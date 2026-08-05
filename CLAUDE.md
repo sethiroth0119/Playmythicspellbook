@@ -43,6 +43,10 @@ assume `window.Foo` exists because `const Foo` does.
 - **No image or video upload. Text only.** Hosting UGC carries a non-deferrable legal
   obligation to detect and report CSAM. If images are ever wanted, use a third party that
   handles scanning as part of its product.
+- **🚫 No Discord webhooks / no Discord integration.** Decided 2026-08-05. The community
+  design doc argues hard for outbound webhooks as its highest-value item — **that
+  recommendation is overruled and must not be re-proposed.** Do not build it, and do not
+  re-derive it from the doc.
 - Do not modify battle, card, or economy code while working on Community.
 
 ## ⚠ Corrections to the community-feature design doc

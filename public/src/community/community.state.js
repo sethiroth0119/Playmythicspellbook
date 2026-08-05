@@ -25,6 +25,7 @@ export const Community = {
   ballots: [],            // [{vote_id,user_id,choice}] for the listed votes
   objectives: [],
   rewards: [],
+  ownerPayouts: [],
   // status
   loading: false,
   missing: false,         // the migrations have not been run
@@ -110,6 +111,9 @@ export async function loadCommunity(id) {
     catch (e) { Community.objectives = []; }
     try { const w = await api.listRewards(id); note(w); Community.rewards = w.rows || []; }
     catch (e) { Community.rewards = []; }
+    // Owner-only by RLS; a member just gets [].
+    try { const op = await api.listOwnerPayouts(id); Community.ownerPayouts = op.rows || []; }
+    catch (e) { Community.ownerPayouts = []; }
   } finally {
     Community.loading = false;
     Community.loadedAt = Date.now();

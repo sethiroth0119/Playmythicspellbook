@@ -514,7 +514,21 @@ function rewardsHtml() {
       <span class="mc-pill ${r.claimed_at ? 'on' : 'pend'}">${r.claimed_at ? 'claimed' : 'unclaimed'}</span>
     </div>`).join('');
 
-  return `<div class="mc-card"><h3>Your payouts</h3>
+  // 💠 Owner earnings. Shown only to whoever the rows belong to (RLS returns
+  //    nothing to anyone else), so the owner can see WHY Cinder appeared in
+  //    their gift inbox instead of it arriving unexplained.
+  const op = Community.ownerPayouts || [];
+  const opTotal = op.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const opMembers = op.filter(r => r.kind === 'member_ip').length;
+  const opChat = op.filter(r => r.kind === 'chat_activity').length;
+  const ownerBox = op.length ? `<div class="mc-card"><h3>What your community earned you</h3>
+      <div class="mc-row"><span class="nm">New members (unique address)<span class="sub">100 🔥 each, once per address</span></span><span class="val">${opMembers}</span></div>
+      <div class="mc-row"><span class="nm">Active members on the wire<span class="sub">10 🔥 each, at most once per 5 hours</span></span><span class="val">${opChat}</span></div>
+      <div class="mc-row"><span class="nm">Total earned</span><span class="val">🔥 ${fmtNum(opTotal)}</span></div>
+      <div class="mc-note" style="margin-top:8px">These arrive as gifts — claim them in <b>Rewards &amp; Gifts</b> on your profile. Talking in your own community earns nothing, and each address counts once.</div>
+    </div>` : '';
+
+  return ownerBox + `<div class="mc-card"><h3>Your payouts</h3>
       ${mine > 0
         ? `<div class="mc-row"><span class="nm">You have <b>🔥 ${fmtNum(mine)}</b> waiting.<span class="sub">Claiming credits your wallet.</span></span>
            <button class="mc-b" data-mc="claim">Claim</button></div>`

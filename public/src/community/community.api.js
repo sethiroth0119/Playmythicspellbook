@@ -374,6 +374,19 @@ export async function listRewards(communityId) {
   } catch (e) { return { ...fail(e), rows: [] }; }
 }
 
+// Owner earnings — 100/new-IP member and 10/active chatter. RLS returns rows
+// only to the owner, so a member calling this simply gets an empty list.
+export async function listOwnerPayouts(communityId, limit = 60) {
+  const c = client(); if (!c) return { ...OFFLINE, rows: [] };
+  try {
+    const r = await c.from('community_owner_payouts')
+      .select('id,kind,subject_user,amount,created_at')
+      .eq('community_id', communityId).order('created_at', { ascending: false }).limit(limit);
+    if (r.error) return { ...fail(r.error), rows: [] };
+    return { ok: true, rows: r.data || [] };
+  } catch (e) { return { ...fail(e), rows: [] }; }
+}
+
 export async function distribute(communityId, amount, note) {
   const c = client(); if (!c) return OFFLINE;
   try {

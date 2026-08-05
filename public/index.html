@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120f7';
+  window.BUILD_VERSION = 'v120f8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -63088,6 +63088,11 @@ function _campOwnerDataEnsure() {
       App._twNodeOwnersFetching = false;
       try { if (playerOwnsAnyNode() && typeof render === 'function') render(); } catch (e) {}
     });
+    // 🏛 Warm the mayor contracts alongside the owners — a hired mayor may own
+    // no node at all, so this cannot ride on playerOwnsAnyNode(). It is the
+    // only thing that makes the Manage City button appear for them, and it
+    // no-ops harmlessly until supabase-mayors.sql is run.
+    try { if (typeof tw_fetchNodeMayors === 'function') tw_fetchNodeMayors(); } catch (e) {}
   } catch (e) {}
 }
 function isCampUnlocked() {
@@ -200372,6 +200377,85 @@ function _dbDetailPanel() {
 // the node-efficiency boost hook, and graceful cloud persistence (localStorage
 // fallback inside the city until the city_state migration is run).
 // ═══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════
+// 🏛 NODE MAYORS — the game side of the Mayor Hall hiring contract.
+//
+// Mayor Hall (market-deploy) runs the negotiation; when an offer is accepted
+// its RPC writes ONE row into `node_mayors`. That table is the entire
+// handoff: public read, one active row per node, carrying who runs the city
+// and on what terms. The game had never read it, so a player could be hired
+// as mayor and find nothing had changed on their end.
+//
+// Degrades silently when the table is absent (supabase-mayors.sql unrun) —
+// the same shape as the garage rail: no table means no mayors, never an
+// error in a player's face.
+// ════════════════════════════════════════════════════════════════════════
+let _twMayors = null;            // { nodeId: row } once fetched
+let _twMayorsFetching = false;
+let _twMayorsMissing = false;    // table not installed — stop asking
+
+async function tw_fetchNodeMayors(force) {
+  try {
+    if (_twMayorsMissing) return null;
+    if (_twMayors && !force) return _twMayors;
+    if (_twMayorsFetching) return _twMayors;
+    if (!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client)) return null;
+    _twMayorsFetching = true;
+    const r = await Cloud.client
+      .from('node_mayors')
+      .select('node_id,mayor_id,owner_id,player_pct,currency,hours_per_month,card_policy,resource_policy,active')
+      .eq('active', true)
+      .limit(500);
+    _twMayorsFetching = false;
+    if (r && r.error) {
+      // 42P01 / PGRST205 = the table does not exist yet. Remember that so we
+      // do not re-query it on every render of the map.
+      const m = String((r.error && r.error.message) || '');
+      if (/does not exist|PGRST205|42P01|schema cache/i.test(m)) { _twMayorsMissing = true; }
+      return null;
+    }
+    const out = {};
+    for (const row of ((r && r.data) || [])) if (row && row.node_id) out[row.node_id] = row;
+    _twMayors = out;
+    try { if (typeof render === 'function') render(); } catch (e) {}
+    return _twMayors;
+  } catch (e) { _twMayorsFetching = false; return null; }
+}
+// The mayor row for a node, or null. Never triggers a fetch itself — the
+// map render warms the cache — so it is safe to call inside a render pass.
+function _twNodeMayor(nodeId) {
+  try { return (_twMayors && _twMayors[nodeId]) || null; } catch (e) { return null; }
+}
+// Am I the hired mayor of this node? This is the gate for the manage button.
+function _twIAmMayorOf(nodeId) {
+  try {
+    const me = (Profile && Profile.cloud && Profile.cloud.userId) || null;
+    if (!me) return false;
+    const m = _twNodeMayor(nodeId);
+    return !!(m && m.mayor_id === me);
+  } catch (e) { return false; }
+}
+// The contract in one line, for the button's hint. Terms are the point of the
+// negotiation, so a mayor should see what they actually agreed to without
+// leaving the game for the Hall.
+function _twMayorTermsLine(nodeId) {
+  try {
+    const m = _twNodeMayor(nodeId);
+    if (!m) return '';
+    const pct = (m.player_pct != null) ? (m.player_pct + '% of revenue') : '';
+    const cur = m.currency ? String(m.currency).toUpperCase() : '';
+    const hrs = m.hours_per_month ? (m.hours_per_month + 'h/month') : '';
+    const cards = m.card_policy ? ('cards: ' + m.card_policy) : '';
+    const res = m.resource_policy ? ('resources: ' + m.resource_policy) : '';
+    return [pct, cur, hrs, cards, res].filter(Boolean).join(' · ');
+  } catch (e) { return ''; }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.mayors = { fetch: tw_fetchNodeMayors, of: _twNodeMayor,
+                         iAmMayorOf: _twIAmMayorOf, terms: _twMayorTermsLine };
+} catch (e) {}
+
 function _openNodeCity(nodeId) {
   try { App._cityNodeId = nodeId || null; } catch (e) {}
   if (document.getElementById('node-city-frame')) return;
@@ -213147,12 +213231,25 @@ function renderTerritoryWars() {
         const _po2 = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(selNode.id) : null;
         const _iOwnIt = !!(_me2 && _po2 && _po2.user_id === _me2);
         const _connected = !!(Profile && Profile.campNodeId === selNode.id);
-        if (!_iOwnIt && !_connected) return '';
+        // 🏛 A HIRED MAYOR is neither the owner nor necessarily a connected
+        // settler, so the old gate showed them nothing — a player could accept
+        // a Mayor Hall contract and find the job did not exist in-game. Being
+        // the mayor is now its own way in.
+        const _iAmMayor = (typeof _twIAmMayorOf === 'function') && _twIAmMayorOf(selNode.id);
+        if (!_iOwnIt && !_connected && !_iAmMayor) return '';
         const _cityName = escapeHtml(selNode.name || 'Node') + ' City';
-        const _lbl = _iOwnIt ? ('🏙 Enter Your ' + _cityName) : '🏙 Build Your City Here';
+        // Owning outranks the appointment: if you somehow hold both, you see
+        // your own city, not the job.
+        const _lbl = _iOwnIt ? ('🏙 Enter Your ' + _cityName)
+                   : _iAmMayor ? ('🏛 Manage ' + _cityName)
+                   : '🏙 Build Your City Here';
+        const _terms = _iAmMayor && (typeof _twMayorTermsLine === 'function') ? _twMayorTermsLine(selNode.id) : '';
         const _hint = _iOwnIt
           ? 'Your city — build it out; its Link % shields this node from decay.'
-          : 'Connected settler — build a city that supplies this node. Everything you gather goes to your camp storage.';
+          : _iAmMayor
+            ? ('You are the hired mayor of this city. Build and run it on the owner\'s behalf'
+               + (_terms ? ' — ' + escapeHtml(_terms) : '') + '.')
+            : 'Connected settler — build a city that supplies this node. Everything you gather goes to your camp storage.';
         return `<div class="tw-nd-claim mine"><div class="tw-nd-claim-row">
             <button class="btn-mini btn-primary" onclick="__mg._openNodeCity('${escapeHtml(selNode.id)}')">${_lbl}</button>
           </div><div class="tw-nd-claim-hint">${_hint}</div></div>`;

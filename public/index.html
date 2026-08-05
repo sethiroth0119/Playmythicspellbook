@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120h4';
+  window.BUILD_VERSION = 'v120h5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -78300,11 +78300,9 @@ function _guildChatSubscribe() {
 function _guildLog(text) {
   try {
     if (!Cloud || !Cloud.client || !Corp.mine || !Profile.cloud || !Profile.cloud.userId) return;
-    Cloud.client.from('guild_chat').insert({
-      corp_id: Corp.mine.id, user_id: Profile.cloud.userId,
-      user_name: ((Profile.cloud.displayName || 'Survivor') + '').slice(0, 40),
-      body: String(text).slice(0, 400), kind: 'sys',
-    }).then(function () {});
+    // Server-side: direct INSERT on guild_chat is revoked (sql/011). Founder
+    // only, so a member cannot forge a system line that reads as the game.
+    Cloud.client.rpc('guild_log', { p_corp_id: Corp.mine.id, p_body: String(text).slice(0, 400) }).then(function () {});
   } catch (e) {}
 }
 async function _jbLegalFetch() {
@@ -78829,13 +78827,12 @@ function _jbHandleAction(a) {
         try {
           const body = String(a.body || '').trim().slice(0, 400);
           if (!body || !Cloud || !Cloud.client || !Corp.mine || !Profile.cloud || !Profile.cloud.userId) return;
-          const row = {
-            corp_id: Corp.mine.id, user_id: Profile.cloud.userId,
-            user_name: ((Profile.cloud.displayName || 'Survivor') + '').slice(0, 40),
-            body: body, kind: 'chat',
-          };
-          const r = await Cloud.client.from('guild_chat').insert(row);
-          if (r && r.error) { showToast('⚠ Message failed to send.', 2600); return; }
+          // sql/011: the server is the only thing that can post. It derives the
+          // display name, filters, and rate-limits — so there is no user_name to
+          // spoof and no unthrottled faucet feeding the sql/008 chat reward.
+          const r = await Cloud.client.rpc('guild_send', { p_corp_id: Corp.mine.id, p_body: body });
+          if (r && r.error) { showToast(/slow down/i.test(r.error.message || '') ? '⏳ Slow down a moment.' : '⚠ Message failed to send.', 2600); return; }
+          const row = r.data || { corp_id: Corp.mine.id, user_id: Profile.cloud.userId, body: body, kind: 'chat' };
           App._guildChat = (App._guildChat || []).concat([Object.assign({ created_at: new Date().toISOString() }, row)]).slice(-120);
           _jbSendData();
         } catch (e) {}
@@ -201152,13 +201149,10 @@ try {
       try {
         const text = String(body || '').trim().slice(0, 400);
         if (!text || !Cloud || !Cloud.client || !Corp.mine || !Profile.cloud || !Profile.cloud.userId) return false;
-        const row = {
-          corp_id: Corp.mine.id, user_id: Profile.cloud.userId,
-          user_name: ((Profile.cloud.displayName || 'Survivor') + '').slice(0, 40),
-          body: text, kind: 'chat',
-        };
-        const r = await Cloud.client.from('guild_chat').insert(row);
+        // sql/011 — server-derived name, server filter, server rate limit.
+        const r = await Cloud.client.rpc('guild_send', { p_corp_id: Corp.mine.id, p_body: text });
         if (r && r.error) return false;
+        const row = r.data || { corp_id: Corp.mine.id, user_id: Profile.cloud.userId, body: text, kind: 'chat' };
         App._guildChat = (App._guildChat || []).concat([Object.assign({ created_at: new Date().toISOString() }, row)]).slice(-200);
         return true;
       } catch (e) { return false; }

@@ -1,3 +1,4 @@
+import { handlePushSend } from './push.js';
 /* Mythic Spellbook — public Game API + static site (one Cloudflare Worker).
  *
  * Read-only, public-safe aggregates ONLY. No new secrets: it reuses the
@@ -1056,6 +1057,20 @@ export default {
   async fetch(request, env) {
     let u;
     try { u = new URL(request.url); } catch (e) { return env.ASSETS.fetch(request); }
+
+    // 🔔 Web Push — the only thing that reaches a CLOSED app. Gated behind a
+    //    shared secret: without one, anyone could push arbitrary text to every
+    //    player's lock screen wearing the game's icon, which is a phishing
+    //    channel, not just a spam channel.
+    if (u.pathname === '/api/push/send') {
+      try { return await handlePushSend(request, env); }
+      catch (e) { return cjson({ error: 'push_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
+    }
+    // Lets the client fetch the applicationServerKey instead of it being
+    // hardcoded in two places that can drift apart.
+    if (u.pathname === '/api/push/key') {
+      return cjson({ key: env.VAPID_PUBLIC || null, configured: !!(env.VAPID_PUBLIC && env.VAPID_PRIVATE) });
+    }
 
     if (u.pathname === '/api/art/proxy') {
       try { return await handleArtProxy(request, u); }

@@ -411,7 +411,7 @@
 // answering and players were served stale /assets/ images indefinitely.
 // The manual per-deploy version bump below is the real freshness signal:
 // new bytes → install+activate → old caches reaped.
-const CACHE_VERSION = 'mythic-v120h2-mayorcity';
+const CACHE_VERSION = 'mythic-v120h3-webpush';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if
@@ -540,4 +540,43 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'skip-waiting') {
     self.skipWaiting();
   }
+});
+
+/* 🔔 WEB PUSH — the only path that reaches a CLOSED app. The in-page notifier
+   (v120h0) needs a live tab; this does not.
+
+   ⚠ The handler must ALWAYS call showNotification(). A push that resolves
+   without showing anything makes the browser display its own "This site has
+   been updated in the background" message, and repeatedly doing it can cost the
+   site its push permission entirely. So a malformed payload still shows
+   something honest rather than being swallowed. */
+self.addEventListener('push', (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch (e) {
+    try { d = { title: 'Mythic Spellbook', body: event.data ? event.data.text() : '' }; } catch (e2) { d = {}; }
+  }
+  // `source` is the community (or "Emergency Broadcast") and leads the title —
+  // "New announcement" alone is useless to someone in four communities.
+  const title = d.source ? (d.source + ' · ' + (d.title || 'Update'))
+                         : (d.title || 'Mythic Spellbook');
+  event.waitUntil(self.registration.showNotification(title, {
+    body: (d.body || '').slice(0, 180),
+    tag: d.tag || 'mythic',
+    data: { url: d.url || '/' },
+    icon: '/assets/artwork/gameicons/Bank%20of%20Ethos.png',
+    badge: '/assets/artwork/gameicons/Bank%20of%20Ethos.png',
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  // Focus an existing tab rather than opening a second copy of a 12MB app.
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if (c.url.indexOf(self.location.origin) === 0) { try { await c.focus(); return; } catch (e) {} }
+    }
+    try { await self.clients.openWindow(url); } catch (e) {}
+  })());
 });

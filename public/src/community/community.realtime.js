@@ -71,6 +71,79 @@ export async function notify(community, title, body, tag) {
   } catch (e) { return false; }
 }
 
+/* ── WEB PUSH ────────────────────────────────────────────────────────────────
+   Permission alone only gets notifications while a tab or the service worker is
+   alive. A PUSH SUBSCRIPTION is what reaches a closed app, so asking for
+   permission and subscribing are one action from the player's point of view.
+   Everything here degrades: no service worker, no push manager, or no VAPID key
+   configured on the Worker simply means no subscription, and the in-page
+   notifier still works. */
+function urlB64ToUint8Array(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+export async function pushSubscribe() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return { ok: false, reason: 'unsupported' };
+    if (Notification.permission !== 'granted') return { ok: false, reason: 'no-permission' };
+
+    // The key comes from the Worker so it lives in exactly one place. Hardcoding
+    // it in the client too is how the two drift and every push starts failing
+    // with a signature error nobody can explain.
+    const kr = await fetch('/api/push/key', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+    if (!kr || !kr.configured || !kr.key) return { ok: false, reason: 'not-configured' };
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,          // required by Chrome; a silent push is refused
+        applicationServerKey: urlB64ToUint8Array(kr.key),
+      });
+    }
+    const j = sub.toJSON();
+    const b = bridge();
+    const c = b && b.cloud && b.cloud.client;
+    if (!c) return { ok: false, reason: 'offline' };
+    const r = await c.rpc('push_subscribe', {
+      p_endpoint: j.endpoint,
+      p_p256dh: j.keys && j.keys.p256dh,
+      p_auth: j.keys && j.keys.auth,
+      p_ua: (navigator.userAgent || '').slice(0, 200),
+    });
+    if (r && r.error) return { ok: false, reason: r.error.message || 'save failed' };
+    return { ok: true };
+  } catch (e) { return { ok: false, reason: (e && e.message) || 'failed' }; }
+}
+
+export async function pushUnsubscribe() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return { ok: true };
+    const ep = sub.endpoint;
+    await sub.unsubscribe();
+    const b = bridge();
+    const c = b && b.cloud && b.cloud.client;
+    if (c) { try { await c.rpc('push_unsubscribe', { p_endpoint: ep }); } catch (e) {} }
+    return { ok: true };
+  } catch (e) { return { ok: false }; }
+}
+
+export async function pushState() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg || !reg.pushManager) return 'unsupported';
+    const sub = await reg.pushManager.getSubscription();
+    return sub ? 'subscribed' : 'not-subscribed';
+  } catch (e) { return 'unsupported'; }
+}
+
 /* ── channels ────────────────────────────────────────────────────────────── */
 
 function client() {

@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120h2';
+  window.BUILD_VERSION = 'v120h3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -216042,6 +216042,6 @@ render();
      wrapped so a failure inside it can never take the game down.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
      other static asset. -->
-<script type="module" src="src/community/index.js?v=120h1"></script>
+<script type="module" src="src/community/index.js?v=120h3"></script>
 </body>
 </html>

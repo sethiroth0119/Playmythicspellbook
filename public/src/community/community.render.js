@@ -11,7 +11,7 @@ import { Community, loadDirectory, loadCommunity, standings, myMembershipFor, ap
 import { bridge, esc, fmtNum, fmtDate } from './community.bridge.js';
 import * as roles from './community.roles.js';
 import { subscribeWire, subscribeCommunity, unsubscribeAll, sendTyping,
-         notifyState, askNotifyPermission } from './community.realtime.js';
+         notifyState, askNotifyPermission, pushSubscribe } from './community.realtime.js';
 
 const OV = 'mythic-community-ov';
 let view = 'directory';     // 'directory' | 'community'
@@ -679,9 +679,21 @@ async function onClick(ev) {
 
     if (act === 'notify-on') {
       const res = await askNotifyPermission();
-      b.toast(res === 'granted' ? '🔔 Alerts on — announcements, votes and payouts will reach you.'
-        : res === 'denied' ? '🔕 Your browser blocked alerts for this site.'
-        : 'Alerts were not enabled.');
+      if (res !== 'granted') {
+        b.toast(res === 'denied' ? '🔕 Your browser blocked alerts for this site.' : 'Alerts were not enabled.');
+        paint();
+        return;
+      }
+      // Permission alone only covers a live tab. Subscribing to push is what
+      // reaches a phone with the game closed — so it is the same action to the
+      // player, not a second button they would never find.
+      const ps = await pushSubscribe();
+      b.toast(ps.ok
+        ? '🔔 Alerts on — these now reach you even with the game closed.'
+        : ps.reason === 'not-configured'
+          ? '🔔 Alerts on for this tab. Push to a closed app is not switched on for this server yet.'
+          : '🔔 Alerts on for this tab. Background push could not be set up here (' + (ps.reason || '?') + ').',
+        5200);
       paint();
       return;
     }

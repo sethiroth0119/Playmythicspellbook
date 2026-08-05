@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e6';
+  window.BUILD_VERSION = 'v120e7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -40939,6 +40939,10 @@ const Forge = {
   // bloating the pack record itself (large data URLs go to IndexedDB / Storage
   // alongside cardArt, not the small Forge JSON that syncs to user_profiles).
   packArt: {},          // { packId: dataURL or URL }
+  // 🏰 Vault-container art. Was never declared here, so it existed only from
+  // the moment an admin uploaded — which is part of why it looked optional to
+  // every list that should have carried it.
+  crateArt: {},         // { crateId: dataURL or URL } — same lifecycle as packArt
   starterDeckArt: {},   // { deckId: dataURL or URL } — same IDB lifecycle as packArt
   // Item icon image for Forge custom held items. Shown in the loadout list, the
   // shop, on-field tooltips, and the VS-screen item strip. Keyed by item id so
@@ -47474,6 +47478,9 @@ const STORAGE_CATEGORIES = [
   ['chestArt',     'chestArt.json'],
   ['campAudio',    'campAudio.json'],
   ['packArt',        'packArt.json'],
+  // 🏰 Without this the container art saved for the admin and never reached a
+  // player — this list is both the upload and the download side.
+  ['crateArt',       'crateArt.json'],
   ['starterDeckArt', 'starterDeckArt.json'],
   ['itemArt',        'itemArt.json'],
   ['catalogMedia',   'catalogMedia.json'],
@@ -48057,6 +48064,7 @@ async function _cloudifyAllAssets(onProgress) {
   const targets = [
     ['campArt', Forge.campArt], ['reArt', Forge.reArt], ['opArt', Forge.opArt],
     ['chestArt', Forge.chestArt], ['packArt', Forge.packArt], ['itemArt', Forge.itemArt],
+    ['crateArt', Forge.crateArt],
     ['locationArt', Forge.locationArt], ['starterDeckArt', Forge.starterDeckArt],
     ['weatherAudio', Forge.weatherAudio], ['customSfx', Forge.customSfx],
     ['menuHeroes', Forge.mainMenuHeroes], ['starterDecks', Forge.starterDecks],
@@ -65404,7 +65412,14 @@ async function loadHeavyForgeFromIdb() {
       try { console.info('🆘 Placeholder mode — custom art not loaded (' + (haveSpr ? sIdx.length : 0) + ' sprites / ' + (haveCar ? cIdx.length : 0) + ' on disk). Remove localStorage.hg_artstream to re-enable streaming.'); } catch (e) {}
     }
   }
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'customSfx', 'customMusic', 'weatherVfx', 'weatherVfxIntensity', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt', 'chestArt', 'charBoxArt', 'hubTileArt', 'convoyTruckArt'];
+  // ⚠ THIS is the list that decides whether an admin's upload survives a
+  // reload. saveForge() writes forge_<key> to IDB for every art map, but only
+  // the keys named HERE are read back. 'crateArt' was written and never read —
+  // it had been added to the CONTENT map further down instead, whose loop
+  // starts `if (!Array.isArray(v)) continue`, so an object-shaped art map was
+  // silently skipped there forever. Listed in the wrong place reads as covered
+  // and behaves as absent.
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'customSfx', 'customMusic', 'weatherVfx', 'weatherVfxIntensity', 'campArt', 'campAudio', 'packArt', 'crateArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt', 'chestArt', 'charBoxArt', 'hubTileArt', 'convoyTruckArt'];
   let changed = false;
   for (const k of keys) {
     // The two giant stores are the proven OOM culprit (~15k frames). When the
@@ -65501,7 +65516,10 @@ async function loadForgeContentFromIdb() {
     // Ⓐ Without this line the bundle editor would appear to work and lose every
     // edit on reload — saveForge only persists keys listed here.
     ['forge_azaBundles',       'azaBundles'],
-    ['forge_crateArt',         'crateArt'],
+    // ⚠ 'crateArt' USED TO BE LISTED HERE and could never work: this map feeds
+    // a loop that bails on anything that is not an array, and crateArt is a
+    // {crateId: dataURL} object. It now rides the art-map hydration in
+    // loadForgeArtFromIdb, which is where every other *Art store lives.
     ['forge_campaigns',        'campaigns'],
   ];
   let changed = false;

@@ -66,6 +66,20 @@ function injectStyle() {
   #${OV} .mc-form{display:grid;gap:8px;margin-top:8px}
   #${OV} .mc-empty{color:#8d8370;font-size:.86rem;padding:8px 0}
   #${OV} .mc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+  /* 📻 Wire. Fills its card instead of leaving half the screen dead, which is
+     what the standalone Guild Wire screen did. */
+  #${OV} .mc-wire{height:min(52vh,460px);overflow-y:auto;display:flex;flex-direction:column;gap:7px;
+    padding:10px 4px;border-top:1px solid rgba(210,164,78,.18);border-bottom:1px solid rgba(210,164,78,.18);margin:8px 0}
+  #${OV} .mc-wmsg{max-width:74%;align-self:flex-start}
+  #${OV} .mc-wmsg.me{align-self:flex-end;text-align:right}
+  #${OV} .mc-wmeta{font-size:.66rem;color:#8d8370;letter-spacing:.05em;margin-bottom:2px}
+  #${OV} .mc-wbody{display:inline-block;text-align:left;padding:7px 11px;border-radius:9px;font-size:.86rem;
+    line-height:1.5;border:1px solid rgba(210,164,78,.25);background:rgba(255,255,255,.035);color:#e7dcc0;
+    white-space:pre-wrap;word-break:break-word}
+  #${OV} .mc-wmsg.me .mc-wbody{background:rgba(212,175,55,.14);border-color:rgba(210,164,78,.5)}
+  #${OV} .mc-wsys{text-align:center;font-size:.7rem;color:#8d8370;letter-spacing:.04em;padding:2px 0}
+  #${OV} .mc-wsend{display:flex;gap:7px}
+  #${OV} .mc-wsend input{flex:1}
   `;
   document.head.appendChild(s);
 }
@@ -140,9 +154,51 @@ function directoryHtml() {
 function tabsHtml() {
   const t = (k, label) => `<button class="mc-tab ${tab === k ? 'on' : ''}" data-mc="tab" data-tab="${k}">${label}</button>`;
   const claim = myUnclaimedRewards();
-  return `<div class="mc-tabs">${t('standings', 'Standings')}${t('news', 'Announcements')}${t('votes', 'Votes')}` +
+  // 📻 Wire first and default — this hub IS the Guild Wire now, with the civic
+  //    layer behind it rather than in a second window.
+  return `<div class="mc-tabs">${t('wire', '📻 Wire')}${t('standings', 'Standings')}${t('news', 'Announcements')}${t('votes', 'Votes')}` +
     `${t('objectives', 'Objectives')}${t('members', 'Members')}${t('corps', 'Corporations')}` +
     `${t('ledger', 'Contributions')}${t('rewards', 'Rewards' + (claim > 0 ? ' •' : ''))}</div>`;
+}
+
+/* ── 📻 THE GUILD WIRE ────────────────────────────────────────────────────
+   The corporation's realtime chat, living inside the community hub so there is
+   ONE social screen instead of two half-empty ones.
+   ⚠ Scope note that is shown to the player, not just written here: the wire is
+   per-CORPORATION while a community spans several corps. Calling it "the
+   community's chat" would mislead anyone in a multi-corp community, so the
+   header names the corp whose wire this is. */
+function wireHtml() {
+  const b = bridge();
+  const corp = b.myCorp();
+  if (!corp || !corp.id) {
+    return `<div class="mc-card"><h3>📻 Guild Wire</h3>
+      <div class="mc-empty">The wire belongs to a corporation, and you are not in one.
+      Found or join a corporation in <b>Just Business</b> to get a wire — the rest of this hub works regardless.</div></div>`;
+  }
+  const chat = b.guildChat() || [];
+  const me = b.displayName();
+  const lines = chat.map((m) => {
+    if (m.kind === 'sys') {
+      return `<div class="mc-wsys">— ${esc(m.body)} —</div>`;
+    }
+    const mine = m.user_name === me;
+    const when = m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    return `<div class="mc-wmsg ${mine ? 'me' : ''}">
+      <div class="mc-wmeta">${esc(m.user_name || '?')}${when ? ' · ' + when : ''}</div>
+      <div class="mc-wbody">${esc(m.body)}</div></div>`;
+  }).join('');
+
+  return `<div class="mc-card">
+      <h3>📻 ${esc(corp.name || 'Your corporation')}'s wire
+        <span class="mc-pill">${chat.length} on the wire</span></h3>
+      <div class="mc-note">Live chat and every corporation action, seen by all members. This wire belongs to <b>${esc(corp.name || 'your corp')}</b> — a community can hold several corporations, so other members of this community may be on a different wire.</div>
+      <div id="mc-wire" class="mc-wire">${lines || '<div class="mc-empty" style="text-align:center;padding:26px">Quiet on the wire. Say something to the guild.</div>'}</div>
+      <div class="mc-wsend">
+        <input id="mc-wmsg" maxlength="400" placeholder="Message your guild…" autocomplete="off">
+        <button class="mc-b" data-mc="wire-send">Send</button>
+      </div>
+    </div>`;
 }
 
 function standingsHtml() {
@@ -408,7 +464,8 @@ function rewardsHtml() {
 function communityHtml() {
   const c = Community.current;
   if (!c) return banner() + '<div class="mc-empty">Community not found.</div>';
-  const body = tab === 'members' ? membersHtml()
+  const body = tab === 'wire' ? wireHtml()
+             : tab === 'members' ? membersHtml()
              : tab === 'corps' ? corpsHtml()
              : tab === 'ledger' ? ledgerHtml()
              : tab === 'news' ? newsHtml()
@@ -420,6 +477,11 @@ function communityHtml() {
 }
 
 /* ── paint + events ──────────────────────────────────────────────────────── */
+// Chat is only readable if it lands at the newest line. paint() rebuilds the
+// whole panel, so this has to run after every repaint of the wire.
+function scrollWire() {
+  try { const w = document.getElementById('mc-wire'); if (w) w.scrollTop = w.scrollHeight; } catch (e) {}
+}
 export function paint() {
   const ov = document.getElementById(OV); if (!ov) return;
   if (view === 'directory') {
@@ -429,11 +491,20 @@ export function paint() {
     const title = c ? `🏛 [${esc(c.tag)}] ${esc(c.name)}` : '🏛 Community';
     ov.innerHTML = shell(title + ' <button class="mc-b" data-mc="back" style="margin-left:10px">← All</button>',
       Community.loading ? '<div class="mc-empty">Loading…</div>' : communityHtml(), tabsHtml());
+    if (tab === 'wire') scrollWire();
   }
 }
 
 async function refreshDirectory() { await loadDirectory(); paint(); }
-async function refreshCommunity() { if (openId) { await loadCommunity(openId); paint(); } }
+async function refreshCommunity() {
+  if (!openId) return;
+  // The wire lives in the parent's Just Business state, so ask it to refresh
+  // alongside the community's own tables — otherwise the Wire tab shows
+  // whatever was last loaded by a visit to Just Business, which may be nothing.
+  try { bridge().guildChatRefresh(); } catch (e) {}
+  await loadCommunity(openId);
+  paint();
+}
 
 async function onClick(ev) {
   const el = ev.target.closest('[data-mc]'); if (!el || busy) return;
@@ -443,7 +514,7 @@ async function onClick(ev) {
   if (act === 'close') { close(); return; }
   if (act === 'back') { view = 'directory'; openId = null; paint(); refreshDirectory(); return; }
   if (act === 'tab') { tab = el.dataset.tab; paint(); return; }
-  if (act === 'open') { openId = el.dataset.id; view = 'community'; tab = 'standings'; paint(); await refreshCommunity(); return; }
+  if (act === 'open') { openId = el.dataset.id; view = 'community'; tab = 'wire'; paint(); await refreshCommunity(); return; }
 
   busy = true;
   try {
@@ -516,6 +587,17 @@ async function onClick(ev) {
       if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not update that corporation.')); return; }
       await api.logAction(openId, 'corp → ' + el.dataset.status, el.dataset.c);
       await refreshCommunity();
+      return;
+    }
+
+    if (act === 'wire-send') {
+      const input = document.getElementById('mc-wmsg');
+      const body = (input && input.value) || '';
+      if (!body.trim()) return;
+      const ok = await b.guildChatSend(body);
+      if (!ok) { b.toast('⚠ Message failed to send.'); return; }
+      if (input) input.value = '';
+      paint(); scrollWire();
       return;
     }
 
@@ -655,6 +737,15 @@ export function open() {
     // Click-outside closes, matching every other overlay in the game.
     ov.addEventListener('click', (ev) => { if (ev.target === ov) close(); });
     ov.addEventListener('click', onClick);
+    // Enter sends on the wire. Delegated, because paint() replaces the input
+    // element every repaint and a direct listener would not survive it.
+    ov.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' || ev.shiftKey) return;
+      if (!ev.target || ev.target.id !== 'mc-wmsg') return;
+      ev.preventDefault();
+      const btn = ov.querySelector('[data-mc="wire-send"]');
+      if (btn) btn.click();
+    });
     document.body.appendChild(ov);
   }
   view = 'directory'; openId = null; tab = 'standings';

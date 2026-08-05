@@ -37,6 +37,10 @@ const NULL_BRIDGE = {
   // no parallel mission system, so if this returns [] the objectives tab says
   // so rather than inventing targets.
   twNodes: () => [],
+  // 📻 The corporation's Guild Wire, hosted inside this hub.
+  guildChat: () => [],
+  guildChatRefresh: () => {},
+  guildChatSend: async () => false,
   isAdmin: () => false,
   render: () => {},
   _null: true,

@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120g8';
+  window.BUILD_VERSION = 'v120g9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -78810,6 +78810,18 @@ function _jbHandleAction(a) {
           try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
         } catch (e) {}
       })();
+    } else if (a.kind === 'openCommunity') {
+      // 📻 The Guild Wire moved into the Community hub — one social screen
+      //    instead of two half-empty ones. Leave Just Business, then open it.
+      (function () {
+        try { _jbLeave(); } catch (e) {}
+        setTimeout(function () {
+          try {
+            if (window.MythicCommunity) window.MythicCommunity.open();
+            else showToast('⚠ The Community module did not load.', 3200);
+          } catch (e) {}
+        }, 120);
+      })();
     } else if (a.kind === 'chatSend') {
       // 💬 Guild wire — insert; realtime delivers to every member. Optimistic
       // local append so the sender sees it instantly.
@@ -79326,7 +79338,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=120e6';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=120g9';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {
@@ -200967,6 +200979,35 @@ try {
     corpTreasury: (corpId) => {
       try { return (Corp && Corp.mine && Corp.mine.id === corpId) ? (Corp.treasury | 0) : 0; } catch (e) { return 0; }
     },
+    /* 📻 GUILD WIRE — the corporation's realtime chat, surfaced inside the
+       Community hub so the Wire and the civic layer are ONE screen rather than
+       two places that both feel half-empty.
+       ⚠ The wire is per-CORPORATION (guild_chat.corp_id) while a community
+       spans several corps. That is why this reads "your corp's wire" and the
+       hub says so — it is not the community's chat, and pretending otherwise
+       would mislead anyone in a multi-corp community. */
+    guildChat: () => {
+      try { return Array.isArray(App._guildChat) ? App._guildChat.slice(-200) : []; } catch (e) { return []; }
+    },
+    guildChatRefresh: () => {
+      try { if (typeof _jbGuildRefresh === 'function') _jbGuildRefresh(); } catch (e) {}
+    },
+    // Same insert the Just Business app uses, so both surfaces write one table.
+    guildChatSend: async (body) => {
+      try {
+        const text = String(body || '').trim().slice(0, 400);
+        if (!text || !Cloud || !Cloud.client || !Corp.mine || !Profile.cloud || !Profile.cloud.userId) return false;
+        const row = {
+          corp_id: Corp.mine.id, user_id: Profile.cloud.userId,
+          user_name: ((Profile.cloud.displayName || 'Survivor') + '').slice(0, 40),
+          body: text, kind: 'chat',
+        };
+        const r = await Cloud.client.from('guild_chat').insert(row);
+        if (r && r.error) return false;
+        App._guildChat = (App._guildChat || []).concat([Object.assign({ created_at: new Date().toISOString() }, row)]).slice(-200);
+        return true;
+      } catch (e) { return false; }
+    },
     /* 🗺 Territory Wars nodes — community OBJECTIVES point at these rather than
        inventing a parallel mission system. `owned` is read live from the
        player's own TW state, so objective progress is the real war, not a
@@ -215929,6 +215970,6 @@ render();
      wrapped so a failure inside it can never take the game down.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
      other static asset. -->
-<script type="module" src="src/community/index.js?v=120g8"></script>
+<script type="module" src="src/community/index.js?v=120g9"></script>
 </body>
 </html>

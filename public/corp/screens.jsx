@@ -651,6 +651,46 @@ function FeedScreen() {
     try { window.JB_action && window.JB_action({ kind: 'chatSend', body: b.slice(0, 400) }); } catch (e) {}
     setMsg('');
   };
+  // 📻 THE WIRE MOVED. It now lives inside the Community hub, alongside
+  // standings, announcements, votes, objectives, contributions and rewards —
+  // one social screen instead of a chat box with half the page empty and a
+  // separate civic window elsewhere. This screen is the signpost.
+  const openHub = () => { try { window.JB_action && window.JB_action({ kind: 'openCommunity' }); } catch (e) {} };
+  return (
+    <div className="screen">
+      <ScreenHead title="Guild Wire" desc="The wire now lives in the Community hub, with the rest of the civic layer." />
+      <div className="card" style={{ padding: 30, maxWidth: 720 }}>
+        <div style={{ fontSize: 30 }}>📻</div>
+        <div style={{ margin: '10px 0 6px', fontWeight: 700, fontSize: 16 }}>The Wire is part of Communities now</div>
+        <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.65 }}>
+          {corp
+            ? <>Your corporation’s live chat sits in the <b>Wire</b> tab of the Community hub, next to standings,
+              announcements, votes, objectives, contributions and rewards — so the whole social and civic layer
+              is one screen instead of two.</>
+            : <>The wire belongs to a corporation, and you are not in one yet. Found or join one in <b>Guild &amp; Hiring</b>;
+              the rest of the Community hub works either way.</>}
+        </div>
+        <button className="btn" style={{ marginTop: 16 }} onClick={openHub}>Open the Community hub</button>
+      </div>
+    </div>
+  );
+}
+// Retained below: the original standalone wire. Kept rather than deleted so the
+// message shapes and the send path stay visible next to their replacement.
+function LegacyFeedScreen() {
+  const [, setTick] = useState(0);
+  const [msg, setMsg] = useState('');
+  const endRef = useRef(null);
+  const econ = (window.__JB && window.__JB.econ) || null;
+  const corp = econ && econ.corp;
+  const chat = (econ && Array.isArray(econ.guildChat)) ? econ.guildChat : [];
+  const me = (econ && econ.handle) || '';
+  const send = () => {
+    const b = msg.trim();
+    if (!b) return;
+    try { window.JB_action && window.JB_action({ kind: 'chatSend', body: b.slice(0, 400) }); } catch (e) {}
+    setMsg('');
+  };
   if (!corp) {
     return (
       <div className="screen">

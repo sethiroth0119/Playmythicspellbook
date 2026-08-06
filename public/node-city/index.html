@@ -2654,6 +2654,45 @@ const civTone = (c, to, k, mul) => {
   return (ch(16) << 16) | (ch(8) << 8) | ch(0);
 };
 
+/* ═══ SHARED CIVILIAN MATERIALS — the crowd's whole material cost ═══════════
+   Citizens were the most expensive thing on the field: at the bench's 60-agent
+   mix, 41 civilians cost 690 meshes and 87 MATERIALS, while 19 vehicles cost
+   90 meshes and 6. The vehicles got there by moving per-instance colour onto
+   `vertexColors` over shared materials; this is the same move for people.
+
+   TWO allocations per figure became ZERO:
+
+   • SKIN never needed to be per-figure at all — there are only six values in
+     the palette, so six shared materials cover every citizen who will ever
+     exist. It was allocating a fresh material to re-state one of six colours.
+
+   • CLOTH genuinely IS per-figure (civTone blends continuously, so two
+     citizens rarely share a shirt). It cannot be a fixed palette — so the
+     colour moves into the GEOMETRY as a vertex-colour attribute, and every
+     garment on every citizen draws from one shared material. `box()` already
+     builds fresh geometry per mesh, so the attribute is free: no extra
+     geometry, no extra draw state.
+
+   The material must be WHITE, because MeshStandardMaterial MULTIPLIES its
+   colour by the vertex colour — any tint here would stain the entire crowd. */
+const CIV_SKIN_HEX = [0xf2cbA8, 0xe3ad86, 0xc98d62, 0xa06f4a, 0x744d33, 0xf7d9bb];
+const CIV_SKIN_MATS = CIV_SKIN_HEX.map(h => new THREE.MeshStandardMaterial({ color: h, roughness: .82 }));
+const CIV_CLOTH_MAT = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .93, vertexColors: true });
+
+/* Bake a flat colour into a mesh's vertices so it can share CIV_CLOTH_MAT.
+   Returns the mesh, so it drops straight into the existing box(...) calls. */
+function civVC(mesh, hex) {
+  try {
+    const geo = mesh.geometry;
+    const n = geo.attributes.position.count;
+    const r = ((hex >> 16) & 255) / 255, g2 = ((hex >> 8) & 255) / 255, b = (hex & 255) / 255;
+    const arr = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { arr[i * 3] = r; arr[i * 3 + 1] = g2; arr[i * 3 + 2] = b; }
+    geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  } catch (e) {}
+  return mesh;
+}
+
 function makeCivilian(col, seed) {
   const g = new THREE.Group();
 
@@ -2682,7 +2721,8 @@ function makeCivilian(col, seed) {
   const torF = T.tor;
   const hdF  = T.head;
 
-  const SKIN = [0xf2cbA8, 0xe3ad86, 0xc98d62, 0xa06f4a, 0x744d33, 0xf7d9bb];
+  // (The skin palette lives at CIV_SKIN_HEX / CIV_SKIN_MATS — a second copy here
+  //  would be a silent divergence waiting to happen the first time one is edited.)
   const base = (col === undefined || col === null) ? 0x8fa3d8 : col;
   // Wardrobe tone by archetype — the grouping lever. (There is no district or
   // zone information on this call: makeCivilian(col) is all the caller hands
@@ -2697,9 +2737,13 @@ function makeCivilian(col, seed) {
     : A === 'child'  ? civTone(base, 0xffffff, .20, 1.00)   // pastel
     : base;
 
-  /* ── the ONLY two materials this figure allocates ── */
-  const cloth = new THREE.MeshStandardMaterial({ color: clothCol, roughness: .93 });
-  const skin  = new THREE.MeshStandardMaterial({ color: SKIN[(rSkin * SKIN.length) | 0], roughness: .82 });
+  /* ── ZERO materials allocated. Both are shared; see CIV_CLOTH_MAT above.
+        `cloth` keeps its name so every garment call site is untouched — the
+        per-figure colour is baked into those meshes' vertices in one pass at
+        the end of this function, once the archetype has finished adding its
+        own hats and hoods. ── */
+  const cloth = CIV_CLOTH_MAT;
+  const skin  = CIV_SKIN_MATS[(rSkin * CIV_SKIN_MATS.length) | 0];
 
   /* ── everything else reuses the shared palette ── */
   const TRO = A === 'smart'  ? [MAT.dark, MAT.dark, MAT.stone, MAT.dark]
@@ -2916,6 +2960,14 @@ function makeCivilian(col, seed) {
     lt: 0                     // last t, for a frame-rate independent blend
   };
   g.userData.civType = A;     // for the harness / critic probes only
+
+  /* 🎨 BAKE THE WARDROBE. Runs LAST, after the archetype has added its own
+     hood / hard hat / beanie / cap / peak, so every garment on the figure is
+     caught by one pass instead of eight call sites remembering to do it.
+     Only meshes actually using the shared cloth material are touched — skin,
+     trousers, shoes, hair, bags and props keep their own shared MAT entries. */
+  g.traverse(o => { if (o.isMesh && o.material === CIV_CLOTH_MAT) civVC(o, clothCol); });
+
   return g;
 }
 

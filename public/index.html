@@ -16486,6 +16486,41 @@
     .cbx-shell { grid-template-columns: minmax(0, 1fr); }
     .cbx-side { position: static; }
   }
+  /* ── 🚚 CONVOY CARD (rail-safe) ────────────────────────────────────────────
+     Was an inline flex ROW in a 250-290px rail, which starved the text column to
+     ~100px and wrapped "3 of 3 convoy slots left today" one word per line. The
+     rig and its numbers now sit on one line, the explanation runs full width
+     beneath, and the upgrade button spans the card instead of stealing width. */
+  .cvy-card { background: linear-gradient(180deg, rgba(202,162,62,0.12), rgba(20,12,40,0.5));
+    border: 1px solid rgba(212,175,55,0.4); border-radius: 10px;
+    padding: 0.7rem 0.8rem; margin-bottom: 1rem; }
+  .cvy-top { display: flex; align-items: center; gap: 0.6rem; }
+  .cvy-top > :first-child { flex: none; }
+  .cvy-txt { min-width: 0; }
+  .cvy-name { font-family: 'Cinzel', serif; font-weight: 800; color: #ffd166;
+    line-height: 1.15; overflow-wrap: anywhere; }
+  .cvy-slots { font-weight: 700; margin-top: 0.1rem; }
+  .cvy-note { margin-top: 0.45rem; line-height: 1.45; }
+  .cvy-up { width: 100%; margin-top: 0.55rem; }
+
+  /* ── 🏚 UNDEVELOPED ROOMS read as a BLUEPRINT, not an empty box ────────────
+     With nothing built, all nine cards were identical dark rectangles with a
+     blank art well and the same grey "[ UNDEVELOPED ]" label — the board looked
+     broken rather than unbuilt, and nothing suggested where to start. An
+     unbuilt room now shows survey hatching and a dashed footprint, so it reads
+     as a plot waiting for construction. Built rooms are untouched. */
+  .cmpx-room.is-empty { border-style: dashed; }
+  .cmpx-room.is-empty .cmpx-room-art {
+    background-image:
+      linear-gradient(rgba(120,160,220,0.10) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120,160,220,0.10) 1px, transparent 1px),
+      linear-gradient(180deg, rgba(10,16,28,0.9), rgba(6,10,18,0.95)) !important;
+    background-size: 22px 22px, 22px 22px, 100% 100% !important;
+    position: relative; }
+  .cmpx-room.is-empty .cmpx-room-art::after {
+    content: ''; position: absolute; inset: 18% 16%;
+    border: 1px dashed rgba(150,190,240,0.30); border-radius: 4px; }
+
   .cbx-panel { background: linear-gradient(180deg, rgba(14,17,26,0.95), rgba(8,10,16,0.98));
     border: 1px solid rgba(212,175,55,0.28); border-radius: 10px;
     padding: 0.7rem 0.8rem; box-shadow: 0 4px 14px rgba(0,0,0,0.45); }
@@ -16640,9 +16675,22 @@
   .dpx-collect::before, .dpx-collect::after { content: '✦'; position: absolute; top: 50%;
     transform: translateY(-50%); font-size: 0.8rem; color: rgba(60,40,4,0.6); }
   .dpx-collect::before { left: 0.7rem; } .dpx-collect::after { right: 0.7rem; }
-  .dpx-empty { display: flex; align-items: center; justify-content: center; min-height: 110px;
-    border: 1px dashed rgba(212,175,55,0.32); border-radius: 10px; margin-bottom: 0.85rem;
-    color: #6d7893; font-family: 'Cinzel', serif; letter-spacing: 0.1em; }
+  /* ⚠ EMPTY SLOTS WERE THE BIGGEST WASTE OF SPACE ON THE SCREEN.
+     Six of these at 110px tall, stacked one per row, ran to ~900px — more than a
+     full viewport — to say "you have six free slots". On a fresh camp that is
+     literally all the deploy panel showed, and it is what pushed the centre
+     column to 2093px against a 121px right column.
+     They now flow as a compact auto-fit grid: same information, one band. Filled
+     slots keep their full-width row, so a real parked unit still reads big. */
+  .dpx-empties { display: grid; gap: 0.5rem; margin-bottom: 0.85rem;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .dpx-empty { display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+    min-height: 56px; padding: 0.5rem;
+    border: 1px dashed rgba(212,175,55,0.3); border-radius: 10px;
+    background: repeating-linear-gradient(135deg, rgba(212,175,55,0.035) 0 8px, transparent 8px 16px);
+    color: #6d7893; font-family: 'Cinzel', serif; letter-spacing: 0.08em; font-size: 0.86rem; }
+  /* Outside the grid (defensive — any other caller) it still needs its own gap. */
+  .dpx-empty:not(.dpx-empties > *) { margin-bottom: 0.85rem; }
 
   /* ── available-to-park rows ── */
   .dpx-av { display: flex; align-items: center; gap: 0.8rem; width: 100%; text-align: left;
@@ -28007,12 +28055,21 @@
   .tw-drawer-node-name { font-family:'JetBrains Mono','Consolas',monospace; font-size:1.55rem; font-weight:900; letter-spacing:0.06em; text-transform:uppercase; color:#e8b84e; line-height:1.05; }
   .tw-drawer-node-coords { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.72rem; color:#4e7ea8; letter-spacing:0.18em; margin-top:0.15rem; }
   .tw-drawer-node-sub { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.6rem; color:#8a96a3; letter-spacing:0.05em; margin-top:0.2rem; }
-  /* 8 tabs squeezed at flex:1 overlapped their own labels on a laptop — they
-     now keep their natural width and the strip scrolls sideways instead. */
+  /* 8 tabs squeezed at flex:1 overlapped their own labels on a laptop, so they
+     were given natural width and a sideways scroll. That traded one problem for
+     a worse one: a mouse wheel does NOT scroll a horizontal container (browsers
+     only map wheel->x when Shift is held), and the scrollbar was 3px tall, so on
+     a narrow drawer the later tabs were simply unreachable.
+     They now WRAP instead. Nothing can be hidden by a scroll offset that the
+     user has no way to change. The scroll properties are kept as a fallback for
+     a single tab too wide to fit, and _twTabWheel() maps the wheel onto it. */
   .tw-drawer-tabs { display:flex; border-bottom:1px solid rgba(35,44,54,0.7); flex-shrink:0; background:rgba(10,12,16,0.6);
-    overflow-x:auto; flex-wrap:nowrap; scrollbar-width:thin; scrollbar-color:rgba(200,148,40,0.5) transparent; }
-  .tw-drawer-tabs::-webkit-scrollbar { height:3px; }
-  .tw-drawer-tabs::-webkit-scrollbar-thumb { background:rgba(200,148,40,0.5); }
+    overflow-x:auto; flex-wrap:wrap; row-gap:0.15rem;
+    scrollbar-width:thin; scrollbar-color:rgba(200,148,40,0.65) transparent; overscroll-behavior-x:contain; }
+  .tw-drawer-tabs::-webkit-scrollbar { height:9px; }
+  .tw-drawer-tabs::-webkit-scrollbar-track { background:rgba(0,0,0,0.35); border-radius:5px; }
+  .tw-drawer-tabs::-webkit-scrollbar-thumb { background:rgba(200,148,40,0.65); border-radius:5px; }
+  .tw-drawer-tabs::-webkit-scrollbar-thumb:hover { background:rgba(230,180,70,0.85); }
   .tw-drawer-tab { flex:0 0 auto; white-space:nowrap; padding:0.5rem 0.62rem; font-family:'JetBrains Mono','Consolas',monospace; font-size:0.52rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#5b6772; background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; transition:all 0.12s; }
   .tw-drawer-tab:hover { color:#a89878; }
   .tw-drawer-tab.is-active { color:#ffe9a8; border-bottom-color:#c89428; }
@@ -28179,7 +28236,7 @@
     box-shadow:0 0 0 1px rgba(255,120,90,0.10), 0 0 42px rgba(200,40,40,0.28),
                0 26px 70px rgba(0,0,0,0.75);
   }
-  /* breadcrumb — "DISTRICT NODES > RED ZONE" */
+  /* breadcrumb — "CITY NODES > RED ZONE" */
   .tw-node-drawer.tw-aaa .tw-drawer-crumb-bar { border-bottom:none; padding:0.7rem 1rem 0.2rem; }
   .tw-node-drawer.tw-aaa .tw-drawer-crumb-text {
     font-family:'Cinzel',serif; font-size:0.8rem; font-weight:700; letter-spacing:0.17em;
@@ -28201,9 +28258,12 @@
   .tw-node-drawer.tw-aaa .tw-drawer-node-sub {
     font-family:'Cinzel',serif; font-size:0.86rem; letter-spacing:0.10em; color:#b9a98a;
     text-transform:uppercase; margin-top:0.22rem; }
-  /* tab rail — active tab is a boxed gold plate, per the reference */
+  /* tab rail — active tab is a boxed gold plate, per the reference.
+     ⚠ `gap` here is shorthand and sets ROW gap too, which is what makes the
+     wrapped second line breathe. Do not narrow it back to column-gap only. */
   .tw-node-drawer.tw-aaa .tw-drawer-tabs {
-    background:transparent; border-bottom:1px solid rgba(226,72,66,0.28); gap:0.3rem; padding:0.55rem 0.8rem 0.5rem; }
+    background:transparent; border-bottom:1px solid rgba(226,72,66,0.28); gap:0.3rem; padding:0.55rem 0.8rem 0.5rem;
+    flex-wrap:wrap; }
   .tw-node-drawer.tw-aaa .tw-drawer-tab {
     font-family:'Cinzel',serif; font-size:0.8rem; font-weight:700; letter-spacing:0.11em;
     color:#8a7d63; border:1px solid transparent; border-radius:7px; padding:0.42rem 0.9rem; }
@@ -28606,7 +28666,7 @@
   .tw-statusbar-bottom b { color: #d6dee6; font-weight: 500; }
 
   /* ══════════════════════════════════════════════════════════════════════
-     🗺 DISTRICT NODES — v118r5 COMMAND-CHART REMODEL
+     🗺 CITY NODES — v118r5 COMMAND-CHART REMODEL
      Skins the EXISTING war-map chrome (header bar, toolbar, field reports,
      map, node markers, roads, status bar) into the gold/violet chart look.
      Every id, data-attr and handler is untouched — this is a skin plus
@@ -36296,7 +36356,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120h5';
+  window.BUILD_VERSION = 'v120k8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -41912,7 +41972,7 @@ function _packTearCinematic(opts) {
     function buildStack() {
       phase = 'reveal'; idx = 0; revealed = drawn.map(() => false);
       pack.style.display = 'none';
-      cardsWrap.innerHTML = drawn.map((e, i) => `<div class="ptc-card" data-i="${i}"><div class="ptc-face ptc-back"><img src="assets/artwork/cardback.png?v=2" alt="" draggable="false"></div>${_ptcCardFrontHtml(e)}</div>`).join('');
+      cardsWrap.innerHTML = drawn.map((e, i) => `<div class="ptc-card" data-i="${i}"><div class="ptc-face ptc-back"><img src="assets/artwork/cardback.png?v=5" alt="" draggable="false"></div>${_ptcCardFrontHtml(e)}</div>`).join('');
       tap.style.display = 'block';   // visual click-catcher; clicks handled by the overlay listener
       layout(true);
       hint.textContent = `Tap to reveal  ·  1 / ${drawn.length}`;
@@ -46115,6 +46175,13 @@ async function cloudSyncProfile() {
       __cashout__:          (Profile.cashout          && typeof Profile.cashout          === 'object') ? Profile.cashout          : {},
       __wagers__:           (Profile.wagers           && typeof Profile.wagers           === 'object') ? Profile.wagers           : {},
       __fieldBag__:         (Profile.fieldBag         && typeof Profile.fieldBag         === 'object') ? Profile.fieldBag         : {},
+      // 🎒 Bag TIERS are paid progression (up to 1200 Cinders, or rare craft
+      // mats) and were never uploaded — so signing in on another device, or any
+      // cloud-wins hydration, dropped the player back to the 36-slot basic bag
+      // and looting silently started leaving loot behind.
+      __bagsOwned__:        Array.isArray(Profile.bagsOwned) ? Profile.bagsOwned : [],
+      __bagCap__:           (Profile.bagCap | 0) || 0,
+      __fieldBagRunLock__:  (Profile.fieldBagRunLock  && typeof Profile.fieldBagRunLock  === 'object') ? Profile.fieldBagRunLock  : {},
       __ownedTombstones__:  Array.isArray(Profile.ownedTombstones) ? Profile.ownedTombstones : [],
       __equippedTombstone__: (typeof Profile.equippedTombstone === 'string') ? Profile.equippedTombstone : null,
       __ownedAvatars__:     Array.isArray(Profile.ownedAvatars) ? Profile.ownedAvatars : [],
@@ -47258,6 +47325,31 @@ async function cloudFetchProfile() {
       }
       if (f.__wagers__       && typeof f.__wagers__       === 'object') Profile.wagers         = f.__wagers__;
       if (f.__fieldBag__     && typeof f.__fieldBag__     === 'object') Profile.fieldBag       = f.__fieldBag__;
+      /* 🎒 Bag tiers are UNIONED, never replaced — the same merge the tombstone
+         and avatar collections use below. A bag is bought once and owned
+         forever, so a stale cloud row must not be able to take one away; if
+         either side knows about a tier, the player keeps it. */
+      if (Array.isArray(f.__bagsOwned__)) {
+        const _bset = {};
+        [].concat(Profile.bagsOwned || [], f.__bagsOwned__).forEach(id => { if (typeof id === 'string') _bset[id] = 1; });
+        Profile.bagsOwned = Object.keys(_bset);
+      }
+      if ((f.__bagCap__ | 0) > (Profile.bagCap | 0)) Profile.bagCap = f.__bagCap__ | 0;
+      if (f.__fieldBagRunLock__ && typeof f.__fieldBagRunLock__ === 'object') Profile.fieldBagRunLock = f.__fieldBagRunLock__;
+      /* 🎁 Chests and keys were uploaded but never hydrated back, so they did not
+         survive a device change either. Merged per-tier by MAX rather than
+         replaced — a stale cloud row must never confiscate a rare drop the
+         player just earned locally. */
+      if (f.__chests__ && typeof f.__chests__ === 'object') {
+        const c = (Profile.chests && typeof Profile.chests === 'object') ? Profile.chests : {};
+        for (const k in f.__chests__) c[k] = Math.max(c[k] | 0, f.__chests__[k] | 0);
+        Profile.chests = c;
+      }
+      if (f.__chestKeys__ && typeof f.__chestKeys__ === 'object') {
+        const c = (Profile.chestKeys && typeof Profile.chestKeys === 'object') ? Profile.chestKeys : {};
+        for (const k in f.__chestKeys__) c[k] = Math.max(c[k] | 0, f.__chestKeys__[k] | 0);
+        Profile.chestKeys = c;
+      }
       if (Array.isArray(f.__ownedTombstones__)) {
         const set = {};
         [].concat(Profile.ownedTombstones || [], f.__ownedTombstones__).forEach(id => { if (typeof id === 'string') set[id] = 1; });
@@ -64378,15 +64470,24 @@ function _convoyPanelHtml() {
       ? `<img src="${escapeHtml(art)}" alt="${escapeHtml(best.name)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid rgba(212,175,55,0.45);flex:none">`
       : `<span style="font-size:2.4rem;line-height:1;flex:none">${best.emoji || '🚚'}</span>`;
     const canUpgrade = CONVOY_TRUCKS.some(t => t.perDay > cap);
+    /* ⚠ Layout moved OFF the inline style and onto .cvy-* classes.
+       This was a single inline flex row — 64px image + text + "Bigger rig"
+       button — and the camp's left rail is only 290px wide (250px under
+       1500px). The text column collapsed to about 100px, so "3 of 3 convoy
+       slots left today" wrapped to one or two words per line and the card read
+       as broken. Inline styles beat any stylesheet, so it could not be fixed
+       from CSS; the layout has to live in a class for the rail to restyle it. */
     return `
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:linear-gradient(180deg,rgba(202,162,62,0.12),rgba(20,12,40,0.5));border:1px solid rgba(212,175,55,0.4);border-radius:10px;padding:0.7rem 0.95rem;margin-bottom:1rem">
-        ${pic}
-        <div style="min-width:0;flex:1">
-          <div style="font-family:'Cinzel',serif;font-weight:800;color:#ffd166">🚚 ${escapeHtml(best.name)}</div>
-          <div class="small-text" style="color:${col};font-weight:700">${left} of ${cap} convoy slot${cap === 1 ? '' : 's'} left today</div>
-          <div class="small-text ink-dim">One slot per operative sent on a loot run or Covert Action. Resets daily.</div>
+      <div class="cvy-card">
+        <div class="cvy-top">
+          ${pic}
+          <div class="cvy-txt">
+            <div class="cvy-name">🚚 ${escapeHtml(best.name)}</div>
+            <div class="small-text cvy-slots" style="color:${col}">${left} of ${cap} convoy slot${cap === 1 ? '' : 's'} left today</div>
+          </div>
         </div>
-        ${canUpgrade ? `<button class="btn-mini" title="Buy a bigger rig with Aza coin" onclick="try{App.screen='vendorMarket';App.vendorMarketTab='convoy';render();}catch(e){}">⬆ Bigger rig</button>` : ''}
+        <div class="small-text ink-dim cvy-note">One slot per operative sent on a loot run or Covert Action. Resets daily.</div>
+        ${canUpgrade ? `<button class="btn-mini cvy-up" title="Buy a bigger rig with Aza coin" onclick="try{App.screen='vendorMarket';App.vendorMarketTab='convoy';render();}catch(e){}">⬆ Bigger rig</button>` : ''}
       </div>`;
   } catch (e) { return ''; }
 }
@@ -66336,6 +66437,33 @@ function loadForge() {
       if (p.cxHoldings     && typeof p.cxHoldings     === 'object') Profile.cxHoldings      = p.cxHoldings;       // 📈 CX share positions
       if (Array.isArray(p.unopenedPacks))                              Profile.unopenedPacks   = p.unopenedPacks;    // 📦 pack inventory
       if (p.fieldBag        && typeof p.fieldBag        === 'object') Profile.fieldBag        = p.fieldBag;         // 🎒 field bag
+      /* 🎒 BAG OWNERSHIP — the same whitelist bug as sideDeck / archonDeck /
+         salvage / cxHoldings above, and the reason "bag looting doesn't work".
+         Buying a Military Pack (1200 Cinders) or crafting a Smuggler / SCP bag
+         pushed onto Profile.bagsOwned and saveProfile() wrote it into the blob,
+         but this loader never read it back — so every refresh reverted the
+         player to the 36-slot basic Survivor Bag. Their real 49/56/72-slot
+         capacity vanished, looting hit "bag full" early, and the haul they
+         should have carried was left to rot. */
+      if (Array.isArray(p.bagsOwned))                                 Profile.bagsOwned       = p.bagsOwned.slice(); // 🎒 owned bag tiers
+      if (typeof p.bagCap === 'number')                               Profile.bagCap          = p.bagCap | 0;        // 🎒 forward-compat cap
+      if (typeof p.bagTier === 'string')                              Profile.bagTier         = p.bagTier;           // 🎒 selected tier
+      /* 🗺 Run-lock was also unrestored, which made refreshing mid-roguelite-run
+         a way to unlock loot that is supposed to stay bag-locked until the run
+         ends — the lock rebuilt empty, so the next camp deposit banked it all. */
+      if (p.fieldBagRunLock && typeof p.fieldBagRunLock === 'object') Profile.fieldBagRunLock = p.fieldBagRunLock;  // 🗺 mid-run lock
+      /* 🎁 CHEST + 🗝 KEY DROPS come from looting bodies (_rollChestDrops) and are
+         the rarest thing in the loop. They were saved and uploaded but never read
+         back, so the toast pointed players at a Vault tab that was empty again
+         after one refresh. */
+      if (p.chests          && typeof p.chests          === 'object') Profile.chests          = p.chests;           // 🎁 chest drops
+      if (p.chestKeys       && typeof p.chestKeys       === 'object') Profile.chestKeys       = p.chestKeys;        // 🗝 key drops
+      /* 🚗 The "send loot to camp" action is gated on playerOwnsVehicle(), which
+         reads princePortfolios.lot. Unrestored, a player who owns a car was told
+         "Need a vehicle to send loot to camp" after every refresh, and the whole
+         research-loot route was unreachable. */
+      if (p.princePortfolios && typeof p.princePortfolios === 'object') Profile.princePortfolios = p.princePortfolios; // 🚗 vehicles / lots
+      if (p.garage          && typeof p.garage          === 'object') Profile.garage          = p.garage;           // 🚗 owned vehicles
       if (p.heroLoadouts    && typeof p.heroLoadouts    === 'object') Profile.heroLoadouts    = p.heroLoadouts;     // 🪖 loadouts
       if (p.heroEnergy      && typeof p.heroEnergy      === 'object') Profile.heroEnergy      = p.heroEnergy;       // 🔋 energy/rest
       if (p.heroSkillTrees  && typeof p.heroSkillTrees  === 'object') Profile.heroSkillTrees  = p.heroSkillTrees;   // 🌳 skill trees
@@ -72025,7 +72153,7 @@ function getDeckSleeveImage() {
   return (typeof Profile.equippedSleeve === 'string' && Profile.equippedSleeve) ? Profile.equippedSleeve : null;
 }
 // Built-in card back — the art every pile falls back to.
-const CARDBACK_DEFAULT_IMG = 'assets/artwork/cardback.png?v=2';
+const CARDBACK_DEFAULT_IMG = 'assets/artwork/cardback.png?v=5';
 // Resolve the back to draw on a pile. Mirrors getTombstoneImage(owner): only
 // the PLAYER's own piles wear their sleeve; the opponent keeps the default so
 // a sleeve can never be mistaken for the other side's cards.
@@ -82725,13 +82853,80 @@ function _promptCostPayment(state, side, sourceUnit, cost, label, excludeCardId)
 
 // AI move resolution that auto-pays a move.activationCost first. If the AI can't
 // pay, the move is skipped (state unchanged) so the AI never gets a free effect.
+/* ⚔️ Fire the Fire Emblem cut-away for an AI attack too.
+   Reported from the game: "when the enemy attacks play the new animations
+   instead of the old one." Only the PLAYER attack site was wired.
+   _aiResolveMove is a pure reducer like executeMove, so the animation cannot be
+   awaited here. It is dispatched fire-and-forget — the AI turn already paces
+   itself — and damage is diffed across the reducer for the same reason as the
+   player path: only the reducer knows what actually landed. */
+/* 🎞 The reel a Fire Emblem combatant animates with during the cut-away.
+   The attacker gets its ATTACK animation, the defender its idle; either falls
+   back to idle and then to null, in which case combat.js keeps the existing
+   static-portrait path. Returns { frames, fps } or null — never throws, because
+   a missing sprite must degrade to a still portrait, not kill the animation. */
+function _feReel(unit, anim) {
+  try {
+    if (!unit) return null;
+    const id = unit.isHero ? ('h_' + unit.heroId) : ('u_' + (unit.originalCardId || unit.cardId));
+    if (!id || id === 'u_' || id === 'h_' || id.indexOf('undefined') >= 0) return null;
+    let frames = getSpriteFrames(id, anim);
+    let used = anim;
+    if (!frames || frames.length < 2) { frames = getSpriteFrames(id, 'idle'); used = 'idle'; }
+    if (!frames || frames.length < 2) return null;
+    const fps = getSpriteAnimFps(id, used) || 12;
+    return { frames: frames, fps: fps };
+  } catch (e) { return null; }
+}
+function _feAiCutaway(before, after, unit, target, move) {
+  try {
+    if (!target || !window.FEBattle || typeof window.FEBattle.play !== 'function') return;
+    const b = (before.units || []).find(u => u && u.id === target.id);
+    const a = (after.units || []).find(u => u && u.id === target.id);
+    const dmg = Math.max(0, ((b && b.currentHp) | 0) - ((a && a.currentHp) | 0));
+    if (dmg <= 0) return;
+    let ae = null, de = null;
+    try {
+      ae = document.querySelector('[data-unit="' + unit.id + '"]');
+      de = document.querySelector('[data-unit="' + target.id + '"]');
+    } catch (e) {}
+    /* Park the promise so the AI STEP SCHEDULER can wait on it. _aiResolveMove
+       is a reducer and cannot return it, but the AI turn is already a timed
+       step loop (scheduleAIStep), so the next step just has to be chained onto
+       this instead of a fixed delay — that is what turns the enemy's attack
+       from "animation plays over the action" into a real pause. */
+    App._feCutaway = window.FEBattle.play({
+      attacker: { name: unit.name, atk: (unit.stats && unit.stats.atk) | 0, el: ae, reel: _feReel(unit, 'attack') },
+      defender: { name: target.name, hp: (b && b.currentHp) | 0, el: de, reel: _feReel(target, 'idle') },
+      damage: dmg, killed: !!(!a || !a.alive), crit: !!(move && move._crit),
+    });
+  } catch (e) {}
+}
+/* Schedule the next AI step AFTER any cut-away finishes, falling back to the
+   plain delay. ⚠ Never let a stuck animation strand the enemy turn: the promise
+   is raced against a hard cap, and the pending handle is cleared either way. */
+function scheduleAIStepAfterCutaway(delay) {
+  const p = App._feCutaway;
+  App._feCutaway = null;
+  if (!p || typeof p.then !== 'function') { scheduleAIStep(delay); return; }
+  let fired = false;
+  const go = () => { if (fired) return; fired = true; try { scheduleAIStep(delay); } catch (e) {} };
+  try { p.then(go, go); } catch (e) { go(); }
+  setTimeout(go, 3800);
+}
 function _aiResolveMove(state, unit, target, move) {
   const ac = move && move.activationCost;
-  if (_costIsEmpty(ac)) return executeMove(state, unit, target, move);
+  if (_costIsEmpty(ac)) {
+    const _out = executeMove(state, unit, target, move);
+    try { _feAiCutaway(state, _out, unit, target, move); } catch (e) {}
+    return _out;
+  }
   if (!_costPayable(state, 'ai', unit, ac)) return state;   // can't pay → skip
   const pay = _applyCostPayment(state, 'ai', unit, ac, _aiPickCost(state, 'ai', unit, ac));
   let s = { ...pay.state, log: [...(pay.state.log || []), ...(pay.log || [])] };
+  const _pre = s;
   s = executeMove(s, unit, target, move);
+  try { _feAiCutaway(_pre, s, unit, target, move); } catch (e) {}
   if (pay.selfSacrifice) {
     const live = (s.units || []).find(u => u.id === unit.id);
     if (live) { const ss = _applySelfSacrifice(s, 'ai', live); s = { ...ss.state, log: [...(ss.state.log || []), ...ss.log] }; }
@@ -83041,8 +83236,8 @@ function _vfxFlyDeckToGrave(who, cards) {
             } catch (e2) {}
             var im = document.createElement('img');
             im.alt = '';
-            im.src = art || 'assets/artwork/cardback.png?v=2';
-            im.onerror = function () { try { im.src = 'assets/artwork/cardback.png?v=2'; } catch (e3) {} };
+            im.src = art || 'assets/artwork/cardback.png?v=5';
+            im.onerror = function () { try { im.src = 'assets/artwork/cardback.png?v=5'; } catch (e3) {} };
             el.appendChild(im);
             document.body.appendChild(el);
             // An arc, not a straight line — lifted at the midpoint so it reads as
@@ -84950,6 +85145,20 @@ function _playEffectVfxCine(file) {
 function _playEffectVfx(kind, anchor) {
   try {
     if (typeof document === 'undefined' || typeof requestAnimationFrame === 'undefined' || typeof performance === 'undefined') return;
+    /* 🚫 The Fire Emblem cut-away owns the screen while it runs.
+       Reported from the game: "the old animations play after the new one."
+       Both were firing for the same hit — the cut-away, then the legacy field
+       VFX on top of it, which reads as a stutter and undoes the framing.
+       While a cut-away is live, the old effect is dropped rather than queued:
+       queueing would just move the double-play later. Non-combat effects are
+       unaffected, because nothing sets this flag outside a strike. */
+    /* 🎬 BOTH animations play, by choice. An earlier pass suppressed the legacy
+       attack VFX while (and then shortly after) the Fire Emblem cut-away ran,
+       on the assumption that two animations for one hit read as a stutter. The
+       user disagreed after seeing it both ways: the legacy effect shows the
+       ATTACK itself, which the cut-away does not, so they complement each other
+       rather than compete. Suppression removed on request — do not reinstate it
+       without asking. */
     // 🎬 3D effect cinematic (transparent iframe) — routed before the canvas-2D path.
     if (_EFFECT_VFX_CINE[kind]) { _playEffectVfxCine(_EFFECT_VFX_CINE[kind].file); return; }
     const cfg = _EFFECT_VFX[kind]; if (!cfg) return;
@@ -85008,7 +85217,12 @@ function _playEffectVfx(kind, anchor) {
     }
 
     // ---- envelope (matches the reference) ----
-    const DUR = 1500, EMIT = 1050, IN = 160, OUT = 420;
+    /* 🐢 Same time scale as the impact rig — the 2D path has its own 1.5s
+       envelope and a FIXED dt of 1/60 (not real time), so both the envelope
+       and the step have to be scaled or the sim would simply run out of
+       particles early and hold on an empty frame. */
+    const _TS = (typeof _VFX_TIME_SCALE === "number" ? _VFX_TIME_SCALE : 1);
+    const DUR = 1500 * _TS, EMIT = 1050 * _TS, IN = 160 * _TS, OUT = 420 * _TS;
     const t0 = performance.now();
     let shake = 0;
     const step = () => {
@@ -85018,7 +85232,7 @@ function _playEffectVfx(kind, anchor) {
         ov.style.opacity = '0'; setTimeout(() => { try { ov.remove(); } catch (e) {} }, 220);
         _effectVfxBusy = Math.max(0, _effectVfxBusy - 1); return;
       }
-      const dt = Math.min(0.05, 1 / 60);
+      const dt = Math.min(0.05, 1 / 60) / _TS;
       const t = tt / 1000;
       const env = Math.max(0, Math.min(Math.min(1, tt / IN), Math.min(1, (DUR - tt) / OUT)));
       const spawn = tt < EMIT;
@@ -86287,6 +86501,12 @@ function _orbitalSchedule(key, R) {
   else { for (let i = 0; i < 14; i++) { const x = -20 + i * 3.0, z = Math.sin(i * 0.6) * 6; list.push({ x, z, at: 0.2 + i * 0.14, scale: 1.0 + rnd2() * 0.4, r: 1.3 }); } }
   return list;
 }
+/* 🐢 How much slower the legacy combat VFX runs than real time.
+   1 = original speed. Raised on request — the effect was passing too fast to
+   enjoy. Applied as a divisor on dt/elapsed in the impact rig frame loop, so
+   every phase, particle life and decay curve stretches together and the loop
+   end (elapsed >= D) moves out to match. Tune here, nowhere else. */
+const _VFX_TIME_SCALE = 2.6;
 let _impactRig = null, _impactBusy = false;
 
 function _vfxEnsureThree(cb) {
@@ -86933,7 +87153,19 @@ function _playImpactVfx(kind, anchor) {
     const frame = () => {
       const now = performance.now();
       let dt = (now - last) / 1000; last = now; if (dt > .05) dt = .05;
-      elapsed = (now - t0) / 1000;
+      /* 🐢 TIME SCALE — "slow the old combat animation, it passes on too fast,
+         I want people to enjoy the animations."
+         Scaling dt and elapsed together (rather than editing dozens of hand-
+         tuned phase constants) slows the ENTIRE simulation uniformly: particle
+         lifetimes, ring expansion, the dragon's rise, light falloff, screen
+         shake decay — all of it is driven off these two values. The loop ends
+         on `elapsed >= D`, so a smaller elapsed also extends the real-time run
+         to D * _VFX_TIME_SCALE automatically; nothing gets cut off.
+         ⚠ The dt clamp stays on the RAW delta so a stalled frame is still
+         capped before scaling — otherwise a tab-switch would inject one
+         enormous scaled step and snap the whole effect forward. */
+      dt /= _VFX_TIME_SCALE;
+      elapsed = (now - t0) / 1000 / _VFX_TIME_SCALE;
       const t = elapsed;
       flash *= .8; shake *= .85;
       G.fbMat.uniforms.time.value = t;
@@ -97961,8 +98193,23 @@ try { window.__mg = window.__mg || {}; window.__mg.boardCine = _boardSpriteCine;
 // looks identical to setting a face-down trap. The OWNER sees the unit's name on the
 // card (like a set trap they can read); an enemy face-down unit stays nameless (hidden).
 // The owner re-reveals the real art inside their own unit modal ({reveal:true}).
+// 🕵 THE ONE VISIBILITY RULE for Subterfuge. A face-down unit is a secret from
+// everyone EXCEPT its owner, and `owner === 'player'` is always the local player
+// — remote MP state is adopted through swapBattlePerspective, so the side you
+// are looking at is always 'player'. This is the same test the reveal hatch uses
+// (`unitBoardVisual(u, { reveal: isPlayer })` in the unit modal); every surface
+// that prints a unit's identity must ask THIS function, not re-derive the rule.
+function _isHiddenFaceDown(u) {
+  return !!(u && u.isFaceDown && u.owner !== 'player');
+}
+// The neutral stand-in an opponent reads instead of the real name. Returns
+// ESCAPED html — it is a drop-in for `escapeHtml(u.name)` at every call site.
+function _unitNameHtml(u) {
+  if (_isHiddenFaceDown(u)) return 'Set';
+  return escapeHtml((u && u.name) || '');
+}
 function _subterfugeTokenHtml(occupant) {
-  const isOwn = !!(occupant && occupant.owner === 'player');
+  const isOwn = !_isHiddenFaceDown(occupant);
   const nm = (occupant && occupant.name) || 'Unit';
   const label = isOwn ? '<div class="tcb-label">' + escapeHtml(nm) + '</div>' : '';
   const title = isOwn
@@ -107108,7 +107355,7 @@ function _renderImpl() {
   if (App.screen === 'battle')           return renderBattle();
   // ⚠ Fallback: TW router normally intercepts this before we get here.
   // NEVER reset App.screen to 'title' on a TW crash — just log + toast (v86p).
-  if (App.screen === 'territoryWars') { try { renderTerritoryWars(); } catch(e) { console.warn('[TW fallback]', e); try { if (typeof showToast === 'function') showToast('⚠ District Nodes error — check console', 3000); } catch(_){} } return; }
+  if (App.screen === 'territoryWars') { try { renderTerritoryWars(); } catch(e) { console.warn('[TW fallback]', e); try { if (typeof showToast === 'function') showToast('⚠ City Nodes error — check console', 3000); } catch(_){} } return; }
 }
 
 let toastTimer = null;
@@ -110184,7 +110431,7 @@ function renderTitle() {
         badge: dailyDone ? '✓ Cleared today' : 'Resets at midnight',
         alertBadge: !dailyDone,
         onclick: () => { App.screen = 'daily'; render(); } },
-      // (District Nodes moved to the Ruin Exchange hub — it's corp territory and
+      // (City Nodes moved to the Ruin Exchange hub — it's corp territory and
       // economy, which is what that hub collects. See the `exchange:` list.)
     ],
     forge: (() => {
@@ -110254,11 +110501,11 @@ function renderTitle() {
       return [...everyoneTiles, ...adminTiles];
     })(),
     exchange: [
-      // 🗺 District Nodes (Territory Wars) — corp control, node capture, guards,
+      // 🗺 City Nodes (Territory Wars) — corp control, node capture, guards,
       // node-shop upgrades. Lives HERE (moved out of the Battle Hall) because
       // it's territory + economy, alongside Just Business / City Hall / the
       // Foundation Reserve. Visible to all players.
-      { id: 'btn-warmap', icon: '🗺', name: 'District Nodes', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
+      { id: 'btn-warmap', icon: '🗺', name: 'City Nodes', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
           badge: (() => {
             try {
               const t = (Forge.territoryWars || {});
@@ -110280,7 +110527,7 @@ function renderTitle() {
               renderTerritoryWars();
             } catch(e) {
               console.error('[WarMap button]', e);
-              try { if (typeof showToast === 'function') showToast('⚠ District Nodes error: ' + String(e && e.message || e).slice(0, 80), 4000); } catch(_) {}
+              try { if (typeof showToast === 'function') showToast('⚠ City Nodes error: ' + String(e && e.message || e).slice(0, 80), 4000); } catch(_) {}
             }
           } },
       { id: 'btn-vendor-market', icon: '<img src="assets/artwork/gameicons/Azacoin.png" alt="Vendor Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Vendor Market', sub: 'Card packs + Aza coin Store',   accent: '#d8b8ff',
@@ -110358,7 +110605,7 @@ function renderTitle() {
             onclick: () => { App.screen = 'cashout'; render(); } }
         : { id: 'btn-cashout', icon: '🔒', name: 'Cashout Vault', sub: `Train a hero to Lv ${CASHOUT_UNLOCK_HERO_LEVEL} — or capture a node`, accent: '#608a70',
             badge: cashoutLockText, locked: true,
-            onclick: () => { showToast(`🔒 Cashout Vault unlocks when a hero reaches Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (your top: Lv ${topHeroLevel}) — or the moment you own a node in District Nodes.`, 4200); } },
+            onclick: () => { showToast(`🔒 Cashout Vault unlocks when a hero reaches Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (your top: Lv ${topHeroLevel}) — or the moment you own a node in City Nodes.`, 4200); } },
       // Tutor Shop — gated behind account level (long-term meta progression).
       tutorUnlocked
         ? { id: 'btn-tutor', icon: '<img src="assets/artwork/gameicons/Tutor%20shop.png" alt="Tutor Shop" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Tutor Shop', sub: 'Teach moves to your roster', accent: '#ffd166',
@@ -110374,7 +110621,7 @@ function renderTitle() {
             onclick: () => { App.screen = 'market'; App.marketTab = 'browse'; App.marketFilter = 'all'; reseedNpcListingsIfStale(false); render(); } }
         : { id: 'btn-market', icon: '🔒', name: 'Player Market', sub: `Train ${MARKET_UNLOCK_HERO_COUNT} heroes to Lv ${MARKET_UNLOCK_HERO_LEVEL} — or capture a node`, accent: '#607890',
             badge: marketLockText, locked: true,
-            onclick: () => { showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${heroesAtMarketLv}) — or the moment you own a node in District Nodes.`, 4200); } },
+            onclick: () => { showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${heroesAtMarketLv}) — or the moment you own a node in City Nodes.`, 4200); } },
     ],
     codex: [
       { id: 'btn-collection',   icon: '<img src="assets/artwork/gameicons/Storage%20box.png" alt="Inventory" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Inventory',   sub: 'Every card you own',          accent: '#8be0c4',
@@ -116078,7 +116325,7 @@ function renderPricingAdmin() {
           <button class="btn-primary btn-mini" id="btn-open-tw-admin">🗺 Territory Wars Builder (${((Forge.territoryWars||{}).nodes||[]).length} nodes)</button>
         </div>
         <div class="small-text ink-dim" style="margin-top:0.4rem">
-          🗺 <strong>Territory Wars</strong> — a corporation-driven world map with sectors, nodes, guard decks, node-shop defenses, and 5h30m resource cycles. Players access it from <strong>Battle Hall → District Nodes</strong>.
+          🗺 <strong>Territory Wars</strong> — a corporation-driven world map with sectors, nodes, guard decks, node-shop defenses, and 5h30m resource cycles. Players access it from <strong>Battle Hall → City Nodes</strong>.
         </div>
       </div>
 
@@ -130029,16 +130276,21 @@ function _charBoxPanel(s) {
     if (id) u = (s.units || []).find(x => x && String(x.id) === String(id) && x.alive) || null;
   } catch (e) {}
   if (!u) return '';
-  const art = (typeof _charBoxArtFor === 'function') ? _charBoxArtFor(u) : '';
+  // 🕵 SUBTERFUGE — this card fills on HOVER (_cbxShowFor from the hover menu) as
+  // well as on click, so it was the cheapest identity leak of them all: sweep the
+  // cursor over an enemy set card and read its name, level, portrait ART, element
+  // and faction without committing to anything. Same rule as the board token.
+  const faceHidden = (typeof _isHiddenFaceDown === 'function') && _isHiddenFaceDown(u);
+  const art = (!faceHidden && typeof _charBoxArtFor === 'function') ? _charBoxArtFor(u) : '';
   const hp = Math.max(0, u.currentHp | 0), mx = Math.max(1, u.maxHp | 0);
   const pct = Math.max(0, Math.min(100, Math.round((hp / mx) * 100)));
   // Colour the bar by remaining share — the same read the HP bars on the board give.
   const hpTone = pct > 60 ? '#5edb8a' : (pct > 28 ? '#f0c454' : '#ff6a5a');
   let els = [];
-  try { els = (typeof getElementsOf === 'function') ? (getElementsOf(u) || []) : []; } catch (e) {}
+  try { els = (faceHidden || typeof getElementsOf !== 'function') ? [] : (getElementsOf(u) || []); } catch (e) {}
   let facs = [];
-  try { facs = (typeof getFactionsOf === 'function') ? (getFactionsOf(u) || []) : []; } catch (e) {}
-  const kind = u.isHero ? 'Hero' : (u.isWall ? 'Wall' : (u.summonSource ? 'Summon' : 'Unit'));
+  try { facs = (faceHidden || typeof getFactionsOf !== 'function') ? [] : (getFactionsOf(u) || []); } catch (e) {}
+  const kind = faceHidden ? 'Face-down' : (u.isHero ? 'Hero' : (u.isWall ? 'Wall' : (u.summonSource ? 'Summon' : 'Unit')));
   const kalon = (typeof _isKalonTransformed === 'function' && _isKalonTransformed(u));
   const pill = (txt, colour) =>
     `<span class="cbx-pill" style="--pc:${colour}">${escapeHtml(txt)}</span>`;
@@ -130048,17 +130300,19 @@ function _charBoxPanel(s) {
   const facPills = facs.length
     ? facs.map(f => pill((FACTION_BY_ID[f] && FACTION_BY_ID[f].name) || f, (FACTION_BY_ID[f] && FACTION_BY_ID[f].color) || '#9aa4bb')).join('')
     : `<span class="cbx-none">—</span>`;
-  const portrait = art
+  const portrait = faceHidden
+    ? `<div class="cbx-img cbx-noimg" style="padding:0">${_subterfugeTokenHtml(u)}</div>`
+    : art
     ? `<img class="cbx-img" src="${escapeHtml(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.remove()">`
     : `<div class="cbx-img cbx-noimg">${escapeHtml(u.icon || '⚔')}</div>`;
   return `
     <div class="cbx cbx-float${u.owner === 'player' ? ' mine' : ' foe'}" data-cbx-unit="${escapeHtml(String(u.id))}">
       <div class="cbx-portrait">
         ${portrait}
-        <span class="cbx-lvl" title="Level">${u.level | 0}</span>
-        ${kalon ? '<span class="cbx-kalon" title="Kalon form">✦</span>' : ''}
+        ${faceHidden ? '' : `<span class="cbx-lvl" title="Level">${u.level | 0}</span>`}
+        ${(kalon && !faceHidden) ? '<span class="cbx-kalon" title="Kalon form">✦</span>' : ''}
       </div>
-      <div class="cbx-name">${escapeHtml(u.name || 'Unknown')}</div>
+      <div class="cbx-name">${faceHidden ? _unitNameHtml(u) : escapeHtml(u.name || 'Unknown')}</div>
       <div class="cbx-kind">${escapeHtml(kind)}${u.owner === 'player' ? '' : ' · Enemy'}</div>
       <div class="cbx-hp">
         <div class="cbx-hp-bar"><span style="width:${pct}%;background:${hpTone}"></span></div>
@@ -130184,8 +130438,8 @@ function renderBattlePiles(s) {
   if (!s || !s.player || !s.ai || s.gameOver) return '';
   // 🎴 The player's equipped deck sleeve skins THEIR piles; the opponent's
   // piles always keep the default back.
-  const CARDBACK = (typeof getCardBackImage === 'function') ? getCardBackImage('player') : 'assets/artwork/cardback.png?v=2';
-  const CARDBACK_FOE = (typeof CARDBACK_DEFAULT_IMG === 'string') ? CARDBACK_DEFAULT_IMG : 'assets/artwork/cardback.png?v=2';
+  const CARDBACK = (typeof getCardBackImage === 'function') ? getCardBackImage('player') : 'assets/artwork/cardback.png?v=5';
+  const CARDBACK_FOE = (typeof CARDBACK_DEFAULT_IMG === 'string') ? CARDBACK_DEFAULT_IMG : 'assets/artwork/cardback.png?v=5';
   const len = (a) => Array.isArray(a) ? a.length : 0;
   // Killed units only — dead, non-hero units still sitting in s.units. (The
   // `graveyard` array is spent CARDS, not kills — that's why live units used
@@ -132829,8 +133083,48 @@ function _completeAssaultAttack() {
   const target = (s.units || []).find(u => u.id === ap.targetUnitId);
   const move   = (typeof lookupMove === 'function') ? lookupMove(ap.moveId) : null;
   if (!sel || !target || !target.alive || !move) { renderBattle(); return; }
+  /* ⚔️ THE MISSING THIRD ATTACK PATH — this is why the cut-away "went back to
+     the old animation". The main click handler bails to the assault prompt
+     BEFORE its own executeMove whenever the player holds ANY assault card:
+
+         if (move.kind === 'attack') {
+           if (_assaultHand.length > 0) { …; return; }   ← exits here
+         }
+         App.state = executeMove(…)                       ← the wiring lives here
+
+     So the attack finishes HERE instead, and this path was never wired. Anyone
+     carrying an assault card therefore saw the legacy VFX on every single
+     attack, which is exactly the reported symptom. Same contract as the other
+     two sites: state lands first, damage is diffed across the reducer, and
+     checkPostAction is deferred until the cut-away settles behind a single-fire
+     guard so nothing can strand the turn. */
+  const _aHpBefore = (target.currentHp | 0);
+  let _aEl = { a: null, d: null };
+  try {
+    _aEl.a = document.querySelector('[data-unit="' + sel.id + '"]');
+    _aEl.d = document.querySelector('[data-unit="' + target.id + '"]');
+  } catch (e) {}
   App.state = executeMove(App.state, sel, target, move);
-  checkPostAction();
+  {
+    let done = false;
+    const cont = () => { if (done) return; done = true; try { checkPostAction(); } catch (e) {} };
+    let played = false;
+    try {
+      const after = (App.state.units || []).find(u => u && u.id === target.id);
+      const dmg = Math.max(0, _aHpBefore - (after ? (after.currentHp | 0) : 0));
+      try { console.info('[FE] assault-path attack —', 'damage:', dmg, 'FEBattle:', typeof window.FEBattle); } catch (_) {}
+      if (window.FEBattle && typeof window.FEBattle.play === 'function' && dmg > 0) {
+        played = true;
+        Promise.resolve(window.FEBattle.play({
+          attacker: { name: sel.name, atk: (sel.stats && sel.stats.atk) | 0, el: _aEl.a, reel: _feReel(sel, 'attack') },
+          defender: { name: target.name, hp: _aHpBefore, el: _aEl.d, reel: _feReel(target, 'idle') },
+          damage: dmg, killed: !!(!after || !after.alive), crit: !!move._crit,
+        })).catch(() => {}).then(cont);
+        setTimeout(cont, 3800);
+      }
+    } catch (e) { try { console.warn('[FE] assault path', e); } catch (_) {} }
+    if (!played) cont();
+  }
 }
 // Execute the pending spell cast that was deferred for the assault prompt (v86l).
 function _completeAssaultSpell() {
@@ -135499,7 +135793,15 @@ function renderUnitModal() {
   // 🔍 Enemy scan gate. Enemy units that haven't been scanned hide their
   // element / faction / passives / moves so the player has to commit to a
   // scan first (Tactical Awareness, Surveillance Drone, Weak Point Scan).
-  const enemyHidden = !isPlayer && !(typeof isUnitScanned === 'function' && isUnitScanned(u.id));
+  // 🕵 SUBTERFUGE — a face-down enemy is hidden REGARDLESS of scan state. Scanning
+  // is intel on a unit you can SEE; it does not turn a set card face up (only a
+  // flip does — attack it, step beside it, or Detection). Folding it into
+  // enemyHidden is what closes the whole body of this modal in one place: moves,
+  // held item, passives, element/faction, and the Trigger & Special Abilities
+  // section that would otherwise spell out the trap's Flip Effect and Ambush
+  // Reaction to the one player who must not know them.
+  const faceHidden  = _isHiddenFaceDown(u);
+  const enemyHidden = !isPlayer && (faceHidden || !(typeof isUnitScanned === 'function' && isUnitScanned(u.id)));
   const canScan     = !isPlayer && (typeof playerHasScanCapability === 'function') && playerHasScanCapability();
   const moves = enemyHidden ? [] : getAvailableMoves(u);
   // Unified item lookup so the battle unit modal shows custom items' name +
@@ -135537,7 +135839,9 @@ function renderUnitModal() {
   const canFlip = isPlayer && u.isFaceDown && !u.placedThisTurn && s.turn === 'player';
 
   const isDispelled = (u.statusEffects || []).some(e => e.type === 'dispel');
-  const movesHtml = enemyHidden
+  const movesHtml = faceHidden
+    ? `<div class="modal-empty scan-hidden-block">🃏 <strong>Face-down</strong> — this set card's moves stay hidden until it flips. Attack it, move a unit beside it, or field a Detection passive to force it up.</div>`
+    : enemyHidden
     ? `<div class="modal-empty scan-hidden-block">🔒 <strong>Move set hidden</strong> — scan this enemy with a hero who has Tactical Awareness / Surveillance Drone / Weak Point Scan to reveal their attacks.</div>`
     : moves.length === 0
     ? `<div class="modal-empty">No moves available at this level.</div>`
@@ -135597,13 +135901,19 @@ function renderUnitModal() {
           <div class="modal-portrait">${unitBoardVisual(u, { reveal: isPlayer })}</div>
           <div class="modal-title-block">
             <div class="modal-title">
-              ${escapeHtml(u.name)}
+              ${/* 🕵 The portrait beside this already renders the card-back for a
+                    face-down enemy ({reveal:isPlayer}) — but the title printed the
+                    real name right next to it, so Details handed over exactly what
+                    the token was hiding. Same rule, same answer: "Set". */ ''}
+              ${_unitNameHtml(u)}
               <span class="modal-owner-tag ${u.owner}">${isPlayer ? 'YOUR ' + (isHero ? 'HERO' : 'UNIT') : 'ENEMY ' + (isHero ? 'HERO' : 'UNIT')}</span>
             </div>
             ${isHero ? `<div class="hd-hero-mark" style="margin:3px 0 4px"><img src="assets/artwork/gameicons/hero-board-icon.png" alt="Hero"><span>Hero — your throne piece. Keep it alive to win.</span></div>` : ''}
             <div class="modal-subtitle">
-              <span class="lvl-tag-inline">${getLevelIcon('1.5em')}${u.level}</span>
-              ${enemyHidden
+              ${faceHidden ? '' : `<span class="lvl-tag-inline">${getLevelIcon('1.5em')}${u.level}</span>`}
+              ${faceHidden
+                ? `<span class="scan-hidden-pill" title="A set card. Its name, level, stats, moves and flip effect stay hidden until something turns it face up.">🃏 Face-down — identity hidden</span>`
+                : enemyHidden
                 ? `<span class="scan-hidden-pill" title="Unknown elemental signature — scan this enemy to reveal.">??? Unknown Element</span>
                    <span class="scan-hidden-pill" title="Unknown faction — scan this enemy to reveal.">??? Unknown Faction</span>
                    ${canScan ? `<button class="scan-btn" data-scan-enemy="${u.id}" title="Use your hero scan skill to reveal this enemy intel.">🔍 Scan</button>` : `<span class="scan-locked-pill" title="No scan-capable hero on your team — unlock Tactical Awareness, Surveillance Drone, or Weak Point Scan in a hero Skill Tree.">🔒 Scan Locked</span>`}`
@@ -135616,10 +135926,11 @@ function renderUnitModal() {
               ${isPlayer ? _rapportPillHtml(u.originalCardId || u.cardId) : ''}
               ${u.trait && !enemyHidden ? (() => { const tr = (typeof getTrait === 'function') ? getTrait(u.trait) : null; if (!tr) return ''; const col = (TRAIT_RARITY_COLOR[tr.rarity] || '#9aa0a6'); return `<span class="nature-pill" style="border-color:${col};color:${col}" title="${escapeHtml(tr.rarity.toUpperCase() + ' — ' + tr.desc)}">${tr.icon} ${escapeHtml(tr.name)}</span>`; })() : ''}
             </div>
+            ${faceHidden ? '' : `
             <div class="modal-xp">
               <div class="modal-xp-bar"><div class="modal-xp-fill" style="width:${xpPct}%"></div></div>
               <div class="modal-xp-label">${u.xp || 0} / ${xpToNext} XP</div>
-            </div>
+            </div>`}
           </div>
         </div>
 
@@ -135646,10 +135957,16 @@ function renderUnitModal() {
 
         <div class="modal-section">
           <div class="modal-section-title">Stats</div>
-          ${renderStatBars(u.stats, { currentHp: u.currentHp, maxHp: u.maxHp })}
+          ${/* 🕵 The stat spread is a fingerprint — read ATK/DEF/MAG/SPD off a set
+                card and you have identified it as surely as by its name. HP stays:
+                the board already draws its bar, and you need it to judge whether
+                attacking the trap is worth springing it. */ ''}
+          ${faceHidden
+            ? `<div class="modal-empty scan-hidden-block">🃏 <strong>HP ${u.currentHp}/${u.maxHp}</strong> — the rest of this set card's stats stay hidden until it flips.</div>`
+            : renderStatBars(u.stats, { currentHp: u.currentHp, maxHp: u.maxHp })}
         </div>
 
-        ${(u.trait || u.nature || (isPlayer && u.bond != null)) ? `
+        ${(!faceHidden && (u.trait || u.nature || (isPlayer && u.bond != null))) ? `
         <div class="modal-section">
           <div class="modal-section-title">🧬 Traits & Nature</div>
           <div style="display:flex;flex-direction:column;gap:8px">
@@ -137186,9 +137503,20 @@ function renderBoard() {
             ${occupant.isFaceDown ? '' : '<div class="unit-frame"></div>'}
             <div class="unit-icon">${unitBoardVisual(occupant)}</div>
             <div class="unit-hp"><div class="unit-hp-fill${hpPct <= 25 ? ' hp-low' : ''}" style="width:${hpPct}%"></div></div>
+            ${/* 🕵 HIDDEN INFORMATION — a face-down unit must not print what it is.
+                  This block rendered occupant.name and occupant.level
+                  UNCONDITIONALLY. The isFaceDown check above only suppressed
+                  .unit-frame, and no CSS rule hides .unit-info on a face-down
+                  unit — the only .unit.facedown rules touch .unit-icon. So a Set
+                  enemy showed its real name and level on the board, which defeats
+                  the entire point of Subterfuge: the opponent could read every
+                  face-down card without flipping it.
+                  Your OWN face-down units still name themselves — you are allowed
+                  to know what you set. An opponent's reads "Set". */ ''}
             <div class="unit-info">
-              <span class="unit-name">${escapeHtml(occupant.name)}</span>
-              <span class="unit-meta">${getLevelIcon('1.5em')} ${occupant.level}</span>
+              <span class="unit-name">${_unitNameHtml(occupant)}</span>
+              <span class="unit-meta">${_isHiddenFaceDown(occupant)
+                ? '' : `${getLevelIcon('1.5em')} ${occupant.level}`}</span>
             </div>
             ${occupant.flying ? `<div class="flying-marker" title="Flying — immune to ground attacks">🪶</div>` : ''}
             ${(function () {
@@ -137222,9 +137550,9 @@ function renderBoard() {
           const _vk = _vm && _vm.vanishKind;
           const _vi = _vk === 'dig' ? '⛏️' : _vk === 'realm' ? '🌌' : '🪶';
           cellInner = `
-            <div class="unit ${occupant.owner}${isSel ? ' selected' : ''}" data-unit="${occupant.id}" data-y="${y}" title="${escapeHtml(occupant.name)} — vanished, returns next turn" style="opacity:0.3;filter:grayscale(0.55)">
+            <div class="unit ${occupant.owner}${isSel ? ' selected' : ''}" data-unit="${occupant.id}" data-y="${y}" title="${_unitNameHtml(occupant)} — vanished, returns next turn" style="opacity:0.3;filter:grayscale(0.55)">
               <div class="unit-icon" style="display:flex;align-items:center;justify-content:center;font-size:1.7rem;animation:ds-portrait-glow 1.6s ease-in-out infinite">${_vi}</div>
-              <div class="unit-info"><span class="unit-name">${escapeHtml(occupant.name)}</span><span class="unit-meta">returning…</span></div>
+              <div class="unit-info"><span class="unit-name">${_unitNameHtml(occupant)}</span><span class="unit-meta">returning…</span></div>
             </div>`;
         }
       } else if (trail && trail.from && trail.from.x === x && trail.from.y === y) {
@@ -137553,8 +137881,16 @@ function renderActionPanel() {
       <div class="quick-header">
         <div class="quick-portrait">${unitBoardVisual(sel)}</div>
         <div class="quick-info">
-          <div class="quick-name">${escapeHtml(sel.name)} <span class="lvl-tag-inline">${getLevelIcon('1.5em')}${sel.level}</span></div>
-          <div class="quick-hp">HP ${sel.currentHp}/${sel.maxHp} · ATK ${sel.stats.atk} · DEF ${sel.stats.def} · MAG ${sel.stats.mag} · SPD ${sel.stats.spd}</div>
+          ${/* 🕵 A face-down enemy is selectable (onUnitClick selects ANY unit), so
+                this panel was a second, one-click route to the identity the board
+                itself now hides — name, level, and the exact stat line that
+                fingerprints the card. Mask all of it. HP stays: the board already
+                draws its bar, and you need it to decide whether to attack. */ ''}
+          <div class="quick-name">${_unitNameHtml(sel)} ${_isHiddenFaceDown(sel)
+            ? '' : `<span class="lvl-tag-inline">${getLevelIcon('1.5em')}${sel.level}</span>`}</div>
+          <div class="quick-hp">${_isHiddenFaceDown(sel)
+            ? `HP ${sel.currentHp}/${sel.maxHp} · <span class="ink-dim">face-down — stats hidden until it flips</span>`
+            : `HP ${sel.currentHp}/${sel.maxHp} · ATK ${sel.stats.atk} · DEF ${sel.stats.def} · MAG ${sel.stats.mag} · SPD ${sel.stats.spd}`}</div>
         </div>
       </div>
       <div class="quick-tip">${tip}</div>
@@ -139180,10 +139516,67 @@ function onTileClick(x, y) {
           return;
         }
       }
+      /* ⚔️ FIRE EMBLEM CUT-AWAY.
+         executeMove is a PURE SYNCHRONOUS REDUCER — (state, attacker, target,
+         move) => newState — and this handler is not async, so the animation
+         cannot be awaited inline without restructuring every caller. Instead the
+         state lands immediately (game logic is completely untouched) and the
+         cut-away plays over it, with checkPostAction deferred until it finishes
+         so the turn still reads as paused.
+         Damage is derived by DIFFING currentHp across the reducer rather than
+         re-deriving it — the reducer is the only thing that knows what actually
+         landed after mitigation, Sturdy, lethal-avoid and the rest. */
+      const _feDef = occupant, _feAtk = sel;
+      const _feHpBefore = (_feDef && _feDef.currentHp) | 0;
+      const _feEl = { a: null, d: null };
+      try {
+        _feEl.a = document.querySelector('[data-unit="' + _feAtk.id + '"]');
+        _feEl.d = document.querySelector('[data-unit="' + _feDef.id + '"]');
+      } catch (e) {}
       App.state = executeMove(App.state, sel, occupant, move);
       App.ui.selectedMoveId = null;
       App.ui.actionMode = null;
-      checkPostAction();
+      {
+        // ⚠ checkPostAction MUST run exactly once no matter what the animation
+        //   does — a swallowed continuation would strand the turn. Guarded.
+        let _feDone = false;
+        const _feContinue = () => {
+          if (_feDone) return;
+          _feDone = true;
+          try { checkPostAction(); } catch (e) { try { console.warn('[FE] postAction', e); } catch (_) {} }
+        };
+        let _played = false;
+        try {
+          const _after = (App.state.units || []).find(u => u && u.id === _feDef.id);
+          const _hpAfter = _after ? (_after.currentHp | 0) : 0;
+          const _dmg = Math.max(0, _feHpBefore - _hpAfter);
+          const _killed = !!(!_after || !_after.alive);
+          /* 🔎 Reported: "the old combat animation is back and not the new Fire
+             Emblem." Every gate below is a reason the cut-away would silently
+             not run, leaving the legacy VFX to play instead — and none of them
+             said anything. They do now, so one attack in the console tells us
+             which gate it is instead of another round of guessing. */
+          try {
+            console.info('[FE] attack resolved —',
+              'FEBattle:', typeof window.FEBattle,
+              'play:', (window.FEBattle && typeof window.FEBattle.play),
+              'damage:', _dmg, 'killed:', _killed,
+              'hidden:', document.hidden,
+              'attackerEl:', !!_feEl.a, 'defenderEl:', !!_feEl.d);
+          } catch (_) {}
+          if (window.FEBattle && typeof window.FEBattle.play === 'function' && _dmg > 0) {
+            _played = true;
+            Promise.resolve(window.FEBattle.play({
+              attacker: { name: _feAtk.name, atk: (_feAtk.stats && _feAtk.stats.atk) | 0, el: _feEl.a, reel: _feReel(_feAtk, 'attack') },
+              defender: { name: _feDef.name, hp: _feHpBefore, el: _feEl.d, reel: _feReel(_feDef, 'idle') },
+              damage: _dmg, killed: _killed, crit: !!move._crit,
+            })).catch(() => {}).then(_feContinue);
+            // Belt and braces: if the promise never settles, continue anyway.
+            setTimeout(_feContinue, 3800);
+          }
+        } catch (e) { try { console.warn('[FE] play', e); } catch (_) {} }
+        if (!_played) _feContinue();
+      }
       return;
     }
     return;
@@ -142979,6 +143372,29 @@ function _applyAltPlayCost(state, side, card) {
   } catch (e) {}
   return out;
 }
+// 🤖 AI-side ALTERNATE-COST payment for the NON-UNIT play paths (spell / trap /
+// weather). The AI's unit deploy pays inline; those three each rebuild `s.ai` in
+// a single object literal, so this hands back the exact pieces they fold in.
+//
+// ⚠ MUST be called on the PRE-PLAY snapshot — before the card is pushed to the
+// graveyard. Paying afterwards would let the card's own fresh graveyard record
+// satisfy its own cost filter (it would pay for itself and cast free).
+//
+// `energy` is null for a normal card (caller keeps its own cost maths) and 0 for
+// an alternate-cost card, because there the REMOVAL is the cost.
+function _aiPayAltCost(s, card) {
+  const out = { units: s.units, hand: (s.ai && s.ai.hand) || [], log: s.log, energy: null };
+  try {
+    if (!card || !card.playRequirement || card.playRequirement.type !== 'banishGraveCost') return out;
+    if (typeof _applyAltPlayCost !== 'function') return out;
+    const ap = _applyAltPlayCost({ ...s }, 'ai', card);
+    if (ap.units) out.units = ap.units;   // 'field' zone sacrifices units
+    if (ap.hand)  out.hand  = ap.hand;    // 'hand'/'handOrGrave' banished from hand
+    if (ap.log)   out.log   = ap.log;
+    out.energy = 0;
+  } catch (e) {}
+  return out;
+}
 function _checkPlayRequirement(card, state, side) {
   // ⚰️💸 ALTERNATE-COST GATE — blocks the play (and, via getEffectiveCardCost,
   // the highlight) until the removal can actually be paid.
@@ -143107,12 +143523,12 @@ function _aiPlayReqOk(card, state) {
     if (req.type === 'vanishUnit') {
       return !!(typeof _vanishCostTarget === 'function' && _vanishCostTarget(state, 'ai', card));
     }
-    // ⚰️💸 banishGraveCost is likewise an ALTERNATE COST, not a board condition.
-    // Units: playable only when the AI can actually pay (the deploy path pays it).
-    // Other card types: the AI's spell/trap/weather paths don't pay this cost yet,
-    // so the AI declines to play those rather than casting them for free.
+    // ⚰️💸 banishGraveCost is likewise an ALTERNATE COST, not a board condition:
+    // the AI may only play the card when it can actually pay. Every AI play path
+    // now settles the cost — units inline in the deploy branch, and spell / trap
+    // / weather via _aiPayAltCost — so all card types are allowed through the
+    // same payability check instead of non-units being declined outright.
     if (req.type === 'banishGraveCost') {
-      if ((card.type || 'unit') !== 'unit') return false;
       return !!(typeof _altCostTargets === 'function' && _altCostTargets(state, 'ai', card));
     }
     if (req.type !== 'unitsOnField' && req.type !== 'weather' && req.type !== 'timeOfDay' && req.type !== 'graveTribe') return true;
@@ -145724,7 +146140,10 @@ function doAIStep() {
   // setTimeout 0 gives us a near-immediate post-step hook.
   setTimeout(_wrappedReturn, 0);
 
-  const s = App.state;
+  // `let`, not `const`: the spell branch below re-points this snapshot once, at
+  // the moment an ALTERNATE COST is paid, so every spell branch inherits the
+  // already-paid hand/units/log instead of each re-implementing the payment.
+  let s = App.state;
   const aiHero = s.units.find(u => u.owner === 'ai' && u.isHero);
   const playerProf = getPlayerProfile();
 
@@ -146058,16 +146477,20 @@ function doAIStep() {
         if ((aiHero && hasPassive(aiHero, 'weatherweaver')) || sideHasPassive(s, 'ai', 'weatherweaver')) {
           duration += 2;
         }
+        // ⚰️💸 Pay any ALTERNATE COST on the pre-play snapshot (before the grave
+        // push below, or the card's own grave record could pay for it).
+        const _aipW = _aiPayAltCost(s, best);
         App.state = {
           ...s,
+          units: _aipW.units,
           weather: { weatherType: best.weatherType, turnsLeft: duration, ownerHint: 'ai', customEffects: best.customEffects || null },
           ai: {
             ...s.ai,
-            hand: s.ai.hand.filter(c => c.instanceId !== best.instanceId),
+            hand: _aipW.hand.filter(c => c.instanceId !== best.instanceId),
             graveyard: [...s.ai.graveyard, best],
-            energy: s.ai.energy - best.cost,
+            energy: s.ai.energy - (_aipW.energy !== null ? _aipW.energy : best.cost),
           },
-          log: [...s.log, { msg: `Enemy summons ${best.name}! (${duration} turns)`, color: 'red' }],
+          log: [..._aipW.log, { msg: `Enemy summons ${best.name}! (${duration} turns)`, color: 'red' }],
         };
         try { _fireFieldCardOnPlay(best, 'ai'); } catch (e) {}   // 🎴 AI weather on-play effect
         // ⚡ cardPlayed triggers — AI weather. actorOwner = 'ai'.
@@ -146138,11 +146561,16 @@ function doAIStep() {
           .sort((a, b) => a.d - b.d);
         if (scored.length > 0) {
           const dest = scored[0].t;
+          // ⚰️💸 Pay any ALTERNATE COST before the grave push (self-payment guard).
+          // Energy already resolves to 0 for a payable alt-cost card via
+          // getEffectiveCardCost, so only the removal itself is applied here.
+          const _aipT = _aiPayAltCost(s, trap);
           App.state = {
             ...s,
+            units: _aipT.units,
             board: s.board.map(row => row.map(t => (t.x === dest.x && t.y === dest.y) ? { ...t, trap: { card: trap, owner: 'ai' } } : t)),
-            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== trap.instanceId), graveyard: [...s.ai.graveyard, trap], energy: s.ai.energy - getEffectiveCardCost(trap, s, 'ai') },
-            log: [...s.log, { msg: `Enemy sets a trap…`, color: 'red' }],
+            ai: { ...s.ai, hand: _aipT.hand.filter(c => c.instanceId !== trap.instanceId), graveyard: [...s.ai.graveyard, trap], energy: s.ai.energy - getEffectiveCardCost(trap, s, 'ai') },
+            log: [..._aipT.log, { msg: `Enemy sets a trap…`, color: 'red' }],
           };
           setAIActor(null, `🪤 Enemy sets a trap`);
           renderBattle();
@@ -146312,6 +146740,14 @@ function doAIStep() {
             playSpellActivationVfx(card, { label: 'ENEMY SPELL', targetPos: (best.target && best.target.pos) ? best.target.pos : null });
           }
         } catch (e) {}
+        // ⚰️💸 ALTERNATE COST — paid ONCE here, before any branch commits the
+        // card to the graveyard (paying later would let its own fresh grave
+        // record satisfy its own filter and cast it for free). Re-pointing `s`
+        // means every branch below inherits the reduced hand / units / log.
+        const _aipS = _aiPayAltCost(s, card);
+        if (_aipS.energy !== null) {
+          s = { ...s, units: _aipS.units, ai: { ...s.ai, hand: _aipS.hand }, log: _aipS.log };
+        }
         if (best.kind === 'damage') {
           // AI spell cards = magical damage for Immortal-passive clamping.
           const trig = applyDamageTriggers(best.target, card.effect.amount, 'magic');
@@ -146638,7 +147074,7 @@ function doAIStep() {
           markAIUnitActed(unit.id);
           setAIActor(unit.id, `⚔ Enemy ${unit.name} → ${pick.move.name} → ${pick.target.name}`);
           renderBattle();
-          scheduleAIStep(AI_DELAYS.attack);
+          scheduleAIStepAfterCutaway(AI_DELAYS.attack);
         };
         try {
           tryPromptCounter(App.state, {
@@ -146654,7 +147090,7 @@ function doAIStep() {
               setAIActor(unit.id, `⏱ Counter — ${pick.move.name} negated`);
               App.state.log = (App.state.log || []).concat([{ msg: `⏱ ${pick.target.name}'s counter negates ${unit.name}'s attack!`, color: 'green' }]);
               renderBattle();
-              scheduleAIStep(AI_DELAYS.attack);
+              scheduleAIStepAfterCutaway(AI_DELAYS.attack);
             } else {
               _doAttack();
             }
@@ -146827,7 +147263,7 @@ function doAIStep() {
         markAIUnitActed(unit.id);
         setAIActor(unit.id, `⚔ Enemy ${unit.name} → ${pick.move.name} → ${pick.target.name}`);
         renderBattle();
-        scheduleAIStep(AI_DELAYS.attack);
+        scheduleAIStepAfterCutaway(AI_DELAYS.attack);
         return;
       }
     }
@@ -151485,9 +151921,27 @@ function renderCamp() {
     `;
   };
 
+  /* 🏚 SLOT LIST — filled slots first, then ONE compact band of empties.
+     Previously every slot rendered a full-height row in index order, so a fresh
+     camp printed six 110px "+ Empty Slot" boxes down the page (~900px) and the
+     one thing a player actually wants to look at — a parked unit — could be
+     below the fold under a wall of nothing. Occupied slots keep their big row;
+     the empties collapse into a single auto-fit grid. */
   const _maxSlots = campMaxSlots();
-  const slotsHtml = [];
-  for (let i = 0; i < _maxSlots; i++) slotsHtml.push(renderSlot(Camp.slots[i] || null));
+  const _filledHtml = [], _emptyCount = (() => {
+    let n = 0;
+    for (let i = 0; i < _maxSlots; i++) {
+      const sl = Camp.slots[i] || null;
+      if (sl) _filledHtml.push(renderSlot(sl)); else n++;
+    }
+    return n;
+  })();
+  const slotsHtml = _filledHtml.slice();
+  if (_emptyCount > 0) {
+    slotsHtml.push('<div class="dpx-empties">'
+      + Array.from({ length: _emptyCount }, () => renderSlot(null)).join('')
+      + '</div>');
+  }
 
   // 🏗️ XCOM-style base grid. Art is a swap hook — drop an image URL into
   // Forge.campArt[facId] later and it replaces the placeholder backdrop.
@@ -151548,7 +152002,7 @@ function renderCamp() {
     // the bottom. The art itself, every button and every label are unchanged —
     // only the frame around them is new.
     return `
-      <div class="cmpx-room" style="--acc:${f.accent};${dimmed}">
+      <div class="cmpx-room${s.level > 0 ? '' : (s.state === 'building' ? ' is-building' : ' is-empty')}" style="--acc:${f.accent};${dimmed}">
         <div class="cmpx-room-bar"><span style="width:${(() => {
           // Level fill. An UNBUILT room reads as an empty rail, not a full one.
           try {
@@ -154124,7 +154578,7 @@ function _csNodeMeta(nodeId) {
   return { name: name || nodeId, resource };
 }
 function _csResName(id) { try { return (typeof _meta === 'function' && _meta(id) && _meta(id).name) || id; } catch (e) { return id; } }
-// All registerable District Nodes. Lists the FULL TW node catalog
+// All registerable City Nodes. Lists the FULL TW node catalog
 // (Forge.territoryWars.nodes) — NOT just nodes that already have a cloud recon
 // row — so a shop can register to ANY node even before it has been reconned.
 // Cloud recon stats (commerce, corruption, …) ride along when available.
@@ -155587,7 +156041,7 @@ function _csMount3D(mount) {
         const fr = Math.max(cat ? cat.w || 1 : 1, cat ? cat.d || 1 : 1) * 0.5 * (p.scale || 1);
         if (!cat || (cat.h == null) || cat.h > 0.25) propColliders.push({ gx: p.x || 0, gz: p.z || 0, r: Math.max(0.35, fr) });
         // 🛠 Functional fixture: walk up + E uses it (bed/storage/counter/binder/open).
-        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE BINDER', binder: 'THE BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS', vendor: 'VENDOR MARKET', battle: 'BATTLE TABLE', lab: 'THE LAB', deckbuilder: 'DECK BUILDER', district: 'DISTRICT NODES', camp: 'CAMP', market: 'THE MARKET', crafting: 'CRAFTING', cinder: 'CINDER SHOP', crash: 'CRASH EXCHANGE' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
+        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE BINDER', binder: 'THE BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS', vendor: 'VENDOR MARKET', battle: 'BATTLE TABLE', lab: 'THE LAB', deckbuilder: 'DECK BUILDER', district: 'CITY NODES', camp: 'CAMP', market: 'THE MARKET', crafting: 'CRAFTING', cinder: 'CINDER SHOP', crash: 'CRASH EXCHANGE' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
       } catch (e) {}
       if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); _csSeatModel(m); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
@@ -155709,7 +156163,7 @@ function _csEnterStation(view) {
   };
   if (_csPortal[view]) { try { _csPortal[view](); } catch (e) {} try { render(); } catch (e) {} return; }
   if (view === 'district') {
-    // 🏙️ District Nodes — open the Territory Wars map AND tell the owner which
+    // 🏙️ City Nodes — open the Territory Wars map AND tell the owner which
     // District Node their shop is registered to (read off CardShop.mine.node_id).
     // Mirrors the hub's direct renderTerritoryWars() call so a render fallback
     // can't reset TW state.
@@ -156490,7 +156944,7 @@ function _csFurnitureCardHtml(r) {
   const cur = isAza ? '🪙' : '🔥';
   const id = escapeHtml(r.id);
   const inCart = _csCart[r.id] | 0;
-  const funcLabels = { bed: '🛏️ Bed', storage: '🧰 Storage', counter: '📒 Binder', binder: '📒 Binder', open: '🎴 Open packs', vendor: '🛒 Vendor', battle: '⚔️ Battle', lab: '🧪 Lab', deckbuilder: '🃏 Deck Builder', district: '🏙️ District Nodes', camp: '🏚 Camp', market: '🏪 Market', crafting: '🔨 Crafting', cinder: '🔥 Cinder Shop', crash: '📈 Crash Exchange' };
+  const funcLabels = { bed: '🛏️ Bed', storage: '🧰 Storage', counter: '📒 Binder', binder: '📒 Binder', open: '🎴 Open packs', vendor: '🛒 Vendor', battle: '⚔️ Battle', lab: '🧪 Lab', deckbuilder: '🃏 Deck Builder', district: '🏙️ City Nodes', camp: '🏚 Camp', market: '🏪 Market', crafting: '🔨 Crafting', cinder: '🔥 Cinder Shop', crash: '📈 Crash Exchange' };
   const funcTag = (r.func && funcLabels[r.func]) ? `<span style="color:#9ec5ff"> · ${funcLabels[r.func]}</span>` : '';
   const cartCtrl = inCart > 0
     ? `<div class="csm-qty"><button data-csm-cart="${id}" data-d="-1">–</button><span class="csm-qn">${inCart} in cart</span><button data-csm-cart="${id}" data-d="1">+</button></div>`
@@ -156734,7 +157188,7 @@ function _csOpenFurnitureMarket(onClose) {
     </div>
     <div class="csm-grid2" style="grid-template-columns:1fr 1fr 1fr">
       <select data-csm="mount" title="Placement type"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select>
-      <select data-csm="func" title="Function — walk up + E to use"><optgroup label="— Storefront / commerce —"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter (storefront)</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market (buy packs)</option><option value="battle">⚔️ Battle Table (AI / online match)</option></optgroup><optgroup label="— Portals (walk up + E → go there) —"><option value="lab">🧪 The Lab (fusion)</option><option value="deckbuilder">🃏 Deck Builder table</option><option value="district">🏙️ District Nodes (shows your node)</option><option value="camp">🏚 Camp / Bunker</option><option value="market">🏪 The Market</option><option value="crafting">🔨 Crafting</option><option value="cinder">🔥 Cinder Shop</option><option value="crash">📈 Crash Exchange</option></optgroup></select>
+      <select data-csm="func" title="Function — walk up + E to use"><optgroup label="— Storefront / commerce —"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter (storefront)</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market (buy packs)</option><option value="battle">⚔️ Battle Table (AI / online match)</option></optgroup><optgroup label="— Portals (walk up + E → go there) —"><option value="lab">🧪 The Lab (fusion)</option><option value="deckbuilder">🃏 Deck Builder table</option><option value="district">🏙️ City Nodes (shows your node)</option><option value="camp">🏚 Camp / Bunker</option><option value="market">🏪 The Market</option><option value="crafting">🔨 Crafting</option><option value="cinder">🔥 Cinder Shop</option><option value="crash">📈 Crash Exchange</option></optgroup></select>
       <select data-csm="currency" title="Currency players pay in"><option value="cinder">🔥 Cinder (taxed)</option><option value="aza">🪙 Aza Coin</option></select>
     </div>
     <div class="csm-grid2" style="grid-template-columns:auto 1fr">
@@ -158133,7 +158587,7 @@ function _revealPackCardInPlace(idx) {
     if (r.packId && typeof getPackImage === 'function') packBackImg = getPackImage(r.packId);
     if (!packBackImg && r.packArt) packBackImg = r.packArt;
   } catch (e) {}
-  const backImgSrc = String(packBackImg || 'assets/artwork/cardback.png?v=3').replace(/"/g, '&quot;');
+  const backImgSrc = String(packBackImg || 'assets/artwork/cardback.png?v=5').replace(/"/g, '&quot;');
   const el = document.querySelector(`[data-reveal-card="${idx}"]`);
   if (el) {
     const newHtml = _buildPackRevealCardHtml(r.cards[idx], idx, true, backImgSrc, r.packName);
@@ -158166,7 +158620,7 @@ function renderPackRevealModal() {
     if (r.packId && typeof getPackImage === 'function') packBackImg = getPackImage(r.packId);
     if (!packBackImg && r.packArt) packBackImg = r.packArt;
   } catch (e) {}
-  const finalBackImg = packBackImg || 'assets/artwork/cardback.png?v=3';
+  const finalBackImg = packBackImg || 'assets/artwork/cardback.png?v=5';
   const backImgSrc = String(finalBackImg).replace(/"/g, '&quot;');
 
   // Use the module-level card builder so the click handler can swap a
@@ -171718,10 +172172,10 @@ const RPG_GUIDE_PAGES = [
   { route: 'coliseum',     label: 'Colosseum' },
   { route: 'camp',         label: 'Survivor Camp' },
   { route: 'lab',          label: 'The Lab' },
-  // 🗺 District Nodes (Territory Wars war map) — App.screen === 'territoryWars',
+  // 🗺 City Nodes (Territory Wars war map) — App.screen === 'territoryWars',
   // so _currentGuideRoute's fall-through matches it with no extra wiring.
   // Serves BOTH systems: this list feeds the guide editor AND TUTORIAL_PAGES.
-  { route: 'territoryWars', label: '🗺 District Nodes (Territory Wars)' },
+  { route: 'territoryWars', label: '🗺 City Nodes (Territory Wars)' },
   // Title sub-hubs (one App.screen, switched via the hub portals).
   { route: 'title:battle',   label: 'Battle Hall (hub)' },
   { route: 'title:forge',    label: 'Forge Sanctum (hub)' },
@@ -180406,7 +180860,7 @@ function renderRlcReward() {
   offer = offer.slice(0, n);
   // 🎴 These face-downs are the PLAYER's own reward picks, so they wear the
   // player's equipped deck sleeve when they have one.
-  const CARDBACK = (typeof getCardBackImage === 'function') ? getCardBackImage('player') : 'assets/artwork/cardback.png?v=2';
+  const CARDBACK = (typeof getCardBackImage === 'function') ? getCardBackImage('player') : 'assets/artwork/cardback.png?v=5';
   // Face-down card the player flips to reveal its hidden reward.
   const flipCard = (key, idx) => {
     let c = null; try { c = resolveDeckCard(key); } catch (e) {}
@@ -193931,7 +194385,7 @@ function _osimNodeById(id) { return _osimNodes().find(n => n && n.id === id) || 
 function _osimNodeName(n) { return (n && (n.name || n.label || n.id)) || 'District Node'; }
 function _osimRenderNodeLink() {
   const nodes = _osimNodes();
-  if (!nodes.length) return '<div class="empty">No District Nodes exist yet. They\'re seeded in the District Nodes map — come back once one is live.</div>';
+  if (!nodes.length) return '<div class="empty">No City Nodes exist yet. They\'re seeded in the City Nodes map — come back once one is live.</div>';
   const node = _osimState.nodeId ? _osimNodeById(_osimState.nodeId) : null;
   if (!node) { let h = '<div class="statline">Register your Extraction Field to <b>ONE</b> real District Node. Delivering <b>fuel</b> there <b style="color:#4fd6d6">repairs its roads</b> + earns you Aza — like the other businesses that back a district.</div>'; nodes.slice(0, 16).forEach(n => { const r = _twNodeReconEnsure(n); const pct = Math.round(((r.roadsRepaired + r.buildingsRestored) / ((r.roadsTotal + r.buildingsTotal) || 1)) * 100); h += '<div class="osim-sellrow"><div class="info"><b style="color:#9fe6e6">' + _osimEsc(_osimNodeName(n)) + '</b><div class="qty">Rebuilt ' + pct + '% · roads ' + r.roadsRepaired + '/' + r.roadsTotal + ' · corruption ' + Math.round(r.corruption) + '%</div></div><button class="osim-buy aza" onclick="_OSIM.nodeRegister(\'' + n.id + '\')">Register</button></div>'; }); return h; }
   const r = _twNodeReconEnsure(node); const pct = Math.round(((r.roadsRepaired + r.buildingsRestored) / ((r.roadsTotal + r.buildingsTotal) || 1)) * 100); const fuel = _osimState.inv.fuel;
@@ -200971,7 +201425,7 @@ function _openNodeCity(nodeId) {
   if (document.getElementById('node-city-frame')) return;
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120h4';
+  f.src = 'node-city/index.html?v=120i2';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -201041,13 +201495,34 @@ window.cityStateSave = async function (json) {
     if (!Cloud || !Cloud.ready || !Cloud.client || !Profile.cloud || !Profile.cloud.userId) return;
     const target = _cityStateUserId(); if (!target) return;
     const st = JSON.parse(json);
-    await Cloud.client.from('city_state').upsert({
+    const res = await Cloud.client.from('city_state').upsert({
       user_id: target, state: st,
       sync_pct: (st.syncPct | 0),
       node_id: (App._cityNodeId && /^[0-9a-f-]{36}$/i.test(String(App._cityNodeId))) ? App._cityNodeId : null,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id' });
-  } catch (e) {}
+    /* ⚠ A REJECTED WRITE USED TO LOOK EXACTLY LIKE A SUCCESSFUL ONE.
+       Supabase resolves rather than throws on an RLS refusal, so `await` alone
+       catches nothing and the old bare `catch (e) {}` swallowed the rest. That
+       is why "the mayor's work is not saving" went unnoticed: the city kept its
+       localStorage copy, so it looked saved right up until the next load.
+       An RLS refusal is now surfaced loudly — a mayor losing a build session is
+       far worse than a console warning. */
+    if (res && res.error) {
+      const mgr = !!(App._cityOwnerId);
+      try { console.warn('[cityStateSave] REJECTED', res.error.code, res.error.message, mgr ? '(as mayor)' : '(as owner)'); } catch (_) {}
+      if (mgr && !App._cityMgrSaveWarned) {
+        App._cityMgrSaveWarned = true;
+        try { showToast('⚠ Your changes to this city are NOT saving — the owner\'s save is refusing writes. Tell an admin: sql/014_mayor_city_state.sql needs running.', 9000); } catch (_) {}
+      }
+      return false;
+    }
+    App._cityMgrSaveWarned = false;
+    return true;
+  } catch (e) {
+    try { console.warn('[cityStateSave] threw', e); } catch (_) {}
+    return false;
+  }
 };
 window.cityStateLoad = async function () {
   try {
@@ -201057,8 +201532,18 @@ window.cityStateLoad = async function () {
     //    built returns zero rows, and .single() treats that as an ERROR — which
     //    would surface as "no city" even once one exists.
     const r = await Cloud.client.from('city_state').select('state').eq('user_id', target).maybeSingle();
+    /* ⚠ Same trap on the READ side, and it is the more confusing of the two.
+       Owner-only RLS makes a mayor's SELECT return ZERO ROWS rather than an
+       error — indistinguishable from "the owner has never built a city". The
+       mayor then starts from an empty grid and builds on top of nothing, so
+       even a working save would overwrite the owner's real city. Worth a loud
+       warning: an empty result while acting as a mayor is nearly always RLS. */
+    if (r && r.error) { try { console.warn('[cityStateLoad] REJECTED', r.error.code, r.error.message); } catch (_) {} }
+    else if (App._cityOwnerId && !(r && r.data)) {
+      try { console.warn('[cityStateLoad] mayor got ZERO rows for owner', target, '— either the owner has no city yet, or RLS is refusing the read (sql/014).'); } catch (_) {}
+    }
     return (r && r.data && r.data.state) ? JSON.stringify(r.data.state) : null;
-  } catch (e) { return null; }
+  } catch (e) { try { console.warn('[cityStateLoad] threw', e); } catch (_) {} return null; }
 };
 try { window.__mg = window.__mg || {}; window.__mg._openNodeCity = _openNodeCity; window.__mg._closeNodeCity = _closeNodeCity; } catch (e) {}
 // The city bridge reads window.parent.FoundationReserve — but the game declares
@@ -208757,7 +209242,7 @@ async function tw_cloudPostFeed(kind, msg) {
 // A camp registers to exactly ONE District Node. The choice lives on
 // Profile.campNodeId (cloud-synced with the profile) AND is mirrored to the
 // cross-player `tw_camp_registrations` table so EVERY player's camp shows under
-// that node on the District Nodes map. All cloud calls degrade gracefully — if
+// that node on the City Nodes map. All cloud calls degrade gracefully — if
 // Supabase isn't ready or the table doesn't exist yet they're silent no-ops and
 // the local camp keeps working unchanged.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -209192,7 +209677,7 @@ function openCampNodePicker() {
       <div class="cnp-meta">${escapeHtml(n.id)} · ${escapeHtml(n.difficulty || 'T1')} · ${escapeHtml(yields)}</div>
       <button class="btn-mini ${isCur ? '' : 'btn-primary'}" data-act="camp-register" data-node="${escapeHtml(n.id)}" ${isCur ? 'disabled' : ''}>${isCur ? '✓ Current Node' : 'Register Camp Here'}</button>
     </div>`;
-  }).join('') || '<div class="hint">No District Nodes are defined yet.</div>';
+  }).join('') || '<div class="hint">No City Nodes are defined yet.</div>';
   host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
     <div class="cnp-modal-head"><h3>Connect to a District Node</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
     <div class="cnp-modal-body">
@@ -209204,7 +209689,7 @@ function openCampNodePicker() {
 function closeCampNodePicker() { const h = document.getElementById('camp-node-picker-host'); if (h) h.innerHTML = ''; }
 // 🏷 Name your settlement — saved on Profile.campName, cloud-synced cross-device,
 // and pushed to the global tw_camp_registrations row so every player sees it on
-// the District Nodes map + Civilization Network.
+// the City Nodes map + Civilization Network.
 function openCampRename() {
   let host = document.getElementById('camp-node-picker-host');
   if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
@@ -209212,7 +209697,7 @@ function openCampRename() {
   host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog" style="width:min(440px,96vw)">
     <div class="cnp-modal-head"><h3>Name Your Settlement</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
     <div class="cnp-modal-body">
-      <div class="hint" style="margin-bottom:10px">What do the survivors call this place? This name shows on the District Nodes map + Civilization Network for <b>every player</b>.</div>
+      <div class="hint" style="margin-bottom:10px">What do the survivors call this place? This name shows on the City Nodes map + Civilization Network for <b>every player</b>.</div>
       <input id="camp-rename-input" class="cnp-input" maxlength="28" value="${escapeHtml(cur)}" placeholder="Settlement name">
       <div style="display:flex;gap:8px;margin-top:14px">
         <button class="btn-primary" style="flex:1" data-act="camp-rename-save">Rename</button>
@@ -209965,7 +210450,7 @@ function _reconNetworkBodyHtml() {
     const p = posN[nd.node.id];
     lines += `<line class="rnet-spoke" x1="${CX}" y1="${CY}" x2="${p.x}" y2="${p.y}"/>`;
     const initials = (nd.node.name || 'N').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-    chips += `<div class="rnet-chip node" data-act="recon-net-node" data-node="${escapeHtml(nd.node.id)}" title="Open ${escapeHtml(nd.node.name)} on the District Nodes map" style="left:${pct(p.x, 940)}%;top:${pct(p.y, 660)}%"><div class="rnet-disc nodc">${escapeHtml(initials)}</div><div class="rnet-nlabel">${escapeHtml(nd.node.name)}</div></div>`;
+    chips += `<div class="rnet-chip node" data-act="recon-net-node" data-node="${escapeHtml(nd.node.id)}" title="Open ${escapeHtml(nd.node.name)} on the City Nodes map" style="left:${pct(p.x, 940)}%;top:${pct(p.y, 660)}%"><div class="rnet-disc nodc">${escapeHtml(initials)}</div><div class="rnet-nlabel">${escapeHtml(nd.node.name)}</div></div>`;
     nd.camps.forEach(c => {
       lines += `<line class="rnet-route ${c._ambushed ? 'ambushed' : ''}" x1="${p.x}" y1="${p.y}" x2="${c._x}" y2="${c._y}"/>`;
       const ci = ((c.name || 'C').replace(/^camp\s+/i, '').trim().charAt(0) || 'C').toUpperCase();
@@ -210124,7 +210609,7 @@ function renderReconstruction() {
   </div>`;
 }
 // ═══════════════════════════════════════════════════════════════════════════
-// 📢 ETHOS SPONSOR NETWORK — in-world sponsor billboards on District Nodes.
+// 📢 ETHOS SPONSOR NETWORK — in-world sponsor billboards on City Nodes.
 // A node's owner-corp (or a studio admin) sells ad space; when a player opens a
 // node, the SPONSOR tab shows the active sponsor as an in-world billboard with a
 // "Visit Sponsor" link (external-leave warning). Ads live in the cross-player
@@ -212067,7 +212552,7 @@ function renderTwNodeListModal(t) {
         + '#tw-nl-backdrop .tw-nl-empty{padding:1.4rem;text-align:center;color:#cbb8a0;grid-column:1/-1}'
       + '</style>'
       + '<div class="tw-nl-modal" role="dialog">'
-        + '<div class="tw-nl-hd"><div class="tw-nl-ttl">📋 District Nodes<span class="tw-nl-ct">(' + nodes.length + ')</span></div><button class="btn-secondary btn-mini" id="tw-nl-close">✕ Close</button></div>'
+        + '<div class="tw-nl-hd"><div class="tw-nl-ttl">📋 City Nodes<span class="tw-nl-ct">(' + nodes.length + ')</span></div><button class="btn-secondary btn-mini" id="tw-nl-close">✕ Close</button></div>'
         + '<input type="search" class="tw-nl-search" id="tw-nl-search" placeholder="🔍 Search nodes by name…" autocomplete="off">'
         + '<div class="tw-nl-grid">' + chips + '</div>'
       + '</div>'
@@ -213015,7 +213500,7 @@ function _aiCorpOpen(corpId, tab) {
       +   '<span class="cd-corner tl"></span><span class="cd-corner tr"></span>'
       +   '<span class="cd-corner bl"></span><span class="cd-corner br"></span>'
       +   '<div class="tw-drawer-crumb-bar">'
-      +     '<span class="tw-drawer-crumb-text">DISTRICT NODES · ' + (isNew ? 'STARTUP' : 'AI CORPORATION') + '</span>'
+      +     '<span class="tw-drawer-crumb-text">CITY NODES · ' + (isNew ? 'STARTUP' : 'AI CORPORATION') + '</span>'
       +     '<span class="tw-drawer-barcode">||||||||||||||||</span>'
       +     '<button class="tw-drawer-close" data-aicorp-close="1">✕</button>'
       +   '</div>'
@@ -213785,7 +214270,7 @@ function renderTerritoryWars() {
   const _twOwnedCount = Object.keys(st.ownedNodes||{}).length;
   const _twThreats = t.nodes.filter(function(n){ var o=st.ownedNodes[n.id]; return !!(o&&o.underAttack); }).length;
   // ── v118r5 chart-remodel helpers ──────────────────────────────────────────
-  // Line-art glyph set (mockup "update for district nodes"). Inline so the map
+  // Line-art glyph set (mockup "update for city nodes"). Inline so the map
   // never waits on an icon font and every button keeps its own colour token.
   const _nxSv = (d, fill) => '<svg viewBox="0 0 24 24" fill="' + (fill ? 'currentColor' : 'none')
     + '" stroke="' + (fill ? 'none' : 'currentColor') + '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
@@ -213837,7 +214322,7 @@ function renderTerritoryWars() {
     // 🔙 Back — same id, same handler, now styled as the first breadcrumb.
     +   '<button class="tw-wm-back" id="tw-back">' + _nxIcoStar + ' Ruin Exchange</button>'
     +   '<span class="sep">›</span>'
-    +   '<span class="here">District Nodes</span>'
+    +   '<span class="here">City Nodes</span>'
     // 🏙 Connected settlers: jump straight into their node city from the map.
     +   (function () {
           try {
@@ -214405,7 +214890,7 @@ function renderTerritoryWars() {
       <div class="tw-node-drawer tw-aaa${_drawerAnim}" data-node-id="${escapeHtml(selNode.id)}">
         <span class="cd-corner tl"></span><span class="cd-corner tr"></span><span class="cd-corner bl"></span><span class="cd-corner br"></span>
         <div class="tw-drawer-crumb-bar">
-          <span class="tw-drawer-crumb-text">DISTRICT NODES · ${escapeHtml(_dRegion.toUpperCase())}</span>
+          <span class="tw-drawer-crumb-text">CITY NODES · ${escapeHtml(_dRegion.toUpperCase())}</span>
           <span class="tw-drawer-barcode">||||||||||||||||</span>
           <button class="tw-drawer-close" id="tw-drawer-close">✕</button>
         </div>
@@ -214455,7 +214940,7 @@ function renderTerritoryWars() {
         <div class="tw-wm-bays">${_twBays}</div>
         <div class="nx-actions">
           <button class="tw-new-node-btn nx-abtn nx-blue" id="tw-node-list-btn" title="Browse every district node by name and jump straight to it — open to all players">${_nxIco.list} Node List</button>
-          <button class="tw-new-node-btn nx-abtn nx-gold" id="tw-tutorial-btn" title="Replay the District Nodes lesson">${_nxIco.tutorial} Tutorial</button>
+          <button class="tw-new-node-btn nx-abtn nx-gold" id="tw-tutorial-btn" title="Replay the City Nodes lesson">${_nxIco.tutorial} Tutorial</button>
           ${_isAdm ? `<button class="tw-new-node-btn nx-abtn nx-green" id="tw-admin-new-node">${_nxIco.plus} New Node</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn nx-abtn nx-plain" id="tw-admin-reset-nodes" title="Reset EVERY node to a fresh reconstruction baseline (200,000 civilians, 0 roads/buildings) and randomize each node's resource. Keeps names, positions and roads.">${_nxIco.reset} Reset Nodes</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn nx-abtn nx-blue" id="tw-admin-connect-roads" title="Connect every roadless node to its nearest neighbours and light the new supply lines">${_nxIco.roads} Connect Roads</button>` : ''}
@@ -214523,7 +215008,7 @@ function renderTerritoryWars() {
 
   document.getElementById('tw-back').onclick = () => {
     App._twSelectedNode = null;
-    // District Nodes lives under the Ruin Exchange hub (corp territory +
+    // City Nodes lives under the Ruin Exchange hub (corp territory +
     // economy), so Back returns THERE — not to the Battle Hall.
     App.titleHub = 'exchange';
     App.screen = 'title';
@@ -214629,6 +215114,28 @@ function renderTerritoryWars() {
     // Partial re-render: just swap active tab classes without full render
     document.querySelectorAll('[data-ndtab]').forEach(t => t.classList.toggle('is-active', t.dataset.ndtab === App._twNodeTab));
     document.querySelectorAll('.tw-nd-tab-panel').forEach(p => p.classList.toggle('is-active', p.id === 'tw-nd-' + App._twNodeTab));
+    // Keep the chosen tab in view when the rail did have to scroll.
+    try { b.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {}
+  });
+  /* 🖱 WHEEL → HORIZONTAL on the tab rail.
+     The rail now wraps, so this is a fallback for the case where a single tab
+     is still too wide to fit. Browsers only map a vertical wheel onto a
+     horizontal scroll when Shift is held, which is why the rail read as
+     completely stuck — there was no way to reach the later tabs at all.
+     Only intercepts when there is genuinely something to scroll, so a wheel
+     over the rail still scrolls the page when the rail fits. */
+  document.querySelectorAll('.tw-drawer-tabs').forEach(rail => {
+    if (rail._wheelWired) return;
+    rail._wheelWired = true;
+    rail.addEventListener('wheel', (e) => {
+      const over = rail.scrollWidth - rail.clientWidth;
+      if (over <= 1) return;                       // nothing hidden — let the page scroll
+      const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (!d) return;
+      const before = rail.scrollLeft;
+      rail.scrollLeft += d;
+      if (rail.scrollLeft !== before) e.preventDefault();   // only swallow it if it moved
+    }, { passive: false });
   });
   // 🜏 Dark Event banner cards — clicking jumps to the Sabotage Node so
   // the player can attack it immediately.
@@ -214681,9 +215188,25 @@ function renderTerritoryWars() {
   });
 
   // ── Admin: save node changes ──
+  /* 🔒 ONE GATE FOR EVERY MAP-EDITING ACTION.
+     All of these buttons were rendered behind `_isAdm ? ... : ''` and their
+     handlers then trusted that entirely — none of them re-checked. Conditional
+     rendering is presentation, not authorisation: a stale drawer rendered while
+     the admin flag was still true, a partial re-render, or a single line in the
+     console all produce a live button. These write to the SHARED map every
+     player loads, so the check belongs on the action itself.
+     ⚠ This is still CLIENT-side. It stops the UI being the hole; it is not a
+     substitute for the row-level policy on the server. */
+  function _twAdminGate(what) {
+    if (typeof isAdmin === 'function' && isAdmin()) return true;
+    try { showToast('🔒 Admins only — ' + what + ' is disabled for players.', 3000); } catch (e) {}
+    return false;
+  }
+
   const _admSaveBtn = document.getElementById('tw-admin-save-btn');
   if (_admSaveBtn) {
     _admSaveBtn.onclick = () => {
+      if (!_twAdminGate('editing a node')) return;
       const tf = _twForge(); const ts = _twState();
       const node = tf.nodes.find(n => n.id === App._twSelectedNode);
       if (!node) return;
@@ -214718,14 +215241,31 @@ function renderTerritoryWars() {
   const _admDelBtn = document.getElementById('tw-admin-del-btn');
   if (_admDelBtn) {
     _admDelBtn.onclick = async () => {
+      if (!_twAdminGate('deleting a node')) return;
       const nid = App._twSelectedNode; if (!nid) return;
       const tf = _twForge();
       const node = tf.nodes.find(n => n.id === nid);
       if (!(await gcConfirm(`Delete "${node ? node.name : nid}"? This cannot be undone.`))) return;
       tf.nodes = tf.nodes.filter(n => n.id !== nid);
       tf.nodes.forEach(n => { n.connections = (n.connections || []).filter(c => c !== nid); });
+      /* 🧹 Purge the deleted node's SUPPLY ROUTES too.
+         Route keys are `[idA, idB].sort().join('|')`, so every lit route that
+         touched this node was left behind pointing at an id that no longer
+         exists. They are saved to localStorage AND published to card_catalog,
+         so the orphans reached every player and the marketing site, and they
+         accumulated with each deletion. */
+      if (Array.isArray(tf.litRoutes)) {
+        tf.litRoutes = tf.litRoutes.filter(k => String(k).split('|').indexOf(nid) < 0);
+        try { localStorage.setItem('hg_tw_litRoutes', JSON.stringify(tf.litRoutes)); } catch (e) {}
+      }
+      // Release the cloud ownership row as well, or the node stays "owned" by a
+      // player who can no longer see it and the id is unusable if it is reissued.
+      try { if (typeof tw_cloudClearNodeOwner === 'function') Promise.resolve(tw_cloudClearNodeOwner(nid)).catch(() => {}); } catch (e) {}
       App._twSelectedNode = null;
       try { saveForge(); } catch (e) {}
+      // Push the removal live — otherwise other players keep the deleted node
+      // until the next unrelated publish happens to fire.
+      try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
       showToast('🗑 Node deleted', 2500);
       render();
     };
@@ -214757,6 +215297,7 @@ function renderTerritoryWars() {
   const _connectBtn = document.getElementById('tw-admin-connect-roads');
   if (_connectBtn) {
     _connectBtn.onclick = () => {
+      if (!_twAdminGate('rewiring roads')) return;
       const res = _twConnectOrphanRoads({ light: true, k: 2 });
       if (res.connected) {
         showToast(`🛣 Connected ${res.connected} node${res.connected === 1 ? '' : 's'} · lit ${res.routes} new route${res.routes === 1 ? '' : 's'}. Pushing live…`, 4500);
@@ -214788,6 +215329,7 @@ function renderTerritoryWars() {
           box2.innerHTML = rows.map(r => `<button class="tw-owner-result" data-uid="${escapeHtml(r.user_id)}" data-name="${escapeHtml(r.name)}"><span>${escapeHtml(r.name)}</span>${r.sub ? `<span class="tw-owner-sub">${escapeHtml(r.sub)}</span>` : ''}</button>`).join('');
           box2.querySelectorAll('.tw-owner-result').forEach(b => b.onclick = () => {
             const uid = b.dataset.uid, name = b.dataset.name;
+            if (!_twAdminGate('assigning a node owner')) return;
             Promise.resolve(tw_cloudSetNodeOwner(_selId, uid, name)).then(ok => {
               if (ok) {
                 showToast('✅ ' + name + ' now owns ' + _selName + ' — they can publish sponsor ads on it.', 4200);
@@ -214803,6 +215345,7 @@ function renderTerritoryWars() {
   const _ownerClearEl = document.getElementById('tw-owner-clear');
   if (_ownerClearEl) {
     _ownerClearEl.onclick = () => {
+      if (!_twAdminGate('removing a node owner')) return;
       const _selId = App._twSelectedNode;
       Promise.resolve(tw_cloudClearNodeOwner(_selId)).then(ok => {
         if (ok) { showToast('Owner removed from this node.', 2400); try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {} render(); }
@@ -214814,6 +215357,7 @@ function renderTerritoryWars() {
   const _pubMapBtn = document.getElementById('tw-admin-publish-map');
   if (_pubMapBtn) {
     _pubMapBtn.onclick = async () => {
+      if (!_twAdminGate('publishing the map')) return;
       _pubMapBtn.disabled = true;
       _pubMapBtn.textContent = '⏳ Publishing…';
       try {
@@ -214837,8 +215381,24 @@ function renderTerritoryWars() {
   const _admNewBtn = document.getElementById('tw-admin-new-node');
   if (_admNewBtn) {
     _admNewBtn.onclick = () => {
+      /* 🔒 ADMIN-ONLY — checked HERE, not just by hiding the button.
+         The button was rendered conditionally and the handler trusted that
+         completely, so anything that produced the element produced a working
+         New Node: a stale render after an admin flag changed, a partial
+         re-render, or one line in the console. Creating a node writes to the
+         SHARED map every player sees, so the check belongs on the action. */
+      if (!(typeof isAdmin === 'function' && isAdmin())) {
+        showToast('🔒 Only admins can create nodes.', 3000);
+        return;
+      }
       const tf = _twForge();
-      const nextNum = tf.nodes.length + 1;
+      // ⚠ IDs were minted from nodes.length + 1, so deleting a node and adding
+      //   another handed out an ID that already existed — two nodes sharing an
+      //   id, and every lookup by id hitting whichever came first. Walk up from
+      //   the count until an unused id is found instead.
+      let nextNum = tf.nodes.length + 1;
+      const _taken = new Set(tf.nodes.map(n => n && n.id));
+      while (_taken.has('N-' + String(nextNum).padStart(2, '0'))) nextNum++;
       const newId = 'N-' + String(nextNum).padStart(2, '0');
       // Drop the new node into the emptiest open spot so it never overlaps an
       // existing node (computed BEFORE the push, from the current node set).
@@ -214884,6 +215444,7 @@ function renderTerritoryWars() {
   const _admResetBtn = document.getElementById('tw-admin-reset-nodes');
   if (_admResetBtn) {
     _admResetBtn.onclick = () => {
+      if (!_twAdminGate('resetting every node')) return;
       let ok = true;
       try { ok = confirm('Reset EVERY node to a fresh reconstruction baseline (200,000 civilians, 0 roads / 0 buildings) and RANDOMIZE each node\'s resource?\n\nNode names, positions and roads are kept.'); } catch (e) {}
       if (!ok) return;
@@ -214907,12 +215468,12 @@ function renderTerritoryWars() {
   // which was an admin economy-testing tool; the day clock still advances on
   // its own shared 24h schedule). Open to every player.
   const _twTutBtn = document.getElementById('tw-tutorial-btn');
-  if (_twTutBtn) _twTutBtn.onclick = () => _abxReplayLesson('District Nodes');
+  if (_twTutBtn) _twTutBtn.onclick = () => _abxReplayLesson('City Nodes');
   // ✦ AUTO-SHOW on arrival. The War Map is entered by calling
   // renderTerritoryWars() DIRECTLY (the tile deliberately bypasses the render
   // dispatch chain so a crash here can't bounce the player back to the title),
   // which means the per-screen hooks in _renderImpl — page guides AND tutorial
-  // auto-open — never ran for this screen. That's why the District Nodes
+  // auto-open — never ran for this screen. That's why the City Nodes
   // lesson didn't play on arrival. Fire them here; both are idempotent
   // (openOnce honours the per-player seen flag, and each bails if an overlay
   // is already up), so the re-renders this screen does are harmless.
@@ -216080,7 +216641,7 @@ function _twBindNodeEditor(t) {
     if (App && App.screen === 'territoryWars') {
       try { renderTerritoryWars(); } catch (e) {
         console.warn('[TW] renderTerritoryWars error', e);
-        try { if (typeof showToast === 'function') showToast('⚠ District Nodes error — ' + String(e && e.message || e).slice(0, 80), 3500); } catch (_) {}
+        try { if (typeof showToast === 'function') showToast('⚠ City Nodes error — ' + String(e && e.message || e).slice(0, 80), 3500); } catch (_) {}
       }
       return; // ALWAYS return — never let _origRender reset the screen
     }
@@ -216177,5 +216738,29 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
      other static asset. -->
 <script type="module" src="src/community/index.js?v=120h3"></script>
+<!-- battle-board round 1 -->
+<!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
+     Loaded LAST so the board plate styles win by ordinary source order; the
+     stylesheet contains no !important and relies on that.
+     ⚠ combat.js only DEFINES window.FEBattle. It is deliberately NOT wired into
+       the damage path yet: executeMove is a pure synchronous reducer
+       ((state, attacker, target, move) => newState), so an async cut-away has to
+       be awaited at a CALLER, not inside it. Wiring it in the wrong place would
+       either desync state or swallow the animation.
+     ⚠ Do NOT delete the mdQuake keyframes while doing that. Despite the name it
+       is a SUMMON effect — _vfxQuakeSummon fires on a 30+ ATK unit landing
+       ('heavy landing'), not on an attack. It has nothing to do with combat.
+     Bump ?v= on every change — the service worker caches these like any asset. -->
+<link rel="stylesheet" href="src/battle/board.css?v=120k6">
+<link rel="stylesheet" href="src/battle/units.css?v=120k6">
+<link rel="stylesheet" href="src/battle/chrome.css?v=120k6">
+<link rel="stylesheet" href="src/battle/alive.css?v=120k6">
+<script src="src/battle/combat.js?v=120k7" defer></script>
+<script src="src/battle/targeting.js?v=120k6" defer></script>
+<link rel="stylesheet" href="src/sprites/frames.css?v=120k3">
+<script src="src/battle/fit.js?v=120k6" defer></script>
+<link rel="stylesheet" href="src/sprites/idle.css?v=120k4">
+<script src="src/sprites/frames.js?v=120k3" defer></script>
+<script src="src/sprites/idle.js?v=120k4" defer></script>
 </body>
 </html>

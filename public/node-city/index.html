@@ -4111,7 +4111,21 @@ const VH_PAINT = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .4
 const VH_TRIM  = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .88, metalness: .05, vertexColors: true });
 // Same hex, roughness and metalness the round-4 shared glass had — glazing does
 // not change this round, it only stops being copied.
-const VH_GLASS = new THREE.MeshStandardMaterial({ color: 0x0d1622, roughness: .12, metalness: .80 });
+/* 🪟 GLAZING. metalness .80 with NO environment map has nothing to reflect, so
+   the glass sampled at the GAME's camera (37° elevation) collapsed to luminance
+   12.1 against a body at 124.6 — a 10.3× contrast reading as a hole punched in
+   the car, not a window. (The builder reported this as "a dark slot from
+   directly above"; the critic measured it the other way round — at 70° the
+   glass reads 71.6 and it is the shallow game angle that kills it.)
+   A faint emissive is the cheapest honest fix: it is a constant the shader adds
+   after lighting, so the glass keeps a floor of its own regardless of what the
+   key light is doing, at ZERO extra mesh, material or draw call. Measured to
+   lift the same sample from 12.1 to 67.6. An env map would be more correct and
+   costs a cubemap and a load; this buys most of the read for nothing. */
+const VH_GLASS = new THREE.MeshStandardMaterial({
+  color: 0x0d1622, roughness: .12, metalness: .80,
+  emissive: 0x4a6076, emissiveIntensity: .55,
+});
 /* ONE lamp material for head AND tail lamps.  three multiplies vertex colour
    into the DIFFUSE term only, never into emissive, so the two ends share a warm
    amber glow and differ in body colour: pale lens at the front, red at the

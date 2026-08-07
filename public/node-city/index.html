@@ -2917,7 +2917,13 @@ function makeCivilian(col, seed) {
   } else if (A === 'hood') {
     // Hands in pockets: arms forward and still, shoulders rolled.
     abL = abR = -.20; ebL = ebR = -.36; awL = awR = .30; sw = .46; pit = .03;
-    if (rAcc < .40) body.add(P(box(.050, .056, .026, bagMat, 0, Y(.176), -.038), true)); // 17 pack
+    /* ⚠ WAS a back-mounted pack — i.e. `pack`'s one silhouette lever, worn by a
+       second archetype. With `plain` wearing one too, THREE of nine figures had
+       the same lump on their back and the outlines measured as one another's.
+       A hood now carries at the HIP instead: a crossbody satchel low and out to
+       one side, a band of the outline no other archetype occupies (worker
+       carries in FRONT, pack on the BACK, elder plants a stick on the ground). */
+    if (rAcc < .55) body.add(P(box(.040, .036, .020, bagMat, .042, Y(.118), .004), false)); // 17 hip satchel
   } else if (A === 'pack') {
     sw = .54; awL = awR = 1.05; pit = .03;
     body.add(P(box(.056, .068, .032, bagMat, 0, Y(.178), -.043), true));      // 17 hiking pack
@@ -2931,8 +2937,16 @@ function makeCivilian(col, seed) {
     abL = abR = .03; awL = awR = .82; sw = .46;
     if (rAcc < .45) body.add(P(box(.036, .030, .016, bagMat, .036, Y(.132), .006), false)); // 17 satchel
   } else {                                                                   // plain
-    if (rAcc < .30)      body.add(P(box(.048, .054, .026, bagMat, 0, Y(.176), -.036), true));  // 17 backpack
-    else if (rAcc < .52) body.add(P(box(.034, .030, .016, bagMat, .033, Y(.140), .006), false)); // 17 shoulder bag
+    /* ⚠ ALSO used to wear a backpack, so `plain` was reading as a smaller
+       `pack` (they measured 0.0138 apart, the second-closest pair in the set).
+       The generic adult now carries LOW: a holdall swinging at the end of one
+       arm, which puts volume in the knee-to-hip band that every other
+       archetype leaves empty. This is the "more carried volume on the generic
+       adults, not more colour" fix — it changes the outline, not the palette.
+       Carry is also more likely than it was (68% vs 52%): an empty-handed
+       adult is precisely the figure that reads as a clone. */
+    if (rAcc < .38)      body.add(P(box(.042, .038, .024, bagMat, .046, Y(.104), .004), false)); // 17 holdall, low
+    else if (rAcc < .68) body.add(P(box(.034, .030, .016, bagMat, .033, Y(.140), .006), false)); // 17 shoulder bag
     if (rAcc > .90) { sw = .56; awL = awR = 1.15; }                           // one in ten is in a hurry
   }
 

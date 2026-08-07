@@ -36356,7 +36356,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120l2';
+  window.BUILD_VERSION = 'v120l3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -201425,7 +201425,7 @@ function _openNodeCity(nodeId) {
   if (document.getElementById('node-city-frame')) return;
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120l2';
+  f.src = 'node-city/index.html?v=120l3';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -201458,7 +201458,15 @@ function _openNodeCity(nodeId) {
 }
 function _closeNodeCity() {
   const f = document.getElementById('node-city-frame');
-  if (f) { f.style.opacity = '0'; setTimeout(() => { try { f.remove(); } catch (e) {} }, 400); }
+  /* ⚠ DROP THE ID IMMEDIATELY, not in 400ms. _openNodeCity early-returns when a
+     frame with this id exists, so during the fade-out the city was still
+     "open": leaving the owner's city and going straight back to your own
+     returned early and left the OWNER'S iframe on screen — the exact "it shows
+     the city I manage" report. Clearing the id first means a re-open always
+     builds a fresh iframe (and so re-runs loadCity for the right city), while
+     the old one is still free to finish fading. */
+  if (f) { try { f.id = 'node-city-frame-closing'; } catch (e) {}
+           f.style.opacity = '0'; setTimeout(() => { try { f.remove(); } catch (e) {} }, 400); }
   const x = document.getElementById('node-city-close');
   if (x) { try { x.remove(); } catch (e) {} }
   const b = document.getElementById('node-city-owner');
@@ -201490,6 +201498,11 @@ window.cityNodeBoost = async function (nodeId, pct) {
 function _cityStateUserId() {
   try { return App._cityOwnerId || (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; }
 }
+/* 🏛 The city iframe needs this too — its LOCAL cache must be namespaced per
+   city, or a mayor's autosave of the owner's layout lands in the same slot the
+   mayor's own city reads from. Exposed (not duplicated) so there is exactly one
+   answer to "whose city is this" on both sides of the bridge. */
+window.cityStateUserId = _cityStateUserId;
 window.cityStateSave = async function (json) {
   try {
     if (!Cloud || !Cloud.ready || !Cloud.client || !Profile.cloud || !Profile.cloud.userId) return;
@@ -203096,7 +203109,11 @@ function _uiAutoScale() {
   try {
     const ov = localStorage.getItem('hg_uiscale');
     let z = 1;
-    const frameUp = ['node-city-frame', 'deck-vault-frame', 'pack-opener-frame', 'base-builder-frame'].some((id) => document.getElementById(id))
+    // 'node-city-frame-closing' is the SAME iframe mid fade-out (see
+    // _closeNodeCity — the id is dropped immediately so a re-open can build a
+    // fresh frame). It must stay exempt for those 400ms or the auto-scale
+    // zooms a fullscreen iframe on its way out.
+    const frameUp = ['node-city-frame', 'node-city-frame-closing', 'deck-vault-frame', 'pack-opener-frame', 'base-builder-frame'].some((id) => document.getElementById(id))
       || document.querySelector('iframe[id*="jb"], iframe[id*="just"]');
     // EXEMPT every fullscreen SELF-FITTING screen: battle (svh budgets), the
     // Master-Duel main menu + VS screen (viewport-clamped compositions), and

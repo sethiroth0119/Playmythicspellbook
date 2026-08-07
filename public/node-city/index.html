@@ -1138,16 +1138,71 @@ const MythicCityBridge = (() => {
   // City persistence. localStorage always; cloud when connected.
   // In Claude Code: parent implements cityStateSave/cityStateLoad against
   // the city_state table (SQL provided).  ◄◄ CLAUDE CODE HOOK ◄◄
-  const CITYKEY = 'mythic_node_city_v1';
+  /* 🔴 ONE KEY PER CITY — NOT ONE KEY GLOBALLY.
+     ─────────────────────────────────────────────────────────────────────────
+     This was a single shared key, and a hired MAYOR broke it in the worst way.
+     A mayor manages the OWNER's city, so:
+       1. opening it loaded the owner's layout (correct — the cloud row is keyed
+          on the owner),
+       2. the city then autosaved that layout into the ONE local key, silently
+          overwriting the mayor's own city in localStorage,
+       3. and when the mayor next opened THEIR OWN city, any cloud miss — no row
+          yet, offline, an RLS hiccup — fell through to that key and handed them
+          the OWNER'S CITY as their own... which then saved back into the mayor's
+          cloud row. The report was "it shows the city I manage"; the real damage
+          was that it could overwrite the mayor's own city with someone else's.
+     Two independent guards, because either alone still loses in some mode:
+       • the key is NAMESPACED per target user, so two cities cannot share a slot;
+       • every payload is STAMPED with the user it belongs to and a mismatched
+         stamp is refused on read, which also covers 'message' mode (where the
+         id cannot be resolved synchronously) and legacy unstamped saves. */
+  const CITYKEY_BASE = 'mythic_node_city_v1';
+  // Resolved late, never cached: which city is on screen changes between opens.
+  function cityOwnerId() {
+    try {
+      // Deliberately NOT gated on B.mode. Whether the city is namespaced should
+      // depend on whether we can IDENTIFY the city, not on which transport the
+      // bridge negotiated — and `P` is only assigned when same-origin parent
+      // detection succeeded, so falling back to window.parent keeps this working
+      // in every case where the answer is actually reachable. A cross-origin
+      // parent throws on property access and is caught, which is the honest
+      // "unknown" answer; standalone has no mayors, so unknown is correct there.
+      const src = P || ((typeof window !== 'undefined' && window.parent !== window) ? window.parent : window);
+      if (src && typeof src.cityStateUserId === 'function') return src.cityStateUserId() || null;
+    } catch (e) {}
+    return null;
+  }
+  function cityKey() { const u = cityOwnerId(); return u ? (CITYKEY_BASE + ':' + u) : CITYKEY_BASE; }
+
   B.saveCity = async (json) => {
-    try { localStorage.setItem(CITYKEY, json); } catch (e) {}
+    try {
+      // Stamp the owner INTO the payload so a read can always self-check, even
+      // from the un-namespaced legacy key.
+      let out = json;
+      const u = cityOwnerId();
+      if (u) { try { const o = JSON.parse(json); o._owner = u; out = JSON.stringify(o); } catch (e) {} }
+      localStorage.setItem(cityKey(), out);
+    } catch (e) {}
     if (B.mode === 'parent') { try { if (typeof P.cityStateSave === 'function') P.cityStateSave(json); } catch (e) {} }
     else if (B.mode === 'message') { rpc('saveCity', { json }); }
   };
   B.loadCity = async () => {
     if (B.mode === 'parent') { try { if (typeof P.cityStateLoad === 'function') { const j = await P.cityStateLoad(); if (j) return j; } } catch (e) {} }
     else if (B.mode === 'message') { const j = await rpc('loadCity', {}); if (j) return j; }
-    try { return localStorage.getItem(CITYKEY); } catch (e) { return null; }
+    // Local fallback — must never hand back a DIFFERENT person's city.
+    try {
+      const want = cityOwnerId();
+      const raw = localStorage.getItem(cityKey());
+      if (!raw) return null;
+      if (want) {
+        let stamp = null;
+        try { stamp = (JSON.parse(raw) || {})._owner || null; } catch (e) {}
+        // A stamp that disagrees is someone else's city. Refuse it and start
+        // clean rather than show — and then overwrite — the wrong city.
+        if (stamp && stamp !== want) return null;
+      }
+      return raw;
+    } catch (e) { return null; }
   };
 
   window.MythicCityBridge = B;

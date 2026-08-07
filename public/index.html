@@ -8384,6 +8384,27 @@
   }
   .hand-strip-count .hsc-hand { font-weight: 800; color: var(--gold-bright); }
   .hand-strip-count .hsc-deck { color: var(--ink-dim); font-family: 'Roboto Mono','Courier New',monospace; font-size: 0.68rem; }
+
+  /* ✋ HAND-LIMIT DISCARD. Sits ABOVE the hand strip (z 2200 vs its 50) because
+     the cards being chosen from are the ones IN that strip — a picker rendered
+     under them would be unclickable. No cancel button on purpose: the turn
+     cannot legally end over the limit, so an escape hatch would just be a way
+     to skip the rule. */
+  .dsc-backdrop { position: fixed; inset: 0; z-index: 2200; display: flex;
+    align-items: center; justify-content: center; padding: 1rem;
+    background: rgba(6,3,14,0.82); backdrop-filter: blur(3px); }
+  .dsc-panel { max-width: min(1100px, 96vw); max-height: 90vh; overflow: auto;
+    background: linear-gradient(180deg, rgba(28,18,50,0.98), rgba(12,7,22,0.98));
+    border: 2px solid rgba(255,176,112,0.6); border-radius: 14px;
+    padding: 1rem 1.1rem; box-shadow: 0 24px 70px rgba(0,0,0,0.85); }
+  .dsc-head { text-align: center; margin-bottom: 0.8rem; }
+  .dsc-title { font-family: 'Cinzel', serif; font-size: 1.15rem; font-weight: 800; color: #ffb070; }
+  .dsc-cards { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: center; }
+  .dsc-pick { cursor: pointer; border-radius: 10px; transition: transform .15s ease, filter .15s ease; }
+  .dsc-pick:hover { transform: translateY(-8px) scale(1.04);
+    filter: drop-shadow(0 10px 20px rgba(0,0,0,.8)) drop-shadow(0 0 12px rgba(255,140,60,.75)); }
+  /* The hand card inside is a <button>; it must not eat the pick's click. */
+  .dsc-pick .hand-card { pointer-events: none; }
   .hand-strip-cards {
     display: flex;
     gap: 0.55rem;
@@ -36356,7 +36377,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120l3';
+  window.BUILD_VERSION = 'v120l4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -97740,7 +97761,10 @@ const endPlayerTurn = (state) => {
   return s;
 };
 const endAITurn = (state) => {
-  let s = { ...state, turn: 'player', turnNumber: state.turnNumber + 1, selection: null };
+  // ✋ HAND LIMIT for the AI — applied to the state BEFORE the turn flips, so
+  // the discard belongs to the turn that is ending, exactly like the player's.
+  let s = (typeof _aiEnforceHandLimit === 'function') ? _aiEnforceHandLimit(state) : state;
+  s = { ...s, turn: 'player', turnNumber: s.turnNumber + 1, selection: null };
   // ⏳ END-OF-TURN GRAVE ABILITIES — processed as the owner's next turn begins
   // (equivalent timing, one clean hook): any grave card with an 'endTurn'
   // graveActive fires automatically. "While in the graveyard, at the end of
@@ -130034,6 +130058,7 @@ function _renderBattleImmediateImpl() {
       ${App.replayViewing ? '' : renderCounterPrompt()}
       ${App.replayViewing ? '' : renderAssaultPrompt()}
       ${App.replayViewing ? '' : renderSacrificePrompt()}
+      ${App.replayViewing ? '' : renderDiscardPrompt()}
       ${App.replayViewing ? '' : renderVerdictPrompt()}
       ${App.replayViewing ? '' : (typeof renderHandRevealModal === 'function' ? renderHandRevealModal() : '')}
       ${App.replayViewing ? '' : (typeof renderCallLockBanner === 'function' ? renderCallLockBanner() : '')}
@@ -130162,6 +130187,7 @@ function _renderBattleImmediateImpl() {
   if (typeof bindHackPrompt === 'function') bindHackPrompt();
   if (typeof bindAssaultPrompt === 'function') bindAssaultPrompt();
   if (typeof bindSacrificePrompt === 'function') bindSacrificePrompt();
+  if (typeof bindDiscardPrompt === 'function') bindDiscardPrompt();
   if (typeof bindVerdictPrompt === 'function') bindVerdictPrompt();
   if (typeof bindHandRevealModal === 'function') bindHandRevealModal();
   if (typeof bindCallLockPrompt === 'function') bindCallLockPrompt();
@@ -132537,6 +132563,92 @@ function _tickTunneledCards(s, who) {
 // ⚔ SACRIFICE TARGETING UI
 // ============================================================
 // Rendered inside the battle overlay when App.ui.sacrificeTargeting is set.
+/* ✋ HAND LIMIT — you may hold more than this DURING your turn, but you cannot
+   END the turn over it: the excess is discarded, and YOU choose what goes.
+   ⚠ Distinct from the DRAW cap (8), which stops a draw from overfilling the
+     hand mid-turn. Both exist on purpose: the draw cap stops runaway card
+     advantage, this stops hoarding. Keeping them equal would make the discard
+     unreachable, so the numbers differ deliberately. */
+const HAND_LIMIT = 7;
+// How many cards this side must pitch to end the turn legally. 0 = none.
+function _handOverflow(state, side) {
+  try {
+    const h = (state && state[side] && state[side].hand) || [];
+    return Math.max(0, h.length - HAND_LIMIT);
+  } catch (e) { return 0; }
+}
+/* The player picks; nothing is auto-chosen for them. Blocks the turn end until
+   the hand is legal — cancelling would just let them skip the rule. */
+function renderDiscardPrompt() {
+  const dp = App.ui && App.ui.discardPrompt;
+  if (!dp) return '';
+  const s = App.state;
+  if (!s || !s.player) return '';
+  const need = Math.max(0, _handOverflow(s, 'player'));
+  if (need <= 0) return '';
+  const cards = (s.player.hand || []).map((c, i) => {
+    let face = '';
+    try { face = renderHandCard(c, { large: false }); } catch (e) { face = '<div class="hand-card"></div>'; }
+    return `<div class="dsc-pick" data-discard-iid="${escapeHtml(String(c.instanceId || ('idx_' + i)))}" title="Discard ${escapeHtml(c.name || 'this card')}">${face}</div>`;
+  }).join('');
+  return `
+    <div class="dsc-backdrop" id="discard-backdrop">
+      <div class="dsc-panel">
+        <div class="dsc-head">
+          <div class="dsc-title">✋ Hand limit — discard ${need} card${need === 1 ? '' : 's'}</div>
+          <div class="small-text ink-dim">You may hold up to <strong>${HAND_LIMIT}</strong> at the end of your turn. You have <strong>${(s.player.hand || []).length}</strong>. Click a card to send it to your graveyard.</div>
+        </div>
+        <div class="dsc-cards">${cards}</div>
+      </div>
+    </div>`;
+}
+function bindDiscardPrompt() {
+  document.querySelectorAll('[data-discard-iid]').forEach(el => {
+    el.onclick = () => {
+      try {
+        const iid = el.getAttribute('data-discard-iid');
+        const s = App.state; if (!s || !s.player) return;
+        const hand = (s.player.hand || []).slice();
+        let idx = hand.findIndex(c => c && String(c.instanceId) === iid);
+        if (idx < 0 && iid.indexOf('idx_') === 0) idx = parseInt(iid.slice(4), 10);
+        if (!(idx >= 0) || !hand[idx]) return;
+        const [card] = hand.splice(idx, 1);
+        App.state = { ...s, player: { ...s.player, hand, graveyard: [...(s.player.graveyard || []), card] },
+          log: [...(s.log || []), { msg: `✋ Hand limit — ${card.name || 'a card'} discarded.`, color: 'amber' }] };
+        try { if (typeof playSfx === 'function') playSfx('cardPlace'); } catch (e) {}
+        // Still over? Keep the prompt up. Otherwise clear it and finish the
+        // end-turn the player already asked for.
+        if (_handOverflow(App.state, 'player') > 0) { renderBattle(); return; }
+        App.ui.discardPrompt = null;
+        renderBattle();
+        try { onEndTurn(); } catch (e) {}
+      } catch (e) { try { console.warn('[discard]', e); } catch (_) {} }
+    };
+  });
+}
+/* The AI never gets a picker. It pitches its cheapest cards, so the rule costs
+   it something real without stalling the turn on a prompt nobody can answer. */
+function _aiEnforceHandLimit(state) {
+  try {
+    let over = _handOverflow(state, 'ai');
+    if (over <= 0) return state;
+    const hand = (state.ai.hand || []).slice();
+    const grave = [...(state.ai.graveyard || [])];
+    const log = [...(state.log || [])];
+    while (over-- > 0 && hand.length) {
+      let worst = 0;
+      for (let i = 1; i < hand.length; i++) {
+        const a = (hand[i] && hand[i].cost) | 0, b = (hand[worst] && hand[worst].cost) | 0;
+        if (a < b) worst = i;
+      }
+      const [c] = hand.splice(worst, 1);
+      grave.push(c);
+      log.push({ msg: `✋ Enemy discards ${c && c.name ? c.name : 'a card'} to the hand limit.`, color: 'red' });
+    }
+    return { ...state, ai: { ...state.ai, hand, graveyard: grave }, log };
+  } catch (e) { return state; }
+}
+
 function renderSacrificePrompt() {
   const st = App.ui && App.ui.sacrificeTargeting;
   if (!st) return '';
@@ -138110,7 +138222,7 @@ function renderHandStrip() {
   return `
     <div class="hand-strip no-meta">
       <div class="hand-strip-count" title="Cards in hand / hand limit · cards left in deck">
-        <span class="hsc-hand">🂠 ${_handCount}/8</span>
+        <span class="hsc-hand"${_handCount > HAND_LIMIT ? ' style="color:#ffb070"' : ''}>🂠 ${_handCount}/${HAND_LIMIT}${_handCount > HAND_LIMIT ? ' ⚠' : ''}</span>
         <span class="hsc-deck">Deck ${s.player.deck.length}</span>
       </div>
       <div class="hand-strip-cards">${cards || '<div class="empty-list-note" style="margin:0">No cards. Drawing fatigue!</div>'}</div>
@@ -138167,7 +138279,7 @@ function renderHandColumn(opts) {
     <div class="hand-column ${embedded ? 'embedded' : ''}">
       <div class="hand-column-head">
         <div class="hand-strip-title">Your Hand</div>
-        <div class="hand-strip-sub">${s.player.hand.length}/8 · Deck ${s.player.deck.length}</div>
+        <div class="hand-strip-sub" style="${s.player.hand.length > HAND_LIMIT ? 'color:#ffb070;font-weight:700' : ''}">${s.player.hand.length}/${HAND_LIMIT}${s.player.hand.length > HAND_LIMIT ? ' ⚠' : ''} · Deck ${s.player.deck.length}</div>
       </div>
       <div class="hand-column-cards">${cards || '<div class="empty-list-note" style="margin:0">No cards. Drawing fatigue!</div>'}</div>
       ${endBtn}
@@ -144962,6 +145074,43 @@ function onEndTurn() {
     showToast('🕓 Waiting for opponent…', 1500);
     return;
   }
+  /* ✋ HAND LIMIT. Held here, BEFORE anything else in the end-turn sequence
+     runs, because everything below this point either mutates state or hands
+     control to the opponent — a discard resolved afterwards would be discarding
+     out of the NEXT turn. The prompt re-enters this function once the hand is
+     legal (see bindDiscardPrompt), so the player's click still ends the turn.
+     ⚠ Deliberately NOT applied when the turn timer force-ended the turn: a
+       player who is AFK or out of time cannot answer a picker, and blocking
+       there would hang the match instead of ending it. In that one case the
+       overflow is auto-pitched, cheapest first, exactly like the AI. */
+  try {
+    if (!App.state || !App.state.gameOver) {
+      const over = _handOverflow(App.state, 'player');
+      if (over > 0) {
+        if (App._turnTimerFired) {
+          let s = App.state;
+          const hand = (s.player.hand || []).slice();
+          const grave = [...(s.player.graveyard || [])];
+          const log = [...(s.log || [])];
+          let n = over;
+          while (n-- > 0 && hand.length) {
+            let worst = 0;
+            for (let i = 1; i < hand.length; i++) if (((hand[i] && hand[i].cost) | 0) < ((hand[worst] && hand[worst].cost) | 0)) worst = i;
+            const [c] = hand.splice(worst, 1); grave.push(c);
+            log.push({ msg: `✋ Out of time — ${c && c.name ? c.name : 'a card'} discarded to the hand limit.`, color: 'amber' });
+          }
+          App.state = { ...s, player: { ...s.player, hand, graveyard: grave }, log };
+        } else {
+          App.ui.discardPrompt = { need: over };
+          try { showToast(`✋ Hand limit ${HAND_LIMIT} — discard ${over} card${over === 1 ? '' : 's'} to end your turn.`, 3600); } catch (e) {}
+          renderBattle();
+          return;
+        }
+      } else if (App.ui && App.ui.discardPrompt) {
+        App.ui.discardPrompt = null;   // hand became legal by other means
+      }
+    }
+  } catch (e) { try { console.warn('[handLimit]', e); } catch (_) {} }
   // ⏱ TURN-TIMER FORFEIT — track consecutive 2:00 turn-timer misses. The timer
   // sets App._turnTimerFired = true ONLY when it auto-ends the turn (the clock
   // ran out). A "miss" is a genuinely IDLE turn — the player did nothing for the

@@ -154,6 +154,82 @@ revoke all on function public.boe_transfer(numeric, text) from public;
 grant execute on function public.boe_transfer(numeric, text) to authenticated;
 
 -- --------------------------------------------------------------------------
+-- 1b. THE SAME MOVE FOR AZA (👑) — user_profiles.sovereigns <-> bank_of_ethos.aza
+--
+--     ⚠ AZA IS BOUGHT WITH REAL MONEY, so this is the more serious of the two.
+--     It had the identical split-write: sovereigns are client-held and pushed,
+--     the bank's aza column is server-side and durable, so every way the client
+--     failed to save the debit minted premium currency.
+--
+--     A SEPARATE FUNCTION, not an overload of boe_transfer(). PostgREST resolves
+--     overloads by argument NAMES and a same-arity ambiguity is a genuine
+--     footgun; a distinct name also means the already-deployed 2-arg Cinder
+--     calls keep working untouched.
+-- --------------------------------------------------------------------------
+create or replace function public.boe_transfer_aza(p_amount numeric, p_dir text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $a$
+declare
+  v_uid  uuid := auth.uid();
+  v_amt  numeric := floor(coalesce(p_amount, 0));
+  v_sov  numeric;
+  v_bank numeric;
+begin
+  if v_uid is null then
+    return jsonb_build_object('ok', false, 'error', 'not_authenticated');
+  end if;
+  if v_amt is null or v_amt <= 0 then
+    return jsonb_build_object('ok', false, 'error', 'bad_amount');
+  end if;
+  if p_dir is null or p_dir not in ('deposit', 'withdraw') then
+    return jsonb_build_object('ok', false, 'error', 'bad_direction');
+  end if;
+
+  insert into public.bank_of_ethos (user_id, balance)
+  values (v_uid, 0)
+  on conflict (user_id) do nothing;
+
+  select coalesce(aza, 0) into v_bank from public.bank_of_ethos where user_id = v_uid for update;
+  select coalesce(sovereigns, 0) into v_sov from public.user_profiles where user_id = v_uid for update;
+  if v_sov is null then
+    return jsonb_build_object('ok', false, 'error', 'no_profile');
+  end if;
+
+  if p_dir = 'deposit' then
+    if v_sov < v_amt then
+      return jsonb_build_object('ok', false, 'error', 'insufficient_wallet',
+                                'aza', v_sov, 'bank_aza', v_bank);
+    end if;
+    update public.user_profiles set sovereigns = coalesce(sovereigns,0) - v_amt where user_id = v_uid;
+    update public.bank_of_ethos  set aza        = coalesce(aza,0)        + v_amt where user_id = v_uid;
+  else
+    if v_bank < v_amt then
+      return jsonb_build_object('ok', false, 'error', 'insufficient_bank',
+                                'aza', v_sov, 'bank_aza', v_bank);
+    end if;
+    update public.bank_of_ethos  set aza        = coalesce(aza,0)        - v_amt where user_id = v_uid;
+    update public.user_profiles  set sovereigns = coalesce(sovereigns,0) + v_amt where user_id = v_uid;
+  end if;
+
+  insert into public.boe_ledger (user_id, kind, aza, note)
+  values (v_uid, p_dir || '_aza',
+          case when p_dir = 'deposit' then v_amt else -v_amt end,
+          'atomic ' || p_dir || ' (aza)');
+
+  select coalesce(sovereigns,0) into v_sov  from public.user_profiles where user_id = v_uid;
+  select coalesce(aza,0)        into v_bank from public.bank_of_ethos  where user_id = v_uid;
+
+  return jsonb_build_object('ok', true, 'aza', v_sov, 'bank_aza', v_bank, 'moved', v_amt, 'dir', p_dir);
+end;
+$a$;
+
+revoke all on function public.boe_transfer_aza(numeric, text) from public;
+grant execute on function public.boe_transfer_aza(numeric, text) to authenticated;
+
+-- --------------------------------------------------------------------------
 -- 2. Authoritative read, so the client can resync both sides after a move
 --    without trusting its own cached numbers.
 -- --------------------------------------------------------------------------

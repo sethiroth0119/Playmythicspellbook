@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120t4';
+  window.BUILD_VERSION = 'v120t5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -58425,6 +58425,41 @@ async function _boeTransfer(amount, dir) {
   } catch (e) {}
   return { ok: true, gems: Profile.gems, balance: BankEthos.balance, moved: amt };
 }
+/* 👑 THE SAME ATOMIC MOVE FOR AZA. Aza is bought with REAL MONEY, so this was
+   the more serious of the two holes — and it had the identical shape: the
+   sovereigns debit was client-held and pushed, the bank's aza column was
+   server-side and durable, so any failure to persist the debit minted premium
+   currency. Server owns both sides; we adopt what it returns. Fails closed. */
+async function _boeTransferAza(amount, dir) {
+  const amt = Math.floor(Number(amount) || 0);
+  if (!(amt > 0)) return { ok: false, reason: 'bad_amount' };
+  if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
+    return { ok: false, reason: 'signin' };
+  }
+  let r;
+  try { r = await Cloud.client.rpc('boe_transfer_aza', { p_amount: amt, p_dir: dir }); }
+  catch (e) { return { ok: false, reason: 'network' }; }
+  if (r && r.error) {
+    const _code = ((r.error.code || '') + ''), _msg = ((r.error.message || '') + '');
+    const _absent = /PGRST202/i.test(_code) || /PGRST202|does not exist|schema cache|Could not find the function/i.test(_msg);
+    return { ok: false, reason: _absent ? 'not_installed' : (_msg || 'rpc_failed') };
+  }
+  const j = r && r.data;
+  if (!j || j.ok !== true) {
+    try {
+      if (j && typeof j.aza === 'number') { Profile.sovereigns = Math.max(0, Math.round(j.aza)); saveProfile(); }
+      if (j && typeof j.bank_aza === 'number') BankEthos.aza = Math.max(0, Math.round(j.bank_aza));
+    } catch (e) {}
+    return { ok: false, reason: (j && j.error) || 'refused' };
+  }
+  // ADOPT, never compute.
+  try {
+    Profile.sovereigns = Math.max(0, Math.round(Number(j.aza) || 0));
+    BankEthos.aza      = Math.max(0, Math.round(Number(j.bank_aza) || 0));
+    saveProfile();
+  } catch (e) {}
+  return { ok: true, aza: Profile.sovereigns, bankAza: BankEthos.aza, moved: amt };
+}
 function _boeTransferWhy(reason, amt) {
   if (reason === 'not_installed') return '⚠ Banking is temporarily disabled — the secure transfer update has not been applied yet. Nothing was moved.';
   if (reason === 'signin') return '⚠ Sign in to use the bank. Nothing was moved.';
@@ -58483,18 +58518,8 @@ async function boeDepositAza(amt) {
   if (_boeNeedCols()) return false;
   if (!(amt > 0)) { showToast('Enter an amount.'); return false; }
   if ((Profile.sovereigns || 0) < amt) { showToast('Need ' + amt.toLocaleString() + ' 👑 — you have ' + (Profile.sovereigns || 0).toLocaleString() + '.', 4200); return false; }
-  if (!spendSovereigns(amt)) { showToast('Not enough Aza.'); return false; }
-  try { saveProfile(); } catch (e) {}
-  {
-    const mv = await _boeAdjust(0, amt);
-    if (!mv.ok) { addSovereigns(amt); try { saveProfile(); } catch (_) {} showToast('⚠ Aza deposit failed — refunded, nothing was moved.', 4200); return false; }
-  }
-  /* Same window as the Cinder deposit — see that note. */
-  try {
-    if (typeof cloudSyncProfile === 'function' && Cloud && Cloud.ready && Profile.cloud && Profile.cloud.signedIn) {
-      await cloudSyncProfile();
-    }
-  } catch (e) { try { console.warn('[boe] aza deposit cloud push failed', e); } catch (_) {} }
+  const mv = await _boeTransferAza(amt, 'deposit');
+  if (!mv.ok) { showToast(_boeTransferWhy(mv.reason, amt), 5200); return false; }
   try { boeLog('deposit', 0, amt, 'Aza deposit to bank'); } catch (e) {}
   showToast('🏦 Deposited ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
   return true;
@@ -58505,21 +58530,15 @@ async function boeWithdrawAza(amt) {
   if (_boeNeedCols()) return false;
   if (!(amt > 0)) { showToast('Enter an amount.'); return false; }
   if (BankEthos.aza < amt) { showToast('Bank Aza is ' + BankEthos.aza.toLocaleString() + ' 👑.', 4000); return false; }
-  // Same contract as the Cinder withdrawal: confirmed debit BEFORE the wallet
-  // is credited, or the same lost-update race mints Aza instead of Cinder.
-  {
-    const mv = await _boeAdjust(0, -amt);
-    if (!mv.ok) { showToast('⚠ Aza withdrawal failed — nothing was moved.', 3600); return false; }
+  // One atomic server move — the split write minted Aza the same way it minted
+  // Cinder, and Aza is bought with real money.
+  const mv = await _boeTransferAza(amt, 'withdraw');
+  if (!mv.ok) {
+    showToast(mv.reason === 'insufficient_bank'
+      ? '⚠ Withdrawal declined — bank Aza is ' + (BankEthos.aza | 0).toLocaleString() + ' 👑. Nothing was moved.'
+      : _boeTransferWhy(mv.reason, amt), 5200);
+    return false;
   }
-  addSovereigns(amt); try { saveProfile(); } catch (e) {}
-  /* Same reason as the deposit: the wallet change must reach the SERVER before
-     the player can reload, or a refresh restores the pre-move balance from the
-     cloud while the bank keeps its side. See the deposit for the full note. */
-  try {
-    if (typeof cloudSyncProfile === 'function' && Cloud && Cloud.ready && Profile.cloud && Profile.cloud.signedIn) {
-      await cloudSyncProfile();
-    }
-  } catch (e) { try { console.warn('[boe] cloud push failed', e); } catch (_) {} }
   try { boeLog('withdraw', 0, -amt, 'Aza withdrawal'); } catch (e) {}
   showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
   return true;

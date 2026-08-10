@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120t3';
+  window.BUILD_VERSION = 'v120t4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -193900,6 +193900,31 @@ function ppBuyCompany() {
   return true;
 }
 
+/* 💰 WHAT A CAR IS ACTUALLY WORTH — the same formula _ppGenListing prices from
+   (baseValue × condition × wear), recomputed from the vehicle's OWN fields so a
+   car that has been bought, moved or re-listed still values correctly.
+   ⚠ This exists because NPC buyers used to pay a figure rolled with NO reference
+     to the car at all — see the cap in ppSellToBuyer. */
+function _ppFairValue(v) {
+  try {
+    const base = Number(v && v.baseValue) || 0;
+    if (!(base > 0)) return Math.max(0, Math.round(Number(v && v.price) || 0));
+    const condMult = (typeof PP_COND_MULT !== 'undefined' && PP_COND_MULT[v.condition]) || 1;
+    const wear = Math.max(0.5, 1 - (Number(v.mileage) || 0) / 600000);
+    return Math.max(1000, Math.round(base * condMult * wear));
+  } catch (e) { return Math.max(0, Math.round(Number(v && v.price) || 0)); }
+}
+/* 💵 NPCs PAY MARKET VALUE. Not the buyer's rolled figure, not a margin over
+   market — market, full stop. `buyer.reward` is now only flavour/intent (what
+   they SAY they are shopping with); the money that actually changes hands is
+   the car's worth. This is the rule that kills the arbitrage: if an NPC can
+   never pay more than a car is worth, buying low and flipping to an NPC cannot
+   produce a profit at all, so there is no loop to farm. Profit has to come from
+   sourcing below market on the auction floor, which is the actual game. */
+function _ppBuyerPayout(buyer, v) {
+  return Math.max(0, _ppFairValue(v));
+}
+
 // --- Generators ---
 function _ppGenListing() {
   const base = _ppPick(PP_VEHICLE_NAMES);
@@ -194179,6 +194204,19 @@ function ppSellToBuyer(buyerId, vehicleId) {
       return false;
     }
   }
+  /* 🔴 THE DEALERSHIP MONEY PRINTER, AND THE CAP THAT CLOSES IT.
+     `buyer.reward` is rolled in _ppGenBuyer as `_ppBetween(40,380)*1000 × 1.10`
+     (×1.35 VIP) — i.e. 44,000–513,000 Cinder decided with NO REFERENCE TO THE
+     CAR. This function then paid it for ANY type-matching vehicle. So the loop
+     was: buy the cheapest car on the auction floor, hand it to a big buyer,
+     collect up to half a million, repeat. That is the reported "sell cars to
+     the NPCs and get millions".
+     The buyer's roll is now only what they are WILLING to spend; what they
+     actually pay is capped at the car's real worth plus a dealer's margin, so
+     a junk car fetches junk money no matter who is asking. Selling a genuinely
+     valuable car still pays well — the profit now comes from sourcing good
+     stock cheaply, which is the actual game. */
+  const payout = _ppBuyerPayout(buyer, v);
   // FUEL CHECK — the user's specific ask.
   const fuel = (v.fuelLevel | 0);
   if (fuel < 60) {
@@ -194186,7 +194224,7 @@ function ppSellToBuyer(buyerId, vehicleId) {
       _ppLog('warn', buyer.name + ' complained about low fuel on ' + v.name + ' — bought anyway for less.');
       showToast(buyer.name + ': "Tank\'s near empty. I\'ll take it but you eat 15% off the top."', 5200);
       // 15% price reduction.
-      Profile.gems = (Profile.gems | 0) + Math.round(buyer.reward * 0.85);
+      Profile.gems = (Profile.gems | 0) + Math.round(payout * 0.85);
     } else {
       _ppLog('bad', buyer.name + ' walked — ' + v.name + ' had only ' + fuel + '% fuel.');
       showToast(buyer.name + ': "Tank\'s dry. Fill it up next time. I\'m out."', 5200);
@@ -194197,13 +194235,15 @@ function ppSellToBuyer(buyerId, vehicleId) {
       return false;
     }
   } else {
-    Profile.gems = (Profile.gems | 0) + buyer.reward;
+    Profile.gems = (Profile.gems | 0) + payout;
   }
+  // What actually changed hands — the fuel branch above pays 85% of it.
+  const _paid = (fuel < 60) ? Math.round(payout * 0.85) : payout;
   p.lot = p.lot.filter(x => x.id !== vehicleId);
   p.buyers = p.buyers.filter(b => b.id !== buyerId);
   p.reputation = Math.min(100, p.reputation + (buyer.isVip ? 4 : 2));
-  _ppLog('good', 'Sold ' + v.name + ' to ' + buyer.name + ' for ' + buyer.reward.toLocaleString() + ' 🔥.');
-  showToast('💵 Sold ' + v.name + ' to ' + buyer.name + ' — +' + buyer.reward.toLocaleString() + ' 🔥', 4800);
+  _ppLog('good', 'Sold ' + v.name + ' to ' + buyer.name + ' for ' + _paid.toLocaleString() + ' 🔥 (market value).');
+  showToast('💵 Sold ' + v.name + ' to ' + buyer.name + ' — +' + _paid.toLocaleString() + ' 🔥', 4800);
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
   return true;
 }

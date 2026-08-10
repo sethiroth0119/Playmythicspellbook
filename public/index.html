@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120t2';
+  window.BUILD_VERSION = 'v120t3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -58376,37 +58376,70 @@ async function boeApplyMaintenance() {
     showToast('🏦 Bank of Ethos maintenance — ' + charged.toLocaleString() + ' 🔥 (' + periods + '× 30-day fee) → Foundation Reserve.' + (charged < due ? ' Account underfunded.' : ''), 6000);
   } catch (e) {}
 }
+/* 🔒 ATOMIC MONEY MOVE (sql/022). The ONLY correct way to move Cinder between
+   wallet and bank. The server owns BOTH sides and does the arithmetic; we adopt
+   what it returns and never compute a balance ourselves.
+
+   ⚠ WHY THIS REPLACED THE OLD FLOW, AND WHY IT IS NOT "ANOTHER ORDERING FIX":
+   a deposit used to be a CLIENT debit (Profile.gems + saveProfile) plus a
+   SERVER credit. Not atomic. The credit always landed; the debit only landed if
+   the client persisted it — so every way the client fails to save was a mint:
+   the debounce losing to a refresh, the freshness guard restoring an older
+   snapshot, and saveProfile() early-returning ENTIRELY in a non-writer tab
+   (MultiTab.amWriter === false), which no amount of awaiting can fix because
+   the state was never written. v120t2 awaited the push and it kept duping.
+   Now there is no client-held debit to lose.
+
+   ⚠ FAILS CLOSED. If sql/022 is not applied the RPC is absent and this refuses
+   the move. That disables banking until the migration is run, which is the
+   correct trade against an exploit that minted ~2.13 BILLION Cinder. */
+async function _boeTransfer(amount, dir) {
+  const amt = Math.floor(Number(amount) || 0);
+  if (!(amt > 0)) return { ok: false, reason: 'bad_amount' };
+  if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
+    return { ok: false, reason: 'signin' };
+  }
+  let r;
+  try { r = await Cloud.client.rpc('boe_transfer', { p_amount: amt, p_dir: dir }); }
+  catch (e) { return { ok: false, reason: 'network' }; }
+  if (r && r.error) {
+    const _code = ((r.error.code || '') + ''), _msg = ((r.error.message || '') + '');
+    const _absent = /PGRST202/i.test(_code) || /PGRST202|does not exist|schema cache|Could not find the function/i.test(_msg);
+    return { ok: false, reason: _absent ? 'not_installed' : (_msg || 'rpc_failed') };
+  }
+  const j = r && r.data;
+  if (!j || j.ok !== true) {
+    // The server told us the truth about both sides even when refusing — adopt
+    // it so the UI stops showing a fiction.
+    try {
+      if (j && typeof j.gems === 'number') { Profile.gems = Math.max(0, Math.round(j.gems)); saveProfile(); }
+      if (j && typeof j.balance === 'number') BankEthos.balance = Math.max(0, Math.round(j.balance));
+    } catch (e) {}
+    return { ok: false, reason: (j && j.error) || 'refused' };
+  }
+  // ADOPT, never compute. These are the authoritative post-move values.
+  try {
+    Profile.gems = Math.max(0, Math.round(Number(j.gems) || 0));
+    BankEthos.balance = Math.max(0, Math.round(Number(j.balance) || 0));
+    saveProfile();
+  } catch (e) {}
+  return { ok: true, gems: Profile.gems, balance: BankEthos.balance, moved: amt };
+}
+function _boeTransferWhy(reason, amt) {
+  if (reason === 'not_installed') return '⚠ Banking is temporarily disabled — the secure transfer update has not been applied yet. Nothing was moved.';
+  if (reason === 'signin') return '⚠ Sign in to use the bank. Nothing was moved.';
+  if (reason === 'insufficient_wallet') return '⚠ Not enough Cinder in your wallet. Nothing was moved.';
+  if (reason === 'insufficient_bank') return '⚠ Not enough in your bank. Nothing was moved.';
+  if (reason === 'no_profile') return '⚠ Your profile has not synced yet — try again in a moment. Nothing was moved.';
+  return '⚠ Transfer failed — nothing was moved. Try again.';
+}
 async function boeDeposit(amt) {
   amt = Math.floor(amt);
   if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
   if (!(amt > 0)) { showToast('Enter an amount.'); return false; }
   if ((Profile.gems || 0) < amt) { showToast('Need ' + amt.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 4200); return false; }
-  if (!spendGems(amt)) { showToast('Not enough Cinders'); return false; }
-  try { saveProfile(); } catch (e) {}
-  // Mirror of the withdrawal: an unconfirmed credit used to LOSE the player's
-  // Cinder when a concurrent chain overwrote it. Refund unless the bank
-  // confirms it actually took the money.
-  {
-    const mv = await _boeAdjust(amt, 0);
-    if (!mv.ok) {
-      addGems(amt); try { saveProfile(); } catch (_) {}
-      showToast('⚠ Deposit failed — refunded, nothing was moved.', 4200);
-      return false;
-    }
-  }
-  /* 🔴 DUPLICATION FIX. saveProfile() only writes LOCALSTORAGE; the cloud push
-     is 4-SECOND DEBOUNCED. So the money had already left the wallet on this
-     device and arrived in the bank server-side, while the CLOUD profile still
-     held the pre-deposit Cinder. Refresh inside that window and the wallet was
-     restored from the cloud with the bank credit intact — deposit, refresh,
-     repeat, unbounded Cinder. Reported live: repeated ~250,000 deposits.
-     The debit must reach the server before the player can reload, so this
-     awaits the real profile push instead of trusting the debounce. */
-  try {
-    if (typeof cloudSyncProfile === 'function' && Cloud && Cloud.ready && Profile.cloud && Profile.cloud.signedIn) {
-      await cloudSyncProfile();
-    }
-  } catch (e) { try { console.warn('[boe] deposit cloud push failed', e); } catch (_) {} }
+  const mv = await _boeTransfer(amt, 'deposit');
+  if (!mv.ok) { showToast(_boeTransferWhy(mv.reason, amt), 5200); return false; }
   try { boeLog('deposit', amt, 0, 'Cinder deposit to bank'); } catch (e) {}
   showToast('🏦 Deposited ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
   return true;
@@ -58424,27 +58457,17 @@ async function boeWithdraw(amt) {
     showToast(msg, 6000);
     return false;
   }
-  // 🔴 THE ORDER HERE IS THE FIX. The bank must be debited and CONFIRMED before
-  //    a single Cinder reaches the wallet. It used to decrement optimistically
-  //    and call addGems() regardless, so a write that got overwritten by a
-  //    concurrent chain still paid out — that was the farm.
-  const mv = await _boeAdjust(-amt, 0);
+  /* Withdraw is the same split-write in reverse — bank debit server-side, wallet
+     credit client-side — so it minted the same way whenever the credit outlived
+     a lost debit. One atomic server move, then adopt what it returns. */
+  const mv = await _boeTransfer(amt, 'withdraw');
   if (!mv.ok) {
-    showToast(mv.reason === 'insufficient_or_missing'
+    showToast(mv.reason === 'insufficient_bank'
       ? '⚠ Withdrawal declined — the bank now shows 🔥 ' + (BankEthos.balance | 0).toLocaleString() + '. Nothing was moved.'
-      : '⚠ Withdrawal failed — nothing was moved. Try again.', 4200);
+      : _boeTransferWhy(mv.reason, amt), 5200);
     return false;
   }
-  addGems(amt); try { saveProfile(); } catch (e) {}
   try { boeLog('withdraw', -amt, 0, 'Cinder withdrawal'); } catch (e) {}
-  /* Same reason as the deposit: the wallet change must reach the SERVER before
-     the player can reload, or a refresh restores the pre-move balance from the
-     cloud while the bank keeps its side. See the deposit for the full note. */
-  try {
-    if (typeof cloudSyncProfile === 'function' && Cloud && Cloud.ready && Profile.cloud && Profile.cloud.signedIn) {
-      await cloudSyncProfile();
-    }
-  } catch (e) { try { console.warn('[boe] cloud push failed', e); } catch (_) {} }
   showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
   return true;
 }

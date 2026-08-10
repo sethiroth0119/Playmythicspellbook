@@ -742,6 +742,8 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
   const corp = econ && econ.corp;
   const roster = (econ && Array.isArray(econ.roster)) ? econ.roster : [];
   const requests = (econ && Array.isArray(econ.requests)) ? econ.requests : [];
+  // Accepted, but their membership row does not exist yet (see sql/016).
+  const pendingHires = (econ && Array.isArray(econ.pendingHires)) ? econ.pendingHires : [];
   const amOwner = !!(econ && econ.amOwner);
   const cap = (econ && econ.memberCap) || 25;
   const count = (econ && econ.memberCount) || roster.length;
@@ -898,7 +900,7 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
             </div>
             <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>Roster</div>
             <div className="col" style={{ gap: 4, maxHeight: '34vh', overflow: 'auto' }}>
-              {roster.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Just you so far.</div>}
+              {roster.length === 0 && pendingHires.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Just you so far.</div>}
               {roster.map(m => (
                 <div key={m.userId} className="row" style={{ justifyContent: 'space-between', padding: '8px 12px', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
                   <span>{m.name} <span className="mono muted" style={{ fontSize: 10.5 }}>· {m.role}</span></span>
@@ -911,6 +913,13 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
                       <button className="btn sm" onClick={() => act({ kind: 'corpKick', userId: m.userId })} style={{ color: 'var(--toxic)' }}>Remove</button>
                     </span>
                   )}
+                </div>
+              ))}
+              {pendingHires.map(m => (
+                <div key={'ph-' + m.userId} className="row" title="Hired. Their membership is created the first time they sync."
+                     style={{ justifyContent: 'space-between', padding: '8px 12px', border: '1px dashed var(--line-soft)', borderRadius: 4, opacity: .72 }}>
+                  <span>{m.name} <span className="mono muted" style={{ fontSize: 10.5 }}>· {m.role}</span></span>
+                  <span className="mono muted" style={{ fontSize: 10, letterSpacing: '.1em' }}>JOINING…</span>
                 </div>
               ))}
             </div>

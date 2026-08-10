@@ -452,7 +452,18 @@ function _phCanvas(def){
   x.strokeStyle=r.css; x.lineWidth=14; x.strokeRect(10,10,492,748);
   x.strokeStyle='rgba(255,255,255,0.14)'; x.lineWidth=2; x.strokeRect(26,26,460,716);
   x.textAlign='center';
-  x.fillStyle='rgba(255,255,255,0.15)'; x.font='190px Georgia'; x.fillText('✦',256,330);
+  // 🃏 The card's authored glyph, not a generic sparkle. A card whose art
+  // cannot be textured (see the CORS note in the game's _packOpenerArtPair)
+  // must still read as ITSELF — an icon + framed name + rarity, never a blank
+  // box and never a broken image.
+  const _gl = (def && def.icon) ? String(def.icon) : '✦';
+  x.fillStyle='rgba(255,255,255,0.22)';
+  x.font=(_gl==='✦'?'190px':'170px')+" Georgia, 'Segoe UI Emoji', 'Apple Color Emoji', sans-serif";
+  x.fillText(_gl,256,330);
+  if(def && def.type){
+    x.fillStyle='rgba(243,231,200,0.45)'; x.font='italic 26px Georgia';
+    x.fillText(String(def.type).toUpperCase(),256,382);
+  }
   x.fillStyle='#f3e7c8'; x.font='bold 44px Georgia';
   const words=String((def&&def.name)||'Card').split(' '); let line='',lines=[];
   for(const w of words){ const t=line?line+' '+w:w; if(x.measureText(t).width>420&&line){lines.push(line);line=w;}else line=t; }
@@ -809,7 +820,11 @@ function showCardDetail(def){
   if(!def) return;
   const el=document.getElementById('cardDetail'); if(!el) return;
   const r=_rar(def.rarity);
-  el.querySelector('.cd-art').src = def.art || _phCanvas(def).toDataURL('image/png');
+  // `artDom` is the card's real art even when it is NOT CORS-readable — a
+  // plain <img> has no such restriction, only the WebGL texture path does. So
+  // a card that shows the framed fallback in the 3D fan still shows its actual
+  // picture the moment the player taps it.
+  el.querySelector('.cd-art').src = def.artDom || def.art || _phCanvas(def).toDataURL('image/png');
   el.querySelector('.cd-name').textContent = def.name || 'Card';
   const rr=el.querySelector('.cd-rarity'); rr.textContent = r.label; rr.style.color = r.css;
   const chips=[];
@@ -873,6 +888,8 @@ window.addEventListener('message', async (e)=>{
       name:  (c && c.name)   ? String(c.name) : 'Card',
       rarity:(c && RARITY[c.rarity]) ? c.rarity : 'common',
       art:   (c && c.art)    ? String(c.art)  : '',
+      artDom:(c && c.artDom) ? String(c.artDom): '',
+      icon:  (c && c.icon)   ? String(c.icon) : '',
       type:  (c && c.type)   ? String(c.type) : '',
       cost:  (c && c.cost!=null) ? c.cost : '',
       element:(c && c.element) ? String(c.element) : '',

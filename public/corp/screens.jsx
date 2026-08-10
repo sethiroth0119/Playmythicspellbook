@@ -1092,7 +1092,13 @@ function OperationsScreen({ econ }) {
   const [cat, setCat] = useState('All');
   const corp = econ && econ.corp;
   const hasCorp = !!corp;
-  const treasury = corp ? '2,438,120 Aza coin' : 'NO CORPORATION';
+  // ⏳ "We have not asked the server yet" is NOT "you have no corporation".
+  // The parent sets econ.corpChecked once corpEnsure() has actually completed a
+  // lookup; until then a real owner would be shown a RESTRICTED banner telling
+  // them individuals cannot own industry, which is both wrong and alarming.
+  // This only softens the MESSAGE — the buy button stays disabled either way.
+  const checking = !!(econ && econ.signedIn && !corp && !econ.corpChecked);
+  const treasury = corp ? '2,438,120 Aza coin' : (checking ? 'CHECKING…' : 'NO CORPORATION');
   const ql = q.trim().toLowerCase();
   const rows = OPERATIONS.filter(o =>
     (cat === 'All' || o.cat === cat) &&
@@ -1138,7 +1144,13 @@ function OperationsScreen({ econ }) {
         </div>
       </div>
 
-      {!hasCorp && (
+      {checking && (
+        <div className="card flat" style={{ padding: 14, marginBottom: 14 }}>
+          <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>Checking</div>
+          <div style={{ fontSize: 13 }}>Looking up your corporation registration…</div>
+        </div>
+      )}
+      {!hasCorp && !checking && (
         <div className="card flat" style={{ padding: 14, marginBottom: 14, borderColor: 'var(--toxic-soft)' }}>
           <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--toxic)', marginBottom: 4 }}>Restricted</div>
           <div style={{ fontSize: 13 }}>Only <b>corporations</b> can own, fund and operate industry — individuals cannot. Found or join one via <b>Guild &amp; Hiring</b>, then operations unlock here.</div>
@@ -1205,19 +1217,23 @@ function OperationsScreen({ econ }) {
               {!owned && (
                 <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
                   <span className="muted">Startup (Treasury)</span>
-                  <span className="mono">{oe ? oe.startup.toLocaleString() + ' 🔥' : o.startup}</span>
+                  <span className="mono">{oe ? (oe.startup | 0).toLocaleString() + ' 🔥' : o.startup}</span>
                 </div>
               )}
+              {/* ⚠ These read straight off the bridged OPS_ECON row. A row that
+                  is missing one of these numbers used to throw inside render and
+                  React unmounted the WHOLE app — a blank Just Business, not a
+                  missing line. `| 0` costs nothing and cannot crash. */}
               {oe && (
                 <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
                   <span className="muted">Wages</span>
-                  <span className="mono">{oe.salaryPerWorkerHr.toLocaleString()} 🔥 / worker·hr</span>
+                  <span className="mono">{(oe.salaryPerWorkerHr | 0).toLocaleString()} 🔥 / worker·hr</span>
                 </div>
               )}
               {oe && (
                 <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
                   <span className="muted">Output</span>
-                  <span className="mono">{oe.ratePerWorkerHr.toLocaleString()} 🔥 / worker·hr</span>
+                  <span className="mono">{(oe.ratePerWorkerHr | 0).toLocaleString()} 🔥 / worker·hr</span>
                 </div>
               )}
               {oe && oe.yields && (
@@ -1247,6 +1263,18 @@ function OperationsScreen({ econ }) {
                       </span>
                     </div>
                   ) : null}
+                  {/* 🏙 SITED IN A CITY. The other half of the ownership gate: the
+                      build menu tells a city player that operations exist, and this
+                      tells an operations player that the city exists. An unsited op
+                      is unchanged in every number above — siting only ever adds. */}
+                  <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                    <span className="muted">🏙 City plot</span>
+                    <span className="mono" style={{ color: owned.sited ? 'var(--aza)' : 'var(--muted, #8a8272)' }}>
+                      {owned.sited
+                        ? (owned.siteEffPct > 0 ? 'SITED — +' + owned.siteEffPct + '% output' : 'SITED')
+                        : 'not sited — place it in your city for a plot bonus'}
+                    </span>
+                  </div>
                   <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
                     <span className="muted">Net accrued</span>
                     <span className="mono" style={{ color: 'var(--aza)' }}>+{(owned.net | 0).toLocaleString()} 🔥</span>
@@ -1272,13 +1300,13 @@ function OperationsScreen({ econ }) {
             </div>
 
             {!hasCorp && (
-              <button className="btn" disabled style={{ width: '100%', marginTop: 10, opacity: 0.7, cursor: 'default' }}>Corporation required</button>
+              <button className="btn" disabled style={{ width: '100%', marginTop: 10, opacity: 0.7, cursor: 'default' }}>{checking ? 'Checking your corporation…' : 'Corporation required'}</button>
             )}
             {hasCorp && !owned && (
               <button className="btn primary" disabled={!isOwner} title={isOwner ? '' : 'Founder/CEO only'}
                 style={{ width: '100%', marginTop: 10, opacity: isOwner ? 1 : 0.6, cursor: isOwner ? 'pointer' : 'default' }}
                 onClick={() => { if (isOwner) act({ kind: 'opFound', op: o.id }); }}>
-                {isOwner ? ('🏦 Fund from Treasury · ' + (oe ? oe.startup.toLocaleString() : '?') + ' 🔥') : 'Founder/CEO funds this'}
+                {isOwner ? ('🏦 Fund from Treasury · ' + (oe ? (oe.startup | 0).toLocaleString() : '?') + ' 🔥') : 'Founder/CEO funds this'}
               </button>
             )}
             {hasCorp && owned && (

@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
 <style>
-  html,body{margin:0;padding:0;height:100%;background:transparent!important;overflow:hidden}
-  #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
+  html,body{margin:0;padding:0;height:100%;background:transparent!important;background-image:none!important;overflow:hidden}
+  #fx{position:fixed;inset:0;display:block;background:transparent!important;pointer-events:none}
 </style>
 <title>Weather Realms</title>
-<script>window.WX_BUILD="v119h0-weather";</script>
+<script>window.WX_BUILD="v120r7-weather";</script>
 </head>
 <body>
 <canvas id="fx"></canvas>
@@ -18,82 +18,219 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    WEATHER REALMS — 21 battlefield weathers, each with its own painter.
 
-   The previous pass drove every weather through ONE generic particle loop, so
-   they all read as "some dots" and at low intensity they read as nothing at all
-   (0.6% of pixels painted at 10%). Each weather now has a hand-written painter:
-   rain has depth layers and splashes, the tornado has a real funnel, the flood
-   only floods the LOWER BAND so units stay readable, the moons hang to the
-   RIGHT of the board.
+   ⚠ THIS LAYER IS ON SCREEN FOR MINUTES, not for seven seconds. Two things
+   follow and they drive every decision in this file:
 
-   INTENSITY is meaningful across its whole range. It scales three things at
-   once — how many elements, how strong they draw, and how fast they move — and
-   it has a floor, so 10% is "light rain" rather than "nothing":
-        dens = 0.35 + 0.65·i      alpha = 0.55 + 0.45·i      speed = 0.7 + 0.6·i
+     1. It does more to set the game's tone than any cinematic — and it has the
+        most opportunity to quietly wash the board out, because the player has
+        to READ CARDS THROUGH IT for whole turns.
+     2. Per-frame cost matters. Nothing here may allocate per particle. (The
+        old fire_rain built 220 linear gradients EVERY FRAME; that alone was
+        0.75 ms/frame, four times the cost of the heaviest rain.)
 
-   The no-white guarantees are unchanged: FX.rgba clamps every colour, the frame
-   carries one alpha ceiling, and there is no full-screen light fill anywhere.
+   ───────────────────────────────────────────────────────────────────────────
+   THE CEILING STRUCTURE — two sealed passes, not one clamp
+   ───────────────────────────────────────────────────────────────────────────
+   The old build carried ONE ceiling at 0.72 over everything, and the metric
+   that blessed it (`whiteWash`: alpha > 200 AND rgb > 200) could not fire:
+   0.72 × 255 = 183.6, so the test was unreachable by construction. It would
+   have reported 0.00% on a solid white screen. It is not used here.
+
+   What is measured instead is the luminance the PLAYER SEES:
+        compLum(BL) = BL·(1−a) + lum(rgb)·a
+   at board brightnesses 40 / 90 / 140. ⚠ The weather iframe composites at
+   opacity **1.0** — index.html raises it to '1' after the stamp check and the
+   host div carries no opacity — so unlike the cinematics there is no 0.9 wrap
+   to hide behind. The raw frame IS what lands on the board.
+
+   So the frame is composited in two sealed passes:
+
+     AIR  — ceiling 0.36. Every light-emitting thing: sky grade, fog banks,
+            glows, motes, streaks, halos, shafts, embers, the lightning lift.
+            No particle density can escape it: with a bounded to 0.36 and the
+            engine's colour clamp holding luminance under ~237, the worst pixel
+            this pass can put on a board of 140 is 175, and on a board of 40 is
+            111. That is a structural guarantee, not a tuning value.
+     FORM — ceiling 0.66. Line work and solid bodies ONLY: the sun/moon disc,
+            the tornado funnel, the flood surface, the runic circles, the clock
+            dial, the near-plane. These are strokes and fills at sub-0.6 written
+            alpha in mid-tone colour — they are what makes a weather
+            IDENTIFIABLE at a glance, and they are physically incapable of
+            covering the frame the way an atmosphere can.
+
+   `seal()` is FX.applyCeiling(AIR/FORM) called between the passes; FX.mount's
+   own applyCeiling(FORM) finishes the frame, so AIR lands at exactly 0.36.
+   destination-in multiplies DESTINATION ALPHA ONLY — colour is untouched, so
+   it cannot divide colour up into white the way a premultiplied ceiling did.
+   Core 2D blending, no GPU capability to gate on.
+
+   TWO CONSEQUENCES THAT ONLY SHOW UP UNDER MEASUREMENT (inherited from the
+   cinematics, both confirmed here):
+     • The seal clamps the DARK as hard as the light. A 0.20 vignette written
+       into a pass about to be multiplied by 0.36 arrives at 0.07 — i.e.
+       nothing. Every dark value in the AIR pass is pre-compensated by
+       IK = 1/AIR.
+     • Atmosphere light must be WRITTEN BRIGHT. Writing 0.25 into that same
+       pass puts 0.09 on the board — that is mechanically what "the effects
+       feel thin" always was. Light carries a gain of LG and the seal is the
+       guarantee that density still cannot escape.
+
+   ───────────────────────────────────────────────────────────────────────────
+   INTENSITY is meaningful across its whole range — it scales how many elements
+   there are, how strongly they draw, how fast they move, AND how strong the
+   structural pieces are (the flood band, the funnel, the fog). It has floors,
+   so 10% is "light rain" rather than "nothing".
    ═══════════════════════════════════════════════════════════════════════════ */
 (function () {
-  /* ⚠ MEASURED, NOT GUESSED. At 0.42 the strongest weather peaked at alpha
-     80/255 and fog at 32 — technically drawing, visually absent. The colour
-     clamp means a higher ceiling cannot produce white, it just lets the effect
-     be SEEN, so this is the number that makes weather read as weather. */
-  FX.CEIL = 0.72;
+
+  /* ── the two ceilings ─────────────────────────────────────────────────── */
+  var AIR  = 0.36;              /* everything that emits light */
+  var FORM = 0.66;              /* line work and bodies only */
+  var SEAL = AIR / FORM;        /* the mid-frame destination-in */
+  var IK   = 1 / AIR;           /* pre-compensation for DARK values in AIR */
+  var LG   = 2.3;               /* gain for LIGHT in AIR — write bright, seal low */
+  FX.CEIL  = FORM;              /* FX.mount applies this at the end of the frame */
 
   var cur = 'normal_rain', intensity = 0.5, bolt = { t: -9, x: 0.5, seed: 0 };
 
-  /* deterministic scratch fields — reused by every painter */
-  var P = FX.pool(520, function (p, i) {
+  /* ♿ prefers-reduced-motion. The field is frozen at a single well-composed
+     instant rather than removed — the weather still tells you what weather it
+     is, it just does not move. Lightning is skipped entirely (a frozen clock
+     would hold the flash on screen forever). Live-bound, because the OS
+     setting can change while a match is running. */
+  var RM = false;
+  try {
+    var _mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    RM = !!_mq.matches;
+    var _onmq = function (e) { RM = !!e.matches; };
+    if (_mq.addEventListener) _mq.addEventListener('change', _onmq);
+    else if (_mq.addListener) _mq.addListener(_onmq);
+  } catch (e) {}
+
+  /* deterministic scratch fields — reused by every painter, never reallocated */
+  var P = FX.pool(560, function (p, i) {
     p.x = FX.hash(i, 11); p.y = FX.hash(i, 12);
     p.z = 0.30 + FX.hash(i, 13) * 0.95;        /* depth: size + speed + alpha */
     p.s = 0.5 + FX.hash(i, 14) * 1.3;
     p.r = FX.hash(i, 15) * 6.2832;
     p.w = FX.hash(i, 16);
     p.v = FX.hash(i, 17);
+    p.u = FX.hash(i, 18);
   });
 
-  /* ── shared helpers ──────────────────────────────────────────────────── */
+  /* ── intensity curves ─────────────────────────────────────────────────── */
   /* ⚠ THE FLOORS MATTER MORE THAN THE RANGE. At the old floors, 10% intensity
-     painted 0.5%% of the screen — indistinguishable from the effect being
-     broken, which is exactly how it was reported. 10%% now means "light rain",
-     not "no rain": ~60%% of the density and ~73%% of the strength, with the
-     range still doing real work between there and 100%%. */
-  function dens(i) { return 0.55 + 0.45 * i; }
-  /* the 1.35 lifts every painter at once — they were all authored against a
-     ceiling that turned out to be half of what the layer needed */
-  function alph(i) { return Math.min(1, (0.70 + 0.30 * i) * 1.35); }
-  function spd(i)  { return 0.75 + 0.50 * i; }
-  /* ⚠ STRUCTURAL elements — fog banks, the flood band, the tornado funnel — are
-     not particles, so they ignored dens()/alph() and the slider did nothing for
-     the weathers built out of them (fog read 72% at 10% AND at 100%). This is
-     the curve those parts scale on. */
+     painted 0.5% of the screen — indistinguishable from the effect being
+     broken, which is exactly how it was reported. */
+  function dens(i)   { return 0.55 + 0.45 * i; }
+  /* ⚠ NOT clamped to 1 — FX.rgba clamps at the point of use. The old build
+     wrote Math.min(1, (0.70+0.30i)*1.35), which pins at 1.0 for every
+     intensity above 0.22: the gain never landed and the slider stopped
+     moving alpha entirely. With LG applied here and the seal at AIR, an
+     ISOLATED light element lands at ~115% of its old on-screen strength
+     while a DENSE one is hard-capped at 0.36 instead of 0.72. */
+  function alph(i)   { return (0.70 + 0.30 * i) * LG; }
+  function spd(i)    { return 0.75 + 0.50 * i; }
+  /* ⚠ STRUCTURAL elements — fog banks, the flood band, the funnel — are not
+     particles, so they ignored dens()/alph() and the slider did nothing for the
+     weathers built out of them (fog read 72% at 10% AND at 100%). */
   function struct(i) { return 0.30 + 0.70 * i; }
 
-  /* a dark vertical wash — never light, so it cannot grey the board out */
-  function sky(ctx, W, H, top, bot, a) {
-    var g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, FX.rgba(top, a));
-    g.addColorStop(1, FX.rgba(bot, a * 0.66));
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  /* ── the shared wind ──────────────────────────────────────────────────── */
+  /* ONE slowly-varying gust that every painter reads. Rain, leaves, snow, dust
+     and fog all lean the same way at the same moment, which is the difference
+     between "a weather system" and "N independent particle emitters". Two
+     sines, evaluated a handful of times per frame — not per particle. */
+  function gust(k) {
+    return Math.sin(FX.t * 0.23 + k) * 0.62 + Math.sin(FX.t * 0.071 + k * 2.3) * 0.38;
   }
-  /* falling streaks with depth: near ones are longer, faster and brighter */
+
+  /* ── AIR helpers ──────────────────────────────────────────────────────── */
+
+  /* THE GRADE. A dark vertical wash plus a corner vignette that frames the
+     board. Both stops are DARK, so this can only ever lower luminance — the
+     one direction that can never trip the white bug. Pre-compensated by IK so
+     the seal does not eat it (this is the mistake the cinematics measured:
+     0.20 written into a 0.36 pass arrives at 0.07). */
+  function grade(ctx, W, H, cTop, cBot, k) {
+    var a = Math.min(1, k * IK);
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, FX.rgba(cTop, a));
+    g.addColorStop(1, FX.rgba(cBot, a * 0.52));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    var U = Math.max(W, H);
+    var v = ctx.createRadialGradient(W * 0.5, H * 0.52, U * 0.22, W * 0.5, H * 0.52, U * 0.76);
+    v.addColorStop(0, FX.rgba(cBot, 0));
+    v.addColorStop(1, FX.rgba(cBot, Math.min(1, a * 1.45)));
+    ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  }
+
+  /* CENTRE RELIEF — the constraint "it never obscures the board" made
+     STRUCTURAL instead of a promise about particle counts. One destination-out
+     radial punches the atmosphere back by ~45% over the middle of the field,
+     where the cards are, and leaves it at full strength at the edges, where
+     the weather reads. Costs one fill; runs before the seal so it thins the
+     grade — NOT the particle field. ⚠ Running it after the painter
+     punched a visible elliptical HOLE in the middle of a downpour, which is
+     a worse artefact than the crowding it was meant to fix; the seal at AIR
+     already holds board visibility near 80%. Order is the whole fix. */
+  function relief(ctx, W, H) {
+    var U = Math.max(W, H);
+    var g = ctx.createRadialGradient(W * 0.5, H * 0.55, 0, W * 0.5, H * 0.55, U * 0.58);
+    g.addColorStop(0,    'rgba(0,0,0,0.45)');
+    g.addColorStop(0.52, 'rgba(0,0,0,0.24)');
+    g.addColorStop(1,    'rgba(0,0,0,0)');
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* Falling streaks with three real depth bands and ONE shared wind, so a
+     downpour reads as a single moving volume rather than N independent dots.
+     ⚠ NO per-particle gradient object. Two flat segments give the same taper
+     for a fraction of the time, and this loop runs 360 times a frame for
+     minutes on end. */
   function streaks(ctx, W, H, n, colour, opt) {
     opt = opt || {};
-    var len = opt.len || 26, wind = opt.wind || 0.18, sp = opt.speed || 1, a = opt.alpha || 0.4, wob = opt.wobble || 0;
+    var wind = (opt.wind || 0.18) + gust(0) * (opt.gust == null ? 0.075 : opt.gust);
+    var len = opt.len || 26, sp = opt.speed || 1, a = opt.alpha || 0.4, th = opt.thick || 1.5;
+    ctx.lineCap = 'butt';
     for (var i = 0; i < n; i++) {
-      var p = P[i];
-      var y = ((p.y + FX.t * sp * 0.42 * p.z) % 1);
-      var x = ((p.x + FX.t * wind * 0.1 * p.z + (wob ? Math.sin(FX.t * 1.4 + p.r) * wob : 0)) % 1 + 1) % 1;
-      var L = len * p.z * (0.7 + p.s * 0.4);
-      ctx.strokeStyle = FX.rgba(colour, a * p.z * 0.9);
-      ctx.lineWidth = Math.max(0.7, p.z * (opt.thick || 1.5));
-      ctx.beginPath();
-      ctx.moveTo(x * W, y * H);
-      ctx.lineTo(x * W - wind * L * 2.2, y * H - L);
-      ctx.stroke();
+      var p = P[i % P.length];
+      var z = p.z;
+      var y = ((p.y + FX.t * sp * 0.42 * z) % 1);
+      var x = ((p.x + FX.t * wind * 0.10 * z + Math.sin(FX.t * 0.7 + p.r) * 0.005) % 1 + 1) % 1;
+      var L = len * z * (0.7 + p.s * 0.4);
+      var X = x * W, Y = y * H, dx = -wind * L * 2.2;
+      ctx.lineWidth = Math.max(0.7, z * th);
+      ctx.strokeStyle = FX.rgba(colour, a * z * 0.95);
+      ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(X + dx * 0.42, Y - L * 0.42); ctx.stroke();
+      /* ⚠ 0.55, not 0.34. Perceived density is TOTAL INK, not peak alpha:
+         at 0.34 the two-segment taper put less on screen than the old flat
+         stroke and rain read as drizzle at intensity 1. */
+      ctx.strokeStyle = FX.rgba(colour, a * z * 0.55);
+      ctx.beginPath(); ctx.moveTo(X + dx * 0.42, Y - L * 0.42); ctx.lineTo(X + dx, Y - L); ctx.stroke();
     }
   }
-  /* splash pops where rain lands */
+
+  /* THE CURTAIN — soft vertical sheets drifting across the field. It is what
+     makes rain read as VOLUME instead of as a screen of lines, and it costs
+     three gradients a frame rather than three hundred. */
+  function curtain(ctx, W, H, n, colour, a, sp) {
+    for (var i = 0; i < n; i++) {
+      var p = P[(i * 31) % P.length];
+      var x = (((p.x + FX.t * sp * 0.035 * (0.4 + p.z)) % 1.4) - 0.2) * W;
+      var w = W * (0.10 + p.z * 0.17);
+      var g = ctx.createLinearGradient(x - w, 0, x + w, 0);
+      g.addColorStop(0,   FX.rgba(colour, 0));
+      g.addColorStop(0.5, FX.rgba(colour, a * (0.5 + p.z * 0.5)));
+      g.addColorStop(1,   FX.rgba(colour, 0));
+      ctx.fillStyle = g; ctx.fillRect(x - w, 0, w * 2, H);
+    }
+  }
+
+  /* Splash pops where rain lands — ring plus a vertical kick, so it reads as
+     water hitting a surface rather than as an expanding circle. */
   function splashes(ctx, W, H, n, colour, a) {
     for (var i = 0; i < n; i++) {
       var p = P[(i * 7) % P.length];
@@ -101,22 +238,86 @@
       if (cyc > 0.35) continue;
       var k = cyc / 0.35;
       var x = p.x * W, y = (0.55 + p.v * 0.42) * H;
-      ctx.strokeStyle = FX.rgba(colour, a * (1 - k) * 0.7);
+      ctx.strokeStyle = FX.rgba(colour, a * (1 - k) * 0.62);
       ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.ellipse(x, y, 3 + k * 13, (3 + k * 13) * 0.32, 0, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(x, y, 3 + k * 13, (3 + k * 13) * 0.30, 0, 0, 6.2832); ctx.stroke();
+      if (k < 0.5) {
+        ctx.strokeStyle = FX.rgba(colour, a * (1 - k * 2) * 0.5);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (p.u - 0.5) * 5, y - 4 - k * 9); ctx.stroke();
+      }
     }
   }
-  /* a celestial disc — moons hang to the RIGHT of the board, as asked */
-  function disc(ctx, W, H, colour, r, glow, opt) {
+
+  /* Rolling fog banks with parallax. FX.glowSoft is source-over, never
+     'lighter' — a dozen overlapping additive fog blobs saturate toward white no
+     matter how well each colour is clamped, and that is a bug this project has
+     already shipped once. */
+  function fogBanks(ctx, W, H, n, colour, a, speed, yBase, spread) {
+    var gx = gust(1.7) * 0.03;
+    for (var i = 0; i < n; i++) {
+      var p = P[(i * 13) % P.length];
+      var x = ((p.x + FX.t * speed * (0.2 + p.z * 0.5) * 0.05 + gx * p.z) % 1.4 - 0.2) * W;
+      var y = (yBase + p.v * spread) * H;
+      var r = Math.min(W, H) * (0.12 + p.z * 0.22);
+      FX.glowSoft(x, y, r, colour, a * (0.4 + p.z * 0.6) * struct(intensity));
+    }
+  }
+
+  /* SHAFTS that start at an ABSOLUTE inner radius. The sibling cinematics
+     proved that rays drawn from a body's centre are simply painted over by the
+     body — the fix is geometry, not brightness. Soft on both axes (a single
+     quad has hard side edges, which is literally why the old Archon gate drew a
+     grey rectangle on the board). */
+  function rays(ctx, cx, cy, n, r0, r1, colour, a, base, spread, wob) {
+    ctx.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < n; i++) {
+      var f = n === 1 ? 0.5 : i / (n - 1);
+      var ang = base + (f - 0.5) * spread + Math.sin(FX.t * 0.25 + i * 1.7) * (wob == null ? 0.014 : wob);
+      var ca = Math.cos(ang), sa = Math.sin(ang), px = -sa, py = ca;
+      var w0 = r0 * 0.05, w1 = r0 * (0.16 + FX.hash(i, 61) * 0.22);
+      var k = a * (0.5 + FX.hash(i, 62) * 0.5) * (0.7 + 0.3 * FX.pulse(FX.t, 0.11 + i * 0.017));
+      var g = ctx.createLinearGradient(cx + ca * r0, cy + sa * r0, cx + ca * r1, cy + sa * r1);
+      g.addColorStop(0,   FX.rgba(colour, k));
+      g.addColorStop(0.6, FX.rgba(colour, k * 0.35));
+      g.addColorStop(1,   FX.rgba(colour, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(cx + ca * r0 + px * w0, cy + sa * r0 + py * w0);
+      ctx.lineTo(cx + ca * r1 + px * w1, cy + sa * r1 + py * w1);
+      ctx.lineTo(cx + ca * r1 - px * w1, cy + sa * r1 - py * w1);
+      ctx.lineTo(cx + ca * r0 - px * w0, cy + sa * r0 - py * w0);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* The halo of a celestial body. AIR pass — it is light. */
+  function discGlow(ctx, W, H, colour, r, glow, opt) {
     opt = opt || {};
     var dx = W * (opt.x || 0.84), dy = H * (opt.y || 0.22), R = Math.min(W, H) * r;
     FX.glow(dx, dy, R * (opt.halo || 3.0), colour, glow);
-    ctx.fillStyle = FX.rgba(colour, opt.solid == null ? 0.55 : opt.solid);
+    return { x: dx, y: dy, r: R };
+  }
+  /* The body of a celestial body. FORM pass — it must read as an object.
+     Moons hang to the RIGHT of the board, as asked. */
+  function discBody(ctx, W, H, colour, r, opt) {
+    opt = opt || {};
+    var dx = W * (opt.x || 0.84), dy = H * (opt.y || 0.22), R = Math.min(W, H) * r;
+    /* a dark seat behind the body so the disc reads as a silhouette with a lit
+       face rather than as a bright smear on the sky */
+    ctx.fillStyle = 'rgba(5,4,9,0.30)';
+    ctx.beginPath(); ctx.arc(dx, dy, R * 1.16, 0, 6.2832); ctx.fill();
+    /* the face — lit from one side, so it has volume */
+    var g = ctx.createRadialGradient(dx - R * 0.32, dy - R * 0.30, R * 0.05, dx, dy, R);
+    g.addColorStop(0, FX.rgba(colour, (opt.solid == null ? 0.58 : opt.solid)));
+    g.addColorStop(0.72, FX.rgba(colour, (opt.solid == null ? 0.58 : opt.solid) * 0.72));
+    g.addColorStop(1, FX.rgba(opt.limb || colour, (opt.solid == null ? 0.58 : opt.solid) * 0.34));
+    ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(dx, dy, R, 0, 6.2832); ctx.fill();
-    if (opt.crater) {                                   /* moon texture */
+    if (opt.crater) {
       for (var c = 0; c < 7; c++) {
         var ca = FX.hash(c, 41) * 6.2832, cr = R * (0.15 + FX.hash(c, 42) * 0.5);
-        ctx.fillStyle = FX.rgba(opt.crater, 0.30);
+        ctx.fillStyle = FX.rgba(opt.crater, 0.34);
         ctx.beginPath(); ctx.arc(dx + Math.cos(ca) * cr, dy + Math.sin(ca) * cr, R * (0.06 + FX.hash(c, 43) * 0.13), 0, 6.2832); ctx.fill();
       }
     }
@@ -124,453 +325,682 @@
       ctx.fillStyle = 'rgba(6,4,10,0.97)';
       ctx.beginPath(); ctx.arc(dx - R * 0.10, dy - R * 0.05, R * 0.96, 0, 6.2832); ctx.fill();
       ctx.lineWidth = Math.max(2, R * 0.045);
-      ctx.strokeStyle = FX.rgba(opt.eclipse, 0.55);
+      ctx.strokeStyle = FX.rgba(opt.eclipse, 0.5);
       ctx.beginPath(); ctx.arc(dx, dy, R * 1.02, 0, 6.2832); ctx.stroke();
     }
     return { x: dx, y: dy, r: R };
   }
-  /* forked lightning + a tinted sky lift (never a white flash) */
+
+  /* LIGHTNING. ⚠ The old version lit the whole frame with a flat fillRect —
+     a full-screen light fill is the single most direct route to the bug the
+     user keeps reporting. The lift is now a TOP-WEIGHTED gradient: the sky
+     brightens, the board (bottom two thirds, where the cards are) barely
+     moves. The strike is a real double-flash — hit, dip, brighter — and the
+     bolt carries a dark halo so it reads as force rather than as a white line.
+     Skipped entirely under reduced motion. */
   function lightning(ctx, W, H, colour, I, every) {
+    if (RM) return;
     var gap = (every || 3.4) - I * 1.4;
     if (FX.t - bolt.t > gap) { bolt.t = FX.t; bolt.seed++; bolt.x = 0.15 + FX.hash(bolt.seed, 91) * 0.7; }
     var age = FX.t - bolt.t;
-    if (age < 0 || age > 0.4) return;
-    var f = 1 - age / 0.4;
-    ctx.fillStyle = FX.rgba(colour, 0.10 * f * I);       /* the lift */
-    ctx.fillRect(0, 0, W, H);
-    var draw = function (x0, y0, segs, wdt, a) {
-      ctx.strokeStyle = FX.rgba(colour, a * f);
-      ctx.lineWidth = wdt; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(x0, y0);
-      var xx = x0, yy = y0;
+    if (age < 0 || age > 0.55) return;
+    /* double-flash envelope */
+    var f = age < 0.09 ? (1 - age / 0.09) * 0.75
+          : age < 0.15 ? 0.10
+          : (1 - (age - 0.15) / 0.40);
+    if (f <= 0) return;
+    var g = ctx.createLinearGradient(0, 0, 0, H * 0.86);
+    g.addColorStop(0,   FX.rgba(colour, 0.30 * f * I));
+    g.addColorStop(0.45, FX.rgba(colour, 0.10 * f * I));
+    g.addColorStop(1,   FX.rgba(colour, 0));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    var draw = function (x0, segs, wdt, a) {
+      var xx = x0, yy = -10;
+      var pts = [[xx, yy]];
       for (var s = 0; s < segs; s++) {
         yy += H / segs; xx += (FX.hash(bolt.seed * 20 + s, 92) - 0.5) * W * 0.11;
-        ctx.lineTo(xx, yy);
+        pts.push([xx, yy]);
       }
+      /* dark halo first — contrast made of black, which can only lower lum */
+      ctx.strokeStyle = 'rgba(3,4,10,0.5)';
+      ctx.lineWidth = wdt * 3.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (var q = 1; q < pts.length; q++) ctx.lineTo(pts[q][0], pts[q][1]);
       ctx.stroke();
-      return { x: xx, y: yy };
+      ctx.strokeStyle = FX.rgba(colour, a * f);
+      ctx.lineWidth = wdt;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (var q2 = 1; q2 < pts.length; q2++) ctx.lineTo(pts[q2][0], pts[q2][1]);
+      ctx.stroke();
     };
     var bx = bolt.x * W;
-    draw(bx, -10, 7, 3.2, 0.75);
-    if (FX.hash(bolt.seed, 93) > 0.45) draw(bx + W * 0.06, -10, 6, 1.8, 0.42);  /* fork */
+    draw(bx, 8, 3.0, 0.80);
+    if (FX.hash(bolt.seed, 93) > 0.45) draw(bx + W * 0.06, 6, 1.7, 0.44);
   }
-  /* rolling fog banks with parallax */
-  function fogBanks(ctx, W, H, n, colour, a, speed, yBase, spread) {
+
+  /* ── FORM helpers ─────────────────────────────────────────────────────── */
+
+  /* NEAR PLANE — a handful of large, out-of-focus elements crossing close to
+     camera. It is the depth cue you cannot buy with more particles, and every
+     one of them is DARK, so it can only ever lower luminance. Five soft
+     gradients a frame. */
+  function nearPlane(ctx, W, H, n, colour, a, sp, sq) {
     for (var i = 0; i < n; i++) {
-      var p = P[(i * 13) % P.length];
-      var x = ((p.x + FX.t * speed * (0.2 + p.z * 0.5) * 0.05) % 1.4 - 0.2) * W;
-      var y = (yBase + p.v * spread) * H;
-      var r = Math.min(W, H) * (0.12 + p.z * 0.22);
-      FX.glowSoft(x, y, r, colour, a * (0.4 + p.z * 0.6) * struct(intensity));
+      var p = P[(i * 47) % P.length];
+      var y = (((p.y + FX.t * sp * 0.15) % 1.28) - 0.14) * H;
+      var x = (((p.x + FX.t * sp * 0.028 + Math.sin(FX.t * 0.4 + p.r) * 0.02) % 1.24) - 0.12) * W;
+      var r = Math.min(W, H) * (0.045 + p.z * 0.06);
+      ctx.save(); ctx.translate(x, y); ctx.scale(1, sq || 1);
+      FX.glowSoft(0, 0, r, colour, a * (0.5 + p.w * 0.5));
+      ctx.restore();
     }
   }
 
-  /* ── the painters ────────────────────────────────────────────────────── */
+  /* A horizon line — where the weather meets the ground. Cheap silhouette. */
+  function surface(ctx, W, H, lvl, colour, a, amp, hz) {
+    ctx.strokeStyle = FX.rgba(colour, a);
+    ctx.lineWidth = 2; ctx.beginPath();
+    for (var x = 0; x <= W; x += 12) {
+      var yy = lvl + Math.sin((x / W) * 9 + FX.t * hz) * amp + Math.sin((x / W) * 21 - FX.t * hz * 1.4) * amp * 0.5;
+      if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+
+  /* ── the painters ─────────────────────────────────────────────────────────
+     Each preset is { g:[darkTop, darkBottom, gradeStrength], air:fn, form:fn }.
+     `air` may only draw light and haze; `form` may only draw line work and
+     bodies. Nothing in `form` covers the frame.
+     ───────────────────────────────────────────────────────────────────────── */
   var WX = {
 
-    sunny_day: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#2a4a6e', '#3d5570', 0.10 * I);
-      var d = disc(ctx, W, H, '#e8c56a', 0.085, 0.30 * I, { x: 0.82, y: 0.18, halo: 4.2 });
-      for (var i = 0; i < 5; i++) {                       /* god rays */
-        var a = -0.9 + i * 0.22;
-        FX.beam(d.x - Math.cos(a) * W * 0.25, d.y + Math.sin(a) * H * 0.35,
-                W * 0.055, H * 1.15, '#e8d9a0', 0.05 * I, a * 0.35);
-      }
-      var n = Math.round(46 * dens(I));
-      for (var m = 0; m < n; m++) {
-        var p = P[m];
-        FX.glow(((p.x + Math.sin(FX.t * 0.2 + p.r) * 0.03) % 1) * W,
-                ((p.y + Math.cos(FX.t * 0.16 + p.r) * 0.025) % 1) * H,
-                9 * p.z, '#e8d9a0', 0.16 * alph(I));
-      }
-    },
-
-    normal_rain: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#101823', '#1b2634', 0.16 * I);
-      streaks(ctx, W, H, Math.round(300 * dens(I)), '#9dc0e6',
-              { len: 30, wind: 0.16, speed: 1.5 * spd(I), alpha: 0.42 * alph(I), thick: 1.6 });
-      splashes(ctx, W, H, Math.round(26 * dens(I)), '#a9c9ea', 0.5 * alph(I));
-      fogBanks(ctx, W, H, Math.round(5 * dens(I)), '#2c3b4e', 0.07 * I, 0.5, 0.62, 0.3);
-    },
-
-    thunderhead: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#0a0f18', '#161f2e', 0.22 * I);
-      streaks(ctx, W, H, Math.round(360 * dens(I)), '#a9c6e8',
-              { len: 38, wind: 0.30, speed: 1.9 * spd(I), alpha: 0.46 * alph(I), thick: 1.9 });
-      splashes(ctx, W, H, Math.round(30 * dens(I)), '#b6d2f0', 0.55 * alph(I));
-      fogBanks(ctx, W, H, Math.round(6 * dens(I)), '#22303f', 0.09 * I, 0.8, 0.55, 0.35);
-      lightning(ctx, W, H, '#bcd6f2', I, 3.0);
-    },
-
-    sandstorm: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#4a3418', '#6b5028', 0.20 * I);
-      /* driven dust sheets */
-      for (var s = 0; s < 7; s++) {
-        var p = P[s * 11];
-        var x = ((p.x + FX.t * (0.10 + p.z * 0.18) * spd(I)) % 1.5 - 0.25) * W;
-        var y = (0.15 + p.v * 0.7) * H;
-        FX.glow(x, y, Math.min(W, H) * (0.18 + p.z * 0.3), '#c8a86a', 0.10 * I);
-      }
-      var n = Math.round(400 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var q = P[i];
-        var gx = ((q.x + FX.t * (0.35 + q.z * 0.5) * spd(I)) % 1) * W;
-        var gy = ((q.y + Math.sin(FX.t * 1.1 + q.r) * 0.02) % 1) * H;
-        ctx.fillStyle = FX.rgba('#d8b878', 0.30 * q.z * alph(I));
-        ctx.fillRect(gx, gy, 3.4 * q.z, 1.1 * q.z);
+    sunny_day: {
+      g: ['#14202e', '#1b2b36', 0.55],
+      air: function (ctx, W, H, I) {
+        var d = discGlow(ctx, W, H, '#e8c56a', 0.085, 0.30 * I, { x: 0.82, y: 0.18, halo: 4.4 });
+        /* ⚠ r0 starts OUTSIDE the disc — a shaft drawn from the centre is
+           painted over by the body, which is exactly the defect the sibling
+           piece found in its reveal. */
+        rays(ctx, d.x, d.y, 7, d.r * 1.25, Math.max(W, H) * 1.05, '#e8d9a0', 0.17 * I, 2.30, 1.15);
+        /* warm sky haze along the top only — never the middle of the board */
+        var g = ctx.createLinearGradient(0, 0, 0, H * 0.62);
+        g.addColorStop(0, FX.rgba('#5d7ea8', 0.20 * I));
+        g.addColorStop(1, FX.rgba('#5d7ea8', 0));
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H * 0.62);
+        /* pollen drifting on the shared wind */
+        var n = Math.round(54 * dens(I)), gx = gust(0.4) * 0.02;
+        for (var m = 0; m < n; m++) {
+          var p = P[m];
+          FX.glow(((p.x + gx * p.z + Math.sin(FX.t * 0.2 + p.r) * 0.03) % 1) * W,
+                  ((p.y + Math.cos(FX.t * 0.16 + p.r) * 0.025 - FX.t * 0.006 * p.z) % 1 + 1) % 1 * H,
+                  8 * p.z, '#e8d9a0', 0.16 * alph(I));
+        }
+      },
+      form: function (ctx, W, H, I) {
+        discBody(ctx, W, H, '#e8c56a', 0.085, { x: 0.82, y: 0.18, solid: 0.46, limb: '#c08a3a' });
+        nearPlane(ctx, W, H, 3, '#0d1520', 0.09 * struct(I), 0.30, 1);
       }
     },
 
-    snow: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#232c3e', '#3d4a60', 0.14 * I);
-      var n = Math.round(280 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var y = ((p.y + FX.t * 0.055 * p.z * spd(I)) % 1) * H;
-        var x = ((p.x + Math.sin(FX.t * 0.45 * p.s + p.r) * 0.035) % 1) * W;
-        ctx.fillStyle = FX.rgba('#c6d8ec', 0.5 * p.z * alph(I));
-        ctx.beginPath(); ctx.arc(x, y, 1.1 + p.z * 2.2, 0, 6.2832); ctx.fill();
+    normal_rain: {
+      g: ['#0a121c', '#111a26', 1.00],
+      air: function (ctx, W, H, I) {
+        curtain(ctx, W, H, 3, '#5c7fa6', 0.17 * struct(I), spd(I));
+        streaks(ctx, W, H, Math.round(300 * dens(I)), '#9dc0e6',
+                { len: 30, wind: 0.16, speed: 1.5 * spd(I), alpha: 0.42 * alph(I), thick: 1.6 });
+        splashes(ctx, W, H, Math.round(26 * dens(I)), '#a9c9ea', 0.50 * alph(I));
+        fogBanks(ctx, W, H, Math.round(5 * dens(I)), '#1d2836', 0.16 * I, 0.5, 0.66, 0.28);
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 5, '#070c14', 0.14 * struct(I), 1.5, 2.4);
       }
-      fogBanks(ctx, W, H, Math.round(4 * dens(I)), '#3f4d63', 0.06 * I, 0.35, 0.7, 0.25);
+    },
+
+    thunderhead: {
+      g: ['#050a12', '#0c1420', 1.30],
+      air: function (ctx, W, H, I) {
+        curtain(ctx, W, H, 4, '#4d6d94', 0.21 * struct(I), spd(I) * 1.4);
+        streaks(ctx, W, H, Math.round(360 * dens(I)), '#a9c6e8',
+                { len: 38, wind: 0.30, speed: 1.9 * spd(I), alpha: 0.46 * alph(I), thick: 1.9, gust: 0.14 });
+        splashes(ctx, W, H, Math.round(30 * dens(I)), '#b6d2f0', 0.55 * alph(I));
+        fogBanks(ctx, W, H, Math.round(6 * dens(I)), '#151f2c', 0.20 * I, 0.8, 0.55, 0.35);
+        lightning(ctx, W, H, '#bcd6f2', I, 3.0);
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 6, '#04080f', 0.16 * struct(I), 1.9, 2.6);
+      }
+    },
+
+    sandstorm: {
+      g: ['#2b1c06', '#3a280f', 0.95],
+      air: function (ctx, W, H, I) {
+        var gk = gust(2.1);
+        for (var s = 0; s < 7; s++) {                    /* driven dust sheets */
+          var p = P[s * 11];
+          var x = ((p.x + FX.t * (0.10 + p.z * 0.18) * spd(I)) % 1.5 - 0.25) * W;
+          var y = (0.15 + p.v * 0.7 + gk * 0.02) * H;
+          FX.glowSoft(x, y, Math.min(W, H) * (0.18 + p.z * 0.3), '#a8834a', 0.46 * struct(I));
+        }
+        var n = Math.round(400 * dens(I));
+        for (var i = 0; i < n; i++) {                    /* grains, wind-leaned */
+          var q = P[i];
+          var gx = ((q.x + FX.t * (0.35 + q.z * 0.5) * spd(I)) % 1) * W;
+          var gy = ((q.y + Math.sin(FX.t * 1.1 + q.r) * 0.02 + gk * 0.012 * q.z) % 1 + 1) % 1 * H;
+          ctx.fillStyle = FX.rgba('#d8b878', 0.30 * q.z * alph(I));
+          ctx.fillRect(gx, gy, (3.4 + gk * 1.4) * q.z, 1.1 * q.z);
+        }
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 5, '#1a1105', 0.17 * struct(I), 0.9, 0.7);
+      }
+    },
+
+    snow: {
+      g: ['#111828', '#1b2333', 0.85],
+      air: function (ctx, W, H, I) {
+        var gx = gust(0.9) * 0.055;
+        var n = Math.round(280 * dens(I));
+        for (var i = 0; i < n; i++) {
+          var p = P[i];
+          var y = ((p.y + FX.t * 0.055 * p.z * spd(I)) % 1) * H;
+          var x = (((p.x + gx * p.z + Math.sin(FX.t * 0.45 * p.s + p.r) * 0.035) % 1) + 1) % 1 * W;
+          ctx.fillStyle = FX.rgba('#c6d8ec', 0.50 * p.z * alph(I));
+          ctx.beginPath(); ctx.arc(x, y, 1.1 + p.z * 2.2, 0, 6.2832); ctx.fill();
+        }
+        fogBanks(ctx, W, H, Math.round(4 * dens(I)), '#242e3f', 0.16 * I, 0.35, 0.72, 0.24);
+        /* ground drift — a shallow band of blown snow, the thing that tells you
+           it has been snowing rather than that it is snowing */
+        var dg = ctx.createLinearGradient(0, H * 0.84, 0, H);
+        dg.addColorStop(0, FX.rgba('#8fa6bf', 0));
+        dg.addColorStop(1, FX.rgba('#8fa6bf', 0.22 * struct(I)));
+        ctx.fillStyle = dg; ctx.fillRect(0, H * 0.84, W, H * 0.16);
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 5, '#8fa8c4', 0.075 * struct(I), 0.55, 1);
+      }
     },
 
     /* ⚠ THE FLOOD DOES NOT COVER THE BOARD. Water lives in the lower band with
        a moving surface line; everything above it stays clear so units read. */
-    flood: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#0b1a26', '#123040', 0.14 * I);
-      streaks(ctx, W, H, Math.round(200 * dens(I)), '#8fc7dd',
-              { len: 28, wind: 0.14, speed: 1.5 * spd(I), alpha: 0.34 * alph(I), thick: 1.5 });
-      var lvl = H * 0.74;                                  /* the water line */
-      var g = ctx.createLinearGradient(0, lvl, 0, H);
-      g.addColorStop(0, FX.rgba('#2f7f9e', 0.22 * struct(I)));
-      g.addColorStop(1, FX.rgba('#123246', 0.40 * struct(I)));
-      ctx.fillStyle = g; ctx.fillRect(0, lvl, W, H - lvl);
-      ctx.strokeStyle = FX.rgba('#8fd4ea', 0.42 * struct(I));
-      ctx.lineWidth = 2; ctx.beginPath();
-      for (var x = 0; x <= W; x += 12) {
-        var yy = lvl + Math.sin((x / W) * 9 + FX.t * 1.6) * 4 + Math.sin((x / W) * 21 - FX.t * 2.2) * 2;
-        if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
-      }
-      ctx.stroke();
-      for (var r = 0; r < Math.round(9 * dens(I)); r++) {   /* ripples on the surface */
-        var p = P[r * 9], cyc = (FX.t * 0.55 + p.w) % 1;
-        ctx.strokeStyle = FX.rgba('#a9e3f5', 0.22 * (1 - cyc) * alph(I));
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.ellipse(p.x * W, lvl + p.v * (H - lvl) * 0.8, 6 + cyc * 34, (6 + cyc * 34) * 0.26, 0, 0, 6.2832);
-        ctx.stroke();
-      }
-    },
-
-    tornado_storm: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#1b1f2b', '#333b4e', 0.20 * I);
-      var cx = W * 0.5, top = H * 0.02, bot = H * 0.88;
-      /* the funnel: stacked ellipses, wider at the top, swaying */
-      for (var s = 0; s <= 26; s++) {
-        var k = s / 26;
-        var y = top + (bot - top) * k;
-        var wid = W * (0.30 - k * 0.245) * (0.85 + 0.15 * Math.sin(FX.t * 2 + k * 6));
-        var sway = Math.sin(FX.t * 1.1 + k * 3.4) * W * 0.045 * (1 - k);
-        ctx.strokeStyle = FX.rgba(k > 0.6 ? '#8b93a8' : '#aab3c6', (0.12 + 0.20 * (1 - k)) * struct(I));
-        ctx.lineWidth = 1.5 + (1 - k) * 2;
-        ctx.beginPath();
-        ctx.ellipse(cx + sway, y, wid, wid * 0.18, 0, 0, 6.2832);
-        ctx.stroke();
-      }
-      /* debris orbiting the funnel */
-      var n = Math.round(120 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var k2 = ((p.y + FX.t * 0.16 * spd(I)) % 1);
-        var y2 = top + (bot - top) * k2;
-        var rad = W * (0.30 - k2 * 0.245);
-        var ang = p.r + FX.t * (3.2 - k2 * 1.4) * spd(I);
-        ctx.fillStyle = FX.rgba('#c4b49a', 0.42 * alph(I));
-        ctx.fillRect(cx + Math.cos(ang) * rad, y2 + Math.sin(ang) * rad * 0.18, 3.5 * p.z, 2 * p.z);
-      }
-      lightning(ctx, W, H, '#c3d2e8', I, 4.2);
-    },
-
-    magical_leaves: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#16281c', '#28422e', 0.12 * I);
-      var n = Math.round(190 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var y = ((p.y + FX.t * 0.07 * p.z * spd(I)) % 1) * H;
-        var x = ((p.x + Math.sin(FX.t * 0.5 * p.s + p.r) * 0.07) % 1) * W;
-        var rot = p.r + FX.t * (0.8 + p.s);
-        ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
-        var c = i % 5 === 0 ? '#c9e08a' : (i % 3 === 0 ? '#6fbf7a' : '#8fd08a');
-        ctx.fillStyle = FX.rgba(c, 0.46 * p.z * alph(I));
-        ctx.beginPath(); ctx.ellipse(0, 0, 10 * p.z, 4.2 * p.z, 0, 0, 6.2832); ctx.fill();
-        ctx.strokeStyle = FX.rgba('#3f7a4a', 0.3 * p.z * alph(I));
-        ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(-10 * p.z, 0); ctx.lineTo(10 * p.z, 0); ctx.stroke();
-        ctx.restore();
-        if (i % 9 === 0) FX.glow(x, y, 7 * p.z, '#a8e6a0', 0.16 * alph(I));
-      }
-    },
-
-    stars_falling: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#0a0f26', '#161f3f', 0.16 * I);
-      var n = Math.round(90 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var k = ((p.y + FX.t * 0.34 * p.z * spd(I)) % 1);
-        var x = (p.x + k * 0.22) * W, y = k * H;
-        var L = 46 * p.z;
-        var g = ctx.createLinearGradient(x, y, x - L * 0.55, y - L);
-        g.addColorStop(0, FX.rgba('#bfe0ff', 0.7 * alph(I)));
-        g.addColorStop(1, FX.rgba('#6aa0ff', 0));
-        ctx.strokeStyle = g; ctx.lineWidth = 1.4 * p.z;
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - L * 0.55, y - L); ctx.stroke();
-        FX.glow(x, y, 7 * p.z, '#cfe6ff', 0.34 * alph(I));
-      }
-      for (var s = 0; s < Math.round(50 * dens(I)); s++) {  /* fixed twinkles */
-        var q = P[(s * 17) % P.length];
-        var tw = 0.35 + 0.65 * FX.pulse(FX.t + q.w * 5, 0.4 + q.v * 0.6);
-        FX.glow(q.x * W, q.y * H * 0.7, 2.6 * q.z, '#9fd0ff', 0.22 * tw * alph(I));
-      }
-    },
-
-    magic_aura_realm: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#171036', '#26194e', 0.16 * I);
-      var cx = W / 2, cy = H * 0.56;
-      for (var r = 0; r < 4; r++) {                       /* runic circles */
-        var rr = Math.min(W, H) * (0.14 + r * 0.10) * (1 + 0.04 * FX.pulse(FX.t, 0.15 + r * 0.05));
-        ctx.save(); ctx.translate(cx, cy); ctx.rotate(FX.t * (0.12 + r * 0.05) * (r % 2 ? -1 : 1)); ctx.scale(1, 0.4);
-        ctx.strokeStyle = FX.rgba(r % 2 ? '#a78bfa' : '#7dd3fc', 0.24 * alph(I));
-        ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
-        ctx.strokeStyle = FX.rgba('#c4b5fd', 0.20 * alph(I));
-        for (var g2 = 0; g2 < 8 + r * 2; g2++) {
-          var ga = (g2 / (8 + r * 2)) * 6.2832;
+    flood: {
+      g: ['#06131c', '#0a1e2a', 1.00],
+      air: function (ctx, W, H, I) {
+        curtain(ctx, W, H, 3, '#3f7f9b', 0.15 * struct(I), spd(I));
+        streaks(ctx, W, H, Math.round(200 * dens(I)), '#8fc7dd',
+                { len: 28, wind: 0.14, speed: 1.5 * spd(I), alpha: 0.34 * alph(I), thick: 1.5 });
+        var lvl = H * 0.74;
+        for (var r = 0; r < Math.round(9 * dens(I)); r++) {
+          var p = P[r * 9], cyc = (FX.t * 0.55 + p.w) % 1;
+          ctx.strokeStyle = FX.rgba('#a9e3f5', 0.22 * (1 - cyc) * alph(I));
+          ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.moveTo(Math.cos(ga) * rr * 0.93, Math.sin(ga) * rr * 0.93);
-          ctx.lineTo(Math.cos(ga) * rr * 1.06, Math.sin(ga) * rr * 1.06);
+          ctx.ellipse(p.x * W, lvl + p.v * (H - lvl) * 0.8, 6 + cyc * 34, (6 + cyc * 34) * 0.26, 0, 0, 6.2832);
           ctx.stroke();
         }
+      },
+      form: function (ctx, W, H, I) {
+        var lvl = H * 0.74;
+        var g = ctx.createLinearGradient(0, lvl, 0, H);
+        g.addColorStop(0, FX.rgba('#1d5a72', 0.24 * struct(I)));
+        g.addColorStop(1, FX.rgba('#0a2130', 0.44 * struct(I)));
+        ctx.fillStyle = g; ctx.fillRect(0, lvl, W, H - lvl);
+        surface(ctx, W, H, lvl, '#8fd4ea', 0.34 * struct(I), 4, 1.6);
+        /* a second, dimmer line just under it — depth in the water surface */
+        surface(ctx, W, H, lvl + 7, '#3f8fae', 0.18 * struct(I), 3, 1.1);
+        nearPlane(ctx, W, H, 3, '#04121b', 0.12 * struct(I), 1.3, 2.2);
+      }
+    },
+
+    tornado_storm: {
+      g: ['#0b0e16', '#161c28', 1.25],
+      air: function (ctx, W, H, I) {
+        var cx = W * 0.5, top = H * 0.02, bot = H * 0.88;
+        /* the dust the funnel is dragging — soft, behind the strokes */
+        for (var s = 0; s < 5; s++) {
+          var k0 = s / 5;
+          FX.glowSoft(cx + Math.sin(FX.t * 1.1 + k0 * 3.4) * W * 0.04,
+                      top + (bot - top) * k0,
+                      W * (0.16 - k0 * 0.10), '#3b4353', 0.34 * struct(I));
+        }
+        var n = Math.round(120 * dens(I));
+        for (var i = 0; i < n; i++) {                     /* orbiting debris */
+          var p = P[i];
+          var k2 = ((p.y + FX.t * 0.16 * spd(I)) % 1);
+          var y2 = top + (bot - top) * k2;
+          var rad = W * (0.30 - k2 * 0.245);
+          var ang = p.r + FX.t * (3.2 - k2 * 1.4) * spd(I);
+          ctx.fillStyle = FX.rgba('#c4b49a', 0.42 * alph(I));
+          ctx.fillRect(cx + Math.cos(ang) * rad, y2 + Math.sin(ang) * rad * 0.18, 3.5 * p.z, 2 * p.z);
+        }
+        lightning(ctx, W, H, '#c3d2e8', I, 4.2);
+      },
+      form: function (ctx, W, H, I) {
+        var cx = W * 0.5, top = H * 0.02, bot = H * 0.88;
+        for (var s = 0; s <= 26; s++) {
+          var k = s / 26;
+          var y = top + (bot - top) * k;
+          var wid = W * (0.30 - k * 0.245) * (0.85 + 0.15 * Math.sin(FX.t * 2 + k * 6));
+          var sway = Math.sin(FX.t * 1.1 + k * 3.4) * W * 0.045 * (1 - k);
+          ctx.strokeStyle = FX.rgba(k > 0.6 ? '#7a8296' : '#98a1b4', (0.12 + 0.22 * (1 - k)) * struct(I));
+          ctx.lineWidth = 1.5 + (1 - k) * 2;
+          ctx.beginPath();
+          ctx.ellipse(cx + sway, y, wid, wid * 0.18, 0, 0, 6.2832);
+          ctx.stroke();
+        }
+        /* the ground scud where it touches down */
+        ctx.save(); ctx.translate(cx, bot); ctx.scale(1, 0.22);
+        ctx.strokeStyle = FX.rgba('#8b93a8', 0.24 * struct(I));
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 0, W * (0.09 + 0.02 * FX.pulse(FX.t, 0.7)), 0, 6.2832); ctx.stroke();
         ctx.restore();
       }
-      var n = Math.round(80 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var a2 = p.r + FX.t * (0.3 + p.s * 0.4);
-        var rad = Math.min(W, H) * (0.1 + p.z * 0.3);
-        FX.glow(cx + Math.cos(a2) * rad, cy + Math.sin(a2) * rad * 0.45 - (FX.t * 12 * p.z) % (H * 0.3),
-                4 + p.z * 7, i % 3 === 0 ? '#7dd3fc' : '#a78bfa', 0.26 * alph(I));
+    },
+
+    magical_leaves: {
+      g: ['#0a1610', '#10251a', 0.80],
+      air: function (ctx, W, H, I) {
+        var gx = gust(1.2) * 0.09;
+        var n = Math.round(190 * dens(I));
+        for (var i = 0; i < n; i++) {
+          var p = P[i];
+          var y = ((p.y + FX.t * 0.07 * p.z * spd(I)) % 1) * H;
+          var x = (((p.x + gx * p.z + Math.sin(FX.t * 0.5 * p.s + p.r) * 0.07) % 1) + 1) % 1 * W;
+          var rot = p.r + FX.t * (0.8 + p.s) + gx * 3;
+          ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+          var c = i % 5 === 0 ? '#c9e08a' : (i % 3 === 0 ? '#6fbf7a' : '#8fd08a');
+          /* the fold — an ellipse squashed by its own rotation reads as a leaf
+             turning over in the air rather than as a coloured pill */
+          /* floor 0.45, not 0.28 — below that a third of the field is
+             edge-on slivers at any instant and it stops reading as leaves */
+          var sq = 0.45 + 0.55 * Math.abs(Math.sin(FX.t * (0.9 + p.s) + p.r));
+          ctx.fillStyle = FX.rgba(c, 0.46 * p.z * alph(I));
+          ctx.beginPath(); ctx.ellipse(0, 0, 10 * p.z, 4.2 * p.z * sq, 0, 0, 6.2832); ctx.fill();
+          ctx.strokeStyle = FX.rgba('#2c5c36', 0.30 * p.z * alph(I));
+          ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(-10 * p.z, 0); ctx.lineTo(10 * p.z, 0); ctx.stroke();
+          ctx.restore();
+          if (i % 9 === 0) FX.glow(x, y, 7 * p.z, '#a8e6a0', 0.16 * alph(I));
+        }
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 4, '#071209', 0.13 * struct(I), 0.7, 0.55);
       }
     },
 
-    holy_aura: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#24304a', '#3a4664', 0.10 * I);
-      for (var i = 0; i < 7; i++) {                       /* shafts from above */
-        var x = W * (0.1 + i * 0.13) + Math.sin(FX.t * 0.3 + i) * W * 0.02;
-        FX.beam(x, H * 0.42, W * (0.035 + FX.hash(i, 51) * 0.03), H * 1.05,
-                '#e8d9a0', (0.07 + 0.05 * FX.pulse(FX.t, 0.2 + i * 0.03)) * I, 0.06);
-      }
-      var n = Math.round(90 * dens(I));
-      for (var m = 0; m < n; m++) {                       /* rising motes */
-        var p = P[m];
-        var y = (1 - ((p.y + FX.t * 0.06 * p.z * spd(I)) % 1)) * H;
-        var x2 = ((p.x + Math.sin(FX.t * 0.4 + p.r) * 0.02) % 1) * W;
-        FX.glow(x2, y, 3 + p.z * 6, m % 4 === 0 ? '#f0e3b8' : '#cfe0ff', 0.24 * alph(I));
-      }
-      FX.glow(W / 2, H * 0.30, Math.min(W, H) * 0.42, '#e8d9a0', 0.10 * I);
+    /* ⚠ THE PEAK OFFENDER OF THE OLD BUILD. Measured at CEIL 0.72 it put a
+       background pixel at luminance 207 over a board of 90 and 193 over a board
+       of 40 — the only preset in the set with a non-zero >200 count. The cause
+       was a near-white core (#bfe0ff at 0.7 alpha) plus an additive glow on top
+       of it, on the highest ceiling in the file. The head is now a smaller,
+       cooler core inside the sealed AIR pass, and the read comes from a LONGER
+       tail and a real flare streak instead of from a brighter head. */
+    stars_falling: {
+      g: ['#05081a', '#0b1130', 0.95],
+      air: function (ctx, W, H, I) {
+        var n = Math.round(90 * dens(I));
+        ctx.lineCap = 'butt';
+        for (var i = 0; i < n; i++) {
+          var p = P[i];
+          var k = ((p.y + FX.t * 0.34 * p.z * spd(I)) % 1);
+          var x = (p.x + k * 0.22) * W, y = k * H;
+          var L = 62 * p.z;                       /* longer than before */
+          var dx = -L * 0.55;
+          /* three flat segments instead of a per-particle gradient: same taper,
+             no allocation, and this loop runs for minutes */
+          ctx.lineWidth = 1.5 * p.z;
+          ctx.strokeStyle = FX.rgba('#9fc8ff', 0.48 * alph(I));
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + dx * 0.30, y - L * 0.30); ctx.stroke();
+          ctx.lineWidth = 1.1 * p.z;
+          ctx.strokeStyle = FX.rgba('#7fa8ee', 0.22 * alph(I));
+          ctx.beginPath(); ctx.moveTo(x + dx * 0.30, y - L * 0.30); ctx.lineTo(x + dx * 0.64, y - L * 0.64); ctx.stroke();
+          ctx.lineWidth = 0.8 * p.z;
+          ctx.strokeStyle = FX.rgba('#5c7fd0', 0.10 * alph(I));
+          ctx.beginPath(); ctx.moveTo(x + dx * 0.64, y - L * 0.64); ctx.lineTo(x + dx, y - L); ctx.stroke();
+          FX.glow(x, y, 6 * p.z, '#9fc8ff', 0.21 * alph(I));
+        }
+        for (var s = 0; s < Math.round(50 * dens(I)); s++) {  /* fixed twinkles */
+          var q = P[(s * 17) % P.length];
+          var tw = 0.35 + 0.65 * FX.pulse(FX.t + q.w * 5, 0.4 + q.v * 0.6);
+          FX.glow(q.x * W, q.y * H * 0.7, 2.6 * q.z, '#8ec0f5', 0.22 * tw * alph(I));
+        }
+      },
+      form: null
     },
 
-    infection_gas: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#131c16', '#1f2e22', 0.18 * I);
-      fogBanks(ctx, W, H, Math.round(18 * dens(I)), '#7ba33a', 0.26 * alph(I), 0.5, 0.5, 0.5);
-      var n = Math.round(70 * dens(I));
-      for (var i = 0; i < n; i++) {                       /* spores + bubbles */
-        var p = P[i];
-        var y = (1 - ((p.y + FX.t * 0.05 * p.z * spd(I)) % 1)) * H;
-        var x = ((p.x + Math.sin(FX.t * 0.5 + p.r) * 0.03) % 1) * W;
-        ctx.strokeStyle = FX.rgba('#a3e04a', 0.30 * alph(I));
+    magic_aura_realm: {
+      g: ['#0c0722', '#150e33', 0.95],
+      air: function (ctx, W, H, I) {
+        var cx = W / 2, cy = H * 0.56;
+        var n = Math.round(80 * dens(I));
+        for (var i = 0; i < n; i++) {
+          var p = P[i];
+          var a2 = p.r + FX.t * (0.3 + p.s * 0.4);
+          var rad = Math.min(W, H) * (0.1 + p.z * 0.3);
+          FX.glow(cx + Math.cos(a2) * rad,
+                  cy + Math.sin(a2) * rad * 0.45 - (FX.t * 12 * p.z) % (H * 0.3),
+                  4 + p.z * 7, i % 3 === 0 ? '#7dd3fc' : '#a78bfa', 0.26 * alph(I));
+        }
+        FX.glowSoft(cx, cy, Math.min(W, H) * 0.46, '#241a52', 0.30 * struct(I));
+      },
+      form: function (ctx, W, H, I) {
+        var cx = W / 2, cy = H * 0.56;
+        for (var r = 0; r < 4; r++) {                       /* runic circles */
+          var rr = Math.min(W, H) * (0.14 + r * 0.10) * (1 + 0.04 * FX.pulse(FX.t, 0.15 + r * 0.05));
+          ctx.save(); ctx.translate(cx, cy); ctx.rotate(FX.t * (0.12 + r * 0.05) * (r % 2 ? -1 : 1)); ctx.scale(1, 0.4);
+          ctx.strokeStyle = FX.rgba(r % 2 ? '#a78bfa' : '#7dd3fc', 0.26 * struct(I));
+          ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
+          ctx.strokeStyle = FX.rgba('#c4b5fd', 0.22 * struct(I));
+          for (var g2 = 0; g2 < 8 + r * 2; g2++) {
+            var ga = (g2 / (8 + r * 2)) * 6.2832;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(ga) * rr * 0.93, Math.sin(ga) * rr * 0.93);
+            ctx.lineTo(Math.cos(ga) * rr * 1.06, Math.sin(ga) * rr * 1.06);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
+    },
+
+    holy_aura: {
+      g: ['#0e1524', '#182034', 0.60],
+      air: function (ctx, W, H, I) {
+        /* shafts from above, starting off the top of the frame */
+        rays(ctx, W * 0.5, -H * 0.35, 7, H * 0.42, H * 1.55, '#e8d9a0', 0.16 * I, 1.5708, 1.55, 0.02);
+        var n = Math.round(90 * dens(I));
+        for (var m = 0; m < n; m++) {                       /* rising motes */
+          var p = P[m];
+          var y = (1 - ((p.y + FX.t * 0.06 * p.z * spd(I)) % 1)) * H;
+          var x2 = ((p.x + Math.sin(FX.t * 0.4 + p.r) * 0.02) % 1) * W;
+          FX.glow(x2, y, 3 + p.z * 6, m % 4 === 0 ? '#f0e3b8' : '#cfe0ff', 0.24 * alph(I));
+        }
+        FX.glow(W / 2, H * 0.22, Math.min(W, H) * 0.40, '#e8d9a0', 0.20 * I);
+      },
+      form: function (ctx, W, H, I) {
+        /* a slow halo ring overhead — the one piece of geometry that says
+           "holy" rather than "bright" */
+        ctx.save(); ctx.translate(W * 0.5, H * 0.20); ctx.scale(1, 0.22);
+        ctx.strokeStyle = FX.rgba('#e2cf92', 0.30 * struct(I));
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 0, Math.min(W, H) * (0.30 + 0.012 * FX.pulse(FX.t, 0.13)), 0, 6.2832); ctx.stroke();
+        ctx.restore();
+      }
+    },
+
+    infection_gas: {
+      g: ['#080f0a', '#0e1a10', 1.15],
+      air: function (ctx, W, H, I) {
+        fogBanks(ctx, W, H, Math.round(18 * dens(I)), '#4c6b22', 0.52, 0.5, 0.5, 0.5);
+        var n = Math.round(70 * dens(I));
+        for (var i = 0; i < n; i++) {                       /* spores + bubbles */
+          var p = P[i];
+          var y = (1 - ((p.y + FX.t * 0.05 * p.z * spd(I)) % 1)) * H;
+          var x = ((p.x + Math.sin(FX.t * 0.5 + p.r) * 0.03) % 1) * W;
+          ctx.strokeStyle = FX.rgba('#a3e04a', 0.30 * alph(I));
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(x, y, 2.5 + p.z * 6, 0, 6.2832); ctx.stroke();
+          if (i % 5 === 0) FX.glow(x, y, 8 * p.z, '#84cc16', 0.16 * alph(I));
+        }
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 4, '#0a1408', 0.15 * struct(I), 0.35, 0.8);
+      }
+    },
+
+    toxic_aura: {
+      g: ['#060f08', '#0c1a0d', 1.20],
+      air: function (ctx, W, H, I) {
+        fogBanks(ctx, W, H, Math.round(20 * dens(I)), '#2f6f33', 0.56, 0.4, 0.6, 0.4);
+        var n = Math.round(60 * dens(I));
+        for (var i = 0; i < n; i++) {
+          var p = P[i];
+          var cyc = (FX.t * (0.25 + p.s * 0.2) + p.w) % 1;
+          var x = p.x * W, y = H * (0.98 - cyc * 0.5);
+          FX.glow(x, y, 4 + p.z * 9 * (1 - cyc * 0.5), '#65c46a', 0.24 * (1 - cyc) * alph(I));
+        }
+        for (var d = 0; d < Math.round(18 * dens(I)); d++) {   /* condensate */
+          var q = P[(d * 23) % P.length];
+          var dy = ((q.y + FX.t * 0.3 * q.z) % 1) * H;
+          ctx.strokeStyle = FX.rgba('#8fd66a', 0.26 * alph(I));
+          ctx.lineWidth = 1.4;
+          ctx.beginPath(); ctx.moveTo(q.x * W, dy); ctx.lineTo(q.x * W, dy + 9 * q.z); ctx.stroke();
+        }
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 4, '#081206', 0.16 * struct(I), 0.30, 0.9);
+      }
+    },
+
+    solaris: {
+      g: ['#1c0e04', '#2b1808', 1.00],
+      air: function (ctx, W, H, I) {
+        var d = discGlow(ctx, W, H, '#e0a447', 0.12, 0.34 * I, { x: 0.82, y: 0.20, halo: 4.2 });
+        rays(ctx, d.x, d.y, 9, d.r * 1.20, Math.max(W, H) * 1.1, '#e2a24a', 0.16 * I, 2.45, 1.6);
+        for (var b = 0; b < 6; b++) {                        /* heat shimmer */
+          var y = H * (0.35 + b * 0.11) + Math.sin(FX.t * 1.6 + b) * 5;
+          ctx.strokeStyle = FX.rgba('#e2a24a', 0.14 * I);
+          ctx.lineWidth = 8 + Math.sin(FX.t + b) * 3;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y + Math.sin(FX.t * 0.8 + b) * 8); ctx.stroke();
+        }
+        var n = Math.round(80 * dens(I));
+        for (var i = 0; i < n; i++) {                        /* rising embers */
+          var p = P[i];
+          var y2 = (1 - ((p.y + FX.t * 0.09 * p.z * spd(I)) % 1)) * H;
+          FX.glow(((p.x + Math.sin(FX.t * 0.6 + p.r) * 0.02) % 1) * W, y2, 3 + p.z * 5, '#e8a24a', 0.26 * alph(I));
+        }
+      },
+      form: function (ctx, W, H, I) {
+        discBody(ctx, W, H, '#e0a447', 0.12, { x: 0.82, y: 0.20, solid: 0.5, limb: '#a35d1c' });
+        nearPlane(ctx, W, H, 3, '#150a02', 0.10 * struct(I), 0.4, 1);
+      }
+    },
+
+    eclipse: {
+      g: ['#06040c', '#0d0812', 1.55],
+      air: function (ctx, W, H, I) {
+        var d = discGlow(ctx, W, H, '#c9a2ff', 0.10, 0.24 * I, { x: 0.84, y: 0.20, halo: 3.6 });
+        /* the corona — short rays hugging the rim, so the occluded body reads */
+        rays(ctx, d.x, d.y, 12, d.r * 1.08, d.r * 3.1, '#d8b4ff', 0.20 * I, 0, 6.2832, 0.03);
+        var n = Math.round(150 * dens(I));
+        for (var i = 0; i < n; i++) {                        /* falling ash */
+          var p = P[i];
+          var y = ((p.y + FX.t * 0.06 * p.z * spd(I)) % 1) * H;
+          var x = ((p.x + Math.sin(FX.t * 0.3 + p.r) * 0.02) % 1) * W;
+          ctx.fillStyle = FX.rgba('#6b5c74', 0.34 * p.z * alph(I));
+          ctx.beginPath(); ctx.arc(x, y, 1 + p.z * 1.8, 0, 6.2832); ctx.fill();
+        }
+      },
+      form: function (ctx, W, H, I) {
+        discBody(ctx, W, H, '#c9a2ff', 0.10, { x: 0.84, y: 0.20, solid: 0.46, eclipse: '#d8b4ff' });
+        nearPlane(ctx, W, H, 3, '#050309', 0.14 * struct(I), 0.5, 1);
+      }
+    },
+
+    blood_moon: {
+      g: ['#120406', '#1d080b', 1.30],
+      air: function (ctx, W, H, I) {
+        discGlow(ctx, W, H, '#b3384a', 0.11, 0.30 * I, { x: 0.84, y: 0.20, halo: 3.8 });
+        var n = Math.round(160 * dens(I));
+        for (var i = 0; i < n; i++) {
+          var p = P[i];
+          var y = ((p.y + FX.t * 0.07 * p.z * spd(I)) % 1) * H;
+          var x = ((p.x + Math.sin(FX.t * 0.35 + p.r) * 0.025) % 1) * W;
+          ctx.fillStyle = FX.rgba('#c2564a', 0.32 * p.z * alph(I));
+          ctx.beginPath(); ctx.arc(x, y, 1.1 + p.z * 2, 0, 6.2832); ctx.fill();
+        }
+        fogBanks(ctx, W, H, Math.round(7 * dens(I)), '#4a1218', 0.22 * I, 0.4, 0.66, 0.3);
+      },
+      form: function (ctx, W, H, I) {
+        discBody(ctx, W, H, '#b3384a', 0.11, { x: 0.84, y: 0.20, solid: 0.55, crater: '#5a1723', limb: '#68202c' });
+        nearPlane(ctx, W, H, 3, '#0d0305', 0.13 * struct(I), 0.5, 1);
+      }
+    },
+
+    /* ⚠ THE MEAN OFFENDER OF THE OLD BUILD. It was the ONE preset whose mean
+       background luminance came out BRIGHTER than the board it sits on
+       (102.6 against a board of 90) — a pale grey sheet over the whole field,
+       which is precisely what "the board is washed out" means. Mist is now
+       built out of DARK banks with a thin pale rim near the top, so it removes
+       contrast (which is what fog does) without adding light. */
+    veil: {
+      g: ['#0d1016', '#151920', 1.20],
+      air: function (ctx, W, H, I) {
+        fogBanks(ctx, W, H, Math.round(16 * dens(I)), '#5c6673', 0.62, 0.30, 0.30, 0.55);
+        fogBanks(ctx, W, H, Math.round(13 * dens(I)), '#454d5a', 0.56, 0.55, 0.60, 0.40);
+        /* the pale rim only where the bank is thin, along the top */
+        var g = ctx.createLinearGradient(0, H * 0.05, 0, H * 0.45);
+        g.addColorStop(0, FX.rgba('#96a1b0', 0.20 * struct(I)));
+        g.addColorStop(1, FX.rgba('#8a95a4', 0));
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H * 0.45);
+        var n = Math.round(40 * dens(I));
+        for (var i = 0; i < n; i++) {                        /* drifting wisps */
+          var p = P[i];
+          FX.glow(((p.x + FX.t * 0.012 * p.z + gust(0.6) * 0.01) % 1 + 1) % 1 * W,
+                  ((p.y + Math.sin(FX.t * 0.2 + p.r) * 0.02) % 1) * H,
+                  14 * p.z, '#9aa5b3', 0.07 * alph(I));
+        }
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 5, '#191e26', 0.16 * struct(I), 0.22, 0.85);
+      }
+    },
+
+    noosphere: {
+      g: ['#070f1c', '#0c1a2c', 1.00],
+      air: function (ctx, W, H, I) {
+        var n = Math.round(70 * dens(I));
+        for (var i = 0; i < n; i++) {
+          var p = P[i];
+          FX.glow(((p.x + Math.sin(FX.t * 0.25 + p.r) * 0.05) % 1) * W,
+                  ((p.y + Math.cos(FX.t * 0.2 + p.r) * 0.04) % 1) * H,
+                  5 + p.z * 8, i % 3 === 0 ? '#a5d8f0' : '#5ba3d0', 0.20 * alph(I));
+        }
+        FX.glowSoft(W / 2, H * 0.55, Math.min(W, H) * 0.5, '#0f2440', 0.30 * struct(I));
+      },
+      form: function (ctx, W, H, I) {
+        for (var w = 0; w < 5; w++) {                        /* psychic waves */
+          var ph = (FX.t * 0.14 + w * 0.2) % 1;
+          var rr = Math.min(W, H) * (0.10 + ph * 0.7);
+          ctx.save(); ctx.translate(W / 2, H * 0.55); ctx.scale(1, 0.42);
+          ctx.strokeStyle = FX.rgba('#67b7e0', 0.24 * (1 - ph) * struct(I));
+          ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
+          ctx.restore();
+        }
+        /* filaments between the nearest motes — the "network" read */
+        ctx.strokeStyle = FX.rgba('#4f93bd', 0.16 * struct(I));
         ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(x, y, 2.5 + p.z * 6, 0, 6.2832); ctx.stroke();
-        if (i % 5 === 0) FX.glow(x, y, 8 * p.z, '#84cc16', 0.16 * alph(I));
+        ctx.beginPath();
+        for (var i = 0; i < 14; i++) {
+          var a = P[i * 3], b = P[i * 3 + 1];
+          ctx.moveTo(((a.x + Math.sin(FX.t * 0.25 + a.r) * 0.05) % 1) * W, ((a.y + Math.cos(FX.t * 0.2 + a.r) * 0.04) % 1) * H);
+          ctx.lineTo(((b.x + Math.sin(FX.t * 0.25 + b.r) * 0.05) % 1) * W, ((b.y + Math.cos(FX.t * 0.2 + b.r) * 0.04) % 1) * H);
+        }
+        ctx.stroke();
       }
     },
 
-    toxic_aura: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#0f1a12', '#1b2f1d', 0.18 * I);
-      fogBanks(ctx, W, H, Math.round(20 * dens(I)), '#4fae52', 0.28 * alph(I), 0.4, 0.6, 0.4);
-      var n = Math.round(60 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var cyc = (FX.t * (0.25 + p.s * 0.2) + p.w) % 1;
-        var x = p.x * W, y = H * (0.98 - cyc * 0.5);
-        FX.glow(x, y, 4 + p.z * 9 * (1 - cyc * 0.5), '#65c46a', 0.24 * (1 - cyc) * alph(I));
-      }
-      /* dripping condensate */
-      for (var d = 0; d < Math.round(18 * dens(I)); d++) {
-        var q = P[(d * 23) % P.length];
-        var dy = ((q.y + FX.t * 0.3 * q.z) % 1) * H;
-        ctx.strokeStyle = FX.rgba('#8fd66a', 0.26 * alph(I));
-        ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.moveTo(q.x * W, dy); ctx.lineTo(q.x * W, dy + 9 * q.z); ctx.stroke();
-      }
-    },
-
-    solaris: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#3d2512', '#5e3a1a', 0.16 * I);
-      disc(ctx, W, H, '#e0a447', 0.12, 0.34 * I, { x: 0.82, y: 0.20, halo: 4.0 });
-      for (var b = 0; b < 6; b++) {                        /* heat shimmer bands */
-        var y = H * (0.35 + b * 0.11) + Math.sin(FX.t * 1.6 + b) * 5;
-        ctx.strokeStyle = FX.rgba('#e2a24a', 0.07 * I);
-        ctx.lineWidth = 8 + Math.sin(FX.t + b) * 3;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y + Math.sin(FX.t * 0.8 + b) * 8); ctx.stroke();
-      }
-      var n = Math.round(80 * dens(I));
-      for (var i = 0; i < n; i++) {                        /* rising embers */
-        var p = P[i];
-        var y2 = (1 - ((p.y + FX.t * 0.09 * p.z * spd(I)) % 1)) * H;
-        FX.glow(((p.x + Math.sin(FX.t * 0.6 + p.r) * 0.02) % 1) * W, y2, 3 + p.z * 5, '#e8a24a', 0.26 * alph(I));
+    oil_rain: {
+      g: ['#080604', '#100d08', 1.25],
+      air: function (ctx, W, H, I) {
+        curtain(ctx, W, H, 3, '#2a2418', 0.22 * struct(I), spd(I));
+        streaks(ctx, W, H, Math.round(280 * dens(I)), '#5b503c',
+                { len: 34, wind: 0.2, speed: 1.4 * spd(I), alpha: 0.50 * alph(I), thick: 2.4 });
+        for (var i = 0; i < Math.round(10 * dens(I)); i++) {  /* iridescence */
+          var p = P[(i * 19) % P.length];
+          FX.glow(p.x * W, H * (0.86 + p.v * 0.12), 26 * p.z, i % 2 ? '#3f7d6a' : '#6a4a7d', 0.10 * alph(I));
+        }
+      },
+      form: function (ctx, W, H, I) {
+        var g = ctx.createLinearGradient(0, H * 0.80, 0, H);
+        g.addColorStop(0, FX.rgba('#14120c', 0));
+        g.addColorStop(1, FX.rgba('#1a160e', 0.42 * struct(I)));
+        ctx.fillStyle = g; ctx.fillRect(0, H * 0.80, W, H * 0.2);
+        surface(ctx, W, H, H * 0.815, '#4a4230', 0.30 * struct(I), 3, 0.9);
+        nearPlane(ctx, W, H, 4, '#060503', 0.15 * struct(I), 1.2, 2.2);
       }
     },
 
-    eclipse: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#0a0710', '#160e1c', 0.24 * I);
-      disc(ctx, W, H, '#c9a2ff', 0.10, 0.26 * I, { x: 0.84, y: 0.20, halo: 3.4, solid: 0.5, eclipse: '#d8b4ff' });
-      var n = Math.round(150 * dens(I));
-      for (var i = 0; i < n; i++) {                        /* falling ash */
-        var p = P[i];
-        var y = ((p.y + FX.t * 0.06 * p.z * spd(I)) % 1) * H;
-        var x = ((p.x + Math.sin(FX.t * 0.3 + p.r) * 0.02) % 1) * W;
-        ctx.fillStyle = FX.rgba('#6b5c74', 0.34 * p.z * alph(I));
-        ctx.beginPath(); ctx.arc(x, y, 1 + p.z * 1.8, 0, 6.2832); ctx.fill();
-      }
-      var vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, Math.min(W, H) * 0.8);
-      vg.addColorStop(0, 'rgba(4,2,8,0)'); vg.addColorStop(1, 'rgba(4,2,8,' + (0.35 * I).toFixed(3) + ')');
-      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
-    },
-
-    blood_moon: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#1a0709', '#310f12', 0.20 * I);
-      disc(ctx, W, H, '#b3384a', 0.11, 0.32 * I, { x: 0.84, y: 0.20, halo: 3.6, solid: 0.6, crater: '#6d1f2c' });
-      var n = Math.round(160 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var y = ((p.y + FX.t * 0.07 * p.z * spd(I)) % 1) * H;
-        var x = ((p.x + Math.sin(FX.t * 0.35 + p.r) * 0.025) % 1) * W;
-        ctx.fillStyle = FX.rgba('#c2564a', 0.32 * p.z * alph(I));
-        ctx.beginPath(); ctx.arc(x, y, 1.1 + p.z * 2, 0, 6.2832); ctx.fill();
-      }
-      fogBanks(ctx, W, H, Math.round(7 * dens(I)), '#7a1f26', 0.10 * I, 0.4, 0.66, 0.3);
-    },
-
-    veil: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#222730', '#39404c', 0.16 * I);
-      fogBanks(ctx, W, H, Math.round(16 * dens(I)), '#aeb8c6', 0.30 * alph(I), 0.30, 0.24, 0.6);
-      fogBanks(ctx, W, H, Math.round(13 * dens(I)), '#8d96a6', 0.26 * alph(I), 0.55, 0.58, 0.4);
-      var n = Math.round(40 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        FX.glow(((p.x + FX.t * 0.012 * p.z) % 1) * W, ((p.y + Math.sin(FX.t * 0.2 + p.r) * 0.02) % 1) * H,
-                14 * p.z, '#c3ccd8', 0.07 * alph(I));
+    fire_rain: {
+      g: ['#150603', '#210b05', 1.20],
+      air: function (ctx, W, H, I) {
+        var n = Math.round(220 * dens(I));
+        /* ⚠ NO per-particle gradient. The old version built one linear gradient
+           for every one of these 220 embers, EVERY FRAME — 0.75 ms/frame, four
+           times the cost of the heaviest rain, on a layer that stays up for
+           minutes. Three flat segments read the same and cost a sixth. */
+        ctx.lineCap = 'butt';
+        for (var i = 0; i < n; i++) {
+          var p = P[i];
+          var y = ((p.y + FX.t * 0.30 * p.z * spd(I)) % 1) * H;
+          var x = ((p.x + FX.t * 0.03 * p.z) % 1) * W;
+          var L = 24 * p.z, dx = -L * 0.3;
+          ctx.lineWidth = 1.7 * p.z;
+          ctx.strokeStyle = FX.rgba('#e2732a', 0.62 * alph(I));
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + dx * 0.34, y - L * 0.34); ctx.stroke();
+          ctx.lineWidth = 1.2 * p.z;
+          ctx.strokeStyle = FX.rgba('#b8471a', 0.32 * alph(I));
+          ctx.beginPath(); ctx.moveTo(x + dx * 0.34, y - L * 0.34); ctx.lineTo(x + dx * 0.68, y - L * 0.68); ctx.stroke();
+          ctx.lineWidth = 0.9 * p.z;
+          ctx.strokeStyle = FX.rgba('#7d2a0c', 0.16 * alph(I));
+          ctx.beginPath(); ctx.moveTo(x + dx * 0.68, y - L * 0.68); ctx.lineTo(x + dx, y - L); ctx.stroke();
+          if (i % 3 === 0) FX.glow(x, y, 5 * p.z, '#e88a2a', 0.32 * alph(I));
+        }
+        var gg = ctx.createLinearGradient(0, H * 0.78, 0, H);
+        gg.addColorStop(0, FX.rgba('#c2410c', 0));
+        gg.addColorStop(1, FX.rgba('#c2410c', 0.32 * struct(I)));
+        ctx.fillStyle = gg; ctx.fillRect(0, H * 0.78, W, H * 0.22);
+      },
+      form: function (ctx, W, H, I) {
+        nearPlane(ctx, W, H, 4, '#0e0402', 0.14 * struct(I), 1.6, 2.4);
       }
     },
 
-    noosphere: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#101a2e', '#1c2f4e', 0.15 * I);
-      for (var w = 0; w < 5; w++) {                        /* psychic waves */
-        var rr = Math.min(W, H) * (0.10 + ((FX.t * 0.14 + w * 0.2) % 1) * 0.7);
-        var fade = 1 - ((FX.t * 0.14 + w * 0.2) % 1);
-        ctx.save(); ctx.translate(W / 2, H * 0.55); ctx.scale(1, 0.42);
-        ctx.strokeStyle = FX.rgba('#67b7e0', 0.22 * fade * alph(I));
-        ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
-        ctx.restore();
-      }
-      var n = Math.round(70 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        FX.glow(((p.x + Math.sin(FX.t * 0.25 + p.r) * 0.05) % 1) * W,
-                ((p.y + Math.cos(FX.t * 0.2 + p.r) * 0.04) % 1) * H,
-                5 + p.z * 8, i % 3 === 0 ? '#a5d8f0' : '#5ba3d0', 0.20 * alph(I));
-      }
-    },
-
-    oil_rain: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#0c0a08', '#1b1610', 0.20 * I);
-      streaks(ctx, W, H, Math.round(280 * dens(I)), '#5b503c',
-              { len: 34, wind: 0.2, speed: 1.4 * spd(I), alpha: 0.5 * alph(I), thick: 2.4 });
-      /* slick pooling at the bottom with an iridescent sheen */
-      var g = ctx.createLinearGradient(0, H * 0.80, 0, H);
-      g.addColorStop(0, FX.rgba('#1d1a12', 0));
-      g.addColorStop(1, FX.rgba('#2a2418', 0.34 * alph(I)));
-      ctx.fillStyle = g; ctx.fillRect(0, H * 0.80, W, H * 0.2);
-      for (var i = 0; i < Math.round(10 * dens(I)); i++) {
-        var p = P[(i * 19) % P.length];
-        FX.glow(p.x * W, H * (0.86 + p.v * 0.12), 26 * p.z, i % 2 ? '#3f7d6a' : '#6a4a7d', 0.09 * alph(I));
-      }
-    },
-
-    fire_rain: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#210d06', '#3d160a', 0.18 * I);
-      var n = Math.round(220 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var y = ((p.y + FX.t * 0.30 * p.z * spd(I)) % 1) * H;
-        var x = ((p.x + FX.t * 0.03 * p.z) % 1) * W;
-        var L = 20 * p.z;
-        var g = ctx.createLinearGradient(x, y, x - L * 0.3, y - L);
-        g.addColorStop(0, FX.rgba('#e2732a', 0.62 * alph(I)));
-        g.addColorStop(1, FX.rgba('#8a2a0c', 0));
-        ctx.strokeStyle = g; ctx.lineWidth = 1.6 * p.z;
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - L * 0.3, y - L); ctx.stroke();
-        FX.glow(x, y, 5 * p.z, '#e88a2a', 0.32 * alph(I));
-      }
-      var gg = ctx.createLinearGradient(0, H * 0.82, 0, H);
-      gg.addColorStop(0, FX.rgba('#c2410c', 0));
-      gg.addColorStop(1, FX.rgba('#c2410c', 0.16 * alph(I)));
-      ctx.fillStyle = gg; ctx.fillRect(0, H * 0.82, W, H * 0.18);
-    },
-
-    /* ⏳ NEW — a slow-of-time field: concentric dial rings, motes that drift in
+    /* ⏳ A slow-of-time field: concentric dial rings, motes that drift in
        stutters, and a slow pulse across the board. */
-    time_slow: function (ctx, W, H, I) {
-      sky(ctx, W, H, '#16182a', '#232744', 0.15 * I);
-      var cx = W / 2, cy = H * 0.55, U = Math.min(W, H);
-      for (var r = 0; r < 3; r++) {                        /* dial rings */
-        var rr = U * (0.16 + r * 0.11);
-        ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
-        ctx.strokeStyle = FX.rgba('#8fb6d8', 0.20 * alph(I));
-        ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
-        /* tick marks — the "clock" read */
-        ctx.strokeStyle = FX.rgba('#c9dcf0', 0.24 * alph(I));
-        for (var k = 0; k < 12; k++) {
-          var a = (k / 12) * 6.2832;
-          ctx.beginPath();
-          ctx.moveTo(Math.cos(a) * rr * 0.92, Math.sin(a) * rr * 0.92);
-          ctx.lineTo(Math.cos(a) * rr * 1.04, Math.sin(a) * rr * 1.04);
-          ctx.stroke();
+    time_slow: {
+      g: ['#0b0d18', '#12142a', 0.85],
+      air: function (ctx, W, H, I) {
+        var n = Math.round(90 * dens(I));
+        for (var i = 0; i < n; i++) {                        /* stuttering motes */
+          var p = P[i];
+          var stut = Math.floor((FX.t * 0.5 + p.w) * 6) / 6;
+          var y = ((p.y + stut * 0.12 * p.z) % 1) * H;
+          var x = ((p.x + Math.sin(stut * 2 + p.r) * 0.01) % 1) * W;
+          FX.glow(x, y, 3 + p.z * 5, i % 4 === 0 ? '#c9dcf0' : '#7fa8cc', 0.22 * alph(I));
         }
+      },
+      form: function (ctx, W, H, I) {
+        var cx = W / 2, cy = H * 0.55, U = Math.min(W, H);
+        for (var r = 0; r < 3; r++) {                        /* dial rings */
+          var rr = U * (0.16 + r * 0.11);
+          ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
+          ctx.strokeStyle = FX.rgba('#7fa2c2', 0.24 * struct(I));
+          ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
+          ctx.strokeStyle = FX.rgba('#a8c2da', 0.26 * struct(I));
+          for (var k = 0; k < 12; k++) {
+            var a = (k / 12) * 6.2832;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(a) * rr * 0.92, Math.sin(a) * rr * 0.92);
+            ctx.lineTo(Math.cos(a) * rr * 1.04, Math.sin(a) * rr * 1.04);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+        /* the sweeping hand, stepping rather than gliding */
+        var step = Math.floor(FX.t * 1.6) / 1.6;
+        ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
+        ctx.rotate(step * 0.9);
+        ctx.strokeStyle = FX.rgba('#8fbfe6', 0.34 * struct(I));
+        ctx.lineWidth = 2.4;
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(U * 0.26, 0); ctx.stroke();
+        ctx.restore();
+        /* one slow pulse crossing the field */
+        var pw = (FX.t * 0.18) % 1;
+        ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
+        ctx.strokeStyle = FX.rgba('#9cc0e0', 0.20 * (1 - pw) * struct(I));
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 0, U * 0.1 + pw * U * 0.8, 0, 6.2832); ctx.stroke();
         ctx.restore();
       }
-      /* the sweeping hand, stepping rather than gliding */
-      var step = Math.floor(FX.t * 1.6) / 1.6;
-      ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
-      ctx.rotate(step * 0.9);
-      ctx.strokeStyle = FX.rgba('#a9d6ff', 0.34 * alph(I));
-      ctx.lineWidth = 2.4;
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(U * 0.26, 0); ctx.stroke();
-      ctx.restore();
-      /* motes that advance in stutters — time is dragging */
-      var n = Math.round(90 * dens(I));
-      for (var i = 0; i < n; i++) {
-        var p = P[i];
-        var stut = Math.floor((FX.t * 0.5 + p.w) * 6) / 6;
-        var y = ((p.y + stut * 0.12 * p.z) % 1) * H;
-        var x = ((p.x + Math.sin(stut * 2 + p.r) * 0.01) % 1) * W;
-        FX.glow(x, y, 3 + p.z * 5, i % 4 === 0 ? '#c9dcf0' : '#7fa8cc', 0.22 * alph(I));
-      }
-      /* one slow pulse crossing the field */
-      var pw = (FX.t * 0.18) % 1;
-      ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
-      ctx.strokeStyle = FX.rgba('#bcd8f2', 0.18 * (1 - pw) * alph(I));
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(0, 0, U * 0.1 + pw * U * 0.8, 0, 6.2832); ctx.stroke();
-      ctx.restore();
     }
   };
 
@@ -585,17 +1015,40 @@
     ['oil_rain', 'Raining Oil'], ['fire_rain', 'Raining Fire'], ['time_slow', 'Slow of Time']
   ];
 
+  /* ── the frame ────────────────────────────────────────────────────────── */
   FX.mount({ draw: function () {
+    /* ♿ frozen field under reduced motion — a still, legible atmosphere rather
+       than no atmosphere. Held at a time that has all the cycles part-way
+       through, so nothing is caught mid-blink. */
+    if (RM) FX.t = 4.0;
+
     var ctx = FX.ctx, W = FX.W, H = FX.H;
-    var fn = WX[cur] || WX.normal_rain;
-    fn(ctx, W, H, Math.max(0.05, Math.min(1, intensity)));
+    var I = Math.max(0.05, Math.min(1, intensity));
+    var wx = WX[cur] || WX.normal_rain;
+
+    /* ── AIR ── everything that emits light, plus the dark grade */
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    grade(ctx, W, H, wx.g[0], wx.g[1], (0.055 + 0.085 * I) * wx.g[2]);
+    relief(ctx, W, H);           /* ⚑ thins the GRADE only — see relief() */
+    if (wx.air) wx.air(ctx, W, H, I);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    FX.applyCeiling(SEAL);            /* ⚑ the seal — AIR lands at exactly AIR */
+
+    /* ── FORM ── line work and bodies only */
+    if (wx.form) wx.form(ctx, W, H, I);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    /* FX.mount applies FX.CEIL = FORM after this returns */
   }});
 
   window.WeatherRealms = {
     list: function () { return LIST.map(function (r, i) { return { index: i, id: r[0], name: r[1] }; }); },
     set: function (idOrIndex) {
-      if (typeof idOrIndex === 'number') { cur = (LIST[idOrIndex] || LIST[1])[0]; return cur; }
-      if (WX[idOrIndex]) cur = idOrIndex;
+      var was = cur;
+      if (typeof idOrIndex === 'number') { cur = (LIST[idOrIndex] || LIST[1])[0]; }
+      else if (WX[idOrIndex]) { cur = idOrIndex; }
+      /* a preset swap must not inherit the previous weather's strike timer, or
+         a storm handed over mid-flash holds the lift on the new sky */
+      if (cur !== was) { bolt.t = -9; bolt.seed = 0; }
       return cur;
     },
     setIntensity: function (v) { intensity = Math.max(0, Math.min(1, +v || 0)); },

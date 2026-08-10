@@ -491,6 +491,23 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
           <span className="act-lbl">Hire</span>
           <span className="act-hot">H</span>
         </button>
+        {/* 🛏 THE BUNKHOUSE HAD NO DOOR. Its logic, UI, purchase and persistence
+            all shipped, but this screen sits under a full-viewport iframe, so
+            nothing could open it — the design doc's "floor, works with no city"
+            was unreachable for every player without a Tier-1 city. Added as its
+            OWN button rather than by repurposing a room's CTA: panel.jsx renders
+            exactly one CTA per room, so reusing one would have deleted an
+            existing entry point. The overlay this opens renders above the
+            builder frame, which is why the postMessage seam works here. */}
+        <button
+          className="act"
+          title="Billet cards to train their Resonance (R)"
+          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "bunkhouse" }, window.location.origin); } catch (e) {} }}
+        >
+          {Ic.survivor}
+          <span className="act-lbl">Bunks</span>
+          <span className="act-hot">R</span>
+        </button>
       </div>
 
       <div className="tick">

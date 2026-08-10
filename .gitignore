@@ -61,3 +61,6 @@ public/.claude/
 # own codebases and do not belong in the game's history.
 mythic-contracts/
 mythic-game-api/
+.cityloop/
+.battleloop/
+.spriteloop/

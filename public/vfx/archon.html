@@ -9,7 +9,7 @@
   #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
 </style>
 <title>Rite of the Archon</title>
-<script>window.VFX_BUILD="v119f6-archon";</script>
+<script>window.VFX_BUILD="v120t3-archon";</script>
 </head>
 <body>
 <canvas id="fx"></canvas>
@@ -17,85 +17,747 @@
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
    RITE OF THE ARCHON — a tribute summon.
-   Beats:  gather  (the tributes rise into a ring)
-        →  offer   (they burn down into the circle, embers climb)
-        →  gate    (a rift opens above the board)
-        →  descend (the Archon comes down through it)
-        →  reveal  (nameplate, standing light)
-   Same engine, same guarantees: 2D canvas, clamped colours, one alpha ceiling.
+
+   Beats:  gather  (the tributes rise out of the circle, each on its shadow)
+        →  offer   (they burn away from the bottom up; the embers climb)
+        →  gate    (a TEAR opens above the board — a hole, not a lamp)
+        →  descend (the Archon comes down through it; its shadow finds the floor)
+        →  reveal  (landing shock, nameplate, standing light)
+   Same engine, same guarantees: 2D canvas, clamped colours, two sealed layers.
    ═══════════════════════════════════════════════════════════════════════════ */
 (function () {
-  /* A one-shot cinematic may composite harder than the persistent weather
-     layer: it is on screen for five seconds, and after the colour clamp there
-     is no white for a higher ceiling to amplify. Measured: 0 white pixels
-     across the whole timeline at this value. */
-  FX.CEIL = 0.78;
-  var GOLD = '#e0b64a', EMBER = '#ff8a3c', DEEP = '#4c2f8f', SKY = '#7ec0ff';
+
+/* ═══ CINE KIT — copied verbatim into kalon / fusion / archon ════════════════
+   THE THIRD OPTION (see .battleloop/_r7/mech.NOTES.md).
+
+   The white screen was never the card. It was the DIFFUSE FIELD: full-frame
+   vignettes, additive glows and particle banks, all riding ONE frame-wide alpha
+   ceiling. Raising that ceiling to stop the effects feeling thin is exactly the
+   knob that re-opens the bug — the previous build sat at 0.78, which is also
+   the precise value at which the `alpha > 200` white-wash test can no longer
+   fire (0.78 × 255 = 198.9). A metric that cannot fire is not a guarantee.
+
+   So the frame is composited in TWO passes instead:
+
+     ATMO (0.40) — every glow, mote, beam, vignette, dust and shock ring.
+                   Sealed mid-frame with destination-in, BELOW the 0.42 that
+                   beat the white screen. No density of additive light in this
+                   layer can wash the board out.
+     HERO (0.74) — the card, the unit art, the line work, the nameplate. The
+                   highest alpha at which a pixel of PURE WHITE art still
+                   composites to luminance ~195 over the battlefield: under the
+                   200 threshold with margin, and with NO reliance on the host's
+                   0.9 wrap opacity.
+
+   Everything that makes these read as expensive now costs zero luminance:
+   silhouette, cast shadow, dark shock rings, anticipation, weight and settle.
+   ═══════════════════════════════════════════════════════════════════════════ */
+var ATMO = 0.40, HERO = 0.74;
+FX.CEIL = HERO;                                  /* mount's own final pass */
+/* Seal the atmosphere layer. destination-in multiplies DESTINATION ALPHA only —
+   colour is untouched — so this cannot divide a colour up into white the way the
+   old premultiplied ceiling did. Called OUTSIDE any camera transform: it resets
+   the matrix. */
+function seal() { FX.applyCeiling(ATMO / HERO); }
+
+var CK = {};
+/* ── timing: nothing in here is uniform speed ───────────────────────────── */
+CK.back = function (p) { p = FX.clamp01(p); var c = 1.70158, s = c + 1, q = p - 1; return 1 + s*q*q*q + c*q*q; };
+CK.snap = function (p) { p = FX.clamp01(p); return 1 - Math.pow(1 - p, 5); };
+CK.decay = function (p) { p = FX.clamp01(p); return Math.pow(1 - p, 2.4); };
+CK.breathe = function (t, hz, amp) { return 1 + Math.sin(t * 6.2832 * (hz == null ? 0.3 : hz)) * (amp == null ? 0.012 : amp); };
+
+/* ── contrast without luminance ─────────────────────────────────────────── */
+/* A dark radial that pushes the battlefield away from the subject. This is what
+   replaces "make it brighter": the eye reads local contrast, not absolute light. */
+CK.ink = function (cx, cy, r, a, squashY) {
+  if (a <= 0 || r <= 0) return;
+  var ctx = FX.ctx;
+  ctx.save();
+  ctx.translate(cx, cy); if (squashY) ctx.scale(1, squashY);
+  var g = ctx.createRadialGradient(0, 0, r * 0.12, 0, 0, r);
+  g.addColorStop(0,    'rgba(2,1,5,' + a.toFixed(3) + ')');
+  g.addColorStop(0.55, 'rgba(2,1,5,' + (a * 0.62).toFixed(3) + ')');
+  g.addColorStop(1,    'rgba(2,1,5,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.2832); ctx.fill();
+  ctx.restore();
+};
+/* An expanding ring of DARK — a smoke shock. Force, with no light at all. */
+CK.inkRing = function (cx, cy, k, R, a, squashY) {
+  if (k <= 0 || k > 1.001) return;
+  var ctx = FX.ctx, e = FX.easeOut(k), r = R * (0.05 + e * 0.95);
+  ctx.save();
+  ctx.translate(cx, cy); if (squashY) ctx.scale(1, squashY);
+  ctx.lineWidth = Math.max(2, R * 0.16 * (1 - e));
+  ctx.strokeStyle = 'rgba(3,2,6,' + (a * (1 - e)).toFixed(3) + ')';
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.2832); ctx.stroke();
+  ctx.restore();
+};
+/* Cast shadow. Weight is a shadow, not a glow. */
+CK.shadow = function (cx, cy, rx, ry, a) {
+  if (a <= 0 || rx <= 0) return;
+  var ctx = FX.ctx;
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(1, Math.max(0.001, ry / rx));
+  var g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+  g.addColorStop(0,   'rgba(0,0,0,' + a.toFixed(3) + ')');
+  g.addColorStop(0.6, 'rgba(0,0,0,' + (a * 0.45).toFixed(3) + ')');
+  g.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, rx, 0, 6.2832); ctx.fill();
+  ctx.restore();
+};
+
+/* ── light with a shape: a tapered streak, not a dot ────────────────────── */
+CK.streak = function (x, y, ang, len, w, colour, a) {
+  if (a <= 0 || len <= 0) return;
+  var ctx = FX.ctx;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+  var g = ctx.createLinearGradient(-len, 0, 0, 0);
+  g.addColorStop(0, FX.rgba(colour, 0));
+  g.addColorStop(1, FX.rgba(colour, a));
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(-len, 0); ctx.lineTo(0, -w / 2); ctx.lineTo(w * 0.5, 0); ctx.lineTo(0, w / 2);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+};
+/* A real shaft of light: soft on BOTH axes. FX.beam gradients only along its
+   height, so its left and right edges are hard — on the board that reads as a
+   grey rectangle sitting on the field, which is what the Archon gate did. */
+/* ⚠ Built from a SCALED RADIAL, not from a masked rect. The first version of
+   this helper painted a horizontal falloff and then knocked a vertical falloff
+   out of it with destination-out — which does not erase "my rect", it erases
+   the DESTINATION, i.e. the grade and every glow already drawn underneath. It
+   cut a bright hole straight through the frame. A radial in a scaled space is
+   soft on both axes by construction and touches nothing but itself. */
+CK.shaft = function (cx, topY, botY, halfW, colour, a) {
+  if (a <= 0 || halfW <= 0 || botY <= topY) return;
+  var ctx = FX.ctx, h = botY - topY, mid = (topY + botY) / 2;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(cx, mid);
+  ctx.scale(1, h / (halfW * 2));
+  var g = ctx.createRadialGradient(0, 0, 0, 0, 0, halfW);
+  g.addColorStop(0,    FX.rgba(colour, a));
+  g.addColorStop(0.42, FX.rgba(colour, a * 0.42));
+  g.addColorStop(1,    FX.rgba(colour, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, halfW, 0, 6.2832); ctx.fill();
+  ctx.restore();
+};
+
+/* ── AFTER-THE-ART LIGHT ─────────────────────────────────────────────────────
+   ⚠ THE ROUND-1 DEFECT THIS EXISTS TO FIX. Every page stroked its reveal halo
+   and god-rays BEFORE FX.chromaImage, so a large opaque hero image occluded all
+   of it. With an empty payload the payoff looked good; with art in the slot —
+   i.e. in every real game — the player saw a rectangle and a nameplate and
+   nothing else. Light that DRESSES the hero has to be composited AFTER it.
+
+   These three helpers build the art's SILHOUETTE in an offscreen canvas and use
+   it as a stencil, so post-art light can be placed exactly where it cannot wash
+   the face:
+     CK.aura   — dilate the body, knock the body back out: an outer halo that is
+                 DISJOINT from the art by construction.
+     CK.rim    — body minus body-shifted-away-from-the-light: a lit crescent ON
+                 the figure. The one cheap thing that makes a flat sprite read
+                 as lit by the scene it is standing in.
+     CK.onBody — paint anything, then intersect with the body. Used for weld
+                 seams that resolve into the silhouette.
+     CK.ray    — a tapered shaft whose INNER radius starts outside the art, so
+                 it is never covered no matter how big the hero image is.
+
+   ⚠ The stamps composite with SOURCE-OVER, never 'lighter'. Twelve additive
+   stamps of an already-clamped gold still sum past 255 per channel and clip to
+   WHITE — that is the exact failure mode this project keeps re-discovering.
+   source-over builds ALPHA toward 1 and leaves the colour where FX.rgba put it.
+   ⚠ Mask sizes are quantised to 8px so a breathing scale does not allocate a
+   fresh canvas every frame; the stencil is then drawn back at the art's EXACT
+   size, so the rim stays registered to the edge. */
+var _silCache = {}, _silN = 0, _scr = null, _scrG = null;
+function _scratch(w, h) {
+  if (!_scr) { _scr = document.createElement('canvas'); _scrG = _scr.getContext('2d'); }
+  if (_scr.width !== w || _scr.height !== h) { _scr.width = w; _scr.height = h; }
+  else _scrG.clearRect(0, 0, w, h);
+  _scrG.setTransform(1, 0, 0, 1, 0, 0);
+  _scrG.globalAlpha = 1; _scrG.globalCompositeOperation = 'source-over';
+  return _scrG;
+}
+/* ⚠ THE CARD-FACE FALLBACK — the defect the stencils shipped with.
+   `_vfxPayloadFor` in the host falls back to `_vfxCardFace(d.unit)` whenever a
+   unit has no sprite, and the host's own comment says that is the COMMON path.
+   A card face is an OPAQUE RECTANGLE, so a stencil cut from its alpha IS the
+   rectangle: CK.rim / CK.aura / CK.ghost degrade into a neon border around a
+   box. Detect it once per image (32x32 alpha coverage, cached on the image) and
+   then treat it as what it is — a CARD. Rounded stencil corners, a raking light
+   instead of an edge band, and a real frame on the hero draw.
+   On a tainted canvas we cannot read the alpha; default to FALSE, i.e. the
+   pre-existing creature path, so an unreadable image can never make a sprite
+   render as a card. */
+function _rr(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y,     x + w, y + h, r);
+  g.arcTo(x + w, y + h, x,     y + h, r);
+  g.arcTo(x,     y + h, x,     y,     r);
+  g.arcTo(x,     y,     x + w, y,     r);
+  g.closePath();
+}
+CK.isRect = function (img) {
+  if (!img || !img.width) return false;
+  if (img.__ckRect != null) return img.__ckRect;
+  var r = false;
+  try {
+    var c = document.createElement('canvas'); c.width = 32; c.height = 32;
+    var g = c.getContext('2d'); g.drawImage(img, 0, 0, 32, 32);
+    var d = g.getImageData(0, 0, 32, 32).data, op = 0;
+    for (var i = 3; i < d.length; i += 4) if (d[i] > 24) op++;
+    r = op >= 1024 * 0.93;                 /* >=93% of the box solid: a card face */
+  } catch (e) { r = false; }
+  img.__ckRect = r; return r;
+};
+/* the art, flattened to one clamped colour. Cached; never contains white. */
+CK.silh = function (img, w, h, colour) {
+  if (!img || !img.width) return null;
+  if (!img.__sid) img.__sid = ++_silN;
+  var key = img.__sid + '|' + w + '|' + h + '|' + colour;
+  if (_silCache[key]) return _silCache[key];
+  var c = document.createElement('canvas'); c.width = w; c.height = h;
+  var g = c.getContext('2d');
+  g.drawImage(img, 0, 0, w, h);
+  g.globalCompositeOperation = 'source-in';
+  g.fillStyle = FX.rgba(colour, 1); g.fillRect(0, 0, w, h);
+  if (CK.isRect(img)) {                    /* card face: the stencil is a CARD */
+    g.globalCompositeOperation = 'destination-in';
+    g.fillStyle = '#000';
+    _rr(g, 0.5, 0.5, w - 1, h - 1, Math.min(w, h) * 0.055); g.fill();
+  }
+  g.globalCompositeOperation = 'source-over';
+  var ks = Object.keys(_silCache); if (ks.length > 12) delete _silCache[ks[0]];
+  _silCache[key] = c; return c;
+};
+/* geometry shared by all three stencil passes */
+function _fitQ(img, boxW, boxH, scale) {
+  var k = Math.min(boxW / img.width, boxH / img.height) * (scale == null ? 1 : scale);
+  var ew = img.width * k, eh = img.height * k;
+  if (ew < 10 || eh < 10) return null;
+  return { ew: ew, eh: eh,
+           qw: Math.max(8, Math.round(ew / 8) * 8),
+           qh: Math.max(8, Math.round(eh / 8) * 8) };
+}
+function _blit(cx, cy, W, H, sx, sy, a) {
+  var ctx = FX.ctx;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = FX.clamp01(a);
+  ctx.drawImage(_scr, cx - W * sx / 2, cy - H * sy / 2, W * sx, H * sy);
+  ctx.restore();
+}
+/* OUTER HALO. dir/arc optional: limit the halo to one side (backlight). */
+CK.aura = function (img, cx, cy, boxW, boxH, scale, colour, a, spreadK, dir, arc) {
+  if (!img || !img.width || a <= 0.004) return;
+  var q = _fitQ(img, boxW, boxH, scale); if (!q) return;
+  var m = CK.silh(img, q.qw, q.qh, colour); if (!m) return;
+  var s = Math.max(2, Math.round(q.qw * (spreadK == null ? 0.06 : spreadK)));
+  var W = q.qw + s * 2, H = q.qh + s * 2;
+  var g = _scratch(W, H);
+  var ST = [[1.00, 0.17], [0.70, 0.23], [0.44, 0.30], [0.20, 0.40]];
+  for (var si = 0; si < ST.length; si++) {
+    g.globalAlpha = ST[si][1];
+    for (var ai = 0; ai < 12; ai++) {
+      var an = ai * 0.5236;
+      if (arc != null && dir != null) {
+        var dd = Math.atan2(Math.sin(an - dir), Math.cos(an - dir));
+        if (Math.abs(dd) > arc) continue;
+      }
+      g.drawImage(m, s + Math.cos(an) * s * ST[si][0], s + Math.sin(an) * s * ST[si][0]);
+    }
+  }
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'destination-out';
+  g.drawImage(m, s, s);                       /* the body is punched back out */
+  g.globalCompositeOperation = 'source-over';
+  _blit(cx, cy, W, H, q.ew / q.qw, q.eh / q.qh, a);
+};
+/* INNER RIM. `dir` points from the figure TOWARD the light; the crescent lands
+   on that side. Stack two calls (wide+faint, tight+bright) for a soft falloff. */
+CK.rim = function (img, cx, cy, boxW, boxH, scale, colour, a, dir, distK) {
+  if (!img || !img.width || a <= 0.004) return;
+  var q = _fitQ(img, boxW, boxH, scale); if (!q) return;
+  /* ⚠ RECTANGULAR CARD FACE. body-minus-shifted-body on a rectangle is a
+     uniform band down two sides — the neon rectangle border. The physically
+     right answer for a flat card is a RAKING LIGHT: brightest at the lit edge,
+     falling off INTO the face, clipped to the rounded card. */
+  if (CK.isRect(img)) {
+    var mr = CK.silh(img, q.qw, q.qh, colour); if (!mr) return;
+    var ux = Math.cos(dir), uy = Math.sin(dir);
+    var ex = q.qw / 2 + ux * q.qw / 2, ey = q.qh / 2 + uy * q.qh / 2;
+    var reach = Math.max(q.qw, q.qh) * (0.14 + (distK == null ? 0.022 : distK) * 6);
+    var gr = _scratch(q.qw, q.qh);
+    var lgr = gr.createLinearGradient(ex, ey, ex - ux * reach, ey - uy * reach);
+    lgr.addColorStop(0,    FX.rgba(colour, 0.75));
+    lgr.addColorStop(0.28, FX.rgba(colour, 0.30));
+    lgr.addColorStop(1,    FX.rgba(colour, 0));
+    gr.fillStyle = lgr; gr.fillRect(0, 0, q.qw, q.qh);
+    gr.globalCompositeOperation = 'destination-in';
+    gr.drawImage(mr, 0, 0);
+    gr.globalCompositeOperation = 'source-over';
+    _blit(cx, cy, q.qw, q.qh, q.ew / q.qw, q.eh / q.qh, a * 0.80);
+    return;
+  }
+  var m = CK.silh(img, q.qw, q.qh, colour); if (!m) return;
+  var d = Math.max(1.5, q.qw * (distK == null ? 0.022 : distK));
+  var g = _scratch(q.qw, q.qh);
+  g.drawImage(m, 0, 0);
+  g.globalCompositeOperation = 'destination-out';
+  g.drawImage(m, -Math.cos(dir) * d, -Math.sin(dir) * d);
+  g.globalCompositeOperation = 'source-over';
+  _blit(cx, cy, q.qw, q.qh, q.ew / q.qw, q.eh / q.qh, a);
+};
+/* PAINT ON THE BODY. paint(g,w,h) draws into the stencil; the result is clipped
+   to the silhouette. Weld seams, scan lines, ash — anything that belongs ON the
+   figure rather than around it. */
+CK.onBody = function (img, cx, cy, boxW, boxH, scale, paint, a) {
+  if (!img || !img.width || a <= 0.004) return;
+  var q = _fitQ(img, boxW, boxH, scale); if (!q) return;
+  var m = CK.silh(img, q.qw, q.qh, '#606060'); if (!m) return;
+  var g = _scratch(q.qw, q.qh);
+  try { paint(g, q.qw, q.qh); } catch (e) { return; }
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'destination-in';
+  g.drawImage(m, 0, 0);
+  g.globalCompositeOperation = 'source-over';
+  _blit(cx, cy, q.qw, q.qh, q.ew / q.qw, q.eh / q.qh, a);
+};
+/* A TINTED COPY OF THE BODY. Not a light pass — a duplicate silhouette in one
+   clamped colour, for afterimages and for "three become one". */
+CK.ghost = function (img, cx, cy, boxW, boxH, scale, colour, a) {
+  if (!img || !img.width || a <= 0.004) return;
+  var q = _fitQ(img, boxW, boxH, scale); if (!q) return;
+  var m = CK.silh(img, q.qw, q.qh, colour); if (!m) return;
+  var ctx = FX.ctx;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = FX.clamp01(a);
+  ctx.drawImage(m, cx - q.ew / 2, cy - q.eh / 2, q.ew, q.eh);
+  ctx.restore();
+};
+/* A ray that STARTS OUTSIDE the art. r0 is an absolute radius: pass the hero
+   image's half-extent and the ray can never be occluded by it. */
+CK.ray = function (cx, cy, ang, r0, r1, wIn, wOut, colour, a) {
+  if (a <= 0.002 || r1 <= r0) return;
+  var ctx = FX.ctx;
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(ang);
+  ctx.globalCompositeOperation = 'lighter';
+  /* soft on BOTH axes: three nested quads, alphas summing to a at the core and
+     0.34a at the rim. One quad has hard side edges and reads as a grey wedge. */
+  var LN = [[1.00, 0.34], [0.56, 0.30], [0.24, 0.36]];
+  for (var q = 0; q < LN.length; q++) {
+    var aa = a * LN[q][1], wi = wIn * LN[q][0], wo = wOut * LN[q][0];
+    var g = ctx.createLinearGradient(r0, 0, r1, 0);
+    g.addColorStop(0,    FX.rgba(colour, aa));
+    g.addColorStop(0.30, FX.rgba(colour, aa * 0.58));
+    g.addColorStop(1,    FX.rgba(colour, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(r0, -wi / 2); ctx.lineTo(r1, -wo / 2);
+    ctx.lineTo(r1, wo / 2); ctx.lineTo(r0, wi / 2);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+};
+
+/* THE HERO DRAW. For a real sprite this is exactly FX.chromaImage and nothing
+   changes. For the host's rectangular card-face fallback — the common path — it
+   becomes a CARD: rounded corners, a raking multiply ramp so the face is lit by
+   this scene, and a tinted frame. "The card is the hero" is the bar's own words;
+   the previous build rendered that case as a photo with a neon outline. */
+CK.hero = function (img, cx, cy, box, alpha, split, scale, tint) {
+  if (!img || !img.width || alpha <= 0.004) return false;
+  if (!CK.isRect(img)) { FX.chromaImage(img, cx, cy, box, box, alpha, split, scale); return false; }
+  var q = _fitQ(img, box, box, scale);
+  if (!q) { FX.chromaImage(img, cx, cy, box, box, alpha, split, scale); return false; }
+  var ctx = FX.ctx, w = q.ew, h = q.eh, rr = Math.min(w, h) * 0.055;
+  ctx.save();
+  ctx.globalAlpha = FX.clamp01(alpha);
+  ctx.translate(cx, cy);
+  FX.roundRect(-w / 2, -h / 2, w, h, rr); ctx.clip();
+  if (split > 0.2) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = FX.clamp01(alpha) * 0.30;
+    ctx.drawImage(img, -w / 2 - split, -h / 2, w, h);
+    ctx.drawImage(img, -w / 2 + split, -h / 2, w, h);
+    ctx.restore();
+  }
+  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.globalAlpha = FX.clamp01(alpha) * 0.26;
+  var lgh = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+  lgh.addColorStop(0,   'rgb(255,246,232)');
+  lgh.addColorStop(0.5, 'rgb(198,184,198)');
+  lgh.addColorStop(1,   'rgb(92,76,116)');
+  ctx.fillStyle = lgh; ctx.fillRect(-w / 2, -h / 2, w, h);
+  ctx.restore();
+  ctx.save();
+  ctx.globalAlpha = FX.clamp01(alpha);
+  ctx.translate(cx, cy);
+  ctx.lineWidth = Math.max(1.5, h * 0.010);
+  ctx.strokeStyle = FX.rgba(tint || '#d9b45a', 0.85);
+  FX.roundRect(-w / 2, -h / 2, w, h, rr); ctx.stroke();
+  ctx.restore();
+  return true;
+};
+
+/* ── the card, with weight ──────────────────────────────────────────────── */
+/* FX.drawCard gives the body/art/frame. This adds the two things that make it
+   read as an object in the world: a rim light in its element tint and a cast
+   shadow on the ground below it. */
+CK.card = function (img, cx, cy, h, alpha, rot, tint, groundY, scale) {
+  if (alpha <= 0.004) return;
+  var ctx = FX.ctx, w = h * 0.7;
+  if (groundY != null) {
+    var drop = Math.max(1, (groundY - cy) / Math.max(1, h));
+    CK.shadow(cx, groundY, w * (0.62 + drop * 0.10), w * 0.16, Math.max(0, 0.45 - drop * 0.13) * alpha);
+  }
+  ctx.save();
+  ctx.translate(cx, cy); if (scale && scale !== 1) ctx.scale(scale, scale);
+  ctx.translate(-cx, -cy);
+  FX.drawCard(img, cx, cy, h, alpha, rot, tint);
+  /* Scene light. A multiply ramp clipped to the card face: bright at the top,
+     falling into shadow at the bottom, so the art reads as LIT BY THIS SCENE
+     rather than pasted on. It also takes the top off the brightest possible
+     art — a pure-white card face leaves here at ~225, not 255 — which is free
+     margin on the one surface big enough to matter. */
+  ctx.save();
+  ctx.translate(cx, cy); if (rot) ctx.rotate(rot);
+  FX.roundRect(-w / 2, -h / 2, w, h, h * 0.045); ctx.clip();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.globalAlpha = alpha * 0.30;
+  var lg = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+  lg.addColorStop(0,   'rgb(255,246,232)');
+  lg.addColorStop(0.45,'rgb(196,180,196)');
+  lg.addColorStop(1,   'rgb(96,78,120)');
+  ctx.fillStyle = lg; ctx.fillRect(-w / 2, -h / 2, w, h);
+  ctx.restore();
+  /* rim: a soft outer edge in the tint so the card separates from the board */
+  ctx.save();
+  ctx.translate(cx, cy); if (rot) ctx.rotate(rot);
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = Math.max(1, h * 0.006);
+  ctx.strokeStyle = FX.rgba(tint || '#d9b45a', 0.55);
+  FX.roundRect(-w / 2 - 2, -h / 2 - 2, w + 4, h + 4, h * 0.05); ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+};
+
+/* ── nameplate: a dark slab that wipes open, letterspaced eyebrow, gold rule ── */
+CK.spaced = function (s, cx, y, px, colour, a, weight) {
+  var ctx = FX.ctx, i;
+  ctx.save();
+  ctx.font = (weight || 600) + ' ' + px + 'px ui-sans-serif,system-ui,-apple-system,sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  var sp = px * 0.36, total = 0;
+  for (i = 0; i < s.length; i++) total += ctx.measureText(s.charAt(i)).width + sp;
+  total -= sp;
+  var x = cx - total / 2;
+  ctx.fillStyle = FX.rgba(colour, a);
+  for (i = 0; i < s.length; i++) { ctx.fillText(s.charAt(i), x, y); x += ctx.measureText(s.charAt(i)).width + sp; }
+  ctx.restore();
+};
+CK.plate = function (name, eyebrow, cx, cy, k, tint) {
+  if (k <= 0) return;
+  var ctx = FX.ctx, W = FX.W, H = FX.H;
+  var e = FX.easeOut(FX.clamp01(k));
+  var fs = Math.round(H * 0.046);
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '800 ' + fs + 'px ui-serif,Georgia,"Times New Roman",serif';
+  var tw = ctx.measureText(name || '').width, maxw = W * 0.62;
+  if (tw > maxw && tw > 0) {
+    fs = Math.max(11, Math.floor(fs * maxw / tw));
+    ctx.font = '800 ' + fs + 'px ui-serif,Georgia,"Times New Roman",serif';
+    tw = ctx.measureText(name || '').width;
+  }
+  var pw = (tw + H * 0.13) * e, phh = fs * 2.5;
+  var g = ctx.createLinearGradient(cx - pw / 2, 0, cx + pw / 2, 0);
+  g.addColorStop(0,    'rgba(5,3,9,0)');
+  g.addColorStop(0.16, 'rgba(5,3,9,0.80)');
+  g.addColorStop(0.84, 'rgba(5,3,9,0.80)');
+  g.addColorStop(1,    'rgba(5,3,9,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(cx - pw / 2, cy - phh * 0.52, pw, phh);
+  if (eyebrow) CK.spaced(String(eyebrow), cx, cy - fs * 0.95, Math.max(9, Math.round(H * 0.020)), tint || '#e0c98a', 0.95 * e, 700);
+  ctx.globalAlpha = e;
+  ctx.shadowColor = 'rgba(0,0,0,0.92)'; ctx.shadowBlur = 16;
+  ctx.fillStyle = FX.rgba('#f0dfb0', 0.98);
+  ctx.fillText(name || '', cx, cy);
+  ctx.shadowBlur = 0;
+  var rw = pw * 0.78;
+  var g2 = ctx.createLinearGradient(cx - rw / 2, 0, cx + rw / 2, 0);
+  g2.addColorStop(0,   FX.rgba(tint || '#d9b45a', 0));
+  g2.addColorStop(0.5, FX.rgba(tint || '#d9b45a', 0.85));
+  g2.addColorStop(1,   FX.rgba(tint || '#d9b45a', 0));
+  ctx.fillStyle = g2;
+  ctx.fillRect(cx - rw / 2, cy + fs * 0.82, rw, Math.max(1, H * 0.0022));
+  ctx.restore();
+};
+/* Letterbox with a hairline — dark, so it frames the shot for free. */
+CK.bars = function (k, tint) {
+  if (k <= 0) return;
+  var ctx = FX.ctx, h = FX.H * 0.075 * FX.clamp01(k);
+  ctx.save();
+  ctx.fillStyle = 'rgba(3,2,7,0.94)';
+  ctx.fillRect(0, 0, FX.W, h);
+  ctx.fillRect(0, FX.H - h, FX.W, h);
+  var g = ctx.createLinearGradient(0, 0, FX.W, 0);
+  g.addColorStop(0,   FX.rgba(tint || '#d9b45a', 0));
+  g.addColorStop(0.5, FX.rgba(tint || '#d9b45a', 0.30 * FX.clamp01(k)));
+  g.addColorStop(1,   FX.rgba(tint || '#d9b45a', 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, h - 1, FX.W, 1);
+  ctx.fillRect(0, FX.H - h, FX.W, 1);
+  ctx.restore();
+};
+/* ⚠ DARK IS PRE-COMPENSATED. The seal is a flat multiply over everything drawn
+   so far, so it clamps the DARKENING as hard as it clamps the light — and the
+   grade is the one tool that buys contrast at zero luminance. Every dark value
+   in the ATMO pass is therefore written at 1/ATMO of its intended strength and
+   arrives at the intended one. A vignette can still never exceed ATMO (0.40),
+   so the board can never be dimmed by more than 40% by this layer. */
+var IK = 1 / ATMO;
+/* ⚠ AND SO IS THE LIGHT. Writing 0.25 into a layer that will be multiplied by
+   0.40 puts 0.10 on the board — which is what "the effects feel thin" actually
+   was. The seal is the guarantee; inside the layer, write BRIGHT. Every atmo
+   light alpha carries this gain, and none of it can escape ATMO. */
+var LG = 2.1;
+CK.vignette = function (cx, cy, U, k) {
+  if (k <= 0.01) return;
+  var ctx = FX.ctx;
+  /* a flat grade first: the whole field steps down ~20% the moment the rite
+     starts. This is the single biggest "premium" lever in the whole page and it
+     is pure black — it can only ever LOWER luminance, never raise it. */
+  /* ⚠ OVERSIZED ON PURPOSE. The payoff camera can zoom BELOW 1 and pan, and a
+     grade drawn as fillRect(0,0,W,H) inside that transform leaves an ungraded
+     bright band around the edge of the frame. Covering 130% of the canvas costs
+     nothing (it is clipped) and makes the grade transform-proof. */
+  var OX = -FX.W * 0.15, OY = -FX.H * 0.15, OW = FX.W * 1.30, OH = FX.H * 1.30;
+  ctx.fillStyle = 'rgba(3,2,7,' + FX.clamp01(0.16 * IK * k).toFixed(3) + ')';
+  ctx.fillRect(OX, OY, OW, OH);
+  var g = ctx.createRadialGradient(cx, cy, U * 0.24, cx, cy, U * 1.05);
+  g.addColorStop(0,   'rgba(3,2,7,0)');
+  g.addColorStop(0.55,'rgba(3,2,7,' + FX.clamp01(0.12 * IK * k).toFixed(3) + ')');
+  g.addColorStop(1,   'rgba(3,2,7,' + FX.clamp01(0.34 * IK * k).toFixed(3) + ')');
+  ctx.fillStyle = g; ctx.fillRect(OX, OY, OW, OH);
+};
+/* ═══ END CINE KIT ═══════════════════════════════════════════════════════ */
+
+
+  var GOLD = '#e0b64a', EMBER = '#ff8a3c', DEEP = '#4c2f8f', SKY = '#7ec0ff', BLOOD = '#c2410c';
 
   var D = FX.director([
-    { n: 'gather',  d: 1.10 },
-    { n: 'offer',   d: 1.20 },
-    { n: 'gate',    d: 1.00 },
-    { n: 'descend', d: 1.30 },
+    { n: 'gather',  d: 1.00 },
+    { n: 'offer',   d: 1.15 },
+    { n: 'gate',    d: 0.95 },
+    { n: 'descend', d: 1.25 },
     { n: 'reveal',  d: 2.00 }
-  ]);
+  ]);                                     /* 6.35s + 0.4 tail — inside the host's 7s */
 
   var S = { time: 0, playing: false, name: 'ARCHON', eyebrow: 'ARCHON  //  TRIBUTE SUMMON',
             unitImg: null, tribs: [], tints: [] };
 
-  var EMBERS = FX.pool(70, function (e, i) {
+  var EMBERS = FX.pool(72, function (e, i) {
     e.a = FX.hash(i, 41) * 6.2832;
-    e.r = 0.06 + FX.hash(i, 42) * 0.26;
-    e.sp = 0.35 + FX.hash(i, 43) * 0.9;
+    e.r = 0.05 + FX.hash(i, 42) * 0.26;
+    e.sp = 0.32 + FX.hash(i, 43) * 0.9;
     e.sz = 2 + FX.hash(i, 44) * 4;
     e.ph = FX.hash(i, 45);
+    e.z  = 0.45 + FX.hash(i, 46) * 0.55;
   });
 
   function draw(dt, t) {
     if (S.playing) S.time += dt;
-    var W = FX.W, H = FX.H, cx = W / 2, cy = H * 0.54, ctx = FX.ctx;
-    var ph = D.at(S.time), unit = Math.min(W, H);
+    var W = FX.W, H = FX.H, cx = W / 2, cy = H * 0.50, ctx = FX.ctx;
+    var ph = D.at(S.time), U = Math.min(W, H);
+    var N = ph.name, p = ph.p, GY = cy + U * 0.225;
     var n = Math.max(1, S.tribs.length);
+    var gateY = cy - U * 0.260;
 
-    /* ── camera: the rite builds, the landing hits ────────────────────────── */
-    var land = (ph.name === 'descend' && ph.p > 0.82) ? (ph.p - 0.82) / 0.18 : 0;
-    var shake = ph.name === 'gather'  ? ph.p * 0.07
-              : ph.name === 'offer'   ? 0.07 + ph.p * 0.13
-              : ph.name === 'gate'    ? 0.20 + ph.p * 0.14
-              : ph.name === 'descend' ? (land ? 0.9 * (1 - land) : 0.34)
-              : Math.max(0, 0.16 - ph.p * 0.16);
-    var zoom  = ph.name === 'gate'    ? 1 + ph.p * 0.03
-              : ph.name === 'descend' ? 1.03 + FX.easeOut(ph.p) * 0.04
-              : ph.name === 'reveal'  ? 1.07 - FX.easeOut(ph.p) * 0.07 : 1;
-    FX.camera(shake, zoom, cx, cy);
+    /* the landing: the last 18% of the descent */
+    var land = (N === 'descend' && p > 0.82) ? (p - 0.82) / 0.18 : 0;
+    var shake = N === 'gather'  ? p * 0.05
+              : N === 'offer'   ? 0.05 + p * 0.10
+              : N === 'gate'    ? 0.15 + FX.easeIn(p) * 0.22
+              : N === 'descend' ? (land ? 1.15 * CK.decay(land) : 0.30 + p * 0.10)
+              : Math.max(0, 0.14 * (1 - p * 3.2));
+    var zoom  = N === 'gate'    ? 1 + FX.easeIn(p) * 0.030
+              : N === 'descend' ? 1.030 + FX.easeOut(p) * 0.045
+              : N === 'reveal'  ? 1.075 - FX.easeOut(FX.clamp01(p * 1.90)) * 0.075 : 1;
+    var darkK = N === 'gather' ? p : N === 'reveal' ? 1 - FX.easeIn(p) * 0.55 : 1;
 
-    var darkK = ph.name === 'gather' ? ph.p : ph.name === 'reveal' ? 1 - ph.p * 0.6 : 1;
-    if (darkK > 0.01) {
-      var vg = ctx.createRadialGradient(cx, cy, unit * 0.18, cx, cy, unit * 0.85);
-      vg.addColorStop(0, 'rgba(3,2,7,0)');
-      vg.addColorStop(1, 'rgba(3,2,7,' + (0.5 * darkK).toFixed(3) + ')');
-      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
-    }
+    /* ═══ THE PAYOFF CAMERA — ARCHON IS AN ARRIVAL: THE FRAME SETTLES ═══════
+       Kalon pushes in, Fusion drifts sideways; this one does the third thing
+       and it is the only one that can, because there are two sealed layers to
+       move against each other. The camera FALLS onto the landing (the hero
+       layer travels up in frame, i.e. the camera comes down after the body it
+       was chasing) while the WORLD RECEDES — hero zoom drops 0.085 and the
+       atmosphere pushes in 0.075, in opposite directions — and the Archon's own
+       scale is compensated UP by 20% on top of that.
+       Net: the gold floor ring and the closing gate shrink away while the body
+       grows. A dolly zoom, on a 2D canvas, out of two ctx.scale calls. It is
+       the "this thing is enormous and the camera is backing off" read, which is
+       what an arrival is, and it is unmistakably not a push-in. */
+    var camP = N === 'reveal' ? FX.clamp01((p - 0.10) / 0.90) : 0;
+    var zoomH = zoom - camP * 0.130, zoomA = zoom + camP * 0.115;
+    var panHY = -U * 0.075 * camP, panAY = U * 0.030 * camP;
+    var camS  = 1 + camP * 0.32;                 /* subject scale compensation */
 
-    /* ── summoning circle ─────────────────────────────────────────────────── */
-    var circK = ph.name === 'gather' ? ph.p
-              : ph.name === 'offer'  ? 1
-              : ph.name === 'gate'   ? 1
-              : ph.name === 'descend'? 1 - ph.p * 0.5 : Math.max(0, 0.5 - ph.p * 0.5);
+    /* the Archon's own descent, shared by both layers */
+    var dd = N === 'descend' ? FX.easeOut(p) : N === 'reveal' ? 1 : 0;
+    var archY = gateY + dd * (cy + U * 0.030 - gateY);
+    var archA = N === 'descend' ? FX.clamp01(p * 2.0) : N === 'reveal' ? 1 : 0;
+
+    var gateK = N === 'gate'    ? CK.snap(p)
+              : N === 'descend' ? 1 - p * 0.25
+              : N === 'reveal'  ? Math.max(0, 0.75 - p * 2.2) : 0;
+
+    /* ═══ LAYER 1 — ATMOSPHERE (sealed at 0.40) ═══════════════════════════ */
+    FX.camera(shake, zoomA, cx, cy);
+    if (panAY) ctx.translate(0, panAY);
+    CK.vignette(cx, cy, U, darkK);
+    if (N !== 'gather') CK.ink(cx, cy, U * 0.52, FX.clamp01(0.26 * IK), 0.95);
+
+    var circK = N === 'gather' ? CK.snap(p)
+              : (N === 'offer' || N === 'gate') ? 1
+              : N === 'descend' ? 1 - p * 0.35 : Math.max(0, 0.65 - p * 0.65);
     if (circK > 0.01) {
-      ctx.save();
-      ctx.translate(cx, cy + unit * 0.22); ctx.scale(1, 0.32);
-      var R = unit * 0.26;
-      FX.glow(0, 0, R * 1.1, GOLD, 0.24 * circK);
-      ctx.lineWidth = Math.max(1, unit * 0.0045);
-      ctx.strokeStyle = FX.rgba(GOLD, 0.55 * circK);
+      ctx.save(); ctx.translate(cx, GY); ctx.scale(1, 0.30);
+      FX.glow(0, 0, U * 0.30, GOLD, 0.30 * LG * circK);
+      FX.glow(0, 0, U * 0.14, EMBER, 0.22 * LG * circK);
+      ctx.restore();
+    }
+    /* embers climbing out of the circle toward the tear */
+    if (N === 'offer' || N === 'gate' || N === 'descend') {
+      var ek = N === 'offer' ? CK.snap(p) : N === 'gate' ? 1 : 1 - p * 0.7;
+      for (var e = 0; e < EMBERS.length; e++) {
+        var em = EMBERS[e];
+        var climb = ((t * em.sp + em.ph) % 1);
+        var ex = cx + Math.cos(em.a + t * 0.3) * U * em.r;
+        var ey = GY - climb * U * 0.52;
+        CK.streak(ex, ey, -1.5708, em.sz * (2 + climb * 7) * em.z, em.sz * em.z,
+                  e % 5 === 0 ? GOLD : EMBER, 0.30 * LG * ek * (1 - climb) * em.z);
+      }
+    }
+    /* the shaft down from the tear */
+    if (gateK > 0.01) {
+      CK.shaft(cx, gateY, GY, U * 0.115 * gateK, SKY, 0.26 * LG * gateK);
+      CK.shaft(cx, gateY, GY, U * 0.045 * gateK, DEEP, 0.30 * LG * gateK);
+    }
+    /* ⚠ THE GATE HAD NO MASS. ~0.8 s of a thin ellipse outline over a nearly
+       empty frame — the one build-up beat that reads as unfinished rather than
+       restrained, and the reason archon is slow to land at thumbnail. Mass is
+       bought here with DARK and with SHAPE, never with brightness: a wide pool
+       of black behind the tear (which can only lower luminance), one widening
+       cone of light instead of two parallel columns, and debris shedding out of
+       the hole. The bright half stays inside the sealed 0.40 layer. */
+    if (gateK > 0.01) {
+      var gm = N === 'gate' ? CK.snap(p) : gateK;
+      CK.ink(cx, gateY, U * 0.46 * gm, FX.clamp01(0.30 * IK) * gm, 0.52);
+      /* a tall pool of black down the column between the tear and the floor —
+         the empty middle of the gate, filled with the one material that cannot
+         raise a single luminance number */
+      CK.ink(cx, (gateY + GY) / 2, U * 0.26 * gm, FX.clamp01(0.19 * IK) * gm, 1.55);
+      CK.ray(cx, gateY, 1.5708, U * 0.03, U * (0.16 + 0.34 * gm),
+             U * 0.09, U * 0.28, SKY, 0.11 * LG * gm);
+      for (var fd = 0; fd < 30; fd++) {
+        var fp2 = ((t * (0.42 + FX.hash(fd, 31) * 0.5) + FX.hash(fd, 32)) % 1);
+        var fx2 = cx + (FX.hash(fd, 33) - 0.5) * U * 0.44;
+        var fy2 = gateY + fp2 * (GY - gateY);
+        CK.streak(fx2, fy2, 1.5708, (3 + FX.hash(fd, 34) * 9) * (1 + fp2 * 2),
+                  2 + FX.hash(fd, 35) * 3, fd % 4 === 0 ? EMBER : SKY,
+                  0.30 * LG * gm * (1 - fp2) * (0.35 + 0.65 * FX.hash(fd, 36)));
+      }
+    }
+    if (archA > 0.01) FX.glow(cx, archY, U * 0.30, DEEP, 0.26 * LG * archA);
+    if (land) {
+      FX.speedLines(cx, archY, 1 - land, SKY, 28);
+      FX.dust(cx, GY, land, '#3a3020');
+    }
+    if (N === 'reveal') {
+      var r0 = FX.easeOut(FX.clamp01(p * 1.5));
+      /* ⚠ RAYS NOW START OUTSIDE THE ART — the old fan ran from the centre and
+         the hero image covered it entirely.
+         ARCHON ARRIVES: its light comes DOWN. Rays pointing down run long, rays
+         pointing up are stubs — the exact mirror of Kalon's fan. */
+      var ARa = U * 0.245;
+      for (var gr2 = 0; gr2 < 13; gr2++) {
+        /* the fan DRIFTS. r0 saturates at p=0.67, so at t*0.05 the whole fan
+           was frozen for the last two thirds of the payoff. */
+        var raA = gr2 * 0.4833 + t * 0.11;
+        var dnw = 0.34 + 0.66 * (0.5 + 0.5 * Math.sin(raA));
+        CK.ray(cx, archY, raA,
+               ARa * (0.98 + FX.hash(gr2, 63) * 0.10),
+               ARa + U * (0.12 + FX.hash(gr2, 61) * 0.30) * r0 * dnw,
+               U * 0.020, U * (0.036 + FX.hash(gr2, 62) * 0.040),
+               gr2 % 3 === 0 ? GOLD : SKY,
+               0.40 * LG * r0 * dnw * (0.40 + 0.60 * FX.pulse(t * 0.5 + gr2, 0.3)));
+      }
+      /* five columns still falling out of the closing tear, past the shoulders */
+      for (var dc = 0; dc < 5; dc++) {
+        var dx2 = cx + (dc - 2) * U * 0.150 + Math.sin(t * 0.4 + dc) * U * 0.005;
+        var dl = 0.55 + 0.45 * FX.pulse(t * 0.4 + dc * 0.7, 0.3);
+        /* ⚠ THE LIGHT FALLS. These were five columns fixed between the tear and
+           the floor, animated only in brightness — a still frame with a dimmer
+           on it. Each is now a SEGMENT travelling down out of the closing tear:
+           the same number of draws, and the difference between a lit shot and a
+           moving one. */
+        var dpz = ((t * (0.55 + dc * 0.09) + dc * 0.21) % 1);
+        var dTop = gateY + U * 0.02 + dpz * (GY - gateY - U * 0.28);
+        CK.shaft(dx2, dTop, dTop + U * 0.28, U * 0.016 * dl,
+                 dc % 2 ? SKY : DEEP,
+                 0.62 * LG * r0 * dl * (1 - dpz * 0.55) * (1 - p * 0.35));
+      }
+    }
+    FX.cameraEnd();
+    seal();
+
+    /* ═══ LAYER 2 — HERO & STRUCTURE (ceiling 0.74) ═══════════════════════ */
+    FX.camera(shake, zoomH, cx, cy);
+    if (panHY) ctx.translate(0, panHY);
+    /* ⚠ TIGHTER DURING THE REVEAL. This pool is drawn in the HERO pass, i.e. ON
+       TOP of the atmosphere; at U*0.36 it covered the whole annulus the ray fan
+       lives in and swallowed it whole. */
+    if (N !== 'gather') CK.ink(cx, cy, U * (N === 'reveal' ? 0.26 : 0.36), 0.32 * (N === 'reveal' ? 1 - p * 0.5 : 1), 0.95);
+
+    /* ── the summoning circle ─────────────────────────────────────────────── */
+    if (circK > 0.01) {
+      var R = U * 0.265;
+      ctx.save(); ctx.translate(cx, GY); ctx.scale(1, 0.30);
+      CK.shadow(0, 0, R * 1.3, R * 1.3, 0.55 * circK);
+      ctx.lineWidth = Math.max(1.2, U * 0.0045);
+      ctx.strokeStyle = FX.rgba(GOLD, 0.72 * circK);
       ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.2832); ctx.stroke();
-      ctx.strokeStyle = FX.rgba(DEEP, 0.45 * circK);
-      ctx.beginPath(); ctx.arc(0, 0, R * 0.66, 0, 6.2832); ctx.stroke();
-      /* rune ticks around the rim, rotating slowly */
-      ctx.strokeStyle = FX.rgba(GOLD, 0.4 * circK);
-      for (var k = 0; k < 12; k++) {
-        var a = t * 0.25 + k * 0.5236;
+      ctx.lineWidth = Math.max(1, U * 0.0032);
+      ctx.setLineDash([R * 0.13, R * 0.08]);
+      ctx.lineDashOffset = -t * R * 0.5;
+      ctx.strokeStyle = FX.rgba(DEEP, 0.60 * circK);
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.70, 0, 6.2832); ctx.stroke();
+      ctx.setLineDash([]); ctx.lineDashOffset = 0;
+      /* the sigil: a star polygon, the thing that says RITE and not "circle" */
+      ctx.lineWidth = Math.max(1, U * 0.0026);
+      ctx.strokeStyle = FX.rgba(EMBER, 0.42 * circK);
+      ctx.beginPath();
+      for (var sv = 0; sv <= 5; sv++) {
+        var sa2 = (sv * 2 / 5) * 6.2832 - 1.5708 + t * 0.10;
+        var sx2 = Math.cos(sa2) * R * 0.62, sy2 = Math.sin(sa2) * R * 0.62;
+        if (sv === 0) ctx.moveTo(sx2, sy2); else ctx.lineTo(sx2, sy2);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = FX.rgba(GOLD, 0.55 * circK);
+      ctx.lineWidth = Math.max(1, U * 0.0030);
+      for (var k = 0; k < 14; k++) {
+        var a = t * 0.22 + k * 0.4488;
         ctx.beginPath();
         ctx.moveTo(Math.cos(a) * R * 0.86, Math.sin(a) * R * 0.86);
         ctx.lineTo(Math.cos(a) * R * 0.98, Math.sin(a) * R * 0.98);
@@ -104,102 +766,269 @@
       ctx.restore();
     }
 
-    /* ── tributes: rise, then burn away ───────────────────────────────────── */
-    var tribA = ph.name === 'gather' ? FX.easeOut(ph.p)
-              : ph.name === 'offer'  ? 1 - FX.easeIn(ph.p) : 0;
+    /* ── tributes: rise, then burn away from the bottom up ────────────────── */
+    var tribA = N === 'gather' ? CK.snap(p) : N === 'offer' ? 1 : 0;
+    var burn  = N === 'offer' ? FX.clamp01(FX.easeIn(p) * 1.12) : 0;
     if (tribA > 0.01) {
       for (var i = 0; i < n; i++) {
-        var ang = (i / n) * 6.2832 - 1.5708 + t * 0.18;
-        var rad = unit * 0.22 * (ph.name === 'offer' ? 1 - FX.easeIn(ph.p) * 0.75 : 1);
+        var ang = (i / n) * 6.2832 - 1.5708 + t * 0.16;
+        var rad = U * 0.235;
         var x = cx + Math.cos(ang) * rad;
-        var y = cy + Math.sin(ang) * rad * 0.42 - unit * 0.02;
+        var dz = Math.sin(ang);
+        var y = cy + dz * rad * 0.40 - U * 0.010 - CK.snap(FX.clamp01(p * 1.4)) * U * 0.03;
         var tint = S.tints[i] || GOLD;
-        FX.glow(x, y, unit * 0.09, tint, 0.20 * tribA);
-        FX.drawCard(S.tribs[i] || null, x, y, unit * 0.19, tribA, Math.sin(t + i) * 0.05, tint);
-      }
-    }
-
-    /* ── offer: embers climb toward the rift ──────────────────────────────── */
-    if (ph.name === 'offer' || ph.name === 'gate') {
-      var ek = ph.name === 'offer' ? ph.p : 1 - ph.p * 0.6;
-      for (var e = 0; e < EMBERS.length; e++) {
-        var em = EMBERS[e];
-        var climb = ((t * em.sp + em.ph) % 1);
-        var ex = cx + Math.cos(em.a + t * 0.3) * unit * em.r;
-        var ey = cy + unit * 0.20 - climb * unit * 0.48;
-        FX.glow(ex, ey, em.sz * 2.4, e % 5 === 0 ? GOLD : EMBER, 0.26 * ek * (1 - climb));
-      }
-    }
-
-    /* ── gate: a rift opens above ─────────────────────────────────────────── */
-    var gateK = ph.name === 'gate'    ? FX.easeOut(ph.p)
-              : ph.name === 'descend' ? 1
-              : ph.name === 'reveal'  ? Math.max(0, 1 - ph.p * 2) : 0;
-    if (gateK > 0.01) {
-      var gy = cy - unit * 0.30;
-      var gw = unit * 0.34 * gateK, gh = unit * 0.055 * gateK;
-      ctx.save();
-      ctx.translate(cx, gy);
-      var g = ctx.createRadialGradient(0, 0, 0, 0, 0, gw);
-      g.addColorStop(0, FX.rgba(SKY, 0.40 * gateK));
-      g.addColorStop(0.5, FX.rgba(DEEP, 0.28 * gateK));
-      g.addColorStop(1, FX.rgba(DEEP, 0));
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.ellipse(0, 0, gw, gh * 2.4, 0, 0, 6.2832); ctx.fill();
-      ctx.lineWidth = Math.max(1.5, unit * 0.005);
-      ctx.strokeStyle = FX.rgba(SKY, 0.5 * gateK);
-      ctx.beginPath(); ctx.ellipse(0, 0, gw * 0.86, gh * 1.9, 0, 0, 6.2832); ctx.stroke();
-      ctx.restore();
-      /* the shaft of light down to the circle */
-      FX.beam(cx, (gy + cy + unit * 0.2) / 2, gw * 1.05, (cy + unit * 0.2) - gy, SKY, 0.16 * gateK, 0);
-    }
-
-    /* ── descend + reveal: the Archon arrives ─────────────────────────────── */
-    if (ph.name === 'descend' || ph.name === 'reveal') {
-      var d = ph.name === 'descend' ? FX.easeOut(ph.p) : 1;
-      var y = cy - unit * 0.26 + d * unit * 0.28;
-      var a = ph.name === 'descend' ? FX.clamp01(ph.p * 1.8) : 1;
-      FX.glow(cx, y, unit * 0.30, DEEP, 0.22 * a);
-      FX.chromaImage(S.unitImg, cx, y, unit * 0.48, unit * 0.48, a,
-                     ph.name === 'descend' ? 10 * (1 - ph.p) : 0, 0.9 + d * 0.1);
-      /* landing shock on arrival */
-      if (land) {
-        FX.speedLines(cx, y, 1 - land, SKY, 26);
-        FX.impact(cx, cy + unit * 0.10, land, GOLD, 1);
-        FX.dust(cx, cy + unit * 0.22, land, '#3a3020');
-      }
-      if (ph.name === 'reveal') {
-        for (var q = 0; q < 22; q++) {
-          var qa = FX.hash(q, 51) * 6.2832 + t * 0.4;
-          var qr = unit * (0.20 + FX.hash(q, 52) * 0.12);
-          FX.glow(cx + Math.cos(qa) * qr, y + Math.sin(qa) * qr * 0.45,
-                  3 + FX.hash(q, 53) * 4, q % 3 === 0 ? GOLD : SKY, 0.20);
+        var kk = 0.84 + (dz + 1) * 0.5 * 0.24;
+        var h2 = U * 0.215 * kk;
+        var aa = tribA * (0.66 + (dz + 1) * 0.5 * 0.34);
+        /* burn line: the card is eaten upward and leaves an ember edge behind */
+        var keep = 1 - burn * (0.55 + FX.hash(i, 81) * 0.5);
+        if (keep > 0.02) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x - h2, y - h2 / 2, h2 * 2, h2 * keep);
+          ctx.clip();
+          CK.card(S.tribs[i] || null, x, y, h2, aa, Math.sin(t + i) * 0.04, tint,
+                  burn > 0.02 ? null : GY, 1);
+          ctx.restore();
+          if (burn > 0.02) {
+            var byy = y - h2 / 2 + h2 * keep;
+            var bw = h2 * 0.7;
+            var bg2 = ctx.createLinearGradient(0, byy - h2 * 0.10, 0, byy);
+            bg2.addColorStop(0, FX.rgba(EMBER, 0));
+            bg2.addColorStop(1, FX.rgba(EMBER, 0.9 * aa));
+            ctx.fillStyle = bg2;
+            ctx.fillRect(x - bw / 2, byy - h2 * 0.10, bw, h2 * 0.10);
+            ctx.fillStyle = FX.rgba(GOLD, 0.95 * aa);
+            ctx.fillRect(x - bw / 2, byy - 1.5, bw, 2.5);
+          }
         }
-        FX.plate(S.name, S.eyebrow, cx, cy + unit * 0.32, FX.clamp01((ph.p - 0.1) * 3), GOLD);
+      }
+    }
+
+    /* ── THE TEAR: a hole in the sky. Dark inside, hot at the edge. ───────── */
+    if (gateK > 0.01) {
+      var gw = U * 0.335 * gateK, gh = U * 0.110 * gateK;
+      ctx.save();
+      ctx.translate(cx, gateY);
+      /* the hole itself — near-black, so the "gate" is an absence of board */
+      var hg = ctx.createRadialGradient(0, 0, 0, 0, 0, gw);
+      hg.addColorStop(0,    'rgba(2,1,6,' + (0.96 * gateK).toFixed(3) + ')');
+      hg.addColorStop(0.62, 'rgba(6,3,16,' + (0.90 * gateK).toFixed(3) + ')');
+      hg.addColorStop(1,    'rgba(6,3,16,0)');
+      ctx.fillStyle = hg;
+      ctx.beginPath(); ctx.ellipse(0, 0, gw, gh, 0, 0, 6.2832); ctx.fill();
+      /* the torn edge */
+      ctx.lineWidth = Math.max(1.5, U * 0.0055);
+      ctx.strokeStyle = FX.rgba(SKY, 0.68 * gateK);
+      ctx.beginPath(); ctx.ellipse(0, 0, gw * 0.94, gh * 0.94, 0, 0, 6.2832); ctx.stroke();
+      ctx.lineWidth = Math.max(1, U * 0.0022);
+      ctx.strokeStyle = FX.rgba(DEEP, 0.55 * gateK);
+      ctx.beginPath(); ctx.ellipse(0, 0, gw * 1.10, gh * 1.10, 0, 0, 6.2832); ctx.stroke();
+      /* cracks running out of the tear into the air around it */
+      ctx.lineCap = 'round';
+      for (var cr = 0; cr < 9; cr++) {
+        var ca = FX.hash(cr, 91) * 6.2832;
+        var cl = U * (0.04 + FX.hash(cr, 92) * 0.08) * gateK;
+        ctx.lineWidth = Math.max(1, U * 0.0026 * (0.4 + FX.hash(cr, 94)));
+        ctx.strokeStyle = FX.rgba(cr % 3 === 0 ? EMBER : SKY,
+                                  (0.30 + 0.35 * FX.pulse(t * 1.3 + cr, 1.1)) * gateK);
+        ctx.beginPath();
+        var qx = Math.cos(ca) * gw * 0.92, qy = Math.sin(ca) * gh * 0.92;
+        ctx.moveTo(qx, qy);
+        for (var cs = 1; cs <= 3; cs++) {
+          var jj = (FX.hash(cr * 7 + cs, 93) - 0.5) * 0.7;
+          qx += Math.cos(ca + jj) * (cl / 3);
+          qy += Math.sin(ca + jj) * (cl / 3) * 0.55;
+          ctx.lineTo(qx, qy);
+        }
+        ctx.stroke();
+      }
+      /* THE SKY PEELS. Seven slabs torn off the rim, drifting out with a lit
+         leading edge. This is the mass the gate was missing and it is made of
+         BLACK — it can only ever lower luminance — so at thumbnail there is now
+         a big shape where there used to be a hairline ellipse. */
+      var pk2 = N === 'gate' ? FX.easeOut(FX.clamp01((p - 0.08) / 0.92)) : 1;
+      for (var pe = 0; pe < 7; pe++) {
+        var pa = FX.hash(pe, 101) * 6.2832;
+        var pd = U * (0.02 + pk2 * (0.09 + FX.hash(pe, 102) * 0.11));
+        var ps = U * (0.030 + FX.hash(pe, 103) * 0.042) * gateK;
+        ctx.save();
+        /* ⚠ 0.26, not 0.62. The slabs are mass and they are BLACK, but their lit
+           leading edge is SKY at near-full alpha, and at 0.62 they carried it
+           above the frame-safe band. Spreading them sideways instead of upward
+           keeps every bright pixel inside the subject box and loses nothing:
+           what reads as "the sky peeling" is the silhouettes, not their edges. */
+        ctx.translate(Math.cos(pa) * pd * 1.55, Math.sin(pa) * pd * 0.26);
+        ctx.rotate(pa + pk2 * (FX.hash(pe, 104) - 0.5) * 2.2);
+        ctx.globalAlpha = gateK * (1 - pk2 * 0.25);
+        ctx.fillStyle = 'rgba(5,3,12,0.95)';
+        ctx.beginPath();
+        ctx.moveTo(-ps, -ps * 0.42); ctx.lineTo(ps * 0.62, -ps * 0.72);
+        ctx.lineTo(ps, ps * 0.34); ctx.lineTo(-ps * 0.5, ps * 0.86);
+        ctx.closePath(); ctx.fill();
+        ctx.lineWidth = Math.max(1, U * 0.0026);
+        ctx.strokeStyle = FX.rgba(pe % 3 === 0 ? EMBER : SKY, 0.55);
+        ctx.beginPath(); ctx.moveTo(ps * 0.62, -ps * 0.72); ctx.lineTo(ps, ps * 0.34); ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+    /* the pressure ring leaving the tear the instant it opens — a dark shock
+       first, a thin cold ring behind it. The gate now has an EVENT in it. */
+    if (N === 'gate') {
+      var prk = FX.clamp01(p * 1.5);
+      CK.inkRing(cx, gateY, prk, U * 0.62, 0.80, 0.46);
+      if (prk > 0 && prk < 1) {
+        ctx.save(); ctx.translate(cx, gateY); ctx.scale(1, 0.46);
+        ctx.lineWidth = Math.max(1.5, U * 0.010 * (1 - prk));
+        ctx.strokeStyle = FX.rgba(SKY, 0.55 * (1 - prk));
+        ctx.beginPath(); ctx.arc(0, 0, U * (0.06 + FX.easeOut(prk) * 0.52), 0, 6.2832); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    /* ── the Archon comes down ────────────────────────────────────────────── */
+    if (archA > 0.01) {
+      /* the shadow finds the floor before the body does — this is the weight */
+      CK.shadow(cx, GY, U * (0.10 + dd * 0.13), U * (0.028 + dd * 0.036), 0.30 + dd * 0.32);
+      CK.hero(S.unitImg, cx, archY, U * 0.46, archA,
+              N === 'descend' ? 11 * (1 - p) : 0,
+              (0.86 + dd * 0.14) * CK.breathe(t, 0.3, 0.008) * camS, SKY);
+    }
+    if (land) {
+      CK.inkRing(cx, GY, land, U * 0.62, 0.80, 0.28);
+      ctx.save();
+      ctx.translate(cx, GY); ctx.scale(1, 0.30);
+      ctx.lineWidth = Math.max(1.5, U * 0.012 * (1 - land));
+      ctx.strokeStyle = FX.rgba(GOLD, 0.75 * (1 - land));
+      ctx.beginPath(); ctx.arc(0, 0, U * (0.10 + FX.easeOut(land) * 0.70), 0, 6.2832); ctx.stroke();
+      ctx.restore();
+      FX.impact(cx, GY - U * 0.04, land, GOLD, 1);
+    }
+
+    /* ═══ REVEAL — AN ARRIVAL ═════════════════════════════════════════════════
+       Kalon floats inside a field and Fusion hangs in a wiring diagram; this one
+       is STANDING ON THE FLOOR it just cracked. Its halo is not a pair of
+       concentric circles — it is the gold ring under its feet and the arc of the
+       gate closing over its head, and every piece of its light comes from above.
+       ⚠ FX.chromaImage for the Archon is drawn ABOVE, in the `archA` block, so
+       everything in here is already composited after the art. */
+    if (N === 'reveal') {
+      var r = CK.snap(FX.clamp01(p * 2.0));
+      var AY = archY - U * 0.02;
+      var scA = (0.86 + 0.14) * CK.breathe(t, 0.3, 0.008) * camS;  /* matches archA path */
+
+      /* the floor it landed on: a gold ring that keeps ringing, plus a second
+         one still travelling outward. No other page has a ground plate here. */
+      var fk = CK.snap(FX.clamp01(p * 2.4));
+      /* ⚠ THE FLOOR RING BELONGS TO THE BODY, NOT THE BACKGROUND. The dolly
+         zoom shrinks the whole hero layer by 13% across the payoff; left alone
+         that takes the gold ring — half of what makes this page readable at
+         thumbnail scale — down with it. It scales with the subject instead, so
+         the arrival keeps its signature while the world recedes around it. */
+      var fkS = 1 + camP * 0.26;
+      ctx.save(); ctx.translate(cx, GY); ctx.scale(1, 0.28);
+      CK.shadow(0, 0, U * 0.26 * fkS, U * 0.26 * fkS, 0.50 * fk);
+      ctx.lineWidth = Math.max(1.6, U * 0.0055);
+      ctx.strokeStyle = FX.rgba(GOLD, (0.62 + 0.18 * FX.pulse(t, 0.45)) * fk);
+      ctx.beginPath(); ctx.arc(0, 0, U * 0.215 * fkS, 0, 6.2832); ctx.stroke();
+      ctx.lineWidth = Math.max(1, U * 0.0026);
+      ctx.setLineDash([U * 0.026, U * 0.017]);
+      ctx.lineDashOffset = -t * U * 0.06;
+      ctx.strokeStyle = FX.rgba(EMBER, 0.46 * fk);
+      ctx.beginPath(); ctx.arc(0, 0, U * 0.150 * fkS, 0, 6.2832); ctx.stroke();
+      ctx.setLineDash([]); ctx.lineDashOffset = 0;
+      var ow = ((t * 0.35) % 1);
+      ctx.lineWidth = Math.max(1, U * 0.006 * (1 - ow));
+      ctx.strokeStyle = FX.rgba(GOLD, 0.42 * fk * (1 - ow));
+      ctx.beginPath(); ctx.arc(0, 0, U * (0.215 + ow * 0.30) * fkS, 0, 6.2832); ctx.stroke();
+      /* the floor answering the slam — one hard ring, once */
+      if (slamR > 0 && slamR < 1) {
+        ctx.lineWidth = Math.max(1.6, U * 0.011 * (1 - slamR));
+        ctx.strokeStyle = FX.rgba(GOLD, 0.62 * (1 - slamR));
+        ctx.beginPath(); ctx.arc(0, 0, U * (0.12 + FX.easeOut(slamR) * 0.72) * fkS, 0, 6.2832); ctx.stroke();
+        ctx.lineWidth = Math.max(1, U * 0.004 * (1 - slamR));
+        ctx.strokeStyle = FX.rgba(EMBER, 0.40 * (1 - slamR));
+        ctx.beginPath(); ctx.arc(0, 0, U * (0.08 + FX.easeOut(slamR) * 0.46) * fkS, 0, 6.2832); ctx.stroke();
+      }
+      ctx.restore();
+
+      /* the gate closing over its head — an ARC, not a circle.
+         THE SLAM is the payoff's second beat: the arc snaps shut a beat after
+         the nameplate lands and the floor answers it, so the back half of a
+         2.00 s arrival is not just a receding camera. */
+      var slam  = FX.clamp01((p - 0.42) / 0.28);
+      var slamK = (slam <= 0 || slam >= 1) ? 0 : Math.sin(slam * 3.14159);
+      var slamR = FX.clamp01((p - 0.60) / 0.32);
+      var hb = CK.back(FX.clamp01(p * 2.2)) * (1 - 0.34 * FX.easeIn(slam));
+      ctx.save();
+      ctx.translate(cx, AY - U * 0.055);
+      ctx.scale(1, 0.52);
+      ctx.lineWidth = Math.max(1.6, U * 0.0060);
+      ctx.strokeStyle = FX.rgba(SKY, 0.72 * r * Math.max(0.30, 1 - p * 1.1) * (1 + 0.7 * slamK));
+      ctx.beginPath();
+      ctx.arc(0, 0, U * 0.300 * hb, Math.PI * (1.12 - 0.09 * slam), Math.PI * (1.88 + 0.09 * slam));
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1, U * 0.0024);
+      ctx.setLineDash([U * 0.030, U * 0.020]);
+      ctx.strokeStyle = FX.rgba(GOLD, 0.48 * r);
+      ctx.beginPath(); ctx.arc(0, 0, U * 0.352 * hb, Math.PI * 1.06, Math.PI * 1.94); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      /* ══ AFTER THE ART ══ stencil passes cut from the Archon's own silhouette.
+         Round 1's reveal dressing sat under FX.chromaImage and the player never
+         saw it. LIT FROM ABOVE, because it came from up there. */
+      CK.rim(S.unitImg, cx, archY, U * 0.46, U * 0.46, scA, SKY,   0.54 * r * (1 + 0.55 * slamK), -1.5708, 0.034);
+      CK.rim(S.unitImg, cx, archY, U * 0.46, U * 0.46, scA, GOLD,  0.38 * r, -1.5708, 0.013);
+      CK.rim(S.unitImg, cx, archY, U * 0.46, U * 0.46, scA, EMBER, 0.22 * r, 1.5708, 0.016);
+      CK.aura(S.unitImg, cx, archY, U * 0.46, U * 0.46, scA, SKY,
+              0.24 * r * (0.72 + 0.28 * FX.pulse(t, 0.35)), 0.085, -1.5708, 1.45);
+      /* the landing afterimage — the shape it was a moment ago, catching up */
+      var ai2 = FX.clamp01(p / 0.22);
+      if (ai2 < 0.999) {
+        CK.ghost(S.unitImg, cx, archY - U * 0.10 * (1 - ai2), U * 0.46, U * 0.46, scA,
+                 SKY, 0.34 * (1 - ai2) * (1 - ai2));
+      }
+
+      /* ash FALLING — kalon's motes rise, these settle */
+      for (var q = 0; q < 34; q++) {
+        var qf = ((t * (0.26 + FX.hash(q, 52) * 0.34) + FX.hash(q, 51)) % 1);
+        FX.glow(cx + (FX.hash(q, 53) - 0.5) * U * 0.62 + Math.sin(t * 0.6 + q) * U * 0.012,
+                AY - U * 0.30 + qf * U * 0.52,
+                1.5 + FX.hash(q, 54) * 3.0, q % 3 === 0 ? GOLD : EMBER,
+                0.32 * r * (1 - qf) * (0.35 + 0.65 * FX.hash(q, 55)));
       }
     }
 
     FX.cameraEnd();
-    FX.letterbox(ph.name === 'gather' ? FX.easeOut(ph.p)
-               : ph.name === 'reveal' ? 1 - FX.easeIn(FX.clamp01((ph.p - 0.55) / 0.45)) : 1);
+    /* ⚠ THE NAMEPLATE LEAVES THE CAMERA — the world recedes, the type does not. */
+    if (N === 'reveal') CK.plate(S.name, S.eyebrow, cx, cy + U * 0.335, FX.clamp01((p - 0.12) * 2.6), GOLD);
+    CK.bars(N === 'gather' ? CK.snap(p)
+          : N === 'reveal' ? 1 - FX.easeIn(FX.clamp01((p - 0.58) / 0.42)) : 1, GOLD);
 
     if (S.playing && S.time > D.total + 0.4) S.playing = false;
   }
 
   FX.mount({ draw: draw });
 
+  /* ── public API — unchanged contract: set / play / seek ─────────────────── */
+  /* ⚠ Every slot applies INDEPENDENTLY: one dead image must never abort the
+     rest of set(). */
   function set(p) {
     if (!p) return;
-    if (p.name)    S.name = String(p.name).toUpperCase();
-    if (p.eyebrow) S.eyebrow = p.eyebrow;
-    if (p.unit) FX.loadImage(p.unit).then(function (i) { if (i) S.unitImg = i; });
-    if (p.tributeTint) S.tints = p.tributeTint.slice();
-    if (p.tributes) {
-      S.tribs = new Array(p.tributes.length);
-      p.tributes.forEach(function (src, i) {
-        FX.loadImage(src).then(function (im) { S.tribs[i] = im; });
-      });
-    }
+    try { if (p.name)    S.name = String(p.name).toUpperCase(); } catch (e) {}
+    try { if (p.eyebrow) S.eyebrow = p.eyebrow; } catch (e) {}
+    try { if (p.unit) FX.loadImage(p.unit).then(function (i) { if (i) S.unitImg = i; }); } catch (e) {}
+    try { if (p.tributeTint) S.tints = p.tributeTint.slice(); } catch (e) {}
+    try {
+      if (p.tributes) {
+        S.tribs = new Array(p.tributes.length);
+        p.tributes.forEach(function (src, i) {
+          try { FX.loadImage(src).then(function (im) { S.tribs[i] = im; }); } catch (e) {}
+        });
+      }
+    } catch (e) {}
   }
   function play(p) {
     set(p); S.time = 0; S.playing = true;

@@ -122,7 +122,7 @@ var PAL = {
   forest:    { deep: '#232c22', base: '#41503a', lit: '#7d8659', elev: 0.30, rough: 0.40 },
   graveyard: { deep: '#2c2c30', base: '#585a58', lit: '#95968f', elev: 0.25, rough: 0.34 },
   facility:  { deep: '#252d33', base: '#4e5a5f', lit: '#8e979a', elev: 0.22, rough: 0.20 },
-  mountain:  { deep: '#312320', base: '#6a5044', lit: '#b0937c', elev: 0.82, rough: 1.00 },
+  mountain:  { deep: '#2b1f1b', base: '#69503f', lit: '#b89b7e', elev: 0.82, rough: 1.15 },
   wastes:    { deep: '#4e442f', base: '#8d8062', lit: '#cdbf9d', elev: 0.28, rough: 0.50 },
 };
 // Precomputed as integer triples. parseInt() on a hex string is not something
@@ -261,7 +261,7 @@ var OCT_RIDGE = [0.36, 0.32, 0.20, 0.09, 0.03];
 /* How wide, in tiles, the mottled band between two biomes is. Wide enough
    that no straight bisector survives it; narrow enough that a small region
    still has a recognisable middle. */
-var INTERGRADE = 2.6;
+var INTERGRADE = 3.2;
 
 function bakeTerrain(seed, opts) {
   opts = opts || {};
@@ -310,8 +310,8 @@ function bakeTerrain(seed, opts) {
   // isolated LAND tile inside a lake still survives, and everything in between
   // gets a soft, gradable bank instead of a cell wall.
   var wetBlur = new Float32Array(wet);
-  blurTiles(wetBlur, W, H, 1);
-  for (i = 0; i < W * H; i++) wet[i] = 0.55 * wet[i] + 0.45 * wetBlur[i];
+  blurTiles(wetBlur, W, H, 2);
+  for (i = 0; i < W * H; i++) wet[i] = 0.48 * wet[i] + 0.52 * wetBlur[i];
 
   blurTiles(elevT, W, H, 3);   // 3 passes ≈ three tiles of foothill
   blurTiles(roughT, W, H, 2);
@@ -354,7 +354,7 @@ function bakeTerrain(seed, opts) {
   var wc = { g: noiseGrid(seed, R_WARP_C, 67, 47), w: 67, h: 47 };
   var wd = { g: noiseGrid(seed, R_WARP_C + 1, 157, 108), w: 157, h: 108 };
   var WARP_A = 0.80, WARP_B = 0.34, WARP_C = 0.38, WARP_D = 0.15;   // in tiles
-  var WATER_WARP = 0.42;
+  var WATER_WARP = 0.58;
 
   // ── 3. Per-pixel fields ─────────────────────────────────────────────────
   var N = BW * BH;
@@ -521,7 +521,8 @@ function bakeTerrain(seed, opts) {
       // a puddle of paint. A little high-frequency noise added BEFORE the
       // threshold is what makes it ragged.
       WVAL[i] = sampleTile(wet, W, H, fx + dx * WATER_WARP, fy + dy * WATER_WARP)
-              + (sampleGrid(wd.g, wd.w, wd.h, fx * (wd.w - 1) / W, fy * (wd.h - 1) / H) - 0.5) * 0.13;
+              + (sampleGrid(wd.g, wd.w, wd.h, fx * (wd.w - 1) / W, fy * (wd.h - 1) / H) - 0.5) * 0.115
+              + (v4 - 0.5) * 0.075 + (v3 - 0.5) * 0.055;
       var eb = sampleTile(elevT, W, H, wx, wy);
       var rg = sampleTile(roughT, W, H, wx, wy);
       // Three terms, and all three matter:
@@ -605,7 +606,13 @@ function bakeTerrain(seed, opts) {
      between the Open Steppe reading as a table and reading as country. */
   var DM = Math.max(2, (PX * 0.40) | 0);
   var RELIEF_MACRO = 11.0, RELIEF_MICRO = 16 / (PX / 28);
-  var WTHR = 0.42;
+  /* ⚠ 0.32, not 0.42. The water field is a two-pass blur of the binary tile
+     mask, so the value at the centre of a shoreline water tile sits near 0.75
+     and the land beside it near 0.18; thresholding at the midpoint of THAT
+     range, not of [0,1], is what puts the painted coast at the actual tile
+     boundary instead of eating half the lake. Raising the blur without moving
+     the threshold is why the first lakes came out both rounded AND shrunken. */
+  var WTHR = 0.32;
   var hashf = M.wpHash32;
   var o3 = oct[3], o4g = oct[4];
 
@@ -619,8 +626,16 @@ function bakeTerrain(seed, opts) {
       var eu = ELEV[y > 0 ? i - BW : i], ed = ELEV[y < BH - 1 ? i + BW : i];
       var eL = ELEV[x > DM ? i - DM : i], eR = ELEV[x < BW - 1 - DM ? i + DM : i];
       var eU = ELEV[y > DM ? i - DM * BW : i], eD = ELEV[y < BH - 1 - DM ? i + DM * BW : i];
-      var gx = (eR - eL) * RELIEF_MACRO + (er - el) * RELIEF_MICRO;
-      var gy = (eD - eU) * RELIEF_MACRO + (ed - eu) * RELIEF_MICRO;
+      /* Relief is scaled by the local ruggedness. The whole map cannot share
+         one vertical exaggeration: the number that makes a steppe read as
+         gently rolling makes a mountain read as a bump, and the number that
+         makes the mountain dramatic turns the steppe into corrugated iron.
+         Rugged ground gets nearly triple the exaggeration of soft ground,
+         which is why Dragon Mountain can carry itself on shading and only
+         needs a scatter of crags as accents rather than a lawn of them. */
+      var rmul = 0.80 + 1.85 * (RGA[i] / 200);
+      var gx = ((eR - eL) * RELIEF_MACRO + (er - el) * RELIEF_MICRO) * rmul;
+      var gy = ((eD - eU) * RELIEF_MACRO + (ed - eu) * RELIEF_MICRO) * rmul;
       var nl = 1 / Math.sqrt(gx * gx + gy * gy + 1);
       var lam = (-gx * lx - gy * ly + lz) * nl;
       var slope = Math.sqrt(gx * gx + gy * gy);
@@ -660,7 +675,7 @@ function bakeTerrain(seed, opts) {
 
       if (wv > WTHR) {
         // ── water ──────────────────────────────────────────────────────
-        var dep = sstep(WTHR, 0.88, wv);
+        var dep = sstep(WTHR, 0.86, wv);
         var bedR = TR[i] * 0.62, bedG = TG[i] * 0.66, bedB = TB[i] * 0.60;
         var sc = WATERV.shore, mc = WATERV.mid, dc = WATERV.deep;
         // shallows let the drowned ground show through
@@ -677,7 +692,7 @@ function bakeTerrain(seed, opts) {
         cr = mix(cr, shc[0], sheen); cg = mix(cg, shc[1], sheen); cb = mix(cb, shc[2], sheen);
         // foam at the waterline — a soft band, wobbled by the same noise so it
         // is never a clean offset curve
-        var fm = (1 - Math.abs(wv - (WTHR + 0.028)) / 0.042);
+        var fm = (1 - Math.abs(wv - (WTHR + 0.030)) / 0.045);
         if (fm > 0) {
           fm = clamp(fm, 0, 1) * (0.10 + 0.90 * rip * rip);
           var fc = WATERV.foam;
@@ -707,9 +722,14 @@ function bakeTerrain(seed, opts) {
            should. */
         var rock = sstep(0.60, 1.00, e) * sstep(0.30, 0.66, RGA[i] / 200);
         if (rock > 0.01) {
-          var rk = sh > 0.62 ? 1 : 0;
-          var rr2 = rk ? 168 : 82, rg2 = rk ? 146 : 68, rb2 = rk ? 122 : 60;
-          cr = mix(cr, rr2, rock * 0.72); cg = mix(cg, rg2, rock * 0.72); cb = mix(cb, rb2, rock * 0.72);
+          /* ⚠ The rock tone is a CONTINUOUS function of the light, not a
+             threshold on it. Picking one of two rock colours either side of
+             sh=0.62 quantised the whole massif into two flat plateaus of
+             value and destroyed exactly the relief this section exists to
+             show — a mountain with a hillshade painted flat on top of it. */
+          var rt = clamp(sh * 0.92, 0, 1);
+          var rr2 = mix(58, 196, rt), rg2 = mix(48, 172, rt), rb2 = mix(44, 146, rt);
+          cr = mix(cr, rr2, rock * 0.62); cg = mix(cg, rg2, rock * 0.62); cb = mix(cb, rb2, rock * 0.62);
         }
 
         // ── per-biome texture ───────────────────────────────────────────
@@ -723,7 +743,7 @@ function bakeTerrain(seed, opts) {
           // is why they wrap around the ridges instead of striping the screen
           var band = e * 19 + det * 2.6;
           var sfr = band - Math.floor(band);
-          var strata = 0.92 + 0.18 * sstep(0.12, 0.55, sfr) - 0.11 * sstep(0.62, 0.95, sfr);
+          var strata = 0.90 + 0.24 * sstep(0.12, 0.55, sfr) - 0.15 * sstep(0.62, 0.95, sfr);
           cr *= strata; cg *= strata * 0.99; cb *= strata * 0.975;
           // ember light in the crevices: low-lying, steep-sided, thresholded
           var crk = 1 - Math.abs(mid + mid - 1);
@@ -808,8 +828,8 @@ function bakeTerrain(seed, opts) {
         }
 
         // damp sand where the land meets water
-        if (wv > WTHR - 0.13) {
-          var damp = sstep(WTHR - 0.13, WTHR, wv);
+        if (wv > WTHR - 0.12) {
+          var damp = sstep(WTHR - 0.12, WTHR, wv);
           cr = mix(cr, 150, damp * 0.26); cg = mix(cg, 136, damp * 0.26); cb = mix(cb, 108, damp * 0.26);
         }
       }
@@ -902,7 +922,7 @@ function carveRivers(seed, ELEV, WVAL, BW, BH, PX, W, H) {
   var step = Math.max(2, (PX / 2) | 0);
   for (y = PX; y < BH - PX; y += step) for (x = PX; x < BW - PX; x += step) {
     i = y * BW + x;
-    if (WVAL[i] > 0.42) continue;
+    if (WVAL[i] > 0.32) continue;
     if (ELEV[i] > 0.68) cand.push([x, y, ELEV[i]]);
   }
   cand.sort(function (a, b) { return b[2] - a[2]; });
@@ -924,7 +944,7 @@ function carveRivers(seed, ELEV, WVAL, BW, BH, PX, W, H) {
     for (var s = 0; s < 900; s++) {
       var idx = (cy | 0) * BW + (cx | 0);
       if (cx < 1 || cy < 1 || cx >= BW - 1 || cy >= BH - 1) break;
-      if (WVAL[idx] > 0.44) break;                      // reached a lake
+      if (WVAL[idx] > 0.34) break;                      // reached a lake
       // steepest descent over a small ring
       var bestA = 0, bestE = 1e9, found = false;
       for (var a = 0; a < 12; a++) {
@@ -950,14 +970,14 @@ function carveRivers(seed, ELEV, WVAL, BW, BH, PX, W, H) {
         var v = 1 - dd / (wid + 1.6);
         if (v <= 0) continue;
         var k2 = py2 * BW + px2;
-        var val = 0.44 + v * 0.30;
+        var val = 0.36 + v * 0.34;
         if (val > wj[k2]) wj[k2] = val;
       }
     }
     if (life < 12) continue;
   }
   for (i = 0; i < BW * BH; i++) {
-    if (wj[i] > WVAL[i]) { WVAL[i] = wj[i]; ELEV[i] -= 0.02 * (wj[i] - 0.44) / 0.30; }
+    if (wj[i] > WVAL[i]) { WVAL[i] = wj[i]; ELEV[i] -= 0.02 * (wj[i] - 0.36) / 0.34; }
   }
 }
 
@@ -987,7 +1007,8 @@ function drawRoads(A) {
     var r = rng(M.wpHash32(A.seed, L.at + 1, L.horiz ? 1 : 2, R_ROAD));
     var ph1 = r() * 6.3, ph2 = r() * 6.3;
     for (t = 0; t <= len; t += PX * 0.34) {
-      var wob = Math.sin(t / (PX * 4.9) + ph1) * PX * 0.52 + Math.sin(t / (PX * 1.73) + ph2) * PX * 0.20;
+      var wob = Math.sin(t / (PX * 5.7) + ph1) * PX * 0.74 + Math.sin(t / (PX * 2.13) + ph2) * PX * 0.30
+              + Math.sin(t / (PX * 0.91) + ph1 * 2.3) * PX * 0.09;
       var ax = L.horiz ? t : (L.at + 0.5) * PX + wob;
       var ay = L.horiz ? (L.at + 0.5) * PX + wob : t;
       pts.push([ax, ay]);
@@ -997,7 +1018,7 @@ function drawRoads(A) {
     for (k = 0; k < pts.length; k++) {
       var px2 = clamp(pts[k][0] | 0, 0, A.BW - 1), py2 = clamp(pts[k][1] | 0, 0, A.BH - 1);
       var idx = py2 * A.BW + px2;
-      var dry = A.WVAL[idx] < A.WTHR - 0.02;
+      var dry = A.WVAL[idx] < A.WTHR - 0.015;
       if (dry) run.push(pts[k]);
       else { strokeRoad(c, run, PX); run = []; }
     }
@@ -1037,7 +1058,7 @@ function strokeRoad(c, pts, PX) {
    they would if this were a painting, and everything carries a contact shadow
    offset toward the lower-right — the same sun as the hillshade.             */
 var SCAT_TRY = 13;
-var DENSITY = { plains: 0.26, forest: 0.90, graveyard: 0.40, facility: 0.30, mountain: 0.30, wastes: 0.22 };
+var DENSITY = { plains: 0.26, forest: 0.90, graveyard: 0.42, facility: 0.30, mountain: 0.26, wastes: 0.34 };
 
 function scatterObjects(A) {
   var M = mapgen(), out = [];
@@ -1052,7 +1073,7 @@ function scatterObjects(A) {
         if (fx < -0.4 || fy < -0.4 || fx > A.W + 0.4 || fy > A.H + 0.4) continue;
         var bx = clamp((fx * A.PX) | 0, 0, A.BW - 1), by = clamp((fy * A.PX) | 0, 0, A.BH - 1);
         var i = by * A.BW + bx;
-        if (A.WVAL[i] > A.WTHR - 0.03) continue;                 // not in the water
+        if (A.WVAL[i] > A.WTHR - 0.02) continue;                 // not in the water
         var nm = BORDER[A.BIO[i]];
         var cl = sampleGrid(clump.g, clump.w, clump.h, fx / A.W * (clump.w - 1), fy / A.H * (clump.h - 1));
         var acc = ((h >>> 20) & 1023) / 1024;
@@ -1067,6 +1088,16 @@ function scatterObjects(A) {
   return out;
 }
 
+/* Local convexity of the baked height field at a continuous tile position:
+   positive on a spine, negative in a hollow. Used to decide where crags stand
+   and, below, to keep the biggest trees out of the ridgelines. */
+function ridgeAt(A, fx, fy) {
+  var d = Math.max(2, (A.PX * 0.42) | 0);
+  var bx = clamp((fx * A.PX) | 0, d, A.BW - 1 - d), by = clamp((fy * A.PX) | 0, d, A.BH - 1 - d);
+  var i = by * A.BW + bx;
+  return A.ELEV[i] - (A.ELEV[i - d] + A.ELEV[i + d] + A.ELEV[i - d * A.BW] + A.ELEV[i + d * A.BW]) * 0.25;
+}
+
 function makeObject(A, nm, fx, fy, e, lit, r) {
   var c = A.ctx, PX = A.PX;
   var px = fx * PX, py = fy * PX;
@@ -1076,12 +1107,24 @@ function makeObject(A, nm, fx, fy, e, lit, r) {
     return { y: fy, f: function () { conifer ? drawConifer(c, px, py, s, lit, r) : drawBroadleaf(c, px, py, s, lit, r); } };
   }
   if (nm === 'mountain') {
-    // Crags follow the height field: big broken teeth on the high ground,
-    // rubble on the skirts. Scattering one uniform crag everywhere — which is
-    // what the first pass did — turns a massif into a hedgehog.
-    var t = r(), hi = clamp((e - 0.72) / 0.50, 0, 1);
-    if (t < 0.10 + 0.62 * hi) { var s2 = PX * (0.16 + r() * 0.26 + hi * 0.52); return { y: fy, f: function () { drawCrag(c, px, py, s2, lit, e, r); } }; }
-    if (t < 0.88) { var s3 = PX * (0.08 + r() * 0.13); return { y: fy, f: function () { drawBoulder(c, px, py, s3, lit, r); } }; }
+    /* Crags go where the ROCK ALREADY RISES, not wherever the scatter felt
+       like putting one. Two passes of this file drew a uniform lawn of
+       identical brown wedges over the whole massif and it read as a texture
+       swatch called "spikes" rather than as a mountain. So placement is gated
+       on the local convexity of the height field — positive on a spine,
+       negative in a bowl — which makes the crags line up along the arêtes the
+       ridged noise already built, leaves the corries open, and gives the
+       massif an internal structure the eye can follow. Size scales with both
+       altitude and how pronounced the spine is, so the skyline has a few real
+       peaks instead of a hundred equal teeth. */
+    var t = r(), hi = clamp((e - 0.70) / 0.55, 0, 1);
+    var spine = clamp(ridgeAt(A, fx, fy) * 26, -1, 1);
+    var pCrag = (0.05 + 0.30 * hi) * (0.20 + 1.1 * clamp(spine * 0.5 + 0.5, 0, 1));
+    if (t < pCrag) {
+      var s2 = PX * (0.12 + r() * 0.17 + hi * 0.26 + Math.max(0, spine) * 0.20);
+      return { y: fy, f: function () { drawCrag(c, px, py, s2, lit, e, r); } };
+    }
+    if (t < 0.88) { var s3 = PX * (0.06 + r() * 0.13); return { y: fy, f: function () { drawBoulder(c, px, py, s3, lit, r); } }; }
     var s4 = PX * (0.18 + r() * 0.14); return { y: fy, f: function () { drawDeadTree(c, px, py, s4, lit, r, '#3a2c22'); } };
   }
   if (nm === 'graveyard') {
@@ -1126,6 +1169,7 @@ function contact(c, x, y, w, h, a) {
 }
 function drawConifer(c, x, y, s, lit, r) {
   var tint = 0.72 + lit * 0.5;
+  var hue = r();          // 0 = cool blue-green, 1 = warm olive
   contact(c, x, y, s * 0.85, s * 0.34, 0.30);
   c.strokeStyle = 'rgba(40,28,18,0.85)'; c.lineWidth = Math.max(0.7, s * 0.11);
   c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - s * 0.55); c.stroke();
@@ -1137,7 +1181,7 @@ function drawConifer(c, x, y, s, lit, r) {
     c.beginPath();
     c.moveTo(x - wd, cy); c.lineTo(x, cy - hh); c.lineTo(x + wd, cy);
     c.closePath();
-    c.fillStyle = shadeRGB(38 + r() * 12, 54 + r() * 20, 36 + r() * 12, tint);
+    c.fillStyle = shadeRGB(34 + hue * 26, 52 + r() * 20, 34 + (1 - hue) * 20, tint);
     c.fill();
     // lit rim, upper-left
     c.beginPath(); c.moveTo(x - wd, cy); c.lineTo(x, cy - hh); c.lineTo(x - wd * 0.15, cy);
@@ -1151,7 +1195,8 @@ function drawBroadleaf(c, x, y, s, lit, r) {
   c.strokeStyle = 'rgba(46,32,20,0.9)'; c.lineWidth = Math.max(0.8, s * 0.13);
   c.beginPath(); c.moveTo(x, y); c.lineTo(x - s * 0.06, y - s * 0.5); c.stroke();
   var lobes = 3 + (r() * 3 | 0);
-  var base = [52 + r() * 20, 74 + r() * 22, 40 + r() * 14];
+  var hue2 = r();
+  var base = [44 + hue2 * 34, 74 + r() * 20, 44 - hue2 * 12];
   for (var i = 0; i < lobes; i++) {
     var a = (i / lobes) * Math.PI * 2 + r();
     var rr = s * (0.30 + r() * 0.18);
@@ -1202,14 +1247,22 @@ function drawCrag(c, x, y, s, lit, e, r) {
   c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);
   for (i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
   c.closePath();
-  c.fillStyle = shadeRGB(66, 52, 44, 0.60 + lit * 0.40); c.fill();
+  // Three rock types, picked per instance. A massif made of one colour is a
+  // texture; a massif made of basalt, granite and iron-stained scree is a
+  // mountain. The lit-face colours below key off the same pick.
+  var rk2 = r();
+  var dR = rk2 < 0.36 ? 58 : rk2 < 0.72 ? 76 : 92, dG = rk2 < 0.36 ? 50 : rk2 < 0.72 ? 66 : 62,
+      dB = rk2 < 0.36 ? 48 : rk2 < 0.72 ? 58 : 48;
+  var lR = rk2 < 0.36 ? 140 : rk2 < 0.72 ? 164 : 178, lG = rk2 < 0.36 ? 130 : rk2 < 0.72 ? 148 : 132,
+      lB = rk2 < 0.36 ? 124 : rk2 < 0.72 ? 132 : 104;
+  c.fillStyle = shadeRGB(dR, dG, dB, 0.60 + lit * 0.40); c.fill();
   // the lit flank: everything left of the summit line
   c.beginPath();
   c.moveTo(pts[0][0], pts[0][1]);
   c.lineTo(pts[1][0], pts[1][1]); c.lineTo(pts[2][0], pts[2][1]); c.lineTo(pts[3][0], pts[3][1]);
   c.lineTo(sx - w * 0.10, y);
   c.closePath();
-  c.fillStyle = shadeRGB(152, 128, 104, 0.70 + lit * 0.46); c.fill();
+  c.fillStyle = shadeRGB(lR, lG, lB, 0.70 + lit * 0.46); c.fill();
   // a crease down the face, so the rock has structure
   c.strokeStyle = 'rgba(38,28,22,0.28)'; c.lineWidth = Math.max(0.5, s * 0.06);
   c.beginPath(); c.moveTo(sx, y - h); c.lineTo(sx - w * (0.2 + r() * 0.3), y); c.stroke();
@@ -1352,7 +1405,7 @@ function addNodeDeposits(A, out) {
     var fx = x + 0.30 + (h & 255) / 255 * 0.40;
     var fy = y + 0.32 + ((h >>> 8) & 255) / 255 * 0.38;
     var i = clamp((fy * A.PX) | 0, 0, A.BH - 1) * A.BW + clamp((fx * A.PX) | 0, 0, A.BW - 1);
-    if (A.WVAL[i] > A.WTHR - 0.03) continue;
+    if (A.WVAL[i] > A.WTHR - 0.02) continue;
     var lit = A.LIGHT[i] / 200;
     (function (kind, px, py, lit, r) {
       out.push({ y: py / A.PX + 0.01, f: function () { drawDeposit(A.ctx, kind, px, py, A.PX * 0.24, lit, r); } });
@@ -1492,28 +1545,47 @@ function drawWarpathGate(c, x, y, PX, lit) {
   c.beginPath(); c.moveTo(x - s * 0.5, y); c.lineTo(x + s * 0.5, y);
   c.lineTo(x + s * 1.7, y + s * 0.62); c.lineTo(x + s * 0.6, y + s * 0.62); c.closePath(); c.fill();
   c.restore();
-  contact(c, x, y, s * 0.9, s * 0.28, 0.36);
-  // the aperture glow behind the arch
-  glow(c, x, y - s * 0.62, s * 1.5, 'rgba(240,196,96,0.42)');
-  var w = s * 0.62, h = s * 1.15, t = s * 0.20;
-  // uprights
-  c.fillStyle = shadeRGB(92, 84, 72, 0.55 + lit * 0.35);
-  c.fillRect(x - w, y - h, t, h);
-  c.fillRect(x + w - t, y - h, t, h);
-  c.fillStyle = shadeRGB(178, 166, 146, 0.62 + lit * 0.4);
-  c.fillRect(x - w, y - h, t * 0.38, h);
-  c.fillRect(x + w - t, y - h, t * 0.34, h);
-  // lintel
-  c.fillStyle = shadeRGB(104, 94, 80, 0.55 + lit * 0.35);
-  c.fillRect(x - w * 1.22, y - h - t * 0.9, w * 2.44, t * 0.95);
-  c.fillStyle = shadeRGB(190, 178, 156, 0.6 + lit * 0.4);
-  c.fillRect(x - w * 1.22, y - h - t * 0.9, w * 2.44, t * 0.30);
-  // the doorway itself
+  contact(c, x, y, s * 0.95, s * 0.28, 0.38);
+  var w = s * 0.60, h = s * 1.25, t = s * 0.19;
+  var i;
+  /* The doorway is drawn FIRST and small, then the stone is drawn over it.
+     The first version filled the whole span between the piers with a bright
+     gradient, which at map zoom is a beige slab with two thin edges — the
+     single most important structure on the map read as a rectangle. The
+     aperture is now narrower than the piers are thick, so what you see is
+     masonry with light coming through it. */
+  glow(c, x, y - h * 0.52, s * 1.35, 'rgba(238,190,96,0.34)');
   var g = c.createLinearGradient(x, y - h, x, y);
-  g.addColorStop(0, 'rgba(255,226,150,0.85)');
-  g.addColorStop(1, 'rgba(196,132,44,0.35)');
+  g.addColorStop(0, 'rgba(255,236,182,0.95)');
+  g.addColorStop(0.55, 'rgba(232,178,86,0.80)');
+  g.addColorStop(1, 'rgba(150,92,30,0.55)');
   c.fillStyle = g;
-  c.fillRect(x - w + t, y - h, (w - t) * 2, h);
+  c.beginPath();
+  c.moveTo(x - w * 0.52, y);
+  c.lineTo(x - w * 0.52, y - h * 0.68);
+  c.quadraticCurveTo(x, y - h * 1.02, x + w * 0.52, y - h * 0.68);
+  c.lineTo(x + w * 0.52, y);
+  c.closePath(); c.fill();
+  // piers, coursed so they read as cut stone
+  for (i = 0; i < 2; i++) {
+    var px2 = i ? x + w * 0.52 : x - w * 0.52 - t;
+    c.fillStyle = shadeRGB(74, 68, 60, 0.55 + lit * 0.35);
+    c.fillRect(px2, y - h, t, h);
+    c.fillStyle = shadeRGB(150, 140, 122, 0.60 + lit * 0.40);
+    c.fillRect(px2, y - h, t * 0.34, h);
+    c.strokeStyle = 'rgba(24,20,16,0.34)'; c.lineWidth = Math.max(0.6, s * 0.022);
+    for (var b2 = 1; b2 < 5; b2++) {
+      c.beginPath(); c.moveTo(px2, y - h * b2 / 5); c.lineTo(px2 + t, y - h * b2 / 5); c.stroke();
+    }
+  }
+  // lintel, oversailing the piers
+  c.fillStyle = shadeRGB(86, 78, 68, 0.55 + lit * 0.35);
+  c.fillRect(x - w * 0.86 - t, y - h - t * 0.85, (w * 0.86 + t) * 2, t * 0.90);
+  c.fillStyle = shadeRGB(166, 154, 134, 0.60 + lit * 0.42);
+  c.fillRect(x - w * 0.86 - t, y - h - t * 0.85, (w * 0.86 + t) * 2, t * 0.26);
+  // a keystone, because the eye looks for a centre
+  c.fillStyle = shadeRGB(120, 110, 96, 0.60 + lit * 0.40);
+  c.fillRect(x - t * 0.34, y - h - t * 0.85, t * 0.68, t * 0.90);
 }
 function drawPortal(c, x, y, PX, lit) {
   var s = PX * 0.95;
@@ -1692,10 +1764,18 @@ function finishEdges(A) {
 function bakeMemory(src, BW, BH) {
   var cv = mkCanvas(BW, BH), c = cv.getContext('2d');
   c.drawImage(src, 0, 0);
+  // Not fully drained and not blacked out. The bar asks for three states that
+  // are visually distinct, and "remembered" has to sit clearly BETWEEN the
+  // other two: a fully grey, heavily dimmed memory layer ends up the same
+  // value as the cloud and the map reads as two states, not three. So: most
+  // of the saturation removed but not all, a cold ink wash, and only a modest
+  // dim — you can still read the terrain, you just cannot mistake it for now.
+  c.globalAlpha = 0.80;
   c.globalCompositeOperation = 'saturation';
   c.fillStyle = 'hsl(0,0%,50%)'; c.fillRect(0, 0, BW, BH);
+  c.globalAlpha = 1;
   c.globalCompositeOperation = 'source-over';
-  c.fillStyle = 'rgba(22,26,42,0.62)'; c.fillRect(0, 0, BW, BH);
+  c.fillStyle = 'rgba(30,38,58,0.40)'; c.fillRect(0, 0, BW, BH);
   return cv;
 }
 
@@ -1918,8 +1998,8 @@ function draw(ctx, opts) {
   var vg = ctx.createRadialGradient(VW / 2, VH / 2, Math.min(VW, VH) * 0.30,
                                     VW / 2, VH / 2, Math.max(VW, VH) * 0.80);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(0.62, 'rgba(4,3,8,0.22)');
-  vg.addColorStop(1, 'rgba(3,2,6,0.68)');
+  vg.addColorStop(0.66, 'rgba(4,3,8,0.13)');
+  vg.addColorStop(1, 'rgba(3,2,6,0.50)');
   ctx.fillStyle = vg; ctx.fillRect(0, 0, VW, VH);
   ctx.restore();
 
@@ -2061,23 +2141,39 @@ function drawCamp(ctx, x, y, z, col, a) {
   ctx.fillStyle = 'rgba(255,176,72,0.95)'; ctx.fill();
   banner(ctx, x + s * 0.92, y, s * 1.5, col);
 }
+/* A hero has to be findable in one glance on a busy painted map, at any zoom,
+   which is a different problem from looking good. So: a dark plinth shadow to
+   separate it from whatever texture is underneath, a glow in the player's
+   colour, a cloak silhouette with a bright rim on the sunward side, and a
+   banner. The first version's cloak was a bowtie — the quadratic bulged the
+   wrong way and at a distance the hero read as a white X. */
 function drawHero(ctx, x, y, z, col, a) {
-  var s = z * 0.44;
-  ctx.fillStyle = 'rgba(10,8,6,0.45)';
-  ctx.beginPath(); ctx.ellipse(x + s * 0.30, y + s * 0.06, s * 0.74, s * 0.26, 0, 0, Math.PI * 2); ctx.fill();
-  glow(ctx, x, y - s * 0.7, s * 2.2, 'rgba(' + hex(col).join(',') + ',0.24)');
-  // cloaked figure: a wedge for the body, a disc for the head, one lit edge
+  var s = z * 0.52;
+  ctx.fillStyle = 'rgba(8,6,5,0.50)';
+  ctx.beginPath(); ctx.ellipse(x + s * 0.24, y + s * 0.04, s * 0.66, s * 0.22, 0, 0, Math.PI * 2); ctx.fill();
+  glow(ctx, x, y - s * 0.72, s * 2.0, 'rgba(' + hex(col).join(',') + ',0.30)');
+  // cloak: shoulders in, hem out, straight sides
   ctx.beginPath();
-  ctx.moveTo(x - s * 0.52, y); ctx.quadraticCurveTo(x, y - s * 0.55, x + s * 0.52, y);
-  ctx.lineTo(x + s * 0.30, y - s * 1.12); ctx.lineTo(x - s * 0.30, y - s * 1.12); ctx.closePath();
-  ctx.fillStyle = a.dark ? 'rgb(46,40,54)' : 'rgb(58,48,64)'; ctx.fill();
+  ctx.moveTo(x - s * 0.24, y - s * 1.05);
+  ctx.lineTo(x + s * 0.24, y - s * 1.05);
+  ctx.lineTo(x + s * 0.46, y);
+  ctx.quadraticCurveTo(x, y + s * 0.10, x - s * 0.46, y);
+  ctx.closePath();
+  ctx.fillStyle = a.dark ? 'rgb(40,35,48)' : 'rgb(52,45,60)'; ctx.fill();
+  // sunward rim
   ctx.beginPath();
-  ctx.moveTo(x - s * 0.52, y); ctx.quadraticCurveTo(x - s * 0.3, y - s * 0.5, x - s * 0.30, y - s * 1.12);
-  ctx.lineTo(x - s * 0.06, y - s * 1.12); ctx.lineTo(x - s * 0.10, y); ctx.closePath();
-  ctx.fillStyle = 'rgba(198,186,206,0.42)'; ctx.fill();
-  ctx.beginPath(); ctx.arc(x, y - s * 1.28, s * 0.26, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgb(214,190,160)'; ctx.fill();
-  banner(ctx, x + s * 0.72, y, s * 1.9, col);
+  ctx.moveTo(x - s * 0.24, y - s * 1.05);
+  ctx.lineTo(x - s * 0.06, y - s * 1.05);
+  ctx.lineTo(x - s * 0.16, y + s * 0.02);
+  ctx.lineTo(x - s * 0.46, y);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(206,196,216,0.50)'; ctx.fill();
+  // hood
+  ctx.beginPath(); ctx.arc(x, y - s * 1.18, s * 0.24, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgb(46,40,52)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(x - s * 0.05, y - s * 1.22, s * 0.15, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgb(196,172,142)'; ctx.fill();
+  banner(ctx, x + s * 0.60, y, s * 1.8, col);
 }
 function banner(ctx, x, y, h, col) {
   ctx.strokeStyle = 'rgba(42,30,20,0.92)'; ctx.lineWidth = Math.max(1, h * 0.05);

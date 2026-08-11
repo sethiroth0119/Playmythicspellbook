@@ -64,3 +64,10 @@ mythic-game-api/
 .cityloop/
 .battleloop/
 .spriteloop/
+
+# Oversized ANIMATED frames. .gif was not covered above, and this one is 112 MiB
+# — past GitHub's 100 MiB hard per-file limit, so `git add` on it produces a
+# rejected push rather than a large repo. It is already excluded from the
+# Cloudflare upload for the same reason (public/.assetsignore). File stays on
+# disk; compress or convert to a sprite sheet if it is ever wanted in-game.
+public/assets/Units/unit frames/New units/*.gif

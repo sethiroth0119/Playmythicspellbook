@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120t9';
+  window.BUILD_VERSION = 'v120u0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -219341,9 +219341,26 @@ function renderTerritoryWars() {
         const _po = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(selNode.id) : null;
         if (_po && _po.user_id) {
           const _mine = _me && _po.user_id === _me;
+          /* 🔌 TIER, ON THE OWNER'S OWN BANNER. It was only ever visible in the
+             ADMIN tab, which the owner of a node cannot open — so the person
+             whose payout rate it governs was the one person who could not see
+             it. Both rates are shown because they are different numbers doing
+             different jobs: 🔥 is this node's share of the reward pool per
+             collect, 📦 is the bonus resource generation its owner earns.
+             Module absent ⇒ the chip is simply omitted, never a broken one. */
+          let _tierChip = '';
+          try {
+            const _T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+            if (_T) {
+              const _tt = _T.resolveTier(selNode, {});
+              _tierChip = `<span class="tw-nd-claim-badge" title="Node tier — ${_tt.rate}% share of the global reward pool per collect, ${_tt.rate + _T.RESOURCE_BONUS_PCT}% bonus resource generation"
+                style="background:linear-gradient(180deg,${_tt.accent},rgba(0,0,0,.35));color:#0f0b04;border-color:rgba(0,0,0,.4)">🔌 ${escapeHtml(_tt.name)} · ${_tt.rate}% 🔥 · ${_tt.rate + _T.RESOURCE_BONUS_PCT}% 📦</span>`;
+            }
+          } catch (e) {}
           return `<div class="tw-nd-claim ${_mine ? 'mine' : ''}"><div class="tw-nd-claim-row">
               <span class="tw-nd-claim-badge">🚩 CLAIMED</span>
               <span class="tw-nd-claim-owner">${escapeHtml(_po.display_name || 'Player')}${_mine ? ' · you' : ''}</span>
+              ${_tierChip}
             </div></div>`;
         }
         if (_me) {
@@ -221726,7 +221743,7 @@ render();
      bridge it registers, stays inert and warns once — the globals trap.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/city/index.js?v=r12res14"></script>
+<script type="module" src="src/city/index.js?v=v120u0seam"></script>
 <!-- 🤝 TRADING — player-to-player swaps + LOT listings for the Resource
      Exchange. Registers window.MythicTrading and is INERT until the Market's
      Resources tab renders. index.html keeps the Supabase calls (Cloud/Profile

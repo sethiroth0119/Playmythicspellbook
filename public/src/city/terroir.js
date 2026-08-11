@@ -345,9 +345,36 @@ export function tierOf(resId) { return terroir().tiers[resId] || TERROIR_ECON.un
    Always a finite number ≥ 0 — a NaN here would multiply a payout to nothing
    and look exactly like the "collected 0" bug class this project has shipped
    before. Unknown resource ⇒ 1 (unchanged), never 0. */
+/* ⛏ THE NODE'S OWN SEAM PAYS TRIPLE.
+   A PRN advertises what it is — "PRN — FUEL PRODUCTION" — and until now the
+   city built on top of it had no mechanical relationship to that at all: a fuel
+   node's city produced fuel at exactly the same rate as anyone else's. The node
+   identity was flavour text.
+
+   Now the city starts with a x3 on the resource its node actually produces, so
+   a fuel node IS a fuel city and specialising into it is the obvious play.
+
+   Applied HERE because yieldMul() is the one function every production path
+   already asks (city buildings via stackMul's sibling, operations via opMul,
+   the panel's own rate preview) — so the buff lands on the payout AND on every
+   number the UI prints, with no site left to forget it.
+
+   ⚠ EXACTLY 1x when there is no node, no survey, or the seam does not match:
+     terroir must never invent a bonus for a player who has not got a node yet,
+     and an unsurveyed profile already resolves seamResId to null. */
+export const SEAM_BONUS_MUL = 3;
+export function seamBonusFor(resId) {
+  try {
+    if (!resId) return 1;
+    const seam = terroir().seamResId;
+    return (seam && String(seam) === String(resId)) ? SEAM_BONUS_MUL : 1;
+  } catch (e) { return 1; }
+}
+
 export function yieldMul(resId) {
   const m = tierDef(tierOf(resId)).yieldMul;
-  return (typeof m === 'number' && isFinite(m) && m >= 0) ? m : 1;
+  const base = (typeof m === 'number' && isFinite(m) && m >= 0) ? m : 1;
+  return base * seamBonusFor(resId);
 }
 
 /* 🏭 STACKING — the k-th building producing `resId` (k is 1-based).

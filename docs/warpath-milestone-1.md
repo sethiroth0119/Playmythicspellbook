@@ -92,7 +92,7 @@ tree beyond Blacksmith I, forward outposts (camp is movable but singular).
 |---|---|---|---|
 | P1 mapgen | 3 | **WINS** | Warpath-exclusive *cards* are not minted (deliberate — see below) |
 | P2 schema | 4 | **WINS** | `warpath_state()` is one big query; at 4 players it is fine, at 20 it will need splitting |
-| P3 screen | — | not started | — |
+| P3 screen | 3 | **ready for independent critic** | Terrain art is the fallback painter until `warpath-render.js` lands |
 | P4 bridge | — | not started | — |
 
 ### P1 — world generation · round history
@@ -156,6 +156,39 @@ drops to a plain `authenticated` role and confirms a client cannot insert into `
 cannot rewrite `warpath_inventory`, cannot move its hero by writing the table, cannot read a
 non-participant's run, and — the one that actually matters — **cannot forge a `warpath_grants`
 row**, which is the only table that reaches the permanent collection.
+
+### P3 — the Warpath screen · round history
+
+**Files:** `public/warpath/index.html`, `public/warpath/warpath-app.js`,
+`public/warpath/warpath-net.js`
+
+Inspected in **headless Chromium** (Playwright, `/opt/pw-browsers`), screenshotted, and driven
+through scripted playthroughs — not reviewed by reading.
+
+| Round | What the critic actually did | Verdict | Gap sent back |
+|---|---|---|---|
+| 1 | Opened the page at 1440×900 and looked at the screenshot | **LOSES** | The world was invisible. Unexplored tiles were filled `#08070d` against a `#07060b` page, so 95% of the screen was indistinguishable from the background and the map read as a bug. The camera also pinned the map to one side instead of centring it, and the gold reachability overlay was painted over **unexplored** tiles — a fog-of-war leak that showed which hidden tiles were water. |
+| 2 | Re-screenshotted; then ran a scripted 26-turn playthrough through the real RPC surface | **LOSES** | **The mode was unplayable from most spawns.** The run harvested 26 nodes over 14 turns and finished with *zero wood*. Every building needs wood, so it could raise neither a Supply Tent (vault stayed at 0 slots) nor a Recruitment Tent (no recruiting at all, for the entire run). It harvested a **Dragon Heart and lost it at extraction** because there was nowhere to secure it. Wood only appeared in the forest and plains node tables. |
+| 3 | Replayed after the fix; drove the recruitment modal through the real DOM | **ready for independent critic** | — |
+
+**Round 3 evidence.** A scripted expedition now completes the whole loop: pitch camp → gather →
+draft cards from discovery encounters → return → secure → build Supply Tent → travel to a
+recruitment site → travel to the Warpath Gate → 2-turn extraction countdown → EXPEDITION
+COMPLETE. Materials now actually come home (`{"void_crystal":1,"ancient_bone":3}`), which was
+impossible before. No page errors in any run.
+
+**The balance fix, in all three copies.** Wood was added to the mountain/wastes/graveyard/
+facility node tables (scarce, never absent), and a `STARTING_STIPEND` of 🪵25 🍖20 🪨15 🪙10
+arrives secured. The stipend is deliberately sized to buy **one** tier-1 tent, not both — the
+SQL suite asserts exactly that, so a future "make it more generous" edit fails the test.
+
+**Renderer boundary.** Per the map bar, `warpath-app.js` no longer paints terrain. It owns fog
+*state*, the actor list, camera, input, panels and modals, and calls
+`WarpathRender.bakeTerrain(seed)` / `.draw(ctx, opts)` / `.screenToTile(...)`. Two things are
+deliberate: the reachability overlay is filtered to explored tiles **before** it reaches the
+renderer (the paint layer cannot know it would be leaking fog), and if the module is absent or
+throws, a plain fallback painter takes over so the screen degrades instead of going black. The
+404 for `warpath-render.js` was confirmed in the browser and the fallback engaged cleanly.
 
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which

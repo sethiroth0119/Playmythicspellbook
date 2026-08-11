@@ -235,6 +235,11 @@ console.log('  movecost/node_at  ' + tileCount + ' tiles');
   if (star.join(',') !== D.STARTER_POOL.join(',')) bad('starter_pool', 0, '', D.STARTER_POOL, star);
   console.log('starter pool        ' + star.length + ' cards');
 
+  const stip = psql(`select kind||'|'||amount from public.warpath_starting_stipend order by kind`).split('\n');
+  const mineStip = Object.keys(D.STARTING_STIPEND).sort().map(k => k + '|' + D.STARTING_STIPEND[k]);
+  if (stip.join(',') !== mineStip.join(',')) bad('starting_stipend', 0, '', mineStip, stip);
+  console.log('starting stipend    ' + mineStip.length + ' resources');
+
   // and the vault ladder the two sides both hard-code
   const slots = psql(`select public.wp_vault_slots(id) from public.warpath_expeditions limit 0`);
   if (JSON.stringify(D.VAULT_SLOTS) !== JSON.stringify([0, 5, 10, 20])) {

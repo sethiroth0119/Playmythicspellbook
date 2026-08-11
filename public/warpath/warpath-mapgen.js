@@ -106,25 +106,28 @@ var BIOMES = {
     id: 'graveyard', name: 'The Graveyard', icon: '🪦', tone: '#6b5f80',
     pack: 'Undead units, Graveyard triggers, Necromancy, cursed artifacts.',
     nodeDensity: 40, moveBase: 1,
-    nodes: [['essence', 34], ['ancient_bone', 14], ['stone', 22], ['gold', 20], ['void_crystal', 4]],
+    // Dead trees. Wood is thin outside the forest but never absent — a run
+    // that cannot find any wood cannot build a camp at all (see the note on
+    // STARTING_STIPEND in warpath-data.js).
+    nodes: [['essence', 34], ['ancient_bone', 14], ['stone', 22], ['gold', 20], ['void_crystal', 4], ['wood', 12]],
   },
   facility: {
     id: 'facility', name: 'Ouroboros Facility', icon: '🧪', tone: '#4f86a8',
     pack: 'Rare artifacts, experimental equipment, strange trigger cards.',
     nodeDensity: 36, moveBase: 1,
-    nodes: [['iron', 36], ['essence', 22], ['ouroboros_core', 12], ['gold', 22], ['celestial_ore', 5]],
+    nodes: [['iron', 36], ['essence', 22], ['ouroboros_core', 12], ['gold', 22], ['celestial_ore', 5], ['wood', 8]],
   },
   mountain: {
     id: 'mountain', name: 'Dragon Mountain', icon: '🌋', tone: '#a3583f',
     pack: 'Dragon units, Fire resources, Dragon equipment, legendary foes.',
     nodeDensity: 42, moveBase: 2,
-    nodes: [['stone', 34], ['iron', 26], ['dragon_heart', 10], ['celestial_ore', 8], ['food', 12]],
+    nodes: [['stone', 34], ['iron', 26], ['dragon_heart', 10], ['celestial_ore', 8], ['food', 12], ['wood', 8]],
   },
   wastes: {
     id: 'wastes', name: 'The Ashen Wastes', icon: '🏜', tone: '#8a7b62',
     pack: 'Little grows here. What you find, nobody else wanted to walk for.',
     nodeDensity: 22, moveBase: 1,
-    nodes: [['stone', 30], ['iron', 22], ['void_crystal', 10], ['gold', 24], ['essence', 12]],
+    nodes: [['stone', 30], ['iron', 22], ['void_crystal', 10], ['gold', 24], ['essence', 12], ['wood', 10]],
   },
 };
 var BIOME_ORDER = ['plains', 'forest', 'graveyard', 'facility', 'mountain', 'wastes'];

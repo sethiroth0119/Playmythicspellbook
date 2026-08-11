@@ -266,6 +266,22 @@ var ENTRY = {
   moves_per_turn: 6,          // movement points, spent against tile moveCost
 };
 
+/* ⚠ THE STARTING STIPEND EXISTS BECAUSE A PLAYTEST FAILED WITHOUT IT.
+   A scripted run that spawned away from forest harvested 26 nodes over 14
+   turns and finished with ZERO wood. Every building except nothing needs
+   wood, so that run could not raise a Supply Tent (vault stayed at 0 slots)
+   and could not raise a Recruitment Tent (no recruiting at all, ever). It
+   harvested a Dragon Heart and then lost it at extraction because there was
+   nowhere to secure it. The entire camp and recruitment half of the mode was
+   locked out by where the hero happened to land.
+
+   The kit below is deliberately not generous: it affords a Supply Tent I
+   (🪵20 🍖10) with five wood to spare, OR banks toward a Recruitment Tent I
+   (🪵30 🍖20) that still needs wood found out in the world. That is the
+   "you cannot fully upgrade everything" tension the brief wants — a choice,
+   rather than a lockout. */
+var STARTING_STIPEND = { wood: 25, food: 20, stone: 15, gold: 10, iron: 0, essence: 0 };
+
 // Losing a battle. "Losing shouldn't erase everything." You drop UNSECURED
 // carry, your hero is injured, and you wake up at your own camp.
 var LOSS = {
@@ -286,7 +302,7 @@ root.WarpathData = {
   EXTRACT_BASE_CARDS: EXTRACT_BASE_CARDS,
   EXTRACT_CARDS_PER_VAULT_LEVEL: EXTRACT_CARDS_PER_VAULT_LEVEL,
   EXTRACT_TURNS: EXTRACT_TURNS,
-  ENTRY: ENTRY, LOSS: LOSS,
+  ENTRY: ENTRY, LOSS: LOSS, STARTING_STIPEND: STARTING_STIPEND,
 };
 
 })(typeof module !== 'undefined' && module.exports ? module.exports : (typeof window !== 'undefined' ? window : this));

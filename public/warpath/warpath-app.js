@@ -5,7 +5,14 @@
    actually turns on: the ENCOUNTER draft, the recruitment pick-1-of-3, the
    landmark, and EXPEDITION COMPLETE.
 
-   Two rules this file keeps:
+   THREE rules this file keeps:
+     • It does NOT paint terrain. public/warpath/warpath-render.js owns every
+       pixel of the world — relief, biome texture, shorelines, structures, the
+       fog veil and the finish passes. This file owns fog STATE, the actor
+       list, the camera, input, panels and modals, and hands the renderer a
+       seed + fog accessor + actors. If the renderer is missing or throws, a
+       deliberately plain fallback painter keeps the screen usable rather than
+       leaving a black canvas.
      • It owns NO rules. Every state change is a WarpathNet.rpc() round trip
        and then a re-read of warpath_state(). The client never decides that a
        harvest succeeded, what a node contained, or how far a hero may walk —
@@ -121,6 +128,7 @@ function refresh() {
     if (!S.world || S.seed !== st.run.seed) {
       S.seed = st.run.seed;
       S.world = M.generate(st.run.seed);
+      baked = null; bakedSeed = -1;      // a new world needs a new bake
     }
     // Fog arrives as base64 from the server; the offline mock hands over the
     // raw array. Bit n is byte[n>>3] & (1<<(n&7)) — the convention Postgres's
@@ -198,12 +206,21 @@ function clampCam() {
   S.cam.x = mw <= viewW() ? (mw - viewW()) / 2 : Math.max(0, Math.min(S.cam.x, mw - viewW()));
   S.cam.y = mh <= viewH() ? (mh - viewH()) / 2 : Math.max(0, Math.min(S.cam.y, mh - viewH()));
 }
+/* Hit testing. If the renderer exposes screenToTile we use it — it may
+   letterbox, rotate or apply a projection we know nothing about, and the
+   click has to land on the tile the player actually sees. */
 function tileFromEvent(ev) {
   var r = cv.getBoundingClientRect();
-  var px = ev.clientX - r.left + S.cam.x, py = ev.clientY - r.top + S.cam.y;
-  var x = Math.floor(px / S.cam.z), y = Math.floor(py / S.cam.z);
-  if (x < 0 || y < 0 || x >= M.WORLD_W || y >= M.WORLD_H) return null;
-  return { x: x, y: y };
+  var cx = ev.clientX - r.left, cy = ev.clientY - r.top;
+  var mod = renderer(), t = null;
+  if (mod && typeof mod.screenToTile === 'function') {
+    try { t = mod.screenToTile(cx, cy, drawOpts()); } catch (e) { t = null; }
+  }
+  if (!t) {
+    t = { x: Math.floor((cx + S.cam.x) / S.cam.z), y: Math.floor((cy + S.cam.y) / S.cam.z) };
+  }
+  if (!t || t.x < 0 || t.y < 0 || t.x >= M.WORLD_W || t.y >= M.WORLD_H) return null;
+  return { x: t.x | 0, y: t.y | 0 };
 }
 
 function shade(hex, mul) {
@@ -214,13 +231,128 @@ function shade(hex, mul) {
   return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
+/* ── The render adapter ───────────────────────────────────────────────────
+   warpath-render.js is presentation-only and knows nothing about turns, rules
+   or networking. We give it four things and it paints:
+
+     seed      — the world is a pure function of it, same as everywhere else
+     camera    — {x,y} world-pixel offset and {z} pixels-per-tile
+     fog       — fogState(x,y) → 0 unseen · 1 remembered · 2 live
+     actors    — heroes, camps and the selection cursor, in world coordinates
+
+   ⚠ The renderer must never decide what is AT a coordinate. Everything it
+   draws is a layer on top of WarpathMap.tileAt(), and any sub-tile detail it
+   invents (where a tree sits, where a ridge runs) has to come from wpHash32
+   with its own salts so it is identical for every player and stable across
+   reloads. The Postgres mirror re-derives the same tile from the same seed,
+   and that agreement is the entire anti-cheat claim — a renderer that moved a
+   node by a pixel of "artistic licence" would quietly break it.            */
+var R = null;                 // resolved WarpathRender, or null → fallback
+var baked = null, bakedSeed = -1;
+
+function renderer() {
+  if (R !== null) return R;
+  var m = window.WarpathRender;
+  R = (m && typeof m.draw === 'function') ? m : false;
+  return R;
+}
+
+// 0 unseen · 1 remembered (explored, not currently in vision) · 2 live.
+// The three states the map bar asks for, decided here because fog is STATE.
+function fogState(x, y) {
+  if (!explored(x, y)) return 0;
+  return inVision(x, y) ? 2 : 1;
+}
+
+function actorList() {
+  var st = S.state, out = [];
+  if (!st) return out;
+  if (st.camp) out.push({ kind: 'camp', x: st.camp.x, y: st.camp.y, self: true,
+                          label: 'Your camp', color: '#ff7a2f',
+                          buildings: st.camp.buildings });
+  (st.others || []).forEach(function (o) {
+    if (o.camp) out.push({ kind: 'camp', x: o.camp.x, y: o.camp.y, self: false,
+                           label: o.hero_name + "'s camp", color: '#6b5f80' });
+    // Only ever drawn from coordinates the SERVER chose to send. An unseen
+    // hero has x === null and simply is not in this list.
+    if (o.visible && o.x != null) {
+      out.push({ kind: 'hero', x: o.x, y: o.y, self: false,
+                 label: o.hero_name, color: '#c0473f', slot: o.slot });
+    }
+  });
+  if (st.me) out.push({ kind: 'hero', x: st.me.x, y: st.me.y, self: true,
+                        label: st.me.hero_name || 'Your Hero', color: '#d4af37',
+                        slot: st.me.slot, status: st.me.status });
+  return out;
+}
+
+function drawOpts() {
+  return {
+    seed: S.seed,
+    world: S.world,
+    camera: { x: S.cam.x, y: S.cam.y, z: S.cam.z },
+    view: { w: window.innerWidth, h: window.innerHeight, vw: viewW(), vh: viewH() },
+    fog: fogState,
+    fogState: fogState,
+    actors: actorList(),
+    selection: S.sel,
+    reachable: reachableExplored(),
+    claimedNodes: (S.state && S.state.claimed_nodes) || [],
+    time: performance.now(),
+  };
+}
+
+/* The reachable overlay is filtered to EXPLORED tiles before it ever reaches
+   the renderer. S.reach is computed against the real world, so handing over
+   the raw set would let the paint layer reveal which unexplored tiles are
+   water — a fog leak in the renderer that the renderer could not know to
+   avoid. Filtering here keeps that decision with the state owner. */
+function reachableExplored() {
+  var out = {};
+  for (var k in S.reach) {
+    var p = k.split(',');
+    if (explored(+p[0], +p[1])) out[k] = S.reach[k];
+  }
+  return out;
+}
+
 function draw() {
+  if (!S.world) { ctx.fillStyle = '#07060b'; ctx.fillRect(0, 0, window.innerWidth, window.innerHeight); return; }
+  var mod = renderer();
+  if (mod) {
+    try {
+      if (bakedSeed !== S.seed && typeof mod.bakeTerrain === 'function') {
+        baked = mod.bakeTerrain(S.seed); bakedSeed = S.seed;
+      }
+      mod.draw(ctx, Object.assign(drawOpts(), { baked: baked }));
+      return;
+    } catch (e) {
+      // A broken painter must not take the whole expedition down with it.
+      try { console.warn('[warpath] render module failed, falling back:', e); } catch (e2) {}
+      R = false;
+    }
+  }
+  drawFallback();
+}
+
+/* ── Fallback painter ─────────────────────────────────────────────────────
+   Deliberately plain: flat biome tone, fog, tokens. It exists so the screen
+   still works if warpath-render.js is absent or throws — NOT as a second
+   renderer to maintain. It does not meet the map bar and is not supposed to.
+   ══════════════════════════════════════════════════════════════════════ */
+function shade(hex, mul) {
+  var n = parseInt(hex.slice(1), 16);
+  var r = Math.min(255, ((n >> 16) & 255) * mul) | 0;
+  var g = Math.min(255, ((n >> 8) & 255) * mul) | 0;
+  var b = Math.min(255, (n & 255) * mul) | 0;
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+function drawFallback() {
   var z = S.cam.z;
   ctx.fillStyle = '#07060b';
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
-  if (!S.world) return;
   var me = S.state && S.state.me;
-
   var x0 = Math.max(0, Math.floor(S.cam.x / z)), y0 = Math.max(0, Math.floor(S.cam.y / z));
   var x1 = Math.min(M.WORLD_W - 1, Math.ceil((S.cam.x + window.innerWidth) / z));
   var y1 = Math.min(M.WORLD_H - 1, Math.ceil((S.cam.y + window.innerHeight) / z));
@@ -228,96 +360,51 @@ function draw() {
   for (var y = y0; y <= y1; y++) {
     for (var x = x0; x <= x1; x++) {
       var sx = Math.round(x * z - S.cam.x), sy = Math.round(y * z - S.cam.y);
-      if (!explored(x, y)) {
-        /* ⚠ NOT the page background. The first version filled unexplored tiles
-           with #08070d against a #07060b page, so the entire world was
-           invisible and the screen read as broken rather than as fogged. The
-           player has to be able to see the SHAPE and SIZE of what they have
-           not explored — that is what makes them want to walk into it. So:
-           a dark cartographer's field with a faint ruled grid, and nothing
-           whatsoever about what is on the tile. */
+      var fs = fogState(x, y);
+      if (fs === 0) {
         ctx.fillStyle = '#131020';
         ctx.fillRect(sx, sy, z + 1, z + 1);
-        ctx.strokeStyle = 'rgba(143,135,163,.10)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(sx + .5, sy + .5, z, z);
         continue;
       }
       var t = S.world.at(x, y);
-      var lit = inVision(x, y);
       var base = t.water ? '#12233d' : M.BIOMES[t.biome].tone;
-      // A little per-tile variance so a biome is not a flat slab of colour.
       var v = 0.82 + (M.wpRoll(S.seed, x, y, 2, 26)) / 100;
-      ctx.fillStyle = shade(base, v * (lit ? 1 : 0.5));
+      ctx.fillStyle = shade(base, v * (fs === 2 ? 1 : 0.5));
       ctx.fillRect(sx, sy, z + 1, z + 1);
-
-      // The lattice reads as a faint track — it is the fast ground, so the
-      // player should be able to see the road they are actually walking on.
-      if (!t.water && t.lattice) {
-        ctx.fillStyle = 'rgba(232,226,213,' + (lit ? 0.07 : 0.035) + ')';
-        ctx.fillRect(sx, sy, z + 1, z + 1);
-      }
       if (z >= 15) {
-        var st = structureAt(x, y), gl = null;
-        if (st) gl = st.s.icon || (st.k === 'gate' ? '🚪' : '❓');
+        var stru = structureAt(x, y), gl = null;
+        if (stru) gl = stru.s.icon || (stru.k === 'gate' ? '🚪' : '❓');
         else if (t.node && !nodeClaimed(x, y)) gl = t.node.icon;
-        else if (t.node) gl = null;
         if (gl) {
-          ctx.globalAlpha = lit ? 1 : 0.5;
+          ctx.globalAlpha = fs === 2 ? 1 : 0.5;
           ctx.font = Math.floor(z * 0.66) + 'px serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           ctx.fillText(gl, sx + z / 2, sy + z / 2 + 1);
           ctx.globalAlpha = 1;
         }
       }
-      if (!lit) { ctx.fillStyle = 'rgba(6,5,11,.42)'; ctx.fillRect(sx, sy, z + 1, z + 1); }
     }
   }
-
-  /* Reachable-this-turn overlay — EXPLORED TILES ONLY.
-     S.reach is computed against the real world, so painting it over unexplored
-     tiles told the player exactly which of them were water and which were
-     rough. That is a fog-of-war leak in the renderer, and it was visible in
-     the very first screenshot as gold squares floating in the dark. You can
-     still WALK into the fog (that is the whole point of exploring) — the
-     button below allows it and the server arbitrates — you just do not get
-     the terrain for free. */
+  var reach = reachableExplored();
   if (me && me.status === 'active') {
     ctx.strokeStyle = 'rgba(212,175,55,.34)'; ctx.lineWidth = 1;
-    for (var k in S.reach) {
+    for (var k in reach) {
       var p = k.split(','), rx = +p[0], ry = +p[1];
-      if (rx < x0 - 1 || rx > x1 + 1 || ry < y0 - 1 || ry > y1 + 1) continue;
       if (rx === me.x && ry === me.y) continue;
-      if (!explored(rx, ry)) continue;
       var ax = Math.round(rx * z - S.cam.x), ay = Math.round(ry * z - S.cam.y);
       ctx.fillStyle = 'rgba(212,175,55,.10)';
       ctx.fillRect(ax, ay, z, z);
       ctx.strokeRect(ax + .5, ay + .5, z - 1, z - 1);
     }
   }
-
-  // Camp
-  var camp = S.state && S.state.camp;
-  if (camp) drawToken(camp.x, camp.y, '⛺', '#ff7a2f');
-
-  // Other heroes — only ever drawn if the SERVER sent coordinates.
-  ((S.state && S.state.others) || []).forEach(function (o) {
-    if (o.camp) drawToken(o.camp.x, o.camp.y, '⛺', '#6b5f80');
-    if (o.visible && o.x != null) drawToken(o.x, o.y, '🗡', '#c0473f');
+  actorList().forEach(function (a) {
+    drawToken(a.x, a.y, a.kind === 'camp' ? '⛺' : (a.self ? '🧙' : '🗡'), a.color, a.self);
   });
-
-  // Selection
   if (S.sel) {
     var sxx = Math.round(S.sel.x * z - S.cam.x), syy = Math.round(S.sel.y * z - S.cam.y);
     ctx.strokeStyle = '#f3e7c8'; ctx.lineWidth = 2;
     ctx.strokeRect(sxx + 1, syy + 1, z - 2, z - 2);
   }
-
-  // Hero, last, so nothing covers it
-  if (me) drawToken(me.x, me.y, '🧙', '#d4af37', true);
-
-  // The edge of the world, and a vignette. Without these the map has no
-  // boundary and reads as a texture rather than as a place.
   var bx = Math.round(-S.cam.x), by = Math.round(-S.cam.y);
   ctx.strokeStyle = 'rgba(212,175,55,.30)'; ctx.lineWidth = 2;
   ctx.strokeRect(bx - 1, by - 1, M.WORLD_W * z + 2, M.WORLD_H * z + 2);

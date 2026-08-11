@@ -65,7 +65,7 @@ function mockInit(seed) {
   var sp = world.spawns[0];
   var inv = {};
   M.EXPEDITION_RESOURCES.concat(M.EXTRACTION_MATERIALS).forEach(function (k) {
-    inv[k] = { carried: 0, secured: 0 };
+    inv[k] = { carried: 0, secured: (D.STARTING_STIPEND[k] || 0) };
   });
   var cards = D.STARTER_POOL.map(function (k, i) {
     return { id: 's' + i, key: k, source: 'starter', secured: true, turn: 1 };
@@ -292,7 +292,8 @@ var MOCK = {
     var n = 0;
     mock.cards.forEach(function (c) { if (!c.secured) { c.secured = true; n++; } });
     return { ok: true, moved: moved, cards_secured: n, vault_used: used,
-             vault_slots: slots, vault_full: used >= slots };
+             vault_slots: slots, no_vault: slots === 0,
+             vault_full: slots > 0 && used >= slots };
   },
 
   warpath_recruit: function (a) {

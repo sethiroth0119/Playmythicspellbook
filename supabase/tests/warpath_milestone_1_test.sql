@@ -98,7 +98,18 @@ begin
   if n <> 24 then raise exception 'FAIL: starter pool is % cards, expected 24', n; end if;
   select count(*) into n from public.warpath_inventory where expedition_id = ea;
   if n <> 6 then raise exception 'FAIL: expected 6 expedition resources, got %', n; end if;
-  pass := pass + 1; raise notice 'ok  starter pool 24 cards + six resources at zero';
+  pass := pass + 1; raise notice 'ok  starter pool 24 cards + six expedition resources';
+
+  -- The starting kit. A playtest without it spawned away from forest, found no
+  -- wood in 14 turns and could raise neither tent, so it had no vault and no
+  -- recruiting for the whole run. The kit must buy exactly ONE tier-1 tent.
+  if (select secured from public.warpath_inventory where expedition_id = ea and kind = 'wood') <> 25 then
+    raise exception 'FAIL: the starting stipend did not land'; end if;
+  if (select secured from public.warpath_inventory where expedition_id = ea and kind = 'wood') >=
+     ((select (cost->>'wood')::int from public.warpath_building_costs where building = 'supply' and level = 1)
+    + (select (cost->>'wood')::int from public.warpath_building_costs where building = 'recruitment' and level = 1)) then
+    raise exception 'FAIL: the stipend buys BOTH tier-1 tents — that is not a choice'; end if;
+  pass := pass + 1; raise notice 'ok  the starting kit buys one tier-1 tent, not two';
 
   st := public.warpath_state();
   if not (st->>'in_run')::boolean then raise exception 'FAIL: state says not in a run'; end if;
@@ -141,10 +152,14 @@ begin
   -- a legal one-tile step really moves and really spends the budget
   select warpath_expeditions.x, warpath_expeditions.y into v_x, v_y
     from public.warpath_expeditions where id = ea;
-  for n in 0..8 loop
-    exit when (select not public.wp_is_water(v_seed, least(public.wp_w()-1, v_x+1), v_y));
-  end loop;
-  r := public.warpath_move(ea, least(public.wp_w()-1, v_x+1), v_y);
+  -- pick a genuinely passable neighbour rather than assuming x+1 is land
+  select gx, gy into v_x, v_y from generate_series(greatest(0, v_x-1), least(public.wp_w()-1, v_x+1)) gx,
+                                   generate_series(greatest(0, v_y-1), least(public.wp_h()-1, v_y+1)) gy
+   where not public.wp_is_water(v_seed, gx, gy)
+     and not (gx = (select warpath_expeditions.x from public.warpath_expeditions where id = ea)
+          and gy = (select warpath_expeditions.y from public.warpath_expeditions where id = ea))
+   limit 1;
+  r := public.warpath_move(ea, v_x, v_y);
   if not (r->>'ok')::boolean then raise exception 'FAIL: legal move refused: %', r; end if;
   if (r->>'moves_left')::int >= 6 then raise exception 'FAIL: movement budget was not spent'; end if;
   pass := pass + 1; raise notice 'ok  a legal move costs movement (% left)', r->>'moves_left';
@@ -184,6 +199,10 @@ begin
   pass := pass + 1; raise notice 'ok  camp pitched';
 
   -- Building spends SECURED stock, so it must fail before we deposit.
+  -- Zero the starting stipend first: it arrives SECURED (see the note in
+  -- warpath_enter), so without this the camp could already afford a Supply
+  -- Tent and the assertion below would be testing nothing.
+  update public.warpath_inventory set secured = 0 where expedition_id = ea;
   update public.warpath_inventory i set carried = 200
     from public.warpath_resources r where r.kind = i.kind and r.tier = 'expedition'
       and i.expedition_id = ea;

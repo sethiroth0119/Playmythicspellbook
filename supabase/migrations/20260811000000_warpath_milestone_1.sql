@@ -248,10 +248,10 @@ delete from public.warpath_biome_nodes;
 insert into public.warpath_biome_nodes (biome, ord, kind, weight) values
   ('plains',0,'food',40),('plains',1,'gold',24),('plains',2,'wood',20),('plains',3,'stone',16),
   ('forest',0,'wood',38),('forest',1,'food',24),('forest',2,'essence',20),('forest',3,'kalon_fragment',4),('forest',4,'gold',14),
-  ('graveyard',0,'essence',34),('graveyard',1,'ancient_bone',14),('graveyard',2,'stone',22),('graveyard',3,'gold',20),('graveyard',4,'void_crystal',4),
-  ('facility',0,'iron',36),('facility',1,'essence',22),('facility',2,'ouroboros_core',12),('facility',3,'gold',22),('facility',4,'celestial_ore',5),
-  ('mountain',0,'stone',34),('mountain',1,'iron',26),('mountain',2,'dragon_heart',10),('mountain',3,'celestial_ore',8),('mountain',4,'food',12),
-  ('wastes',0,'stone',30),('wastes',1,'iron',22),('wastes',2,'void_crystal',10),('wastes',3,'gold',24),('wastes',4,'essence',12);
+  ('graveyard',0,'essence',34),('graveyard',1,'ancient_bone',14),('graveyard',2,'stone',22),('graveyard',3,'gold',20),('graveyard',4,'void_crystal',4),('graveyard',5,'wood',12),
+  ('facility',0,'iron',36),('facility',1,'essence',22),('facility',2,'ouroboros_core',12),('facility',3,'gold',22),('facility',4,'celestial_ore',5),('facility',5,'wood',8),
+  ('mountain',0,'stone',34),('mountain',1,'iron',26),('mountain',2,'dragon_heart',10),('mountain',3,'celestial_ore',8),('mountain',4,'food',12),('mountain',5,'wood',8),
+  ('wastes',0,'stone',30),('wastes',1,'iron',22),('wastes',2,'void_crystal',10),('wastes',3,'gold',24),('wastes',4,'essence',12),('wastes',5,'wood',10);
 
 -- The node on a tile, or null. Mirrors nodeAt(). THIS is the function that
 -- decides what a player is allowed to claim to have harvested.
@@ -821,6 +821,17 @@ insert into public.warpath_building_costs (building, level, cost) values
   ('watchtower',1,'{"wood":40,"stone":20}'),('watchtower',2,'{"wood":70,"stone":50,"iron":25}'),
   ('arcane',1,'{"essence":25,"wood":20}'),('arcane',2,'{"essence":60,"iron":30}');
 
+-- The kit a fresh expedition arrives with. A TABLE rather than a CASE inside
+-- warpath_enter(), so public/warpath/_sqlcheck.js can diff it against
+-- STARTING_STIPEND in warpath-data.js and the two copies cannot drift.
+create table if not exists public.warpath_starting_stipend (
+  kind   text primary key references public.warpath_resources(kind),
+  amount int not null
+);
+delete from public.warpath_starting_stipend;
+insert into public.warpath_starting_stipend (kind, amount) values
+  ('wood',25),('food',20),('stone',15),('gold',10),('iron',0),('essence',0);
+
 -- The 24-card starter pool, so the server (not the client) decides what a
 -- fresh expedition walks in with. Mirrors STARTER_POOL in warpath-data.js.
 create table if not exists public.warpath_starter_pool (
@@ -841,9 +852,11 @@ alter table public.warpath_discovery       enable row level security;
 alter table public.warpath_discovery_meta  enable row level security;
 alter table public.warpath_building_costs  enable row level security;
 alter table public.warpath_starter_pool    enable row level security;
+alter table public.warpath_starting_stipend enable row level security;
 do $$ declare t text; begin
   foreach t in array ARRAY['warpath_recruit_offers','warpath_discovery','warpath_discovery_meta',
-                           'warpath_building_costs','warpath_starter_pool'] loop
+                           'warpath_building_costs','warpath_starter_pool',
+                           'warpath_starting_stipend'] loop
     execute format('drop policy if exists %I on public.%I', t || '_sel', t);
     execute format('create policy %I on public.%I for select to authenticated using (true)', t || '_sel', t);
   end loop;
@@ -1012,10 +1025,20 @@ begin
             v_sp[1], v_sp[2], p_pay)
     returning * into v_exp;
 
-  -- 3. Six expedition resources, all at zero. Rows exist up front so every
-  --    later update is a plain UPDATE and can never create a phantom resource.
-  insert into public.warpath_inventory (expedition_id, kind)
-    select v_exp.id, kind from public.warpath_resources where tier = 'expedition';
+  -- 3. Six expedition resources. Rows exist up front so every later update is
+  --    a plain UPDATE and can never create a phantom resource.
+  --
+  --    ⚠ The stipend is not flavour. A playtest that spawned away from forest
+  --    finished 14 turns with zero wood, could raise neither a Supply Tent nor
+  --    a Recruitment Tent, and so had no vault and no recruiting for the whole
+  --    run — it harvested a Dragon Heart and lost it at extraction. The kit is
+  --    small on purpose: it buys ONE of the two tier-1 tents, not both.
+  --    Mirrors STARTING_STIPEND in public/warpath/warpath-data.js.
+  insert into public.warpath_inventory (expedition_id, kind, secured)
+    select v_exp.id, r.kind, coalesce(k.amount, 0)
+      from public.warpath_resources r
+      left join public.warpath_starting_stipend k on k.kind = r.kind
+     where r.tier = 'expedition';
 
   -- 4. The starter pool. Secured from the start — you brought these from home.
   insert into public.warpath_cards (expedition_id, card_key, source, secured, acquired_turn)
@@ -1405,7 +1428,10 @@ begin
 
   return jsonb_build_object('ok', true, 'moved', moved, 'cards_secured', ncards,
                             'vault_used', used, 'vault_slots', slots,
-                            'vault_full', used >= slots);
+                            -- distinguish "vault is full" from "there is no vault",
+                            -- because the fix for each is a different building
+                            'no_vault', slots = 0,
+                            'vault_full', slots > 0 and used >= slots);
 end $$;
 
 /* ── RECRUIT ──────────────────────────────────────────────────────────────

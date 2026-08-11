@@ -332,6 +332,10 @@
 
 <script src="warpath-mapgen.js?v=120g1"></script>
 <script src="warpath-data.js?v=120g1"></script>
+<!-- warpath-render.js paints the world; the screen only supplies seed, fog and
+     actors. It is loaded BEFORE the app so the adapter finds it on first draw,
+     and the app falls back to a plain painter if it is absent. -->
+<script src="warpath-render.js?v=120g1"></script>
 <script src="warpath-net.js?v=120g1"></script>
 <script src="warpath-app.js?v=120g1"></script>
 </body>

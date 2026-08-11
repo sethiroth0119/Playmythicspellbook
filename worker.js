@@ -370,7 +370,35 @@ async function handleBuy(request, env, u) {
     const s = await stripeApi(env, 'GET', '/v1/checkout/sessions/' + encodeURIComponent(sid), null);
     const md = (s && s.metadata) || {};
     if (!s || s.payment_status !== 'paid' || md.user_id !== user.id) return cjson({ ok: false });
-    return cjson({ ok: true, sid: sid, pack: md.pack, aza: Number(md.aza) || (AZA_PACKS[md.pack] && AZA_PACKS[md.pack].aza) || 0 });
+    /* 💰 CREDIT HERE, SERVER-SIDE. This endpoint used to verify the payment
+       correctly and then hand the amount back for the CLIENT to credit itself
+       — it wrote user_profiles.sovereigns and inserted the aza_purchases
+       receipt on its own JWT. The verification was never the weak part; the
+       crediting was. The client chose the number it wrote, and it also drove
+       the insert that was supposed to make the whole thing exactly-once.
+       aza_fulfill() does both in one transaction under SB_SERVICE, idempotent
+       on the UNIQUE session id, exactly like _shopFulfillSession above. */
+    const aza = Number(md.aza) || (AZA_PACKS[md.pack] && AZA_PACKS[md.pack].aza) || 0;
+    if (!(aza > 0)) return cjson({ ok: false, error: 'bad_amount' });
+    if (!env.SB_SERVICE) return cjson({ ok: false, error: 'sb_service_missing' }, 503);
+    let credited = null;
+    try {
+      const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') + '/rest/v1/rpc/aza_fulfill',
+        { method: 'POST',
+          headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, 'content-type': 'application/json' },
+          body: JSON.stringify({ p_user: user.id, p_session: sid, p_aza: aza }) });
+      if (!r.ok) return cjson({ ok: false, error: 'credit_failed_' + r.status }, 502);
+      credited = await r.json().catch(() => null);
+    } catch (e) { return cjson({ ok: false, error: 'credit_error' }, 502); }
+    // ⚠ Only report ok when the money actually moved (or was already moved by
+    //   an earlier call). A paid session that failed to credit must NOT look
+    //   like a success — the player would see the modal and have no Aza.
+    if (!credited || credited.ok !== true) return cjson({ ok: false, error: 'credit_refused' }, 502);
+    return cjson({
+      ok: true, sid: sid, pack: md.pack, aza: aza,
+      already: credited.already === true,
+      balance: Number(credited.aza) || 0,   // authoritative post-credit balance
+    });
   }
 
   return cjson({ error: 'not_found' }, 404);

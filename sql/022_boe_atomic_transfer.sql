@@ -257,8 +257,10 @@ grant execute on function public.boe_balances() to authenticated;
 -- ===========================================================================
 -- select p.proname, pg_get_function_identity_arguments(p.oid) as args, p.prosecdef as security_definer
 --   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
---  where n.nspname = 'public' and p.proname in ('boe_transfer','boe_balances')
+--  where n.nspname = 'public'
+--    and p.proname in ('boe_transfer','boe_transfer_aza','boe_balances')
 --  order by 1;
+-- Expect THREE rows, every one with security_definer = true.
 --
 -- Expect NO client UPDATE policy left on the bank table:
 -- select policyname, cmd from pg_policies

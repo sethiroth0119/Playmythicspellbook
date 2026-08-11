@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120u2';
+  window.BUILD_VERSION = 'v120u3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -36984,6 +36984,20 @@ const STATUS_EFFECTS = {
   // Ability/heal moves are locked out for the duration. If no enemy is reachable, the unit
   // may still move freely.
   rage:       { id: 'rage',       name: 'Raged',      icon: '😡',  forceAttackNearest: true, atkMod: 3, defMod: -2, desc: 'Must attack the nearest enemy; can only use attack moves (+3 ATK, -2 DEF)' },
+  /* 🕷 CORRUPTED — rage with the target set INVERTED. The unit may only use attack
+     moves (same lockout as rage), and the only legal targets are its OWN side.
+     Deliberately heavier than rage, per the design call:
+       • No stat compensation. Rage pays +3 ATK for its restriction because it
+         still hits the enemy — the restriction is only about WHICH enemy.
+         Corrupted turns the unit's whole output against its owner, so there is
+         no upside to price in. Adding an ATK bonus here would make corrupting
+         your own beater a viable combo, which inverts the intent.
+       • `forceAttackAlly`, NOT `forceAttackNearest` — it is a target-SET switch,
+         not a target-CHOICE restriction. The corrupted unit picks freely among
+         its allies; the cruelty is that it has to pick one at all.
+     ⚠ Every site that assumed "attack target ⇒ enemy" has to consult
+       _statusForcingAllyAttack(). See it for the list. */
+  corrupted:  { id: 'corrupted',  name: 'Corrupted',  icon: '🕷',  forceAttackAlly: true, desc: 'Turned against its own — can ONLY attack allied units, and may only use attack moves.' },
   // Infected — themed for zombies, aliens, plague-bearers. Halves ALL of the victim's
   // combat stats (ATK, MAG, DEF, RES, SPD) via the `statMult` field, which is read by
   // `getStatusStatMultiplier(unit)` and applied at damage-formula + speed-calc time.
@@ -41010,12 +41024,88 @@ function _cardCostCutFor(card, state, side) {
     return Math.max(0, total);
   } catch (e) { return 0; }
 }
+/* 🎟 ZERO-COST-IN-HAND — "if you control X, this card costs 0 in your hand."
+   Card shape (all keys optional, ANY match wins — the spec reads as an OR list):
+     card.zeroCostIf = {
+       controlKalon:       true,      // you control a Kalon (real transform OR Born Ascended)
+       controlFacedownTrap:true,      // you control a face-down trap
+       controlEnchantment: true,      // you control an enchantment / curse
+       controlUnitNamed:   'Name',    // you control a unit with this name
+       graveyardHasNamed:  'Name',    // a card with this name is in your graveyard
+       revealInHand:       'Name',    // you can reveal this card in your hand
+     }
+
+   ⚠ WHY IT LIVES IN getEffectiveCardCost AND NOWHERE ELSE.
+     A previous pass concluded no cost hook existed, having searched for
+     `costsZero` / `costOverride` / `handCost` / `effectiveCost`. The hook is real,
+     it is just named getEffectiveCardCost, and the hand renderer, the click-time
+     affordability check, both energy-deduction sites and the AI's scoring already
+     route through it. Adding the condition here means the price the hand DISPLAYS
+     and the price the play path CHARGES cannot drift — which is the entire failure
+     mode this feature invites (and the same class as def.cost / def.gen).
+     Do not add a second cost path. Extend this one.
+
+   ⚠ Name matching is case/space-insensitive on BOTH sides. Card names in this game
+     carry punctuation and stray casing ("Ualti's Secret Library"), and an exact ===
+     silently never fires — a condition that never fires looks identical to a card
+     that simply costs full price, so it would not be noticed. */
+function _zcNorm(s) { return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
+function _zeroCostConditionMet(card, state, side) {
+  try {
+    const z = card && card.zeroCostIf;
+    if (!z || typeof z !== 'object') return false;
+    const who = (side === 'ai') ? 'ai' : 'player';
+    const sd  = state && state[who];
+    const mine = (state && Array.isArray(state.units))
+      ? state.units.filter(u => u && u.alive && u.owner === who) : [];
+
+    // "You control a Kalon" — routes through the shared predicate so Born
+    // Ascended (countsAsKalon) satisfies it too, exactly like every other
+    // Kalon gate in the game.
+    if (z.controlKalon && typeof _isKalonUnit === 'function' && mine.some(u => _isKalonUnit(u))) return true;
+
+    // Face-down trap. Trap-ness is spelled several ways across the codebase
+    // (type / cardType / isTrap), so accept any of them rather than betting on one.
+    if (z.controlFacedownTrap && mine.some(u => u.isFaceDown &&
+        (u.isTrap || _zcNorm(u.type) === 'trap' || _zcNorm(u.cardType) === 'trap'))) return true;
+
+    // Enchantment — curses are the same zone/class here (see the on-play split).
+    if (z.controlEnchantment && mine.some(u => {
+      const t = _zcNorm(u.type) || _zcNorm(u.cardType);
+      return u.isEnchantment || t === 'enchantment' || t === 'curse';
+    })) return true;
+
+    if (z.controlUnitNamed && mine.some(u => _zcNorm(u.name) === _zcNorm(z.controlUnitNamed))) return true;
+
+    if (z.graveyardHasNamed && sd && Array.isArray(sd.graveyard)
+        && sd.graveyard.some(c => c && _zcNorm(c.name) === _zcNorm(z.graveyardHasNamed))) return true;
+
+    // "Reveal a card in your hand" — as a COST CONDITION this is a possession
+    // test: can you show it. The reveal itself is presentation, and gating the
+    // price on an interaction would mean the hand could not price the card until
+    // the player clicked it. Self is excluded so a card cannot reveal itself to
+    // pay for itself.
+    if (z.revealInHand && sd && Array.isArray(sd.hand)
+        && sd.hand.some(c => c && c !== card && c.id !== card.id
+             && _zcNorm(c.name) === _zcNorm(z.revealInHand))) return true;
+
+    return false;
+  } catch (e) { return false; }
+}
 // Public entry point — every caller keeps using getEffectiveCardCost. The original
 // body is untouched below as _getEffectiveCardCostRaw (weatherborn, play-requirement
 // discount, stress surcharge, mobilize, outnumbered) and the cheapen discount is
 // applied to whatever it returns, so it stacks with all of them and can never push a
 // cost below zero.
 function getEffectiveCardCost(card, state, side) {
+  // 🎟 ZERO-COST-IN-HAND — checked FIRST and returns hard 0. It is an absolute
+  // price ("costs 0"), not a discount, so it must not be reachable by the
+  // surcharge branches below (tithe +1, cost spike, arcane tariff). A card that
+  // reads "costs 0" and then charges 1 because it happens to carry Tithe is a
+  // rules contradiction the player cannot see coming.
+  try {
+    if (_zeroCostConditionMet(card, state, side)) return 0;
+  } catch (e) {}
   // ⚰️💸 ALTERNATE COST — the removal replaces the energy cost entirely.
   // Payable ⇒ 0 (free). Not payable ⇒ a cost nothing can afford, so every
   // existing "cost <= energy" highlight/enable check dims the card for free —
@@ -83088,8 +83178,15 @@ const getAvailableMoves = (unit) => {
       moves = _basic ? [_basic] : [];
     }
   }
-  // Raged units can ONLY use attack moves — abilities, buffs, heals are locked out
-  if ((unit.statusEffects || []).some(e => e.type === 'rage')) {
+  // Raged units can ONLY use attack moves — abilities, buffs, heals are locked out.
+  // Corrupted carries the same lockout: "must attack" has no other enforcement
+  // machinery in this engine (there is no end-turn compulsion anywhere), so
+  // removing every non-attack option IS how rage expresses "must", and Corrupted
+  // is specified as the heavier version of it.
+  // ⚠ Kept keyed to rage explicitly rather than folded into a flag: the lockout
+  //   is a MOVE-KIND restriction, while forceAttackNearest / forceAttackAlly are
+  //   TARGET restrictions. A future status could want one without the other.
+  if ((unit.statusEffects || []).some(e => e.type === 'rage') || _statusForcingAllyAttack(unit)) {
     moves = moves.filter(m => m && m.kind === 'attack');
   }
   return moves;
@@ -83113,6 +83210,50 @@ function findNearestReachableEnemy(unit, units) {
     if (d < bestDist) { bestDist = d; best = e; }
   }
   return best;
+}
+
+/* 😡 Which status (if any) is forcing this unit to hit the closest enemy?
+   Returns the STATUS_EFFECTS def so callers can name it in the toast, or null.
+
+   ⚠ READ THE FLAG, NEVER THE ID. Both enforcement sites — the player's click
+     and the AI's candidate filter — used to test `e.type === 'rage'` literally.
+     STATUS_EFFECTS has carried a data-driven `forceAttackNearest` flag the whole
+     time, and `berserk` sets it too ("must attack the nearest enemy" is in its
+     own description). Nothing read the flag, so berserk was pure upside: +6 ATK
+     with none of the drawback it advertises, for the player AND the AI. Any
+     future status that sets the flag would have been silently inert the same
+     way. This is the one place that decides it now. */
+function _statusForcingNearest(unit) {
+  if (!unit) return null;
+  for (const e of (unit.statusEffects || [])) {
+    const def = (typeof STATUS_EFFECTS !== 'undefined') ? STATUS_EFFECTS[e.type] : null;
+    if (def && def.forceAttackNearest) return def;
+  }
+  return null;
+}
+
+/* 🕷 Is this unit turned against its own side? Returns the STATUS_EFFECTS def
+   (so callers can name it in a toast) or null. Currently only `corrupted`.
+
+   ⚠ THIS INVERTS AN ASSUMPTION BAKED IN ALL OVER THE BATTLE CODE: that the
+     target of an attack move is an ENEMY. Ownership is tested inline in a lot
+     of places, so every site that decides "is this a legal attack target" or
+     "which units do I light up / score" has to ask this. The ones that matter:
+       • canAttackTarget()      — the shared legality gate (player + AI)
+       • the click validTarget test — `occupant.owner !== 'player'`
+       • the target highlighter — iterates enemies only
+       • the AI candidate loop  — iterates playerUnits only
+       • getAvailableMoves()    — attack-only lockout, shared with rage
+     Miss one and the game either lights up a tile the click refuses, or offers
+     a target the gate rejects. That is the same UI-lies-about-the-rules bug
+     class as def.cost / def.gen; it is not hypothetical here. */
+function _statusForcingAllyAttack(unit) {
+  if (!unit) return null;
+  for (const e of (unit.statusEffects || [])) {
+    const def = (typeof STATUS_EFFECTS !== 'undefined') ? STATUS_EFFECTS[e.type] : null;
+    if (def && def.forceAttackAlly) return def;
+  }
+  return null;
 }
 
 // ===== EGG MOVES / INHERITANCE =====
@@ -96851,6 +96992,15 @@ function canAttackTarget(attacker, target) {
         return { ok: false, reason: 'phase' };
       }
     } catch (e) {}
+  }
+  // 🕷 CORRUPTED — the target set is inverted: only the attacker's OWN side is
+  // legal. Placed here so the player's click and the AI's candidate filter both
+  // obey it from one place, exactly like the ward and phase gates above.
+  // ⚠ Compares owner to owner, never to the literal 'player'. A corrupted AI
+  //   unit must turn on the AI's own units, not on the player's — a hardcoded
+  //   side test here would silently make Corrupted a *buff* when the AI got it.
+  if (_statusForcingAllyAttack(attacker) && target.owner !== attacker.owner) {
+    return { ok: false, reason: 'corrupted' };
   }
   for (const e of (attacker.statusEffects || [])) {
     // Follow My Lead — total attack lockout for the duration. The unit can
@@ -140586,12 +140736,21 @@ function renderBoard() {
     if (App.ui.selectedMoveId && !sel.hasAttacked) {
       const move = lookupMove(App.ui.selectedMoveId);
       if (move) {
-        const isRaged = (sel.statusEffects || []).some(e => e.type === 'rage');
-        const rageTarget = isRaged ? findNearestReachableEnemy(sel, s.units) : null;
+        // Flag-driven, so the highlight agrees with the click gate. This tested
+        // e.type === 'rage' literally while the click gate does not any more —
+        // leaving it would highlight enemies a berserk unit is not allowed to
+        // hit, and the click would then reject the tile the game just lit up.
+        const rageTarget = _statusForcingNearest(sel) ? findNearestReachableEnemy(sel, s.units) : null;
+        // 🕷 Corrupted inverts which side is lit up for an attack move. This has to
+        // agree with the click's validTarget test exactly — highlighting enemies
+        // here while the click only accepts allies is the UI-lies-about-the-rules
+        // bug, and it would read as the board ignoring every click.
+        const hlCorrupt = !!_statusForcingAllyAttack(sel);
         if (move.kind === 'attack') {
           const attackRange = getEffectiveAttackRange(sel, move);
           for (const u of s.units) {
-            if (u.alive && u.owner !== 'player' && !isVanished(u) && distance(sel.pos, u.pos) <= attackRange) {
+            const sideOk = hlCorrupt ? (u.owner === 'player' && u.id !== sel.id) : (u.owner !== 'player');
+            if (u.alive && sideOk && !isVanished(u) && distance(sel.pos, u.pos) <= attackRange) {
               // When Raged, only the nearest reachable enemy is a valid attack tile
               if (rageTarget && u.id !== rageTarget.id) continue;
               validAttacks.push(u.pos);
@@ -142835,7 +142994,11 @@ function onTileClick(x, y) {
       // Attack range gets shortened by negative-SPD status effects; ability range is unaffected.
       const effRange = getEffectiveAttackRange(sel, move);
       if (distance(sel.pos, occupant.pos) > effRange) { showToast(getSpeedPenalty(sel) > 0 ? 'Out of range — slowed' : 'Out of range'); return; }
-      const validTarget = (move.kind === 'attack' && occupant.owner !== 'player') ||
+      // 🕷 Corrupted flips which side an attack move may be aimed at. Without this
+      // the click is rejected as 'Invalid target' before canAttackTarget is ever
+      // consulted, so the status would look implemented and do nothing.
+      const _corrupt = _statusForcingAllyAttack(sel);
+      const validTarget = (move.kind === 'attack' && (_corrupt ? occupant.owner === 'player' : occupant.owner !== 'player')) ||
                           (move.target === 'ally' && occupant.owner === 'player') ||
                           (move.target === 'sacrificeAlly' && occupant.owner === 'player' && !occupant.isHero && occupant.id !== sel.id) ||
                           (move.target === 'enemy' && occupant.owner !== 'player');
@@ -142850,16 +143013,23 @@ function onTileClick(x, y) {
         showToast(`${occupant.name} is not on the battlefield!`);
         return;
       }
-      // Taunt: if any enemy taunter is in range of this move, the player must attack the taunter
-      if (move.kind === 'attack' && occupant.owner !== 'player' && !hasPassive(occupant, 'taunt')) {
+      // Taunt: if any enemy taunter is in range of this move, the player must attack the taunter.
+      // ⚠ Skipped while Corrupted: enemy Taunt cannot compel a unit that is not
+      //   allowed to attack the enemy at all. Leaving it in made the two rules
+      //   contradict — Taunt demanded the taunter, Corrupted forbade it, and the
+      //   unit could not legally attack anything.
+      if (move.kind === 'attack' && !_corrupt && occupant.owner !== 'player' && !hasPassive(occupant, 'taunt')) {
         const taunters = s.units.filter(u => u.alive && u.owner !== 'player' && hasPassive(u, 'taunt') && distance(sel.pos, u.pos) <= effRange);
         if (taunters.length > 0) { showToast(`Must attack the Taunt unit (${taunters[0].name}) first!`); return; }
       }
-      // Rage: must target the nearest reachable enemy. If the click isn't that target, reject.
-      if ((sel.statusEffects || []).some(e => e.type === 'rage') && move.kind === 'attack') {
+      // Raged / Berserk: must target the nearest reachable enemy. If the click
+      // isn't that target, reject. Driven by the status's forceAttackNearest
+      // flag, not by a hardcoded id — see _statusForcingNearest().
+      const _forceNear = (move.kind === 'attack') ? _statusForcingNearest(sel) : null;
+      if (_forceNear) {
         const nearest = findNearestReachableEnemy(sel, s.units);
         if (nearest && occupant.id !== nearest.id) {
-          showToast(`😡 Raged — must attack the closest enemy (${nearest.name})!`);
+          showToast(`${_forceNear.icon || '😡'} ${_forceNear.name || 'Raged'} — must attack the closest enemy (${nearest.name})!`);
           return;
         }
       }
@@ -142870,7 +143040,9 @@ function onTileClick(x, y) {
       if (move.kind === 'attack') {
         const gate = canAttackTarget(sel, occupant);
         if (!gate.ok) {
-          if (gate.reason === 'happy') {
+          if (gate.reason === 'corrupted') {
+            showToast(`🕷 ${sel.name} is Corrupted — it can only attack your own units.`);
+          } else if (gate.reason === 'happy') {
             showToast(`😊 ${sel.name} is Happy — refuses to attack ${occupant.name}.`);
           } else if (gate.reason === 'follow') {
             showToast(`🐑 ${sel.name} is Following — cannot attack while led.`);
@@ -150467,7 +150639,15 @@ function doAIStep() {
         (m.kind === 'attack') ||
         (m.kind === 'ability' && m.takeControl && (m.target === 'enemy' || m.target === 'allEnemies')));
       const isDispelled = (probe.statusEffects || []).some(e => e.type === 'dispel');
-      const playerUnits = App.state.units.filter(u => u.owner === 'player' && u.alive && !isVanished(u));
+      // 🕷 Corrupted inverts the AI's candidate pool onto its OWN units. Without
+      // this the AI keeps scoring the player's units, canAttackTarget rejects
+      // every one of them, the pool comes back empty, and a corrupted AI unit
+      // simply does nothing — which reads as Corrupted being a stun rather than
+      // the drawback it is. Self is excluded: nothing may attack itself.
+      const _aiCorrupt = !!_statusForcingAllyAttack(probe);
+      const playerUnits = _aiCorrupt
+        ? App.state.units.filter(u => u.owner === probe.owner && u.id !== probe.id && u.alive && !isVanished(u))
+        : App.state.units.filter(u => u.owner === 'player' && u.alive && !isVanished(u));
       const candidates = [];
       for (const move of moves) {
         const _isControl = move.kind === 'ability' && !!move.takeControl;
@@ -150506,8 +150686,11 @@ function doAIStep() {
           candidates.push({ move, target: t, score: sc });
         }
       }
-      // Rage: force the AI to hit the nearest reachable enemy
-      const isRaged = (probe.statusEffects || []).some(e => e.type === 'rage');
+      // Raged / Berserk: force the AI to hit the nearest reachable enemy.
+      // Flag-driven, matching the player-side check — this tested e.type ===
+      // 'rage' literally, so a berserk AI unit kept its +6 ATK and picked
+      // targets freely. See _statusForcingNearest().
+      const isRaged = !!_statusForcingNearest(probe);
       const rageTarget = isRaged ? findNearestReachableEnemy(probe, App.state.units) : null;
       const ragedPool = rageTarget ? candidates.filter(c => c.target && c.target.id === rageTarget.id) : candidates;
       const taunts = ragedPool.filter(c => c.target && hasPassive(c.target, 'taunt'));

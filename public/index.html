@@ -204936,7 +204936,20 @@ async function _cityMgrLoad(nodeId) {
     CityMgr.active = true; CityMgr.nodeId = nodeId;
     CityMgr.cinder = Math.max(0, Math.round(Number(j.cinder) || 0));
     CityMgr.salvage = (j.salvage && typeof j.salvage === 'object') ? j.salvage : {};
-    CityMgr.pending = { cinder: 0, salvage: {} };
+    /* 🧺 CARRY THE STALLED QUEUE ACROSS THE CONNECT, do not zero it.
+       Earnings that arrived before this RPC returned were held in `pending` by
+       _cityMgrQueue(). Connecting is precisely the moment they become
+       flushable — so resetting to {cinder:0, salvage:{}} here would delete the
+       queue at the one instant it was finally worth something, and the hold
+       would be a slower way of losing the same money.
+       Reset only the keys we are NOT carrying, so a fresh session still starts
+       clean. The next 6s tick flushes whatever survives. */
+    const _held = CityMgr.pending || { cinder: 0, salvage: {} };
+    CityMgr.pending = { cinder: (_held.cinder | 0), salvage: Object.assign({}, _held.salvage || {}) };
+    CityMgr._queueWarned = false; CityMgr._refuseWarned = false;
+    if ((CityMgr.pending.cinder | 0) || Object.keys(CityMgr.pending.salvage).length) {
+      try { showToast('🏛 City ledger connected — banking the earnings held while it was offline.', 4600); } catch (e) {}
+    }
     if (CityMgr._timer) clearInterval(CityMgr._timer);
     CityMgr._timer = setInterval(_cityMgrFlush, 6000);
     return true;
@@ -205777,7 +205790,9 @@ window.cityGetRes = (id) => {
 window.cityAddRes = (id, n) => {
   try {
     n = Math.floor(n) || 0; if (!n) return;
-    if (_cityMgrStalled()) return;             // never credit the manager for the owner's output
+    // 📦 QUEUED, NOT DROPPED. See cityAddCinders below for the whole story —
+    //    this is the resource half of the same silent loss.
+    if (_cityMgrStalled()) { _cityMgrQueue('salvage', n, id); return; }
     if (!CityMgr.active) { addRes(id, n); return; }
     CityMgr.salvage[id] = Math.max(0, (Number(CityMgr.salvage[id]) || 0) + n);
     CityMgr.pending.salvage[id] = (CityMgr.pending.salvage[id] || 0) + n;
@@ -205785,7 +205800,7 @@ window.cityAddRes = (id, n) => {
 };
 window.citySpendRes = (cost) => {
   try {
-    if (_cityMgrStalled()) return false;       // the owner's city cannot be built on the mayor's stash
+    if (_cityMgrStalled()) return _cityMgrRefuse();   // cannot verify the owner's stash yet
     if (!CityMgr.active) return !!spendResources(cost);
     // Check the WHOLE cost before deducting any of it — a half-paid cost is a
     // building the player was charged for and did not get.
@@ -205803,10 +205818,63 @@ window.citySpendRes = (cost) => {
 window.cityGetCinders = () => {
   try { return CityMgr.active ? (CityMgr.cinder | 0) : (_cityMgrStalled() ? 0 : (Profile.gems | 0)); } catch (e) { return 0; }
 };
+/* 🧺 THE STALLED QUEUE — earnings that arrive before the owner's ledger is up.
+   ────────────────────────────────────────────────────────────────────────────
+   `_cityMgrStalled()` is true when App._cityOwnerId is set (we are in somebody
+   else's city) but CityMgr.active is false (the ledger manager has not
+   connected). _openNodeCity sets the owner id BEFORE _cityMgrStart() runs, and
+   _cityMgrStart is a try/catch that returns false, so any transient failure at
+   open time — a slow auth, a cloud hiccup, one failed city_owner_ledger_apply —
+   stranded the whole session in that state.
+
+   ⚠ WHAT IT USED TO DO: `if (_cityMgrStalled()) return;` — every convoy payout,
+     every contribution, every scrap of production was discarded with no error,
+     no toast and no log line. The player earned nothing and was told nothing.
+     That is the reported "I get paid and my wallet never updates".
+
+   Now the delta is HELD and flushed once the manager connects. Nothing is lost.
+   The accepted trade (your call, and it is a real one): we are banking against
+   a session whose ledger has not been verified yet, so the queue is capped and
+   announced rather than silently unbounded. If the manager never connects, the
+   queue dies with the page — the same outcome as before, but the player was
+   told, and in the common case (a connect a few seconds later) they are paid.
+
+   🔴 CREDITS ONLY. Spends are NOT queued: charging against a balance we have
+      not read would let the city hand over a building the owner may not be
+      able to pay for. Those refuse — visibly, see _cityMgrRefuse. */
+const CITY_QUEUE_CAP = 5_000_000;              // absurd-value guard, not a balance rule
+function _cityMgrQueue(kind, n, id) {
+  try {
+    CityMgr.pending = CityMgr.pending || { cinder: 0, salvage: {} };
+    if (kind === 'cinder') {
+      if ((CityMgr.pending.cinder | 0) + n > CITY_QUEUE_CAP) return;
+      CityMgr.pending.cinder += n;
+    } else {
+      CityMgr.pending.salvage = CityMgr.pending.salvage || {};
+      CityMgr.pending.salvage[id] = (CityMgr.pending.salvage[id] || 0) + n;
+    }
+    // Say it ONCE per stalled session — a per-payout toast on a city that pays
+    // every few seconds is noise the player would learn to dismiss.
+    if (!CityMgr._queueWarned) {
+      CityMgr._queueWarned = true;
+      try { console.warn('[city] ledger manager not connected — holding earnings until it is.'); } catch (e) {}
+      try { showToast('🏛 City ledger still connecting — your earnings are being held, not lost.', 5200); } catch (e) {}
+    }
+  } catch (e) {}
+}
+// Spends while stalled: refuse, but never silently.
+function _cityMgrRefuse() {
+  try {
+    if (CityMgr._refuseWarned) return false;
+    CityMgr._refuseWarned = true;
+    showToast('🏛 City ledger still connecting — building is paused for a moment.', 4200);
+  } catch (e) {}
+  return false;
+}
 window.cityAddCinders = (n) => {
   try {
     n = Math.floor(n) || 0; if (!n) return;
-    if (_cityMgrStalled()) return;             // the owner's revenue is not the mayor's to bank
+    if (_cityMgrStalled()) { _cityMgrQueue('cinder', n); return; }
     if (!CityMgr.active) { addCinders(n); return; }
     CityMgr.cinder += n; CityMgr.pending.cinder += n;
   } catch (e) {}
@@ -205814,7 +205882,7 @@ window.cityAddCinders = (n) => {
 window.citySpendCinders = (n) => {
   try {
     n = Math.floor(n) || 0; if (n <= 0) return false;
-    if (_cityMgrStalled()) return false;       // …and not their Cinder either
+    if (_cityMgrStalled()) return _cityMgrRefuse();   // …and not their Cinder either
     if (!CityMgr.active) return !!spendCinders(n);
     if (CityMgr.cinder < n) return false;
     CityMgr.cinder -= n; CityMgr.pending.cinder -= n;

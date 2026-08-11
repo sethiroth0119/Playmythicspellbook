@@ -92,7 +92,7 @@ tree beyond Blacksmith I, forward outposts (camp is movable but singular).
 |---|---|---|---|
 | P1 mapgen | 3 | **WINS** | Warpath-exclusive *cards* are not minted (deliberate — see below) |
 | P2 schema | 5 | **critic-fixed, ready for re-critique** | `warpath_state()` is one big query; fine at 4 players, needs splitting at 20 |
-| P3 screen | 3 | **ready for independent critic** | Terrain art is the fallback painter until `warpath-render.js` lands |
+| P3 screen | 4 | **critic-fixed, ready for re-critique** | Resource sinks and draft volume are unbalanced — deliberately NOT tuned against mock evidence |
 | P4 bridge | 3 | **critic-fixed, ready for re-critique** | Client-authoritative battle results remain self-declared (inherent to the repo's existing MP model) |
 
 ### P1 — world generation · round history
@@ -280,6 +280,44 @@ identity. The bootstrap now uses a session-local GUC (`request.jwt.claim.sub`), 
 Supabase actually reads. Any concurrency result taken with the old stub was meaningless.
 
 Suite is now **62 assertions**: 47 gameplay + 6 RLS + 8 regressions + 1 fog.
+
+#### P3 round 4 — independent critic verdict: LOSES. Gap plus five of seven fixed.
+
+The critic re-tested the economy fix properly (28 runs, 28 seeds, fog-honest bot) and confirmed
+it: **28/28 built Supply Tent I on turn 1**, every extraction came home with 2–7 materials, and
+**zero rule refusals in 28 runs** — every button's enabled state agreed with the server. Its
+summary: *playable, but not yet worth playing.*
+
+| # | Finding | Fix |
+|---|---|---|
+| **GAP** | **The draft modal was a blind pick.** Three identical biome icons, a title-cased id and a category word — no name, cost, stats, element, text or art. The mode's entire identity is that choice, and `cardName()` carried a comment claiming the catalogs were out of reach. | They were one postMessage away. `warpath:cardmeta` now carries the **real catalogs** from the parent (including admin-forged cards); `warpath-data.js` ships a generated fallback for standalone use. `cardFace()` renders name, type + cost, elements as tinted pills, the full 6-stat block, passive/flying, and the card's own text. Used by the draft, the recruit modal and the pool list. |
+| 1 | Recruitment fired 7 times in 28 runs. Tent I cost 🪵30 against a 🪵25 stipend — five short, so the "turn-1 choice" was not one. And **building spends `secured` while recruiting spends `carried`**, with no withdraw and no explanation. | Tent I is 🪵25 — you can afford **either** tent on turn 1, never both. The two wallets are now stated outright in the Hold panel, build costs are tagged `secured` and recruit costs `carried`. |
+| 2 | *"Nothing to deposit."* was shown exactly when the player was losing materials — the vault warning only fired when something else moved. | The no-vault / vault-full warnings fire on their own, count the materials at risk, and name the building that fixes it. |
+| 3 | No risk/reward: securing was free and always correct; a loss only took carried *resources*, worthless once banked. | A PvP loss now also drops your newest **unsecured card** (server + mock). Pushing deeper costs something. |
+| 5 | `DECK_FULL` (40) vs `DECK_MILESTONES` (→60) clamped the 46/52/60 ticks onto one pixel; the HUD hardcoded "→ 25" against a 24-card starter pool. | Bar scales to the last milestone with `DECK_FULL` marked as its own line; the "25" is gone. |
+| 6 | **Phone layout broken** — the 340px dossier covered 87% of a 390px screen, the map was a 50px strip, and every action button was buried. | The panel is a collapsing bottom sheet on narrow screens. Measured at 390×844: map visible **802px** (was ~50), rail above the sheet, End Turn on screen. |
+
+**A bug the critic did not find, surfaced by the fix:** `location:siphoned` sat in the facility
+discovery table and **is not a card** — it is a status effect declared inside one. The original
+"all 63 keys resolve" check pulled ids out of `index.html` with a regex that also matched nested
+objects. Drafting it would have handed the player a card that resolves to nothing: dropped from
+the battle deck, dropped again at extraction. `_selftest.js` now `eval`s the catalog arrays —
+the only check that agrees with `resolveDeckCard()` — and `_sqlcheck.js` caught the SQL copy
+still holding the bad key.
+
+**Deliberately not fixed, and why:** items 4 (Expedition Gold and Food have almost no sinks) and
+5's volume half (3–13 cards found against the brief's ~40) are balance, and **the only evidence
+available is the offline mock — which the critic itself warns flatters the design**: a rival
+entered vision zero times in 28 runs and the mock hardcodes `camp: null` for every other player,
+so it measures a solitaire resource walk. Tuning the economy against that would be fitting to the
+wrong game. These need a real four-player run first.
+
+**Item 7, stated honestly:** fog of war is **server-enforced but client-transparent**. The server
+will not tell you where an unseen hero is (and, after the P2 fix, will not let you read it off
+the table either) — but `S.world = M.generate(seed)` means the client holds every tile, the
+landmark's identity and all four spawn points. Anyone with a console can read the map. Milestone 1
+does not close this; doing so means streaming tiles instead of deriving them, which trades away
+the "world is a seed" architecture. It is a real asymmetry gap, not a solved one.
 
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which

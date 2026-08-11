@@ -687,3 +687,101 @@ begin
   raise notice '';
   raise notice '════════ FOG: % CHECK PASSED ════════', pass;
 end $$;
+
+-- =============================================================================
+-- P3 round-2 critic: the mock let a client reset its own extraction countdown
+-- forever. The critic could not check whether the SERVER had the same hole.
+-- It does not — but "does not" needs to be an assertion, not a reading.
+-- =============================================================================
+do $$
+declare ua uuid; ea uuid; r jsonb; v_seed bigint; v_gate jsonb; n int; pass int := 0;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  insert into auth.users (email) values ('ex@warpath.test') returning id into ua;
+  insert into public.warpath_tickets (user_id, tickets) values (ua, 3);
+  perform public.set_uid(ua);
+  r := public.warpath_enter('hero_e', 'E', 'ticket');
+  ea := (r->>'expedition_id')::uuid;
+  select seed into v_seed from public.warpath_runs where id = (r->>'run_id')::uuid;
+
+  select s into v_gate from jsonb_array_elements(public.wp_structures(v_seed)) s
+    where s->>'k' = 'gate' limit 1;
+  update public.warpath_expeditions set x = (v_gate->>'x')::int, y = (v_gate->>'y')::int where id = ea;
+
+  r := public.warpath_extract_begin(ea);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: extraction refused at a gate: %', r; end if;
+  select extract_left into n from public.warpath_expeditions where id = ea;
+  if n <> 2 then raise exception 'FAIL: countdown started at %, expected 2', n; end if;
+
+  -- burn one turn, then try to restart the countdown
+  perform public.warpath_end_turn(ea);
+  select extract_left into n from public.warpath_expeditions where id = ea;
+  if n <> 1 then raise exception 'FAIL: countdown did not tick (at %)', n; end if;
+
+  r := public.warpath_extract_begin(ea);
+  if (r->>'ok')::boolean then
+    raise exception 'FAIL: a hero already extracting restarted its own countdown';
+  end if;
+  if r->>'reason' <> 'not_active' then raise exception 'FAIL: wrong refusal: %', r->>'reason'; end if;
+  select extract_left into n from public.warpath_expeditions where id = ea;
+  if n <> 1 then raise exception 'FAIL: the refused call still moved the countdown (now %)', n; end if;
+  pass := pass + 1;
+  raise notice 'ok  an extracting hero cannot restart its own countdown (server side)';
+
+  -- and a hero who has already left cannot begin again either
+  perform public.warpath_end_turn(ea);
+  r := public.warpath_extract_finish(ea, null);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: extract_finish: %', r; end if;
+  r := public.warpath_extract_begin(ea);
+  if (r->>'ok')::boolean then raise exception 'FAIL: an extracted hero began extracting again'; end if;
+  pass := pass + 1;
+  raise notice 'ok  an extracted hero cannot begin extracting again';
+
+  -- the refusal now names which wallet was short
+  raise notice '';
+  raise notice '════════ EXTRACTION GUARDS: % CHECKS PASSED ════════', pass;
+end $$;
+
+do $$
+declare ua uuid; ea uuid; r jsonb; v_seed bigint; v_site jsonb; pass int := 0;
+begin
+  select user_id into ua from public.warpath_expeditions order by entered_at desc limit 1;
+  perform public.set_uid(ua);
+  update public.warpath_tickets set tickets = 3 where user_id = ua;
+  r := public.warpath_enter('hero_w2', 'W2', 'ticket');
+  if not (r->>'ok')::boolean then raise notice 'skip: %', r->>'reason'; return; end if;
+  ea := (r->>'expedition_id')::uuid;
+  select seed into v_seed from public.warpath_runs where id = (r->>'run_id')::uuid;
+
+  -- BUILD is refused against the SECURED wallet
+  update public.warpath_inventory set secured = 0, carried = 500 where expedition_id = ea;
+  perform public.warpath_camp_place(ea);
+  r := public.warpath_camp_build(ea, 'supply');
+  if (r->>'ok')::boolean then raise exception 'FAIL: built from carried stock'; end if;
+  if r->>'wallet' <> 'secured' then
+    raise exception 'FAIL: build refusal did not name the secured wallet (got %)', r->>'wallet'; end if;
+  pass := pass + 1; raise notice 'ok  a build refusal names the SECURED wallet';
+
+  -- RECRUIT is refused against the CARRIED wallet
+  select s into v_site from jsonb_array_elements(public.wp_structures(v_seed)) s
+    where s->>'k' = 'site' limit 1;
+  update public.warpath_expeditions set x = (v_site->>'x')::int, y = (v_site->>'y')::int where id = ea;
+  update public.warpath_inventory set secured = 500, carried = 0 where expedition_id = ea;
+  update public.warpath_camps set buildings = '{"campfire":1,"recruitment":1}'::jsonb
+    where expedition_id = ea;
+  r := public.warpath_recruit(ea, v_site->>'id', 0);
+  if (r->>'ok')::boolean then raise exception 'FAIL: recruited from the vault'; end if;
+  if r->>'reason' <> 'insufficient' then raise exception 'FAIL: wrong reason %', r->>'reason'; end if;
+  if r->>'wallet' <> 'carried' then
+    raise exception 'FAIL: recruit refusal did not name the carried wallet (got %)', r->>'wallet'; end if;
+  pass := pass + 1; raise notice 'ok  a recruit refusal names the CARRIED wallet';
+
+  raise notice '';
+  raise notice '════════ WALLETS: % CHECKS PASSED ════════', pass;
+end $$;

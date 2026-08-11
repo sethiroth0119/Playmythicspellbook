@@ -934,13 +934,13 @@ function bakeTerrain(seed, opts) {
            caps on Dragon Mountain (which is the destination biome and has to
            be the most arresting thing on the map) without frosting every
            swell of the Open Steppe. */
-        var snowline = (0.92 - 0.19 * clamp(RGA[i] / 200, 0, 1.2)) + 0.20 * det + 0.09 * mid;
+        var snowline = (0.97 - 0.19 * clamp(RGA[i] / 200, 0, 1.2)) + 0.20 * det + 0.09 * mid;
         var snowAmt = sstep(snowline, snowline + 0.26, e)
                     * clamp(1 - mslope * 0.26, 0.0, 1)
                     * clamp(0.35 + 1.0 * fine, 0, 1);
         if (snowAmt > 0.02) {
           var sn = sh > 0.70 ? SNOWV.lit : SNOWV.deep;
-          var sa = snowAmt * 0.90;
+          var sa = snowAmt * 0.82;
           cr = mix(cr, sn[0], sa); cg = mix(cg, sn[1], sa); cb = mix(cb, sn[2], sa);
         }
 
@@ -1322,7 +1322,13 @@ function makeObject(A, nm, fx, fy, e, lit, r) {
        peaks instead of a hundred equal teeth. */
     var t = r(), hi = clamp((e - 0.70) / 0.55, 0, 1);
     var spine = clamp(ridgeAt(A, fx, fy) * 26, -1, 1);
-    var pCrag = (0.05 + 0.30 * hi) * (0.20 + 1.1 * clamp(spine * 0.5 + 0.5, 0, 1));
+    /* ⚠ Halved from the first pass. At the old rate a high massif grew a
+       crag on nearly every candidate and the close view was a field of
+       wedges — the exact "row of tents" failure the drawCrag comment warns
+       about, reintroduced through density rather than through shape. The
+       relief and the hachures carry the mountain now; these are accents on
+       it and have to be rare enough to read as accents. */
+    var pCrag = (0.03 + 0.16 * hi) * (0.20 + 1.0 * clamp(spine * 0.5 + 0.5, 0, 1));
     if (t < pCrag) {
       /* ⚠ Capped. Unbounded, the top of this range produced crags wider than
          a tile, and a rock outcrop drawn at that size stops reading as rock
@@ -1447,7 +1453,13 @@ function drawCrag(c, x, y, s, lit, e, r) {
      the downhill side. The summit is pushed well off centre and the two
      flanks are given independent widths, so the silhouette never resolves
      into a triangle no matter how many of them overlap. */
-  var w = s * (1.15 + r() * 0.75), h = s * (0.85 + r() * 0.95);
+  /* ⚠ The HEIGHT distribution is squared on purpose. Uniform heights give a
+     row of similar peaks however varied the silhouette of each one is; a
+     squared draw makes most outcrops low broken ridges and only the occasional
+     one a true peak, which is both what a massif looks like and what stops the
+     eye reading a repeated motif. */
+  var rh = r();
+  var w = s * (1.15 + r() * 0.75), h = s * (0.30 + rh * rh * 1.45);
   var lean = (r() - 0.5) * 1.15 * w;
   var sx = x + lean;                        // summit, deliberately off-centre
   var sh2 = h * (0.34 + r() * 0.30);        // shoulder height
@@ -1503,13 +1515,13 @@ function drawCrag(c, x, y, s, lit, e, r) {
   c.lineTo(pts[6][0], pts[6][1]);
   c.closePath();
   c.fillStyle = 'rgba(24,18,15,0.22)'; c.fill();
-  c.strokeStyle = 'rgba(238,226,204,' + (0.22 + lit * 0.30).toFixed(3) + ')';
+  c.strokeStyle = 'rgba(238,226,204,' + (0.12 + lit * 0.22).toFixed(3) + ')';
   c.lineWidth = Math.max(0.6, s * 0.075); c.lineJoin = 'round';
   c.beginPath();
   c.moveTo(pts[1][0], pts[1][1]); c.lineTo(pts[2][0], pts[2][1]);
   c.lineTo(pts[3][0], pts[3][1]); c.lineTo(pts[4][0], pts[4][1]);
   c.stroke();
-  if (e > 0.94 && r() < 0.55) {
+  if (e > 0.98 && r() < 0.26) {
     c.beginPath();
     c.moveTo(pts[2][0], pts[2][1]); c.lineTo(sx, y - h);
     c.lineTo(shx, y - sh2); c.lineTo(shx - w * 0.18, y - sh2 - h * 0.10);

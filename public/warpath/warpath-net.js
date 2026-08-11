@@ -260,7 +260,8 @@ var MOCK = {
     if (!spec || lvl > spec.maxLevel) return fail('max_level_or_unknown');
     var cost = spec.levels[lvl - 1].cost, k;
     for (k in cost) if ((mock.inv[k].secured || 0) < cost[k]) {
-      return fail('insufficient', { kind: k, need: cost[k], have: mock.inv[k].secured });
+      return fail('insufficient', { kind: k, need: cost[k], have: mock.inv[k].secured,
+                                    wallet: 'secured' });
     }
     for (k in cost) mock.inv[k].secured -= cost[k];
     mock.camp.buildings[b] = lvl;
@@ -310,7 +311,8 @@ var MOCK = {
     }
     var k;
     for (k in offer.cost) if ((mock.inv[k].carried || 0) < offer.cost[k]) {
-      return fail('insufficient', { kind: k, need: offer.cost[k], have: mock.inv[k].carried });
+      return fail('insufficient', { kind: k, need: offer.cost[k], have: mock.inv[k].carried,
+                                    wallet: 'carried' });
     }
     for (k in offer.cost) mock.inv[k].carried -= offer.cost[k];
     mock.cards.push({ id: 'c' + (mock.cardSeq++), key: offer.key, source: 'recruit',
@@ -383,6 +385,12 @@ var MOCK = {
 
   warpath_extract_begin: function () {
     var me = mock.me;
+    // ⚠ The status guard mirrors warpath_extract_begin in the migration, which
+    // refuses anything that is not 'active'. Without it here a client could
+    // call this every turn and reset its own countdown forever — the server
+    // was never vulnerable, but the mock is what the screen is developed
+    // against, so a rule missing here is a rule nobody sees break.
+    if (me.status !== 'active') return fail('not_active', { status: me.status });
     var g = mock.world.gates.filter(function (z) { return z.x === me.x && z.y === me.y; })[0];
     if (!g) return fail('not_at_a_gate');
     var turns = level('arcane') >= 2 ? 1 : D.EXTRACT_TURNS;

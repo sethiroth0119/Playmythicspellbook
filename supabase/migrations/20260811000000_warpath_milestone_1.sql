@@ -1424,8 +1424,11 @@ begin
   for k, need in select key, value::int from jsonb_each_text(cost) loop
     select secured into have from public.warpath_inventory where expedition_id = me.id and kind = k;
     if coalesce(have, 0) < need then
+      -- name the wallet: building spends SECURED, recruiting spends CARRIED,
+      -- and "you have 0" without saying which one is the single most confusing
+      -- message in the mode.
       return jsonb_build_object('ok', false, 'reason', 'insufficient', 'kind', k,
-                                'need', need, 'have', coalesce(have, 0));
+                                'need', need, 'have', coalesce(have, 0), 'wallet', 'secured');
     end if;
   end loop;
   for k, need in select key, value::int from jsonb_each_text(cost) loop
@@ -1539,7 +1542,7 @@ begin
     select carried into have from public.warpath_inventory where expedition_id = me.id and kind = k;
     if coalesce(have, 0) < need then
       return jsonb_build_object('ok', false, 'reason', 'insufficient', 'kind', k,
-                                'need', need, 'have', coalesce(have, 0));
+                                'need', need, 'have', coalesce(have, 0), 'wallet', 'carried');
     end if;
   end loop;
   for k, need in select key, value::int from jsonb_each_text(offer.cost) loop

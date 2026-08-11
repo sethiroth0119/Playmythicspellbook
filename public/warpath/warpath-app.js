@@ -33,7 +33,7 @@ var S = {
   sel: null,                 // selected tile {x,y}
   reach: {},                 // reachable set for the hero this turn
   cam: { x: 0, y: 0, z: 22 }, userZoom: false,
-  tab: 'camp', fogKey: 0, quality: 'high', meta: null,
+  tab: 'camp', fogKey: 0, quality: 'high', meta: null, encDismissed: false,
   busy: false, ended: false,
   hover: null,
 };
@@ -94,8 +94,23 @@ var REASONS = {
 function why(r) {
   if (!r) return 'That did not work.';
   if (r.reason === 'insufficient') {
+    /* ⚠ Name the wallet. "you have 0" was the message a player got while
+       standing on 500 secured wood, because recruiting spends CARRIED — and it
+       was the failure on 122 site visits against 34 successful hires. */
     var m = M.RESOURCES[r.kind] || { icon: '', name: r.kind };
-    return 'Not enough ' + m.icon + ' ' + m.name + ' — need ' + r.need + ', you have ' + r.have + '.';
+    var w = r.wallet === 'secured' ? 'secured (in your camp vault)'
+          : r.wallet === 'carried' ? 'carried (on your Hero)' : '';
+    var other = r.wallet === 'carried' ? 'secured' : r.wallet === 'secured' ? 'carried' : null;
+    var otherHave = null;
+    try {
+      var inv = (S.state && S.state.inventory && S.state.inventory[r.kind]) || null;
+      if (inv && other) otherHave = inv[other];
+    } catch (e) {}
+    return 'Not enough ' + m.icon + ' ' + m.name + (w ? ' ' + w : '')
+      + ' — need ' + r.need + ', you have ' + r.have + '.'
+      + (otherHave ? ' You have ' + otherHave + ' ' + other + ' — '
+          + (other === 'secured' ? 'the vault cannot pay for recruits.'
+                                 : 'deposit it at camp to build with it.') : '');
   }
   if (r.reason === 'tent_too_small') {
     return 'Recruitment Tent ' + ['', 'I', 'II', 'III'][r.need_tent] + ' is needed for that recruit'
@@ -150,6 +165,15 @@ function refresh() {
     if (prev !== S.fog) { /* new buffer identity is fine — fogKey covers it */ }
     recomputeReach();
     renderAll();
+    /* A pending encounter on the tile we are standing on re-opens itself
+       unless the player explicitly dismissed it this session. This is what
+       makes a mid-draft reload — or a dropped connection, which is normal
+       live — recoverable rather than a silently lost pick. */
+    try {
+      var e = st.encounter;
+      if (e && !S.encDismissed && st.me && e.x === st.me.x && e.y === st.me.y
+          && !$('modal').firstChild) showEncounter(e);
+    } catch (e2) {}
   });
 }
 function recomputeReach() {
@@ -903,9 +927,16 @@ function renderRail() {
   })[0];
   var pendingBattle = (st.battles || [])[0];
 
+  var pendingEnc = st.encounter;
+  var encHere = pendingEnc && pendingEnc.x === me.x && pendingEnc.y === me.y;
+
   if (pendingBattle) {
     actBtn.textContent = 'Fight'; actBtn.disabled = false;
     actBtn.onclick = function () { launchBattle(pendingBattle); };
+  } else if (encHere && canAct) {
+    // Recovery path for a draft that was closed or interrupted.
+    actBtn.textContent = 'Open encounter'; actBtn.disabled = false;
+    actBtn.onclick = function () { S.encDismissed = false; showEncounter(pendingEnc); };
   } else if (adjacent && canAct) {
     actBtn.textContent = 'Challenge ' + adjacent.hero_name.split(' ')[0];
     actBtn.disabled = false;
@@ -1013,13 +1044,21 @@ function showEncounter(enc) {
     function () {
       Array.prototype.forEach.call(document.querySelectorAll('[data-pick]'), function (el) {
         el.onclick = function () {
+          S.encDismissed = false;
           closeModal();
           act('warpath_encounter_pick', { p_enc: enc.id, p_idx: +el.dataset.pick }, function (r) {
             ribbon('Added to your pool', cardName(r.card_key) + ' — carry it home to keep it.');
           });
         };
       });
-      $('enc-skip').onclick = closeModal;
+      /* ⚠ Closing is NOT declining. The server keeps the encounter with
+         picked:null forever, so Escape, a stray backdrop tap or a page reload
+         used to strand the pick: refresh() never re-opened it and the action
+         button offered nothing on that tile. It is recoverable now — the
+         action button re-opens it, and a fresh page load opens it for you,
+         because a dropped connection mid-draft is normal and losing the card
+         to it is not acceptable. */
+      $('enc-skip').onclick = function () { S.encDismissed = true; closeModal(); };
     });
 }
 
@@ -1183,9 +1222,73 @@ window.addEventListener('message', function (ev) {
   });
 });
 
-/* ── Extraction & the EXPEDITION COMPLETE sheet ──────────────────────────── */
+/* ── Extraction & the EXPEDITION COMPLETE sheet ────────────────────────────
+   ⚠ CONFIRM BEFORE COMMITTING. Extraction is irreversible and used to fire on
+   one click, with the player only finding out what came home on the summary
+   afterwards — a critic extracted with "Cards Discovered 3 / New Cards Secured
+   0" and was told only in a tab it had never opened. The numbers below come
+   from state the client already has, so it costs nothing to show them first,
+   and the empty-handed case gets a warning rather than a surprise. */
+function extractPreview() {
+  var st = S.state, cap = st.me.extract_cap;
+  var eligible = st.cards.filter(function (c) { return c.secured && c.source !== 'starter'; });
+  var carriedCards = st.cards.filter(function (c) { return !c.secured && c.source !== 'starter'; });
+  var mats = {}, carriedMats = {};
+  M.EXTRACTION_MATERIALS.forEach(function (k) {
+    var v = st.inventory[k] || {};
+    if (v.secured) mats[k] = v.secured;
+    if (v.carried) carriedMats[k] = v.carried;
+  });
+  return { cap: cap, cards: eligible.slice(0, cap), overflow: Math.max(0, eligible.length - cap),
+           carriedCards: carriedCards, mats: mats, carriedMats: carriedMats };
+}
 function doExtract() {
-  act('warpath_extract_finish', { p_keep: null }, function (r) { showSummary(r); });
+  var pv = extractPreview();
+  var lost = pv.carriedCards.length + Object.keys(pv.carriedMats).length;
+  var listing = pv.cards.length
+    ? '<div class="haul">' + pv.cards.map(function (c) {
+        var m = cardMeta(c.key) || {};
+        return '<div class="h">' + (m.i || '🃏') + ' ' + esc(cardName(c.key)) + '</div>';
+      }).join('') + '</div>'
+    : '<div class="lede" style="color:var(--invalid)">Nothing you found out here is secured, so '
+      + '<b>no cards will come home</b>. Cards have to be deposited at your camp to be extractable.</div>';
+  var matList = Object.keys(pv.mats).length
+    ? '<div class="haul">' + Object.keys(pv.mats).map(function (k) {
+        return '<div class="h">' + (M.RESOURCES[k] || {}).icon + ' '
+             + esc((M.RESOURCES[k] || {}).name || k) + ' ×' + pv.mats[k] + '</div>';
+      }).join('') + '</div>' : '';
+  var warn = '';
+  if (lost) {
+    warn = '<div class="lede" style="color:var(--ember)">⚠ You are still carrying '
+      + (pv.carriedCards.length ? pv.carriedCards.length + ' unsecured card'
+          + (pv.carriedCards.length === 1 ? '' : 's') : '')
+      + (pv.carriedCards.length && Object.keys(pv.carriedMats).length ? ' and ' : '')
+      + (Object.keys(pv.carriedMats).length ? Object.keys(pv.carriedMats).map(function (k) {
+          return pv.carriedMats[k] + ' ' + ((M.RESOURCES[k] || {}).name || k); }).join(', ') : '')
+      + '. None of it comes home.</div>';
+  }
+  if (pv.overflow) {
+    warn += '<div class="lede" style="color:var(--mist)">Your extraction capacity is '
+      + pv.cap + ' cards; ' + pv.overflow + ' secured card'
+      + (pv.overflow === 1 ? '' : 's') + ' will be left behind. Upgrade the Supply Tent to raise it.</div>';
+  }
+  openModal(
+    '<div class="eyebrow">Extraction</div><h2>Leave the Warpath?</h2>'
+    + '<div class="lede">This is final. Here is exactly what goes into your permanent collection.</div>'
+    + '<h3 class="sec" style="text-align:center;border:0">Cards coming home · ' + pv.cards.length
+      + ' / ' + pv.cap + '</h3>' + listing
+    + (matList ? '<h3 class="sec" style="text-align:center;border:0">Materials</h3>' + matList : '')
+    + warn
+    + '<div class="sheet-foot">'
+    + '<button class="btn gold" id="ex-go">Extract and go home</button>'
+    + '<button class="btn" id="ex-stay">Stay out here</button></div>',
+    function () {
+      $('ex-go').onclick = function () {
+        closeModal();
+        act('warpath_extract_finish', { p_keep: null }, function (r) { showSummary(r); });
+      };
+      $('ex-stay').onclick = closeModal;
+    });
 }
 function showSummary(r) {
   var s = (r && r.summary) || {};
@@ -1280,14 +1383,57 @@ Array.prototype.forEach.call(document.querySelectorAll('#sidetabs button'), func
       z.classList.remove('on');
     });
     b.classList.add('on'); S.tab = b.dataset.tab; renderSide();
+    // On a phone the tab strip is the visible lip of a closed sheet; pressing
+    // one has to raise it, or the tabs look broken.
+    if (isNarrow() && !sheetOpen()) setPanel(true);
   };
 });
+/* ── The dossier panel ────────────────────────────────────────────────────
+   ⚠ TWO DIFFERENT CONTROLS, ONE BUTTON. On desktop the panel is a right-hand
+   column and `hidden` slides it off the edge. Under 900px it is a bottom
+   sheet, and the class that raises it is `open` — which NOTHING EVER ADDED.
+   `hidden` and the default state resolve to the same transform at that
+   breakpoint, so the only toggle shipped was a no-op on every phone: the camp
+   builder, both wallet explanations, the extraction cap readout, Deposit &
+   secure and Complete extraction were all unreachable, and since #b-endturn
+   disables once status is 'ready', a phone run could not be finished at all.
+
+   The button now drives whichever control the current viewport actually uses,
+   and the rail is pushed clear of the sheet instead of being covered by it. */
+function isNarrow() {
+  try { return window.matchMedia('(max-width:900px)').matches; }
+  catch (e) { return window.innerWidth <= 900; }
+}
+function sheetOpen() { return $('side').classList.contains('open'); }
+function setPanel(show) {
+  var s = $('side'), t = $('sidetoggle'), rail = $('rail');
+  if (isNarrow()) {
+    s.classList.remove('hidden');
+    s.classList.toggle('open', !!show);
+    document.body.classList.toggle('sheet-open', !!show);
+    t.textContent = show ? '⌄' : '⌃';
+    t.setAttribute('aria-label', show ? 'Close panel' : 'Open panel');
+    rail.style.right = '0';
+  } else {
+    s.classList.remove('open');
+    document.body.classList.remove('sheet-open');
+    s.classList.toggle('hidden', !show);
+    t.textContent = show ? '›' : '‹';
+    t.setAttribute('aria-label', show ? 'Collapse panel' : 'Expand panel');
+    rail.style.right = show ? '334px' : '0';
+  }
+  setTimeout(resize, 360);
+}
 $('sidetoggle').onclick = function () {
-  var s = $('side'); s.classList.toggle('hidden');
-  $('sidetoggle').textContent = s.classList.contains('hidden') ? '‹' : '›';
-  $('rail').style.right = s.classList.contains('hidden') ? '0' : '334px';
-  setTimeout(function () { resize(); }, 360);
+  setPanel(isNarrow() ? !sheetOpen() : $('side').classList.contains('hidden'));
 };
+// Crossing the breakpoint has to re-normalise, or a rotated phone inherits the
+// desktop rail offset and a resized desktop inherits the sheet transform.
+var _wasNarrow = isNarrow();
+window.addEventListener('resize', function () {
+  var now = isNarrow();
+  if (now !== _wasNarrow) { _wasNarrow = now; setPanel(!now); }
+});
 
 function buildLegend() {
   var h = '';

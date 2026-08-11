@@ -144,10 +144,10 @@ var WATCHTOWER_VISION = [0, 5, 7];
    The brief's example is the Goblin Encampment: three recruits, priced so you
    cannot take all three. That "you only have 75 Food" moment is the draft.
 
-   Costs are in EXPEDITION resources and are tuned so a fresh camp can afford
-   roughly one and a half recruits at a site — which is exactly the pick-1-of-3
-   pressure the mode is built on. `rank` gates against the Recruitment Tent
-   level, so a Tent I camp physically cannot take the commander.             */
+   Costs are in EXPEDITION resources and are paid from the hero's CARRIED
+   stock, not the camp vault — see the two-wallet note in the Hold panel.
+   `rank` gates against the Recruitment Tent level, so a Tent I camp
+   physically cannot take the commander.                                     */
 var RECRUIT_POOLS = {
   forest_hollow: {
     site: 'forest_hollow',
@@ -368,10 +368,14 @@ var ENTRY = {
    locked out by where the hero happened to land.
 
    The kit below is deliberately not generous: it affords a Supply Tent I
-   (🪵20 🍖10) with five wood to spare, OR banks toward a Recruitment Tent I
-   (🪵30 🍖20) that still needs wood found out in the world. That is the
-   "you cannot fully upgrade everything" tension the brief wants — a choice,
-   rather than a lockout. */
+   (🪵20 🍖10) OR a Recruitment Tent I (🪵25 🍖20) — never both, since 20+25
+   exceeds the 25 wood it grants. That is the "you cannot fully upgrade
+   everything" tension the brief wants: a choice, rather than a lockout.
+
+   ⚠ Tent I was 🪵30 for one round, five wood above the stipend, which made the
+   advertised turn-1 choice impossible — a critic measured 7 recruits across 28
+   runs. If you raise this cost again, raise the stipend with it or you are
+   silently removing the decision. */
 var STARTING_STIPEND = { wood: 25, food: 20, stone: 15, gold: 10, iron: 0, essence: 0 };
 
 // Losing a battle. "Losing shouldn't erase everything." You drop UNSECURED

@@ -91,7 +91,7 @@ tree beyond Blacksmith I, forward outposts (camp is movable but singular).
 | Piece | Round | Verdict | Remaining gap |
 |---|---|---|---|
 | P1 mapgen | 3 | **WINS** | Warpath-exclusive *cards* are not minted (deliberate — see below) |
-| P2 schema | — | not started | — |
+| P2 schema | 4 | **WINS** | `warpath_state()` is one big query; at 4 players it is fine, at 20 it will need splitting |
 | P3 screen | — | not started | — |
 | P4 bridge | — | not started | — |
 
@@ -119,6 +119,43 @@ is declared permanently land — a connected grid spanning the map — and every
 cannot function without is snapped onto it. `_selftest.js` flood-fills from spawn 0 on every
 seed and asserts it reaches all 11 structures. That is the invariant, and it is tested, not
 asserted in a comment.
+
+### P2 — schema, world mirror and RPCs · round history
+
+**Files:** `supabase/migrations/20260811000000_warpath_milestone_1.sql`,
+`supabase/tests/warpath_milestone_1_test.sql`, `public/warpath/_sqlcheck.js`
+
+Inspection was done against a **live PostgreSQL 16 cluster**, not by reading. The migration
+was applied for real and the RPCs were called for real.
+
+| Round | What the critic actually did | Verdict | Gap sent back |
+|---|---|---|---|
+| 1 | Applied the migration; ran `_sqlcheck.js` (JS vs plpgsql) | **LOSES** | 4,794 mismatches. `0x2545f491` had been transcribed as `624134277` instead of `625341585`, so the hash diverged at its final multiply and *every* derived quantity — biome, water, node, structures, path cost — disagreed between browser and server. Everything downstream cascaded from one wrong digit. |
+| 2 | Reran `_sqlcheck.js`; wrote and ran the end-to-end RPC test | **LOSES** | `warpath_battle_report` contained `update warpath_battles set spoils = spoils` — ambiguous against the plpgsql local, so *every PvP battle report raised an exception*. Even resolved, it was a no-op. Only surfaced because the test actually fought a battle. |
+| 3 | Reran the full test to completion | **LOSES** | Re-entry after extracting matchmade the player straight back into the world they had just left, hit `unique (run_id, user_id)` and threw — **after** the entry ticket had been debited. A player's second run ate their ticket and crashed. |
+| 4 | Full test + RLS test **as a non-owner role** + content-table diff | **WINS** | — |
+
+**Round 4 evidence.** 52 assertions pass: 46 gameplay + 6 RLS.
+`_sqlcheck.js` reports `JS AND SQL AGREE` across 11,200 tiles, 308 structures, 166 path costs,
+and the duplicated content tables (9 recruit offers, 76 discovery rows, 14 building costs,
+24 starter cards).
+
+**Two design flaws the critic pass found by reading, not by running:**
+
+1. *Starter cards were extractable.* The 24 loaner cards arrive `secured` on turn 1, so they
+   sorted to the front of the extraction query and filled the entire cap with cards the player
+   already owned — the mode would have rewarded nothing. Fixed by excluding `source = 'starter'`
+   and asserted in the test ("no starter card came home").
+2. *Every Guardian dropped an Ouroboros Core*, regardless of which landmark it guarded, which
+   flattens the exact "where did you get that?" moment the brief is built around. Each landmark
+   now drops its own material.
+
+**The RLS test matters more than it looks.** The gameplay test runs as the table owner, and
+owners bypass RLS entirely — so it proved nothing about hard constraint #4. The second block
+drops to a plain `authenticated` role and confirms a client cannot insert into `warpath_cards`,
+cannot rewrite `warpath_inventory`, cannot move its hero by writing the table, cannot read a
+non-participant's run, and — the one that actually matters — **cannot forge a `warpath_grants`
+row**, which is the only table that reaches the permanent collection.
 
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which

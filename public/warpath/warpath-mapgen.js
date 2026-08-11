@@ -155,9 +155,33 @@ var RESOURCES = {
   kalon_fragment:  { id: 'kalon_fragment',  name: 'Kalon Fragment',  icon: '🍎', tier: 'extraction', yieldMin: 1, yieldMax: 1 },
 };
 
-// ── Lattice helpers ───────────────────────────────────────────────────────
+/* ── Lattice helpers ──────────────────────────────────────────────────────
+   ⚠ INTEGER ONLY, deliberately. An earlier draft used
+   `LATTICE_ROW_OFF + LATTICE_ROW * Math.round((y - LATTICE_ROW_OFF)/LATTICE_ROW)`,
+   which is floating point AND relies on JS's round-half-toward-+Infinity rule.
+   Postgres `round()` on numeric is round-half-AWAY-from-zero, so the two
+   languages would disagree on exactly the halfway cases — and a structure
+   placed one tile apart on the server and the client is a silent, intermittent
+   "you are not standing on the gate" bug. Scanning the handful of candidate
+   lines instead is unambiguous in both languages and costs nothing.          */
 function onLattice(x, y) {
   return (y % LATTICE_ROW) === LATTICE_ROW_OFF || (x % LATTICE_COL) === LATTICE_COL_OFF;
+}
+function nearestLatticeRow(y) {
+  var best = LATTICE_ROW_OFF, bd = 9999, r;
+  for (r = LATTICE_ROW_OFF; r < WORLD_H; r += LATTICE_ROW) {
+    var d = Math.abs(r - y);
+    if (d < bd) { bd = d; best = r; }
+  }
+  return best;
+}
+function nearestLatticeCol(x) {
+  var best = LATTICE_COL_OFF, bd = 9999, c;
+  for (c = LATTICE_COL_OFF; c < WORLD_W; c += LATTICE_COL) {
+    var d = Math.abs(c - x);
+    if (d < bd) { bd = d; best = c; }
+  }
+  return best;
 }
 // Snap an arbitrary point onto the nearest lattice line, clamped in-bounds.
 // Used for every structure that MUST be reachable.
@@ -165,11 +189,8 @@ function snapToLattice(x, y) {
   x = Math.max(0, Math.min(WORLD_W - 1, x | 0));
   y = Math.max(0, Math.min(WORLD_H - 1, y | 0));
   if (onLattice(x, y)) return { x: x, y: y };
-  // distance to the nearest lattice row vs the nearest lattice column
-  var ry = LATTICE_ROW_OFF + LATTICE_ROW * Math.round((y - LATTICE_ROW_OFF) / LATTICE_ROW);
-  var cx = LATTICE_COL_OFF + LATTICE_COL * Math.round((x - LATTICE_COL_OFF) / LATTICE_COL);
-  ry = Math.max(LATTICE_ROW_OFF, Math.min(WORLD_H - 1, ry));
-  cx = Math.max(LATTICE_COL_OFF, Math.min(WORLD_W - 1, cx));
+  var ry = nearestLatticeRow(y), cx = nearestLatticeCol(x);
+  // Ties go to the row, in both languages.
   return (Math.abs(ry - y) <= Math.abs(cx - x)) ? { x: x, y: ry } : { x: cx, y: y };
 }
 
@@ -209,19 +230,24 @@ function shuffledCells(seed) {
   return cells;
 }
 
+// CW/CH are exact: 44/4 = 11 and 30/3 = 10. Kept as constants so the SQL
+// mirror does not have to divide.
+var CORE_CW = 11, CORE_CH = 10;
+
 function biomeCores(seed) {
   var cores = [], i;
   var cells = shuffledCells(seed);
-  var cw = WORLD_W / CORE_COLS, ch = WORLD_H / CORE_ROWS;
   for (i = 0; i < CORE_COUNT; i++) {
     var cell = cells[i];
     var cellX = cell % CORE_COLS, cellY = (cell / CORE_COLS) | 0;
     // Jitter within the middle 60% of the cell so cores never land flush
     // against a cell border (which would put two cores adjacent).
-    var jx = wpRoll(seed, i, 0, S_CORE_X, 1000) / 1000;
-    var jy = wpRoll(seed, i, 0, S_CORE_Y, 1000) / 1000;
-    var px = Math.floor(cw * (cellX + 0.2 + jx * 0.6));
-    var py = Math.floor(ch * (cellY + 0.2 + jy * 0.6));
+    // ⚠ Integer arithmetic only — the roll IS the per-mille offset, so there
+    // is no float here for the plpgsql mirror to disagree with.
+    var jx = wpRoll(seed, i, 0, S_CORE_X, 600);
+    var jy = wpRoll(seed, i, 0, S_CORE_Y, 600);
+    var px = Math.floor((CORE_CW * (cellX * 1000 + 200 + jx)) / 1000);
+    var py = Math.floor((CORE_CH * (cellY * 1000 + 200 + jy)) / 1000);
     var kind;
     if (i < FORCED_CORES.length) kind = FORCED_CORES[i];
     else kind = CORE_POOL[wpRoll(seed, i, 0, S_CORE_KIND, CORE_POOL.length)];
@@ -230,15 +256,21 @@ function biomeCores(seed) {
   return cores;
 }
 
-// Nearest core by squared euclidean distance, with a per-tile fuzz so the
-// borders between biomes are ragged rather than a clean Voronoi edge.
+/* Nearest core by squared euclidean distance, with a per-tile fuzz so the
+   borders between biomes are ragged rather than a clean Voronoi edge.
+
+   ⚠ The fuzz is applied as `d * (940 + roll)` — i.e. everything is scaled by
+   1000 and stays an INTEGER — rather than `d + d*(roll-60)/1000`, which was
+   the first version and produced a float. Comparing floats for the argmin is
+   exactly where the JS and plpgsql copies would eventually disagree by one
+   tile, and a biome that differs between client and server means the server
+   rejecting a legitimate harvest. Max magnitude here is 2836 * 1059 ≈ 3.0e6:
+   nowhere near overflow in either language.                                  */
 function biomeAt(seed, cores, x, y) {
-  var best = 0, bestD = 1e9, i;
+  var best = 0, bestD = Infinity, i;
   for (i = 0; i < cores.length; i++) {
     var dx = cores[i].x - x, dy = cores[i].y - y;
-    var d = dx * dx + dy * dy;
-    // +/- ~6% of the distance, hashed per (tile, core).
-    d = d + (d * (wpRoll(seed, x * 64 + i, y, S_BIOME_FUZZ, 120) - 60)) / 1000;
+    var d = (dx * dx + dy * dy) * (940 + wpRoll(seed, x * 64 + i, y, S_BIOME_FUZZ, 120));
     if (d < bestD) { bestD = d; best = i; }
   }
   return cores[best].biome;
@@ -542,6 +574,7 @@ root.WarpathMap = {
   LANDMARKS: LANDMARKS,
   wpHash32: wpHash32, wpRoll: wpRoll,
   onLattice: onLattice, snapToLattice: snapToLattice,
+  nearestLatticeRow: nearestLatticeRow, nearestLatticeCol: nearestLatticeCol,
   biomeCores: biomeCores, shuffledCells: shuffledCells, biomeAt: biomeAt, isWater: isWater,
   moveCostAt: moveCostAt, nodeAt: nodeAt,
   spawns: spawns, gates: gates, recruitSites: recruitSites, landmark: landmark,

@@ -1,0 +1,1802 @@
+-- =============================================================================
+-- 🗺 WARPATH — Milestone 1. Run-based multiplayer expedition/draft mode.
+--
+-- Your Hero leaves the permanent city, enters a temporary four-player world,
+-- pitches a camp, explores under fog of war, gathers, recruits, fights other
+-- heroes through REAL Mythic Spellbook card battles, secures loot in a vault,
+-- and extracts back home with whatever survived.
+--
+-- ── THREE RULES THIS FILE EXISTS TO ENFORCE ─────────────────────────────────
+--
+-- 1. THE WARPATH NEVER RESOLVES A CARD BATTLE.
+--    warpath_battle_open() creates a battle row and returns its id. That is the
+--    whole of its involvement. The battle is played by the existing engine in
+--    public/index.html, and warpath_battle_report() consumes the verdict. Grep
+--    this file for damage, HP-of-a-unit, or a deck: there is none. The only
+--    hero HP here is expedition health, which is a map-layer stat.
+--
+-- 2. RUN STATE CAN NEVER REACH THE PERMANENT COLLECTION EXCEPT THROUGH
+--    EXTRACTION. Every warpath_* table below is temporary and run-scoped. The
+--    single row type that a permanent-side reader ever looks at is
+--    warpath_grants, written ONLY by warpath_extract_finish(), which caps what
+--    it writes. Nothing else in this file inserts into it.
+--
+-- 3. THE CLIENT CANNOT WRITE RUN STATE DIRECTLY. Every warpath_* table has a
+--    SELECT policy for participants and NO insert/update/delete policy at all.
+--    Mutations happen exclusively through the `security definer` RPCs at the
+--    bottom, which re-derive the world from the seed and re-check every claim.
+--    This is deliberately stricter than the neighbouring tw_* tables.
+--
+-- ── THE WORLD IS A SEED, NOT A TABLE ────────────────────────────────────────
+-- There are no tile rows. warpath_runs.seed drives public/warpath/warpath-mapgen.js
+-- in the browser and the wp_* functions here in Postgres, and the two agree
+-- bit-for-bit — public/warpath/_sqlcheck.js diffs 20,000 samples of every
+-- derived quantity across both implementations. When a client says "I harvested
+-- the iron at (14,7)", the server recomputes what is at (14,7) and rejects the
+-- claim if it disagrees. That is what stops a crafted client inventing a
+-- Dragon Heart node.
+--
+-- Run ONCE in the Supabase SQL editor (or `supabase db push`). Idempotent.
+-- Depends on: auth.users, and public.bank_of_ethos / public.boe_ledger from
+-- api.sql (AZA entry). Ticket entry works without them.
+-- =============================================================================
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PART 1 — THE WORLD MIRROR
+-- Every function here has a twin in public/warpath/warpath-mapgen.js. If you
+-- change one, change both and re-run public/warpath/_sqlcheck.js.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- World size and lattice. Mirrors WORLD_W / WORLD_H / LATTICE_* .
+create or replace function public.wp_w() returns int language sql immutable parallel safe as $$ select 44 $$;
+create or replace function public.wp_h() returns int language sql immutable parallel safe as $$ select 30 $$;
+
+/* wp_hash32 — the contract between the browser and this database.
+
+   Mirrors wpHash32() exactly. The `::numeric` casts are load-bearing: a
+   uint32 * uint32 product reaches ~9.6e18, which overflows bigint (max
+   ~9.22e18), so the modulo MUST happen in numeric before the cast back down.
+   Getting this wrong does not error — it silently wraps, and then the server
+   and the client disagree about what is on a tile. */
+create or replace function public.wp_hash32(p_seed bigint, p_x int, p_y int, p_salt int)
+returns bigint language plpgsql immutable parallel safe as $$
+declare h bigint;
+begin
+  h := (p_seed % 4294967296) # 2654435769;                                   -- ^ 0x9e3779b9
+  h := ((((h # p_x)::numeric * 2246822507) % 4294967296))::bigint;           -- * 0x85ebca6b
+  h := ((((h # p_y)::numeric * 3266489909) % 4294967296))::bigint;           -- * 0xc2b2ae35
+  h := ((((h # p_salt)::numeric * 668265263) % 4294967296))::bigint;         -- * 0x27d4eb2f
+  h := h # (h >> 15);
+  h := (((h::numeric * 625341585) % 4294967296))::bigint;                    -- * 0x2545f491
+  h := h # (h >> 13);
+  return h;
+end $$;
+
+create or replace function public.wp_roll(p_seed bigint, p_x int, p_y int, p_salt int, p_n int)
+returns int language sql immutable parallel safe as $$
+  select (public.wp_hash32(p_seed, p_x, p_y, p_salt) % p_n)::int
+$$;
+
+-- ── The land lattice ─────────────────────────────────────────────────────
+create or replace function public.wp_on_lattice(p_x int, p_y int)
+returns boolean language sql immutable parallel safe as $$
+  select (p_y % 6) = 3 or (p_x % 7) = 4
+$$;
+
+-- ⚠ Scanning candidates, NOT round((y-3)/6). Postgres rounds halves away from
+-- zero and JS rounds them toward +Infinity, so the two would disagree on the
+-- exact halfway cases and place a gate one tile apart on client and server.
+create or replace function public.wp_nearest_lattice_row(p_y int)
+returns int language plpgsql immutable parallel safe as $$
+declare r int; best int := 3; bd int := 9999;
+begin
+  r := 3;
+  while r < public.wp_h() loop
+    if abs(r - p_y) < bd then bd := abs(r - p_y); best := r; end if;
+    r := r + 6;
+  end loop;
+  return best;
+end $$;
+
+create or replace function public.wp_nearest_lattice_col(p_x int)
+returns int language plpgsql immutable parallel safe as $$
+declare c int; best int := 4; bd int := 9999;
+begin
+  c := 4;
+  while c < public.wp_w() loop
+    if abs(c - p_x) < bd then bd := abs(c - p_x); best := c; end if;
+    c := c + 7;
+  end loop;
+  return best;
+end $$;
+
+-- Returns ARRAY[x,y] snapped onto the lattice. Ties go to the row, as in JS.
+create or replace function public.wp_snap(p_x int, p_y int)
+returns int[] language plpgsql immutable parallel safe as $$
+declare x int; y int; ry int; cx int;
+begin
+  x := greatest(0, least(public.wp_w() - 1, p_x));
+  y := greatest(0, least(public.wp_h() - 1, p_y));
+  if public.wp_on_lattice(x, y) then return ARRAY[x, y]; end if;
+  ry := public.wp_nearest_lattice_row(y);
+  cx := public.wp_nearest_lattice_col(x);
+  if abs(ry - y) <= abs(cx - x) then return ARRAY[x, ry]; else return ARRAY[cx, y]; end if;
+end $$;
+
+-- ── Biome cores ──────────────────────────────────────────────────────────
+-- Mirrors shuffledCells(): seeded Fisher-Yates over the 12 grid cells, so the
+-- four forced pack biomes are not always in the same row of the map.
+create or replace function public.wp_shuffled_cells(p_seed bigint)
+returns int[] language plpgsql immutable parallel safe as $$
+declare cells int[] := ARRAY[0,1,2,3,4,5,6,7,8,9,10,11]; i int; j int; t int;
+begin
+  i := 11;
+  while i > 0 loop
+    j := public.wp_roll(p_seed, i, 0, 108, i + 1);            -- S_CORE_KIND + 100
+    t := cells[i + 1]; cells[i + 1] := cells[j + 1]; cells[j + 1] := t;
+    i := i - 1;
+  end loop;
+  return cells;
+end $$;
+
+-- 12 cores as jsonb: [{x,y,b}, ...]. Mirrors biomeCores().
+-- FORCED_CORES = forest, graveyard, facility, mountain (all four must exist or
+-- a whole archetype is undraftable this run). CORE_POOL fills the rest.
+create or replace function public.wp_cores(p_seed bigint)
+returns jsonb language plpgsql immutable parallel safe as $$
+declare
+  forced text[] := ARRAY['forest','graveyard','facility','mountain'];
+  pool   text[] := ARRAY['plains','plains','plains','wastes','wastes','forest','mountain','graveyard'];
+  cells  int[]  := public.wp_shuffled_cells(p_seed);
+  out jsonb := '[]'::jsonb;
+  i int; cell int; cx int; cy int; jx int; jy int; px int; py int; kind text;
+begin
+  for i in 0..11 loop
+    cell := cells[i + 1];
+    cx := cell % 4; cy := cell / 4;
+    jx := public.wp_roll(p_seed, i, 0, 6, 600);               -- S_CORE_X
+    jy := public.wp_roll(p_seed, i, 0, 7, 600);               -- S_CORE_Y
+    px := (11 * (cx * 1000 + 200 + jx)) / 1000;               -- CORE_CW = 11
+    py := (10 * (cy * 1000 + 200 + jy)) / 1000;               -- CORE_CH = 10
+    if i < 4 then kind := forced[i + 1];
+    else kind := pool[public.wp_roll(p_seed, i, 0, 8, 8) + 1]; -- S_CORE_KIND
+    end if;
+    out := out || jsonb_build_object(
+      'x', least(public.wp_w() - 1, px), 'y', least(public.wp_h() - 1, py), 'b', kind);
+  end loop;
+  return out;
+end $$;
+
+/* Nearest core, with the per-tile fuzz that ragged-edges the biome borders.
+   Everything is scaled by 1000 and stays integer — the JS twin does the same —
+   because an argmin over floats is precisely where two implementations
+   eventually disagree by one tile. */
+create or replace function public.wp_biome_at(p_seed bigint, p_x int, p_y int, p_cores jsonb default null)
+returns text language plpgsql immutable parallel safe as $$
+declare
+  cores jsonb := coalesce(p_cores, public.wp_cores(p_seed));
+  i int; dx int; dy int; d bigint; bestd bigint := null; best text := 'plains';
+begin
+  for i in 0..11 loop
+    dx := (cores->i->>'x')::int - p_x;
+    dy := (cores->i->>'y')::int - p_y;
+    d := (dx::bigint * dx + dy::bigint * dy) * (940 + public.wp_roll(p_seed, p_x * 64 + i, p_y, 12, 120));
+    if bestd is null or d < bestd then bestd := d; best := cores->i->>'b'; end if;
+  end loop;
+  return best;
+end $$;
+
+-- ── Terrain ──────────────────────────────────────────────────────────────
+create or replace function public.wp_is_water(p_seed bigint, p_x int, p_y int)
+returns boolean language sql immutable parallel safe as $$
+  select case
+    when public.wp_on_lattice(p_x, p_y) then false
+    when p_x < 1 or p_y < 1 or p_x >= public.wp_w() - 1 or p_y >= public.wp_h() - 1 then false
+    when public.wp_roll(p_seed, p_x / 3, p_y / 3, 1, 100) >= 17 then false
+    else public.wp_roll(p_seed, p_x, p_y, 41, 100) < 62
+  end
+$$;
+
+create or replace function public.wp_move_cost(p_seed bigint, p_x int, p_y int, p_biome text default null)
+returns int language plpgsql immutable parallel safe as $$
+declare b text; base int;
+begin
+  if public.wp_on_lattice(p_x, p_y) then return 1; end if;
+  b := coalesce(p_biome, public.wp_biome_at(p_seed, p_x, p_y));
+  base := case when b = 'mountain' then 2 else 1 end;          -- BIOMES[*].moveBase
+  return least(3, base + case when public.wp_roll(p_seed, p_x, p_y, 2, 100) < 26 then 1 else 0 end);
+end $$;
+
+-- ── Resource nodes ───────────────────────────────────────────────────────
+-- The weights and yields live in tables rather than inside a function so that
+-- the client, this database and a human auditor are all reading the SAME
+-- numbers. `ord` must match the array order in warpath-mapgen.js exactly —
+-- the kind is picked by walking a cumulative weight, so order is semantic.
+create table if not exists public.warpath_resources (
+  kind       text primary key,
+  tier       text not null check (tier in ('expedition','extraction')),
+  yield_min  int  not null,
+  yield_max  int  not null
+);
+insert into public.warpath_resources (kind, tier, yield_min, yield_max) values
+  ('wood','expedition',8,22), ('stone','expedition',8,20), ('iron','expedition',5,14),
+  ('food','expedition',10,28), ('essence','expedition',4,12), ('gold','expedition',12,40),
+  ('dragon_heart','extraction',1,1), ('void_crystal','extraction',1,1),
+  ('celestial_ore','extraction',1,1), ('ancient_bone','extraction',1,1),
+  ('ouroboros_core','extraction',1,1), ('kalon_fragment','extraction',1,1)
+on conflict (kind) do update set tier = excluded.tier,
+  yield_min = excluded.yield_min, yield_max = excluded.yield_max;
+
+create table if not exists public.warpath_biome_nodes (
+  biome   text not null,
+  ord     int  not null,
+  kind    text not null references public.warpath_resources(kind),
+  weight  int  not null,
+  primary key (biome, ord)
+);
+create table if not exists public.warpath_biomes (
+  biome        text primary key,
+  node_density int not null,
+  move_base    int not null
+);
+insert into public.warpath_biomes (biome, node_density, move_base) values
+  ('plains',34,1), ('forest',46,1), ('graveyard',40,1),
+  ('facility',36,1), ('mountain',42,2), ('wastes',22,1)
+on conflict (biome) do update set node_density = excluded.node_density, move_base = excluded.move_base;
+
+delete from public.warpath_biome_nodes;
+insert into public.warpath_biome_nodes (biome, ord, kind, weight) values
+  ('plains',0,'food',40),('plains',1,'gold',24),('plains',2,'wood',20),('plains',3,'stone',16),
+  ('forest',0,'wood',38),('forest',1,'food',24),('forest',2,'essence',20),('forest',3,'kalon_fragment',4),('forest',4,'gold',14),
+  ('graveyard',0,'essence',34),('graveyard',1,'ancient_bone',14),('graveyard',2,'stone',22),('graveyard',3,'gold',20),('graveyard',4,'void_crystal',4),
+  ('facility',0,'iron',36),('facility',1,'essence',22),('facility',2,'ouroboros_core',12),('facility',3,'gold',22),('facility',4,'celestial_ore',5),
+  ('mountain',0,'stone',34),('mountain',1,'iron',26),('mountain',2,'dragon_heart',10),('mountain',3,'celestial_ore',8),('mountain',4,'food',12),
+  ('wastes',0,'stone',30),('wastes',1,'iron',22),('wastes',2,'void_crystal',10),('wastes',3,'gold',24),('wastes',4,'essence',12);
+
+-- The node on a tile, or null. Mirrors nodeAt(). THIS is the function that
+-- decides what a player is allowed to claim to have harvested.
+create or replace function public.wp_node_at(p_seed bigint, p_x int, p_y int, p_biome text default null)
+returns jsonb language plpgsql stable parallel safe as $$
+declare
+  b text; dens int; total int; r int; acc int := 0; k text; rec record;
+  ymin int; ymax int; tier text; amt int;
+begin
+  if public.wp_is_water(p_seed, p_x, p_y) then return null; end if;
+  b := coalesce(p_biome, public.wp_biome_at(p_seed, p_x, p_y));
+  select node_density into dens from public.warpath_biomes where biome = b;
+  if dens is null then return null; end if;
+  if public.wp_roll(p_seed, p_x, p_y, 3, 1000) >= dens * 10 then return null; end if;   -- S_NODE
+
+  select sum(weight) into total from public.warpath_biome_nodes where biome = b;
+  r := public.wp_roll(p_seed, p_x, p_y, 4, total);                                      -- S_NODE_KIND
+  for rec in select kind, weight from public.warpath_biome_nodes where biome = b order by ord loop
+    acc := acc + rec.weight;
+    if r < acc then k := rec.kind; exit; end if;
+  end loop;
+  if k is null then select kind into k from public.warpath_biome_nodes where biome = b order by ord limit 1; end if;
+
+  select yield_min, yield_max, warpath_resources.tier into ymin, ymax, tier
+    from public.warpath_resources where kind = k;
+  amt := ymin + public.wp_roll(p_seed, p_x, p_y, 5, ymax - ymin + 1);                   -- S_NODE_AMT
+  return jsonb_build_object('kind', k, 'amount', amt, 'tier', tier);
+end $$;
+
+/* ── Structures ───────────────────────────────────────────────────────────
+   Mirrors placeStructures(): ONE pass, fixed order, 5-tile minimum separation,
+   walking forward through the row-major list of lattice tiles. Placing each
+   list separately is what let a spawn land on a recruitment site in the JS
+   version, so this must stay a single pass here too.
+
+   Returns [{k,id,x,y,...}] where k is 'gate' | 'site' | 'landmark' | 'spawn'. */
+create or replace function public.wp_structures(p_seed bigint)
+returns jsonb language plpgsql immutable parallel safe as $$
+declare
+  lat int[][];            -- row-major lattice tiles
+  n int; claimed int[][] := ARRAY[]::int[][]; nclaim int := 0;
+  cores jsonb := public.wp_cores(p_seed);
+  out jsonb := '[]'::jsonb;
+  i int; j int; k int; s int[]; startk int := 0; px int; py int; ok boolean;
+  ox int; oy int;
+  site_ids   text[] := ARRAY['forest_hollow','barrow_gate','assembly_floor'];
+  site_names text[] := ARRAY['Verdant Hollow','The Barrow Gate','Assembly Floor 3'];
+  gate_names text[] := ARRAY['Weeping Portal','Cracked Portal'];
+  lm_ids     text[] := ARRAY['black_pyramid','the_garden','drowned_choir'];
+  lm_names   text[] := ARRAY['The Black Pyramid','The Garden','The Drowned Choir'];
+  qx numeric[] := ARRAY[0.16,0.84,0.16,0.84];
+  qy numeric[] := ARRAY[0.18,0.18,0.82,0.82];
+  li int;
+  placed int[];
+begin
+  -- Row-major lattice tile list (order matters: the walk steps through it).
+  select array_agg(ARRAY[gx2, gy2] order by gy2, gx2) into lat
+    from generate_series(0, public.wp_h() - 1) gy2,
+         generate_series(0, public.wp_w() - 1) gx2
+   where public.wp_on_lattice(gx2, gy2);
+  n := array_length(lat, 1);
+
+  -- place(): snap, then walk forward until far enough from everything placed.
+  -- Inlined as a loop below because plpgsql has no closures.
+  <<placeall>>
+  for i in 0..10 loop
+    -- Work out the DESIRED spot for structure i, in the same fixed order the
+    -- JS uses: gate_main, gate_0, gate_1, three sites, landmark, four spawns.
+    if i = 0 then
+      px := public.wp_w() / 2; py := public.wp_h() / 2;
+    elsif i <= 2 then
+      j := i - 1;
+      px := public.wp_roll(p_seed, j, 0, 10, public.wp_w() - 8) + 4;         -- S_GATE
+      py := public.wp_roll(p_seed, j, 1, 10, public.wp_h() - 8) + 4;
+    elsif i <= 5 then
+      j := i - 3;
+      ox := public.wp_roll(p_seed, j, 0, 13, 7) - 3;                          -- S_RECRUIT
+      oy := public.wp_roll(p_seed, j, 1, 13, 7) - 3;
+      px := (cores->j->>'x')::int + ox;
+      py := (cores->j->>'y')::int + oy;
+    elsif i = 6 then
+      px := public.wp_roll(p_seed, 1, 0, 11, public.wp_w() - 10) + 5;         -- S_LANDMARK
+      py := public.wp_roll(p_seed, 1, 1, 11, public.wp_h() - 10) + 5;
+    else
+      j := i - 7;
+      px := round(public.wp_w() * qx[j + 1])::int + public.wp_roll(p_seed, j, 0, 9, 7) - 3;   -- S_SPAWN
+      py := round(public.wp_h() * qy[j + 1])::int + public.wp_roll(p_seed, j, 1, 9, 5) - 2;
+    end if;
+
+    s := public.wp_snap(px, py);
+    startk := 0;
+    for k in 1..n loop
+      if lat[k][1] = s[1] and lat[k][2] = s[2] then startk := k - 1; exit; end if;
+    end loop;
+
+    placed := null;
+    for k in 0..(n - 1) loop
+      j := ((startk + k) % n) + 1;
+      ok := true;
+      for li in 1..nclaim loop
+        if greatest(abs(lat[j][1] - claimed[li][1]), abs(lat[j][2] - claimed[li][2])) < 5 then
+          ok := false; exit;
+        end if;
+      end loop;
+      if ok then placed := ARRAY[lat[j][1], lat[j][2]]; exit; end if;
+    end loop;
+    if placed is null then raise exception 'wp_structures: lattice exhausted'; end if;
+
+    nclaim := nclaim + 1;
+    claimed := claimed || ARRAY[ARRAY[placed[1], placed[2]]];
+
+    -- Emit
+    if i = 0 then
+      out := out || jsonb_build_object('k','gate','id','gate_main','name','The Warpath Gate',
+                                       'main',true,'x',placed[1],'y',placed[2]);
+    elsif i <= 2 then
+      out := out || jsonb_build_object('k','gate','id','gate_' || (i-1),'name',gate_names[i],
+                                       'main',false,'x',placed[1],'y',placed[2]);
+    elsif i <= 5 then
+      out := out || jsonb_build_object('k','site','id',site_ids[i-2],'name',site_names[i-2],
+                                       'x',placed[1],'y',placed[2]);
+    elsif i = 6 then
+      li := public.wp_roll(p_seed, 0, 0, 11, 3);
+      out := out || jsonb_build_object('k','landmark','id',lm_ids[li+1],'name',lm_names[li+1],
+                                       'guardian', lm_ids[li+1] <> 'the_garden',
+                                       'x',placed[1],'y',placed[2]);
+    else
+      out := out || jsonb_build_object('k','spawn','id','spawn_' || (i-7),'slot',i-7,
+                                       'x',placed[1],'y',placed[2]);
+    end if;
+  end loop;
+  return out;
+end $$;
+
+-- Convenience lookups over wp_structures.
+create or replace function public.wp_structure_at(p_seed bigint, p_x int, p_y int)
+returns jsonb language sql stable parallel safe as $$
+  select s from jsonb_array_elements(public.wp_structures(p_seed)) s
+   where (s->>'x')::int = p_x and (s->>'y')::int = p_y limit 1
+$$;
+
+create or replace function public.wp_spawn(p_seed bigint, p_slot int)
+returns int[] language sql stable parallel safe as $$
+  select ARRAY[(s->>'x')::int, (s->>'y')::int]
+    from jsonb_array_elements(public.wp_structures(p_seed)) s
+   where s->>'k' = 'spawn' and (s->>'slot')::int = p_slot limit 1
+$$;
+
+/* ── Movement validation ──────────────────────────────────────────────────
+   Bounded Bellman-Ford over the (2*budget+1)^2 window around the hero. Budget
+   is 6, so this is a 13x13 = 169-cell relaxation run 6 times — cheap enough to
+   run on every move, which is the point: the server does not take the client's
+   word for how far it walked. Returns the true minimum cost, or null if the
+   destination is not reachable within budget. */
+create or replace function public.wp_path_cost(p_seed bigint, p_fx int, p_fy int,
+                                               p_tx int, p_ty int, p_budget int)
+returns int language plpgsql stable parallel safe as $$
+declare
+  span int := p_budget; size int := p_budget * 2 + 1;
+  cost int[]; nx int; ny int; ax int; ay int; tgx int; tgy int;
+  pass boolean[]; mc int[];
+  i int; j int; it int; changed boolean; c int; nc int;
+begin
+  if p_fx = p_tx and p_fy = p_ty then return 0; end if;
+  if greatest(abs(p_tx - p_fx), abs(p_ty - p_fy)) > p_budget then return null; end if;
+
+  -- Window arrays are 1-based: index (dy+span+1, dx+span+1).
+  cost := array_fill(999999, ARRAY[size, size]);
+  pass := array_fill(false,  ARRAY[size, size]);
+  mc   := array_fill(9,      ARRAY[size, size]);
+  for i in 1..size loop
+    for j in 1..size loop
+      ax := p_fx + (j - 1 - span); ay := p_fy + (i - 1 - span);
+      if ax >= 0 and ay >= 0 and ax < public.wp_w() and ay < public.wp_h()
+         and not public.wp_is_water(p_seed, ax, ay) then
+        pass[i][j] := true;
+        mc[i][j] := public.wp_move_cost(p_seed, ax, ay);
+      end if;
+    end loop;
+  end loop;
+  cost[span + 1][span + 1] := 0;
+
+  for it in 1..p_budget loop
+    changed := false;
+    for i in 1..size loop
+      for j in 1..size loop
+        c := cost[i][j];
+        if c >= 999999 then continue; end if;
+        for ny in greatest(1, i - 1)..least(size, i + 1) loop
+          for nx in greatest(1, j - 1)..least(size, j + 1) loop
+            if nx = j and ny = i then continue; end if;
+            if not pass[ny][nx] then continue; end if;
+            nc := c + mc[ny][nx];
+            if nc <= p_budget and nc < cost[ny][nx] then
+              cost[ny][nx] := nc; changed := true;
+            end if;
+          end loop;
+        end loop;
+      end loop;
+    end loop;
+    exit when not changed;
+  end loop;
+
+  tgx := p_tx - p_fx + span + 1; tgy := p_ty - p_fy + span + 1;
+  if cost[tgy][tgx] >= 999999 then return null; end if;
+  return cost[tgy][tgx];
+end $$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PART 2 — RUN STATE (temporary, run-scoped, RPC-write-only)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- 🎟 Warpath Tickets. Server-authoritative — deliberately NOT the client's
+-- Profile.sovereigns wallet, which lives inside the save blob and is therefore
+-- whatever the client says it is. Tickets are granted by quests / battle pass /
+-- admin, and spent here.
+create table if not exists public.warpath_tickets (
+  user_id    uuid primary key references auth.users(id) on delete cascade,
+  tickets    int not null default 0 check (tickets >= 0),
+  lifetime   int not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+-- WarpathRun — one world, up to four heroes.
+create table if not exists public.warpath_runs (
+  id          uuid primary key default gen_random_uuid(),
+  seed        bigint not null,
+  rarity      text not null default 'common' check (rarity in ('common','rare','epic','mythic')),
+  status      text not null default 'open'  check (status in ('open','active','closed')),
+  turn        int  not null default 1,
+  max_turns   int  not null default 60,
+  max_players int  not null default 4,
+  created_at  timestamptz not null default now(),
+  closed_at   timestamptz
+);
+create index if not exists warpath_runs_open_idx on public.warpath_runs (status, created_at)
+  where status = 'open';
+
+-- PlayerExpedition + HeroExpeditionState. One row per player per run. `fog` is
+-- a 1320-bit bitmap (165 bytes) rather than a revealed-tiles table — four
+-- players x ~400 tiles would be 1600 rows per run for something that is
+-- literally a set of bits.
+create table if not exists public.warpath_expeditions (
+  id             uuid primary key default gen_random_uuid(),
+  run_id         uuid not null references public.warpath_runs(id) on delete cascade,
+  user_id        uuid not null references auth.users(id) on delete cascade,
+  slot           int  not null check (slot between 0 and 3),
+  hero_id        text not null,
+  hero_name      text,
+  hero_hp        int  not null default 100,
+  hero_max_hp    int  not null default 100,
+  x              int  not null,
+  y              int  not null,
+  moves_left     int  not null default 6,
+  injured_turns  int  not null default 0,
+  turn_ended     boolean not null default false,
+  status         text not null default 'active'
+                 check (status in ('active','extracting','ready','extracted','lost')),
+  extract_left   int  not null default 0,
+  entry_paid     text not null default 'ticket' check (entry_paid in ('ticket','aza','free')),
+  fog            bytea not null default decode(repeat('00', 165), 'hex'),
+  -- run statistics, for the EXPEDITION COMPLETE screen
+  stat_distance  int not null default 0,
+  stat_defeated  int not null default 0,
+  stat_raided    int not null default 0,
+  stat_bosses    int not null default 0,
+  entered_at     timestamptz not null default now(),
+  ended_at       timestamptz,
+  unique (run_id, user_id),
+  unique (run_id, slot)
+);
+create index if not exists warpath_exp_user_idx on public.warpath_expeditions (user_id, status);
+
+-- Camp. One movable camp per expedition (the brief's PACK CAMP / FORWARD CAMP;
+-- Milestone 1 allows moving it, but not running two at once).
+create table if not exists public.warpath_camps (
+  expedition_id uuid primary key references public.warpath_expeditions(id) on delete cascade,
+  run_id        uuid not null references public.warpath_runs(id) on delete cascade,
+  x int not null,
+  y int not null,
+  buildings     jsonb not null default '{"campfire":1}'::jsonb,
+  placed_turn   int not null default 1,
+  moved_count   int not null default 0
+);
+create index if not exists warpath_camps_run_idx on public.warpath_camps (run_id);
+
+-- ExpeditionInventory. `carried` is on the Hero and can be lost; `secured` is
+-- in the camp vault and cannot. That split is the entire risk/reward loop.
+create table if not exists public.warpath_inventory (
+  expedition_id uuid not null references public.warpath_expeditions(id) on delete cascade,
+  kind          text not null references public.warpath_resources(kind),
+  carried       int  not null default 0 check (carried >= 0),
+  secured       int  not null default 0 check (secured >= 0),
+  primary key (expedition_id, kind)
+);
+
+-- TemporaryCardPool. Every card drafted this run. NOT the player's collection —
+-- nothing reads this table from the permanent side.
+create table if not exists public.warpath_cards (
+  id            uuid primary key default gen_random_uuid(),
+  expedition_id uuid not null references public.warpath_expeditions(id) on delete cascade,
+  card_key      text not null,
+  source        text not null check (source in ('starter','recruit','discovery','boss','battle')),
+  secured       boolean not null default false,
+  acquired_turn int not null default 1
+);
+create index if not exists warpath_cards_exp_idx on public.warpath_cards (expedition_id);
+
+-- ResourceNode depletion. A node is claimed ONCE per run, by whoever gets there
+-- first — which is most of what makes four heroes on one map interesting.
+create table if not exists public.warpath_node_claims (
+  run_id     uuid not null references public.warpath_runs(id) on delete cascade,
+  x          int  not null,
+  y          int  not null,
+  claimed_by uuid not null references public.warpath_expeditions(id) on delete cascade,
+  kind       text not null,
+  amount     int  not null,
+  turn       int  not null,
+  primary key (run_id, x, y)
+);
+
+-- Encounter (the draft). Rolled server-side from the tile hash and STORED, so
+-- reloading the page cannot re-roll a bad pick into a good one.
+create table if not exists public.warpath_encounters (
+  id            uuid primary key default gen_random_uuid(),
+  expedition_id uuid not null references public.warpath_expeditions(id) on delete cascade,
+  x int not null,
+  y int not null,
+  biome         text not null,
+  offers        jsonb not null,
+  picked        int,
+  created_turn  int not null,
+  unique (expedition_id, x, y)
+);
+
+-- RecruitmentPool claims — one recruit per site per expedition. Pick 1 of 3.
+create table if not exists public.warpath_recruit_claims (
+  expedition_id uuid not null references public.warpath_expeditions(id) on delete cascade,
+  site_id       text not null,
+  offer_idx     int  not null,
+  card_key      text not null,
+  turn          int  not null,
+  primary key (expedition_id, site_id)
+);
+
+-- BattleEncounter. The Warpath's ENTIRE involvement in a card battle: it
+-- records that one is owed, and it records the verdict when the real engine
+-- returns one. There is no board, no deck and no damage in this table.
+create table if not exists public.warpath_battles (
+  id            uuid primary key default gen_random_uuid(),
+  run_id        uuid not null references public.warpath_runs(id) on delete cascade,
+  kind          text not null check (kind in ('pvp','guardian')),
+  attacker_id   uuid not null references public.warpath_expeditions(id) on delete cascade,
+  defender_id   uuid references public.warpath_expeditions(id) on delete cascade,
+  x int not null,
+  y int not null,
+  status        text not null default 'open' check (status in ('open','resolved','abandoned')),
+  winner_id     uuid references public.warpath_expeditions(id) on delete set null,
+  spoils        jsonb,
+  opened_at     timestamptz not null default now(),
+  resolved_at   timestamptz
+);
+create index if not exists warpath_battles_run_idx on public.warpath_battles (run_id, status);
+
+-- The run feed. Scout reports, extraction warnings, battle results — the
+-- "⚠ A HERO IS PREPARING TO LEAVE THE WARPATH" broadcast lives here.
+create table if not exists public.warpath_events (
+  id            bigint generated always as identity primary key,
+  run_id        uuid not null references public.warpath_runs(id) on delete cascade,
+  expedition_id uuid references public.warpath_expeditions(id) on delete cascade,
+  turn          int not null,
+  kind          text not null,
+  payload       jsonb not null default '{}'::jsonb,
+  created_at    timestamptz not null default now()
+);
+create index if not exists warpath_events_run_idx on public.warpath_events (run_id, id desc);
+
+/* ⭐ THE ONLY BRIDGE TO PERMANENT DATA.
+   warpath_extract_finish() is the only writer. The game client drains
+   unclaimed rows on next load and applies them to Profile.cardCollection.
+   If you are auditing "can a Warpath bug corrupt my collection?", this table
+   and that one function are the entire attack surface. */
+create table if not exists public.warpath_grants (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  run_id     uuid not null references public.warpath_runs(id) on delete cascade,
+  card_keys  text[] not null default '{}',
+  materials  jsonb  not null default '{}'::jsonb,
+  summary    jsonb  not null default '{}'::jsonb,
+  claimed    boolean not null default false,
+  created_at timestamptz not null default now(),
+  claimed_at timestamptz,
+  unique (user_id, run_id)
+);
+create index if not exists warpath_grants_open_idx on public.warpath_grants (user_id)
+  where claimed = false;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PART 3 — RLS. Read for participants. NO write policies anywhere: every
+-- mutation goes through the security-definer RPCs in Part 4.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+alter table public.warpath_tickets        enable row level security;
+alter table public.warpath_runs           enable row level security;
+alter table public.warpath_expeditions    enable row level security;
+alter table public.warpath_camps          enable row level security;
+alter table public.warpath_inventory      enable row level security;
+alter table public.warpath_cards          enable row level security;
+alter table public.warpath_node_claims    enable row level security;
+alter table public.warpath_encounters     enable row level security;
+alter table public.warpath_recruit_claims enable row level security;
+alter table public.warpath_battles        enable row level security;
+alter table public.warpath_events         enable row level security;
+alter table public.warpath_grants         enable row level security;
+alter table public.warpath_resources      enable row level security;
+alter table public.warpath_biomes         enable row level security;
+alter table public.warpath_biome_nodes    enable row level security;
+
+-- Am I in this run?
+create or replace function public.wp_in_run(p_run uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.warpath_expeditions
+                  where run_id = p_run and user_id = auth.uid())
+$$;
+-- Is this expedition mine?
+create or replace function public.wp_is_mine(p_exp uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.warpath_expeditions
+                  where id = p_exp and user_id = auth.uid())
+$$;
+
+drop policy if exists wp_tickets_sel on public.warpath_tickets;
+create policy wp_tickets_sel on public.warpath_tickets for select to authenticated using (user_id = auth.uid());
+
+drop policy if exists wp_runs_sel on public.warpath_runs;
+create policy wp_runs_sel on public.warpath_runs for select to authenticated
+  using (status = 'open' or public.wp_in_run(id));
+
+-- Everyone in the run sees everyone's expedition ROW. That is intentional and
+-- is not a fog-of-war leak: the client is only handed the other heroes'
+-- positions through warpath_state(), which filters them against YOUR fog.
+-- Direct table reads are still limited to your own run.
+drop policy if exists wp_exp_sel on public.warpath_expeditions;
+create policy wp_exp_sel on public.warpath_expeditions for select to authenticated
+  using (user_id = auth.uid() or public.wp_in_run(run_id));
+
+drop policy if exists wp_camps_sel on public.warpath_camps;
+create policy wp_camps_sel on public.warpath_camps for select to authenticated using (public.wp_in_run(run_id));
+
+drop policy if exists wp_inv_sel on public.warpath_inventory;
+create policy wp_inv_sel on public.warpath_inventory for select to authenticated using (public.wp_is_mine(expedition_id));
+
+drop policy if exists wp_cards_sel on public.warpath_cards;
+create policy wp_cards_sel on public.warpath_cards for select to authenticated using (public.wp_is_mine(expedition_id));
+
+drop policy if exists wp_claims_sel on public.warpath_node_claims;
+create policy wp_claims_sel on public.warpath_node_claims for select to authenticated using (public.wp_in_run(run_id));
+
+drop policy if exists wp_enc_sel on public.warpath_encounters;
+create policy wp_enc_sel on public.warpath_encounters for select to authenticated using (public.wp_is_mine(expedition_id));
+
+drop policy if exists wp_rec_sel on public.warpath_recruit_claims;
+create policy wp_rec_sel on public.warpath_recruit_claims for select to authenticated using (public.wp_is_mine(expedition_id));
+
+drop policy if exists wp_bat_sel on public.warpath_battles;
+create policy wp_bat_sel on public.warpath_battles for select to authenticated using (public.wp_in_run(run_id));
+
+drop policy if exists wp_ev_sel on public.warpath_events;
+create policy wp_ev_sel on public.warpath_events for select to authenticated using (public.wp_in_run(run_id));
+
+drop policy if exists wp_grants_sel on public.warpath_grants;
+create policy wp_grants_sel on public.warpath_grants for select to authenticated using (user_id = auth.uid());
+
+-- Static content tables — readable by anyone signed in, written by migration only.
+drop policy if exists wp_res_sel on public.warpath_resources;
+create policy wp_res_sel on public.warpath_resources for select to authenticated using (true);
+drop policy if exists wp_biomes_sel on public.warpath_biomes;
+create policy wp_biomes_sel on public.warpath_biomes for select to authenticated using (true);
+drop policy if exists wp_bnodes_sel on public.warpath_biome_nodes;
+create policy wp_bnodes_sel on public.warpath_biome_nodes for select to authenticated using (true);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PART 4 — SERVER-SIDE CONTENT
+-- The client has these same tables in public/warpath/warpath-data.js, because
+-- it has to draw them. The server has them because it must never take the
+-- client's word for what a recruit costs or which cards were on offer.
+-- public/warpath/_sqlcheck.js diffs the two copies.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+create table if not exists public.warpath_recruit_offers (
+  site_id  text not null,
+  idx      int  not null,
+  card_key text not null,
+  rank     int  not null,
+  cost     jsonb not null,
+  label    text not null,
+  primary key (site_id, idx)
+);
+delete from public.warpath_recruit_offers;
+insert into public.warpath_recruit_offers (site_id, idx, card_key, rank, cost, label) values
+  ('forest_hollow',0,'unit:wolf',1,'{"food":30}','Dire Wolf'),
+  ('forest_hollow',1,'unit:spider',2,'{"food":40,"essence":10}','Giant Spider'),
+  ('forest_hollow',2,'unit:troll',4,'{"food":100,"gold":50}','Cave Troll'),
+  ('barrow_gate',0,'unit:spider',1,'{"essence":18}','Crypt Spider'),
+  ('barrow_gate',1,'unit:lich',3,'{"essence":45,"gold":30}','Lich Apprentice'),
+  ('barrow_gate',2,'unit:golem',3,'{"essence":35,"stone":40}','Bone Golem'),
+  ('assembly_floor',0,'unit:sprite',2,'{"iron":20,"essence":10}','Ignition Wisp'),
+  ('assembly_floor',1,'unit:ice',3,'{"iron":35,"essence":25}','Coolant Elemental'),
+  ('assembly_floor',2,'unit:paladin',4,'{"iron":60,"gold":40}','Ouroboros Sentinel');
+
+create table if not exists public.warpath_discovery (
+  biome    text not null,
+  ord      int  not null,
+  card_key text not null,
+  weight   int  not null,
+  primary key (biome, ord)
+);
+create table if not exists public.warpath_discovery_meta (
+  biome  text primary key,
+  chance int not null,
+  title  text not null
+);
+delete from public.warpath_discovery_meta;
+insert into public.warpath_discovery_meta (biome, chance, title) values
+  ('forest',16,'THE WOOD OFFERS'), ('graveyard',18,'SOMETHING SITS UP'),
+  ('facility',17,'A CABINET UNSEALS'), ('mountain',15,'THE MOUNTAIN NOTICES YOU'),
+  ('plains',9,'A TRAVELLER STOPS'), ('wastes',11,'BURIED, BUT NOT DEEPLY');
+delete from public.warpath_discovery;
+insert into public.warpath_discovery (biome, ord, card_key, weight) values
+  ('forest',0,'unit:wolf',20),('forest',1,'unit:troll',8),('forest',2,'unit:spider',16),('forest',3,'unit:archer',14),
+  ('forest',4,'trap:razorVines',12),('forest',5,'trap:snare',12),('forest',6,'trap:plagueBloom',8),('forest',7,'trap:sleepPowder',8),
+  ('forest',8,'location:forest',18),('forest',9,'location:poisonBog',10),('forest',10,'location:mire',10),
+  ('forest',11,'spell:frostwind',6),('forest',12,'spell:tarPit',8),
+  ('graveyard',0,'unit:lich',12),('graveyard',1,'unit:spider',14),('graveyard',2,'unit:golem',12),('graveyard',3,'unit:priest',8),
+  ('graveyard',4,'trap:soulSnare',14),('graveyard',5,'trap:hexSigil',12),('graveyard',6,'trap:boneCrusher',12),('graveyard',7,'trap:plagueSpore',10),
+  ('graveyard',8,'location:cursedEarth',16),('graveyard',9,'location:necropolis',10),('graveyard',10,'location:altar',12),
+  ('graveyard',11,'weather:bloodmoon',5),('graveyard',12,'weather:eclipse',5),
+  ('facility',0,'unit:xenoDrone',14),('facility',1,'unit:hiveDrone',12),('facility',2,'unit:parasiteHost',8),('facility',3,'unit:ice',12),
+  ('facility',4,'trap:staticMine',14),('facility',5,'trap:nullGlyph',12),('facility',6,'trap:aetherNet',12),('facility',7,'trap:xenoBurst',8),
+  ('facility',8,'location:medicalCenter',12),('facility',9,'location:siphoned',10),('facility',10,'location:manaFont',12),
+  ('facility',11,'spell:arcaneInsight',8),('facility',12,'spell:suppressAwakening',5),
+  ('mountain',0,'unit:orc',16),('mountain',1,'unit:troll',12),('mountain',2,'unit:golem',14),('mountain',3,'unit:paladin',8),('mountain',4,'unit:broodTyrant',3),
+  ('mountain',5,'trap:magmaVent',16),('mountain',6,'trap:flameBurst',14),('mountain',7,'trap:spikes',10),
+  ('mountain',8,'location:lava',16),('mountain',9,'location:forgeAnvil',12),('mountain',10,'location:bastion',10),
+  ('mountain',11,'spell:fireblast',10),('mountain',12,'spell:wrath',6),
+  ('plains',0,'unit:goblin',20),('plains',1,'unit:archer',16),('plains',2,'unit:orc',14),('plains',3,'unit:priest',12),
+  ('plains',4,'trap:caltrops',14),('plains',5,'trap:bearTrap',12),('plains',6,'trap:snare',10),
+  ('plains',7,'location:watchtower',14),('plains',8,'location:holySpring',12),('plains',9,'location:forest',12),
+  ('plains',10,'spell:rally',10),('plains',11,'spell:mend',10),
+  ('wastes',0,'unit:golem',16),('wastes',1,'unit:goblin',14),('wastes',2,'unit:ice',10),('wastes',3,'unit:lich',8),
+  ('wastes',4,'trap:frostGlyph',14),('wastes',5,'trap:mirePit',12),('wastes',6,'trap:caltrops',12),
+  ('wastes',7,'location:sandstormDunes',16),('wastes',8,'location:mire',12),('wastes',9,'location:bastion',10),
+  ('wastes',10,'weather:sandstorm',8),('wastes',11,'weather:mistveil',6);
+
+create table if not exists public.warpath_building_costs (
+  building text not null,
+  level    int  not null,
+  cost     jsonb not null,
+  primary key (building, level)
+);
+delete from public.warpath_building_costs;
+insert into public.warpath_building_costs (building, level, cost) values
+  ('campfire',1,'{}'),
+  ('recruitment',1,'{"wood":30,"food":20}'),('recruitment',2,'{"wood":60,"iron":20,"food":40}'),('recruitment',3,'{"wood":90,"iron":50,"essence":30}'),
+  ('blacksmith',1,'{"stone":30,"iron":15}'),('blacksmith',2,'{"stone":60,"iron":40}'),('blacksmith',3,'{"stone":90,"iron":70,"essence":25}'),
+  ('supply',1,'{"wood":20,"food":10}'),('supply',2,'{"wood":45,"stone":30}'),('supply',3,'{"wood":70,"stone":55,"iron":30}'),
+  ('watchtower',1,'{"wood":40,"stone":20}'),('watchtower',2,'{"wood":70,"stone":50,"iron":25}'),
+  ('arcane',1,'{"essence":25,"wood":20}'),('arcane',2,'{"essence":60,"iron":30}');
+
+-- The 24-card starter pool, so the server (not the client) decides what a
+-- fresh expedition walks in with. Mirrors STARTER_POOL in warpath-data.js.
+create table if not exists public.warpath_starter_pool (
+  ord int primary key,
+  card_key text not null
+);
+delete from public.warpath_starter_pool;
+insert into public.warpath_starter_pool (ord, card_key) values
+  (0,'unit:goblin'),(1,'unit:goblin'),(2,'unit:wolf'),(3,'unit:wolf'),(4,'unit:archer'),
+  (5,'unit:orc'),(6,'unit:spider'),(7,'unit:priest'),(8,'unit:sprite'),(9,'unit:golem'),
+  (10,'trap:spikes'),(11,'trap:snare'),(12,'trap:caltrops'),(13,'trap:bearTrap'),
+  (14,'location:forest'),(15,'location:forest'),(16,'location:manaFont'),(17,'location:manaFont'),
+  (18,'location:altar'),(19,'location:holySpring'),(20,'location:watchtower'),(21,'location:mire'),
+  (22,'spell:mend'),(23,'spell:bolt');
+
+alter table public.warpath_recruit_offers  enable row level security;
+alter table public.warpath_discovery       enable row level security;
+alter table public.warpath_discovery_meta  enable row level security;
+alter table public.warpath_building_costs  enable row level security;
+alter table public.warpath_starter_pool    enable row level security;
+do $$ declare t text; begin
+  foreach t in array ARRAY['warpath_recruit_offers','warpath_discovery','warpath_discovery_meta',
+                           'warpath_building_costs','warpath_starter_pool'] loop
+    execute format('drop policy if exists %I on public.%I', t || '_sel', t);
+    execute format('create policy %I on public.%I for select to authenticated using (true)', t || '_sel', t);
+  end loop;
+end $$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PART 5 — RPCs. Every mutation in the mode goes through one of these.
+-- All `security definer`: the tables have no client write policies at all.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Camp building level (0 = not built).
+create or replace function public.wp_level(p_exp uuid, p_building text)
+returns int language sql stable security definer set search_path = public as $$
+  select coalesce((buildings->>p_building)::int, 0) from public.warpath_camps where expedition_id = p_exp
+$$;
+
+-- Vault slots for EXTRACTION MATERIALS. No Supply Tent = no vault = everything
+-- you are carrying can be taken from you. Mirrors VAULT_SLOTS.
+create or replace function public.wp_vault_slots(p_exp uuid)
+returns int language sql stable security definer set search_path = public as $$
+  select (ARRAY[0,5,10,20])[coalesce(public.wp_level(p_exp,'supply'),0) + 1]
+$$;
+
+/* Fog. `fog` is a 1320-bit bitmap; bit index is y*44+x, and Postgres numbers
+   bytea bits so that bit n is `byte[n/8] | (1 << (n%8))`. The browser reads the
+   same base64 with `bytes[i>>3] & (1 << (i&7))`. */
+create or replace function public.wp_reveal(p_exp uuid, p_cx int, p_cy int, p_r int)
+returns void language plpgsql security definer set search_path = public as $$
+declare f bytea; x int; y int; bit int; w int := public.wp_w(); h int := public.wp_h();
+begin
+  if p_r < 0 then return; end if;
+  select fog into f from public.warpath_expeditions where id = p_exp;
+  if f is null then return; end if;
+  for y in greatest(0, p_cy - p_r)..least(h - 1, p_cy + p_r) loop
+    for x in greatest(0, p_cx - p_r)..least(w - 1, p_cx + p_r) loop
+      bit := y * w + x;
+      f := set_bit(f, bit, 1);
+    end loop;
+  end loop;
+  update public.warpath_expeditions set fog = f where id = p_exp;
+end $$;
+
+create or replace function public.wp_explored(p_fog bytea, p_x int, p_y int)
+returns boolean language sql immutable as $$
+  select get_bit(p_fog, p_y * public.wp_w() + p_x) = 1
+$$;
+
+-- Hero vision. Base 2, +1 with a level-2 Watchtower. (Scouts are Milestone 2.)
+create or replace function public.wp_vision(p_exp uuid)
+returns int language sql stable security definer set search_path = public as $$
+  select 2 + case when public.wp_level(p_exp,'watchtower') >= 2 then 1 else 0 end
+$$;
+
+-- Append to the run feed.
+create or replace function public.wp_log(p_run uuid, p_exp uuid, p_kind text, p_payload jsonb default '{}')
+returns void language plpgsql security definer set search_path = public as $$
+declare t int;
+begin
+  select turn into t from public.warpath_runs where id = p_run;
+  insert into public.warpath_events (run_id, expedition_id, turn, kind, payload)
+    values (p_run, p_exp, coalesce(t, 1), p_kind, coalesce(p_payload, '{}'));
+end $$;
+
+-- My live expedition row, or null. Guards every RPC below.
+create or replace function public.wp_my_exp(p_exp uuid)
+returns public.warpath_expeditions language sql stable security definer set search_path = public as $$
+  select * from public.warpath_expeditions where id = p_exp and user_id = auth.uid()
+$$;
+
+/* 🎟 A free ticket, once a week. The brief lists "occasional free tickets" so
+   that free players can participate; without at least one source the mode is
+   unreachable in a fresh database. Quests / battle pass / events can top this
+   up by writing to warpath_tickets directly from their own RPCs. */
+create or replace function public.warpath_claim_free_ticket()
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_row public.warpath_tickets;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  insert into public.warpath_tickets (user_id, tickets, lifetime, updated_at)
+    values (v_uid, 0, 0, now() - interval '8 days')
+    on conflict (user_id) do nothing;
+  select * into v_row from public.warpath_tickets where user_id = v_uid;
+  if v_row.updated_at > now() - interval '7 days' then
+    return jsonb_build_object('ok', false, 'reason', 'already_claimed',
+                              'next_at', v_row.updated_at + interval '7 days', 'tickets', v_row.tickets);
+  end if;
+  update public.warpath_tickets
+     set tickets = tickets + 1, lifetime = lifetime + 1, updated_at = now()
+   where user_id = v_uid returning * into v_row;
+  return jsonb_build_object('ok', true, 'tickets', v_row.tickets);
+end $$;
+
+/* ── ENTER THE WARPATH ────────────────────────────────────────────────────
+   Debits entry, joins or opens a run, plants the hero on its spawn, deals the
+   starter pool and burns the fog back around the landing site.
+
+   ⚠ AZA BUYS ENTRY, NOT POWER. The only thing p_pay changes is which balance
+   is debited; nothing downstream — not the seed, not the node table, not the
+   extraction cap — ever reads entry_paid. That is the no-pay-to-win rule
+   expressed as the absence of a branch, and it is worth keeping that way.
+
+   ⚠ AZA is taken from public.bank_of_ethos.aza, the SERVER-side balance, and
+   never from the client's Profile.sovereigns wallet — that lives inside the
+   save blob and is therefore whatever the client says it is. Players bank AZA
+   to spend it here, and the debit is journalled to boe_ledger like every other
+   bank movement. */
+create or replace function public.warpath_enter(p_hero_id text, p_hero_name text default null,
+                                                p_pay text default 'ticket')
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_run public.warpath_runs; v_exp public.warpath_expeditions;
+  v_slot int; v_sp int[]; v_aza numeric; v_cost numeric := 3; rec record;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  if p_hero_id is null or length(p_hero_id) = 0 then
+    return jsonb_build_object('ok', false, 'reason', 'no_hero'); end if;
+  if exists (select 1 from public.warpath_expeditions
+              where user_id = v_uid and status in ('active','extracting','ready')) then
+    return jsonb_build_object('ok', false, 'reason', 'already_in_a_warpath');
+  end if;
+
+  -- 1. Pay. Nothing else in this function looks at how.
+  if p_pay = 'ticket' then
+    update public.warpath_tickets set tickets = tickets - 1, updated_at = updated_at
+      where user_id = v_uid and tickets >= 1;
+    if not found then return jsonb_build_object('ok', false, 'reason', 'no_ticket'); end if;
+  elsif p_pay = 'aza' then
+    select aza into v_aza from public.bank_of_ethos where user_id = v_uid for update;
+    if v_aza is null or v_aza < v_cost then
+      return jsonb_build_object('ok', false, 'reason', 'insufficient_aza', 'need', v_cost, 'have', coalesce(v_aza,0));
+    end if;
+    update public.bank_of_ethos set aza = aza - v_cost, updated_at = now() where user_id = v_uid;
+    insert into public.boe_ledger (user_id, kind, aza, note)
+      values (v_uid, 'warpath_entry', -v_cost, 'Warpath expedition entry');
+  else
+    return jsonb_build_object('ok', false, 'reason', 'bad_payment');
+  end if;
+
+  -- 2. Join an open run, or open one. skip locked so four simultaneous joins
+  --    do not serialise onto the same row and then collide on the slot unique.
+  -- ⚠ `not exists` is load-bearing. Without it, a player who has already
+  -- extracted from this world matchmakes straight back into it, hits the
+  -- unique (run_id, user_id) and blows up — AFTER their ticket was debited.
+  -- You get one expedition per world, ever.
+  select * into v_run from public.warpath_runs
+    where status = 'open'
+      and (select count(*) from public.warpath_expeditions e where e.run_id = warpath_runs.id) < max_players
+      and not exists (select 1 from public.warpath_expeditions e2
+                       where e2.run_id = warpath_runs.id and e2.user_id = v_uid)
+    order by created_at limit 1 for update skip locked;
+  if v_run.id is null then
+    insert into public.warpath_runs (seed) values (floor(random() * 4294967295)::bigint)
+      returning * into v_run;
+  end if;
+
+  select min(s) into v_slot from generate_series(0, v_run.max_players - 1) s
+   where s not in (select slot from public.warpath_expeditions where run_id = v_run.id);
+  if v_slot is null then return jsonb_build_object('ok', false, 'reason', 'run_full'); end if;
+
+  v_sp := public.wp_spawn(v_run.seed, v_slot);
+
+  insert into public.warpath_expeditions
+    (run_id, user_id, slot, hero_id, hero_name, x, y, entry_paid)
+    values (v_run.id, v_uid, v_slot, p_hero_id, coalesce(p_hero_name, p_hero_id),
+            v_sp[1], v_sp[2], p_pay)
+    returning * into v_exp;
+
+  -- 3. Six expedition resources, all at zero. Rows exist up front so every
+  --    later update is a plain UPDATE and can never create a phantom resource.
+  insert into public.warpath_inventory (expedition_id, kind)
+    select v_exp.id, kind from public.warpath_resources where tier = 'expedition';
+
+  -- 4. The starter pool. Secured from the start — you brought these from home.
+  insert into public.warpath_cards (expedition_id, card_key, source, secured, acquired_turn)
+    select v_exp.id, card_key, 'starter', true, 1 from public.warpath_starter_pool order by ord;
+
+  perform public.wp_reveal(v_exp.id, v_sp[1], v_sp[2], public.wp_vision(v_exp.id));
+
+  -- 5. Four heroes present closes the run to newcomers.
+  if (select count(*) from public.warpath_expeditions where run_id = v_run.id) >= v_run.max_players then
+    update public.warpath_runs set status = 'active' where id = v_run.id;
+  end if;
+
+  perform public.wp_log(v_run.id, v_exp.id, 'entered',
+    jsonb_build_object('hero', coalesce(p_hero_name, p_hero_id), 'slot', v_slot));
+
+  return jsonb_build_object('ok', true, 'run_id', v_run.id, 'seed', v_run.seed,
+                            'expedition_id', v_exp.id, 'slot', v_slot, 'x', v_sp[1], 'y', v_sp[2]);
+end $$;
+
+/* ── STATE ────────────────────────────────────────────────────────────────
+   Everything the client needs in one round trip.
+
+   ⚠ Other heroes are filtered against MY fog before they leave the database.
+   Sending all four positions and letting the client hide three of them would
+   make fog of war a rendering convention rather than a rule — the information
+   would be sitting in the network tab. Heroes show only inside live vision;
+   camps show once you have explored the tile they stand on. */
+create or replace function public.warpath_state(p_run uuid default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid(); me public.warpath_expeditions; run public.warpath_runs;
+  v_vision int; others jsonb := '[]'; rec record; seen boolean; camp jsonb;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  select * into me from public.warpath_expeditions
+    where user_id = v_uid and (p_run is null or run_id = p_run)
+    order by (status in ('active','extracting','ready')) desc, entered_at desc limit 1;
+  if me.id is null then return jsonb_build_object('ok', true, 'in_run', false); end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+  v_vision := public.wp_vision(me.id);
+
+  for rec in select e.*, c.x as cx, c.y as cy, c.buildings as cb
+               from public.warpath_expeditions e
+               left join public.warpath_camps c on c.expedition_id = e.id
+              where e.run_id = me.run_id and e.id <> me.id loop
+    seen := greatest(abs(rec.x - me.x), abs(rec.y - me.y)) <= v_vision;
+    camp := null;
+    if rec.cx is not null and public.wp_explored(me.fog, rec.cx, rec.cy) then
+      camp := jsonb_build_object('x', rec.cx, 'y', rec.cy, 'buildings', rec.cb);
+    end if;
+    others := others || jsonb_build_object(
+      'expedition_id', rec.id, 'slot', rec.slot, 'hero_name', rec.hero_name,
+      'status', rec.status, 'visible', seen,
+      'x', case when seen then rec.x end, 'y', case when seen then rec.y end,
+      'camp', camp);
+  end loop;
+
+  return jsonb_build_object(
+    'ok', true, 'in_run', true,
+    'run', jsonb_build_object('id', run.id, 'seed', run.seed, 'turn', run.turn,
+                              'max_turns', run.max_turns, 'status', run.status,
+                              'players', (select count(*) from public.warpath_expeditions where run_id = run.id)),
+    'me', jsonb_build_object(
+      'expedition_id', me.id, 'slot', me.slot, 'hero_id', me.hero_id, 'hero_name', me.hero_name,
+      'x', me.x, 'y', me.y, 'hp', me.hero_hp, 'max_hp', me.hero_max_hp,
+      'moves_left', me.moves_left, 'injured_turns', me.injured_turns,
+      'turn_ended', me.turn_ended, 'status', me.status, 'extract_left', me.extract_left,
+      'vision', v_vision, 'vault_slots', public.wp_vault_slots(me.id),
+      'extract_cap', 6 + 3 * public.wp_level(me.id, 'supply'),
+      'fog', encode(me.fog, 'base64'),
+      'stats', jsonb_build_object('distance', me.stat_distance, 'defeated', me.stat_defeated,
+                                  'raided', me.stat_raided, 'bosses', me.stat_bosses)),
+    'camp', (select jsonb_build_object('x', x, 'y', y, 'buildings', buildings, 'moved', moved_count)
+               from public.warpath_camps where expedition_id = me.id),
+    'inventory', coalesce((select jsonb_object_agg(kind, jsonb_build_object('carried', carried, 'secured', secured))
+                             from public.warpath_inventory where expedition_id = me.id), '{}'::jsonb),
+    'cards', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'key', card_key, 'source', source,
+                                                           'secured', secured, 'turn', acquired_turn)
+                                order by acquired_turn, id)
+                         from public.warpath_cards where expedition_id = me.id), '[]'::jsonb),
+    'recruited', coalesce((select jsonb_agg(site_id) from public.warpath_recruit_claims
+                            where expedition_id = me.id), '[]'::jsonb),
+    'claimed_nodes', coalesce((select jsonb_agg(jsonb_build_object('x', x, 'y', y))
+                                 from public.warpath_node_claims where run_id = me.run_id), '[]'::jsonb),
+    'encounter', (select jsonb_build_object('id', id, 'x', x, 'y', y, 'biome', biome, 'offers', offers)
+                    from public.warpath_encounters
+                   where expedition_id = me.id and picked is null order by created_turn desc limit 1),
+    'battles', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'status', status,
+                                                             'attacker', attacker_id, 'defender', defender_id,
+                                                             'winner', winner_id, 'x', x, 'y', y))
+                           from public.warpath_battles
+                          where run_id = me.run_id and status = 'open'
+                            and (attacker_id = me.id or defender_id = me.id)), '[]'::jsonb),
+    'others', others,
+    'events', coalesce((select jsonb_agg(jsonb_build_object('turn', turn, 'kind', kind, 'payload', payload)
+                                 order by id desc)
+                          from (select * from public.warpath_events where run_id = me.run_id
+                                 order by id desc limit 40) z), '[]'::jsonb),
+    'grants_waiting', (select count(*) from public.warpath_grants where user_id = v_uid and claimed = false));
+end $$;
+
+/* ── MOVE ─────────────────────────────────────────────────────────────────
+   The server re-derives the true path cost with wp_path_cost() — a bounded
+   Bellman-Ford over the movement window — rather than trusting a cost the
+   client sends. Then it reveals fog and, if the tile is new and rolls one,
+   opens a discovery encounter. */
+create or replace function public.warpath_move(p_exp uuid, p_x int, p_y int)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; run public.warpath_runs; cost int; enc jsonb;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  if exists (select 1 from public.warpath_battles where status = 'open'
+              and (attacker_id = me.id or defender_id = me.id)) then
+    return jsonb_build_object('ok', false, 'reason', 'battle_pending');
+  end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+  if p_x < 0 or p_y < 0 or p_x >= public.wp_w() or p_y >= public.wp_h() then
+    return jsonb_build_object('ok', false, 'reason', 'out_of_bounds'); end if;
+  if public.wp_is_water(run.seed, p_x, p_y) then
+    return jsonb_build_object('ok', false, 'reason', 'impassable'); end if;
+
+  cost := public.wp_path_cost(run.seed, me.x, me.y, p_x, p_y, me.moves_left);
+  if cost is null then return jsonb_build_object('ok', false, 'reason', 'out_of_range'); end if;
+
+  update public.warpath_expeditions
+     set x = p_x, y = p_y, moves_left = moves_left - cost,
+         stat_distance = stat_distance + greatest(abs(p_x - me.x), abs(p_y - me.y))
+   where id = me.id;
+  perform public.wp_reveal(me.id, p_x, p_y, public.wp_vision(me.id));
+
+  enc := public.warpath_encounter_open(me.id);
+  return jsonb_build_object('ok', true, 'x', p_x, 'y', p_y, 'cost', cost,
+                            'moves_left', me.moves_left - cost,
+                            'encounter', case when (enc->>'ok')::boolean then enc->'encounter' end);
+end $$;
+
+/* ── DISCOVERY ENCOUNTER ──────────────────────────────────────────────────
+   "Explore → Discover Opportunity → Make Choice → Add Card → Continue."
+   Three cards from the biome's table, pick one. The offer is rolled from the
+   TILE hash and then STORED, so refreshing the page cannot re-roll a bad
+   choice into a good one — which is the whole difference between a draft and
+   a slot machine. One encounter per tile per expedition, forever. */
+create or replace function public.warpath_encounter_open(p_exp uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; run public.warpath_runs; b text; meta record;
+  total int; offers jsonb := '[]'; picks int[] := ARRAY[]::int[];
+  i int; r int; acc int; rec record; k text; tries int; enc public.warpath_encounters;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  select * into enc from public.warpath_encounters where expedition_id = me.id and x = me.x and y = me.y;
+  if enc.id is not null then
+    if enc.picked is not null then return jsonb_build_object('ok', false, 'reason', 'already_resolved'); end if;
+    return jsonb_build_object('ok', true, 'encounter',
+      jsonb_build_object('id', enc.id, 'x', enc.x, 'y', enc.y, 'biome', enc.biome, 'offers', enc.offers));
+  end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+  b := public.wp_biome_at(run.seed, me.x, me.y);
+  select * into meta from public.warpath_discovery_meta where biome = b;
+  if meta.biome is null then return jsonb_build_object('ok', false, 'reason', 'no_table'); end if;
+  -- Salt 20 is the encounter roll; distinct from every terrain salt.
+  if public.wp_roll(run.seed, me.x, me.y, 20, 100) >= meta.chance then
+    return jsonb_build_object('ok', false, 'reason', 'nothing_here');
+  end if;
+
+  select sum(weight) into total from public.warpath_discovery where biome = b;
+  for i in 0..2 loop
+    tries := 0; k := null;
+    while k is null and tries < 12 loop
+      r := public.wp_roll(run.seed, me.x * 97 + i * 7 + tries, me.y, 21, total);
+      acc := 0;
+      for rec in select ord, card_key, weight from public.warpath_discovery where biome = b order by ord loop
+        acc := acc + rec.weight;
+        if r < acc then
+          if not (rec.ord = any(picks)) then k := rec.card_key; picks := picks || rec.ord; end if;
+          exit;
+        end if;
+      end loop;
+      tries := tries + 1;
+    end loop;
+    if k is not null then offers := offers || jsonb_build_object('key', k); end if;
+  end loop;
+  if jsonb_array_length(offers) = 0 then return jsonb_build_object('ok', false, 'reason', 'nothing_here'); end if;
+
+  insert into public.warpath_encounters (expedition_id, x, y, biome, offers, created_turn)
+    values (me.id, me.x, me.y, b, offers, run.turn)
+    on conflict (expedition_id, x, y) do nothing
+    returning * into enc;
+  if enc.id is null then
+    select * into enc from public.warpath_encounters where expedition_id = me.id and x = me.x and y = me.y;
+  end if;
+  return jsonb_build_object('ok', true, 'title', meta.title, 'encounter',
+    jsonb_build_object('id', enc.id, 'x', enc.x, 'y', enc.y, 'biome', enc.biome, 'offers', enc.offers));
+end $$;
+
+create or replace function public.warpath_encounter_pick(p_enc uuid, p_idx int)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare enc public.warpath_encounters; me public.warpath_expeditions; run public.warpath_runs; k text;
+begin
+  select * into enc from public.warpath_encounters where id = p_enc;
+  if enc.id is null then return jsonb_build_object('ok', false, 'reason', 'no_encounter'); end if;
+  me := public.wp_my_exp(enc.expedition_id);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if enc.picked is not null then return jsonb_build_object('ok', false, 'reason', 'already_picked'); end if;
+  if p_idx < 0 or p_idx >= jsonb_array_length(enc.offers) then
+    return jsonb_build_object('ok', false, 'reason', 'bad_index'); end if;
+  k := enc.offers->p_idx->>'key';
+  select * into run from public.warpath_runs where id = me.run_id;
+  update public.warpath_encounters set picked = p_idx where id = enc.id;
+  -- Discovered cards are CARRIED, not secured: you have to walk them home to
+  -- your camp before they can be extracted. That is the risk the vault exists
+  -- to answer.
+  insert into public.warpath_cards (expedition_id, card_key, source, secured, acquired_turn)
+    values (me.id, k, 'discovery', false, run.turn);
+  return jsonb_build_object('ok', true, 'card_key', k);
+end $$;
+
+/* ── HARVEST ──────────────────────────────────────────────────────────────
+   The client says "I am standing on a node". The server derives what is
+   actually at that tile from the seed and credits THAT — never an amount the
+   client sent. First hero to a node takes it; the run keeps the claim. */
+create or replace function public.warpath_harvest(p_exp uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare me public.warpath_expeditions; run public.warpath_runs; node jsonb; k text; amt int;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  if me.moves_left < 1 then return jsonb_build_object('ok', false, 'reason', 'no_moves_left'); end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+
+  node := public.wp_node_at(run.seed, me.x, me.y);
+  if node is null then return jsonb_build_object('ok', false, 'reason', 'no_node_here'); end if;
+  k := node->>'kind'; amt := (node->>'amount')::int;
+
+  insert into public.warpath_node_claims (run_id, x, y, claimed_by, kind, amount, turn)
+    values (me.run_id, me.x, me.y, me.id, k, amt, run.turn)
+    on conflict (run_id, x, y) do nothing;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'already_harvested'); end if;
+
+  insert into public.warpath_inventory (expedition_id, kind, carried)
+    values (me.id, k, amt)
+    on conflict (expedition_id, kind) do update set carried = warpath_inventory.carried + excluded.carried;
+  update public.warpath_expeditions set moves_left = moves_left - 1 where id = me.id;
+
+  if (node->>'tier') = 'extraction' then
+    perform public.wp_log(me.run_id, me.id, 'material_found', jsonb_build_object('kind', k));
+  end if;
+  return jsonb_build_object('ok', true, 'kind', k, 'amount', amt, 'tier', node->>'tier',
+                            'moves_left', me.moves_left - 1);
+end $$;
+
+/* ── CAMP ─────────────────────────────────────────────────────────────────
+   Pitch or move. The brief's PACK CAMP: moving costs a turn's movement and
+   resets nothing except position — the buildings travel with you, because a
+   camp you have to rebuild from scratch is a camp nobody ever moves. */
+create or replace function public.warpath_camp_place(p_exp uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare me public.warpath_expeditions; run public.warpath_runs; existing public.warpath_camps;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+  if public.wp_is_water(run.seed, me.x, me.y) then
+    return jsonb_build_object('ok', false, 'reason', 'impassable'); end if;
+
+  select * into existing from public.warpath_camps where expedition_id = me.id;
+  if existing.expedition_id is null then
+    insert into public.warpath_camps (expedition_id, run_id, x, y, placed_turn)
+      values (me.id, me.run_id, me.x, me.y, run.turn);
+    perform public.wp_log(me.run_id, me.id, 'camp_placed', jsonb_build_object('x', me.x, 'y', me.y));
+    return jsonb_build_object('ok', true, 'placed', true, 'x', me.x, 'y', me.y);
+  end if;
+  if existing.x = me.x and existing.y = me.y then
+    return jsonb_build_object('ok', false, 'reason', 'camp_already_here'); end if;
+  if me.moves_left < 2 then return jsonb_build_object('ok', false, 'reason', 'need_2_moves_to_pack'); end if;
+  update public.warpath_camps set x = me.x, y = me.y, moved_count = moved_count + 1
+    where expedition_id = me.id;
+  update public.warpath_expeditions set moves_left = moves_left - 2 where id = me.id;
+  perform public.wp_log(me.run_id, me.id, 'camp_moved', jsonb_build_object('x', me.x, 'y', me.y));
+  return jsonb_build_object('ok', true, 'moved', true, 'x', me.x, 'y', me.y);
+end $$;
+
+create or replace function public.warpath_camp_build(p_exp uuid, p_building text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; camp public.warpath_camps; lvl int; cost jsonb;
+  k text; need int; have int;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  select * into camp from public.warpath_camps where expedition_id = me.id;
+  if camp.expedition_id is null then return jsonb_build_object('ok', false, 'reason', 'no_camp'); end if;
+  if camp.x <> me.x or camp.y <> me.y then
+    return jsonb_build_object('ok', false, 'reason', 'not_at_camp'); end if;
+
+  lvl := coalesce((camp.buildings->>p_building)::int, 0) + 1;
+  select warpath_building_costs.cost into cost from public.warpath_building_costs
+    where building = p_building and level = lvl;
+  if cost is null then return jsonb_build_object('ok', false, 'reason', 'max_level_or_unknown'); end if;
+
+  -- Building spends SECURED stock. You must have walked it home first.
+  for k, need in select key, value::int from jsonb_each_text(cost) loop
+    select secured into have from public.warpath_inventory where expedition_id = me.id and kind = k;
+    if coalesce(have, 0) < need then
+      return jsonb_build_object('ok', false, 'reason', 'insufficient', 'kind', k,
+                                'need', need, 'have', coalesce(have, 0));
+    end if;
+  end loop;
+  for k, need in select key, value::int from jsonb_each_text(cost) loop
+    update public.warpath_inventory set secured = secured - need
+      where expedition_id = me.id and kind = k;
+  end loop;
+
+  update public.warpath_camps
+     set buildings = buildings || jsonb_build_object(p_building, lvl)
+   where expedition_id = me.id;
+  -- A new Watchtower burns fog back immediately; that is what it is for.
+  if p_building = 'watchtower' then
+    perform public.wp_reveal(me.id, camp.x, camp.y, (ARRAY[0,5,7])[least(lvl,2) + 1]);
+  end if;
+  perform public.wp_log(me.run_id, me.id, 'built', jsonb_build_object('building', p_building, 'level', lvl));
+  return jsonb_build_object('ok', true, 'building', p_building, 'level', lvl);
+end $$;
+
+/* ── SECURE (the Expedition Vault) ────────────────────────────────────────
+   "You find a Void Crystal. You can carry it and continue exploring — but
+   you're risking it. Return to camp and deposit it: SECURED."
+
+   Expedition resources deposit freely (they are bulk). Extraction materials
+   consume vault slots, and slots come from the Supply Tent — so the decision
+   the brief wants ("keep exploring, or go bank the loot?") is a real one with
+   a real ceiling. Carried cards are deposited here too. */
+create or replace function public.warpath_secure(p_exp uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; camp public.warpath_camps;
+  slots int; used int; rec record; moved jsonb := '{}'; ncards int; nmat int := 0; room int;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  select * into camp from public.warpath_camps where expedition_id = me.id;
+  if camp.expedition_id is null then return jsonb_build_object('ok', false, 'reason', 'no_camp'); end if;
+  if camp.x <> me.x or camp.y <> me.y then
+    return jsonb_build_object('ok', false, 'reason', 'not_at_camp'); end if;
+
+  slots := public.wp_vault_slots(me.id);
+  select coalesce(sum(i.secured), 0) into used from public.warpath_inventory i
+    join public.warpath_resources r on r.kind = i.kind
+   where i.expedition_id = me.id and r.tier = 'extraction';
+
+  for rec in select i.kind, i.carried, r.tier from public.warpath_inventory i
+               join public.warpath_resources r on r.kind = i.kind
+              where i.expedition_id = me.id and i.carried > 0 loop
+    if rec.tier = 'expedition' then
+      update public.warpath_inventory set secured = secured + rec.carried, carried = 0
+        where expedition_id = me.id and kind = rec.kind;
+      moved := moved || jsonb_build_object(rec.kind, rec.carried);
+    else
+      room := greatest(0, slots - used);
+      if room > 0 then
+        room := least(room, rec.carried);
+        update public.warpath_inventory set secured = secured + room, carried = carried - room
+          where expedition_id = me.id and kind = rec.kind;
+        used := used + room; nmat := nmat + room;
+        moved := moved || jsonb_build_object(rec.kind, room);
+      end if;
+    end if;
+  end loop;
+
+  update public.warpath_cards set secured = true where expedition_id = me.id and secured = false;
+  get diagnostics ncards = row_count;
+
+  return jsonb_build_object('ok', true, 'moved', moved, 'cards_secured', ncards,
+                            'vault_used', used, 'vault_slots', slots,
+                            'vault_full', used >= slots);
+end $$;
+
+/* ── RECRUIT ──────────────────────────────────────────────────────────────
+   The brief's Goblin Encampment: three offers, you cannot afford all three.
+   Rank is gated by the Recruitment Tent level, so a camp that never built the
+   tent physically cannot take the commander. One recruit per site, ever. */
+create or replace function public.warpath_recruit(p_exp uuid, p_site text, p_idx int)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; run public.warpath_runs; st jsonb; offer record;
+  tent int; k text; need int; have int;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+
+  -- You have to actually be standing on the site. Derived, not asserted.
+  st := public.wp_structure_at(run.seed, me.x, me.y);
+  if st is null or st->>'k' <> 'site' or st->>'id' <> p_site then
+    return jsonb_build_object('ok', false, 'reason', 'not_at_site');
+  end if;
+  if exists (select 1 from public.warpath_recruit_claims where expedition_id = me.id and site_id = p_site) then
+    return jsonb_build_object('ok', false, 'reason', 'site_already_recruited');
+  end if;
+  select * into offer from public.warpath_recruit_offers where site_id = p_site and idx = p_idx;
+  if offer.site_id is null then return jsonb_build_object('ok', false, 'reason', 'bad_offer'); end if;
+
+  tent := public.wp_level(me.id, 'recruitment');
+  -- Tent I recruits rank 1-2, II adds 3-4, III adds 5.
+  if offer.rank > (ARRAY[0,2,4,5])[least(tent,3) + 1] then
+    return jsonb_build_object('ok', false, 'reason', 'tent_too_small',
+                              'need_tent', case when offer.rank <= 2 then 1 when offer.rank <= 4 then 2 else 3 end,
+                              'tent', tent);
+  end if;
+
+  -- Recruiting spends CARRIED resources: you are paying them on the spot.
+  for k, need in select key, value::int from jsonb_each_text(offer.cost) loop
+    select carried into have from public.warpath_inventory where expedition_id = me.id and kind = k;
+    if coalesce(have, 0) < need then
+      return jsonb_build_object('ok', false, 'reason', 'insufficient', 'kind', k,
+                                'need', need, 'have', coalesce(have, 0));
+    end if;
+  end loop;
+  for k, need in select key, value::int from jsonb_each_text(offer.cost) loop
+    update public.warpath_inventory set carried = carried - need where expedition_id = me.id and kind = k;
+  end loop;
+
+  -- Recruits arrive SECURED — the brief counts "cards you successfully
+  -- recruited" as extraction-eligible without a trip back to camp. A contract
+  -- is not loot you are carrying in a sack.
+  insert into public.warpath_cards (expedition_id, card_key, source, secured, acquired_turn)
+    values (me.id, offer.card_key, 'recruit', true, run.turn);
+  insert into public.warpath_recruit_claims (expedition_id, site_id, offer_idx, card_key, turn)
+    values (me.id, p_site, p_idx, offer.card_key, run.turn);
+  perform public.wp_log(me.run_id, me.id, 'recruited',
+    jsonb_build_object('site', p_site, 'label', offer.label));
+  return jsonb_build_object('ok', true, 'card_key', offer.card_key, 'label', offer.label);
+end $$;
+
+/* ── TURNS ────────────────────────────────────────────────────────────────
+   Everyone moves in the same turn; the run clock advances when the last active
+   hero ends theirs. Extraction countdown and injury tick here, which is what
+   makes "extraction takes 1-3 turns" a window your rivals can act inside. */
+create or replace function public.warpath_end_turn(p_exp uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; run public.warpath_runs; pending int; rec record; base int;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status not in ('active','extracting') then
+    return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  update public.warpath_expeditions set turn_ended = true where id = me.id;
+
+  select count(*) into pending from public.warpath_expeditions
+   where run_id = me.run_id and status in ('active','extracting') and turn_ended = false;
+  if pending > 0 then
+    return jsonb_build_object('ok', true, 'waiting_for', pending, 'turn', (select turn from public.warpath_runs where id = me.run_id));
+  end if;
+
+  -- Last one in: advance the world.
+  update public.warpath_runs set turn = turn + 1 where id = me.run_id returning * into run;
+
+  for rec in select * from public.warpath_expeditions
+              where run_id = me.run_id and status in ('active','extracting') loop
+    base := case when rec.injured_turns > 0 then 4 else 6 end;   -- injury costs movement
+    update public.warpath_expeditions
+       set turn_ended = false,
+           moves_left = base,
+           injured_turns = greatest(0, rec.injured_turns - 1),
+           hero_hp = least(rec.hero_max_hp, rec.hero_hp + 5),
+           extract_left = case when rec.status = 'extracting' then greatest(0, rec.extract_left - 1) else 0 end,
+           status = case when rec.status = 'extracting' and rec.extract_left - 1 <= 0 then 'ready' else rec.status end
+     where id = rec.id;
+  end loop;
+
+  -- The world closes. Anyone still out there loses everything they did not
+  -- extract; that is the deal.
+  if run.turn > run.max_turns then
+    update public.warpath_expeditions set status = 'lost', ended_at = now()
+      where run_id = run.id and status in ('active','extracting');
+    update public.warpath_runs set status = 'closed', closed_at = now() where id = run.id;
+    perform public.wp_log(run.id, null, 'run_closed', '{}');
+  end if;
+
+  return jsonb_build_object('ok', true, 'turn', run.turn, 'advanced', true);
+end $$;
+
+/* ── BATTLE BRIDGE ────────────────────────────────────────────────────────
+   ⚠ THIS IS THE ARCHITECTURAL RULE, IN CODE.
+
+   warpath_battle_open() creates a row that says "these two heroes have
+   collided at (x,y)" and hands back an id. It does not shuffle a deck, deal a
+   hand, roll a die or decide anything. The battle is played by the existing
+   Mythic Spellbook engine — App.battlePrep → vsScreen in public/index.html —
+   and warpath_battle_report() consumes the verdict it produces.
+
+   Designed so the Colyseus migration is a no-op here: whoever reports the
+   result (client today, authoritative server tomorrow) calls the same
+   function, and the race gate `where status = 'open'` means a double report
+   is harmless. */
+create or replace function public.warpath_battle_open(p_exp uuid, p_target uuid default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; foe public.warpath_expeditions;
+  run public.warpath_runs; st jsonb; b public.warpath_battles; v_kind text;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+
+  if exists (select 1 from public.warpath_battles where status = 'open'
+              and (attacker_id = me.id or defender_id = me.id)) then
+    return jsonb_build_object('ok', false, 'reason', 'battle_already_open');
+  end if;
+
+  if p_target is not null then
+    v_kind := 'pvp';
+    select * into foe from public.warpath_expeditions where id = p_target and run_id = me.run_id;
+    if foe.id is null then return jsonb_build_object('ok', false, 'reason', 'no_such_hero'); end if;
+    if foe.status <> 'active' and foe.status <> 'extracting' then
+      return jsonb_build_object('ok', false, 'reason', 'target_not_in_play'); end if;
+    -- Adjacent only. Distance is recomputed here, not sent by the client.
+    if greatest(abs(foe.x - me.x), abs(foe.y - me.y)) > 1 then
+      return jsonb_build_object('ok', false, 'reason', 'out_of_reach');
+    end if;
+  else
+    -- PvE: the landmark Guardian. "You have to find the Black Pyramid during a
+    -- Warpath and defeat the Guardian."
+    v_kind := 'guardian';
+    st := public.wp_structure_at(run.seed, me.x, me.y);
+    if st is null or st->>'k' <> 'landmark' or not (st->>'guardian')::boolean then
+      return jsonb_build_object('ok', false, 'reason', 'nothing_to_fight');
+    end if;
+    if exists (select 1 from public.warpath_battles
+                where run_id = me.run_id and attacker_id = me.id and kind = 'guardian' and status = 'resolved') then
+      return jsonb_build_object('ok', false, 'reason', 'guardian_already_faced');
+    end if;
+  end if;
+
+  insert into public.warpath_battles (run_id, kind, attacker_id, defender_id, x, y)
+    values (me.run_id, v_kind, me.id, p_target, me.x, me.y) returning * into b;
+  perform public.wp_log(me.run_id, me.id, 'battle_opened',
+    jsonb_build_object('battle_id', b.id, 'kind', v_kind, 'x', me.x, 'y', me.y));
+  return jsonb_build_object('ok', true, 'battle_id', b.id, 'kind', v_kind,
+                            'defender', p_target, 'x', me.x, 'y', me.y,
+                            'landmark', case when v_kind = 'guardian' then st end);
+end $$;
+
+/* Consume a verdict from the battle service. Race-gated exactly like
+   mp_resolve_match: the conditional UPDATE means the second reporter reads
+   back the authoritative answer instead of overwriting it. */
+create or replace function public.warpath_battle_report(p_battle uuid, p_winner uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  b public.warpath_battles; upd public.warpath_battles;
+  v_uid uuid := auth.uid(); loser public.warpath_expeditions; winner public.warpath_expeditions;
+  camp public.warpath_camps; rec record; v_spoils jsonb := '{}'::jsonb; take int;
+  v_seed bigint; v_mat text;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  select * into b from public.warpath_battles where id = p_battle;
+  if b.id is null then return jsonb_build_object('ok', false, 'reason', 'no_such_battle'); end if;
+  if not exists (select 1 from public.warpath_expeditions
+                  where id in (b.attacker_id, b.defender_id) and user_id = v_uid) then
+    return jsonb_build_object('ok', false, 'reason', 'not_a_participant');
+  end if;
+  if p_winner is not null and p_winner not in (b.attacker_id, coalesce(b.defender_id, b.attacker_id)) then
+    return jsonb_build_object('ok', false, 'reason', 'winner_not_a_participant');
+  end if;
+
+  update public.warpath_battles set status = 'resolved', winner_id = p_winner, resolved_at = now()
+    where id = b.id and status = 'open' returning * into upd;
+  if upd.id is null then
+    select * into upd from public.warpath_battles where id = b.id;
+    return jsonb_build_object('ok', true, 'we_won_race', false, 'winner', upd.winner_id);
+  end if;
+
+  if b.kind = 'guardian' then
+    if p_winner = b.attacker_id then
+      select * into winner from public.warpath_expeditions where id = b.attacker_id;
+      -- Each landmark drops ITS OWN material, so "where did you get that?" has
+      -- a specific answer rather than always being an Ouroboros Core.
+      select run.seed into v_seed from public.warpath_runs run where run.id = b.run_id;
+      v_mat := case (public.wp_structure_at(v_seed, b.x, b.y))->>'id'
+                 when 'the_garden'    then 'kalon_fragment'
+                 when 'drowned_choir' then 'void_crystal'
+                 else 'ouroboros_core' end;
+      -- Boss loot is secured on the spot and does not need a trip home.
+      insert into public.warpath_inventory (expedition_id, kind, secured)
+        values (b.attacker_id, v_mat, 1)
+        on conflict (expedition_id, kind) do update set secured = warpath_inventory.secured + 1;
+      update public.warpath_expeditions set stat_bosses = stat_bosses + 1 where id = b.attacker_id;
+      v_spoils := jsonb_build_object('material', v_mat);
+      perform public.wp_log(b.run_id, b.attacker_id, 'guardian_defeated', v_spoils);
+    else
+      update public.warpath_expeditions
+         set injured_turns = 2, hero_hp = greatest(1, hero_hp - 25) where id = b.attacker_id;
+    end if;
+  else
+    -- PvP. "Losing shouldn't erase everything." The loser drops half of what
+    -- they were CARRYING plus one unsecured material, is injured, and retreats
+    -- to their own camp. Anything already in the vault is untouched — which is
+    -- the entire argument for walking home.
+    select * into loser  from public.warpath_expeditions
+      where id = case when p_winner = b.attacker_id then b.defender_id else b.attacker_id end;
+    select * into winner from public.warpath_expeditions where id = p_winner;
+    if loser.id is not null then
+      for rec in select i.kind, i.carried, r.tier from public.warpath_inventory i
+                   join public.warpath_resources r on r.kind = i.kind
+                  where i.expedition_id = loser.id and i.carried > 0 loop
+        take := case when rec.tier = 'expedition' then rec.carried / 2 else least(1, rec.carried) end;
+        if take > 0 then
+          update public.warpath_inventory set carried = carried - take
+            where expedition_id = loser.id and kind = rec.kind;
+          insert into public.warpath_inventory (expedition_id, kind, carried)
+            values (winner.id, rec.kind, take)
+            on conflict (expedition_id, kind) do update set carried = warpath_inventory.carried + excluded.carried;
+          v_spoils := v_spoils || jsonb_build_object(rec.kind, take);
+        end if;
+      end loop;
+      select * into camp from public.warpath_camps where expedition_id = loser.id;
+      update public.warpath_expeditions
+         set injured_turns = 2, hero_hp = greatest(1, hero_hp - 30),
+             x = coalesce(camp.x, loser.x), y = coalesce(camp.y, loser.y), moves_left = 0
+       where id = loser.id;
+      update public.warpath_expeditions
+         set stat_defeated = stat_defeated + 1,
+             stat_raided = stat_raided + case when v_spoils <> '{}'::jsonb then 1 else 0 end
+       where id = winner.id;
+    end if;
+    perform public.wp_log(b.run_id, winner.id, 'hero_defeated',
+      jsonb_build_object('winner', winner.hero_name, 'loser', loser.hero_name, 'spoils', v_spoils));
+  end if;
+
+  update public.warpath_battles set spoils = v_spoils where id = b.id;
+  return jsonb_build_object('ok', true, 'we_won_race', true, 'winner', p_winner, 'spoils', v_spoils);
+end $$;
+
+/* ── EXTRACTION ───────────────────────────────────────────────────────────
+   Reach a gate, then survive the countdown. Everyone in the run is told you
+   are leaving — "⚠ A HERO IS PREPARING TO LEAVE THE WARPATH" — which is what
+   turns the last two turns of a good run into the tensest part of it. */
+create or replace function public.warpath_extract_begin(p_exp uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare me public.warpath_expeditions; run public.warpath_runs; st jsonb; turns int;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+  st := public.wp_structure_at(run.seed, me.x, me.y);
+  if st is null or st->>'k' <> 'gate' then
+    return jsonb_build_object('ok', false, 'reason', 'not_at_a_gate'); end if;
+
+  -- A researched Arcane Tent shortens the wait; that is its second-level perk.
+  turns := case when public.wp_level(me.id, 'arcane') >= 2 then 1 else 2 end;
+  update public.warpath_expeditions
+     set status = 'extracting', extract_left = turns where id = me.id;
+  perform public.wp_log(me.run_id, me.id, 'extraction_started',
+    jsonb_build_object('hero', me.hero_name, 'gate', st->>'name', 'x', me.x, 'y', me.y, 'turns', turns));
+  return jsonb_build_object('ok', true, 'turns', turns, 'gate', st->>'name');
+end $$;
+
+/* ⭐ THE ONE FUNCTION THAT TOUCHES PERMANENT DATA.
+   It writes exactly one warpath_grants row and nothing else. Everything it
+   can put in that row is bounded:
+     • cards  — must be SECURED cards belonging to THIS expedition, and no more
+                than the extraction cap (6 + 3 per Supply Tent level)
+     • materials — the SECURED extraction materials, read from inventory
+   A caller cannot name a card id it does not own, cannot exceed the cap, and
+   cannot run twice (unique (user_id, run_id) plus the status transition).   */
+create or replace function public.warpath_extract_finish(p_exp uuid, p_keep uuid[] default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; run public.warpath_runs;
+  cap int; keys text[]; mats jsonb; kept uuid[]; n int; summary jsonb;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'ready' then
+    return jsonb_build_object('ok', false, 'reason', 'not_ready', 'status', me.status,
+                              'extract_left', me.extract_left); end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+  cap := 6 + 3 * public.wp_level(me.id, 'supply');
+
+  -- Only secured cards of THIS expedition are eligible, whatever was asked for.
+  -- ⚠ `source <> 'starter'` is not a detail. The 24 starter cards are a loaner
+  -- deck, they arrive secured on turn 1, and without this they sort to the
+  -- front and fill the entire extraction cap with cards the player already
+  -- owned. Nothing you did not find out here comes home.
+  select array_agg(id) into kept from (
+    select id from public.warpath_cards
+     where expedition_id = me.id and secured = true and source <> 'starter'
+       and (p_keep is null or id = any(p_keep))
+     order by (source = 'boss') desc, (source = 'recruit') desc, acquired_turn
+     limit cap) z;
+  kept := coalesce(kept, ARRAY[]::uuid[]);
+  select coalesce(array_agg(card_key), ARRAY[]::text[]) into keys
+    from public.warpath_cards where id = any(kept);
+
+  select coalesce(jsonb_object_agg(i.kind, i.secured), '{}'::jsonb) into mats
+    from public.warpath_inventory i join public.warpath_resources r on r.kind = i.kind
+   where i.expedition_id = me.id and r.tier = 'extraction' and i.secured > 0;
+
+  select count(*) into n from public.warpath_cards
+   where expedition_id = me.id and source <> 'starter';
+  summary := jsonb_build_object(
+    'cards_discovered', n,
+    'cards_secured', array_length(keys, 1),
+    'resources_extracted', (select coalesce(sum(i.secured), 0) from public.warpath_inventory i
+                              join public.warpath_resources r on r.kind = i.kind
+                             where i.expedition_id = me.id and r.tier = 'expedition'),
+    'bosses_defeated', me.stat_bosses,
+    'players_defeated', me.stat_defeated,
+    'camps_raided', me.stat_raided,
+    'distance_travelled', me.stat_distance,
+    'turns', run.turn);
+
+  insert into public.warpath_grants (user_id, run_id, card_keys, materials, summary)
+    values (me.user_id, me.run_id, coalesce(keys, ARRAY[]::text[]), mats, summary)
+    on conflict (user_id, run_id) do nothing;
+
+  update public.warpath_expeditions set status = 'extracted', ended_at = now() where id = me.id;
+  perform public.wp_log(me.run_id, me.id, 'extracted',
+    jsonb_build_object('hero', me.hero_name, 'cards', array_length(keys, 1)));
+  return jsonb_build_object('ok', true, 'card_keys', coalesce(keys, ARRAY[]::text[]),
+                            'materials', mats, 'summary', summary, 'cap', cap);
+end $$;
+
+-- Abandon: walk away with nothing. Kept so a stuck player is never trapped in
+-- a run, which would also block them from ever entering another one.
+create or replace function public.warpath_abandon(p_exp uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare me public.warpath_expeditions;
+begin
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status in ('extracted','lost') then return jsonb_build_object('ok', true, 'already', me.status); end if;
+  update public.warpath_expeditions set status = 'lost', ended_at = now() where id = me.id;
+  perform public.wp_log(me.run_id, me.id, 'abandoned', jsonb_build_object('hero', me.hero_name));
+  return jsonb_build_object('ok', true);
+end $$;
+
+/* Drain the outbox. The game client calls this on load and applies the result
+   to Profile.cardCollection. Marking claimed is conditional so a double call
+   cannot grant the same cards twice. */
+create or replace function public.warpath_grants_claim()
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); out jsonb := '[]'; rec record;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  for rec in update public.warpath_grants set claimed = true, claimed_at = now()
+              where user_id = v_uid and claimed = false
+              returning * loop
+    out := out || jsonb_build_object('run_id', rec.run_id, 'card_keys', rec.card_keys,
+                                     'materials', rec.materials, 'summary', rec.summary);
+  end loop;
+  return jsonb_build_object('ok', true, 'grants', out);
+end $$;
+
+-- Execute grants. Everything is security definer + auth.uid()-scoped inside.
+do $$ declare f record; begin
+  for f in select p.oid::regprocedure::text as sig from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname like 'warpath\_%' loop
+    execute format('grant execute on function %s to authenticated', f.sig);
+  end loop;
+end $$;
+
+-- Read-only for clients, on every run table. There are deliberately NO
+-- insert/update/delete grants and NO write policies: the only way to change
+-- run state is through the security-definer RPCs above.
+do $$ declare t text; begin
+  for t in select tablename from pg_tables
+            where schemaname = 'public' and tablename like 'warpath\_%' loop
+    execute format('grant select on public.%I to authenticated', t);
+    execute format('revoke insert, update, delete on public.%I from authenticated', t);
+  end loop;
+end $$;

@@ -130,7 +130,7 @@ var PAL = {
      dark mass with a few brilliant lit faces and a white cap, not an evenly
      bright one; the drama comes from the RANGE between deep and lit, and from
      the drawn ridge lines, not from raising the average. */
-  mountain:  { deep: '#20171a', base: '#55423a', lit: '#9a8471', elev: 0.90, rough: 1.26 },
+  mountain:  { deep: '#2e2226', base: '#584740', lit: '#968d82', elev: 0.90, rough: 1.26 },
   wastes:    { deep: '#4e442f', base: '#8d8062', lit: '#cdbf9d', elev: 0.28, rough: 0.50 },
 };
 // Precomputed as integer triples. parseInt() on a hex string is not something
@@ -624,6 +624,7 @@ function bakeTerrain(seed, opts) {
      between the Open Steppe reading as a table and reading as country. */
   var DM = Math.max(2, (PX * 0.40) | 0);
   var RELIEF_MACRO = 11.0, RELIEF_MICRO = 16 / (PX / 28);
+  var RELIEF_KNEE = 2.6;   // see the soft-knee note in the shading loop
   /* ⚠ 0.32, not 0.42. The water field is a two-pass blur of the binary tile
      mask, so the value at the centre of a shoreline water tile sits near 0.75
      and the land beside it near 0.18; thresholding at the midpoint of THAT
@@ -651,13 +652,45 @@ function bakeTerrain(seed, opts) {
          Rugged ground gets nearly triple the exaggeration of soft ground,
          which is why Dragon Mountain can carry itself on shading and only
          needs a scatter of crags as accents rather than a lawn of them. */
-      var rmul = 0.80 + 1.85 * (RGA[i] / 200);
+      var rgN = RGA[i] / 200;
+      var rmul = 0.80 + 1.85 * rgN;
+      /* ⚠ The MICRO term does NOT get the full ruggedness multiplier.
+         It used to, and on Dragon Mountain that tripled the fine gradient as
+         well as the landform one: the massif came out as salt-and-pepper —
+         every few pixels swinging the tonal ramp end to end — and no amount
+         of palette work could make a coherent mountain out of it. Ruggedness
+         should exaggerate the LANDFORM (that is what makes a mountain a
+         mountain) and leave the surface texture roughly alone. */
+      var mmul = 0.85 + 0.72 * rgN;
       var gmx = (eR - eL) * RELIEF_MACRO * rmul, gmy = (eD - eU) * RELIEF_MACRO * rmul;
-      var gx = gmx + (er - el) * RELIEF_MICRO * rmul;
-      var gy = gmy + (ed - eu) * RELIEF_MICRO * rmul;
+      var gx = gmx + (er - el) * RELIEF_MICRO * mmul;
+      var gy = gmy + (ed - eu) * RELIEF_MICRO * mmul;
+      /* ── SOFT-KNEE THE GRADIENT ──────────────────────────────────────────
+         This is the line that turns Dragon Mountain from a stain into a
+         mountain, and it took an embarrassingly long time to find.
+
+         The vertical exaggeration here is about tenfold, which is what open
+         country needs before a swell of a few percent grade shows up at all.
+         On rugged ground that same multiplier produces gradients around
+         THIRTY — an 88° wall at every pixel — and once the gradient is that
+         large the lambertian term saturates: every surface is either fully
+         lit or fully shadowed, the tonal ramp slams to its endpoints, and a
+         massif renders as a checkerboard of bleached slope and ink blot with
+         no modelling in between. It also makes every slope test in the file
+         meaningless, which is the real reason the snowline never fired on the
+         one biome that needed it.
+
+         So the gradient goes through a soft knee: below ~1 it is essentially
+         untouched (the steppe keeps its exaggeration), and it asymptotes to
+         RELIEF_KNEE however steep the ground gets. The mountain gets a
+         continuous range of surface angles back, which is the only way a
+         hillshade can model form at all. */
+      var gm = Math.sqrt(gx * gx + gy * gy);
+      var comp = 1 / (1 + gm * (1 / RELIEF_KNEE));
+      gx *= comp; gy *= comp;
+      var slope = gm * comp;
       var nl = 1 / Math.sqrt(gx * gx + gy * gy + 1);
       var lam = (-gx * lx - gy * ly + lz) * nl;
-      var slope = Math.sqrt(gx * gx + gy * gy);
       /* ⚠ The MACRO slope is kept separately, and the snow depends on it.
          `slope` above includes the micro term — the rock-and-grass texture —
          and on rugged ground that term alone runs to several units, so a
@@ -666,7 +699,8 @@ function bakeTerrain(seed, opts) {
          Mountain had no cap at all, and the destination biome lost the one
          feature that would have made it read as a peak from across the map.
          Snow slides off a LANDFORM slope, not off gravel. */
-      var mslope = Math.sqrt(gmx * gmx + gmy * gmy);
+      var mgm = Math.sqrt(gmx * gmx + gmy * gmy);
+      var mslope = mgm / (1 + mgm * (1 / RELIEF_KNEE));
 
       /* ── curvature ────────────────────────────────────────────────────
          The Laplacian of the height field: positive in a hollow, negative on
@@ -691,7 +725,7 @@ function bakeTerrain(seed, opts) {
       var cf = 0.42 + 0.58 * clamp(slope * 1.35, 0, 1);
       sh = 0.5 + (sh - 0.5) * cf - curv * 0.34;
       if (sh < 0) sh = 0;
-      sh *= (1 - 0.42 * SHADOW[i]);              // the cast shadow
+      sh *= (1 - 0.50 * SHADOW[i]);              // the cast shadow
       if (sh > 1.22) sh = 1.22;
       LIGHT[i] = clamp(sh * 200, 0, 255) | 0;
 
@@ -791,8 +825,21 @@ function bakeTerrain(seed, opts) {
              the wrong rock and the wrong drama for a volcano. */
           var band = e * 24 + det * 3.1;
           var sfr = band - Math.floor(band);
-          var strata = 0.94 + 0.13 * sstep(0.10, 0.50, sfr) - 0.11 * sstep(0.58, 0.96, sfr);
+          /* ⚠ Faded out wherever the ground is actually ROCK. Strata are a
+             sedimentary feature and at full strength across a whole massif
+             they read as contour lines on a sand dune — which is precisely
+             what two rounds of this file produced. They belong on the lower
+             shoulders; the exposed rock above gets fracture instead. */
+          var stAmt = 1 - rock * 0.72;
+          var strata = 1 + (0.13 * sstep(0.10, 0.50, sfr) - 0.11 * sstep(0.58, 0.96, sfr) - 0.06) * stAmt;
           cr *= strata; cg *= strata * 0.99; cb *= strata * 0.975;
+          // fractured rock: a fine dark crack network, only on the bare rock
+          if (rock > 0.02) {
+            var frac = sstep(0.84, 1.0, 1 - Math.abs(fine + fine - 1)) * rock;
+            cr = mix(cr, 40, frac * 0.30); cg = mix(cg, 35, frac * 0.30); cb = mix(cb, 36, frac * 0.30);
+            var grit = 0.94 + 0.13 * fine;
+            cr *= grit; cg *= grit; cb *= grit;
+          }
           /* Ember light. Two terms, because one reads as orange confetti: a
              wide, weak bloom that warms the whole hollow, and a narrow bright
              core inside it that is the fissure itself. Both live LOW on the
@@ -889,7 +936,7 @@ function bakeTerrain(seed, opts) {
            swell of the Open Steppe. */
         var snowline = (0.92 - 0.19 * clamp(RGA[i] / 200, 0, 1.2)) + 0.20 * det + 0.09 * mid;
         var snowAmt = sstep(snowline, snowline + 0.26, e)
-                    * clamp(1 - mslope * 0.30, 0.0, 1)
+                    * clamp(1 - mslope * 0.26, 0.0, 1)
                     * clamp(0.35 + 1.0 * fine, 0, 1);
         if (snowAmt > 0.02) {
           var sn = sh > 0.70 ? SNOWV.lit : SNOWV.deep;
@@ -1281,7 +1328,7 @@ function makeObject(A, nm, fx, fy, e, lit, r) {
          a tile, and a rock outcrop drawn at that size stops reading as rock
          and starts reading as a tent. The massif's scale now comes from the
          height field and the hachures; the crags are accents on it. */
-      var s2 = PX * Math.min(0.46, 0.12 + r() * 0.14 + hi * 0.20 + Math.max(0, spine) * 0.16);
+      var s2 = PX * Math.min(0.38, 0.11 + r() * 0.12 + hi * 0.17 + Math.max(0, spine) * 0.14);
       return { y: fy, f: function () { drawCrag(c, px, py, s2, lit, e, r); } };
     }
     // fewer loose boulders than the first pass: at the density it used, the
@@ -1434,6 +1481,15 @@ function drawCrag(c, x, y, s, lit, e, r) {
   c.lineTo(sx - w * 0.22, y);
   c.closePath();
   c.fillStyle = shadeRGB(lR, lG, lB, 0.70 + lit * 0.46); c.fill();
+  /* A third facet between the lit and shadowed flanks. Two flat fills meeting
+     along one line is cut paper however good the silhouette is; three tonal
+     steps is the minimum at which a polygon starts reading as a solid. */
+  c.beginPath();
+  c.moveTo(pts[2][0], pts[2][1]); c.lineTo(pts[3][0], pts[3][1]);
+  c.lineTo(sx - w * 0.22, y); c.lineTo(sx - w * (0.44 + r() * 0.2), y);
+  c.closePath();
+  c.fillStyle = shadeRGB((dR + lR) >> 1, (dG + lG) >> 1, (dB + lB) >> 1, 0.66 + lit * 0.44);
+  c.fill();
   // a crease down the face, so the rock has structure
   c.strokeStyle = 'rgba(38,28,22,0.28)'; c.lineWidth = Math.max(0.5, s * 0.06);
   c.beginPath(); c.moveTo(sx, y - h); c.lineTo(sx - w * (0.2 + r() * 0.3), y); c.stroke();
@@ -1459,7 +1515,7 @@ function drawCrag(c, x, y, s, lit, e, r) {
     c.lineTo(shx, y - sh2); c.lineTo(shx - w * 0.18, y - sh2 - h * 0.10);
     c.lineTo(sx - w * 0.06, y - h * 0.86);
     c.closePath();
-    c.fillStyle = 'rgba(226,234,242,0.80)'; c.fill();
+    c.fillStyle = 'rgba(222,230,240,0.62)'; c.fill();
   }
 }
 function drawBoulder(c, x, y, s, lit, r) {
@@ -1928,6 +1984,8 @@ function drawLabels(ctx, baked, cam, st) {
   var z = cam.z;
   if (z < 11) return;                      // below this the type is illegible anyway
   var fs = z * 0.52;
+  var M2 = mapgen(), MW2 = M2.WORLD_W, MH2 = M2.WORLD_H;
+  var VW2 = ctx.canvas ? ctx.canvas.width : MW2 * z;
   ctx.save();
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.font = '600 ' + fs.toFixed(1) + 'px Georgia, "Times New Roman", serif';
@@ -1935,18 +1993,26 @@ function drawLabels(ctx, baked, cam, st) {
   try { ctx.letterSpacing = Math.max(1, z * 0.10).toFixed(1) + 'px'; } catch (e) { /* older engines */ }
   for (var i = 0; i < labels.length; i++) {
     var L = labels[i];
-    var px = L.x * z - cam.x, py = L.y * z - cam.y;
     var half = ctx.measureText(L.text).width * 0.5 / z;    // in tiles
+    /* Nudge the name back inside the world. A biome core can sit two tiles
+       from the edge and its name is eight tiles long, and the previous
+       version simply let it run off the chart — "AGON MOUNTAIN". Clamping in
+       WORLD space rather than screen space means the label stays put relative
+       to its region when the camera moves, which a screen-space clamp would
+       not: the name would slide along the frame edge as you panned. */
+    var lxw = clamp(L.x, half + 0.4, Math.max(half + 0.4, MW2 - half - 0.4));
+    var px = lxw * z - cam.x, py = clamp(L.y, 0.7, MH2 - 0.7) * z - cam.y;
+    if (px < -half * z - z || px > VW2 + half * z + z) continue;
     var a = 1;
     if (st) {
       /* Sample the middle and both ends. A name that runs off into the
          shroud is suppressed entirely rather than cropped mid-word — half a
          word fading into cloud looks like a rendering fault, and the half
          that survives still names ground the player has not walked. */
-      var MW = mapgen().WORLD_W - 1, ly = clamp(L.y | 0, 0, mapgen().WORLD_H - 1);
-      var s = Math.min(st(clamp(L.x | 0, 0, MW), ly),
-                       st(clamp((L.x - half * 0.8) | 0, 0, MW), ly),
-                       st(clamp((L.x + half * 0.8) | 0, 0, MW), ly));
+      var MW = MW2 - 1, ly = clamp(L.y | 0, 0, MH2 - 1);
+      var s = Math.min(st(clamp(lxw | 0, 0, MW), ly),
+                       st(clamp((lxw - half * 0.8) | 0, 0, MW), ly),
+                       st(clamp((lxw + half * 0.8) | 0, 0, MW), ly));
       if (!(s > 0)) continue;              // 0, undefined or NaN → not drawn
       a = s === 1 ? 0.40 : 1;
     }
@@ -2004,15 +2070,15 @@ function bakeMemory(src, BW, BH) {
      the dimming. The distinction from `live` is carried by colour temperature
      and chroma, which the eye reads instantly, rather than by brightness,
      which just destroys the picture. */
-  c.globalAlpha = 0.52;
+  c.globalAlpha = 0.46;
   c.globalCompositeOperation = 'saturation';
   c.fillStyle = 'hsl(0,0%,50%)'; c.fillRect(0, 0, BW, BH);
   c.globalAlpha = 1;
   c.globalCompositeOperation = 'source-over';
-  c.fillStyle = 'rgba(22,32,54,0.24)'; c.fillRect(0, 0, BW, BH);
+  c.fillStyle = 'rgba(22,32,54,0.19)'; c.fillRect(0, 0, BW, BH);
   // a hair of moonlight back into the highlights, so the relief still reads
   c.globalCompositeOperation = 'overlay';
-  c.fillStyle = 'rgba(150,162,190,0.10)'; c.fillRect(0, 0, BW, BH);
+  c.fillStyle = 'rgba(158,168,192,0.14)'; c.fillRect(0, 0, BW, BH);
   c.globalCompositeOperation = 'source-over';
   return cv;
 }
@@ -2053,7 +2119,10 @@ function bakeSilhouette(seed, ELEV, SHADOW, WVAL, WTHR, BW, BH, PX) {
       var e = ELEV[i];
       var eL = ELEV[x > DM ? i - DM : i], eR = ELEV[x < BW - 1 - DM ? i + DM : i];
       var eU = ELEV[y > DM ? i - DM * BW : i], eD = ELEV[y < BH - 1 - DM ? i + DM * BW : i];
-      var gx = (eR - eL) * 8.0, gy = (eD - eU) * 8.0;
+      var gx = (eR - eL) * 14.0, gy = (eD - eU) * 14.0;
+      // same soft knee as the terrain pass, for the same reason
+      var gm2 = Math.sqrt(gx * gx + gy * gy), c2 = 1 / (1 + gm2 * 0.30);
+      gx *= c2; gy *= c2;
       var nl = 1 / Math.sqrt(gx * gx + gy * gy + 1);
       var lam = (-gx * lx - gy * ly + lz) * nl;
       var cv2 = (eL + eR + eU + eD) * 0.25 - e;
@@ -2078,9 +2147,9 @@ function bakeSilhouette(seed, ELEV, SHADOW, WVAL, WTHR, BW, BH, PX) {
            The landform has to be legible, not dramatic — dramatic is what the
            map itself gets to be once you have walked there. */
         var v = clamp(sh, 0, 1);
-        cr = mix(104, 196, v); cg = mix(94, 182, v); cb = mix(78, 154, v);
-        var mass = sstep(0.42, 1.05, e);
-        cr = mix(cr, 88, mass * 0.42); cg = mix(cg, 78, mass * 0.42); cb = mix(cb, 64, mass * 0.42);
+        cr = mix(80, 208, v); cg = mix(72, 194, v); cb = mix(60, 166, v);
+        var mass = sstep(0.40, 1.05, e);
+        cr = mix(cr, 72, mass * 0.56); cg = mix(cg, 64, mass * 0.56); cb = mix(cb, 54, mass * 0.56);
         var cap = sstep(1.00, 1.34, e);
         cr = mix(cr, 228, cap * 0.72); cg = mix(cg, 230, cap * 0.72); cb = mix(cb, 232, cap * 0.72);
       }
@@ -2125,9 +2194,15 @@ function bakeCloud(seed, W, H) {
       g3 = noiseGrid(seed, R_CLOUD + 2, 71, 50);
   var img = c.createImageData(CW, CH), d = img.data;
   for (var y = 0; y < CH; y++) for (var x = 0; x < CW; x++) {
-    var v = sampleGrid(g1, 13, 10, x / CW * 12, y / CH * 9) * 0.55
-          + sampleGrid(g2, 31, 22, x / CW * 30, y / CH * 21) * 0.30
-          + sampleGrid(g3, 71, 50, x / CW * 70, y / CH * 49) * 0.15;
+    /* Weighted hard toward the LOWEST octave: a shroud wants a few big banks
+       with clear windows between them, not an even stipple. At the first
+       weighting the three octaves were close enough in strength that the
+       cloud came out uniformly busy, and a uniformly busy veil hides the
+       landform everywhere by a little instead of hiding it somewhere by a
+       lot — which is the difference between weather and a dirty lens. */
+    var v = sampleGrid(g1, 13, 10, x / CW * 12, y / CH * 9) * 0.68
+          + sampleGrid(g2, 31, 22, x / CW * 30, y / CH * 21) * 0.23
+          + sampleGrid(g3, 71, 50, x / CW * 70, y / CH * 49) * 0.09;
     var i = (y * CW + x) << 2;
     var t = clamp((v - 0.30) * 2.1, 0, 1);
     var t2 = t * t * (3 - 2 * t);
@@ -2144,7 +2219,7 @@ function bakeCloud(seed, W, H) {
     // Opacity: thin over most of the map so the landform underneath is plainly
     // legible, piling up into banks that bury it completely. The quartic keeps
     // the thick banks a minority of the area — a deck with holes in it.
-    d[i + 3] = (mix(52, 160, t2 * t2) + 16 * t) | 0;
+    d[i + 3] = (mix(38, 148, t2 * t2) + 14 * t) | 0;
   }
   c.putImageData(img, 0, 0);
   return cv;

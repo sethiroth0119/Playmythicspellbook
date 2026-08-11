@@ -521,15 +521,136 @@ init().catch(err => {
 async function init(){
   THREE = await loadThree();
 
+  /* 🔥 GPU BACKBUFFER BUDGET — this used to kill the renderer process.
+     #scene is `position:fixed; inset:0` so setSize() is ALWAYS the full
+     viewport, and this iframe stays mounted for as long as the player idles
+     on the title screen. The old attributes were
+     `{ antialias:true, alpha:true }`
+     with `setPixelRatio(min(dpr,2))`. On a 1920x1080 retina panel that is a
+     3840x2160 drawing buffer and the driver allocates FOUR surfaces (measured
+     on that machine: a context opened with the OLD attributes reports
+     SAMPLES 4, DEPTH_BITS 24; with the new ones, SAMPLES 0, DEPTH_BITS 0):
+       4x MSAA colour RGBA8 ....... 127 MiB
+       4x MSAA depth24 ............ 127 MiB
+       resolve target ..............  32 MiB
+       compositor front buffer .....  32 MiB   = 316 MiB
+     At 2560x1440 @2 the same maths gives 563 MiB. None of it is visible to
+     the JS heap — which is exactly why the heap read a flat 806-825 MB while
+     the GPU process died.
+     After the cuts below the same panels allocate one colour surface plus the
+     compositor front buffer and nothing else (all figures MiB, from running
+     the real clampPixelRatio() over a display matrix):
+       1920x1080 @2 → 3840x2160 →  63   (was  316)   ratio unchanged at 2
+       2560x1440 @2 → 5120x2880 → 113   (was  563)   ratio unchanged at 2
+       3840x2160 @1 → 3840x2160 →  63   (was  316)   ratio unchanged at 1
+       3840x2160 @2 → 5333x3000 → 122   (was 1266)   ratio 1.389 — the ONLY
+                                                     display class the budget
+                                                     scales down at all
+       7680x4320 @1 → 7680x4320 → 253   (was 1266)   ratio floored at 1, over
+                                                     budget on purpose — see ⚠
+     Add ~50% to each if the compositor triple-buffers. Quote the range, never
+     a single number: the surface count is the driver's business, only the
+     buffer size is ours.
+     Two of the three cuts below are free. The third is not, and is fenced
+     accordingly:
+       depth:false     — the scene holds exactly ONE object, additive Points
+                         with depthWrite:false. Nothing ever reads or writes
+                         depth, so the buffer was pure dead weight.
+       antialias:false — MSAA only smooths geometry edges. The only geometry
+                         is 0.075-unit point sprites whose texture fades to
+                         alpha 0 at the quad border, so there is no hard edge
+                         for MSAA to find. Measured, not assumed: the identical
+                         500-ember cloud (seeded PRNG, same camera, same frame)
+                         rendered at 1280x720 through both attribute sets and
+                         read back gives
+                           peak luminance ......... 110.6 vs 110.6  (identical)
+                           pixels brighter than 64 . 405 vs 405     (identical)
+                           total additive energy ... -0.45%
+                           mean abs difference ..... 0.016/255, max 16/255,
+                                                     0 pixels differing by >32
+                         The bright core of every ember survives untouched;
+                         all MSAA bought was ~300 fringe pixels differing by
+                         8-16/255. Additive blending conserves the energy, so
+                         the embers read the same, a hair less hazy.
+       pixel budget    — a TAIL GUARD only, see clampPixelRatio() below.
+     ⚠ Do NOT "restore" antialias/depth here because a future object needs
+     them: add the flag back only alongside something that actually reads
+     depth, and re-measure, or the title screen goes back to 316 MiB. */
   let renderer;
   if (THREE.WebGPURenderer){
-    renderer = new THREE.WebGPURenderer({ canvas, antialias:true, alpha:true });
+    renderer = new THREE.WebGPURenderer({ canvas, antialias:false, alpha:true, depth:false });
     await renderer.init();
     rendererName = renderer.backend?.isWebGPUBackend ? 'WebGPU' : 'WebGL2';
   } else {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+    renderer = new THREE.WebGLRenderer({ canvas, antialias:false, alpha:true, depth:false });
   }
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+  /* A pixel BUDGET, not a tighter DPR cap. The surviving colour buffer still
+     scales with viewport², so something has to bound the tail — but resolution
+     is the ONE lever here that is not free, and an earlier revision of this
+     block spent it far too cheaply. It capped the ratio at 1.5 and asserted
+     that "1.5 vs 2 is imperceptible on blurred gradient sprites". Measured
+     against the ratio-2 render (same harness as the MSAA numbers above, the
+     lower ratio bilinearly upscaled back to the physical grid exactly as the
+     compositor would) at THREE buffer sizes — point-sprite size in device
+     pixels scales with the buffer, so a small window exaggerates any
+     resolution cut and one scale alone would prove nothing:
+                ── 1280x720 ──   ── 2560x1440 ──   ── 3840x2160 ──
+       ratio    peak px>64  E    peak px>64   E     peak px>64   E
+        2.0    110.6   405 ref  191.2  3546  ref   226.7  8746  ref
+        1.554   91.5    74 -6%  146.3  2856  -3%      not probed
+        1.5     88.7    48 -8%  153.6  2700  -4%      not probed
+        1.388   93.6    31 -12% 129.3  2418  -6%   198.3  7814  -3%
+        aa:on  110.6   405 -0%  191.2  3546  -0%   226.7  8746  -0%
+     (peak = brightest pixel, px>64 = pixels above quarter brightness,
+      E = total additive energy vs the ratio-2 reference.)
+     Read the bottom row first: MSAA never moved the peak or the hot-pixel
+     count by a single unit at any scale. Resolution moves both, every time.
+     The embers are NOT blurred blobs — each sprite is only ~3 device px across
+     at 1280x720, ~6 at 2560x1440 — so a sprite's hot centre lives in one or
+     two pixels and dropping the ratio deletes it. Ratio 1.5 threw away 20% of
+     the brightest pixel in the frame and 24-88% of the pixels above 64.
+     Additive blending hides that in the energy total because the light merely
+     spreads out, which is exactly why the old comment's energy-only reasoning
+     concluded "imperceptible": sparks that lose their hot core stop reading as
+     sparks while the energy sum barely twitches. The curve is not even
+     monotonic (1.554 scores worse than 1.5 at 2560x1440) because a non-integer
+     ratio resamples badly on top of losing detail — so the cost is jittery per
+     display as well as real. The one consolation is that it shrinks fast with
+     buffer size (ratio 1.388 loses 92% / 32% / 11% of the hot pixels across
+     the three scales), which is what makes a HIGH budget affordable and a low
+     one not. So the ratio cap goes back to the original Math.min(dpr, 2) and
+     the budget is set high enough that mainstream displays never reach it:
+         1920x1080 @2 → 8.29M px   ┐
+         3840x2160 @1 → 8.29M px   ├ under budget: ratio 2 (or 1), i.e. pixel-
+         2560x1440 @2 → 14.75M px  │ identical to the pre-fix build
+         5120x2880 @1 → 14.75M px  ┘
+         3840x2160 @2 → 33.2M px  → over: ratio 1.388, capped at 16.0M px
+     So the budget only bites on a 4K-and-up retina panel, where the untouched
+     buffer would be 253 MiB of colour+compositor and the alternative is the
+     GPU process death this whole block exists to stop. Everywhere else the
+     memory win is the free one: killing 4x MSAA colour+depth above.
+     ⚠ The Math.max(1, …) floor is REAL and the budget is therefore NOT a hard
+     cap. Above 16.0M CSS pixels of viewport the floor wins and the budget is
+     exceeded, not met: a 7680x4320 desktop at DPR 1 renders 33.2M px = 253 MiB
+     and this function does nothing about it. That is deliberate — ratio < 1
+     means the compositor upscales a buffer that is blurrier than the CSS grid
+     the rest of the menu is laid out on, which is a worse bug than the memory.
+     Do not describe this as "scales down until it fits"; it scales down TOWARD
+     the budget and never below ratio 1. (An earlier revision of this comment
+     did claim it fit, which was false on every panel above 4K.)
+     Called again on resize so dragging the window between monitors re-fits
+     instead of keeping a stale ratio. */
+  const MAX_DRAW_PIXELS = 16.0e6;   // 61 MiB/surface RGBA8; colour + front ≈ 122 MiB
+  function clampPixelRatio(){
+    const dpr  = Math.min(devicePixelRatio || 1, 2);
+    const need = innerWidth * innerHeight * dpr * dpr;
+    const r    = need > MAX_DRAW_PIXELS
+      ? Math.max(1, dpr * Math.sqrt(MAX_DRAW_PIXELS / need))
+      : dpr;
+    renderer.setPixelRatio(r);
+  }
+  clampPixelRatio();
   renderer.setSize(innerWidth, innerHeight);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
@@ -589,15 +710,52 @@ async function init(){
   const clock = new THREE.Clock();
   const bgEl = document.getElementById('bg');
   let mx = 0, my = 0, pulse = 0;
+  /* Interaction stamp, read by the idle frame cap below. Anything the player
+     can drive that wants full frame rate must push this forward. */
+  let activeUntil = 0;
   addEventListener('pointermove', e => {
     mx = (e.clientX/innerWidth  - 0.5);
     my = (e.clientY/innerHeight - 0.5);
+    activeUntil = performance.now() + 900;   // parallax must not run at half rate
   });
 
-  window.__pulseFire = () => { pulse = 1; };
+  window.__pulseFire = () => { pulse = 1; activeUntil = performance.now() + 900; };
 
   const baseSize = embers.material.size;
+
+  /* 🔋 IDLE FRAME CAP — 60 fps while the player is moving the pointer or a menu
+     pulse is playing, 30 fps when the screen is untouched.
+     WHY: this loop, not the lightning canvas, is the heavy thing in this iframe.
+     Measured on the idle title screen before this change: 64.6 rAF/s in the
+     document, of which 59.9/s were WebGL draw calls from here (counted by
+     patching drawArrays/drawElements) against the bolt canvas' 4.6 clears/s.
+     Each of those is a full-viewport present — 3840x2160 on a 1080p/DPR2 panel
+     — and it never stopped, for as long as the player sat on the title screen.
+     Capping the untouched case halves that: 59.9 → 30.0 draws/s, measured.
+     ⚠ This is GPU bandwidth and power, NOT memory: no buffer is freed by
+     drawing less often, and this scene's colour buffer is resident either way.
+     The memory levers in this file are the renderer attributes above,
+     clampPixelRatio()'s pixel budget, and release() on the lightning canvas —
+     never the frame rate. Do not quote a frames-per-second delta as megabytes.
+     ⚠ The early return MUST stay above clock.getDelta(). getDelta() is
+     stateful — it returns the time since it was last CALLED — so skipping a
+     frame after reading it would hand the ember integrator half the elapsed
+     time and the embers would visibly drift at half speed. Returning first
+     credits the skipped interval to the next drawn frame, and 1/30 s is still
+     under the 0.05 clamp below, so motion is identical either way.
+     Not gated on document.hidden as well, and that was checked rather than
+     assumed: over a 6.2 s hidden window this iframe logged 0 rAF callbacks,
+     0 WebGL draws and 0 canvas clears — rAF is already fully suspended — so
+     renderer.setAnimationLoop(null) on hide would buy exactly nothing while
+     adding a path that can strand the scene stopped if the matching 'visible'
+     event never lands. */
+  const IDLE_GAP_MS = 1000/30 - 2;   // tolerance, or a 60Hz pair lands 1 ms late and drops to 20 fps
+  let lastDraw = 0;
   renderer.setAnimationLoop(() => {
+    const nowMs = performance.now();
+    if (nowMs > activeUntil && nowMs - lastDraw < IDLE_GAP_MS) return;
+    lastDraw = nowMs;
+
     const dt = Math.min(clock.getDelta(), 0.05);
     const t  = clock.elapsedTime;
 
@@ -613,6 +771,16 @@ async function init(){
       camera.position.x = 1.6 + mx*0.7;
       camera.position.y = 1.5 - my*0.5;
       camera.lookAt(lookTarget);
+      /* Rejected optimisation, do not "fix" this: guarding this write on
+         "did mx/my actually change". It LOOKS like it dirties the backdrop's
+         compositor layer every frame while the pointer sits still, and it does
+         not — Blink drops an inline-style write whose value is unchanged before
+         it reaches style invalidation. Measured on this element: 5 writes of the
+         identical string produce 0 attribute mutation records, 5 writes of a
+         changed string produce 5, and over a 20 s idle window this line produced
+         0 mutations at 60 fps. What is left is 0.48 µs for the setter plus
+         0.15 µs to build the string, i.e. ~38 µs per second of main thread —
+         not worth a state variable that can go stale. */
       bgEl.style.transform = `scale(1.04) translate(${(-mx*14).toFixed(1)}px, ${(-my*10).toFixed(1)}px)`;
     }
 
@@ -626,6 +794,7 @@ async function init(){
   addEventListener('resize', () => {
     camera.aspect = innerWidth/innerHeight;
     camera.updateProjectionMatrix();
+    clampPixelRatio();   // re-fit the GPU budget — a stale ratio re-inflates the backbuffer
     renderer.setSize(innerWidth, innerHeight);
   });
 
@@ -786,12 +955,87 @@ document.getElementById('musicBtn').addEventListener('click', () => {
   if (!cv) return;
   var ctx = cv.getContext('2d');
   var W = 0, H = 0, DPR = 1;
+  var parked = true;  // is the backing store released right now? Starts true:
+                      // nothing is drawn until the first strike, so the canvas
+                      // must not allocate 31.6 MiB at boot just to sit blank.
+
+  /* 💾 THE BACKING STORE IS THE MEMORY — AND IT DOES NOT HAVE TO BE RESIDENT.
+     `position:fixed; inset:0`, alive for as long as the player idles on the
+     title screen, so this canvas' bitmap is resident GPU memory that the JS
+     heap cannot see — the exact shape of the crash this file is being audited
+     for (heap flat at ~810 MB for 48 min, GPU process dies anyway).
+     MEASURED, not assumed. Windows perf counter
+     `\GPU Process Memory(pid_<gpu>)\Local Usage`, read against the browser's
+     own GPU process on the idle title screen, dpr 2 / 1920x1080:
+         one 3840x2160 canvas   allocated → released :  -32.3 MiB
+         eight of them (to clear the ±4 MiB noise floor): -258 MiB, ~32 each
+     So a 2D canvas costs width*height*4 bytes of real GPU memory, 1:1 with the
+     arithmetic (31.64 MiB), and `cv.width = 0` HANDS ALL OF IT BACK. That is
+     what release() is for, and it is the entire memory win on this canvas.
+
+     It is free because the loop already parks between storms (see frame()):
+     strikes are 2.6-9.1 s apart and a bolt lives 260-600 ms, so the canvas has
+     nothing on it most of the time. Measured on the live title screen — 49 s
+     sampled every 100 ms, 8 complete storm cycles — the bitmap exists for 8.9%
+     of the wall clock (each strike holds it 400-700 ms) and is 0x0 for the
+     other 91%. Time-averaged residency therefore goes 31.6 MiB → 2.8 MiB, and
+     it is a hard zero for as long as the tab is hidden. The park branch already
+     owed the canvas a wipe on the way out — and dropping the bitmap IS the
+     wipe, which is why the `dirty` flag that tracked that is gone.
+     Reallocating costs nothing
+     measurable: `cv.width = 3840` plus a full bolt repaint records in 0.1 ms,
+     and the A/B says keeping the bitmap and clearRect-ing it is SLOWER, because
+     a freshly sized bitmap starts transparent so the clear is free.
+
+     ⚠ This REPLACED a resolution cut, and must not be "simplified" back into
+     one. Earlier revisions pinned DPR to 1 (then 1.5) to shrink the same bytes,
+     on the claim that nothing here is sharp enough to notice. That claim is
+     false, and the whole-frame mean|Δ| offered as proof is the wrong instrument
+     — it averages a 1.3px hot core in with a 34px-blur haze over 8.3M pixels
+     and reads ~0.35/255 no matter what you do. Masked to the hot core alone
+     (`stroke(b.pts, 1.3, white, a)` below — the brightest thing on the screen),
+     the same seeded-bolt A/B, each ratio bilinearly upscaled to the 2x grid:
+         ratio    core peak   core energy   core px dimmed by >32/255
+          2.0       125.8        (ref)              (ref)
+          1.5       112.7       -10.4%        ~200 of 4.8k  ( 4%)
+          1.0       101.1       -19.6%       ~2265 of 4.8k  (46%)
+     (alpha 0.45, mid-flicker; the ratios hold across an alpha sweep of
+     1.0/0.9/0.6/0.45/0.25, and the line also measures 1-2 device px fatter at
+     its 10%-of-peak width. At alpha 1.0 the core clips to 255 at every ratio,
+     which is why "it still peaks at 255" is not evidence of anything.)
+     A fifth of the brightness off the brightest element on the first screen a
+     player sees is not worth 23.7 MiB when parking returns 31.6 MiB for free.
+     So the ratio goes back to min(dpr, 2) — the same policy as the WebGL
+     scene's clampPixelRatio() a few hundred lines up, with the same pixel
+     budget as a tail guard, for the same reason: only a 4K-and-up retina panel
+     ever reaches it. Never below ratio 1 — rendering under CSS resolution means
+     the compositor upscales a blurry buffer, which is worse than the memory. */
+  var MAX_BOLT_PIXELS = 16.0e6;   // matches clampPixelRatio(): 64 MB RGBA8
+
+  /* Give the canvas its bitmap back. Sizing it is what allocates, so this is
+     also the only place DPR is read — a resize while parked just records the
+     new W/H and lets the next alloc() pick the ratio up from there. */
+  function alloc() {
+    var want = Math.min(window.devicePixelRatio || 1, 2);
+    var need = W * H * want * want;
+    DPR = need > MAX_BOLT_PIXELS
+      ? Math.max(1, want * Math.sqrt(MAX_BOLT_PIXELS / need))
+      : want;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);   // sizing a canvas resets its context
+    parked = false;
+  }
+
+  /* Hand the bytes back to the GPU process. Blanking the canvas is a side
+     effect, not a separate step — that is the wipe the park branch owes. */
+  function release() {
+    cv.width = 0; cv.height = 0;
+    parked = true;
+  }
 
   function resize() {
-    DPR = Math.min(2, window.devicePixelRatio || 1);
     W = window.innerWidth; H = window.innerHeight;
-    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    if (!parked) alloc();   // parked → nothing to resize; alloc() will use the new W/H
   }
   resize();
   window.addEventListener('resize', resize);
@@ -860,15 +1104,68 @@ document.getElementById('musicBtn').addEventListener('click', () => {
   }
 
   var live = [], nextAt = performance.now() + 900 + Math.random() * 2200, raf = 0;
+  var sleep = 0;    // pending wake-up timer id while the loop is parked
+
+  /* 😴 Restart the loop from a parked state. Anything that can make the canvas
+     have work to do outside a frame (a clustered bolt landing after the first
+     one has already expired, the tab coming back) must go through here, or the
+     bolt sits invisible until the sleep timer happens to fire.
+
+     ⚠ Deliberately does NOT check document.hidden and bail. An earlier version
+     did (`if (!raf && !document.hidden)`) and the lightning died permanently:
+     setTimeout keeps firing in a background tab but rAF does not, so the park
+     timer would come due while hidden, decline to schedule anything, and leave
+     BOTH raf and sleep at 0 — a dead-end with nothing left to restart it, and
+     visibilitychange is not guaranteed to deliver a matching 'visible' event.
+     Requesting the frame unconditionally is self-healing instead: a rAF asked
+     for while hidden simply stays pending and Chrome delivers it the moment the
+     tab is shown, which is exactly the behaviour we want anyway. */
+  function wake() {
+    if (sleep) { clearTimeout(sleep); sleep = 0; }
+    if (!raf) raf = requestAnimationFrame(frame);
+  }
 
   function frame(now) {
+    /* 🔋 PARK BETWEEN STORMS — this is the whole reason the loop is shaped like
+       this. Strikes are 2.6-9.1 s apart and a bolt lives 260-600 ms, so there is
+       nothing to draw ~95% of the time. The old loop still woke 60x/s and ran an
+       unconditional clearRect over the full viewport, so this canvas' compositor
+       layer was re-uploaded ~60x/s forever. Parking it takes that to the strike
+       rate: measured on the live page, 59.9 clears/s → 4.8 clears/s.
+       Parking is also where the MEMORY goes: release() hands the backing store
+       back, a measured 32.3 MiB (see the comment above alloc()). Mind the ORDER
+       below — the park test runs before anything paints, so the frame that
+       decides to sleep is the same frame that returns the bytes, and the
+       matching alloc() sits after it so a waking frame always has a bitmap.
+       ⚠ Be precise about what this does NOT buy, because the first version of
+       this comment was not: it does not let the renderer idle. The
+       renderer.setAnimationLoop() in init() — a few hundred lines up, same
+       module, same iframe — still drives the WebGL scene (measured 59.9 draws/s
+       before it was capped to 30 while idle, and it never reaches zero), so a
+       future maintainer chasing "why is the GPU still hot on the title screen"
+       should look there and not conclude this loop is the culprit.
+       So when there is no live bolt and the next one is still in the future we do
+       NOT clear and do NOT re-request; we sleep until the strike is actually due. */
+    if (!live.length && now < nextAt) {
+      release();   // drops the bitmap, which is also how the last frame gets wiped
+      raf = 0;
+      sleep = setTimeout(wake, Math.max(16, nextAt - now));   // see wake() — must not gate on document.hidden
+      return;
+    }
+
+    /* Deliberately here and not in wake(): rAF does not fire on a hidden tab, so
+       allocating at the point of painting is what guarantees a hidden tab never
+       holds the bitmap — the clustered-bolt timer can and does call wake() while
+       hidden, and that must arm a frame without allocating anything. */
+    if (parked) alloc();
+
     raf = requestAnimationFrame(frame);
     ctx.clearRect(0, 0, W, H);
 
     if (now >= nextAt) {
       live.push(makeBolt());
       // Storms cluster — a second bolt right behind the first now and then.
-      if (Math.random() < 0.28) setTimeout(function () { live.push(makeBolt()); }, 90 + Math.random() * 220);
+      if (Math.random() < 0.28) setTimeout(function () { live.push(makeBolt()); wake(); }, 90 + Math.random() * 220);
       nextAt = now + 2600 + Math.random() * 6500;
     }
 
@@ -914,10 +1211,29 @@ document.getElementById('musicBtn').addEventListener('click', () => {
   }
 
   /* Don't burn frames on a hidden tab — and don't let a backlog of bolts all
-     resolve at once when it comes back. */
+     resolve at once when it comes back.
+     ⚠ Must clear the park timer too. If hiding only cancelled the rAF and left a
+     pending sleep timer armed, that timer would fire on return and start a second
+     loop alongside the one the visible branch starts — two concurrent frame()
+     chains on one canvas. Zeroing both here is what makes the wake() below able
+     to tell "nothing is running" from "a frame is already pending".
+     ⚠ The reset is UNCONDITIONAL on the way back, and an earlier revision that
+     guarded it with `if (!raf && !sleep)` was wrong: the clustered-bolt timer
+     calls wake() even while hidden (see wake() — it must not gate on
+     document.hidden), which leaves raf non-zero, which skipped the reset, and a
+     backlogged bolt then fired on the very first visible frame instead of after
+     the 1.2 s beat this handler promises. Clearing live/nextAt is safe in every
+     state; wake() is what makes "exactly one loop" true — it clears any pending
+     sleep timer and only requests a frame when one is not already in flight.
+     ⚠ Hiding must release() as well, and it is the ONE case the park branch in
+     frame() cannot cover: cancelling the rAF means frame() never runs again, so
+     if the tab is hidden mid-bolt the bitmap would stay resident (32.3 MiB) for
+     however long the player is away — precisely the wrong direction. Releasing
+     here is safe because the way back in resets live/nextAt anyway, and the
+     waking frame allocates before it paints. */
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
-    else if (!raf) { live.length = 0; nextAt = performance.now() + 1200; raf = requestAnimationFrame(frame); }
+    if (document.hidden) { cancelAnimationFrame(raf); raf = 0; clearTimeout(sleep); sleep = 0; release(); }
+    else { live.length = 0; nextAt = performance.now() + 1200; wake(); }
   });
   raf = requestAnimationFrame(frame);
 })();

@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120t5';
+  window.BUILD_VERSION = 'v120t9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -44348,6 +44348,28 @@ const Profile = {
   // Sovereigns are PURCHASED WITH REAL MONEY ONLY from the Sovereigns Store.
   // They can buy from the shop and trade with other players, but cannot be earned in-game.
   sovereigns: 0,
+  /* 🔢 WALLET DEBIT COUNTERS — the local half of the sql/023 anti-dupe.
+     Each one remembers the server's `wallet_seq` as of the snapshot this
+     device currently holds: `walletSeqProfile` for user_profiles (gems +
+     sovereigns), `walletSeqProgress` for user_progress (canonical cinder).
+
+     They exist to answer one question the client previously could not:
+     "is my copy of the wallet merely older than the server's, or did the
+     SERVER take money out after my copy was taken?" Both look identical —
+     local higher than server — but the right response is opposite. For a
+     stale-but-unmirrored gain, keep local (MAX). For a server-side debit,
+     adopt the server, or the bank deposit you just made comes straight back
+     out of thin air and the bank keeps its credit. That is the exact shape
+     of the exploit that minted ~2.13 BILLION Cinder.
+
+     The server bumps its counter ONLY on a debit, so an ordinary reward
+     leaves it alone and the protective MAX still applies. Deliberately
+     local-only (never uploaded, not in the forge blob): this is a marker for
+     THIS device's snapshot, and a shared value would be meaningless. A fresh
+     device starts at 0, which is behind, which correctly means "adopt the
+     server". */
+  walletSeqProfile:  0,
+  walletSeqProgress: 0,
   // 🧰 Survival resources — earned (camp loot/missions), spent to craft
   // cards/relics/items and to build the camp base. Admin-editable costs.
   resources: { food: 0, ammo: 0, water: 0, medicine: 0, supplies: 0, metal: 0, intel: 0 },
@@ -46561,8 +46583,29 @@ async function cloudSyncProfile() {
       competitive:   Profile.competitive || {},
       heroes:        Profile.heroes || {},
       units:         Profile.units || {},
-      gems:          Profile.gems || 0,
-      sovereigns:    Profile.sovereigns || 0,
+      /* 💰 gems + sovereigns ARE DELIBERATELY NOT UPLOADED (removed v120t7).
+         They were the last client-writable copy of both currencies, and the
+         upload was a genuine money bug in its own right: a tab that had not
+         seen a bank deposit would push its pre-deposit number back over the
+         server's debit, restoring the wallet while the bank kept the credit.
+
+         Both columns are now written server-side only — wallet_charge and
+         wallet_credit keep user_profiles.gems in step with the canonical
+         user_progress.cinder (sql/023, sql/023b), and every Aza path writes
+         both rows in one transaction (sql/024, sql/025). Nothing here needs to
+         send them, and sql/026 revokes the column privileges so nothing can.
+
+         ⚠ Do not add them back. If a balance looks wrong, the canonical row is
+           the thing to fix. Re-adding these fields would silently reopen the
+           whole class — and since sql/026 is applied the upsert would simply
+           start failing, taking every other progression field down with it
+           (the upsert is one statement).
+           The log line to grep for is "permission denied for TABLE
+           user_profiles" — Postgres reports DML privilege failures at table
+           granularity and never names the column, so searching for the column
+           name finds nothing. This was observed for real on 2026-08-10 when
+           service-worker-cached tabs kept sending these fields for ~7 minutes
+           after 026 applied. */
       deck_history:  Profile.deckHistory || {},
       // Original shape — `Profile.deckByHero` is a flat map `{[heroId]: {name, cards}}`.
       // Reverted from the temporary `{ list, byHero, _extra }` blob that caused
@@ -46835,6 +46878,62 @@ async function cloudFetchProfile() {
       // The hydration gate just opened above, so this is safe.
       return cloudSyncProfile();
     }
+    /* 💰 SERVER-DEBIT OVERRIDE — deliberately ABOVE every guard below.
+
+       The stale-cloud guard is right about progression and wrong about money.
+       It keeps local whenever local looks newer, and after a bank deposit
+       local ALWAYS looks newer: _boeTransfer calls saveProfile(), which sets
+       cloud.pendingChanges, which makes localIsFresher unconditionally true.
+       That branch then returns early and re-uploads the stale local wallet
+       straight over the server's debit. The bank keeps its credit and the
+       money is back — which is the Aza half of the dupe outright, since
+       sovereigns have no canonical row and nothing downstream corrects them.
+
+       Money cannot use "whose timestamp is newer", because both sides of the
+       dupe look identical under that test. sql/023 gives us the fact that
+       actually settles it: user_profiles.wallet_seq counts server-side DEBITS.
+       If the server has debited since our snapshot, the server's wallet is the
+       truth no matter how fresh local looks — we are holding a pre-deposit
+       copy. If it hasn't, this is a no-op and the guard below decides as it
+       always has.
+
+       Scope is exactly the two wallet fields. Every other progression field
+       still goes through the guard untouched — this must not become a second
+       way to lose a taught move or a deck edit. */
+    try {
+      const _srvWSeq = Math.max(0, Number(data.wallet_seq) || 0);
+      const _locWSeq = Math.max(0, Number(Profile.walletSeqProfile) || 0);
+      if (_srvWSeq > _locWSeq) {
+        // Don't ring the spend bell — this is hydration, not a purchase.
+        try { if (typeof _suppressSpendDuringLoad === 'function') _suppressSpendDuringLoad(2500); } catch (e) {}
+        if (typeof data.gems === 'number') {
+          const _g = Math.max(0, Math.round(Number(data.gems) || 0));
+          try { _gemsTaxExempt(() => { Profile.gems = _g; }); } catch (e) { Profile.gems = _g; }
+        }
+        if (typeof data.sovereigns === 'number') {
+          Profile.sovereigns = Math.max(0, Math.round(Number(data.sovereigns) || 0));
+        }
+        Profile.walletSeqProfile = _srvWSeq;
+        /* ⚠ PERSIST WITHOUT POISONING THE GUARD THAT RUNS NEXT. saveProfile()
+           stamps lastLocalEditAt = now and sets pendingChanges, and the guard
+           twelve lines below reads both. Letting it do that here would make
+           EVERY device look fresher than the cloud on every fetch — the exact
+           cross-device bug documented at the sign-in call site ("I signed into
+           my iPad and got my old data"). Same preserve-and-restore fix used
+           there: the write to localStorage lands, the guard's inputs don't
+           move. */
+        try {
+          const _preEditAt  = (Profile.cloud && Profile.cloud.lastLocalEditAt) || 0;
+          const _prePending = !!(Profile.cloud && Profile.cloud.pendingChanges);
+          saveProfile();
+          if (Profile.cloud) {
+            Profile.cloud.lastLocalEditAt = _preEditAt;
+            Profile.cloud.pendingChanges  = _prePending;
+          }
+        } catch (e) {}
+        try { console.info('💰 Server debited the wallet since this snapshot (seq ' + _locWSeq + ' → ' + _srvWSeq + ') — adopting the server\'s balances ahead of the freshness guard.'); } catch (e) {}
+      }
+    } catch (e) {}
     // 🛡️ STALE-CLOUD GUARD 🛡️
     // Before we let cloud data overwrite anything, check whether LOCAL has
     // changes that are NEWER than this cloud snapshot. If so, the cloud row
@@ -56578,6 +56677,12 @@ async function walletFetchProgress() {
         return { ok: false };
       }
       Wallet.lastFetchAt = Date.now();
+      // Adopt the seeded row's counter so the very first post-seed refresh
+      // isn't misread as "the server debited me".
+      try {
+        const _sd = Array.isArray(seed.data) ? seed.data[0] : seed.data;
+        if (_sd && typeof _sd.wallet_seq !== 'undefined') Profile.walletSeqProgress = Math.max(0, _sd.wallet_seq | 0);
+      } catch (e) {}
       return { ok: true, row: seed.data };
     }
     // Apply the canonical row — server is source of truth, BUT use MAX so
@@ -56586,20 +56691,72 @@ async function walletFetchProgress() {
     // the win credited Profile.gems locally but the server's wallet_credit
     // RPC was never called (or hadn't returned yet), the local value is
     // higher than the server's; MAX preserves it, and the next mirror call
-    // will reconcile up to the server. Going DOWN is impossible here
-    // because every spend goes through wallet_charge first.
+    // will reconcile up to the server.
+    /* 🔴 …AND THE EXCEPTION THAT MAKES MAX SAFE. The line that used to close
+       the paragraph above read:
+
+           "Going DOWN is impossible here because every spend goes through
+            wallet_charge first."
+
+       boe_transfer() is a spend that does NOT go through wallet_charge, so
+       from sql/022 onward that sentence was false — and this MAX was the
+       thing undoing every bank deposit. The wallet came back from the
+       canonical row while the bank kept its credit, on every single refresh.
+       An atomic transfer could not fix it, because the restore happens
+       AFTER the transfer, from a row the transfer never touched.
+
+       sql/023 makes boe_transfer write both wallet rows and bump wallet_seq
+       on any server-side DEBIT. So: seq ahead of ours => the server took
+       money out after this snapshot => adopt the server verbatim. Seq level
+       => the only way local can be higher is an unmirrored gain => MAX, as
+       before. Credits never bump it, so nothing a player earned is at risk.
+
+       Degrades safely: on a database without sql/023 there is no wallet_seq,
+       both sides read 0, and this behaves exactly as it did before. */
+    const _srvSeq = Math.max(0, (r.data.wallet_seq | 0));
+    const _locSeq = Math.max(0, (Profile.walletSeqProgress | 0));
+    const _serverDebited = _srvSeq > _locSeq;
     _gemsTaxExempt(() => {
       const serverGems = Math.max(0, r.data.cinder | 0);
       const localGems  = Math.max(0, (typeof Profile.gems === 'number' && isFinite(Profile.gems)) ? Profile.gems : 0);
-      const adopted    = Math.max(serverGems, localGems);
+      const adopted    = _serverDebited ? serverGems : Math.max(serverGems, localGems);
       Profile.gems = adopted;
       // 💾 If we kept the higher local value, push it back to the server
-      // so the next refresh reads the up-to-date row.
-      if (localGems > serverGems) {
+      // so the next refresh reads the up-to-date row. NEVER when the server
+      // has debited since our snapshot — crediting the difference back is
+      // precisely how the deposit got minted a second time.
+      if (!_serverDebited && localGems > serverGems) {
         const diff = localGems - serverGems;
         try { _serverMirrorCredit(diff, 'reconcile_local_gain_on_fetch'); } catch (e) {}
       }
     });
+    // In step with the server's counter either way — we have just applied
+    // everything it knew about.
+    Profile.walletSeqProgress = _srvSeq;
+    /* 👑 AZA: ADOPT VERBATIM. No MAX, no counter.
+       Cinder needs the MAX because a player can legitimately be holding a
+       reward whose mirror call failed. Aza cannot get into that state any
+       more: purchase, gift, reward and refund all write the canonical row
+       inside the same transaction that decides the amount (sql/024, sql/025).
+       So a local value above the server's is a failed RPC or a forged one, and
+       either way the server wins.
+
+       ⚠ THE ONE EXCEPTION, and it protects real money: if the canonical row
+         reads 0 while this device holds Aza, that is far more likely to be an
+         account the 024 seed never covered than a player who genuinely has
+         none. Zeroing them would delete something they may have paid for, so
+         we leave local alone and let a purchase or the seed establish the
+         canonical value. The cost is that their Aza cannot be banked until
+         then — a refusal, not a loss. */
+    if (typeof r.data.sovereigns === 'number') {
+      const _srvAza = Math.max(0, Math.round(r.data.sovereigns));
+      const _locAza = Math.max(0, Math.round(Number(Profile.sovereigns) || 0));
+      if (_srvAza > 0 || _locAza === 0) {
+        Profile.sovereigns = _srvAza;
+      } else {
+        try { console.warn('👑 Canonical Aza reads 0 but this device holds ' + _locAza + ' — keeping local. This account predates the sql/024 seed; banking Aza will refuse until it is seeded.'); } catch (e) {}
+      }
+    }
     if (r.data.item_inventory && typeof r.data.item_inventory === 'object') {
       // Merge MAX so any client-side optimistic grants that haven't synced
       // yet aren't silently dropped (defense-in-depth).
@@ -56642,6 +56799,12 @@ async function chargeCinderAtomic(amount, reason) {
     if (!row || !row.ok) return { ok: false, reason: (row && row.reason) || 'rpc_failed', newBalance: row ? (row.new_balance | 0) : (Profile.gems | 0) };
     // Server confirmed. Apply the new balance — never tax a server-driven write.
     _gemsTaxExempt(() => { Profile.gems = row.new_balance | 0; });
+    // 🔢 Stay in step with the server's debit counter (sql/023). We have just
+    //    adopted the post-charge balance, so we are level — and staying level
+    //    is what keeps the protective MAX in walletFetchProgress available for
+    //    unmirrored earnings. Falling behind here would make the next boot
+    //    adopt the server verbatim and throw those earnings away.
+    if (typeof row.wallet_seq !== 'undefined') Profile.walletSeqProgress = Math.max(0, row.wallet_seq | 0);
     // Mirror the 2% into the local ledger so the Tax tab updates instantly.
     const tax = row.tax_amount | 0;
     if (tax > 0) {
@@ -56758,7 +56921,7 @@ async function walletReconcile() {
     Wallet._reconciling = true;
     try {
       const me = Profile.cloud.userId;
-      const r = await Cloud.client.from('user_progress').select('cinder').eq('user_id', me).maybeSingle();
+      const r = await Cloud.client.from('user_progress').select('cinder,wallet_seq').eq('user_id', me).maybeSingle();
       if (r && r.error) {
         if (_walletRpcUnavailable(r.error)) Wallet.rpcMissing = true;
         return { ok: false, reason: (r.error.message || 'read failed') };
@@ -56766,6 +56929,24 @@ async function walletReconcile() {
       if (!r || !r.data) return { ok: false, reason: 'no row' };   // progress_ensure seeds it
       const server = Math.max(0, r.data.cinder | 0);
       const local = Math.max(0, (typeof Profile.gems === 'number' && isFinite(Profile.gems)) ? Profile.gems | 0 : 0);
+      /* 🔴 THE SAME ADOPT-vs-MAX TEST AS walletFetchProgress, and it matters
+         even more here, because this function does not just KEEP the higher
+         local number — it credits the difference onto the server, making the
+         mint durable. A bank deposit leaves local high (a non-writer tab's
+         saveProfile early-returns, so localStorage never saw the debit) and
+         the server correctly low; without this guard the "player was
+         shortchanged" branch below hands the deposit straight back and the
+         bank keeps its credit. Seq ahead of ours => the server debited after
+         our snapshot => adopt it downward and credit NOTHING. */
+      const _srvSeq = Math.max(0, (r.data.wallet_seq | 0));
+      const _locSeq = Math.max(0, (Profile.walletSeqProgress | 0));
+      if (_srvSeq > _locSeq) {
+        try { _gemsTaxExempt(() => { Profile.gems = server; }); } catch (e) { Profile.gems = server; }
+        Profile.walletSeqProgress = _srvSeq;
+        try { saveProfile(); } catch (e) {}
+        try { localStorage.removeItem(_WALLET_RECON_KEY); } catch (e) {}
+        return { ok: true, server, local, credited: 0, adoptedServerDebit: true };
+      }
       if (server >= local) {
         // Canonical row already knows about everything (or more) — adopt it
         // upward and stop asking.
@@ -57544,9 +57725,11 @@ async function boeAutoSettle() {
     for (const req of r.data) {
       const amt = Math.floor(Number(req.amount) || 0);
       if (!(amt > 0)) continue;
-      const mv = await _boeAdjust(amt, 0);
+      // 🏦 sql/030 — the flip to 'settled' AND the credit are one statement on
+      //    the server, so this can no longer credit without settling (double
+      //    pay on the next open) or settle without crediting (silent loss).
+      const mv = await _boeSettleRequest(req.id);
       if (!mv.ok) continue;                    // retried on the next open
-      await t.update({ status: 'settled', resolved_at: new Date().toISOString() }).eq('id', req.id).eq('from_user', me);
       await boeLog('request_received', amt, 0, 'Request paid', req.to_handle || '');
       showToast('💰 ' + (req.to_handle || 'A player') + ' paid your request — +' + amt.toLocaleString() + ' 🔥 to bank.', 5600);
     }
@@ -57595,7 +57778,10 @@ async function boeCreateLoan(azaAmt, installments) {
     const ins = await t.insert({ user_id: Profile.cloud.userId, aza_amount: azaAmt, cinder_owed: cinderOwed, cinder_paid: 0, installments: installments, period_days: 7, status: 'active', hero_capacity_aza: cap, note: 'Hero-collateralized loan' }).select('*').maybeSingle();
     if (ins && ins.error) throw ins.error;
     // Credit bank with the principal Cinder.
-    const mv = await _boeAdjust(cinderOwed, 0);
+    // 🏦 sql/030 reads cinder_owed off the loan row we just inserted and stamps
+    //    disbursed_at in the same statement, so a principal cannot be paid out
+    //    twice however many times this is retried.
+    const mv = await _boeDisburseLoan(ins.id);
     if (!mv.ok) throw new Error(mv.reason || 'principal not credited');
   } catch (e) { BankEthos.balance = prevBal; showToast('⚠ Loan application failed.', 4200); return false; }
   try { boeLog('loan_principal', cinderOwed, 0, 'Loan principal · ' + azaAmt + ' 👑 → bank', ''); } catch (e) {}
@@ -57813,18 +57999,19 @@ async function boeMercClockOut(contractId, forced) {
     const mercShare = Math.floor(T * BOE_MERC_SHARE_MERC);
     const empShare = Math.floor(T * BOE_MERC_SHARE_EMPLOYER);
     const tax = Math.max(0, T - mercShare - empShare);
-    // The clocker credits THEIR OWN bank directly. The other side picks
-    // up their share on next bank open (same claim-on-read pattern as
-    // requests — single-writer-safe under boe_upd RLS).
-    const nextStatus = isMerc ? 'completed_pending_employer' : 'completed_pending_merc';
+    // The clocker is paid their share now; the other side picks theirs up on
+    // next bank open (claim-on-read, same as requests). It used to say
+    // "single-writer-safe under boe_upd RLS" — that stopped being the
+    // mechanism in sql/030, where the server owns both halves.
     const myShare = isMerc ? mercShare : empShare;
-    const prevBal = BankEthos.balance;
-    if (myShare > 0) {
-      const mv = await _boeAdjust(myShare, 0);
-      if (!mv.ok) throw new Error(mv.reason || 'payout not credited');
-    }
-    const upd = await t.update({ status: nextStatus, clocked_out_at: new Date().toISOString(), merc_payout: mercShare, employer_payout: empShare, fr_tax: tax }).eq('id', contractId);
-    if (upd && upd.error) { /* funds already credited; partner still settles by status */ }
+    /* 🏦 sql/030 does ALL of it: splits target_cinder, stamps both payouts and
+       the Foundation tax, moves the contract to completed_pending_<other side>
+       and credits this caller's share — one statement-chain.
+       ⚠ The 40/52 split now lives in boe_merc_settle. mercShare/empShare above
+         are what the UI PROMISES; if you retune BOE_MERC_SHARE_* here, retune
+         the function too or the toast will quote a number the bank did not pay. */
+    const mv = await _boeSettleMerc(contractId);
+    if (!mv.ok) throw new Error(mv.reason || 'payout not credited');
     // Foundation Reserve tax (4% from each side, charged once here).
     try { if (typeof frLogCivic === 'function' && tax > 0) frLogCivic(tax, 'tax', { resource: 'Mercenary contract', market: 'mercenary' }); } catch (e) {}
     try { boeLog(isMerc ? 'merc_earn' : 'merc_yield', myShare, 0, (forced ? 'Force clock-out · ' : 'Clock-out · ') + (isMerc ? 'mercenary 40%' : 'employer 52%'), isMerc ? (c.employer_handle || '') : (c.mercenary_handle || '')); } catch (e) {}
@@ -57848,11 +58035,10 @@ async function boeMercAutoSettle() {
     for (const c of list) {
       const isMerc = c.mercenary_user === me;
       const myShare = Math.floor(isMerc ? Number(c.merc_payout) || 0 : Number(c.employer_payout) || 0);
-      if (myShare > 0) {
-        const mv = await _boeAdjust(myShare, 0);
-        if (!mv.ok) continue;                  // retried on the next open
-      }
-      await t.update({ status: 'completed' }).eq('id', c.id);
+      // 🏦 sql/030 — pays the share STAMPED ON THE ROW at clock-out and closes
+      //    the contract in one statement. `myShare` here is only for the toast.
+      const mv = await _boeSettleMerc(c.id);
+      if (!mv.ok) continue;                    // retried on the next open
       try { boeLog(isMerc ? 'merc_earn' : 'merc_yield', myShare, 0, 'Mercenary contract settled', isMerc ? (c.employer_handle || '') : (c.mercenary_handle || '')); } catch (e) {}
       if (myShare > 0) showToast('🪖 Mercenary contract paid — +' + myShare.toLocaleString() + ' 🜂 to bank.', 5400);
     }
@@ -57989,7 +58175,7 @@ async function boeMarketBuyNow(id) {
       const prevAza = BankEthos.aza;
       if (bTake > 0) {
         const mv = await _boeAdjust(0, -bTake);
-        if (!mv.ok) { if (wTake > 0) addSovereigns(wTake); showToast('⚠ Payment failed — nothing was moved.'); return false; }
+        if (!mv.ok) { if (wTake > 0) refundSovereigns(wTake); showToast('⚠ Payment failed — nothing was moved.'); return false; }
       }
     } else {
       const wC = (Profile && Profile.gems) | 0;
@@ -58051,9 +58237,11 @@ async function boeMarketAutoSettle() {
     for (const l of r.data) {
       const price = Math.floor(Number(l.price) || 0);
       if (price <= 0) continue;
-      const mv = (l.currency === 'aza') ? await _boeAdjust(0, price) : await _boeAdjust(price, 0);
+      // 🏦 sql/030 reads BOTH the price and the currency off the listing, so a
+      //    seller cannot ask to be paid the Cinder price in Aza. Flip + credit
+      //    are one statement, so a settled listing is always a paid one.
+      const mv = await _boeSettleMarket(l.id);
       if (!mv.ok) continue;                    // retried on the next open
-      await t.update({ status: 'paid', settled_at: new Date().toISOString() }).eq('id', l.id);
       try { boeLog('market_sale', l.currency === 'aza' ? 0 : price, l.currency === 'aza' ? price : 0, 'Sold ' + (l.qty | 0) + '× ' + (l.item_name || ''), l.buyer_handle || ''); } catch (e) {}
       showToast('🛒 Sale settled — +' + price.toLocaleString() + ' ' + (l.currency === 'aza' ? '👑' : '🜂') + ' to bank.', 5200);
     }
@@ -58229,7 +58417,15 @@ async function boeFetch() {
       return false;
     }
     if (!r || !r.data) {
-      const ins = await t.insert({ user_id: me, balance: 0 });
+      /* ⚠ DO NOT NAME `balance` HERE. sql/028 grants the client INSERT on every
+         bank column EXCEPT balance and aza — that missing column grant is the
+         only thing stopping a client writing its own bank balance, now that
+         022's policy drops are known to have never matched (wrong names).
+         Naming an ungranted column fails the whole INSERT, which is precisely
+         the "Bank not ready" outage this replaced: the row could not be created,
+         so BankEthos.ready never went true and every deposit — Cinder, Aza and
+         resources alike — bailed on its first line. The column defaults to 0. */
+      const ins = await t.insert({ user_id: me });
       if (ins && ins.error) { BankEthos._err = 'setup'; return false; }
       BankEthos.balance = 0; BankEthos.aza = 0; BankEthos.resources = {};
       BankEthos.lastFeeAt = Date.now(); BankEthos.openedAt = Date.now();
@@ -58281,75 +58477,85 @@ async function boeFetch() {
    result back, refusing to report success unless the row really landed on the
    expected number. That closes the mint even without the migration, though
    only the RPC closes the race itself. */
+/* 💸 DEBITS ONLY, AS OF sql/030. This used to take a signed delta and apply it
+   either way; it is now a thin wrapper over boe_spend(), which REFUSES a
+   negative amount (i.e. a credit) outright.
+
+   WHY THE SIGNATURE DID NOT CHANGE: every debit call site already passes
+   negative numbers — _boeAdjust(-fee, 0) — and they are correct as written.
+   Flipping them all to positive would be a lot of edits whose only effect is to
+   move a minus sign, and each one is a chance to invert a payment.
+
+   ⚠ A CREDIT NOW FAILS LOUDLY instead of quietly working. That is deliberate.
+     Every credit in this file is a claim-on-read settlement (a paid request, a
+     sold listing, a finished contract, a loan principal) and each has its own
+     server function that flips the source row and pays in one statement — see
+     _boeSettle* below. If you are adding a NEW way for the bank to gain money,
+     it needs a settlement function too; it does not need this.
+
+   The old client-side "verified absolute write" fallback is GONE. It existed
+   for databases without the RPC, and it wrote balance/aza directly — which
+   sql/028 no longer grants, so it could only ever fail now. Keeping it would
+   just be a slower way to reach the same error. */
 async function _boeAdjust(deltaCinder, deltaAza) {
   const dC = Math.round(Number(deltaCinder) || 0);
   const dA = Math.round(Number(deltaAza) || 0);
+  // ⚠ FIRST, and deliberately ahead of the sign-in check: a credit reaching
+  //    here is a CODING error, not a connectivity one, and it should read the
+  //    same whether or not the player happens to be online.
+  if (dC > 0 || dA > 0) {
+    try { console.warn('[boe] _boeAdjust refused a CREDIT (' + dC + ' 🔥 / ' + dA + ' 👑) — credits must go through a settlement RPC (sql/030).'); } catch (e) {}
+    return { ok: false, reason: 'credit_refused' };
+  }
+  if (dC === 0 && dA === 0) return { ok: true, balance: BankEthos.balance, aza: BankEthos.aza };
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
     return { ok: false, reason: 'signin' };
   }
-  const me = Profile.cloud.userId;
-  // ── Preferred path: one atomic statement, server side.
   try {
-    const r = await Cloud.client.rpc('boe_adjust_balance', { p_delta_cinder: dC, p_delta_aza: dA });
-    if (!(r && r.error)) {
-      const j = r && r.data;
-      if (j && j.ok === true) {
-        BankEthos.balance = Math.max(0, Math.round(Number(j.balance) || 0));
-        if (BankEthos._extCols) BankEthos.aza = Math.max(0, Math.round(Number(j.aza) || 0));
-        return { ok: true, balance: BankEthos.balance, aza: BankEthos.aza };
+    const r = await Cloud.client.rpc('boe_spend', { p_cinder: -dC, p_aza: -dA, p_reason: 'bank spend' });
+    if (r && r.error) {
+      const _msg = ((r.error.message || '') + ''), _code = ((r.error.code || '') + '');
+      if (/PGRST202/i.test(_code) || /PGRST202|does not exist|schema cache|Could not find the function/i.test(_msg)) {
+        return { ok: false, reason: 'not_installed' };
       }
-      if (j && j.ok === false && j.error !== 'not_authenticated') {
-        // The server refused (overdraft / missing row) and told us the truth
-        // about the balance — adopt it so the UI stops showing a fiction.
-        if (typeof j.balance === 'number') BankEthos.balance = Math.max(0, Math.round(j.balance));
-        if (BankEthos._extCols && typeof j.aza === 'number') BankEthos.aza = Math.max(0, Math.round(j.aza));
-        return { ok: false, reason: j.error || 'refused' };
-      }
-    } else {
-      // ⚠ "RPC not installed" is reported in error.CODE (PGRST202), not
-      //    reliably in the message — an earlier version of this check only read
-      //    the message and so treated a missing function as a hard failure,
-      //    which would have made every bank move fail closed until sql/004 was
-      //    run. Check both, and let anything else be a genuine error.
-      const _msg = ((r.error.message || '') + '');
-      const _code = ((r.error.code || '') + '');
-      const _absent = /PGRST202/i.test(_code) || /PGRST202|does not exist|schema cache|Could not find the function/i.test(_msg);
-      if (!_absent) return { ok: false, reason: _msg || 'rpc failed' };
+      return { ok: false, reason: _msg || 'rpc failed' };
     }
-    // else: RPC not installed → fall through to the verified fallback.
-  } catch (e) { /* fall through */ }
-
-  // ── Fallback: verified absolute write. Still racy against a concurrent
-  //    chain, but it can no longer report success for a write that did not
-  //    land, which is what turned the race into free money.
-  try {
-    const t = await _boeRow(); if (!t) return { ok: false, reason: 'signin' };
-    const cur = await t.select('balance,aza').eq('user_id', me).maybeSingle();
-    if (cur && cur.error) return { ok: false, reason: cur.error.message || 'read failed' };
-    const curBal = Math.max(0, Math.round(Number(cur && cur.data && cur.data.balance) || 0));
-    const curAza = Math.max(0, Math.round(Number(cur && cur.data && cur.data.aza) || 0));
-    const wantBal = curBal + dC;
-    const wantAza = curAza + dA;
-    if (wantBal < 0 || (dA && wantAza < 0)) {
-      BankEthos.balance = curBal;
-      if (BankEthos._extCols) BankEthos.aza = curAza;
-      return { ok: false, reason: 'insufficient_or_missing' };
-    }
-    const patch = { balance: wantBal, updated_at: new Date().toISOString() };
-    if (dA && BankEthos._extCols) patch.aza = wantAza;
-    const t2 = await _boeRow();
-    // ⚠ .select() is what makes this VERIFIED. A bare .update() returns no rows
-    //   and no error even when it matched nothing, which is exactly how a
-    //   silent no-op used to look like success.
-    const up = await t2.update(patch).eq('user_id', me).select('balance,aza').maybeSingle();
-    if (up && up.error) return { ok: false, reason: up.error.message || 'write failed' };
-    const gotBal = Math.round(Number(up && up.data && up.data.balance));
-    if (!up || !up.data || gotBal !== wantBal) return { ok: false, reason: 'write not confirmed' };
-    BankEthos.balance = Math.max(0, gotBal);
-    if (dA && BankEthos._extCols) BankEthos.aza = Math.max(0, Math.round(Number(up.data.aza) || 0));
+    const j = r && r.data;
+    if (!j || j.ok !== true) return { ok: false, reason: (j && j.error) || 'refused' };
+    BankEthos.balance = Math.max(0, Math.round(Number(j.balance) || 0));
+    if (BankEthos._extCols) BankEthos.aza = Math.max(0, Math.round(Number(j.aza) || 0));
     return { ok: true, balance: BankEthos.balance, aza: BankEthos.aza };
   } catch (e) { return { ok: false, reason: (e && e.message) || 'exception' }; }
 }
+/* 🏦 THE CREDIT SIDE. One helper per settlement kind, each calling the matching
+   sql/030 function, which flips the source row and pays in ONE statement-chain
+   — so a settlement can never mark itself done without paying, or pay twice.
+   All four adopt the server's balances and never compute one. */
+async function _boeSettleRpc(fn, args, label) {
+  if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
+    return { ok: false, reason: 'signin' };
+  }
+  try {
+    const r = await Cloud.client.rpc(fn, args);
+    if (r && r.error) {
+      const _msg = ((r.error.message || '') + ''), _code = ((r.error.code || '') + '');
+      if (/PGRST202/i.test(_code) || /PGRST202|does not exist|schema cache|Could not find the function/i.test(_msg)) {
+        try { console.warn('[boe] ' + fn + ' missing — run sql/030. ' + (label || '')); } catch (e) {}
+        return { ok: false, reason: 'not_installed' };
+      }
+      return { ok: false, reason: _msg || 'rpc failed' };
+    }
+    const j = r && r.data;
+    if (!j || j.ok !== true) return { ok: false, reason: (j && j.error) || 'refused' };
+    if (typeof j.balance === 'number') BankEthos.balance = Math.max(0, Math.round(j.balance));
+    if (BankEthos._extCols && typeof j.aza === 'number') BankEthos.aza = Math.max(0, Math.round(j.aza));
+    return { ok: true, credited: Math.max(0, Math.round(Number(j.credited) || 0)), data: j };
+  } catch (e) { return { ok: false, reason: (e && e.message) || 'exception' }; }
+}
+function _boeSettleRequest(requestId) { return _boeSettleRpc('boe_request_settle', { p_request_id: requestId }, 'request settlement'); }
+function _boeSettleMarket(listingId)  { return _boeSettleRpc('boe_market_settle',  { p_listing_id: listingId },  'marketplace settlement'); }
+function _boeSettleMerc(contractId)   { return _boeSettleRpc('boe_merc_settle',    { p_contract_id: contractId }, 'mercenary settlement'); }
+function _boeDisburseLoan(loanId)     { return _boeSettleRpc('boe_loan_disburse',  { p_loan_id: loanId },        'loan principal'); }
 // Auto-charge any due 30-day maintenance periods → Foundation Reserve.
 async function boeApplyMaintenance() {
   try {
@@ -58393,7 +58599,7 @@ async function boeApplyMaintenance() {
    ⚠ FAILS CLOSED. If sql/022 is not applied the RPC is absent and this refuses
    the move. That disables banking until the migration is run, which is the
    correct trade against an exploit that minted ~2.13 BILLION Cinder. */
-async function _boeTransfer(amount, dir) {
+async function _boeTransfer(amount, dir, _retried) {
   const amt = Math.floor(Number(amount) || 0);
   if (!(amt > 0)) return { ok: false, reason: 'bad_amount' };
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
@@ -58408,6 +58614,18 @@ async function _boeTransfer(amount, dir) {
     return { ok: false, reason: _absent ? 'not_installed' : (_msg || 'rpc_failed') };
   }
   const j = r && r.data;
+  /* 🔁 'wallet_resyncing' — the canonical wallet is BEHIND the profile mirror,
+     meaning this player holds a reward whose background mirror call failed.
+     The server refuses rather than move money it would have to delete in order
+     to do so (see sql/023). walletReconcile() is the existing, audited fix for
+     exactly that state: it re-reads the server and credits the difference, and
+     because it is diff-based rather than a queue of deltas it cannot
+     double-credit. Run it, retry ONCE, and only surface an error if the second
+     attempt still refuses. The player should never have to know this happened. */
+  if (j && j.ok !== true && j.error === 'wallet_resyncing' && !_retried) {
+    try { if (typeof walletReconcile === 'function') await walletReconcile(); } catch (e) {}
+    return _boeTransfer(amount, dir, true);
+  }
   if (!j || j.ok !== true) {
     // The server told us the truth about both sides even when refusing — adopt
     // it so the UI stops showing a fiction.
@@ -58421,7 +58639,26 @@ async function _boeTransfer(amount, dir) {
   try {
     Profile.gems = Math.max(0, Math.round(Number(j.gems) || 0));
     BankEthos.balance = Math.max(0, Math.round(Number(j.balance) || 0));
+    /* 🔢 sql/023 — take BOTH debit counters with the money. This is what stops
+       the deposit being handed back on the next boot: without it we stay
+       behind the server, and the reconcile reads "local is higher, the player
+       was shortchanged" and credits the difference back while the bank keeps
+       its credit. Adopting them says "we have seen this debit". */
+    if (typeof j.wallet_seq   !== 'undefined') Profile.walletSeqProfile  = Math.max(0, Number(j.wallet_seq)   | 0);
+    if (typeof j.progress_seq !== 'undefined') Profile.walletSeqProgress = Math.max(0, Number(j.progress_seq) | 0);
     saveProfile();
+    // 📣 Tell the other tabs. If THIS tab is not the writer its saveProfile()
+    //    above did nothing, and the writer tab would otherwise upload its own
+    //    pre-deposit copy straight back over the server's debit.
+    try {
+      if (typeof MultiTab !== 'undefined' && MultiTab && typeof MultiTab.broadcastWallet === 'function') {
+        MultiTab.broadcastWallet({
+          gems: Profile.gems,
+          seqProfile: Profile.walletSeqProfile,
+          seqProgress: Profile.walletSeqProgress,
+        });
+      }
+    } catch (e) {}
   } catch (e) {}
   return { ok: true, gems: Profile.gems, balance: BankEthos.balance, moved: amt };
 }
@@ -58456,7 +58693,20 @@ async function _boeTransferAza(amount, dir) {
   try {
     Profile.sovereigns = Math.max(0, Math.round(Number(j.aza) || 0));
     BankEthos.aza      = Math.max(0, Math.round(Number(j.bank_aza) || 0));
+    // 🔢 sql/023 — Aza lives only in user_profiles, so only that counter moves.
+    if (typeof j.wallet_seq !== 'undefined') Profile.walletSeqProfile = Math.max(0, Number(j.wallet_seq) | 0);
     saveProfile();
+    // 📣 Aza has no canonical server row, so this broadcast is not a
+    //    convenience — it is what stops a stale writer tab re-uploading the
+    //    pre-deposit sovereigns and minting a real-money currency.
+    try {
+      if (typeof MultiTab !== 'undefined' && MultiTab && typeof MultiTab.broadcastWallet === 'function') {
+        MultiTab.broadcastWallet({
+          sovereigns: Profile.sovereigns,
+          seqProfile: Profile.walletSeqProfile,
+        });
+      }
+    } catch (e) {}
   } catch (e) {}
   return { ok: true, aza: Profile.sovereigns, bankAza: BankEthos.aza, moved: amt };
 }
@@ -58466,6 +58716,9 @@ function _boeTransferWhy(reason, amt) {
   if (reason === 'insufficient_wallet') return '⚠ Not enough Cinder in your wallet. Nothing was moved.';
   if (reason === 'insufficient_bank') return '⚠ Not enough in your bank. Nothing was moved.';
   if (reason === 'no_profile') return '⚠ Your profile has not synced yet — try again in a moment. Nothing was moved.';
+  // Only ever reached if the automatic reconcile-and-retry ALSO came back
+  // resyncing, which means the canonical wallet genuinely could not be lifted.
+  if (reason === 'wallet_resyncing') return '⚠ Your wallet is still syncing with the server. Nothing was moved — try again in a few seconds.';
   return '⚠ Transfer failed — nothing was moved. Try again.';
 }
 async function boeDeposit(amt) {
@@ -58558,19 +58811,40 @@ async function boeExchangeAzaToCinder(azaAmt) {
   const total = boeTotalAza();
   if (total < azaAmt) { showToast('You have ' + total.toLocaleString() + ' 👑 (wallet + bank).', 4200); return false; }
   const cinderOut = azaAmt * AZA_TO_CINDER;
-  // Take from wallet first, remainder from the bank vault.
-  const wTake = Math.min(azaAmt, (Profile && Profile.sovereigns) | 0);
-  const bTake = azaAmt - wTake;
-  const prevAza = BankEthos.aza, prevBal = BankEthos.balance;
-  if (wTake > 0 && !spendSovereigns(wTake)) { showToast('Not enough Aza.'); return false; }
+  /* 💱 THE WHOLE EXCHANGE IS ONE SERVER CALL NOW (sql/030).
+     It used to be three client steps — spend the wallet Aza, debit the rest
+     from the vault, credit the Cinder — with the rate in JS and a hand-rolled
+     unwind in the catch. boe_exchange_aza takes the Aza total, drains the
+     wallet first and the vault for the remainder (same order as before), and
+     credits the Cinder at the server's rate, rolling the wallet leg back
+     itself if the bank leg refuses.
+     ⚠ AZA_TO_CINDER above is now what the UI PROMISES; the rate that PAYS is
+       in the function. Change one, change the other. */
   try {
-    // Both legs in ONE atomic statement — an exchange must never half-apply.
-    const mv = await _boeAdjust(cinderOut, -bTake);
-    if (!mv.ok) throw new Error(mv.reason || 'exchange not applied');
+    const r = await Cloud.client.rpc('boe_exchange_aza', { p_aza: azaAmt });
+    const _err = (r && r.error) ? ((r.error.message || '') + '') : '';
+    if (_err) {
+      if (/PGRST202|does not exist|schema cache|Could not find the function/i.test(_err)) {
+        showToast('⚠ Exchange is disabled until sql/030 is applied. Nothing moved.', 5600); return false;
+      }
+      throw new Error(_err);
+    }
+    const j = r && r.data;
+    if (!j || j.ok !== true) {
+      // The server reports both sides even when refusing — adopt them so the
+      // UI stops showing a fiction.
+      if (j && typeof j.bank_aza === 'number') BankEthos.aza = Math.max(0, Math.round(j.bank_aza));
+      if (j && typeof j.aza === 'number') { try { _sovAdopt({ aza: j.aza }); } catch (e) {} }
+      showToast(j && j.error === 'insufficient_aza'
+        ? '⚠ Not enough Aza (wallet + bank). Nothing moved.'
+        : '⚠ Exchange failed — nothing moved.', 4200);
+      return false;
+    }
+    BankEthos.balance = Math.max(0, Math.round(Number(j.balance) || 0));
+    BankEthos.aza     = Math.max(0, Math.round(Number(j.bank_aza) || 0));
+    try { _sovAdopt({ aza: j.aza }); } catch (e) {}
     try { saveProfile(); } catch (e) {}
   } catch (e) {
-    if (wTake > 0) { addSovereigns(wTake); try { saveProfile(); } catch (_) {} }
-    BankEthos.aza = prevAza; BankEthos.balance = prevBal;
     showToast('⚠ Exchange failed — nothing moved.', 4200); return false;
   }
   try { boeLog('exchange', cinderOut, -azaAmt, 'Exchanged Aza → Cinder'); } catch (e) {}
@@ -60644,14 +60918,111 @@ async function nodePoolFetch() {
   }
   return FoundationReserve.nodePool;
 }
+/* 🔌 NODE TIER PLUMBING (v120t8). The rate table itself lives in
+   /src/nodes/tiers.js — a module, so it cannot see any `const` in this file
+   (the globals trap). These three helpers are the seam: they gather what the
+   module needs from THIS side and read its answer back defensively.
+
+   ⚠ EVERY ONE OF THEM IS TOTAL. If the module 404s, `_nodeTierPoolShare`
+     returns the old flat NODE_POOL_MAX_SLICE and `_nodeTierResBonus` returns
+     an empty map — i.e. exactly the pre-tier economy. An absent module must
+     cost the FEATURE, never a payout. Same contract _opComputed already holds
+     with window.MythicTerroir. */
+const NodeTierState = { pledgeTierId: null, fetched: 0 };
+// The founder package this player actually bought. One read, cached for the
+// session — pledge_purchases only changes when money moves, and a node payout
+// must never block on a network round trip.
+async function nodeTierFetchPledge() {
+  try {
+    if (NodeTierState.fetched && (Date.now() - NodeTierState.fetched) < 600000) return NodeTierState.pledgeTierId;
+    NodeTierState.fetched = Date.now();
+    if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
+    const r = await Cloud.client.from('pledge_purchases')
+      .select('tier_id,status,created_at').eq('user_id', Profile.cloud.userId)
+      .order('created_at', { ascending: false }).limit(20);
+    if (r && r.error) return null;
+    // Highest tier they hold, not the most recent — buying a small pack after a
+    // large one must not demote anybody.
+    const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+    let best = null, bestRank = -1;
+    for (const row of ((r && r.data) || [])) {
+      if (!row || !row.tier_id) continue;
+      const st = String(row.status || '').toLowerCase();
+      if (st && st !== 'paid' && st !== 'completed' && st !== 'complete' && st !== 'succeeded') continue;
+      if (!T) { best = row.tier_id; break; }
+      const t = T.resolveTier(null, { pledgeTierId: row.tier_id });
+      const rank = T.TIERS.findIndex((x) => x.id === t.id);
+      if (rank > bestRank) { bestRank = rank; best = row.tier_id; }
+    }
+    NodeTierState.pledgeTierId = best;
+    return best;
+  } catch (e) { return null; }
+}
+function _nodeTierCtx() { return { pledgeTierId: NodeTierState.pledgeTierId }; }
+// The node whose tier speaks for this player. Their best one; null when they
+// own none, which the module resolves to Free — "no node in the city" is a
+// real tier, not an error.
+function _myTierNode() {
+  try {
+    const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+    const me = (Profile.cloud && Profile.cloud.userId) || null;
+    const mine = ((FoundationReserve && FoundationReserve.nodes) || [])
+      .filter((n) => n && n.owner_id === me);
+    /* 🏙 CITY NODES COUNT TOO, and in practice they are the ones that matter:
+       the City Nodes admin panel assigns tiers on Territory Wars nodes, and a
+       node there carries an OWNER. So a tier set on the city node your player
+       owns is the tier they earn at — that is what makes the panel's Owner
+       field mean something. Both node kinds go into one list and the best tier
+       wins, so owning a PRN and a city node can never quietly downgrade you. */
+    try {
+      if (me && typeof _twForge === 'function' && typeof _twNodeOwnerUser === 'function') {
+        for (const n of ((_twForge() || {}).nodes || [])) {
+          if (!n || !n.tier) continue;
+          const o = _twNodeOwnerUser(n.id);
+          if (o && (o.user_id === me || o.id === me)) mine.push(n);
+        }
+      }
+    } catch (e) {}
+    if (!mine.length || !T) return mine[0] || null;
+    let best = mine[0], bestRank = -1;
+    for (const n of mine) {
+      const rank = T.TIERS.findIndex((x) => x.id === T.resolveTier(n, _nodeTierCtx()).id);
+      if (rank > bestRank) { bestRank = rank; best = n; }
+    }
+    return best;
+  } catch (e) { return null; }
+}
+function _nodeTierPoolShare(n) {
+  try {
+    const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+    if (!T || typeof T.cinderPoolShare !== 'function') return NODE_POOL_MAX_SLICE;
+    const v = Number(T.cinderPoolShare(n, _nodeTierCtx()));
+    return (isFinite(v) && v > 0) ? v : NODE_POOL_MAX_SLICE;
+  } catch (e) { return NODE_POOL_MAX_SLICE; }
+}
+function _nodeTierResBonus(yields) {
+  try {
+    const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+    if (!T || typeof T.resourceBonus !== 'function') return {};
+    return T.resourceBonus(yields, _myTierNode(), _nodeTierCtx()) || {};
+  } catch (e) { return {}; }
+}
+function _nodeTierLabel(n) {
+  try {
+    const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+    return T ? T.tierLabel(n, _nodeTierCtx()) : '';
+  } catch (e) { return ''; }
+}
 // The real expected payout for a node: bounded accrual, clamped to a % slice
 // of the remaining global pool (unless the pool ledger isn't set up → legacy
 // bounded-only behavior, so existing players never regress).
+// 🔌 The slice is now the node's TIER rate (Free 0.5% … Eternal 20%) rather
+//    than one flat 5% for everyone, so the finite pool distributes by standing.
 function _nodeRealPay(n) {
   const bounded = _nodeClaimable(n);
   const pool = FoundationReserve.nodePool;
   if (!pool || pool.legacy) return bounded;
-  const slice = Math.floor((pool.avail || 0) * NODE_POOL_MAX_SLICE);
+  const slice = Math.floor((pool.avail || 0) * _nodeTierPoolShare(n));
   return Math.max(0, Math.min(bounded, slice, pool.avail | 0));
 }
 const RESERVE_NODE_TYPES = [
@@ -60796,6 +61167,11 @@ function _nodeActiveRisk(n) {
 }
 async function nodeFetch() {
   if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
+  // 🔌 Warm the purchased-tier lookup alongside the nodes. Fire-and-forget and
+  //    session-cached — a payout must never wait on it, and until it lands the
+  //    resolver simply falls back to Free (or to an admin override, which does
+  //    not need it at all).
+  try { nodeTierFetchPledge(); } catch (e) {}
   try {
     if (!Corp.mine && typeof corpEnsure === 'function') { try { await corpEnsure(); } catch (e) {} }
     if (!Corp.mine) { FoundationReserve.nodes = []; FoundationReserve.nodesFetched = Date.now(); return; }
@@ -63187,7 +63563,16 @@ function auctUnlock(listingId, cur) {
   return unlockGemsForBid(listingId);
 }
 function _auctWalletSpend(cur, amount) { return _curIsAza(cur) ? spendSovereigns(amount) : spendGems(amount); }
-function _auctWalletAdd(cur, amount) { return _curIsAza(cur) ? addSovereigns(amount) : addGems(amount); }
+/* An NPC winning a player's auction pays them, and for Aza that is newly
+   created premium currency — so it goes through the reward rules like every
+   other grant. The bid amount is passed as a REQUEST: sov_reward clamps it to
+   the auction_npc_sale band and applies the daily ceiling. The local bump
+   keeps the toast honest while the RPC lands. */
+function _auctWalletAdd(cur, amount) {
+  if (!_curIsAza(cur)) return addGems(amount);
+  addSovereigns(amount);
+  return sovReward('auction_npc_sale', amount);
+}
 
 // ===== Auction listing creators (parallel to listCardForSale / listHeldItemForSale) =====
 function listCardForAuction(customCardId, opts) {
@@ -63546,19 +63931,104 @@ function getCinders()        { return Profile.gems || 0; }
 function addCinders(amount)  { addGems(amount); }
 function spendCinders(amount){ return spendGems(amount); }
 function getSovereigns()     { return Profile.sovereigns || 0; }
+
+/* 👑 AZA IS SERVER-OWNED (sql/024 + sql/025).
+   ────────────────────────────────────────────────────────────────────────
+   Aza used to be a plain number in Profile that the client added to and
+   subtracted from, uploaded with the profile blob. Since `authenticated` has
+   column UPDATE on user_profiles.sovereigns, that meant one PostgREST PATCH
+   set any player's premium, real-money currency to any value. Not a race, not
+   an exploit chain — the front door.
+
+   Now user_progress.sovereigns is canonical and the client cannot write it.
+   These helpers are the only routes, and each is shaped so the client cannot
+   name a number out of thin air:
+     * spend   -> sov_charge          (down is always safe)
+     * refund  -> sov_refund(ledger)  (reverses ONE real prior charge, once)
+     * reward  -> sov_reward(kind)    (server owns the amount AND the roll)
+     * buy     -> the Worker, after Stripe confirms
+     * gift    -> aza_gift_claim      (amount read from the gift row)
+
+   Local Profile.sovereigns is still mutated first, for instant UI — the
+   "mirror" model, same as Cinder. The server is the truth and boot adopts it,
+   so the worst case for a failed RPC is a value that corrects itself on the
+   next load, never one that persists as free money. */
+let _sovLastCharge = null;   // { promise -> ledger_id | null, amount }
+
+function _sovRpc(fn, args) {
+  try {
+    if (typeof initCloud !== 'function' || !initCloud() || !Cloud.client
+        || !Profile.cloud || !Profile.cloud.signedIn) return Promise.resolve(null);
+    return Promise.resolve(Cloud.client.rpc(fn, args))
+      .then(r => (r && !r.error) ? r.data : null)
+      .catch(() => null);
+  } catch (e) { return Promise.resolve(null); }
+}
+// Adopt an authoritative balance from any Aza RPC reply. Never computes.
+function _sovAdopt(j) {
+  try {
+    if (!j || typeof j.aza !== 'number') return;
+    Profile.sovereigns = Math.max(0, Math.round(j.aza));
+    try { saveProfile(); } catch (e) {}
+    if (typeof MultiTab !== 'undefined' && MultiTab && typeof MultiTab.broadcastWallet === 'function') {
+      MultiTab.broadcastWallet({ sovereigns: Profile.sovereigns });
+    }
+    if (typeof render === 'function') render();
+  } catch (e) {}
+}
+
+/* ⚠ LOCAL ONLY — does NOT create Aza on the server, and anything it adds is
+   overwritten by the canonical balance at next boot. Kept because the refund
+   and reward helpers below want an instant optimistic bump before their RPC
+   lands. If you are adding a NEW way to grant Aza, this is not it: add a rule
+   to aza_reward_rules and call sovReward(). */
 function addSovereigns(amount) {
   amount = Math.floor(amount || 0);
   if (amount === 0) return;
   Profile.sovereigns = Math.max(0, (Profile.sovereigns || 0) + amount);
   saveProfile();
 }
-function spendSovereigns(amount) {
+function spendSovereigns(amount, reason) {
   amount = Math.floor(amount || 0);
   if (amount <= 0) return true;
   if ((Profile.sovereigns || 0) < amount) return false;
   Profile.sovereigns = (Profile.sovereigns || 0) - amount;
   saveProfile();
+  // Server does the real move and hands back a ledger id, which is the only
+  // thing sov_refund will accept — an amount parameter would just be a credit
+  // RPC wearing a different hat.
+  const p = _sovRpc('sov_charge', { p_amount: amount, p_reason: reason || 'aza spend' })
+    .then(j => { _sovAdopt(j); return (j && j.ok && j.ledger_id) ? j.ledger_id : null; });
+  _sovLastCharge = { promise: p, amount: amount };
   return true;
+}
+/* Put back the most recent spend after the thing it paid for failed. Bumps
+   locally at once so the UI never shows the player short, then reverses the
+   real charge server-side. Safe to call without awaiting. */
+function refundSovereigns(amount) {
+  amount = Math.floor(amount || 0);
+  if (amount > 0) addSovereigns(amount);
+  const rec = _sovLastCharge;
+  _sovLastCharge = null;
+  if (!rec) return Promise.resolve(false);
+  return rec.promise
+    .then(lid => lid ? _sovRpc('sov_refund', { p_ledger_id: lid }) : null)
+    .then(j => { _sovAdopt(j); return !!(j && j.ok); })
+    .catch(() => false);
+}
+/* The ONLY way gameplay creates Aza. The client says what happened; the server
+   decides whether it pays, how much, and whether the player has had too many
+   lately. Returns the granted amount (0 is a legitimate outcome for a chest).
+   `requested` is honoured only for rules flagged client_amount, and is clamped
+   to that rule's band server-side. */
+function sovReward(kind, requested) {
+  const args = { p_kind: String(kind || '') };
+  if (typeof requested === 'number' && isFinite(requested)) args.p_requested = Math.max(0, Math.floor(requested));
+  return _sovRpc('sov_reward', args).then(j => {
+    _sovAdopt(j);
+    if (!j || j.ok !== true) return 0;
+    return Math.max(0, Math.round(Number(j.granted) || 0));
+  });
 }
 
 // ===== Account / Profile Level system =====
@@ -68540,6 +69010,15 @@ function _notifyMultiTab() {
   function _broadcast(msg) {
     try { MultiTab.channel.postMessage(msg); } catch (e) {}
   }
+  /* 💰 Publish a server-confirmed wallet move to every other tab. Called by
+     the Bank of Ethos transfer paths; see the 'wallet' branch in onmessage
+     for why a tab that did not perform the move still has to hear about it.
+     Undefined when BroadcastChannel is unavailable (the IIFE returns early),
+     so every caller checks typeof first. */
+  MultiTab.broadcastWallet = function (patch) {
+    if (!patch || typeof patch !== 'object') return;
+    _broadcast(Object.assign({ type: 'wallet', tabId: MultiTab.tabId }, patch));
+  };
   function _amWriterCheck() {
     // Re-evaluate writer status. We're the writer if:
     //   - we've claimed AND no other tab has an EARLIER claim, OR
@@ -68582,6 +69061,32 @@ function _notifyMultiTab() {
       MultiTab.writerId = null;
       MultiTab.writerSeen = 0;
       _amWriterCheck();
+    } else if (m.type === 'wallet' && m.tabId !== MultiTab.tabId) {
+      /* 💰 A SERVER-CONFIRMED WALLET MOVE HAPPENED IN ANOTHER TAB.
+         Adopt it here immediately. Without this, banking from a NON-WRITER
+         tab is still a mint even with sql/023 in place: that tab's
+         saveProfile() early-returns, while THIS tab — the writer, and the
+         only one that uploads — still holds the pre-deposit number in memory
+         and pushes it back over user_profiles on its next debounce. The bank
+         keeps the credit and the mirror is restored.
+         Cinder is also defended server-side (boe_transfer reads only the
+         canonical row, which no client can write). Aza has no canonical row,
+         so for Aza this listener IS the defence. Same-origin BroadcastChannel,
+         so delivery is reliable; the values are the server's own reply,
+         re-broadcast verbatim, never recomputed here. */
+      try {
+        if (typeof m.gems === 'number') {
+          const _g = Math.max(0, Math.round(m.gems));
+          try { _gemsTaxExempt(() => { Profile.gems = _g; }); } catch (e) { Profile.gems = _g; }
+        }
+        if (typeof m.sovereigns === 'number') Profile.sovereigns = Math.max(0, Math.round(m.sovereigns));
+        if (typeof m.seqProfile  === 'number') Profile.walletSeqProfile  = Math.max(0, m.seqProfile  | 0);
+        if (typeof m.seqProgress === 'number') Profile.walletSeqProgress = Math.max(0, m.seqProgress | 0);
+        // No-op in a non-writer tab by design; in the writer tab this is the
+        // whole point — the corrected value is what gets uploaded.
+        try { saveProfile(); } catch (e) {}
+        try { if (typeof render === 'function') render(); } catch (e) {}
+      } catch (e) {}
     }
   };
   // Heartbeat loop — every tab broadcasts its presence. Cheap (~1 message/
@@ -79117,6 +79622,16 @@ async function _opSettle(o) {
         const q = Math.max(0, Math.floor(c.yields[rid]));
         if (q > 0) yieldedL[rid] = q;
       });
+      /* 🔌 PRN TIER BONUS — resources generated ON TOP of the run, at the
+         owner's node tier + 1 point (Free 1.5% … Eternal 21%). Applied HERE
+         because this is the moment the spec names: the city has produced and
+         the NPCs have just been paid. It is strictly additive — the base yield
+         above is untouched, so a player with no node loses nothing and simply
+         earns the Free rate. */
+      try {
+        const _tb = _nodeTierResBonus(yieldedL);
+        Object.keys(_tb).forEach(function (rid) { yieldedL[rid] = (yieldedL[rid] | 0) + _tb[rid]; });
+      } catch (e) {}
       if (Object.keys(yieldedL).length && typeof addSalvage === 'function') addSalvage(yieldedL);
       // 🏭 Business output is supply — it moves the exchange like node output does.
       try { if (typeof cxProduce === 'function' && Object.keys(yieldedL).length) cxProduce(yieldedL, 'op:' + (o.op_type || 'business')); } catch (e2) {}
@@ -79158,6 +79673,16 @@ async function _opSettle(o) {
       const q = Math.max(0, Math.floor(cy[rid] * (wagesShort ? 0.5 : 1)));
       if (q > 0) yielded[rid] = q;
     });
+    /* 🔌 PRN TIER BONUS — same additive rule as the personally-funded path.
+       ⚠ Computed from the ALREADY-PENALISED figures, so a wages-short run pays
+         a tier bonus on the halved output rather than on what the run would
+         have made if the corp could afford its people. Paying the full bonus
+         here would soften the exact penalty the treasury shortfall exists to
+         impose. */
+    try {
+      const _tb = _nodeTierResBonus(yielded);
+      Object.keys(_tb).forEach(function (rid) { yielded[rid] = (yielded[rid] | 0) + _tb[rid]; });
+    } catch (e) {}
     if (Object.keys(yielded).length && typeof addSalvage === 'function') {
       addSalvage(yielded);
       try { saveProfile(); } catch (e) {}
@@ -101892,14 +102417,13 @@ function _bbUnitDefs(units) {
         if (o.cardId && o.cardId !== o.originalCardId) ids.push('k_' + o.cardId, 'u_' + o.cardId);
       }
       ids.push('u_' + lookupId, 'h_' + lookupId, lookupId);
-      // ⚠ NO BASE-CHARACTER FALLBACK FOR A TRANSFORMED UNIT. This used to fall
-      // through to the ORIGINAL character's sprite when the Kalon had none,
-      // which is exactly the "my Kalons still show as their base form" report:
-      // the board drew the pre-transform creature and everything looked
-      // unchanged. Leaving `frames` empty lets the board use `art` — which for
-      // a transformed unit is the KALON'S OWN card art (lookupId is its cardId)
-      // — so you see the Kalon even with no sprite authored for it. Upload a
-      // Kalon sprite and the `k_` ids above win again.
+      // ⚠ THE BASE-CHARACTER FALLBACK IS DELIBERATELY *NOT* IN THIS LIST — it is
+      // applied below, and only after `art` has had its chance. Putting the base
+      // ids here is what produced the "my Kalons still show as their base form"
+      // report: base FRAMES outrank the Kalon's own still art, so the board drew
+      // the pre-transform creature and the ascension looked like it never
+      // happened. Order that actually holds: Kalon frames → Kalon art → base
+      // frames → base art.
       // ⚠ Try EVERY animation set, not just 'idle'. This asked for 'idle' only,
       // so any sprite authored without an idle set reported "no frames" and the
       // unit fell back to the procedural body / card art — the actual cause of
@@ -101916,6 +102440,51 @@ function _bbUnitDefs(units) {
             if (clean.length) { frames = clean; break outer; }
           }
         }
+      }
+      /* 🫧 …AND THE TIER THAT STOPS A KALON BEING A JELLYFISH.
+         Every id above is scoped to the Kalon FORM, and for the built-in forms
+         there is nothing filed under any of them. KALON_FORMS (Goblin King,
+         Archlich, Broodmother, …) are plain constants carrying an emoji `icon`
+         and no art: they are not catalog cards, so resolveDeckCard/getCardArt
+         both miss on `lookupId`, and nobody has ever uploaded an Atelier sprite
+         into their `k_` slot either. The def therefore went to the board with
+         frames:null AND art:null — and battle-board's paintSprite has exactly
+         one thing to draw in that case, the procedural jelly at the end of its
+         if/else chain. That is the reported "Kalons show up as 3D blobs".
+         (The 2D renderer never had this bug: unitBoardVisual() lists
+         originalCardId after cardId, so it quietly showed the base art.)
+
+         So when the FORM has contributed nothing at all, borrow the base
+         character — the creature that just ascended, which is at least the
+         right silhouette on the right tile. Deliberately LAST and guarded on
+         `!art`, so a Kalon with its own sprite, or merely its own card art,
+         still wins: that ordering is what the note above is protecting.
+         The transform is never invisible even here — the ascension VFX, the
+         name plate, the stats and the log line all still fire. */
+      const _kb2 = _isKalonTransformed(o) ? String(o.heroId || o.originalCardId || '') : '';
+      if (!frames && !art && _kb2 && _kb2 !== lookupId) {
+        const baseIds = ['u_' + _kb2, 'h_' + _kb2, _kb2];
+        base:
+        for (const sid of baseIds) {
+          for (const set of SETS) {
+            const spr = (typeof getSpriteFrames === 'function') ? getSpriteFrames(sid, set) : null;
+            if (Array.isArray(spr) && spr.length) {
+              const clean = spr.filter(f => f && typeof f === 'string' && f.slice(0, 5) !== 'blob:').map(_bbAbs).filter(Boolean);
+              if (clean.length) { frames = clean; break base; }
+            }
+          }
+        }
+        // Still nothing animated? The base card's still illustration is the
+        // last thing between this unit and the jelly.
+        if (!frames) {
+          let ba = null;
+          try { ba = (typeof Forge !== 'undefined' && Forge.cardArtUrl && Forge.cardArtUrl[_kb2]) || null; } catch (e) {}
+          if (typeof ba !== 'string' || !ba) { try { ba = (typeof getCardArt === 'function') ? getCardArt(_kb2) : null; } catch (e) {} }
+          if (typeof ba === 'string' && ba && ba.slice(0, 5) !== 'blob:') art = _bbAbs(ba);
+        }
+        // Let the force-load below stream these in too, so a base sprite that
+        // simply wasn't resident yet lands on the next 2Hz def rebuild.
+        for (const sid of baseIds) ids.push(sid);
       }
       // 🩹 NO FRAMES → FORCE THE SPRITE OFF DISK, even when art streaming is OFF.
       // ⚠ THIS IS WHY UNITS SHOWED THEIR CARD ON THE BATTLEFIELD. In
@@ -162654,21 +163223,24 @@ async function azaConfirmReturn() {
     if (!tok) return;
     const j = await fetch('/api/buy/confirm?sid=' + encodeURIComponent(sid), { headers: { accept: 'application/json', authorization: 'Bearer ' + tok } }).then(r => r.json()).catch(() => null);
     if (!j || !j.ok || !(Number(j.aza) > 0)) { showToast('⚠ Could not verify that purchase. If you were charged, contact support with no card details.', 6000); return; }
-    // Idempotent credit: the UNIQUE session_id makes a duplicate insert fail
-    // → we only addSovereigns when THIS client wrote the row.
-    try {
-      const ins = await Cloud.client.from('aza_purchases').insert({ user_id: Profile.cloud.userId, session_id: sid, aza: Number(j.aza) });
-      if (ins && ins.error) {
-        if (/duplicate|unique|23505|conflict/i.test((ins.error.message || '') + '')) { showToast('✓ This Aza purchase was already credited.', 4200); return; }
-        throw ins.error;
-      }
-    } catch (e) {
-      if (/aza_purchases|PGRST205|does not exist/i.test((e && e.message) || '')) { showToast('⚠ Run the updated api.sql so purchases can be credited.', 6000); return; }
-      showToast('⚠ Crediting failed — your session is valid; retry by reopening this link.', 6000); return;
-    }
-    addSovereigns(Number(j.aza));
+    /* 💰 THE WORKER HAS ALREADY CREDITED IT (sql/024 aza_fulfill, under the
+       service-role key, idempotent on the Stripe session id).
+
+       This used to be the crediting site: the client inserted the
+       aza_purchases receipt on its own JWT and then called addSovereigns()
+       with an amount it chose. Aza is bought with real money, so the number
+       that lands must not be one the client picks — and the exactly-once
+       guarantee must not depend on the client bothering to write the receipt.
+       Both now happen server-side, in one transaction.
+
+       We only ADOPT the balance the server reports. A repeat visit to the
+       success URL returns already:true and moves nothing. */
+    const _bal = Number(j.balance);
+    if (isFinite(_bal) && _bal >= 0) Profile.sovereigns = Math.max(0, Math.round(_bal));
+    Profile.walletSeqProfile = Math.max(0, Number(Profile.walletSeqProfile) | 0);
     try { saveProfile(); } catch (e) {}
     try { if (typeof render === 'function') render(); } catch (e) {}
+    if (j.already === true) { showToast('✓ This Aza purchase was already credited.', 4200); return; }
     // 🎉 Success modal — confirm the purchase + show the NEW Aza balance.
     _showAzaSuccessModal(Number(j.aza), Number(Profile.sovereigns || 0));
   } catch (e) {}
@@ -174841,29 +175413,82 @@ async function claimGift(g) {
     try { if (!Corp.mine && typeof corpEnsure === 'function') await corpEnsure(); } catch (e) {}
     if (!Corp.mine || !Corp.mine.id) return { error: 'Found or join a corporation first — your granted node waits in the gift inbox until then.' };
   }
+  /* 🔒 THE CLAIM IS A SERVER CALL NOW (sql/027) — for every kind, Aza included.
+     (sql/024 got Aza here first, via aza_gift_claim. That function still exists
+     and is still correct; gift_claim simply absorbed it so there is ONE claim
+     path to reason about instead of one safe one and one that wasn't.)
+     This used to be a client-side flip:
+         .update({status:'claimed'}).eq('id',…).eq('status','pending')
+     which looks like an exactly-once guard and is not one. `gifts_upd` let the
+     RECIPIENT update any column of their own row, so a player could set status
+     back to 'pending' and claim the same admin grant again, forever — the
+     reported "Grant a reward keeps sending them the same amount". The same
+     grant also made `qty` player-writable, so the amount could be rewritten
+     before claiming; that reached even aza_gift_claim, which reads qty from
+     the row, and Aza is bought with real money.
+     gift_claim() flips and pays in one statement-chain, from a row players can
+     no longer touch. It returns the qty it actually honoured — use THAT, never
+     `g.qty`, which is just whatever the last fetch happened to cache. */
   try {
-    const { data, error } = await Cloud.client
-      .from('gifts')
-      .update({ status: 'claimed', claimed_at: new Date().toISOString() })
-      .eq('id', g.id)
-      .eq('to_user', Profile.cloud.userId)
-      .eq('status', 'pending')           // ← prevents double-claim
-      .select();
-    if (error) return { error: error.message || 'Could not claim.' };
-    if (!data || data.length === 0) return { error: 'This gift was already claimed.' };
-    const qty = Math.max(1, parseInt(g.qty, 10) || 1);
+    const _cr = await Cloud.client.rpc('gift_claim', { p_gift_id: g.id });
+    if (_cr && _cr.error) {
+      /* ⚠ FAILS CLOSED, matching _boeTransfer's stance on sql/022. If 027 has
+         not been applied the RPC is absent, and the honest response is to
+         refuse — the old path is the dupe. The gift stays in the inbox. */
+      const _m = String((_cr.error && _cr.error.message) || '');
+      if (/gift_claim|PGRST202|PGRST205|schema cache|does not exist|not found/i.test(_m)) {
+        return { error: 'Reward claiming is being upgraded — run sql/027 in Supabase. Your gift is safe in the inbox.' };
+      }
+      return { error: _m || 'Could not claim.' };
+    }
+    const j = _cr && _cr.data;
+    if (!j || j.ok !== true) {
+      return { error: (j && j.error === 'not_claimable')
+        ? 'This gift was already claimed.'
+        : 'Could not claim that gift — try again in a moment.' };
+    }
+    // 👑💰 Money kinds are already in the canonical row — `paid` says so. Adopt
+    //      the authoritative balance; do NOT add anything locally, or the claim
+    //      lands twice (once server-side, once here) and we are back to a dupe
+    //      with extra steps.
+    if (j.paid === true) {
+      try {
+        if (typeof j.cinder === 'number') {
+          const _c = Math.max(0, Math.round(j.cinder));
+          try { _gemsTaxExempt(() => { Profile.gems = _c; }); } catch (e) { Profile.gems = _c; }
+        }
+        if (typeof j.aza === 'number') _sovAdopt({ aza: j.aza });
+      } catch (e) {}
+      // A coupon also leaves a record the player can see in their profile; the
+      // Cinder half of it was paid above.
+      if (String(j.kind) === '__coupon__') {
+        try {
+          if (!Array.isArray(Profile.coupons)) Profile.coupons = [];
+          Profile.coupons.push({ code: g.card_name || 'Coupon', value: Math.max(0, j.qty | 0), ts: Date.now() });
+        } catch (e) {}
+      }
+      try { _persistProgressNow(); } catch (e) { try { saveProfile(); } catch (_) {} }
+      GiftsCache.pending = GiftsCache.pending.filter(x => x.id !== g.id);
+      try { if (typeof render === 'function') render(); } catch (e) {}
+      return { ok: true };
+    }
+    // Inventory kinds: the server has recorded the claim, we apply the item.
+    const qty = Math.max(1, parseInt(j.qty, 10) || 1);
     // Reward kind is encoded in card_id (admin grants reuse the gifts table
     // with NO schema change). A plain card id falls through to the deck.
-    const cid = String(g.card_id || '');
+    // ⚠ Read the kind the SERVER reported, not `g.card_id` — `g` is a cached
+    //   snapshot from the last fetch, and the row is the thing under dispute.
+    // 💰 No money branch here any more: __cinder__, __aza__ and __coupon__ all
+    //    return paid:true above and never reach this point. Adding one back
+    //    would credit on top of what gift_claim already paid.
+    const cid = String((j && j.kind) || g.card_id || '');
     const mRes = cid.match(/^__res:(.+)__$/);
     const mItem = cid.match(/^__item:(.+)__$/);
     const mNode = cid.match(/^__node:(.+)__$/);
     const mPack = cid.match(/^__pack:(.+)__$/);
     const mCos = cid.match(/^__cosmetic:(sleeve|tombstone):(.+)__$/);
     try {
-      if (cid === '__cinder__') { if (typeof addGems === 'function') addGems(qty); }
-      else if (cid === '__aza__') { if (typeof addSovereigns === 'function') addSovereigns(qty); }
-      else if (mRes) { if (typeof addSalvage === 'function') addSalvage({ [mRes[1]]: qty }); }
+      if (mRes) { if (typeof addSalvage === 'function') addSalvage({ [mRes[1]]: qty }); }
       else if (mItem) { if (!Profile.itemInventory) Profile.itemInventory = {}; Profile.itemInventory[mItem[1]] = (Profile.itemInventory[mItem[1]] || 0) + qty; }
       else if (mNode) {
         const t = (typeof _nodeType === 'function' && _nodeType(mNode[1])) || { id: mNode[1], name: 'PRN', proc: '' };
@@ -174874,7 +175499,10 @@ async function claimGift(g) {
           meta: { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now(), funded: 'gift' },
         });
         if (ins && ins.error) {
-          try { await Cloud.client.from('gifts').update({ status: 'pending', claimed_at: null }).eq('id', g.id); } catch (_) {}
+          // Put it back in the inbox. Players no longer hold UPDATE on gifts
+          // (sql/027), so this is an RPC — and gift_unclaim REFUSES the money
+          // kinds, which is what stops the rollback becoming a replay.
+          try { await Cloud.client.rpc('gift_unclaim', { p_gift_id: g.id }); } catch (_) {}
           return { error: 'PRN grant failed — ' + (((ins.error.message) || 'try again').slice(0, 80)) };
         }
         try { if (typeof nodeFetch === 'function') nodeFetch(); } catch (e) {}
@@ -174908,17 +175536,18 @@ async function claimGift(g) {
         const custom = ((typeof getAllCustomPacks === 'function') ? getAllCustomPacks() : (Forge.customPacks || [])).find(p => p.id === pid);
         const packDef = builtIn || ((custom && typeof toEnginePackDef === 'function') ? toEnginePackDef(custom) : null);
         if (!packDef || typeof addUnopenedPack !== 'function') {
-          try { await Cloud.client.from('gifts').update({ status: 'pending', claimed_at: null }).eq('id', g.id); } catch (_) {}
+          try { await Cloud.client.rpc('gift_unclaim', { p_gift_id: g.id }); } catch (_) {}
           return { error: 'That pack isn’t in your catalog yet — try again in a moment.' };
         }
         for (let i = 0; i < qty; i++) { try { addUnopenedPack(packDef, 'gift'); } catch (e) {} }
         try { showToast('📦 ' + (packDef.name || 'Pack') + ' added to Pack Opening — crack it when you’re ready!', 4500); } catch (e) {}
       }
-      else if (cid === '__coupon__') {
-        if (!Array.isArray(Profile.coupons)) Profile.coupons = [];
-        Profile.coupons.push({ code: g.card_name || 'Coupon', value: qty, ts: Date.now() });
-        if (qty > 0 && typeof addGems === 'function') addGems(qty);   // coupon value pays out in Cinders
-      } else {
+      // 🎟 __coupon__ is NOT handled here any more — it returns paid:true above,
+      //    because its face value pays out in Cinder and gift_claim credits the
+      //    canonical row. The branch that used to sit here called addGems(qty)
+      //    off the cached row; leaving it in place would pay the coupon twice
+      //    the moment anything let a coupon reach this far.
+      else {
         if (!Profile.cardCollection) Profile.cardCollection = {};
         Profile.cardCollection[cid] = (Profile.cardCollection[cid] || 0) + qty;
       }
@@ -184597,9 +185226,13 @@ function _covertCollect(missionInstanceId) {
     if (m.missionId === 'cv_resource') {
       // 250–500 Cinder + 1 Aza, twice per week.
       const c = 250 + Math.floor(Math.random() * 251);
+      // 👑 Aza comes from the server. The 1-per-run payout and the "2 per week"
+      //    limit both live in aza_reward_rules now — the limit used to be
+      //    checked only here, which meant it was never actually enforced.
       const a = 1;
       if (typeof addCinders === 'function') addCinders(c);
-      if (typeof addSovereigns === 'function') addSovereigns(a);
+      addSovereigns(a);
+      sovReward('cv_resource');
       payout = `+${c.toLocaleString()} Cinder, +${a} Aza`;
     } else if (m.missionId === 'cv_intel') {
       // Reveal a Dark Event a few hours early — by adding 30min back
@@ -184641,9 +185274,10 @@ function _covertCollect(missionInstanceId) {
     } else if (m.missionId === 'cv_recruit') {
       // 1000–2500 Cinder + 2 Aza, once per two weeks.
       const c = 1000 + Math.floor(Math.random() * 1501);
-      const a = 2;
+      const a = 2;   // server-owned; see aza_reward_rules.cv_recruit
       if (typeof addCinders === 'function') addCinders(c);
-      if (typeof addSovereigns === 'function') addSovereigns(a);
+      addSovereigns(a);
+      sovReward('cv_recruit');
       payout = `+${c.toLocaleString()} Cinder, +${a} Aza, recruit contacts established.`;
     }
   } catch (e) { console.warn('[covert collect]', e); }
@@ -200969,7 +201603,9 @@ function _rollChestDrops() {
   } catch (e) {}
   return out;
 }
-function _openChest(tierId) {
+// async since v120t7: the Aza roll is now settled by the server before the
+// results modal is shown, so the modal reports what was actually granted.
+async function _openChest(tierId) {
   const t = _chestTier(tierId);
   const chests = _ensureChests(), keys = _ensureChestKeys();
   if ((chests[t.id] | 0) < 1 || (keys[t.id] | 0) < 1) { showToast('You need both a ' + t.name + ' AND its key.'); return; }
@@ -201010,11 +201646,14 @@ function _openChest(tierId) {
       try { addCinders(c); } catch (e) { Profile.gems = (Profile.gems | 0) + c; }
       lines.push('🔥 ' + c.toLocaleString() + ' Cinder');
     }
-    if (Math.random() < t.azaCh) {
-      const a = t.aza[0] + Math.floor(Math.random() * (t.aza[1] - t.aza[0] + 1));
-      try { if (typeof addSovereigns === 'function') addSovereigns(a); else Profile.sovereigns = (Profile.sovereigns | 0) + a; } catch (e) {}
-      lines.push('👑 ' + a + ' Aza coin — jackpot!');
-    }
+    /* 👑 THE SERVER ROLLS THIS ONE, and it is the clearest case for why.
+       The chance and the range are unchanged — aza_reward_rules is seeded
+       straight from CHEST_TIERS — but rolling here meant a client could roll
+       until it liked the number, and then report whatever number it wanted
+       regardless. Now the roll, the amount and the daily ceiling are all
+       server-side, and we just print what came back. */
+    const azaWon = await sovReward('chest_' + t.id);
+    if (azaWon > 0) lines.push('👑 ' + azaWon + ' Aza coin — jackpot!');
   } catch (e) {}
   try { saveProfile(); } catch (e) {}
   try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
@@ -204636,7 +205275,7 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120t2';
+  f.src = 'node-city/index.html?v=120t9';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -204670,6 +205309,112 @@ function _openNodeCity(nodeId, _resolved) {
     if (App._cityBadgeTimer) { try { clearInterval(App._cityBadgeTimer); } catch (e) {} }
     App._cityBadgeTimer = setInterval(_cityOwnerBadgeSync, 2000);
   } catch (e) {}
+  // 🔌 Tier pill — the generation rate THIS city's node pays, and (for an
+  //    admin) the place to assign it. Sits under the owner badge.
+  try { _cityTierPill(); } catch (e) {}
+}
+/* 🔌 PRN TIER — pill + assignment modal, on the Node City overlay.
+   The pill always states a rate, including for a player who owns no node at
+   all: that is the Free tier, not a blank. Assignment is admin-only (the rate
+   is otherwise earned by buying a founder package), and the override is stamped
+   on economy_nodes.meta.tier — JSONB, so no schema change, matching how every
+   other per-node fact in this file is stored. */
+function _cityTierPill() {
+  const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+  if (!T) return;                                    // module absent → no pill, no feature
+  const old = document.getElementById('node-city-tier');
+  if (old) { try { old.remove(); } catch (e) {} }
+  const node = ((FoundationReserve && FoundationReserve.nodes) || []).find((n) => n && n.id === App._cityNodeId) || null;
+  const tier = T.resolveTier(node, _nodeTierCtx());
+  const canEdit = (typeof isAdmin === 'function') && isAdmin();
+  const p = document.createElement('button');
+  p.id = 'node-city-tier';
+  p.textContent = '🔌 ' + tier.name + ' · ' + tier.rate + '%' + (canEdit ? ' ✎' : '');
+  p.title = canEdit
+    ? 'Node tier — ' + tier.rate + '% Cinder pool share, ' + (tier.rate + T.RESOURCE_BONUS_PCT) + '% resource generation. Click to assign.'
+    : 'Node tier — ' + tier.rate + '% Cinder pool share, ' + (tier.rate + T.RESOURCE_BONUS_PCT) + '% resource generation.';
+  p.style.cssText = 'position:fixed;top:52px;left:16px;z-index:2147483301;padding:6px 13px;border-radius:999px;'
+    + 'font-family:Cinzel,serif;font-weight:700;font-size:11.5px;letter-spacing:.07em;color:#0f0b04;'
+    + 'background:linear-gradient(180deg,' + tier.accent + ',rgba(0,0,0,.25));border:1px solid rgba(0,0,0,.4);'
+    + 'box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:' + (canEdit ? 'pointer' : 'default');
+  if (canEdit) p.onclick = () => { try { _cityTierModal(node); } catch (e) {} };
+  document.body.appendChild(p);
+}
+function _cityTierModal(node) {
+  const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+  if (!T) return;
+  if (!node) { showToast('🔌 No PRN is attached to this city — its owner is on the Free tier (0.5%). Nothing to assign.', 5600); return; }
+  const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+  const cur = T.resolveTier(node, _nodeTierCtx());
+  const ov = document.createElement('div');
+  ov.id = 'node-tier-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;background:rgba(6,4,12,.78);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:1.2rem';
+  const rows = T.TIERS.map((t) => {
+    const on = t.id === cur.id;
+    return '<button data-tier="' + esc(t.id) + '" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;cursor:pointer;'
+      + 'margin-bottom:6px;padding:9px 12px;border-radius:9px;color:#f0e6d0;font-weight:700;'
+      + 'border:1px solid ' + (on ? t.accent : 'rgba(212,175,55,.28)') + ';'
+      + 'background:' + (on ? 'rgba(212,175,55,.16)' : 'rgba(20,14,30,.6)') + '">'
+      + '<span style="width:11px;height:11px;border-radius:50%;background:' + t.accent + ';flex:none"></span>'
+      + '<span style="flex:1">' + esc(t.name) + (on ? ' <span style="color:#9fe8bd">· current</span>' : '') + '</span>'
+      + '<span style="font-family:monospace;color:#ffd166">' + t.rate + '% 🔥</span>'
+      + '<span style="font-family:monospace;color:#9fe0b0">' + (t.rate + T.RESOURCE_BONUS_PCT) + '% 📦</span>'
+      + '</button>';
+  }).join('');
+  ov.innerHTML = '<div style="max-width:520px;width:100%;max-height:82vh;overflow:auto;padding:1.2rem 1.3rem;border-radius:14px;'
+    + 'background:linear-gradient(180deg,rgba(28,20,44,.98),rgba(14,10,22,.99));border:1px solid rgba(212,175,55,.45);box-shadow:0 20px 60px rgba(0,0,0,.7)">'
+    + '<div style="font-family:Cinzel,serif;font-weight:800;color:#ffcf5a;font-size:1.05rem;margin-bottom:2px">🔌 Node Tier — ' + esc(node.name || 'PRN') + '</div>'
+    + '<div class="small-text" style="color:#bfae86;margin-bottom:10px;line-height:1.6">'
+    + '🔥 sets this node\'s share of the global reward pool per collect. '
+    + '📦 is the bonus resource generation its owner earns when their city produces and pays its workers (tier + '
+    + T.RESOURCE_BONUS_PCT + ' point).</div>'
+    + rows
+    + '<div style="display:flex;gap:8px;margin-top:10px">'
+    + '<button id="ntier-clear" style="flex:1;cursor:pointer;border-radius:8px;padding:.5rem;border:1px solid rgba(212,175,55,.4);background:rgba(20,14,30,.7);color:#e8dcc0;font-weight:700">↺ Clear override</button>'
+    + '<button id="ntier-close" style="flex:1;cursor:pointer;border-radius:8px;padding:.5rem;border:1px solid rgba(212,175,55,.4);background:rgba(20,14,30,.7);color:#e8dcc0;font-weight:700">Close</button>'
+    + '</div></div>';
+  document.body.appendChild(ov);
+  const shut = () => { try { ov.remove(); } catch (e) {} };
+  ov.addEventListener('click', (e) => { if (e.target === ov) shut(); });
+  ov.querySelector('#ntier-close').onclick = shut;
+  ov.querySelector('#ntier-clear').onclick = () => { _cityTierAssign(node, null).then(shut); };
+  ov.querySelectorAll('[data-tier]').forEach((b) => {
+    b.onclick = () => { _cityTierAssign(node, b.getAttribute('data-tier')).then(shut); };
+  });
+}
+/* Stamp (or clear) the override. `null` removes it, so the node falls back to
+   whatever the owner actually purchased — which is why this is a delete rather
+   than "set it to free": those are different states and conflating them would
+   strip a paying player's tier the first time an admin undid a change. */
+async function _cityTierAssign(node, tierId) {
+  try {
+    if (!node) return false;
+    const meta = Object.assign({}, node.meta || {});
+    if (tierId) meta.tier = tierId; else delete meta.tier;
+    node.meta = meta;                                  // optimistic, so the pill repaints now
+    try { _cityTierPill(); } catch (e) {}
+    if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
+      showToast('☁ Signed out — the tier was not saved.', 4200); return false;
+    }
+    const r = await Cloud.client.from('economy_nodes')
+      .update({ meta: meta, updated_at: new Date().toISOString() }).eq('id', node.id).select('id');
+    if (r && r.error) throw r.error;
+    // ⚠ RLS scopes economy_nodes UPDATE to the OWNER (policy en_upd). Assigning
+    //   a tier on someone else's node needs sql/029; without it the statement
+    //   matches no rows and returns no error, so check the returned row rather
+    //   than trusting silence — the same silent-no-op trap _boeAdjust hit.
+    if (!r || !Array.isArray(r.data) || r.data.length === 0) {
+      showToast('⚠ Tier not saved — run sql/029 so admins can set tiers on other players\' nodes.', 6000);
+      return false;
+    }
+    showToast('🔌 ' + (node.name || 'PRN') + ' → ' + (tierId ? (((typeof window !== 'undefined' && window.MythicNodeTiers && window.MythicNodeTiers.tierById(tierId)) || {}).name || tierId) : 'override cleared'), 4200);
+    try { if (typeof nodeFetch === 'function') await nodeFetch(); } catch (e) {}
+    try { _cityTierPill(); } catch (e) {}
+    return true;
+  } catch (e) {
+    showToast('⚠ Could not save the tier — try again.', 4000);
+    return false;
+  }
 }
 function _closeNodeCity() {
   const f = document.getElementById('node-city-frame');
@@ -204699,6 +205444,13 @@ function _closeNodeCity() {
   if (x) { try { x.remove(); } catch (e) {} }
   const b = document.getElementById('node-city-owner');
   if (b) { try { b.remove(); } catch (e) {} }
+  // The tier pill and its modal are overlay chrome too — they are position:fixed
+  // on the PARENT document, so leaving them behind would float them over the
+  // game itself once the iframe is gone.
+  const tp = document.getElementById('node-city-tier');
+  if (tp) { try { tp.remove(); } catch (e) {} }
+  const tov = document.getElementById('node-tier-overlay');
+  if (tov) { try { tov.remove(); } catch (e) {} }
   // The badge's live refresh dies with the badge.
   if (App._cityBadgeTimer) { try { clearInterval(App._cityBadgeTimer); } catch (e) {} App._cityBadgeTimer = null; }
   // An open still resolving when the player leaves must not land afterwards.
@@ -212464,7 +213216,11 @@ function _twChosenAwardTrophy(chosen) {
   // Cinder + Aza payout — generous because this is a major milestone.
   try {
     if (typeof addCinders === 'function') addCinders(50000);
-    if (typeof addSovereigns === 'function') addSovereigns(25); // 25 Aza ≈ $25
+    // 25 Aza ≈ $25 — the single largest grant in the game, so it is the last
+    // one that should be mintable from the client. Amount + rate now live in
+    // aza_reward_rules.tw_chosen_trophy.
+    addSovereigns(25);
+    sovReward('tw_chosen_trophy');
   } catch (e) {}
   // Unique trophy relic — stored on the player inventory.
   try {
@@ -212691,7 +213447,8 @@ function _twCancelDarkEvent(darkEventId, sabotageNodeId) {
   // Reward — chunky Cinder + small Aza pop.
   try {
     if (typeof addCinders === 'function') addCinders(10000);
-    if (typeof addSovereigns === 'function') addSovereigns(5);
+    addSovereigns(5);
+    sovReward('dark_event_sabotage');   // amount + rate: aza_reward_rules
   } catch (e) {}
   showToast(`🜏 Dark Event SABOTAGED — ${event.eventName || 'Operation'} cancelled! +10,000 Cinder, +5 Aza.`, 6500);
   _twLog('darkEvent', `🜏 ${(_twPlayerCorp() && _twPlayerCorp().name) || 'Your corp'} sabotaged ${event.eventName} — event cancelled.`);
@@ -213282,7 +214039,18 @@ function contributeCampToNode() {
   const node = getCampNode();
   if (!node) { try { showToast('⚠ Register your camp to a District Node first.'); } catch (e) {} return; }
   if ((Profile.gems || 0) < CAMP_CONTRIB_COST) { try { showToast(`Need ${CAMP_CONTRIB_COST} 🔥 to send supplies.`); } catch (e) {} return; }
-  Profile.gems = (Profile.gems || 0) - CAMP_CONTRIB_COST;
+  /* 💰 spendGems(), NOT a direct write to Profile.gems.
+     This used to be `Profile.gems = (Profile.gems || 0) - CAMP_CONTRIB_COST`,
+     and since v120t7 that is a no-op with extra steps: user_progress.cinder is
+     the canonical wallet, only spendGems()/addGems() mirror to it, and
+     walletFetchProgress() adopts MAX(server, local). So the 250 came out
+     locally, the server never heard about it, and the next sync handed it
+     straight back — the reported "I contributed and my wallet did not update".
+     The player was not being charged at all. */
+  if (!spendGems(CAMP_CONTRIB_COST)) {
+    try { showToast(`Need ${CAMP_CONTRIB_COST} 🔥 to send supplies.`); } catch (e) {}
+    return;
+  }
   const before = _campContrib();
   Profile.campContrib = Math.min(100, before + 4);
   // Prestige ticks every 10% contribution crossed.
@@ -218886,6 +219654,31 @@ function renderTerritoryWars() {
         <label class="tw-admin-label">Yield JSON</label>
         <input class="tw-admin-input" id="tw-admin-yield" value="${escapeHtml(JSON.stringify(selNode.resourceYield||{}))}" placeholder='{"FOOD":10}'>
       </div>
+      ${(function () {
+        /* 🔌 NODE TIER — the generation rate this node's OWNER earns.
+           Sits here, in the panel that already owns identity/yield/cinder,
+           because this is where an operator actually administers a node. The
+           Node City pill is a read-only display of the same value.
+           Absent module = no section at all rather than a broken control; the
+           rate table lives in /src/nodes/tiers.js and nothing here duplicates
+           it, so the dropdown can never advertise a rate the payout won't pay. */
+        const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+        if (!T) return '';
+        const cur = T.resolveTier(selNode, {});
+        const opts = T.TIERS.map(function (t) {
+          return '<option value="' + escapeHtml(t.id) + '"' + (t.id === cur.id ? ' selected' : '') + '>'
+               + escapeHtml(t.name) + ' — ' + t.rate + '% 🔥 · ' + (t.rate + T.RESOURCE_BONUS_PCT) + '% 📦'
+               + '</option>';
+        }).join('');
+        return '<div class="tw-nd-section-hdr">— NODE TIER 🔌</div>'
+          + '<div style="padding:0 0.75rem 0.5rem;font-size:0.60rem;color:#5b6772;line-height:1.5">'
+          + '🔥 share of the global reward pool per PRN collect · 📦 bonus resource generation when this node\'s owner produces and pays their workers. '
+          + 'No node at all = Free ' + T.freeTier().rate + '%.</div>'
+          + '<div class="tw-admin-field-row">'
+          + '<label class="tw-admin-label">Tier</label>'
+          + '<select class="tw-admin-input" id="tw-admin-tier">' + opts + '</select>'
+          + '</div>';
+      })()}
       <div class="tw-nd-section-hdr">— CINDER STATS</div>
       <div class="tw-admin-field-row">
         <label class="tw-admin-label">Cinder Total</label>
@@ -219249,6 +220042,13 @@ function renderTerritoryWars() {
       const pyVal   = parseFloat((document.getElementById('tw-admin-py') || {}).value);
       const yldVal  = (document.getElementById('tw-admin-yield') || {}).value || '';
       const cinVal  = parseInt((document.getElementById('tw-admin-cinder') || {}).value);
+      /* 🔌 Tier rides the same Save — one button for the whole panel, and it
+         reaches players through the existing _adminAutoPublish below like every
+         other node edit. Validated against the real table rather than trusted:
+         a stale/hand-edited id must not become a tier nobody can resolve. */
+      const tierVal = (document.getElementById('tw-admin-tier') || {}).value || '';
+      const _TT = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+      if (_TT && tierVal && _TT.tierById(tierVal)) node.tier = tierVal;
       if (nameVal.trim()) node.name = nameVal.trim();
       if (typeVal.trim()) { node.type = typeVal.trim(); node.purpose = typeVal.trim(); }
       if (secVal.trim()) node.sectorId = secVal.trim();
@@ -220812,6 +221612,14 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/trading/index.js?v=r12trade1"></script>
+<!-- 🔌 PRN NODE TIERS — the generation-rate table (Free 0.5% … Eternal 20%).
+     Registers window.MythicNodeTiers: pure math, no I/O, no globals. Two
+     consumers in this file, both `typeof`-guarded so an absent module falls
+     back to the flat pre-tier behaviour rather than zeroing a payout —
+     _nodeRealPay (Cinder pool slice) and _opSettle (resource bonus).
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/nodes/tiers.js?v=v120t9n2"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

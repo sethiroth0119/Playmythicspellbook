@@ -1920,8 +1920,21 @@ const BUILDINGS = {
               gen: { medicine: 0.4 }, use: { water: 0.15 }, desc: 'Synthesizes medicine. Sips water.' },
   munitions:{ name: 'Munitions',     ico: '🔫', cost: { cinder: 44, metal: 20 }, pop: 2, crew: 2,
               gen: { ammo: 0.5 }, use: { metal: 0.2 }, desc: 'Presses ammo from scrap metal.' },
+  /* 🔥 CINDER FORGE — RETIRED. It minted currency out of fuel + metal with no
+     customer on the other side: not a sale, not a service, just alchemy. That
+     made it the single best Cinder-per-tile in the game and the backbone of a
+     player earning ~16,000,000 🔥/day. Cinder is now only made the way a real
+     economy makes it — by SELLING something to somebody (gas station, arena,
+     shop, club).
+
+     ⚠ THE DEF IS KEPT ON PURPOSE, EMPTY. Six sites read `BUILDINGS[t.type].name`
+       with no null guard (damage/repair toasts and their log lines), so deleting
+       the key would throw for every player who already has one standing. It is
+       removed from the build menu and BUILD_ORDER instead: existing forges keep
+       their tile and their name, produce nothing, and no new one can be placed.
+       Delete this entry only once no saved city contains a 'forge' tile. */
   forge:    { name: 'Cinder Forge',  ico: '🔥', cost: { cinder: 60, metal: 24, fuel: 12 }, pop: 3, crew: 2,
-              gen: { cinder: 0.35 }, use: { fuel: 0.15, metal: 0.1 }, desc: 'Burns fuel + metal into raw Cinder ₵.' },
+              retired: true, desc: 'Decommissioned. The Foundation outlawed minting Cinder from scrap — it sells nothing, so it earns nothing.' },
   reslab:   { name: 'Research Spire',ico: '🧠', cost: { cinder: 90, metal: 20, supplies: 14 }, pop: 3, crew: 2,
               gen: { memoryShards: 0.06 }, desc: 'Distills memory shards from the node hum.' },
   siphon:   { name: 'Rift Siphon',   ico: '🟣', cost: { cinder: 110, metal: 26, fuel: 16 }, pop: 3, crew: 2,
@@ -2198,12 +2211,14 @@ const BUILD_SECTIONS = [
   { id: 'def',   name: 'Defense',        ico: '🛡️', desc: 'Raiders are coming. These are what stop them.',
     items: ['barracks', 'tower', 'police', 'wall', 'gate', 'munitions', 'motorpool', 'firestation'] },
   { id: 'arc',   name: 'Arcane',         ico: '✨', desc: 'Card-powered structures and rare tech.',
-    items: ['forge', 'reslab', 'siphon', 'obelisk', 'kalonstable', 'resthouse'] },
+    // 'forge' removed — retired, see the Cinder Forge def above. Unlisting it
+    // here and in BUILD_ORDER is what actually stops it being placed again.
+    items: ['reslab', 'siphon', 'obelisk', 'kalonstable', 'resthouse'] },
   { id: 'dec',   name: 'Decoration',     ico: '🌿', desc: 'Cosmetic, with small morale gains.',
     items: ['tree', 'bush', 'garden', 'fountain'] },
 ];
 
-const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmine','fuelrig','gasstation','depot','medlab','munitions','forge','housing','barracks','tower','wall','gate','arena','shop','caravanpost','lot','reslab','siphon','obelisk','kalonstable','tree','bush','garden','fountain',
+const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmine','fuelrig','gasstation','depot','medlab','munitions','housing','barracks','tower','wall','gate','arena','shop','caravanpost','lot','reslab','siphon','obelisk','kalonstable','tree','bush','garden','fountain',
   // ── the service city (r5) ──
   'foodtruck','restaurant','grocery','clinic','club','cannery','smelter','machineshop','powerstation','warehouse','motorpool','firestation','police',
   // ── the House (r8) ──
@@ -2230,6 +2245,41 @@ const OBELISK_LINK = 5;
 
 /* ── Economy layer ── */
 const LOT_RENT_PER_MIN = 0.15;                   // tenant rent paid to owner
+/* 💰 CINDER IS EARNED PER **HOUR**, NOT PER MINUTE.
+   ────────────────────────────────────────────────────────────────────────────
+   Every `gen: { cinder: n }` figure in BUILDINGS and LOT_RENT_PER_MIN is still
+   written in the old per-minute units — they are divided by this on the way out,
+   in the ONE place each is accrued, so the tuning numbers stay readable and
+   there is a single knob to turn.
+
+   WHY: a player was making ~16,000,000 🔥/day. Cinder is the currency, and it
+   was accruing on the same 1-minute cadence as food and scrap while ALSO being
+   multiplied by the whole unbounded tileMult() stack (adjacency × level² ×
+   mayor × Kalon × sockets × weather × commerce). Goods have a stock ceiling that
+   bounds them; currency has none. Slowing the currency leg by 60× without
+   touching goods keeps city production feeling alive while making Cinder
+   something a city EARNS over a day rather than prints every minute.
+
+   ⚠ RESOURCES ARE DELIBERATELY UNTOUCHED. Food, water, metal, fuel, ammo and
+     the rest still tick per minute. Dividing those too would stall every
+     downstream consumer and starve the city — the bug was never production
+     speed, it was that currency had no ceiling.
+   ⚠ If you retune, change THIS, not the per-building numbers — they are also
+     what the build panel prints, and the two must agree. */
+/* 🧯 Hard ceiling on the composite per-tile output multiplier — see tileMult().
+   5x means a maxed, fully-buffed city earns 5x a bare one, which keeps every
+   bonus meaningful while making the stacked extremes impossible. With the
+   hourly Cinder period this puts a 80-of-each, all-L3, fully-buffed city at
+   roughly 35,000 🔥/day, against ~16,000,000 before. */
+const TILE_MULT_CAP = 5;
+const CINDER_PERIOD_DIV = 60;                    // per-minute figures → per-hour
+const cinderRate = (perMin) => (perMin || 0) / CINDER_PERIOD_DIV;
+/* The SAME number the tick will actually pay, for any resource. Every panel that
+   prints a production rate must go through this rather than reading def.gen[r]
+   directly — otherwise the build menu advertises 0.25/min while the economy pays
+   0.25/hr, and an advertised rate a player cannot reproduce reads as a bug and
+   gets filed as one. */
+const genOf = (def, r) => (r === 'cinder') ? cinderRate(def.gen[r]) : (def.gen[r] || 0);
 const CARAVAN_EVERY = 240, CARAVAN_TRIP = [90, 150];  // seconds
 const DECAY_PER_HR = 1.6, DECAY_DEPOT_FACTOR = .5;    // wear; damaged at 100
 /* 🛤️ ROAD NETWORK LIMIT — roads are 4🔥 each and hand every neighbour +25%,
@@ -2317,7 +2367,12 @@ const RAID_INTERVAL = 7200, RAID_INTERVAL_PREV = 300;   // 2 hours
 
 /* 🧨 Lifting a road costs Cinder. Roads are 4 ₵ to lay, so 6 ₵ to clear means
    re-planning a district is a real, if small, expense rather than free. */
-const ROAD_DEMOLISH_COST = 6;
+/* Scaled with the rest of the city builder (x100, matching BUILD_CINDER_MULT).
+   The constant itself moves rather than being wrapped in scaleCost(), because
+   six sites read it — the spend, the inspector ledger row, the button label and
+   three toasts — and a constant that is scaled at only some of them is how a
+   menu ends up promising 6 and charging 600. */
+const ROAD_DEMOLISH_COST = 600;
 const RAID_BASE_STR = 10, RAID_STR_PER_WAVE = 7;
 const RAID_STORE_LOSS = .25, RAID_REWARD_PER_WAVE = 8, RAID_AMMO_PER_DEF = 2;
 
@@ -15821,7 +15876,24 @@ function tileMult(x, z, t, staff, powered) {
         * (1 + socketBoost(t));
   if (t.type === 'arena') m *= Math.max(.3, wellbeing.morale / 50);   // crowds follow morale
   if (def.powerNeed) m *= powered;
-  return m;
+  /* 🧯 THE CEILING. Everything above is MULTIPLICATIVE and, until this line,
+     unbounded: adjacency × 2^(lvl-1) × staffing × weather × mayor × Kalon ×
+     (1 + sockets) × morale × power, and then tileOutputFactor() multiplies the
+     result again by commerce/labour/efficiency. Each term is individually
+     reasonable. The product was not — it is how one player reached ~16,000,000
+     🔥/day, roughly 27x above what the per-building caps should have allowed.
+
+     A cap on the PRODUCT is the only fix that holds, because it bounds every
+     stacking path at once, including ones added later by somebody who never
+     reads this comment. Bounding the terms one at a time is whack-a-mole and
+     the next buff reopens it.
+
+     Deliberately generous: a well-built, well-run, fully-buffed city still
+     earns TILE_MULT_CAP times a bare one, so every bonus in the game remains
+     worth chasing. It only refuses the stacked extremes.
+     ⚠ THIS IS THE ECONOMY DIAL. To retune city output, change this number —
+       not the per-building rates, which are also what the build panel prints. */
+  return Math.min(m, TILE_MULT_CAP);
 }
 
 async function economyTick(dtMin) {
@@ -15868,7 +15940,12 @@ async function economyTick(dtMin) {
     if (t.type === 'lot' && t.tenant && !t.damaged) {
       // Rent is Cinder income, so it takes the commerce leg like every other
       // Cinder line — a tenant business in a city nobody will trade with pays less.
-      const rent = LOT_RENT_PER_MIN * tileOutputFactor(t, true, OM);
+      /* 💰 Rent is Cinder, so it takes the HOURLY period too (CINDER_PERIOD_DIV).
+         Leaving it on the minute while the four selling buildings moved to the
+         hour would not have been a compromise — it would have handed the entire
+         exploit to lots, at 60x the rate of everything else, and the next report
+         would have been "a player is farming rent". */
+      const rent = cinderRate(LOT_RENT_PER_MIN) * tileOutputFactor(t, true, OM);
       game.frac.cinder = (game.frac.cinder || 0) + rent * dtMin;
       prodPerMin.cinder = (prodPerMin.cinder || 0) + rent;
       t.earn = (t.earn || 0) + rent * dtMin;         // lifetime, for the Ledger tab
@@ -15949,9 +16026,14 @@ async function economyTick(dtMin) {
         prodPerMin[r] = (prodPerMin[r] || 0) + (room > 0 ? def.gen[r] * mult * om : 0);
         continue;
       }
-      const madeR = def.gen[r] * mult * om * dtMin;
+      // 💰 Cinder accrues on the HOUR (see CINDER_PERIOD_DIV); goods on the
+      //    minute, unchanged. Both the banked amount and the rate the HUD prints
+      //    go through the same divisor, so the panel can never promise a number
+      //    the tick does not pay.
+      const genR = (r === 'cinder') ? cinderRate(def.gen[r]) : def.gen[r];
+      const madeR = genR * mult * om * dtMin;
       game.frac[r] = (game.frac[r] || 0) + madeR;
-      prodPerMin[r] = (prodPerMin[r] || 0) + def.gen[r] * mult * om;
+      prodPerMin[r] = (prodPerMin[r] || 0) + genR * mult * om;
       /* 🧾 LIFETIME CINDER, PER TILE. The exact amount is already in hand here
          with `t` in scope — this is the whole cost of a real Ledger tab. Only
          Cinder is banked: goods are city stock, not this building's money. */
@@ -16112,6 +16194,49 @@ async function raidTick(dt) {
 /* ════════════════════════════════════════════════════════════════════════
    9. Build / inspect / demolish + costs against the REAL ledger.
    ════════════════════════════════════════════════════════════════════ */
+/* 💸 BUILD PRICES — SCALED HERE, NOT IN THE 40 DEFS.
+   ────────────────────────────────────────────────────────────────────────────
+   The authored numbers were 2–600 🔥. A Machine Shop cost 100 🔥 in a game where
+   a single city was earning millions a day, so building was free in every sense
+   that matters and the whole catalogue was a rounding error against income.
+   Cinder x100 puts real buildings in the thousands-to-tens-of-thousands
+   (Food Truck 1,800 · Machine Shop 10,000 · Power Station 20,000 · Stadium
+   60,000) while Road and Street Light stay in the hundreds — correct, because
+   you place dozens of those.
+
+   Resources move x5, not x100, on purpose: they are PRODUCED at fractions per
+   minute, so matching the Cinder multiplier would put a Warehouse beyond any
+   city that has not already been running for weeks. Cinder is the headline
+   price; resources are the pacing.
+
+   ⚠ APPLIED IN ONE HELPER because `costOf` is NOT the only reader — the build
+     menu, the shop tooltip and the hover chip all render `def.cost` directly.
+     Scaling only in costOf would have advertised 100 🔥 and charged 10,000.
+   ⚠ `tierCost` IS DELIBERATELY EXEMPT. The Resting House ships an explicit
+     published table (90k → 1.1M) that is already at the right scale; running it
+     through this would price it at 9M–110M. costOf returns that branch before
+     ever reaching here, and baseCost() is never called on it. */
+const BUILD_CINDER_MULT = 100;
+const BUILD_RES_MULT    = 5;
+/* Scale ANY {resource: n} price dict. Split out from baseCost() because the
+   city builder charges for four things, not one — placing a building, hiring a
+   worker or soldier, training the garrison up a rank, and clearing a road — and
+   every one of them was authored at the same tiny scale. Leaving the other
+   three at 1x would just move the "everything is free" problem one menu across.
+   (Repairs need no entry here: repairCost() derives from costOf(), so it
+   scales automatically and must NOT be scaled twice.) */
+function scaleCost(src) {
+  const out = {};
+  for (const k in (src || {})) {
+    const v = Number(src[k]) || 0;
+    if (v <= 0) continue;
+    out[k] = (k === 'cinder')
+      ? Math.round(v * BUILD_CINDER_MULT)
+      : Math.max(1, Math.round(v * BUILD_RES_MULT));
+  }
+  return out;
+}
+function baseCost(def) { return scaleCost(def && def.cost); }
 function costOf(type, lvl = 1) {
   const def = BUILDINGS[type];
   /* 🛏 EXPLICIT PER-TIER PRICING. The generic curve is cost × UPGRADE_MULT^(lvl-1),
@@ -16122,7 +16247,7 @@ function costOf(type, lvl = 1) {
      building may opt in with `tierCost`; NOTHING else declares it, so every
      existing building takes the identical path it always did. */
   if (def.tierCost && def.tierCost[lvl - 1]) return { ...def.tierCost[lvl - 1] };
-  const base = def.cost, out = {};
+  const base = baseCost(def), out = {};
   const m = Math.pow(UPGRADE_MULT, lvl - 1);
   for (const k in base) out[k] = Math.ceil(base[k] * m);
   return out;
@@ -16579,10 +16704,12 @@ function insTopline(k, t, x, z, mult, om) {
   if (def.gen) {
     const keys = Object.keys(def.gen), r = keys[0];
     out.push({ e: 'Output / min', v: '<span style="color:' + (dead ? 'var(--invalid)' : 'var(--valid)') + '">' +
-      insRate(dead ? 0 : def.gen[r] * mult * insOmFor(r, om)) + '</span> <small>' + resIco(r) + '</small>',
+      insRate(dead ? 0 : genOf(def, r) * mult * insOmFor(r, om)) + '</span> <small>' + resIco(r) + '</small>',
       d: t.damaged ? 'offline — damaged' : insHalted(t) ? 'halted — no ' + resName(insHalted(t))
-        : keys.length > 1 ? '+ ' + keys.slice(1).map(rr => insRate(def.gen[rr] * mult * insOmFor(rr, om)) + ' ' + resIco(rr)).join(' · ')
-        : 'base ' + def.gen[r] + ' ' + resIco(r) + '/min at L1' });
+        : keys.length > 1 ? '+ ' + keys.slice(1).map(rr => insRate(genOf(def, rr) * mult * insOmFor(rr, om)) + ' ' + resIco(rr)).join(' · ')
+        // Cinder is hourly, everything else is per minute — say which, per row,
+        // rather than printing one unit that is wrong for half the catalogue.
+        : 'base ' + genOf(def, r) + ' ' + resIco(r) + (r === 'cinder' ? '/hr' : '/min') + ' at L1' });
   }
   if (def.svc) {
     const s = def.svc, fed = t.svcFed == null ? 1 : t.svcFed;
@@ -16665,7 +16792,7 @@ function insChain(t, x, z, mult, om) {
   if (def.gen) for (const r in def.gen) {
     const halted = insHalted(t) || t.damaged;
     const full = CITY_STOCK[r] && stockOf(r) >= stockCap();
-    outs.push(chip(halted || full ? 'miss' : 'out', resIco(r), insRate(halted ? 0 : def.gen[r] * mult * insOmFor(r, om)) + '/min',
+    outs.push(chip(halted || full ? 'miss' : 'out', resIco(r), insRate(halted ? 0 : genOf(def, r) * mult * insOmFor(r, om)) + (r === 'cinder' ? '/hr' : '/min'),
       resName(r) + (r === 'power' ? ' · never banked' : '')));
     if (full) notes.push(insAlert('warn', '🏬', resName(r) + ' storage is full',
       'Refining stops when the shelves fill (' + Math.round(stockOf(r)) + ' / ' + stockCap() +
@@ -16837,7 +16964,7 @@ function insLevelCard(t, x, z, mult, om) {
     (t.lvl + 1) + ': rates scale ×' + RATE_MULT + ' per level.</div>';
   const rows = [];
   if (def.gen) for (const r in def.gen) rows.push(insFac(resIco(r) + ' ' + resName(r) + ' / min',
-    insRate(def.gen[r] * mult * insOmFor(r, om)) + ' → <span class="up">' + insRate(def.gen[r] * mult * insOmFor(r, om) * RATE_MULT) + '</span>'));
+    insRate(genOf(def, r) * mult * insOmFor(r, om)) + ' → <span class="up">' + insRate(genOf(def, r) * mult * insOmFor(r, om) * RATE_MULT) + '</span>'));
   if (def.svc) rows.push(insFac(NEED_META[def.svc.need].ico + ' ' + NEED_META[def.svc.need].name + ' / min',
     insRate(def.svc.supply * mult) + ' → <span class="up">' + insRate(def.svc.supply * mult * RATE_MULT) + '</span>'));
   if (def.svc && def.svc.input) rows.push(insFac(resIco(def.svc.input) + ' ' + resName(def.svc.input) + ' drawn / min',
@@ -16869,7 +16996,7 @@ function insLedgerPane(t, x, z, mult, om) {
   let cin = 0;
   const halted = t.damaged || insHalted(t);
   if (def.gen) for (const r in def.gen) {
-    const v = halted ? 0 : def.gen[r] * mult * insOmFor(r, om) * cyc;
+    const v = halted ? 0 : genOf(def, r) * mult * insOmFor(r, om) * cyc;
     if (r === 'cinder') cin += v;
     flow.push(['Produces ' + resName(r), '<span class="up">+' + insRate(v) + '</span> ' + resIco(r)]);
   }
@@ -19441,7 +19568,7 @@ function setMode(m, type) {
     const def = BUILDINGS[type];
     const b = document.createElement('button');
     b.className = 'bbtn'; b.dataset.type = type;
-    b.innerHTML = '<span class="bico">' + def.ico + '</span><span class="bname">' + def.name + '</span><span class="bcost">' + costLabel(def.cost) + '</span>';
+    b.innerHTML = '<span class="bico">' + def.ico + '</span><span class="bname">' + def.name + '</span><span class="bcost">' + costLabel(baseCost(def)) + '</span>';
     b.title = def.desc;
     b.onclick = () => mode === 'place' && placeType === type ? setMode('inspect') : setMode('place', type);
     bar.appendChild(b);
@@ -19475,7 +19602,7 @@ function buildShopBody() {
     + '<div class="shopgrid">'
     + sec.items.map((t) => {
         const d = BUILDINGS[t];
-        const cost = shopEsc(costLabel(d.cost));
+        const cost = shopEsc(costLabel(baseCost(d)));
         const extra = (d.pop ? ' · Pop ' + d.pop : '') + (d.crew ? ' · Crew ' + d.crew : '');
         // The visible cost row is chips (each one hoverable); the card's own
         // tooltip keeps the plain label — a tooltip inside a tooltip is
@@ -19483,7 +19610,7 @@ function buildShopBody() {
         return '<button class="shopcard" type="button" data-build="' + shopEsc(t) + '">'
           + '<span class="si">' + d.ico + '</span>'
           + '<span class="sn">' + shopEsc(d.name) + '</span>'
-          + '<span class="sc">' + costChipsHtml(d.cost) + '</span>'
+          + '<span class="sc">' + costChipsHtml(baseCost(d)) + '</span>'
           + '<span class="stip"><b>' + shopEsc(d.ico + ' ' + d.name) + '</b>' + shopEsc(d.desc || '')
           + '<span class="tc">' + cost + shopEsc(extra) + '</span></span>'
           + '</button>';
@@ -19503,7 +19630,7 @@ function closeBuildShop() { const v = document.getElementById('shopveil'); if (v
 async function hireUnit(kind) {
   if (popUsed() + 1 > popCap()) { toast('No free population — build Housing or grow your nodes.', 'bad'); return; }
   if (kind === 'soldier' && game.army.soldiers + 1 > garrisonCap()) { toast('No garrison space — build or upgrade a Barracks.', 'bad'); return; }
-  const cost = kind === 'worker' ? ARMY.workerHire : ARMY.soldierHire;
+  const cost = scaleCost(kind === 'worker' ? ARMY.workerHire : ARMY.soldierHire);
   if (!(await payCost(cost))) { toast('Cannot afford to hire (' + costLabel(cost) + ').', 'bad'); return; }
   if (kind === 'worker') game.army.workers++; else game.army.soldiers++;
   toast((kind === 'worker' ? '👷 Worker' : ARMY.ranks[game.army.rank].ico + ' Soldier') + ' hired from the settlement.', 'good');
@@ -19517,7 +19644,7 @@ function dismissUnit(kind) {
 async function upgradeMilitary() {
   const next = ARMY.ranks[game.army.rank + 1];
   if (!next) return;
-  if (!(await payCost(next.cost))) { toast('Cannot afford ' + next.name + ' training (' + costLabel(next.cost) + ').', 'bad'); return; }
+  if (!(await payCost(scaleCost(next.cost)))) { toast('Cannot afford ' + next.name + ' training (' + costLabel(scaleCost(next.cost)) + ').', 'bad'); return; }
   game.army.rank++;
   toast(next.ico + ' The garrison trains up to ' + next.name + ' — defense ×' + next.mult.toFixed(1) + '.', 'good');
   updateHUD(); saveSoon();
@@ -19532,10 +19659,10 @@ function renderArmy() {
       // chip row inside it pushed the row into a horizontal scroll. The price
       // moves into the tooltip instead, which has no width pressure at all.
       '<span><button class="hbtn" data-army="fire-worker" data-tip="' + shopEsc('<b>Dismiss a worker</b>Frees the population slot. There is no refund.') + '">−</button> ' +
-      '<button class="hbtn ember" data-army="hire-worker" data-tip="' + shopEsc('<b>👷 Hire a worker</b>Workers staff every producer. Below 100% staffing every producer scales its output down.<span class="use">Costs ' + costLabel(ARMY.workerHire) + ' · you have ' + costHave('cinder').toLocaleString() + ' 🔥</span>') + '">+ Hire</button></span></div>' +
+      '<button class="hbtn ember" data-army="hire-worker" data-tip="' + shopEsc('<b>👷 Hire a worker</b>Workers staff every producer. Below 100% staffing every producer scales its output down.<span class="use">Costs ' + costLabel(scaleCost(ARMY.workerHire)) + ' · you have ' + costHave('cinder').toLocaleString() + ' 🔥</span>') + '">+ Hire</button></span></div>' +
     '<div class="arow"><span>' + rk.ico + ' Soldiers <span style="color:var(--mist)">(' + game.army.soldiers + '/' + garrisonCap() + ' · def ' + soldierDefense() + ')</span></span>' +
       '<span><button class="hbtn" data-army="fire-soldier" data-tip="' + shopEsc('<b>Dismiss a soldier</b>Frees a garrison slot and the population it used. There is no refund.') + '">−</button> ' +
-      '<button class="hbtn ember" data-army="hire-soldier" data-tip="' + shopEsc('<b>' + rk.ico + ' Hire a soldier</b>Soldiers defend the city AND the node anchors during a raid.<span class="use">Costs ' + costLabel(ARMY.soldierHire) + ' · you have ' + costHave('cinder').toLocaleString() + ' 🔥</span>') + '">+ Hire</button></span></div>' +
+      '<button class="hbtn ember" data-army="hire-soldier" data-tip="' + shopEsc('<b>' + rk.ico + ' Hire a soldier</b>Soldiers defend the city AND the node anchors during a raid.<span class="use">Costs ' + costLabel(scaleCost(ARMY.soldierHire)) + ' · you have ' + costHave('cinder').toLocaleString() + ' 🔥</span>') + '">+ Hire</button></span></div>' +
     // 🎖 THE GARRISON AS A UNIT CARD — portrait sigil, "<n> <Rank>" title and an
     // icon stat row, instead of the old one-line sentence.
     '<div class="unitcard">' +
@@ -19550,7 +19677,7 @@ function renderArmy() {
       '</div>' +
     '</div>' +
     '<div class="rankbar">' +
-      (next ? '<br><button class="hbtn ember" data-army="rankup" style="margin-top:4px">⬆ Train ' + next.name + ' — ' + costChipsHtml(next.cost, { verb: 'Training cost' }) + '</button>' : ' · max rank') +
+      (next ? '<br><button class="hbtn ember" data-army="rankup" style="margin-top:4px">⬆ Train ' + next.name + ' — ' + costChipsHtml(scaleCost(next.cost), { verb: 'Training cost' }) + '</button>' : ' · max rank') +
       '<br><span style="color:var(--mist)">Soldiers guard the city AND the node anchors — an unguarded breach cripples a node\'s link.</span></div>';
   if (html !== renderArmy._last) { renderArmy._last = html; $('armybody').innerHTML = html; }
 }
@@ -22197,7 +22324,7 @@ function ctWork(c) {
     const r = Object.keys(def.gen)[0];
     // The SAME expression the dossier's topline prints, so the two can never
     // disagree in front of the player.
-    gen = { res: r, rate: def.gen[r] * mult * insOmFor(r, om) };
+    gen = { res: r, rate: genOf(def, r) * mult * insOmFor(r, om) };
   }
   return { k: c.job, t, def, x, z, mult, gen, halted,
            svc: def.svc ? def.svc : null, name: def.name || t.type };

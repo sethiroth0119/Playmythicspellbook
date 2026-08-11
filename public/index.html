@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120u0';
+  window.BUILD_VERSION = 'v120u1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -77910,9 +77910,9 @@ function openCampWorkshop() {
         proj('triage', '🏚 Repair & Triage',
           'Clears the camp\'s consumption backlog now + halves upkeep for 24h. Spends Medicine to treat the wounded.', triageCost, '🏚 Repair', can(triageCost)) +
         proj('memory', '🧠 Memory Transfer',
-          'Refine soul-memory into spendable Aza coin (+5 🪙).', memCost, '🧠 Transfer', can(memCost)) +
+          'Refine soul-memory into usable genetic material (+5 🧬 DNA) for the lab below.', memCost, '🧠 Transfer', can(memCost)) +
         proj('refine', '🟣 Forbidden Refinement',
-          'Smelt Corrupted Essence into Cinders (+120 🔥). The black market never asks questions.', refineCost, '🟣 Refine', can(refineCost)) +
+          'Smelt Corrupted Essence down into salvage (+12 ⛓️ Metal, +8 📦 Supplies). The slag is worth more than the essence.', refineCost, '🟣 Refine', can(refineCost)) +
         '<div style="border:1px solid rgba(134,224,138,0.3);border-radius:10px;padding:10px 12px;background:rgba(14,30,18,0.5)">' +
           '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#86e08a">🧬 DNA Lab — Clone a Card</div>' +
           '<div class="small-text ink-dim" style="margin:2px 0 6px">Grow a +1 copy of any card you own. DNA cost scales with rarity (+2 Supplies).</div>' +
@@ -77941,14 +77941,34 @@ function openCampWorkshop() {
         Profile.campConsumeFrac = {}; Profile.campLastTick = Date.now();
         Profile.campRepairUntil = Date.now() + 24 * 3600000;
         done('🏚 Camp repaired & wounded treated — upkeep halved for 24h, backlog cleared.');
+      /* 🔒 THE CAMP WORKSHOP PAYS IN RESOURCES ONLY — NEVER CURRENCY.
+         These two used to be straight alchemy: 8 Memory Shards -> +5 Aza, and
+         6 Corrupted Essence -> +120 Cinder, both written directly onto
+         Profile.sovereigns / Profile.gems. Same shape as node-city's Cinder
+         Forge, and the Aza one was worse than an economy bug — Aza is bought
+         with real money, and sql/024 made the canonical row server-owned
+         precisely so no client path could mint it. This was a client path
+         minting it, repeatable, off farmable resources.
+
+         They now refine into RESOURCES, which is what a workshop does. The
+         actions keep their identity and their sinks; only the output changes
+         from money to materials.
+         ⚠ Do NOT reintroduce a currency payout here. If Cinder is wanted from
+           camp output, sell the materials — that is a trade with a counterparty
+           on the other side, which is the whole distinction. */
       } else if (id === 'memory') {
         if (!spendResources(memCost)) return;
-        Profile.sovereigns = (Profile.sovereigns | 0) + 5;
-        done('🧠 Memory transferred — +5 🪙 Aza.');
+        // Feeds the DNA Lab directly below this in the same panel — the shards
+        // now buy the cloning they were always thematically adjacent to.
+        addSalvage({ dna: 5 });
+        try { saveProfile(); } catch (e) {}
+        done('🧠 Memory transferred — +5 🧬 DNA for the lab.');
       } else if (id === 'refine') {
         if (!spendResources(refineCost)) return;
-        Profile.gems = (Profile.gems | 0) + 120;
-        done('🟣 Essence refined — +120 <span class="cinder-icon"></span> Cinders. (No questions asked.)');
+        // Smelting yields materials, not money.
+        addSalvage({ metal: 12, supplies: 8 });
+        try { saveProfile(); } catch (e) {}
+        done('🟣 Essence smelted — +12 ⛓️ Metal, +8 📦 Supplies.');
       }
     });
     ov.querySelectorAll('[data-clone]').forEach(b => b.onclick = () => {

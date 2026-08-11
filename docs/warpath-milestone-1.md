@@ -91,7 +91,7 @@ tree beyond Blacksmith I, forward outposts (camp is movable but singular).
 | Piece | Round | Verdict | Remaining gap |
 |---|---|---|---|
 | P1 mapgen | 3 | **WINS** | Warpath-exclusive *cards* are not minted (deliberate — see below) |
-| P2 schema | 4 | **WINS** | `warpath_state()` is one big query; at 4 players it is fine, at 20 it will need splitting |
+| P2 schema | 5 | **critic-fixed, ready for re-critique** | `warpath_state()` is one big query; fine at 4 players, needs splitting at 20 |
 | P3 screen | 3 | **ready for independent critic** | Terrain art is the fallback painter until `warpath-render.js` lands |
 | P4 bridge | 3 | **critic-fixed, ready for re-critique** | Client-authoritative battle results remain self-declared (inherent to the repo's existing MP model) |
 
@@ -257,6 +257,29 @@ of memory, nothing is acked, `serverStillOwes: 1`, ledger empty — and the retr
 lands it exactly once.
 
 **Baseline re-run:** 9 console errors before the Warpath commits, 9 after, identical set.
+
+#### P2 round 5 — independent critic verdict: LOSES. All six findings fixed.
+
+The critic ran against a real PG16 with Supabase's actual role shape and confirmed the
+direct-write half of constraint #4 holds completely, that extraction cannot be forged or
+replayed, and that re-derivation is exact across **118,800 tile-field comparisons** on 18 seeds.
+Then it found the mode was not multiplayer.
+
+| # | Finding | Fix | Verified **concurrently** |
+|---|---|---|---|
+| 1 | **The lobby could not form a shared world — 4 entrants → 4 separate single-player maps, 12/12 rounds.** Cold: all four ran the SELECT before any INSERT committed (READ COMMITTED). Warm: `for update skip locked` made every concurrent joiner *skip* the open run and fork a new one. `skip locked` prevented slot collisions by making the lobby unable to fill. | `pg_advisory_xact_lock(hashtext('warpath_lobby'))` before the SELECT, and a plain blocking `for update`. `unique (run_id, slot)` still backstops. | **12/12 rounds now form a full four-player world** — 4 psql processes on a wall-clock barrier, 6 cold + 6 warm. `dup_slots=0`, `over_capacity=0`, tickets spent == expeditions created, every round. |
+| 2 | `wp_level()` returned **NULL** for a campless hero and 5 of 6 callers didn't coalesce. A campless hero passed the Recruitment Tent gate a camped one failed; and `6 + 3 * NULL` → NULL made `limit cap` into **`LIMIT ALL`** — 41 cards into `warpath_grants` where the cap was 6. | One `coalesce` inside `wp_level`. | Campless hero refused the rank-4 offer; campless extraction returns **exactly 6** of 30 secured cards. |
+| 3 | `wp_reveal` / `wp_log` are security definer, mutating, take an arbitrary expedition id, and the grant loop only matched `warpath\_%` — so they kept EXECUTE **TO PUBLIC**. One REST call cleared another player's fog (34 → 1320 bits). | Revoke EXECUTE on every `wp_*` from `public` and `authenticated`, re-granting only `wp_in_run` / `wp_is_mine`, which RLS policy expressions evaluate as the querying role. | `has_function_privilege` asserts both directions. |
+| 4 | The fog leak the code argues against existed **via the table**: `wp_exp_sel` granted SELECT on the whole row, so PostgREST returned `x=37 y=3 hp=100` for an unseen hero. | `wp_exp_sel` and `wp_camps_sel` restricted to own rows. Rivals arrive only through `warpath_state()`, which applies fog. | A rival's row reads 0 as `authenticated`; own row still readable; **`warpath_state` still returns rivals** (verified as the role, not the owner). |
+| 5 | PvP was free and repeatable — nine battles in one turn, zero movement, stripped a neighbour to nothing. | 2 movement per challenge (1 for a Guardian) and no repeat pairing in the same turn (`opened_turn`). Self-declared victory is left alone: it is inherent to the repo's existing client-authoritative MP model. | Cost, cooldown and the no-movement refusal each asserted. |
+| 6 | `seed bigint` had no `CHECK` — negative seeds are the one input where JS and plpgsql drift, asserted only in a comment. | `CHECK (seed >= 0)`. | Insert of `-1` raises `check_violation`. |
+
+**A harness bug worth recording:** the first concurrent run still showed 0/12, because the test
+stub stored `auth.uid()` in a *shared table* — four concurrent sessions overwrote each other's
+identity. The bootstrap now uses a session-local GUC (`request.jwt.claim.sub`), which is what
+Supabase actually reads. Any concurrency result taken with the old stub was meaningless.
+
+Suite is now **62 assertions**: 47 gameplay + 6 RLS + 8 regressions + 1 fog.
 
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which

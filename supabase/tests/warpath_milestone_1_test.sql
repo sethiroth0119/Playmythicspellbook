@@ -526,3 +526,156 @@ begin
   raise notice '';
   raise notice '════════ RLS: % CHECKS PASSED ════════', pass;
 end $$;
+
+-- =============================================================================
+-- REGRESSIONS from the P2 critic. Each of these was a live defect.
+-- =============================================================================
+do $$
+declare
+  ua uuid; ub uuid; ea uuid; eb uuid; r jsonb; v_seed bigint; v_run uuid;
+  v_site jsonb; n int; pass int := 0; failed boolean;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  insert into auth.users (email) values ('reg-a@warpath.test') returning id into ua;
+  insert into auth.users (email) values ('reg-b@warpath.test') returning id into ub;
+  insert into public.warpath_tickets (user_id, tickets) values (ua, 5), (ub, 5);
+
+  -- ── 1. wp_level must be 0, not NULL, for a hero with NO camp ────────────
+  -- The original returned NULL, which (a) let a CAMPLESS hero pass the
+  -- Recruitment Tent gate that a camped hero failed, and (b) made
+  -- `6 + 3 * NULL` = NULL so `limit cap` became LIMIT ALL — no extraction cap
+  -- at all. The earlier suite could not catch this: it pitched a camp first.
+  perform public.set_uid(ua);
+  r := public.warpath_enter('hero_a', 'A', 'ticket');
+  ea := (r->>'expedition_id')::uuid; v_run := (r->>'run_id')::uuid;
+  select seed into v_seed from public.warpath_runs where id = v_run;
+
+  if public.wp_level(ea, 'recruitment') is null then
+    raise exception 'FAIL: wp_level returns NULL for a campless hero'; end if;
+  if public.wp_level(ea, 'recruitment') <> 0 then
+    raise exception 'FAIL: wp_level should be 0 with no camp'; end if;
+  if public.wp_vault_slots(ea) <> 0 then
+    raise exception 'FAIL: a campless hero has vault slots'; end if;
+  if (6 + 3 * public.wp_level(ea, 'supply')) is null then
+    raise exception 'FAIL: the extraction cap is NULL for a campless hero — LIMIT ALL'; end if;
+  pass := pass + 1; raise notice 'ok  wp_level is 0 (not NULL) with no camp — cap and tent gate both hold';
+
+  -- and the tent gate actually refuses a campless hero the rank-4 offer
+  select s into v_site from jsonb_array_elements(public.wp_structures(v_seed)) s
+    where s->>'k' = 'site' limit 1;
+  update public.warpath_expeditions set x = (v_site->>'x')::int, y = (v_site->>'y')::int where id = ea;
+  update public.warpath_inventory i set carried = 500
+    from public.warpath_resources rr where rr.kind = i.kind and rr.tier = 'expedition'
+     and i.expedition_id = ea;
+  r := public.warpath_recruit(ea, v_site->>'id', 2);
+  if (r->>'ok')::boolean then
+    raise exception 'FAIL: a CAMPLESS hero recruited the rank-4 unit'; end if;
+  pass := pass + 1; raise notice 'ok  a campless hero cannot out-recruit a camped one';
+
+  -- ── 2. the campless extraction cap is a real number ────────────────────
+  -- Give the hero more secured cards than the base cap and confirm it bites.
+  insert into public.warpath_cards (expedition_id, card_key, source, secured, acquired_turn)
+    select ea, 'unit:goblin', 'discovery', true, 1 from generate_series(1, 30);
+  update public.warpath_expeditions set status = 'ready' where id = ea;
+  r := public.warpath_extract_finish(ea, null);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: extract: %', r; end if;
+  n := coalesce(array_length((select array_agg(k) from jsonb_array_elements_text(r->'card_keys') k), 1), 0);
+  if n <> 6 then
+    raise exception 'FAIL: campless extraction returned % cards, cap is 6', n; end if;
+  pass := pass + 1; raise notice 'ok  a campless hero extracts exactly 6 cards, not all 30';
+
+  -- ── 3. wp_reveal / wp_log are not callable by a client ─────────────────
+  -- Both are security definer, mutating, and take an arbitrary expedition id.
+  -- The grant loop used to match only warpath_% and left these EXECUTE TO PUBLIC.
+  if has_function_privilege('authenticated', 'public.wp_reveal(uuid,integer,integer,integer)', 'execute') then
+    raise exception 'FAIL: authenticated can execute wp_reveal — it can clear another player''s fog';
+  end if;
+  if has_function_privilege('authenticated', 'public.wp_log(uuid,uuid,text,jsonb)', 'execute') then
+    raise exception 'FAIL: authenticated can execute wp_log — it can forge run-feed entries';
+  end if;
+  if has_function_privilege('public', 'public.wp_reveal(uuid,integer,integer,integer)', 'execute') then
+    raise exception 'FAIL: PUBLIC can execute wp_reveal';
+  end if;
+  -- but the two the RLS policies depend on must stay callable
+  if not has_function_privilege('authenticated', 'public.wp_in_run(uuid)', 'execute') then
+    raise exception 'FAIL: wp_in_run is not executable — every RLS policy breaks';
+  end if;
+  if not has_function_privilege('authenticated', 'public.wp_is_mine(uuid)', 'execute') then
+    raise exception 'FAIL: wp_is_mine is not executable — every RLS policy breaks';
+  end if;
+  pass := pass + 1; raise notice 'ok  wp_reveal / wp_log are private; the two policy helpers stay callable';
+
+  -- ── 4. PvP costs movement and cannot repeat in one turn ────────────────
+  perform public.set_uid(ub);
+  r := public.warpath_enter('hero_b', 'B', 'ticket');
+  eb := (r->>'expedition_id')::uuid;
+  update public.warpath_expeditions set x = 11, y = 3, moves_left = 6, status = 'active' where id = ea;
+  update public.warpath_expeditions set x = 12, y = 3, moves_left = 6, status = 'active' where id = eb;
+
+  perform public.set_uid(ub);
+  r := public.warpath_battle_open(eb, ea);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: adjacent challenge refused: %', r; end if;
+  select moves_left into n from public.warpath_expeditions where id = eb;
+  if n <> 4 then raise exception 'FAIL: attacking cost % movement, expected 2', 6 - n; end if;
+  pass := pass + 1; raise notice 'ok  challenging a Hero costs 2 movement';
+
+  perform public.warpath_battle_report((r->>'battle_id')::uuid, eb);
+  r := public.warpath_battle_open(eb, ea);
+  if (r->>'ok')::boolean then
+    raise exception 'FAIL: the same pairing fought twice in one turn — free re-attack'; end if;
+  if r->>'reason' <> 'already_fought_this_turn' then
+    raise exception 'FAIL: wrong refusal: %', r->>'reason'; end if;
+  pass := pass + 1; raise notice 'ok  the same two Heroes cannot fight twice in one turn';
+
+  -- and with no movement left you cannot attack at all
+  update public.warpath_expeditions set moves_left = 1 where id = eb;
+  update public.warpath_battles set opened_turn = -1 where run_id = (select run_id from public.warpath_expeditions where id = eb);
+  r := public.warpath_battle_open(eb, ea);
+  if (r->>'ok')::boolean then raise exception 'FAIL: attacked with 1 movement left'; end if;
+  pass := pass + 1; raise notice 'ok  attacking requires the movement to do it';
+
+  -- ── 5. seeds are non-negative ──────────────────────────────────────────
+  failed := false;
+  begin insert into public.warpath_runs (seed) values (-1);
+  exception when check_violation then failed := true; end;
+  if not failed then raise exception 'FAIL: a negative seed was accepted — JS and plpgsql drift there'; end if;
+  pass := pass + 1; raise notice 'ok  a negative seed is rejected by a CHECK, not by a comment';
+
+  raise notice '';
+  raise notice '════════ REGRESSIONS: % CHECKS PASSED ════════', pass;
+end $$;
+
+-- ── 6. fog: another player's row must not be readable from the table ──────
+do $$
+declare ua uuid; ub uuid; ra uuid; n int; pass int := 0;
+begin
+  select user_id into ua from public.warpath_expeditions order by entered_at limit 1;
+  select run_id  into ra from public.warpath_expeditions where user_id = ua limit 1;
+  select user_id into ub from public.warpath_expeditions where run_id = ra and user_id <> ua limit 1;
+  if ub is null then raise notice 'skip: only one player in the run'; return; end if;
+
+  perform public.set_uid(ua);
+  set local role authenticated;
+  -- warpath_state() filters other heroes against MY fog. The TABLE must not
+  -- hand out what the function refuses — a critic read x/y/hp straight off it.
+  select count(*) into n from public.warpath_expeditions where user_id = ub;
+  if n <> 0 then
+    raise exception 'FAIL: another player''s expedition row is readable — fog is decorative';
+  end if;
+  select count(*) into n from public.warpath_camps
+   where expedition_id in (select id from public.warpath_expeditions where user_id = ub);
+  if n <> 0 then raise exception 'FAIL: another player''s camp row is readable'; end if;
+  select count(*) into n from public.warpath_expeditions where user_id = ua;
+  if n = 0 then raise exception 'FAIL: a player cannot read their OWN expedition'; end if;
+  reset role;
+  pass := 1;
+  raise notice 'ok  a rival''s position is not readable from the table, only through warpath_state()';
+  raise notice '';
+  raise notice '════════ FOG: % CHECK PASSED ════════', pass;
+end $$;

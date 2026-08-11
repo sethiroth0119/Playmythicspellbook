@@ -489,6 +489,12 @@ create table if not exists public.warpath_runs (
 );
 create index if not exists warpath_runs_open_idx on public.warpath_runs (status, created_at)
   where status = 'open';
+-- Negative seeds are the ONLY inputs where warpath-mapgen.js and the wp_*
+-- mirror can disagree — the JS side documents "NO NEGATIVE INPUTS" in a
+-- comment and nothing enforced it. Now something does.
+do $$ begin
+  alter table public.warpath_runs add constraint warpath_runs_seed_nonneg check (seed >= 0);
+exception when duplicate_object then null; end $$;
 
 -- PlayerExpedition + HeroExpeditionState. One row per player per run. `fog` is
 -- a 1320-bit bitmap (165 bytes) rather than a revealed-tiles table — four
@@ -611,10 +617,14 @@ create table if not exists public.warpath_battles (
   status        text not null default 'open' check (status in ('open','resolved','abandoned')),
   winner_id     uuid references public.warpath_expeditions(id) on delete set null,
   spoils        jsonb,
+  opened_turn   int,
   opened_at     timestamptz not null default now(),
   resolved_at   timestamptz
 );
+alter table public.warpath_battles add column if not exists opened_turn int;
 create index if not exists warpath_battles_run_idx on public.warpath_battles (run_id, status);
+create index if not exists warpath_battles_pair_idx on public.warpath_battles
+  (run_id, attacker_id, defender_id, opened_turn);
 
 -- The run feed. Scout reports, extraction warnings, battle results — the
 -- "⚠ A HERO IS PREPARING TO LEAVE THE WARPATH" broadcast lives here.
@@ -690,16 +700,24 @@ drop policy if exists wp_runs_sel on public.warpath_runs;
 create policy wp_runs_sel on public.warpath_runs for select to authenticated
   using (status = 'open' or public.wp_in_run(id));
 
--- Everyone in the run sees everyone's expedition ROW. That is intentional and
--- is not a fog-of-war leak: the client is only handed the other heroes'
--- positions through warpath_state(), which filters them against YOUR fog.
--- Direct table reads are still limited to your own run.
+/* ⚠ OWN ROW ONLY. This used to allow reading every expedition in your run,
+   on the reasoning that warpath_state() filters other heroes against your fog
+   before sending them. warpath_state() does — but a critic simply read the
+   TABLE through PostgREST instead and got `x=37 y=3 hp=100` for a hero it
+   could not see. Fog of war enforced by one function while the underlying row
+   is world-readable to the run is not enforced at all.
+
+   Other players now reach you ONLY through warpath_state(), which is security
+   definer and applies the fog. */
 drop policy if exists wp_exp_sel on public.warpath_expeditions;
 create policy wp_exp_sel on public.warpath_expeditions for select to authenticated
-  using (user_id = auth.uid() or public.wp_in_run(run_id));
+  using (user_id = auth.uid());
 
+-- Same reasoning: a camp's coordinates are exactly what the Watchtower is for.
+-- Rival camps arrive through warpath_state(), gated on your explored fog.
 drop policy if exists wp_camps_sel on public.warpath_camps;
-create policy wp_camps_sel on public.warpath_camps for select to authenticated using (public.wp_in_run(run_id));
+create policy wp_camps_sel on public.warpath_camps for select to authenticated
+  using (public.wp_is_mine(expedition_id));
 
 drop policy if exists wp_inv_sel on public.warpath_inventory;
 create policy wp_inv_sel on public.warpath_inventory for select to authenticated using (public.wp_is_mine(expedition_id));
@@ -867,10 +885,24 @@ end $$;
 -- All `security definer`: the tables have no client write policies at all.
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- Camp building level (0 = not built).
+/* Camp building level (0 = not built).
+
+   ⚠ THE OUTER coalesce IS LOad-BEARING. This used to return NULL — not 0 —
+   for a hero who had never pitched a camp, because the SELECT matched no row
+   at all. Five of its six callers did not coalesce, and the consequences were
+   inverted rules rather than errors:
+     • a CAMPLESS hero passed the Recruitment Tent gate (NULL comparisons are
+       not false, so `offer.rank > tent_ceiling` never fired) and hired the
+       rank-4 unit that a hero WITH a camp was correctly refused
+     • warpath_extract_finish computed `6 + 3 * NULL` = NULL, so `limit cap`
+       became LIMIT ALL and 41 cards went into warpath_grants where the cap
+       should have been 6 — no cap at all, in the one function that is the
+       only bridge to the permanent collection
+   One coalesce closes all five. */
 create or replace function public.wp_level(p_exp uuid, p_building text)
 returns int language sql stable security definer set search_path = public as $$
-  select coalesce((buildings->>p_building)::int, 0) from public.warpath_camps where expedition_id = p_exp
+  select coalesce((select (buildings->>p_building)::int from public.warpath_camps
+                    where expedition_id = p_exp), 0)
 $$;
 
 -- Vault slots for EXTRACTION MATERIALS. No Supply Tent = no vault = everything
@@ -997,18 +1029,41 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'bad_payment');
   end if;
 
-  -- 2. Join an open run, or open one. skip locked so four simultaneous joins
-  --    do not serialise onto the same row and then collide on the slot unique.
-  -- ⚠ `not exists` is load-bearing. Without it, a player who has already
-  -- extracted from this world matchmakes straight back into it, hits the
-  -- unique (run_id, user_id) and blows up — AFTER their ticket was debited.
-  -- You get one expedition per world, ever.
+  /* 2. Join an open run, or open one.
+
+     ⚠ THE ADVISORY LOCK IS THE WHOLE LOBBY. Without it this function cannot
+     assemble a shared world, which is Milestone 1's first requirement and the
+     precondition for encounters, PvP, node contention and the battle bridge.
+     A critic measured it: four concurrent entrants produced four separate
+     single-player maps, 12 rounds out of 12, by two independent routes.
+
+       • Cold lobby — every transaction ran the SELECT below before any of the
+         others had committed its INSERT. Under READ COMMITTED none of them
+         could see the others, so all four forked their own world.
+       • Warm lobby — `for update skip locked` (which this used to say) let
+         exactly one joiner take the open run and made every other concurrent
+         joiner SKIP it and fall through to create a fresh one. skip locked was
+         hired to prevent slot collisions, and it does; but it bought that by
+         making the lobby unable to fill, which is worse.
+
+     Serialising matchmaking on one key fixes both. Joiners now WAIT for the
+     lobby instead of forking away from it. The lock is transaction-scoped, so
+     it releases on commit or rollback with nothing to clean up, and the
+     `unique (run_id, slot)` constraint still backstops the invariant.
+     Matchmaking is a handful of milliseconds, so the queue is not a bottleneck.
+
+     ⚠ `not exists` is load-bearing too. Without it, a player who has already
+     extracted from this world matchmakes straight back into it, hits the
+     unique (run_id, user_id) and blows up — AFTER their ticket was debited.
+     You get one expedition per world, ever. */
+  perform pg_advisory_xact_lock(hashtext('warpath_lobby'));
+
   select * into v_run from public.warpath_runs
     where status = 'open'
       and (select count(*) from public.warpath_expeditions e where e.run_id = warpath_runs.id) < max_players
       and not exists (select 1 from public.warpath_expeditions e2
                        where e2.run_id = warpath_runs.id and e2.user_id = v_uid)
-    order by created_at limit 1 for update skip locked;
+    order by created_at limit 1 for update;
   if v_run.id is null then
     insert into public.warpath_runs (seed) values (floor(random() * 4294967295)::bigint)
       returning * into v_run;
@@ -1591,6 +1646,28 @@ begin
     if greatest(abs(foe.x - me.x), abs(foe.y - me.y)) > 1 then
       return jsonb_build_object('ok', false, 'reason', 'out_of_reach');
     end if;
+    /* ⚠ ATTACKING COSTS SOMETHING, AND YOU GET ONE SWING PER TURN.
+       Neither of these existed. A critic opened NINE battles in a single turn
+       against one neighbour, spending no movement, and stripped them from 200
+       of every resource and 9 extraction materials down to nothing — and then
+       walked the spoils home through the ordinary secure→extract path into a
+       permanent collection.
+
+       Self-declared victory is inherent to the client-authoritative battle
+       model this repo already uses everywhere, and Milestone 1 is not the
+       place to change that. The FREE RE-ATTACK is not inherent, and it is what
+       turned a raid into a vacuum. Two moves per challenge on a six-move turn,
+       and never the same pairing twice in one turn. */
+    if me.moves_left < 2 then
+      return jsonb_build_object('ok', false, 'reason', 'need_2_moves_to_attack',
+                                'moves_left', me.moves_left);
+    end if;
+    if exists (select 1 from public.warpath_battles
+                where run_id = me.run_id and kind = 'pvp' and opened_turn = run.turn
+                  and ((attacker_id = me.id and defender_id = p_target)
+                    or (attacker_id = p_target and defender_id = me.id))) then
+      return jsonb_build_object('ok', false, 'reason', 'already_fought_this_turn');
+    end if;
   else
     -- PvE: the landmark Guardian. "You have to find the Black Pyramid during a
     -- Warpath and defeat the Guardian."
@@ -1605,8 +1682,13 @@ begin
     end if;
   end if;
 
-  insert into public.warpath_battles (run_id, kind, attacker_id, defender_id, x, y)
-    values (me.run_id, v_kind, me.id, p_target, me.x, me.y) returning * into b;
+  -- Guardians cost a move too; nothing in this mode should be free.
+  update public.warpath_expeditions
+     set moves_left = greatest(0, moves_left - case when v_kind = 'pvp' then 2 else 1 end)
+   where id = me.id;
+
+  insert into public.warpath_battles (run_id, kind, attacker_id, defender_id, x, y, opened_turn)
+    values (me.run_id, v_kind, me.id, p_target, me.x, me.y, run.turn) returning * into b;
   perform public.wp_log(me.run_id, me.id, 'battle_opened',
     jsonb_build_object('battle_id', b.id, 'kind', v_kind, 'x', me.x, 'y', me.y));
   return jsonb_build_object('ok', true, 'battle_id', b.id, 'kind', v_kind,
@@ -1870,8 +1952,36 @@ begin
   return jsonb_build_object('ok', true, 'grants', out);
 end $$;
 
--- Execute grants. Everything is security definer + auth.uid()-scoped inside.
+/* ── EXECUTE grants ───────────────────────────────────────────────────────
+   The warpath_* RPCs are the public surface: every one is security definer and
+   re-checks auth.uid() internally.
+
+   ⚠ THE wp_* HELPERS ARE NOT PUBLIC, and the first version of this loop only
+   granted `warpath\_%` — which left the wp_* helpers on Postgres's default of
+   EXECUTE TO PUBLIC. Two of them are security definer, mutating, and take an
+   arbitrary expedition id with no ownership check. A critic called wp_reveal()
+   over REST against another player's expedition and switched their fog off
+   entirely: 34 bits revealed → 1320. wp_log() would let anyone forge run-feed
+   entries the same way.
+
+   So EXECUTE is revoked from public and authenticated on every wp_* function.
+   The two exceptions are wp_in_run() and wp_is_mine(), which RLS policies call
+   — policy expressions are evaluated as the QUERYING role, so revoking those
+   would break every SELECT in the schema. Both are boolean and auth.uid()-
+   scoped, so they answer nothing about anyone but the caller. */
 do $$ declare f record; begin
+  for f in select p.oid::regprocedure::text as sig, p.proname from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname like 'wp\_%' loop
+    execute format('revoke all on function %s from public', f.sig);
+    execute format('revoke all on function %s from authenticated', f.sig);
+  end loop;
+  -- the two the RLS policies themselves depend on
+  for f in select p.oid::regprocedure::text as sig from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname in ('wp_in_run', 'wp_is_mine') loop
+    execute format('grant execute on function %s to authenticated', f.sig);
+  end loop;
   for f in select p.oid::regprocedure::text as sig from pg_proc p
             join pg_namespace n on n.oid = p.pronamespace
            where n.nspname = 'public' and p.proname like 'warpath\_%' loop

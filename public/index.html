@@ -56581,7 +56581,34 @@ function _gemsTaxTick() {
       const suppressed = Math.min(dec, _pollSpendSuppress | 0);
       _pollSpendSuppress = Math.max(0, (_pollSpendSuppress | 0) - suppressed);
       const taxable = dec - suppressed;
-      if (taxable > 0) _frTaxCinderSpend(taxable, 'Cinder spending');
+      if (taxable > 0) {
+        _frTaxCinderSpend(taxable, 'Cinder spending');
+        /* 🔴 …AND DEBIT THE CANONICAL WALLET. This is the other half, and until
+           now it did not exist.
+
+           `taxable` is EXACTLY the un-mirrored spend: `dec` is the net decrease
+           in Profile.gems since the last tick, and everything a converted site
+           already reported through _serverMirrorCharge has been subtracted out
+           of it two lines up. So what is left came from one of the ~150 legacy
+           sites that still write `Profile.gems = Profile.gems - n` directly.
+
+           Those never touched user_progress.cinder. Since v120t7 that row is
+           canonical and walletFetchProgress() adopts MAX(server, local) — so
+           the server, never having seen the debit, handed the money straight
+           back on the next sync. Every unmirrored spend in the game was
+           effectively free: shop purchases, hires, bids, listing fees, wages.
+
+           Doing it HERE rather than converting 150 call sites is deliberate:
+           the interceptor already sees every decrease with zero per-site
+           wiring, so this catches the ones nobody has found yet AND every
+           future one somebody writes without reading CLAUDE.md.
+
+           ⚠ NOT _serverMirrorCharge() — that logs the 2% tax as well, and
+             _frTaxCinderSpend on the line above has already logged it. Calling
+             it would double-count every legacy spend in the Treasury figures.
+             This is the debit only. */
+        try { _mirrorLegacySpend(taxable); } catch (e) {}
+      }
     }
   } catch (e) {}
 }
@@ -56997,6 +57024,36 @@ function _serverMirrorCredit(amount, reason) {
       })
       .catch(() => { _walletMarkReconcile(); });
   } catch (e) { _walletMarkReconcile(); }
+}
+/* 💸 THE DEBIT-ONLY MIRROR, for spends the poll watcher caught.
+   Sibling of _serverMirrorCredit above, and deliberately narrower than
+   _serverMirrorCharge: no tax ledger, no toast, no balance adoption — only the
+   canonical debit. Called from _gemsTaxTick for the leftover that legacy
+   `Profile.gems = …` sites produced; see the long note there for why that is
+   the right seam.
+
+   ⚠ DOES NOT ADOPT wallet_charge's returned balance. The spend has ALREADY
+     happened locally — that is what the watcher just measured — so local is
+     correct and the server is catching up. Adopting here would fight whatever
+     else moved the wallet inside the same 600ms tick.
+   ⚠ Failures mark the durable reconcile flag rather than vanishing. A debit
+     that silently fails is how the money comes back, which is the bug this
+     exists to fix. */
+function _mirrorLegacySpend(amount) {
+  try {
+    amount = Math.max(0, Math.floor(amount || 0));
+    if (amount <= 0) return;
+    if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { _walletMarkReconcile(); return; }
+    if (Wallet.rpcMissing) { _walletMarkReconcile(); return; }
+    Promise.resolve(Cloud.client.rpc('wallet_charge', { p_amount: amount, p_reason: 'legacy spend mirror' }))
+      .then(res => {
+        if (res && res.error) {
+          if (_walletRpcUnavailable(res.error)) Wallet.rpcMissing = true;
+          _walletMarkReconcile();
+        }
+      })
+      .catch(() => { _walletMarkReconcile(); });
+  } catch (e) { try { _walletMarkReconcile(); } catch (_) {} }
 }
 function _serverMirrorGrant(itemId, qty) {
   try {

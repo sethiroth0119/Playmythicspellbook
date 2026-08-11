@@ -33,7 +33,7 @@ var S = {
   sel: null,                 // selected tile {x,y}
   reach: {},                 // reachable set for the hero this turn
   cam: { x: 0, y: 0, z: 22 }, userZoom: false,
-  tab: 'camp', fogKey: 0, quality: 'high',
+  tab: 'camp', fogKey: 0, quality: 'high', meta: null,
   busy: false, ended: false,
   hover: null,
 };
@@ -492,20 +492,31 @@ function renderTop() {
   $('t-vault').textContent = used + '/' + me.vault_slots;
   $('t-vault').parentNode.classList.toggle('warn', me.vault_slots > 0 && used >= me.vault_slots);
 
+  /* The deck ladder. Two bugs here: the bar was scaled to DECK_FULL (40) while
+     DECK_MILESTONES runs to 60, so the 46/52/60 ticks piled onto the last
+     pixel; and the markup hardcoded "→ 25" when the starter pool is 24. Scale
+     to the LAST milestone, and mark DECK_FULL as its own line — that is the
+     one that matters, because it is where the engine stops padding. */
   var n = st.cards.length;
   $('t-deck').textContent = n;
-  var ms = D.DECK_MILESTONES, next = ms.filter(function (m) { return m > n; })[0];
+  var ms = D.DECK_MILESTONES, span = Math.max(D.DECK_FULL, ms[ms.length - 1]);
+  var next = ms.filter(function (m) { return m > n; })[0];
   $('t-decknext').textContent = next ? ('→ ' + next) : 'FULL DECK';
   var track = $('decktrack');
   if (!track.dataset.ticked) {
     ms.forEach(function (m) {
       var i = document.createElement('i');
-      i.style.left = Math.min(100, (m / D.DECK_FULL) * 100) + '%';
+      i.style.left = Math.min(100, (m / span) * 100) + '%';
       track.appendChild(i);
     });
+    var full = document.createElement('i');
+    full.className = 'full';
+    full.style.left = Math.min(100, (D.DECK_FULL / span) * 100) + '%';
+    full.title = 'A full battle deck';
+    track.appendChild(full);
     track.dataset.ticked = '1';
   }
-  $('deckfill').style.width = Math.min(100, (n / D.DECK_FULL) * 100) + '%';
+  $('deckfill').style.width = Math.min(100, (n / span) * 100) + '%';
   $('t-mode').firstElementChild.textContent = NET.mode === 'live' ? 'live' : 'offline demo';
   var lm = S.world && S.world.landmark;
   $('runname').textContent = 'Warpath · seed ' + (S.seed >>> 0).toString(36).toUpperCase();
@@ -572,7 +583,8 @@ function tabCamp(st) {
              + M.RESOURCES[k].icon + cost[k] + '</span>';
       }).join(' ');
       next += '<div class="kv"><span>' + spec.icon + ' ' + esc(spec.name) + ' '
-            + ['I', 'II', 'III'][lvl] + '</span><b>' + (line || 'free') + '</b></div>';
+            + ['I', 'II', 'III'][lvl] + '</span><b>' + (line || 'free')
+            + ' <span class="wallet sec">secured</span></b></div>';
     });
   }
   return '<h3 class="sec">Expedition camp</h3>'
@@ -593,10 +605,20 @@ function carriedCount(st) {
 }
 
 function tabHold(st) {
+  /* The two wallets are a real rule and were never stated: BUILDING spends
+     secured stock, RECRUITING spends carried stock, and "Deposit & secure"
+     sweeps everything into the vault with no way back. A player could
+     permanently convert their hiring money into building money and never be
+     told why the recruits had become unaffordable. */
   var h = '<h3 class="sec">Expedition resources</h3>'
-    + '<p class="hint">Spent out here, gone when the Warpath ends. '
-    + '<span style="color:var(--ember)">Carried</span> can be taken from you; '
-    + '<span style="color:var(--sky)">secured</span> cannot.</p>';
+    + '<p class="hint">Spent out here, gone when the Warpath ends.</p>'
+    + '<div class="wallets">'
+    + '<div><b style="color:var(--ember)">Carried</b><span>on your Hero · pays for RECRUITS · '
+    + 'can be taken from you</span></div>'
+    + '<div><b style="color:var(--sky)">Secured</b><span>in the camp vault · pays for BUILDING · '
+    + 'safe from raids</span></div></div>'
+    + '<p class="hint" style="margin-top:-4px">Depositing moves carried → secured, and there is no '
+    + 'way back this expedition — keep enough on your Hero to hire with.</p>';
   M.EXPEDITION_RESOURCES.forEach(function (k) {
     var r = M.RESOURCES[k], v = st.inventory[k] || { carried: 0, secured: 0 };
     h += '<div class="res-row"><div class="nm">' + r.icon + ' ' + esc(r.name) + '</div>'
@@ -643,8 +665,10 @@ function tabPool(st) {
   var found_cards = st.cards.filter(function (c) { return c.source !== 'starter'; });
   if (!found_cards.length) h += '<p class="hint" style="opacity:.7">Nothing yet.</p>';
   found_cards.forEach(function (c) {
-    h += '<div class="card-chip' + (c.secured ? '' : ' unsecured') + '">'
-      + '<span>' + esc(cardName(c.key)) + '</span>'
+    var m = cardMeta(c.key) || {};
+    h += '<div class="card-chip' + (c.secured ? '' : ' unsecured') + '" title="'
+      + esc((m.d || '') + (m.c != null ? ' (cost ' + m.c + ')' : '')) + '">'
+      + '<span>' + (m.i || '') + ' ' + esc(cardName(c.key)) + '</span>'
       + '<span class="src ' + esc(c.source) + '">' + esc(c.source) + '</span></div>';
   });
   h += '<h3 class="sec" style="margin-top:16px">Loaner deck</h3>';
@@ -658,12 +682,53 @@ function tabPool(st) {
   return h;
 }
 
-// The catalogs live in the parent game, not here, so a key is prettified
-// rather than resolved. The parent shows the real card when it builds the deck.
+/* ── Cards ────────────────────────────────────────────────────────────────
+   S.meta is the real catalog: posted by the parent game over
+   `warpath:cardmeta` when embedded, or the generated fallback in
+   warpath-data.js when standalone. Everything below degrades to the old
+   prettified id if a key is somehow unknown, rather than rendering blank. */
+function cardMeta(key) { return (S.meta && S.meta[key]) || D.CARD_META[key] || null; }
 function cardName(key) {
-  var i = key.indexOf(':');
-  var id = key.slice(i + 1);
+  var m = cardMeta(key);
+  if (m && m.n) return m.n;
+  var id = String(key || '').slice(String(key || '').indexOf(':') + 1);
   return id.replace(/([A-Z])/g, ' $1').replace(/^./, function (c) { return c.toUpperCase(); });
+}
+var STAT_LABELS = ['HP', 'ATK', 'DEF', 'MAG', 'RES', 'SPD'];
+var TYPE_WORD = { unit: 'Unit', spell: 'Equipment', trap: 'Trigger',
+                  location: 'Resource', weather: 'Weather' };
+var ELEMENT_TONE = {
+  fire: '#ff7a2f', water: '#4fa3ff', nature: '#4caf7a', earth: '#a3854f',
+  shadow: '#9b4dff', light: '#f3e7c8', storm: '#7fb8ff', wind: '#8fe3d0',
+};
+
+/* One offer card, rendered from real data. This is the mode's whole identity —
+   "Explore → Discover Opportunity → Make Choice" — and it used to be the biome
+   icon three times over a title-cased id. */
+function cardFace(key, extra) {
+  var m = cardMeta(key) || {};
+  var kind = m.t || String(key).slice(0, String(key).indexOf(':'));
+  var stats = '';
+  if (m.s) {
+    stats = '<div class="cstats">' + m.s.map(function (v, i) {
+      return '<span><b>' + v + '</b>' + STAT_LABELS[i] + '</span>';
+    }).join('') + '</div>';
+  }
+  var els = (m.el || []).map(function (e) {
+    return '<span class="cel" style="--e:' + (ELEMENT_TONE[e] || '#8f87a3') + '">' + esc(e) + '</span>';
+  }).join('');
+  var tags = [];
+  if (m.p) tags.push(esc(m.p));
+  if (m.fly) tags.push('flying');
+  return '<div class="pi">' + (m.i || '🃏') + '</div>'
+    + '<div class="pn">' + esc(cardName(key)) + '</div>'
+    + '<div class="pt">' + esc(TYPE_WORD[kind] || kind)
+      + (m.c != null ? ' · cost ' + m.c : '') + '</div>'
+    + (els ? '<div class="cels">' + els + '</div>' : '')
+    + stats
+    + (tags.length ? '<div class="ctags">' + tags.map(esc).join(' · ') + '</div>' : '')
+    + (m.d ? '<div class="pd">' + esc(m.d) + '</div>' : '')
+    + (extra || '');
 }
 
 function tabFeed(st) {
@@ -727,12 +792,32 @@ function bindSide() {
   var s = $('f-secure');
   if (s) s.onclick = function () {
     act('warpath_secure', {}, function (r) {
+      /* ⚠ "Nothing to deposit." used to be shown whenever `moved` was empty —
+         which is EXACTLY the case where the player is standing in camp with a
+         full vault (or no vault) and materials they cannot bank. They were told
+         nothing was happening while quietly losing the ore at extraction. The
+         vault warning now fires on its own, not only when something else moved,
+         and it names the building that fixes it. */
       var moved = Object.keys(r.moved || {}).length;
-      ribbon('Vault', moved || r.cards_secured
-        ? ('Secured ' + moved + ' resource type' + (moved === 1 ? '' : 's')
-           + (r.cards_secured ? ' and ' + r.cards_secured + ' card' + (r.cards_secured === 1 ? '' : 's') : '')
-           + '.' + (r.vault_full ? ' The vault is full — upgrade the Supply Tent.' : ''))
-        : 'Nothing to deposit.');
+      var stuck = 0;
+      var inv = (S.state && S.state.inventory) || {};
+      M.EXTRACTION_MATERIALS.forEach(function (k) { stuck += ((inv[k] || {}).carried) || 0; });
+      if (r.no_vault && stuck) {
+        ribbon('No vault', 'You are carrying ' + stuck + ' extraction material'
+          + (stuck === 1 ? '' : 's') + ' with nowhere to put ' + (stuck === 1 ? 'it' : 'them')
+          + '. Build the Supply Tent, or ' + (stuck === 1 ? 'it is' : 'they are') + ' lost at extraction.');
+        return;
+      }
+      if (r.vault_full && stuck) {
+        ribbon('Vault full', stuck + ' material' + (stuck === 1 ? '' : 's')
+          + ' still on your Hero with no room to secure ' + (stuck === 1 ? 'it' : 'them')
+          + '. Upgrade the Supply Tent — anything carried is lost at extraction.');
+        return;
+      }
+      if (!moved && !r.cards_secured) { ribbon('Vault', 'Nothing to deposit.'); return; }
+      ribbon('Vault', 'Secured ' + moved + ' resource type' + (moved === 1 ? '' : 's')
+        + (r.cards_secured ? ' and ' + r.cards_secured + ' card' + (r.cards_secured === 1 ? '' : 's') : '')
+        + '.' + (r.vault_full ? ' The vault is now full — upgrade the Supply Tent.' : ''));
     });
   };
   var a = $('f-abandon');
@@ -917,11 +1002,7 @@ function showEncounter(enc) {
   var tbl = D.DISCOVERY[enc.biome] || {};
   var b = M.BIOMES[enc.biome] || {};
   var picks = enc.offers.map(function (o, i) {
-    return '<div class="pick" data-pick="' + i + '">'
-      + '<div class="pi">' + (b.icon || '❔') + '</div>'
-      + '<div class="pn">' + esc(cardName(o.key)) + '</div>'
-      + '<div class="pt">' + esc(o.key.slice(0, o.key.indexOf(':'))) + '</div>'
-      + '</div>';
+    return '<div class="pick" data-pick="' + i + '">' + cardFace(o.key) + '</div>';
   }).join('');
   openModal(
     '<div class="eyebrow">Encounter</div>'
@@ -961,11 +1042,12 @@ function showRecruit(site) {
       ? 'Needs Recruitment Tent ' + ['', 'I', 'II', 'III'][o.rank <= 2 ? 1 : o.rank <= 4 ? 2 : 3]
       : (afford ? '' : 'You cannot afford this');
     return '<div class="pick' + (locked || !afford ? ' no' : '') + '" data-recruit="' + i + '">'
-      + '<div class="pi">' + (locked ? '🔒' : '🗡') + '</div>'
-      + '<div class="pn">' + esc(o.label) + '</div>'
-      + '<div class="pt">Rank ' + o.rank + '</div>'
+      + (locked ? '<div class="lockbadge">🔒</div>' : '')
+      + cardFace(o.key)
+      + '<div class="pt">Rank ' + o.rank + ' · hired as ' + esc(o.label) + '</div>'
       + '<div class="pd">' + esc(o.note) + '</div>'
-      + '<div class="pc ' + (locked || !afford ? 'bad' : 'ok') + '">' + costLine + '</div>'
+      + '<div class="pc ' + (locked || !afford ? 'bad' : 'ok') + '">' + costLine
+      + ' <span class="wallet">carried</span></div>'
       + (reason ? '<div class="pd" style="color:var(--invalid)">' + esc(reason) + '</div>' : '')
       + '</div>';
   }).join('');
@@ -1224,6 +1306,8 @@ window.addEventListener('resize', resize);
 function boot() {
   buildLegend();
   resize();
+  // Real card data before the first encounter can fire.
+  try { NET.cardMeta().then(function (m) { S.meta = m; renderAll(); }); } catch (e) {}
   rpc('warpath_state', {}).then(function (st) {
     // Not in a run yet: offline we start one immediately so the page is
     // reviewable; live, the parent only mounts us after warpath_enter().

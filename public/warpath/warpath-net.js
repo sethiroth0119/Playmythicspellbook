@@ -369,6 +369,11 @@ var MOCK = {
       M.EXTRACTION_MATERIALS.forEach(function (m) {
         if (mock.inv[m].carried > 0) { mock.inv[m].carried -= 1; spoils[m] = 1; }
       });
+      // Unsecured cards drop as well — mirrors warpath_battle_report. This is
+      // what makes walking loot home a decision rather than a formality.
+      for (var ci = mock.cards.length - 1; ci >= 0; ci--) {
+        if (!mock.cards[ci].secured) { spoils.card_lost = 1; mock.cards.splice(ci, 1); break; }
+      }
       me.injured_turns = 2; me.hp = Math.max(1, me.hp - 30); me.moves_left = 0;
       if (mock.camp) { me.x = mock.camp.x; me.y = mock.camp.y; }
       log('hero_defeated', { loser: me.hero_name, spoils: spoils });
@@ -459,7 +464,36 @@ function rpcMock(fn, args) {
   });
 }
 
+/* Card metadata. Live, the PARENT is authoritative — it holds the real
+   catalogs including anything an admin forged, and it is what the battle
+   engine will actually deal. Offline we use the generated fallback in
+   warpath-data.js so the draft is still readable standalone. */
+function cardMeta() {
+  if (!EMBEDDED) return Promise.resolve(D.CARD_META);
+  return new Promise(function (resolve) {
+    var done = false;
+    var onMeta = function (ev) {
+      var d = ev.data;
+      if (!d || d.type !== 'warpath:cardmeta') return;
+      window.removeEventListener('message', onMeta);
+      done = true;
+      // Merge over the fallback so a key the parent does not know about still
+      // renders something rather than blanking.
+      resolve(Object.assign({}, D.CARD_META, d.meta || {}));
+    };
+    window.addEventListener('message', onMeta);
+    try { window.parent.postMessage({ type: 'warpath:cardmeta:req' }, window.location.origin); }
+    catch (e) {}
+    setTimeout(function () {
+      if (done) return;
+      window.removeEventListener('message', onMeta);
+      resolve(D.CARD_META);           // parent never answered — degrade, do not hang
+    }, 4000);
+  });
+}
+
 root.WarpathNet = {
+  cardMeta: cardMeta,
   embedded: EMBEDDED,
   mode: EMBEDDED ? 'live' : 'offline',
   rpc: function (fn, args) { return EMBEDDED ? rpcParent(fn, args) : rpcMock(fn, args); },

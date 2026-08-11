@@ -283,6 +283,11 @@ function bakeTerrain(seed, opts) {
   // ground it drowned, and painting it that way is why the water reads as
   // sitting IN the terrain rather than punched through it.
   var cores = world.cores || M.biomeCores(seed);
+  /* The per-tile biome index. Deliberately kept even though the painter
+     classifies continuously and never reads it: it is the honest, generator-
+     agreeing answer for a tile, and the moment somebody adds a debug overlay
+     or a minimap that must NOT feather, this is the array they want. It costs
+     1320 bytes. */
   var bi = new Uint8Array(W * H);
   var wet = new Float32Array(W * H);
   var elevT = new Float32Array(W * H);
@@ -842,7 +847,7 @@ function bakeTerrain(seed, opts) {
       var lum2 = (cr * 0.30 + cg * 0.59 + cb * 0.11) / 255;
       var warm = (lum2 - 0.46);
       cr += warm * 20; cg += warm * 7; cb -= warm * 15;
-      cr = mix(cr, 214, 0.045); cg = mix(cg, 196, 0.045); cb = mix(cb, 158, 0.045);
+      cr = mix(cr, 214, 0.035); cg = mix(cg, 196, 0.035); cb = mix(cb, 158, 0.035);
       // paper grain, hashed so it is identical on every machine
       var gr = ((hashf(seed, x, y, R_GRAIN) >>> 12) & 255) / 255 - 0.5;
       cr += gr * 7.0; cg += gr * 7.0; cb += gr * 7.0;
@@ -1229,19 +1234,27 @@ function drawDeadTree(c, x, y, s, lit, r, col) {
    ridge only, and only very high up; the snowFIELD is the terrain pass's job,
    which is where snow belongs. */
 function drawCrag(c, x, y, s, lit, e, r) {
-  contact(c, x, y, s * 1.15, s * 0.40, 0.34);
-  var w = s * (0.80 + r() * 0.55), h = s * (1.3 + r() * 1.4);
-  var lean = (r() - 0.5) * s * 0.8;
-  var sx = x + lean;                        // summit
-  var sh2 = h * (0.52 + r() * 0.26);        // shoulder height
-  var shx = sx + w * (0.30 + r() * 0.45);   // shoulder x
+  contact(c, x, y, s * 1.45, s * 0.42, 0.32);
+  /* ⚠ Wide and asymmetric, not tall and symmetric. A steep isoceles wedge
+     with a lit left half is, to the eye, a tent — and a slope covered in them
+     is a campsite, which is what two passes of this file produced. Real
+     outcrops are broader than they are high, lean, and have a rubble skirt on
+     the downhill side. The summit is pushed well off centre and the two
+     flanks are given independent widths, so the silhouette never resolves
+     into a triangle no matter how many of them overlap. */
+  var w = s * (1.15 + r() * 0.75), h = s * (0.85 + r() * 0.95);
+  var lean = (r() - 0.5) * 1.15 * w;
+  var sx = x + lean;                        // summit, deliberately off-centre
+  var sh2 = h * (0.34 + r() * 0.30);        // shoulder height
+  var shx = sx + w * (0.34 + r() * 0.50);   // shoulder x
   var pts = [
     [x - w, y],
-    [x - w * (0.55 + r() * 0.3), y - h * (0.28 + r() * 0.22)],
-    [sx - w * (0.16 + r() * 0.2), y - h * (0.72 + r() * 0.16)],
+    [x - w * (0.62 + r() * 0.3), y - h * (0.34 + r() * 0.26)],
+    [sx - w * (0.20 + r() * 0.24), y - h * (0.76 + r() * 0.16)],
     [sx, y - h],
     [shx, y - sh2],
-    [x + w * (0.86 + r() * 0.3), y]
+    [shx + w * (0.18 + r() * 0.3), y - sh2 * (0.30 + r() * 0.3)],
+    [x + w * (0.94 + r() * 0.4), y]
   ];
   var i;
   c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);
@@ -1260,13 +1273,13 @@ function drawCrag(c, x, y, s, lit, e, r) {
   c.beginPath();
   c.moveTo(pts[0][0], pts[0][1]);
   c.lineTo(pts[1][0], pts[1][1]); c.lineTo(pts[2][0], pts[2][1]); c.lineTo(pts[3][0], pts[3][1]);
-  c.lineTo(sx - w * 0.10, y);
+  c.lineTo(sx - w * 0.22, y);
   c.closePath();
   c.fillStyle = shadeRGB(lR, lG, lB, 0.70 + lit * 0.46); c.fill();
   // a crease down the face, so the rock has structure
   c.strokeStyle = 'rgba(38,28,22,0.28)'; c.lineWidth = Math.max(0.5, s * 0.06);
   c.beginPath(); c.moveTo(sx, y - h); c.lineTo(sx - w * (0.2 + r() * 0.3), y); c.stroke();
-  if (e > 1.02 && r() < 0.55) {
+  if (e > 1.06 && r() < 0.40) {
     c.beginPath();
     c.moveTo(pts[2][0], pts[2][1]); c.lineTo(sx, y - h);
     c.lineTo(shx, y - sh2); c.lineTo(shx - w * 0.18, y - sh2 - h * 0.10);
@@ -1828,13 +1841,46 @@ function bakeCloud(seed, W, H) {
    soft irregular front that suggests something is under it.
    ══════════════════════════════════════════════════════════════════════ */
 
-var _scratch = { a: null, b: null, w: 0, h: 0 };
-function scratch(w, h) {
-  if (_scratch.w !== w || _scratch.h !== h) {
-    _scratch.a = mkCanvas(w, h); _scratch.b = mkCanvas(w, h);
-    _scratch.w = w; _scratch.h = h;
+/* ── The fog, composited in WORLD space ───────────────────────────────────
+   The obvious implementation composites the fog into a viewport-sized scratch
+   canvas every frame. It works, and it costs two full-viewport masked draws
+   per frame — which is fine while the player sits still and is not fine while
+   they pan, because the camera is part of the composite and every pan frame
+   invalidates it. Measured at 1440x900 in software that was ~53ms a frame
+   during a drag: visibly heavy.
+
+   So the two fog layers are built at BAKE resolution, in world space, exactly
+   like the terrain: `a` is the desaturated memory image masked to everything
+   not currently visible, `b` is the cloud masked to the unexplored. Neither
+   depends on the camera at all, so they are rebuilt only when the fog itself
+   changes — once a turn — and every frame in between, including every frame
+   of a pan or a zoom, is three sub-rectangle blits of three static images.  */
+var _fogw = { key: null, seed: -1, a: null, b: null, w: 0, h: 0, unseen: false, has: false };
+function fogWorld(baked, m, key) {
+  if (!m.any) return null;
+  if (_fogw.has && _fogw.key === key && key != null && _fogw.seed === baked.seed) return _fogw;
+  var BW = baked.w, BH = baked.h;
+  if (_fogw.w !== BW || _fogw.h !== BH) {
+    _fogw.a = mkCanvas(BW, BH); _fogw.b = mkCanvas(BW, BH);
+    _fogw.w = BW; _fogw.h = BH;
   }
-  return _scratch;
+  var a = _fogw.a.getContext('2d'), b = _fogw.b.getContext('2d');
+  a.setTransform(1, 0, 0, 1, 0, 0); a.globalCompositeOperation = 'source-over';
+  a.clearRect(0, 0, BW, BH);
+  a.drawImage(baked.memory, 0, 0);
+  a.globalCompositeOperation = 'destination-in';
+  a.drawImage(m.dim, 0, 0, BW, BH);
+  a.globalCompositeOperation = 'source-over';
+  b.setTransform(1, 0, 0, 1, 0, 0); b.globalCompositeOperation = 'source-over';
+  b.clearRect(0, 0, BW, BH);
+  if (m.anyUnseen) {
+    b.drawImage(baked.cloud, 0, 0, BW, BH);
+    b.globalCompositeOperation = 'destination-in';
+    b.drawImage(m.unseen, 0, 0, BW, BH);
+    b.globalCompositeOperation = 'source-over';
+  }
+  _fogw.key = key; _fogw.seed = baked.seed; _fogw.unseen = m.anyUnseen; _fogw.has = true;
+  return _fogw;
 }
 var _mask = { dim: null, unseen: null, key: null, q: 0, cv: null };
 
@@ -1923,11 +1969,27 @@ function draw(ctx, opts) {
   // ── terrain blit ────────────────────────────────────────────────────────
   var dx0 = -cam.x, dy0 = -cam.y, dw = W * z, dh = H * z;
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  // A soft drop under the map so it reads as a chart lying on a table.
-  ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = Math.max(8, z * 0.6); ctx.shadowOffsetY = z * 0.18;
-  ctx.drawImage(baked.canvas, dx0, dy0, dw, dh);
-  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+  /* ⚠ 'medium', not 'high', and no shadowBlur.
+     Two lines that between them cost more than everything else in the frame
+     put together. `shadowBlur` on a full-map drawImage asks the rasteriser to
+     blur a megapixel every frame for a decoration nobody can see under the
+     fog; and the 'high' resampler is several times the cost of 'medium' at a
+     scale factor that is usually close to 1:1 anyway. The drop under the map
+     is now three offset rectangles drawn once, which looks the same. */
+  ctx.imageSmoothingQuality = 'medium';
+  ctx.fillStyle = 'rgba(0,0,0,0.30)';
+  ctx.fillRect(dx0 + z * 0.10, dy0 + z * 0.14, dw, dh);
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.fillRect(dx0 + z * 0.24, dy0 + z * 0.30, dw, dh);
+  /* Blit only the part of the baked world the viewport can see. On a phone
+     held at max zoom that is a fifth of the image. */
+  var vx0 = clamp(Math.floor(cam.x / z) - 1, 0, W), vy0 = clamp(Math.floor(cam.y / z) - 1, 0, H);
+  var vx1 = clamp(Math.ceil((cam.x + VW) / z) + 1, 0, W), vy1 = clamp(Math.ceil((cam.y + VH) / z) + 1, 0, H);
+  if (vx1 > vx0 && vy1 > vy0) {
+    ctx.drawImage(baked.canvas,
+      vx0 * PX, vy0 * PX, (vx1 - vx0) * PX, (vy1 - vy0) * PX,
+      vx0 * z - cam.x, vy0 * z - cam.y, (vx1 - vx0) * z, (vy1 - vy0) * z);
+  }
 
   // ── movement affordances, under the fog so they cannot leak terrain ─────
   if (opts.reach) drawReach(ctx, opts, cam, W, H);
@@ -1937,42 +1999,15 @@ function draw(ctx, opts) {
   var tFogStart = now();
   if (opts.fogState || opts.explored || opts.visible) {
     var m = fogMasks(baked, opts, W, H);
-    if (m.any) {
-      // Clip everything below to the screen rect the fog can actually touch.
-      var cx0 = clamp(m.box.x0 * z - cam.x, 0, VW), cy0 = clamp(m.box.y0 * z - cam.y, 0, VH);
-      var cx1 = clamp(m.box.x1 * z - cam.x, 0, VW), cy1 = clamp(m.box.y1 * z - cam.y, 0, VH);
-      var cw = cx1 - cx0, chh = cy1 - cy0;
-      if (cw > 0 && chh > 0) {
-        var sc = scratch(Math.max(1, Math.ceil(VW)), Math.max(1, Math.ceil(VH)));
-        var a = sc.a.getContext('2d'), b = sc.b.getContext('2d');
-
-        // 1. remembered + unseen: the pre-baked desaturated world, masked
-        a.setTransform(1, 0, 0, 1, 0, 0);
-        a.clearRect(cx0, cy0, cw, chh);
-        a.globalCompositeOperation = 'source-over';
-        a.save(); a.beginPath(); a.rect(cx0, cy0, cw, chh); a.clip();
-        a.drawImage(baked.memory, dx0, dy0, dw, dh);
-        a.globalCompositeOperation = 'destination-in';
-        a.drawImage(m.dim, dx0, dy0, dw, dh);
-        a.restore();
-        a.globalCompositeOperation = 'source-over';
-        ctx.drawImage(sc.a, cx0, cy0, cw, chh, cx0, cy0, cw, chh);
-
-        // 2. unseen: the cloud bank on top
-        if (m.anyUnseen) {
-          b.setTransform(1, 0, 0, 1, 0, 0);
-          b.clearRect(cx0, cy0, cw, chh);
-          b.globalCompositeOperation = 'source-over';
-          b.save(); b.beginPath(); b.rect(cx0, cy0, cw, chh); b.clip();
-          b.drawImage(baked.cloud, dx0, dy0, dw, dh);
-          b.globalCompositeOperation = 'destination-in';
-          b.drawImage(m.unseen, dx0, dy0, dw, dh);
-          b.restore();
-          b.globalCompositeOperation = 'source-over';
-          ctx.globalAlpha = 0.965;
-          ctx.drawImage(sc.b, cx0, cy0, cw, chh, cx0, cy0, cw, chh);
-          ctx.globalAlpha = 1;
-        }
+    var fw = fogWorld(baked, m, opts.fogKey);
+    if (fw && vx1 > vx0 && vy1 > vy0) {
+      ctx.drawImage(fw.a, vx0 * PX, vy0 * PX, (vx1 - vx0) * PX, (vy1 - vy0) * PX,
+                    vx0 * z - cam.x, vy0 * z - cam.y, (vx1 - vx0) * z, (vy1 - vy0) * z);
+      if (fw.unseen) {
+        ctx.globalAlpha = 0.965;
+        ctx.drawImage(fw.b, vx0 * PX, vy0 * PX, (vx1 - vx0) * PX, (vy1 - vy0) * PX,
+                      vx0 * z - cam.x, vy0 * z - cam.y, (vx1 - vx0) * z, (vy1 - vy0) * z);
+        ctx.globalAlpha = 1;
       }
     }
   }
@@ -2063,14 +2098,6 @@ function drawPath(ctx, path, cam) {
   ctx.stroke();
   try { ctx.setLineDash([]); } catch (e) {}
   ctx.restore();
-}
-function roundRect(c, x, y, w, h, r) {
-  c.moveTo(x + r, y);
-  c.arcTo(x + w, y, x + w, y + h, r);
-  c.arcTo(x + w, y + h, x, y + h, r);
-  c.arcTo(x, y + h, x, y, r);
-  c.arcTo(x, y, x + w, y, r);
-  c.closePath();
 }
 
 /* Camp influence: the brief says "a diffuse coloured bloom with a hand-drawn

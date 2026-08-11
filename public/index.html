@@ -215574,6 +215574,35 @@ function _warpathOpen() {
       }
       return;
     }
+    /* 🃏 The draft screen has to show the player what they are choosing
+       between — name, cost, element, stats, text. The catalogs live here, not
+       in the sub-app, so we hand them over. This is the authoritative copy:
+       it includes admin-forged custom cards, and it is what the engine deals.
+       The sub-app ships a generated fallback for standalone use only. */
+    if (d.type === 'warpath:cardmeta:req') {
+      const meta = {};
+      try {
+        const packs = [['unit', UNIT_CARDS], ['spell', SPELL_CARDS], ['trap', TRAP_CARDS],
+                       ['location', LOCATION_CARDS], ['weather', WEATHER_CARDS]];
+        for (const [kind, arr] of packs) {
+          for (const c of (arr || [])) {
+            if (!c || !c.id) continue;
+            const e = { n: c.name, i: c.icon || '', t: kind };
+            if (c.cost != null) e.c = c.cost;
+            if (c.elements && c.elements.length) e.el = c.elements;
+            if (c.stats) e.s = [c.stats.hp, c.stats.atk, c.stats.def, c.stats.mag, c.stats.res, c.stats.spd];
+            if (c.passive && c.passive !== 'none') e.p = c.passive;
+            if (c.flying) e.fly = 1;
+            if (c.desc) e.d = c.desc;
+            if (c.restriction != null) e.r = c.restriction;
+            meta[kind + ':' + c.id] = e;
+          }
+        }
+      } catch (e) {}
+      try { _WP.frame.contentWindow.postMessage({ type: 'warpath:cardmeta', meta: meta },
+                                                window.location.origin); } catch (e) {}
+      return;
+    }
     if (d.type === 'warpath:battle') { warpathStartBattle(d.battle); return; }
     if (d.type === 'warpath:done')   { _warpathClose(); warpathClaimGrants(); return; }
   };

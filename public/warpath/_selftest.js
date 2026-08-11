@@ -114,6 +114,66 @@ for (let s = 0; s < N; s++) {
   agg.extraction.push(extraction);
 }
 
+/* ── CARD_META vs the real catalogs ───────────────────────────────────────
+   ⚠ Re-derive from the ARRAYS, not with a regex. The original check pulled
+   card ids out of public/index.html with `/\{\s*id:\s*.([a-zA-Z0-9_]+)./g`,
+   which also matched nested objects — so `siphoned`, a STATUS EFFECT declared
+   inside a card, was counted as a location card. `location:siphoned` sat in
+   the facility discovery table declared valid, and a player who drafted it
+   would have received a card that resolves to nothing: dropped from the
+   battle deck, dropped again at extraction. Evaluating the array is the only
+   check that actually agrees with resolveDeckCard(). */
+{
+  const fs = require('fs'), path = require('path');
+  const idx = path.join(__dirname, '..', 'index.html');
+  if (fs.existsSync(idx)) {
+    const src = fs.readFileSync(idx, 'utf8');
+    const block = (name) => {
+      const i = src.indexOf('const ' + name + ' = [');
+      if (i < 0) return null;
+      let d = 0, j = src.indexOf('[', i), k = j;
+      for (; k < src.length; k++) { if (src[k] === '[') d++; else if (src[k] === ']') { d--; if (!d) break; } }
+      return src.slice(j, k + 1);
+    };
+    const kinds = { unit: 'UNIT_CARDS', spell: 'SPELL_CARDS', trap: 'TRAP_CARDS',
+                    location: 'LOCATION_CARDS', weather: 'WEATHER_CARDS' };
+    const cat = {};
+    let ok = true;
+    for (const k in kinds) {
+      const b = block(kinds[k]);
+      if (!b) { ok = false; break; }
+      // eslint-disable-next-line no-eval
+      cat[k] = new Map(eval(b).map(c => [c.id, c]));
+    }
+    if (!ok) {
+      console.log('note: could not read the catalogs from index.html — skipping the CARD_META check');
+    } else {
+      const D = require('./warpath-data.js').WarpathData;
+      const keys = new Set(D.STARTER_POOL);
+      Object.values(D.RECRUIT_POOLS).forEach(p => p.offers.forEach(o => keys.add(o.key)));
+      Object.values(D.DISCOVERY).forEach(b => b.cards.forEach(c => keys.add(c[0])));
+      let bad = 0;
+      for (const key of keys) {
+        const kind = key.slice(0, key.indexOf(':')), id = key.slice(key.indexOf(':') + 1);
+        const c = cat[kind] && cat[kind].get(id);
+        if (!c) { console.log('FAIL unresolvable card key in warpath-data.js: ' + key); bad++; continue; }
+        const m = D.CARD_META[key];
+        if (!m) { console.log('FAIL CARD_META is missing ' + key); bad++; continue; }
+        if (m.n !== c.name) { console.log('FAIL CARD_META name drift for ' + key + ': ' + m.n + ' vs ' + c.name); bad++; }
+        if ((m.c != null ? m.c : null) !== (c.cost != null ? c.cost : null)) {
+          console.log('FAIL CARD_META cost drift for ' + key); bad++;
+        }
+      }
+      for (const key of Object.keys(D.CARD_META)) {
+        if (!keys.has(key)) { console.log('FAIL CARD_META has a key the mode never offers: ' + key); bad++; }
+      }
+      fails += bad;
+      console.log('CARD_META            ' + keys.size + ' keys checked against the live catalogs'
+        + (bad ? ' — ' + bad + ' PROBLEMS' : ''));
+    }
+  }
+}
+
 const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
 const lo  = a => Math.min(...a), hi = a => Math.max(...a);
 

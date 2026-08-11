@@ -83,7 +83,12 @@ var CAMP_BUILDINGS = {
     id: 'recruitment', name: 'Recruitment Tent', icon: '⛺', slot: 'south', maxLevel: 3,
     desc: 'Gates which Units you may recruit. The single biggest lever on your deck.',
     levels: [
-      { cost: { wood: 30, food: 20 },              effect: 'Recruit Rank 1-2 Units (cost 1-2).' },
+      // ⚠ 🪵25 not 🪵30. The starting kit is 🪵25 🍖20, so a 30-wood tent made
+      // the advertised turn-1 choice between Supply and Recruitment impossible:
+      // you could only ever afford Supply, and a critic measured 7 recruits
+      // across 28 runs as a result. At 25 you can afford EITHER tent on turn 1
+      // and not both (20+25 > 25), which is the decision the brief asks for.
+      { cost: { wood: 25, food: 20 },              effect: 'Recruit Rank 1-2 Units (cost 1-2).' },
       { cost: { wood: 60, iron: 20, food: 40 },    effect: 'Recruit Rank 3-4 Units (cost 3-4).' },
       { cost: { wood: 90, iron: 50, essence: 30 }, effect: 'Recruit Rank 5 Units. The big ones talk to you now.' },
     ],
@@ -208,7 +213,7 @@ var DISCOVERY = {
     cards: [
       ['unit:xenoDrone', 14], ['unit:hiveDrone', 12], ['unit:parasiteHost', 8], ['unit:ice', 12],
       ['trap:staticMine', 14], ['trap:nullGlyph', 12], ['trap:aetherNet', 12], ['trap:xenoBurst', 8],
-      ['location:medicalCenter', 12], ['location:siphoned', 10], ['location:manaFont', 12],
+      ['location:medicalCenter', 12], ['location:skyCitadel', 10], ['location:manaFont', 12],
       ['spell:arcaneInsight', 8], ['spell:suppressAwakening', 5],
     ],
   },
@@ -242,6 +247,93 @@ var DISCOVERY = {
       ['weather:sandstorm', 8], ['weather:mistveil', 6],
     ],
   },
+};
+
+
+/* ── CARD_META — what a card actually IS ──────────────────────────────────
+   ⚠ THE DRAFT MODAL WAS A BLIND PICK WITHOUT THIS. It showed the biome icon
+   three times, a title-cased id and the word "UNIT" — no cost, no stats, no
+   element, no text, not even the card's real name. A critic screenshotted a
+   turn-1 encounter offering `LOCATION:MIRE | LOCATION:POISONBOG | UNIT:TROLL`
+   and pointed out that the mode's entire identity is that choice.
+
+   ⚠ THIS IS THE OFFLINE FALLBACK ONLY. Live, the parent game posts the REAL
+   catalog over `warpath:cardmeta` — which is authoritative, includes any
+   admin-forged custom cards, and is what the battle engine will actually use.
+   This copy exists so the screen is honest when opened standalone.
+
+   Generated from UNIT_CARDS / SPELL_CARDS / TRAP_CARDS / LOCATION_CARDS /
+   WEATHER_CARDS in public/index.html. `_selftest.js` re-derives it from those
+   same arrays and fails if the two drift, which is how `location:siphoned`
+   was caught: it is a STATUS EFFECT, not a card, and the original check had
+   scooped nested objects with a regex and declared it fine.
+
+   Keys are short because this ships to the browser: n name · i icon · t type
+   c cost · el elements · s [hp,atk,def,mag,res,spd] · p passive · fly · d desc */
+var CARD_META = {
+  "location:altar": {"n":"Power Altar","i":"⛩️","t":"location","c":3,"d":"+5 ATK and +5 MAG aura to owner's Mage / Cultist units."},
+  "location:bastion": {"n":"Bastion","i":"🏰","t":"location","c":2,"d":"+5 DEF and +5 RES aura to ALL of the owner's units."},
+  "location:cursedEarth": {"n":"Cursed Earth","i":"☠️","t":"location","c":3,"d":"2 dmg + Siphoned (2t) per turn to all enemy units."},
+  "location:forest": {"n":"Sacred Grove","i":"🌲","t":"location","c":2,"d":"Owner's Nature / Plant / Beast units heal 4 HP/turn."},
+  "location:forgeAnvil": {"n":"Forge Anvil","i":"🔨","t":"location","c":3,"d":"+15% crit chance for ALL of the owner's units."},
+  "location:holySpring": {"n":"Holy Spring","i":"⛲","t":"location","c":3,"d":"Owner's units heal 5 HP/turn + 50% chance to cleanse one debuff."},
+  "location:lava": {"n":"Lava Pit","i":"🌋","t":"location","c":2,"d":"3 dmg/turn to all units & heroes — except Fire element and Flying units."},
+  "location:manaFont": {"n":"Mana Font","i":"🔮","t":"location","c":3,"d":"Owner gains +1 energy at the start of each of their turns."},
+  "location:medicalCenter": {"n":"Medical Center","i":"🏥","t":"location","c":3,"d":"Heals 4 HP/turn to ALL of the owner's units and hero."},
+  "location:mire": {"n":"Mire","i":"🕳️","t":"location","c":1,"d":"-1 SPD aura to all enemy units (Flying immune)."},
+  "location:necropolis": {"n":"Necropolis","i":"🪦","t":"location","c":3,"d":"Owner's Undead / Vampire / Necromancer units: +3 ATK and heal 2 HP/turn."},
+  "location:poisonBog": {"n":"Poison Bog","i":"🟢","t":"location","c":2,"d":"Each turn, applies Poison (2t) to all enemy units."},
+  "location:sandstormDunes": {"n":"Sandstorm Dunes","i":"🏜️","t":"location","c":2,"d":"2 dmg/turn to all units — except Earth / Storm element and Flying."},
+  "location:skyCitadel": {"n":"Sky Citadel","i":"☁️","t":"location","c":3,"d":"Owner's Flying units: +3 ATK, +3 MAG, +1 SPD."},
+  "location:watchtower": {"n":"Watchtower","i":"🗼","t":"location","c":3,"d":"+1 attack range for ALL of the owner's units."},
+  "spell:arcaneInsight": {"n":"Arcane Insight","i":"📚","t":"spell","c":2,"d":"Draw 2 cards"},
+  "spell:bolt": {"n":"Magic Bolt","i":"⚡","t":"spell","c":1,"d":"Deal 12 dmg"},
+  "spell:fireblast": {"n":"Fire Blast","i":"🔥","t":"spell","c":3,"d":"Deal 25 dmg"},
+  "spell:frostwind": {"n":"Frostwind","i":"❄️","t":"spell","c":2,"d":"Deal 14 dmg + Slow 2t"},
+  "spell:mend": {"n":"Mend","i":"💚","t":"spell","c":2,"d":"Heal 20 HP"},
+  "spell:rally": {"n":"Rally","i":"📯","t":"spell","c":2,"d":"Allies Strong 2t"},
+  "spell:suppressAwakening": {"n":"Suppress Awakening","i":"🚫","t":"spell","c":3,"d":"Enemy cannot use Kalon transformations for 2 turns."},
+  "spell:tarPit": {"n":"Tar Pit","i":"🕳️","t":"spell","c":1,"d":"Slow target enemy for 3 turns"},
+  "spell:wrath": {"n":"Divine Wrath","i":"☄️","t":"spell","c":4,"d":"Deal 35 dmg"},
+  "trap:aetherNet": {"n":"Aether Net","i":"🕸️","t":"trap","c":2,"d":"Stun (2t) — catches flying units too"},
+  "trap:bearTrap": {"n":"Bear Trap","i":"⛓️","t":"trap","c":2,"d":"35 dmg + bleed (3t) — heavy iron jaws"},
+  "trap:boneCrusher": {"n":"Bone Crusher","i":"💀","t":"trap","c":3,"d":"45 dmg — pure crush, no status"},
+  "trap:caltrops": {"n":"Caltrops","i":"🔱","t":"trap","c":1,"d":"10 dmg + slow (2t) — cheap denial"},
+  "trap:flameBurst": {"n":"Flame Burst","i":"💥","t":"trap","c":2,"d":"25 dmg + burn"},
+  "trap:frostGlyph": {"n":"Frost Glyph","i":"❄️","t":"trap","c":2,"d":"20 dmg + frozen (2t) — locks them solid"},
+  "trap:hexSigil": {"n":"Hex Sigil","i":"❓","t":"trap","c":2,"d":"Confusion (3t) — 33% chance to hit self"},
+  "trap:magmaVent": {"n":"Magma Vent","i":"🌋","t":"trap","c":3,"d":"30 dmg + burn (3t) — sustained inferno"},
+  "trap:mirePit": {"n":"Mire Pit","i":"🕳️","t":"trap","c":1,"d":"Stumble — skips their next turn"},
+  "trap:nullGlyph": {"n":"Null Glyph","i":"🚫","t":"trap","c":1,"d":"Dispel (3t) — silences energy moves"},
+  "trap:plagueBloom": {"n":"Plague Bloom","i":"🦠","t":"trap","c":2,"d":"Siphoned (4t) — tendrils drain 3-6 HP/turn"},
+  "trap:plagueSpore": {"n":"Plague Spore","i":"🧬","t":"trap","c":3,"d":"Infected (3t) — halves ALL stats"},
+  "trap:razorVines": {"n":"Razor Vines","i":"🌿","t":"trap","c":2,"d":"20 dmg + bleed (3t) — also snags flyers"},
+  "trap:sleepPowder": {"n":"Sleep Powder","i":"💤","t":"trap","c":2,"d":"Sleep (3t) — 35% wake chance/turn"},
+  "trap:snare": {"n":"Snare","i":"🪤","t":"trap","c":1,"d":"Stuns"},
+  "trap:soulSnare": {"n":"Soul Snare","i":"👻","t":"trap","c":3,"d":"15 dmg + weak (3t) — -3 ATK lingering"},
+  "trap:spikes": {"n":"Spike Trap","i":"⚙️","t":"trap","c":1,"d":"15 dmg"},
+  "trap:staticMine": {"n":"Static Mine","i":"⚡","t":"trap","c":2,"d":"22 dmg + paralysis (3t) — -1 SPD, 25% skip"},
+  "trap:xenoBurst": {"n":"Xeno Burst","i":"👽","t":"trap","c":3,"d":"20 dmg + infected (3t) — also snags flyers"},
+  "unit:archer": {"n":"Elven Archer","i":"🏹","t":"unit","c":2,"el":["wind"],"s":[16,16,6,8,8,1],"d":"Strikes from a distance."},
+  "unit:broodTyrant": {"n":"Brood Tyrant","i":"👽","t":"unit","c":5,"el":["shadow","nature"],"s":[44,24,16,18,14,2],"p":"xenoBond","d":"Apex of the swarm — moves with predator grace."},
+  "unit:goblin": {"n":"Goblin Scout","i":"👺","t":"unit","c":1,"el":["shadow"],"s":[14,10,5,5,5,2],"p":"swift","d":"Fast but fragile."},
+  "unit:golem": {"n":"Stone Golem","i":"🗿","t":"unit","c":3,"el":["earth"],"s":[32,14,18,5,15,1],"p":"thorns","d":"Living stone."},
+  "unit:hiveDrone": {"n":"Hive Drone","i":"🛸","t":"unit","c":3,"el":["storm","wind"],"s":[22,10,8,18,14,2],"p":"xenoBond","fly":1,"d":"Scout from the mothership. (Flying)"},
+  "unit:ice": {"n":"Ice Elemental","i":"❄️","t":"unit","c":3,"el":["water","wind"],"s":[22,8,10,18,16,1],"p":"rainmaker","fly":1,"d":"Frozen fury, born of storms. (Flying)"},
+  "unit:lich": {"n":"Lich Apprentice","i":"💀","t":"unit","c":3,"el":["shadow","storm"],"s":[20,6,8,20,16,1],"p":"lifesteal","d":"Wields dark lightning."},
+  "unit:orc": {"n":"Orc Warrior","i":"🧌","t":"unit","c":2,"el":["earth"],"s":[24,16,10,5,7,1],"p":"tough","d":"Brutal frontline fighter."},
+  "unit:paladin": {"n":"Paladin","i":"🛡️","t":"unit","c":4,"el":["light"],"s":[34,18,16,12,14,1],"p":"tough","d":"Holy warrior."},
+  "unit:parasiteHost": {"n":"Parasite Host","i":"🧟","t":"unit","c":2,"el":["shadow","nature"],"s":[20,14,7,10,8,1],"p":"xenoBond","d":"Once a human — now the carrier walks."},
+  "unit:priest": {"n":"Healing Priest","i":"✨","t":"unit","c":2,"el":["light"],"s":[18,5,7,14,14,1],"d":"Mends allies."},
+  "unit:spider": {"n":"Giant Spider","i":"🕷️","t":"unit","c":2,"el":["shadow","nature"],"s":[18,12,6,8,6,2],"p":"venomous","d":"Venomous forest hunter."},
+  "unit:sprite": {"n":"Fire Sprite","i":"🔥","t":"unit","c":2,"el":["fire"],"s":[16,6,6,18,12,1],"p":"sunbather","fly":1,"d":"Wisp of pure flame. (Flying)"},
+  "unit:troll": {"n":"Cave Troll","i":"👹","t":"unit","c":4,"el":["nature","earth"],"s":[40,22,15,5,10,1],"p":"regeneration","d":"Slow and deadly forest giant."},
+  "unit:wolf": {"n":"Dire Wolf","i":"🐺","t":"unit","c":2,"el":["nature"],"s":[20,14,8,5,8,2],"p":"swift","d":"Hunts in packs."},
+  "unit:xenoDrone": {"n":"Xeno Drone","i":"👾","t":"unit","c":1,"el":["shadow"],"s":[14,12,6,6,6,2],"p":"xenoBond","d":"Hivemind grunt — fast, fragile, contagious."},
+  "weather:bloodmoon": {"n":"Bloodmoon","i":"🌕","t":"weather","c":3,"d":"All attackers heal 20% of damage dealt (4 turns)"},
+  "weather:eclipse": {"n":"Eclipse","i":"🌑","t":"weather","c":3,"d":"Shadow +50%, Light -50% (4 turns)"},
+  "weather:mistveil": {"n":"Mistveil","i":"🌫️","t":"weather","c":2,"d":"All attacks +25% miss chance (4 turns)"},
+  "weather:sandstorm": {"n":"Sandstorm","i":"🏜️","t":"weather","c":3,"d":"Non-Earth/Storm -3 HP/turn"}
 };
 
 /* ── Extraction ───────────────────────────────────────────────────────────
@@ -303,6 +395,7 @@ root.WarpathData = {
   EXTRACT_CARDS_PER_VAULT_LEVEL: EXTRACT_CARDS_PER_VAULT_LEVEL,
   EXTRACT_TURNS: EXTRACT_TURNS,
   ENTRY: ENTRY, LOSS: LOSS, STARTING_STIPEND: STARTING_STIPEND,
+  CARD_META: CARD_META,
 };
 
 })(typeof module !== 'undefined' && module.exports ? module.exports : (typeof window !== 'undefined' ? window : this));

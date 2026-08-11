@@ -809,7 +809,7 @@ insert into public.warpath_discovery (biome, ord, card_key, weight) values
   ('graveyard',11,'weather:bloodmoon',5),('graveyard',12,'weather:eclipse',5),
   ('facility',0,'unit:xenoDrone',14),('facility',1,'unit:hiveDrone',12),('facility',2,'unit:parasiteHost',8),('facility',3,'unit:ice',12),
   ('facility',4,'trap:staticMine',14),('facility',5,'trap:nullGlyph',12),('facility',6,'trap:aetherNet',12),('facility',7,'trap:xenoBurst',8),
-  ('facility',8,'location:medicalCenter',12),('facility',9,'location:siphoned',10),('facility',10,'location:manaFont',12),
+  ('facility',8,'location:medicalCenter',12),('facility',9,'location:skyCitadel',10),('facility',10,'location:manaFont',12),
   ('facility',11,'spell:arcaneInsight',8),('facility',12,'spell:suppressAwakening',5),
   ('mountain',0,'unit:orc',16),('mountain',1,'unit:troll',12),('mountain',2,'unit:golem',14),('mountain',3,'unit:paladin',8),('mountain',4,'unit:broodTyrant',3),
   ('mountain',5,'trap:magmaVent',16),('mountain',6,'trap:flameBurst',14),('mountain',7,'trap:spikes',10),
@@ -833,7 +833,7 @@ create table if not exists public.warpath_building_costs (
 delete from public.warpath_building_costs;
 insert into public.warpath_building_costs (building, level, cost) values
   ('campfire',1,'{}'),
-  ('recruitment',1,'{"wood":30,"food":20}'),('recruitment',2,'{"wood":60,"iron":20,"food":40}'),('recruitment',3,'{"wood":90,"iron":50,"essence":30}'),
+  ('recruitment',1,'{"wood":25,"food":20}'),('recruitment',2,'{"wood":60,"iron":20,"food":40}'),('recruitment',3,'{"wood":90,"iron":50,"essence":30}'),
   ('blacksmith',1,'{"stone":30,"iron":15}'),('blacksmith',2,'{"stone":60,"iron":40}'),('blacksmith',3,'{"stone":90,"iron":70,"essence":25}'),
   ('supply',1,'{"wood":20,"food":10}'),('supply',2,'{"wood":45,"stone":30}'),('supply',3,'{"wood":70,"stone":55,"iron":30}'),
   ('watchtower',1,'{"wood":40,"stone":20}'),('watchtower',2,'{"wood":70,"stone":50,"iron":25}'),
@@ -1768,6 +1768,17 @@ begin
           v_spoils := v_spoils || jsonb_build_object(rec.kind, take);
         end if;
       end loop;
+      /* ⚠ UNSECURED CARDS DROP TOO. Without this, securing was free and always
+         correct: warpath_secure flips every drafted card to secured at no cost,
+         and a loss only took carried RESOURCES — which are worthless once
+         banked. The brief's central tension ("do I push deeper, or go secure
+         what I have?") did not exist, because there was nothing to lose by
+         pushing. Now the newest unsecured card is left on the field. */
+      delete from public.warpath_cards
+       where id in (select id from public.warpath_cards
+                     where expedition_id = loser.id and secured = false
+                     order by acquired_turn desc, id desc limit 1);
+      if found then v_spoils := v_spoils || jsonb_build_object('card_lost', 1); end if;
       select * into camp from public.warpath_camps where expedition_id = loser.id;
       update public.warpath_expeditions
          set injured_turns = 2, hero_hp = greatest(1, hero_hp - 30),

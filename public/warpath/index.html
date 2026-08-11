@@ -168,6 +168,12 @@
   .res-row .amt .s{color:var(--sky)}
   .res-row .amt .d{color:var(--mist);font-size:11px}
   .res-row.mat{border-bottom-color:rgba(155,77,255,.22)}
+  .wallets{display:grid;gap:6px;margin:0 0 10px}
+  .wallets div{border:1px solid var(--edge);border-radius:7px;padding:6px 9px;background:rgba(20,16,30,.6)}
+  .wallets b{display:block;font-family:'Cinzel',serif;font-size:10px;letter-spacing:.14em;
+    text-transform:uppercase;margin-bottom:2px}
+  .wallets span{font-size:12px;color:var(--mist);font-style:italic;line-height:1.4}
+  .wallet.sec{color:var(--sky);border-color:rgba(127,184,255,.5)}
 
   .card-chip{display:flex;justify-content:space-between;align-items:center;gap:6px;
     font-size:12.5px;padding:5px 8px;border:1px solid var(--edge);border-radius:6px;
@@ -217,6 +223,21 @@
   .pick .pc{font-size:12.5px;font-variant-numeric:tabular-nums;margin-top:2px}
   .pick .pc.bad{color:var(--invalid)}
   .pick .pc.ok{color:var(--valid)}
+  /* Real card faces in the draft — the offer has to say what it IS. */
+  .pick .cels{display:flex;gap:5px;flex-wrap:wrap;justify-content:center}
+  .pick .cel{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;font-family:'Cinzel',serif;
+    color:var(--e);border:1px solid var(--e);border-radius:999px;padding:1px 7px;opacity:.9}
+  .pick .cstats{display:grid;grid-template-columns:repeat(3,1fr);gap:3px 6px;width:100%;
+    margin-top:2px;font-size:10px;color:var(--mist)}
+  .pick .cstats span{display:flex;flex-direction:column;align-items:center;line-height:1.15}
+  .pick .cstats b{color:var(--bone);font-size:12.5px;font-variant-numeric:tabular-nums}
+  .pick .ctags{font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+    font-family:'Cinzel',serif;color:var(--arcane)}
+  .pick .lockbadge{position:absolute;top:8px;right:9px;font-size:14px;opacity:.75}
+  .pick{position:relative}
+  .pick .wallet{font-size:9px;letter-spacing:.09em;text-transform:uppercase;font-family:'Cinzel',serif;
+    color:var(--ember);border:1px solid rgba(255,122,47,.5);border-radius:999px;padding:1px 6px;margin-left:4px}
+  #decktrack i.full{width:2px;background:var(--gold)}
   .sheet-foot{margin-top:20px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
   .sheet-foot .btn{width:auto;min-width:150px}
 
@@ -271,10 +292,29 @@
     max-width:min(520px,88vw);text-align:center}
   #err.show{opacity:1}
 
+  /* ⚠ PHONE. The old rule left #side at 340px over a 390px viewport with the
+     rail underneath it: the dossier covered 87% of the screen, the map was a
+     50px strip and MOVE HERE / PITCH CAMP / END TURN were all buried. On a
+     narrow screen the panel becomes a bottom sheet that starts collapsed, and
+     the rail sits above it. */
   @media (max-width:900px){
-    #side{width:100%;max-width:340px}
-    #rail{right:0;padding-bottom:12px}
-    #rail #tileinfo{min-width:0;flex:1 1 100%}
+    #side{width:100%;max-width:none;top:auto;bottom:0;height:58vh;
+      border-left:0;border-top:1px solid var(--edge);border-radius:14px 14px 0 0;
+      transform:translateY(calc(100% - 42px))}
+    #side.open{transform:translateY(0)}
+    #side.hidden{transform:translateY(calc(100% - 42px))}
+    #sidetabs{height:42px}
+    #sidetoggle{top:-1px;left:50%;margin:0 0 0 -32px;width:64px;height:22px;
+      border-radius:8px 8px 0 0;border:1px solid var(--edge);border-bottom:0}
+    #rail{right:0;bottom:44px;padding:8px 8px 6px;gap:6px}
+    #rail .btn{min-width:0;flex:1 1 auto;padding:8px 6px;font-size:10px}
+    #rail #tileinfo{min-width:0;flex:1 1 100%;padding:6px 9px;font-size:12px}
+    #bearings{margin-bottom:0}
+    .bear{font-size:11px;padding:2px 8px}
+    #top{padding:6px 8px 18px;gap:5px}
+    .pill{padding:3px 7px;font-size:12px}
+    #decktrack{width:84px}
+    #runname{font-size:11px}
   }
 </style>
 </head>

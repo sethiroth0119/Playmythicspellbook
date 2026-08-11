@@ -969,7 +969,8 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_uid uuid := auth.uid();
   v_run public.warpath_runs; v_exp public.warpath_expeditions;
-  v_slot int; v_sp int[]; v_gate int[]; v_aza numeric; v_cost numeric := 3; rec record;
+  v_slot int; v_sp int[]; v_gate int[]; v_name text;
+  v_aza numeric; v_cost numeric := 3; rec record;
 begin
   if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
   if p_hero_id is null or length(p_hero_id) = 0 then
@@ -1019,9 +1020,19 @@ begin
 
   v_sp := public.wp_spawn(v_run.seed, v_slot);
 
+  -- ⚠ hero_name is shown to the OTHER THREE PLAYERS in this run — in the feed,
+  -- on the map and in battle. It arrives from a client, so it is capped and
+  -- stripped here rather than trusted. The renderers escape it as well, but a
+  -- value that reaches three other people's screens should not depend on every
+  -- future consumer remembering to escape; one careless innerHTML downstream
+  -- would otherwise be cross-account script injection.
+  v_name := nullif(btrim(regexp_replace(coalesce(p_hero_name, p_hero_id, 'Hero'),
+                                        '[^[:alnum:][:space:]''_-]', '', 'g')), '');
+  v_name := left(coalesce(v_name, 'Hero'), 24);
+
   insert into public.warpath_expeditions
     (run_id, user_id, slot, hero_id, hero_name, x, y, entry_paid)
-    values (v_run.id, v_uid, v_slot, p_hero_id, coalesce(p_hero_name, p_hero_id),
+    values (v_run.id, v_uid, v_slot, left(p_hero_id, 64), v_name,
             v_sp[1], v_sp[2], p_pay)
     returning * into v_exp;
 
@@ -1060,7 +1071,7 @@ begin
   end if;
 
   perform public.wp_log(v_run.id, v_exp.id, 'entered',
-    jsonb_build_object('hero', coalesce(p_hero_name, p_hero_id), 'slot', v_slot));
+    jsonb_build_object('hero', v_name, 'slot', v_slot));
 
   return jsonb_build_object('ok', true, 'run_id', v_run.id, 'seed', v_run.seed,
                             'expedition_id', v_exp.id, 'slot', v_slot, 'x', v_sp[1], 'y', v_sp[2]);
@@ -1798,9 +1809,53 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
-/* Drain the outbox. The game client calls this on load and applies the result
-   to Profile.cardCollection. Marking claimed is conditional so a double call
-   cannot grant the same cards twice. */
+/* ── DRAINING THE OUTBOX — READ, THEN APPLY, THEN ACKNOWLEDGE ─────────────
+   ⚠ warpath_grants_claim() below marks the grant claimed IN THE SAME CALL that
+   returns it, which makes it unsafe for a browser client. A critic proved the
+   failure with two tabs open: the drain ran in a NON-WRITER tab, saveProfile()
+   returned early (it refuses to write from a reader tab), and the cards were
+   thrown away — while the server had already recorded them as delivered. The
+   player permanently lost cards they had earned.
+
+   So the client now uses this pair instead:
+     warpath_grants_pending()  — read-only, changes nothing
+     warpath_grants_ack(ids)   — called ONLY after the client has verified the
+                                 cards are on disk
+
+   claim() is kept for compatibility with anything already calling it, but the
+   game does not. If you are writing a new consumer, use the pair. */
+create or replace function public.warpath_grants_pending()
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); out jsonb := '[]'; rec record;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  for rec in select * from public.warpath_grants
+              where user_id = v_uid and claimed = false order by created_at loop
+    out := out || jsonb_build_object('id', rec.id, 'run_id', rec.run_id,
+                                     'card_keys', rec.card_keys, 'materials', rec.materials,
+                                     'summary', rec.summary);
+  end loop;
+  return jsonb_build_object('ok', true, 'grants', out);
+end $$;
+
+-- Acknowledge specific grants. Scoped to the caller and to still-unclaimed
+-- rows, so it can be retried safely and can never touch another account.
+create or replace function public.warpath_grants_ack(p_ids uuid[])
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); n int;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  if p_ids is null or array_length(p_ids, 1) is null then
+    return jsonb_build_object('ok', true, 'acked', 0); end if;
+  update public.warpath_grants set claimed = true, claimed_at = now()
+   where user_id = v_uid and claimed = false and id = any(p_ids);
+  get diagnostics n = row_count;
+  return jsonb_build_object('ok', true, 'acked', n);
+end $$;
+
+/* Legacy read-and-mark drain. See the note above — the game no longer calls
+   this, because marking delivered before the client has persisted anything
+   loses cards whenever the write fails. */
 create or replace function public.warpath_grants_claim()
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); out jsonb := '[]'; rec record;

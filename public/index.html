@@ -108401,6 +108401,9 @@ const _MD_ICO = {
 // ═══════════════════════════════════════════════════════════════════════════
 function _mmData() {
   const out = { type: 'mm:data', player: {}, event: null };
+  // 🗺 The cinematic menu hides its Warpath button when the mode is switched
+  // off. Without this the kill switch only silences the classic menu.
+  try { out.warpath = (typeof warpathEnabled === 'function') ? warpathEnabled() : true; } catch (e) { out.warpath = true; }
   try {
     const cc = Profile.cloud || {};
     out.player.name = (cc.displayName || (Profile.account && Profile.account.displayName) || (cc.email || '').split('@')[0] || 'Survivor').slice(0, 24);
@@ -108540,9 +108543,11 @@ const MD_SECTIONS = [
   // 🗺 WARPATH — the run-based expedition draft. Opens a body-level overlay
   // (openWarpathGate) rather than switching App.screen, so nothing about the
   // existing screen routing changes. Hidden entirely when the mode is off.
-  // The entry stays visible even when the mode is switched off; openWarpathGate()
-  // is the one place that knows whether the Warpath is open, and it says so.
+  // 🗺 WARPATH — hidden outright when the mode is off, rather than present and
+  // apologising. `warpathEnabled` is a hoisted function declaration, so it is
+  // callable here even though it is defined much further down the file.
   { t: 'Warpath',       s: 'Leave the city · draft a deck by surviving', ic: _MD_ICO.tent,
+    hidden: () => !(typeof warpathEnabled === 'function' && warpathEnabled()),
     go: () => { if (typeof openWarpathGate === 'function') openWarpathGate(); } },
 ];
 
@@ -109213,7 +109218,11 @@ function _masterMenuHtml() {
   const xpPct = (typeof getAccountXpPct === 'function') ? getAccountXpPct() : 0;
   const cinder = (Profile.gems || 0).toLocaleString();
   const aza = (Profile.sovereigns || 0).toLocaleString();
+  // A section may hide itself. Hidden ones emit '' rather than being filtered
+  // out, so every remaining item keeps its ORIGINAL index — the click handler
+  // below looks up MD_SECTIONS[i] by that index.
   const items = MD_SECTIONS.map((sec, i) =>
+    (sec.hidden && sec.hidden()) ? '' :
     `<div class="md-mitem" data-md-nav="${i}"><span class="md-mico">${sec.ic || ''}</span><div class="md-mtext"><div class="md-mtitle">${escapeHtml(sec.t)}</div><div class="md-msub">${escapeHtml(sec.s)}</div></div></div>`).join('');
   return `<div id="md-stage">
     <canvas id="md-fx"></canvas>
@@ -215439,32 +215448,56 @@ function _twBindNodeEditor(t) {
 // happens if a Warpath battle actually started:
 //   • the gameover capture block   (records the verdict)
 //   • the two goPlayAgain dispatch sites (routes back to the map)
-// Turning WARPATH_ENABLED off removes the menu entry and the gate; the hooks
-// then never fire because nothing sets App._warpathAfter.
+// With the mode switched off (localStorage `hg_warpath` = '0') both menu
+// entries are hidden and the gate refuses, so nothing ever sets
+// App._warpathAfter and the three hooks are dead code.
 // ═══════════════════════════════════════════════════════════════════════════
 const WARPATH_VER = 'v120g1';
-// Kill switch. `hg_warpath = '0'` in localStorage disables the mode entirely
-// without a deploy — same pattern as `hg_ascent_map`.
+// Kill switch — `hg_warpath = '0'` disables the mode without a deploy, same
+// pattern as `hg_ascent_map`. Both menu surfaces read this, so "off" means the
+// entry is gone rather than present-and-apologising.
 function warpathEnabled() {
   try { return localStorage.getItem('hg_warpath') !== '0'; } catch (e) { return true; }
 }
+// Set the first time this account successfully enters a Warpath. The
+// extraction drain is gated on it so a player who has never touched the mode
+// never spends an RPC on it — which also means shipping index.html before the
+// migration lands costs the playerbase nothing.
+const WARPATH_SEEN_KEY = 'hg_warpath_seen';
+function warpathEverEntered() {
+  try { return localStorage.getItem(WARPATH_SEEN_KEY) === '1'; } catch (e) { return false; }
+}
 
-// ⚠ WHITELIST. The iframe is same-origin, so it could ask us to proxy ANY rpc
-// name — including one belonging to the bank or the card market. Only these
-// cross. Adding a name here is granting the Warpath screen a new power.
-const WARPATH_RPCS = {
+/* ⚠ WHAT THIS LIST IS, AND WHAT IT IS NOT.
+   It is a GUARDRAIL AGAINST MISTAKES — it stops the Warpath screen from
+   quietly acquiring the ability to call the bank, and makes every power it
+   does have enumerable in one place. Adding a name here is granting a power.
+
+   It is NOT a security boundary. public/warpath/ is same-origin, so anything
+   running in that frame can already reach `parent.Cloud.client` directly and
+   ignore this list entirely; a critic demonstrated exactly that. The real
+   boundary is Postgres — RLS plus the auth.uid() checks inside every
+   security-definer RPC — and that is where it has to stay.
+
+   Object.create(null) because a plain object literal inherits `constructor`,
+   `toString` and `__proto__`, all of which passed the bare `WARPATH_RPCS[fn]`
+   truthiness test this used to do. */
+const WARPATH_RPCS = Object.assign(Object.create(null), {
   warpath_state: 1, warpath_move: 1, warpath_harvest: 1,
   warpath_camp_place: 1, warpath_camp_build: 1, warpath_secure: 1,
   warpath_recruit: 1, warpath_encounter_open: 1, warpath_encounter_pick: 1,
   warpath_end_turn: 1, warpath_battle_open: 1, warpath_battle_report: 1,
   warpath_extract_begin: 1, warpath_extract_finish: 1, warpath_abandon: 1,
-};
+});
+function _warpathAllowed(fn) {
+  return typeof fn === 'string' && Object.prototype.hasOwnProperty.call(WARPATH_RPCS, fn);
+}
 
 const _WP = { host: null, frame: null, onMsg: null, expeditionId: null, runId: null };
 
 // ── The RPC proxy ─────────────────────────────────────────────────────────
 async function _warpathRpc(fn, args) {
-  if (!WARPATH_RPCS[fn]) throw new Error('warpath: ' + fn + ' is not a permitted call');
+  if (!_warpathAllowed(fn)) throw new Error('warpath: ' + fn + ' is not a permitted call');
   if (!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client)) {
     throw new Error('Sign in to enter the Warpath — it is a shared world.');
   }
@@ -215634,45 +215667,183 @@ async function warpathAfterBattle() {
 }
 
 /* ── EXTRACTION → THE PERMANENT COLLECTION ────────────────────────────────
-   ⭐ This is the only place in the entire game where Warpath data touches a
-   player's real cards, and it reads from warpath_grants — an append-only
-   outbox that ONLY warpath_extract_finish() writes, with the extraction cap
-   already applied server-side. We do not decide what is granted here; we
-   apply what the server already decided, and the RPC marks it claimed so a
-   double call cannot grant twice. */
+   ⭐ The only place in the game where Warpath data touches a player's real
+   cards. It reads warpath_grants, the outbox that only warpath_extract_finish()
+   writes with the cap already applied.
+
+   ⚠ THE ORDER OF OPERATIONS HERE IS THE WHOLE SAFETY PROPERTY, and the first
+   version had it backwards. It called warpath_grants_claim(), which marks the
+   grant delivered IN THE SAME CALL that returns it, and then applied the cards
+   and called saveProfile(). saveProfile() returns early in a non-writer tab
+   (`MultiTab.amWriter === false`), and this drain ran in EVERY tab on a timer —
+   including tabs that had never opened the Warpath. A critic reproduced the
+   result with two real tabs: server says delivered, disk has nothing, and the
+   server has no copy left to re-issue. The player permanently lost cards they
+   had earned.
+
+   So now:
+     1. refuse to run at all unless we are the elected writer tab
+     2. warpath_grants_pending()  — read-only; the server still owes them
+     3. skip anything already in the local ledger (idempotency WE own, rather
+        than trusting the server's claimed flag to be the only defence)
+     4. validate and clamp everything before it touches Profile
+     5. apply, saveProfile(), then READ THE BLOB BACK and prove the cards are
+        actually on disk — rolling the in-memory change back if they are not
+     6. only then warpath_grants_ack()
+
+   Every step before 6 is retryable. If we die anywhere in 1-5 the grant is
+   still pending and we pick it up next boot. */
+const WARPATH_LEDGER_KEY = 'hg_warpath_grants';
+function _wpLedger() {
+  try {
+    const a = JSON.parse(localStorage.getItem(WARPATH_LEDGER_KEY) || '[]');
+    return Array.isArray(a) ? a : [];
+  } catch (e) { return []; }
+}
+function _wpLedgerHas(id) { return _wpLedger().indexOf(String(id)) >= 0; }
+function _wpLedgerAdd(ids) {
+  try {
+    const next = _wpLedger().concat(ids.map(String));
+    // Keep it bounded; a player will never have hundreds of unacked grants.
+    localStorage.setItem(WARPATH_LEDGER_KEY, JSON.stringify(next.slice(-300)));
+    return true;
+  } catch (e) { return false; }
+}
+// Only the elected writer tab may apply a grant, because only it can save one.
+function _wpAmWriter() {
+  try { return !(typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false); }
+  catch (e) { return true; }
+}
+/* Whatever the server sends, only cards this build can actually resolve are
+   applied, and never past the per-card copy limit (`_cardCopyLimit` honours
+   the Banned/Limited list, so a banned card cannot arrive by this route
+   either). resolveDeckCard() throws on a non-string, so it is guarded. */
+function _wpResolveGrantKey(key) {
+  try {
+    if (typeof key !== 'string' || key.indexOf(':') < 1) return null;
+    const card = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null;
+    return (card && card.id) ? card : null;
+  } catch (e) { return null; }
+}
+// Material ids are compared against the six the mode actually defines. An
+// unknown key is dropped: Profile is deep-cloned into the cloud row and the
+// export payload, so anything that lands here travels.
+const WARPATH_MATERIALS = ['dragon_heart', 'void_crystal', 'celestial_ore',
+                           'ancient_bone', 'ouroboros_core', 'kalon_fragment'];
+
 async function warpathClaimGrants() {
+  if (!warpathEnabled()) return;
+  // 1 — reader tabs must never touch this. They cannot persist the result.
+  if (!_wpAmWriter()) return;
+
   let out = null;
-  try { out = await _warpathRpc('warpath_grants_claim', {}); }
+  try { out = await _warpathRpc('warpath_grants_pending', {}); }
   catch (e) { return; }
-  const grants = (out && out.grants) || [];
-  if (!grants.length) return;
+  const all = (out && out.grants) || [];
+  // 3 — local idempotency. Anything already applied is only waiting on an ack.
+  const already = all.filter(g => g && g.id && _wpLedgerHas(g.id)).map(g => g.id);
+  const fresh   = all.filter(g => g && g.id && !_wpLedgerHas(g.id));
+
+  const applied = [];      // [{id, n}] so we can undo if the write does not land
+  const mats    = {};      // materialId -> delta, likewise
+  const names   = [];
   let added = 0;
-  const names = [];
-  for (const g of grants) {
-    for (const key of (g.card_keys || [])) {
-      const card = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null;
-      if (!card || !card.id) continue;      // never invent a card the game does not have
-      Profile.cardCollection = Profile.cardCollection || {};
-      Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
-      added++;
-      if (names.length < 4) names.push(card.name || card.id);
-    }
-    // Extraction materials are Warpath-exclusive and have no home in the city
-    // ledger yet, so they are recorded on the profile rather than silently
-    // dropped. Milestone 2 gives them a crafting sink.
-    if (g.materials && typeof g.materials === 'object') {
-      Profile.warpathMaterials = Profile.warpathMaterials || {};
-      for (const k in g.materials) {
-        Profile.warpathMaterials[k] = (Profile.warpathMaterials[k] || 0) + (parseInt(g.materials[k], 10) || 0);
+
+  // 4 + 5 — apply in memory. The whole loop is guarded: a single malformed key
+  // used to throw out here, outside the try, and take the grant with it.
+  try {
+    Profile.cardCollection = Profile.cardCollection || {};
+    for (const g of fresh) {
+      for (const key of ((g && g.card_keys) || [])) {
+        const card = _wpResolveGrantKey(key);
+        if (!card) continue;                       // never invent a card this build lacks
+        const limit = (typeof _cardCopyLimit === 'function') ? _cardCopyLimit(card) : 3;
+        const have = Profile.cardCollection[card.id] || 0;
+        if (have >= limit) continue;               // clamp — the server is not the only judge
+        Profile.cardCollection[card.id] = have + 1;
+        applied.push({ id: card.id, n: 1 });
+        added++;
+        if (names.length < 4) names.push(card.name || card.id);
+      }
+      if (g && g.materials && typeof g.materials === 'object') {
+        Profile.warpathMaterials = Profile.warpathMaterials || {};
+        for (const k of Object.keys(g.materials)) {
+          if (WARPATH_MATERIALS.indexOf(k) < 0) continue;   // drop anything not ours
+          const n = parseInt(g.materials[k], 10);
+          if (!isFinite(n) || n <= 0) continue;
+          const add = Math.min(n, 999);
+          Profile.warpathMaterials[k] = (Profile.warpathMaterials[k] || 0) + add;
+          mats[k] = (mats[k] || 0) + add;
+        }
       }
     }
+  } catch (e) {
+    try { console.warn('[warpath] grant apply failed, rolling back:', e); } catch (e2) {}
+    _wpUndoGrant(applied, mats);
+    return;                                        // nothing acked — retried next boot
   }
-  try { saveProfile(); } catch (e) {}
-  if (added) {
+
+  if (fresh.length) {
+    try { saveProfile(); } catch (e) {}
+    // 5 — prove it. saveProfile() can no-op (reader tab) or fail (quota), and
+    // both are silent. Read the blob back before telling the server anything.
+    if (!_wpGrantPersisted(applied, mats)) {
+      try { console.warn('[warpath] grant did not reach disk — rolling back, will retry'); } catch (e) {}
+      _wpUndoGrant(applied, mats);
+      return;
+    }
+    _wpLedgerAdd(fresh.map(g => g.id));
+  }
+
+  // 6 — and only now.
+  const ackIds = already.concat(fresh.map(g => g.id));
+  if (ackIds.length) {
+    try { await _warpathRpc('warpath_grants_ack', { p_ids: ackIds }); }
+    catch (e) { /* still ledgered; the next drain re-acks and does not re-apply */ }
+  }
+
+  if (added || Object.keys(mats).length) {
     showToast('🗺 Extraction complete — ' + added + ' card' + (added === 1 ? '' : 's')
       + ' added to your collection' + (names.length ? ': ' + names.join(', ') : '') + '.', 6000);
   }
   try { render(); } catch (e) {}
+}
+
+// Read the saved blob back and confirm the grant is genuinely on disk.
+function _wpGrantPersisted(applied, mats) {
+  try {
+    if (!applied.length && !Object.keys(mats).length) return true;
+    const raw = localStorage.getItem(STORAGE_KEYS.profile);
+    if (!raw) return false;
+    const disk = JSON.parse(raw);
+    const cc = (disk && disk.cardCollection) || {};
+    const want = {};
+    applied.forEach(a => { want[a.id] = (want[a.id] || 0) + a.n; });
+    for (const id in want) {
+      if ((cc[id] || 0) < want[id]) return false;
+    }
+    const dm = (disk && disk.warpathMaterials) || {};
+    for (const k in mats) { if ((dm[k] || 0) < mats[k]) return false; }
+    return true;
+  } catch (e) { return false; }
+}
+// Undo an in-memory application. Used when the write did not land, so the
+// player's live session matches what is actually saved.
+function _wpUndoGrant(applied, mats) {
+  try {
+    applied.forEach(a => {
+      const cur = (Profile.cardCollection && Profile.cardCollection[a.id]) || 0;
+      const next = cur - a.n;
+      if (next > 0) Profile.cardCollection[a.id] = next;
+      else if (Profile.cardCollection) delete Profile.cardCollection[a.id];
+    });
+    for (const k in mats) {
+      const cur = (Profile.warpathMaterials && Profile.warpathMaterials[k]) || 0;
+      const next = cur - mats[k];
+      if (next > 0) Profile.warpathMaterials[k] = next;
+      else if (Profile.warpathMaterials) delete Profile.warpathMaterials[k];
+    }
+  } catch (e) {}
 }
 
 /* ── THE WARPATH GATE ─────────────────────────────────────────────────────
@@ -215771,6 +215942,7 @@ function openWarpathGate() {
         el.innerHTML = '<span style="color:#c0473f">' + escapeHtml(msg) + '</span>';
         return;
       }
+      try { localStorage.setItem(WARPATH_SEEN_KEY, '1'); } catch (e2) {}
       wrap.remove();
       _warpathOpen();
     } catch (e) {
@@ -215792,7 +215964,9 @@ function openWarpathGate() {
 // The free-ticket RPC is reachable from the gate, so it belongs on the list.
 WARPATH_RPCS.warpath_enter = 1;
 WARPATH_RPCS.warpath_claim_free_ticket = 1;
-WARPATH_RPCS.warpath_grants_claim = 1;
+// The read/ack pair, NOT warpath_grants_claim — see the note on ordering above.
+WARPATH_RPCS.warpath_grants_pending = 1;
+WARPATH_RPCS.warpath_grants_ack = 1;
 
 try {
   window.__mg = window.__mg || {};
@@ -215802,7 +215976,14 @@ try {
 
 // Drain any extraction that completed while the player was away — e.g. they
 // extracted, closed the tab, and came back on another device.
-try { setTimeout(() => { if (warpathEnabled()) warpathClaimGrants(); }, 6000); } catch (e) {}
+// Gated three ways: the mode must be on, this account must have actually
+// entered a Warpath at some point, and we must be the writer tab. A player who
+// has never touched the mode never spends a request on it.
+try {
+  setTimeout(() => {
+    if (warpathEnabled() && warpathEverEntered() && _wpAmWriter()) warpathClaimGrants();
+  }, 6000);
+} catch (e) {}
 
 
 render();

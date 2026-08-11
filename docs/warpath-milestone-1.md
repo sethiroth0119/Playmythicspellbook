@@ -93,7 +93,7 @@ tree beyond Blacksmith I, forward outposts (camp is movable but singular).
 | P1 mapgen | 3 | **WINS** | Warpath-exclusive *cards* are not minted (deliberate — see below) |
 | P2 schema | 4 | **WINS** | `warpath_state()` is one big query; at 4 players it is fine, at 20 it will need splitting |
 | P3 screen | 3 | **ready for independent critic** | Terrain art is the fallback painter until `warpath-render.js` lands |
-| P4 bridge | 2 | **ready for independent critic** | The cinematic menu entry is untested against a live main-menu build |
+| P4 bridge | 3 | **critic-fixed, ready for re-critique** | Client-authoritative battle results remain self-declared (inherent to the repo's existing MP model) |
 
 ### P1 — world generation · round history
 
@@ -231,6 +231,32 @@ contract (`opts.cam` / `opts.reach` / `opts.fogState` / `opts.fogKey` / `opts.ma
 `window.WarpathRender` is `undefined` in the browser. The screen stays fully usable because the
 adapter falls back to the plain painter, which is exactly what the fallback is for. That file is
 another agent's and has been left untouched.
+
+#### P4 round 3 — independent critic verdict: LOSES. All findings fixed.
+
+The critic confirmed at line level that constraint #1 holds (0 deletions, 6 hunks, byte-identical
+boot against a `3a8f800~1` baseline) and then found that **the grant drain destroyed player
+cards**. Every fix below was re-verified in a real browser with a **real MultiTab election**
+(two pages in one Playwright context — shared `localStorage` and `BroadcastChannel`), stubbing
+only the network.
+
+| # | Finding | Fix | Verified |
+|---|---|---|---|
+| 1 | **Permanent card destruction.** The drain ran on a timer in *every* tab. `warpath_grants_claim()` marks delivered in the same call that returns, then `saveProfile()` returns early in a non-writer tab. Server said delivered, disk had nothing, server had nothing left to re-issue. | Split the RPC into **`warpath_grants_pending()` (read-only)** and **`warpath_grants_ack(ids)`**. The client now: writer-tab gate → peek → apply → `saveProfile()` → **read the blob back and prove the cards are on disk** → roll back if not → only then ack. | Reader tab: `rpcLog: []`, `serverStillOwes: 1` — it does not even call. Writer tab: `persisted: 2`, `acked: ["g-1"]`. |
+| 2 | A malformed key threw outside the try and took the grant with it. | Whole apply loop guarded; `_wpResolveGrantKey` rejects non-strings before `resolveDeckCard`. | `card_keys: [null, 42, 'nonsense', {a:1}, …]` → `threw: null`, grant still applied and acked. |
+| 3 | No validation: 30 copies wrote `copiesNow: 34`; `{"<img src=x onerror=alert(1)>": 5}` landed in `Profile.warpathMaterials` and travels via `buildExportPayload`. | Copies clamped by **`_cardCopyLimit`** (so Banned/Limited cards cannot arrive this way either); material ids checked against the six the mode defines. | 10× `unit:wolf` → `wolfCopies: 3` (MAX 3). Hostile key dropped: `materialKeys: ["void_crystal"]`. |
+| 4 | No local idempotency — the server's claimed flag was the only defence. | Local ledger keyed on `grant.id` in `hg_warpath_grants`, written before the ack. | Same grant id offered twice → `goblinAfterReplay: 2`, not 4. |
+| 5 | Whitelist decorative; prototype keys (`constructor`, `toString`, `__proto__`) all passed. | `Object.create(null)` + `hasOwnProperty`. **Comment corrected** — it is a guardrail against mistakes, not a security boundary; same-origin frames are not one, and the real boundary is RLS. | All five prototype keys and `boe_withdraw` → `refused`; `Object.getPrototypeOf(WARPATH_RPCS)` → `null`. |
+| 6 | `p_hero_name` uncapped/unsanitised server-side. | Stripped to `[alnum space ' _ -]` and capped at 24 chars in `warpath_enter`; `hero_id` capped at 64. | `<img src=x onerror=alert(1)>Bob` → `img srcx onerroralert1Bob`. |
+| 7 | Flag-off dishonest; `WARPATH_ENABLED` referenced but never existed. | Both menus hide the entry; `mm:data` carries `warpath`; the phantom comment is gone. | Flag off → `inClassicMenu: false`; flag on → `true`. |
+| 8 | Default-on cost every signed-in player an RPC on boot. | Gated on `hg_warpath_seen`, set only on a successful `warpath_enter`, plus the writer-tab gate. | A plain boot makes no Warpath call. |
+
+**Rollback path** (not in the critic's list, added because the ordering fix demands it): with
+`localStorage.setItem` throwing `QuotaExceededError` on the profile key, the grant is rolled out
+of memory, nothing is acked, `serverStillOwes: 1`, ledger empty — and the retry after recovery
+lands it exactly once.
+
+**Baseline re-run:** 9 console errors before the Warpath commits, 9 after, identical set.
 
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which

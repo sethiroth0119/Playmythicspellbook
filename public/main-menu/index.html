@@ -689,6 +689,11 @@ function setChars(list){
 addEventListener('message', (e) => {
   const d = e && e.data;
   if (!d || d.type !== 'mm:data') return;
+  // 🗺 Warpath can be switched off game-side; hide its nav item when it is.
+  if (typeof d.warpath === 'boolean') {
+    var _wpBtn = document.querySelector('.nav-item[data-label="Warpath"]');
+    if (_wpBtn) _wpBtn.style.display = d.warpath ? '' : 'none';
+  }
   try { if (d.characters) setChars(d.characters); } catch(err){}
   try { if (typeof d.music === 'boolean') paintMusic(d.music); } catch(err){}
   // 🎭 Characters manager is an ADMIN tool — only the game may reveal it.

@@ -108537,6 +108537,13 @@ const MD_SECTIONS = [
   { t: 'The Codex',     s: 'Inventory, bestiary, trophies',           ic: _MD_ICO.book,    go: () => { App.titleHub = 'codex'; } },
   { t: 'The Camp',      s: 'Roster, replays, leaders',                ic: _MD_ICO.tent,    go: () => { App.titleHub = 'field'; } },
   { t: 'Arcanum',       s: 'Settings & data',                         ic: _MD_ICO.compass, go: () => { App.titleHub = 'arcanum'; } },
+  // 🗺 WARPATH — the run-based expedition draft. Opens a body-level overlay
+  // (openWarpathGate) rather than switching App.screen, so nothing about the
+  // existing screen routing changes. Hidden entirely when the mode is off.
+  // The entry stays visible even when the mode is switched off; openWarpathGate()
+  // is the one place that knows whether the Warpath is open, and it says so.
+  { t: 'Warpath',       s: 'Leave the city · draft a deck by surviving', ic: _MD_ICO.tent,
+    go: () => { if (typeof openWarpathGate === 'function') openWarpathGate(); } },
 ];
 
 // 🎴 The featured-character roster — shown to EVERY player. Priority:
@@ -146817,6 +146824,7 @@ function bindGameOverEvents() {
   const wasCampaign = !!(App.campaignVictory) || !!(App.battlePrep && App.battlePrep.campaignNode);
   const wasDaily    = !!(App.dailyVictory)    || !!(App.battlePrep && App.battlePrep.dailyChallenge);
   const wasRlc      = !!App._rlcPendingAfterBattle;
+  const wasWarpath  = !!App._warpathAfter;
   const wasGym      = !!App._gymPendingAfterBattle;
   const wasWorld    = !!App._worldAfter;
   const wasFishing  = !!App._fishingEncounterAfter;
@@ -146866,6 +146874,7 @@ function bindGameOverEvents() {
       if (typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
       App._gymPendingAfterBattle = null; App.screen = 'gymWars'; render(); return;
     }
+    if (wasWarpath && typeof warpathAfterBattle === 'function') { warpathAfterBattle(); return; }
     if (wasRlc) {
       if (typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
       App.screen = 'rlcMap'; render(); return;
@@ -146915,6 +146924,7 @@ function bindGameOverEvents() {
     }
     // 🗺️ Roguelite: still resolve the run (HP carry / fail) before leaving so
     // progress isn't silently lost — rlcAfterBattle routes appropriately.
+    if (wasWarpath && typeof warpathAfterBattle === 'function') { warpathAfterBattle(); return; }
     if (wasWorld && typeof worldBattleAfter === 'function') { worldBattleAfter(); return; }
     if (wasRlc && typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
     if (wasGym && typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
@@ -147205,6 +147215,19 @@ function recordBattleProgress() {
       if (ph) endHP = Math.max(1, parseInt(ph.currentHp, 10) || 1);
     } catch (e) {}
     App._rlcPendingAfterBattle = { campaignId: App.battlePrep.rlc.campaignId, nodeId: App.battlePrep.rlc.nodeId, won: !!won, endHP };
+  }
+
+  // 🗺 Warpath: record which battle this was and who won, so the game-over
+  // return path can report it. This is the ONLY thing the engine contributes
+  // to the Warpath — the run itself lives on the server.
+  if (App.battlePrep && App.battlePrep.warpath) {
+    App._warpathAfter = {
+      battle_id: App.battlePrep.warpath.battle_id,
+      kind: App.battlePrep.warpath.kind,
+      expedition_id: App.battlePrep.warpath.expedition_id,
+      opponent_expedition_id: App.battlePrep.warpath.opponent_expedition_id || null,
+      won: !!won,
+    };
   }
 
   // 🏛️ Gym Core Wars outcome. A Core Trial win grants that Core Badge (once;
@@ -215393,6 +215416,394 @@ function _twBindNodeEditor(t) {
   try { render = batched; } catch (_) {}   // overwrite the top-level function binding too
   window.renderNow = function () { try { return _renderImmediate(); } catch (e) { try { console.warn('renderNow error', e); } catch (_) {} } };
 })();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🗺 WARPATH HOST — public/warpath/ as the run-based expedition mode.
+// ---------------------------------------------------------------------------
+// Same-origin iframe, mounted the way the node city (_openNodeCity) and the
+// Ascent map (_rlcAscentMount) already are. Everything Warpath needs from the
+// server crosses ONE channel — a postMessage RPC proxy — so the sub-app never
+// holds a Supabase session and nothing about auth is duplicated.
+//
+// ⚠ THE ARCHITECTURAL RULE LIVES HERE.
+// The Warpath server creates a battle and consumes its result; it never
+// resolves one. When two heroes collide, the iframe posts `warpath:battle` and
+// THIS file builds an ordinary App.battlePrep and hands it to the existing
+// engine — the same vsScreen path ranked, roguelite and gym battles take. When
+// the engine is done, warpathAfterBattle() reports the verdict back through
+// warpath_battle_report() and remounts the map. There is no Warpath combat
+// code anywhere, in this file or in public/warpath/.
+//
+// ⚠ ADDITIVE ONLY. Outside this block the monolith changes in three places,
+// each one line, each guarded by App._warpathAfter being set — which only ever
+// happens if a Warpath battle actually started:
+//   • the gameover capture block   (records the verdict)
+//   • the two goPlayAgain dispatch sites (routes back to the map)
+// Turning WARPATH_ENABLED off removes the menu entry and the gate; the hooks
+// then never fire because nothing sets App._warpathAfter.
+// ═══════════════════════════════════════════════════════════════════════════
+const WARPATH_VER = 'v120g1';
+// Kill switch. `hg_warpath = '0'` in localStorage disables the mode entirely
+// without a deploy — same pattern as `hg_ascent_map`.
+function warpathEnabled() {
+  try { return localStorage.getItem('hg_warpath') !== '0'; } catch (e) { return true; }
+}
+
+// ⚠ WHITELIST. The iframe is same-origin, so it could ask us to proxy ANY rpc
+// name — including one belonging to the bank or the card market. Only these
+// cross. Adding a name here is granting the Warpath screen a new power.
+const WARPATH_RPCS = {
+  warpath_state: 1, warpath_move: 1, warpath_harvest: 1,
+  warpath_camp_place: 1, warpath_camp_build: 1, warpath_secure: 1,
+  warpath_recruit: 1, warpath_encounter_open: 1, warpath_encounter_pick: 1,
+  warpath_end_turn: 1, warpath_battle_open: 1, warpath_battle_report: 1,
+  warpath_extract_begin: 1, warpath_extract_finish: 1, warpath_abandon: 1,
+};
+
+const _WP = { host: null, frame: null, onMsg: null, expeditionId: null, runId: null };
+
+// ── The RPC proxy ─────────────────────────────────────────────────────────
+async function _warpathRpc(fn, args) {
+  if (!WARPATH_RPCS[fn]) throw new Error('warpath: ' + fn + ' is not a permitted call');
+  if (!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client)) {
+    throw new Error('Sign in to enter the Warpath — it is a shared world.');
+  }
+  const { data, error } = await Cloud.client.rpc(fn, args || {});
+  if (error) {
+    // The migration not being applied yet is the single most likely failure,
+    // and "function does not exist" is not a useful thing to show a player.
+    const m = String((error && error.message) || '');
+    if (/does not exist|PGRST202|PGRST205|42883|schema cache/i.test(m)) {
+      throw new Error('The Warpath is not installed on this server yet (run the warpath migration).');
+    }
+    throw new Error(m || 'Warpath call failed');
+  }
+  return data;
+}
+
+// ── Mount / unmount ───────────────────────────────────────────────────────
+function _warpathClose(silent) {
+  try { if (_WP.onMsg) window.removeEventListener('message', _WP.onMsg); } catch (e) {}
+  try { if (_WP.host && _WP.host.parentNode) _WP.host.parentNode.removeChild(_WP.host); } catch (e) {}
+  _WP.host = _WP.frame = _WP.onMsg = null;
+  if (!silent) { try { render(); } catch (e) {} }
+}
+
+function _warpathOpen() {
+  if (_WP.host) return;
+  const host = document.createElement('div');
+  host.id = 'warpath-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:2147483300;background:#07060b';
+  const f = document.createElement('iframe');
+  f.id = 'warpath-frame';
+  f.src = 'warpath/index.html?v=' + encodeURIComponent(WARPATH_VER) + '&s=' + Date.now().toString(36);
+  f.setAttribute('title', 'Warpath');
+  f.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;display:block';
+  host.appendChild(f);
+
+  // Parent-side exit. The map has its own Abandon button, but Esc inside an
+  // iframe never reaches us, so a player must always have a way out.
+  const x = document.createElement('button');
+  x.textContent = '✕ LEAVE THE WARPATH';
+  x.style.cssText = 'position:absolute;top:12px;right:14px;z-index:3;padding:8px 16px;border-radius:999px;cursor:pointer;'
+    + "font-family:'Cinzel',serif;font-weight:800;font-size:12px;letter-spacing:.1em;color:#f3e7c8;border:2px solid transparent;"
+    + 'background:linear-gradient(180deg,rgba(24,18,34,.95),rgba(12,9,18,.97)) padding-box,'
+    + 'linear-gradient(150deg,#f6d67e,#c29a3a 30%,#7a5f24 55%,#c29a3a 78%,#f6d780) border-box;'
+    + 'box-shadow:0 7px 22px rgba(0,0,0,.62)';
+  x.onclick = () => {
+    // Leaving does NOT abandon the expedition — the run is server-side and
+    // still there when they come back. Only the map screen closes.
+    _warpathClose();
+    showToast('Your expedition is still out there. Return through the Warpath Gate.', 4200);
+  };
+  host.appendChild(x);
+  document.body.appendChild(host);
+  _WP.host = host; _WP.frame = f;
+
+  _WP.onMsg = async (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== 'object' || typeof d.type !== 'string') return;
+    if (!_WP.frame || ev.source !== _WP.frame.contentWindow) return;   // only our frame
+
+    if (d.type === 'warpath:rpc') {
+      let result = null, error = null;
+      try { result = await _warpathRpc(d.fn, d.args); }
+      catch (e) { error = String((e && e.message) || e); }
+      try {
+        _WP.frame.contentWindow.postMessage(
+          { type: 'warpath:rpc:result', id: d.id, result: result, error: error },
+          window.location.origin);
+      } catch (e) {}
+      // Track the live expedition so the battle bridge knows who is fighting.
+      if (d.fn === 'warpath_state' && result && result.in_run) {
+        _WP.expeditionId = (result.me && result.me.expedition_id) || null;
+        _WP.runId = (result.run && result.run.id) || null;
+      }
+      return;
+    }
+    if (d.type === 'warpath:battle') { warpathStartBattle(d.battle); return; }
+    if (d.type === 'warpath:done')   { _warpathClose(); warpathClaimGrants(); return; }
+  };
+  window.addEventListener('message', _WP.onMsg);
+}
+
+/* ── THE BATTLE BRIDGE ────────────────────────────────────────────────────
+   Turn a Warpath collision into an ordinary battle. Everything below is the
+   same battlePrep shape rlcStartBattle() builds — no engine change, no new
+   battle path, no Warpath-specific combat rules. */
+function warpathPadDeck(keys) {
+  // The Warpath pool starts at 24 cards and grows toward a real deck. The
+  // engine deals from DECK_SIZE, so a short pool is padded FOR THE BATTLE
+  // ONLY. Nothing here is added to the player's pool — a padded card exists
+  // for the length of one match and is never extractable.
+  const deck = (keys || []).filter(k => typeof resolveDeckCard === 'function' && !!resolveDeckCard(k));
+  if (!deck.length) return [];
+  const base = deck.slice(0);
+  let i = 0;
+  while (deck.length < DECK_SIZE) { deck.push(base[i % base.length]); i++; }
+  return deck.slice(0, DECK_SIZE);
+}
+
+function warpathStartBattle(b) {
+  if (!b || !b.battle_id) return;
+  const hero = (typeof findHeroById === 'function') ? findHeroById(b.hero_id) : null;
+  const heroes = (typeof getAllHeroes === 'function') ? getAllHeroes() : [];
+  const myHero = hero || heroes[0];
+  if (!myHero) { showToast('Could not resolve your Hero for this battle.', 4000); return; }
+  // The opponent is a real Hero from the catalog. For a Guardian we pick one
+  // deterministically from the battle id so the same Guardian is the same foe.
+  let foe = null;
+  if (b.opponent_expedition_id) {
+    foe = heroes.filter(h => h.id !== myHero.id)[0] || myHero;
+  } else {
+    const others = heroes.filter(h => h.id !== myHero.id);
+    let n = 0; for (let i = 0; i < String(b.battle_id).length; i++) n = (n * 31 + String(b.battle_id).charCodeAt(i)) >>> 0;
+    foe = others.length ? others[n % others.length] : myHero;
+  }
+  if (b.opponent_name) foe = Object.assign({}, foe, { name: String(b.opponent_name) });
+
+  const cards = warpathPadDeck(b.card_keys);
+  if (!cards.length) { showToast('Your Warpath pool has no playable cards yet.', 4000); return; }
+  Profile.decks = (Array.isArray(Profile.decks) ? Profile.decks : []).filter(d => d.id !== 'warpath_run_deck');
+  Profile.decks.push({ id: 'warpath_run_deck', name: 'Warpath Pool', heroId: myHero.id,
+                       cards: cards, createdAt: Date.now() });
+
+  // The map screen has to go away for the battle; the run itself is on the
+  // server and is untouched by unmounting the iframe.
+  _warpathClose(true);
+
+  App.battlePrep = {
+    hero: myHero, opponent: foe, customCards: Forge.customCards,
+    deckId: 'warpath_run_deck', deckName: 'Warpath Pool',
+    campaignNode: null, scriptedWeather: null,
+    enemyLevel: b.kind === 'guardian' ? 6 : null,
+    enemyDeckOverride: null, encounterModifiers: null,
+    // The ONLY Warpath-specific field the engine ever sees. It is not read by
+    // any combat code — the gameover hook uses it to know where to report.
+    warpath: { battle_id: b.battle_id, kind: b.kind,
+               expedition_id: b.expedition_id,
+               opponent_expedition_id: b.opponent_expedition_id || null },
+    coinCall: null, coinResult: null, playerWonFlip: null, playerGoesFirst: null,
+    rankedMode: false, openCupRun: null, openCupAPPerWin: 0,
+  };
+  App.battlePrepFlags = null;
+  App.screen = 'vsScreen';
+  render();
+}
+
+/* Called from the game-over return path. Reports the verdict the ENGINE
+   produced and puts the player back on the map. warpath_battle_report is
+   race-gated server-side, so reporting twice is harmless by design — which is
+   what lets an authoritative server report it later instead of us. */
+async function warpathAfterBattle() {
+  const res = App._warpathAfter; App._warpathAfter = null;
+  App.state = null;
+  if (!res) { App.screen = 'title'; return render(); }
+  try {
+    await _warpathRpc('warpath_battle_report', {
+      p_battle: res.battle_id,
+      p_winner: res.won ? res.expedition_id : (res.opponent_expedition_id || null),
+    });
+  } catch (e) {
+    try { console.warn('[warpath] could not report the battle:', e); } catch (e2) {}
+    showToast('⚠ Could not reach the Warpath to report that battle — it will resolve when you return.', 5200);
+  }
+  App.screen = 'title';
+  render();
+  _warpathOpen();
+}
+
+/* ── EXTRACTION → THE PERMANENT COLLECTION ────────────────────────────────
+   ⭐ This is the only place in the entire game where Warpath data touches a
+   player's real cards, and it reads from warpath_grants — an append-only
+   outbox that ONLY warpath_extract_finish() writes, with the extraction cap
+   already applied server-side. We do not decide what is granted here; we
+   apply what the server already decided, and the RPC marks it claimed so a
+   double call cannot grant twice. */
+async function warpathClaimGrants() {
+  let out = null;
+  try { out = await _warpathRpc('warpath_grants_claim', {}); }
+  catch (e) { return; }
+  const grants = (out && out.grants) || [];
+  if (!grants.length) return;
+  let added = 0;
+  const names = [];
+  for (const g of grants) {
+    for (const key of (g.card_keys || [])) {
+      const card = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null;
+      if (!card || !card.id) continue;      // never invent a card the game does not have
+      Profile.cardCollection = Profile.cardCollection || {};
+      Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
+      added++;
+      if (names.length < 4) names.push(card.name || card.id);
+    }
+    // Extraction materials are Warpath-exclusive and have no home in the city
+    // ledger yet, so they are recorded on the profile rather than silently
+    // dropped. Milestone 2 gives them a crafting sink.
+    if (g.materials && typeof g.materials === 'object') {
+      Profile.warpathMaterials = Profile.warpathMaterials || {};
+      for (const k in g.materials) {
+        Profile.warpathMaterials[k] = (Profile.warpathMaterials[k] || 0) + (parseInt(g.materials[k], 10) || 0);
+      }
+    }
+  }
+  try { saveProfile(); } catch (e) {}
+  if (added) {
+    showToast('🗺 Extraction complete — ' + added + ' card' + (added === 1 ? '' : 's')
+      + ' added to your collection' + (names.length ? ': ' + names.join(', ') : '') + '.', 6000);
+  }
+  try { render(); } catch (e) {}
+}
+
+/* ── THE WARPATH GATE ─────────────────────────────────────────────────────
+   "From the main city: WARPATH GATE. Player selects Begin Expedition. Then
+   SELECT HERO." Built as a body-level overlay rather than a new App.screen so
+   render() and the screen switch are not touched at all. */
+function openWarpathGate() {
+  if (!warpathEnabled()) { showToast('The Warpath is closed.', 3000); return; }
+  if (document.getElementById('warpath-gate')) return;
+  if (!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client)) {
+    showToast('Sign in to enter the Warpath — it is a shared world.', 4200); return;
+  }
+  const heroes = ((typeof getAllHeroes === 'function') ? getAllHeroes() : []).slice(0, 12);
+  const owned = heroes.filter(h => !Profile.heroes || Profile.heroes[h.id] || Object.keys(Profile.heroes || {}).length === 0);
+  const list = (owned.length ? owned : heroes);
+
+  const wrap = document.createElement('div');
+  wrap.id = 'warpath-gate';
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;'
+    + 'justify-content:center;padding:20px;background:rgba(5,4,9,.9);backdrop-filter:blur(4px)';
+  wrap.innerHTML =
+    '<div style="width:min(720px,100%);max-height:92vh;overflow-y:auto;border:1px solid #2e2740;border-radius:14px;'
+    + 'padding:26px;background:radial-gradient(700px 320px at 50% 0%,#221634 0%,transparent 70%),#1a1626;'
+    + 'box-shadow:0 24px 70px rgba(0,0,0,.75)">'
+    + '<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:.44em;color:#ff7a2f;text-align:center">Warpath Gate</div>'
+    + '<h2 style="font-family:Cinzel,serif;font-size:26px;letter-spacing:.1em;text-transform:uppercase;text-align:center;'
+    + 'color:#f3e7c8;margin:8px 0">Begin Expedition</h2>'
+    + '<div style="text-align:center;font-style:italic;color:#8f87a3;max-width:520px;margin:0 auto 18px;line-height:1.6">'
+    + 'Your Hero leaves the city and enters a temporary world with three others. Build a camp, draft a deck out of what '
+    + 'you find, and get back to a gate alive. Only what you secure comes home.</div>'
+    + '<div id="wp-gate-status" style="text-align:center;color:#8f87a3;font-size:13px;margin-bottom:14px">Checking your tickets…</div>'
+    + '<div style="font-family:Cinzel,serif;font-size:11px;letter-spacing:.16em;color:#d4af37;text-transform:uppercase;'
+    + 'border-bottom:1px solid #2e2740;padding-bottom:5px;margin-bottom:10px">Select Hero</div>'
+    + '<div id="wp-gate-heroes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:18px">'
+    + list.map((h, i) =>
+        '<button data-wp-hero="' + escapeHtml(h.id) + '" style="border:1px solid #2e2740;border-radius:9px;padding:10px 6px;'
+        + 'background:rgba(20,16,30,.8);color:#e8e2d5;cursor:pointer;font-family:inherit;text-align:center">'
+        + '<div style="font-size:24px">' + (h.icon || '🧙') + '</div>'
+        + '<div style="font-family:Cinzel,serif;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;margin-top:4px">'
+        + escapeHtml(h.name || h.id) + '</div></button>').join('')
+    + '</div>'
+    + '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">'
+    + '<button id="wp-go-ticket" class="btn-primary" disabled>🎟 Enter · 1 Ticket</button>'
+    + '<button id="wp-go-aza" class="btn-secondary" disabled>👑 Enter · 3 AZA</button>'
+    + '<button id="wp-free" class="btn-secondary">Claim weekly ticket</button>'
+    + '<button id="wp-cancel" class="btn-secondary">Not today</button>'
+    + '</div>'
+    + '<div style="text-align:center;color:#8f87a3;font-size:12px;font-style:italic;margin-top:12px">'
+    + 'AZA buys entry, never power. The world, the loot tables and the extraction cap are identical either way.</div>'
+    + '</div>';
+  document.body.appendChild(wrap);
+
+  let chosen = null;
+  const heroBtns = wrap.querySelectorAll('[data-wp-hero]');
+  const sync = () => {
+    heroBtns.forEach(b => { b.style.borderColor = (b.dataset.wpHero === chosen) ? '#d4af37' : '#2e2740'; });
+    wrap.querySelector('#wp-go-ticket').disabled = !chosen;
+    wrap.querySelector('#wp-go-aza').disabled = !chosen;
+  };
+  heroBtns.forEach(b => { b.onclick = () => { chosen = b.dataset.wpHero; sync(); }; });
+  sync();
+
+  // Resuming beats entering: a player who already has an expedition out there
+  // must not be able to buy a second one.
+  _warpathRpc('warpath_state', {}).then((st) => {
+    const el = wrap.querySelector('#wp-gate-status');
+    if (st && st.in_run) {
+      el.innerHTML = '<b style="color:#d4af37">You already have a Hero in the Warpath.</b>';
+      const go = wrap.querySelector('#wp-go-ticket');
+      go.disabled = false; go.textContent = '↩ Return to your expedition';
+      go.onclick = () => { wrap.remove(); _warpathOpen(); };
+      wrap.querySelector('#wp-go-aza').style.display = 'none';
+    } else {
+      el.textContent = 'Choose the Hero who walks through the gate.';
+    }
+  }).catch((e) => {
+    wrap.querySelector('#wp-gate-status').innerHTML =
+      '<span style="color:#c0473f">' + escapeHtml(String(e.message || e)) + '</span>';
+  });
+
+  const enter = async (pay) => {
+    if (!chosen) return;
+    const el = wrap.querySelector('#wp-gate-status');
+    el.textContent = 'Entering the Warpath…';
+    const hero = list.filter(h => h.id === chosen)[0];
+    try {
+      const r = await _warpathRpc('warpath_enter', {
+        p_hero_id: chosen, p_hero_name: (hero && hero.name) || chosen, p_pay: pay,
+      });
+      if (!r || !r.ok) {
+        const msg = { no_ticket: 'You have no Warpath Ticket. Claim the weekly one, or pay in AZA.',
+                      insufficient_aza: 'Not enough banked AZA — the entry fee comes from your Bank of Ethos balance.',
+                      already_in_a_warpath: 'You already have a Hero out there.',
+                      run_full: 'That world just filled. Try again.' }[r && r.reason]
+                  || ('Could not enter (' + ((r && r.reason) || 'unknown') + ').');
+        el.innerHTML = '<span style="color:#c0473f">' + escapeHtml(msg) + '</span>';
+        return;
+      }
+      wrap.remove();
+      _warpathOpen();
+    } catch (e) {
+      el.innerHTML = '<span style="color:#c0473f">' + escapeHtml(String(e.message || e)) + '</span>';
+    }
+  };
+  wrap.querySelector('#wp-go-ticket').onclick = () => enter('ticket');
+  wrap.querySelector('#wp-go-aza').onclick = () => enter('aza');
+  wrap.querySelector('#wp-cancel').onclick = () => wrap.remove();
+  wrap.querySelector('#wp-free').onclick = async () => {
+    const el = wrap.querySelector('#wp-gate-status');
+    try {
+      const r = await _warpathRpc('warpath_claim_free_ticket', {});
+      el.textContent = (r && r.ok) ? ('🎟 Ticket claimed — you have ' + r.tickets + '.')
+                                   : 'You have already claimed this week’s ticket.';
+    } catch (e) { el.textContent = String(e.message || e); }
+  };
+}
+// The free-ticket RPC is reachable from the gate, so it belongs on the list.
+WARPATH_RPCS.warpath_enter = 1;
+WARPATH_RPCS.warpath_claim_free_ticket = 1;
+WARPATH_RPCS.warpath_grants_claim = 1;
+
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.warpath = { gate: openWarpathGate, open: _warpathOpen, close: _warpathClose,
+                          claim: warpathClaimGrants, enabled: warpathEnabled };
+} catch (e) {}
+
+// Drain any extraction that completed while the player was away — e.g. they
+// extracted, closed the tab, and came back on another device.
+try { setTimeout(() => { if (warpathEnabled()) warpathClaimGrants(); }, 6000); } catch (e) {}
+
 
 render();
 

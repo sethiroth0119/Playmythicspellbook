@@ -93,7 +93,7 @@ tree beyond Blacksmith I, forward outposts (camp is movable but singular).
 | P1 mapgen | 3 | **WINS** | Warpath-exclusive *cards* are not minted (deliberate — see below) |
 | P2 schema | 4 | **WINS** | `warpath_state()` is one big query; at 4 players it is fine, at 20 it will need splitting |
 | P3 screen | 3 | **ready for independent critic** | Terrain art is the fallback painter until `warpath-render.js` lands |
-| P4 bridge | — | not started | — |
+| P4 bridge | 2 | **ready for independent critic** | The cinematic menu entry is untested against a live main-menu build |
 
 ### P1 — world generation · round history
 
@@ -189,6 +189,48 @@ deliberate: the reachability overlay is filtered to explored tiles **before** it
 renderer (the paint layer cannot know it would be leaking fog), and if the module is absent or
 throws, a plain fallback painter takes over so the screen degrades instead of going black. The
 404 for `warpath-render.js` was confirmed in the browser and the fallback engaged cleanly.
+
+### P4 — battle bridge and the Warpath Gate · round history
+
+**Files:** `public/index.html` (+411 lines, 0 deletions), `public/main-menu/index.html` (+6)
+
+| Round | What the critic actually did | Verdict | Gap sent back |
+|---|---|---|---|
+| 1 | Booted the real `public/index.html` in headless Chromium and probed the bridge | **LOSES** | The `MD_SECTIONS` entry carried a `hidden:` predicate that **nothing reads** — `_masterMenuHtml` maps over every section unconditionally. A reader would have believed the mode could be hidden from the menu when it could not. Also: the mode was only reachable from the *classic* menu; the cinematic `public/main-menu/` iframe routes by label and had no Warpath button, so most players would never find it. |
+| 2 | Re-probed; exercised the gate with a stubbed `Cloud`; ran the whole suite again | **ready for independent critic** | — |
+
+**Round 2 evidence** (all from a real browser, not from reading):
+
+- Monolith boots, `NO PAGE ERRORS`, `render` intact, `getAllHeroes()` = 6, `DECK_SIZE` = 40.
+- `MD_SECTIONS.length` 7 → 8; the classic menu binds by index so an 8th entry is safe.
+- **The RPC whitelist actually refuses**: `_warpathRpc('boe_withdraw')` →
+  `refused: warpath: boe_withdraw is not a permitted call`. The iframe is same-origin and could
+  otherwise have asked the parent to proxy any RPC in the database, including the bank's.
+- `warpathPadDeck(['unit:goblin','unit:wolf','trap:spikes'])` → 40 cards, every one resolving
+  through the real `resolveDeckCard`.
+- The gate overlay opens, lists 6 heroes, enables entry only after a hero is picked, calls
+  `warpath_state` then `warpath_enter`, mounts the iframe, and **leaves `App.screen`
+  unchanged** — the whole entry flow is a body-level overlay, so `render()` and the screen
+  router are untouched.
+
+**Why the diff is 411 lines and still additive.** One contiguous host block, plus exactly three
+one-line hooks, each guarded by `App._warpathAfter` — which is only ever set when a battle
+carrying `battlePrep.warpath` finishes. With the mode off, nothing sets it and the hooks are
+dead code. `localStorage.hg_warpath = '0'` is the kill switch, mirroring `hg_ascent_map`.
+
+**The architectural rule, in the diff.** `warpathStartBattle()` builds an ordinary
+`App.battlePrep` and sets `App.screen = 'vsScreen'` — the same path ranked, roguelite and gym
+battles take. No engine change, no Warpath combat code. `warpathAfterBattle()` reports the
+verdict the engine produced through `warpath_battle_report`, which is race-gated server-side,
+so an authoritative server reporting it later instead is a no-op rather than a conflict.
+
+**Renderer integration.** `warpath-app.js` was reconciled to the landed `WarpathRender 1.0.0`
+contract (`opts.cam` / `opts.reach` / `opts.fogState` / `opts.fogKey` / `opts.markers`,
+`bakeTerrain(seed, opts)`, `screenToTile(cam, sx, sy)`). At time of writing that module has a
+**syntax error at line 109** — a stray `*/` leaves comment prose outside the comment, so
+`window.WarpathRender` is `undefined` in the browser. The screen stays fully usable because the
+adapter falls back to the plain painter, which is exactly what the fallback is for. That file is
+another agent's and has been left untouched.
 
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which

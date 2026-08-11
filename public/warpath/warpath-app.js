@@ -33,7 +33,7 @@ var S = {
   sel: null,                 // selected tile {x,y}
   reach: {},                 // reachable set for the hero this turn
   cam: { x: 0, y: 0, z: 22 }, userZoom: false,
-  tab: 'camp',
+  tab: 'camp', fogKey: 0, quality: 'high',
   busy: false, ended: false,
   hover: null,
 };
@@ -133,12 +133,21 @@ function refresh() {
     // Fog arrives as base64 from the server; the offline mock hands over the
     // raw array. Bit n is byte[n>>3] & (1<<(n&7)) — the convention Postgres's
     // set_bit() uses, mirrored here so the two never disagree.
+    var prev = S.fog;
     if (st._fog) S.fog = st._fog;
     else if (st.me && st.me.fog) {
       var bin = atob(st.me.fog), a = new Uint8Array(bin.length);
       for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
       S.fog = a;
     }
+    // Cheap change token for the renderer's fog-mask cache: count revealed
+    // bytes rather than diffing 165 bytes every frame.
+    if (S.fog) {
+      var sum = 0;
+      for (var q = 0; q < S.fog.length; q++) sum += S.fog[q];
+      S.fogKey = sum;
+    }
+    if (prev !== S.fog) { /* new buffer identity is fine — fogKey covers it */ }
     recomputeReach();
     renderAll();
   });
@@ -188,8 +197,12 @@ function viewH() { return window.innerHeight; }
 // corner. The first draft left z at a fixed 22, which on a 1440px viewport drew
 // a 968px map floating off-centre — the world looked like a bug.
 function fitZoom() {
-  // Fit the world, but never below 24px/tile — at fit-zoom on a small viewport
-  // the glyphs stop being readable and the map turns into confetti.
+  // Defer to the renderer when it is present — it knows its own legible zoom
+  // floor. Otherwise fit the world at no less than 24px/tile.
+  var mod = renderer();
+  if (mod && typeof mod.fitZoom === 'function') {
+    try { return Math.max(24, mod.fitZoom(viewW(), viewH())); } catch (e) {}
+  }
   return Math.max(24, Math.min(46, Math.min(viewW() / M.WORLD_W, viewH() / M.WORLD_H)));
 }
 function centreOnHero() {
@@ -214,7 +227,7 @@ function tileFromEvent(ev) {
   var cx = ev.clientX - r.left, cy = ev.clientY - r.top;
   var mod = renderer(), t = null;
   if (mod && typeof mod.screenToTile === 'function') {
-    try { t = mod.screenToTile(cx, cy, drawOpts()); } catch (e) { t = null; }
+    try { t = mod.screenToTile({ x: S.cam.x, y: S.cam.y, z: S.cam.z }, cx, cy); } catch (e) { t = null; }
   }
   if (!t) {
     t = { x: Math.floor((cx + S.cam.x) / S.cam.z), y: Math.floor((cy + S.cam.y) / S.cam.z) };
@@ -286,20 +299,50 @@ function actorList() {
   return out;
 }
 
+/* The opts contract warpath-render.js actually reads:
+     cam {x,y,z} · view {w,h} · baked · world · fogState(x,y)→0|1|2 · fogKey
+     reach {'x,y':cost} · path · actors[] · markers[] · sel · hover · quality
+   fogKey is a cheap cache token: the renderer rebuilds its fog masks only when
+   it changes, so we bump it whenever the revealed set or the hero moves. */
 function drawOpts() {
+  var me = S.state && S.state.me;
   return {
-    seed: S.seed,
     world: S.world,
-    camera: { x: S.cam.x, y: S.cam.y, z: S.cam.z },
-    view: { w: window.innerWidth, h: window.innerHeight, vw: viewW(), vh: viewH() },
-    fog: fogState,
+    baked: baked,
+    cam: { x: S.cam.x, y: S.cam.y, z: S.cam.z },
+    view: { w: viewW(), h: viewH() },
     fogState: fogState,
+    fogKey: S.fogKey + '|' + (me ? me.x + ',' + me.y + ',' + (me.vision || 2) : ''),
+    reach: reachableExplored(),
     actors: actorList(),
-    selection: S.sel,
-    reachable: reachableExplored(),
-    claimedNodes: (S.state && S.state.claimed_nodes) || [],
-    time: performance.now(),
+    markers: markerList(),
+    sel: S.sel,
+    hover: S.hover,
+    quality: S.quality,
   };
+}
+
+/* Node pips. The renderer paints the world; WHICH nodes are still unclaimed is
+   run state, so the app supplies them — and only for tiles the player has
+   actually explored, for the same reason the reach set is filtered. */
+function markerList() {
+  var st = S.state; if (!st || !S.world || S.cam.z < 14) return [];
+  var out = [], me = st.me;
+  var x0 = Math.max(0, Math.floor(S.cam.x / S.cam.z) - 1);
+  var y0 = Math.max(0, Math.floor(S.cam.y / S.cam.z) - 1);
+  var x1 = Math.min(M.WORLD_W - 1, Math.ceil((S.cam.x + viewW()) / S.cam.z));
+  var y1 = Math.min(M.WORLD_H - 1, Math.ceil((S.cam.y + viewH()) / S.cam.z));
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      if (!explored(x, y)) continue;
+      var t = S.world.at(x, y);
+      if (!t || !t.node || nodeClaimed(x, y)) continue;
+      out.push({ x: x, y: y, glyph: t.node.icon,
+                 big: t.node.tier === 'extraction',
+                 color: t.node.tier === 'extraction' ? 'rgba(190,140,255,.95)' : 'rgba(226,196,110,.92)' });
+    }
+  }
+  return out;
 }
 
 /* The reachable overlay is filtered to EXPLORED tiles before it ever reaches
@@ -322,9 +365,12 @@ function draw() {
   if (mod) {
     try {
       if (bakedSeed !== S.seed && typeof mod.bakeTerrain === 'function') {
-        baked = mod.bakeTerrain(S.seed); bakedSeed = S.seed;
+        // One bake per world. It is the expensive call; everything after is a
+        // blit plus the live layers.
+        baked = mod.bakeTerrain(S.seed, { world: S.world, quality: S.quality });
+        bakedSeed = S.seed;
       }
-      mod.draw(ctx, Object.assign(drawOpts(), { baked: baked }));
+      mod.draw(ctx, drawOpts());
       return;
     } catch (e) {
       // A broken painter must not take the whole expedition down with it.
@@ -1107,7 +1153,12 @@ cv.addEventListener('pointerdown', function (e) {
   cv.setPointerCapture(e.pointerId); cv.classList.add('dragging');
 });
 cv.addEventListener('pointermove', function (e) {
-  if (!drag) return;
+  if (!drag) {
+    var h = tileFromEvent(e);
+    var changed = (!!h !== !!S.hover) || (h && S.hover && (h.x !== S.hover.x || h.y !== S.hover.y));
+    if (changed) { S.hover = h; draw(); }
+    return;
+  }
   var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   if (Math.abs(dx) + Math.abs(dy) > 5) drag.moved = true;
   S.cam.x = drag.cx - dx; S.cam.y = drag.cy - dy;

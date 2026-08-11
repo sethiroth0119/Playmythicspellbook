@@ -46036,6 +46036,11 @@ async function cloudSyncProfile() {
       // a player who picks their starter on Device A would land on Device B
       // with ZERO cards. Piggybacks the forge JSONB (no schema migration).
       __cardCollection__:  (Profile.cardCollection  && typeof Profile.cardCollection  === 'object') ? Profile.cardCollection  : {},
+      // 🗺 WARPATH MATERIALS — piggyback for the same reason cardCollection
+      // does. Without it a player extracts a Dragon Heart on their phone and
+      // it does not exist on their laptop; with the loader clause but not this
+      // one, a cloud restore silently wipes it.
+      __warpathMaterials__: (Profile.warpathMaterials && typeof Profile.warpathMaterials === 'object') ? Profile.warpathMaterials : {},
       // 📋 Side Deck + 💎 Socketed Gems — piggyback the forge JSONB (v86u) so the
       // Deck Builder's side-deck cards and per-card gem sockets survive new
       // devices / cloud restores, same as cardCollection above. Both were
@@ -47130,6 +47135,18 @@ async function cloudFetchProfile() {
         for (const id in _ii) {
           const cv = _ii[id] | 0, lv = Profile.itemInventory[id] | 0;
           if (cv > lv) Profile.itemInventory[id] = cv;
+        }
+      }
+      // 🗺 WARPATH MATERIALS restore — MERGED with MAX, identical policy to
+      // __cardCollection__ / __itemInventory__ above, so a stale cloud copy can
+      // never wipe a material extracted on this device that the cloud has not
+      // synced yet.
+      if (f.__warpathMaterials__ && typeof f.__warpathMaterials__ === 'object') {
+        if (!Profile.warpathMaterials || typeof Profile.warpathMaterials !== 'object') Profile.warpathMaterials = {};
+        const _wm = f.__warpathMaterials__;
+        for (const id in _wm) {
+          const cv = _wm[id] | 0, lv = Profile.warpathMaterials[id] | 0;
+          if (cv > lv) Profile.warpathMaterials[id] = cv;
         }
       }
       // 🛡 Equipped gear / relics — per-hero merge (cloud value wins per known
@@ -66028,6 +66045,16 @@ function loadForge() {
         });
       }
       if (p.cardCollection && typeof p.cardCollection === 'object') Profile.cardCollection = p.cardCollection;
+      // 🗺 WARPATH EXTRACTION MATERIALS — Dragon Heart, Void Crystal and the
+      // rest. Same class of bug as sideDeck/socketedGems below: the Warpath
+      // wrote Profile.warpathMaterials and saveProfile() serialised it, but
+      // this loader is a field-by-field allowlist and had no clause for it —
+      // so every material a player extracted survived until the next reload
+      // and was then dropped on the floor, AFTER the server had already
+      // recorded the grant as delivered. These are the one reward the mode
+      // says cannot be obtained anywhere else, so losing them is the whole
+      // point of the mode evaporating.
+      if (p.warpathMaterials && typeof p.warpathMaterials === 'object') Profile.warpathMaterials = p.warpathMaterials;
       // 📋 Side Deck + 💎 Socketed Gems — added to the whitelist (v86u). Both
       // were written by the Deck Builder and stringified to localStorage by
       // saveProfile(), but were MISSING from this loader, so every reload
@@ -215743,6 +215770,66 @@ function _wpAmWriter() {
   try { return !(typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false); }
   catch (e) { return true; }
 }
+
+/* ── A PROMOTED WRITER MUST NOT WRITE ITS BOOT-TIME PROFILE ───────────────
+   MultiTab promotion (`_amWriterCheck`) flips `amWriter` to true after
+   STALE_MS and does NOT reload anything. A reader tab therefore sits on the
+   Profile it parsed at boot, and the moment it is promoted its next
+   saveProfile() serialises that stale copy over whatever the previous writer
+   had persisted since. A critic drove it with two real tabs: A drains, proves,
+   acks; A closes; B is promoted by the genuine election and writes
+   {"d0":0,"d1":0,"mats":{}} over the top. Server pending is empty. The cards
+   are gone, and the drain fires 6s after boot so no user action is needed to
+   set it up.
+
+   The general form of this is a pre-existing property of the save layer and
+   is not the Warpath's to rewrite. What IS ours is the property the Warpath
+   put at risk, so on promotion we reconcile the two fields this mode writes
+   against the persisted blob before anything can be saved over them. Disk
+   wins: this tab was a READER, so its in-memory divergence was never going to
+   be persisted anyway — the game already tells the player as much ("this tab
+   is now read-only to protect your saves").
+
+   Registered through the existing onMultiTab() listener registry rather than
+   by editing the election, so the save path itself is untouched. */
+function _wpReconcileFromDisk(why) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.profile);
+    if (!raw) return false;
+    const disk = JSON.parse(raw);
+    if (!disk || typeof disk !== 'object') return false;
+    let changed = 0;
+    if (disk.cardCollection && typeof disk.cardCollection === 'object') {
+      Profile.cardCollection = Profile.cardCollection || {};
+      for (const id in disk.cardCollection) {
+        const dv = disk.cardCollection[id] | 0;
+        if ((Profile.cardCollection[id] | 0) < dv) { Profile.cardCollection[id] = dv; changed++; }
+      }
+    }
+    if (disk.warpathMaterials && typeof disk.warpathMaterials === 'object') {
+      Profile.warpathMaterials = Profile.warpathMaterials || {};
+      for (const k in disk.warpathMaterials) {
+        const dv = disk.warpathMaterials[k] | 0;
+        if ((Profile.warpathMaterials[k] | 0) < dv) { Profile.warpathMaterials[k] = dv; changed++; }
+      }
+    }
+    if (changed) {
+      try { console.warn('[warpath] reconciled ' + changed + ' entries from disk on ' + why); } catch (e) {}
+    }
+    return true;
+  } catch (e) { return false; }
+}
+// Fires on every MultiTab state change; acts only on the reader → writer edge.
+let _wpWasWriter = null;
+try {
+  if (typeof onMultiTab === 'function') {
+    onMultiTab(function (mt) {
+      const now = !(mt && mt.amWriter === false);
+      if (_wpWasWriter === false && now === true) _wpReconcileFromDisk('writer promotion');
+      _wpWasWriter = now;
+    });
+  }
+} catch (e) {}
 /* Whatever the server sends, only cards this build can actually resolve are
    applied, and never past the per-card copy limit (`_cardCopyLimit` honours
    the Banned/Limited list, so a banned card cannot arrive by this route
@@ -215773,10 +215860,24 @@ async function warpathClaimGrants() {
   const already = all.filter(g => g && g.id && _wpLedgerHas(g.id)).map(g => g.id);
   const fresh   = all.filter(g => g && g.id && !_wpLedgerHas(g.id));
 
+  /* ⚠ Re-check the election AFTER the await. `pending()` is a network round
+     trip, and the writer can change under us mid-flight — the promotion path
+     needs only STALE_MS. Applying against a Profile we are no longer allowed
+     to save is exactly the case the proof below has to catch, so do not even
+     start. */
+  if (!_wpAmWriter()) return;
+
   const applied = [];      // [{id, n}] so we can undo if the write does not land
   const mats    = {};      // materialId -> delta, likewise
   const names   = [];
+  // BEFORE snapshot, filled lazily as ids are touched. The proof compares
+  // after >= before + delta; without this it can only ever prove "non-zero".
+  const before  = { cards: {}, mats: {} };
   let added = 0;
+
+  // Never apply onto a base this tab may have drifted from. Cheap, and it
+  // makes the before-snapshot below agree with what is actually on disk.
+  _wpReconcileFromDisk('grant drain');
 
   // 4 + 5 — apply in memory. The whole loop is guarded: a single malformed key
   // used to throw out here, outside the try, and take the grant with it.
@@ -215789,6 +215890,7 @@ async function warpathClaimGrants() {
         const limit = (typeof _cardCopyLimit === 'function') ? _cardCopyLimit(card) : 3;
         const have = Profile.cardCollection[card.id] || 0;
         if (have >= limit) continue;               // clamp — the server is not the only judge
+        if (before.cards[card.id] === undefined) before.cards[card.id] = have;
         Profile.cardCollection[card.id] = have + 1;
         applied.push({ id: card.id, n: 1 });
         added++;
@@ -215801,6 +215903,7 @@ async function warpathClaimGrants() {
           const n = parseInt(g.materials[k], 10);
           if (!isFinite(n) || n <= 0) continue;
           const add = Math.min(n, 999);
+          if (before.mats[k] === undefined) before.mats[k] = Profile.warpathMaterials[k] || 0;
           Profile.warpathMaterials[k] = (Profile.warpathMaterials[k] || 0) + add;
           mats[k] = (mats[k] || 0) + add;
         }
@@ -215816,7 +215919,7 @@ async function warpathClaimGrants() {
     try { saveProfile(); } catch (e) {}
     // 5 — prove it. saveProfile() can no-op (reader tab) or fail (quota), and
     // both are silent. Read the blob back before telling the server anything.
-    if (!_wpGrantPersisted(applied, mats)) {
+    if (!_wpGrantPersisted(before, applied, mats)) {
       try { console.warn('[warpath] grant did not reach disk — rolling back, will retry'); } catch (e) {}
       _wpUndoGrant(applied, mats);
       return;
@@ -215838,21 +215941,35 @@ async function warpathClaimGrants() {
   try { render(); } catch (e) {}
 }
 
-// Read the saved blob back and confirm the grant is genuinely on disk.
-function _wpGrantPersisted(applied, mats) {
+/* Read the saved blob back and confirm the grant is genuinely on disk.
+
+   ⚠ THIS COMPARED A DELTA AGAINST AN ABSOLUTE. The first version built
+   `want[id] = <copies this grant adds>` and then asserted `disk[id] >= want[id]`
+   — i.e. "does the disk hold at least one copy?", not "does the disk hold what
+   it held before, plus what we just added?". A critic called it against a disk
+   that had received NO write at all and got `proofSays: true`. It only ever
+   fired when the player owned FEWER copies than the grant added, so for any
+   repeat card — and for materials on every run after the first — it was a
+   no-op, and a silent saveProfile() failure walked straight through to the ack.
+
+   Now it takes a BEFORE snapshot and asserts `after >= before + delta`, which
+   is the only form that detects "nothing was written". */
+function _wpGrantPersisted(before, applied, mats) {
   try {
     if (!applied.length && !Object.keys(mats).length) return true;
     const raw = localStorage.getItem(STORAGE_KEYS.profile);
     if (!raw) return false;
     const disk = JSON.parse(raw);
     const cc = (disk && disk.cardCollection) || {};
-    const want = {};
-    applied.forEach(a => { want[a.id] = (want[a.id] || 0) + a.n; });
-    for (const id in want) {
-      if ((cc[id] || 0) < want[id]) return false;
+    const delta = {};
+    applied.forEach(a => { delta[a.id] = (delta[a.id] || 0) + a.n; });
+    for (const id in delta) {
+      if ((cc[id] | 0) < (before.cards[id] | 0) + delta[id]) return false;
     }
     const dm = (disk && disk.warpathMaterials) || {};
-    for (const k in mats) { if ((dm[k] || 0) < mats[k]) return false; }
+    for (const k in mats) {
+      if ((dm[k] | 0) < (before.mats[k] | 0) + mats[k]) return false;
+    }
     return true;
   } catch (e) { return false; }
 }
@@ -216000,7 +216117,8 @@ WARPATH_RPCS.warpath_grants_ack = 1;
 try {
   window.__mg = window.__mg || {};
   window.__mg.warpath = { gate: openWarpathGate, open: _warpathOpen, close: _warpathClose,
-                          claim: warpathClaimGrants, enabled: warpathEnabled };
+                          claim: warpathClaimGrants, enabled: warpathEnabled,
+                          reconcile: _wpReconcileFromDisk };
 } catch (e) {}
 
 // Drain any extraction that completed while the player was away — e.g. they

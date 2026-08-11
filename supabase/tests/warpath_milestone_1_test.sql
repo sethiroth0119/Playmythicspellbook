@@ -220,6 +220,14 @@ begin
 
   -- ── 7. THE VAULT HAS A CEILING ──────────────────────────────────────────
   -- 9 carried Void Crystals, 5 slots: five secure, four stay at risk.
+  -- ⚠ Clear every OTHER extraction material first. The harvest step above picks
+  -- whatever node the seed happens to put under the hero, so on some seeds it
+  -- banks a Dragon Heart that then competes for the same five slots and the
+  -- assertion below sees 4 instead of 5. The rule was right; the test was
+  -- seed-dependent, and passed by luck until a reseed exposed it.
+  update public.warpath_inventory i set carried = 0, secured = 0
+    from public.warpath_resources r
+   where r.kind = i.kind and r.tier = 'extraction' and i.expedition_id = ea;
   insert into public.warpath_inventory (expedition_id, kind, carried)
     values (ea, 'void_crystal', 9)
     on conflict (expedition_id, kind) do update set carried = 9, secured = 0;

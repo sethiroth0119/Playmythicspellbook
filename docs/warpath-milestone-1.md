@@ -93,7 +93,7 @@ tree beyond Blacksmith I, forward outposts (camp is movable but singular).
 | P1 mapgen | 3 | **WINS** | Warpath-exclusive *cards* are not minted (deliberate — see below) |
 | P2 schema | 5 | **critic-fixed, ready for re-critique** | `warpath_state()` is one big query; fine at 4 players, needs splitting at 20 |
 | P3 screen | 4 | **critic-fixed, ready for re-critique** | Resource sinks and draft volume are unbalanced — deliberately NOT tuned against mock evidence |
-| P4 bridge | 3 | **critic-fixed, ready for re-critique** | Client-authoritative battle results remain self-declared (inherent to the repo's existing MP model) |
+| P4 bridge | 4 | **critic-fixed, ready for re-critique** | The general stale-writer clobber is a pre-existing save-layer property; only the two Warpath-owned fields are defended |
 
 ### P1 — world generation · round history
 
@@ -318,6 +318,65 @@ the table either) — but `S.world = M.generate(seed)` means the client holds ev
 landmark's identity and all four spawn points. Anyone with a console can read the map. Milestone 1
 does not close this; doing so means streaming tiles instead of deriving them, which trades away
 the "world is a seed" architecture. It is a real asymmetry gap, not a solved one.
+
+#### P4 round 4 — independent critic verdict: LOSES. Three findings, all fixed.
+
+The critic confirmed round 3 held — `warpath_grants_ack` survives forged/mixed/100k id arrays,
+the two-tab kill is closed, all 26 hostile card keys drop, Banned→0 / Limited→1 / plain→3,
+materials `-3` dropped and `1e9`→999. Then it found the reward was being destroyed anyway.
+
+**GAP — `Profile.warpathMaterials` was written and never read back.** The profile loader at
+`:65896`+ is a field-by-field allowlist; `p.cardCollection` is restored, `p.warpathMaterials`
+had **no clause anywhere** (`grep -c 'p\.warpathMaterials'` → 0). Every extracted Dragon Heart,
+Void Crystal and Ouroboros Core survived in memory until the next reload and was then dropped —
+*after* the grant had been acked and was unrecoverable. 100% of extractions, one tab, no race,
+just F5. Hard constraint #4 failing in the direction that matters: run state crossed the bridge
+and the permanent side ended up with nothing.
+
+**The general audit the critic asked for.** Every `Profile.*` key the Warpath block writes,
+checked against both persistence paths:
+
+| Key | Local loader `:65896`+ | Cloud round-trip |
+|---|---|---|
+| `Profile.cardCollection` | ✅ `:66030` | ✅ `__cardCollection__` piggyback |
+| `Profile.warpathMaterials` | ❌ **missing** → fixed | ❌ **missing on both sides** → fixed |
+| `Profile.decks` (`warpath_run_deck`) | ✅ `:66007` | n/a — transient battle deck, same as `rlc_run_deck` |
+| `Profile.heroes` | read-only in this block | — |
+
+So it was worse than one clause: materials were absent from the **cloud upload and the cloud
+restore too**, meaning a material extracted on a phone never existed on a laptop. Three fixes —
+loader clause, `__warpathMaterials__` piggyback in `forgeSmall`, and a MAX-merge restore matching
+the `__itemInventory__` policy. Verified: `{"dragon_heart":2,"void_crystal":3,"ouroboros_core":1}`
+survives reload *and* a subsequent save; cloud merge takes `dragon_heart 1→7`, keeps a local-only
+`void_crystal 5`, adds `ouroboros_core 3`; both piggybacks confirmed inside the object that
+becomes `rowRaw.forge`.
+
+**2 — the read-back proof compared a delta against an absolute.** It asked "does disk hold ≥1
+copy?" rather than "before + delta?", so on an untouched disk it returned `true`. It now takes a
+BEFORE snapshot as ids are touched and asserts `after >= before + delta`. Verified both ways:
+no-write → `proofSays: false`; real write → `true`. The election is also re-checked **after** the
+`pending()` await, since promotion needs only `STALE_MS` and the await is a network round trip.
+
+**3 — a promoted writer clobbered the persisted blob.** `_amWriterCheck` (`:67103`) flips
+`amWriter` true and reloads nothing, so a reader tab promoted after boot writes its boot-time
+`Profile` over everything since. Reproduced with two real tabs and the genuine election. Fixed by
+registering through the existing `onMultiTab()` listener registry — on the reader→writer edge,
+the two Warpath-owned fields are reconciled from disk (disk wins; a reader's in-memory divergence
+was never going to be persisted anyway). Also runs immediately before applying a grant.
+Verified: B promoted, B saves, `diskWolf: 1, diskOre: 4` intact — previously `{}`.
+
+**Scope I did not take, stated plainly:** the general stale-writer clobber is a **pre-existing
+property of the save layer** and affects every field, not just ours. Rewriting the election to
+reload on promotion is the correct global fix but it is a change to the core save path, which
+constraint #1 says not to risk from here. This defends the property the Warpath put at risk and
+leaves the general bug documented rather than silently half-fixed.
+
+**Also fixed:** the vault-ceiling assertion was **seed-dependent** — on some seeds the harvest
+step banked a second extraction material that competed for the same five slots, so it read 4 and
+passed only by luck. The rule was right; the test now clears other materials first and is stable
+across three consecutive runs.
+
+**Baseline re-run:** 20 console errors before, 20 after, identical set.
 
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which

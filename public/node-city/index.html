@@ -15698,22 +15698,72 @@ function computeLinks() {
   for (const k in game.tiles) if (game.tiles[k].type === 'road') roadSet.add(k);
   let totalRoads = roadSet.size;
 
-  for (const a of game.anchors) {
-    // BFS over roads starting from tiles adjacent to the anchor
-    const seen = new Set(); const q = [];
-    for (const [dx, dz] of NEI) { const k = key(a.x + dx, a.z + dz); if (roadSet.has(k) && !seen.has(k)) { seen.add(k); q.push(k); } }
-    while (q.length) {
-      const [cx, cz] = q.shift().split(',').map(Number);
-      for (const [dx, dz] of NEI) {
-        const k = key(cx + dx, cz + dz);
-        if (roadSet.has(k) && !seen.has(k)) { seen.add(k); q.push(k); }
+  /* 🚦 ROAD COMPONENTS — COMPUTED ONCE FOR THE WHOLE CITY, NOT ONCE PER ANCHOR.
+     This function runs every 2 seconds, and it used to flood-fill the ENTIRE
+     road network separately for every anchor. Two costs, both avoidable:
+
+       1. `q.shift()` on a plain array is O(n) — it memmoves the whole queue on
+          every single dequeue — so each BFS was O(roads²), not O(roads). On a
+          road-heavy city that is the difference between thousands of operations
+          and hundreds of thousands, four times a minute per anchor.
+       2. The answer was IDENTICAL work each time. "Which roads can this anchor
+          reach" is just "which connected components touch this anchor", and the
+          components do not depend on the anchor at all.
+
+     So: label every road with its component ONCE (single pass, O(roads), index
+     cursor instead of shift()), then each anchor only unions the components it
+     touches. Semantics are unchanged — the old `seen` set was exactly the union
+     of the components adjacent to the anchor.
+
+     Also drops `.split(',').map(Number)`, which allocated two arrays per node
+     visited; at this call rate that is pure garbage-collector pressure, and GC
+     pauses are indistinguishable from the freezing this pass is chasing. */
+  const comp = new Map();     // road key -> component id
+  const compMembers = [];     // component id -> road keys in it
+  {
+    const queue = [];
+    for (const start of roadSet) {
+      if (comp.has(start)) continue;
+      const id = compMembers.length;
+      const members = [start];
+      comp.set(start, id);
+      queue.length = 0; queue.push(start);
+      let qi = 0;                                   // ← cursor, never shift()
+      while (qi < queue.length) {
+        const ck = queue[qi++];
+        const ci = ck.indexOf(',');
+        const cx = +ck.slice(0, ci), cz = +ck.slice(ci + 1);
+        for (const [dx, dz] of NEI) {
+          const nk = key(cx + dx, cz + dz);
+          if (roadSet.has(nk) && !comp.has(nk)) {
+            comp.set(nk, id); members.push(nk); queue.push(nk);
+          }
+        }
       }
+      compMembers.push(members);
+    }
+  }
+
+  for (const a of game.anchors) {
+    // Which road components does this anchor touch? (was: a fresh full BFS)
+    const touched = new Set();
+    for (const [dx, dz] of NEI) {
+      const c = comp.get(key(a.x + dx, a.z + dz));
+      if (c !== undefined) touched.add(c);
     }
     // Which buildings are served? adjacent to reachable road OR to the anchor.
     const served = new Set();
     const mark = (x, z) => { for (const [dx, dz] of NEI) { const t = tileAt(x + dx, z + dz); if (t && t.type !== 'road' && t.type !== 'anchor') served.add(key(x + dx, z + dz)); } };
     mark(a.x, a.z);
-    for (const k of seen) { const [x, z] = k.split(',').map(Number); mark(x, z); }
+    let reachedRoads = 0;                            // was `seen.size`
+    for (const c of touched) {
+      const members = compMembers[c];
+      reachedRoads += members.length;
+      for (const k of members) {
+        const ci = k.indexOf(',');
+        mark(+k.slice(0, ci), +k.slice(ci + 1));
+      }
+    }
 
     /* 🔎 Kept on the anchor so the building dossier can answer "does THIS tile
        feed THIS node?" exactly, instead of re-running the BFS and drifting from
@@ -15732,7 +15782,7 @@ function computeLinks() {
       if (nt.feeds.includes('__housing__') && def.popCap) pts += def.popCap * t.lvl * .8;
       if (nt.feeds.includes('__defense__') && def.defense) pts += def.defense * t.lvl * .5;
     }
-    if (nt.feeds.includes('__roads__')) pts += seen.size * 1.2;
+    if (nt.feeds.includes('__roads__')) pts += reachedRoads * 1.2;
     if (events.rush) pts *= 2;                       // 🚀 Planetary Rush
     pts += obeliskBonus();                           // 🗿 Obelisk of Ethos
     a.link = Math.min(100, Math.round(pts));
@@ -20013,6 +20063,13 @@ const OFFLINE_SLICE_SEC = 10;
      MessageChannel post is a real macrotask (the browser can paint and handle
      input between the two) and is not on the timer throttle. */
 const OFFLINE_YIELD_EVERY = 400;
+/* 🧊 Buildings constructed between paint yields while loading a saved city.
+   Sized in tiles, not milliseconds, because buildMesh cost varies hugely by
+   type (a tree is nothing, a Stadium is not) and a count is the thing this loop
+   can actually measure. 24 = one grid row: small enough that the heaviest
+   plausible row still leaves the page responsive, large enough that a full
+   city is ~20 yields rather than 500. */
+const LOAD_MESH_CHUNK = 24;
 const _offYieldCh = (typeof MessageChannel === 'function') ? new MessageChannel() : null;
 function offlineYield() {
   if (!_offYieldCh) return new Promise(r => setTimeout(r, 0));
@@ -20313,6 +20370,10 @@ async function loadState() {
         if (Number.isFinite(n)) vitals[k] = THREE.MathUtils.clamp(n, 0, 100);
       }
     }
+    /* Meshes built so far this load — the counter for the chunked yield below.
+       Counts BUILDINGS only (roads have no mesh here), which is the work that
+       actually costs anything. */
+    let _meshesBuilt = 0;
     for (const [k, td] of Object.entries(s.tiles)) {
       if (game.tiles[k]) continue;                 // anchor already there
       if (!BUILDINGS[td.type]) continue;
@@ -20364,6 +20425,25 @@ async function loadState() {
         t.mesh = buildMesh(td.type === 'lot' && t.tenant ? 'tenantbiz' : td.type, t.lvl, x, z);
         placeMeshAt(t.mesh, x, z, t.rot);
         if (t.damaged) applyDamagedLook(t);
+        /* 🧊 THE OPEN-THE-CITY FREEZE. buildMesh is the most expensive call in
+           this file — a fully built 24x24 grid is 5,482 meshes — and this loop
+           used to construct EVERY ONE of them in a single uninterrupted block.
+           The tab cannot paint or accept input for the whole run, which is not
+           "slow loading", it is the browser going white and the OS offering to
+           kill the page. The bigger the city, the worse it gets, so it lands
+           hardest on exactly the players with the most invested.
+
+           Yielding here is free: the render loop has not started yet
+           (setAnimationLoop runs at the END of boot, long after loadState is
+           awaited), so nothing can observe a half-built grid, and saves are
+           still blocked by _loadDone/_saveWouldErase until the load completes.
+
+           ⚠ MessageChannel, NOT setTimeout — same reason the offline catch-up
+             uses it, and it was MEASURED there: a timer inside a frame the
+             compositor has not painted is throttled to ~130ms per yield, which
+             would turn 20 yields into 2.6 seconds of pure waiting. See
+             offlineYield(). */
+        if ((++_meshesBuilt % LOAD_MESH_CHUNK) === 0) await offlineYield();
       }
     }
     if (Array.isArray(s.deck)) game.defenseDeck = s.deck.slice(0, DECK_MAX);
@@ -22777,9 +22857,27 @@ const QUALITY = {
     { name: 'low',    pr: 1.25, shadow: 1024, soft: false, moonShadow: false, lamps: 8, span: 9, cull: 20, tileCull: 22, fog: [13, 22] },
     { name: 'potato', pr: 1.0, shadow: 768,  soft: false, moonShadow: false, lamps: 6, span: 7, cull: 15, tileCull: 16, fog: [10, 16] },
   ],
-  i: 0, samples: [], locked: false, lastChange: 0,
+  i: 0, samples: [], stalls: 0, locked: false, lastChange: 0,
   // 60fps is 16.7ms. Step down past 22ms sustained, consider stepping up under 12ms.
   DOWN_MS: 22, UP_MS: 12, WINDOW: 90, COOLDOWN: 4000,
+  /* 🧊 HITCH DETECTION — the governor used to be BLIND TO FREEZING, which is the
+     one thing players actually report.
+     Two reasons it could not see it:
+       1. `if (ms > 200) return` discarded the frame entirely. A city hitching to
+          300ms every second therefore contributed NOTHING to the measurement —
+          the worse the stutter got, the more of it was thrown away.
+       2. A median over 90 frames answers "how is the typical frame", and nobody
+          feels the typical frame. 44 bad frames out of 90 still medians fine.
+          Smoothness is a WORST-CASE property; the median is the one statistic
+          guaranteed to hide it.
+     So: still ignore a single monstrous gap (STALL_IGNORE_MS — that is a tab
+     wake or an alt-tab, not the steady state), but COUNT the merely-bad frames
+     and step down on a p90 or on a hitch count, not on the median alone. */
+  STALL_MS: 50,          // a frame this long is a visible hitch at any target
+  STALL_IGNORE_MS: 200,  // above this it is a tab wake, not the city's fault
+  STALL_TRIP: 6,         // this many hitches in one window ⇒ step down
+  DOWN_P90_MS: 34,       // p90 worse than ~30fps ⇒ step down even if median is ok
+  UP_P90_MS: 18,         // …and never step back up while the tail is still bad
 };
 function qualityApply(reason) {
   const t = QUALITY.tiers[QUALITY.i];
@@ -22816,20 +22914,43 @@ function qualityApply(reason) {
 function qualityTick(dt) {
   if (QUALITY.locked) return;
   const ms = dt * 1000;
-  // Ignore obvious stalls (tab wake, a big rebuild) — they are not the steady state.
-  if (ms > 200) return;
+  // A single monstrous gap is a tab wake / alt-tab, not the city's steady state.
+  // Everything BELOW this is real and gets counted, including the hitches the
+  // old `> 200` cutoff used to throw away — see the note on QUALITY.STALL_MS.
+  if (ms > QUALITY.STALL_IGNORE_MS) return;
   const S = QUALITY.samples;
   S.push(ms);
+  if (ms > QUALITY.STALL_MS) QUALITY.stalls++;
   if (S.length < QUALITY.WINDOW) return;
-  S.sort((a, b) => a - b);
-  const med = S[S.length >> 1];
-  QUALITY.samples = [];
+  /* ⚠ COOLDOWN IS CHECKED BEFORE THE WINDOW IS CONSUMED. It used to be checked
+     after `QUALITY.samples = []`, so a window that completed during a cooldown
+     was measured and then thrown on the floor — the governor needed a further
+     full WINDOW of frames to react, roughly doubling its response time exactly
+     when it had just decided something was wrong. Returning early instead keeps
+     accumulating, so the decision that follows is made on MORE evidence, not
+     less. Growth is bounded by the cooldown (~240 frames), and sorting a few
+     hundred numbers once every four seconds is free. */
   const now = performance.now();
   if (now - QUALITY.lastChange < QUALITY.COOLDOWN) return;
-  if (med > QUALITY.DOWN_MS && QUALITY.i < QUALITY.tiers.length - 1) {
-    QUALITY.i++; QUALITY.lastChange = now; qualityApply(Math.round(med) + 'ms');
-  } else if (med < QUALITY.UP_MS && QUALITY.i > 0) {
-    QUALITY.i--; QUALITY.lastChange = now; qualityApply(Math.round(med) + 'ms, recovered');
+  S.sort((a, b) => a - b);
+  const med = S[S.length >> 1];
+  const p90 = S[Math.min(S.length - 1, Math.floor(S.length * 0.9))];
+  const stalls = QUALITY.stalls;
+  QUALITY.samples = []; QUALITY.stalls = 0;
+  const hitching = stalls >= QUALITY.STALL_TRIP;
+  /* Step down if the TYPICAL frame is bad (median), or the TAIL is bad (p90),
+     or the city is hitching — any one of the three. Smoothness is a worst-case
+     property, so the down-check is deliberately the union of three signals
+     while the up-check below is the intersection: quick to protect the player,
+     slow to spend their frame budget again. */
+  if ((med > QUALITY.DOWN_MS || p90 > QUALITY.DOWN_P90_MS || hitching)
+      && QUALITY.i < QUALITY.tiers.length - 1) {
+    QUALITY.i++; QUALITY.lastChange = now;
+    qualityApply(hitching ? (stalls + ' hitches/' + S.length + 'f')
+                          : ('med ' + Math.round(med) + 'ms, p90 ' + Math.round(p90) + 'ms'));
+  } else if (med < QUALITY.UP_MS && p90 < QUALITY.UP_P90_MS && stalls === 0 && QUALITY.i > 0) {
+    QUALITY.i--; QUALITY.lastChange = now;
+    qualityApply('med ' + Math.round(med) + 'ms, p90 ' + Math.round(p90) + 'ms, recovered');
   }
 }
 // Start one tier down on the WebGL2 fallback: it is materially more expensive

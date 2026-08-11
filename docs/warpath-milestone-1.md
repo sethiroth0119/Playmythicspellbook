@@ -92,7 +92,7 @@ tree beyond Blacksmith I, forward outposts (camp is movable but singular).
 |---|---|---|---|
 | P1 mapgen | 3 | **WINS** | Warpath-exclusive *cards* are not minted (deliberate — see below) |
 | P2 schema | 5 | **critic-fixed, ready for re-critique** | `warpath_state()` is one big query; fine at 4 players, needs splitting at 20 |
-| P3 screen | 4 | **critic-fixed, ready for re-critique** | Resource sinks and draft volume are unbalanced — deliberately NOT tuned against mock evidence |
+| P3 screen | 5 | **critic-fixed, ready for re-critique** | Risk/reward is thin, and the mock cannot test it — rivals never fight, so the drop rule is untested rather than absent |
 | P4 bridge | 4 | **critic-fixed, ready for re-critique** | The general stale-writer clobber is a pre-existing save-layer property; only the two Warpath-owned fields are defended |
 
 ### P1 — world generation · round history
@@ -377,6 +377,60 @@ passed only by luck. The rule was right; the test now clears other materials fir
 across three consecutive runs.
 
 **Baseline re-run:** 20 console errors before, 20 after, identical set.
+
+#### P3 round 5 — independent critic verdict: LOSES. Gap plus four fixed.
+
+The critic confirmed the draft fix at scale: **659 encounters across 60 runs**, 61 of 63 catalog
+cards appearing, no duplicate keys inside a triple, 4.1% single-type triples. Funded Tent I built
+turn-1 **30/30 on both branches** with a real exclusive fork (Recruitment-first: 27 recruits,
+12.8 cards discovered; Supply-first: 7 recruits, 8.33 materials home). Recruitment went from
+**7 recruits in 28 runs to 34 in 60**. Zero pageerrors across ~400 interactions and 120 runs.
+
+**GAP — the phone panel could never be opened.** `#side.open` is the class that raises the bottom
+sheet and **nothing in the codebase ever added it** (`grep` for `classList.*open` → nothing);
+the only toggle shipped was `classList.toggle('hidden')`, and under the breakpoint `hidden` and
+the default state resolve to the *same* transform. So on every viewport ≤900px the camp builder,
+both wallet explanations, the extraction-cap readout, `#f-secure` and `#f-extract` were all
+unreachable — and since `#b-endturn` disables at `status === 'ready'`, **a phone run could not be
+completed at all**. "802px of map, up from ~50px" was true and was a regression: the old layout
+buried the map under a usable panel, the new one buried the panel under a usable map.
+
+Fixed with a viewport-aware `setPanel()`: `open` under the breakpoint, `hidden` above it, the rail
+pushed clear via `body.sheet-open`, a breakpoint-crossing resize handler that re-normalises, and
+tab presses raising the sheet (the tab strip *is* the visible lip of a closed sheet). **Measured,
+not screenshotted** — `#sidebody` top coordinate and `elementFromPoint` hit-testing:
+
+| viewport | closed | after tapping the handle |
+|---|---|---|
+| 390×844 phone | `body.top=845` · inView **false** · camp/secure **false** | `cls=open` · `body.top=414` · inView **true** · camp **true** · secure **true** |
+| 820×1180 tablet | `body.top=1181` · inView **false** | `cls=open` · `body.top=562` · inView **true** |
+| 899×600 edge | `body.top=601` · inView **false** | `cls=open` · `body.top=307` · inView **true** |
+| 1440×900 desktop | inView **true** (unchanged) | `cls=hidden` collapses as before |
+
+`#f-extract` on a phone: present and **tappable at y=800–832 in an 844px viewport**, with End Turn
+still reachable throughout. A phone run can be finished.
+
+| # | Finding | Fix | Verified |
+|---|---|---|---|
+| 1 | Escape or a reload discarded a pick irrecoverably — the server kept `picked:null` but nothing re-opened it and `#b-act` stayed disabled. | The action button offers **"Open encounter"** on that tile, and a pending encounter under the hero re-opens itself on load unless explicitly dismissed. Matters more live, where a dropped connection is normal. | `autoOpenedOnRefresh: true`, `actBtn: "Open encounter"`, enabled. |
+| 2 | `why()` said "you have 0" without naming the wallet — `cannot_afford_carried` on **122 site visits** against 34 hires. | Server returns `wallet: 'carried' | 'secured'` on both refusals; the client names it *and* reports the other wallet's balance with the reason it cannot help. | Two new SQL assertions: build refusal names `secured`, recruit refusal names `carried`. |
+| 3 | `warpath-data.js` still advertised the old 🪵30 cost. | Corrected, plus a note that raising it again without raising the stipend silently removes the decision. | — |
+| 4 | `warpath_extract_begin` had no already-extracting guard **in the mock**; the critic could not check the server. | Mock guarded. **The server already was** (`status <> 'active'`) — but that is now an assertion rather than a reading. | Mock: second call `not_active`, countdown `1 → 1`. SQL: countdown unaffected, and an *extracted* hero cannot begin again. |
+
+**Disclosure, the one risk/reward change made without guessing.** Extraction committed on one
+click and reported the outcome only afterwards. It now shows exactly what is coming home *before*
+committing, with an explicit warning when nothing is secured — the critic's own case rendered as:
+*"Cards coming home · 0 / 6 — Nothing you found out here is secured, so no cards will come home."*
+plus a **Stay out here** button that leaves the run untouched (`status: 'ready'` after cancelling).
+
+**Held the line on the risk model.** The gate is a median 2.7 turns away, `warpath_secure` still
+flips every unsecured card free, and only a PvP defeat costs a card. Those are real, but the mock
+saw rivals adjacent **64 times and fought zero battles** — its rivals never challenge, build or
+extract, and it hardcodes `camp: null` where the server returns rival camps. The card-drop rule,
+injury/retreat, `waiting_for` turn sync and camp discovery are **untested, not absent**. Tuning
+them against a solitaire harness would be fitting to the wrong game.
+
+Suite is now **66 assertions** (47 + 6 RLS + 8 regressions + 1 fog + 2 extraction guards + 2 wallets).
 
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which

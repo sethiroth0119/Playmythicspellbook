@@ -2535,8 +2535,8 @@ function drawReach(ctx, opts, cam, W, H) {
      that faces the missing neighbour, so nothing is drawn across the
      interior. */
   var TAU = Math.PI * 2, R = z * 0.615;
-  ctx.strokeStyle = 'rgba(226,196,116,0.40)';
-  ctx.lineWidth = Math.max(1, z * 0.055); ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(226,196,116,0.32)';
+  ctx.lineWidth = Math.max(1, z * 0.045); ctx.lineCap = 'round';
   ctx.beginPath();
   for (k = 0; k < list.length; k++) {
     x = list[k][0]; y = list[k][1];

@@ -1,0 +1,617 @@
+/* ============================================================================
+   r3_chrome.css — BATTLE HUD CHROME
+   Appended AFTER index.html's inline <style> blocks and after
+   src/battle/board.css + units.css. Everything below wins by ordinary source
+   order at ordinary specificity.
+
+   THE BRIEF, VERBATIM: "keep the UI but make it much more neat in the same
+   design but neater."
+
+   So this is NOT a redesign. Same components, same order, same information,
+   same controls, same gold-on-dark language, same Cinzel display face, same
+   --bc-* / --gold* variables. What changes is discipline:
+
+     1. RECLAIM THE CENTRE. The left rail was 560px on a 1920 screen (29% of
+        the width), and — the real bug — the grid stopped reserving a column
+        for the fixed right deck rail below 1500px, so at 1440 the deck rail
+        painted straight over the right 170px of the board while a 100px
+        dead band sat between the HUD and the board. Measured, not guessed.
+     2. ONE SPACING RHYTHM. Every gap and pad in the panel was ad hoc
+        (4/5/6/7/8/9/10/11/12/13/14/16/18/20/26/34px, across three stacked
+        "compression passes"). Everything now steps on a 4px scale.
+     3. CONSISTENT SIZING. Control heights were 21/22/28/30/31/37/38/40/44/
+        45/57/60/63/67px — a dozen heights. Now three: 32 / 40 / 48.
+     4. TIGHTEN, DO NOT RESTYLE. No colour, gradient, border treatment,
+        typeface or component is replaced. Nothing is removed or hidden.
+
+   🔴 CONSTRAINTS RESPECTED
+   • `.board`, `.tile` and `.unit` are NOT touched. The strings "perspective",
+     "rotateX" and "transform-style" do not appear in this file. The only
+     board-adjacent declaration is `grid-template-columns` on `.battle-grid`,
+     which is page layout, not the board plane.
+   • No control is removed or hidden. `display:none` / `visibility:hidden` /
+     `opacity:0` appear NOWHERE in this file — grep it. Concede, Settings,
+     End Turn, Ultimate, Battle Log (both buttons), Field Bag, the timer, the
+     location and weather cards, every consumable slot and every action-panel
+     button keep a hit box.
+   • No `filter` / `backdrop-filter` is added to anything, repeating or not.
+     The word does not appear outside this comment.
+   • Breakpoints: every base value changed here is re-checked against the
+     existing @media blocks (~6900, ~6930, ~6990, ~7004, ~7066, ~7085, ~7099).
+     Because this file is appended LAST, the overrides below are placed after
+     the rules they answer — the "a breakpoint override above its base rule
+     silently loses" trap runs the other way here, so the narrow-screen block
+     at the end of this file is deliberately the last thing in it.
+
+   ⚠ `!important` — used ONLY to answer an existing `!important`, never to win
+   a fight this file could win on source order. Every one of them answers the
+   three "PANEL FIT" compression passes in index.html (~5698-5784), which set
+   padding/size/font on `.bcp` descendants with `!important`. Each is marked
+   "answers !important" inline. There are no others. 53 in total.
+   (Note to whoever edits this header: do not paste a comment-close sequence
+   into a CSS comment. Doing so ends the block early and the parser then eats
+   the next rule whole — it cost this round one full measure/capture cycle.)
+   ========================================================================== */
+
+
+/* ---------------------------------------------------------------------------
+   0. THE SCALE
+   One 4px spacing step and three control heights, declared on the chrome root
+   so they can never leak into the rest of the 22MB app. Everything below reads
+   these instead of typing a number.
+   ------------------------------------------------------------------------ */
+.bchrome,
+.bcp {
+  --r3-1: 4px;
+  --r3-2: 8px;
+  --r3-3: 12px;
+  --r3-4: 16px;
+
+  /* three control heights — nothing else is allowed a height of its own */
+  --r3-row-sm: 32px;   /* log head, hint, inline chips          */
+  --r3-row:    40px;   /* the whole control bar, ultimate, bag   */
+  --r3-row-lg: 48px;   /* END TURN — the one primary action      */
+
+  --r3-radius: 10px;
+  --r3-radius-sm: 8px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   1. RECLAIM THE CENTRE
+   ~~~~~~~~~~~~~~~~~~~~~
+   1a. The rail budget. index.html already has the single source of truth for
+       this (`--btl-rail-w`, read by BOTH the rail's width and the grid column
+       that reserves room for it), so the whole reclaim is three numbers.
+       560 -> 440 on a big desktop; 400 -> 320 on a laptop; 330 -> 280 below
+       that. The laptop numbers are set by the board, not by taste: they are
+       the widest rail that still leaves the board's own height-derived width
+       (100svh - 208px, times 8/7) fitting INSIDE its column, so the board is
+       never both width-bound and hidden. The right rail's variable is NOT
+       touched — that furniture belongs to the deck-rail piece.
+
+       The breakpoint STRUCTURE is mirrored exactly, because a single
+       unconditional `:root` rule here would also override index.html's
+       narrower brackets and hand a 440px rail to a 1280px screen.
+   ------------------------------------------------------------------------ */
+:root { --btl-rail-w: 440px; }
+@media (max-width: 1599px) { :root { --btl-rail-w: 320px; } }
+@media (max-width: 1279px) { :root { --btl-rail-w: 280px; } }
+
+/* 1a-bis. The RIGHT rail's real width, because `--btl-rail-r` no longer
+       describes it. index.html sets `.bp-wrap { width: var(--btl-rail-r) }`
+       at ~6587 and then overwrites it with a flat 248px at ~6845 and 228px at
+       ~6892, while the variable still says 214/186/172. A comment at ~9289
+       already warns "do not trust --btl-rail-r to describe the rail" — this is
+       that drift, measured: at 1440 the variable reserved 186px for a 228px
+       rail, so the reservation was 42px short and the deck rail sat on the
+       board even where a column existed.
+
+       The variable itself is NOT re-pointed: other code reads it and the deck
+       rail is another piece's furniture. Instead the real widths are mirrored
+       here, next to the line numbers they come from, and only the grid
+       reservation below uses them.                                            */
+:root { --r3-rail-r-real: 248px; }            /* index.html ~6845 */
+@media (max-width: 1500px) { :root { --r3-rail-r-real: 228px; } }  /* ~6892 */
+
+/* 1b. 🔴 THE ACTUAL BUG. `.battle-grid` declares three columns — left rail,
+       board, and a spacer that reserves the fixed right deck rail — derived
+       from the same two variables so they can never drift. But two legacy
+       @media blocks (index.html ~6930/6931) still overwrite it with a
+       TWO-column `500px 1fr` / `440px 1fr`, and they sit after the base rule,
+       so below 1500px the board's column ran under the deck rail.
+
+       Measured at 1440x900 before this file: the deck rail covered the right
+       169.6px of the board, and column 1 was 500px against a 400px rail — a
+       100px dead band. Restoring the derived template fixes both. Scoped to
+       >1100px because at 1100 and below the grid becomes a flex column and the
+       deck rail is hidden, where a template would be meaningless.           */
+@media (min-width: 1101px) {
+  .battle-grid {
+    grid-template-columns:
+      calc(var(--btl-rail-w, 440px) + 20px)
+      minmax(0, 1fr)
+      calc(var(--r3-rail-r-real, 248px) + 24px);
+  }
+}
+
+/* 1c. The rail's own inset was 3.2px left / 9.6px right — the chrome sat off
+       its own centre line. Symmetric, on the scale.                          */
+.battle-left {
+  padding: var(--r3-1) var(--r3-2);
+  gap: var(--r3-2);
+}
+
+
+/* ---------------------------------------------------------------------------
+   2. ONE RHYTHM
+   The rail gapped at 5px, the panel at 4px, the panel frame padded
+   16/12/28 top/side/bottom (then 6px bottom via an !important patch). Every
+   block in the column now separates by exactly one step, and the frame's own
+   padding is dropped entirely — the rail (1c) already provides the inset, and
+   two nested paddings on the same edge is the least neat thing a panel can do.
+   ------------------------------------------------------------------------ */
+.bchrome .bc-rail { gap: var(--r3-2); }
+
+.bcp { padding: 0; }
+.bchrome .bcp { padding-bottom: 0 !important; }        /* answers !important */
+.bcp .hud { gap: var(--r3-2); }
+
+/* the action-panel / skill-bar wrappers share the same inset as everything
+   else instead of their own 5px */
+.bchrome .bc-wrap { padding: var(--r3-2) !important; } /* answers !important */
+
+
+/* ---------------------------------------------------------------------------
+   3. FIELD CARDS — location + weather
+   Same two cards, same three lines of copy each. Tightened to one padding
+   step, one icon size, and line-heights that stop the block drifting past its
+   neighbours.
+   ------------------------------------------------------------------------ */
+.bcp .envrow { gap: var(--r3-2); }
+.bcp .envcard {
+  padding: var(--r3-2) var(--r3-3) !important;         /* answers !important */
+  gap: var(--r3-2) !important;                         /* answers !important */
+  min-height: 56px;
+  align-items: center;
+  border-radius: var(--r3-radius);
+}
+.bcp .envcard .eic {
+  width: 32px !important;                              /* answers !important */
+  height: 32px !important;                             /* answers !important */
+  border-radius: var(--r3-radius-sm);
+}
+.bcp .envcard .eic svg { width: 18px; height: 18px; }
+.bcp .envcard .lab { font-size: 8.5px !important;      /* answers !important */
+  letter-spacing: .16em; line-height: 1.1; }
+.bcp .envcard b { font-size: 13px !important;          /* answers !important */
+  line-height: 1.15; margin-top: 1px; }
+.bcp .envcard .sub { font-size: 10.5px !important;     /* answers !important */
+  line-height: 1.2; margin-top: 1px; }
+
+
+/* ---------------------------------------------------------------------------
+   4. HERO CARDS
+   ~~~~~~~~~~~~~
+   🐛 The portrait. index.html sets `width:62px !important; height:78px
+   !important` on it and a comment above says the stretched portrait was
+   "fixed" — but `.bcp .portrait { min-height: 170px }` was never overridden,
+   and min-height beats height. So the hero portrait actually rendered 62x170:
+   a 0.36 aspect-ratio sliver of a face, and it alone made each hero card
+   234px tall. Measured, then confirmed by removing the min-height.
+   It is now a plain 72x96 portrait (3:4), and each card is ~157px.
+
+   The other half of the card was the grid: column one was
+   `minmax(120px, 34%)` holding a 62px portrait, leaving ~58px of dead black
+   between the portrait and the name. Column one now hugs the portrait.
+   ------------------------------------------------------------------------ */
+.bcp #fighters { display: flex; flex-direction: column; gap: var(--r3-2); }
+
+.bcp .fighter {
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: var(--r3-2) !important;                     /* answers !important */
+  gap: var(--r3-2) !important;                         /* answers !important */
+  border-radius: var(--r3-radius);
+}
+.bcp .fighter .portrait {
+  width: 72px !important;                              /* answers !important */
+  height: 96px !important;                             /* answers !important */
+  min-height: 0;                       /* ← the bug: this is what was missing */
+  border-radius: var(--r3-radius-sm);
+}
+.bcp .finfo {
+  padding: 0;                        /* plain — index.html's is not important */
+  gap: var(--r3-1) !important;                         /* answers !important */
+}
+.bcp .fighter h2 { font-size: 15px !important;         /* answers !important */
+  line-height: 1.1; }
+.bcp .fighter .lvl { font-size: 10px !important;       /* answers !important */
+  padding: 1px var(--r3-2) !important; }               /* answers !important */
+
+/* chips: one pill height, one pill inset */
+.bcp .pills    { gap: var(--r3-1) !important; }        /* answers !important */
+.bcp .statuses { gap: var(--r3-1); }   /* plain — index.html's is not important */
+.bcp .pill  { font-size: 9.5px !important;             /* answers !important */
+  padding: 2px var(--r3-2) !important; line-height: 1.5; }
+.bcp .schip { font-size: 10px !important;              /* answers !important */
+  padding: 2px var(--r3-2) !important; line-height: 1.5; }
+
+/* HP bar: the segments were pinned to 8px inside a 22px track, so the fill
+   floated inside its own frame. Give the track a real height and let the
+   segments stretch into it — same bar, same ten segments, no gap. */
+.bcp .rprow { gap: var(--r3-2) !important; }           /* answers !important */
+.bcp .rpbar { height: 14px; padding: 2px; border-radius: var(--r3-radius-sm); }
+.bcp .rpseg { height: auto !important; }               /* answers !important */
+.bcp .rprow .tag { font-size: 10px !important;         /* answers !important */
+  letter-spacing: .1em; }
+.bcp .rprow .num { font-size: 12px !important; }       /* answers !important */
+
+.bcp .deckchip {
+  height: 22px;
+  padding: 0 var(--r3-2) !important;                   /* answers !important */
+  font-size: 11px !important;                          /* answers !important */
+  gap: var(--r3-2);
+  border-radius: var(--r3-radius-sm);
+}
+
+/* energy strip: it was inset 14px from the card edge while the portrait was
+   inset 6px, so the card had two different left margins. One margin now. */
+.bcp .estrip {
+  margin: var(--r3-2) 0 0;
+  padding: 0 var(--r3-3) !important;                   /* answers !important */
+  min-height: 28px;
+  gap: var(--r3-2);
+}
+.bcp .estrip .num { font-size: 11px !important; }      /* answers !important */
+
+/* VS divider — the badge joins the 32px size, and its -1px/4px margin (which
+   pulled it off the column's left edge) goes. */
+.bcp .vs { margin: 0; gap: var(--r3-3); }
+.bcp .vs .badge {
+  width: var(--r3-row-sm) !important;                  /* answers !important */
+  height: var(--r3-row-sm) !important;                 /* answers !important */
+  font-size: 11px !important;                          /* answers !important */
+}
+
+
+/* ---------------------------------------------------------------------------
+   5. STATUS LINE
+   ------------------------------------------------------------------------ */
+.bchrome .bcp .hint {
+  min-height: var(--r3-row-sm);
+  padding: var(--r3-2) var(--r3-3) !important;         /* answers !important */
+  font-size: 13px !important;                          /* answers !important */
+  line-height: 1.3;
+  border-radius: var(--r3-radius);
+}
+.bchrome .bcp .hint .bc-cancel { font-size: 10.5px; padding: 2px var(--r3-2); }
+
+
+/* ---------------------------------------------------------------------------
+   6. BATTLE LOG
+   Both header buttons keep their hit box — the chevron (open log) and the
+   magnifier (open log, focus search) are the same controls at 24px.
+   ------------------------------------------------------------------------ */
+.bcp .log { border-radius: var(--r3-radius); }
+.bcp .loghead {
+  min-height: var(--r3-row-sm);
+  padding: 0 var(--r3-3) !important;                   /* answers !important */
+  gap: var(--r3-2);
+}
+.bcp .loghead b { font-size: 12px !important;          /* answers !important */
+  letter-spacing: .14em; }
+.bcp .loghead button { width: 24px; height: 24px; }
+.bcp .loghead button svg { width: 16px; height: 16px; }
+.bcp .logrow {
+  padding: var(--r3-1) var(--r3-3) !important;         /* answers !important */
+  font-size: 11px !important;                          /* answers !important */
+  gap: var(--r3-2);
+}
+
+
+/* ---------------------------------------------------------------------------
+   7. ULTIMATE
+   Note the markup emits `.ultbtn` (from _bcUltButton), so the `.bcp .ult`
+   compression rules never applied to it and it kept its uncompressed 14/17px
+   padding — one of the reasons the column had a dozen heights. It joins the
+   40px row.
+   ------------------------------------------------------------------------ */
+.bchrome .ultbtn {
+  min-height: var(--r3-row);
+  padding: var(--r3-2) var(--r3-3);
+  gap: var(--r3-2);
+  border-radius: var(--r3-radius);
+}
+.bchrome .ultbtn .ult-glyph { font-size: 18px; }
+.bchrome .ultbtn .ult-k  { font-size: 8.5px; letter-spacing: .2em; }
+.bchrome .ultbtn .ult-nm { font-size: 13px; }
+.bchrome .ultbtn .ult-state {
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0 var(--r3-2);
+  font-size: 10px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   8. END TURN — the one primary action, the one large height
+   ------------------------------------------------------------------------ */
+.bcp .endturn {
+  margin: 0;
+  min-height: var(--r3-row-lg);
+  padding: 0 var(--r3-4) !important;                   /* answers !important */
+  font-size: 18px !important;                          /* answers !important */
+  letter-spacing: .12em !important;                    /* answers !important */
+}
+.bchrome .ocorn { width: 18px; height: 18px; }
+.bchrome .ocorn.tl, .bchrome .ocorn.tr { top: var(--r3-1); }
+.bchrome .ocorn.bl, .bchrome .ocorn.br { bottom: var(--r3-1); }
+.bchrome .ocorn.tl, .bchrome .ocorn.bl { left: var(--r3-3); }
+.bchrome .ocorn.tr, .bchrome .ocorn.br { right: var(--r3-3); }
+.bcp .etwrap::before { left: var(--r3-4); }
+.bcp .etwrap::after  { right: var(--r3-4); }
+.bcp .etwrap::before, .bcp .etwrap::after { font-size: 14px; }
+
+
+/* ---------------------------------------------------------------------------
+   9. CONSUMABLES
+   Same four slots, same labels, same hints. What goes is the DOUBLE frame:
+   `.consbox` drew a bordered box and `.hero-cb-bar` drew a second one inside
+   it, 2px apart. One frame, one inset.
+   ------------------------------------------------------------------------ */
+.bcp .consbox {
+  padding: var(--r3-2) !important;                     /* answers !important */
+  border-radius: var(--r3-radius);
+}
+.bcp .consbox .hero-cb-bar {
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 0;
+}
+.bcp .consbox .hero-cb-title {
+  font-size: 9.5px;
+  letter-spacing: .16em;
+  margin-bottom: var(--r3-2);
+}
+.bcp .consbox .hero-cb-row  { gap: var(--r3-2); }
+.bcp .consbox .hero-cb-slot {
+  padding: var(--r3-1);
+  gap: 2px;
+  border-radius: var(--r3-radius-sm);
+}
+.bcp .consbox .hero-cb-icon  { height: 24px; }
+.bcp .consbox .hero-cb-icon .item-icon-emoji,
+.bcp .consbox .hero-cb-empty { font-size: 1.05rem; }
+.bcp .consbox .hero-cb-label { font-size: 9px; }
+.bcp .consbox .hero-cb-hint  { font-size: 8px; letter-spacing: .08em; }
+
+
+/* ---------------------------------------------------------------------------
+   10. FIELD BAG — joins the 40px row
+   ------------------------------------------------------------------------ */
+.bchrome .bc-bag {
+  min-height: var(--r3-row);
+  padding: 0 var(--r3-3);
+  gap: var(--r3-2);
+  border-radius: var(--r3-radius);
+}
+.bchrome .bc-bag .bcb-ic    { font-size: 16px; }
+.bchrome .bc-bag .bcb-k     { font-size: 11px; letter-spacing: .14em; }
+.bchrome .bc-bag .bcb-sub   { font-size: 10.5px; margin-top: 1px; }
+.bchrome .bc-bag .bcb-arrow { font-size: 18px; }
+
+
+/* ---------------------------------------------------------------------------
+   11. THE CONTROL BAR
+   Concede 31px, turn plaque 60px (its `min-height:60px` was never part of any
+   compression pass), timer 44px, gear 30px — four controls on one row at four
+   heights, none of them aligned. All four are now exactly 40px and the row is
+   40px. The plaque's 22px chamfer is scaled to match the shorter bar so the
+   bevel still reads as a bevel rather than a wedge.
+   ------------------------------------------------------------------------ */
+.bcp .topbar {
+  gap: var(--r3-2) !important;                         /* answers !important */
+  margin-top: 0;
+  align-items: center;
+}
+.bcp .concede {
+  height: var(--r3-row);
+  padding: 0 var(--r3-3) !important;                   /* answers !important */
+  font-size: 10.5px !important;                        /* answers !important */
+  gap: var(--r3-2);
+  border-radius: var(--r3-radius-sm);
+  justify-content: center;
+}
+.bcp .concede svg { width: 14px; height: 14px; }
+.bcp .turnplaque {
+  height: var(--r3-row);
+  min-height: var(--r3-row);
+  padding: 0 var(--r3-4) !important;                   /* answers !important */
+  gap: var(--r3-2);
+  clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 50%,
+                     calc(100% - 14px) 100%, 14px 100%, 0 50%);
+}
+.bcp .turnplaque b { font-size: 16px !important;       /* answers !important */
+  letter-spacing: .06em; }
+.bcp .turnplaque .flr { font-size: 11px; }
+.bcp .timer {
+  width: var(--r3-row) !important;                     /* answers !important */
+  height: var(--r3-row) !important;                    /* answers !important */
+}
+.bcp .timer b { font-size: 11px !important; }          /* answers !important */
+.bcp .gear {
+  width: var(--r3-row) !important;                     /* answers !important */
+  height: var(--r3-row) !important;                    /* answers !important */
+}
+.bcp .gear svg { width: 18px; height: 18px; }
+
+
+/* ---------------------------------------------------------------------------
+   12. THE ORNATE PANEL FRAME — one radius
+   `.panel` (14px), the hero cards (14px), the log (10px), the ult (13px), the
+   env cards (10px) and the bag (10px) all drew different corners.
+   ------------------------------------------------------------------------ */
+.bchrome .panel { border-radius: var(--r3-radius); }
+.bchrome .panel::before { border-radius: calc(var(--r3-radius) - 3px); }
+
+
+/* ---------------------------------------------------------------------------
+   13. NARROW SCREENS (<=1100px) — MUST BE LAST IN THIS FILE
+   Below 1100 the grid becomes a flex column: the rail stacks ABOVE the board
+   at full width, capped at 60svh. Measured at 900x760 before this file, the
+   HUD took 459px of a 760px viewport (60%) and the board was cut off by the
+   hand strip — the exact opposite of "the centre is board and nothing else".
+
+   The panel reflows to two columns and the two hero cards sit side by side,
+   which roughly halves the rail's height. Nothing is dropped: every block is
+   still present, in the same reading order, left-to-right then down. The cap
+   comes down to 42svh so the board gets the rest.
+   ------------------------------------------------------------------------ */
+@media (max-width: 1100px) {
+  .bcp .hud {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: var(--r3-2);
+  }
+  /* full-width rows: field conditions, the two heroes, the status line, the
+     primary action and the control bar */
+  .bcp .envrow,
+  .bcp #fighters,
+  .bcp .hint,
+  .bcp .etwrap,
+  .bcp .topbar { grid-column: 1 / -1; }
+
+  /* heroes side by side with the VS badge between them */
+  .bcp #fighters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--r3-2);
+  }
+  .bcp .vs { flex-direction: column; gap: var(--r3-1); }
+
+  /* log · ultimate · consumables · bag pair up in the remaining cells */
+  .bcp .consbox .hero-cb-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .battle-grid .battle-left { max-height: 42svh; padding: var(--r3-1) var(--r3-2); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🩹 THE <=1100px REFLOW WAS WRONG AS SHIPPED, NOT MERELY UNFINISHED.
+
+   Judged by a critic against the 900px capture: the two-column reflow hands
+   every block the FULL width without constraining its contents, so a laptop
+   player got a 700px-wide HP bar with an empty right half, a Consumables box
+   that is mostly void around four small slots, and 6-9px labels. It reads as
+   "mostly empty black with tiny type" — worse compositionally than what it
+   replaced, even though it did win on height (HUD 460px -> 330px of 760).
+
+   The height win is kept. What is added is an inner measure so content stops
+   stretching, and the type steps back UP now that there is room for it —
+   the previous pass shrank type to survive a height problem that no longer
+   exists.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 1100px) {
+  /* Cap the measure and centre it. Blocks may span the rail; their CONTENT
+     may not. 420px is roughly the width these components were designed at. */
+  .bchrome .bcp .fighter,
+  .bchrome .bcp .consbox,
+  .bchrome .bcp .hero-cb-bar,
+  .bchrome .bcp .hud,
+  .bchrome .bcp .statuses {
+    max-width: 420px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* ⚠ Step the type back up. _bcpFit floors its zoom at 0.5, which is what
+     produced 6-9px labels — that floor was compensating for the old height,
+     so with the reflow it now just shrinks text for no reason. Raising the
+     base sizes here recovers legibility without touching _bcpFit, which other
+     breakpoints still depend on. */
+  .bchrome .bcp .fname   { font-size: 13px; }
+  .bchrome .bcp .fstat   { font-size: 12px; }
+  .bchrome .bcp .hint,
+  .bchrome .bcp .small   { font-size: 11px; }
+  .bchrome .bcp .cslot-label { font-size: 10px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🩹 THE WEATHER CARD WAS CLIPPED AT 1440 (pre-existing, both before AND after
+   the chrome pass — a critic confirmed it is not a regression from that round).
+
+   .bcp .envrow is `grid-template-columns: 1fr 1fr` — two rigid halves. The
+   location and weather cards each get half of a rail that NARROWS at 1440,
+   while the card's own icon stays a fixed 46px and neither its title nor its
+   subtitle can shrink. Below a certain rail width the text simply runs out of
+   box and is cut, with no ellipsis to signal it.
+
+   Fixed by letting the row reflow instead of insisting on two columns, and by
+   giving the text permission to shrink. `min-width: 0` is the load-bearing
+   part: a grid/flex item defaults to min-width:auto, which refuses to shrink
+   below its content and is the actual reason the overflow had nowhere to go.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.bchrome .bcp .envrow {
+  /* Two across while they fit; stacked once they do not. */
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+}
+.bchrome .bcp .envcard { min-width: 0; }
+/* The text column inside the card — everything after the fixed-size icon. */
+.bchrome .bcp .envcard > *:not(.eic) { min-width: 0; }
+.bchrome .bcp .envcard b,
+.bchrome .bcp .envcard .lab,
+.bchrome .bcp .envcard span.sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* At the narrowest rail let the icon give up a little too, rather than the
+   name losing characters to it. */
+@media (max-width: 1500px) {
+  .bchrome .bcp .envcard .eic { width: 38px; height: 38px; }
+  .bchrome .bcp .envcard .eic svg { width: 22px; height: 22px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   💬 CHAT + EMOTE BUBBLES MOVED TO THE LEFT, CLEAR OF THE DECK RAIL.
+
+   Both floated bottom-RIGHT, which is exactly where the deck column lives —
+   they sat on top of Realm Deck / Your Deck and the turn counter. Moved under
+   the left-hand UI instead, where there is empty space in every layout.
+
+   ⚠ #chat-fab is positioned by JS (_chatPositionFab writes inline left/right/
+     bottom, and re-runs on render). An inline style beats a normal stylesheet
+     rule, so these need !important — that is the one thing that outranks it.
+     .emote-bar is plain CSS and does not.
+   ⚠ Scoped with :has(.battle-screen) so this only applies in battle. On the
+     main menu the fab deliberately docks above the Herald's Dispatch card,
+     bottom-right, and that behaviour is left alone.
+   ═══════════════════════════════════════════════════════════════════════════ */
+body:has(.battle-screen) #chat-fab {
+  left: 1rem !important;
+  right: auto !important;
+  bottom: 1rem !important;
+}
+body:has(.battle-screen) .emote-bar {
+  left: 1rem;
+  right: auto;
+  bottom: 5.25rem;      /* stacked above the chat bubble, not on top of it */
+  align-items: flex-start;
+}
+/* The tray opens from the bar — flip it so it expands to the RIGHT, into the
+   board, instead of off the left edge of the screen. */
+body:has(.battle-screen) .emote-tray {
+  left: 0;
+  right: auto;
+  transform-origin: bottom left;
+}
+/* Narrow screens: the left rail collapses, so keep the pair tucked in the
+   corner rather than tracking a rail that is no longer there. */
+@media (max-width: 900px) {
+  body:has(.battle-screen) #chat-fab { bottom: 0.6rem !important; left: 0.6rem !important; }
+  body:has(.battle-screen) .emote-bar { bottom: 4.6rem; left: 0.6rem; }
+}

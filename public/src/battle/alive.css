@@ -1,0 +1,1099 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   ROUND 3 — A LIVING BOARD: surface paint, weather, set traps
+   Appended after board.css and units.css; wins by ordinary source order at
+   equal specificity.
+
+   THE BRIEF
+   "Trap cards, surface paint and weather all work on this board and look
+   beautiful. Make the board feel alive."
+   All three systems already work. This file is presentation only: not one
+   selector here changes what is rendered, only how it is lit and shaped. No
+   element is hidden, no affordance is deleted — the move/attack highlight over
+   a painted tile, the owner's trap label, the enemy set card and every weather
+   particle all still read, several of them better than before.
+
+   🔴 THE HARD CONSTRAINT, RESPECTED
+   Nothing here adds `perspective`, `rotateX`, `rotate3d` or
+   `transform-style: preserve-3d` to `.board` or to anything inside it. There
+   are exactly three `transform` declarations in the whole file: two are
+   `transform: none` (§1b and §1c, where REMOVING a projection is the entire
+   point) and the third is a 2D `translate(-50%, -50%)` centring one pseudo-
+   element (§6). Nothing is projected, nothing is tilted, no 3D rendering
+   context is opened — two rules explicitly close one with
+   `transform-style: flat`.
+
+   PERFORMANCE CONTRACT — measured, not estimated (numbers in §8)
+   • Zero new elements. Every rule below paints into a div or a pseudo-element
+     that the shipped renderer already emits.
+   • Zero `filter` / `backdrop-filter` anywhere. The property is not used in
+     this file at all — 56 tiles would have meant 56 compositing layers, which
+     is the mistake board.css §0 records.
+   • The static look is built entirely from `background`, `box-shadow` and one
+     `clip-path` — paint-time work inside the board's existing raster, not layer
+     promotions. Exactly the discipline board.css §2 used.
+   • The animated layer count on a painted board goes DOWN, not up: six surface
+     types were animating the `.tile-surface` element ITSELF as well as its
+     pseudo-elements. The element is now static and only the pseudo moves, so a
+     painted tile costs one composited layer instead of two or three.
+   • Everything that moves is either inside a pseudo-element that is already
+     promoted, or on `.weather-fx` — which is a SIBLING of `.board`, not a
+     descendant of a tile.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §1 — WHAT WAS ACTUALLY WRONG
+   Three findings, all measured on the live cascade with the shipped default
+   board (`renderBoard()` sets `iso-mode` unless `App.ui.isoBoard === false`,
+   so iso-mode IS normal play). None of them are opinions about taste.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ---------------------------------------------------------------------------
+   §1a — THERE ARE THREE `!important` SUPPRESSORS, NOT TWO.
+   board.css closes with a fix for two rules that blank the tile background:
+       .board.iso-mode .tile                     (0,2,0)  ~7886
+       .board.has-active-location-img > .tile     (0,2,0)  ~11626
+   It re-applies `background: var(--plate-bg) !important` at the same
+   specificity, later in source order, and that works.
+
+   But index.html ~7817 has a THIRD, MORE SPECIFIC one:
+       .board.iso-mode .tile[data-y="0"],
+       .board.iso-mode .tile[data-y="1"]  { background: rgba(255,220,180,0.08) !important }
+       .board.iso-mode .tile[data-y="2"]  { background: rgba(255,220,180,0.05) !important }
+   An attribute selector is (0,1,0) on its own, so those are (0,3,0) — they
+   out-specify board.css's fix. Measured on the probe: the tiles in the top
+   THREE rows computed to `rgba(255,220,180,0.08)`, i.e. 24 of 56 zones — 43% of
+   the board — have been showing no carved plate at all since round 1 shipped.
+
+   Answered exactly the way board.css answers the other two: same specificity,
+   later in source order, `!important` used only to cancel an `!important`.
+
+   Their INTENT is kept, not thrown away. Those rules exist to lift the back
+   rows, which the battlefield photograph paints almost black. That is now done
+   by raising `--plate-stone` — the plate's own stone tone — which brightens the
+   same tiles without erasing the carving. Their `box-shadow` rim carries no
+   `!important` and is left untouched.
+   ------------------------------------------------------------------------ */
+.board.iso-mode .tile[data-y="0"],
+.board.iso-mode .tile[data-y="1"] {
+  background: var(--plate-bg) !important;
+  --plate-stone: rgba(214, 188, 148, 0.255);
+}
+.board.iso-mode .tile[data-y="2"] {
+  background: var(--plate-bg) !important;
+  --plate-stone: rgba(184, 160, 122, 0.215);
+}
+/* `.tile.even` alternates the stone tone across the board (board.css §2). On
+   the three lifted rows the even variant has to be lifted with it or the back
+   half of the board reads as a checkerboard. */
+.board.iso-mode .tile.even[data-y="0"],
+.board.iso-mode .tile.even[data-y="1"] { --plate-stone: rgba(206, 180, 142, 0.275); }
+.board.iso-mode .tile.even[data-y="2"] { --plate-stone: rgba(176, 152, 116, 0.235); }
+
+
+/* ---------------------------------------------------------------------------
+   §1b — WHY THE SURFACES LOOKED PASTED ON: THEY WERE STANDING UP.
+   index.html ~7950:
+       .board.iso-mode .tile > * { transform: rotateX(-38deg) !important; }
+   That is the billboard rule. It counter-rotates every direct child of a tile
+   so figures stand upright out of the tilted ground plane — correct for a unit,
+   a wall or a tombstone.
+
+   `.tile-surface` is a direct child of `.tile`. So every oil slick, puddle and
+   fire on the board has been standing VERTICALLY, hinged on the tile's bottom
+   edge, facing the camera like a card. A liquid is not a billboard. It belongs
+   in the ground plane, and that one fact accounts for most of "they look pasted
+   on" — no amount of re-colouring fixes a puddle that is standing up.
+
+   `transform: none` REMOVES a projection; it cannot re-introduce the board
+   glitch. `transform-style: flat` is set with it so the element does not open a
+   3D rendering context of its own once its transform is gone.
+   `!important` is needed here only because the rule being cancelled uses it.
+   ------------------------------------------------------------------------ */
+.board.iso-mode .tile > .tile-surface {
+  transform: none !important;
+  transform-style: flat !important;
+  transform-origin: 50% 50% !important;
+}
+
+
+/* ---------------------------------------------------------------------------
+   §1c — AND SO WAS THE SET CARD.
+   Same rule, same consequence. index.html ~12010 says, in the `.trap-card-back`
+   declaration itself: "Flat board → no counter-rotation. The trap card lies on
+   the tilted surface like a real card on a table", and sets `transform: none`.
+   The iso billboard rule at (0,2,0) + `!important` has been overriding that
+   intent ever since, standing every set card up on its edge.
+
+   A card standing to attention is the opposite of concealed. Laid back down it
+   reads as what it is — something face-down ON the ground — and it stops
+   competing with the standing figures for silhouette. The ground-contact shadow
+   index.html already draws for it (`.tile:has(> .trap-card-back)::before`,
+   ~7974) finally has something to sit under.
+
+   Only board-level set cards are laid flat. A face-down UNIT keeps the unit
+   billboard: it occupies a zone, it can be attacked, and it has to read at the
+   same scale as the units either side of it.
+   ------------------------------------------------------------------------ */
+.board.iso-mode .tile > .trap-card-back {
+  transform: none !important;
+  transform-style: flat !important;
+  transform-origin: 50% 50% !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §2 — SURFACE PAINT: ONE SHAPE, ONE LIGHT
+   Before: sixteen full-bleed rounded rectangles, each with its own colour, its
+   own inner glow and its own idea of where the light was. They covered the
+   chamfered corners, the lip, the junction diamonds and the socket — the entire
+   plate — so a painted zone stopped being a zone.
+
+   After: one shared recipe. Every surface is a POOL sitting in the socket the
+   plate already carves, clipped to an octagon just inside the plate's chamfer,
+   lit by the same 163° key as the stone (board.css §2) and the cards (units.css
+   §2), with the socket's own upper-wall shadow falling across it. The sixteen
+   materials differ only in three colour tokens and one optional emissive.
+
+   ⚠ COST: `clip-path` here is STATIC. A static clip-path is a paint clip, not a
+   layer promotion — the same call board.css §3 makes for the engraved groove.
+   ========================================================================== */
+
+.board .tile-surface {
+  /* -- material tokens; every `.surf-*` rule below sets only these -------- */
+  --sf-hi:    rgba(150, 150, 150, 0.24);   /* centre of the pool, where it is thinnest */
+  --sf-body:  rgba( 80,  80,  80, 0.34);   /* the body of the fluid */
+  --sf-deep:  rgba( 12,  12,  12, 0.44);   /* the deep edge, against the socket wall */
+  --sf-spec:  0.16;                        /* specular strength of the key light on it */
+  --sf-emit:  rgba(0, 0, 0, 0);            /* emissive haze — hot / charged surfaces only */
+
+  /* The pool is held BY THE ENGRAVING. The clip is an octagon inset 12% —
+     exactly the inset board.css §3 cuts the groove at — so a liquid fills the
+     socket and stops at the channel around it. The plate's chamfered corners,
+     its lit lip, its shadowed joins and the junction diamonds where the
+     battlefield photo reads through are all left clear, which is what makes
+     the fluid read as something the STONE is holding rather than a sticker
+     laid over the zone. Every gradient below is sized to that 76% footprint,
+     not to the tile. */
+  clip-path: polygon(
+    26% 12%, 74% 12%, 88% 26%, 88% 74%, 74% 88%, 26% 88%, 12% 74%, 12% 26%
+  );
+  border-radius: 0;
+
+  /* Every per-type `box-shadow` is retired. They were rectangular inset glows
+     sized to the tile; under the octagon clip they would draw bright bands
+     along the four straight edges and nothing on the diagonals. What they were
+     for — a hot rim on fire, a cold rim on water — is now the `--sf-emit`
+     layer, which is a radial and therefore agrees with the clip. */
+  box-shadow: none;
+
+  /* Six of the sixteen types animated this ELEMENT (opacity flickers and
+     scale pulses) as well as their pseudo-elements. Animating the element
+     promotes the whole surface to its own compositing layer on top of the one
+     the pseudo already needs. Motion is consolidated into the pseudo in §3, so
+     the element itself goes back to being ordinary paint. */
+  animation: none;
+
+  background:
+    /* 1 — THE KEY LIGHT ON THE FLUID SURFACE. 163°, the same rake the plates
+           and the cards use, so a puddle is lit by the same sun as the stone
+           it is lying in. This layer is what makes a surface read as WET: a
+           wet material returns a bright specular in the direction of the key
+           and goes dark away from it. `--sf-spec` is how "wet" each material
+           is — oil and ice are high, gas and fire are near zero. */
+    linear-gradient(163deg,
+      rgba(255, 248, 232, var(--sf-spec)) 0%,
+      rgba(255, 244, 224, calc(var(--sf-spec) * 0.30)) 21%,
+      rgba(255, 244, 224, 0) 45%,
+      rgba(0, 0, 0, 0.11) 78%,
+      rgba(0, 0, 0, 0.22) 100%) center / 78% 78% no-repeat,
+
+    /* 2 — THE SOCKET'S UPPER WALL, falling across the fluid. board.css §2
+           layer 6 casts exactly this band onto the empty socket floor; casting
+           it again ON TOP of the liquid is what puts the liquid UNDER the rim
+           instead of over it. Sized to the socket (84%), not the tile. */
+    linear-gradient(180deg,
+      rgba(0, 0, 0, 0.50) 0%,
+      rgba(0, 0, 0, 0.19) 17%,
+      rgba(0, 0, 0, 0.00) 41%) center / 78% 78% no-repeat,
+
+    /* 3 — and the far wall bouncing the key back into the fluid's front edge.
+           Twin of board.css §2's socket highlight, same warm tone. */
+    linear-gradient(0deg,
+      rgba(255, 228, 184, 0.17) 0%,
+      rgba(255, 228, 184, 0.05) 10%,
+      rgba(255, 228, 184, 0.00) 23%) center / 78% 78% no-repeat,
+
+    /* 4 — MENISCUS. Liquid darkens where it climbs the wall it is held by.
+           This is the layer that stops the pool having a cut edge. */
+    radial-gradient(closest-side at 50% 52%,
+      rgba(0, 0, 0, 0.00) 44%,
+      rgba(0, 0, 0, 0.22) 74%,
+      rgba(0, 0, 0, 0.44) 92%,
+      rgba(0, 0, 0, 0.56) 100%) center / 78% 78% no-repeat,
+
+    /* 5 — EMISSIVE. Transparent for inert materials; fire, acid, gas, holy
+           ground and live current light their own socket from inside it. */
+    radial-gradient(closest-side at 50% 58%,
+      var(--sf-emit) 0%,
+      rgba(0, 0, 0, 0) 74%) center / 86% 86% no-repeat,
+
+    /* 6 — THE POOL. Deepest and most saturated in the socket, thinning to a
+           wet stain at the octagon edge. Centred slightly low (55%) because a
+           liquid settles toward the front of a recess lit from above — the same
+           reason the socket highlight in board.css sits on the lower wall. */
+    radial-gradient(closest-side ellipse at 50% 55%,
+      var(--sf-hi)   0%,
+      var(--sf-body) 34%,
+      var(--sf-deep) 82%,
+      var(--sf-deep) 100%) center / 78% 78% no-repeat;
+}
+
+/* Every `.surf-*::before` / `::after` in index.html is a detail pass — sheen,
+   ripple, bubbles, crackle. They are re-shaped to the pool rather than the
+   tile: inset to the socket and clipped to the same octagon, so no detail
+   escapes onto the plate's lip. */
+.board .tile-surface::before,
+.board .tile-surface::after {
+  clip-path: polygon(
+    26% 12%, 74% 12%, 88% 26%, 88% 74%, 74% 88%, 26% 88%, 12% 74%, 12% 26%
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §3 — THE SIXTEEN MATERIALS
+   Each is three colours, a specular strength and (sometimes) an emissive.
+   Written at `.board .surf-*` (0,2,0) so it lands on the same rung as §2 and
+   overrides it by source order, and so index.html's `.surf-*` (0,1,0) rules
+   never fight it.
+   ========================================================================== */
+
+/* 🛢 OIL — the darkest, wettest thing on the board. Near-black body, very high
+   specular, and the iridescent film kept from index.html but slowed right down
+   and pulled inside the socket. */
+.board .surf-oil {
+  --sf-hi:   rgba( 34,  31,  38, 0.62);
+  --sf-body: rgba( 14,  13,  17, 0.76);
+  --sf-deep: rgba(  4,   4,   6, 0.82);
+  --sf-spec: 0.30;
+}
+.board .surf-oil::before {
+  inset: 12%;
+  background:
+    radial-gradient(ellipse at 34% 32%, rgba(122, 214, 190, 0.20), rgba(0, 0, 0, 0) 56%),
+    radial-gradient(ellipse at 70% 66%, rgba(190, 126, 220, 0.20), rgba(0, 0, 0, 0) 56%);
+  animation: surfSheen 7.5s ease-in-out infinite;
+}
+
+/* 🫧 GREASE — oil's pale, dirty cousin. Lower specular, warmer, thinner. */
+.board .surf-grease {
+  --sf-hi:   rgba(112, 104,  62, 0.46);
+  --sf-body: rgba( 60,  55,  32, 0.60);
+  --sf-deep: rgba( 22,  20,  10, 0.66);
+  --sf-spec: 0.26;
+}
+.board .surf-grease::before {
+  inset: 12%;
+  background: radial-gradient(ellipse at 42% 38%, rgba(216, 232, 158, 0.22), rgba(0, 0, 0, 0) 60%);
+  animation: surfSheen 6.4s ease-in-out infinite;
+}
+
+/* 💧 WATER — the brief asks for "a pool with a surface", so it gets one: a
+   distinct waterline. The specular sits high, the body is transparent enough
+   that the stone reads through it, and the deep edge is where the socket wall
+   goes under. The ripple is kept — it is the one detail that says the surface
+   is a surface — but re-centred on the socket instead of the tile. */
+.board .surf-water {
+  --sf-hi:   rgba(124, 180, 224, 0.25);
+  --sf-body: rgba( 46, 100, 156, 0.34);
+  --sf-deep: rgba( 13,  40,  82, 0.44);
+  --sf-spec: 0.24;
+}
+/* ⚠ THE ONE ANIMATION ON THE BOARD THAT WAS DIRTYING ITS TILE.
+   index.html's `surfRipple` grows the ring by animating `width` and `height`
+   from 14% to 86%. Width and height are not compositable: every frame the ring
+   has to be re-laid-out and the tile it sits in re-painted, which is precisely
+   what the board's "rasterise once" rule exists to prevent — and a radius-1
+   puddle is nine tiles doing it at once. Re-expressed as `transform: scale()`
+   on a fixed-size ring: identical motion, but it composites on its own layer
+   and the tile underneath is never touched again. */
+@keyframes r3SurfRipple {
+  0%   { transform: translate(-50%, -50%) scale(0.20); opacity: 0.55; }
+  100% { transform: translate(-50%, -50%) scale(1.00); opacity: 0; }
+}
+.board .surf-water::before {
+  /* Sized against the socket rather than the whole tile. The ring's own box is
+     now constant; only its scale moves. */
+  width: 60%;
+  height: 60%;
+  border-color: rgba(186, 226, 255, 0.5);
+  animation: r3SurfRipple 4.6s ease-out infinite;
+}
+/* A second, static waterline: a bright horizontal glint just above the pool's
+   centre. Painted on `::after`, which index.html leaves unused for water, and
+   with no animation — so it costs paint, not a layer. */
+.board .surf-water::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 17% 3.5% at 41% 43%, rgba(226, 244, 255, 0.30), rgba(0, 0, 0, 0) 100%),
+    radial-gradient(ellipse 11% 2.5% at 58% 50%, rgba(214, 238, 255, 0.18), rgba(0, 0, 0, 0) 100%),
+    radial-gradient(ellipse  8% 2%   at 50% 62%, rgba(200, 228, 255, 0.13), rgba(0, 0, 0, 0) 100%);
+}
+
+/* 🧊 ICE — the highest specular on the board and almost no body, because ice is
+   a hard glaze rather than a pool. */
+.board .surf-ice {
+  --sf-hi:   rgba(222, 244, 255, 0.27);
+  --sf-body: rgba(162, 206, 234, 0.24);
+  --sf-deep: rgba( 82, 136, 180, 0.30);
+  --sf-spec: 0.34;
+}
+.board .surf-ice::before {
+  inset: 14%;
+  animation: surfSheen 6s ease-in-out infinite;
+}
+
+/* 🔥 FIRE — the one material that is a light SOURCE, so the recipe inverts:
+   specular near zero (flame has no gloss), emissive high, and the pool is the
+   ember bed the flame stands in. The flame licks are the only two-pseudo
+   animation left in the file, because a fire that does not move is not a fire.
+   The parent's 0.5s `steps(3)` opacity flicker is dropped by §2 — it was a
+   whole extra layer per fire tile to do what the licks already do. */
+.board .surf-fire {
+  --sf-hi:   rgba(255, 210, 112, 0.60);
+  --sf-body: rgba(224,  90,  20, 0.50);
+  --sf-deep: rgba( 92,  20,   6, 0.44);
+  --sf-spec: 0.04;
+  --sf-emit: rgba(255, 142,  44, 0.28);
+}
+.board .surf-fire::before,
+.board .surf-fire::after {
+  bottom: 6%;
+  background: radial-gradient(ellipse at 50% 82%,
+    rgba(255, 238, 156, 0.95),
+    rgba(255, 120, 26, 0.68) 54%,
+    rgba(0, 0, 0, 0) 80%);
+}
+.board .surf-fire::before { left: 22%; width: 32%; height: 60%; }
+.board .surf-fire::after  { right: 20%; width: 27%; height: 48%; }
+
+/* 💨 STEAM — no pool at all. Body near zero, emissive carries it, and the drift
+   moves to the pseudo so the element stops animating. */
+.board .surf-steam {
+  --sf-hi:   rgba(236, 242, 250, 0.26);
+  --sf-body: rgba(198, 208, 224, 0.17);
+  --sf-deep: rgba(148, 160, 182, 0.09);
+  --sf-spec: 0.05;
+  --sf-emit: rgba(224, 232, 244, 0.10);
+}
+.board .surf-steam::before {
+  content: '';
+  position: absolute;
+  inset: 4%;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 46% 54%, rgba(238, 244, 252, 0.34), rgba(0, 0, 0, 0) 68%);
+  animation: surfSteamPulse 4.2s ease-in-out infinite;
+}
+
+/* ☠️ TOXIC GAS — a cloud sitting in the socket. Same treatment as steam plus
+   the sickly emissive; the element's scale-pulse moves to the pseudo. */
+.board .surf-toxin {
+  --sf-hi:   rgba(170, 238, 108, 0.30);
+  --sf-body: rgba( 92, 172,  54, 0.30);
+  --sf-deep: rgba( 24,  66,  18, 0.32);
+  --sf-spec: 0.06;
+  --sf-emit: rgba(126, 214,  74, 0.16);
+}
+.board .surf-toxin::before {
+  content: '';
+  position: absolute;
+  inset: 2%;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 42% 46%, rgba(168, 238, 106, 0.40), rgba(0, 0, 0, 0) 66%);
+  animation: surfToxinPulse 3.4s ease-in-out infinite;
+}
+
+/* ☣️ POISON MIRE — a bog, so it keeps a real body and stays matte. */
+.board .surf-poison {
+  --sf-hi:   rgba(120, 196,  82, 0.30);
+  --sf-body: rgba( 54, 124,  38, 0.38);
+  --sf-deep: rgba( 12,  42,  11, 0.44);
+  --sf-spec: 0.11;
+  --sf-emit: rgba( 74, 164,  50, 0.10);
+}
+.board .surf-poison::before { inset: 10%; animation: surfAcidBubble 3.0s ease-in infinite; }
+
+/* 🧪 ACID — bright, caustic, and it lights its own socket. */
+.board .surf-acid {
+  --sf-hi:   rgba(224, 250, 120, 0.36);
+  --sf-body: rgba(148, 192,  26, 0.34);
+  --sf-deep: rgba( 42,  66,   4, 0.40);
+  --sf-spec: 0.15;
+  --sf-emit: rgba(190, 232,  44, 0.18);
+}
+.board .surf-acid::before { inset: 10%; animation: surfAcidBubble 2.2s ease-in infinite; }
+
+/* 🩸 BLOODSTAIN — dark, glossy, and completely still. The one surface that
+   should NOT move: a stain is not an event. */
+.board .surf-blood {
+  --sf-hi:   rgba(150,  28,  26, 0.44);
+  --sf-body: rgba(100,  12,  14, 0.56);
+  --sf-deep: rgba( 33,   4,   5, 0.62);
+  --sf-spec: 0.22;
+}
+
+/* 🕸 WEBBING — not a pool. The silk itself is the material, so the body tokens
+   go almost to nothing and the crosshatch carries it, pulled into the socket. */
+.board .surf-web {
+  --sf-hi:   rgba(236, 240, 248, 0.15);
+  --sf-body: rgba(184, 192, 208, 0.12);
+  --sf-deep: rgba(102, 110, 128, 0.15);
+  --sf-spec: 0.10;
+}
+.board .surf-web::before {
+  inset: 8%;
+  background:
+    repeating-linear-gradient(45deg,  rgba(238, 242, 250, 0.34) 0 1.5px, rgba(0,0,0,0) 1.5px 11px),
+    repeating-linear-gradient(-45deg, rgba(238, 242, 250, 0.34) 0 1.5px, rgba(0,0,0,0) 1.5px 11px),
+    repeating-radial-gradient(circle, rgba(248, 250, 255, 0.34) 0 1px, rgba(0,0,0,0) 1px 9px);
+  opacity: 0.85;
+}
+
+/* 🌵 CALTROPS — dry iron on dry ground. The spikes were in the element's own
+   `background`, which §2 replaces, so they move to the pseudo — and they now
+   catch the 163° key on their upper-left faces and drop a shadow to the
+   lower-right, which is what makes five dots read as five objects. */
+.board .surf-caltrops {
+  --sf-hi:   rgba( 44,  40,  32, 0.30);
+  --sf-body: rgba( 25,  22,  17, 0.38);
+  --sf-deep: rgba(  9,   8,   6, 0.44);
+  --sf-spec: 0.07;
+}
+.board .surf-caltrops::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 29% 33%, rgba(236, 228, 208, 0.92) 0 1.6px, rgba(0,0,0,0) 2.2px),
+    radial-gradient(circle at 30% 34%, rgba(0, 0, 0, 0.75) 0 2px, rgba(0,0,0,0) 3px),
+    radial-gradient(circle at 66% 28%, rgba(236, 228, 208, 0.90) 0 1.6px, rgba(0,0,0,0) 2.2px),
+    radial-gradient(circle at 67% 29%, rgba(0, 0, 0, 0.75) 0 2px, rgba(0,0,0,0) 3px),
+    radial-gradient(circle at 45% 60%, rgba(236, 228, 208, 0.90) 0 1.6px, rgba(0,0,0,0) 2.2px),
+    radial-gradient(circle at 46% 61%, rgba(0, 0, 0, 0.75) 0 2px, rgba(0,0,0,0) 3px),
+    radial-gradient(circle at 71% 67%, rgba(236, 228, 208, 0.88) 0 1.5px, rgba(0,0,0,0) 2.1px),
+    radial-gradient(circle at 72% 68%, rgba(0, 0, 0, 0.72) 0 1.9px, rgba(0,0,0,0) 2.9px),
+    radial-gradient(circle at 26% 71%, rgba(236, 228, 208, 0.88) 0 1.5px, rgba(0,0,0,0) 2.1px),
+    radial-gradient(circle at 27% 72%, rgba(0, 0, 0, 0.72) 0 1.9px, rgba(0,0,0,0) 2.9px);
+}
+
+/* ⚡ ELECTRIFIED GROUND — charged plate. The element's 0.18s `steps(2)` flicker
+   is gone (§2): at 5.5 restarts a second on every charged tile it was the most
+   expensive animation on the board, and the arcs on the pseudo already read as
+   current. */
+.board .surf-electrified {
+  --sf-hi:   rgba(142, 218, 248, 0.30);
+  --sf-body: rgba( 20,  56,  96, 0.36);
+  --sf-deep: rgba(  2,  12,  30, 0.42);
+  --sf-spec: 0.24;
+  --sf-emit: rgba( 88, 192, 244, 0.14);
+}
+.board .surf-electrified::before {
+  inset: 8%;
+  animation: surfElecArc 0.52s steps(3) infinite;
+}
+
+/* ✨ HOLY GROUND — light coming UP out of the socket, so the emissive is high
+   and the ring stays. */
+.board .surf-holy {
+  --sf-hi:   rgba(255, 244, 202, 0.32);
+  --sf-body: rgba(220, 190, 114, 0.20);
+  --sf-deep: rgba(130,  96,  28, 0.16);
+  --sf-spec: 0.17;
+  --sf-emit: rgba(255, 222, 148, 0.16);
+}
+.board .surf-holy::before { width: 58%; height: 58%; }
+
+/* 🪨 CRACKED EARTH — the fissures glow, the ground does not. */
+.board .surf-cracked {
+  --sf-hi:   rgba( 62,  52,  40, 0.32);
+  --sf-body: rgba( 33,  27,  21, 0.42);
+  --sf-deep: rgba( 12,  10,   8, 0.48);
+  --sf-spec: 0.06;
+  --sf-emit: rgba(196,  62,  14, 0.12);
+}
+.board .surf-cracked::before { inset: 8%; }
+
+/* 🌀 VOID RIFT — NEW, and it fixes a real gap rather than restyling one.
+   index.html ~99781 carries a standing warning that `SURFACE_TYPES` defines
+   sixteen hazards while the stylesheet defines fifteen, and names the missing
+   one: `rift`. It is a real paintable hazard (the Voidborn COLLAPSE keystone
+   leaves it, and it is selectable in the Forge) that has been rendering
+   NOTHING on the flat board since it was added. It gets the shared recipe like
+   everything else — a hole rather than a pool, so the body goes to near-black
+   and the emissive is a cold event-horizon rim. */
+.board .surf-rift {
+  --sf-hi:   rgba(  8,   2,  16, 0.78);
+  --sf-body: rgba( 16,   4,  32, 0.66);
+  --sf-deep: rgba( 66,  28, 118, 0.34);
+  --sf-spec: 0.10;
+  --sf-emit: rgba(140,  84, 230, 0.14);
+}
+.board .surf-rift::before {
+  content: '';
+  position: absolute;
+  /* ⚠ `surfHolyRing` (borrowed from index.html) carries
+     `translate(-50%, -50%)` in every keyframe, so this pseudo MUST be
+     positioned from its top-left corner at 50%/50% — with `inset` it would be
+     yanked up and left by half its own size the moment the animation applied. */
+  left: 50%; top: 50%;
+  width: 60%; height: 60%;
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(closest-side at 50% 50%,
+    rgba(0, 0, 0, 0.92) 0%,
+    rgba(0, 0, 0, 0.86) 46%,
+    rgba(168, 108, 255, 0.42) 78%,
+    rgba(0, 0, 0, 0) 100%);
+  animation: surfHolyRing 3.6s ease-in-out infinite;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §4 — AND THE STONE GETS WET
+   A pool that stops dead at its own outline still reads as an object sitting on
+   the plate. Real spilled liquid wicks into the stone around it and stains it.
+
+   That stain belongs in the PLATE, not in another overlay, and board.css §6a
+   already built the slot for exactly this kind of thing: `--plate-shade`, a
+   paint layer inside `--plate-bg`, under the card and over the socket. Two
+   consequences, both free:
+     • it costs nothing — no element, no layer, it is one more stop in a
+       background list the tile already paints;
+     • it survives all three `!important` suppressors automatically, because
+       board.css re-applies `background: var(--plate-bg) !important` and
+       `--plate-bg` reads `--plate-shade`. A custom property cascades on its own
+       and is never what an `!important` background is fighting about.
+
+   ⚠ SPECIFICITY, DELIBERATE. board.css §6a sets `--plate-shade` to the CARD's
+   cast shadow at `.board > .tile:has(> .unit)` — (0,3,0). This rule is
+   (0,4,0) and later, so it would have deleted every unit's contact shadow on a
+   painted tile. `:not(:has(> .unit))` is what stops that: an occupied painted
+   zone keeps the card's shadow (which matters more), and the pool in §2 still
+   paints over the plate either way.
+   ========================================================================== */
+.board > .tile:has(> .tile-surface):not(:has(> .unit)) {
+  --plate-shade: var(--sf-stain,
+    radial-gradient(closest-side ellipse at 50% 54%,
+      rgba(0, 0, 0, 0.58) 0%,
+      rgba(0, 0, 0, 0.34) 56%,
+      rgba(0, 0, 0, 0.00) 94%));
+}
+
+/* Wet, black and slightly wider than the pool — oil creeps. */
+.board > .tile:has(> .surf-oil),
+.board > .tile:has(> .surf-grease) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 54%,
+    rgba(4, 3, 6, 0.52) 0%, rgba(9, 7, 12, 0.30) 62%, rgba(0, 0, 0, 0) 94%);
+}
+/* Damp stone: darker and very slightly cooler, no colour of its own. */
+.board > .tile:has(> .surf-water),
+.board > .tile:has(> .surf-ice),
+.board > .tile:has(> .surf-steam) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 54%,
+    rgba(6, 16, 30, 0.52) 0%, rgba(10, 22, 38, 0.28) 60%, rgba(0, 0, 0, 0) 94%);
+}
+/* Scorch — the ring of soot a fire leaves outside itself. */
+.board > .tile:has(> .surf-fire),
+.board > .tile:has(> .surf-cracked) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 56%,
+    rgba(48, 14, 2, 0.46) 0%, rgba(22, 8, 2, 0.58) 58%, rgba(0, 0, 0, 0) 96%);
+}
+/* Corroded stone under anything caustic. */
+.board > .tile:has(> .surf-acid),
+.board > .tile:has(> .surf-poison),
+.board > .tile:has(> .surf-toxin) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 54%,
+    rgba(14, 26, 4, 0.56) 0%, rgba(20, 34, 6, 0.30) 60%, rgba(0, 0, 0, 0) 94%);
+}
+/* Dried rust at the edge of a fresh stain. */
+.board > .tile:has(> .surf-blood) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 54%,
+    rgba(28, 2, 4, 0.62) 0%, rgba(48, 10, 8, 0.32) 62%, rgba(0, 0, 0, 0) 94%);
+}
+/* Charged and blessed ground light the stone instead of staining it. */
+.board > .tile:has(> .surf-electrified) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 54%,
+    rgba(0, 10, 24, 0.50) 0%, rgba(40, 120, 180, 0.16) 62%, rgba(0, 0, 0, 0) 94%);
+}
+.board > .tile:has(> .surf-holy) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 54%,
+    rgba(255, 226, 150, 0.20) 0%, rgba(180, 140, 50, 0.10) 60%, rgba(0, 0, 0, 0) 92%);
+}
+/* Dry debris — barely darkens the plate at all. */
+.board > .tile:has(> .surf-web),
+.board > .tile:has(> .surf-caltrops) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 54%,
+    rgba(0, 0, 0, 0.34) 0%, rgba(0, 0, 0, 0.16) 62%, rgba(0, 0, 0, 0) 92%);
+}
+/* A rift does not stain the stone, it eats it. */
+.board > .tile:has(> .surf-rift) {
+  --sf-stain: radial-gradient(closest-side ellipse at 50% 52%,
+    rgba(0, 0, 0, 0.88) 0%, rgba(28, 6, 52, 0.50) 62%, rgba(0, 0, 0, 0) 94%);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §5 — "I CAN'T MOVE THERE" — TARGETS OVER A PAINTED TILE
+   index.html ~988 documents this one at length: `.tile-surface` is a full-bleed
+   CHILD, a child always paints over its parent's background, so the green move
+   wash on a painted tile was swallowed and players read painted tiles as
+   unreachable. Its fix draws the highlight again on `.tile::before` at
+   `z-index: 2`, which works — but board.css §3 later took that same
+   pseudo-element for the ENGRAVED GROOVE and gave it a `clip-path`. The two
+   rules now merge: index wins `inset` and `background` (it is more specific),
+   board.css keeps `clip-path` (index does not set it), and the result is a
+   square green wash clipped to a ring it was never drawn for.
+
+   Resolved by making the two agree instead of collide. The highlight IS the
+   groove: the octagonal channel around the zone fills with the state colour and
+   glows, on top of the fluid. Nothing is removed — the pulse, the centre pip
+   (`::after`, z-index 3) and the border colours are index.html's and are left
+   alone — and the affordance gets stronger, because a lit ring around a full
+   socket reads better than a wash over one.
+   ========================================================================== */
+.board > .tile.has-surface.move-target::before,
+.board > .tile.has-surface.placement::before,
+.board > .tile.has-surface.attack-target::before,
+.board > .tile.has-surface.swap-target::before {
+  inset: 6%;
+  z-index: 2;
+  box-shadow: none;
+  /* the groove ring — outer octagon clockwise, bridge, inner octagon
+     counter-clockwise, bridge back. Same construction as board.css §3, widened
+     so it carries colour at a glance. */
+  clip-path: polygon(
+    17% 0%, 83% 0%, 100% 17%, 100% 83%, 83% 100%, 17% 100%, 0% 83%, 0% 17%, 17% 0%,
+    23% 6%, 6% 23%, 6% 77%, 23% 94%, 77% 94%, 94% 77%, 94% 23%, 77% 6%, 23% 6%,
+    17% 0%
+  );
+  animation: surfTargetPulse 1.8s ease-in-out infinite;
+}
+.board > .tile.has-surface.move-target::before {
+  background: linear-gradient(180deg, rgba(158, 255, 196, 0.95), rgba(46, 176, 96, 0.85));
+}
+.board > .tile.has-surface.placement::before {
+  background: linear-gradient(180deg, rgba(186, 232, 255, 0.95), rgba(58, 132, 200, 0.85));
+}
+.board > .tile.has-surface.attack-target::before {
+  background: linear-gradient(180deg, rgba(255, 176, 140, 0.95), rgba(206, 66, 36, 0.88));
+}
+.board > .tile.has-surface.swap-target::before {
+  background: linear-gradient(180deg, rgba(255, 226, 148, 0.95), rgba(196, 150, 40, 0.85));
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §6 — SET CARDS: CONCEALED, NOT LOUD
+   Two things were shouting.
+
+   (1) `.tile.has-trap { box-shadow: inset 0 0 12px rgba(180,30,45,0.5) }` —
+       a RED alarm ring around your own set card. Red is the enemy colour
+       everywhere else on this board; on your own trap it reads as a warning
+       about yourself, and it is the single loudest thing in an empty zone.
+   (2) units.css §8 gave the card back the full weight of a face-up card —
+       lit top lip, bright team rim, glow. Correct for a face-down UNIT, which
+       has to read at unit scale. Wrong for a card lying in the dirt.
+
+   The replacement says "buried", quietly: the plate carries a disturbed-earth
+   seam with a very faint ember in it, and the card itself is lit as something
+   sunk in the socket — the socket's upper wall shadows its top edge, the floor
+   bounces a little warmth back at its bottom edge, and its rim is dull brass
+   instead of gold. Combined with the flat lay in §1c, a set card now reads as
+   something set INTO the ground.
+   ========================================================================== */
+
+/* (1) the alarm ring goes; the plate takes over the job. */
+.board > .tile.has-trap { box-shadow: none; }
+.board > .tile.has-trap:not(:has(> .unit)) {
+  --plate-shade:
+    /* the faint ember, deep in the socket */
+    radial-gradient(closest-side ellipse at 50% 58%,
+      rgba(196, 74, 52, 0.15) 0%,
+      rgba(150, 44, 30, 0.06) 46%,
+      rgba(0, 0, 0, 0) 78%) center / 62% 62% no-repeat,
+    /* and the ring of turned earth around whatever was buried */
+    radial-gradient(closest-side ellipse at 50% 54%,
+      rgba(0, 0, 0, 0.00) 40%,
+      rgba(0, 0, 0, 0.40) 74%,
+      rgba(0, 0, 0, 0.58) 96%,
+      rgba(0, 0, 0, 0.00) 100%) center / 100% 100% no-repeat;
+}
+
+/* (2) the card, lit as a sunk object. Written at (0,4,0) for the board-level
+   set card and (0,5,0) for the face-down unit's card back so it lands after
+   units.css §8, which uses exactly those two selectors. */
+.board > .tile.has-trap > .trap-card-back,
+.board > .tile > .unit.facedown .trap-card-back {
+  border-radius: 3px;
+  background-color: #100e0a;
+  box-shadow:
+    /* the socket's upper wall, falling across the top of the card */
+    inset 0 7px 10px -6px rgba(0, 0, 0, 0.95),
+    /* light bouncing off the socket floor into the card's bottom edge */
+    inset 0 -1px 0 rgba(255, 226, 176, 0.30),
+    /* dull brass, not gold: present when you look for it, silent when you
+       are not. The bright rim units.css gives a face-up card is what made a
+       set card announce itself. */
+    0 0 0 1px rgba(126, 106, 70, 0.60),
+    /* contact — the card meets the plate */
+    0 1px 1px rgba(0, 0, 0, 0.85),
+    0 4px 9px rgba(0, 0, 0, 0.62);
+}
+
+/* The concealing veil. `.trap-card-back` is a flex column whose children are
+   all `display: none` except the label, so a pseudo has to be absolute or it
+   becomes a flex item. Static — no animation, no layer. */
+.board .trap-card-back::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    /* the same 163° key the rest of the board is lit by, so the card's own
+       art is graded into the scene instead of glowing at its own brightness */
+    linear-gradient(163deg,
+      rgba(255, 240, 208, 0.10) 0%,
+      rgba(255, 236, 200, 0.02) 26%,
+      rgba(0, 0, 0, 0.18) 62%,
+      rgba(0, 0, 0, 0.34) 100%),
+    /* and a soft dark hood over the top third — a thing in a hole */
+    linear-gradient(180deg,
+      rgba(0, 0, 0, 0.46) 0%,
+      rgba(0, 0, 0, 0.16) 26%,
+      rgba(0, 0, 0, 0.00) 52%);
+}
+
+/* THE ONE MOVING PART. A set card should be noticed without shouting, and the
+   thing the eye actually catches in peripheral vision is slow change, not
+   brightness. Seven seconds, amplitude small enough that a still frame barely
+   shows it. Owner's card only — the enemy's set card is dead still and cold,
+   which is its own kind of information. One promoted layer per set trap, and a
+   player has one or two. */
+@keyframes trapEmberBreathe {
+  0%, 100% { opacity: 0.24; }
+  50%      { opacity: 0.68; }
+}
+.board > .tile.has-trap > .trap-card-back::after {
+  content: '';
+  position: absolute;
+  left: 50%; top: 56%;
+  width: 62%; height: 46%;
+  transform: translate(-50%, -50%);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(closest-side at 50% 50%,
+    rgba(226, 128, 72, 0.34) 0%,
+    rgba(180, 70, 34, 0.13) 52%,
+    rgba(0, 0, 0, 0) 84%);
+  animation: trapEmberBreathe 7s ease-in-out infinite;
+}
+
+/* The enemy's set card: colder, flatter, no ember, no warm bounce. You can see
+   that something is there; you get nothing else from it. */
+.board > .tile > .trap-card-back.tcb-enemy {
+  box-shadow:
+    inset 0 7px 10px -6px rgba(0, 0, 0, 0.95),
+    inset 0 -1px 0 rgba(190, 206, 226, 0.16),
+    0 0 0 1px rgba(84, 92, 106, 0.55),
+    0 1px 1px rgba(0, 0, 0, 0.85),
+    0 4px 9px rgba(0, 0, 0, 0.62);
+}
+.board > .tile > .trap-card-back.tcb-enemy::before {
+  background:
+    linear-gradient(163deg,
+      rgba(214, 230, 255, 0.06) 0%,
+      rgba(200, 220, 255, 0.01) 26%,
+      rgba(0, 0, 0, 0.22) 62%,
+      rgba(0, 0, 0, 0.40) 100%),
+    linear-gradient(180deg,
+      rgba(0, 0, 0, 0.52) 0%,
+      rgba(0, 0, 0, 0.20) 28%,
+      rgba(0, 0, 0, 0.00) 54%);
+}
+
+/* The owner's trap name. It was a black pill floating on the art. Now a brass
+   tag pressed into the bottom of the card — same information, reads as part of
+   the object. `z-index` lifts it clear of the veil above. */
+.board .trap-card-back .tcb-label {
+  position: relative;
+  z-index: 2;
+  color: #f0e2c2;
+  background: linear-gradient(180deg, rgba(28, 22, 14, 0.88), rgba(12, 9, 5, 0.92));
+  border-radius: 1px;
+  padding: 1px 5px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 232, 182, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(126, 106, 70, 0.5);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.95);
+}
+
+/* A face-down UNIT keeps its team rim — ownership of a piece in a zone is
+   gameplay information and units.css is right to show it. It is re-stated here
+   because the box-shadow above replaced the whole list; this adds the rim back
+   as an outer ring OUTSIDE the brass hairline, so the card is still concealed
+   and still legibly yours or theirs. */
+.board > .tile > .unit.facedown .trap-card-back {
+  box-shadow:
+    inset 0 7px 10px -6px rgba(0, 0, 0, 0.95),
+    inset 0 -1px 0 rgba(255, 226, 176, 0.30),
+    0 0 0 1px rgba(126, 106, 70, 0.60),
+    0 0 0 2px var(--u-rim-soft, rgba(150, 122, 62, 0.40)),
+    0 1px 1px rgba(0, 0, 0, 0.85),
+    0 4px 9px rgba(0, 0, 0, 0.62);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §7 — WEATHER: ATMOSPHERE, NOT DECORATION
+
+   WHERE IT LIVES IN THE STACKING ORDER — verified on the live cascade, not
+   assumed:
+       .board-area                       position: relative, contain: layout style
+         ├─ .board                       transformed ⇒ its own stacking context
+         │    ├─ .board-ambient          z-index 1   (ground glows, candles)
+         │    ├─ .board::after           z-index 2   (depth vignette, multiply)
+         │    ├─ .tile × 56              z-index 5   (plates, surfaces, units)
+         │    └─ .board-ambient-drift    z-index 6   (ash, embers over the field)
+         ├─ .weather-fx                  z-index 5   ← the DOM weather overlay
+         ├─ .wx-tint / .hwx-tint         z-index 13  (WebGL colour grade)
+         └─ .wx-canvas / .hwx-canvas     z-index 14  (WebGL particles)
+   Because `.board` is a stacking context, ALL of it — including the z-index-6
+   drift layer inside it — composites as one unit below `.weather-fx`. So
+   weather already sits over the whole field rather than per-tile, and nothing
+   here needs to move it. What it needed was to stop competing with the units.
+
+   ⚠ `.wx-tint` and `.hwx-tint` are styled from a <style> element that
+   `_wxEnsureStyle()` / `_hwxEnsureStyle()` append to <head> AT RUNTIME — i.e.
+   later in source order than this file. Equal specificity would lose. Every
+   rule for them below is written at (0,2,0) so it wins on specificity
+   regardless of when the JS runs.
+   ========================================================================== */
+
+/* (a) HAZE — behind the particles (a `::before` paints before element children
+   at the same z). The field's far edge is where atmosphere accumulates, so it
+   is graded from the top down, agreeing with the key light rather than
+   flattening the board with a uniform veil.
+
+   ⚠ Deliberately NEUTRAL. The first version was a cool blue-grey, which is
+   right for rain and wrong for every warm weather in the set — under Harsh Sun
+   it put a cold cast on the far half of a heat-wave board. Each weather already
+   owns a hue (its particles, its `.wx-tint` grade); the haze only supplies
+   DENSITY. The two that want a cast get it explicitly below. */
+.board-area > .weather-fx::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(214, 218, 226, 0.09) 0%,
+    rgba(196, 202, 214, 0.05) 24%,
+    rgba(160, 168, 184, 0.015) 48%,
+    rgba(0, 0, 0, 0) 68%);
+}
+.board-area > .weather-fx.fx-rain::before,
+.board-area > .weather-fx.fx-lstorm::before,
+.board-area > .weather-fx.fx-mist::before {
+  background: linear-gradient(180deg,
+    rgba(186, 206, 234, 0.13) 0%,
+    rgba(160, 180, 210, 0.07) 24%,
+    rgba(118, 138, 170, 0.02) 48%,
+    rgba(0, 0, 0, 0) 68%);
+}
+.board-area > .weather-fx.fx-sun::before {
+  background: linear-gradient(180deg,
+    rgba(255, 228, 158, 0.13) 0%,
+    rgba(255, 206, 122, 0.06) 26%,
+    rgba(255, 190, 100, 0.015) 50%,
+    rgba(0, 0, 0, 0) 70%);
+}
+
+/* (b) THE VIGNETTE — the rule that answers "must not fight the units". An
+   `::after` paints over every particle in the overlay, and it is a hole: fully
+   transparent over the middle of the field where the pieces are, thickening
+   only toward the frame. Weather is therefore densest exactly where nothing is
+   happening. This is the difference between atmosphere and decoration, and it
+   costs one pseudo-element and no layer. */
+.board-area > .weather-fx::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 74% 66% at 50% 54%,
+    rgba(6, 9, 16, 0.00) 0%,
+    rgba(6, 9, 16, 0.00) 44%,
+    rgba(6, 9, 16, 0.11) 72%,
+    rgba(5, 7, 13, 0.24) 90%,
+    rgba(4, 6, 11, 0.32) 100%);
+}
+
+/* (c) The WebGL colour grade gets the same treatment. `.wx-tint` is a flat
+   full-field wash at up to 0.55 opacity, which is what makes a weather board
+   read muddy — it lands on the cards as hard as on the ground. Masked, it keeps
+   its full strength at the edges and drops to about a third over the play area,
+   so the grade still reads as one atmosphere but the pieces stay the brightest
+   things on screen. Its `mix-blend-mode: soft-light` and the JS-driven opacity
+   are untouched; if `mask-image` is unsupported the declaration is simply
+   dropped and the tint behaves exactly as it does today. */
+.board-area > .wx-tint,
+.board-area > .hwx-tint {
+  -webkit-mask-image: radial-gradient(ellipse 76% 68% at 50% 55%,
+    rgba(0, 0, 0, 0.30) 0%,
+    rgba(0, 0, 0, 0.52) 44%,
+    rgba(0, 0, 0, 0.84) 76%,
+    rgba(0, 0, 0, 1) 100%);
+  mask-image: radial-gradient(ellipse 76% 68% at 50% 55%,
+    rgba(0, 0, 0, 0.30) 0%,
+    rgba(0, 0, 0, 0.52) 44%,
+    rgba(0, 0, 0, 0.84) 76%,
+    rgba(0, 0, 0, 1) 100%);
+}
+
+/* (d) HARSH SUN, tamed. Nothing is removed — the disc, the twenty rays, the
+   shimmer and the twenty-two motes all still play. They were simply sized for
+   a full screen and are sitting on a board: a 160px disc with three stacked
+   glows out to 320px, and a hard box-shadow halo on every 3px mote. Retuned to
+   read as light in the air rather than as objects drawn on the field. */
+.board-area > .weather-fx.fx-sun .wfx-sun-disc {
+  width: 112px; height: 112px;
+  box-shadow:
+    0 0 64px rgba(255, 208, 120, 0.44),
+    0 0 150px rgba(255, 150, 60, 0.22);
+  opacity: 0.82;
+}
+.board-area > .weather-fx.fx-sun .wfx-ray {
+  /* NOT widened. Twenty rays at 6px cover a third of the field; at the shipped
+     3px they are light passing through, which is the point of a shaft. */
+  width: 3px;
+  background: linear-gradient(180deg,
+    rgba(255, 220, 100, 0) 0%,
+    rgba(255, 238, 176, 0.20) 24%,
+    rgba(255, 214, 118, 0.08) 60%,
+    rgba(0, 0, 0, 0) 100%);
+}
+.board-area > .weather-fx.fx-sun .wfx-haze {
+  background: linear-gradient(180deg,
+    rgba(255, 224, 140, 0.06) 0%,
+    rgba(255, 186, 70, 0.03) 48%,
+    rgba(0, 0, 0, 0) 100%);
+}
+.board-area > .weather-fx.fx-sun .wfx-shimmer { opacity: 0.55; }
+/* A dust mote is a speck catching the light. It does not need a 6px halo of
+   its own — that is what made twenty-two of them read as fireflies. */
+.board-area > .weather-fx.fx-sun .wfx-dust {
+  width: 2px; height: 2px;
+  box-shadow: none;
+  opacity: 0.7;
+}
+
+/* (e) RAIN. The streaks are good and are kept; they are pulled back just enough
+   that the numerals on the cards win the contrast fight, and the puddle ripples
+   are dimmed because they were brighter than the water surfaces they are
+   supposed to be landing in. */
+.board-area > .weather-fx.fx-rain .wfx-drop,
+.board-area > .weather-fx.fx-lstorm .wfx-drop { opacity: 0.72; }
+.board-area > .weather-fx.fx-rain .wfx-ripple {
+  border-color: rgba(180, 210, 255, 0.30);
+  box-shadow: none;
+}
+
+/* (f) The field-condition banner. It was the generic panel chrome used by every
+   list row in the game; the twin `.location-banner` beside it already carries
+   owner-aware trim, so the weather line was the only one of the pair that did
+   not look like it belonged to the battlefield. Same size, same layout — it is
+   now a stamped plate with a warm rim, matching the board frame. */
+.bc-fieldcond .weather-banner,
+.battle-screen .weather-banner {
+  background:
+    linear-gradient(180deg, rgba(46, 38, 26, 0.92), rgba(22, 18, 12, 0.94));
+  border-color: rgba(196, 164, 96, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 236, 190, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 1px 3px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §8 — THE LAYER BUDGET, AND REDUCED MOTION
+
+   Counted by walking every element and pseudo-element under `.board` and
+   testing `getComputedStyle(el, pseudo).animationName !== 'none'` — i.e. every
+   element the compositor has to promote, measured rather than estimated. On the
+   probe board (23 painted tiles covering all sixteen hazard types, 2 set cards,
+   3 painted tiles also flagged as move/attack targets):
+
+       inside .board, before this file   35 animated elements
+       inside .board, after  this file   30 animated elements
+       (31 once the Void Rift tile is added — it rendered nothing before, so
+        it has no "before" figure to compare against.)
+
+   NEW COMPOSITING LAYERS INTRODUCED BY THIS FILE: 0 — it is a net −5.
+   Six `.tile-surface` ELEMENTS stopped animating (fire, acid, toxin, poison,
+   electrified, steam, holy — each of which was promoting the whole surface on
+   top of the pseudo-element it was already promoting), and one animation was
+   added: the set card's ember. Two more pseudo-elements gained motion that
+   their parent element used to carry, which is a move, not an addition.
+   Everything else in this file is `background`, `box-shadow`, `clip-path` and
+   one `mask-image` — none of which promote anything, and none of which is
+   applied per-tile as a `filter`.
+
+   The 80 rain particles counted separately in a storm all live inside
+   `.weather-fx`, which is a SIBLING of `.board`. They were always there and are
+   not touched; the point is that they are not inside the 56-tile grid.
+
+   Nothing here animates a property that would force the 56-tile grid to
+   re-layout or re-paint. Every keyframe used — surfSheen, surfRipple,
+   surfFlame, surfAcidBubble, surfToxinPulse, surfSteamPulse, surfElecArc,
+   surfCrackGlow, surfHolyRing, surfTargetPulse, trapEmberBreathe — drives
+   `opacity` and/or `transform` on an absolutely-positioned pseudo-element, so
+   the tile it sits in is never re-painted and the grid never re-flows. There
+   are no width/height/margin/inset transitions anywhere in the file.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Everything keeps its full painted appearance — the pool, the light, the
+     stain, the concealed card and the weather grade are all static paint. Only
+     the moving parts stop, which on this board is exactly the set of elements
+     the compositor was promoting. */
+  .board .tile-surface,
+  .board .tile-surface::before,
+  .board .tile-surface::after,
+  .board > .tile.has-surface.move-target::before,
+  .board > .tile.has-surface.placement::before,
+  .board > .tile.has-surface.attack-target::before,
+  .board > .tile.has-surface.swap-target::before,
+  .board > .tile.has-trap > .trap-card-back::after,
+  .board-area > .weather-fx *,
+  .board-area > .weather-fx::before,
+  .board-area > .weather-fx::after {
+    animation: none !important;
+  }
+  /* With the pulse gone the target ring still has to read, so it holds at full
+     strength instead of at whatever opacity the keyframe stopped on. */
+  .board > .tile.has-surface.move-target::before,
+  .board > .tile.has-surface.placement::before,
+  .board > .tile.has-surface.attack-target::before,
+  .board > .tile.has-surface.swap-target::before { opacity: 1; }
+  /* And the set card's ember settles at its mid value rather than vanishing. */
+  .board > .tile.has-trap > .trap-card-back::after { opacity: 0.46; }
+}

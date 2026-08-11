@@ -1,0 +1,498 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   ROUND 2 — THE UNITS ON THE BOARD
+   Appended after everything else; wins by ordinary source order at equal
+   specificity. There is NO `!important` in this file — nothing here needed to
+   beat an inline style. (The one inline style on the board that could have
+   tempted it, `getLevelIcon()`'s per-icon drop-shadow, is left alone.)
+
+   THE PROBLEM THIS FIXES
+   Round 1 rebuilt every zone into a carved plate with a sunken socket. The
+   pieces standing in those sockets did not keep up: `.unit.player` /
+   `.unit.ai` painted a translucent radial WASH over the whole cell, darker
+   than the plate underneath, with the name and level crammed into a 60px flex
+   row at the bottom. The ground out-crafted the piece. In the reference the
+   card is the brightest, most saturated, highest-detail object on screen and
+   the ground is subordinate. This file inverts our board back the right way.
+
+   🔎 THE BUG THAT MADE IT UNFIXABLE
+   `.unit-frame` — the card frame element rendered on every face-up board unit
+   — has never painted. index.html declares it `position: absolute` at ~13120,
+   and then `.unit > * { position: relative; z-index: 1 }` at ~13207 overrides
+   it: same specificity (0,1,0), later in the file. As a relative flex item
+   with no content it computes to height 0. Measured live: getBoundingClientRect
+   → 82.8 x 0. So every unit on the board has been a bare tinted rectangle with
+   no card under it, and round 1's contact-edge shadow (board.css §6b, which
+   targets `.unit-frame`) has been landing on a zero-height box. Restoring
+   `position: absolute` is what makes a card exist to be lit at all.
+
+   ⚠ WHAT THIS FILE DELIBERATELY DOES NOT TOUCH
+   • `.unit::before` GEOMETRY, COLOUR OR BACKGROUND — it is the owner-indicator
+     strip (index ~14006), the 3px team bar, and it is the last of three
+     competing definitions. A previous builder restyled it and silently deleted
+     the team strip and the enemy rim board-wide. The only thing changed here is
+     `filter`, and only to remove a stray blur; see §1c.
+   • `.board` — no perspective, no rotateX, no transform-style. Nothing here
+     adds a transform to any board-level element.
+   • `.tile` `contain: layout paint` — nothing here is positioned outside a
+     tile's box. See §5 for how the level badge "floats free" while respecting
+     paint containment.
+   • `box-shadow` on the `.unit` element itself — `.unit.selected` (~13462),
+     `.unit.ai-actor` (~15816) and `.unit:hover:not(.selected)` all express
+     themselves through that one property at specificity (0,2,0). Anything this
+     file set on `.unit.player` / `.unit.ai` at (0,2,0) would land later and
+     silently delete the selection ring and the AI-actor highlight. All new
+     edge/glow work is therefore done on `.unit-frame`, one level down.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* ---------------------------------------------------------------------------
+   0. TEAM TOKENS
+   Team identity survives as TRIM: a coloured card edge, a coloured glow under
+   the card, a coloured cap on the nameplate, plus the untouched owner strip and
+   the HP fill colour. None of it is a wash over the cell, so the card art keeps
+   its own colour and value.
+   ------------------------------------------------------------------------ */
+.board > .tile > .unit {
+  --u-rim:      rgba(120, 176, 240, 0.90);   /* card edge, friendly */
+  --u-rim-soft: rgba(96, 158, 232, 0.42);    /* glow off the edge     */
+  --u-cap:      #5fa8ee;                     /* nameplate cap         */
+}
+.board > .tile > .unit.ai {
+  --u-rim:      rgba(255, 140, 108, 0.92);
+  --u-rim-soft: rgba(232, 84, 58, 0.46);
+  --u-cap:      #f0704c;
+}
+
+
+/* ---------------------------------------------------------------------------
+   1. KILL THE FLAT COLOUR BLOCK
+   ------------------------------------------------------------------------ */
+
+/* (a) The wash. `.unit.player` / `.unit.ai` (~13224) each paint a
+   radial-gradient over the entire cell — the single thing that made units read
+   as tinted rectangles darker than the plate. Only `background` is reset;
+   their `box-shadow` (a 1px inset team ring) is left alone, both because it is
+   legitimate trim and because touching box-shadow here would outrank
+   `.unit.selected` / `.unit.ai-actor`. */
+.board > .tile > .unit.player,
+.board > .tile > .unit.ai {
+  background: none;
+}
+
+/* (b) The base drop-shadow FILTER. With the wash gone, `.unit` has almost no
+   opaque area of its own, so `filter: drop-shadow()` (~13141) would stop
+   tracing a card silhouette and start tracing the ragged alpha of the art and
+   the text. It is also the expensive kind of shadow — an alpha-mask blur that
+   needs its own render surface. The cast shadow it was faking is already drawn
+   properly by round 1 into the PLATE (`--plate-shade`, board.css §6a), and the
+   card's own contact edge is re-established in §2. So it is retired.
+   `.unit.ai`'s red drop-shadow is retired with it and re-expressed in §2 as a
+   box-shadow on the card — same red glow, same read, no filter. */
+.board > .tile > .unit { filter: none; }
+.board > .tile > .unit.ai { filter: none; }
+
+/* ⚠ Two states DO carry meaning in `filter`, and this file's reset is written
+   at (0,3,0), which outranks their (0,2,0) rules. Verified by smoke-testing the
+   state classes on a live unit: both came back `filter: none`, i.e. the reset
+   had silently deleted them. Restored verbatim at matching specificity.
+     • .unit.decoy         (~7631)  — a decoy is desaturated and hue-shifted so
+                                      players can tell it from the real unit.
+     • .unit.poly-material (~10037) — the gold glow on an auto-selected
+                                      Polycreation material.
+   (The vanished-unit treatment sets `filter: grayscale(.55)` INLINE in
+   renderBoard, so it beats everything here and needs no restoration.) */
+.board > .tile > .unit.decoy {
+  filter: hue-rotate(-15deg) saturate(0.85) brightness(0.92);
+}
+.board > .tile > .unit.poly-material {
+  filter: drop-shadow(0 0 10px rgba(255, 200, 90, 0.85));
+}
+
+/* ⛔ TRIED AND REJECTED — retiring `.unit::after`'s `filter: blur(8px)` on
+   common units (its opacity is 0 there, so the blur renders nothing). The rule
+   matched and still computed to blur(8px), because that same rule carries
+   `transition: filter 1s ease-out`: the change does not apply, it ANIMATES, so
+   every common unit would have spent a second easing a filter it does not show.
+   Not worth a second of pointless work per unit for an invisible saving. */
+
+/* (c) A stray blur on the owner strip. index ~13193 (the dead contact-shadow
+   rule) sets `filter: blur(3px)` on `.unit::before`; the later strip rule at
+   ~14006 replaces the geometry and the background but NOT the filter, so the
+   3px team bar has been rendering blurred — one more alpha-blur surface per
+   unit, spent on softening the exact thing that carries team identity.
+   This is not a restyle of the strip: geometry, colour, background and the
+   `.unit.ai::before` rim are all untouched. The bar just becomes crisp. */
+.board > .tile > .unit::before { filter: none; }
+
+
+/* ---------------------------------------------------------------------------
+   2. THE CARD ITSELF
+   `.unit-frame` is restored to `position: absolute` and becomes the card body:
+   a physical object with stock, a lit top edge, a shaded bottom edge, a team
+   rim and a contact shadow into the socket.
+
+   `inset: 3px 0 0` leaves the top 3px clear so the owner strip still paints —
+   the strip has z-index auto and `.unit > *` forces every child to z-index 1,
+   so a card at inset 0 would cover it. The strip now reads as a coloured tab
+   along the card's top edge, which is a better use of it than a floating bar.
+
+   Card stock is drawn in CSS rather than from `assets/Frames/unit card.png`.
+   That asset is 768x1152 of gold filigree, a landscape art window and a cream
+   rules box; squashed into an 87x87 board cell it resolves to mush (it is what
+   was *supposed* to be painting before the position bug, and it carried no
+   readable detail at this size). Gradients cost no decode, stay sharp at every
+   board scale, and let the value be aimed precisely — which is the whole point
+   of this round.
+   ------------------------------------------------------------------------ */
+.board > .tile > .unit .unit-frame {
+  position: absolute;
+  inset: 3px 0 0;
+  border-radius: 5px;
+  z-index: 0;
+  pointer-events: none;
+  /* Warm bone stock, keyed from the top-left like every plate on the board
+     (round 1's key runs at 163deg; this reads as the same light). The card is
+     deliberately LIGHTER than the plate it sits in — the plate's brightest lip
+     is about rgba(255,228,182,0.32) over dark stone, so the card's DARKEST
+     corner still has to clear that. It is a narrow range, high in the scale,
+     because a card is a flat object under one light, not a lit sphere. */
+  background:
+    linear-gradient(163deg,
+      #e4d8ba 0%,
+      #cdbf9b 30%,
+      #ab9c78 62%,
+      #8b7d5e 86%,
+      #6d6148 100%);
+  box-shadow:
+    /* lit top lip + shaded bottom lip: the card has thickness */
+    inset 0  1px 0 rgba(255, 248, 226, 0.72),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.62),
+    /* THE TEAM RIM — trim, not a wash. Two rings: a hard 1px edge that reads at
+       arm's length, and a softer 2px bleed outside it that survives being
+       scanned rather than looked at. */
+    0 0 0 1px var(--u-rim),
+    0 0 0 2px var(--u-rim-soft),
+    /* team glow off the edge, replacing the retired drop-shadow filter */
+    0 0 8px var(--u-rim-soft),
+    /* contact: the card meets the plate instead of hovering over it */
+    0 1px 2px rgba(0, 0, 0, 0.72),
+    0 3px 7px rgba(0, 0, 0, 0.55);
+}
+
+/* Hover: lift the card, do not re-introduce a filter. `.unit:hover` (~13207)
+   sets `filter: drop-shadow(0 8px 10px)`; it is replaced here by a deeper
+   box-shadow on the card so the hover read is identical without the surface.
+   The existing `transform: var(--counter-rot) translateY(-2px)` is untouched —
+   --counter-rot is the inert translateZ(0) no-op, so no 3D context is created. */
+.board > .tile > .unit:hover { filter: none; }
+.board > .tile > .unit:hover .unit-frame {
+  box-shadow:
+    inset 0  1px 0 rgba(255, 252, 238, 0.85),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.62),
+    0 0 0 1px rgba(255, 244, 214, 0.95),
+    0 0 10px var(--u-rim-soft),
+    0 2px 4px rgba(0, 0, 0, 0.72),
+    0 7px 12px rgba(0, 0, 0, 0.58);
+}
+
+
+/* ---------------------------------------------------------------------------
+   3. THE ART WINDOW
+   The art stays in normal flex flow (it is `flex: 1 1 auto`, so it keeps
+   self-sizing against whatever the HP gauge and nameplate need at any breakpoint
+   — an absolutely-positioned window would have to hard-code that). Insetting it
+   inside the card leaves the stock showing as a border all the way round, which
+   is what turns "a picture in a cell" into "a card with art on it".
+   ------------------------------------------------------------------------ */
+.board > .tile > .unit .unit-icon {
+  /* `.unit .unit-icon` (~13473) hard-sets `width: 100%`, so adding side margins
+     made the art overflow the card and get clipped by `.unit`'s overflow —
+     measured 83px of art in an 87px unit with 5.8px margins asked for. `auto`
+     lets the stretch alignment do its job and is what actually reveals the
+     card border. */
+  width: auto;
+  margin: 6% 8% 0;
+  border-radius: 2px;
+  /* Warm dark window rather than black. Card ART arrives opaque and covers
+     this; SPRITES arrive as transparent frames and stand against it, so it has
+     to be a card's art recess, not a hole. */
+  background: linear-gradient(178deg, #3a3327 0%, #241f17 58%, #14110c 100%);
+  /* recessed art window: dark line under the top lip, light line at the base */
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.75),
+    0 1px 0 rgba(255, 246, 220, 0.30);
+}
+/* One key light across the whole board. Round 1 lit all 56 plates from 163deg;
+   the same rake is laid over the art so a card is lit by the same sun as the
+   ground it is standing on, instead of being a flat sticker with its own
+   lighting. Cheap: a paint-only pseudo inside a box that already carries
+   `contain: layout paint` + `isolation: isolate`, so it cannot cost a layer or
+   escape the art window. */
+.board > .tile > .unit .unit-icon::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(163deg,
+    rgba(255, 244, 214, 0.22) 0%,
+    rgba(255, 236, 198, 0.09) 24%,
+    rgba(255, 236, 198, 0.00) 52%,
+    rgba(0, 0, 0, 0.10) 82%,
+    rgba(0, 0, 0, 0.22) 100%);
+}
+
+
+/* ---------------------------------------------------------------------------
+   4. THE NAMEPLATE — and the long-name regression
+   The regression: round 1 pulled `.unit` to 93% of the tile to expose the
+   socket, and `.unit-info` is a flex ROW sharing that width between the name
+   and the level meta. Measured on the live probe, the name got 57px while
+   "Ash Revenant Prime" needs 82px and "Vault Houndmaster" 80px.
+
+   Reverting the inset is not on the table — it is what anchors the card in its
+   socket. Three things are done instead, in order of how much they buy:
+     1. the level meta is lifted out of the row entirely (§5), which hands the
+        name the FULL card width instead of a 57px remainder;
+     2. the type is tuned for the job — smaller, tighter tracking, and dark ink
+        on a light plate instead of light ink with a heavy shadow, which is
+        legible several steps smaller;
+     3. a two-line clamp as the guarantee. Any name too long for one line wraps
+        rather than clipping, so `scrollWidth` can never exceed `clientWidth` —
+        `__truncated()` returns empty for arbitrary input, not just for the
+        names that happen to be on the board today.
+   ------------------------------------------------------------------------ */
+.board > .tile > .unit .unit-info {
+  position: relative;          /* anchor for the floated level badge in §5 */
+  display: block;              /* was a flex row; the name now owns the width */
+  margin: 0 8% 6%;
+  padding: 1px 2px 2px;
+  border-radius: 0 0 2px 2px;
+  /* Bone plate. This is the brightest element on the unit and it is what pulls
+     the piece above the plate in value — the art alone cannot be relied on,
+     since plenty of our card art is dark. */
+  background:
+    linear-gradient(180deg,
+      rgba(246, 238, 218, 0.96) 0%,
+      rgba(214, 202, 175, 0.96) 55%,
+      rgba(168, 156, 131, 0.96) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    /* team cap along the base of the plate — accent, not wash */
+    inset 0 -2px 0 var(--u-cap),
+    0 1px 2px rgba(0, 0, 0, 0.55);
+}
+.board > .tile > .unit .unit-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: break-word;
+  overflow: hidden;
+  text-align: center;
+  font-size: 0.62rem;
+  line-height: 1.06;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+  /* Dark ink on the bone plate. The old treatment was light ink plus a double
+     black shadow to survive any battlefield behind it; on its own plate the
+     contrast is intrinsic, the shadow can go, and the glyphs stay crisp at a
+     size where a shadow would have filled them in. */
+  color: #251d12;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+
+/* ---------------------------------------------------------------------------
+   5. THE LEVEL FLOATS FREE — and how that respects `contain: layout paint`
+   In the reference the numerals sit outside the card, unboxed, over the ground.
+   `.tile` carries `contain: layout paint`, so anything positioned outside the
+   tile box is hard-clipped with no ellipsis — and `.unit` additionally carries
+   `overflow: hidden`. So "floating free" is done by REMOVING THE BOX, not by
+   escaping one: the badge leaves the `.unit-info` flex row (freeing the name's
+   width) and is pinned to the top edge of the nameplate — i.e. over the bottom
+   corner of the art, unboxed, with only its own shadow separating it. It stays
+   entirely inside the tile, so containment is never tested.
+
+   `bottom: 100%` on the relatively-positioned nameplate means the badge tracks
+   the plate at every breakpoint instead of hard-coding a height.
+   ------------------------------------------------------------------------ */
+.board > .tile > .unit .unit-meta {
+  position: absolute;
+  right: 1px;
+  /* Above the plate AND clear of the HP gauge (4px bar + 2px seat + 1px), so
+     the badge lands inside the bottom-right corner of the ART WINDOW rather
+     than colliding with the gauge — measured on the probe, not guessed. */
+  bottom: 100%;
+  margin-bottom: 7px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  font-size: 0.6rem;
+  line-height: 1;
+  color: #ffe6a4;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 4px rgba(0, 0, 0, 0.85),
+    0 0 7px rgba(255, 190, 90, 0.45);
+}
+
+
+/* ---------------------------------------------------------------------------
+   6. THE HP GAUGE — a lit strip inside the card, not a bar under a rectangle
+   ------------------------------------------------------------------------ */
+/* The gauge is seated directly on top of the nameplate so the two read as one
+   fitting on the card — a lit strip in a recess — instead of a loose green bar
+   floating between the art and a panel. It also stays the second team signal
+   after the owner strip: green for yours, red for theirs, untouched. */
+.board > .tile > .unit .unit-hp {
+  margin: 2px 8% 0;
+  /* 4px, not 3: at 3px the enemy gradient's dark end (#b91c1c) dominates and
+     the gauge reads black instead of red. Measured on the probe. */
+  height: 4px;
+  width: auto;
+  border-radius: 2px 2px 0 0;
+  background: rgba(6, 5, 4, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.7),
+    inset 0 1px 1px rgba(0, 0, 0, 0.55);
+}
+.board > .tile > .unit .unit-hp-fill { border-radius: 2px 0 0 0; }
+
+
+/* ---------------------------------------------------------------------------
+   7. HEROES
+   The hero already carries a gold ring on `.unit` (~13232) and a bobbing
+   marker; the card is given a matching gold edge so the ring reads as the
+   card's own trim rather than a halo floating around a tinted box.
+   ------------------------------------------------------------------------ */
+.board > .tile > .unit.hero .unit-frame {
+  background:
+    linear-gradient(163deg,
+      #f2e4bc 0%,
+      #dbc894 30%,
+      #b8a26a 62%,
+      #948049 86%,
+      #776438 100%);
+  box-shadow:
+    inset 0  1px 0 rgba(255, 250, 228, 0.85),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.62),
+    0 0 0 1px rgba(245, 202, 96, 0.95),
+    0 0 9px rgba(212, 175, 55, 0.55),
+    0 1px 2px rgba(0, 0, 0, 0.72),
+    0 3px 8px rgba(0, 0, 0, 0.58);
+}
+.board > .tile > .unit.hero .unit-info { box-shadow:
+  inset 0 1px 0 rgba(255, 255, 255, 0.6),
+  inset 0 -2px 0 #d9b34a,
+  0 1px 2px rgba(0, 0, 0, 0.55); }
+
+/* The hero marker sat at `bottom: -7px` — mostly clipped by `.unit`'s
+   overflow:hidden, and what survived landed across the middle of the name. That
+   was invisible while the name was light text on a dark cell; on a light plate
+   it is a hole punched through the word, and raising it by a fixed amount does
+   not survive a two-line name. Moved to the art window's top-left corner, where
+   it reads as a hero pip on the card and cannot collide with the plate at any
+   name length.
+   `left` is written as calc(art-inset + half-width) because the marker's bob
+   animation hard-codes `translateX(-50%)`; this lands its left edge on the art
+   window's left edge without touching the animation.
+   z-index drops 7 → 5 deliberately: `.bleed-badge` sits at z 6 in the same
+   corner, and a live combat status must win over a permanent one. */
+.board > .tile > .unit.hero .hero-board-marker {
+  top: 7%;
+  bottom: auto;
+  left: calc(8% + 9px);
+  width: 18px;
+  z-index: 5;
+}
+
+
+/* ---------------------------------------------------------------------------
+   8. FACE-DOWN PARITY
+   A face-down unit renders `.trap-card-back` (assets/Frames/Settrap.png) inside
+   `.unit-icon` and carries NO `.unit-frame`, so every piece of weight added
+   above — card edge, team rim, contact shadow — skipped it entirely and a Set
+   card sat on the plate like a sticker. The same treatment is re-applied to the
+   card back so a face-down piece has exactly the weight of a face-up one.
+   Board-level set traps (`.tile.has-trap > .trap-card-back`, not inside a unit)
+   get the same edge so the two agree.
+   ------------------------------------------------------------------------ */
+.board > .tile > .unit.facedown .unit-icon {
+  width: auto;
+  margin: 6% 8% 0;
+  background: none;
+  box-shadow: none;
+}
+.board > .tile > .unit.facedown .trap-card-back {
+  width: 100%;
+  height: 100%;
+}
+.board > .tile > .unit.facedown .trap-card-back,
+.board > .tile.has-trap > .trap-card-back {
+  border-radius: 4px;
+  background-color: #17150f;
+  box-shadow:
+    inset 0  1px 0 rgba(255, 248, 226, 0.55),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.62),
+    0 0 0 1px var(--u-rim, rgba(196, 172, 118, 0.85)),
+    0 0 7px var(--u-rim-soft, rgba(150, 122, 62, 0.40)),
+    0 1px 2px rgba(0, 0, 0, 0.72),
+    0 3px 7px rgba(0, 0, 0, 0.55);
+}
+/* A face-down unit still shows its nameplate ("Set" for the opponent's). Keep
+   it on the same plate as a face-up card so the row of cards reads as one set
+   of objects rather than two treatments. */
+.board > .tile > .unit.facedown .unit-info { margin-top: -1px; }
+
+
+/* ---------------------------------------------------------------------------
+   9. FREE-FLOATING COMBAT NUMERALS (`.unit-stats`)
+   renderBoard() does not currently emit this element — the shipped unit carries
+   `.unit-hp` and `.unit-info` only — but the board probe does, and the round
+   brief asks for the reference's unboxed numerals. Styled here so that if/when
+   an ATK/HP readout is added it lands as free numerals over the card rather
+   than as another panel inside the cell. Inert when the element is absent.
+   ------------------------------------------------------------------------ */
+.board > .tile > .unit .unit-stats {
+  position: absolute;
+  left: 0; right: 0;
+  top: 4px;
+  z-index: 4;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 1px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: 'Cinzel', serif;
+  font-weight: 800;
+  font-size: 0.66rem;
+  line-height: 1;
+  color: rgba(255, 250, 236, 0.55);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 5px rgba(0, 0, 0, 0.8);
+}
+.board > .tile > .unit .unit-stats .atk { color: #ffd98a; }
+.board > .tile > .unit .unit-stats .hp  { color: #a8e6ff; }
+.board > .tile > .unit.ai .unit-stats .hp { color: #ffb0a2; }
+
+
+/* ---------------------------------------------------------------------------
+   10. SMALL BOARDS
+   Under 700px index.html drops `.unit-info` to 0.6rem and the cell is a lot
+   tighter. The name keeps its own scale (it is no longer sharing the row) and
+   the nameplate loses a little padding so the art window keeps its area.
+   ------------------------------------------------------------------------ */
+@media (max-width: 700px) {
+  .board > .tile > .unit .unit-info { padding: 0 2px 1px; margin-bottom: 4%; }
+  .board > .tile > .unit .unit-name { font-size: 0.58rem; line-height: 1.02; }
+  /* The gauge keeps its 4px — the enemy red goes muddy below that (see §6) — so
+     only its seat tightens, and the badge's clearance follows it. */
+  .board > .tile > .unit .unit-hp   { margin-top: 1px; }
+  .board > .tile > .unit .unit-meta { font-size: 0.55rem; margin-bottom: 6px; }
+  .board > .tile > .unit.hero .hero-board-marker { left: calc(8% + 7px); width: 14px; }
+}

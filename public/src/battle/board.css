@@ -1,0 +1,475 @@
+/* ============================================================================
+   r1_board.css — BOARD PLANE + ZONE SLOTS
+   Appended AFTER index.html's stylesheet. Everything below wins by ordinary
+   cascade; there is not a single `!important` in this file.
+
+   🔴 THE CONSTRAINT, RESPECTED
+   No `perspective`, no `rotateX`, no `transform-style: preserve-3d`, nothing
+   that turns `.board` (or any ancestor) into a projected layer. The board stays
+   exactly as flat and top-down as it is today — `transform: translateZ(0);
+   transform-style: flat` is untouched. All of the craft below is ordinary
+   *paint*: background gradients, box-shadow and one static `clip-path`.
+
+   PERFORMANCE CONTRACT
+   • No new compositing layers. Multi-stop gradients, box-shadow and a static
+     clip-path are paint-time work inside the board's single cached raster —
+     they are NOT layer promotions.
+   • No `filter:` / `backdrop-filter:` added to `.tile` (that would have been 56
+     new layers). The word `filter` does not appear in this file outside comments.
+   • No `will-change`, no `transform`, no `animation` and no new element or
+     pseudo-element is introduced anywhere, so the board layer is still
+     rasterised once and cached. NEW COMPOSITING LAYERS: 0.
+   • Everything reads from `background`, `box-shadow` and one static
+     `clip-path` — all paint, all inside the existing raster.
+
+   CASCADE STRATEGY (important if you edit this)
+   The base plate is declared at `.tile` specificity (0,1,0) ON PURPOSE, so that
+   every existing gameplay override — `.tile.move-target`, `.tile.attack-target`,
+   `.tile.placement`, `.tile.location-*`, `.tile.bp-targetable`, the consumable
+   targeting states, `.board.has-active-location-img > .tile` — still wins
+   exactly as it does today. Nothing is taken away. The states we explicitly
+   want to keep the carved socket for are then re-expressed at (0,3,0) by
+   swapping ONE custom property, `--plate-extra`, instead of replacing the
+   background. That is why the whole plate lives in `--plate-bg`.
+   ========================================================================== */
+
+
+/* ---------------------------------------------------------------------------
+   1. THE GROUND PLANE
+   The uniform 2px gutter was the single loudest "spreadsheet" cue: 56 boxes
+   floating on a photo. Dropping it to 0 lets the plates butt up against each
+   other like laid flagstones; the joins are now drawn by the plates themselves
+   (chamfered corners + a lip that catches light on top and drops to shadow at
+   the bottom), which is soft and worn instead of a hard black grid.
+   Layout-only change. No transform touched.
+   ------------------------------------------------------------------------ */
+.board {
+  gap: 0;
+  padding: 12px;
+
+  /* ⚠ MAINTENANCE NOTE — this restates index.html's three background layers
+     verbatim except for the top wash, because CSS cannot re-tune one layer of a
+     multi-layer background without restating the list. If the default
+     battlefield art path ever changes in index.html, change it here too.
+     (The location system sets `background-image` INLINE on `.board`, and inline
+     still beats this, so whole-board location art keeps working untouched.)
+
+     WHAT CHANGED: the wash was `rgba(8,5,2,0.20) → rgba(8,5,2,0.34)`, a flat
+     ~27% black veil over the whole photo. It made the field muddy and it lit
+     from nowhere. It is now a much lighter wash that is also DIRECTIONAL —
+     brightest at the top where the key is, deepening toward the bottom — so
+     the plane agrees with the light on every plate sitting on it, and the
+     terrain underneath actually reads. */
+  background:
+    linear-gradient(178deg,
+      rgba(255, 226, 176, 0.07) 0%,
+      rgba(10, 7, 3, 0.10) 34%,
+      rgba(8, 5, 2, 0.22) 78%,
+      rgba(6, 4, 2, 0.32) 100%),
+    url('assets/board/Battlefield/dark-forest.png') center / cover no-repeat,
+    linear-gradient(135deg, #5a4028 0%, #3a2818 50%, #1f140b 100%);
+
+  /* The frame reads as a lit rim: a warm hairline just inside the gold border,
+     and the plane sinking away from it. Paint only. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 236, 190, 0.20),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.45),
+    inset 0 0 30px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(212, 175, 55, 0.25),
+    0 0 24px rgba(212, 175, 55, 0.18),
+    0 14px 44px rgba(0, 0, 0, 0.72);
+}
+
+
+/* ---------------------------------------------------------------------------
+   2. THE ZONE PLATE
+   A tile is now a chamfered stone slab with a socket sunk into it.
+
+   The octagonal silhouette is built from four corner-cut linear-gradients
+   (layers 7–10) rather than `clip-path` on `.tile` itself — clipping the tile
+   would also clip the unit standing in it. Because the corners are cut and the
+   gutter is gone, the four-tile junctions open into small diamonds where the
+   battlefield photograph reads straight through. That is what stops the board
+   looking like a table and starts it looking like a floor.
+
+   LIGHT DIRECTION is a single consistent key from the top, very slightly left
+   (163deg). Every plate is lit identically — top edge catches a warm rim, the
+   body falls off toward the bottom-right, and the bottom edge sits in shadow.
+   ------------------------------------------------------------------------ */
+.tile {
+  /* -- tunables --------------------------------------------------------- */
+  /* corner cut, measured along each quarter's 45° gradient line */
+  --chamfer: 7%;
+  /* the slab. Translucent on purpose: the battlefield photo modulates it, so
+     the ground still reads through and every plate picks up the terrain
+     underneath it instead of being a flat brown swatch. Kept low — the plate
+     must read through CONTRAST (lit lip, shadowed join, sunk socket), not
+     through a milky veil laid over the terrain. */
+  --plate-stone: rgba(152, 130, 98, 0.175);
+  /* per-tile paint slot — location tints, enemy pools and target washes get
+     injected here so they land INSIDE the socket instead of replacing it. */
+  --plate-extra: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0));
+  /* second paint slot, used only by occupied zones — see section 6 */
+  --plate-shade: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0));
+
+  --plate-bg:
+    /* 1 — per-tile extra (location / enemy pool / target wash) */
+    var(--plate-extra) center / 100% 100% no-repeat,
+
+    /* 1b — cast shadow of whatever card is standing in this zone */
+    var(--plate-shade) center / 100% 100% no-repeat,
+
+    /* 2 — stone grain. Fine, low-contrast, angled off the grid so it never
+           lines up with the tile edges and never reads as a pattern. */
+    repeating-linear-gradient(114deg,
+      rgba(255, 244, 222, 0.022) 0 1px,
+      rgba(0, 0, 0, 0.030) 1px 3px) center / 100% 100%,
+
+    /* 3 — THE LIP. Warm rim along the top edge where the key light hits,
+           dropping to a hard shadow along the bottom edge. Inset to 76% width
+           so it stops before the chamfered corners and leaves the junction
+           diamonds clean. This one layer is what makes the plate read as a
+           raised slab rather than a painted square. */
+    linear-gradient(180deg,
+      rgba(255, 240, 210, 0.34) 0%,
+      rgba(255, 240, 210, 0.10) 3%,
+      rgba(255, 240, 210, 0.00) 9%,
+      rgba(0, 0, 0, 0.00) 84%,
+      rgba(0, 0, 0, 0.30) 96%,
+      rgba(0, 0, 0, 0.52) 100%) center / 78% 100% no-repeat,
+
+    /* 4 — key light across the slab face, top-left to bottom-right */
+    linear-gradient(163deg,
+      rgba(255, 235, 200, 0.11) 0%,
+      rgba(255, 235, 200, 0.02) 30%,
+      rgba(0, 0, 0, 0.12) 68%,
+      rgba(0, 0, 0, 0.24) 100%) center / 100% 100% no-repeat,
+
+    /* 5 — edge wear: each slab darkens into its own joins so neighbouring
+           plates meet in shadow instead of on a ruled line */
+    radial-gradient(farthest-side at 50% 46%,
+      rgba(0, 0, 0, 0.00) 52%,
+      rgba(0, 0, 0, 0.16) 80%,
+      rgba(0, 0, 0, 0.36) 100%) center / 100% 100% no-repeat,
+
+    /* 6 — THE SOCKET, lit by the same key. A recess lit from above throws the
+           shadow of its own upper wall onto its floor and catches a highlight
+           on the far wall. These two soft bands are what actually say "sunk",
+           far more than any outline does. Sized to the socket, not the tile. */
+    linear-gradient(180deg,
+      rgba(0, 0, 0, 0.46) 0%,
+      rgba(0, 0, 0, 0.17) 20%,
+      rgba(0, 0, 0, 0.00) 44%) center / 72% 72% no-repeat,
+    linear-gradient(0deg,
+      rgba(255, 226, 178, 0.15) 0%,
+      rgba(255, 226, 178, 0.04) 10%,
+      rgba(255, 226, 178, 0.00) 22%) center / 72% 72% no-repeat,
+
+    /* 7 — socket floor: sunk, with a slow amber ember-glow in it so an EMPTY
+           zone still reads unmistakably as a zone. */
+    radial-gradient(closest-side at 50% 50%,
+      rgba(255, 182, 92, 0.12) 0%,
+      rgba(255, 182, 92, 0.05) 30%,
+      rgba(0, 0, 0, 0.20) 58%,
+      rgba(0, 0, 0, 0.07) 74%,
+      rgba(0, 0, 0, 0.00) 84%) center / 100% 100% no-repeat,
+
+    /* 8–11 — the chamfered slab itself, one quarter per corner.
+       ⚠ background-size MUST be exactly 50%: at 50.4% the quarters overlapped
+       by ~1px and the doubled alpha of the translucent stone drew a visible
+       cross through the middle of every tile. */
+    linear-gradient(135deg,  rgba(0,0,0,0) 0 var(--chamfer), var(--plate-stone) var(--chamfer)) left  top    / 50% 50% no-repeat,
+    linear-gradient(-135deg, rgba(0,0,0,0) 0 var(--chamfer), var(--plate-stone) var(--chamfer)) right top    / 50% 50% no-repeat,
+    linear-gradient(45deg,   rgba(0,0,0,0) 0 var(--chamfer), var(--plate-stone) var(--chamfer)) left  bottom / 50% 50% no-repeat,
+    linear-gradient(-45deg,  rgba(0,0,0,0) 0 var(--chamfer), var(--plate-stone) var(--chamfer)) right bottom / 50% 50% no-repeat;
+
+  background: var(--plate-bg);
+
+  /* The gold hairline WAS the grid. Kept as a transparent 1px border so every
+     existing `border-color:` override (locations, move/attack/placement,
+     targeting) still has a border to colour — nothing is disabled. */
+  border-color: transparent;
+  border-radius: 4px;
+  /* the old `inset 0 0 6px rgba(0,0,0,.5)` drew a rectangle inside every cell,
+     which fought the octagon. The plate's own gradients carry the depth now.
+     Declared at (0,1,0) so every state box-shadow still wins over it. */
+  box-shadow: none;
+}
+
+/* Stone is never uniform. `.tile.even` already alternates across the board, so
+   reuse it for a whisper of tonal variance — far too small to read as a
+   checkerboard, just enough that no two neighbours are identical. */
+/* ⚠ `.tile.even` sets `background:` at (0,2,0) in index.html, which out-specifies
+   the base plate above — leaving HALF the board with no plate at all. Re-applied
+   here at (0,3,0). Any future `.tile.<state> { background }` added to
+   index.html needs the same one-line treatment; the audited list is
+   even / location-* / move-target / attack-target / placement / swap-target /
+   consumable-target-*. (`.tile.bp-targetable`, `.board.iso-mode .tile*` and
+   `.board.has-active-location-img > .tile*` all use `!important` and are
+   deliberately left exactly as they are.) */
+.board > .tile.even {
+  background: var(--plate-bg);
+  --plate-stone: rgba(140, 118, 88, 0.200);
+}
+
+
+/* ---------------------------------------------------------------------------
+   3. THE ENGRAVING
+   An octagonal groove cut into the plate. `clip-path: polygon()` traces the
+   outer octagon clockwise, bridges to an inner octagon traced counter-clockwise
+   and returns along the same bridge — the doubled bridge has zero area, so the
+   default nonzero fill rule leaves a clean ring. (Deliberately NOT using
+   `polygon(evenodd, …)`: an engine without it would drop the whole declaration
+   and paint an unclipped square.)
+
+   The ring's gradient is the debossed read: the upper wall of a groove faces
+   away from an overhead key light and goes dark; the lower wall faces into it
+   and catches a highlight. Same light direction as the slab.
+
+   Static clip-path = a paint clip. It does not promote a layer.
+   ------------------------------------------------------------------------ */
+.tile::before {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(0, 0, 0, 0.82) 0%,
+    rgba(0, 0, 0, 0.58) 34%,
+    rgba(0, 0, 0, 0.30) 56%,
+    rgba(255, 216, 162, 0.08) 72%,
+    rgba(255, 222, 172, 0.22) 88%,
+    rgba(255, 228, 182, 0.32) 100%);
+  clip-path: polygon(
+    /* outer octagon, clockwise */
+    17% 0%, 83% 0%, 100% 17%, 100% 83%, 83% 100%, 17% 100%, 0% 83%, 0% 17%, 17% 0%,
+    /* bridge in, then inner octagon counter-clockwise, then bridge back */
+    20.5% 3.5%, 3.5% 20.5%, 3.5% 79.5%, 20.5% 96.5%, 79.5% 96.5%, 96.5% 79.5%, 96.5% 20.5%, 79.5% 3.5%, 20.5% 3.5%,
+    17% 0%
+  );
+}
+
+/* 🔴 The enemy-ownership pool. `.tile:has(> .unit.ai)::before` in index.html
+   owns the same pseudo-element, so the ring is restored here at (0,3,1) and the
+   red pool moves into the plate's own paint slot — where it now glows out of
+   the socket instead of sitting as a flat ellipse on top of it. The affordance
+   ("whose unit is whose") is preserved, not removed. */
+.board > .tile:has(> .unit.ai)::before {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(24, 0, 0, 0.82) 0%,
+    rgba(40, 2, 0, 0.58) 34%,
+    rgba(56, 6, 2, 0.30) 56%,
+    rgba(255, 174, 152, 0.10) 72%,
+    rgba(255, 190, 170, 0.24) 88%,
+    rgba(255, 202, 184, 0.34) 100%);
+  clip-path: polygon(
+    17% 0%, 83% 0%, 100% 17%, 100% 83%, 83% 100%, 17% 100%, 0% 83%, 0% 17%, 17% 0%,
+    20.5% 3.5%, 3.5% 20.5%, 3.5% 79.5%, 20.5% 96.5%, 79.5% 96.5%, 96.5% 79.5%, 96.5% 20.5%, 79.5% 3.5%, 20.5% 3.5%,
+    17% 0%
+  );
+}
+.board > .tile:has(> .unit.ai) {
+  --plate-extra: radial-gradient(closest-side at 50% 56%,
+    rgba(226, 64, 52, 0.14) 0%,
+    rgba(226, 64, 52, 0.07) 44%,
+    rgba(226, 64, 52, 0.00) 74%);
+}
+
+
+/* ---------------------------------------------------------------------------
+   4. LOCATION ZONES — the plate survives the terrain
+   index.html paints these as opaque `linear-gradient(135deg, …)` boxes, which
+   is the one place the socket would have been flattened back into a coloured
+   rectangle. Re-expressed at (0,3,0) as the SAME plate with the terrain colour
+   glowing out of the socket. Border colours are left to the original rules, so
+   every location still carries its own outline.
+   ------------------------------------------------------------------------ */
+.board > .tile[class*="location-"] { background: var(--plate-bg); }
+
+.board > .tile.location-lava        { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(255, 118, 44, 0.42), rgba(190, 54, 16, 0.20) 52%, rgba(190, 54, 16, 0) 80%); }
+.board > .tile.location-forest      { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(84, 208, 128, 0.30), rgba(28, 110, 60, 0.16) 52%, rgba(28, 110, 60, 0) 80%); }
+.board > .tile.location-altar       { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(186, 120, 244, 0.34), rgba(96, 46, 152, 0.18) 52%, rgba(96, 46, 152, 0) 80%); }
+.board > .tile.location-poisonBog   { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(126, 214, 106, 0.32), rgba(36, 110, 30, 0.16) 52%, rgba(36, 110, 30, 0) 80%); }
+.board > .tile.location-frostGlade  { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(150, 214, 244, 0.32), rgba(38, 96, 150, 0.18) 52%, rgba(38, 96, 150, 0) 80%); }
+.board > .tile.location-plagueDen   { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(150, 216, 116, 0.30), rgba(58, 108, 32, 0.16) 52%, rgba(58, 108, 32, 0) 80%); }
+.board > .tile.location-cursedEarth { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(146, 106, 200, 0.30), rgba(58, 30, 92, 0.20) 52%, rgba(58, 30, 92, 0) 80%); }
+.board > .tile.location-holySpring  { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(154, 236, 216, 0.32), rgba(38, 116, 116, 0.16) 52%, rgba(38, 116, 116, 0) 80%); }
+.board > .tile.location-manaFont    { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(142, 168, 240, 0.32), rgba(34, 54, 140, 0.18) 52%, rgba(34, 54, 140, 0) 80%); }
+.board > .tile.location-watchtower  { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(196, 200, 214, 0.28), rgba(70, 70, 88, 0.18) 52%, rgba(70, 70, 88, 0) 80%); }
+.board > .tile.location-forgeAnvil  { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(236, 178, 106, 0.34), rgba(120, 62, 20, 0.18) 52%, rgba(120, 62, 20, 0) 80%); }
+.board > .tile.location-bastion     { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(170, 198, 226, 0.28), rgba(44, 72, 100, 0.18) 52%, rgba(44, 72, 100, 0) 80%); }
+.board > .tile.location-mire        { --plate-extra: radial-gradient(closest-side at 50% 50%, rgba(178, 148, 100, 0.28), rgba(70, 50, 26, 0.20) 52%, rgba(70, 50, 26, 0) 80%); }
+
+
+/* ---------------------------------------------------------------------------
+   5. TARGET HIGHLIGHTS — light poured into the socket
+   Same idea: keep the carved plate, put the state colour in the paint slot.
+   Only `background` is touched — the original rules' `border-color`,
+   `box-shadow`, `cursor`, `animation` and `::after` pips are all left alone,
+   so move / attack / placement behave and pulse exactly as before.
+   ------------------------------------------------------------------------ */
+.board > .tile.move-target,
+.board > .tile.attack-target,
+.board > .tile.placement,
+.board > .tile.swap-target,
+.board > .tile.consumable-target-ally,
+.board > .tile.consumable-target-enemy,
+.board > .tile.consumable-target-tile { background: var(--plate-bg); }
+
+.board > .tile.move-target {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(74, 222, 128, 0.32), rgba(74, 222, 128, 0.13) 56%, rgba(74, 222, 128, 0) 84%);
+}
+.board > .tile.move-target:hover {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(126, 246, 168, 0.44), rgba(74, 222, 128, 0.20) 60%, rgba(74, 222, 128, 0) 88%);
+}
+.board > .tile.attack-target {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(255, 128, 84, 0.32), rgba(232, 93, 60, 0.14) 56%, rgba(232, 93, 60, 0) 84%);
+}
+.board > .tile.attack-target:hover {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(255, 156, 112, 0.44), rgba(232, 93, 60, 0.22) 60%, rgba(232, 93, 60, 0) 88%);
+}
+.board > .tile.placement {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(120, 190, 255, 0.30), rgba(74, 143, 212, 0.13) 56%, rgba(74, 143, 212, 0) 84%);
+}
+.board > .tile.placement:hover {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(160, 214, 255, 0.42), rgba(74, 143, 212, 0.20) 60%, rgba(74, 143, 212, 0) 88%);
+}
+.board > .tile.swap-target {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(240, 200, 96, 0.30), rgba(224, 182, 74, 0.13) 56%, rgba(224, 182, 74, 0) 84%);
+}
+
+/* Consumable targeting — ally / enemy / tile. Same treatment; the original
+   border-color, box-shadow and pulse animation on each are untouched. */
+.board > .tile.consumable-target-ally {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(108, 224, 255, 0.34), rgba(56, 180, 200, 0.15) 56%, rgba(56, 180, 200, 0) 84%);
+}
+.board > .tile.consumable-target-enemy {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(255, 122, 90, 0.34), rgba(220, 90, 90, 0.15) 56%, rgba(220, 90, 90, 0) 84%);
+}
+.board > .tile.consumable-target-tile {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(255, 209, 102, 0.26), rgba(200, 140, 50, 0.12) 56%, rgba(200, 140, 50, 0) 84%);
+}
+.board > .tile.consumable-target-tile:hover {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(255, 222, 140, 0.42), rgba(200, 140, 50, 0.20) 60%, rgba(200, 140, 50, 0) 88%);
+}
+
+/* Idle hover on an ordinary zone: the socket warms, nothing moves. No
+   transform, no filter — just the paint slot, so hover repaints ONE tile. */
+.board > .tile:hover {
+  --plate-extra: radial-gradient(closest-side at 50% 50%,
+    rgba(255, 226, 158, 0.20), rgba(255, 210, 130, 0.08) 52%, rgba(255, 210, 130, 0) 80%);
+}
+
+
+/* ---------------------------------------------------------------------------
+   6. CARDS SITTING ON THE PLATE
+
+   🛑 DO NOT PUT THE CONTACT SHADOW ON `.unit::before`.
+   I tried that first and it was wrong twice over. index.html defines
+   `.unit::before` THREE times: a contact shadow (~13193), the enemy-ownership
+   rim (`.unit.ai::before`, ~11826) and — last, so it is the one that actually
+   wins — the OWNER INDICATOR STRIP, the 3px team-coloured bar across the top of
+   every unit cell (~14006). The original contact-shadow rule is dead code; it
+   has been overridden ever since that strip was added, which is exactly why
+   units currently read as pasted on. Styling `.unit::before` from here would
+   have deleted the owner strip and the enemy rim on every unit on the board.
+
+   So the weight is built with no pseudo-element at all, in two parts:
+
+   (a) THE SHADOW POOL, painted into the PLATE, not onto the unit. `.tile` gets
+       a second paint slot, `--plate-shade`, that is filled only for occupied
+       zones. Because it is part of the tile's background it sits under the card
+       and on top of the socket — geometrically exactly where a cast shadow
+       belongs — and it costs zero elements and zero layers. It also cannot be
+       clipped away: `.tile` carries `contain: paint`, so anything drawn outside
+       the tile box (as the old `bottom:-3px` shadow was) is thrown away.
+
+   (b) THE CONTACT EDGE, a tight dark shadow on `.unit-frame` — the card frame
+       element that already exists on every face-up board unit — so the card
+       meets the plate instead of hovering above it.
+   ------------------------------------------------------------------------ */
+
+/* (a) — occupied zones get a cast shadow in the plate itself. */
+.board > .tile:has(> .unit) {
+  --plate-shade: radial-gradient(ellipse 54% 36% at 51% 80%,
+    rgba(0, 0, 0, 0.74) 0%,
+    rgba(0, 0, 0, 0.52) 40%,
+    rgba(0, 0, 0, 0.24) 66%,
+    rgba(0, 0, 0, 0.00) 88%);
+}
+
+/* (b) — the card meets the plate. A dark contact line right under the frame,
+   then a short spread. `.unit` clips its own overflow and `.tile` contains
+   paint, so the spread is deliberately short: what survives the clip is the
+   near-contact part, which is the part that does the work. */
+.board > .tile > .unit .unit-frame {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 210, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+    0 1px 2px rgba(0, 0, 0, 0.66),
+    0 3px 7px rgba(0, 0, 0, 0.52);
+}
+
+/* (c) — and give the shadow somewhere to land. A card painted edge-to-edge over
+   its zone has no ground around it, so no contact shadow can read no matter how
+   well it is drawn. `.unit` is a centred flex item in `.tile`, so pulling it to
+   93% leaves a thin margin of plate showing on all four sides: the lip and the
+   cast shadow above surround the card, and it reads as sitting IN the socket.
+   Percentage sizing only — the tile track, the board box and every transform
+   are untouched, so none of the anti-zoom guarantees are affected. */
+.board > .tile > .unit {
+  width: 93%;
+  height: 93%;
+  border-radius: 7px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🩹 THE PLATES WERE INVISIBLE IN A REAL BATTLE.
+
+   Reported straight from the game: "I do not see changes to the board." The
+   plates were never wrong — they were being overwritten. TWO rules in
+   index.html blank the tile background with !important, and both are active in
+   normal play:
+
+     .board.iso-mode .tile            { background: rgba(0,0,0,0.04) !important }   ~7886
+     .board.has-active-location-img > .tile
+                                      { background: rgba(0,0,0,0.18) !important }   ~11626
+
+   A battle with location art set — which is the usual case — therefore showed
+   the ORIGINAL flat tiles no matter what this file did. Nothing in round 1
+   could have been visible.
+
+   Re-applying the plate needs !important to beat !important, at matching
+   specificity and later in the source order. This is the one place in this
+   file where !important is justified: it is not winning a design argument, it
+   is answering an existing !important that would otherwise erase the feature.
+   The state overlays (move/attack targets, location tints) are deliberately
+   NOT touched — they layer over the plate through --plate-extra.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.board.iso-mode .tile,
+.board.has-active-location-img > .tile {
+  background: var(--plate-bg) !important;
+  border-color: transparent !important;
+}
+/* Keep the carved groove and the socket under both modes too — they are
+   painted by ::before, which neither suppressor touches, but iso-mode sets
+   `overflow: visible !important` and that let the groove bleed. */
+.board.iso-mode .tile::before,
+.board.has-active-location-img > .tile::before { opacity: 1; }

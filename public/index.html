@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120u1';
+  window.BUILD_VERSION = 'v120u2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -37147,6 +37147,20 @@ const PASSIVES = {
   // lockdown). Put both on one card for a total Kalon + Archon null-field.
   kalonSuppress:  { id: 'kalonSuppress',  name: 'Null Awakening',  desc: '🚫 While this unit lives, NEITHER player can Kalon Transform.' },
   archonSuppress: { id: 'archonSuppress', name: 'Seal the Source', desc: '🚫 While this unit lives, NEITHER player can perform an Archon Summon.' },
+  /* 🜂 BORN ASCENDED — a BASE unit that the whole game already treats as a
+     Kalon, without ever having transformed. Everything Kalon-ness gates on
+     runs through _isKalonUnit(), so honouring the passive there gets the lot
+     in one place: the k_ sprite slot, the Kalon-scoped board key, Kalon-only
+     buffs, and Kalon-only counterplay.
+     ⚠ THE COUNTERPLAY IS THE POINT, NOT A SIDE EFFECT. This unit becomes a
+       legal target for purgeAscended and every other "destroy all Kalons"
+       effect from the moment it hits the field. A card that gets Kalon
+       upside with no Kalon downside would be strictly better than actually
+       transforming, which would make the mechanic pointless.
+     ⚠ It does NOT consume the owner's Kalon charge and does NOT set
+       kalonUsed — so this unit can still perform a real Kalon Transform later
+       if its card has a form. "Counts as" is a status, not a spent action. */
+  countsAsKalon:  { id: 'countsAsKalon',  name: 'Born Ascended',   desc: '🜂 Treated as a Kalon Transform at all times, even though it never transformed. Gains Kalon support — and Kalon counterplay.' },
   // 🪦 RAISE FROM DEAD
   // On death, leave a GLOWING tombstone that blocks the tile for 1-3 turns.
   // When the timer expires, the unit revives on that tile at 60% HP.
@@ -99411,7 +99425,16 @@ function getMovePath(unit, units, weather, target) {
 // Used by the 'purgeAscended' spell / move / on-play effect. Heroes are never
 // Kalon or Archon, so they're inherently safe. Hits BOTH sides.
 function _isKalonUnit(u) {
-  return !!(u && (u.kalonUsed || (u.originalCardId && u.cardId && u.cardId !== u.originalCardId)));
+  if (!u) return false;
+  /* 🜂 "Born Ascended" — a base unit whose passive declares it a Kalon without
+     it ever transforming. Checked HERE and only here: every Kalon gate in the
+     game already funnels through this predicate (sprite slot via
+     _kalonSpriteBase, board identity via _bbUnitKey, Kalon-only buffs, and
+     purgeAscended's kill list), so one line covers all of them and none can
+     drift. Guarded by typeof because this function is called from paths that
+     run before the passive helpers are defined. */
+  try { if (typeof hasPassive === 'function' && hasPassive(u, 'countsAsKalon')) return true; } catch (e) {}
+  return !!(u.kalonUsed || (u.originalCardId && u.cardId && u.cardId !== u.originalCardId));
 }
 function _isArchonUnit(u) {
   return !!(u && (u.isArchon || u.summonSource === 'Archon Summon'));

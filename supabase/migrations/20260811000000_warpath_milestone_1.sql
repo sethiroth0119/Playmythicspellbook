@@ -956,7 +956,7 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_uid uuid := auth.uid();
   v_run public.warpath_runs; v_exp public.warpath_expeditions;
-  v_slot int; v_sp int[]; v_aza numeric; v_cost numeric := 3; rec record;
+  v_slot int; v_sp int[]; v_gate int[]; v_aza numeric; v_cost numeric := 3; rec record;
 begin
   if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
   if p_hero_id is null or length(p_hero_id) = 0 then
@@ -1022,6 +1022,14 @@ begin
     select v_exp.id, card_key, 'starter', true, 1 from public.warpath_starter_pool order by ord;
 
   perform public.wp_reveal(v_exp.id, v_sp[1], v_sp[2], public.wp_vision(v_exp.id));
+  -- Your Hero walked in through the Warpath Gate, so they know where the front
+  -- door is. Without this the first turn is a 5x5 patch of light in a black
+  -- field with nothing to walk towards, which reads as a broken screen rather
+  -- than as fog. The two wandering portals stay hidden — those you have to find.
+  select ARRAY[(g->>'x')::int, (g->>'y')::int] into v_gate
+    from jsonb_array_elements(public.wp_structures(v_run.seed)) g
+   where g->>'id' = 'gate_main' limit 1;
+  if v_gate is not null then perform public.wp_reveal(v_exp.id, v_gate[1], v_gate[2], 1); end if;
 
   -- 5. Four heroes present closes the run to newcomers.
   if (select count(*) from public.warpath_expeditions where run_id = v_run.id) >= v_run.max_players then

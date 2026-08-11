@@ -123866,6 +123866,48 @@ function renderCardEditor() {
     </div>
   ` : '';
 
+  /* 🎟 ZERO-COST-IN-HAND — "if you control X, this card costs 0 in your hand."
+     Sits next to Play Requirement because it is the same KIND of thing (a price
+     decided by board state) — but it is deliberately a SEPARATE field, not
+     another `playRequirement` type:
+       • playRequirement gates WHETHER the card is playable; this only changes
+         WHAT it costs. A card can legitimately have both.
+       • The banishGraveCost alternate cost charges you something (removing N
+         cards) in exchange for free. This charges nothing — it is a conditional
+         price, so folding it into that dropdown would misrepresent it.
+     Conditions are OR-matched: ANY box ticked or field filled makes it free.
+     Leave the whole block empty and no zeroCostIf is written to the card. */
+  const zc = (card.zeroCostIf && typeof card.zeroCostIf === 'object') ? card.zeroCostIf : {};
+  const zeroCostBlock = (isUnitLike || type === 'spell' || type === 'weather' || type === 'location' || type === 'trap' || type === 'wall' || type === 'counter') ? `
+    <div class="editor-field full" style="border-top:1px dashed rgba(120,220,160,0.35);padding-top:0.8rem;margin-top:0.4rem">
+      <label style="font-weight:700;color:#7fe0a8">🎟 Costs 0 in your hand (conditional free play)</label>
+      <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Optional. While <strong>any one</strong> of these is true, this card costs <strong>⚡0</strong> from your hand — the hand shows 0 and the play path charges 0. Tick nothing to leave the card at its normal cost.<br>This is an <strong>absolute price</strong>: it overrides surcharges like Tithe, so a card that reads 0 always charges 0.</div>
+    </div>
+    <div class="editor-field full">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="ed-zc-kalon" ${zc.controlKalon ? 'checked' : ''}>
+        <span>🜂 …while you control a <strong>Kalon</strong></span>
+      </label>
+      <div class="small-text ink-dim" style="margin:0.1rem 0 0.4rem 22px">Counts real Kalon Transforms <em>and</em> units with the “Born Ascended” passive.</div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="ed-zc-trap" ${zc.controlFacedownTrap ? 'checked' : ''}>
+        <span>🪤 …while you control a <strong>face-down trap</strong></span>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:0.35rem">
+        <input type="checkbox" id="ed-zc-ench" ${zc.controlEnchantment ? 'checked' : ''}>
+        <span>✨ …while you control an <strong>enchantment</strong> (curses count)</span>
+      </label>
+    </div>
+    <div class="editor-field full">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;min-width:0">
+        <div style="min-width:0"><label class="small-text">🛡 …while you control a unit named</label><input id="ed-zc-unitname" type="text" maxlength="40" placeholder="exact card name (optional)" value="${escapeHtml(zc.controlUnitNamed || '')}" style="width:100%;min-width:0"></div>
+        <div style="min-width:0"><label class="small-text">⚰️ …while this card is in your graveyard</label><input id="ed-zc-gravename" type="text" maxlength="40" placeholder="exact card name (optional)" value="${escapeHtml(zc.graveyardHasNamed || '')}" style="width:100%;min-width:0"></div>
+        <div style="min-width:0"><label class="small-text">✋ …by revealing this card in your hand</label><input id="ed-zc-revealname" type="text" maxlength="40" placeholder="exact card name (optional)" value="${escapeHtml(zc.revealInHand || '')}" style="width:100%;min-width:0"></div>
+      </div>
+      <div class="small-text ink-dim" style="margin-top:0.35rem">Names match ignoring case and extra spaces, so “ualti's  secret library” finds “Ualti's Secret Library”. The reveal condition ignores the card itself — it needs a <em>second</em> copy in hand, so a card cannot reveal itself to pay for itself.</div>
+    </div>
+  ` : '';
+
   // Location block — covers-whole-board toggle + board image upload. The toggle
   // makes the location apply its tile effect to EVERY tile of the battlefield AND
   // swap the board background to the uploaded image. Built-in locations stay
@@ -125022,7 +125064,7 @@ function renderCardEditor() {
         </details>
         <details class="fx-sub" id="fx-playreq">
           <summary class="fx-subsum">🔑 Play Conditions <span class="fx-sum-hint">what must be true to play it</span></summary>
-          <div class="editor-grid">${playReqBlock}</div>
+          <div class="editor-grid">${playReqBlock}${zeroCostBlock}</div>
         </details>
         <details class="fx-sub" id="fx-ingrave">
           <summary class="fx-subsum">⚰ In-Grave <span class="fx-sum-hint">what it does from the graveyard</span></summary>
@@ -127634,6 +127676,30 @@ function captureEditorIntoCard(card) {
     } else {
       delete card.playRequirement;
     }
+  }
+
+  /* 🎟 Zero-cost-in-hand. Only the conditions the author actually set are
+     written, and an entirely empty block DELETES the field rather than saving
+     `{}` — _zeroCostConditionMet treats an object with no matching keys as
+     "never free", so an empty {} would be harmless but it would still show up
+     in exported card JSON and in the Godot data as if the card had a condition.
+     Guarded on the checkbox existing, like every other block here, because the
+     panel is not rendered for card types that cannot use it. */
+  if (document.getElementById('ed-zc-kalon')) {
+    const _zcOn   = (id) => { const el = document.getElementById(id); return !!(el && el.checked); };
+    const _zcName = (id) => (v(id) || '').trim();
+    const _zc = {};
+    if (_zcOn('ed-zc-kalon')) _zc.controlKalon = true;
+    if (_zcOn('ed-zc-trap'))  _zc.controlFacedownTrap = true;
+    if (_zcOn('ed-zc-ench'))  _zc.controlEnchantment = true;
+    const _zcUnit   = _zcName('ed-zc-unitname');
+    const _zcGrave  = _zcName('ed-zc-gravename');
+    const _zcReveal = _zcName('ed-zc-revealname');
+    if (_zcUnit)   _zc.controlUnitNamed  = _zcUnit;
+    if (_zcGrave)  _zc.graveyardHasNamed = _zcGrave;
+    if (_zcReveal) _zc.revealInHand      = _zcReveal;
+    if (Object.keys(_zc).length) card.zeroCostIf = _zc;
+    else delete card.zeroCostIf;
   }
 
   // Kalon
@@ -141772,6 +141838,30 @@ function renderCardDetailModal() {
         _prTxt = (_pr.timeOfDay === 'night') ? '🌙 Playable only at night.' : '☀️ Playable only during the day.';
       }
       if (_prTxt) onPlayText = (onPlayText ? onPlayText + ' ' : '') + _prTxt;
+    }
+  } catch (e) {}
+  /* 🎟 Zero-cost-in-hand — say WHY the card is free, on the card itself.
+     The catch-all below only recognises effect-shaped properties (an object with
+     a registered `type`), and zeroCostIf has no `type` — so without this the
+     hand would show a ⚡0 price with nothing anywhere explaining it, which reads
+     as a bug rather than a condition the player can play around.
+     Built from the same field list the Forge writes, in the same order. */
+  try {
+    const _zc = card.zeroCostIf;
+    if (_zc && typeof _zc === 'object') {
+      const _zcBits = [];
+      if (_zc.controlKalon)        _zcBits.push('you control a Kalon');
+      if (_zc.controlFacedownTrap) _zcBits.push('you control a face-down trap');
+      if (_zc.controlEnchantment)  _zcBits.push('you control an enchantment');
+      if (_zc.controlUnitNamed)    _zcBits.push('you control ' + _zc.controlUnitNamed);
+      if (_zc.graveyardHasNamed)   _zcBits.push(_zc.graveyardHasNamed + ' is in your graveyard');
+      if (_zc.revealInHand)        _zcBits.push('you reveal ' + _zc.revealInHand + ' in your hand');
+      // "or" — the conditions are OR-matched, and joining with "and" would
+      // describe a card that is strictly harder to play than the one that ships.
+      if (_zcBits.length) {
+        onPlayText = (onPlayText ? onPlayText + ' ' : '')
+          + '🎟 Costs ⚡0 in your hand if ' + _zcBits.join(', or ') + '.';
+      }
     }
   } catch (e) {}
   // 🎴 Extra on-play effects (v116l) — append each so the card detail lists all.

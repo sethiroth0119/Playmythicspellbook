@@ -118,12 +118,12 @@ var R_WARP_A = 701, R_WARP_B = 702, R_WARP_C = 703,
    difference between the Graveyard and the Ashen Wastes is that one is full of
    headstones and the other is full of cracks.                                */
 var PAL = {
-  plains:    { deep: '#3f4632', base: '#7a7d55', lit: '#b8b184', elev: 0.17, rough: 0.30 },
+  plains:    { deep: '#4c5139', base: '#7d8058', lit: '#b0ab7e', elev: 0.17, rough: 0.30 },
   forest:    { deep: '#232c22', base: '#41503a', lit: '#7d8659', elev: 0.30, rough: 0.40 },
   graveyard: { deep: '#2c2c30', base: '#585a58', lit: '#95968f', elev: 0.25, rough: 0.34 },
   facility:  { deep: '#252d33', base: '#4e5a5f', lit: '#8e979a', elev: 0.22, rough: 0.20 },
   mountain:  { deep: '#312320', base: '#6a5044', lit: '#b0937c', elev: 0.82, rough: 1.00 },
-  wastes:    { deep: '#3f3628', base: '#7d7157', lit: '#c2b493', elev: 0.28, rough: 0.56 },
+  wastes:    { deep: '#4e442f', base: '#8d8062', lit: '#cdbf9d', elev: 0.28, rough: 0.50 },
 };
 // Precomputed as integer triples. parseInt() on a hex string is not something
 // to do a million times inside the shading loop — it was most of the first
@@ -255,8 +255,13 @@ function blurTiles(a, w, h, passes) {
    at the finest octave is just noisy, while at 27 cells (~1.6 tiles) it is
    exactly the scale of a mountain arête.                                     */
 var OCT_CELLS = [6, 13, 27, 55, 110];
-var OCT_FBM   = [0.42, 0.25, 0.16, 0.10, 0.07];
-var OCT_RIDGE = [0.34, 0.30, 0.20, 0.11, 0.05];
+var OCT_FBM   = [0.44, 0.26, 0.16, 0.09, 0.05];
+var OCT_RIDGE = [0.36, 0.32, 0.20, 0.09, 0.03];
+
+/* How wide, in tiles, the mottled band between two biomes is. Wide enough
+   that no straight bisector survives it; narrow enough that a small region
+   still has a recognisable middle. */
+var INTERGRADE = 2.6;
 
 function bakeTerrain(seed, opts) {
   opts = opts || {};
@@ -308,7 +313,7 @@ function bakeTerrain(seed, opts) {
   blurTiles(wetBlur, W, H, 1);
   for (i = 0; i < W * H; i++) wet[i] = 0.55 * wet[i] + 0.45 * wetBlur[i];
 
-  blurTiles(elevT, W, H, 2);
+  blurTiles(elevT, W, H, 3);   // 3 passes ≈ three tiles of foothill
   blurTiles(roughT, W, H, 2);
   blurTiles(toneR, W, H, 1); blurTiles(toneG, W, H, 1); blurTiles(toneB, W, H, 1);
 
@@ -337,11 +342,19 @@ function bakeTerrain(seed, opts) {
   // agrees with, and a coastline that wanders a whole tile would put open
   // ground under paint that looks like a lake. Biome is cosmetic; water is not
   // quite.
+  // ⚠ WARP_C is not a rounding error, it is the STAIRCASE KILLER. Even with a
+  // whole tile of low-frequency wander, the biome lookup is still
+  // nearest-neighbour, so the boundary is the warped preimage of a cell edge:
+  // a wobbling staircase whose steps are exactly one tile. You can count the
+  // tiles off it, which is the stated failure condition. A high-frequency warp
+  // at nearly half a tile chews those steps into a ragged interlock at a
+  // scale well below one cell, and the staircase stops existing.
   var wa = { g: noiseGrid(seed, R_WARP_A, 8, 7), w: 8, h: 7 };
   var wb = { g: noiseGrid(seed, R_WARP_B, 19, 14), w: 19, h: 14 };
-  var wc = { g: noiseGrid(seed, R_WARP_C, 61, 43), w: 61, h: 43 };
-  var WARP_A = 0.86, WARP_B = 0.34, WARP_C = 0.155;   // in tiles
-  var WATER_WARP = 0.48;
+  var wc = { g: noiseGrid(seed, R_WARP_C, 67, 47), w: 67, h: 47 };
+  var wd = { g: noiseGrid(seed, R_WARP_C + 1, 157, 108), w: 157, h: 108 };
+  var WARP_A = 0.80, WARP_B = 0.34, WARP_C = 0.38, WARP_D = 0.15;   // in tiles
+  var WATER_WARP = 0.42;
 
   // ── 3. Per-pixel fields ─────────────────────────────────────────────────
   var N = BW * BH;
@@ -352,44 +365,163 @@ function bakeTerrain(seed, opts) {
   var WXA  = new Float32Array(N);
   var WYA  = new Float32Array(N);
   var TR = new Float32Array(N), TG = new Float32Array(N), TB = new Float32Array(N);
+  var RGA = new Uint8Array(N);          // ruggedness, kept for the rock blend
+
+  /* The warp is evaluated at HALF resolution and bilinearly upsampled. Eight
+     grid samples per pixel was the single most expensive thing in the bake,
+     and the displacement field is smooth by construction — its finest octave
+     has a wavelength of eight pixels — so half-rate sampling is visually free
+     and roughly quarters the cost. */
+  var HW = (BW >> 1) + 2, HH = (BH >> 1) + 2;
+  var HDX = new Float32Array(HW * HH), HDY = new Float32Array(HW * HH);
+  for (y = 0; y < HH; y++) for (x = 0; x < HW; x++) {
+    var hfx = (x * 2 + 0.5) / PX, hfy = (y * 2 + 0.5) / PX;
+    var ua = hfx * (wa.w - 1) / W, va = hfy * (wa.h - 1) / H;
+    var ub = hfx * (wb.w - 1) / W, vb = hfy * (wb.h - 1) / H;
+    var uc = hfx * (wc.w - 1) / W, vc = hfy * (wc.h - 1) / H;
+    var ud = hfx * (wd.w - 1) / W, vd = hfy * (wd.h - 1) / H;
+    var ii = y * HW + x;
+    HDX[ii] = (sampleGrid(wa.g, wa.w, wa.h, ua, va) - 0.5) * WARP_A
+            + (sampleGrid(wb.g, wb.w, wb.h, ub, vb) - 0.5) * WARP_B
+            + (sampleGrid(wc.g, wc.w, wc.h, uc, vc) - 0.5) * WARP_C
+            + (sampleGrid(wd.g, wd.w, wd.h, ud, vd) - 0.5) * WARP_D;
+    HDY[ii] = (sampleGrid(wa.g, wa.w, wa.h, va + 2.1, ua + 1.3) - 0.5) * WARP_A
+            + (sampleGrid(wb.g, wb.w, wb.h, vb + 3.7, ub + 2.9) - 0.5) * WARP_B
+            + (sampleGrid(wc.g, wc.w, wc.h, vc + 5.3, uc + 4.1) - 0.5) * WARP_C
+            + (sampleGrid(wd.g, wd.w, wd.h, vd + 7.9, ud + 6.7) - 0.5) * WARP_D;
+  }
+
+  /* The cores, unpacked into flat arrays for the per-pixel Voronoi, plus a
+     per-core fuzz weight. `CF` is what decorrelates the cores from each other:
+     one shared noise field multiplied by a different constant per core means
+     the boundary between any two of them wanders, while a single global fuzz
+     would just scale everything equally and move nothing. */
+  var CN = cores.length;
+  var CX = new Float32Array(CN), CY = new Float32Array(CN),
+      CB = new Uint8Array(CN), CF = new Float32Array(CN);
+  for (k = 0; k < CN; k++) {
+    CX[k] = cores[k].x; CY[k] = cores[k].y;
+    var cbi = BORDER.indexOf(cores[k].biome); CB[k] = cbi < 0 ? 0 : cbi;
+    CF[k] = 0.12 + (M.wpHash32(seed, k + 1, 3, R_WARP_C + 5) % 1000) / 1000 * 0.30;
+  }
+  var FZW = 97, FZH = 68, fzg = noiseGrid(seed, R_WARP_C + 3, FZW, FZH);
+
+  /* Per-tile shortlist of the cores that could plausibly win anywhere inside
+     that tile. Testing all twelve cores at every one of a million pixels was
+     the single largest line item in the bake; the warp displaces a lookup by
+     at most about 1.5 tiles, so the five nearest cores to the tile are a safe
+     superset of the possible winners and the inner loop shrinks by 60%.
+     Purely a speed structure — it cannot change the answer. */
+  var CAND_N = 5;
+  var CAND = new Uint8Array(W * H * CAND_N);
+  (function () {
+    var order = [], t, tx2, ty2, kk;
+    for (ty2 = 0; ty2 < H; ty2++) for (tx2 = 0; tx2 < W; tx2++) {
+      order.length = 0;
+      for (kk = 0; kk < CN; kk++) {
+        var ax = CX[kk] - tx2, ay = CY[kk] - ty2;
+        order.push([ax * ax + ay * ay, kk]);
+      }
+      order.sort(function (a, b) { return a[0] - b[0]; });
+      t = (ty2 * W + tx2) * CAND_N;
+      for (kk = 0; kk < CAND_N; kk++) CAND[t + kk] = order[kk][1];
+    }
+  })();
 
   var invPX = 1 / PX;
   for (y = 0; y < BH; y++) {
     var rowBase = y * BW;
     var fy = (y + 0.5) * invPX;
+    var hy = y * 0.5, hy0 = hy | 0, hyf = hy - hy0;
     for (x = 0; x < BW; x++) {
       i = rowBase + x;
       var fx = (x + 0.5) * invPX;
-      // warp: three octaves, two independent channels each (the second channel
-      // is read at an offset so x and y displacement are not correlated).
-      var ua = fx * (wa.w - 1) / W, va = fy * (wa.h - 1) / H;
-      var ub = fx * (wb.w - 1) / W, vb = fy * (wb.h - 1) / H;
-      var uc = fx * (wc.w - 1) / W, vc = fy * (wc.h - 1) / H;
-      var dx = (sampleGrid(wa.g, wa.w, wa.h, ua, va) - 0.5) * WARP_A
-             + (sampleGrid(wb.g, wb.w, wb.h, ub, vb) - 0.5) * WARP_B
-             + (sampleGrid(wc.g, wc.w, wc.h, uc, vc) - 0.5) * WARP_C;
-      var dy = (sampleGrid(wa.g, wa.w, wa.h, va + 2.1, ua + 1.3) - 0.5) * WARP_A
-             + (sampleGrid(wb.g, wb.w, wb.h, vb + 3.7, ub + 2.9) - 0.5) * WARP_B
-             + (sampleGrid(wc.g, wc.w, wc.h, vc + 5.3, uc + 4.1) - 0.5) * WARP_C;
+      var hx = x * 0.5, hx0 = hx | 0, hxf = hx - hx0;
+      var q = hy0 * HW + hx0;
+      var m0 = HDX[q] + (HDX[q + 1] - HDX[q]) * hxf;
+      var m1 = HDX[q + HW] + (HDX[q + HW + 1] - HDX[q + HW]) * hxf;
+      var dx = m0 + (m1 - m0) * hyf;
+      m0 = HDY[q] + (HDY[q + 1] - HDY[q]) * hxf;
+      m1 = HDY[q + HW] + (HDY[q + HW + 1] - HDY[q + HW]) * hxf;
+      var dy = m0 + (m1 - m0) * hyf;
       var wx = fx + dx, wy = fy + dy;
       WXA[i] = wx; WYA[i] = wy;
 
-      var tx = wx < 0 ? 0 : (wx > W - 0.001 ? W - 1 : wx | 0);
-      var ty = wy < 0 ? 0 : (wy > H - 0.001 ? H - 1 : wy | 0);
-      BIO[i] = bi[ty * W + tx];
-
-      WVAL[i] = sampleTile(wet, W, H, fx + dx * WATER_WARP, fy + dy * WATER_WARP);
-
-      // fBm + ridged, from the precomputed octaves
-      var f = 0, r = 0, o;
+      // fBm + ridged, from the precomputed octaves. Every octave value is kept:
+      // the landform term needs the first three and the biome intergrade needs
+      // the last two, and sampling the same grids twice per pixel was waste.
+      var f = 0, r = 0, o, v0 = 0, v1 = 0, v2 = 0, v3 = 0, v4 = 0;
       for (k = 0; k < 5; k++) {
         o = oct[k];
         var v = sampleGrid(o.g, o.w, o.h, x * o.sx, y * o.sy);
+        if (k === 0) v0 = v; else if (k === 1) v1 = v; else if (k === 2) v2 = v;
+        else if (k === 3) v3 = v; else v4 = v;
         f += v * OCT_FBM[k];
         var rr = 1 - Math.abs(v + v - 1); rr *= rr;
         r += rr * OCT_RIDGE[k];
       }
       DET[i] = f;
+
+      /* ── biome, classified CONTINUOUSLY, then INTERGRADED ─────────────
+         Part one — continuous classification. This does not read
+         `bi[ty*W+tx]`, and that is deliberate. A nearest-tile lookup, however
+         hard you warp the coordinate you look it up with, returns a value that
+         is constant across each cell, so the boundary between two biomes is
+         always the warped image of a cell edge: a staircase with one-tile
+         steps. It wobbles, but you can still count the tiles along it, which
+         is the stated failure condition. So the painter re-evaluates the SAME
+         Voronoi over the SAME 12 cores the generator uses, at continuous
+         position instead of integer tile index. No cell to cross, no
+         staircase.
+
+         Part two — and this is the part that actually kills the seam. A
+         continuous Voronoi boundary is smooth, but it is still a LINE, and
+         between two regions with different colour it reads as one: the cell
+         boundaries of a Voronoi over gridded cores are straight, and half a
+         tile of wobble on a straight line still looks straight from across
+         the room. Widening the warp until the line bends is the wrong lever —
+         it just paints the wrong biome a long way from where it is.
+
+         So there is no line. The runner-up core is tracked as well as the
+         winner, and within a couple of tiles of the bisector the two biomes
+         are INTERLEAVED, dithered against a coherent two-octave noise: at the
+         bisector it is an even mix, and it fades to pure over the band. The
+         result is a mottled intergrade — a forest that thins into scrub into
+         open ground — which is both what painted maps do and what real
+         country does. Because the pick drives the scatter as well as the
+         paint, the trees thin out with it for free.
+
+         The average position of the transition is still the true bisector, so
+         this stays honest about where a biome is; it only stops pretending
+         the world has an edge there. */
+      var fz = sampleGrid(fzg, FZW, FZH, fx * (FZW - 1) / W, fy * (FZH - 1) / H);
+      var px0 = wx - 0.5, py0 = wy - 0.5;
+      var ctx0 = fx < 0 ? 0 : (fx > W - 1 ? W - 1 : fx | 0);
+      var cty0 = fy < 0 ? 0 : (fy > H - 1 ? H - 1 : fy | 0);
+      var cbase = (cty0 * W + ctx0) * CAND_N;
+      var bestD = Infinity, bestB = 0, secD = Infinity, secB = 0;
+      for (k = 0; k < CAND_N; k++) {
+        var kk2 = CAND[cbase + k];
+        var ddx = CX[kk2] - px0, ddy = CY[kk2] - py0;
+        var dd = (ddx * ddx + ddy * ddy) * (0.80 + CF[kk2] * fz);
+        if (dd < bestD) { secD = bestD; secB = bestB; bestD = dd; bestB = CB[kk2]; }
+        else if (dd < secD) { secD = dd; secB = CB[kk2]; }
+      }
+      if (secB !== bestB && secD < 1e8) {
+        var gap = Math.sqrt(secD) - Math.sqrt(bestD);        // tiles
+        var wgt = 0.5 + 0.5 * sstep(0, INTERGRADE, gap);
+        var dith = v4 * 0.52 + v3 * 0.48;
+        BIO[i] = dith < wgt ? bestB : secB;
+      } else {
+        BIO[i] = bestB;
+      }
+
+      // Coastline: the bilinear water field is already smooth (no steps), but
+      // a threshold on a smooth field gives a soft rounded curve that reads as
+      // a puddle of paint. A little high-frequency noise added BEFORE the
+      // threshold is what makes it ragged.
+      WVAL[i] = sampleTile(wet, W, H, fx + dx * WATER_WARP, fy + dy * WATER_WARP)
+              + (sampleGrid(wd.g, wd.w, wd.h, fx * (wd.w - 1) / W, fy * (wd.h - 1) / H) - 0.5) * 0.13;
       var eb = sampleTile(elevT, W, H, wx, wy);
       var rg = sampleTile(roughT, W, H, wx, wy);
       // Three terms, and all three matter:
@@ -400,9 +532,16 @@ function bakeTerrain(seed, opts) {
       //          has a horizon that goes up and down.
       //   rg*… — the biome's own ruggedness, ridged for arêtes plus fBm for
       //          the shoulders underneath them.
-      var land = (sampleGrid(oct[0].g, oct[0].w, oct[0].h, x * oct[0].sx, y * oct[0].sy) - 0.5) * 0.30
-               + (sampleGrid(oct[1].g, oct[1].w, oct[1].h, x * oct[1].sx, y * oct[1].sy) - 0.5) * 0.16;
-      ELEV[i] = eb + land + rg * (0.60 * r + 0.40 * f - 0.46) * 1.25;
+      var land = (v0 - 0.5) * 0.44 + (v1 - 0.5) * 0.26 + (v2 - 0.5) * 0.13;
+      /* ⚠ How much of the detail is RIDGED is a function of ruggedness, not a
+         constant. Ridged noise makes arêtes, and an arête is the right shape
+         for Dragon Mountain and precisely the wrong shape for the Open
+         Steppe — applied uniformly it laid a net of filaments over the whole
+         map and the world came out looking like crumpled foil. Rugged ground
+         gets mostly ridge; gentle ground gets mostly smooth fBm swells. */
+      var ridgeMix = 0.15 + 0.58 * rg;
+      ELEV[i] = eb + land + rg * (ridgeMix * r + (1 - ridgeMix) * f - 0.46) * 1.30;
+      RGA[i] = (rg * 200) | 0;
 
       TR[i] = sampleTile(toneR, W, H, wx, wy);
       TG[i] = sampleTile(toneG, W, H, wx, wy);
@@ -441,7 +580,7 @@ function bakeTerrain(seed, opts) {
         var d = ELEV[qy * BW + qx] - (e0 + rise * SHADOW_STRIDE * k);
         if (d > occ) occ = d;
       }
-      SHADOW[i] = occ > 0 ? (occ > 0.10 ? 1 : occ * 10) : 0;
+      SHADOW[i] = occ > 0 ? (occ > 0.13 ? 1 : occ * 7.7) : 0;
     }
     blurTiles(SHADOW, BW, BH, 1);   // soft-edged shadows, not stencil cuts
   }
@@ -451,14 +590,21 @@ function bakeTerrain(seed, opts) {
   var img = ctx.createImageData(BW, BH);
   var d8 = img.data;
   var LIGHT = new Uint8Array(N);       // kept for the object pass
-  /* ⚠ RELIEF is a MULTIPLIER, and the first version of this line divided
-     instead. That one character is the difference between a hillshaded world
-     and a flat one: elevation runs over roughly a unit across the whole map,
-     so a raw per-pixel central difference is ~0.03 and the surface normal
-     comes out indistinguishable from straight up everywhere. The gradient has
-     to be scaled INTO the range where the dot product actually moves. Scaled
-     by PX so the relief looks the same at every bake resolution. */
-  var RELIEF = 780 / PX;
+  /* ── The hillshade is TWO-SCALE, and it has to be ────────────────────────
+     A single central difference over one pixel cannot light both a mountain
+     and a meadow. Broad landforms are, by definition, gentle: a hill 0.4 units
+     high spread over 200 pixels has a per-pixel gradient of 0.002, which after
+     normalisation is a surface indistinguishable from flat. Crank the
+     multiplier until that hill shows and the fine octaves become sandpaper.
+
+     So the normal is built from two gradients: a MACRO one measured across
+     ±0.4 of a tile, which is what makes open ground undulate and what gives a
+     massif its overall lit and shadowed flanks, and a MICRO one measured
+     across one pixel, which is the rock and grass texture. They are summed
+     before normalising, so a slope carries both. This is the difference
+     between the Open Steppe reading as a table and reading as country. */
+  var DM = Math.max(2, (PX * 0.40) | 0);
+  var RELIEF_MACRO = 11.0, RELIEF_MICRO = 16 / (PX / 28);
   var WTHR = 0.42;
   var hashf = M.wpHash32;
   var o3 = oct[3], o4g = oct[4];
@@ -468,17 +614,41 @@ function bakeTerrain(seed, opts) {
       i = y * BW + x;
       var e = ELEV[i];
 
-      // surface normal from central differences
+      // surface normal from two central differences, wide and narrow
       var el = ELEV[x > 0 ? i - 1 : i], er = ELEV[x < BW - 1 ? i + 1 : i];
       var eu = ELEV[y > 0 ? i - BW : i], ed = ELEV[y < BH - 1 ? i + BW : i];
-      var gx = (er - el) * RELIEF, gy = (ed - eu) * RELIEF;
+      var eL = ELEV[x > DM ? i - DM : i], eR = ELEV[x < BW - 1 - DM ? i + DM : i];
+      var eU = ELEV[y > DM ? i - DM * BW : i], eD = ELEV[y < BH - 1 - DM ? i + DM * BW : i];
+      var gx = (eR - eL) * RELIEF_MACRO + (er - el) * RELIEF_MICRO;
+      var gy = (eD - eU) * RELIEF_MACRO + (ed - eu) * RELIEF_MICRO;
       var nl = 1 / Math.sqrt(gx * gx + gy * gy + 1);
       var lam = (-gx * lx - gy * ly + lz) * nl;
       var slope = Math.sqrt(gx * gx + gy * gy);
 
+      /* ── curvature ────────────────────────────────────────────────────
+         The Laplacian of the height field: positive in a hollow, negative on
+         a spine. Cartographic relief has done this for a century because a
+         pure lambertian hillshade cannot show you a valley that runs toward
+         the light — it comes out the same tone as the flat beside it.
+         Darkening hollows and catching ridge lines is what makes drainage
+         legible, and drainage is most of what makes open country look like
+         country instead of like a gradient. */
+      var curv = ((eL + eR + eU + eD) * 0.25 - e) * (RELIEF_MACRO * 2.1);
+      if (curv > 0.5) curv = 0.5; else if (curv < -0.5) curv = -0.5;
+
       var sh = 0.26 + 0.92 * lam;
+      /* ⚠ CONTRAST FOLLOWS SLOPE, and without this the map has diagonal
+         banding across every open plain. The tonal ramp from `deep` to `lit`
+         spans a luminance ratio of about 2.5, so on gentle ground a swell of
+         a few percent grade still swings the colour a long way, and a smooth
+         landform noise lit from 45° turns into alternating light and dark
+         bands that read as folds in cloth. Flat ground therefore gets its
+         contrast compressed toward the mid-tone and only real slopes get the
+         full range — which is also just true of how ground looks. */
+      var cf = 0.42 + 0.58 * clamp(slope * 1.35, 0, 1);
+      sh = 0.5 + (sh - 0.5) * cf - curv * 0.34;
       if (sh < 0) sh = 0;
-      sh *= (1 - 0.50 * SHADOW[i]);              // the cast shadow
+      sh *= (1 - 0.42 * SHADOW[i]);              // the cast shadow
       if (sh > 1.22) sh = 1.22;
       LIGHT[i] = clamp(sh * 200, 0, 255) | 0;
 
@@ -519,11 +689,28 @@ function bakeTerrain(seed, opts) {
         // Half the warped-nearest biome tone, half the blurred tone field. The
         // nearest lookup keeps a forest reading as forest right up to its edge;
         // the blurred field stops that edge being a knife.
-        var br = mix(bs[0], TR[i], 0.50), bg2 = mix(bs[1], TG[i], 0.50), bb = mix(bs[2], TB[i], 0.50);
+        var br = mix(bs[0], TR[i], 0.40), bg2 = mix(bs[1], TG[i], 0.40), bb = mix(bs[2], TB[i], 0.40);
         var t = sh > 1 ? 1 : sh;
         if (t < 0.5) { var u2 = t * 2; cr = mix(dp[0], br, u2); cg = mix(dp[1], bg2, u2); cb = mix(dp[2], bb, u2); }
         else { var u3 = (t - 0.5) * 2; cr = mix(br, lt[0], u3); cg = mix(bg2, lt[1], u3); cb = mix(bb, lt[2], u3); }
         if (sh > 1) { var ov = (sh - 1) * 0.7; cr = mix(cr, 255, ov); cg = mix(cg, 255, ov); cb = mix(cb, 255, ov); }
+
+        /* ── HIGH GROUND IS ROCK, WHATEVER BIOME IT IS ───────────────────
+           The one change that stops Dragon Mountain looking like a brown
+           sticker. Biome colour switches at the Voronoi boundary, which is a
+           curve in the wrong place: a mountain does not end where the
+           cartographer's region ends, it ends where the ground comes back
+           down. So above a threshold the palette is blended toward bare rock
+           and scree as a function of ELEVATION, and the mountain's visible
+           edge becomes the contour of its own foothills — which also means a
+           high shoulder of the steppe next door goes rocky too, exactly as it
+           should. */
+        var rock = sstep(0.60, 1.00, e) * sstep(0.30, 0.66, RGA[i] / 200);
+        if (rock > 0.01) {
+          var rk = sh > 0.62 ? 1 : 0;
+          var rr2 = rk ? 168 : 82, rg2 = rk ? 146 : 68, rb2 = rk ? 122 : 60;
+          cr = mix(cr, rr2, rock * 0.72); cg = mix(cg, rg2, rock * 0.72); cb = mix(cb, rb2, rock * 0.72);
+        }
 
         // ── per-biome texture ───────────────────────────────────────────
         // The bar: each biome must be identifiable with the colour removed.
@@ -545,11 +732,11 @@ function bakeTerrain(seed, opts) {
         } else if (nm === 'wastes') {
           // wind-scoured: anisotropic streaks plus a dry-mud crack network
           var st = sampleGrid(o4g.g, o4g.w, o4g.h, x * o4g.sx * 0.30, y * o4g.sy * 2.8);
-          var sm = 0.93 + 0.14 * st;
+          var sm = 0.95 + 0.10 * st;
           var crack = 1 - Math.abs(fine + fine - 1);
           crack = sstep(0.93, 1.0, crack);
           cr *= sm; cg *= sm; cb *= sm;
-          cr = mix(cr, 58, crack * 0.34); cg = mix(cg, 48, crack * 0.34); cb = mix(cb, 38, crack * 0.34);
+          cr = mix(cr, 66, crack * 0.26); cg = mix(cg, 56, crack * 0.26); cb = mix(cb, 44, crack * 0.26);
         } else if (nm === 'facility') {
           // hard geometry, rotated ~13° so its seams can never line up with a
           // tile boundary and re-introduce the grid we just spent a page killing
@@ -584,20 +771,39 @@ function bakeTerrain(seed, opts) {
           cr *= dap; cg *= dap * 1.01; cb *= dap * 0.96;
         } else {
           // plains: broad patchwork of grass and dry ground
-          var patch = 0.90 + 0.20 * mid;
+          var patch = 0.92 + 0.16 * mid;
           cr *= patch; cg *= patch; cb *= patch * 0.97;
-          var dry = sstep(0.62, 0.95, fine);
-          cr = mix(cr, 186, dry * 0.20); cg = mix(cg, 170, dry * 0.20); cb = mix(cb, 112, dry * 0.20);
+          // grazing: broad dry-gold patches against green, at landform scale
+          var dry = sstep(0.46, 0.82, det);
+          cr = mix(cr, 176, dry * 0.20); cg = mix(cg, 164, dry * 0.20); cb = mix(cb, 112, dry * 0.20);
+          var green = sstep(0.62, 0.30, det);
+          cr = mix(cr, 84, green * 0.18); cg = mix(cg, 106, green * 0.18); cb = mix(cb, 62, green * 0.18);
         }
 
         // ── snow ────────────────────────────────────────────────────────
         // Accumulates by altitude, but NOT on the steepest faces — snow slides
         // off a cliff, and leaving it on makes a mountain look like a cake.
-        var snowline = 0.74 + 0.17 * det;
-        var snowAmt = sstep(snowline, snowline + 0.20, e) * clamp(1 - slope * 0.55, 0.06, 1);
-        if (snowAmt > 0) {
-          var sn = sh > 0.62 ? SNOWV.lit : SNOWV.deep;
-          var sa = snowAmt * 0.90;
+        /* ── snow ────────────────────────────────────────────────────────
+           Snow is an ACCUMULATION, not a colour applied to high tiles. Three
+           things decide whether it is here, and all three have to be in:
+             • altitude, with a long feathered lower edge (0.28 wide) and a
+               snowline that itself wanders with the terrain noise, so the
+               treeline is a ragged contour rather than a level set;
+             • slope — it slides off anything steep, so the lit rock faces
+               stay rock and the snow gathers in the flats and the crevices,
+               which is the thing that makes a peak read as a peak;
+             • a mottling noise, because a real snowfield is patchy at its
+               margins and continuous only at the top.
+           Getting this wrong is what produced the "field of white tents" in
+           the first pass: uniform white applied to everything above a hard
+           threshold, plus a white cap stamped on every scattered crag. */
+        var snowline = 0.86 + 0.22 * det + 0.10 * mid;
+        var snowAmt = sstep(snowline, snowline + 0.28, e)
+                    * clamp(1 - slope * 0.42, 0.0, 1)
+                    * clamp(0.35 + 1.0 * fine, 0, 1);
+        if (snowAmt > 0.02) {
+          var sn = sh > 0.70 ? SNOWV.lit : SNOWV.deep;
+          var sa = snowAmt * 0.88;
           cr = mix(cr, sn[0], sa); cg = mix(cg, sn[1], sa); cb = mix(cb, sn[2], sa);
         }
 
@@ -615,7 +821,7 @@ function bakeTerrain(seed, opts) {
       // a painting, and they are what makes six biomes look like one map.
       var lum2 = (cr * 0.30 + cg * 0.59 + cb * 0.11) / 255;
       var warm = (lum2 - 0.46);
-      cr += warm * 26; cg += warm * 8; cb -= warm * 18;
+      cr += warm * 20; cg += warm * 7; cb -= warm * 15;
       cr = mix(cr, 214, 0.045); cg = mix(cg, 196, 0.045); cb = mix(cb, 158, 0.045);
       // paper grain, hashed so it is identical on every machine
       var gr = ((hashf(seed, x, y, R_GRAIN) >>> 12) & 255) / 255 - 0.5;
@@ -630,6 +836,20 @@ function bakeTerrain(seed, opts) {
   }
   ctx.putImageData(img, 0, 0);
   var tShade = now();
+
+  /* A cheap statistical fingerprint of the height field and the lighting.
+     Not decoration: while tuning this file it was repeatedly unclear whether a
+     change to the relief had actually altered anything or whether the picture
+     merely looked the same, and eyeballing a 1.2-megapixel PNG is a bad way to
+     answer that. These four numbers answer it in one line. */
+  var dbg = { eMin: 1e9, eMax: -1e9, lMean: 0, lMin: 255, lMax: 0, bio: [0, 0, 0, 0, 0, 0] };
+  for (i = 0; i < N; i += 7) {
+    var ev = ELEV[i]; if (ev < dbg.eMin) dbg.eMin = ev; if (ev > dbg.eMax) dbg.eMax = ev;
+    var lv = LIGHT[i]; dbg.lMean += lv; if (lv < dbg.lMin) dbg.lMin = lv; if (lv > dbg.lMax) dbg.lMax = lv;
+    dbg.bio[BIO[i]]++;
+  }
+  dbg.lMean = Math.round(dbg.lMean / Math.ceil(N / 7));
+  dbg.eMin = round2(dbg.eMin); dbg.eMax = round2(dbg.eMax);
 
   // ── 7. Everything that is drawn rather than computed ────────────────────
   var ART = {
@@ -654,6 +874,7 @@ function bakeTerrain(seed, opts) {
     world: world,
     cloud: bakeCloud(seed, W, H),
     memory: bakeMemory(cv, BW, BH),
+    debug: dbg,
     timing: {
       total: round2(t1 - t0), fields: round2(tFields - t0),
       shadow: round2(tShadow - tFields), shading: round2(tShade - tShadow),
@@ -816,7 +1037,7 @@ function strokeRoad(c, pts, PX) {
    they would if this were a painting, and everything carries a contact shadow
    offset toward the lower-right — the same sun as the hillshade.             */
 var SCAT_TRY = 13;
-var DENSITY = { plains: 0.26, forest: 0.90, graveyard: 0.40, facility: 0.34, mountain: 0.34, wastes: 0.22 };
+var DENSITY = { plains: 0.26, forest: 0.90, graveyard: 0.40, facility: 0.30, mountain: 0.30, wastes: 0.22 };
 
 function scatterObjects(A) {
   var M = mapgen(), out = [];
@@ -858,8 +1079,8 @@ function makeObject(A, nm, fx, fy, e, lit, r) {
     // Crags follow the height field: big broken teeth on the high ground,
     // rubble on the skirts. Scattering one uniform crag everywhere — which is
     // what the first pass did — turns a massif into a hedgehog.
-    var t = r(), hi = clamp((e - 0.55) / 0.45, 0, 1);
-    if (t < 0.30 + 0.42 * hi) { var s2 = PX * (0.16 + r() * 0.22 + hi * 0.40); return { y: fy, f: function () { drawCrag(c, px, py, s2, lit, e, r); } }; }
+    var t = r(), hi = clamp((e - 0.72) / 0.50, 0, 1);
+    if (t < 0.10 + 0.62 * hi) { var s2 = PX * (0.16 + r() * 0.26 + hi * 0.52); return { y: fy, f: function () { drawCrag(c, px, py, s2, lit, e, r); } }; }
     if (t < 0.88) { var s3 = PX * (0.08 + r() * 0.13); return { y: fy, f: function () { drawBoulder(c, px, py, s3, lit, r); } }; }
     var s4 = PX * (0.18 + r() * 0.14); return { y: fy, f: function () { drawDeadTree(c, px, py, s4, lit, r, '#3a2c22'); } };
   }
@@ -954,28 +1175,51 @@ function drawDeadTree(c, x, y, s, lit, r, col) {
     c.lineTo(x + Math.cos(a) * s * 0.55, yy + Math.sin(a) * s * 0.55); c.stroke();
   }
 }
+/* A crag is NOT a triangle. The first pass drew every one as an isoceles
+   wedge with a white cap and the massif came out looking like a row of tents.
+   This builds a broken silhouette instead: a jagged left flank climbing to an
+   off-centre summit, a shorter shoulder, and a right flank that falls away at
+   a different angle, all with per-instance jitter — so no two read the same
+   even when a hundred of them overlap. Snow is a thin rime on the summit
+   ridge only, and only very high up; the snowFIELD is the terrain pass's job,
+   which is where snow belongs. */
 function drawCrag(c, x, y, s, lit, e, r) {
-  var snow = e > 0.86;
   contact(c, x, y, s * 1.15, s * 0.40, 0.34);
-  var w = s * (0.85 + r() * 0.5), h = s * (1.4 + r() * 1.2);
-  var lean = (r() - 0.5) * s * 0.6;
-  // dark face (away from the sun) first
+  var w = s * (0.80 + r() * 0.55), h = s * (1.3 + r() * 1.4);
+  var lean = (r() - 0.5) * s * 0.8;
+  var sx = x + lean;                        // summit
+  var sh2 = h * (0.52 + r() * 0.26);        // shoulder height
+  var shx = sx + w * (0.30 + r() * 0.45);   // shoulder x
+  var pts = [
+    [x - w, y],
+    [x - w * (0.55 + r() * 0.3), y - h * (0.28 + r() * 0.22)],
+    [sx - w * (0.16 + r() * 0.2), y - h * (0.72 + r() * 0.16)],
+    [sx, y - h],
+    [shx, y - sh2],
+    [x + w * (0.86 + r() * 0.3), y]
+  ];
+  var i;
+  c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);
+  for (i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
+  c.closePath();
+  c.fillStyle = shadeRGB(66, 52, 44, 0.60 + lit * 0.40); c.fill();
+  // the lit flank: everything left of the summit line
   c.beginPath();
-  c.moveTo(x - w, y); c.lineTo(x + lean, y - h); c.lineTo(x + w, y); c.closePath();
-  c.fillStyle = shadeRGB(66, 52, 44, 0.62 + lit * 0.38); c.fill();
-  // lit face
-  c.beginPath();
-  c.moveTo(x - w, y); c.lineTo(x + lean, y - h); c.lineTo(x + lean - w * 0.18, y); c.closePath();
-  c.fillStyle = shadeRGB(150, 124, 100, 0.70 + lit * 0.46); c.fill();
-  if (snow) {
+  c.moveTo(pts[0][0], pts[0][1]);
+  c.lineTo(pts[1][0], pts[1][1]); c.lineTo(pts[2][0], pts[2][1]); c.lineTo(pts[3][0], pts[3][1]);
+  c.lineTo(sx - w * 0.10, y);
+  c.closePath();
+  c.fillStyle = shadeRGB(152, 128, 104, 0.70 + lit * 0.46); c.fill();
+  // a crease down the face, so the rock has structure
+  c.strokeStyle = 'rgba(38,28,22,0.28)'; c.lineWidth = Math.max(0.5, s * 0.06);
+  c.beginPath(); c.moveTo(sx, y - h); c.lineTo(sx - w * (0.2 + r() * 0.3), y); c.stroke();
+  if (e > 1.02 && r() < 0.55) {
     c.beginPath();
-    c.moveTo(x + lean - w * 0.36, y - h * 0.60);
-    c.lineTo(x + lean, y - h);
-    c.lineTo(x + lean + w * 0.34, y - h * 0.56);
-    c.lineTo(x + lean + w * 0.12, y - h * 0.66);
-    c.lineTo(x + lean - w * 0.10, y - h * 0.58);
+    c.moveTo(pts[2][0], pts[2][1]); c.lineTo(sx, y - h);
+    c.lineTo(shx, y - sh2); c.lineTo(shx - w * 0.18, y - sh2 - h * 0.10);
+    c.lineTo(sx - w * 0.06, y - h * 0.86);
     c.closePath();
-    c.fillStyle = 'rgba(238,244,252,0.94)'; c.fill();
+    c.fillStyle = 'rgba(226,234,242,0.80)'; c.fill();
   }
 }
 function drawBoulder(c, x, y, s, lit, r) {
@@ -1012,8 +1256,8 @@ function drawHeadstone(c, x, y, s, lit, r) {
 }
 function drawWisp(c, x, y, s, r) {
   var g = c.createRadialGradient(x, y - s, 0, x, y - s, s * 3.2);
-  g.addColorStop(0, 'rgba(168,214,206,0.55)');
-  g.addColorStop(0.4, 'rgba(120,168,178,0.18)');
+  g.addColorStop(0, 'rgba(178,196,190,0.34)');
+  g.addColorStop(0.4, 'rgba(130,156,160,0.10)');
   g.addColorStop(1, 'rgba(120,168,178,0)');
   c.fillStyle = g; c.beginPath(); c.arc(x, y - s, s * 3.2, 0, Math.PI * 2); c.fill();
 }
@@ -1028,8 +1272,8 @@ function drawPanelBlock(c, x, y, s, lit, r) {
   c.fillRect(-w, -h, w * 2, h * 0.36);
   c.strokeStyle = 'rgba(10,18,24,0.6)'; c.lineWidth = Math.max(0.6, s * 0.07);
   c.strokeRect(-w, -h, w * 2, h * 2);
-  c.fillStyle = 'rgba(120,236,255,0.75)';
-  c.fillRect(-w * 0.6, h * 0.45, w * 0.9, Math.max(0.8, s * 0.10));
+  c.fillStyle = 'rgba(140,206,222,0.42)';
+  c.fillRect(-w * 0.6, h * 0.45, w * 0.9, Math.max(0.7, s * 0.08));
   c.restore();
 }
 function drawPylon(c, x, y, s, lit, r) {
@@ -1041,17 +1285,17 @@ function drawPylon(c, x, y, s, lit, r) {
   c.strokeStyle = shadeRGB(150, 176, 188, 0.6 + lit * 0.4);
   c.lineWidth = Math.max(0.5, s * 0.07);
   c.beginPath(); c.moveTo(x - s * 0.34, y - h * 0.72); c.lineTo(x + s * 0.34, y - h * 0.72); c.stroke();
-  var g = c.createRadialGradient(x, y - h, 0, x, y - h, s * 1.3);
-  g.addColorStop(0, 'rgba(150,244,255,0.95)');
-  g.addColorStop(0.35, 'rgba(90,200,230,0.35)');
-  g.addColorStop(1, 'rgba(90,200,230,0)');
-  c.fillStyle = g; c.beginPath(); c.arc(x, y - h, s * 1.3, 0, Math.PI * 2); c.fill();
+  var g = c.createRadialGradient(x, y - h, 0, x, y - h, s * 0.9);
+  g.addColorStop(0, 'rgba(168,226,238,0.70)');
+  g.addColorStop(0.4, 'rgba(96,170,196,0.16)');
+  g.addColorStop(1, 'rgba(96,170,196,0)');
+  c.fillStyle = g; c.beginPath(); c.arc(x, y - h, s * 0.9, 0, Math.PI * 2); c.fill();
 }
 function drawConduit(c, x, y, s, r) {
   c.save(); c.translate(x, y); c.rotate(0.226 + (r() < 0.5 ? 0 : Math.PI / 2));
   c.strokeStyle = 'rgba(28,44,52,0.62)'; c.lineWidth = Math.max(1, s * 0.42);
   c.beginPath(); c.moveTo(-s * 2.4, 0); c.lineTo(s * 2.4, 0); c.stroke();
-  c.strokeStyle = 'rgba(126,226,246,0.42)'; c.lineWidth = Math.max(0.5, s * 0.15);
+  c.strokeStyle = 'rgba(126,196,214,0.22)'; c.lineWidth = Math.max(0.5, s * 0.13);
   c.beginPath(); c.moveTo(-s * 2.4, 0); c.lineTo(s * 2.4, 0); c.stroke();
   c.restore();
 }
@@ -1274,7 +1518,7 @@ function drawWarpathGate(c, x, y, PX, lit) {
 function drawPortal(c, x, y, PX, lit) {
   var s = PX * 0.95;
   contact(c, x, y, s * 0.95, s * 0.30, 0.34);
-  glow(c, x, y - s * 0.5, s * 2.0, 'rgba(150,86,236,0.40)');
+  glow(c, x, y - s * 0.5, s * 1.7, 'rgba(140,100,190,0.26)');
   // a ring of leaning stones
   for (var i = 0; i < 7; i++) {
     var a = (i / 7) * Math.PI * 2 + 0.3;
@@ -1288,9 +1532,9 @@ function drawPortal(c, x, y, PX, lit) {
     c.restore();
   }
   var g = c.createRadialGradient(x, y - s * 0.36, 0, x, y - s * 0.36, s * 0.55);
-  g.addColorStop(0, 'rgba(232,206,255,0.95)');
-  g.addColorStop(0.45, 'rgba(146,72,226,0.7)');
-  g.addColorStop(1, 'rgba(60,20,90,0.0)');
+  g.addColorStop(0, 'rgba(224,208,240,0.88)');
+  g.addColorStop(0.45, 'rgba(140,96,186,0.55)');
+  g.addColorStop(1, 'rgba(60,32,84,0.0)');
   c.fillStyle = g; c.beginPath(); c.ellipse(x, y - s * 0.36, s * 0.55, s * 0.42, 0, 0, Math.PI * 2); c.fill();
 }
 function drawEncampment(c, x, y, PX, lit, site) {
@@ -1341,8 +1585,8 @@ function drawPyramid(c, x, y, PX, lit) {
   c.fillStyle = 'rgba(6,4,10,0.95)';
   c.beginPath(); c.moveTo(x - s * 0.16, y); c.lineTo(x - s * 0.16, y - s * 0.34);
   c.lineTo(x + s * 0.16, y - s * 0.34); c.lineTo(x + s * 0.16, y); c.closePath(); c.fill();
-  glow(c, x, y - s * 0.2, s * 0.9, 'rgba(120,40,200,0.42)');
-  glow(c, x, y - s * 1.35, s * 1.2, 'rgba(160,90,240,0.28)');
+  glow(c, x, y - s * 0.2, s * 0.8, 'rgba(108,64,150,0.26)');
+  glow(c, x, y - s * 1.35, s * 1.1, 'rgba(132,96,178,0.16)');
 }
 function drawGarden(c, x, y, PX, lit) {
   var s = PX * 1.15, i;
@@ -1451,7 +1695,7 @@ function bakeMemory(src, BW, BH) {
   c.globalCompositeOperation = 'saturation';
   c.fillStyle = 'hsl(0,0%,50%)'; c.fillRect(0, 0, BW, BH);
   c.globalCompositeOperation = 'source-over';
-  c.fillStyle = 'rgba(28,32,50,0.50)'; c.fillRect(0, 0, BW, BH);
+  c.fillStyle = 'rgba(22,26,42,0.62)'; c.fillRect(0, 0, BW, BH);
   return cv;
 }
 
@@ -1472,10 +1716,14 @@ function bakeCloud(seed, W, H) {
           + sampleGrid(g3, 71, 50, x / CW * 70, y / CH * 49) * 0.15;
     var i = (y * CW + x) << 2;
     // a cold slate cloud with a faint warm underlight where it thins
-    var t = clamp((v - 0.30) * 1.9, 0, 1);
-    d[i]     = mix(16, 58, t) + mix(0, 14, t);
-    d[i + 1] = mix(14, 54, t);
-    d[i + 2] = mix(24, 72, t);
+    // ⚠ Watch the channel order here. The first version added a warm term to
+    // the red channel and produced a lilac fog bank that looked like a bug.
+    // Unexplored world is cold ink with a faint slate lift where it thins.
+    var t = clamp((v - 0.34) * 2.4, 0, 1);
+    var t2 = t * t;
+    d[i]     = mix(11, 46, t2) + 4 * t;
+    d[i + 1] = mix(12, 50, t2) + 3 * t;
+    d[i + 2] = mix(19, 62, t2);
     d[i + 3] = 255;
   }
   c.putImageData(img, 0, 0);
@@ -1508,7 +1756,19 @@ function scratch(w, h) {
   }
   return _scratch;
 }
-var _mask = { dim: null, unseen: null, key: null, q: 0 };
+var _mask = { dim: null, unseen: null, key: null, q: 0, cv: null };
+
+/* ⚠ The four mask canvases are CACHED, not reallocated. Building a fresh
+   canvas per frame is what made the measured frame cost climb monotonically
+   across a benchmark run — the renderer was outrunning the garbage collector
+   with discarded backing stores rather than actually doing more work. */
+function maskCanvases(MW, MH) {
+  if (!_mask.cv || _mask.cv.w !== MW || _mask.cv.h !== MH) {
+    _mask.cv = { w: MW, h: MH, raw: mkCanvas(MW, MH), raw2: mkCanvas(MW, MH),
+                 dim: mkCanvas(MW, MH), uns: mkCanvas(MW, MH) };
+  }
+  return _mask.cv;
+}
 
 function fogMasks(baked, opts, W, H) {
   var M = mapgen();
@@ -1516,8 +1776,11 @@ function fogMasks(baked, opts, W, H) {
   var key = opts.fogKey;
   if (_mask.dim && key != null && _mask.key === key && _mask.q === Q) return _mask;
   var st = fogAccessor(opts);
-  var raw = mkCanvas(MW, MH), rc = raw.getContext('2d');
-  var raw2 = mkCanvas(MW, MH), rc2 = raw2.getContext('2d');
+  var C = maskCanvases(MW, MH);
+  var raw = C.raw, rc = raw.getContext('2d');
+  var raw2 = C.raw2, rc2 = raw2.getContext('2d');
+  rc.setTransform(1, 0, 0, 1, 0, 0); rc.clearRect(0, 0, MW, MH);
+  rc2.setTransform(1, 0, 0, 1, 0, 0); rc2.clearRect(0, 0, MW, MH);
   var x, y, any = false, anyUnseen = false;
   var bx0 = W, by0 = H, bx1 = -1, by1 = -1;
   for (y = 0; y < H; y++) for (x = 0; x < W; x++) {
@@ -1538,9 +1801,11 @@ function fogMasks(baked, opts, W, H) {
       rc2.beginPath(); rc2.arc((x + 0.5) * Q + jx, (y + 0.5) * Q + jy, rr, 0, Math.PI * 2); rc2.fill();
     }
   }
-  var dim = mkCanvas(MW, MH), dc = dim.getContext('2d');
-  var uns = mkCanvas(MW, MH), uc = uns.getContext('2d');
-  try { dc.filter = 'blur(' + (Q * 0.46).toFixed(2) + 'px)'; uc.filter = 'blur(' + (Q * 0.46).toFixed(2) + 'px)'; } catch (e) { /* no filter: hard edges */ }
+  var dim = C.dim, dc = dim.getContext('2d');
+  var uns = C.uns, uc = uns.getContext('2d');
+  dc.setTransform(1, 0, 0, 1, 0, 0); dc.clearRect(0, 0, MW, MH);
+  uc.setTransform(1, 0, 0, 1, 0, 0); uc.clearRect(0, 0, MW, MH);
+  try { dc.filter = 'blur(' + (Q * 0.72).toFixed(2) + 'px)'; uc.filter = 'blur(' + (Q * 0.80).toFixed(2) + 'px)'; } catch (e) { /* no filter: hard edges */ }
   dc.drawImage(raw, 0, 0);
   uc.drawImage(raw2, 0, 0);
   _mask.dim = dim; _mask.unseen = uns; _mask.key = key; _mask.q = Q;
@@ -1661,21 +1926,46 @@ function draw(ctx, opts) {
   return { total: round2(now() - t0), fog: round2(tFog - tFogStart) };
 }
 
+/* ⚠ The movement overlay is NOT a grid of squares.
+   It was, and it undid a lot of the work in this file: a hundred rounded
+   rectangles laid over the terrain is a picture of the tile lattice, drawn on
+   top of a picture that spends a megapixel hiding it. The reachable set still
+   has to be legible tile by tile — the player is choosing a destination — so
+   the compromise is a soft round pip at each tile centre plus one continuous
+   ragged outline around the whole set. You can see exactly where you can go
+   and there is not a straight cell edge anywhere in it. */
 function drawReach(ctx, opts, cam, W, H) {
-  var z = cam.z, k, ex = opts.explored;
-  ctx.save();
-  ctx.fillStyle = 'rgba(212,175,55,0.11)';
-  ctx.strokeStyle = 'rgba(212,175,55,0.30)';
-  ctx.lineWidth = Math.max(1, z * 0.045);
+  var z = cam.z, k, ex = opts.explored, p, x, y;
+  var set = {}, list = [];
   for (k in opts.reach) {
-    var p = k.split(','), x = +p[0], y = +p[1];
-    if (ex && !ex(x, y)) continue;                 // never paint into the fog
-    var sx = x * z - cam.x, sy = y * z - cam.y;
-    if (sx < -z || sy < -z) continue;
-    ctx.beginPath();
-    roundRect(ctx, sx + z * 0.10, sy + z * 0.10, z * 0.80, z * 0.80, z * 0.22);
-    ctx.fill(); ctx.stroke();
+    p = k.split(','); x = +p[0]; y = +p[1];
+    if (ex && !ex(x, y)) continue;
+    set[x + ',' + y] = 1; list.push([x, y]);
   }
+  if (!list.length) return;
+  ctx.save();
+  // the field
+  ctx.fillStyle = 'rgba(214,180,86,0.085)';
+  for (k = 0; k < list.length; k++) {
+    var sx = (list[k][0] + 0.5) * z - cam.x, sy = (list[k][1] + 0.5) * z - cam.y;
+    if (sx < -z || sy < -z || sx > 1e5) continue;
+    ctx.beginPath(); ctx.arc(sx, sy, z * 0.62, 0, Math.PI * 2); ctx.fill();
+  }
+  // the frontier: only edges with no reachable neighbour, drawn as short
+  // hand-wobbled strokes rather than a traced cell outline
+  ctx.strokeStyle = 'rgba(226,196,116,0.42)';
+  ctx.lineWidth = Math.max(1, z * 0.055); ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (k = 0; k < list.length; k++) {
+    x = list[k][0]; y = list[k][1];
+    var bx = x * z - cam.x, by = y * z - cam.y;
+    var wob = z * 0.10;
+    if (!set[x + ',' + (y - 1)]) { ctx.moveTo(bx + z * 0.12, by + wob); ctx.lineTo(bx + z * 0.88, by - wob * 0.6); }
+    if (!set[x + ',' + (y + 1)]) { ctx.moveTo(bx + z * 0.12, by + z - wob * 0.6); ctx.lineTo(bx + z * 0.88, by + z + wob); }
+    if (!set[(x - 1) + ',' + y]) { ctx.moveTo(bx + wob, by + z * 0.12); ctx.lineTo(bx - wob * 0.6, by + z * 0.88); }
+    if (!set[(x + 1) + ',' + y]) { ctx.moveTo(bx + z - wob * 0.6, by + z * 0.12); ctx.lineTo(bx + z + wob, by + z * 0.88); }
+  }
+  ctx.stroke();
   ctx.restore();
 }
 function drawPath(ctx, path, cam) {

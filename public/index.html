@@ -123302,7 +123302,17 @@ function renderCardEditor() {
       </div>
       <div class="small-text ink-dim" style="margin-top:0.3rem">Fires only when an enemy <strong>attacks</strong> the trap or <strong>moves onto</strong> it — Amount is damage (Riposte), stun turns (Repel), or reflect % of the attacker's power (Mirror). This is on top of the Flip Effect below.</div>
     </div>` : ''}
-    <div class="editor-field"><label>Effect Type</label><select id="ed-onplay-type">${onPlayTypeOpts}</select></div>
+    <div class="editor-field"><label>Effect Type</label><select id="ed-onplay-type">${onPlayTypeOpts}</select>
+      <!-- 🎟 Signpost, not a feature. "Make this card cost 0 in hand" gets looked for
+           HERE first, because it reads like an effect — but it cannot live in this
+           dropdown. Everything in this list writes card.onPlay, which fires WHEN THE
+           CARD IS PLAYED; a hand price has to be known BEFORE that, while the card is
+           still sitting in hand. Wiring it here would produce a card that shows its
+           full cost, charges full cost, and then "goes free" after the fact.
+           So it lives in 🔑 Play Conditions as card.zeroCostIf. This line exists
+           purely so the next person to go looking finds it in one hop. -->
+      <div class="small-text ink-dim" style="margin-top:0.3rem">Looking for <strong>“costs 0 in your hand”</strong>? That is a price, not an on-play effect — it is under <strong>🔑 Play Conditions → 🎟 Costs 0 in your hand</strong>.</div>
+    </div>
     <div class="editor-field full">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Normally On Play only fires on a hand deploy. With Anywhere checked it fires on EVERY arrival to the field: hand play, effect/move/spell summons, deck pulls, and graveyard rises (Rise, raise-traps, tombstone revives, rebirth).">
         <input type="checkbox" id="ed-onplay-anywhere" ${onPlay.anywhere ? 'checked' : ''}>

@@ -81,9 +81,9 @@ node -e "const s=require('fs').readFileSync('public/index.html','utf8');let m=0;
 
 ## Open items
 
-### 0 — 🔴 STALE RESET DIRECTIVES ARE STILL WIPING PLAYERS. Needs your decision.
+### 0 — ✅ STALE RESET DIRECTIVES — FIXED (v120w0 + sql/036). Watch it for a few days.
 
-**Partly fixed in v120w0, but the biggest half is still live.**
+**Both halves are closed. 82 players were still exposed; that number is now 0.**
 
 Reported as "players who sign in on a different device get reset from the old economy
 reset" and "cards missing from their account". Two separate mechanisms:
@@ -96,9 +96,9 @@ bundle now contains `function _purgeResetOnce(){}`. Stamps now round-trip via
 `__purgeReset__` / `__seasonApplied__`, and the `purge` branch finally has the admin
 exemption the `economy` branch always had.
 
-**(b) The DIRECTIVE path is still firing on old resets. NOT fixed.** Evidence — five
-accounts in four days, each applying all five historical directives within one minute
-(the fingerprint of a device with no local record), every one ending on zero Cinder:
+**(b) The DIRECTIVE path was firing on old resets — FIXED in `sql/036`.** Evidence that
+led to it: five accounts in four days, each applying all five historical directives within
+one minute (the fingerprint of a device with no local record), every one on zero Cinder:
 
 | when | user | directives at once | cards now | cinder now |
 |---|---|---|---|---|
@@ -112,27 +112,49 @@ There are nine directives in `season_reset`, dated 07-28 → 08-02. `season_appl
 suppresses a directive the *user* already took, so anyone who did not take it back then —
 new account, new device, cleared storage — takes it now, in August, with a real collection.
 
-**A reset from 07-28 has no business wiping anyone today.** Recommended fix, in order:
+**What `sql/036` does.** The gate went into the `season_apply` RPC rather than the client,
+because `_applySeasonReset` returns without touching anything unless that RPC answers
+`{ok:true, already:false}` — so a server-side refusal protects players on **old cached
+builds too**, which is exactly who was being hurt. Two gates:
 
-1. **Expire the old directives.** They have served their purpose. Either delete the nine
-   `season_reset` rows or add an `expires_at` the client honours. This is a DB write that
-   affects every player, so it is a judgement call, not a bug fix — hence not done.
-2. **Gate directives on account age** so a reset can never apply to an account that did not
-   exist when it was published. This is the durable fix; expiry alone leaves the same hole
-   the next time a directive is published.
+- **Expiry (72h)** — a directive is an event, not a standing order. It reaches everyone who
+  plays within a few days, then stops existing. 72h covers a long weekend away.
+- **Account age** — an account created *after* a directive was published was never part of
+  the economy it corrects, so it can never be wiped by it, at any age.
+
+It returns `already:true` (not `ok:false`) on purpose: the client marks it locally and stops
+asking. `ok:false` would leave it permanently unapplied and re-fire the RPC on every 120s
+poll, for nine stale rows, for every player, forever.
+
+**Nothing was deleted.** All 9 directives and all 494 application rows are untouched — only
+who a directive may still act on changed. The new `skipped_reason` column keeps the audit
+honest: a row written by the gate wiped nobody and is distinguishable from one that did.
+
+Verified live: a stale purge against an account holding 9,711,873 Cinder and 180 cards
+returned `{ok:true, already:true, skipped:"expired"}` with **both values unchanged**; a
+directive published *now* still returns `already:false` and applies normally. Exposure went
+from **379 user/directive pairs across 82 players to 0**.
 
 ```sql
--- who is still taking old directives?
+-- Should stay EMPTY. Any row here is a real wipe, not a gated skip.
 select to_char(a.applied_at,'MM-DD HH24:MI') as applied, left(a.user_id::text,8) as usr,
-       sr.scope, to_char(sr.created_at,'MM-DD') as directive_published
+       sr.scope, to_char(sr.created_at,'MM-DD') as published
   from public.season_reset_applied a join public.season_reset sr on sr.id = a.reset_id
- where a.applied_at > now() - interval '7 days'
- order by a.applied_at desc;
+ where a.applied_at > now() - interval '2 days' and a.skipped_reason is null
+ order by 1 desc;
 ```
 
-**Restitution:** 35 of 97 accounts currently sit at 0 or starter-only collections. Some are
-genuinely new players, so that is an upper bound, not a victim count. The affected users
-above are identified by id and can be made whole once you decide on compensation.
+```sql
+-- The gate doing its job (these wiped nobody):
+select skipped_reason, count(*), max(applied_at)
+  from public.season_reset_applied where skipped_reason is not null group by 1;
+```
+
+**Restitution is still open.** 35 of 97 accounts sit at 0 or starter-only collections — some
+are genuinely new players, so treat that as an upper bound, not a victim count. The five
+users identified above (`53af15c6`, `53eb89a1`, `37592af1`, `e40ef8ca`, `2feefce7`) were
+each hit within the last four days and are the clearest candidates. `admin_grant_vault_rows`
+in `sql/031` is the ref-idempotent pattern to copy if you want a card/Cinder grant tool.
 
 ### 1. Revoke `wallet_credit` from `authenticated` — the real prize, blocked on data
 

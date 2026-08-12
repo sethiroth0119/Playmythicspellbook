@@ -206370,6 +206370,31 @@ window.cityOwnerIdentity = function () {
     return { viewerId: null, viewerName: 'Wanderer', ownerId: null, ownerName: 'Wanderer', isOwner: true };
   }
 };
+/* 🏙 ONE CITY PER NODE — the client half of sql/033 Part B.
+   city_state is being re-keyed from PRIMARY KEY (user_id) to (user_id, node_id).
+   node_id is NOT NULL there, with an all-zeros sentinel meaning "the player's
+   original city" — the one every existing row becomes, and the one that opens
+   when no specific node is in play.
+
+   ⚠ NULL CANNOT BE THE KEY. Postgres treats NULLs as DISTINCT in a unique
+     constraint, so a nullable node_id would let the same user hold unlimited
+     duplicate rows — the exact opposite of the constraint, failing silently.
+     Hence the sentinel. */
+const CITY_NODE_SENTINEL = '00000000-0000-0000-0000-000000000000';
+function _cityNodeKey() {
+  try {
+    const n = App._cityNodeId;
+    return (n && /^[0-9a-f-]{36}$/i.test(String(n))) ? String(n) : CITY_NODE_SENTINEL;
+  } catch (e) { return CITY_NODE_SENTINEL; }
+}
+/* Does an error mean "that onConflict target does not exist on this database"?
+   Postgres 42P10 is the code; PostgREST also phrases it in prose. */
+function _cityConflictUnsupported(err) {
+  const m = (((err && err.message) || '') + ' ' + ((err && err.code) || '')).toLowerCase();
+  return m.includes('42p10')
+      || m.includes('no unique or exclusion constraint')
+      || m.includes('on conflict specification');
+}
 window.cityStateSave = async function (json) {
   try {
     /* 🔴 A SAVE FROM A CITY THAT IS NO LONGER OPEN IS NOT A SAVE, IT IS A
@@ -206385,12 +206410,27 @@ window.cityStateSave = async function (json) {
     if (!Cloud || !Cloud.ready || !Cloud.client || !Profile.cloud || !Profile.cloud.userId) return;
     const target = _cityStateUserId(); if (!target) return;
     const st = JSON.parse(json);
-    const res = await Cloud.client.from('city_state').upsert({
+    const _nodeKey = _cityNodeKey();
+    const _row = {
       user_id: target, state: st,
       sync_pct: (st.syncPct | 0),
-      node_id: (App._cityNodeId && /^[0-9a-f-]{36}$/i.test(String(App._cityNodeId))) ? App._cityNodeId : null,
+      node_id: _nodeKey,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' });
+    };
+    /* 🔀 WORKS AGAINST BOTH SCHEMAS, ON PURPOSE — there is no safe deploy order
+       without it. Ship this before sql/033 Part B and 'user_id,node_id' is not
+       a constraint yet; apply Part B before this ships and 'user_id' is no
+       longer one. Either way an upsert fails, and a failed city save is a
+       player's build session. So: try the composite target, and if THIS
+       database has not been migrated yet, fall back to the legacy one with a
+       NULL node (which is what its rows look like). Once Part B is applied the
+       fallback simply never fires, and this can be simplified away. */
+    let res = await Cloud.client.from('city_state').upsert(_row, { onConflict: 'user_id,node_id' });
+    if (res && res.error && _cityConflictUnsupported(res.error)) {
+      res = await Cloud.client.from('city_state').upsert(
+        Object.assign({}, _row, { node_id: (_nodeKey === CITY_NODE_SENTINEL) ? null : _nodeKey }),
+        { onConflict: 'user_id' });
+    }
     /* ⚠ A REJECTED WRITE USED TO LOOK EXACTLY LIKE A SUCCESSFUL ONE.
        Supabase resolves rather than throws on an RLS refusal, so `await` alone
        catches nothing and the old bare `catch (e) {}` swallowed the rest. That
@@ -206422,7 +206462,21 @@ window.cityStateLoad = async function () {
     // ⚠ maybeSingle, not single: a mayor opening a city the owner has never
     //    built returns zero rows, and .single() treats that as an ERROR — which
     //    would surface as "no city" even once one exists.
-    const r = await Cloud.client.from('city_state').select('state').eq('user_id', target).maybeSingle();
+    /* 🏙 Node-scoped read. Before sql/033 Part B every row has node_id NULL, so
+       the sentinel lookup finds nothing and we retry the legacy shape — that
+       fallback is what stops a migrated-code / unmigrated-database pairing from
+       reporting "you have no city" and handing the player an empty grid to
+       build over their real one.
+       ⚠ The fallback is ONLY for the sentinel. A miss on a REAL node id means
+         that node genuinely has no city yet, which is a new city and must not
+         silently adopt the player's main one. */
+    const _nodeKey = _cityNodeKey();
+    let r = await Cloud.client.from('city_state').select('state')
+      .eq('user_id', target).eq('node_id', _nodeKey).maybeSingle();
+    if ((!r || (!r.error && !r.data)) && _nodeKey === CITY_NODE_SENTINEL) {
+      r = await Cloud.client.from('city_state').select('state')
+        .eq('user_id', target).is('node_id', null).maybeSingle();
+    }
     /* ⚠ Same trap on the READ side, and it is the more confusing of the two.
        Owner-only RLS makes a mayor's SELECT return ZERO ROWS rather than an
        error — indistinguishable from "the owner has never built a city". The
@@ -207141,7 +207195,16 @@ window.cityMayorGet = async function () {
     // that is OPEN, not the viewer's own. maybeSingle because a city with no
     // row yet is a normal state, not an error.
     const target = _cityStateUserId(); if (!target) return null;
-    const r = await Cloud.client.from('city_state').select('mayor_id, mayor_name').eq('user_id', target).maybeSingle();
+    // Node-scoped, with the same sentinel fallback as cityStateLoad — the
+    // Governance panel must describe the city that is OPEN, and after Part B
+    // "the owner's city" is no longer a single row.
+    const _nodeKey = _cityNodeKey();
+    let r = await Cloud.client.from('city_state').select('mayor_id, mayor_name')
+      .eq('user_id', target).eq('node_id', _nodeKey).maybeSingle();
+    if ((!r || (!r.error && !r.data)) && _nodeKey === CITY_NODE_SENTINEL) {
+      r = await Cloud.client.from('city_state').select('mayor_id, mayor_name')
+        .eq('user_id', target).is('node_id', null).maybeSingle();
+    }
     return (r && r.data && r.data.mayor_id) ? { mayorId: r.data.mayor_id, mayorName: r.data.mayor_name } : null;
   } catch (e) { return null; }
 };

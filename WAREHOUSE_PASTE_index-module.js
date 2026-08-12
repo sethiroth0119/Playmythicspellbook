@@ -3,14 +3,23 @@
 //
 // This file is NOT loaded by anything and is NOT deployed (it lives outside
 // ./public on purpose). It exists so the handoff does not ask anyone to go
-// fishing for 323 lines inside a 215,000-line file.
+// fishing for 447 lines inside a 215,000-line file.
+//
+// ⚠ THIS FILE MUST MATCH THE MODULE LIVE IN public/index.html.
+// It silently went 180 lines stale once already, and anyone who pasted it
+// would have reinstated the version where sent resources could never be
+// withdrawn. Before trusting it, run:
+//
+//     node _wh_paste_check.mjs      →  WAREHOUSE PASTE FILE MATCHES
+//
+// and regenerate it if it drifts. That check is also in the QA checklist.
 //
 // WHERE IT GOES — public/index.html, immediately BEFORE this unique line:
 //
 //     // Run a real economy action posted by the app.
 //
-// which sits just after _dwellingClose() ends (~line 78143 on this branch).
-// The warehouse module is the direct sibling of the Dwelling module.
+// which sits just after _dwellingClose() ends. The warehouse module is the
+// direct sibling of the Dwelling module.
 //
 // Paste everything BELOW this header. Verify after pasting with:
 //     node _synckcheck.mjs     →  ALL CLEAN
@@ -38,7 +47,7 @@
 let _whFrame = null, _whMsgHandler = null;
 const WH_RPC_ALLOW = {
   wh_config: 1, wh_my_warehouse: 1, wh_warehouse_json: 1, wh_directory: 1,
-  wh_buy_unit: 1, wh_upgrade_tier: 1, wh_buy_lifter: 1, wh_rent_unit: 1,
+  wh_buy_unit: 1, wh_expand_unit: 1, wh_upgrade_tier: 1, wh_buy_lifter: 1, wh_rent_unit: 1,
   wh_my_rentals: 1, wh_send_shipment: 1, wh_store_crate: 1, wh_withdraw: 1,
   wh_cancel_shipment: 1,
 };
@@ -89,6 +98,10 @@ async function _whFetchRentals(force) {
 function _whIsRenting() { return !!(_whRentals && _whRentals.length); }
 // The button every origin screen shows. `kind` is 'city' | 'house' | 'camp' —
 // the three places the design says a player can send from.
+function _whMyStorageButtonHtml(style) {
+  return '<button class="wh-mine-btn" style="' + (style || 'padding:0.45rem 0.9rem;background:rgba(124,232,168,0.16);color:#7ce8a8;border:1px solid rgba(124,232,168,0.5);border-radius:7px;cursor:pointer;font-family:\'Cinzel\',serif;font-size:0.78rem;letter-spacing:0.04em')
+    + '">📦 My storage</button>';
+}
 function _whSendButtonHtml(kind, nodeId, label, style) {
   const renting = _whIsRenting();
   const txt = renting ? '📦 Send to your storage' : '🛒 Buy storage from player';
@@ -101,6 +114,10 @@ function _whSendButtonHtml(kind, nodeId, label, style) {
 // Wire every _whSendButtonHtml inside `root`. Safe to call on any container.
 function _whBindSendButtons(root) {
   try {
+    (root || document).querySelectorAll('.wh-mine-btn').forEach(b => {
+      if (b._whBound) return; b._whBound = true;
+      b.onclick = () => { try { _whOpenMyStorage(); } catch (e) {} };
+    });
     (root || document).querySelectorAll('.wh-send-btn').forEach(b => {
       if (b._whBound) return; b._whBound = true;
       b.onclick = () => {
@@ -185,19 +202,52 @@ async function _whOpenDirectory(kind, nodeId, label) {
     try { if (typeof render === 'function') render(); } catch (e) {}
   });
 }
+// ⚠ EVERY reason code the server can return needs a line here. Anything missing
+// falls through and shows the player a raw identifier — "❌ too_large" was
+// reaching people, and too_large is very reachable.
 function _whReason(r) {
+  const cur = (r && r.currency === 'aza') ? 'Aza' : 'Cinder';
   const m = {
-    insufficient: 'Not enough ' + ((r && r.currency === 'aza') ? 'Aza' : 'Cinder') + '.',
-    no_free_unit: 'That warehouse has no free bay left.',
+    insufficient:  'Not enough ' + cur + '.',
+    no_free_unit:  'That warehouse has no free bay left.',
     own_warehouse: 'That is your own warehouse — you cannot rent from yourself.',
-    closed: 'That warehouse is not taking renters.',
+    closed:        'That warehouse is not taking renters.',
     not_your_unit: 'That bay is not yours.',
     empty_payload: 'Pick at least one resource to send.',
-    bad_origin: 'That is not a valid place to send from.',
-    tier_cap: 'That warehouse cannot hold any more bays.',
+    bad_origin:    'That is not a valid place to send from.',
+    tier_cap:      'That warehouse cannot hold any more bays — it needs upgrading first.',
     not_signed_in: 'Sign in to use player storage.',
+    too_large:     'That load is too heavy for one run — send it in smaller batches'
+                   + (r && r.max_shipment_kg ? ' (max ' + (+r.max_shipment_kg).toLocaleString() + ' kg).' : '.'),
+    no_room_at_destination: 'Your bay cannot hold that much'
+                   + (r && r.free_kg != null ? ' — only ' + Math.floor(r.free_kg).toLocaleString() + ' kg of space is free once everything already on the road lands.' : '.')
+                   + ' Withdraw something, buy more space, or send less.',
+    no_room:       'That bay is full.',
+    too_heavy:     'That crate is too heavy for your lifter'
+                   + (r && r.weight_kg ? ' (' + r.weight_kg + ' kg vs ' + r.carry_kg + ' kg).' : '.'),
+    in_transit:    'That load has not arrived yet.',
+    rental_expired:'That rental has run out — renew it before sending more.',
+    wrong_unit:    'That crate is addressed to a different bay.',
+    already_stored:'That crate has already been put away.',
+    bay_maxed:     'That bay is as large as a single bay can get — rent another one.',
+    not_allowed:   'You are not allowed to touch that bay.',
+    no_unit:       'That storage bay no longer exists.',
+    no_crate:      'That crate is no longer on the van.',
+    no_shipment:   'That load no longer exists.',
+    no_warehouse:  'That warehouse no longer exists.',
+    max_tier:      'That warehouse is already fully upgraded.',
+    already_owned: 'You already own that weight lifter.',
+    bad_tier:      'That is not a weight lifter you can buy.',
+    not_rented:    'Nobody is renting that bay.',
+    still_in_grace:'That renter still has time to collect their goods.',
+    nothing_there: 'There is nothing in there to take out.',
+    too_late:      'That load has already been put away.',
+    not_yours:     'That is not yours.',
+    blocked:       'That action is not available from here.',
+    rpc_failed:    'The storage network could not complete that.',
+    timeout:       'The storage network did not answer in time.',
   };
-  return (r && m[r.reason]) || (r && r.reason) || 'The storage network did not answer.';
+  return (r && m[r.reason]) || 'The storage network did not answer.';
 }
 // ── 📦 "Send to my storage unit" — pick a bay, pick resources, ship it ──────
 async function _whOpenSendModal(kind, nodeId, label) {
@@ -261,7 +311,7 @@ function _whDeliveryNotice(r) {
   const body = `
     <div style="background:rgba(255,209,102,0.09);border:1px solid rgba(255,209,102,0.3);border-radius:9px;padding:0.7rem 0.85rem;color:#ffd166;margin-bottom:0.9rem">${WH_ETA_BLURB}</div>
     <p style="margin-bottom:0.7rem">Your load is on the road to <strong style="color:#ffd166">Bay ${r.bay_no}</strong>
-      in ${escapeHtml(r.owner_name || 'the')} warehouse — <strong>${(+r.weight_kg).toLocaleString()} kg</strong>
+      in ${r.owner_name ? escapeHtml(r.owner_name) + "'s" : 'the'} warehouse — <strong>${(+r.weight_kg).toLocaleString()} kg</strong>
       across <strong>${r.crates_total}</strong> ${r.crates_total === 1 ? 'crate' : 'crates'}.</p>
     <div style="display:flex;gap:0.9rem;flex-wrap:wrap;font-family:'Roboto Mono',monospace;font-size:0.82rem">
       <span style="color:#bfae87">Origin</span>
@@ -276,12 +326,94 @@ function _whDeliveryNotice(r) {
     '<button class="wh-x2" style="padding:0.5rem 1.1rem;background:rgba(255,209,102,0.2);color:#ffd166;border:1px solid rgba(255,209,102,0.6);border-radius:7px;cursor:pointer;font-family:\'Cinzel\',serif;font-size:0.84rem">Got it</button>')
     .querySelector('.wh-x2').onclick = () => { const m = document.getElementById('wh-sent'); if (m) m.remove(); };
 }
+// ── 📦 MY STORAGE — what is in your bays, and how to get it back ───────────
+// ⚠ THIS IS THE OTHER HALF OF THE LOOP. Sending debits the salvage ledger; for
+// a while nothing in the entire repo called wh_withdraw or wh_cancel_shipment,
+// so a player could ship 500 kg of metal, watch it carried into a bay, and
+// never see it again. Shipping a one-way resource destroyer is worse than
+// shipping no feature. Every bay's real contents are listed here, per resource,
+// with a withdraw that credits the ledger back — the exact mirror of the debit
+// in _whOpenSendModal.
+async function _whOpenMyStorage() {
+  const rentals = await _whFetchRentals(true);
+  if (!rentals.length) { _whOpenDirectory('camp', null, ''); return; }
+  const resById = {};
+  try { (typeof RESOURCES !== 'undefined' ? RESOURCES : []).forEach(r => { resById[r.id] = r; }); } catch (e) {}
+  const body = rentals.map(r => {
+    const c = r.contents || {};
+    const keys = Object.keys(c).filter(k => (c[k] | 0) > 0);
+    const pct = Math.min(100, (r.used_kg / Math.max(1, r.capacity_kg)) * 100);
+    return `<div style="padding:0.8rem 0.9rem;margin-bottom:0.6rem;background:rgba(0,0,0,0.35);border:1px solid rgba(212,175,55,0.28);border-radius:10px">
+      <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+        <div style="flex:1">
+          <div style="color:#ffd166;font-family:'Cinzel',serif;font-size:0.95rem">BAY ${r.bay_no} · ${escapeHtml(r.owner_name || 'a player')}'s warehouse</div>
+          <div style="color:#bfae87;font-size:0.74rem;font-family:'Roboto Mono',monospace">${Math.round(r.used_kg)} / ${r.capacity_kg} kg${r.rent_until ? ' · rented to ' + new Date(r.rent_until).toLocaleDateString() : ''}</div>
+        </div>
+        <button class="wh-visit" data-wid="${escapeHtml(r.warehouse_id)}" style="padding:0.38rem 0.8rem;background:rgba(196,168,255,0.2);color:#c4a8ff;border:1px solid rgba(196,168,255,0.5);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.76rem">🏗 Visit</button>
+        <button class="wh-take" data-uid="${escapeHtml(r.unit_id)}" ${keys.length ? '' : 'disabled'} style="padding:0.38rem 0.8rem;background:${keys.length ? 'rgba(124,232,168,0.2)' : '#33333344'};color:${keys.length ? '#7ce8a8' : '#666'};border:1px solid ${keys.length ? 'rgba(124,232,168,0.5)' : '#444'};border-radius:7px;cursor:${keys.length ? 'pointer' : 'not-allowed'};font-family:'Cinzel',serif;font-size:0.76rem">↩ Withdraw all</button>
+      </div>
+      <div style="height:8px;border-radius:99px;background:rgba(255,255,255,0.09);overflow:hidden;margin-bottom:0.5rem"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#7ce8a8,#ffd166)"></div></div>
+      ${keys.length
+        ? `<div style="display:flex;flex-wrap:wrap;gap:0.4rem">${keys.map(k => {
+            const d = resById[k] || { icon: '📦', name: k };
+            return `<span style="display:inline-flex;align-items:center;gap:0.3rem;padding:0.2rem 0.5rem;background:rgba(255,255,255,0.05);border:1px solid rgba(212,175,55,0.22);border-radius:99px;font-size:0.76rem">${d.icon} ${escapeHtml(d.name)} <b style="color:#ffd166;font-family:'Roboto Mono',monospace">${(c[k] | 0).toLocaleString()}</b></span>`;
+          }).join('')}</div>`
+        : '<div style="color:#bfae87;font-size:0.78rem">Empty — nothing has been carried in yet.</div>'}
+    </div>`;
+  }).join('');
+  const root = _whModal('wh-storage', '📦 My storage',
+    'Every bay you rent, what is in it, and how to get it back.', body,
+    '<button class="wh-market" style="padding:0.5rem 1.1rem;background:rgba(255,209,102,0.18);color:#ffd166;border:1px solid rgba(255,209,102,0.55);border-radius:7px;cursor:pointer;font-family:\'Cinzel\',serif;font-size:0.82rem">🛒 Rent another bay</button>');
+  root.querySelector('.wh-market').onclick = () => { root.remove(); _whOpenDirectory('camp', null, ''); };
+  root.querySelectorAll('.wh-visit').forEach(b => b.onclick = () => { root.remove(); _whOpen(b.dataset.wid); });
+  root.querySelectorAll('.wh-take').forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Collecting…';
+    const r = await _whRpc('wh_withdraw', { p_unit_id: b.dataset.uid });
+    if (!r || r.ok === false) { b.disabled = false; b.textContent = '↩ Withdraw all'; showToast('❌ ' + _whReason(r), 4000); return; }
+    _whCreditPayload(r.payload, 'Withdrawn from storage');
+    root.remove(); await _whFetchRentals(true); _whOpenMyStorage();
+  });
+}
+// Credit a payload back into the salvage ledger. The exact mirror of the debit
+// in _whOpenSendModal — resources exist in exactly one place at a time.
+function _whCreditPayload(payload, why) {
+  let n = 0;
+  try {
+    const L = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage = Profile.salvage || {});
+    Object.keys(payload || {}).forEach(id => {
+      const q = Math.max(0, Math.floor(+payload[id] || 0));
+      if (q > 0) { L[id] = (L[id] | 0) + q; n += q; }
+    });
+    if (typeof saveProfile === 'function') saveProfile();
+  } catch (e) {}
+  if (n > 0) showToast('📦 ' + (why || 'Returned') + ' — ' + n.toLocaleString() + ' units back in your stores.', 3600);
+  else showToast('📦 Nothing to collect.', 2400);
+  try { if (typeof render === 'function') render(); } catch (e) {}
+  return n;
+}
+// ↩ Pull a load back off the road (or off a warehouse floor it cannot fit on).
+async function _whCancelShipment(shipmentId) {
+  const r = await _whRpc('wh_cancel_shipment', { p_shipment_id: shipmentId });
+  if (!r || r.ok === false) { showToast('❌ ' + _whReason(r), 4000); return false; }
+  _whCreditPayload(r.payload, 'Load recalled');
+  return true;
+}
 // ── 🏗 the warehouse itself — first-person, overlaid like the Dwelling ──────
-async function _whOpen() {
+// `warehouseId` opens SOMEONE ELSE'S yard — a renter walking into the warehouse
+// their bay is in, which is what "give them a storage unit space in the player
+// owned warehouse that they actually have to take the resources to" describes.
+// Omit it to open your own.
+async function _whOpen(warehouseId) {
   if (document.getElementById('wh-overlay')) return;
-  const state = await _whRpc('wh_my_warehouse', { p_name: _whMyName(), p_node_id: (Profile.campNodeId || null) });
-  if (!state) {
-    showToast('🚚 Player storage is not switched on yet — apply supabase/migrations/20260812000000_warehouse_storage.sql.', 5200);
+  const state = warehouseId
+    ? await _whRpc('wh_warehouse_json', { p_warehouse_id: warehouseId })
+    : await _whRpc('wh_my_warehouse', { p_name: _whMyName(), p_node_id: (Profile.campNodeId || null) });
+  if (!state || state.ok === false) {
+    // Never show a player a migration filename. Signed-out and not-installed
+    // look identical from here, so say the one true thing that helps them.
+    showToast(_whReady()
+      ? '🚚 Player storage is unavailable right now — please try again shortly.'
+      : '🚚 Sign in to use player storage.', 4200);
     return;
   }
   const ov = document.createElement('div');
@@ -341,5 +473,6 @@ function _whClose() {
 try {
   window.__mg = window.__mg || {};
   window.__mg.warehouse = { open: _whOpen, send: _whOpenSendModal, market: _whOpenDirectory,
-                            rentals: _whFetchRentals, renting: _whIsRenting };
+                            mine: _whOpenMyStorage, rentals: _whFetchRentals,
+                            renting: _whIsRenting, credit: _whCreditPayload };
 } catch (e) {}

@@ -93,7 +93,8 @@ var R_WARP_A = 701, R_WARP_B = 702, R_WARP_C = 703,
     R_RIVER  = 760,   // river sources and meander
     R_ROAD   = 770,   // road wobble
     R_FOGJIT = 780,   // fog blob jitter
-    R_HACH   = 790;   // ridge hachure jitter
+    R_HACH   = 790,   // ridge hachure jitter
+    R_CONE   = 795;   // +0..3, the volcano: radius, crater, barrancos, ash
 
 /* ── The palette ──────────────────────────────────────────────────────────
    Three tones per biome, not one. `tone` in warpath-mapgen.js is a UI colour —
@@ -130,7 +131,14 @@ var PAL = {
      dark mass with a few brilliant lit faces and a white cap, not an evenly
      bright one; the drama comes from the RANGE between deep and lit, and from
      the drawn ridge lines, not from raising the average. */
-  mountain:  { deep: '#2e2226', base: '#584740', lit: '#968d82', elev: 0.90, rough: 1.26 },
+  /* ⚠ `rough` came DOWN when the volcano went in. 1.26 was chosen when ridged
+     noise was the only thing making this biome a mountain, and it had to carry
+     the whole massif alone; at that amplitude the detail octaves swing ±0.8 of
+     elevation at a wavelength under two tiles, which is a mountain's worth of
+     relief packed into gravel's worth of distance, and it renders as crumpled
+     foil. Now that a real landform sits in the middle of the biome, the noise
+     goes back to being what noise is good at — broken ground around a peak. */
+  mountain:  { deep: '#2e2226', base: '#584740', lit: '#968d82', elev: 0.90, rough: 1.06 },
   wastes:    { deep: '#4e442f', base: '#8d8062', lit: '#cdbf9d', elev: 0.28, rough: 0.50 },
 };
 // Precomputed as integer triples. parseInt() on a hex string is not something
@@ -171,9 +179,34 @@ var SHADOW_STEPS = 14, SHADOW_STRIDE = 3;
    exists so the app can drop it on a weak device without knowing the number. */
 var QUALITY = { low: 16, med: 22, high: 28, ultra: 36 };
 
+/* ── How much of the document the painted world carries ───────────────────
+   The last line of the grade pulls every pixel of the live map a few percent
+   toward one warm parchment note. It is there to make six biomes look like one
+   painting — but it does a second job that only shows up in a real game frame:
+   the SHROUD is parchment, and at the start of a run the shroud is four fifths
+   of the screen. Too little of this and the explored patch is a saturated
+   island pasted onto a pale field; too much and the world goes to mud and
+   there was no point painting it. Tuned by rendering the same early-run frame
+   at several values and looking at them side by side. */
+var DOC_PULL = 0.26, DOC_WASH = 0.045;
+
 // ── tiny utils ────────────────────────────────────────────────────────────
 function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
-function sstep(a, b, x) { if (x <= a) return 0; if (x >= b) return 1; x = (x - a) / (b - a); return x * x * (3 - 2 * x); }
+/* ⚠ sstep MUST handle a > b, and for two rounds it silently did not.
+   The old body tested `x <= a` first, so a descending call — `sstep(0.34, 0.04,
+   h)`, meaning "1 down low, 0 up high" — degenerated into a HARD step at `a`
+   with the sense INVERTED. Two callers were written that way and both got the
+   opposite of what they asked for: Dragon Mountain's ember fissures, which are
+   documented as living low on the mountain, fired only ABOVE the threshold and
+   nowhere else; and the plains' green patches landed on exactly the same
+   high-`det` ground as the dry gold patches they were supposed to alternate
+   with. Normalising first and clamping after makes both directions work. */
+function sstep(a, b, x) {
+  if (a === b) return x < a ? 0 : 1;
+  x = (x - a) / (b - a);
+  x = x < 0 ? 0 : (x > 1 ? 1 : x);
+  return x * x * (3 - 2 * x);
+}
 function mix(a, b, t) { return a + (b - a) * t; }
 function hex(c) { var n = parseInt(c.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
 function rgba(c, a) { var p = hex(c); return 'rgba(' + p[0] + ',' + p[1] + ',' + p[2] + ',' + a + ')'; }
@@ -248,6 +281,37 @@ function blurTiles(a, w, h, passes) {
     for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
       i = y * w + x;
       a[i] = (tmp[i - (y > 0 ? w : 0)] + 2 * tmp[i] + tmp[i + (y < h - 1 ? w : 0)]) * 0.25;
+    }
+  }
+  return a;
+}
+
+/* Separable running-sum box blur, `passes` of radius `r`. Two passes of a box
+   is a decent gaussian and costs four adds per pixel per pass regardless of
+   radius — which is the only reason a wide blur over a megapixel is affordable
+   inside the bake at all. blurTiles above is a 1-pixel kernel and would need
+   thirty passes to reach the same width. */
+function boxBlur(a, w, h, r, passes) {
+  var tmp = new Float32Array(w * h), p, x, y, i, sum, n = 2 * r + 1, inv = 1 / n;
+  for (p = 0; p < passes; p++) {
+    for (y = 0; y < h; y++) {
+      var row = y * w;
+      sum = 0;
+      for (i = -r; i <= r; i++) sum += a[row + (i < 0 ? 0 : (i > w - 1 ? w - 1 : i))];
+      for (x = 0; x < w; x++) {
+        tmp[row + x] = sum * inv;
+        var xo = x - r, xn = x + r + 1;
+        sum += a[row + (xn > w - 1 ? w - 1 : xn)] - a[row + (xo < 0 ? 0 : xo)];
+      }
+    }
+    for (x = 0; x < w; x++) {
+      sum = 0;
+      for (i = -r; i <= r; i++) sum += tmp[(i < 0 ? 0 : (i > h - 1 ? h - 1 : i)) * w + x];
+      for (y = 0; y < h; y++) {
+        a[y * w + x] = sum * inv;
+        var yo = y - r, yn = y + r + 1;
+        sum += tmp[(yn > h - 1 ? h - 1 : yn) * w + x] - tmp[(yo < 0 ? 0 : yo) * w + x];
+      }
     }
   }
   return a;
@@ -419,6 +483,113 @@ function bakeTerrain(seed, opts) {
   }
   var FZW = 97, FZH = 68, fzg = noiseGrid(seed, R_WARP_C + 3, FZW, FZH);
 
+  /* ══ DRAGON MOUNTAIN: A SUMMIT, NOT A SMEAR ═══════════════════════════════
+     Every other landform on this map is noise — fBm for swells, ridged noise
+     for arêtes — and noise is a wonderful way to make ground and a hopeless
+     way to make a LANDMARK. Noise has no centre. Cranked up on a rugged biome
+     it produces a broad, blurred, busy massif with a dozen equal high points
+     and nothing to point at, which is precisely what Dragon Mountain was: a
+     range without a peak. The brief builds a whole strategy on "head north
+     toward the volcano", and you cannot head toward a texture.
+
+     So the volcano is placed, not grown. Each mountain core carries an
+     explicit stratovolcano: a radial profile, a summit crater, a lip, and
+     barrancos down the flanks. It is added to the same height field as
+     everything else, so the existing hillshade, cast shadow, rock blend,
+     river carve and silhouette all pick it up for free — the mountain casts a
+     real shadow, streams radiate off it, and it shows through the shroud.
+
+     PROFILE. `1 - rad^0.72` and not `1 - rad`. A linear cone is a party hat;
+     the exponent below 1 makes the flanks CONCAVE — steep near the summit,
+     flattening into a broad apron — which is the actual silhouette of a
+     stratovolcano and the reason one reads as enormous from a long way off.
+
+     ⚠ THE RENDERER STILL CANNOT MOVE ANYTHING. The cone is centred on the
+     core the generator already placed and it changes no tile's biome, no
+     tile's passability and no node. It is paint on top of `tileAt`, exactly
+     like every tree. A player who walks to the summit finds the same tiles
+     the server says are there.
+
+     Everything that depends only on the radius — profile, crater, lip,
+     barranco amplitude — is precomputed into a 256-entry LUT and lerped, so
+     the per-pixel cost inside the cone is a square root, two lattice samples
+     and a handful of multiplies. No trig anywhere: the barrancos are an
+     angular noise sampled by the UNIT DIRECTION VECTOR, which is continuous
+     all the way round the circle and therefore has no seam at due east the
+     way an atan2-based one would.                                            */
+  var CONE_LUTN = 256;
+  var CONES = [];
+  (function () {
+    var rank = 0, kk;
+    for (kk = 0; kk < CN; kk++) {
+      if (cores[kk].biome !== 'mountain') continue;
+      var h1 = M.wpHash32(seed, kk + 1, 7, R_CONE);
+      var h2 = M.wpHash32(seed, kk + 1, 11, R_CONE + 1);
+      /* The first mountain core is THE volcano; any others the pool rolls are
+         subordinate peaks at two-thirds the height. A range with one dominant
+         summit is a destination. A range with three equal summits is scenery. */
+      var lead = rank === 0;
+      /* ⚠ TALL AND FAIRLY TIGHT, and both numbers were raised after looking at
+         the first render. At six and a half tiles of radius and 1.1 of height
+         the cone was real but it was not the tallest thing in its own biome —
+         the ridged noise on the surrounding massif reached the same elevation,
+         so the eye had nothing to settle on and the volcano read as one lump
+         among several. A destination has to WIN. The upper flanks now run at
+         roughly four fifths of the sun's own elevation angle, which is where
+         the lambertian term goes near-grazing and the shaded flank turns to a
+         hard dark mass — the thing that makes a peak look like a peak. */
+      var rr = (5.05 + (h1 & 255) / 255 * 1.05) * (lead ? 1 : 0.80);
+      var hh = (1.46 + ((h1 >>> 8) & 255) / 255 * 0.22) * (lead ? 1 : 0.62);
+      var ecc = (((h1 >>> 16) & 255) / 255 - 0.5) * 0.26;   // never a true circle
+      /* ⚠ Big. A crater at a tenth of the cone's radius is geologically
+         reasonable and cartographically useless: half a tile across, it
+         vanished at map scale and the volcano had no summit marking at all
+         until you zoomed in. At this radius the caldera is nearly two tiles
+         wide and the orange reads from across the world, which is the entire
+         point of putting a destination on a map. */
+      var rc = 0.150 + ((h2 >>> 16) & 255) / 255 * 0.040;   // crater radius, in rad
+      var cd = lead ? 0.30 : 0.20;                          // crater depth, in profile units
+      var P = new Float32Array(CONE_LUTN + 2), C = new Float32Array(CONE_LUTN + 2),
+          E = new Float32Array(CONE_LUTN + 2);
+      for (var t2 = 0; t2 <= CONE_LUTN + 1; t2++) {
+        var rad = t2 / CONE_LUTN;
+        var f = (1 - Math.pow(rad < 1 ? rad : 1, 0.72)) * sstep(1.0, 0.76, rad);
+        var cm = sstep(rc, rc * 0.42, rad);                 // 1 in the bowl, 0 outside
+        f -= cd * cm;
+        // the lip: a real crater's rim is the highest ground on the mountain
+        f += 0.058 * sstep(rc * 1.60, rc * 1.06, rad) * sstep(rc * 0.60, rc * 0.96, rad);
+        P[t2] = f; C[t2] = cm;
+        // barrancos live on the flanks: nothing in the bowl, nothing on the apron
+        /* Barranco amplitude. Raised hard from the first value: the damped
+           flanks are almost perfectly smooth, which is what lets the cone read
+           as a cone, but smooth also means airbrushed — there was nothing on
+           the surface for the eye to hold. The gullies are the only structure
+           allowed up here, so they have to be the structure. */
+        E[t2] = 0.175 * sstep(rc * 1.4, 0.36, rad) * sstep(1.0, 0.58, rad);
+      }
+      var wd = ((h2 & 1023) / 1023) * Math.PI * 2;          // ash drifts downwind
+      CONES.push({ x: cores[kk].x + 0.5, y: cores[kk].y + 0.5,
+                   ax: 1 + ecc, ay: 1 - ecc, R2: rr * rr, invR: 1 / rr, H: hh,
+                   P: P, C: C, E: E, lead: lead,
+                   wx: Math.cos(wd), wy: Math.sin(wd) });
+      rank++;
+    }
+  })();
+  var CONE_N = CONES.length;
+  var CONE_HMAX_PRE = 0;
+  for (k = 0; k < CONE_N; k++) if (CONES[k].H > CONE_HMAX_PRE) CONE_HMAX_PRE = CONES[k].H;
+  // Angular noise for the barrancos, read by unit direction rather than angle.
+  var BRW = 13, BRH = 13, brg = noiseGrid(seed, R_CONE + 2, BRW, BRH);
+  var BR2W = 31, BR2H = 31, br2g = noiseGrid(seed, R_CONE + 3, BR2W, BR2H);
+  /* Uint8, not Float32. Three more megapixel float arrays is twelve megabytes
+     on a phone for three values that feed a snowline, a colour mix and an ash
+     wash — 1/180th of an elevation unit is two percent of the narrowest
+     feather any of them uses, so the quantisation is invisible. The cone is
+     added to ELEV at full precision; only these read-backs are packed. */
+  var CONEA = new Uint8Array(BW * BH);   // cone height * 180, for snow and rock
+  var CRATA = new Uint8Array(BW * BH);   // crater bowl mask * 255
+  var ASHA  = new Uint8Array(BW * BH);   // downwind ash apron * 255
+
   /* Per-tile shortlist of the cores that could plausibly win anywhere inside
      that tile. Testing all twelve cores at every one of a million pixels was
      the single largest line item in the bake; the warp displaces a lookup by
@@ -554,7 +725,86 @@ function bakeTerrain(seed, opts) {
          map and the world came out looking like crumpled foil. Rugged ground
          gets mostly ridge; gentle ground gets mostly smooth fBm swells. */
       var ridgeMix = 0.15 + 0.58 * rg;
-      ELEV[i] = eb + land + rg * (ridgeMix * r + (1 - ridgeMix) * f - 0.46) * 1.30;
+
+      /* ── the volcano ──────────────────────────────────────────────────────
+         Evaluated BEFORE the noise terms, because it does not merely add to
+         them — it SUPPRESSES them. That is the whole lesson of the first
+         attempt at this: a cone added on top of the mountain biome's ridged
+         noise at full strength is a cone buried in noise, and it rendered as
+         exactly the crumpled smear it had been before, only higher up. The
+         noise has an amplitude near ±0.8 at a wavelength under two tiles; the
+         cone has an amplitude of 1.1 spread over six. Superposed at equal
+         weight the short wavelength wins the hillshade every time, because a
+         hillshade responds to GRADIENT and the gradient of the small term is
+         an order of magnitude larger.
+
+         A stratovolcano's flanks are smooth, and that smoothness is not an
+         absence of detail — it is the feature. It is why a real one reads as a
+         single enormous object from fifty miles away, and it is the only way
+         this shape survives being lit. So the detail octaves and the global
+         landform wander are both damped by how far up the cone a pixel sits:
+         full noise out on the apron, a clean lit surface near the summit, and
+         the barrancos supplying the only structure up there.
+
+         Evaluated at the WARPED position, which matters more than it looks:
+         the same displacement field that stops the biome boundaries being
+         Voronoi bisectors also stops this being a drafting-compass circle.
+         The base contour of the cone wanders by most of a tile, so it
+         interlocks with the country around it instead of sitting on it. */
+      var cone = 0, coneN = 0;
+      if (CONE_N) {
+        var crat = 0, ash = 0;
+        var cone = 0, crat = 0, ash = 0;
+        for (k = 0; k < CONE_N; k++) {
+          var CO = CONES[k];
+          var cdx = (wx - CO.x) * CO.ax, cdy = (wy - CO.y) * CO.ay;
+          var cd2 = cdx * cdx + cdy * cdy;
+          if (cd2 >= CO.R2) continue;
+          var cds = Math.sqrt(cd2);
+          var crad = cds * CO.invR;
+          var clt = crad * CONE_LUTN, cli = clt | 0, clf = clt - cli;
+          var pv2 = CO.P[cli] + (CO.P[cli + 1] - CO.P[cli]) * clf;
+          var ev2 = CO.E[cli] + (CO.E[cli + 1] - CO.E[cli]) * clf;
+          var ndx = 0, ndy = 0;
+          if (cds > 1e-4) { var iv = 1 / cds; ndx = cdx * iv; ndy = cdy * iv; }
+          if (ev2 > 0) {
+            /* Barrancos — the radial gullies that rib every stratovolcano.
+               Two angular octaves, sampled by the unit direction so they are
+               continuous the whole way round, and the sampling radius grows
+               with `crad` so the gullies SPLAY as they descend instead of
+               staying parallel stripes. */
+            var sr = 0.30 + 0.36 * crad;
+            var b1 = sampleGrid(brg, BRW, BRH, (ndx * sr + 0.5) * (BRW - 1), (ndy * sr + 0.5) * (BRH - 1));
+            var b2 = sampleGrid(br2g, BR2W, BR2H, (ndx * sr + 0.5) * (BR2W - 1), (ndy * sr + 0.5) * (BR2H - 1));
+            var gcut = 1 - Math.abs((b1 * 0.68 + b2 * 0.32) * 2 - 1);   // ridged: gullies, not waves
+            pv2 += (gcut * gcut - 0.42) * ev2;
+          }
+          var hcone = pv2 * CO.H;
+          if (hcone > cone) {
+            cone = hcone;
+            // how far up THIS cone: 0 at the base, 1 at the lip. The term that
+            // damps the noise, and the one the snowcap is keyed to.
+            coneN = pv2 > 0 ? (pv2 > 1 ? 1 : pv2) : 0;
+            crat = CO.C[cli] + (CO.C[cli + 1] - CO.C[cli]) * clf;
+            // ash falls downwind of the vent and thins with distance
+            var wdot = ndx * CO.wx + ndy * CO.wy;
+            // a PLUME, not a hemisphere: cubed, so the fall is a lobe on one
+            // flank rather than a grey wash over half the mountain
+            if (wdot > 0) ash = wdot * wdot * wdot * sstep(0.98, 0.20, crad) * (CO.lead ? 1 : 0.6);
+          }
+        }
+        CONEA[i] = cone > 0 ? (cone * 180 > 255 ? 255 : (cone * 180) | 0) : 0;
+        CRATA[i] = (crat * 255) | 0;
+        ASHA[i] = (ash * 255) | 0;
+      }
+      var dampD = 1 - 0.92 * coneN, dampL = 1 - 0.75 * coneN;
+      ELEV[i] = eb + land * dampL + cone
+              + rg * (ridgeMix * r + (1 - ridgeMix) * f - 0.46) * 1.30 * dampD
+              // scree tooth: the finest octave, put BACK on the cone at low
+              // amplitude. Damping the landform octaves to almost nothing is
+              // what lets the shape read, but a surface with literally no
+              // texture on it reads as vinyl; this is grain, not relief.
+              + (v4 - 0.5) * 0.052 * coneN;
       /* ⚠ CLAMPED, and it has to be. This is a Uint8Array and `rg` is a biome
          ruggedness that is allowed to exceed 1.0 — Dragon Mountain's is well
          over it. Storing rg*200 unclamped wraps 264 to 8, which silently
@@ -578,7 +828,7 @@ function bakeTerrain(seed, opts) {
   // actually placed. They are deliberately narrow (a fifth of a tile), because
   // they are decoration: no rule in the mode knows they exist and nothing is
   // impassable because of one.
-  carveRivers(seed, ELEV, WVAL, BW, BH, PX, W, H);
+  carveRivers(seed, ELEV, WVAL, CRATA, CONEA, CONE_HMAX_PRE, BW, BH, PX, W, H);
 
   // ── 5. Cast shadow ──────────────────────────────────────────────────────
   var llen = Math.sqrt(LX * LX + LY * LY + LZ * LZ);
@@ -634,11 +884,31 @@ function bakeTerrain(seed, opts) {
   var WTHR = 0.32;
   var hashf = M.wpHash32;
   var o3 = oct[3], o4g = oct[4];
+  /* The snowcap's two thresholds, in ABSOLUTE cone height rather than in
+     profile fraction, so a subordinate peak two thirds as tall gets a smaller
+     cap or none — which is what makes the lead volcano read as the tallest
+     thing on the map rather than as one of three white dots. */
+  var CONE_HMAX = CONE_HMAX_PRE;
+  /* ⚠ TIGHT. Read as a radius rather than as a height these say "snow from
+     two tiles in, solid by the crater rim". The first values here said "snow
+     from three tiles in", which on a cone eleven tiles wide is HALF THE
+     MOUNTAIN, and the volcano came out wearing a white beanie that swallowed
+     the whole lit flank — the cap stopped being a landmark and became the
+     landform. A cap has to be a small bright thing on a large dark thing. */
+  var CAP_A = 0.50 * CONE_HMAX, CAP_B = 0.72 * CONE_HMAX;
 
   for (y = 0; y < BH; y++) {
     for (x = 0; x < BW; x++) {
       i = y * BW + x;
       var e = ELEV[i];
+      var coneV = CONEA[i] * (1 / 180), cratV = CRATA[i] * (1 / 255), ashV = ASHA[i] * (1 / 255);
+      /* ⚠ RE-DERIVED, not carried over. The fields loop has a `coneN` holding
+         exactly this fraction, and reaching for it here silently read the last
+         value that loop left behind — the bottom-right corner of the map,
+         which is zero — so every volcano-conditional in the shading pass was
+         dead. `var` is function-scoped and both loops live in bakeTerrain;
+         nothing warns you. */
+      var coneF = CONE_HMAX > 0 ? coneV / CONE_HMAX : 0;
 
       // surface normal from two central differences, wide and narrow
       var el = ELEV[x > 0 ? i - 1 : i], er = ELEV[x < BW - 1 ? i + 1 : i];
@@ -770,7 +1040,15 @@ function bakeTerrain(seed, opts) {
         var t = sh > 1 ? 1 : sh;
         if (t < 0.5) { var u2 = t * 2; cr = mix(dp[0], br, u2); cg = mix(dp[1], bg2, u2); cb = mix(dp[2], bb, u2); }
         else { var u3 = (t - 0.5) * 2; cr = mix(br, lt[0], u3); cg = mix(bg2, lt[1], u3); cb = mix(bb, lt[2], u3); }
-        if (sh > 1) { var ov = (sh - 1) * 0.7; cr = mix(cr, 255, ov); cg = mix(cg, 255, ov); cb = mix(cb, 255, ov); }
+        /* ⚠ The over-bright is SUPPRESSED ON THE VOLCANO. This term exists to
+           let a rare sunward face blow out, which is lovely on broken ground
+           where only a few facets ever face the light at once. A cone is one
+           enormous smooth facet: half of it faces the light at nearly the same
+           angle, so the term fired across thousands of contiguous pixels and
+           the mountain came out as a bleached quarry — the palest thing on the
+           map, when it should be the darkest. */
+        var volc = sstep(0.10, 0.42, coneF);
+        if (sh > 1) { var ov = (sh - 1) * 0.7 * (1 - volc * 0.88); cr = mix(cr, 255, ov); cg = mix(cg, 255, ov); cb = mix(cb, 255, ov); }
 
         /* ── HIGH GROUND IS ROCK, WHATEVER BIOME IT IS ───────────────────
            The one change that stops Dragon Mountain looking like a brown
@@ -782,7 +1060,13 @@ function bakeTerrain(seed, opts) {
            edge becomes the contour of its own foothills — which also means a
            high shoulder of the steppe next door goes rocky too, exactly as it
            should. */
-        var rock = sstep(0.46, 0.92, e) * sstep(0.26, 0.58, RGA[i] / 200);
+        /* ⚠ The cone counts toward the RUGGEDNESS gate as well as the height
+           one. Rock is keyed on "high AND rough", and roughness is a per-biome
+           constant blurred across tiles — so where the volcano's apron spills
+           onto the gentle biome next door the ground came out half a unit high
+           and still upholstered in grass. A volcanic flank is scree wherever
+           it is steep, whichever cartographer's region it happens to be in. */
+        var rock = sstep(0.46, 0.92, e) * sstep(0.26, 0.58, RGA[i] / 200 + coneV * 0.50);
         if (rock > 0.01) {
           /* ⚠ The rock tone is a CONTINUOUS function of the light, not a
              threshold on it. Picking one of two rock colours either side of
@@ -791,7 +1075,25 @@ function bakeTerrain(seed, opts) {
              show — a mountain with a hillshade painted flat on top of it. */
           var rt = clamp(sh * 0.92, 0, 1);
           var rr2 = mix(44, 186, rt * rt * 0.55 + rt * 0.45), rg2 = mix(38, 164, rt), rb2 = mix(40, 141, rt);
-          cr = mix(cr, rr2, rock * 0.70); cg = mix(cg, rg2, rock * 0.70); cb = mix(cb, rb2, rock * 0.70);
+          /* ── BASALT, NOT LIMESTONE ──────────────────────────────────────
+             The generic rock ramp tops out at a pale grey that is right for a
+             sunlit crag and wrong for a volcano, and on a cone — where the lit
+             flank is a single continuous surface — it produced a mountain of
+             chalk. Dragon Mountain is ash and cooled lava: a dark mass with a
+             comparatively narrow tonal range. That is not only truer, it is
+             what buys the two things that have to carry this landform from
+             across the map — a white cap and an orange crater have nothing to
+             be brilliant AGAINST unless the rock under them is dark. */
+          if (volc > 0.01) {
+            var vt = rt * rt * 0.42 + rt * 0.58;
+            rr2 = mix(rr2, mix(21, 112, vt), volc);
+            rg2 = mix(rg2, mix(18, 103, vt), volc);
+            rb2 = mix(rb2, mix(21, 103, vt), volc);
+          }
+          // the cone leans harder on the rock ramp: the biome's own `lit` tone
+          // is a pale grey and at 30% it was enough to keep re-bleaching it
+          var rkm = rock * (0.70 + 0.24 * volc);
+          cr = mix(cr, rr2, rkm); cg = mix(cg, rg2, rkm); cb = mix(cb, rb2, rkm);
 
           /* ── ridge crests and gullies ──────────────────────────────────
              The Laplacian is already in hand and on rock it is worth far more
@@ -801,12 +1103,24 @@ function bakeTerrain(seed, opts) {
              finger. A positive curvature is a couloir — sink it to near black
              and the mountain acquires internal drainage. Between them they
              are most of the difference between "brown lump" and "massif". */
-          var crest = sstep(0.05, 0.30, -curv) * clamp(0.35 + 0.85 * lam, 0, 1);
+          /* ⚠ AND THE CREST HIGHLIGHT IS GATED OFF THE CONE — the third and
+             worst of the three passes that all failed the same way. Hachures,
+             the over-bright and this one are each keyed to a property that a
+             broken massif has only in places and a cone has EVERYWHERE: a
+             steep gradient, a face turned to the sun, and — here — negative
+             curvature. A cone is convex over its entire surface, so the arête
+             catch-light fired across every pixel of it at full strength and
+             laid a flat 34% wash of near-white over the whole mountain. That
+             single line was most of why the volcano kept coming out as chalk
+             no matter how dark the rock ramp under it was made. An arête
+             highlight belongs on an arête. */
+          var arete = 1 - volc * 0.86;
+          var crest = sstep(0.05, 0.30, -curv) * clamp(0.35 + 0.85 * lam, 0, 1) * arete;
           /* ⚠ The gully term is deliberately WEAK now. At its first strength
              it painted the hollows near-black and the massif came out as a
              checkerboard of bleached slope and ink blot rather than as a
              continuous piece of ground. A couloir is a shadow, not a hole. */
-          var gully = sstep(0.06, 0.40, curv) * clamp(0.30 + 0.70 * (1 - lam), 0, 1);
+          var gully = sstep(0.06, 0.40, curv) * clamp(0.30 + 0.70 * (1 - lam), 0, 1) * arete;
           cr = mix(cr, 246, crest * rock * 0.34); cg = mix(cg, 236, crest * rock * 0.34); cb = mix(cb, 216, crest * rock * 0.34);
           cr = mix(cr, 36, gully * rock * 0.22); cg = mix(cg, 31, gully * rock * 0.22); cb = mix(cb, 34, gully * rock * 0.22);
         }
@@ -830,7 +1144,7 @@ function bakeTerrain(seed, opts) {
              they read as contour lines on a sand dune — which is precisely
              what two rounds of this file produced. They belong on the lower
              shoulders; the exposed rock above gets fracture instead. */
-          var stAmt = 1 - rock * 0.72;
+          var stAmt = (1 - rock * 0.72) * (1 - volc * 0.85);
           var strata = 1 + (0.13 * sstep(0.10, 0.50, sfr) - 0.11 * sstep(0.58, 0.96, sfr) - 0.06) * stAmt;
           cr *= strata; cg *= strata * 0.99; cb *= strata * 0.975;
           // fractured rock: a fine dark crack network, only on the bare rock
@@ -853,7 +1167,15 @@ function bakeTerrain(seed, opts) {
              the fissures then appear only on those. */
           var field = sstep(0.50, 0.74, det);
           var crk = 1 - Math.abs(mid + mid - 1);
-          var low = sstep(0.34, 0.04, e - 0.46) * field;
+          /* ⚠ Retuned, and it had to be, twice over. This term is documented
+             as "the heat is in the ground, not on the summit" and it was
+             written `sstep(0.34, 0.04, e - 0.46)` — a descending call, which
+             the old broken sstep turned into a hard step with the sense
+             inverted, so the fissures fired only on HIGH ground. With sstep
+             fixed the same call would have fired nowhere at all, because the
+             volcano now lifts every part of this biome above the old
+             threshold. Absolute elevations, re-picked against the cone. */
+          var low = sstep(1.34, 0.68, e) * field;
           var bloom = sstep(0.58, 0.96, crk) * low * (0.4 + 0.6 * fine);
           if (bloom > 0) { cr = mix(cr, 188, bloom * 0.30); cg = mix(cg, 80, bloom * 0.22); cb = mix(cb, 46, bloom * 0.15); }
           var glow = sstep(0.90, 1.0, crk) * low * (0.55 + 0.45 * fine);
@@ -909,6 +1231,38 @@ function bakeTerrain(seed, opts) {
           cr = mix(cr, 84, green * 0.18); cg = mix(cg, 106, green * 0.18); cb = mix(cb, 62, green * 0.18);
         }
 
+        /* ── the crater and the ash apron ────────────────────────────────
+           Both are painted outside the per-biome branch on purpose: the
+           volcano is a landform and it does not stop at the Voronoi boundary
+           any more than its foothills do. Ashfall in particular is supposed
+           to run out over whatever is downwind of it.
+
+           The bowl is black scoria — the darkest value anywhere on the map,
+           which is what makes the lava inside it read as genuinely hot rather
+           than as orange paint. The lava itself is a ridged network, not a
+           disc: a crusted lake with fissures glowing through it. */
+        if (cratV > 0.004) {
+          var wall = cratV * 0.80;
+          cr = mix(cr, 44, wall); cg = mix(cg, 35, wall); cb = mix(cb, 34, wall);
+          var heat = sstep(0.02, 0.42, cratV) * (1 - sstep(0.40, 0.72, cratV));
+          if (heat > 0) { cr = mix(cr, 176, heat * 0.26); cg = mix(cg, 78, heat * 0.16); cb = mix(cb, 44, heat * 0.08); }
+          var lake = sstep(0.70, 0.99, cratV);
+          if (lake > 0) {
+            var crust = 1 - Math.abs((fine * 0.55 + mid * 0.45) * 2 - 1);
+            var vein = sstep(0.52, 0.97, crust);
+            cr = mix(cr, 122, lake * 0.55); cg = mix(cg, 48, lake * 0.55); cb = mix(cb, 34, lake * 0.55);
+            cr = mix(cr, 255, lake * vein * 0.92); cg = mix(cg, 132, lake * vein * 0.62); cb = mix(cb, 44, lake * vein * 0.34);
+          }
+        }
+        if (ashV > 0.012) {
+          // fresh ash: grey, matte, and it kills the local colour
+          var av = ashV * 0.34 * (0.72 + 0.56 * fine);
+          var alum = cr * 0.30 + cg * 0.59 + cb * 0.11;
+          cr = mix(cr, mix(alum, 74, 0.55), av);
+          cg = mix(cg, mix(alum, 70, 0.55), av);
+          cb = mix(cb, mix(alum, 70, 0.55), av);
+        }
+
         // ── snow ────────────────────────────────────────────────────────
         // Accumulates by altitude, but NOT on the steepest faces — snow slides
         // off a cliff, and leaving it on makes a mountain look like a cake.
@@ -934,13 +1288,33 @@ function bakeTerrain(seed, opts) {
            caps on Dragon Mountain (which is the destination biome and has to
            be the most arresting thing on the map) without frosting every
            swell of the Open Steppe. */
-        var snowline = (0.97 - 0.19 * clamp(RGA[i] / 200, 0, 1.2)) + 0.20 * det + 0.09 * mid;
-        var snowAmt = sstep(snowline, snowline + 0.26, e)
-                    * clamp(1 - mslope * 0.26, 0.0, 1)
-                    * clamp(0.35 + 1.0 * fine, 0, 1);
+        /* ⚠ THE CONE RAISES THE SNOWLINE BY MORE THAN IT RAISES THE GROUND.
+           `1.15 * coneV` against a cone that adds exactly `coneV` to `e` means
+           the altitude rule NET DECREASES up the volcano — deliberately. Left
+           alone it would have done the opposite of what a cap needs: the cone
+           lifts its whole six-tile apron above the old line and the entire
+           destination biome ices over into a white pancake. So the altitude
+           rule is made to ignore the volcano, and the volcano gets its own
+           cap keyed to how far up the CONE the pixel is, which is a fraction
+           of a mountain rather than an absolute height and is therefore the
+           only version of this that puts white on the top quarter. */
+        var snowline = (0.97 - 0.19 * clamp(RGA[i] / 200, 0, 1.2)) + 0.20 * det + 0.09 * mid + 1.15 * coneV;
+        var capAmt = CONE_HMAX > 0 ? sstep(CAP_A, CAP_B, coneV) : 0;
+        // no snow in a crater full of lava, none under fresh ashfall
+        capAmt *= (1 - cratV) * (1 - ashV * 0.80);
+        var altAmt = sstep(snowline, snowline + 0.26, e);
+        /* ⚠ The cap does NOT get the full slope-shedding term. That term is
+           tuned for a broken massif, where the point is to leave snow in the
+           crevices and strip it off the faces; a cone is one continuous face,
+           so at full strength it stripped the cap almost everywhere and the
+           summit came out the same value as the flanks. On a smooth flank
+           snow LIES. So the cone's cap sheds gently and floors at 45%. */
+        var capA2 = capAmt * clamp(1 - mslope * 0.10, 0.45, 1) * clamp(0.55 + 0.72 * fine, 0, 1);
+        var snowAmt = altAmt * clamp(1 - mslope * 0.26, 0.0, 1) * clamp(0.35 + 1.0 * fine, 0, 1);
+        if (capA2 > snowAmt) snowAmt = capA2;
         if (snowAmt > 0.02) {
           var sn = sh > 0.70 ? SNOWV.lit : SNOWV.deep;
-          var sa = snowAmt * 0.82;
+          var sa = snowAmt * (0.82 + 0.13 * volc);
           cr = mix(cr, sn[0], sa); cg = mix(cg, sn[1], sa); cb = mix(cb, sn[2], sa);
         }
 
@@ -959,7 +1333,21 @@ function bakeTerrain(seed, opts) {
       var lum2 = (cr * 0.30 + cg * 0.59 + cb * 0.11) / 255;
       var warm = (lum2 - 0.46);
       cr += warm * 20; cg += warm * 7; cb -= warm * 15;
-      cr = mix(cr, 214, 0.035); cg = mix(cg, 196, 0.035); cb = mix(cb, 158, 0.035);
+      /* ⚠ The document pull is applied at CONSTANT LUMINANCE, not as a wash.
+         Mixing every pixel toward a literal parchment colour does unify the
+         palette, and at the strength the early-run frame wants it also lifts
+         every dark value on the map by a fifth — which meant Dragon Mountain's
+         shaded flank, the single strongest piece of modelling in the picture,
+         came back forty levels paler. Pulling toward parchment's HUE at the
+         pixel's OWN luminance takes the chroma difference out (which is what
+         made the explored patch read as a saturated island against the pale
+         shroud) and leaves the drawing intact. The small flat wash after it is
+         the ink of the paper itself, and stays small. */
+      var lumP = cr * 0.30 + cg * 0.59 + cb * 0.11;
+      cr = mix(cr, lumP + 16.8, DOC_PULL);
+      cg = mix(cg, lumP - 1.2, DOC_PULL);
+      cb = mix(cb, lumP - 39.2, DOC_PULL);
+      cr = mix(cr, 214, DOC_WASH); cg = mix(cg, 196, DOC_WASH); cb = mix(cb, 158, DOC_WASH);
       // paper grain, hashed so it is identical on every machine
       var gr = ((hashf(seed, x, y, R_GRAIN) >>> 12) & 255) / 255 - 0.5;
       cr += gr * 7.0; cg += gr * 7.0; cb += gr * 7.0;
@@ -992,11 +1380,15 @@ function bakeTerrain(seed, opts) {
      change to the relief had actually altered anything or whether the picture
      merely looked the same, and eyeballing a 1.2-megapixel PNG is a bad way to
      answer that. These four numbers answer it in one line. */
-  var dbg = { eMin: 1e9, eMax: -1e9, lMean: 0, lMin: 255, lMax: 0, bio: [0, 0, 0, 0, 0, 0] };
+  var dbg = { eMin: 1e9, eMax: -1e9, lMean: 0, lMin: 255, lMax: 0, bio: [0, 0, 0, 0, 0, 0],
+              cones: CONE_N, cMax: 0, cArea: 0, cratArea: 0, hmax: round2(CONE_HMAX) };
   for (i = 0; i < N; i += 7) {
     var ev = ELEV[i]; if (ev < dbg.eMin) dbg.eMin = ev; if (ev > dbg.eMax) dbg.eMax = ev;
     var lv = LIGHT[i]; dbg.lMean += lv; if (lv < dbg.lMin) dbg.lMin = lv; if (lv > dbg.lMax) dbg.lMax = lv;
     dbg.bio[BIO[i]]++;
+    if (CONEA[i] > dbg.cMax) dbg.cMax = CONEA[i];
+    if (CONEA[i] > 18) dbg.cArea++;
+    if (CRATA[i] > 128) dbg.cratArea++;
   }
   dbg.lMean = Math.round(dbg.lMean / Math.ceil(N / 7));
   dbg.eMin = round2(dbg.eMin); dbg.eMax = round2(dbg.eMax);
@@ -1005,7 +1397,7 @@ function bakeTerrain(seed, opts) {
   var ART = {
     ctx: ctx, seed: seed, PX: PX, BW: BW, BH: BH, W: W, H: H,
     ELEV: ELEV, WVAL: WVAL, LIGHT: LIGHT, BIO: BIO, WXA: WXA, WYA: WYA,
-    RGA: RGA, WTHR: WTHR, world: world,
+    RGA: RGA, WTHR: WTHR, world: world, CONEA: CONEA, CRATA: CRATA,
   };
   drawRoads(ART);
   drawHachures(ART);
@@ -1026,19 +1418,28 @@ function bakeTerrain(seed, opts) {
   var labels = labelSites(ART);
   finishEdges(ART);
   var t1 = now();
+  /* ⚠ These three used to be built inside the returned object literal, AFTER
+     the timestamp — so `timing.total` was quietly excluding a fifth of the
+     bake and every performance comparison made from it was wrong by that much.
+     Built here, timed here. */
+  var CLOUD = bakeCloud(seed, W, H);
+  var t2 = now();
+  var MEM = bakeMemory(cv, BW, BH);
+  var t3 = now();
 
   return {
     canvas: cv, ctx: ctx, seed: seed, px: PX, w: BW, h: BH,
     world: world, labels: labels,
-    cloud: bakeCloud(seed, W, H),
-    memory: bakeMemory(cv, BW, BH),
+    cloud: CLOUD,
+    memory: MEM,
     silhouette: SIL,
     debug: dbg,
     timing: {
-      total: round2(t1 - t0), fields: round2(tFields - t0),
+      total: round2(t3 - t0), fields: round2(tFields - t0),
       shadow: round2(tShadow - tFields), shading: round2(tShade - tShadow),
       silhouette: round2(tSil - tShade),
       objects: round2(tObjects - tSil), finish: round2(t1 - tObjects),
+      cloud: round2(t2 - t1), memory: round2(t3 - t2),
       pixels: BW * BH,
     },
   };
@@ -1056,13 +1457,22 @@ function now() {
    what stops them looking like a drainage simulation and starts them looking
    drawn. They terminate in a lake, at the map edge, or in a local minimum
    (which becomes a tarn, which is fine).                                     */
-function carveRivers(seed, ELEV, WVAL, BW, BH, PX, W, H) {
+function carveRivers(seed, ELEV, WVAL, CRATA, CONEA, CONE_HMAX, BW, BH, PX, W, H) {
   var M = mapgen();
   var cand = [], x, y, i;
   var step = Math.max(2, (PX / 2) | 0);
   for (y = PX; y < BH - PX; y += step) for (x = PX; x < BW - PX; x += step) {
     i = y * BW + x;
     if (WVAL[i] > 0.32) continue;
+    /* ⚠ NOT IN THE CRATER. Sources are the highest ground on the map and the
+       highest ground on the map is now the volcano's lip — from which the
+       walker immediately descends into the bowl, hits its local minimum four
+       steps later and stops, leaving a short blue worm sitting in the lava.
+       Rivers rise on the flanks. */
+    if (CRATA[i] > 6) continue;
+    // and not on the upper cone either: a source on the lip runs four pixels
+    // and stops, and the summit is not where a catchment is
+    if (CONE_HMAX > 0 && CONEA[i] / 180 > 0.50 * CONE_HMAX) continue;
     if (ELEV[i] > 0.68) cand.push([x, y, ELEV[i]]);
   }
   cand.sort(function (a, b) { return b[2] - a[2]; });
@@ -1081,6 +1491,13 @@ function carveRivers(seed, ELEV, WVAL, BW, BH, PX, W, H) {
     var wid = PX * 0.055, life = 0;
     var r = rng(M.wpHash32(seed, j + 1, 7, R_RIVER));
     var ang = r() * Math.PI * 2;
+    /* ⚠ The path is COLLECTED first and stamped afterwards. The `life < 12`
+       test below has always been there and has always been dead code: it ran
+       after the stamping loop, so every four-pixel stub the walker abandoned
+       in a hollow had already been painted into the water field. Buffering the
+       course and committing it only if the river got somewhere is the whole
+       fix, and it is what removes the short blue worms from the high ground. */
+    var course = [];
     for (var s = 0; s < 900; s++) {
       var idx = (cy | 0) * BW + (cx | 0);
       if (cx < 1 || cy < 1 || cx >= BW - 1 || cy >= BH - 1) break;
@@ -1101,20 +1518,23 @@ function carveRivers(seed, ELEV, WVAL, BW, BH, PX, W, H) {
       cx += Math.cos(ang) * 2.0; cy += Math.sin(ang) * 2.0;
       life++;
       wid = Math.min(PX * 0.20, wid + PX * 0.00055);
-      // stamp
-      var rad = Math.ceil(wid) + 1;
+      course.push(cx, cy, wid);
+    }
+    if (life < 12) continue;
+    for (var cq = 0; cq < course.length; cq += 3) {
+      var qcx = course[cq], qcy = course[cq + 1], qw = course[cq + 2];
+      var rad = Math.ceil(qw) + 1;
       for (var oy = -rad; oy <= rad; oy++) for (var ox = -rad; ox <= rad; ox++) {
-        var px2 = (cx + ox) | 0, py2 = (cy + oy) | 0;
+        var px2 = (qcx + ox) | 0, py2 = (qcy + oy) | 0;
         if (px2 < 0 || py2 < 0 || px2 >= BW || py2 >= BH) continue;
         var dd = Math.sqrt(ox * ox + oy * oy);
-        var v = 1 - dd / (wid + 1.6);
+        var v = 1 - dd / (qw + 1.6);
         if (v <= 0) continue;
         var k2 = py2 * BW + px2;
         var val = 0.36 + v * 0.34;
         if (val > wj[k2]) wj[k2] = val;
       }
     }
-    if (life < 12) continue;
   }
   for (i = 0; i < BW * BH; i++) {
     if (wj[i] > WVAL[i]) { WVAL[i] = wj[i]; ELEV[i] -= 0.02 * (wj[i] - 0.36) / 0.34; }
@@ -1223,11 +1643,23 @@ function drawHachures(A) {
       if (e < 0.56) continue;                     // low ground is not hachured
       if (A.RGA[i] < 76) continue;                // and neither is soft ground
       if (A.WVAL[i] > A.WTHR) continue;
+      /* ⚠ AND NEITHER IS THE VOLCANO'S UPPER CONE, which is the one place on
+         the map where this pass actively destroys the thing it exists to show.
+         Hachures key on gradient, and a cone has a large, absolutely uniform
+         gradient over its entire surface — so every stroke fired at full
+         strength, the sunward flank bleached out under pale strokes and the
+         shaded flank filled in solid black, and the clean lit surface the cone
+         was built for disappeared under a radial scribble. Hachures say "this
+         ground is steep and broken". A cone is steep and SMOOTH; its own
+         hillshade is the correct and sufficient description of it. */
+      var cnh = A.CONEA[i] / 180;
+      var hbare = 1 - sstep(0.14, 0.46, cnh);
+      if (hbare < 0.04) continue;
       var gx = E[i + d] - E[i - d], gy = E[i + d * BW] - E[i - d * BW];
       var sl = Math.sqrt(gx * gx + gy * gy);
       if (sl < 0.016) continue;
       var h = M.wpHash32(A.seed, x, y, R_HACH);
-      var amt = clamp((sl - 0.016) / 0.075, 0, 1) * clamp((e - 0.56) / 0.26, 0, 1);
+      var amt = clamp((sl - 0.016) / 0.075, 0, 1) * clamp((e - 0.56) / 0.26, 0, 1) * hbare;
       if (((h >>> 22) & 255) / 255 > amt * 0.94) continue;   // thin them out on gentle slopes
       var ux = -gx / sl, uy = -gy / sl;                       // the fall line
       var lit = (gx * sunx + gy * suny) / sl;                 // +1 faces the sun
@@ -1322,13 +1754,22 @@ function makeObject(A, nm, fx, fy, e, lit, r) {
        peaks instead of a hundred equal teeth. */
     var t = r(), hi = clamp((e - 0.70) / 0.55, 0, 1);
     var spine = clamp(ridgeAt(A, fx, fy) * 26, -1, 1);
+    /* ⚠ NOTHING STANDS ON THE VOLCANO'S UPPER CONE. The crag scatter is gated
+       on altitude, and the cone raised the altitude of six tiles' worth of
+       ground — so the first render of it grew a forest of rock wedges all over
+       the one surface whose whole job is to be a clean lit slope. The cone's
+       drama is its FORM; anything scattered on it is a thing standing in front
+       of the form. Out on the apron, where the noise is back and the cone term
+       has faded, the crags come back. */
+    var cn = A.CONEA[A.BW * clamp((fy * A.PX) | 0, 0, A.BH - 1) + clamp((fx * A.PX) | 0, 0, A.BW - 1)] / 180;
+    var bare = 1 - sstep(0.16, 0.52, cn);
     /* ⚠ Halved from the first pass. At the old rate a high massif grew a
        crag on nearly every candidate and the close view was a field of
        wedges — the exact "row of tents" failure the drawCrag comment warns
        about, reintroduced through density rather than through shape. The
        relief and the hachures carry the mountain now; these are accents on
        it and have to be rare enough to read as accents. */
-    var pCrag = (0.03 + 0.16 * hi) * (0.20 + 1.0 * clamp(spine * 0.5 + 0.5, 0, 1));
+    var pCrag = (0.03 + 0.16 * hi) * (0.20 + 1.0 * clamp(spine * 0.5 + 0.5, 0, 1)) * bare;
     if (t < pCrag) {
       /* ⚠ Capped. Unbounded, the top of this range produced crags wider than
          a tile, and a rock outcrop drawn at that size stops reading as rock
@@ -1339,8 +1780,8 @@ function makeObject(A, nm, fx, fy, e, lit, r) {
     }
     // fewer loose boulders than the first pass: at the density it used, the
     // massif came out looking gravelled rather than carved
-    if (t < 0.60) { var s3 = PX * (0.05 + r() * 0.11); return { y: fy, f: function () { drawBoulder(c, px, py, s3, lit, r); } }; }
-    if (t < 0.88) return null;
+    if (t < 0.60 * bare) { var s3 = PX * (0.05 + r() * 0.11); return { y: fy, f: function () { drawBoulder(c, px, py, s3, lit, r); } }; }
+    if (t < 1 - 0.12 * bare) return null;
     var s4 = PX * (0.18 + r() * 0.14); return { y: fy, f: function () { drawDeadTree(c, px, py, s4, lit, r, '#3a2c22'); } };
   }
   if (nm === 'graveyard') {
@@ -1982,7 +2423,15 @@ function labelSites(A) {
     if (!tries || hits / tries < 0.55) continue;
     if (used[co.biome] && used[co.biome] > 1) continue;
     used[co.biome] = (used[co.biome] || 0) + 1;
-    out.push({ x: co.x + 0.5, y: co.y + 0.5, text: M.BIOMES[co.biome].name.toUpperCase() });
+    /* ⚠ A mountain label is pushed OFF ITS OWN CORE. Every other biome's core
+       is an unremarkable piece of its region and the label sits happily on it;
+       a mountain core is now the summit of a volcano, so setting type there
+       lays "DRAGON MOUNTAIN" straight across the caldera — the one square inch
+       of this map the whole brief points at. The offset is south-west, into
+       the lit apron, where a name on a campaign map usually goes anyway. */
+    var lx2 = co.x + 0.5, ly2 = co.y + 0.5;
+    if (co.biome === 'mountain') { lx2 -= 1.1; ly2 += 3.0; }
+    out.push({ x: lx2, y: ly2, text: M.BIOMES[co.biome].name.toUpperCase() });
   }
   return out;
 }
@@ -2114,6 +2563,19 @@ function bakeMemory(src, BW, BH) {
 function bakeSilhouette(seed, ELEV, SHADOW, WVAL, WTHR, BW, BH, PX) {
   var cv = mkCanvas(BW, BH), c = cv.getContext('2d');
   var img = c.createImageData(BW, BH), d = img.data;
+  /* ⚠ A SMOOTHED COPY OF THE HEIGHT FIELD, and this is the difference between
+     a chart and a coffee stain. The terrain's finest landform octaves have
+     features around a third of a tile, which on the painted map is texture you
+     read as ground. Under cloud, at low contrast, in a frame that is four
+     fifths shroud, the same octaves are a field of soft brown blotches — and
+     blotches on parchment is exactly the read we were trying to get away from.
+     Widening the gradient stencil does not fix it, because the blotch is in
+     the VALUES and not only in the derivative.
+     So the silhouette lights a genuinely low-passed field: everything below
+     about half a tile is gone, and what survives is massif, valley and ridge —
+     the only things unexplored ground is supposed to be telling the player. */
+  var ES = new Float32Array(ELEV);
+  boxBlur(ES, BW, BH, Math.max(2, (PX * 0.16) | 0), 2);
   var hashf = mapgen().wpHash32;
   var llen = Math.sqrt(LX * LX + LY * LY + LZ * LZ);
   var lx = LX / llen, ly = LY / llen, lz = LZ / llen;
@@ -2123,28 +2585,36 @@ function bakeSilhouette(seed, ELEV, SHADOW, WVAL, WTHR, BW, BH, PX) {
      thing under cloud, where at map scale it reads as static. A shroud has to
      show LANDFORM — the massif, the valley, the ridge running north — so this
      lights a deliberately smoothed version of the same height field. */
-  var DM = Math.max(3, (PX * 0.55) | 0);
+  var DM = Math.max(3, (PX * 0.40) | 0);
   var x, y, i;
   for (y = 0; y < BH; y++) {
     for (x = 0; x < BW; x++) {
       i = y * BW + x;
-      var e = ELEV[i];
-      var eL = ELEV[x > DM ? i - DM : i], eR = ELEV[x < BW - 1 - DM ? i + DM : i];
-      var eU = ELEV[y > DM ? i - DM * BW : i], eD = ELEV[y < BH - 1 - DM ? i + DM * BW : i];
-      var gx = (eR - eL) * 14.0, gy = (eD - eU) * 14.0;
+      var e = ES[i];
+      var eL = ES[x > DM ? i - DM : i], eR = ES[x < BW - 1 - DM ? i + DM : i];
+      var eU = ES[y > DM ? i - DM * BW : i], eD = ES[y < BH - 1 - DM ? i + DM * BW : i];
+      var gx = (eR - eL) * 17.0, gy = (eD - eU) * 17.0;
       // same soft knee as the terrain pass, for the same reason
       var gm2 = Math.sqrt(gx * gx + gy * gy), c2 = 1 / (1 + gm2 * 0.30);
       gx *= c2; gy *= c2;
       var nl = 1 / Math.sqrt(gx * gx + gy * gy + 1);
       var lam = (-gx * lx - gy * ly + lz) * nl;
       var cv2 = (eL + eR + eU + eD) * 0.25 - e;
-      var sh = clamp(0.30 + 0.86 * lam - cv2 * 5.0, 0, 1.3);
+      // curvature weighted harder than on the painted map: under cloud the
+      // only thing that can make a valley legible is its drainage line
+      var sh = clamp(0.30 + 0.86 * lam - cv2 * 8.5, 0, 1.3);
       sh *= (1 - 0.34 * SHADOW[i]);
       var cr, cg, cb;
       if (WVAL[i] > WTHR) {
         // water under cloud: flat, cool, a shade darker with depth. Shape only.
+        /* ⚠ MUTED, DELIBERATELY. Water under cloud used to be the most
+           saturated thing anywhere in an early-run frame: a scatter of bright
+           blue puddles on a parchment field, which pulled the eye away from
+           the only two things unexplored ground is supposed to be saying —
+           where the high country is, and where the volcano is. A lake on a
+           chart is drawn in the chart's own ink. */
         var dep = sstep(WTHR, 0.86, WVAL[i]);
-        cr = mix(132, 96, dep); cg = mix(146, 112, dep); cb = mix(162, 132, dep);
+        cr = mix(150, 118, dep); cg = mix(154, 126, dep); cb = mix(152, 132, dep);
       } else {
         /* ⚠ CONTRAST, not brightness. The first grade of this layer put the
            relief in a narrow band up near white, and under the cloud it came
@@ -2158,12 +2628,23 @@ function bakeSilhouette(seed, ELEV, SHADOW, WVAL, WTHR, BW, BH, PX) {
            satellite marble, which is the failure mode the previous grade hit.
            The landform has to be legible, not dramatic — dramatic is what the
            map itself gets to be once you have walked there. */
+        /* Widened once the field under it was low-passed. The narrow band was
+           protection against the small-scale blotching; with that gone the
+           relief can afford — and needs — a real tonal range, because the
+           thing it has to survive is a translucent veil on top of it. */
         var v = clamp(sh, 0, 1);
-        cr = mix(80, 208, v); cg = mix(72, 194, v); cb = mix(60, 166, v);
-        var mass = sstep(0.40, 1.05, e);
-        cr = mix(cr, 72, mass * 0.56); cg = mix(cg, 64, mass * 0.56); cb = mix(cb, 54, mass * 0.56);
-        var cap = sstep(1.00, 1.34, e);
-        cr = mix(cr, 228, cap * 0.72); cg = mix(cg, 230, cap * 0.72); cb = mix(cb, 232, cap * 0.72);
+        cr = mix(58, 222, v); cg = mix(52, 208, v); cb = mix(44, 178, v);
+        var mass = sstep(0.40, 1.15, e);
+        cr = mix(cr, 70, mass * 0.60); cg = mix(cg, 62, mass * 0.60); cb = mix(cb, 52, mass * 0.60);
+        /* ⚠ Re-pitched for the volcano. These thresholds were set when the
+           map's ceiling was about 1.4; the cone pushed it past 2.2, and at the
+           old numbers the whole upper third of Dragon Mountain saturated to
+           white and the destination biome appeared through the shroud as a
+           luminous dandelion. A cap under cloud should be a small bright
+           SIGNAL on a dark mass — which is also, conveniently, exactly what it
+           is on the painted map. */
+        var cap = sstep(1.52, 1.98, e);
+        cr = mix(cr, 226, cap * 0.60); cg = mix(cg, 228, cap * 0.60); cb = mix(cb, 230, cap * 0.60);
       }
       var gr = ((hashf(seed, x, y, R_GRAIN) >>> 16) & 255) / 255 - 0.5;
       cr += gr * 3.5; cg += gr * 3.5; cb += gr * 3.5;
@@ -2200,38 +2681,200 @@ function bakeSilhouette(seed, ELEV, SHADOW, WVAL, WTHR, BW, BH, PX) {
    on that and will break if this is made opaque again: the silhouette becomes
    pointless, and the fog stops having a third state at all.                 */
 function bakeCloud(seed, W, H) {
-  var Q = 10, CW = W * Q, CH = H * Q;
+  var M = mapgen();
+  /* Sixteen samples per tile, up from ten. The old resolution was chosen when
+     this layer was three octaves of value noise about to be blurred anyway;
+     wisps are a HIGH-FREQUENCY structure and at ten per tile the finest octave
+     landed on a six-pixel lattice which, blown up to the bake's twenty-eight,
+     came out as round lumps. Round lumps at that scale are exactly what read
+     as coffee grounds. */
+  var Q = 16, CW = W * Q, CH = H * Q;
   var cv = mkCanvas(CW, CH), c = cv.getContext('2d');
-  var g1 = noiseGrid(seed, R_CLOUD, 13, 10), g2 = noiseGrid(seed, R_CLOUD + 1, 31, 22),
-      g3 = noiseGrid(seed, R_CLOUD + 2, 71, 50);
-  var img = c.createImageData(CW, CH), d = img.data;
-  for (var y = 0; y < CH; y++) for (var x = 0; x < CW; x++) {
-    /* Weighted hard toward the LOWEST octave: a shroud wants a few big banks
-       with clear windows between them, not an even stipple. At the first
-       weighting the three octaves were close enough in strength that the
-       cloud came out uniformly busy, and a uniformly busy veil hides the
-       landform everywhere by a little instead of hiding it somewhere by a
-       lot — which is the difference between weather and a dirty lens. */
-    var v = sampleGrid(g1, 13, 10, x / CW * 12, y / CH * 9) * 0.68
-          + sampleGrid(g2, 31, 22, x / CW * 30, y / CH * 21) * 0.23
-          + sampleGrid(g3, 71, 50, x / CW * 70, y / CH * 49) * 0.09;
-    var i = (y * CW + x) << 2;
-    var t = clamp((v - 0.30) * 2.1, 0, 1);
-    var t2 = t * t * (3 - 2 * t);
-    // Colour: a cold pale deck that goes very slightly warmer and brighter
-    // where it is thickest, like cloud top catching the same sun as the map.
-    /* Aged paper, not white steam. The shroud is a MAP convention — the part
-       of the chart nobody has drawn on yet — so it lives in the same warm
-       earthy band as the rest of the palette. A neutral white veil put a hard
-       value and temperature split down the middle of the frame; parchment
-       sits next to the painted map instead of arguing with it. */
-    d[i]     = mix(178, 208, t2);
-    d[i + 1] = mix(166, 195, t2);
-    d[i + 2] = mix(140, 168, t2);
-    // Opacity: thin over most of the map so the landform underneath is plainly
-    // legible, piling up into banks that bury it completely. The quartic keeps
-    // the thick banks a minority of the area — a deck with holes in it.
-    d[i + 3] = (mix(38, 148, t2 * t2) + 14 * t) | 0;
+
+  /* ── WIND ───────────────────────────────────────────────────────────────
+     One direction for the whole deck, hashed from the seed. Everything below
+     is evaluated in a frame rotated onto it and then STRETCHED along it, so
+     every feature at every octave is elongated the same way. This is the
+     cheapest single thing that turns noise into weather: isotropic noise has
+     no story, and a deck that is plainly blowing one way does. */
+  var hw = M.wpHash32(seed, 3, 9, R_CLOUD + 8);
+  var wang = ((hw & 2047) / 2047) * Math.PI;
+  var cw = Math.cos(wang), sw = Math.sin(wang);
+  var STRETCH = 2.6;
+
+  /* ── CURL WARP ──────────────────────────────────────────────────────────
+     The actual answer to "it looks like a stain". A stain is what value noise
+     with an alpha ramp always looks like, however many octaves you stack on
+     it, because every octave is isotropic and blobby and stacking blobs gives
+     you a bigger blob. Cloud is not blobs; cloud is a FLOW, with filaments
+     that stretch, shear, wrap around each other and tear.
+
+     So the density is not sampled at the pixel. It is sampled at the pixel
+     displaced by a divergence-free velocity field — the curl of a scalar
+     potential, (∂ψ/∂y, −∂ψ/∂x). Divergence-free is the important word: such a
+     field cannot pile density up or thin it out, it can only SHEAR it, so
+     round features get drawn out into hooks and streamers around the
+     potential's extrema instead of merely being pushed around. Two octaves of
+     it, the coarse one for the big rotation and the fine one for the shredding
+     at the edges.
+
+     ⚠ Built at quarter resolution and bilinearly upsampled, exactly like the
+     terrain's warp field and for exactly the same reason: it is smooth by
+     construction — its finest feature is twenty pixels across — so sampling it
+     per pixel would buy nothing and cost four fifths of this function.       */
+  var pAW = 10, pAH = 8,  pA = noiseGrid(seed, R_CLOUD + 3, pAW, pAH);
+  var pBW = 25, pBH = 18, pB = noiseGrid(seed, R_CLOUD + 4, pBW, pBH);
+  var GW = (CW >> 2) + 2, GH = (CH >> 2) + 2;
+  var WXG = new Float32Array(GW * GH), WYG = new Float32Array(GW * GH);
+  /* ⚠ CURL_AMP IS A DISPLACEMENT, NOT A GRADIENT, and conflating the two is
+     worth a permanent note because the first version did and the failure was
+     not obvious from the code. Dividing the central difference by 2h turns it
+     into a derivative whose magnitude here runs to fifteen — and it was then
+     used directly as an offset in NORMALISED MAP UNITS, i.e. the lookup was
+     being thrown fifteen map widths sideways. Every octave sampled effectively
+     random positions, and the "cloud" was a moiré of the noise lattice folded
+     over on itself: the marbled-endpaper look. The raw difference is left
+     un-normalised and multiplied by an explicit amplitude tuned in units of
+     the map, where a sane shear is a tile or two. */
+  var CURL_AMP = 0.0042;
+  var hstep = 0.006;
+  function psi(u, v) {
+    return sampleGrid(pA, pAW, pAH, u * (pAW - 1), v * (pAH - 1))
+         + sampleGrid(pB, pBW, pBH, u * (pBW - 1), v * (pBH - 1)) * 0.45;
+  }
+  var gx2, gy2, ii;
+  for (gy2 = 0; gy2 < GH; gy2++) for (gx2 = 0; gx2 < GW; gx2++) {
+    var u0 = (gx2 * 4) / CW, v0 = (gy2 * 4) / CH;
+    ii = gy2 * GW + gx2;
+    WXG[ii] =  (psi(u0, v0 + hstep) - psi(u0, v0 - hstep)) / (2 * hstep) * CURL_AMP;
+    WYG[ii] = -(psi(u0 + hstep, v0) - psi(u0 - hstep, v0)) / (2 * hstep) * CURL_AMP;
+  }
+
+  // Density octaves, sampled in the wind-aligned, wind-stretched frame.
+  var d1W = 13, d1H = 11, d1 = noiseGrid(seed, R_CLOUD,     d1W, d1H);
+  var d2W = 27, d2H = 22, d2 = noiseGrid(seed, R_CLOUD + 1, d2W, d2H);
+  var d3W = 55, d3H = 44, d3 = noiseGrid(seed, R_CLOUD + 2, d3W, d3H);
+  var d4W = 111, d4H = 88, d4 = noiseGrid(seed, R_CLOUD + 5, d4W, d4H);
+
+  var D = new Float32Array(CW * CH);
+  var x, y, i;
+  for (y = 0; y < CH; y++) {
+    var vN = y / CH;
+    var wgy = y * 0.25, wgy0 = wgy | 0, wgyf = wgy - wgy0;
+    for (x = 0; x < CW; x++) {
+      var uN = x / CW;
+      var wgx = x * 0.25, wgx0 = wgx | 0, wgxf = wgx - wgx0;
+      var q = wgy0 * GW + wgx0;
+      var m0 = WXG[q] + (WXG[q + 1] - WXG[q]) * wgxf;
+      var m1 = WXG[q + GW] + (WXG[q + GW + 1] - WXG[q + GW]) * wgxf;
+      var wu = uN + (m0 + (m1 - m0) * wgyf);
+      m0 = WYG[q] + (WYG[q + 1] - WYG[q]) * wgxf;
+      m1 = WYG[q + GW] + (WYG[q + GW + 1] - WYG[q + GW]) * wgxf;
+      var wv = vN + (m0 + (m1 - m0) * wgyf);
+      // rotate onto the wind, then stretch along it
+      var au = (wu * cw + wv * sw) / STRETCH + 0.5;
+      var av = (-wu * sw + wv * cw) + 0.5;
+      /* ⚠ THE FINE OCTAVES ARE NOT WARPED. The shear displaces a lookup by a
+         couple of tiles, which is a gentle fold for an octave whose features
+         are ten tiles across and a catastrophe for one whose features are half
+         a tile: the fine detail gets folded over itself several times and
+         comes back as tight repeating ripples — a watered-silk texture that
+         reads as fabric, not sky. Coarse structure gets the flow; surface
+         grain is sampled straight. */
+      var bu = (uN * cw + vN * sw) / STRETCH + 0.5;
+      var bv = (-uN * sw + vN * cw) + 0.5;
+
+      /* ⚠ NO EXTRA FREQUENCY MULTIPLIER. Each grid already carries its own
+         octave, and the first version of this multiplied the lookup by 2/4/8
+         ON TOP of that — which put the finest octave on a lattice cell 1.7
+         pixels wide. That is not detail, it is static, and it is what made the
+         first curl-warped cloud read as machined marble rather than as sky.
+         The anisotropy comes from the /STRETCH above, which makes the sampled
+         span along the wind less than half the span across it. */
+      var n1 = sampleGrid(d1, d1W, d1H, au * (d1W - 1), av * (d1H - 1));
+      var n2 = sampleGrid(d2, d2W, d2H, au * (d2W - 1), av * (d2H - 1));
+      var n3 = sampleGrid(d3, d3W, d3H, bu * (d3W - 1), bv * (d3H - 1));
+      var n4 = sampleGrid(d4, d4W, d4H, bu * (d4W - 1), bv * (d4H - 1));
+      /* Weighted hard toward the LOWEST octave, which is the one property of
+         the old cloud worth keeping: a shroud wants a few big banks with clear
+         windows between them, not an even stipple. A uniformly busy veil hides
+         the landform everywhere by a little instead of hiding it somewhere by
+         a lot, which is the difference between weather and a dirty lens. */
+      var dv = n1 * 0.55 + n2 * 0.25 + n3 * 0.13 + n4 * 0.07;
+      /* ⚠ NO RIDGED OCTAVE HERE, and that is the second thing this function
+         had to unlearn. Ridged noise makes filaments on a MOUNTAIN because a
+         mountain's filaments are arêtes and arêtes are exactly the level sets
+         of a smooth field. In a cloud the same construction draws its ridges
+         along the noise lattice's zero contours, which are CLOSED LOOPS, and
+         the shroud comes out looking like marbled endpaper or an oil slick.
+         Wispiness here comes from the shear — the curl warp above stretching
+         and folding a perfectly smooth field — which is also how it comes
+         about in the sky. */
+      D[y * CW + x] = dv;
+    }
+  }
+
+  /* ── LIGHT THE CLOUD ────────────────────────────────────────────────────
+     The density field is treated as a height field and hillshaded with the
+     same sun as the ground beneath it. This is what makes a deck read as
+     something with volume sitting ABOVE the map rather than as a tint applied
+     to it: the north-west face of every bank catches the light and the
+     south-east side of it falls into its own shade, so the shroud carries the
+     one visual property the rest of the picture is built on — a single
+     consistent light. It also costs one gradient. */
+  var llen = Math.sqrt(LX * LX + LY * LY);
+  var lx2 = LX / llen, ly2 = LY / llen;
+  var img = c.createImageData(CW, CH), d8 = img.data;
+  /* The gradient is measured across two thirds of a tile, not across three
+     pixels. A bank is fifty pixels wide; a three-pixel difference measures the
+     grain on its surface rather than its FORM, and lighting the grain gives a
+     sparkly nothing. Light the form. */
+  var SD = Math.max(3, (Q * 0.66) | 0);
+  for (y = 0; y < CH; y++) {
+    for (x = 0; x < CW; x++) {
+      i = y * CW + x;
+      var dc = D[i];
+      var dl = D[x > SD ? i - SD : i], dr = D[x < CW - 1 - SD ? i + SD : i];
+      var du = D[y > SD ? i - SD * CW : i], dd = D[y < CH - 1 - SD ? i + SD * CW : i];
+      var gx = (dr - dl), gy = (dd - du);
+      var lam = clamp(0.5 + (-gx * lx2 - gy * ly2) * 7.0, 0, 1);
+      lam = lam * lam * (3 - 2 * lam);
+
+      /* ⚠ A STEEP RAMP, and this is the difference between weather and a
+         stain. Density here is a sum of octaves and therefore nearly gaussian
+         about the middle of its range, so a gentle ramp maps almost the whole
+         map into the middle of the alpha range — a uniform grubby film,
+         everywhere, which is precisely the "coffee-stained" read. Pushing the
+         threshold up and the slope steep splits the deck into a minority of
+         genuinely thick banks and a majority of genuinely CLEAR sky, and the
+         clear sky is what lets the landform underneath be seen sharply enough
+         to be worth walking toward. (Clear is safe: what is under the veil is
+         the contents-free silhouette, by construction.) */
+      var t = clamp((dc - 0.415) * 3.5, 0, 1);
+      var t2 = t * t * (3 - 2 * t);
+      /* Aged paper, not white steam. The shroud is a MAP convention — the part
+         of the chart nobody has drawn on yet — so it lives in the same warm
+         earthy band as the rest of the palette, and the self-shading moves it
+         along a warm axis rather than toward grey: cream where the sun hits
+         the top of a bank, dusty ochre in its shadow. A neutral white veil put
+         a hard value and temperature split down the middle of the frame. */
+      // a real tonal range across a single bank — a shaded flank that is
+      // genuinely darker than the ground showing through the window beside it
+      var sr = mix(116, 240, lam), sg = mix(108, 229, lam), sb = mix(96, 202, lam);
+      // thicker cloud is also brighter cloud: more of it to scatter light
+      var lift = t2 * 0.34;
+      var o = i << 2;
+      d8[o]     = mix(sr, 246, lift);
+      d8[o + 1] = mix(sg, 238, lift);
+      d8[o + 2] = mix(sb, 214, lift);
+      /* Opacity: thin over most of the map so the landform underneath is
+         plainly legible, piling up into banks that bury it completely. The
+         quartic keeps the thick banks a minority of the area — a deck with
+         holes in it — and the small extra term from the SHADING means the lit
+         crest of a bank is slightly more opaque than its shaded flank, which
+         is what gives the front of the deck a drawn edge. */
+      d8[o + 3] = (mix(12, 214, t2 * t2 * 0.55 + t2 * 0.45) + 12 * lam * t) | 0;
+    }
   }
   c.putImageData(img, 0, 0);
   return cv;

@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120u6';
+  window.BUILD_VERSION = 'v120u7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -206472,6 +206472,66 @@ window.cityAddCinders = (n) => {
     if (!CityMgr.active) { addCinders(n); return; }
     CityMgr.cinder += n; CityMgr.pending.cinder += n;
   } catch (e) {}
+};
+/* 🌐 THE NODE MARKET — the parent half of MythicCityBridge.fetchMarketNodes().
+   The city's financial district (Index Fund / Holding Company) invests in OTHER
+   operators' PRN nodes and prices the return off how well they are actually
+   doing. node-city runs in a same-origin iframe and cannot reach Supabase for
+   itself — `Cloud` is a top-level `const` here, invisible to that document — so
+   the read lives on this side and is handed over, which is the same seam every
+   other city↔game capability uses.
+
+   ⚠ GUARDED, per CLAUDE.md: any failure returns [] and the city renders "node
+     desk offline". It must work before the table exists, offline, and signed
+     out. Never throws into the iframe.
+   ⚠ OTHER PLAYERS ONLY. `.neq('owner_id', me)` is the whole point — a fund that
+     invested in its own owner's nodes would be a player paying themselves a
+     return on their own performance, which is a loop, not a market.
+   ⚠ NO PII CROSSES. Only the node's public game facts and a DISPLAY NAME go
+     over — never owner_id, never anything from auth.users. economy_nodes is
+     SELECT `using (true)` so this exposes nothing the game does not already
+     make public, and the display name comes from public_profiles, which exists
+     to be public. */
+window.cityFetchMarketNodes = async () => {
+  try {
+    if (typeof initCloud !== 'function' || !initCloud()) return [];
+    if (!Cloud || !Cloud.client) return [];
+    if (!Profile.cloud || !Profile.cloud.signedIn) return [];
+    const me = Profile.cloud.userId || null;
+    let q = Cloud.client.from('economy_nodes')
+      .select('id, node_type, owner_id, meta, status')
+      .limit(60);
+    if (me) q = q.neq('owner_id', me);
+    const r = await q;
+    if (!r || r.error || !Array.isArray(r.data)) return [];
+    // Owner display names, best-effort. A missing name is '—', never a uuid:
+    // showing a raw account id would be both ugly and an identifier leak.
+    const ids = [...new Set(r.data.map(n => n && n.owner_id).filter(Boolean))].slice(0, 60);
+    const names = {};
+    try {
+      if (ids.length) {
+        const pr = await Cloud.client.from('public_profiles').select('user_id, display_name').in('user_id', ids);
+        if (pr && !pr.error && Array.isArray(pr.data)) {
+          for (const p of pr.data) if (p && p.user_id) names[p.user_id] = p.display_name || null;
+        }
+      }
+    } catch (e) {}
+    return r.data.map(n => {
+      const m = (n && n.meta && typeof n.meta === 'object') ? n.meta : {};
+      return {
+        id: n.id,
+        node_type: n.node_type || 'supply',
+        // A node's own name is not a column here; the type reads fine as one.
+        name: (m.name || null) || (String(n.node_type || 'PRN') + ' PRN'),
+        owner: names[n.owner_id] || '—',
+        level: Math.max(1, Math.min(10, (m.level | 0) || 1)),
+        eff:   Math.max(0, Math.min(100, m.eff != null ? +m.eff : 100)),
+        // What computeLinks() pushes from the owner's own city — the single
+        // best signal of whether that operation is actually being run well.
+        link:  Math.max(0, Math.min(100, m.cityLink != null ? +m.cityLink : 0)),
+      };
+    }).filter(n => n.id);
+  } catch (e) { return []; }
 };
 window.citySpendCinders = (n) => {
   try {

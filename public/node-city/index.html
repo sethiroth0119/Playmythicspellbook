@@ -1499,6 +1499,30 @@ const MythicCityBridge = (() => {
     ];
   };
 
+  /* 🌐 THE NODE MARKET — OTHER PLAYERS' nodes, for the financial district to
+     invest in. Distinct from fetchNodes(), which is the player's OWN anchors.
+     economy_nodes is SELECT `using (true)`, so this reads data the game already
+     makes public; it needs no new policy and no new trust.
+     ⚠ Returns [] rather than throwing or inventing. An empty market is a real
+       state the panel renders honestly ("desk offline"); fabricated foreign
+       nodes would attach another player's name to a number we made up. */
+  B.fetchMarketNodes = async () => {
+    if (B.mode === 'parent') {
+      try {
+        if (typeof P.cityFetchMarketNodes === 'function') return (await P.cityFetchMarketNodes()) || [];
+      } catch (e) {}
+      return [];
+    }
+    if (B.mode === 'message') { try { return (await rpc('fetchMarketNodes', {})) || []; } catch (e) { return []; } }
+    // Mock mode only — standalone dev, no parent, no database.
+    return [
+      { id: 'mk-1', name: 'Redline Supply PRN', node_type: 'supply', owner: 'Vex',    level: 4, eff: 92, link: 78 },
+      { id: 'mk-2', name: 'Deepcut Mining PRN', node_type: 'mining', owner: 'Suri',   level: 3, eff: 71, link: 55 },
+      { id: 'mk-3', name: 'Tarpit Fuel PRN',    node_type: 'fuel',   owner: 'Kade',   level: 2, eff: 44, link: 20 },
+      { id: 'mk-4', name: 'Halcyon Founder PRN',node_type: 'founder',owner: 'Ualti',  level: 6, eff: 98, link: 91 },
+    ];
+  };
+
   // City wellbeing -> the camp's RECONSTRUCTION meter. <<< CLAUDE CODE HOOK >>>
   // Pushed ~once a minute: { morale 0-100, hunger 0-100, sync 0-100,
   // alliedCamps, reconPerHr }. reconPerHr is the suggested Reconstruction
@@ -1933,8 +1957,39 @@ const BUILDINGS = {
        removed from the build menu and BUILD_ORDER instead: existing forges keep
        their tile and their name, produce nothing, and no new one can be placed.
        Delete this entry only once no saved city contains a 'forge' tile. */
-  forge:    { name: 'Cinder Forge',  ico: '🔥', cost: { cinder: 60, metal: 24, fuel: 12 }, pop: 3, crew: 2,
-              retired: true, desc: 'Decommissioned. The Foundation outlawed minting Cinder from scrap — it sells nothing, so it earns nothing.' },
+  /* 💹 THE FINANCIAL DISTRICT — the Cinder Forge remodelled.
+     The Forge was retired for MINTING: it turned fuel + metal into currency with
+     no customer on the other side, which is what produced a ~16,000,000 🔥/day
+     player. These replace it with the opposite mechanic. A financial building
+     creates NO cinder of its own — it has no `gen` — it does two things:
+
+       1. LIFTS what real earners make, by FIN_BOOST_EACH each (see finBoost).
+          That multiplier is applied INSIDE tileMult(), i.e. UNDER TILE_MULT_CAP,
+          so no quantity of them can reopen the faucet. This is deliberate and
+          load-bearing: the cap is the economy dial, and a bonus that dodged it
+          would be the Forge all over again wearing a suit.
+       2. INVESTS a slice of the cinder the city actually earns, and returns it
+          with a yield every FIN_CYCLE_H hours (see finTick).
+
+     ⚠ `forge` KEEPS ITS KEY. Every player who already has a decommissioned
+       Forge standing gets a working financial building on that tile instead of
+       a dead one — which is the point of "add them back". Renaming the key
+       would strand those tiles, and six sites read BUILDINGS[t.type].name with
+       no null guard (see the retirement note this replaces). */
+  /* 💹 PRICES. A financial building is the only structure in the city that pays
+     a RETURN rather than a rate, so it has to cost like one — cheap funds would
+     be strictly correct to spam, and the +0.5% lift stacks. `fin` is the risk
+     appetite: it scales both the book each building carries and how hard the
+     market can swing it (see FIN_TIERS). Trust is the safe one. */
+  forge:    { name: 'Cinder Trust',  ico: '📈', cost: { cinder: 900, metal: 120, fuel: 60 }, pop: 3, crew: 2,
+              fin: 1, powerNeed: 0.4,
+              desc: 'The old Forge, remodelled. Mints nothing — it lifts every Cinder earner in the city and puts a slice of the takings into blue-chip paper. Steady, dull, hard to lose money in.' },
+  indexfund:{ name: 'Index Fund',    ico: '📊', cost: { cinder: 3200, metal: 320, supplies: 160, memoryShards: 3 }, pop: 3, crew: 2,
+              fin: 2, powerNeed: 0.6,
+              desc: 'Spreads the takings across the whole market — a dozen firms and the best-performing PRN nodes in the region. Bigger book, real swings.' },
+  holdco:   { name: 'Holding Company', ico: '🏦', cost: { cinder: 11000, metal: 900, supplies: 450, memoryShards: 18 }, pop: 4, crew: 3,
+              fin: 3, powerNeed: 0.9,
+              desc: 'A company that owns companies. It takes concentrated positions in the riskiest ventures and the hottest nodes. It can double a cycle. It can halve one.' },
   reslab:   { name: 'Research Spire',ico: '🧠', cost: { cinder: 90, metal: 20, supplies: 14 }, pop: 3, crew: 2,
               gen: { memoryShards: 0.06 }, desc: 'Distills memory shards from the node hum.' },
   siphon:   { name: 'Rift Siphon',   ico: '🟣', cost: { cinder: 110, metal: 26, fuel: 16 }, pop: 3, crew: 2,
@@ -2210,9 +2265,11 @@ const BUILD_SECTIONS = [
     items: ['housing', 'medlab', 'arena', 'shop', 'stadium'] },
   { id: 'def',   name: 'Defense',        ico: '🛡️', desc: 'Raiders are coming. These are what stop them.',
     items: ['barracks', 'tower', 'police', 'wall', 'gate', 'munitions', 'motorpool', 'firestation'] },
+  { id: 'fin',   name: 'Financial',      ico: '💹', desc: 'Lifts every Cinder earner in the city, and invests a slice of the takings.',
+    items: ['forge', 'indexfund', 'holdco'] },
   { id: 'arc',   name: 'Arcane',         ico: '✨', desc: 'Card-powered structures and rare tech.',
-    // 'forge' removed — retired, see the Cinder Forge def above. Unlisting it
-    // here and in BUILD_ORDER is what actually stops it being placed again.
+    // 'forge' MOVED, not removed — it is the Cinder Trust now (see the Financial
+    // district above). Listing it there is what makes it placeable again.
     items: ['reslab', 'siphon', 'obelisk', 'kalonstable', 'resthouse'] },
   { id: 'dec',   name: 'Decoration',     ico: '🌿', desc: 'Cosmetic, with small morale gains.',
     items: ['tree', 'bush', 'garden', 'fountain'] },
@@ -2226,7 +2283,10 @@ const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmi
   // ── the Stadium (r9) ──
   'railyard', 'stadium',
   // ── the material chain (r12) ──
-  'lumbercamp', 'quarry', 'fibercroft', 'sawmill', 'weavery'];
+  'lumbercamp', 'quarry', 'fibercroft', 'sawmill', 'weavery',
+  // ── the financial district: the Forge remodelled. 'forge' is BACK in this
+  //    list, which is what makes it placeable again; the other two are new.
+  'forge', 'indexfund', 'holdco'];
 
 /* ── TCG layer ─────────────────────────────────────────────────────────
    The player's card collection powers the city:
@@ -2272,6 +2332,399 @@ const LOT_RENT_PER_MIN = 0.15;                   // tenant rent paid to owner
    hourly Cinder period this puts a 80-of-each, all-L3, fully-buffed city at
    roughly 35,000 🔥/day, against ~16,000,000 before. */
 const TILE_MULT_CAP = 5;
+/* ══ 💹 THE FINANCIAL DIALS ══════════════════════════════════════════════════
+   Five numbers, and between them they are the whole feature. Kept together and
+   named, next to TILE_MULT_CAP, because that is where somebody retuning the
+   economy will look — and because the last time Cinder generation was tuned by
+   editing rates scattered through the file it produced a 16,000,000 🔥/day
+   player.
+
+   FIN_BOOST_EACH — what one financial building adds to every Cinder EARNER in
+     the city. The brief said 0.5% each, so 0.005.
+     ⚠ Applied inside tileMult(), therefore UNDER TILE_MULT_CAP. That is the
+       safety property that makes this feature not-the-Forge: a player who
+       carpets the map in Index Funds still cannot exceed the cap. Move this
+       multiplication outside the cap and you have rebuilt the faucet.
+
+   FIN_DIVERT — the slice of earned Cinder the funds put to work instead of
+     paying straight out. This is NOT a loss and NOT a tax: it is returned in
+     full at the end of the cycle, plus FIN_YIELD. It is what makes the payout
+     proportional to a city that genuinely earns, rather than free money.
+
+   FIN_YIELD — the return on the book each cycle. This is the ONLY new Cinder
+     the feature creates. Everything else is deferral. Keep it small: at 12% of
+     a diverted 10%, the funds add ~1.2% to a city's Cinder over 72h before the
+     boost, which is a bonus rather than an income source.
+
+   FIN_CYCLE_H — 72, from the brief.
+
+   FIN_BOOK_CAP_EACH — the book each building can carry. Without a ceiling an
+     idle city accumulates an unbounded principal and the yield compounds into
+     exactly the kind of number this economy has already been burned by. */
+const FIN_BOOST_EACH    = 0.005;
+const FIN_DIVERT        = 0.10;
+const FIN_YIELD         = 0.12;      // the BASELINE drift; see FIN_TIERS for the swing
+const FIN_CYCLE_H       = 72;
+const FIN_CYCLE_MS      = FIN_CYCLE_H * 3600000;
+const FIN_BOOK_CAP_EACH = 25000;
+
+/* ══ 🎲 RISK ═════════════════════════════════════════════════════════════════
+   `def.fin` is the building's risk appetite (1 Trust, 2 Index Fund, 3 HoldCo).
+   Each tier sets how much book it carries and how far a cycle can swing.
+
+   ⚠ THE FLOOR IS THE SAFETY PROPERTY. `worst` is the most negative return a
+     holding can post, and it is bounded well above -1. A position can LOSE, and
+     lose hard, but it can never go below zero and it can never reach past the
+     book into money the player already holds. The most a bad cycle can cost is
+     the slice that was invested — which is the difference between a volatile
+     investment and a machine that eats your wallet.
+   ⚠ `drift` keeps the EXPECTED value positive but small. Averaged over many
+     cycles a Holding Company beats a Trust; on any single cycle it can be far
+     worse. That is the trade the brief asked for. */
+const FIN_TIERS = {
+  1: { label: 'Conservative', bookMult: 1,   best: 0.35, worst: -0.10, drift: 0.10, picks: 2 },
+  2: { label: 'Balanced',     bookMult: 2.5, best: 0.80, worst: -0.35, drift: 0.12, picks: 3 },
+  3: { label: 'Aggressive',   bookMult: 6,   best: 1.80, worst: -0.65, drift: 0.15, picks: 4 },
+};
+function finTierOf(def) { return FIN_TIERS[(def && def.fin) | 0] || FIN_TIERS[1]; }
+
+/* ══ 🏢 THE MARKET ═══════════════════════════════════════════════════════════
+   Invented firms, so the portfolio reads like a portfolio instead of a number.
+   `vol` scales the tier's swing for that holding (a bond house barely moves; a
+   Kalon venture is a coin flip with teeth) and `bias` nudges its drift.
+   Purely cosmetic-plus-weighting: every payout is still bounded by the tier. */
+const FIN_COMPANIES = [
+  { id: 'ethosbond', name: 'Ethos Municipal Bonds',  ico: '🏛', sector: 'Sovereign debt',  vol: 0.25, bias:  0.02 },
+  { id: 'ashfall',   name: 'Ashfall Logistics',      ico: '🚚', sector: 'Haulage',         vol: 0.55, bias:  0.01 },
+  { id: 'cinderfab', name: 'Cinderfab Foundries',    ico: '🏭', sector: 'Heavy industry',  vol: 0.70, bias:  0.00 },
+  { id: 'vantablack',name: 'Vantablack Refineries',  ico: '⛽', sector: 'Energy',          vol: 0.90, bias:  0.01 },
+  { id: 'greywater', name: 'Greywater Utilities',    ico: '💧', sector: 'Utilities',       vol: 0.40, bias:  0.01 },
+  { id: 'ouroboros', name: 'Ouroboros Biotech',      ico: '🧬', sector: 'Biotech',         vol: 1.30, bias: -0.02 },
+  { id: 'nine',      name: 'Nine Lantern Media',     ico: '📡', sector: 'Media',           vol: 1.05, bias:  0.00 },
+  { id: 'kalondyn',  name: 'Kalon Dynamics',         ico: '🜂', sector: 'Arcane venture',  vol: 1.60, bias: -0.03 },
+  { id: 'riftworks', name: 'Riftworks Salvage',      ico: '🟣', sector: 'Salvage',         vol: 1.45, bias: -0.01 },
+  { id: 'gawain',    name: 'Gawain Security Group',  ico: '🛡', sector: 'Private defence', vol: 0.80, bias:  0.01 },
+  { id: 'bunny',     name: 'Jade Carrot Holdings',   ico: '🥕', sector: 'Agri-conglomerate',vol: 0.60, bias:  0.01 },
+  { id: 'meridian',  name: 'Meridian Node Partners', ico: '🌐', sector: 'Infrastructure',  vol: 0.95, bias:  0.02 },
+];
+function finCompany(id) { return FIN_COMPANIES.find(c => c.id === id) || FIN_COMPANIES[0]; }
+
+/* 🎲 A DETERMINISTIC ROLL. Seeded from (cycle stamp, holding key), never from
+   Math.random().
+   ⚠ THIS IS AN ANTI-CHEAT PROPERTY, NOT A STYLE CHOICE. With Math.random() a
+     player who dislikes a cycle's outcome could close the tab before the payout
+     saved and reload for a fresh roll — a save-scum on real currency. Seeding
+     from the cycle's own due-stamp means the result for a given cycle is FIXED:
+     reloading recomputes the identical number, so there is nothing to farm.
+     (It is also why the payout is reproducible when a player disputes it.) */
+function finRoll(seedStr) {
+  let h = 2166136261 >>> 0;
+  const s = String(seedStr);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  // xorshift once more so adjacent seeds do not produce adjacent rolls
+  h ^= h << 13; h >>>= 0; h ^= h >> 17; h ^= h << 5; h >>>= 0;
+  return h / 4294967296;                       // [0,1)
+}
+/* Return for one holding this cycle, as a fraction (-0.65 … +1.80).
+   Triangular-ish: two rolls averaged, so extremes are rarer than the middle —
+   a flat distribution makes a total wipeout as likely as an average cycle,
+   which reads as broken rather than as risk. */
+function finReturnFor(tier, vol, bias, seed) {
+  const r = (finRoll(seed + ':a') + finRoll(seed + ':b')) / 2;   // ~triangular around .5
+  const span = (r - 0.5) * 2;                                     // -1 … +1
+  const swing = span >= 0 ? tier.best * span : Math.abs(tier.worst) * span;
+  const out = (tier.drift + bias) + swing * Math.max(0.05, vol);
+  // Hard clamp. Whatever vol/bias do, a cycle can never breach the tier band.
+  return Math.max(tier.worst, Math.min(tier.best, out));
+}
+/* How many working financial buildings the city has. Damaged ones do not count
+   — a broken bank is not managing anybody's money, which is the same rule every
+   other building in this file follows. */
+function finCount() {
+  let n = 0;
+  try {
+    for (const t of Object.values(game.tiles)) {
+      const d = BUILDINGS[t.type];
+      if (d && d.fin && !t.damaged) n += 1;
+    }
+  } catch (e) {}
+  return n;
+}
+/* The multiplier a Cinder earner gets from the financial district. 1 when there
+   are none, so it is safe to multiply by unconditionally. */
+function finBoost() { return 1 + FIN_BOOST_EACH * finCount(); }
+/* How much capital the city's desks can hold at once. Weighted by TIER, not by
+   a flat per-building figure: a Holding Company costs twelve times a Trust and
+   swings far harder, so it has to carry a far larger book or the price is not
+   defensible. (FIN_TIERS.bookMult is the multiplier; a flat cap here is what
+   made the expensive desks pointless in the first cut of this feature.) */
+function finBookCap() {
+  let cap = 0;
+  try {
+    for (const t of Object.values(game.tiles)) {
+      const d = BUILDINGS[t.type];
+      if (d && d.fin && !t.damaged) cap += FIN_BOOK_CAP_EACH * finTierOf(d).bookMult;
+    }
+  } catch (e) {}
+  return Math.round(cap);
+}
+/* 💹 Put a slice of one Cinder deposit to work. Returns how much was taken, so
+   the caller pays out the remainder — the two always sum to the whole deposit,
+   which is what makes this a deferral rather than a tax.
+   ⚠ Returns 0 when the city has no financial buildings, when the book is full,
+     or on any error. A city without a fund must behave EXACTLY as it did before
+     this feature existed, and "return 0" is how that is guaranteed at every
+     failure path rather than only the happy one. */
+function finInvest(whole) {
+  try {
+    if (finCount() <= 0) return 0;
+    const amt = Math.floor((whole | 0) * FIN_DIVERT);
+    if (amt <= 0) return 0;
+    const book = Math.max(0, game.fin.book | 0);
+    const room = Math.max(0, finBookCap() - book);
+    const put  = Math.min(amt, room);
+    if (put <= 0) return 0;
+    game.fin.book = book + put;
+    // Arm the cycle on the FIRST investment, not on build: a countdown that
+    // starts before there is anything invested is a countdown to zero.
+    if (!game.fin.dueAt) game.fin.dueAt = Date.now() + FIN_CYCLE_MS;
+    return put;
+  } catch (e) { return 0; }
+}
+/* ══ 🌐 THE NODE MARKET ══════════════════════════════════════════════════════
+   Other players' PRN nodes, as investable positions. economy_nodes is SELECT
+   `using (true)` — node data is already public to any signed-in player — so
+   this needs no policy change; it is a read of something the game already
+   shows. Cached, because it is a network round-trip on a 72-hour mechanic and
+   re-fetching it per frame would be absurd.
+   ⚠ Degrades to an EMPTY market, never to fake nodes. If the bridge cannot
+     answer, the funds simply hold companies only and the panel says the desk is
+     offline. Inventing plausible-looking foreign nodes would put another
+     player's name on a number this client made up. */
+let _finMarket = [];
+let _finMarketAt = 0;
+const FIN_MARKET_TTL_MS = 10 * 60000;
+async function finRefreshMarket(force) {
+  try {
+    const now = Date.now();
+    if (!force && _finMarketAt && (now - _finMarketAt) < FIN_MARKET_TTL_MS) return _finMarket;
+    _finMarketAt = now;
+    const B = MythicCityBridge;
+    if (!B || typeof B.fetchMarketNodes !== 'function') { _finMarket = []; return _finMarket; }
+    const rows = await B.fetchMarketNodes();
+    _finMarket = (Array.isArray(rows) ? rows : []).filter(n => n && n.id).slice(0, 40);
+  } catch (e) { _finMarket = []; }
+  return _finMarket;
+}
+/* A node's PERFORMANCE, 0..1 — what the return is actually priced off.
+   eff is the node's efficiency, cityLink is what a city's roads are feeding it
+   (the number computeLinks pushes), level is its size. All three are things the
+   OWNER earns, which is the point: you are backing somebody else's operation. */
+function finNodeScore(n) {
+  const eff  = Math.max(0, Math.min(100, +n.eff  || 0)) / 100;
+  const link = Math.max(0, Math.min(100, +n.link || 0)) / 100;
+  const lvl  = Math.max(1, Math.min(10, +n.level || 1)) / 10;
+  return Math.max(0, Math.min(1, eff * 0.5 + link * 0.35 + lvl * 0.15));
+}
+
+/* 💹 THIS CYCLE'S POSITIONS — derived, never stored.
+   The book is split across a handful of picks chosen deterministically from the
+   cycle's own stamp. Deriving rather than persisting means the panel and the
+   payout cannot disagree: both call this, both get the same list, and there is
+   no saved holdings array to drift out of sync with the money.
+   Best nodes first — the brief is that the funds back nodes that are DOING
+   WELL, so the market is sorted by score and the top ones are taken. */
+function finPositions() {
+  const out = [];
+  try {
+    const book = Math.max(0, Math.floor(game.fin.book || 0));
+    const seedBase = 'c' + (game.fin.dueAt || 0);
+    // Every financial building contributes its own risk tier and its own picks.
+    const tiles = Object.entries(game.tiles)
+      .filter(([, t]) => { const d = BUILDINGS[t.type]; return d && d.fin && !t.damaged; });
+    if (!tiles.length || book <= 0) return out;
+
+    const nodes = _finMarket.slice().map(n => ({ n, s: finNodeScore(n) })).sort((a, b) => b.s - a.s);
+    let nodeCursor = 0;
+    const slots = [];
+    for (const [k, t] of tiles) {
+      const def = BUILDINGS[t.type];
+      const tier = finTierOf(def);
+      for (let i = 0; i < tier.picks; i++) {
+        // Roughly a third of an aggressive book goes into nodes when any are
+        // listed; a Trust sticks to paper.
+        const wantNode = (def.fin >= 2) && nodes.length > 0 && (i % 3 === 2);
+        if (wantNode) {
+          const pick = nodes[nodeCursor % nodes.length]; nodeCursor++;
+          slots.push({ kind: 'node', tier, tile: k, node: pick.n, score: pick.s,
+                       vol: 0.5 + (1 - pick.s) * 1.1,      // a weak node is the volatile one
+                       bias: (pick.s - 0.5) * 0.20 });     // …and a strong one drifts up
+        } else {
+          const ci = Math.floor(finRoll(seedBase + ':' + k + ':' + i) * FIN_COMPANIES.length);
+          const co = FIN_COMPANIES[Math.min(FIN_COMPANIES.length - 1, ci)];
+          slots.push({ kind: 'co', tier, tile: k, co, vol: co.vol, bias: co.bias });
+        }
+      }
+    }
+    if (!slots.length) return out;
+    // Equal weight. Simple, explainable in the panel, and it means one holding
+    // cannot dominate the cycle.
+    const each = Math.floor(book / slots.length);
+    let remainder = book - each * slots.length;
+    slots.forEach((s, i) => {
+      const amount = each + (remainder-- > 0 ? 1 : 0);
+      const seed = seedBase + ':' + s.tile + ':' + i + ':' + (s.kind === 'co' ? s.co.id : s.node.id);
+      const ret = finReturnFor(s.tier, s.vol, s.bias, seed);
+      out.push(Object.assign({ amount, ret, payout: Math.round(amount * (1 + ret)) }, s));
+    });
+  } catch (e) {}
+  return out;
+}
+
+/* 💹 Close the cycle: hand the book back with its yield. Cheap enough to call
+   on the 4s system beat — it is a clock comparison until the moment it fires.
+   ⚠ WALL-CLOCK, so the cycle runs with the tab shut. A 72-hour countdown that
+     only advanced while the city was open would take weeks of play to pay once.
+   ⚠ The book is ZEROED BEFORE the await. addCinders is async and crosses the
+     bridge to the parent; if a second beat landed while it was in flight and
+     the book were still populated, the same principal would be paid twice.
+     Zero-then-pay is what makes a duplicate impossible. dueAt is cleared rather
+     than advanced by a period, so the next cycle begins when money is next
+     actually invested — an empty city does not accrue a payout for doing
+     nothing, which is the whole difference between this and the Forge. */
+async function finTick() {
+  try {
+    const f = game.fin;
+    if (!f || !f.dueAt || Date.now() < f.dueAt) return;
+    const book = Math.max(0, Math.floor(f.book || 0));
+    if (book <= 0) { f.dueAt = 0; f.book = 0; return; }
+    /* Positions are read BEFORE the book is cleared — finPositions() derives the
+       split from `book` and `dueAt`, so clearing either first would resolve an
+       empty portfolio and pay nothing. */
+    const pos = finPositions();
+    const payout = pos.length
+      ? pos.reduce((s, p) => s + Math.max(0, p.payout | 0), 0)
+      : Math.round(book * (1 + FIN_YIELD));     // no positions ⇒ the plain baseline
+    const gain = payout - book;
+    // Zero BEFORE the await, for the double-pay reason in the header note.
+    f.dueAt = 0; f.book = 0;
+    f.lastPaid = Date.now();
+    f.lifetime = (f.lifetime | 0) + gain;
+    // 🧾 Keep the closed cycle so the dossier can show WHAT happened, not just
+    //    a number. Bounded to the positions of one cycle.
+    f.last = { at: Date.now(), book, payout, gain,
+               rows: pos.map(p => ({
+                 kind: p.kind,
+                 name: p.kind === 'co' ? p.co.name : (p.node.name || p.node.node_type || 'PRN node'),
+                 ico:  p.kind === 'co' ? p.co.ico  : '🌐',
+                 sub:  p.kind === 'co' ? p.co.sector : ('owner ' + (p.node.owner || '—') + ' · perf ' + Math.round(p.score * 100) + '%'),
+                 amount: p.amount, ret: p.ret, payout: p.payout,
+               })) };
+    if (payout > 0) await MythicCityBridge.addCinders(payout);
+    const sign = gain >= 0 ? '+' : '';
+    try { logEvent('fin', '💹 Cycle closed — ' + book.toLocaleString() + ' 🔥 invested returned ' + payout.toLocaleString() + ' (' + sign + gain.toLocaleString() + ').'); } catch (e) {}
+    try { toast('💹 Investment cycle closed: ' + sign + gain.toLocaleString() + ' 🔥 on ' + book.toLocaleString() + ' invested.', gain >= 0 ? '' : 'bad'); } catch (e) {}
+    try { saveSoon(); } catch (e) {}
+  } catch (e) { try { console.warn('[fin]', e); } catch (_) {} }
+}
+
+/* 💹 THE PORTFOLIO PANE — what this building is actually holding.
+   Shows the live positions for the OPEN cycle and the statement for the last
+   CLOSED one. Both come from the same finPositions()/f.last data the payout
+   used, so the panel can never quote a number the money did not honour — the
+   "UI advertises what the code won't do" trap this project has hit repeatedly.
+   ⚠ Percentages here are the REAL rolled returns for this cycle, not estimates.
+     They are deterministic (see finRoll), so what a player reads now is exactly
+     what they will be paid at close — the panel is a statement, not a forecast. */
+function insFinPane(t, def) {
+  try {
+    const f = game.fin || {};
+    const tier = finTierOf(def);
+    const n = finCount();
+    const pct = (v) => (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+    const cls = (v) => v >= 0 ? 'good' : 'bad';
+    const money = (v) => Math.round(v).toLocaleString();
+
+    const led = (a, b) => '<div class="led"><span>' + a + '</span><span>' + b + '</span></div>';
+    const book = Math.max(0, Math.floor(f.book || 0));
+
+    // ── card 1: the desk ──
+    let deskBody =
+      led('Risk profile', '<b>' + tier.label + '</b>') +
+      led('Lift to every Cinder earner', '<span class="up">+' + (FIN_BOOST_EACH * 100).toFixed(1) + '%</span>') +
+      (n > 1 ? led('City total from ' + n + ' desks', '<span class="up">+' + (FIN_BOOST_EACH * n * 100).toFixed(1) + '%</span>') : '') +
+      led('Share of takings invested', Math.round(FIN_DIVERT * 100) + '%') +
+      led('Cycle length', FIN_CYCLE_H + ' h') +
+      '<div class="led tot"><span>One-cycle swing band</span><span><span class="dn">' + pct(tier.worst) +
+        '</span> … <span class="up">' + pct(tier.best) + '</span></span></div>' +
+      '<div class="ins-desc" style="margin:10px 0 0">This desk creates no Cinder of its own. It lifts what the city already earns, ' +
+      'and puts a slice of the takings to work — returned in full at the close of each cycle, for better or worse.</div>';
+    let h = insCardHtml(def.name, tier.label + ' desk', deskBody);
+
+    // ── card 2: the open cycle + live positions ──
+    const pos = finPositions();
+    let openBody;
+    if (f.dueAt) {
+      const ms = Math.max(0, f.dueAt - Date.now());
+      const hrs = Math.floor(ms / 3600000), mins = Math.floor((ms % 3600000) / 60000);
+      openBody = led('Open book', '<b>' + money(book) + ' 🔥</b>') + led('Closes in', '<b>' + hrs + 'h ' + mins + 'm</b>');
+      if (pos.length) {
+        openBody += pos.map(p => {
+          const nm  = p.kind === 'co' ? (p.co.ico + ' ' + p.co.name) : ('🌐 ' + (p.node.name || p.node.node_type || 'PRN node'));
+          const sub = p.kind === 'co' ? p.co.sector
+                    : ('owner ' + String(p.node.owner || '—') + ' · perf ' + Math.round(p.score * 100) + '%');
+          return led(logEsc(nm) + '<br><span style="opacity:.6;font-size:.85em">' + logEsc(sub) + '</span>',
+            money(p.amount) + ' 🔥 → <span class="' + cls(p.ret) + '">' + pct(p.ret) + '</span>');
+        }).join('');
+        const proj = pos.reduce((s, p) => s + p.payout, 0);
+        openBody += '<div class="led tot"><span>Projected close</span><span class="' + cls(proj - book) + '">' +
+          money(proj) + ' 🔥</span></div>';
+        openBody += '<div class="ins-desc" style="margin:10px 0 0">These are the settled returns for this cycle, not a forecast — ' +
+          'they are fixed the moment the cycle opens and cannot be re-rolled by reloading.</div>';
+      } else if (book > 0) {
+        openBody += '<div class="ins-desc" style="margin:10px 0 0">Capital is banked but not yet allocated.</div>';
+      }
+    } else {
+      openBody = '<div class="ins-desc">No cycle running. The desk opens one the next time the city banks Cinder.</div>';
+    }
+    h += insCardHtml('This cycle', 'positions held right now', openBody);
+
+    // ── card 3: the node desk ──
+    if (def.fin >= 2) {
+      h += insCardHtml('Node desk', 'other operators\' PRN nodes',
+        _finMarket.length
+          ? led('Nodes tracked', '<b>' + _finMarket.length + '</b>') +
+            '<div class="ins-desc" style="margin:10px 0 0">Positions are taken in the best-performing nodes first. A node\'s return is priced off its ' +
+            'efficiency, what its owner\'s roads are feeding it, and its level — so you are backing somebody else\'s operation, and it pays like it.</div>'
+          : insAlert('bad', '🌐', 'Node desk offline',
+              'No other operators\' nodes are listed right now, so the book holds paper only. It will start trading them as soon as the market answers.'));
+    } else {
+      h += insCardHtml('Node desk', 'not available at this tier',
+        '<div class="ins-desc">A Cinder Trust trades paper only. An Index Fund or a Holding Company takes positions in other operators\' PRN nodes.</div>');
+    }
+
+    // ── card 4: the last statement ──
+    if (f.last && f.last.at) {
+      const L = f.last;
+      let sb = led('Invested', money(L.book) + ' 🔥') +
+               led('Returned', '<b>' + money(L.payout) + ' 🔥</b>') +
+               '<div class="led tot"><span>Result</span><span class="' + cls(L.gain) + '">' +
+                 (L.gain >= 0 ? '+' : '−') + money(Math.abs(L.gain)) + ' 🔥</span></div>';
+      sb += (L.rows || []).map(r => led(
+        logEsc(String(r.ico || '') + ' ' + String(r.name || '')) +
+          '<br><span style="opacity:.6;font-size:.85em">' + logEsc(String(r.sub || '')) + '</span>',
+        money(r.amount || 0) + ' 🔥 → <span class="' + cls(+r.ret || 0) + '">' + pct(+r.ret || 0) + '</span>')).join('');
+      h += insCardHtml('Last statement', new Date(L.at).toLocaleString(), sb);
+    } else {
+      h += insCardHtml('Last statement', 'nothing settled yet',
+        '<div class="ins-desc">No cycle has closed. The first statement appears ' + FIN_CYCLE_H + ' hours after this desk first invests.</div>');
+    }
+    h += insCardHtml('Lifetime', 'profit from investments',
+      led('Net investment profit', '<span class="' + cls(f.lifetime || 0) + '">' +
+        ((f.lifetime || 0) >= 0 ? '+' : '−') + money(Math.abs(f.lifetime || 0)) + ' 🔥</span>'));
+    return h;
+  } catch (e) { return ''; }
+}
 const CINDER_PERIOD_DIV = 60;                    // per-minute figures → per-hour
 const cinderRate = (perMin) => (perMin || 0) / CINDER_PERIOD_DIV;
 /* The SAME number the tick will actually pay, for any resource. Every panel that
@@ -15347,6 +15800,16 @@ const game = {
   raid: { timer: RAID_INTERVAL, wave: 1 },
   army: { workers: 0, soldiers: 0, rank: 0 },   // hired from the population
   frac: {},                         // fractional per-resource accumulators
+  /* 💹 THE INVESTMENT BOOK. `book` is Cinder the funds are holding — already
+     EARNED by the city and deliberately not paid out yet; it comes back in full
+     plus FIN_YIELD when the cycle closes. `dueAt` is a wall-clock ms stamp, not
+     a countdown: a countdown only advances while the city is open, so a 72-hour
+     cycle would take weeks of play to close. Wall-clock means the cycle runs
+     while the tab is shut, which is what "every 72 hours" has to mean.
+     ⚠ dueAt = 0 means "no cycle running". It is armed the first time anything
+       is actually invested, so a player who has not built a fund yet is never
+       shown a countdown to nothing. */
+  fin: { book: 0, dueAt: 0, lastPaid: 0, lifetime: 0 },
   log: [],                          // [{t,k,m}] event history — see logEvent()
   lastTick: performance.now(),
   /* ── the consumption layer (r5) ──────────────────────────────────────
@@ -15925,6 +16388,12 @@ function tileMult(x, z, t, staff, powered) {
         * kalonCityBoost()
         * (1 + socketBoost(t));
   if (t.type === 'arena') m *= Math.max(.3, wellbeing.morale / 50);   // crowds follow morale
+  /* 💹 THE FINANCIAL DISTRICT'S LIFT. Only Cinder EARNERS feel it — a farm does
+     not sell anything, so an investment house has nothing to leverage there.
+     ⚠ Deliberately ABOVE the Math.min() below, i.e. inside TILE_MULT_CAP. See
+       FIN_BOOST_EACH: this is the one line that keeps the remodelled Forge from
+       becoming the old Forge. It must never be moved after the cap. */
+  if (def.gen && def.gen.cinder) m *= finBoost();
   if (def.powerNeed) m *= powered;
   /* 🧯 THE CEILING. Everything above is MULTIPLICATIVE and, until this line,
      unbounded: adjacency × 2^(lvl-1) × staffing × weather × mayor × Kalon ×
@@ -16121,7 +16590,19 @@ async function economyTick(dtMin) {
     const whole = Math.floor(game.frac[r]);
     if (whole >= 1) {
       game.frac[r] -= whole;
-      if (r === 'cinder') await MythicCityBridge.addCinders(whole);
+      if (r === 'cinder') {
+        /* 💹 THE FUNDS TAKE THEIR SLICE FIRST. This is the ONE place city Cinder
+           becomes real money, so it is the only honest place to invest from —
+           anywhere else and the book could be fed by Cinder the city never
+           actually earned, which is the Forge's exact sin.
+           The diverted amount is NOT lost: finTick returns it in full plus
+           FIN_YIELD when the cycle closes. With no financial buildings standing
+           finInvest returns 0 and this is a no-op, so the pre-existing payout
+           path is byte-for-byte unchanged for everyone who has not built one. */
+        const invested = finInvest(whole);
+        const paid = whole - invested;
+        if (paid > 0) await MythicCityBridge.addCinders(paid);
+      }
       else await MythicCityBridge.addRes(r, whole);
     }
   }
@@ -17429,6 +17910,9 @@ function openInspect(k) {
   const tabs = [{ id: 'ov', name: 'Overview' }];
   if (work) tabs.push({ id: 'wf', name: 'Workforce' });
   if (hasLedger) tabs.push({ id: 'lg', name: 'Ledger' });
+  // 💹 Only a financial building has a book to show.
+  const finPane = def.fin ? insFinPane(t, def) : '';
+  if (finPane) tabs.push({ id: 'fi', name: 'Portfolio' });
   if (!tabs.some(tb => tb.id === insTab)) insTab = 'ov';
   insBuildTabs(tabs);
 
@@ -17436,6 +17920,7 @@ function openInspect(k) {
   let panes = '<div class="pane' + (ov.one ? ' one' : '') + '" role="tabpanel" id="inspane-ov" data-tab="ov" aria-labelledby="instab-ov" tabindex="0">' + ov.html + '</div>';
   if (work) panes += '<div class="pane one" role="tabpanel" id="inspane-wf" data-tab="wf" aria-labelledby="instab-wf" tabindex="0">' + work + '</div>';
   if (hasLedger) panes += '<div class="pane" role="tabpanel" id="inspane-lg" data-tab="lg" aria-labelledby="instab-lg" tabindex="0">' + insLedgerPane(t, x, z, mult, om) + '</div>';
+  if (finPane) panes += '<div class="pane one" role="tabpanel" id="inspane-fi" data-tab="fi" aria-labelledby="instab-fi" tabindex="0">' + finPane + '</div>';
   $('inspanes').innerHTML = panes;
   insSelect(insTab, false);
   $('inspanes').scrollTop = 0;
@@ -19915,6 +20400,31 @@ function serialize() {
        found work, so the city REMEMBERS its people between sessions. Absent
        on load ⇒ an empty log and nothing else changes (see lifeLoad). */
     life: lifeSave(),
+    /* 💹 THE INVESTMENT BOOK. MUST ride the save. `book` is Cinder the city has
+       already EARNED and that the funds are holding — it exists nowhere else,
+       so dropping it here is a straight loss of up to a full cycle of the
+       player's money, and `dueAt` is the only record that a cycle is running.
+       Same class of must-persist as the Resting House's uncollected Resonance
+       above, and for the same reason. */
+    /* ⚠ NOT `| 0` ON THE STAMPS. dueAt/lastPaid are Date.now() milliseconds
+       (~1.78e12); the bitwise OR that is used all over this file for small
+       integers truncates to 32 bits and would turn a due date into garbage —
+       silently, and only for the timestamp fields. Math.round on a Number. */
+    fin: { book: Math.max(0, Math.round(game.fin.book || 0)),
+           dueAt: Math.max(0, Math.round(+game.fin.dueAt || 0)),
+           lastPaid: Math.max(0, Math.round(+game.fin.lastPaid || 0)),
+           lifetime: Math.max(0, Math.round(game.fin.lifetime || 0)),
+           /* The closed cycle's statement. Rides the save so the dossier can
+              still show WHAT the last cycle did after a reload — a bare profit
+              number with no positions behind it is the thing players dispute.
+              Bounded to one cycle's rows, so it cannot grow the save. */
+           last: (game.fin.last && typeof game.fin.last === 'object')
+             ? { at: Math.round(+game.fin.last.at || 0),
+                 book: Math.round(+game.fin.last.book || 0),
+                 payout: Math.round(+game.fin.last.payout || 0),
+                 gain: Math.round(+game.fin.last.gain || 0),
+                 rows: (Array.isArray(game.fin.last.rows) ? game.fin.last.rows : []).slice(0, 24) }
+             : null },
     syncPct: citySync(), savedAt: Date.now() });
 }
 let saveTimer = null;
@@ -20336,6 +20846,37 @@ async function loadState() {
       delete game.raid.ri;                  // runtime state does not carry it
     }
     if (s.army) game.army = { workers: s.army.workers | 0, soldiers: s.army.soldiers | 0, rank: Math.min(ARMY.ranks.length - 1, s.army.rank | 0) };
+    /* 💹 The investment book. Absent on every save written before the financial
+       district existed, which correctly means "nothing invested, no cycle
+       running" — the defaults in `game.fin` already say that, so an old save
+       needs no migration and simply starts its first cycle when it first earns.
+       ⚠ Numbers, not `| 0`: the stamps are milliseconds (see serialize).
+       ⚠ dueAt is CLAMPED to one cycle ahead. A save carrying a far-future stamp
+         (device clock skew, or a hand-edited save) would otherwise park the
+         player's own money out of reach indefinitely. Clamping forward-dates to
+         now+FIN_CYCLE_MS pays it late at worst, never never. */
+    if (s.fin && typeof s.fin === 'object') {
+      const _fb = Math.max(0, Math.round(+s.fin.book || 0));
+      const _fd = Math.max(0, Math.round(+s.fin.dueAt || 0));
+      game.fin.book     = Number.isFinite(_fb) ? _fb : 0;
+      game.fin.dueAt    = Number.isFinite(_fd) ? Math.min(_fd, Date.now() + FIN_CYCLE_MS) : 0;
+      game.fin.lastPaid = Math.max(0, Math.round(+s.fin.lastPaid || 0));
+      game.fin.lifetime = Math.max(0, Math.round(+s.fin.lifetime || 0));
+      // A book with no cycle stamp would never pay out. Re-arm it.
+      if (game.fin.book > 0 && !game.fin.dueAt) game.fin.dueAt = Date.now() + FIN_CYCLE_MS;
+      // The last statement. Absent on any save written before it existed, which
+      // just means "no cycle has closed yet" — the panel says so.
+      if (s.fin.last && typeof s.fin.last === 'object') {
+        const L = s.fin.last;
+        game.fin.last = {
+          at: Math.max(0, Math.round(+L.at || 0)),
+          book: Math.max(0, Math.round(+L.book || 0)),
+          payout: Math.max(0, Math.round(+L.payout || 0)),
+          gain: Math.round(+L.gain || 0),
+          rows: (Array.isArray(L.rows) ? L.rows : []).slice(0, 24).filter(r => r && typeof r === 'object'),
+        };
+      }
+    }
     if (typeof s.morale === 'number') wellbeing.morale = THREE.MathUtils.clamp(s.morale, 0, 100);
     if (typeof s.hunger === 'number') wellbeing.hunger = THREE.MathUtils.clamp(s.hunger, 0, 100);
     /* ── the consumption layer (v5). Every field optional; a v4 save takes the
@@ -23246,6 +23787,13 @@ function animate() {
     manageAgents(); evaluateNeeds();
     caravanTick(nowSec); expeditionTick(nowSec); refugeeTick(nowSec);
     decayTick(4); nodeXpTick(4);
+    // 💹 A clock comparison until the 72h cycle is actually due — cheap enough
+    //    for this beat, and frequent enough that the payout lands within four
+    //    seconds of the city being open past its due time.
+    try { finTick(); } catch (e) {}
+    // 🌐 Keep the investable node list warm. Self-throttled to FIN_MARKET_TTL_MS
+    //    inside, so calling it on this beat costs a timestamp comparison.
+    try { if (finCount() > 0) finRefreshMarket(); } catch (e) {}
   }
   moraleAcc += dt;
   if (moraleAcc >= 5) { moraleTick(moraleAcc); moraleAcc = 0; }

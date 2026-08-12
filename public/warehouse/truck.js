@@ -150,6 +150,17 @@
   // the two used to overlap, which is why the arch could never be cut.
   const DOOR = { z0: 0.62, z1: 1.42 };
   const ARCH_HALF = 0.62;                          // how far an arch reaches fore/aft
+  // 🚪 CARGO SIDE OPENING — the roll-up on the kerb flank, standing open.
+  // ⚠ This exists because the delivered load was INVISIBLE. Crates were being
+  // stacked on the deck inside a completely sealed lofted shell: a raycast from
+  // eye height at 1,888 standable positions found ZERO of the 12 crate meshes
+  // from anywhere a player could stand. Twelve meshes built, shadow-casting and
+  // drawn every frame, that nobody could ever see — while the design says
+  // "press E and SEE the storage that was delivered" and "they have to pick up
+  // the load". The most physical beat in the feature was happening behind a
+  // blank white panel. The mechanism to fix it already existed: the same `cut`
+  // that makes the kerb door a genuine hole.
+  const CARGO = { z0: -2.46, z1: -0.44, deckY: 0.66 };
 
   // ─── 🧵 Loft — stitch a run of rings into one welded shell ──────────────────
   // ⚠ WINDING MATTERS. section() walks the outline counter-clockwise as seen
@@ -213,6 +224,8 @@
       [D.zAxleF + ARCH_HALF, D.halfW,  D.shoulderY,  D.crown],
       [D.zAxleR - ARCH_HALF, D.halfW,  D.shoulderY,  D.crown],
       [D.zAxleR + ARCH_HALF, D.halfW,  D.shoulderY,  D.crown],
+      [CARGO.z0,         D.halfW,      D.shoulderY,  D.crown],
+      [CARGO.z1,         D.halfW,      D.shoulderY,  D.crown],
       [2.10,             D.halfW,      D.shoulderY,  D.crown],
       [2.46,             D.halfW - 0.008, D.shoulderY - 0.025, D.crown - 0.012],
       [2.66,             D.halfW - 0.026, D.shoulderY - 0.080, D.crown - 0.040],
@@ -239,6 +252,8 @@
       [D.zAxleF, D.zAxleR].some(zc => zA >= zc - ARCH_HALF - 0.001 && zB <= zc + ARCH_HALF + 0.001);
     const cut = (zA, zB, i) => {
       if (i >= WALL_R0 && zA >= DOOR.z0 - 0.001 && zB <= DOOR.z1 + 0.001) return true;
+      // the cargo roll-up: kerb-side wall, deck height upward
+      if (i >= WALL_R0 && zA >= CARGO.z0 - 0.001 && zB <= CARGO.z1 + 0.001) return true;
       return (i === WALL_R0 || i === WALL_L0) && inArch(zA, zB);
     };
     const m = new THREE.Mesh(loft(THREE, rings, true, false, cut), mats.paintShell);
@@ -393,8 +408,24 @@
     // ── cargo interior — a real floor, liner walls and a cab bulkhead, so the
     //    open slider reveals somewhere goods could actually go ───────────────
     box(THREE, T, 2.02, 0.06, 4.42, mats.floor, 0, D.floorY + 0.06, -0.62);       // deck
-    // Liners start ABOVE the cut band, so they never paint across a wheel arch.
-    [-1, 1].forEach(s => box(THREE, T, 0.05, 1.70, 4.42, mats.paintU, s * 0.99, D.floorY + 1.28, -0.62));
+    // Liners start ABOVE the cut band, so they never paint across a wheel arch —
+    // and the KERB-side liner is split around the cargo opening so it does not
+    // seal the hole we just cut.
+    box(THREE, T, 0.05, 1.70, 4.42, mats.paintU, -0.99, D.floorY + 1.28, -0.62);
+    box(THREE, T, 0.05, 1.70, 0.34, mats.paintU,  0.99, D.floorY + 1.28, CARGO.z0 - 0.20);
+    box(THREE, T, 0.05, 1.70, 0.34, mats.paintU,  0.99, D.floorY + 1.28, CARGO.z1 + 0.20);
+    // Framed edge + the shutter rolled up above the opening.
+    const cfx = D.halfW + 0.020, ccz = (CARGO.z0 + CARGO.z1) / 2, ccw = CARGO.z1 - CARGO.z0;
+    box(THREE, T, 0.042, D.shoulderY - D.floorY + 0.06, 0.055, mats.paint, cfx, (D.floorY + D.shoulderY) / 2, CARGO.z0 - 0.028);
+    box(THREE, T, 0.042, D.shoulderY - D.floorY + 0.06, 0.055, mats.paint, cfx, (D.floorY + D.shoulderY) / 2, CARGO.z1 + 0.028);
+    box(THREE, T, 0.042, 0.060, ccw + 0.11, mats.paint, cfx, D.floorY - 0.028, ccz);
+    const shut = [];
+    for (let i = 0; i < 7; i++) shut.push({ w: 0.052, h: 0.055, d: ccw - 0.04, x: cfx + 0.012, y: D.shoulderY - 0.10 - i * 0.062, z: ccz });
+    T.add(mergeBoxes(THREE, shut, mats.seam));
+    // Dark liner DEEP inside — it exists so you read a loaded box rather than a
+    // hole through the truck, but at x 0.35 it sat in front of the cargo and
+    // occluded the whole back row of crates. It belongs behind them.
+    box(THREE, T, 0.05, 1.90, ccw, mats.cabin, -0.62, D.floorY + 1.00, ccz);
     box(THREE, T, 2.02, 2.10, 0.06, mats.paintU, 0, D.floorY + 1.12, D.zBulkhead - 0.04);  // bulkhead
     box(THREE, T, 1.90, 0.05, 2.10, mats.floor, 0, D.floorY + 0.05, 1.95);        // cab floor
     // Cab liners. The kerb side is SPLIT fore and aft of the slider so the liner
@@ -637,5 +668,8 @@
   // generous; these are the values the reference renders were judged at.
   const SHADOW_HINT = { bias: -0.0002, normalBias: 0.06, mapSize: 2048 };
 
-  root.WHTruck = { build: build, DIMS: D, SHADOW_HINT: SHADOW_HINT };
+  // Where a host may stack cargo so it is actually SEEN through the opening.
+  const CARGO_OPENING = { z0: -2.46, z1: -0.44, deckY: 0.66, x: 0.42 };
+
+  root.WHTruck = { build: build, DIMS: D, SHADOW_HINT: SHADOW_HINT, CARGO: CARGO_OPENING };
 })(typeof window !== 'undefined' ? window : this);

@@ -144,7 +144,26 @@
     pointer-events:auto;background:rgba(255,209,102,.18);border:1px solid rgba(255,209,102,.6);
     color:var(--gold);display:flex;align-items:center;justify-content:center;
     font-family:'Cinzel',Georgia,serif;font-size:.9rem}
-  @media (max-width:820px){ #bays{display:none} #ship{max-width:56vw} }
+  /* ⚠ Below ~800 px the fixed cards overprinted each other: the button row sat
+     on top of "Tier 1/5 Bays 2/4", and at 390 px the top strip was unreadable.
+     Cards shrink and step out of each other's way instead of overlapping. */
+  @media (max-width:900px){
+    #bays{display:none}
+    #ship{max-width:52vw;font-size:.7rem;top:96px}
+    #topbtns{top:auto;bottom:12px;transform:translateX(-50%) scale(.94)}
+    #topbar{font-size:.7rem;gap:9px;padding:7px 9px}
+    #wallet{font-size:.7rem;padding:7px 9px}
+    #carry{min-width:190px;bottom:74px;padding:8px 10px}
+  }
+  @media (max-width:560px){
+    #topbar{left:8px;right:auto;max-width:58vw;flex-wrap:wrap;gap:4px 8px}
+    #wallet{top:8px;right:8px;font-size:.66rem;line-height:1.35}
+    #ship{display:none}
+    #carry{left:8px;bottom:80px;min-width:150px}
+    #topbtns{gap:5px}
+    .btn{padding:6px 9px;font-size:.7rem}
+    #prompt{font-size:.74rem;padding:6px 11px;bottom:24%}
+  }
 </style>
 </head>
 <body>
@@ -192,6 +211,15 @@
 </div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- ⚠ FALLBACK. The CDN was a single point of failure for the whole minigame,
+     while this repo already ships the same r128 build at assets/vfx/three.min.js.
+     document.write is deliberate: it is the one way to load a replacement
+     SYNCHRONOUSLY here, so truck.js below still finds window.THREE. -->
+<script>
+  if (!window.THREE) {
+    document.write('<script src="../assets/vfx/three.min.js"><\/script>');
+  }
+</script>
 <script src="truck.js"></script>
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
@@ -481,6 +509,15 @@ function buildScene() {
   scene.fog = new T.Fog(0x0a0c11, 34, 96);
   camera = new T.PerspectiveCamera(72, innerWidth / innerHeight, 0.08, 260);
   camera.position.set(0, EYE, -2);
+  // Restore where the player was stood, so a re-entry does not snap them back
+  // to the door — the card-shop walk does the same with App._csWalk.
+  try {
+    var _w = JSON.parse(sessionStorage.getItem('wh_walk') || 'null');
+    if (_w && isFinite(_w.x) && isFinite(_w.z)) {
+      camera.position.set(_w.x, EYE, _w.z);
+      Ctl.yaw = Ctl.cyaw = _w.yaw || 0; Ctl.pitch = Ctl.cpitch = _w.pitch || 0;
+    }
+  } catch (e) {}
   clock = new T.Clock();
 
   scene.add(new T.HemisphereLight(0x2b3448, 0x0a0a0d, 0.62));
@@ -519,6 +556,26 @@ function buildScene() {
 
   // Merge indexed BoxGeometries into one buffer — r128 keeps BufferGeometryUtils
   // in /examples, which we do not load, and this is all we need from it.
+  // ⚠ three.js never frees GPU memory for you. buildBays() and
+  // rebuildTruckCrates() used to scene.remove() and walk away, so geometries
+  // climbed +29 per 100 refreshes and never plateaued — and refreshWorld()
+  // fires on EVERY crate stored, so a long unloading session bled steadily.
+  window.disposeNode = function (n) {
+    if (!n) return;
+    try {
+      n.traverse(function (o) {
+        if (!o.isMesh) return;
+        if (o.geometry) o.geometry.dispose();
+        var mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(function (mm) {
+          if (!mm) return;
+          if (mm.map) mm.map.dispose();
+          mm.dispose();
+        });
+      });
+    } catch (e) {}
+    try { if (n.parent) n.parent.remove(n); else scene.remove(n); } catch (e) {}
+  };
   var mergeGeos = function (list) {
     var pos = [], nor = [], idx = [], base = 0;
     list.forEach(function (g) {
@@ -585,7 +642,7 @@ function buildScene() {
   // Numbered open-front cubicles down the back and side walls. Each bay gets a
   // sensor so walking into it is what "putting it into storage" means.
   App.buildBays = function () {
-    App.bayNodes.forEach(function (b) { scene.remove(b.node); });
+    App.bayNodes.forEach(function (b) { disposeNode(b.node); });
     App.bayNodes = [];
     App.sensors = App.sensors.filter(function (s) { return s.kind !== 'bay'; });
     var st = WH.state(); if (!st) return;
@@ -723,10 +780,15 @@ function buildScene() {
 }
 
 /* ── 📦 the crates still sitting in the truck ─────────────────────────────── */
+// ⚠ Stacked INSIDE the cargo opening truck.js now cuts in the kerb flank, at
+// deck height, facing the warehouse. The previous build put them at y = 1.16
+// inside a sealed shell: a raycast from 1,888 standable positions saw exactly
+// none of them. If the player cannot see the load, "pick up the load" is just a
+// text prompt and a teleport.
 function rebuildTruckCrates() {
   var st = WH.state(); if (!st || !T) return;
   Object.keys(App.crateMeshes).forEach(function (k) {
-    scene.remove(App.crateMeshes[k]); delete App.crateMeshes[k];
+    disposeNode(App.crateMeshes[k]); delete App.crateMeshes[k];
   });
   var pending = [];
   (st.shipments || []).forEach(function (s) {
@@ -742,13 +804,31 @@ function rebuildTruckCrates() {
     }
   } catch (e) {}
   if (App.truckDrive) return;                 // do not stack crates on a moving van
+  var CO = (window.WHTruck && WHTruck.CARGO) || { z0: -2.46, z1: -0.44, deckY: 0.66, x: 0.42 };
   var m = new T.MeshStandardMaterial({ color: 0x8a6a3e, roughness: 0.86 });
-  pending.slice(0, 14).forEach(function (p, i) {
-    var g = new T.Mesh(new T.BoxGeometry(0.6, 0.48, 0.6), m);
-    // Stacked on the van's deck, in truck-local space then rotated with it.
-    var lx = 0.15 - (i % 2) * 0.5, lz = 1.0 - Math.floor(i / 2) * 0.72, ly = 1.16;
+  var m2 = new T.MeshStandardMaterial({ color: 0x6d5230, roughness: 0.9 });
+  App.crateMats = [m, m2];
+  // Three along, two deep — and the BACK row is STEPPED UP a tier so its crates
+  // clear the front row instead of hiding behind it. Straight rows put 6 of the
+  // 12 permanently out of sight from every standable position.
+  pending.slice(0, 12).forEach(function (p, i) {
+    var col = i % 3, grp = Math.floor(i / 3);            // 0,1 front · 2,3 back
+    var row = grp >= 2 ? 1 : 0;
+    var tier = (grp % 2) + row;                          // back row starts a tier higher
+    var lz = CO.z0 + 0.42 + col * 0.62;                   // along the truck
+    var lx = CO.x - row * 0.56;                           // into the box
+    var ly = CO.deckY + 0.27 + tier * 0.52;
+    var g = new T.Group();
+    var b = new T.Mesh(new T.BoxGeometry(0.52, 0.5, 0.52), m);
+    g.add(b);
+    [-0.21, 0.21].forEach(function (o) {
+      var sl = new T.Mesh(new T.BoxGeometry(0.56, 0.055, 0.56), m2);
+      sl.position.y = o; g.add(sl);
+    });
+    // truck-local → world: the van is rotated so local +X faces world −Z.
     g.position.set(App.truck.position.x + lz, ly, App.truck.position.z - lx);
-    g.castShadow = true; scene.add(g);
+    g.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    scene.add(g);
     App.crateMeshes[p.c.id] = g;
   });
 }
@@ -867,7 +947,24 @@ function expandUnit(unit, cur) {
     if (u) u.capacity_kg = r.capacity_kg;
     if (r.wallet) st.wallet = r.wallet;
     WH.setState(st); closeModal(); refreshWorld();
-    toast('📦 Bay ' + r.bay_no + ' opened up — now ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg. Put it in.', 3600);
+    // ⚠ The modal promises "the crate in your hands goes straight in", so put
+    // it in. It used to leave the player still holding it while the toast said
+    // "Put it in" — the copy and the behaviour contradicted each other one
+    // second apart.
+    if (App.held) {
+      var c = App.held;
+      WH.rpc('wh_store_crate', { p_crate_id: c.c.id, p_unit_id: unit.id }).then(function (r2) {
+        if (!r2 || r2.ok === false) {
+          toast('📦 Bay ' + r.bay_no + ' opened up — now ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg.', 3600);
+          return;
+        }
+        applyStored(c, r2);
+        toast('📦 Bay ' + r2.bay_no + ' opened up and the crate went straight in — '
+          + Math.round(r2.used_kg) + '/' + r2.capacity_kg + ' kg.', 4000);
+      });
+    } else {
+      toast('📦 Bay ' + r.bay_no + ' opened up — now ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg.', 3600);
+    }
   });
 }
 
@@ -957,8 +1054,10 @@ function openBayModal(unit) {
   var inbound = (WH.state().shipments || []).filter(function (sp) { return sp.unit_id === unit.id && sp.status !== 'stored'; });
   if (inbound.length) {
     body += '<div class="note" style="margin-top:.8rem">🚚 ' + inbound.map(function (sp) {
-      return esc(sp.sender_name || 'A renter') + ' — ' + (sp.crates || []).length + ' crates still to come in, '
-        + etaText(sp).replace(/<[^>]+>/g, '');
+      var n = (sp.crates || []).length;
+      var landed = new Date(sp.eta_at).getTime() <= Date.now();
+      return esc(sp.sender_name || 'A renter') + ' — ' + n + (n === 1 ? ' crate ' : ' crates ')
+        + (landed ? 'waiting on the van to be carried in' : 'still on the road, ' + etaText(sp).replace(/<[^>]+>/g, ''));
     }).join('<br>') + '</div>';
   }
   openModal('📦 Bay ' + unit.bay_no, 'What is in storage here', body, [{ label: 'Close', on: closeModal }]);
@@ -1074,22 +1173,28 @@ function doInteract() {
         toast('❌ ' + reasonText(r), 3600);
         return;
       }
-      App.held = null; App.carried = 0; App.heldMesh.visible = false;
-      // Mirror the server's answer into local state, then rebuild what changed.
-      var st = WH.state();
-      var u = st.units.filter(function (x) { return x.id === r.unit_id; })[0];
-      if (u) { u.used_kg = r.used_kg; }
-      st.shipments.forEach(function (s) {
-        if (s.id !== crate.s.id) return;
-        s.crates = (s.crates || []).filter(function (c) { return c.id !== crate.c.id; });
-        s.crates_stored = r.crates_stored;
-        if (r.shipment_done) s.status = 'stored';
-      });
-      WH.setState(st); refreshWorld();
+      applyStored(crate, r);
       toast('📦 Stored in Bay ' + r.bay_no + ' — ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg'
         + (r.shipment_done ? '. <b>Delivery complete.</b>' : '.'), 3200);
     });
   }
+}
+
+// Mirror the server's answer for one stored crate into local state, drop the
+// crate from the player's hands, and rebuild what changed. Shared by the normal
+// drop and by the buy-space-then-store path, so the two can never drift.
+function applyStored(crate, r) {
+  App.held = null; App.carried = 0; App.heldMesh.visible = false;
+  var st = WH.state();
+  var u = st.units.filter(function (x) { return x.id === r.unit_id; })[0];
+  if (u) { u.used_kg = r.used_kg; if (r.capacity_kg) u.capacity_kg = r.capacity_kg; }
+  (st.shipments || []).forEach(function (s) {
+    if (s.id !== crate.s.id) return;
+    s.crates = (s.crates || []).filter(function (c) { return c.id !== crate.c.id; });
+    s.crates_stored = r.crates_stored;
+    if (r.shipment_done) s.status = 'stored';
+  });
+  WH.setState(st); refreshWorld();
 }
 
 function refreshWorld() {
@@ -1149,6 +1254,14 @@ function bindControls() {
     if (['w', 'a', 's', 'd', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) e.preventDefault();
   });
   addEventListener('keyup', function (e) { Ctl.keys[(e.key || '').toLowerCase()] = false; });
+  // ⚠ Losing focus mid-stride used to leave the key DOWN: hold W, switch tabs
+  // for 2.5 s, come back and you had walked four metres blind. The browser
+  // never sends the keyup, so the state has to be cleared by hand.
+  var releaseAll = function () {
+    Ctl.keys = {}; Ctl.move.f = Ctl.move.b = Ctl.move.l = Ctl.move.r = 0; Ctl.drag = false;
+  };
+  addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); });
 
   // Touch thumb pad.
   var map = ['f', 'l', 'r', 'b'];
@@ -1212,10 +1325,20 @@ function tick() {
       rebuildTruckCrates();
     }
   }
+  // Smoothed look, the same way the card-shop walk (_cs3d) does it:
+  //   const k = 1 - Math.exp(-dt * 14); cyaw += (yaw - cyaw) * k
+  // Frame-rate independent, and it gives the head real weight instead of
+  // snapping straight to the raw input.
+  if (Ctl.cyaw === undefined) { Ctl.cyaw = Ctl.yaw; Ctl.cpitch = Ctl.pitch; }
+  var kSm = 1 - Math.exp(-dt * 18);
+  Ctl.cyaw += (Ctl.yaw - Ctl.cyaw) * kSm;
+  Ctl.cpitch += (Ctl.pitch - Ctl.cpitch) * kSm;
   camera.rotation.order = 'YXZ';
-  camera.rotation.x = Ctl.pitch; camera.rotation.y = Ctl.yaw;
+  camera.rotation.x = Ctl.cpitch; camera.rotation.y = Ctl.cyaw;
 
-  var K = Ctl.keys, mv = Ctl.move;
+  // ⚠ Reading a modal must not walk you out of the sensor that raised it.
+  var modalOpen = $('modal').classList.contains('on');
+  var K = modalOpen ? {} : Ctl.keys, mv = modalOpen ? { f: 0, b: 0, l: 0, r: 0 } : Ctl.move;
   var f = (K['w'] || K['arrowup'] || mv.f ? 1 : 0) - (K['s'] || K['arrowdown'] || mv.b ? 1 : 0);
   var r = (K['d'] || K['arrowright'] || mv.r ? 1 : 0) - (K['a'] || K['arrowleft'] || mv.l ? 1 : 0);
   if (f || r) {
@@ -1223,14 +1346,17 @@ function tick() {
     // Normalise so diagonal is not 41% faster — the classic tell of a rushed
     // controller.
     var len = Math.hypot(f, r); f /= len; r /= len;
-    var fx = -Math.sin(Ctl.yaw), fz = -Math.cos(Ctl.yaw);
-    var rx = Math.cos(Ctl.yaw), rz = -Math.sin(Ctl.yaw);
+    var fx = -Math.sin(Ctl.cyaw), fz = -Math.cos(Ctl.cyaw);
+    var rx = Math.cos(Ctl.cyaw), rz = -Math.sin(Ctl.cyaw);
     var dx = (fx * f + rx * r) * spd, dz = (fz * f + rz * r) * spd;
     var nx = camera.position.x + dx, nz = camera.position.z + dz;
     if (!blocked(nx, camera.position.z)) camera.position.x = nx;
     if (!blocked(camera.position.x, nz)) camera.position.z = nz;
-    camera.position.x = Math.max(-40, Math.min(40, camera.position.x));
-    camera.position.z = Math.max(-24, Math.min(30, camera.position.z));
+    // Keep the player in the yard. The clamps used to enclose 80 x 54 m around
+    // a 26 x 30 m site, so three quarters of the walkable area was unlit grey
+    // plane with the warehouse out of sight behind you.
+    camera.position.x = Math.max(-14.5, Math.min(14.5, camera.position.x));
+    camera.position.z = Math.max(-19.5, Math.min(17.0, camera.position.z));
     Ctl.bob += spd * 2.2;
   } else {
     Ctl.bob += dt * 1.2;
@@ -1263,6 +1389,12 @@ function tick() {
     $('prompt').innerHTML = 'E — ' + promptFor(best);
   }
 
+  try {
+    if ((App._saveTick = (App._saveTick || 0) + 1) % 40 === 0) {
+      sessionStorage.setItem('wh_walk', JSON.stringify({
+        x: camera.position.x, z: camera.position.z, yaw: Ctl.cyaw, pitch: Ctl.cpitch }));
+    }
+  } catch (e) {}
   renderer.render(scene, camera);
 }
 function promptFor(s) {

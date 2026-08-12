@@ -331,11 +331,19 @@ anything missing shows the player a raw identifier.
      guarantee about a balance the player can also edit.
 3. **Bay contents are visible to the warehouse owner by design** — they have to
    see a load to unload it.
-4. **Performance is unmeasured on real hardware.** Headless under a software
-   rasteriser the yard runs at 3–4 fps (211 meshes, ~8.9k tris, 6 lights; the
-   truck alone is 145 draw calls). Almost certainly fine on a GPU, but measure
-   before calling the feel good, and merge more of the truck by material if not.
-5. **The wheel arches are now real holes cut from the shell** (same mechanism as
+4. **Performance is unmeasured on real hardware.** An independent probe measured
+   **36 draw calls and 410 triangles** in the rendered frame with frame rate
+   scaling exactly with pixel count at constant calls — i.e. the 2–4 fps seen
+   headless is purely SwiftShader fill rate, not scene complexity. It is very
+   likely fine on any GPU, but nobody has measured a real one.
+5. **The truck now carries three real openings** cut from the lofted shell by the
+   same mechanism — the kerb door, both wheel arches, and the cargo roll-up.
+   The cargo one exists because the delivered load was otherwise invisible: a
+   raycast from 1,888 standable positions saw 0 of 12 crates. It is now 9 of 12
+   from 1,502 positions. **If you move `CARGO` in truck.js, move the crate
+   stacking in `rebuildTruckCrates()` with it** — they are keyed together
+   through `WHTruck.CARGO`.
+6. **The wheel arches are real holes cut from the shell** (same mechanism as
    the door), which required dropping the body to `floorY 0.60` so the side wall
    actually overlaps the tyre. If you change `floorY`, re-check the arches, the
    step well and the cargo deck together — they all key off it.

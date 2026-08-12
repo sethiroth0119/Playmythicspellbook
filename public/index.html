@@ -60648,14 +60648,50 @@ function openCityHall() {
       try { if (typeof _fcSyncLoanToBankEthos === 'function') _fcSyncLoanToBankEthos(); } catch (_) {}
       const bizLoans = Array.isArray(BankEthos.businessLoans) ? BankEthos.businessLoans : [];
       const bizOutstanding = bizLoans.reduce((s, l) => s + ((l && l.balance) | 0), 0);
-      const ledgr = (BankEthos.ledger || []).slice(0, 10);
+      /* 🧾 THE STATEMENT IS A STATEMENT NOW, NOT A PREVIEW.
+         Every market sale, purchase and listing has always been written to
+         boe_ledger with the item, the quantity, the price and the counterparty
+         — the data was never missing. What was missing was any way to SEE it:
+         the panel showed ten rows of everything mixed together, so a player who
+         sold six cards yesterday could not tell you what they got for them.
+         Filter + depth, no new logging required. */
+      const _ledAll = (BankEthos.ledger || []);
+      const _MARKET_KINDS = ['market_sale', 'market_buy', 'market_list'];
+      const _ledFilter = BankEthos._ledFilter || 'all';
+      const _ledMatch = (e) => _ledFilter === 'all' ? true
+        : _ledFilter === 'market' ? _MARKET_KINDS.indexOf(e.kind) >= 0
+        : _MARKET_KINDS.indexOf(e.kind) < 0;               // 'bank' = everything else
+      const ledgr = _ledAll.filter(_ledMatch).slice(0, 40);
+      /* 💰 What the market actually earned, over the rows we hold. Sales only —
+         a purchase is money leaving, and folding the two together would print a
+         net figure that answers a question nobody asked. */
+      const _sales = _ledAll.filter(e => e.kind === 'market_sale');
+      const _soldCin = _sales.reduce((s, e) => s + Math.max(0, e.cinder | 0), 0);
+      const _soldAza = _sales.reduce((s, e) => s + Math.max(0, e.aza | 0), 0);
+      const _chip = (id, label) => '<button data-boe-led="' + id + '" style="' +
+        'padding:0.28rem 0.6rem;border-radius:6px;font-size:0.72rem;font-weight:800;cursor:pointer;' +
+        'border:1px solid ' + (_ledFilter === id ? 'rgba(212,175,55,0.75)' : 'rgba(212,175,55,0.25)') + ';' +
+        'background:' + (_ledFilter === id ? 'rgba(212,175,55,0.16)' : 'rgba(12,9,4,0.5)') + ';' +
+        'color:' + (_ledFilter === id ? '#ffd166' : '#8a7a4a') + '">' + label + '</button>';
+      const ledgerFilterBar =
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px">' +
+          _chip('all', 'All') + _chip('market', '🛒 Market') + _chip('bank', '🏦 Bank') +
+          (_sales.length
+            ? '<span class="small-text" style="margin-left:auto;color:#7fe0a0;font-weight:700">' +
+              _sales.length + ' sale' + (_sales.length === 1 ? '' : 's') + ' · +' + numF(_soldCin) + ' 🔥' +
+              (_soldAza ? ' · +' + numF(_soldAza) + ' ✦' : '') + '</span>'
+            : '') +
+        '</div>';
       const fmtTs = (ts) => {
         const d = new Date(ts || Date.now());
         return d.toLocaleString();
       };
       const headerCard = (label, value, accent) => '<div style="flex:1;min-width:140px;padding:9px 11px;border:1px solid rgba(212,175,55,0.22);border-radius:8px;background:rgba(40,32,12,0.18)"><div class="small-text" style="color:#b59a66">' + label + '</div><div style="color:' + (accent || '#ffe6b0') + ';font-weight:800;font-size:1.05rem">' + value + '</div></div>';
       const ledgerRows = ledgr.length === 0
-        ? '<div class="ink-dim" style="padding:0.8rem;text-align:center">No recent transactions.</div>'
+        ? '<div class="ink-dim" style="padding:0.8rem;text-align:center">' +
+          (_ledFilter === 'market' ? 'Nothing bought or sold on the market yet.'
+           : _ledFilter === 'bank' ? 'No bank transfers yet.'
+           : 'No recent transactions.') + '</div>'
         : ledgr.map(e => {
             const c = (e.cinder | 0), a = (e.aza | 0);
             const signC = c >= 0 ? '+' : '';
@@ -60699,6 +60735,7 @@ function openCityHall() {
         bizLoanSection +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div class="small-text" style="color:#b59a66">Recent ledger entries</div>' +
         '<button id="ch-open-boe" style="cursor:pointer;border:1px solid rgba(212,175,55,0.4);background:rgba(212,175,55,0.14);color:#ffcf5a;border-radius:7px;padding:0.35rem 0.7rem;font-weight:800;font-size:0.8rem">🏦 Open Bank of Ethos →</button></div>' +
+        ledgerFilterBar +
         ledgerRows;
     };
 
@@ -60754,6 +60791,18 @@ function openCityHall() {
       const _openBoe = () => { close(); try { if (typeof openBankOfEthos === 'function') openBankOfEthos(); } catch (e) {} };
       const gateBtn = document.getElementById('ch-open-boe-gate'); if (gateBtn) gateBtn.onclick = _openBoe;
       const tabBtn  = document.getElementById('ch-open-boe');      if (tabBtn)  tabBtn.onclick  = _openBoe;
+      /* 🧾 Statement filter. Held on BankEthos rather than in a local so the
+         chosen view survives the panel re-rendering on the next ledger refresh
+         — a filter that silently resets to All every few seconds is worse than
+         no filter at all. */
+      try {
+        document.querySelectorAll('[data-boe-led]').forEach((b) => {
+          b.onclick = () => {
+            BankEthos._ledFilter = b.getAttribute('data-boe-led') || 'all';
+            render();
+          };
+        });
+      } catch (e) {}
       const fnd = document.getElementById('ch-found');
       /* Open the charter itself, not just the screen. `jb:open` with 'found' is
          the corp app's own deep link (corp/app.jsx:157) and is already used by

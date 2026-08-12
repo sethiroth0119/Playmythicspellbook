@@ -62,7 +62,10 @@ select public.wh_eta_hours(0), public.wh_eta_hours(10); -- 72, 6
 
 ## 3 · Client — four insertions in `public/index.html`
 
-Each anchor below is **unique** in the file (`grep -c` returns 1). Search for the
+Each anchor below is **unique** in the file. ⚠ One caveat: the 3-line city
+anchor in §3.4 returns 0 from a naive `grep -c` because its third line is what
+the insertion displaces — check the first two lines of that one, or search for
+`x.onclick = _closeNodeCity;` alone. The other six match exactly once. Search for the
 anchor, then insert exactly where stated.
 
 ### 3.1 The module
@@ -323,7 +326,7 @@ something to show a player. Add a line to *both* whenever you add an RPC.
 - [ ] Filling a bay raises **"You need to open storage unit space"** offering
       **10 Aza** or **50,000 Cinder**; unaffordable options are disabled.
 - [ ] Buying **grows that bay by 500 kg** and the crate in hand then fits.
-- [ ] **Upgrade to tier 3, then WALK TO EVERY NEW BAY** and press E at each one.
+- [ ] **Upgrade to **tier 5** (32 bays), then WALK TO EVERY NEW BAY** and press E at each one.
       Counting bays in the HUD is not enough — a build where the bays exist but
       cannot be reached satisfies a count and fails the player.
 - [ ] A truck **pulls up** when a load lands, and pulls away once it is empty.
@@ -397,3 +400,25 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
    the door), which required dropping the body to `floorY 0.60` so the side wall
    actually overlaps the tyre. If you change `floorY`, re-check the arches, the
    step well and the cargo deck together — they all key off it.
+
+7. **THE BAY LAYOUT IS THE MOST FRAGILE GEOMETRY IN THE MODULE.** Four numbers
+   have to agree, and three separate bugs have come from them drifting apart:
+   - `BAYS_PER_ROW` and `ROW_PITCH` decide how many rows a bay count needs;
+   - `shedZB(n)` derives the shed's back wall from that;
+   - `clampPos()` derives where a player may stand from `App.shedZB`;
+   - the key light's `shadow.camera.bottom` derives its reach from it too.
+   Change any one and re-run `_wh_reach_check.mjs`, which drives the real page
+   at every tier a warehouse can sell. It calls the page's own `blocked()` **and**
+   its own `clampPos()` — never a copy of either. An earlier version modelled the
+   clamp instead of calling it, and cheerfully certified 32/32 bays walkable
+   while 20 sat behind a hardcoded `-19.5`: tier 5 cost 1,500,000 Cinder and
+   delivered 12 walkable bays out of 32.
+
+8. **`WHTruck.SHADOW_HINT` is a cross-file contract.** `truck.js` exports the
+   `bias` / `normalBias` / `mapSize` its flat slab sides were authored against,
+   and `public/warehouse/index.html` reads it when configuring the key light.
+   Ignore it and the truck stripes itself with shadow acne down every flat panel.
+   The shadow **frustum** is a separate hazard with the same shape as the clamp
+   bug: `shadow.camera.bottom` must reach `App.shedZB`, or the back of the shed
+   silently stops casting and receiving shadows — at tier 5 that was the back
+   16.6 m, half the bays.

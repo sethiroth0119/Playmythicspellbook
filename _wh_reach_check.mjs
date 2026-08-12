@@ -34,14 +34,19 @@ const PAGE = join(ROOT, 'public', 'warehouse', 'index.html');
 // ── locate three.js ────────────────────────────────────────────────────────
 const CANDIDATES = [
   process.env.WH_THREE,
+  // ⚠ THE REPO'S OWN COPY FIRST. public/assets/vfx/three.min.js is committed at
+  // HEAD and is r128 — the same build the page loads. Omitting it made this
+  // gate demand an npm install for a file already sitting in the working tree,
+  // and offline that was the difference between running and being skipped.
+  join(ROOT, 'public', 'assets', 'vfx', 'three.min.js'),
   join(ROOT, 'node_modules', 'three', 'build', 'three.min.js'),
   join(ROOT, 'node_modules', 'three', 'build', 'three.js'),
 ].filter(Boolean);
 const threePath = CANDIDATES.find(p => { try { return existsSync(p); } catch (e) { return false; } });
 if (!threePath) {
   console.error('✖ cannot run: three.js r128 not found.\n'
-    + '  Install it:  npm i three@0.128.0 --no-save\n'
-    + '  or point at a copy:  WH_THREE=/path/to/three.min.js node _wh_reach_check.mjs');
+    + '  Expected the repo copy at public/assets/vfx/three.min.js\n'
+    + '  or point at another:  WH_THREE=/path/to/three.min.js node _wh_reach_check.mjs');
   process.exit(2);
 }
 
@@ -103,6 +108,15 @@ for (const n of TIERS) {
     // reimplementation of it — the point is to catch the case where the game's
     // own idea of "solid" walls a bay off.
     const S = 0.2, key = (a, b) => a + ',' + b;
+    // ⚠ CALL THE GAME'S OWN CLAMP. Do not restate it. The first attempt at this
+    // gate rebuilt the clamp from App.shedZB — which is what the clamp SHOULD
+    // be — and so it passed a page whose real clamp was still hardcoded at
+    // -19.5, certifying 32/32 walkable while 20 bays were sealed off. A cell is
+    // standable only if App.clampPos() leaves it exactly where it is.
+    const clamped = (x, z) => {
+      const c = App.clampPos(x, z);
+      return Math.abs(c.x - x) < 1e-9 && Math.abs(c.z - z) < 1e-9;
+    };
     const start = [Math.round(App.truckDoor.x / S), Math.round(App.truckDoor.z / S)];
     const seen = new Set([key(start[0], start[1])]);
     const q = [start];
@@ -113,7 +127,12 @@ for (const n of TIERS) {
       for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const nx = cx + dx, nz = cz + dz;
         const wx = nx * S, wz = nz * S;
-        if (wx < -30 || wx > 30 || wz < App.shedZB - 3 || wz > 26) continue;
+        // ⚠ MODEL THE MOVEMENT CLAMP, NOT JUST blocked(). This gate certified
+        // 32/32 bays walkable while 20 of them were behind a hardcoded
+        // camera.position.z clamp — it was flooding through a wall the tick
+        // loop would never let the player cross. A reachability gate has to
+        // reproduce EVERY constraint on movement, not the interesting one.
+        if (!clamped(wx, wz)) continue;
         const k = key(nx, nz);
         if (seen.has(k)) continue;
         seen.add(k);
@@ -131,7 +150,9 @@ for (const n of TIERS) {
         for (let oz = -rr; oz <= rr; oz++) {
           if (ox * ox + oz * oz > rr * rr) continue;
           const gx = Math.round(x / S) + ox, gz = Math.round(z / S) + oz;
-          if (seen.has(key(gx, gz)) && !blocked(gx * S, gz * S)) return true;
+          const sx = gx * S, sz = gz * S;
+          if (!clamped(sx, sz)) continue;
+          if (seen.has(key(gx, gz)) && !blocked(sx, sz)) return true;
         }
       }
       return false;

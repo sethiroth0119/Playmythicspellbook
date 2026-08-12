@@ -344,6 +344,14 @@
   // ─── 🛞 Wheel — steel rim, modest hubcap, chunky sidewall ───────────────────
   function wheel(THREE, mats, x, z) {
     const g = new THREE.Group();
+    // ⚠ MIRROR BY SIDE. The cap and the lug ring used to be placed at a fixed
+    // +X offset regardless of which flank the wheel was on, so on the −X
+    // (street) side every hubcap and every lug faced INBOARD and was hidden
+    // behind its own tyre. Half the truck's hubcaps were simply missing — on
+    // exactly the flank that lost the blind A/B four rounds running, while the
+    // kerb flank (which has them) did fine. `out` is the outboard direction for
+    // this wheel; everything on the visible face keys off it.
+    const out = x < 0 ? -1 : 1;
     const t = cyl(THREE, g, D.wheelR, D.wheelR, D.wheelW, 26, mats.rubber, 0, 0, 0);
     t.rotation.z = Math.PI / 2;
     // Sidewall shoulders, so the tyre is not a bare cylinder.
@@ -353,13 +361,13 @@
     });
     const rim = cyl(THREE, g, D.wheelR * 0.60, D.wheelR * 0.60, D.wheelW * 0.55, 22, mats.steel, 0, 0, 0);
     rim.rotation.z = Math.PI / 2;
-    const cap = cyl(THREE, g, D.wheelR * 0.36, D.wheelR * 0.40, 0.05, 20, mats.chrome, D.wheelW * 0.50, 0, 0);
+    const cap = cyl(THREE, g, D.wheelR * 0.36, D.wheelR * 0.40, 0.05, 20, mats.chrome, out * D.wheelW * 0.50, 0, 0);
     cap.rotation.z = Math.PI / 2;
     // Lug ring — reads at a glance, and as ONE mesh it costs almost nothing.
     const lugs = [];
     for (let i = 0; i < 6; i++) {
       const a = i / 6 * Math.PI * 2;
-      lugs.push({ w: 0.034, h: 0.042, d: 0.042, x: D.wheelW * 0.54,
+      lugs.push({ w: 0.034, h: 0.042, d: 0.042, x: out * D.wheelW * 0.54,
         y: Math.sin(a) * D.wheelR * 0.24, z: Math.cos(a) * D.wheelR * 0.24, rx: a });
     }
     g.add(mergeBoxes(THREE, lugs, mats.chrome));
@@ -422,7 +430,12 @@
 
     // ── cargo interior — a real floor, liner walls and a cab bulkhead, so the
     //    open slider reveals somewhere goods could actually go ───────────────
-    box(THREE, T, 2.02, 0.06, 4.42, mats.floor, 0, D.floorY + 0.06, -0.62);
+    // ⚠ 1.92 wide, not 2.02. At 2.02 the deck's cut edge sat at |x| 1.01 — 40 mm
+    // behind the flank plane and squarely in the arch opening, where it read at
+    // luminance 192 against a 168 flank. The brightest pixels on the whole side
+    // of the truck were inside a wheel arch. Pulled back behind the wheel
+    // houses and the liners, where the deck belongs.
+    box(THREE, T, 1.92, 0.06, 4.42, mats.floor, 0, D.floorY + 0.06, -0.62);
     // ⚠ WHEEL HOUSES. A 0.92 m tyre against a 0.69 m deck top means the rear
     // duals passed 0.23 m THROUGH the cargo floor, and with the flank now cut
     // open you looked straight at a bare tyre standing in the load space. Every
@@ -436,7 +449,11 @@
       // DARK: a pale box around a wheel is exactly the picture-frame cage the
       // flank was just cleaned of.
       const wInner = OUTER - D.dualGap - D.wheelW / 2 - 0.05;   // inboard edge of the inner dual
-      const wOuter = D.halfW;
+      // ⚠ NOT D.halfW. At exactly 1.05 these eight faces are coplanar with the
+      // shell's own side wall, and ~5.3 m of them z-fought into a hard dark
+      // strip painted across intact white skin just above the arch cut. 10 mm
+      // inboard is invisible and ends the fight.
+      const wOuter = D.halfW - 0.010;
       const wxc = sd * (wInner + wOuter) / 2, ww = wOuter - wInner;
       const wz = D.zAxleR, wl = ARCH_HALF * 2 + 0.10, wh2 = 0.46;
       box(THREE, T, ww, 0.05, wl, mats.cabin,  wxc, D.floorY + wh2, wz);           // top
@@ -459,7 +476,10 @@
     const cfx = D.halfW + 0.020, ccz = (CARGO.z0 + CARGO.z1) / 2, ccw = CARGO.z1 - CARGO.z0;
     box(THREE, T, 0.042, D.shoulderY - D.floorY + 0.06, 0.055, mats.paint, cfx, (D.floorY + D.shoulderY) / 2, CARGO.z0 - 0.028);
     box(THREE, T, 0.042, D.shoulderY - D.floorY + 0.06, 0.055, mats.paint, cfx, (D.floorY + D.shoulderY) / 2, CARGO.z1 + 0.028);
-    box(THREE, T, 0.042, 0.060, ccw + 0.11, mats.paint, cfx, D.floorY - 0.028, ccz);
+    // ⚠ NOT body-white. This sill runs proud of the flank at tyre-crown height and
+    // cut straight across the rear duals, bisecting a hubcap — a bright bar over
+    // the darkest part of the truck. It is a threshold plate; treat it as one.
+    box(THREE, T, 0.042, 0.060, ccw + 0.11, mats.black, cfx, D.floorY - 0.028, ccz);
     const shut = [];
     for (let i = 0; i < 7; i++) shut.push({ w: 0.052, h: 0.055, d: ccw - 0.04, x: cfx + 0.012, y: D.shoulderY - 0.10 - i * 0.062, z: ccz });
     T.add(mergeBoxes(THREE, shut, mats.seam));
@@ -501,8 +521,11 @@
     const APER_R = [[DOOR.z0, DOOR.z1, D.shoulderY], [CARGO.z0, CARGO.z1, D.shoulderY],
                     [D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF, ARCH_TOP],
                     [D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF, ARCH_TOP]];
-    const APER_L = [[CARGO.z0, CARGO.z1, D.shoulderY],
-                    [D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF, ARCH_TOP],
+    // ⚠ SIDE-AWARE. The cargo opening is cut KERB-SIDE ONLY (`i >= WALL_R0` in
+    // shell()), so listing it here broke the STREET rub rail and lower seam for
+    // an opening that is not on that flank — a 2.078 m gap in the trim over
+    // completely intact white skin. Only the wheel arches are cut on both sides.
+    const APER_L = [[D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF, ARCH_TOP],
                     [D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF, ARCH_TOP]];
     // Stop where the flank is still FULL WIDTH. Past z 2.46 the shell tapers in
     // toward the cab, so a rail run out to 2.84 left a 14 cm chip floating

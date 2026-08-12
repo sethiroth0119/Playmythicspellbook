@@ -549,10 +549,18 @@ function buildScene() {
   var key = new T.DirectionalLight(0xffd9a8, 1.5);
   key.position.set(6, 20, 14); key.castShadow = true;
   key.shadow.mapSize.set(SHMAP, SHMAP);
+  // ⚠ THE SHADOW FRUSTUM MUST REACH THE BACK WALL. Like the movement clamp,
+  // this was fixed at -30 while the shed's depth became derived: at tier 5 the
+  // building runs to z -46.6, so the back 16.6 m — half the bays — cast and
+  // received no shadows at all. Sized off the same shedZB the geometry uses,
+  // with a margin, so the two cannot drift apart.
+  var _shZ = (App.shedZB != null ? App.shedZB : -19) - 6;
   key.shadow.camera.left = -30; key.shadow.camera.right = 30;
-  key.shadow.camera.top = 30; key.shadow.camera.bottom = -30;
+  key.shadow.camera.top = 30; key.shadow.camera.bottom = _shZ;
+  key.shadow.camera.updateProjectionMatrix();
   key.shadow.camera.near = 1; key.shadow.camera.far = 70;
   key.shadow.bias = sh.bias; key.shadow.normalBias = Math.max(0.28, sh.normalBias);
+  App.keyLight = key;
   scene.add(key);
   var fill = new T.DirectionalLight(0x5b76a8, 0.26); fill.position.set(-12, 8, -14); scene.add(fill);
 
@@ -662,6 +670,14 @@ function buildScene() {
     App.colliders = App.colliders.filter(function (c) { return !c._shed; });
     var ZB = shedZB(units);
     App.shedZB = ZB;
+    // Re-fit the shadow frustum to the new depth. buildScene() sizes it once at
+    // boot, but the shed grows every time a tier is bought.
+    try {
+      if (App.keyLight) {
+        App.keyLight.shadow.camera.bottom = ZB - 6;
+        App.keyLight.shadow.camera.updateProjectionMatrix();
+      }
+    } catch (e) {}
     var keep = function (o) { App.shedParts.push(o); return o; };
     var wall = function (w, h, d, m, x, y, z, noShadow) {
       var o = box(w, h, d, m, x, y, z, noShadow); keep(o); return o;
@@ -1504,6 +1520,25 @@ function dropHeld() {
 
 /* ── movement + collision. One AABB list, swept per axis so sliding along a
       wall feels right instead of sticking. ─────────────────────────────────── */
+// ⚠ THE ONLY PLACE THE YARD DECIDES WHERE A PLAYER MAY STAND.
+// The back wall MOVES: shedZB() derives the shed's depth from the bay count,
+// but this clamp used to be hardcoded at -19.5 and never followed it. At tier 5
+// the shed reaches z -46.6 and holds 32 bays — 20 of them sat behind an
+// invisible wall you could walk into but never through. 1,500,000 Cinder for 12
+// walkable bays out of 32.
+//
+// It is a FUNCTION, and the tick loop calls it, because the reachability gate
+// calls it too. The first fix left the clamp inline and taught the gate to model
+// it; the gate then happily re-certified the hardcoded version, because a gate
+// that reimplements a rule only ever tests its own copy of it. Same discipline
+// as blocked(): the check runs the game's code, never a paraphrase of it.
+function clampPos(x, z) {
+  var zBack = (App.shedZB != null ? App.shedZB : -19) + 0.6;
+  return { x: Math.max(-14.5, Math.min(14.5, x)),
+           z: Math.max(zBack, Math.min(17.0, z)) };
+}
+App.clampPos = clampPos;
+
 function blocked(x, z) {
   var R = 0.42;
   for (var i = 0; i < App.colliders.length; i++) {
@@ -1565,8 +1600,8 @@ function tick() {
     // Keep the player in the yard. The clamps used to enclose 80 x 54 m around
     // a 26 x 30 m site, so three quarters of the walkable area was unlit grey
     // plane with the warehouse out of sight behind you.
-    camera.position.x = Math.max(-14.5, Math.min(14.5, camera.position.x));
-    camera.position.z = Math.max(-19.5, Math.min(17.0, camera.position.z));
+    var _cp = App.clampPos(camera.position.x, camera.position.z);
+    camera.position.x = _cp.x; camera.position.z = _cp.z;
     Ctl.bob += spd * 2.2;
   } else {
     Ctl.bob += dt * 1.2;

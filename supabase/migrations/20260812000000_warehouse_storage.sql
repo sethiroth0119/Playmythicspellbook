@@ -850,7 +850,12 @@ returns jsonb language sql stable security definer set search_path = public as $
     'weight_kg', s.weight_kg, 'payload', s.payload,
     'status', case when s.status = 'transit' and s.eta_at <= now() then 'arrived' else s.status end,
     'crates_total', s.crates_total, 'crates_stored', s.crates_stored,
-    'crates_left', (select count(*) from public.wh_crates c where c.shipment_id = s.id and c.stored = false)
+    'crates_left', (select count(*) from public.wh_crates c where c.shipment_id = s.id and c.stored = false),
+    -- The kilograms already put away, so a client can compute the SAME
+    -- "still on the road" figure wh_send_shipment nets off before accepting a
+    -- new load. Without it the send modal could only guess, and it guessed high.
+    'stored_kg', coalesce((select sum(c.weight_kg) from public.wh_crates c
+                            where c.shipment_id = s.id and c.stored), 0)
   ) order by s.eta_at)
   from public.wh_shipments s
   join public.wh_warehouses w on w.id = s.warehouse_id

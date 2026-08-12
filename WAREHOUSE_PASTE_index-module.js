@@ -259,6 +259,20 @@ function _whReason(r) {
 // Weights and limits come from wh_config() — never a second copy in the client.
 // Cached because the send modal reads them on every keystroke.
 let WH_WEIGHTS = {}, WH_MAXKG = 1800, WH_DEFKG = 1;
+// kg already in transit to each warehouse, keyed by warehouse id. The server
+// nets this off before accepting a shipment, so the send modal has to as well.
+let _whInflight = {};
+async function _whRefreshInflight() {
+  _whInflight = {};
+  try {
+    const rows = await _whRpc('wh_my_shipments', {});
+    (rows || []).forEach(sp => {
+      if (!sp || (sp.status !== 'transit' && sp.status !== 'arrived')) return;
+      const left = Math.max(0, (+sp.weight_kg || 0) - (+sp.stored_kg || 0));
+      _whInflight[sp.warehouse_id] = (_whInflight[sp.warehouse_id] || 0) + left;
+    });
+  } catch (e) {}
+}
 async function _whLoadConfig() {
   const c = await _whRpc('wh_config', {});
   if (c) {
@@ -269,6 +283,9 @@ async function _whLoadConfig() {
   return c;
 }
 async function _whOpenSendModal(kind, nodeId, label) {
+  // The limit shown must net off what is already on the road, exactly as the
+  // server does — so fetch it before the modal renders, not after it lies.
+  await _whRefreshInflight();
   const rentals = await _whFetchRentals(true);
   if (!rentals.length) { _whOpenDirectory(kind, nodeId, label); return; }
   await _whLoadConfig();
@@ -314,14 +331,27 @@ async function _whOpenSendModal(kind, nodeId, label) {
     });
     const sel = root.querySelector('#wh-bay');
     const bay = rentals.filter(r => r.unit_id === (sel && sel.value))[0];
-    const free = bay ? Math.max(0, bay.capacity_kg - bay.used_kg) : WH_MAXKG;
+    // ⚠ MIRROR THE SERVER'S SUM, NOT THIS ONE BAY. wh_send_shipment computes
+    // free space as EVERY bay this sender rents in that warehouse, MINUS every
+    // kilogram already on the road to them. Showing only the selected bay's
+    // headroom meant the meter read green and Send came back
+    // `no_room_at_destination` — the same late-discovery failure that was fixed
+    // for `too_large` and left in place here. The server is still the authority;
+    // this just stops the UI promising something it will refuse.
+    const wid = bay ? bay.warehouse_id : null;
+    const sameWh = wid ? rentals.filter(r => r.warehouse_id === wid) : (bay ? [bay] : []);
+    const capFree = sameWh.reduce((t, r) => t + Math.max(0, r.capacity_kg - r.used_kg), 0);
+    const inFlight = (_whInflight[wid] != null) ? _whInflight[wid] : 0;
+    const free = bay ? Math.max(0, capFree - inFlight) : WH_MAXKG;
     const lim = Math.min(WH_MAXKG, free);
     const el = root.querySelector('#wh-kg'), bar = root.querySelector('#wh-kgbar');
     if (el) { el.textContent = kg.toFixed(1) + ' kg'; el.style.color = kg > lim ? '#ff6b6b' : '#ffd166'; }
     if (bar) { bar.style.width = Math.min(100, kg / Math.max(1, lim) * 100) + '%';
                bar.style.background = kg > lim ? 'linear-gradient(90deg,#ff9c2e,#ff6b6b)' : 'linear-gradient(90deg,#7ce8a8,#ffd166)'; }
     const lb = root.querySelector('#wh-kglim');
-    if (lb) lb.textContent = 'of ' + lim.toLocaleString() + ' kg free' + (free < WH_MAXKG ? ' in Bay ' + (bay ? bay.bay_no : '?') : '');
+    if (lb) lb.textContent = 'of ' + lim.toLocaleString() + ' kg free'
+      + (free < WH_MAXKG ? (sameWh.length > 1 ? ' across your bays there' : ' in Bay ' + (bay ? bay.bay_no : '?')) : '')
+      + (inFlight > 0 ? ' (' + Math.round(inFlight).toLocaleString() + ' kg already on the road)' : '');
     const go = root.querySelector('.wh-go');
     if (go) { go.disabled = (kg <= 0 || kg > lim); go.style.opacity = go.disabled ? '0.45' : '1'; }
   };
@@ -464,7 +494,10 @@ function _whCreditPayload(payload, why) {
     // exists for — the server has emptied the bay and the goods now live only
     // in this tab's memory — passed silently, and a background tab was the
     // likeliest case.
-    saved = (typeof saveProfile === 'function') ? (saveProfile() !== false) : false;
+    // ⚠ === true. Anything else — false, undefined, a future refactor's null —
+    // means "not proven written", and this is the one place in the module where
+    // an unproven write silently destroys the player's goods.
+    saved = (typeof saveProfile === 'function') ? (saveProfile() === true) : false;
     if (!saved && typeof _persistProgressNow === 'function') {
       // One forced retry through the direct persist path before we alarm.
       try { _persistProgressNow(); saved = true; } catch (e) { saved = false; }

@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120v7';
+  window.BUILD_VERSION = 'v120v8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -183592,7 +183592,15 @@ function _rlcCashOutRewards(run) {
     if (card) { Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1; granted++; }
   });
   const cin = Math.max(0, parseInt(run.currency, 10) || 0);
-  if (cin > 0) Profile.gems = Math.max(0, (Profile.gems || 0) + cin);
+  // 🔴 Was `Profile.gems = Math.max(0, gems + cin)` — a raw local credit. It saved
+  //    the profile but never touched the canonical wallet, so the server never
+  //    learned about a run's winnings and reconcile_local_gain_on_fetch had to
+  //    clean up after it with an anonymous difference-credit. Run cash-outs are
+  //    the largest of the remaining unattributed faucets (hundreds to thousands
+  //    per run). addGems mirrors to user_progress.cinder and, if that call
+  //    fails, hands the exact reward to the outbox to replay — which is what
+  //    lets the difference-credit be deleted.
+  if (cin > 0) addGems(cin, 'Roguelite run cash-out');
   run._cashedRewards = { cards: granted, cinders: cin };
   try { (typeof _persistProgressNow === 'function') ? _persistProgressNow() : saveProfile(); } catch (e) {}
 }
@@ -216174,7 +216182,22 @@ function _reconApplyEffects(eff) {
   const r = _reconState();
   for (const k in eff) {
     if (k === 'pop') { if (!Profile.campWorkforce || typeof Profile.campWorkforce !== 'object') Profile.campWorkforce = {}; for (const role in eff.pop) Profile.campWorkforce[role] = Math.max(0, (Profile.campWorkforce[role] | 0) + eff.pop[role]); continue; }
-    if (k === 'cinder') { Profile.gems = Math.max(0, (Profile.gems || 0) + eff.cinder); continue; }
+    // 🔴 This one is BIDIRECTIONAL — reconstruction events both pay out and
+    //    fine (there are cinder:-800 and cinder:-600 effects), so it cannot be
+    //    routed wholesale through addGems: a negative would drop the local
+    //    balance while wallet_credit refuses amounts <= 0, opening a fresh
+    //    divergence in the other direction.
+    //    The GAIN now mirrors. The PENALTY deliberately keeps its old
+    //    local-only clamp — see the note in _reconApplyEffects' caller; billing
+    //    it through _serverMirrorCharge would book civic tax on a fine, which
+    //    inflates the Foundation Reserve pool from a non-market event. That is
+    //    an economy decision, not a bug fix.
+    if (k === 'cinder') {
+      const d = Math.floor(eff.cinder || 0);
+      if (d > 0) addGems(d, 'Reconstruction event');
+      else if (d < 0) Profile.gems = Math.max(0, (Profile.gems || 0) + d);
+      continue;
+    }
     if (k === 'prestige') { Profile.campPrestige = Math.max(0, _campPrestige() + eff.prestige); continue; }
     if (k === 'contrib') { Profile.campContrib = Math.max(0, Math.min(100, _campContrib() + eff.contrib)); continue; }
     if (k === 'morale' || k === 'security' || k === 'hope') { r.vitals[k] = Math.max(0, Math.min(100, (r.vitals[k] || 0) + eff[k])); continue; }

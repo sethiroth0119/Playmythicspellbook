@@ -335,15 +335,28 @@ begin
   update public.warpath_inventory set carried = 40 where expedition_id = ea and kind = 'wood';
   -- snapshot the vault so we can prove the battle did not touch it
   select secured into n from public.warpath_inventory where expedition_id = ea and kind = 'void_crystal';
+  -- ⚠ A BARE WIN CLAIM IS NOT ENOUGH ANY MORE. B (the attacker) naming itself
+  -- is exactly what an exploiter would send, so it is recorded and waits.
   perform public.set_uid(ub);
   r := public.warpath_battle_report(v_battle, eb);
   if not (r->>'ok')::boolean then raise exception 'FAIL: report: %', r; end if;
-  if not (r->>'we_won_race')::boolean then raise exception 'FAIL: first reporter lost the race'; end if;
-  pass := pass + 1; raise notice 'ok  the verdict was consumed, spoils %', r->>'spoils';
+  if not (r->>'pending_confirmation')::boolean then
+    raise exception 'FAIL: a bare self-declared WIN resolved on one report: %', r; end if;
+  if (select status from public.warpath_battles where id = v_battle) <> 'open' then
+    raise exception 'FAIL: the battle resolved on an uncorroborated win claim'; end if;
+  pass := pass + 1; raise notice 'ok  a self-declared win waits for the opponent';
 
-  -- second report is a harmless read-back, exactly like mp_resolve_match
+  -- A concedes. Nobody lies to lose, so that settles it immediately.
+  perform public.set_uid(ua);
+  r := public.warpath_battle_report(v_battle, eb);
+  if not (r->>'we_won_race')::boolean then raise exception 'FAIL: agreement did not resolve: %', r; end if;
+  if (r->>'winner')::uuid <> eb then raise exception 'FAIL: wrong winner recorded'; end if;
+  pass := pass + 1; raise notice 'ok  both sides agreeing resolves it — spoils %', r->>'spoils';
+
+  -- and a further report is a harmless read-back, exactly like mp_resolve_match
+  perform public.set_uid(ub);
   r := public.warpath_battle_report(v_battle, ea);
-  if (r->>'we_won_race')::boolean then raise exception 'FAIL: a second report overwrote the winner'; end if;
+  if (r->>'we_won_race')::boolean then raise exception 'FAIL: a later report overwrote the winner'; end if;
   if (r->>'winner')::uuid <> eb then raise exception 'FAIL: the winner changed on re-report'; end if;
   pass := pass + 1; raise notice 'ok  a double report reads back the authoritative winner';
 
@@ -633,7 +646,16 @@ begin
   if n <> 4 then raise exception 'FAIL: attacking cost % movement, expected 2', 6 - n; end if;
   pass := pass + 1; raise notice 'ok  challenging a Hero costs 2 movement';
 
+  -- resolve it properly: B claims, A concedes. A bare win claim now leaves the
+  -- battle OPEN awaiting the opponent, so without the concession the next
+  -- assertion would trip on battle_already_open instead of the rule it tests.
   perform public.warpath_battle_report((r->>'battle_id')::uuid, eb);
+  perform public.set_uid(ua);
+  perform public.warpath_battle_report((r->>'battle_id')::uuid, eb);
+  perform public.set_uid(ub);
+  if (select status from public.warpath_battles where id = (r->>'battle_id')::uuid) <> 'resolved' then
+    raise exception 'FAIL: agreement did not resolve the battle'; end if;
+
   r := public.warpath_battle_open(eb, ea);
   if (r->>'ok')::boolean then
     raise exception 'FAIL: the same pairing fought twice in one turn — free re-attack'; end if;
@@ -784,4 +806,115 @@ begin
 
   raise notice '';
   raise notice '════════ WALLETS: % CHECKS PASSED ════════', pass;
+end $$;
+
+-- =============================================================================
+-- Four-player harness findings B3, B4, B7, B8. Each was live behaviour.
+-- =============================================================================
+do $$
+declare
+  ua uuid; ub uuid; ea uuid; eb uuid; r jsonb; v_run uuid; v_seed bigint;
+  v_gate jsonb; n int; pass int := 0;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  insert into auth.users (email) values ('b3a@w.test') returning id into ua;
+  insert into auth.users (email) values ('b3b@w.test') returning id into ub;
+  insert into public.warpath_tickets (user_id, tickets) values (ua, 5), (ub, 5);
+
+  perform public.set_uid(ua);
+  r := public.warpath_enter('h', 'Ash', 'ticket');
+  ea := (r->>'expedition_id')::uuid; v_run := (r->>'run_id')::uuid;
+  select seed into v_seed from public.warpath_runs where id = v_run;
+  perform public.set_uid(ub);
+  r := public.warpath_enter('h', 'Vex', 'ticket');
+  eb := (r->>'expedition_id')::uuid;
+
+  -- ── B7: ending your turn must actually END it ──────────────────────────
+  perform public.set_uid(ua);
+  update public.warpath_expeditions set x = 11, y = 3, moves_left = 6 where id = ea;
+  perform public.warpath_end_turn(ea);
+  if not (select turn_ended from public.warpath_expeditions where id = ea) then
+    raise exception 'FAIL: end_turn did not set turn_ended'; end if;
+  r := public.warpath_move(ea, 11, 4);
+  if (r->>'ok')::boolean then
+    raise exception 'FAIL: moved after ending the turn — the barrier is decorative'; end if;
+  if r->>'reason' <> 'turn_already_ended' then raise exception 'FAIL: wrong reason %', r->>'reason'; end if;
+  r := public.warpath_harvest(ea);
+  if (r->>'ok')::boolean then raise exception 'FAIL: harvested after ending the turn'; end if;
+  r := public.warpath_camp_place(ea);
+  if (r->>'ok')::boolean then raise exception 'FAIL: pitched camp after ending the turn'; end if;
+  pass := pass + 1; raise notice 'ok  ending a turn stops movement, harvesting and camping';
+
+  -- let the turn roll over
+  perform public.set_uid(ub); perform public.warpath_end_turn(eb);
+
+  -- ── B3: a defeat must interrupt an extraction ──────────────────────────
+  perform public.set_uid(ua);
+  select s into v_gate from jsonb_array_elements(public.wp_structures(v_seed)) s
+    where s->>'k' = 'gate' limit 1;
+  update public.warpath_expeditions set x = (v_gate->>'x')::int, y = (v_gate->>'y')::int,
+         status = 'active', moves_left = 6, turn_ended = false where id = ea;
+  perform public.warpath_camp_place(ea);
+  r := public.warpath_extract_begin(ea);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: extract_begin: %', r; end if;
+  if (select status from public.warpath_expeditions where id = ea) <> 'extracting' then
+    raise exception 'FAIL: not extracting'; end if;
+
+  update public.warpath_expeditions set x = (v_gate->>'x')::int + 1, y = (v_gate->>'y')::int,
+         moves_left = 6, turn_ended = false, protected_until = 0 where id = eb;
+  perform public.set_uid(ub);
+  r := public.warpath_battle_open(eb, ea);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: could not challenge an extracting hero: %', r; end if;
+  perform public.warpath_battle_report((r->>'battle_id')::uuid, eb);
+  perform public.set_uid(ua);
+  perform public.warpath_battle_report((r->>'battle_id')::uuid, eb);   -- concede
+
+  if (select status from public.warpath_expeditions where id = ea) <> 'active' then
+    raise exception 'FAIL: a hero beaten mid-extraction is still extracting (status %)',
+      (select status from public.warpath_expeditions where id = ea); end if;
+  if (select extract_left from public.warpath_expeditions where id = ea) <> 0 then
+    raise exception 'FAIL: the countdown survived the defeat'; end if;
+  if not exists (select 1 from public.warpath_events where run_id = v_run and kind = 'extraction_broken') then
+    raise exception 'FAIL: nobody was told the extraction was broken'; end if;
+  pass := pass + 1; raise notice 'ok  losing mid-extraction cancels the countdown';
+
+  -- ── B4: a beaten hero cannot be pinned on its own campfire ─────────────
+  n := (select protected_until from public.warpath_expeditions where id = ea);
+  if n <= (select turn from public.warpath_runs where id = v_run) then
+    raise exception 'FAIL: no regrouping grace after a defeat (protected_until %)', n; end if;
+  perform public.set_uid(ub);
+  update public.warpath_battles set opened_turn = -1 where run_id = v_run;   -- clear the per-turn cap
+  update public.warpath_expeditions set moves_left = 6 where id = eb;
+  r := public.warpath_battle_open(eb, ea);
+  if (r->>'ok')::boolean then
+    raise exception 'FAIL: a just-beaten hero was re-challenged immediately — that is a hostage, not a raid'; end if;
+  if r->>'reason' <> 'target_regrouping' then raise exception 'FAIL: wrong reason %', r->>'reason'; end if;
+  pass := pass + 1; raise notice 'ok  a beaten hero gets a grace period before it can be hit again';
+
+  -- ── B8: the completion screen must not lie ─────────────────────────────
+  perform public.set_uid(ua);
+  update public.warpath_expeditions set status = 'ready', extract_left = 0 where id = ea;
+  -- nothing secured beyond the loaner deck: the honest answer is 0, not null
+  delete from public.warpath_cards where expedition_id = ea and source <> 'starter';
+  r := public.warpath_extract_finish(ea, null);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: extract_finish: %', r; end if;
+  if (r->'summary'->>'cards_secured') is null then
+    raise exception 'FAIL: cards_secured is null — array_length on an empty array'; end if;
+  if (r->'summary'->>'cards_secured')::int <> 0 then
+    raise exception 'FAIL: cards_secured should be 0, got %', r->'summary'->>'cards_secured'; end if;
+  if (r->'summary' ? 'resources_extracted') then
+    raise exception 'FAIL: still reporting resources_extracted — expedition resources never come home'; end if;
+  if (r->'summary'->>'resources_gathered')::int <> 0 then
+    raise exception 'FAIL: resources_gathered counted the starting stipend (got %)',
+      r->'summary'->>'resources_gathered'; end if;
+  pass := pass + 1; raise notice 'ok  the completion screen reports 0 as 0, and gathered rather than extracted';
+
+  raise notice '';
+  raise notice '════════ HARNESS FINDINGS: % CHECKS PASSED ════════', pass;
 end $$;

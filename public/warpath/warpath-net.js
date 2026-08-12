@@ -79,7 +79,7 @@ function mockInit(seed) {
       status: 'active', extract_left: 0, turn_ended: false,
       stats: { distance: 0, defeated: 0, raided: 0, bosses: 0 },
     },
-    camp: null, inv: inv, cards: cards, cardSeq: 100,
+    camp: null, inv: inv, cards: cards, cardSeq: 100, gathered: 0,
     recruited: [], claimed: {}, encounters: {}, encounter: null,
     battles: [], events: [], grants: [],
     fog: new Uint8Array(Math.ceil(world.w * world.h / 8)),
@@ -161,6 +161,7 @@ var MOCK = {
   warpath_move: function (a) {
     var me = mock.me;
     if (me.status !== 'active') return fail('not_active');
+    if (me.turn_ended) return fail('turn_already_ended');
     if (mock.battles.some(function (b) { return b.status === 'open'; })) return fail('battle_pending');
     var t = mock.world.at(a.p_x, a.p_y);
     if (!t) return fail('out_of_bounds');
@@ -229,6 +230,7 @@ var MOCK = {
     if (mock.claimed[key]) return fail('already_harvested');
     mock.claimed[key] = true;
     mock.inv[t.node.kind].carried += t.node.amount;
+    if (t.node.tier === 'expedition') mock.gathered = (mock.gathered || 0) + t.node.amount;
     me.moves_left -= 1;
     if (t.node.tier === 'extraction') log('material_found', { kind: t.node.kind });
     return { ok: true, kind: t.node.kind, amount: t.node.amount, tier: t.node.tier,
@@ -377,6 +379,9 @@ var MOCK = {
         if (!mock.cards[ci].secured) { spoils.card_lost = 1; mock.cards.splice(ci, 1); break; }
       }
       me.injured_turns = 2; me.hp = Math.max(1, me.hp - 30); me.moves_left = 0;
+      // mirrors B3/B4 in the migration
+      if (me.status === 'extracting' || me.status === 'ready') { me.status = 'active'; me.extract_left = 0; }
+      me.protected_until = mock.turn + 2;
       if (mock.camp) { me.x = mock.camp.x; me.y = mock.camp.y; }
       log('hero_defeated', { loser: me.hero_name, spoils: spoils });
     }
@@ -414,7 +419,7 @@ var MOCK = {
     var summary = {
       cards_discovered: mock.cards.filter(function (c) { return c.source !== 'starter'; }).length,
       cards_secured: eligible.length,
-      resources_extracted: M.EXPEDITION_RESOURCES.reduce(function (s, r) { return s + mock.inv[r].secured; }, 0),
+      resources_gathered: mock.gathered || 0,
       bosses_defeated: me.stats.bosses, players_defeated: me.stats.defeated,
       camps_raided: me.stats.raided, distance_travelled: me.stats.distance, turns: mock.turn,
     };
@@ -437,6 +442,7 @@ var MOCK = {
     var me = mock.me;
     if (me.status !== 'active' && me.status !== 'extracting') return fail('not_active');
     mock.turn++;
+    me.turn_ended = false;
     me.moves_left = me.injured_turns > 0 ? 4 : D.ENTRY.moves_per_turn;
     me.injured_turns = Math.max(0, me.injured_turns - 1);
     me.hp = Math.min(me.max_hp, me.hp + 5);

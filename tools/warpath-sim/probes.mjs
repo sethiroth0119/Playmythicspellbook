@@ -192,16 +192,31 @@ head('P5  a battle nobody reports');
     if (!mvB.ok) note('⚠ the DEFENDER is frozen by a battle it did not start and cannot decline. '
                     + 'If the attacker closes the tab, the defender cannot move again — '
                     + 'unless it reports the battle itself, which it is allowed to do:');
+    /* B5 changed this deliberately. A unilateral self-declared WIN no longer
+       takes the opponent's goods — it is recorded as a claim and waits. */
     const selfReport = await b.s.rpc('warpath_battle_report', [open.battle_id, b.exp]);
     if (selfReport.ok && selfReport.we_won_race) {
-      note('⚠ the DEFENDER unilaterally declared ITSELF the winner and took the '
-         + "attacker's carried goods. warpath_battle_report (migration:1705) accepts a "
-         + 'verdict from either participant and has no idea which client played the battle.');
-    }
-    // ...and the attacker's second, contradictory report is race-gated.
+      fail("the DEFENDER unilaterally declared ITSELF the winner and took the attacker's goods");
+    } else if (selfReport.pending_confirmation) {
+      pass('a unilateral self-declared win takes nothing — it waits for the opponent');
+    } else fail(`unexpected self-report: ${JSON.stringify(selfReport)}`);
+
     const late = await a.s.rpc('warpath_battle_report', [open.battle_id, a.exp]);
-    if (late.ok && late.we_won_race === false) pass('a second contradictory report is refused by the race gate');
-    else fail(`double report was not race-gated: ${JSON.stringify(late)}`);
+    if (late.pending_confirmation || late.we_won_race === false)
+      pass('the contradictory second claim does not overwrite anything either');
+    else fail(`double report was not gated: ${JSON.stringify(late)}`);
+
+    /* The defender always has an immediate way out of a battle it did not
+       start and cannot decline: concede. Nobody lies to lose, so it resolves
+       at once and unfreezes the map for both. */
+    const concede = await b.s.rpc('warpath_battle_report', [open.battle_id, a.exp]);
+    if (concede.ok && concede.we_won_race) {
+      pass('the defender can concede to unfreeze itself immediately');
+      const mv = await b.s.rpc('warpath_move', [b.exp, 22, 15]);
+      if (mv.ok || mv.reason !== 'battle_pending')
+        pass('and it can move again once the battle is settled');
+      else fail(`still frozen after conceding: ${JSON.stringify(mv)}`);
+    } else fail(`conceding did not resolve: ${JSON.stringify(concede)}`);
   }
   await closeAll(players);
 }
@@ -218,15 +233,32 @@ head('P6  simultaneous contradictory battle reports');
     a.s.rpc('warpath_battle_report', [open.battle_id, a.exp]),
     b.s.rpc('warpath_battle_report', [open.battle_id, b.exp]),
   ]);
+  /* The contract changed deliberately (B5). A bare self-declared WIN is no
+     longer believed on its own, so two heroes both claiming victory must now
+     settle NEITHER — being first is worth nothing. This is a stronger
+     assertion than the one it replaces, which only required that exactly one
+     of two contradictory claims stuck. */
   const won = [ra, rb].filter(r => r.we_won_race).length;
-  if (won === 1) pass('two contradictory verdicts arriving together: exactly one is recorded');
-  else fail(`${won} reports claimed the race: ${JSON.stringify([ra, rb])}`);
-  const row = (await obs.sql('select winner_id, status from public.warpath_battles where id=$1', [open.battle_id]))[0];
-  note(`recorded winner is ${row.winner_id === a.exp ? 'the attacker' : 'the defender'}, status ${row.status}`);
-  note('⚠ so the outcome of a Warpath PvP battle is decided by whichever client '
-     + 'posts first, not by the card game. That is inherent to the client-authoritative '
-     + 'model this repo uses everywhere, but with four players it is now reachable by '
-     + 'anyone who is merely faster.');
+  const pending = [ra, rb].filter(r => r.pending_confirmation).length;
+  if (won === 0 && pending === 2)
+    pass('two contradictory win claims settle neither — posting first buys nothing');
+  else fail(`contradictory claims: ${won} claimed the race, ${pending} pending: ${JSON.stringify([ra, rb])}`);
+
+  let row = (await obs.sql('select winner_id, status from public.warpath_battles where id=$1', [open.battle_id]))[0];
+  if (row.status === 'open' && row.winner_id === null)
+    pass('the battle stays open while the two accounts disagree');
+  else fail(`a contested battle resolved anyway: ${JSON.stringify(row)}`);
+
+  // ...and it must not stay open forever, or both heroes are pinned.
+  for (const p of players) await p.s.rpc('warpath_end_turn', [p.exp]);
+  row = (await obs.sql('select winner_id, status from public.warpath_battles where id=$1', [open.battle_id]))[0];
+  if (row.status === 'resolved' && row.winner_id)
+    pass('the turn boundary settles a contested battle, so nobody is pinned by a silent opponent');
+  else fail(`a contested battle survived the turn sweep: ${JSON.stringify(row)}`);
+  note(`the sweep awarded it to ${row.winner_id === a.exp ? 'the attacker' : 'the defender'}`);
+  note('a self-declared WIN is now recorded as a claim and needs the opponent to agree; '
+     + 'a CONCESSION is believed at once, because nobody lies to lose. Whichever client '
+     + 'posts first no longer decides the fight.');
   await closeAll(players);
 }
 
@@ -261,12 +293,20 @@ head('P7  defeat during the extraction countdown');
     const open = await raider.s.rpc('warpath_battle_open', [raider.exp, victim.exp]);
     if (!open.ok) { note(`an extracting hero could not be attacked: ${open.reason}`); }
     else {
+      /* Both clients report — which is what the shipped bridge does: each side
+         calls warpath_battle_report from warpathAfterBattle, so the loser's
+         report is a concession and resolves immediately. Reporting from only
+         the winner leaves it awaiting corroboration (see P6). */
       await raider.s.rpc('warpath_battle_report', [open.battle_id, raider.exp]);
+      await victim.s.rpc('warpath_battle_report', [open.battle_id, raider.exp]);
       const after = (await obs.sql(
         'select x, y, status, extract_left, injured_turns from public.warpath_expeditions where id=$1',
         [victim.exp]))[0];
       note(`after losing mid-extraction: status=${after.status} extract_left=${after.extract_left} `
          + `position=${after.x},${after.y} (camp is 5,5; the gate is ${gate.x},${gate.y}) injured=${after.injured_turns}`);
+      if (after.status !== 'extracting' && after.extract_left === 0) {
+        pass('losing mid-extraction cancels the countdown and puts the hero back on the map');
+      }
       if (after.status === 'extracting') {
         note('⚠ THE EXTRACTION SURVIVES THE DEFEAT. warpath_battle_report (migration:1770) '
            + 'retreats the loser to their camp and injures them but never touches `status` or '

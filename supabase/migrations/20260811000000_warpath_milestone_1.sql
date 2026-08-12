@@ -524,11 +524,14 @@ create table if not exists public.warpath_expeditions (
   stat_defeated  int not null default 0,
   stat_raided    int not null default 0,
   stat_bosses    int not null default 0,
+  -- B4: a hero beaten in PvP cannot be re-challenged until this run turn.
+  protected_until int not null default 0,
   entered_at     timestamptz not null default now(),
   ended_at       timestamptz,
   unique (run_id, user_id),
   unique (run_id, slot)
 );
+alter table public.warpath_expeditions add column if not exists protected_until int not null default 0;
 create index if not exists warpath_exp_user_idx on public.warpath_expeditions (user_id, status);
 
 -- Camp. One movable camp per expedition (the brief's PACK CAMP / FORWARD CAMP;
@@ -618,10 +621,15 @@ create table if not exists public.warpath_battles (
   winner_id     uuid references public.warpath_expeditions(id) on delete set null,
   spoils        jsonb,
   opened_turn   int,
+  -- B5: each participant's own claim about who won.
+  claim_attacker uuid,
+  claim_defender uuid,
   opened_at     timestamptz not null default now(),
   resolved_at   timestamptz
 );
 alter table public.warpath_battles add column if not exists opened_turn int;
+alter table public.warpath_battles add column if not exists claim_attacker uuid;
+alter table public.warpath_battles add column if not exists claim_defender uuid;
 create index if not exists warpath_battles_run_idx on public.warpath_battles (run_id, status);
 create index if not exists warpath_battles_pair_idx on public.warpath_battles
   (run_id, attacker_id, defender_id, opened_turn);
@@ -952,6 +960,33 @@ begin
     values (p_run, p_exp, coalesce(t, 1), p_kind, coalesce(p_payload, '{}'));
 end $$;
 
+/* ⭐ THE CALLER'S OWN EXPEDITION, derived from auth.uid().
+
+   ⚠ EVERY MUTATING RPC BELOW TOOK `p_exp uuid` AS ITS FIRST ARGUMENT WITH NO
+   DEFAULT, AND NOTHING IN public/ EVER SENT IT. PostgREST resolves overloads by
+   argument NAME, so all eleven client call sites failed with PGRST202 before
+   reaching the database — and the bridge rewrote that into "The Warpath is not
+   installed on this server yet", which hid it for nine review rounds. End turn
+   and Abandon were both dead, and since a run can only close inside
+   warpath_end_turn, warpath_enter then returned already_in_a_warpath forever:
+   a player paid a ticket or 3 AZA and was locked out of the mode permanently.
+
+   The fix is to derive the expedition here rather than to make the client pass
+   an id. That is strictly stronger — a client cannot name an expedition it
+   does not own even by accident, because it never names one at all — and it
+   removes eleven call sites that each had to get it right. Passing p_exp
+   explicitly still works (the simulator and the SQL suite do it) and is still
+   ownership-checked by wp_my_exp().
+
+   Statuses match warpath_enter's "already in a Warpath" test, so the two can
+   never disagree about which expedition is live. */
+create or replace function public.wp_active_exp()
+returns uuid language sql stable security definer set search_path = public as $$
+  select id from public.warpath_expeditions
+   where user_id = auth.uid() and status in ('active','extracting','ready')
+   order by entered_at desc limit 1
+$$;
+
 -- My live expedition row, or null. Guards every RPC below.
 create or replace function public.wp_my_exp(p_exp uuid)
 returns public.warpath_expeditions language sql stable security definer set search_path = public as $$
@@ -1219,14 +1254,21 @@ end $$;
    Bellman-Ford over the movement window — rather than trusting a cost the
    client sends. Then it reveals fog and, if the tile is new and rolls one,
    opens a discovery encounter. */
-create or replace function public.warpath_move(p_exp uuid, p_x int, p_y int)
+create or replace function public.warpath_move(p_exp uuid default null, p_x int default null, p_y int default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   me public.warpath_expeditions; run public.warpath_runs; cost int; enc jsonb;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  /* ⚠ turn_ended was a readiness flag, not a lock. After pressing End turn a
+     hero still had its full movement and could keep moving, harvesting and
+     pitching camp while the other three waited on it — the barrier announced
+     you were done without making you done. */
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
   if exists (select 1 from public.warpath_battles where status = 'open'
               and (attacker_id = me.id or defender_id = me.id)) then
     return jsonb_build_object('ok', false, 'reason', 'battle_pending');
@@ -1258,13 +1300,15 @@ end $$;
    TILE hash and then STORED, so refreshing the page cannot re-roll a bad
    choice into a good one — which is the whole difference between a draft and
    a slot machine. One encounter per tile per expedition, forever. */
-create or replace function public.warpath_encounter_open(p_exp uuid)
+create or replace function public.warpath_encounter_open(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   me public.warpath_expeditions; run public.warpath_runs; b text; meta record;
   total int; offers jsonb := '[]'; picks int[] := ARRAY[]::int[];
   i int; r int; acc int; rec record; k text; tries int; enc public.warpath_encounters;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   select * into enc from public.warpath_encounters where expedition_id = me.id and x = me.x and y = me.y;
@@ -1338,13 +1382,20 @@ end $$;
    The client says "I am standing on a node". The server derives what is
    actually at that tile from the seed and credits THAT — never an amount the
    client sent. First hero to a node takes it; the run keeps the claim. */
-create or replace function public.warpath_harvest(p_exp uuid)
+create or replace function public.warpath_harvest(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare me public.warpath_expeditions; run public.warpath_runs; node jsonb; k text; amt int;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  /* ⚠ turn_ended was a readiness flag, not a lock. After pressing End turn a
+     hero still had its full movement and could keep moving, harvesting and
+     pitching camp while the other three waited on it — the barrier announced
+     you were done without making you done. */
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
   if me.moves_left < 1 then return jsonb_build_object('ok', false, 'reason', 'no_moves_left'); end if;
   select * into run from public.warpath_runs where id = me.run_id;
 
@@ -1373,13 +1424,20 @@ end $$;
    Pitch or move. The brief's PACK CAMP: moving costs a turn's movement and
    resets nothing except position — the buildings travel with you, because a
    camp you have to rebuild from scratch is a camp nobody ever moves. */
-create or replace function public.warpath_camp_place(p_exp uuid)
+create or replace function public.warpath_camp_place(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare me public.warpath_expeditions; run public.warpath_runs; existing public.warpath_camps;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  /* ⚠ turn_ended was a readiness flag, not a lock. After pressing End turn a
+     hero still had its full movement and could keep moving, harvesting and
+     pitching camp while the other three waited on it — the barrier announced
+     you were done without making you done. */
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
   select * into run from public.warpath_runs where id = me.run_id;
   if public.wp_is_water(run.seed, me.x, me.y) then
     return jsonb_build_object('ok', false, 'reason', 'impassable'); end if;
@@ -1401,15 +1459,22 @@ begin
   return jsonb_build_object('ok', true, 'moved', true, 'x', me.x, 'y', me.y);
 end $$;
 
-create or replace function public.warpath_camp_build(p_exp uuid, p_building text)
+create or replace function public.warpath_camp_build(p_exp uuid default null, p_building text default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   me public.warpath_expeditions; camp public.warpath_camps; lvl int; cost jsonb;
   k text; need int; have int;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  /* ⚠ turn_ended was a readiness flag, not a lock. After pressing End turn a
+     hero still had its full movement and could keep moving, harvesting and
+     pitching camp while the other three waited on it — the barrier announced
+     you were done without making you done. */
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
   select * into camp from public.warpath_camps where expedition_id = me.id;
   if camp.expedition_id is null then return jsonb_build_object('ok', false, 'reason', 'no_camp'); end if;
   if camp.x <> me.x or camp.y <> me.y then
@@ -1455,14 +1520,21 @@ end $$;
    consume vault slots, and slots come from the Supply Tent — so the decision
    the brief wants ("keep exploring, or go bank the loot?") is a real one with
    a real ceiling. Carried cards are deposited here too. */
-create or replace function public.warpath_secure(p_exp uuid)
+create or replace function public.warpath_secure(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   me public.warpath_expeditions; camp public.warpath_camps;
   slots int; used int; rec record; moved jsonb := '{}'; ncards int; nmat int := 0; room int;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  /* ⚠ turn_ended was a readiness flag, not a lock. After pressing End turn a
+     hero still had its full movement and could keep moving, harvesting and
+     pitching camp while the other three waited on it — the barrier announced
+     you were done without making you done. */
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
   select * into camp from public.warpath_camps where expedition_id = me.id;
   if camp.expedition_id is null then return jsonb_build_object('ok', false, 'reason', 'no_camp'); end if;
   if camp.x <> me.x or camp.y <> me.y then
@@ -1507,15 +1579,22 @@ end $$;
    The brief's Goblin Encampment: three offers, you cannot afford all three.
    Rank is gated by the Recruitment Tent level, so a camp that never built the
    tent physically cannot take the commander. One recruit per site, ever. */
-create or replace function public.warpath_recruit(p_exp uuid, p_site text, p_idx int)
+create or replace function public.warpath_recruit(p_exp uuid default null, p_site text default null, p_idx int default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   me public.warpath_expeditions; run public.warpath_runs; st jsonb; offer record;
   tent int; k text; need int; have int;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  /* ⚠ turn_ended was a readiness flag, not a lock. After pressing End turn a
+     hero still had its full movement and could keep moving, harvesting and
+     pitching camp while the other three waited on it — the barrier announced
+     you were done without making you done. */
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
   select * into run from public.warpath_runs where id = me.run_id;
 
   -- You have to actually be standing on the site. Derived, not asserted.
@@ -1565,15 +1644,38 @@ end $$;
    Everyone moves in the same turn; the run clock advances when the last active
    hero ends theirs. Extraction countdown and injury tick here, which is what
    makes "extraction takes 1-3 turns" a window your rivals can act inside. */
-create or replace function public.warpath_end_turn(p_exp uuid)
+create or replace function public.warpath_end_turn(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   me public.warpath_expeditions; run public.warpath_runs; pending int; rec record; base int;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status not in ('active','extracting') then
     return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+
+  /* ⚠ THE TURN BARRIER NEEDS THE SAME LOCK THE LOBBY GOT.
+     Four simultaneous end_turns used to do two wrong things at once. Each
+     transaction set its own turn_ended and then counted the others in the SAME
+     READ COMMITTED snapshot, so none could see the others' uncommitted writes
+     and every one concluded somebody was still thinking — 7 of 30 synchronised
+     rounds advanced the clock zero times. When they retried, all four entered
+     the advance block together, updating warpath_runs and then every expedition
+     row while each already held a lock on its own row: textbook ABBA, and the
+     harness collected 20 raw 40P01 deadlocks handed straight back to callers.
+     In the browser it looked like End turn simply doing nothing.
+
+     warpath_enter already solved this one function earlier with an advisory
+     lock on the lobby. This is the same shape and takes the same medicine,
+     keyed per run so two worlds never queue behind each other. The lock is
+     transaction-scoped: whoever holds it sets its flag, counts committed
+     flags, and commits — the next one in sees that write. The last one through
+     is the only one that runs the advance, so there is nothing left to deadlock
+     against. */
+  perform pg_advisory_xact_lock(hashtext('warpath_turn:' || me.run_id::text));
+
   update public.warpath_expeditions set turn_ended = true where id = me.id;
 
   select count(*) into pending from public.warpath_expeditions
@@ -1596,6 +1698,24 @@ begin
            extract_left = case when rec.status = 'extracting' then greatest(0, rec.extract_left - 1) else 0 end,
            status = case when rec.status = 'extracting' and rec.extract_left - 1 <= 0 then 'ready' else rec.status end
      where id = rec.id;
+  end loop;
+
+  /* Settle any battle still contested from a previous turn. A bare win claim
+     waits for corroboration (see warpath_battle_report), and without this
+     nothing would ever come back to it — the client reports once. Prefer a
+     concession, then the defender's word, then the attacker's. */
+  for rec in select * from public.warpath_battles
+              where run_id = run.id and status = 'open' and kind = 'pvp'
+                and coalesce(opened_turn, 0) < run.turn
+                and (claim_attacker is not null or claim_defender is not null) loop
+    perform public.wp_resolve_battle(rec.id,
+      case
+        when rec.claim_attacker is not null and rec.claim_attacker is distinct from rec.attacker_id
+          then rec.claim_attacker                                   -- attacker conceded
+        when rec.claim_defender is not null and rec.claim_defender is distinct from rec.defender_id
+          then rec.claim_defender                                   -- defender conceded
+        else coalesce(rec.claim_defender, rec.claim_attacker)
+      end);
   end loop;
 
   -- The world closes. Anyone still out there loses everything they did not
@@ -1623,15 +1743,22 @@ end $$;
    result (client today, authoritative server tomorrow) calls the same
    function, and the race gate `where status = 'open'` means a double report
    is harmless. */
-create or replace function public.warpath_battle_open(p_exp uuid, p_target uuid default null)
+create or replace function public.warpath_battle_open(p_exp uuid default null, p_target uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   me public.warpath_expeditions; foe public.warpath_expeditions;
   run public.warpath_runs; st jsonb; b public.warpath_battles; v_kind text;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  /* ⚠ turn_ended was a readiness flag, not a lock. After pressing End turn a
+     hero still had its full movement and could keep moving, harvesting and
+     pitching camp while the other three waited on it — the barrier announced
+     you were done without making you done. */
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
   select * into run from public.warpath_runs where id = me.run_id;
 
   if exists (select 1 from public.warpath_battles where status = 'open'
@@ -1671,6 +1798,17 @@ begin
                     or (attacker_id = p_target and defender_id = me.id))) then
       return jsonb_build_object('ok', false, 'reason', 'already_fought_this_turn');
     end if;
+    /* ⚠ B4 — A BEATEN HERO MUST BE ABLE TO LEAVE ITS OWN CAMP.
+       Defeat teleports the loser home with moves_left = 0, and the
+       once-per-pairing rule caps the RATE of re-attack but not the TOTAL. With
+       greatest(1, hero_hp - 30) there is no death either, so a camper could
+       pin someone on their own campfire indefinitely — 8 consecutive turns in
+       a probe, 3 in free play, with the victim never getting a move. A short
+       grace after a defeat is the difference between a raid and a hostage. */
+    if foe.protected_until >= run.turn then
+      return jsonb_build_object('ok', false, 'reason', 'target_regrouping',
+                                'until_turn', foe.protected_until);
+    end if;
   else
     -- PvE: the landmark Guardian. "You have to find the Black Pyramid during a
     -- Warpath and defeat the Guardian."
@@ -1702,25 +1840,82 @@ end $$;
 /* Consume a verdict from the battle service. Race-gated exactly like
    mp_resolve_match: the conditional UPDATE means the second reporter reads
    back the authoritative answer instead of overwriting it. */
+/* Consume a verdict from the battle service. The Warpath still resolves no
+   card battle — it decides only WHOSE REPORT to believe, then applies it.
+
+   ⚠ B5 — THIS USED TO BE DECIDED BY WHOEVER POSTED FIRST. Either participant
+   could name any winner and the race gate recorded it. The gate is correct —
+   exactly one verdict is ever written — but with four players anyone quick
+   could simply claim every fight. Self-declared results are inherent to the
+   client-authoritative battle model this repo already uses everywhere, and
+   Milestone 1 is not the place to move combat server-side. What IS fixable is
+   whose word counts:
+
+     • CONCEDING IS BELIEVED IMMEDIATELY. A report naming the OTHER player as
+       the winner resolves on the spot — nobody lies to lose.
+     • AGREEMENT IS BELIEVED IMMEDIATELY. Both sides naming the same winner.
+     • A BARE WIN CLAIM WAITS. It is recorded, and warpath_end_turn's sweep
+       settles it when the clock next moves, so a closed tab cannot freeze a
+       battle and pin two heroes on the map.
+
+   PvE has one participant, so a Guardian result resolves at once. */
 create or replace function public.warpath_battle_report(p_battle uuid, p_winner uuid)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
-  b public.warpath_battles; upd public.warpath_battles;
-  v_uid uuid := auth.uid(); loser public.warpath_expeditions; winner public.warpath_expeditions;
-  camp public.warpath_camps; rec record; v_spoils jsonb := '{}'::jsonb; take int;
-  v_seed bigint; v_mat text;
+  b public.warpath_battles; v_uid uuid := auth.uid();
+  v_me uuid; v_mine uuid; v_theirs uuid; v_conceded boolean; v_agreed boolean;
 begin
   if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
   select * into b from public.warpath_battles where id = p_battle;
   if b.id is null then return jsonb_build_object('ok', false, 'reason', 'no_such_battle'); end if;
-  if not exists (select 1 from public.warpath_expeditions
-                  where id in (b.attacker_id, b.defender_id) and user_id = v_uid) then
-    return jsonb_build_object('ok', false, 'reason', 'not_a_participant');
-  end if;
+  select id into v_me from public.warpath_expeditions
+   where id in (b.attacker_id, b.defender_id) and user_id = v_uid;
+  if v_me is null then return jsonb_build_object('ok', false, 'reason', 'not_a_participant'); end if;
   if p_winner is not null and p_winner not in (b.attacker_id, coalesce(b.defender_id, b.attacker_id)) then
     return jsonb_build_object('ok', false, 'reason', 'winner_not_a_participant');
   end if;
+  if b.status <> 'open' then
+    return jsonb_build_object('ok', true, 'we_won_race', false, 'winner', b.winner_id);
+  end if;
 
+  if b.kind <> 'pvp' or b.defender_id is null then
+    return public.wp_resolve_battle(p_battle, p_winner);       -- PvE: one witness
+  end if;
+
+  if v_me = b.attacker_id then
+    update public.warpath_battles set claim_attacker = p_winner where id = b.id;
+    v_theirs := b.claim_defender;
+  else
+    update public.warpath_battles set claim_defender = p_winner where id = b.id;
+    v_theirs := b.claim_attacker;
+  end if;
+  v_mine     := p_winner;
+  v_conceded := (v_mine is distinct from v_me);
+  v_agreed   := (v_theirs is not null and v_theirs is not distinct from v_mine);
+
+  if v_conceded or v_agreed then return public.wp_resolve_battle(p_battle, p_winner); end if;
+  return jsonb_build_object('ok', true, 'pending_confirmation', true,
+                            'reason', 'awaiting_opponent', 'battle_id', b.id);
+end $$;
+
+/* ── Applying a battle result ─────────────────────────────────────────────
+   Extracted so that TWO callers can use it: warpath_battle_report(), when the
+   verdict is trustworthy enough to act on immediately, and the end-of-turn
+   sweep, which settles anything still contested when the clock moves. Without
+   the second caller a contested battle stays open forever and pins both heroes,
+   because the client reports exactly once and nothing retries.
+   Race-gated: only the transaction that flips 'open' does any work.          */
+create or replace function public.wp_resolve_battle(p_battle uuid, p_winner uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  b public.warpath_battles; upd public.warpath_battles;
+  loser public.warpath_expeditions; winner public.warpath_expeditions;
+  camp public.warpath_camps; rec record; v_spoils jsonb := '{}'::jsonb; take int;
+  v_seed bigint; v_mat text; run_turn int;
+begin
+  select * into b from public.warpath_battles where id = p_battle;
+  if b.id is null then return jsonb_build_object('ok', false, 'reason', 'no_such_battle'); end if;
+  select turn into run_turn from public.warpath_runs where id = b.run_id;
   update public.warpath_battles set status = 'resolved', winner_id = p_winner, resolved_at = now()
     where id = b.id and status = 'open' returning * into upd;
   if upd.id is null then
@@ -1783,10 +1978,27 @@ begin
                      order by acquired_turn desc, id desc limit 1);
       if found then v_spoils := v_spoils || jsonb_build_object('card_lost', 1); end if;
       select * into camp from public.warpath_camps where expedition_id = loser.id;
+      /* ⚠ B3 — LOSING MUST INTERRUPT AN EXTRACTION.
+         This used to retreat and injure the loser and never touch `status` or
+         `extract_left`, so a hero beaten mid-extraction was carried home to its
+         camp and then completed the extraction two turns later from wherever it
+         happened to be standing — nowhere near a gate. The tensest moment the
+         mode has (everyone is told you are leaving; the countdown is the window
+         to stop you) cost the victim nothing but carried goods. Being beaten
+         now puts you back on the map with the countdown cancelled: reach a gate
+         again and start over. */
       update public.warpath_expeditions
          set injured_turns = 2, hero_hp = greatest(1, hero_hp - 30),
-             x = coalesce(camp.x, loser.x), y = coalesce(camp.y, loser.y), moves_left = 0
+             x = coalesce(camp.x, loser.x), y = coalesce(camp.y, loser.y), moves_left = 0,
+             status = case when loser.status in ('extracting','ready') then 'active'
+                           else loser.status end,
+             extract_left = 0,
+             protected_until = run_turn + 2
        where id = loser.id;
+      if loser.status in ('extracting','ready') then
+        perform public.wp_log(b.run_id, loser.id, 'extraction_broken',
+          jsonb_build_object('hero', loser.hero_name, 'by', winner.hero_name));
+      end if;
       update public.warpath_expeditions
          set stat_defeated = stat_defeated + 1,
              stat_raided = stat_raided + case when v_spoils <> '{}'::jsonb then 1 else 0 end
@@ -1804,13 +2016,20 @@ end $$;
    Reach a gate, then survive the countdown. Everyone in the run is told you
    are leaving — "⚠ A HERO IS PREPARING TO LEAVE THE WARPATH" — which is what
    turns the last two turns of a good run into the tensest part of it. */
-create or replace function public.warpath_extract_begin(p_exp uuid)
+create or replace function public.warpath_extract_begin(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare me public.warpath_expeditions; run public.warpath_runs; st jsonb; turns int;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  /* ⚠ turn_ended was a readiness flag, not a lock. After pressing End turn a
+     hero still had its full movement and could keep moving, harvesting and
+     pitching camp while the other three waited on it — the barrier announced
+     you were done without making you done. */
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
   select * into run from public.warpath_runs where id = me.run_id;
   st := public.wp_structure_at(run.seed, me.x, me.y);
   if st is null or st->>'k' <> 'gate' then
@@ -1820,8 +2039,18 @@ begin
   turns := case when public.wp_level(me.id, 'arcane') >= 2 then 1 else 2 end;
   update public.warpath_expeditions
      set status = 'extracting', extract_left = turns where id = me.id;
+  /* ⚠ B6 — WHAT THE BROADCAST MAY SAY, DECIDED ON PURPOSE.
+     The brief wants everyone told ("⚠ A HERO IS PREPARING TO LEAVE THE
+     WARPATH") and that tension is the point of the countdown. But this used to
+     publish exact coordinates to every player regardless of fog, and the
+     simulator's hunter used it as a homing beacon — which is not tension, it
+     is a free reveal that nothing else in the mode grants.
+     It now names the GATE, not the tile. A player who has explored that gate
+     already knows where it is and can race you; a player who has not gets the
+     warning without a map pin. The fog stays the thing that decides who can
+     act on the news. */
   perform public.wp_log(me.run_id, me.id, 'extraction_started',
-    jsonb_build_object('hero', me.hero_name, 'gate', st->>'name', 'x', me.x, 'y', me.y, 'turns', turns));
+    jsonb_build_object('hero', me.hero_name, 'gate', st->>'name', 'turns', turns));
   return jsonb_build_object('ok', true, 'turns', turns, 'gate', st->>'name');
 end $$;
 
@@ -1833,12 +2062,14 @@ end $$;
      • materials — the SECURED extraction materials, read from inventory
    A caller cannot name a card id it does not own, cannot exceed the cap, and
    cannot run twice (unique (user_id, run_id) plus the status transition).   */
-create or replace function public.warpath_extract_finish(p_exp uuid, p_keep uuid[] default null)
+create or replace function public.warpath_extract_finish(p_exp uuid default null, p_keep uuid[] default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   me public.warpath_expeditions; run public.warpath_runs;
   cap int; keys text[]; mats jsonb; kept uuid[]; n int; summary jsonb;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'ready' then
@@ -1868,12 +2099,22 @@ begin
 
   select count(*) into n from public.warpath_cards
    where expedition_id = me.id and source <> 'starter';
+  /* ⚠ B8 — TWO LIES ON THE COMPLETION SCREEN.
+     `array_length` on an EMPTY array returns NULL, not 0, so a run that
+     extracted nothing reported "New Cards Secured: null". And
+     resources_extracted counted SECURED EXPEDITION RESOURCES — including the
+     70-unit starting stipend the player was given — while warpath_grants
+     carries no expedition resources home at all. It reported ~150 "extracted"
+     for a run that extracted none of it. Expedition resources are explicitly
+     meant to evaporate, so the honest number is what you GATHERED out here,
+     read from the node claims you actually made. */
   summary := jsonb_build_object(
     'cards_discovered', n,
-    'cards_secured', array_length(keys, 1),
-    'resources_extracted', (select coalesce(sum(i.secured), 0) from public.warpath_inventory i
-                              join public.warpath_resources r on r.kind = i.kind
-                             where i.expedition_id = me.id and r.tier = 'expedition'),
+    'cards_secured', coalesce(array_length(keys, 1), 0),
+    'resources_gathered', (select coalesce(sum(c.amount), 0)
+                             from public.warpath_node_claims c
+                             join public.warpath_resources r on r.kind = c.kind
+                            where c.claimed_by = me.id and r.tier = 'expedition'),
     'bosses_defeated', me.stat_bosses,
     'players_defeated', me.stat_defeated,
     'camps_raided', me.stat_raided,
@@ -1893,10 +2134,12 @@ end $$;
 
 -- Abandon: walk away with nothing. Kept so a stuck player is never trapped in
 -- a run, which would also block them from ever entering another one.
-create or replace function public.warpath_abandon(p_exp uuid)
+create or replace function public.warpath_abandon(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare me public.warpath_expeditions;
 begin
+  -- Derive from auth.uid() when the caller did not name one (the client never does).
+  p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status in ('extracted','lost') then return jsonb_build_object('ok', true, 'already', me.status); end if;

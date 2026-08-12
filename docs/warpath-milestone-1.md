@@ -432,6 +432,49 @@ them against a solitaire harness would be fitting to the wrong game.
 
 Suite is now **66 assertions** (47 + 6 RLS + 8 regressions + 1 fog + 2 extraction guards + 2 wallets).
 
+#### Four-player harness round — B1 (P0) through B9
+
+The simulator (`tools/warpath-sim/`) ran four real sessions against real Postgres and found what
+nine review rounds could not, because every previous round had been run against the offline mock.
+
+**B1 (P0) — the shipped client could not perform a single mutating action.** Every mutating RPC
+took `p_exp uuid` as its first argument **with no default**, and nothing in `public/` ever sent
+it. PostgREST resolves by argument *name*, so all eleven call sites failed with PGRST202 before
+reaching the database — and `public/index.html` rewrote that into *"The Warpath is not installed
+on this server yet"*, which reads like a deployment note. End turn and Abandon were both dead,
+and since a run can only close inside `warpath_end_turn`, `warpath_enter` then answered
+`already_in_a_warpath` forever: **a player paid a ticket or 3 AZA and was locked out permanently.**
+
+Fixed by **deriving the expedition server-side from `auth.uid()`** (`wp_active_exp()`), not by
+making the client pass an id. That is strictly stronger — a client cannot name an expedition it
+does not own, because it never names one at all — and it removes eleven call sites that each had
+to get it right. Passing `p_exp` explicitly still works and is still ownership-checked, which is
+what the SQL suite and the simulator do.
+
+**The systemic fix matters more than the bug.** `warpath-net.js`'s offline mock *reimplements* the
+RPCs in JavaScript with its own signatures — it is not an optimistic server, it is a **different
+API**, and nothing compared the two. `public/warpath/_contractcheck.js` now scrapes every
+`rpc(...)`/`act(...)` call site out of the shipped client, reads the real signatures from
+`pg_proc`, and applies PostgREST's own resolution rule. Proven to catch the regression: reinstating
+`p_exp` on one function alone produces `FAIL public/warpath/warpath-app.js:954 warpath_move(p_x, p_y)`.
+(Its first version had three false positives of its own — a loose regex matching `expedition_id :`
+inside a ternary — now fixed with balanced-bracket parsing, because a contract test that cries
+wolf gets switched off.)
+
+| # | Finding | Fix | Verified |
+|---|---|---|---|
+| **B2** (P0) | Four simultaneous `end_turn`s neither advanced the clock nor avoided deadlocking — 7/30 rounds advanced zero times, 20 raw `40P01`s returned to callers. Each transaction set its own flag then counted the others in the same READ COMMITTED snapshot; on retry all four ran the advance block in ABBA order. | `pg_advisory_xact_lock(hashtext('warpath_turn:' || run_id))` — the same medicine `warpath_enter` already took for the lobby, keyed per run. | **30/30 rounds advance exactly once, 0 deadlocks.** |
+| **B3** | Losing a battle did not interrupt an extraction — a hero beaten mid-countdown finished extracting two turns later from nowhere near a gate. | Defeat resets `status` to `active` and `extract_left` to 0, and logs `extraction_broken`. | Asserted; probe P7 passes. |
+| **B4** | A hero could be pinned at its own camp indefinitely (8 turns in a probe) — defeat teleports the loser home with `moves_left = 0` and there is no death. | `protected_until` grace of 2 turns after a PvP defeat; `battle_open` refuses with `target_regrouping`. | Asserted; probe P8 reports the refusal. |
+| **B5** | A PvP verdict was decided by whichever client posted first. | **Conceding is believed immediately** (nobody lies to lose); **agreement** resolves immediately; a **bare win claim waits** and is settled by a sweep at the next turn boundary, so a silent opponent cannot freeze two heroes. | Probes P5/P6: two contradictory claims settle **neither**, the battle stays open, and the turn sweep resolves it. |
+| **B6** | The extraction broadcast published exact coordinates to everyone, ignoring fog — the harness's hunter used it as a homing beacon. | Names the **gate**, not the tile. Anyone who has explored that gate can act on it; anyone who has not gets the warning without a map pin. Decided on purpose and documented. | Probe P7 shows the payload is now `{gate, hero, turns}`. |
+| **B7** | `turn_ended` was a readiness flag, not a lock — after ending a turn a hero still had full movement. | Guard in move / harvest / camp_place / camp_build / secure / recruit / battle_open / extract_begin. | Asserted; probe P1 passes. |
+| **B8** | The completion screen lied twice: `cards_secured` was `null` (`array_length` on an empty array), and `resources_extracted` counted the 70-unit starting stipend that `warpath_grants` never carries home. | `coalesce(..., 0)`, and the honest number — `resources_gathered`, read from the node claims actually made. | Asserted both ways; probe P11 shows a clean empty-run summary. |
+| **B9** | The loser was told nothing — `hero_defeated` was in `warpath_state` but nothing read it, on a 12s poll. | `announceNewEvents()` surfaces anything that happened *to me* since the last read; poll tightened to 5s. | — |
+
+Suite is now **71 assertions**; probes **20 passed, 0 failed**; the four-player sim completes runs
+with real extractions and materials home.
+
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which
 is the one thing hard constraint #1 says not to risk. Exclusivity in Milestone 1 is expressed

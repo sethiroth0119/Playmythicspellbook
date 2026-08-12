@@ -33,7 +33,7 @@ var S = {
   sel: null,                 // selected tile {x,y}
   reach: {},                 // reachable set for the hero this turn
   cam: { x: 0, y: 0, z: 22 }, userZoom: false,
-  tab: 'camp', fogKey: 0, quality: 'high', meta: null, encDismissed: false,
+  tab: 'camp', fogKey: 0, quality: 'high', meta: null, encDismissed: false, seenEvents: null,
   busy: false, ended: false,
   hover: null,
 };
@@ -90,6 +90,10 @@ var REASONS = {
   guardian_already_faced: 'You have already faced this Guardian.',
   battle_already_open: 'A battle is already pending.',
   already_in_a_warpath: 'You are already on a Warpath.',
+  turn_already_ended: 'You have ended your turn — wait for the others.',
+  target_regrouping: 'That Hero was just beaten and is regrouping.',
+  need_2_moves_to_attack: 'Challenging a Hero costs 2 movement.',
+  already_fought_this_turn: 'You have already fought them this turn.',
 };
 function why(r) {
   if (!r) return 'That did not work.';
@@ -164,6 +168,11 @@ function refresh() {
     }
     if (prev !== S.fog) { /* new buffer identity is fine — fogKey covers it */ }
     recomputeReach();
+    /* ⚠ B9 — THE LOSER WAS TOLD NOTHING. `hero_defeated` has always been in
+       warpath_state, but nothing read it and the poll was 12s, so a player
+       raided mid-run found out by noticing their own resource bar had moved.
+       Anything that happened TO me since the last read is surfaced now. */
+    try { announceNewEvents(st); } catch (e) {}
     renderAll();
     /* A pending encounter on the tile we are standing on re-opens itself
        unless the player explicitly dismissed it this session. This is what
@@ -765,6 +774,46 @@ function tabFeed(st) {
   });
   return h + '</div>';
 }
+/* Events the player must not miss. Keyed on turn+kind so a repoll cannot
+   re-announce the same thing; only the first sighting speaks. */
+var LOUD = { hero_defeated: 1, extraction_started: 1, extraction_broken: 1,
+             guardian_defeated: 1, run_closed: 1 };
+function announceNewEvents(st) {
+  var evs = (st && st.events) || [];
+  if (!S.seenEvents) {
+    // First read of a session establishes the baseline — do not shout history.
+    S.seenEvents = {};
+    evs.forEach(function (e) { S.seenEvents[e.turn + ':' + e.kind + ':' + JSON.stringify(e.payload || {})] = 1; });
+    return;
+  }
+  var me = st.me, mine = (me && me.hero_name) || '';
+  for (var i = evs.length - 1; i >= 0; i--) {
+    var e = evs[i];
+    var k = e.turn + ':' + e.kind + ':' + JSON.stringify(e.payload || {});
+    if (S.seenEvents[k]) continue;
+    S.seenEvents[k] = 1;
+    if (!LOUD[e.kind]) continue;
+    var p = e.payload || {};
+    if (e.kind === 'hero_defeated') {
+      if (p.loser && p.loser === mine) {
+        ribbon('You were beaten', (p.winner || 'Another Hero') + ' took what you were carrying. '
+          + 'Your vault held. You wake at your camp, injured.');
+      } else if (p.winner && p.winner === mine) {
+        ribbon('Victory', 'You beat ' + (p.loser || 'a rival') + ' and took their carried loot.');
+      }
+    } else if (e.kind === 'extraction_broken') {
+      if (p.hero === mine) ribbon('Extraction broken', 'You were stopped before you could leave. '
+        + 'Reach a gate again to restart the countdown.');
+    } else if (e.kind === 'extraction_started') {
+      if (p.hero !== mine) ribbon('⚠ A Hero is leaving the Warpath',
+        (p.hero || 'Someone') + ' is holding ' + (p.gate || 'a gate') + ' for ' + (p.turns || 2)
+        + ' turn' + ((p.turns || 2) === 1 ? '' : 's') + '.');
+    } else if (e.kind === 'run_closed') {
+      ribbon('The Warpath closed', 'Anything not extracted is gone.');
+    }
+  }
+}
+
 function feedLine(e) {
   var p = e.payload || {};
   switch (e.kind) {
@@ -780,7 +829,9 @@ function feedLine(e) {
     case 'guardian_defeated':   return 'The Guardian fell. It was carrying ' +
                                      ((M.RESOURCES[p.material] || {}).name || 'something') + '.';
     case 'hero_defeated':       return (p.winner || 'A Hero') + ' beat ' + (p.loser || 'someone') + '.';
-    case 'extraction_started':  return '⚠ ' + (p.hero || 'A Hero') + ' is preparing to leave the Warpath.';
+    case 'extraction_started':  return '⚠ ' + (p.hero || 'A Hero') + ' is preparing to leave the Warpath'
+                                     + (p.gate ? ' at ' + p.gate : '') + '.';
+    case 'extraction_broken':   return (p.hero || 'A Hero') + ' was stopped mid-extraction by ' + (p.by || 'someone') + '.';
     case 'extracted':           return (p.hero || 'A Hero') + ' made it home with ' + (p.cards || 0) + ' cards.';
     case 'abandoned':           return (p.hero || 'A Hero') + ' walked away with nothing.';
     case 'run_closed':          return 'The Warpath closed.';
@@ -1295,7 +1346,7 @@ function showSummary(r) {
   var rows = [
     ['Cards Discovered', s.cards_discovered || 0],
     ['New Cards Secured', s.cards_secured || 0],
-    ['Resources Extracted', s.resources_extracted || 0],
+    ['Resources Gathered', s.resources_gathered || 0],
     ['Bosses Defeated', s.bosses_defeated || 0],
     ['Players Defeated', s.players_defeated || 0],
     ['Camps Raided', s.camps_raided || 0],
@@ -1475,7 +1526,9 @@ function boot() {
     // Live runs are shared, so poll for what the others are doing. Cheap: one
     // row-set per player, and only while the run is live.
     if (NET.mode === 'live') {
-      setInterval(function () { if (!S.busy && !S.ended) refresh(); }, 12000);
+      // 5s, not 12s: a raid, an extraction warning or a broken countdown are
+      // all things you need to hear about while you can still react.
+      setInterval(function () { if (!S.busy && !S.ended) refresh(); }, 5000);
     }
   });
 }

@@ -341,6 +341,18 @@ something to show a player. Add a line to *both* whenever you add an RPC.
       after any edit to the module.
 - [ ] The 🏋 terminal sells lifters; buying one raises the limit immediately.
 
+**Automated gates — run these, do not eyeball them**
+```
+npm i three@0.128.0 playwright --no-save     # once, for the reachability gate
+node _wh_check_all.mjs                       # runs everything below; exit 0 = safe
+```
+| Gate | Guards against |
+|---|---|
+| `_harness.js` | A parse error or top-level TDZ anywhere in the game. |
+| `_synckcheck.mjs` | An inline `<script>` block that will not minify. |
+| `_wh_paste_check.mjs` | `WAREHOUSE_PASTE_index-module.js` drifting behind the live module. It has silently drifted **twice**; both times the stale file still parsed and looked fine, and following the handoff would have pasted back a version where resources could never be withdrawn. |
+| `_wh_reach_check.mjs` | A warehouse bay you cannot walk to. Floods the yard on a 0.2 m grid from the truck door using the page's **own** `blocked()` predicate at 2/4/8/14/22/32 bays. The bay layout is derived from the unit count, so a spacing or row-wrap change can wall one off — and nothing shows it until a player has paid up to 1,500,000 Cinder for Tier 5 and finds Bay 27 behind a collider. **Re-run it if you touch `BW`, `BD`, the row pitch, the shed dimensions or the collider list.** Exits non-zero on any unreachable bay, so it belongs in CI. |
+
 **Regression**
 - [ ] Camp, Real Estate Office and the card-shop 3D walk all still work.
 - [ ] `node _harness.js` → ALL CHECKS PASSED. `node _synckcheck.mjs` → ALL CLEAN.

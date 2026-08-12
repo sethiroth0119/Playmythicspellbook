@@ -81,6 +81,59 @@ node -e "const s=require('fs').readFileSync('public/index.html','utf8');let m=0;
 
 ## Open items
 
+### 0 — 🔴 STALE RESET DIRECTIVES ARE STILL WIPING PLAYERS. Needs your decision.
+
+**Partly fixed in v120w0, but the biggest half is still live.**
+
+Reported as "players who sign in on a different device get reset from the old economy
+reset" and "cards missing from their account". Two separate mechanisms:
+
+**(a) The build-stamped one-shot — FIXED and deployed in v120w0.** `_purgeResetOnce`
+skipped the `season_apply` server gate by design and relied on guards that were all
+per-device (`Profile.purgeResetApplied` was set but never uploaded — the exact bug already
+documented for `gearResetApplied` at the whitelist, ~line 46531). Retired; the shipped
+bundle now contains `function _purgeResetOnce(){}`. Stamps now round-trip via
+`__purgeReset__` / `__seasonApplied__`, and the `purge` branch finally has the admin
+exemption the `economy` branch always had.
+
+**(b) The DIRECTIVE path is still firing on old resets. NOT fixed.** Evidence — five
+accounts in four days, each applying all five historical directives within one minute
+(the fingerprint of a device with no local record), every one ending on zero Cinder:
+
+| when | user | directives at once | cards now | cinder now |
+|---|---|---|---|---|
+| 08-12 17:10 | `53af15c6` | 5 | 0 | 0 |
+| 08-12 10:24 | `53eb89a1` | 5 | 19 | 0 |
+| 08-12 08:12 | `37592af1` | 5 | 0 | 0 |
+| 08-12 00:08 | `e40ef8ca` | 5 | 50 | 0 |
+| 08-11 23:52 | `2feefce7` | 5 | 420 | 0 |
+
+There are nine directives in `season_reset`, dated 07-28 → 08-02. `season_apply` only
+suppresses a directive the *user* already took, so anyone who did not take it back then —
+new account, new device, cleared storage — takes it now, in August, with a real collection.
+
+**A reset from 07-28 has no business wiping anyone today.** Recommended fix, in order:
+
+1. **Expire the old directives.** They have served their purpose. Either delete the nine
+   `season_reset` rows or add an `expires_at` the client honours. This is a DB write that
+   affects every player, so it is a judgement call, not a bug fix — hence not done.
+2. **Gate directives on account age** so a reset can never apply to an account that did not
+   exist when it was published. This is the durable fix; expiry alone leaves the same hole
+   the next time a directive is published.
+
+```sql
+-- who is still taking old directives?
+select to_char(a.applied_at,'MM-DD HH24:MI') as applied, left(a.user_id::text,8) as usr,
+       sr.scope, to_char(sr.created_at,'MM-DD') as directive_published
+  from public.season_reset_applied a join public.season_reset sr on sr.id = a.reset_id
+ where a.applied_at > now() - interval '7 days'
+ order by a.applied_at desc;
+```
+
+**Restitution:** 35 of 97 accounts currently sit at 0 or starter-only collections. Some are
+genuinely new players, so that is an upper bound, not a victim count. The affected users
+above are identified by id and can be made whole once you decide on compensation.
+
 ### 1. Revoke `wallet_credit` from `authenticated` — the real prize, blocked on data
 
 This is the last client-controlled money path. A player can currently ask the server to

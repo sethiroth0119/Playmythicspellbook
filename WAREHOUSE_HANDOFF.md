@@ -201,7 +201,7 @@ kept in sync by hand).
 | `unit_price_aza` / `unit_price_cinder` | 10 / 50,000 | "about $10 of Aza", matched in Cinder |
 | `unit_capacity_kg` | 500 | Per bay |
 | `crate_kg` | **22** | ⚠ must stay ≤ tier-0 lifter capacity |
-| `max_shipment_kg` | 4000 | Bigger loads are refused, never truncated |
+| `max_shipment_kg` | **1800** | Sized to a tier-1 renter's real 1,932 kg ceiling. Bigger loads are refused, never truncated — and `wh_send_shipment` also checks the actual destination. |
 | `rent_cinder_per_day` | 1200 | Paid to the warehouse owner |
 | `rent_max_days` / `rent_grace_days` | 30 / 3 | Grace before goods can be impounded |
 | `free_city_hours` / `max_hours` | 72 / 72 | The ceiling, and the free-city rule |
@@ -218,7 +218,9 @@ kept in sync by hand).
 
 | level | 0 (free) | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| hours | **72** | 72 | 64 | 56 | 48 | 40 | 32 | 26 | 20 | 13 | **6** |
+| hours | **72** | 68 | 62 | 56 | 50 | 44 | 37 | 30 | 22 | 14 | **6** |
+
+72 h is now the free-city rate *and nothing else* — LV1 is 68 h, so "the higher the node, the faster the run" is true across the whole range.
 
 Delivery level is derived server-side as
 `1 + garrison + refinery + civic` (each 0–5 on `tw_node_recon`), clamped 1–10 —
@@ -242,7 +244,8 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 | `wh_my_rentals()` | signed in | Drives the button label. |
 | `wh_send_shipment(unit, kind, node, label, payload, name)` | renter | Weight + ETA computed server-side; splits into crates. |
 | `wh_store_crate(crate, unit)` | owner or renter | The unload gate. |
-| `wh_buy_unit(currency)` | owner | 10 Aza / 50,000 Cinder. |
+| `wh_buy_unit(currency)` | owner | Adds a NEW empty bay. 10 Aza / 50,000 Cinder. |
+| `wh_expand_unit(unit, currency)` | owner or that renter | **Grows an EXISTING bay** by another 500 kg, same price. This is what the "you need to open storage unit space" modal calls — buying a new bay cannot help a crate addressed to a full one. |
 | `wh_upgrade_tier(currency)` | owner | Raises the bay cap. |
 | `wh_buy_lifter(tier, currency)` | anyone | Carry capacity. |
 | `wh_withdraw(unit, res, qty)` | renter | Takes goods back out. |
@@ -252,7 +255,9 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 
 `wh_store_crate` refusal reasons the UI handles: `in_transit`, `too_heavy`,
 `no_room` (→ raises the purchase modal), `wrong_unit`, `not_allowed`,
-`already_stored`.
+`already_stored`, `rental_expired`. `wh_send_shipment` adds `too_large` and
+`no_room_at_destination`. **Every one of these has a line in `_whReason`** —
+anything missing shows the player a raw identifier.
 
 ---
 
@@ -274,6 +279,17 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 - [ ] The sent resources leave your salvage ledger immediately.
 - [ ] Repeat from a **house** (Real Estate Office) and a **city** (city overlay pill).
 
+**Getting it back out — the other half of the loop**
+- [ ] **📦 My storage** (Camp panel, or the Real Estate Office) lists every bay
+      you rent, broken out per resource, with the weight.
+- [ ] **↩ Withdraw all** credits the resources back into your salvage ledger and
+      empties the bay.
+- [ ] **🏗 Visit** opens the warehouse your bay is in — a renter can walk it too,
+      not just the owner.
+- [ ] In the yard, **E on a bay with empty hands** shows what is stored there.
+- [ ] With a full bay, the modal's **↩ Send this load back** returns the
+      remaining crates and credits the ledger.
+
 **Unloading (as the warehouse owner)**
 - [ ] Camp → **🏗 My warehouse** opens the yard; WASD walks, mouse looks,
       clicking locks the pointer, Esc releases, Shift runs.
@@ -285,7 +301,8 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 - [ ] **E** at the right bay stores it; the bay's fill bar and stacked goods grow.
 - [ ] Filling a bay raises **"You need to open storage unit space"** offering
       **10 Aza** or **50,000 Cinder**; unaffordable options are disabled.
-- [ ] Buying deducts the real balance and a new numbered bay appears without a reload.
+- [ ] Buying **grows that bay by 500 kg** and the crate in hand then fits.
+- [ ] A truck **pulls up** when a load lands, and pulls away once it is empty.
 - [ ] At the tier cap the modal offers the **warehouse upgrade** instead.
 - [ ] The 🏋 terminal sells lifters; buying one raises the limit immediately.
 
@@ -318,5 +335,7 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
    rasteriser the yard runs at 3–4 fps (211 meshes, ~8.9k tris, 6 lights; the
    truck alone is 145 draw calls). Almost certainly fine on a GPU, but measure
    before calling the feel good, and merge more of the truck by material if not.
-5. **The door opening is a real hole in the loft, but the arch lip** still reads
-   as a faint dotted arc rather than a clean cut edge.
+5. **The wheel arches are now real holes cut from the shell** (same mechanism as
+   the door), which required dropping the body to `floorY 0.60` so the side wall
+   actually overlaps the tyre. If you change `floorY`, re-check the arches, the
+   step well and the cargo deck together — they all key off it.

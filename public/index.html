@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120v9';
+  window.BUILD_VERSION = 'v120w0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46539,6 +46539,19 @@ async function cloudSyncProfile() {
          had already had it. Persisting the stamp per ACCOUNT is what actually
          makes it one-time; the device stores stay as the fast path. */
       __gearReset__:       (typeof Profile.gearResetApplied === 'string') ? Profile.gearResetApplied : '',
+      /* 🛑 THE SAME STAMP BUG, TWICE MORE — and these two were the expensive
+         ones. `purgeResetApplied` and `seasonResetApplied` are both SET by
+         their guards and were both missing from this whitelist, exactly like
+         gearResetApplied above. The purge one-shot bypasses the season_apply
+         server gate on purpose, so this stamp was its only cross-device
+         guard — and it never travelled. A player changing devices had their
+         Cinder, gear, vault and CARD COLLECTION torn down a second time.
+         The one-shot is retired now (see PURGE_ONESHOT_RETIRED), but these
+         stamps must persist regardless: the next PURGE_RESET_ID bump would
+         re-open the identical hole. A stamp that is not uploaded is not a
+         stamp, it is a device-local cache. */
+      __purgeReset__:      (typeof Profile.purgeResetApplied  === 'string') ? Profile.purgeResetApplied  : '',
+      __seasonApplied__:   (typeof Profile.seasonResetApplied === 'string') ? Profile.seasonResetApplied : '',
       // 🃏 CARD COLLECTION — THE player's owned-cards count map. Without this
       // a player who picks their starter on Device A would land on Device B
       // with ZERO cards. Piggybacks the forge JSONB (no schema migration).
@@ -47278,6 +47291,14 @@ async function cloudFetchProfile() {
       try {
         const _fgr = data.forge.__gearReset__;
         if (typeof _fgr === 'string' && _fgr) Profile.gearResetApplied = _fgr;
+        // 🛑 …and the two reset stamps that were never round-tripping. Read
+        //    back BEFORE _purgeResetOnce / _applySeasonReset can fire: both
+        //    gate on Profile.cloud._hydratedFromCloud, which is set after
+        //    this merge, so the stamp is always in place first.
+        const _fpr = data.forge.__purgeReset__;
+        if (typeof _fpr === 'string' && _fpr) Profile.purgeResetApplied = _fpr;
+        const _fsa = data.forge.__seasonApplied__;
+        if (typeof _fsa === 'string' && _fsa) Profile.seasonResetApplied = _fsa;
       } catch (e) {}
     }
     const _cloudSalvage = (data.forge && typeof data.forge === 'object' && data.forge.__salvage__ && typeof data.forge.__salvage__ === 'object')
@@ -75561,8 +75582,57 @@ function _wipeBusinessProgress() {
      localStorage quota and a swallowed setItem throw is what once re-ran a
      finished wipe on every load. */
 const PURGE_RESET_ID = '2026-08-01-economy-purge';
+/* 🛑 RETIRED 2026-08-12 — DO NOT RE-ARM WITHOUT READING ALL OF THIS.
+   ─────────────────────────────────────────────────────────────────────────
+   THE BUG THIS CAUSED. Reported as "players who sign in on a different
+   device get their progress reset from the old economy reset", and
+   separately as "cards missing from their collection that are in mine".
+   Both were this function, and it reproduced on the ADMIN account.
+
+   Every other wipe path is gated by season_apply, a server RPC that RECORDS
+   the application per user, so a second device is told {already:true} and
+   does nothing. This one deliberately skips that gate:
+
+       if (sr._oneShot) { _sj = { ok: true, already: false, ... }; }
+
+   because its id is synthetic and has no season_reset row. In exchange it
+   was supposed to be guarded by three stores — but read what they are:
+
+     • _purgeOnceMem            in memory, dies with the tab
+     • localStorage             per DEVICE
+     • IndexedDB                per DEVICE
+     • Profile.purgeResetApplied  set on line ~75574 and NEVER UPLOADED —
+                                  it is not in the cloud whitelist, so it
+                                  cannot survive to a second device
+
+   So on any new device all four guards are empty, the server gate is
+   bypassed by design, and the teardown runs again on an account that
+   already took it. scope:'purge' zeroes Cinder, salvage, field bag, item
+   inventory, equipment, relics, hero loadouts and the vault, and strips the
+   CARD COLLECTION back to the starter deck. And the admin exemption lives
+   inside the `scope === 'economy'` branch, so 'purge' never honoured it.
+
+   This is the exact failure already documented for gearResetApplied at the
+   cloud whitelist (~line 46531): a stamp that is set but never persisted
+   makes a "one-time" clean run once PER DEVICE, forever.
+
+   WHY RETIRE RATHER THAN JUST PERSIST THE STAMP. Persisting it (done below,
+   __purgeReset__) stops this recurring, but it cannot help an account whose
+   original device is gone — there is no stamp anywhere to upload, so that
+   player would still be wiped exactly once more. The one-shot ran on
+   2026-08-01 and its job was to reach accounts whose directive an older
+   build had already consumed. Eleven days on, that job is done, and all
+   that remains is a mechanism that deletes a player's collection when they
+   change phones.
+
+   Future resets go through the directive path (season_apply), which is
+   properly server-gated and admin-exempt. If you ever genuinely need
+   another build-stamped one-shot, give it a real season_reset row so it
+   goes through season_apply like everything else — do NOT re-arm this. */
+const PURGE_ONESHOT_RETIRED = true;
 let _purgeOnceMem = false;
 function _purgeResetOnce() {
+  if (PURGE_ONESHOT_RETIRED) return;
   try {
     if (_purgeOnceMem) return;
     // ⏳ Same hydration gate as _applySeasonReset: clearing before the cloud
@@ -75973,6 +76043,17 @@ async function _applySeasonReset(sr) {
       return;
     }
     if (sr.scope === 'purge') {
+      /* 👑 ADMINS ARE EXEMPT HERE TOO. This mirrors the identical guard in the
+         'economy' branch above — which was the ONLY admin check in this whole
+         function, so a 'purge' directive stripped an admin's Cinder, gear and
+         collection while an 'economy' one left them alone. That inconsistency
+         is how the reported wipe reproduced on the admin account.
+         The directive is already marked applied above, so an exempt admin
+         never takes this teardown and it cannot return on another device. */
+      if (typeof isAdmin === 'function' && isAdmin()) {
+        try { console.info('👑 Admin is exempt from the purge teardown.'); } catch (_) {}
+        return;
+      }
       try { _wipeBusinessProgress(); } catch (e) {}
       // 🏪 Card Shop licence (device-local flag, cleared alongside the rest).
       try { Profile.cardShopUnlocked = false; } catch (e) {}

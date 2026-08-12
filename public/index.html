@@ -28154,6 +28154,18 @@
   .tw-nd-claim-badge.unclaimed { color:#98a4b0; border-color:rgba(152,164,176,0.4); }
   .tw-nd-claim-owner { flex:1; min-width:0; color:#e8d9b0; font-weight:700; font-size:0.82rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tw-nd-claim-hint { font-size:0.62rem; color:#8a7f64; margin-top:0.4rem; line-height:1.4; }
+  /* 🏛 Capital / town badges (sql/033). Sized and coloured to sit inside
+     .tw-nd-claim-row next to the buttons without competing with them — the
+     capital reads gold, a town reads muted, because which one you are looking
+     at should be legible at a glance without reading the label. */
+  .tw-nd-cap, .tw-nd-town {
+    display:inline-flex; align-items:center; gap:4px;
+    font-size:0.56rem; font-weight:800; letter-spacing:0.08em;
+    padding:0.22rem 0.45rem; border-radius:4px; white-space:nowrap;
+    align-self:center;
+  }
+  .tw-nd-cap  { color:#ffd166; border:1px solid rgba(212,175,55,0.55); background:rgba(212,175,55,0.10); }
+  .tw-nd-town { color:#8fa3b8; border:1px solid rgba(143,163,184,0.35); background:rgba(143,163,184,0.07); }
   /* ⚜️ v118d3 — AAA ORNATE NODE DRAWER — opt-in via .tw-aaa on .tw-node-drawer.
      Pure scoped override of the existing terminal-styled node detail panel; markup/IDs
      unchanged (+ 4 .cd-corner brackets). Reskins the "Red Zone" node modal to gold-ornate. */
@@ -61260,6 +61272,88 @@ function _nodeTierResBonus(yields) {
     return T.resourceBonus(yields, _myTierNode(), _nodeTierCtx()) || {};
   } catch (e) { return {}; }
 }
+/* 🏛 THE CAPITAL AND ITS TOWNS (sql/033).
+   Every node the player owns carries meta.role — exactly one 'main', the rest
+   'town', enforced by a partial unique index server-side. A town feeds the
+   capital a share of its own standing: the better the town's TIER, the more it
+   sends. That is the whole hierarchy — towns are not lesser copies of the
+   capital, they are what makes the capital worth having.
+
+   ⚠ A node with no role reads as a TOWN, never as a main. Defaulting the other
+     way would give a brand-new node the capital's boost the moment it appeared,
+     and a second main would break the one-capital rule the database enforces. */
+function _nodeRole(n) {
+  try { const r = (n && n.meta && n.meta.role) || ''; return r === 'main' ? 'main' : 'town'; }
+  catch (e) { return 'town'; }
+}
+function _nodeIsMain(n) { return _nodeRole(n) === 'main'; }
+/* Per-town contribution to the capital, as a fraction. Scaled by the town's
+   tier share so an Eternal town is worth far more than a Free one — the same
+   ladder that already decides its pool slice, reused rather than reinvented. */
+const TOWN_BOOST_PER_TIER = 0.35;      // an Eternal town (20% share) sends ~7%
+const TOWN_BOOST_CAP      = 0.60;      // …and the capital cannot exceed +60%
+/* The multiplier the CAPITAL earns from the towns feeding it. Returns exactly 1
+   for a town, for an unowned node, and on any error — this multiplies a payout,
+   so every failure path resolves to "no boost" rather than to something larger. */
+function _nodeTownBoost(n) {
+  try {
+    if (!n || !_nodeIsMain(n)) return 1;
+    const all = (FoundationReserve && FoundationReserve.nodes) || [];
+    let sum = 0;
+    for (const t of all) {
+      if (!t || t.id === n.id) continue;
+      if (_nodeRole(t) !== 'town') continue;
+      // Tier share is 0.005 (Free) … 0.20 (Eternal); normalise so Free is small
+      // and Eternal is meaningful without either being free money.
+      let share = 0.005;
+      try { share = Math.max(0.005, Math.min(0.20, Number(_nodeTierPoolShare(t)) || 0.005)); } catch (e) {}
+      sum += share * TOWN_BOOST_PER_TIER;
+    }
+    if (!Number.isFinite(sum) || sum <= 0) return 1;
+    return 1 + Math.min(TOWN_BOOST_CAP, sum);
+  } catch (e) { return 1; }
+}
+/* 🏛 Re-designate the capital. Server-side via node_set_main (sql/033), which
+   demotes the old capital and promotes the new one in ONE statement — the
+   partial unique index on economy_nodes can therefore never observe two mains,
+   which a client-side two-write approach could not guarantee.
+   ⚠ ADOPTS the server's answer rather than assuming success. If the RPC refuses
+     (not your node, not installed) the local roles are left exactly as they
+     were, so the map never shows a capital the database disagrees with. */
+async function _nodeMakeCapital(nodeId) {
+  try {
+    if (!nodeId) return false;
+    if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
+      showToast('⚠ Sign in to set your capital.', 3200); return false;
+    }
+    const all = (FoundationReserve && FoundationReserve.nodes) || [];
+    const target = all.find(n => n && n.id === nodeId);
+    if (!target) return false;
+    if (!(await gcConfirm('🏛 Make this your <b>capital</b>?<br><br>Your current capital becomes a town and starts feeding this one instead.'))) return false;
+    let r;
+    try { r = await Cloud.client.rpc('node_set_main', { p_node_id: nodeId }); }
+    catch (e) { showToast('⚠ Network error — capital unchanged.', 3600); return false; }
+    const row = r && r.data && (Array.isArray(r.data) ? r.data[0] : r.data);
+    if ((r && r.error) || !row || row.ok !== true) {
+      const m = ((r && r.error && r.error.message) || (row && row.note) || '') + '';
+      showToast(/does not exist|schema cache|PGRST202/i.test(m)
+        ? '⚠ Capitals need sql/033 applied. Nothing changed.'
+        : '⚠ ' + (m || 'Could not set the capital') + '. Nothing changed.', 4600);
+      return false;
+    }
+    // Mirror the server's single-main rule locally so the map is correct now,
+    // not after the next fetch.
+    for (const n of all) {
+      if (!n || !n.meta) { if (n) n.meta = n.meta || {}; }
+      if (!n) continue;
+      n.meta.role = (n.id === nodeId) ? 'main' : 'town';
+    }
+    showToast('🏛 Capital moved. Your other nodes are now towns feeding it.', 5200);
+    try { render(); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+try { window.__mg = window.__mg || {}; window.__mg._nodeMakeCapital = _nodeMakeCapital; } catch (e) {}
 function _nodeTierLabel(n) {
   try {
     const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
@@ -61272,7 +61366,13 @@ function _nodeTierLabel(n) {
 // 🔌 The slice is now the node's TIER rate (Free 0.5% … Eternal 20%) rather
 //    than one flat 5% for everyone, so the finite pool distributes by standing.
 function _nodeRealPay(n) {
-  const bounded = _nodeClaimable(n);
+  /* 🏛 The capital earns what its TOWNS feed it. Applied to the bounded ACCRUAL
+     rather than to the pool slice on purpose: the slice is this node's share of
+     a finite global reserve, so inflating it would quietly take Cinder from
+     every other player. Boosting accrual means the capital fills faster from
+     its own standing, while the pool still bounds any single claim exactly as
+     before. _nodeTownBoost returns 1 for towns, so their payout is untouched. */
+  const bounded = Math.floor(_nodeClaimable(n) * _nodeTownBoost(n));
   const pool = FoundationReserve.nodePool;
   if (!pool || pool.legacy) return bounded;
   const slice = Math.floor((pool.avail || 0) * _nodeTierPoolShare(n));
@@ -220297,9 +220397,24 @@ function renderTerritoryWars() {
             ? ('You are the hired mayor of this city. Build and run it on the owner\'s behalf'
                + (_terms ? ' — ' + escapeHtml(_terms) : '') + '.')
             : 'Connected settler — build a city that supplies this node. Everything you gather goes to your camp storage.';
+        /* 🏛 CAPITAL / TOWN. Only the OWNER may re-designate, and only on a node
+           they own — a mayor runs a city, they do not choose the player's
+           capital. The capital badge is shown to everyone; the button is not. */
+        const _isMain = (typeof _nodeIsMain === 'function') && _nodeIsMain(selNode);
+        const _roleBadge = _isMain
+          ? '<span class="tw-nd-cap" title="Your capital — towns feed it a share of their tier.">🏛 CAPITAL</span>'
+          : '<span class="tw-nd-town" title="A town. Its tier feeds your capital.">🏘 TOWN</span>';
+        const _capBtn = (_iOwnIt && !_isMain)
+          ? `<button class="btn-mini" onclick="__mg._nodeMakeCapital('${escapeHtml(selNode.id)}')" title="Make this your capital. Your current capital becomes a town.">🏛 Make capital</button>`
+          : '';
+        const _boost = _isMain && (typeof _nodeTownBoost === 'function') ? _nodeTownBoost(selNode) : 1;
+        const _boostLine = (_isMain && _boost > 1)
+          ? `<div class="tw-nd-claim-hint">🏘 Towns are feeding this capital <b>+${Math.round((_boost - 1) * 100)}%</b> accrual.</div>`
+          : '';
         return `<div class="tw-nd-claim mine"><div class="tw-nd-claim-row">
             <button class="btn-mini btn-primary" onclick="__mg._openNodeCity('${escapeHtml(selNode.id)}')">${_lbl}</button>
-          </div><div class="tw-nd-claim-hint">${_hint}</div></div>`;
+            ${_capBtn}${_roleBadge}
+          </div><div class="tw-nd-claim-hint">${_hint}</div>${_boostLine}</div>`;
       })()}
       ${(typeof _nodePowerSectionHtml === 'function') ? _nodePowerSectionHtml(selNode) : ''}
       ${(typeof _ownershipSectionHtml === 'function') ? _ownershipSectionHtml() : ''}

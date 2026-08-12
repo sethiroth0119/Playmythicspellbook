@@ -78,9 +78,13 @@ returns jsonb language sql immutable as $$
     'max_shipment_kg', 4000,
     -- ⏱ ETA in HOURS by node level. Level 1 = the 72h ceiling; level 10 = 6h.
     -- FREE CITIES (a node with no tw_node_owners row) ALWAYS take 72h.
+    -- ⚠ LEVEL 1 MUST BEAT LEVEL 0. They both used to be 72, which made the
+    -- promise "the higher the node, the faster the run" false at the bottom of
+    -- the range and gave a claimed LV1 node no advantage over an unclaimed one.
+    -- 72h is now exactly the FREE-CITY rate and nothing else reaches it.
     'eta_hours', jsonb_build_object(
-      '0', 72, '1', 72, '2', 64, '3', 56, '4', 48, '5', 40,
-      '6', 32, '7', 26, '8', 20, '9', 13, '10', 6
+      '0', 72, '1', 68, '2', 62, '3', 56, '4', 50, '5', 44,
+      '6', 37, '7', 30, '8', 22, '9', 14, '10', 6
     ),
     'free_city_hours', 72,
     'max_hours', 72,
@@ -522,7 +526,9 @@ returns jsonb language sql stable security definer set search_path = public as $
                     and (u.rent_until is null or u.rent_until > now()))
   ) order by w.tier desc, w.created_at)
   from public.wh_warehouses w
-  where w.open_to_all = true or w.owner_id = auth.uid()), '[]'::jsonb);
+  -- Never your own: you cannot rent from yourself, and offering it only ends in
+  -- an `own_warehouse` error after the player has already clicked.
+  where w.open_to_all = true and w.owner_id is distinct from auth.uid()), '[]'::jsonb);
 $$;
 -- (the aggregate lives in a scalar sub-select so an empty directory returns [] not null)
 grant execute on function public.wh_directory() to authenticated;
@@ -556,6 +562,48 @@ begin
   return public.wh_warehouse_json(v_w.id) || jsonb_build_object('bought', true, 'spent', v_cost, 'currency', v_cur);
 end; $$;
 grant execute on function public.wh_buy_unit(text) to authenticated;
+
+-- ─── 📦 wh_expand_unit — GROW an existing bay ───────────────────────────────
+-- ⚠ This exists because the no-room modal was selling a non-fix. It charged the
+-- 10 Aza / 50,000 Cinder and called wh_buy_unit, which adds a brand-new UNRENTED
+-- bay — and the crate in your hands is addressed to the renter's bay, so
+-- wh_store_crate still refused it with `wrong_unit`. The player paid and the
+-- load remained stranded. Opening storage unit space now means what it says:
+-- the ADDRESSED bay gets another unit_capacity_kg of room, for the same price.
+-- Either the warehouse owner (who is stood there holding the crate) or the bay's
+-- own renter may pay.
+create or replace function public.wh_expand_unit(p_unit_id uuid, p_currency text default 'cinder')
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid(); v_u public.wh_units; v_w public.wh_warehouses;
+  v_cfg jsonb := public.wh_config(); v_cur text; v_cost bigint; v_add numeric;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  v_cur := case when p_currency = 'aza' then 'aza' else 'cinder' end;
+  select * into v_u from public.wh_units where id = p_unit_id for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'no_unit'); end if;
+  select * into v_w from public.wh_warehouses where id = v_u.warehouse_id;
+  if v_w.owner_id is distinct from v_uid and v_u.renter_id is distinct from v_uid then
+    return jsonb_build_object('ok', false, 'reason', 'not_allowed');
+  end if;
+  -- A bay may be expanded up to four times its original size; past that the
+  -- warehouse needs more bays, not a bottomless one.
+  v_add := (v_cfg ->> 'unit_capacity_kg')::numeric;
+  if v_u.capacity_kg >= v_add * 4 then
+    return jsonb_build_object('ok', false, 'reason', 'bay_maxed', 'capacity_kg', v_u.capacity_kg);
+  end if;
+  v_cost := (v_cfg ->> (case when v_cur = 'aza' then 'unit_price_aza' else 'unit_price_cinder' end))::bigint;
+  if not public._wh_charge(v_uid, v_cur, v_cost, 'Warehouse: open storage unit space (bay ' || v_u.bay_no || ')') then
+    return jsonb_build_object('ok', false, 'reason', 'insufficient', 'currency', v_cur, 'cost', v_cost);
+  end if;
+  update public.wh_units set capacity_kg = capacity_kg + v_add, updated_at = now() where id = v_u.id;
+  return jsonb_build_object('ok', true, 'unit_id', v_u.id, 'bay_no', v_u.bay_no,
+    'capacity_kg', v_u.capacity_kg + v_add, 'used_kg', v_u.used_kg,
+    'spent', v_cost, 'currency', v_cur,
+    'wallet', (select jsonb_build_object('cinder', cinder, 'aza', sovereigns)
+               from public.user_progress where user_id = v_uid));
+end; $$;
+grant execute on function public.wh_expand_unit(uuid, text) to authenticated;
 
 -- ─── 🏗 wh_upgrade_tier — a bigger building holds more bays ──────────────────
 create or replace function public.wh_upgrade_tier(p_currency text default 'cinder')

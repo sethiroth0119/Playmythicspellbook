@@ -78337,7 +78337,20 @@ function _resolveAnyCard(id) {
   } catch (e) {}
   return null;
 }
-const _CLONE_DNA_BY_RARITY = { common: 3, uncommon: 5, rare: 8, epic: 14, legendary: 22, mythic: 34 };
+/* 🧬 WHAT A CLONE COSTS. Raised from 3/5/8/14/22/34 — roughly sixty-fold.
+   At the old prices a Memory Transfer (+5 DNA) bought a common card outright,
+   so cloning was not a sink, it was a formality.
+   ⚠ DNA SUPPLY HAD TO MOVE WITH IT. A sixty-fold price rise against an
+     unchanged trickle would not be a sink, it would be a wall — nobody clones
+     anything ever again. The Genetics Lab operation (OPS_ECON.genelab) is the
+     counterpart: it is the licence that unlocks this panel AND the industrial
+     DNA source that makes these numbers reachable. Change one, change the
+     other, or cloning silently dies. */
+const _CLONE_DNA_BY_RARITY = { common: 180, uncommon: 300, rare: 600, epic: 900, legendary: 1200, mythic: 3600 };
+/* An unrecognised rarity charges the COMMON price, not a made-up midpoint:
+   a card whose rarity string this build does not know is far more likely to be
+   a new common than a mythic, and guessing high would overcharge for a bug. */
+const _CLONE_DNA_FALLBACK = 180;
 function openCampWorkshop() {
   try {
     const ID = 'camp-workshop';
@@ -78360,10 +78373,15 @@ function openCampWorkshop() {
       </div>`;
     // Owned-card list for Clone.
     const ownedIds = Object.keys(Profile.cardCollection || {}).filter(k => (Profile.cardCollection[k] | 0) > 0);
+    /* 🧬 Resolved ONCE per open, not per row: the licence cannot change while
+       the panel is on screen, and asking per card would walk Operations.list
+       for every card the player owns. */
+    const _geneLabLicensed = (typeof _geneLabOwnsLicense === 'function') ? _geneLabOwnsLicense() : true;
+    const _geneLabEcon = (typeof _opEcon === 'function') ? (_opEcon('genelab') || null) : null;
     const cloneRows = ownedIds.map(id => {
       const c = _resolveAnyCard(id); if (!c) return '';
       const rar = String(c.rarity || 'common').toLowerCase();
-      const dna = _CLONE_DNA_BY_RARITY[rar] || 6;
+      const dna = _CLONE_DNA_BY_RARITY[rar] || _CLONE_DNA_FALLBACK;
       const ok = have('dna') >= dna && have('supplies') >= 2;
       return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px;border-bottom:1px solid rgba(184,136,255,0.12)">
         <span style="color:#e8ddff;font-size:0.86rem">${escapeHtml(c.name || id)} <span class="small-text ink-dim">${rar} ·×${Profile.cardCollection[id] | 0}</span></span>
@@ -78389,9 +78407,24 @@ function openCampWorkshop() {
         proj('refine', '🟣 Forbidden Refinement',
           'Smelt Corrupted Essence down into salvage (+12 ⛓️ Metal, +8 📦 Supplies). The slag is worth more than the essence.', refineCost, '🟣 Refine', can(refineCost)) +
         '<div style="border:1px solid rgba(134,224,138,0.3);border-radius:10px;padding:10px 12px;background:rgba(14,30,18,0.5)">' +
-          '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#86e08a">🧬 DNA Lab — Clone a Card</div>' +
-          '<div class="small-text ink-dim" style="margin:2px 0 6px">Grow a +1 copy of any card you own. DNA cost scales with rarity (+2 Supplies).</div>' +
-          '<div style="max-height:200px;overflow:auto;border:1px solid rgba(184,136,255,0.18);border-radius:8px">' + cloneRows + '</div>' +
+          '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#86e08a">🧬 DNA Lab — Clone a Card' +
+            (_geneLabLicensed ? '' : ' <span style="font-size:0.7rem;color:#ff9a6b;border:1px solid rgba(255,154,107,0.45);border-radius:5px;padding:1px 5px;vertical-align:middle">🔒 LOCKED</span>') +
+          '</div>' +
+          (_geneLabLicensed
+            ? '<div class="small-text ink-dim" style="margin:2px 0 6px">Grow a +1 copy of any card you own. DNA cost scales with rarity (+2 Supplies).</div>' +
+              '<div style="max-height:200px;overflow:auto;border:1px solid rgba(184,136,255,0.18);border-radius:8px">' + cloneRows + '</div>'
+            /* 🔒 LOCKED STATE. Says what it is, what it costs and WHERE to buy
+               it — a lock that does not tell you how to open it just reads as
+               something broken. Prices come from _opEcon so this line can never
+               drift from what Just Business actually charges. */
+            : '<div class="small-text ink-dim" style="margin:2px 0 8px">Cloning needs a <b style="color:#86e08a">Genetics Lab</b>. Found one in ' +
+              '<b>Just Business</b> to unlock this panel — it is also the only industrial source of 🧬 DNA.</div>' +
+              '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 10px;border:1px dashed rgba(134,224,138,0.35);border-radius:8px;background:rgba(14,30,18,0.4)">' +
+                '<span class="small-text" style="color:#86e08a;font-weight:700">🧬 Genetics Lab</span>' +
+                '<span class="small-text ink-dim">Startup ' + ((_geneLabEcon && _geneLabEcon.startup) || 0).toLocaleString() + ' 🔥' +
+                  ' · up to ' + ((_geneLabEcon && _geneLabEcon.maxWorkers) || 0) + ' staff' +
+                  ' · ' + ((_geneLabEcon && _geneLabEcon.yields && _geneLabEcon.yields.dna) || 0) + ' 🧬/worker·hr</span>' +
+              '</div>') +
         '</div>' +
       '</div>';
     document.body.appendChild(ov);
@@ -78448,7 +78481,21 @@ function openCampWorkshop() {
     });
     ov.querySelectorAll('[data-clone]').forEach(b => b.onclick = () => {
       const cid = b.getAttribute('data-clone');
-      const dna = parseInt(b.getAttribute('data-dna'), 10) || 6;
+      /* 🔒 CHECKED AGAIN HERE, not just in the markup. Hiding a button is a
+         presentation choice, not a gate — the rows are still in the DOM for
+         anyone who kept the panel open across a licence change, and a handler
+         that trusts its own UI is one console call from being free. */
+      if (typeof _geneLabOwnsLicense === 'function' && !_geneLabOwnsLicense()) {
+        try { showToast('🔒 Cloning needs a Genetics Lab — found one in Just Business.', 4200); } catch (e) {}
+        return;
+      }
+      /* ⚠ The PRICE IS RE-DERIVED FROM THE CARD, never read from the button.
+         data-dna is markup a player can edit; re-resolving the rarity means the
+         attribute is a display value only and cloning a mythic for a common's
+         price is not a thing that can be typed into devtools. */
+      const _cc = _resolveAnyCard(cid);
+      const _rar = String((_cc && _cc.rarity) || 'common').toLowerCase();
+      const dna = _CLONE_DNA_BY_RARITY[_rar] || _CLONE_DNA_FALLBACK;
       if (!spendResources({ dna: dna, supplies: 2 })) return;
       if (!Profile.cardCollection) Profile.cardCollection = {};
       Profile.cardCollection[cid] = (Profile.cardCollection[cid] | 0) + 1;
@@ -79588,6 +79635,17 @@ const OPS_ECON = {
   // 🥋 Dojo — the licence to run a MOVE storefront. Owning one unlocks the
   // Tutor Shop (wholesale) and lets you stock + resell moves to other players.
   dojo:         { startup: 150000, ratePerWorkerHr: 450,  salaryPerWorkerHr: 110, maxWorkers: 6,  yields: {} },
+  /* 🧬 GENETICS LAB — the licence to CLONE cards, and the industry that feeds
+     it. Two jobs on purpose: owning it unlocks the camp's DNA Lab panel, and
+     staffing it is the only industrial source of DNA. A licence with no supply
+     would sell players a locked door; a supply with no licence would leave the
+     panel free. Sized against `research` (700k, the other premium science op)
+     and below `oil` — it gates a convenience, not a whole economy.
+     ⚠ THE YIELD AND _CLONE_DNA_BY_RARITY ARE ONE DIAL IN TWO PLACES. Fully
+       staffed this is 8 x 2.0 = 16 DNA/hr, so a common clone (180) is about
+       eleven hours of a running lab and a mythic (3600) is roughly nine days.
+       Retune either number and the other has to move with it. */
+  genelab:      { startup: 550000, ratePerWorkerHr: 1200, salaryPerWorkerHr: 300, maxWorkers: 8,  yields: { dna: 2.0 }, inputs: { medicine: 0.6 } },
   // 🏦 Bank — the licence to run a LENDING house. Founding it is only the
   // premises; the charter itself is bought in MT at the Office of the Mint and
   // is what actually lets you lend. Workers here are BANK TELLERS: they staff
@@ -79809,6 +79867,11 @@ const OP_LABELS = {
   smuggling: 'Smuggling Network', salvage: 'Salvage Operation', gas: 'Gas Station Chain',
   cars: 'Car Dealership', fishing: 'Fishing Company', cardshop: 'Card Shop', dojo: 'Dojo',
   bank: 'Bank', warehouse: 'Warehouse',
+  /* ⚠ REQUIRED, not cosmetic. The Just Business catalog is built from
+     Object.keys(OPS_ECON) and falls back to the raw key for its display name,
+     so a new operation without a label here is buyable but shows up in the shop
+     as "genelab". */
+  genelab: 'Genetics Lab',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -80102,6 +80165,20 @@ function _dojoOwnsLicense() {
     if (typeof isAdmin === 'function' && isAdmin()) return true;
     if (Profile && Profile.dojoUnlocked) return true;
     if (typeof Operations !== 'undefined' && Operations.list && Operations.list.some(x => x && x.op_type === 'dojo')) return true;
+  } catch (e) {}
+  return false;
+}
+/* 🧬 True once the player has founded the Genetics Lab operation (or is admin).
+   Same shape as _dojoOwnsLicense / _csOwnsLicense — deliberately, so there is
+   one recognisable way to ask "does this player hold that licence".
+   ⚠ Reads Operations.list, which is the CLOUD-BACKED list, so the licence
+     follows the account rather than the device. Profile.geneLabUnlocked is
+     accepted too for an admin/manual grant, matching the other two. */
+function _geneLabOwnsLicense() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return true;
+    if (Profile && Profile.geneLabUnlocked) return true;
+    if (typeof Operations !== 'undefined' && Operations.list && Operations.list.some(x => x && x.op_type === 'genelab')) return true;
   } catch (e) {}
   return false;
 }

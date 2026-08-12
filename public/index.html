@@ -163063,6 +163063,14 @@ function renderUserManagement() {
             `<button class="btn-primary" id="um-gsend" ${AdmUM._busy ? 'disabled' : ''}>Send</button>` +
           `</div>` +
           `<div class="small-text ink-dim" style="margin-top:4px">Lands in the player's gift inbox — they claim it like any reward.</div>` +
+          // 🎁 One-click standard package. Separate button rather than another
+          //    dropdown entry: it is a fixed bundle, so the amount/ref inputs
+          //    above are meaningless for it and would just look ignored.
+          `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px">` +
+            `<button class="btn-secondary" id="um-care" ${AdmUM._busy ? 'disabled' : ''} style="border-color:#7fe0a8;color:#9ff0c4">📦 Send care package</button>` +
+            `<span class="small-text ink-dim">${esc(typeof carePackageSummary === 'function' ? carePackageSummary() : '')}</span>` +
+          `</div>` +
+          `<div class="small-text ink-dim" style="margin-top:4px">Sent as separate rewards, so a full vault only holds back the resources — the Cinder is still claimable.</div>` +
           `<div style="font-weight:800;color:#ff9a6b;margin:12px 0 6px">🛠 Account</div>` +
           `<div style="display:flex;gap:6px;flex-wrap:wrap">` +
             `<button class="btn-secondary btn-mini" id="um-ban" ${AdmUM._busy ? 'disabled' : ''}>🚫 Ban</button>` +
@@ -163150,6 +163158,22 @@ function renderUserManagement() {
       gs.disabled = false; gs.textContent = 'Send';
       if (r && r.ok) showToast('🎁 Sent to ' + d.handle + ': ' + (r.label || kind) + '.', 5000);
       else showToast('⚠ ' + ((r && r.error) || 'Grant failed') + '.', 4600);
+    };
+    const cp = document.getElementById('um-care');
+    if (cp) cp.onclick = async () => {
+      // Confirmed, because it is five grants at once and 500,000 Cinder is a
+      // large number to send by mis-click from a search result list.
+      if (!(await gcConfirm('📦 Send a care package to ' + d.handle + '?<br><br>' +
+            (typeof carePackageSummary === 'function' ? carePackageSummary() : '') +
+            '<br><br>It lands in their gift inbox as five separate rewards.'))) return;
+      cp.disabled = true; cp.textContent = '…';
+      const r = await adminSendCarePackage(d.user_id);
+      cp.disabled = false; cp.textContent = '📦 Send care package';
+      // A PARTIAL send is reported as a warning, not a success — the admin has
+      // to know which half to re-send.
+      if (r && r.ok && !r.partial) showToast('📦 Care package sent to ' + d.handle + '.', 5200);
+      else if (r && r.ok && r.partial) showToast('⚠ ' + (r.label || 'Partially sent') + '.', 8000);
+      else showToast('⚠ ' + ((r && r.error) || 'Care package failed') + '.', 5200);
     };
     const _acct = async (op, extra, confirmMsg) => {
       if (confirmMsg && !(await gcConfirm(confirmMsg))) return;
@@ -176026,6 +176050,33 @@ async function claimGift(g) {
     try { if (!Corp.mine && typeof corpEnsure === 'function') await corpEnsure(); } catch (e) {}
     if (!Corp.mine || !Corp.mine.id) return { error: 'Found or join a corporation first — your granted node waits in the gift inbox until then.' };
   }
+  /* 📦 NO ROOM IN THE VAULT ⇒ NO CLAIM. Same stance as the node check above,
+     and for the same reason: refuse BEFORE the server flips the gift to
+     claimed, so it stays in the inbox until the player has made space. Claiming
+     first and discovering the overflow afterwards would destroy the reward —
+     addSalvage() does not cap, it just adds, so an over-cap claim would either
+     silently exceed the ceiling or (once anything does enforce it) vanish.
+
+     ⚠ The pre-check uses the CACHED g.qty, because the authoritative quantity
+       only comes back from gift_claim() — by which point the gift is already
+       claimed and it is too late to refuse. That is the right trade: g.qty is
+       admin-set and is the same number the inbox is showing the player, and a
+       row players can no longer edit (sql/027). It is a capacity check, not a
+       money check; the money path stays entirely server-side. */
+  const _mResPre = _cid0.match(/^__res:(.+)__$/);
+  if (_mResPre) {
+    try {
+      const cap   = (typeof getResourceCap   === 'function') ? (getResourceCap()   | 0) : 0;
+      const units = (typeof getResourceUnits === 'function') ? (getResourceUnits() | 0) : 0;
+      const want  = Math.max(0, parseInt(g.qty, 10) || 0);
+      if (cap > 0 && units + want > cap) {
+        const room = Math.max(0, cap - units);
+        return { error: '📦 Not enough vault space — this reward needs ' + want.toLocaleString() +
+          ' units and you have room for ' + room.toLocaleString() + ' (' + units.toLocaleString() + ' / ' +
+          cap.toLocaleString() + ' used). Install a vault container or spend some resources, then claim it. Your reward is safe in the inbox.' };
+      }
+    } catch (e) { /* a broken capacity read must never block a legitimate claim */ }
+  }
   /* 🔒 THE CLAIM IS A SERVER CALL NOW (sql/027) — for every kind, Aza included.
      (sql/024 got Aza here first, via aza_gift_claim. That function still exists
      and is still correct; gift_claim simply absorbed it so there is ONE claim
@@ -176219,6 +176270,60 @@ async function adminGrant(toUserId, kind, amount, ref, label) {
     if (error) return { error: (/gifts|PGRST205|schema cache|does not exist/i.test(error.message || '') ? 'Gift inbox not set up — run the updated api.sql in Supabase (creates the gifts table).' : (error.message || 'Grant failed.')) };
     return { ok: true, label: card_name };
   } catch (e) { return { error: (e && e.message) || 'Network error.' }; }
+}
+
+/* 🎁 CARE PACKAGE — one admin action, five claimable rewards.
+   Deliberately built ON TOP of adminGrant() rather than as a new grant path:
+   that function is already RLS-gated, already maps every kind to the right
+   card_id, and its rewards already claim through the server-side gift_claim()
+   RPC that sql/027 exists to enforce. A bespoke "care package" insert would be
+   a second money path to audit, and the first one took a dupe exploit to get
+   right (see the note in claimGift).
+
+   Sent as FIVE SEPARATE GIFTS, not one bundle, for a reason the player feels:
+   the vault-space rule only blocks RESOURCES. As five rows, a player with a
+   full vault can still claim the 500,000 Cinder immediately and leave the four
+   resource stacks in the inbox until they make room. As one bundle, a full
+   vault would block the Cinder too — punishing them for the half of the gift
+   that has nothing to do with storage.
+
+   ⚠ 2,000 resource units against a base ceiling of EXACTLY 2,000
+     (RES_STASH_BASE — briefly 2,250, reverted). So the four stacks fit an
+     empty stash precisely and nothing more: any player already holding
+     resources will be blocked on the last stack or two until they spend some
+     or install a vault container. That is the requested behaviour, but it does
+     mean this package is all-or-nothing for a tidy player and partial for
+     everyone else — if it should always fit, raise RES_STASH_BASE or the
+     vault, rather than shrinking the package. */
+const CARE_PACKAGE = [
+  { kind: 'cinder',   ref: null,       amount: 500000 },
+  { kind: 'resource', ref: 'metal',    amount: 500 },
+  { kind: 'resource', ref: 'supplies', amount: 500 },
+  { kind: 'resource', ref: 'water',    amount: 500 },
+  { kind: 'resource', ref: 'food',     amount: 500 },
+];
+function carePackageSummary() {
+  return CARE_PACKAGE.map(p => p.amount.toLocaleString() + ' ' + (p.ref || 'Cinder')).join(' · ');
+}
+async function adminSendCarePackage(toUserId) {
+  if (typeof isAdmin === 'function' && !isAdmin()) return { error: 'Admin only.' };
+  if (!Cloud.client || !toUserId) return { error: 'Pick a player.' };
+  const sent = [], failed = [];
+  for (const part of CARE_PACKAGE) {
+    /* ⚠ SEQUENTIAL, and every result is inspected. Fired in parallel, one
+       rejected insert would be lost in the noise and the player would get a
+       partial package that LOOKED complete. The caller is told exactly which
+       parts landed, because a half-delivered grant is a support ticket and the
+       admin needs to know which half to re-send. */
+    let r;
+    try { r = await adminGrant(toUserId, part.kind, part.amount, part.ref, null); }
+    catch (e) { r = { error: (e && e.message) || 'Network error.' }; }
+    if (r && r.ok) sent.push((part.ref || 'cinder')); else failed.push((part.ref || 'cinder') + ': ' + ((r && r.error) || 'failed'));
+  }
+  if (!sent.length) return { error: 'Care package failed — ' + (failed[0] || 'nothing sent.') };
+  if (failed.length) return { ok: true, partial: true, sent: sent, failed: failed,
+    label: 'Sent ' + sent.length + '/' + CARE_PACKAGE.length + ' — FAILED: ' + failed.join('; ') };
+  return { ok: true, sent: sent, label: '🎁 Care package sent — ' + carePackageSummary() };
 }
 
 // Body-anchored "You got a gift" pop-up. Self-contained (same pattern as the

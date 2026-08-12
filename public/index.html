@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120v8';
+  window.BUILD_VERSION = 'v120v9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -206850,14 +206850,10 @@ function _cityNodeKey() {
     return (n && /^[0-9a-f-]{36}$/i.test(String(n))) ? String(n) : CITY_NODE_SENTINEL;
   } catch (e) { return CITY_NODE_SENTINEL; }
 }
-/* Does an error mean "that onConflict target does not exist on this database"?
-   Postgres 42P10 is the code; PostgREST also phrases it in prose. */
-function _cityConflictUnsupported(err) {
-  const m = (((err && err.message) || '') + ' ' + ((err && err.code) || '')).toLowerCase();
-  return m.includes('42p10')
-      || m.includes('no unique or exclusion constraint')
-      || m.includes('on conflict specification');
-}
+/* (_cityConflictUnsupported lived here — it detected "that onConflict target does
+   not exist on this database" (Postgres 42P10) so cityStateSave could retry
+   against the pre-sql/033 single-key schema. Part B is applied, that retry is
+   gone, and this had no other caller.) */
 window.cityStateSave = async function (json) {
   try {
     /* 🔴 A SAVE FROM A CITY THAT IS NO LONGER OPEN IS NOT A SAVE, IT IS A
@@ -206880,20 +206876,14 @@ window.cityStateSave = async function (json) {
       node_id: _nodeKey,
       updated_at: new Date().toISOString(),
     };
-    /* 🔀 WORKS AGAINST BOTH SCHEMAS, ON PURPOSE — there is no safe deploy order
-       without it. Ship this before sql/033 Part B and 'user_id,node_id' is not
-       a constraint yet; apply Part B before this ships and 'user_id' is no
-       longer one. Either way an upsert fails, and a failed city save is a
-       player's build session. So: try the composite target, and if THIS
-       database has not been migrated yet, fall back to the legacy one with a
-       NULL node (which is what its rows look like). Once Part B is applied the
-       fallback simply never fires, and this can be simplified away. */
-    let res = await Cloud.client.from('city_state').upsert(_row, { onConflict: 'user_id,node_id' });
-    if (res && res.error && _cityConflictUnsupported(res.error)) {
-      res = await Cloud.client.from('city_state').upsert(
-        Object.assign({}, _row, { node_id: (_nodeKey === CITY_NODE_SENTINEL) ? null : _nodeKey }),
-        { onConflict: 'user_id' });
-    }
+    /* 🏙 Node-scoped upsert. This carried a second write that retried against the
+       pre-sql/033 schema (onConflict 'user_id', NULL node) so that code and
+       database could be deployed in either order without losing a build session.
+       Part B is applied — city_state is PRIMARY KEY (user_id, node_id) with
+       node_id NOT NULL — so that retry could no longer succeed even if it fired:
+       there is no unique constraint on user_id alone any more, and a NULL node
+       is now rejected by the column itself. Removed. */
+    const res = await Cloud.client.from('city_state').upsert(_row, { onConflict: 'user_id,node_id' });
     /* ⚠ A REJECTED WRITE USED TO LOOK EXACTLY LIKE A SUCCESSFUL ONE.
        Supabase resolves rather than throws on an RLS refusal, so `await` alone
        catches nothing and the old bare `catch (e) {}` swallowed the rest. That
@@ -206925,21 +206915,20 @@ window.cityStateLoad = async function () {
     // ⚠ maybeSingle, not single: a mayor opening a city the owner has never
     //    built returns zero rows, and .single() treats that as an ERROR — which
     //    would surface as "no city" even once one exists.
-    /* 🏙 Node-scoped read. Before sql/033 Part B every row has node_id NULL, so
-       the sentinel lookup finds nothing and we retry the legacy shape — that
-       fallback is what stops a migrated-code / unmigrated-database pairing from
-       reporting "you have no city" and handing the player an empty grid to
-       build over their real one.
-       ⚠ The fallback is ONLY for the sentinel. A miss on a REAL node id means
-         that node genuinely has no city yet, which is a new city and must not
-         silently adopt the player's main one. */
+    /* 🏙 Node-scoped read. This used to retry with `.is('node_id', null)` when the
+       sentinel lookup missed, so migrated code could still find rows in an
+       unmigrated database rather than report "you have no city" and hand the
+       player an empty grid to build over their real one. sql/033 Part B is
+       applied: node_id is NOT NULL and no NULL row exists or can be written, so
+       the retry could never match. It was not free either — it fired on every
+       MISS, and a miss is exactly what a player opening their first city
+       produces, costing them a wasted round-trip. Removed.
+       ⚠ Still true, and the reason a blanket fallback would be wrong: a miss on
+         a REAL node id means that node genuinely has no city yet. That is a NEW
+         city and must not silently adopt the player's main one. */
     const _nodeKey = _cityNodeKey();
-    let r = await Cloud.client.from('city_state').select('state')
+    const r = await Cloud.client.from('city_state').select('state')
       .eq('user_id', target).eq('node_id', _nodeKey).maybeSingle();
-    if ((!r || (!r.error && !r.data)) && _nodeKey === CITY_NODE_SENTINEL) {
-      r = await Cloud.client.from('city_state').select('state')
-        .eq('user_id', target).is('node_id', null).maybeSingle();
-    }
     /* ⚠ Same trap on the READ side, and it is the more confusing of the two.
        Owner-only RLS makes a mayor's SELECT return ZERO ROWS rather than an
        error — indistinguishable from "the owner has never built a city". The
@@ -207685,12 +207674,8 @@ window.cityMayorGet = async function () {
     // Governance panel must describe the city that is OPEN, and after Part B
     // "the owner's city" is no longer a single row.
     const _nodeKey = _cityNodeKey();
-    let r = await Cloud.client.from('city_state').select('mayor_id, mayor_name')
+    const r = await Cloud.client.from('city_state').select('mayor_id, mayor_name')
       .eq('user_id', target).eq('node_id', _nodeKey).maybeSingle();
-    if ((!r || (!r.error && !r.data)) && _nodeKey === CITY_NODE_SENTINEL) {
-      r = await Cloud.client.from('city_state').select('mayor_id, mayor_name')
-        .eq('user_id', target).is('node_id', null).maybeSingle();
-    }
     return (r && r.data && r.data.mayor_id) ? { mayorId: r.data.mayor_id, mayorName: r.data.mayor_name } : null;
   } catch (e) { return null; }
 };

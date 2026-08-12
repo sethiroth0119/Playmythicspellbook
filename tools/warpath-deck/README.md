@@ -87,6 +87,8 @@ game each, ~250 MB). `--scale` multiplies match counts. Results land in
 | `q3` | is any biome archetype dominant? |
 | `q4` | do Warpath pools beat normal collection decks? |
 | `q5` | does the 25 → 31 → 38 → 46 → 52 → 60 progression work? |
+| `q6` | which card types the AI pilot never plays, and what that costs a Warpath deck |
+| `keys` | does every card key in `warpath-data.js` resolve in the engine? |
 
 ## Files
 
@@ -98,3 +100,13 @@ game each, ~250 MB). `--scale` multiplies match counts. Results land in
 - `verify.mjs` — the draft mirror vs real Postgres
 - `stats.mjs` — Wilson intervals, quantiles, a seeded PRNG
 - `run.mjs` — the five questions
+
+### Probes (each one is the reproduction for a finding)
+
+| probe | what it shows |
+|---|---|
+| `probe-swap.mjs` | the perspective-swap loop is fair: sides alternate `ABAB…`, each draws once per turn, and the second mover's permanent +1 max energy is visible in the trace |
+| `probe-bridge.mjs` | what `warpathStartBattle` actually builds — the 40-card deck it saves, its copy-limit violations, and the opponent deck `buildAIDeck()` returns |
+| `probe-emptyfoe.mjs` | plays a Warpath pool against the empty opponent deck that `buildAIDeck()` returns on an install with no published AI decks |
+| `probe-control.mjs` | the mirror-match seat/first-mover control across three heroes |
+| `probe-unresolved.mjs` | diagnostics for matches that never reach a verdict |

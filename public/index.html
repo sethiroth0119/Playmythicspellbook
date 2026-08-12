@@ -160174,7 +160174,19 @@ function _csMount3D(mount) {
       window.removeEventListener('mousemove', lookMove); window.removeEventListener('mouseup', lookEnd); window.removeEventListener('touchmove', lookMove); window.removeEventListener('touchend', lookEnd);
       window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); window.removeEventListener('resize', onResize);
       try { mixers.forEach(m => { try { m.stopAllAction(); } catch (e) {} }); } catch (e) {}
-      try { renderer.dispose(); } catch (e) {} try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
+      /* 🔴 dispose() DOES NOT RELEASE THE WEBGL CONTEXT — forceContextLoss() does.
+         dispose() frees the Three.js-side GPU objects and leaves the context
+         itself alive until the GC happens to collect the canvas, which is not
+         deterministic and can be a long time. Chrome allows roughly SIXTEEN live
+         WebGL contexts per process and force-drops the OLDEST when a new one
+         exceeds that — which surfaces as "the renderer died" on a screen that
+         did nothing wrong, with a FLAT JS heap, because no JavaScript memory
+         leaked. This panel builds a fresh renderer on every open and had no
+         forceContextLoss, so reopening it enough times walked straight into
+         that cap. One line, and the context is handed back on close. */
+      try { renderer.dispose(); } catch (e) {}
+      try { renderer.forceContextLoss(); } catch (e) {}
+      try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
     };
   } catch (e) { return null; }
 }
@@ -160823,7 +160835,13 @@ function _csMountLayoutBuilder(root) {
     try { if (ro) ro.disconnect(); } catch (e) {}
     window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', end); window.removeEventListener('touchmove', move); window.removeEventListener('touchend', end);
     window.removeEventListener('keydown', key); window.removeEventListener('resize', onResize);
-    try { renderer.dispose(); } catch (e) {} try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
+    // 🔴 See the note on the sibling panel's teardown: dispose() frees the
+    //    Three.js objects but leaves the WebGL context alive, and Chrome drops
+    //    the OLDEST context once ~16 are live. This builder makes a new one on
+    //    every open, so without this it walks into that cap.
+    try { renderer.dispose(); } catch (e) {}
+    try { renderer.forceContextLoss(); } catch (e) {}
+    try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
   };
   root._csLayoutSave = _csLayoutSave;
 }
@@ -161100,7 +161118,15 @@ function _csFurniturePreview(item) {
     const close = () => {
       try { cancelAnimationFrame(raf); } catch (e) {}
       window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); window.removeEventListener('touchmove', mv); window.removeEventListener('touchend', up);
+      /* 🔴 THE WORST OF THE THREE, because this one is PER ITEM. A furniture
+         preview builds its own renderer every time the player opens one, and
+         dispose() alone leaves the WebGL context alive — Chrome caps live
+         contexts at ~16 and force-drops the oldest past that. Browsing a
+         catalogue is exactly the behaviour that reaches the cap fastest, and
+         the resulting "renderer died" looks unrelated to furniture and shows a
+         FLAT JS heap, because nothing JavaScript-side leaked. */
       try { renderer.dispose(); } catch (e) {}
+      try { renderer.forceContextLoss(); } catch (e) {}
       const w = document.getElementById('cs-preview-backdrop'); if (w) w.remove();
     };
     wrap.querySelector('#cs-preview-close').onclick = close;

@@ -55820,9 +55820,14 @@ async function cardMarketFetch() {
           const upd = await Cloud.client.from('card_market_listings').update({ paid_out: true }).eq('id', r.id).eq('paid_out', false).select('id');
           if (!(upd && upd.data && upd.data.length)) continue;
           const amt = (r.listing_type === 'auction') ? (r.current_bid || 0) : (r.price || 0);
-          Profile.gems = (Profile.gems || 0) + amt; total += amt;
+          total += amt;
         }
-        if (total > 0) { try { saveProfile(); } catch (e) {} showToast(`💰 Market sales collected: +${total} 🔥`, 4200); }
+        /* 💰 Credited ONCE for the whole batch, not per row. addGems fires a
+           cloud write and a canonical-wallet mirror each call, so crediting
+           inside the loop would be N round-trips for one collection. The
+           per-row `paid_out` flip above is still the anti-double-pay guard —
+           this only changes how the total is banked. */
+        if (total > 0) { addGems(total, 'Card market sales'); showToast(`💰 Market sales collected: +${total} 🔥`, 4200); }
       }
     } catch (e) { _cmMarkErr(e); }
     const { data, error } = await Cloud.client.from('card_market_listings')
@@ -64080,7 +64085,15 @@ function spendGems(amount) {
   } catch (e) { try { saveProfile(); } catch (_) {} }
   return true;
 }
-function addGems(amount) {
+/* `reason` is optional and defaults to the historic 'addGems', so all 29 existing
+   callers are unchanged. It exists because every Cinder faucet used to land in
+   wallet_ledger as either 'addGems' or — for the sites that wrote Profile.gems
+   directly — as an anonymous `reconcile_local_gain_on_fetch` blob produced by
+   the MAX(server, local) adopt. Neither says WHERE the money came from, so the
+   Cinder supply could not be audited: production shows +602,357 🔥 of reconcile
+   gains in one week with nothing attributing a single unit of it to a source.
+   A named reason per faucet is the prerequisite for ever noticing abuse. */
+function addGems(amount, reason) {
   amount = Math.floor(amount || 0);
   if (amount === 0) return;
   Profile.gems = (Profile.gems || 0) + amount;
@@ -64100,7 +64113,7 @@ function addGems(amount) {
   //    (reported at client 661,147 vs server 1,143).
   //    Fire-and-forget is fine here ONLY because a failure marks the durable
   //    reconcile flag, which re-reads and lifts the server up later.
-  try { _serverMirrorCredit(amount, 'addGems'); } catch (e) { try { _walletMarkReconcile(); } catch (_) {} }
+  try { _serverMirrorCredit(amount, reason || 'addGems'); } catch (e) { try { _walletMarkReconcile(); } catch (_) {} }
 }
 
 // ===== The Ruin Exchange — currency aliases & helpers =====
@@ -65417,7 +65430,7 @@ function _campGrantLoot(tier, mul) {
   const t = CAMP_LOOT_TIERS[tier] || CAMP_LOOT_TIERS.scout;
   const qBonus = (typeof campBonus === 'function') ? campBonus('lootQuality') : 0; // Intel Center
   const gem = Math.floor((t.gem[0] + Math.random() * (t.gem[1] - t.gem[0])) * lm * (1 + qBonus));
-  Profile.gems = (Profile.gems || 0) + gem;
+  addGems(gem, 'Camp loot run');
   out.push(`<span class="cinder-icon"></span> ${gem} salvage`);
   // 🧰 Survival resources — the loot run hauls back raw materials. More on
   // riskier tiers; quantities scale with the loot multiplier + Intel Center.
@@ -66329,8 +66342,8 @@ function _campCollectTithe() {
   const today = new Date().toISOString().slice(0, 10);
   if (!Camp.facilities.__tithe || Camp.facilities.__tithe.day !== today) {
     Camp.facilities.__tithe = { day: today };
-    Profile.gems = (Profile.gems || 0) + t;
-    try { saveCamp(); saveProfile(); } catch (e) {}
+    addGems(t, 'Black Market tithe (daily)');
+    try { saveCamp(); } catch (e) {}
     return t;
   }
   return 0;
@@ -66474,7 +66487,7 @@ function resolveCampMeta() {
     const attack = 70 + Math.random() * 50;
     if (defense >= attack) {
       const reward = 120 + Math.floor(rival.rep);
-      Profile.gems = (Profile.gems || 0) + reward;
+      addGems(reward, 'Faction war defended');
       rival.threat = Math.max(0, rival.threat - 55);
       rival.rep = Math.min(100, (rival.rep || 0) + 18);
       out.push({ icon: '⚔️', name: 'FACTION WAR', status: 'WARLORD DOWN', color: '#5fae7a',
@@ -66495,7 +66508,7 @@ function resolveCampMeta() {
     const attack = 18 + rival.threat * 0.7 + Math.random() * 25;
     if (defense >= attack) {
       const reward = 20 + Math.floor(rival.threat * 0.4);
-      Profile.gems = (Profile.gems || 0) + reward;
+      addGems(reward, 'Camp defense repelled');
       rival.threat = Math.max(0, rival.threat - 30);
       rival.rep = Math.min(100, (rival.rep || 0) + 6);
       out.push({ icon: '🛡️', name: 'CAMP DEFENSE', status: 'REPELLED', color: '#5fae7a',
@@ -70616,7 +70629,7 @@ function awardCampaignRewards(rewards) {
   if (!rewards) return [];
   const lines = [];
   if (rewards.gems) {
-    Profile.gems = (Profile.gems || 0) + rewards.gems;
+    addGems(rewards.gems, 'Campaign reward');
     lines.push(`🔥 +${rewards.gems} Cinders`);
   }
   if (rewards.item) {
@@ -71290,7 +71303,7 @@ function unlockAchievement(id) {
   const def = ACHIEVEMENTS.find(a => a.id === id);
   if (!def) return false;
   Profile.achievements.earned[id] = { ts: Date.now(), gems: def.gems || 0 };
-  if (def.gems) Profile.gems = (Profile.gems || 0) + def.gems;
+  if (def.gems) addGems(def.gems, 'Achievement: ' + id);
   saveProfile();
   // 🌟 Account XP — half the gem reward in XP, capped at 80 so a single 250-gem
   // achievement can't slingshot the player past several account levels at once.
@@ -81329,8 +81342,7 @@ function _jbHandleAction(a) {
         ? frApplyTax(gross, { market: 'corp', resource: a.resource || 'goods', quantity: qty, corpId: corp && corp.id, rate: _lawRate })
         : { gross: gross, tax: 0, net: gross, label: 'Foundation Tax' };
       const _lawLabel = (_lawRate > 0) ? ('📜 Corporate levy ' + Math.round(_lawRate * 100) + '%') : q.label;
-      Profile.gems = (Profile.gems || 0) + q.net;
-      try { saveProfile(); } catch (e) {}
+      addGems(q.net, 'Corp market sale: ' + (a.resource || 'goods'));
       try { showToast('💼 Sold ' + qty + '× ' + (a.resource || 'goods') + ' — +' + q.net + ' 🔥 (' + _lawLabel + ' −' + q.tax + ' → Foundation Reserve)', 4600); } catch (e) {}
       _jbSendData();
     } else if (a.kind === 'buy') {
@@ -100513,8 +100525,7 @@ function applyEventRewardsToState(state, enc) {
       // clears). Plain match win/loss Cinder is still 0; this only fires
       // when an event-card encounter explicitly drops a gem reward.
       if (heroOwner === 'player') {
-        Profile.gems = (Profile.gems || 0) + (r.amount || 0);
-        saveProfile();
+        addGems(r.amount || 0, 'Battle event card reward');
         log.push({ msg: `🔥 +${r.amount || 0} Cinders`, color: 'amber' });
       }
     } else if (r.type === 'draw') {
@@ -151917,7 +151928,7 @@ function recordBattleProgress() {
     if (!wasClearedToday) {
       Profile.dailyChallenges = Profile.dailyChallenges || {};
       Profile.dailyChallenges[dailyKey] = 'cleared';
-      Profile.gems = (Profile.gems || 0) + DAILY_CHALLENGE_REWARD;
+      addGems(DAILY_CHALLENGE_REWARD, 'Daily challenge first clear');
       saveProfile();
       // Daily first-clear is a big XP chunk — encourages logging in daily.
       addAccountXp(120, 'Daily Challenge Cleared');
@@ -155442,8 +155453,13 @@ function _smugglerTrade(i) {
     // ---- grant the PAYS-YOU ----
     let giveLabel = '';
     if (g.kind === 'cinder') {
-      Profile.gems = (Profile.gems || 0) + g.amount;
-      try { if (typeof _serverMirrorCredit === 'function') _serverMirrorCredit(g.amount, 'Black Market deal'); } catch (e) {}
+      /* ⚠ The explicit _serverMirrorCredit that used to sit here is GONE ON
+         PURPOSE — addGems already mirrors. Keeping both would credit the
+         canonical wallet twice for one deal while the local balance moved once,
+         and the MAX(server, local) adopt would then hand the inflated server
+         figure back as truth. This was the only credit site in the file that
+         mirrored at all, which is why it is the only one that could double. */
+      addGems(g.amount, 'Black Market deal');
       giveLabel = '+' + g.amount + ' Cinder';
     } else if (g.kind === 'res') { addRes(g.id, g.qty); giveLabel = '+' + g.qty + ' ' + _resMeta(g.id).name; }
     else if (g.kind === 'card') {
@@ -155534,7 +155550,9 @@ function _refinerySellRes(id, amtSpec) {
     spendResources({ [id]: amt });
     const gross = amt * _resCinderValue(id);
     const q = (typeof frApplyTax === 'function') ? frApplyTax(gross, { market: 'black', resource: id, quantity: amt }) : { net: gross, tax: 0, label: '' };
-    if (typeof addCinders === 'function') addCinders(q.net); else Profile.gems = (Profile.gems || 0) + q.net;
+    // ⚠ The fallback used to write Profile.gems raw, so on any build where
+    //   addCinders is absent the sale never reached the canonical wallet.
+    if (typeof addCinders === 'function') addCinders(q.net); else addGems(q.net, 'Refinery sale');
     showToast('🔥 +' + q.net + ' Cinders — refined ' + amt + ' ' + _resMeta(id).name + (q.tax ? ' · −' + q.tax + ' tax' : '') + '.', 3000);
     render();
   } catch (e) { try { console.warn('[refinery] sell failed', e); } catch (_) {} }
@@ -214892,7 +214910,7 @@ function _campRouteResolve() {
     delivered++;
   }
   r.lastDeliveryAt = Math.min(now, (r.lastDeliveryAt || now) + (delivered + (ambushed ? 1 : 0)) * CAMP_ROUTE_INTERVAL_MS);
-  if (cinder > 0) Profile.gems = (Profile.gems || 0) + cinder;
+  if (cinder > 0) addGems(cinder, 'Camp convoy delivery');
   if (ambushed) { r.status = 'ambushed'; r.ambushAt = now; }
   try { saveProfile(); } catch (e) {}
   if (delivered || ambushed) { try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {} }
@@ -214931,7 +214949,7 @@ function launchConvoyDefense() {
     let cinder = 0;
     if (won) {
       cinder = Math.round(220 * tier * (1 + _campContrib() / 100));
-      Profile.gems = (Profile.gems || 0) + cinder;
+      addGems(cinder, 'Camp route secured');
       Profile.campContrib = Math.min(100, _campContrib() + 2);
       try { _twLog('route', `<b>${escapeHtml(_campRegName())}</b> secured its ${escapeHtml(node.name)} convoy (+${cinder} 🔥).`); } catch (e) {}
     } else {

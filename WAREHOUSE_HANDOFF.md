@@ -74,7 +74,12 @@ anchor, then insert exactly where stated.
 That line sits just after `_dwellingClose()` ends, around line 78143. The
 warehouse module is the direct sibling of the Dwelling module and belongs there.
 
-**Paste:** the whole block from
+**Paste:** the entire contents of **`WAREHOUSE_PASTE_index-module.js`** (repo
+root, below its header comment) — that file is exactly this module, 323 lines,
+extracted verbatim so nobody has to go fishing inside a 215,000-line file. It is
+not loaded by anything and lives outside `./public`, so it never deploys.
+
+It runs from
 `// ═══…\n// 🚚 STORAGE WAREHOUSE — player-owned warehouses, rented bays, …`
 down to and including
 ```js
@@ -84,7 +89,6 @@ try {
                             rentals: _whFetchRentals, renting: _whIsRenting };
 } catch (e) {}
 ```
-(Take it verbatim from this branch's `public/index.html`.)
 
 It defines: `WH_RPC_ALLOW`, `WH_ETA_BLURB`, `_whReady`, `_whRpc`, `_whMyName`,
 `_whWallet`, `_whFetchRentals`, `_whIsRenting`, `_whSendButtonHtml`,

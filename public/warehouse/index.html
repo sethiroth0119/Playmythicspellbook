@@ -392,7 +392,16 @@ var MOCK = (function () {
         var row = CFG.tiers[nx - 1], cost2 = cur2 === 'aza' ? row.aza : row.cinder;
         if (!chg(cur2, cost2)) return { ok: false, reason: 'insufficient', currency: cur2, cost: cost2 };
         S.warehouse.tier = nx; S.warehouse.max_units = row.max_units;
-        return Object.assign({}, S, { upgraded: nx, spent: cost2, currency: cur2 });
+        // Mirror the server: an upgrade BUILDS bays, it does not just raise a cap.
+        var seed = Math.min(row.max_units, S.units.length + 2), added = 0;
+        while (S.units.length < seed) {
+          var bn = S.units.length + 1;
+          S.units.push({ id: 'u' + bn, bay_no: bn, renter_id: null, renter_name: null,
+            capacity_kg: CFG.unit_capacity_kg, used_kg: 0, contents: {}, mine: false });
+          added++;
+        }
+        S.warehouse.units_total = S.units.length;
+        return Object.assign({}, S, { upgraded: nx, spent: cost2, currency: cur2, bays_added: added });
       }
       if (fn === 'wh_buy_lifter') {
         var cur3 = a.p_currency === 'aza' ? 'aza' : 'cinder', t = a.p_tier | 0;
@@ -730,8 +739,17 @@ function buildScene() {
   };
   App.colliders.push({ x: -1.2, z: 10.5, hw: 3.7, hd: 1.15 });
   // Where the player stands to reach into the cargo — just outside the slider.
-  App.truckDoor = { x: -1.2 + 2.26, z: 10.5 - 1.5 };
-  App.sensors.push({ kind: 'truck', x: App.truckDoor.x, z: App.truckDoor.z, r: 2.6 });
+  // ⚠ THE SENSOR MUST SIT AT THE CARGO OPENING. It used to be placed from the
+  // truck's KERB DOOR (local z 2.26) — 3.7 m forward of the freight, beside the
+  // front wheel arch — so from the spot where E is pressed the raycast saw 0 of
+  // 12 crates, and the centre itself was inside the truck's collider and
+  // unreachable. "Press E and SEE the storage that was delivered" is only met if
+  // the crates are visible from where you stand to press it. The cargo opening
+  // is truck-local z −1.45 (the midpoint of CARGO), and rotation.y = π/2 maps
+  // local (x, z) → world (z, −x).
+  var cargoLocalZ = -1.45, standOut = 2.05;
+  App.truckDoor = { x: App.truck.position.x + cargoLocalZ, z: App.truck.position.z - standOut };
+  App.sensors.push({ kind: 'truck', x: App.truckDoor.x, z: App.truckDoor.z, r: 2.8 });
 
   // Apron markings + a couple of bollards so the yard reads as a place.
   var line = new T.Mesh(new T.PlaneGeometry(0.16, 16), mat.gold);
@@ -843,11 +861,21 @@ function carryLimit() {
   var t = st ? (st.lifter_tier | 0) : 0;
   return (C.lifters[t] || C.lifters[0]).carry_kg;
 }
+// True only in YOUR OWN yard. A visiting renter used to see the upgrade
+// terminal rendering the OWNER's tier with live buy buttons, while
+// wh_upgrade_tier resolves by owner_id = auth.uid() — so the charge landed on
+// the visitor's own warehouse, or came back no_warehouse.
+function isOwner() { var st = WH.state(); return !st || st.is_owner !== false; }
 function renderHud() {
   var st = WH.state(); if (!st) return;
+  // Owner-only controls disappear when visiting somebody else's yard.
+  var own = isOwner();
+  $('b-up').style.display = own ? '' : 'none';
+  $('topbar').setAttribute('data-visiting', own ? '' : '1');
   var C = cfg(), w = st.wallet || WH.wallet();
   var tier = C.tiers[st.warehouse.tier - 1] || C.tiers[0];
   $('topbar').innerHTML = '<span class="display" style="color:var(--gold)">🏗 ' + esc(tier.name) + '</span>'
+    + (own ? '' : '<span style="color:var(--mist)">visiting ' + esc(st.warehouse.owner_name || 'another player') + '</span>')
     + '<span>Tier <b>' + st.warehouse.tier + '</b>/5</span>'
     + '<span>Bays <b>' + st.units.length + '</b>/' + tier.max_units + '</span>';
   $('wallet').innerHTML = '🔥 <b class="mono" style="color:var(--gold)">' + fmt(w.cinder) + '</b> Cinder'
@@ -1000,38 +1028,60 @@ function buyUnit(cur) {
       toast('❌ ' + reasonText(r), 3400);
       return;
     }
-    WH.setState(r); closeModal(); refreshWorld();
-    toast('📦 Storage unit opened — Bay ' + r.warehouse.units_total + ' is ready.', 3200);
+    WH.setState(r); refreshWorld();
+    toast('📦 Storage unit opened — Bay ' + r.warehouse.units_total + ' is ready to rent out.', 3200);
+    openUpgradeModal();
   });
 }
 
 function openUpgradeModal() {
   var C = cfg(), st = WH.state(), w = st.wallet || WH.wallet();
   var cur = st.warehouse.tier, next = C.tiers[cur];
-  var body = C.tiers.map(function (t) {
-    var state = t.tier < cur ? 'built' : t.tier === cur ? 'current' : 'locked';
-    return '<div class="opt' + (state === 'current' ? ' owned' : '') + '">'
-      + '<div class="g"><div class="t">Tier ' + t.tier + ' · ' + esc(t.name)
-      + (state === 'current' ? ' <span style="color:var(--good)">— you are here</span>' : '') + '</div>'
-      + '<div class="d">Holds up to <b>' + t.max_units + '</b> storage bays'
-      + (t.tier > 1 ? ' · 🪙 ' + t.aza + ' Aza or 🔥 ' + fmt(t.cinder) + ' Cinder' : ' · starting building')
-      + '</div></div></div>';
-  }).join('');
+  var capNow = C.tiers[cur - 1].max_units, have = st.units.length;
+  var canBuy = have < capNow;
+  // ⚠ wh_buy_unit had ZERO call sites — the only rpc that can add a bay was
+  // dead code in both halves, so a warehouse was permanently stuck at 2 bays
+  // and "upgrade the building to store more storage for other players" bought
+  // nothing but a bigger number. The upgrade now seeds bays server-side AND
+  // the rest of the cap is buyable right here.
+  var body = '<div class="note">This warehouse has <b>' + have + '</b> of <b>' + capNow
+    + '</b> storage bays built. Every bay is one more player who can rent from you.</div>'
+    + (canBuy
+      ? '<div class="opt"><div class="g"><div class="t">➕ Open another storage bay</div>'
+        + '<div class="d">' + C.unit_capacity_kg + ' kg · 🪙 ' + C.unit_price_aza
+        + ' Aza or 🔥 ' + fmt(C.unit_price_cinder) + ' Cinder</div></div>'
+        + '<button class="btn gold" data-bay-aza="1"' + (w.aza < C.unit_price_aza ? ' disabled' : '') + '>🪙 ' + C.unit_price_aza + '</button>'
+        + '<button class="btn gold" data-bay-cin="1"' + (w.cinder < C.unit_price_cinder ? ' disabled' : '') + '>🔥 ' + fmt(C.unit_price_cinder) + '</button></div>'
+      : '<div class="note">Every bay this tier allows is built. Upgrade the building to make room for more.</div>')
+    + C.tiers.map(function (t) {
+      var state = t.tier < cur ? 'built' : t.tier === cur ? 'current' : 'locked';
+      return '<div class="opt' + (state === 'current' ? ' owned' : '') + '">'
+        + '<div class="g"><div class="t">Tier ' + t.tier + ' · ' + esc(t.name)
+        + (state === 'current' ? ' <span style="color:var(--good)">— you are here</span>' : '') + '</div>'
+        + '<div class="d">Holds up to <b>' + t.max_units + '</b> storage bays'
+        + (t.tier > 1 ? ' · 🪙 ' + t.aza + ' Aza or 🔥 ' + fmt(t.cinder) + ' Cinder · <b>+2 bays built on upgrade</b>' : ' · starting building')
+        + '</div></div></div>';
+    }).join('');
   var foot = [{ label: 'Close', on: closeModal }];
   if (next) {
-    foot.push({ label: '🪙 ' + next.aza + ' Aza', gold: true, disabled: w.aza < next.aza,
+    foot.push({ label: '🏗 Upgrade · 🪙 ' + next.aza, gold: true, disabled: w.aza < next.aza,
       on: function () { upgradeTier('aza'); } });
-    foot.push({ label: '🔥 ' + fmt(next.cinder) + ' Cinder', gold: true, disabled: w.cinder < next.cinder,
+    foot.push({ label: '🏗 Upgrade · 🔥 ' + fmt(next.cinder), gold: true, disabled: w.cinder < next.cinder,
       on: function () { upgradeTier('cinder'); } });
   }
   openModal('🏗 Warehouse', next ? 'Upgrade to Tier ' + next.tier + ' · ' + esc(next.name)
     : 'Fully upgraded', body, foot);
+  $('m-body').querySelectorAll('[data-bay-aza]').forEach(function (b) { b.onclick = function () { buyUnit('aza'); }; });
+  $('m-body').querySelectorAll('[data-bay-cin]').forEach(function (b) { b.onclick = function () { buyUnit('cinder'); }; });
 }
+
 function upgradeTier(cur) {
   WH.rpc('wh_upgrade_tier', { p_currency: cur }).then(function (r) {
     if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3400); return; }
     WH.setState(r); closeModal(); refreshWorld();
-    toast('🏗 Warehouse upgraded to Tier ' + r.warehouse.tier + '.', 3200);
+    toast('🏗 Warehouse upgraded to Tier ' + r.warehouse.tier + ' — <b>'
+      + (r.bays_added || 0) + ' new bays</b> built, ' + r.warehouse.units_total + ' of '
+      + r.warehouse.max_units + ' now standing.', 4600);
   });
 }
 
@@ -1056,12 +1106,20 @@ function openBayModal(unit) {
   var c = unit.contents || {};
   var keys = Object.keys(c).filter(function (k) { return (c[k] | 0) > 0; });
   var pct = Math.min(100, unit.used_kg / Math.max(1, unit.capacity_kg) * 100);
+  // ⚠ renter_name is MASKED to null for a bay you neither own nor rent, so a
+  // null name does not mean "empty" — the server ships `occupied` for exactly
+  // this. Reading the mask as vacancy told players a stranger's full bay was
+  // free to take.
+  var known = (unit.renter_name != null) || (unit.used_kg != null);
   var body = '<div class="note">' + (unit.renter_name
       ? 'Rented by <b>' + esc(unit.renter_name) + '</b>.'
-      : 'Not rented yet — any player can take this bay.')
-    + ' Holding <b>' + Math.round(unit.used_kg || 0) + ' kg</b> of ' + unit.capacity_kg + ' kg.</div>'
-    + '<div class="bar" style="margin-bottom:.8rem"><i style="width:' + pct + '%"></i></div>'
-    + (keys.length
+      : (unit.occupied ? 'Rented by another player — what is inside is theirs.'
+                       : 'Not rented yet — any player can take this bay.'))
+    + (known ? ' Holding <b>' + Math.round(unit.used_kg || 0) + ' kg</b> of ' + unit.capacity_kg + ' kg.'
+             : ' Capacity ' + unit.capacity_kg + ' kg.') + '</div>'
+    + (known ? '<div class="bar" style="margin-bottom:.8rem"><i style="width:' + pct + '%"></i></div>' : '')
+    + (!known ? '<p style="color:var(--mist)">You can only see inside a bay you own the building for, or rent yourself.</p>'
+      : keys.length
       ? keys.map(function (k) {
           var m = RES_META[k] || ['📦', k];
           var kg = ((cfg().weights[k] || cfg().default_weight) * c[k]).toFixed(1);
@@ -1119,20 +1177,52 @@ function buyLifter(tier, cur) {
   });
 }
 
+// ⚠ THE IFRAME HAS ITS OWN MAP AND IT IS THE ONE THAT FIRES. Fixing the host's
+// _whReason left this one covering 10 of 31 codes with a fallback that returned
+// the RAW IDENTIFIER — maxing a bay showed the player "❌ bay_maxed", and a
+// blocked rpc showed them "❌ blocked". Never return r.reason: an unmapped code
+// is a bug in this table, and the player should not be the one to read it.
 function reasonText(r) {
+  var cur = (r && r.currency === 'aza') ? 'Aza' : 'Cinder';
   var m = {
-    insufficient: 'Not enough ' + ((r && r.currency === 'aza') ? 'Aza' : 'Cinder') + '.',
-    tier_cap: 'Your warehouse tier cannot hold any more bays — upgrade the building first.',
-    max_tier: 'The warehouse is already fully upgraded.',
-    already_owned: 'You already own that lifter.',
-    no_room: 'That bay has no room left.',
-    too_heavy: 'That crate is too heavy for your lifter.',
-    in_transit: 'That load has not arrived yet.',
-    not_allowed: 'You are not allowed to touch that bay.',
+    insufficient:  'Not enough ' + cur + '.',
+    no_room:       'That bay has no room left.',
+    no_room_at_destination: 'Your bay cannot hold that much'
+                   + (r && r.free_kg != null ? ' — only ' + Math.floor(r.free_kg).toLocaleString() + ' kg is free.' : '.'),
+    too_heavy:     'That crate is too heavy for your lifter'
+                   + (r && r.weight_kg ? ' (' + r.weight_kg + ' kg vs ' + r.carry_kg + ' kg).' : '.'),
+    too_large:     'That load is too heavy for one run — send it in smaller batches.',
+    in_transit:    'That load has not arrived yet.',
+    wrong_unit:    'That crate is addressed to a different bay.',
+    already_stored:'That crate has already been put away.',
+    rental_expired:'That rental has run out — renew it before storing more.',
+    bay_maxed:     'That bay is as large as one bay can get — the renter needs a second one.',
+    tier_cap:      'This warehouse cannot hold any more bays — upgrade the building first.',
+    max_tier:      'The warehouse is already fully upgraded.',
+    already_owned: 'You already own that weight lifter.',
+    bad_tier:      'That is not a weight lifter you can buy.',
+    not_allowed:   'You are not allowed to touch that bay.',
+    not_your_unit: 'That bay is not yours.',
+    not_yours:     'That is not yours.',
+    no_unit:       'That storage bay no longer exists.',
+    no_crate:      'That crate is no longer on the van.',
+    no_shipment:   'That load no longer exists.',
+    no_warehouse:  'That warehouse no longer exists.',
+    no_free_unit:  'There is no free bay here.',
+    not_rented:    'Nobody is renting that bay.',
+    still_in_grace:'That renter still has time to collect their goods.',
+    nothing_there: 'There is nothing in there to take out.',
+    too_late:      'That load has already been put away.',
+    own_warehouse: 'That is your own warehouse.',
+    closed:        'That warehouse is not taking renters.',
+    empty_payload: 'Nothing was selected to send.',
+    bad_origin:    'That is not a valid place to send from.',
     not_signed_in: 'You need to be signed in.',
-    timeout: 'The server did not answer.',
+    blocked:       'That action is not available from here.',
+    rpc_failed:    'The storage network could not complete that.',
+    timeout:       'The storage network did not answer.'
   };
-  return (r && m[r.reason]) || (r && r.reason) || 'Something went wrong.';
+  return (r && m[r.reason]) || 'Something went wrong.';
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1146,7 +1236,10 @@ function doInteract() {
   var n = App.near;
   if (!n) return;
   if (n.kind === 'lifter') { openLifterModal(); return; }
-  if (n.kind === 'upgrade') { openUpgradeModal(); return; }
+  if (n.kind === 'upgrade') {
+    if (!isOwner()) { toast('🏗 This is not your warehouse — only its owner can upgrade it.', 3200); return; }
+    openUpgradeModal(); return;
+  }
   if (n.kind === 'truck') {
     if (App.held) { toast('You are already carrying a crate — take it to a bay.', 2400); return; }
     var p = nextCrate();

@@ -242,11 +242,12 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 | `wh_directory()` | signed in | Warehouses with a free bay (counts only). |
 | `wh_rent_unit(wh, days, name)` | signed in | Charges renter, credits owner, claims a bay. |
 | `wh_my_rentals()` | signed in | Drives the button label. |
+| `wh_my_shipments()` | signed in | Everything you have on the road — powers the in-transit view and Recall. |
 | `wh_send_shipment(unit, kind, node, label, payload, name)` | renter | Weight + ETA computed server-side; splits into crates. |
 | `wh_store_crate(crate, unit)` | owner or renter | The unload gate. |
 | `wh_buy_unit(currency)` | owner | Adds a NEW empty bay. 10 Aza / 50,000 Cinder. |
 | `wh_expand_unit(unit, currency)` | owner or that renter, rental must be CURRENT | **Grows an EXISTING bay** by another 500 kg, same price. This is what the "you need to open storage unit space" modal calls — buying a new bay cannot help a crate addressed to a full one. |
-| `wh_upgrade_tier(currency)` | owner | Raises the bay cap. |
+| `wh_upgrade_tier(currency)` | owner | Raises the bay cap **and builds 2 bays**. |
 | `wh_buy_lifter(tier, currency)` | anyone | Carry capacity. |
 | `wh_withdraw(unit, res, qty)` | renter | Takes goods back out. |
 | `wh_cancel_shipment(id)` | sender | Pulls back un-stored crates. |
@@ -256,8 +257,14 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 `wh_store_crate` refusal reasons the UI handles: `in_transit`, `too_heavy`,
 `no_room` (→ raises the purchase modal), `wrong_unit`, `not_allowed`,
 `already_stored`, `rental_expired`. `wh_send_shipment` adds `too_large` and
-`no_room_at_destination`. **Every one of these has a line in `_whReason`** —
-anything missing shows the player a raw identifier.
+`no_room_at_destination`.
+
+⚠ **There are TWO reason maps and both must be kept complete.** `_whReason` in
+`public/index.html` covers the host-side modals; `reasonText` in
+`public/warehouse/index.html` covers everything you do standing in the yard, and
+it is the one players hit most. Both now cover all 31 server codes, and **neither
+falls back to `r.reason`** — an unmapped code is a bug in the table, not
+something to show a player. Add a line to *both* whenever you add an RPC.
 
 ---
 
@@ -286,8 +293,10 @@ anything missing shows the player a raw identifier.
 - [ ] Repeat from a **house** (Real Estate Office) and a **city** (city overlay pill).
 
 **Getting it back out — the other half of the loop**
-- [ ] **📦 My storage** (Camp panel, or the Real Estate Office) lists every bay
-      you rent, broken out per resource, with the weight.
+- [ ] **📦 My storage** (Camp panel, Real Estate Office, or the city overlay)
+      lists every bay you rent, broken out per resource, with the weight.
+- [ ] It also lists everything **on the road**, with its ETA, and **↩ Recall**
+      returns an un-stored load to your ledger.
 - [ ] **↩ Withdraw all** credits the resources back into your salvage ledger and
       empties the bay.
 - [ ] **🏗 Visit** opens the warehouse your bay is in — a renter can walk it too,
@@ -309,7 +318,18 @@ anything missing shows the player a raw identifier.
       **10 Aza** or **50,000 Cinder**; unaffordable options are disabled.
 - [ ] Buying **grows that bay by 500 kg** and the crate in hand then fits.
 - [ ] A truck **pulls up** when a load lands, and pulls away once it is empty.
-- [ ] At the tier cap the modal offers the **warehouse upgrade** instead.
+- [ ] The 🏗 terminal offers **➕ Open another storage bay** (10 Aza / 50,000
+      Cinder) whenever bays < cap — and buying one really adds a numbered bay.
+- [ ] **Upgrading the building builds 2 bays immediately** and raises the cap;
+      the toast names how many were built. It must never move only the number.
+- [ ] At the tier cap the ➕ control disappears and the modal offers the upgrade.
+- [ ] **Crates are visible on the van** from where you stand at the door — not
+      just counted in the HUD.
+- [ ] Visiting **someone else's** warehouse (📦 My storage → 🏗 Visit) hides the
+      warehouse-upgrade terminal and says "visiting <owner>" in the top bar.
+- [ ] A bay you neither own nor rent does **not** claim to be un-rented.
+- [ ] `node _wh_paste_check.mjs` → **WAREHOUSE PASTE FILE MATCHES**. Re-run it
+      after any edit to the module.
 - [ ] The 🏋 terminal sells lifters; buying one raises the limit immediately.
 
 **Regression**

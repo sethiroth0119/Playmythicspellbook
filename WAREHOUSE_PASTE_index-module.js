@@ -3,7 +3,7 @@
 //
 // This file is NOT loaded by anything and is NOT deployed (it lives outside
 // ./public on purpose). It exists so the handoff does not ask anyone to go
-// fishing for 447 lines inside a 215,000-line file.
+// fishing for 489 lines inside a 215,000-line file.
 //
 // ⚠ THIS FILE MUST MATCH THE MODULE LIVE IN public/index.html.
 // It silently went 180 lines stale once already, and anyone who pasted it
@@ -48,7 +48,7 @@ let _whFrame = null, _whMsgHandler = null;
 const WH_RPC_ALLOW = {
   wh_config: 1, wh_my_warehouse: 1, wh_warehouse_json: 1, wh_directory: 1,
   wh_buy_unit: 1, wh_expand_unit: 1, wh_upgrade_tier: 1, wh_buy_lifter: 1, wh_rent_unit: 1,
-  wh_my_rentals: 1, wh_send_shipment: 1, wh_store_crate: 1, wh_withdraw: 1,
+  wh_my_rentals: 1, wh_my_shipments: 1, wh_send_shipment: 1, wh_store_crate: 1, wh_withdraw: 1,
   wh_cancel_shipment: 1,
 };
 // 📦 One shared truth about how long a delivery takes, said in the words the
@@ -136,7 +136,13 @@ function _whRefreshButtons(root) {
   _whFetchRentals(true).then(() => {
     try {
       (root || document).querySelectorAll('.wh-send-btn').forEach(b => {
-        b.textContent = _whIsRenting() ? '📦 Send to your storage' : '🛒 Buy storage from player';
+        // ⚠ PRESERVE THE PREFIX. This used to blat textContent on every button,
+        // which wiped the per-house name spliced in by the Real Estate Office —
+        // a player with three homes got three identical buttons one frame after
+        // the panel drew. The prefix rides on the element so a repaint can put
+        // it back.
+        const pre = b.getAttribute('data-wh-prefix') || '';
+        b.textContent = pre + (_whIsRenting() ? '📦 Send to your storage' : '🛒 Buy storage from player');
       });
     } catch (e) {}
   });
@@ -361,11 +367,35 @@ async function _whOpenMyStorage() {
         : '<div style="color:#bfae87;font-size:0.78rem">Empty — nothing has been carried in yet.</div>'}
     </div>`;
   }).join('');
+  // ⚠ IN-TRANSIT VIEW. _whCancelShipment existed with exactly one occurrence in
+  // the whole file — its own definition. A sender could watch nothing and recall
+  // nothing; only somebody standing in the yard could send a load back.
+  const ship = await _whRpc('wh_my_shipments', {}) || [];
+  const shipHtml = ship.length ? `
+    <div style="font-family:'Cinzel',serif;color:#ffd166;font-size:0.9rem;letter-spacing:0.05em;margin:0.2rem 0 0.6rem">🚚 On the road</div>
+    ${ship.map(sp => {
+      const ms = new Date(sp.eta_at).getTime() - Date.now();
+      const eta = ms <= 0 ? '<span style="color:#7ce8a8">ARRIVED — waiting to be unloaded</span>'
+        : '<span style="color:#ff7a2f">' + Math.floor(ms / 3600000) + 'h ' + Math.floor((ms % 3600000) / 60000) + 'm</span>';
+      return `<div style="display:flex;align-items:center;gap:0.7rem;padding:0.65rem 0.85rem;margin-bottom:0.5rem;background:rgba(0,0,0,0.3);border:1px solid rgba(255,122,47,0.28);border-radius:10px">
+        <div style="flex:1">
+          <div style="color:#e2eaff;font-size:0.84rem">Bay ${sp.bay_no} · ${escapeHtml(sp.owner_name || 'a player')}'s warehouse — <strong>${(+sp.weight_kg).toLocaleString()} kg</strong></div>
+          <div style="color:#bfae87;font-size:0.74rem">from your ${escapeHtml(sp.origin_kind)}${sp.origin_label ? ' — ' + escapeHtml(sp.origin_label) : ''} · ${sp.free_city ? 'free city, 72h' : 'node LV ' + sp.node_level + ', ' + sp.eta_hours + 'h'} · ${eta} · ${sp.crates_left} of ${sp.crates_total} crates still to unload</div>
+        </div>
+        <button class="wh-recall" data-sid="${escapeHtml(sp.id)}" style="padding:0.38rem 0.8rem;background:rgba(255,107,107,0.16);color:#ff9b9b;border:1px solid rgba(255,107,107,0.5);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.76rem">↩ Recall</button>
+      </div>`;
+    }).join('')}
+    <div style="height:1px;background:rgba(212,175,55,0.2);margin:0.4rem 0 0.9rem"></div>` : '';
   const root = _whModal('wh-storage', '📦 My storage',
-    'Every bay you rent, what is in it, and how to get it back.', body,
+    'Every bay you rent, what is in it, what is on its way, and how to get it back.', shipHtml + body,
     '<button class="wh-market" style="padding:0.5rem 1.1rem;background:rgba(255,209,102,0.18);color:#ffd166;border:1px solid rgba(255,209,102,0.55);border-radius:7px;cursor:pointer;font-family:\'Cinzel\',serif;font-size:0.82rem">🛒 Rent another bay</button>');
   root.querySelector('.wh-market').onclick = () => { root.remove(); _whOpenDirectory('camp', null, ''); };
   root.querySelectorAll('.wh-visit').forEach(b => b.onclick = () => { root.remove(); _whOpen(b.dataset.wid); });
+  root.querySelectorAll('.wh-recall').forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Recalling…';
+    if (await _whCancelShipment(b.dataset.sid)) { root.remove(); _whOpenMyStorage(); }
+    else { b.disabled = false; b.textContent = '↩ Recall'; }
+  });
   root.querySelectorAll('.wh-take').forEach(b => b.onclick = async () => {
     b.disabled = true; b.textContent = 'Collecting…';
     const r = await _whRpc('wh_withdraw', { p_unit_id: b.dataset.uid });
@@ -384,8 +414,20 @@ function _whCreditPayload(payload, why) {
       const q = Math.max(0, Math.floor(+payload[id] || 0));
       if (q > 0) { L[id] = (L[id] | 0) + q; n += q; }
     });
-    if (typeof saveProfile === 'function') saveProfile();
   } catch (e) {}
+  // ⚠ The SAVE gets its own try/catch and is NOT silent. The server has already
+  // emptied the bay, so if the write fails the goods exist only in memory —
+  // one refresh and they are gone with no re-credit path. Tell the player to
+  // stay put, and retry once.
+  try {
+    if (typeof saveProfile === 'function') saveProfile();
+  } catch (e) {
+    try { setTimeout(() => { try { saveProfile(); } catch (e2) {} }, 1200); } catch (e2) {}
+    try {
+      showToast('⚠ Your goods came back but the save failed — do NOT refresh. '
+        + 'Retrying; if this keeps happening, report it before reloading.', 12000);
+    } catch (e2) {}
+  }
   if (n > 0) showToast('📦 ' + (why || 'Returned') + ' — ' + n.toLocaleString() + ' units back in your stores.', 3600);
   else showToast('📦 Nothing to collect.', 2400);
   try { if (typeof render === 'function') render(); } catch (e) {}

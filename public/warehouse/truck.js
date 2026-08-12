@@ -69,11 +69,21 @@
       paintU: M({ color: 0xb9b5ac, roughness: 0.62, metalness: 0.10 }),   // shaded underside / door returns
       floor:  M({ color: 0x6d6a63, roughness: 0.88, metalness: 0.05 }),   // cargo floor + step well
       seam:   M({ color: 0x8e8a80, roughness: 0.70, metalness: 0.08 }),   // rub rail / panel-line grooves
-      glass:  M({ color: 0x0e1620, roughness: 0.07, metalness: 0.86,
-                  transparent: true, opacity: 0.78 }),                     // dark tint, blue-grey sheen
+      // Same trap: fully-metallic glass with nothing to reflect is a black hole.
+      // A little metalness plus a lifted base colour keeps the blue-grey sheen.
+      glass:  M({ color: 0x1b2634, roughness: 0.14, metalness: 0.35,
+                  transparent: true, opacity: 0.74 }),                     // dark tint, blue-grey sheen
       rubber: M({ color: 0x121417, roughness: 0.96, metalness: 0.02 }),
-      chrome: M({ color: 0xc6ccd4, roughness: 0.20, metalness: 1.00 }),
-      steel:  M({ color: 0x9aa0a8, roughness: 0.45, metalness: 0.85 }),   // plain steel wheels
+      // ⚠ metalness ≥ 0.6 with NO envMap in the scene renders PURE BLACK — a
+      // fully metallic surface has no diffuse term, so with nothing to reflect
+      // it reflects nothing. 32 meshes were affected: every hubcap was a black
+      // void, the mirror glass was a black void, the rear pull-strap bar and the
+      // step bumper's rub strip read as detached black slabs. This prop has to
+      // look right in ANY scene, so it does not assume an environment map —
+      // metalness is dialled back and roughness up, which reads as brushed
+      // metal under plain lights and still takes a highlight.
+      chrome: M({ color: 0xc6ccd4, roughness: 0.34, metalness: 0.45 }),
+      steel:  M({ color: 0x9aa0a8, roughness: 0.55, metalness: 0.35 }),   // plain steel wheels
       black:  M({ color: 0x1a1d22, roughness: 0.72, metalness: 0.18 }),   // mirrors, trim, grille surround
       grille: M({ color: 0x0b0d10, roughness: 0.85, metalness: 0.25 }),
       amber:  M({ color: 0xff9c2e, roughness: 0.35, emissive: 0xff7a10, emissiveIntensity: 0.85 }),
@@ -354,17 +364,20 @@
   }
 
   // ─── 🔩 Wheel arch — the opening is CUT FROM THE SHELL (see shell()'s `cut`) ─
-  // All that is left to build is what you see through it: a dark inner liner so
-  // you cannot see out the far side of the truck, and a thin returned edge on
-  // the cut. The previous build drew a 1.14 m half-disc and 21 spaced lip boxes;
-  // because only 0.21 m of that radius met the body, the result was a serrated
-  // white comb around a black plate, both ending in mid-air below the sill.
+  // ⚠ THE POINT OF THE CUT IS TO SEE THE TYRE THROUGH IT. The previous build
+  // filled the opening with a flat slab at x ±0.98 — OUTBOARD of the front tyre
+  // (0.725–0.995) and of the outer rear dual (0.785–1.055) — so the liner
+  // occluded the very thing the hole exists to reveal. The result was a hard
+  // black letterbox 1.24 m long with the tyre hanging entirely below it: a spat,
+  // which is exactly the failure the cut was meant to end.
+  // The liner now sits INBOARD of the tyre, so it only stops you seeing out the
+  // far side, and it is shaped to the arch rather than being a rectangle.
   function arch(THREE, mats, side, z) {
     const g = new THREE.Group();
     const top = D.floorY + (D.shoulderY - D.floorY) / SIDE_N;   // the cut band's top
     const liner = new THREE.Mesh(
-      new THREE.BoxGeometry(0.10, top - D.floorY, ARCH_HALF * 2), mats.rubber);
-    liner.position.set(side * (D.halfW - 0.07), (D.floorY + top) / 2, z);
+      new THREE.BoxGeometry(0.06, top - D.floorY + 0.10, ARCH_HALF * 2 - 0.06), mats.rubber);
+    liner.position.set(side * 0.70, (D.floorY + top) / 2, z);   // INBOARD of the tyre
     liner.receiveShadow = true; g.add(liner);
     // Returned edge along the top of the opening — one strip, not a comb.
     const lip = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.045, ARCH_HALF * 2 + 0.02), mats.paintU);
@@ -386,7 +399,7 @@
       lens.rotation.x = Math.PI / 2 - 0.10;
     });
     // Amber turn signal, outboard of the lamps.
-    const ts = box(THREE, g, 0.16, 0.12, 0.055, mats.amber, side * 0.905, 1.08, nz + 0.005);
+    const ts = box(THREE, g, 0.14, 0.12, 0.055, mats.amber, side * 0.800, 1.08, nz + 0.005);
     ts.rotation.x = -0.10;
     return g;
   }
@@ -407,7 +420,21 @@
 
     // ── cargo interior — a real floor, liner walls and a cab bulkhead, so the
     //    open slider reveals somewhere goods could actually go ───────────────
-    box(THREE, T, 2.02, 0.06, 4.42, mats.floor, 0, D.floorY + 0.06, -0.62);       // deck
+    box(THREE, T, 2.02, 0.06, 4.42, mats.floor, 0, D.floorY + 0.06, -0.62);
+    // ⚠ WHEEL HOUSES. A 0.92 m tyre against a 0.69 m deck top means the rear
+    // duals passed 0.23 m THROUGH the cargo floor, and with the flank now cut
+    // open you looked straight at a bare tyre standing in the load space. Every
+    // real box van boxes them in; so does this one.
+    [-1, 1].forEach(sd => {
+      const wx = sd * 0.86, wz = D.zAxleR, ww = 0.46, wl = 1.34, wh2 = 0.42;
+      box(THREE, T, ww, 0.05, wl, mats.floor,  wx, D.floorY + wh2, wz);            // top
+      box(THREE, T, 0.05, wh2, wl, mats.floor, wx - sd * ww / 2, D.floorY + wh2 / 2, wz);  // inboard wall
+      box(THREE, T, ww, wh2, 0.05, mats.floor, wx, D.floorY + wh2 / 2, wz - wl / 2);
+      box(THREE, T, ww, wh2, 0.05, mats.floor, wx, D.floorY + wh2 / 2, wz + wl / 2);
+      // …and the same under the cab floor for the steer axle.
+      box(THREE, T, ww, 0.05, 1.20, mats.floor,  sd * 0.80, D.floorY + wh2, D.zAxleF);
+      box(THREE, T, 0.05, wh2, 1.20, mats.floor, sd * (0.80 - ww / 2), D.floorY + wh2 / 2, D.zAxleF);
+    });       // deck
     // Liners start ABOVE the cut band, so they never paint across a wheel arch —
     // and the KERB-side liner is split around the cargo opening so it does not
     // seal the hole we just cut.
@@ -439,20 +466,47 @@
 
     // ── side detailing ───────────────────────────────────────────────────────
     // ⚠ Z-FIGHTING: trim that STRADDLES the shell surface shimmers into a dotted
-    // moiré band the length of the truck. Every strip below is offset so its
+    // moire band the length of the truck. Every strip below is offset so its
     // INNER face clears the shell by ~4 mm — proud trim, never coplanar trim.
     const proud = (t) => D.halfW + t / 2 + 0.004;
+    // ⚠ …and trim must STOP AT EVERY HOLE. A single 5.9 m rod ran straight
+    // through the open kerb door, the cargo opening and both wheel arches: a ray
+    // inward at rail height hit the rail and then nothing for 1.68 m, an
+    // unsupported bar hanging across an open bay in front of the freight. The
+    // fronts were never trimmed either, so the rail and the lower seam ran 0.21 m
+    // and 0.31 m past the end of the shell into free air beside the nose.
+    // railRun() subtracts the apertures on the side it is drawing and clamps to
+    // the bodywork, emitting one merged mesh per rail.
+    const APER_R = [[DOOR.z0, DOOR.z1], [CARGO.z0, CARGO.z1],
+                    [D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF],
+                    [D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF]];
+    const APER_L = [[D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF],
+                    [D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF]];
+    const Z0 = D.zRear + 0.04, Z1 = 2.84;            // the shell's own extent
+    function railRun(side, y, h, t, mat, apertures) {
+      // Walk the run, skipping any span that crosses an opening.
+      const cuts = (apertures || []).slice().sort((a, b) => a[0] - b[0]);
+      const segs = [];
+      let z = Z0;
+      for (const c of cuts) {
+        const a = Math.max(Z0, c[0] - 0.03), b = Math.min(Z1, c[1] + 0.03);
+        if (a > z + 0.06) segs.push([z, a]);
+        z = Math.max(z, b);
+      }
+      if (Z1 > z + 0.06) segs.push([z, Z1]);
+      if (!segs.length) return;
+      T.add(mergeBoxes(THREE, segs.map(sg => ({
+        w: t, h: h, d: sg[1] - sg[0], x: side * proud(t), y: y, z: (sg[0] + sg[1]) / 2
+      })), mat));
+    }
     [-1, 1].forEach(side => {
+      const ap = side > 0 ? APER_R : APER_L;
       // Horizontal rub rail, about a third of the way up the side.
-      // ONE strip, not two. An earlier build stacked a thin black strip on the
-      // rail whose slab overlapped the rail's own — 9 mm of shared volume, which
-      // is exactly how you manufacture a dotted moire band 5 m long.
-      box(THREE, T, 0.030, 0.070, 5.90, mats.seam,  side * proud(0.030), 1.52, 0.12);
-      box(THREE, T, 0.034, 0.022, 5.90, mats.black, side * (proud(0.030) + 0.026), 1.52, 0.12);
+      railRun(side, 1.52, 0.070, 0.030, mats.seam, ap);
+      // Lower body seam, so the side is not one dead slab.
+      railRun(side, 0.78, 0.032, 0.018, mats.seam, ap);
       // Vertical panel line where the cab meets the cargo box.
       box(THREE, T, 0.022, 1.82, 0.030, mats.seam, side * proud(0.022), 1.80, D.zBulkhead);
-      // Lower body seam, so the side is not one dead slab.
-      box(THREE, T, 0.018, 0.032, 6.02, mats.seam, side * proud(0.018), 0.78, 0.16);
       T.add(arch(THREE, mats, side, D.zAxleF));
       T.add(arch(THREE, mats, side, D.zAxleR));
     });
@@ -578,12 +632,15 @@
     // only 0.60 m of clearance, so a well reaching to 0.16 hung below the truck
     // like a bolted-on ladder. One shallow step, fully boxed in on three sides,
     // dark, and never below the frame rails.
-    const wellY = dyB - 0.22;
+    // ⚠ The comment below used to say "never below the frame rails" while the
+    // well bottomed 0.125 m UNDER them, reading as a white box bolted beneath
+    // the door. It is now genuinely inside the envelope.
+    const wellY = dyB - 0.15;
     box(THREE, doorway, 0.44, 0.05, dw - 0.10, mats.floor, dx - 0.26, wellY, dz);             // tread (the one lit surface)
     box(THREE, doorway, 0.50, 0.24, 0.04, mats.cabin, dx - 0.26, wellY + 0.12, dz + dw / 2 - 0.04);
     box(THREE, doorway, 0.50, 0.24, 0.04, mats.cabin, dx - 0.26, wellY + 0.12, dz - dw / 2 + 0.04);
     box(THREE, doorway, 0.04, 0.28, dw, mats.cabin, dx - 0.50, wellY + 0.12, dz);             // inner wall
-    box(THREE, doorway, 0.52, 0.04, dw, mats.cabin, dx - 0.26, wellY - 0.045, dz);            // well floor
+    box(THREE, doorway, 0.52, 0.04, dw, mats.cabin, dx - 0.26, wellY - 0.035, dz);            // well floor
     // Kick panel closing the outside of the well so daylight cannot get under it.
     box(THREE, doorway, 0.04, 0.26, dw + 0.04, mats.paintU, dx + 0.004, wellY + 0.11, dz);
     cyl(THREE, doorway, 0.020, 0.020, 1.15, 8, mats.chrome, dx - 0.16, dyB + 1.10, dz - dw / 2 + 0.12);

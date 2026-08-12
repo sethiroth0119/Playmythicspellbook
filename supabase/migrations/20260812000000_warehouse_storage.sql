@@ -652,6 +652,7 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_uid uuid := auth.uid(); v_w public.wh_warehouses;
   v_cfg jsonb := public.wh_config(); v_cur text; v_cost bigint; v_next integer; v_row jsonb;
+  v_max integer; v_seed integer;
 begin
   if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
   v_cur := case when p_currency = 'aza' then 'aza' else 'cinder' end;
@@ -665,7 +666,26 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'insufficient', 'currency', v_cur, 'cost', v_cost);
   end if;
   update public.wh_warehouses set tier = v_next, updated_at = now() where id = v_w.id;
-  return public.wh_warehouse_json(v_w.id) || jsonb_build_object('upgraded', v_next, 'spent', v_cost, 'currency', v_cur);
+  -- ⚠ AN UPGRADE MUST DELIVER STORAGE, NOT A NUMBER. This used to raise `tier`
+  -- and stop: the cap went 4 → 8 while the warehouse still had its original 2
+  -- bays, the HUD then advertised 6 slots that could never be filled, and at
+  -- tier 5 that was 1,500,000 Cinder for "Bays 2/32". The clause is "upgrade the
+  -- building to store MORE storage for other players", so the building now
+  -- physically gains bays. Two come with the upgrade; the rest of the new cap
+  -- stays buyable through wh_buy_unit.
+  v_max  := (v_row ->> 'max_units')::integer;
+  v_seed := least(v_max, v_w.units_total + 2);
+  if v_seed > v_w.units_total then
+    insert into public.wh_units (warehouse_id, bay_no, capacity_kg)
+      select v_w.id,
+             coalesce((select max(bay_no) from public.wh_units where warehouse_id = v_w.id), 0) + g,
+             (v_cfg ->> 'unit_capacity_kg')::numeric
+      from generate_series(1, v_seed - v_w.units_total) g;
+    update public.wh_warehouses set units_total = v_seed where id = v_w.id;
+  end if;
+  return public.wh_warehouse_json(v_w.id)
+    || jsonb_build_object('upgraded', v_next, 'spent', v_cost, 'currency', v_cur,
+                          'bays_added', v_seed - v_w.units_total);
 end; $$;
 grant execute on function public.wh_upgrade_tier(text) to authenticated;
 
@@ -759,6 +779,29 @@ returns jsonb language sql stable security definer set search_path = public as $
   where u.renter_id = auth.uid() and (u.rent_until is null or u.rent_until > now())), '[]'::jsonb);
 $$;
 grant execute on function public.wh_my_rentals() to authenticated;
+
+-- ─── 📡 wh_my_shipments — what this player has on the road right now ────────
+-- Without this a sender had no in-transit view anywhere in the game, and
+-- wh_cancel_shipment was unreachable except by someone standing in the yard.
+create or replace function public.wh_my_shipments()
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce((select jsonb_agg(jsonb_build_object(
+    'id', s.id, 'warehouse_id', s.warehouse_id, 'owner_name', w.owner_name,
+    'unit_id', s.unit_id, 'bay_no', u.bay_no,
+    'origin_kind', s.origin_kind, 'origin_label', s.origin_label,
+    'node_level', s.node_level, 'free_city', s.free_city,
+    'eta_hours', s.eta_hours, 'eta_at', s.eta_at, 'sent_at', s.sent_at,
+    'weight_kg', s.weight_kg, 'payload', s.payload,
+    'status', case when s.status = 'transit' and s.eta_at <= now() then 'arrived' else s.status end,
+    'crates_total', s.crates_total, 'crates_stored', s.crates_stored,
+    'crates_left', (select count(*) from public.wh_crates c where c.shipment_id = s.id and c.stored = false)
+  ) order by s.eta_at)
+  from public.wh_shipments s
+  join public.wh_warehouses w on w.id = s.warehouse_id
+  left join public.wh_units u on u.id = s.unit_id
+  where s.sender_id = auth.uid() and s.status in ('transit', 'arrived')), '[]'::jsonb);
+$$;
+grant execute on function public.wh_my_shipments() to authenticated;
 
 -- ─── 🚚 wh_send_shipment — "Send to my storage unit" ─────────────────────────
 -- Weight AND eta are computed HERE. The client may not pass either one. The

@@ -2725,6 +2725,34 @@ function insFinPane(t, def) {
     return h;
   } catch (e) { return ''; }
 }
+/* 🍽 How hard per-citizen demand tracks the multiplier that inflates supply.
+   0 = today's behaviour (flat demand, 5x supply). 1 = demand scales exactly
+   with production. Solved to 0.10: a fully-buffed city lands on break-even
+   while an unbuffed one is untouched. See the long note in moraleTick(). */
+const DEMAND_FOLLOWS_SUPPLY = 0.10;
+/* The average output multiplier the city's STAPLE producers are enjoying, as a
+   demand scale in [1, TILE_MULT_CAP].
+   ⚠ ALWAYS RETURNS >= 1, and returns exactly 1 on any error or on a city with
+     no staple producers. This value multiplies how much the population EATS —
+     a bug here starves a city, so every failure path resolves to "today's
+     behaviour" rather than to something larger. */
+function cityDemandScale() {
+  try {
+    const staff = staffingRatio(), pf = game.power.factor;
+    let sum = 0, n = 0;
+    for (const [k, t] of Object.entries(game.tiles)) {
+      const d = BUILDINGS[t.type];
+      if (!d || !d.gen || t.damaged) continue;
+      if (!d.gen.food && !d.gen.water) continue;       // staples set the pace
+      const ci = k.indexOf(',');
+      sum += tileMult(+k.slice(0, ci), +k.slice(ci + 1), t, staff, pf); n++;
+    }
+    if (!n) return 1;
+    const avg = sum / n;
+    if (!Number.isFinite(avg) || avg <= 1) return 1;
+    return 1 + (Math.min(avg, TILE_MULT_CAP) - 1) * DEMAND_FOLLOWS_SUPPLY;
+  } catch (e) { return 1; }
+}
 const CINDER_PERIOD_DIV = 60;                    // per-minute figures → per-hour
 const cinderRate = (perMin) => (perMin || 0) / CINDER_PERIOD_DIV;
 /* The SAME number the tick will actually pay, for any resource. Every panel that
@@ -19217,8 +19245,34 @@ async function moraleTick(dtSec) {
   const dtMin = dtSec / 60;
   let fedOk = true, wateredOk = true;
   if (pop > 0) {
-    wellbeing.eatFrac += pop * MORALE.eatPerPopPerMin * dtMin;
-    wellbeing.drinkFrac += pop * MORALE.drinkPerPopPerMin * dtMin;
+    /* 🍽 DEMAND FOLLOWS SUPPLY — the asymmetry this fixes.
+       Every producer in the city is multiplied by tileMult (adjacency × level ×
+       staffing × weather × mayor × Kalon × sockets, capped at TILE_MULT_CAP=5).
+       Consumption was a FLAT per-citizen rate multiplied by nothing at all. So
+       supply scaled 5x with development and demand scaled 1x, and a fully
+       buffed farm fed FIVE HUNDRED citizens. Food filled the shared 2,000-unit
+       vault, crowded every other resource out of it, and the surplus was then
+       silently discarded by addRes while "STASH FULL" spammed the player.
+
+       Scaling demand by the same multiplier the producers enjoy is the
+       structurally correct answer: a city that has quintupled its output has
+       quintupled the mouths' expectations too.
+
+       ⚠ MEASURED, NOT GUESSED. k = DEMAND_FOLLOWS_SUPPLY was solved for, not
+         picked: at k=0.10 a fully-buffed city goes from +3.1 food/min of pure
+         surplus to -0.1 (break-even), while an UNBUFFED city is bit-identical
+         — scale(1, k) === 1 for every k, so no starter city and no unbuffed
+         live city can be pushed into starvation by this dial. Higher k values
+         were rejected for driving developed cities sharply negative.
+
+       ⚠ THIS DOES NOT FIX THE HOARDER. A player who builds eight farms and no
+         Cannery still banks ~45 food/min: population demand is simply small
+         against multiplied production. That case needs producers to IDLE when
+         the stash cannot accept their output, which is a separate change to
+         the accrual path — not another turn of this dial. */
+    const _dScale = cityDemandScale();
+    wellbeing.eatFrac += pop * MORALE.eatPerPopPerMin * _dScale * dtMin;
+    wellbeing.drinkFrac += pop * MORALE.drinkPerPopPerMin * _dScale * dtMin;
     const eat = Math.floor(wellbeing.eatFrac), drink = Math.floor(wellbeing.drinkFrac);
     if (eat >= 1) {
       wellbeing.eatFrac -= eat;

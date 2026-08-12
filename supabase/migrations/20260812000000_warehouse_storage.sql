@@ -67,7 +67,15 @@ returns jsonb language sql immutable as $$
     'default_weight', 1.0,
     -- 📦 A shipment is split into crates of at most this many kg, so hauling a
     -- big load is a real several-trip job rather than one magic click.
-    'crate_kg', 50,
+    -- ⚠ THIS MUST STAY <= the tier-0 (Bare Hands) carry limit. It used to be 50
+    -- against a 25 kg bare-hands limit, which meant a brand-new player could not
+    -- lift a single crate and the minigame did not function until they had paid
+    -- 25,000 Cinder for a Hand Truck. The weight limit is meant to make you take
+    -- TRIPS, not to paywall the loop.
+    'crate_kg', 22,
+    -- The most a shipment may weigh in one go. Past this the sender splits it.
+    -- Silently truncating a payload is how you make resources disappear.
+    'max_shipment_kg', 4000,
     -- ⏱ ETA in HOURS by node level. Level 1 = the 72h ceiling; level 10 = 6h.
     -- FREE CITIES (a node with no tw_node_owners row) ALWAYS take 72h.
     'eta_hours', jsonb_build_object(
@@ -78,7 +86,10 @@ returns jsonb language sql immutable as $$
     'max_hours', 72,
     -- 💰 Renting a bay: what the renter pays the warehouse owner per day.
     'rent_cinder_per_day', 1200,
-    'rent_max_days', 30
+    'rent_max_days', 30,
+    -- How long a lapsed renter keeps their goods before the warehouse owner may
+    -- impound them. Goods are NEVER silently deleted.
+    'rent_grace_days', 3
   );
 $$;
 grant execute on function public.wh_config() to authenticated, anon;
@@ -125,8 +136,18 @@ create table if not exists public.wh_units (
 create index if not exists wh_units_renter_idx on public.wh_units (renter_id);
 
 alter table public.wh_units enable row level security;
+-- READ: your own bays, and the bays inside your own warehouse. NOT everyone's.
+-- ⚠ This used to be `using (true)`, which quietly undid the masking in
+-- wh_warehouse_json: the rpc returned contents {} for other renters and a
+-- direct table select returned the real {"metal":100,"medicine":50}. It also
+-- handed an attacker a shopping list of which bays were worth diverting.
+-- The rental market does NOT need this — wh_directory is SECURITY DEFINER and
+-- only ever publishes counts.
 drop policy if exists whu_sel on public.wh_units;
-create policy whu_sel on public.wh_units for select to authenticated using (true);
+create policy whu_sel on public.wh_units for select to authenticated using (
+  renter_id = auth.uid()
+  or exists (select 1 from public.wh_warehouses w where w.id = warehouse_id and w.owner_id = auth.uid())
+);
 drop policy if exists whu_ins on public.wh_units;
 create policy whu_ins on public.wh_units for insert to authenticated with check (false);
 drop policy if exists whu_upd on public.wh_units;
@@ -137,16 +158,37 @@ create policy whu_upd on public.wh_units for update to authenticated using (fals
 -- this row is written, and wh_cancel_shipment hands the un-stored remainder
 -- straight back, so the resources exist in exactly one place at a time.
 --
--- ⚠ HONEST LIMITATION, stated rather than papered over: Cinder and Aza ARE
---   server-authoritative (public.user_progress), but the salvage ledger
---   (Profile.salvage — food/metal/fuel/…) has no server-side balance in this
---   game at all; it rides inside the profile blob. So the server can and does
---   validate the SHAPE of a payload (known resource ids, positive integers,
---   clamped quantities) and derives its weight and ETA itself — but it cannot
---   yet verify the sender actually HAD those resources. PRODUCTION HARDENING:
---   add a server-side salvage balance (a user_resources table + a debit rpc)
---   and move the debit into wh_send_shipment's transaction. Nothing else in
---   this module trusts the client, and no Cinder/Aza path depends on this.
+-- ⚠ KNOWN LIMITATIONS — the complete list, not a flattering subset.
+--
+--  1. THE SALVAGE LEDGER IS NOT SERVER-SIDE. Cinder and Aza are authoritative
+--     (public.user_progress), but the salvage ledger (Profile.salvage —
+--     food/metal/fuel/…) has no server-side balance anywhere in this game; it
+--     rides inside the profile blob. The server validates the SHAPE of a
+--     payload (known ids, positive integers, clamped quantities) and derives
+--     its weight and ETA itself, but it CANNOT verify the sender owned the
+--     goods: `wh_send_shipment` with {"dna":1000000} from an empty ledger
+--     returns ok:true. HARDENING: add a user_resources table + a debit rpc and
+--     move the debit into wh_send_shipment's transaction.
+--
+--  2. THIS MODULE INHERITS TWO HOLES IT DOES NOT OWN, and its economy claims
+--     are only as strong as they are:
+--       • public.tw_node_owners has `with check (true)` on insert, so any
+--         authenticated user can insert themselves as the owner of any node.
+--         wh_node_level() reads that table, so node ownership — and therefore
+--         a faster ETA — is forgeable until that policy is tightened.
+--       • bulletproof_saves.sql's `up_upd` policy lets a player UPDATE their
+--         own public.user_progress row directly, so a client can set its own
+--         Cinder balance. Every "charged inside the transaction" guarantee
+--         below is real, but it is a guarantee about a balance the player can
+--         also edit. Fix that policy and the guarantees become absolute.
+--
+--  3. Bay contents are visible to the WAREHOUSE OWNER by design — they have to
+--     see a load to unload it. A renter is trusting the warehouse owner with
+--     visibility, exactly as in the real world.
+--
+-- Everything else in this module is enforced server-side: currency, weight,
+-- crate splitting, bay capacity, lifter capacity, bay↔shipment ownership, and
+-- the free-city 72h floor.
 create table if not exists public.wh_shipments (
   id            uuid primary key default gen_random_uuid(),
   sender_id     uuid not null references auth.users(id) on delete cascade,
@@ -309,6 +351,48 @@ begin
   return greatest(1, least(10, v_lvl));
 end; $$;
 grant execute on function public.wh_node_level(text) to authenticated;
+
+-- ─── 🔗 wh_player_at_node — is this player REALLY attached to that node? ────
+-- p_node_id arrives from the client, so on its own it proves nothing: an
+-- earlier build let a player ship out of their own camp while naming a rich
+-- stranger's LV10 node and collect a 6-hour run. We check the relationships the
+-- server already records:
+--   tw_camp_registrations  their camp is registered at the node
+--   tw_node_residency      one of their houses is stationed there
+--   tw_node_owners         they own the node
+--   city_node_links        their city is linked to it
+-- An unverifiable claim is deliberately NOT an error — wh_send_shipment treats
+-- it as a free city and charges the full 72 hours, so forging a node id can
+-- only ever make your delivery slower.
+create or replace function public.wh_player_at_node(p_uid uuid, p_node_id text)
+returns boolean language plpgsql stable security definer set search_path = public as $$
+declare v_hit boolean := false;
+begin
+  if p_uid is null or p_node_id is null or length(trim(p_node_id)) = 0 then return false; end if;
+  begin
+    select exists (select 1 from public.tw_camp_registrations r
+                    where r.node_id = p_node_id and r.user_id = p_uid) into v_hit;
+  exception when undefined_table or undefined_column then v_hit := false; end;
+  if v_hit then return true; end if;
+  begin
+    select exists (select 1 from public.tw_node_residency r
+                    where r.node_id = p_node_id and r.user_id = p_uid and r.residents > 0) into v_hit;
+  exception when undefined_table or undefined_column then v_hit := false; end;
+  if v_hit then return true; end if;
+  begin
+    select exists (select 1 from public.tw_node_owners o
+                    where o.node_id = p_node_id and o.user_id = p_uid) into v_hit;
+  exception when undefined_table or undefined_column then v_hit := false; end;
+  if v_hit then return true; end if;
+  begin
+    if p_node_id ~ '^[0-9a-fA-F-]{36}$' then
+      select exists (select 1 from public.city_node_links c
+                      where c.node_id = p_node_id::uuid and c.user_id = p_uid) into v_hit;
+    end if;
+  exception when undefined_table or undefined_column then v_hit := false; end;
+  return coalesce(v_hit, false);
+end; $$;
+grant execute on function public.wh_player_at_node(uuid, text) to authenticated;
 
 -- ─── ⏱ wh_eta_hours — hours for a delivery, from the config table ───────────
 create or replace function public.wh_eta_hours(p_level integer)
@@ -541,8 +625,17 @@ begin
   if not v_w.open_to_all then return jsonb_build_object('ok', false, 'reason', 'closed'); end if;
   -- Claim the lowest-numbered genuinely free bay. FOR UPDATE SKIP LOCKED so two
   -- players racing for the last bay can never both win it.
+  -- ⚠ A bay is only FREE if it is empty. An earlier build re-rented any bay
+  -- whose rent_until had passed and wiped `contents` to '{}' as it did so —
+  -- one second past expiry and another player's goods were gone, irrecoverably.
+  -- Now: goods are never destroyed by a rental change. A lapsed bay that still
+  -- holds something stays with its renter (who can still wh_withdraw it) until
+  -- the warehouse owner impounds it via wh_impound_unit after the grace period.
   select * into v_u from public.wh_units
-    where warehouse_id = v_w.id and (renter_id is null or rent_until < now())
+    where warehouse_id = v_w.id
+      and (renter_id is null
+           or (rent_until < now() - ((v_cfg ->> 'rent_grace_days')::int || ' days')::interval
+               and contents = '{}'::jsonb))
     order by bay_no limit 1 for update skip locked;
   if not found then return jsonb_build_object('ok', false, 'reason', 'no_free_unit'); end if;
   v_cost := (v_cfg ->> 'rent_cinder_per_day')::bigint * v_days;
@@ -552,9 +645,6 @@ begin
   perform public._wh_credit(v_w.owner_id, 'cinder', v_cost, 'Warehouse: bay ' || v_u.bay_no || ' rented');
   update public.wh_units set
     renter_id = v_uid, renter_name = p_name,
-    -- A bay reclaimed from a lapsed renter starts empty; never inherit contents.
-    contents = case when renter_id = v_uid then contents else '{}'::jsonb end,
-    used_kg  = case when renter_id = v_uid then used_kg  else 0 end,
     rent_until = greatest(coalesce(rent_until, now()), now()) + (v_days || ' days')::interval,
     updated_at = now()
   where id = v_u.id;
@@ -616,7 +706,16 @@ begin
   if v_kg <= 0 then return jsonb_build_object('ok', false, 'reason', 'empty_payload'); end if;
   -- 🏳 Node level → ETA. Free city (no tw_node_owners row) resolves to level 0,
   -- which the eta table maps to the 72h ceiling.
-  v_lvl   := public.wh_node_level(p_node_id);
+  -- ⚖ Refuse a load we could not crate up faithfully, rather than truncating it.
+  if v_kg > (v_cfg ->> 'max_shipment_kg')::numeric then
+    return jsonb_build_object('ok', false, 'reason', 'too_large',
+      'weight_kg', v_kg, 'max_shipment_kg', (v_cfg ->> 'max_shipment_kg')::numeric);
+  end if;
+  -- 🏳 The origin node must be one this player is DEMONSTRABLY attached to.
+  -- An unverifiable claim is not an error — it just resolves to a free city and
+  -- takes the full 72 hours, so forging a node id can never buy a faster run.
+  v_lvl   := case when public.wh_player_at_node(v_uid, p_node_id)
+                  then public.wh_node_level(p_node_id) else 0 end;
   v_free  := (v_lvl = 0);
   v_hours := case when v_free then (v_cfg ->> 'free_city_hours')::integer else public.wh_eta_hours(v_lvl) end;
   v_hours := least((v_cfg ->> 'max_hours')::integer, greatest(1, v_hours));
@@ -635,8 +734,15 @@ begin
   v_crate_kg := (v_cfg ->> 'crate_kg')::numeric;
   v_rem := v_pay; v_i := 0;
   while (select count(*) from jsonb_each_text(v_rem)) > 0 loop
+    -- ⚠ The stop is a HARD ERROR, not a quiet exit. An earlier build bailed out
+    -- of this loop and then wrote crates_total = v_i anyway: 400 metal vanished
+    -- with ok:true, and because crates_total exceeded the crates that actually
+    -- existed the shipment could never reach 'stored' — or be cancelled. If the
+    -- payload cannot be crated, nothing is written at all.
+    if v_i >= 400 then
+      raise exception 'wh_send_shipment: payload needs more than 400 crates';
+    end if;
     v_i := v_i + 1;
-    if v_i > 400 then exit; end if;             -- hard safety stop
     v_cpay := '{}'::jsonb; v_cw := 0; v_left := v_crate_kg;
     for k, v_qty in select key, (value)::numeric from jsonb_each_text(v_rem) order by key loop
       v_unit_kg := coalesce(((v_cfg -> 'weights') ->> k)::numeric, (v_cfg ->> 'default_weight')::numeric);
@@ -652,10 +758,17 @@ begin
       end if;
       if v_left <= 0 then exit; end if;
     end loop;
-    exit when v_cpay = '{}'::jsonb;
+    -- If a pass produced nothing the payload cannot be crated — fail loudly
+    -- rather than leaving a shipment whose crates do not add up.
+    if v_cpay = '{}'::jsonb then
+      raise exception 'wh_send_shipment: payload could not be crated';
+    end if;
     insert into public.wh_crates (shipment_id, crate_no, payload, weight_kg)
       values (v_ship.id, v_i, v_cpay, v_cw);
   end loop;
+  -- crates_total is counted from the rows that REALLY exist, never from the
+  -- loop counter.
+  select count(*) into v_i from public.wh_crates where shipment_id = v_ship.id;
   update public.wh_shipments set crates_total = v_i where id = v_ship.id;
 
   return jsonb_build_object('ok', true,
@@ -693,6 +806,24 @@ begin
   select * into v_u from public.wh_units where id = coalesce(p_unit_id, v_s.unit_id) for update;
   if not found then return jsonb_build_object('ok', false, 'reason', 'no_unit'); end if;
   select * into v_w from public.wh_warehouses where id = v_u.warehouse_id;
+  -- ⚠ THE BAY MUST BELONG TO THE SHIPMENT. p_unit_id is client-supplied and only
+  -- DEFAULTS to the shipment's bay, so this check is the whole ballgame. An
+  -- earlier build only asked "is the caller the owner or the renter OF THE
+  -- TARGET BAY" — which a warehouse owner satisfies trivially by renting one
+  -- cheap bay in some THIRD player's warehouse. Executed attack: Bob owns the
+  -- warehouse, so he legitimately receives Alice's crate ids in order to unload
+  -- her truck; he rents a bay in Carol's warehouse for 1,200 Cinder and stores
+  -- Alice's crates into it. Alice's bay stays empty, her shipment reports
+  -- "stored 10/10", and Bob withdraws her goods as his own.
+  -- The bay must be in the SAME warehouse the load was sent to, and rented by
+  -- the SAME player who sent it. (Same-warehouse overflow into another of the
+  -- sender's own bays stays legal; anything else does not.)
+  if v_u.warehouse_id is distinct from v_s.warehouse_id
+     or v_u.renter_id is distinct from v_s.sender_id then
+    return jsonb_build_object('ok', false, 'reason', 'wrong_unit');
+  end if;
+  -- …and the caller still has to be someone entitled to touch this warehouse:
+  -- the owner (who does the hauling) or the renter themselves.
   if v_w.owner_id is distinct from v_uid and v_u.renter_id is distinct from v_uid then
     return jsonb_build_object('ok', false, 'reason', 'not_allowed');
   end if;
@@ -760,9 +891,77 @@ begin
 end; $$;
 grant execute on function public.wh_withdraw(uuid, text, numeric) to authenticated;
 
--- ─── ✖ wh_cancel_shipment — pull a load back before it lands ────────────────
--- Returns the escrowed payload so the sender's ledger can be made whole. Only
--- possible while still in transit and only for un-stored crates.
+-- ─── 🔒 wh_impound_unit — free a lapsed bay without destroying anything ─────
+-- After the grace period the warehouse owner may clear a bay whose renter
+-- stopped paying. The goods are NOT deleted — they move to wh_impound, which
+-- the former renter can still reclaim with wh_reclaim. Somebody else's property
+-- is not the warehouse owner's to bin.
+create table if not exists public.wh_impound (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  warehouse_id uuid references public.wh_warehouses(id) on delete set null,
+  bay_no      integer,
+  contents    jsonb not null default '{}'::jsonb,
+  weight_kg   numeric not null default 0,
+  created_at  timestamptz not null default now(),
+  claimed_at  timestamptz
+);
+create index if not exists wh_impound_user_idx on public.wh_impound (user_id, claimed_at);
+alter table public.wh_impound enable row level security;
+drop policy if exists whi_sel on public.wh_impound;
+create policy whi_sel on public.wh_impound for select to authenticated using (user_id = auth.uid());
+drop policy if exists whi_ins on public.wh_impound;
+create policy whi_ins on public.wh_impound for insert to authenticated with check (false);
+drop policy if exists whi_upd on public.wh_impound;
+create policy whi_upd on public.wh_impound for update to authenticated using (false) with check (false);
+
+create or replace function public.wh_impound_unit(p_unit_id uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_u public.wh_units; v_w public.wh_warehouses;
+        v_cfg jsonb := public.wh_config(); v_grace int;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  select * into v_u from public.wh_units where id = p_unit_id for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'no_unit'); end if;
+  select * into v_w from public.wh_warehouses where id = v_u.warehouse_id;
+  if v_w.owner_id is distinct from v_uid then return jsonb_build_object('ok', false, 'reason', 'not_allowed'); end if;
+  v_grace := (v_cfg ->> 'rent_grace_days')::int;
+  if v_u.renter_id is null then return jsonb_build_object('ok', false, 'reason', 'not_rented'); end if;
+  if v_u.rent_until is null or v_u.rent_until > now() - (v_grace || ' days')::interval then
+    return jsonb_build_object('ok', false, 'reason', 'still_in_grace', 'rent_until', v_u.rent_until);
+  end if;
+  if v_u.contents <> '{}'::jsonb then
+    insert into public.wh_impound (user_id, warehouse_id, bay_no, contents, weight_kg)
+      values (v_u.renter_id, v_w.id, v_u.bay_no, v_u.contents, v_u.used_kg);
+  end if;
+  update public.wh_units set renter_id = null, renter_name = null, rent_until = null,
+    contents = '{}'::jsonb, used_kg = 0, updated_at = now() where id = v_u.id;
+  return jsonb_build_object('ok', true, 'bay_no', v_u.bay_no, 'impounded_kg', v_u.used_kg);
+end; $$;
+grant execute on function public.wh_impound_unit(uuid) to authenticated;
+
+-- ─── ↩ wh_reclaim — a former renter takes impounded goods back ─────────────
+create or replace function public.wh_reclaim(p_impound_id uuid default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_out jsonb := '{}'::jsonb; r record; k text; v_q numeric;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  for r in select * from public.wh_impound
+            where user_id = v_uid and claimed_at is null
+              and (p_impound_id is null or id = p_impound_id) for update loop
+    for k, v_q in select key, (value)::numeric from jsonb_each_text(r.contents) loop
+      v_out := v_out || jsonb_build_object(k, coalesce((v_out ->> k)::numeric, 0) + v_q);
+    end loop;
+    update public.wh_impound set claimed_at = now() where id = r.id;
+  end loop;
+  return jsonb_build_object('ok', true, 'payload', v_out);
+end; $$;
+grant execute on function public.wh_reclaim(uuid) to authenticated;
+
+-- ─── ✖ wh_cancel_shipment — pull a load back ────────────────────────────────
+-- Returns the escrowed payload of every UN-STORED crate so the sender's ledger
+-- can be made whole. Legal while in transit AND after arrival — a load that
+-- lands into a bay with no room has to have a way home.
 create or replace function public.wh_cancel_shipment(p_shipment_id uuid)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_s public.wh_shipments; v_back jsonb;
@@ -770,7 +969,12 @@ begin
   if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
   select * into v_s from public.wh_shipments where id = p_shipment_id for update;
   if not found or v_s.sender_id <> v_uid then return jsonb_build_object('ok', false, 'reason', 'not_yours'); end if;
-  if v_s.status <> 'transit' then return jsonb_build_object('ok', false, 'reason', 'too_late'); end if;
+  -- 'arrived' is cancellable too. Otherwise a load that lands into a bay with
+  -- no room is stranded forever: every crate returns no_room, wh_buy_unit adds
+  -- a NEW bay rather than growing this one, and the sender has no way back.
+  if v_s.status not in ('transit', 'arrived') then
+    return jsonb_build_object('ok', false, 'reason', 'too_late');
+  end if;
   select coalesce(jsonb_object_agg(key, qty), '{}'::jsonb) into v_back from (
     select key, sum((value)::numeric) as qty
     from public.wh_crates c, jsonb_each_text(c.payload)
@@ -789,3 +993,36 @@ do $$ begin
     alter publication supabase_realtime add table public.wh_units;
   exception when duplicate_object then null; when undefined_object then null; end;
 end $$;
+
+-- ─── 🔐 Lock the function surface down ──────────────────────────────────────
+-- Postgres grants EXECUTE to PUBLIC on every new function by default, so `anon`
+-- inherited it: signed out, wh_directory() happily returned live warehouse rows
+-- (owner_id, owner_name, node_id, tier). The state-changers all refuse an
+-- anonymous caller with not_signed_in, so this was disclosure rather than
+-- damage — but it should never have been readable. Revoke from PUBLIC, then
+-- grant back only what each role actually needs. wh_config() stays public: it
+-- is a price list with no player data in it.
+do $$
+declare f record;
+begin
+  for f in
+    select p.oid::regprocedure as sig, p.proname
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname like 'wh\_%' escape '\'
+  loop
+    execute format('revoke all on function %s from public, anon', f.sig);
+    if f.proname in ('_wh_charge', '_wh_credit') then
+      continue;                                  -- internals: nobody but the rpcs
+    end if;
+    execute format('grant execute on function %s to authenticated', f.sig);
+  end loop;
+  -- Internals stay revoked even from authenticated.
+  for f in
+    select p.oid::regprocedure as sig
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in ('_wh_charge', '_wh_credit')
+  loop
+    execute format('revoke all on function %s from public, anon, authenticated', f.sig);
+  end loop;
+end $$;
+grant execute on function public.wh_config() to authenticated, anon;

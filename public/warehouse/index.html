@@ -1,0 +1,1130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Mythic Spellbook — Storage Warehouse</title>
+<!-- WH_BUILD is a deploy probe, not decoration. Bump it on every content change
+     so wrangler's manifest can't decide the file is "already live" and skip the
+     upload (the same trap NODE CITY fell into — see NC_BUILD). -->
+<script>window.WH_BUILD = "v1-warehouse";</script>
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     🏗 STORAGE WAREHOUSE — the player-owned warehouse minigame.
+
+     Other live players rent a numbered BAY here and ship resources to it out of
+     their city, house or camp. A step van pulls up on the apron; the warehouse
+     owner walks out first-person, presses E at the open kerb-side door, hauls
+     a crate at a time under a real weight limit, and drops it in the renter's
+     bay. Bay full → "You need to open storage unit space" → buy more space with
+     Cinder or Aza. Can't lift it → buy a bigger weight lifter.
+
+     HOW IT CONNECTS TO THE MAIN GAME (index.html):
+       Everything authoritative lives in Postgres (supabase/migrations/
+       20260812000000_warehouse_storage.sql). This page never decides what
+       anything costs, weighs, or holds — it asks. The host page owns the
+       Supabase client, so the page talks to it over postMessage with ONE
+       generic envelope:
+
+         child → parent  { type:'wh:ready' }
+         parent → child  { type:'wh:state', state, wallet, me }
+         child → parent  { type:'wh:rpc', reqId, fn, args }
+         parent → child  { type:'wh:rpcResult', reqId, ok, data, error }
+         child → parent  { type:'wh:exit' }
+
+       `fn` is one of the wh_* rpcs and the HOST whitelists it — see
+       WAREHOUSE_HANDOFF.md. Opened with no parent (or a parent that never
+       answers) the page drops into MOCK MODE and is fully playable offline,
+       which is also how it gets tested.
+     ══════════════════════════════════════════════════════════════════════ -->
+<style>
+  /* Same token vocabulary the game uses: Cinzel display, #ffd166 gold,
+     rgba(212,175,55,…) rules, Roboto Mono for numbers. */
+  :root{
+    --obsidian:#0b0910;
+    --panel:rgba(20,17,30,.94);
+    --edge:rgba(212,175,55,.35);
+    --gold:#ffd166;
+    --gold-dim:#bfae87;
+    --bone:#e8e2d5;
+    --mist:#8f87a3;
+    --good:#7ce8a8;
+    --bad:#ff6b6b;
+    --ember:#ff7a2f;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--obsidian);
+    font-family:'Inter','Roboto',system-ui,sans-serif;color:var(--bone);user-select:none}
+  canvas{display:block}
+  .display{font-family:'Cinzel',Georgia,serif;letter-spacing:.06em;text-transform:uppercase}
+  .mono{font-family:'Roboto Mono',ui-monospace,monospace}
+
+  /* ── boot ── */
+  #boot{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;background:var(--obsidian)}
+  #boot h1{font-family:'Cinzel',Georgia,serif;color:var(--gold);font-size:1.3rem;letter-spacing:.12em}
+  #boot p{color:var(--mist);font-size:.85rem}
+  #boot.gone{display:none}
+
+  /* ── HUD ── */
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:20}
+  .card{position:absolute;background:var(--panel);border:1px solid var(--edge);
+    border-radius:12px;padding:10px 13px;backdrop-filter:blur(6px);
+    box-shadow:0 10px 34px rgba(0,0,0,.55)}
+  #topbar{top:12px;left:12px;display:flex;gap:16px;align-items:center;font-size:.8rem}
+  #topbar b{color:var(--gold)}
+  #wallet{top:12px;right:12px;font-size:.8rem;text-align:right;line-height:1.6}
+  #carry{bottom:14px;left:12px;min-width:260px}
+  #carry .lbl{font-size:.66rem;letter-spacing:.12em;color:var(--gold-dim);text-transform:uppercase}
+  #carry .kg{font-size:1.15rem;color:var(--gold);margin:2px 0 6px}
+  .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#7ce8a8,#ffd166);transition:width .18s}
+  .bar.over i{background:linear-gradient(90deg,#ff9c2e,#ff6b6b)}
+  #bays{bottom:14px;right:12px;min-width:240px;max-height:46vh;overflow:hidden}
+  #bays .row{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:.74rem}
+  #bays .row .n{width:46px;color:var(--gold);font-weight:700}
+  #bays .row .bar{flex:1}
+  #bays .row .v{width:74px;text-align:right;color:var(--gold-dim)}
+  #bays .row.mine .n{color:var(--good)}
+  #ship{top:64px;left:12px;font-size:.75rem;line-height:1.7;max-width:330px}
+  #ship .eta{color:var(--ember);font-weight:700}
+  #prompt{position:fixed;left:50%;bottom:19%;transform:translateX(-50%);z-index:22;
+    background:rgba(10,8,16,.9);border:1px solid var(--edge);border-radius:10px;
+    padding:8px 16px;font-size:.86rem;color:var(--gold);display:none;
+    font-family:'Cinzel',Georgia,serif;letter-spacing:.05em;pointer-events:none}
+  #cross{position:fixed;left:50%;top:50%;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;
+    border-radius:50%;background:rgba(255,209,102,.85);z-index:21;pointer-events:none;
+    box-shadow:0 0 0 1px rgba(0,0,0,.6)}
+  #toast{position:fixed;left:50%;top:16%;transform:translateX(-50%);z-index:40;
+    display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none}
+  #toast div{background:rgba(10,8,16,.94);border:1px solid var(--edge);border-radius:10px;
+    padding:8px 15px;font-size:.82rem;color:var(--bone);animation:tin .25s ease-out}
+  @keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+  /* ── back / exit ── */
+  #topbtns{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:23;display:flex;gap:8px}
+  button{font:inherit;cursor:pointer}
+  .btn{background:rgba(27,37,64,.9);color:#cdd3e3;border:1px solid var(--edge);
+    padding:7px 15px;border-radius:8px;font-weight:600;font-size:.8rem}
+  .btn:hover{background:rgba(40,54,92,.95)}
+  .btn.gold{background:rgba(255,209,102,.16);color:var(--gold);border-color:rgba(255,209,102,.55)}
+  .btn.gold:hover{background:rgba(255,209,102,.26)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+
+  /* ── modal — the game's own modal idiom ── */
+  #modal{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at center,rgba(8,4,20,.65),rgba(2,1,8,.93));
+    backdrop-filter:blur(4px)}
+  #modal.on{display:flex}
+  .sheet{max-width:640px;width:94vw;max-height:86vh;display:flex;flex-direction:column;
+    background:linear-gradient(180deg,rgba(28,22,52,.97),rgba(12,8,28,.99));
+    border:1px solid rgba(212,175,55,.5);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.75)}
+  .sheet h2{font-family:'Cinzel',Georgia,serif;color:var(--gold);font-size:1.22rem;
+    letter-spacing:.06em;margin:0;padding:1.05rem 1.3rem .35rem}
+  .sheet .sub{color:var(--gold-dim);font-size:.82rem;padding:0 1.3rem .8rem}
+  .sheet .body{flex:1;overflow-y:auto;padding:0 1.3rem 1rem;font-size:.87rem;line-height:1.6}
+  .sheet .foot{display:flex;gap:8px;justify-content:flex-end;padding:.85rem 1.3rem;
+    border-top:1px solid rgba(212,175,55,.2)}
+  .opt{display:flex;align-items:center;gap:12px;padding:.7rem .85rem;margin-bottom:.55rem;
+    background:rgba(0,0,0,.34);border:1px solid rgba(212,175,55,.28);border-radius:10px}
+  .opt .g{flex:1}
+  .opt .t{color:var(--bone);font-weight:600}
+  .opt .d{color:var(--gold-dim);font-size:.76rem}
+  .opt.owned{border-color:rgba(124,232,168,.5)}
+  .note{background:rgba(255,209,102,.09);border:1px solid rgba(255,209,102,.3);
+    border-radius:9px;padding:.65rem .8rem;color:var(--gold);font-size:.8rem;margin-bottom:.7rem}
+
+  /* ── touch ── */
+  #touch{position:fixed;inset:0;z-index:24;pointer-events:none;display:none}
+  #touch.on{display:block}
+  #touch .pad{position:absolute;bottom:90px;left:20px;width:150px;height:150px}
+  #touch .k{position:absolute;width:48px;height:48px;border-radius:12px;pointer-events:auto;
+    background:rgba(20,17,30,.85);border:1px solid var(--edge);color:var(--gold);
+    display:flex;align-items:center;justify-content:center;font-size:1.05rem}
+  #touch .use{position:absolute;bottom:110px;right:26px;width:74px;height:74px;border-radius:50%;
+    pointer-events:auto;background:rgba(255,209,102,.18);border:1px solid rgba(255,209,102,.6);
+    color:var(--gold);display:flex;align-items:center;justify-content:center;
+    font-family:'Cinzel',Georgia,serif;font-size:.9rem}
+  @media (max-width:820px){ #bays{display:none} #ship{max-width:56vw} }
+</style>
+</head>
+<body>
+
+<div id="boot"><h1>🏗 Storage Warehouse</h1><p id="bootmsg">Opening the yard…</p></div>
+
+<div id="hud">
+  <div class="card" id="topbar"></div>
+  <div class="card" id="wallet"></div>
+  <div class="card" id="ship"></div>
+  <div class="card" id="carry">
+    <div class="lbl">Carrying</div>
+    <div class="kg mono" id="carrykg">0 / 25 kg</div>
+    <div class="bar" id="carrybar"><i style="width:0%"></i></div>
+    <div class="lbl" style="margin-top:8px" id="lifterlbl">🖐 Bare Hands</div>
+  </div>
+  <div class="card" id="bays"></div>
+</div>
+
+<div id="topbtns">
+  <button class="btn" id="b-exit">← Back</button>
+  <button class="btn gold" id="b-lift">🏋 Weight Lifters</button>
+  <button class="btn gold" id="b-up">🏗 Warehouse</button>
+</div>
+
+<div id="prompt"></div>
+<div id="cross"></div>
+<div id="toast"></div>
+
+<div id="touch">
+  <div class="pad">
+    <button class="k" style="left:51px;top:0">▲</button>
+    <button class="k" style="left:0;top:51px">◀</button>
+    <button class="k" style="left:102px;top:51px">▶</button>
+    <button class="k" style="left:51px;top:102px">▼</button>
+  </div>
+  <button class="use" id="t-use">E</button>
+</div>
+
+<div id="modal"><div class="sheet">
+  <h2 id="m-title"></h2>
+  <div class="sub" id="m-sub"></div>
+  <div class="body" id="m-body"></div>
+  <div class="foot" id="m-foot"></div>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="truck.js"></script>
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   🔌 HOST BRIDGE — one generic rpc envelope, plus a MOCK fallback so the page
+   is playable (and testable) with no game around it.
+   ══════════════════════════════════════════════════════════════════════════ */
+var WH = (function () {
+  var state = null, wallet = { cinder: 0, aza: 0 }, me = { id: 'local', name: 'You' };
+  var bridged = false, seq = 0, pending = {}, readyFns = [];
+  function post(m) { try { if (parent && parent !== window) parent.postMessage(m, '*'); } catch (e) {} }
+  window.addEventListener('message', function (e) {
+    var d = e && e.data; if (!d || typeof d !== 'object') return;
+    if (d.type === 'wh:state') {
+      bridged = true;
+      state = d.state || state;
+      if (d.wallet) wallet = d.wallet;
+      if (d.me) me = d.me;
+      readyFns.splice(0).forEach(function (f) { try { f(); } catch (_) {} });
+      try { window.dispatchEvent(new Event('wh:changed')); } catch (_) {}
+    } else if (d.type === 'wh:rpcResult') {
+      var p = pending[d.reqId]; if (!p) return;
+      delete pending[d.reqId];
+      p(d.ok ? (d.data || null) : null, d.error || null);
+    }
+  });
+  post({ type: 'wh:ready' });
+  return {
+    bridged: function () { return bridged; },
+    state: function () { return state; },
+    setState: function (s) { state = s; try { window.dispatchEvent(new Event('wh:changed')); } catch (_) {} },
+    wallet: function () { return wallet; },
+    setWallet: function (w) { if (w) wallet = w; },
+    me: function () { return me; },
+    onReady: function (f) { if (state) f(); else readyFns.push(f); },
+    exit: function () { post({ type: 'wh:exit' }); },
+    // Every server call funnels through here. Unbridged → MOCK.rpc answers it.
+    rpc: function (fn, args) {
+      return new Promise(function (res) {
+        if (!bridged) { res(MOCK.rpc(fn, args || {})); return; }
+        var id = ++seq;
+        pending[id] = function (data, err) { res(err ? { ok: false, reason: String(err) } : data); };
+        post({ type: 'wh:rpc', reqId: id, fn: fn, args: args || {} });
+        setTimeout(function () {
+          if (pending[id]) { delete pending[id]; res({ ok: false, reason: 'timeout' }); }
+        }, 12000);
+      });
+    },
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════════════
+   🧪 MOCK — a faithful stand-in for the SQL so the yard runs standalone.
+   It mirrors wh_config()'s numbers and re-implements the SAME gates the rpcs
+   enforce (lifter capacity, bay capacity, tier cap, wallet) — deliberately, so
+   a bug in the client's assumptions shows up here instead of in production.
+   ══════════════════════════════════════════════════════════════════════════ */
+var MOCK = (function () {
+  var CFG = {
+    aza_to_cinder: 5000, start_units: 2,
+    unit_price_aza: 10, unit_price_cinder: 50000, unit_capacity_kg: 500,
+    tiers: [
+      { tier: 1, max_units: 4,  aza: 0,   cinder: 0,       name: 'Lean-To Depot' },
+      { tier: 2, max_units: 8,  aza: 25,  cinder: 125000,  name: 'Sheet-Metal Warehouse' },
+      { tier: 3, max_units: 14, aza: 60,  cinder: 300000,  name: 'Concrete Distribution Hub' },
+      { tier: 4, max_units: 22, aza: 140, cinder: 700000,  name: 'Regional Freight Terminal' },
+      { tier: 5, max_units: 32, aza: 300, cinder: 1500000, name: 'Ashfall Logistics Yard' }
+    ],
+    lifters: [
+      { tier: 0, carry_kg: 25,  aza: 0,  cinder: 0,      name: 'Bare Hands',  icon: '🖐' },
+      { tier: 1, carry_kg: 45,  aza: 2,  cinder: 10000,  name: 'Back Brace',  icon: '🎽' },
+      { tier: 2, carry_kg: 90,  aza: 5,  cinder: 25000,  name: 'Hand Truck',  icon: '🛒' },
+      { tier: 3, carry_kg: 180, aza: 12, cinder: 60000,  name: 'Pallet Jack', icon: '🛠' },
+      { tier: 4, carry_kg: 400, aza: 30, cinder: 150000, name: 'Forklift',    icon: '🚜' }
+    ],
+    weights: { food: 1.2, water: 2.0, ammo: 0.8, medicine: 0.4, energyDrink: 0.5,
+               supplies: 1.5, metal: 3.5, fuel: 3.0, corruptedEssence: 0.6,
+               memoryShards: 0.2, dna: 0.1 },
+    default_weight: 1.0, crate_kg: 50,
+    eta_hours: { 0: 72, 1: 72, 2: 64, 3: 56, 4: 48, 5: 40, 6: 32, 7: 26, 8: 20, 9: 13, 10: 6 },
+    free_city_hours: 72, max_hours: 72, rent_cinder_per_day: 1200, rent_max_days: 30
+  };
+  var S = null;
+  function wt(p) { var t = 0; for (var k in p) t += p[k] * (CFG.weights[k] || CFG.default_weight); return Math.round(t * 10) / 10; }
+  function crates(payload) {
+    var rem = {}, out = [], n = 0;
+    for (var k in payload) rem[k] = payload[k];
+    while (n < 200) {
+      var pay = {}, w = 0, left = CFG.crate_kg, any = false;
+      var keys = Object.keys(rem).sort();
+      if (!keys.length) break;
+      for (var i = 0; i < keys.length; i++) {
+        var k2 = keys[i], uw = CFG.weights[k2] || CFG.default_weight;
+        var take = Math.min(rem[k2], Math.floor(left / uw));
+        if (take < 1 && w === 0) take = 1;
+        if (take >= 1) {
+          pay[k2] = take; w += take * uw; left -= take * uw; any = true;
+          rem[k2] -= take; if (rem[k2] <= 0) delete rem[k2];
+        }
+        if (left <= 0) break;
+      }
+      if (!any) break;
+      n++; out.push({ id: 'c' + n, crate_no: n, payload: pay, weight_kg: Math.round(w * 10) / 10 });
+    }
+    return out;
+  }
+  function build() {
+    // Two shipments: one from a FREE CITY (72h, already landed) and one from a
+    // LV8 owned node, so the ETA rule is visible without waiting three days.
+    var s1 = { id: 's1', sender_name: 'Ashvane', unit_id: 'u1', origin_kind: 'city',
+      origin_label: 'Ashfall Commons (free city)', node_level: 0, free_city: true,
+      eta_hours: 72, eta_at: new Date(Date.now() - 60000).toISOString(),
+      weight_kg: 0, status: 'arrived', crates_total: 0, crates_stored: 0,
+      payload: { metal: 40, food: 60, supplies: 25 } };
+    var s2 = { id: 's2', sender_name: 'Corvin', unit_id: 'u2', origin_kind: 'house',
+      origin_label: 'Ironrow Terrace', node_level: 8, free_city: false,
+      eta_hours: 20, eta_at: new Date(Date.now() + 20 * 3600000).toISOString(),
+      weight_kg: 0, status: 'transit', crates_total: 0, crates_stored: 0,
+      payload: { fuel: 30, medicine: 40 } };
+    [s1, s2].forEach(function (s) { s.crates = crates(s.payload); s.weight_kg = wt(s.payload); s.crates_total = s.crates.length; });
+    S = {
+      ok: true, is_owner: true, config: CFG,
+      warehouse: { id: 'w1', owner_id: 'local', owner_name: 'You', node_id: 'node_demo',
+        tier: 1, units_total: 2, max_units: 4, open_to_all: true },
+      units: [
+        { id: 'u1', bay_no: 1, renter_id: 'p2', renter_name: 'Ashvane', capacity_kg: 500, used_kg: 0, contents: {}, mine: false },
+        { id: 'u2', bay_no: 2, renter_id: 'p3', renter_name: 'Corvin',  capacity_kg: 500, used_kg: 470, contents: { metal: 120, water: 15 }, mine: false }
+      ],
+      shipments: [s1, s2],
+      lifter_tier: 0,
+      wallet: { cinder: 260000, aza: 45 }
+    };
+    return S;
+  }
+  function chg(cur, amt) {
+    var w = S.wallet;
+    if (cur === 'aza') { if (w.aza < amt) return false; w.aza -= amt; }
+    else { if (w.cinder < amt) return false; w.cinder -= amt; }
+    return true;
+  }
+  return {
+    build: build,
+    rpc: function (fn, a) {
+      if (!S) build();
+      if (fn === 'wh_my_warehouse') return S;
+      if (fn === 'wh_buy_unit') {
+        var cur = a.p_currency === 'aza' ? 'aza' : 'cinder';
+        var max = CFG.tiers[S.warehouse.tier - 1].max_units;
+        if (S.warehouse.units_total >= max) return { ok: false, reason: 'tier_cap', max_units: max, tier: S.warehouse.tier };
+        var cost = cur === 'aza' ? CFG.unit_price_aza : CFG.unit_price_cinder;
+        if (!chg(cur, cost)) return { ok: false, reason: 'insufficient', currency: cur, cost: cost };
+        var n = S.units.length + 1;
+        S.units.push({ id: 'u' + n, bay_no: n, renter_id: null, renter_name: null,
+          capacity_kg: CFG.unit_capacity_kg, used_kg: 0, contents: {}, mine: false });
+        S.warehouse.units_total = n;
+        return Object.assign({}, S, { bought: true, spent: cost, currency: cur });
+      }
+      if (fn === 'wh_upgrade_tier') {
+        var cur2 = a.p_currency === 'aza' ? 'aza' : 'cinder';
+        var nx = S.warehouse.tier + 1;
+        if (nx > 5) return { ok: false, reason: 'max_tier' };
+        var row = CFG.tiers[nx - 1], cost2 = cur2 === 'aza' ? row.aza : row.cinder;
+        if (!chg(cur2, cost2)) return { ok: false, reason: 'insufficient', currency: cur2, cost: cost2 };
+        S.warehouse.tier = nx; S.warehouse.max_units = row.max_units;
+        return Object.assign({}, S, { upgraded: nx, spent: cost2, currency: cur2 });
+      }
+      if (fn === 'wh_buy_lifter') {
+        var cur3 = a.p_currency === 'aza' ? 'aza' : 'cinder', t = a.p_tier | 0;
+        if (t < 1 || t > 4) return { ok: false, reason: 'bad_tier' };
+        if (S.lifter_tier >= t) return { ok: false, reason: 'already_owned', tier: S.lifter_tier };
+        var lr = CFG.lifters[t], cost3 = cur3 === 'aza' ? lr.aza : lr.cinder;
+        if (!chg(cur3, cost3)) return { ok: false, reason: 'insufficient', currency: cur3, cost: cost3 };
+        S.lifter_tier = t;
+        return { ok: true, tier: t, carry_kg: lr.carry_kg, spent: cost3, currency: cur3, wallet: S.wallet };
+      }
+      if (fn === 'wh_store_crate') {
+        var c = null, sh = null;
+        S.shipments.forEach(function (s) { (s.crates || []).forEach(function (x) { if (x.id === a.p_crate_id) { c = x; sh = s; } }); });
+        if (!c) return { ok: false, reason: 'no_crate' };
+        if (new Date(sh.eta_at).getTime() > Date.now()) return { ok: false, reason: 'in_transit', eta_at: sh.eta_at };
+        var u = S.units.filter(function (x) { return x.id === (a.p_unit_id || sh.unit_id); })[0];
+        if (!u) return { ok: false, reason: 'no_unit' };
+        var carry = CFG.lifters[S.lifter_tier].carry_kg;
+        if (c.weight_kg > carry) return { ok: false, reason: 'too_heavy', weight_kg: c.weight_kg, carry_kg: carry, lifter_tier: S.lifter_tier };
+        if (u.used_kg + c.weight_kg > u.capacity_kg)
+          return { ok: false, reason: 'no_room', used_kg: u.used_kg, capacity_kg: u.capacity_kg, weight_kg: c.weight_kg };
+        for (var k in c.payload) u.contents[k] = (u.contents[k] || 0) + c.payload[k];
+        u.used_kg = Math.round((u.used_kg + c.weight_kg) * 10) / 10;
+        sh.crates = sh.crates.filter(function (x) { return x.id !== c.id; });
+        sh.crates_stored++;
+        if (sh.crates_stored >= sh.crates_total) sh.status = 'stored';
+        return { ok: true, crate_id: c.id, unit_id: u.id, bay_no: u.bay_no,
+          weight_kg: c.weight_kg, used_kg: u.used_kg, capacity_kg: u.capacity_kg,
+          crates_stored: sh.crates_stored, crates_total: sh.crates_total,
+          shipment_done: sh.crates_stored >= sh.crates_total };
+      }
+      return { ok: false, reason: 'unknown_fn' };
+    }
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════════════
+   🌍 THE YARD
+   ══════════════════════════════════════════════════════════════════════════ */
+var App = {
+  ready: false, held: null, near: null, carried: 0,
+  crateMeshes: {}, bayNodes: [], truck: null, colliders: [], sensors: [],
+};
+var T = null, scene, camera, renderer, clock;
+var Ctl = { yaw: 0, pitch: 0, keys: {}, move: { f: 0, b: 0, l: 0, r: 0 },
+            locked: false, drag: false, lx: 0, ly: 0, bob: 0, vy: 0 };
+
+var EYE = 1.70, SPEED = 4.2, SPRINT = 7.4;
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+  return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+function fmt(n) { return (n | 0).toLocaleString(); }
+function cfg() { var s = WH.state(); return (s && s.config) || MOCK.rpc('wh_my_warehouse', {}).config; }
+
+function toast(msg, ms) {
+  var d = document.createElement('div'); d.innerHTML = msg;
+  $('toast').appendChild(d);
+  setTimeout(function () { try { d.remove(); } catch (e) {} }, ms || 2600);
+}
+
+/* ── ⏱ ETA text. The spec's promise, said in the spec's words. ─────────────── */
+function etaText(s) {
+  var ms = new Date(s.eta_at).getTime() - Date.now();
+  if (ms <= 0) return '<span style="color:var(--good)">ARRIVED</span>';
+  var h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return '<span class="eta mono">' + h + 'h ' + m + 'm</span>';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BUILD THE SCENE
+   ══════════════════════════════════════════════════════════════════════════ */
+function buildScene() {
+  T = window.THREE;
+  renderer = new T.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = T.PCFSoftShadowMap;
+  renderer.outputEncoding = T.sRGBEncoding;
+  renderer.toneMapping = T.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
+  document.body.appendChild(renderer.domElement);
+
+  scene = new T.Scene();
+  scene.background = new T.Color(0x0a0c11);
+  scene.fog = new T.Fog(0x0a0c11, 34, 96);
+  camera = new T.PerspectiveCamera(72, innerWidth / innerHeight, 0.08, 260);
+  camera.position.set(0, EYE, -2);
+  clock = new T.Clock();
+
+  scene.add(new T.HemisphereLight(0x2b3448, 0x0a0a0d, 0.62));
+  scene.add(new T.AmbientLight(0x1c2230, 0.34));
+  // One overhead yard lamp, warm, casting the real contact shadows. Bias values
+  // come from WHTruck.SHADOW_HINT — flat slab sides stripe themselves with acne
+  // if normalBias is stingy.
+  var sh = (window.WHTruck && WHTruck.SHADOW_HINT) || { bias: -0.0002, normalBias: 0.06, mapSize: 2048 };
+  var key = new T.DirectionalLight(0xffd9a8, 1.5);
+  key.position.set(6, 20, 14); key.castShadow = true;
+  key.shadow.mapSize.set(sh.mapSize, sh.mapSize);
+  key.shadow.camera.left = -30; key.shadow.camera.right = 30;
+  key.shadow.camera.top = 30; key.shadow.camera.bottom = -30;
+  key.shadow.camera.near = 1; key.shadow.camera.far = 70;
+  key.shadow.bias = sh.bias; key.shadow.normalBias = sh.normalBias;
+  scene.add(key);
+  var fill = new T.DirectionalLight(0x5b76a8, 0.26); fill.position.set(-12, 8, -14); scene.add(fill);
+
+  var M = function (o) { return new T.MeshStandardMaterial(o); };
+  var mat = {
+    asphalt: M({ color: 0x14161b, roughness: 0.58, metalness: 0.22 }),
+    slab:    M({ color: 0x2a2d34, roughness: 0.92 }),
+    wall:    M({ color: 0x3a3f49, roughness: 0.88 }),
+    wallIn:  M({ color: 0x4a505c, roughness: 0.9 }),
+    steel:   M({ color: 0x767d88, roughness: 0.42, metalness: 0.8 }),
+    dark:    M({ color: 0x191c22, roughness: 0.8 }),
+    gold:    M({ color: 0xd4af37, roughness: 0.35, metalness: 0.7,
+                 emissive: 0x6a5520, emissiveIntensity: 0.5 }),
+    crate:   M({ color: 0x8a6a3e, roughness: 0.86 }),
+    crateT:  M({ color: 0x6d5230, roughness: 0.9 }),
+    // A bay YOU rent is tinted green, so your own space is findable at a glance.
+    bayMine: M({ color: 0x2c4a3a, roughness: 0.85, emissive: 0x0d2a1c, emissiveIntensity: 0.6 }),
+  };
+
+  var box = function (w, h, d, m, x, y, z, noShadow) {
+    var o = new T.Mesh(new T.BoxGeometry(w, h, d), m);
+    o.position.set(x, y, z);
+    if (!noShadow) { o.castShadow = true; o.receiveShadow = true; }
+    scene.add(o); return o;
+  };
+  // Everything solid registers an AABB. One list, one test — no per-object rules.
+  var solid = function (o, w, d) {
+    App.colliders.push({ x: o.position.x, z: o.position.z, hw: w / 2, hd: d / 2 });
+    return o;
+  };
+
+  // ── ground ──
+  var g = new T.Mesh(new T.PlaneGeometry(200, 200), mat.asphalt);
+  g.rotation.x = -Math.PI / 2; g.receiveShadow = true; scene.add(g);
+  var slab = new T.Mesh(new T.PlaneGeometry(28, 22), mat.slab);
+  slab.rotation.x = -Math.PI / 2; slab.position.set(0, 0.01, -8); slab.receiveShadow = true; scene.add(slab);
+
+  // ── the shed: back + side walls, a roof, and a wide dock opening at +Z ──
+  var WX = 13, ZB = -19, ZF = 2, H = 7;
+  solid(box(WX * 2, H, 0.5, mat.wall, 0, H / 2, ZB), WX * 2, 0.5);
+  solid(box(0.5, H, ZF - ZB, mat.wall, -WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
+  solid(box(0.5, H, ZF - ZB, mat.wall,  WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
+  // Front wall with a 9 m dock opening in the middle.
+  solid(box(9.5, H, 0.5, mat.wall, -WX + 4.75, H / 2, ZF), 9.5, 0.5);
+  solid(box(9.5, H, 0.5, mat.wall,  WX - 4.75, H / 2, ZF), 9.5, 0.5);
+  box(9.0, 1.6, 0.5, mat.wall, 0, H - 0.8, ZF);              // header over the opening
+  var roof = box(WX * 2 + 0.5, 0.4, ZF - ZB, mat.wall, 0, H, (ZB + ZF) / 2, true);
+  roof.receiveShadow = true;
+  // Roof trusses + strip lights, so the interior has depth instead of a flat lid.
+  for (var i = 0; i < 7; i++) {
+    var z = ZB + 1.6 + i * 3.0;
+    box(WX * 2, 0.28, 0.28, mat.steel, 0, H - 0.55, z, true);
+    var lt = box(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);
+    var pl = new T.PointLight(0xffe6bd, 0.5, 20, 2); pl.position.set(0, H - 1.1, z); scene.add(pl);
+  }
+  // Painted dock threshold — you can see where inside becomes outside.
+  var thr = new T.Mesh(new T.PlaneGeometry(9, 0.5), mat.gold);
+  thr.rotation.x = -Math.PI / 2; thr.position.set(0, 0.02, ZF); scene.add(thr);
+
+  // ── the bays ─────────────────────────────────────────────────────────────
+  // Numbered open-front cubicles down the back and side walls. Each bay gets a
+  // sensor so walking into it is what "putting it into storage" means.
+  App.buildBays = function () {
+    App.bayNodes.forEach(function (b) { scene.remove(b.node); });
+    App.bayNodes = [];
+    App.sensors = App.sensors.filter(function (s) { return s.kind !== 'bay'; });
+    var st = WH.state(); if (!st) return;
+    var BW = 3.3, BD = 3.6, BH = 3.0;
+    st.units.forEach(function (u, i) {
+      var col = i % 7, row = Math.floor(i / 7);
+      var x = -WX + 2.4 + col * (BW + 0.35);
+      var z = ZB + 0.6 + BD / 2 + row * (BD + 2.6);
+      var n = new T.Group(); n.position.set(x, 0, z); scene.add(n);
+      var wallM = u.mine ? mat.bayMine : mat.wallIn;
+      var sub = function (w, h, d, m, px, py, pz) {
+        var o = new T.Mesh(new T.BoxGeometry(w, h, d), m);
+        o.position.set(px, py, pz); o.castShadow = true; o.receiveShadow = true; n.add(o); return o;
+      };
+      sub(0.18, BH, BD, wallM, -BW / 2, BH / 2, 0);
+      sub(0.18, BH, BD, wallM,  BW / 2, BH / 2, 0);
+      sub(BW, BH, 0.18, wallM, 0, BH / 2, -BD / 2);
+      sub(BW, 0.14, BD, mat.dark, 0, BH, 0);
+      var pad = new T.Mesh(new T.PlaneGeometry(BW - 0.3, BD - 0.3), mat.slab);
+      pad.rotation.x = -Math.PI / 2; pad.position.y = 0.03; n.add(pad);
+      // The bay number, painted on the back wall — a canvas texture, no fonts fetched.
+      var cv = document.createElement('canvas'); cv.width = 256; cv.height = 128;
+      var cx = cv.getContext('2d');
+      cx.fillStyle = 'rgba(0,0,0,0)'; cx.fillRect(0, 0, 256, 128);
+      cx.font = 'bold 74px Georgia,serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+      cx.fillStyle = u.mine ? '#7ce8a8' : '#ffd166';
+      cx.fillText('BAY ' + u.bay_no, 128, 52);
+      cx.font = '30px Georgia,serif'; cx.fillStyle = '#bfae87';
+      cx.fillText(u.renter_name ? String(u.renter_name).slice(0, 16) : 'UNRENTED', 128, 100);
+      var tx = new T.CanvasTexture(cv); tx.minFilter = T.LinearFilter;
+      var sign = new T.Mesh(new T.PlaneGeometry(2.6, 1.3),
+        new T.MeshBasicMaterial({ map: tx, transparent: true }));
+      sign.position.set(0, 2.1, -BD / 2 + 0.11); n.add(sign);
+      // Stacked goods, so a full bay LOOKS full.
+      var frac = Math.max(0, Math.min(1, u.used_kg / Math.max(1, u.capacity_kg)));
+      var stacks = Math.round(frac * 9);
+      for (var s2 = 0; s2 < stacks; s2++) {
+        var sx = -0.95 + (s2 % 3) * 0.95, sz = -0.9 + Math.floor(s2 / 3) * 0.95;
+        sub(0.72, 0.62, 0.72, mat.crate, sx, 0.34, sz);
+      }
+      App.colliders.push({ x: x - BW / 2, z: z, hw: 0.14, hd: BD / 2 });
+      App.colliders.push({ x: x + BW / 2, z: z, hw: 0.14, hd: BD / 2 });
+      App.colliders.push({ x: x, z: z - BD / 2, hw: BW / 2, hd: 0.14 });
+      App.sensors.push({ kind: 'bay', unit: u, x: x, z: z + 0.4, r: 2.2 });
+      App.bayNodes.push({ node: n, unit: u });
+    });
+  };
+
+  // ── the step van, parked kerb-side to the dock ───────────────────────────
+  // rotation.y = π/2 maps the truck's local +X (the sliding door) onto world −Z,
+  // so the open door faces the warehouse and the nose points down the apron.
+  App.truck = WHTruck.build(T, { profile: 'squircle', doorOpen: true });
+  App.truck.position.set(-1.2, 0, 10.5);
+  App.truck.rotation.y = Math.PI / 2;
+  scene.add(App.truck);
+  App.colliders.push({ x: -1.2, z: 10.5, hw: 3.7, hd: 1.15 });
+  // Where the player stands to reach into the cargo — just outside the slider.
+  App.truckDoor = { x: -1.2 + 2.26, z: 10.5 - 1.5 };
+  App.sensors.push({ kind: 'truck', x: App.truckDoor.x, z: App.truckDoor.z, r: 2.6 });
+
+  // Apron markings + a couple of bollards so the yard reads as a place.
+  var line = new T.Mesh(new T.PlaneGeometry(0.16, 16), mat.gold);
+  line.rotation.x = -Math.PI / 2; line.position.set(-5.6, 0.02, 9); scene.add(line);
+  var line2 = line.clone(); line2.position.x = 3.4; scene.add(line2);
+  [-7.5, 7.5].forEach(function (x) {
+    var b = box(0.34, 1.1, 0.34, mat.gold, x, 0.55, 3.2);
+    App.colliders.push({ x: x, z: 3.2, hw: 0.3, hd: 0.3 });
+  });
+
+  // ── the two terminals: weight lifters, and the building itself ───────────
+  var term = function (x, z, ry, col) {
+    var n = new T.Group(); n.position.set(x, 0, z); n.rotation.y = ry; scene.add(n);
+    var b = new T.Mesh(new T.BoxGeometry(1.0, 1.2, 0.5), mat.dark);
+    b.position.y = 0.6; b.castShadow = true; n.add(b);
+    var scr = new T.Mesh(new T.BoxGeometry(0.86, 0.62, 0.06),
+      new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.1, roughness: 0.4 }));
+    scr.position.set(0, 1.42, 0.02); n.add(scr);
+    var post = new T.Mesh(new T.BoxGeometry(0.14, 0.7, 0.14), mat.steel);
+    post.position.y = 1.0; n.add(post);
+    var pl = new T.PointLight(col, 0.7, 6, 2); pl.position.set(0, 1.5, 0.5); n.add(pl);
+    App.colliders.push({ x: x, z: z, hw: 0.6, hd: 0.4 });
+    return n;
+  };
+  term(-10.6, 0.2, -0.5, 0x4aa0d8);
+  App.sensors.push({ kind: 'lifter', x: -10.0, z: 0.6, r: 2.2 });
+  term(10.6, 0.2, 0.5, 0xd4af37);
+  App.sensors.push({ kind: 'upgrade', x: 10.0, z: 0.6, r: 2.2 });
+
+  // ── the crate you carry ──────────────────────────────────────────────────
+  App.heldMesh = new T.Group();
+  var cb = new T.Mesh(new T.BoxGeometry(0.62, 0.5, 0.5), mat.crate);
+  App.heldMesh.add(cb);
+  [-0.24, 0.24].forEach(function (o) {
+    var s3 = new T.Mesh(new T.BoxGeometry(0.66, 0.07, 0.54), mat.crateT);
+    s3.position.y = o * 0.9; App.heldMesh.add(s3);
+  });
+  App.heldMesh.position.set(0, -0.34, -0.72);
+  App.heldMesh.visible = false;
+  camera.add(App.heldMesh);
+  scene.add(camera);
+
+  addEventListener('resize', function () {
+    camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+}
+
+/* ── 📦 the crates still sitting in the truck ─────────────────────────────── */
+function rebuildTruckCrates() {
+  var st = WH.state(); if (!st || !T) return;
+  Object.keys(App.crateMeshes).forEach(function (k) {
+    scene.remove(App.crateMeshes[k]); delete App.crateMeshes[k];
+  });
+  var pending = [];
+  (st.shipments || []).forEach(function (s) {
+    if (new Date(s.eta_at).getTime() > Date.now()) return;   // still on the road
+    (s.crates || []).forEach(function (c) { pending.push({ c: c, s: s }); });
+  });
+  App.pendingCrates = pending;
+  var m = new T.MeshStandardMaterial({ color: 0x8a6a3e, roughness: 0.86 });
+  pending.slice(0, 14).forEach(function (p, i) {
+    var g = new T.Mesh(new T.BoxGeometry(0.6, 0.48, 0.6), m);
+    // Stacked on the van's deck, in truck-local space then rotated with it.
+    var lx = 0.15 - (i % 2) * 0.5, lz = 1.0 - Math.floor(i / 2) * 0.72, ly = 1.16;
+    g.position.set(App.truck.position.x + lz, ly, App.truck.position.z - lx);
+    g.castShadow = true; scene.add(g);
+    App.crateMeshes[p.c.id] = g;
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   HUD
+   ══════════════════════════════════════════════════════════════════════════ */
+function carryLimit() {
+  var st = WH.state(), C = cfg();
+  var t = st ? (st.lifter_tier | 0) : 0;
+  return (C.lifters[t] || C.lifters[0]).carry_kg;
+}
+function renderHud() {
+  var st = WH.state(); if (!st) return;
+  var C = cfg(), w = st.wallet || WH.wallet();
+  var tier = C.tiers[st.warehouse.tier - 1] || C.tiers[0];
+  $('topbar').innerHTML = '<span class="display" style="color:var(--gold)">🏗 ' + esc(tier.name) + '</span>'
+    + '<span>Tier <b>' + st.warehouse.tier + '</b>/5</span>'
+    + '<span>Bays <b>' + st.units.length + '</b>/' + tier.max_units + '</span>';
+  $('wallet').innerHTML = '🔥 <b class="mono" style="color:var(--gold)">' + fmt(w.cinder) + '</b> Cinder'
+    + '<br>🪙 <b class="mono" style="color:var(--gold)">' + fmt(w.aza) + '</b> Aza';
+
+  var lt = C.lifters[st.lifter_tier | 0] || C.lifters[0];
+  $('lifterlbl').textContent = lt.icon + ' ' + lt.name + ' — ' + lt.carry_kg + ' kg limit';
+  var lim = carryLimit(), pct = Math.min(100, App.carried / lim * 100);
+  $('carrykg').textContent = App.carried.toFixed(1) + ' / ' + lim + ' kg';
+  $('carrybar').className = 'bar' + (App.carried > lim ? ' over' : '');
+  $('carrybar').firstChild.style.width = pct + '%';
+
+  $('bays').innerHTML = '<div class="lbl display" style="font-size:.66rem;color:var(--gold-dim);letter-spacing:.12em">Storage bays</div>'
+    + st.units.map(function (u) {
+      var f = Math.min(100, u.used_kg / Math.max(1, u.capacity_kg) * 100);
+      return '<div class="row' + (u.mine ? ' mine' : '') + '"><span class="n">BAY ' + u.bay_no + '</span>'
+        + '<span class="bar"><i style="width:' + f + '%"></i></span>'
+        + '<span class="v mono">' + Math.round(u.used_kg) + '/' + u.capacity_kg + '</span></div>';
+    }).join('');
+
+  var live = (st.shipments || []).filter(function (s) { return s.status !== 'stored'; });
+  if (!live.length) {
+    $('ship').innerHTML = '<span style="color:var(--mist)">No inbound freight. Renters send from their city, house or camp.</span>';
+  } else {
+    $('ship').innerHTML = '<div class="lbl display" style="font-size:.66rem;color:var(--gold-dim);letter-spacing:.12em">Inbound</div>'
+      + live.map(function (s) {
+        var left = (s.crates || []).length;
+        return '<div style="margin-top:5px">🚚 <b>' + esc(s.sender_name || 'A renter') + '</b> → Bay '
+          + (bayNoFor(s.unit_id) || '?') + '<br><span style="color:var(--mist)">'
+          + esc(s.origin_label || s.origin_kind) + ' · '
+          + (s.free_city ? 'free city, 72h' : 'node LV ' + s.node_level + ', ' + s.eta_hours + 'h')
+          + '</span> · ' + etaText(s) + (left ? ' · <b>' + left + '</b> crates left' : '') + '</div>';
+      }).join('');
+  }
+}
+function bayNoFor(unitId) {
+  var st = WH.state(); if (!st) return null;
+  var u = st.units.filter(function (x) { return x.id === unitId; })[0];
+  return u ? u.bay_no : null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MODALS
+   ══════════════════════════════════════════════════════════════════════════ */
+function closeModal() { $('modal').classList.remove('on'); }
+function openModal(title, sub, body, foot) {
+  $('m-title').innerHTML = title; $('m-sub').innerHTML = sub || '';
+  $('m-body').innerHTML = body; $('m-foot').innerHTML = '';
+  (foot || []).forEach(function (b) {
+    var el = document.createElement('button');
+    el.className = 'btn' + (b.gold ? ' gold' : ''); el.innerHTML = b.label;
+    if (b.disabled) el.disabled = true;
+    el.onclick = b.on; $('m-foot').appendChild(el);
+  });
+  $('modal').classList.add('on');
+  if (Ctl.locked) { try { document.exitPointerLock(); } catch (e) {} }
+}
+
+/* ── 📦 "You need to open storage unit space" — the spec's exact words ────── */
+function openNoRoomModal(unit, needKg) {
+  var C = cfg(), st = WH.state(), w = st.wallet || WH.wallet();
+  var tier = C.tiers[st.warehouse.tier - 1] || C.tiers[0];
+  var capped = st.units.length >= tier.max_units;
+  var body =
+    '<div class="note">Bay ' + unit.bay_no + ' is holding <b>' + Math.round(unit.used_kg) + ' kg</b> of '
+      + unit.capacity_kg + ' kg. This crate weighs <b>' + needKg + ' kg</b> and will not fit.</div>'
+    + (capped
+      ? '<p>Your <b>' + esc(tier.name) + '</b> is already carrying its maximum of <b>' + tier.max_units
+        + '</b> bays. Upgrade the building before you can open any more space.</p>'
+      : '<p>Open another storage unit in your warehouse. New bays hold <b>' + C.unit_capacity_kg
+        + ' kg</b> each and can be rented straight out to other players.</p>'
+        + '<div class="opt"><div class="g"><div class="t">🪙 ' + C.unit_price_aza + ' Aza Coin</div>'
+        + '<div class="d">You hold ' + fmt(w.aza) + ' Aza</div></div></div>'
+        + '<div class="opt"><div class="g"><div class="t">🔥 ' + fmt(C.unit_price_cinder) + ' Cinder</div>'
+        + '<div class="d">You hold ' + fmt(w.cinder) + ' Cinder — the same price at the '
+        + fmt(C.aza_to_cinder) + ' Cinder / Aza peg</div></div></div>');
+  var foot = [{ label: 'Not now', on: closeModal }];
+  if (capped) {
+    foot.push({ label: '🏗 Upgrade the warehouse', gold: true, on: function () { openUpgradeModal(); } });
+  } else {
+    foot.push({ label: '🪙 Buy with Aza', gold: true, disabled: w.aza < C.unit_price_aza,
+      on: function () { buyUnit('aza'); } });
+    foot.push({ label: '🔥 Buy with Cinder', gold: true, disabled: w.cinder < C.unit_price_cinder,
+      on: function () { buyUnit('cinder'); } });
+  }
+  openModal('📦 You need to open storage unit space', 'Bay ' + unit.bay_no + ' is full', body, foot);
+}
+
+function buyUnit(cur) {
+  WH.rpc('wh_buy_unit', { p_currency: cur }).then(function (r) {
+    if (!r || r.ok === false) {
+      toast('❌ ' + reasonText(r), 3400);
+      return;
+    }
+    WH.setState(r); closeModal();
+    toast('📦 Storage unit opened — Bay ' + r.warehouse.units_total + ' is ready.', 3200);
+  });
+}
+
+function openUpgradeModal() {
+  var C = cfg(), st = WH.state(), w = st.wallet || WH.wallet();
+  var cur = st.warehouse.tier, next = C.tiers[cur];
+  var body = C.tiers.map(function (t) {
+    var state = t.tier < cur ? 'built' : t.tier === cur ? 'current' : 'locked';
+    return '<div class="opt' + (state === 'current' ? ' owned' : '') + '">'
+      + '<div class="g"><div class="t">Tier ' + t.tier + ' · ' + esc(t.name)
+      + (state === 'current' ? ' <span style="color:var(--good)">— you are here</span>' : '') + '</div>'
+      + '<div class="d">Holds up to <b>' + t.max_units + '</b> storage bays'
+      + (t.tier > 1 ? ' · 🪙 ' + t.aza + ' Aza or 🔥 ' + fmt(t.cinder) + ' Cinder' : ' · starting building')
+      + '</div></div></div>';
+  }).join('');
+  var foot = [{ label: 'Close', on: closeModal }];
+  if (next) {
+    foot.push({ label: '🪙 ' + next.aza + ' Aza', gold: true, disabled: w.aza < next.aza,
+      on: function () { upgradeTier('aza'); } });
+    foot.push({ label: '🔥 ' + fmt(next.cinder) + ' Cinder', gold: true, disabled: w.cinder < next.cinder,
+      on: function () { upgradeTier('cinder'); } });
+  }
+  openModal('🏗 Warehouse', next ? 'Upgrade to Tier ' + next.tier + ' · ' + esc(next.name)
+    : 'Fully upgraded', body, foot);
+}
+function upgradeTier(cur) {
+  WH.rpc('wh_upgrade_tier', { p_currency: cur }).then(function (r) {
+    if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3400); return; }
+    WH.setState(r); closeModal(); refreshWorld();
+    toast('🏗 Warehouse upgraded to Tier ' + r.warehouse.tier + '.', 3200);
+  });
+}
+
+/* ── 🏋 weight lifters — "owners or workers can buy weight lifters" ───────── */
+function openLifterModal() {
+  var C = cfg(), st = WH.state(), w = st.wallet || WH.wallet(), have = st.lifter_tier | 0;
+  var body = '<div class="note">Every crate has a real weight. Your lifter decides the '
+    + 'heaviest single crate you can pick up — the server checks it too, so a bigger '
+    + 'lifter is the only way to move a heavy pallet.</div>'
+    + C.lifters.map(function (l) {
+      var owned = have >= l.tier;
+      return '<div class="opt' + (owned ? ' owned' : '') + '"><div class="g">'
+        + '<div class="t">' + l.icon + ' ' + esc(l.name) + ' — <span class="mono">' + l.carry_kg + ' kg</span>'
+        + (owned ? ' <span style="color:var(--good)">✓ owned</span>' : '') + '</div>'
+        + '<div class="d">' + (l.tier === 0 ? 'What you start with.'
+            : '🪙 ' + l.aza + ' Aza or 🔥 ' + fmt(l.cinder) + ' Cinder') + '</div></div>'
+        + (owned || l.tier === 0 ? '' :
+           '<button class="btn gold" data-lift-aza="' + l.tier + '"' + (w.aza < l.aza ? ' disabled' : '') + '>🪙 ' + l.aza + '</button>'
+         + '<button class="btn gold" data-lift-cin="' + l.tier + '"' + (w.cinder < l.cinder ? ' disabled' : '') + '>🔥 ' + fmt(l.cinder) + '</button>')
+        + '</div>';
+    }).join('');
+  openModal('🏋 Weight Lifters', 'Raise how much you can carry', body, [{ label: 'Close', on: closeModal }]);
+  $('m-body').querySelectorAll('[data-lift-aza]').forEach(function (b) {
+    b.onclick = function () { buyLifter(b.getAttribute('data-lift-aza') | 0, 'aza'); };
+  });
+  $('m-body').querySelectorAll('[data-lift-cin]').forEach(function (b) {
+    b.onclick = function () { buyLifter(b.getAttribute('data-lift-cin') | 0, 'cinder'); };
+  });
+}
+function buyLifter(tier, cur) {
+  WH.rpc('wh_buy_lifter', { p_tier: tier, p_currency: cur }).then(function (r) {
+    if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3400); return; }
+    var st = WH.state();
+    st.lifter_tier = r.tier;
+    if (r.wallet) st.wallet = r.wallet;
+    WH.setState(st);
+    toast('🏋 ' + cfg().lifters[r.tier].name + ' bought — you can now lift ' + r.carry_kg + ' kg.', 3200);
+    openLifterModal();
+  });
+}
+
+function reasonText(r) {
+  var m = {
+    insufficient: 'Not enough ' + ((r && r.currency === 'aza') ? 'Aza' : 'Cinder') + '.',
+    tier_cap: 'Your warehouse tier cannot hold any more bays — upgrade the building first.',
+    max_tier: 'The warehouse is already fully upgraded.',
+    already_owned: 'You already own that lifter.',
+    no_room: 'That bay has no room left.',
+    too_heavy: 'That crate is too heavy for your lifter.',
+    in_transit: 'That load has not arrived yet.',
+    not_allowed: 'You are not allowed to touch that bay.',
+    not_signed_in: 'You need to be signed in.',
+    timeout: 'The server did not answer.',
+  };
+  return (r && m[r.reason]) || (r && r.reason) || 'Something went wrong.';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   INTERACTION — pick a crate up, put it down
+   ══════════════════════════════════════════════════════════════════════════ */
+function nextCrate() {
+  var p = (App.pendingCrates || [])[0];
+  return p || null;
+}
+function doInteract() {
+  var n = App.near;
+  if (!n) return;
+  if (n.kind === 'lifter') { openLifterModal(); return; }
+  if (n.kind === 'upgrade') { openUpgradeModal(); return; }
+  if (n.kind === 'truck') {
+    if (App.held) { toast('You are already carrying a crate — take it to a bay.', 2400); return; }
+    var p = nextCrate();
+    if (!p) {
+      var st = WH.state();
+      var waiting = (st.shipments || []).filter(function (s) { return new Date(s.eta_at).getTime() > Date.now(); });
+      toast(waiting.length
+        ? '🚚 The van is empty. The next load lands in ' + etaText(waiting[0]).replace(/<[^>]+>/g, '') + '.'
+        : '🚚 The van is empty.', 3000);
+      return;
+    }
+    var lim = carryLimit();
+    if (p.c.weight_kg > lim) {
+      toast('🏋 That crate is <b>' + p.c.weight_kg + ' kg</b> — your lifter tops out at <b>'
+        + lim + ' kg</b>. Buy a bigger weight lifter.', 4200);
+      return;
+    }
+    App.held = p;
+    App.carried = p.c.weight_kg;
+    App.heldMesh.visible = true;
+    var m = App.crateMeshes[p.c.id]; if (m) { scene.remove(m); delete App.crateMeshes[p.c.id]; }
+    var bn = bayNoFor(p.s.unit_id);
+    toast('📦 Picked up a ' + p.c.weight_kg + ' kg crate — take it to <b>Bay ' + bn + '</b>.', 3000);
+    renderHud();
+    return;
+  }
+  if (n.kind === 'bay') {
+    if (!App.held) { toast('Nothing to put down. Take a crate off the van first.', 2400); return; }
+    var target = n.unit;
+    var want = App.held.s.unit_id;
+    if (target.id !== want) {
+      toast('❌ That crate is addressed to <b>Bay ' + bayNoFor(want) + '</b>, not Bay ' + target.bay_no + '.', 3400);
+      return;
+    }
+    var crate = App.held;
+    WH.rpc('wh_store_crate', { p_crate_id: crate.c.id, p_unit_id: target.id }).then(function (r) {
+      if (!r || r.ok === false) {
+        if (r && r.reason === 'no_room') { openNoRoomModal(target, crate.c.weight_kg); return; }
+        toast('❌ ' + reasonText(r), 3600);
+        return;
+      }
+      App.held = null; App.carried = 0; App.heldMesh.visible = false;
+      // Mirror the server's answer into local state, then rebuild what changed.
+      var st = WH.state();
+      var u = st.units.filter(function (x) { return x.id === r.unit_id; })[0];
+      if (u) { u.used_kg = r.used_kg; }
+      st.shipments.forEach(function (s) {
+        if (s.id !== crate.s.id) return;
+        s.crates = (s.crates || []).filter(function (c) { return c.id !== crate.c.id; });
+        s.crates_stored = r.crates_stored;
+        if (r.shipment_done) s.status = 'stored';
+      });
+      WH.setState(st); refreshWorld();
+      toast('📦 Stored in Bay ' + r.bay_no + ' — ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg'
+        + (r.shipment_done ? '. <b>Delivery complete.</b>' : '.'), 3200);
+    });
+  }
+}
+
+function refreshWorld() {
+  // Rebuild only what the world derives from state; the player keeps standing
+  // exactly where they were.
+  App.colliders = App.colliders.filter(function (c) { return !c._bay; });
+  App.buildBays();
+  rebuildTruckCrates();
+  renderHud();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FIRST-PERSON CONTROLLER
+   ══════════════════════════════════════════════════════════════════════════ */
+function bindControls() {
+  var el = renderer.domElement;
+  // Pointer lock is the primary control — "normal standard gaming controls".
+  // Drag-look is kept as the fallback for touch and for browsers that refuse
+  // the lock, so the yard is never unplayable.
+  el.addEventListener('click', function () {
+    if ($('modal').classList.contains('on')) return;
+    if (!Ctl.locked && el.requestPointerLock) { try { el.requestPointerLock(); } catch (e) {} }
+  });
+  document.addEventListener('pointerlockchange', function () {
+    Ctl.locked = (document.pointerLockElement === el);
+    $('cross').style.display = Ctl.locked ? 'block' : 'block';
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (Ctl.locked) {
+      Ctl.yaw -= e.movementX * 0.0022;
+      Ctl.pitch = Math.max(-1.25, Math.min(1.25, Ctl.pitch - e.movementY * 0.0022));
+    } else if (Ctl.drag) {
+      Ctl.yaw -= (e.clientX - Ctl.lx) * 0.005;
+      Ctl.pitch = Math.max(-1.25, Math.min(1.25, Ctl.pitch - (e.clientY - Ctl.ly) * 0.005));
+      Ctl.lx = e.clientX; Ctl.ly = e.clientY;
+    }
+  });
+  el.addEventListener('mousedown', function (e) { Ctl.drag = true; Ctl.lx = e.clientX; Ctl.ly = e.clientY; });
+  addEventListener('mouseup', function () { Ctl.drag = false; });
+  el.addEventListener('touchstart', function (e) {
+    var t = e.touches[0]; Ctl.drag = true; Ctl.lx = t.clientX; Ctl.ly = t.clientY;
+  }, { passive: true });
+  addEventListener('touchmove', function (e) {
+    if (!Ctl.drag) return; var t = e.touches[0];
+    Ctl.yaw -= (t.clientX - Ctl.lx) * 0.006;
+    Ctl.pitch = Math.max(-1.25, Math.min(1.25, Ctl.pitch - (t.clientY - Ctl.ly) * 0.006));
+    Ctl.lx = t.clientX; Ctl.ly = t.clientY;
+  }, { passive: true });
+  addEventListener('touchend', function () { Ctl.drag = false; });
+
+  addEventListener('keydown', function (e) {
+    var k = (e.key || '').toLowerCase();
+    Ctl.keys[k] = true;
+    if (k === 'e') { doInteract(); }
+    if (k === 'q' && App.held) { dropHeld(); }
+    if (k === 'escape' && $('modal').classList.contains('on')) closeModal();
+    if (['w', 'a', 's', 'd', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) e.preventDefault();
+  });
+  addEventListener('keyup', function (e) { Ctl.keys[(e.key || '').toLowerCase()] = false; });
+
+  // Touch thumb pad.
+  var map = ['f', 'l', 'r', 'b'];
+  document.querySelectorAll('#touch .pad .k').forEach(function (b, i) {
+    var k = map[i];
+    var on = function (ev) { ev.preventDefault(); Ctl.move[k] = 1; };
+    var off = function (ev) { ev.preventDefault(); Ctl.move[k] = 0; };
+    b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off);
+    b.addEventListener('pointerleave', off); b.addEventListener('pointercancel', off);
+  });
+  $('t-use').addEventListener('click', doInteract);
+  if ('ontouchstart' in window) $('touch').classList.add('on');
+
+  $('b-exit').onclick = function () { WH.exit(); };
+  $('b-lift').onclick = openLifterModal;
+  $('b-up').onclick = openUpgradeModal;
+  $('prompt').addEventListener('click', doInteract);
+}
+
+function dropHeld() {
+  if (!App.held) return;
+  var p = App.held;
+  App.held = null; App.carried = 0; App.heldMesh.visible = false;
+  // Put it back on the van rather than leaving it in the mud.
+  App.pendingCrates = App.pendingCrates || [];
+  if (App.pendingCrates.indexOf(p) < 0) App.pendingCrates.unshift(p);
+  rebuildTruckCrates(); renderHud();
+  toast('📦 Crate put back on the van.', 2200);
+}
+
+/* ── movement + collision. One AABB list, swept per axis so sliding along a
+      wall feels right instead of sticking. ─────────────────────────────────── */
+function blocked(x, z) {
+  var R = 0.42;
+  for (var i = 0; i < App.colliders.length; i++) {
+    var c = App.colliders[i];
+    if (Math.abs(x - c.x) < c.hw + R && Math.abs(z - c.z) < c.hd + R) return true;
+  }
+  return false;
+}
+
+function tick() {
+  requestAnimationFrame(tick);
+  var dt = Math.min(0.05, clock.getDelta());
+  if (!App.ready) { renderer.render(scene, camera); return; }
+
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = Ctl.yaw; camera.rotation.x = Ctl.pitch;
+
+  var K = Ctl.keys, mv = Ctl.move;
+  var f = (K['w'] || K['arrowup'] || mv.f ? 1 : 0) - (K['s'] || K['arrowdown'] || mv.b ? 1 : 0);
+  var r = (K['d'] || K['arrowright'] || mv.r ? 1 : 0) - (K['a'] || K['arrowleft'] || mv.l ? 1 : 0);
+  if (f || r) {
+    var spd = (K['shift'] ? SPRINT : SPEED) * (App.held ? 0.78 : 1) * dt;
+    // Normalise so diagonal is not 41% faster — the classic tell of a rushed
+    // controller.
+    var len = Math.hypot(f, r); f /= len; r /= len;
+    var fx = -Math.sin(Ctl.yaw), fz = -Math.cos(Ctl.yaw);
+    var rx = Math.cos(Ctl.yaw), rz = -Math.sin(Ctl.yaw);
+    var dx = (fx * f + rx * r) * spd, dz = (fz * f + rz * r) * spd;
+    var nx = camera.position.x + dx, nz = camera.position.z + dz;
+    if (!blocked(nx, camera.position.z)) camera.position.x = nx;
+    if (!blocked(camera.position.x, nz)) camera.position.z = nz;
+    camera.position.x = Math.max(-40, Math.min(40, camera.position.x));
+    camera.position.z = Math.max(-24, Math.min(30, camera.position.z));
+    Ctl.bob += spd * 2.2;
+  } else {
+    Ctl.bob += dt * 1.2;
+  }
+  // Head bob: small enough not to nauseate, present enough that you are walking
+  // rather than gliding. Carrying a crate slows the cadence and deepens it.
+  var amp = (f || r) ? (App.held ? 0.035 : 0.024) : 0.004;
+  camera.position.y = EYE + Math.sin(Ctl.bob) * amp;
+  if (App.heldMesh.visible) {
+    App.heldMesh.position.y = -0.34 + Math.sin(Ctl.bob * 0.5) * 0.018;
+    App.heldMesh.rotation.z = Math.sin(Ctl.bob * 0.5) * 0.03;
+  }
+
+  // Nearest sensor → the E prompt.
+  var best = null, bd = Infinity;
+  for (var i = 0; i < App.sensors.length; i++) {
+    var s = App.sensors[i];
+    var d = Math.hypot(camera.position.x - s.x, camera.position.z - s.z);
+    if (d < s.r && d < bd) { bd = d; best = s; }
+  }
+  if (best !== App.near) {
+    App.near = best;
+    var p = $('prompt');
+    if (!best) p.style.display = 'none';
+    else {
+      p.style.display = 'block';
+      p.innerHTML = 'E — ' + promptFor(best);
+    }
+  } else if (best) {
+    $('prompt').innerHTML = 'E — ' + promptFor(best);
+  }
+
+  renderer.render(scene, camera);
+}
+function promptFor(s) {
+  if (s.kind === 'lifter') return 'Weight lifters';
+  if (s.kind === 'upgrade') return 'Warehouse & storage units';
+  if (s.kind === 'truck') {
+    if (App.held) return 'Put the crate back on the van';
+    var p = nextCrate();
+    return p ? ('Take a crate (' + p.c.weight_kg + ' kg → Bay ' + bayNoFor(p.s.unit_id) + ')')
+             : 'The van is empty';
+  }
+  if (s.kind === 'bay') {
+    if (!App.held) return 'Bay ' + s.unit.bay_no + ' — ' + Math.round(s.unit.used_kg) + '/' + s.unit.capacity_kg + ' kg';
+    return 'Drop in Bay ' + s.unit.bay_no;
+  }
+  return 'Use';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BOOT
+   ══════════════════════════════════════════════════════════════════════════ */
+function start() {
+  if (!window.THREE) {
+    $('bootmsg').innerHTML = '3D failed to load.<br><span style="color:var(--bad)">Check the connection and reopen the warehouse.</span>';
+    return;
+  }
+  buildScene();
+  bindControls();
+  App.buildBays();
+  rebuildTruckCrates();
+  renderHud();
+  App.ready = true;
+  $('boot').classList.add('gone');
+  toast('🏗 <b>Your warehouse.</b> WASD to walk · mouse to look · <b>E</b> to use · Shift to run.', 6000);
+  tick();
+}
+
+window.addEventListener('wh:changed', function () { renderHud(); });
+
+// Ask the host for state. If nobody answers in 1.2 s we are standalone — build
+// the mock yard and play anyway, which is also how this page gets tested.
+(function boot() {
+  var started = false;
+  var go = function () { if (started) return; started = true; start(); };
+  WH.onReady(function () { go(); });
+  setTimeout(function () {
+    if (!WH.state()) { WH.setState(MOCK.build()); }
+    go();
+  }, 1200);
+})();
+</script>
+</body>
+</html>

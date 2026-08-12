@@ -1429,6 +1429,7 @@ end $$;
 create or replace function public.warpath_camp_place(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare me public.warpath_expeditions; run public.warpath_runs; existing public.warpath_camps;
+  rec record;
 begin
   -- Derive from auth.uid() when the caller did not name one (the client never does).
   p_exp := coalesce(p_exp, public.wp_active_exp());
@@ -1454,6 +1455,23 @@ begin
   if existing.x = me.x and existing.y = me.y then
     return jsonb_build_object('ok', false, 'reason', 'camp_already_here'); end if;
   if me.moves_left < 2 then return jsonb_build_object('ok', false, 'reason', 'need_2_moves_to_pack'); end if;
+  /* ⚠ TELL THE PEOPLE WHO WOULD NOTICE. A scout that discovered this camp sees
+     it simply vanish from their map the moment it is packed — warpath_state
+     gates rival camps on explored fog, and the NEW site is unexplored, so the
+     camp reads as null with no explanation. From the client that looks like a
+     bug rather than an event.
+
+     So anyone who had explored the OLD site is told the camp struck. Only them:
+     you learn a camp is gone because you knew where it was, which is the same
+     rule that let you see it in the first place. Nobody is told where it went. */
+  for rec in select e.id from public.warpath_expeditions e
+              where e.run_id = me.run_id and e.id <> me.id
+                and e.status in ('active','extracting')
+                and public.wp_explored(e.fog, existing.x, existing.y) loop
+    perform public.wp_log(me.run_id, rec.id, 'rival_camp_struck',
+      jsonb_build_object('hero', me.hero_name, 'x', existing.x, 'y', existing.y));
+  end loop;
+
   update public.warpath_camps set x = me.x, y = me.y, moved_count = moved_count + 1
     where expedition_id = me.id;
   update public.warpath_expeditions set moves_left = moves_left - 2 where id = me.id;
@@ -1760,6 +1778,17 @@ begin
               where run_id = run.id and status = 'open' and kind = 'pvp'
                 and coalesce(opened_turn, 0) < run.turn
                 and (claim_attacker is not null or claim_defender is not null) loop
+    /* Two claims that disagree get LOGGED, not silently picked between. We
+       cannot tell who is lying from here — that is what the Colyseus migration
+       in docs/mp-server-authority-shared-engine.md is for — but a run whose
+       feed records the disagreement is one an operator can audit later. */
+    if rec.claim_attacker is not null and rec.claim_defender is not null
+       and rec.claim_attacker is distinct from rec.claim_defender then
+      perform public.wp_log(run.id, rec.attacker_id, 'battle_disputed',
+        jsonb_build_object('battle_id', rec.id,
+                           'attacker_claimed', rec.claim_attacker,
+                           'defender_claimed', rec.claim_defender));
+    end if;
     perform public.wp_resolve_battle(rec.id,
       case
         when rec.claim_attacker is not null and rec.claim_attacker is distinct from rec.attacker_id
@@ -1768,6 +1797,31 @@ begin
           then rec.claim_defender                                   -- defender conceded
         else coalesce(rec.claim_defender, rec.claim_attacker)
       end);
+  end loop;
+
+  /* ⚠ A BATTLE NOBODY REPORTS IS A SOFT-LOCK ON TWO PLAYERS.
+     While a battle is open, warpath_move refuses with battle_pending — for the
+     ATTACKER, who chose this, and for the DEFENDER, who did not and cannot
+     decline. If the attacker closes the tab between opening the battle and
+     reporting it, both heroes are pinned to the map for the rest of the run.
+     The defender does have an out (conceding is believed immediately), but
+     "concede or stay frozen forever" is not an acceptable pair of options for
+     someone who was attacked.
+
+     So an unreported battle expires. Two full turns with NO claim from either
+     side and it never happened: no winner, no loot, no injury, both released.
+     That is deliberately the gentlest possible resolution, because the one
+     thing we know about this battle is that we know nothing about it. */
+  for rec in select * from public.warpath_battles
+              where run_id = run.id and status = 'open' and kind = 'pvp'
+                and claim_attacker is null and claim_defender is null
+                and coalesce(opened_turn, 0) < run.turn - 1 loop
+    update public.warpath_battles
+       set status = 'abandoned', resolved_at = now() where id = rec.id and status = 'open';
+    if found then
+      perform public.wp_log(run.id, rec.attacker_id, 'battle_abandoned',
+        jsonb_build_object('battle_id', rec.id, 'opened_turn', rec.opened_turn));
+    end if;
   end loop;
 
   -- The world closes. Anyone still out there loses everything they did not

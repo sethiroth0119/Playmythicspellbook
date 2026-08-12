@@ -158,7 +158,7 @@ if (want('q1')) {
   head('Q1 — is a drafted pool legal and playable?');
   const N = 400;
   const runs = draftPools(N, { turns: 60 });
-  const gains = runs.map(r => r.discovered.length + r.recruited.length);
+  const gains = runs.map(r => r.gains.length);
   const disc = runs.map(r => r.discovered.length);
   const rec = runs.map(r => r.recruited.length);
   const ext = runs.map(r => r.extracted.length);
@@ -173,7 +173,7 @@ if (want('q1')) {
   const curve = [];
   for (const T of [5, 10, 15, 20, 30, 45, 60]) {
     const rs = draftPools(80, { turns: T });
-    const dd = describe(rs.map(r => r.discovered.length + r.recruited.length));
+    const dd = describe(rs.map(r => r.gains.length));
     curve.push({ turns: T, mean: +dd.mean.toFixed(1), p10: dd.p10, p90: dd.p90 });
   }
   line('  pool gain vs run length: ' + curve.map(c => `${c.turns}t→${c.mean}`).join('  '));
@@ -185,7 +185,7 @@ if (want('q1')) {
   const styles = [];
   for (const style of ['explore', 'harvest']) {
     const rs = draftPools(200, { turns: 60, style });
-    const gg = describe(rs.map(r => r.discovered.length + r.recruited.length));
+    const gg = describe(rs.map(r => r.gains.length));
     const ex = describe(rs.map(r => r.extracted.length));
     styles.push({ style, gain: gg, extracted: ex });
     line(`  playstyle "${style}": gained mean ${gg.mean.toFixed(1)} (p10 ${gg.p10}, p90 ${gg.p90}, range ${gg.min}–${gg.max}), `
@@ -198,7 +198,7 @@ if (want('q1')) {
     ['starter only (24 cards, no draft)', Data.STARTER_POOL],
     ['sim-observed low  (+3 gained)', poolWithGains(base, 3)],
     ['sim-observed high (+13 gained)', poolWithGains(base, 13)],
-    ['brief intent      (+40 gained)', poolWithGains(runs.find(r => r.discovered.length + r.recruited.length >= 40) || base, 40)],
+    ['brief intent      (+40 gained)', poolWithGains(runs.find(r => r.gains.length >= 40) || base, 40)],
   ];
   const rows = [];
   for (const [name, pool] of scen) {
@@ -259,8 +259,8 @@ if (want('q2')) {
   for (const [i, j] of pairs) {
     const r = await duel(decks[i].keys, decks[j].keys, MATCHES, `${i}v${j}`);
     out.push({ i, j, rate: r.rate.p, lo: r.rate.lo, hi: r.rate.hi, n: r.done,
-               gi: decks[i].run.discovered.length + decks[i].run.recruited.length,
-               gj: decks[j].run.discovered.length + decks[j].run.recruited.length,
+               gi: decks[i].run.gains.length,
+               gj: decks[j].run.gains.length,
                medianTurns: r.turns.p50 });
     line(`  pool ${String(i).padStart(2)} (+${String(out.at(-1).gi).padStart(2)} drafted) vs pool ${String(j).padStart(2)} (+${String(out.at(-1).gj).padStart(2)}): `
        + `${pct(r.rate.p)} [${pct(r.rate.lo)}–${pct(r.rate.hi)}] over ${r.done}`);
@@ -298,7 +298,7 @@ if (want('q3')) {
       const r = runExpedition({ seed: (900001 + k * 7919) >>> 0, slot: k % 4, turns: 60, pick: 'value', target: b });
       byBiome[b].push({ run: r, keys: await E.pad(r.pool) });
     }
-    const g = byBiome[b].map(x => x.run.discovered.length + x.run.recruited.length);
+    const g = byBiome[b].map(x => x.run.gains.length);
     const sh = shape(byBiome[b][0].keys, META);
     line(`  ${b.padEnd(10)} drafted +${g.join('/+')} cards; sample deck: units ${sh.units} traps ${sh.traps} loc ${sh.locations} spell ${sh.spells} wthr ${sh.weather}, avg cost ${sh.avgCost.toFixed(2)}`);
   }
@@ -342,11 +342,11 @@ if (want('q4')) {
 
   const runs = draftPools(6, { turns: 60, seed0: 555001 });
   const best = runs.slice().sort((a, b) =>
-    (b.discovered.length + b.recruited.length) - (a.discovered.length + a.recruited.length))[0];
+    b.gains.length - a.gains.length)[0];
   const cands = [
     ['starter pool only (24)', Data.STARTER_POOL],
     ['typical run (+13)', poolWithGains(runs[0], 13)],
-    ['good run (+' + (best.discovered.length + best.recruited.length) + ')', best.pool],
+    ['good run (+' + (best.gains.length) + ')', best.pool],
     ['brief intent (+40)', poolWithGains(best, 40)],
   ];
   const MATCHES = 80 * SCALE;
@@ -370,7 +370,7 @@ if (want('q5')) {
   const STARTER_N = Data.STARTER_POOL.length;          // 24 cards, NOT 25
   line(`  STARTER_POOL is ${STARTER_N} cards; the brief's "25" counts the Hero, which is not a deck card.`);
   const donors = draftPools(24, { turns: 60, seed0: 770001 })
-    .filter(r => STARTER_N + r.discovered.length + r.recruited.length >= 60);
+    .filter(r => STARTER_N + r.gains.length >= 60);
   line(`  ${donors.length}/24 full 60-turn runs reached a 60-card pool at all.`);
   const donor = donors[0] || draftPools(1, { turns: 60, seed0: 770001 })[0];
   const ref = await E.pad(Data.STARTER_POOL);          // the 24-card start is the yardstick

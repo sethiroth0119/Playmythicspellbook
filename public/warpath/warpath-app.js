@@ -778,7 +778,8 @@ function tabFeed(st) {
 /* Events the player must not miss. Keyed on turn+kind so a repoll cannot
    re-announce the same thing; only the first sighting speaks. */
 var LOUD = { hero_defeated: 1, extraction_started: 1, extraction_broken: 1,
-             guardian_defeated: 1, run_closed: 1, watchtower_report: 1 };
+             guardian_defeated: 1, run_closed: 1, watchtower_report: 1,
+             rival_camp_struck: 1 };
 function announceNewEvents(st) {
   var evs = (st && st.events) || [];
   if (!S.seenEvents) {
@@ -812,6 +813,8 @@ function announceNewEvents(st) {
     } else if (e.kind === 'watchtower_report') {
       ribbon('⚠ Enemy camp discovered', 'Your Watchtower has spotted ' + (p.hero || 'a rival')
         + "'s camp " + (p.dist != null ? p.dist + ' tiles from yours' : 'nearby') + '.');
+    } else if (e.kind === 'rival_camp_struck') {
+      ribbon('A camp has struck', (p.hero || 'A rival') + ' packed up and left ' + p.x + ',' + p.y + '.');
     } else if (e.kind === 'run_closed') {
       ribbon('The Warpath closed', 'Anything not extracted is gone.');
     }
@@ -835,6 +838,10 @@ function feedLine(e) {
     case 'hero_defeated':       return (p.winner || 'A Hero') + ' beat ' + (p.loser || 'someone') + '.';
     case 'extraction_started':  return '⚠ ' + (p.hero || 'A Hero') + ' is preparing to leave the Warpath'
                                      + (p.gate ? ' at ' + p.gate : '') + '.';
+    case 'rival_camp_struck':   return (p.hero || 'A rival') + ' packed their camp at '
+                                     + p.x + ',' + p.y + ' and moved on.';
+    case 'battle_abandoned':    return 'A battle nobody reported expired — both Heroes went free.';
+    case 'battle_disputed':     return 'Two Heroes each claimed the same victory.';
     case 'watchtower_report':   return '🗼 Watchtower: ' + (p.hero || 'a rival') + ' is camped '
                                      + (p.dist != null ? p.dist + ' tiles away' : 'nearby') + '.';
     case 'scout_report':        return '🔭 Scout report — ' + (p.count || 0) + ' known camp'
@@ -1013,8 +1020,17 @@ function renderRail() {
     actBtn.textContent = 'Open encounter'; actBtn.disabled = false;
     actBtn.onclick = function () { S.encDismissed = false; showEncounter(pendingEnc); };
   } else if (adjacent && canAct) {
-    actBtn.textContent = 'Challenge ' + adjacent.hero_name.split(' ')[0];
-    actBtn.disabled = false;
+    /* ⚠ The button has to know what the attack COSTS. Challenging spends 2
+       movement (B4/B5) and this was enabled regardless, so a hero that had
+       walked all turn could press Challenge, get need_2_moves_to_attack and
+       never reach the battle bridge — which is exactly how the browser harness
+       lost a battle it thought it had started. Every other action's enabled
+       state agrees with the server; this one has to as well. */
+    var canAfford = me.moves_left >= 2;
+    actBtn.textContent = canAfford
+      ? 'Challenge ' + adjacent.hero_name.split(' ')[0]
+      : 'Challenge · needs 2 \uD83D\uDC63';
+    actBtn.disabled = !canAfford;
     actBtn.onclick = function () {
       act('warpath_battle_open', { p_target: adjacent.expedition_id }, function (r) {
         launchBattle({ id: r.battle_id, kind: r.kind, defender: r.defender });

@@ -194,8 +194,15 @@ export function runExpedition(opts) {
   const carry = { ...Data.STARTING_STIPEND };
   const materials = [];
   const pool = [...Data.STARTER_POOL];
+  /* `gains` is the acquisition-ORDERED list of everything found out here. It
+     matters: warpath_state returns cards `order by acquired_turn, id`
+     (migration:1231) and warpathPadDeck keeps only the first DECK_SIZE of them
+     (index.html:215644), so a card's position in this array decides whether it
+     ever reaches a battle deck. */
+  const gains = [];
   const discovered = [];                           // keys added by encounters
   const recruited = [];
+  const claimedSites = new Set();                  // ONE recruit per site, ever
   const camp = { x: hx, y: hy, recruitment: 0, blacksmith: 0, supply: 0, watchtower: 0, arcane: 0 };
   const sites = recruitSites(seed);                // [{ id, name, biome, x, y }, …]
   const log = { encountersSeen: 0, encountersFired: 0, tilesWalked: 0, nodes: 0, builds: [] };
@@ -218,19 +225,24 @@ export function runExpedition(opts) {
     return false;
   }
 
+  /* ⚠ ONE recruit per site, and there are only three sites on the map.
+     warpath_recruit refuses a second claim outright ("site_already_recruited",
+     migration:1483) and the rank gate is ARRAY[0,2,4,5] by Recruitment Tent
+     level (migration:1492). So the ENTIRE recruitment half of the mode can
+     contribute at most 3 cards to a run. The policy here is "take the BEST
+     offer this camp can afford", which is the pick-1-of-3 the brief describes. */
   function tryRecruit() {
     for (const s of sites) {
       if (s.x !== hx || s.y !== hy) continue;
+      if (claimedSites.has(s.id)) continue;
       const p = Data.RECRUIT_POOLS[s.id];
       if (!p) continue;
-      // Cheapest-first so a Tent I camp does not blow its food on nothing.
-      const offers = [...p.offers].sort((a, b) => a.rank - b.rank);
-      for (const o of offers) {
-        const maxRank = [0, 2, 4, 5][camp.recruitment | 0];
-        if (o.rank > maxRank) continue;
-        if (!can(o.cost)) continue;
-        pay(o.cost); pool.push(o.key); recruited.push(o.key);
-      }
+      const maxRank = [0, 2, 4, 5][Math.min(3, camp.recruitment | 0)];
+      const afford = p.offers.filter(o => o.rank <= maxRank && can(o.cost));
+      if (!afford.length) continue;
+      const best = afford.reduce((m, o) => (baseValue(o.key) > baseValue(m.key) ? o : m), afford[0]);
+      pay(best.cost); claimedSites.add(s.id);
+      pool.push(best.key); recruited.push(best.key); gains.push(best.key);
     }
   }
 
@@ -284,7 +296,7 @@ export function runExpedition(opts) {
         if (offers) {
           log.encountersFired++;
           const chosen = pickFn(offers, pool, r);
-          pool.push(chosen); discovered.push(chosen);
+          pool.push(chosen); discovered.push(chosen); gains.push(chosen);
         }
       }
     }
@@ -292,12 +304,14 @@ export function runExpedition(opts) {
 
   // Extraction capacity — the real formula from warpath-data.js.
   const cap = Data.EXTRACT_BASE_CARDS + Data.EXTRACT_CARDS_PER_VAULT_LEVEL * (camp.supply | 0);
-  const gained = discovered.concat(recruited);
-  const extracted = gained.slice(0, cap);
+  // warpath_extract_finish orders boss first, then recruit, then acquired_turn
+  // (migration:2159) and takes `cap` of them.
+  const forExtract = recruited.concat(gains.filter(k => recruited.indexOf(k) < 0));
+  const extracted = forExtract.slice(0, cap);
 
   return {
     seed, slot: opts.slot | 0, target, pick: opts.pick || 'value', style: opts.style || 'explore', turns,
-    pool, discovered, recruited, extracted, extractCap: cap,
+    pool, gains, discovered, recruited, extracted, extractCap: cap,
     materials, camp, carry, log,
   };
 }

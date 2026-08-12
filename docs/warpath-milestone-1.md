@@ -539,6 +539,59 @@ carry-to-bank ratio is still untouched, waiting on the deck-quality harness.
 
 Suite is now **83 assertions**; probes 20/20; contract check clean.
 
+#### Battle safety, notification, and the harness that asserts the fix
+
+**B5 — split into the half that is closable here and the half that is not.**
+
+*Closed:* an unreported battle no longer soft-locks two players. While a battle is open
+`warpath_move` refuses with `battle_pending` — for the attacker, who chose it, **and the
+defender, who did not and cannot decline**. If the attacker closes the tab between opening and
+reporting, both heroes were pinned for the rest of the run. Two full turns with no claim from
+either side and the battle expires: no winner, no loot, no injury, both released — deliberately
+the gentlest resolution, because the one thing known about that battle is that nothing is known
+about it. A disagreement (both sides claiming victory) is now **logged** as `battle_disputed`
+before the sweep settles it, so an operator can audit it later.
+
+*Not closed, and waiting for Colyseus:* **who is telling the truth.** `warpath_battle_report`
+still takes a client's word. Conceding is believed immediately, agreement is believed
+immediately, and a bare win claim waits — so being fast buys nothing and the exploit is not
+free — but two colluding or lying clients are not detectable from here. The real answer is
+server-side battle resolution, `docs/mp-server-authority-shared-engine.md`. This is a mitigation,
+not a fix, and should not be described as one.
+
+**B9 — the loser is told.** Already landed in an earlier round and confirmed here: the 12s poll
+is 5s, and `announceNewEvents()` surfaces anything that happened *to me* since the last read
+(defeat, extraction broken, a rival leaving, a Watchtower sighting, a camp striking). It is still
+a **poll**, so a window remains; a realtime subscription would close it and that is the same
+channel the Colyseus work brings.
+
+**P9 — a packed camp no longer just vanishes.** A scout that discovered a camp saw it disappear
+with no explanation, because `warpath_state` gates rival camps on explored fog and the new site
+is unexplored. Anyone who had explored the **old** site is now told the camp struck — only them,
+by the same rule that let them see it — and nobody is told where it went.
+
+**`browser-sim.mjs` phase A now asserts the contract, not the bug.** It expected the client's
+calls to *fail*; they resolve now, so it asserts they resolve **and take effect** (the camp is
+really on the server, the turn is really ended). This is the phase that would have caught B1:
+four real browsers, the real bridge, nothing added to the arguments the client sends.
+
+**Two things the harness caught while being fixed:**
+
+1. Phase B drove only the *attacker's* browser, so one unilateral win claim left the battle open —
+   correct under B5, and the probe was reading it as a failure. It now drives the **defender's**
+   client too (the pending battle appears in its own action button), which is also what makes it
+   a real end-to-end test of B9.
+2. A genuine client bug: the **Challenge button was enabled when the hero could not afford the
+   2-movement cost**, so pressing it produced `need_2_moves_to_attack` and never reached the
+   battle bridge. Every other action's enabled state agrees with the server; this one did not.
+
+**Closed on the coordinator's measurement:** vault capacity / the carried-to-secured ratio. The
+bug fixes moved it from 7:1 to 2.6:1 on their own — defeats costing the loser nothing went
+34% → 0%, materials transferred 0.49 → 2.10 — so no tuning was applied and none should be until
+real players, not bots, are generating the numbers.
+
+Suite is now **89 assertions**.
+
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which
 is the one thing hard constraint #1 says not to risk. Exclusivity in Milestone 1 is expressed

@@ -14,7 +14,7 @@ import { runExpedition, Data } from './draft.mjs';
  *  Lets a measured distribution (the four-player sim saw 3–13 discovered) and
  *  the brief's intended 40 be tested against the SAME real draft stream. */
 export function poolWithGains(run, nGained) {
-  const gains = run.discovered.concat(run.recruited);
+  const gains = run.gains;
   return Data.STARTER_POOL.concat(gains.slice(0, nGained));
 }
 

@@ -57,7 +57,9 @@ async function bootSeats(browser, shim, n) {
 const state = page => inFrame(page, () => window.WarpathNet.rpc('warpath_state', {}));
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PHASE A — the client exactly as shipped.
+// PHASE A — the client exactly as shipped. This is the phase that would have
+// caught B1: four real browsers, the real bridge, and NOTHING added to the
+// arguments the client sends.
 // ═══════════════════════════════════════════════════════════════════════════
 async function phaseA(browser) {
   head('PHASE A — four browsers, the client as shipped, nothing added');
@@ -84,20 +86,37 @@ async function phaseA(browser) {
     { x: st0.me.x + 1, y: st0.me.y });
   const end = await inFrame(p0, () => window.WarpathNet.rpc('warpath_end_turn', {}).catch(e => ({ err: String(e.message || e) })));
 
-  const broken = [['warpath_camp_place', camp], ['warpath_move', move], ['warpath_end_turn', end]]
-    .filter(([, r]) => r && r.err);
-  if (broken.length === 0) pass('the client can move, camp and end its turn');
-  else {
-    fail(`${broken.length}/3 of the client's own calls were refused before reaching the database`);
-    for (const [fn, r] of broken) note(`${fn} -> ${r.err}`);
-    note('⚠ ROOT CAUSE: every mutating warpath_* RPC takes `p_exp uuid` as its FIRST '
-       + 'parameter with NO DEFAULT (migration:1222, 1341, 1376, 1404, 1458, 1510, 1568, '
-       + '1626, 1807, 1836, 1896), and public/warpath/warpath-app.js never sends it — '
-       + 'grep the whole of public/ for `p_exp` and the only hit is an unrelated dojo call. '
-       + 'PostgREST resolves functions by ARGUMENT NAME, so warpath_move({p_x,p_y}) does not '
-       + 'match any overload and comes back PGRST202. public/index.html:215536 then rewrites '
-       + 'that into "The Warpath is not installed on this server yet", so the real symptom in '
-       + 'front of a player is a false installation error on every single action.');
+  /* ⚠ THIS ASSERTS THE CONTRACT, NOT THE BUG.
+     It used to expect these three calls to FAIL, because every mutating RPC
+     took `p_exp uuid` first with no default and the client never sent it —
+     PostgREST resolves by argument NAME, so all eleven call sites came back
+     PGRST202, which the bridge rewrote into "The Warpath is not installed on
+     this server yet". The expedition is derived from auth.uid() now
+     (wp_active_exp), so the client's own argument shapes are the thing under
+     test: if a signature ever drifts away from what public/ sends, these three
+     go red here and public/warpath/_contractcheck.js goes red in CI. */
+  const calls = [['warpath_camp_place', camp], ['warpath_move', move], ['warpath_end_turn', end]];
+  const broken = calls.filter(([, r]) => r && (r.err || r.ok === false));
+  if (broken.length === 0) {
+    pass('the client can camp, move and end its turn — its own call shapes resolve');
+  } else {
+    fail(`${broken.length}/3 of the client's own calls were refused`);
+    for (const [fn, r] of broken) note(`${fn} -> ${r.err || r.reason}`);
+    note('⚠ if the reason is a PostgREST resolution error rather than a game rule, a '
+       + 'signature has drifted from what public/warpath/warpath-app.js actually sends. '
+       + 'That is exactly the class of bug that made the whole mode unplayable and went '
+       + 'unnoticed for nine review rounds, because every round ran against the offline '
+       + 'mock in warpath-net.js — which reimplements the RPCs with its OWN signatures '
+       + 'and is therefore a different API. public/warpath/_contractcheck.js is the '
+       + 'standing check; this is the end-to-end one.');
+  }
+  // and the calls must have taken effect, not merely resolved
+  if (broken.length === 0) {
+    const after = await state(p0);
+    if (after && after.camp) pass('the camp the client pitched is really on the server');
+    else fail('warpath_camp_place resolved but no camp exists');
+    if (after && after.me && after.me.turn_ended) pass('and the turn it ended is really ended');
+    else fail('warpath_end_turn resolved but turn_ended is false');
   }
   // What the player actually sees.
   const toast = await app(p0).locator('#toast').textContent({ timeout: 2000 }).catch(() => null);
@@ -209,19 +228,49 @@ async function phaseB(browser) {
          + `carrying ${handed[0].card_keys.length} card keys and hero ${handed[0].hero_id}`);
     } else fail('the client never posted warpath:battle to the parent');
     await pages[0].waitForTimeout(1200);
-    const row = await shim.obs.sql(
+
+    /* ⚠ ONE SIDE REPORTING IS NO LONGER ENOUGH, ON PURPOSE.
+       A bare self-declared WIN is recorded as a claim and waits for the
+       opponent (B5), so a battle driven from the attacker's browser alone is
+       correctly still open here. That is the fix, not a failure — being fast
+       used to decide the fight. The DEFENDER joins the same battle through
+       its own client: warpath_state() carries it in .battles and the action
+       button becomes "Fight". Drive that too, which is also what makes this
+       the real end-to-end test of whether the loser is told anything. */
+    let row = await shim.obs.sql(
+      `select b.kind, b.status, b.winner_id, b.spoils, b.attacker_id from public.warpath_battles b
+        where b.run_id = $1 order by b.opened_at desc limit 1`, [s0.run.id]);
+    if (row.length && row[0].status === 'open') {
+      pass('one unilateral win claim leaves the battle open — posting first decides nothing');
+    } else fail(`a single self-declared win resolved the battle: ${JSON.stringify(row)}`);
+
+    // the defender's client picks the pending battle up and reports it
+    await pages[1].waitForTimeout(6000);
+    const act1 = String(await app(pages[1]).locator('#b-act').textContent({ timeout: 4000 }).catch(() => '')).trim();
+    if (/Fight/i.test(act1)) pass(`the defender's own client offers the pending battle: "${act1}"`);
+    else note(`the defender's action button reads "${act1}"`);
+    await app(pages[1]).locator('#b-act').click({ timeout: 5000 })
+      .catch(() => app(pages[1]).locator('#b-act').click({ force: true, timeout: 5000 }));
+    await pages[1].waitForTimeout(2500);
+
+    row = await shim.obs.sql(
       `select b.kind, b.status, b.winner_id, b.spoils, b.attacker_id from public.warpath_battles b
         where b.run_id = $1 order by b.opened_at desc limit 1`, [s0.run.id]);
     if (row.length && row[0].status === 'resolved') {
-      pass(`and the verdict came back through warpath_battle_report: ${row[0].kind} resolved, `
+      pass(`both sides reported and the verdict landed: ${row[0].kind} resolved, `
          + `winner ${row[0].winner_id === s0.me.expedition_id ? 'seat 0' : 'seat 1'}, spoils ${JSON.stringify(row[0].spoils)}`);
-    } else fail(`the battle did not resolve: ${JSON.stringify(row)}`);
+    } else fail(`the battle did not resolve after both sides reported: ${JSON.stringify(row)}`);
     const loser = await shim.obs.sql(
       'select x, y, injured_turns, hero_hp, moves_left from public.warpath_expeditions where id=$1',
       [s1.me.expedition_id]);
     note(`the defeated hero: ${JSON.stringify(loser[0])} (its camp is at ${JSON.stringify((await state(pages[1])).camp)})`);
+    // B9: the loser must be TOLD, not left to notice its own resource bar move.
+    await pages[1].waitForTimeout(6000);          // one poll interval
+    const ribbon1 = String(await app(pages[1]).locator('#ribbon').textContent({ timeout: 3000 }).catch(() => '')).trim();
     const toast1 = String(await app(pages[1]).locator('#toast').textContent({ timeout: 2000 }).catch(() => '')).trim();
-    note(`what the LOSER's screen says right now: "${toast1 || '(nothing — it has not repolled yet)'}"`);
+    const told = ribbon1 || toast1;
+    if (told) pass(`the loser's own screen says: "${told.replace(/\s+/g, ' ').slice(0, 90)}"`);
+    else fail('the loser was told nothing after a full poll interval');
     note('⚠ the loser is told nothing at the moment it happens. warpath_state() carries the '
        + "'hero_defeated' event in .events, but the client only repolls every 12 seconds "
        + '(warpath-app.js:1477), so a player can be robbed, injured and teleported across the '

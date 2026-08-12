@@ -1076,3 +1076,97 @@ begin
   raise notice '';
   raise notice '════════ PvP VISIBILITY: % CHECKS PASSED ════════', pass;
 end $$;
+
+-- =============================================================================
+-- B5 safety half: an unreported battle must not pin two players forever, and a
+-- disagreement must leave a trace. The AUTHORITY half is not solved here — see
+-- docs/mp-server-authority-shared-engine.md.
+-- =============================================================================
+do $$
+declare
+  ua uuid; ub uuid; ea uuid; eb uuid; r jsonb; v_run uuid; v_b uuid; n int; pass int := 0;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  insert into auth.users (email) values ('d1@w.test') returning id into ua;
+  insert into auth.users (email) values ('d2@w.test') returning id into ub;
+  insert into public.warpath_tickets (user_id, tickets) values (ua, 5), (ub, 5);
+  perform public.set_uid(ua);
+  r := public.warpath_enter('h', 'Aggro', 'ticket');
+  ea := (r->>'expedition_id')::uuid; v_run := (r->>'run_id')::uuid;
+  perform public.set_uid(ub);
+  r := public.warpath_enter('h', 'Victim', 'ticket');
+  eb := (r->>'expedition_id')::uuid;
+
+  update public.warpath_expeditions set x = 18, y = 15, moves_left = 6, turn_ended = false,
+         protected_until = 0 where id = ea;
+  update public.warpath_expeditions set x = 19, y = 15, moves_left = 6, turn_ended = false,
+         protected_until = 0 where id = eb;
+
+  -- the attacker opens a fight and then vanishes
+  perform public.set_uid(ua);
+  r := public.warpath_battle_open(ea, eb);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: battle_open: %', r; end if;
+  v_b := (r->>'battle_id')::uuid;
+
+  -- the DEFENDER, who did not choose this, is frozen
+  perform public.set_uid(ub);
+  r := public.warpath_move(eb, 20, 15);
+  if (r->>'ok')::boolean then raise exception 'FAIL: expected the defender to be pinned'; end if;
+  if r->>'reason' <> 'battle_pending' then raise exception 'FAIL: wrong reason %', r->>'reason'; end if;
+  pass := pass + 1; raise notice 'ok  an open battle pins the defender (the problem)';
+
+  -- nobody reports. Two turns later it must expire and release them both.
+  for n in 1..3 loop
+    perform public.set_uid(ua); perform public.warpath_end_turn(ea);
+    perform public.set_uid(ub); perform public.warpath_end_turn(eb);
+  end loop;
+  if (select status from public.warpath_battles where id = v_b) <> 'abandoned' then
+    raise exception 'FAIL: an unreported battle is still open — two players are pinned for the whole run (status %)',
+      (select status from public.warpath_battles where id = v_b); end if;
+  if (select winner_id from public.warpath_battles where id = v_b) is not null then
+    raise exception 'FAIL: an unwitnessed battle awarded a winner'; end if;
+  pass := pass + 1; raise notice 'ok  a battle nobody reports expires instead of pinning both heroes';
+
+  perform public.set_uid(ub);
+  update public.warpath_expeditions set moves_left = 6, turn_ended = false, status = 'active' where id = eb;
+  r := public.warpath_move(eb, 20, 15);
+  if not (r->>'ok')::boolean then
+    raise exception 'FAIL: the defender is still frozen after the battle expired: %', r; end if;
+  pass := pass + 1; raise notice 'ok  and both heroes can move again';
+
+  if not exists (select 1 from public.warpath_events where run_id = v_run and kind = 'battle_abandoned') then
+    raise exception 'FAIL: the expiry was silent'; end if;
+  pass := pass + 1; raise notice 'ok  the expiry is recorded in the run feed';
+
+  -- ── a disagreement leaves a trace ──────────────────────────────────────
+  update public.warpath_expeditions set x = 18, y = 15, moves_left = 6, turn_ended = false,
+         protected_until = 0, status = 'active' where id = ea;
+  update public.warpath_expeditions set x = 19, y = 15, moves_left = 6, turn_ended = false,
+         protected_until = 0, status = 'active' where id = eb;
+  perform public.set_uid(ua);
+  r := public.warpath_battle_open(ea, eb);
+  v_b := (r->>'battle_id')::uuid;
+  perform public.warpath_battle_report(v_b, ea);        -- attacker claims itself
+  perform public.set_uid(ub);
+  perform public.warpath_battle_report(v_b, eb);        -- defender claims itself
+  if (select status from public.warpath_battles where id = v_b) <> 'open' then
+    raise exception 'FAIL: two contradictory self-claims resolved anyway'; end if;
+  pass := pass + 1; raise notice 'ok  two players both claiming victory resolves neither';
+
+  perform public.set_uid(ua); perform public.warpath_end_turn(ea);
+  perform public.set_uid(ub); perform public.warpath_end_turn(eb);
+  if not exists (select 1 from public.warpath_events where run_id = v_run and kind = 'battle_disputed') then
+    raise exception 'FAIL: the disagreement was not logged — nothing to audit later'; end if;
+  if (select status from public.warpath_battles where id = v_b) <> 'resolved' then
+    raise exception 'FAIL: the disputed battle never settled'; end if;
+  pass := pass + 1; raise notice 'ok  a disputed verdict is logged, then settled so nobody stays pinned';
+
+  raise notice '';
+  raise notice '════════ BATTLE SAFETY: % CHECKS PASSED ════════', pass;
+end $$;

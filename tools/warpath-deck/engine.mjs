@@ -55,8 +55,11 @@ export async function openEngine(opts = {}) {
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--mute-audio'],
   });
   const pageErrors = [];
-  const pages = [];
-  for (let i = 0; i < workers; i++) pages.push(await newTab(browser, srv.port, pageErrors));
+  // Booted concurrently: public/index.html is ~11 MB and each tab spends most of
+  // its boot parsing it, so five sequential boots cost about eight minutes and
+  // five parallel ones about two.
+  const pages = await Promise.all(
+    Array.from({ length: workers }, () => newTab(browser, srv.port, pageErrors)));
   const p0 = pages[0];
 
   /* Run a list of match configs across the tab pool, preserving input order.

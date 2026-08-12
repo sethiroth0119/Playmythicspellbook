@@ -76538,7 +76538,7 @@ function sellToTrader(id, resId, qty) {
   const store = _trEnsureProfileStock();
   if (!store[id]) store[id] = {};
   store[id][resId] = current + sellQty;
-  Profile.gems = (Profile.gems | 0) + payout;
+  addGems(payout, 'Trader sale: ' + resId);
   try { saveProfile(); } catch (e) {}
   try { _persistForgeNow && _persistForgeNow(); } catch (e) {}
   return { ok: true, soldQty: sellQty, payout: payout, capped: sellQty < wantQty };
@@ -116423,7 +116423,7 @@ function _applyCouponRewards(coupon) {
   }
   // 🔥 Cinder
   if ((r.cinder | 0) > 0) {
-    Profile.gems = (Profile.gems | 0) + (r.cinder | 0);
+    addGems(r.cinder | 0, 'Coupon reward');
     lines.push(`🔥 +${(r.cinder | 0).toLocaleString()} Cinder`);
   }
   // 🪙 Aza coin
@@ -167191,7 +167191,8 @@ async function realtyFetch() {
         const upd = await Cloud.client.from('realty_listings').update({ paid_out: true }).eq('id', r.id).eq('paid_out', false).select('id');
         if (!(upd && upd.data && upd.data.length)) continue;
         const amt = r.status === 'sold' ? (r.price | 0) : (r.rent | 0);
-        Profile.gems = (Profile.gems | 0) + amt; changed = true;
+        // Guarded by the atomic `paid_out` flip above, so a re-fetch cannot pay twice.
+        addGems(amt, r.status === 'sold' ? 'Realty: property sold' : 'Realty: rent collected'); changed = true;
         try { showToast((r.status === 'sold' ? '🏠 Sold "' : '🔑 Rented out "') + ((r.prop_json && r.prop_json.name) || 'property') + '" — +' + amt.toLocaleString() + ' 🔥 collected.', 4600); } catch (e) {}
       }
     }
@@ -174974,10 +174975,10 @@ const DREAMS = [
     } catch (e) {} } },
   { id: 'lucky',    icon: '🍀', name: 'Lucky Dream',
     text: 'A four-petaled coin spins in your dream — and lands wrong-side up.',
-    apply: () => { try { Profile.gems = (Profile.gems | 0) + 250; if (typeof showToast === 'function') showToast('💎 +250 Cinder from your dream', 2200); } catch (e) {} } },
+    apply: () => { try { addGems(250, 'Camp survivor payout'); if (typeof showToast === 'function') showToast('💎 +250 Cinder from your dream', 2200); } catch (e) {} } },
   { id: 'greedy',   icon: '💸', name: 'Greedy Dream',
     text: 'You dream of gold piled to the ceiling. A door opens. The pile is gone.',
-    apply: () => { try { Profile.gems = (Profile.gems | 0) + 500; if (typeof showToast === 'function') showToast('💎 +500 Cinder', 2200); } catch (e) {} } },
+    apply: () => { try { addGems(500, 'Camp survivor payout'); if (typeof showToast === 'function') showToast('💎 +500 Cinder', 2200); } catch (e) {} } },
   { id: 'energetic',icon: '⚡',  name: 'Energetic Dream',
     text: 'You sprint across plains forever, unwearying. Your legs hum at sunrise.',
     apply: () => { try {
@@ -179519,14 +179520,14 @@ async function mbPlaceBet(matchId, side, pickUserId, pickName, stake) {
     };
     const { error } = await Cloud.client.from('match_bets').insert(row);
     if (error) {
-      Profile.gems = (Profile.gems | 0) + stake;   // refund
-      try { saveProfile && saveProfile(); } catch (e) {}
+      // The bet never landed — give the stake straight back. Labelled as a
+      // refund, not a win, so the ledger does not read it as income.
+      addGems(stake, 'Match bet refunded (insert failed)');
       const missing = /does not exist|match_bets/i.test(error.message || '');
       return { ok: false, msg: missing ? 'Betting isn’t set up yet — run the SQL (match_bets).' : ('Bet failed: ' + (error.message || 'unknown')) };
     }
   } catch (e) {
-    Profile.gems = (Profile.gems | 0) + stake;
-    try { saveProfile && saveProfile(); } catch (e2) {}
+    addGems(stake, 'Match bet refunded (network error)');
     return { ok: false, msg: 'Network error placing bet.' };
   }
   try {
@@ -179588,7 +179589,9 @@ async function mbSettleCompleted() {
         const claim = await Cloud.client.from('match_bets').update({ settled: true, won: won, payout: payout })
           .eq('id', b.id).eq('settled', false).select('id');
         if (!(claim && claim.data && claim.data.length)) continue;  // already settled elsewhere
-        if (payout > 0) { Profile.gems = (Profile.gems | 0) + payout; credited += payout; }
+        // Guarded by the atomic `settled` flip above — a concurrent settle
+        // cannot pay the same bet twice.
+        if (payout > 0) { addGems(payout, 'Match bet won'); credited += payout; }
         try {
           Profile.wagers = Profile.wagers || {}; const sx = Profile.wagers.stats = Profile.wagers.stats || {};
           if (won) sx.won = (sx.won || 0) + 1; else sx.lost = (sx.lost || 0) + 1;
@@ -191637,7 +191640,7 @@ function _cxExecuteSell(id, qty, _pxOverride) {
   _cxSellPos.qty = Math.max(0, have - qty);
   if (_cxSellPos.qty === 0) delete Profile.cxHoldings[id];
   else Profile.cxHoldings[id] = _cxSellPos;
-  Profile.gems = (Profile.gems | 0) + net;
+  addGems(net, 'Exchange: sold ' + id);
   // 💾 DEDICATED SAVE — same immediate dedicated key as buy path.
   try { _saveCxHoldings(); } catch (e) {}
   // 🏛 Reserve update — pool BUYS our units (gains them, loses the Cinder).
@@ -191687,7 +191690,10 @@ function _cxConvertAzaToCinder(amountAZA) {
   const rate = (_cxAzaRate().rate) || CX_AZA_BASE_RATE;
   const cr = Math.floor(amountAZA * rate * 0.995);  // 0.5% spread
   try { BankEthos.aza = haveAza - amountAZA; } catch (e) {}
-  Profile.gems = (Profile.gems | 0) + cr;
+  // 💱 Aza is the real-money currency, so this conversion in particular must be
+  //    attributable — an unlabelled reconcile blob is the last thing you want
+  //    on the one path that turns purchased value into spendable Cinder.
+  addGems(cr, 'Exchange: AZA → Cinder');
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
   _cxPushEvent({ cat: 'FX', cls: 'intel', msg: 'AZA → CINDER: ' + amountAZA.toFixed(4) + ' AZA → ' + _cxFmtCR(cr), impact: 'RATE ' + _cxFmt(rate) + ' CR/AZA (0.5% spread)' });
   return { ok: true, msg: 'Converted ' + amountAZA.toFixed(4) + ' AZA → ' + _cxFmtCR(cr) + '.' };
@@ -193193,12 +193199,19 @@ function _wf3GoToBattle(r) {
 // live-trip overlay open, so it's safe to call from recordBattleProgress).
 function _wf3AwardFishingXp(amt) {
   const L = _wf3Live(); L.xp += amt;
-  while (L.level < WF3_MAX_LEVEL && L.xp >= _wf3XpForLevel(L.level)) { L.xp -= _wf3XpForLevel(L.level); L.level++; if (typeof Profile === 'object') Profile.gems = (Profile.gems | 0) + 15 * L.level; }
+  /* 🎣 Level-up bonuses are SUMMED and banked once after the loop, not credited
+     per level. A single award can carry several levels at once, and addGems
+     fires a cloud write plus a canonical-wallet mirror on every call — so
+     crediting inside the loop would be one round-trip per level gained. The
+     player receives exactly the same total. */
+  let _lvlBonus = 0;
+  while (L.level < WF3_MAX_LEVEL && L.xp >= _wf3XpForLevel(L.level)) { L.xp -= _wf3XpForLevel(L.level); L.level++; _lvlBonus += 15 * L.level; }
+  if (_lvlBonus > 0) { try { addGems(_lvlBonus, 'Fishing level-up bonus'); } catch (e) {} }
   if (L.level >= WF3_MAX_LEVEL) L.xp = Math.min(L.xp, _wf3XpForLevel(L.level));
 }
 function _wf3AwardFishingWin(fe) {
   if (!fe) return;
-  if (fe.bounty) Profile.gems = (Profile.gems | 0) + (fe.bounty | 0);
+  if (fe.bounty) addGems(fe.bounty | 0, 'Fishing bounty');
   try { _wf3AwardFishingXp(WF3_XP_GAIN[fe.xpRarity] || 20); } catch (e) {}
   try { saveProfile && saveProfile(); } catch (e) {}
 }
@@ -195090,7 +195103,14 @@ try { (window.__mg = window.__mg || {}).ppGrantSelf = ppGrantSelf; } catch (e) {
 function grantTestCinder(amount) {
   if (!_requireAdmin('grantTestCinder')) return 0;
   const n = Math.max(0, Math.floor(Number(amount) || 3000000));
-  Profile.gems = (Profile.gems | 0) + n;
+  /* 🛠 ADMIN GRANT — deliberately routed through addGems so it lands in
+     wallet_ledger under its own name. This is the single largest Cinder faucet
+     in the file (3,000,000 by default) and it was the LEAST visible: written
+     raw, it reached the canonical wallet only as an anonymous
+     reconcile_local_gain_on_fetch, indistinguishable from a player's honest
+     earnings. An admin tool should be the easiest grant to audit, not the
+     hardest. */
+  addGems(n, 'ADMIN grantTestCinder');
   try { saveProfile && saveProfile(); } catch (e) { console.warn('[grantTestCinder] saveProfile failed — Cinder grant may revert on next sync', e); }
   try { showToast('🪙 +' + n.toLocaleString() + ' Cinder granted for testing. Balance: ' + (Profile.gems | 0).toLocaleString(), 5200); } catch (e) {}
   try { if (typeof render === 'function') render(); } catch (e) {}
@@ -195366,7 +195386,7 @@ function ppScrapVehicle(vehicleId) {
   if (idx < 0) return false;
   const v = p.lot[idx];
   const refund = Math.round((v.price || 0) * 0.10 / 100) * 100;
-  Profile.gems = (Profile.gems | 0) + refund;
+  addGems(refund, 'Dealership: vehicle scrapped');
   p.lot.splice(idx, 1);
   _ppLog('warn', 'Scrapped ' + v.name + ' to the junkyard for ' + refund.toLocaleString() + ' 🔥.');
   showToast('💀 Scrapped ' + v.name + ' for ' + refund.toLocaleString() + ' 🔥.', 4200);
@@ -195489,7 +195509,7 @@ function ppSellToBuyer(buyerId, vehicleId) {
       _ppLog('warn', buyer.name + ' complained about low fuel on ' + v.name + ' — bought anyway for less.');
       showToast(buyer.name + ': "Tank\'s near empty. I\'ll take it but you eat 15% off the top."', 5200);
       // 15% price reduction.
-      Profile.gems = (Profile.gems | 0) + Math.round(payout * 0.85);
+      addGems(Math.round(payout * 0.85), 'Dealership: vehicle sold (low fuel discount)');
     } else {
       _ppLog('bad', buyer.name + ' walked — ' + v.name + ' had only ' + fuel + '% fuel.');
       showToast(buyer.name + ': "Tank\'s dry. Fill it up next time. I\'m out."', 5200);
@@ -195500,7 +195520,7 @@ function ppSellToBuyer(buyerId, vehicleId) {
       return false;
     }
   } else {
-    Profile.gems = (Profile.gems | 0) + payout;
+    addGems(payout, 'Dealership: vehicle sold');
   }
   // What actually changed hands — the fuel branch above pays 85% of it.
   const _paid = (fuel < 60) ? Math.round(payout * 0.85) : payout;
@@ -195526,7 +195546,7 @@ function ppSellPartToBuyer(buyerId, partId) {
       return false;
     }
   }
-  Profile.gems = (Profile.gems | 0) + buyer.reward;
+  addGems(buyer.reward, 'Dealership: part sold');
   p.parts = p.parts.filter(x => x.id !== partId);
   p.buyers = p.buyers.filter(b => b.id !== buyerId);
   p.reputation = Math.min(100, p.reputation + 1);
@@ -197254,7 +197274,7 @@ function brOpenLoan(principal, rate) {
   const s = ensureBlackRiver();
   if (s.loan) { showToast('You already have an open Black River loan.'); return false; }
   s.loan = { principal, balance: principal, rate, openedAt: Date.now() };
-  Profile.gems = (Profile.gems | 0) + principal;
+  addGems(principal, 'Black River: loan drawn');
   _brSyncLoanToBankEthos();
   _brLog('event', 'Took out ¢' + principal.toLocaleString() + ' Bank of Ethos loan at ' + Math.round(rate * 100) + '% per run.');
   showToast('🏦 Loan disbursed: +¢' + principal.toLocaleString() + ' Cinder (' + Math.round(rate * 100) + '% per run).', 4800);
@@ -197300,7 +197320,7 @@ function brInsure() {
 function brPayoutInsurance() {
   const s = ensureBlackRiver();
   if (!s.insured) return 0;
-  Profile.gems = (Profile.gems | 0) + 6000;
+  addGems(6000, 'Black River: insurance payout');
   s.insured = false;
   return 6000;
 }
@@ -197347,7 +197367,7 @@ function brSettleFuture() {
   const f = s.futures;
   const proceeds = f.qty * s.oilPrice;
   const pnl = Math.round(f.qty * (s.oilPrice - f.strike));
-  Profile.gems = (Profile.gems | 0) + proceeds;
+  addGems(proceeds, 'Black River: futures settled');
   s.futures = null;
   _brLog(pnl >= 0 ? 'good' : 'bad', 'Settled futures contract: ' + (pnl >= 0 ? '+' : '') + '¢' + pnl.toLocaleString() + ' P&L.');
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
@@ -197418,7 +197438,7 @@ function brSell(kind, black) {
   if (have <= 0) return false;
   const price = black ? BR_MARKET[kind].black : BR_MARKET[kind].legal;
   const gross = have * price;
-  Profile.gems = (Profile.gems | 0) + gross;
+  addGems(gross, 'Black River: oil sold');
   s[kind] = 0;
   // 🛒 Ecosystem hook: refined fuel that was just sold also flows into the
   //    player's salvage stores (a portion converts back to game fuel/resources)
@@ -197809,7 +197829,7 @@ function _brFireEvent() {
     () => { const d = _brTakeDmg(16); _brMissionLog('🎯 Rival corporation ambushes the convoy — ' + d + ' damage.', 'bad'); },
     () => { const d = _brTakeDmg(10); _brMissionLog('⚙️ Engine failure in the ' + m.weather.toLowerCase() + ' — ' + d + ' damage.', 'bad'); },
     () => { m.cargo = _brRand(m.cargo * 0.85); _brMissionLog('💧 Fuel leak — part of the haul lost plugging it.', 'bad'); },
-    () => { const c = _brRand(120 + Math.random() * 200); Profile.gems = (Profile.gems | 0) + c; _brMissionLog('💎 Hidden treasure cache — +¢' + c + '.', 'good'); },
+    () => { const c = _brRand(120 + Math.random() * 200); addGems(c, 'Black River: event windfall'); _brMissionLog('💎 Hidden treasure cache — +¢' + c + '.', 'good'); },
     () => { const s = ensureBlackRiver(); s.rep += 2; m.threat = _brClamp(m.threat - 4, 0, 100); _brMissionLog('🧑‍🤝‍🧑 Aided survivor refugees — +2 rep.', 'good'); },
   ];
   _brPick(events)();
@@ -197907,7 +197927,7 @@ function _brWinRun() {
   const ma    = _brRand(m.cargo * 0.25 * m.R.mult);
   const rp    = _brRand(2 * m.R.mult);
   s.crude += crude;
-  Profile.gems = (Profile.gems | 0) + cin;
+  addGems(cin, 'Black River: run succeeded');
   s.mats  += ma;
   s.rep   += rp;
   // 🛢 Ecosystem hook — convey a slice of the mats yield to game salvage.
@@ -197923,7 +197943,7 @@ function _brFailRun(reason) {
   const m = _brMission;
   const s = ensureBlackRiver();
   const salvage = _brRand(m.cargo * 1.5);
-  Profile.gems = (Profile.gems | 0) + salvage;
+  addGems(salvage, 'Black River: run salvaged');
   s.rep = _brClamp(s.rep - 1, 0, 99999);
   _brLive().forEach(c => {
     _brAdjMorale(c, -22);
@@ -199148,7 +199168,7 @@ function fcNpcSell(qty) {
   if (qty > s.fuel) { showToast('Not enough fuel.'); return false; }
   const rev = Math.round(qty * s.npc * 0.95);
   s.fuel -= qty;
-  Profile.gems = (Profile.gems | 0) + rev;
+  addGems(rev, 'Fuel Command: NPC sale');
   s.supply = _fcClamp(s.supply + qty / 40, 3, 100);
   fcRecalcNpc();
   // 📉 Selling to NPC → market price down.
@@ -199259,7 +199279,7 @@ function fcOpenLoan(principal, rate) {
   if (!principal || principal <= 0) { showToast('⚠️ Enter a loan amount above 0.', 3200); return false; }
   if ((s.creditLimit | 0) > 0 && principal > s.creditLimit) { showToast('⚠️ Exceeds credit limit (¢' + (s.creditLimit | 0).toLocaleString() + ').', 4200); return false; }
   s.loan = { principal: principal | 0, balance: principal | 0, rate: rate || 0.012, openedAt: Date.now() };
-  Profile.gems = (Profile.gems | 0) + (principal | 0);
+  addGems((principal | 0), 'Fuel Command: loan drawn');
   _fcSyncLoanToBankEthos();
   _fcLog('event', 'Took out ¢' + principal.toLocaleString() + ' Bank of Ethos loan @ ' + Math.round((rate || 0.012) * 100) + '% / cycle.');
   showToast('🏦 Loan disbursed: +¢' + principal.toLocaleString() + ' Cinder.', 4800);
@@ -199318,7 +199338,7 @@ function fcSettleHedge() {
   if (!s.hedge) return false;
   const diff = (s.npc - s.hedge.price) * s.hedge.qty;
   const gain = Math.round(Math.max(0, diff));
-  Profile.gems = (Profile.gems | 0) + gain;
+  addGems(gain, 'Fuel Command: hedge settled');
   _fcLog(gain > 0 ? 'good' : 'warn', 'Hedge settled — ' + (gain > 0 ? '+' : '') + _fcFmt(gain) + '₵ banked.');
   showToast(gain > 0 ? ('Hedge paid +¢' + _fcFmt(gain)) : 'Hedge expired flat.', 3200);
   s.hedge = null;
@@ -199343,7 +199363,7 @@ function fcClosePos() {
   const pl   = Math.round(s.pos.stake * (1 + dir * move * 4));
   const payout = Math.max(0, pl);
   const delta  = pl - s.pos.stake;
-  Profile.gems = (Profile.gems | 0) + payout;
+  addGems(payout, 'Fuel Command: position closed');
   _fcLog(delta >= 0 ? 'good' : 'bad', 'Closed ' + s.pos.side.toUpperCase() + ' — return ¢' + _fcFmt(payout) + ' (P/L ' + (delta >= 0 ? '+' : '') + _fcFmt(delta) + ').');
   showToast('Position closed: ' + (delta >= 0 ? '+' : '') + '¢' + _fcFmt(delta), 3200);
   s.pos = null;
@@ -199432,7 +199452,7 @@ function fcFireEvent(forceId) {
     }
     case 'boom':   { const f = Math.min(s.fuel, _fcRnd(100, 300)); s.fuel -= f; s.damage += 40; s.repSafety -= 12; if (Math.random() < 0.4) s.workers = Math.max(0, s.workers - 1); msg = 'MASSIVE LOSS — ' + f + ' bbl gone, station crippled.'; break; }
   }
-  if (s.insured && ['bandit', 'scp', 'boom'].includes(ev.id)) { Profile.gems = (Profile.gems | 0) + 4000; msg += ' Insurance paid out +¢4,000.'; }
+  if (s.insured && ['bandit', 'scp', 'boom'].includes(ev.id)) { addGems(4000, 'Fuel Command: insurance payout'); msg += ' Insurance paid out +¢4,000.'; }
   s.repSafety = _fcClamp(s.repSafety, -30, 40);
   const level = (ev.id === 'inspect' && msg.startsWith('Passed')) ? 'good' : (ev.sev >= 2 ? 'bad' : 'warn');
   _fcLog(level, ev.ico + ' ' + ev.nm + ' — ' + msg);
@@ -199465,7 +199485,7 @@ function fcTick() {
   const sold = Math.min(s.fuel, Math.round(dem));
   const gross = sold * s.pump;
   s.fuel -= sold;
-  Profile.gems = (Profile.gems | 0) + gross;
+  addGems(gross, 'Fuel Command: sales');
   s.totalSold += sold;
   s.lifetimeRevenue += gross;
   // Operating cost (lower than NPC opex of original mock — 5x reduced)
@@ -199643,7 +199663,7 @@ function fcClaimPendingPayouts() {
         const s = ensureFuelCommand();
         // Take fuel from station inventory + credit cinder
         s.fuel = Math.max(0, (s.fuel | 0) - (p.qty | 0));
-        Profile.gems = (Profile.gems | 0) + (p.total | 0);
+        addGems((p.total | 0), 'Fuel Command: pending payout claimed');
         s.p2pSales += 1;
         s.lifetimeRevenue += (p.total | 0);
         _fcLog('good', '⛽ P2P sale: ' + p.qty + ' bbl → ' + (p.buyerName || 'a player') + ' @ ¢' + p.unit + ' = +¢' + _fcFmt(p.total) + '.');
@@ -216847,7 +216867,7 @@ function _twDispenseLoot(key, amount) {
     return { label: '👑 Aza', amount };
   }
   if (lower === 'cinder' || lower === 'gems') {
-    Profile.gems = (Profile.gems | 0) + amount;
+    addGems(amount, 'War map: loot dispensed');
     return { label: '<span class="cinder-icon"></span> Cinder (wallet)', amount };
   }
   // Card / Relic specific id.
@@ -217448,7 +217468,7 @@ function _twNodeClaimSharedMilestones(node) {
     (function (milestone) {
       Promise.resolve(tw_cloudClaimMilestone(node.id, milestone.pct)).then((res) => {
         if (res && res.granted) {
-          try { Profile.gems = (Profile.gems | 0) + (res.cinder | 0); } catch (e) {}
+          try { addGems((res.cinder | 0), 'Node milestone (shared)'); } catch (e) {}
           try { Profile.campPrestige = (Profile.campPrestige | 0) + (res.prestige | 0); } catch (e) {}
           try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
           try { if (typeof showToast === 'function') showToast(`🎖 ${(node.name || 'Node')} hit ${milestone.pct}% — ${res.label || milestone.label}! +${res.cinder | 0} 🔥 +${res.prestige | 0} prestige` + (res.restored ? ' · NODE RESTORED' : ''), 5000); } catch (e) {}
@@ -217481,7 +217501,7 @@ function _twNodeCheckMilestones(node) {
       r.milestones.push(ms.pct);
       r.corruption = Math.max(ms.restored ? 8 : 0, Math.round((r.corruption | 0) - ms.corrDrop));
       if (ms.restored) { r.restored = true; r.population = r.civiliansTotal; }
-      try { Profile.gems = (Profile.gems | 0) + ms.cinder; } catch (e) {}
+      try { addGems(ms.cinder, 'Node milestone'); } catch (e) {}
       try { Profile.campPrestige = (Profile.campPrestige | 0) + ms.prestige; } catch (e) {}
       try { if (typeof showToast === 'function') showToast(`🎖 ${(node.name || 'Node')} hit ${ms.pct}% rebuilt — ${ms.label}! +${ms.cinder} 🔥 +${ms.prestige} prestige` + (ms.restored ? ' · NODE RESTORED' : ''), 5000); } catch (e) {}
       try { _twLog('settlement', `<b>${escapeHtml(node.name || 'A node')}</b> reconstruction reached <b>${ms.pct}%</b> — ${escapeHtml(ms.label)}.`); } catch (e) {}
@@ -217956,7 +217976,7 @@ async function _twCollectNodeBank(nodeId) {
     if (!(typeof Cloud !== 'undefined' && Cloud && Cloud.ready)) { showToast('☁ Sign in to collect node payouts.', 3600); return; }
     const res = await tw_cloudCollectNodeBank(nodeId);
     if (res && res.ok && (res.amount | 0) > 0) {
-      try { Profile.gems = (Profile.gems | 0) + (res.amount | 0); } catch (e) {}
+      try { addGems((res.amount | 0), 'Node bank collected'); } catch (e) {}
       try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
       try { delete (App._twNodeReconCloud || {})[nodeId]; } catch (e) {}  // force a fresh bank read
       try { if (typeof tw_cloudFetchNodeRecon === 'function') tw_cloudFetchNodeRecon(nodeId); } catch (e) {}

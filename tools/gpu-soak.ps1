@@ -31,7 +31,17 @@
 param(
   [int]$Minutes      = 50,
   [int]$IntervalSec  = 30,
-  [string]$OutCsv    = "$PSScriptRoot\gpu-soak.csv"
+  [string]$OutCsv    = "$PSScriptRoot\gpu-soak.csv",
+  # 🎯 Target a SPECIFIC GPU process instead of guessing.
+  # ⚠ The auto-pick below takes the LARGEST Chromium GPU process, which is only
+  #   the game's if the game is the only browser running. On a normal desktop —
+  #   a second Edge window with a dozen unrelated tabs — the auto-pick samples
+  #   THAT one and reports a confident verdict about the wrong process. Worse,
+  #   a shared GPU process pools every tab's memory, so even picking the right
+  #   browser gives you a number the game is only partly responsible for.
+  #   Launch the game with its own --user-data-dir and pass that instance's GPU
+  #   pid here, and the samples belong to the game alone.
+  [int]$GpuPid       = 0
 )
 
 Write-Host "Finding the browser's GPU process..." -ForegroundColor Cyan
@@ -42,10 +52,31 @@ Write-Host "Finding the browser's GPU process..." -ForegroundColor Cyan
 #   rather than "wrong process name". Scan them all and take whichever is
 #   actually running the game.
 $browsers = @('msedge.exe','chrome.exe','brave.exe','opera.exe','vivaldi.exe')
-$gpu = Get-CimInstance Win32_Process |
-       Where-Object { $browsers -contains $_.Name -and $_.CommandLine -like '*--type=gpu-process*' } |
-       Sort-Object WorkingSetSize -Descending |
-       Select-Object -First 1
+if ($GpuPid -gt 0) {
+  $gpu = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq $GpuPid } | Select-Object -First 1
+  if (-not $gpu) { Write-Host "PID $GpuPid is not running." -ForegroundColor Red; exit 1 }
+  # ⚠ BOTH checks, not just the command line. A command-line substring match
+  #   alone is startlingly easy to fool — any shell whose own arguments happen
+  #   to mention --type=gpu-process passes it (a script that greps for GPU
+  #   processes does exactly that, which is how this was caught). Requiring the
+  #   executable to be a browser as well makes a false positive implausible.
+  if ($browsers -notcontains $gpu.Name -or $gpu.CommandLine -notlike '*--type=gpu-process*') {
+    # Refuse rather than silently sample a renderer or the browser process —
+    # the numbers would look plausible and mean something else entirely.
+    Write-Host "PID $GpuPid ($($gpu.Name)) is not a Chromium GPU process." -ForegroundColor Red; exit 1
+  }
+  Write-Host "Targeting the GPU process you named (PID $GpuPid)." -ForegroundColor Green
+} else {
+  $gpu = Get-CimInstance Win32_Process |
+         Where-Object { $browsers -contains $_.Name -and $_.CommandLine -like '*--type=gpu-process*' } |
+         Sort-Object WorkingSetSize -Descending |
+         Select-Object -First 1
+  $allGpu = @(Get-CimInstance Win32_Process | Where-Object { $browsers -contains $_.Name -and $_.CommandLine -like '*--type=gpu-process*' })
+  if ($allGpu.Count -gt 1) {
+    Write-Host ("⚠ {0} Chromium GPU processes are running — picking the largest, which may not be the game." -f $allGpu.Count) -ForegroundColor Yellow
+    Write-Host "  Re-run with -GpuPid <pid> to be certain." -ForegroundColor Yellow
+  }
+}
 
 if (-not $gpu) {
   Write-Host "No Chromium GPU process found." -ForegroundColor Red
@@ -67,13 +98,23 @@ foreach ($i in (Get-Counter -ListSet Process).PathsWithInstances |
   try { if ((Get-Counter $i -ErrorAction Stop).CounterSamples[0].CookedValue -eq $pidGpu) {
           $instance = ($i -split '\(|\)')[1]; break } } catch {}
 }
-if (-not $instance) { Write-Host "Could not map PID to a perf-counter instance." -ForegroundColor Red; exit 1 }
-
 $counters = @(
-  "\Process($instance)\Working Set - Private",
   "\GPU Process Memory(pid_$pidGpu*)\Local Usage",
   "\GPU Process Memory(pid_$pidGpu*)\Dedicated Usage"
 )
+if ($instance) {
+  # Private working set is a NICE-TO-HAVE second opinion, not the measurement.
+  $counters = @("\Process($instance)\Working Set - Private") + $counters
+} else {
+  # ⚠ DO NOT ABORT HERE. This used to `exit 1`, which killed the whole soak
+  #   because a SECONDARY counter could not be resolved — on this machine there
+  #   are 68 `msedge*` Process instances (msedgewebview2 among them) and the
+  #   pid→instance walk simply does not find a match. The verdict is computed
+  #   from GPU local usage, which is keyed by pid directly and works fine, so
+  #   losing the working-set column costs a column and nothing else. Refusing to
+  #   run at all is how a 50-minute diagnostic turns into no diagnostic.
+  Write-Host "Note: could not map PID to a Process perf-counter instance — continuing without the private-working-set column (the GPU counters, which the verdict uses, are unaffected)." -ForegroundColor Yellow
+}
 
 $samples = [System.Collections.Generic.List[object]]::new()
 $end     = (Get-Date).AddMinutes($Minutes)

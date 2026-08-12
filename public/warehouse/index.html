@@ -79,7 +79,11 @@
   .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden}
   .bar i{display:block;height:100%;background:linear-gradient(90deg,#7ce8a8,#ffd166);transition:width .18s}
   .bar.over i{background:linear-gradient(90deg,#ff9c2e,#ff6b6b)}
-  #bays{bottom:14px;right:12px;min-width:240px;max-height:46vh;overflow:hidden}
+    /* ⚠ scroll, do not clip. At 32 bays this box measured the same as at 14 and
+     silently showed ~13 rows while the top bar advertised "Bays 32/32". */
+  #bays{bottom:14px;right:12px;min-width:240px;max-height:46vh;overflow-y:auto;pointer-events:auto}
+  #bays::-webkit-scrollbar{width:6px}
+  #bays::-webkit-scrollbar-thumb{background:rgba(212,175,55,.4);border-radius:3px}
   #bays .row{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:.74rem}
   #bays .row .n{width:46px;color:var(--gold);font-weight:700}
   #bays .row .bar{flex:1}
@@ -380,7 +384,7 @@ var MOCK = (function () {
         var cost = cur === 'aza' ? CFG.unit_price_aza : CFG.unit_price_cinder;
         if (!chg(cur, cost)) return { ok: false, reason: 'insufficient', currency: cur, cost: cost };
         var n = S.units.length + 1;
-        S.units.push({ id: 'u' + n, bay_no: n, renter_id: null, renter_name: null,
+        S.units.push({ id: 'u' + n, bay_no: n, renter_id: null, renter_name: null, occupied: false,
           capacity_kg: CFG.unit_capacity_kg, used_kg: 0, contents: {}, mine: false });
         S.warehouse.units_total = n;
         return Object.assign({}, S, { bought: true, spent: cost, currency: cur });
@@ -535,15 +539,20 @@ function buildScene() {
   // come from WHTruck.SHADOW_HINT — flat slab sides stripe themselves with acne
   // if normalBias is stingy.
   var sh = (window.WHTruck && WHTruck.SHADOW_HINT) || { bias: -0.0002, normalBias: 0.06, mapSize: 2048 };
-  // 1024 is plenty for a yard this size and halves the shadow pass cost.
-  var SHMAP = 1024;
+  // ⚠ Use the map size the MESH IS AUTHORED FOR. Hard-coding 1024 against
+  // WHTruck.SHADOW_HINT.mapSize = 2048 halved the shadow resolution the bias
+  // values were tuned against, and produced hard horizontal corduroy banding
+  // across the middle tier of crates — in the exact frame the player sees when
+  // they press E. normalBias is raised well past the mesh hint too, because the
+  // yard has far more near-parallel flat surfaces than the truck alone.
+  var SHMAP = sh.mapSize || 2048;
   var key = new T.DirectionalLight(0xffd9a8, 1.5);
   key.position.set(6, 20, 14); key.castShadow = true;
   key.shadow.mapSize.set(SHMAP, SHMAP);
   key.shadow.camera.left = -30; key.shadow.camera.right = 30;
   key.shadow.camera.top = 30; key.shadow.camera.bottom = -30;
   key.shadow.camera.near = 1; key.shadow.camera.far = 70;
-  key.shadow.bias = sh.bias; key.shadow.normalBias = sh.normalBias;
+  key.shadow.bias = sh.bias; key.shadow.normalBias = Math.max(0.28, sh.normalBias);
   scene.add(key);
   var fill = new T.DirectionalLight(0x5b76a8, 0.26); fill.position.set(-12, 8, -14); scene.add(fill);
 
@@ -618,34 +627,82 @@ function buildScene() {
   var slab = new T.Mesh(new T.PlaneGeometry(28, 22), mat.slab);
   slab.rotation.x = -Math.PI / 2; slab.position.set(0, 0.01, -8); slab.receiveShadow = true; scene.add(slab);
 
-  // ── the shed: back + side walls, a roof, and a wide dock opening at +Z ──
-  var WX = 13, ZB = -19, ZF = 2, H = 7;
-  solid(box(WX * 2, H, 0.5, mat.wall, 0, H / 2, ZB), WX * 2, 0.5);
-  solid(box(0.5, H, ZF - ZB, mat.wall, -WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
-  solid(box(0.5, H, ZF - ZB, mat.wall,  WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
-  // Front wall with a 9 m dock opening in the middle.
-  solid(box(9.5, H, 0.5, mat.wall, -WX + 4.75, H / 2, ZF), 9.5, 0.5);
-  solid(box(9.5, H, 0.5, mat.wall,  WX - 4.75, H / 2, ZF), 9.5, 0.5);
-  box(9.0, 1.6, 0.5, mat.wall, 0, H - 0.8, ZF);              // header over the opening
-  var roof = box(WX * 2 + 0.5, 0.4, ZF - ZB, mat.wall, 0, H, (ZB + ZF) / 2, true);
-  roof.receiveShadow = true;
-  // Roof trusses + strip lights, so the interior has depth instead of a flat lid.
-  // ⚠ TWO point lights, not seven. Every extra light recompiles every material
-  // in the scene and adds another iteration to every fragment shader; the first
-  // build shipped seven and the yard ran at a crawl — walking felt broken
-  // because the frame rate was, not because the controller was.
-  // The strip fixtures are emissive geometry, which costs nothing.
-  for (var i = 0; i < 7; i++) {
-    var z = ZB + 1.6 + i * 3.0;
-    box(WX * 2, 0.28, 0.28, mat.steel, 0, H - 0.55, z, true);
-    box(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);
-  }
-  [ZB + 5, ZB + 14].forEach(function (z) {
-    var pl = new T.PointLight(0xffe6bd, 0.85, 30, 2); pl.position.set(0, H - 1.4, z); scene.add(pl);
-  });
-  // Painted dock threshold — you can see where inside becomes outside.
-  var thr = new T.Mesh(new T.PlaneGeometry(9, 0.5), mat.gold);
-  thr.rotation.x = -Math.PI / 2; thr.position.set(0, 0.02, ZF); scene.add(thr);
+  // ── the shed ─────────────────────────────────────────────────────────────
+  // ⚠ THE BUILDING GROWS WITH THE BAYS. It used to be a fixed 26 x 21 m box
+  // while bays were laid out 7-to-a-row across its full width with 0.35 m
+  // between shells — and the player's collision radius is 0.42 m. A completed
+  // row was an impassable wall. A flood fill from the truck door found bays
+  // 1-14 unreachable at tier 4, and at tier 5 the yard collapsed to a 4 m²
+  // pocket with BOTH terminals and the dock door sealed off, with bays planted
+  // in the front wall and outside the building entirely. 1,500,000 Cinder
+  // bought storage nobody could walk to — the same "sold but not delivered"
+  // shape as wh_buy_unit having no callers, and exposed by fixing that one.
+  //
+  // The layout rules that make it impossible now:
+  //   • BAYS_PER_ROW is capped so a row can never span the shed,
+  //   • a SIDE CORRIDOR of AISLE_W is always left clear on the +X side,
+  //   • rows are pitched ROW_PITCH apart so there is an aisle in front of each,
+  //   • and the shed's DEPTH is derived from the row count, so the building is
+  //     always big enough for every bay the current tier can sell.
+  var BW = 3.3, BD = 3.6, BH = 3.0;          // bay width / depth / height
+  var BAYS_PER_ROW = 5, ROW_PITCH = BD + 2.6, AISLE_W = 2.6;
+  var WX = 13, ZF = 2, H = 7;
+  function rowsFor(n) { return Math.max(1, Math.ceil(Math.max(1, n) / BAYS_PER_ROW)); }
+  function shedZB(n) { return Math.min(-19, -(3.2 + rowsFor(n) * ROW_PITCH)); }
+
+  App.shedParts = [];
+  App.shedRows = -1;
+  App.buildShed = function (units) {
+    var rows = rowsFor(units);
+    if (rows === App.shedRows) return;
+    App.shedRows = rows;
+    App.shedParts.forEach(function (o) { disposeNode(o); });
+    App.shedParts = [];
+    // Drop the shed's colliders; bay colliders are rebuilt separately.
+    App.colliders = App.colliders.filter(function (c) { return !c._shed; });
+    var ZB = shedZB(units);
+    App.shedZB = ZB;
+    var keep = function (o) { App.shedParts.push(o); return o; };
+    var wall = function (w, h, d, m, x, y, z, noShadow) {
+      var o = box(w, h, d, m, x, y, z, noShadow); keep(o); return o;
+    };
+    var solidShed = function (o, w, d) {
+      var c = { x: o.position.x, z: o.position.z, hw: w / 2, hd: d / 2, _shed: true };
+      App.colliders.push(c); return o;
+    };
+    solidShed(wall(WX * 2, H, 0.5, mat.wall, 0, H / 2, ZB), WX * 2, 0.5);
+    solidShed(wall(0.5, H, ZF - ZB, mat.wall, -WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
+    solidShed(wall(0.5, H, ZF - ZB, mat.wall,  WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
+    solidShed(wall(9.5, H, 0.5, mat.wall, -WX + 4.75, H / 2, ZF), 9.5, 0.5);
+    solidShed(wall(9.5, H, 0.5, mat.wall,  WX - 4.75, H / 2, ZF), 9.5, 0.5);
+    wall(9.0, 1.6, 0.5, mat.wall, 0, H - 0.8, ZF);                 // header over the opening
+    var roof = wall(WX * 2 + 0.5, 0.4, ZF - ZB, mat.wall, 0, H, (ZB + ZF) / 2, true);
+    roof.receiveShadow = true;
+    // Trusses + emissive strip fixtures. Lights stay at TWO no matter how long
+    // the shed gets — every extra light recompiles every material in the scene.
+    var nT = Math.max(7, Math.round((ZF - ZB) / 3.0));
+    for (var i = 0; i < nT; i++) {
+      var z = ZB + 1.6 + i * ((ZF - ZB - 3.2) / Math.max(1, nT - 1));
+      wall(WX * 2, 0.28, 0.28, mat.steel, 0, H - 0.55, z, true);
+      wall(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);
+    }
+    if (!App.shedLights) {
+      App.shedLights = [ZB + 5, ZB + 14].map(function (z) {
+        var pl = new T.PointLight(0xffe6bd, 0.85, 34, 2);
+        pl.position.set(0, H - 1.4, z); scene.add(pl); return pl;
+      });
+    } else {
+      App.shedLights[0].position.z = ZB + Math.min(6, (ZF - ZB) * 0.25);
+      App.shedLights[1].position.z = ZB + (ZF - ZB) * 0.68;
+    }
+    var thr = new T.Mesh(new T.PlaneGeometry(9, 0.5), mat.gold);
+    thr.rotation.x = -Math.PI / 2; thr.position.set(0, 0.02, ZF);
+    scene.add(thr); keep(thr);
+    var slab2 = new T.Mesh(new T.PlaneGeometry(WX * 2 + 2, ZF - ZB + 2), mat.slab);
+    slab2.rotation.x = -Math.PI / 2; slab2.position.set(0, 0.012, (ZB + ZF) / 2);
+    slab2.receiveShadow = true; scene.add(slab2); keep(slab2);
+  };
+  App.buildShed(2);
 
   // ── the bays ─────────────────────────────────────────────────────────────
   // Numbered open-front cubicles down the back and side walls. Each bay gets a
@@ -655,11 +712,16 @@ function buildScene() {
     App.bayNodes = [];
     App.sensors = App.sensors.filter(function (s) { return s.kind !== 'bay'; });
     var st = WH.state(); if (!st) return;
-    var BW = 3.3, BD = 3.6, BH = 3.0;
+    // Grow the building FIRST, so there is somewhere to put them.
+    App.buildShed(st.units.length);
+    var ZB = App.shedZB;
     st.units.forEach(function (u, i) {
-      var col = i % 7, row = Math.floor(i / 7);
-      var x = -WX + 2.4 + col * (BW + 0.35);
-      var z = ZB + 0.6 + BD / 2 + row * (BD + 2.6);
+      var col = i % BAYS_PER_ROW, row = Math.floor(i / BAYS_PER_ROW);
+      // Rows hug the −X wall and stop short of +X, leaving AISLE_W of clear
+      // floor down the whole length of the shed: every row is reachable from
+      // the dock without passing through another one.
+      var x = -WX + 0.9 + BW / 2 + col * (BW + 0.45);
+      var z = ZB + 1.2 + BD / 2 + row * ROW_PITCH;
       var n = new T.Group(); n.position.set(x, 0, z); scene.add(n);
       var wallM = u.mine ? mat.bayMine : mat.wallIn;
       var sub = function (w, h, d, m, px, py, pz) {
@@ -704,9 +766,13 @@ function buildScene() {
         var sx = -0.95 + (s2 % 3) * 0.95, sz = -0.9 + Math.floor(s2 / 3) * 0.95;
         sub(0.72, 0.62, 0.72, mat.crate, sx, 0.34, sz);
       }
-      App.colliders.push({ x: x - BW / 2, z: z, hw: 0.14, hd: BD / 2 });
-      App.colliders.push({ x: x + BW / 2, z: z, hw: 0.14, hd: BD / 2 });
-      App.colliders.push({ x: x, z: z - BD / 2, hw: BW / 2, hd: 0.14 });
+      // ⚠ `_bay: true` is what refreshWorld() prunes on. Without it every
+      // refresh — one per crate stored — appended another three colliders per
+      // bay and never removed any: 16 → 136 over twenty refreshes, invisible
+      // walls accumulating around the bays.
+      App.colliders.push({ x: x - BW / 2, z: z, hw: 0.14, hd: BD / 2, _bay: true });
+      App.colliders.push({ x: x + BW / 2, z: z, hw: 0.14, hd: BD / 2, _bay: true });
+      App.colliders.push({ x: x, z: z - BD / 2, hw: BW / 2, hd: 0.14, _bay: true });
       App.sensors.push({ kind: 'bay', unit: u, x: x, z: z + 0.4, r: 2.2 });
       App.bayNodes.push({ node: n, unit: u });
     });
@@ -715,7 +781,7 @@ function buildScene() {
   // ── the step van, parked kerb-side to the dock ───────────────────────────
   // rotation.y = π/2 maps the truck's local +X (the sliding door) onto world −Z,
   // so the open door faces the warehouse and the nose points down the apron.
-  App.truck = WHTruck.build(T, { profile: 'squircle', doorOpen: true });
+  App.truck = WHTruck.build(T, { profile: 'squircle', doorOpen: true, cargoOpen: true });
   App.truckHome = new T.Vector3(-1.2, 0, 10.5);
   App.truck.position.copy(App.truckHome);
   App.truck.rotation.y = Math.PI / 2;
@@ -776,9 +842,11 @@ function buildScene() {
     return n;
   };
   term(-10.6, 0.2, -0.5, 0x4aa0d8);
-  App.sensors.push({ kind: 'lifter', x: -10.0, z: 0.6, r: 2.2 });
+  // Sensor centre pushed clear of the terminal's own collider — it used to sit
+  // inside it, so the exact point the prompt is anchored to was unstandable.
+  App.sensors.push({ kind: 'lifter', x: -9.3, z: 1.3, r: 2.4 });
   term(10.6, 0.2, 0.5, 0xd4af37);
-  App.sensors.push({ kind: 'upgrade', x: 10.0, z: 0.6, r: 2.2 });
+  App.sensors.push({ kind: 'upgrade', x: 9.3, z: 1.3, r: 2.4 });
 
   // ── the crate you carry ──────────────────────────────────────────────────
   App.heldMesh = new T.Group();
@@ -816,6 +884,18 @@ function rebuildTruckCrates() {
     (s.crates || []).forEach(function (c) { pending.push({ c: c, s: s }); });
   });
   App.pendingCrates = pending;
+  // Roll the cargo door down when the van is empty — an open black aperture
+  // filling most of the frame is not what "the van is empty" should look like.
+  try {
+    if (App.truck && App.truckCargoOpen !== (pending.length > 0)) {
+      App.truckCargoOpen = pending.length > 0;
+      var pos = App.truck.position.clone(), rot = App.truck.rotation.y, vis = App.truck.visible;
+      disposeNode(App.truck);
+      App.truck = WHTruck.build(T, { profile: 'squircle', doorOpen: true, cargoOpen: App.truckCargoOpen });
+      App.truck.position.copy(pos); App.truck.rotation.y = rot; App.truck.visible = vis;
+      scene.add(App.truck);
+    }
+  } catch (e) {}
   // The van is only here when there is something on it.
   try {
     if (!App.truckDrive) {
@@ -912,13 +992,21 @@ function renderHud() {
 }
 // A bay you are not entitled to see reports null for used_kg / capacity_kg.
 // Never do arithmetic on those — show the bay as occupied and move on.
-function bayVisible(u) { return u && u.capacity_kg != null; }
+// ⚠ ONE predicate, and it asks the right question: were we actually given this
+// bay's numbers? An earlier build asked `capacity_kg != null` under the name
+// bayVisible and used it to decide whether a bay was anyone's business — but
+// the server masks capacity_kg for every bay the viewer neither owns nor rents,
+// so FREE bays failed it too. The directory advertised them, the 3D label
+// (which reads `occupied`) said "free", and walking up to one said it belonged
+// to another player. Occupancy and knowability are different questions; keep
+// them apart.
+function bayKnown(u) { return !!u && u.capacity_kg != null && u.used_kg != null; }
 function bayFillPct(u) {
-  if (!bayVisible(u)) return 0;
+  if (!bayKnown(u)) return 0;
   return Math.min(100, (u.used_kg || 0) / Math.max(1, u.capacity_kg) * 100);
 }
 function bayFillText(u) {
-  if (!bayVisible(u)) return u && u.occupied ? 'private' : 'free';
+  if (!bayKnown(u)) return u && u.occupied ? 'private' : 'free';
   return Math.round(u.used_kg || 0) + '/' + u.capacity_kg;
 }
 function bayNoFor(unitId) {
@@ -1097,10 +1185,21 @@ var RES_META = {
   dna: ['🧬', 'DNA']
 };
 function openBayModal(unit) {
-  if (!bayVisible(unit)) {
-    openModal('📦 Bay ' + unit.bay_no, 'Someone else\'s storage',
-      '<div class="note">This bay belongs to another player. What is inside it, and how full it is, '
-      + 'is between them and the warehouse owner.</div>', [{ label: 'Close', on: closeModal }]);
+  // Three cases, and they must line up with what the 3D label already says:
+  //   • we have the numbers      → show what is stored
+  //   • occupied by someone else → say so, show nothing
+  //   • free                     → say it is FREE, because the directory is
+  //                                advertising it and the label says so too
+  if (!bayKnown(unit)) {
+    if (unit.occupied) {
+      openModal('📦 Bay ' + unit.bay_no, 'Someone else\'s storage',
+        '<div class="note">This bay belongs to another player. What is inside it, and how full it is, '
+        + 'is between them and the warehouse owner.</div>', [{ label: 'Close', on: closeModal }]);
+    } else {
+      openModal('📦 Bay ' + unit.bay_no, 'Free — nobody is renting this one',
+        '<div class="note">This bay is empty and available. Rent it from the Camp or the Real Estate '
+        + 'Office and you can ship your own resources here.</div>', [{ label: 'Close', on: closeModal }]);
+    }
     return;
   }
   var c = unit.contents || {};
@@ -1518,7 +1617,7 @@ function promptFor(s) {
              : 'The van is empty';
   }
   if (s.kind === 'bay') {
-    if (!App.held) return 'Look in Bay ' + s.unit.bay_no + ' (' + bayFillText(s.unit) + (bayVisible(s.unit) ? ' kg)' : ')');
+    if (!App.held) return 'Look in Bay ' + s.unit.bay_no + ' (' + bayFillText(s.unit) + (bayKnown(s.unit) ? ' kg)' : ')');
     return 'Drop in Bay ' + s.unit.bay_no;
   }
   return 'Use';

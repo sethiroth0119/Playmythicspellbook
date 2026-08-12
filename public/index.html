@@ -78367,9 +78367,22 @@ function _whReason(r) {
   return (r && m[r.reason]) || 'The storage network did not answer.';
 }
 // ── 📦 "Send to my storage unit" — pick a bay, pick resources, ship it ──────
+// Weights and limits come from wh_config() — never a second copy in the client.
+// Cached because the send modal reads them on every keystroke.
+let WH_WEIGHTS = {}, WH_MAXKG = 1800, WH_DEFKG = 1;
+async function _whLoadConfig() {
+  const c = await _whRpc('wh_config', {});
+  if (c) {
+    WH_WEIGHTS = c.weights || {};
+    WH_MAXKG = +c.max_shipment_kg || WH_MAXKG;
+    WH_DEFKG = +c.default_weight || 1;
+  }
+  return c;
+}
 async function _whOpenSendModal(kind, nodeId, label) {
   const rentals = await _whFetchRentals(true);
   if (!rentals.length) { _whOpenDirectory(kind, nodeId, label); return; }
+  await _whLoadConfig();
   const S = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {});
   const have = (typeof RESOURCES !== 'undefined' ? RESOURCES : []).filter(r => (S[r.id] | 0) > 0);
   const kindLabel = { city: 'city', house: 'home', camp: 'camp' }[kind] || 'camp';
@@ -78380,15 +78393,23 @@ async function _whOpenSendModal(kind, nodeId, label) {
       <span style="color:#bfae87;font-size:0.8rem">Deliver to</span>
       <select id="wh-bay" style="flex:1;padding:0.45rem 0.6rem;background:rgba(0,0,0,0.45);color:#e2eaff;border:1px solid rgba(212,175,55,0.35);border-radius:7px;font-family:inherit">${bayOpts}</select>
     </div>
+    <!-- ⚠ A running weight total, live. The server enforces max_shipment_kg AND
+         the destination's free space, but with unit counts only those limits
+         were invisible until after the player pressed Send. -->
+    <div id="wh-weigh" style="display:flex;align-items:center;gap:0.7rem;padding:0.55rem 0.8rem;margin-bottom:0.8rem;background:rgba(0,0,0,0.4);border:1px solid rgba(212,175,55,0.3);border-radius:9px;font-family:'Roboto Mono',monospace;font-size:0.82rem">
+      <span style="color:#bfae87">LOAD</span><strong id="wh-kg" style="color:#ffd166">0.0 kg</strong>
+      <span style="flex:1;height:8px;border-radius:99px;background:rgba(255,255,255,0.09);overflow:hidden"><i id="wh-kgbar" style="display:block;height:100%;width:0%;background:linear-gradient(90deg,#7ce8a8,#ffd166)"></i></span>
+      <span id="wh-kglim" style="color:#bfae87"></span>
+    </div>
     ${have.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.5rem">
       ${have.map(r => `
         <div style="display:flex;align-items:center;gap:0.55rem;padding:0.5rem 0.65rem;background:rgba(0,0,0,0.35);border:1px solid rgba(212,175,55,0.22);border-radius:9px">
           <span style="font-size:1.15rem">${r.icon}</span>
           <div style="flex:1;min-width:0">
             <div style="color:#e2eaff;font-size:0.82rem">${escapeHtml(r.name)}</div>
-            <div style="color:#bfae87;font-size:0.72rem;font-family:'Roboto Mono',monospace">have ${(S[r.id] | 0).toLocaleString()}</div>
+            <div style="color:#bfae87;font-size:0.72rem;font-family:'Roboto Mono',monospace">have ${(S[r.id] | 0).toLocaleString()} · ${WH_WEIGHTS[r.id] || 1} kg each</div>
           </div>
-          <input class="wh-qty" data-res="${escapeHtml(r.id)}" type="number" min="0" max="${S[r.id] | 0}" value="0"
+          <input class="wh-qty" data-res="${escapeHtml(r.id)}" data-kg="${(WH_WEIGHTS[r.id] || 1)}" type="number" min="0" max="${S[r.id] | 0}" value="0"
             style="width:74px;padding:0.32rem 0.4rem;background:rgba(0,0,0,0.5);color:#ffd166;border:1px solid rgba(212,175,55,0.35);border-radius:6px;font-family:'Roboto Mono',monospace;text-align:right">
         </div>`).join('')}
       </div>`
@@ -78396,6 +78417,28 @@ async function _whOpenSendModal(kind, nodeId, label) {
   const root = _whModal('wh-send', '🚚 Send to my storage unit',
     'Shipping from your ' + kindLabel + (label ? ' — ' + escapeHtml(label) : ''), body,
     '<button class="wh-go" style="padding:0.5rem 1.2rem;background:rgba(255,209,102,0.2);color:#ffd166;border:1px solid rgba(255,209,102,0.6);border-radius:7px;cursor:pointer;font-family:\'Cinzel\',serif;font-size:0.86rem;letter-spacing:0.05em">🚚 Send to my storage unit</button>');
+  // Live weight readout: total, the ceiling, and the CHOSEN BAY's free space.
+  const _whWeigh = () => {
+    let kg = 0;
+    root.querySelectorAll('.wh-qty').forEach(i => {
+      kg += Math.max(0, Math.floor(+i.value || 0)) * (+i.dataset.kg || WH_DEFKG);
+    });
+    const sel = root.querySelector('#wh-bay');
+    const bay = rentals.filter(r => r.unit_id === (sel && sel.value))[0];
+    const free = bay ? Math.max(0, bay.capacity_kg - bay.used_kg) : WH_MAXKG;
+    const lim = Math.min(WH_MAXKG, free);
+    const el = root.querySelector('#wh-kg'), bar = root.querySelector('#wh-kgbar');
+    if (el) { el.textContent = kg.toFixed(1) + ' kg'; el.style.color = kg > lim ? '#ff6b6b' : '#ffd166'; }
+    if (bar) { bar.style.width = Math.min(100, kg / Math.max(1, lim) * 100) + '%';
+               bar.style.background = kg > lim ? 'linear-gradient(90deg,#ff9c2e,#ff6b6b)' : 'linear-gradient(90deg,#7ce8a8,#ffd166)'; }
+    const lb = root.querySelector('#wh-kglim');
+    if (lb) lb.textContent = 'of ' + lim.toLocaleString() + ' kg free' + (free < WH_MAXKG ? ' in Bay ' + (bay ? bay.bay_no : '?') : '');
+    const go = root.querySelector('.wh-go');
+    if (go) { go.disabled = (kg <= 0 || kg > lim); go.style.opacity = go.disabled ? '0.45' : '1'; }
+  };
+  root.querySelectorAll('.wh-qty').forEach(i => { i.oninput = _whWeigh; i.onchange = _whWeigh; });
+  const _bs = root.querySelector('#wh-bay'); if (_bs) _bs.onchange = _whWeigh;
+  _whWeigh();
   root.querySelector('.wh-go').onclick = async () => {
     const payload = {};
     root.querySelectorAll('.wh-qty').forEach(i => {
@@ -78518,29 +78561,33 @@ async function _whOpenMyStorage() {
 // Credit a payload back into the salvage ledger. The exact mirror of the debit
 // in _whOpenSendModal — resources exist in exactly one place at a time.
 function _whCreditPayload(payload, why) {
-  let n = 0;
+  let n = 0, saved = false;
   try {
     const L = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage = Profile.salvage || {});
     Object.keys(payload || {}).forEach(id => {
       const q = Math.max(0, Math.floor(+payload[id] || 0));
       if (q > 0) { L[id] = (L[id] | 0) + q; n += q; }
     });
-  } catch (e) {}
-  // ⚠ The SAVE gets its own try/catch and is NOT silent. The server has already
-  // emptied the bay, so if the write fails the goods exist only in memory —
-  // one refresh and they are gone with no re-credit path. Tell the player to
-  // stay put, and retry once.
-  try {
-    if (typeof saveProfile === 'function') saveProfile();
-  } catch (e) {
-    try { setTimeout(() => { try { saveProfile(); } catch (e2) {} }, 1200); } catch (e2) {}
-    try {
-      showToast('⚠ Your goods came back but the save failed — do NOT refresh. '
-        + 'Retrying; if this keeps happening, report it before reloading.', 12000);
-    } catch (e2) {}
+    // ⚠ CHECK THE RETURN VALUE, NOT AN EXCEPTION. saveProfile() never throws:
+    // its own outer handler swallows everything and returns false, and its FIRST
+    // statement is a silent early return when this tab is not the MultiTab
+    // writer. Wrapping it in try/catch meant the exact failure this warning
+    // exists for — the server has emptied the bay and the goods now live only
+    // in this tab's memory — passed silently, and a background tab was the
+    // likeliest case.
+    saved = (typeof saveProfile === 'function') ? (saveProfile() !== false) : false;
+    if (!saved && typeof _persistProgressNow === 'function') {
+      // One forced retry through the direct persist path before we alarm.
+      try { _persistProgressNow(); saved = true; } catch (e) { saved = false; }
+    }
+  } catch (e) { saved = false; }
+  if (n <= 0) { showToast('📦 Nothing to collect.', 2400); return 0; }
+  if (saved) {
+    showToast('📦 ' + (why || 'Returned') + ' — ' + n.toLocaleString() + ' units back in your stores.', 3600);
+  } else {
+    showToast('⚠ ' + (why || 'Returned') + ' — ' + n.toLocaleString() + ' units are back, but the save did NOT go through. '
+      + 'Keep this tab open and do not reload until your stores show them.', 9000);
   }
-  if (n > 0) showToast('📦 ' + (why || 'Returned') + ' — ' + n.toLocaleString() + ' units back in your stores.', 3600);
-  else showToast('📦 Nothing to collect.', 2400);
   try { if (typeof render === 'function') render(); } catch (e) {}
   return n;
 }

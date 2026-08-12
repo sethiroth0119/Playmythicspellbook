@@ -362,6 +362,39 @@ begin
 end; $$;
 grant execute on function public.wh_node_level(text) to authenticated;
 
+-- ─── 🪪 _wh_display_name — the caller's REAL name, never the one they claim ──
+-- ⚠ Every display identity in this module used to be a client-supplied p_name
+-- written straight into owner_name / renter_name / sender_name, unchecked and
+-- uncapped. Executed against the previous build:
+--     Bob → wh_my_warehouse('Alice')          → owner_name 'Alice'
+--     Bob → wh_rent_unit(…, 'Alice (Staff)')  → Alice sees her own bay rented
+--                                               by "Alice (Staff)"
+--     Bob → wh_send_shipment(…, '<b>MODERATOR</b>')
+--     Bob → wh_my_warehouse(repeat('A',1000000)) → accepted, and every shopper
+--           downloaded the megabyte back out of the un-paginated directory
+-- Two rounds were spent masking owner_id / renter_id so nobody can LEARN who
+-- someone is; leaving the write side open meant anyone could ASSERT they were
+-- anyone, which is strictly worse. Names now come from public.user_profiles —
+-- the same row the rest of the game treats as a player's identity — and the
+-- p_name arguments are accepted for signature compatibility and IGNORED.
+create or replace function public._wh_display_name(p_uid uuid)
+returns text language plpgsql stable security definer set search_path = public as $$
+declare v_name text;
+begin
+  if p_uid is null then return null; end if;
+  begin
+    select nullif(btrim(up.display_name), '') into v_name
+      from public.user_profiles up where up.user_id = p_uid;
+  exception when undefined_table or undefined_column then v_name := null;
+  end;
+  -- Strip control characters and hard-cap the length, so even a compromised
+  -- profile row cannot become a payload or a banner.
+  v_name := left(regexp_replace(coalesce(v_name, ''), '[\x00-\x1F\x7F]', '', 'g'), 40);
+  if v_name = '' then v_name := 'Player ' || left(p_uid::text, 8); end if;
+  return v_name;
+end; $$;
+revoke all on function public._wh_display_name(uuid) from public, anon, authenticated;
+
 -- ─── 🔗 wh_player_at_node — is this player REALLY attached to that node? ────
 -- p_node_id arrives from the client, so on its own it proves nothing: an
 -- earlier build let a player ship out of their own camp while naming a rich
@@ -457,15 +490,29 @@ begin
   select * into v_w from public.wh_warehouses where owner_id = v_uid;
   if not found then
     v_start := (public.wh_config() ->> 'start_units')::integer;
+    -- p_name is ignored (see _wh_display_name). p_node_id is only kept when the
+    -- player can actually be shown to be attached to that node — otherwise a
+    -- player could plant their building in someone else's LV10 district and
+    -- have the directory report it as provenance.
     insert into public.wh_warehouses (owner_id, owner_name, node_id, units_total)
-      values (v_uid, p_name, p_node_id, v_start) returning * into v_w;
+      values (v_uid, public._wh_display_name(v_uid),
+              case when public.wh_player_at_node(v_uid, p_node_id) then p_node_id else null end,
+              v_start) returning * into v_w;
     -- 📦 The starting bays. Small on purpose — the player buys their way up.
     insert into public.wh_units (warehouse_id, bay_no, capacity_kg)
       select v_w.id, g, (public.wh_config() ->> 'unit_capacity_kg')::numeric
       from generate_series(1, v_start) g;
-  elsif p_name is not null and coalesce(v_w.owner_name, '') <> p_name then
-    update public.wh_warehouses set owner_name = p_name, updated_at = now()
-      where id = v_w.id returning * into v_w;
+  else
+    -- Keep the stored name in step with the profile (not with whatever the
+    -- client last sent), and adopt a node the player can actually be shown to
+    -- be attached to. Setting node_id only on CREATE meant a player who
+    -- registered at a district AFTER building their warehouse could never
+    -- record it.
+    update public.wh_warehouses set
+      owner_name = public._wh_display_name(v_uid),
+      node_id = case when public.wh_player_at_node(v_uid, p_node_id) then p_node_id else node_id end,
+      updated_at = now()
+    where id = v_w.id returning * into v_w;
   end if;
   return public.wh_warehouse_json(v_w.id);
 end; $$;
@@ -513,7 +560,9 @@ begin
         -- Masked too: capacity ranks the bays by who has paid to expand.
         'capacity_kg', case when v_is_owner or u.renter_id = v_uid then u.capacity_kg else null end,
         'contents', case when v_is_owner or u.renter_id = v_uid then u.contents else '{}'::jsonb end,
-        'mine', (u.renter_id = v_uid)
+        -- `= v_uid` on a NULL renter_id yields NULL, not false. An unrented bay
+        -- is not 'maybe mine'.
+        'mine', coalesce(u.renter_id = v_uid, false)
       ) order by u.bay_no) from public.wh_units u where u.warehouse_id = v_w.id), '[]'::jsonb),
     'shipments', coalesce((
       select jsonb_agg(jsonb_build_object(
@@ -539,30 +588,37 @@ end; $$;
 grant execute on function public.wh_warehouse_json(uuid) to authenticated;
 
 -- ─── 🗂 wh_directory — warehouses a player could rent a bay in ───────────────
-create or replace function public.wh_directory()
+-- Drop the pre-pagination signature, or both overloads coexist and every
+-- wh_directory() call fails with "function is not unique".
+drop function if exists public.wh_directory();
+-- ⚠ PAGINATED. One un-paginated global list meant every shopper downloaded
+-- every warehouse row — and one player storing a megabyte in their own name
+-- made that everyone else's bandwidth problem.
+create or replace function public.wh_directory(p_limit integer default 25, p_offset integer default 0)
 returns jsonb language sql stable security definer set search_path = public as $$
-  select coalesce((select jsonb_agg(jsonb_build_object(
-    'id', w.id, 'owner_name', w.owner_name,
-    'node_id', w.node_id, 'tier', w.tier, 'units_total', w.units_total,
-    -- ⚠ This predicate must MATCH wh_rent_unit's, or the directory advertises
-    -- bays that then refuse with no_free_unit. It used to say "expired" where
-    -- the claim rule says "expired past the grace period AND empty".
-    'free_units', (select count(*) from public.wh_units u
-                    where u.warehouse_id = w.id
-                      and (u.renter_id is null
-                           or (u.rent_until < now() - ((public.wh_config() ->> 'rent_grace_days')::int || ' days')::interval
-                               and u.contents = '{}'::jsonb))),
-    'my_units', (select count(*) from public.wh_units u
-                  where u.warehouse_id = w.id and u.renter_id = auth.uid()
-                    and (u.rent_until is null or u.rent_until > now()))
-  ) order by w.tier desc, w.created_at)
-  from public.wh_warehouses w
-  -- Never your own: you cannot rent from yourself, and offering it only ends in
-  -- an `own_warehouse` error after the player has already clicked.
-  where w.open_to_all = true and w.owner_id is distinct from auth.uid()), '[]'::jsonb);
+  -- The page is selected FIRST, then aggregated. Aggregating and then limiting
+  -- would still have built the whole list server-side.
+  select coalesce((select jsonb_agg(t.row) from (
+    select jsonb_build_object(
+      'id', w.id, 'owner_id', w.owner_id, 'owner_name', w.owner_name,
+      'node_id', w.node_id, 'tier', w.tier, 'units_total', w.units_total,
+      'free_units', (select count(*) from public.wh_units u
+                      where u.warehouse_id = w.id
+                        and (u.renter_id is null
+                             or (u.rent_until < now() - ((public.wh_config() ->> 'rent_grace_days')::int || ' days')::interval
+                                 and u.contents = '{}'::jsonb))),
+      'my_units', (select count(*) from public.wh_units u
+                    where u.warehouse_id = w.id and u.renter_id = auth.uid()
+                      and (u.rent_until is null or u.rent_until > now()))
+    ) as row
+    from public.wh_warehouses w
+    where w.open_to_all = true and w.owner_id is distinct from auth.uid()
+    order by w.tier desc, w.created_at
+    limit greatest(1, least(50, coalesce(p_limit, 25)))
+    offset greatest(0, coalesce(p_offset, 0))
+  ) t), '[]'::jsonb);
 $$;
--- (the aggregate lives in a scalar sub-select so an empty directory returns [] not null)
-grant execute on function public.wh_directory() to authenticated;
+grant execute on function public.wh_directory(integer, integer) to authenticated;
 
 -- ─── 💸 wh_buy_unit — "You need to open storage unit space" ──────────────────
 -- 10 Aza OR 50,000 Cinder (the exact $10 peg). Charged inside the transaction;
@@ -753,7 +809,7 @@ begin
   end if;
   perform public._wh_credit(v_w.owner_id, 'cinder', v_cost, 'Warehouse: bay ' || v_u.bay_no || ' rented');
   update public.wh_units set
-    renter_id = v_uid, renter_name = p_name,
+    renter_id = v_uid, renter_name = public._wh_display_name(v_uid),
     rent_until = greatest(coalesce(rent_until, now()), now()) + (v_days || ' days')::interval,
     updated_at = now()
   where id = v_u.id;
@@ -892,7 +948,10 @@ begin
     sender_id, sender_name, warehouse_id, unit_id, origin_kind, origin_node, origin_label,
     node_level, free_city, payload, weight_kg, eta_hours, eta_at, status)
   values (
-    v_uid, p_name, v_w.id, v_u.id, v_kind, p_node_id, p_origin_label,
+    v_uid, public._wh_display_name(v_uid), v_w.id, v_u.id, v_kind, p_node_id,
+    -- origin_label is the sender's own words about where it came from, so it is
+    -- capped and stripped rather than trusted verbatim.
+    left(regexp_replace(coalesce(p_origin_label, ''), '[\x00-\x1F\x7F]', '', 'g'), 60),
     v_lvl, v_free, v_pay, v_kg, v_hours, now() + (v_hours || ' hours')::interval, 'transit')
   returning * into v_ship;
 
@@ -1121,7 +1180,7 @@ grant execute on function public.wh_impound_unit(uuid) to authenticated;
 -- ─── ↩ wh_reclaim — a former renter takes impounded goods back ─────────────
 create or replace function public.wh_reclaim(p_impound_id uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare v_uid uuid := auth.uid(); v_out jsonb := '{}'::jsonb; r record; k text; v_q numeric;
+declare v_uid uuid := auth.uid(); v_out jsonb := '{}'::jsonb; r record; k text; v_q numeric; v_n int := 0;
 begin
   if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
   for r in select * from public.wh_impound
@@ -1131,8 +1190,13 @@ begin
       v_out := v_out || jsonb_build_object(k, coalesce((v_out ->> k)::numeric, 0) + v_q);
     end loop;
     update public.wh_impound set claimed_at = now() where id = r.id;
+    v_n := v_n + 1;
   end loop;
-  return jsonb_build_object('ok', true, 'payload', v_out);
+  -- Claiming nothing is not a success. Calling this with someone else's impound
+  -- id used to return ok:true with an empty payload, which the client toasts as
+  -- a win.
+  if v_n = 0 then return jsonb_build_object('ok', false, 'reason', 'nothing_there'); end if;
+  return jsonb_build_object('ok', true, 'payload', v_out, 'claimed', v_n);
 end; $$;
 grant execute on function public.wh_reclaim(uuid) to authenticated;
 

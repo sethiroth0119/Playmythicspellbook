@@ -209,6 +209,7 @@ kept in sync by hand).
 | `max_shipment_kg` | **1800** | Sized to a tier-1 renter's real 1,932 kg ceiling. Bigger loads are refused, never truncated — and `wh_send_shipment` also checks the actual destination. |
 | `rent_cinder_per_day` | 1200 | Paid to the warehouse owner |
 | `rent_max_days` / `rent_grace_days` | 30 / 3 | Grace before goods can be impounded |
+| bay expansion ceiling | **4 × `unit_capacity_kg`** (2,000 kg) | `wh_expand_unit` refuses past this with `bay_maxed`; hard-coded in the rpc, not in the config block |
 | `free_city_hours` / `max_hours` | 72 / 72 | The ceiling, and the free-city rule |
 
 **Warehouse tiers** — tier → max bays / Aza / Cinder:
@@ -322,6 +323,9 @@ something to show a player. Add a line to *both* whenever you add an RPC.
 - [ ] Filling a bay raises **"You need to open storage unit space"** offering
       **10 Aza** or **50,000 Cinder**; unaffordable options are disabled.
 - [ ] Buying **grows that bay by 500 kg** and the crate in hand then fits.
+- [ ] **Upgrade to tier 3, then WALK TO EVERY NEW BAY** and press E at each one.
+      Counting bays in the HUD is not enough — a build where the bays exist but
+      cannot be reached satisfies a count and fails the player.
 - [ ] A truck **pulls up** when a load lands, and pulls away once it is empty.
 - [ ] The 🏗 terminal offers **➕ Open another storage bay** (10 Aza / 50,000
       Cinder) whenever bays < cap — and buying one really adds a numbered bay.

@@ -53,6 +53,7 @@
     zAxleF:     2.05,   // FORWARD CONTROL — the front axle sits behind the driver
     zAxleR:    -1.62,
     dualGap:    0.40,   // centre-to-centre of the two rear tyres per side
+    wheelOuterPad: 0.16, // how far a wheel's furniture reaches beyond its centre
   };
 
   // ─── 🎨 Materials — a real split, not one grey for everything ───────────────
@@ -92,6 +93,9 @@
                   emissive: 0xfff0cc, emissiveIntensity: 0.45 }),
       cabin:  M({ color: 0x14161a, roughness: 0.95, metalness: 0.03 }),   // what you glimpse inside
       plate:  M({ color: 0xd8d2c2, roughness: 0.55, metalness: 0.2 }),    // the number plate itself
+      // A painted bumper, but NOT body colour — white-on-white dissolved it
+      // into the nose entirely. Non-metallic so it never flares like chrome.
+      bumper: M({ color: 0x9aa0a4, roughness: 0.62, metalness: 0.05 }),
     };
   }
 
@@ -363,28 +367,19 @@
     return g;
   }
 
-  // ─── 🔩 Wheel arch — the opening is CUT FROM THE SHELL (see shell()'s `cut`) ─
-  // ⚠ THE POINT OF THE CUT IS TO SEE THE TYRE THROUGH IT. The previous build
-  // filled the opening with a flat slab at x ±0.98 — OUTBOARD of the front tyre
-  // (0.725–0.995) and of the outer rear dual (0.785–1.055) — so the liner
-  // occluded the very thing the hole exists to reveal. The result was a hard
-  // black letterbox 1.24 m long with the tyre hanging entirely below it: a spat,
-  // which is exactly the failure the cut was meant to end.
-  // The liner now sits INBOARD of the tyre, so it only stops you seeing out the
-  // far side, and it is shaped to the arch rather than being a rectangle.
-  function arch(THREE, mats, side, z) {
-    const g = new THREE.Group();
-    const top = D.floorY + (D.shoulderY - D.floorY) / SIDE_N;   // the cut band's top
-    const liner = new THREE.Mesh(
-      new THREE.BoxGeometry(0.06, top - D.floorY + 0.10, ARCH_HALF * 2 - 0.06), mats.rubber);
-    liner.position.set(side * 0.70, (D.floorY + top) / 2, z);   // INBOARD of the tyre
-    liner.receiveShadow = true; g.add(liner);
-    // Returned edge along the top of the opening — one strip, not a comb.
-    const lip = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.045, ARCH_HALF * 2 + 0.02), mats.paintU);
-    lip.position.set(side * (D.halfW + 0.017), top + 0.020, z);
-    lip.castShadow = true; g.add(lip);
-    return g;
-  }
+  // ─── 🔩 Wheel arch — THERE IS NO ARCH PART. That is the point. ─────────────
+  // Three rounds were spent adding furniture here — a lip strip, a liner slab,
+  // a returned edge — and every round the wheels read worse and a crude box
+  // control took them in the blind A/B. The reference photo has essentially no
+  // arch detail at all: an uninterrupted off-white slab flank with a plain dark
+  // tyre tucked into a simple cut opening. No lip, no liner, no frame, nothing
+  // proud of the flank.
+  //
+  // So the arch is now exactly two things, neither of them a part:
+  //   1. the `cut` in shell() that removes the skin, and
+  //   2. the dark underbody already sitting behind it.
+  // The tyres are pulled inboard so no rubber crosses the flank plane. If this
+  // still ties in an A/B, the remaining gap is the tyre material, not the arch.
 
   // ─── 🔦 Headlamp cluster — DUAL round lamps in a rounded-rect housing ───────
   function headlamps(THREE, mats, side, nz) {
@@ -409,6 +404,13 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function build(THREE, opts) {
     opts = opts || {};
+    // An empty van standing with its cargo door rolled up presents the player a
+    // near-black rectangle across most of the frame. The door is only open when
+    // there is something behind it.
+    const cargoOpen = opts.cargoOpen !== false;
+    // Outermost wheel centre. Wheel houses and wheel placement both key off it,
+    // so they cannot drift apart.
+    const OUTER = D.halfW - 0.22;
     const profile = opts.profile === 'radius' ? 'radius' : 'squircle';
     const doorOpen = opts.doorOpen !== false;      // curb-side slider stands open
     const mats = makeMats(THREE);
@@ -426,14 +428,26 @@
     // open you looked straight at a bare tyre standing in the load space. Every
     // real box van boxes them in; so does this one.
     [-1, 1].forEach(sd => {
-      const wx = sd * 0.86, wz = D.zAxleR, ww = 0.46, wl = 1.34, wh2 = 0.42;
-      box(THREE, T, ww, 0.05, wl, mats.floor,  wx, D.floorY + wh2, wz);            // top
-      box(THREE, T, 0.05, wh2, wl, mats.floor, wx - sd * ww / 2, D.floorY + wh2 / 2, wz);  // inboard wall
-      box(THREE, T, ww, wh2, 0.05, mats.floor, wx, D.floorY + wh2 / 2, wz - wl / 2);
-      box(THREE, T, ww, wh2, 0.05, mats.floor, wx, D.floorY + wh2 / 2, wz + wl / 2);
-      // …and the same under the cab floor for the steer axle.
-      box(THREE, T, ww, 0.05, 1.20, mats.floor,  sd * 0.80, D.floorY + wh2, D.zAxleF);
-      box(THREE, T, 0.05, wh2, 1.20, mats.floor, sd * (0.80 - ww / 2), D.floorY + wh2 / 2, D.zAxleF);
+      // ⚠ THE HOUSE MUST COVER THE INNER DUAL. It used to span |x| 0.63-1.09
+      // while the inner dual sat at |x| 0.385-0.655 — 0.22 m of a 0.27 m tyre
+      // stood bare INSIDE the load space, humping 0.23 m above the deck dead
+      // centre of the view the player gets when they press E. The house is now
+      // derived from the wheels' real extents instead of guessed at, and it is
+      // DARK: a pale box around a wheel is exactly the picture-frame cage the
+      // flank was just cleaned of.
+      const wInner = OUTER - D.dualGap - D.wheelW / 2 - 0.05;   // inboard edge of the inner dual
+      const wOuter = D.halfW;
+      const wxc = sd * (wInner + wOuter) / 2, ww = wOuter - wInner;
+      const wz = D.zAxleR, wl = ARCH_HALF * 2 + 0.10, wh2 = 0.46;
+      box(THREE, T, ww, 0.05, wl, mats.cabin,  wxc, D.floorY + wh2, wz);           // top
+      box(THREE, T, 0.05, wh2, wl, mats.cabin, sd * wInner, D.floorY + wh2 / 2, wz);  // inboard wall
+      box(THREE, T, ww, wh2, 0.05, mats.cabin, wxc, D.floorY + wh2 / 2, wz - wl / 2);
+      box(THREE, T, ww, wh2, 0.05, mats.cabin, wxc, D.floorY + wh2 / 2, wz + wl / 2);
+      // …and the same under the cab floor for the steer axle (single wheel).
+      const fInner = OUTER - D.wheelW / 2 - 0.05;
+      const fxc = sd * (fInner + wOuter) / 2, fw = wOuter - fInner;
+      box(THREE, T, fw, 0.05, 1.30, mats.cabin,  fxc, D.floorY + wh2, D.zAxleF);
+      box(THREE, T, 0.05, wh2, 1.30, mats.cabin, sd * fInner, D.floorY + wh2 / 2, D.zAxleF);
     });       // deck
     // Liners start ABOVE the cut band, so they never paint across a wheel arch —
     // and the KERB-side liner is split around the cargo opening so it does not
@@ -477,15 +491,28 @@
     // and 0.31 m past the end of the shell into free air beside the nose.
     // railRun() subtracts the apertures on the side it is drawing and clamps to
     // the bodywork, emitting one merged mesh per rail.
-    const APER_R = [[DOOR.z0, DOOR.z1], [CARGO.z0, CARGO.z1],
-                    [D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF],
-                    [D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF]];
-    const APER_L = [[D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF],
-                    [D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF]];
-    const Z0 = D.zRear + 0.04, Z1 = 2.84;            // the shell's own extent
+    // ⚠ AN APERTURE ONLY INTERRUPTS A RAIL IT ACTUALLY CROSSES. Each entry is
+    // [z0, z1, yTop] and railRun ignores any whose yTop is below the rail. The
+    // wheel arches top out at y 0.963; the rub rail sits at y 1.52 — 0.56 m
+    // clear — yet they were chopping it anyway, turning a 6 m rail into three
+    // disconnected stubs per side (0.39 m / 1.00 m / 0.14 m on the kerb side)
+    // and leaving broken trim plainly visible down the flank.
+    const ARCH_TOP = D.floorY + (D.shoulderY - D.floorY) / SIDE_N;
+    const APER_R = [[DOOR.z0, DOOR.z1, D.shoulderY], [CARGO.z0, CARGO.z1, D.shoulderY],
+                    [D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF, ARCH_TOP],
+                    [D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF, ARCH_TOP]];
+    const APER_L = [[CARGO.z0, CARGO.z1, D.shoulderY],
+                    [D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF, ARCH_TOP],
+                    [D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF, ARCH_TOP]];
+    // Stop where the flank is still FULL WIDTH. Past z 2.46 the shell tapers in
+    // toward the cab, so a rail run out to 2.84 left a 14 cm chip floating
+    // 2-4 cm clear of the bodywork.
+    const Z0 = D.zRear + 0.04, Z1 = 2.44;
     function railRun(side, y, h, t, mat, apertures) {
       // Walk the run, skipping any span that crosses an opening.
-      const cuts = (apertures || []).slice().sort((a, b) => a[0] - b[0]);
+      // Only the openings that reach this rail's own height can break it.
+      const cuts = (apertures || []).filter(c => (c[2] == null || c[2] > y))
+                                    .slice().sort((a, b) => a[0] - b[0]);
       const segs = [];
       let z = Z0;
       for (const c of cuts) {
@@ -507,8 +534,7 @@
       railRun(side, 0.78, 0.032, 0.018, mats.seam, ap);
       // Vertical panel line where the cab meets the cargo box.
       box(THREE, T, 0.022, 1.82, 0.030, mats.seam, side * proud(0.022), 1.80, D.zBulkhead);
-      T.add(arch(THREE, mats, side, D.zAxleF));
-      T.add(arch(THREE, mats, side, D.zAxleR));
+      // (no arch parts — see the note above arch removal)
     });
 
     // ── roof furniture: two raised rectangular vents/hatches ────────────────
@@ -602,7 +628,7 @@
     T.add(mergeBoxes(THREE, slats, mats.black));
     [-1, 1].forEach(sd => T.add(headlamps(THREE, mats, sd, nz)));
     // Bumper stands PROUD of the nose face, with a legible plate recess.
-    box(THREE, T, 2.02, 0.28, 0.22, mats.paint, 0, 0.76, nz + 0.10);
+    box(THREE, T, 2.02, 0.28, 0.22, mats.bumper, 0, 0.76, nz + 0.10);
     box(THREE, T, 2.06, 0.05, 0.07, mats.seam,  0, 0.865, nz + 0.12);
     box(THREE, T, 0.58, 0.26, 0.06, mats.black, 0, 0.74, nz + 0.21);
     box(THREE, T, 0.46, 0.16, 0.02, mats.plate, 0, 0.74, nz + 0.245);
@@ -630,8 +656,10 @@
     box(THREE, doorway, dx - rear, 0.05, dw, mats.cabin,  (dx + rear) / 2, dyB + 0.03, dz);   // deck lip
     // ⚠ The well drops INSIDE the body envelope. With the sill at 0.60 there is
     // only 0.60 m of clearance, so a well reaching to 0.16 hung below the truck
-    // like a bolted-on ladder. One shallow step, fully boxed in on three sides,
-    // dark, and never below the frame rails.
+    // like a bolted-on ladder. One shallow step, fully boxed in on three sides.
+    // HONEST NOTE: the tread still finishes ~45 mm below the frame rails — a
+    // real step van's well does too — so this does NOT claim to clear them. It
+    // claims only to stay inside the body's own footprint, which it does.
     // ⚠ The comment below used to say "never below the frame rails" while the
     // well bottomed 0.125 m UNDER them, reading as a white box bolted beneath
     // the door. It is now genuinely inside the envelope.
@@ -669,9 +697,14 @@
     // into a crescent. Ribs are now nearly flush and the lamps stand clear.
     const rz = D.zRear - 0.02;
     box(THREE, T, 1.86, 2.10, 0.04, mats.paintU, 0, D.floorY + 1.10, rz - 0.015);
+    // ⚠ The roll-up only stands open when there is freight behind it.
     const ribs = [];
     for (let i = 0; i < 16; i++) ribs.push({ w: 1.82, h: 0.070, d: 0.028, x: 0, y: D.floorY + 0.16 + i * 0.128, z: rz - 0.036 });
     T.add(mergeBoxes(THREE, ribs, mats.seam));
+    if (!cargoOpen) {
+      // Door down: a ribbed panel filling the aperture.
+      box(THREE, T, 1.86, 2.10, 0.05, mats.paint, 0, D.floorY + 1.10, rz - 0.06);
+    }
     box(THREE, T, 0.42, 0.09, 0.05, mats.chrome, 0, D.floorY + 0.10, rz - 0.05);       // pull strap bar
     // Step bumper as ONE piece rather than three disjoint slabs.
     box(THREE, T, 1.78, 0.20, 0.30, mats.black, 0, 0.46, rz - 0.16);
@@ -687,8 +720,14 @@
     // Tucked INSIDE the body line — at x -0.86 with a 0.40 half-length it used
     // to poke 0.21 m through the street-side wall and read as a white drum
     // bolted to the outside of the truck.
-    const tank = cyl(THREE, T, 0.20, 0.20, 0.62, 16, mats.steel, -0.60, 0.44, 0.30);
-    tank.rotation.z = Math.PI / 2;
+    // ⚠ Was mounted CROSSWAYS with the left frame rail passing clean through it
+    // for 0.40 m, its top poking up through the cargo deck, and — once `steel`
+    // lost its metalness — presenting a pale disc under the belly as the
+    // brightest thing on the truck. Now it runs ALONG the chassis outboard of
+    // the rail, below the deck, in a dark material, with two straps.
+    const tank = cyl(THREE, T, 0.145, 0.145, 0.86, 14, mats.black, -0.74, 0.30, 0.20);
+    tank.rotation.x = Math.PI / 2;
+    [-0.26, 0.26].forEach(dz => box(THREE, T, 0.32, 0.028, 0.045, mats.steel, -0.74, 0.30, 0.20 + dz));
     // Mud flaps HANG from the sill; they used to start 0.41 m below it, attached
     // to nothing.
     [-1, 1].forEach(s => box(THREE, T, 0.02, 0.42, 0.30, mats.rubber, s * 0.92, D.floorY - 0.21, D.zAxleR - 0.74));
@@ -696,10 +735,17 @@
     // ── wheels: 6 total, DUAL rears ─────────────────────────────────────────
     // The rear pair is tucked IN so the outer tyre finishes just inside the body
     // line — duals hanging proud of the sides read as a monster truck.
+    // (OUTER is declared near the top of build() so the wheel houses can be
+    //  derived from the same number the wheels are placed with.)
+    // ⚠ Everything on a wheel — tyre, sidewall rings, hubcap — must finish
+    // INSIDE the flank plane. The outer dual used to reach x 1.08 against a
+    // halfW of 1.05, so rubber stood 0.03 m proud of the bodywork and the eye
+    // read a bolted-on wheel rather than one sitting in a cut opening.
+    // wheelMaxX() below is the real outer extent; keep it under halfW − 0.02.
     [-1, 1].forEach(s => {
-      T.add(wheel(THREE, mats, s * (D.halfW - 0.19), D.zAxleF));
-      T.add(wheel(THREE, mats, s * (D.halfW - 0.33 - D.dualGap / 2), D.zAxleR));
-      T.add(wheel(THREE, mats, s * (D.halfW - 0.33 + D.dualGap / 2), D.zAxleR));
+      T.add(wheel(THREE, mats, s * OUTER, D.zAxleF));
+      T.add(wheel(THREE, mats, s * (OUTER - D.dualGap), D.zAxleR));
+      T.add(wheel(THREE, mats, s * OUTER, D.zAxleR));
     });
     // Axle tubes, so the truck is not floating on disconnected tyres.
     [D.zAxleF, D.zAxleR].forEach(z => {

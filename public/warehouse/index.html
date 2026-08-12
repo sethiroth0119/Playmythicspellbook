@@ -269,13 +269,22 @@ var MOCK = (function () {
     weights: { food: 1.2, water: 2.0, ammo: 0.8, medicine: 0.4, energyDrink: 0.5,
                supplies: 1.5, metal: 3.5, fuel: 3.0, corruptedEssence: 0.6,
                memoryShards: 0.2, dna: 0.1 },
-    default_weight: 1.0, crate_kg: 50,
+    // ⚠ These MUST mirror wh_config() in the migration exactly. When they drift
+    // the standalone yard behaves differently from the live one — this block
+    // said crate_kg 50 after the server moved to 22, and the mock yard became
+    // unplayable (every crate too heavy for bare hands) while production was fine.
+    default_weight: 1.0, crate_kg: 22, max_shipment_kg: 4000, rent_grace_days: 3,
     eta_hours: { 0: 72, 1: 72, 2: 64, 3: 56, 4: 48, 5: 40, 6: 32, 7: 26, 8: 20, 9: 13, 10: 6 },
     free_city_hours: 72, max_hours: 72, rent_cinder_per_day: 1200, rent_max_days: 30
   };
   var S = null;
   function wt(p) { var t = 0; for (var k in p) t += p[k] * (CFG.weights[k] || CFG.default_weight); return Math.round(t * 10) / 10; }
-  function crates(payload) {
+  // ⚠ Crate ids must be unique ACROSS shipments. They used to be 'c1','c2'…
+  // per shipment, so two loads both had a 'c1' and wh_store_crate matched the
+  // wrong one — a crate off the arrived van resolved to the shipment still on
+  // the road and came back "That load has not arrived yet." The real ids are
+  // uuids; the mock now prefixes with the shipment id for the same guarantee.
+  function crates(payload, sid) {
     var rem = {}, out = [], n = 0;
     for (var k in payload) rem[k] = payload[k];
     while (n < 200) {
@@ -293,7 +302,7 @@ var MOCK = (function () {
         if (left <= 0) break;
       }
       if (!any) break;
-      n++; out.push({ id: 'c' + n, crate_no: n, payload: pay, weight_kg: Math.round(w * 10) / 10 });
+      n++; out.push({ id: sid + '-c' + n, crate_no: n, payload: pay, weight_kg: Math.round(w * 10) / 10 });
     }
     return out;
   }
@@ -310,14 +319,14 @@ var MOCK = (function () {
       eta_hours: 20, eta_at: new Date(Date.now() + 20 * 3600000).toISOString(),
       weight_kg: 0, status: 'transit', crates_total: 0, crates_stored: 0,
       payload: { fuel: 30, medicine: 40 } };
-    [s1, s2].forEach(function (s) { s.crates = crates(s.payload); s.weight_kg = wt(s.payload); s.crates_total = s.crates.length; });
+    [s1, s2].forEach(function (s) { s.crates = crates(s.payload, s.id); s.weight_kg = wt(s.payload); s.crates_total = s.crates.length; });
     S = {
       ok: true, is_owner: true, config: CFG,
       warehouse: { id: 'w1', owner_id: 'local', owner_name: 'You', node_id: 'node_demo',
         tier: 1, units_total: 2, max_units: 4, open_to_all: true },
       units: [
         { id: 'u1', bay_no: 1, renter_id: 'p2', renter_name: 'Ashvane', capacity_kg: 500, used_kg: 0, contents: {}, mine: false },
-        { id: 'u2', bay_no: 2, renter_id: 'p3', renter_name: 'Corvin',  capacity_kg: 500, used_kg: 470, contents: { metal: 120, water: 15 }, mine: false }
+        { id: 'u2', bay_no: 2, renter_id: 'p3', renter_name: 'Corvin',  capacity_kg: 500, used_kg: 492, contents: { metal: 130, water: 18 }, mine: false }
       ],
       shipments: [s1, s2],
       lifter_tier: 0,
@@ -453,9 +462,11 @@ function buildScene() {
   // come from WHTruck.SHADOW_HINT — flat slab sides stripe themselves with acne
   // if normalBias is stingy.
   var sh = (window.WHTruck && WHTruck.SHADOW_HINT) || { bias: -0.0002, normalBias: 0.06, mapSize: 2048 };
+  // 1024 is plenty for a yard this size and halves the shadow pass cost.
+  var SHMAP = 1024;
   var key = new T.DirectionalLight(0xffd9a8, 1.5);
   key.position.set(6, 20, 14); key.castShadow = true;
-  key.shadow.mapSize.set(sh.mapSize, sh.mapSize);
+  key.shadow.mapSize.set(SHMAP, SHMAP);
   key.shadow.camera.left = -30; key.shadow.camera.right = 30;
   key.shadow.camera.top = 30; key.shadow.camera.bottom = -30;
   key.shadow.camera.near = 1; key.shadow.camera.far = 70;
@@ -479,6 +490,23 @@ function buildScene() {
     bayMine: M({ color: 0x2c4a3a, roughness: 0.85, emissive: 0x0d2a1c, emissiveIntensity: 0.6 }),
   };
 
+  // Merge indexed BoxGeometries into one buffer — r128 keeps BufferGeometryUtils
+  // in /examples, which we do not load, and this is all we need from it.
+  var mergeGeos = function (list) {
+    var pos = [], nor = [], idx = [], base = 0;
+    list.forEach(function (g) {
+      var p = g.attributes.position.array, nA = g.attributes.normal.array, iA = g.index.array;
+      for (var i = 0; i < p.length; i++) pos.push(p[i]);
+      for (var j = 0; j < nA.length; j++) nor.push(nA[j]);
+      for (var k = 0; k < iA.length; k++) idx.push(iA[k] + base);
+      base += g.attributes.position.count;
+    });
+    var out = new T.BufferGeometry();
+    out.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+    out.setAttribute('normal', new T.Float32BufferAttribute(nor, 3));
+    out.setIndex(idx);
+    return out;
+  };
   var box = function (w, h, d, m, x, y, z, noShadow) {
     var o = new T.Mesh(new T.BoxGeometry(w, h, d), m);
     o.position.set(x, y, z);
@@ -509,12 +537,19 @@ function buildScene() {
   var roof = box(WX * 2 + 0.5, 0.4, ZF - ZB, mat.wall, 0, H, (ZB + ZF) / 2, true);
   roof.receiveShadow = true;
   // Roof trusses + strip lights, so the interior has depth instead of a flat lid.
+  // ⚠ TWO point lights, not seven. Every extra light recompiles every material
+  // in the scene and adds another iteration to every fragment shader; the first
+  // build shipped seven and the yard ran at a crawl — walking felt broken
+  // because the frame rate was, not because the controller was.
+  // The strip fixtures are emissive geometry, which costs nothing.
   for (var i = 0; i < 7; i++) {
     var z = ZB + 1.6 + i * 3.0;
     box(WX * 2, 0.28, 0.28, mat.steel, 0, H - 0.55, z, true);
-    var lt = box(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);
-    var pl = new T.PointLight(0xffe6bd, 0.5, 20, 2); pl.position.set(0, H - 1.1, z); scene.add(pl);
+    box(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);
   }
+  [ZB + 5, ZB + 14].forEach(function (z) {
+    var pl = new T.PointLight(0xffe6bd, 0.85, 30, 2); pl.position.set(0, H - 1.4, z); scene.add(pl);
+  });
   // Painted dock threshold — you can see where inside becomes outside.
   var thr = new T.Mesh(new T.PlaneGeometry(9, 0.5), mat.gold);
   thr.rotation.x = -Math.PI / 2; thr.position.set(0, 0.02, ZF); scene.add(thr);
@@ -538,9 +573,19 @@ function buildScene() {
         var o = new T.Mesh(new T.BoxGeometry(w, h, d), m);
         o.position.set(px, py, pz); o.castShadow = true; o.receiveShadow = true; n.add(o); return o;
       };
-      sub(0.18, BH, BD, wallM, -BW / 2, BH / 2, 0);
-      sub(0.18, BH, BD, wallM,  BW / 2, BH / 2, 0);
-      sub(BW, BH, 0.18, wallM, 0, BH / 2, -BD / 2);
+      // One merged shell per bay. Bays are static furniture; five separate
+      // boxes each was pure draw-call tax.
+      var shell = new T.Group();
+      var gs = [
+        new T.BoxGeometry(0.18, BH, BD), new T.BoxGeometry(0.18, BH, BD),
+        new T.BoxGeometry(BW, BH, 0.18)
+      ];
+      gs[0].translate(-BW / 2, BH / 2, 0);
+      gs[1].translate(BW / 2, BH / 2, 0);
+      gs[2].translate(0, BH / 2, -BD / 2);
+      var merged = mergeGeos(gs);
+      var mm = new T.Mesh(merged, wallM);
+      mm.castShadow = true; mm.receiveShadow = true; n.add(mm);
       sub(BW, 0.14, BD, mat.dark, 0, BH, 0);
       var pad = new T.Mesh(new T.PlaneGeometry(BW - 0.3, BD - 0.3), mat.slab);
       pad.rotation.x = -Math.PI / 2; pad.position.y = 0.03; n.add(pad);
@@ -603,7 +648,8 @@ function buildScene() {
     scr.position.set(0, 1.42, 0.02); n.add(scr);
     var post = new T.Mesh(new T.BoxGeometry(0.14, 0.7, 0.14), mat.steel);
     post.position.y = 1.0; n.add(post);
-    var pl = new T.PointLight(col, 0.7, 6, 2); pl.position.set(0, 1.5, 0.5); n.add(pl);
+    // No PointLight here either — the emissive screen carries it. Two terminals
+    // meant two more lights in every shader for a glow that emissive already gives.
     App.colliders.push({ x: x, z: z, hw: 0.6, hd: 0.4 });
     return n;
   };
@@ -761,7 +807,7 @@ function buyUnit(cur) {
       toast('❌ ' + reasonText(r), 3400);
       return;
     }
-    WH.setState(r); closeModal();
+    WH.setState(r); closeModal(); refreshWorld();
     toast('📦 Storage unit opened — Bay ' + r.warehouse.units_total + ' is ready.', 3200);
   });
 }

@@ -47067,7 +47067,39 @@ async function cloudFetchProfile() {
     const localPending   = !!(Profile.cloud && Profile.cloud.pendingChanges);
     // 5-second grace: if local was edited within 5s AFTER cloud's updated_at
     // we still treat local as fresher (covers clock drift + race conditions).
-    const localIsFresher = localPending || (localEditedMs > 0 && localEditedMs >= (cloudUpdatedMs - 5000));
+    /* 🪪 CROSS-DEVICE: PENDING IS NOT A TIME MACHINE.
+       This read:
+           localPending || (localEditedMs > 0 && localEditedMs >= cloudUpdatedMs - 5000)
+       so `pendingChanges` ALONE made local authoritative, with no reference to
+       when the cloud was last written. That is the reported "sign in on another
+       device and get old data".
+
+       pendingChanges is set by saveProfile(), and saveProfile runs during
+       ordinary startup — this file already documents the same trap for money
+       ("after a bank deposit local ALWAYS looks newer … which makes
+       localIsFresher unconditionally true") and special-cased the wallet via
+       wallet_seq. The identical flaw applied to EVERY other progression field
+       and was never closed.
+
+       The consequence on a returning device: play on phone Mon, on desktop
+       Tue-Fri, reopen the phone Sat. The phone still carries Monday's save and
+       a stale pending flag, declares itself fresher than Friday's cloud, keeps
+       Monday's progression — and then UPLOADS it, so the newer week is
+       overwritten on the server too. The player loses the days, not just the
+       view of them.
+
+       Pending now means "local has unsaved work" — which still wins a tie, and
+       still wins when local genuinely is the newer edit — but it can no longer
+       out-rank a cloud row written LATER than local's own last edit. Two
+       divergent timelines cannot be merged; most-recent-write is the semantic
+       players expect from "the same account on another device", and it is the
+       one that cannot silently delete a week.
+
+       ⚠ The 5s grace is preserved exactly, covering clock drift between the
+         device and Postgres, so a same-session save/fetch race still resolves
+         to local as it always did. */
+    const localIsFresher = (localPending || localEditedMs > 0)
+                        && localEditedMs >= (cloudUpdatedMs - 5000);
     // 🛡️ ANTI-WIPE gates (the actual fix for the fresh-device account erase):
     const localEmpty   = _profileLooksEmpty(Profile);
     const cloudHasProg = _cloudRowHasProgress(data);

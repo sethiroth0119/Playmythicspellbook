@@ -75,7 +75,13 @@ returns jsonb language sql immutable as $$
     'crate_kg', 22,
     -- The most a shipment may weigh in one go. Past this the sender splits it.
     -- Silently truncating a payload is how you make resources disappear.
-    'max_shipment_kg', 4000,
+    -- ⚠ Sized against what a renter can REALISTICALLY have waiting for it. A
+    -- tier-1 warehouse is 4 bays x 500 kg, and crate granularity wastes ~17 kg
+    -- per bay (floor(500/21) = 23 crates = 483 kg), so 1,932 kg is the real
+    -- tier-1 ceiling. 4,000 was more than double that and made "accepted" a
+    -- promise the yard could not keep. wh_send_shipment also checks the actual
+    -- destination now; this is just the outer bound.
+    'max_shipment_kg', 1800,
     -- ⏱ ETA in HOURS by node level. Level 1 = the 72h ceiling; level 10 = 6h.
     -- FREE CITIES (a node with no tw_node_owners row) ALWAYS take 72h.
     -- ⚠ LEVEL 1 MUST BEAT LEVEL 0. They both used to be 72, which made the
@@ -396,7 +402,11 @@ begin
   exception when undefined_table or undefined_column then v_hit := false; end;
   return coalesce(v_hit, false);
 end; $$;
-grant execute on function public.wh_player_at_node(uuid, text) to authenticated;
+-- ⚠ NOT granted to authenticated. It takes an arbitrary user id, so exposing it
+-- let any player map any OTHER player's camp registrations and residency:
+-- wh_player_at_node(carol, 'node-rich') answered `t` when called by Alice.
+-- Only wh_send_shipment needs it, and that runs SECURITY DEFINER.
+revoke all on function public.wh_player_at_node(uuid, text) from public, anon, authenticated;
 
 -- ─── ⏱ wh_eta_hours — hours for a delivery, from the config table ───────────
 create or replace function public.wh_eta_hours(p_level integer)
@@ -483,10 +493,22 @@ begin
       'open_to_all', v_w.open_to_all),
     'units', coalesce((
       select jsonb_agg(jsonb_build_object(
-        'id', u.id, 'bay_no', u.bay_no, 'renter_id', u.renter_id, 'renter_name', u.renter_name,
-        'capacity_kg', u.capacity_kg, 'used_kg', u.used_kg,
+        'id', u.id, 'bay_no', u.bay_no,
+        -- ⚠ MASKED. Tightening the table RLS moved this leak into the rpc and
+        -- made it worse: any authenticated player could read a warehouse id out
+        -- of wh_directory() and pull back, per bay, the renter's RAW auth.users
+        -- id, their name, how full their bay was and when their rent expired.
+        -- Exporting another player's auth uid is worse than the contents leak
+        -- it replaced, and used_kg + identity IS the "which bays are worth
+        -- diverting" list this module claims not to publish. You see a bay's
+        -- occupant only if you own the building or rent that bay.
+        'renter_id',   case when v_is_owner or u.renter_id = v_uid then u.renter_id   else null end,
+        'renter_name', case when v_is_owner or u.renter_id = v_uid then u.renter_name else null end,
+        'used_kg',     case when v_is_owner or u.renter_id = v_uid then u.used_kg     else null end,
+        'rent_until',  case when v_is_owner or u.renter_id = v_uid then u.rent_until  else null end,
+        'occupied',    (u.renter_id is not null),
+        'capacity_kg', u.capacity_kg,
         'contents', case when v_is_owner or u.renter_id = v_uid then u.contents else '{}'::jsonb end,
-        'rent_until', u.rent_until,
         'mine', (u.renter_id = v_uid)
       ) order by u.bay_no) from public.wh_units u where u.warehouse_id = v_w.id), '[]'::jsonb),
     'shipments', coalesce((
@@ -518,9 +540,14 @@ returns jsonb language sql stable security definer set search_path = public as $
   select coalesce((select jsonb_agg(jsonb_build_object(
     'id', w.id, 'owner_id', w.owner_id, 'owner_name', w.owner_name,
     'node_id', w.node_id, 'tier', w.tier, 'units_total', w.units_total,
+    -- ⚠ This predicate must MATCH wh_rent_unit's, or the directory advertises
+    -- bays that then refuse with no_free_unit. It used to say "expired" where
+    -- the claim rule says "expired past the grace period AND empty".
     'free_units', (select count(*) from public.wh_units u
                     where u.warehouse_id = w.id
-                      and (u.renter_id is null or u.rent_until < now())),
+                      and (u.renter_id is null
+                           or (u.rent_until < now() - ((public.wh_config() ->> 'rent_grace_days')::int || ' days')::interval
+                               and u.contents = '{}'::jsonb))),
     'my_units', (select count(*) from public.wh_units u
                   where u.warehouse_id = w.id and u.renter_id = auth.uid()
                     and (u.rent_until is null or u.rent_until > now()))
@@ -736,7 +763,7 @@ declare
   v_cfg jsonb := public.wh_config(); v_pay jsonb; v_kg numeric;
   v_lvl integer; v_free boolean; v_hours integer; v_ship public.wh_shipments;
   v_crate_kg numeric; v_n integer; v_i integer; v_left numeric; v_take numeric;
-  v_kind text; k text; v_qty numeric; v_unit_kg numeric; v_cpay jsonb; v_cw numeric;
+  v_kind text; k text; v_qty numeric; v_unit_kg numeric; v_cpay jsonb; v_cw numeric; v_free_kg numeric;
   v_rem jsonb;
 begin
   if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
@@ -758,6 +785,28 @@ begin
   if v_kg > (v_cfg ->> 'max_shipment_kg')::numeric then
     return jsonb_build_object('ok', false, 'reason', 'too_large',
       'weight_kg', v_kg, 'max_shipment_kg', (v_cfg ->> 'max_shipment_kg')::numeric);
+  end if;
+  -- 📏 …and refuse one the DESTINATION cannot hold. Without this the loop
+  -- accepted arithmetically impossible deliveries: a 3,997 kg shipment against
+  -- a 500 kg bay returned ok:true, and ten of them put 39,970 kg in flight
+  -- against 500 kg of storage. The sender learned about it 72 hours later and
+  -- the only way out was cancelling everything.
+  -- Free space is the sender's own current bays in THIS warehouse, minus every
+  -- kilogram already on the road to them.
+  select coalesce(sum(u.capacity_kg - u.used_kg), 0) into v_free_kg
+    from public.wh_units u
+    where u.warehouse_id = v_w.id and u.renter_id = v_uid
+      and (u.rent_until is null or u.rent_until > now());
+  v_free_kg := v_free_kg - coalesce((
+    select sum(sh.weight_kg - coalesce(
+             (select sum(c2.weight_kg) from public.wh_crates c2
+               where c2.shipment_id = sh.id and c2.stored), 0))
+    from public.wh_shipments sh
+    where sh.warehouse_id = v_w.id and sh.sender_id = v_uid
+      and sh.status in ('transit', 'arrived')), 0);
+  if v_kg > v_free_kg then
+    return jsonb_build_object('ok', false, 'reason', 'no_room_at_destination',
+      'weight_kg', v_kg, 'free_kg', greatest(0, v_free_kg));
   end if;
   -- 🏳 The origin node must be one this player is DEMONSTRABLY attached to.
   -- An unverifiable claim is not an error — it just resolves to a free city and
@@ -869,6 +918,11 @@ begin
   if v_u.warehouse_id is distinct from v_s.warehouse_id
      or v_u.renter_id is distinct from v_s.sender_id then
     return jsonb_build_object('ok', false, 'reason', 'wrong_unit');
+  end if;
+  -- The rental has to be current, exactly as wh_send_shipment already demands.
+  -- Allowing a lapsed bay to keep accepting deposits contradicted that gate.
+  if v_u.rent_until is not null and v_u.rent_until < now() then
+    return jsonb_build_object('ok', false, 'reason', 'rental_expired', 'rent_until', v_u.rent_until);
   end if;
   -- …and the caller still has to be someone entitled to touch this warehouse:
   -- the owner (who does the hauling) or the renter themselves.
@@ -1059,16 +1113,21 @@ begin
     where n.nspname = 'public' and p.proname like 'wh\_%' escape '\'
   loop
     execute format('revoke all on function %s from public, anon', f.sig);
-    if f.proname in ('_wh_charge', '_wh_credit') then
-      continue;                                  -- internals: nobody but the rpcs
+    -- Internals stay revoked from everyone; only the rpcs call them.
+    -- wh_player_at_node belongs in that set despite its public-looking name:
+    -- it takes an arbitrary user id and would otherwise be an oracle for any
+    -- player's camp/residency. The sweep runs LAST, so forgetting it here
+    -- silently grants it back after the explicit revoke above.
+    if f.proname like '\_wh\_%' escape '\' or f.proname = 'wh_player_at_node' then
+      continue;
     end if;
     execute format('grant execute on function %s to authenticated', f.sig);
   end loop;
-  -- Internals stay revoked even from authenticated.
+  -- …and belt-and-braces on every internal, including wh_player_at_node.
   for f in
     select p.oid::regprocedure as sig
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname in ('_wh_charge', '_wh_credit')
+    where n.nspname = 'public' and p.proname like '\_wh\_%' escape '\'
   loop
     execute format('revoke all on function %s from public, anon, authenticated', f.sig);
   end loop;

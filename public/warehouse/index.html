@@ -273,8 +273,8 @@ var MOCK = (function () {
     // the standalone yard behaves differently from the live one — this block
     // said crate_kg 50 after the server moved to 22, and the mock yard became
     // unplayable (every crate too heavy for bare hands) while production was fine.
-    default_weight: 1.0, crate_kg: 22, max_shipment_kg: 4000, rent_grace_days: 3,
-    eta_hours: { 0: 72, 1: 72, 2: 64, 3: 56, 4: 48, 5: 40, 6: 32, 7: 26, 8: 20, 9: 13, 10: 6 },
+    default_weight: 1.0, crate_kg: 22, max_shipment_kg: 1800, rent_grace_days: 3,
+    eta_hours: { 0: 72, 1: 68, 2: 62, 3: 56, 4: 50, 5: 44, 6: 37, 7: 30, 8: 22, 9: 14, 10: 6 },
     free_city_hours: 72, max_hours: 72, rent_cinder_per_day: 1200, rent_max_days: 30
   };
   var S = null;
@@ -374,6 +374,33 @@ var MOCK = (function () {
         if (!chg(cur3, cost3)) return { ok: false, reason: 'insufficient', currency: cur3, cost: cost3 };
         S.lifter_tier = t;
         return { ok: true, tier: t, carry_kg: lr.carry_kg, spent: cost3, currency: cur3, wallet: S.wallet };
+      }
+      if (fn === 'wh_expand_unit') {
+        var curE = a.p_currency === 'aza' ? 'aza' : 'cinder';
+        var uE = S.units.filter(function (x) { return x.id === a.p_unit_id; })[0];
+        if (!uE) return { ok: false, reason: 'no_unit' };
+        if (uE.capacity_kg >= CFG.unit_capacity_kg * 4) return { ok: false, reason: 'bay_maxed', capacity_kg: uE.capacity_kg };
+        var costE = curE === 'aza' ? CFG.unit_price_aza : CFG.unit_price_cinder;
+        if (!chg(curE, costE)) return { ok: false, reason: 'insufficient', currency: curE, cost: costE };
+        uE.capacity_kg += CFG.unit_capacity_kg;
+        return { ok: true, unit_id: uE.id, bay_no: uE.bay_no, capacity_kg: uE.capacity_kg,
+                 used_kg: uE.used_kg, spent: costE, currency: curE, wallet: S.wallet };
+      }
+      if (fn === 'wh_cancel_shipment') {
+        var shC = S.shipments.filter(function (x) { return x.id === a.p_shipment_id; })[0];
+        if (!shC) return { ok: false, reason: 'no_shipment' };
+        var back = {};
+        (shC.crates || []).forEach(function (c2) {
+          for (var k2 in c2.payload) back[k2] = (back[k2] || 0) + c2.payload[k2];
+        });
+        shC.status = 'cancelled'; shC.crates = [];
+        return { ok: true, payload: back };
+      }
+      if (fn === 'wh_withdraw') {
+        var uW = S.units.filter(function (x) { return x.id === a.p_unit_id; })[0];
+        if (!uW) return { ok: false, reason: 'no_unit' };
+        var out = uW.contents; uW.contents = {}; uW.used_kg = 0;
+        return { ok: true, payload: out };
       }
       if (fn === 'wh_store_crate') {
         var c = null, sh = null;
@@ -621,9 +648,27 @@ function buildScene() {
   // rotation.y = π/2 maps the truck's local +X (the sliding door) onto world −Z,
   // so the open door faces the warehouse and the nose points down the apron.
   App.truck = WHTruck.build(T, { profile: 'squircle', doorOpen: true });
-  App.truck.position.set(-1.2, 0, 10.5);
+  App.truckHome = new T.Vector3(-1.2, 0, 10.5);
+  App.truck.position.copy(App.truckHome);
   App.truck.rotation.y = Math.PI / 2;
   scene.add(App.truck);
+  // 🚚 The van PULLS UP. It used to be parked forever, present even while the
+  // prompt read "The van is empty" — the design says trucks arrive. It drives in
+  // down the apron whenever a load lands, and reverses back out once the last
+  // crate is off it.
+  App.truckDrive = null;
+  App.truckArrive = function (instant) {
+    if (instant) { App.truck.position.copy(App.truckHome); App.truck.visible = true; return; }
+    App.truck.visible = true;
+    App.truck.position.set(App.truckHome.x + 34, 0, App.truckHome.z + 5);
+    App.truckDrive = { t0: performance.now(), dur: 3400, from: App.truck.position.clone(), to: App.truckHome.clone(), out: false };
+    toast('🚚 <b>A truck is pulling up.</b> Walk out and unload it.', 5000);
+  };
+  App.truckDepart = function () {
+    if (!App.truck.visible || App.truckDrive) return;
+    App.truckDrive = { t0: performance.now(), dur: 3000, from: App.truck.position.clone(),
+                       to: new T.Vector3(App.truckHome.x + 34, 0, App.truckHome.z + 5), out: true };
+  };
   App.colliders.push({ x: -1.2, z: 10.5, hw: 3.7, hd: 1.15 });
   // Where the player stands to reach into the cargo — just outside the slider.
   App.truckDoor = { x: -1.2 + 2.26, z: 10.5 - 1.5 };
@@ -689,6 +734,14 @@ function rebuildTruckCrates() {
     (s.crates || []).forEach(function (c) { pending.push({ c: c, s: s }); });
   });
   App.pendingCrates = pending;
+  // The van is only here when there is something on it.
+  try {
+    if (!App.truckDrive) {
+      if (pending.length && !App.truck.visible) App.truckArrive(!App.ready);
+      else if (!pending.length && App.truck.visible && App.ready) App.truckDepart();
+    }
+  } catch (e) {}
+  if (App.truckDrive) return;                 // do not stack crates on a moving van
   var m = new T.MeshStandardMaterial({ color: 0x8a6a3e, roughness: 0.86 });
   pending.slice(0, 14).forEach(function (p, i) {
     var g = new T.Mesh(new T.BoxGeometry(0.6, 0.48, 0.6), m);
@@ -772,33 +825,64 @@ function openModal(title, sub, body, foot) {
 }
 
 /* ── 📦 "You need to open storage unit space" — the spec's exact words ────── */
-function openNoRoomModal(unit, needKg) {
+// ⚠ This modal used to charge for a NEW bay. The crate in your hands is
+// addressed to the RENTER's bay, so wh_store_crate then refused it with
+// `wrong_unit` and the load stayed stranded — the player paid 50,000 Cinder for
+// nothing. Opening storage unit space now GROWS the addressed bay
+// (wh_expand_unit), which is the only purchase that can possibly help. And if
+// they would rather not pay, the load can go home instead.
+function openNoRoomModal(unit, needKg, crate) {
   var C = cfg(), st = WH.state(), w = st.wallet || WH.wallet();
-  var tier = C.tiers[st.warehouse.tier - 1] || C.tiers[0];
-  var capped = st.units.length >= tier.max_units;
+  var maxCap = C.unit_capacity_kg * 4;
+  var maxed = unit.capacity_kg >= maxCap;
   var body =
     '<div class="note">Bay ' + unit.bay_no + ' is holding <b>' + Math.round(unit.used_kg) + ' kg</b> of '
       + unit.capacity_kg + ' kg. This crate weighs <b>' + needKg + ' kg</b> and will not fit.</div>'
-    + (capped
-      ? '<p>Your <b>' + esc(tier.name) + '</b> is already carrying its maximum of <b>' + tier.max_units
-        + '</b> bays. Upgrade the building before you can open any more space.</p>'
-      : '<p>Open another storage unit in your warehouse. New bays hold <b>' + C.unit_capacity_kg
-        + ' kg</b> each and can be rented straight out to other players.</p>'
+    + (maxed
+      ? '<p>Bay ' + unit.bay_no + ' is already as large as one bay can get (' + maxCap
+        + ' kg). The rest of this load has to go back — or the renter needs a second bay.</p>'
+      : '<p>Open more space <b>in Bay ' + unit.bay_no + ' itself</b>. It gains another <b>'
+        + C.unit_capacity_kg + ' kg</b>, and the crate in your hands goes straight in.</p>'
         + '<div class="opt"><div class="g"><div class="t">🪙 ' + C.unit_price_aza + ' Aza Coin</div>'
         + '<div class="d">You hold ' + fmt(w.aza) + ' Aza</div></div></div>'
         + '<div class="opt"><div class="g"><div class="t">🔥 ' + fmt(C.unit_price_cinder) + ' Cinder</div>'
         + '<div class="d">You hold ' + fmt(w.cinder) + ' Cinder — the same price at the '
         + fmt(C.aza_to_cinder) + ' Cinder / Aza peg</div></div></div>');
   var foot = [{ label: 'Not now', on: closeModal }];
-  if (capped) {
-    foot.push({ label: '🏗 Upgrade the warehouse', gold: true, on: function () { openUpgradeModal(); } });
-  } else {
+  foot.push({ label: '↩ Send this load back', on: function () { returnLoad(crate); } });
+  if (!maxed) {
     foot.push({ label: '🪙 Buy with Aza', gold: true, disabled: w.aza < C.unit_price_aza,
-      on: function () { buyUnit('aza'); } });
+      on: function () { expandUnit(unit, 'aza'); } });
     foot.push({ label: '🔥 Buy with Cinder', gold: true, disabled: w.cinder < C.unit_price_cinder,
-      on: function () { buyUnit('cinder'); } });
+      on: function () { expandUnit(unit, 'cinder'); } });
   }
   openModal('📦 You need to open storage unit space', 'Bay ' + unit.bay_no + ' is full', body, foot);
+}
+
+function expandUnit(unit, cur) {
+  WH.rpc('wh_expand_unit', { p_unit_id: unit.id, p_currency: cur }).then(function (r) {
+    if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3400); return; }
+    var st = WH.state();
+    var u = st.units.filter(function (x) { return x.id === r.unit_id; })[0];
+    if (u) u.capacity_kg = r.capacity_kg;
+    if (r.wallet) st.wallet = r.wallet;
+    WH.setState(st); closeModal(); refreshWorld();
+    toast('📦 Bay ' + r.bay_no + ' opened up — now ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg. Put it in.', 3600);
+  });
+}
+
+// ↩ The way out when nobody wants to pay: the whole remaining load goes home.
+function returnLoad(crate) {
+  if (!crate) { closeModal(); return; }
+  WH.rpc('wh_cancel_shipment', { p_shipment_id: crate.s.id }).then(function (r) {
+    if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3600); return; }
+    var st = WH.state();
+    st.shipments = st.shipments.filter(function (x) { return x.id !== crate.s.id; });
+    WH.setState(st);
+    App.held = null; App.carried = 0; App.heldMesh.visible = false;
+    closeModal(); refreshWorld();
+    toast('↩ The rest of the load is on its way back to the sender.', 4200);
+  });
 }
 
 function buyUnit(cur) {
@@ -840,6 +924,44 @@ function upgradeTier(cur) {
     WH.setState(r); closeModal(); refreshWorld();
     toast('🏗 Warehouse upgraded to Tier ' + r.warehouse.tier + '.', 3200);
   });
+}
+
+// ── 📦 What is actually in a bay ───────────────────────────────────────────
+// contents comes straight from wh_units; the server masks it to the warehouse
+// owner and the bay's own renter, so anything shown here is something the
+// viewer is entitled to see.
+var RES_META = {
+  food: ['🥫', 'Food'], water: ['💧', 'Water'], ammo: ['🔫', 'Ammo'],
+  medicine: ['💊', 'Medicine'], energyDrink: ['🥤', 'Energy Drink'],
+  supplies: ['📦', 'Supplies'], metal: ['⛓️', 'Metal'], fuel: ['⛽', 'Fuel'],
+  corruptedEssence: ['🟣', 'Corrupted Essence'], memoryShards: ['🧠', 'Memory Shards'],
+  dna: ['🧬', 'DNA']
+};
+function openBayModal(unit) {
+  var c = unit.contents || {};
+  var keys = Object.keys(c).filter(function (k) { return (c[k] | 0) > 0; });
+  var pct = Math.min(100, unit.used_kg / Math.max(1, unit.capacity_kg) * 100);
+  var body = '<div class="note">' + (unit.renter_name
+      ? 'Rented by <b>' + esc(unit.renter_name) + '</b>.'
+      : 'Not rented yet — any player can take this bay.')
+    + ' Holding <b>' + Math.round(unit.used_kg || 0) + ' kg</b> of ' + unit.capacity_kg + ' kg.</div>'
+    + '<div class="bar" style="margin-bottom:.8rem"><i style="width:' + pct + '%"></i></div>'
+    + (keys.length
+      ? keys.map(function (k) {
+          var m = RES_META[k] || ['📦', k];
+          var kg = ((cfg().weights[k] || cfg().default_weight) * c[k]).toFixed(1);
+          return '<div class="opt"><div class="g"><div class="t">' + m[0] + ' ' + esc(m[1]) + '</div>'
+            + '<div class="d mono">' + (c[k] | 0).toLocaleString() + ' units · ' + kg + ' kg</div></div></div>';
+        }).join('')
+      : '<p style="color:var(--mist)">Nothing has been carried in here yet. Loads that have landed are waiting on the van.</p>');
+  var inbound = (WH.state().shipments || []).filter(function (sp) { return sp.unit_id === unit.id && sp.status !== 'stored'; });
+  if (inbound.length) {
+    body += '<div class="note" style="margin-top:.8rem">🚚 ' + inbound.map(function (sp) {
+      return esc(sp.sender_name || 'A renter') + ' — ' + (sp.crates || []).length + ' crates still to come in, '
+        + etaText(sp).replace(/<[^>]+>/g, '');
+    }).join('<br>') + '</div>';
+  }
+  openModal('📦 Bay ' + unit.bay_no, 'What is in storage here', body, [{ label: 'Close', on: closeModal }]);
 }
 
 /* ── 🏋 weight lifters — "owners or workers can buy weight lifters" ───────── */
@@ -935,7 +1057,10 @@ function doInteract() {
     return;
   }
   if (n.kind === 'bay') {
-    if (!App.held) { toast('Nothing to put down. Take a crate off the van first.', 2400); return; }
+    // Empty-handed at a bay = LOOK INSIDE IT. This is a literal clause of the
+    // design ("press E and see the storage that was delivered") and it used to
+    // answer "Nothing to put down", which told the player nothing at all.
+    if (!App.held) { openBayModal(n.unit); return; }
     var target = n.unit;
     var want = App.held.s.unit_id;
     if (target.id !== want) {
@@ -945,7 +1070,7 @@ function doInteract() {
     var crate = App.held;
     WH.rpc('wh_store_crate', { p_crate_id: crate.c.id, p_unit_id: target.id }).then(function (r) {
       if (!r || r.ok === false) {
-        if (r && r.reason === 'no_room') { openNoRoomModal(target, crate.c.weight_kg); return; }
+        if (r && r.reason === 'no_room') { openNoRoomModal(target, crate.c.weight_kg, crate); return; }
         toast('❌ ' + reasonText(r), 3600);
         return;
       }
@@ -1070,8 +1195,25 @@ function tick() {
   var dt = Math.min(0.05, clock.getDelta());
   if (!App.ready) { renderer.render(scene, camera); return; }
 
+  // roll the truck along its arrival / departure path
+  if (App.truckDrive) {
+    var d = App.truckDrive;
+    // ⚠ WALL CLOCK, not `dt`. Movement caps dt at 50 ms so a stalled frame can
+    // never teleport the player through a wall — but feeding that capped value
+    // to a cinematic means a machine running at 2 fps takes 34 seconds to park
+    // a 3.4-second animation. A cinematic should take the time it says.
+    var dt2 = Math.min(1, (performance.now() - d.t0) / d.dur);
+    // ease-out on arrival (it brakes), ease-in on departure (it pulls away)
+    var e = d.out ? dt2 * dt2 : 1 - Math.pow(1 - dt2, 3);
+    App.truck.position.lerpVectors(d.from, d.to, e);
+    if (dt2 >= 1) {
+      if (d.out) App.truck.visible = false;
+      App.truckDrive = null;
+      rebuildTruckCrates();
+    }
+  }
   camera.rotation.order = 'YXZ';
-  camera.rotation.y = Ctl.yaw; camera.rotation.x = Ctl.pitch;
+  camera.rotation.x = Ctl.pitch; camera.rotation.y = Ctl.yaw;
 
   var K = Ctl.keys, mv = Ctl.move;
   var f = (K['w'] || K['arrowup'] || mv.f ? 1 : 0) - (K['s'] || K['arrowdown'] || mv.b ? 1 : 0);
@@ -1133,7 +1275,7 @@ function promptFor(s) {
              : 'The van is empty';
   }
   if (s.kind === 'bay') {
-    if (!App.held) return 'Bay ' + s.unit.bay_no + ' — ' + Math.round(s.unit.used_kg) + '/' + s.unit.capacity_kg + ' kg';
+    if (!App.held) return 'Look in Bay ' + s.unit.bay_no + ' (' + Math.round(s.unit.used_kg || 0) + '/' + s.unit.capacity_kg + ' kg)';
     return 'Drop in Bay ' + s.unit.bay_no;
   }
   return 'Use';

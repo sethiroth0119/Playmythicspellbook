@@ -918,3 +918,161 @@ begin
   raise notice '';
   raise notice '════════ HARNESS FINDINGS: % CHECKS PASSED ════════', pass;
 end $$;
+
+-- =============================================================================
+-- PvP VISIBILITY — the Watchtower, the extraction reciprocal, the Scout Report.
+-- Deterministic, because four-run sim samples are far too noisy to tell whether
+-- a feature fires at all.
+-- =============================================================================
+do $$
+declare
+  ua uuid; ub uuid; ea uuid; eb uuid; r jsonb; v_run uuid; v_seed bigint;
+  v_gate jsonb; st jsonb; n int; pass int := 0;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  insert into auth.users (email) values ('w1@w.test') returning id into ua;
+  insert into auth.users (email) values ('w2@w.test') returning id into ub;
+  insert into public.warpath_tickets (user_id, tickets) values (ua, 5), (ub, 5);
+  perform public.set_uid(ua);
+  r := public.warpath_enter('h', 'Watcher', 'ticket');
+  ea := (r->>'expedition_id')::uuid; v_run := (r->>'run_id')::uuid;
+  select seed into v_seed from public.warpath_runs where id = v_run;
+  perform public.set_uid(ub);
+  r := public.warpath_enter('h', 'Neighbour', 'ticket');
+  eb := (r->>'expedition_id')::uuid;
+
+  -- two camps 10 tiles apart: inside a Tower I's 12, outside the old 8
+  perform public.set_uid(ua);
+  update public.warpath_expeditions set x = 18, y = 15, moves_left = 6 where id = ea;
+  perform public.warpath_camp_place(ea);
+  perform public.set_uid(ub);
+  update public.warpath_expeditions set x = 28, y = 15, moves_left = 6 where id = eb;
+  perform public.warpath_camp_place(eb);
+
+  -- ── the tower must not report before it is built ───────────────────────
+  perform public.set_uid(ua); perform public.warpath_end_turn(ea);
+  perform public.set_uid(ub); perform public.warpath_end_turn(eb);
+  if exists (select 1 from public.warpath_events where run_id = v_run and kind = 'watchtower_report') then
+    raise exception 'FAIL: a camp with no Watchtower reported anyway'; end if;
+  perform public.set_uid(ua);
+  st := public.warpath_state();
+  if (st->'others'->0->'camp') is not null and (st->'others'->0->>'camp') <> 'null' then
+    raise exception 'FAIL: an unexplored rival camp is visible without a tower'; end if;
+  pass := pass + 1; raise notice 'ok  no Watchtower, no report — the rival camp stays unknown';
+
+  -- ── build it, and it must fire ─────────────────────────────────────────
+  update public.warpath_camps set buildings = '{"campfire":1,"watchtower":1}'::jsonb
+   where expedition_id = ea;
+  perform public.set_uid(ua); perform public.warpath_end_turn(ea);
+  perform public.set_uid(ub); perform public.warpath_end_turn(eb);
+
+  select count(*) into n from public.warpath_events
+   where run_id = v_run and kind = 'watchtower_report' and expedition_id = ea;
+  if n < 1 then
+    raise exception 'FAIL: a Watchtower I did not report a camp 10 tiles away — the building the game charges 40 wood for still does nothing'; end if;
+  pass := pass + 1; raise notice 'ok  a Watchtower reports a rival camp 10 tiles out';
+
+  -- and the camp is now actually on the owner's map, via ordinary fog
+  perform public.set_uid(ua);
+  st := public.warpath_state();
+  if (st->'others'->0->'camp'->>'x')::int <> 28 then
+    raise exception 'FAIL: the reported camp did not become visible in warpath_state'; end if;
+  pass := pass + 1; raise notice 'ok  the reported camp appears on the map through normal fog';
+
+  -- ...and it must NOT report the same camp again every turn
+  perform public.set_uid(ua); perform public.warpath_end_turn(ea);
+  perform public.set_uid(ub); perform public.warpath_end_turn(eb);
+  select count(*) into n from public.warpath_events
+   where run_id = v_run and kind = 'watchtower_report' and expedition_id = ea;
+  if n > 1 then raise exception 'FAIL: the tower re-reports known camps every turn (% events)', n; end if;
+  pass := pass + 1; raise notice 'ok  the tower reports only NEW intel, it does not spam the feed';
+
+  -- ── the tower never reports a live hero position ───────────────────────
+  update public.warpath_expeditions set x = 20, y = 15 where id = eb;   -- 2 tiles from A's camp
+  perform public.set_uid(ua);
+  st := public.warpath_state();
+  if (st->'others'->0->>'x') is not null and not (st->'others'->0->>'visible')::boolean then
+    raise exception 'FAIL: a hero position leaked through the tower channel'; end if;
+  pass := pass + 1; raise notice 'ok  the tower reports camps only — live positions stay behind fog';
+
+  -- ── the extraction reciprocal ──────────────────────────────────────────
+  -- ⚠ Use a PORTAL, not the main gate. warpath_enter reveals the Warpath Gate
+  -- to every entrant on purpose (you walked in through it), so the main gate is
+  -- universally known and always has watchers. The interesting case — and the
+  -- whole reason the count exists — is the quiet portal nobody has found.
+  select s into v_gate from jsonb_array_elements(public.wp_structures(v_seed)) s
+    where s->>'k' = 'gate' and (s->>'main')::boolean is not true limit 1;
+  perform public.set_uid(ua);
+  update public.warpath_expeditions set x = (v_gate->>'x')::int, y = (v_gate->>'y')::int,
+         status = 'active', turn_ended = false, moves_left = 6 where id = ea;
+  r := public.warpath_extract_begin(ea);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: extract_begin: %', r; end if;
+  if (r->'watchers') is null then
+    raise exception 'FAIL: extraction does not report how many rivals can act on the warning'; end if;
+  if (r->>'watchers')::int <> 0 then
+    raise exception 'FAIL: expected 0 watchers at an unfound portal, got %', r->>'watchers'; end if;
+  pass := pass + 1; raise notice 'ok  extracting at an undiscovered portal reports 0 rivals watching';
+
+  -- now let B explore that portal, and the count must rise
+  perform public.wp_reveal(eb, (v_gate->>'x')::int, (v_gate->>'y')::int, 1);
+  update public.warpath_expeditions set status = 'active', extract_left = 0 where id = ea;
+  r := public.warpath_extract_begin(ea);
+  if (r->>'watchers')::int <> 1 then
+    raise exception 'FAIL: a rival who has explored the portal was not counted (got %)', r->>'watchers'; end if;
+  pass := pass + 1; raise notice 'ok  a rival who knows the portal is counted — the risk is priced';
+
+  -- and the main gate, which everyone entered through, is correctly loud
+  select s into v_gate from jsonb_array_elements(public.wp_structures(v_seed)) s
+    where s->>'k' = 'gate' and (s->>'main')::boolean is true limit 1;
+  update public.warpath_expeditions set x = (v_gate->>'x')::int, y = (v_gate->>'y')::int,
+         status = 'active', extract_left = 0 where id = ea;
+  r := public.warpath_extract_begin(ea);
+  if (r->>'watchers')::int < 1 then
+    raise exception 'FAIL: the Warpath Gate is known to every entrant and should never read 0'; end if;
+  pass := pass + 1; raise notice 'ok  the main gate always reads as watched — that is what it is for';
+
+  -- and the public broadcast still carries no coordinates (B6)
+  if exists (select 1 from public.warpath_events
+              where run_id = v_run and kind = 'extraction_started' and payload ? 'x') then
+    raise exception 'FAIL: the extraction broadcast is publishing coordinates again'; end if;
+  pass := pass + 1; raise notice 'ok  the broadcast still names the gate, not the tile';
+
+  -- ── the Scout Report ───────────────────────────────────────────────────
+  perform public.set_uid(ua);
+  update public.warpath_expeditions e set x = c.x, y = c.y, status = 'active',
+         moves_left = 6, turn_ended = false, extract_left = 0, scouted_turn = 0
+    from public.warpath_camps c where c.expedition_id = e.id and e.id = ea;
+  r := public.warpath_scout_report(ea);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: scout report: %', r; end if;
+  if jsonb_array_length(r->'reports') < 1 then
+    raise exception 'FAIL: the scout found nothing though the tower already located a camp'; end if;
+  if (r->'reports'->0 ? 'x') or (r->'reports'->0 ? 'y') then
+    raise exception 'FAIL: the scout report leaks coordinates — it must give a direction and a band'; end if;
+  if (r->>'moves_left')::int <> 5 then
+    raise exception 'FAIL: the scout report did not cost 1 movement (left %)', r->>'moves_left'; end if;
+  pass := pass + 1; raise notice 'ok  the scout reports direction + band for %, costs 1 movement',
+    r->'reports'->0->>'hero';
+
+  r := public.warpath_scout_report(ea);
+  if (r->>'ok')::boolean then raise exception 'FAIL: the scout reported twice in one turn'; end if;
+  pass := pass + 1; raise notice 'ok  one scout report per turn';
+
+  -- a camp you have never seen is not reported
+  perform public.set_uid(ub);
+  update public.warpath_expeditions e set x = c.x, y = c.y, moves_left = 6, turn_ended = false,
+         scouted_turn = 0 from public.warpath_camps c
+   where c.expedition_id = e.id and e.id = eb;
+  r := public.warpath_scout_report(eb);
+  if jsonb_array_length(r->'reports') <> 0 then
+    raise exception 'FAIL: the scout reported a camp its owner has never discovered'; end if;
+  pass := pass + 1; raise notice 'ok  the scout only re-surfaces what you already found';
+
+  raise notice '';
+  raise notice '════════ PvP VISIBILITY: % CHECKS PASSED ════════', pass;
+end $$;

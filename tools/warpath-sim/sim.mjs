@@ -231,6 +231,10 @@ async function collect(obs, sim, bots, map) {
        left join public.warpath_expeditions w on w.id = b.winner_id
       where b.run_id = $1 order by b.opened_turn, b.opened_at`, [sim.runId]);
 
+  for (const b of bots) {
+    const row = (await obs.sql('select buildings from public.warpath_camps where expedition_id=$1', [b.exp]))[0];
+    b.lastBuildings = row ? row.buildings : null;
+  }
   sim.finalExp = await obs.sql(
     `select e.slot, e.hero_name, e.status, e.hero_hp, e.stat_distance, e.stat_defeated,
             e.stat_raided, e.stat_bosses,
@@ -260,6 +264,16 @@ async function collect(obs, sim, bots, map) {
   sim.botCounters = Object.fromEntries(bots.map(b => [b.name, b.counters]));
   sim.pgErrors = bots.flatMap(b => b.s.pgErrors.map(e => ({ who: b.name, ...e })));
   sim.rivalCampsKnown = Object.fromEntries(bots.map(b => [b.name, b.rivalCamps.size]));
+  /* The awareness table — the measurement this whole exercise is judged on.
+     `aware` is "did this player ever get ANY signal that the other three
+     exist", which is the thing battle count fails to capture. */
+  sim.awareness = bots.map(b => ({
+    who: b.name, strategy: b.strategy?.id || null,
+    ...b.signals,
+    aware: (b.signals.sawRivalHero + b.signals.foundRivalCamp +
+            b.signals.gotExtractWarn + b.signals.gotTowerReport + b.signals.fought) > 0,
+    watchtower: !!(b.lastBuildings && b.lastBuildings.watchtower),
+  }));
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
@@ -410,6 +424,31 @@ function report(all) {
   const worst = Object.entries(streaks).sort((a, b) => b[1] - a[1])[0];
   say(`   longest run of consecutive-turn defeats of the same hero  ${worst ? `${worst[1]} (${worst[0]})` : 0}`);
   if (errs.length) { say('   ⚠ errors:'); for (const e of errs) say(`     - ${e}`); }
+
+  /* ── ⑤b AWARENESS ────────────────────────────────────────────────────────
+     Reported before the per-bot dump because it is the headline. The control
+     roster (`--roster nohunter`) is the one that matters: the question is
+     whether the three players who are NOT trying to find anybody ever learn
+     that anybody is there. */
+  say('\n⑤b AWARENESS — did each player ever learn the others exist?');
+  {
+    const rows = all.flatMap(a => a.sim.awareness || []);
+    const n = rows.length || 1;
+    const pct = (k) => ((rows.filter(r => r[k] > 0).length / n) * 100).toFixed(0) + '%';
+    const runsWithCamp = all.filter(a => (a.sim.awareness || []).some(r => r.foundRivalCamp > 0)).length;
+    say(`   players who received ANY signal            ${(rows.filter(r => r.aware).length / n * 100).toFixed(0)}%  (${rows.filter(r => r.aware).length}/${n})`);
+    say(`     · saw a rival hero in vision             ${pct('sawRivalHero')}`);
+    say(`     · discovered a rival camp                ${pct('foundRivalCamp')}`);
+    say(`     · received an extraction warning         ${pct('gotExtractWarn')}`);
+    say(`     · received a Watchtower report           ${pct('gotTowerReport')}`);
+    say(`     · actually fought                        ${pct('fought')}`);
+    say(`   runs where ANY rival camp was discovered   ${runsWithCamp}/${all.length}`);
+    say(`   players who built a Watchtower             ${(rows.filter(r => r.watchtower).length / n * 100).toFixed(0)}%`);
+    const firsts = rows.map(r => r.firstSignalTurn).filter(t => t != null).sort((a, b) => a - b);
+    say(`   median turn of first contact               ${firsts.length ? firsts[Math.floor(firsts.length / 2)] : '—'}`);
+    const silent = rows.filter(r => !r.aware).map(r => r.who);
+    if (silent.length) say(`   ⚠ played a whole run and never learned anyone else was there: ${[...new Set(silent)].join(', ')}`);
+  }
 
   say('\n⑥ PER-BOT');
   for (let i = 0; i < all.length; i++) {

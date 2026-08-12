@@ -401,7 +401,8 @@ var MOCK = {
     var turns = level('arcane') >= 2 ? 1 : D.EXTRACT_TURNS;
     me.status = 'extracting'; me.extract_left = turns;
     log('extraction_started', { hero: me.hero_name, gate: g.name, turns: turns });
-    return { ok: true, turns: turns, gate: g.name };
+    // watchers: the mock has no rival fog to consult, so it reports 0 honestly.
+    return { ok: true, turns: turns, gate: g.name, watchers: 0 };
   },
 
   warpath_extract_finish: function (a) {
@@ -430,6 +431,23 @@ var MOCK = {
   },
 
   warpath_abandon: function () { mock.me.status = 'lost'; return { ok: true }; },
+
+  // 🔭 Mirrors warpath_scout_report. No new information — direction and band
+  // for camps already in explored fog.
+  warpath_scout_report: function () {
+    var me = mock.me;
+    if (me.status !== 'active') return fail('not_active');
+    if (me.turn_ended) return fail('turn_already_ended');
+    if (!mock.camp) return fail('no_camp');
+    if (mock.camp.x !== me.x || mock.camp.y !== me.y) return fail('not_at_camp');
+    if (mock.scoutedTurn === mock.turn) return fail('already_scouted_this_turn');
+    if (me.moves_left < 1) return fail('no_moves_left');
+    mock.scoutedTurn = mock.turn; me.moves_left -= 1;
+    // The offline mock has no rival camps at all (see the note in warpath_state),
+    // so this honestly reports nothing rather than inventing a target.
+    return { ok: true, reports: [], moves_left: me.moves_left,
+             summary: 'Your scout finds no sign of anyone. Nobody you have seen is camped near here.' };
+  },
 
   warpath_grants_claim: function () {
     var g = mock.grants.slice(); mock.grants = [];

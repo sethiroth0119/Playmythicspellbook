@@ -475,6 +475,70 @@ wolf gets switched off.)
 Suite is now **71 assertions**; probes **20 passed, 0 failed**; the four-player sim completes runs
 with real extractions and materials home.
 
+#### PvP visibility — information, not proximity
+
+Built pieces **1, 3 and 4** of the agreed plan. Piece 2 (the spawn ring) is **held** pending a
+look at a real turn-1 frame.
+
+**Instrumented first, and baselined before touching behaviour.** The measurement is *"did this
+player ever learn the other three exist"*, not battle count — battle count is hunter-dominated
+(one bot produced every battle in the mixed batch) and says nothing about the other three.
+`tools/warpath-sim/` now records five signal channels per player and their union (`aware`).
+
+| signal | nohunter (control) | mixed |
+|---|---|---|
+| | before → after | before → after |
+| received **any** signal | 81% → **83%** | 75% → **83%** |
+| saw a rival hero | 75% → 63% | 63% → **79%** |
+| discovered a rival camp | 25% → 21% | 44% → **50%** |
+| extraction warning | 75% → 75% | 75% → 75% |
+| **Watchtower report** | **0% → 17%** | **0% → 13%** |
+| actually fought | 0% → 0% | 56% → 46% |
+| runs with any camp found | 3/4 → 4/6 | 4/4 → **6/6** |
+
+*(4-run baseline, 6-run after; single-digit percentages here are noise.)*
+
+**Battle count did not move — and that is the pass condition we agreed.** PvP went 5.25 → 4.00
+per run in mixed and stayed at 0 in the control. What moved is the thing that was measured for:
+a channel that reported *nothing at all* now fires, and in the mixed roster every run ends with
+a rival camp discovered.
+
+**The Watchtower was a broken promise, and that is a finding in its own right.**
+`warpath-data.js` has advertised *"Enemy camps within 8 tiles are reported"* since the first
+commit; the building costs 🪵40 🪨20 and the effect was **implemented nowhere**. Any player who
+built it paid for a fog bonus and a lie. It now reports rival **camps** — never live hero
+positions; that is what fog is for — by revealing the camp tile in the observer's own fog, so it
+flows through exactly the same explored-once path `warpath_state` already uses.
+
+**And its advertised range was wrong for the world it shipped into.** At 8 tiles it reported
+**0%** on the mixed roster: spawns land 29–35 tiles apart, so an 8-tile tower covers ~0.5% of a
+44×30 map. The radius is now tied to the thing that decides whether it can ever fire — Tower I
+reaches 12, Tower II reaches 20, so a fully-upgraded tower can just about see its nearest
+neighbouring spawn and never the whole map. The advertised text was corrected to match.
+
+**Extraction reciprocal (3).** `warpath_extract_begin` now returns how many rivals have explored
+*that gate* — exactly the set who can act on the broadcast, since B6 stripped the coordinates. A
+neat consequence fell out of testing: the **main gate always reads as watched**, because
+`warpath_enter` reveals it to every entrant by design. So "two turns at the Warpath Gate" and
+"two turns at a portal nobody has found" are now visibly different decisions, priced before you
+commit.
+
+**Scout Report (4).** One movement, once per turn, at your own campfire. Adds **no** information —
+it re-surfaces rival camps already in your explored fog as a direction and a distance band, never
+coordinates and never a live hero. Camp discovery is durable but one-shot; this turns a memory
+into something actionable.
+
+All three are covered by **12 deterministic assertions** rather than sim samples, including the
+negative cases: no tower → no report; the tower does not re-report known camps; no hero position
+leaks through the tower channel; the scout reports nothing for a camp its owner never found.
+
+**Honest limits.** 6 runs is a small sample and the per-signal deltas outside the Watchtower row
+are within noise. BOLT (the rusher) still ends some runs having learned nothing — it extracts
+around turn 7, so it barely plays; that is a bot archetype, not a mode failure. The 7:1
+carry-to-bank ratio is still untouched, waiting on the deck-quality harness.
+
+Suite is now **83 assertions**; probes 20/20; contract check clean.
+
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which
 is the one thing hard constraint #1 says not to risk. Exclusivity in Milestone 1 is expressed

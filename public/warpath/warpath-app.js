@@ -94,6 +94,7 @@ var REASONS = {
   target_regrouping: 'That Hero was just beaten and is regrouping.',
   need_2_moves_to_attack: 'Challenging a Hero costs 2 movement.',
   already_fought_this_turn: 'You have already fought them this turn.',
+  already_scouted_this_turn: 'Your scout has already reported this turn.',
 };
 function why(r) {
   if (!r) return 'That did not work.';
@@ -777,7 +778,7 @@ function tabFeed(st) {
 /* Events the player must not miss. Keyed on turn+kind so a repoll cannot
    re-announce the same thing; only the first sighting speaks. */
 var LOUD = { hero_defeated: 1, extraction_started: 1, extraction_broken: 1,
-             guardian_defeated: 1, run_closed: 1 };
+             guardian_defeated: 1, run_closed: 1, watchtower_report: 1 };
 function announceNewEvents(st) {
   var evs = (st && st.events) || [];
   if (!S.seenEvents) {
@@ -808,6 +809,9 @@ function announceNewEvents(st) {
       if (p.hero !== mine) ribbon('⚠ A Hero is leaving the Warpath',
         (p.hero || 'Someone') + ' is holding ' + (p.gate || 'a gate') + ' for ' + (p.turns || 2)
         + ' turn' + ((p.turns || 2) === 1 ? '' : 's') + '.');
+    } else if (e.kind === 'watchtower_report') {
+      ribbon('⚠ Enemy camp discovered', 'Your Watchtower has spotted ' + (p.hero || 'a rival')
+        + "'s camp " + (p.dist != null ? p.dist + ' tiles from yours' : 'nearby') + '.');
     } else if (e.kind === 'run_closed') {
       ribbon('The Warpath closed', 'Anything not extracted is gone.');
     }
@@ -831,6 +835,10 @@ function feedLine(e) {
     case 'hero_defeated':       return (p.winner || 'A Hero') + ' beat ' + (p.loser || 'someone') + '.';
     case 'extraction_started':  return '⚠ ' + (p.hero || 'A Hero') + ' is preparing to leave the Warpath'
                                      + (p.gate ? ' at ' + p.gate : '') + '.';
+    case 'watchtower_report':   return '🗼 Watchtower: ' + (p.hero || 'a rival') + ' is camped '
+                                     + (p.dist != null ? p.dist + ' tiles away' : 'nearby') + '.';
+    case 'scout_report':        return '🔭 Scout report — ' + (p.count || 0) + ' known camp'
+                                     + ((p.count || 0) === 1 ? '' : 's') + ' located.';
     case 'extraction_broken':   return (p.hero || 'A Hero') + ' was stopped mid-extraction by ' + (p.by || 'someone') + '.';
     case 'extracted':           return (p.hero || 'A Hero') + ' made it home with ' + (p.cards || 0) + ' cards.';
     case 'abandoned':           return (p.hero || 'A Hero') + ' walked away with nothing.';
@@ -855,6 +863,12 @@ function footFor(st) {
   var camp = st.camp, atCamp = camp && me.x === camp.x && me.y === camp.y;
   var h = '';
   if (atCamp) h += '<button class="btn ember" id="f-secure">Deposit &amp; secure</button>';
+  // 🔭 One movement, once a turn, at your own campfire. Surfaces rival camps
+  // you have ALREADY discovered — direction and distance band, never a pin.
+  if (atCamp && me.status === 'active') {
+    h += '<button class="btn sm" id="f-scout" title="1 movement · once per turn">'
+       + '🔭 Scout report</button>';
+  }
   h += '<button class="btn danger sm" id="f-abandon">Abandon expedition</button>';
   return h;
 }
@@ -893,6 +907,16 @@ function bindSide() {
       ribbon('Vault', 'Secured ' + moved + ' resource type' + (moved === 1 ? '' : 's')
         + (r.cards_secured ? ' and ' + r.cards_secured + ' card' + (r.cards_secured === 1 ? '' : 's') : '')
         + '.' + (r.vault_full ? ' The vault is now full — upgrade the Supply Tent.' : ''));
+    });
+  };
+  var sc = $('f-scout');
+  if (sc) sc.onclick = function () {
+    act('warpath_scout_report', {}, function (r) {
+      var reps = r.reports || [];
+      if (!reps.length) { ribbon('Scout report', r.summary || 'No sign of anyone.'); return; }
+      ribbon('Scout report', reps.map(function (x) {
+        return x.hero + ' — ' + x.band + ', to the ' + x.dir;
+      }).join(' · '));
     });
   };
   var a = $('f-abandon');
@@ -1005,8 +1029,13 @@ function renderRail() {
     actBtn.textContent = 'Begin extraction'; actBtn.disabled = false;
     actBtn.onclick = function () {
       act('warpath_extract_begin', {}, function (r) {
-        ribbon('Extraction started', 'Hold this gate for ' + r.turns + ' turn'
-               + (r.turns === 1 ? '' : 's') + '. Everyone has been told.');
+        // The reciprocal half: how many rivals have explored THIS gate, i.e.
+        // how many of them the broadcast is actually actionable for.
+        var w = r.watchers | 0;
+        ribbon('Extraction started', 'Hold ' + (r.gate || 'this gate') + ' for ' + r.turns
+          + ' turn' + (r.turns === 1 ? '' : 's') + '. '
+          + (w === 0 ? 'No rival has found this gate — nobody can act on the warning.'
+             : w + ' rival' + (w === 1 ? ' has' : 's have') + ' explored this gate and just heard you.'));
       });
     };
   } else if (s2 && s2.k === 'landmark' && canAct) {

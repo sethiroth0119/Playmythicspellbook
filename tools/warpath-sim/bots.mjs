@@ -36,8 +36,23 @@ export class Bot {
     this.counters = {
       moves: 0, harvests: 0, harvest_taken: 0, builds: 0, secures: 0, recruits: 0,
       picks: 0, pvp_opened: 0, pvp_refused: 0, guardian_opened: 0, wins: 0, losses: 0,
-      extract_begin: 0, extracted: 0, refusals: {},
+      extract_begin: 0, extracted: 0, refusals: {}, scout_reports: 0,
     };
+    /* ── AWARENESS INSTRUMENTATION ──────────────────────────────────────────
+       The question this harness has to answer is NOT "how many battles
+       happened". It is "did this player ever learn the other three exist".
+       Battle count is a lagging, hunter-dominated number — one bot spending
+       its whole run hunting produced every battle in the mixed batch, which
+       says nothing about the other three. These are the leading signals, one
+       per channel the mode actually has:
+         sawRivalHero   — a hero entered live vision (fog-limited, fleeting)
+         foundRivalCamp — a rival camp entered explored fog (durable intel)
+         gotExtractWarn — the run-wide "a Hero is leaving" broadcast
+         gotTowerReport — the Watchtower's camp report
+         fought         — actually collided
+       `aware` is the union: did ANY of them ever fire. */
+    this.signals = { sawRivalHero: 0, foundRivalCamp: 0, gotExtractWarn: 0,
+                     gotTowerReport: 0, fought: 0, firstSignalTurn: null };
   }
 
   refuse(op, reason) {
@@ -58,17 +73,42 @@ export class Bot {
   // ── observation ───────────────────────────────────────────────────────────
   observe(st) {
     const turn = st.run.turn;
+    const mark = (k) => {
+      this.signals[k]++;
+      if (this.signals.firstSignalTurn === null) this.signals.firstSignalTurn = turn;
+    };
     for (const o of st.others || []) {
-      if (o.visible && o.x != null) this.lastSeen.set(o.expedition_id, { x: o.x, y: o.y, turn });
-      if (o.camp) this.rivalCamps.set(o.expedition_id, { x: o.camp.x, y: o.camp.y, buildings: o.camp.buildings });
-    }
-    // The extraction broadcast is public and carries coordinates — see the
-    // wp_log() call in warpath_extract_begin (migration:1828).
-    for (const ev of st.events || []) {
-      if (ev.kind === 'extraction_started' && ev.payload?.x != null && turn - ev.turn <= 3) {
-        this.extractionBeacon = { x: ev.payload.x, y: ev.payload.y, turn: ev.turn };
+      if (o.visible && o.x != null) {
+        if (!this.lastSeen.has(o.expedition_id)) mark('sawRivalHero');
+        this.lastSeen.set(o.expedition_id, { x: o.x, y: o.y, turn });
+      }
+      if (o.camp) {
+        if (!this.rivalCamps.has(o.expedition_id)) mark('foundRivalCamp');
+        this.rivalCamps.set(o.expedition_id, { x: o.camp.x, y: o.camp.y, buildings: o.camp.buildings });
       }
     }
+    for (const ev of st.events || []) {
+      const key = `${ev.turn}:${ev.kind}:${JSON.stringify(ev.payload || {})}`;
+      if (this._seenEv?.has(key)) continue;
+      (this._seenEv ||= new Set()).add(key);
+      if (ev.kind === 'extraction_started' && ev.payload?.hero !== this.name) mark('gotExtractWarn');
+      if (ev.kind === 'watchtower_report') mark('gotTowerReport');
+      if (ev.kind === 'hero_defeated' &&
+          (ev.payload?.winner === this.name || ev.payload?.loser === this.name)) mark('fought');
+      /* B6: the broadcast no longer carries coordinates, only the gate name.
+         A bot can still act on it if it has explored that gate — which is the
+         point — so resolve the name against the map rather than being handed
+         a pin. */
+      if (ev.kind === 'extraction_started' && turn - ev.turn <= 3) {
+        const g = (this.map?.gates || []).find(z => z.name === ev.payload?.gate);
+        if (g) this.extractionBeacon = { x: g.x, y: g.y, turn: ev.turn, viaGateName: true };
+        else if (ev.payload?.x != null) this.extractionBeacon = { x: ev.payload.x, y: ev.payload.y, turn: ev.turn };
+      }
+    }
+  }
+
+  atOwnCamp(st) {
+    const c = st.camp; return !!(c && c.x === st.me.x && c.y === st.me.y);
   }
 
   // ── movement helpers ──────────────────────────────────────────────────────
@@ -225,6 +265,16 @@ export class Bot {
         else this.refuse('secure', r.reason);
         return 'go';
       }
+      /* 🔭 Standing at our own campfire with movement to spare: ask the scout.
+         1 movement, once a turn, and it only re-surfaces camps already in our
+         explored fog — so a bot that has never seen anyone learns nothing,
+         which is the honest behaviour to measure. */
+      case 'scout': {
+        const r = await this.s.rpc('warpath_scout_report', [this.exp]);
+        if (r.ok) { c.scout_reports++; this.lastScout = r.reports || []; }
+        else this.refuse('scout', r.reason);
+        return 'go';
+      }
       case 'recruit': {
         const r = await this.s.rpc('warpath_recruit', [this.exp, a.site, a.idx]);
         if (r.ok) c.recruits++; else this.refuse('recruit', r.reason);
@@ -344,6 +394,10 @@ export async function builder(st) {
 
   if (atCamp) {
     if (load.bulk > 0 || load.mats > 0 || load.unsecuredCards > 0) return { op: 'secure' };
+    // nothing to bank, standing at camp, movement to spare → ask the scout
+    if (this.atOwnCamp(st) && st.me.moves_left > 1 && this.scoutedTurn !== st.run.turn) {
+      this.scoutedTurn = st.run.turn; return { op: 'scout' };
+    }
     for (const [b, lvl] of BUILD_PLAN) {
       const have = (camp.buildings || {})[b] || 0;
       if (have === lvl - 1 && !this.blockedBuild.has(`${b}${lvl}`)) {

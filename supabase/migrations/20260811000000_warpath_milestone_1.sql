@@ -526,12 +526,14 @@ create table if not exists public.warpath_expeditions (
   stat_bosses    int not null default 0,
   -- B4: a hero beaten in PvP cannot be re-challenged until this run turn.
   protected_until int not null default 0,
+  scouted_turn    int not null default 0,
   entered_at     timestamptz not null default now(),
   ended_at       timestamptz,
   unique (run_id, user_id),
   unique (run_id, slot)
 );
 alter table public.warpath_expeditions add column if not exists protected_until int not null default 0;
+alter table public.warpath_expeditions add column if not exists scouted_turn int not null default 0;
 create index if not exists warpath_exp_user_idx on public.warpath_expeditions (user_id, status);
 
 -- Camp. One movable camp per expedition (the brief's PACK CAMP / FORWARD CAMP;
@@ -1700,6 +1702,56 @@ begin
      where id = rec.id;
   end loop;
 
+  /* 🗼 THE WATCHTOWER, WHICH PROMISED THIS AND DID NOTHING.
+     warpath-data.js has advertised "Enemy camps within 8 tiles are reported"
+     since the first commit, the building costs 🪵40 🪨20, and the effect was
+     implemented NOWHERE — a player could pay for it and get a fog bonus and
+     nothing else. That is the game breaking a promise the moment somebody
+     believes it, which is worse than not offering it.
+
+     It reports CAMPS, never live hero positions: a camp is a structure that
+     sits still and is fair game for a tower; where a hero is standing right
+     now is what fog is for. The report works by revealing the rival camp tile
+     in the observer's own fog, so it flows through exactly the same
+     explored-once path warpath_state already uses for camp discovery — no
+     second visibility rule to keep in sync.
+
+     Only genuinely NEW intel raises an event, so a tower does not spam the
+     feed every turn about a camp you already know about.
+
+     ⚠ RANGE 12 / 20, NOT THE ADVERTISED 8. The "within 8 tiles" line was
+     written before the map had a size. On a 44x30 world where spawns land
+     29-35 tiles apart, an 8-tile tower covers about half a percent of the map
+     and — measured — reported NOTHING in four mixed-roster runs. The radius is
+     now set against the thing that actually determines whether it can ever
+     fire: a Tower I reaches well beyond your own vision, and a Tower II can
+     just about reach the nearest neighbouring spawn. It is deliberately short
+     of seeing the whole map; a tower is a neighbourhood watch, not a satellite. */
+  for rec in select e.id as exp_id, c.x as cx, c.y as cy,
+                    coalesce((c.buildings->>'watchtower')::int, 0) as tower
+               from public.warpath_expeditions e
+               join public.warpath_camps c on c.expedition_id = e.id
+              where e.run_id = run.id and e.status in ('active','extracting')
+                and coalesce((c.buildings->>'watchtower')::int, 0) >= 1 loop
+    declare foe record; f bytea;
+    begin
+      select fog into f from public.warpath_expeditions where id = rec.exp_id;
+      for foe in select c2.x, c2.y, e2.hero_name
+                   from public.warpath_camps c2
+                   join public.warpath_expeditions e2 on e2.id = c2.expedition_id
+                  where c2.run_id = run.id and c2.expedition_id <> rec.exp_id
+                    and greatest(abs(c2.x - rec.cx), abs(c2.y - rec.cy))
+                        <= (case when rec.tower >= 2 then 20 else 12 end) loop
+        if f is null or not public.wp_explored(f, foe.x, foe.y) then
+          perform public.wp_reveal(rec.exp_id, foe.x, foe.y, 1);
+          perform public.wp_log(run.id, rec.exp_id, 'watchtower_report',
+            jsonb_build_object('hero', foe.hero_name, 'x', foe.x, 'y', foe.y,
+                               'dist', greatest(abs(foe.x - rec.cx), abs(foe.y - rec.cy))));
+        end if;
+      end loop;
+    end;
+  end loop;
+
   /* Settle any battle still contested from a previous turn. A bare win claim
      waits for corroboration (see warpath_battle_report), and without this
      nothing would ever come back to it — the client reports once. Prefer a
@@ -2018,7 +2070,7 @@ end $$;
    turns the last two turns of a good run into the tensest part of it. */
 create or replace function public.warpath_extract_begin(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare me public.warpath_expeditions; run public.warpath_runs; st jsonb; turns int;
+declare me public.warpath_expeditions; run public.warpath_runs; st jsonb; turns int; watchers int;
 begin
   -- Derive from auth.uid() when the caller did not name one (the client never does).
   p_exp := coalesce(p_exp, public.wp_active_exp());
@@ -2037,6 +2089,24 @@ begin
 
   -- A researched Arcane Tent shortens the wait; that is its second-level perk.
   turns := case when public.wp_level(me.id, 'arcane') >= 2 then 1 else 2 end;
+
+  /* 🚪 THE RECIPROCAL HALF OF THE BROADCAST.
+     Everyone is told a hero is leaving — the brief wants that, and the
+     countdown is the mode's one scheduled collision point. But until now the
+     information ran one way: the extracting player announced themselves and
+     learned nothing. So the countdown was something that happened TO you.
+
+     Now you are told how many rivals have explored THIS gate, which is exactly
+     the set that can act on the news (B6 stripped the coordinates from the
+     public event, so a player who has never seen this gate gets a warning
+     without a map pin). Two turns at a gate three people know about is a
+     different decision from two turns at one nobody has found, and now you can
+     tell which one you are making before you commit. */
+  select count(*) into watchers from public.warpath_expeditions e
+   where e.run_id = me.run_id and e.id <> me.id
+     and e.status in ('active','extracting')
+     and public.wp_explored(e.fog, me.x, me.y);
+
   update public.warpath_expeditions
      set status = 'extracting', extract_left = turns where id = me.id;
   /* ⚠ B6 — WHAT THE BROADCAST MAY SAY, DECIDED ON PURPOSE.
@@ -2051,7 +2121,8 @@ begin
      act on the news. */
   perform public.wp_log(me.run_id, me.id, 'extraction_started',
     jsonb_build_object('hero', me.hero_name, 'gate', st->>'name', 'turns', turns));
-  return jsonb_build_object('ok', true, 'turns', turns, 'gate', st->>'name');
+  return jsonb_build_object('ok', true, 'turns', turns, 'gate', st->>'name',
+                            'watchers', watchers);
 end $$;
 
 /* ⭐ THE ONE FUNCTION THAT TOUCHES PERMANENT DATA.
@@ -2130,6 +2201,69 @@ begin
     jsonb_build_object('hero', me.hero_name, 'cards', array_length(keys, 1)));
   return jsonb_build_object('ok', true, 'card_keys', coalesce(keys, ARRAY[]::text[]),
                             'materials', mats, 'summary', summary, 'cap', cap);
+end $$;
+
+/* 🔭 SCOUT REPORT — making owned intel actionable.
+   "Your scout reports: ⚠ ENEMY CAMP DISCOVERED — 2 regions east."
+
+   This adds NO new information. It only re-surfaces what you already own: the
+   rival camps sitting in your own explored fog. Camp discovery is durable but
+   it is a one-off — you walk past a camp on turn 12 and by turn 40 you have no
+   idea whether you are near it. The report answers "which way, roughly how
+   far" on demand, which is what turns a memory into a plan.
+
+   It costs 1 movement and is once per turn, so a player who wants to keep
+   tabs on a rival is paying for it out of the same budget that buys harvesting
+   and travel. Direction and a distance BAND only — never coordinates, never a
+   live hero. A camp can also have been packed and moved since you saw it, and
+   the report is honest about how stale it is.                                */
+create or replace function public.warpath_scout_report(p_exp uuid default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  me public.warpath_expeditions; run public.warpath_runs; camp public.warpath_camps;
+  rec record; best record; bestd int := 99999; d int; dir text; band text; out jsonb := '[]';
+begin
+  p_exp := coalesce(p_exp, public.wp_active_exp());
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  select * into camp from public.warpath_camps where expedition_id = me.id;
+  if camp.expedition_id is null then return jsonb_build_object('ok', false, 'reason', 'no_camp'); end if;
+  if camp.x <> me.x or camp.y <> me.y then
+    return jsonb_build_object('ok', false, 'reason', 'not_at_camp'); end if;
+  select * into run from public.warpath_runs where id = me.run_id;
+  if me.scouted_turn >= run.turn then
+    return jsonb_build_object('ok', false, 'reason', 'already_scouted_this_turn'); end if;
+  if me.moves_left < 1 then return jsonb_build_object('ok', false, 'reason', 'no_moves_left'); end if;
+
+  for rec in select c.x, c.y, e.hero_name
+               from public.warpath_camps c
+               join public.warpath_expeditions e on e.id = c.expedition_id
+              where c.run_id = me.run_id and c.expedition_id <> me.id
+                and public.wp_explored(me.fog, c.x, c.y) loop
+    d := greatest(abs(rec.x - camp.x), abs(rec.y - camp.y));
+    dir := case
+      when abs(rec.y - camp.y) > abs(rec.x - camp.x) * 2 then case when rec.y < camp.y then 'north' else 'south' end
+      when abs(rec.x - camp.x) > abs(rec.y - camp.y) * 2 then case when rec.x < camp.x then 'west' else 'east' end
+      else (case when rec.y < camp.y then 'north' else 'south' end) ||
+           (case when rec.x < camp.x then 'west' else 'east' end) end;
+    band := case when d <= 6 then 'close' when d <= 14 then 'nearby' else 'distant' end;
+    out := out || jsonb_build_object('hero', rec.hero_name, 'dir', dir, 'band', band);
+    if d < bestd then bestd := d; end if;
+  end loop;
+
+  update public.warpath_expeditions
+     set moves_left = moves_left - 1, scouted_turn = run.turn where id = me.id;
+
+  if jsonb_array_length(out) = 0 then
+    return jsonb_build_object('ok', true, 'reports', out, 'moves_left', me.moves_left - 1,
+                              'summary', 'Your scout finds no sign of anyone. Nobody you have seen is camped near here.');
+  end if;
+  perform public.wp_log(me.run_id, me.id, 'scout_report',
+    jsonb_build_object('count', jsonb_array_length(out)));
+  return jsonb_build_object('ok', true, 'reports', out, 'moves_left', me.moves_left - 1,
+                            'nearest', bestd);
 end $$;
 
 -- Abandon: walk away with nothing. Kept so a stuck player is never trapped in

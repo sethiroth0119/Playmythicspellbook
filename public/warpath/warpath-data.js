@@ -115,8 +115,8 @@ var CAMP_BUILDINGS = {
     id: 'watchtower', name: 'Watchtower', icon: '🗼', slot: 'north', maxLevel: 2,
     desc: 'Burns the fog back around camp, and spots heroes moving near it.',
     levels: [
-      { cost: { wood: 40, stone: 20 },             effect: '+5 vision around camp. Enemy camps within 8 tiles are reported.' },
-      { cost: { wood: 70, stone: 50, iron: 25 },   effect: '+7 vision. Hero vision +1 everywhere.' },
+      { cost: { wood: 40, stone: 20 },             effect: '+5 vision around camp. Rival camps within 12 tiles are reported.' },
+      { cost: { wood: 70, stone: 50, iron: 25 },   effect: '+7 vision. Hero vision +1 everywhere. Camp reports reach 20 tiles.' },
     ],
   },
   arcane: {

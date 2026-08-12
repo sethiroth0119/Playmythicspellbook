@@ -215515,6 +215515,7 @@ const WARPATH_RPCS = Object.assign(Object.create(null), {
   warpath_recruit: 1, warpath_encounter_open: 1, warpath_encounter_pick: 1,
   warpath_end_turn: 1, warpath_battle_open: 1, warpath_battle_report: 1,
   warpath_extract_begin: 1, warpath_extract_finish: 1, warpath_abandon: 1,
+  warpath_scout_report: 1,
 });
 function _warpathAllowed(fn) {
   return typeof fn === 'string' && Object.prototype.hasOwnProperty.call(WARPATH_RPCS, fn);

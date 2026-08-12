@@ -57816,11 +57816,44 @@ function _boeTbl(name) {
 }
 // 📒 Append a signed ledger entry (memory + cloud, best-effort). Memory copy
 // is what the embedded app's Ledger view + PDF statement render.
+/* 🔴 KINDS THE SERVER ALREADY WRITES. Do not insert these from the client.
+
+   Every accepted transfer appends to boe_ledger INSIDE THE SAME TRANSACTION as
+   the balance change — sql/022:142 (Cinder), sql/022:217 and sql/024:385 (Aza),
+   and _boe_apply in sql/030 for exchange, loans, requests, market sales and
+   mercenary shares. When those moves went server-side the client's own boeLog
+   calls were left in place, so each one wrote a SECOND row for the same event.
+
+   That is the reported "I put Aza in the bank and it disappeared". The money was
+   never lost — bank totals reconcile exactly — but the player's statement showed
+   the deposit twice, and a statement that lists your 100 Aza leaving twice is
+   indistinguishable from losing 100 Aza. Duplicate pairs are visible in
+   production ~0.3s apart, distinguishable only by the arrow glyph: the server
+   writes "Aza -> Cinder", the client wrote "Aza → Cinder".
+
+   Fixed HERE rather than at the nine call sites, because the list of
+   server-owned kinds is the thing that will change again — the next settlement
+   moved server-side needs one entry added here, not another duplicate hunted
+   down after players report it.
+
+   ⚠ The optimistic in-memory row is KEPT. It is what makes the statement update
+     the instant you act; the next ledger fetch replaces the list with the
+     server's authoritative rows. Only the duplicate INSERT is suppressed. */
+const BOE_SERVER_LOGGED_KINDS = new Set([
+  'deposit', 'withdraw',            // sql/022 boe_transfer / sql/024 boe_transfer_aza
+  'exchange',                       // sql/030 boe_exchange_aza
+  'loan_principal',                 // sql/030 boe_loan_draw
+  'request_received',               // sql/030 boe_request_settle
+  'market_sale',                    // sql/030 boe_market_settle
+  'merc_earn', 'merc_yield',        // sql/030 boe_merc_settle
+]);
 async function boeLog(kind, cinder, aza, note, counterparty) {
   try {
     const e = { ts: Date.now(), kind: kind, cinder: cinder | 0, aza: aza | 0, note: note || '', counterparty: counterparty || '' };
     BankEthos.ledger.unshift(e);
     if (BankEthos.ledger.length > 120) BankEthos.ledger.length = 120;
+    // The server already recorded this one atomically with the money movement.
+    if (BOE_SERVER_LOGGED_KINDS.has(kind)) return;
     const t = _boeTbl('boe_ledger'); if (!t) return;
     await t.insert({ user_id: Profile.cloud.userId, kind: e.kind, cinder: e.cinder, aza: e.aza, note: e.note, counterparty: e.counterparty });
   } catch (e2) {}

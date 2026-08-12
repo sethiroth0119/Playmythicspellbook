@@ -17,6 +17,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { minify as terserMinify } from 'terser';
 
 const PUBLIC = path.resolve('public');
@@ -64,8 +65,30 @@ export async function minify() {
   console.log('🔨 reading', SRC);
   const html = fs.readFileSync(SRC, 'utf8');
   if (html.startsWith(SENTINEL)) {
+    /* 🔴 ALREADY MINIFIED. This used to be `await restore(); return minify();`
+       with no check that the restore actually did anything — and restore() is a
+       no-op when the backup is gone. So in the one state that actually happens
+       in practice (a previous deploy died, leaving a minified index.html and no
+       backup) this recursed forever: read minified → restore nothing → minify →
+       read minified → … until the stack blew.
+
+       There is nothing to recover from on disk in that state, and minifying an
+       already-minified file would write a MINIFIED BACKUP — destroying the only
+       remaining copy of the source. So: refuse, loudly, and say exactly how to
+       get the source back. git has it; this script does not. */
+    if (!fs.existsSync(BACKUP)) {
+      throw new Error(
+        'public/index.html is already minified and there is NO backup to restore from.\n' +
+        '   This means a previous deploy was interrupted. The source is not recoverable\n' +
+        '   from disk — restore it from git and re-run:\n\n' +
+        '       git checkout -- public/index.html\n');
+    }
     console.log('✓ already minified — restoring source first so we re-minify fresh');
     await restore();
+    const after = fs.readFileSync(SRC, 'utf8');
+    if (after.startsWith(SENTINEL)) {
+      throw new Error('restore ran but public/index.html is STILL minified — the backup was itself minified. Restore from git: git checkout -- public/index.html');
+    }
     return minify();
   }
   console.log('💾 backing up source →', path.basename(BACKUP));
@@ -103,16 +126,46 @@ export async function minify() {
 export async function restore() {
   if (!fs.existsSync(BACKUP)) {
     console.log('⚠  no backup file at', BACKUP, '— nothing to restore');
-    return;
+    return false;
   }
   const src = fs.readFileSync(BACKUP, 'utf8');
+  /* 🔴 NEVER RESTORE A POISONED BACKUP. If the backup itself starts with the
+     sentinel then a previous run minified an already-minified file, and writing
+     it back would overwrite the working copy with the minified build AND then
+     delete the evidence — which is exactly how this repo twice ended up with a
+     minified index.html and no backup, looking like a clean restore had run.
+     Leave both files alone and say so; git still has the source. */
+  if (src.startsWith(SENTINEL)) {
+    console.error('❌ the backup at ' + BACKUP + ' is itself MINIFIED — refusing to restore it.');
+    console.error('   Recover the source with:  git checkout -- public/index.html');
+    console.error('   (leaving the backup in place; nothing has been overwritten)');
+    return false;
+  }
   fs.writeFileSync(SRC, src);
+  /* Verify the write landed before dropping the only other copy. An unlink that
+     runs after a failed/partial write is how a backup becomes the last casualty
+     of an already-bad situation. */
+  const check = fs.readFileSync(SRC, 'utf8');
+  if (check.startsWith(SENTINEL) || check.length !== src.length) {
+    console.error('❌ restore wrote ' + SRC + ' but it does not match the backup — KEEPING the backup.');
+    return false;
+  }
   fs.unlinkSync(BACKUP);
   console.log('✓ restored', SRC, 'from backup');
+  return true;
 }
 
 const arg = (process.argv[2] || '').toLowerCase();
-if (import.meta.url === 'file://' + process.argv[1].replace(/\\/g, '/')) {
+/* 🔴 THE ENTRYPOINT CHECK WAS WRONG ON WINDOWS, AND IT FAILED SILENTLY.
+   It compared import.meta.url against 'file://' + argv[1]. On Windows
+   import.meta.url is `file:///C:/…` (THREE slashes, drive letter) while that
+   concatenation produces `file://C:/…` (two). The strings never matched, so
+   `node build.mjs minify` and `node build.mjs restore` did nothing at all and
+   exited 0 — including the exact recovery command this file's own header tells
+   you to run when a deploy goes wrong. A recovery tool that silently no-ops is
+   worse than one that is missing, because you believe you have run it.
+   pathToFileURL is the supported way to build the comparison. */
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   if (arg === 'minify') {
     minify().catch(e => { console.error('❌', e.message); process.exit(1); });
   } else if (arg === 'restore') {

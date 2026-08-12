@@ -57121,6 +57121,14 @@ async function walletReconcile() {
     if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return { ok: false };
     if (Wallet._reconciling) return { ok: false, busy: true };
     Wallet._reconciling = true;
+    /* 📮 DRAIN THE OUTBOX FIRST, and do it HERE rather than at each of
+       walletReconcile's call sites — this is the one funnel every trigger
+       already passes through, so hooking it once cannot miss one.
+       Order is the point: if the queued credits land, the canonical row catches
+       up on its own and the balance-difference path below finds nothing left to
+       invent. The outbox is the fix; reconcile becomes the fallback it was
+       always meant to be rather than the primary recovery. */
+    try { await _walletOutboxDrain(); } catch (e) {}
     try {
       const me = Profile.cloud.userId;
       const r = await Cloud.client.from('user_progress').select('cinder,wallet_seq').eq('user_id', me).maybeSingle();
@@ -57189,17 +57197,107 @@ function _serverMirrorCredit(amount, reason) {
     // ⚠ Was `if (Wallet.rpcMissing) return;` — a silent permanent drop. Now the
     //   gain is REMEMBERED so the reconcile pass picks it up once the RPC is
     //   reachable again.
-    if (Wallet.rpcMissing) { _walletMarkReconcile(); return; }
-    Promise.resolve(Cloud.client.rpc('wallet_credit', { p_amount: amount, p_reason: reason || 'reward' }))
+    if (Wallet.rpcMissing) { _walletOutboxAdd(amount, reason); _walletMarkReconcile(); return; }
+    /* 🔁 EVERY CREDIT CARRIES A REF, so a retry can never pay twice.
+       sql/035 records the ref on the ledger row and refuses a repeat, which is
+       what makes the outbox below safe: at-least-once delivery plus
+       server-side dedupe is exactly-once in effect. */
+    const _ref = _walletRef();
+    Promise.resolve(Cloud.client.rpc('wallet_credit', { p_amount: amount, p_reason: reason || 'reward', p_ref: _ref }))
       .then(res => {
         if (res && res.error) {
           if (_walletRpcUnavailable(res.error)) Wallet.rpcMissing = true;
-          _walletMarkReconcile();                   // ← the credit that used to vanish
+          /* 📮 REMEMBER WHAT FAILED, NOT MERELY THAT SOMETHING DID.
+             This used to call _walletMarkReconcile() alone, which recorded a
+             single boolean. The amount and the reason were thrown away — so the
+             only recovery left was "make my balance match the server", and that
+             is the arbitrary client-computed credit
+             (reconcile_local_gain_on_fetch) this whole line of work exists to
+             remove. Queue the ACTUAL credit and the recovery becomes a replay
+             of a known reward instead of an assertion about a balance. */
+          _walletOutboxAdd(amount, reason, _ref);
+          _walletMarkReconcile();                   // belt and braces, for now
         }
       })
-      .catch(() => { _walletMarkReconcile(); });
-  } catch (e) { _walletMarkReconcile(); }
+      .catch(() => { _walletOutboxAdd(amount, reason, _ref); _walletMarkReconcile(); });
+  } catch (e) { _walletOutboxAdd(amount, reason); _walletMarkReconcile(); }
 }
+
+/* ══ 📮 THE CREDIT OUTBOX ═════════════════════════════════════════════════
+   A credit whose mirror call failed is held here with its amount and reason,
+   and replayed until the server takes it. That is the whole point: it replaces
+   "reconcile my balance to whatever local says" — a number the client invents —
+   with "please apply this specific reward again", which the server can bound,
+   attribute and refuse.
+
+   ⚠ SAFE ONLY BECAUSE OF THE REF. Retrying a credit is at-least-once delivery;
+     without server-side dedupe it would be a minting bug. sql/035 stores the
+     ref on the ledger row under a unique index and returns the balance
+     unchanged on a repeat. Never retry a credit without one.
+   ⚠ Rides Profile, which saveProfile() JSON.stringifies whole — so the queue
+     survives a reload, which is the case that matters most (the tab closed
+     before the retry).
+   ⚠ BOUNDED. Entries expire and the queue is capped: a permanently failing
+     credit must not grow without limit or be retried forever. Dropping one
+     costs a reward; letting it grow unbounded costs the save file. */
+const WALLET_OUTBOX_MAX   = 200;
+const WALLET_OUTBOX_TRIES = 12;
+const WALLET_OUTBOX_TTL_MS = 7 * 24 * 3600 * 1000;
+function _walletRef() {
+  // Unique per credit, and stable once minted so the retry reuses it.
+  return 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+}
+function _walletOutbox() {
+  if (!Array.isArray(Profile.walletOutbox)) Profile.walletOutbox = [];
+  return Profile.walletOutbox;
+}
+function _walletOutboxAdd(amount, reason, ref) {
+  try {
+    amount = Math.max(0, Math.floor(amount || 0));
+    if (amount <= 0) return;
+    const q = _walletOutbox();
+    if (q.length >= WALLET_OUTBOX_MAX) q.shift();      // oldest goes first
+    q.push({ ref: ref || _walletRef(), amount: amount, reason: String(reason || 'reward').slice(0, 120),
+             at: Date.now(), tries: 0 });
+    try { saveProfile(); } catch (e) {}
+  } catch (e) {}
+}
+/* Replay everything pending. Sequential and small: this runs on boot and after
+   a sync, and a burst of parallel RPCs on a cold start is how you turn a
+   recovered reward into a rate-limit refusal. */
+async function _walletOutboxDrain() {
+  try {
+    const q = _walletOutbox();
+    if (!q.length) return 0;
+    if (typeof initCloud !== 'function' || !initCloud()) return 0;
+    if (!Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return 0;
+    if (Wallet.rpcMissing) return 0;
+    const now = Date.now();
+    let sent = 0, changed = false;
+    for (let i = q.length - 1; i >= 0; i--) {
+      const e = q[i];
+      if (!e || !(e.amount > 0) || (now - (e.at || 0)) > WALLET_OUTBOX_TTL_MS || (e.tries | 0) >= WALLET_OUTBOX_TRIES) {
+        q.splice(i, 1); changed = true; continue;      // expired or exhausted
+      }
+      e.tries = (e.tries | 0) + 1; changed = true;
+      let res = null;
+      try {
+        res = await Cloud.client.rpc('wallet_credit',
+          { p_amount: e.amount, p_reason: e.reason || 'reward', p_ref: e.ref });
+      } catch (err) { res = { error: err }; }
+      if (res && res.error) {
+        if (_walletRpcUnavailable(res.error)) { Wallet.rpcMissing = true; break; }
+        continue;                                       // leave queued, try later
+      }
+      /* Delivered — and safe to drop even if this response raced a previous
+         attempt, because the ref makes a duplicate a no-op server-side. */
+      q.splice(i, 1); sent++;
+    }
+    if (changed) { try { saveProfile(); } catch (e) {} }
+    return sent;
+  } catch (e) { return 0; }
+}
+try { window.__mg = window.__mg || {}; window.__mg.walletOutboxDrain = _walletOutboxDrain; } catch (e) {}
 /* 💸 THE DEBIT-ONLY MIRROR, for spends the poll watcher caught.
    Sibling of _serverMirrorCredit above, and deliberately narrower than
    _serverMirrorCharge: no tax ledger, no toast, no balance adoption — only the

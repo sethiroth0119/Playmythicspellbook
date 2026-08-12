@@ -36429,7 +36429,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120u5';
+  window.BUILD_VERSION = 'v120u6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46516,6 +46516,17 @@ async function cloudSyncProfile() {
       __heroEnergy__:      (Profile.heroEnergy      && typeof Profile.heroEnergy      === 'object') ? Profile.heroEnergy      : {},
       // 📦 Base Vault grid layout — small per-account placement array.
       __vaultLayout__:     (Profile.vaultLayout     && typeof Profile.vaultLayout     === 'object') ? Profile.vaultLayout     : {},
+      /* 🔒 WHICH ONE-TIME GEAR CLEAN THIS ACCOUNT HAS ALREADY HAD.
+         _gearResetOnce() latches on three stores — an in-memory Set,
+         localStorage['hg_gear_reset'] and IndexedDB — and it also checks
+         `Profile.gearResetApplied`, which it SETS but which was never saved
+         anywhere and never loaded back. That check could therefore never once
+         return true, so the only durable latch was device-local storage.
+         Sign in on a second device, clear site data, or let Safari evict its
+         ~7-day storage, and the "one-time" clean ran AGAIN on an account that
+         had already had it. Persisting the stamp per ACCOUNT is what actually
+         makes it one-time; the device stores stay as the fast path. */
+      __gearReset__:       (typeof Profile.gearResetApplied === 'string') ? Profile.gearResetApplied : '',
       // 🃏 CARD COLLECTION — THE player's owned-cards count map. Without this
       // a player who picks their starter on Device A would land on Device B
       // with ZERO cards. Piggybacks the forge JSONB (no schema migration).
@@ -47213,6 +47224,17 @@ async function cloudFetchProfile() {
       // 📦 Vault layout — single object overwrite (newer wins).
       const _fvault = data.forge.__vaultLayout__;
       if (_fvault && typeof _fvault === 'object') Profile.vaultLayout = _fvault;
+      /* 🔒 …and the gear-clean stamp, so the "one-time" clean is one-time PER
+         ACCOUNT rather than per device. Restored BEFORE _gearResetOnce can run
+         (that function refuses to act until _hydratedFromCloud is set, which
+         happens on this path), which is what closes the re-wipe window.
+         ⚠ Only ever adopted, never cleared here: a save written before this
+           field existed has no stamp, and blanking a local one on that account
+           would re-arm the wipe it is meant to prevent. */
+      try {
+        const _fgr = data.forge.__gearReset__;
+        if (typeof _fgr === 'string' && _fgr) Profile.gearResetApplied = _fgr;
+      } catch (e) {}
     }
     const _cloudSalvage = (data.forge && typeof data.forge === 'object' && data.forge.__salvage__ && typeof data.forge.__salvage__ === 'object')
       ? data.forge.__salvage__
@@ -75405,7 +75427,31 @@ function _gearResetOnce() {
     Profile.salvage = {};
     Profile.resources = {};
     Profile.fieldBag = {};
-    Profile.vaultLayout = {};
+    /* 🏰 PAID VAULT CAPACITY SURVIVES THE CLEAN — ITS CONTENTS STILL GO.
+       This was `Profile.vaultLayout = {}`, which threw away the whole object.
+       But that one object holds two completely different kinds of thing:
+         • `placements` — the ITEMS sitting in the vault. Gear. What a "gear
+           clean" is for, and correct to clear.
+         • `rows` / `cols` / `stashExtra` — the SIZE of the vault, bought with
+           Ⓐ Aza at 25 / 60 / 120 a container (VAULT_CRATES). That is paid
+           capacity, and it is not gear.
+       Wiping both meant a clean slate silently repossessed something players
+       had paid real-money currency for, with no refund and no message — and
+       because getVaultLayout() treats `{}` as a valid object and just fills in
+       the DEFAULT row count, the loss looked exactly like a normal 8-row vault
+       rather than like an error anyone would report as a bug.
+       Contents cleared, capacity kept. */
+    try {
+      const _pv = (Profile.vaultLayout && typeof Profile.vaultLayout === 'object') ? Profile.vaultLayout : null;
+      const _keepRows  = (_pv && typeof _pv.rows === 'number') ? _pv.rows : null;
+      const _keepCols  = (_pv && typeof _pv.cols === 'number') ? _pv.cols : null;
+      const _keepExtra = (_pv && (_pv.stashExtra | 0) > 0) ? (_pv.stashExtra | 0) : 0;
+      const _nv = { placements: [] };
+      if (_keepRows  != null) _nv.rows = _keepRows;
+      if (_keepCols  != null) _nv.cols = _keepCols;
+      if (_keepExtra)         _nv.stashExtra = _keepExtra;
+      Profile.vaultLayout = _nv;
+    } catch (e) { Profile.vaultLayout = { placements: [] }; }
     Profile.itemInventory = {};
     Profile.equipment = {};
     Profile.relicEquipment = {};
@@ -86846,7 +86892,54 @@ async function _offerHandTriggers(trigger) {
     }
   } catch (e) { try { console.warn('[handTriggers]', e); } catch (_) {} }
 }
-function _activateHandAbility(instanceId) {
+/* ✋✨ THE HAND-ACTIVATION ANIMATION — the beat before the effect.
+   A hand ability used to resolve INSTANTLY: the card vanished from your hand and
+   the board changed in the same frame, so the only thing tying cause to effect
+   was a log line. This lifts and flares the actual card in the hand rail first,
+   so the player sees WHICH card is doing it before anything moves.
+
+   Uses the Web Animations API rather than a CSS class so the whole beat is
+   self-contained here — no stylesheet coupling, and nothing to clean up if the
+   hand re-renders underneath us.
+
+   ⚠ IT MUST NEVER BE ABLE TO HANG THE ACTIVATION. If the element is missing
+     (hand collapsed, card face-down, a re-render swapped the node) or the
+     animation never fires its finish event, the promise still resolves — via
+     the missing-element path or the belt-and-braces timeout. An ability that
+     silently refuses to resolve because a cosmetic tween did not complete would
+     be a far worse bug than having no animation at all. */
+const HAND_FX_MS = 560;
+function _vfxHandActivate(card) {
+  return new Promise((resolve) => {
+    let el = null;
+    try {
+      const iid = card && card.instanceId;
+      if (iid && typeof document !== 'undefined') {
+        el = document.querySelector('.hand-card[data-card="' +
+          ((window.CSS && CSS.escape) ? CSS.escape(iid) : iid) + '"]');
+      }
+    } catch (e) {}
+    if (!el || typeof el.animate !== 'function') { resolve(); return; }
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      try { el.style.zIndex = ''; } catch (_) {}
+      resolve();
+    };
+    try {
+      el.style.zIndex = '60';               // ride above its neighbours while it flares
+      const anim = el.animate([
+        { transform: 'translateY(0) scale(1)',        filter: 'brightness(1)' },
+        { transform: 'translateY(-18px) scale(1.12)', filter: 'brightness(1.55) drop-shadow(0 0 15px rgba(126,224,168,0.95))', offset: 0.45 },
+        { transform: 'translateY(-9px) scale(1.04)',  filter: 'brightness(1.15) drop-shadow(0 0 8px rgba(126,224,168,0.55))' },
+      ], { duration: HAND_FX_MS, easing: 'cubic-bezier(.2,.8,.3,1)' });
+      anim.addEventListener('finish', finish);
+      anim.addEventListener('cancel', finish);
+    } catch (e) { finish(); return; }
+    setTimeout(finish, HAND_FX_MS + 250);   // the promise resolves no matter what
+  });
+}
+async function _activateHandAbility(instanceId) {
   try {
     const s = App.state;
     if (!s || !s.player) return;
@@ -86862,7 +86955,32 @@ function _activateHandAbility(instanceId) {
       try { showToast('🚫 ' + (card.name || 'That ability') + ' can\'t be used — ' + _pf.reason + ' (nothing was spent)'); } catch (e) {}
       return;
     }
-    let ns = { ...s };
+    /* ✋ Animate BEFORE anything is spent or applied. Every rejection above has
+       already returned, so a card that flares is a card that is definitely
+       about to fire — the animation never promises something that then fizzles. */
+    try { await _vfxHandActivate(card); } catch (e) {}
+
+    /* 🔴 DO NOT RE-RUN _canActivateHandAbility() AFTER THE AWAIT.
+       A TRIGGERED hand ability is invoked as:
+           App._handTrigBypass = true;
+           _activateHandAbility(id);
+           finally { App._handTrigBypass = false; }
+       That caller is synchronous and does not await us, so the `finally` runs
+       the instant we hit the await above — the bypass flag is ALREADY false by
+       the time we get here. Re-gating would then take the manual-only path,
+       decide "fires on its own trigger, not manually", and silently refuse
+       every triggered ability in the game. The gate result captured before the
+       await is the authoritative one.
+
+       What IS still worth re-checking is the cheap, flag-independent fact that
+       the card has not left the hand during the animation (a counter, a
+       discard effect, an opponent action). Everything else is re-read from the
+       CURRENT state below rather than the stale snapshot. */
+    const s2 = App.state;
+    if (!s2 || !s2.player) return;
+    if (!(s2.player.hand || []).some(c => c && c.instanceId === instanceId)) return;
+
+    let ns = { ...s2 };
     // Pay the energy cost, then the card cost (discard → grave, banish → void,
     // none → stays in hand but can't be re-used).
     let hand = (ns.player.hand || []).slice();
@@ -86880,6 +86998,54 @@ function _activateHandAbility(instanceId) {
     App.state = ns;
     App.ui.cardDetailId = null;
     try { if (typeof playSfx === 'function') playSfx('cardPlace'); } catch (e) {}
+    /* 📋 …AND SAY WHAT IT DID, third and last beat.
+       applyOnPlayEffect only reports through _abilityReport for UNIT-LIKE cards
+       (see the type gate there — it exists so spells borrowing the hero's
+       position are not announced as "hero abilities"). A hand ability is
+       usually on a SPELL, so it fell through that gate and produced no panel
+       row at all: the card left your hand, the board changed, and the only
+       record was one log line that scrolls away.
+
+       Reported explicitly here instead, where the ability's own definition is
+       in scope, so it is right regardless of the card's type. The card has
+       already left the hand by now, which is exactly why `card` (the snapshot
+       taken before the cost was paid) is the thing being described. */
+    try {
+      if (typeof _abilityReport === 'function') {
+        const _lines = [];
+        try {
+          const _t = (typeof describeOnPlayEffect === 'function') ? describeOnPlayEffect(ha.effect) : '';
+          if (_t) _lines.push(_t);
+        } catch (_) {}
+        // What the activation COST is part of what happened, and it is the half
+        // the player is most likely to have missed while watching the board.
+        const _paid = [];
+        if (gate.cost) _paid.push('−' + gate.cost + ' ⚡');
+        if (mode === 'discard') _paid.push('discarded to the graveyard');
+        else if (mode === 'banish') _paid.push('banished');
+        if (_paid.length) _lines.push('Cost: ' + _paid.join(', ') + '.');
+        if (_lines.length) {
+          let _ec = '#7ee0a8', _eico = '';
+          try {
+            const _els = (typeof getElementsOf === 'function') ? (getElementsOf(card) || []) : [];
+            if (_els.length) {
+              if (typeof getElementColor === 'function') _ec = getElementColor(_els[0]) || _ec;
+              if (typeof getElemIcon === 'function') _eico = getElemIcon(_els[0], '0.9em') || '';
+            }
+          } catch (_) {}
+          _abilityReport({
+            name: card.name || 'Hand ability',
+            kind: '✋ Hand ability',
+            cardId: card.id || card.cardId || null,
+            cardType: card.type || 'spell',
+            elemColor: _ec,
+            elemIcon: _eico,
+            effects: _lines,
+            by: 'Your ' + (card.name || 'card'),
+          });
+        }
+      }
+    } catch (e) {}
     if (typeof checkPostAction === 'function') checkPostAction(); else if (typeof renderBattle === 'function') renderBattle();
   } catch (e) { try { console.warn('[handAbility]', e); } catch (_) {} }
 }
@@ -90569,6 +90735,51 @@ function _afxOnRelayed(d) {
         hidden: !!d.hidden,
       });
     } finally { _afxInbound = false; }
+
+    /* 📋 …AND THE SIDE PANEL, which multiplayer was missing entirely.
+       Against the AI, _abilityReport fires for BOTH sides — an enemy activation
+       gets a row tagged "Enemy <unit>" that STAYS on screen for 14s with one
+       plain-language line per effect. In a Colyseus match it never fired for the
+       opponent at all: this relay only ever called ActivateFX.announce, so all
+       you got of their turn was a banner that plays once and is gone. If you
+       blinked, or two effects chained, you simply never learned what happened —
+       and that is worse in MP than against the AI, because a human opponent is
+       exactly who you need to be able to audit.
+
+       So the same beat now feeds both, and MP matches single-player.
+
+       ⚠ RESPECT `hidden`. A face-down / concealed card must not have its
+         identity spelled out in a panel that lingers — ActivateFX already
+         redacts the band, and leaking it here would re-open the Subterfuge leak
+         this file has closed once already. Redacted rows still appear, because
+         "the opponent activated SOMETHING" is itself information the player is
+         entitled to. */
+    try {
+      if (typeof _abilityReport === 'function') {
+        const _hid = !!d.hidden;
+        let _ec = '#e8a04c', _eico = '';
+        if (!_hid) {
+          try {
+            const _def = (typeof _cardDefById === 'function' && d.cardId) ? _cardDefById(d.cardId) : null;
+            const _els = (_def && typeof getElementsOf === 'function') ? (getElementsOf(_def) || []) : [];
+            if (_els.length) {
+              if (typeof getElementColor === 'function') _ec = getElementColor(_els[0]) || _ec;
+              if (typeof getElemIcon === 'function') _eico = getElemIcon(_els[0], '0.9em') || '';
+            }
+          } catch (_) {}
+        }
+        _abilityReport({
+          name: _hid ? 'Hidden card' : (d.name || 'Ability'),
+          kind: d.kindLabel || _AFX_KIND[d.zone] || 'Ability',
+          cardId: _hid ? null : (d.cardId || null),
+          cardType: (d.zone === 'hand') ? 'spell' : 'unit',
+          elemColor: _ec,
+          elemIcon: _eico,
+          effects: Array.isArray(d.effects) ? d.effects : [],
+          by: 'Enemy ' + (_hid ? 'card' : (d.name || 'card')),
+        });
+      }
+    } catch (e) {}
   } catch (e) { try { console.warn('[afx relay in]', e); } catch (_) {} }
 }
 try { window.__mg = window.__mg || {}; window.__mg.afxRelayIn = _afxOnRelayed; } catch (e) {}

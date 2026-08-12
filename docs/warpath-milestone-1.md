@@ -638,6 +638,89 @@ Suite is now **101 assertions**; probes 20/20; contract clean.
 forced deadline and a forced battle expiry, which is deterministic in SQL and timing-dependent in
 the sim. They are permanent tests either way.)*
 
+#### The deck harness's three findings — the offer tables, and what the bridge did with them
+
+One investigation, because they are one question: what the world hands a player, and what the
+bridge does with it on the way to a battle. Every number below is `tools/warpath-deck` at
+`--scale 2`, the same scale as the baseline it is compared against.
+
+**Where the answer turned out to be.** Both of the first two findings were the *same bug*, and
+it was neither of the two candidates on the table. `warpathPadDeck` ended in
+`pool.slice(0, DECK_SIZE)`. The server hands the pool over in acquisition order
+(`order by acquired_turn, id`) and the 24 starter cards are inserted at entry — so the first 24
+of those 40 slots were **always** the starter issue, and no run could ever field more than 16
+drafted cards however long it lasted.
+
+`probe-truncation.mjs` measures the consequence directly. `draftedSLOTS` is the number of the
+40 slots holding a key the starter could never have given you:
+
+| gained | pool | draftedSLOTS | distinct drafted in deck | distinct drafted LOST | over-3-copies |
+|---|---|---|---|---|---|
+| 0 | 24 | 0 | 0 | 0 | 3 |
+| 13 | 37 | 7.1 | 9.1 | 0 | 1.6 |
+| 20 | 44 | 9.7 | 10.7 | 1.8 | 0.3 |
+| 25 | 49 | 9.6 | 11.8 | 3.8 | 0.4 |
+| 35 | 59 | **8.0** | 15.5 | 8.0 | 0.5 |
+| 40 | 64 | **8.0** | 14.0 | 10.0 | 1.0 |
+
+It peaks around +20 and then **falls**. Past about twenty cards, drafting made the deck worse.
+
+That also settles which candidate cause it was. **It was not recruitment.** At +40 the deck
+fields the same 8 novel slots it fields at +20, so multiplying recruitment tenfold would move
+nothing. (Recruitment being a rounding error — 25.3 discovered against 1.05 recruited — is real
+and separate, and it is *by design*: three sites on the map, one claim each, so the entire
+recruitment half of the mode can contribute at most 3 cards to a run.) **And it was not
+dilution**, in the sense meant: padding was not filling a good pool with copies, it was
+throwing drafted cards away.
+
+The old bridge was also dealing an **illegal deck**. From the same q1 table, baseline:
+
+```
+starter only (24 cards)   units 20 traps 8 loc 10 spell 2   over-3: goblin×4, wolf×4, forest×4
+                          single-slot surplus 9
+```
+
+Ten Locations, nine of them competing for the one board slot the engine has, and four copies of
+three different cards against a limit of three. The harness's own calibration line says what
+that cost: a tuned catalogue deck used to beat the Warpath starting deck **75.8%**; against the
+same 24-card pool built properly it wins **53.8%**. Twenty-two points of the mode's difficulty
+were the bridge, not the mode.
+
+**The fix: the bridge selects a deck instead of truncating a pool.** `warpathPadDeck` now builds
+the best legal 40 the pool can make — the same 22/8/4/3/3 shape `getGeneratedDeckForHero` builds
+for every AI in the game, quotas as ceilings rather than floors so a pool that drafted no traps
+does not get traps invented for it, `MAX_COPIES_PER_CARD` respected, and Locations and Weather
+held to three because only one of each can ever be in play. It is behind
+`WARPATH_DECK_SELECT`, a one-line flip back to the shipped behaviour, and it is still
+battle-only: nothing is written back to the pool and a duplicated card is never extractable.
+
+**And then the fill order, which was a second finding inside the first.** The first version
+filled breadth-first — every distinct card got a first copy before any card got a second. That
+is monotone on paper and wrong in play: a newly drafted mediocre card *always* displaced a
+second copy of a better one. So each **copy** is now scored separately, discounted by how many
+copies are already in. A second Goblin beats a first Spider; a third Spider beats nothing.
+
+The discount was measured, not chosen. Same probe, same donor runs
+(`probe-progression.mjs`, four independent runs that each reached a 60-card pool):
+
+| fill | rungs where a bigger pool made a worse deck | what the whole draft is worth |
+|---|---|---|
+| breadth-first | 2 (−13.1, −14.4 pts) | +3.8% |
+| copies at 0.95 / 0.90 (near depth-first) | 3 | **−2.5%** |
+| copies at 0.85 / 0.72 | 1 (−6.9 pts) | +5.6% |
+| **copies at 0.75 / 0.55** — shipped | 2 (−3.2, −4.4 pts, both inside noise) | **+10.6%** |
+
+Near-depth-first is the worst of the four by a distance: it collapses the deck onto 14 distinct
+cards and the pool stops mattering at all.
+
+**One more thing was tried here and measured worse, and is written down so it is not
+rediscovered.** q5 kept finding rungs where a bigger pool made a worse deck, and the thing that
+moved with them was average cost — a 1.93 deck losing to a 1.80 one, repeatedly. `s -= 1.2 * cost`
+looked obviously right. It turned two small backward rungs into one 15.6-point cliff and cut what
+the whole draft is worth from +10.6% to +6.9%. The correlation was real and the causal reading of
+it was wrong.
+
+
 **Still waiting for Colyseus:** who is telling the truth about a battle result. Conceding and
 agreement are believed immediately and a bare win claim waits, so being fast buys nothing — but
 two lying clients are not detectable from here. See `docs/mp-server-authority-shared-engine.md`.

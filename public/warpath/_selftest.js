@@ -170,6 +170,142 @@ for (let s = 0; s < N; s++) {
       fails += bad;
       console.log('CARD_META            ' + keys.size + ' keys checked against the live catalogs'
         + (bad ? ' — ' + bad + ' PROBLEMS' : ''));
+
+      /* ── The authored Guardian decks ────────────────────────────────────
+         These are the mode's only authored PvE encounter and they live in
+         index.html, so nothing else checks them. An unresolvable id would be
+         silently dropped by warpathGuardianDeck and the Guardian would arrive
+         with a short deck and lose to a clock it should have set. */
+      const objBlock = (name) => {
+        const i = src.indexOf('const ' + name + ' = {');
+        if (i < 0) return null;
+        let d = 0, j = src.indexOf('{', i), k = j;
+        for (; k < src.length; k++) { if (src[k] === '{') d++; else if (src[k] === '}') { d--; if (!d) break; } }
+        return src.slice(j, k + 1);
+      };
+      const gb = objBlock('WARPATH_GUARDIANS');
+      if (!gb) { console.log('FAIL WARPATH_GUARDIANS not found in index.html'); fails++; }
+      else {
+        // eslint-disable-next-line no-eval
+        const G = eval('(' + gb + ')');
+        const heroBlock = (() => {
+          const i = src.indexOf('const STARTER_HEROES = [');
+          if (i < 0) return null;
+          let d = 0, j = src.indexOf('[', i), k = j;
+          for (; k < src.length; k++) { if (src[k] === '[') d++; else if (src[k] === ']') { d--; if (!d) break; } }
+          // eslint-disable-next-line no-eval
+          return new Set(eval(src.slice(j, k + 1)).map(h => h.id));
+        })();
+        const DECK_SIZE = 40, MAX_COPIES = 3;
+        let gbad = 0, names = [];
+        for (const lm of Object.keys(G)) {
+          const g = G[lm]; let n = 0; const seen = new Set();
+          if (heroBlock && !heroBlock.has(g.heroId)) {
+            console.log('FAIL Guardian ' + lm + ' names a hero that does not exist: ' + g.heroId); gbad++;
+          }
+          for (const [key, copies] of g.deck) {
+            const kind = key.slice(0, key.indexOf(':')), id = key.slice(key.indexOf(':') + 1);
+            if (!(cat[kind] && cat[kind].get(id))) { console.log('FAIL Guardian ' + lm + ' uses an unresolvable key: ' + key); gbad++; continue; }
+            if (copies > MAX_COPIES) { console.log('FAIL Guardian ' + lm + ' runs ' + copies + '× ' + key); gbad++; }
+            if (seen.has(key)) { console.log('FAIL Guardian ' + lm + ' lists ' + key + ' twice'); gbad++; }
+            seen.add(key); n += copies;
+          }
+          if (n !== DECK_SIZE) { console.log('FAIL Guardian ' + lm + ' has ' + n + ' cards, not ' + DECK_SIZE); gbad++; }
+          names.push(lm + ' (' + n + ', ' + g.heroId + ')');
+        }
+        // Every landmark the generator marks `guardian` must HAVE one authored,
+        // read from the generator rather than restated here — adding a fourth
+        // guarded landmark should fail this until somebody writes its deck.
+        for (const l of (M.LANDMARKS || [])) {
+          if (l.guardian && !G[l.id]) {
+            console.log('FAIL guarded landmark ' + l.id + ' has no authored Guardian deck'); gbad++;
+          }
+          if (!l.guardian && G[l.id]) {
+            console.log('FAIL ' + l.id + ' has a Guardian deck but no Guardian'); gbad++;
+          }
+        }
+        fails += gbad;
+        console.log('Guardian decks       ' + names.join(', ') + (gbad ? ' — ' + gbad + ' PROBLEMS' : ''));
+      }
+
+      /* ── THE BRIDGE: pool → 40 cards ────────────────────────────────────
+         warpathPadDeck is the single place a Warpath pool becomes a battle
+         deck. If it ever returns something other than DECK_SIZE the engine
+         deals a short deck and the player decks out; if it stops being
+         deterministic the same pool fights two different fights. Neither is
+         visible from the Warpath screen, so it is checked here against the
+         real card catalogue. */
+      const fnBlock = (name) => {
+        const i = src.indexOf('function ' + name + '(');
+        if (i < 0) return null;
+        let d = 0, j = src.indexOf('{', i), k = j;
+        for (; k < src.length; k++) { if (src[k] === '{') d++; else if (src[k] === '}') { d--; if (!d) break; } }
+        return src.slice(i, k + 1);
+      };
+      const padSrc = fnBlock('warpathPadDeck'), scoreSrc = fnBlock('_warpathCardScore');
+      if (!padSrc || !scoreSrc) { console.log('FAIL warpathPadDeck / _warpathCardScore not found'); fails++; }
+      else {
+        const sandbox = {
+          DECK_SIZE: 40, MAX_COPIES_PER_CARD: 3, WARPATH_DECK_SELECT: true,
+          resolveDeckCard: (key) => {
+            const kind = key.slice(0, key.indexOf(':')), id = key.slice(key.indexOf(':') + 1);
+            const c = cat[kind] && cat[kind].get(id);
+            return c ? Object.assign({ type: kind }, c) : null;
+          },
+        };
+        // eslint-disable-next-line no-new-func
+        const pad = new Function('DECK_SIZE', 'MAX_COPIES_PER_CARD', 'WARPATH_DECK_SELECT', 'resolveDeckCard',
+          scoreSrc + '\n' + padSrc + '\nreturn warpathPadDeck;')(
+          sandbox.DECK_SIZE, sandbox.MAX_COPIES_PER_CARD, sandbox.WARPATH_DECK_SELECT, sandbox.resolveDeckCard);
+
+        const every = [];
+        for (const kind of Object.keys(cat)) for (const id of cat[kind].keys()) every.push(kind + ':' + id);
+        const D = require('./warpath-data.js').WarpathData;
+        const discovery = new Set(D.STARTER_POOL);
+        Object.values(D.DISCOVERY).forEach(b => b.cards.forEach(c => discovery.add(c[0])));
+        const cases = [
+          ['the starter pool alone', D.STARTER_POOL],
+          ['the starter pool + everything draftable', D.STARTER_POOL.concat([...discovery])],
+          ['every card in the game', every],
+          ['a single card', [D.STARTER_POOL[0]]],
+          ['nothing but Locations', every.filter(k => k.startsWith('location:'))],
+        ];
+        let pbad = 0;
+        for (const [name, pool] of cases) {
+          const deck = pad(pool);
+          if (deck.length !== 40) { console.log('FAIL warpathPadDeck dealt ' + deck.length + ' cards for ' + name); pbad++; continue; }
+          if (pad(pool.slice()).join('|') !== deck.join('|')) {
+            console.log('FAIL warpathPadDeck is not deterministic for ' + name); pbad++;
+          }
+          const counts = {};
+          for (const k of deck) counts[k] = (counts[k] || 0) + 1;
+          const loc = deck.filter(k => k.startsWith('location:')).length;
+          const wth = deck.filter(k => k.startsWith('weather:')).length;
+          // The caps only apply when the pool HAS something else to offer —
+          // a pool of nothing but Locations must still deal 40 cards.
+          const hasOther = pool.some(k => !k.startsWith('location:') && !k.startsWith('weather:'));
+          if (hasOther && (loc > 3 || wth > 3)) {
+            console.log('FAIL warpathPadDeck dealt ' + loc + ' Locations / ' + wth + ' Weather for ' + name
+              + ' — only one of each can ever be in play'); pbad++;
+          }
+          const over = Object.entries(counts).filter(([, v]) => v > 3);
+          // Over the copy limit is only tolerable when the pool cannot make a
+          // legal 40 at all (fewer than 14 distinct cards).
+          const distinctPool = new Set(pool).size;
+          if (over.length && distinctPool >= 14) {
+            console.log('FAIL warpathPadDeck broke the 3-copy limit with ' + distinctPool + ' distinct cards available: '
+              + over.map(o => o[0] + '×' + o[1]).join(', ')); pbad++;
+          }
+        }
+        // An empty or entirely unresolvable pool must deal NOTHING, not junk —
+        // warpathStartBattle checks for that and refuses the battle.
+        if (pad([]).length !== 0 || pad(['unit:definitely_not_a_card']).length !== 0) {
+          console.log('FAIL warpathPadDeck invented a deck out of an empty pool'); pbad++;
+        }
+        fails += pbad;
+        console.log('warpathPadDeck       ' + cases.length + ' pools → 40 cards, deterministic, legal'
+          + (pbad ? ' — ' + pbad + ' PROBLEMS' : ''));
+      }
     }
   }
 }

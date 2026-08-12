@@ -807,7 +807,7 @@ function tabFeed(st) {
    re-announce the same thing; only the first sighting speaks. */
 var LOUD = { hero_defeated: 1, extraction_started: 1, extraction_broken: 1,
              guardian_defeated: 1, run_closed: 1, watchtower_report: 1,
-             rival_camp_struck: 1 };
+             rival_camp_struck: 1, landmark_sighted: 1 };
 function announceNewEvents(st) {
   var evs = (st && st.events) || [];
   if (!S.seenEvents) {
@@ -841,6 +841,16 @@ function announceNewEvents(st) {
     } else if (e.kind === 'watchtower_report') {
       ribbon('⚠ Enemy camp discovered', 'Your Watchtower has spotted ' + (p.hero || 'a rival')
         + "'s camp " + (p.dist != null ? p.dist + ' tiles from yours' : 'nearby') + '.');
+    } else if (e.kind === 'landmark_sighted') {
+      /* The one authored PvE encounter in the mode, and 2 of every 3 players
+         who were shown it walked past. It is already painted in your fog —
+         this only makes sure you looked. No coordinates: the event is private
+         and finding it again is the point. */
+      ribbon('Something is out there', p.guarded
+        ? 'You have seen a structure that should not exist, and something is standing at its door. '
+          + 'It is on your map now. Nobody else has been told.'
+        : 'You have seen a structure that should not exist. It is on your map now. '
+          + 'Nobody else has been told.');
     } else if (e.kind === 'rival_camp_struck') {
       ribbon('A camp has struck', (p.hero || 'A rival') + ' packed up and left ' + p.x + ',' + p.y + '.');
     } else if (e.kind === 'run_closed') {
@@ -874,6 +884,8 @@ function feedLine(e) {
     case 'battle_disputed':     return 'Two Heroes each claimed the same victory.';
     case 'watchtower_report':   return '🗼 Watchtower: ' + (p.hero || 'a rival') + ' is camped '
                                      + (p.dist != null ? p.dist + ' tiles away' : 'nearby') + '.';
+    case 'landmark_sighted':    return '❓ You have sighted an unidentified structure'
+                                     + (p.guarded ? ' — something is guarding it.' : '.');
     case 'scout_report':        return '🔭 Scout report — ' + (p.count || 0) + ' known camp'
                                      + ((p.count || 0) === 1 ? '' : 's') + ' located.';
     case 'extraction_broken':   return (p.hero || 'A Hero') + ' was stopped mid-extraction by ' + (p.by || 'someone') + '.';
@@ -1298,6 +1310,11 @@ function launchBattle(battle) {
       return (o && o.hero_name) || 'A rival Hero';
     })(),
     hero_id: st.me.hero_id,
+    // WHICH landmark, not just that it is one. The Guardian's deck is authored
+    // per landmark in the parent game, so the Black Pyramid and the Drowned
+    // Choir have to be distinguishable here or they fight identically.
+    landmark_id: (battle.kind === 'guardian'
+      ? ((battle.landmark || (S.world && S.world.landmark) || {}).id || null) : null),
     // The pool, not a deck. The parent pads it to DECK_SIZE for the engine.
     card_keys: st.cards.map(function (c) { return c.key; }),
     hero_hp: st.me.hp, hero_max_hp: st.me.max_hp,

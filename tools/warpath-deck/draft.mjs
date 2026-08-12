@@ -312,6 +312,10 @@ export function runExpedition(opts) {
   return {
     seed, slot: opts.slot | 0, target, pick: opts.pick || 'value', style: opts.style || 'explore', turns,
     pool, gains, discovered, recruited, extracted, extractCap: cap,
+    // Every tile this run actually stood on, as y*WORLD_W+x. The ONLY way to
+    // learn what a landmark is, or to fight its Guardian, is to walk onto its
+    // tile — so this is what "is the landmark findable?" reduces to.
+    visited: seen,
     materials, camp, carry, log,
   };
 }

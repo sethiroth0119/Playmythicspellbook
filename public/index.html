@@ -215641,11 +215641,13 @@ function _warpathOpen() {
    Turn a Warpath collision into an ordinary battle. Everything below is the
    same battlePrep shape rlcStartBattle() builds — no engine change, no new
    battle path, no Warpath-specific combat rules. */
-function warpathPadDeck(keys) {
-  // The Warpath pool starts at 24 cards and grows toward a real deck. The
-  // engine deals from DECK_SIZE, so a short pool is padded FOR THE BATTLE
-  // ONLY. Nothing here is added to the player's pool — a padded card exists
-  // for the length of one match and is never extractable.
+/* 🚩 Flip to false to restore the acquisition-order bridge exactly as it
+   shipped. Kept as a one-line escape hatch because this is the only place a
+   Warpath pool becomes a battle deck, so it is the only place a regression
+   here can hide. */
+const WARPATH_DECK_SELECT = true;
+
+function _warpathPadDeckLegacy(keys) {
   const deck = (keys || []).filter(k => typeof resolveDeckCard === 'function' && !!resolveDeckCard(k));
   if (!deck.length) return [];
   const base = deck.slice(0);
@@ -215654,17 +215656,243 @@ function warpathPadDeck(keys) {
   return deck.slice(0, DECK_SIZE);
 }
 
+/* What one card is worth to a run deck. Units are ranked by stats-per-energy —
+   the same body/cost the harness's tuned reference and the Forge's own scoring
+   use — and everything else by cheapness, because a Trap or a Location you
+   cannot afford to set is a Trap you never set. Both get the game's existing
+   hero-theme bonus on top, so a run deck leans the way the hero does. Type
+   quotas keep units from competing with locations for the same slot, so the
+   two halves only have to be self-consistent, not commensurable. */
+function _warpathCardScore(card, hero) {
+  if (!card) return -1e9;
+  let s = 0;
+  try { if (hero && typeof _scoreCardForHero === 'function') s += _scoreCardForHero(card, hero); }
+  catch (e) {}
+  const st = card.stats || {};
+  const cost = Math.max(1, card.cost | 0);
+  if (card.type === 'unit') {
+    const body = (st.hp | 0) + Math.max(st.atk | 0, st.mag | 0) * 1.5 + ((st.def | 0) + (st.res | 0)) * 0.5;
+    s += body / cost;
+  } else {
+    s += Math.max(0, 8 - cost);
+  }
+  /* ⚠ A CURVE TERM WAS TRIED HERE AND MEASURED WORSE. q5 kept finding rungs
+     where a bigger pool made a worse deck, and the thing that moved with them
+     was average cost — a 1.93 deck losing to a 1.80 one, repeatedly — so
+     `s -= 1.2 * cost` looked obviously right: efficiency is not castability,
+     and a hand of 3-drops on turn one is a hand of nothing. Same probe, same
+     donors: it turned two small backward rungs into one 15.6-point cliff and
+     cut what the whole draft is worth from +10.6% to +6.9%. The correlation
+     with average cost is real and the causal reading of it was wrong. Left
+     out, and written down so it is not rediscovered. */
+  return s;
+}
+
+function warpathPadDeck(keys, hero) {
+  // The Warpath pool starts at 24 cards and grows past DECK_SIZE as the run
+  // goes on. The engine deals exactly DECK_SIZE, so this is where a pool
+  // becomes a deck. Nothing here is added to the player's pool — a duplicated
+  // card exists for the length of one match and is never extractable.
+  //
+  // ⚠ It used to be `pool.slice(0, DECK_SIZE)`. The server hands the pool over
+  // in acquisition order and the 24 starter cards are inserted at entry, so
+  // the first 24 of those 40 slots were ALWAYS the starter issue and a run
+  // could never field more than 16 drafted cards however long it lasted. The
+  // deck harness measured the consequence directly: drafted slots peaked at
+  // 9.7/40 around +20 gained and then FELL to 8.0 at +35, i.e. drafting more
+  // made the deck worse. Selecting the deck instead of truncating the pool is
+  // the fix; see tools/warpath-deck/probe-truncation.mjs.
+  if (!WARPATH_DECK_SELECT) return _warpathPadDeckLegacy(keys);
+  if (typeof resolveDeckCard !== 'function') return [];
+  const cap = (typeof DECK_SIZE === 'number') ? DECK_SIZE : 40;
+  const maxCopies = (typeof MAX_COPIES_PER_CARD === 'number') ? MAX_COPIES_PER_CARD : 3;
+
+  /* Distinct candidates. A pool can hold several copies of a key and the deck
+     may run up to MAX_COPIES_PER_CARD of it regardless — padding a short pool
+     to DECK_SIZE has always been allowed to duplicate, and is explicitly
+     battle-only: nothing here is written back to the pool and a duplicated card
+     is never extractable. */
+  const seenKey = Object.create(null);
+  const order = [];                            // first-seen order, for a stable tiebreak
+  for (const k of (keys || [])) {
+    if (seenKey[k]) continue;
+    const c = resolveDeckCard(k);
+    // Summons and Archons are never drawable — buildDeckFromKeys drops them at
+    // battle time, so spending a slot on one would deal a short deck.
+    if (!c || c.type === 'summon' || c.isSummon || c.type === 'hero') continue;
+    if (c.archonSummon && c.archonSummon.enabled) continue;
+    seenKey[k] = true;
+    order.push({ key: k, card: c, seen: order.length });
+  }
+  if (!order.length) return [];
+
+  /* ⚠ THE DECK IS CHOSEN A COPY AT A TIME, NOT A CARD AT A TIME.
+     The first version of this filled each bucket breadth-first — every distinct
+     card got its first copy before any card got a second. That is monotone on
+     paper and wrong in play: a newly drafted mediocre card ALWAYS displaced a
+     second copy of a better one, so the deck got wider and weaker as the run
+     went on. Measured, that produced a progression curve that went backwards
+     twice (probe-progression.mjs: 31→38 60.0%→46.9%, 46→52 58.8%→44.4%, and the
+     entire draft worth +3.8 points).
+
+     So each COPY is a candidate with its own score, discounted by how many
+     copies of that card are already in. A second Goblin beats a first Spider;
+     a third Spider does not beat a first anything. The discount is the one
+     dial between "three of the best card" and "one of everything", and it was
+     measured rather than guessed — four settings, same probe, same donors:
+
+       fill                    rungs that go backwards   the whole draft is worth
+       breadth-first            2  (−13.1, −14.4 pts)              +3.8%
+       copies at 0.95 / 0.90    3                                  −2.5%
+       copies at 0.85 / 0.72    1  (−6.9 pts)                      +5.6%
+       copies at 0.75 / 0.55    2  (−3.2, −4.4 pts, both noise)   +10.6%
+
+     Near-depth-first is the worst of the four by a distance: it collapses the
+     deck onto 14 distinct cards and the pool stops mattering at all. */
+  const COPY_FALLOFF = [1, 0.75, 0.55];
+  const cand = [];
+  for (const e of order) {
+    const base = _warpathCardScore(e.card, hero);
+    for (let c = 0; c < maxCopies; c++) {
+      cand.push({ e, copy: c, type: e.card.type || 'unit', score: base * COPY_FALLOFF[c] });
+    }
+  }
+  // Deterministic: same pool ⇒ same deck. Ties break on copy index first so a
+  // card's copies stay in order, then on the order the pool listed them.
+  cand.sort((a, b) => (b.score - a.score) || (a.copy - b.copy) || (a.e.seen - b.e.seen));
+
+  const deck = [], used = Object.create(null);
+  const push = e => { deck.push(e.key); used[e.key] = (used[e.key] | 0) + 1; };
+
+  /* The house shape — the same 22/8/4/3/3 getGeneratedDeckForHero builds, so a
+     run deck and a collection deck are the same kind of object. Quotas are
+     CEILINGS, not floors: a pool that drafted no traps does not get traps
+     invented for it, and the 3-card ceiling on locations and weather is what
+     stops a location-heavy biome pool from filling a deck with cards that
+     compete for one board slot (only one location and one weather can ever be
+     in play at a time). */
+  const QUOTA = { unit: 22, spell: 8, trap: 4, location: 3, weather: 3 };
+  const taken = { unit: 0, spell: 0, trap: 0, location: 0, weather: 0 };
+  for (const c of cand) {
+    if (deck.length >= cap) break;
+    if ((taken[c.type] | 0) >= (QUOTA[c.type] | 0)) continue;
+    if ((used[c.e.key] | 0) >= maxCopies) continue;
+    push(c.e); taken[c.type]++;
+  }
+
+  /* Whatever the ceilings left unfilled goes to the rest of the pool, in the
+     same order, ignoring the type quotas but never the copy limit. This is also
+     the ONLY path by which a 24-card starter pool reaches 40: it duplicates its
+     best cards up to the legal limit rather than cycling the pool from the
+     front, which used to push cards past three copies. Locations and weather
+     stay capped — a deck of six Locations is five dead cards. */
+  for (const c of cand) {
+    if (deck.length >= cap) break;
+    if (c.type === 'location' || c.type === 'weather') continue;
+    if ((used[c.e.key] | 0) >= maxCopies) continue;
+    push(c.e);
+  }
+  /* Only if that still cannot fill 40 do Locations and Weather come off their
+     leash — a pool of nothing but Locations is a terrible deck either way, and
+     a LEGAL terrible deck beats an illegal one. */
+  for (const c of cand) {
+    if (deck.length >= cap) break;
+    if ((used[c.e.key] | 0) >= maxCopies) continue;
+    push(c.e);
+  }
+  // A pool with too few distinct cards to make a legal 40 (fewer than 14
+  // distinct) would otherwise deal a short deck, which decks the player out
+  // almost immediately. Size wins over the copy limit at that point, exactly
+  // as _legalizeDeck decides it for AI decks.
+  for (let i = 0; deck.length < cap && order.length; i++) push(order[i % order.length]);
+  return deck.slice(0, cap);
+}
+
+/* ── THE GUARDIANS ────────────────────────────────────────────────────────
+   Two of the three landmarks are guarded, and beating one is the only authored
+   PvE encounter the mode has. It used to be fought with `enemyDeckOverride:
+   null`, which hands the fight to buildAIDeck() — the generic admin AI deck on
+   an install that has one, and an EMPTY ARRAY on an install that does not
+   (probe-emptyfoe.mjs: 20/20 Warpath wins, median two half-turns).
+   So both Guardians fought the same, and on a fresh install neither fought at
+   all. These are authored, legal 40-card decks: exactly DECK_SIZE, never more
+   than MAX_COPIES_PER_CARD of anything, built only from ids that exist in the
+   built-in catalogue, and each one is a different fight on purpose.
+
+   The hero is fixed per landmark rather than hashed from the battle id. The
+   old comment claimed the hash made "the same Guardian the same foe", but a
+   battle id is per-battle, so every run met a different one. */
+const WARPATH_GUARDIANS = {
+  /* 🔺 THE BLACK PYRAMID — "It was not built. It was left." Ouroboros: a swarm
+     that gets worse the longer you leave it, every body carrying xenoBond. It
+     goes wide and it goes fast, so it punishes a slow, tall draw. */
+  black_pyramid: {
+    heroId: 'zarra',
+    /* ⚠ REBUILT ONCE. The first version ran 18 units, ten traps and THREE
+       Brood Tyrants at five energy, and probe-guardian measured it at 80.8%
+       to the player — a landmark boss losing four fights in five. The Drowned
+       Choir, built the same evening with twenty two-and-three-drops, measured
+       55.8%. The difference was the opening hand: a swarm that cannot deploy
+       until turn five is not a swarm. Same cards, same identity, twenty bodies
+       and one fewer Tyrant. */
+    deck: [['unit:xenoDrone', 3], ['unit:parasiteHost', 3], ['unit:spider', 3],
+           ['unit:hiveDrone', 3], ['unit:golem', 3], ['unit:ice', 3], ['unit:broodTyrant', 2],
+           ['spell:arcaneInsight', 3], ['spell:bolt', 3],
+           ['trap:xenoBurst', 3], ['trap:staticMine', 3], ['trap:nullGlyph', 2],
+           ['location:manaFont', 2], ['location:skyCitadel', 1],
+           ['weather:lightningStorm', 2], ['weather:mindRealm', 1]],
+  },
+  /* 🕯 THE DROWNED CHOIR — "Thirty voices, no throats." The opposite fight:
+     slow, cold and attritional. It drains, it freezes, and it wins by still
+     being there. Bring reach or bring a clock. */
+  drowned_choir: {
+    heroId: 'vex',
+    deck: [['unit:lich', 3], ['unit:ice', 3], ['unit:priest', 3], ['unit:parasiteHost', 3],
+           ['unit:spider', 3], ['unit:golem', 3], ['unit:archer', 2],
+           ['spell:frostwind', 3], ['spell:mend', 3],
+           ['trap:soulSnare', 3], ['trap:frostGlyph', 3], ['trap:hexSigil', 2],
+           ['location:necropolis', 2], ['location:mire', 1],
+           ['weather:eclipse', 2], ['weather:mistveil', 1]],
+  },
+};
+
+/* Expand a Guardian recipe into DECK_SIZE keys. Anything the catalogue cannot
+   resolve is dropped rather than trusted, and a short deck is topped up from
+   the parts of the recipe that did resolve — a Guardian with 31 cards would
+   deck out mid-fight and hand the player a win it did not earn. Returns null
+   if the landmark has no authored Guardian, which leaves the old behaviour
+   exactly where it was. */
+function warpathGuardianDeck(landmarkId) {
+  const spec = WARPATH_GUARDIANS[landmarkId];
+  if (!spec || typeof resolveDeckCard !== 'function') return null;
+  const cap = (typeof DECK_SIZE === 'number') ? DECK_SIZE : 40;
+  const out = [], distinct = [];
+  for (const [key, copies] of spec.deck) {
+    if (!resolveDeckCard(key)) continue;              // catalogue drift, not a crash
+    distinct.push(key);
+    for (let i = 0; i < copies && out.length < cap; i++) out.push(key);
+  }
+  if (!distinct.length) return null;
+  for (let i = 0; out.length < cap; i++) out.push(distinct[i % distinct.length]);
+  return out.slice(0, cap);
+}
+
 function warpathStartBattle(b) {
   if (!b || !b.battle_id) return;
   const hero = (typeof findHeroById === 'function') ? findHeroById(b.hero_id) : null;
   const heroes = (typeof getAllHeroes === 'function') ? getAllHeroes() : [];
   const myHero = hero || heroes[0];
   if (!myHero) { showToast('Could not resolve your Hero for this battle.', 4000); return; }
-  // The opponent is a real Hero from the catalog. For a Guardian we pick one
-  // deterministically from the battle id so the same Guardian is the same foe.
+  // The opponent is a real Hero from the catalog.
+  const guardian = (b.kind === 'guardian') ? WARPATH_GUARDIANS[b.landmark_id] : null;
   let foe = null;
   if (b.opponent_expedition_id) {
     foe = heroes.filter(h => h.id !== myHero.id)[0] || myHero;
+  } else if (guardian) {
+    // A named Guardian is the SAME Hero in every world, every run. That is what
+    // makes it a landmark rather than a random fight.
+    foe = heroes.filter(h => h.id === guardian.heroId)[0]
+       || heroes.filter(h => h.id !== myHero.id)[0] || myHero;
   } else {
     const others = heroes.filter(h => h.id !== myHero.id);
     let n = 0; for (let i = 0; i < String(b.battle_id).length; i++) n = (n * 31 + String(b.battle_id).charCodeAt(i)) >>> 0;
@@ -215672,7 +215900,7 @@ function warpathStartBattle(b) {
   }
   if (b.opponent_name) foe = Object.assign({}, foe, { name: String(b.opponent_name) });
 
-  const cards = warpathPadDeck(b.card_keys);
+  const cards = warpathPadDeck(b.card_keys, myHero);
   if (!cards.length) { showToast('Your Warpath pool has no playable cards yet.', 4000); return; }
   Profile.decks = (Array.isArray(Profile.decks) ? Profile.decks : []).filter(d => d.id !== 'warpath_run_deck');
   Profile.decks.push({ id: 'warpath_run_deck', name: 'Warpath Pool', heroId: myHero.id,
@@ -215687,7 +215915,10 @@ function warpathStartBattle(b) {
     deckId: 'warpath_run_deck', deckName: 'Warpath Pool',
     campaignNode: null, scriptedWeather: null,
     enemyLevel: b.kind === 'guardian' ? 6 : null,
-    enemyDeckOverride: null, encounterModifiers: null,
+    // A PvP collision is still whatever the AI brings; only the authored
+    // Guardians override the deck, and only when the landmark names one.
+    enemyDeckOverride: guardian ? warpathGuardianDeck(b.landmark_id) : null,
+    encounterModifiers: null,
     // The ONLY Warpath-specific field the engine ever sees. It is not read by
     // any combat code — the gameover hook uses it to know where to report.
     warpath: { battle_id: b.battle_id, kind: b.kind,

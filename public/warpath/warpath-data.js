@@ -241,6 +241,19 @@ var DISCOVERY = {
     encounterChance: 11,
     title: 'BURIED, BUT NOT DEEPLY',
     cards: [
+      /* ⚠ THESE WEIGHTS WERE CHANGED AND CHANGED BACK. q3 has the Ashen Wastes
+         at ~59% against the field and beating all five other biomes head to
+         head, which is exactly the "always go to the volcano" the stage exists
+         to catch. The obvious hypothesis was that its two heaviest slots are
+         Golem and Goblin, the two strongest cards in the starter pool, so a
+         Wastes run buys extra copies of what it already owns. Moving that
+         weight onto the Lich and the Ice elemental and re-running q3 at the
+         same scale moved it from 59.3% to 58.8% — inside the noise — so the
+         hypothesis is wrong and the change was reverted rather than kept for
+         its flavour. It is wrong because warpathPadDeck already pads a short
+         pool up to three copies of the best cards in it: a starter deck runs
+         three Goblins and three Golems whether or not the Wastes ever offered
+         one. Whatever the Wastes' advantage is, it is not its unit weights. */
       ['unit:golem', 16], ['unit:goblin', 14], ['unit:ice', 10], ['unit:lich', 8],
       ['trap:frostGlyph', 14], ['trap:mirePit', 12], ['trap:caltrops', 12],
       ['location:sandstormDunes', 16], ['location:mire', 12], ['location:bastion', 10],

@@ -110,3 +110,13 @@ game each, ~250 MB). `--scale` multiplies match counts. Results land in
 | `probe-emptyfoe.mjs` | plays a Warpath pool against the empty opponent deck that `buildAIDeck()` returns on an install with no published AI decks |
 | `probe-control.mjs` | the mirror-match seat/first-mover control across three heroes |
 | `probe-unresolved.mjs` | diagnostics for matches that never reach a verdict |
+| `probe-truncation.mjs` | separates the two candidate causes of the flat draft curve: how many of the cards a run actually drew out of the world survive into the 40 the engine is handed |
+| `probe-progression.mjs` | does a bigger pool make a better deck, every time — across several donor runs against a common opponent. The instrument the fill order was tuned on |
+| `probe-biome.mjs` | the half of "what does a biome pay" that q3 cannot see: yield, offer-table quality and cost, from the real draft over hundreds of seeds |
+| `probe-landmark.mjs` | how often a real 60-turn run ever sees, and ever stands on, the one landmark — the mode's only authored PvE encounter |
+| `probe-guardian.mjs` | how hard the authored Guardian decks are against real Warpath pools, with the old empty-deck Guardian as the scale |
+
+`probe-progression.mjs` and `probe-biome.mjs` are instruments for **iterating**, not
+tables of record. Anything they suggest is confirmed by re-running `run.mjs` at the
+same scale as the number it is being compared against — the baseline in this repo was
+taken at `--scale 2`, so a `--scale 1` re-run is not a comparable table.

@@ -617,7 +617,7 @@ begin
   if has_function_privilege('authenticated', 'public.wp_reveal(uuid,integer,integer,integer)', 'execute') then
     raise exception 'FAIL: authenticated can execute wp_reveal — it can clear another player''s fog';
   end if;
-  if has_function_privilege('authenticated', 'public.wp_log(uuid,uuid,text,jsonb)', 'execute') then
+  if has_function_privilege('authenticated', 'public.wp_log(uuid,uuid,text,jsonb,boolean)', 'execute') then
     raise exception 'FAIL: authenticated can execute wp_log — it can forge run-feed entries';
   end if;
   if has_function_privilege('public', 'public.wp_reveal(uuid,integer,integer,integer)', 'execute') then
@@ -1341,4 +1341,153 @@ begin
 
   raise notice '';
   raise notice '════════ TURN-CLOCK DEADLOCK: % CHECKS PASSED ════════', pass;
+end $$;
+
+-- =============================================================================
+-- ⚠ THE FEED HAD NO AUDIENCE, and the mode's only authored PvE encounter had
+-- no announcement.
+--
+-- warpath_state returned the last 40 events by run_id alone, so a player who
+-- never built a Watchtower read the camp coordinates of everyone who did. And
+-- probe-landmark.mjs measured that 36.7% of real 60-turn runs bring the
+-- landmark out from under the fog while only 14.0% ever stand on it — two of
+-- every three players who are shown it walk past. The sighting is the fix, and
+-- it must be PRIVATE: telling the run that somebody has seen the landmark
+-- would hand rivals both the intel and, by implication, a search area.
+-- =============================================================================
+do $$
+declare
+  u uuid[]; e uuid[]; r jsonb; v_run uuid; v_seed bigint; lm jsonb;
+  n_mine int; n_theirs int; pass int := 0; i int;
+  lx int; ly int; dx int; dy int; ox int; oy int;
+  d_x int; d_y int; o_x int; o_y int; found boolean := false;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  for i in 1..4 loop
+    declare uid uuid;
+    begin
+      insert into auth.users (email) values ('fp' || i || '@feed.test') returning id into uid;
+      insert into public.warpath_tickets (user_id, tickets) values (uid, 5);
+      perform public.set_uid(uid);
+      r := public.warpath_enter('h', 'F' || i, 'ticket');
+      u := array_append(u, uid); e := array_append(e, (r->>'expedition_id')::uuid);
+      v_run := (r->>'run_id')::uuid;
+    end;
+  end loop;
+  select seed into v_seed from public.warpath_runs where id = v_run;
+  select s into lm from jsonb_array_elements(public.wp_structures(v_seed)) s
+   where s->>'k' = 'landmark' limit 1;
+  if lm is null then raise exception 'FAIL: this world has no landmark at all'; end if;
+
+  -- ── 1. A private row reaches its owner and nobody else ────────────────────
+  perform public.wp_log(v_run, e[1], 'watchtower_report',
+                        jsonb_build_object('hero','F2','x',3,'y',4,'dist',9), true);
+  perform public.set_uid(u[1]);
+  select jsonb_array_length(jsonb_path_query_array(public.warpath_state(v_run),
+         '$.events[*] ? (@.kind == "watchtower_report")')) into n_mine;
+  perform public.set_uid(u[2]);
+  select jsonb_array_length(jsonb_path_query_array(public.warpath_state(v_run),
+         '$.events[*] ? (@.kind == "watchtower_report")')) into n_theirs;
+  if n_mine <> 1 then raise exception 'FAIL: the owner cannot see their own watchtower report'; end if;
+  pass := pass + 1; raise notice 'ok  a private event reaches the expedition it is addressed to';
+  if n_theirs <> 0 then
+    raise exception 'FAIL: a rival reads the Watchtower intel it did not pay for — the tower is not an advantage';
+  end if;
+  pass := pass + 1; raise notice 'ok  ⚠ a rival does NOT read another player''s Watchtower report';
+
+  -- ── 2. Broadcasts still broadcast ─────────────────────────────────────────
+  perform public.wp_log(v_run, e[1], 'extraction_started', jsonb_build_object('hero','F1','turns',2));
+  perform public.set_uid(u[3]);
+  select jsonb_array_length(jsonb_path_query_array(public.warpath_state(v_run),
+         '$.events[*] ? (@.kind == "extraction_started")')) into n_theirs;
+  if n_theirs <> 1 then
+    raise exception 'FAIL: the extraction broadcast stopped broadcasting — privacy defaulted the wrong way';
+  end if;
+  pass := pass + 1; raise notice 'ok  the extraction broadcast still reaches the whole run';
+
+  -- ── 3. The landmark announces itself, once, from inside vision ────────────
+  /* The run seed is random (warpath_enter: floor(random() * 4294967295)), so
+     the tiles around the landmark cannot be assumed dry. Search for a real
+     pair: a DESTINATION on land inside vision range 2, and an ORIGIN on land
+     next to it that is still outside vision. Walking that one step is the
+     whole event. */
+  lx := (lm->>'x')::int; ly := (lm->>'y')::int;
+  <<hunt>>
+  for dy in -2..2 loop
+    for dx in -2..2 loop
+      continue when greatest(abs(dx), abs(dy)) = 0;
+      continue when lx + dx < 0 or ly + dy < 0
+                 or lx + dx >= public.wp_w() or ly + dy >= public.wp_h();
+      continue when public.wp_is_water(v_seed, lx + dx, ly + dy);
+      for oy in -1..1 loop
+        for ox in -1..1 loop
+          continue when ox = 0 and oy = 0;
+          continue when lx + dx + ox < 0 or ly + dy + oy < 0
+                     or lx + dx + ox >= public.wp_w() or ly + dy + oy >= public.wp_h();
+          continue when public.wp_is_water(v_seed, lx + dx + ox, ly + dy + oy);
+          -- the origin must be OUTSIDE vision, or the sighting fires before the move
+          continue when greatest(abs(lx + dx + ox - lx), abs(ly + dy + oy - ly)) <= 2;
+          d_x := lx + dx; d_y := ly + dy;
+          o_x := lx + dx + ox; o_y := ly + dy + oy;
+          found := true;
+          exit hunt;
+        end loop;
+      end loop;
+    end loop;
+  end loop;
+  if not found then raise exception 'FAIL: no dry approach to the landmark on seed %', v_seed; end if;
+
+  update public.warpath_expeditions
+     set x = o_x, y = o_y, moves_left = 6, turn_ended = false
+   where id = e[1];
+  perform public.set_uid(u[1]);
+  -- Nothing yet: standing outside vision is not a sighting.
+  select count(*) into n_mine from public.warpath_events
+   where run_id = v_run and expedition_id = e[1] and kind = 'landmark_sighted';
+  if n_mine <> 0 then raise exception 'FAIL: sighted from outside vision'; end if;
+  r := public.warpath_move(e[1], d_x, d_y);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: could not step beside the landmark: %', r; end if;
+  select count(*) into n_mine from public.warpath_events
+   where run_id = v_run and expedition_id = e[1] and kind = 'landmark_sighted';
+  if n_mine <> 1 then
+    raise exception 'FAIL: walked within vision of the landmark and was never told (% events)', n_mine;
+  end if;
+  pass := pass + 1; raise notice 'ok  the landmark announces itself when it comes into view';
+  if (select (payload->>'guarded') is null from public.warpath_events
+       where run_id = v_run and expedition_id = e[1] and kind = 'landmark_sighted') then
+    raise exception 'FAIL: the sighting does not say whether it is guarded';
+  end if;
+  if (select payload ? 'x' or payload ? 'y' from public.warpath_events
+       where run_id = v_run and expedition_id = e[1] and kind = 'landmark_sighted') then
+    raise exception 'FAIL: the sighting carries coordinates — a leak waiting for the feed to change';
+  end if;
+  pass := pass + 1; raise notice 'ok  the sighting says guarded-or-not and carries no coordinates';
+
+  -- ...and only once, however many more moves happen beside it. The landmark
+  -- tile itself is snapped to the land lattice, so it is always walkable.
+  update public.warpath_expeditions set moves_left = 6 where id = e[1];
+  r := public.warpath_move(e[1], lx, ly);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: could not walk onto the landmark: %', r; end if;
+  select count(*) into n_mine from public.warpath_events
+   where run_id = v_run and expedition_id = e[1] and kind = 'landmark_sighted';
+  if n_mine <> 1 then raise exception 'FAIL: the sighting fired % times', n_mine; end if;
+  pass := pass + 1; raise notice 'ok  it fires exactly once per expedition, not once per step';
+
+  -- ── 4. And it is nobody else's business ───────────────────────────────────
+  perform public.set_uid(u[4]);
+  select jsonb_array_length(jsonb_path_query_array(public.warpath_state(v_run),
+         '$.events[*] ? (@.kind == "landmark_sighted")')) into n_theirs;
+  if n_theirs <> 0 then
+    raise exception 'FAIL: the run was told somebody found the landmark — that is a free search area';
+  end if;
+  pass := pass + 1; raise notice 'ok  ⚠ a rival is NOT told that the landmark has been sighted';
+
+  raise notice '';
+  raise notice '════════ FEED PRIVACY: % CHECKS PASSED ════════', pass;
 end $$;

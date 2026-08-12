@@ -663,6 +663,17 @@ create table if not exists public.warpath_events (
 );
 create index if not exists warpath_events_run_idx on public.warpath_events (run_id, id desc);
 
+/* ⚠ THE FEED HAD NO AUDIENCE. Every row in it was returned to every player in
+   the run, because warpath_state selected the last 40 events by run_id alone
+   and did not even return expedition_id for the client to filter on. That was
+   fine while the feed only carried broadcasts, but `watchtower_report` had
+   already started posting a RIVAL CAMP'S COORDINATES into it — so a player who
+   never built a tower read the intel of everyone who did, and the Watchtower
+   stopped being an advantage you buy. `private` marks a row as addressed to
+   its expedition_id; warpath_state filters on it. Default false, so every
+   existing broadcast keeps broadcasting. */
+alter table public.warpath_events add column if not exists private boolean not null default false;
+
 /* ⭐ THE ONLY BRIDGE TO PERMANENT DATA.
    warpath_extract_finish() is the only writer. The game client drains
    unclaimed rows on next load and applies them to Profile.cardCollection.
@@ -843,6 +854,9 @@ insert into public.warpath_discovery (biome, ord, card_key, weight) values
   ('plains',4,'trap:caltrops',14),('plains',5,'trap:bearTrap',12),('plains',6,'trap:snare',10),
   ('plains',7,'location:watchtower',14),('plains',8,'location:holySpring',12),('plains',9,'location:forest',12),
   ('plains',10,'spell:rally',10),('plains',11,'spell:mend',10),
+  -- ⚠ The Ashen Wastes is the strongest biome in q3 (~59% against the field).
+  -- A reweight of these rows was tried and measured at 58.8% — no effect — and
+  -- reverted. See public/warpath/warpath-data.js for why the hypothesis failed.
   ('wastes',0,'unit:golem',16),('wastes',1,'unit:goblin',14),('wastes',2,'unit:ice',10),('wastes',3,'unit:lich',8),
   ('wastes',4,'trap:frostGlyph',14),('wastes',5,'trap:mirePit',12),('wastes',6,'trap:caltrops',12),
   ('wastes',7,'location:sandstormDunes',16),('wastes',8,'location:mire',12),('wastes',9,'location:bastion',10),
@@ -966,14 +980,21 @@ returns int language sql stable security definer set search_path = public as $$
   select 2 + case when public.wp_level(p_exp,'watchtower') >= 2 then 1 else 0 end
 $$;
 
--- Append to the run feed.
-create or replace function public.wp_log(p_run uuid, p_exp uuid, p_kind text, p_payload jsonb default '{}')
+-- Append to the run feed. `p_private` addresses a row to p_exp alone; the
+-- default is a broadcast, which is what every existing caller wanted.
+-- ⚠ Dropped first, not replaced: adding a defaulted parameter creates an
+-- OVERLOAD, and the four-argument calls all over this file would then be
+-- ambiguous against it.
+drop function if exists public.wp_log(uuid, uuid, text, jsonb);
+create or replace function public.wp_log(p_run uuid, p_exp uuid, p_kind text, p_payload jsonb default '{}',
+                                         p_private boolean default false)
 returns void language plpgsql security definer set search_path = public as $$
 declare t int;
 begin
   select turn into t from public.warpath_runs where id = p_run;
-  insert into public.warpath_events (run_id, expedition_id, turn, kind, payload)
-    values (p_run, p_exp, coalesce(t, 1), p_kind, coalesce(p_payload, '{}'));
+  insert into public.warpath_events (run_id, expedition_id, turn, kind, payload, private)
+    values (p_run, p_exp, coalesce(t, 1), p_kind, coalesce(p_payload, '{}'),
+            coalesce(p_private, false) and p_exp is not null);
 end $$;
 
 /* ⭐ THE CALLER'S OWN EXPEDITION, derived from auth.uid().
@@ -1276,9 +1297,14 @@ begin
                           where run_id = me.run_id and status = 'open'
                             and (attacker_id = me.id or defender_id = me.id)), '[]'::jsonb),
     'others', others,
+    -- Broadcasts, plus the rows addressed to this expedition. See the note on
+    -- warpath_events.private: the feed used to hand every player everyone
+    -- else's watchtower intel.
     'events', coalesce((select jsonb_agg(jsonb_build_object('turn', turn, 'kind', kind, 'payload', payload)
                                  order by id desc)
-                          from (select * from public.warpath_events where run_id = me.run_id
+                          from (select * from public.warpath_events
+                                 where run_id = me.run_id
+                                   and (not private or expedition_id = me.id)
                                  order by id desc limit 40) z), '[]'::jsonb),
     'grants_waiting', (select count(*) from public.warpath_grants where user_id = v_uid and claimed = false));
 end $$;
@@ -1325,6 +1351,33 @@ begin
          stat_distance = stat_distance + greatest(abs(p_x - me.x), abs(p_y - me.y))
    where id = me.id;
   perform public.wp_reveal(me.id, p_x, p_y, public.wp_vision(me.id));
+
+  /* 🔺 THE LANDMARK SIGHTING.
+     There is exactly one landmark per world and it is the mode's ONLY authored
+     PvE encounter. Measured over 480 real 60-turn runs (probe-landmark.mjs):
+     36.7% of runs bring it out from under the fog, but only 14.0% ever stand
+     on it. So it is not primarily a discovery problem — two out of every three
+     players who are shown it walk straight past, because it is one painted
+     structure on a 1320-tile map and nothing says it matters.
+
+     This is the same move the extraction broadcast makes: the world speaks up.
+     PRIVATE, and with no coordinates — it tells YOU that you have seen
+     something, it does not tell your rivals where you are or where it is. The
+     structure is already painted in your fog; finding it again is on you. */
+  if not exists (select 1 from public.warpath_events
+                  where run_id = me.run_id and expedition_id = me.id
+                    and kind = 'landmark_sighted') then
+    declare lm jsonb; v_r int := public.wp_vision(me.id);
+    begin
+      select s into lm from jsonb_array_elements(public.wp_structures(run.seed)) s
+        where s->>'k' = 'landmark' limit 1;
+      if lm is not null
+         and abs((lm->>'x')::int - p_x) <= v_r and abs((lm->>'y')::int - p_y) <= v_r then
+        perform public.wp_log(me.run_id, me.id, 'landmark_sighted',
+          jsonb_build_object('guarded', (lm->>'guardian')::boolean), true);
+      end if;
+    end;
+  end if;
 
   enc := public.warpath_encounter_open(me.id);
   return jsonb_build_object('ok', true, 'x', p_x, 'y', p_y, 'cost', cost,
@@ -1935,9 +1988,11 @@ begin
                         <= (case when rec.tower >= 2 then 20 else 12 end) loop
         if f is null or not public.wp_explored(f, foe.x, foe.y) then
           perform public.wp_reveal(rec.exp_id, foe.x, foe.y, 1);
+          -- PRIVATE. A tower is intel you paid for; posting it to the shared
+          -- feed gave it to the three players who did not build one.
           perform public.wp_log(run.id, rec.exp_id, 'watchtower_report',
             jsonb_build_object('hero', foe.hero_name, 'x', foe.x, 'y', foe.y,
-                               'dist', greatest(abs(foe.x - rec.cx), abs(foe.y - rec.cy))));
+                               'dist', greatest(abs(foe.x - rec.cx), abs(foe.y - rec.cy))), true);
         end if;
       end loop;
     end;

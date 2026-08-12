@@ -179,6 +179,15 @@ var MOCK = {
     me.stats.distance += Math.max(Math.abs(a.p_x - me.x), Math.abs(a.p_y - me.y));
     me.x = a.p_x; me.y = a.p_y; me.moves_left -= cost;
     reveal(me.x, me.y, vision());
+    // Mirror wp_move's landmark sighting so the offline demo shows the same
+    // moment the live mode does. Once per run, and only from inside vision.
+    if (!mock.landmarkSighted && mock.world && mock.world.landmark) {
+      var lm = mock.world.landmark, v = vision();
+      if (Math.abs(lm.x - me.x) <= v && Math.abs(lm.y - me.y) <= v) {
+        mock.landmarkSighted = true;
+        log('landmark_sighted', { guarded: !!lm.guardian });
+      }
+    }
     var enc = MOCK.warpath_encounter_open({});
     return { ok: true, x: me.x, y: me.y, cost: cost, moves_left: me.moves_left,
              encounter: enc.ok ? enc.encounter : null };

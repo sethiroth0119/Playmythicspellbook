@@ -89,7 +89,7 @@ const results = {};
 /* ═══ CONTROL ═══════════════════════════════════════════════════════════ */
 if (want('control')) {
   head('CONTROL — mirror match. The harness must not favour a seat.');
-  const starterDeck = await E.pad(Data.STARTER_POOL);
+  const starterDeck = await E.pad(Data.STARTER_POOL, HERO);
   const n = 200 * SCALE;
   const cfgs = [];
   for (let i = 0; i < n; i++) {
@@ -202,7 +202,7 @@ if (want('q1')) {
   ];
   const rows = [];
   for (const [name, pool] of scen) {
-    const padded = await E.pad(pool);
+    const padded = await E.pad(pool, HERO);
     const insp = await E.inspect(padded);
     const sh = shape(padded, META);
     rows.push({ name, poolSize: pool.length, deckSize: padded.length, ...sh, engineSaysLegal: insp.legalSize && insp.legalCopies, engineOver: insp.overLimit });
@@ -226,7 +226,7 @@ if (want('q1')) {
   line('  playability (each scenario mirrored against itself, real engine):');
   const play = [];
   for (const [name, pool] of scen) {
-    const padded = await E.pad(pool);
+    const padded = await E.pad(pool, HERO);
     const r = await duel(padded, padded, 40 * SCALE, name);
     line(`  ${name.padEnd(34)} ${r.done}/${r.done + r.unres} matches reached a verdict, `
        + `median ${r.turns.p50} half-turns, deck-outs ${r.deckOuts}, `
@@ -245,7 +245,7 @@ if (want('q2')) {
   const MATCHES = 40 * SCALE;
   const runs = draftPools(POOLS, { turns: 60, seed0: 100003 });
   const decks = [];
-  for (const r of runs) decks.push({ run: r, keys: await E.pad(r.pool) });
+  for (const r of runs) decks.push({ run: r, keys: await E.pad(r.pool, HERO) });
   const r0 = rng(20260812);
   const seen = new Set(), pairs = [];
   while (pairs.length < Math.min(PAIRS, POOLS * (POOLS - 1) / 2)) {
@@ -296,7 +296,7 @@ if (want('q3')) {
     byBiome[b] = [];
     for (let k = 0; k < INSTANCES; k++) {
       const r = runExpedition({ seed: (900001 + k * 7919) >>> 0, slot: k % 4, turns: 60, pick: 'value', target: b });
-      byBiome[b].push({ run: r, keys: await E.pad(r.pool) });
+      byBiome[b].push({ run: r, keys: await E.pad(r.pool, HERO) });
     }
     const g = byBiome[b].map(x => x.run.gains.length);
     const sh = shape(byBiome[b][0].keys, META);
@@ -352,7 +352,7 @@ if (want('q4')) {
   const MATCHES = 80 * SCALE;
   const rows = [];
   for (const [name, pool] of cands) {
-    const wp = await E.pad(pool);
+    const wp = await E.pad(pool, HERO);
     for (const [refName, ref] of [['generated', gen], ['tuned', tuned]]) {
       const r = await duel(wp, ref, MATCHES, `${name} vs ${refName}`);
       line(`  ${name.padEnd(22)} vs ${refName.padEnd(10)}  warpath wins ${fmtRate(r.a, r.done)}   median ${r.turns.p50} half-turns`);
@@ -373,12 +373,12 @@ if (want('q5')) {
     .filter(r => STARTER_N + r.gains.length >= 60);
   line(`  ${donors.length}/24 full 60-turn runs reached a 60-card pool at all.`);
   const donor = donors[0] || draftPools(1, { turns: 60, seed0: 770001 })[0];
-  const ref = await E.pad(Data.STARTER_POOL);          // the 24-card start is the yardstick
+  const ref = await E.pad(Data.STARTER_POOL, HERO);          // the 24-card start is the yardstick
   const MATCHES = 80 * SCALE;
   const rows = [];
   for (const m of MILE) {
     const pool = poolWithGains(donor, Math.max(0, m - STARTER_N)).slice(0, m);
-    const keys = await E.pad(pool);
+    const keys = await E.pad(pool, HERO);
     const sh = shape(keys, META);
     const r = await duel(keys, ref, MATCHES, 'mile' + m);
     line(`  ${String(m).padStart(2)} cards (pool ${pool.length})  vs the 24-card start: ${fmtRate(r.a, r.done)}   `
@@ -392,7 +392,7 @@ if (want('q5')) {
   for (let i = 1; i < MILE.length; i++) {
     const lo = poolWithGains(donor, Math.max(0, MILE[i - 1] - STARTER_N)).slice(0, MILE[i - 1]);
     const hi = poolWithGains(donor, Math.max(0, MILE[i] - STARTER_N)).slice(0, MILE[i]);
-    const r = await duel(await E.pad(hi), await E.pad(lo), MATCHES, `${MILE[i]}v${MILE[i - 1]}`);
+    const r = await duel(await E.pad(hi, HERO), await E.pad(lo, HERO), MATCHES, `${MILE[i]}v${MILE[i - 1]}`);
     line(`  ${MILE[i]} vs ${MILE[i - 1]}: ${fmtRate(r.a, r.done)}`);
     steps.push({ from: MILE[i - 1], to: MILE[i], ...r.rate });
   }
@@ -403,14 +403,14 @@ if (want('q5')) {
 /* ═══ Q6 — what the AI pilot cannot do, and what that costs a Warpath deck ═ */
 if (want('q6')) {
   head('Q6 — dead cards under AI pilot. What does the AI refuse to play?');
-  const starter = await E.pad(Data.STARTER_POOL);
+  const starter = await E.pad(Data.STARTER_POOL, HERO);
   const probe = await E.playMatch({ heroA: HERO, heroB: HERO, keysA: starter, keysB: starter,
                                     aFirst: true, maxHalfTurns: 220, turnTimeoutMs: 12000 });
   line(`  one starter-mirror match: location ever on the field ${probe.sawLocation}, `
      + `weather ${probe.sawWeather}, trap ${probe.sawTrap}`);
   // Strip the card types the AI never touches and see what the deck is worth then.
   const noLoc = Data.STARTER_POOL.filter(k => (META[k] || {}).type !== 'location');
-  const noLocDeck = await E.pad(noLoc);
+  const noLocDeck = await E.pad(noLoc, HERO);
   const MATCHES = 200 * SCALE;
   const r = await duel(noLocDeck, starter, MATCHES, 'noloc-vs-starter');
   line(`  starter pool with its 8 Location cards REMOVED (${noLoc.length} cards → ${noLocDeck.length}) `

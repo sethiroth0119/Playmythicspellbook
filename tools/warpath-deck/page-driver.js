@@ -144,8 +144,11 @@ function inspectDeck(keys) {
 /* The SHIPPED battle-bridge padding path, verbatim from the game — this is
    what a real Warpath pool goes through on the way into a match.
    public/index.html:215643. */
-function padLikeWarpath(keys) {
-  return (typeof warpathPadDeck === 'function') ? warpathPadDeck(keys) : keys.slice(0, DECK_SIZE);
+function padLikeWarpath(keys, heroId) {
+  // warpathStartBattle passes the player's own Hero, so the harness must too —
+  // the bridge themes the run deck toward it.
+  var hero = heroId ? findHero(heroId) : null;
+  return (typeof warpathPadDeck === 'function') ? warpathPadDeck(keys, hero) : keys.slice(0, DECK_SIZE);
 }
 
 /* ── 4. One match, driven by the real AI on both sides ─────────────────── */

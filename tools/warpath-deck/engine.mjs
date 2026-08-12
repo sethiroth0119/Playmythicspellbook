@@ -86,7 +86,7 @@ export async function openEngine(opts = {}) {
     pages, pageErrors, workers,
     catalog: () => p0.evaluate(() => window.__wpd.catalog()),
     inspect: keys => p0.evaluate(k => window.__wpd.inspectDeck(k), keys),
-    pad: keys => p0.evaluate(k => window.__wpd.padLikeWarpath(k), keys),
+    pad: (keys, heroId) => p0.evaluate(a => window.__wpd.padLikeWarpath(a.k, a.h), { k: keys, h: heroId || null }),
     generatedDeck: heroId => p0.evaluate(h => window.__wpd.generatedDeck(h), heroId),
     tunedDeck: () => p0.evaluate(() => window.__wpd.tunedDeck()),
     playMatch: cfg => p0.evaluate(c => window.__wpd.playMatch(c), cfg),

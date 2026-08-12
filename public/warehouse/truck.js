@@ -68,6 +68,10 @@
       // extra pass and saves the body from vanishing at grazing angles.
       paintShell: M({ color: 0xe8e4da, roughness: 0.42, metalness: 0.12, side: THREE.DoubleSide }),
       paintU: M({ color: 0xb9b5ac, roughness: 0.62, metalness: 0.10 }),   // shaded underside / door returns
+      // The shell's own bottom cap, seen through every wheel arch. Dark, matte,
+      // and DoubleSide because the loft's underside is viewed from both faces.
+      underbody: M({ color: 0x1a1c20, roughness: 0.95, metalness: 0.04,
+                     side: THREE.DoubleSide }),
       floor:  M({ color: 0x6d6a63, roughness: 0.88, metalness: 0.05 }),   // cargo floor + step well
       seam:   M({ color: 0x8e8a80, roughness: 0.70, metalness: 0.08 }),   // rub rail / panel-line grooves
       // Same trap: fully-metallic glass with nothing to reflect is a black hole.
@@ -184,8 +188,20 @@
   // `skip(zA, zB, i)` omits the quad between stations zA→zB at ring index i —
   // this is how the kerb-side door becomes a REAL hole in the skin rather than
   // a dark panel the body draws over.
+  // ⚠ TWO MATERIAL GROUPS, and the second one exists for a specific reason.
+  // The section's UNDERSIDE run is at y = floorY across the full width, and the
+  // arch cuts open the wall directly above it — so from any lateral view into a
+  // wheel arch you look straight at the shell's own bottom cap, lit, in the
+  // brightest material on the truck (paintShell, 0xe8e4da, DoubleSide), 65 mm
+  // OUTBOARD of the tyre. It read as a pale shelf slicing every wheel in half:
+  // 205-228 luminance against a 30-72 tyre and a 171 flank. The brightest pixels
+  // on the whole side of the truck were inside a wheel arch, and narrowing the
+  // cargo DECK could never have fixed it, because the deck was not what you
+  // were looking at. Group 1 is the underside; it gets the dark underbody.
+  const UNDER_0 = TOP_N + SIDE_N - 1;              // segment [-hw, y0] → ...
+  const UNDER_1 = TOP_N + SIDE_N + BOT_N - 2;      // ... → [hw, y0]
   function loft(THREE, rings, capFirst, capLast, skip) {
-    const pos = [], idx = [];
+    const pos = [], skin = [], under = [];
     for (const r of rings) for (const q of r.pts) pos.push(q[0], q[1], r.z);
     const N = RING_N;
     for (let s = 0; s < rings.length - 1; s++) {
@@ -193,10 +209,12 @@
       for (let i = 0; i < N; i++) {
         if (skip && skip(rings[s].z, rings[s + 1].z, i)) continue;
         const j = (i + 1) % N;
+        const idx = (i >= UNDER_0 && i <= UNDER_1) ? under : skin;
         idx.push(a + i, a + j, b + j);
         idx.push(a + i, b + j, b + i);
       }
     }
+    const idx = skin;
     // Flat caps as a triangle fan around the ring's centroid.
     const cap = (ring, base, front) => {
       let cx = 0, cy = 0;
@@ -215,7 +233,9 @@
     if (capLast)  cap(rings[rings.length - 1], (rings.length - 1) * N, true);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(idx);
+    g.setIndex(skin.concat(under));
+    g.addGroup(0, skin.length, 0);                 // painted skin
+    if (under.length) g.addGroup(skin.length, under.length, 1);   // dark underbody
     g.computeVertexNormals();
     return g;
   }
@@ -226,7 +246,7 @@
   // The FRONT is deliberately left open: that hole is the windshield aperture,
   // filled below by the nose shell and above by glass. Capping it would weld a
   // white wall across the cab.
-  function shell(THREE, mats, profile) {
+  function shell(THREE, mats, profile, cargoOpen) {
     const st = [
       // z,              halfW,        shoulder,     crown
       [D.zRear,          D.halfW,      D.shoulderY,  D.crown],
@@ -267,10 +287,15 @@
     const cut = (zA, zB, i) => {
       if (i >= WALL_R0 && zA >= DOOR.z0 - 0.001 && zB <= DOOR.z1 + 0.001) return true;
       // the cargo roll-up: kerb-side wall, deck height upward
-      if (i >= WALL_R0 && zA >= CARGO.z0 - 0.001 && zB <= CARGO.z1 + 0.001) return true;
+      // ⚠ GATED. `cargoOpen:false` used to add exactly one panel at the REAR
+      // while this cut stayed unconditional — and because the yard parks the van
+      // rotation.y = π/2, the flank the player actually faces is the kerb one.
+      // So "closed" changed the rear view by 43.7% of pixels and the view they
+      // were looking at by 0.004%. The shutter was never shut.
+      if (cargoOpen && i >= WALL_R0 && zA >= CARGO.z0 - 0.001 && zB <= CARGO.z1 + 0.001) return true;
       return (i === WALL_R0 || i === WALL_L0) && inArch(zA, zB);
     };
-    const m = new THREE.Mesh(loft(THREE, rings, true, false, cut), mats.paintShell);
+    const m = new THREE.Mesh(loft(THREE, rings, true, false, cut), [mats.paintShell, mats.underbody]);
     m.castShadow = true; m.receiveShadow = true;
     return m;
   }
@@ -289,7 +314,7 @@
       [D.zNose + 0.10,   D.halfW - 0.170, D.cowlY - 0.38, 0.08],
     ];
     const rings = st.map(s => ({ z: s[0], pts: section(profile, s[1], D.floorY - 0.10, s[2], s[3]) }));
-    const m = new THREE.Mesh(loft(THREE, rings, true, true), mats.paintShell);
+    const m = new THREE.Mesh(loft(THREE, rings, true, true), [mats.paintShell, mats.underbody]);
     m.castShadow = true; m.receiveShadow = true;
     return m;
   }
@@ -363,12 +388,17 @@
     rim.rotation.z = Math.PI / 2;
     const cap = cyl(THREE, g, D.wheelR * 0.36, D.wheelR * 0.40, 0.05, 20, mats.chrome, out * D.wheelW * 0.50, 0, 0);
     cap.rotation.z = Math.PI / 2;
-    // Lug ring — reads at a glance, and as ONE mesh it costs almost nothing.
+    // ⚠ Lug ring — SMALL, TIGHT, BARELY PROUD. Six 34x42 mm boxes standing
+    // 2.8 mm off a 170 mm cap at 110 mm radius, each rotated to its own polar
+    // angle, read as two square eyes and a mouth — a cartoon face, dead centre
+    // of the view the player gets pressing E at the cargo doorway, on the
+    // most-seen wheel in the game. Eight small studs on a tighter circle read
+    // as a wheel; six big rotated slabs read as a smiley.
     const lugs = [];
-    for (let i = 0; i < 6; i++) {
-      const a = i / 6 * Math.PI * 2;
-      lugs.push({ w: 0.034, h: 0.042, d: 0.042, x: out * D.wheelW * 0.54,
-        y: Math.sin(a) * D.wheelR * 0.24, z: Math.cos(a) * D.wheelR * 0.24, rx: a });
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * Math.PI * 2;
+      lugs.push({ w: 0.014, h: 0.020, d: 0.020, x: out * (D.wheelW * 0.50 + 0.012),
+        y: Math.sin(a) * D.wheelR * 0.145, z: Math.cos(a) * D.wheelR * 0.145 });
     }
     g.add(mergeBoxes(THREE, lugs, mats.chrome));
     g.position.set(x, D.wheelR, z);
@@ -392,7 +422,7 @@
   // ─── 🔦 Headlamp cluster — DUAL round lamps in a rounded-rect housing ───────
   function headlamps(THREE, mats, side, nz) {
     const g = new THREE.Group();
-    const hx = side * 0.63;
+    const hx = side * 0.655;
     const hs = box(THREE, g, 0.42, 0.26, 0.09, mats.black, hx, 1.08, nz - 0.030);
     hs.rotation.x = -0.10;
     [-0.115, 0.115].forEach(o => {
@@ -402,7 +432,9 @@
       lens.rotation.x = Math.PI / 2 - 0.10;
     });
     // Amber turn signal, outboard of the lamps.
-    const ts = box(THREE, g, 0.14, 0.12, 0.055, mats.amber, side * 0.800, 1.08, nz + 0.005);
+    // ⚠ 110 mm of a 140 mm signal used to sit inside the housing footprint,
+    // leaving ~15 px of amber per side at 8 m. It stands clear of the housing now.
+    const ts = box(THREE, g, 0.12, 0.13, 0.060, mats.amber, side * 0.925, 1.08, nz + 0.010);
     ts.rotation.x = -0.10;
     return g;
   }
@@ -425,7 +457,7 @@
     const T = new THREE.Group();
     T.userData.mats = mats;
 
-    T.add(shell(THREE, mats, profile));
+    T.add(shell(THREE, mats, profile, cargoOpen));
     T.add(noseShell(THREE, mats, profile));
 
     // ── cargo interior — a real floor, liner walls and a cab bulkhead, so the
@@ -458,6 +490,14 @@
       const wz = D.zAxleR, wl = ARCH_HALF * 2 + 0.10, wh2 = 0.46;
       box(THREE, T, ww, 0.05, wl, mats.cabin,  wxc, D.floorY + wh2, wz);           // top
       box(THREE, T, 0.05, wh2, wl, mats.cabin, sd * wInner, D.floorY + wh2 / 2, wz);  // inboard wall
+      // ⚠ OUTBOARD WALL, but only ABOVE the arch cut. Without it you looked from
+      // the cargo doorway straight into an open cage containing the outer dual
+      // and its hubcap, dead centre of the view. It must start at the top of the
+      // cut band, or it would seal the wheel arch we just spent three rounds
+      // opening.
+      const aTop = D.floorY + (D.shoulderY - D.floorY) / SIDE_N;
+      box(THREE, T, 0.05, D.floorY + wh2 - aTop, wl, mats.cabin,
+          sd * wOuter, (aTop + D.floorY + wh2) / 2, wz);
       box(THREE, T, ww, wh2, 0.05, mats.cabin, wxc, D.floorY + wh2 / 2, wz - wl / 2);
       box(THREE, T, ww, wh2, 0.05, mats.cabin, wxc, D.floorY + wh2 / 2, wz + wl / 2);
       // …and the same under the cab floor for the steer axle (single wheel).
@@ -472,17 +512,24 @@
     box(THREE, T, 0.05, 1.70, 4.42, mats.paintU, -0.99, D.floorY + 1.28, -0.62);
     box(THREE, T, 0.05, 1.70, 0.34, mats.paintU,  0.99, D.floorY + 1.28, CARGO.z0 - 0.20);
     box(THREE, T, 0.05, 1.70, 0.34, mats.paintU,  0.99, D.floorY + 1.28, CARGO.z1 + 0.20);
-    // Framed edge + the shutter rolled up above the opening.
     const cfx = D.halfW + 0.020, ccz = (CARGO.z0 + CARGO.z1) / 2, ccw = CARGO.z1 - CARGO.z0;
-    box(THREE, T, 0.042, D.shoulderY - D.floorY + 0.06, 0.055, mats.paint, cfx, (D.floorY + D.shoulderY) / 2, CARGO.z0 - 0.028);
-    box(THREE, T, 0.042, D.shoulderY - D.floorY + 0.06, 0.055, mats.paint, cfx, (D.floorY + D.shoulderY) / 2, CARGO.z1 + 0.028);
-    // ⚠ NOT body-white. This sill runs proud of the flank at tyre-crown height and
-    // cut straight across the rear duals, bisecting a hubcap — a bright bar over
-    // the darkest part of the truck. It is a threshold plate; treat it as one.
-    box(THREE, T, 0.042, 0.060, ccw + 0.11, mats.black, cfx, D.floorY - 0.028, ccz);
-    const shut = [];
-    for (let i = 0; i < 7; i++) shut.push({ w: 0.052, h: 0.055, d: ccw - 0.04, x: cfx + 0.012, y: D.shoulderY - 0.10 - i * 0.062, z: ccz });
-    T.add(mergeBoxes(THREE, shut, mats.seam));
+    // Framed edge + the shutter rolled up above the opening — only when there
+    // IS an opening. With cargoOpen:false the skin is intact here and a frame
+    // around nothing is just trim floating on a blank flank.
+    if (cargoOpen) {
+      box(THREE, T, 0.042, D.shoulderY - D.floorY + 0.06, 0.055, mats.paint, cfx, (D.floorY + D.shoulderY) / 2, CARGO.z0 - 0.028);
+      box(THREE, T, 0.042, D.shoulderY - D.floorY + 0.06, 0.055, mats.paint, cfx, (D.floorY + D.shoulderY) / 2, CARGO.z1 + 0.028);
+      // ⚠ NOT body-white, NOT proud, and AT THE DECK LINE. Darkening it helped but
+      // left it 42 mm outboard of the flank at y 0.572 — below the 0.92 m tyre
+      // crown, with a z-span that fully contains the rear duals, so it still drew
+      // a bar straight across both wheels from every lateral view. A threshold
+      // plate belongs at the deck it is the threshold of: flush with the flank,
+      // at deck height, no overhang past the opening.
+      box(THREE, T, 0.038, 0.048, ccw, mats.black, D.halfW - 0.021, D.floorY + 0.062, ccz);
+      const shut = [];
+      for (let i = 0; i < 7; i++) shut.push({ w: 0.052, h: 0.055, d: ccw - 0.04, x: cfx + 0.012, y: D.shoulderY - 0.10 - i * 0.062, z: ccz });
+      T.add(mergeBoxes(THREE, shut, mats.seam));
+    }
     // Dark liner DEEP inside — it exists so you read a loaded box rather than a
     // hole through the truck, but at x 0.35 it sat in front of the cargo and
     // occluded the whole back row of crates. It belongs behind them.
@@ -644,10 +691,14 @@
     box(THREE, T, 1.90, 0.05, 0.07, mats.seam, 0, D.cowlY - 0.075, D.zCowl - 0.04);  // cowl seam
     // Recessed dark grille: LOW, CENTRED and clearly narrower than the nose, a
     // distinct rectangle rather than a full-width letterbox merged with the lamps.
-    box(THREE, T, 0.92, 0.34, 0.09, mats.black,  0, 0.99, nz - 0.035);
-    box(THREE, T, 0.80, 0.26, 0.05, mats.grille, 0, 0.99, nz + 0.010);
+    // ⚠ 0.78, not 0.92. The surround reached ±0.46 and the lamp housings started
+    // at 0.42 — a 40 mm overlap per side welded grille and lamps into ONE dark
+    // solid spanning 89% of the nose, broken only by the four lens discs. That
+    // is the full-width letterbox this was supposed to have stopped being.
+    box(THREE, T, 0.78, 0.34, 0.09, mats.black,  0, 0.99, nz - 0.035);
+    box(THREE, T, 0.66, 0.26, 0.05, mats.grille, 0, 0.99, nz + 0.010);
     const slats = [];
-    for (let i = 0; i < 5; i++) slats.push({ w: 0.76, h: 0.020, d: 0.026, x: 0, y: 0.90 + i * 0.045, z: nz + 0.026 });
+    for (let i = 0; i < 5; i++) slats.push({ w: 0.62, h: 0.020, d: 0.026, x: 0, y: 0.90 + i * 0.045, z: nz + 0.026 });
     T.add(mergeBoxes(THREE, slats, mats.black));
     [-1, 1].forEach(sd => T.add(headlamps(THREE, mats, sd, nz)));
     // Bumper stands PROUD of the nose face, with a legible plate recess.
@@ -655,7 +706,9 @@
     box(THREE, T, 2.06, 0.05, 0.07, mats.seam,  0, 0.865, nz + 0.12);
     box(THREE, T, 0.58, 0.26, 0.06, mats.black, 0, 0.74, nz + 0.21);
     box(THREE, T, 0.46, 0.16, 0.02, mats.plate, 0, 0.74, nz + 0.245);
-    [-1, 1].forEach(sd => box(THREE, T, 0.10, 0.26, 0.14, mats.black, sd * 0.86, 0.58, nz + 0.04));
+    // ⚠ Tucked UP into the bumper, not hung below it. At y 0.58 with the bumper
+    // at 0.62-0.90 they overlapped by 20 mm and read as two black stilts.
+    [-1, 1].forEach(sd => box(THREE, T, 0.10, 0.18, 0.16, mats.black, sd * 0.86, 0.70, nz + 0.06));
 
     // ── curb-side sliding door, standing OPEN ───────────────────────────────
     // A real opening in the side: a dark doorway, a recessed step well you can
@@ -732,9 +785,15 @@
     // Step bumper as ONE piece rather than three disjoint slabs.
     box(THREE, T, 1.78, 0.20, 0.30, mats.black, 0, 0.46, rz - 0.16);
     box(THREE, T, 1.82, 0.05, 0.05, mats.chrome, 0, 0.56, rz - 0.30);
+    // ⚠ Bezelled, and mounted on the BODY beside the shutter rather than on the
+    // ribs. Four bare cylinders standing 39 mm proud of a ribbed surface read as
+    // poker chips glued to a garage door.
     [-1, 1].forEach(s => [0, 1].forEach(i => {
-      const l = cyl(THREE, T, 0.072, 0.072, 0.055, 14, i ? mats.amber : mats.red,
-        s * 0.76, 0.86 + i * 0.20, rz - 0.075);
+      const bez = cyl(THREE, T, 0.086, 0.086, 0.030, 14, mats.black,
+        s * 0.80, 0.86 + i * 0.20, rz - 0.050);
+      bez.rotation.x = Math.PI / 2;
+      const l = cyl(THREE, T, 0.062, 0.062, 0.028, 14, i ? mats.amber : mats.red,
+        s * 0.80, 0.86 + i * 0.20, rz - 0.072);
       l.rotation.x = Math.PI / 2;
     }));
 
@@ -795,7 +854,12 @@
   const SHADOW_HINT = { bias: -0.0002, normalBias: 0.06, mapSize: 2048 };
 
   // Where a host may stack cargo so it is actually SEEN through the opening.
-  const CARGO_OPENING = { z0: -2.46, z1: -0.44, deckY: 0.66, x: 0.42 };
+  // ⚠ deckY IS THE STACKING FLOOR, NOT THE CARGO DECK. The rear wheel house
+  // spans the whole cargo opening in z, and its top sits at floorY + 0.46 —
+  // 0.40 m above the deck. Stacking from the deck buried the bottom tier of
+  // crates inside a dark box, and they visibly passed through it. Goods go ON
+  // the wheel arches in a real box van, and now they do here.
+  const CARGO_OPENING = { z0: -2.46, z1: -0.44, deckY: D.floorY + 0.46, x: 0.42 };
 
   root.WHTruck = { build: build, DIMS: D, SHADOW_HINT: SHADOW_HINT, CARGO: CARGO_OPENING };
 })(typeof window !== 'undefined' ? window : this);

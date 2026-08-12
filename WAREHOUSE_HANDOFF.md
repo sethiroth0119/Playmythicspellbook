@@ -414,7 +414,17 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
    while 20 sat behind a hardcoded `-19.5`: tier 5 cost 1,500,000 Cinder and
    delivered 12 walkable bays out of 32.
 
-8. **`WHTruck.SHADOW_HINT` is a cross-file contract.** `truck.js` exports the
+8. **The lofted shell carries TWO materials, and the second one matters.**
+   `loft()` puts the section's underside run in material group 1
+   (`mats.underbody`, dark) and everything else in group 0 (`paintShell`,
+   body-white). The wheel arches are cut directly above that underside, so if
+   you collapse the groups back to one material the shell's own bottom cap
+   becomes a lit body-white shelf visible through all four arches, 65 mm
+   outboard of the tyre — it slices each wheel in half at luminance 205-228
+   against a 30-72 tyre. That defect survived four rounds of A/B losses and
+   was misdiagnosed twice as the cargo deck, which is a different mesh entirely.
+
+9. **`WHTruck.SHADOW_HINT` is a cross-file contract.** `truck.js` exports the
    `bias` / `normalBias` / `mapSize` its flat slab sides were authored against,
    and `public/warehouse/index.html` reads it when configuring the key light.
    Ignore it and the truck stripes itself with shadow acne down every flat panel.
@@ -422,3 +432,9 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
    bug: `shadow.camera.bottom` must reach `App.shedZB`, or the back of the shed
    silently stops casting and receiving shadows — at tier 5 that was the back
    16.6 m, half the bays.
+
+10. **`WHTruck.CARGO.deckY` is the crate STACKING floor, not the cargo deck.**
+    It is deliberately `floorY + 0.46` — the top of the rear wheel house, which
+    spans the whole cargo opening in z. Stack from the real deck instead and the
+    bottom tier of crates is buried 0.40 m inside a dark box and visibly passes
+    through it.

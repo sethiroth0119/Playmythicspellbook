@@ -1499,6 +1499,31 @@ const MythicCityBridge = (() => {
     ];
   };
 
+  /* 📦 STASH HEADROOM — how much the player's vault can still accept.
+     Producers use this to IDLE rather than manufacture goods that addRes()
+     silently drops on arrival. See the note on window.cityResourceHeadroom.
+     ⚠ Returns Infinity (never 0) on any failure or on an older parent that has
+       no such hook. Idling a city because we could not READ the ceiling would
+       be a far worse bug than the over-production this exists to stop —
+       "unknown" must mean "carry on", not "stop working". */
+  B.resourceHeadroom = async () => {
+    const OPEN = { cap: 0, units: 0, free: Infinity };
+    if (B.mode === 'parent') {
+      try {
+        if (typeof P.cityResourceHeadroom === 'function') {
+          const h = P.cityResourceHeadroom();
+          if (h && typeof h.free === 'number') return h;
+        }
+      } catch (e) {}
+      return OPEN;
+    }
+    if (B.mode === 'message') {
+      try { const h = await rpc('resourceHeadroom', {}); return (h && typeof h.free === 'number') ? h : OPEN; }
+      catch (e) { return OPEN; }
+    }
+    return OPEN;   // mock/standalone: no vault to fill
+  };
+
   /* 🌐 THE NODE MARKET — OTHER PLAYERS' nodes, for the financial district to
      invest in. Distinct from fetchNodes(), which is the player's OWN anchors.
      economy_nodes is SELECT `using (true)`, so this reads data the game already
@@ -16534,6 +16559,30 @@ async function economyTick(dtMin) {
     return Math.min(1, got / want);
   };
 
+  /* 📦 IDLE PRODUCERS WHEN THE VAULT IS FULL.
+     City STOCK (rations, planks…) has always clamped its own production to the
+     room left — see the `room`/`made` lines in the stock branch below. LEDGER
+     resources (food, metal, water…) never did: they accrued at full rate into
+     game.frac, were banked by addRes(), and addRes SILENTLY DROPPED whatever
+     did not fit. Eight farms and no Cannery therefore manufactured ~45 food a
+     minute into a full 2,000-unit vault — discarded on arrival, spamming
+     "STASH FULL", and crowding every other resource out of a SHARED cap.
+
+     Fetched ONCE per tick, not per tile: it is a hop across the iframe bridge,
+     and every tile in the city must be judged against the same ledger state
+     anyway — re-reading mid-loop would let one building's deposit change the
+     answer for the next, which is the same reasoning cityOutputMultipliers()
+     already documents.
+
+     ⚠ `free` is Infinity when the ceiling is unknown or the bridge is older
+       than this code. Idling a city because we could not READ the cap would be
+       far worse than the over-production this fixes. */
+  let _ledgerFree = Infinity;
+  try {
+    const _hr = await MythicCityBridge.resourceHeadroom();
+    if (_hr && Number.isFinite(_hr.free)) _ledgerFree = Math.max(0, _hr.free);
+  } catch (e) { _ledgerFree = Infinity; }
+
   for (const [k, t] of Object.entries(game.tiles)) {
     const def = BUILDINGS[t.type]; if (!def) continue;
     if (!def.gen && !def.use && !def.svc && !LEGACY_SERVICE[t.type]) continue;
@@ -16578,9 +16627,24 @@ async function economyTick(dtMin) {
       //    go through the same divisor, so the panel can never promise a number
       //    the tick does not pay.
       const genR = (r === 'cinder') ? cinderRate(def.gen[r]) : def.gen[r];
-      const madeR = genR * mult * om * dtMin;
-      game.frac[r] = (game.frac[r] || 0) + madeR;
-      prodPerMin[r] = (prodPerMin[r] || 0) + genR * mult * om;
+      let madeR = genR * mult * om * dtMin;
+      /* 📦 A LEDGER RESOURCE THE VAULT CANNOT TAKE IS NOT PRODUCED.
+         Same shape as the city-stock clamp above: production is limited to the
+         room left, and the rate the HUD prints drops to 0 when there is none —
+         so the panel never advertises output the tick will not deliver.
+         `_ledgerFree` is decremented as we go, so several farms in one tick
+         share the remaining space instead of each seeing the full headroom.
+         ⚠ CINDER IS EXEMPT. It is currency, not a stash unit; it has no
+           resource cap and must never be idled by a full vault. */
+      if (r !== 'cinder' && Number.isFinite(_ledgerFree)) {
+        madeR = Math.min(madeR, _ledgerFree);
+        _ledgerFree = Math.max(0, _ledgerFree - madeR);
+      }
+      if (madeR > 0) game.frac[r] = (game.frac[r] || 0) + madeR;
+      // Rate shown = rate actually payable. A full vault reads as idle, which
+      // is the truth and is what tells the player to spend or expand.
+      const _payable = (r === 'cinder' || madeR > 0 || !Number.isFinite(_ledgerFree));
+      prodPerMin[r] = (prodPerMin[r] || 0) + (_payable ? genR * mult * om : 0);
       /* 🧾 LIFETIME CINDER, PER TILE. The exact amount is already in hand here
          with `t` in scope — this is the whole cost of a real Ledger tab. Only
          Cinder is banked: goods are city stock, not this building's money. */

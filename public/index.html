@@ -206769,6 +206769,29 @@ window.cityGetRes = (id) => {
     return (getRes(id) | 0);
   } catch (e) { return 0; }
 };
+/* 📦 HOW MUCH THE PLAYER'S STASH CAN STILL TAKE.
+   The city needs this to IDLE its producers instead of manufacturing goods
+   that addRes() will silently drop on arrival. Without it a player with eight
+   farms and no Cannery banks ~45 food/min into a full 2,000-unit vault: the
+   surplus is discarded, "STASH FULL" spams, and food crowds every other
+   resource out of a shared cap.
+
+   ⚠ Returns free = 0 when the ledger manager is stalled. That is deliberate —
+     while stalled, cityAddRes QUEUES rather than banks, and a city that kept
+     producing into that queue would pile up goods the player may have no room
+     for once it drains. Idle is the honest answer.
+   ⚠ Currency is NOT a resource unit and is not covered here; Cinder has no
+     stash cap and must never be idled by this. */
+window.cityResourceHeadroom = () => {
+  try {
+    if (_cityMgrStalled()) return { cap: 0, units: 0, free: 0 };
+    const cap = (typeof getResourceCap === 'function') ? (getResourceCap() | 0) : 0;
+    const units = (typeof getResourceUnits === 'function') ? (getResourceUnits() | 0) : 0;
+    // cap 0 means "no ceiling known" — never idle on a number we do not have.
+    if (!(cap > 0)) return { cap: 0, units: units, free: Infinity };
+    return { cap: cap, units: units, free: Math.max(0, cap - units) };
+  } catch (e) { return { cap: 0, units: 0, free: Infinity }; }
+};
 window.cityAddRes = (id, n) => {
   try {
     n = Math.floor(n) || 0; if (!n) return;

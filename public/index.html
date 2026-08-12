@@ -163262,6 +163262,19 @@ function renderUserManagement() {
             `<span class="small-text ink-dim">${esc(typeof carePackageSummary === 'function' ? carePackageSummary() : '')}</span>` +
           `</div>` +
           `<div class="small-text ink-dim" style="margin-top:4px">Sent as separate rewards, so a full vault only holds back the resources — the Cinder is still claimable.</div>` +
+          /* 🏰 VAULT RESTITUTION. Players lost paid Vault Containers to the
+             2026-07-29 gear clean (fixed in v120u6). The grant RPC has existed
+             since sql/031 but was SQL-only, so working the queue meant opening
+             the database — which is why zero grants have been issued while
+             people wait for something they paid for. Same reasoning as the care
+             package: the tool existing is not the same as the tool being used. */
+          `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px">` +
+            `<span class="small-text" style="color:#ffcf5a;font-weight:700">🏰 Restore vault rows</span>` +
+            [['1','📦 Supply Crate'], ['3','🚛 Cargo Container'], ['5','🏰 Relic Vault Door']].map(function (o) {
+              return '<button class="btn-secondary btn-mini" data-um-vault="' + o[0] + '"' + (AdmUM._busy ? ' disabled' : '') + '>' + o[1] + '</button>';
+            }).join('') +
+          `</div>` +
+          `<div class="small-text ink-dim" style="margin-top:4px">Grants the rows back immediately (no inbox). Idempotent per ticket — re-running the same report never grants twice.</div>` +
           `<div style="font-weight:800;color:#ff9a6b;margin:12px 0 6px">🛠 Account</div>` +
           `<div style="display:flex;gap:6px;flex-wrap:wrap">` +
             `<button class="btn-secondary btn-mini" id="um-ban" ${AdmUM._busy ? 'disabled' : ''}>🚫 Ban</button>` +
@@ -163366,6 +163379,53 @@ function renderUserManagement() {
       else if (r && r.ok && r.partial) showToast('⚠ ' + (r.label || 'Partially sent') + '.', 8000);
       else showToast('⚠ ' + ((r && r.error) || 'Care package failed') + '.', 5200);
     };
+    /* 🏰 Vault restitution, one click per container class.
+       ⚠ THE TICKET REF IS ASKED FOR, NOT GENERATED. admin_grant_vault_rows is
+         idempotent PER REF (sql/031), and that guarantee is the only thing
+         standing between a support queue and granting the same player their
+         rows three times because two people picked up the same report. A
+         generated ref would make every click unique and throw the guarantee
+         away, so the admin is asked for the report id and told why. */
+    document.querySelectorAll('[data-um-vault]').forEach((btn) => {
+      btn.onclick = async () => {
+        const rows = parseInt(btn.getAttribute('data-um-vault'), 10) || 0;
+        if (rows <= 0) return;
+        const label = (btn.textContent || '').trim();
+        const ref = await gcPrompt(
+          '🏰 Restore <b>' + rows + ' vault row' + (rows > 1 ? 's' : '') + '</b> to ' + esc(d.handle) + '?<br><br>' +
+          'Enter the report / ticket id. Re-running the same id will NOT grant twice.',
+          '');
+        if (ref === null) return;                     // cancelled
+        const key = String(ref || '').trim();
+        if (!key) { showToast('⚠ A ticket id is required — it is what stops a double grant.', 4600); return; }
+        btn.disabled = true;
+        try {
+          const r = await Cloud.client.rpc('admin_grant_vault_rows', {
+            p_user_id: d.user_id, p_rows: rows,
+            p_reason: label + ' lost to the 2026-07-29 gear clean', p_ref: key,
+          });
+          const row = r && r.data && (Array.isArray(r.data) ? r.data[0] : r.data);
+          if (r && r.error) {
+            const m = ((r.error.message || '') + '');
+            showToast(/does not exist|schema cache|PGRST202/i.test(m)
+              ? '⚠ Vault grants need sql/031 applied. Nothing changed.'
+              : '⚠ ' + m + '. Nothing changed.', 5600);
+          } else if (row && row.applied === false) {
+            // Not an error — this is the idempotency guard doing its job.
+            showToast('ℹ Already applied for that ticket — ' + (row.note || 'no change') +
+                      ' (vault is ' + row.rows_after + ' rows).', 6000);
+          } else if (row && row.applied === true) {
+            showToast('🏰 Restored ' + rows + ' row' + (rows > 1 ? 's' : '') + ' to ' + d.handle +
+                      ' — vault ' + row.rows_before + ' → ' + row.rows_after + '.', 6000);
+          } else {
+            showToast('⚠ Grant returned nothing — check the ledger before retrying.', 5600);
+          }
+        } catch (e) {
+          showToast('⚠ Network error — nothing changed.', 4200);
+        }
+        btn.disabled = false;
+      };
+    });
     const _acct = async (op, extra, confirmMsg) => {
       if (confirmMsg && !(await gcConfirm(confirmMsg))) return;
       const tok = (typeof _sbToken === 'function') ? await _sbToken() : null;

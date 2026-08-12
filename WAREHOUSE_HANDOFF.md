@@ -65,35 +65,40 @@ select public.wh_eta_hours(0), public.wh_eta_hours(10); -- 72, 6
 Each anchor below is **unique** in the file (`grep -c` returns 1). Search for the
 anchor, then insert exactly where stated.
 
-### 3.1 The module — ~380 lines
+### 3.1 The module
 
 **Anchor (insert IMMEDIATELY BEFORE this line):**
 ```js
 // Run a real economy action posted by the app.
 ```
-That line sits just after `_dwellingClose()` ends, around line 78143. The
-warehouse module is the direct sibling of the Dwelling module and belongs there.
+That line sits just after `_dwellingClose()` ends. The warehouse module is the
+direct sibling of the Dwelling module and belongs there.
 
 **Paste:** the entire contents of **`WAREHOUSE_PASTE_index-module.js`** (repo
-root, below its header comment) — that file is exactly this module, 323 lines,
-extracted verbatim so nobody has to go fishing inside a 215,000-line file. It is
-not loaded by anything and lives outside `./public`, so it never deploys.
+root, below its header comment). That file is this module, extracted verbatim so
+nobody has to go fishing inside a 215,000-line file. It is loaded by nothing and
+lives outside `./public`, so it never deploys.
 
-It runs from
+> **Do not trust that file until you have run `node _wh_paste_check.mjs`.**
+> It byte-compares the file against the module actually live in
+> `public/index.html` and names the first line that differs. It exists because
+> the file silently went 180 lines stale once — still parsing, still plausible,
+> but missing the whole retrieval half, so anyone who pasted it would have
+> reinstated a build where resources sent to a warehouse could never be
+> withdrawn. **No line count is quoted here on purpose**; a number in prose is
+> exactly what went stale. The check is the source of truth.
+
+The block runs from
 `// ═══…\n// 🚚 STORAGE WAREHOUSE — player-owned warehouses, rented bays, …`
-down to and including
-```js
-try {
-  window.__mg = window.__mg || {};
-  window.__mg.warehouse = { open: _whOpen, send: _whOpenSendModal, market: _whOpenDirectory,
-                            rentals: _whFetchRentals, renting: _whIsRenting };
-} catch (e) {}
-```
+down to and including its closing `window.__mg.warehouse = { … }` registration —
+take both ends from the paste file itself rather than from this document.
 
-It defines: `WH_RPC_ALLOW`, `WH_ETA_BLURB`, `_whReady`, `_whRpc`, `_whMyName`,
-`_whWallet`, `_whFetchRentals`, `_whIsRenting`, `_whSendButtonHtml`,
-`_whBindSendButtons`, `_whRefreshButtons`, `_whModal`, `_whOpenDirectory`,
-`_whReason`, `_whOpenSendModal`, `_whDeliveryNotice`, `_whOpen`, `_whClose`.
+For the same reason there is no function inventory here: it drifted too. To see
+what the module defines, run:
+
+```
+grep -n "^\(function\|const\|async function\) _wh\|^const WH_" WAREHOUSE_PASTE_index-module.js
+```
 
 ### 3.2 Camp Heights destination
 

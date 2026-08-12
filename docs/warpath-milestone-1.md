@@ -592,6 +592,56 @@ real players, not bots, are generating the numbers.
 
 Suite is now **89 assertions**.
 
+#### The turn clock (P3), and the deadlock it is built around
+
+`waiting_for` blocked a four-player world until every living expedition ended its turn. One
+player closing a tab froze the run **indefinitely** for three people who did nothing wrong —
+a live-service failure rather than a game bug: it makes the mode grief-able by accident and
+unshippable to strangers.
+
+**⚠ The circular dependency, fixed before building.** The deadline is paused for players in an
+open battle (a card battle happens outside the Warpath's clock and would blow the deadline every
+time). The first design also expired an unreported battle after **two turns**. Those two rules
+deadlock: A and B open a battle and neither reports → both paused → neither auto-ends → the
+barrier still waits on them → the turn cannot advance → the battle is waiting for turns that
+never arrive. C and D freeze, by exactly the failure the timer exists to prevent, and now
+unreachable by the auto-end as well.
+
+So **a battle expires on its own wall clock** (`warpath_battles.expires_at`, 4 minutes), never on
+the turn counter, swept by the same enforcement point independently of the barrier. And **the
+pause is bounded by that expiry** rather than by the battle merely existing — otherwise "open a
+challenge and never report" is a free way to stop your own clock. The rule generalises: *nothing
+that pauses the turn clock may also be the thing the turn clock is responsible for ending.*
+
+| piece | as built |
+|---|---|
+| deadline | `warpath_runs.turn_seconds` **column default 90**, so it retunes without a migration |
+| enforcement | `warpath_state` calls `wp_tick()` — every client polls it every 5s, so the first to look pays. Same lazy-on-read shape as `tw_node_sim_sync`. A run nobody is watching does not advance, which is correct: the deadline protects *present* players |
+| expiry | auto-end the turn of anyone still thinking, unless paused by a live battle |
+| repeat offenders | 3 consecutive auto-ends → `away`; away heroes leave the barrier entirely, so the rest play at full speed. The hero **stays on the map, lootable and attackable** — walking away has a real cost |
+| re-entry | any action clears `away` and resets the strike count (9 call sites) |
+| extraction | `away` **freezes** `extract_left`. You have to be present to leave, or going away becomes the safest way to extract and B3 is undone. Frozen, not cancelled — a disconnect should cost tempo, not the run |
+| client | turn countdown pill (amber ≤20s, pulsing ≤5s) and **per-seat barrier dots** — thinking / ended / away / gone. "Why is nothing happening" now has a visible answer, which is most of the harm a stalled player does |
+
+`wp_advance_turn()` was extracted from `warpath_end_turn` so both the last player to press the
+button and the deadline sweep drive the identical path.
+
+**12 new assertions**, including the deadlock as a permanent test: a battle carries a wall clock;
+both combatants are exempt while it is live; the turn does **not** advance during the pause; the
+pause **stops** at the battle's expiry; and then the tick expires the battle and the run moves on.
+Also asserted: one absent player no longer freezes three others, three timeouts mark `away`, an
+away hero is skipped by the barrier but stays on the map, and acting clears the flag.
+
+Suite is now **101 assertions**; probes 20/20; contract clean.
+
+*(The two probes requested live in the assertion suite rather than `probes.mjs` — they need a
+forced deadline and a forced battle expiry, which is deterministic in SQL and timing-dependent in
+the sim. They are permanent tests either way.)*
+
+**Still waiting for Colyseus:** who is telling the truth about a battle result. Conceding and
+agreement are believed immediately and a bare win claim waits, so being fast buys nothing — but
+two lying clients are not detectable from here. See `docs/mp-server-authority-shared-engine.md`.
+
 **Known P1 gap, deliberately not closed:** no Warpath-*exclusive* cards are minted. Doing so
 means writing new entries into the card catalog inside the 215k-line production monolith, which
 is the one thing hard constraint #1 says not to risk. Exclusivity in Milestone 1 is expressed

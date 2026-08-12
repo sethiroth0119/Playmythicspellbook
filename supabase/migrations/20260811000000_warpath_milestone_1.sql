@@ -484,9 +484,15 @@ create table if not exists public.warpath_runs (
   turn        int  not null default 1,
   max_turns   int  not null default 60,
   max_players int  not null default 4,
+  -- ⏱ Turn clock. A COLUMN DEFAULT, not a literal in a function, so the
+  -- deadline can be retuned without a migration.
+  turn_seconds  int not null default 90,
+  turn_deadline timestamptz,
   created_at  timestamptz not null default now(),
   closed_at   timestamptz
 );
+alter table public.warpath_runs add column if not exists turn_seconds int not null default 90;
+alter table public.warpath_runs add column if not exists turn_deadline timestamptz;
 create index if not exists warpath_runs_open_idx on public.warpath_runs (status, created_at)
   where status = 'open';
 -- Negative seeds are the ONLY inputs where warpath-mapgen.js and the wp_*
@@ -527,6 +533,9 @@ create table if not exists public.warpath_expeditions (
   -- B4: a hero beaten in PvP cannot be re-challenged until this run turn.
   protected_until int not null default 0,
   scouted_turn    int not null default 0,
+  -- ⏱ consecutive turns ended by the deadline rather than by the player
+  auto_ends       int not null default 0,
+  away            boolean not null default false,
   entered_at     timestamptz not null default now(),
   ended_at       timestamptz,
   unique (run_id, user_id),
@@ -534,6 +543,8 @@ create table if not exists public.warpath_expeditions (
 );
 alter table public.warpath_expeditions add column if not exists protected_until int not null default 0;
 alter table public.warpath_expeditions add column if not exists scouted_turn int not null default 0;
+alter table public.warpath_expeditions add column if not exists auto_ends int not null default 0;
+alter table public.warpath_expeditions add column if not exists away boolean not null default false;
 create index if not exists warpath_exp_user_idx on public.warpath_expeditions (user_id, status);
 
 -- Camp. One movable camp per expedition (the brief's PACK CAMP / FORWARD CAMP;
@@ -626,12 +637,15 @@ create table if not exists public.warpath_battles (
   -- B5: each participant's own claim about who won.
   claim_attacker uuid,
   claim_defender uuid,
+  -- ⏱ WALL-CLOCK expiry, deliberately not turn-counted. See wp_expire_battles.
+  expires_at    timestamptz,
   opened_at     timestamptz not null default now(),
   resolved_at   timestamptz
 );
 alter table public.warpath_battles add column if not exists opened_turn int;
 alter table public.warpath_battles add column if not exists claim_attacker uuid;
 alter table public.warpath_battles add column if not exists claim_defender uuid;
+alter table public.warpath_battles add column if not exists expires_at timestamptz;
 create index if not exists warpath_battles_run_idx on public.warpath_battles (run_id, status);
 create index if not exists warpath_battles_pair_idx on public.warpath_battles
   (run_id, attacker_id, defender_id, opened_turn);
@@ -1188,6 +1202,15 @@ begin
     where user_id = v_uid and (p_run is null or run_id = p_run)
     order by (status in ('active','extracting','ready')) desc, entered_at desc limit 1;
   if me.id is null then return jsonb_build_object('ok', true, 'in_run', false); end if;
+
+  /* ⏱ The turn clock is enforced HERE, on read. Every live client polls this
+     every five seconds, so the first one to look pays for the tick — the same
+     lazy-on-read arrangement tw_node_sim_sync uses. A world nobody is looking
+     at simply does not advance, and that is the correct behaviour: the
+     deadline protects players who are present. */
+  perform public.wp_tick(me.run_id);
+  me := public.wp_my_exp(me.id);                 -- re-read: the tick may have moved us
+
   select * into run from public.warpath_runs where id = me.run_id;
   v_vision := public.wp_vision(me.id);
 
@@ -1203,6 +1226,10 @@ begin
     others := others || jsonb_build_object(
       'expedition_id', rec.id, 'slot', rec.slot, 'hero_name', rec.hero_name,
       'status', rec.status, 'visible', seen,
+      -- who the barrier is waiting on, and who has walked away. Not a fog
+      -- leak: it says nothing about WHERE anyone is, only whether the run is
+      -- blocked on them — which is the thing a stalled player needs to know.
+      'turn_ended', rec.turn_ended, 'away', rec.away,
       'x', case when seen then rec.x end, 'y', case when seen then rec.y end,
       'camp', camp);
   end loop;
@@ -1211,12 +1238,17 @@ begin
     'ok', true, 'in_run', true,
     'run', jsonb_build_object('id', run.id, 'seed', run.seed, 'turn', run.turn,
                               'max_turns', run.max_turns, 'status', run.status,
+                              'turn_seconds', run.turn_seconds,
+                              'deadline', run.turn_deadline,
+                              'seconds_left', greatest(0, extract(epoch from (run.turn_deadline - now()))::int),
+                              'waiting_for', public.wp_pending_count(run.id),
                               'players', (select count(*) from public.warpath_expeditions where run_id = run.id)),
     'me', jsonb_build_object(
       'expedition_id', me.id, 'slot', me.slot, 'hero_id', me.hero_id, 'hero_name', me.hero_name,
       'x', me.x, 'y', me.y, 'hp', me.hero_hp, 'max_hp', me.hero_max_hp,
       'moves_left', me.moves_left, 'injured_turns', me.injured_turns,
       'turn_ended', me.turn_ended, 'status', me.status, 'extract_left', me.extract_left,
+      'away', me.away, 'auto_ends', me.auto_ends,
       'vision', v_vision, 'vault_slots', public.wp_vault_slots(me.id),
       'extract_cap', 6 + 3 * public.wp_level(me.id, 'supply'),
       'fog', encode(me.fog, 'base64'),
@@ -1271,6 +1303,10 @@ begin
      pitching camp while the other three waited on it — the barrier announced
      you were done without making you done. */
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   if exists (select 1 from public.warpath_battles where status = 'open'
               and (attacker_id = me.id or defender_id = me.id)) then
     return jsonb_build_object('ok', false, 'reason', 'battle_pending');
@@ -1398,6 +1434,10 @@ begin
      pitching camp while the other three waited on it — the barrier announced
      you were done without making you done. */
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   if me.moves_left < 1 then return jsonb_build_object('ok', false, 'reason', 'no_moves_left'); end if;
   select * into run from public.warpath_runs where id = me.run_id;
 
@@ -1441,6 +1481,10 @@ begin
      pitching camp while the other three waited on it — the barrier announced
      you were done without making you done. */
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   select * into run from public.warpath_runs where id = me.run_id;
   if public.wp_is_water(run.seed, me.x, me.y) then
     return jsonb_build_object('ok', false, 'reason', 'impassable'); end if;
@@ -1495,6 +1539,10 @@ begin
      pitching camp while the other three waited on it — the barrier announced
      you were done without making you done. */
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   select * into camp from public.warpath_camps where expedition_id = me.id;
   if camp.expedition_id is null then return jsonb_build_object('ok', false, 'reason', 'no_camp'); end if;
   if camp.x <> me.x or camp.y <> me.y then
@@ -1555,6 +1603,10 @@ begin
      pitching camp while the other three waited on it — the barrier announced
      you were done without making you done. */
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   select * into camp from public.warpath_camps where expedition_id = me.id;
   if camp.expedition_id is null then return jsonb_build_object('ok', false, 'reason', 'no_camp'); end if;
   if camp.x <> me.x or camp.y <> me.y then
@@ -1615,6 +1667,10 @@ begin
      pitching camp while the other three waited on it — the barrier announced
      you were done without making you done. */
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   select * into run from public.warpath_runs where id = me.run_id;
 
   -- You have to actually be standing on the site. Derived, not asserted.
@@ -1664,59 +1720,176 @@ end $$;
    Everyone moves in the same turn; the run clock advances when the last active
    hero ends theirs. Extraction countdown and injury tick here, which is what
    makes "extraction takes 1-3 turns" a window your rivals can act inside. */
-create or replace function public.warpath_end_turn(p_exp uuid default null)
-returns jsonb language plpgsql security definer set search_path = public as $$
-declare
-  me public.warpath_expeditions; run public.warpath_runs; pending int; rec record; base int;
+/* ═══ THE TURN CLOCK ═══════════════════════════════════════════════════════
+   `waiting_for` blocks a four-player world until every living expedition ends
+   its turn. One player closing a tab froze the run indefinitely for three
+   people who did nothing wrong — a live-service failure, not a game bug: it
+   makes the mode grief-able by accident and unshippable to strangers.
+
+   ⚠ THE CIRCULAR DEPENDENCY THIS IS BUILT AROUND.
+   The deadline is PAUSED for players in an open battle, because a card battle
+   happens outside the Warpath's clock and would otherwise blow the deadline
+   every time. The first draft also expired an unreported battle after TWO
+   TURNS. Those two rules deadlock: A and B open a battle and neither reports,
+   both are paused so neither auto-ends, the barrier still waits on them so the
+   turn cannot advance — and the battle's expiry is counted in turns that will
+   now never arrive. C and D wait forever, frozen by precisely the failure the
+   timer exists to prevent, and unreachable by the auto-end too.
+
+   So a battle expires on ITS OWN WALL CLOCK, never on the turn counter, and
+   the pause is bounded by that same expiry rather than by the battle merely
+   existing — otherwise "open a challenge and never report" is a free way to
+   stop your own clock. Nothing that pauses the turn clock may also be the
+   thing the turn clock is responsible for ending.                           */
+
+-- How long an unreported battle is allowed to pin two heroes.
+create or replace function public.wp_battle_ttl() returns interval
+  language sql immutable as $$ select interval '4 minutes' $$;
+
+/* Am I exempt from the deadline right now? Only while a battle I am in is
+   BOTH open AND not yet past its own expiry. */
+create or replace function public.wp_deadline_paused(p_exp uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.warpath_battles b
+     where b.status = 'open'
+       and (b.attacker_id = p_exp or b.defender_id = p_exp)
+       and coalesce(b.expires_at, now() + public.wp_battle_ttl()) > now())
+$$;
+
+/* Who the barrier is actually waiting for. `away` players are skipped
+   entirely — three consecutive auto-ends and the remaining players should not
+   keep paying 90 seconds a turn for a tab nobody is looking at. */
+create or replace function public.wp_pending_count(p_run uuid)
+returns int language sql stable security definer set search_path = public as $$
+  select count(*)::int from public.warpath_expeditions
+   where run_id = p_run and status in ('active','extracting')
+     and turn_ended = false and away = false
+$$;
+
+/* Wall-clock battle expiry. Independent of the turn barrier by design — this
+   is the half of the deadlock fix that lets a paused pair release themselves. */
+create or replace function public.wp_expire_battles(p_run uuid)
+returns int language plpgsql security definer set search_path = public as $$
+declare rec record; n int := 0;
 begin
-  -- Derive from auth.uid() when the caller did not name one (the client never does).
-  p_exp := coalesce(p_exp, public.wp_active_exp());
-  me := public.wp_my_exp(p_exp);
-  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
-  if me.status not in ('active','extracting') then
-    return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+  for rec in select * from public.warpath_battles
+              where run_id = p_run and status = 'open' and kind = 'pvp'
+                and expires_at is not null and expires_at <= now() loop
+    if rec.claim_attacker is not null or rec.claim_defender is not null then
+      -- somebody said something; settle on the best word available
+      if rec.claim_attacker is not null and rec.claim_defender is not null
+         and rec.claim_attacker is distinct from rec.claim_defender then
+        perform public.wp_log(p_run, rec.attacker_id, 'battle_disputed',
+          jsonb_build_object('battle_id', rec.id, 'attacker_claimed', rec.claim_attacker,
+                             'defender_claimed', rec.claim_defender));
+      end if;
+      perform public.wp_resolve_battle(rec.id, case
+        when rec.claim_attacker is not null and rec.claim_attacker is distinct from rec.attacker_id
+          then rec.claim_attacker
+        when rec.claim_defender is not null and rec.claim_defender is distinct from rec.defender_id
+          then rec.claim_defender
+        else coalesce(rec.claim_defender, rec.claim_attacker) end);
+    else
+      -- nobody reported anything: it never happened. No winner, no loot, no injury.
+      update public.warpath_battles set status = 'abandoned', resolved_at = now()
+       where id = rec.id and status = 'open';
+      if found then
+        perform public.wp_log(p_run, rec.attacker_id, 'battle_abandoned',
+          jsonb_build_object('battle_id', rec.id, 'reason', 'nobody reported it'));
+      end if;
+    end if;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
 
-  /* ⚠ THE TURN BARRIER NEEDS THE SAME LOCK THE LOBBY GOT.
-     Four simultaneous end_turns used to do two wrong things at once. Each
-     transaction set its own turn_ended and then counted the others in the SAME
-     READ COMMITTED snapshot, so none could see the others' uncommitted writes
-     and every one concluded somebody was still thinking — 7 of 30 synchronised
-     rounds advanced the clock zero times. When they retried, all four entered
-     the advance block together, updating warpath_runs and then every expedition
-     row while each already held a lock on its own row: textbook ABBA, and the
-     harness collected 20 raw 40P01 deadlocks handed straight back to callers.
-     In the browser it looked like End turn simply doing nothing.
+/* ⏱ THE ENFORCEMENT POINT.
+   No cron and no scheduler: warpath_state is polled by every live client every
+   five seconds, so the first client to look pays for the tick — the same
+   lazy-on-read arrangement tw_node_sim_sync already uses in this repo. A run
+   with nobody watching simply does not advance, which is correct: the deadline
+   exists to protect players who ARE present, not to simulate absent ones. */
+create or replace function public.wp_tick(p_run uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare run public.warpath_runs; rec record; n int;
+begin
+  select * into run from public.warpath_runs where id = p_run;
+  if run.id is null or run.status = 'closed' then return; end if;
 
-     warpath_enter already solved this one function earlier with an advisory
-     lock on the lobby. This is the same shape and takes the same medicine,
-     keyed per run so two worlds never queue behind each other. The lock is
-     transaction-scoped: whoever holds it sets its flag, counts committed
-     flags, and commits — the next one in sees that write. The last one through
-     is the only one that runs the advance, so there is nothing left to deadlock
-     against. */
-  perform pg_advisory_xact_lock(hashtext('warpath_turn:' || me.run_id::text));
+  perform pg_advisory_xact_lock(hashtext('warpath_turn:' || p_run::text));
+  select * into run from public.warpath_runs where id = p_run;   -- re-read under the lock
 
-  update public.warpath_expeditions set turn_ended = true where id = me.id;
+  -- 1. battles first, on their own clock. This is what releases a paused pair.
+  perform public.wp_expire_battles(p_run);
 
-  select count(*) into pending from public.warpath_expeditions
-   where run_id = me.run_id and status in ('active','extracting') and turn_ended = false;
-  if pending > 0 then
-    return jsonb_build_object('ok', true, 'waiting_for', pending, 'turn', (select turn from public.warpath_runs where id = me.run_id));
+  -- 2. seed a deadline for a run that has never had one
+  if run.turn_deadline is null then
+    update public.warpath_runs set turn_deadline = now() + make_interval(secs => run.turn_seconds)
+     where id = p_run returning * into run;
+    return;
   end if;
+  if run.turn_deadline > now() then return; end if;
 
-  -- Last one in: advance the world.
-  update public.warpath_runs set turn = turn + 1 where id = me.run_id returning * into run;
+  -- 3. the deadline has passed: end the turn of anyone still thinking, unless
+  --    they are mid-battle and that battle has not itself expired.
+  for rec in select * from public.warpath_expeditions
+              where run_id = p_run and status in ('active','extracting')
+                and turn_ended = false and away = false loop
+    if public.wp_deadline_paused(rec.id) then continue; end if;
+    update public.warpath_expeditions
+       set turn_ended = true, auto_ends = auto_ends + 1,
+           away = (auto_ends + 1) >= 3
+     where id = rec.id;
+    if (rec.auto_ends + 1) >= 3 then
+      perform public.wp_log(p_run, rec.id, 'hero_away',
+        jsonb_build_object('hero', rec.hero_name));
+    else
+      perform public.wp_log(p_run, rec.id, 'turn_timed_out',
+        jsonb_build_object('hero', rec.hero_name));
+    end if;
+  end loop;
+
+  -- 4. if that emptied the barrier, advance; otherwise extend so the paused
+  --    players get a fresh window once their battle clears.
+  if public.wp_pending_count(p_run) = 0 then
+    perform public.wp_advance_turn(p_run);
+  else
+    update public.warpath_runs
+       set turn_deadline = now() + make_interval(secs => run.turn_seconds) where id = p_run;
+  end if;
+end $$;
+
+/* ── ADVANCING THE WORLD ──────────────────────────────────────────────────
+   Lifted out of warpath_end_turn so that TWO callers can drive it: the last
+   player to press End turn, and wp_tick() when the deadline expires. Must be
+   called holding the per-run advisory lock. */
+create or replace function public.wp_advance_turn(p_run uuid)
+returns public.warpath_runs language plpgsql security definer set search_path = public as $$
+declare run public.warpath_runs; rec record; base int;
+begin
+  -- Last one in: advance the world, and start the next turn's clock.
+  update public.warpath_runs
+     set turn = turn + 1,
+         turn_deadline = now() + make_interval(secs => turn_seconds)
+   where id = p_run returning * into run;
 
   for rec in select * from public.warpath_expeditions
-              where run_id = me.run_id and status in ('active','extracting') loop
+              where run_id = p_run and status in ('active','extracting') loop
     base := case when rec.injured_turns > 0 then 4 else 6 end;   -- injury costs movement
     update public.warpath_expeditions
        set turn_ended = false,
            moves_left = base,
            injured_turns = greatest(0, rec.injured_turns - 1),
            hero_hp = least(rec.hero_max_hp, rec.hero_hp + 5),
-           extract_left = case when rec.status = 'extracting' then greatest(0, rec.extract_left - 1) else 0 end,
-           status = case when rec.status = 'extracting' and rec.extract_left - 1 <= 0 then 'ready' else rec.status end
+           /* ⚠ AWAY FREEZES THE COUNTDOWN. If an absent hero kept extracting,
+              walking away would be the SAFEST way to leave the Warpath and B3
+              (losing interrupts extraction) would be undone. Frozen, not
+              cancelled: a disconnect should cost you tempo, not your run. */
+           extract_left = case when rec.status = 'extracting' and not rec.away
+                               then greatest(0, rec.extract_left - 1) else rec.extract_left end,
+           status = case when rec.status = 'extracting' and not rec.away
+                          and rec.extract_left - 1 <= 0 then 'ready' else rec.status end
      where id = rec.id;
   end loop;
 
@@ -1833,7 +2006,45 @@ begin
     perform public.wp_log(run.id, null, 'run_closed', '{}');
   end if;
 
-  return jsonb_build_object('ok', true, 'turn', run.turn, 'advanced', true);
+
+  return run;
+end $$;
+
+create or replace function public.warpath_end_turn(p_exp uuid default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare me public.warpath_expeditions; run public.warpath_runs; pending int;
+begin
+  p_exp := coalesce(p_exp, public.wp_active_exp());
+  me := public.wp_my_exp(p_exp);
+  if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
+  if me.status not in ('active','extracting') then
+    return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
+
+  /* ⚠ THE TURN BARRIER NEEDS THE SAME LOCK THE LOBBY GOT.
+     Four simultaneous end_turns used to do two wrong things at once: each
+     transaction set its own turn_ended and then counted the others in the SAME
+     READ COMMITTED snapshot, so nobody could see anybody and 7 of 30 rounds
+     advanced zero times; and on retry all four ran the advance block, updating
+     warpath_runs and then every expedition row while each already held a lock
+     on its own row — textbook ABBA, 20 raw 40P01s handed back to callers.
+     warpath_enter already took this medicine for the lobby. Keyed per run so
+     two worlds never queue behind each other. */
+  perform pg_advisory_xact_lock(hashtext('warpath_turn:' || me.run_id::text));
+
+  -- Pressing the button is proof of presence: it clears any away flag.
+  update public.warpath_expeditions
+     set turn_ended = true, auto_ends = 0, away = false where id = me.id;
+
+  pending := public.wp_pending_count(me.run_id);
+  if pending > 0 then
+    return jsonb_build_object('ok', true, 'waiting_for', pending,
+                              'turn', (select turn from public.warpath_runs where id = me.run_id),
+                              'deadline', (select turn_deadline from public.warpath_runs where id = me.run_id));
+  end if;
+
+  run := public.wp_advance_turn(me.run_id);
+  return jsonb_build_object('ok', true, 'turn', run.turn, 'advanced', true,
+                            'deadline', run.turn_deadline);
 end $$;
 
 /* ── BATTLE BRIDGE ────────────────────────────────────────────────────────
@@ -1865,6 +2076,10 @@ begin
      pitching camp while the other three waited on it — the barrier announced
      you were done without making you done. */
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   select * into run from public.warpath_runs where id = me.run_id;
 
   if exists (select 1 from public.warpath_battles where status = 'open'
@@ -1934,8 +2149,9 @@ begin
      set moves_left = greatest(0, moves_left - case when v_kind = 'pvp' then 2 else 1 end)
    where id = me.id;
 
-  insert into public.warpath_battles (run_id, kind, attacker_id, defender_id, x, y, opened_turn)
-    values (me.run_id, v_kind, me.id, p_target, me.x, me.y, run.turn) returning * into b;
+  insert into public.warpath_battles (run_id, kind, attacker_id, defender_id, x, y, opened_turn, expires_at)
+    values (me.run_id, v_kind, me.id, p_target, me.x, me.y, run.turn,
+            now() + public.wp_battle_ttl()) returning * into b;
   perform public.wp_log(me.run_id, me.id, 'battle_opened',
     jsonb_build_object('battle_id', b.id, 'kind', v_kind, 'x', me.x, 'y', me.y));
   return jsonb_build_object('ok', true, 'battle_id', b.id, 'kind', v_kind,
@@ -2136,6 +2352,10 @@ begin
      pitching camp while the other three waited on it — the barrier announced
      you were done without making you done. */
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   select * into run from public.warpath_runs where id = me.run_id;
   st := public.wp_structure_at(run.seed, me.x, me.y);
   if st is null or st->>'k' <> 'gate' then
@@ -2282,6 +2502,10 @@ begin
   if me.id is null then return jsonb_build_object('ok', false, 'reason', 'not_your_expedition'); end if;
   if me.status <> 'active' then return jsonb_build_object('ok', false, 'reason', 'not_active'); end if;
   if me.turn_ended then return jsonb_build_object('ok', false, 'reason', 'turn_already_ended'); end if;
+  -- Acting is proof of presence: it clears the away flag and the strike count.
+  if me.away or me.auto_ends > 0 then
+    update public.warpath_expeditions set away = false, auto_ends = 0 where id = me.id;
+  end if;
   select * into camp from public.warpath_camps where expedition_id = me.id;
   if camp.expedition_id is null then return jsonb_build_object('ok', false, 'reason', 'no_camp'); end if;
   if camp.x <> me.x or camp.y <> me.y then

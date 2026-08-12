@@ -80,6 +80,7 @@ function mockInit(seed) {
       stats: { distance: 0, defeated: 0, raided: 0, bosses: 0 },
     },
     camp: null, inv: inv, cards: cards, cardSeq: 100, gathered: 0,
+    deadlineAt: Date.now() + 90000,
     recruited: [], claimed: {}, encounters: {}, encounter: null,
     battles: [], events: [], grants: [],
     fog: new Uint8Array(Math.ceil(world.w * world.h / 8)),
@@ -132,8 +133,14 @@ var MOCK = {
     return {
       ok: true, in_run: true,
       run: { id: 'mock-run', seed: mock.seed, turn: mock.turn,
-             max_turns: mock.maxTurns, status: 'active', players: 4 },
-      me: Object.assign({}, mock.me, {
+             max_turns: mock.maxTurns, status: 'active', players: 4,
+             // ⏱ mirrors the turn clock in warpath_state. The mock is single
+             // player so the deadline never actually bites, but the HUD has to
+             // be developed against the same shape it will get live.
+             turn_seconds: 90,
+             seconds_left: Math.max(0, Math.round((mock.deadlineAt - Date.now()) / 1000)),
+             waiting_for: mock.me.turn_ended ? 0 : 1 },
+      me: Object.assign({}, mock.me, { away: false, auto_ends: 0,
         vision: v, vault_slots: vaultSlots(), extract_cap: extractCap(),
         fog: null,
       }),
@@ -149,7 +156,7 @@ var MOCK = {
       others: mock.others.map(function (o) {
         var seen = Math.max(Math.abs(o.x - mock.me.x), Math.abs(o.y - mock.me.y)) <= v;
         return { expedition_id: o.expedition_id, slot: o.slot, hero_name: o.hero_name,
-                 status: o.status, visible: seen,
+                 status: o.status, visible: seen, turn_ended: false, away: false,
                  x: seen ? o.x : null, y: seen ? o.y : null, camp: null };
       }),
       events: mock.events.slice(0, 40),
@@ -460,6 +467,7 @@ var MOCK = {
     var me = mock.me;
     if (me.status !== 'active' && me.status !== 'extracting') return fail('not_active');
     mock.turn++;
+    mock.deadlineAt = Date.now() + 90000;
     me.turn_ended = false;
     me.moves_left = me.injured_turns > 0 ? 4 : D.ENTRY.moves_per_turn;
     me.injured_turns = Math.max(0, me.injured_turns - 1);

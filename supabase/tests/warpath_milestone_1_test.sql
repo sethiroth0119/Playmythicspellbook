@@ -1170,3 +1170,175 @@ begin
   raise notice '';
   raise notice '════════ BATTLE SAFETY: % CHECKS PASSED ════════', pass;
 end $$;
+
+-- =============================================================================
+-- THE TURN CLOCK, and the circular dependency it is built around.
+-- =============================================================================
+do $$
+declare
+  u uuid[]; e uuid[]; r jsonb; v_run uuid; n int; pass int := 0; i int; st jsonb;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  for i in 1..4 loop
+    declare uid uuid;
+    begin
+      insert into auth.users (email) values ('t' || i || '@clock.test') returning id into uid;
+      insert into public.warpath_tickets (user_id, tickets) values (uid, 5);
+      perform public.set_uid(uid);
+      r := public.warpath_enter('h', 'P' || i, 'ticket');
+      u := array_append(u, uid); e := array_append(e, (r->>'expedition_id')::uuid);
+      v_run := (r->>'run_id')::uuid;
+    end;
+  end loop;
+
+  -- ── a deadline exists and is in the future ─────────────────────────────
+  perform public.set_uid(u[1]);
+  st := public.warpath_state();
+  if (st->'run'->>'deadline') is null then raise exception 'FAIL: no turn deadline'; end if;
+  if (st->'run'->>'seconds_left')::int <= 0 then
+    raise exception 'FAIL: the deadline is already in the past'; end if;
+  pass := pass + 1; raise notice 'ok  a run has a turn deadline (% s left, % s per turn)',
+    st->'run'->>'seconds_left', st->'run'->>'turn_seconds';
+
+  -- ── ONE PLAYER WALKS AWAY: the other three must not be held ────────────
+  perform public.set_uid(u[1]); perform public.warpath_end_turn(e[1]);
+  perform public.set_uid(u[2]); perform public.warpath_end_turn(e[2]);
+  perform public.set_uid(u[3]); perform public.warpath_end_turn(e[3]);
+  -- P4 never ends its turn. Force the deadline into the past and tick.
+  n := (select turn from public.warpath_runs where id = v_run);
+  update public.warpath_runs set turn_deadline = now() - interval '1 second' where id = v_run;
+  perform public.set_uid(u[1]); perform public.warpath_state();
+  if (select turn from public.warpath_runs where id = v_run) <= n then
+    raise exception 'FAIL: one absent player froze the run — the deadline did not advance it'; end if;
+  if not exists (select 1 from public.warpath_events where run_id = v_run and kind = 'turn_timed_out') then
+    raise exception 'FAIL: the timeout was silent'; end if;
+  pass := pass + 1; raise notice 'ok  a player who walks away no longer freezes the other three';
+
+  -- ── three strikes and they are marked away, and skipped ────────────────
+  for i in 1..3 loop
+    perform public.set_uid(u[1]); perform public.warpath_end_turn(e[1]);
+    perform public.set_uid(u[2]); perform public.warpath_end_turn(e[2]);
+    perform public.set_uid(u[3]); perform public.warpath_end_turn(e[3]);
+    update public.warpath_runs set turn_deadline = now() - interval '1 second' where id = v_run;
+    perform public.set_uid(u[1]); perform public.warpath_state();
+  end loop;
+  if not (select away from public.warpath_expeditions where id = e[4]) then
+    raise exception 'FAIL: three consecutive timeouts did not mark the hero away'; end if;
+  pass := pass + 1; raise notice 'ok  three consecutive timeouts mark a hero away';
+
+  -- an away hero is no longer part of the barrier at all
+  perform public.set_uid(u[1]); perform public.warpath_end_turn(e[1]);
+  perform public.set_uid(u[2]); perform public.warpath_end_turn(e[2]);
+  n := (select turn from public.warpath_runs where id = v_run);
+  perform public.set_uid(u[3]);
+  r := public.warpath_end_turn(e[3]);
+  if not (r->>'advanced')::boolean then
+    raise exception 'FAIL: the barrier still waits on an away hero: %', r; end if;
+  pass := pass + 1; raise notice 'ok  an away hero is skipped — the other three play at full speed';
+
+  -- ...and it is still on the map, lootable, not removed from the run
+  if (select status from public.warpath_expeditions where id = e[4]) <> 'active' then
+    raise exception 'FAIL: an away hero was removed from the run rather than left on the map'; end if;
+  pass := pass + 1; raise notice 'ok  the away hero stays on the map — walking away has a real cost';
+
+  -- acting is proof of presence
+  perform public.set_uid(u[4]);
+  update public.warpath_expeditions set moves_left = 6, turn_ended = false where id = e[4];
+  perform public.warpath_camp_place(e[4]);
+  if (select away from public.warpath_expeditions where id = e[4]) then
+    raise exception 'FAIL: acting did not clear the away flag'; end if;
+  if (select auto_ends from public.warpath_expeditions where id = e[4]) <> 0 then
+    raise exception 'FAIL: acting did not reset the strike count'; end if;
+  pass := pass + 1; raise notice 'ok  any action clears away and resets the strikes';
+
+  raise notice '';
+  raise notice '════════ TURN CLOCK: % CHECKS PASSED ════════', pass;
+end $$;
+
+-- =============================================================================
+-- ⚠ THE DEADLOCK. Two clients open a battle and NEITHER reports. Both are
+-- exempt from the deadline while it is open, so neither auto-ends; the barrier
+-- waits on them, so the turn cannot advance; and if the battle expired on a
+-- TURN count it would be waiting for turns that never arrive. The other two
+-- players must still be able to finish a run.
+-- =============================================================================
+do $$
+declare
+  u uuid[]; e uuid[]; r jsonb; v_run uuid; v_b uuid; n int; pass int := 0; i int;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  for i in 1..4 loop
+    declare uid uuid;
+    begin
+      insert into auth.users (email) values ('dl' || i || '@clock.test') returning id into uid;
+      insert into public.warpath_tickets (user_id, tickets) values (uid, 5);
+      perform public.set_uid(uid);
+      r := public.warpath_enter('h', 'D' || i, 'ticket');
+      u := array_append(u, uid); e := array_append(e, (r->>'expedition_id')::uuid);
+      v_run := (r->>'run_id')::uuid;
+    end;
+  end loop;
+
+  update public.warpath_expeditions set x = 18, y = 15, moves_left = 6, protected_until = 0 where id = e[1];
+  update public.warpath_expeditions set x = 19, y = 15, moves_left = 6, protected_until = 0 where id = e[2];
+  perform public.set_uid(u[1]);
+  r := public.warpath_battle_open(e[1], e[2]);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: battle_open: %', r; end if;
+  v_b := (r->>'battle_id')::uuid;
+  if (select expires_at from public.warpath_battles where id = v_b) is null then
+    raise exception 'FAIL: the battle has no wall-clock expiry — it can only die on the turn counter'; end if;
+  pass := pass + 1; raise notice 'ok  a battle carries its own wall clock, not a turn count';
+
+  -- both combatants are exempt from the deadline while it is open
+  if not public.wp_deadline_paused(e[1]) or not public.wp_deadline_paused(e[2]) then
+    raise exception 'FAIL: combatants are not exempt from the deadline'; end if;
+  pass := pass + 1; raise notice 'ok  both combatants are exempt from the turn deadline';
+
+  -- the other two end their turns; nobody reports the battle
+  perform public.set_uid(u[3]); perform public.warpath_end_turn(e[3]);
+  perform public.set_uid(u[4]); perform public.warpath_end_turn(e[4]);
+  n := (select turn from public.warpath_runs where id = v_run);
+  update public.warpath_runs set turn_deadline = now() - interval '1 second' where id = v_run;
+  perform public.set_uid(u[3]); perform public.warpath_state();
+  if (select turn from public.warpath_runs where id = v_run) <> n then
+    raise exception 'FAIL: the turn advanced while two exempt players were mid-battle'; end if;
+  pass := pass + 1; raise notice 'ok  while the battle is live the pause holds — the turn does not advance';
+
+  -- ...and the pause is BOUNDED. Push the battle past its own clock.
+  update public.warpath_battles set expires_at = now() - interval '1 second' where id = v_b;
+  if public.wp_deadline_paused(e[1]) then
+    raise exception 'FAIL: the pause outlives the battle expiry — a free way to stop your own clock'; end if;
+  pass := pass + 1; raise notice 'ok  the pause is bounded by the battle expiry, not by its existence';
+
+  -- the tick must now expire the battle AND release the run
+  update public.warpath_runs set turn_deadline = now() - interval '1 second' where id = v_run;
+  perform public.set_uid(u[3]); perform public.warpath_state();
+  if (select status from public.warpath_battles where id = v_b) = 'open' then
+    raise exception 'FAIL: the unreported battle is still open — the run is deadlocked'; end if;
+  if (select turn from public.warpath_runs where id = v_run) <= n then
+    raise exception 'FAIL: THE DEADLOCK. Two players opened a battle, neither reported, and the run froze for the other two.'; end if;
+  pass := pass + 1; raise notice 'ok  ⚠ THE DEADLOCK IS BROKEN — the battle died on its own clock and the run moved on';
+
+  -- and both combatants are free again
+  perform public.set_uid(u[2]);
+  update public.warpath_expeditions set moves_left = 6, turn_ended = false where id = e[2];
+  r := public.warpath_move(e[2], 20, 15);
+  if not (r->>'ok')::boolean and r->>'reason' = 'battle_pending' then
+    raise exception 'FAIL: a combatant is still pinned after the battle expired'; end if;
+  pass := pass + 1; raise notice 'ok  both combatants are released';
+
+  raise notice '';
+  raise notice '════════ TURN-CLOCK DEADLOCK: % CHECKS PASSED ════════', pass;
+end $$;

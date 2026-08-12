@@ -33,7 +33,7 @@ var S = {
   sel: null,                 // selected tile {x,y}
   reach: {},                 // reachable set for the hero this turn
   cam: { x: 0, y: 0, z: 22 }, userZoom: false,
-  tab: 'camp', fogKey: 0, quality: 'high', meta: null, encDismissed: false, seenEvents: null,
+  tab: 'camp', fogKey: 0, deadlineAt: null, quality: 'high', meta: null, encDismissed: false, seenEvents: null,
   busy: false, ended: false,
   hover: null,
 };
@@ -95,6 +95,7 @@ var REASONS = {
   need_2_moves_to_attack: 'Challenging a Hero costs 2 movement.',
   already_fought_this_turn: 'You have already fought them this turn.',
   already_scouted_this_turn: 'Your scout has already reported this turn.',
+  turn_already_ended: 'You have ended your turn — wait for the others.',
 };
 function why(r) {
   if (!r) return 'That did not work.';
@@ -517,6 +518,33 @@ function renderTop() {
   var me = st.me;
   $('t-turn').textContent = st.run.turn;
   $('t-turn').nextElementSibling.textContent = '/' + st.run.max_turns + ' turns';
+
+  /* ⏱ THE TURN CLOCK, and who the barrier is waiting on.
+     "Why is nothing happening" with no visible answer is most of the harm a
+     stalled player does — it reads as a broken game rather than as a person
+     who walked away. The countdown and the dots turn both into information. */
+  var secs = st.run.seconds_left;
+  var clock = $('t-clock');
+  if (secs != null && st.me.status !== 'extracted' && st.me.status !== 'lost') {
+    S.deadlineAt = Date.now() + secs * 1000;
+    clock.style.display = '';
+  } else { S.deadlineAt = null; clock.style.display = 'none'; }
+
+  var dots = '';
+  var seats = [{ hero_name: st.me.hero_name || 'You', turn_ended: st.me.turn_ended,
+                 away: st.me.away, self: true, status: st.me.status }]
+    .concat(st.others || []);
+  seats.forEach(function (o) {
+    var cls = o.away ? 'away' : (o.turn_ended ? 'done' : 'thinking');
+    if (o.status === 'extracted' || o.status === 'lost') cls = 'gone';
+    dots += '<i class="' + cls + (o.self ? ' me' : '') + '" title="' + esc(o.hero_name || 'Hero') + ' — '
+         + (o.away ? 'away' : o.turn_ended ? 'turn ended' : 'still moving') + '"></i>';
+  });
+  $('t-seats').innerHTML = dots;
+  var waiting = st.run.waiting_for | 0;
+  $('t-seats').setAttribute('title', waiting
+    ? 'Waiting for ' + waiting + ' Hero' + (waiting === 1 ? '' : 'es') + ' to end their turn'
+    : 'Everyone has ended their turn');
   $('t-moves').textContent = me.moves_left;
   $('t-hp').textContent = me.hp;
   var used = 0;
@@ -838,6 +866,8 @@ function feedLine(e) {
     case 'hero_defeated':       return (p.winner || 'A Hero') + ' beat ' + (p.loser || 'someone') + '.';
     case 'extraction_started':  return '⚠ ' + (p.hero || 'A Hero') + ' is preparing to leave the Warpath'
                                      + (p.gate ? ' at ' + p.gate : '') + '.';
+    case 'turn_timed_out':      return (p.hero || 'A Hero') + ' ran out of time and their turn was ended.';
+    case 'hero_away':           return '⚠ ' + (p.hero || 'A Hero') + ' has stopped responding — the run no longer waits for them.';
     case 'rival_camp_struck':   return (p.hero || 'A rival') + ' packed their camp at '
                                      + p.x + ',' + p.y + ' and moved on.';
     case 'battle_abandoned':    return 'A battle nobody reported expired — both Heroes went free.';
@@ -1544,6 +1574,19 @@ function buildLegend() {
 
 /* ── Boot ───────────────────────────────────────────────────────────────── */
 window.addEventListener('resize', resize);
+
+/* The server is the authority on the deadline; this only animates between
+   polls so the number does not sit frozen for five seconds at a time. */
+function tickClock() {
+  var el = $('t-clock');
+  if (!el || !S.deadlineAt) return;
+  var left = Math.max(0, Math.round((S.deadlineAt - Date.now()) / 1000));
+  var m = Math.floor(left / 60), ss = left % 60;
+  el.querySelector('b').textContent = m + ':' + (ss < 10 ? '0' : '') + ss;
+  el.classList.toggle('warn', left <= 20);
+  el.classList.toggle('critical', left <= 5);
+}
+setInterval(tickClock, 1000);
 
 function boot() {
   buildLegend();

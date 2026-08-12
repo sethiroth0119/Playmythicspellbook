@@ -91,6 +91,19 @@
   .pill.moves{border-color:rgba(255,122,47,.55)}
   .pill.warn{border-color:var(--invalid);color:#ffb4ad}
   .pill .vault{color:var(--sky)}
+  /* ⏱ turn clock + the per-seat barrier dots */
+  .pill.clock b{font-variant-numeric:tabular-nums;min-width:34px;display:inline-block;text-align:right}
+  .pill.clock.warn{border-color:rgba(255,122,47,.7);color:#ffd0b0}
+  .pill.clock.critical{border-color:var(--invalid);color:#ffb4ad;animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.55}}
+  .pill.seats{gap:5px;padding:5px 9px}
+  .pill.seats i{width:9px;height:9px;border-radius:50%;display:block;border:1px solid var(--edge)}
+  .pill.seats i.thinking{background:var(--ember);border-color:var(--ember);
+    animation:pulse 1.6s ease-in-out infinite}
+  .pill.seats i.done{background:var(--valid);border-color:var(--valid)}
+  .pill.seats i.away{background:transparent;border-color:var(--invalid);border-style:dashed}
+  .pill.seats i.gone{background:var(--edge);border-color:var(--edge)}
+  .pill.seats i.me{box-shadow:0 0 0 2px rgba(212,175,55,.55)}
   #runname{font-family:'Cinzel',serif;font-size:14px;letter-spacing:.16em;color:var(--gold);
     margin-right:6px;white-space:nowrap;text-transform:uppercase;}
   #deckbar{pointer-events:auto;display:flex;align-items:center;gap:8px;background:var(--panel);
@@ -327,6 +340,8 @@
 <div id="top">
   <div id="runname">Warpath</div>
   <div class="pill turn"><span class="ic">🕛</span><b id="t-turn">1</b><span class="sub">/60 turns</span></div>
+  <div class="pill clock" id="t-clock" title="Time left in this turn"><span class="ic">⏱</span><b>1:30</b></div>
+  <div class="pill seats" id="t-seats" title="Who the turn is waiting for"></div>
   <div class="pill moves"><span class="ic">👣</span><b id="t-moves">6</b><span class="sub">moves</span></div>
   <div class="pill"><span class="ic">❤️</span><b id="t-hp">100</b><span class="sub">hp</span></div>
   <div class="pill"><span class="ic">🔐</span><span class="vault" id="t-vault">0/0</span><span class="sub">vault</span></div>

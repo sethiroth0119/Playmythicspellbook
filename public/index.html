@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120v6';
+  window.BUILD_VERSION = 'v120v7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -206310,6 +206310,10 @@ function _cityOwnerBadgeText() {
   } catch (e) { return ''; }
 }
 function _cityOwnerBadgeSync() {
+  // 🔌 The tier pill rides this tick too — see _cityTierPillSync. Called before
+  //    the early return below so it still runs on a frame where the owner badge
+  //    is absent but the pill is not.
+  try { _cityTierPillSync(); } catch (e) {}
   try {
     const b = document.getElementById('node-city-owner');
     if (!b) return;
@@ -206539,31 +206543,98 @@ function _openNodeCity(nodeId, _resolved) {
   try { _cityTierPill(); } catch (e) {}
 }
 /* 🔌 PRN TIER — pill + assignment modal, on the Node City overlay.
-   The pill always states a rate, including for a player who owns no node at
-   all: that is the Free tier, not a blank. Assignment is admin-only (the rate
-   is otherwise earned by buying a founder package), and the override is stamped
-   on economy_nodes.meta.tier — JSONB, so no schema change, matching how every
-   other per-node fact in this file is stored. */
+   The pill always states a rate for a city we can resolve, including a player
+   who owns no node at all: that is the Free tier, not a blank. A city whose
+   node we cannot resolve YET says so instead — see the note in _cityTierPill.
+   Assignment is admin-only (the rate is otherwise earned by buying a founder
+   package), and the override is stamped on economy_nodes.meta.tier — JSONB, so
+   no schema change, matching how every other per-node fact in this file is
+   stored. */
+/* 🔌 Nothing on the city-open path calls nodeFetch() — the node list is loaded
+   by the Foundation Reserve panel (and a handful of node actions). A player who
+   walks straight into their city has never fetched it, so "checking tier…"
+   would sit there forever with nobody coming to fix it. Kick a fetch when we
+   find ourselves unresolved, throttled so a 2s sync loop cannot turn into a
+   request loop, and let _cityTierPillSync repaint when it lands. */
+function _cityTierEnsureNodes() {
+  try {
+    if (typeof nodeFetch !== 'function') return;
+    const now = Date.now();
+    if (now - (App._cityTierFetchAt || 0) < 8000) return;
+    App._cityTierFetchAt = now;
+    Promise.resolve(nodeFetch()).then(() => { try { _cityTierPillSync(); } catch (e) {} }, () => {});
+  } catch (e) {}
+}
 function _cityTierPill() {
   const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
   if (!T) return;                                    // module absent → no pill, no feature
   const old = document.getElementById('node-city-tier');
   if (old) { try { old.remove(); } catch (e) {} }
-  const node = ((FoundationReserve && FoundationReserve.nodes) || []).find((n) => n && n.id === App._cityNodeId) || null;
-  const tier = T.resolveTier(node, _nodeTierCtx());
+  /* 🔌 "FREE" MUST MEAN FREE CAMP, NOT "I DO NOT KNOW YET".
+     This resolved the node once and passed null straight to resolveTier, which
+     answers Free — so a city whose node data had not arrived was indistinguish-
+     able from a city with no node at all, and both printed FREE · 0.5%.
+     Two ways that happens, and neither is rare:
+       • FoundationReserve.nodes is fetched ASYNC, and the pill is built while
+         the city opens — routinely before the list lands.
+       • Nodes are CORP-SCOPED: `if (!Corp.mine) FoundationReserve.nodes = []`.
+         A player not in a corp has an empty list, so a genuine node city
+         reported Free every time.
+     So: no node id at all is a free camp and says so. A node id we cannot
+     resolve yet is UNKNOWN — it says "checking", and the refresh below corrects
+     it the moment the data arrives. Printing a rate we have not verified is
+     worse than printing nothing: it is a number the player will plan around. */
+  const _nodes = (FoundationReserve && FoundationReserve.nodes) || [];
+  const node = _nodes.find((n) => n && n.id === App._cityNodeId) || null;
+  const _isFreeCamp = !App._cityNodeId;
+  const _unknown = !!App._cityNodeId && !node;
+  if (_unknown) _cityTierEnsureNodes();              // go get it, then repaint
+  const tier = T.resolveTier(_isFreeCamp ? null : node, _nodeTierCtx());
   const canEdit = (typeof isAdmin === 'function') && isAdmin();
   const p = document.createElement('button');
   p.id = 'node-city-tier';
-  p.textContent = '🔌 ' + tier.name + ' · ' + tier.rate + '%' + (canEdit ? ' ✎' : '');
-  p.title = canEdit
-    ? 'Node tier — ' + tier.rate + '% Cinder pool share, ' + (tier.rate + T.RESOURCE_BONUS_PCT) + '% resource generation. Click to assign.'
-    : 'Node tier — ' + tier.rate + '% Cinder pool share, ' + (tier.rate + T.RESOURCE_BONUS_PCT) + '% resource generation.';
+  p.textContent = _unknown
+    ? '🔌 checking tier…'
+    : '🔌 ' + tier.name + ' · ' + tier.rate + '%' + (canEdit ? ' ✎' : '');
+  // Remember what we drew, so the 2s refresh can skip a no-op rebuild.
+  try { App._cityTierKey = _unknown ? 'unknown' : (tier.id + ':' + tier.rate + ':' + (canEdit ? 1 : 0)); } catch (e) {}
+  p.title = _unknown
+    ? 'This city is attached to a PRN, but its details have not loaded yet. The rate will appear in a moment.'
+    : (_isFreeCamp
+        ? 'Free camp — no PRN attached. ' + tier.rate + '% Cinder pool share, ' + (tier.rate + T.RESOURCE_BONUS_PCT) + '% resource generation.'
+        : 'Node tier — ' + tier.rate + '% Cinder pool share, ' + (tier.rate + T.RESOURCE_BONUS_PCT) + '% resource generation.')
+      + (canEdit ? ' Click to assign.' : '');
   p.style.cssText = 'position:fixed;top:52px;left:16px;z-index:2147483301;padding:6px 13px;border-radius:999px;'
     + 'font-family:Cinzel,serif;font-weight:700;font-size:11.5px;letter-spacing:.07em;color:#0f0b04;'
     + 'background:linear-gradient(180deg,' + tier.accent + ',rgba(0,0,0,.25));border:1px solid rgba(0,0,0,.4);'
-    + 'box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:' + (canEdit ? 'pointer' : 'default');
+    + 'box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:' + (canEdit ? 'pointer' : 'default')
+    // An unresolved tier is dimmed, so "checking" never reads as a live rate.
+    + (_unknown ? ';opacity:.55' : '');
   if (canEdit) p.onclick = () => { try { _cityTierModal(node); } catch (e) {} };
   document.body.appendChild(p);
+}
+/* 🔁 Keep the pill honest as data arrives. FoundationReserve.nodes lands after
+   the city opens (and repopulates when a corp fetch completes), so a pill built
+   once is a pill that stays wrong. Rides the badge timer that already ticks
+   every 2s rather than adding a second one, and REBUILDS ONLY WHEN THE ANSWER
+   CHANGES — tearing down and recreating a DOM node twice a second would drop
+   the admin's click handler mid-press and flicker the pill for everyone. */
+function _cityTierPillSync() {
+  try {
+    if (!document.getElementById('node-city-tier')) return;   // city not open
+    const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+    if (!T) return;
+    const _nodes = (FoundationReserve && FoundationReserve.nodes) || [];
+    const node = _nodes.find((n) => n && n.id === App._cityNodeId) || null;
+    const unknown = !!App._cityNodeId && !node;
+    const canEdit = (typeof isAdmin === 'function') && isAdmin();
+    const tier = T.resolveTier(App._cityNodeId ? node : null, _nodeTierCtx());
+    const key = unknown ? 'unknown' : (tier.id + ':' + tier.rate + ':' + (canEdit ? 1 : 0));
+    // Still unresolved: retry (throttled) rather than repaint the same pill.
+    if (unknown) { _cityTierEnsureNodes(); return; }
+    if (key === App._cityTierKey) return;                     // nothing changed
+    _cityTierPill();
+  } catch (e) {}
 }
 function _cityTierModal(node) {
   const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;

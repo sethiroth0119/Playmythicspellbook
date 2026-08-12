@@ -245,7 +245,7 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 | `wh_send_shipment(unit, kind, node, label, payload, name)` | renter | Weight + ETA computed server-side; splits into crates. |
 | `wh_store_crate(crate, unit)` | owner or renter | The unload gate. |
 | `wh_buy_unit(currency)` | owner | Adds a NEW empty bay. 10 Aza / 50,000 Cinder. |
-| `wh_expand_unit(unit, currency)` | owner or that renter | **Grows an EXISTING bay** by another 500 kg, same price. This is what the "you need to open storage unit space" modal calls — buying a new bay cannot help a crate addressed to a full one. |
+| `wh_expand_unit(unit, currency)` | owner or that renter, rental must be CURRENT | **Grows an EXISTING bay** by another 500 kg, same price. This is what the "you need to open storage unit space" modal calls — buying a new bay cannot help a crate addressed to a full one. |
 | `wh_upgrade_tier(currency)` | owner | Raises the bay cap. |
 | `wh_buy_lifter(tier, currency)` | anyone | Carry capacity. |
 | `wh_withdraw(unit, res, qty)` | renter | Takes goods back out. |
@@ -265,6 +265,12 @@ anything missing shows the player a raw identifier.
 
 **Server**
 - [ ] All four SQL files applied; `select public.wh_config()` returns JSON.
+- [ ] **Concurrency:** open two tabs as the same renter and send two large loads
+      into two DIFFERENT bays at the same moment. Exactly one should be accepted
+      once the combined weight exceeds the free space. (`wh_send_shipment` takes
+      `pg_advisory_xact_lock` on sender+warehouse — the capacity sum spans every
+      bay the sender holds, so a per-bay row lock is not enough.)
+- [ ] A rental past `rent_until` cannot send, store, **or be expanded**.
 - [ ] Signed out, `wh_directory()` is **denied** (only `wh_config()` is public).
 - [ ] A node with no `tw_node_owners` row gives `wh_node_level` = 0.
 
@@ -330,7 +336,10 @@ anything missing shows the player a raw identifier.
      "charged inside the transaction" guarantee here is real, but it is a
      guarantee about a balance the player can also edit.
 3. **Bay contents are visible to the warehouse owner by design** — they have to
-   see a load to unload it.
+   see a load to unload it. Everyone else sees `renter_id`, `renter_name`,
+   `used_kg`, `capacity_kg` and `rent_until` as `null`, and the warehouse
+   owner's `auth` id is never exported. The client renders those bays as
+   *private*; if you add UI that reads those fields, handle `null`.
 4. **Performance is unmeasured on real hardware.** An independent probe measured
    **36 draw calls and 410 triangles** in the rendered frame with frame rate
    scaling exactly with pixel count at constant calls — i.e. the 2–4 fps seen

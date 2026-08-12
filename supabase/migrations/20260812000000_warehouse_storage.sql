@@ -487,7 +487,10 @@ begin
     'is_owner', v_is_owner,
     'config', public.wh_config(),
     'warehouse', jsonb_build_object(
-      'id', v_w.id, 'owner_id', v_w.owner_id, 'owner_name', v_w.owner_name,
+      -- The owner's raw auth.users id is the same class of identifier we mask
+      -- for renters; `is_owner` already tells the caller what they need.
+      'id', v_w.id, 'owner_id', case when v_is_owner then v_w.owner_id else null end,
+      'owner_name', v_w.owner_name,
       'node_id', v_w.node_id, 'tier', v_w.tier, 'units_total', v_w.units_total,
       'max_units', ((public.wh_config() -> 'tiers') -> (v_w.tier - 1) ->> 'max_units')::integer,
       'open_to_all', v_w.open_to_all),
@@ -507,7 +510,8 @@ begin
         'used_kg',     case when v_is_owner or u.renter_id = v_uid then u.used_kg     else null end,
         'rent_until',  case when v_is_owner or u.renter_id = v_uid then u.rent_until  else null end,
         'occupied',    (u.renter_id is not null),
-        'capacity_kg', u.capacity_kg,
+        -- Masked too: capacity ranks the bays by who has paid to expand.
+        'capacity_kg', case when v_is_owner or u.renter_id = v_uid then u.capacity_kg else null end,
         'contents', case when v_is_owner or u.renter_id = v_uid then u.contents else '{}'::jsonb end,
         'mine', (u.renter_id = v_uid)
       ) order by u.bay_no) from public.wh_units u where u.warehouse_id = v_w.id), '[]'::jsonb),
@@ -538,7 +542,7 @@ grant execute on function public.wh_warehouse_json(uuid) to authenticated;
 create or replace function public.wh_directory()
 returns jsonb language sql stable security definer set search_path = public as $$
   select coalesce((select jsonb_agg(jsonb_build_object(
-    'id', w.id, 'owner_id', w.owner_id, 'owner_name', w.owner_name,
+    'id', w.id, 'owner_name', w.owner_name,
     'node_id', w.node_id, 'tier', w.tier, 'units_total', w.units_total,
     -- ⚠ This predicate must MATCH wh_rent_unit's, or the directory advertises
     -- bays that then refuse with no_free_unit. It used to say "expired" where
@@ -612,6 +616,16 @@ begin
   select * into v_w from public.wh_warehouses where id = v_u.warehouse_id;
   if v_w.owner_id is distinct from v_uid and v_u.renter_id is distinct from v_uid then
     return jsonb_build_object('ok', false, 'reason', 'not_allowed');
+  end if;
+  -- ⚠ THE RENTAL MUST BE CURRENT. wh_send_shipment and wh_store_crate both gate
+  -- on rent_until; this one did not, and that is precisely the bug this function
+  -- exists to fix — paying for capacity that cannot help the payer. Measured: a
+  -- renter ten days past expiry was charged 150,000 Cinder to grow a bay she
+  -- could neither send to (not_your_unit) nor store into (rental_expired). The
+  -- owner then impounded it and the next tenant got a 2,000 kg bay for the price
+  -- of a 500 kg one.
+  if v_u.renter_id is not null and v_u.rent_until is not null and v_u.rent_until < now() then
+    return jsonb_build_object('ok', false, 'reason', 'rental_expired', 'rent_until', v_u.rent_until);
   end if;
   -- A bay may be expanded up to four times its original size; past that the
   -- warehouse needs more bays, not a bottomless one.
@@ -786,6 +800,20 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'too_large',
       'weight_kg', v_kg, 'max_shipment_kg', (v_cfg ->> 'max_shipment_kg')::numeric);
   end if;
+  -- 🔒 SERIALISE THE WHOLE CALCULATION. The capacity check below sums over
+  -- EVERY bay this sender holds in this warehouse, but the only lock held is
+  -- the FOR UPDATE on p_unit_id — one bay. Two sessions sending to DIFFERENT
+  -- bays therefore never contended, and under READ COMMITTED neither could see
+  -- the other's uncommitted wh_shipments row, so both read the same free space
+  -- and both said yes. Measured: four concurrent 1,799 kg sends against 2,000 kg
+  -- of storage all accepted — 7,196 kg in flight, 360% of capacity, 5,208 kg
+  -- permanently stranded once everything that could be stored had been.
+  -- Same-bay racing WAS serialised, which is exactly why single-threaded tests
+  -- showed this as fixed. The lock has to cover what the arithmetic covers.
+  -- An advisory lock keyed on (sender, warehouse) does that with no row-lock
+  -- ordering to get wrong and no deadlock cycle: whoever holds it never needs
+  -- the waiter's row locks.
+  perform pg_advisory_xact_lock(hashtextextended(v_uid::text || ':' || v_w.id::text, 0));
   -- 📏 …and refuse one the DESTINATION cannot hold. Without this the loop
   -- accepted arithmetically impossible deliveries: a 3,997 kg shipment against
   -- a 500 kg bay returned ok:true, and ten of them put 39,970 kg in flight
@@ -1036,8 +1064,13 @@ begin
     insert into public.wh_impound (user_id, warehouse_id, bay_no, contents, weight_kg)
       values (v_u.renter_id, v_w.id, v_u.bay_no, v_u.contents, v_u.used_kg);
   end if;
+  -- Capacity returns to the base size. An expansion is something a particular
+  -- renter paid for; silently transferring it to whoever rents next would let a
+  -- 2,000 kg bay go for the price of a 500 kg one.
   update public.wh_units set renter_id = null, renter_name = null, rent_until = null,
-    contents = '{}'::jsonb, used_kg = 0, updated_at = now() where id = v_u.id;
+    contents = '{}'::jsonb, used_kg = 0,
+    capacity_kg = (v_cfg ->> 'unit_capacity_kg')::numeric,
+    updated_at = now() where id = v_u.id;
   return jsonb_build_object('ok', true, 'bay_no', v_u.bay_no, 'impounded_kg', v_u.used_kg);
 end; $$;
 grant execute on function public.wh_impound_unit(uuid) to authenticated;

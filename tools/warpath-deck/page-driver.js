@@ -212,6 +212,7 @@ async function playMatch(cfg) {
   var half = 0, timeouts = 0;
   var MAX_HALF = cfg.maxHalfTurns || 200;
   var err = null;
+  var sawLocation = false, sawWeather = false, sawTrap = false;
 
   try {
     while (!App.state.gameOver && half < MAX_HALF) {
@@ -222,6 +223,13 @@ async function playMatch(cfg) {
       if (App.state.gameOver) break;
       var r = await runAiTurn(cfg.turnTimeoutMs);
       if (r === 'timeout') timeouts++;
+      // Did any card of these kinds ever reach the field? placeLocation
+      // (index.html:143456) writes state.player.hand directly and is only
+      // reachable from the human UI — doAIStep has no 'location' branch at
+      // all — so this is how we prove locations are dead under AI pilot.
+      if (App.state.activeLocation) sawLocation = true;
+      if (App.state.weather) sawWeather = true;
+      if ((App.state.board || []).some(function (row) { return row.some(function (t) { return t && t.trap; }); })) sawTrap = true;
       half++;
     }
   } catch (e) { err = String((e && e.message) || e); }
@@ -244,10 +252,27 @@ async function playMatch(cfg) {
     }
   });
 
+  // Card economy. Everything not still in hand or deck was played, discarded
+  // or destroyed — so `stranded` (hand at the end) is the closest honest read
+  // on cards the deck could not use in the time the match lasted.
+  var piles = {};
+  ['player', 'ai'].forEach(function (o) {
+    var side = (o === 'player') ? (swapped ? 'B' : 'A') : (swapped ? 'A' : 'B');
+    var b = App.state[o] || {};
+    piles[side] = {
+      hand: (b.hand || []).length, deck: (b.deck || []).length,
+      grave: (b.graveyard || []).length,
+      handCosts: (b.hand || []).map(function (c) { return c ? (c.cost | 0) : 0; }),
+      maxEnergy: b.maxEnergy | 0,
+    };
+    piles[side].played = 40 - piles[side].hand - piles[side].deck;
+  });
+
   return {
     winner: winner, halfTurns: half, turnNumber: App.state.turnNumber | 0,
     unresolved: !winner, deckOut: deckOut, timeouts: timeouts, error: err,
-    heroHp: heroHp, tail: tail,
+    heroHp: heroHp, tail: tail, piles: piles,
+    sawLocation: sawLocation, sawWeather: sawWeather, sawTrap: sawTrap,
     survivorsA: (App.state.units || []).filter(function (u) {
       var side = (u.owner === 'player') ? (swapped ? 'B' : 'A') : (swapped ? 'A' : 'B');
       return u && u.alive && !u.isHero && side === 'A';
@@ -281,10 +306,55 @@ function catalog() {
              .map(function (h) { return { id: h.id, name: h.name, elements: h.elements || [] }; }) };
 }
 
+/* ── 6. Reference decks from the MAIN collection ───────────────────────────
+   getGeneratedDeckForHero (index.html:71040) is the game's own themed
+   40-card builder — 22 units / 8 spells / 4 traps / 3 locations / 3 weather,
+   themed to the hero. It is what campaign and AI opponents are built from, so
+   it is the fairest available stand-in for "a normal collection deck", and it
+   is not something this harness invented. */
+function generatedDeck(heroId) {
+  return getGeneratedDeckForHero(heroId);
+}
+
+/* A tuned catalogue deck: the same 22/8/4/3/3 shape, but units chosen by
+   stats-per-energy off the FULL built-in catalogue rather than by hero theme,
+   capped at the real 3-copy limit. This is the "somebody who knows what they
+   are doing built this from packs" upper bound. */
+function tunedDeck() {
+  var score = function (c) {
+    var s = c.stats || {};
+    return ((s.hp | 0) + Math.max(s.atk | 0, s.mag | 0) * 1.5 + ((s.def | 0) + (s.res | 0)) * 0.5)
+           / Math.max(1, c.cost | 0);
+  };
+  var byScore = function (arr) {
+    return arr.slice().sort(function (a, b) { return score(b) - score(a); });
+  };
+  var out = [];
+  var take = function (arr, kind, n) {
+    var i = 0;
+    var pool = (kind === 'unit') ? byScore(arr) : arr.slice().sort(function (a, b) { return (a.cost | 0) - (b.cost | 0); });
+    while (out.length < 40 && n > 0 && pool.length) {
+      var c = pool[i % pool.length];
+      var k = kind + ':' + c.id;
+      var have = out.filter(function (x) { return x === k; }).length;
+      if (have < MAX_COPIES_PER_CARD) { out.push(k); n--; }
+      i++;
+      if (i > pool.length * (MAX_COPIES_PER_CARD + 1)) break;
+    }
+  };
+  take(UNIT_CARDS, 'unit', 22);
+  take(SPELL_CARDS, 'spell', 8);
+  take(TRAP_CARDS, 'trap', 4);
+  take(LOCATION_CARDS, 'location', 3);
+  take(WEATHER_CARDS, 'weather', 3);
+  return out.slice(0, DECK_SIZE);
+}
+
 stubPresentation();
 W.__wpd = {
   playMatch: playMatch, inspectDeck: inspectDeck, padLikeWarpath: padLikeWarpath,
   catalog: catalog, neutralise: neutralise, cardIdsOf: cardIdsOf,
+  generatedDeck: generatedDeck, tunedDeck: tunedDeck,
   ready: true,
 };
 })();

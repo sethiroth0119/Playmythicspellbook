@@ -17066,6 +17066,42 @@ const ECO_BUILDING_MAP = {
      budget here, and that Cinder flows back up the Ouroboros chain to the
      printer, the paper mill and the forestry camp. */
   shop:        { out: ['boosterPacks'],       ind: 'cardShop' },
+  /* ── 🏗 FIVE STANDING TILES THAT WERE ALWAYS BUSINESSES AND WERE NEVER WIRED.
+     Added with the construction round (SPEC_CONSTRUCTION §9) because the
+     feature makes the question unavoidable: if a Construction Co. is now a
+     PREREQUISITE for half the shop, it had better be a firm — and once you are
+     opening this table for that, the five obvious omissions go in with it.
+     `warehouse` has the strongest case of the five: it already contributes
+     freight capacity at ecoLogisticsCounts() (:16871 — the economy literally
+     counts it) while employing nobody and holding no balance sheet.
+
+     🔴 EVERY `out` ID HERE MUST SATISFY Recipes.producible(). syncBuildings
+        drops an unproducible id at economy/index.js:153 — SILENTLY, no warn, no
+        throw — so a typo or a chain.js-only id produces a tile that looks
+        perfectly wired in this table and founds no firm, forever, with a green
+        console. tools/economy-tests/run.mjs round0b asserts producible() on
+        every id in this map so the typo is caught by the gate instead of by a
+        player wondering why their Warehouse has no staff. */
+  warehouse:   { out: ['packagingMaterial', 'cardboard'],          ind: 'distributor' },
+  caravanpost: { out: ['packagingMaterial'],                       ind: 'distributor' },
+  motorpool:   { out: ['maintenanceParts', 'tires'],               ind: 'transitCo' },
+  reslab:      { out: ['researchEquipment', 'researchChemicals'],  ind: 'scpFoundry' },
+  resthouse:   { out: ['householdGoods'],                          ind: 'hotel' },
+  /* 🚫 DELIBERATELY NOT HERE — "add the buildings" does NOT mean "add all the
+     buildings", and each of these was argued and rejected:
+       • stadium — its own header (:2287-2291) states that if a `gen` ever
+         appears on it the stadium has become an idle earner and the entire
+         design is dead. A firm is a gen with extra steps.
+       • police / firestation — municipal services. A firm can reach the
+         BANKRUPT rung, and this map's own header (above) forbids a player's
+         civic building going bankrupt.
+       • forge / indexfund / holdco — the financial layer is already modelled,
+         by bank.js on this side and finBoost/finTick on the city side. Wiring
+         them as firms double-counts the Cinder they already lift.
+       • op_bank — the real bug is ecoHost().hasBank testing `t.type === 'bank'`
+         when the tile is `op_bank` (§0.10). Founding a bank FIRM here would
+         neither fix hasBank nor be noticed by it; it would just make the dead
+         DEBT rung harder to spot. That fix is its own commit. */
 };
 
 /* Build the list MythicEconomy.syncBuildings() reconciles against. One entry
@@ -22791,6 +22827,68 @@ const OP_BP = {
                   desc: 'An unmarked building with a very good extractor fan. Refines Anomaly X out of corrupted essence and reagents — see THE NETWORK.' },
 };
 const OPS_TYPES = Object.keys(OP_BP);
+/* ════════════════════════════════════════════════════════════════════════════
+   🏭 OPERATIONS → BUSINESSES. The other half of ECO_BUILDING_MAP (:17033).
+   ----------------------------------------------------------------------------
+   Every row above declares `pop`, `crew`, `powerNeed` and `use`: the city
+   ALREADY treats an operation as a workplace that houses staff, draws power off
+   the grid and eats inputs. What it did not have was a payroll or a balance
+   sheet — an Oil Company employed nobody in the economy and produced not one
+   barrel into its inventory. That is the gap this table closes, and it is the
+   same gap the five standing tiles at :17085 closed.
+
+   🔴 WHY THIS IS NOT THE DOUBLE-COUNT THAT DISQUALIFIED forge/indexfund/holdco.
+      A finance tile's yield is computed FROM CINDER ALREADY IN THE CITY —
+      finTick() pays out of `game.fin.book`, the same pile — so founding a firm
+      on one would run one pile of money through two earners. An operation's own
+      income is a PARENT-LEDGER write (opsSellShipment → MythicCityBridge
+      .addCinders), which is outside the closed loop entirely: it never enters
+      totalCinder() and the audit never sees it. A firm's revenue here is
+      internal to the closed loop. Two piles, not one pile twice.
+
+   🚫 NO `bank` ROW, deliberately — see the ECO_BUILDING_MAP footer at :17101.
+      The bank's real defect is ecoHost().hasBank testing `t.type === 'bank'`
+      against a tile that is `op_bank`, and a firm here would neither fix that
+      nor be noticed by it. round0b asserts that `bank` is the ONE operation
+      with no entry, so a future hand adding it has to argue with a red gate.
+
+   ⚠ REGISTERED BY MUTATING ECO_BUILDING_MAP IN THE LOOP BELOW, not by editing
+     that literal. `OP_BP` and `opsKeyOf` are declared ~5,700 lines after it and
+     are in their temporal dead zone up there; writing `op_mining:` by hand
+     would also mean maintaining the OPS_PREFIX in two places. One loop, one
+     prefix, and a key that cannot drift from the blueprint it names.
+
+   ⚠ `out` IDS OBEY THE SAME RULE AS THE MAP ABOVE: producible() or the row is
+     dropped SILENTLY at economy/index.js:153. Deposit lists are plural because
+     the ground picks (pickAvailable); non-deposit lists are singular because
+     for a non-deposit pickAvailable always returns the first entry, so a second
+     id there would be decoration pretending to be a choice.
+   ════════════════════════════════════════════════════════════════════════════ */
+const OP_ECO_MAP = {
+  // ── extraction: the ground decides which, exactly as for the city tiles.
+  mining:       { out: ['ironOre', 'copperOre', 'aluminumOre', 'zincOre', 'nickelOre', 'coal'], ind: 'mine' },
+  oil:          { out: ['crudeOil', 'naturalGas'],                                     ind: 'oilfield' },
+  agri:         { out: ['wheat', 'corn', 'rice', 'potatoes', 'soybeans', 'vegetables'], ind: 'farm' },
+  fishing:      { out: ['freshFish', 'seafood', 'shellfish', 'seaweed'],                ind: 'fishery' },
+  /* The Anomaly Site is the only industry the black market could honestly run,
+     and the ground gates it: a Smuggling Network on a node with no anomalous
+     deposit founds no firm, which is the correct answer rather than a bug. */
+  smuggling:    { out: ['mythicResidue', 'anomalousEnergy', 'mythicEssence', 'arcaneCrystal'], ind: 'anomalySite' },
+  // ── production. `heavyWorks` is the yard-and-cranes industry; the row's own
+  //    desc ("Eats ingots, parts and planks; keeps the city standing") is it.
+  construction: { out: ['constructionComponents'], ind: 'heavyWorks' },
+  salvage:      { out: ['recycledMetal'],          ind: 'recycler' },
+  cars:         { out: ['cars'],                   ind: 'autoPlant' },
+  research:     { out: ['researchEquipment', 'researchChemicals'], ind: 'scpFoundry' },
+  // ── retail & service — these sell to RESIDENTS, so their industry kind is
+  //    what routes household spending to them. Each mirrors the city tile whose
+  //    mesh it borrows, so an op and its ordinary twin compete on equal terms.
+  gas:          { out: ['gasoline'],        ind: 'transitCo' },   // ↔ gasstation
+  medical:      { out: ['medicalSupplies'], ind: 'clinic' },      // ↔ clinic
+  cardshop:     { out: ['boosterPacks'],    ind: 'cardShop' },    // ↔ shop
+  dojo:         { out: ['sportingGoods'],   ind: 'venue' },       // ↔ arena
+  warehouse:    { out: ['packagingMaterial', 'cardboard'], ind: 'distributor' }, // ↔ warehouse
+};
 const opsKeyOf = (opType) => OPS_PREFIX + opType;
 const opsTypeOf = (bType) => (bType && bType.indexOf(OPS_PREFIX) === 0) ? bType.slice(OPS_PREFIX.length) : null;
 /* Register the blueprints. Placement is FREE in city currency — the 400,000 🔥
@@ -22807,6 +22905,10 @@ for (const t of OPS_TYPES) {
     ...(d.svc ? { svc: d.svc } : {}),
   };
   BUILD_ORDER.push(opsKeyOf(t));
+  /* 🏭 …and the business, where one was argued for. Absent from OP_ECO_MAP ⇒
+     the operation is exactly what it was before this round, which is the same
+     contract ECO_BUILDING_MAP's own header states for an absent tile type. */
+  if (OP_ECO_MAP[t]) ECO_BUILDING_MAP[opsKeyOf(t)] = OP_ECO_MAP[t];
 }
 /* 🛒 Its own section, second in the list. A locked blueprint the player cannot
    find is not discovery — this has to sit where a new player will scroll past
@@ -26346,6 +26448,24 @@ function animate() {
       grantState: () => (typeof OPS_GRANT === 'object' ? { ...OPS_GRANT } : null),
       grantReset: () => { try { OPS_GRANT.done = false; OPS_GRANT.tries = 0; OPS_GRANT.at = 0; return true; } catch (e) { return false; } },
       licences:   (t) => (typeof opsRowsOf === 'function' ? opsRowsOf(t || 'construction').all.length : null),
+    },
+    /* 🏭 THE BUILDING → BUSINESS SEAM, made observable.
+       `ecoBuildings()` and `ECO_BUILDING_MAP` are top-level names inside this
+       IIFE — nothing about them is on window (the globals trap) — so the one
+       invariant that can silently destroy a player's firm (:17117: a
+       construction SITE is ABSENT from this list, an UPGRADING tile stays
+       PRESENT) had no way to be observed from a driver at all. It could only
+       be inferred from MythicEconomy.firms(), which is the CONSEQUENCE rather
+       than the thing itself, and which cannot tell "withdrawn and reaped" from
+       "never founded".
+       ⚠ `sync()` is the SHIPPED ecoSync, not a local twin. A seam that built
+         its own list and called syncBuildings itself would be testing itself
+         and would pass with this file's gate written the wrong way round. */
+    eco: {
+      map:   () => ECO_BUILDING_MAP,
+      list:  () => ecoBuildings(),
+      sync:  () => ecoSync(),
+      firms: () => { try { return window.MythicEconomy.firms(); } catch (e) { return null; } },
     },
     costOf,
   };

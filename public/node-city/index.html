@@ -1640,6 +1640,25 @@ const MythicCityBridge = (() => {
     console.log('[MythicCityBridge] cityReport', report);
   };
 
+  /* 🃏 OUROBOROS PRINT VOLUME -> the Foundation Reserve.  ◄◄ CLAUDE CODE HOOK ◄◄
+     Pushed once per closed ECONOMIC DAY (20 real minutes) by ecoDailyClose(),
+     and only when the city's chain actually printed something:
+       { day, spanned, units, value, exported, packs }   — all plain numbers.
+     `value` is Cinder-denominated at the economy's own derived prices; `spanned`
+     is how many economic days the tick jumped (>1 means offline catch-up, and
+     the volume reported is the LAST day only — see ecoDailyClose).
+
+     🔴 THIS IS A REPORT, NOT A PAYMENT. Nothing on this side of the bridge is
+        credited and nothing may be: the city economy audits a closed loop and
+        its only ledger write is its own audited Cinder payout. In Claude Code
+        implement window.cityCardOutput(r) in index.html and BOUND whatever the
+        Foundation Reserve does with it there. */
+  B.pushCardOutput = async (report) => {
+    if (B.mode === 'parent') { try { if (typeof P.cityCardOutput === 'function') P.cityCardOutput(report); } catch (e) {} return; }
+    if (B.mode === 'message') { await rpc('cityCardOutput', { report }); return; }
+    console.log('[MythicCityBridge] cityCardOutput', report);
+  };
+
   // THE CARD COLLECTION.  ◄◄ CLAUDE CODE HOOK ◄◄
   // parent: map the game's collection to {id,name,type,element,power,rarity}.
   // type ∈ Hero|Unit|Kalon|Spell|Equipment|Artifact|Relic|Structure.
@@ -16967,7 +16986,84 @@ async function economyTick(dtMin) {
      day is. Guarded exactly like MythicHouse above: the module is loaded
      asynchronously and the city must tick normally on any build where it never
      arrives. See ecoHost() for what it is handed and why. */
-  try { if (window.MythicEconomy && window.MythicEconomy.ready()) window.MythicEconomy.tick(dtMin, ecoHost()); } catch (e) {}
+  try {
+    if (window.MythicEconomy && window.MythicEconomy.ready()) {
+      const snap = window.MythicEconomy.tick(dtMin, ecoHost());
+      ecoDailyClose(snap);
+    }
+  } catch (e) {}
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🃏 THE DAILY CLOSE → MythicEconomy.cardOutput() → the Foundation Reserve.
+
+   cardOutput() existed and was never called. It reports the Ouroboros product
+   this city's OWN supply chain actually printed — booster packs, collector
+   packs, starter decks, card boxes — out of real paper, ink and foil it really
+   consumed. Reporting it is the whole point: the number is evidence the chain
+   ran, not a reward for running it.
+
+   🔴 IT REPORTS. IT DOES NOT MINT, AND NOTHING HERE PAYS ANYTHING.
+      No addCinders, no addRes, no gems. The economy's ONE ledger write is its
+      own audited payout inside MythicEconomy.tick(); a second faucet fed by a
+      simulated production figure is precisely the shape of the retired Cinder
+      Forge, which produced a ~16,000,000/day player. The bound on what the
+      figure is allowed to become lives in index.html beside FoundationReserve
+      (window.cityCardOutput), because FoundationReserve and Profile are
+      top-level `const` over there and invisible to anything on this side — the
+      globals trap is the reason the DECISION belongs there and only the
+      MEASUREMENT belongs here.
+
+   WHY A DAY-NUMBER EDGE AND NOT A TIMER: sim.js resets `S.observed` at the top
+   of runDay(), so the volume cardOutput() sums is the day that just closed and
+   nothing else. Reading it on any other beat would either re-report a day
+   already reported or read a half-finished one.
+
+   ⚠ FIRST SIGHT IS NOT A CLOSE. `_ecoLastDay` starts null and the first tick
+     after a load only RECORDS the day. Without that, every reload would report
+     the day already sitting in the restored save. Deliberately NOT persisted:
+     re-reporting nothing is the safe failure, re-reporting a day is not.
+   ⚠ CATCH-UP UNDER-REPORTS ON PURPOSE. advance() can run up to
+     ECON.clock.maxCatchUpDays whole days in one tick and `S.observed` survives
+     only the last of them, so a 3-day catch-up reports one day's volume. Under-
+     reporting a simulated figure costs nobody anything; inventing the other two
+     days would be a number with no production behind it. */
+let _ecoLastDay = null;
+function ecoDailyClose(snap) {
+  try {
+    const day = (snap && typeof snap.day === 'number' && isFinite(snap.day)) ? Math.floor(snap.day) : null;
+    if (day === null) return;
+    if (_ecoLastDay === null) { _ecoLastDay = day; return; }   // first sight, see above
+    if (day <= _ecoLastDay) return;                            // same day, or a reset save
+    const spanned = day - _ecoLastDay;
+    _ecoLastDay = day;
+
+    const r = window.MythicEconomy.cardOutput();
+    if (!r) return;
+    /* Primitives across the bridge (Rule 3) — never the module's own object.
+       The past live bug on this seam was a host object stored BY REFERENCE that
+       leaked NaN into a panel while every internal number stayed correct. */
+    const fin = (v) => (typeof v === 'number' && isFinite(v) && v > 0) ? v : 0;
+    const units = fin(r.totalUnits), value = fin(r.value), exported = fin(r.exported);
+    const packs = fin((r.units || {}).boosterPacks) + fin((r.units || {}).collectorPacks);
+    /* ⚠ A ZERO DAY IS STILL PUSHED, ON PURPOSE.
+       Measured against the shipped economy: NOTHING supplies `printedCards`.
+       No entry in ECO_BUILDING_MAP outputs it, sim.js `bootstrap()` seeds only
+       water/power/food/landlord/deposits, and trade.js `refreshPartner()` sells
+       only a partner's endowment STRENGTHS (raw deposits) — so the one input
+       every Ouroboros recipe starts from cannot enter a city at all today. A
+       card shop therefore founds a healthy firm that reports
+       `lastBottleneck: printedCards` and produces 0 forever.
+       Suppressing zero reports would have left this seam looking wired and
+       behaving exactly as dark as it was before, and the first person to add a
+       print works upstream would have had no way to tell the difference. A zero
+       is a measurement: it says the chain ran and printed nothing. */
+    MythicCityBridge.pushCardOutput({
+      day, spanned,
+      units: Math.round(units), value: Math.round(value),
+      exported: Math.round(exported), packs: Math.round(packs),
+    });
+  } catch (e) { /* the close is telemetry; it must never break the tick */ }
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -17155,6 +17251,137 @@ function ecoSync() {
   } catch (e) {}
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   🌩 DISASTERS → PRICES. The `host.shock` term, which was wired and dark.
+
+   sim.js `stepPrices()` passes `shock: host && host.shock ? host.shock : 1` into
+   Prices.step, and prices.js `targetMul()` applies it LAST:
+       if (ctx.shock) mul *= ctx.shock;
+       return Math.max(E.minMul, Math.min(E.maxMul, mul));   // 0.35 … 4.0
+   So it is a raw multiplier on the whole price target, 1 = normal, and it lands
+   inside a clamp that also holds every other price term. That clamp is a
+   backstop, NOT a budget: a shock big enough to reach 4.0 on its own would pin
+   the entire market at the ceiling and delete supply/demand from the model. This
+   mapping therefore ships its own, much tighter ceiling (`max`) and never
+   returns below 1 — a disaster is a PREMIUM. Weather that HELPS (rain, farmMult
+   1.3) already shows up as extra supply through the normal ratio term; adding a
+   discount here would count it twice and in the wrong direction.
+
+   ⚠ THE SIGNAL IS THE ONE THE CITY ALREADY HAS, not a new one.
+     • WEATHER — `wx.type` and the WEATHER row's OWN production multipliers.
+       Suppression is derived from `allMult × outdoorMult`, the same two numbers
+       weatherMult() multiplies into every outdoor building, so the price story
+       and the production story cannot disagree. A second hand-written "how bad
+       is a storm" table would drift away from the first retune of the weather.
+     • RAIDS — a wave is an INSTANT, not a duration, so "a raid is happening"
+       does not exist as live state. What does exist is `game.raid.timer`
+       counting down to a wave that `game.raid.wave % SIEGE_EVERY` already
+       classifies as a siege. Merchants price in a siege they can see coming;
+       the ramp runs only inside the last `raidWindowFrac` of the interval so
+       that a city not under threat sits at EXACTLY 1 rather than at some small
+       permanent premium that would make "normal" unobservable.
+
+   🔴 RULE 3 — PRIMITIVES ONLY, AND NEVER NaN.
+      ecoHost() is handed ACROSS the bridge. The live bug this file already paid
+      for was a host object stored BY REFERENCE leaking NaN into the panel while
+      every internal number stayed correct. Worse, the usual guards do not work
+      here: `Infinity` survives `x || 0`, and a truthy STRING survives
+      `Math.floor(x || 0)` (Math.floor('1e9') is 1e9, not 0). So every input goes
+      through `_shkNum`, which demands `typeof === 'number' && isFinite`, and the
+      result is re-checked before it leaves. Anything unrecognisable resolves to
+      exactly 1 — neutral — and the economy simply does not hear about the storm.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* 🔢 RULE 4 — THE MAPPING CONSTANTS LIVE IN ECON, NOT IN ecoHost().
+   They are DECLARED here only because this package may not edit
+   public/src/economy/* at all, and INSTALLED into ECON on first read (below).
+   The install is `if (!ECON.shock)`, so the day tuning.js ships its own `shock`
+   group that one wins and this literal becomes dead weight — there is exactly
+   one authority for these numbers at runtime and it is ECON.shock. `on: 0`
+   reads exactly like a missing module and switches the whole term off, the same
+   contract ECON.construction already has (see bldCfg). */
+const SHOCK_TUNING = {
+  on: 1,
+  /* Ceiling on the COMBINED shock. A tornado during a siege multiplies out to
+     1.73; clamped here so the worst day in the game is a +60% market, which is
+     a crisis a player can trade through rather than a wall. */
+  max: 1.60,
+  raidWindowFrac: 0.15,   // last 15% of the raid interval — 18 min of a 2 h cycle
+  raidGain: 0.12,         // +12% at the moment an ordinary wave lands
+  siegeGain: 0.30,        // +30% for a siege (SIEGE_EVERY-th wave)
+  weatherGain: 0.50,      // premium per unit of lost outdoor output
+  severeAdd: 0.08,        // flat adder for WEATHER[..].severe
+};
+
+/* A finite JS number, or null. The ONLY accepted input shape — see the Infinity
+   and truthy-string bugs in the header above. */
+const _shkNum = (v) => (typeof v === 'number' && isFinite(v)) ? v : null;
+/* A tuning value, or its documented default if the group has been edited into
+   nonsense. A bad constant must degrade the term, never poison the price. */
+const _shkCfgNum = (v, dflt) => { const n = _shkNum(v); return n === null ? dflt : n; };
+
+const shockCfg = () => {
+  try {
+    const E = window.MythicEconomy;
+    if (!E || !E.ECON) return null;                 // no module → no shock, city ticks on
+    if (!E.ECON.shock) E.ECON.shock = SHOCK_TUNING; // register once, ECON is the authority
+    const C = E.ECON.shock;
+    return (C && C.on) ? C : null;
+  } catch (e) { return null; }
+};
+
+function ecoShock() {
+  const C = shockCfg();
+  if (!C) return 1;
+  let s = 1;
+
+  // ── The wave bearing down on the walls.
+  try {
+    const R = (typeof game !== 'undefined' && game && game.raid) || null;
+    const timer = _shkNum(R && R.timer);
+    const wave  = _shkNum(R && R.wave);
+    const iv    = _shkNum(typeof RAID_INTERVAL === 'number' ? RAID_INTERVAL : null);
+    const frac  = Math.max(0, Math.min(1, _shkCfgNum(C.raidWindowFrac, 0)));
+    if (timer !== null && wave !== null && iv !== null && iv > 0 && frac > 0) {
+      const win = iv * frac;
+      /* raidTick() lets the timer go momentarily negative before it resets, and
+         that instant is the most dangerous one in the cycle — clamp it to 0
+         (full ramp) rather than letting it fall out of the window. */
+      const t = Math.max(0, timer);
+      if (t < win) {
+        const ramp = Math.max(0, Math.min(1, 1 - t / win));
+        const every = _shkNum(typeof SIEGE_EVERY === 'number' ? SIEGE_EVERY : null);
+        const siege = every !== null && every > 0 && (Math.round(wave) % Math.round(every) === 0);
+        s *= 1 + ramp * Math.max(0, _shkCfgNum(siege ? C.siegeGain : C.raidGain, 0));
+      }
+    }
+  } catch (e) { /* a broken raid state must not price anything */ }
+
+  // ── The sky.
+  try {
+    const type = (typeof wx !== 'undefined' && wx) ? wx.type : null;
+    /* hasOwnProperty, not a bare lookup: `wx.type === 'constructor'` would
+       otherwise resolve to Object's constructor and read as a live weather row. */
+    const known = typeof type === 'string' && typeof WEATHER === 'object' &&
+                  Object.prototype.hasOwnProperty.call(WEATHER, type);
+    if (known && type !== 'clear') {
+      const W = WEATHER[type];
+      const all  = _shkCfgNum(W.allMult, 1);
+      const outd = _shkCfgNum(W.outdoorMult, 1);
+      // Lost outdoor output, 0..1. Snow (.88 × .8) reads .296; a storm .3.
+      const hit = Math.max(0, Math.min(1, 1 - all * outd));
+      s *= 1 + hit * Math.max(0, _shkCfgNum(C.weatherGain, 0)) +
+           (W.severe ? Math.max(0, _shkCfgNum(C.severeAdd, 0)) : 0);
+    }
+  } catch (e) { /* ditto for a broken weather row */ }
+
+  // ── The exit gate. One last finite check, because everything above multiplied.
+  const out = _shkNum(s);
+  if (out === null || !(out >= 1)) return 1;
+  const cap = Math.max(1, _shkCfgNum(C.max, 1));
+  return Math.min(cap, out);
+}
+
 function ecoHost() {
   const cov = (game.cov && game.cov.pct) || {};
   return {
@@ -17176,6 +17403,10 @@ function ecoHost() {
        already computed for other panels. */
     infrastructure: Math.max(0, Math.min(1, ((game.cov && game.cov.avg) || 0.5) * 0.7 +
                                             Math.min(1, roadUsed() / Math.max(1, roadCap())) * 0.3)),
+    /* 🌩 The disaster price multiplier sim.js has always read and nothing ever
+       set. A PRIMITIVE, computed fresh every tick — see ecoShock() above for the
+       range, the mapping and why a missing signal is exactly 1. */
+    shock: ecoShock(),
   };
 }
 
@@ -26466,6 +26697,24 @@ function animate() {
       list:  () => ecoBuildings(),
       sync:  () => ecoSync(),
       firms: () => { try { return window.MythicEconomy.firms(); } catch (e) { return null; } },
+      /* 🌩 THE SHOCK TERM, MADE FALSIFIABLE. `host()` is the SHIPPED ecoHost —
+         the same object the economy is handed, not a twin — and `shock()` is the
+         one number out of it. `wx` is the live weather record so a driver can
+         put a storm over the city by hand (rAF is dead in the capture pane, so
+         waiting for real weather is not a test). `shockCfg()` proves the
+         constants are being read from ECON rather than from a literal inline. */
+      host:     () => ecoHost(),
+      shock:    () => ecoShock(),
+      shockCfg: () => shockCfg(),
+      wx,
+      /* 🃏 THE DAILY CLOSE. `cards()` is cardOutput() straight from the module;
+         `close(snap)` is the SHIPPED edge detector with the snapshot injected,
+         so the "one report per closed day, never on first sight" contract can be
+         driven without waiting 20 real minutes; `lastDay()` is its only state. */
+      cards:   () => { try { return window.MythicEconomy.cardOutput(); } catch (e) { return null; } },
+      close:   (snap) => ecoDailyClose(snap),
+      lastDay: () => _ecoLastDay,
+      resetDay: () => { _ecoLastDay = null; return true; },
     },
     costOf,
   };

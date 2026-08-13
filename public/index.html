@@ -207324,6 +207324,83 @@ window.cityReport = function (r) {
     if (civ > 0 && typeof _twAddNodeContribution === 'function') _twAddNodeContribution(Profile.campNodeId, 0, 0, civ);
   } catch (e) {}
 };
+// ─── 🃏 THE CITY'S PRINT RUN → the Foundation Reserve (REPORTING ONLY) ───────
+// node-city's closed-loop economy pushes one of these per closed ECONOMIC DAY
+// (~20 real minutes) via MythicCityBridge.pushCardOutput → ecoDailyClose →
+// MythicEconomy.cardOutput(). It is the Ouroboros volume the city's own supply
+// chain actually printed: { day, spanned, units, value, exported, packs }.
+//
+// 🔴 IT MINTS NOTHING, AND IT MUST NOT. No Cinder, no gems, no reserve_
+//    contributions row, no Reserve points, no cloud write of any kind. The city
+//    economy audits a closed loop on every tick and its ONE ledger write is its
+//    own audited payout; paying anything out of a SIMULATED production figure
+//    would be a second, unaudited faucet — the exact shape of the retired Cinder
+//    Forge, which produced a ~16,000,000/day player. This function therefore
+//    only ever writes to a counter that no other system spends.
+//
+// THE BOUND — deliberately explicit, and deliberately visible when it bites:
+//   1. CITY_PRINT_UNITS_PER_DAY is the most one economic day may contribute.
+//      A bigger day is recorded AT the cap and `cappedDays` is incremented, so
+//      clipping shows up in the record instead of silently flattening.
+//   2. CITY_PRINT_LIFETIME_UNITS is the ceiling on the running total. AT THE
+//      BOUND the total stops moving entirely, `atCap` latches true, and further
+//      days still increment `days` (so the city is visibly still printing) while
+//      adding nothing. Nothing downstream reads past the cap, because nothing
+//      downstream reads it at all yet — which is the point: the ceiling exists
+//      BEFORE anyone is tempted to hang a reward off the number.
+//   3. One report per calendar-day-number per session, `spanned` notwithstanding
+//      — an offline catch-up that jumped 3 economic days credits ONE.
+const CITY_PRINT_UNITS_PER_DAY = 5000;      // per economic day
+const CITY_PRINT_LIFETIME_UNITS = 5000000;  // hard ceiling on the running total
+window.cityCardOutput = function (r) {
+  try {
+    if (!r || typeof r !== 'object') return null;
+    // Infinity survives `|| 0` and a truthy string survives `Math.floor(x || 0)`
+    // — both have bitten this codebase — so demand a finite number outright.
+    const num = (v) => (typeof v === 'number' && isFinite(v) && v > 0) ? v : 0;
+    const day = (typeof r.day === 'number' && isFinite(r.day)) ? Math.floor(r.day) : null;
+    if (day === null) return null;
+
+    const P = (Profile.cityPrint && typeof Profile.cityPrint === 'object') ? Profile.cityPrint : {};
+    const rec = {
+      units:      num(P.units),
+      value:      num(P.value),
+      days:       num(P.days),
+      cappedDays: num(P.cappedDays),
+      lastDay:    (typeof P.lastDay === 'number' && isFinite(P.lastDay)) ? Math.floor(P.lastDay) : -1,
+      atCap:      !!P.atCap,
+    };
+    if (day <= rec.lastDay) return rec;          // already counted this close
+    rec.lastDay = day;
+    rec.days += 1;
+
+    // A zero day still advances `days` (the chain ran and printed nothing —
+    // see ecoDailyClose in node-city for why that is the honest reading today)
+    // but must not cost a Profile write every 20 minutes forever.
+    const rawUnits0 = num(r.units);
+    if (rawUnits0 <= 0 && num(r.value) <= 0) {
+      Profile.cityPrint = rec; FoundationReserve.cityPrint = rec; return rec;
+    }
+
+    const rawUnits = rawUnits0;
+    const capped = Math.min(rawUnits, CITY_PRINT_UNITS_PER_DAY);
+    if (rawUnits > capped) rec.cappedDays += 1;
+    // Value is scaled by exactly the fraction of units that survived the cap, so
+    // the two numbers can never tell different stories about the same day.
+    const keep = rawUnits > 0 ? capped / rawUnits : 0;
+    const headroom = Math.max(0, CITY_PRINT_LIFETIME_UNITS - rec.units);
+    const admit = Math.min(capped, headroom);
+    if (admit < capped) rec.atCap = true;        // the lifetime ceiling, latched
+    rec.units += admit;
+    rec.value += num(r.value) * keep * (capped > 0 ? admit / capped : 0);
+    rec.value = Math.round(rec.value);
+
+    Profile.cityPrint = rec;
+    FoundationReserve.cityPrint = rec;           // read-only dashboard figure
+    try { saveProfile(); } catch (e) {}
+    return rec;
+  } catch (e) { return null; }
+};
 // The card collection, mapped to the city's socket schema. Type mapping:
 // hero→Hero, kalon-capable→Kalon, unit→Unit, spell→Spell, trap/counter→Artifact,
 // location→Structure (the card sink for Kalon Stable/Obelisk), weather→Relic.

@@ -236,6 +236,17 @@ export const ECON = {
        sitting next to the wage table is two numbers that mean the same thing,
        and the first wage retune makes them disagree — every price in the game
        then drifts away from every payroll in the game, silently. */
+    /* ⚠ 12, AND DO NOT "IMPROVE" IT WITHOUT THE HOST'S POPULATION CAP IN HAND.
+       Lowering this raises headcount everywhere, and a sweep against a test
+       city whose population grew freely made 5 look strictly better —
+       employment 27→90, unemployment 92%→73%. That test was wrong: node-city
+       gates population on HOUSING (`popCap()` = 4 + 6 per housing level), so a
+       real city never has hundreds of residents and a handful of businesses.
+       Re-run against the real cap, 5 pins the city at 0% unemployment forever
+       — which does not "fix" unemployment, it DELETES it, along with
+       "high unemployment means less consumer spending". At 12 a city runs at
+       full employment while it is small and starts shedding jobs once it
+       outgrows its own demand, which is the arc the feature is for. */
     laborUnitsPerDay: 12,
     /* ⚡ FALLBACK ONLY. The real price of power is the derived price of the
        `electricity` resource — prices.js reads that and only falls back here if

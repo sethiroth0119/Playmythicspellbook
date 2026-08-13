@@ -135,7 +135,9 @@ export function unemployment() {
    tiers. Two systems growing population independently would diverge within
    minutes and the player would see two different numbers for the same city. */
 export function setPopulation(total) {
-  total = Math.max(0, Math.floor(total || 0));
+  /* The host's population figure crosses the seam here every tick, so it gets
+     the same treatment as a loaded save — see num(). */
+  total = num(total, 0, true);
   const cur = population();
   if (cur === 0) {
     // Fresh seed: everyone starts poor. A city does not begin with a middle class.
@@ -417,17 +419,31 @@ export function bindRoster(citizens) {
   } catch (e) { return false; }
 }
 
+/* Coerce anything to a safe non-negative number. `int` floors it. A value that
+   is not finite after coercion becomes `dflt` — never NaN, never negative. */
+function num(v, dflt, int) {
+  const n = Number(v);
+  if (!isFinite(n) || n < 0) return dflt || 0;
+  return int ? Math.floor(n) : n;
+}
+
 export function serialize() {
   return { v: 1, pop: { ...S.pop }, savings: { ...S.savings }, employed: { ...S.employed } };
 }
 export function load(raw) {
   reset();
   if (!raw || typeof raw !== 'object') return;
+  /* 🔴 COERCE THROUGH Number() BEFORE Math.floor(), ALWAYS.
+     `Math.floor((raw.pop && raw.pop[t]) || 0)` looks defensive and is not: a
+     non-numeric STRING is truthy, so `|| 0` never fires, `Math.floor('x')` is
+     NaN, and `Math.max(0, NaN)` is NaN — the population silently became NaN and
+     poisoned the treasury, the audit and every panel downstream from one bad
+     byte in a save file. `num()` is the only way values enter this module. */
   for (const t of TIERS) {
-    S.pop[t] = Math.max(0, Math.floor((raw.pop && raw.pop[t]) || 0));
-    S.savings[t] = Math.max(0, Number((raw.savings && raw.savings[t]) || 0)) || 0;
+    S.pop[t] = num(raw.pop && raw.pop[t], 0, true);
+    S.savings[t] = num(raw.savings && raw.savings[t], 0, false);
   }
-  for (const b in S.employed) S.employed[b] = Math.max(0, Math.floor((raw.employed && raw.employed[b]) || 0));
+  for (const b in S.employed) S.employed[b] = num(raw.employed && raw.employed[b], 0, true);
 }
 
 export default { BASKET, setPopulation, hire, payWages, demand, buy, unemployment, settle };

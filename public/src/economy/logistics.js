@@ -35,11 +35,23 @@ export function reset() { S.capacity = 0; S.booked = 0; S.lastRatio = 1; S.lastC
    `counts` is {warehouse: 3, terminal: 1, ...} — supplied by the host, because
    this module must not know what a node-city tile looks like. */
 export function setCapacity(counts) {
-  S.buildings = counts || {};
+  /* 🔴 SANITISE ON THE WAY IN, NOT ON THE WAY OUT.
+     This used to store the host's object by reference. The capacity SUM was
+     safe (`NaN | 0` is 0), so the number was always right — but the raw object
+     went straight into `report()` and out to the panel, so a single bad count
+     from the host printed `NaN` warehouses at the player while every internal
+     figure looked perfect. Anything crossing the seam gets coerced here, once,
+     and nothing downstream has to wonder. */
+  S.buildings = {};
+  const src = (counts && typeof counts === 'object') ? counts : {};
+  for (const k in src) {
+    const n = Math.floor(Number(src[k]));
+    if (isFinite(n) && n > 0) S.buildings[k] = n;
+  }
   let cap = 0;
   for (const k in S.buildings) {
     const per = ECON.logistics.capacity[k];
-    if (per) cap += per * Math.max(0, S.buildings[k] | 0);
+    if (per) cap += per * S.buildings[k];
   }
   /* 🛟 A FLOOR, SO A NEW CITY CAN TRADE AT ALL. With zero logistics buildings a
      city would have zero capacity and could not import the very materials it

@@ -351,6 +351,26 @@ export function match(cashAvailable, day) {
 
 export function beginDay() { S.lastImported = {}; S.lastExported = {}; S.lastImportSpend = 0; S.lastExportRevenue = 0; }
 
+/* 📤 STANDING EXPORT INTEREST for one resource: how many units per day the
+   partners this city can reach would take off its hands.
+   ----------------------------------------------------------------------------
+   🔴 THIS BREAKS A CHICKEN-AND-EGG DEADLOCK, AND WITHOUT IT HALF THE CITY IDLES.
+   Production is planned from demand, and demand was only ever counted from
+   REALISED sales. An extractor with no local customer therefore produced
+   nothing → held no stock → had nothing to offer → made no exports → recorded
+   no demand → produced nothing. A copper mine on a copper-rich node sat dark
+   forever while four neighbouring cities were openly asking to buy copper.
+
+   A business produces for the orders it can SEE, and a partner's standing
+   interest is an order. This is what actually makes a node's seams worth
+   owning, and it is the mechanism behind specialising at all: you mine copper
+   because someone will buy copper, not because you personally need it. */
+export function exportInterest(resId) {
+  let n = 0;
+  for (const p of S.partners) n += (p.buys && p.buys[resId]) || 0;
+  return n;
+}
+
 export function report(nodeId) {
   return {
     active: activeSpecializations(),

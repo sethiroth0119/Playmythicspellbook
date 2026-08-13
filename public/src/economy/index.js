@@ -153,14 +153,26 @@ function syncBuildings(list) {
     wanted.set(String(b.key), b);
   }
   for (const f of Firms.all()) {
-    if (!f.tileKey) continue;
-    if (!wanted.has(String(f.tileKey))) { f.rung = 'BANKRUPT'; f.reported = true; removed++; }
+    if (!f.tileKey) continue;              // bootstrap firms are not tile-owned
+    const b = wanted.get(String(f.tileKey));
+    /* Gone, OR the tile was demolished and something else built on the same
+       square. A key that now names a different business is not the same
+       business — without this check a Sawmill rebuilt as a Clinic would keep
+       the sawmill's balance sheet, payroll and supplier history. */
+    if (!b || b.out !== f.out || b.ind !== f.ind) {
+      f.rung = 'BANKRUPT'; f.reported = true; removed++;
+    }
   }
   Firms.reap();
   const have = new Set(Firms.alive().map(f => String(f.tileKey)).filter(Boolean));
   for (const [key, b] of wanted) {
     if (have.has(key)) continue;
-    Firms.found(b.out, { ind: b.ind, capacity: b.capacity, tileKey: key, name: b.name });
+    /* 📈 LEVEL SCALES CAPACITY, so upgrading a building means something
+       economically rather than only visually. Explicit capacity wins if the
+       host supplied one. */
+    const lvl = Math.max(1, b.lvl | 0 || 1);
+    const cap = b.capacity != null ? b.capacity : Firms.defaultCapacity(b.out) * lvl;
+    Firms.found(b.out, { ind: b.ind, capacity: cap, tileKey: key, name: b.name });
     added++;
   }
   return { added, removed };
@@ -170,6 +182,33 @@ function syncBuildings(list) {
    THE one gate — see endowment.js. Non-deposits always return true. */
 function canBuild(resId) {
   return Endow.canExtract(Sim.state().nodeId, resId);
+}
+
+/* 🎯 Pick the best id this node can actually produce from a candidate list.
+   ----------------------------------------------------------------------------
+   The host maps a BUILDING to a set of plausible outputs — a Farm could grow
+   wheat, corn, rice or potatoes — and this answers which one THIS ground
+   supports, best seam first. Returns null when the node supports none of them,
+   which is the host's cue not to offer the blueprint at all.
+
+   🔴 THIS IS WHY A FARM IS NOT HARD-WIRED TO WHEAT. Pinning each building to a
+   single resource would mean a node without wheat could not have a farm, and a
+   player would pay for a building that then produced nothing — which is worse
+   than never being offered it. It is also what makes one city a wheat town and
+   its neighbour a rice town without either of them choosing. */
+function pickAvailable(ids) {
+  if (!Array.isArray(ids) || !ids.length) return null;
+  const nodeId = Sim.state().nodeId;
+  let best = null, bestRank = -1;
+  for (const id of ids) {
+    if (!Recipes.producible(id)) continue;
+    // A non-deposit is always makeable; a deposit has to be in the ground.
+    if (!Recipes.isDeposit(id)) return id;
+    if (!Endow.canExtract(nodeId, id)) continue;
+    const rank = (Endow.gradeDef(Endow.gradeOf(nodeId, id)) || {}).rank || 0;
+    if (rank > bestRank) { bestRank = rank; best = id; }
+  }
+  return best;
 }
 
 /* ── 🃏 THE FOUNDATION RESERVE SEAM ─────────────────────────────────────────
@@ -216,7 +255,7 @@ const api = {
   ready: () => mounted,
 
   // the city ⇄ economy seam
-  syncBuildings, canBuild, cardOutput,
+  syncBuildings, canBuild, pickAvailable, cardOutput,
   setPopulation: (n) => HH.setPopulation(n),
 
   // reads for the UI

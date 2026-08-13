@@ -221,8 +221,16 @@ export function bootstrap(opts) {
    Fractional days accumulate; a whole economic day runs `runDay()`.
    ════════════════════════════════════════════════════════════════════════════ */
 export function advance(dtMin, host) {
-  const days = Math.max(0, (dtMin || 0) / Math.max(1, ECON.clock.dayMin));
-  if (!(days > 0)) return null;
+  /* 🔴 A NON-FINITE dt MUST DO NOTHING AT ALL.
+     `NaN` and `undefined` already fell out here (both are falsy, so `|| 0`
+     caught them), but `Infinity` did not: it survived the `> 0` test, made
+     `dayFrac` Infinity, and then the catch-up clamp happily ran three full
+     economic days off a garbage argument. A bad clock reading from the host
+     must never move money — the clamp exists to bound a LONG absence, not to
+     launder nonsense into a legitimate-looking tick. */
+  if (typeof dtMin !== 'number' || !isFinite(dtMin) || dtMin <= 0) return null;
+  const days = Math.max(0, dtMin / Math.max(1, ECON.clock.dayMin));
+  if (!(days > 0) || !isFinite(days)) return null;
 
   S.dayFrac += days;
   /* ⚠ CAPPED CATCH-UP. See ECON.clock.maxCatchUpDays: fast-forwarding 36 hours
@@ -587,6 +595,17 @@ function subsistenceFor(id) {
   return per * HH.population();
 }
 
+/* The floor from OUTSIDE the city: what reachable partners are standing ready
+   to buy. See Trade.exportInterest for why production must see this — without
+   it an extractor with no local customer can never start. Discounted, because
+   an offer is interest rather than a signed contract, and a city that produced
+   flat out against every partner's full appetite would drown in unsold stock
+   the moment freight or a partner's demand moved. */
+const EXPORT_CONFIDENCE = 0.6;
+function exportFloorFor(id) {
+  try { return Trade.exportInterest(id) * EXPORT_CONFIDENCE; } catch (e) { return 0; }
+}
+
 function productionTargets(days) {
   const out = {};
   for (const f of Firms.alive()) {
@@ -594,7 +613,7 @@ function productionTargets(days) {
     const cap = f.capacity * Firms.levelDef(f.level).capMul;
     if (!out[id]) {
       if (S.demandEMA[id] == null) S.demandEMA[id] = cap;     // warm-up seed
-      const target = Math.max(S.demandEMA[id], subsistenceFor(id)) * COVER_DAYS;
+      const target = Math.max(S.demandEMA[id], subsistenceFor(id), exportFloorFor(id)) * COVER_DAYS;
       const have = S.INV[id] || 0;
       out[id] = { want: Math.max(0, target - have) * Math.max(0.0001, days), total: 0 };
     }
@@ -806,6 +825,11 @@ function runDay(days, host) {
   zeroFlow();
 
   Logistics.setCapacity(host.logisticsCounts || {});
+  /* Partners are established BEFORE production plans, not after trading. The
+     production forecast reads their standing interest (exportFloorFor), so a
+     city that discovered its partners only at settlement time would spend its
+     whole first day blind to every export order on the table. */
+  if (!Trade.state().partners.length) Trade.setPartners(Trade.simulatedPartners(S.nodeId, 4));
 
   // 1–2. Production and consumer spending.
   runProduction(days, host);
@@ -825,8 +849,7 @@ function runDay(days, host) {
   }
   Trade.buildOffers(surplus, S.day);
   Trade.buildWants(shortfall, S.nodeId, S.day);
-  if (!Trade.state().partners.length) Trade.setPartners(Trade.simulatedPartners(S.nodeId, 4));
-  else Trade.refreshPartners();   // other cities keep producing and keep needing things
+  Trade.refreshPartners();   // other cities keep producing and keep needing things
 
   const traded = Trade.match(S.treasury, S.day);
   // Imports are paid out of the treasury; the goods land in inventory.
@@ -1075,8 +1098,20 @@ export function snapshot() {
 export function serialize() {
   const inv = {};
   for (const id in S.INV) if (S.INV[id] > 0.001) inv[id] = Math.round(S.INV[id] * 1000) / 1000;
+  /* 🔴 THE DEMAND FORECAST IS REAL STATE AND MUST RIDE THE SAVE.
+     It was left out because it "recomputes itself" — it does, but only by going
+     back through the warm-up seed, which starts every producer at nameplate
+     capacity. A reloaded city therefore over-produced for several days, hired
+     differently, and drifted: 28 firms became 29 and the treasury landed 8%
+     apart from the same starting point. Reproducing a save has to mean
+     reproducing the plan, not just the balances. */
+  const dema = {};
+  for (const id in S.demandEMA) {
+    const v = S.demandEMA[id];
+    if (isFinite(v) && v > 0.001) dema[id] = Math.round(v * 1000) / 1000;
+  }
   return {
-    v: 1, nodeId: S.nodeId, day: S.day, dayFrac: S.dayFrac,
+    v: 1, nodeId: S.nodeId, day: S.day, dayFrac: S.dayFrac, demandEMA: dema,
     treasury: Math.round(S.treasury * 100) / 100,
     payoutOwed: Math.round(S.payoutOwed * 100) / 100,
     payoutAllowed: S.payoutAllowed, booted: S.booted,
@@ -1095,6 +1130,12 @@ export function load(raw) {
   S.payoutOwed = Math.max(0, Number(raw.payoutOwed) || 0);
   S.payoutAllowed = raw.payoutAllowed !== false;
   S.booted = !!raw.booted;
+  if (raw.demandEMA && typeof raw.demandEMA === 'object') {
+    for (const id in raw.demandEMA) {
+      const v = Number(raw.demandEMA[id]);
+      if (isFinite(v) && v >= 0 && (RECIPES[id] || DEPOSITS[id])) S.demandEMA[id] = v;
+    }
+  }
   if (raw.inv && typeof raw.inv === 'object') {
     for (const id in raw.inv) {
       const v = Number(raw.inv[id]);

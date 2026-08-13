@@ -269,9 +269,17 @@ export function movers(limit) {
 /* ── Persistence. Only `mul` survives: supply/demand/stock are re-observed on
    the first tick and a stale copy of them would price one tick against a city
    that no longer exists. */
+/* ⚠ THE THRESHOLD AND THE PRECISION BOTH MATTER FOR REPRODUCIBILITY.
+   This dropped anything within 1% of neutral and rounded the rest to 3dp. Across
+   ~200 live resources that discarded enough state that a reloaded city's prices,
+   and therefore its production plan, drifted measurably from one that had never
+   been saved. Keeping 4dp and only discarding genuinely-neutral prices costs a
+   few hundred bytes and makes a reload land on the same city. */
 export function serialize() {
   const out = {};
-  for (const id in MKT) if (Math.abs(MKT[id].mul - 1) > 0.01) out[id] = Math.round(MKT[id].mul * 1000) / 1000;
+  for (const id in MKT) {
+    if (Math.abs(MKT[id].mul - 1) > 1e-4) out[id] = Math.round(MKT[id].mul * 10000) / 10000;
+  }
   return out;
 }
 export function load(raw) {

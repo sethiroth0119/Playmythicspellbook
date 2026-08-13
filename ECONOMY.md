@@ -56,13 +56,10 @@ than money appearing, because the number only ever goes down.
 
 ---
 
-## Verified
-
-Run these; they are cheap and they are the regression gate.
+## Verified — run the gauntlet
 
 ```
-node --input-type=module -e "Promise.all([import('./public/src/economy/recipes.js'),
-  import('./public/src/resources/chain.js')]).then(([R,C])=>console.log(R.audit(C.RESOURCE_CHAIN.map(r=>r.id))))"
+node tools/economy-tests/run.mjs      # the regression gate; exits non-zero on failure
 node _synckcheck.mjs public/node-city/index.html
 ```
 
@@ -72,9 +69,36 @@ node _synckcheck.mjs public/node-city/index.html
 | Price relaxation | converges, residual `8.7e-8` |
 | Arbitrage (output priced below its own inputs) | **0 violations** across the graph |
 | Endowment guarantees | hold across **500 nodes** |
-| Closed-loop audit | **0 failures** over 200 economic days × 4 nodes |
-| Save round-trip | `totalCinder` preserved to rounding |
+| Conservation of Cinder | **0 failures**, 40 randomized cities × 120 days |
+| Hostile input (NaN/∞ dt, corrupt saves, zero pop) | survives, no NaN escapes |
+| Save/load completeness | exact at 0 ticks; drift bounded <1% after 15 days |
+| Buildings → businesses → jobs | grows, closes, idempotent, no inheritance |
 | node-city syntax | ALL CLEAN |
+
+### What the gauntlet caught
+
+Everything below was live in the committed code and looked correct in review.
+
+| Bug | Consequence |
+|---|---|
+| `Infinity` dt survived the guard | A bad clock read from the host ran three economic days and moved money. |
+| `Math.floor(str)` in `households.load` | One bad byte in a save made population `NaN`, poisoning the treasury and the audit. |
+| Freight counts stored by reference | A bad host count printed `NaN` warehouses while every internal figure was right. |
+| `demandEMA` not serialized | A reloaded city re-entered the production warm-up and drifted — 28 firms became 29. |
+| `loanId` / `blacklistUntil` not serialized | **A firm could take a second loan against the first by reloading the page**, and a defaulter got its credit back free. |
+| Distress `throttle` not restored on load | A failing business ran at full rate for one tick after every reload. |
+| Rebuilt tile kept the old firm | A Sawmill rebuilt as a Clinic inherited the sawmill's cash, payroll and suppliers. |
+| Extractors could never start | Production planned only from *realised* demand, so a copper mine with no local customer sat dark while four partner cities were openly buying copper. Export interest now feeds the forecast. |
+
+### One tuning trap worth remembering
+
+A sweep of `laborUnitsPerDay` said 5 was strictly better than 12 — employment
+27→90, unemployment 92%→73%. **That sweep was wrong**, because the test city's
+population grew freely. node-city gates population on housing
+(`popCap()` = 4 + 6 per housing level), and against the real cap 5 pins the city
+at 0% unemployment permanently — deleting the mechanic rather than fixing it.
+The value stayed at 12. *A test that does not match the host's constraints will
+confidently point the wrong way.*
 
 ---
 
@@ -115,11 +139,12 @@ the recycled leg's advantage is margin, and `bestLeg()` still picks it at run ti
 The simulation is **structurally** sound and **economically** stable. Three things are tuning
 surfaces rather than finished numbers, all reachable from `ECON`:
 
-1. **Employment scales with businesses, not population.** A test city with 8 businesses and
-   278 residents sits near 97% unemployment — which is *correct*, but it means the number the
-   player sees depends entirely on how much industry they have built. Jobs arrive through
-   `syncBuildings()`; the more the city builds, the more this comes to life. Worth watching in
-   real play before retuning `laborUnitsPerDay`.
+1. **Employment tracks buildings, and that now works end to end.** Against node-city's real
+   housing cap, a city runs at **0% unemployment while it is small** and starts shedding jobs
+   once it outgrows its own demand (~23% by day 240, ~49% by day 300 in a 30-building city).
+   That arc is the intended one. Roughly half of a mature city's businesses sit idle for want
+   of a downstream customer — correct for a 258-resource chain that no single city can cover,
+   and the reason the trade and specialization layers matter.
 2. **`unmetSubsistence` is a real signal, not a bug.** It means the city genuinely cannot feed
    its population — two bakeries cannot supply 278 people. That is a bottleneck to solve by
    building, and the panel says so.
@@ -140,11 +165,14 @@ surfaces rather than finished numbers, all reachable from `ECON`:
   volume; it does not mint. What the host does with that number belongs on the host's side of
   the bridge where `FoundationReserve` and `Profile` actually live. Paying from inside the
   economy would be a second, unaudited faucet.
-- **Per-building firm mapping in node-city.** `syncBuildings()` exists and is tested; node-city
-  does not yet call it, because mapping its ~40 tile types onto resource ids is a design pass
-  of its own and I did not want to guess at it. Until it is called, firms come from
-  `bootstrap()` and the economy runs alongside the existing tile production rather than
-  replacing it. **Nothing in the existing city changed.**
+- ~~Per-building firm mapping in node-city.~~ **Now wired.** `ECO_BUILDING_MAP` in
+  node-city maps 28 tile types to industries and candidate outputs; the economy picks the one
+  the node's ground supports (`pickAvailable`), so a Farm grows wheat on one node and rice on
+  another and is not offered at all where neither exists. Businesses are founded when a
+  building goes up, closed when it comes down, and replaced (not inherited) when a tile is
+  rebuilt as something else. Capacity scales with tile level. Tiles with no payroll and no
+  customers — roads, walls, decor — are deliberately absent from the map, so they are exactly
+  what they were before this feature existed.
 - **Discord webhooks.** Out of scope, permanently (CLAUDE.md).
 
 ---

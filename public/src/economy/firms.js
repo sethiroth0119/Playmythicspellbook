@@ -446,6 +446,12 @@ export function serialize() {
     firms: FIRMS.map(f => ({
       id: f.id, out: f.out, ind: f.ind, name: f.name, level: f.level, capacity: f.capacity,
       cash: Math.round(f.cash * 100) / 100, debt: Math.round(f.debt * 100) / 100,
+      /* 🔴 THE LOAN LINK MUST RIDE THE SAVE. `loanId` was reset to null on load
+         while bank.js kept the loan itself — so `autoBorrow()` saw a firm with
+         no loan, and a distressed business could take out a SECOND loan against
+         the first simply by reloading the page. `blacklistUntil` was lost the
+         same way, handing a defaulter its credit back for free. */
+      loanId: f.loanId || null, blacklistUntil: Math.round(f.blacklistUntil || 0),
       workers: { ...f.workers }, rung: f.rung, badDays: f.badDays, goodDays: f.goodDays,
       inventory: Math.round(f.inventory * 100) / 100, profitStreak: f.profitStreak,
       suppliers: Object.keys(f.suppliers || {}), tileKey: f.tileKey,
@@ -472,10 +478,17 @@ export function load(raw) {
       level: Math.max(1, Math.min(ECON.firm.levels.length, r.level | 0 || 1)),
       capacity: Math.max(1, Number(r.capacity) || defaultCapacity(r.out)),
       cash: Math.max(0, Number(r.cash) || 0), debt: Math.max(0, Number(r.debt) || 0),
-      loanId: null, blacklistUntil: 0,
+      loanId: r.loanId || null, blacklistUntil: Math.max(0, Number(r.blacklistUntil) || 0),
       workers: { unskilled: 0, skilled: 0, technical: 0, advanced: 0 },
       rung: RUNGS.indexOf(r.rung) >= 0 ? r.rung : 'HEALTHY',
-      badDays: r.badDays | 0, goodDays: r.goodDays | 0, throttle: 1,
+      badDays: r.badDays | 0, goodDays: r.goodDays | 0,
+      /* Throttle is DERIVED from the rung, not stored — but it must be derived
+         HERE too. Defaulting it to 1 on load let a distressed firm run at full
+         rate for one tick after every reload, which is both a free recovery and
+         a source of save/load drift. closeDay() sets the same value. */
+      throttle: (r.rung && r.rung !== 'HEALTHY' && r.rung !== 'BANKRUPT')
+                ? ECON.firm.distress.throttlePct
+                : (r.rung === 'BANKRUPT' ? 0 : 1),
       revenueDay: 0, costDay: 0, profitDay: 0, customersDay: 0,
       profitStreak: r.profitStreak | 0, suppliers: {},
       lifetimeRevenue: Number(r.lifetimeRevenue) || 0, lifetimeProfit: Number(r.lifetimeProfit) || 0,

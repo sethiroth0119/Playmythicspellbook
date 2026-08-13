@@ -16868,6 +16868,95 @@ function ecoLogisticsCounts() {
   }
   return { depot, terminal };
 }
+/* ════════════════════════════════════════════════════════════════════════════
+   🏭 BUILDINGS → BUSINESSES.
+   ----------------------------------------------------------------------------
+   The economy's jobs come from its FIRMS, and its firms come from what the
+   player has actually built. Without this map the economy runs on the handful
+   of businesses `bootstrap()` seeds and employment can never grow with the
+   city — a city of 300 with 8 businesses is 97% unemployed, correctly and
+   uselessly.
+
+   Each entry lists the outputs a building could plausibly make; the economy
+   picks the one THIS node's ground supports (MythicEconomy.pickAvailable).
+   That is why a Farm is not hard-wired to wheat: on a node with no wheat it
+   grows whatever is there, and on a node with none of them it founds no
+   business at all rather than a building that produces nothing.
+
+   ⚠ ONLY REAL BUSINESSES ARE LISTED. Roads, walls, gates, trees, fountains and
+     the decor have no payroll and no customers; giving them a balance sheet
+     would mean a player's wall could go bankrupt. Absent from this map ⇒ the
+     tile is exactly what it was before this feature existed.
+   ════════════════════════════════════════════════════════════════════════════ */
+const ECO_BUILDING_MAP = {
+  // ── extraction. Multiple candidates: the ground decides which.
+  farm:        { out: ['wheat', 'corn', 'rice', 'potatoes', 'soybeans', 'vegetables'], ind: 'farm' },
+  hydrofarm:   { out: ['vegetables', 'fruit', 'herbs', 'potatoes'],                    ind: 'farm' },
+  fibercroft:  { out: ['cotton', 'plantFiber'],                                        ind: 'farm' },
+  lumbercamp:  { out: ['timber', 'wood'],                                              ind: 'forestry' },
+  quarry:      { out: ['stone', 'limestone', 'gravel', 'sand', 'clay', 'silica'],      ind: 'quarry' },
+  scrapmine:   { out: ['ironOre', 'copperOre', 'aluminumOre', 'zincOre', 'nickelOre', 'coal'], ind: 'mine' },
+  fuelrig:     { out: ['crudeOil', 'naturalGas'],                                      ind: 'oilfield' },
+  siphon:      { out: ['mythicResidue', 'anomalousEnergy', 'mythicEssence', 'arcaneCrystal'], ind: 'anomalySite' },
+  purifier:    { out: ['freshWater'],                                                  ind: 'waterworks' },
+  // ── processing & manufacturing
+  sawmill:     { out: ['lumber'],             ind: 'sawmill' },
+  smelter:     { out: ['pigIron'],            ind: 'smelter' },
+  cannery:     { out: ['cannedFood'],         ind: 'foodPlant' },
+  weavery:     { out: ['fabric'],             ind: 'textileMill' },
+  machineshop: { out: ['machineParts'],       ind: 'machineWorks' },
+  munitions:   { out: ['metalComponents'],    ind: 'fabricator' },
+  medlab:      { out: ['medicine'],           ind: 'pharma' },
+  powerstation:{ out: ['electricity'],        ind: 'powerPlant' },
+  // ── retail & service — these sell to residents
+  grocery:     { out: ['bread'],              ind: 'grocer' },
+  restaurant:  { out: ['preparedMeals'],      ind: 'restaurant' },
+  foodtruck:   { out: ['preparedMeals'],      ind: 'restaurant' },
+  club:        { out: ['beverages'],          ind: 'venue' },
+  arena:       { out: ['sportingGoods'],      ind: 'venue' },
+  clinic:      { out: ['medicalSupplies'],    ind: 'clinic' },
+  gasstation:  { out: ['gasoline'],           ind: 'transitCo' },
+  housing:     { out: ['constructionComponents'], ind: 'landlord' },
+  depot:       { out: ['packagingMaterial'],  ind: 'distributor' },
+  railyard:    { out: ['packagingMaterial'],  ind: 'distributor' },
+  /* 🃏 THE PLAYER SHOP IS THE CARD SHOP. This is the seam that puts Mythic
+     Spellbook itself inside the city economy: residents spend their `cards`
+     budget here, and that Cinder flows back up the Ouroboros chain to the
+     printer, the paper mill and the forestry camp. */
+  shop:        { out: ['boosterPacks'],       ind: 'cardShop' },
+};
+
+/* Build the list MythicEconomy.syncBuildings() reconciles against. One entry
+   per standing, undamaged business tile. Capacity scales with the tile's level,
+   which is what makes upgrading a building mean something economically. */
+function ecoBuildings() {
+  const E = window.MythicEconomy; if (!E) return [];
+  const out = [];
+  for (const [k, t] of Object.entries(game.tiles)) {
+    const m = ECO_BUILDING_MAP[t.type]; if (!m) continue;
+    /* A damaged building is offline everywhere else in this city; it must be
+       offline here too, or a burnt-out factory keeps hiring. */
+    if (t.damaged) continue;
+    const res = E.pickAvailable(m.out);
+    if (!res) continue;                 // this ground supports none of them
+    out.push({ key: k, out: res, ind: m.ind, name: (BUILDINGS[t.type] || {}).name,
+               capacity: undefined, lvl: t.lvl | 0 });
+  }
+  return out;
+}
+
+/* Reconcile the economy's businesses against the city's buildings. Cheap (a
+   Map diff over ~50 tiles) and called on the panel's slow timer rather than per
+   frame — a business is founded when a building goes up, not 60× a second.
+   ⚠ Guarded: a throw in here must never break the render tick that calls it. */
+function ecoSync() {
+  const E = window.MythicEconomy; if (!E || !E.ready()) return;
+  try {
+    const r = E.syncBuildings(ecoBuildings());
+    if (r && (r.added || r.removed)) saveSoon();
+  } catch (e) {}
+}
+
 function ecoHost() {
   const cov = (game.cov && game.cov.pct) || {};
   return {
@@ -24213,11 +24302,12 @@ function animate() {
           renderEco._last = null; renderEco();
         });
       }
+      ecoSync();
       renderEco();
       /* Repaint on its own slow timer rather than per frame: the panel changes
          on ECONOMIC DAYS (20 real minutes), so a 60fps repaint would be ~72,000
          wasted innerHTML diffs per day for at most one visible change. */
-      setInterval(renderEco, 4000);
+      setInterval(() => { ecoSync(); renderEco(); }, 4000);
     }
   } catch (e) { console.warn('[city] economy module unavailable', e); }
 

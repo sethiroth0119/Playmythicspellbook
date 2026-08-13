@@ -775,6 +775,8 @@
     <div class="lfilters">
       <button class="hbtn on" data-ecotab="city">🏙 City</button>
       <button class="hbtn" data-ecotab="chain">📊 Supply</button>
+      <button class="hbtn" data-ecotab="market">📈 Market</button>
+      <button class="hbtn" data-ecotab="trade">🤝 Trade</button>
       <button class="hbtn" data-ecotab="survey">⛏ Survey</button>
     </div>
     <div id="ecobody"></div>
@@ -16119,19 +16121,239 @@ function renderLog() {
      produced; a panel that does its own arithmetic eventually disagrees with
      the simulation it is describing. */
 let ecoTab = 'city';
+/* 🖱 THE PANEL'S OWN STATE, AND IT IS ONLY SELECTION STATE.
+   `ecoTrace` is the resource the player asked to see the chain behind;
+   `ecoSaid` is the last action's verdict IN THE MODULE'S OWN WORDS. Neither is
+   a figure this file derived — see ecoFmt() for the one place a number is
+   touched at all, and what it is and is not allowed to do. */
+let ecoTrace = null;
+let ecoSaid = null;
+
+/* 🔢 DISPLAY FORMATTING, AND NOTHING ELSE. This is the same job render.js's
+   own n0/n1/pct do on its side of the seam: round ONE number the module handed
+   over so it fits in a cell.
+   🔴 IT NEVER TAKES TWO. No sums, no ratios, no differences, no percentage
+   changes. The moment a panel combines two of the simulation's numbers it has
+   an opinion about the economy, and an opinion can disagree — terroir.js states
+   the same rule and the reason: "a figure the UI recomputes its own way is a
+   figure that eventually lies." Every value below arrives inside an object from
+   MythicEconomy and is printed. */
+function ecoFmt(v, dp) {
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  return dp ? n.toFixed(dp) : Math.round(n).toLocaleString();
+}
+
+/* Each section draws inside its OWN try. renderEco used to wrap the whole body
+   in one, so a throw in any single MythicEconomy call blanked the entire panel
+   — and the five actions surfaced here are five more calls that can throw. One
+   bad section now costs that section and nothing else, and either way the 4 s
+   repaint timer keeps running because nothing escapes to it. */
+function ecoSection(fn) {
+  try { return fn() || ''; }
+  catch (e) {
+    try { console.warn('[eco] panel section failed', e); } catch (e2) {}
+    return '<div class="eco-empty">This part of the panel could not be drawn.</div>';
+  }
+}
+
+/* An action button. The argument rides the dataset because the handler is
+   delegated on #ecocard — the panel's innerHTML is replaced every 4 s, so a
+   listener bound to a button would be dead by the next repaint. */
+function ecoBtn(act, arg, label, off, tip) {
+  return '<button class="hbtn" style="flex:0 0 auto;padding:2px 7px;font-size:10px"' +
+    ' data-ecoact="' + logEsc(act) + '" data-ecoarg="' + logEsc(arg == null ? '' : arg) + '"' +
+    (off ? ' disabled' : '') + (tip ? ' title="' + logEsc(tip) + '"' : '') +
+    '>' + logEsc(label) + '</button>';
+}
+
+/* ── 🎬 THE FIVE ACTIONS ─────────────────────────────────────────────────────
+   borrow(), levelCheck(), structuralGaps(), trace() and movers() were all
+   implemented on window.MythicEconomy and NONE of them had a way in. This is
+   the way in.
+
+   🔴 THE VERDICT IS THE MODULE'S, WORD FOR WORD. borrow() returns
+   {ok, why, amount}; levelCheck() returns {ok, maxed, next, missing:[{label,
+   have, need}]}. This prints those. It never decides for itself whether a loan
+   was wise or how much a firm could have had.
+   ⚠ EVERY CALL IS WRAPPED, and not defensively-for-the-sake-of-it: E.borrow
+     does Firms.byId(id) and hands the result straight to Bank.borrow, which
+     reads firm.rung — so a stale firm id from a button rendered one repaint ago
+     throws a TypeError. That must cost the player a line of text, never the
+     panel. */
+function ecoAction(act, arg) {
+  const E = window.MythicEconomy;
+  if (!E || !E.ready()) return false;
+  try {
+    if (act === 'trace') { ecoTrace = String(arg || '') || null; }
+    else if (act === 'untrace') { ecoTrace = null; }
+    else if (act === 'clear') { ecoSaid = null; }
+    else if (act === 'level') {
+      const r = E.levelCheck(+arg);
+      if (!r) ecoSaid = { ok: false, text: 'That business is no longer trading.' };
+      else if (r.maxed) ecoSaid = { ok: true, text: 'Already at the top level — there is nothing above it.' };
+      else if (r.ok) ecoSaid = { ok: true, text: 'Every requirement for ' + r.next.name + ' is met. It expands on the next close.' };
+      else ecoSaid = { ok: false, text: 'Short of ' + r.next.name + ' — ' +
+        r.missing.map(m => m.label + ' ' + ecoFmt(m.have, 1) + '/' + ecoFmt(m.need, 1)).join(' · ') };
+    }
+    else if (act === 'borrow') {
+      /* ♾ Infinity, deliberately, and it is not a magic number.
+         bank.js clamps the request to min(amount, creditLimit(firm), reserve),
+         so asking for everything asks for exactly what the lender will actually
+         lend — and the SIZE of the loan is then decided inside the module,
+         where the ECON.bank figures live. A panel offering "borrow 5,000" would
+         have put an economy number in this file, which rule 4 forbids, and it
+         would have been wrong the moment ECON.bank.maxLoanToRevenueDays moved.
+         ⚠ TODAY THIS ALWAYS REFUSES, AND HONESTLY SO. bank.js gates on
+           LENDER.hasBank, which sim.js sets from a tile test that looks for
+           type 'bank' while the tile is actually 'op_bank' — so it is
+           permanently false and the answer is "No bank in the city". That is
+           the module's own sentence, printed unchanged. The BANK package fixes
+           the tile test; nothing here needs to change when it does. */
+      const r = E.borrow(+arg, Infinity);
+      if (!r || !r.ok) ecoSaid = { ok: false, text: 'No loan — ' + ((r && r.why) || 'the lender refused') + '.' };
+      else { ecoSaid = { ok: true, text: 'Borrowed ' + ecoFmt(r.amount) + ' 🔥 against the business.' }; saveSoon(); }
+    }
+    else return false;
+  } catch (e) {
+    ecoSaid = { ok: false, text: 'That did not go through.' };
+    try { console.warn('[eco] action ' + act + ' failed', e); } catch (e2) {}
+  }
+  renderEco._last = null; renderEco();
+  return true;
+}
+
+/* 🔎 trace(resId) — "Iron Mine → Warehouse → Freight Route → Steel Mill".
+   bottleneck.js walks upstream from the resource to the first step that is
+   actually the problem and renderChain() (the module's own) draws it. None of
+   that walk happens here. */
+function ecoTraceHtml(E) {
+  const path = E.trace(ecoTrace) || [];
+  const h = ['<div class="eco-h">🔎 ' + logEsc(resName(ecoTrace)) + ' — where it comes from ' +
+             ecoBtn('untrace', '', '×') + '</div>'];
+  if (!path.length) {
+    h.push('<div class="eco-empty">Nothing upstream of ' + logEsc(resName(ecoTrace)) + ' is blocked.</div>');
+    return h.join('');
+  }
+  h.push(E.renderChain(path));
+  const last = path[path.length - 1];
+  if (last && last.detail) h.push('<div class="eco-tag" style="margin-top:4px">' + logEsc(last.detail) + '</div>');
+  if (last && last.cause && last.cause.fix) {
+    h.push('<div class="eco-fix">' + logEsc(last.cause.ico + ' ' + last.cause.label + ' — ' + last.cause.fix) + '</div>');
+  }
+  return h.join('');
+}
+
+/* The three per-business actions, in one row. `bank` is the snapshot's own
+   hasBank flag, read ONCE per repaint by the caller — snapshot() rebuilds the
+   whole trade and logistics report on every call, so asking it per firm would
+   be fifty of those per paint. */
+function ecoActRow(id, name, out, bank) {
+  return '<div class="eco-row"><span class="nm">' + logEsc(name) +
+    (out ? ' · ' + logEsc(resName(out)) : '') + '</span>' +
+    ecoBtn('level', id, '⬆ Expansion', false, 'What this business still needs to grow') +
+    ecoBtn('borrow', id, bank ? '🏦 Borrow' : '🏦 Needs a bank', !bank,
+           bank ? 'Borrow whatever the lender will advance against it'
+                : 'A bank has to be standing in the city before any business can borrow.') +
+    (out ? ecoBtn('trace', out, '🔎 Trace', false, 'Walk the chain that feeds it') : '') +
+    '</div>';
+}
+
+function ecoChainHtml(E) {
+  const s = E.snapshot();
+  const bank = !!(s && s.bank && s.bank.hasBank);
+  const h = [];
+  const rows = E.bottlenecks(6);
+  h.push(rows.length
+    ? rows.map(d => E.renderFirm(d, E.levelCheck(d.firmId)) + ecoActRow(d.firmId, d.name, d.out, bank)).join('')
+    : '<div class="eco-empty">Every business is running at full rate.</div>');
+  /* 🏢 EVERY business gets the action row, not only the struggling ones.
+     cityReport() deliberately returns nothing for a firm that is HEALTHY and
+     unblocked — so hanging the buttons off that list alone left a city where
+     everything worked with no way to check a level gate or take a loan, which
+     is exactly the city where you would want to. */
+  const firms = E.firms() || [];
+  const shown = new Set(rows.map(d => d.firmId));
+  const rest = firms.filter(f => f && !shown.has(f.id));
+  if (rest.length) {
+    h.push('<div class="eco-h">🏢 Every other business</div>');
+    for (const f of rest) h.push(ecoActRow(f.id, f.name, f.out, bank));
+  }
+  if (!bank) {
+    h.push('<div class="eco-tag">🏦 No bank is standing in this city, so nothing can borrow. ' +
+      'The lender is the city\'s own — it has nothing to do with your camp Cinder.</div>');
+  }
+  return h.join('');
+}
+
+/* 📈 movers(n) — what is spiking, and the row that says why.
+   prices.js sorts by distance from a normal price in BOTH directions, which is
+   the only ordering that answers "what should I be worried about". The row
+   prints the multiplier the market row carries; it does not turn it into a
+   percentage change, because that would be a number this file then owned. */
+function ecoMarketHtml(E) {
+  const rows = E.movers(14) || [];
+  if (!rows.length) return '<div class="eco-empty">No market yet — nothing has been made or wanted.</div>';
+  const h = ['<div class="eco-h">📈 What is moving</div>',
+             '<div class="eco-tag">Sorted by how far from a normal price they are. ×1.00 is normal.</div>'];
+  for (const m of rows) {
+    h.push('<div class="eco-row"><span class="nm">' + logEsc(resIco(m.id) + ' ' + resName(m.id)) + '</span>' +
+      '<span class="vl">×' + ecoFmt(m.mul, 2) + '</span>' +
+      '<span class="vl">' + ecoFmt(m.price, 2) + ' 🔥</span>' +
+      ecoBtn('trace', m.id, '🔎 Why') + '</div>');
+    h.push('<div class="eco-tag" style="margin:-2px 0 5px 5px">made ' + ecoFmt(m.supply, 1) +
+      ' · wanted ' + ecoFmt(m.demand, 1) + ' · in stock ' + ecoFmt(m.stock, 1) + '</div>');
+  }
+  return h.join('');
+}
+
+/* 🚫 structuralGaps() — "your city can never mine these", and the prompt into
+   trade that follows from it. An endowment gap is permanent: no amount of
+   building fixes it, so the only honest next step is to buy the thing in. The
+   module counts the consumers and prices them; this sorts nothing and prints. */
+function ecoTradeHtml(E) {
+  const gaps = E.structuralGaps() || [];
+  const h = ['<div class="eco-h">🚫 What this ground will never give you</div>'];
+  if (!gaps.length) {
+    h.push('<div class="eco-empty">Nothing strategic is missing — unusual ground.</div>');
+  } else {
+    h.push('<div class="eco-tag">These cannot be mined here at any price. Every one has to be bought in.</div>');
+    for (const g of gaps) {
+      h.push('<div class="eco-row"><span class="nm">' + logEsc(resIco(g.res) + ' ' + resName(g.res)) + '</span>' +
+        '<span class="vl">' + ecoFmt(g.consumers) + ' 🏭</span>' +
+        '<span class="vl">' + ecoFmt(g.price, 2) + ' 🔥</span>' +
+        ecoBtn('trace', g.res, '🔎 Trace') + '</div>');
+    }
+    h.push('<div class="eco-tag">🏭 businesses here that already consume it · 🔥 what it costs today.</div>');
+  }
+  const s = E.snapshot(), t = (s && s.trade) || {};
+  h.push('<div class="eco-h">🤝 What is already coming in</div>');
+  h.push('<div class="eco-flow">' +
+    '<div class="k">Imported</div><div class="v">' + ecoFmt(t.importSpend) + ' 🔥</div>' +
+    '<div class="k">Exported</div><div class="v">' + ecoFmt(t.exportRevenue) + ' 🔥</div>' +
+    '<div class="k">Partners</div><div class="v">' + ecoFmt((t.partners || []).length) + '</div></div>');
+  return h.join('');
+}
+
 function renderEco() {
   const host = $('ecobody'); if (!host) return;
   const E = window.MythicEconomy; if (!E || !E.ready()) return;
-  let html = '';
-  try {
-    if (ecoTab === 'survey') html = E.renderSurvey(E.survey());
-    else if (ecoTab === 'chain') {
-      const rows = E.bottlenecks(6);
-      html = rows.length
-        ? rows.map(d => E.renderFirm(d, E.levelCheck(d.firmId))).join('')
-        : '<div class="eco-empty">Every business is running at full rate.</div>';
-    } else html = E.render(E.snapshot(), { primary: E.primaryBottleneck() });
-  } catch (e) { html = '<div class="eco-empty">The economy panel could not be drawn.</div>'; }
+  const h = [];
+  /* The last verdict and the requested chain ride EVERY tab. An answer that
+     vanished because the 4 s repaint landed while the player was on another tab
+     would read as a button that did nothing. */
+  if (ecoSaid) {
+    h.push('<div class="eco-fix"' +
+      (ecoSaid.ok ? '' : ' style="background:#2a1620;border-color:#5a2530;color:#ffb0bc"') + '>' +
+      logEsc(ecoSaid.text) + ' ' + ecoBtn('clear', '', '×') + '</div>');
+  }
+  if (ecoTrace) h.push(ecoSection(() => ecoTraceHtml(E)));
+  if (ecoTab === 'survey') h.push(ecoSection(() => E.renderSurvey(E.survey())));
+  else if (ecoTab === 'chain') h.push(ecoSection(() => ecoChainHtml(E)));
+  else if (ecoTab === 'market') h.push(ecoSection(() => ecoMarketHtml(E)));
+  else if (ecoTab === 'trade') h.push(ecoSection(() => ecoTradeHtml(E)));
+  else h.push(ecoSection(() => E.render(E.snapshot(), { primary: E.primaryBottleneck() })));
+  const html = h.join('');
   if (html !== renderEco._last) { renderEco._last = html; host.innerHTML = html; }
 }
 
@@ -17249,6 +17471,20 @@ function ecoSync() {
     const r = E.syncBuildings(ecoBuildings());
     if (r && (r.added || r.removed)) saveSoon();
   } catch (e) {}
+}
+
+/* 🔗 bindRoster — households.js has EXPORTED IT SINCE THE ECONOMY LANDED AND
+   NOTHING HAS EVER CALLED IT. Read its body before touching this: it takes ONE
+   object, requires only that the object has a `sync()` function, calls it, and
+   returns whether that worked. CITIZENS_API.sync is that function; citEmpSync()
+   is what it does. Filled in at mount, so it is null on any build where the
+   economy module never arrived and this is a no-op — same contract as ecoSync.
+   ⚠ It runs on the ECONOMY's 4 s beat as well as the vitals beat, because the
+     seat counts it is a view of are re-derived by sim.js every tick. */
+let _ecoBindRoster = null;
+function ecoBindRoster() {
+  if (!_ecoBindRoster) return false;
+  try { return _ecoBindRoster(); } catch (e) { return false; }
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -24633,7 +24869,12 @@ function citTarget() { return Math.min(citCap(), Math.max(CIT.MIN, citJobSlots()
 
 function citAdd() {
   const seq = _citSeq++;
-  const c = { id: 'c' + seq, name: citName(seq), job: null, mood: NaN };
+  /* `emp` is the ECONOMY's employer for this person — a firm id out of
+     /src/economy, never a tile. It is deliberately a second field rather than
+     an overload of `job`: `job` is a tile key that setJob() validates against
+     game.tiles, and a firm id in there would be seated at a building that does
+     not exist. See citEmpSync() for what fills it and why. */
+  const c = { id: 'c' + seq, name: citName(seq), job: null, mood: NaN, emp: null };
   citizens.push(c); _citById.set(c.id, c);
   return c;
 }
@@ -24676,6 +24917,151 @@ function citAssignJobs() {
   }
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   🔗 THE NAMED ROSTER ⇄ THE ECONOMY'S EMPLOYMENT
+   ─────────────────────────────────────────────────────────────────────────
+   Two systems have owned "who works" since the economy landed and neither
+   knew the other existed. THIS file owns the ~72 NAMED people — a tile, a
+   mood, dialogue. /src/economy/households.js owns AGGREGATE employment —
+   thousands of people across four skill bands, filled by hire() each tick.
+   The visible cost of that split: a citizen would tell you to your face that
+   there was no work going anywhere while the model had them on a payroll.
+
+   🔴 THEY ARE NOT MERGED, AND MERGING THEM IS THE WRONG FIX. Counting named
+   citizens as the economy's workforce caps the city at CIT.MAX people; giving
+   every aggregate worker a record means four thousand dialogue trees. What
+   happens here is an ASSIGNMENT: each named citizen is pointed at a firm the
+   economy ALREADY staffs, so the person you stop in the street holds a job the
+   simulation agrees exists. The roster is a VIEW; the economy is the source.
+
+   🔴 THE ECONOMY STAYS AUTHORITATIVE AND THIS CANNOT MOVE ITS NUMBERS.
+   Nothing below calls postJobs(), hire(), payWages() or setPopulation(), and
+   nothing writes to a firm — `f.workers` is READ as a seat count and never
+   touched. Binding the roster must not change employment by one person. If it
+   ever can, this has become a second source of truth and the two WILL drift,
+   which is precisely the bug it exists to end.
+
+   🔴 IT NEVER WRITES game.tiles EITHER, same as citAssignJobs above.
+
+   🔌 households.js exports `bindRoster(citizens)` for exactly this and it was
+      never called. Its whole contract is: the object must have a `sync()`
+      function, and it calls it. CITIZENS_API.sync is that function and it is
+      this. See the bind site next to E.mount() for the call.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* The economy's businesses, as SEATS a named person can occupy.
+   A firm hires in exactly ONE skill band (firms.js `headcountFor` returns a
+   single `band`), so the band holding people IS the firm's band — read as the
+   largest entry rather than summed, which keeps this a LOOKUP instead of a
+   second copy of arithmetic the economy already owns. */
+function citEconFirms() {
+  const E = window.MythicEconomy;
+  if (!E || typeof E.ready !== 'function' || !E.ready() || typeof E.firms !== 'function') return null;
+  let firms = null;
+  try { firms = E.firms(); } catch (e) { return null; }
+  if (!Array.isArray(firms)) return null;
+  const out = [];
+  for (const f of firms) {
+    if (!f || f.id == null) continue;
+    let band = null, seats = 0;
+    const w = f.workers || {};
+    for (const b in w) {
+      const n = Math.max(0, Math.floor(+w[b] || 0));
+      if (n > seats) { seats = n; band = b; }
+    }
+    out.push({ id: f.id, name: f.name || 'a business', ind: f.ind || null,
+               tile: f.tileKey ? String(f.tileKey) : null, band, seats });
+  }
+  // A stable deal order, so the same city lands the same way on every reload.
+  out.sort((a, b) => a.id - b.id);
+  return out;
+}
+
+/* Assign the named roster onto those seats. Returns how many named citizens
+   the economy employs, or -1 when the economy could not be asked. */
+function citEmpSync() {
+  const firms = citEconFirms();
+  /* ⚠ ABSENT ECONOMY ⇒ TOUCH NOTHING, AND THAT IS NOT LAZINESS.
+     The module is imported asynchronously and lands whole seconds after
+     loadState() has already restored `emp` from disk. Clearing the field here
+     would throw away every restored assignment BEFORE there was anything to
+     re-validate it against, and the roster would reshuffle on every reload —
+     the exact fault three unsaved variables caused in this file's
+     neighbourhood already. -1 means "not asked yet"; the save's value stands. */
+  if (!firms) return -1;
+
+  const byId = new Map(), byTile = new Map(), free = new Map();
+  for (const f of firms) {
+    byId.set(f.id, f);
+    if (f.tile) byTile.set(f.tile, f);
+    free.set(f.id, f.seats);
+  }
+  const claim = (f) => {
+    const n = free.get(f.id) | 0;
+    if (n <= 0) return false;
+    free.set(f.id, n - 1);
+    return true;
+  };
+
+  /* 1. THE TILE WINS OVER EVERYTHING ELSE. Somebody crewing the square a firm
+     stands on works for THAT firm; naming any other employer would be the
+     plausible lie this file's rules forbid. A firm the economy has MOTHBALLED
+     staffs nobody (headcountFor returns n:0 with no orders), so its named crew
+     hold a city seat and no economy job — which is true, and is what a
+     mothballed plant looks like from the inside. */
+  const idle = [];
+  for (const c of citizens) {
+    if (!c.job) { idle.push(c); continue; }
+    const f = byTile.get(String(c.job));
+    // No firm on that tile: a civic or defensive seat. A real job, not a
+    // business — so it gets no economy employer and claims no seat.
+    c.emp = f && claim(f) ? f.id : null;
+  }
+  /* 2. TENURE for everyone the city has no seat for. Somebody who has been at
+     the same employer keeps it while it still has room: re-dealing the whole
+     roster on every 4 s beat would make every line of dialogue built on where
+     they work meaningless within a minute. */
+  const spare = [];
+  for (const c of idle) {
+    const f = c.emp != null ? byId.get(c.emp) : null;
+    if (f && claim(f)) continue;
+    c.emp = null; spare.push(c);
+  }
+  /* 3. Deal the rest round-robin across the businesses that still have room.
+     🔴 THIS IS THE CASE THAT USED TO LIE. The economy reports hundreds
+     employed; the city has a handful of crewed tiles; so every named citizen
+     past the last crew seat said "no work going anywhere" while the simulation
+     had them working and being paid. Round-robin rather than firm-by-firm so
+     one big employer does not swallow the whole roster. */
+  let fi = 0;
+  for (const c of spare) {
+    for (let g = 0; g < firms.length; g++) {
+      const f = firms[(fi + g) % firms.length];
+      if (claim(f)) { c.emp = f.id; fi = (fi + g + 1) % firms.length; break; }
+    }
+  }
+  let n = 0;
+  for (const c of citizens) if (c.emp != null) n++;
+  return n;
+}
+
+/* What the economy says about this person's employer, or null. Read off the
+   LIVE firm every time and never cached, so it cannot go stale against the
+   simulation — the same rule citMoodTarget follows for mood. */
+function citEmpInfo(c) {
+  if (!c || c.emp == null) return null;
+  const E = window.MythicEconomy;
+  if (!E || typeof E.firm !== 'function') return null;
+  let f = null;
+  try { f = E.firm(c.emp); } catch (e) { return null; }
+  if (!f || f.rung === 'BANKRUPT') return null;
+  const meta = (E.industries && E.industries[f.ind]) || null;
+  return { id: f.id, name: f.name, ind: f.ind, out: f.out || null,
+           tile: f.tileKey || null,
+           indName: (meta && meta.name) || f.ind || 'a business',
+           indIco: (meta && meta.ico) || '🏭' };
+}
+
 /* 😐 MOOD — four terms, every one of them a number the game already keeps.
    Weights sum to 1.00 and the result is 0..100.
      .40  wellbeing.morale        the city-wide mood the whole layer runs on
@@ -24715,15 +25101,27 @@ function citRefresh(force) {
      roster does not exist yet at spawn time and every civilian would walk the
      whole session anonymous. */
   try { citBindAgents(); } catch (e) {}
+  /* 🔗 …and re-point the roster at the economy on the same beat, so a citizen's
+     stated employer can never be older than their mood. Cheap: one pass over
+     ≤ CIT.MAX people. Guarded because the economy module may never arrive. */
+  try { citEmpSync(); } catch (e) { console.warn('[citizens] employment', e); }
 }
 
 /* 💾 PERSISTENCE. Short keys because 80 records ride every save. Absent on
    load ⇒ an EMPTY roster that citEnsure immediately refills from the city as
-   it stands — never a throw, never a half-restored person. */
+   it stands — never a throw, never a half-restored person.
+   🔴 `e` (the economy employer) RIDES THE SAVE and that is not optional. It is
+   derived state, but it is derived from a DEAL — round-robin over whoever had
+   a free seat — so re-deriving it from scratch produces a different, equally
+   valid answer and the whole roster changes employer on every reload. Three
+   unsaved state variables have already been live bugs in this file's
+   neighbourhood (one of them let a firm take a second loan by reloading the
+   page); an assignment that only looks stable is the same class of fault. */
 function citSave() {
   return {
     seq: _citSeq,
-    list: citizens.map(c => ({ i: c.id, n: c.name, j: c.job || null, m: Math.round(c.mood) || 0 })),
+    list: citizens.map(c => ({ i: c.id, n: c.name, j: c.job || null, m: Math.round(c.mood) || 0,
+                               e: (c.emp == null ? null : c.emp) })),
   };
 }
 function citLoad(raw) {
@@ -24743,6 +25141,12 @@ function citLoad(raw) {
       // still exists is citAssignJobs' problem, and its answer is "idle".
       job: (typeof r.j === 'string' && /^-?\d+,-?\d+$/.test(r.j)) ? r.j : null,
       mood: Number.isFinite(+r.m) ? Math.max(0, Math.min(100, +r.m)) : NaN,
+      /* The employer is restored as a BARE ID and validated later, for the same
+         reason `job` is: the economy module has not been imported yet at
+         loadState() time, so there is nothing here to check it against.
+         citEmpSync() drops it the moment it can ask — and until then the roster
+         holds the assignment the save was written with rather than none. */
+      emp: (Number.isFinite(+r.e) && +r.e > 0) ? Math.floor(+r.e) : null,
     };
     citizens.push(c); _citById.set(id, c);
   }
@@ -24794,6 +25198,12 @@ const CIT_SAY = {
   idleMid: ['Looking for a crew that will take me.', 'No posting has my name on it yet.',
     'Build something that needs hands and I am there.'],
   idleHigh: ['Between jobs, but the city is kind.', 'No shift today. I am not worried.'],
+  /* 🔗 The economy employs them, the city has no crewed tile for them. {W} is
+     the FIRM's name, out of /src/economy — not a building you placed. */
+  econLow: ['Hours at the {W}. Barely worth the walk.', 'The {W} takes me on when it suits them.'],
+  econMid: ['I take my shifts at the {W}.', 'The {W} has me on the books.',
+    'Work at the {W}. It is not a building you put up, but it pays.'],
+  econHigh: ['Good work going at the {W}.', 'The {W} keeps me busy and keeps me paid.'],
 };
 function citBubbleFor(a) {
   const c = citOf(a);
@@ -24801,12 +25211,20 @@ function citBubbleFor(a) {
   const t = c.job ? game.tiles[c.job] : null;
   const def = t ? BUILDINGS[t.type] : null;
   const W = def ? (def.name || t.type) : null;
+  /* 🔗 NO CITY SEAT IS NOT THE SAME THING AS NO WORK, and saying so was the
+     lie this package exists to end: the economy can have this person on a
+     payroll at a business with no crewed tile of its own (the waterworks, the
+     landlord, a farm the model bootstrapped). Ask before reaching for the
+     "idle" lines — those stay, for the people the economy really has nowhere
+     to put, which is a genuine and much more interesting state. */
+  const emp = W ? null : citEmpInfo(c);
   let band;
-  if (!W) band = c.mood < 35 ? 'idleLow' : c.mood > 70 ? 'idleHigh' : 'idleMid';
+  if (emp) band = c.mood < 35 ? 'econLow' : c.mood > 70 ? 'econHigh' : 'econMid';
+  else if (!W) band = c.mood < 35 ? 'idleLow' : c.mood > 70 ? 'idleHigh' : 'idleMid';
   else if (t.damaged) band = 'wrecked';
   else band = c.mood < 35 ? 'jobLow' : c.mood > 70 ? 'jobHigh' : 'jobMid';
   const arr = CIT_SAY[band];
-  const text = arr[citSeqOf(c.id) % arr.length].replace('{W}', W || '');
+  const text = arr[citSeqOf(c.id) % arr.length].replace('{W}', W || (emp ? emp.name : ''));
   return { text, tone: c.mood < 35 ? 'bad' : c.mood > 70 ? 'good' : '', who: c.name };
 }
 
@@ -24840,10 +25258,22 @@ function citBubbleFor(a) {
      plausible lie this file's rules forbid. Passing null idles them, which is
      always legal. Nothing here writes to game.tiles. */
 const CITIZENS_API = {
-  list: () => citizens.map(c => ({ id: c.id, name: c.name, job: c.job, mood: c.mood })),
-  get: (id) => { const c = _citById.get(String(id)); return c ? { id: c.id, name: c.name, job: c.job, mood: c.mood } : null; },
-  byJob: (k) => citizens.filter(c => c.job === k).map(c => ({ id: c.id, name: c.name, job: c.job, mood: c.mood })),
+  list: () => citizens.map(c => ({ id: c.id, name: c.name, job: c.job, mood: c.mood, emp: c.emp })),
+  get: (id) => { const c = _citById.get(String(id)); return c ? { id: c.id, name: c.name, job: c.job, mood: c.mood, emp: c.emp } : null; },
+  byJob: (k) => citizens.filter(c => c.job === k).map(c => ({ id: c.id, name: c.name, job: c.job, mood: c.mood, emp: c.emp })),
   count: () => citizens.length,
+  /* 🔗 THE SEAM households.js's bindRoster() CALLS, and the only thing it asks
+     for. Read it before renaming this: bindRoster(citizens) takes one object,
+     tests `typeof citizens.sync === 'function'`, calls it, and returns whether
+     it managed to. So `sync` is the whole contract — and it means "re-point the
+     named roster at the jobs the economy says exist", never "reconcile the
+     roster with the city", which is citRefresh's job and stays there.
+     Returns the number of named citizens the economy employs, or -1 when the
+     economy could not be asked at all. */
+  sync: () => citEmpSync(),
+  /* Who the economy says this person works for. Null is a real answer: they
+     hold a civic crew seat, or the model has nobody in a seat for them. */
+  employer: (id) => { const c = _citById.get(String(id)); return c ? citEmpInfo(c) : null; },
   // — life-events seam —
   setMood: (id, v) => {
     const c = _citById.get(String(id)); if (!c || !Number.isFinite(+v)) return false;
@@ -25434,9 +25864,22 @@ function ctLines(c, W, terms) {
 
   // 2. their work, straight off the tile
   if (!W) {
-    out.push({ text: ctPick(['No, I have no seat anywhere. Build something that needs hands and I am there.',
-                             'Nothing going. I would take anything with a roof on it.'], c),
-               tone: 'dn', why: 'job = null — no crewed seat free for them' });
+    /* 🔗 …or off the ECONOMY, when the city has no crewed tile for them.
+       🔴 THIS IS THE LINE THAT USED TO CONTRADICT THE SIMULATION. It said "no
+       seat anywhere" to anyone without a crewed tile, while
+       /src/economy/households.js had them employed, paid and spending. The
+       roster is a view onto that model now (citEmpSync), so ask it first and
+       only fall through to the idle lines when the answer is genuinely no. */
+    const emp = citEmpInfo(c);
+    if (emp) {
+      out.push({ text: 'I am on the books at the ' + emp.name + '. ' + emp.indIco + ' ' + emp.indName +
+                       ' work — nothing you put up on a tile, but it is a wage.',
+                 tone: '', why: 'MythicEconomy.firm(' + emp.id + ') — the model staffs this business' });
+    } else {
+      out.push({ text: ctPick(['No, I have no seat anywhere. Build something that needs hands and I am there.',
+                               'Nothing going. I would take anything with a roof on it.'], c),
+                 tone: 'dn', why: 'job = null, and the economy has no seat for them either' });
+    }
   } else if (W.t.damaged) {
     out.push({ text: 'The ' + W.name + ' is wrecked. We stand about outside it waiting on a repair.',
                tone: 'dn', why: 'game.tiles[' + W.k + '].damaged' });
@@ -25519,10 +25962,16 @@ function ctHtml(c0) {
   const esc = logEsc;
 
   let h = '<div class="ctname">👤 ' + esc(c.name) + '</div>';
+  /* The subheading must agree with the sentence ctLines() picked, or the panel
+     contradicts itself two lines apart — so it asks the economy the same way. */
+  const ctEmp = W ? null : citEmpInfo(c);
   h += '<div class="ctsub">' + (W
     ? 'Holds a seat at the <b>' + esc(W.name) + '</b> · tile ' + esc(W.k) +
       (W.t.lvl > 1 ? ' · level ' + W.t.lvl : '')
-    : '<b>No work right now.</b> They are one of the city’s named citizens with no crewed seat.') + '</div>';
+    : ctEmp
+      ? 'On the books at the <b>' + esc(ctEmp.name) + '</b> · ' + esc(ctEmp.indIco + ' ' + ctEmp.indName) +
+        ' · no crewed tile of their own'
+      : '<b>No work right now.</b> They are one of the city’s named citizens with no crewed seat.') + '</div>';
 
   h += said.map(s => '<div class="ctsay ' + s.tone + '">' + esc(s.text) + '</div>').join('');
 
@@ -25559,6 +26008,19 @@ function ctHtml(c0) {
     h += '<div class="ctrow"><span>Seats here</span><span class="ctv">' + (W.def.crew | 0) +
       ' 👷 · ' + (ctMates(c).length + 1) + ' named</span></div>' +
       '<div class="ctrow"><span>City staffing</span><span class="ctv">' + Math.round(staffingRatio() * 100) + '%</span></div>';
+  } else if (ctEmp) {
+    /* 🔗 Their EMPLOYER, when the city has no tile for them. Every value is
+       read straight off the firm the economy is running — this panel decides
+       nothing about it and computes nothing from it. */
+    h += '<div class="cthead">Who pays them</div>' +
+      '<div class="ctrow"><span>' + esc(ctEmp.indIco + ' ' + ctEmp.name) + '</span><span class="ctv">' +
+        esc(ctEmp.indName) + '</span></div>';
+    if (ctEmp.out) {
+      h += '<div class="ctrow"><span>Makes</span><span class="ctv">' +
+        esc(resIco(ctEmp.out) + ' ' + resName(ctEmp.out)) + '</span></div>';
+    }
+    h += '<div class="ctrow"><span>Where</span><span class="ctv">' +
+      (ctEmp.tile ? 'tile ' + esc(ctEmp.tile) : 'no tile of its own') + '</span></div>';
   }
 
   const hist = ctHistory(c);
@@ -26335,18 +26797,36 @@ function animate() {
         // the markup that uses them and out of this file's stylesheet.
         const st = document.createElement('style'); st.textContent = E.css; document.head.appendChild(st);
         card.addEventListener('click', (ev) => {
+          /* Actions first: they live INSIDE #ecobody, which the tab handler
+             below re-renders, so a delegated listener is the only kind that
+             survives a repaint. See ecoAction() for the five it dispatches. */
+          const a = ev.target.closest('[data-ecoact]');
+          if (a) { ecoAction(a.dataset.ecoact, a.dataset.ecoarg); return; }
           const b = ev.target.closest('[data-ecotab]'); if (!b) return;
           ecoTab = b.dataset.ecotab;
           card.querySelectorAll('[data-ecotab]').forEach(x => x.classList.toggle('on', x === b));
           renderEco._last = null; renderEco();
         });
       }
+      /* 🔗 THE ROSTER SEAM. households.js exports bindRoster() and this is the
+         only call to it in the codebase — see ecoBindRoster() and citEmpSync().
+         ⚠ NO ?v= ON THIS IMPORT, AND THAT IS LOAD-BEARING. index.js imports
+           './households.js' with no query, and a module is identified by its
+           RESOLVED URL — adding a cache-buster here would instantiate a SECOND
+           copy of households.js with its own population, savings and employment,
+           and the roster would then be a view onto an economy nobody is
+           running. The two specifiers must resolve to the same string. */
+      try {
+        const HH = await import('../src/economy/households.js');
+        _ecoBindRoster = () => HH.bindRoster(window.MythicCitizens);
+      } catch (e) { console.warn('[city] bindRoster unavailable', e); }
       ecoSync();
+      ecoBindRoster();
       renderEco();
       /* Repaint on its own slow timer rather than per frame: the panel changes
          on ECONOMIC DAYS (20 real minutes), so a 60fps repaint would be ~72,000
          wasted innerHTML diffs per day for at most one visible change. */
-      setInterval(() => { ecoSync(); renderEco(); }, 4000);
+      setInterval(() => { ecoSync(); ecoBindRoster(); renderEco(); }, 4000);
     }
   } catch (e) { console.warn('[city] economy module unavailable', e); }
   /* 🏗 THE SECOND HALF OF THE LOAD PATH, and the first moment it can run.
@@ -26715,6 +27195,20 @@ function animate() {
       close:   (snap) => ecoDailyClose(snap),
       lastDay: () => _ecoLastDay,
       resetDay: () => { _ecoLastDay = null; return true; },
+      /* 🔗 THE ROSTER SEAM AND THE PANEL, made drivable.
+         `bind()` is the SHIPPED ecoBindRoster — households.js's bindRoster with
+         the live roster — not a local twin, so a test that calls it exercises
+         the same path the 4 s timer does. `render()` is the shipped repaint and
+         `tab()`/`act()` are the shipped click paths: rAF never fires in the
+         capture pane, so a panel driven any other way is a panel testing
+         itself. `body()` is what actually ended up in the DOM. */
+      bind:   () => ecoBindRoster(),
+      render: () => { renderEco(); return true; },
+      tab:    (t) => { ecoTab = String(t || 'city'); renderEco._last = null; renderEco(); return ecoTab; },
+      act:    (a, arg) => ecoAction(a, arg),
+      said:   () => (ecoSaid ? { ...ecoSaid } : null),
+      traced: () => ecoTrace,
+      body:   () => { const el = $('ecobody'); return el ? el.innerHTML : null; },
     },
     costOf,
   };

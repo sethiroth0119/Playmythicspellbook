@@ -91,11 +91,19 @@
       steel:  M({ color: 0x9aa0a8, roughness: 0.55, metalness: 0.35 }),   // plain steel wheels
       black:  M({ color: 0x1a1d22, roughness: 0.72, metalness: 0.18 }),   // mirrors, trim, grille surround
       grille: M({ color: 0x0b0d10, roughness: 0.85, metalness: 0.25 }),
-      // ⚠ Amber has to SURVIVE TONE MAPPING. At emissiveIntensity 0.85 under
-      // ACES the lens clipped to rgb(245,232,188) — saturation 0.233, a cream
-      // bulb rather than an amber one. Deeper base, deeper emissive, and a third
-      // of the intensity keeps it orange after the curve.
-      amber:  M({ color: 0xff8a00, roughness: 0.35, emissive: 0xc25200, emissiveIntensity: 0.30 }),
+      // ⚠ Amber has to SURVIVE TONE MAPPING, and the fix is a HUE shift, not a
+      // brightness one. Lowering intensity stopped the lens clipping to cream at
+      // distance, but close up it still measured hue 48° — yellow, not amber —
+      // because a bright BASE colour takes the warm key (0xffd9a8) across all
+      // three channels and ACES lifts the top end further. So: keep the base
+      // nearly black so the key has almost no diffuse to desaturate, carry the
+      // hue in the emissive (added after lighting, before the curve), and aim it
+      // redder than the colour you actually want, because the curve walks it
+      // back up. Measured on screen under the yard's exact rig:
+      //   was  rgb(237, 205, 74)  sat 0.687  hue 48.0°  ← yellow
+      //   now  rgb(244, 186, 59)  sat 0.758  hue 41.2°  ← amber
+      // If you retune this, measure the rendered pixels; the hex alone lies.
+      amber:  M({ color: 0x2a0f00, roughness: 0.40, emissive: 0xff4a00, emissiveIntensity: 1.00 }),
       red:    M({ color: 0xd42a22, roughness: 0.35, emissive: 0x8e1008, emissiveIntensity: 0.7 }),
       lamp:   M({ color: 0xf2f4f6, roughness: 0.14, metalness: 0.30,
                   emissive: 0xfff0cc, emissiveIntensity: 0.45 }),

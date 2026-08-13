@@ -153,10 +153,24 @@ var MOCK = {
       }),
       encounter: mock.encounter,
       battles: mock.battles.filter(function (b) { return b.status === 'open'; }),
+      /* ⚠ THESE TWO FIELDS WERE HARDCODED false, SO THE BARRIER DOTS SHIPPED
+         WITHOUT ANYBODY — critic, harness or player — EVER SEEING ONE. `done`,
+         `away` and `gone` were unreachable states in the only build most people
+         can run, which makes a whole feature unfalsifiable. The mock is a demo,
+         not a server, so it does not need a real barrier; it needs to be able to
+         SHOW the states the real one produces. Derived from the slot and the
+         turn so they change as the run goes on and every state is reachable
+         within the first few turns, and deterministic so a screenshot of turn 3
+         is the same screenshot tomorrow. */
       others: mock.others.map(function (o) {
         var seen = Math.max(Math.abs(o.x - mock.me.x), Math.abs(o.y - mock.me.y)) <= v;
+        // 3 phases over 3 rivals, so all of thinking / done / away are on
+        // screen at once on turn 1 and each rival cycles as the run goes on.
+        var phase = (mock.turn + o.slot) % 3;
         return { expedition_id: o.expedition_id, slot: o.slot, hero_name: o.hero_name,
-                 status: o.status, visible: seen, turn_ended: false, away: false,
+                 status: o.status, visible: seen,
+                 turn_ended: phase !== 0,
+                 away: phase === 2,
                  x: seen ? o.x : null, y: seen ? o.y : null, camp: null };
       }),
       events: mock.events.slice(0, 40),

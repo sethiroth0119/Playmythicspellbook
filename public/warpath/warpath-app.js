@@ -545,6 +545,12 @@ function renderTop() {
      who walked away. The countdown and the dots turn both into information. */
   var secs = st.run.seconds_left;
   var clock = $('t-clock');
+  /* ⚠ OFFLINE THERE IS NO SHARED CLOCK, and the pill sat at 0:00 pulsing
+     `critical` forever — the poll that would refresh it is gated on
+     NET.mode === 'live', so it counted to zero once and then lied for the rest
+     of the session. A turn timer only means something when somebody else is
+     waiting on you. */
+  if (NET.mode !== 'live') { S.deadlineAt = null; clock.style.display = 'none'; } else
   if (secs != null && st.me.status !== 'extracted' && st.me.status !== 'lost') {
     S.deadlineAt = Date.now() + secs * 1000;
     clock.style.display = '';
@@ -1693,7 +1699,18 @@ function sizeSheet() {
   var ceiling = Math.round(window.innerHeight * 0.56);
   // The rail lives INSIDE the sheet while it is open, so it costs nothing here.
   var room = window.innerHeight - hudBottom - MIN_MAP_BAND;
-  side.style.setProperty('--wp-sheet-h', Math.max(120, Math.min(ceiling, room)) + 'px');
+  /* ⚠ WHEN THE SHEET AND THE MAP COMPETE, THE MAP WINS — and that is a decision,
+     not an accident. This used to read Math.max(120, ...), which gave the SHEET
+     a 120px floor: on a screen short enough for the two to fight, the sheet
+     would have taken its floor out of the map's. They are not symmetric. A
+     sheet that is too short still scrolls internally and every control in it
+     stays reachable; a map band that is too short cannot be recovered by any
+     action the player can take, because the camera has been clamped against a
+     viewport that is not there. So `room` is a hard subtraction and the sheet
+     takes what is left, down to nothing. On the shortest screen anyone has
+     tested (844x390) that leaves 192px, so this floor is a guard rather than a
+     mode. */
+  side.style.setProperty('--wp-sheet-h', Math.max(0, Math.min(ceiling, room)) + 'px');
   /* html and body are overflow:hidden, but focusing the sheet handle can still
      scroll the window — measured at 53px on a 844x390 screen, which slides the
      top HUD out of sight. Nothing on this page is ever meant to scroll. */

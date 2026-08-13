@@ -235,6 +235,26 @@ const SIZES = [[390, 844], [360, 640], [899, 600], [844, 390], [820, 1180], [144
   } else {
     console.log('  ok  ⚠ ...and TOLD THE PLAYER what happened to them while it was gone');
   }
+  /* ── THE BARRIER DOTS, OBSERVED FOR THE FIRST TIME ──────────────────────
+     `done` / `away` / `gone` shipped with the mock hardcoding turn_ended:false
+     and away:false for every rival, so no critic, harness or player had ever
+     seen one — a whole feature that could not be falsified. */
+  const dots = await page.evaluate(() => {
+    const seen = {};
+    for (const i of document.querySelectorAll('#t-seats i')) {
+      for (const c of i.classList) seen[c] = (seen[c] || 0) + 1;
+    }
+    return seen;
+  });
+  const want = ['thinking', 'done', 'away'];
+  const missing = want.filter(k => !dots[k]);
+  if (missing.length) {
+    console.log('  ✘ barrier dot state(s) still unreachable in the shipped demo: '
+      + missing.join(', ') + ' (saw ' + JSON.stringify(dots) + ')'); lfails++;
+  } else {
+    console.log('  ok  ⚠ barrier dots are observable at last: ' + JSON.stringify(dots));
+  }
+
   if (perrs.length) { console.log('  ✘ pageerror: ' + perrs[0]); lfails++; }
   await ctx.close();
 

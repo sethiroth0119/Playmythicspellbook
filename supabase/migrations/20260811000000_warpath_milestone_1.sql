@@ -1336,9 +1336,21 @@ begin
     'encounter', (select jsonb_build_object('id', id, 'x', x, 'y', y, 'biome', biome, 'offers', offers)
                     from public.warpath_encounters
                    where expedition_id = me.id and picked is null order by created_turn desc limit 1),
+    /* ⚠ `i_claimed` IS THE WHOLE DIFFERENCE BETWEEN "FIGHT" AND "WAITING".
+       Without it the client could not tell an unfought battle from one it had
+       already played and reported, so after reporting a win it was told
+       "Victory · the Warpath has recorded it", frozen by battle_pending, and
+       offered a Fight button for the battle it had just won. A bare win claim
+       waits for the opponent by design; the client has to be able to SAY that. */
     'battles', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'status', status,
                                                              'attacker', attacker_id, 'defender', defender_id,
-                                                             'winner', winner_id, 'x', x, 'y', y))
+                                                             'winner', winner_id, 'x', x, 'y', y,
+                                                             'i_claimed', case when attacker_id = me.id
+                                                                               then claim_attacker is not null
+                                                                               else claim_defender is not null end,
+                                                             'they_claimed', case when attacker_id = me.id
+                                                                                  then claim_defender is not null
+                                                                                  else claim_attacker is not null end))
                            from public.warpath_battles
                           where run_id = me.run_id and status = 'open'
                             and (attacker_id = me.id or defender_id = me.id)), '[]'::jsonb),

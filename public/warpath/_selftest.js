@@ -450,6 +450,94 @@ for (let s = 0; s < N; s++) {
   console.log('grant drain          ' + (gbad ? gbad + ' PROBLEMS' : 'defers what it cannot resolve, repairs before it applies'));
 }
 
+/* ── THE SCREEN'S THREE SILENT FAILURES ───────────────────────────────────
+   All three were invisible to every check that existed, because they are about
+   what the player is TOLD and what is left on screen, not about whether
+   anything threw. */
+{
+  const fs = require('fs'), path = require('path');
+  const app = fs.readFileSync(path.join(__dirname, 'warpath-app.js'), 'utf8');
+  const idx = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  let bad = 0;
+
+  /* 1. The camera must know about the bottom sheet. viewH() returned
+     window.innerHeight unconditionally while viewW() beside it subtracted the
+     desktop column, so with the sheet open the world was 137px tall at
+     390x844 and GONE at 844x390 — and clampCam, comparing against the wrong
+     viewport, pinned cam.y so dragging did nothing. */
+  const lift = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let d = 0, j = src.indexOf('{', i), k = j;
+    for (; k < src.length; k++) { if (src[k] === '{') d++; else if (src[k] === '}') { d--; if (!d) break; } }
+    return src.slice(i, k + 1);
+  };
+  const sheetSrc = lift(app, 'sheetH'), viewHSrc = lift(app, 'viewH');
+  if (!sheetSrc || !viewHSrc) { console.log('FAIL sheetH/viewH not found in warpath-app.js'); bad++; }
+  else {
+    const make = (w, h, cls, sheetPx) => {
+      const side = { classList: { contains: c => cls.indexOf(c) >= 0 },
+                     getBoundingClientRect: () => ({ height: sheetPx }) };
+      // eslint-disable-next-line no-new-func
+      return new Function('$', 'window',
+        sheetSrc + '\n' + viewHSrc + '\nreturn { sheetH, viewH };')(
+        id => (id === 'side' ? side : null), { innerWidth: w, innerHeight: h });
+    };
+    const cases = [
+      // [w, h, classes, sheet px, expect viewH]
+      [1440, 900, [], 0, 900],                       // desktop, sheet is a column
+      [1440, 900, ['open'], 500, 900],               // ...even if something says open
+      [390, 844, ['hidden'], 0, 844],                // phone, collapsed
+      [390, 844, ['open'], 473, 371],                // phone, open: 56vh gone
+      [360, 640, ['open'], 358, 282],
+      [844, 390, ['open'], 218, 172],                // rotated: the case that was 0
+    ];
+    for (const [w, h, cls, px, want] of cases) {
+      const got = make(w, h, cls, px).viewH();
+      if (got !== want) {
+        console.log('FAIL viewH at ' + w + 'x' + h + ' [' + cls.join(',') + '] = ' + got + ', expected ' + want); bad++;
+      }
+    }
+    // The floor matters: a sheet taller than the window must not produce a
+    // zero or negative viewport, which is what made the world vanish.
+    if (make(390, 400, ['open'], 900).viewH() <= 0) {
+      console.log('FAIL viewH can still return zero — the world disappears'); bad++;
+    }
+  }
+
+  /* 2. The battle verdict has to survive the remount. warpathStartBattle
+     removes the iframe and warpathAfterBattle builds a new one, so the result
+     always lands on the FIRST read of a new session — where "do not shout
+     history" swallowed it. */
+  if (!/_loadSeen\(st\)/.test(app) || !/sessionStorage/.test(app)) {
+    console.log('FAIL the announce baseline still dies with the frame — every battle result is swallowed'); bad++;
+  }
+  if (!/_saveSeen\(st\);\s*\n\}/.test(app)) {
+    console.log('FAIL the announce baseline is never written back'); bad++;
+  }
+  if (!/hero_away:\s*1/.test(app)) {
+    console.log('FAIL being dropped from the barrier is still announced by a dashed dot and nothing else'); bad++;
+  }
+
+  /* 3. The parent must actually send the verdict, and the client must read the
+     "not yet" the server sends back. */
+  if (!/warpath:battleResult/.test(idx)) {
+    console.log('FAIL nothing in the game ever posts warpath:battleResult — the handler is dead code'); bad++;
+  }
+  if (!/pending_confirmation/.test(idx)) {
+    console.log('FAIL the parent ignores pending_confirmation and reports every claim as a win'); bad++;
+  }
+  if (!/d\.awaiting/.test(app)) {
+    console.log('FAIL the screen cannot say "waiting on your opponent"'); bad++;
+  }
+  if (!/pendingBattle\.i_claimed/.test(app)) {
+    console.log('FAIL the screen still offers "Fight" for a battle you have already reported'); bad++;
+  }
+  fails += bad;
+  console.log('the screen           ' + (bad ? bad + ' PROBLEMS'
+    : 'camera knows the sheet, verdicts survive the remount, "waiting" is sayable'));
+}
+
 const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
 const lo  = a => Math.min(...a), hi = a => Math.max(...a);
 

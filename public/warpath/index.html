@@ -319,9 +319,15 @@
     #sidetabs{height:42px}
     #sidetoggle{top:-23px;left:50%;margin:0 0 0 -32px;width:64px;height:22px;
       border-radius:8px 8px 0 0;border:1px solid var(--edge);border-bottom:0}
+    /* ⚠ THE HANDLE SAT ON TOP OF THE FIRST BUTTON THE GAME ASKS FOR. It is
+       22px tall and overhangs the sheet, so at 390x844 it covered 29% of Pitch
+       camp's hit area (9% of End turn at 360x640) and the bottom half of that
+       tap opened the dossier instead. The rail is lifted clear of it rather
+       than the handle being shrunk — a 22px target is already small enough. */
     #rail{right:0;bottom:44px;padding:8px 8px 6px;gap:6px}
+    body:not(.sheet-open) #rail{bottom:70px}
     /* The sheet must not cover the action rail it sits under. */
-    body.sheet-open #rail{bottom:calc(56vh + 4px)}
+    body.sheet-open #rail{bottom:calc(56vh + 26px)}
     #rail .btn{min-width:0;flex:1 1 auto;padding:8px 6px;font-size:10px}
     #rail #tileinfo{min-width:0;flex:1 1 100%;padding:6px 9px;font-size:12px}
     #bearings{margin-bottom:0}

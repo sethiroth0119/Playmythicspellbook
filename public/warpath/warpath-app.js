@@ -226,7 +226,24 @@ function resize() {
   draw();
 }
 function viewW() { return window.innerWidth - (window.innerWidth > 900 && !$('side').classList.contains('hidden') ? 334 : 0); }
-function viewH() { return window.innerHeight; }
+/* ⚠ viewH() RETURNED window.innerHeight UNCONDITIONALLY while viewW() above it
+   correctly subtracts the 334px desktop column — so nothing ever told the camera
+   about the 56vh bottom sheet. With the panel open the visible map band was
+   838px at 1440x900, 314px at 820x1180, 137px at 390x844, 64px at 899x600, 12px
+   at 360x640 and ZERO rotated at 844x390: the world was gone. Worse, clampCam
+   then compared the map height against the WRONG viewport, decided it fitted,
+   pinned cam.y and made dragging do nothing — a phone player saw world rows 1-7
+   of 30, permanently. */
+function sheetH() {
+  var side = $('side');
+  if (!side || side.classList.contains('hidden')) return 0;
+  if (window.innerWidth > 900) return 0;              // desktop: it is a column, see viewW
+  if (!side.classList.contains('open')) return 0;     // collapsed to its handle
+  var r = side.getBoundingClientRect();
+  // Measured, not assumed: the sheet is 56vh by CSS but respects safe areas.
+  return Math.max(0, Math.min(window.innerHeight, Math.round(r.height)));
+}
+function viewH() { return Math.max(120, window.innerHeight - sheetH()); }
 
 // Zoom that shows the whole world without letterboxing it into a stamp in the
 // corner. The first draft left z at a fixed 22, which on a 1440px viewport drew
@@ -528,6 +545,16 @@ function renderTop() {
   if (secs != null && st.me.status !== 'extracted' && st.me.status !== 'lost') {
     S.deadlineAt = Date.now() + secs * 1000;
     clock.style.display = '';
+    /* ⚠ IT IS THE RUN'S DEADLINE, NOT YOURS. The pill kept counting down and
+       pulsing `critical` after the player had already ended their turn, under
+       a tooltip that said "Time left in this turn" — so the one thing left to
+       do was panic about a clock that could not cost them anything. Once your
+       turn is in, the same number means "how long the others have". */
+    S.clockIsMine = !st.me.turn_ended;
+    clock.title = st.me.turn_ended
+      ? 'Your turn is in — this is how long the run waits for the others'
+      : 'Time left in this turn';
+    clock.classList.toggle('waiting', !!st.me.turn_ended);
   } else { S.deadlineAt = null; clock.style.display = 'none'; }
 
   var dots = '';
@@ -807,14 +834,63 @@ function tabFeed(st) {
    re-announce the same thing; only the first sighting speaks. */
 var LOUD = { hero_defeated: 1, extraction_started: 1, extraction_broken: 1,
              guardian_defeated: 1, run_closed: 1, watchtower_report: 1,
-             rival_camp_struck: 1, landmark_sighted: 1 };
+             rival_camp_struck: 1, landmark_sighted: 1, hero_away: 1 };
+
+/* ⚠ "DO NOT SHOUT HISTORY" WAS SILENCING THE ONLY THING WORTH SHOUTING.
+   Baselining on the first read is right for a page the player opened. It is
+   fatal here, because A BATTLE TEARS THIS SCREEN DOWN: warpathStartBattle
+   removes the iframe from the DOM and warpathAfterBattle builds a brand-new one
+   with a cache-busted src. So the outcome of every battle always landed on the
+   first refresh of a NEW session, S.seenEvents was empty, and hero_defeated,
+   guardian_defeated and extraction_broken were all swallowed as history. The
+   remount is the NORMAL path, not an edge case.
+
+   So the baseline outlives the frame. It is keyed per run in sessionStorage, so
+   a rebuilt frame continues the session it is really part of, and a genuinely
+   new run still starts quiet. */
+function _seenKey(st) {
+  var run = st && st.run && st.run.id;
+  return run ? ('wp_seen_' + run) : null;
+}
+function _loadSeen(st) {
+  try {
+    var k = _seenKey(st); if (!k) return null;
+    var raw = sessionStorage.getItem(k);
+    if (!raw) return null;
+    var o = JSON.parse(raw);
+    return (o && typeof o === 'object') ? o : null;
+  } catch (e) { return null; }
+}
+function _saveSeen(st) {
+  try {
+    var k = _seenKey(st); if (!k) return;
+    var keys = Object.keys(S.seenEvents);
+    // Bounded: the feed itself is capped at 40, so this cannot grow unbounded
+    // over a 60-turn run, but be explicit about it anyway.
+    if (keys.length > 400) {
+      var trimmed = {};
+      keys.slice(-400).forEach(function (x) { trimmed[x] = 1; });
+      S.seenEvents = trimmed;
+    }
+    sessionStorage.setItem(k, JSON.stringify(S.seenEvents));
+  } catch (e) {}
+}
+
 function announceNewEvents(st) {
   var evs = (st && st.events) || [];
   if (!S.seenEvents) {
-    // First read of a session establishes the baseline — do not shout history.
-    S.seenEvents = {};
-    evs.forEach(function (e) { S.seenEvents[e.turn + ':' + e.kind + ':' + JSON.stringify(e.payload || {})] = 1; });
-    return;
+    var carried = _loadSeen(st);
+    if (carried) {
+      // A rebuilt frame. Carry on from where the torn-down one left off, so the
+      // battle that caused the rebuild is NEWS.
+      S.seenEvents = carried;
+    } else {
+      // A genuinely first read of this run establishes the baseline.
+      S.seenEvents = {};
+      evs.forEach(function (e) { S.seenEvents[e.turn + ':' + e.kind + ':' + JSON.stringify(e.payload || {})] = 1; });
+      _saveSeen(st);
+      return;
+    }
   }
   var me = st.me, mine = (me && me.hero_name) || '';
   for (var i = evs.length - 1; i >= 0; i--) {
@@ -853,10 +929,20 @@ function announceNewEvents(st) {
           + 'Nobody else has been told.');
     } else if (e.kind === 'rival_camp_struck') {
       ribbon('A camp has struck', (p.hero || 'A rival') + ' packed up and left ' + p.x + ',' + p.y + '.');
+    } else if (e.kind === 'hero_away') {
+      // Being dropped from the barrier used to be announced by a dashed dot.
+      if (p.hero === mine) {
+        ribbon('You have been marked away', 'Three turns passed without you, so the run no longer '
+          + 'waits for you. Your Hero is still on the map — and still lootable. Act to come back.');
+      } else {
+        ribbon('A Hero has stopped responding', (p.hero || 'Someone')
+          + ' is no longer holding up the turn. They are still out there.');
+      }
     } else if (e.kind === 'run_closed') {
       ribbon('The Warpath closed', 'Anything not extracted is gone.');
     }
   }
+  _saveSeen(st);
 }
 
 function feedLine(e) {
@@ -1055,8 +1141,18 @@ function renderRail() {
   var encHere = pendingEnc && pendingEnc.x === me.x && pendingEnc.y === me.y;
 
   if (pendingBattle) {
-    actBtn.textContent = 'Fight'; actBtn.disabled = false;
-    actBtn.onclick = function () { launchBattle(pendingBattle); };
+    /* ⚠ THIS SAID "FIGHT" FOR A BATTLE YOU HAD ALREADY PLAYED AND REPORTED.
+       A bare win claim waits for the opponent, so the battle stays open — and
+       the only thing on screen invited you to play the same match again, which
+       would have been a second whole card game for one result. */
+    if (pendingBattle.i_claimed) {
+      actBtn.textContent = pendingBattle.they_claimed ? 'Result disputed' : 'Waiting on your opponent';
+      actBtn.disabled = true;
+      actBtn.onclick = null;
+    } else {
+      actBtn.textContent = 'Fight'; actBtn.disabled = false;
+      actBtn.onclick = function () { launchBattle(pendingBattle); };
+    }
   } else if (encHere && canAct) {
     // Recovery path for a draft that was closed or interrupted.
     actBtn.textContent = 'Open encounter'; actBtn.disabled = false;
@@ -1354,15 +1450,38 @@ function launchBattle(battle) {
     });
 }
 
-// The parent posts the engine's verdict back here.
+/* The parent posts the engine's verdict back here, after it has reported it.
+
+   ⚠ THIS USED TO REPORT THE BATTLE ITSELF, AND NOTHING EVER SENT IT THE
+   MESSAGE — the whole handler was dead code, and the parent reported the result
+   and dropped the answer. So the one screen in the mode whose job is to tell
+   you what just happened said nothing at all: the loser was teleported home,
+   docked 30 HP, injured for two turns, stripped of half their carried
+   resources and their newest unsecured card, and came back to silence.
+
+   The parent reports (it is the one holding the verdict); this renders it. And
+   it renders the THIRD outcome as well as the two obvious ones: a bare win
+   claim waits for the opponent by design, and telling the player "Victory, the
+   Warpath has recorded it" while the server still says status=open is a lie
+   the client used to tell every time. */
 window.addEventListener('message', function (ev) {
   var d = ev.data;
   if (!d || d.type !== 'warpath:battleResult') return;
   closeModal();
-  act('warpath_battle_report', { p_battle: d.battle_id, p_winner: d.won ? S.state.me.expedition_id : d.loser_is_me === false ? null : (d.winner_expedition_id || null) }, function (r) {
-    ribbon(d.won ? 'Victory' : 'Defeat',
-      d.won ? 'The Warpath has recorded it.' : 'You wake at your camp. The vault held.');
-  });
+  if (!d.reported) {
+    ribbon('Not reported yet', 'The Warpath could not be reached to record that battle. '
+      + 'It will settle when the connection comes back.');
+  } else if (d.awaiting) {
+    ribbon(d.won ? 'You won — waiting on your opponent' : 'Reported',
+      'Your result is in. A win only counts once the other Hero reports the same thing, '
+      + 'so being quick buys nothing. Until then neither of you can move.');
+  } else if (d.won) {
+    ribbon('Victory', 'The Warpath has recorded it.');
+  } else {
+    ribbon('Defeat', 'You wake at your camp, injured. Your vault held — only what you were '
+      + 'carrying is gone.');
+  }
+  refresh();
 });
 
 /* ── Extraction & the EXPEDITION COMPLETE sheet ────────────────────────────
@@ -1600,8 +1719,9 @@ function tickClock() {
   var left = Math.max(0, Math.round((S.deadlineAt - Date.now()) / 1000));
   var m = Math.floor(left / 60), ss = left % 60;
   el.querySelector('b').textContent = m + ':' + (ss < 10 ? '0' : '') + ss;
-  el.classList.toggle('warn', left <= 20);
-  el.classList.toggle('critical', left <= 5);
+  // Only urgent while it is actually your turn — see the note in renderTop.
+  el.classList.toggle('warn', S.clockIsMine !== false && left <= 20);
+  el.classList.toggle('critical', S.clockIsMine !== false && left <= 5);
 }
 setInterval(tickClock, 1000);
 

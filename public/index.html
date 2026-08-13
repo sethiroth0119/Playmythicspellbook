@@ -215641,6 +215641,13 @@ function _warpathOpen() {
       } catch (e) {}
       try { _WP.frame.contentWindow.postMessage({ type: 'warpath:cardmeta', meta: meta },
                                                 window.location.origin); } catch (e) {}
+      /* The rebuilt frame has just spoken for the first time, which is the
+         earliest moment it can be handed the verdict of the battle that caused
+         the rebuild. Delivered exactly once. */
+      if (_WP.pendingResult) {
+        const pr = _WP.pendingResult; _WP.pendingResult = null;
+        try { _WP.frame.contentWindow.postMessage(pr, window.location.origin); } catch (e) {}
+      }
       return;
     }
     if (d.type === 'warpath:battle') { warpathStartBattle(d.battle); return; }
@@ -216019,8 +216026,20 @@ async function warpathAfterBattle() {
   const res = App._warpathAfter; App._warpathAfter = null;
   App.state = null;
   if (!res) { App.screen = 'title'; return render(); }
+  /* ⚠ THE VERDICT USED TO BE REPORTED AND THEN DROPPED ON THE FLOOR.
+     Nothing in the shipped game ever posted `warpath:battleResult`, so the
+     sub-app's handler for it was dead code, and the two fields the server uses
+     to say "not yet" — pending_confirmation / awaiting_opponent — were never
+     read by anybody. A player who won was told "Victory, the Warpath has
+     recorded it", was then frozen by battle_pending, and was offered a Fight
+     button for the battle they had just won.
+
+     The screen is torn down around a battle and rebuilt afterwards, so the
+     answer cannot be handed over synchronously — it is stashed and posted to
+     the new frame once it says it is ready. */
+  let report = null;
   try {
-    await _warpathRpc('warpath_battle_report', {
+    report = await _warpathRpc('warpath_battle_report', {
       p_battle: res.battle_id,
       p_winner: res.won ? res.expedition_id : (res.opponent_expedition_id || null),
     });
@@ -216028,6 +216047,14 @@ async function warpathAfterBattle() {
     try { console.warn('[warpath] could not report the battle:', e); } catch (e2) {}
     showToast('⚠ Could not reach the Warpath to report that battle — it will resolve when you return.', 5200);
   }
+  _WP.pendingResult = {
+    type: 'warpath:battleResult',
+    battle_id: res.battle_id, kind: res.kind || null, won: !!res.won,
+    // The server's own words, not a guess made here.
+    awaiting: !!(report && report.pending_confirmation),
+    resolved: !!(report && report.winner),
+    reported: !!report,
+  };
   App.screen = 'title';
   render();
   _warpathOpen();

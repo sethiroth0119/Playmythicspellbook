@@ -89,6 +89,25 @@ function houseTiles() {
   return out;
 }
 function specOf(t) { return H.tierSpec(t ? t.lvl : 1); }
+/* 🏗 IS THIS HOUSE STILL A HOLE IN THE GROUND?
+   A Resting House under construction (`t.bld.k === 0`) has no beds, no roof and
+   no card asleep in it, and it must accrue exactly ZERO — otherwise a player
+   who orders a 24-hour Tier 3 House starts earning Resonance from a foundation
+   pad, which is the same class of bug as a construction site paying rent.
+   ⚠ AN UPGRADING HOUSE (k = 1) IS NOT A SITE. It is a standing, working
+     building at its current tier whose `lvl` simply has not moved yet — it
+     keeps its billets and keeps accruing at the tier it actually reached.
+     That asymmetry is the entire point of the k flag; testing `t.bld` alone
+     here would silently stop a live House the moment its owner upgraded it.
+   🔴 THE GLOBALS TRAP. `bldSite` is a top-level `const` inside node-city's
+      module script and is invisible from here, so index.html hands it over as
+      `ctx.isSite` at mount. The fallback reads the record's own shape, which
+      keeps this correct (and unit-testable with a bare tile object) if a
+      future ctx forgets the field — never a bare global, never window.game. */
+function isSite(t) {
+  try { if (CTX && typeof CTX.isSite === 'function') return !!CTX.isSite(t); } catch (e) {}
+  return !!(t && t.bld && t.bld.k === 0);
+}
 /* The billet store lives ON THE TILE, so it is written by the city's own
    serialize() and read by its loadState() — no second save file, no second
    failure mode. `loadHouse` is absent-tolerant by construction. */
@@ -124,6 +143,7 @@ export function tick(dtMin) {
   const rq = restNow().quality;
   for (const [, t] of houseTiles()) {
     if (t.damaged) continue;                       // a damaged building is offline, city-wide rule
+    if (isSite(t)) continue;                       // 🏗 and an unbuilt one does not exist yet
     const spec = specOf(t);
     H.tick(houseOf(t), dtMin, {
       tierRate: spec.rate, restQuality: rq,
@@ -147,6 +167,12 @@ export function settleOffline() {
   let total = 0, away = 0, capped = false;
   for (const [, t] of houseTiles()) {
     if (t.damaged) continue;
+    /* 🏗 Same skip as the live tick, and it matters MORE here: settle() pays
+       for an absence, so a House ordered just before the player closed the tab
+       would bank up to the whole 36-hour cap for a building that was a
+       foundation pad the entire time. The watermark is untouched by the skip,
+       so it settles honestly from the moment it finishes. */
+    if (isSite(t)) continue;
     const spec = specOf(t);
     const r = H.settle(houseOf(t), {
       tierRate: spec.rate, restQuality: rq,
@@ -469,7 +495,7 @@ export function mount(ctx) {
     tipLine, open, close, refresh, restNow, restInputs, houseOf,
     specOf, HOUSE_TYPE, TIERS: H.TIERS, ROOMS: H.ROOMS,
     // 🔬 test seam — the driver needs to move the clock without waiting 36h.
-    _ctx: () => CTX, _core: () => ctxForCore(),
+    _ctx: () => CTX, _core: () => ctxForCore(), _isSite: isSite,
   };
   try { window.MythicHouse = api; } catch (e) {}
   return api;

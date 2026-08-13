@@ -16895,14 +16895,14 @@ async function economyTick(dtMin) {
      computed — rest quality is read from game.cov/vitals/wellbeing inside the
      module. Guarded because the module is loaded asynchronously and the city
      must tick normally on any browser or build where it never arrives. */
-  /* 🏗 ⚠ DOCUMENTED GAP: the per-tile skip a site needs lives on the MODULE
-     side. house.city.js walks CTX.game.tiles itself (houseTiles()) and applies
-     its own `t.damaged` guard; this file cannot reach inside that loop. It
-     costs nothing today — a site has no billets (the Manage-billets action is
-     hidden on a site) and an empty House accrues zero — so the only effect is
-     an empty house record materialising on an unfinished Resting House. If a
-     bldSite gate is ever wanted there it has to be handed over through the
-     mount ctx, exactly like every other read this file lends out. */
+  /* 🏗 THE PER-TILE SITE SKIP LIVES ON THE MODULE SIDE, and it is closed:
+     house.city.js walks CTX.game.tiles itself (houseTiles()) and this file
+     cannot reach inside that loop, so `bldSite` is handed over as `ctx.isSite`
+     at mount — the globals trap again, and the same hand-over every other read
+     that module makes goes through. It falls back to reading the record shape
+     (`t.bld.k === 0`) so the module is still correct if a future ctx forgets
+     to pass it. An UPGRADING Resting House (k=1) is standing and working and
+     keeps accruing; only a hole in the ground is skipped. */
   try { if (window.MythicHouse) window.MythicHouse.tick(dtMin); } catch (e) {}
 
   /* 🏙 THE LIVING ECONOMY rides the same clock as everything else here — a
@@ -17165,6 +17165,261 @@ const bldRemain = (t, now) => t && t.bld
 const bldExempt = type => type === 'anchor'
       || (bldCfg() ? bldCfg().exemptTypes.indexOf(type) >= 0 : true)
       || !!(BUILDINGS[type] && BUILDINGS[type].decor);
+
+/* `opsTypeOf` / `opsKeyOf` are `const` arrows declared with the OPERATIONS
+   layer several thousand lines below this one. Every caller here runs long
+   after boot has walked past that line, so the binding is live — but a
+   try/catch is not decoration: `typeof` on a `const` still in its temporal
+   dead zone THROWS ReferenceError rather than answering 'undefined', so there
+   is no cheaper guard, and a duration helper that throws during boot would
+   take the whole city page down with it. */
+const bldOpType = type => { try { return opsTypeOf(type); } catch (e) { return null; } };
+
+/* ⏳ THE PROFILE — everything the duration curve needs, extracted from a
+   building def. Returns null for an exempt type (⇒ instant, no timer, no
+   slot) and null when the economy module is absent, which is the same answer
+   for the same reason: no curve, no order.
+
+   🔴 RAW def.cost / def.tierCost — NEVER costOf(). costOf() returns tierCost
+      UNSCALED while scaleCost() multiplies everything else by
+      BUILD_CINDER_MULT, so `costOf('stadium',1).cinder` is 600 against
+      `costOf('farm',1).cinder` 1400 — a costOf-derived duration builds a
+      Stadium FASTER THAN A STARTER FARM. Two of the three competing designs
+      shipped that bug off the stale comment above costOf() claiming tierCost
+      "is already at the right scale". The raw dicts are all authored on one
+      shelf (bush 2 … holdco 11000, with tierCost 45–2400 sitting inside it)
+      and are the only directly comparable numbers in the file.
+   🔴 genOf(), NEVER def.gen.cinder. def.gen.cinder is a PER-MINUTE figure the
+      tick pays at /CINDER_PERIOD_DIV, and genOf()'s own header forbids any
+      panel reading def.gen[r] directly for exactly that reason.
+      genOf(def,'cinder')*60 is cinder per HOUR, which is what `full` divides.
+   ⚠ `power` never reaches the resource channel — it is in ECON's resSkip
+      because power is NEVER BANKED. Letting gen.power 6.0 fall through to the
+      default tier makes it the single largest resource signal in the game and
+      pushes the mandatory Power Station above the 24-hour ceiling, from a
+      quantity no ledger ever holds. */
+function bldProfile(type, lvl, kind, speedMul) {
+  const C = bldCfg(); if (!C) return null;
+  const def = BUILDINGS[type]; if (!def) return null;
+  if (bldExempt(type)) return null;
+  /* Every op_* is registered with `cost: {}`, so no cost-derived formula can
+     say anything about one at all. They get the flat opSec out of ECON —
+     reading the OPS mock price literal into a duration would be a Rule-4
+     breach and would also be wrong, since that price is the LICENCE and was
+     already paid at City Hall. */
+  if (bldOpType(type) !== null) return { fixedSec: C.opSec, kind, lvl, speedMul };
+
+  const rate = Math.pow(RATE_MULT, lvl - 1);           // the same curve tileMult() uses
+  const dv = d => { let v = 0; for (const k in (d || {}))
+      v += (k === 'cinder') ? (+d[k] || 0) : (+d[k] || 0) * C.costResWeight; return v; };
+  const raw = (def.tierCost && def.tierCost[lvl - 1])
+      ? def.tierCost[lvl - 1]
+      : (() => { const m = Math.pow(UPGRADE_MULT, lvl - 1), o = {};
+                 for (const k in (def.cost || {})) o[k] = (+def.cost[k] || 0) * m; return o; })();
+
+  const cinderPerHr = (def.gen && def.gen.cinder) ? genOf(def, 'cinder') * 60 * rate : 0;
+  let res = 0;
+  for (const r in (def.gen || {})) {
+    if (C.resSkip.indexOf(r) >= 0) continue;
+    let tier = C.resTier[r];
+    /* An id ECON does not name is looked up in the resource chain, and only
+       then falls back to the default tier — a wave-2 resource must not be
+       priced as if it were wheat just because this table predates it. */
+    if (tier === undefined) { try { const m = window.MythicResourceChain &&
+        window.MythicResourceChain.byId(r); tier = (m && Number.isFinite(+m.tier)) ? +m.tier
+        : C.defaultTier; } catch (e) { tier = C.defaultTier; } }
+    res += genOf(def, r) * 60 * rate * Math.pow(C.tierMul, tier);
+  }
+  const svc = (((def.svc && def.svc.supply) || 0) +
+               ((LEGACY_SERVICE[type] && LEGACY_SERVICE[type].supply) || 0)) * lvl;
+
+  return { cost: dv(raw), cinderPerHr, res, svc, lvl, kind, speedMul };
+}
+/* Seconds, or 0 for "no timer" — exempt type, no config, or NO ECONOMY MODULE.
+   That last one is the degrade path and it is why there is no fallback literal
+   here (Rule 4): with /src/economy gone this returns 0, nothing writes a
+   timer, the city places buildings instantly exactly as it did before this
+   feature, and bldNormalize() COMPLETES whatever was already on disk. */
+function bldDuration(type, lvl, kind, speedMul) {
+  const E = window.MythicEconomy; const p = bldProfile(type, lvl, kind, speedMul || 1);
+  if (!p || !E || typeof E.buildSeconds !== 'function') return 0;
+  const d = E.buildSeconds(p) | 0;
+  return (Number.isFinite(d) && d > 0) ? d : 0;
+}
+
+/* ═══ CREWS ═════════════════════════════════════════════════════════════════
+   A free Municipal Works crew takes any job under the municipal ceiling, and
+   that ceiling IS the gate — expressed as a duration rather than a yes/no
+   requirement, so the whole starter shelf (farm 9m26 … barracks 33m36) goes up
+   in a Construction-Co-less city while every Cinder earner (gasstation 1h53,
+   arena 3h23) sits above it. Income is the thing the Co. unlocks.
+
+   ⚠ SPEED IS BAKED IN AT ORDER TIME AND IS NEVER RE-ANCHORED. There is no `sm`
+     field on the record and nothing rescales a live job when capacity changes.
+     workersOf() reads the parent OPS manifest, which degrades to 0 whenever
+     OPS.st is null (standalone/message mode, a failed RPC) — a stale manifest
+     silently multiplying every in-flight deadline, and persisting it, fires on
+     exactly the scenario this feature is about: the Construction Co. destroyed
+     mid-build. Losing or gaining a Co. therefore changes NOTHING about jobs
+     already running. What completing a Co. buys instead is immediate: crew
+     slots open NOW (start more jobs this second) and every FUTURE order is
+     faster. Read that as the whole rejected design, because it is.
+   ⚠ MANAGER MODE: these walk `game.tiles`, which IS the owner's city when a
+     hired mayor is looking at it. Never route them through OPS.st/opsRowsOf. */
+
+/* Completed, undamaged Construction Cos.
+   ⚠ THE TYPE STRING IS DERIVED, NEVER TYPED. `ecoHost().hasBank` tests
+     `t.type === 'bank'` while the bank is BUILDINGS['op_bank'] — permanently
+     false, which is why the entire DEBT rung is dead code. That bug is one
+     line from here and it is exactly this mistake.
+   `!bldBusy` rather than `!bldSite`: an op is maxLvl 1 so k=1 is unreachable
+   for one, which makes the two spellings identical here — and of the two, "a
+   Co. that is itself a hole in the ground supervises nothing" is the reading
+   that stays correct if ops ever gain levels. */
+function bldCoTiles() {
+  let ty = null; try { ty = opsKeyOf('construction'); } catch (e) { ty = null; }
+  if (!ty) return [];
+  return Object.entries(game.tiles).filter(([, t]) => t && t.type === ty && !t.damaged && !bldBusy(t));
+}
+/* 0 when the manifest is unavailable, which is SAFE here and only here: this
+   is read at order time and never re-anchors a live deadline. */
+function bldWorkersOf(k) { try { return (opsRowForKey(k) || {}).workers | 0; } catch (e) { return 0; } }
+function bldSlots() {
+  const C = bldCfg(); if (!C) return 0;
+  let n = C.municipal.slots;                                     // the free crew
+  for (const [k] of bldCoTiles()) n += C.slots.perCo + Math.floor(bldWorkersOf(k) / C.slots.perWorkerStep);
+  return Math.min(C.slots.max, n);                               // 2 → 5 with a 12-worker Co. → 6 capped
+}
+function bldSpeed() {
+  const C = bldCfg(); if (!C) return 1;
+  let m = 1;
+  for (const [k] of bldCoTiles()) m += C.speed.perCo + bldWorkersOf(k) * C.speed.perWorker;
+  return Math.min(C.speed.maxMul, m);                            // 1.0 → 1.50 → 2.0
+}
+function bldActive() { let n = 0; for (const t of Object.values(game.tiles)) if (t && t.bld) n++; return n; }
+
+/* 🔒 THE CREW SLOTS HAVE THE EXACT SAME RACE THE PER-TYPE CAP HAS, and for the
+   exact same reason — this one was introduced BY this feature, so it is ours.
+   `bldActive()` counts tiles that already carry `t.bld`, but that record is not
+   written until AFTER `await payCost` resolves. Every order fired while a
+   bridge round-trip is in flight therefore reads the same pre-payment `active`,
+   and four clicks 15 ms apart start four jobs on two slots with no refusal at
+   all. `_placing` does not cover it (per-SQUARE, and these are different
+   squares) and neither does `guardedAction`/`actionBusy` (per-BUTTON: a
+   concurrent placement and an upgrade never see each other's latch).
+   THE RESERVATION IS TAKEN SYNCHRONOUSLY, in the same turn as the test that
+   passed, and released in a `finally` that spans the whole await — so a thrown
+   or rejected bridge call can never leak a phantom crew and lock the city out
+   of building for the session. A plain counter, not a Set: several orders of
+   the same or different types can legitimately be in flight at once, up to the
+   number of slots, and that count is the only thing the gate cares about. */
+let _pendingOrders = 0;
+const bldReserveCrew  = () => { _pendingOrders++; };
+const bldReleaseCrew  = () => { _pendingOrders = Math.max(0, _pendingOrders - 1); };
+/* Jobs actually running PLUS jobs paid-for-or-paying whose record is not on a
+   tile yet. THIS, never bare bldActive(), is what the order gates test. */
+function bldCommitted() { return bldActive() + _pendingOrders; }
+
+/* Seconds until the soonest crew frees, for the refusal message.
+   ⚠ Infinity IS REACHABLE, and only since the reservation above existed: a
+     burst of clicks can fill every slot with orders that are still inside their
+     payCost await, so the gate refuses while no tile carries a record yet.
+     Answered honestly rather than as 0 — 0 would render as "0:00", i.e. "try
+     again now", which is the one thing that is not true. The callers print a
+     different sentence for it; see bldCrewBusyMsg. */
+function bldNextFreeSec(now) {
+  const t0 = Number.isFinite(+now) ? +now : Date.now();
+  let best = Infinity;
+  for (const t of Object.values(game.tiles)) if (t && t.bld) best = Math.min(best, bldRemain(t, t0));
+  return best;
+}
+/* ONE refusal sentence, written once and shared by the placement gate and the
+   upgrade gate — two copies of a player-facing message drift, and this one has
+   two branches to keep in step. */
+function bldCrewBusyMsg() {
+  const busy = bldCommitted(), slots = bldSlots(), next = bldNextFreeSec();
+  return '🏗 Every crew is working — ' + busy + ' / ' + slots + ' on site. ' +
+    (Number.isFinite(next)
+      ? 'The next one frees in ' + fmtCountdown(next) + '.'
+      /* Every slot is held by an order still paying for itself this instant —
+         a burst of clicks. There is no deadline to name yet, so name the truth
+         instead of printing a countdown of nothing. */
+      : 'The last crew was taken a moment ago.');
+}
+
+/* What payCost() ACTUALLY charged, in the shape the refund path has to give
+   back. THE HONEST-REFUND BASIS: cancelling reads this record and never
+   re-derives the price from costOf(), because a retune between the order and
+   the cancel would otherwise refund a number that was never paid — in either
+   direction. `pr` is null rather than {} when nothing but Cinder changed
+   hands, so a finished tile's save does not grow an empty object. */
+function bldPaid(cost) {
+  const pr = {}; let any = false;
+  for (const r in (cost || {})) {
+    if (r === 'cinder') continue;
+    const v = Math.max(0, Math.round(+cost[r] || 0));
+    if (v > 0) { pr[r] = v; any = true; }
+  }
+  return { pc: Math.max(0, Math.round((cost && +cost.cinder) || 0)), pr: any ? pr : null };
+}
+/* A fresh build order for a tile that is about to be written, or null when
+   there is no timer. `s` is stamped by the caller AT THE MOMENT payCost
+   RESOLVED, never before it — a record written ahead of the await would run
+   its clock through a bridge round-trip the player did not spend. */
+function bldRecord(kind, targetLvl, durSec, cost) {
+  if (!(durSec > 0)) return null;
+  const C = bldCfg(); const paid = bldPaid(cost);
+  return { k: kind ? 1 : 0, l: targetLvl | 0, s: Date.now(), d: durSec | 0,
+           fv: (C ? C.formulaV : 0) | 0, pc: paid.pc, pr: paid.pr };
+}
+/* An order's refund, at 100% of what it actually charged. No fraction, so no
+   rounding drift: place-then-cancel is EXACTLY zero across the wallet, which
+   is the one property that makes a 24-hour timer on a mis-click survivable. */
+function bldOrderRefund(rec) {
+  const out = {};
+  if (!rec) return out;
+  const c = Math.max(0, Math.round(+rec.pc || 0)); if (c > 0) out.cinder = c;
+  for (const r in (rec.pr || {})) {
+    const v = Math.max(0, Math.round(+rec.pr[r] || 0));
+    if (v > 0) out[r] = (out[r] || 0) + v;
+  }
+  return out;
+}
+/* ⚠ MUTATES its argument (deletes `cinder` as it pays it) — pass a copy if the
+   dict is needed afterwards. Same two-step the demolish refund has always
+   used: Cinder goes through addCinders, everything else through addRes.
+   Rule 2: every key here came out of costOf()/def.cost, so they are all
+   index.html RESOURCES ids. A chain id must never reach addRes. */
+async function bldPayRefund(refund) {
+  if (refund.cinder) { await MythicCityBridge.addCinders(refund.cinder); delete refund.cinder; }
+  for (const r in refund) if (refund[r]) await MythicCityBridge.addRes(r, refund[r]);
+}
+/* 🧨 CANCEL ONE ORDER. A site (k=0) has nothing standing, so cancelling it
+   removes the tile; an upgrade (k=1) cancels only the undelivered level and
+   leaves the working building exactly where it is. Both refund 100% of what
+   the order charged and nothing more — the standing building's own 50% is
+   demolish's business, not cancel's.
+   `t.bld` is cleared FIRST, before the await, for the same reason bldFinish
+   does it: the 4-second sweep and a second click both have to find nothing. */
+async function bldCancel(kk) {
+  const t = game.tiles[kk]; const rec = t && t.bld; if (!rec) return null;
+  delete t.bld;
+  const refund = bldOrderRefund(rec);
+  const nm = (BUILDINGS[t.type] || {}).name || t.type;
+  if (rec.k === 0) {
+    try { dropTileMesh(t); } catch (e) {}
+    const [x, z] = kk.split(',').map(Number);
+    delete game.tiles[kk];
+    try { refreshRoadArea(x, z); } catch (e) {}
+    if (selectedKey === kk) { $('inspect').classList.remove('open'); selectedKey = null; }
+  }
+  await bldPayRefund({ ...refund });
+  logEvent('city', '🏗 ' + (rec.k === 1 ? 'Upgrade of ' + nm : nm + ' construction') +
+           ' at ' + kk + ' cancelled — ' + (Object.keys(refund).length ? costLabel(refund) + ' refunded' : 'nothing to refund') + '.');
+  try { computeLinks(); manageAgents(); updateHUD(); saveSoon(); } catch (e) {}
+  if (rec.k === 1 && selectedKey === kk) { try { openInspect(kk); } catch (e) {} }
+  return { key: kk, kind: rec.k, refund };
+}
 
 /* 🏗 Rehydrate a build order from a save.
    ⚠ RUNS BEFORE window.MythicEconomy EXISTS. loadState() is awaited early in
@@ -17644,12 +17899,34 @@ window.__tipBuild = function (spec) {
    A Set rather than a global latch, because placing two different squares fast
    is legitimate and should not be throttled. */
 const _placing = new Set();
+/* 🔒 THE OTHER HALF OF THE SAME RACE, AND IT IS OLDER THAN THIS FEATURE.
+   `_placing` is per-SQUARE, deliberately, so paving two tiles fast is not
+   throttled. But the per-type CAP is counted from `game.tiles` at the top of
+   tryPlace and the tile is not written until after `await payCost` — so two
+   fast clicks on two DIFFERENT squares both read count 0, both pass a `cap: 1`
+   check, and both place. That has always been true; it was cheap to undo while
+   a duplicate was a click and a refund away. A 24-hour timer turns it into a
+   day-long unwinnable tile on a building the city is only ever allowed one of
+   (gate, stadium, resthouse, railyard, obelisk, kalonstable).
+   A MULTISET, not a Set: the same type can legitimately be in flight on
+   several squares at once when its cap allows it, and a Set could only ever
+   answer "some square is placing a gate", which under-counts the moment the
+   cap is 2. Incremented beside `_placing.add` and released in the SAME finally,
+   so a thrown bridge call cannot leak a phantom reservation and lock a type out
+   for the session. */
+const _pendingType = new Map();
+const _pendingOf = ty => _pendingType.get(ty) || 0;
 async function tryPlace(x, z) {
   if (!inGrid(x, z) || tileAt(x, z)) return;
   const pk = key(x, z);
   if (_placing.has(pk)) return;
   const def = BUILDINGS[placeType]; if (!def) return;
-  const count = Object.values(game.tiles).filter(t => t.type === placeType).length;
+  /* Sites are NOT excluded from this count, on purpose (the asymmetry table):
+     an unfinished gate still owns the city's one gate slot, or a player starts
+     two 24-hour builds of a cap-1 building and one of them is dead on arrival.
+     Everything else about a site is invisible; this and the population charge
+     are the two things it holds. */
+  const count = Object.values(game.tiles).filter(t => t.type === placeType).length + _pendingOf(placeType);
   // 🛤️ Roads answer to the maintenance cap, not the generic per-building one —
   // and the refusal has to say how to RAISE it, or it is just a wall.
   if (placeType === 'road') {
@@ -17690,9 +17967,23 @@ async function tryPlace(x, z) {
   }
   if (def.pop && popUsed() + def.pop > popCap()) { toast('Not enough population — build Housing.', 'bad'); return; }
   const cost = costOf(placeType);
+  /* 🏗 THE DURATION IS FIXED HERE, BEFORE THE AWAIT — and it is the last read
+     of bldSpeed() this order will ever make. Re-reading crew speed after
+     payCost resolves would let a Construction Co. that completed during the
+     bridge round-trip re-anchor an order the player was already quoted, which
+     is the same class of bug as rescaling live jobs on a capacity change; the
+     refusal gate that ran before this (see the order-gate wrapper) quoted this
+     same number from this same function. 0 ⇒ exempt type, or no economy
+     module: instant placement, byte-for-byte the old behaviour. */
+  const durSec = bldDuration(placeType, 1, 0, bldSpeed());
   // 🔒 From here on there is an await, so hold the square until it resolves.
   //    Released in a finally so a thrown bridge call cannot deadlock the tile.
+  //    ⚠ `ptype` is captured, not re-read: the player can switch the palette
+  //       while payCost is in flight, and the reservation must be released
+  //       under the key it was taken under or the multiset leaks.
+  const ptype = placeType;
   _placing.add(pk);
+  _pendingType.set(ptype, _pendingOf(ptype) + 1);
   try {
     if (!(await payCost(cost))) { toast('Cannot afford ' + def.name + ' (' + costLabel(cost) + ').', 'bad'); return; }
     if (tileAt(x, z)) return;         // something legitimately took it while we paid
@@ -17704,11 +17995,16 @@ async function tryPlace(x, z) {
        constructors carry this key so the shape is identical wherever a tile
        comes from — a `bld` that is present on one path and `undefined` on
        another is how a predicate starts answering differently depending on
-       whether the tile was placed this session or loaded from disk. The order
-       package fills this in; a timerless build writes null and behaves exactly
-       as it did before this feature existed. */
+       whether the tile was placed this session or loaded from disk. A
+       timerless build writes null and behaves exactly as it did before this
+       feature existed.
+       ⚠ `s` is stamped INSIDE bldRecord, i.e. right here, one line after
+         payCost resolved — that is the definition of the field.
+       ⚠ pc/pr record what payCost ACTUALLY CHARGED, taken from the same `cost`
+         dict it was handed, so a cancel refunds the price that was paid rather
+         than the price costOf() would quote after a retune. */
     const t = { type: placeType, lvl: 1, rot: canRotate(placeType) ? placeRot : 0, born: game.cityAge || 0,
-                spent: (cost && cost.cinder) | 0, earn: 0, bld: null };
+                spent: (cost && cost.cinder) | 0, earn: 0, bld: bldRecord(0, 1, durSec, cost) };
     if (def.requiresCard) {
       const c = freeCards().find(c => c.type === def.requiresCard);
       CARDS.splice(CARDS.indexOf(c), 1);
@@ -17718,8 +18014,17 @@ async function tryPlace(x, z) {
     game.tiles[pk] = t;
     if (placeType === 'road') { refreshRoadArea(x, z); }
     else { t.mesh = buildMesh(placeType, 1, x, z); placeMeshAt(t.mesh, x, z, t.rot); refreshRoadArea(x, z); }
+    /* 🚧 The site look, applied the same way loadState applies it to a tile
+       that came off disk — AFTER placeMeshAt, because it copies the world
+       position off the mesh placeMeshAt just positioned rather than
+       re-deriving it. Mirrors `if (t.damaged) applyDamagedLook(t)`. */
+    if (t.bld) applyBuildLook(t);
     computeLinks(); manageAgents(); updateHUD(); saveSoon();
-  } finally { _placing.delete(pk); }
+  } finally {
+    _placing.delete(pk);
+    const n = _pendingOf(ptype) - 1;
+    if (n > 0) _pendingType.set(ptype, n); else _pendingType.delete(ptype);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -18830,7 +19135,10 @@ function openInspect(k) {
   // ANY resource number. costChipsHtml builds from BUILDINGS/costOf data only —
   // no user string reaches it — and each chip is its own hover target.
   const up = $('btn-upgrade');
-  if (!t.damaged && (def.maxLvl || MAX_LVL) > t.lvl) {
+  // 🏗 One job per tile: no upgrading a hole in the ground, and no stacking a
+  //    second order on a building that is already mid-upgrade. bldBusy, not
+  //    bldSite — this is a button, which is the one thing bldBusy is for.
+  if (!t.damaged && !bldBusy(t) && (def.maxLvl || MAX_LVL) > t.lvl) {
     up.style.display = 'block';
     up.innerHTML = '⬆ Upgrade to L' + (t.lvl + 1) + ' — '
       + costChipsHtml(costOf(t.type, t.lvl + 1), { verb: 'Upgrade cost' });
@@ -18851,8 +19159,13 @@ function openInspect(k) {
   else rot.style.display = 'none';
   const dem = $('btn-demolish');
   dem.style.display = 'block';
+  /* 🏗 A site says CANCEL and says FULL refund, because that is what the button
+     does there — printing "50% refund" over an action that returns 100% of the
+     order is a lie in the safe direction, which is still a lie, and it is the
+     label a player reads before committing to undoing a 24-hour mistake. */
   dem.textContent = t.type === 'road'
     ? '🧨 Demolish road — ' + ROAD_DEMOLISH_COST + ' ₵'
+    : bldSite(t) ? '🧨 Cancel construction (full refund)'
     : '🧨 Demolish (50% refund)';
 }
 function repairCost(t) {
@@ -18890,20 +19203,89 @@ $('btn-repair').onclick = guardedAction(async () => {
 $('btn-rotate').onclick = () => rotateSelected();
 $('btn-close').onclick = () => { $('inspect').classList.remove('open'); selectedKey = null; };
 $('btn-upgrade').onclick = guardedAction(async () => {
-  const t = game.tiles[selectedKey]; if (!t) return;
+  const k = selectedKey;
+  const t = game.tiles[k]; if (!t) return;
+  /* 🏗 BEFORE anything: one job per tile. The button is hidden while a job runs
+     and guardedAction already covers the await, so this is the third line of
+     defence and it is here because the cost of missing it is a SECOND paid
+     order overwriting the first one's pc/pr — the player's money quietly
+     leaving with no refund basis left to give it back from. */
+  if (bldBusy(t)) return;
   if (t.lvl >= (BUILDINGS[t.type].maxLvl || MAX_LVL)) return;   // the button is hidden, but a double-fire is not
-  const cost = costOf(t.type, t.lvl + 1);
+  const target = t.lvl + 1;
+  const cost = costOf(t.type, target);
+  /* kind = 1 and the TARGET level: upgrades scale off ECON's upgrade curve
+     (base × mulPerLevel^(lvl-1)), so a farm L1→L2 is 24m49 and L2→L3 is 1h34.
+     Quoted and fixed BEFORE the await, exactly as tryPlace does it. */
+  const durSec = bldDuration(t.type, target, 1, bldSpeed());
+  /* 🔒 The crew reservation, taken SYNCHRONOUSLY the moment the slot test
+     passes and released in the finally below — see _pendingOrders. This button
+     is NOT covered against a concurrent placement by guardedAction/actionBusy:
+     that latch is per-button, so an upgrade and a tryPlace both awaiting their
+     own payCost never see each other, read the same pre-payment count, and
+     start two jobs on one free slot. */
+  let reserved = false;
+  if (durSec > 0) {
+    /* The same two refusals the placement gate applies, in the same order and
+       for the same reasons — an upgrade occupies a crew slot exactly like a
+       new build, and an upgrade is where the long durations actually live. */
+    if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
+    if (bldOpType(t.type) === null && durSec > bldCfg().municipal.maxSec && !bldCoTiles().length) {
+      toast('🔒 That upgrade takes ' + fmtCountdown(durSec) + ' — more than the free Municipal Works crew will take on (' +
+            fmtCountdown(bldCfg().municipal.maxSec) + '). Buy a 🏗 Construction Co. at City Hall and site it first.', 'bad');
+      return;
+    }
+    bldReserveCrew(); reserved = true;
+  }
+  /* ⚠ The finally spans EVERY await from here down, and in particular it
+     releases only AFTER `t.bld` is written — the instant `bldActive()` starts
+     counting this job is the instant the reservation stops standing in for it,
+     with no window in between where the slot looks free. */
+  try {
   if (!(await payCost(cost))) { toast('Cannot afford upgrade (' + costLabel(cost) + ').', 'bad'); return; }
+  /* 🏗 AND AGAIN AFTER THE AWAIT. The tile can be gone (demolished) or already
+     carrying an order by the time the bridge answers.
+     ⚠ IT REFUNDS RATHER THAN RETURNING. The spec's line here is a bare
+       `return`, which on a path that has ALREADY CHARGED silently eats the
+       upgrade cost — the one outcome a player reads as theft. The refund is
+       100% of what payCost just took, through the same helper cancel uses, so
+       it is exactly reversible and mints nothing. */
+  const live = game.tiles[k];
+  if (live !== t || bldBusy(t)) {
+    await bldPayRefund({ ...bldOrderRefund(bldPaid(cost)) });
+    toast('⚠ That building changed while the upgrade was being paid for — the cost was refunded in full.', 'bad');
+    updateHUD(); return;
+  }
   t.spent = (t.spent || 0) + ((cost && cost.cinder) | 0);
-  t.lvl++;
-  dropTileMesh(t);
-  // ⚠ coords resolved BEFORE the rebuild — buildMesh seeds a house off them, and
-  //   an upgrade that rebuilt without them would re-roll the house the player is
-  //   standing in front of. Same tile, same seed, one more storey.
-  const [x, z] = selectedKey.split(',').map(Number);
-  t.mesh = buildMesh(t.type, t.lvl, x, z);
-  placeMeshAt(t.mesh, x, z, t.rot);
-  computeLinks(); openInspect(selectedKey); updateHUD(); saveSoon();
+  if (durSec <= 0) {
+    /* THE INSTANT PATH, VERBATIM. Exempt type, or no economy module: this is
+       byte-for-byte what upgrading did before this feature and it must stay
+       that way, because it is also the degrade path. */
+    t.lvl++;
+    dropTileMesh(t);
+    // ⚠ coords resolved BEFORE the rebuild — buildMesh seeds a house off them, and
+    //   an upgrade that rebuilt without them would re-roll the house the player is
+    //   standing in front of. Same tile, same seed, one more storey.
+    const [x, z] = k.split(',').map(Number);
+    t.mesh = buildMesh(t.type, t.lvl, x, z);
+    placeMeshAt(t.mesh, x, z, t.rot);
+  } else {
+    /* 🏗 THE TIMED UPGRADE. NO t.lvl++, NO dropTileMesh, NO buildMesh — and
+       that is the entire difference between k=1 and k=0. The building is
+       STANDING and WORKING at its current level for the whole countdown: it
+       produces, it employs, it holds its population and its defence, it keeps
+       its firm in the economy with the SAME firm id, and its mesh is still the
+       building the player is looking at. `t.lvl` moves in exactly one place,
+       bldFinish(), at completion. A level comparison as the discriminator
+       (`bt > 0 && bl <= lvl`) is what collapses this into an inert site and
+       hands a standing L3 building's firm to the reaper. */
+    t.bld = bldRecord(1, target, durSec, cost);
+    toast('🏗 Upgrade to L' + target + ' underway — ' + fmtCountdown(durSec) + '. It keeps working at L' + t.lvl + ' meanwhile.', 'good');
+    logEvent('city', '🏗 ' + ((BUILDINGS[t.type] || {}).name || t.type) + ' at ' + k +
+             ' started upgrading to L' + target + ' (' + fmtCountdown(durSec) + ').');
+  }
+  computeLinks(); openInspect(k); updateHUD(); saveSoon();
+  } finally { if (reserved) bldReleaseCrew(); }
 });
 $('btn-demolish').onclick = guardedAction(async () => {
   const t = game.tiles[selectedKey]; if (!t) return;
@@ -18923,6 +19305,17 @@ $('btn-demolish').onclick = guardedAction(async () => {
     computeLinks(); manageAgents(); updateHUD(); saveSoon();
     return;
   }
+  /* 🏗 A HOLE IN THE GROUND IS CANCELLED, NOT DEMOLISHED — and it refunds 100%
+     of what the order charged, not 50% of a building that was never built.
+     Demolish stays ENABLED on a site on purpose: blocking it outright bricks a
+     mis-clicked 24-hour order for a day, which was the only deliberately
+     unrecoverable state in the whole design. The two actions are the same
+     action here, so they are the same code — one refund policy, one place. */
+  if (bldSite(t)) {
+    const r = await bldCancel(selectedKey);
+    toast('🧨 Construction cancelled' + (r && Object.keys(r.refund).length ? ' — ' + costLabel(r.refund) + ' refunded in full.' : '.'), 'good');
+    return;
+  }
   /* ⚠ The tile comes off the board BEFORE the refund is awaited. The guard above
      already stops a double-click, but this also closes the window where a raid
      tick or an autosave could observe a building that has already been paid out
@@ -18934,6 +19327,23 @@ $('btn-demolish').onclick = guardedAction(async () => {
   try { if (window.MythicHouse) window.MythicHouse.onDemolish(t); } catch (e) {}
   const refund = {}; const c = costOf(t.type, t.lvl);
   for (const k in c) refund[k] = Math.floor(c[k] * .5);
+  /* 🏗 TWO REFUNDS ON A BUILDING THAT WAS MID-UPGRADE (k=1), and they are
+     different in kind, which is why they are added rather than blended:
+       · 50% of costOf(type, t.lvl) — the STANDING building, at the level it
+         actually reached. Unchanged, and it is what demolish has always paid.
+       · 100% of the order's own pc/pr — the level that was NEVER DELIVERED.
+         Charging a cancellation fee on a level the player never received is
+         indefensible, and the record is the honest basis for it: the exact
+         numbers payCost took, not what costOf() would quote today.
+     Neither mints: one is a fraction of a price paid at placement, the other is
+     bounded by what this order charged and can be paid out exactly once,
+     because `t.bld` goes with the tile. */
+  const rec = t.bld || null;
+  if (rec) {
+    const back = bldOrderRefund(rec);
+    for (const r in back) refund[r] = (refund[r] || 0) + back[r];
+    delete t.bld;                    // the order dies with the building
+  }
   dropTileMesh(t);
   const [x, z] = selectedKey.split(',').map(Number);
   delete game.tiles[selectedKey];
@@ -22460,6 +22870,74 @@ function opsDecorateShop() {
     } finally { OPS.placing.delete(pk); }
   };
 }
+
+/* ── 🏗 THE ORDER GATE ─────────────────────────────────────────────────────
+   Wrapped, not edited — and wrapped AFTER the operations wrapper above, which
+   makes this the OUTERMOST layer. That ordering is the whole point: a refusal
+   here happens before opsRefresh, before payCost, before a mesh, before a
+   tile. Nothing is charged and nothing is written, which is exactly what the
+   ops gate above does for an unowned blueprint and for the same reason.
+
+   TWO REFUSALS, IN THIS ORDER.
+   1. NO FREE CREW. There is deliberately NO QUEUE: paying now for something
+      that starts in twenty hours is the worst possible shape for a 24-hour
+      timer, and a queue adds a paid-but-unstarted persisted state with its own
+      cancel, load and reconciliation paths. The refusal names the wall-clock
+      time the next crew frees, or it is just a wall.
+   2. THE MUNICIPAL CEILING. The free Municipal Works crew takes any job under
+      ECON's municipal.maxSec; longer than that needs a COMPLETED, undamaged
+      Construction Co. standing. Every op_* is exempt from this requirement
+      (never from the timer or the slot) — the licence was already paid at City
+      Hall and charging twice for one business is the kind of thing a player
+      never forgives. op_construction itself computes to 15 minutes, well under
+      the ceiling, so the bootstrap closes twice over: through the free crew
+      AND through the ops exemption.
+
+   ⚠ THE GATE IS A PLACEMENT CHECK ONLY. In-flight builds continue if the Co.
+     is later demolished, damaged or unsited — re-checking at completion would
+     destroy a paid-for 24-hour build on an accidental demolish. */
+{
+  const _tryPlaceOrderBase = tryPlace;
+  tryPlace = async function (x, z) {
+    const C = bldCfg();
+    const def = BUILDINGS[placeType];
+    /* Occupied or off-grid: hand straight over, or a click on an existing
+       building answers with a crew message it has nothing to do with. */
+    if (!C || !def || !inGrid(x, z) || tileAt(x, z)) return _tryPlaceOrderBase(x, z);
+    /* The SAME call the base will make one moment later with the same inputs.
+       0 ⇒ exempt (roads, walls, street lights, lots, decor) or no economy
+       module: no timer, no slot, no gate — paving a grid must never become
+       twenty countdowns and must never be refused for want of a crew. */
+    const durSec = bldDuration(placeType, 1, 0, bldSpeed());
+    if (durSec <= 0) return _tryPlaceOrderBase(x, z);
+
+    /* 🔒 bldCommitted(), NEVER bare bldActive(). The base writes `t.bld` only
+       after its own `await payCost`, so a second click arriving during that
+       round-trip would otherwise read the same free slot the first one did.
+       Four clicks 15 ms apart against a 40 ms bridge = four jobs on two slots,
+       silently, with no refusal shown. See _pendingOrders. */
+    if (bldCommitted() >= bldSlots()) {
+      toast(bldCrewBusyMsg() + (bldCoTiles().length ? '' : ' A 🏗 Construction Co. adds crews.'), 'bad');
+      return;
+    }
+    if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldCoTiles().length) {
+      toast('🔒 A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise — more than the free Municipal Works crew will take on (' +
+            fmtCountdown(C.municipal.maxSec) + '). Buy a 🏗 Construction Co. at City Hall and site it first.', 'bad');
+      return;
+    }
+    /* THE RESERVATION IS TAKEN HERE — synchronously, in the same turn as the
+       test that just passed, BEFORE control is ever handed to the base and
+       therefore before any await exists that a second click could slip into.
+       ⚠ `return await`, not `return`. A bare `return promise` inside try/finally
+         in an async function runs the finally IMMEDIATELY, at the return
+         statement — the reservation would be released before payCost had even
+         been called and the race would be exactly as open as before. The await
+         is what makes the finally wait for the tile to be written. */
+    bldReserveCrew();
+    try { return await _tryPlaceOrderBase(x, z); }
+    finally { bldReleaseCrew(); }
+  };
+}
 /* 🔗 RECONCILE — meta.site is the source of truth, the tile is the picture.
    Any removal path (demolish, a future raid levelling, an edit) drops the tile
    without telling this layer, so the two are re-squared here instead of hooking
@@ -24946,6 +25424,12 @@ function animate() {
     const HOUSE = mod.mount({
       game, vitals, wellbeing,
       cardById, openCardPicker, saveSoon, toast,
+      /* 🏗 THE SITE PREDICATE, handed over because `bldSite` is a top-level
+         `const` in this module script and an ES module cannot see it. An
+         unfinished Resting House is a foundation pad: it must accrue nothing.
+         An UPGRADING one (k=1) is standing and working and must accrue
+         normally, which is why this is bldSite and not bldBusy. */
+      isSite: (t) => bldSite(t),
       confirm: (msg) => (typeof gcConfirm === 'function' ? gcConfirm(msg) : Promise.resolve(confirm(msg))),
       assignCard: (id, on) => MythicCityBridge.assignCard(id, on),
       /* ⏱ THE IDLE CONTRACT, handed over rather than re-declared. These are the
@@ -25212,6 +25696,15 @@ function animate() {
       slots:  () => (typeof bldSlots === 'function' ? bldSlots() : null),
       speed:  () => (typeof bldSpeed === 'function' ? bldSpeed() : null),
       hasCo:  () => (typeof bldCoTiles === 'function' ? bldCoTiles().length > 0 : null),
+      active: () => (typeof bldActive === 'function' ? bldActive() : null),
+      /* The in-flight crew reservations, and the number the gate actually
+         tests. A race test cannot see this any other way: `pending` is nonzero
+         only DURING an await, so a driver that fires four orders and then reads
+         `active` sees the settled state and learns nothing about the window
+         where the bug lived. */
+      pending:   () => (typeof _pendingOrders === 'number' ? _pendingOrders : null),
+      committed: () => (typeof bldCommitted === 'function' ? bldCommitted() : null),
+      nextFree: () => (typeof bldNextFreeSec === 'function' ? bldNextFreeSec() : null),
       profile: (type, lvl, kind, speedMul) => (typeof bldProfile === 'function'
                  ? bldProfile(type, lvl | 0 || 1, kind | 0, speedMul || 1) : null),
       timeFor: (type, lvl, kind, speedMul) => (typeof bldDuration === 'function'

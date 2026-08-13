@@ -79732,7 +79732,16 @@ const NODE_ACCRUAL_CAP_H = 24 * 7;
 const OPS_ECON = {
   mining:       { startup: 400000, ratePerWorkerHr: 900,  salaryPerWorkerHr: 220, maxWorkers: 12, yields: { metal: 2.2 } },
   oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10, yields: { fuel: 2.6 } },
-  construction: { startup: 350000, ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { metal: 2.0 }, inputs: { fuel: 0.5 } },
+  /* 🏗 CONSTRUCTION CO. — startup 0, and that zero is a product decision, not a
+     placeholder. City building timers put every Cinder earner (gas station
+     1h53, arena 3h23) above the free Municipal Works ceiling, so the Co. is the
+     thing that unlocks income — and it was priced at 350,000 🔥, which is node
+     income a player without a node does not have. Charging for the key to the
+     door you need the key to open is a wall, not a gate. Everything else about
+     the business (wages, output, yields, inputs, the 12-worker cap) is
+     unchanged; only the licence fee is gone. See OPS_FREE_LICENCE below — it is
+     what stops a stale published admin override from putting the fee back. */
+  construction: { startup: 0,      ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { metal: 2.0 }, inputs: { fuel: 0.5 } },
   medical:      { startup: 450000, ratePerWorkerHr: 1000, salaryPerWorkerHr: 260, maxWorkers: 10, yields: { medicine: 0.9 }, inputs: { food: 0.8 } },
   agri:         { startup: 300000, ratePerWorkerHr: 700,  salaryPerWorkerHr: 170, maxWorkers: 14, yields: { food: 2.4 } },
   research:     { startup: 700000, ratePerWorkerHr: 1700, salaryPerWorkerHr: 430, maxWorkers: 8,  yields: { memoryShards: 0.25 }, inputs: { metal: 0.6, fuel: 0.3 } },
@@ -79949,13 +79958,18 @@ function _ownsBankOp() {
         || ((typeof _jbLocalOpsList === 'function' ? _jbLocalOpsList() : []) || []).some(o => o && o.op_type === 'bank');
   } catch (e) { return false; }
 }
-async function _opCreateLocal(opType, cost) {
+/* `fundedBy` is optional and only ever a LABEL — nothing branches on it, it is
+   there so a support question about a row can be answered. It was implied by
+   `cost` alone (paid ⇒ personal, unpaid ⇒ an MT bank stake) until zero-price
+   licences existed and made "unpaid" ambiguous; passing it explicitly beats
+   widening that inference again. */
+async function _opCreateLocal(opType, cost, fundedBy) {
   if ((Operations.list || []).some(function (x) { return x && x.op_type === opType; })) { showToast('You already operate that.', 3400); return false; }
   const localOp = {
     id: 'local_' + opType + '_' + Date.now(),
     corp_id: (Corp.mine && Corp.mine.id) || 'local',
     op_type: opType, level: 1, workers: 0, status: 'active',
-    meta: { lastCollect: Date.now(), localOnly: true, fundedBy: cost ? 'personal' : 'mt-stake' },
+    meta: { lastCollect: Date.now(), localOnly: true, fundedBy: fundedBy || (cost ? 'personal' : 'mt-stake') },
     created_at: new Date().toISOString(),
   };
   _jbLocalOpsList().push(localOp);
@@ -80018,11 +80032,26 @@ function getOpsEconOverrides() {
   } catch (e) {}
   return null;
 }
+/* 🏗 FREE LICENCES — operations whose startup fee is ZERO by product decision.
+   The table above already says 0 for these; this exists because the table is
+   only HALF of the price. `getOpsEconOverrides()` merges an admin/published
+   override on top of it, and a Catalog published before this change still
+   carries `construction: { startup: 350000 }`. Without the clamp below, every
+   player who has ever received that catalog would keep paying the old fee and
+   the "free" flow in the city would silently refuse itself with `not-free`.
+   So the clamp is the enforcement and the table entry is the documentation.
+   ⚠ Free means free to ACQUIRE. Wages, inputs and the operation's own economy
+     are untouched, and the city still charges a 15-minute build and a crew slot
+     to SITE one. This must never be read as "the business is free to run". */
+const OPS_FREE_LICENCE = { construction: 1 };
 function _opEcon(t) {
   const base = OPS_ECON[t] || null;
   if (!base) return null;
   const ov = getOpsEconOverrides();
   const o = ov && ov[t];
+  // No override → the table value stands, and for a free licence that value is
+  // already 0. Returning `base` itself (not a copy) is deliberate and unchanged
+  // — several callers have always received the live row.
   if (!o || typeof o !== 'object') return base;
   const merged = Object.assign({}, base, o);
   // `yields` is a nested map — merge it too, so overriding one resource doesn't
@@ -80035,6 +80064,11 @@ function _opEcon(t) {
   if (o.inputs && typeof o.inputs === 'object') {
     merged.inputs = Object.assign({}, base.inputs || {}, o.inputs);
   }
+  // 🏗 A free licence stays free THROUGH an override. See OPS_FREE_LICENCE.
+  // This is the last word on the price and the only place it is decided, which
+  // is what keeps every call site (Just Business, the city manifest, the city
+  // build menu) honest without one of them hardcoding a zero.
+  if (OPS_FREE_LICENCE[t]) merged.startup = 0;
   return merged;
 }
 try { window.__mg = window.__mg || {}; window.__mg.opsEcon = { table: OPS_ECON, live: _opEcon, computed: _opComputed }; } catch (e) {}
@@ -82216,6 +82250,33 @@ function _jbHandleAction(a) {
         try {
           const e = _opEcon(a.op);
           if (!e) { showToast('⚠ Unknown operation type: ' + a.op, 3600); _jbSendData(); return; }
+
+          /* 🏗 A ZERO-PRICE LICENCE IS ISSUED, NOT SOLD — take the money paths
+             out of the way before either of them can run.
+             This is not cosmetic. `chargeCinderAtomic(0)` returns
+             { ok:false, reason:'bad_amount' } by design (:57027), so the
+             personal path would refuse a free business with "Startup failed:
+             bad_amount"; and the corp path would insert a 0-Cinder
+             `op_startup` row into corp_treasury, an append-only ledger, for a
+             transaction that never happened. Neither is a payment, so neither
+             runs. No confirm either — a modal asking a player to approve
+             spending nothing is noise.
+             🔴 NOTHING IS MINTED, MOVED OR REFUNDED HERE. There is no
+                addGems/_opTreasuryRow/chargeCinderAtomic on this branch at all.
+                A player who ALREADY PAID 350,000 🔥 keeps the operation they
+                bought and is NOT compensated: after the fact a paid licence and
+                a granted one are the same row, so a refund would be a faucet
+                pointed at a charge nobody can identify. */
+          if ((e.startup | 0) <= 0) {
+            const _held = (typeof _opsAllRows === 'function')
+              ? _opsAllRows() : (Operations.list || []);
+            if (_held.some(function (x) { return x && x.op_type === a.op; })) {
+              showToast('You already operate that.', 3400); _jbSendData(); return;
+            }
+            const madeFree = await _opCreateLocal(a.op, 0, 'free-licence');
+            if (madeFree) showToast('🏗 ' + ((OP_LABELS && OP_LABELS[a.op]) || a.op) + ' licence issued — free. Hire workers to start production.', 6000);
+            _jbSendData(); return;
+          }
 
           // 🏦 BANK — the one operation you can buy two ways. Ask first, because
           // the two prices are not interchangeable: Cinder is SPENT, MT is
@@ -207888,9 +207949,51 @@ window.cityOpsCityHall = function () {
     return { ok: true };
   } catch (e) { return { ok: false }; }
 };
+/* 🏗 THE FREE-LICENCE COUNTER AT CITY HALL. The city calls this for an
+   operation whose price has resolved to ZERO — today that is the Construction
+   Co. and nothing else. Two callers, one seam: a node holder is granted it at
+   city boot without ever seeing the gate, and everybody else collects it by
+   clicking the locked card, which is the same City Hall door as before.
+
+   🔴 THE PRICE IS RE-CHECKED HERE, AGAINST _opEcon, AND ANY NON-ZERO PRICE IS
+      REFUSED. The city is an iframe with its own cached manifest, and this is
+      the last line before an operation row exists — so it must be impossible to
+      talk this function into handing out something that costs money. If an
+      admin ever retunes the fee back, every free path in the city shuts off by
+      itself and the ordinary paid flow returns, with no second edit.
+   🔴 NO CINDER MOVES, IN EITHER DIRECTION. There is no chargeCinderAtomic, no
+      _opTreasuryRow and no addGems on this path; the row is created at cost 0
+      through the SAME _opCreateLocal seam the MT bank purchase has always used.
+      A player who already paid for a Construction Co. keeps it and is NOT
+      refunded — see the opFound branch for why inventing one would be a faucet.
+   IDEMPOTENT BY OWNERSHIP, never by a flag. _opsAllRows() spans the corp list
+   AND the profile-local list, and the profile-local list is on disk before any
+   network call, so booting twice with a node held cannot produce two licences
+   even offline. The remaining seam — a corp row that exists in the cloud but
+   has not been fetched yet — is closed by the opFetch() below AND self-heals
+   anyway: opFetch drops a local row whose type the corp already owns (:80063). */
+window.cityOpsGrantFree = async function (opType) {
+  try {
+    const t = String(opType || '');
+    const e = (typeof _opEcon === 'function') ? _opEcon(t) : null;
+    if (!e) return { ok: false, error: 'unknown-op' };
+    if ((e.startup | 0) > 0) return { ok: false, error: 'not-free' };
+    const held = () => _opsAllRows().some((o) => o && o.op_type === t);
+    if (held()) return { ok: true, existed: true };
+    // Read the list before writing to it. Granting against a list we have never
+    // read is how a player ends up with a local row beside a corp row.
+    try { if (typeof opFetch === 'function' && !Operations._fetched) await opFetch(); } catch (e2) {}
+    if (held()) return { ok: true, existed: true };
+    const made = await _opCreateLocal(t, 0, 'free-licence');
+    if (!made) return { ok: true, existed: true };
+    try { showToast('🏗 ' + ((OP_LABELS && OP_LABELS[t]) || t) + ' licence issued — free. Place it in your city from the build menu.', 6000); } catch (e2) {}
+    return { ok: true, existed: false };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+};
 try {
   window.__mg = window.__mg || {};
   window.__mg.ops = { state: () => window.cityOpsState(), site: window.cityOpsSite, hall: window.cityOpsCityHall,
+                      grantFree: window.cityOpsGrantFree,
                       unsite: window.cityOpsUnsite, setEff: window.cityOpsSetSiteEff,
                       setLab: window.cityOpsSetLab, enter: window.cityEnterBusiness,
                       siteEff: (id) => _opSiteEff(_opRowById(id)),

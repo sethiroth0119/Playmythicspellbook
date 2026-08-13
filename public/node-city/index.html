@@ -17346,6 +17346,23 @@ function bldCrewBusyMsg() {
          instead of printing a countdown of nothing. */
       : 'The last crew was taken a moment ago.');
 }
+/* The sentence BOTH municipal-ceiling refusals end with — the placement gate
+   and the upgrade gate. One copy, because two copies of a player-facing message
+   drift, and this one has a branch to keep in step: the Construction Co.
+   licence is free (index.html OPS_FREE_LICENCE), so telling a stuck player to
+   "buy" it sends them looking for 350,000 🔥 they do not need. The price is
+   asked, never assumed — retune a fee back on and the sentence corrects itself.
+   ⚠ opsIsFree lives in the ops layer further down the file; it is a hoisted
+     function declaration, but the typeof guard means this is still honest if
+     that layer is ever pulled out. */
+function bldCoHint() {
+  try {
+    if (typeof opsIsFree === 'function' && opsIsFree('construction')) {
+      return 'Pick up a 🏗 Construction Co. at City Hall — it is free — and site it first.';
+    }
+  } catch (e) {}
+  return 'Buy a 🏗 Construction Co. at City Hall and site it first.';
+}
 
 /* What payCost() ACTUALLY charged, in the shape the refund path has to give
    back. THE HONEST-REFUND BASIS: cancelling reads this record and never
@@ -19232,7 +19249,7 @@ $('btn-upgrade').onclick = guardedAction(async () => {
     if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
     if (bldOpType(t.type) === null && durSec > bldCfg().municipal.maxSec && !bldCoTiles().length) {
       toast('🔒 That upgrade takes ' + fmtCountdown(durSec) + ' — more than the free Municipal Works crew will take on (' +
-            fmtCountdown(bldCfg().municipal.maxSec) + '). Buy a 🏗 Construction Co. at City Hall and site it first.', 'bad');
+            fmtCountdown(bldCfg().municipal.maxSec) + '). ' + bldCoHint(), 'bad');
       return;
     }
     bldReserveCrew(); reserved = true;
@@ -22568,8 +22585,14 @@ function _opsParent() {
 }
 /* ⚠ TEST FALLBACK ONLY. Real prices come from the parent's _opEcon (the one
    place operation pricing is allowed to live — see CLAUDE.md). These exist so
-   the standalone city can render a priced, locked blueprint without a game. */
-const OPS_MOCK_PRICE = { mining: 400000, oil: 500000, gas: 350000, construction: 350000, salvage: 250000,
+   the standalone city can render a priced, locked blueprint without a game.
+   🏗 `construction: 0` MIRRORS _opEcon, it does not decide anything. The
+      Construction Co. licence is free (index.html OPS_ECON + OPS_FREE_LICENCE);
+      this copy exists so the standalone/mock city takes the same free path a
+      real player does, which is the only way that path is testable here. If the
+      parent's price and this one ever disagree, the parent wins — every reader
+      goes through opsPriceOf(), which asks the manifest first. */
+const OPS_MOCK_PRICE = { mining: 400000, oil: 500000, gas: 350000, construction: 0, salvage: 250000,
   cars: 450000, agri: 300000, fishing: 300000, medical: 450000, research: 700000, cardshop: 200000,
   dojo: 150000, bank: 1000000, warehouse: 280000, smuggling: 600000 };
 const OPS_MOCK_KEY = 'mythic_city_mockops_v1';
@@ -22692,13 +22715,170 @@ async function opsEnterBusiness(opType) {
   if (P && typeof P.cityEnterBusiness === 'function') { try { return P.cityEnterBusiness(opType); } catch (e) { return { ok: false, error: 'bridge' }; } }
   return { ok: false, error: 'no-parent' };
 }
-function opsCityHall() {
-  const P = _opsParent();
-  if (P && typeof P.cityOpsCityHall === 'function') { try { return P.cityOpsCityHall(); } catch (e) {} }
-  toast('🏛 City Hall is in the full game — Just Business → Found a Business.', 'bad');
-  return { ok: false };
+/* 🏛 CITY HALL — two doors now, and which one opens is decided by the PRICE.
+   A priced licence is bought in the full game (Just Business → Found a
+   Business); that is what the parent's cityOpsCityHall opens, unchanged.
+   🏗 A ZERO-PRICE licence is handed over the counter, right here. You do not
+      route a player to a payment screen to charge them nothing, and inventing a
+      "compliance" subsystem to hold a free permit would be a second place for
+      ownership to live. City Hall is where you pick it up; this is City Hall.
+   Stays SYNCHRONOUS for its existing callers — nothing downstream of a City
+   Hall click awaits it — so the free path is fired and reported by toast. If
+   the counter cannot serve us (an older parent with no grant seam, 'message'
+   mode, a refusal) we fall back to opening the real City Hall rather than
+   leaving the click unanswered. */
+function opsCityHall(opType) {
+  const _open = () => {
+    const P = _opsParent();
+    if (P && typeof P.cityOpsCityHall === 'function') { try { return P.cityOpsCityHall(); } catch (e) {} }
+    toast('🏛 City Hall is in the full game — Just Business → Found a Business.', 'bad');
+    return { ok: false };
+  };
+  if (!opType || !opsIsFree(opType)) return _open();
+  opsAcquireFree(opType).then((r) => {
+    if (r && r.ok) {
+      const lbl = OP_BP[opType] ? OP_BP[opType].label : opType;
+      if (r.reason !== 'already') {
+        toast('🏛 ' + lbl + ' licence issued — free. Place it from the build menu.', 'good');
+        logEvent('city', '🏗 ' + lbl + ' licence collected at City Hall — no fee.');
+      }
+      opsRepaintShop();
+      return;
+    }
+    _open();
+  }).catch(() => { try { _open(); } catch (e) {} });
+  return { ok: true, free: true };
 }
 const opsMoney = (n) => (n | 0).toLocaleString();
+
+/* ═══ 🏗 ZERO-PRICE LICENCES ════════════════════════════════════════════════
+   THE PRODUCT DECISION (v120i5). The Construction Co. licence costs nothing,
+   and a player who holds a PRN node is handed it without asking.
+   Why: city building timers put the whole starter shelf under the free
+   Municipal Works ceiling but every Cinder EARNER above it (gas station 1h53,
+   arena 3h23), so the Co. is what unlocks income — and it was priced at
+   350,000 🔥, which is node income. A player with no node had to buy the key to
+   the door they needed the key to open. Node holders already did the work the
+   licence stands for, so they simply have it; everyone else collects it free.
+
+   🔴 THE PRICE IS NEVER DECIDED IN THIS FILE. opsPriceOf() asks the MANIFEST,
+      which the parent builds from _opEcon — the one place operation pricing is
+      allowed to live (CLAUDE.md, Rule 4). OPS_MOCK_PRICE is consulted only when
+      there is no manifest at all, and is that table's documented test mirror.
+      Retune the fee back in _opEcon and every path below switches itself off.
+   🔴 NO CINDER MOVES. Nothing here touches addCinders/spendCinders/addRes/
+      spendRes, and the grant goes through the parent's ops purchase seam at
+      cost 0 — the city NEVER writes corp_operations itself. A player who
+      already PAID keeps their Co. and is not refunded: the row a paid licence
+      leaves is identical to the row a granted one leaves, so a refund would be
+      a faucet aimed at a charge nobody can identify. */
+function opsPriceOf(opType) {
+  const cat = opsCatalogOf(opType);
+  if (cat && Number.isFinite(+cat.startup)) return Math.max(0, Math.round(+cat.startup));
+  return Math.max(0, OPS_MOCK_PRICE[opType] | 0);
+}
+function opsIsFree(opType) { return opsPriceOf(opType) <= 0; }
+/* Repaint the palette after ownership changes — but only if it is actually
+   open. buildShopBody() on a closed shop is wasted work at best and, at boot,
+   runs before the DOM the base builder expects. */
+function opsRepaintShop() {
+  try {
+    const b = document.getElementById('shopbody');
+    if (b && b.offsetParent !== null) buildShopBody();
+  } catch (e) {}
+}
+/* Acquire a licence whose price is zero. Returns { ok, reason } and NEVER
+   throws — every caller is fire-and-forget, and an unhandled rejection out of a
+   boot path is a console error the player cannot act on. */
+async function opsAcquireFree(opType) {
+  try {
+    if (!opsIsFree(opType)) return { ok: false, reason: 'not-free' };
+    /* Idempotent by OWNERSHIP, not by a flag: a licence already on the books —
+       bought, granted, or restored from the save — is never issued twice, and
+       that holds across reloads because the books outlive the flag. */
+    if (opsRowsOf(opType).all.length) return { ok: true, reason: 'already' };
+    /* A hired mayor is looking at somebody else's city. The manifest is the
+       MAYOR's businesses, and quietly writing a licence into their account off
+       the back of a visit is not something they asked for. */
+    if (OPS.st && OPS.st.manager) return { ok: false, reason: 'manager' };
+    const P = _opsParent();
+    if (P && typeof P.cityOpsGrantFree === 'function') {
+      let r = null;
+      try { r = await P.cityOpsGrantFree(opType); } catch (e) { return { ok: false, reason: 'bridge' }; }
+      if (r && r.ok) { await opsRefresh(true); return { ok: true, reason: r.existed ? 'already' : 'granted' }; }
+      return { ok: false, reason: (r && r.error) || 'refused' };
+    }
+    if (MythicCityBridge.mode === 'standalone') {
+      const m = opsMock();
+      let made = false;
+      if (!m.ops.some((o) => o && o.type === opType)) {
+        m.ops.push({ id: 'mock_' + opType + '_' + Date.now(), type: opType, workers: 0, level: 1, site: null, lab: null });
+        opsMockSave(); made = true;
+      }
+      await opsRefresh(true);
+      return { ok: true, reason: made ? 'granted' : 'already' };
+    }
+    // 'message' mode, or a parent too old to have the counter. Honest refusal;
+    // the caller falls back to opening the real City Hall.
+    return { ok: false, reason: 'unavailable' };
+  } catch (e) { return { ok: false, reason: 'error' }; }
+}
+/* 🗺 NODE HOLDERS ARE HANDED THE LICENCE AND NEVER SEE THE GATE.
+   ⚠ THIS IS NEVER AWAITED BY BOOT. fetchNodes() crosses the bridge, and in
+     'message' mode that is a postMessage round trip to a parent that may never
+     answer. Awaiting it inside loadState would hold the entire city hostage to
+     a silent listener, so it is fired and forgotten, raced against a timeout,
+     and throw / null / hang all land on the same "no nodes visible" branch that
+     does nothing at all.
+   ⚠ AN EMPTY ANSWER AT BOOT MEANS "NOT YET", NOT "NO NODES". In parent mode
+     fetchNodes reads FoundationReserve.nodes, which the GAME fetches on its own
+     schedule and which is routinely still empty when the city opens. Hence the
+     small bounded retry on the ops beat — bounded so it can never become a
+     poll, and abandoned for the session once it concludes either way. */
+const OPS_GRANT = { done: false, tries: 0, at: 0 };
+const OPS_GRANT_MAX_TRIES  = 6;
+const OPS_GRANT_RETRY_MS   = 30000;
+const OPS_GRANT_NODE_MS    = 4000;    // the bridge either answers, or it did not
+const OPS_NODE_LICENCES    = ['construction'];
+async function opsGrantNodeLicences() {
+  try {
+    if (OPS_GRANT.done) return;
+    const now = Date.now();
+    if (OPS_GRANT.tries && now - OPS_GRANT.at < OPS_GRANT_RETRY_MS) return;
+    if (OPS_GRANT.tries >= OPS_GRANT_MAX_TRIES) { OPS_GRANT.done = true; return; }
+    OPS_GRANT.tries++; OPS_GRANT.at = now;
+    // Nothing free to hand out (the fee was retuned back on) — stop asking.
+    const want = OPS_NODE_LICENCES.filter((t) => opsIsFree(t));
+    if (!want.length) { OPS_GRANT.done = true; return; }
+    if (want.every((t) => opsRowsOf(t).all.length)) { OPS_GRANT.done = true; return; }
+    if (OPS.st && (OPS.st.manager || OPS.st.unavailable)) return;
+    let nodes = null;
+    try {
+      nodes = await Promise.race([
+        MythicCityBridge.fetchNodes(),
+        new Promise((r) => setTimeout(() => r('__timeout__'), OPS_GRANT_NODE_MS)),
+      ]);
+    } catch (e) { nodes = null; }
+    // throw, null, undefined, a non-array, a hang, or a genuinely empty list all
+    // arrive here as "no node visible". None of them grants, none of them fails
+    // loudly, and none of them stops the city.
+    if (!Array.isArray(nodes) || !nodes.length) return;
+    for (const t of want) {
+      if (opsRowsOf(t).all.length) continue;
+      const r = await opsAcquireFree(t);
+      if (!r || !r.ok) continue;
+      if (r.reason === 'granted') {
+        const lbl = OP_BP[t] ? OP_BP[t].label : t;
+        toast('🏗 ' + lbl + ' licence granted — you hold a node, so the compliance is already yours.', 'good');
+        logEvent('city', '🏗 ' + lbl + ' licence granted free to a node holder.');
+        opsRepaintShop();
+      }
+    }
+    // Concluded only when every wanted licence is actually on the books. A
+    // partial pass keeps its remaining retries rather than declaring victory.
+    if (want.every((t) => opsRowsOf(t).all.length)) OPS_GRANT.done = true;
+  } catch (e) { /* a licence that could not be granted is never worth a crash */ }
+}
 
 /* ── 1. THE OWNERSHIP GATE, drawn into the build shop ──────────────────────
    Locked blueprints STAY VISIBLE with their price. That is not decoration: a
@@ -22784,21 +22964,35 @@ function opsDecorateShop() {
     // Owned AND already standing here → not in the menu. It is on the map.
     if (!rows.unsited.length && rows.here.length) { card.remove(); return; }
     const blocked = !st || st.unavailable || st.manager;
+    /* 🏗 A ZERO-PRICE LICENCE IS NOT A PADLOCK. Same card, same place in the
+       list, same City Hall click — but a card that says "🔒 350,000 🔥" for
+       something that costs nothing reads as a wall, and a player who believes
+       the wall never clicks it. The shape of the flow is unchanged; only the
+       sentence and the price chip are. Still LOCKED while `blocked`, because
+       then we cannot enumerate ownership at all and must not promise anything. */
+    const free = opsIsFree(opType) && !blocked && !rows.elsewhere.length;
     if (!rows.unsited.length || blocked) {
       card.classList.add('opslock'); card.classList.remove('opsown');
       const why = (st && st.manager)
         ? 'You are managing another player\'s city'
         : (rows.elsewhere.length ? 'Sited in another one of your cities'
-                                 : 'Purchase at City Hall');
-      if (sc) sc.innerHTML = '<span class="opsbuy">🔒 ' + shopEsc(why)
-        + (rows.elsewhere.length || (st && st.manager) ? '' : ' — <b>' + opsMoney(price) + ' 🔥</b>') + '</span>';
-      if (!card.querySelector('.opslockico')) {
+                                 : (free ? 'Free licence — collect at City Hall'
+                                         : 'Purchase at City Hall'));
+      if (sc) sc.innerHTML = '<span class="opsbuy">' + (free ? '🏛 ' : '🔒 ') + shopEsc(why)
+        + (rows.elsewhere.length || (st && st.manager) ? ''
+           : (free ? ' — <b>FREE</b>' : ' — <b>' + opsMoney(price) + ' 🔥</b>')) + '</span>';
+      if (!free && !card.querySelector('.opslockico')) {
         const l = document.createElement('span'); l.className = 'opslockico'; l.textContent = '🔒'; card.appendChild(l);
       }
       card.onclick = () => {
         if (st && st.manager) { toast('🏛 These are your businesses, not the owner\'s — you cannot site them in a city you only manage.', 'bad'); return; }
         if (rows.elsewhere.length) { toast('🏭 Your ' + OP_BP[opType].label + ' is already sited in another city. Demolish it there to move it.', 'bad'); return; }
         closeBuildShop();
+        if (free) {
+          toast('🏛 Collecting your ' + OP_BP[opType].label + ' licence at City Hall — no fee.', 'good');
+          opsCityHall(opType);
+          return;
+        }
         toast('🔒 ' + OP_BP[opType].label + ' — buy the business at City Hall for ' + opsMoney(price) + ' 🔥, then place it here.', 'bad');
         opsCityHall();
       };
@@ -22843,6 +23037,14 @@ function opsDecorateShop() {
     const row = rows.unsited[0];
     if (!row) {
       const cat = opsCatalogOf(opType);
+      /* 🏗 A free licence is collected, not bought — and the click that got
+         here is already a player asking for it, so collect it rather than
+         answering with a price of nothing. */
+      if (opsIsFree(opType)) {
+        toast('🏛 You do not hold a ' + OP_BP[opType].label + ' licence yet — collecting it at City Hall, free.', 'good');
+        opsCityHall(opType);
+        return;
+      }
       toast('🔒 You do not own a ' + OP_BP[opType].label + ' yet — buy it at City Hall'
         + (cat ? ' for ' + opsMoney(cat.startup) + ' 🔥' : '') + '.', 'bad');
       return;
@@ -22922,7 +23124,7 @@ function opsDecorateShop() {
     }
     if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldCoTiles().length) {
       toast('🔒 A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise — more than the free Municipal Works crew will take on (' +
-            fmtCountdown(C.municipal.maxSec) + '). Buy a 🏗 Construction Co. at City Hall and site it first.', 'bad');
+            fmtCountdown(C.municipal.maxSec) + '). ' + bldCoHint(), 'bad');
       return;
     }
     /* THE RESERVATION IS TAKEN HERE — synchronously, in the same turn as the
@@ -22944,6 +23146,13 @@ function opsDecorateShop() {
    every call site. Runs at boot and on the economy beat. */
 async function opsReconcile(boot) {
   const st = await opsRefresh(true);
+  /* 🏗 FREE LICENCES — DELIBERATELY NOT AWAITED, at boot or on the beat.
+     opsReconcile(true) is awaited by loadState, and this reaches across the
+     bridge for the player's node list; awaiting it would put the whole city
+     boot behind a call that can hang forever in 'message' mode. Fired with a
+     .catch so a rejection can never surface as an unhandled one. It rate-limits
+     and gives up on its own — see opsGrantNodeLicences. */
+  try { opsGrantNodeLicences().catch(() => {}); } catch (e) {}
   if (!st || !st.ops) return;
   /* 🔴 NEVER RECONCILE AGAINST A MANIFEST WE DO NOT TRUST.
      Pass (c) below deletes an op building that no row claims. That is right when
@@ -25713,6 +25922,23 @@ function animate() {
          and that arithmetic belongs to the order package next to the code that
          charged it — a second copy here would be a second refund policy. */
       cancel: (k) => (typeof bldCancel === 'function' ? bldCancel(k) : null),
+      /* 🏗 THE ZERO-PRICE LICENCE, made falsifiable. This is a module, so none
+         of it is on window; without these the free-licence path can only be
+         checked by clicking, and the node-holder grant fires off the boot
+         reconcile where nothing observes it.
+         `price(t)` is what the city believes an operation costs — the manifest
+         first, mock only in its absence — so a test can prove the 0 came from
+         _opEcon rather than from a literal in this file.
+         `grantState` exposes the retry bookkeeping so the "boot twice ⇒ one
+         licence" and "fetchNodes hangs" cases have something to assert on. */
+      price:      (t) => (typeof opsPriceOf === 'function' ? opsPriceOf(t) : null),
+      free:       (t) => (typeof opsIsFree === 'function' ? opsIsFree(t) : null),
+      acquire:    (t) => (typeof opsAcquireFree === 'function' ? opsAcquireFree(t) : null),
+      cityHall:   (t) => (typeof opsCityHall === 'function' ? opsCityHall(t) : null),
+      grant:      () => (typeof opsGrantNodeLicences === 'function' ? opsGrantNodeLicences() : null),
+      grantState: () => (typeof OPS_GRANT === 'object' ? { ...OPS_GRANT } : null),
+      grantReset: () => { try { OPS_GRANT.done = false; OPS_GRANT.tries = 0; OPS_GRANT.at = 0; return true; } catch (e) { return false; } },
+      licences:   (t) => (typeof opsRowsOf === 'function' ? opsRowsOf(t || 'construction').all.length : null),
     },
     costOf,
   };

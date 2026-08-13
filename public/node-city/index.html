@@ -17111,6 +17111,46 @@ function bldLoad(raw, lvl, type) {
            pr: (raw.pr && typeof raw.pr === 'object') ? raw.pr : null };
 }
 
+/* 🚧 THE SITE LOOK. A foundation pad, four corner posts and two tie beams —
+   seven boxes on ONE SHARED MATERIAL, because the scene budget is draw calls
+   and materials, not triangles, and a canvas-textured sprite was already
+   refused for exactly that reason (see the sprite note in the label code).
+   ⚠ NO rotation.z / rotation.x TILT. The tilt is applyDamagedLook's visual
+     signature; a player who reads a site as a fire goes looking for a repair
+     bill that does not exist.
+   ⚠ NO userData colour stash and NO clearBuildLook. applyDamagedLook has to
+     stash `_col` because it MUTATES the real mesh and something must restore
+     it; this does not mutate anything — it DROPS the mesh and builds a new one,
+     and completion drops it right back again (see bldFinish). Nothing to
+     restore means nothing to contend with damage's stash, which is the bug two
+     designs walked into. */
+const SITE_MAT = new THREE.MeshStandardMaterial({ color: 0x8a8070, roughness: .95 });
+function buildSiteMesh() {
+  const g = new THREE.Group();
+  g.add(box(.92, .05, .92, SITE_MAT, 0, .025, 0));                    // poured pad
+  for (const px of [-.34, .34]) for (const pz of [-.34, .34])
+    g.add(box(.055, .36, .055, SITE_MAT, px, .23, pz));               // frame posts
+  g.add(box(.74, .045, .055, SITE_MAT, 0, .40, -.34));                // tie beams
+  g.add(box(.055, .045, .74, SITE_MAT, .34, .40, 0));
+  return g;
+}
+/* Swap a tile's mesh for the site look. Takes no coordinates ON PURPOSE: the
+   world position is COPIED off the mesh placeMeshAt already positioned, rather
+   than re-derived from the grid key. refreshRoad's comment makes the same call
+   for the same reason — placeMeshAt owns the tile→world mapping, and a second
+   copy of it is a second thing to drift. */
+function applyBuildLook(t) {
+  if (!t || !t.mesh || !t.bld) return;
+  const old = t.mesh;
+  const g = buildSiteMesh();
+  g.position.copy(old.position);
+  g.rotation.y = old.rotation.y;
+  dropTileMesh(t);                     // frees the finished building's buffers
+  t.mesh = g;
+  try { applyShadowPolicy(g); } catch (e) {}
+  scene.add(g);
+}
+
 /* Complete ONE order, in place. `t.bld` is cleared FIRST, before any other
    work — the same precedent as finTick() zeroing `dueAt` before its await, and
    it is what makes re-entrancy impossible.
@@ -17120,7 +17160,12 @@ function bldLoad(raw, lvl, type) {
    ⚠ `t.spent` is NOT touched — the money genuinely left at order time. */
 function bldFinish(k, t) {
   const rec = t && t.bld; if (!rec) return false;
-  t.bld = null;
+  /* DELETED, not set to null. Every predicate is a bare truthiness test and
+     serialize()'s conditional spread keys off the same field, so both spellings
+     read the same — but a finished tile that still carries the key invites the
+     next reader to test `'bld' in t` and be wrong. The field's PRESENCE is the
+     state machine; absence is the finished state. */
+  delete t.bld;
   t.lvl = rec.l;
   if (rec.k === 0) t.born = game.cityAge || 0;
   try {
@@ -17149,6 +17194,104 @@ function bldFinishAll(why) {
     try { computeLinks(); manageAgents(); updateHUD(); saveSoon(); } catch (e) {}
   }
   return n;
+}
+
+/* ⏳ OFFLINE STATE. `_bldOffline` is set for exactly as long as the bridge is
+   patched; `_bldDirty` remembers that something completed while the trailer was
+   suppressed, so the catch-up can sync once at the end. Declared ABOVE the
+   sweep: `let` has no hoisting to fall back on. */
+let _bldOffline = false, _bldDirty = false;
+/* The sorted due list and the single-comparison early-out that keep the offline
+   sweep O(completions) instead of O(slices × tiles).
+   ⚠ WHY THIS EXISTS: OFFLINE_SLICE_SEC = 10 against OFFLINE_CAP_H = 36 is
+     12,960 slices. A full tile walk per slice over a built city is ~7 MILLION
+     tile visits inside a loop that yields only every OFFLINE_YIELD_EVERY
+     slices — that is the load screen going white on exactly the players with
+     the most invested. `vnow >= _bldNext` is one number comparison per slice,
+     and bldSweep only runs when something is actually due. */
+let _bldDue = [], _bldNext = Infinity;
+function _bldRebuildDue() {
+  _bldDue = [];
+  for (const [k, t] of Object.entries(game.tiles))
+    if (t && t.bld) _bldDue.push({ key: k, endAt: t.bld.s + t.bld.d * 1000 });
+  _bldDue.sort((a, b) => a.endAt - b.endAt);
+  _bldNext = _bldDue.length ? _bldDue[0].endAt : Infinity;
+}
+
+/* 🏗 THE COMPLETION ENGINE.
+   Synchronous, and it READS NO ECON — a job already on disk completes even in a
+   session where /src/economy 404s. Wrapped in try/catch at every call site,
+   exactly like `try { finTick(); } catch (e) {}` on the same 4-second beat.
+
+   `nowMs` IS AN ARGUMENT, NOT `Date.now()`, AND THAT IS THE WHOLE POINT. On the
+   live beat it is the wall clock. Inside offlineCatchUp it is a VIRTUAL clock
+   (`from + done*1000`) walking forward through the absence, so a building that
+   finished 35 h into a 36 h absence starts producing 35 h in — not at t=0. The
+   difference is not cosmetic: offlineCatchUp monkey-patches
+   MythicCityBridge.addRes/addCinders/spendRes for the whole slice loop, so
+   sweeping before the loop would credit 35 h of output nobody earned as REAL
+   ledger writes. That is a Cinder mint, and it is the single most dangerous
+   thing this feature could have done.
+
+   ⚠ NOTHING IN HERE MAY TOUCH addRes / addCinders / spendRes, directly or
+     through a callee. Completion credits NOTHING — the cost was debited at
+     order time and the reward is the building itself. That is what makes the
+     whole feature Rule-1 safe, and it is why the offline path is allowed to run
+     it at all. */
+function bldSweep(nowMs) {
+  const now = Number.isFinite(+nowMs) ? +nowMs : Date.now();
+  const done = [];
+  for (const [k, t] of Object.entries(game.tiles)) {
+    if (!t || !t.bld) continue;
+    if (t.bld.s + t.bld.d * 1000 > now) continue;
+    /* 🚧 A TILE MID-SITING IS NOT OURS TO TOUCH. The ops tryPlace wrapper writes
+       the tile, AWAITS the licence RPC, and on failure rolls the whole thing
+       back with dropTileMesh + delete. The 4-second beat can land inside that
+       await; completing the order there would rebuild a mesh onto a tile that
+       is about to be deleted, and the rollback would leave the scene holding
+       it. It is a Set of the same grid keys, so this is one lookup. */
+    try { if (OPS.placing.has(k)) continue; } catch (e) {}
+    const kind = t.bld.k;                      // read BEFORE bldFinish clears it
+    if (bldFinish(k, t)) done.push({ key: k, type: t.type, lvl: t.lvl, kind });
+  }
+  if (!done.length) return 0;
+
+  /* Per-building detail goes to the LOG, never to the rail. */
+  for (const d of done) {
+    const nm = (BUILDINGS[d.type] || {}).name || d.type;
+    logEvent('city', d.kind === 1
+      ? '🏗 ' + nm + ' at ' + d.key + ' finished upgrading to L' + d.lvl + '.'
+      : '🏗 ' + nm + ' at ' + d.key + ' finished construction.');
+  }
+
+  /* Inside the catch-up NONE of the trailer may run: ecoSync per completion is
+     a firm reconcile per building, saveNow inside a load screen writes a save
+     of a half-simulated city, and a toast fires before the player can see it.
+     The flag has exactly the lifetime of the bridge patch, which is the real
+     hazard window — see offlineCatchUp. The loop syncs ONCE when it exits. */
+  if (_bldOffline) { _bldDirty = true; return done.length; }
+
+  /* ONE BATCHED TOAST. toast() caps the rail at three and collapses exact
+     repeats, so five per-building toasts would evict three unrelated messages
+     and still not show five. */
+  const nm1 = (BUILDINGS[done[0].type] || {}).name || done[0].type;
+  toast(done.length === 1
+    ? '🏗 ' + nm1 + (done[0].kind === 1 ? ' finished upgrading to L' + done[0].lvl + '.' : ' is finished.')
+    : '🏗 ' + done.length + ' buildings finished.', 'good');
+
+  /* saveNow, NOT saveSoon. A completion is exactly the moment a crash hands out
+     a free building or eats a paid one, and nothing else on this beat writes —
+     the next write would otherwise be up to SAVE_EVERY_SEC away.
+     ecoSync EXPLICITLY, or a finished business waits up to another 4 s to
+     become a firm. */
+  try { computeLinks(); } catch (e) { console.warn('[bld] links', e); }
+  try { manageAgents(); } catch (e) { console.warn('[bld] agents', e); }
+  try { updateHUD(); } catch (e) { console.warn('[bld] hud', e); }
+  try { ecoSync(); } catch (e) { console.warn('[bld] ecoSync', e); }
+  try { saveNow(); } catch (e) { console.warn('[bld] save', e); }
+  // The dossier is showing a countdown for a building that no longer has one.
+  try { if (selectedKey && done.some(d => d.key === selectedKey)) openInspect(selectedKey); } catch (e) {}
+  return done.length;
 }
 
 /* Applies the two bounds that NEED ECON, at the first moment ECON exists —
@@ -20455,6 +20598,12 @@ function rebuildSlot(slot) {
     dropTileMesh(t);
     t.mesh = buildMesh(t.type, t.lvl, x, z); placeMeshAt(t.mesh, x, z, t.rot);
     if (t.damaged) applyDamagedLook(t);
+    /* 🏗 …and a site stays a site. Without this an admin re-skin visually
+       COMPLETES every building whose timer is still running, which reads as the
+       feature being broken rather than as the re-skin doing it. Last writer
+       wins and that is the order we want; the damaged/building pair is
+       unreachable anyway (damageTile refuses a site, loadState drops the flag). */
+    if (t.bld) applyBuildLook(t);
   }
 }
 $('adminrows').addEventListener('change', (ev) => {
@@ -21266,6 +21415,19 @@ async function offlineCatchUp(awayMsOverride) {
   const before = { pop: cityPop(), vitals: { ...vitals }, stock: { ...game.stock } };
   const t0 = performance.now();
   let done = 0, slices = 0;
+  /* 🏗 THE VIRTUAL CLOCK'S ZERO. The absence runs FORWARD from the moment the
+     save was written, so the wall-clock time at slice `done` is `vFrom + done*1000`.
+     `_offlineFrom` is that moment; when a TEST injects an override there is no
+     save stamp to read, and the honest equivalent of "away for awayMs, back
+     now" is `Date.now() - awayMs`. Either way vFrom is a real epoch, which is
+     the only thing that can be compared against a record's `s + d*1000`. */
+  const vFrom = (Number.isFinite(+awayMsOverride) || !from) ? (Date.now() - awayMs) : from;
+  /* Sorted once here, refreshed only when something actually completes — see
+     _bldRebuildDue. `_bldOffline` suppresses bldSweep's trailer for exactly as
+     long as the bridge above is patched, which is the window in which a
+     completion could reach a ledger. */
+  _bldOffline = true; _bldDirty = false;
+  _bldRebuildDue();
   try {
     while (done < simSec - 1e-9) {
       const dt = Math.min(OFFLINE_SLICE_SEC, simSec - done);
@@ -21286,6 +21448,30 @@ async function offlineCatchUp(awayMsOverride) {
          may not FAIL while nobody can repair it — see decayTick. */
       decayTick(dt, true);
       done += dt;
+      /* 🏗 CONSTRUCTION FINISHES WHILE YOU ARE AWAY — AT THE HOUR IT FINISHED.
+         One number comparison per slice; bldSweep runs O(completions) times,
+         not 12,960. Swept AFTER `done += dt` so `vnow` is the END of the slice
+         just simulated: a job due mid-slice lands at the slice boundary, which
+         under-credits it by at most OFFLINE_SLICE_SEC and can never over-credit
+         it. Over-crediting here is a MINT — the bridge is patched, every
+         addCinders in these slices is a real ledger write — so the rounding
+         goes this way on purpose.
+         ⚠ Completion itself credits nothing (see bldSweep). The building simply
+           starts existing for the remaining slices, and economyTick pays it the
+           same way it pays every other tile. */
+      const vnow = vFrom + done * 1000;
+      if (vnow >= _bldNext) {
+        try { bldSweep(vnow); } catch (e) {}
+        _bldRebuildDue();
+        /* ⚠ A job that is STILL due after a sweep was deliberately refused —
+           the only refusal there is a tile mid-siting. Left alone, the early-out
+           above would be true for every one of the remaining slices and the
+           O(slices × tiles) walk this list exists to prevent would be back.
+           Park it: the unconditional post-loop sweep collects it. That costs the
+           tile its offline production, which is the safe direction — this path
+           can only ever UNDER-credit, never mint. */
+        if (_bldNext <= vnow) _bldNext = Infinity;
+      }
       if ((++slices % OFFLINE_YIELD_EVERY) === 0) {
         try {
           const g = $('bootgpu');
@@ -21296,6 +21482,14 @@ async function offlineCatchUp(awayMsOverride) {
     }
   } finally {
     B.addRes = oAddRes; B.addCinders = oAddCin; B.spendRes = oSpend;
+    _bldOffline = false;                  // same lifetime as the bridge patch
+  }
+  /* 🏗 ONE sync for the whole absence, and only now that the bridge is its own
+     again. Per-completion this would be a firm reconcile inside the slice loop;
+     the caller does the saveNow() and the updateHUD() immediately after. */
+  if (_bldDirty) {
+    _bldDirty = false;
+    try { computeLinks(); manageAgents(); ecoSync(); } catch (e) { console.warn('[bld] offline sync', e); }
   }
   const costMs = performance.now() - t0;
 
@@ -21599,6 +21793,13 @@ async function loadState() {
         t.mesh = buildMesh(td.type === 'lot' && t.tenant ? 'tenantbiz' : td.type, t.lvl, x, z);
         placeMeshAt(t.mesh, x, z, t.rot);
         if (t.damaged) applyDamagedLook(t);
+        /* 🏗 A job that survived the save comes back looking like a job. Done
+           INSIDE this chunked loop, never as a second pass afterwards: a
+           separate walk over 5,482 meshes is another uninterrupted block, and
+           the whole point of the chunking below is that there is no such thing
+           in the load path. Cheap here — a city has at most a handful of live
+           orders, and every one of them yields on the same counter. */
+        if (t.bld) applyBuildLook(t);
         /* 🧊 THE OPEN-THE-CITY FREEZE. buildMesh is the most expensive call in
            this file — a fully built 24x24 grid is 5,482 meshes — and this loop
            used to construct EVERY ONE of them in a single uninterrupted block.
@@ -24428,6 +24629,13 @@ function animate() {
     //    for this beat, and frequent enough that the payout lands within four
     //    seconds of the city being open past its due time.
     try { finTick(); } catch (e) {}
+    /* 🏗 THE COMPLETION BEAT. Same shape and the same reasoning as finTick
+       above it: a clock comparison per live job, cheap enough for this beat and
+       frequent enough that a building goes up within four seconds of being due.
+       It rides the 4 s timer rather than the 0.5 s HUD beat because completion
+       does real work (mesh rebuild, ecoSync, saveNow) while the countdown the
+       player watches is repainted by updateHUD, which is on the fast beat. */
+    try { bldSweep(Date.now()); } catch (e) {}
     // 🌐 Keep the investable node list warm. Self-throttled to FIN_MARKET_TTL_MS
     //    inside, so calling it on this beat costs a timestamp comparison.
     try { if (finCount() > 0) finRefreshMarket(); } catch (e) {}
@@ -24695,6 +24903,15 @@ function animate() {
       showAwayReport(rep);
     }
   } catch (e) { console.warn('offline catch-up', e); }
+  /* 🏗 UNCONDITIONAL, and it is not a duplicate of the sweeps inside the loop.
+     The catch-up simulates at most OFFLINE_CAP_H hours, so an absence of 40 h
+     leaves a job that was due 39 h ago still parked — the virtual clock never
+     reached it. It also covers the case where the catch-up did not run at all
+     (a refresh under OFFLINE_MIN_MS, a save with no stamp, a throw above): the
+     first 4 s beat is otherwise the earliest anything completes, and boot()
+     starts the render loop at the very end. Anything it finishes here gets the
+     full trailer, because `_bldOffline` is already back to false. */
+  try { bldSweep(Date.now()); } catch (e) { console.warn('[bld] boot sweep', e); }
   /* 🛏 THE HOUSE'S BACKSTOP. If offlineCatchUp ran, every House was already
      paid slice by slice and the watermark is at now, so this settles 0 — it is
      not a second payment path, it is the same one asked whether anything is
@@ -24809,6 +25026,40 @@ function animate() {
       load: bldLoad,
       normalize: bldNormalize,
       finishAll: bldFinishAll,
+      /* THE COMPLETION ENGINE, drivable by hand. `sweep(nowMs)` is the SHIPPED
+         function with the clock injected — the same call animate() makes on its
+         4 s beat and the same one the offline loop makes with a virtual clock,
+         so a test drives production code rather than a test-only twin. */
+      sweep: (nowMs) => bldSweep(nowMs),
+      /* ⏰ THE TEST CLOCK. Both of these move the STAMP, never Date.now():
+         a job's remaining time is `s + d*1000 - now`, so pushing `s` backwards
+         is indistinguishable from time passing — and it leaves every other
+         wall-clock system in the city (fin.dueAt, house.lastAt, weather) exactly
+         where it was, which faking the clock would not.
+         `finish` pushes ONE job one millisecond past its own deadline, so the
+         next sweep completes it and nothing else. */
+      finish: (k) => { const t = game.tiles[k]; if (!t || !t.bld) return false;
+                       t.bld.s -= t.bld.d * 1000 + 1; return true; },
+      advance: (ms) => { const n = Math.max(0, +ms || 0); let c = 0;
+                         for (const t of Object.values(game.tiles))
+                           if (t && t.bld) { t.bld.s -= n; c++; }
+                         return c; },
+      /* The order gate's own readouts. `typeof`-guarded because they arrive
+         with the order package and this seam has to be correct in a build that
+         has the sweep but not yet the gate — an undeclared name answers
+         'undefined' to typeof, and a null here reads honestly as "not built
+         yet" rather than throwing in the middle of a test. */
+      slots:  () => (typeof bldSlots === 'function' ? bldSlots() : null),
+      speed:  () => (typeof bldSpeed === 'function' ? bldSpeed() : null),
+      hasCo:  () => (typeof bldCoTiles === 'function' ? bldCoTiles().length > 0 : null),
+      profile: (type, lvl, kind, speedMul) => (typeof bldProfile === 'function'
+                 ? bldProfile(type, lvl | 0 || 1, kind | 0, speedMul || 1) : null),
+      timeFor: (type, lvl, kind, speedMul) => (typeof bldDuration === 'function'
+                 ? bldDuration(type, lvl | 0 || 1, kind | 0, speedMul || 1) : null),
+      /* ⚠ NOT a local "just drop the record". Cancelling REFUNDS what was paid,
+         and that arithmetic belongs to the order package next to the code that
+         charged it — a second copy here would be a second refund policy. */
+      cancel: (k) => (typeof bldCancel === 'function' ? bldCancel(k) : null),
     },
     costOf,
   };

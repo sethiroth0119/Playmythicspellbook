@@ -742,6 +742,10 @@ function buildScene() {
   var BW = 3.3, BD = 3.6, BH = 3.0;          // bay width / depth / height
   var BAYS_PER_ROW = 5, ROW_PITCH = BD + 2.6, AISLE_W = 2.6;
   var WX = 13, ZF = 2, H = 7;
+  // Where the aisle fixtures hang. The bay block ends near x +6.2 and the wall
+  // is at +13, so this is the middle of the walking aisle — the position from
+  // which a fixture can actually see the bay flanks the player looks at.
+  var AISLE_X = 8.8;
   function rowsFor(n) { return Math.max(1, Math.ceil(Math.max(1, n) / BAYS_PER_ROW)); }
   function shedZB(n) { return Math.min(-19, -(3.2 + rowsFor(n) * ROW_PITCH)); }
 
@@ -822,13 +826,25 @@ function buildScene() {
     var lint = 0.85 + Math.min(0.95, (depth - 21) * 0.031);
     var lrng = Math.max(34, depth * 0.92);
     if (!App.shedLights) {
+      // ⚠ THE FIXTURES HANG OVER THE AISLE, NOT THE CENTRELINE.
+      // They used to sit at x = 0. The bays occupy x −10.45 … +4.55 and the
+      // walking strip is x 9.2, so every bay flank you actually LOOK AT from
+      // the aisle has normal (+1,0,0) and sits at x ≈ 6.2 — which puts a light
+      // at x = 0 BEHIND it. N·L is negative there, so both fixtures delivered
+      // exactly zero to the one surface the player spends the whole walk
+      // looking at. That is why its luminance was a flat CONSTANT of 103 at
+      // five positions: hemisphere (Δ70) + ambient (Δ19) and nothing else, no
+      // matter where you stood. Measured per-light, per-face, at those exact
+      // positions — both PointLights Δ0, all three DirectionalLights Δ0.
+      // Real warehouses light the aisles for exactly this reason.
       App.shedLights = [0.30, 0.72].map(function (f) {
         var pl = new T.PointLight(0xffe6bd, lint, lrng, 2);
-        pl.position.set(0, H - 1.4, ZB + depth * f); scene.add(pl); return pl;
+        pl.position.set(AISLE_X, H - 1.4, ZB + depth * f); scene.add(pl); return pl;
       });
     }
     try { App.lights.shed = App.shedLights; } catch (e) {}
     App.shedLights.forEach(function (pl, i) {
+      pl.position.x = AISLE_X;
       pl.position.z = ZB + depth * (i === 0 ? 0.30 : 0.72);
       pl.intensity = lint; pl.distance = lrng;
     });

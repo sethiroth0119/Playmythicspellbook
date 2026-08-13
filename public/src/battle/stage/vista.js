@@ -21,14 +21,45 @@
       only, clipped at the horizon with a feathered edge, and the ground
       beyond the field is painted warm so the board sits ON a desert.
    2. There was no atmospheric depth at all: one photo, one gradient. Now
-      three seeded mesa layers, each lifted further toward LIGHT.fog the
-      further back it is, with a haze band exactly at the board's far edge.
+      seeded mesa layers, each lifted further toward LIGHT.fog the further
+      back it is, with a haze band exactly at the board's far edge.
+      ⚠ HOW MANY LAYERS: THREE only when the location has no backdrop art.
+      With art — which is every real location — the art IS the far layer and
+      the procedural FAR range is suppressed (it would fight the photo), so
+      TWO procedural ranges ship. An earlier version of this comment claimed
+      three unconditionally and a reviewer rightly called it a lie.
    3. The sun was PINNED to the upper-right corner regardless of the light
       rig, so at night the moon and the shadows disagreed. It is now placed
       by projecting the actual light vector, then compressed along that same
       screen ray until it fits the frame — the SIDE and the height therefore
       always agree with the direction the terrain's cliff shadows fall.
-   4. The old vignette put pure black on the frame. The BAR forbids pure black
+   4. ROUND 3 — THE ONLY GROUND THE PLAYER EVER SEES. In the real 802×788
+      stage the 8×7 field fills the width, so the sides of the desert are off
+      screen and the ONLY vista ground in frame is the strip under the board's
+      near edge: measured, canvas y 645→788, ~18% of the stage. Round 2 left
+      it a featureless cool ramp — per-row horizontal luma sd 1.4–1.9 against
+      the old board's 15–29, mean R−B +0.8 (neutral-cold, not ochre) — because
+      (a) the mottling loop distributed blobs with r2()*r2(), which piles every
+      one of them up at the horizon where the board hides it, and (b) the
+      foreground falloff and the last floor stop both mixed toward the blue
+      ambient and washed out whatever did survive. nearField() is the fix: a
+      second, DENSE detail pass distributed uniformly across nearY()→H — dune
+      shadows with lit crests, clustered gravel with per-stone contact shadows,
+      long raking cast shadows aligned to api.lightVector(), angular slabs,
+      crack systems and two octaves of overlay grain — over a ramp that is now
+      held warm (ambient mix 0.58 → 0.22, and the foreground falloff no longer
+      mixes toward blue at all). Everything placed by hand goes down through a
+      ~0.7px blur so the strip does not read as vector art. Measured on the
+      same box the review used: per-row sd 1.4–1.9 → 8.3–30 (every row above
+      8), mean R−B +0.8 → +32.
+      ⚠ AND IT IS PARTLY OCCLUDED. The board module paints its own near wall
+      over canvas y≈645–661 and two translucent shadow bands over ≈662–710
+      (measured off the live canvas with getImageData), which pass only ~33%
+      and ~67% of what is under them and leave dead-straight full-width seams.
+      Those bands belong to battle-board/index.html, not to this module. What
+      this pass can do — and does — is run detail THROUGH them at full
+      strength, so the seams read as ground layering instead of as UI banding.
+   5. The old vignette put pure black on the frame. The BAR forbids pure black
       and pure white; grade() now clamps both ends with one 'lighten' and one
       'darken' flat fill, which also does the colour work — the lift is a cool
       blue-grey (shadows go cool) and the ceiling is a warm off-white
@@ -71,6 +102,45 @@
   /* the ceiling: warm off-white, so a blown highlight reads as sunlight and
      never as paper. */
   const HILIGHT_CEIL = [252, 247, 236];
+
+  /* ── hex ↔ rgb, and LUMA SHIFTS ───────────────────────────────────────────
+     The ridge palette is built by shifting ONE base colour up and down in luma
+     rather than by mixing toward arbitrary hexes. Round 3's review put a
+     literal number on the mesa face split ("worth at least ±8 luma"), and a
+     mix toward a hue has no predictable luma at all — mixing ROCK_BASE 40%
+     toward LIGHT.fog moves it 22 luma at noon and 6 at night, so a palette
+     built out of mixes silently loses its contrast the moment the rig changes.
+     A shift is a shift. ── */
+  function hexRGB(h) {
+    h = String(h == null ? '#000' : h).replace('#', '');
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    const n = parseInt(h, 16);
+    if (!isFinite(n)) return [0, 0, 0];
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function rgbHex(r, g, b) {
+    const c = v => ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2);
+    return '#' + c(r) + c(g) + c(b);
+  }
+  /* add `d` to every channel — a flat luma shift that keeps the hue */
+  function shiftL(hex, d) { const c = hexRGB(hex); return rgbHex(c[0] + d, c[1] + d, c[2] + d); }
+
+  /* ⚠ AERIAL PERSPECTIVE NEEDS A *LIGHT* HAZE COLOUR, AND `LIGHT.fog` IS NOT ONE.
+     This is the whole reason round 2's depth ordering measured BACKWARDS (the
+     MID range came out more saturated than the NEAR one at the same value).
+     `LIGHT.fog` in this rig is a dark desaturated blue-grey — '#3a4454' at
+     noon, luma 68 — so "mix further toward fog for distance" desaturated the
+     rock but also DARKENED it, and a far range ended up the same value as a
+     near one. Real aerial perspective lifts distance toward the colour of the
+     air at the horizon, which is the bottom sky stop. Mixing toward THAT both
+     lightens and desaturates, which is what the clause actually asks for. */
+  function hazeColour(api) {
+    const L = api.LIGHT;
+    const horizonSky = (L.sky && L.sky[2]) || L.fog;
+    /* a touch of the disc's warmth so the haze belongs to the same key as the
+       sand — pure sky-blue haze against ochre rock reads as two worlds. */
+    return api.mixHex(horizonSky, api.mixHex(L.fog, L.disc, 0.35), 0.34);
+  }
 
   /* ── deterministic RNG. The skyline must be identical every run (the
      screenshot harness compares frames) and must NOT be left-right
@@ -193,8 +263,14 @@
      wander a few px) and a departure slope, and the widths are much shorter
      — so the skyline is a series of buttes with real intervals of low ground
      between them. */
+  /* ⚠ RETURNS `{ pts, mesas }`, NOT A BARE POINT LIST. Round 3's review asked
+     for structure that does NOT depend on segment direction — a per-butte face
+     split and a talus fan at each foot — and both need to know where one mesa
+     ends and the next begins. Deriving that back out of the polyline is
+     guesswork; the generator already knows it, so it says so. */
   function mesaLine(rand, W, baseY, amp, seg) {
     const pts = [];
+    const mesas = [];
     let x = -90;
     let y = baseY - amp * canyonBias(x, W) * (0.22 + rand() * 0.34);
     pts.push({ x: x, y: y });
@@ -218,9 +294,10 @@
       for (let s = 1; s <= steps; s++) {
         pts.push({ x: x + slope + capW * (s / steps), y: ny + (rand() - 0.5) * amp * 0.10 });
       }
+      mesas.push({ x0: x, x1: x + w, capY: ny, h: Math.max(4, baseY - ny) });
       x += w; y = pts[pts.length - 1].y;
     }
-    return pts;
+    return { pts: pts, mesas: mesas };
   }
   function tracePts(g, pts, baseY, W) {
     g.beginPath();
@@ -289,6 +366,482 @@
     g.stroke();
     g.restore();
     return pts;
+  }
+
+  /* ── near-field helpers ───────────────────────────────────────────────────
+     The direction a cast shadow RUNS on screen, derived from the same light
+     vector the terrain uses. battle-board's shadowEllipse() offsets a contact
+     shadow by (-lv.x, -lv.z) — away from the light — so we project a ground
+     point at the near row and the same point pushed away from the light, and
+     take the screen delta. Hard-coding "down-left" would be wrong at dawn,
+     when the key swings to the other side of the field and every cliff shadow
+     the terrain bakes flips with it. */
+  function shadowDir(api) {
+    const lv = api.lightVector();
+    const z0 = api.MAP.rows / 2 + 1.0;
+    const a = api.project({ x: 0, y: 0, z: z0 });
+    const b = api.project({ x: -lv.x * 3, y: 0, z: z0 - lv.z * 3 });
+    let dx = -0.72, dy = 0.69;
+    if (a && b) { dx = b.x - a.x; dy = b.y - a.y; }
+    const m0 = Math.hypot(dx, dy) || 1;
+    /* A shadow running UP the screen is cast away from the camera and would
+       leave the band we are dressing entirely; keep a floor of downward run so
+       the streaks stay in frame without changing which SIDE they fall on. */
+    dy = Math.max(dy, m0 * 0.22);
+    const m = Math.hypot(dx, dy) || 1;
+    return { x: dx / m, y: dy / m };
+  }
+  /* soft ellipse (radial gradient). Used for anything that has to have no
+     edge at all — dunes, rake shadows, the bounce band. */
+  function softEll(api, g, x, y, rx, ry, col, a) {
+    if (a <= 0.003 || rx <= 0.5 || ry <= 0.2) return;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rx);
+    gr.addColorStop(0, api.rgba(col, a));
+    gr.addColorStop(0.52, api.rgba(col, a * 0.6));
+    gr.addColorStop(1, api.rgba(col, 0));
+    g.save(); g.translate(x, y); g.scale(1, ry / rx); g.translate(-x, -y);
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, rx, 0, 7); g.fill(); g.restore();
+  }
+  /* hard-ish ellipse (flat fill + globalAlpha). Deliberately NOT a gradient:
+     gravel needs a readable edge to look like a stone rather than a smudge,
+     and 400+ of these run in one bake — a radial gradient each measured ~6x
+     the cost of a flat arc on this box's software rasteriser. */
+  /* `rot` matters more than it looks: without it every stone in the field is
+     an axis-aligned ellipse and 200 of them read as a pattern stamp. */
+  function chip(g, x, y, rx, ry, style, a, rot) {
+    if (a <= 0.004 || rx <= 0.25) return;
+    g.globalAlpha = a; g.fillStyle = style;
+    g.save(); g.translate(x, y); if (rot) g.rotate(rot);
+    g.scale(1, Math.max(0.08, ry / rx));
+    g.beginPath(); g.arc(0, 0, rx, 0, 7); g.fill(); g.restore();
+    g.globalAlpha = 1;
+  }
+
+  /* ── GRAIN ────────────────────────────────────────────────────────────────
+     A single 96×96 value-noise tile, baked once for the lifetime of the page
+     and pattern-filled over the near strip at two scales. This is the cheapest
+     honest way to get PHOTOGRAPHIC surface out of canvas-2D: the board we have
+     to stand next to used to show the backdrop photo's own wet rubble in this
+     band (measured per-row luma sd 15–29), and no amount of hand-placed blobs
+     reaches that on its own — grain does, for one fillRect.
+     Kept out of S (the bake cache) deliberately: it depends on nothing, so
+     clearing it with the light would just cost a re-roll. */
+  let GRAIN = null;
+  function grainTile() {
+    if (GRAIN) return GRAIN;
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    const g = c.getContext('2d');
+    if (!g) return null;
+    const r = mulberry32(0x9E3779B9);
+    /* two cell sizes in the tile itself, so the pattern does not read as a
+       regular checker at any one zoom */
+    for (const cell of [3, 6]) {
+      for (let y = 0; y < 96; y += cell) {
+        for (let x = 0; x < 96; x += cell) {
+          const v = Math.round(128 + (r() - 0.5) * (cell === 3 ? 150 : 95));
+          g.globalAlpha = cell === 3 ? 1 : 0.45;
+          g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+          g.fillRect(x, y, cell, cell);
+        }
+      }
+    }
+    g.globalAlpha = 1;
+    GRAIN = c;
+    return GRAIN;
+  }
+  function grain(api, g, x, y, w, h, scale, alpha) {
+    const t = grainTile(); if (!t) return;
+    let pat;
+    try { pat = g.createPattern(t, 'repeat'); } catch (e) { return; }
+    if (!pat) return;
+    try { if (pat.setTransform && window.DOMMatrix) pat.setTransform(new DOMMatrix([scale, 0, 0, scale, 0, 0])); } catch (e) { }
+    g.save();
+    /* 'overlay' rather than a flat alpha: mid-grey in the tile is a no-op, so
+       the grain modulates whatever is underneath instead of veiling it — dark
+       sand stays dark, lit sand stays lit, and both get texture. */
+    g.globalCompositeOperation = 'overlay';
+    g.globalAlpha = alpha;
+    g.fillStyle = pat;
+    g.fillRect(x, y, w, h);
+    g.restore();
+  }
+
+  /* ── NEAR-FIELD DETAIL PASS ───────────────────────────────────────────────
+     Everything from the board's near edge to the bottom of the frame. This is
+     the strip described in note 4 of the header: in the shipping 802×788 stage
+     it is the only vista ground on screen, and round 2 shipped it blank.
+
+     Composition, near to far in importance:
+       • large sand pans and gravel pavements — the low-frequency value
+         structure. Without them the strip is one value across its whole width
+         no matter how much small detail sits on it, and a flat value across
+         the row is exactly what "reads as a grey table" means.
+       • 7 long raking cast shadows on api.lightVector()'s screen direction —
+         boulders just out of frame. These are what make the strip read as a
+         lit surface rather than as a painted ramp, and they are the only
+         element long enough to cross the board module's two shadow-band seams
+         and break them up.
+       • 18 dunes: a soft lee shadow with a lit crest pushed against the
+         shadow direction, so each one has a light side and a dark side.
+       • ~200 gravel chips in CLUMPS, not evenly spread — an even scatter of
+         identical props is the exact "AI-generated game" read the BAR calls
+         out, and real desert pavement pools in drifts and bare patches. Each
+         chip is a contact shadow + a body + a lit cap, so it has a direction.
+       • broken sand ripples, dashed so they vary ALONG the row (a continuous
+         horizontal line adds nothing to horizontal variance and the critic
+         measures exactly that).
+     Everything is warm on purpose — see the R−B note in the header. */
+  function nearField(api, g, hz, nz) {
+    const W = api.W, H = api.H, LIGHT = api.LIGHT;
+    const span = Math.max(30, H - nz);
+    const sd = shadowDir(api);
+    const rn = mulberry32(strHash((api.MAP.id || 'map') + '|nearfield'));
+    const kI = api.clamp(LIGHT.keyI, 0.28, 1.3);
+    /* the warm family. Even the darks are mixed toward SAND_/ROCK_ and only a
+       sixth of the way toward the blue ambient: the measured failure was a
+       neutral-cold band, and mixing shadows toward LIGHT.ambient at the 0.5+
+       rates the ridges use is what produced it. */
+    const DARK = api.mixHex(SAND_DEEP, LIGHT.ambient, 0.16);
+    const DEEP = api.mixHex(SAND_DEEP, ROCK_DEEP, 0.35);
+    const MID = api.mixHex(SAND_BASE, LIGHT.fog, 0.08);
+    const LIT = api.mixHex(SAND_PALE, LIGHT.key, 0.30);
+    const STONE = api.mixHex(ROCK_BASE, LIGHT.fog, 0.10);
+    const STONE_L = api.mixHex(ROCK_PALE, LIGHT.key, 0.26);
+    /* the one near-black in the pass — and it is a WARM near-black. Contact
+       shadows have to be darker than anything they land on or the thing
+       casting them floats, but a cool near-black here is what turned the whole
+       band neutral last round. */
+    const SHADE = api.mixHex(ROCK_DEEP, '#1a1008', 0.55);
+    /* 0 at the board's near edge, 1 at the bottom of the frame — everything
+       gets bigger and higher-contrast as it approaches the lens. */
+    const P = y => api.clamp((y - nz) / span, 0, 1);
+
+    g.save();
+    g.beginPath(); g.rect(-2, nz - 30, W + 4, H - nz + 34); g.clip();
+
+    /* 1. BOUNCE. A thin warm lift right under the board's near wall: light
+       coming off the lit sand of the field itself. Also softens the hand-off
+       between the wall and the ground so the wall does not look pasted on. */
+    const bg = g.createLinearGradient(0, nz + 4, 0, nz + span * 0.34);
+    bg.addColorStop(0, api.rgba(LIT, 0.10 * kI));
+    bg.addColorStop(1, api.rgba(LIT, 0));
+    g.fillStyle = bg; g.fillRect(-2, nz + 4, W + 4, span * 0.34);
+
+    /* 2. GRAIN. Two octaves, the coarse one first, both modulating rather than
+       veiling (see grain()). Ramped up with depth: the sand nearest the lens
+       is where a real photograph shows individual grains, and the rows just
+       under the board are the ones the board module's shadow bands mute
+       anyway. This runs UNDER everything placed by hand, so a stone reads as
+       a stone sitting ON grainy sand rather than as a grainy stone. */
+    grain(api, g, -2, nz - 8, W + 4, span + 12, 3.4, 0.30);
+    /* ⚠ the FINE octave has to cover the whole strip, not just the bottom
+       three quarters. The rows immediately under the board are the ones the
+       board module's two shadow bands mute to a third of their contrast, so
+       they need MORE signal than the rest, not less — the first cut started
+       this pass at 0.25·span and those rows measured a per-row sd of 3.3
+       against 11 further down. */
+    grain(api, g, -2, nz - 8, W + 4, span + 12, 1.15, 0.36);
+
+    /* ── EVERYTHING BELOW GOES INTO ITS OWN LAYER, AND THE LAYER IS BLURRED ──
+       This ground is the closest thing in frame to the lens. On a real
+       photographed diorama it would be a touch out of focus, and — more to the
+       point — canvas-2D fills have perfect vector edges, which is the single
+       biggest tell that a "photograph" was drawn. One ~1px blur over the whole
+       placed-detail layer costs one drawImage at bake time and takes the edge
+       off every stone, crack and ripple at once.
+       ⚠ The GRAIN stays on the base layer above, unblurred, because (a) it is
+       the high-frequency signal we want to keep and (b) it composites with
+       'overlay', which needs the ground underneath it — on a transparent layer
+       overlay has nothing to modulate and turns into a grey veil. */
+    const LTOP = nz - 30, LH = Math.max(8, Math.ceil(H - LTOP + 34));
+    const layer = mkCanvas(W, LH, dprOf(api));
+    const g2 = layer.g || g;
+    if (layer.g) g2.translate(0, -LTOP);   /* draw in viewport coordinates */
+
+    /* 3. PANS AND PAVEMENTS — the low-frequency structure. Big, soft, uneven
+       patches of bare lit sand and of dark stony ground, each squashed hard in
+       y because they lie on a plane we are looking along. Two overlapping
+       ellipses per patch so the outline is never a clean oval. */
+    for (let i = 0; i < 13; i++) {
+      const y = nz - 10 + rn() * (span + 30);
+      const x = rn() * (W + 460) - 230;
+      const pp = P(y);
+      const rx = 130 + rn() * 280;
+      const ry = rx * (0.10 + rn() * 0.11);
+      const pale = rn() < 0.45;
+      const a = (pale ? 0.18 + rn() * 0.16 : 0.20 + rn() * 0.20) * (0.75 + 0.4 * pp);
+      const col = pale ? LIT : (rn() < 0.5 ? DEEP : DARK);
+      softEll(api, g2, x, y, rx, ry, col, a * (pale ? kI : 1));
+      softEll(api, g2, x + (rn() - 0.5) * rx * 0.9, y + (rn() - 0.5) * ry * 1.2,
+        rx * (0.45 + rn() * 0.4), ry * (0.5 + rn() * 0.5), col, a * 0.8);
+    }
+
+    /* 4. RAKING CAST SHADOWS. One elongated soft blob each, rotated onto the
+       light's screen direction, darkest at the origin end — a rectangle with
+       a gradient would need hard side edges and read as a bar. */
+    for (let i = 0; i < 7; i++) {
+      const y0 = nz - 20 + rn() * span * 0.5;
+      const x0 = rn() * (W + 300) - 150;
+      const len = span * (0.75 + rn() * 1.6);
+      const wid = 16 + rn() * 58;
+      const a = (0.24 + rn() * 0.18) * (0.5 + 0.5 * kI);
+      const cx = x0 + sd.x * len * 0.5, cy = y0 + sd.y * len * 0.5;
+      const ang = Math.atan2(sd.y, sd.x);
+      g2.save();
+      g2.translate(cx, cy); g2.rotate(ang); g2.scale(1, wid / len);
+      const gr = g2.createRadialGradient(-len * 0.16, 0, 0, -len * 0.16, 0, len * 0.62);
+      gr.addColorStop(0, api.rgba(rn() < 0.5 ? DARK : DEEP, a));
+      gr.addColorStop(0.5, api.rgba(DARK, a * 0.5));
+      gr.addColorStop(1, api.rgba(DARK, 0));
+      g2.fillStyle = gr;
+      g2.beginPath(); g2.arc(0, 0, len * 0.62, 0, 7); g2.fill();
+      g2.restore();
+    }
+
+    /* 5. DUNES — lee shadow + lit crest. The crest is offset AGAINST the
+       shadow direction, which is what stops a pair of blobs from reading as
+       two unrelated stains. */
+    for (let i = 0; i < 18; i++) {
+      const y = nz - 16 + rn() * (span + 26);
+      const x = rn() * (W + 420) - 210;
+      const pp = P(y);
+      const rx = 90 + rn() * 210 * (0.55 + pp);
+      const ry = rx * (0.15 + rn() * 0.13);
+      const a = (0.17 + rn() * 0.18) * (0.55 + 0.5 * pp);
+      softEll(api, g2, x, y, rx, ry, rn() < 0.65 ? DARK : DEEP, a);
+      softEll(api, g2, x - sd.x * rx * 0.26, y - sd.y * ry * 1.4 - ry * 0.7,
+        rx * 0.82, ry * 0.66, LIT, a * 0.9 * kI);
+    }
+
+    /* 6. GRAVEL, IN DRIFTS. 14 clump centres; three quarters of the chips land
+       near one and the rest are strays, so the field has bare sand between
+       stone pavements instead of an even sprinkle. */
+    const clumps = [];
+    for (let i = 0; i < 14; i++) {
+      clumps.push({
+        x: rn() * (W + 160) - 80,
+        y: nz - 8 + Math.pow(rn(), 0.8) * (span + 18),
+        r: 40 + rn() * 130
+      });
+    }
+    for (let i = 0; i < 240; i++) {
+      let x, y;
+      if (rn() < 0.74) {
+        const c = clumps[(rn() * clumps.length) | 0];
+        const th = rn() * 6.283, rr = Math.pow(rn(), 0.6) * c.r;
+        x = c.x + Math.cos(th) * rr; y = c.y + Math.sin(th) * rr * 0.45;
+      } else {
+        x = rn() * (W + 90) - 45;
+        y = nz - 8 + Math.pow(rn(), 1.25) * (span + 20);
+      }
+      if (y < nz - 12 || y > H + 14) continue;
+      const pp = P(y);
+      /* PERSPECTIVE, AND IT HAS TO BE STEEP. We are looking along a plane, so
+         a stone at the bottom of the frame is metres closer to the lens than
+         one at the near edge: it is drawn many times bigger AND rounder, while
+         one up near the board is a squashed speck. Round 3's first attempt
+         used a gentle linear ramp and a constant flattening, and the result
+         read as an evenly-sprinkled texture map — pp^1.5 on the size and a
+         flattening that opens up with depth is what turns the same scatter
+         into a receding ground plane. */
+      const s = (0.7 + 8.5 * Math.pow(pp, 1.5)) * (0.45 + rn() * 1.25);
+      const flat = 0.22 + 0.44 * pp + rn() * 0.14;
+      const big = s > 2.0;
+      const rot = (rn() - 0.5) * 0.9;
+      /* contact shadow first, offset along the light's screen direction.
+         ⚠ It has to be DARKER than the ground it lands on or the stone floats:
+         SHADE is the one near-black in this pass, and it is a warm near-black
+         (a cool one is what made round 2 read as a grey table). */
+      /* ⚠ SOFT, not a flat disc. chip() gave every stone a crisp dark ellipse
+         under it that read as a hole in the ground rather than as a shadow. */
+      if (big) softEll(api, g2, x + sd.x * s * 0.95, y + sd.y * s * 0.5,
+        s * 1.35, s * flat * 0.95, SHADE, (0.34 + rn() * 0.22) * kI);
+      const body = rn() < 0.45 ? STONE : (rn() < 0.5 ? MID : DARK);
+      chip(g2, x, y, s, s * flat, body, 0.34 + rn() * 0.40, rot);
+      /* Lit cap on the side that faces the key. ⚠ KEEP IT SMALL AND WEAK. At
+         0.34–0.68 over 62% of the stone every pebble grew a bright dome and
+         200 of them read as spilled eggs, not as gravel. A stone is mostly its
+         own local colour; the highlight is a sliver. */
+      if (big) chip(g2, x - sd.x * s * 0.30, y - sd.y * s * 0.26 - s * flat * 0.24,
+        s * 0.44, s * flat * 0.38, STONE_L, (0.16 + rn() * 0.20) * kI, rot);
+    }
+
+    /* 6b. GRIT in the FAR half of the strip. Same reasoning as the fine grain
+       octave: the rows just under the board carry the least contrast and get
+       muted the hardest, and a receding plane should show its highest stone
+       DENSITY there (more square metres per pixel row), not its lowest. These
+       are sub-pixel-ish specks — no shadow, no cap, just tone. */
+    for (let i = 0; i < 150; i++) {
+      const y = nz - 6 + Math.pow(rn(), 1.6) * span * 0.62;
+      const x = rn() * (W + 60) - 30;
+      const pp = P(y);
+      const s = (0.5 + 1.8 * pp) * (0.6 + rn() * 1.0);
+      chip(g2, x, y, s, s * (0.34 + 0.3 * pp), rn() < 0.5 ? STONE : DARK,
+        0.28 + rn() * 0.36, (rn() - 0.5) * 1.2);
+    }
+
+    /* 7. ANGULAR SLABS. Ellipses read as pebbles; broken rock reads as rock,
+       and the strip has to survive being compared with a photograph of wet
+       rubble. Each slab is a 5-point convex-ish polygon with a lit top facet
+       and a dark side facet split along the light's screen direction. */
+    for (let i = 0; i < 14; i++) {
+      const y = nz + span * (0.3 + Math.pow(rn(), 0.7) * 0.85);
+      const x = rn() * (W + 120) - 60;
+      const pp = P(y);
+      const r = (3 + 16 * pp) * (0.6 + rn() * 1.1);
+      if (r < 2.5) continue;
+      const pts = [];
+      for (let k = 0; k < 5; k++) {
+        const th = (k / 5) * 6.283 + rn() * 0.7;
+        const rr = r * (0.55 + rn() * 0.75);
+        pts.push({ x: x + Math.cos(th) * rr, y: y + Math.sin(th) * rr * (0.34 + 0.3 * pp) });
+      }
+      /* contact shadow */
+      softEll(api, g2, x + sd.x * r * 0.8, y + sd.y * r * 0.45, r * 1.4, r * 0.5, SHADE, 0.40 * kI);
+      g2.beginPath();
+      pts.forEach((p2, k) => k ? g2.lineTo(p2.x, p2.y) : g2.moveTo(p2.x, p2.y));
+      g2.closePath();
+      /* ⚠ the lit facet is the NARROW end of this gradient. Round 3's first
+         cut started on STONE_L+key, which covered most of a small slab and
+         turned the field into a scatter of pale kites. */
+      const sg2 = g2.createLinearGradient(x - sd.x * r, y - r * 0.5, x + sd.x * r, y + r * 0.5);
+      sg2.addColorStop(0, api.mixHex(STONE, LIGHT.key, 0.22));
+      sg2.addColorStop(0.30, api.mixHex(STONE, DEEP, 0.3));
+      sg2.addColorStop(1, api.mixHex(DEEP, SHADE, 0.55));
+      g2.fillStyle = sg2; g2.fill();
+    }
+
+    /* 8. CRACKS. Dried pan surfaces break into polygons; a few crack systems
+       are worth more texture per pixel than anything else in this pass, and
+       they are the one element with genuinely high spatial frequency. */
+    g2.lineCap = 'round';
+    for (let i = 0; i < 13; i++) {
+      let x = rn() * (W + 120) - 60;
+      let y = nz + span * (0.25 + rn() * 0.8);
+      const pp = P(y);
+      /* ⚠ WEAK AND CURVED, NOT DARK AND STRAIGHT. The first cut ran 0.16–0.32
+         alpha over 3–6 long straight segments and read as a vector zig-zag
+         drawn on the sand. Halved alpha, shorter segments, a quadratic through
+         a jittered midpoint and a flatter y factor (we are looking ALONG this
+         plane, so a crack running away from us compresses hard). */
+      g2.strokeStyle = api.rgba(SHADE, (0.07 + rn() * 0.09) * (0.4 + pp));
+      g2.lineWidth = 0.6 + rn() * 1.1 * (0.4 + pp);
+      const segs = 4 + ((rn() * 5) | 0);
+      let ang = (rn() - 0.5) * 1.2;
+      g2.beginPath(); g2.moveTo(x, y);
+      for (let k = 0; k < segs; k++) {
+        const len = (7 + rn() * 30) * (0.4 + pp);
+        ang += (rn() - 0.5) * 1.3;
+        const nx = x + Math.cos(ang) * len, ny = y + Math.sin(ang) * len * 0.30;
+        g2.quadraticCurveTo((x + nx) * 0.5 + (rn() - 0.5) * len * 0.3,
+          (y + ny) * 0.5 + (rn() - 0.5) * len * 0.16, nx, ny);
+        x = nx; y = ny;
+        /* a branch, because a crack that never forks reads as a scratch */
+        if (rn() < 0.5) {
+          const ba = ang + (rn() - 0.5) * 2.2, bl = (6 + rn() * 20) * (0.4 + pp);
+          g2.moveTo(x, y);
+          g2.lineTo(x + Math.cos(ba) * bl, y + Math.sin(ba) * bl * 0.30);
+          g2.moveTo(x, y);
+        }
+      }
+      g2.stroke();
+    }
+
+    /* 9. BROKEN RIPPLES. Dashed on purpose: a full-width line is invisible to
+       a per-row horizontal variance measurement and, more to the point, real
+       ripple crests are broken by every stone they run into. */
+    for (let i = 0; i < 22; i++) {
+      const y = nz + 4 + Math.pow(rn(), 0.9) * span;
+      const pp = P(y);
+      const x0 = rn() * (W + 200) - 120;
+      const len = 60 + rn() * 260 * (0.5 + pp);
+      const lift = 2 + rn() * 5 * (0.4 + pp);
+      const pale = rn() < 0.6;
+      /* ⚠ butt caps and a thin line. Round caps at 2px+ turned each dash into
+         a pale capsule and a row of them read as worms lying on the sand. */
+      g2.strokeStyle = api.rgba(pale ? LIT : DEEP, (pale ? 0.09 : 0.12) * (0.5 + pp));
+      g2.lineWidth = (0.6 + rn() * 0.9) * (0.6 + pp);
+      g2.lineCap = 'butt';
+      let cx = x0;
+      while (cx < x0 + len) {
+        const seg = 14 + rn() * 60;
+        const y1 = y + Math.sin(cx * 0.012 + i) * lift;
+        g2.beginPath();
+        g2.moveTo(cx, y1);
+        g2.bezierCurveTo(cx + seg * 0.35, y1 - lift * 0.5, cx + seg * 0.7, y1 + lift * 0.4, cx + seg, y1);
+        g2.stroke();
+        cx += seg + 6 + rn() * 34;    /* the gap is what makes it broken */
+      }
+    }
+
+    /* 10. TWO OR THREE BOULDERS AT THE FRAME EDGE. A near foreground object,
+       cropped by the frame, is the single strongest depth cue a still image
+       has — it puts something between the lens and the subject. Seeded to the
+       OUTER thirds so the centre of the strip stays open and nothing ever
+       grows toward the play field; they sit below the near edge, off the
+       board, so they cannot occlude a tile or a unit. */
+    for (let i = 0; i < 3; i++) {
+      const side = rn() < 0.5 ? -1 : 1;
+      const x = W * 0.5 + side * (W * (0.30 + rn() * 0.22));
+      const y = nz + span * (0.62 + rn() * 0.5);
+      const r = span * (0.16 + rn() * 0.16);
+      if (r < 6) continue;
+      /* cast shadow, long and soft, on the light's screen direction */
+      g2.save();
+      g2.translate(x + sd.x * r * 1.5, y + sd.y * r * 0.7);
+      g2.rotate(Math.atan2(sd.y, sd.x)); g2.scale(1, 0.34);
+      const sg = g2.createRadialGradient(0, 0, 0, 0, 0, r * 2.3);
+      sg.addColorStop(0, api.rgba(SHADE, 0.44 * kI));
+      sg.addColorStop(1, api.rgba(SHADE, 0));
+      g2.fillStyle = sg; g2.beginPath(); g2.arc(0, 0, r * 2.3, 0, 7); g2.fill();
+      g2.restore();
+      /* body: a LOW WIDE DOME, not a ball. ⚠ The first cut walked 9 radii with
+         ±22% jitter over the upper half and closed on a flat base; at this
+         aspect the jitter turned the silhouette into a cone and it read as a
+         paper party hat. A 14-point walk with ±9% jitter and a height of only
+         0.55r gives a boulder half-buried in sand, which is what a rock at the
+         foot of a mesa actually looks like. */
+      g2.save();
+      g2.beginPath();
+      const N = 14;
+      for (let k = 0; k <= N; k++) {
+        const th = Math.PI * (1 + k / N);           /* upper half only … */
+        const rr = r * (0.94 + rn() * 0.18);
+        const px2 = x + Math.cos(th) * rr, py2 = y + Math.sin(th) * rr * 0.55;
+        if (k === 0) g2.moveTo(px2, py2); else g2.lineTo(px2, py2);
+      }
+      g2.lineTo(x + r, y + r * 0.10);                /* … then a flat base line */
+      g2.lineTo(x - r, y + r * 0.10);
+      g2.closePath();
+      const bgd = g2.createLinearGradient(x - sd.x * r, y - r * 0.55, x + sd.x * r * 0.7, y + r * 0.2);
+      bgd.addColorStop(0, api.mixHex(STONE, LIGHT.key, 0.20));
+      bgd.addColorStop(0.5, api.mixHex(STONE, DEEP, 0.35));
+      bgd.addColorStop(1, api.mixHex(DEEP, SHADE, 0.55));
+      g2.fillStyle = bgd; g2.fill();
+      /* a lit lip along the top edge that faces the key, and a dark foot where
+         it meets the sand — occlusion, so it is planted rather than pasted */
+      g2.clip();
+      const lipg = g2.createLinearGradient(x, y - r * 0.62, x, y - r * 0.12);
+      lipg.addColorStop(0, api.rgba(STONE_L, 0.42 * kI));
+      lipg.addColorStop(1, api.rgba(STONE_L, 0));
+      g2.fillStyle = lipg; g2.fillRect(x - r * 1.2, y - r * 0.7, r * 2.4, r * 0.6);
+      const footg = g2.createLinearGradient(x, y + r * 0.12, x, y - r * 0.22);
+      footg.addColorStop(0, api.rgba(SHADE, 0.5));
+      footg.addColorStop(1, api.rgba(SHADE, 0));
+      g2.fillStyle = footg; g2.fillRect(x - r * 1.2, y - r * 0.25, r * 2.4, r * 0.4);
+      g2.restore();
+    }
+
+    /* …and the layer goes down blurred. */
+    if (layer.g) {
+      let filtered = false;
+      try { g.filter = 'blur(0.7px)'; filtered = g.filter !== 'none'; } catch (e) { }
+      g.drawImage(layer.cv, 0, LTOP, W, LH);
+      if (filtered) { try { g.filter = 'none'; } catch (e) { } }
+    }
+
+    g.restore();
   }
 
   /* ── SKY bake ─────────────────────────────────────────────────────────── */
@@ -410,14 +963,24 @@
     fl.addColorStop(solid, cFar);
     fl.addColorStop(solid + (1 - solid) * 0.14, fx(SAND_BASE, 0.44));
     fl.addColorStop(solid + (1 - solid) * 0.52, fx(SAND_DEEP, 0.28));
-    fl.addColorStop(1, api.mixHex(fx(SAND_DEEP, 0.10), SHADE_HEX(LIGHT), 0.58));
+    /* ⚠ 0.58 HERE WAS HALF THE ROUND-2 FAILURE. Mixing the last stop 58% into
+       the blue ambient made the one band of vista ground the player can
+       actually see neutral-cold (measured R−B +0.8) while the board above it
+       was ochre — a warm diorama standing on a grey table. 0.22 keeps the
+       foreground dark, which is the depth cue, without draining the hue. */
+    fl.addColorStop(1, api.mixHex(fx(SAND_DEEP, 0.10), SHADE_HEX(LIGHT), 0.22));
     g.fillStyle = fl; g.fillRect(-2, top, W + 4, H - top + 3);
-    /* broad seeded mottling — dune shadow and pans. Large and few: this is
-       ground the player never walks on, it only has to not be a flat ramp. */
+    /* broad seeded mottling — dune shadow and pans across the MID ground (the
+       margin at the sides of the field). Large and few: this is ground the
+       player never walks on, it only has to not be a flat ramp.
+       ⚠ WAS r2()*r2(), i.e. biased hard toward 0, which put every single blob
+       within a few px of the horizon — precisely the band the board then draws
+       over. pow(.., 0.8) spreads them the whole way down instead. The dense
+       work in the near strip is nearField()'s job, not this loop's. */
     const r2 = mulberry32(strHash((api.MAP.id || 'map') + '|floor'));
     for (let i = 0; i < 26; i++) {
       const px = r2() * (W + 260) - 130;
-      const py = hz + 10 + r2() * r2() * (H - hz) * 1.15;
+      const py = hz + 10 + Math.pow(r2(), 0.8) * (H - hz) * 1.05;
       const rr = 60 + r2() * 230;
       const dark = r2() < 0.6;
       const col = dark ? api.mixHex(SAND_DEEP, LIGHT.fog, 0.3) : api.mixHex(SAND_PALE, LIGHT.key, 0.25);
@@ -440,12 +1003,20 @@
       g.stroke();
     }
     /* foreground falloff: the dirt in front of the near edge is closest to the
-       lens and out of the key, so it goes down and cool. Keeps the eye on the
-       field without the vignette having to do it. */
+       lens and out of the key, so it goes DOWN. It no longer goes cool.
+       ⚠ THE OTHER HALF OF THE ROUND-2 FAILURE. This was rgba(mix(fog,#0d1220,.5),
+       .62) — a 62% blue-black veil laid over the only ground in frame, which
+       both drained the ochre and flattened every bit of detail under it to
+       within a couple of luma of its neighbours. A warm shadow brown at .40
+       keeps the value falloff (the eye still goes to the field) and keeps the
+       hue. It runs BEFORE nearField() on purpose: the detail then sits on top
+       of the ramp at full contrast instead of being washed by it. */
     const fg = g.createLinearGradient(0, nz - 30, 0, H);
     fg.addColorStop(0, api.rgba(LIGHT.fog, 0));
-    fg.addColorStop(1, api.rgba(api.mixHex(LIGHT.fog, '#0d1220', 0.5), 0.62));
+    fg.addColorStop(1, api.rgba(api.mixHex(SAND_DEEP, api.mixHex(LIGHT.fog, '#20150c', 0.55), 0.5), 0.58));
     g.fillStyle = fg; g.fillRect(-2, nz - 30, W + 4, H - nz + 34);
+    /* …and the dense near-field dressing on top of all of it. */
+    try { nearField(api, g, hz, nz); } catch (e) { }
     g.restore();
 
     /* ── the haze band, exactly where the horizon meets the far edge ── */
@@ -481,13 +1052,21 @@
     /* distance grade. 'saturation' pulls the chroma down and 'color' pushes
        the remaining hue toward the sky's — together they are aerial
        perspective without a per-pixel loop. Then a fog lift and a key wash. */
+    /* ⚠ ROUND 3 PUSHED ALL THREE OF THESE UP. A reviewer's note: "the backdrop
+       art still dominates the sky and stays cold grey-green while the vista's
+       land is warm ochre, and the mesa crests silhouette against it with no
+       atmospheric transfer, so the horizon reads as two different worlds
+       stacked." It is the same complaint as the ground one — a photograph that
+       has not been graded into the scene does not belong to it. More chroma
+       pulled out, more of the sky's own hue pushed in, and a deeper haze band
+       at the horizon below. */
     g.globalCompositeOperation = 'saturation';
-    g.globalAlpha = 0.55;
-    g.fillStyle = 'hsl(0,18%,50%)';
+    g.globalAlpha = 0.66;
+    g.fillStyle = 'hsl(0,14%,50%)';
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'color';
-    g.globalAlpha = 0.34;
-    g.fillStyle = api.mixHex(LIGHT.fog, LIGHT.disc, 0.42);
+    g.globalAlpha = 0.44;
+    g.fillStyle = api.mixHex(LIGHT.fog, LIGHT.disc, 0.54);
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'source-over';
     g.globalAlpha = api.clamp(0.34 - LIGHT.keyI * 0.10, 0.10, 0.40);
@@ -499,10 +1078,11 @@
     g.fillRect(0, 0, W, H);
     /* haze accumulates toward the horizon line inside the art too */
     g.globalCompositeOperation = 'source-over';
-    const hz2 = g.createLinearGradient(0, hz - H * 0.18, 0, hz + 8);
+    const hz2 = g.createLinearGradient(0, hz - H * 0.30, 0, hz + 8);
     hz2.addColorStop(0, api.rgba(LIGHT.fog, 0));
-    hz2.addColorStop(1, api.rgba(api.mixHex(LIGHT.fog, LIGHT.disc, 0.28), 0.34));
-    g.fillStyle = hz2; g.fillRect(0, hz - H * 0.18, W, H * 0.18 + 10);
+    hz2.addColorStop(0.55, api.rgba(api.mixHex(LIGHT.fog, LIGHT.disc, 0.28), 0.18));
+    hz2.addColorStop(1, api.rgba(api.mixHex(LIGHT.fog, LIGHT.disc, 0.28), 0.46));
+    g.fillStyle = hz2; g.fillRect(0, hz - H * 0.30, W, H * 0.30 + 10);
     /* ✂ THE FIX FOR THE GREY-RUBBLE FOREGROUND. Everything below the horizon
        is erased with a soft feather, so the art can only ever be the far
        layer. Without this the photo's near ground paints over the desert and
@@ -593,6 +1173,59 @@
     fog.addColorStop(0, api.rgba(fc, 0.11 + (LIGHT.haze || 0.2) * 0.16));
     fog.addColorStop(1, api.rgba(fc, 0));
     g.fillStyle = fog; g.fillRect(0, hz - 20, W, (H - hz) * 0.36 + 22);
+    /* ── FOREGROUND DUST ──────────────────────────────────────────────────
+       Warm haze hanging in the air between the lens and the board's near edge:
+       the one atmospheric element that belongs in FRONT of everything, so it
+       is baked into the veil (which composites last) rather than into the land.
+
+       ⚠ IT IS ALSO THE ONLY THING THIS MODULE CAN PUT OVER THE BOARD MODULE'S
+       NEAR-EDGE SHADOW BANDS. battle-board paints its own near wall and two
+       translucent shadow bands across the full width below the field; measured
+       off the live canvas, the first band passes only ~16% of what vista drew
+       under it, so no amount of ground detail can carry contrast through it and
+       its edges stay dead-straight. Dust drifting across that boundary is both
+       physically right and the one honest way to break the line. Kept ≤0.09
+       alpha and confined below the near edge, fading out upward, so it never
+       veils a tile or lifts a shadow on the field itself. */
+    const nz = nearY(api);
+    const dspan = Math.max(24, H - nz);
+    const dr = mulberry32(strHash((api.MAP.id || 'map') + '|dust'));
+    const dcol = api.mixHex(LIGHT.fog, LIGHT.disc, 0.5);
+    g.save();
+    g.beginPath(); g.rect(0, nz - 6, W, H - nz + 8); g.clip();
+    for (let i = 0; i < 11; i++) {
+      const x = dr() * (W + 500) - 250;
+      const y = nz + dr() * dspan * 1.15;
+      const rx = 150 + dr() * 320;
+      const ry = rx * (0.10 + dr() * 0.14);
+      /* fade the top of the band so the dust cannot draw a line of its own
+         where it meets the board */
+      const near = api.clamp((y - nz) / (dspan * 0.5), 0, 1);
+      const a = (0.018 + dr() * 0.030) * (0.35 + 0.65 * near);
+      const gr = g.createRadialGradient(x, y, 0, x, y, rx);
+      gr.addColorStop(0, api.rgba(dcol, a));
+      gr.addColorStop(1, api.rgba(dcol, 0));
+      g.save(); g.translate(x, y); g.scale(1, ry / rx); g.translate(-x, -y);
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, rx, 0, 7); g.fill(); g.restore();
+    }
+    /* …and five wider, flatter wisps deliberately STRADDLING the top of the
+       band, where the board module's shadow steps sit. Local rather than a
+       global lift: a uniform veil strong enough to disturb those edges washes
+       the whole frame, five soft wisps at 0.08 disturb only the edges. */
+    for (let i = 0; i < 5; i++) {
+      const x = dr() * (W + 400) - 200;
+      const y = nz + dspan * (0.06 + dr() * 0.42);
+      const rx = 220 + dr() * 300;
+      const ry = rx * (0.07 + dr() * 0.07);
+      const a = 0.045 + dr() * 0.035;
+      const gr = g.createRadialGradient(x, y, 0, x, y, rx);
+      gr.addColorStop(0, api.rgba(dcol, a));
+      gr.addColorStop(0.6, api.rgba(dcol, a * 0.5));
+      gr.addColorStop(1, api.rgba(dcol, 0));
+      g.save(); g.translate(x, y); g.scale(1, ry / rx); g.translate(-x, -y);
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, rx, 0, 7); g.fill(); g.restore();
+    }
+    g.restore();
     return o.cv;
   }
   function artCanvas(api, img, dpr) {

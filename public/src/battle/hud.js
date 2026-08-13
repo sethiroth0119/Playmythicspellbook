@@ -47,8 +47,6 @@
 const SVG_VANISH =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">' +
   '<path d="M12 3l4.6 9L12 21l-4.6-9z"/><path d="M4 8.5c2.6 1.6 13.4 1.6 16 0" opacity=".65"/></svg>';
-const SVG_BOLT =
-  '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L5 13h5l-1 9 8-12h-5z"/></svg>';
 
 let queued = false;
 let reported = false;

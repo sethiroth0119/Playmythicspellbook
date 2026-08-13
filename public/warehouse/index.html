@@ -567,9 +567,24 @@ function buildScene() {
   var M = function (o) { return new T.MeshStandardMaterial(o); };
   var mat = {
     asphalt: M({ color: 0x14161b, roughness: 0.58, metalness: 0.22 }),
-    slab:    M({ color: 0x2a2d34, roughness: 0.92 }),
-    wall:    M({ color: 0x3a3f49, roughness: 0.88 }),
-    wallIn:  M({ color: 0x4a505c, roughness: 0.9 }),
+    slab:    M({ color: 0x1e2126, roughness: 0.95 }),   // dark concrete — the darkest value
+    // ⚠ THREE VALUES, DELIBERATELY SEPARATED. Floor, walls and bay shells were
+    // 0x2a2d34 / 0x3a3f49 / 0x4a505c — close enough in luminance (37 / 55 / 72)
+    // that from the middle of the floor the room had no depth cue at all: a
+    // grey plane meeting a grey wall in front of grey boxes. Now ~39 / 114 / 69,
+    // so the eye reads floor, then bays, then walls, in that order, and the
+    // space has a back to it.
+    wall:    M({ color: 0x6b7280, roughness: 0.82 }),   // pale galvanised sheet
+    wallRib: M({ color: 0x5a616e, roughness: 0.78 }),   // the rib profile on it
+    skirt:   M({ color: 0x2e323a, roughness: 0.92 }),   // kick rail at the floor
+    roofDek: M({ color: 0x1b1e24, roughness: 0.95 }),   // deck, read from below
+    purlin:  M({ color: 0x4e5563, roughness: 0.7, metalness: 0.5 }),
+    hazard:  M({ color: 0xd8b13a, roughness: 0.7 }),    // bollard sleeves
+    // ⚠ MEASURED, NOT CHOSEN. At 0x3f4550 the bay shells rendered at luminance
+    // 108 against a floor at 105 — indistinguishable, which is the exact defect
+    // this round exists to fix, just moved from wall-vs-floor to bay-vs-floor.
+    // Raised until the rendered gap is real: floor ~70, bays ~140, walls ~180.
+    wallIn:  M({ color: 0x646c7c, roughness: 0.86 }),   // bay shells — mid value
     steel:   M({ color: 0x767d88, roughness: 0.42, metalness: 0.8 }),
     dark:    M({ color: 0x191c22, roughness: 0.8 }),
     gold:    M({ color: 0xd4af37, roughness: 0.35, metalness: 0.7,
@@ -711,10 +726,162 @@ function buildScene() {
       App.shedLights[0].position.z = ZB + Math.min(6, (ZF - ZB) * 0.25);
       App.shedLights[1].position.z = ZB + (ZF - ZB) * 0.68;
     }
-    var thr = new T.Mesh(new T.PlaneGeometry(9, 0.5), mat.gold);
-    thr.rotation.x = -Math.PI / 2; thr.position.set(0, 0.02, ZF);
-    scene.add(thr); keep(thr);
-    var slab2 = new T.Mesh(new T.PlaneGeometry(WX * 2 + 2, ZF - ZB + 2), mat.slab);
+    // ── 🧱 RIBBED WALLS. Real industrial sheds are profiled steel, and a rib run
+    //    plus a kick rail does more for the room than any amount of colour work.
+    //    ⚠ EVERY DIMENSION DERIVES FROM ZB / WX / H. Hardcode a length here and
+    //    it silently stops covering the wall at tier 3 — the same way the -19.5
+    //    movement clamp survived until someone drove to tier 5. And they are
+    //    MERGED: 102 ribs at tier 5 as separate meshes would be 102 draw calls.
+    var RIB_PITCH = 1.15, RIB_W = 0.09, RIB_D = 0.05;
+    var ribGeos = [], skirtGeos = [];
+    var addRib = function (w, h, d, x, y, z) {
+      var g = new T.BoxGeometry(w, h, d); g.translate(x, y, z); ribGeos.push(g);
+    };
+    var addSkirt = function (w, h, d, x, y, z) {
+      var g = new T.BoxGeometry(w, h, d); g.translate(x, y, z); skirtGeos.push(g);
+    };
+    var ribH = H - 0.35, ribY = ribH / 2 + 0.28;
+    // back wall (spans X), ribs vertical
+    var nBack = Math.max(2, Math.round((WX * 2 - 1) / RIB_PITCH));
+    for (var rb = 0; rb <= nBack; rb++) {
+      var rx = -WX + 0.5 + rb * ((WX * 2 - 1) / nBack);
+      addRib(RIB_W, ribH, RIB_D, rx, ribY, ZB + 0.27);
+    }
+    addSkirt(WX * 2 - 0.4, 0.30, 0.10, 0, 0.15, ZB + 0.29);
+    // side walls (span Z), ribs vertical
+    var sideLen = ZF - ZB - 0.6;
+    var nSide = Math.max(2, Math.round(sideLen / RIB_PITCH));
+    for (var sd = -1; sd <= 1; sd += 2) {
+      for (var rs = 0; rs <= nSide; rs++) {
+        var rz = ZB + 0.3 + rs * (sideLen / nSide);
+        addRib(RIB_D, ribH, RIB_W, sd * (WX - 0.27), ribY, rz);
+      }
+      addSkirt(0.10, 0.30, sideLen + 0.2, sd * (WX - 0.29), 0.15, (ZB + ZF) / 2);
+    }
+    var ribMesh = new T.Mesh(mergeGeos(ribGeos), mat.wallRib);
+    ribMesh.receiveShadow = true; scene.add(ribMesh); keep(ribMesh);
+    var skirtMesh = new T.Mesh(mergeGeos(skirtGeos), mat.skirt);
+    skirtMesh.receiveShadow = true; scene.add(skirtMesh); keep(skirtMesh);
+
+    // ── 🏗 CEILING DEPTH — purlins between the trusses, and a deck that reads
+    //    as a deck. One merged mesh; the trusses themselves are untouched.
+    var purGeos = [];
+    for (var pz = ZB + 1.0; pz < ZF - 0.5; pz += 1.5) {
+      for (var px = -1; px <= 1; px += 1) {
+        var pg = new T.BoxGeometry(0.10, 0.10, 1.42);
+        pg.translate(px * (WX * 0.55), H - 0.30, pz + 0.71); purGeos.push(pg);
+      }
+    }
+    if (purGeos.length) {
+      var purMesh = new T.Mesh(mergeGeos(purGeos), mat.purlin);
+      scene.add(purMesh); keep(purMesh);
+    }
+    var deck = new T.Mesh(new T.PlaneGeometry(WX * 2 - 0.6, ZF - ZB - 0.6), mat.roofDek);
+    deck.rotation.x = Math.PI / 2; deck.position.set(0, H - 0.22, (ZB + ZF) / 2);
+    scene.add(deck); keep(deck);
+
+    // ── 🚧 THE DOCK END should say vehicles come in here. Bollards sit OUTSIDE
+    //    the 9 m opening (which spans x ±4.5) so they can never block the route
+    //    in — _wh_reach_check.mjs drives every tier and would fail if they did.
+    var bolGeos = [], sleeveGeos = [];
+    [-1, 1].forEach(function (bs) {
+      [0, 1].forEach(function (bi) {
+        var bx = bs * (5.6 + bi * 1.5), bz = ZF + 1.1;
+        var bg = new T.CylinderGeometry(0.13, 0.15, 1.05, 10);
+        bg.translate(bx, 0.52, bz); bolGeos.push(bg);
+        var sg = new T.CylinderGeometry(0.145, 0.145, 0.22, 10);
+        sg.translate(bx, 0.80, bz); sleeveGeos.push(sg);
+      });
+    });
+    var bol = new T.Mesh(mergeGeos(bolGeos), mat.skirt);
+    bol.castShadow = true; scene.add(bol); keep(bol);
+    var slv = new T.Mesh(mergeGeos(sleeveGeos), mat.hazard);
+    slv.castShadow = true; scene.add(slv); keep(slv);
+
+    // (The old flat gold threshold plane used to sit at y 0.02, ON TOP of the
+    //  painted hazard border below, hiding it behind a plain yellow bar. The
+    //  border is painted into the floor texture now, so the plane is gone.)
+
+    // ── 🎨 THE FLOOR is the largest surface in the room and carried nothing.
+    //    One CanvasTexture — aisle lanes, a hazard-striped dock border, and a
+    //    bay-number stencil in front of every bay — costs ONE draw call and no
+    //    extra geometry. Every coordinate below is computed from the same ZB /
+    //    WX / BW / ROW_PITCH the bays themselves are placed from, so it grows
+    //    with the shed instead of drifting out of register at high tiers.
+    var fw = WX * 2 + 2, fd = ZF - ZB + 2;
+    var PX = 26;                                   // px per metre
+    var cw = Math.min(2048, Math.round(fw * PX)), ch = Math.min(2048, Math.round(fd * PX));
+    var sx = cw / fw, sy = ch / fd;                // world → canvas
+    var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+    var cx = cv.getContext('2d');
+    var X2 = function (x) { return (x + fw / 2) * sx; };            // world x → px
+    // ⚠ CANVAS TOP IS −Z, NOT +Z. PlaneGeometry lies in XY and the floor is
+    // rotated −90° about X, which sends the plane's local +Y to world −Z. Canvas
+    // row 0 is therefore the BACK of the shed. Mapping +z to the top instead
+    // mirrored the whole floor front-to-back: bay 5 (row 0, at the back) painted
+    // itself by the dock, and every stencil came out reversed.
+    var Z2 = function (z) { return (z - (ZB - 1)) * sy; };          // world z → px (−z at top)
+    cx.fillStyle = '#1e2126'; cx.fillRect(0, 0, cw, ch);
+    // subtle concrete mottling so the slab is not a flat fill
+    for (var mo = 0; mo < 900; mo++) {
+      cx.fillStyle = 'rgba(255,255,255,' + (0.006 + Math.random() * 0.014).toFixed(3) + ')';
+      var mr = 6 + Math.random() * 34;
+      cx.beginPath(); cx.arc(Math.random() * cw, Math.random() * ch, mr, 0, 7); cx.fill();
+    }
+    // expansion joints on a 6 m grid
+    cx.strokeStyle = 'rgba(0,0,0,0.34)'; cx.lineWidth = Math.max(1, 0.03 * sx);
+    for (var jx = -WX; jx <= WX; jx += 6) { cx.beginPath(); cx.moveTo(X2(jx), 0); cx.lineTo(X2(jx), ch); cx.stroke(); }
+    for (var jz = ZF; jz > ZB; jz -= 6) { cx.beginPath(); cx.moveTo(0, Z2(jz)); cx.lineTo(cw, Z2(jz)); cx.stroke(); }
+    // AISLE LANES down the clear side of the shed, derived from where the bay
+    // rows actually stop (they hug −X and leave AISLE_W of clear floor).
+    var laneX0 = -WX + 0.9 + BAYS_PER_ROW * (BW + 0.45) + 0.35;
+    cx.strokeStyle = '#d8d2c0'; cx.lineWidth = Math.max(2, 0.12 * sx);
+    [laneX0, Math.min(WX - 1.0, laneX0 + 3.0)].forEach(function (lx) {
+      cx.beginPath(); cx.moveTo(X2(lx), Z2(ZF - 0.8)); cx.lineTo(X2(lx), Z2(ZB + 0.8)); cx.stroke();
+    });
+    // walkway hatching between the two lane lines
+    cx.strokeStyle = 'rgba(216,210,192,0.30)'; cx.lineWidth = Math.max(1, 0.05 * sx);
+    for (var hz = ZB + 1.2; hz < ZF - 1.0; hz += 0.9) {
+      cx.beginPath(); cx.moveTo(X2(laneX0), Z2(hz)); cx.lineTo(X2(Math.min(WX - 1.0, laneX0 + 3.0)), Z2(hz - 0.6)); cx.stroke();
+    }
+    // HAZARD BORDER along the dock edge
+    var hb0 = X2(-WX + 0.5), hb1 = X2(WX - 0.5), hy = Z2(ZF - 0.10), hh = 0.75 * sy;
+    cx.save(); cx.beginPath(); cx.rect(hb0, hy, hb1 - hb0, hh); cx.clip();
+    cx.fillStyle = '#c9a227'; cx.fillRect(hb0, hy, hb1 - hb0, hh);
+    cx.fillStyle = '#1a1c21';
+    for (var sxp = hb0 - hh; sxp < hb1 + hh; sxp += hh * 1.4) {
+      cx.beginPath(); cx.moveTo(sxp, hy + hh); cx.lineTo(sxp + hh * 0.7, hy + hh);
+      cx.lineTo(sxp + hh * 1.4, hy); cx.lineTo(sxp + hh * 0.7, hy); cx.closePath(); cx.fill();
+    }
+    cx.restore();
+    // BAY NUMBER STENCILS on the floor in front of each bay — same layout maths
+    // buildBays uses, so they stay in register at every tier.
+    cx.textAlign = 'center'; cx.textBaseline = 'middle';
+    for (var bn = 0; bn < units; bn++) {
+      var bcol = bn % BAYS_PER_ROW, brow = Math.floor(bn / BAYS_PER_ROW);
+      var bx = -WX + 0.9 + BW / 2 + bcol * (BW + 0.45);
+      var bz = ZB + 1.2 + BD / 2 + brow * ROW_PITCH + BD / 2 + 0.75;
+      // Rotated 180° in canvas space so the stencil faces someone walking IN
+      // from the dock, which is the only direction anyone reads it from.
+      cx.save(); cx.translate(X2(bx), Z2(bz)); cx.rotate(Math.PI);
+      cx.font = 'bold ' + Math.round(0.85 * sy) + 'px Georgia, serif';
+      cx.fillStyle = 'rgba(216,210,192,0.80)';
+      cx.fillText(String(bn + 1), 0, 0);
+      cx.font = Math.round(0.30 * sy) + 'px Georgia, serif';
+      cx.fillStyle = 'rgba(216,210,192,0.45)';
+      cx.fillText('BAY', 0, -0.62 * sy);
+      cx.restore();
+      // stall edging either side of the bay mouth
+      cx.strokeStyle = 'rgba(216,210,192,0.5)'; cx.lineWidth = Math.max(1, 0.07 * sx);
+      cx.beginPath();
+      cx.moveTo(X2(bx - BW / 2), Z2(bz + 0.55)); cx.lineTo(X2(bx - BW / 2), Z2(bz - 1.15));
+      cx.moveTo(X2(bx + BW / 2), Z2(bz + 0.55)); cx.lineTo(X2(bx + BW / 2), Z2(bz - 1.15));
+      cx.stroke();
+    }
+    var ftex = new T.CanvasTexture(cv);
+    ftex.anisotropy = 4;
+    var slab2 = new T.Mesh(new T.PlaneGeometry(fw, fd),
+      new T.MeshStandardMaterial({ map: ftex, roughness: 0.95 }));
     slab2.rotation.x = -Math.PI / 2; slab2.position.set(0, 0.012, (ZB + ZF) / 2);
     slab2.receiveShadow = true; scene.add(slab2); keep(slab2);
   };

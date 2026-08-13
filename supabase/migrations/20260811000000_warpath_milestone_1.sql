@@ -493,6 +493,27 @@ create table if not exists public.warpath_runs (
 );
 alter table public.warpath_runs add column if not exists turn_seconds int not null default 90;
 alter table public.warpath_runs add column if not exists turn_deadline timestamptz;
+/* ⏱ The battle clocks live here for the same reason turn_seconds does: they are
+   the numbers most likely to be wrong, and a column retunes without a
+   migration. The old value was frozen into an `immutable` function body, which
+   also blocked the brief's Common / Rare / Epic / Mythic run tiers from ever
+   giving a Mythic run a longer fuse.
+
+   900s is sized off a measured p90 of 45 half-turns (control.json, n=400) at a
+   realistic 20 seconds a half-turn — NOT off the median, and not off the
+   engine's 120s-per-turn ceiling, which would put a p90 match at 90 minutes.
+   It is the SILENCE tolerance, not a match budget: a client still in the match
+   refreshes it, so the number only has to outlast a pause for coffee. */
+alter table public.warpath_runs add column if not exists battle_seconds int not null default 900;
+alter table public.warpath_runs add column if not exists battle_max_seconds int not null default 3600;
+/* ⚠ AND A SHORT FUSE FOR A BATTLE NOBODY EVER TURNED UP TO. A generous silence
+   tolerance is right once we know a match is being played, and badly wrong
+   before that: an attacker who opens a fight and closes the tab pins the
+   DEFENDER, who did not choose this and cannot decline. So a battle starts on a
+   120-second fuse — enough for a client to load the vs screen and send its
+   first heartbeat — and only the first heartbeat buys it the long one. Opening
+   a challenge and walking away now costs the victim two minutes, not fifteen. */
+alter table public.warpath_runs add column if not exists battle_grace_seconds int not null default 120;
 create index if not exists warpath_runs_open_idx on public.warpath_runs (status, created_at)
   where status = 'open';
 -- Negative seeds are the ONLY inputs where warpath-mapgen.js and the wp_*
@@ -646,6 +667,31 @@ alter table public.warpath_battles add column if not exists opened_turn int;
 alter table public.warpath_battles add column if not exists claim_attacker uuid;
 alter table public.warpath_battles add column if not exists claim_defender uuid;
 alter table public.warpath_battles add column if not exists expires_at timestamptz;
+/* ⏱ THREE CLOCKS, ONE JOB EACH. A single four-minute wall clock tried to do all
+   three and did none of them: the median real match in this repo's own engine
+   harness is 25 half-turns and the p90 is 45, while index.html:135724 allows
+   TURN_TIME_LIMIT_MS = 120000 per turn. Finishing a median match inside four
+   minutes needed 9.6 seconds a half-turn. So an honest, unanimous verdict was
+   being thrown away mid-match, and claiming victory one millisecond after
+   opening the battle strictly beat playing it.
+
+     expires_at       LIVENESS. Pushed forward by warpath_battle_alive() every
+                      time a client still sitting in the match says so. A battle
+                      dies of SILENCE, not of duration.
+     pause_until      how long THE RUN's turn barrier will wait for this battle.
+                      Fixed at open and never moved — the combatants stop being
+                      exempt from the deadline here whether or not the match is
+                      still going, so two players cannot freeze two others by
+                      playing slowly, or by pretending to.
+     hard_expires_at  the ceiling nothing can push. Fixed at open.
+
+   The rule the turn clock was built around still holds, and now holds properly:
+   nothing that pauses the turn clock may also be the thing the turn clock is
+   responsible for ending. `pause_until` is the pause; `expires_at` is the
+   battle. They are separate columns because they are separate questions. */
+alter table public.warpath_battles add column if not exists pause_until timestamptz;
+alter table public.warpath_battles add column if not exists hard_expires_at timestamptz;
+alter table public.warpath_battles add column if not exists alive_at timestamptz;
 create index if not exists warpath_battles_run_idx on public.warpath_battles (run_id, status);
 create index if not exists warpath_battles_pair_idx on public.warpath_battles
   (run_id, attacker_id, defender_id, opened_turn);
@@ -1795,20 +1841,58 @@ end $$;
    stop your own clock. Nothing that pauses the turn clock may also be the
    thing the turn clock is responsible for ending.                           */
 
--- How long an unreported battle is allowed to pin two heroes.
-create or replace function public.wp_battle_ttl() returns interval
-  language sql immutable as $$ select interval '4 minutes' $$;
+/* How long a SILENT battle is allowed to live, read from the run so it can be
+   retuned per run and per tier. The zero-argument `immutable` version this
+   replaces returned a constant four minutes; see the note on the columns. */
+drop function if exists public.wp_battle_ttl();
+create or replace function public.wp_battle_ttl(p_run uuid)
+returns interval language sql stable security definer set search_path = public as $$
+  select make_interval(secs => coalesce((select battle_seconds from public.warpath_runs where id = p_run), 900))
+$$;
 
-/* Am I exempt from the deadline right now? Only while a battle I am in is
-   BOTH open AND not yet past its own expiry. */
+/* Am I exempt from the deadline right now? Only while a battle I am in is open
+   AND still inside the window the RUN agreed to wait — `pause_until`, which no
+   heartbeat can move. A long match is allowed; a long match holding three other
+   players hostage is not. */
 create or replace function public.wp_deadline_paused(p_exp uuid)
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (
     select 1 from public.warpath_battles b
      where b.status = 'open'
        and (b.attacker_id = p_exp or b.defender_id = p_exp)
-       and coalesce(b.expires_at, now() + public.wp_battle_ttl()) > now())
+       and coalesce(b.pause_until, b.expires_at, b.opened_at) > now())
 $$;
+
+/* 💓 THE HEARTBEAT. Called by whichever client is actually sitting in the card
+   battle. It is the whole reason the fuse can be short: a battle now dies of
+   SILENCE rather than of taking as long as a real game of cards takes.
+
+   It cannot extend past hard_expires_at, and it deliberately does NOT touch
+   pause_until — being alive keeps your battle alive, it does not buy you the
+   right to keep the other two players waiting. */
+create or replace function public.warpath_battle_alive(p_battle uuid default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare b public.warpath_battles; v_uid uuid := auth.uid(); v_me uuid; v_new timestamptz;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  select * into b from public.warpath_battles where id = p_battle;
+  if b.id is null then return jsonb_build_object('ok', false, 'reason', 'no_such_battle'); end if;
+  select id into v_me from public.warpath_expeditions
+   where id in (b.attacker_id, coalesce(b.defender_id, b.attacker_id)) and user_id = v_uid;
+  if v_me is null then return jsonb_build_object('ok', false, 'reason', 'not_a_participant'); end if;
+  if b.status <> 'open' then
+    return jsonb_build_object('ok', true, 'battle_over', true, 'winner', b.winner_id);
+  end if;
+  v_new := least(now() + public.wp_battle_ttl(b.run_id),
+                 coalesce(b.hard_expires_at, now() + public.wp_battle_ttl(b.run_id)));
+  update public.warpath_battles
+     set expires_at = greatest(coalesce(expires_at, v_new), v_new), alive_at = now()
+   where id = b.id returning * into b;
+  return jsonb_build_object('ok', true, 'battle_id', b.id,
+                            'seconds_left', greatest(0, extract(epoch from (b.expires_at - now()))::int),
+                            'barrier_seconds_left',
+                            greatest(0, extract(epoch from (coalesce(b.pause_until, now()) - now()))::int));
+end $$;
 
 /* Who the barrier is actually waiting for. `away` players are skipped
    entirely — three consecutive auto-ends and the remaining players should not
@@ -1822,13 +1906,22 @@ $$;
 
 /* Wall-clock battle expiry. Independent of the turn barrier by design — this
    is the half of the deadlock fix that lets a paused pair release themselves. */
+/* ⚠ THIS USED TO READ `and kind = 'pvp'`, AND SO DID THE TURN SWEEP, SO A
+   GUARDIAN BATTLE HAD NO REAPER AT ALL. warpath_move refuses with
+   battle_pending while any battle is open, so if the parent game never posted a
+   result — a crash, a closed tab, a reload on the vs screen — the hero could
+   not move again for the rest of the run, and the only way out was the client
+   happening to offer the Fight button again. A battle forced an hour past its
+   expiry was still `open` after five expires, ten ticks and five sweeps. PvE
+   has one participant and no second witness, so an unreported Guardian is
+   simply abandoned: no spoils, no injury, hero released. */
 create or replace function public.wp_expire_battles(p_run uuid)
 returns int language plpgsql security definer set search_path = public as $$
 declare rec record; n int := 0;
 begin
   for rec in select * from public.warpath_battles
-              where run_id = p_run and status = 'open' and kind = 'pvp'
-                and expires_at is not null and expires_at <= now() loop
+              where run_id = p_run and status = 'open'
+                and least(coalesce(expires_at, hard_expires_at), coalesce(hard_expires_at, expires_at)) <= now() loop
     if rec.claim_attacker is not null or rec.claim_defender is not null then
       -- somebody said something; settle on the best word available
       if rec.claim_attacker is not null and rec.claim_defender is not null
@@ -2036,21 +2129,17 @@ begin
      "concede or stay frozen forever" is not an acceptable pair of options for
      someone who was attacked.
 
-     So an unreported battle expires. Two full turns with NO claim from either
-     side and it never happened: no winner, no loot, no injury, both released.
-     That is deliberately the gentlest possible resolution, because the one
-     thing we know about this battle is that we know nothing about it. */
-  for rec in select * from public.warpath_battles
-              where run_id = run.id and status = 'open' and kind = 'pvp'
-                and claim_attacker is null and claim_defender is null
-                and coalesce(opened_turn, 0) < run.turn - 1 loop
-    update public.warpath_battles
-       set status = 'abandoned', resolved_at = now() where id = rec.id and status = 'open';
-    if found then
-      perform public.wp_log(run.id, rec.attacker_id, 'battle_abandoned',
-        jsonb_build_object('battle_id', rec.id, 'opened_turn', rec.opened_turn));
-    end if;
-  end loop;
+     So an unreported battle expires: no winner, no loot, no injury, both
+     released. That is deliberately the gentlest possible resolution, because
+     the one thing we know about this battle is that we know nothing about it.
+
+     ⚠ THIS SWEEP USED TO COUNT TURNS — `opened_turn < run.turn - 1`, two turns,
+     about three minutes at the default pace — which is the SAME defect the
+     four-minute TTL had, in a second place, and it would have discarded an
+     honest verdict from a match that was still being played. There is now
+     exactly ONE rule for when a battle dies and it is wall-clock silence, so
+     this calls the reaper rather than reimplementing it. */
+  perform public.wp_expire_battles(run.id);
 
   -- The world closes. Anyone still out there loses everything they did not
   -- extract; that is the deal.
@@ -2067,7 +2156,7 @@ end $$;
 
 create or replace function public.warpath_end_turn(p_exp uuid default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare me public.warpath_expeditions; run public.warpath_runs; pending int;
+declare me public.warpath_expeditions; run public.warpath_runs; pending int; present int; skipped int;
 begin
   p_exp := coalesce(p_exp, public.wp_active_exp());
   me := public.wp_my_exp(p_exp);
@@ -2085,6 +2174,23 @@ begin
      warpath_enter already took this medicine for the lobby. Keyed per run so
      two worlds never queue behind each other. */
   perform pg_advisory_xact_lock(hashtext('warpath_turn:' || me.run_id::text));
+  -- Re-read UNDER the lock: `me` was fetched before it, so anything decided on
+  -- the pre-lock copy is decided on a stale row.
+  select * into me from public.warpath_expeditions where id = me.id;
+  select * into run from public.warpath_runs where id = me.run_id;
+
+  /* ⚠ NO GUARD HERE MEANT ONE PLAYER OWNED THE WORLD'S CLOCK. Ending a turn
+     that was already ended did the full advance again, and wp_pending_count
+     skips `away` heroes, so a single present player was unanimous with
+     themselves: 61 end_turn calls in 54ms ran the run to turn 61, closed it,
+     marked three away heroes `lost`, cleared the caller's injuries and banked a
+     permanent grant — 77ms, start to finish. It compounds with the battle TTL,
+     because `away` is 3 x 90s of silence, which is exactly what happened to
+     anyone stuck in a card battle longer than four minutes. */
+  if me.turn_ended then
+    return jsonb_build_object('ok', false, 'reason', 'turn_already_ended',
+                              'turn', run.turn, 'deadline', run.turn_deadline);
+  end if;
 
   -- Pressing the button is proof of presence: it clears any away flag.
   update public.warpath_expeditions
@@ -2093,8 +2199,28 @@ begin
   pending := public.wp_pending_count(me.run_id);
   if pending > 0 then
     return jsonb_build_object('ok', true, 'waiting_for', pending,
-                              'turn', (select turn from public.warpath_runs where id = me.run_id),
-                              'deadline', (select turn_deadline from public.warpath_runs where id = me.run_id));
+                              'turn', run.turn, 'deadline', run.turn_deadline);
+  end if;
+
+  /* The barrier is empty — but WHY it is empty matters, and the difference is
+     whether anyone is being SKIPPED. If it emptied because everyone still in
+     the run pressed the button, advance: that is the whole point of the button,
+     and a genuinely solo run (three players extracted, or nobody else ever
+     joined) must not be slowed to 90 seconds a turn for nothing.
+
+     If it emptied only because the others are `away` — still in the run, still
+     on the map, still lootable — then they are owed the real clock they went
+     away under, and this turn waits out its own deadline instead of being
+     skippable at memory speed. The lone player is never blocked from ACTING;
+     only from fast-forwarding the world past people who are not there to
+     object. wp_tick advances it on the wall clock a moment later. */
+  select count(*) into present from public.warpath_expeditions
+   where run_id = me.run_id and status in ('active','extracting') and away = false;
+  select count(*) into skipped from public.warpath_expeditions
+   where run_id = me.run_id and status in ('active','extracting') and away = true;
+  if present <= 1 and skipped > 0 and run.turn_deadline is not null and run.turn_deadline > now() then
+    return jsonb_build_object('ok', true, 'waiting_for', 0, 'held_for_away', skipped,
+                              'turn', run.turn, 'deadline', run.turn_deadline);
   end if;
 
   run := public.wp_advance_turn(me.run_id);
@@ -2204,9 +2330,16 @@ begin
      set moves_left = greatest(0, moves_left - case when v_kind = 'pvp' then 2 else 1 end)
    where id = me.id;
 
-  insert into public.warpath_battles (run_id, kind, attacker_id, defender_id, x, y, opened_turn, expires_at)
+  /* The three clocks, all stamped here and each answering one question:
+     how long before SILENCE kills this battle (refreshed by the heartbeat),
+     how long the RUN waits for it (never refreshed), and the ceiling. */
+  insert into public.warpath_battles (run_id, kind, attacker_id, defender_id, x, y, opened_turn,
+                                      expires_at, pause_until, hard_expires_at, alive_at)
     values (me.run_id, v_kind, me.id, p_target, me.x, me.y, run.turn,
-            now() + public.wp_battle_ttl()) returning * into b;
+            now() + make_interval(secs => run.battle_grace_seconds),
+            now() + public.wp_battle_ttl(me.run_id),
+            now() + make_interval(secs => run.battle_max_seconds),
+            null) returning * into b;
   perform public.wp_log(me.run_id, me.id, 'battle_opened',
     jsonb_build_object('battle_id', b.id, 'kind', v_kind, 'x', me.x, 'y', me.y));
   return jsonb_build_object('ok', true, 'battle_id', b.id, 'kind', v_kind,

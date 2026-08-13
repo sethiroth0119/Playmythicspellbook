@@ -1121,11 +1121,26 @@ begin
   if r->>'reason' <> 'battle_pending' then raise exception 'FAIL: wrong reason %', r->>'reason'; end if;
   pass := pass + 1; raise notice 'ok  an open battle pins the defender (the problem)';
 
-  -- nobody reports. Two turns later it must expire and release them both.
+  /* Nobody reports, and nobody ever turned up: no heartbeat has ever arrived
+     for this battle. That is the case the SHORT fuse exists for, because the
+     person paying for it is the defender.
+
+     ⚠ THIS USED TO BE COUNTED IN TURNS — three end_turns and the battle died.
+     That rule discarded honest verdicts from matches that were still being
+     played (median 25 half-turns, p90 45, against a four-minute fuse), so
+     expiry is wall-clock now and this asserts the wall clock. `now()` is fixed
+     for the whole transaction, so time is compressed by writing the timestamps
+     into the past — the same technique the deadlock block below uses. */
+  if (select alive_at from public.warpath_battles where id = v_b) is not null then
+    raise exception 'FAIL: a battle nobody has attended is already counted as live'; end if;
   for n in 1..3 loop
     perform public.set_uid(ua); perform public.warpath_end_turn(ea);
     perform public.set_uid(ub); perform public.warpath_end_turn(eb);
   end loop;
+  if (select status from public.warpath_battles where id = v_b) <> 'open' then
+    raise exception 'FAIL: three turns killed the battle — expiry is still counted in turns'; end if;
+  update public.warpath_battles set expires_at = now() - interval '1 second' where id = v_b;
+  perform public.wp_expire_battles(v_run);
   if (select status from public.warpath_battles where id = v_b) <> 'abandoned' then
     raise exception 'FAIL: an unreported battle is still open — two players are pinned for the whole run (status %)',
       (select status from public.warpath_battles where id = v_b); end if;
@@ -1159,6 +1174,8 @@ begin
     raise exception 'FAIL: two contradictory self-claims resolved anyway'; end if;
   pass := pass + 1; raise notice 'ok  two players both claiming victory resolves neither';
 
+  -- The sweep settles it when the battle's own clock runs out, not on a turn count.
+  update public.warpath_battles set expires_at = now() - interval '1 second' where id = v_b;
   perform public.set_uid(ua); perform public.warpath_end_turn(ea);
   perform public.set_uid(ub); perform public.warpath_end_turn(eb);
   if not exists (select 1 from public.warpath_events where run_id = v_run and kind = 'battle_disputed') then
@@ -1316,13 +1333,19 @@ begin
     raise exception 'FAIL: the turn advanced while two exempt players were mid-battle'; end if;
   pass := pass + 1; raise notice 'ok  while the battle is live the pause holds — the turn does not advance';
 
-  -- ...and the pause is BOUNDED. Push the battle past its own clock.
-  update public.warpath_battles set expires_at = now() - interval '1 second' where id = v_b;
-  if public.wp_deadline_paused(e[1]) then
-    raise exception 'FAIL: the pause outlives the battle expiry — a free way to stop your own clock'; end if;
-  pass := pass + 1; raise notice 'ok  the pause is bounded by the battle expiry, not by its existence';
+  /* ...and the pause is BOUNDED. It is bounded by `pause_until` — the window
+     the RUN agreed to wait — and NOT by how long the match actually takes,
+     because those are different questions and a client can move one of them.
+     The battle here is still open and still live; the barrier lets go anyway. */
+  update public.warpath_battles set pause_until = now() - interval '1 second' where id = v_b;
+  if public.wp_deadline_paused(e[1]) or public.wp_deadline_paused(e[2]) then
+    raise exception 'FAIL: the pause outlives its own window — a free way to stop your own clock'; end if;
+  if (select status from public.warpath_battles where id = v_b) <> 'open' then
+    raise exception 'FAIL: releasing the barrier killed a match that was still being played'; end if;
+  pass := pass + 1; raise notice 'ok  the pause is bounded by the window the run agreed to, not by the match';
 
   -- the tick must now expire the battle AND release the run
+  update public.warpath_battles set expires_at = now() - interval '1 second' where id = v_b;
   update public.warpath_runs set turn_deadline = now() - interval '1 second' where id = v_run;
   perform public.set_uid(u[3]); perform public.warpath_state();
   if (select status from public.warpath_battles where id = v_b) = 'open' then
@@ -1490,4 +1513,278 @@ begin
 
   raise notice '';
   raise notice '════════ FEED PRIVACY: % CHECKS PASSED ════════', pass;
+end $$;
+
+-- =============================================================================
+-- ⚠ THE BATTLE CLOCK WAS SHORTER THAN THE BATTLE.
+--
+-- wp_battle_ttl() was `immutable` and returned four minutes. This repo's own
+-- real-engine harness measures the median match at 25 half-turns and the p90 at
+-- 45, and index.html:135724 allows 120 SECONDS per turn — so finishing a median
+-- match inside the fuse required 9.6 seconds a half-turn. Two things followed,
+-- and both are asserted here:
+--   (a) an honest, unanimous verdict arriving at p90 match length was thrown
+--       away — status abandoned, no spoils, no injury;
+--   (b) claiming victory one millisecond after opening strictly beat playing,
+--       because the "a bare win claim waits" promise waited exactly 240s and
+--       then simply believed it.
+-- The fix is three clocks with one job each plus a liveness heartbeat, so a
+-- battle dies of SILENCE rather than of duration. Time is compressed by writing
+-- timestamps into the past, the same technique the deadlock block above uses.
+-- =============================================================================
+do $$
+declare
+  u uuid[]; e uuid[]; r jsonb; v_run uuid; v_b uuid; b public.warpath_battles;
+  n int; pass int := 0; i int; t0 timestamptz;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  for i in 1..4 loop
+    declare uid uuid;
+    begin
+      insert into auth.users (email) values ('bc' || i || '@clock2.test') returning id into uid;
+      insert into public.warpath_tickets (user_id, tickets) values (uid, 5);
+      perform public.set_uid(uid);
+      r := public.warpath_enter('h', 'C' || i, 'ticket');
+      u := array_append(u, uid); e := array_append(e, (r->>'expedition_id')::uuid);
+      v_run := (r->>'run_id')::uuid;
+    end;
+  end loop;
+
+  -- ── 0. The fuse is a COLUMN, not a frozen function body ───────────────────
+  if (select battle_seconds from public.warpath_runs where id = v_run) < 600 then
+    raise exception 'FAIL: battle_seconds is shorter than a real match';
+  end if;
+  update public.warpath_runs set battle_seconds = 900 where id = v_run;
+  if public.wp_battle_ttl(v_run) <> interval '900 seconds' then
+    raise exception 'FAIL: wp_battle_ttl does not read the run — it cannot be tuned per run or per tier';
+  end if;
+  pass := pass + 1; raise notice 'ok  the battle fuse is a run column, tunable without a migration';
+
+  -- ── 1. AN HONEST VERDICT AT p90 MATCH LENGTH IS STILL HONOURED ────────────
+  update public.warpath_expeditions set x = 18, y = 15, moves_left = 6, protected_until = 0 where id = e[1];
+  update public.warpath_expeditions set x = 19, y = 15, moves_left = 6, protected_until = 0 where id = e[2];
+  perform public.set_uid(u[1]);
+  r := public.warpath_battle_open(e[1], e[2]);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: battle_open: %', r; end if;
+  v_b := (r->>'battle_id')::uuid;
+
+  -- 45 half-turns at a realistic pace is ~15 minutes. Walk the clock forward in
+  -- five-minute steps with BOTH clients heart-beating, exactly as a real pair
+  -- sitting in the match would.
+  for i in 1..3 loop
+    update public.warpath_battles
+       set opened_at = opened_at - interval '5 minutes',
+           expires_at = expires_at - interval '5 minutes',
+           pause_until = pause_until - interval '5 minutes',
+           hard_expires_at = hard_expires_at - interval '5 minutes'
+     where id = v_b;
+    perform public.set_uid(u[1]); r := public.warpath_battle_alive(v_b);
+    perform public.set_uid(u[2]); r := public.warpath_battle_alive(v_b);
+    perform public.wp_expire_battles(v_run);
+    if (select status from public.warpath_battles where id = v_b) <> 'open' then
+      raise exception 'FAIL: a battle both players were still playing died after % minutes', i * 5;
+    end if;
+  end loop;
+  pass := pass + 1; raise notice 'ok  ⚠ a live match survives past p90 length while its clients are heart-beating';
+
+  -- ...and the verdict, when it finally arrives, is acted on.
+  perform public.set_uid(u[1]); r := public.warpath_battle_report(v_b, e[1]);
+  perform public.set_uid(u[2]); r := public.warpath_battle_report(v_b, e[1]);
+  select * into b from public.warpath_battles where id = v_b;
+  if b.status <> 'resolved' or b.winner_id <> e[1] then
+    raise exception 'FAIL: an honest unanimous verdict at p90 length was discarded (status %, winner %)', b.status, b.winner_id;
+  end if;
+  pass := pass + 1; raise notice 'ok  ⚠ THE HONEST VERDICT IS HONOURED — 15 minutes in, agreed, and paid out';
+
+  -- ── 2. A BARE CLAIM AT t=0 DOES NOT BEAT PLAYING THE GAME ─────────────────
+  update public.warpath_expeditions set x = 18, y = 15, moves_left = 6, protected_until = 0, turn_ended = false where id = e[1];
+  update public.warpath_expeditions set x = 19, y = 15, moves_left = 6, protected_until = 0, turn_ended = false where id = e[2];
+  perform public.set_uid(u[1]);
+  r := public.warpath_battle_open(e[1], e[2]);
+  v_b := (r->>'battle_id')::uuid;
+  perform public.set_uid(u[1]); r := public.warpath_battle_report(v_b, e[1]);   -- "I won", 1ms in
+  if (select status from public.warpath_battles where id = v_b) <> 'open' then
+    raise exception 'FAIL: a bare win claim was believed on the spot';
+  end if;
+  -- The defender is still playing, and says so. Four minutes pass.
+  update public.warpath_battles set opened_at = opened_at - interval '4 minutes',
+         expires_at = expires_at - interval '4 minutes',
+         pause_until = pause_until - interval '4 minutes'
+   where id = v_b;
+  perform public.set_uid(u[2]); r := public.warpath_battle_alive(v_b);
+  perform public.wp_expire_battles(v_run);
+  if (select status from public.warpath_battles where id = v_b) <> 'open' then
+    raise exception 'FAIL: ⚠ the attacker took the win while the defender was still playing';
+  end if;
+  pass := pass + 1; raise notice 'ok  ⚠ a t=0 win claim is NOT believed while the other side is still alive';
+
+  -- The defender finishes and reports the truth. Disagreement, so it is logged
+  -- and the defender's word carries — but nobody won by being fast.
+  perform public.set_uid(u[2]); r := public.warpath_battle_report(v_b, e[2]);
+  perform public.wp_expire_battles(v_run);
+  select * into b from public.warpath_battles where id = v_b;
+  if b.status = 'resolved' and b.winner_id = e[1] then
+    raise exception 'FAIL: the premature claimant still won';
+  end if;
+  pass := pass + 1; raise notice 'ok  the fast claim did not decide it';
+
+  -- ── 3. THE PAUSE IS STILL BOUNDED — heartbeats do not freeze the run ──────
+  update public.warpath_expeditions set x = 18, y = 15, moves_left = 6, protected_until = 0, turn_ended = false where id = e[1];
+  update public.warpath_expeditions set x = 19, y = 15, moves_left = 6, protected_until = 0, turn_ended = false where id = e[2];
+  -- A fresh pair: this run has already fought e1-vs-e2 twice above, and
+  -- warpath_battle_open refuses a repeat inside the same turn by design.
+  update public.warpath_battles set status = 'resolved' where run_id = v_run and status = 'open';
+  update public.warpath_expeditions set protected_until = 0, injured_turns = 0,
+         x = 24, y = 15, moves_left = 6, turn_ended = false, status = 'active' where id = e[3];
+  update public.warpath_expeditions set protected_until = 0, injured_turns = 0,
+         x = 25, y = 15, moves_left = 6, turn_ended = false, status = 'active' where id = e[4];
+  perform public.set_uid(u[3]);
+  r := public.warpath_battle_open(e[3], e[4]);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: battle_open (pause block): %', r; end if;
+  v_b := (r->>'battle_id')::uuid;
+  if not public.wp_deadline_paused(e[3]) then raise exception 'FAIL: no pause at all'; end if;
+  -- Push past pause_until while BOTH clients keep insisting they are alive.
+  update public.warpath_battles set pause_until = now() - interval '1 second' where id = v_b;
+  perform public.set_uid(u[3]); r := public.warpath_battle_alive(v_b);
+  perform public.set_uid(u[4]); r := public.warpath_battle_alive(v_b);
+  if public.wp_deadline_paused(e[3]) or public.wp_deadline_paused(e[4]) then
+    raise exception 'FAIL: ⚠ two players can freeze the run indefinitely by heart-beating';
+  end if;
+  pass := pass + 1; raise notice 'ok  ⚠ a heartbeat keeps the BATTLE alive, it does not keep the RUN waiting';
+  if (select status from public.warpath_battles where id = v_b) <> 'open' then
+    raise exception 'FAIL: releasing the barrier also killed the live match';
+  end if;
+  pass := pass + 1; raise notice 'ok  ...and releasing the barrier does not kill the match that is still being played';
+
+  -- ── 4. NOTHING OUTLIVES THE CEILING ───────────────────────────────────────
+  update public.warpath_battles set hard_expires_at = now() - interval '1 second' where id = v_b;
+  perform public.set_uid(u[3]); r := public.warpath_battle_alive(v_b);
+  perform public.wp_expire_battles(v_run);
+  if (select status from public.warpath_battles where id = v_b) = 'open' then
+    raise exception 'FAIL: a heartbeat pushed a battle past its hard ceiling';
+  end if;
+  pass := pass + 1; raise notice 'ok  no heartbeat can push a battle past hard_expires_at';
+
+  -- ── 5. A GUARDIAN BATTLE HAS A REAPER ─────────────────────────────────────
+  -- wp_expire_battles and the turn sweep both read `kind = 'pvp'`, so a PvE
+  -- battle the parent never reported pinned the hero for the whole run:
+  -- warpath_move returned battle_pending forever.
+  insert into public.warpath_battles (run_id, kind, attacker_id, x, y, opened_turn,
+                                      expires_at, pause_until, hard_expires_at, opened_at)
+    values (v_run, 'guardian', e[1], 5, 5, 1,
+            now() - interval '1 hour', now() - interval '1 hour',
+            now() - interval '1 hour', now() - interval '2 hours')
+    returning id into v_b;
+  perform public.wp_expire_battles(v_run);
+  if (select status from public.warpath_battles where id = v_b) = 'open' then
+    raise exception 'FAIL: ⚠ a Guardian battle an hour past its expiry is still open — the hero can never move again';
+  end if;
+  pass := pass + 1; raise notice 'ok  ⚠ a Guardian battle is reaped like any other';
+  perform public.set_uid(u[1]);
+  update public.warpath_expeditions set moves_left = 6, turn_ended = false, x = 5, y = 5,
+         status = 'active' where id = e[1];
+  r := public.warpath_move(e[1], 6, 5);
+  if not (r->>'ok')::boolean and r->>'reason' = 'battle_pending' then
+    raise exception 'FAIL: the hero is still pinned by the dead Guardian battle';
+  end if;
+  pass := pass + 1; raise notice 'ok  ...and the hero it pinned is released';
+
+  raise notice '';
+  raise notice '════════ BATTLE CLOCK: % CHECKS PASSED ════════', pass;
+end $$;
+
+-- =============================================================================
+-- ⚠ ONE PRESENT PLAYER OWNED THE WORLD'S CLOCK.
+-- warpath_end_turn had no turn_ended guard and wp_pending_count skips `away`
+-- heroes, so a lone player was unanimous with themselves: 61 end_turn calls in
+-- 54ms ran the run to turn 61, closed it, marked three away heroes `lost`,
+-- cleared the caller's injuries and banked a permanent grant. Total 77ms.
+-- =============================================================================
+do $$
+declare
+  u uuid[]; e uuid[]; r jsonb; v_run uuid; n int; t0 int; pass int := 0; i int; spun int := 0;
+begin
+  delete from public.warpath_grants; delete from public.warpath_events;
+  delete from public.warpath_battles; delete from public.warpath_node_claims;
+  delete from public.warpath_encounters; delete from public.warpath_recruit_claims;
+  delete from public.warpath_cards; delete from public.warpath_inventory;
+  delete from public.warpath_camps; delete from public.warpath_expeditions;
+  delete from public.warpath_runs; delete from public.warpath_tickets;
+
+  for i in 1..4 loop
+    declare uid uuid;
+    begin
+      insert into auth.users (email) values ('sp' || i || '@spin.test') returning id into uid;
+      insert into public.warpath_tickets (user_id, tickets) values (uid, 5);
+      perform public.set_uid(uid);
+      r := public.warpath_enter('h', 'S' || i, 'ticket');
+      u := array_append(u, uid); e := array_append(e, (r->>'expedition_id')::uuid);
+      v_run := (r->>'run_id')::uuid;
+    end;
+  end loop;
+
+  -- ── 1. Ending a turn twice is refused ─────────────────────────────────────
+  perform public.set_uid(u[1]);
+  r := public.warpath_end_turn(e[1]);
+  if not (r->>'ok')::boolean then raise exception 'FAIL: the first end_turn was refused: %', r; end if;
+  r := public.warpath_end_turn(e[1]);
+  if (r->>'ok')::boolean or r->>'reason' <> 'turn_already_ended' then
+    raise exception 'FAIL: ⚠ a player can end the same turn twice: %', r;
+  end if;
+  pass := pass + 1; raise notice 'ok  ⚠ ending an already-ended turn is refused';
+
+  -- ── 2. A lone present player cannot spin the world ────────────────────────
+  update public.warpath_expeditions set away = true, turn_ended = true
+   where id in (e[2], e[3], e[4]);
+  update public.warpath_expeditions set turn_ended = false where id = e[1];
+  update public.warpath_runs set turn_deadline = now() + interval '90 seconds' where id = v_run;
+  t0 := (select turn from public.warpath_runs where id = v_run);
+  for i in 1..61 loop
+    perform public.set_uid(u[1]);
+    r := public.warpath_end_turn(e[1]);
+    if (r->>'advanced') is not null then spun := spun + 1; end if;
+    update public.warpath_expeditions set turn_ended = false where id = e[1];
+  end loop;
+  n := (select turn from public.warpath_runs where id = v_run);
+  if n > t0 then
+    raise exception 'FAIL: ⚠ THE SPIN. 61 end_turns moved the world from turn % to turn % with three players away and the deadline unexpired', t0, n;
+  end if;
+  pass := pass + 1; raise notice 'ok  ⚠ THE SPIN IS DEAD — 61 end_turns, alone, moved the world zero turns';
+  if (select status from public.warpath_runs where id = v_run) = 'closed' then
+    raise exception 'FAIL: one player closed the run by pressing a button in a loop';
+  end if;
+  if exists (select 1 from public.warpath_expeditions where id in (e[2],e[3],e[4]) and status = 'lost') then
+    raise exception 'FAIL: three away players were wiped out by one player spinning the clock';
+  end if;
+  pass := pass + 1; raise notice 'ok  the away players still have their run, and the world is still open';
+
+  -- ── 3. ...but a lone player is not STUCK: the real clock still moves ──────
+  update public.warpath_runs set turn_deadline = now() - interval '1 second' where id = v_run;
+  perform public.set_uid(u[1]);
+  perform public.warpath_state(v_run);
+  if (select turn from public.warpath_runs where id = v_run) <= t0 then
+    raise exception 'FAIL: a solo player is now frozen out of their own run';
+  end if;
+  pass := pass + 1; raise notice 'ok  a lone player still advances — on the real 90s clock, not at memory speed';
+
+  -- ── 4. And two present players still advance instantly ────────────────────
+  update public.warpath_expeditions set away = false, turn_ended = false where id in (e[1], e[2]);
+  update public.warpath_expeditions set away = true, turn_ended = true where id in (e[3], e[4]);
+  update public.warpath_runs set turn_deadline = now() + interval '90 seconds' where id = v_run;
+  t0 := (select turn from public.warpath_runs where id = v_run);
+  perform public.set_uid(u[1]); r := public.warpath_end_turn(e[1]);
+  perform public.set_uid(u[2]); r := public.warpath_end_turn(e[2]);
+  if (select turn from public.warpath_runs where id = v_run) <> t0 + 1 then
+    raise exception 'FAIL: two present players pressing End turn no longer advance the world';
+  end if;
+  pass := pass + 1; raise notice 'ok  two present players still advance the turn the moment they agree';
+
+  raise notice '';
+  raise notice '════════ TURN-CLOCK ABUSE: % CHECKS PASSED ════════', pass;
 end $$;

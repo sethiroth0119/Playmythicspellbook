@@ -721,6 +721,139 @@ the whole draft is worth from +10.6% to +6.9%. The correlation was real and the 
 it was wrong.
 
 
+**What moved.** Same harness, same `--scale 2`, baseline in `tools/warpath-deck/out/baseline/`.
+
+`q4` — Warpath pools against normal collection decks:
+
+| pool | vs `generated` (was) | vs `tuned` (was) |
+|---|---|---|
+| starter pool only (24) | **48.8%** (26.3%) | **43.1%** (21.3%) |
+| typical run (+13) | **66.3%** (32.5%) | **63.7%** (29.4%) |
+| good run (+35) | **59.4%** (28.7%) | **50.0%** (28.7%) |
+| brief intent (+40) | **50.6%** (35.0%) | **47.5%** (31.9%) |
+
+Every cell up 15–35 points, and the level shift is the repair, not a buff: the four rows are
+*different draft streams*, so `q4` is a level check and not a progression test — `q5` is the
+progression test.
+
+`q6` says the same thing from the other side. Removing the starter pool's eight Location cards
+used to be worth **59.8%** — i.e. a fifth of the deck was dead weight the AI pilot could not use.
+It is now **48.8%**: nothing left to remove.
+
+`q2` — two independently drafted pools, which is where the coordinator's "15–85% pool matchups"
+lived:
+
+| | baseline | now |
+|---|---|---|
+| per-pairing spread (sd) | 17.4% | **10.3%** |
+| range | **15.0%–85.0%** | **28.7%–67.5%** |
+| statistically lopsided pairings | 4/24 | **1/24** |
+
+Replicated across three runs of the same code (sd 8.9 / 8.5 / 10.3). **The correlation between
+"drafted more cards" and "won" is not evidence either way** and should not be quoted: the same
+three runs gave r = +0.314, −0.160, +0.227. With 24 pairings its standard error is about 0.21.
+
+`q5` — the milestone curve, which is the honest weak spot:
+
+| pool | baseline | now |
+|---|---|---|
+| 25 | 48.1% | 40.6% |
+| 31 | 61.3% | 62.5% |
+| 38 | 49.4% | 58.1% |
+| 46 | 46.3% | 55.0% |
+| 52 | 52.5% | 44.4% |
+| 60 | 55.0% | 46.3% |
+
+**Say it plainly: `q5` is not fixed, and its top two rungs got worse.** `q5` runs ONE donor at
+n=160, and the two rows at 52 and 60 build a deck with the same distinct count and the same
+average cost — so most of the difference between them is noise, and the whole shape swung by 14
+points across three runs of identical code. `probe-progression.mjs` exists because of that: four
+independent donors, common opponent, and it reads +10.6% end to end with two backward rungs of
+3–4 points. The two instruments disagree about the top of the curve and I trust neither to
+±5 points.
+
+There is also a **ceiling nobody put there on purpose**: a 40-card deck cannot express a 60-card
+pool. Past roughly pool 46 the deck stops changing — `distinct` sticks at 26 and `avgCost` at
+1.93 — so the last two `DECK_MILESTONES` rungs cannot be worth much in deck power however the
+bridge is written. If 52 and 60 are meant to feel like progress they have to pay in something
+other than the battle deck (extraction capacity, choice, a second deck slot). That is a design
+call, not a bug, and it is not mine to make.
+
+**Finding 2 — the inverted biome payoff — was the same bug, and is fixed by the same change.**
+
+| biome | baseline | now | encounter chance | cards a 60-turn run drafts |
+|---|---|---|---|---|
+| wastes | 57.4% | **57.8%** | 11 | 19.0 |
+| graveyard | **46.7%** (worst) | **52.1%** | 18 (highest) | 22.2 |
+| plains | 49.2% | 48.8% | 9 (lowest) | 14.1 |
+| mountain | 52.1% | 48.6% | 15 | 19.9 |
+| forest | 46.9% | 46.4% | 16 | 19.3 |
+| facility | 47.8% | 46.4% | 17 | 22.2 |
+| **spread** | **10.7%** | **11.4%** | | |
+
+The inversion was exactly this: the Barrow Gate has the **highest** encounter chance and among the
+highest yields, and it finished **last**. It finished last because its table is expensive and
+Location-heavy, and the old bridge turned a Location-heavy pool into ten Locations and threw the
+rest away. Selecting the deck fixed it without a single weight changing: **46.7% → 52.1%, worst to
+second.** The spread did not widen (10.7% → 11.4%, and the same code gave 14.9 / 12.8 / 11.4
+across three runs — run-to-run variation on this metric is about ±2 points).
+
+**What is NOT fixed, and one falsified hypothesis.** The Ashen Wastes is still the strongest
+biome at ~58% and still beats all five others head to head. The obvious explanation — its two
+heaviest slots are Golem and Goblin, the two strongest cards in the starter pool, so a Wastes run
+buys extra copies of what it already owns — was tested by moving that weight onto the Lich and the
+Ice elemental and re-running `q3` at the same scale: **59.3% → 58.8%, inside the noise.** The
+change was reverted rather than kept for its flavour. It is wrong because `warpathPadDeck` already
+pads a short pool up to three copies of the best cards in it — a starter deck runs three Goblins
+whether or not the Wastes ever offered one. Whatever the Wastes' advantage is, it is not its unit
+weights, and the next place to look is that it is the only biome whose *entire* table is castable
+on curve. Written into `warpath-data.js` next to the weights so it is not rediscovered.
+
+**Finding 3 — the Guardian had no deck, and now has two.** `enemyDeckOverride: null` handed the
+mode's only authored PvE encounter to `buildAIDeck()` — a generic AI deck at best, and on an
+install with no published AI decks an **empty array**: 20/20 to the player, median **1.5
+half-turns**. Two authored decks now, one per guarded landmark, exactly `DECK_SIZE`, never more
+than `MAX_COPIES_PER_CARD`, built only from ids that exist in the catalogue, and each a different
+fight on purpose — the Black Pyramid an Ouroboros swarm under Zarra, the Drowned Choir a cold
+attrition deck under Vex. The Hero is now fixed **per landmark**: the old comment claimed the
+battle-id hash made "the same Guardian the same foe", but a battle id is per battle, so every run
+met a different one.
+
+| pool | vs Black Pyramid | vs Drowned Choir | vs the old empty deck |
+|---|---|---|---|
+| starter pool only (24) | 58.3% | 53.3% | 100% |
+| typical run (+13) | 77.5% | 62.5% | 100% |
+| good run (+35) | 73.3% | 53.3% | 100% |
+| median half-turns | 17–18 | 16 | **1.5** |
+
+The Pyramid needed one measured revision: its first build ran ten traps and **three** five-energy
+Brood Tyrants and measured 80.8% to the player, because a swarm that cannot deploy until turn five
+is not a swarm. Twenty two-and-three-drops and one fewer Tyrant took it to 58.3%. It is still the
+softer of the two against drafted pools and that is stated rather than smoothed over. Neither
+number includes `enemyLevel: 6`, which the bridge sets and the harness does not model, so the real
+fight is harder than this by whatever six levels are worth.
+
+**The harder question: is the landmark findable?** Measured over 480 real 60-turn runs
+(`probe-landmark.mjs`), and the answer is worse than "rare":
+
+| | turn 20 | turn 40 | turn 60 |
+|---|---|---|---|
+| the landmark came out from under the fog | 17.5% | 29.2% | **36.7%** |
+| the hero actually stood on it | 5.8% | 9.0% | **14.0%** |
+
+So it is **not primarily a discovery problem**. Two of every three players who are *shown* it walk
+straight past — it is one painted structure on a 1320-tile map and nothing says it matters. (The
+four-player sim's "zero Guardian battles in 16 runs" is unremarkable against a 13.6% rate; that
+part was not overstated.)
+
+It now announces itself, the way the extraction broadcast does — and **privately, with no
+coordinates**. It tells you that you have seen something; it does not tell your rivals where you
+are or where it is. Which required fixing something else first: **the run feed had no audience.**
+`warpath_state` returned the last 40 events by `run_id` alone and did not even return
+`expedition_id` for the client to filter on — so `watchtower_report`, which posts a **rival camp's
+coordinates**, was being read by the three players who never built a tower. A `private` column and
+one predicate; every existing broadcast still broadcasts.
+
 **Still waiting for Colyseus:** who is telling the truth about a battle result. Conceding and
 agreement are believed immediately and a bare win claim waits, so being fast buys nothing — but
 two lying clients are not detectable from here. See `docs/mp-server-authority-shared-engine.md`.

@@ -533,7 +533,9 @@ function buildScene() {
   } catch (e) {}
   clock = new T.Clock();
 
-  scene.add(new T.HemisphereLight(0x2b3448, 0x0a0a0d, 0.62));
+  // Hemisphere carries everything the two fixtures cannot reach — the back of a
+  // 48 m shed is 20 m from the nearest one. Not a new light: this already existed.
+  scene.add(new T.HemisphereLight(0x39435a, 0x0d0f14, 0.86));
   scene.add(new T.AmbientLight(0x1c2230, 0.34));
   // One overhead yard lamp, warm, casting the real contact shadows. Bias values
   // come from WHTruck.SHADOW_HINT — flat slab sides stripe themselves with acne
@@ -546,6 +548,14 @@ function buildScene() {
   // they press E. normalBias is raised well past the mesh hint too, because the
   // yard has far more near-parallel flat surfaces than the truck alone.
   var SHMAP = sh.mapSize || 2048;
+  // One place that sizes the shadow box, called at boot AND on every tier change.
+  function fitKeyShadow(L, zb) {
+    var span = Math.abs(zb) + 22;                  // site depth plus the apron
+    L.shadow.camera.left = -span; L.shadow.camera.right = span;
+    L.shadow.camera.top = span;   L.shadow.camera.bottom = -span;
+    L.shadow.camera.near = 1;     L.shadow.camera.far = span * 2.4;
+    L.shadow.camera.updateProjectionMatrix();
+  }
   var key = new T.DirectionalLight(0xffd9a8, 1.5);
   key.position.set(6, 20, 14); key.castShadow = true;
   key.shadow.mapSize.set(SHMAP, SHMAP);
@@ -554,13 +564,17 @@ function buildScene() {
   // building runs to z -46.6, so the back 16.6 m — half the bays — cast and
   // received no shadows at all. Sized off the same shedZB the geometry uses,
   // with a margin, so the two cannot drift apart.
-  var _shZ = (App.shedZB != null ? App.shedZB : -19) - 6;
-  key.shadow.camera.left = -30; key.shadow.camera.right = 30;
-  key.shadow.camera.top = 30; key.shadow.camera.bottom = _shZ;
-  key.shadow.camera.updateProjectionMatrix();
+  // ⚠ ALL FOUR SIDES AND `far`, not just `bottom`. This is the movement-clamp
+  // bug for the third time: only the one bound that had visibly failed was made
+  // to follow the shed, and left/right/far stayed hardcoded. At tier 5 the +X
+  // back corner projects to ~30.3 in light space — just outside a ±30 frustum,
+  // so the corner silently stopped casting. Fit the whole box to the site.
+  fitKeyShadow(key, (App.shedZB != null ? App.shedZB : -19));
+  
   key.shadow.camera.near = 1; key.shadow.camera.far = 70;
   key.shadow.bias = sh.bias; key.shadow.normalBias = Math.max(0.28, sh.normalBias);
   App.keyLight = key;
+  App.fitKeyShadow = fitKeyShadow;
   scene.add(key);
   var fill = new T.DirectionalLight(0x5b76a8, 0.26); fill.position.set(-12, 8, -14); scene.add(fill);
 
@@ -584,7 +598,12 @@ function buildScene() {
     // 108 against a floor at 105 — indistinguishable, which is the exact defect
     // this round exists to fix, just moved from wall-vs-floor to bay-vs-floor.
     // Raised until the rendered gap is real: floor ~70, bays ~140, walls ~180.
-    wallIn:  M({ color: 0x646c7c, roughness: 0.86 }),   // bay shells — mid value
+    // ⚠ ALBEDO, NOT PLACEMENT, IS WHAT HOLDS THE SEPARATION. At 0x646c7c the
+    // shells read +43 against the floor near a light fixture and −42 at the back
+    // of a tier-5 shed, because a point light at range cannot lift them. A
+    // brighter base plus a little self-lift keeps them above the floor
+    // everywhere: the separation stops depending on where the player stands.
+    wallIn:  M({ color: 0x8a93a4, roughness: 0.84, emissive: 0x14181f, emissiveIntensity: 1.0 }),
     steel:   M({ color: 0x767d88, roughness: 0.42, metalness: 0.8 }),
     dark:    M({ color: 0x191c22, roughness: 0.8 }),
     gold:    M({ color: 0xd4af37, roughness: 0.35, metalness: 0.7,
@@ -647,8 +666,12 @@ function buildScene() {
   // ── ground ──
   var g = new T.Mesh(new T.PlaneGeometry(200, 200), mat.asphalt);
   g.rotation.x = -Math.PI / 2; g.receiveShadow = true; scene.add(g);
-  var slab = new T.Mesh(new T.PlaneGeometry(28, 22), mat.slab);
-  slab.rotation.x = -Math.PI / 2; slab.position.set(0, 0.01, -8); slab.receiveShadow = true; scene.add(slab);
+  // ⚠ NO SECOND SLAB. The apron slab used to be drawn here at y 0.01 AND again
+  // as slab2 at y 0.012 inside the shed rebuild — the lower one entirely
+  // occluded, never resized when the shed grew, and a permanently invisible
+  // draw call. Only the apron portion outside the shed is drawn here now.
+  var slab = new T.Mesh(new T.PlaneGeometry(28, 16), mat.slab);
+  slab.rotation.x = -Math.PI / 2; slab.position.set(0, 0.01, 9); slab.receiveShadow = true; scene.add(slab);
 
   // ── the shed ─────────────────────────────────────────────────────────────
   // ⚠ THE BUILDING GROWS WITH THE BAYS. It used to be a fixed 26 x 21 m box
@@ -688,10 +711,7 @@ function buildScene() {
     // Re-fit the shadow frustum to the new depth. buildScene() sizes it once at
     // boot, but the shed grows every time a tier is bought.
     try {
-      if (App.keyLight) {
-        App.keyLight.shadow.camera.bottom = ZB - 6;
-        App.keyLight.shadow.camera.updateProjectionMatrix();
-      }
+      if (App.keyLight && App.fitKeyShadow) App.fitKeyShadow(App.keyLight, ZB);
     } catch (e) {}
     var keep = function (o) { App.shedParts.push(o); return o; };
     var wall = function (w, h, d, m, x, y, z, noShadow) {
@@ -707,25 +727,47 @@ function buildScene() {
     solidShed(wall(9.5, H, 0.5, mat.wall, -WX + 4.75, H / 2, ZF), 9.5, 0.5);
     solidShed(wall(9.5, H, 0.5, mat.wall,  WX - 4.75, H / 2, ZF), 9.5, 0.5);
     wall(9.0, 1.6, 0.5, mat.wall, 0, H - 0.8, ZF);                 // header over the opening
-    var roof = wall(WX * 2 + 0.5, 0.4, ZF - ZB, mat.wall, 0, H, (ZB + ZF) / 2, true);
-    roof.receiveShadow = true;
+    // ⚠ THE ROOF MUST CAST. It was built with noShadow=true, so the key light
+    // passed straight THROUGH a solid roof and lit the floor directly. Flipping
+    // this one flag drops the interior floor band from 135 to 76 — about 44% of
+    // the floor's brightness was sunlight coming through the lid. Every colour
+    // number measured before this was measuring the leak, not the palette: the
+    // floor swung 58→183 across positions a player can stand in, a 125-point
+    // range on ONE uniform material, against the 33-point separation the whole
+    // interior scheme is built on. It also explained a result that should have
+    // stopped the round on its own — the shed was DIMMEST at the dock, where
+    // daylight actually enters, and brightest 32 m inside.
+    var roof = wall(WX * 2 + 0.5, 0.4, ZF - ZB, mat.wall, 0, H, (ZB + ZF) / 2);
+    roof.castShadow = true; roof.receiveShadow = true;
     // Trusses + emissive strip fixtures. Lights stay at TWO no matter how long
     // the shed gets — every extra light recompiles every material in the scene.
     var nT = Math.max(7, Math.round((ZF - ZB) / 3.0));
     for (var i = 0; i < nT; i++) {
       var z = ZB + 1.6 + i * ((ZF - ZB - 3.2) / Math.max(1, nT - 1));
-      wall(WX * 2, 0.28, 0.28, mat.steel, 0, H - 0.55, z, true);
-      wall(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);
+      // Trusses cast too — they are what puts structure into the light.
+      wall(WX * 2, 0.28, 0.28, mat.steel, 0, H - 0.55, z).castShadow = true;
+      wall(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);   // emissive fixture: no shadow
     }
+    // ⚠ THE LIGHT BUDGET MUST FOLLOW THE SHED — WITHOUT ADDING LIGHTS. Two
+    // fixtures at range 34 lit a 21 m tier-1 shed adequately and a 48.6 m tier-5
+    // one not at all: walls fell 211 → 136-145. That was masked while the roof
+    // leaked sunlight; closing the leak would have left tier 5 murky. Lights
+    // stay at TWO (every extra recompiles every material) but their RANGE and
+    // INTENSITY scale with the depth they have to cover, and they sit at the
+    // thirds of the shed rather than at fixed offsets from the back wall.
+    var depth = ZF - ZB;
+    var lint = 0.85 + Math.min(0.95, (depth - 21) * 0.031);
+    var lrng = Math.max(34, depth * 0.92);
     if (!App.shedLights) {
-      App.shedLights = [ZB + 5, ZB + 14].map(function (z) {
-        var pl = new T.PointLight(0xffe6bd, 0.85, 34, 2);
-        pl.position.set(0, H - 1.4, z); scene.add(pl); return pl;
+      App.shedLights = [0.30, 0.72].map(function (f) {
+        var pl = new T.PointLight(0xffe6bd, lint, lrng, 2);
+        pl.position.set(0, H - 1.4, ZB + depth * f); scene.add(pl); return pl;
       });
-    } else {
-      App.shedLights[0].position.z = ZB + Math.min(6, (ZF - ZB) * 0.25);
-      App.shedLights[1].position.z = ZB + (ZF - ZB) * 0.68;
     }
+    App.shedLights.forEach(function (pl, i) {
+      pl.position.z = ZB + depth * (i === 0 ? 0.30 : 0.72);
+      pl.intensity = lint; pl.distance = lrng;
+    });
     // ── 🧱 RIBBED WALLS. Real industrial sheds are profiled steel, and a rib run
     //    plus a kick rail does more for the room than any amount of colour work.
     //    ⚠ EVERY DIMENSION DERIVES FROM ZB / WX / H. Hardcode a length here and
@@ -765,12 +807,15 @@ function buildScene() {
 
     // ── 🏗 CEILING DEPTH — purlins between the trusses, and a deck that reads
     //    as a deck. One merged mesh; the trusses themselves are untouched.
+    // ⚠ CONTINUOUS RUNS, WALL TO WALL. These were 1.42 m boxes butted with
+    // 0.08 m gaps, in three lines that stopped 5.8 m short of each side wall —
+    // 45% of the ceiling bare, and every butt end catching light so the whole
+    // thing read as dashed cable rather than structure. Five unbroken runs now,
+    // spanning the full depth, spaced across the full width.
     var purGeos = [];
-    for (var pz = ZB + 1.0; pz < ZF - 0.5; pz += 1.5) {
-      for (var px = -1; px <= 1; px += 1) {
-        var pg = new T.BoxGeometry(0.10, 0.10, 1.42);
-        pg.translate(px * (WX * 0.55), H - 0.30, pz + 0.71); purGeos.push(pg);
-      }
+    for (var pi = -2; pi <= 2; pi++) {
+      var pg = new T.BoxGeometry(0.10, 0.10, ZF - ZB - 0.5);
+      pg.translate(pi * (WX * 0.42), H - 0.30, (ZB + ZF) / 2); purGeos.push(pg);
     }
     if (purGeos.length) {
       var purMesh = new T.Mesh(mergeGeos(purGeos), mat.purlin);
@@ -778,19 +823,30 @@ function buildScene() {
     }
     var deck = new T.Mesh(new T.PlaneGeometry(WX * 2 - 0.6, ZF - ZB - 0.6), mat.roofDek);
     deck.rotation.x = Math.PI / 2; deck.position.set(0, H - 0.22, (ZB + ZF) / 2);
+    deck.castShadow = true; deck.receiveShadow = true;
     scene.add(deck); keep(deck);
 
     // ── 🚧 THE DOCK END should say vehicles come in here. Bollards sit OUTSIDE
     //    the 9 m opening (which spans x ±4.5) so they can never block the route
     //    in — _wh_reach_check.mjs drives every tier and would fail if they did.
+    // ⚠ ONE SET OF BOLLARDS, AND THEY ARE SOLID. There were already gold ones
+    // at x ±7.5 z 3.2 WITH colliders; these went in at ±5.6/±7.1 z 3.1, so a
+    // chunky gold box and a slim grey cylinder parked 0.4 m apart — two design
+    // languages in one cluster. Worse, these registered NO colliders:
+    // blocked(±5.6, 3.1) returned false and you walked straight through solid
+    // steel. The gold pair is retired (see the dock-furniture block below) and
+    // these are the only ones, on a 1.5 m pitch, each with a collider.
     var bolGeos = [], sleeveGeos = [];
+    App.bollardX = [];
     [-1, 1].forEach(function (bs) {
       [0, 1].forEach(function (bi) {
-        var bx = bs * (5.6 + bi * 1.5), bz = ZF + 1.1;
+        var bx = bs * (5.6 + bi * 1.9), bz = ZF + 1.1;
         var bg = new T.CylinderGeometry(0.13, 0.15, 1.05, 10);
         bg.translate(bx, 0.52, bz); bolGeos.push(bg);
         var sg = new T.CylinderGeometry(0.145, 0.145, 0.22, 10);
         sg.translate(bx, 0.80, bz); sleeveGeos.push(sg);
+        App.colliders.push({ x: bx, z: bz, hw: 0.22, hd: 0.22 });
+        App.bollardX.push(bx);
       });
     });
     var bol = new T.Mesh(mergeGeos(bolGeos), mat.skirt);
@@ -823,10 +879,21 @@ function buildScene() {
     var Z2 = function (z) { return (z - (ZB - 1)) * sy; };          // world z → px (−z at top)
     cx.fillStyle = '#1e2126'; cx.fillRect(0, 0, cw, ch);
     // subtle concrete mottling so the slab is not a flat fill
-    for (var mo = 0; mo < 900; mo++) {
-      cx.fillStyle = 'rgba(255,255,255,' + (0.006 + Math.random() * 0.014).toFixed(3) + ')';
-      var mr = 6 + Math.random() * 34;
-      cx.beginPath(); cx.arc(Math.random() * cw, Math.random() * ch, mr, 0, 7); cx.fill();
+    // ⚠ AGGREGATE, NOT STAINS. 900 discs of 0.23-1.3 m were large soft
+    // overlapping blotches — the most visible thing on the floor after the lane
+    // lines. Concrete aggregate is small and dense: many more, much smaller,
+    // and low enough in contrast to read as texture rather than damp patches.
+    // ⚠ SIZED IN METRES, NOT PIXELS, and dense enough to be texture. Pixel radii
+    // change meaning when the shed grows and the canvas clamps at 2048: the same
+    // "1-3 px" speck is 8 cm at tier 1 and 20 cm at tier 5. Aggregate is 1-4 cm
+    // across, so it is specified that way and converted. Count scales with area
+    // so density is constant, and alpha stays low enough that overlaps do not
+    // accumulate into the pale blotches this replaced.
+    var mArea = fw * fd, mN = Math.round(mArea * 26);
+    for (var mo = 0; mo < mN; mo++) {
+      cx.fillStyle = 'rgba(255,255,255,' + (0.008 + Math.random() * 0.012).toFixed(3) + ')';
+      var mr = (0.010 + Math.random() * 0.030) * sx;      // 1-4 cm, in canvas px
+      cx.beginPath(); cx.arc(Math.random() * cw, Math.random() * ch, Math.max(0.6, mr), 0, 7); cx.fill();
     }
     // expansion joints on a 6 m grid
     cx.strokeStyle = 'rgba(0,0,0,0.34)'; cx.lineWidth = Math.max(1, 0.03 * sx);
@@ -834,18 +901,31 @@ function buildScene() {
     for (var jz = ZF; jz > ZB; jz -= 6) { cx.beginPath(); cx.moveTo(0, Z2(jz)); cx.lineTo(cw, Z2(jz)); cx.stroke(); }
     // AISLE LANES down the clear side of the shed, derived from where the bay
     // rows actually stop (they hug −X and leave AISLE_W of clear floor).
-    var laneX0 = -WX + 0.9 + BAYS_PER_ROW * (BW + 0.45) + 0.35;
+    // ⚠ DERIVE FROM THE BAYS THAT EXIST, not from a full 5-wide row. At tier 1
+    // the two bays sit at x −10.45 and −6.7 while a full-row laneX0 put the
+    // walkway at x 7→10, hard against the far wall with ~18 m of blank slab
+    // between: a walkway leading nowhere, at the tier every player starts at.
+    var laneCols = Math.min(BAYS_PER_ROW, Math.max(1, units));
+    var laneX0 = -WX + 0.9 + laneCols * (BW + 0.45) + 0.35;
     cx.strokeStyle = '#d8d2c0'; cx.lineWidth = Math.max(2, 0.12 * sx);
     [laneX0, Math.min(WX - 1.0, laneX0 + 3.0)].forEach(function (lx) {
       cx.beginPath(); cx.moveTo(X2(lx), Z2(ZF - 0.8)); cx.lineTo(X2(lx), Z2(ZB + 0.8)); cx.stroke();
     });
     // walkway hatching between the two lane lines
     cx.strokeStyle = 'rgba(216,210,192,0.30)'; cx.lineWidth = Math.max(1, 0.05 * sx);
+    // ⚠ CHEVRON ANGLE. 0.6 m of rise over a 3.0 m span is 11° — a ladder lying
+    // flat, not hazard hatching. 45° is what the marking means.
+    var laneX1 = Math.min(WX - 1.0, laneX0 + 3.0);
     for (var hz = ZB + 1.2; hz < ZF - 1.0; hz += 0.9) {
-      cx.beginPath(); cx.moveTo(X2(laneX0), Z2(hz)); cx.lineTo(X2(Math.min(WX - 1.0, laneX0 + 3.0)), Z2(hz - 0.6)); cx.stroke();
+      cx.beginPath(); cx.moveTo(X2(laneX0), Z2(hz)); cx.lineTo(X2(laneX1), Z2(hz - (laneX1 - laneX0))); cx.stroke();
     }
     // HAZARD BORDER along the dock edge
-    var hb0 = X2(-WX + 0.5), hb1 = X2(WX - 0.5), hy = Z2(ZF - 0.10), hh = 0.75 * sy;
+    // ⚠ INSIDE THE ROOM. hy at ZF−0.10 put the band at world z 1.9-2.65 while
+    // the front wall occupies 1.75-2.25: two thirds buried under the wall and
+    // the visible third OUTSIDE on the apron. As an interior marking it did not
+    // exist. It now sits wholly inboard of the wall face.
+    var hb0 = X2(-WX + 0.5), hb1 = X2(WX - 0.5), hh = 0.75 * sy;
+    var hy = Z2(ZF - 0.35) - hh;                 // band runs from the wall inward
     cx.save(); cx.beginPath(); cx.rect(hb0, hy, hb1 - hb0, hh); cx.clip();
     cx.fillStyle = '#c9a227'; cx.fillRect(hb0, hy, hb1 - hb0, hh);
     cx.fillStyle = '#1a1c21';
@@ -861,15 +941,20 @@ function buildScene() {
       var bcol = bn % BAYS_PER_ROW, brow = Math.floor(bn / BAYS_PER_ROW);
       var bx = -WX + 0.9 + BW / 2 + bcol * (BW + 0.45);
       var bz = ZB + 1.2 + BD / 2 + brow * ROW_PITCH + BD / 2 + 0.75;
-      // Rotated 180° in canvas space so the stencil faces someone walking IN
-      // from the dock, which is the only direction anyone reads it from.
+      // ⚠ THE 180° ROTATE IS REQUIRED — and the BAY label has to move WITH it.
+      // The glyphs were upside down because the label was drawn at −0.62·sy,
+      // which the rotation puts BELOW the numeral, so the pair read as an
+      // inverted "BAY" under an inverted digit. Removing the rotate does NOT
+      // fix it (verified by render: the numeral is then upside down on its own);
+      // the rotation is what turns canvas text to face someone walking in from
+      // the dock. Rotate, and draw the label at +0.62·sy so it lands above.
       cx.save(); cx.translate(X2(bx), Z2(bz)); cx.rotate(Math.PI);
       cx.font = 'bold ' + Math.round(0.85 * sy) + 'px Georgia, serif';
       cx.fillStyle = 'rgba(216,210,192,0.80)';
       cx.fillText(String(bn + 1), 0, 0);
       cx.font = Math.round(0.30 * sy) + 'px Georgia, serif';
       cx.fillStyle = 'rgba(216,210,192,0.45)';
-      cx.fillText('BAY', 0, -0.62 * sy);
+      cx.fillText('BAY', 0, 0.62 * sy);          // +y here = above, after rotate
       cx.restore();
       // stall edging either side of the bay mouth
       cx.strokeStyle = 'rgba(216,210,192,0.5)'; cx.lineWidth = Math.max(1, 0.07 * sx);
@@ -1004,10 +1089,10 @@ function buildScene() {
   var line = new T.Mesh(new T.PlaneGeometry(0.16, 16), mat.gold);
   line.rotation.x = -Math.PI / 2; line.position.set(-5.6, 0.02, 9); scene.add(line);
   var line2 = line.clone(); line2.position.x = 3.4; scene.add(line2);
-  [-7.5, 7.5].forEach(function (x) {
-    var b = box(0.34, 1.1, 0.34, mat.gold, x, 0.55, 3.2);
-    App.colliders.push({ x: x, z: 3.2, hw: 0.3, hd: 0.3 });
-  });
+  // (The old gold bollards at x ±7.5 z 3.2 are retired. The dock now has ONE
+  //  set of bollards — the steel pair built with the shed, which derive from
+  //  the opening and carry their own colliders. Two of them 0.4 m apart in two
+  //  different design languages was the tell that they had been added twice.)
 
   // ── the two terminals: weight lifters, and the building itself ───────────
   var term = function (x, z, ry, col) {

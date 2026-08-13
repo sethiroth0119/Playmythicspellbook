@@ -38,8 +38,9 @@ let bad = 0;
    evidence they are designed to distrust. Each accepts one deliberate injury:
 
      ECON_TEST_SABOTAGE=bogus-id   round0b: add an unproducible id to the map
-     ECON_TEST_SABOTAGE=no-map     round0b: read the map from a path that is not
-                                   there, i.e. extraction returns NOTHING
+     ECON_TEST_SABOTAGE=no-map     round0b AND round0d: read node-city from a
+                                   path that is not there, i.e. extraction
+                                   returns NOTHING
      ECON_TEST_SABOTAGE=withdraw   round0c: withdraw an UPGRADING tile from the
                                    reconcile list for exactly one sync — the
                                    invariant at node-city:17117, violated once
@@ -55,6 +56,39 @@ if (SABOTAGE) console.log('🧨 ECON_TEST_SABOTAGE=' + SABOTAGE + ' — this run
    does rather than against a hand-kept copy — gauntlet3.mjs keeps such a copy
    (its `MAP` literal) and it has already fallen 5 entries behind. */
 let CITY_MAP = null;
+
+/* Brace-match the `{…}` block that starts at `decl`, stepping over block
+   comments, line comments and quoted strings — node-city is full of prose and
+   OP_BP carries an escaped apostrophe ("the city\'s Health coverage"), both of
+   which a naive scan would miscount. Returns the block TEXT, comments and all:
+   `new Function` parses those natively, so nothing has to be stripped and no
+   regex has to understand JavaScript. Returns null on an unbalanced scan —
+   NEVER a guess, because a half-read block passes vacuously.
+   Module scope because BOTH round0b (object literals) and round0d (the body of
+   `function ecoHost()`) read the shipped file this way; the second copy was
+   written and then deleted. */
+const srcBlockAfter = (src, decl) => {
+  if (!src) return null;
+  const at = src.indexOf(decl);
+  if (at < 0) return null;
+  let i = src.indexOf('{', at + decl.length - 1);
+  if (i < 0) return null;
+  const start = i;
+  let depth = 0;
+  for (; i < src.length; i++) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) return null; i = e + 1; continue; }
+    if (c === '/' && d === '/') { const e = src.indexOf('\n', i + 2); if (e < 0) return null; i = e; continue; }
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c; i++;
+      for (; i < src.length; i++) { if (src[i] === '\\') { i++; continue; } if (src[i] === q) break; }
+      continue;
+    }
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
+  }
+  return null;                       // unbalanced ⇒ nothing, never a guess
+};
 
 /* ════════════════════════════════════════════════════════════════════════════
    ROUND 0 — 🏗 THE CONSTRUCTION DURATION CURVE
@@ -300,36 +334,10 @@ let CITY_MAP = null;
   chk('read node-city/index.html (' + HTML_PATH.replace(/\\/g, '/').split('/').slice(-2).join('/') + ')',
       !!HTML && HTML.length > 100000, HTML ? HTML.length + ' bytes' : 'UNREADABLE — the map cannot be checked at all');
 
-  /* Brace-match an object literal that starts at `decl`, stepping over block
-     comments, line comments and quoted strings — the map is full of prose and
-     OP_BP carries an escaped apostrophe ("the city\'s Health coverage"), both
-     of which a naive scan would miscount. Returns the literal TEXT, comments
-     and all: `new Function` parses those natively, so nothing has to be
-     stripped and no regex has to understand JavaScript. */
-  const literalAfter = (src, decl) => {
-    if (!src) return null;
-    const at = src.indexOf(decl);
-    if (at < 0) return null;
-    let i = src.indexOf('{', at + decl.length - 1);
-    if (i < 0) return null;
-    const start = i;
-    let depth = 0;
-    for (; i < src.length; i++) {
-      const c = src[i], d = src[i + 1];
-      if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) return null; i = e + 1; continue; }
-      if (c === '/' && d === '/') { const e = src.indexOf('\n', i + 2); if (e < 0) return null; i = e; continue; }
-      if (c === '"' || c === "'" || c === '`') {
-        const q = c; i++;
-        for (; i < src.length; i++) { if (src[i] === '\\') { i++; continue; } if (src[i] === q) break; }
-        continue;
-      }
-      if (c === '{') depth++;
-      else if (c === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
-    }
-    return null;                       // unbalanced ⇒ nothing, never a guess
-  };
+  /* The brace-matching scanner lives at module scope (`srcBlockAfter`) because
+     round0d reads `function ecoHost()` out of the same file the same way. */
   const literalObj = (decl) => {
-    const txt = literalAfter(HTML, decl);
+    const txt = srcBlockAfter(HTML, decl);
     if (!txt) return null;
     try { return (new Function('return (' + txt + ');'))(); } catch (e) { return null; }
   };
@@ -677,6 +685,369 @@ let CITY_MAP = null;
 
     if (fails) { bad++; console.log('\n=== ROUND 0c: ' + fails + ' FAILED ==='); }
     else console.log('\n=== ROUND 0c: ALL PASS ===');
+  }
+}
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0d — 🏦 THE DEAD DEBT RUNG
+   ----------------------------------------------------------------------------
+   THE BUG THIS ROUND EXISTS FOR, and it shipped:
+
+     ecoHost() answered  `hasBank: …some(t => t.type === 'bank' && …)`
+
+   but the bank tile is BUILDINGS['op_bank'], registered by the OPS loop off
+   OPS_PREFIX. NO TILE IS EVER THE BARE STRING 'bank'. So hasBank was
+   permanently false, sim.js never capitalised the lender, bank.js answered
+   "No bank in the city" to every request, and the ENTIRE DEBT RUNG — borrow,
+   interest, amortisation, missed payment, default, write-off — was dead code
+   that had never once executed in production. Nothing was red, because dead
+   code is quiet.
+
+   Two halves, and neither alone is enough:
+
+     THE TILE TEST   `function ecoHost()` is read OUT OF THE SHIPPED FILE and
+                     evaluated. Not a copy — round0c has to copy `bldSite`
+                     because it is a const arrow inside an IIFE, and the header
+                     there says plainly that a copy tests a fiction if the two
+                     drift. ecoHost is a plain `function`, so it can be lifted
+                     whole and driven over real tile shapes.
+     THE RUNG        a city with a real op_bank tile is driven through
+                     capitalise → borrow → accrue → repay, and the loan is
+                     followed by id the whole way. "hasBank is true" would pass
+                     over a lender that still refuses every application.
+
+   🔴 PROVING THE KEY IS DERIVED, NOT TYPED. `opsKeyOf('bank')` and the literal
+      'op_bank' are textually different and behaviourally identical — until the
+      prefix moves, at which point the literal becomes this exact bug again. So
+      the strong check is not a grep: ecoHost is run a SECOND time with
+      opsKeyOf stubbed to a different prefix, and the answer has to FOLLOW the
+      stub. A hardcoded key cannot pass that. The greps are kept as well,
+      because they name the mistake in the failure message.
+
+   ⚠ WHICH TWO TERMS THE MONEY MOVES BETWEEN (Rule 1). totalCinder() is
+     HH.totalSavings() + Firms.totalCash() + S.treasury + Bank.state().reserve.
+     Seeding the lender moves treasury → reserve; a loan moves reserve → firm
+     cash; a repayment moves firm cash → reserve. All four terms are INSIDE the
+     sum, so every leg is a transfer and none of it mints. This round asserts
+     that arithmetic directly rather than trusting the audit to notice.
+
+   ⚠ ROUND ORDER MATTERS. This runs after 0c and re-mounts the economy on its
+     own node; the modules are singletons in this process and a round that
+     inherited 0c's firms would be measuring 0c's city.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0d-bank-debt-rung ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  /* ECON_TEST_SABOTAGE=no-map injures this round too, not only round0b: this
+     round's extraction has exactly the same vacuity failure mode — a scrape
+     that matches nothing would sail past every assertion below while the
+     comment in index.html still claimed the tile test was guarded. */
+  let HTML = null;
+  try {
+    HTML = readFileSync(join(here, SABOTAGE === 'no-map'
+      ? '../../public/node-city/THIS-FILE-DOES-NOT-EXIST.html'
+      : '../../public/node-city/index.html'), 'utf8');
+  } catch (e) { HTML = null; }
+  const BODY = srcBlockAfter(HTML, 'function ecoHost() {');
+  const prefixM = HTML ? /const\s+OPS_PREFIX\s*=\s*'([^']*)'/.exec(HTML) : null;
+  const PREFIX = prefixM ? prefixM[1] : null;
+
+  const got =
+    chk('read ecoHost() out of node-city/index.html',
+        !!BODY && BODY.indexOf('hasBank') > 0,
+        BODY ? BODY.length + ' chars, no hasBank in it' : 'UNREADABLE or unbalanced — the tile test cannot be checked at all') &
+    chk('read OPS_PREFIX out of node-city/index.html', !!PREFIX, String(PREFIX));
+
+  if (!got) {
+    /* Same rule as round0b: a scrape that matched nothing must fail HARD, not
+       pass vacuously. If ecoHost was renamed, fix the marker above. */
+    console.log('\n🔴 ecoHost() COULD NOT BE READ — nothing below was checked.');
+    bad++; console.log('\n=== ROUND 0d: ' + fails + ' FAILED ===');
+  } else {
+    // ── 1. THE TILE TEST, read from source and then actually run ───────────
+    const clause = BODY.slice(BODY.indexOf('hasBank:'), BODY.indexOf('infrastructure:'));
+    chk('the hasBank clause derives its key through opsKeyOf()',
+        /opsKeyOf\(\s*'bank'\s*\)/.test(clause), clause.trim().slice(0, 120));
+    chk("the hasBank clause contains NO hardcoded 'op_bank' — one prefix change from being this bug again",
+        !/['"]op_bank['"]/.test(clause), clause.trim().slice(0, 200));
+    chk("the original bug is gone: no `t.type === 'bank'`",
+        !/type\s*===\s*['"]bank['"]/.test(clause), clause.trim().slice(0, 200));
+    chk('the clause still refuses a DAMAGED bank', /!\s*t\.damaged/.test(clause));
+    chk('the clause guards on bldSite (a SITE is inert), NOT bldBusy (an upgrading bank still lends)',
+        /bldSite\s*\(/.test(clause) && !/bldBusy\s*\(/.test(clause), clause.trim().slice(0, 200));
+
+    /* ⚠ COPIED VERBATIM FROM node-city, same as round0c's copy and for the same
+       reason — a const arrow inside an IIFE cannot be imported. If these drift,
+       round0c fails first and loudly. */
+    const bldSite = t => !!(t && t.bld && t.bld.k === 0);
+
+    /* Lift the shipped function whole and hand it everything it reaches for.
+       ecoShock() is stubbed to 1: this round is about one boolean and the shock
+       curve has its own coverage. */
+    const runHost = (tiles, keyFn) => {
+      const names = ['game', 'cityPop', 'ecoLogisticsCounts', 'bldSite', 'opsKeyOf',
+                     'ecoShock', 'roadUsed', 'roadCap'];
+      const fn = new Function(...names, 'return (function ecoHost() ' + BODY + ')();');
+      return fn(
+        { tiles, cov: { avg: 0.75, pct: { water: 1 } }, power: { factor: 1 } },
+        () => 60, () => ({ warehouse: 3, depot: 2 }), bldSite, keyFn,
+        () => 1, () => 0, () => 1);
+    };
+    const realKey = ty => PREFIX + ty;
+    const asks = tiles => !!runHost(tiles, realKey).hasBank;
+
+    const BANK_T = PREFIX + 'bank';
+    const standing = { '1,0': { type: 'grocery', lvl: 1 }, '2,0': { type: BANK_T, lvl: 1 } };
+    const bareStr  = { '1,0': { type: 'grocery', lvl: 1 }, '2,0': { type: 'bank',  lvl: 1 } };
+    const site     = { '1,0': { type: 'grocery', lvl: 1 },
+                       '2,0': { type: BANK_T, lvl: 1, bld: { k: 0, l: 1, s: Date.now(), d: 900 } } };
+    const upgrading= { '1,0': { type: 'grocery', lvl: 1 },
+                       '2,0': { type: BANK_T, lvl: 1, bld: { k: 1, l: 2, s: Date.now(), d: 900 } } };
+    const damaged  = { '1,0': { type: 'grocery', lvl: 1 }, '2,0': { type: BANK_T, lvl: 1, damaged: true } };
+
+    /* 🐛 THE BUG, REPRODUCED. This is the predicate that shipped, written out,
+       run over the SAME city that the fixed one answers true for. It is here so
+       the round shows the before as well as the after — a green test that only
+       ever saw the fixed code cannot tell you the bug was real. */
+    const PRE_FIX = tiles => Object.values(tiles).some(t => t.type === 'bank' && !t.damaged && !bldSite(t));
+    chk("BEFORE: the shipped predicate (`t.type === 'bank'`) is FALSE with a bank standing — the whole bug",
+        PRE_FIX(standing) === false, 'tile type is ' + BANK_T);
+    chk('AFTER: the fixed clause is TRUE with the same bank standing', asks(standing) === true);
+
+    chk('no bank at all ⇒ false', asks({ '1,0': { type: 'grocery', lvl: 1 } }) === false);
+    chk("a tile literally typed 'bank' ⇒ false (no such tile exists; the old string matched nothing)",
+        asks(bareStr) === false);
+    chk('🏗 a construction SITE bank ⇒ false (a hole in the ground makes no loans)', asks(site) === false);
+    chk('an UPGRADING bank ⇒ TRUE (bldSite, not bldBusy — a working branch stays live)',
+        asks(upgrading) === true);
+    chk('a DAMAGED bank ⇒ false', asks(damaged) === false);
+
+    /* THE DERIVATION CHECK. Move the prefix and the answer must move with it. */
+    const swapped = ty => 'zz_' + ty;
+    chk('the key is DERIVED: with opsKeyOf stubbed to a different prefix, op_bank stops counting',
+        runHost(standing, swapped).hasBank === false,
+        'a hardcoded op_bank would still read true here');
+    chk('…and zz_bank starts counting instead',
+        runHost({ '2,0': { type: 'zz_bank', lvl: 1 } }, swapped).hasBank === true);
+
+    // ── 2. THE RUNG. A real city, a real op_bank tile, a real loan. ────────
+    if (!global.window) {
+      global.window = { MythicCityBridge: { addCinders: async () => {} }, MythicResourceChain: null };
+      const chain = await import('../../public/src/resources/chain.js');
+      global.window.MythicResourceChain = { ALL: chain.RESOURCE_CHAIN };
+    }
+    const P = '../../public/src/economy/';
+    const E = (await import(P + 'index.js')).default;
+    const { ECON } = await import(P + 'tuning.js');
+    const DAY = ECON.clock.dayMin;
+
+    E.mount({ nodeId: 'bank-rung', population: 60 });
+
+    const tiles = {
+      '1,0': { type: 'lumbercamp', lvl: 1 }, '2,0': { type: 'purifier', lvl: 1 },
+      '3,0': { type: 'farm', lvl: 1 },       '4,0': { type: 'grocery', lvl: 1 },
+      '5,0': { type: 'sawmill', lvl: 1 },    '6,0': { type: 'housing', lvl: 2 },
+      /* 🏦 The subject. CITY_MAP has no op_bank row on purpose (round0b asserts
+         that), so this tile founds NO firm — its entire economic effect is the
+         boolean under test. */
+      '9,0': { type: BANK_T, lvl: 1 },
+    };
+    const list = () => Object.entries(tiles)
+      .filter(([, t]) => CITY_MAP[t.type] && !t.damaged && !bldSite(t))
+      .map(([k, t]) => {
+        const o = E.pickAvailable(CITY_MAP[t.type].out);
+        return o ? { key: k, out: o, ind: CITY_MAP[t.type].ind, lvl: t.lvl } : null;
+      }).filter(Boolean);
+
+    E.syncBuildings(list());
+    chk('the bank tile founds no business (it is not in ECO_BUILDING_MAP)',
+        !E.firms().some(f => f.tileKey === '9,0'));
+
+    /* The host is the SHIPPED ecoHost, over the SHIPPED tile test. Nothing
+       between the fix and the lender is hand-written here. */
+    const host = () => runHost(tiles, realKey);
+    chk('the shipped ecoHost reports hasBank for this city', host().hasBank === true);
+
+    /* The four terms of totalCinder(), read the way sim.js defines them. */
+    const terms = () => { const s = E.snapshot();
+      return { savings: s.savings, firmCash: s.firmCash, treasury: s.treasury,
+               reserve: s.bank.reserve, total: s.totalCinder }; };
+    const SUM_TOL = 1e-6;
+    let auditBad = null, flows = 0;
+    const tick = () => {
+      E.tick(DAY, host());
+      const s = E.snapshot();
+      flows += s.flow.faucet - s.flow.imports - s.flow.payout;
+      if (!s.audit || !s.audit.ok) auditBad = JSON.stringify(s.audit);
+    };
+
+    const START = E.snapshot().totalCinder;
+    const seedT0 = terms();
+    const flows0 = flows;
+    tick();                                    // the day the lender is capitalised
+    const seedT1 = terms();
+    chk('CAPITALISE: the lender has a reserve for the first time in this feature\'s life',
+        seedT0.reserve === 0 && seedT1.reserve > 0,
+        'reserve ' + seedT0.reserve.toFixed(2) + ' → ' + seedT1.reserve.toFixed(2));
+    /* ⚠ NOT `treasury went down`. That was the first draft and it failed
+       honestly: the seeding happens at step 5 of runDay, and steps 7–8 of the
+       SAME day then pay corporate tax and property tax INTO the treasury, so
+       the day's net treasury move is upward (0.00 → 8.00 on the run that
+       caught this) even though the seed left it. An endpoint comparison cannot
+       see an intra-day transfer. What CAN be asserted exactly is the pair of
+       claims that actually matter: the reserve appeared, and the day's total
+       moved by nothing but the audited flows — i.e. the seed was a transfer
+       between two totalCinder() terms, not a mint. The debit itself is pinned
+       at its source below, where sim.js writes it. */
+    chk('CAPITALISE mints nothing: the seeding day moves totalCinder by exactly the audited flows',
+        Math.abs((seedT1.total - seedT0.total) - (flows - flows0)) <= Math.max(1, Math.abs(seedT1.total) * 1e-6),
+        'Δtotal ' + (seedT1.total - seedT0.total).toFixed(6) + ' vs flows ' + (flows - flows0).toFixed(6));
+    /* The two terms, named at the source. `S.treasury -= Bank.capitalise(seed)`
+       debits the treasury by EXACTLY what the lender accepted — the judge's
+       audit-safety argument in one line, and the line a future edit is most
+       likely to break by debiting `seed` instead of the return value (they
+       differ whenever the treasury is short). */
+    let simSrc = '';
+    try { simSrc = readFileSync(join(here, '../../public/src/economy/sim.js'), 'utf8'); } catch (e) {}
+    chk('the seed is `S.treasury -= Bank.capitalise(…)` — debited by the amount actually accepted',
+        /S\.treasury\s*-=\s*Bank\.capitalise\(/.test(simSrc),
+        'sim.js no longer debits the treasury by capitalise()\'s return value');
+
+    // Trade for a fortnight so a firm has a revenue average to borrow against.
+    for (let d = 0; d < 14; d++) tick();
+
+    const cands = E.firms().filter(f => f.rung !== 'BANKRUPT' && (f.revenueAvg || 0) > 0)
+                           .sort((a, b) => (b.revenueAvg || 0) - (a.revenueAvg || 0));
+    chk('at least one business is trading and could service a loan', cands.length > 0,
+        E.firms().length + ' firms, none with revenue');
+    const subject = cands[0] || null;
+
+    // ── BORROW — the exact call the panel's 🏦 Borrow button makes ─────────
+    const before = terms();
+    const beforeLoans = E.snapshot().bank.loans;
+    const beforeDebt = E.snapshot().firmDebt;
+    const r = subject ? E.borrow(subject.id, Infinity) : { ok: false, why: 'no firm' };
+    chk('BORROW: the lender advances — the rung EXECUTES for the first time',
+        !!(r && r.ok && r.amount >= 1),
+        r ? ('refused: ' + (r.why || '?') + ' (this is the sentence the dead rung always gave)') : 'no result');
+    const after = terms();
+    const loan = (r && r.ok && r.loan) ? r.loan : null;
+
+    chk('the loan appears on the book', E.snapshot().bank.loans === beforeLoans + 1,
+        beforeLoans + ' → ' + E.snapshot().bank.loans);
+    chk('the borrower carries the debt', Math.abs(E.snapshot().firmDebt - beforeDebt - (r.amount || 0)) < 1e-6,
+        beforeDebt.toFixed(2) + ' → ' + E.snapshot().firmDebt.toFixed(2));
+    chk('BORROW moves reserve → firm cash, and ONLY those two terms',
+        Math.abs((before.reserve - after.reserve) - (r.amount || 0)) < 1e-6 &&
+        Math.abs((after.firmCash - before.firmCash) - (r.amount || 0)) < 1e-6 &&
+        Math.abs(after.treasury - before.treasury) < 1e-6 &&
+        Math.abs(after.savings - before.savings) < 1e-6,
+        'Δreserve ' + (after.reserve - before.reserve).toFixed(2) +
+        ', ΔfirmCash ' + (after.firmCash - before.firmCash).toFixed(2) +
+        ', Δtreasury ' + (after.treasury - before.treasury).toFixed(2));
+    chk('RULE 1: totalCinder is unchanged across the borrow — a loan mints nothing',
+        Math.abs(after.total - before.total) < Math.max(1e-6, Math.abs(after.total) * 1e-9),
+        before.total.toFixed(6) + ' → ' + after.total.toFixed(6));
+
+    /* ── ACCRUE and REPAY ──────────────────────────────────────────────────
+       🔴 FOLLOWED BY THE LOAN OBJECT, NOT BY CITY AGGREGATES. The first draft
+       asserted on snapshot().bank counts and it failed HONESTLY, twice over:
+       sim.js calls Bank.autoBorrow() for every DEBT/DEFAULT firm each day, so
+       this city opened several OTHER loans to dying businesses, one of which
+       went bankrupt and had 179.25 🔥 written off. Both are the rung working
+       exactly as designed — "the reserve eats it, that is what a bad loan book
+       costs" — but they make `written === 0` and `loans === 0` say nothing
+       about the loan under test. So the subject loan is tracked through the
+       object `borrow()` returned, which stays live in LENDER.loans and, when
+       it is removed, KEEPS its final `owed` — the one field that separates a
+       loan repaid (≈0) from a loan defaulted (>0). */
+    const Bank = await import(P + 'bank.js');
+    const L = Bank.state();
+    const principal = loan ? loan.principal : 0;
+    const openMine = () => !!loan && L.loans.some(x => x.id === loan.id);
+    let paidMine = 0, interestMine = 0, cleared = -1, otherLoans = 0;
+    for (let d = 0; d < ECON.bank.termDays + 60 && loan; d++) {
+      const owed0 = loan.owed, day0 = E.snapshot().day;
+      tick();
+      const elapsed = E.snapshot().day - day0;
+      /* bank.js: interest = owed * (rate/365) * days, added BEFORE the payment
+         is taken. Recomputed here rather than read, so this is an independent
+         check of the arithmetic and not a restatement of it. */
+      const i = owed0 * (loan.rate / 365) * elapsed;
+      interestMine += i;
+      paidMine += (owed0 + i) - loan.owed;
+      otherLoans = Math.max(otherLoans, L.loans.length - (openMine() ? 1 : 0));
+      if (!openMine()) { cleared = d; break; }
+    }
+    chk('ACCRUE: interest was charged on the loan (rate ' +
+        (loan ? (loan.rate * 100).toFixed(2) : '—') + '%/yr)',
+        interestMine > 0, 'no interest accrued over ' + (cleared + 1) + ' days');
+    chk('ACCRUE: repayments flow firm cash → reserve', paidMine > 0,
+        'nothing was ever paid back');
+    chk('REPAY: the borrower paid back MORE than it borrowed — debt is not free money',
+        paidMine > principal + 1e-6,
+        'principal ' + principal.toFixed(2) + ', paid ' + paidMine.toFixed(2));
+    chk('REPAY: the subject loan cleared inside its term', cleared >= 0,
+        'still open after ' + (ECON.bank.termDays + 60) + ' days');
+    chk('REPAY: it cleared by being PAID OFF, not written off or defaulted',
+        !!loan && loan.owed <= 0.01 && subject.rung !== 'BANKRUPT' && !(subject.blacklistUntil > 0),
+        loan ? ('final owed ' + loan.owed.toFixed(2) + ', rung ' + subject.rung +
+                ', blacklistUntil ' + (subject.blacklistUntil || 0)) : 'no loan');
+    chk('the borrower is out of debt', Math.abs(subject.debt || 0) < 1e-6,
+        String(subject.debt));
+    chk('the reserve was never negative while lending', L.reserve >= 0, L.reserve.toFixed(2));
+    /* Informational, and it is the other half of the rung proving it runs: the
+       AUTOMATIC distress path (sim.js → Bank.autoBorrow) opened loans of its
+       own, and the write-off branch executed on a business that failed. Not
+       asserted — a healthy run may legitimately produce neither. */
+    console.log('   ℹ the automatic distress path also ran: ' + otherLoans +
+                ' other loan(s) open at peak, ' + L.lifetimeWritten.toFixed(2) +
+                ' 🔥 written off across the city.');
+
+    // ── THE BOOKS, over the whole capitalise → borrow → accrue → repay ─────
+    const END = E.snapshot().totalCinder;
+    const T = terms();
+    const drift = (END - START) - flows;
+    const tol = Math.max(1, Math.abs(END) * 1e-6);
+    const bk = E.snapshot().bank;
+    console.log('\n  🏦 capitalise → borrow → accrue → repay');
+    console.log('     subject loan    principal ' + principal.toFixed(2) + ' → paid ' +
+                paidMine.toFixed(2) + ' (interest ' + interestMine.toFixed(2) +
+                ') over ' + (cleared + 1) + ' days');
+    console.log('     city loan book  lent ' + bk.lent.toFixed(2) + ' · repaid ' + bk.repaid.toFixed(2) +
+                ' · written ' + bk.written.toFixed(2) + ' · open ' + bk.loans);
+    console.log('     terms  savings ' + T.savings.toFixed(2) + ' + firmCash ' + T.firmCash.toFixed(2) +
+                ' + treasury ' + T.treasury.toFixed(2) + ' + reserve ' + T.reserve.toFixed(2));
+    console.log('     totalCinder     ' + START.toFixed(2) + ' → ' + END.toFixed(2) +
+                '   (Δ ' + (END - START).toFixed(2) + ')');
+    console.log('     audited flows   ' + flows.toFixed(2) + '   (faucet − imports − payout)');
+    console.log('     unexplained     ' + drift.toFixed(6) + '   (tolerance ' + tol.toFixed(4) + ')\n');
+    chk('the four terms still sum to totalCinder()',
+        Math.abs((T.savings + T.firmCash + T.treasury + T.reserve) - T.total) < SUM_TOL,
+        (T.savings + T.firmCash + T.treasury + T.reserve).toFixed(6) + ' vs ' + T.total.toFixed(6));
+    /* ⚠ No syncBuildings runs inside this window — the city is fixed — so the
+       founding-seed term round0c has to measure is exactly zero here and the
+       closure is the plain audited one. */
+    chk('RULE 1: no Cinder minted or burned with the DEBT RUNG LIVE',
+        Math.abs(drift) <= tol, 'drift ' + drift.toFixed(6));
+    chk('the day audit stayed clean throughout', !auditBad, auditBad);
+    chk('payouts were never suspended', E.snapshot().payoutAllowed === true);
+
+    /* RULE 5. Belt and braces, in the gate rather than in a reviewer's memory:
+       the simulated lender must never reach the player's real Cinder. */
+    let bankSrc = '';
+    try { bankSrc = readFileSync(join(here, '../../public/src/economy/bank.js'), 'utf8'); } catch (e) {}
+    chk('RULE 5: bank.js names no player-money symbol (Profile.gems / player_banks / spendGems / addGems)',
+        !!bankSrc && !/Profile\s*\.\s*gems|player_banks|spendGems|addGems|MythicCityBridge/.test(
+          bankSrc.replace(/\/\*[\s\S]*?\*\//g, '')),
+        'bank.js reaches for real player money');
+
+    if (fails) { bad++; console.log('\n=== ROUND 0d: ' + fails + ' FAILED ==='); }
+    else console.log('\n=== ROUND 0d: ALL PASS ===');
   }
 }
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {

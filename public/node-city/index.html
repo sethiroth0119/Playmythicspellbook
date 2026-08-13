@@ -16204,12 +16204,14 @@ function ecoAction(act, arg) {
          where the ECON.bank figures live. A panel offering "borrow 5,000" would
          have put an economy number in this file, which rule 4 forbids, and it
          would have been wrong the moment ECON.bank.maxLoanToRevenueDays moved.
-         ⚠ TODAY THIS ALWAYS REFUSES, AND HONESTLY SO. bank.js gates on
-           LENDER.hasBank, which sim.js sets from a tile test that looks for
-           type 'bank' while the tile is actually 'op_bank' — so it is
-           permanently false and the answer is "No bank in the city". That is
-           the module's own sentence, printed unchanged. The BANK package fixes
-           the tile test; nothing here needs to change when it does. */
+         ⚠ THIS USED TO ALWAYS REFUSE, AND HONESTLY SO. bank.js gates on
+           LENDER.hasBank, which sim.js sets from ecoHost()'s tile test — and
+           that test looked for type 'bank' while the tile is 'op_bank', so it
+           was permanently false and the answer was always the module's own
+           sentence, "No bank in the city", printed unchanged. The BANK package
+           fixed the tile test (see ecoHost). Nothing here changed, which was
+           the point of printing the module's refusal instead of inventing one:
+           the button went live on its own. */
       const r = E.borrow(+arg, Infinity);
       if (!r || !r.ok) ecoSaid = { ok: false, text: 'No loan — ' + ((r && r.why) || 'the lender refused') + '.' };
       else { ecoSaid = { ok: true, text: 'Borrowed ' + ecoFmt(r.amount) + ' 🔥 against the business.' }; saveSoon(); }
@@ -17416,10 +17418,12 @@ const ECO_BUILDING_MAP = {
        • forge / indexfund / holdco — the financial layer is already modelled,
          by bank.js on this side and finBoost/finTick on the city side. Wiring
          them as firms double-counts the Cinder they already lift.
-       • op_bank — the real bug is ecoHost().hasBank testing `t.type === 'bank'`
-         when the tile is `op_bank` (§0.10). Founding a bank FIRM here would
-         neither fix hasBank nor be noticed by it; it would just make the dead
-         DEBT rung harder to spot. That fix is its own commit. */
+       • op_bank — the bank's defect was never a missing firm: ecoHost().hasBank
+         tested `t.type === 'bank'` when the tile is `op_bank` (§0.10), which is
+         why the DEBT rung was dead. Founding a bank FIRM here would neither
+         have fixed hasBank nor been noticed by it; it would only have made the
+         dead rung harder to spot. The BANK package fixed the tile test at its
+         source and this row stays deliberately absent. */
 };
 
 /* Build the list MythicEconomy.syncBuildings() reconciles against. One entry
@@ -17628,12 +17632,31 @@ function ecoHost() {
     powerFactor: (game.power && typeof game.power.factor === 'number') ? game.power.factor : 1,
     waterFactor: (typeof cov.water === 'number') ? Math.max(0, Math.min(1, cov.water)) : 1,
     logisticsCounts: ecoLogisticsCounts(),
-    /* 🏗 A half-built bank makes no loans. ⚠ The OTHER bug on this line — the
-       bank is BUILDINGS['op_bank'], registered by the ops loop, so `'bank'`
-       never matches and hasBank is permanently false — is deliberately NOT
-       fixed here. It changes what the DEBT rung does with real money and
-       belongs in its own reviewable commit (SPEC_CONSTRUCTION §0.10). */
-    hasBank: Object.values(game.tiles).some(t => t.type === 'bank' && !t.damaged && !bldSite(t)),
+    /* 🏦 THE TILE TYPE IS DERIVED, NEVER TYPED — and this is the line that
+       proves why that rule exists. It read `t.type === 'bank'` for the whole
+       life of the feature, but the bank is BUILDINGS['op_bank'], registered by
+       the OPS loop off OPS_PREFIX. No tile is ever the bare string 'bank', so
+       hasBank was PERMANENTLY FALSE: bank.js answered "No bank in the city" to
+       every single request and the entire DEBT rung — borrow, accrue, default,
+       write-off — never executed once in production.
+       ⚠ opsKeyOf('bank'), NOT the literal 'op_bank'. A hand-typed key is the
+         same bug one prefix change later, and the ops loop already refuses to
+         hand-write its keys for exactly that reason (see OP_ECO_MAP's header).
+       ⚠ try/catch rather than `typeof`: opsKeyOf is a `const` arrow declared
+         ~5,700 lines below this one, and `typeof` on a const still inside its
+         temporal dead zone THROWS ReferenceError instead of answering
+         'undefined' — the identical guard bldOpType() carries. Failing to a
+         null key means "no bank", i.e. the old behaviour, which is the safe
+         direction to fall over in.
+       🏗 A half-built bank makes no loans, so bldSite() stays on the test —
+         consistent with the 33 read sites WP4 guarded. A SITE is a hole in the
+         ground with a sign on it; an UPGRADING bank is a working branch and
+         stays fully live, which is why this is bldSite and not bldBusy. */
+    hasBank: (() => {
+      let ty = null; try { ty = opsKeyOf('bank'); } catch (e) { ty = null; }
+      if (!ty) return false;
+      return Object.values(game.tiles).some(t => t && t.type === ty && !t.damaged && !bldSite(t));
+    })(),
     /* Infrastructure is a 0..1 quality score the firm LEVEL GATES read. Roads
        and coverage are what a business actually needs to grow, and both are
        already computed for other panels. */
@@ -17828,10 +17851,11 @@ function bldDuration(type, lvl, kind, speedMul) {
      hired mayor is looking at it. Never route them through OPS.st/opsRowsOf. */
 
 /* Completed, undamaged Construction Cos.
-   ⚠ THE TYPE STRING IS DERIVED, NEVER TYPED. `ecoHost().hasBank` tests
+   ⚠ THE TYPE STRING IS DERIVED, NEVER TYPED. `ecoHost().hasBank` used to test
      `t.type === 'bank'` while the bank is BUILDINGS['op_bank'] — permanently
-     false, which is why the entire DEBT rung is dead code. That bug is one
-     line from here and it is exactly this mistake.
+     false, which is why the entire DEBT rung was dead code for the whole life
+     of the feature. That bug was one line from here and it was exactly this
+     mistake; it now derives its key through opsKeyOf() like this one does.
    `!bldBusy` rather than `!bldSite`: an op is maxLvl 1 so k=1 is unreachable
    for one, which makes the two spellings identical here — and of the two, "a
    Co. that is itself a hole in the ground supervises nothing" is the reading
@@ -23314,10 +23338,12 @@ const OPS_TYPES = Object.keys(OP_BP);
       internal to the closed loop. Two piles, not one pile twice.
 
    🚫 NO `bank` ROW, deliberately — see the ECO_BUILDING_MAP footer at :17101.
-      The bank's real defect is ecoHost().hasBank testing `t.type === 'bank'`
-      against a tile that is `op_bank`, and a firm here would neither fix that
-      nor be noticed by it. round0b asserts that `bank` is the ONE operation
-      with no entry, so a future hand adding it has to argue with a red gate.
+      The bank's real defect was ecoHost().hasBank testing `t.type === 'bank'`
+      against a tile that is `op_bank`, and a firm here would neither have fixed
+      that nor been noticed by it. That test now derives its key through
+      opsKeyOf() and the DEBT rung is live; this row stays absent. round0b
+      asserts that `bank` is the ONE operation with no entry, so a future hand
+      adding it has to argue with a red gate.
 
    ⚠ REGISTERED BY MUTATING ECO_BUILDING_MAP IN THE LOOP BELOW, not by editing
      that literal. `OP_BP` and `opsKeyOf` are declared ~5,700 lines after it and

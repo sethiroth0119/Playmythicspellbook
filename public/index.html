@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w4';
+  window.BUILD_VERSION = 'v120w5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -223055,6 +223055,22 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/nodes/tiers.js?v=v120t9n2"></script>
+<!-- 🧰 RESOURCE CHAIN — the 258-entry industrial catalogue behind the city
+     builder (water → agriculture → … → containment → civic). Registers
+     window.MythicResourceChain: pure data, no I/O, no globals, and NOTHING in
+     this file reads it yet.
+     ⚠ IT IS A CATALOGUE, NOT THE LEDGER. RESOURCES (14) is the live ledger and
+       SALVAGE_RES (149) is the loot list; .cityloop/_r12/new_resources.NOTES.md
+       records what an id sitting in the second without the first does to a
+       player ("worse than missing… their pile of it is real and inert").
+       Promoting all 245 new ids at once would repeat that fault 245 times, so
+       promotion is per-resource and happens WITH a producer. RESOURCES_NEXT.md
+       lists the five sites each promotion touches.
+     ⚠ If this 404s nothing changes — no consumer exists yet, which is exactly
+       the safe state to ship a data layer in.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/resources/chain.js?v=v120w5chain1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

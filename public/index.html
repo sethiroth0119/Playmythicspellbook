@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w2';
+  window.BUILD_VERSION = 'v120w3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -195383,7 +195383,6 @@ const PP_LOT_LEVELS = [
 
 const PP_BUY_COMPANY_COST = 50000;    // direct-buy cost if not funding via Car Dealership op
 const PP_FUEL_PER_TOP_OFF  = 20;       // ⛽ units consumed to fully fuel a car
-const PP_BUYER_REFRESH_MS  = 4 * 60 * 1000;  // 4 min cycle for new buyers
 const PP_LISTING_REFRESH_MS = 3 * 60 * 1000; // 3 min cycle for new listings
 
 // --- Helpers ---
@@ -195877,16 +195876,10 @@ function _ppFairValue(v) {
     return Math.max(1000, Math.round(base * condMult * wear));
   } catch (e) { return Math.max(0, Math.round(Number(v && v.price) || 0)); }
 }
-/* 💵 NPCs PAY MARKET VALUE. Not the buyer's rolled figure, not a margin over
-   market — market, full stop. `buyer.reward` is now only flavour/intent (what
-   they SAY they are shopping with); the money that actually changes hands is
-   the car's worth. This is the rule that kills the arbitrage: if an NPC can
-   never pay more than a car is worth, buying low and flipping to an NPC cannot
-   produce a profit at all, so there is no loop to farm. Profit has to come from
-   sourcing below market on the auction floor, which is the actual game. */
-function _ppBuyerPayout(buyer, v) {
-  return Math.max(0, _ppFairValue(v));
-}
+/* (_ppBuyerPayout lived here — it capped an NPC's payment at the car's real
+   worth so a flip to an NPC could not profit. It went with the NPC queue: the
+   cap fixed the price but not the fact that a guaranteed customer stream is
+   guaranteed income, and the part sale beside it was never capped at all.) */
 
 // --- Generators ---
 function _ppGenListing() {
@@ -195912,36 +195905,8 @@ function _ppGenListing() {
     sellerRating: _ppBetween(1, 5),
   };
 }
-function _ppGenBuyer() {
-  const [name, archetype] = _ppPick(PP_NPCS);
-  const wantsPart = _ppChance(0.30);
-  const isVip = _ppChance(0.06);
-  const part = wantsPart ? _ppPick(PP_PARTS) : null;
-  const type = _ppPick([...new Set(PP_VEHICLE_NAMES.map(v => v.type))]);
-  const color = _ppPick(PP_COLORS);
-  const price = _ppBetween(40, 380) * 1000;
-  const tmpl = _ppPick(PP_DIALOGUE[archetype]);
-  const dialogue = tmpl
-    .replace('{type}', type)
-    .replace('{color}', color)
-    .replace('{price}', (price / 1000) + 'k')
-    .replace('{part}', part ? part.name : 'something good');
-  const reward = wantsPart
-    ? Math.round((part.baseValue * (isVip ? 2.4 : 1.4)) / 100) * 100
-    : Math.round(price * (isVip ? 1.35 : 1.10) / 100) * 100;
-  return {
-    id: _ppNewId('npc'),
-    name, archetype, dialogue,
-    mood: _ppPick(['impatient','calm','suspicious','eager','agitated']),
-    requestType: wantsPart ? 'part' : 'vehicle',
-    desiredType: wantsPart ? null : type,
-    desiredColor: wantsPart ? null : (_ppChance(0.4) ? color : null),
-    desiredPart: part ? part.name : null,
-    reward, isVip,
-    spawnedAt: Date.now(),
-    patienceMs: (isVip ? 90 : _ppBetween(45, 75)) * 1000,
-  };
-}
+/* (_ppGenBuyer lived here — it minted an NPC customer with a `reward` of
+   part.baseValue × 1.4/2.4 or 44k–513k Cinder. Removed with the queue.) */
 
 // --- RNG tick — auto-refresh listings + buyers ---
 function ppTick() {
@@ -195969,26 +195934,23 @@ function ppTick() {
     while (p.listings.length < 8) p.listings.push(_ppGenListing());
   }
 
-  // 🩹 Self-heal buyers: if lobby is empty AND it's been more than 90s since
-  //    the last roll, force-spawn 1 buyer so the queue is never permanently
-  //    dead. Normal RNG cycle still fires every PP_BUYER_REFRESH_MS.
-  const lobbyEmpty = p.buyers.length === 0;
-  const sinceBuyerRoll = now - (p.lastBuyerRoll | 0);
-  if (lobbyEmpty && sinceBuyerRoll > 90 * 1000) {
-    p.lastBuyerRoll = now;
-    p.buyers.push(_ppGenBuyer());
-  } else if (sinceBuyerRoll > PP_BUYER_REFRESH_MS) {
-    p.lastBuyerRoll = now;
-    const roll = Math.random();
-    // 25% nothing / 45% one / 25% two / 5% triple. (Less "dead day" RNG when
-    // the lobby is fully empty — players reported nobody ever showing up.)
-    let spawn;
-    if (lobbyEmpty) spawn = roll < 0.10 ? 1 : roll < 0.55 ? 1 : roll < 0.90 ? 2 : 3;
-    else            spawn = roll < 0.25 ? 0 : roll < 0.70 ? 1 : roll < 0.95 ? 2 : 3;
-    for (let i = 0; i < spawn; i++) p.buyers.push(_ppGenBuyer());
-  }
-  // Expire patient-timed-out buyers.
-  p.buyers = p.buyers.filter(b => (now - b.spawnedAt) < b.patienceMs);
+  /* 🚫 NPC BUYER QUEUE REMOVED — it was a Cinder faucet, not a market.
+     The vehicle side had already been capped to market value (_ppBuyerPayout),
+     with a comment explaining that an NPC who cannot pay above a car's worth
+     leaves no loop to farm. The PART side never got that treatment: a part
+     buyer paid `buyer.reward`, rolled in _ppGenBuyer as
+     part.baseValue × 1.4 (× 2.4 for a VIP), straight through addGems.
+     So the loop was: buy a cheap car on the auction floor, strip it, sell the
+     parts to NPCs above their value, repeat — and the queue could not run dry,
+     because the self-heal below force-spawned a buyer whenever the lobby had
+     been empty for 90 seconds. That is a guaranteed customer every 90s, minting
+     new Cinder each time, forever.
+     Cars are still bought and sold: the P2P vehicle marketplace moves Cinder
+     between PLAYERS rather than minting it, and stripping still credits real
+     camp salvage through addRes — which is the reward stripping was always
+     meant to give. `p.buyers` is kept as an always-empty array so old saves
+     that still carry a queue simply render nothing. */
+  if (p.buyers && p.buyers.length) p.buyers = [];
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
 }
 
@@ -196004,12 +195966,9 @@ function ppForceRefresh() {
   }
   while (p.listings.length < 12) p.listings.push(_ppGenListing());
   p.lastListingRoll = Date.now();
-  // Force-spawn 1-2 buyers regardless of cooldown.
-  const n = 1 + Math.floor(Math.random() * 2);
-  for (let i = 0; i < n; i++) p.buyers.push(_ppGenBuyer());
-  p.lastBuyerRoll = Date.now();
-  _ppLog('event', 'RNG force-refreshed: +' + 12 + ' listings target · +' + n + ' buyers.');
-  showToast('🔄 Auction + buyer queue force-refreshed.', 3200);
+  // (Buyer force-spawn removed with the NPC queue — see the note in ppTick.)
+  _ppLog('event', 'RNG force-refreshed: +' + 12 + ' listings target.');
+  showToast('🔄 Auction floor force-refreshed.', 3200);
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
   return true;
 }
@@ -196150,96 +196109,32 @@ function ppStripVehicle(vehicleId) {
   return true;
 }
 
-// --- Sell to a buyer ---
-//   Buyer fuel-check: if buyer wants a vehicle AND fuel < 60, they complain.
-//   Roll: 35% chance they buy anyway (sometimes they take it).
-function ppSellToBuyer(buyerId, vehicleId) {
-  const p = ensurePrincePortfolios();
-  const buyer = p.buyers.find(b => b.id === buyerId);
-  const v = p.lot.find(x => x.id === vehicleId);
-  if (!buyer || !v) return false;
-  if (buyer.requestType !== 'vehicle') { showToast('Buyer wants a part, not a vehicle.'); return false; }
-  // Type match check.
-  if (buyer.desiredType && v.type !== buyer.desiredType) {
-    if (!_ppChance(0.18)) {
-      _ppLog('warn', buyer.name + ' rejected ' + v.name + ' — wanted ' + buyer.desiredType + '.');
-      showToast(buyer.name + ': "I asked for a ' + buyer.desiredType + '. Don\'t insult me."', 4600);
-      return false;
-    }
-  }
-  /* 🔴 THE DEALERSHIP MONEY PRINTER, AND THE CAP THAT CLOSES IT.
-     `buyer.reward` is rolled in _ppGenBuyer as `_ppBetween(40,380)*1000 × 1.10`
-     (×1.35 VIP) — i.e. 44,000–513,000 Cinder decided with NO REFERENCE TO THE
-     CAR. This function then paid it for ANY type-matching vehicle. So the loop
-     was: buy the cheapest car on the auction floor, hand it to a big buyer,
-     collect up to half a million, repeat. That is the reported "sell cars to
-     the NPCs and get millions".
-     The buyer's roll is now only what they are WILLING to spend; what they
-     actually pay is capped at the car's real worth plus a dealer's margin, so
-     a junk car fetches junk money no matter who is asking. Selling a genuinely
-     valuable car still pays well — the profit now comes from sourcing good
-     stock cheaply, which is the actual game. */
-  const payout = _ppBuyerPayout(buyer, v);
-  // FUEL CHECK — the user's specific ask.
-  const fuel = (v.fuelLevel | 0);
-  if (fuel < 60) {
-    if (_ppChance(0.35)) {
-      _ppLog('warn', buyer.name + ' complained about low fuel on ' + v.name + ' — bought anyway for less.');
-      showToast(buyer.name + ': "Tank\'s near empty. I\'ll take it but you eat 15% off the top."', 5200);
-      // 15% price reduction.
-      addGems(Math.round(payout * 0.85), 'Dealership: vehicle sold (low fuel discount)');
-    } else {
-      _ppLog('bad', buyer.name + ' walked — ' + v.name + ' had only ' + fuel + '% fuel.');
-      showToast(buyer.name + ': "Tank\'s dry. Fill it up next time. I\'m out."', 5200);
-      p.reputation = Math.max(0, p.reputation - 2);
-      // Buyer leaves the queue.
-      p.buyers = p.buyers.filter(b => b.id !== buyerId);
-      try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
-      return false;
-    }
-  } else {
-    addGems(payout, 'Dealership: vehicle sold');
-  }
-  // What actually changed hands — the fuel branch above pays 85% of it.
-  const _paid = (fuel < 60) ? Math.round(payout * 0.85) : payout;
-  p.lot = p.lot.filter(x => x.id !== vehicleId);
-  p.buyers = p.buyers.filter(b => b.id !== buyerId);
-  p.reputation = Math.min(100, p.reputation + (buyer.isVip ? 4 : 2));
-  _ppLog('good', 'Sold ' + v.name + ' to ' + buyer.name + ' for ' + _paid.toLocaleString() + ' 🔥 (market value).');
-  showToast('💵 Sold ' + v.name + ' to ' + buyer.name + ' — +' + _paid.toLocaleString() + ' 🔥', 4800);
-  try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
-  return true;
+/* 🚫 ppSellToBuyer REMOVED with the NPC buyer queue. Kept here as the record of
+   what it did and why it is gone, because this one had already been patched
+   once and the patch was not enough.
+   The original paid `buyer.reward` — 44,000–513,000 Cinder rolled with NO
+   REFERENCE TO THE CAR — for any type-matching vehicle, which is the reported
+   "sell cars to the NPCs and get millions". That was capped to the car's real
+   worth (_ppBuyerPayout → _ppFairValue), which did close the vehicle loop.
+   What it did not close was the queue itself: an endlessly respawning stream of
+   guaranteed customers is a guaranteed income even at fair value, and the part
+   path beside it was never capped at all. So the queue goes, not just its
+   prices. Cars are sold to PLAYERS now. */
+function _ppRemovedNpcSale() {
+  showToast('🚗 NPC buyers no longer visit the lot — list vehicles on the player marketplace instead.', 5200);
+  return false;
 }
-
-// --- Sell a stripped part to a buyer who wants one ---
-function ppSellPartToBuyer(buyerId, partId) {
-  const p = ensurePrincePortfolios();
-  const buyer = p.buyers.find(b => b.id === buyerId);
-  const part = p.parts.find(x => x.id === partId);
-  if (!buyer || !part) return false;
-  if (buyer.requestType !== 'part') { showToast('Buyer wants a vehicle, not a part.'); return false; }
-  if (buyer.desiredPart && part.name !== buyer.desiredPart) {
-    if (!_ppChance(0.15)) {
-      showToast(buyer.name + ': "Wrong part. I asked for a ' + buyer.desiredPart + '."', 4400);
-      return false;
-    }
-  }
-  addGems(buyer.reward, 'Dealership: part sold');
-  p.parts = p.parts.filter(x => x.id !== partId);
-  p.buyers = p.buyers.filter(b => b.id !== buyerId);
-  p.reputation = Math.min(100, p.reputation + 1);
-  _ppLog('good', 'Sold ' + part.name + ' to ' + buyer.name + ' for ' + buyer.reward.toLocaleString() + ' 🔥.');
-  showToast('💵 Sold ' + part.name + ' to ' + buyer.name + ' — +' + buyer.reward.toLocaleString() + ' 🔥', 4800);
-  try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
-  return true;
-}
-
-function ppDismissBuyer(buyerId) {
-  const p = ensurePrincePortfolios();
-  p.buyers = p.buyers.filter(b => b.id !== buyerId);
-  try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
-  return true;
-}
+/* 🚫 ppSellPartToBuyer and ppDismissBuyer REMOVED with the NPC buyer queue.
+   ppSellPartToBuyer was the faucet the vehicle cap never covered. It paid
+   `buyer.reward` — for a part buyer that is
+       part.baseValue × 1.4   (× 2.4 for a VIP)
+   rolled in _ppGenBuyer — straight into addGems. Parts come from stripping
+   cars bought cheap on the auction floor, and a buyer was guaranteed every 90
+   seconds by the self-heal in ppTick, so this minted Cinder on a loop with no
+   ceiling anywhere in it.
+   Stripping is untouched and still pays what it was always meant to pay: real
+   camp salvage through addRes. Cars still change hands on the P2P vehicle
+   marketplace, which moves Cinder between players rather than creating it. */
 
 function ppUpgradeLot() {
   const p = ensurePrincePortfolios();
@@ -196312,7 +196207,6 @@ function renderPrincePortfolios() {
     overview: { title: 'OPERATIONS',     crumb: '// OVERVIEW · LIVE' },
     auction:  { title: 'AUCTION FLOOR',  crumb: '// MARKET · RNG LISTINGS' },
     lot:      { title: 'VEHICLE LOT',    crumb: '// PARKING + FUEL' },
-    buyers:   { title: 'BUYER QUEUE',    crumb: '// LIVE NPC CUSTOMERS' },
     parts:    { title: 'PARTS DEPOT',    crumb: '// STRIPPED INVENTORY' },
     log:      { title: 'EVENT LOG',      crumb: '// CHRONOLOGICAL' },
     admin:    { title: 'ADMIN',          crumb: '// PHOTOS · CONFIG' },
@@ -196323,7 +196217,6 @@ function renderPrincePortfolios() {
   if      (tab === 'overview') body = _ppRenderOverview(p);
   else if (tab === 'auction')  body = _ppRenderAuction(p);
   else if (tab === 'lot')      body = _ppRenderLot(p);
-  else if (tab === 'buyers')   body = _ppRenderBuyers(p);
   else if (tab === 'parts')    body = _ppRenderParts(p);
   else if (tab === 'log')      body = _ppRenderLog(p);
   else if (tab === 'admin')    body = _ppRenderAdmin(p);
@@ -196336,7 +196229,7 @@ function renderPrincePortfolios() {
   const navItem = (id, label, count) => {
     const active = (tab === id);
     return '<button class="wfa-nav-btn' + (active ? ' is-active' : '') + '" data-pp-tab="' + id + '">' +
-      '<span class="wfa-nav-ico">' + (id === 'overview' ? '◆' : id === 'auction' ? '⌬' : id === 'lot' ? '▤' : id === 'buyers' ? '👤' : id === 'parts' ? '⚙' : id === 'log' ? '☰' : '👑') + '</span>' +
+      '<span class="wfa-nav-ico">' + (id === 'overview' ? '◆' : id === 'auction' ? '⌬' : id === 'lot' ? '▤' : id === 'parts' ? '⚙' : id === 'log' ? '☰' : '👑') + '</span>' +
       '<span class="wfa-nav-label">' + label + '</span>' +
       (count != null ? '<span class="wfa-nav-count">' + count + '</span>' : '') +
     '</button>';
@@ -196346,8 +196239,6 @@ function renderPrincePortfolios() {
     navItem('overview', 'OVERVIEW',    null) +
     navItem('auction',  'AUCTION',     p.listings.length) +
     navItem('lot',      'VEHICLE LOT', lotUsed + '/' + cap) +
-    '<div class="wfa-nav-group">SALES</div>' +
-    navItem('buyers',   'BUYER QUEUE', p.buyers.length) +
     navItem('parts',    'PARTS',       p.parts.length) +
     '<div class="wfa-nav-group">RECORDS</div>' +
     navItem('log',      'EVENT LOG',   p.log.length) +
@@ -196377,7 +196268,7 @@ function renderPrincePortfolios() {
       '<nav class="wfa-nav">' + navHtml + '</nav>' +
       '<main class="wfa-main">' + _ppRenderResourceRibbon(p) + body + '</main>' +
       '<footer class="wfa-status">' +
-        '<span class="wfa-status-dot">●</span> PRINCE-NET · ONLINE  |  AUCTION OPEN  |  ' + p.lot.length + ' ON LOT  |  ' + p.buyers.length + ' LOBBY  |  REP ' + p.reputation + '%' +
+        '<span class="wfa-status-dot">●</span> PRINCE-NET · ONLINE  |  AUCTION OPEN  |  ' + p.lot.length + ' ON LOT  |  REP ' + p.reputation + '%' +
         '<span class="wfa-status-spd">RNG ×1</span>' +
       '</footer>' +
     '</div>';
@@ -196400,7 +196291,6 @@ function renderPrincePortfolios() {
   if (tab === 'overview') _ppBindOverview();
   else if (tab === 'auction') _ppBindAuction();
   else if (tab === 'lot')     _ppBindLot();
-  else if (tab === 'buyers')  _ppBindBuyers();
   else if (tab === 'parts')   _ppBindParts();
   else if (tab === 'log')     _ppBindLog();
   else if (tab === 'admin')   _ppBindAdmin();
@@ -196425,7 +196315,7 @@ function _ppRenderUnlockGate() {
       '<div class="wfa-locked">' +
         '<div class="wfa-locked-icon">🚗</div>' +
         '<h2>Acquire Prince Portfolios</h2>' +
-        '<p>The dealership runs an auction floor + parking lot + buyer queue. Buy cars cheap (some are scams), fuel them, sell them, or strip them for parts that credit your salvage stores.</p>' +
+        '<p>The dealership runs an auction floor + parking lot. Buy cars cheap (some are scams), fuel them, sell them to other PLAYERS on the marketplace, or strip them for parts that credit your salvage stores.</p>' +
         '<div class="wfa-locked-cost">Cost: <b>' + PP_BUY_COMPANY_COST.toLocaleString() + ' 🔥 CINDER</b></div>' +
         '<div class="wfa-locked-bal">You have <b>' + (Profile.gems | 0).toLocaleString() + ' 🔥</b></div>' +
         '<button class="wfa-buy ' + (canBuy ? '' : 'is-disabled') + '" id="pp-buy-co"' + (canBuy ? '' : ' disabled') + '>' + (canBuy ? 'ACQUIRE COMPANY' : 'INSUFFICIENT CINDER') + '</button>' +
@@ -196496,10 +196386,7 @@ function _ppRenderOverview(p) {
         '</div>' +
       '</div>' +
       '<div class="wfa-panel">' +
-        '<div class="wfa-panel-h"><h3>BUYER LOBBY</h3><span>' + p.buyers.length + ' ACTIVE</span></div>' +
         '<div class="wfa-kpi-row" style="grid-template-columns:repeat(2,1fr)">' +
-          kpi('WAITING', p.buyers.length, 'patience timers', p.buyers.length ? 'warn' : '') +
-          kpi('VIPS',    p.buyers.filter(b => b.isVip).length, 'high value', p.buyers.some(b => b.isVip) ? 'good' : '') +
         '</div>' +
         '<div class="wfa-divider"></div>' +
         '<div class="wfa-row-split"><span class="muted">REPUTATION</span><span style="color:' + (p.reputation > 60 ? '#a3d977' : '#e6b660') + '">' + p.reputation + ' / 100</span></div>' +
@@ -196512,9 +196399,8 @@ function _ppRenderOverview(p) {
         '<div style="display:flex;gap:0.5rem;flex-wrap:wrap">' +
           '<button class="wfa-mini-btn" data-pp-tab="auction">► BROWSE AUCTION</button>' +
           '<button class="wfa-mini-btn" data-pp-tab="lot">► MANAGE LOT</button>' +
-          '<button class="wfa-mini-btn" data-pp-tab="buyers">► BUYER QUEUE (' + p.buyers.length + ')</button>' +
         '</div>' +
-        (lowFuel > 0 ? '<div style="margin-top:0.7rem;padding:0.6rem;background:rgba(230,182,96,0.1);border-left:3px solid #e6b660;font-size:0.78rem;color:#e6b660">⚠ ' + lowFuel + ' car' + (lowFuel === 1 ? '' : 's') + ' on the lot need fuel. Buyers complain at low tanks.</div>' : '') +
+        (lowFuel > 0 ? '<div style="margin-top:0.7rem;padding:0.6rem;background:rgba(230,182,96,0.1);border-left:3px solid #e6b660;font-size:0.78rem;color:#e6b660">⚠ ' + lowFuel + ' car' + (lowFuel === 1 ? '' : 's') + ' on the lot need fuel. A dry tank drags the asking price down.</div>' : '') +
       '</div>' +
       '<div class="wfa-panel">' +
         '<div class="wfa-panel-h"><h3>EVENT FEED</h3><span>LAST 6</span></div>' +
@@ -197101,7 +196987,7 @@ function _ppaFloorBody(p) {
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.7rem;margin-top:0.3rem">' +
       hc('🎙', 'Bidding goes LIVE', 'A 3D car rolls onto the lit stage and rivals bid in real time — outbid them or get priced out.') +
       hc('⚡', 'Win or Buy It Now', 'Raise · Push · Slam to take the high bid, or slam Buy It Now to end it — Cinder is taxed only when you win.') +
-      hc('🏁', 'Drives onto your lot', 'Every car you win parks on your lot with its 3D model — fuel it, flip it to a buyer, or list it P2P.') +
+      hc('🏁', 'Drives onto your lot', 'Every car you win parks on your lot with its 3D model — fuel it, then list it on the player marketplace.') +
     '</div>' +
     '<div style="margin-top:0.9rem;text-align:center;color:#8a8f9a;font-size:0.78rem">🅿️ Lot <b style="color:#cbd5e1">' + lotN + '/' + cap + '</b> occupied · ' + (lotN >= cap ? '<span style="color:#e6a3a3">lot full — sell or upgrade before you can win more</span>' : 'room to win <b style="color:#cbd5e1">' + (cap - lotN) + '</b> more') + '</div>' +
   '</div>';
@@ -197320,7 +197206,7 @@ function _ppRenderLot(p) {
         ) : '<div class="wfa-stock-h" style="margin-top:1rem">▲ MAX TIER REACHED</div>') +
         '<div class="wfa-divider"></div>' +
         '<div class="wfa-stock-h">FUEL TIPS</div>' +
-        '<div class="muted" style="font-size:0.78rem;line-height:1.5">Buyers complain when fuel < 60%. They\'ll demand a 15% discount or walk. Top off each car with <b>' + PP_FUEL_PER_TOP_OFF + ' ⛽</b> from your salvage.</div>' +
+        '<div class="muted" style="font-size:0.78rem;line-height:1.5">A full tank is worth real money on the marketplace, and a dry one is a hard sell. Top off each car with <b>' + PP_FUEL_PER_TOP_OFF + ' ⛽</b> from your salvage.</div>' +
       '</div>' +
     '</div>' +
   '</div>';
@@ -197382,7 +197268,6 @@ function _ppOpenLotModal(vehicleId) {
           '<div class="pp-modal-card-h" style="margin-top:1rem">ACTIONS</div>' +
           '<div class="pp-actions">' +
             '<button class="pp-action" data-pp-act="fuel"><span class="pp-action-ico">⛽</span><span class="pp-action-lbl">FUEL VEHICLE</span><span class="pp-action-key">F</span></button>' +
-            '<button class="pp-action highlight" data-pp-act="offer"><span class="pp-action-ico">👤</span><span class="pp-action-lbl">OFFER TO BUYER</span><span class="pp-action-key">B</span></button>' +
             '<button class="pp-action" data-pp-act="reprice"><span class="pp-action-ico">⌖</span><span class="pp-action-lbl">SET ASKING PRICE</span><span class="pp-action-key">M</span></button>' +
             '<button class="pp-action highlight" data-pp-act="listP2P"><span class="pp-action-ico">🛒</span><span class="pp-action-lbl">LIST IN PLAYER MARKET</span><span class="pp-action-key">L</span></button>' +
             '<button class="pp-action" data-pp-act="strip"><span class="pp-action-ico">🔧</span><span class="pp-action-lbl">STRIP FOR PARTS</span><span class="pp-action-key">S</span></button>' +
@@ -197406,10 +197291,6 @@ function _ppOpenLotModal(vehicleId) {
       _ppConfirmScrap(vehicleId);
     } else if (act === 'reprice') {
       _ppOpenRepriceModal(vehicleId);
-    } else if (act === 'offer') {
-      _ppCloseAnyModal();
-      App._ppTab = 'buyers';
-      render();
     } else if (act === 'listP2P') {
       // 🛒 List in the player-to-player marketplace.
       try {
@@ -197507,73 +197388,6 @@ function _ppCloseAnyModal() {
 }
 
 // ───────── BUYERS ─────────
-function _ppRenderBuyers(p) {
-  const now = Date.now();
-  if (p.buyers.length === 0) {
-    return '<div class="wfa-empty-row" style="padding:3rem;display:flex;flex-direction:column;gap:0.8rem;align-items:center">' +
-      '<div>— LOBBY EMPTY — RNG cycle ~4 min. Auto-heal force-spawns 1 buyer after 90s empty.</div>' +
-      '<button class="wfa-mini-btn warn" id="pp-force-refresh-buy" style="padding:0.5rem 1rem">🔄 SPAWN BUYER NOW</button>' +
-    '</div>';
-  }
-  const cards = p.buyers.map(b => {
-    const elapsed = now - b.spawnedAt;
-    const remain = Math.max(0, b.patienceMs - elapsed);
-    const pct = (remain / b.patienceMs) * 100;
-    const patCol = pct < 20 ? '#cf6868' : pct < 50 ? '#e6b660' : '#a3d977';
-    const photo = ppPhotoCustomer(b.archetype);
-    const matchable = b.requestType === 'vehicle' ? p.lot : p.parts;
-    return '<div class="wfa-supply-card" style="' + (b.isVip ? 'border-color:#ffb627;box-shadow:inset 0 0 12px rgba(255,182,39,0.12)' : '') + '">' +
-      '<div class="wfa-supply-img" style="height:80px">' + (photo ? '<img src="' + escapeHtml(photo) + '">' : '<div style="font-size:1.8rem">' + (b.archetype === 'gangster' ? '🥃' : b.archetype === 'corporate' ? '🎩' : b.archetype === 'smuggler' ? '🕶' : '⛏') + '</div>') +
-        '<div class="wfa-supply-tag-row">' +
-          (b.isVip ? '<span class="wfa-tag premium">★ VIP</span>' : '') +
-          '<span class="wfa-tag" style="background:#2a3e5a;color:#cfe5ff">' + b.archetype.toUpperCase() + '</span>' +
-        '</div>' +
-      '</div>' +
-      '<div style="padding:10px 14px">' +
-        '<div style="font-family:Oswald,sans-serif;font-size:1rem">' + escapeHtml(b.name) + '</div>' +
-        '<div style="font-size:0.75rem;color:#a89878;font-style:italic;margin:0.4rem 0;line-height:1.4">"' + escapeHtml(b.dialogue) + '"</div>' +
-        '<div style="font-family:JetBrains Mono,monospace;font-size:0.72rem;color:#cfe5ff;margin:0.5rem 0">' +
-          (b.requestType === 'vehicle' ? ('WANTS: <b style="color:#e6b660">' + escapeHtml(b.desiredType || 'any vehicle') + '</b>' + (b.desiredColor ? ' · ' + b.desiredColor : '')) : ('WANTS PART: <b style="color:#e6b660">' + escapeHtml(b.desiredPart || '?') + '</b>')) +
-          ' · PAYS UP TO <b style="color:#a3d977">¢' + b.reward.toLocaleString() + '</b>' +
-        '</div>' +
-        '<div style="height:5px;background:#0a0a0a;margin:0.4rem 0;overflow:hidden">' +
-          '<div style="height:100%;width:' + pct.toFixed(0) + '%;background:' + patCol + '"></div>' +
-        '</div>' +
-        '<div style="font-size:0.65rem;color:#a89878;letter-spacing:0.12em">PATIENCE ' + Math.ceil(remain / 1000) + 's</div>' +
-      '</div>' +
-      '<div style="padding:0 12px 12px;display:flex;gap:4px">' +
-        (matchable.length > 0
-          ? '<select class="wfa-mini-btn" data-pp-match-select="' + b.id + '" style="flex:1;font-size:0.65rem">' +
-              matchable.map(it => '<option value="' + it.id + '">' + escapeHtml(it.name || it.glyph) + (b.requestType === 'vehicle' ? ' · ' + it.fuelLevel + '%' : '') + '</option>').join('') +
-            '</select>'
-          : '<span style="flex:1;font-size:0.7rem;color:#cf6868;letter-spacing:0.12em">NO ' + (b.requestType === 'vehicle' ? 'CARS' : 'PARTS') + ' IN STOCK</span>') +
-        (matchable.length > 0 ? '<button class="wfa-mini-btn" style="background:#1a6ba8;color:#fff" data-pp-sell="' + b.id + '">💰 SELL</button>' : '') +
-        '<button class="wfa-mini-btn danger" data-pp-dismiss="' + b.id + '">✕</button>' +
-      '</div>' +
-    '</div>';
-  }).join('');
-  return '<div>' +
-    '<div class="wfa-panel-header">BUYER QUEUE  <span class="wfa-panel-crumb">RNG spawned · Patience timers · Match inventory</span><span class="wfa-panel-right">' + p.buyers.length + ' active</span></div>' +
-    '<div class="wfa-supply-grid">' + cards + '</div>' +
-  '</div>';
-}
-function _ppBindBuyers() {
-  const frb = document.getElementById('pp-force-refresh-buy');
-  if (frb) frb.onclick = () => { if (ppForceRefresh()) render(); };
-  document.querySelectorAll('[data-pp-sell]').forEach(btn => btn.onclick = () => {
-    const bid = btn.dataset.ppSell;
-    const sel = document.querySelector('[data-pp-match-select="' + bid + '"]');
-    if (!sel) return;
-    const itemId = sel.value;
-    const p = ensurePrincePortfolios();
-    const buyer = p.buyers.find(b => b.id === bid);
-    if (!buyer) return;
-    if (buyer.requestType === 'vehicle') ppSellToBuyer(bid, itemId);
-    else ppSellPartToBuyer(bid, itemId);
-    render();
-  });
-  document.querySelectorAll('[data-pp-dismiss]').forEach(b => b.onclick = () => { ppDismissBuyer(b.dataset.ppDismiss); render(); });
-}
 
 // ───────── PARTS ─────────
 function _ppRenderParts(p) {

@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w3';
+  window.BUILD_VERSION = 'v120w4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -196400,7 +196400,7 @@ function _ppRenderOverview(p) {
           '<button class="wfa-mini-btn" data-pp-tab="auction">► BROWSE AUCTION</button>' +
           '<button class="wfa-mini-btn" data-pp-tab="lot">► MANAGE LOT</button>' +
         '</div>' +
-        (lowFuel > 0 ? '<div style="margin-top:0.7rem;padding:0.6rem;background:rgba(230,182,96,0.1);border-left:3px solid #e6b660;font-size:0.78rem;color:#e6b660">⚠ ' + lowFuel + ' car' + (lowFuel === 1 ? '' : 's') + ' on the lot need fuel. A dry tank drags the asking price down.</div>' : '') +
+        (lowFuel > 0 ? '<div style="margin-top:0.7rem;padding:0.6rem;background:rgba(230,182,96,0.1);border-left:3px solid #e6b660;font-size:0.78rem;color:#e6b660">⚠ ' + lowFuel + ' car' + (lowFuel === 1 ? '' : 's') + ' on the lot have an empty tank.</div>' : '') +
       '</div>' +
       '<div class="wfa-panel">' +
         '<div class="wfa-panel-h"><h3>EVENT FEED</h3><span>LAST 6</span></div>' +
@@ -197206,7 +197206,7 @@ function _ppRenderLot(p) {
         ) : '<div class="wfa-stock-h" style="margin-top:1rem">▲ MAX TIER REACHED</div>') +
         '<div class="wfa-divider"></div>' +
         '<div class="wfa-stock-h">FUEL TIPS</div>' +
-        '<div class="muted" style="font-size:0.78rem;line-height:1.5">A full tank is worth real money on the marketplace, and a dry one is a hard sell. Top off each car with <b>' + PP_FUEL_PER_TOP_OFF + ' ⛽</b> from your salvage.</div>' +
+        '<div class="muted" style="font-size:0.78rem;line-height:1.5">A tank is shown on the car and empties to 0 when you acquire it. Top off each car with <b>' + PP_FUEL_PER_TOP_OFF + ' ⛽</b> from your salvage.</div>' +
       '</div>' +
     '</div>' +
   '</div>';

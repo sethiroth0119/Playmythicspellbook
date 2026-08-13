@@ -2508,13 +2508,17 @@ function finReturnFor(tier, vol, bias, seed) {
 }
 /* How many working financial buildings the city has. Damaged ones do not count
    — a broken bank is not managing anybody's money, which is the same rule every
-   other building in this file follows. */
+   other building in this file follows.
+   🏗 Neither does an UNFINISHED one (bldSite). A Holding Company is a 24-hour
+      build, and a desk that carries a book before the doors open is a position
+      opened by a foundation pad. An UPGRADING desk (k=1) is standing and
+      working and is counted — that asymmetry is the whole point of `bldSite`. */
 function finCount() {
   let n = 0;
   try {
     for (const t of Object.values(game.tiles)) {
       const d = BUILDINGS[t.type];
-      if (d && d.fin && !t.damaged) n += 1;
+      if (d && d.fin && !t.damaged && !bldSite(t)) n += 1;
     }
   } catch (e) {}
   return n;
@@ -2532,7 +2536,8 @@ function finBookCap() {
   try {
     for (const t of Object.values(game.tiles)) {
       const d = BUILDINGS[t.type];
-      if (d && d.fin && !t.damaged) cap += FIN_BOOK_CAP_EACH * finTierOf(d).bookMult;
+      // 🏗 Same gate as finCount: an unfinished desk carries no book.
+      if (d && d.fin && !t.damaged && !bldSite(t)) cap += FIN_BOOK_CAP_EACH * finTierOf(d).bookMult;
     }
   } catch (e) {}
   return Math.round(cap);
@@ -2610,7 +2615,8 @@ function finPositions() {
     const seedBase = 'c' + (game.fin.dueAt || 0);
     // Every financial building contributes its own risk tier and its own picks.
     const tiles = Object.entries(game.tiles)
-      .filter(([, t]) => { const d = BUILDINGS[t.type]; return d && d.fin && !t.damaged; });
+      // 🏗 …and takes no positions. Same gate as finCount / finBookCap.
+      .filter(([, t]) => { const d = BUILDINGS[t.type]; return d && d.fin && !t.damaged && !bldSite(t); });
     if (!tiles.length || book <= 0) return out;
 
     const nodes = _finMarket.slice().map(n => ({ n, s: finNodeScore(n) })).sort((a, b) => b.s - a.s);
@@ -2811,7 +2817,9 @@ function cityDemandScale() {
     let sum = 0, n = 0;
     for (const [k, t] of Object.entries(game.tiles)) {
       const d = BUILDINGS[t.type];
-      if (!d || !d.gen || t.damaged) continue;
+      // 🏗 A site grows nothing, so it must not drag the average DOWN either —
+      //    it is not a staple producer running badly, it is not a producer.
+      if (!d || !d.gen || t.damaged || bldSite(t)) continue;
       if (!d.gen.food && !d.gen.water) continue;       // staples set the pace
       const ci = k.indexOf(',');
       sum += tileMult(+k.slice(0, ci), +k.slice(ci + 1), t, staff, pf); n++;
@@ -3544,6 +3552,9 @@ function damageLogKind(cause) {
 function damageTile(k, destroy, cause) {
   const t = game.tiles[k]; if (!t || t.type === 'anchor' || t.type === 'road') return false;
   const [x, z] = k.split(',').map(Number);
+  /* 🏗 Read BEFORE the destroy branch deletes the tile — the log line has to be
+     able to say the thing that vanished was still a hole in the ground. */
+  const wasSite = bldSite(t);
   if (destroy) {
     dropTileMesh(t);
     delete game.tiles[k];
@@ -3551,8 +3562,23 @@ function damageTile(k, destroy, cause) {
     if (selectedKey === k) { $('inspect').classList.remove('open'); selectedKey = null; }
     toast(cause + ' destroyed a ' + BUILDINGS[t.type].name + '!', 'bad');
     logEvent(damageLogKind(cause), cause + ' DESTROYED ' + BUILDINGS[t.type].name + ' (L' + t.lvl +
-      ') at ' + k + '. Nothing was left to repair — rebuild it for ' + costLabel(costOf(t.type)) + '.');
+      ') at ' + k + '. Nothing was left to repair — rebuild it for ' + costLabel(costOf(t.type)) + '.' +
+      (wasSite ? ' It was still UNDER CONSTRUCTION: the build order died with it and nothing is refunded, '
+               + 'exactly as for a finished building.' : ''));
   } else {
+    /* 🏗 A SITE CANNOT BE DAMAGED — AND THIS GUARD BELONGS HERE, NOT AT THE TOP
+       OF THE FUNCTION. Above the `if (destroy)` branch it would shelter a
+       construction site from raiders, lightning, fire rain, anomalies and the
+       tornado, making a hole in the ground the one indestructible tile in the
+       city. A site CAN be destroyed — a total loss with no refund, the same
+       deal a finished building gets. What it cannot be is *damaged*: `damaged`
+       means "standing but offline until repaired", and offering a repair bill
+       on a foundation pad is a bug players pay real Cinder for.
+       Because this returns false, damagedTiles()/renderRepairs()/repairTile()/
+       repairAll() need no guard of their own — the (bld && damaged) pair is
+       unreachable by construction, and loadState drops `dmg` on any save that
+       carries both. */
+    if (bldSite(t)) return false;
     if (t.damaged) return false;
     t.damaged = true;
     applyDamagedLook(t);
@@ -16044,7 +16070,8 @@ $('logcard').addEventListener('click', (ev) => {
 function roadCapParts() {
   let depots = 0, convoy = 0;
   for (const t of Object.values(game.tiles)) {
-    if (t.type === 'depot' && !t.damaged) depots++;
+    // 🏗 An unfinished depot maintains no road: capacity arrives with the doors.
+    if (t.type === 'depot' && !t.damaged && !bldSite(t)) depots++;
     if (t.type === 'anchor' && t.anchor && ((NODE_TYPES[t.anchor.node.node_type] || {}).feeds || []).includes('__roads__')) convoy++;
   }
   return { depots, convoy, cap: ROAD_CAP_BASE + depots * ROAD_PER_DEPOT + convoy * ROAD_PER_CONVOY };
@@ -16404,6 +16431,12 @@ function computeLinks() {
       const t = game.tiles[k]; const def = BUILDINGS[t.type]; if (!def) continue;
       const lvlMul = Math.pow(RATE_MULT, t.lvl - 1);
       if (def.decor) continue;
+      /* 🏗 A site feeds the node NOTHING — but note where this guard is: inside
+         the SCORING loop, not in the road-component walk that built `served`.
+         The site stays in the walk, so it still reads as connected in the
+         dossier and does not split a road component in two the moment a
+         building is placed. It simply contributes no points until it opens. */
+      if (bldSite(t)) continue;
       if (nt.feeds.includes('*')) { pts += 6 * lvlMul; continue; }
       if (def.gen) for (const r in def.gen) if (nt.feeds.includes(r)) pts += def.gen[r] * 10 * lvlMul;
       if (nt.feeds.includes('__housing__') && def.popCap) pts += def.popCap * t.lvl * .8;
@@ -16437,20 +16470,34 @@ function citySync() {
    Cap = base camp + Housing + the NODES themselves (each anchor shelters
    nodePopPerLvl citizens per node level). Hired workers & soldiers draw
    from the same pool as building jobs. */
+/* 🏗 THE POPULATION ASYMMETRY, AND IT IS DELIBERATE. A site does NOT raise the
+   cap but DOES spend against it. Both halves matter:
+     popCap  — an unfinished Housing must not raise the ceiling the placement
+               gate itself reads, or a player queues four Housings and lands
+               over the cap the moment the first one is refused.
+     popUsed — pop is CHARGED AT PLACEMENT (the gate in tryPlace), so releasing
+               it here would hand back seats that were already spent and let a
+               player queue straight past the cap.
+   ⚠ Neither of these has ever carried a `damaged` test, so a grep for
+     `t.damaged` will not find them. They are real edits, not copies. */
 function popCap() {
   let c = 4;
-  for (const t of Object.values(game.tiles)) { const d = BUILDINGS[t.type]; if (d && d.popCap) c += d.popCap * t.lvl; }
+  for (const t of Object.values(game.tiles)) { const d = BUILDINGS[t.type]; if (d && d.popCap && !bldSite(t)) c += d.popCap * t.lvl; }
   for (const a of game.anchors) c += ARMY.nodePopPerLvl * ((a.node.level | 0) || 1);
   return c;
 }
 function popUsed() {
   let u = game.army.workers + game.army.soldiers;
+  // 🏗 NO bldSite GUARD HERE, ON PURPOSE. See the note above popCap().
   for (const t of Object.values(game.tiles)) { const d = BUILDINGS[t.type]; if (d && d.pop) u += d.pop; }
   return u;
 }
 function crewNeeded() {
   let n = 0;
-  for (const t of Object.values(game.tiles)) { const d = BUILDINGS[t.type]; if (d && d.crew && !t.damaged) n += d.crew; }
+  // 🏗 A site demands no crew — nobody can be rostered into a building that is
+  //    not there. This is the labour-pool question; citJobSlots() asks a
+  //    different one and answers it separately (and, for damaged, oppositely).
+  for (const t of Object.values(game.tiles)) { const d = BUILDINGS[t.type]; if (d && d.crew && !t.damaged && !bldSite(t)) n += d.crew; }
   return n;
 }
 function staffingRatio() {
@@ -16460,7 +16507,9 @@ function staffingRatio() {
 }
 function garrisonCap() {
   let g = 0;
-  for (const t of Object.values(game.tiles)) if (t.type === 'barracks') g += BUILDINGS.barracks.garrison * t.lvl;
+  /* 🏗 An unfinished Barracks houses nobody. ⚠ No `damaged` test here today —
+     this is a real edit, not a copy of a neighbouring guard. */
+  for (const t of Object.values(game.tiles)) if (t.type === 'barracks' && !bldSite(t)) g += BUILDINGS.barracks.garrison * t.lvl;
   return g;
 }
 function rankMult() { return ARMY.ranks[game.army.rank].mult; }
@@ -16470,6 +16519,10 @@ function bonusesFor(x, z, type) {
   for (const [dx, dz] of NEI) {
     const t = tileAt(x + dx, z + dz);
     if (!t) continue;
+    // 🏗 A neighbouring site is not a neighbour yet — no cluster bonus from a
+    //    building that has not opened. (Roads are exempt from timers entirely,
+    //    so the road leg below is unaffected in practice.)
+    if (bldSite(t)) continue;
     if (t.type === 'road') b.road = true;
     else if (t.type === 'anchor') b.anchor = true;
     else if (t.type === type && BUILDINGS[type].gen) b.cluster = Math.min(CLUSTER_MAX, b.cluster + CLUSTER_EACH);
@@ -16495,7 +16548,8 @@ function stockCap() {
   let c = STOCK_CAP_BASE;
   for (const t of Object.values(game.tiles)) {
     const d = BUILDINGS[t.type];
-    if (d && d.stockCap && !t.damaged) c += d.stockCap * t.lvl;
+    // 🏗 An unfinished silo stores nothing.
+    if (d && d.stockCap && !t.damaged && !bldSite(t)) c += d.stockCap * t.lvl;
   }
   return c;
 }
@@ -16524,7 +16578,8 @@ function litKeys() {
   const lit = new Set();
   for (const [k, t] of Object.entries(game.tiles)) {
     const d = BUILDINGS[t.type];
-    if (!d || !d.lightRadius || t.damaged) continue;
+    // 🏗 A lamp that is still a hole in the ground lights nothing.
+    if (!d || !d.lightRadius || t.damaged || bldSite(t)) continue;
     const [x, z] = k.split(',').map(Number), R = d.lightRadius;
     for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) lit.add(key(x + dx, z + dz));
   }
@@ -16598,7 +16653,12 @@ async function economyTick(dtMin) {
   {
     let gen = 0, dem = 0, grid = false;
     for (const [k, t] of Object.entries(game.tiles)) {
-      const def = BUILDINGS[t.type]; if (!def || t.damaged) continue;
+      /* 🏗 BOTH LEGS AT ONCE, which is why the guard is on this line and not on
+         the two below it. A half-built Power Station must supply no power, and
+         a half-built factory must draw none — guarding only the supply leg
+         would brown the city out to pay for a building that does not exist
+         yet, and guarding only the demand leg would power it from one. */
+      const def = BUILDINGS[t.type]; if (!def || t.damaged || bldSite(t)) continue;
       const [x, z] = k.split(',').map(Number);
       if (def.gen && def.gen.power) { gen += def.gen.power * tileMult(x, z, t, staff, 1); grid = true; }
       if (def.powerNeed) { dem += def.powerNeed * t.lvl; grid = true; }
@@ -16620,7 +16680,10 @@ async function economyTick(dtMin) {
 
   // leased plots pay rent to the owner
   for (const t of Object.values(game.tiles)) {
-    if (t.type === 'lot' && t.tenant && !t.damaged) {
+    // 🏗 An unfinished lot has no tenant to collect from. (`lot` is on
+    //    ECON.construction.exemptTypes so this is belt-and-braces today; it
+    //    stops being moot the moment that list is retuned.)
+    if (t.type === 'lot' && t.tenant && !t.damaged && !bldSite(t)) {
       // Rent is Cinder income, so it takes the commerce leg like every other
       // Cinder line — a tenant business in a city nobody will trade with pays less.
       /* 💰 Rent is Cinder, so it takes the HOURLY period too (CINDER_PERIOD_DIV).
@@ -16697,7 +16760,11 @@ async function economyTick(dtMin) {
   for (const [k, t] of Object.entries(game.tiles)) {
     const def = BUILDINGS[t.type]; if (!def) continue;
     if (!def.gen && !def.use && !def.svc && !LEGACY_SERVICE[t.type]) continue;
-    if (t.damaged) continue;                     // damaged buildings are offline
+    /* 🏗 THE CENTRAL OUTPUT GATE. Everything below this line — gen, use, svc,
+       LEGACY_SERVICE, t.earn, t.svcFed — is what a building DOES, and a site
+       does none of it. One guard here covers all of them; guarding them
+       individually is how one of them gets missed in the next refactor. */
+    if (t.damaged || bldSite(t)) continue;       // damaged buildings are offline; sites are not buildings
     const [x, z] = k.split(',').map(Number);
     const mult = tileMult(x, z, t, staff, powered);
     /* 📉 The city-conditions multipliers for THIS tile. Two, because Cinder
@@ -16828,6 +16895,14 @@ async function economyTick(dtMin) {
      computed — rest quality is read from game.cov/vitals/wellbeing inside the
      module. Guarded because the module is loaded asynchronously and the city
      must tick normally on any browser or build where it never arrives. */
+  /* 🏗 ⚠ DOCUMENTED GAP: the per-tile skip a site needs lives on the MODULE
+     side. house.city.js walks CTX.game.tiles itself (houseTiles()) and applies
+     its own `t.damaged` guard; this file cannot reach inside that loop. It
+     costs nothing today — a site has no billets (the Manage-billets action is
+     hidden on a site) and an empty House accrues zero — so the only effect is
+     an empty house record materialising on an unfinished Resting House. If a
+     bldSite gate is ever wanted there it has to be handed over through the
+     mount ctx, exactly like every other read this file lends out. */
   try { if (window.MythicHouse) window.MythicHouse.tick(dtMin); } catch (e) {}
 
   /* 🏙 THE LIVING ECONOMY rides the same clock as everything else here — a
@@ -16867,7 +16942,9 @@ function ecoLogisticsCounts() {
        before asserting a tile type is absent. */
   let warehouse = 0, depot = 0, terminal = 0, railhead = 0;
   for (const t of Object.values(game.tiles)) {
-    if (t.damaged) continue;                 // a damaged shed carries nothing
+    // 🏗 …and an unbuilt shed carries less than nothing: freight capacity the
+    //    economy would plan around and then not have.
+    if (t.damaged || bldSite(t)) continue;   // a damaged shed carries nothing
     if (t.type === 'warehouse') warehouse += Math.max(1, t.lvl | 0);
     else if (t.type === 'depot') depot += Math.max(1, t.lvl | 0);
     else if (t.type === 'railyard') railhead += Math.max(1, t.lvl | 0);
@@ -16944,7 +17021,27 @@ function ecoBuildings() {
     const m = ECO_BUILDING_MAP[t.type]; if (!m) continue;
     /* A damaged building is offline everywhere else in this city; it must be
        offline here too, or a burnt-out factory keeps hiring. */
-    if (t.damaged) continue;
+    /* 🔴🔴 THE INVARIANT THAT HAS NO AUTOMATED TRIPWIRE — READ BEFORE EDITING
+       THIS LINE. It is stated here verbatim because this is the one line in
+       the city that can destroy a player's firm silently:
+
+         > A tile may be ABSENT from `ecoBuildings()` until its first
+         > completion, and is PRESENT forever after. It is NEVER withdrawn.
+         > `ecoBuildings` is gated on `bldSite`, never on `bldBusy`.
+
+       Because syncBuildings (public/src/economy/index.js:155-166) sets
+       rung='BANKRUPT' + reported=true and Firms.reap() deletes the firm
+       BEFORE ANY LOG LINE, and its cash leaves totalCinder() uncompensated —
+       while sim.js's audit captures `before` inside runDay (sim.js:820) and
+       syncBuildings runs from a 4 s setInterval. THE GAUNTLET STAYS GREEN
+       THROUGH A FIRM REAP.
+
+       So: a k=1 UPGRADING tile is a standing, working, employing business and
+       must stay in this list. `bldBusy` would withdraw it for the length of
+       the upgrade — up to 24 hours — reap the firm, and nothing anywhere
+       would go red. Any future "simplification" of bldSite to bldBusy here is
+       a data-loss bug wearing a green test suite. */
+    if (t.damaged || bldSite(t)) continue;
     const res = E.pickAvailable(m.out);
     if (!res) continue;                 // this ground supports none of them
     out.push({ key: k, out: res, ind: m.ind, name: (BUILDINGS[t.type] || {}).name,
@@ -16975,7 +17072,12 @@ function ecoHost() {
     powerFactor: (game.power && typeof game.power.factor === 'number') ? game.power.factor : 1,
     waterFactor: (typeof cov.water === 'number') ? Math.max(0, Math.min(1, cov.water)) : 1,
     logisticsCounts: ecoLogisticsCounts(),
-    hasBank: Object.values(game.tiles).some(t => t.type === 'bank' && !t.damaged),
+    /* 🏗 A half-built bank makes no loans. ⚠ The OTHER bug on this line — the
+       bank is BUILDINGS['op_bank'], registered by the ops loop, so `'bank'`
+       never matches and hasBank is permanently false — is deliberately NOT
+       fixed here. It changes what the DEBT rung does with real money and
+       belongs in its own reviewable commit (SPEC_CONSTRUCTION §0.10). */
+    hasBank: Object.values(game.tiles).some(t => t.type === 'bank' && !t.damaged && !bldSite(t)),
     /* Infrastructure is a 0..1 quality score the firm LEVEL GATES read. Roads
        and coverage are what a business actually needs to grow, and both are
        already computed for other panels. */
@@ -17333,7 +17435,9 @@ async function raidTick(dt) {
   const strength = Math.round((RAID_BASE_STR + (game.raid.wave - 1) * RAID_STR_PER_WAVE) * (isSiege ? SIEGE_MULT : 1));
   let towers = 0, staticDef = 0;
   for (const t of Object.values(game.tiles)) {
-    if (t.damaged) continue;
+    // 🏗 A tower with no walls up yet shoots nobody, and must not be counted
+    //    into the ammo bill either — both numbers come out of this one loop.
+    if (t.damaged || bldSite(t)) continue;
     if (t.type === 'tower') { towers++; staticDef += BUILDINGS.tower.defense * t.lvl; }
     if (t.type === 'barracks') staticDef += BUILDINGS.barracks.defense * t.lvl;
     if (t.type === 'gate') staticDef += BUILDINGS.gate.defense * t.lvl;
@@ -17978,7 +18082,7 @@ function insTopline(k, t, x, z, mult, om) {
     d: 'city total ' + decorPoints() + ' → +' + Math.min(DECOR_MORALE_CAP, decorPoints() * DECOR_MORALE_EACH).toFixed(1) + ' morale (cap ' + DECOR_MORALE_CAP + ')' });
   // Wear only exists on things that decay — decayTick skips decor and roads.
   if (!def.decor && t.type !== 'road') {
-    const hasDepot = Object.values(game.tiles).some(d => d.type === 'depot' && !d.damaged);
+    const hasDepot = Object.values(game.tiles).some(d => d.type === 'depot' && !d.damaged && !bldSite(d));
     const rate = DECAY_PER_HR * (hasDepot ? DECAY_DEPOT_FACTOR : 1);
     out.push({ e: 'Condition', v: t.damaged ? '<span style="color:var(--invalid)">FAILED</span>' : (100 - Math.round(t.wear || 0)) + '<small>%</small>',
       d: t.damaged ? 'repair to bring it back online' : rate.toFixed(1) + '%/hr wear' + (hasDepot ? ' — halved by a Supply Depot' : ' — a Supply Depot halves it') });
@@ -18150,7 +18254,7 @@ function insRisk(t, x, z) {
   const def = BUILDINGS[t.type], rows = [];
   const decays = !def.decor && t.type !== 'road';
   if (decays) {
-    const hasDepot = Object.values(game.tiles).some(d => d.type === 'depot' && !d.damaged);
+    const hasDepot = Object.values(game.tiles).some(d => d.type === 'depot' && !d.damaged && !bldSite(d));
     const rate = DECAY_PER_HR * (hasDepot ? DECAY_DEPOT_FACTOR : 1);
     const left = Math.max(0, 100 - (t.wear || 0));
     rows.push(insFac('🏚️ Wear', t.damaged ? '<span class="dn">FAILED</span>' : Math.round(t.wear || 0) + '%',
@@ -18893,7 +18997,9 @@ function allRoadKeys() {
 function roadsAdjacentToTypes(types) {
   const out = new Set();
   for (const [k, t] of Object.entries(game.tiles)) {
-    if (!types.includes(t.type)) continue;
+    // 🏗 Nobody commutes to a site. This is what keeps agentEndpoints() —
+    //    homes, workplaces, truck stops — from routing traffic to a hole.
+    if (!types.includes(t.type) || bldSite(t)) continue;
     const [x, z] = k.split(',').map(Number);
     for (const [dx, dz] of NEI) if (isRoad(x + dx, z + dz)) out.add(key(x + dx, z + dz));
   }
@@ -18934,7 +19040,8 @@ function doorsAt(roadK, kind) {
   const out = [];
   for (const [dx, dz] of NEI) {
     const k = key(x + dx, z + dz), t = game.tiles[k];
-    if (t && !t.damaged && t.type !== 'road' && t.type !== 'anchor' && !BUILDINGS[t.type].decor && !BUILDINGS[t.type].noEnter) out.push(k);
+    // 🏗 …and no door on a building that has no walls yet.
+    if (t && !t.damaged && !bldSite(t) && t.type !== 'road' && t.type !== 'anchor' && !BUILDINGS[t.type].decor && !BUILDINGS[t.type].noEnter) out.push(k);
   }
   return out;
 }
@@ -19003,7 +19110,8 @@ function despawnAgent(a) {
 function desiredAgentCounts() {
   let housing = 0, truckSrc = 0, policeSrc = 0;
   for (const t of Object.values(game.tiles)) {
-    if (t.damaged) continue;
+    // 🏗 A site generates no residents, no deliveries and no patrols.
+    if (t.damaged || bldSite(t)) continue;
     if (t.type === 'housing') housing += t.lvl;
     if (TRUCK_STOPS.includes(t.type)) truckSrc++;
     if (POLICE_SOURCES.includes(t.type)) policeSrc++;
@@ -19085,7 +19193,10 @@ function agentTick(dt) {
       a.insideT -= dt;
       if (a.insideT > 0) continue;
       const [rx, rz] = a.roadK.split(',').map(Number);
-      if (!game.tiles[a.bldgK] || !isRoad(rx, rz)) {     // world changed while inside
+      // 🏗 …including the building being demolished and re-placed as a site
+      //    under them. doorsAt() would never have let them in, so leaving is
+      //    the only consistent answer.
+      if (!game.tiles[a.bldgK] || bldSite(game.tiles[a.bldgK]) || !isRoad(rx, rz)) {     // world changed while inside
         despawnAgent(a); continue;
       }
       a.state = 'exit'; a.p = 0; a.mesh.visible = true;
@@ -19273,7 +19384,8 @@ function serviceMorale() {
   let m = 0;
   for (const t of Object.values(game.tiles)) {
     const d = BUILDINGS[t.type];
-    if (!d || !d.svc || !d.svc.morale || t.damaged) continue;
+    // 🏗 A site cheers nobody up.
+    if (!d || !d.svc || !d.svc.morale || t.damaged || bldSite(t)) continue;
     m += d.svc.morale * t.lvl * (t.svcFed == null ? 1 : t.svcFed);
   }
   return Math.min(15, m);
@@ -19281,7 +19393,9 @@ function serviceMorale() {
 function staticDefense() {
   let s = 0;
   for (const t of Object.values(game.tiles)) {
-    if (t.damaged) continue;
+    // 🏗 Half a wall stops nothing. Must agree with raidTick's own tally or
+    //    the panel promises a defence the raid does not deliver.
+    if (t.damaged || bldSite(t)) continue;
     const d = BUILDINGS[t.type];
     if (d && d.defense) s += d.defense * t.lvl;
   }
@@ -19291,7 +19405,11 @@ function builtCount() {
   let n = 0;
   for (const t of Object.values(game.tiles)) {
     const d = BUILDINGS[t.type];
-    if (d && !d.decor && t.type !== 'road') n++;
+    /* 🏗 A SITE IS NOT CIVILISATION. This feeds tCiv, so counting foundations
+       would let a player raise the city's Civilisation vital by placing
+       buildings they never finish. ⚠ No `damaged` test here today — a real
+       edit, not a copy. */
+    if (d && !d.decor && t.type !== 'road' && !bldSite(t)) n++;
   }
   return n;
 }
@@ -19305,9 +19423,16 @@ function computeCoverage() {
   for (const n of NEEDS) dem[n] = (DEMAND_PER_POP[n] || 0) * pop;
   // ⚡ Power demand also carries the buildings' own draw (set in economyTick).
   dem.power = game.power.demand;
-  // 💡 Light is per BLOCK, not per head: every non-decor tile you have built
-  //    wants to be inside a lamp's radius.
-  dem.light = Math.max(1, Object.keys(game.tiles).length);
+  /* 💡 Light is per BLOCK, not per head: every non-decor tile you have built
+     wants to be inside a lamp's radius.
+     🏗 …every tile you have BUILT. This counts raw tile keys, so without the
+     subtraction the Light vital drops the instant a building is PLACED —
+     before it exists, and for as long as 24 hours — which reads as the city
+     being punished for building. ⚠ No `damaged` test here today; a grep for
+     `t.damaged` will not find this line. */
+  let siteTiles = 0;
+  for (const t of Object.values(game.tiles)) if (bldSite(t)) siteTiles++;
+  dem.light = Math.max(1, Object.keys(game.tiles).length - siteTiles);
 
   /* 🥫 STOCK RELIEF. A vital that reads pure flow would slam to zero the moment
      a farm is damaged, even with a full silo. Reserves are drawable over
@@ -19904,7 +20029,9 @@ const wellbeing = { morale: 50, hunger: 0, eatFrac: 0, drinkFrac: 0, lastPush: 0
 function alliedCamps() { return game.anchors.reduce((s, a) => s + ((a.node.camps | 0) || 0), 0); }
 function decorPoints() {
   let p = 0;
-  for (const t of Object.values(game.tiles)) { const d = BUILDINGS[t.type]; if (d && d.decorPts && !t.damaged) p += d.decorPts; }
+  // 🏗 Moot in practice — decor is exempt from timers — but the gate is here so
+  //    it stays true if the exempt list is ever retuned.
+  for (const t of Object.values(game.tiles)) { const d = BUILDINGS[t.type]; if (d && d.decorPts && !t.damaged && !bldSite(t)) p += d.decorPts; }
   return p;
 }
 
@@ -20021,6 +20148,9 @@ function evaluateNeeds() {
     let unconnected = 0;
     for (const [k, t] of buildings) {
       if (BUILDINGS[t.type].decor || BUILDINGS[t.type].noRoadNeed) continue;  // trees & walls don't need roads
+      // 🏗 …and a site does not need one YET. Scolding a player for not having
+      //    connected a building they are still paying for is noise.
+      if (bldSite(t)) continue;
       const [x, z] = k.split(',').map(Number);
       if (!NEI.some(([dx, dz]) => isRoad(x + dx, z + dz))) unconnected++;
     }
@@ -20136,7 +20266,8 @@ function socketBoost(t) {                          // slotted card → building 
 function kalonCityBoost() {                        // stabled Kalons → global prod
   let n = 0;
   for (const t of Object.values(game.tiles)) {
-    if (t.type !== 'kalonstable' || t.damaged) continue;
+    // 🏗 No stalls yet, no Kalons in them.
+    if (t.type !== 'kalonstable' || t.damaged || bldSite(t)) continue;
     for (const id of (t.cards || [])) { const c = cardById(id); if (c && c.type === 'Kalon') n++; }
     const c1 = t.card && cardById(t.card); if (c1 && c1.type === 'Kalon') n++;
   }
@@ -20152,7 +20283,10 @@ function deckPower() {                             // defense deck + synergy
 function cardDefenseFromSockets() {
   let d = 0;
   for (const t of Object.values(game.tiles)) {
-    if (t.damaged) continue;
+    /* 🏗 A site has no socket to defend from. (A tile cannot normally carry a
+       card AND be a site — the socket UI is closed on one — but a card
+       socketed before a DEMOLISH-and-replace would otherwise keep firing.) */
+    if (t.damaged || bldSite(t)) continue;
     if ((t.type === 'barracks' || t.type === 'tower' || t.type === 'gate' || t.type === 'wall') && t.card) {
       const c = cardById(t.card); if (c) d += c.power;
     }
@@ -20160,7 +20294,8 @@ function cardDefenseFromSockets() {
   return d;
 }
 function obeliskBonus() {
-  for (const t of Object.values(game.tiles)) if (t.type === 'obelisk' && !t.damaged) return OBELISK_LINK;
+  // 🏗 An unfinished Obelisk radiates nothing.
+  for (const t of Object.values(game.tiles)) if (t.type === 'obelisk' && !t.damaged && !bldSite(t)) return OBELISK_LINK;
   return 0;
 }
 // Land value — location, location, location.
@@ -20168,7 +20303,9 @@ function lotValue(x, z) {
   let v = 20;
   for (const [dx, dz] of NEI) {
     const t = tileAt(x + dx, z + dz);
-    if (!t) continue;
+    // 🏗 A building site is not an amenity. Land value arrives with the arena,
+    //    not with the announcement of one.
+    if (!t || bldSite(t)) continue;
     if (t.type === 'road') v += 10;
     if (t.type === 'anchor') v += Math.round(20 + t.anchor.link * .5);
     if (t.type === 'arena') v += 30;
@@ -20190,11 +20327,15 @@ function lotValue(x, z) {
      remained. Held at 99.9 instead, so the very next live decayTick trips it
      within four seconds of the player being back and able to act. */
 function decayTick(dtSec, unattended) {
-  const hasDepot = Object.values(game.tiles).some(t => t.type === 'depot' && !t.damaged);
+  const hasDepot = Object.values(game.tiles).some(t => t.type === 'depot' && !t.damaged && !bldSite(t));
   const rate = DECAY_PER_HR * (hasDepot ? DECAY_DEPOT_FACTOR : 1) * (dtSec / 3600);
   for (const [k, t] of Object.entries(game.tiles)) {
     const def = BUILDINGS[t.type];
-    if (!def || t.damaged || def.decor || t.type === 'road') continue;
+    /* 🏗 NO WEAR ON A BUILDING THAT DOES NOT EXIST. Without this a site
+       accrues wear for its whole build and can trip 100 — which would set
+       t.damaged on a hole in the ground, i.e. reach the exact (bld && damaged)
+       state damageTile and loadState both exist to make unreachable. */
+    if (!def || t.damaged || bldSite(t) || def.decor || t.type === 'road') continue;
     t.wear = (t.wear || 0) + rate;
     if (t.wear >= 100 && unattended) { t.wear = 99.9; continue; }
     if (t.wear >= 100) {
@@ -20223,7 +20364,8 @@ function nodeXpTick(dtSec) {
 // Caravans — trucks that leave the map for other players' cities.
 let NEIGHBORS = [];
 function caravanTick(nowSec) {
-  const posts = Object.entries(game.tiles).filter(([k, t]) => t.type === 'caravanpost' && !t.damaged);
+  // 🏗 No caravan leaves from a site — there is nothing to load it from.
+  const posts = Object.entries(game.tiles).filter(([k, t]) => t.type === 'caravanpost' && !t.damaged && !bldSite(t));
   if (posts.length && NEIGHBORS.length && nowSec > game.caravan.next) {
     game.caravan.next = nowSec + CARAVAN_EVERY * (0.8 + Math.random() * 0.5);
     const dest = NEIGHBORS[Math.floor(Math.random() * NEIGHBORS.length)];
@@ -20301,7 +20443,8 @@ let refugeeNext = 0;
 function refugeeTick(nowSec) {
   if (nowSec < refugeeNext) return;
   refugeeNext = nowSec + REFUGEE_ROLL_EVERY * (0.7 + Math.random() * 0.8);
-  const gate = Object.values(game.tiles).find(t => t.type === 'gate' && !t.damaged);
+  // 🏗 Refugees arrive at a GATE, not at the plan for one.
+  const gate = Object.values(game.tiles).find(t => t.type === 'gate' && !t.damaged && !bldSite(t));
   if (!gate || wellbeing.morale < 30 || Math.random() > REFUGEE_CHANCE) return;
   const n = 1 + Math.floor(Math.random() * 2);
   if (popCap() - popUsed() >= n) {
@@ -22428,7 +22571,14 @@ async function opsReconcile(boot) {
      viable" a fact rather than a promise. */
 function opsSiteEffFor(x, z, t) {
   try {
-    if (!t || t.damaged) return 1;
+    /* 🏗 A SITE PUSHES NEUTRAL — 1.00, not 0 and not a computed number. The
+       floor is what makes "siting can only ever help" true, and a site simply
+       has not earned the help yet.
+       ⚠ DOCUMENTED LIMITATION, not an oversight: the PARENT's accrual still
+         starts at SITING, not at completion. The player paid 350,000 🔥 for
+         the licence and making them wait 15 minutes for it has no design
+         payoff; what the timer costs them is the crew slot. */
+    if (!t || t.damaged || bldSite(t)) return 1;
     const b = bonusesFor(x, z, t.type);
     const def = BUILDINGS[t.type] || {};
     const lit = litKeys().has(key(x, z));
@@ -23032,12 +23182,20 @@ function citSeqOf(id) { const m = /^c(\d+)$/.exec(String(id || '')); return m ? 
    holds its crew — the people who work there did not stop being its crew
    because the roof fell in, and their mood says so (citMoodTarget). This is
    deliberately NOT crewNeeded(), which skips damaged tiles because it is
-   costing the labour pool, a different question. */
+   costing the labour pool, a different question.
+   🏗 A CONSTRUCTION SITE IS THE OPPOSITE CASE AND NEEDS ITS OWN CLAUSE. The
+      damaged rule is about TENURE: those people already worked there. Nobody
+      has ever worked at a site, so there is no tenure to protect — posting the
+      seat would name a citizen as employed by a building that does not exist,
+      which is exactly the plausible lie this file's rules forbid. It becomes
+      their job the moment the doors open, and citAssignJobs deals them in on
+      the next refresh. (An UPGRADING building keeps every seat: it is open,
+      staffed and trading — only its level is pending.) */
 function citJobSlots() {
   const out = [];
   for (const k in game.tiles) {
     const t = game.tiles[k], d = t && BUILDINGS[t.type];
-    if (!d || !(d.crew > 0)) continue;
+    if (!d || !(d.crew > 0) || bldSite(t)) continue;
     for (let i = 0; i < (d.crew | 0); i++) out.push(k);
   }
   return out;
@@ -23280,7 +23438,9 @@ const CITIZENS_API = {
     const c = _citById.get(String(id)); if (!c) return false;
     if (k == null) { c.job = null; return true; }
     const key = String(k), t = game.tiles[key], d = t && BUILDINGS[t.type];
-    if (!d || !(d.crew > 0)) return false;
+    // 🏗 …and a site is not a workplace. Must agree with citJobSlots(), or
+    //    another builder's module can seat somebody where citAssignJobs cannot.
+    if (!d || !(d.crew > 0) || bldSite(t)) return false;
     c.job = key; return true;
   },
   // — inspection / test seam —

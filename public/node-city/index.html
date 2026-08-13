@@ -16855,18 +16855,26 @@ async function economyTick(dtMin) {
      path every other selling building already uses.
    ════════════════════════════════════════════════════════════════════════════ */
 function ecoLogisticsCounts() {
-  /* Which standing buildings give freight capacity. Warehouses do not exist as
-     a tile type here yet, so a Supply Depot is the city's warehouse and the
-     Convoy anchor is its freight terminal — mapped rather than invented, so the
-     number the economy uses is one the player can actually see on the board. */
-  let depot = 0, terminal = 0;
+  /* Which standing buildings give freight capacity. Every key here must exist
+     in ECON.logistics.capacity or it contributes nothing — the economy ignores
+     names it does not price, silently, so a typo reads as "no capacity".
+
+     ⚠ THE WAREHOUSE IS A REAL TILE AND WAS MISSED ONCE. An earlier version of
+       this function carried the comment "Warehouses do not exist as a tile type
+       here yet" and counted only Supply Depots. `warehouse` has been in
+       BUILDINGS all along, so every player who had built one was getting none
+       of its freight capacity and no error anywhere said so. Check BUILDINGS
+       before asserting a tile type is absent. */
+  let warehouse = 0, depot = 0, terminal = 0, railhead = 0;
   for (const t of Object.values(game.tiles)) {
-    if (t.damaged) continue;
-    if (t.type === 'depot') depot++;
-    if (t.type === 'anchor' && t.anchor &&
+    if (t.damaged) continue;                 // a damaged shed carries nothing
+    if (t.type === 'warehouse') warehouse += Math.max(1, t.lvl | 0);
+    else if (t.type === 'depot') depot += Math.max(1, t.lvl | 0);
+    else if (t.type === 'railyard') railhead += Math.max(1, t.lvl | 0);
+    else if (t.type === 'anchor' && t.anchor &&
         ((NODE_TYPES[t.anchor.node.node_type] || {}).feeds || []).includes('__roads__')) terminal++;
   }
-  return { depot, terminal };
+  return { warehouse, depot, terminal, railhead };
 }
 /* ════════════════════════════════════════════════════════════════════════════
    🏭 BUILDINGS → BUSINESSES.

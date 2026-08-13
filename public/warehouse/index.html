@@ -576,6 +576,30 @@ function buildScene() {
   App.keyLight = key;
   App.fitKeyShadow = fitKeyShadow;
   scene.add(key);
+  // ⚠ THE INTERIOR HAD NO SHADOWS AT ALL. Closing the roof was right, but it
+  // removed the key light's only indoor contribution: with every other light
+  // zeroed, interior floor luminance measured p50 = 0 at all three tiers.
+  // Neither PointLight casts, nor does hemisphere, ambient or the fill — so
+  // nothing indoors touched the ground. Walking away from a bay-row face the
+  // floor read 121, 120, 119, 123, 120, 104 at 0.1 → 2.5 m: dead flat, with no
+  // contact dip at all, and the bay shells met the slab like paper standees.
+  //
+  // The fix is a second shadow-casting light INSIDE, under the roof, aimed
+  // straight down — and crucially one that FOLLOWS THE PLAYER. A static frustum
+  // big enough for a tier-5 shed is 137 m across (6.7 cm/texel even at 2048²);
+  // a 26 m box that travels with the camera is 2.5 cm/texel at 1024² and only
+  // ever renders what someone is actually looking at.
+  var hiBay = new T.DirectionalLight(0xffe6bd, 0.55);
+  hiBay.castShadow = true;
+  hiBay.shadow.mapSize.set(1024, 1024);
+  hiBay.shadow.camera.left = -13; hiBay.shadow.camera.right = 13;
+  hiBay.shadow.camera.top = 13;   hiBay.shadow.camera.bottom = -13;
+  hiBay.shadow.camera.near = 0.4; hiBay.shadow.camera.far = 12;
+  hiBay.shadow.bias = -0.0004; hiBay.shadow.normalBias = 0.05;
+  hiBay.position.set(0, 6.2, 0);
+  hiBay.target.position.set(0, 0, 0);
+  scene.add(hiBay); scene.add(hiBay.target);
+  App.hiBay = hiBay;
   var fill = new T.DirectionalLight(0x5b76a8, 0.26); fill.position.set(-12, 8, -14); scene.add(fill);
 
   var M = function (o) { return new T.MeshStandardMaterial(o); };
@@ -603,7 +627,14 @@ function buildScene() {
     // of a tier-5 shed, because a point light at range cannot lift them. A
     // brighter base plus a little self-lift keeps them above the floor
     // everywhere: the separation stops depending on where the player stands.
-    wallIn:  M({ color: 0x8a93a4, roughness: 0.84, emissive: 0x14181f, emissiveIntensity: 1.0 }),
+    // ⚠ NO EMISSIVE. Separation from the floor was real but bought by taking the
+    // largest object class in the room OUT of the light rig: with emissive
+    // 0x14181f the shells measured a flat 142 at 9 of 11 positions regardless of
+    // distance from any fixture — a constant, not a measurement, and immune to
+    // every light. Separation comes from albedo instead, so the shells shade,
+    // take the interior light's contact shadows, and still sit clear of the
+    // 0x1e2126 slab.
+    wallIn:  M({ color: 0x99a2b4, roughness: 0.82 }),
     steel:   M({ color: 0x767d88, roughness: 0.42, metalness: 0.8 }),
     dark:    M({ color: 0x191c22, roughness: 0.8 }),
     gold:    M({ color: 0xd4af37, roughness: 0.35, metalness: 0.7,
@@ -724,8 +755,11 @@ function buildScene() {
     solidShed(wall(WX * 2, H, 0.5, mat.wall, 0, H / 2, ZB), WX * 2, 0.5);
     solidShed(wall(0.5, H, ZF - ZB, mat.wall, -WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
     solidShed(wall(0.5, H, ZF - ZB, mat.wall,  WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
-    solidShed(wall(9.5, H, 0.5, mat.wall, -WX + 4.75, H / 2, ZF), 9.5, 0.5);
-    solidShed(wall(9.5, H, 0.5, mat.wall,  WX - 4.75, H / 2, ZF), 9.5, 0.5);
+    // The dock opening is whatever the two front-wall pieces leave between them.
+    // Derived once, so the rib run below cannot disagree with the wall it is on.
+    var FRONT_PIER = 9.5, DOCK_W = WX * 2 - FRONT_PIER * 2;
+    solidShed(wall(FRONT_PIER, H, 0.5, mat.wall, -WX + FRONT_PIER / 2, H / 2, ZF), FRONT_PIER, 0.5);
+    solidShed(wall(FRONT_PIER, H, 0.5, mat.wall,  WX - FRONT_PIER / 2, H / 2, ZF), FRONT_PIER, 0.5);
     wall(9.0, 1.6, 0.5, mat.wall, 0, H - 0.8, ZF);                 // header over the opening
     // ⚠ THE ROOF MUST CAST. It was built with noShadow=true, so the key light
     // passed straight THROUGH a solid roof and lit the floor directly. Flipping
@@ -738,14 +772,25 @@ function buildScene() {
     // stopped the round on its own — the shed was DIMMEST at the dock, where
     // daylight actually enters, and brightest 32 m inside.
     var roof = wall(WX * 2 + 0.5, 0.4, ZF - ZB, mat.wall, 0, H, (ZB + ZF) / 2);
-    roof.castShadow = true; roof.receiveShadow = true;
+    // ⚠ THE ROOF MUST NOT RECEIVE. It sits ABOVE the interior shadow light, so
+    // it falls outside that light's shadow frustum (near 0.4, looking down from
+    // y 6.2) and the shadow lookup clamps to "occluded" — which painted the
+    // whole ceiling pure black the moment the light was added. It casts, so the
+    // roof still seals the room; it just does not take shadow from a lamp it is
+    // standing on top of.
+    roof.castShadow = true; roof.receiveShadow = false;
     // Trusses + emissive strip fixtures. Lights stay at TWO no matter how long
     // the shed gets — every extra light recompiles every material in the scene.
     var nT = Math.max(7, Math.round((ZF - ZB) / 3.0));
     for (var i = 0; i < nT; i++) {
       var z = ZB + 1.6 + i * ((ZF - ZB - 3.2) / Math.max(1, nT - 1));
       // Trusses cast too — they are what puts structure into the light.
-      wall(WX * 2, 0.28, 0.28, mat.steel, 0, H - 0.55, z).castShadow = true;
+      // ⚠ FULL SPAN AND NO SHADOW RECEIPT. These sit above the interior light
+      // for the same reason the roof does. They also used to stop 1.83 m short
+      // of each side wall (x ±10.92 against inner faces at ±12.75) — a purlin
+      // that does not reach the wall is not carrying anything.
+      var _pl = wall(WX * 2 + 0.5, 0.28, 0.28, mat.steel, 0, H - 0.55, z);
+      _pl.castShadow = true; _pl.receiveShadow = false;
       wall(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);   // emissive fixture: no shadow
     }
     // ⚠ THE LIGHT BUDGET MUST FOLLOW THE SHED — WITHOUT ADDING LIGHTS. Two
@@ -800,6 +845,20 @@ function buildScene() {
       }
       addSkirt(0.10, 0.30, sideLen + 0.2, sd * (WX - 0.29), 0.15, (ZB + ZF) / 2);
     }
+    // ⚠ THE DOCK-END WALL TOO. Rib vertex counts told the story: back wall 600,
+    // side walls 1968, FRONT WALL 0 — the 26 x 7 m surface you face every time
+    // you walk back toward the truck was the one blank pale field in a room
+    // where everything else was profiled, and the corner transition was stark.
+    // It is built in two pieces because the dock opening is cut out of it.
+    var frontLen = FRONT_PIER - 0.6;
+    for (var fsd = -1; fsd <= 1; fsd += 2) {
+      var fx0 = fsd * (DOCK_W / 2 + 0.3);
+      var nFront = Math.max(2, Math.round(frontLen / RIB_PITCH));
+      for (var rf = 0; rf <= nFront; rf++) {
+        addRib(RIB_W, ribH, RIB_D, fx0 + fsd * rf * (frontLen / nFront), ribY, ZF - 0.27);
+      }
+      addSkirt(frontLen + 0.2, 0.30, 0.10, fx0 + fsd * frontLen / 2, 0.15, ZF - 0.29);
+    }
     var ribMesh = new T.Mesh(mergeGeos(ribGeos), mat.wallRib);
     ribMesh.receiveShadow = true; scene.add(ribMesh); keep(ribMesh);
     var skirtMesh = new T.Mesh(mergeGeos(skirtGeos), mat.skirt);
@@ -845,7 +904,14 @@ function buildScene() {
         bg.translate(bx, 0.52, bz); bolGeos.push(bg);
         var sg = new T.CylinderGeometry(0.145, 0.145, 0.22, 10);
         sg.translate(bx, 0.80, bz); sleeveGeos.push(sg);
-        App.colliders.push({ x: bx, z: bz, hw: 0.22, hd: 0.22 });
+          // ⚠ _shed: true. buildShed() prunes with filter(c => !c._shed), so an
+      // untagged push here survived every rebuild: 118 colliders / 4 bollards
+      // after one build became 1,630 / 104 after 25 row-count changes, four
+      // bollards deep at the same four positions. This is verbatim the bug the
+      // note on the bay colliders says _bay exists to prevent, reintroduced one
+      // object class over. blocked() is an O(n) scan run twice per axis per
+      // frame, so the cost is paid every frame forever.
+      App.colliders.push({ x: bx, z: bz, hw: 0.22, hd: 0.22, _shed: true });
         App.bollardX.push(bx);
       });
     });
@@ -941,20 +1007,28 @@ function buildScene() {
       var bcol = bn % BAYS_PER_ROW, brow = Math.floor(bn / BAYS_PER_ROW);
       var bx = -WX + 0.9 + BW / 2 + bcol * (BW + 0.45);
       var bz = ZB + 1.2 + BD / 2 + brow * ROW_PITCH + BD / 2 + 0.75;
-      // ⚠ THE 180° ROTATE IS REQUIRED — and the BAY label has to move WITH it.
-      // The glyphs were upside down because the label was drawn at −0.62·sy,
-      // which the rotation puts BELOW the numeral, so the pair read as an
-      // inverted "BAY" under an inverted digit. Removing the rotate does NOT
-      // fix it (verified by render: the numeral is then upside down on its own);
-      // the rotation is what turns canvas text to face someone walking in from
-      // the dock. Rotate, and draw the label at +0.62·sy so it lands above.
-      cx.save(); cx.translate(X2(bx), Z2(bz)); cx.rotate(Math.PI);
+      // ⚠ NO ROTATION. Work the chain through once and it is unambiguous:
+      //   canvas row 0 → v = 1 (three flips Y on CanvasTexture by default)
+      //   v = 1 → the plane's local +Y
+      //   rotation.x = −π/2 maps local +Y → world −Z
+      //   and Z2() already puts world −Z at canvas row 0.
+      // The two agree, so the bitmap is NOT mirrored: for a player walking in
+      // from the dock — facing −Z — screen-up IS canvas-up, and text drawn
+      // normally reads normally. A 180° rotate can only turn it upside down.
+      //
+      // This cost two rounds. It was removed, then REINSTATED on a bad
+      // verification of my own: I rendered from a camera that was not where a
+      // player stands and had no upright reference in frame, so I could not
+      // tell which way was up and trusted the wrong reading. The check that
+      // settles it is the one in _wh_stencil_check.mjs — a standing eye
+      // position with the bay's own wall sign visible in the same frame.
+      cx.save(); cx.translate(X2(bx), Z2(bz));
       cx.font = 'bold ' + Math.round(0.85 * sy) + 'px Georgia, serif';
       cx.fillStyle = 'rgba(216,210,192,0.80)';
       cx.fillText(String(bn + 1), 0, 0);
       cx.font = Math.round(0.30 * sy) + 'px Georgia, serif';
       cx.fillStyle = 'rgba(216,210,192,0.45)';
-      cx.fillText('BAY', 0, 0.62 * sy);          // +y here = above, after rotate
+      cx.fillText('BAY', 0, -0.62 * sy);         // canvas −y = screen-up = above
       cx.restore();
       // stall edging either side of the bay mouth
       cx.strokeStyle = 'rgba(216,210,192,0.5)'; cx.lineWidth = Math.max(1, 0.07 * sx);
@@ -1892,6 +1966,13 @@ function tick() {
         x: camera.position.x, z: camera.position.z, yaw: Ctl.cyaw, pitch: Ctl.cpitch }));
     }
   } catch (e) {}
+  // Walk the interior shadow light along with the player so its tight frustum is
+  // always over what is on screen. One 1024² map, 26 m across.
+  if (App.hiBay) {
+    App.hiBay.position.set(camera.position.x, 6.2, camera.position.z);
+    App.hiBay.target.position.set(camera.position.x, 0, camera.position.z);
+    App.hiBay.target.updateMatrixWorld();
+  }
   renderer.render(scene, camera);
 }
 function promptFor(s) {

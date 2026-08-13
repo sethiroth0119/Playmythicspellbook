@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w5';
+  window.BUILD_VERSION = 'v120w6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39424,6 +39424,31 @@ function _cityProdStorage() {
 // (Briefly 2250; reverted — the extra belongs to the Relic Vault Door, not to
 // every player's floor. See VAULT_CRATES `stash` on the Relic door.)
 const RES_STASH_BASE = 2000;
+/* 📦 THE FLOOR HAS TO GROW WITH THE LEDGER, OR VARIETY BECOMES A PENALTY.
+   getResourceUnits() sums EVERY resource a player holds against one ceiling, so
+   the cap is shared across however many kinds exist. With 14 kinds, 2,000 units
+   is ~143 of each. The chain catalogue (src/resources/chain.js) queues 245 more
+   for promotion; at 258 kinds the same 2,000 is ~8 of each, and
+   _stashEnforceCap() — which jettisons from the biggest pile — would be trimming
+   a player constantly for the crime of collecting broadly. Worse, it punishes
+   exactly the behaviour the city builder is about to ask for.
+
+   So the floor is expressed PER KIND and derived from the live ledger, which
+   means it rises on its own as each resource is promoted and never needs a
+   second edit. 143 × 14 = 2,002, so today's number is unchanged — this is not a
+   buff, it is the same allowance held still while the denominator moves.
+
+   ⚠ RES_STASH_BASE stays as a hard floor underneath it. A player can never end
+     up with less room than they have today, whatever happens to the ledger.
+   ⚠ Vault rows and Warehouse staff still stack ON TOP, unchanged — see the two
+     branches below. This only moves the base they start from. */
+const RES_STASH_PER_KIND = 143;
+function _resStashFloor() {
+  try {
+    const kinds = (typeof RESOURCE_IDS !== 'undefined' && RESOURCE_IDS.length) ? RESOURCE_IDS.length : 14;
+    return Math.max(RES_STASH_BASE, kinds * RES_STASH_PER_KIND);
+  } catch (e) { return RES_STASH_BASE; }
+}
 function getResourceCap() {
   // 📦 A staffed Warehouse operation raises the ceiling. Added to whichever
   // base applies rather than replacing it, so vault containers and warehouse
@@ -39445,9 +39470,9 @@ function getResourceCap() {
        worth (rows x cols x 25). Only containers with an explicit `stash` value
        contribute; everything else stays purely row-derived, so the two numbers
        can never disagree with what the shop tile advertises. */
-    if (v) return Math.max(RES_STASH_BASE, (v.rows | 0) * (v.cols | 0) * 25) + (v.stashExtra | 0) + wh;
+    if (v) return Math.max(_resStashFloor(), (v.rows | 0) * (v.cols | 0) * 25) + (v.stashExtra | 0) + wh;
   } catch (e) {}
-  return RES_STASH_BASE + wh;
+  return _resStashFloor() + wh;
 }
 function getResourceUnits() {
   const R = _ensureResources();
@@ -223070,7 +223095,7 @@ render();
        the safe state to ship a data layer in.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/resources/chain.js?v=v120w5chain1"></script>
+<script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

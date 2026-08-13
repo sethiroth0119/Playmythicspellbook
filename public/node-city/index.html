@@ -1327,6 +1327,16 @@
 }
 </script>
 
+<!-- 🧰 RESOURCE CHAIN — the shared catalogue, loaded HERE so it registers
+     window.MythicResourceChain before the module below runs and seeds RES_META
+     from it. Module scripts execute in document order, which is the only thing
+     making that seeding deterministic — keep this tag ABOVE the main module.
+     This is a second copy of the same file the parent page loads; the iframe is
+     a separate window, so it needs its own registration.
+     ⚠ Bump ?v= in BOTH places when the catalogue changes — here and in
+       index.html — or one window ships a stale table. -->
+<script type="module" src="../src/resources/chain.js?v=v120w6chain2"></script>
+
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -1882,6 +1892,28 @@ const RES_META = {
   stone:            { name: 'Stone',             ico: '🪨' },
   cloth:            { name: 'Cloth',             ico: '🧵' },
 };
+/* 🧰 …and everything the resource chain defines, folded in automatically.
+   This table was a HAND-MIRROR of index.html's RESOURCES list, which made
+   "add an entry here" a fifth manual step behind every promotion — and a step
+   whose omission is not cosmetic. resIco/resName below are defensive, but
+   line ~19473 reads `RES_META[r].ico` UNGUARDED to build the shortage warning,
+   so the first promoted resource to run low would have thrown a TypeError
+   inside a render and taken the panel down with it — the exact failure the
+   comment above resIco was written about.
+   Seeding from window.MythicResourceChain closes that: every id in the
+   catalogue has a name and an icon here from the moment it is promoted, with
+   no edit to this file. Existing keys WIN — the icons above were chosen for
+   this HUD specifically (stone is 🪨 not 🧱 because 🧱 is CITY_STOCK.ingots),
+   and the catalogue must never quietly override a deliberate choice.
+   Absent module → this loop does nothing and the table is exactly as it was. */
+try {
+  const _chain = (typeof window !== 'undefined') && window.MythicResourceChain;
+  if (_chain && Array.isArray(_chain.ALL)) {
+    for (const r of _chain.ALL) {
+      if (r && r.id && !RES_META[r.id]) RES_META[r.id] = { name: r.name, ico: r.icon };
+    }
+  }
+} catch (e) {}
 const HUD_RES = ['food','water','metal','fuel','supplies','medicine','ammo'];
 // ⚠ SEPARATE from HUD_RES on purpose. HUD_RES is not just a display list — it
 // also decides what raiders can steal from your stores (see RAID_STORE_LOSS)

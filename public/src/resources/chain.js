@@ -62,28 +62,28 @@ export const RESOURCE_CATEGORIES = [
 export const RESOURCE_CHAIN = [
 
   // ── Water ─────────────────────────────────────────────────────
-  { id: 'freshWater',              name: 'Fresh Water',                 icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 1, inputs: [] },
-  { id: 'rawWater',                name: 'Raw Water',                   icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 0, inputs: [] },
+  { id: 'freshWater',              name: 'Fresh Water',                 icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 1, core: true, inputs: [] },
+  { id: 'rawWater',                name: 'Raw Water',                   icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 0, core: true, inputs: [] },
   { id: 'industrialWater',         name: 'Industrial Water',            icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 1, inputs: [] },
-  { id: 'reclaimedWater',          name: 'Reclaimed Water',             icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 1, inputs: [] },
-  { id: 'wastewater',              name: 'Wastewater',                  icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 0, inputs: [] },
+  { id: 'reclaimedWater',          name: 'Reclaimed Water',             icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 1, core: true, inputs: [] },
+  { id: 'wastewater',              name: 'Wastewater',                  icon: '💧',  color: '#7fd6ff', cat: 'water',        tier: 0, core: true, inputs: [] },
 
   // ── Agriculture ───────────────────────────────────────────────
-  { id: 'wheat',                   name: 'Wheat',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
-  { id: 'corn',                    name: 'Corn',                        icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
+  { id: 'wheat',                   name: 'Wheat',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, core: true, inputs: [] },
+  { id: 'corn',                    name: 'Corn',                        icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, core: true, inputs: [] },
   { id: 'rice',                    name: 'Rice',                        icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'potatoes',                name: 'Potatoes',                    icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'soybeans',                name: 'Soybeans',                    icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'sugarCrops',              name: 'Sugar Crops',                 icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
-  { id: 'vegetables',              name: 'Vegetables',                  icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
+  { id: 'vegetables',              name: 'Vegetables',                  icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, core: true, inputs: [] },
   { id: 'fruit',                   name: 'Fruit',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'herbs',                   name: 'Herbs',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'seeds',                   name: 'Seeds',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, existing: true, inputs: [] },
   { id: 'animalFeed',              name: 'Animal Feed',                 icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
-  { id: 'livestock',               name: 'Livestock',                   icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
+  { id: 'livestock',               name: 'Livestock',                   icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, inputs: [] },
   { id: 'poultry',                 name: 'Poultry',                     icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
-  { id: 'eggs',                    name: 'Eggs',                        icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
-  { id: 'rawMilk',                 name: 'Raw Milk',                    icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
+  { id: 'eggs',                    name: 'Eggs',                        icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, inputs: [] },
+  { id: 'rawMilk',                 name: 'Raw Milk',                    icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, inputs: [] },
   { id: 'cotton',                  name: 'Cotton',                      icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'plantFiber',              name: 'Plant Fiber',                 icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'biomass',                 name: 'Biomass',                     icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
@@ -95,15 +95,15 @@ export const RESOURCE_CHAIN = [
   { id: 'seaweed',                 name: 'Seaweed',                     icon: '🐟',  color: '#6fc0d8', cat: 'fishing',      tier: 0, inputs: [] },
 
   // ── Food Processing ───────────────────────────────────────────
-  { id: 'flour',                   name: 'Flour',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
-  { id: 'bread',                   name: 'Bread',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
-  { id: 'meat',                    name: 'Meat',                        icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
+  { id: 'flour',                   name: 'Flour',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },
+  { id: 'bread',                   name: 'Bread',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },
+  { id: 'meat',                    name: 'Meat',                        icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },
   { id: 'processedMeat',           name: 'Processed Meat',              icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
-  { id: 'dairy',                   name: 'Dairy',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
+  { id: 'dairy',                   name: 'Dairy',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },
   { id: 'cheese',                  name: 'Cheese',                      icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
   { id: 'cookingOil',              name: 'Cooking Oil',                 icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
   { id: 'sugar',                   name: 'Sugar',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
-  { id: 'packagedFood',            name: 'Packaged Food',               icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
+  { id: 'packagedFood',            name: 'Packaged Food',               icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },
   { id: 'frozenFood',              name: 'Frozen Food',                 icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
   { id: 'cannedFood',              name: 'Canned Food',                 icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
   { id: 'snacks',                  name: 'Snacks',                      icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
@@ -112,23 +112,23 @@ export const RESOURCE_CHAIN = [
   { id: 'restaurantSupplies',      name: 'Restaurant Supplies',         icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
 
   // ── Forestry & Paper ──────────────────────────────────────────
-  { id: 'timber',                  name: 'Timber',                      icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 0, inputs: [] },
+  { id: 'timber',                  name: 'Timber',                      icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 0, core: true, inputs: [] },
   { id: 'wood',                    name: 'Wood',                        icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 0, existing: true, inputs: [] },
-  { id: 'lumber',                  name: 'Lumber',                      icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 1, inputs: [] },
+  { id: 'lumber',                  name: 'Lumber',                      icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 1, core: true, inputs: [] },
   { id: 'plywood',                 name: 'Plywood',                     icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 1, inputs: [] },
   { id: 'woodPanels',              name: 'Wood Panels',                 icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 1, inputs: [] },
   { id: 'woodPulp',                name: 'Wood Pulp',                   icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 1, inputs: [] },
-  { id: 'paper',                   name: 'Paper',                       icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 1, inputs: [] },
+  { id: 'paper',                   name: 'Paper',                       icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 1, core: true, inputs: [] },
   { id: 'premiumPaper',            name: 'Premium Paper',               icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 2, inputs: [] },
   { id: 'cardboard',               name: 'Cardboard',                   icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 1, inputs: [] },
   { id: 'furnitureComponents',     name: 'Furniture Components',        icon: '🪵',  color: '#c08a4a', cat: 'forestry',     tier: 2, inputs: [] },
 
   // ── Minerals & Ore ────────────────────────────────────────────
   { id: 'stone',                   name: 'Stone',                       icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, existing: true, inputs: [] },
-  { id: 'sand',                    name: 'Sand',                        icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, inputs: [] },
-  { id: 'clay',                    name: 'Clay',                        icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, inputs: [] },
-  { id: 'limestone',               name: 'Limestone',                   icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, inputs: [] },
-  { id: 'gravel',                  name: 'Gravel',                      icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, inputs: [] },
+  { id: 'sand',                    name: 'Sand',                        icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, core: true, inputs: [] },
+  { id: 'clay',                    name: 'Clay',                        icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, core: true, inputs: [] },
+  { id: 'limestone',               name: 'Limestone',                   icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, core: true, inputs: [] },
+  { id: 'gravel',                  name: 'Gravel',                      icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, core: true, inputs: [] },
   { id: 'ironOre',                 name: 'Iron Ore',                    icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, existing: true, inputs: [] },
   { id: 'copperOre',               name: 'Copper Ore',                  icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, inputs: [] },
   { id: 'aluminumOre',             name: 'Aluminum Ore',                icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, inputs: [] },
@@ -147,24 +147,24 @@ export const RESOURCE_CHAIN = [
   { id: 'silica',                  name: 'Silica',                      icon: '🪨',  color: '#a8a29a', cat: 'minerals',     tier: 0, inputs: [] },
 
   // ── Energy & Fuel ─────────────────────────────────────────────
-  { id: 'coal',                    name: 'Coal',                        icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 0, inputs: [] },
-  { id: 'crudeOil',                name: 'Crude Oil',                   icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 0, inputs: [] },
+  { id: 'coal',                    name: 'Coal',                        icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 0, core: true, inputs: [] },
+  { id: 'crudeOil',                name: 'Crude Oil',                   icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 0, core: true, inputs: [] },
   { id: 'naturalGas',              name: 'Natural Gas',                 icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 0, inputs: [] },
-  { id: 'gasoline',                name: 'Gasoline',                    icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, inputs: [] },
-  { id: 'diesel',                  name: 'Diesel',                      icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, inputs: [] },
+  { id: 'gasoline',                name: 'Gasoline',                    icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, core: true, inputs: [] },
+  { id: 'diesel',                  name: 'Diesel',                      icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, core: true, inputs: [] },
   { id: 'industrialFuel',          name: 'Industrial Fuel',             icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, inputs: [] },
   { id: 'aviationFuel',            name: 'Aviation Fuel',               icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, inputs: [] },
   { id: 'naturalGasFuel',          name: 'Natural Gas Fuel',            icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, inputs: [] },
   { id: 'nuclearFuel',             name: 'Nuclear Fuel',                icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, inputs: [] },
   { id: 'hydrogen',                name: 'Hydrogen',                    icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, inputs: [] },
-  { id: 'electricity',             name: 'Electricity',                 icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, inputs: [] },
+  { id: 'electricity',             name: 'Electricity',                 icon: '⚡',   color: '#ffcf6b', cat: 'energy',       tier: 1, core: true, inputs: [] },
 
   // ── Construction ──────────────────────────────────────────────
-  { id: 'brick',                   name: 'Brick',                       icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, inputs: [] },
-  { id: 'cement',                  name: 'Cement',                      icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, inputs: [] },
-  { id: 'concrete',                name: 'Concrete',                    icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, inputs: [] },
-  { id: 'glass',                   name: 'Glass',                       icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, inputs: [] },
-  { id: 'steel',                   name: 'Steel',                       icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, inputs: [] },
+  { id: 'brick',                   name: 'Brick',                       icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, core: true, inputs: [] },
+  { id: 'cement',                  name: 'Cement',                      icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, core: true, inputs: [] },
+  { id: 'concrete',                name: 'Concrete',                    icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, core: true, inputs: [] },
+  { id: 'glass',                   name: 'Glass',                       icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, core: true, inputs: [] },
+  { id: 'steel',                   name: 'Steel',                       icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, core: true, inputs: [] },
   { id: 'asphalt',                 name: 'Asphalt',                     icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, inputs: [] },
   { id: 'structuralSteel',         name: 'Structural Steel',            icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, inputs: [] },
   { id: 'reinforcedConcrete',      name: 'Reinforced Concrete',         icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, existing: true, inputs: [] },
@@ -177,22 +177,22 @@ export const RESOURCE_CHAIN = [
   { id: 'plumbingComponents',      name: 'Plumbing Components',         icon: '🧱',  color: '#c2725a', cat: 'construction', tier: 1, inputs: [] },
 
   // ── Metals ────────────────────────────────────────────────────
-  { id: 'pigIron',                 name: 'Pig Iron',                    icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, inputs: [] },
-  { id: 'sheetMetal',              name: 'Sheet Metal',                 icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, inputs: [] },
+  { id: 'pigIron',                 name: 'Pig Iron',                    icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, core: true, inputs: [] },
+  { id: 'sheetMetal',              name: 'Sheet Metal',                 icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, core: true, inputs: [] },
   { id: 'metalComponents',         name: 'Metal Components',            icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, inputs: [] },
   { id: 'aluminum',                name: 'Aluminum',                    icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, inputs: [] },
-  { id: 'copper',                  name: 'Copper',                      icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, inputs: [] },
+  { id: 'copper',                  name: 'Copper',                      icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, core: true, inputs: [] },
   { id: 'copperWire',              name: 'Copper Wire',                 icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, inputs: [] },
   { id: 'metalAlloys',             name: 'Metal Alloys',                icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, inputs: [] },
   { id: 'advancedAlloys',          name: 'Advanced Alloys',             icon: '⛓️',  color: '#9fb4d8', cat: 'metals',       tier: 1, inputs: [] },
 
   // ── Chemicals ─────────────────────────────────────────────────
-  { id: 'industrialChemicals',     name: 'Industrial Chemicals',        icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, inputs: [] },
+  { id: 'industrialChemicals',     name: 'Industrial Chemicals',        icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, core: true, inputs: [] },
   { id: 'acids',                   name: 'Acids',                       icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, inputs: [] },
   { id: 'solvents',                name: 'Solvents',                    icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, inputs: [] },
   { id: 'fertilizer',              name: 'Fertilizer',                  icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, existing: true, inputs: [] },
   { id: 'industrialGas',           name: 'Industrial Gas',              icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, inputs: [] },
-  { id: 'plastic',                 name: 'Plastic',                     icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, inputs: [] },
+  { id: 'plastic',                 name: 'Plastic',                     icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, core: true, inputs: [] },
   { id: 'rubber',                  name: 'Rubber',                      icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, inputs: [] },
   { id: 'syntheticFiber',          name: 'Synthetic Fiber',             icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, inputs: [] },
   { id: 'paint',                   name: 'Paint',                       icon: '⚗️',  color: '#9ad17a', cat: 'chemicals',    tier: 1, inputs: [] },
@@ -280,18 +280,18 @@ export const RESOURCE_CHAIN = [
   { id: 'residentialWaste',        name: 'Residential Waste',           icon: '🗑️', color: '#8a8578', cat: 'waste',        tier: 0, inputs: [] },
   { id: 'commercialWaste',         name: 'Commercial Waste',            icon: '🗑️', color: '#8a8578', cat: 'waste',        tier: 0, inputs: [] },
   { id: 'industrialWaste',         name: 'Industrial Waste',            icon: '🗑️', color: '#8a8578', cat: 'waste',        tier: 0, inputs: [] },
-  { id: 'organicWaste',            name: 'Organic Waste',               icon: '🗑️', color: '#8a8578', cat: 'waste',        tier: 0, inputs: [] },
+  { id: 'organicWaste',            name: 'Organic Waste',               icon: '🗑️', color: '#8a8578', cat: 'waste',        tier: 0, core: true, inputs: [] },
   { id: 'electronicWaste',         name: 'Electronic Waste',            icon: '🗑️', color: '#8a8578', cat: 'waste',        tier: 0, inputs: [] },
   { id: 'medicalWaste',            name: 'Medical Waste',               icon: '🗑️', color: '#8a8578', cat: 'waste',        tier: 0, inputs: [] },
   { id: 'hazardousWaste',          name: 'Hazardous Waste',             icon: '🗑️', color: '#8a8578', cat: 'waste',        tier: 0, inputs: [] },
 
   // ── Recycling ─────────────────────────────────────────────────
-  { id: 'recycledMetal',           name: 'Recycled Metal',              icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, inputs: [] },
+  { id: 'recycledMetal',           name: 'Recycled Metal',              icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, core: true, inputs: [] },
   { id: 'recycledPlastic',         name: 'Recycled Plastic',            icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, inputs: [] },
   { id: 'recycledGlass',           name: 'Recycled Glass',              icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, inputs: [] },
   { id: 'recycledPaper',           name: 'Recycled Paper',              icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, inputs: [] },
   { id: 'recycledElectronics',     name: 'Recycled Electronics',        icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, inputs: [] },
-  { id: 'compost',                 name: 'Compost',                     icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, inputs: [] },
+  { id: 'compost',                 name: 'Compost',                     icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, core: true, inputs: [] },
   { id: 'reclaimedIndustrialMaterials', name: 'Reclaimed Industrial Materials', icon: '♻️',  color: '#86e08a', cat: 'recycling',    tier: 1, inputs: [] },
 
   // ── Communications ────────────────────────────────────────────
@@ -380,6 +380,43 @@ export const chainByCat  = (cat) => RESOURCE_CHAIN.filter((r) => r.cat === cat);
 export const chainByTier = (tier) => RESOURCE_CHAIN.filter((r) => r.tier === tier);
 /* Ids this catalogue introduces — i.e. everything except the aliases to ids
    index.html already defines. This is the promotion queue. */
+/* ⭐ THE FIRST WAVE — 40 ids that CLOSE A LOOP.
+ *
+ * 258 resource types implies 258 producers, and a half-built chain is worse
+ * than a small finished one: a resource whose input has no producer is
+ * unmakeable, which is the exact "real and inert" failure the header warns
+ * about. So the first wave is chosen for CLOSURE, not coverage — every id below
+ * sits in a chain that runs raw → refined → consumed, with nothing dangling.
+ *
+ *   Water:         rawWater → freshWater (city drinks) → wastewater → reclaimedWater → back to industry
+ *     rawWater, freshWater, wastewater, reclaimedWater
+ *   Grain & bread: wheat → flour → bread; bread is a food the city eats
+ *     wheat, flour, bread
+ *   Livestock:     corn → animal feed → livestock → meat; livestock also gives eggs and rawMilk → dairy
+ *     corn, livestock, meat, eggs, rawMilk, dairy
+ *   Produce:       vegetables + meat + dairy → packagedFood, the shelf-stable staple
+ *     vegetables, packagedFood
+ *   Timber:        timber → lumber (construction) and → paper (cards, offices)
+ *     timber, lumber, paper
+ *   Masonry:       clay → brick; limestone → cement + gravel → concrete; sand → glass
+ *     sand, clay, limestone, gravel, brick, cement, concrete, glass
+ *   Steel:         ironOre (exists) + coal → pigIron → steel → sheetMetal
+ *     coal, pigIron, steel, sheetMetal
+ *   Power & fuel:  coal/crudeOil → electricity; crudeOil → gasoline + diesel for vehicles
+ *     crudeOil, gasoline, diesel, electricity
+ *   Chemicals:     crudeOil → industrialChemicals → plastic, the feedstock for consumer goods
+ *     industrialChemicals, plastic
+ *   Copper:        copperOre (catalogued) → copper, the other half of construction and wiring
+ *     copper
+ *   Waste:         the city produces organicWaste → compost (back to farms); scrap → recycledMetal
+ *     organicWaste, compost, recycledMetal
+ *
+ * ⚠ ironOre and wood already exist in index.html's RESOURCES and are the inputs
+ *   to two of these loops, so those loops are shorter than they look.
+ * Everything not marked `core` stays catalogued and unpromoted until there is
+ * a producer worth building for it. */
+export const CORE_IDS = RESOURCE_CHAIN.filter((r) => r.core).map((r) => r.id);
+
 export const NEW_IDS = RESOURCE_CHAIN.filter((r) => !r.existing).map((r) => r.id);
 
 /* 🔌 THE BRIDGE. Profile/App/RESOURCES are top-level `const` in index.html —
@@ -395,6 +432,7 @@ try {
       byCat: chainByCat,
       byTier: chainByTier,
       NEW_IDS,
+      CORE_IDS,
     };
   }
 } catch (e) {}

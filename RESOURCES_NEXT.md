@@ -94,15 +94,72 @@ lands, so the catalogue and the production data can never disagree about what ma
   ⚠ It uses terser, which **cannot parse JSX** — it reports FAIL for the market site whether or
   not anything is wrong. That file needs a Babel-based check instead.
 
-## Open questions for tomorrow
+## ✅ The three open questions — answered and implemented (v120w6)
 
-1. **Does the city builder use its own resource ids?** node-city has `RES_META` and building
-   `gen: { food: 1.5 }` entries. Confirm whether promoted ids flow through automatically or
-   need a mapping — the r12 notes say the bridge feeds `MythicCityBridge.resources → terroir`,
-   so it may be free.
-2. **Storage cap.** `getResourceUnits()` counts everything against the stash cap
-   (`RES_STASH_BASE = 2000`). 245 more resource types with no cap change means the same total
-   space split more ways. Decide whether the cap scales with variety.
-3. **How many are actually reachable?** 258 types is a lot of buildings. It may be worth
-   picking the ~40 that close real loops for the city first and leaving the rest catalogued
-   until there is a producer worth building.
+### 1. Stash cap — fixed, and today's number did not move
+
+`getResourceUnits()` sums **every** resource against one ceiling, so the cap is shared across
+however many kinds exist. At 14 kinds, 2,000 units is ~143 of each; at 258 it would have been
+~8 of each, and `_stashEnforceCap()` — which jettisons from the biggest pile — would have been
+trimming players constantly for collecting broadly. That punishes the exact behaviour the city
+builder is about to ask for.
+
+The floor is now expressed **per kind** and derived from the live ledger:
+
+```js
+const RES_STASH_PER_KIND = 143;
+function _resStashFloor() {
+  return Math.max(RES_STASH_BASE, RESOURCE_IDS.length * RES_STASH_PER_KIND);
+}
+```
+
+| ledger kinds | floor | per kind |
+|---|---|---|
+| 14 — today | 2,002 | 143 |
+| 54 — after wave 1 | 7,722 | 143 |
+| 258 — full catalogue | 36,894 | 143 |
+
+143 × 14 = 2,002, so **today is unchanged**. This is not a buff — it is the same allowance held
+still while the denominator moves. It rises on its own with each promotion and never needs a
+second edit. `RES_STASH_BASE` (2,000) stays as a hard floor underneath, and vault rows +
+Warehouse staff still stack on top, untouched.
+
+### 2. Scope — 40 first-wave ids, marked `core: true`
+
+Chosen for **closure, not coverage**: every one sits in a chain that runs raw → refined →
+consumed, with nothing dangling. 13 raws + 27 intermediates, and deliberately **no tier 2** —
+finished goods need longer chains. Verified that all 23 input pairs resolve either inside the
+wave or to an id the game already has (`ironOre`, `wood`).
+
+```js
+window.MythicResourceChain.CORE_IDS   // the 40
+```
+
+The loops and their justification are in the `CORE_IDS` comment in `chain.js`. Everything else
+stays catalogued and unpromoted until there is a producer worth building for it.
+
+### 3. node-city — it was *not* free, so I made it free
+
+`RES_META` (node-city ~line 1868) was a **hand-mirror** of `RESOURCES`, so "add an entry here"
+was a fifth manual step behind every promotion. And not a cosmetic one: line ~19473 reads
+`RES_META[r].ico` **unguarded** to build the shortage warning, so the first promoted resource
+to run low would have thrown a TypeError inside a render and taken the panel down — the exact
+failure the comment above `resIco` was written about.
+
+`RES_META` now seeds itself from `window.MythicResourceChain`, with **existing keys winning**
+(the HUD icons were chosen deliberately — stone is 🪨 not 🧱 because 🧱 is already
+`CITY_STOCK.ingots`). node-city loads `chain.js` itself, above its main module, because the
+iframe is a separate window with its own `window`.
+
+**So the promotion checklist is now four steps, not five.**
+
+⚠ `chain.js` is referenced with `?v=` in **two** files — `index.html` and
+`node-city/index.html`. Bump both, or one window ships a stale table.
+
+## Remaining open questions
+
+1. **Does `CITY_PRODUCTION` need a building per resource, or can one building take a recipe
+   parameter?** 40 producers is a lot of buildings; a generic "Refinery" that reads a recipe
+   may be the better shape. Worth deciding before writing the first ten.
+2. **What consumes the finished goods?** Wave 1 stops at intermediates the city eats directly.
+   Tier 2 (machinery, electronics, vehicles) needs a demand sink before it is worth producing.

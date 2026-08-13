@@ -206,6 +206,7 @@ export function runExpedition(opts) {
   const camp = { x: hx, y: hy, recruitment: 0, blacksmith: 0, supply: 0, watchtower: 0, arcane: 0 };
   const sites = recruitSites(seed);                // [{ id, name, biome, x, y }, …]
   const log = { encountersSeen: 0, encountersFired: 0, tilesWalked: 0, nodes: 0, builds: [] };
+  const offersLog = [];                            // every pick-1-of-3 this run saw
 
   const can = cost => Object.keys(cost || {}).every(k => (carry[k] | 0) >= cost[k]);
   const pay = cost => { for (const k in cost) carry[k] -= cost[k]; };
@@ -295,7 +296,14 @@ export function runExpedition(opts) {
         const offers = rollEncounter(seed, hx, hy, bestT.biome);
         if (offers) {
           log.encountersFired++;
+          /* Every offer, and what the player ALREADY HELD when it was made.
+             This is the whole question the draft modal cannot currently answer
+             for them, so it has to be answerable here before anything is
+             proposed about it. Recorded before the pick mutates the pool. */
+          const held = offers.map(k => copies(pool, k));
           const chosen = pickFn(offers, pool, r);
+          offersLog.push({ turn, biome: bestT.biome, offers: offers.slice(0), held,
+                           chosen, chosenHeld: held[offers.indexOf(chosen)] | 0 });
           pool.push(chosen); discovered.push(chosen); gains.push(chosen);
         }
       }
@@ -316,6 +324,7 @@ export function runExpedition(opts) {
     // learn what a landmark is, or to fight its Guardian, is to walk onto its
     // tile — so this is what "is the landmark findable?" reduces to.
     visited: seen,
+    offersLog,
     materials, camp, carry, log,
   };
 }

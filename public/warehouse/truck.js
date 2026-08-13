@@ -91,7 +91,11 @@
       steel:  M({ color: 0x9aa0a8, roughness: 0.55, metalness: 0.35 }),   // plain steel wheels
       black:  M({ color: 0x1a1d22, roughness: 0.72, metalness: 0.18 }),   // mirrors, trim, grille surround
       grille: M({ color: 0x0b0d10, roughness: 0.85, metalness: 0.25 }),
-      amber:  M({ color: 0xff9c2e, roughness: 0.35, emissive: 0xff7a10, emissiveIntensity: 0.85 }),
+      // ⚠ Amber has to SURVIVE TONE MAPPING. At emissiveIntensity 0.85 under
+      // ACES the lens clipped to rgb(245,232,188) — saturation 0.233, a cream
+      // bulb rather than an amber one. Deeper base, deeper emissive, and a third
+      // of the intensity keeps it orange after the curve.
+      amber:  M({ color: 0xff8a00, roughness: 0.35, emissive: 0xc25200, emissiveIntensity: 0.30 }),
       red:    M({ color: 0xd42a22, roughness: 0.35, emissive: 0x8e1008, emissiveIntensity: 0.7 }),
       lamp:   M({ color: 0xf2f4f6, roughness: 0.14, metalness: 0.30,
                   emissive: 0xfff0cc, emissiveIntensity: 0.45 }),
@@ -166,7 +170,12 @@
   // Door opening, in truck-local Z. Full side-wall height, as a walk-in van's
   // kerb door actually is. It sits immediately AFT of the front wheel arch —
   // the two used to overlap, which is why the arch could never be cut.
-  const DOOR = { z0: 0.62, z1: 1.42 };
+  // ⚠ The door's FRONT edge must clear the front wheel arch. At z1 1.42 the
+  // frame return landed at 1.446, inside the arch window (1.43-2.67), so it had
+  // to be shortened to the arch top — leaving a 0.36 m hole in the frame of an
+  // opening cut from y 0.60. Moving the whole door 60 mm aft puts the return at
+  // 1.386, clear of the arch, and the frame runs unbroken from deck to header.
+  const DOOR = { z0: 0.56, z1: 1.36 };
   const ARCH_HALF = 0.62;                          // how far an arch reaches fore/aft
   // 🚪 CARGO SIDE OPENING — the roll-up on the kerb flank, standing open.
   // ⚠ This exists because the delivered load was INVISIBLE. Crates were being
@@ -200,13 +209,18 @@
   // were looking at. Group 1 is the underside; it gets the dark underbody.
   const UNDER_0 = TOP_N + SIDE_N - 1;              // segment [-hw, y0] → ...
   const UNDER_1 = TOP_N + SIDE_N + BOT_N - 2;      // ... → [hw, y0]
-  // `capDark` sends the end caps to the underbody group instead of the skin.
-  // The nose shell's rear cap is a flat body-white disc at z 2.86 that sits
-  // directly behind the FRONT wheel arch: it was measured at 109/1468 (kerb) and
-  // 101/1468 (street) body-white hits inside those arches at max lum 223 against
-  // a 171 flank — the same defect as the main shell's underside cap, one mesh to
-  // the right. It is never seen as bodywork, so it should never be painted like it.
+  // `capDark` sends END CAPS to the underbody group instead of the skin — but
+  // PER CAP: pass { first: true } or { last: true }, never a single flag for
+  // both. The nose shell's REAR cap is a flat disc at z 2.86 sitting directly
+  // behind the front wheel arch (measured 109/1468 kerb and 101/1468 street
+  // body-white hits inside those arches at max lum 223 against a 171 flank), so
+  // it must be dark. Its FRONT cap is the truck's FACE. A single flag darkened
+  // both, and 404/424 head-on rays then landed on the underbody group — 6,464
+  // samples at mean luminance 117 against a 242 white nose. It read as an inset
+  // valance, which is survivable, except the black lamp housings sit on it and
+  // dissolved into it. One flag, two very different surfaces.
   function loft(THREE, rings, capFirst, capLast, skip, capDark) {
+    const dk = capDark === true ? { first: true, last: true } : (capDark || {});
     const pos = [], skin = [], under = [];
     for (const r of rings) for (const q of r.pts) pos.push(q[0], q[1], r.z);
     const N = RING_N;
@@ -220,9 +234,9 @@
         idx.push(a + i, b + j, b + i);
       }
     }
-    const idx = capDark ? under : skin;
     // Flat caps as a triangle fan around the ring's centroid.
-    const cap = (ring, base, front) => {
+    const cap = (ring, base, front, dark) => {
+      const idx = dark ? under : skin;
       let cx = 0, cy = 0;
       for (const q of ring.pts) { cx += q[0]; cy += q[1]; }
       cx /= N; cy /= N;
@@ -235,8 +249,8 @@
         else       idx.push(c, base + j, base + i);
       }
     };
-    if (capFirst) cap(rings[0], 0, false);
-    if (capLast)  cap(rings[rings.length - 1], (rings.length - 1) * N, true);
+    if (capFirst) cap(rings[0], 0, false, !!dk.first);
+    if (capLast)  cap(rings[rings.length - 1], (rings.length - 1) * N, true, !!dk.last);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setIndex(skin.concat(under));
@@ -253,25 +267,44 @@
   // filled below by the nose shell and above by glass. Capping it would weld a
   // white wall across the cab.
   function shell(THREE, mats, profile, cargoOpen) {
-    const st = [
+    // ── THE BODY PROFILE. These are the only stations that define the SHAPE. ──
+    const BASE = [
       // z,              halfW,        shoulder,     crown
       [D.zRear,          D.halfW,      D.shoulderY,  D.crown],
       [D.zRear + 0.10,   D.halfW,      D.shoulderY,  D.crown],
-      [D.zBulkhead,      D.halfW,      D.shoulderY,  D.crown],
-      [DOOR.z0,          D.halfW,      D.shoulderY,  D.crown],
-      [DOOR.z1,          D.halfW,      D.shoulderY,  D.crown],
-      [D.zAxleF - ARCH_HALF, D.halfW,  D.shoulderY,  D.crown],
-      [D.zAxleF + ARCH_HALF, D.halfW,  D.shoulderY,  D.crown],
-      [D.zAxleR - ARCH_HALF, D.halfW,  D.shoulderY,  D.crown],
-      [D.zAxleR + ARCH_HALF, D.halfW,  D.shoulderY,  D.crown],
-      [CARGO.z0,         D.halfW,      D.shoulderY,  D.crown],
-      [CARGO.z1,         D.halfW,      D.shoulderY,  D.crown],
       [2.10,             D.halfW,      D.shoulderY,  D.crown],
       [2.46,             D.halfW - 0.008, D.shoulderY - 0.025, D.crown - 0.012],
       [2.66,             D.halfW - 0.026, D.shoulderY - 0.080, D.crown - 0.040],
       [2.78,             D.halfW - 0.055, D.shoulderY - 0.160, D.crown - 0.080],
       [D.zHeader,        D.halfW - 0.090, D.shoulderY - 0.270, D.crown - 0.130],
     ];
+    // ── …and these are stations added only so an opening can be CUT on an exact
+    // edge. They must not change the shape, so they SAMPLE the profile above
+    // rather than restating a width.
+    //
+    // ⚠ This is why. `[D.zAxleF + ARCH_HALF, D.halfW]` = z 2.67 at FULL width was
+    // written into the middle of the cab taper, between the 2.66 station
+    // (halfW − 0.026) and the 2.78 station (halfW − 0.055). The body therefore
+    // swelled 18.3 mm back OUT over a 37 mm run and immediately tucked in again
+    // — a blister right on the cab shoulder, identical at every height because
+    // the whole section was being scaled. Nobody put it there on purpose; it was
+    // a cut coordinate that had been given a shape value by copy-paste.
+    const at = (z) => {
+      if (z <= BASE[0][0]) return BASE[0].slice();
+      for (let i = 1; i < BASE.length; i++) {
+        if (z > BASE[i][0]) continue;
+        const a = BASE[i - 1], b = BASE[i];
+        const t = (z - a[0]) / (b[0] - a[0]);
+        return [z, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t];
+      }
+      return [z].concat(BASE[BASE.length - 1].slice(1));
+    };
+    const st = BASE.slice().concat([
+      D.zBulkhead, DOOR.z0, DOOR.z1,
+      D.zAxleF - ARCH_HALF, D.zAxleF + ARCH_HALF,
+      D.zAxleR - ARCH_HALF, D.zAxleR + ARCH_HALF,
+      CARGO.z0, CARGO.z1,
+    ].map(at));
     // ⚠ STATIONS MUST ASCEND. Inserting the door edges into this list by hand
     // once produced … 2.10, 2.66, 2.46, 2.66 …, and a segment that runs
     // BACKWARDS in Z makes the shell fold through itself: 70 triangles wound
@@ -325,7 +358,8 @@
       [D.zNose + 0.10,   D.halfW - 0.170, D.cowlY - 0.38, 0.08],
     ];
     const rings = st.map(s => ({ z: s[0], pts: section(profile, s[1], D.floorY - 0.10, s[2], s[3]) }));
-    const m = new THREE.Mesh(loft(THREE, rings, true, true, null, true), [mats.paintShell, mats.underbody]);
+    const m = new THREE.Mesh(loft(THREE, rings, true, true, null, { first: true }),
+      [mats.paintShell, mats.underbody]);
     m.castShadow = true; m.receiveShadow = true;
     return m;
   }
@@ -378,6 +412,16 @@
   }
 
   // ─── 🛞 Wheel — steel rim, modest hubcap, chunky sidewall ───────────────────
+  // Geometry cache. Six wheels were building six identical tyre cylinders, six
+  // identical sidewall rings and six identical caps — geometry reuse was exactly
+  // zero at 166 meshes / 166 geometries. Same shape, same dimensions, no reason
+  // for six copies on the GPU.
+  const _geo = {};
+  const geoCyl = (THREE, rt, rb, h, seg) => {
+    const k = 'c' + rt + '_' + rb + '_' + h + '_' + seg;
+    return _geo[k] || (_geo[k] = new THREE.CylinderGeometry(rt, rb, h, seg));
+  };
+
   function wheel(THREE, mats, x, z) {
     const g = new THREE.Group();
     // ⚠ MIRROR BY SIDE. The cap and the lug ring used to be placed at a fixed
@@ -388,17 +432,20 @@
     // kerb flank (which has them) did fine. `out` is the outboard direction for
     // this wheel; everything on the visible face keys off it.
     const out = x < 0 ? -1 : 1;
-    const t = cyl(THREE, g, D.wheelR, D.wheelR, D.wheelW, 26, mats.rubber, 0, 0, 0);
-    t.rotation.z = Math.PI / 2;
+    const t = new THREE.Mesh(geoCyl(THREE, D.wheelR, D.wheelR, D.wheelW, 26), mats.rubber);
+    t.castShadow = true; t.receiveShadow = true; t.rotation.z = Math.PI / 2; g.add(t);
     // Sidewall shoulders, so the tyre is not a bare cylinder.
     [-1, 1].forEach(s => {
-      const w = cyl(THREE, g, D.wheelR - 0.05, D.wheelR - 0.05, 0.03, 24, mats.rubber, s * D.wheelW * 0.52, 0, 0);
-      w.rotation.z = Math.PI / 2;
+      const w = new THREE.Mesh(geoCyl(THREE, D.wheelR - 0.05, D.wheelR - 0.05, 0.03, 24), mats.rubber);
+      w.position.x = s * D.wheelW * 0.52; w.castShadow = true; w.rotation.z = Math.PI / 2; g.add(w);
     });
-    const rim = cyl(THREE, g, D.wheelR * 0.60, D.wheelR * 0.60, D.wheelW * 0.55, 22, mats.steel, 0, 0, 0);
-    rim.rotation.z = Math.PI / 2;
-    const cap = cyl(THREE, g, D.wheelR * 0.36, D.wheelR * 0.40, 0.05, 20, mats.chrome, out * D.wheelW * 0.50, 0, 0);
-    cap.rotation.z = Math.PI / 2;
+    // ⚠ NO RIM CYLINDER. The tyre is a SOLID cylinder, so a rim inside it is
+    // sealed in and was never the first hit from any of 1,080 sampled camera
+    // positions: 528 triangles and 6 draw calls rendering nothing at all. The
+    // wheel reads from the outside — sidewall rings, cap, studs — and every one
+    // of those is on the outboard face where it can actually be seen.
+    const cap = new THREE.Mesh(geoCyl(THREE, D.wheelR * 0.36, D.wheelR * 0.40, 0.05, 20), mats.chrome);
+    cap.position.x = out * D.wheelW * 0.50; cap.castShadow = true; cap.rotation.z = Math.PI / 2; g.add(cap);
     // ⚠ Lug ring — SMALL, TIGHT, BARELY PROUD. Six 34x42 mm boxes standing
     // 2.8 mm off a 170 mm cap at 110 mm radius, each rotated to its own polar
     // angle, read as two square eyes and a mouth — a cartoon face, dead centre
@@ -484,7 +531,13 @@
     // luminance 192 against a 168 flank. The brightest pixels on the whole side
     // of the truck were inside a wheel arch. Pulled back behind the wheel
     // houses and the liners, where the deck belongs.
-    box(THREE, T, 1.92, 0.06, 4.42, mats.floor, 0, D.floorY + 0.06, -0.62);
+    // ⚠ THE DECK STOPS SHORT OF THE ARCHES, and dark strips carry it the rest of
+    // the way to the liners. Narrowing 2.02 → 1.92 helped but did not finish the
+    // job: the deck's top face was still visible through the rear arch at max
+    // lum 145 / mean 144 against dark rubber. The load floor should read as a
+    // floor from INSIDE the box and as nothing at all from outside it.
+    box(THREE, T, 1.72, 0.06, 4.42, mats.floor, 0, D.floorY + 0.06, -0.62);
+    [-1, 1].forEach(sd => box(THREE, T, 0.20, 0.06, 4.42, mats.cabin, sd * 0.96, D.floorY + 0.06, -0.62));
     // ⚠ CAP THE DECK'S EDGE. With the shell cap fixed, the deck became the
     // brightest thing in a rear arch: max 211 / mean 151 over 1,510 samples,
     // ahead of hubcap chrome at 186, showing as a pale shelf either side of the
@@ -563,7 +616,10 @@
     // occluded the whole back row of crates. It belongs behind them.
     box(THREE, T, 0.05, 1.90, ccw, mats.cabin, -0.62, D.floorY + 1.00, ccz);
     box(THREE, T, 2.02, 2.10, 0.06, mats.paintU, 0, D.floorY + 1.12, D.zBulkhead - 0.04);  // bulkhead
-    box(THREE, T, 1.90, 0.05, 2.10, mats.floor, 0, D.floorY + 0.05, 1.95);        // cab floor
+    // Same treatment for the cab floor, whose outboard edge showed through the
+    // FRONT arch at max lum 180 / mean 148.
+    box(THREE, T, 1.72, 0.05, 2.10, mats.floor, 0, D.floorY + 0.05, 1.95);        // cab floor
+    [-1, 1].forEach(sd => box(THREE, T, 0.20, 0.05, 2.10, mats.cabin, sd * 0.96, D.floorY + 0.05, 1.95));
     // Cab liners. The kerb side is SPLIT fore and aft of the slider so the liner
     // never paints itself across the doorway; the street side is continuous. A
     // headliner closes the top. Without these you look straight through the
@@ -774,18 +830,32 @@
     box(THREE, doorway, 0.04, 0.28, dw, mats.cabin, dx - 0.50, wellY + 0.12, dz);             // inner wall
     box(THREE, doorway, 0.52, 0.04, dw, mats.cabin, dx - 0.26, wellY - 0.035, dz);            // well floor
     // Kick panel closing the outside of the well so daylight cannot get under it.
-    box(THREE, doorway, 0.04, 0.26, dw + 0.04, mats.paintU, dx + 0.004, wellY + 0.11, dz);
+    // ⚠ INBOARD AND DARK. This was the deck-edge defect one part over: at
+    // x 1.054 it stood 24 mm PROUD of a 1.05 flank, its z run reached 10 mm into
+    // the front wheel arch, and being mats.paintU it measured lum 240 / mean 212
+    // — the brightest thing inside that arch, brighter than the 211 deck edge
+    // that had just been fixed for exactly this reason. It is a hidden closure
+    // panel; it should never be seen at all, let alone be the highlight.
+    box(THREE, doorway, 0.04, 0.26, dw - 0.02, mats.cabin, dx - 0.030, wellY + 0.11, dz);
     cyl(THREE, doorway, 0.020, 0.020, 1.15, 8, mats.chrome, dx - 0.16, dyB + 1.10, dz - dw / 2 + 0.12);
     // A shallow returned edge around the cut, so the skin reads as folded metal
     // rather than a laser slice through paper.
     const fx = dx + 0.020;
-    // ⚠ STOP AT THE ARCH. These returns used to run the full opening height from
-    // y 0.570 to 2.81, so their bottom 0.39 m hung down across the front wheel
-    // arch as body-white geometry inside a dark opening. The door starts at the
-    // deck, so its frame should too.
-    const frameB = ARCH_TOP, frameH = dyT + 0.03 - frameB;
-    box(THREE, doorway, 0.042, frameH, 0.055, mats.paint, fx, frameB + frameH / 2, dz + dw / 2 + 0.026);
-    box(THREE, doorway, 0.042, frameH, 0.055, mats.paint, fx, frameB + frameH / 2, dz - dw / 2 - 0.026);
+    // ⚠ STOP AT THE ARCH — BUT ONLY THE EDGE THAT ACTUALLY MEETS ONE. These
+    // returns once ran the full opening height and hung body-white geometry down
+    // across the front wheel arch. The fix was then applied to BOTH verticals,
+    // which left the far edge starting at y 0.963 above a bottom rail at 0.602:
+    // a 0.361 m hole in the frame of an opening cut from y 0.60, on an edge that
+    // never went near an arch. Only the edge whose Z lands inside an arch window
+    // gets shortened; the other runs to the deck where it belongs.
+    const inArchZ = (z) => [D.zAxleF, D.zAxleR]
+      .some(zc => z > zc - ARCH_HALF - 0.001 && z < zc + ARCH_HALF + 0.001);
+    [1, -1].forEach(sgn => {
+      const ez = dz + sgn * (dw / 2 + 0.026);
+      const b = inArchZ(ez) ? ARCH_TOP : dyB - 0.058;
+      const h = dyT + 0.03 - b;
+      box(THREE, doorway, 0.042, h, 0.055, mats.paint, fx, b + h / 2, ez);
+    });
     box(THREE, doorway, 0.042, 0.060, dw + 0.11, mats.paint, fx, dyT + 0.028, dz);
     box(THREE, doorway, 0.042, 0.060, dw + 0.11, mats.paint, fx, dyB - 0.028, dz);
     T.add(doorway);
@@ -894,5 +964,5 @@
   // the wheel arches in a real box van, and now they do here.
   const CARGO_OPENING = { z0: -2.46, z1: -0.44, deckY: D.floorY + 0.46, x: 0.42 };
 
-  root.WHTruck = { build: build, DIMS: D, SHADOW_HINT: SHADOW_HINT, CARGO: CARGO_OPENING };
+  root.WHTruck = { build: build, DIMS: D, SHADOW_HINT: SHADOW_HINT, CARGO: CARGO_OPENING, DOOR: DOOR };
 })(typeof window !== 'undefined' ? window : this);

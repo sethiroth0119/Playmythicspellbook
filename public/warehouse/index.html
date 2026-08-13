@@ -533,10 +533,27 @@ function buildScene() {
   } catch (e) {}
   clock = new T.Clock();
 
+  // ── THE LIGHT CENSUS, stated honestly. This scene runs SEVEN lights and TWO
+  //    shadow-map passes per frame:
+  //      2 × PointLight     the shed fixtures (no shadows)
+  //      3 × Directional    key (2048² shadow), hiBay (1024² shadow), fill
+  //      1 × Hemisphere     1 × Ambient
+  //    An earlier comment described this as "2 PointLights plus the key", which
+  //    undercounts it by three lights and hides the fact that hiBay is a SECOND
+  //    shadow map, not a free extra. Every light recompiles every material and
+  //    adds an iteration to every fragment shader; every shadow map is another
+  //    render of the scene. Add one and you are paying twice.
+  //
   // Hemisphere carries everything the two fixtures cannot reach — the back of a
   // 48 m shed is 20 m from the nearest one. Not a new light: this already existed.
-  scene.add(new T.HemisphereLight(0x39435a, 0x0d0f14, 0.86));
-  scene.add(new T.AmbientLight(0x1c2230, 0.34));
+  // ⚠ EVERY LIGHT IS EXPOSED ON App.lights. A scene whose lighting cannot be
+  // measured cannot be verified, and two rounds were spent arguing about which
+  // light was doing what from screenshots. With this, a probe can zero any one
+  // of them and read the delta — the causation test, not a guess.
+  App.lights = {};
+  App.lights.hemi = new T.HemisphereLight(0x39435a, 0x0d0f14, 0.86);
+  App.lights.amb  = new T.AmbientLight(0x1c2230, 0.34);
+  scene.add(App.lights.hemi); scene.add(App.lights.amb);
   // One overhead yard lamp, warm, casting the real contact shadows. Bias values
   // come from WHTruck.SHADOW_HINT — flat slab sides stripe themselves with acne
   // if normalBias is stingy.
@@ -601,6 +618,7 @@ function buildScene() {
   scene.add(hiBay); scene.add(hiBay.target);
   App.hiBay = hiBay;
   var fill = new T.DirectionalLight(0x5b76a8, 0.26); fill.position.set(-12, 8, -14); scene.add(fill);
+  App.lights.fill = fill; App.lights.key = key; App.lights.hiBay = hiBay;
 
   var M = function (o) { return new T.MeshStandardMaterial(o); };
   var mat = {
@@ -809,6 +827,7 @@ function buildScene() {
         pl.position.set(0, H - 1.4, ZB + depth * f); scene.add(pl); return pl;
       });
     }
+    try { App.lights.shed = App.shedLights; } catch (e) {}
     App.shedLights.forEach(function (pl, i) {
       pl.position.z = ZB + depth * (i === 0 ? 0.30 : 0.72);
       pl.intensity = lint; pl.distance = lrng;
@@ -1022,9 +1041,54 @@ function buildScene() {
       // tell which way was up and trusted the wrong reading. The check that
       // settles it is the one in _wh_stencil_check.mjs — a standing eye
       // position with the bay's own wall sign visible in the same frame.
+      // Record this glyph's box on the canvas. _wh_stencil_check.mjs erases it
+      // and re-renders to isolate the glyph by causation — the only way to
+      // measure orientation that a threshold cannot fake.
       cx.save(); cx.translate(X2(bx), Z2(bz));
       cx.font = 'bold ' + Math.round(0.85 * sy) + 'px Georgia, serif';
       cx.fillStyle = 'rgba(216,210,192,0.80)';
+      // ⚠ TWO HOOKS FOR THE ORIENTATION GATE, captured HERE so they cannot lie.
+      //   stencilErase() re-draws this glyph under the CURRENT transform in
+      //     destination-out, removing exactly its own ink and nothing else. The
+      //     gate renders, erases, re-renders and diffs: whatever changed IS the
+      //     glyph. It cannot invent ink — if the fillText below is deleted, the
+      //     erase removes nothing and the diff is empty, which is the truth.
+      //   stencilRef() draws the same text CANONICALLY (translation only) on a
+      //     scratch canvas. That is the artwork as intended, and it is what the
+      //     on-screen mask gets matched against.
+      // Capturing the transform at this exact point is the whole trick: any
+      // rotate/scale applied above is inside it, so the erase tracks the real
+      // drawing while the reference stays upright, and the two disagree the
+      // moment the floor glyph is flipped.
+      var _tm = cx.getTransform ? cx.getTransform() : null;
+      try {
+        App.stencilErase = App.stencilErase || [];
+        App.stencilRef = App.stencilRef || [];
+        (function (num, fs, tm, ta, tb) {
+          // ⚠ THE NUMERAL ONLY, in both hooks. The word "BAY" is drawn at
+          // alpha 0.45 and at tier 1 it did not survive the render-diff at all,
+          // so the on-screen mask was a bare digit while the reference still
+          // carried "BAY" above it. Comparing different CONTENT reads as an
+          // orientation fault: clean tier 1 scored margin −0.332 and the gate
+          // failed a correct build. Same content on both sides or the
+          // comparison means nothing.
+          App.stencilErase[bn] = function () {
+            cx.save(); if (tm) cx.setTransform(tm);
+            cx.globalCompositeOperation = 'destination-out';
+            cx.fillStyle = '#000';
+            cx.font = 'bold ' + Math.round(0.85 * fs) + 'px Georgia, serif';
+            cx.fillText(String(num), 0, 0);
+            cx.restore();
+          };
+          App.stencilRef[bn] = function (c2, ox, oy) {
+            c2.save(); c2.translate(ox, oy);
+            c2.textAlign = ta; c2.textBaseline = tb; c2.fillStyle = '#f00';
+            c2.font = 'bold ' + Math.round(0.85 * fs) + 'px Georgia, serif';
+            c2.fillText(String(num), 0, 0);
+            c2.restore();
+          };
+        })(bn + 1, sy, _tm, cx.textAlign, cx.textBaseline);
+      } catch (e) {}
       cx.fillText(String(bn + 1), 0, 0);
       cx.font = Math.round(0.30 * sy) + 'px Georgia, serif';
       cx.fillStyle = 'rgba(216,210,192,0.45)';
@@ -1038,6 +1102,7 @@ function buildScene() {
       cx.stroke();
     }
     var ftex = new T.CanvasTexture(cv);
+    App.floorCanvas = cv; App.floorTex = ftex;
     ftex.anisotropy = 4;
     var slab2 = new T.Mesh(new T.PlaneGeometry(fw, fd),
       new T.MeshStandardMaterial({ map: ftex, roughness: 0.95 }));
@@ -1967,10 +2032,39 @@ function tick() {
     }
   } catch (e) {}
   // Walk the interior shadow light along with the player so its tight frustum is
-  // always over what is on screen. One 1024² map, 26 m across.
+  // always over what is on screen.
+  //
+  // ⚠ IT IS TILTED, AND BOTH REASONS MATTER.
+  //
+  // 1. It used to sit at (camX, 6.2, camZ) aiming at (camX, 0, camZ) — straight
+  //    down. A vertical wall lit from directly overhead casts its shadow into
+  //    its own footprint, hidden underneath itself, so it could not draw a
+  //    contact shadow beside anything by construction. Measured: toggling
+  //    castShadow moved mean frame luminance 132.60 → 132.66, Δ 0.06 of ~133.
+  //    Zeroing its intensity moved it 132.6 → 121.0 — so it was contributing
+  //    ~11.6 of light and ~0 of shadow.
+  // 2. Straight down also means N·L = 0 on every VERTICAL face, so it lit the
+  //    floor and contributed exactly nothing to the bay flanks. A causation
+  //    test (zero each light, read the delta on an aisle-facing bay face)
+  //    measured: hiBay 0.0, key 0.0, hemisphere 6.1, ambient 1.8, fill 2.6 —
+  //    and the NEAREST shed point light 63.7 against the far one's 5.4. The
+  //    only thing lighting a bay flank was distance to one of two fixtures, so
+  //    between them the flanks fell to ~10 while the floor kept the ~16 that
+  //    hiBay and the key were giving it, and the floor < bays < walls ladder
+  //    inverted. That was the real bug; the albedo I changed was a symptom.
+  //
+  // So: over the player's shoulder and off to one side, aiming ahead of them.
+  // ~52° elevation gives vertical faces a real N·L and throws their shadows
+  // away from the player where they can be seen.
   if (App.hiBay) {
-    App.hiBay.position.set(camera.position.x, 6.2, camera.position.z);
-    App.hiBay.target.position.set(camera.position.x, 0, camera.position.z);
+    var _hy = (Ctl.cyaw !== undefined ? Ctl.cyaw : Ctl.yaw);
+    var _fx = -Math.sin(_hy), _fz = -Math.cos(_hy);      // where the player looks
+    var _rx = Math.cos(_hy),  _rz = -Math.sin(_hy);      // their right
+    var _tx = camera.position.x + _fx * 3.0;             // aim a little ahead
+    var _tz = camera.position.z + _fz * 3.0;
+    App.hiBay.position.set(_tx - _fx * 4.2 + _rx * 2.6, 6.2, _tz - _fz * 4.2 + _rz * 2.6);
+    App.hiBay.target.position.set(_tx, 0, _tz);
+    App.hiBay.__oldFollow = false;
     App.hiBay.target.updateMatrixWorld();
   }
   renderer.render(scene, camera);

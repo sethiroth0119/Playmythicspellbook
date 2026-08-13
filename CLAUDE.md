@@ -34,6 +34,18 @@ assume `window.Foo` exists because `const Foo` does.
 - User-facing errors use `showToast()`. Confirmations use `gcConfirm()` (async).
 - No new npm dependencies without asking.
 
+## 🏙 The city economy (`public/src/economy/`)
+Registered as `window.MythicEconomy`; wired into `node-city/index.html` via one tick hook,
+one save field and one panel. **See ECONOMY.md before changing any of it.**
+- **Cinder is never minted.** `sim.js` asserts a closed loop every tick and suspends the
+  payout if it breaks. This is the structural guard against the retired Cinder Forge bug.
+- **All economy numbers live in `ECON` (`tuning.js`)** — the `_opEcon()` pattern.
+- **No resource price is written down anywhere.** Prices derive from the recipe graph.
+- **Never `addRes()` a chain resource.** The 258 ids in `/src/resources/chain.js` are not in
+  index.html's `RESOURCES`; the economy holds its own inventory. Only the audited Cinder
+  payout crosses the bridge.
+- `economy/bank.js` is simulated firm credit and is **not** `player_banks` — never join them.
+
 ## Existing systems to reuse, not rebuild
 - `Corp.*` — roster, requests, roles, treasury. **Communities sit ABOVE corps.**
 - `chat_messages` — rooms + DMs + RLS already exist. Community channels are rooms.

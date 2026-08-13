@@ -167,6 +167,14 @@ const SIZES = [[390, 844], [360, 640], [899, 600], [844, 390], [820, 1180], [144
               r.events = [{ turn: (r.run && r.run.turn) || 1, kind: 'hero_defeated',
                             payload: { winner: 'A Rival', loser: r.me.hero_name } }]
                          .concat(r.events);
+              /* Drive the REAL encounter modal — same code path a real draft
+                 takes — by handing the client an encounter on the tile it is
+                 standing on. Nothing here reimplements showEncounter. */
+              if (window.__wantEncounter) {
+                r.encounter = { id: 'probe-enc', x: r.me.x, y: r.me.y, biome: 'forest',
+                                offers: [{ key: 'unit:wolf' }, { key: 'trap:razorVines' },
+                                         { key: 'location:forest' }] };
+              }
             }
             return r;
           });
@@ -187,6 +195,7 @@ const SIZES = [[390, 844], [360, 640], [899, 600], [844, 390], [820, 1180], [144
   });
 
   const DEFEAT = /You were beaten/i;
+  const WANT_ENC = () => window.__wantEncounter;
   const boot = async (qs) => {
     await page.goto(`http://127.0.0.1:${srv.port}/warpath/index.html${qs}`,
       { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -253,6 +262,83 @@ const SIZES = [[390, 844], [360, 640], [899, 600], [844, 390], [820, 1180], [144
       + missing.join(', ') + ' (saw ' + JSON.stringify(dots) + ')'); lfails++;
   } else {
     console.log('  ok  ⚠ barrier dots are observable at last: ' + JSON.stringify(dots));
+  }
+
+  /* ── THE ENCOUNTER MUST FIT ─────────────────────────────────────────────
+     The pick-1-of-3 is the mode's product and it fires ~26 times a run. At
+     360x640 the modal was 589 of 640px with .sheet at max-height:92vh and
+     overflow-y:auto, so all three offers could not be seen at once — a player
+     on a small phone was choosing between three things while looking at two.
+     Asserted on the REAL modal, opened through the real RPC path, not on
+     reconstructed markup. */
+  console.log('\nthe encounter modal\n');
+  for (const [w, h] of [[360, 640], [390, 844], [844, 390]]) {
+    const ec = await browser.newContext({ viewport: { width: w, height: h } });
+    await ec.route('**/*', r => r.request().url().startsWith(`http://127.0.0.1:${srv.port}/`)
+      ? r.continue() : r.fulfill({ status: 204, body: '' }));
+    const ep = await ec.newPage();
+    const eerrs = [];
+    ep.on('pageerror', e => eerrs.push(String(e.message).slice(0, 140)));
+    await ep.addInitScript(() => { window.__wantEncounter = true; });
+    await ep.addInitScript(() => {
+      let real;
+      Object.defineProperty(window, 'WarpathNet', {
+        configurable: true, get() { return real; },
+        set(v) {
+          const orig = v.rpc;
+          v.rpc = function (fn, args) {
+            return Promise.resolve(orig.call(v, fn, args)).then((r) => {
+              if (fn === 'warpath_state' && r && r.ok && r.me && window.__wantEncounter) {
+                r.encounter = { id: 'probe-enc', x: r.me.x, y: r.me.y, biome: 'forest',
+                                offers: [{ key: 'unit:wolf' }, { key: 'trap:razorVines' },
+                                         { key: 'location:forest' }] };
+                // A third Wolf, so the LONGEST badge text ("your deck is
+                // already full of these") is the one the fit is measured
+                // against rather than the shortest.
+                if (Array.isArray(r.cards)) {
+                  r.cards = r.cards.concat([{ id: 'probe-w', key: 'unit:wolf',
+                                              source: 'discovery', secured: true, turn: 1 }]);
+                }
+              }
+              return r;
+            });
+          };
+          real = v;
+        },
+      });
+    });
+    await ep.goto(`http://127.0.0.1:${srv.port}/warpath/index.html`,
+      { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await ep.waitForTimeout(4000);
+    const m = await ep.evaluate(() => {
+      const sheet = document.querySelector('.sheet');
+      if (!sheet) return { none: true };
+      const picks = [...document.querySelectorAll('.pick')];
+      const sr = sheet.getBoundingClientRect();
+      const vis = picks.filter((p) => {
+        const r = p.getBoundingClientRect();
+        return r.top >= sr.top - 1 && r.bottom <= sr.bottom + 1
+            && r.top >= -1 && r.bottom <= window.innerHeight + 1;
+      });
+      return { picks: picks.length, visible: vis.length,
+               scrolls: sheet.scrollHeight > sheet.clientHeight + 1,
+               sheetH: Math.round(sr.height), need: sheet.scrollHeight,
+               got: sheet.clientHeight, vh: window.innerHeight };
+    });
+    const bad = [];
+    if (m.none) bad.push('the encounter modal never opened');
+    else {
+      if (m.picks !== 3) bad.push('expected 3 offers, saw ' + m.picks);
+      if (m.visible !== m.picks) bad.push('only ' + m.visible + ' of ' + m.picks + ' offers are visible at once');
+      if (m.scrolls) bad.push('the modal scrolls (' + m.need + ' into ' + m.got + ')');
+    }
+    if (eerrs.length) bad.push('pageerror: ' + eerrs[0]);
+    if (bad.length) lfails += bad.length;
+    console.log('  ' + String(w + 'x' + h).padEnd(12)
+      + (m.none ? '—' : (m.visible + '/' + m.picks + ' offers visible, modal '
+        + m.sheetH + ' of ' + m.vh))
+      + (bad.length ? '   ✘ ' + bad.join('; ') : '   ok'));
+    await ec.close();
   }
 
   if (perrs.length) { console.log('  ✘ pageerror: ' + perrs[0]); lfails++; }

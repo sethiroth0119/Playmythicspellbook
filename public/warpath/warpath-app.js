@@ -595,11 +595,23 @@ function renderTop() {
      pixel; and the markup hardcoded "→ 25" when the starter pool is 24. Scale
      to the LAST milestone, and mark DECK_FULL as its own line — that is the
      one that matters, because it is where the engine stops padding. */
+  /* The number that actually decides the run, on the bar rather than three
+     taps down: what would come home if you extracted right now. */
+  var xcap = me.extract_cap | 0;
+  var xnow = Math.min(xcap, st.cards.filter(function (c) {
+    return c.secured && c.source !== 'starter';
+  }).length);
+  $('t-extract').textContent = xnow + '/' + xcap;
+  var xp = $('t-extract-pill');
+  xp.classList.toggle('none', xnow === 0);
+  xp.classList.toggle('full', xcap > 0 && xnow >= xcap);
+
   var n = st.cards.length;
   $('t-deck').textContent = n;
   var ms = D.DECK_MILESTONES, span = Math.max(D.DECK_FULL, ms[ms.length - 1]);
   var next = ms.filter(function (m) { return m > n; })[0];
-  $('t-decknext').textContent = next ? ('→ ' + next) : 'FULL DECK';
+  // No longer 'FULL DECK'. It was a finish line that pays nothing.
+  $('t-decknext').textContent = next ? ('→ ' + next) : 'pool';
   var track = $('decktrack');
   if (!track.dataset.ticked) {
     ms.forEach(function (m) {
@@ -803,7 +815,17 @@ var ELEMENT_TONE = {
 /* One offer card, rendered from real data. This is the mode's whole identity —
    "Explore → Discover Opportunity → Make Choice" — and it used to be the biome
    icon three times over a title-cased id. */
-function cardFace(key, extra) {
+/* How many copies of this card the player is already carrying. The one fact
+   that changes the most picks, and the one the modal never told them. */
+function copiesHeld(key) {
+  var st = S.state;
+  if (!st || !st.cards) return 0;
+  var n = 0;
+  for (var i = 0; i < st.cards.length; i++) if (st.cards[i].key === key) n++;
+  return n;
+}
+
+function cardFace(key, extra, held) {
   var m = cardMeta(key) || {};
   var kind = m.t || String(key).slice(0, String(key).indexOf(':'));
   var stats = '';
@@ -818,14 +840,42 @@ function cardFace(key, extra) {
   var tags = [];
   if (m.p) tags.push(esc(m.p));
   if (m.fly) tags.push('flying');
+  /* ⭐ THE COPY BADGE. Measured over 300 real runs: 58.5% of offers are a card
+     the player already holds — 1.75 of every 3 — and 13.9% are already at the
+     3-copy limit warpathPadDeck enforces, so taking them cannot change a
+     battle deck at all. Nothing said so.
+
+     The cost of that silence is not a guess. draft.mjs carries two pick
+     policies that share one value function and differ in exactly one thing —
+     whether they can see how many copies they hold — and `greedy`, the blind
+     one, is what this modal used to permit. Same seeds, same walk, same
+     offers: 29.4% of a blind drafter's picks are on cards that can never reach
+     a deck, against 0.9% for one that can see its pool.
+
+     SILENT AT ZERO. 41.5% of offers are a card the player does not hold, and
+     writing "you carry 0" on all of them is how a decision becomes a
+     spreadsheet. The badge is meant to read as recognising something in your
+     pack, not as a readout bolted to every card. */
+  held = held | 0;
+  var badge = '';
+  if (held >= 3) badge = '<span class="hold full">your deck is already full of these</span>';
+  else if (held > 0) badge = '<span class="hold">you carry ' + held + '</span>';
+
   return '<div class="pi">' + (m.i || '🃏') + '</div>'
     + '<div class="pn">' + esc(cardName(key)) + '</div>'
     + '<div class="pt">' + esc(TYPE_WORD[kind] || kind)
-      + (m.c != null ? ' · cost ' + m.c : '') + '</div>'
+      + (m.c != null ? ' · cost ' + m.c : '')
+      + (badge ? ' · ' + badge : '') + '</div>'
     + (els ? '<div class="cels">' + els + '</div>' : '')
     + stats
     + (tags.length ? '<div class="ctags">' + tags.map(esc).join(' · ') + '</div>' : '')
-    + (m.d ? '<div class="pd">' + esc(m.d) + '</div>' : '')
+    /* ⚠ `desc` IS NOT THE SAME KIND OF TEXT ON EVERY CARD. On a unit it is
+       flavour — "Fast but fragile." On a trap, spell or location it is the
+       RULES — "15 dmg", "3 dmg/turn to all units & heroes". They are tagged
+       apart so a layout that has to save height can drop the charm without
+       deleting the only functional description a non-unit card has. */
+    + (m.d ? '<div class="pd ' + (kind === 'unit' ? 'flavour' : 'rules') + '">'
+             + esc(m.d) + '</div>' : '')
     + (extra || '');
 }
 
@@ -1276,13 +1326,31 @@ function showEncounter(enc) {
   var tbl = D.DISCOVERY[enc.biome] || {};
   var b = M.BIOMES[enc.biome] || {};
   var picks = enc.offers.map(function (o, i) {
-    return '<div class="pick" data-pick="' + i + '">' + cardFace(o.key) + '</div>';
+    return '<div class="pick" data-pick="' + i + '">'
+      + cardFace(o.key, '', copiesHeld(o.key)) + '</div>';
   }).join('');
+
+  /* ⭐ WHAT A PICK IS WORTH. `Extractable now 0 / 6` is the number that decides
+     the run and it was three taps deep, while the loudest progress affordance
+     in the HUD was a ladder to FULL DECK — a milestone the deck harness showed
+     buys nothing, because past roughly a 46-card pool the battle deck stops
+     changing at all. One line, in the run's own terms, next to the decision
+     that fills it. Not a ladder and not a percentage. */
+  var st0 = S.state, foot = '';
+  if (st0 && st0.me) {
+    var cap = st0.me.extract_cap | 0;
+    var spoken = Math.min(cap, st0.cards.filter(function (c) {
+      return c.secured && c.source !== 'starter';
+    }).length);
+    foot = '<div class="conseq">Nothing you take is yours until it is secured at camp and '
+      + 'carried out. <b>' + spoken + ' of ' + cap + '</b> extraction slots spoken for.</div>';
+  }
   openModal(
     '<div class="eyebrow">Encounter</div>'
     + '<h2>' + esc(tbl.title || 'Something offers') + '</h2>'
     + '<div class="lede">' + esc(b.pack || '') + ' You may take <b>one</b>.</div>'
     + '<div class="picks">' + picks + '</div>'
+    + foot
     + '<div class="sheet-foot"><button class="btn" id="enc-skip">Take nothing</button></div>',
     function () {
       Array.prototype.forEach.call(document.querySelectorAll('[data-pick]'), function (el) {

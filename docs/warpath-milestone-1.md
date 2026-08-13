@@ -854,6 +854,81 @@ are or where it is. Which required fixing something else first: **the run feed h
 coordinates**, was being read by the three players who never built a tower. A `private` column and
 one predicate; every existing broadcast still broadcasts.
 
+#### Pool context at the moment of the pick — built
+
+Proposed in `docs/warpath-draft-context-proposal.md`, approved, and shipped as three parts plus a
+readability defect found while checking whether they would fit.
+
+**The case, measured.** The pick-1-of-3 is the product: a median of **26 encounters a run**, and
+the one decision the client asked a player to make with no sight of the pile the card was joining.
+Over 300 real runs (`probe-draft.mjs`): **58.5% of offers are a card the player already holds** —
+1.75 of every 3 — and **13.9% are already at the 3-copy limit** `warpathPadDeck` enforces, so
+taking them cannot change a battle deck at all.
+
+The cost of that silence was not a guess. `draft.mjs` already held the experiment: `PICK_POLICIES`
+`value` and `greedy` share one value function and differ in exactly one thing — whether they can
+see how many copies they hold — and `greedy` is what the modal permitted. Same seeds, same walk,
+same offers:
+
+| | can see its pool | cannot |
+|---|---|---|
+| picks of a **dead** card (≥3 held) | 0.9% | **29.4%** |
+| picks of a card already held | 62.4% | 74.1% |
+| distinct cards in the pool | 29.7 | 26.7 |
+| cards drafted per run | 26.7 | 26.7 |
+
+The coordinator verified this from a different angle — copies beyond the deck cap sitting in the
+final pool — and got **0.6 unplayable cards a run (1.2% of pool) informed against 7.8 (15.4%)
+blind**: thirteen times the waste, a different metric, the same direction.
+
+**1. The copy badge**, in the type line the card already draws, silent at zero. Three states, and
+the silence is as deliberate as the text: nothing at 0 copies (41.5% of offers — writing "you
+carry 0" on all of them is how a decision becomes a spreadsheet), `you carry 2` at 1–2, and
+`your deck is already full of these` at 3+, styled as a refusal rather than a statistic. Chosen
+over a curve strip and over a pool peek because it is the fact that moves the measured number, and
+because it costs **zero new rows**.
+
+**2. The consequence footer**, one line: *"Nothing you take is yours until it is secured at camp
+and carried out. **4 of 6** extraction slots spoken for."*
+
+**3. The FULL DECK ladder, demoted.** It was the loudest progress affordance in the mode and it
+pointed at a milestone the deck harness showed does not pay — past roughly a 46-card pool the
+battle deck stops changing at all, `distinct` sticks at 26 and `avgCost` at 1.93. It is quiet now
+and still says how big the pool is, which is true and worth knowing. The number that actually
+decides the run — what would come home if you extracted right now — was three taps down and is now
+a HUD pill. The two swapped places.
+
+**And the defect found while checking fit.** At 360×640 the encounter modal needed **774px of a
+587px box**: only two of three offers were on screen at once, and rotated it was **zero**. A player
+was choosing between three things while looking at two, in the mode's central interaction, on the
+most common phone size there is. One card measured 238px — icon 34, name 16, type 12, elements 14,
+**stats 55**, tags 11, flavour 18, and 78 of padding — so below 720px of height the card stops
+being a poster and becomes a row: the icon moves up beside the name and the six stats go on one
+line. **Nothing is removed except a unit's flavour line**, and that distinction is load-bearing:
+`desc` is charm on a unit ("Fast but fragile.") and **rules text on everything else** ("15 dmg",
+"3 dmg/turn to all units & heroes"). They are tagged apart so the layout can drop the charm without
+deleting the only functional description a trap, spell or location has.
+
+Result, with the *longest* badge text in place: **3/3 offers visible at every viewport**, modal 542
+of 640 at 360×640. Asserted permanently in `_layoutcheck.js` alongside the ≥120px map-band floor.
+
+Also fixed there: `#boot` is `z-index:90` against the veil's `40`, so a faded-out boot curtain was
+still composited on top of every modal — `visibility` now flips with the opacity.
+
+**What the screenshot caught that four assertions did not.** Every card rendered `[object Object]`:
+`cardFace(key, extra)` already took an HTML string as its second argument and the new options
+object was being concatenated into it. Every geometric and text assertion passed, because they all
+queried specific selectors. Looking at the thing found it in one frame.
+
+**How we will know it worked, honestly.** `probe-draft.mjs` is the pre-change baseline and can
+answer whether dead picks fall, whether pool distinctness rises, and whether what comes home gets
+less uniform. It **cannot** answer whether the choice still feels like an encounter rather than an
+audit. And the 0.9% figure is a **ceiling produced by a machine that counts perfectly and never
+misreads a badge** — a real player lands somewhere between 29.4% and 0.9% and nothing in this repo
+can say where. Quoting the ceiling as the expected outcome would be the same error as reporting
+`viewH()` as an observed band. Four people playing one run each would settle what no probe here
+can.
+
 **Still waiting for Colyseus:** who is telling the truth about a battle result. Conceding and
 agreement are believed immediately and a bare win claim waits, so being fast buys nothing — but
 two lying clients are not detectable from here. See `docs/mp-server-authority-shared-engine.md`.

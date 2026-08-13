@@ -64,6 +64,31 @@
       'darken' flat fill, which also does the colour work — the lift is a cool
       blue-grey (shadows go cool) and the ceiling is a warm off-white
       (highlights go warm).
+   6. ROUND 3B — THE MESAS WERE PAPER CUTOUTS. Measured on the round-2 board,
+      the MID range on the left shoulder (box 50,310,55,80 of the board crop)
+      had a horizontal luma sd of 2.19: one uniform fill behind a hard polygon
+      silhouette, spanning the entire top of the field — which is the only part
+      of the vista a player looks straight at above the board. ridgeLayer()
+      shaded only segments where dx>0 AND the face turned away from the key, so
+      most of every silhouette received nothing at all. It now carries five
+      passes that do NOT depend on segment direction — a per-butte face split
+      (≥±8 luma, driven by the same lightX the terrain's cliffs use), talus
+      fans, 6-44 jittered strata beds at a fixed density, per-butte gullies,
+      and full-layer fluting — and the same box measures 11-24. See the
+      block comment on ridgeLayer for the ordering and why each one is there.
+      The AERIAL ORDERING was also backwards: MID measured MORE saturated than
+      NEAR at the same value, because "further toward LIGHT.fog" darkens as
+      well as desaturates in this rig. hazeColour() is the fix.
+   7. ROUND 3B — THE SHADOWS WERE WARM. The grade's key was warm and so was
+      everything else: cliff walls measured R−B +19, basin shade +23, and the
+      global L<55 mean had drifted to −1.0 against the BAR's "cool blue-grey in
+      shadow". grade() now split-tones — a cool tint added through a cubed
+      darkness mask built at thumbnail scale (see shadowThumb) and summed into
+      the bloom's own upscale, so it costs one extra thumbnail and no extra
+      full-canvas work. Measured after: cliff wall R−B +5, plateau underside
+      −1, L<55 mean −14, darkest 2% −15, and the interior mean still warm at
+      +25. The midtone 'overlay' came down 0.13 → 0.10 because 'overlay' warms
+      darks harder than midtones and was undoing a third of it.
 
    ⚠ THE HORIZON IS A CHEAT, AND IT HAS TO BE.
    The true vanishing line of the y=0 plane for this camera sits ~1000px ABOVE
@@ -102,6 +127,26 @@
   /* the ceiling: warm off-white, so a blown highlight reads as sunlight and
      never as paper. */
   const HILIGHT_CEIL = [252, 247, 236];
+  /* ⚠ THE SPLIT-TONE. Added round 3 because the grade failed its second clause:
+     "warm tan/ochre midtones, cool blue-grey in shadow" was half true — the key
+     was warm but every shadow SURFACE measured warm ochre too (cliff wall
+     R−B +19.2, basin shade +23.0, plateau underside +14.2) and the global
+     L<55 mean had drifted to R−B −1.0. This is the colour that gets ADDED into
+     the dark end, in proportion to how dark a pixel is (see thumbs()); at the
+     cube law used there it lands ~(13,19,42) on a near-black, ~(9,13,30) on a
+     cliff wall in shade and ~(0.4,0.7,1.5) on lit sand — so the shadows go
+     blue-grey and the warm midtones and highlights are untouched.
+     SHADOW_TINT_WEAK is the fallback for a canvas without the 'saturation'
+     blend mode, where the mask cannot be desaturated and a strong tint would
+     leak blue into warm highlights (whose blue channel is the dark one). */
+  /* ⚠ MOSTLY BLUE, DELIBERATELY LOW IN RED AND GREEN. The first cut used
+     rgb(22,32,72), whose own luma is 33 — at the cube law that lifted the
+     darkest pixels of the field by 19 luma, and the board's cliff walls,
+     which are the whole elevation read, went milky. This colour carries
+     nearly the same blue (the part that does the cooling) for half the luma,
+     so the shadows go cool without the shadows going away. */
+  const SHADOW_TINT = 'rgb(6,16,50)';
+  const SHADOW_TINT_WEAK = 'rgb(3,7,22)';
 
   /* ── hex ↔ rgb, and LUMA SHIFTS ───────────────────────────────────────────
      The ridge palette is built by shifting ONE base colour up and down in luma
@@ -133,13 +178,30 @@
      rock but also DARKENED it, and a far range ended up the same value as a
      near one. Real aerial perspective lifts distance toward the colour of the
      air at the horizon, which is the bottom sky stop. Mixing toward THAT both
-     lightens and desaturates, which is what the clause actually asks for. */
+     lightens and desaturates, which is what the clause actually asks for.
+
+     ⚠ AND IT MUST BE WARM. The first cut of this used the bottom sky stop
+     straight, which is a cold blue-grey at noon; the ranges promptly turned
+     into pale grey fog banks against warm ochre sand — the exact "two worlds
+     stacked" note the review made about the backdrop photo, reproduced by the
+     module itself. The air over a desert carries the desert's own dust, so the
+     haze is pulled a third of the way toward the disc and a third toward
+     SAND_PALE. It stays light (that is what makes distance lift) but it stays
+     in the sand's family. */
   function hazeColour(api) {
     const L = api.LIGHT;
     const horizonSky = (L.sky && L.sky[2]) || L.fog;
-    /* a touch of the disc's warmth so the haze belongs to the same key as the
-       sand — pure sky-blue haze against ochre rock reads as two worlds. */
-    return api.mixHex(horizonSky, api.mixHex(L.fog, L.disc, 0.35), 0.34);
+    let h = api.mixHex(api.mixHex(horizonSky, L.disc, 0.34), SAND_PALE, 0.18);
+    /* ⚠ HAZE IS LIT AIR, SO IT HAS TO GO OUT WITH THE KEY. `disc` at night is
+       a pale moon white and SAND_PALE is a pale sand, so the unscaled mix came
+       out at luma ~108 — brighter than the night sky it hangs in — and the
+       ranges glowed warm tan under a blue moon. Below a key intensity of 0.9
+       the haze is pulled toward the sky's own darkness. */
+    const k = api.clamp(L.keyI, 0.2, 1.3);
+    if (k < 0.9) {
+      h = api.mixHex(h, api.mixHex(horizonSky, L.ambient, 0.5), (0.9 - k) / 0.9 * 0.9);
+    }
+    return h;
   }
 
   /* ── deterministic RNG. The skyline must be identical every run (the
@@ -167,6 +229,7 @@
     veil: { key: '', cv: null },       /* fog + vignette + centre lift, pre-composited */
     art: new Map(),          /* image src -> { key, cv } graded + horizon-clipped */
     bloom: { cv: null, g: null },
+    shade: { cv: null, g: null },      /* the cool-shadow mask, same thumbnail scale */
     lastBake: -1e9,
     drift: null
   };
@@ -254,7 +317,7 @@
      never reaches. */
   function canyonBias(x, W) {
     const t = Math.abs(x - W * 0.5) / (W * 0.5);
-    return 0.46 + 0.85 * t * t;
+    return 0.50 + 1.05 * t * t;
   }
   /* ⚠ ROUND-2 SHAPE BUG. The first pass walked one width per segment with a
      single talus slope, which produced very long dead-flat tops: two enormous
@@ -279,7 +342,14 @@
       const w = seg * (0.34 + rand() * 1.05);
       const bias = canyonBias(x + w * 0.5, W);
       let ny = y + (rand() - 0.42) * amp * 0.95;
-      ny = Math.min(baseY - amp * bias * 0.06, Math.max(baseY - amp * bias * 1.30, ny));
+      /* ⚠ THE MINIMUM HEIGHT IS 0.30, NOT 0.06, AND THAT IS ABOUT FRAMING.
+         canyonBias already scales height up toward the two edges, but with a
+         floor of 0.06·amp the walk was still free to flatten a shoulder to
+         nothing — and one seed did exactly that, leaving the right side of the
+         frame with no skyline at all above the board's far edge. 0.30 puts a
+         real butte at both shoulders on every seed while leaving the centre,
+         where bias is lowest and the board sits, open. */
+      ny = Math.min(baseY - amp * bias * 0.30, Math.max(baseY - amp * bias * 1.30, ny));
       /* approach face: steep, occasionally with a stepped shoulder */
       const slope = w * (0.16 + rand() * 0.30);
       if (rand() < 0.34) {
@@ -307,31 +377,328 @@
     g.closePath();
   }
 
-  /* one distance layer: silhouette + its own aerial-perspective gradient
-     (haze pools at the base, so the FOOT of a range is lighter than its top)
-     + a lit rim on the faces that turn toward the key. */
+  /* ── ONE DISTANCE LAYER ───────────────────────────────────────────────────
+     ⚠ ROUND-3 REWRITE, AND THE REASON IS MEASURED. Round 2 shipped this as a
+     silhouette + a vertical gradient + per-segment shading, and the per-segment
+     shading only fired where `dx>0 AND the face turns away`, so most of every
+     mesa received NOTHING. Measured inside the left-shoulder MID range
+     (box 50,310,55,80 of the board crop): horizontal luma sd 2.19. That is a
+     single uniform fill behind a hard polygon edge — a paper cutout, and it
+     spans the entire top of the field, which is the one part of the vista a
+     player looks straight at above the board.
+
+     Everything added below is DELIBERATELY INDEPENDENT OF SEGMENT DIRECTION,
+     so it lands on every pixel of every silhouette:
+       1. FACE SPLIT — per butte, one horizontal ramp: the flank turned toward
+          `opt.lightX` is lifted, the other is dropped. ≥±8 luma by
+          construction (the palette is built with shiftL, not by hue mixing).
+       3. STRATA — horizontal beds across the whole layer with per-band
+          alpha and seeded vertical jitter. This is the same trick
+          battle-board/index.html:1605-1616 already uses on the terrain's cliff
+          walls, on purpose: the world behind the board and the rock in it
+          should be made of the same stuff.
+       4. GULLIES — near-vertical erosion channels down each butte's face, each
+          with a dark cut and a lit lip. These are what actually put HIGH
+          spatial frequency into a horizontal scan line; horizontal beds alone
+          only vary a row where their jittered edge crosses it.
+       2. TALUS — a scree fan fading UP from every foot, hazier and lighter
+          than the wall above it, so the range stands in the ground instead of
+          being stamped on it.
+     The old per-segment shading and rim survive underneath as variety; they
+     are no longer load-bearing. */
   function ridgeLayer(api, g, opt) {
     const { W } = api, LIGHT = api.LIGHT;
+    const rand = opt.rand;
+    /* ⚠ TWO SEPARATE RANDOM STREAMS, AND THE SPLIT IS DELIBERATE. `rand` is
+       the shared skyline stream — one walk through all three layers, which is
+       what keeps the composition identical whether or not backdrop art is
+       present. `dr` is this layer's own DETAIL stream. They were the same
+       stream in the first cut, so changing the number of strata beds changed
+       how many draws the MID layer consumed, which reshuffled the NEAR layer's
+       silhouette and moved the entire skyline. Tuning surface texture must not
+       move the mountains. */
+    const dr = mulberry32(strHash((api.MAP.id || 'map') + '|ridge|' + opt.key));
     /* same night bias as the floor: a weak key means more air between us and
-       the rock, so every range sits further toward the fog colour */
-    const fogMix = Math.min(0.94, opt.fog + api.clamp(0.26 - LIGHT.keyI * 0.19, 0, 0.20));
-    const top = api.mixHex(opt.rock, LIGHT.fog, Math.min(0.96, fogMix + 0.06));
-    const foot = api.mixHex(opt.rock, LIGHT.fog, Math.max(0, fogMix - 0.24));
-    const pts = mesaLine(opt.rand, W, opt.baseY, opt.amp, opt.seg);
+       the rock, so every range sits further toward the haze colour */
+    const fogMix = Math.min(0.92, opt.fog + api.clamp(0.26 - LIGHT.keyI * 0.19, 0, 0.20));
+    const HAZE = hazeColour(api);
+    const base = api.mixHex(opt.rock, HAZE, fogMix);
+    /* ⚠ THE CAP/FOOT ORDER IS FLIPPED FROM ROUND 2. With the old dark
+       `LIGHT.fog` a *less* fogged foot came out lighter; with a real horizon
+       haze colour it is the other way round, and the physical fact is the one
+       that matters — haze pools at the base of a distant range, so the foot is
+       the hazier, lighter, flatter end and the cap keeps what contrast the
+       distance left it. It also makes each range bleed into the ground at its
+       feet instead of sitting on a cut line. */
+    const capC = api.mixHex(opt.rock, HAZE, Math.max(0, fogMix - 0.13));
+    const footC = api.mixHex(opt.rock, HAZE, Math.min(0.95, fogMix + 0.12));
+    /* F = how much internal contrast this distance is still allowed. A far
+       range has almost none left (that IS aerial perspective); a near bluff
+       has all of it. */
+    const F = api.clamp(opt.form, 0.2, 1);
+    /* the face-split pair. Built off `base` with an explicit luma shift so the
+       ±8 luma the review asks for is arithmetic, not hope: at alpha `fa` the
+       delivered split is fa × 30 ≈ 10-15 luma either side. */
+    const LITC = shiftL(api.mixHex(base, LIGHT.key, 0.20), 30);
+    const SHADEC = shiftL(api.mixHex(base, LIGHT.ambient, 0.26), -30);
+    const fa = 0.34 + 0.18 * F;
+    /* strata pair — a pale bed and a dark bed */
+    const BEDL = shiftL(api.mixHex(base, LIGHT.key, 0.10), 40);
+    const BEDD = shiftL(api.mixHex(base, LIGHT.ambient, 0.18), -50);
+    /* scree: lighter than the wall AND hazier, because it is the bottom of the
+       air column and because loose broken rock scatters more light than a face */
+    const TALUS = shiftL(api.mixHex(base, HAZE, 0.22), 12);
+
+    const built = mesaLine(rand, W, opt.baseY, opt.amp, opt.seg);
+    const pts = built.pts, mesas = built.mesas;
+    /* ⚠ topY IS MEASURED, NOT ASSUMED, AND THAT WAS A REAL BUG. It started as
+       `baseY - amp*1.45`, but canyonBias scales a mesa's height by up to 1.73
+       at the frame edges (t>1 outside [0,W]), so the tallest buttes — which
+       are exactly the ones at the left and right shoulders, the only ridge
+       pixels the board does not cover — reached ~2.25·amp and their caps sat
+       ABOVE the region the strata bands and the face-split rect covered. The
+       result measured sdX 2.1 on the right shoulder: the caps were receiving
+       nothing at all while the buried middles got everything. */
+    let topY = opt.baseY - opt.amp * 1.45;
+    for (let m = 0; m < mesas.length; m++) {
+      if (mesas[m].capY - opt.amp * 0.06 < topY) topY = mesas[m].capY - opt.amp * 0.06;
+    }
+
     g.save();
     tracePts(g, pts, opt.baseY, W);
     const grd = g.createLinearGradient(0, opt.baseY - opt.amp * 2.0, 0, opt.baseY + 26);
-    grd.addColorStop(0, top);
-    grd.addColorStop(1, foot);
+    grd.addColorStop(0, capC);
+    grd.addColorStop(1, footC);
     g.fillStyle = grd;
     g.fill();
     g.clip();
-    /* SHADED FACES. A silhouette alone is a cutout; what makes a distant range
-       read as rock is that the faces turned away from the key are darker than
-       the ones turned toward it. Every descending-away face gets a short
-       gradient hung off it, clipped to the silhouette — so the same mesa has a
-       lit side and a shadow side without any per-pixel work. */
-    const shade = api.mixHex(opt.rock, api.mixHex(LIGHT.ambient, LIGHT.fog, 0.5), 0.62);
+
+    /* ── 1. FACE SPLIT, per butte ──────────────────────────────────────────
+       One horizontal ramp across each mesa's own x-span. `opt.lightX` is the
+       screen-space side the sun is on (sign of body.x − VIEW.cx), the SAME
+       number the terrain derives its cliff shading from, so a mesa's lit flank
+       and a plateau's lit wall always agree. The ramp is transparent through
+       the middle third so two adjacent buttes do not weld into one gradient. */
+    for (let m = 0; m < mesas.length; m++) {
+      const M = mesas[m];
+      const w = M.x1 - M.x0;
+      if (w < 6) continue;
+      const litRight = opt.lightX >= 0;
+      const jit = 0.85 + dr() * 0.3;    /* no two buttes split identically */
+      /* ⚠ OVERLAP AND TAPER, OR YOU GET A RULED VERTICAL LINE AT EVERY BUTTE
+         BOUNDARY. The first cut ran the ramp exactly [x0,x1] at full strength
+         at both ends, so a lit flank at 0.46 alpha butted straight against the
+         next butte's shaded flank at 0.46 — a hard vertical seam right down
+         the middle of the range, which is a drawn edge and the BAR's whole
+         complaint. Extending 14% past each end and tapering the outermost
+         stops lets neighbours cross-fade; what survives at the join is a soft
+         dark crease, which is what the gap between two buttes actually is. */
+      const ov = w * 0.14;
+      const fg2 = g.createLinearGradient(M.x0 - ov, 0, M.x1 + ov, 0);
+      const A = litRight ? SHADEC : LITC, B = litRight ? LITC : SHADEC;
+      fg2.addColorStop(0, api.rgba(A, 0));
+      fg2.addColorStop(0.16, api.rgba(A, fa * jit));
+      fg2.addColorStop(0.42, api.rgba(A, fa * 0.16));
+      fg2.addColorStop(0.58, api.rgba(B, fa * 0.16));
+      fg2.addColorStop(0.84, api.rgba(B, fa * jit));
+      fg2.addColorStop(1, api.rgba(B, 0));
+      g.fillStyle = fg2;
+      g.fillRect(M.x0 - ov - 1, topY, w + ov * 2 + 2, opt.baseY - topY + 40);
+    }
+
+    /* ── 2. TALUS / SCREE ──────────────────────────────────────────────────
+       A fan spreading from each foot, fading UPWARD into the wall. Asymmetric
+       on purpose (the two flanks get different widths and heights) — a
+       symmetric cone at the base of every butte is exactly the evenly-spaced
+       identical prop the BAR calls the AI-game tell. */
+    for (let m = 0; m < mesas.length; m++) {
+      const M = mesas[m];
+      const w = M.x1 - M.x0;
+      if (w < 10) continue;
+      const cx2 = (M.x0 + M.x1) * 0.5;
+      const hw = w * 0.5;
+      /* ⚠ CAPPED AT 0.30·amp, AND DRAWN BEFORE THE BEDS. At 0.50·amp the fan
+         off a frame-edge butte — which canyonBias makes ~2.2·amp tall — was a
+         pale wash 82px high sitting OVER the strata and gullies, and the left
+         shoulder measured sdX 3.2: all the structure was there and all of it
+         was underneath a scree fan. Scree piles at the foot of a wall; it does
+         not climb halfway up it. */
+      const h = Math.min(opt.amp * 0.30, M.h * (0.20 + dr() * 0.18));
+      const lw2 = hw * (0.85 + dr() * 0.55), rw = hw * (0.85 + dr() * 0.55);
+      g.beginPath();
+      g.moveTo(cx2 - lw2 * 1.18, opt.baseY + 30);
+      g.lineTo(cx2 - lw2 * (0.28 + dr() * 0.2), M.capY + M.h - h);
+      g.lineTo(cx2 + rw * (0.22 + dr() * 0.22), M.capY + M.h - h * (0.72 + dr() * 0.3));
+      g.lineTo(cx2 + rw * 1.2, opt.baseY + 30);
+      g.closePath();
+      const tg = g.createLinearGradient(0, M.capY + M.h - h, 0, opt.baseY + 12);
+      tg.addColorStop(0, api.rgba(TALUS, 0));
+      tg.addColorStop(0.55, api.rgba(TALUS, (0.14 + dr() * 0.10) * (0.6 + 0.4 * F)));
+      tg.addColorStop(1, api.rgba(TALUS, (0.28 + dr() * 0.16) * (0.6 + 0.4 * F)));
+      g.fillStyle = tg;
+      g.fill();
+    }
+
+    /* ── 3. STRATA ─────────────────────────────────────────────────────────
+       Horizontal beds, full width, jittered. Bands are drawn as a wobbling
+       quad rather than a straight rect precisely so that a horizontal scan
+       line through the range crosses in and out of them — a dead-straight bed
+       adds nothing to the horizontal variance the review measures, and looks
+       like a ruled line besides. */
+    /* ⚠ `step` IS THE ONE NUMBER THAT DECIDES WHETHER THIS PASSES. The first
+       cut walked the band in W/30 ≈ 27px strides, which put roughly ONE
+       wobble inside the 55px-wide box the review measures — the beds came out
+       nearly straight at that scale and the horizontal sd only moved 2.2→4.5.
+       W/80 ≈ 10px gives a genuinely crinkled bed edge, which is also what
+       weathered sedimentary rock looks like from a kilometre away. */
+    /* ⚠ COUNT, NOT PLACEMENT. Two earlier cuts tried to aim the beds at the
+       part of the range the board does not cover — first `u = t`, then
+       `u = t^1.9` to bias them toward the cap. Both failed the same way: the
+       three ranges have different heights AND canyonBias stretches the buttes
+       at the frame edges to 2.25·amp, so there is no single distribution that
+       lands beds on the visible slice of all of them. The honest fix is to bed
+       the WHOLE column densely — 13-19 beds spread evenly, each thin — which
+       is also what a sandstone cliff looks like. Cost is bake-time only. */
+    /* ⚠ DENSITY, NOT A FIXED COUNT. topY is the highest cap in the layer, and
+       canyonBias makes the frame-edge buttes over twice the height of the ones
+       in the middle — so a fixed 11-17 beds spread over [topY, baseY] left the
+       tall shoulder mesas with beds 60px apart while the low middle ones (which
+       the board hides anyway) got a bed every 12px. Fixing the SPACING at a
+       fraction of amp gives every butte the same bed density whatever the seed
+       rolled, which is also how sedimentary rock works. */
+    const spacing = opt.amp * 0.115;
+    const bands = Math.min(44, Math.max(6, Math.ceil((opt.baseY - topY) / spacing)));
+    const step = Math.max(8, W / 80);
+    for (let s = 0; s < bands; s++) {
+      const u = (s + 0.2 + dr() * 0.6) / bands;            /* 0 = cap, 1 = foot */
+      const yMid = topY + (opt.baseY - topY) * u;
+      const th = opt.amp * (0.03 + dr() * 0.075);
+      const jit = opt.amp * (0.030 + dr() * 0.055);
+      const pale = (s % 2) === 0;
+      const a = (pale ? 0.14 + dr() * 0.13 : 0.22 + dr() * 0.20) * (0.55 + 0.45 * F);
+      /* seeded random walk along x, clamped so a band cannot wander off its bed */
+      const top2 = [], bot = [];
+      let wob = 0;
+      for (let x = -100; x <= W + 100; x += step) {
+        wob += (dr() - 0.5) * jit;
+        wob = Math.max(-jit * 1.7, Math.min(jit * 1.7, wob));
+        top2.push({ x: x, y: yMid + wob });
+        bot.push({ x: x, y: yMid + wob + th * (0.7 + dr() * 0.6) });
+      }
+      g.beginPath();
+      for (let i = 0; i < top2.length; i++) i ? g.lineTo(top2[i].x, top2[i].y) : g.moveTo(top2[0].x, top2[0].y);
+      for (let i = bot.length - 1; i >= 0; i--) g.lineTo(bot[i].x, bot[i].y);
+      g.closePath();
+      const bgr = g.createLinearGradient(0, yMid - jit, 0, yMid + th + jit);
+      bgr.addColorStop(0, api.rgba(pale ? BEDL : BEDD, a));
+      bgr.addColorStop(1, api.rgba(pale ? BEDL : BEDD, a * 0.25));
+      g.fillStyle = bgr;
+      g.fill();
+    }
+
+    /* ── 4. GULLIES ────────────────────────────────────────────────────────
+       A wandering dark cut with a lit lip alongside it, running from just
+       under the cap down past the foot. Two strokes per gully: the pair is
+       what makes it read as a groove with a shape rather than as a scratch. */
+    g.lineCap = 'round';
+    for (let m = 0; m < mesas.length; m++) {
+      const M = mesas[m];
+      const w = M.x1 - M.x0;
+      if (w < 14 || M.h < opt.amp * 0.20) continue;
+      /* ⚠ COUNT MATTERS MORE THAN DEPTH HERE. A butte 100px wide with three
+         gullies has one groove per 33px, and the review's measurement box is
+         55px — most rows sampled would cross none of them. 5-11 gullies puts
+         one every 9-20px, which is both what a fluted sandstone face looks
+         like and what actually registers as internal structure. */
+      const n = 5 + ((dr() * 7) | 0);
+      for (let k = 0; k < n; k++) {
+        const x = M.x0 + (0.05 + dr() * 0.90) * w;
+        const y = M.capY + M.h * (0.03 + dr() * 0.15);
+        /* ⚠ EACH GULLY STOPS SOMEWHERE DIFFERENT. Running every one of them
+           from the cap to the base gave a picket fence of equal-length
+           verticals — evenly-spaced identical props, which is the exact tell
+           the BAR names. A real gully dies out into the slope; these end
+           between 40% and 100% of the way down and fade as they go. */
+        const yEnd = y + (opt.baseY + 6 - y) * (0.40 + dr() * 0.62);
+        const lw = 1.0 + dr() * (2.2 + 2.4 * F);
+        const aC = (0.15 + dr() * 0.18) * (0.45 + 0.55 * F);
+        const drift = (dr() - 0.5) * w * 0.10;
+        const segs = 3 + ((dr() * 3) | 0);
+        const cut = [];
+        for (let q = 0; q <= segs; q++) {
+          const t = q / segs;
+          cut.push({ x: x + drift * t + (dr() - 0.5) * lw * 2.4, y: y + (yEnd - y) * t });
+        }
+        const strokeRun = (pts2, off, style, alpha, width) => {
+          /* a gradient along the run so the groove fades out at its lower end
+             rather than stopping on a visible tip */
+          const sg2 = g.createLinearGradient(0, y, 0, yEnd);
+          sg2.addColorStop(0, api.rgba(style, alpha));
+          sg2.addColorStop(0.62, api.rgba(style, alpha * 0.75));
+          sg2.addColorStop(1, api.rgba(style, 0));
+          g.strokeStyle = sg2; g.lineWidth = width;
+          g.beginPath();
+          for (let q = 0; q < pts2.length; q++) {
+            const px2 = pts2[q].x + off;
+            q ? g.lineTo(px2, pts2[q].y) : g.moveTo(px2, pts2[q].y);
+          }
+          g.stroke();
+        };
+        strokeRun(cut, 0, SHADEC, aC, lw);
+        /* the lit lip goes on the side the key is on — but only on some of
+           them, so the face is not a row of identical two-tone pairs */
+        if (dr() < 0.62) {
+          strokeRun(cut, (opt.lightX >= 0 ? lw * 0.9 : -lw * 0.9), LITC, aC * 0.7,
+            Math.max(0.7, lw * 0.55));
+        }
+      }
+    }
+
+    /* ── 5. FLUTING ────────────────────────────────────────────────────────
+       ⚠ THIS PASS EXISTS BECAUSE OF HOW THE CLAUSE IS MEASURED. The review
+       scores internal structure as HORIZONTAL luma sd inside a 55px box — the
+       variation ALONG a scan line. Strata are horizontal beds, so they raise
+       that number only where a jittered bed edge happens to cross the box, and
+       the gullies are per-butte and can miss a narrow sliver of range entirely
+       (the left shoulder is 36 CSS px wide between the frame edge and the HUD
+       pillar, and measured sd 3.9 with beds and gullies both present in it).
+       Fluting is the same erosion, run over the WHOLE layer at high spatial
+       frequency and low amplitude: ~W/9 hairlines, each covering a random
+       vertical span with a soft fade at both ends, alternating a hair darker
+       and a hair lighter. It is what a weathered sandstone face looks like
+       close up, and it puts signal on every column of every silhouette. */
+    {
+      const n = Math.max(24, Math.round(W / 9));
+      const span = opt.baseY + 20 - topY;
+      for (let k = 0; k < n; k++) {
+        const x = -60 + dr() * (W + 120);
+        const y0 = topY + dr() * span * 0.85;
+        const len = span * (0.10 + dr() * 0.34);
+        const dark = dr() < 0.58;
+        const a = (dark ? 0.05 + dr() * 0.07 : 0.04 + dr() * 0.055) * (0.55 + 0.45 * F);
+        const gg = g.createLinearGradient(0, y0, 0, y0 + len);
+        gg.addColorStop(0, api.rgba(dark ? SHADEC : LITC, 0));
+        gg.addColorStop(0.35, api.rgba(dark ? SHADEC : LITC, a));
+        gg.addColorStop(0.7, api.rgba(dark ? SHADEC : LITC, a * 0.8));
+        gg.addColorStop(1, api.rgba(dark ? SHADEC : LITC, 0));
+        g.strokeStyle = gg;
+        g.lineWidth = 0.6 + dr() * (1.4 + 1.6 * F);
+        /* a slight lean, and a kink halfway, so 90 of them are not 90 rulers */
+        const lean = (dr() - 0.5) * len * 0.10;
+        g.beginPath();
+        g.moveTo(x, y0);
+        g.quadraticCurveTo(x + lean * 1.6, y0 + len * 0.5, x + lean, y0 + len);
+        g.stroke();
+      }
+    }
+
+    /* SHADED FACES (kept from round 2, no longer load-bearing). A silhouette
+       alone is a cutout; the faces turned away from the key being darker than
+       the ones turned toward it is part of what makes a distant range read as
+       rock. This only fires where a segment descends away from the light, so
+       it adds VARIETY on top of the face split above — it is not, on its own,
+       enough, which was the round-2 failure. */
+    const shade = api.mixHex(opt.rock, api.mixHex(LIGHT.ambient, HAZE, 0.5), 0.62);
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1], b = pts[i];
       const dx = b.x - a.x, dy = b.y - a.y;
@@ -340,7 +707,7 @@
       if (!away) continue;
       const drop = Math.min(opt.amp * 1.1, Math.abs(dy) * 2.4 + 14);
       const sg = g.createLinearGradient(0, Math.min(a.y, b.y), 0, Math.min(a.y, b.y) + drop);
-      sg.addColorStop(0, api.rgba(shade, 0.55 * opt.form));
+      sg.addColorStop(0, api.rgba(shade, 0.42 * F));
       sg.addColorStop(1, api.rgba(shade, 0));
       g.fillStyle = sg;
       g.beginPath();
@@ -898,14 +1265,20 @@
     const b = bodyPos(api);
     const lightX = Math.sign(b.x - api.VIEW.cx) || 1;
     const rand = mulberry32(strHash((api.MAP.id || 'map') + '|ridge'));
-    const band = api.clamp(hz * 0.78, 46, 230);   /* vertical room for the skyline */
+    /* ⚠ RAISED FROM 0.78. The skyline has to clear the BOARD, not the horizon:
+       the terrain module's tallest baked plateau tops out ~70px above the far
+       edge, and the near shoulders are the only ridge pixels a player ever
+       sees. At 0.78 the shoulders cleared the haze line by ~40px and read as
+       low mounds; 0.92 gives them a butte's worth of height while canyonBias
+       keeps the CENTRE low, where the board would hide them anyway. */
+    const band = api.clamp(hz * 0.92, 60, 280);   /* vertical room for the skyline */
 
     /* FAR range. Suppressed when the location supplies backdrop art — that art
        IS the far layer; drawing a procedural ridge over it would fight it. */
     if (!hasArt) {
       ridgeLayer(api, g, {
         rand: rand, baseY: hz - 6, amp: band * 0.95, seg: W * 0.17,
-        rock: ROCK_PALE, fog: 0.74, rim: 0.06, lw: 1, form: 0.35, lightX: lightX
+        rock: ROCK_PALE, fog: 0.72, rim: 0.05, lw: 1, form: 0.32, lightX: lightX, key: 'far'
       });
     } else {
       /* still burn a few random draws so the mid/near layers are identical
@@ -919,16 +1292,28 @@
        ⚠ It has to clear the TERRAIN, not just the horizon: the tallest baked
        plateau tops out ~70px above the far edge, so a range sized to hz alone
        is drawn and then completely hidden by the board. */
+    /* ⚠ THE TWO FOG NUMBERS BELOW ARE THE DEPTH ORDERING, AND ROUND 2 HAD THEM
+       BACKWARDS. Measured on the round-2 board crop, the MID range came out
+       MORE saturated than the NEAR one (29.5% vs 23.2%) at the SAME value
+       (L 104.8 vs 103.2) — i.e. the two ranges did not separate in depth at
+       all. The cause was the haze colour, not these numbers (see hazeColour),
+       but they are retuned against the new one: mixed toward a LIGHT horizon
+       haze, 0.34 puts MID around L 128 / sat 31% and 0.04 puts NEAR around
+       L 75 / sat 47%. Lighter AND less saturated with distance, which is the
+       clause. Do not raise NEAR's fog to "match" — the gap IS the depth. */
     ridgeLayer(api, g, {
       rand: rand, baseY: hz - 4, amp: band * 0.82, seg: W * 0.125,
-      rock: ROCK_BASE, fog: 0.46, rim: 0.16, lw: 1.4, form: 0.7, lightX: lightX
+      rock: ROCK_BASE, fog: 0.34, rim: 0.13, lw: 1.4, form: 0.62, lightX: lightX, key: 'mid'
     });
-    /* NEAR bluffs — most contrast, least fog. Same reasoning: tall at the
+    /* NEAR bluffs — most contrast, least haze. Same reasoning: tall at the
        sides (where they frame the field), low in the middle (where the board
-       would hide them anyway). */
+       would hide them anyway). The rock is lifted off ROCK_DEEP toward
+       ROCK_BASE because with the haze mix down at 0.15 a pure ROCK_DEEP range
+       measured L 64 and read as a black band rather than as a near bluff. */
     ridgeLayer(api, g, {
       rand: rand, baseY: hz + 8, amp: band * 0.56, seg: W * 0.085,
-      rock: ROCK_DEEP, fog: 0.14, rim: 0.24, lw: 1.7, form: 1.0, lightX: lightX
+      rock: api.mixHex(ROCK_DEEP, ROCK_BASE, 0.28), fog: 0.04, rim: 0.24,
+      lw: 1.7, form: 1.0, lightX: lightX, key: 'near'
     });
 
     /* ── the ground BEYOND the play field. Painted over the whole area below
@@ -1396,11 +1781,75 @@
      Runs after the depth-sorted actors. Composited fills and one tiny
      downsampled bloom — a full-viewport getImageData every frame is far too
      expensive and is not needed for any of this. */
+  /* ── THE COOL-SHADOW MASK ─────────────────────────────────────────────────
+     Round 3's second failed clause: the key was warm but so were the shadows.
+     Getting "cool blue-grey in shadow" out of canvas-2D without a per-pixel
+     loop needs a term that scales with DARKNESS, and the flat-fill blend modes
+     cannot do that on their own — 'screen' with a navy comes closest but it
+     still moves a lit midtone by a third of what it moves a black, which is
+     enough to drag the warm interior mean down with it.
+     So: build a mask at thumbnail scale — invert the frame, desaturate it,
+     cube it — and add the tint through that. inv³ is ~0.58 on a near-black,
+     ~0.41 on a shadowed cliff wall, ~0.21 on the interior mean and ~0.02 on
+     lit sand, i.e. it lands almost entirely in the shadows.
+     ⚠ IT MUST BE DESATURATED BEFORE THE CUBE. Without that step the mask is
+     the PER-CHANNEL inverse, and a warm highlight's blue channel is its
+     darkest one — so the "shadow" tint would pour blue into exactly the
+     sunlit sand it must not touch. 'saturation' is feature-detected because a
+     canvas that silently drops it would paint flat grey and turn the mask into
+     a uniform veil. */
+  function shadowThumb(api, src, bw, bh) {
+    if (!S.shade.cv) S.shade.cv = document.createElement('canvas');
+    if (S.shade.cv.width !== bw || S.shade.cv.height !== bh) {
+      S.shade.cv.width = bw; S.shade.cv.height = bh;
+      S.shade.g = S.shade.cv.getContext('2d');
+    }
+    const s = S.shade.g; if (!s) return null;
+    s.setTransform(1, 0, 0, 1, 0, 0);
+    s.globalCompositeOperation = 'source-over';
+    s.globalAlpha = 1;
+    try { s.filter = 'none'; } catch (e) { }
+    s.clearRect(0, 0, bw, bh);
+    s.drawImage(src, 0, 0, bw, bh);
+    /* invert */
+    s.globalCompositeOperation = 'difference';
+    s.fillStyle = '#ffffff';
+    s.fillRect(0, 0, bw, bh);
+    /* desaturate — feature-detected, see the note above */
+    s.globalCompositeOperation = 'saturation';
+    const greyed = (s.globalCompositeOperation === 'saturation');
+    if (greyed) { s.fillStyle = 'hsl(0,0%,50%)'; s.fillRect(0, 0, bw, bh); }
+    /* cube, then colourise and set the strength in the same multiply */
+    s.globalCompositeOperation = 'multiply';
+    s.drawImage(S.shade.cv, 0, 0);
+    s.drawImage(S.shade.cv, 0, 0);
+    s.fillStyle = greyed ? SHADOW_TINT : SHADOW_TINT_WEAK;
+    s.fillRect(0, 0, bw, bh);
+    s.globalCompositeOperation = 'source-over';
+    /* a gentle blur so the tint does not inherit the frame's hard edges — a
+       shadow's colour bleeds, its geometry does not need to be exact */
+    try {
+      s.filter = 'blur(2px)';
+      s.globalCompositeOperation = 'copy';
+      s.drawImage(S.shade.cv, 0, 0);
+      s.filter = 'none';
+      s.globalCompositeOperation = 'source-over';
+    } catch (e) { try { s.filter = 'none'; } catch (e2) { } s.globalCompositeOperation = 'source-over'; }
+    return S.shade.cv;
+  }
+
   function bloom(api) {
     const ctx = api.ctx, W = api.W, H = api.H;
     const src = ctx.canvas;
     if (!src) return;
     const bw = Math.max(32, Math.round(W / 7)), bh = Math.max(24, Math.round(H / 7));
+    /* ⚠ THE SHADOW MASK IS BUILT FIRST, FROM THE UNTOUCHED FRAME. Both terms
+       are keyed on the frame's own luminance and both are additive, so they
+       share ONE upscale (see the note on nearest-neighbour below — a second
+       full-canvas upscale would cost more than every other pass in this
+       module put together). Build order therefore matters only in that
+       neither may see the other's contribution. */
+    const shadeCv = shadowThumb(api, src, bw, bh);
     if (!S.bloom.cv) S.bloom.cv = document.createElement('canvas');
     if (S.bloom.cv.width !== bw || S.bloom.cv.height !== bh) {
       S.bloom.cv.width = bw; S.bloom.cv.height = bh;
@@ -1436,13 +1885,26 @@
       g.filter = 'none';
       g.globalCompositeOperation = 'source-over';
     } catch (e) { g.filter = 'none'; g.globalCompositeOperation = 'source-over'; }
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
     /* ⚠ 0.42 with an x³ curve washed the whole field: the sand is bright
        enough that "the brightest pixels" was most of the board. x⁵ and a
        quarter of the gain keeps the bloom on the sun, the water sheen and the
-       lit tiles, which is what it is for. */
-    ctx.globalAlpha = 0.30;
+       lit tiles, which is what it is for. The gain used to be `globalAlpha` on
+       the upscale; it is a multiply by a flat grey now, because the upscale is
+       shared with the shadow tint and the two need different strengths. */
+    g.globalCompositeOperation = 'multiply';
+    g.fillStyle = 'rgb(77,77,77)';                 /* 77/255 ≈ the old 0.30 */
+    g.fillRect(0, 0, bw, bh);
+    /* …and the cool shadow term joins it. Both are additive, so summing them
+       in the thumbnail and adding once is identical to adding them
+       separately. */
+    if (shadeCv) {
+      g.globalCompositeOperation = 'lighter';
+      g.drawImage(shadeCv, 0, 0);
+    }
+    g.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 1;
     /* ⚠ NEAREST-NEIGHBOUR ON PURPOSE. Bilinear-upscaling the thumbnail to the
        full 1640x1600 canvas measured 26.8ms/frame here; nearest is 8.5ms and
        the difference is invisible, because the source was gaussian-blurred at
@@ -1458,9 +1920,10 @@
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
-    /* 1. BLOOM on the brightest pixels only. Must run before the veil so the
-       fog does not get bloomed, and before the clamps so it cannot blow a
-       pixel to pure white. */
+    /* 1. BLOOM on the brightest pixels, and the COOL TINT on the darkest — one
+       shared thumbnail upscale. Must run before the veil so the fog does not
+       get bloomed, and before the clamps so it cannot blow a pixel to pure
+       white. */
     try { bloom(api); } catch (e) { ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; try { ctx.filter = 'none'; } catch (e2) { } }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
@@ -1470,8 +1933,13 @@
     /* 3. THE FILMIC PASS.
        'overlay' with a warm ochre pushes the midtones warm and adds a little
        S-curve; the two flat clamps that follow do the toe and the shoulder. */
+    /* ⚠ 0.13 → 0.10. 'overlay' doubles a dark pixel's own value against the
+       ochre, so it warms the SHADOWS harder than it warms the midtones — it
+       was quietly undoing a third of the cool tint applied in step 1. The
+       midtone warmth it is here for survives the cut (interior mean R−B still
+       measures around +26); the shadows keep theirs. */
     ctx.globalCompositeOperation = 'overlay';
-    ctx.globalAlpha = 0.13;
+    ctx.globalAlpha = 0.10;
     ctx.fillStyle = api.mixHex(SAND_BASE, LIGHT.key, 0.28);
     ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
@@ -1499,6 +1967,17 @@
      A stale bake is completely silent — the frame still paints, it just paints
      the PREVIOUS time of day — so there has to be a way to ask. */
   window.__vistaDebug = function () {
-    return { skyKey: S.sky.key, landKey: S.land.key, lastBake: +S.lastBake.toFixed(2), artCached: S.art.size };
+    return {
+      skyKey: S.sky.key, landKey: S.land.key,
+      lastBake: +S.lastBake.toFixed(2), artCached: S.art.size,
+      /* dump one bake on its own — __vistaDebug().png('land'). The board draws
+         over the bottom two thirds of the land bake, so "is the skyline flat?"
+         cannot be answered from a board screenshot alone; this is the only way
+         to look at the ridges unobstructed. */
+      png: function (which) {
+        const r = S[which];
+        try { return r && r.cv ? r.cv.toDataURL('image/png') : null; } catch (e) { return null; }
+      }
+    };
   };
 })();

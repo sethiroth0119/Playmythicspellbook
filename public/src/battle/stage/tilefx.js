@@ -148,8 +148,17 @@ const JIT_STATE = 0.10;
    Surfaces spill further and softer than states: a puddle has no edge at all,
    whereas a movement highlight still has to answer "is THIS tile legal?", so
    its mask stays close to the tile it belongs to. */
-const MASK_SURF  = { base: 1.44, amp: 0.20, blur: 0.24, halo: 1.28, haloBlur: 0.34 };
-const MASK_STATE = { base: 1.20, amp: 0.13, blur: 0.17, halo: 1.26, haloBlur: 0.30 };
+const MASK_SURF  = { base: 1.44, amp: 0.20, blur: 0.24, halo: 1.28, haloBlur: 0.34, tag: 's' };
+const MASK_STATE = { base: 1.20, amp: 0.13, blur: 0.17, halo: 1.26, haloBlur: 0.30, tag: 'p' };
+
+/* ⚠ SOLIDS NEED A TIGHTER MASK THAN LIQUIDS. MASK_SURF's 0.24 feather is right
+   for a puddle, an oil slick or a gas cloud — those genuinely have no edge.
+   Applied to ICE it was wrong in kind, not in degree: a frozen sheet is a rigid
+   plate with a rim, and fading it out over a quarter of a tile turned it into
+   fog lying on the sand. A painter can opt into this instead by setting
+   `mask: MASK_SOLID`. `tag` keys the mask cache, so a new opt object MUST carry
+   a new one or two different masks silently share a cache entry. */
+const MASK_SOLID = { base: 1.28, amp: 0.18, blur: 0.115, halo: 1.24, haloBlur: 0.30, tag: 'q' };
 
 /* ── projected-polygon cache ───────────────────────────────────────────────
    The camera is static and the heightfield is baked, so a tile's screen
@@ -263,20 +272,45 @@ function sizeCv(cv, w, h) {
 let _shCv = null, _shC = null;   /* sharp silhouette */
 let _scCv = null, _scC = null;   /* painter content  */
 
-/* ⚠ CLEAR ONLY THE RECT IN USE. The shared scratch grows to the biggest region
-   ever seen; clearing (and 'destination-in'-ing) the WHOLE canvas for a
-   one-tile puddle cost ~4× more than the region needed and was most of why the
-   first version of this compositor ran at 670 ms/frame in the harness. Stale
-   pixels outside the rect are harmless because every blit reads a source rect
-   of exactly (0,0,pw,ph). */
-function shCtx(pw, ph) {
+/* ⚠ CLEAR THE RECT IN USE **PLUS A MARGIN**. The shared scratch grows to the
+   biggest region ever seen; clearing (and 'destination-in'-ing) the WHOLE
+   canvas for a one-tile puddle cost ~4× more than the region needed and was
+   most of why the first version of this compositor ran at 670 ms/frame in the
+   harness. So the rect-limited clear stays.
+
+   ⚠ ROUND 3 BUG — THE ONE-PIXEL GOLD HAIRLINE. This function used to clear
+   exactly (0,0,pw,ph) and the comment claimed the stale pixels beyond it were
+   harmless "because every blit reads a source rect of exactly (0,0,pw,ph)".
+   That invariant is FALSE, and it cost a critic round. drawImage with a source
+   sub-rect of an OVERSIZED canvas is a scaled texture read, and Chromium's
+   bilinear sampler reaches one texel past the sub-rect on the far side. Two
+   reads do it:
+     • maskScratch()'s 'destination-in' upscales the mask mw×mh → w×h, so a
+       stale non-zero ALPHA one texel out re-admits painter content exactly
+       where the true mask is 0;
+     • blit()/staticLayer() then downscale pw×ph → g.w×g.h in CSS px.
+   The visible result was a 1px axis-aligned bright line down the RIGHT and
+   along the BOTTOM of any region smaller than the largest one drawn before it
+   — measured as a 289px row + 115px column right-angle in gold on the sand.
+   It only shows when a bigger region ran first, which is why it hid from the
+   plain harness run and would have surfaced in real play as paint changed.
+
+   The fix costs two extra pixel rows: clear pw+PAD / ph+PAD. Painter content
+   is clipped to (0,0,w,h) in maskScratch() and the mask raster is drawn with a
+   transform that cannot reach past its own bbox, so the margin stays
+   transparent and the sampler now bleeds TRANSPARENCY instead of last frame.
+   PAD is 2 for the plain reads; rasterMask passes a bigger one because its
+   read carries a blur filter whose kernel reaches further. */
+const SCRATCH_PAD = 2;
+function shCtx(pw, ph, pad) {
   if (!_shCv) { _shCv = mkCv(pw, ph); _shC = _shCv.getContext('2d'); }
   sizeCv(_shCv, pw, ph);
   _shC.setTransform(1, 0, 0, 1, 0, 0);
   _shC.globalCompositeOperation = 'source-over';
   _shC.globalAlpha = 1;
   _shC.filter = 'none';
-  _shC.clearRect(0, 0, pw, ph);
+  const p = pad == null ? SCRATCH_PAD : pad;
+  _shC.clearRect(0, 0, pw + p, ph + p);
   return _shC;
 }
 function scCtx(pw, ph) {
@@ -286,7 +320,7 @@ function scCtx(pw, ph) {
   _scC.globalCompositeOperation = 'source-over';
   _scC.globalAlpha = 1;
   _scC.filter = 'none';
-  _scC.clearRect(0, 0, pw, ph);
+  _scC.clearRect(0, 0, pw + SCRATCH_PAD, ph + SCRATCH_PAD);
   return _scC;
 }
 
@@ -331,7 +365,12 @@ function blobPath(c, api, it, base, amp) {
    rasterisation cost and the memory the cache holds. */
 function rasterMask(api, g, base, amp, blurPx, target) {
   const mw = g.mw, mh = g.mh, s = g.mdpr;
-  const sh = shCtx(mw, mh);
+  /* the read below carries a blur filter, whose kernel samples further out of
+     the source sub-rect than the plain sampler's one texel — so clear a margin
+     wide enough to cover it, or a stale silhouette smears back in along the
+     right/bottom edge (see the SCRATCH_PAD note above). */
+  const bRad = Math.max(0.4, blurPx * s);
+  const sh = shCtx(mw, mh, Math.ceil(bRad * 3) + 2);
   sh.setTransform(s, 0, 0, s, -g.x0 * s, -g.y0 * s);
   sh.fillStyle = '#ffffff';
   for (const it of g.list) {
@@ -345,11 +384,13 @@ function rasterMask(api, g, base, amp, blurPx, target) {
   t.globalCompositeOperation = 'source-over';
   t.globalAlpha = 1;
   t.filter = 'none';
-  t.clearRect(0, 0, mw, mh);
+  /* +pad for the same reason as the scratch: maskScratch() reads this canvas
+     as a SCALED sub-rect, so its right/bottom margin must be transparent. */
+  t.clearRect(0, 0, mw + SCRATCH_PAD, mh + SCRATCH_PAD);
   /* Blur is applied at BLIT time with an identity transform, so the radius is
      in the mask's own pixels and does not silently change with DPR or a stray
      scale left on the scratch context. */
-  t.filter = 'blur(' + Math.max(0.4, blurPx * s).toFixed(2) + 'px)';
+  t.filter = 'blur(' + bRad.toFixed(2) + 'px)';
   t.drawImage(_shCv, 0, 0, mw, mh, 0, 0, mw, mh);
   t.filter = 'none';
 }
@@ -513,7 +554,7 @@ function group(api, tiles, lift, amp, opt) {
     sig: _epoch + '#' + lift + '#' + sig.sort().join(' ')
   };
   if (g.w <= 0 || g.h <= 0 || g.pw > 4096 || g.ph > 4096) return null;
-  buildMask(api, g, opt, opt === MASK_SURF ? 's' : 'p');
+  buildMask(api, g, opt, opt.tag || 'p');
   return g;
 }
 
@@ -1047,65 +1088,258 @@ const PAINTERS = {
     }
   },
 
-  /* ── ICE ── a translucent slab.
-     ⚠ The round-1 version opened with an unclipped source-over feather at 1.9
-     tile radii, which was the only source-over unclipped paint in the file and
-     rendered as a large milky near-white PANEL hanging above the ground — the
-     single worst artefact the critic found. It is gone. The cold now arrives
-     as a faint blue 'multiply' halo (frost cools the sand it creeps over) plus
-     a low 'lighter' sheen, both through the dilated mask, so nothing extends
-     past the pool's own irregular outline. */
+  /* ── ICE ── a frozen SLAB lying in the sand.
+     ⚠ THREE ROUNDS OF THE SAME MISTAKE, and the correction is the point of
+     every number below. Round 1 opened with an unclipped source-over feather
+     at 1.9 tile radii — a milky near-white panel hanging above the ground.
+     Round 2 clipped it to the mask but kept the shape: a centre-weighted
+     radial of 60%-alpha near-white reaching 1.62 tile radii, plus a
+     ['#c8e4f4', 0.11, 'lighter'] halo through the 1.28×-dilated, 0.34-blurred
+     mask. Additive near-white through a dilated blurred mask is a BLOOM by
+     construction: it read as ATMOSPHERIC HAZE floating in the air, spilled a
+     full tile past the pool and desaturated the units standing beside it.
+
+     The diagnosis a critic handed back was exact: "no frost in the crease
+     seams, no ice plane, no cold specular the eye can land on." So the shape
+     changed, not just the alpha:
+       • the additive halo is GONE. Ice does not emit. What it does to the sand
+         around it is CHILL it, so only a cold multiply spills outward now.
+       • the slab is a near-FLAT region-wide fill, not a radial. A radial that
+         falls to zero has no edge, and a material with no edge is haze; the
+         mask supplies the outline, so the fill must not fade on its own.
+       • multiply carries most of the work, so the sand's dune ripples read
+         THROUGH the ice. Seeing the ground under it, colder and darker, is
+         what says "translucent frozen layer" instead of "white sticker".
+       • the structure the eye lands on is now real: fractured plates, frost
+         packed into the crease seam between two ice tiles, dendrites, and one
+         tight specular glint per tile instead of a tile-wide sheen. */
   ice: {
     sStatic: true,
-    halo: () => [['#8fb6cc', 0.16, 'multiply'], ['#c8e4f4', 0.11, 'lighter']],
-    s(api, c, g) {
-      for (const it of g.list) {                /* the slab itself */
+    mask: MASK_SOLID,          /* a rigid plate has a rim; see MASK_SOLID */
+    /* cold only — see the note above for why there is no 'lighter' entry */
+    halo: () => [['#7ea2bc', 0.26, 'multiply']],
+    m(api, c, g) {
+      /* THE PLANE. One flat region-wide multiply: it cools and slightly darkens
+         the sand uniformly, which is what a translucent slab does, and being
+         uniform it cannot double-darken a shared edge or reintroduce the grid.
+         Blue is deliberately the least-attenuated channel (188/255 against
+         127/255 on red) so warm sand comes out cold grey, not merely dimmer.
+
+         ⚠ THIS IS DELIBERATELY NOT A PALE FILM. The first version of this
+         rewrite went the other way — a light multiply plus a strong pale
+         source-over — and it measured (126,133,131) against (102,90,70) sand:
+         cooler, yes, but LIGHTER and low-contrast, and at board zoom that reads
+         as fog lying on the ground, not as ice. Matching the sand's luma and
+         winning on hue instead is what makes it read as a material. */
+      c.fillStyle = api.rgba('#7fa2bc', 0.52);
+      fill(c, g);
+      /* thickness. The slab is deeper where it pooled, and a real sheet of ice
+         over uneven ground is darker there — a faint centre weighting on TOP
+         of the flat plane, not instead of it. */
+      for (const it of g.list) {
         const m = it.m;
-        radial(c, m.cx, m.cy, m.ax, m.ay, m.ax * 1.62, [
-          [0,    api.rgba('#c2e4f8', 0.60)],
-          [0.55, api.rgba('#a6d2ea', 0.44)],
-          [1,    api.rgba('#9cc8e2', 0)]
+        radial(c, m.cx, m.cy, m.ax, m.ay, m.ax * 1.30, [
+          [0,    api.rgba('#5b7f9c', 0.18)],
+          [0.62, api.rgba('#5b7f9c', 0.08)],
+          [1,    api.rgba('#5b7f9c', 0)]
         ]);
-        /* ⚠ Fracture lines were 3 steps of 0.40 tile at 40% white, which at
-           this camera is a 1.2-tile-long bright white STICK. Six of those per
-           tile read as scratches lying on the sand, not as ice. Short, dim,
-           and hairline is the whole difference. */
-        c.strokeStyle = api.rgba('#e8f6ff', 0.20);
-        c.lineWidth = Math.max(0.6, m.ax * 0.016);
-        for (let i = 0; i < 4; i++) {
-          const a = api.hash(it.x, it.z, i) * 6.283;
-          let px = m.cx + (api.hash(it.z, it.x, i + 80) - 0.5) * m.ax * 0.5;
-          let py = m.cy + (api.hash(it.x, it.z, i + 81) - 0.5) * m.ay * 0.5;
-          c.beginPath(); c.moveTo(px, py);
-          for (let s = 1; s <= 3; s++) {
-            px += Math.cos(a + (api.hash(it.x, it.z, i * 3 + s) - 0.5)) * m.ax * 0.20;
-            py += Math.sin(a + (api.hash(it.z, it.x, i * 3 + s) - 0.5)) * m.ay * 0.20;
-            c.lineTo(px, py);
+      }
+    },
+    s(api, c, g) {
+      /* the frozen sheet itself: pale, cold, and FLAT. 0.38 against round 2's
+         0.60-at-centre radial — enough to lift the surface clear of the sand,
+         far short of covering it. */
+      c.fillStyle = api.rgba('#b6d8f2', 0.28);
+      fill(c, g);
+
+      /* ⚠ ICE DETAIL IS TEXTURE, NOT LINEWORK. The first attempt at this pass
+         drew what the design called for — fractured plates, a rime line packed
+         into the crease seam — as long strokes, and the screenshot was
+         unambiguous: three chords per tile at 1.25-1.8 tile radii became a
+         white STARBURST across the pool, and a continuous stroked seam between
+         two ice tiles drew a bright cross exactly on the tile border, i.e. it
+         put the chessboard back on the board in white. Same failure as round
+         1's "1.2-tile-long bright white stick", just at region scale.
+         Everything below is therefore SHORT, DIM and GRANULAR: the frost reads
+         as a frozen crust because there is fine structure in it, not because
+         any single mark is legible. */
+      for (const it of g.list) {
+        const m = it.m, sy = m.ay / m.ax;
+        const h = n => api.hash(it.x, it.z, n);
+        const h2 = n => api.hash(it.z, it.x, n);
+
+        /* ── PLATE STEPS ── two short chords with a bevel: one dim line on the
+           shaded side, one lighter line on the lit side, a hair apart. The pair
+           is the cue — a single line is a scratch, two lines a pixel apart are
+           a STEP between two plates of a solid sheet. Half-length 0.42 of the
+           tile, so a chord is under half a tile end to end and cannot become a
+           spoke of a star. This is the one painter allowed straight lines: a
+           frozen sheet fractures in chords and nothing else here does. */
+        for (let i = 0; i < 2; i++) {
+          const a  = h(i + 40) * 3.14159;
+          const dx = Math.cos(a), dy = Math.sin(a) * sy;
+          const nx = -Math.sin(a), ny = Math.cos(a) * sy;
+          const off = (h2(i + 41) - 0.5) * 1.0 * m.ax;
+          const px = m.cx + nx * off, py = m.cy + ny * off;
+          const L  = m.ax * (0.34 + h(i + 42) * 0.16);
+          const w  = Math.max(0.6, m.ax * 0.016);
+          const seg = (ox, oy, col, al) => {
+            c.strokeStyle = api.rgba(col, al);
+            c.lineWidth = w;
+            c.beginPath();
+            c.moveTo(px - dx * L + ox, py - dy * L + oy);
+            c.lineTo(px + nx * m.ax * 0.04 + ox, py + ny * m.ay * 0.04 + oy);
+            c.lineTo(px + dx * L + ox, py + dy * L + oy);
+            c.stroke();
+          };
+          seg(nx * w,  ny * w,  '#3f6480', 0.16);   /* shaded side */
+          seg(-nx * w, -ny * w, '#eef9ff', 0.17);   /* lit side    */
+        }
+
+        /* ── CRUST ── the granular half. Many tiny bright specks and a few
+           faint dark pits: at this camera no one resolves an individual mark,
+           what carries is that the surface is not smooth. Without this the
+           slab is a flat wash again no matter how good its colour is. */
+        for (let i = 0; i < 26; i++) {
+          const a = h(i + 100) * 6.283;
+          const d = Math.sqrt(h2(i + 101)) * m.ax * 1.05;
+          const cx = m.cx + Math.cos(a) * d, cy = m.cy + Math.sin(a) * d * sy;
+          const r = m.ax * (0.008 + h(i + 102) * 0.020);
+          const lit = h2(i + 103) > 0.28;
+          c.fillStyle = api.rgba(lit ? '#f2fbff' : '#5d7f97', lit ? 0.13 : 0.09);
+          c.beginPath();
+          c.ellipse(cx, cy, r, r * sy, 0, 0, 6.3);
+          c.fill();
+        }
+
+        /* ── DENDRITES ── frost feathering across the plate. Short and barbed;
+           this is what carries the frost read on an ISOLATED ice tile, which
+           has no crease seam to pack rime into. */
+        c.strokeStyle = api.rgba('#e6f6ff', 0.17);
+        c.lineWidth = Math.max(0.5, m.ax * 0.010);
+        for (let i = 0; i < 6; i++) {
+          const a = h(i + 60) * 6.283;
+          const bx = m.cx + (h2(i + 61) - 0.5) * m.ax * 1.5;
+          const by = m.cy + (h(i + 62) - 0.5) * m.ay * 1.5;
+          const len = m.ax * (0.09 + h2(i + 63) * 0.08);
+          c.beginPath();
+          c.moveTo(bx, by);
+          c.lineTo(bx + Math.cos(a) * len, by + Math.sin(a) * len * sy);
+          for (let k = 1; k <= 2; k++) {                /* two barbs */
+            const t = k / 3;
+            const sx = bx + Math.cos(a) * len * t, sty = by + Math.sin(a) * len * t * sy;
+            const ba = a + (k % 2 ? 1 : -1) * 1.05;
+            c.moveTo(sx, sty);
+            c.lineTo(sx + Math.cos(ba) * len * 0.42, sty + Math.sin(ba) * len * 0.42 * sy);
           }
           c.stroke();
+        }
+
+        /* ── COLD SPECULAR ── one tight glint per tile, in `s` and therefore at
+           FULL resolution and crisp. Round 2's sheen was a 1.05-tile-radius
+           radial at 0.34-0.46 alpha; that is not a highlight, that is fog. A
+           specular has to be small enough and hard enough that the eye can land
+           on it and say "that surface is flat, hard and frozen". */
+        const gx = m.cx + (h(70) - 0.5) * m.ax * 0.7;
+        const gy = m.cy - m.ay * (0.16 + h2(71) * 0.18);
+        radial(c, gx, gy, m.ax, m.ay * 0.30, m.ax * 0.30, [
+          [0,    api.rgba('#ffffff', 0.50)],
+          [0.42, api.rgba('#dff2ff', 0.19)],
+          [1,    api.rgba('#cfe8ff', 0)]
+        ]);
+      }
+
+      /* ── RIME IN THE CREASE SEAM ────────────────────────────────────────
+         The terrain draws a darker crease along every tile border, and frost
+         collects in a crease — so an ice pool spanning two tiles gets rime
+         packed into the seam between them. That detail is most of what makes
+         the pool read as material lying IN the ground rather than a wash
+         floating over it.
+
+         ⚠ NO CONTINUOUS STROKE. The first version stroked the seam curve with
+         a soft 0.20-tile band plus a bright rime line, and it drew a clean
+         bright CROSS on the tile border — the chessboard, in white. It is
+         drawn as a DRIFT instead: crystals and stubs scattered along the seam
+         with jitter either side of it, so the frost follows the crease without
+         any mark tracing it.
+
+         ⚠ INTERNAL EDGES ONLY, each drawn from exactly ONE of its two owners.
+         Rime on the region's OUTER perimeter would outline the pool — the very
+         mark this file exists to delete — and drawing a shared seam twice
+         would double its alpha and make it the loudest thing in the pool. */
+      for (const it of g.list) {
+        const q = it.q;
+        const sides = [];
+        if (g.set.has(it.x + ',' + (it.z - 1))) sides.push([q[0], q[1], q[2], 0]);
+        if (g.set.has((it.x - 1) + ',' + it.z)) sides.push([q[6], q[7], q[0], 1]);
+        if (!sides.length) continue;
+        const m = it.m, sy = m.ay / m.ax;
+        for (const sd of sides) {
+          /* ⚠ SCATTER PERPENDICULAR TO THE SEAM, NOT IN SCREEN X/Y. The first
+             drift jittered each mark by ±0.08 of the tile in x and in y
+             independently, which for a near-VERTICAL seam is almost no
+             sideways spread at all — the result was a tidy column of dots
+             sitting on the tile border, i.e. the same grid line, dotted. The
+             offset has to be taken along the seam's own normal, and it has to
+             be wide (up to ~0.30 tile) with a sqrt weighting so the frost is
+             densest in the crease and thins out into both plates. */
+          const tx = sd[2].x - sd[0].x, ty = sd[2].y - sd[0].y;
+          const tl = Math.hypot(tx, ty) || 1;
+          const nx = -ty / tl, ny = tx / tl;
+          const N = 26;
+          for (let i = 0; i < N; i++) {
+            const hh = n => api.hash(it.x * 31 + i, it.z * 17 + sd[3], n);
+            /* t is jittered too, so the marks are not evenly spaced — evenly
+               spaced marks read as a dashed line however far they scatter */
+            const t = (i + hh(0)) / N;
+            const u = 1 - t;
+            const ix = u * u * sd[0].x + 2 * u * t * sd[1].x + t * t * sd[2].x;
+            const iy = u * u * sd[0].y + 2 * u * t * sd[1].y + t * t * sd[2].y;
+            const d = (hh(1) < 0.5 ? -1 : 1) * Math.sqrt(hh(2)) * m.ax * 0.24;
+            const px = ix + nx * d, py = iy + ny * d;
+            /* fade with distance from the crease: rime is packed in the
+               groove and merely dusted on the plates either side */
+            const f = 1 - Math.abs(d) / (m.ax * 0.24);
+            const r = m.ax * (0.010 + hh(3) * 0.020);
+            c.fillStyle = api.rgba('#f4fcff', (0.11 + hh(4) * 0.17) * (0.35 + 0.65 * f));
+            c.beginPath();
+            c.ellipse(px, py, r, r * sy, 0, 0, 6.3);
+            c.fill();
+            if (hh(5) > 0.62) {                     /* a short crystal stub */
+              c.strokeStyle = api.rgba('#eaf7ff', 0.20 * (0.35 + 0.65 * f));
+              c.lineWidth = Math.max(0.5, m.ax * 0.010);
+              const ln = m.ax * (0.04 + hh(6) * 0.06);
+              const aa = hh(7) * 6.283;
+              c.beginPath();
+              c.moveTo(px, py);
+              c.lineTo(px + Math.cos(aa) * ln, py + Math.sin(aa) * ln * sy);
+              c.stroke();
+            }
+          }
         }
       }
     },
     l(api, c, g) {
+      /* Everything hard-edged now lives in `s`. What is left here is a slow,
+         low-amplitude cold shimmer — sub-surface scatter creeping through the
+         slab. Kept small on purpose: this is the layer that used to be the
+         bloom, and the driver renders a non-static `l` at HALF resolution, so
+         nothing crisp may live here anyway. */
+      /* ⚠ THE COLD LIFT, and the same trick the puddle painter documents: sand
+         starts with its blue channel far below red, so NO multiply can make it
+         read blue — the darkest a cyan multiply gets you is olive. One flat
+         additive pass is what puts B above R, and being flat it cannot draw a
+         seam at a tile join. */
+      c.fillStyle = api.rgba('#2a6fa8', 0.11);
+      fill(c, g);
       for (const it of g.list) {
         const m = it.m;
-        const tw = 0.5 + 0.5 * Math.sin(api.T * 2.4 + it.x + it.z * 2);
-        /* the sheen: a broad grazing reflection off a flat frozen surface,
-           weighted to the far half where this camera pitch would catch it */
-        radial(c, m.cx + m.ax * 0.18, m.cy - m.ay * 0.30, m.ax, m.ay * 0.42, m.ax * 1.05, [
-          [0, api.rgba('#eaf8ff', 0.34 + 0.12 * tw)],
-          [0.6, api.rgba('#cfe8ff', 0.08)],
-          [1, api.rgba('#cfe8ff', 0)]
+        const tw = 0.5 + 0.5 * Math.sin(api.T * 1.5 + it.x * 1.7 + it.z * 2.3);
+        radial(c, m.cx + m.ax * 0.10, m.cy - m.ay * 0.16, m.ax, m.ay * 0.46, m.ax * 0.80, [
+          [0,   api.rgba('#bfe4ff', 0.09 + 0.05 * tw)],
+          [0.6, api.rgba('#a8d4f4', 0.03)],
+          [1,   api.rgba('#a8d4f4', 0)]
         ]);
-        for (let i = 0; i < 6; i++) {           /* frost bloom, not spurs */
-          const a = api.hash(it.x, it.z, i + 60) * 6.283;
-          const d = m.ax * (0.35 + api.hash(it.z, it.x, i + 61) * 0.55);
-          const r = m.ax * (0.10 + api.hash(it.x, it.z, i + 62) * 0.10);
-          radial(c, m.cx + Math.cos(a) * d, m.cy + Math.sin(a) * d * (m.ay / m.ax),
-                 r, r * (m.ay / m.ax), r * 2.2, [
-            [0, api.rgba('#f2fbff', 0.16)], [1, api.rgba('#cfe8ff', 0)]
-          ]);
-        }
       }
     }
   },
@@ -1402,7 +1636,7 @@ function drawSurfaces(api) {
     byKey.forEach((tiles, fx) => {
       const P = PAINTERS[fx] || PAINTERS._neutral;
       let g = null;
-      try { g = group(api, tiles, LIFT_SURF, JIT_SURF, MASK_SURF); } catch (e) {}
+      try { g = group(api, tiles, LIFT_SURF, JIT_SURF, P.mask || MASK_SURF); } catch (e) {}
       if (!g) return;
 
       /* 1. the outward spill, through the dilated mask */

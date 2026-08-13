@@ -1,0 +1,778 @@
+/* ============================================================================
+   src/battle/hud.css — BATTLE HUD RELAYOUT + ORNATE SKIN   (piece: battle-hud)
+
+   Loaded from index.html AFTER src/battle/chrome.css so it wins on ordinary
+   source order at ordinary specificity. Its companion is src/battle/hud.js,
+   which does the re-parenting this file cannot express in CSS.
+
+   THE CONFIRMED SPEC THIS IMPLEMENTS
+     • hero portrait + HP bar for BOTH players -> TOP CENTRE, two banners
+       side by side, hex-cut portrait / name / "24 / 30" readout.
+     • the PLAYER's energy, deck, graveyard, realm deck and vanish deck
+       -> RIGHT edge.  The OPPONENT's identical cluster -> LEFT edge.
+     • END TURN -> a large hexagonal amber button, bottom right.
+     • battle log and the remaining controls: neat, fitted, out of the board.
+     • skin: dark, thin gold trim, ornate hex / diamond framing. Nothing may
+       stay a plain rounded rectangle with a flat fill.
+
+   🔴 WHAT THIS FILE MUST NEVER TOUCH — every one of these has already cost
+      real time, and each fails SILENTLY (no console error, no visual clue):
+     • `.board-area`, `.bb-catch`, `#bb-stage-host`, `.bb-stage`, `.wx-canvas`.
+       Every battlefield click travels .bb-catch -> postMessage -> the iframe's
+       pickTile() -> back. `_bbStageTrack()` sizes the 3D stage to .board-area's
+       rect and `.bb-catch` is recreated by every render. Restyling any of them,
+       or changing .board-area's box, kills every click on the board.
+       grep this file: none of those selectors appear outside this comment.
+     • `--bpw` (index.html ~6834) mirrors `.bp-wrap.bsx`'s width at every
+       breakpoint and positions the floating character box. This file therefore
+       does NOT change the right rail's width — 300 / 274 / 248 stay exactly as
+       index.html declares them, so the two can never drift.
+     • `.hand-strip`'s measured border box. src/battle/fit.js measures it and
+       writes --hand-clear, which feeds the board's height reservation. Nothing
+       below adds or removes a single pixel of the strip's height.
+
+   ⚠ RAIL WIDTHS ARE THE BOARD'S SIZE BUDGET. `--btl-rail-w` drives both
+     `.battle-left`'s width and `.battle-grid`'s first column, so `.board-area`
+     follows from it — and VIEW.scale in the stage derives from HEIGHT only, so
+     a wider board column shows MORE WORLD rather than zooming in. The rail
+     shrinks from 440 to 300 here because the two hero cards (its tallest,
+     widest content by far) have moved to the top band, and 300 is exactly the
+     right rail's width so the two clusters mirror each other to the pixel.
+
+   ⚠ `--r3-rail-r-real` is corrected from 248/228 to 300/274/248 — it is the
+     GRID RESERVATION for the right rail, and chrome.css mirrored the stale
+     `.bp-wrap` values instead of the `.bp-wrap.bsx` ones that actually win on
+     specificity (`.bp-wrap.bsx` is 300px, `.bp-wrap` is 248px). The column was
+     under-reserving 52px, which let the board column run under the deck rail.
+   ========================================================================== */
+
+
+/* ---------------------------------------------------------------------------
+   0. TOKENS
+   ------------------------------------------------------------------------ */
+:root {
+  --hudx-gold:        #d2a44e;
+  --hudx-gold-lit:    #f6dc95;
+  --hudx-gold-dim:    rgba(210, 164, 78, 0.42);
+  --hudx-gold-hair:   rgba(210, 164, 78, 0.26);
+  --hudx-blood:       rgba(122, 30, 34, 0.55);
+  --hudx-plate:       linear-gradient(180deg, rgba(19, 16, 30, 0.965), rgba(9, 8, 17, 0.99));
+  --hudx-plate-lit:   linear-gradient(180deg, rgba(30, 25, 45, 0.96), rgba(12, 10, 22, 0.99));
+  --hudx-ch:          9px;    /* corner chamfer */
+
+  /* Height of the top hero-banner band. Read by #battle-event-feed (below) so
+     the notification ticker always stacks UNDER the banners instead of behind
+     them — index.html hard-codes `top:92px`, which is exactly where the
+     banners now sit. */
+  --hud-banner-h: 140px;
+
+  /* Bottom-right END TURN hex. The right rail stops above it. */
+  --hudx-et-h: 116px;
+}
+
+/* The chamfered (octagonal) plate outline used everywhere in place of a
+   rounded rectangle. Declared once; every frame below just references it. */
+:root {
+  --hudx-clip: polygon(
+    var(--hudx-ch) 0, calc(100% - var(--hudx-ch)) 0,
+    100% var(--hudx-ch), 100% calc(100% - var(--hudx-ch)),
+    calc(100% - var(--hudx-ch)) 100%, var(--hudx-ch) 100%,
+    0 calc(100% - var(--hudx-ch)), 0 var(--hudx-ch));
+}
+
+
+/* ---------------------------------------------------------------------------
+   1. THE ORNATE PLATE
+   One recipe, applied by name to every panel in the HUD:
+     · square (or chamfered) corners — never a plain radius
+     · a 1px gold hairline set IN from the edge (::before)
+     · four gold corner braces (::after, drawn as eight background slices so it
+       costs no extra element and cannot affect layout)
+   Both pseudo-elements are pointer-events:none and inset-positioned, so they
+   can never intercept a click on a control underneath.
+   ------------------------------------------------------------------------ */
+.hudx-orn {
+  position: relative;
+  border-radius: 0;
+  border: 1px solid var(--hudx-gold-dim);
+  background: var(--hudx-plate);
+}
+.hudx-orn::before {
+  content: ""; position: absolute; inset: 4px;
+  border: 1px solid var(--hudx-gold-hair);
+  pointer-events: none;
+}
+.hudx-orn::after,
+.hudx-brace::after {
+  content: ""; position: absolute; inset: -1px; pointer-events: none;
+  background:
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 0    0    / 13px 1.6px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 0    0    / 1.6px 13px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 100% 0    / 13px 1.6px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 100% 0    / 1.6px 13px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 0    100% / 13px 1.6px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 0    100% / 1.6px 13px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 100% 100% / 13px 1.6px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 100% 100% / 1.6px 13px no-repeat;
+  opacity: 0.8;
+}
+.hudx-brace { position: relative; }
+
+/* A gold diamond tab, used to break the top and bottom edge of the big frames
+   so no long straight run of border is left reading as a box side. */
+.hudx-dia {
+  position: absolute; left: 50%; width: 11px; height: 11px;
+  transform: translateX(-50%) rotate(45deg);
+  background: linear-gradient(135deg, var(--hudx-gold-lit), #9a6f1e);
+  box-shadow: 0 0 8px rgba(246, 220, 149, 0.45);
+  pointer-events: none; z-index: 5;
+}
+.hudx-dia.t { top: -6px; }
+.hudx-dia.b { bottom: -6px; }
+
+
+/* ---------------------------------------------------------------------------
+   2. RAIL BUDGET — the board's width follows from these three numbers.
+      Mirrored breakpoint-for-breakpoint against chrome.css:98-100, because a
+      single unconditional :root rule here would also hand a 300px rail to a
+      1280px screen where index.html expects 280.
+   ------------------------------------------------------------------------ */
+/* ONE number per breakpoint, for all four variables that describe a rail:
+     --btl-rail-w      the left rail's width AND its grid column
+     --r3-rail-r-real  the right rail's grid column reservation
+     --bpw             the character box's mirror of the right rail's width
+   They are equal, so the two clusters are the same width to the pixel and the
+   character box can never drift off the rail's border again.
+
+   ⚠ Three sets of brackets were in play before this: chrome.css switched
+   --btl-rail-w at 1599/1279, index.html switched --bpw and `.bp-wrap.bsx` at
+   1500/1300, and chrome.css mirrored --r3-rail-r-real from `.bp-wrap` (248/228)
+   — the rule that LOSES to `.bp-wrap.bsx` (300/274/248) on specificity, so the
+   right column was reserving 52px less than the rail actually occupies. All of
+   it collapses to the 1500/1300 pair below. hud.css is the last stylesheet, so
+   these win over every earlier bracket at every width.
+
+   ⚠ The numbers are the rail's SIZE BUDGET FOR THE BOARD. 336 is the widest
+   that still leaves the left rail's chrome legible (measured: _bcpFit's zoom
+   is 0.75 at the old 440px rail and only 0.59 at 300px — the panel is authored
+   for an 830px column and shrinks to fit) while handing the board column ~50px
+   more than it had. */
+:root { --btl-rail-w: 336px; --r3-rail-r-real: 336px; --bpw: 336px; }
+@media (max-width: 1500px) { :root { --btl-rail-w: 300px; --r3-rail-r-real: 300px; --bpw: 300px; } }
+@media (max-width: 1300px) { :root { --btl-rail-w: 272px; --r3-rail-r-real: 272px; --bpw: 272px; } }
+
+/* the rail reads its width from the same variable, so it and --bpw are now
+   one source of truth rather than two hand-synced lists */
+.battle-screen .bp-wrap.bsx { width: var(--r3-rail-r-real); }
+
+/* Symmetry: the left rail is pinned exactly the way `.bp-wrap.bsx` is, so the
+   two clusters sit the same distance from their own edge. */
+.battle-screen .battle-left {
+  left: 0; top: 0; bottom: 0;
+  padding: 9px 8px;
+  gap: 8px;
+}
+
+/* The right rail stops above the END TURN hex, and its frame hugs its content
+   instead of stretching the full column — otherwise the player's cluster is a
+   700px-tall box holding 500px of piles while the opponent's (height:auto in
+   the left rail) is not, and the spec calls for two IDENTICAL clusters.
+   `flex: 0 1 auto` keeps the SHRINK path, which is what lets _bpFit() and
+   `.bsx-body { overflow:hidden }` keep the rail readable on a short window. */
+.battle-screen .bp-wrap.bsx { bottom: calc(var(--hudx-et-h) + 22px); }
+.battle-screen .bp-wrap.bsx .bsx-frame { flex: 0 1 auto; }
+
+/* ⚠ THE BOARD'S TOP EDGE. Hoisting the phase track out of `.battle-center`
+   handed the board column ~40px back, which pulled `.board-area` up to y=6 —
+   straight under the new banner band. This padding puts it back down so the
+   horizon clears the band. It moves `.board-area`'s POSITION, never its size:
+   the box is still `.board`'s own `100svh - 212px` formula, and
+   `_bbStageTrack()` re-reads the rect every frame, so the 3D stage and the
+   `.bb-catch` click layer follow it exactly. Measured at 1600x1000: board-area
+   6 -> 102, ground bottom still clear of the hand strip at 789. */
+@media (min-width: 1101px) {
+  .battle-screen .battle-center { padding-top: calc(var(--hud-banner-h) - 44px); }
+}
+
+/* ⚠ `_bpFit()` is allowed to grow `--fit` to 1.20 on a big desktop. That would
+   make the player's cluster physically larger than the opponent's, which is
+   scaled by hud.js's own fitter — and the spec calls for two IDENTICAL
+   clusters. Shrinking still works exactly as before (it is what keeps the rail
+   readable on a short window); only the growth is clamped. */
+.battle-screen .bsx-inner {
+  width: calc(100% / min(var(--fit, 1), 1));
+  transform: scale(min(var(--fit, 1), 1));
+}
+
+
+/* ---------------------------------------------------------------------------
+   3. TOP BAND — the two hero banners, side by side, plus the phase track.
+      Fixed, pointer-events:none so the band's empty gutters never eat a click
+      meant for the board; only the banners themselves take pointer events.
+   ------------------------------------------------------------------------ */
+.hudx-topband {
+  position: fixed; left: 0; right: 0; top: 0;
+  z-index: 62;                       /* over the rails (61/60), under modals */
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding-top: 4px;
+  pointer-events: none;
+}
+.hudx-topband > * { pointer-events: auto; }
+
+.hudx-banners { display: flex; align-items: stretch; justify-content: center; }
+.hudx-banners #fighters {
+  display: flex; flex-direction: row; align-items: stretch;
+  gap: 0; margin: 0;
+}
+
+/* ── one banner ─────────────────────────────────────────────────────────── */
+.hudx-fighters .fighter {
+  --fc: #d4af37;
+  position: relative;
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: center; gap: 10px;
+  width: 340px; padding: 7px 12px 7px 8px;
+  /* outer gold plate; the dark face is ::before, so the chamfered edge reads
+     as a bevelled metal frame instead of a stroked rectangle */
+  background: linear-gradient(180deg, rgba(214, 176, 90, 0.72), rgba(104, 76, 28, 0.5) 46%, rgba(214, 176, 90, 0.62));
+  clip-path: var(--hudx-clip);
+  border: 0; border-radius: 0;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.62);
+}
+.hudx-fighters .fighter::before {
+  content: ""; position: absolute; inset: 1.6px;
+  clip-path: var(--hudx-clip);
+  background:
+    radial-gradient(120% 150% at 50% -30%, color-mix(in srgb, var(--fc) 22%, transparent), transparent 70%),
+    var(--hudx-plate-lit);
+  pointer-events: none;
+}
+.hudx-fighters .fighter::after {
+  content: ""; position: absolute; inset: 6px;
+  clip-path: var(--hudx-clip);
+  border: 1px solid var(--hudx-gold-hair);
+  pointer-events: none;
+}
+.hudx-fighters .fighter > * { position: relative; z-index: 1; }
+
+/* the opponent's banner mirrors — portrait to the OUTSIDE on both sides */
+.hudx-fighters .fighter[data-side="foe"] { grid-template-columns: minmax(0, 1fr) auto; }
+.hudx-fighters .fighter[data-side="foe"] .hudx-hex { order: 2; }
+/* ⚠ the column stays `align-items: stretch` — flex-end would shrink `.rprow`
+   to its content and the foe's HP bar would end up a different length from
+   the player's. The mirror is done with text-align + per-row reversal. */
+.hudx-fighters .fighter[data-side="foe"] .finfo { order: 1; text-align: right; }
+.hudx-fighters .fighter[data-side="foe"] .rprow { flex-direction: row-reverse; }
+.hudx-fighters .fighter[data-side="foe"] .finfo .pills,
+.hudx-fighters .fighter[data-side="foe"] .finfo .statuses { justify-content: flex-end; }
+.hudx-fighters .fighter[data-side="foe"] { padding: 7px 8px 7px 12px; }
+/* a dark-red inner cast so the enemy banner is never mistaken for your own */
+.hudx-fighters .fighter[data-side="foe"]::before {
+  background:
+    radial-gradient(120% 150% at 50% -30%, rgba(150, 40, 42, 0.3), transparent 70%),
+    linear-gradient(180deg, rgba(34, 17, 22, 0.96), rgba(13, 8, 14, 0.99));
+}
+
+/* ── hex-cut portrait ───────────────────────────────────────────────────── */
+.hudx-hex {
+  position: relative; width: 74px; height: 84px; flex: 0 0 auto;
+  background: linear-gradient(160deg, var(--hudx-gold-lit), #8a6218 55%, #f0cf7a);
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.7));
+}
+.hudx-hex .portrait {
+  position: absolute; inset: 2.4px;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  display: grid; place-items: center; overflow: hidden;
+  min-height: 0; border-radius: 0;
+  background:
+    radial-gradient(80% 66% at 50% 34%, color-mix(in srgb, var(--fc) 30%, transparent), transparent 76%),
+    linear-gradient(170deg, #191322, #06070c 82%);
+  color: color-mix(in srgb, var(--fc) 62%, #f6dc95 30%);
+}
+.hudx-hex .portrait img,
+.hudx-hex .portrait .sprite-stack,
+.hudx-hex .portrait .icon-emoji {
+  width: 100%; height: 100%; object-fit: cover; object-position: center top;
+}
+.hudx-hex .portrait > svg { width: 62%; opacity: 0.92; }
+.hudx-hex .portrait .lbl { display: none; }
+
+/* ── banner body ────────────────────────────────────────────────────────── */
+.hudx-fighters .finfo {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0;
+}
+.hudx-fighters .finfo h2 {
+  margin: 0; font-family: 'Cinzel', serif; font-weight: 900;
+  font-size: 15px; letter-spacing: 0.03em; line-height: 1.1;
+  color: #f7ecd0; text-shadow: 0 2px 3px rgba(0, 0, 0, 0.9);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hudx-fighters .finfo h2 .lvl {
+  margin-left: 6px; padding: 0 5px; font-size: 9px; font-weight: 700;
+  color: #2a1d06; background: linear-gradient(180deg, var(--hudx-gold-lit), var(--hudx-gold));
+  clip-path: polygon(20% 0, 80% 0, 100% 50%, 80% 100%, 20% 100%, 0 50%);
+}
+.hudx-fighters .pills,
+.hudx-fighters .statuses { display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+.hudx-fighters .pills:empty,
+.hudx-fighters .statuses:empty { display: none; }
+.hudx-fighters .pill {
+  --pc: #d4af37;
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px;
+  font-family: 'Cinzel', serif; font-weight: 700; font-size: 8.5px; letter-spacing: 0.12em;
+  color: color-mix(in srgb, var(--pc) 50%, #fff 50%);
+  border: 1px solid color-mix(in srgb, var(--pc) 62%, transparent);
+  background: color-mix(in srgb, var(--pc) 13%, rgba(8, 10, 14, 0.86));
+  border-radius: 0;
+  clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);   /* slanted tab, not a pill */
+}
+.hudx-fighters .pill svg { width: 10px; height: 10px; }
+.hudx-fighters .schip {
+  display: inline-flex; align-items: center; gap: 2px; padding: 1px 5px;
+  font-size: 9px; color: var(--sc, #ffc24a);
+  border: 1px solid color-mix(in srgb, var(--sc, #ffc24a) 55%, transparent);
+  background: rgba(8, 6, 14, 0.8);
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+}
+
+/* HP bar — segmented, gold-framed, with the "24 / 30" readout beside it */
+.hudx-fighters .rprow { display: flex; align-items: center; gap: 7px; margin-top: 1px; }
+.hudx-fighters .rprow .tag {
+  font-family: 'Cinzel', serif; font-weight: 700; font-size: 9px;
+  letter-spacing: 0.16em; color: #cdbb8c;
+}
+.hudx-fighters .rpbar {
+  flex: 1; min-width: 0; display: flex; gap: 1.5px; height: 13px; padding: 2px;
+  border: 1px solid rgba(210, 164, 78, 0.55); border-radius: 0;
+  background: rgba(4, 5, 9, 0.94);
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.85);
+  clip-path: polygon(3px 0, 100% 0, calc(100% - 3px) 100%, 0 100%);
+}
+.hudx-fighters .rpseg { flex: 1; border-radius: 0; background: rgba(255, 255, 255, 0.05); }
+.hudx-fighters .rpseg.on {
+  background: linear-gradient(180deg, #9bef77, #46a52a);
+  box-shadow: 0 0 6px rgba(120, 230, 90, 0.55), inset 0 1px 0 rgba(220, 255, 200, 0.5);
+}
+.hudx-fighters .fighter[data-side="foe"] .rpseg.on {
+  background: linear-gradient(180deg, #ff9d86, #c4382c);
+  box-shadow: 0 0 6px rgba(230, 90, 70, 0.5), inset 0 1px 0 rgba(255, 210, 200, 0.45);
+}
+.hudx-fighters .rprow .num {
+  font-family: 'Cinzel', serif; font-weight: 800; font-size: 13px;
+  color: #f4e7c2; white-space: nowrap; font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* Energy and the deck chip belong to the side CLUSTERS now — a banner that
+   repeated them would be two sources of truth for the same number. The nodes
+   stay in the DOM (ids and listeners intact); they are only not drawn here. */
+.hudx-fighters .deckchip,
+.hudx-fighters .estrip { display: none; }
+
+/* ── the VS divider between the two banners ─────────────────────────────── */
+.hudx-fighters .vs {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; width: 46px; align-self: center;
+}
+.hudx-fighters .vs .ln {
+  width: 1px; flex: 1; min-height: 14px;
+  background: linear-gradient(180deg, transparent, var(--hudx-gold-dim), transparent);
+}
+.hudx-fighters .vs .badge {
+  width: 30px; height: 30px; display: grid; place-items: center;
+  font-family: 'Cinzel', serif; font-weight: 900; font-size: 10px; letter-spacing: 0.06em;
+  color: #2a1d06;
+  background: linear-gradient(160deg, var(--hudx-gold-lit), #b98a24 60%, #f0cf7a);
+  transform: rotate(45deg);
+  box-shadow: 0 0 14px rgba(246, 220, 149, 0.35), 0 4px 10px rgba(0, 0, 0, 0.7);
+}
+.hudx-fighters .vs .badge > * { transform: rotate(-45deg); }
+
+/* ── the phase track, re-cut as a hex-ended plaque ──────────────────────── */
+.hudx-phaserow { display: flex; justify-content: center; }
+.hudx-phaserow #phase-bar {
+  margin: 0; border-radius: 0; border: 1px solid var(--hudx-gold-dim);
+  background: linear-gradient(180deg, rgba(22, 18, 40, 0.94), rgba(8, 7, 18, 0.97));
+  clip-path: polygon(15px 0, calc(100% - 15px) 0, 100% 50%, calc(100% - 15px) 100%, 15px 100%, 0 50%);
+  padding: 3px 22px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+}
+.hudx-phaserow .phz-cell,
+.hudx-phaserow .phz-next { border-radius: 0; }
+.hudx-phaserow .phz-cell.now {
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 50%, calc(100% - 6px) 100%, 6px 100%, 0 50%);
+}
+.hudx-phaserow .phz-next {
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 50%, calc(100% - 6px) 100%, 6px 100%, 0 50%);
+}
+
+/* 📣 The notification ticker is hard-coded at top:92px in index.html — exactly
+   where the banners now live. Later source order wins at the same specificity,
+   so it drops below the band without index.html having to change. */
+#battle-event-feed { top: calc(var(--hud-banner-h) + 8px); }
+.bevt-chip {
+  border-radius: 0;
+  clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 9px 100%, 0 50%);
+}
+
+
+/* ---------------------------------------------------------------------------
+   4. THE TWO SIDE CLUSTERS
+   Identical composition on both edges:  name plate · 2x2 pile grid · energy.
+   The opponent's cluster is built by hud.js at the head of `.battle-left`; the
+   player's is the existing `.bp-wrap.bsx`, re-grouped in place. Both carry the
+   `.bsx` class so every existing `.bsx .cardslot / .count / .slabel / .opp /
+   .energy` rule applies to both without being re-authored.
+   ------------------------------------------------------------------------ */
+.hudx-cluster {
+  flex: 0 0 auto; width: 100%; min-width: 0;
+  display: flex; flex-direction: column;
+  font-size: 13px;
+}
+.hudx-cluster .bsx-frame { flex: 0 0 auto; }
+
+/* both frames get the diamond tabs + a red-tinted head for the foe */
+.hudx-cluster[data-hudx-side="foe"] .bsx-frame {
+  border-color: rgba(190, 96, 84, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.75), inset 0 0 42px rgba(0, 0, 0, 0.6),
+              0 0 26px rgba(0, 0, 0, 0.7), 0 0 18px rgba(150, 40, 40, 0.12);
+}
+
+/* head plate — foe name / player name, same component on both sides */
+.bsx .hudx-head {
+  display: flex; align-items: center; gap: 8px;
+  margin: 1px 2px 7px; padding: 6px 9px;
+  border: 1px solid var(--hudx-gold-dim);
+  background: linear-gradient(180deg, rgba(24, 28, 42, 0.92), rgba(10, 12, 19, 0.96));
+  clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 100%, 0 100%);
+}
+.hudx-cluster[data-hudx-side="foe"] .hudx-head {
+  border-color: rgba(190, 96, 84, 0.5);
+  background: linear-gradient(180deg, rgba(44, 20, 24, 0.92), rgba(14, 8, 12, 0.96));
+}
+.bsx .hudx-head svg { width: 17px; height: 17px; flex: 0 0 auto; color: #ffc24a; }
+.bsx .hudx-head b {
+  flex: 1; min-width: 0; font-family: 'Cinzel', serif; font-weight: 700; font-size: 12.5px;
+  letter-spacing: 0.07em; color: var(--hudx-gold-lit); text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── 2x2 pile grid: DECK · GRAVE · REALM · VANISH ───────────────────────── */
+.hudx-piles {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px 6px; margin: 0 2px 4px;
+}
+.hudx-cell {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  padding: 4px 2px 10px;
+  border: 1px solid var(--hudx-gold-hair);
+  background: linear-gradient(180deg, rgba(16, 14, 26, 0.72), rgba(8, 7, 14, 0.82));
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%, 0 6px);
+}
+.hudx-cell .slabel {
+  padding: 1px 2px 4px; gap: 5px;
+  font-size: 9px; letter-spacing: 0.12em; justify-content: center;
+  white-space: nowrap; overflow: hidden; max-width: 100%;
+}
+.hudx-cell .slabel svg { width: 13px; height: 13px; }
+.hudx-cell .stack { padding: 0; }
+.hudx-cell .cardslot { width: clamp(60px, 9.2vh, 104px); }
+/* the count diamond is sized for the full-width rail slot; in a 2-up cell it
+   has to come down or it covers the card back it is counting */
+.hudx-cell .count {
+  right: -7px; bottom: -5px;
+  width: 34px; height: 34px; min-width: 0;
+}
+.hudx-cell .count i { font-size: 13px; }
+
+/* the VANISH / Void slot — new UI on BOTH sides. There is no vanish pile in the
+   game's markup at all, so hud.js builds this one and fills the count from the
+   `void` array the reducer already maintains (banish / vanish effects push
+   there). With no state to read it renders an honest empty state, never a
+   made-up number. */
+.hudx-voidslot { cursor: default; }
+.hudx-voidface {
+  position: absolute; inset: 0; z-index: 1; border-radius: 5px; overflow: hidden;
+  background:
+    radial-gradient(60% 42% at 50% 46%, rgba(163, 92, 255, 0.42), transparent 72%),
+    repeating-linear-gradient(128deg, rgba(120, 70, 200, 0.14) 0 3px, transparent 3px 7px),
+    linear-gradient(180deg, #191026, #07050d 78%);
+  box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(163, 92, 255, 0.35);
+}
+.hudx-voidface::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 46%; aspect-ratio: 1;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border: 1px solid rgba(196, 152, 255, 0.55);
+  box-shadow: 0 0 12px rgba(163, 92, 255, 0.45), inset 0 0 10px rgba(163, 92, 255, 0.3);
+}
+.hudx-cell.hudx-vanish { border-color: rgba(163, 92, 255, 0.3); }
+.hudx-cell.hudx-vanish .slabel { color: #c9a6ff; }
+.hudx-cell.hudx-vanish .slabel svg { color: #a35cff; }
+.hudx-cell.hudx-vanish .count { border-color: rgba(163, 92, 255, 0.7); }
+.hudx-cell.hudx-vanish .count i { color: #ddc6ff; }
+
+/* ── energy readout, foot of both frames ────────────────────────────────── */
+.bsx .energy {
+  margin: 0 5px 6px; padding: 8px 10px 9px;
+  border: 1px solid var(--hudx-gold-dim); border-top-width: 1.5px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 7px 100%, 0 calc(100% - 7px));
+}
+.bsx .epips { margin-top: 0; }
+.bsx .ebar { border-radius: 0; clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
+.bsx .eorb {
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  border: 0; box-shadow: 0 0 14px rgba(255, 196, 80, 0.4);
+}
+.hudx-cluster[data-hudx-side="foe"] .eorb {
+  background: linear-gradient(180deg, #ffd0c2, #d9614a 60%, #8f2f22); color: #2c0b06;
+}
+.hudx-cluster[data-hudx-side="foe"] .pip.on {
+  background: linear-gradient(180deg, #ffb59f, #d55b40);
+  box-shadow: 0 0 9px rgba(230, 110, 80, 0.65), inset 0 1px 0 rgba(255, 226, 216, 0.7);
+}
+
+/* ── the command bar, moved to the foot of the PLAYER's cluster ─────────────
+   Concede · turn plaque · turn timer · settings. These were at the bottom of
+   the left rail, under the opponent's cluster, which is the wrong side: they
+   are the player's own controls and the left edge now belongs to the enemy.
+   hud.js re-parents them inside a wrapper that carries `bchrome bcp`, so every
+   `.bcp .topbar / .concede / .turnplaque / .timer / .gear` rule in index.html
+   — including the `!important` compression passes — still applies verbatim
+   and the ids (#btn-concede, #turnLabel, #timer, #timerText, #btn-battle-prefs)
+   keep their bindings. Only the 4-across grid is re-flowed for a 264px column.
+   ------------------------------------------------------------------------- */
+.hudx-cmd.bcp {
+  min-height: 0; padding: 7px 5px 4px; display: block;
+  border-top: 1px solid var(--hudx-gold-hair); margin: 6px 2px 0;
+}
+/* ⚠ TWO columns, not the rail's four. index.html pins the timer's box with
+   `width:44px !important` inside a short-viewport media block (~5708), so a
+   four-across row cannot be sized reliably from here and the gear ended up
+   painted over the clock face. Two rows of two is immune to that. */
+.hudx-cmd .topbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "plaque timer" "concede gear";
+  gap: 7px 9px; align-items: center;
+}
+.hudx-cmd .concede {
+  grid-area: concede; justify-self: stretch; justify-content: center;
+  padding: 7px 10px; font-size: 11px;
+}
+.hudx-cmd .turnplaque { grid-area: plaque; min-width: 0; padding: 6px 8px; }
+.hudx-cmd .turnplaque b { font-size: 15px; }
+.hudx-cmd .turnplaque .flr { font-size: 11px; }
+.hudx-cmd .timer { grid-area: timer; justify-self: end; }
+.hudx-cmd .timer b { font-size: 15px; }
+.hudx-cmd .gear { grid-area: gear; justify-self: end; }
+
+/* the rail's remaining furniture, de-pilled */
+.bsx .buff { border-radius: 0; clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%); }
+.bsx .kv .box {
+  border-radius: 0;
+  clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 9px 100%, 0 50%);
+}
+.bsx .tag, .bsx .rank {
+  border-radius: 0;
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 50%, calc(100% - 6px) 100%, 6px 100%, 0 50%);
+}
+.bsx .tunchip { border-radius: 0; clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
+
+
+/* ---------------------------------------------------------------------------
+   5. END TURN — a large hexagon, bottom right.
+      `#btn-end-turn` is DUPLICATED in index.html (the rail's copy and the one
+      inside the unused renderHandColumn); bindBattleEvents binds only the
+      first. hud.js MOVES the rail's live node here — it never re-emits the
+      markup — so the binding survives and the second copy stays unmounted.
+   ------------------------------------------------------------------------ */
+.hudx-endturn {
+  position: fixed; right: 8px; bottom: 16px; z-index: 62;
+  width: calc(var(--btl-rail-w) - 16px); height: var(--hudx-et-h);
+  display: grid; place-items: center;
+  pointer-events: none;
+}
+.hudx-endturn .etwrap {
+  pointer-events: auto; width: 100%; height: 100%; margin: 0; padding: 0;
+  display: grid; place-items: center;
+}
+/* the bevelled ornate hex plate behind the button */
+.hudx-endturn::before,
+.hudx-endturn::after {
+  content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  clip-path: polygon(24% 0, 76% 0, 100% 50%, 76% 100%, 24% 100%, 0 50%);
+  pointer-events: none;
+}
+.hudx-endturn::before {
+  width: 100%; height: 100%;
+  background: linear-gradient(160deg, #f6dc95, #6d4f14 42%, #f0cf7a 78%, #4d3708);
+  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.75));
+}
+.hudx-endturn::after {
+  width: calc(100% - 9px); height: calc(100% - 9px);
+  background: linear-gradient(180deg, rgba(46, 30, 6, 0.95), rgba(16, 10, 3, 0.98));
+}
+.hudx-endturn .endturn {
+  position: relative; z-index: 2;
+  width: calc(100% - 18px); height: calc(100% - 18px);
+  border: 0; border-radius: 0; padding: 0;
+  clip-path: polygon(24% 0, 76% 0, 100% 50%, 76% 100%, 24% 100%, 0 50%);
+  background: linear-gradient(180deg, #ffe9a8 0%, #f5c44f 34%, #d99327 62%, #a4650f 100%);
+  color: #2a1a03;
+  font-family: 'Cinzel', serif; font-weight: 900;
+  font-size: clamp(14px, 1.15vw, 19px); letter-spacing: 0.1em; line-height: 1.1;
+  text-shadow: 0 1px 0 rgba(255, 245, 210, 0.65);
+  box-shadow: inset 0 2px 0 rgba(255, 250, 220, 0.75), inset 0 -8px 16px rgba(120, 66, 6, 0.55);
+  cursor: pointer;
+  display: grid; place-items: center;
+  transition: filter 0.15s, transform 0.12s;
+}
+.hudx-endturn .endturn:hover:not(:disabled) { filter: brightness(1.09); transform: translateY(-1px); }
+.hudx-endturn .endturn:active:not(:disabled) { transform: translateY(1px); }
+/* the button's four rounded-corner ornaments belong to a rounded rectangle and
+   read as debris on a hexagon — they stay in the DOM (nothing is removed) but
+   are not drawn. */
+.hudx-endturn .endturn .ocorn { display: none; }
+/* waiting on the opponent: the same hex, cold and inert */
+.hudx-endturn .endturn.waiting,
+.hudx-endturn .endturn:disabled {
+  background: linear-gradient(180deg, #6a6577, #33303f 55%, #1b1924);
+  color: #b9b2c6; text-shadow: none; cursor: default;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.12), inset 0 -8px 16px rgba(0, 0, 0, 0.5);
+  font-size: clamp(11px, 0.85vw, 14px);
+}
+.hudx-endturn .endturn.ready-pulse { animation: hudx-etpulse 1.9s ease-in-out infinite; }
+@keyframes hudx-etpulse {
+  0%, 100% { box-shadow: inset 0 2px 0 rgba(255, 250, 220, 0.75), inset 0 -8px 16px rgba(120, 66, 6, 0.55), 0 0 0 rgba(255, 200, 90, 0); }
+  50%      { box-shadow: inset 0 2px 0 rgba(255, 250, 220, 0.75), inset 0 -8px 16px rgba(120, 66, 6, 0.55), 0 0 26px rgba(255, 200, 90, 0.55); }
+}
+
+
+/* ---------------------------------------------------------------------------
+   6. THE LEFT RAIL'S REMAINING FURNITURE — battle log, field conditions,
+      action panel, bag, concede / turn / timer / settings.
+      Nothing here is removed or hidden; it is re-cut so no panel in the frame
+      is a plain rounded rectangle with a flat fill.
+   ------------------------------------------------------------------------ */
+.bchrome .panel,
+.bcp .log, .bcp .hint, .bcp .consbox, .bcp .envcard, .bcp .ultbtn,
+.bcp .concede, .bcp .logbtn, .bchrome .bc-bag {
+  border-radius: 0;
+}
+.bchrome .panel {
+  border: 1px solid var(--hudx-gold-dim);
+  background: var(--hudx-plate);
+  clip-path: var(--hudx-clip);
+}
+/* index.html's `.bchrome .panel::before` is an inset rounded ring; re-cut it as
+   the inner gold hairline of the ornate plate. */
+.bchrome .panel::before {
+  inset: 4px; border-radius: 0;
+  border: 1px solid var(--hudx-gold-hair);
+  background: none;
+  clip-path: var(--hudx-clip);
+}
+.bcp .envcard {
+  border: 1px solid var(--hudx-gold-dim);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.bcp .envcard .eic { border-radius: 0; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.bcp .log, .bcp .consbox {
+  border: 1px solid var(--hudx-gold-dim);
+  background: var(--hudx-plate);
+  clip-path: var(--hudx-clip);
+}
+.bcp .hint {
+  border-radius: 0;
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%);
+}
+.bcp .logrow { border-radius: 0; }
+
+/* Gold corner braces on the rail's big plates, so nothing in the frame is a
+   flat-filled box. Drawn as eight background slices on a single ::after —
+   `.bchrome .panel`, `.bcp .log` and `.bcp .consbox` have no ::after of their
+   own (grep: none in index.html), and it is inset-positioned and
+   pointer-events:none, so it can never eat a click on the control below. */
+.bchrome .panel::after,
+.bcp .log::after,
+.bcp .consbox::after {
+  content: ""; position: absolute; inset: -1px; pointer-events: none;
+  background:
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 0    0    / 13px 1.6px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 0    0    / 1.6px 13px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 100% 0    / 13px 1.6px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 100% 0    / 1.6px 13px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 0    100% / 13px 1.6px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 0    100% / 1.6px 13px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 100% 100% / 13px 1.6px no-repeat,
+    linear-gradient(var(--hudx-gold-lit), var(--hudx-gold-lit)) 100% 100% / 1.6px 13px no-repeat;
+  opacity: 0.62;
+  clip-path: var(--hudx-clip);
+}
+.bcp .log, .bcp .consbox { position: relative; }
+.bcp .ultbtn {
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%);
+}
+.bcp .concede {
+  clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+  border-radius: 0;
+}
+.bchrome .bc-bag { clip-path: var(--hudx-clip); }
+.bcp .cslot, .bchrome .cslot { border-radius: 0; }
+/* the turn plaque keeps its flourishes but loses the pill silhouette */
+.bcp .turnplaque, .bchrome .turnplaque {
+  border-radius: 0;
+  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 12px 100%, 0 50%);
+}
+/* field-condition thumbs read as hex gems */
+.bchrome .fthumb { border-radius: 0; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+
+/* the left rail's `.hud` column keeps one rhythm now that the fighters left */
+.bcp .hud { gap: 8px; }
+
+
+/* ---------------------------------------------------------------------------
+   7. OVERLAYS THAT NOW SHARE SPACE WITH THE NEW CHROME
+   ------------------------------------------------------------------------ */
+/* index.html parks the emote bar bottom-RIGHT (`.emote-bar { right:1rem }`),
+   which is exactly where the END TURN hex now sits — but chrome.css already
+   moved it to the bottom-LEFT for the deck rail, with a `body:has(.battle-
+   screen)` selector that outranks a bare `.emote-bar` rule here. Verified in
+   the harness: it lands at 16,873, clear of the hex. So this file only
+   re-cuts its silhouette; re-positioning it would be a rule that never wins
+   and a second source of truth for where it lives. */
+.emote-toggle, .emote-btn { border-radius: 0; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+
+/* Toasts sit bottom-centre over the hand strip and must stay legible against
+   the new chrome; only the silhouette changes. */
+.toast {
+  border-radius: 0;
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%);
+}
+
+/* The hand strip's measured HEIGHT is the board's size budget (fit.js writes it
+   back as --hand-clear), so nothing here may touch its box. Card silhouettes
+   only. */
+.hand-strip-count {
+  border-radius: 0;
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 8px 100%, 0 50%);
+}
+
+
+/* ---------------------------------------------------------------------------
+   8. NARROW SCREENS
+   Below 1100px index.html collapses the grid to a flex column and hides the
+   right rail entirely; the banners would then have no room. Fall back to the
+   untouched stacked layout rather than half-applying this one.
+   ------------------------------------------------------------------------ */
+@media (max-width: 1100px) {
+  :root { --hud-banner-h: 92px; }
+  .hudx-topband { position: static; padding: 0; }
+  .hudx-banners #fighters { flex-direction: column; }
+  .hudx-fighters .fighter { width: auto; }
+  .hudx-endturn { position: static; width: auto; height: auto; }
+  .hudx-endturn::before, .hudx-endturn::after { display: none; }
+  .hudx-endturn .endturn { width: 100%; height: 48px; }
+  .battle-screen .bp-wrap.bsx { bottom: 0; }
+}

@@ -750,6 +750,17 @@
     <button class="hbtn ember rall" id="btn-repair-all"></button>
     <div class="rfoot">Damaged buildings produce nothing and stop counting toward defense. Click a row to inspect it.</div>
   </div>
+  <!-- 🏗 THE SITE BOARD. Every live build order, its countdown and a Cancel.
+       Hidden until there is something on it, exactly like #repaircard above —
+       and it exists for the same reason that card does: after the third order
+       the work is SCATTERED, and a 24-hour timer that can only be found by
+       remembering which square you clicked is a timer the player cannot
+       manage. Rendered by renderBuildBoard() off the 0.5s HUD beat. -->
+  <div class="card" id="bldcard">
+    <h2>Under Construction <span class="rcount" id="bldcount"></span></h2>
+    <div id="bldlist"></div>
+    <div class="bfoot"><span id="bldcrews"></span> A site produces nothing until it finishes; an upgrade keeps working meanwhile. Cancelling refunds the order in full. Click a row to inspect it.</div>
+  </div>
   <div class="card rtiphost" id="raidcard">
     <span class="rtip"><b>⚔ Raider Threat</b>When the timer hits zero a wave attacks. Your Defense total is compared against the wave's strength.<span class="use">Raise Defense: hire soldiers · build Watchtowers and Walls · slot cards into the Defense Deck.</span></span>
     <h2>Raider Threat</h2>
@@ -1074,6 +1085,48 @@
   #repaircard .rall { width: 100%; padding: 5px; }
   #repaircard .rfoot { font-size: 10px; color: var(--mist); margin-top: 6px; line-height: 1.5; }
 
+  /* ── 🏗 The Site Board, and the dossier's countdown ──
+     Cloned from #repaircard down to the row metrics, on purpose: a second
+     visual language for "this tile is not finished yet" would read as a second
+     system. Gold rather than red — construction is work in progress, not a
+     wound, and the player must never confuse the two (which is also why the
+     site MESH carries no damage tilt). */
+  #bldcard { display: none; }
+  #bldcard.on { display: block; }
+  #bldcard h2 .rcount { color: var(--gold); }
+  #bldlist { max-height: 156px; overflow-y: auto; }
+  .brow { display: flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 4px 0;
+    border-top: 1px solid var(--edge); cursor: pointer; }
+  .brow:first-child { border-top: none; }
+  .brow:hover .bname { color: var(--gold); }
+  .brow .bico { font-size: 14px; line-height: 1; }
+  .brow .bbody { flex: 1; min-width: 0; line-height: 1.35; }
+  .brow .bname { display: block; color: var(--bone); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .brow .bmeta { display: block; font-size: 10px; color: var(--mist); font-variant-numeric: tabular-nums; }
+  .brow .bcd { color: var(--gold); font-variant-numeric: tabular-nums; }
+  .brow .hbtn { flex: none; }
+  #bldcard .bfoot { font-size: 10px; color: var(--mist); margin-top: 6px; line-height: 1.5; }
+  #bldcard .bfoot b { color: var(--bone); font-variant-numeric: tabular-nums; }
+  /* Injected at the #insbonus slot — same padding and the same top rule the ops
+     block uses, so a dossier carrying both stacks without a visible seam. */
+  #insbox > #bldins { padding: 10px 16px; border-top: 1px solid var(--edge); }
+  #bldins .bihd { font-size: 11.5px; color: var(--bone); }
+  #bldins .bihd b { color: var(--gold); font-variant-numeric: tabular-nums; }
+  #bldins .bibar { height: 5px; background: #241d33; border-radius: 3px; overflow: hidden; margin: 6px 0 4px; }
+  /* .4s linear, i.e. slightly under the 0.5s repaint beat: the bar creeps
+     instead of stepping, and it can never lag behind its own next update. */
+  #bldins .bibar i { display: block; height: 100%; transition: width .4s linear;
+    background: linear-gradient(90deg, #5a4a2a, var(--gold)); }
+  #bldins .binote { font-size: 10px; color: var(--mist); line-height: 1.5; }
+  /* The build time printed on a shop card. Its OWN element rather than anything
+     inside `.sc`, because opsDecorateShop rewrites `.sc` wholesale for every
+     operation card and would erase a duration written into it. */
+  .shopcard .sdtime { display: block; width: 100%; font-size: .62rem; letter-spacing: .04em;
+    color: #9ad0c0; font-variant-numeric: tabular-nums; }
+  .shopcard.opslock .sdtime { color: #b79a6a; }
+  .shopcard .sdneed { display: block; width: 100%; font-size: .6rem; line-height: 1.3; color: #c9a86a; }
+
   /* ── City log ── */
   #logcard .lfilters { display: flex; gap: 4px; margin-bottom: 6px; }
   #logcard .lfilters .hbtn { flex: 1; padding: 2px 0; font-size: 9.5px; letter-spacing: .04em; }
@@ -1110,6 +1163,10 @@
     text-transform: uppercase; margin-bottom: 5px; }
   #tiletip .hl { color: var(--ember); }
   #tiletip .dmg { color: var(--invalid); }
+  /* 🏗 Deliberately NOT .dmg's red. The hover card is the fastest read in the
+     game and a red line on a construction site sends the player looking for a
+     repair bill that does not exist. */
+  #tiletip .bld { color: var(--gold); }
   #tiletip .tbon { display: block; margin-top: 5px; padding-top: 5px; font-size: 10px;
     border-top: 1px solid rgba(212,175,55,.25); color: var(--mist); }
   #tiletip .tbon .on { color: var(--valid); }
@@ -17438,6 +17495,178 @@ async function bldCancel(kk) {
   return { key: kk, kind: rec.k, refund };
 }
 
+/* ═══ 🏗 THE PLAYER-FACING SURFACE ══════════════════════════════════════════
+   Everything from here down is READ-ONLY on the state machine, with exactly one
+   exception — the Site Board's Cancel button, which routes through bldCancel()
+   above rather than carrying a second refund policy of its own.
+
+   🔴 EVERY DURATION PRINTED ANYWHERE IN THIS FILE COMES FROM bldDuration(),
+      NEVER FROM A SECOND COPY OF THE CURVE. The shop card, the confirm dialog,
+      the refusal toasts, the dossier and the Site Board all ask the SAME
+      function the order gate asks one click later, with the SAME arguments —
+      including bldSpeed(). A card that quotes 1h53 and then charges a 56m job
+      (or the reverse) is worse than a card with no time on it at all, and a
+      second formula would also be a Rule-4 breach the moment ECON is retuned.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The duration a click on a build-shop card would ACTUALLY buy, right now.
+   ⚠ speedMul is bldSpeed(), not 1, for the same reason the order gate uses it:
+     this is a QUOTE, and a quote that ignores crews the player has already paid
+     for is wrong by up to a factor of two. With no Construction Co. standing
+     bldSpeed() is exactly 1, so the shop and a bare timeFor(type,1,0) agree. */
+function bldShopSec(type) {
+  try { return bldDuration(type, 1, 0, bldSpeed()); } catch (e) { return 0; }
+}
+
+/* When a job ordered NOW would land, on the wall clock the player reads.
+   'in 3:00:00' is an abstraction; 'about 11:42 PM' is a decision — it is the
+   half of the sentence that tells someone whether the build finishes before
+   they go to bed. The day is named only when the job crosses midnight, because
+   a weekday on a 90-minute build is noise. */
+function bldLandLabel(durSec) {
+  const now = new Date(), d = new Date(now.getTime() + Math.max(0, +durSec || 0) * 1000);
+  let t;
+  try { t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+  catch (e) { t = d.toTimeString().slice(0, 5); }          // never let a locale kill the order
+  if (d.toDateString() === now.toDateString()) return t;
+  try { return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + t; } catch (e) { return t; }
+}
+
+/* ⏳ THE LONG-ORDER CONFIRM. Anything over ECON's confirmOverSec asks BEFORE a
+   single Cinder moves: a 24-hour commitment discovered after payCost has
+   already resolved is a support ticket, and the only honest place to put the
+   question is in front of the charge.
+   ⚠ gcConfirm() is the PARENT game's modal and this page is an iframe, so that
+     name is NOT in scope in this frame — the House and Stadium mounts hand the
+     same expression across the module boundary for the same reason and fall
+     back the same way. One confirm contract in this file, not three.
+   Returns true when there is nothing to ask (feature off, or a short job), so
+   every call site reads `if (!(await bldConfirmLong(...))) return;`.
+   A modal that THREW is not consent — that path answers false. */
+async function bldConfirmLong(what, durSec) {
+  const C = bldCfg();
+  if (!C || !(durSec > (C.confirmOverSec | 0))) return true;
+  const msg = what + ' takes ' + fmtCountdown(durSec) + ' to build — it would be finished at about '
+    + bldLandLabel(durSec) + '.\n\n'
+    + 'The full cost is charged now and a crew is tied up for the whole job. '
+    + 'You can cancel at any time for a 100% refund.\n\nStart the order?';
+  try {
+    return !!(await (typeof gcConfirm === 'function' ? gcConfirm(msg) : Promise.resolve(confirm(msg))));
+  } catch (e) { return false; }
+}
+
+/* 🏛 THE DOSSIER'S COUNTDOWN + PROGRESS CARD.
+   Injected at the #insbonus anchor with the create-once-by-id +
+   insertBefore(anchor.nextSibling) pattern opsAugmentInspect already proves.
+   #insbonus is deliberately OUTSIDE #inspanes — openInspect rebuilds #inspanes
+   with innerHTML on every open, so a card parked in there would be destroyed by
+   the very repaint that is supposed to show it.
+   ⚠ REPAINTED FROM updateHUD's 0.5s BEAT, never from the 4s sweep. A countdown
+     that jumps four seconds at a time reads as a stuck timer, and "is it
+     actually running?" is the first thing a player asks of a 24-hour clock.
+   The card is BUILT once and only its two variable fields are rewritten after
+   that: this runs twice a second for as long as the dossier is open, and an
+   innerHTML rebuild at 2 Hz re-lays out the box and drops any text selection.
+   Self-clearing: it removes itself the moment the selection has no job (a
+   completion, a cancel, a different tile, or the panel closing), so nothing
+   else has to remember to tear it down. */
+function bldInspectCard() {
+  const panel = document.getElementById('inspect'); if (!panel) return;
+  let host = document.getElementById('bldins');
+  const k = selectedKey, t = k ? game.tiles[k] : null;
+  if (!t || !t.bld || !panel.classList.contains('open')) { if (host) host.remove(); return; }
+  if (!host) {
+    host = document.createElement('div'); host.id = 'bldins';
+    host.innerHTML = '<div class="bihd"></div><div class="bibar"><i></i></div><div class="binote"></div>';
+    const anchor = document.getElementById('insbonus');
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(host, anchor.nextSibling);
+    else panel.appendChild(host);
+  }
+  const rec = t.bld, left = bldRemain(t);
+  const pct = rec.d > 0 ? Math.max(0, Math.min(100, (1 - left / rec.d) * 100)) : 100;
+  /* fmtCountdown VERBATIM — a 24-hour job has to read 24:00:00, which is the
+     whole reason that formatter grew an hours field. */
+  host.querySelector('.bihd').innerHTML = rec.k === 1
+    ? '🏗 Upgrading to L' + (rec.l | 0) + ' — <b>' + fmtCountdown(left) + '</b> left'
+    : '🏗 Under construction — <b>' + fmtCountdown(left) + '</b> left';
+  host.querySelector('.bibar i').style.width = pct.toFixed(1) + '%';
+  host.querySelector('.binote').textContent = rec.k === 1
+    ? 'It keeps working at L' + t.lvl + ' for the whole job — output, jobs, population and defence are all unchanged. Cancelling refunds the upgrade in full and the building stays.'
+    : 'Nothing stands here yet: it produces nothing, employs nobody and defends nothing until it is finished. Cancelling refunds the order in full.';
+}
+
+/* 🏗 THE SITE BOARD — every live job in one place, with a countdown and a
+   Cancel. Cloned from renderRepairs(): same rail card, same row shape, same
+   click-a-row-to-inspect, because these two cards say the same KIND of thing
+   ("these tiles are not working") and a player should only have to learn the
+   pattern once.
+   ⚠ renderRepairs' `_last` HTML cache CANNOT be copied here. Every row's text
+     changes on every beat, so that cache would miss every single time and
+     innerHTML the whole list twice a second — throwing away the list's scroll
+     position and any click that happened to land mid-repaint. Instead the ROWS
+     are rebuilt only when the SET of jobs changes (the signature below) and the
+     countdown is written into its own span every beat.
+   ⚠ The count is bldActive() itself, not `jobs.length`. They are the same
+     number by construction; asking the real function means the board cannot
+     drift from the thing the crew gate counts. */
+function renderBuildBoard() {
+  const card = $('bldcard'); if (!card) return;
+  const jobs = Object.entries(game.tiles).filter(([, t]) => t && t.bld)
+    .sort((a, b) => bldRemain(a[1]) - bldRemain(b[1]));      // soonest to land, first
+  card.classList.toggle('on', jobs.length > 0);
+  /* ⚠ WRITTEN BEFORE THE EMPTY EARLY-RETURN, not after it. An early return that
+     skipped these left the last non-empty numbers frozen in a hidden card —
+     observed live as "(1) · 1 / 0 crews working" sitting in a board with no
+     rows, one boot after a save's jobs had all completed. Invisible while the
+     card is hidden, and wrong the instant it is shown again. */
+  $('bldcount').textContent = '(' + bldActive() + ')';
+  /* The crew line belongs on the card and not only in a refusal toast: "why can
+     I not start another one" should be answerable without first being refused. */
+  $('bldcrews').innerHTML = '<b>' + bldActive() + ' / ' + bldSlots() + '</b> crews working.';
+  if (!jobs.length) { renderBuildBoard._sig = null; $('bldlist').innerHTML = ''; return; }
+  const sig = jobs.map(([k, t]) => k + ':' + t.bld.k + ':' + t.bld.l).join('|');
+  if (sig !== renderBuildBoard._sig) {
+    renderBuildBoard._sig = sig;
+    $('bldlist').innerHTML = jobs.map(([k, t]) => {
+      const def = BUILDINGS[t.type] || {};
+      return '<div class="brow" data-bkey="' + logEsc(k) + '">' +
+        '<span class="bico">' + (def.ico || '🏗') + '</span>' +
+        '<span class="bbody"><span class="bname">' + logEsc(def.name || t.type) +
+          (t.bld.k === 1 ? ' L' + t.lvl + ' → L' + (t.bld.l | 0) : '') + '</span>' +
+        '<span class="bmeta"><span class="bcd" data-bcd="' + logEsc(k) + '">' +
+          fmtCountdown(bldRemain(t)) + '</span> left · ' +
+          (t.bld.k === 1 ? 'upgrading, still working' : 'site') + ' · tile ' + logEsc(k) + '</span></span>' +
+        '<button class="hbtn" type="button" data-bcancel="' + logEsc(k) + '" title="Cancel this order — full refund">🧨</button></div>';
+    }).join('');
+  }
+  /* Read the key back off the node rather than building an attribute selector
+     from it: a tile key is "12,7" and a comma is a selector separator. */
+  $('bldlist').querySelectorAll('.bcd').forEach((el) => {
+    const t = game.tiles[el.getAttribute('data-bcd')];
+    el.textContent = fmtCountdown(t && t.bld ? bldRemain(t) : 0);
+  });
+}
+$('bldlist').addEventListener('click', async (ev) => {
+  const c = ev.target.closest('[data-bcancel]');
+  if (c) {
+    /* stopPropagation, or the row's own inspect handler below also fires and
+       opens a dossier for a tile that is being deleted in the same turn. */
+    ev.stopPropagation();
+    const kk = c.getAttribute('data-bcancel');
+    const t = game.tiles[kk]; if (!t || !t.bld) return;
+    const nm = (BUILDINGS[t.type] || {}).name || t.type;
+    /* No latch of its own: bldCancel() clears `t.bld` synchronously before its
+       first await, so a second click finds no record and returns null. */
+    const r = await bldCancel(kk);
+    if (r) toast('🧨 ' + nm + (r.kind === 1 ? ' upgrade' : ' construction') + ' cancelled' +
+      (Object.keys(r.refund).length ? ' — ' + costLabel(r.refund) + ' refunded in full.' : '.'), 'good');
+    try { renderBuildBoard(); } catch (e) {}
+    return;
+  }
+  const row = ev.target.closest('[data-bkey]');
+  if (row) openInspect(row.getAttribute('data-bkey'));
+});
+
 /* 🏗 Rehydrate a build order from a save.
    ⚠ RUNS BEFORE window.MythicEconomy EXISTS. loadState() is awaited early in
      boot(); the economy module is imported ~1000 lines later, so ECON is
@@ -18986,6 +19215,11 @@ function openInspect(k) {
     insSelect('ov', false);
     $('btn-upgrade').style.display = 'none'; $('btn-demolish').style.display = 'none';
     $('btn-rotate').style.display = 'none'; $('btn-repair').style.display = 'none'; $('btn-action').style.display = 'none';
+    /* 🏗 An anchor never carries a job, so this only ever TEARS DOWN a card left
+       over from the tile that was selected a moment ago. Without it, clicking
+       from a construction site straight to an anchor leaves someone else's
+       countdown sitting in the anchor's dossier until the next HUD beat. */
+    try { bldInspectCard(); } catch (e) { console.warn('[bld] inspect card', e); }
     if (!wasOpen) { try { $('insx').focus(); } catch (e) {} }
     return;
   }
@@ -19010,7 +19244,22 @@ function openInspect(k) {
     (t.rot ? '<i class="sep"></i><span>facing ' + (['south', 'west', 'north', 'east'][t.rot & 3]) + '</span>' : '');
   const halt = insHalted(t);
   const st = $('insstatus');
-  if (t.damaged) { st.className = 'bad'; st.innerHTML = '<i class="pl"></i>DAMAGED'; }
+  /* 🏗 CONSTRUCTION IS THE FIRST THING THIS BADGE SAYS. Without a branch up
+     here a half-built Power Station reads BROWNOUT and a half-built factory
+     reads UNDERSTAFFED — both true of a hole in the ground, and both an answer
+     to a question nobody asked. The one status a player wants is "it is not
+     built yet".
+     ⚠ THE SITE BRANCH IS FIRST AND THE UPGRADE BRANCH IS NOT, and that split is
+       deliberate. A SITE can never be damaged — damageTile() refuses (it can
+       only be destroyed) and loadState drops `dmg` from any save carrying both —
+       so putting it ahead of DAMAGED costs nothing and can never hide a repair
+       bill. An UPGRADING tile CAN be damaged: it is a standing building and the
+       sky can hit it mid-job. There DAMAGED must win, because it is the state
+       with a bill and a button attached, and a dossier showing UPGRADING over a
+       lit Repair button is a player wondering what the button is for. */
+  if (bldSite(t)) { st.className = 'warn'; st.innerHTML = '<i class="pl"></i>UNDER CONSTRUCTION'; }
+  else if (t.damaged) { st.className = 'bad'; st.innerHTML = '<i class="pl"></i>DAMAGED'; }
+  else if (bldBusy(t)) { st.className = 'warn'; st.innerHTML = '<i class="pl"></i>UPGRADING'; }
   else if (halt) { st.className = 'bad'; st.innerHTML = '<i class="pl"></i>HALTED'; }
   else if (def.powerNeed && game.power.factor < 1) { st.className = 'warn'; st.innerHTML = '<i class="pl"></i>BROWNOUT'; }
   else if (def.svc && (t.svcFed == null ? 1 : t.svcFed) < .99) { st.className = 'warn'; st.innerHTML = '<i class="pl"></i>UNDERFED'; }
@@ -19050,7 +19299,14 @@ function openInspect(k) {
   // contextual action button(s)
   const act = $('btn-action');
   act.style.display = 'none'; act.onclick = null;
-  if (!t.damaged) {
+  /* 🏗 bldSite, NOT bldBusy. There is nothing to walk into, socket a card into,
+     billet a card in, plan an event in or lease on a foundation pad, and every
+     one of these actions writes state that the completion sweep would then have
+     to reconcile against a building that did not exist when it was written.
+     An UPGRADING building is STANDING and WORKING — you can enter it, its card
+     stays socketed, its stadium can still be booked — so it is deliberately
+     NOT excluded here. That asymmetry is the whole point of the two predicates. */
+  if (!t.damaged && !bldSite(t)) {
     /* 🏟 The Stadium gets its own dialog rather than a dossier tab, for the
        same reason the Resting House does: the readiness checklist, three
        pricing sliders and the post-event results screen do not fit the
@@ -19184,6 +19440,10 @@ function openInspect(k) {
     ? '🧨 Demolish road — ' + ROAD_DEMOLISH_COST + ' ₵'
     : bldSite(t) ? '🧨 Cancel construction (full refund)'
     : '🧨 Demolish (50% refund)';
+  /* 🏗 The countdown card, at the #insbonus anchor OUTSIDE #inspanes — painted
+     for the open here and repainted from updateHUD's 0.5s beat thereafter.
+     Wrapped: a throw in a decoration must never cost the player the dossier. */
+  try { bldInspectCard(); } catch (e) { console.warn('[bld] inspect card', e); }
 }
 function repairCost(t) {
   const c = costOf(t.type, t.lvl), out = {};
@@ -19252,6 +19512,18 @@ $('btn-upgrade').onclick = guardedAction(async () => {
             fmtCountdown(bldCfg().municipal.maxSec) + '). ' + bldCoHint(), 'bad');
       return;
     }
+    /* ⏳ ASKED BEFORE payCost AND BEFORE THE RESERVATION. Upgrades are where the
+       long durations actually live (a farm L2→L3 is 1h34, a powerstation L1→L2
+       2h28), and the level being bought is not readable once a modal is over the
+       dossier — so the sentence names it.
+       The reservation is deliberately NOT held across the dialog: a modal the
+       player wanders away from would otherwise strand one of only two crew
+       slots for the rest of the session. The crew gate is therefore re-tested
+       after the answer comes back. Today nothing can move behind a native
+       confirm() in this frame, so that re-test is defensive — it is here so this
+       stays correct the day gcConfirm() (a non-blocking modal) is reachable. */
+    if (!(await bldConfirmLong('The upgrade to L' + target, durSec))) return;
+    if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
     bldReserveCrew(); reserved = true;
   }
   /* ⚠ The finally spans EVERY await from here down, and in particular it
@@ -21234,9 +21506,23 @@ function tipHtml(k, t) {
   let h = '<b class="tt">' + def.ico + ' ' + logEsc(def.name) + '</b>' +
     // ⚠ def.maxLvl, not the global MAX_LVL — a Tier 4 Resting House read "Level 4 / 3".
     '<span class="tsub">Level ' + t.lvl + (def.maxLvl === 1 ? '' : ' / ' + (def.maxLvl || MAX_LVL)) + ' · tile ' + k + '</span>';
+  /* 🏗 ABOVE the DAMAGED line, and using fmtCountdown VERBATIM — a 24-hour job
+     has to read 24:00:00, and re-rolling a formatter for one tooltip is how the
+     old two-field version came to print '1440:00'.
+     A SITE and a damaged building are never the same tile (damageTile refuses a
+     site), so on a k=0 tile only one of these two lines can ever appear. An
+     UPGRADING one can legitimately show both, and this order is right: the job
+     is what CHANGED about the tile, the fire is what it costs to fix. */
+  if (t.bld) h += '<span class="bld">🏗 ' + (t.bld.k === 1 ? 'UPGRADING to L' + (t.bld.l | 0) : 'UNDER CONSTRUCTION') +
+    ' — ' + fmtCountdown(bldRemain(t)) + ' left.</span><br>';
   if (t.damaged) h += '<span class="dmg">🔥 DAMAGED — offline. Repair ' + logEsc(costLabel(repairCost(t))) + '.</span><br>';
+  /* 🏗 A site is zeroed exactly like a damaged building, and for a stronger
+     reason: `damaged` at least has a building standing behind the claim. A
+     foundation pad advertising 1.50 🌾/min is the tooltip telling the player the
+     economy is broken. bldSite, not bldBusy — an upgrading building really is
+     producing, at its current level, all the way through the job. */
   if (def.gen) h += 'Output: ' + Object.entries(def.gen).map(([r, v]) =>
-    '<span class="hl">' + (t.damaged ? 0 : (v * b.mult * Math.pow(RATE_MULT, t.lvl - 1) * (def.crew ? staffingRatio() : 1) * weatherMult(t.type))).toFixed(2) + '</span> ' +
+    '<span class="hl">' + (t.damaged || bldSite(t) ? 0 : (v * b.mult * Math.pow(RATE_MULT, t.lvl - 1) * (def.crew ? staffingRatio() : 1) * weatherMult(t.type))).toFixed(2) + '</span> ' +
     resIco(r) + '/min').join(' · ') + '<br>';
   if (def.use) h += 'Consumes: ' + Object.entries(def.use).map(([r, v]) => v.toFixed(2) + ' ' + resIco(r) + '/min').join(' · ') + '<br>';
   if (def.svc) h += NEED_META[def.svc.need].ico + ' Supplies ' + NEED_META[def.svc.need].name + ' coverage' +
@@ -21308,7 +21594,14 @@ renderer.domElement.addEventListener('pointermove', ev => {
     const k = key(t.x, t.z);
     hover.visible = true;
     hover.position.set(t.x - HALF + .5, .02, t.z - HALF + .5);
-    hover.material.color.set(tile.damaged ? 0xc0473f : 0xd4af37);
+    /* 🏗 A THIRD RING COLOUR, and the order matters. Damaged still wins — that
+       is the one with a bill attached. A live job gets steel blue: neither the
+       gold of a working building nor the red of a broken one, because at a
+       zoomed-out camera the ring is often the only thing on screen (the tooltip
+       is clipped off the edge) and "is that thing finished?" has to be
+       answerable from the ring alone. bldBusy, not bldSite: an upgrade is work
+       in progress too, and the tooltip right beside it says which kind. */
+    hover.material.color.set(tile.damaged ? 0xc0473f : bldBusy(tile) ? 0x5aa9e6 : 0xd4af37);
     showTileTip(k, tile, ev);
   } else { hover.visible = false; hideTileTip(); }
 });
@@ -21621,6 +21914,14 @@ function updateHUD() {
     return '<div class="urow"><span>' + RES_META[r].ico + ' ' + RES_META[r].name + '</span>' +
       '<span class="' + (ok ? 'ok' : 'bad') + '">' + perDay.toFixed(1) + ' / ' + need + '·day</span></div>';
   }).join('');
+  /* 🏗 THE COUNTDOWN HEARTBEAT. This function is the 0.5s beat (animate() calls
+     it at hudTimer > .5), which is the finest cadence in the city — and the
+     construction sweep runs on the 4s one, so painting from the sweep would
+     make every countdown step in four-second jumps and read as frozen.
+     Both are wrapped INDIVIDUALLY: a throw in a decoration must never take down
+     the HUD, which is the thing that tells the player they are out of food. */
+  try { renderBuildBoard(); } catch (e) { console.warn('[bld] site board', e); }
+  try { bldInspectCard(); } catch (e) { console.warn('[bld] inspect card', e); }
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -23135,11 +23436,110 @@ function opsDecorateShop() {
          statement — the reservation would be released before payCost had even
          been called and the race would be exactly as open as before. The await
          is what makes the finally wait for the tile to be written. */
+    /* ⏳ THE LONG-ORDER CONFIRM — after both refusals (never ask about an order
+       that is going to be refused anyway) and BEFORE the reservation, which is
+       itself before payCost. The reservation is deliberately not held across the
+       dialog: a modal left open would strand one of only two crew slots.
+       Re-tested afterwards for the reason spelled out at the upgrade button. */
+    if (!(await bldConfirmLong('A ' + def.name, durSec))) return;
+    if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
     bldReserveCrew();
     try { return await _tryPlaceOrderBase(x, z); }
     finally { bldReleaseCrew(); }
   };
 }
+
+/* ── 🏗 THE SHOP CARD ──────────────────────────────────────────────────────
+   WRAPPED AFTER THE OPS WRAPPERS, which makes this the OUTERMOST decorator, and
+   that ordering is not a preference. opsDecorateShop() rewrites `.sc` wholesale
+   for every operation card and REMOVES the card entirely for an operation
+   already standing in this city — so a duration written into `.sc` before it
+   runs is destroyed, and one written into a card it is about to remove is a
+   leak. This runs last, appends its OWN elements, and never touches `.sc`.
+
+   TWO THINGS GO ON THE CARD, AND BOTH BEFORE A SINGLE CINDER IS SPENT:
+   1. THE COMPUTED DURATION, from bldShopSec() → bldDuration() → the ECON curve.
+      The same call, with the same arguments, that the order gate makes on the
+      click. Never a second formula (Rule 4) and never a hand-written table.
+   2. THE MUNICIPAL LOCK, where the free crew will not take the job and no
+      Construction Co. stands. It reuses the ops layer's own .opslock /
+      .opslockico CSS on purpose: the player has ALREADY learned what a faded,
+      padlocked shop card means, and teaching them a second dialect of the same
+      idea is worse than teaching them nothing.
+      This is the sentence the spec insists on — every Cinder earner in the game
+      sits above the municipal ceiling (gasstation 1h53, arena 3h23), so a
+      pre-Co. city cannot build an income building. That is the gate doing its
+      job, but unless the card SAYS SO in words it reads as a bug.
+
+   ⚠ THIS IS THE SIGN ON THE DOOR, NOT THE LOCK. The real refusal lives in the
+     order gate above and still fires for a keyboard placement, a __nc.place()
+     or any path that never opened the shop. Nothing here can reach payCost. */
+function bldDecorateShop() {
+  const body = document.getElementById('shopbody'); if (!body) return;
+  const C = bldCfg(); if (!C) return;      // feature off ⇒ the shop is exactly what it always was
+  const hasCo = bldCoTiles().length > 0;
+  body.querySelectorAll('[data-build]').forEach((card) => {
+    const type = card.getAttribute('data-build');
+    const def = BUILDINGS[type]; if (!def) return;
+    const durSec = bldShopSec(type);
+    /* 0 = exempt (roads, walls, street lights, lots, decor) or no economy
+       module: instant, no slot, no gate. Nothing to print and nothing to lock —
+       and paving a grid must never look like twenty countdowns. */
+    if (durSec <= 0) return;
+    card.style.position = 'relative';      // the padlock is absolutely positioned
+    let el = card.querySelector('.sdtime');
+    if (!el) { el = document.createElement('span'); el.className = 'sdtime'; card.appendChild(el); }
+    el.textContent = '⏱ ' + fmtCountdown(durSec);
+    /* Every op_* is exempt from the REQUIREMENT (never from the timer or the
+       slot): the licence was already paid for at City Hall and charging twice
+       for one business is the thing the registration loop's own comment says a
+       player never forgives. */
+    const isOp = bldOpType(type) !== null;
+    const locked = !isOp && durSec > C.municipal.maxSec && !hasCo;
+    let need = card.querySelector('.sdneed');
+    if (!locked) {
+      if (need) need.remove();
+      /* ⚠ Only ever unlock a card THIS layer locked. opsDecorateShop puts the
+         very same class on an unowned operation blueprint, and clearing it here
+         would visually unlock a business the player has not bought. */
+      if (!isOp) {
+        card.classList.remove('opslock');
+        const ico = card.querySelector('.opslockico'); if (ico) ico.remove();
+      }
+      return;
+    }
+    card.classList.add('opslock');
+    if (!card.querySelector('.opslockico')) {
+      const l = document.createElement('span'); l.className = 'opslockico'; l.textContent = '🔒'; card.appendChild(l);
+    }
+    if (!need) { need = document.createElement('span'); need.className = 'sdneed'; card.appendChild(need); }
+    need.textContent = 'Needs a Construction Co.';
+    /* Assignment, not addEventListener: the base card's own onclick (close the
+       shop, enter place mode) has to be REPLACED, not run alongside this. */
+    card.onclick = () => {
+      closeBuildShop();
+      toast('🔒 A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise — more than the free Municipal Works crew will take on (' +
+            fmtCountdown(C.municipal.maxSec) + '). ' + bldCoHint(), 'bad');
+      /* No argument: the Co. is one licence among many at City Hall and the
+         player may not have decided which one they want. opsCityHall(type)
+         deep-links a purchase; this is a signpost. */
+      opsCityHall();
+    };
+  });
+}
+{
+  const _buildShopBodyBld = buildShopBody;
+  buildShopBody = function () {
+    _buildShopBodyBld();                   // base palette, THEN the ops gate, THEN this
+    try { bldDecorateShop(); } catch (e) { console.warn('[bld] shop decorate', e); }
+  };
+}
+/* openBuildShop needs NO wrapper of its own, and that is worth writing down so
+   nobody adds a redundant one: both the base openBuildShop() and the ops
+   wrapper above it call buildShopBody() — a live, reassignable binding, so both
+   resolve to the wrapper installed here at call time. The durations are also
+   static for a given crew speed, so there is nothing to repaint while the shop
+   sits open. */
 /* 🔗 RECONCILE — meta.site is the source of truth, the tile is the picture.
    Any removal path (demolish, a future raid levelling, an edit) drops the tile
    without telling this layer, so the two are re-squared here instead of hooking
@@ -25884,6 +26284,13 @@ function animate() {
          4 s beat and the same one the offline loop makes with a virtual clock,
          so a test drives production code rather than a test-only twin. */
       sweep: (nowMs) => bldSweep(nowMs),
+      /* 🖌 THE 0.5s REPAINT BEAT the countdown card and the Site Board ride.
+         animate() never runs in the capture pane (no rAF, CLAUDE.md), so the
+         one thing a wall-clock UI has to prove — that the number on screen
+         actually MOVES — cannot be observed without this. It is updateHUD
+         itself, the shipped function, not a test-only twin: a seam that
+         re-implemented the repaint would be testing itself. */
+      beat: () => updateHUD(),
       /* ⏰ THE TEST CLOCK. Both of these move the STAMP, never Date.now():
          a job's remaining time is `s + d*1000 - now`, so pushing `s` backwards
          is indistinguishable from time passing — and it leaves every other

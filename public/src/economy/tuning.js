@@ -219,6 +219,45 @@ export const ECON = {
     ],
   },
 
+  /* ── 🏗 CONSTRUCTION ────────────────────────────────────────────────────
+     How long a building takes to go up. node-city holds NO copy of any of
+     these: it computes a PROFILE from BUILDINGS (which only it can see) and
+     hands it to Construction.seconds() below. If this module never loads,
+     buildSeconds is unreachable, no timer is ever written, and the city
+     places buildings instantly exactly as it did before this feature — and
+     any job already on disk is COMPLETED, never parked. That is the degrade
+     path and it is why there is no fallback literal in index.html (Rule 4).
+     Time scales with what a building is WORTH: 65% of the signal is what it
+     PRODUCES (cinder, tier-weighted resources, service), 35% is what it cost.
+     maxSec is the ceiling the feature was asked for. */
+  construction: {
+    on:        1,
+    formulaV:  1,          // bump on ANY retune below; rescales in-flight jobs
+    minSec:    60,
+    maxSec:    86400,      // 🔒 24 HOURS. The only place this number exists.
+    gamma:     1.7,        // compresses the starter shelf into minutes
+    costExp:   0.62,       // compresses a 3400x cost range into a usable band
+    weight: { cinder: 0.20, resource: 0.30, service: 0.15, cost: 0.35 },
+    full:   { cinderPerHr: 0.30, resource: 1400, service: 3.0, cost: 1200 },
+    costResWeight: 2,      // one raw non-cinder unit ≈ 2 raw cinder on the shelf
+    tierMul:   4,          // unit value = tierMul^tier  →  1 / 4 / 16 / 64
+    defaultTier: 1,
+    resSkip:  ['cinder', 'power'],   // ⚠ 'power' is never banked (index.html:2211)
+    resTier: { food:0, water:0, wood:0, stone:0, cloth:0, metal:0,
+               fuel:1, planks:1, supplies:1, rations:1, goods:1, ingots:1, ammo:1,
+               reagents:2, medicine:2, remedies:2, components:2,
+               memoryShards:3, corruptedEssence:3 },
+    exemptTypes: ['road', 'wall', 'streetlight', 'lot'],  // + anything def.decor
+    opSec:     900,        // every op_* is a flat 15 min. Ops carry cost:{}
+                           // (index.html:21491) so no cost curve applies, and
+                           // reading OPS_MOCK_PRICE would be a Rule-4 breach.
+    upgrade:   { base: 0.75, mulPerLevel: 1.6 },
+    municipal: { slots: 2, maxSec: 2400 },   // free crew; 40-minute ceiling
+    slots:     { perCo: 1, perWorkerStep: 6, max: 6 },
+    speed:     { perCo: 0.20, perWorker: 0.025, maxMul: 2.0 },
+    confirmOverSec: 3600,  // gcConfirm anything over an hour
+  },
+
   /* ── 📈 PRICES ────────────────────────────────────────────────────────────
      A price is cost-plus, then moved by the market. `baseMarkup` is applied at
      each step of the chain, which is why a Reality Stabilisation Component

@@ -46,6 +46,7 @@ import * as Bank from './bank.js';
 import * as Trade from './trade.js';
 import * as Sim from './sim.js';
 import * as Bottleneck from './bottleneck.js';
+import * as Construction from './construction.js';
 import * as Render from './render.js';
 
 const B = () => (typeof window !== 'undefined' ? window.MythicCityBridge : null) || null;
@@ -293,6 +294,17 @@ const api = {
   renderFirm: Render.renderFirm,
   renderSurvey: Render.renderSurvey,
   renderChain: Render.renderChain,
+
+  /* 🏗 CONSTRUCTION TIMERS — how long a building takes to go up.
+     The host computes a PROFILE from `BUILDINGS` (which only it can see, and
+     which no module can reach — the globals trap above) and hands it here. The
+     curve and every number in it live in ECON.construction and NOWHERE else,
+     so index.html carries not one literal from this feature.
+     ⚠ THE ABSENCE OF THIS FUNCTION IS A DEFINED STATE, NOT A BUG. The host
+       tests `typeof E.buildSeconds === 'function'` and, finding nothing,
+       writes no timer and places instantly — and completes every job already
+       on disk rather than parking it behind a module that never arrived. */
+  buildSeconds: (profile) => Construction.seconds(profile),
 
   // the tuning table and the catalogues, for tools and tests
   ECON, econ,

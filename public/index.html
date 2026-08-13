@@ -53832,6 +53832,18 @@ function getDecksForHero(heroId) {
   return getAllDecks().filter(d => d.heroId === heroId);
 }
 function getDeckById(id) {
+  /* 🔒 TRANSIENT RUN DECKS — the only edit to this function, and it is two
+     added lines above the original body, which is untouched.
+     A Warpath run's pool is temporary state that must never reach the permanent
+     profile. It used to be pushed into Profile.decks, which is persisted to
+     disk AND uploaded as forge.userDecks, so it survived reload, appeared on
+     the deck picker, counted toward validDecks, and was fieldable despite
+     holding 14 copies of a card the player owns 3 of (buildDeckFromKeys applies
+     no copy limit). See warpathStartBattle. This slot is null unless a Warpath
+     battle is on screen right now, so for every other caller in the game this
+     function behaves exactly as it did. */
+  const _wpT = (typeof window !== 'undefined') ? window.__wpRunDeck : null;
+  if (_wpT && _wpT.id === id) return _wpT;
   return getAllDecks().find(d => d.id === id) || null;
 }
 function findOrCreateLooseDeck(heroId, cards, name) {
@@ -215902,9 +215914,19 @@ function warpathStartBattle(b) {
 
   const cards = warpathPadDeck(b.card_keys, myHero);
   if (!cards.length) { showToast('Your Warpath pool has no playable cards yet.', 4000); return; }
-  Profile.decks = (Array.isArray(Profile.decks) ? Profile.decks : []).filter(d => d.id !== 'warpath_run_deck');
-  Profile.decks.push({ id: 'warpath_run_deck', name: 'Warpath Pool', heroId: myHero.id,
-                       cards: cards, createdAt: Date.now() });
+  /* ⚠ THIS USED TO BE `Profile.decks.push(...)`, AND THAT IS HARD CONSTRAINT #4
+     BROKEN IN ONE LINE. Profile.decks is written to disk and uploaded to the
+     cloud row as forge.userDecks, so a run deck survived reload, showed up on
+     the deck picker, counted toward validDecks, and was fieldable — with 14
+     copies of a card the player owns three of, because buildDeckFromKeys
+     applies no copy limit. Temporary run state in the permanent profile.
+
+     It lives in one transient slot now, read by getDeckById and by nothing
+     else, and cleared the moment the battle is over. */
+  window.__wpRunDeck = { id: 'warpath_run_deck', name: 'Warpath Pool', heroId: myHero.id,
+                         cards: cards, createdAt: Date.now(), transient: true };
+  // Anything a previous build persisted is swept out, once, here.
+  _wpPurgePersistedRunDeck();
 
   // The map screen has to go away for the battle; the run itself is on the
   // server and is untouched by unmounting the iframe.
@@ -215939,6 +215961,26 @@ function warpathStartBattle(b) {
    produced and puts the player back on the map. warpath_battle_report is
    race-gated server-side, so reporting twice is harmless by design — which is
    what lets an authoritative server report it later instead of us. */
+/* Earlier builds pushed the run deck into Profile.decks, so it is already on
+   disk and in the cloud row for anyone who has played this branch. Sweep it —
+   and its deck-history entry, which recordDeckResult() creates on every
+   Warpath battle — whenever the bridge runs. Idempotent, and it only ever
+   removes the one id this mode owns. */
+function _wpPurgePersistedRunDeck() {
+  try {
+    let changed = false;
+    if (Array.isArray(Profile.decks)) {
+      const kept = Profile.decks.filter(d => !d || d.id !== 'warpath_run_deck');
+      if (kept.length !== Profile.decks.length) { Profile.decks = kept; changed = true; }
+    }
+    if (Profile.deckHistory && Profile.deckHistory.warpath_run_deck) {
+      delete Profile.deckHistory.warpath_run_deck; changed = true;
+    }
+    if (changed && typeof saveProfile === 'function') saveProfile();
+    return changed;
+  } catch (e) { return false; }
+}
+
 /* 💓 THE HEARTBEAT. The Warpath screen is unmounted for the duration of a
    battle, so the only thing that knows the match is still being played is this
    page. Without it the server has to guess how long a game of cards takes, and
@@ -215970,6 +216012,10 @@ function _wpStopHeartbeat() {
 
 async function warpathAfterBattle() {
   _wpStopHeartbeat();
+  // The run deck existed for exactly one match. Drop it, and sweep anything a
+  // previous build managed to persist while we are here.
+  try { window.__wpRunDeck = null; } catch (e) {}
+  _wpPurgePersistedRunDeck();
   const res = App._warpathAfter; App._warpathAfter = null;
   App.state = null;
   if (!res) { App.screen = 'title'; return render(); }
@@ -216014,21 +216060,85 @@ async function warpathAfterBattle() {
 
    Every step before 6 is retryable. If we die anywhere in 1-5 the grant is
    still pending and we pick it up next boot. */
+/* ⭐ THE LEDGER CARRIES THE GOODS, NOT JUST A RECEIPT.
+
+   ⚠ It used to be a list of grant ids, and that made it useless for the one
+   job that matters. MultiTab's rule is "older claim wins ties", and a tab
+   throttled or suspended past STALE_MS never sets amWriter = false — the other
+   tab simply promotes itself. When the first tab wakes it broadcasts its older
+   claimedAt and takes the lock back WITHOUT EVER HAVING BEEN A READER, so the
+   reader→writer edge never fires, the promotion reconcile never runs, and its
+   boot-time Profile goes over the top of disk. A critic drove it with two real
+   pages and CDP Debugger.pause — which is what a backgrounded tab actually is:
+   two extracted Paladins and four Void Crystals gone from disk, gone from the
+   server, and ledgered as delivered so no future drain re-applied them. And the
+   cloud is not a backstop: the piggyback fields are MAX-merged on DOWNLOAD but
+   uploaded as a full-row replace, so the stale tab's upload wins there too.
+
+   Edge-detection on a promotion event is guessing at browser scheduling. A
+   ledger with the goods in it is not. Each entry records the value we PROVED
+   was on disk at ack time, so repair is a high-water mark — it can never invent
+   more than was actually delivered, and a legitimate later increase survives
+   untouched. localStorage is shared across tabs, so the tab that wakes up reads
+   the entries the other tab wrote and repairs itself before it can save. */
+// The six extraction materials, whitelisted because an unknown key is dropped:
+// Profile is deep-cloned into the cloud row and the export payload, so anything
+// that lands here travels. Declared above the ledger because the repair pass
+// reads it.
+const WARPATH_MATERIALS = ['dragon_heart', 'void_crystal', 'celestial_ore',
+                           'ancient_bone', 'ouroboros_core', 'kalon_fragment'];
 const WARPATH_LEDGER_KEY = 'hg_warpath_grants';
 function _wpLedger() {
   try {
     const a = JSON.parse(localStorage.getItem(WARPATH_LEDGER_KEY) || '[]');
-    return Array.isArray(a) ? a : [];
+    if (!Array.isArray(a)) return [];
+    // Tolerate the old id-only shape so an upgrade does not re-apply history.
+    return a.map(e => (e && typeof e === 'object') ? e : { id: String(e), cards: {}, mats: {} });
   } catch (e) { return []; }
 }
-function _wpLedgerHas(id) { return _wpLedger().indexOf(String(id)) >= 0; }
-function _wpLedgerAdd(ids) {
+function _wpLedgerHas(id) {
+  const s = String(id);
+  return _wpLedger().some(e => e && String(e.id) === s);
+}
+function _wpLedgerAdd(entries) {
   try {
-    const next = _wpLedger().concat(ids.map(String));
+    const next = _wpLedger().concat(entries);
     // Keep it bounded; a player will never have hundreds of unacked grants.
     localStorage.setItem(WARPATH_LEDGER_KEY, JSON.stringify(next.slice(-300)));
     return true;
   } catch (e) { return false; }
+}
+
+/* Bring Profile up to at least what the ledger proves was delivered. Runs
+   unconditionally — not on an edge — because the failure it exists for leaves
+   no edge to catch. Returns the number of values it had to raise. */
+function _wpLedgerRepair(why) {
+  let raised = 0;
+  try {
+    const led = _wpLedger();
+    if (!led.length) return 0;
+    Profile.cardCollection = Profile.cardCollection || {};
+    Profile.warpathMaterials = Profile.warpathMaterials || {};
+    for (const e of led) {
+      for (const id in (e && e.cards) || {}) {
+        const want = e.cards[id] | 0;
+        if ((Profile.cardCollection[id] | 0) < want) { Profile.cardCollection[id] = want; raised++; }
+      }
+      for (const k in (e && e.mats) || {}) {
+        if (WARPATH_MATERIALS.indexOf(k) < 0) continue;
+        const want = e.mats[k] | 0;
+        if ((Profile.warpathMaterials[k] | 0) < want) { Profile.warpathMaterials[k] = want; raised++; }
+      }
+    }
+    if (raised) {
+      try {
+        console.warn('[warpath] ' + raised + ' extracted value(s) had been clobbered on disk ('
+          + (why || 'repair') + ') — restored from the local grant ledger.');
+      } catch (e2) {}
+      if (typeof saveProfile === 'function') saveProfile();
+    }
+  } catch (e) { /* a repair that throws must never block the game */ }
+  return raised;
 }
 // Only the elected writer tab may apply a grant, because only it can save one.
 function _wpAmWriter() {
@@ -216084,13 +216194,24 @@ function _wpReconcileFromDisk(why) {
     return true;
   } catch (e) { return false; }
 }
-// Fires on every MultiTab state change; acts only on the reader → writer edge.
+/* Fires on every MultiTab state change.
+
+   ⚠ THE EDGE IS NOT ENOUGH, AND CANNOT BE. A tab suspended past STALE_MS never
+   sets amWriter = false — the other tab promotes itself — so when this one
+   wakes it reclaims the lock on its older claimedAt without ever having been a
+   reader, and reader→writer never fires. That is the common case, not an
+   exotic one: a background tab and a foreground tab is the ordinary state of a
+   browser. So the edge still triggers the cheap reconcile, and the LEDGER
+   REPAIR runs on every state change regardless of direction, because it is
+   idempotent, it is a high-water mark, and it does not need to know which way
+   the lock moved. */
 let _wpWasWriter = null;
 try {
   if (typeof onMultiTab === 'function') {
     onMultiTab(function (mt) {
       const now = !(mt && mt.amWriter === false);
       if (_wpWasWriter === false && now === true) _wpReconcileFromDisk('writer promotion');
+      if (now) _wpLedgerRepair('multitab change');
       _wpWasWriter = now;
     });
   }
@@ -216107,10 +216228,6 @@ function _wpResolveGrantKey(key) {
   } catch (e) { return null; }
 }
 // Material ids are compared against the six the mode actually defines. An
-// unknown key is dropped: Profile is deep-cloned into the cloud row and the
-// export payload, so anything that lands here travels.
-const WARPATH_MATERIALS = ['dragon_heart', 'void_crystal', 'celestial_ore',
-                           'ancient_bone', 'ouroboros_core', 'kalon_fragment'];
 
 async function warpathClaimGrants() {
   if (!warpathEnabled()) return;
@@ -216123,7 +216240,28 @@ async function warpathClaimGrants() {
   const all = (out && out.grants) || [];
   // 3 — local idempotency. Anything already applied is only waiting on an ack.
   const already = all.filter(g => g && g.id && _wpLedgerHas(g.id)).map(g => g.id);
-  const fresh   = all.filter(g => g && g.id && !_wpLedgerHas(g.id));
+  let   fresh   = all.filter(g => g && g.id && !_wpLedgerHas(g.id));
+
+  /* ⚠ AN UNRESOLVABLE KEY USED TO BE DROPPED AND THE GRANT ACKED ANYWAY.
+     `if (!card) continue;` reads like caution — "never invent a card this build
+     lacks" — and it is silent permanent destruction: the card never reaches
+     disk, the ack tells the server to forget it, and the server holds the only
+     re-issuable copy. It fires on ordinary catalogue drift: a client still
+     running a cached sw.js after a content drop, or a `custom:` key granted
+     before Catalog.cards has finished downloading (Catalog.cards at boot: 0).
+
+     So a grant this build cannot fully understand is DEFERRED, not applied and
+     not acked. It stays pending server-side and we try again next boot, by
+     which time the catalogue has usually arrived. A grant that is permanently
+     unresolvable stays visibly owed rather than vanishing quietly. */
+  const deferred = fresh.filter(g => ((g && g.card_keys) || []).some(k => !_wpResolveGrantKey(k)));
+  if (deferred.length) {
+    fresh = fresh.filter(g => deferred.indexOf(g) < 0);
+    try {
+      console.warn('[warpath] ' + deferred.length + ' grant(s) deferred — this build cannot resolve '
+        + 'every card in them yet. They stay owed by the server and will be retried.');
+    } catch (e) {}
+  }
 
   /* ⚠ Re-check the election AFTER the await. `pending()` is a network round
      trip, and the writer can change under us mid-flight — the promotion path
@@ -216143,6 +216281,10 @@ async function warpathClaimGrants() {
   // Never apply onto a base this tab may have drifted from. Cheap, and it
   // makes the before-snapshot below agree with what is actually on disk.
   _wpReconcileFromDisk('grant drain');
+  // ...and repair anything a stale tab has already written over. This runs on
+  // every drain rather than on a promotion edge, because the clobber that
+  // matters leaves no edge behind — see the note on the ledger.
+  _wpLedgerRepair('grant drain');
 
   // 4 + 5 — apply in memory. The whole loop is guarded: a single malformed key
   // used to throw out here, outside the try, and take the grant with it.
@@ -216150,8 +216292,10 @@ async function warpathClaimGrants() {
     Profile.cardCollection = Profile.cardCollection || {};
     for (const g of fresh) {
       for (const key of ((g && g.card_keys) || [])) {
+        // Cannot be null here: a grant containing an unresolvable key was
+        // deferred above rather than reaching this loop.
         const card = _wpResolveGrantKey(key);
-        if (!card) continue;                       // never invent a card this build lacks
+        if (!card) continue;
         const limit = (typeof _cardCopyLimit === 'function') ? _cardCopyLimit(card) : 3;
         const have = Profile.cardCollection[card.id] || 0;
         if (have >= limit) continue;               // clamp — the server is not the only judge
@@ -216189,7 +216333,15 @@ async function warpathClaimGrants() {
       _wpUndoGrant(applied, mats);
       return;
     }
-    _wpLedgerAdd(fresh.map(g => g.id));
+    /* Record the value we just PROVED is on disk, not the delta — a high-water
+       mark can be re-asserted safely any number of times, where a delta cannot.
+       This is the only copy of these cards that will exist once the ack below
+       tells the server to forget them. */
+    const proof = { cards: {}, mats: {} };
+    for (const a of applied) proof.cards[a.id] = Profile.cardCollection[a.id] | 0;
+    for (const k in mats)    proof.mats[k]     = (Profile.warpathMaterials || {})[k] | 0;
+    _wpLedgerAdd(fresh.map(g => ({ id: String(g.id), cards: proof.cards, mats: proof.mats,
+                                   ts: Date.now() })));
   }
 
   // 6 — and only now.

@@ -310,6 +310,146 @@ for (let s = 0; s < N; s++) {
   }
 }
 
+/* ── THE GRANT LEDGER, THE ONLY COPY THAT SURVIVES THE ACK ─────────────────
+   warpath_grants_ack() destroys the server's re-issuable copy of an extracted
+   card, so from that moment the local ledger is the only record that it was
+   ever delivered. Three separate critics have now found a way to lose those
+   cards, so the ledger's three properties are asserted here rather than
+   reasoned about: it survives the old id-only format, it repairs a clobbered
+   Profile as a high-water mark, and it never invents anything.
+
+   Run in Node against the real functions lifted out of index.html, with
+   localStorage and Profile stubbed — the browser parts (MultiTab election,
+   saveProfile) are what the browser critics drive. */
+{
+  const fs = require('fs'), path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const fn = (name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let d = 0, j = src.indexOf('{', i), k = j;
+    for (; k < src.length; k++) { if (src[k] === '{') d++; else if (src[k] === '}') { d--; if (!d) break; } }
+    return src.slice(i, k + 1);
+  };
+  const parts = ['_wpLedger', '_wpLedgerHas', '_wpLedgerAdd', '_wpLedgerRepair'].map(fn);
+  if (parts.some(x => !x)) {
+    console.log('FAIL could not lift the grant ledger out of index.html'); fails++;
+  } else {
+    let bad = 0;
+    const store = {};
+    const ctx = {
+      localStorage: {
+        getItem: k => (k in store ? store[k] : null),
+        setItem: (k, v) => { store[k] = String(v); },
+      },
+      WARPATH_LEDGER_KEY: 'hg_warpath_grants',
+      WARPATH_MATERIALS: ['dragon_heart', 'void_crystal', 'celestial_ore',
+                          'ancient_bone', 'ouroboros_core', 'kalon_fragment'],
+      Profile: {},
+      saveProfile: function () { ctx.saved = (ctx.saved | 0) + 1; },
+      console: { warn: function () {} },
+    };
+    // eslint-disable-next-line no-new-func
+    const api = new Function('localStorage', 'WARPATH_LEDGER_KEY', 'WARPATH_MATERIALS',
+                             'Profile', 'saveProfile', 'console',
+      parts.join('\n') + '\nreturn { _wpLedger, _wpLedgerHas, _wpLedgerAdd, _wpLedgerRepair };')(
+      ctx.localStorage, ctx.WARPATH_LEDGER_KEY, ctx.WARPATH_MATERIALS,
+      ctx.Profile, ctx.saveProfile, ctx.console);
+
+    // 1. The old id-only ledger must still read as "already applied", or an
+    //    upgrade re-applies every grant in a player's history.
+    store['hg_warpath_grants'] = JSON.stringify(['g-old-1', 'g-old-2']);
+    if (!api._wpLedgerHas('g-old-1') || api._wpLedgerHas('g-nope')) {
+      console.log('FAIL the ledger no longer recognises the id-only format an earlier build wrote'); bad++;
+    }
+
+    // 2. A payload entry repairs a Profile that was written over.
+    store['hg_warpath_grants'] = JSON.stringify([
+      { id: 'w1', cards: { paladin: 2 }, mats: { void_crystal: 4 }, ts: 1 },
+    ]);
+    ctx.Profile.cardCollection = {};            // exactly the reproduced clobber:
+    ctx.Profile.warpathMaterials = undefined;   // disk paladin undefined, mats undefined
+    ctx.saved = 0;
+    const raised = api._wpLedgerRepair('test');
+    if (raised !== 2) { console.log('FAIL the ledger repaired ' + raised + ' values, expected 2'); bad++; }
+    if ((ctx.Profile.cardCollection.paladin | 0) !== 2) {
+      console.log('FAIL two extracted Paladins were not restored'); bad++;
+    }
+    if (((ctx.Profile.warpathMaterials || {}).void_crystal | 0) !== 4) {
+      console.log('FAIL four extracted Void Crystals were not restored'); bad++;
+    }
+    if (!ctx.saved) { console.log('FAIL a repair that changed Profile did not save it'); bad++; }
+
+    // 3. It is a HIGH-WATER MARK, not a delta: repeating it must not stack, and
+    //    a legitimately larger value must survive untouched.
+    if (api._wpLedgerRepair('again') !== 0) {
+      console.log('FAIL a second repair changed something — the ledger is stacking deltas'); bad++;
+    }
+    ctx.Profile.cardCollection.paladin = 3;     // the player earned another elsewhere
+    api._wpLedgerRepair('third');
+    if (ctx.Profile.cardCollection.paladin !== 3) {
+      console.log('FAIL the repair pulled a legitimately higher count back DOWN'); bad++;
+    }
+
+    // 4. It never invents: an unknown material is not ours to write, and a
+    //    ledger with nothing in it does nothing.
+    store['hg_warpath_grants'] = JSON.stringify([
+      { id: 'w2', cards: {}, mats: { not_a_material: 9 }, ts: 2 },
+    ]);
+    ctx.Profile.warpathMaterials = {};
+    api._wpLedgerRepair('unknown');
+    if ('not_a_material' in ctx.Profile.warpathMaterials) {
+      console.log('FAIL the repair wrote a material that is not on the whitelist'); bad++;
+    }
+    store['hg_warpath_grants'] = '[]';
+    if (api._wpLedgerRepair('empty') !== 0) { console.log('FAIL an empty ledger changed Profile'); bad++; }
+
+    // 5. Round trip: what _wpLedgerAdd writes is what _wpLedgerRepair reads.
+    store['hg_warpath_grants'] = '[]';
+    api._wpLedgerAdd([{ id: 'w3', cards: { goblin: 3 }, mats: { kalon_fragment: 1 }, ts: 3 }]);
+    ctx.Profile.cardCollection = {}; ctx.Profile.warpathMaterials = {};
+    api._wpLedgerRepair('roundtrip');
+    if ((ctx.Profile.cardCollection.goblin | 0) !== 3
+        || (ctx.Profile.warpathMaterials.kalon_fragment | 0) !== 1) {
+      console.log('FAIL a grant written by _wpLedgerAdd could not be repaired back'); bad++;
+    }
+    fails += bad;
+    console.log('grant ledger         5 properties'
+      + (bad ? ' — ' + bad + ' PROBLEMS' : ' — survives the old format, repairs, never invents'));
+  }
+
+  /* ── THE RUN DECK MUST NOT BE PERSISTABLE ────────────────────────────────
+     Temporary run state in Profile.decks is the letter of hard constraint #4:
+     Profile.decks goes to disk AND uploads as forge.userDecks. */
+  let dbad = 0;
+  if (/Profile\.decks\.push\(\{\s*id:\s*'warpath_run_deck'/.test(src)) {
+    console.log('FAIL the Warpath run deck is being pushed into Profile.decks'); dbad++;
+  }
+  if (!/window\.__wpRunDeck\s*=\s*\{\s*id:\s*'warpath_run_deck'/.test(src)) {
+    console.log('FAIL the Warpath run deck is not held in the transient slot'); dbad++;
+  }
+  if (!/function _wpPurgePersistedRunDeck/.test(src)) {
+    console.log('FAIL nothing sweeps a run deck an earlier build already persisted'); dbad++;
+  }
+  if (!/window\.__wpRunDeck/.test(fn('getDeckById') || '')) {
+    console.log('FAIL getDeckById cannot see the transient run deck — the battle would deal no deck'); dbad++;
+  }
+  fails += dbad;
+  console.log('transient run deck   ' + (dbad ? dbad + ' PROBLEMS' : 'never reaches Profile.decks or the cloud row'));
+
+  /* ── AN UNRESOLVABLE GRANT IS DEFERRED, NOT ACKED ────────────────────── */
+  const drain = fn('warpathClaimGrants') || '';
+  let gbad = 0;
+  if (!/const deferred = fresh\.filter/.test(drain)) {
+    console.log('FAIL a grant this build cannot resolve is still applied and acked'); gbad++;
+  }
+  if (!/_wpLedgerRepair\(/.test(drain)) {
+    console.log('FAIL the drain does not repair a clobbered Profile before applying'); gbad++;
+  }
+  fails += gbad;
+  console.log('grant drain          ' + (gbad ? gbad + ' PROBLEMS' : 'defers what it cannot resolve, repairs before it applies'));
+}
+
 const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
 const lo  = a => Math.min(...a), hi = a => Math.max(...a);
 

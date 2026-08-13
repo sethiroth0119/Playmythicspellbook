@@ -2852,6 +2852,36 @@ const WX_CHANCES = [                   // one roll: first match wins
   { type: 'snow',     p: 0.025 },      // (snow slightly likelier Dec–Feb, see roll)
   { type: 'rain',     p: 0.050 },
 ];
+/* ⚡ LIGHTNING — atmosphere first, demolition never.
+   The header above states what each event does: "farmMult / outdoorMult scale
+   production; tornado physically destroys tiles in its path; fire rain sets
+   buildings burning". A storm is a PRODUCTION MODIFIER (farm ×.7, outdoor ×.7)
+   and lightning is its flavour. It was not behaving that way.
+
+   The strike roll was a flat 22% on every flash, and flashes come every 3-12s
+   with no cap and no reference to how long the storm runs. Measured over 20,000
+   simulated hours on the shipped constants:
+
+     storm      0.409/hr   302s avg    8.8 buildings damaged   3.59 dmg/hr
+     fire rain  0.119/hr   100s avg   13.0 buildings damaged   1.55 dmg/hr
+
+   So the humble storm was dealing 2.3× the total building damage of FIRE RAIN,
+   the event that is supposed to BE the rare catastrophe. Frequency was never
+   the problem — one storm every ~2.4h is exactly the "rolled rarely" the
+   header promises. The damage per storm was.
+
+   It fell hardest on new players, because strikes only pick UNDAMAGED tiles and
+   therefore chew straight through a small city: one storm damaged 88% of an
+   8-building city versus 22% of a 40-building one. A player's first storm could
+   idle their whole town, each repair costing REPAIR_COST_FRAC of build cost.
+
+   Hence a proportional cap rather than a flat one: a storm should cost a small
+   town about what it costs a large one, in PROPORTION. ~8% with the strike roll
+   at 6% lands storms at 0.42× fire rain's damage — a real setback, comfortably
+   below the designated disaster. Flash frequency is untouched; the sky looks
+   exactly as angry as it always did. */
+const WX_LIGHTNING_STRIKE_P  = 0.06;   // was .22 — see above
+const WX_LIGHTNING_CAP_FRAC  = 0.08;   // max buildings struck per storm, as a fraction of the city
 const REPAIR_COST_FRAC = 0.4;          // repair = 40% of build cost
 
 // Adjacency economics (kept from the v3 prototype, tuned to the new set)
@@ -3519,6 +3549,10 @@ function startWeather(type) {
   fireFX.visible = type === 'firerain';
   tornadoMesh.visible = type === 'tornado';
   wx._anomPaid = false;
+  // ⚡ Per-storm strike budget. Reset HERE rather than in weatherTick so the
+  //    allowance belongs to one storm — a counter reset on the tick would
+  //    refill mid-storm and restore the uncapped behaviour this replaced.
+  wx._strikes = 0;
   if (type === 'tornado') {
     tornadoState.x = Math.random() < .5 ? -2 : GRID + 1;
     tornadoState.z = Math.random() * GRID;
@@ -3581,9 +3615,20 @@ function weatherTick(dt) {
     if (now > wx.flashAt) {
       wx.flashAt = now + (3 + Math.random() * 9) * 1000;
       wx.flash = .9;
-      if (Math.random() < .22) {
-        const ks = Object.keys(game.tiles).filter(k => game.tiles[k].type !== 'road' && game.tiles[k].type !== 'anchor' && !game.tiles[k].damaged);
-        if (ks.length) damageTile(ks[Math.floor(Math.random() * ks.length)], false, '⚡ Lightning');
+      if (Math.random() < WX_LIGHTNING_STRIKE_P) {
+        // The cap counts the WHOLE city, not just what is still standing —
+        // otherwise a town already battered by one storm gets a smaller
+        // allowance in the next, and the damage compounds exactly where the
+        // player can least afford it.
+        const all = Object.keys(game.tiles).filter(k => game.tiles[k].type !== 'road' && game.tiles[k].type !== 'anchor');
+        const cap = Math.max(1, Math.ceil(all.length * WX_LIGHTNING_CAP_FRAC));
+        if ((wx._strikes | 0) < cap) {
+          const ks = all.filter(k => !game.tiles[k].damaged);
+          if (ks.length) {
+            wx._strikes = (wx._strikes | 0) + 1;
+            damageTile(ks[Math.floor(Math.random() * ks.length)], false, '⚡ Lightning');
+          }
+        }
       }
     }
   }

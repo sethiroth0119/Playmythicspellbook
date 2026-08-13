@@ -222,6 +222,8 @@ function resize() {
   cv.style.width = window.innerWidth + 'px';
   cv.style.height = window.innerHeight + 'px';
   ctx.setTransform(r, 0, 0, r, 0, 0);
+  // Height first: viewH() and fitZoom() both read the sheet's real box.
+  sizeSheet();
   if (!S.userZoom) { S.cam.z = fitZoom(); clampCam(); }
   draw();
 }
@@ -240,7 +242,8 @@ function sheetH() {
   if (window.innerWidth > 900) return 0;              // desktop: it is a column, see viewW
   if (!side.classList.contains('open')) return 0;     // collapsed to its handle
   var r = side.getBoundingClientRect();
-  // Measured, not assumed: the sheet is 56vh by CSS but respects safe areas.
+  // Measured, not assumed: sizeSheet() computes the height and safe areas can
+  // still trim it.
   return Math.max(0, Math.min(window.innerHeight, Math.round(r.height)));
 }
 function viewH() { return Math.max(120, window.innerHeight - sheetH()); }
@@ -1667,6 +1670,49 @@ function isNarrow() {
   catch (e) { return window.innerWidth <= 900; }
 }
 function sheetOpen() { return $('side').classList.contains('open'); }
+/* THE MINIMUM WORLD. Below this the map stops being a map: you cannot see where
+   you are relative to anything, and dragging it is guesswork. Asserted as a
+   permanent test at four viewports — see _selftest.js. */
+var MIN_MAP_BAND = 120;
+
+/* Size the bottom sheet against what is actually left, rather than against a
+   fraction of the screen. 56vh is a ceiling, not a height. */
+function sizeSheet() {
+  var side = $('side');
+  if (!side) return;
+  if (!isNarrow()) { side.style.removeProperty('--wp-sheet-h'); return; }
+  /* offsetHeight, NOT getBoundingClientRect().bottom. #top is absolutely
+     positioned at top:0, so its height IS its bottom edge — but a rect is
+     measured against the visual viewport, and on a short rotated screen that
+     can be scrolled or pinch-shifted out from under us. Reading a layout
+     property instead means the sheet cannot be sized off a transient offset:
+     at 844x390 the rect said 51 where the element is 78, so the sheet took its
+     56vh ceiling and left a 94px band. */
+  var hud = $('top');
+  var hudBottom = hud ? Math.round(hud.offsetHeight) : 0;
+  var ceiling = Math.round(window.innerHeight * 0.56);
+  // The rail lives INSIDE the sheet while it is open, so it costs nothing here.
+  var room = window.innerHeight - hudBottom - MIN_MAP_BAND;
+  side.style.setProperty('--wp-sheet-h', Math.max(120, Math.min(ceiling, room)) + 'px');
+  /* html and body are overflow:hidden, but focusing the sheet handle can still
+     scroll the window — measured at 53px on a 844x390 screen, which slides the
+     top HUD out of sight. Nothing on this page is ever meant to scroll. */
+  if (window.scrollY || window.scrollX) { try { window.scrollTo(0, 0); } catch (e) {} }
+}
+
+/* Move the action rail in and out of the sheet. The buttons keep their handlers
+   — moving a node does not detach them — so this is purely where it is drawn. */
+function railInSheet(inside) {
+  var rail = $('rail'), side = $('side'), foot = $('sidefoot');
+  if (!rail || !side || !foot) return;
+  var want = !!inside;
+  if (document.body.classList.contains('rail-in-sheet') === want
+      && (want ? rail.parentNode === side : rail.parentNode === document.body)) return;
+  if (want) side.insertBefore(rail, foot);
+  else      document.body.insertBefore(rail, side);
+  document.body.classList.toggle('rail-in-sheet', want);
+}
+
 function setPanel(show) {
   var s = $('side'), t = $('sidetoggle'), rail = $('rail');
   if (isNarrow()) {
@@ -1676,7 +1722,11 @@ function setPanel(show) {
     t.textContent = show ? '⌄' : '⌃';
     t.setAttribute('aria-label', show ? 'Close panel' : 'Open panel');
     rail.style.right = '0';
+    railInSheet(!!show);
+    sizeSheet();
   } else {
+    railInSheet(false);
+    sizeSheet();
     s.classList.remove('open');
     document.body.classList.remove('sheet-open');
     s.classList.toggle('hidden', !show);

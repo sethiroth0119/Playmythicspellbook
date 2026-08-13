@@ -311,7 +311,13 @@
      narrow screen the panel becomes a bottom sheet that starts collapsed, and
      the rail sits above it. */
   @media (max-width:900px){
-    #side{width:100%;max-width:none;top:auto;bottom:0;height:56vh;
+    /* ⚠ HEIGHT IS COMPUTED, NOT 56vh. A fixed fraction cannot know that the top
+       HUD is 73-107px and the action rail another 123-157px, and on a short
+       screen those plus a 56vh sheet leave no map at all: measured, the visible
+       band (rail top minus HUD bottom) was 115px at 390x844, -10px at 360x640
+       and -56px rotated. sizeSheet() sets --wp-sheet-h against what is actually
+       left, so a minimum band always survives; 56vh is only the ceiling. */
+    #side{width:100%;max-width:none;top:auto;bottom:0;height:var(--wp-sheet-h,56vh);
       border-left:0;border-top:1px solid var(--edge);border-radius:14px 14px 0 0;
       transform:translateY(calc(100% - 42px))}
     #side.open{transform:translateY(0)}
@@ -322,12 +328,22 @@
     /* ⚠ THE HANDLE SAT ON TOP OF THE FIRST BUTTON THE GAME ASKS FOR. It is
        22px tall and overhangs the sheet, so at 390x844 it covered 29% of Pitch
        camp's hit area (9% of End turn at 360x640) and the bottom half of that
-       tap opened the dossier instead. The rail is lifted clear of it rather
-       than the handle being shrunk — a 22px target is already small enough. */
-    #rail{right:0;bottom:44px;padding:8px 8px 6px;gap:6px}
-    body:not(.sheet-open) #rail{bottom:70px}
-    /* The sheet must not cover the action rail it sits under. */
-    body.sheet-open #rail{bottom:calc(56vh + 26px)}
+       tap opened the dossier instead. The rail clears it while the sheet is
+       shut rather than the handle being shrunk — a 22px target is already
+       small enough.
+
+       ⚠ AND THE FIRST FIX FOR THAT MADE THINGS WORSE. Lifting the rail by 22px
+       to clear the handle pushed it INTO the top HUD once the sheet was open:
+       every viewport lost band and 360x640 went NEGATIVE. Trading one overlap
+       for another is what happens when three fixed-height things are stacked in
+       a space that cannot hold them, so on a narrow screen the rail is not
+       stacked at all — when the sheet opens the rail MOVES INSIDE IT, above the
+       footer, where a thumb already is. One thing on screen below the HUD, not
+       two, and every action stays reachable. See setPanel(). */
+    #rail{right:0;bottom:66px;padding:8px 8px 6px;gap:6px}
+    body.rail-in-sheet #rail{position:static;bottom:auto;right:auto;left:auto;
+      background:none;padding:6px 10px 8px;border-top:1px solid var(--edge)}
+    body.rail-in-sheet #sidebody{flex:1 1 auto;min-height:0}
     #rail .btn{min-width:0;flex:1 1 auto;padding:8px 6px;font-size:10px}
     #rail #tileinfo{min-width:0;flex:1 1 100%;padding:6px 9px;font-size:12px}
     #bearings{margin-bottom:0}

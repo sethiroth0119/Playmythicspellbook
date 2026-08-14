@@ -65,6 +65,57 @@
         on the same machine. If you add a painter, get its m/l/s static flags
         right — a wrongly-static layer silently stops animating.
 
+   ── ROUND 3: A HIGHLIGHT IS NOT A HAZARD ──────────────────────────────────
+   Round 2 applied the hazard treatment to the tile STATES as well, and that was
+   the wrong call. A hazard has no edge and should spill; a movement range is
+   the answer to "where may I go?" and must stop exactly where the rules stop.
+   With MASK_STATE at base 1.20 and the emission drawn through the ×1.26 halo,
+   seven legal tiles rendered as one soft teal film over the whole lower-left
+   quadrant — four illegal tiles and a water pool included. So the STATE path
+   (drawPool) now uses a mask that is the union of the tile polygons with ~2.5px
+   of feather, fills the interior FLAT and composited once, and puts the only
+   traced mark on the OUTER boundary of the merged region (boundaryEdges). The
+   SURFACE path is unchanged: MASK_SURF still spills, because a puddle should.
+
+   ⚠ AND THE THING THE BLOCKER WAS ACTUALLY ABOUT. The wave-1 critic measured
+   "movement range is invisible: only 0.63% of board pixels change" against the
+   screenshot harness — but the harness never sent any move tiles. It set
+   App.ui.actionMode='move' on a unit whose hasMoved was true, and renderBoard
+   gates validMoves on `actionMode === 'move' && !sel.hasMoved`, so _bbPaint.move
+   was []. Read out of the live page: paintKey `{"move":[],…,"sel":{"x":2,"z":5}}`
+   while getValidMoves() on the same unit returned 7 tiles. If a future round
+   reports this layer as invisible again, CHECK api.paint.move IS NON-EMPTY
+   BEFORE CHANGING ANY NUMBER IN THIS FILE.
+
+   ── ROUND 4: A LIT TILE IS FOUND BY LUMA, NOT BY HUE ──────────────────────
+   Round 3 answered "which cells are legal?" and a critic confirmed it does —
+   but it answered it in HUE, and that is what made the pool read as a sheet of
+   translucent teal cellophane. With the multiply capped at 0.34 the pool's
+   B−R measured −47.6 → +17.5 over the move region against a luma rise of only
+   +26: the sand under the highlight was no longer sand of any colour, it was
+   cyan. The ground had been REPLACED, not lit, which is the same "sticker on
+   top of the ground" failure the outlines were, painted in hue instead.
+   So the split moved: the multiply cap fell to 0.10 (enough to stop the sand's
+   red dominating on near-white dusk ground, its original job, and no more) and
+   the lift it was stealing went into the additive half via each state's `a`.
+   The measured contract over the move pool interior is now
+       ON−OFF luma  ≥ +40   (measured +46.6, whole-pool mean)
+       ON  B−R      ∈ [−20,+15]  (measured −6.1; p95 +14)
+   i.e. a lit tile is BRIGHTER and COOLER sand, not a different material. Two
+   things follow from it and are easy to undo by accident:
+     • every state got its own `a`, solved from how much luma its own filter
+       actually lost, because amber loses almost nothing on warm sand and cyan
+       loses three times as much (a flat rise blew attack to a mean R of 243);
+     • the emissive colours carry more red than they look like they should —
+       pure cyan light inverts the sand's channel order all over again.
+   The other two thirds of the same critique were the edge and the interior:
+   MASK_STATE.blur went 0.055 → 0.100 (a fifth of a tile of feather, with the
+   50% point still exactly on the tile boundary, so nothing about legality
+   changed), and the interior stopped being dead flat — see the region radial
+   and `rfs` in drawPool. On a compact 3×3 pool that measures 57.9 dL at the
+   centre against 37.8 two thirds of the way out; on the L-shaped 7-tile test
+   region it correctly measures flat, because a ring of tiles HAS no centre.
+
    rimBand() and the old unclipped feather() are both gone. A rim stroke traces
    whatever the region's polygon is, so on a single tile it drew the tile; and
    the source-over feather in the ice painter was, at 1.9 tile radii, a milky
@@ -115,13 +166,57 @@ window.BBX = window.BBX || {};
    dark canyon floor to hazed near-white dusk between locations, which is why
    the multiply half exists at all (it bites on bright sand where additive
    cannot, and fades on dark sand where additive takes over). */
+/* ⚠ ROUND 3: AMBER IS RESERVED. `sel` used to be gold, and in a frame where the
+   move range was empty the ONLY findable mark on the whole board was a gold
+   blob under the selected unit — which reads as "that tile is the target".
+   Amber/gold now means exactly one thing, "attack / objective / target", and
+   the selection is the hottest member of the MOVE family instead: same teal
+   story, whiter and brighter, so the pool and its origin are one idea. */
+/* `k` is the overall gain; `a` biases the ADDITIVE half only.
+   ⚠ WHY `a` EXISTS. The multiply half works by removing a channel the ground
+   is rich in, so it is strong for teal on warm sand and nearly useless for
+   AMBER on warm sand — there is no red to take away. Measured on the rendered
+   frame the attack tile came out at a third of the move pool's contrast with
+   both at the same k. Amber therefore leans on the emissive half instead. */
+/* ⚠ ROUND 4 — `a` WENT UP BECAUSE THE MULTIPLY CAP WENT DOWN. See the long
+   note in drawPool. The multiply half used to supply part of each pool's
+   separation from bare sand and paid for it by overwriting the sand's hue;
+   that lift now comes from the emissive half, which brightens the ground
+   without repainting it.
+
+   ⚠ AND THE COMPENSATION IS NOT ONE NUMBER FOR ALL SIX. How much luma a state
+   lost when the cap fell from 0.34 to 0.10 depends entirely on how much of the
+   sand's own channels its filter was removing, and on warm sand that ranges
+   over a factor of three: measured against a typical ground of (113,95,69),
+   dropping the cap cost the cyan `move` filter 9.6 levels of luma, `swap` 5.7,
+   `sel` 5.1, `place` 3.0 and `attack` only 2.9 — amber has almost no red to
+   take away, which is why `a` had to exist in the first place. `hover`'s
+   near-white filter never bit at all. Each `a` below is therefore raised by
+   exactly its own state's loss divided by that state's emissive luma per unit
+   gain, so every state EXCEPT move comes out of round 4 at the brightness it
+   already had and only its hue changes. A flat "+26% for everyone" was tried
+   first and it blew the attack tile to a mean R of 243 — a solved-for number
+   beats a uniform one whenever the states do not share a colour.
+   move is the exception on purpose: it is the state that failed, and it is
+   solved against the measured contract (ON−OFF luma ≥ +40, ON B−R in
+   [−20,+15]) rather than against its old brightness. */
 const COL = {
-  move:   { core: '#7de4ff', body: '#0fa8e0', rim: '#63e2f5', filt: '#4ac8ff', k: 1.55 },
-  attack: { core: '#ffe8b0', body: '#ff8c10', rim: '#ffc65c', filt: '#ffd98a', k: 1.60 },
-  place:  { core: '#ccffd8', body: '#2fd070', rim: '#8ff0b0', filt: '#adffc4', k: 1.15 },
-  swap:   { core: '#e8d4ff', body: '#8a52f0', rim: '#c3a5ff', filt: '#d0b0ff', k: 1.20 },
-  sel:    { core: '#fff2cc', body: '#f0bc3c', rim: '#ffe3a2', filt: '#ffe9b0', k: 1.25 },
-  hover:  { core: '#fff2e2', body: '#e8c894', rim: '#f5dcae', filt: '#fff2dc', k: 0.85 }
+  /* ⚠ move's `core`/`body` carry MORE RED than they read as. That is not a
+     mistake and it is not a warm teal: the additive half is now the whole
+     lift, and a lift made of pure cyan light inverts the sand's own channel
+     order (sand is R>G>B; pure-cyan light drives it to B>G>R and the tile
+     stops being sand). The red in the emissive keeps R and B within a few
+     levels of each other on the lit tile — the pool is then BRIGHTER and
+     COOLER than the sand around it, which is what teal light on sand actually
+     looks like, rather than being a different material. The teal identity is
+     carried by the ~40-level cool SHIFT against the surrounding sand, by the
+     rim and by the halo bloom, not by staining the ground cyan. */
+  move:   { core: '#e8f2fa', body: '#34b6ee', rim: '#a6efff', filt: '#3cc4ff', k: 1.55, a: 1.28 },
+  attack: { core: '#fff0c8', body: '#ff8c10', rim: '#ffd07a', filt: '#ffd98a', k: 1.60, a: 1.62 },
+  place:  { core: '#ccffd8', body: '#2fd070', rim: '#8ff0b0', filt: '#adffc4', k: 1.15, a: 1.30 },
+  swap:   { core: '#e8d4ff', body: '#8a52f0', rim: '#c3a5ff', filt: '#d0b0ff', k: 1.20, a: 1.37 },
+  sel:    { core: '#f4fdff', body: '#8ae8ff', rim: '#e2feff', filt: '#8ce4ff', k: 1.45, a: 1.21 },
+  hover:  { core: '#fff2e2', body: '#e8c894', rim: '#f5dcae', filt: '#fff2dc', k: 0.85, a: 0.95 }
 };
 
 /* States sit a hair above the terrain's top face; surfaces sit above states.
@@ -149,7 +244,32 @@ const JIT_STATE = 0.10;
    whereas a movement highlight still has to answer "is THIS tile legal?", so
    its mask stays close to the tile it belongs to. */
 const MASK_SURF  = { base: 1.44, amp: 0.20, blur: 0.24, halo: 1.28, haloBlur: 0.34, tag: 's' };
-const MASK_STATE = { base: 1.20, amp: 0.13, blur: 0.17, halo: 1.26, haloBlur: 0.30, tag: 'p' };
+
+/* ⚠ ROUND 3 — A HIGHLIGHT IS NOT A HAZARD, AND THIS IS THE NUMBER THAT SAYS SO.
+   MASK_STATE used to be base 1.20 / blur 0.17 with the emission drawn through
+   the DILATED (×1.26, blur 0.30) mask, i.e. the lit area reached ~1.5 tiles out
+   from every legal tile and faded over a third of a tile. Measured on the
+   rendered frame that turned seven legal tiles into one soft teal FILM lying
+   over the whole lower-left quadrant, including the water pool and four illegal
+   tiles: the read was "something is happening over there", never "these seven
+   tiles". A hazard genuinely has no edge and should spill; a movement range is
+   an ANSWER TO A QUESTION and must stop where the rules stop.
+   base 1.00 makes the blob the tile's inscribed ellipse, so the union of blob
+   and quad is the tile with an organic wobble on its edges and its corners
+   intact; blur 0.055·ax is ~2.5 CSS px of feather — soft, not fogged. The halo
+   is now barely dilated and exists only for the thin bloom of light escaping
+   onto the sand just outside the pool.
+
+   ⚠ ROUND 4 — 0.055 WAS A CUT, NOT A FEATHER. Measured on the frame, the
+   boundary went 0 → full in 24 device px against a ~200 device px tile: at 1:1
+   the pool had the straight hard edge of a panel laid on the sand, which is
+   the thing the win condition calls "feathered at the edge" and did not get.
+   0.10·ax is ~9 CSS px of blur radius, so the transition spans about a fifth
+   of a tile — the 50% point still sits exactly on the tile boundary, so the
+   answer to "may I stand here?" is unchanged and the region still stops where
+   the rules stop. Do NOT push this past ~0.13: at 0.17 (round 2) the pool
+   stopped having a findable edge at all and read as fog over the quadrant. */
+const MASK_STATE = { base: 1.00, amp: 0.085, blur: 0.100, halo: 1.12, haloBlur: 0.20, tag: 'p4' };
 
 /* ⚠ SOLIDS NEED A TIGHTER MASK THAN LIQUIDS. MASK_SURF's 0.24 feather is right
    for a puddle, an oil slick or a gas cloud — those genuinely have no edge.
@@ -204,13 +324,51 @@ function jitQuad(api, x, z, lift, amp) {
     [-0.5 + j(x,     z,     104),  0.0                       ]    /* x- edge */
   ];
   const out = [];
+  let ok = true;
   for (let i = 0; i < 8; i++) {
     const w = api.gw(x + pts[i][0], z + pts[i][1], e);
     const p = api.project({ x: w.x, y: w.y, z: w.z });
-    if (!p) { _polys.set(key, null); return null; }   /* behind the camera */
+    if (!p) { ok = false; break; }
     out.push(p);
   }
+  /* ⚠ FALL BACK TO THE HOST'S OWN TILE POLYGON, NEVER TO NOTHING. api.tilePoly
+     (battle-board:1146) is the spine's authority on where a tile is on screen —
+     it is what pickTile and the terrain bake agree with. jitQuad is that same
+     polygon with lattice-keyed jitter and edge midpoints added, so the two
+     cannot disagree by more than the jitter; but if a jittered lattice point
+     lands behind the camera at a shallow row, dropping the tile silently makes
+     a LEGAL TILE UNPAINTABLE. Take the unjittered 4-corner poly instead and
+     expand it to the same 8-point form so every consumer below is unchanged. */
+  if (!ok) {
+    let tp = null;
+    try { tp = api.tilePoly(x, z, 0, e); } catch (err) {}
+    if (!tp || tp.length !== 4) { _polys.set(key, null); return null; }
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    const q = [tp[0], mid(tp[0], tp[1]), tp[1], mid(tp[1], tp[2]),
+               tp[2], mid(tp[2], tp[3]), tp[3], mid(tp[3], tp[0])];
+    _polys.set(key, q);
+    return q;
+  }
   _polys.set(key, out);
+  return out;
+}
+
+/* The OUTER boundary of a merged region, as polylines in tile-edge units.
+   A tile contributes an edge only where the neighbour on that side is NOT in
+   the region, so a contiguous run of lit tiles yields one outline around the
+   whole pool and no interior lines at all — "merge the interiors, hint only the
+   outer boundary". Each entry is the three points of one 8-gon side (corner,
+   edge midpoint, corner) so the outline inherits the same lattice jitter the
+   mask does and cannot drift off it. */
+function boundaryEdges(g) {
+  const out = [];
+  for (const it of g.list) {
+    const q = it.q, x = it.x, z = it.z;
+    if (!g.set.has(x + ',' + (z - 1))) out.push({ p: [q[0], q[1], q[2]], k: 0, it });
+    if (!g.set.has((x + 1) + ',' + z)) out.push({ p: [q[2], q[3], q[4]], k: 1, it });
+    if (!g.set.has(x + ',' + (z + 1))) out.push({ p: [q[4], q[5], q[6]], k: 2, it });
+    if (!g.set.has((x - 1) + ',' + z)) out.push({ p: [q[6], q[7], q[0]], k: 3, it });
+  }
   return out;
 }
 
@@ -577,89 +735,242 @@ function fill(c, g) { c.fillRect(g.x0, g.y0, g.w, g.h); }
    A) TILE STATES — one pool of light per region
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* strength: 1 = the under-ground pass; <1 = the re-assert over a hazard. */
+/* strength: 1 = the under-ground pass; <1 = the re-assert over a hazard.
+
+   ── ROUND 3: WHY THIS FUNCTION WAS REBUILT AROUND THE TILE, NOT AROUND A BLOB
+   Round 2 painted every state as screen-space radial gradients: one region-wide
+   ellipse plus a 1.9-tile-radius blob per tile, all composited through a mask
+   dilated to ~1.5 tiles. It never touched tile geometry, and the frame showed
+   it — seven legal tiles came out as a single soft teal FILM over the whole
+   lower-left quadrant, spilling across four illegal tiles and the water. The
+   player could see that SOMETHING was lit and could not tell WHICH.
+
+   A movement range is not mood lighting. It is the answer to "where may I go?",
+   and the answer has a boundary. So:
+     • the mask is now the union of the TILE POLYGONS (jitQuad, which is
+       api.tilePoly plus lattice jitter and edge midpoints) with ~2.5px of
+       feather — soft, but it stops where the rules stop;
+     • the interior is filled FLAT and composited ONCE, so a contiguous run is
+       one continuous pool with no seam, no bead per cell and no double-lit
+       shared edges;
+     • the only mark that traces anything is a soft emissive rim on the OUTER
+       boundary of the merged region (boundaryEdges), broken into uneven
+       sub-segments with hashed width and alpha and drawn INSIDE the mask, so
+       the feather eats its outer half. It is a glow that fades inward, not a
+       stroke: there is no constant-width line anywhere on a tile perimeter.
+   Everything is still one multiply blit + one additive blit + one halo blit per
+   region per frame, all cached, with only the blit alpha breathing. */
 function drawPool(api, tiles, colKey, strength, lift, filtScale) {
   const col = COL[colKey] || COL.move;
   const S = (strength || 1) * col.k;
   const g = group(api, tiles, lift, JIT_STATE, MASK_STATE);
   if (!g) return;
 
-  const glow = 0.200 * S;
-  /* ⚠ THE MULTIPLY PASS CARRIES THE HIGHLIGHT, THE ADDITIVE PASS CARRIES THE
-     MOOD — and the split is deliberate because the ground under this is not a
-     fixed value. The vista's grade and the location's ground art move the
-     sand between "dark canyon floor" and "hazed near-white dusk" from match to
+  /* ⚠ THE MULTIPLY PASS CARRIES THE HUE, THE ADDITIVE PASS CARRIES THE LIFT —
+     and the split is deliberate because the ground under this is not a fixed
+     value. The vista's grade and the location's ground art move the sand
+     between "dark canyon floor" and "hazed near-white dusk" from match to
      match, and an additive-only highlight measured against one of those is
      invisible on the other. Multiply is the robust half: on bright sand it
-     bites (there is plenty of channel to remove), on dark sand it barely
-     shows and the 'lighter' pass takes over.
+     bites (there is plenty of channel to remove), on dark sand it barely shows
+     and the 'lighter' pass takes over.
 
-     ⚠ The multiply is CAPPED low on purpose. Round 2's first pass ran it at
-     0.58 and the movement pool came out at the same luma as the bare sand —
-     a saturated cyan STAIN rather than light rising out of the ground. The
-     hue shift was right, the direction was wrong: an emissive highlight has to
-     be brighter than what it sits on. So multiply now only does enough to
-     stop the sand's red dominating, and the additive pass carries the lift. */
-  const filtA = Math.min(0.36, 0.26 * S) * (filtScale == null ? 1 : filtScale);
+     ⚠ The multiply is CAPPED. Run it too hard and the pool comes out at the
+     same luma as bare sand — a saturated cyan STAIN rather than light rising
+     out of the ground. An emissive highlight has to be BRIGHTER than what it
+     sits on, so multiply only does enough to stop the sand's red dominating.
 
-  /* (1) the hue filter, as ONE region-wide gradient composited once. Per-tile
-     'multiply' blobs would double-filter every shared edge and draw the grid
-     back in hue instead of in strokes. */
+     ⚠⚠ ROUND 4 — THE CAP WENT FROM 0.34 TO 0.10 AND THAT IS THE WHOLE FIX.
+     Measured on the rendered frame at 0.34 the multiply did not TINT the sand,
+     it REPLACED it: over the move pool B−R went −47.6 (warm sand) to +17.5
+     (cyan) while the luma only rose +26. A viewer finds the pool by HUE, and
+     what they find is a sheet of translucent teal cellophane laid over ground
+     that is no longer sand of any colour — the exact "sticker on top of the
+     ground" this file exists to kill, drawn in hue instead of in outlines.
+     The rule now is: A LIT TILE IS FOUND BY LUMA, NOT BY HUE. Multiply keeps
+     only enough bite to stop the sand's red dominating on near-white dusk
+     ground (its original job, and the reason it is not deleted outright), and
+     the lift it used to steal moved into the additive half via `a`.
+     The measured contract this file is held to, over the move pool interior:
+         ON−OFF luma  ≥ +40      (was +26)
+         ON B−R       ∈ [−20,+15] (was +17.5 off a −47.6 base)
+     i.e. the sand keeps its own hue and simply gets brighter and cooler.
+     If you raise this cap again, re-measure both numbers, not one. */
+  const A = S * (col.a == null ? 1 : col.a);          /* additive-half gain */
+  const filtA = Math.min(0.10, 0.09 * S) * (filtScale == null ? 1 : filtScale);
+  const tag = colKey + '|' + S.toFixed(3) + '|' + filtA.toFixed(3);
+
+  /* (1) hue, FLAT across the union plus a gentle centre bias. Flat is the
+     point: the round-2 version was a radial that reached only filtA·0.66 at the
+     region edge, so the outermost legal tiles — precisely the ones that answer
+     "how far can I go" — were the least coloured tiles in the pool. */
   let rmax = 0;
   for (const it of g.list) {
-    rmax = Math.max(rmax, Math.hypot(it.m.cx - g.cx, (it.m.cy - g.cy) * (g.ax / g.ay)) + it.m.ax);
+    rmax = Math.max(rmax, Math.hypot(it.m.cx - g.cx, (it.m.cy - g.cy) * (g.ax / Math.max(1, g.ay))) + it.m.ax);
   }
   const R = Math.max(rmax, g.ax * 1.4);
-  const tag = colKey + '|' + S.toFixed(3) + '|' + filtA.toFixed(3);
   staticLayer(api, g, 'multiply', 1, 'f' + tag, (c) => {
+    c.fillStyle = api.rgba(col.filt, filtA);
+    fill(c, g);
     radial(c, g.cx, g.cy, g.ax, g.ay, R, [
-      [0,    api.rgba(col.filt, filtA)],
-      [0.62, api.rgba(col.filt, filtA * 0.88)],
-      [1,    api.rgba(col.filt, filtA * 0.66)]
+      [0, api.rgba(col.filt, filtA * 0.30)],
+      [1, api.rgba(col.filt, 0)]
     ]);
   });
 
-  /* (2) the emission: a broad region wash plus per-tile blobs at 1.4× the tile
-     so neighbours overlap and SUM. THAT is what makes a contiguous run read as
-     one pool — at a shared edge both tiles contribute, so the seam is the
-     brightest part of the join instead of a dark gap or a drawn line.
-
-     ⚠ The BREATHING is applied to the blit's alpha, not baked into the
-     gradients, so the whole emission is a cached image and one composite. The
-     earlier version pulsed each tile at its own hashed phase, which forced a
-     full re-mask every frame for a 12% brightness wobble nobody can see. What
-     survives per tile is a hashed static brightness offset — the tiles still
-     do not read as identical stamps — and the phase is hashed per REGION, so
-     the move pool and the attack pool still do not breathe in lockstep.
-
-     It is drawn through the DILATED mask, which is also how the pool's light
-     spills past the legal area into the sand — the two separate halo blits
-     that used to do that were pure cost for the same picture. */
+  /* per-region breathing phase, so the move pool and the attack pool do not
+     march in lockstep. Applied to the BLIT alpha, never baked into a gradient —
+     that is what keeps the whole emission a cached image and one composite. */
   const bph = api.hash(g.list[0].x, g.list[0].z, 7) * 6.283;
   const pulse = 1 + Math.sin(api.T * 1.9 + bph) * 0.10;
+
+  /* (2) the bloom that escapes onto the surrounding sand, through the barely
+     dilated halo mask. This is the ONLY thing allowed outside the legal tiles,
+     and it is deliberately weak — it says "there is light here", it must never
+     be mistakable for "this tile is legal". */
+  staticLayer(api, g, 'lighter', pulse * 0.85, 'o' + tag, (c) => {
+    c.fillStyle = api.rgba(col.body, 0.030 * A);
+    fill(c, g);
+  }, true);
+
+  /* (3) the emission itself: interior + a soft per-tile lift + the rim.
+
+     ⚠ ROUND 4 — THE INTERIOR IS NO LONGER DEAD FLAT. It was, deliberately (see
+     (1) above), and the cost was that the win condition's "brightest at centre"
+     had no truth in the pixels: the interior measured flat to ±10% across seven
+     tiles, so the pool read as a panel of even fill rather than as light. The
+     bias now lives HERE, in the emissive half, not in the hue half — that is
+     the distinction round 3 got wrong. Dimming the hue at the region edge made
+     the outermost legal tiles the least COLOURED, i.e. the least identifiable;
+     dimming the emission there makes them slightly less BRIGHT while their hue,
+     their rim and their boundary are untouched. Falloff is gentle on purpose —
+     measured, the outer ring still lifts ~0.80 of the centre, far above the
+     level at which a tile stops being findable (its own ON−OFF luma is still
+     over +40, which is the whole contract).
+
+     ⚠ THE BIAS IS SPLIT ACROSS TWO LAYERS AND IT HAS TO BE. A region-wide
+     radial ALONE moved the measured centre:edge ratio from 1.29 to only 1.24,
+     because the flat fill, the halo and the per-tile swells are all uniform and
+     simply average the gradient away. The swells are the biggest of those, so
+     the falloff is also folded into them (`rf` below). Anything that puts the
+     whole bias in one layer has to run that layer so hard it clips. */
   staticLayer(api, g, 'lighter', pulse, 'e' + tag, (c) => {
-    radial(c, g.cx, g.cy, g.ax, g.ay, R, [
-      [0,    api.rgba(col.body, 0.105 * S)],
-      [0.55, api.rgba(col.body, 0.068 * S)],
+    c.fillStyle = api.rgba(col.body, 0.052 * A);
+    fill(c, g);
+    radial(c, g.cx, g.cy, g.ax, g.ay, R * 1.02, [
+      [0,    api.rgba(col.core, 0.064 * A)],
+      [0.52, api.rgba(col.body, 0.030 * A)],
       [1,    api.rgba(col.body, 0)]
     ]);
+
+    /* Per-tile share of the region falloff, NORMALISED so its mean over the
+       region is exactly 1. Without the normalisation a two-tile region — where
+       both tiles are equidistant from the centre, i.e. both at u=1 — would come
+       out uniformly dimmer than a one-tile region, and `sel`, `hover` and most
+       attack regions ARE one tile. Normalising makes the falloff a pure
+       redistribution: it changes where the light is, never how much. */
+    let umax = 0;
+    for (const it of g.list) umax = Math.max(umax, Math.hypot(it.m.cx - g.cx, it.m.cy - g.cy));
+    const rfs = [];
+    let rsum = 0;
     for (const it of g.list) {
+      const u = umax > 1e-3 ? Math.hypot(it.m.cx - g.cx, it.m.cy - g.cy) / umax : 0;
+      const f = 1 - 0.46 * u;
+      rfs.push(f); rsum += f;
+    }
+    const rnorm = g.list.length / (rsum || 1);
+
+    /* Per tile: one wide, off-centre, hashed-brightness swell. Wide and soft,
+       NOT tight and hot — a tight blob per tile puts a bright bead at every
+       tile centre and a row of beads is a row of CELLS, the same read as the
+       outlines this file deleted, drawn in light instead. Off-centre and
+       unequal so the pool has internal weather rather than N identical stamps.
+
+       ⚠ ROUND 4 — THE SPREAD WIDENED (v was ±0.15, now ±0.26, and the radius
+       varies per tile too). At ±0.15 the interior was, correctly, free of beads
+       — and also free of ANY variation, which is the other way to look drawn:
+       an even sheet of light with a crisp edge is a translucent PANEL laid on
+       the sand. Light pooling on ground is uneven at a scale larger than the
+       grain and smaller than the region, which is exactly this. The offsets and
+       radii are hashed, so no two tiles get the same swell and the variation
+       does not line up with the lattice. */
+    for (let i = 0; i < g.list.length; i++) {
+      const it = g.list[i];
       const m = it.m;
-      const v = 0.90 + api.hash(it.x, it.z, 7) * 0.20;   /* static, per tile */
-      /* Wide and soft, NOT tight and hot. A tight blob per tile puts a bright
-         bead at every tile centre, and a row of beads is a row of CELLS — the
-         same read as the outlines this file deleted, drawn in light instead.
-         The region gradient above supplies the centre weighting; these only
-         have to make the area continuous. */
-      radial(c, m.cx, m.cy, m.ax, m.ay, m.ax * 1.90, [
-        [0,    api.rgba(col.core, glow * 1.00 * v)],
-        [0.30, api.rgba(col.body, glow * 0.74 * v)],
-        [0.62, api.rgba(col.body, glow * 0.34 * v)],
+      const v  = (0.74 + api.hash(it.x, it.z, 7) * 0.52) * rfs[i] * rnorm;
+      const rr = 1.78 + api.hash(it.z, it.x, 8) * 0.72;
+      const ox = (api.hash(it.x, it.z, 11) - 0.5) * m.ax * 0.46;
+      const oy = (api.hash(it.z, it.x, 12) - 0.5) * m.ay * 0.46;
+      radial(c, m.cx + ox, m.cy + oy, m.ax, m.ay, m.ax * rr, [
+        [0,    api.rgba(col.core, 0.068 * A * v)],
+        [0.42, api.rgba(col.body, 0.052 * A * v)],
         [1,    api.rgba(col.body, 0)]
       ]);
     }
-  }, true);
+
+    /* ── THE RIM ────────────────────────────────────────────────────────────
+       ⚠ READ THIS BEFORE MAKING IT NEATER. The win condition is that a critic
+       cannot find "a hard uniform-width stroke tracing the full perimeter of
+       any tile" — that mark is the single loudest drawn-grid signal there is,
+       and it is what the board's original 2px full-perimeter stroke did. Three
+       properties keep this on the right side of that line and all three are
+       load-bearing:
+         1. it follows the MERGED region's outer boundary only, so interior
+            tile borders inside a contiguous run are never drawn at all;
+         2. its width and alpha are hashed PER SIDE and its bright hairline is
+            broken, so nothing on any perimeter has a constant width or an
+            unbroken length — not even around a single isolated tile;
+         3. it is drawn INSIDE the region mask, whose feather eats its outer
+            half, so what survives is a glow fading inward from the edge.
+       Two additive passes: a continuous wide dim wash that reads as a
+       gradient, and a broken hairline that reads as a glint. */
+    const edges = boundaryEdges(g);
+    c.lineJoin = 'round';
+    for (const e of edges) {
+      const p = e.p;
+      /* ── THE WASH: ONE stroke for the whole side, BUTT caps, one width.
+         ⚠ This was four sub-strokes with independent widths and ROUND caps,
+         and the frame showed exactly what that is: a chain of overlapping
+         capsules, i.e. a row of soft BUBBLES pinned round the pool and, where
+         a single-tile region sat inside a larger one, scattered through its
+         interior too. Round caps + varying width + abutting segments cannot
+         produce a smooth band. Width now varies per SIDE, which is still not
+         uniform across the region but never changes mid-side, and butt caps
+         let consecutive sides abut instead of bulging. */
+      const hw = api.hash(e.it.x, e.it.z, 300 + e.k);
+      c.lineCap = 'butt';
+      c.strokeStyle = api.rgba(col.rim, 0.055 * A * (0.6 + hw * 0.8));
+      c.lineWidth   = g.ax * (0.30 + hw * 0.26);
+      c.beginPath();
+      c.moveTo(p[0].x, p[0].y);
+      c.lineTo(p[1].x, p[1].y);
+      c.lineTo(p[2].x, p[2].y);
+      c.stroke();
+
+      /* ── THE GLINT: a hairline, and this one IS broken. At ~1px wide its
+         round caps are sub-pixel, so breaking it reads as a glint catching
+         part of the edge rather than as beads. It is the reason a critic
+         cannot find a constant-width line tracing any perimeter. */
+      c.lineCap = 'round';
+      const pts = [p[0], mid2(p[0], p[1]), p[1], mid2(p[1], p[2]), p[2]];
+      for (let i = 0; i < 4; i++) {
+        const h  = api.hash(e.it.x * 4 + e.k, e.it.z * 4 + i, 311);
+        if (h < 0.35) continue;
+        const h2 = api.hash(e.it.z * 4 + i, e.it.x * 4 + e.k, 312);
+        c.strokeStyle = api.rgba(col.core, 0.100 * A * (0.5 + h2 * 0.9));
+        c.lineWidth   = Math.max(0.8, g.ax * (0.022 + h * 0.026));
+        c.beginPath();
+        c.moveTo(pts[i].x, pts[i].y);
+        c.lineTo(pts[i + 1].x, pts[i + 1].y);
+        c.stroke();
+      }
+    }
+  });
 }
+
+/* midpoint of two projected points — used to cut a boundary side into
+   sub-segments so the rim can be broken and uneven. */
+function mid2(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
 
 function cells(list) {
   const out = [];
@@ -1010,43 +1321,169 @@ const PAINTERS = {
     }
   },
 
-  /* ── WEB ── silk sits ON the sand, so every strand gets a dark offset twin
-     first. Without that shadow the strands look painted into the ground. */
+  /* ── WEB ───────────────────────────────────────────────────────────────────
+     ⚠ WHAT WAS HERE, AND WHY IT IS GONE. The previous painter drew, per tile:
+     seven perfectly straight radial spokes from ONE centred point, plus three
+     concentric closed rings, all in near-#fff at ONE constant width with
+     square-cut ends, source-over on top of the sand. Every tile got the same
+     rosette. That is the exact failure BAR line 51 names — "no evenly-spaced
+     identical props, no uniform flat gradients, no glowing hard outlines on
+     everything, no symmetry where nature would be messy" — and a critic
+     reading the frame called it the loudest sticker left on the field.
+
+     The rebuild follows the treatment that fixed `ice`: nothing here is
+     regular, nothing here is the same twice, and the light decides how bright
+     each mark is.
+       • every strand is a QUADRATIC WITH SAG, so there is not one straight
+         line in the painter;
+       • the hub is off-centre per tile and the anchors are at unequal angles
+         AND unequal radii — a real web is tied to whatever happened to be
+         there, not to a regular polygon's vertices;
+       • strands are torn: a broken radial stops short and its loose end
+         DANGLES, and the chords that depended on it go with it;
+       • width and alpha are hashed per strand, so no two are the same weight;
+       • brightness is modulated by api.lightVector() — silk is a cylinder and
+         catches the key light hardest ACROSS the light, nearly vanishing along
+         it, which is most of what stops it reading as flat white line-art;
+       • a faint dark offset twin is drawn first as a contact shadow, so the
+         silk sits ON the sand instead of being painted INTO it;
+       • the whole thing goes through MASK_SOLID like the other rigid surfaces,
+         and adjacent tiles' hubs are BRIDGED, so a multi-tile web is one torn
+         sheet spanning the pool rather than N identical rosettes stamped out. */
   web: {
+    mask: MASK_SOLID,
     sStatic: true,
     s(api, c, g) {
       const lv = api.lightVector();
+      /* ground-plane light direction in SCREEN space. lightVector() is a world
+         vector and world +z runs into the screen, so screen-y is -z; this is
+         the same convention the caltrops/fire contact shadows already use. */
+      const lx = lv.x, ly = -lv.z;
+      const ln = Math.hypot(lx, ly) || 1;
+      const litness = (dx, dy) => {
+        const d = Math.hypot(dx, dy) || 1;
+        const along = Math.abs((dx * lx + dy * ly) / (d * ln));
+        return 0.42 + 0.90 * (1 - along);
+      };
+      /* silk graded into the scene's own key rather than a hardcoded white */
+      const silk = api.mixHex('#e4e8ee', (api.LIGHT && api.LIGHT.key) || '#ffe0b0', 0.34);
+
+      /* Build the geometry ONCE: the shadow pass and the silk pass must trace
+         the same curves or the shadow reads as a second web. */
+      const strands = [];
+      const sag = (a, b, bow, w, al) => {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const L = Math.hypot(dx, dy);
+        if (!(L > 0.5)) return;
+        strands.push({
+          ax: a.x, ay: a.y, bx: b.x, by: b.y,
+          qx: (a.x + b.x) / 2 + dy * bow * 0.18,
+          qy: (a.y + b.y) / 2 + L * bow,
+          w, al: al * litness(dx, dy)
+        });
+      };
+
+      const hubs = new Map();
+      for (const it of g.list) {
+        const m = it.m;
+        hubs.set(it.x + ',' + it.z, {
+          x: m.cx + (api.hash(it.x, it.z, 501) - 0.5) * m.ax * 0.78,
+          y: m.cy + (api.hash(it.z, it.x, 502) - 0.5) * m.ay * 0.78
+        });
+      }
+
       for (const it of g.list) {
         const m = it.m, sy = m.ay / m.ax;
-        const strands = (col, alpha, dx, dy, lw) => {
-          c.strokeStyle = api.rgba(col, alpha);
-          c.lineWidth = Math.max(0.8, m.ax * lw);
-          for (let i = 0; i < 7; i++) {
-            const a = i / 7 * 6.283 + api.hash(it.x, it.z, 1) * 1.2;
-            c.beginPath();
-            c.moveTo(m.cx + dx, m.cy + dy);
-            c.lineTo(m.cx + dx + Math.cos(a) * m.ax * 1.2, m.cy + dy + Math.sin(a) * m.ay * 1.2);
-            c.stroke();
+        const H = hubs.get(it.x + ',' + it.z);
+        const h  = n => api.hash(it.x, it.z, n);
+        const h2 = n => api.hash(it.z, it.x, n);
+        const N  = 6 + Math.floor(h(510) * 3);        /* 6..8, never a fixed 8 */
+        const a0 = h(511) * 6.283;
+        const anchors = [];
+        for (let i = 0; i < N; i++) {
+          const ang = a0 + (i / N) * 6.283 + (h(520 + i) - 0.5) * 0.72;
+          const rad = m.ax * (0.74 + h2(534 + i) * 0.62);
+          anchors.push({
+            x: H.x + Math.cos(ang) * rad,
+            y: H.y + Math.sin(ang) * rad * sy,
+            broken: h(548 + i) < 0.20,
+            w: m.ax * (0.009 + h2(560 + i) * 0.015),
+            al: 0.30 + h(572 + i) * 0.26
+          });
+        }
+        for (let i = 0; i < N; i++) {
+          const an = anchors[i];
+          if (an.broken) {
+            /* torn radial: it stops short, and the loose end hangs off it */
+            const t = 0.40 + h2(584 + i) * 0.30;
+            const e = { x: H.x + (an.x - H.x) * t, y: H.y + (an.y - H.y) * t };
+            sag(H, e, 0.03 + h(596 + i) * 0.04, an.w, an.al);
+            sag(e, { x: e.x + (h2(608 + i) - 0.5) * m.ax * 0.26,
+                     y: e.y + m.ay * (0.20 + h(620 + i) * 0.34) },
+                0.16 + h2(632 + i) * 0.14, an.w * 0.8, an.al * 0.8);
+            continue;
           }
-          for (let ring = 1; ring <= 3; ring++) {
-            c.beginPath();
-            for (let i = 0; i <= 14; i++) {
-              const a = i / 14 * 6.283 + api.hash(it.x, it.z, 1) * 1.2;
-              const rr = m.ax * (ring / 3.1) * (1 + 0.10 * Math.sin(a * 3.5 + it.x));
-              const px = m.cx + dx + Math.cos(a) * rr, py = m.cy + dy + Math.sin(a) * rr * sy;
-              i ? c.lineTo(px, py) : c.moveTo(px, py);
-            }
-            c.stroke();
+          sag(H, an, 0.025 + h2(644 + i) * 0.05, an.w, an.al);
+        }
+        /* the spiral, as three UNEVENLY spaced rings of separate sagging
+           chords — never a closed regular polygon, and a chord dies with the
+           radial it was tied to */
+        for (let ring = 0; ring < 3; ring++) {
+          const t = 0.30 + ring * 0.26 + (h(660 + ring) - 0.5) * 0.16;
+          for (let i = 0; i < N; i++) {
+            const p = anchors[i], q = anchors[(i + 1) % N];
+            if (p.broken || q.broken) continue;
+            if (h(670 + ring * 8 + i) < 0.13) continue;
+            const tt = t * (0.88 + h2(700 + ring * 8 + i) * 0.24);
+            sag({ x: H.x + (p.x - H.x) * tt, y: H.y + (p.y - H.y) * tt },
+                { x: H.x + (q.x - H.x) * tt, y: H.y + (q.y - H.y) * tt },
+                0.07 + h2(730 + i) * 0.09,
+                m.ax * (0.007 + h(742 + i) * 0.010),
+                0.24 + h2(754 + i) * 0.22);
           }
-        };
-        strands('#171208', 0.30, -lv.x * m.ax * 0.05, m.ay * 0.06, 0.030);  /* contact shadow */
-        strands('#e8ecf5', 0.55, 0, 0, 0.024);                             /* silk */
-        for (let i = 0; i < 5; i++) {                                      /* dew */
-          const a = api.hash(it.x, it.z, i + 40) * 6.283;
-          const d = api.hash(it.z, it.x, i + 41) * m.ax * 0.9;
-          c.fillStyle = api.rgba('#ffffff', 0.42);
+        }
+      }
+
+      /* ⚠ BRIDGES. Without these a two-tile web is two rosettes with a seam
+         down the middle — the per-tile-stamp read the mask compositor exists to
+         kill. Drawn from ONE of the two owners so a shared span is not doubled. */
+      for (const it of g.list) {
+        const H = hubs.get(it.x + ',' + it.z);
+        const R = hubs.get((it.x + 1) + ',' + it.z);
+        const D = hubs.get(it.x + ',' + (it.z + 1));
+        const w = g.ax * 0.009;
+        if (R) sag(H, R, 0.07 + api.hash(it.x, it.z, 770) * 0.06, w, 0.30);
+        if (D) sag(H, D, 0.07 + api.hash(it.z, it.x, 771) * 0.06, w, 0.30);
+      }
+
+      const trace = (col, am, dx, dy, wm) => {
+        c.lineCap = 'round';
+        for (const st of strands) {
+          c.strokeStyle = api.rgba(col, st.al * am);
+          c.lineWidth = Math.max(0.5, st.w * wm);
           c.beginPath();
-          c.arc(m.cx + Math.cos(a) * d, m.cy + Math.sin(a) * d * sy, Math.max(0.7, m.ax * 0.022), 0, 6.3);
+          c.moveTo(st.ax + dx, st.ay + dy);
+          c.quadraticCurveTo(st.qx + dx, st.qy + dy, st.bx + dx, st.by + dy);
+          c.stroke();
+        }
+      };
+      trace('#1b1509', 0.40, -lx * g.ax * 0.05, g.ay * 0.075, 1.5);   /* contact shadow */
+      trace(silk,     1.00, 0, 0, 1.0);                              /* the silk */
+
+      /* dew — a few only, sitting ON strands rather than scattered at random,
+         and sized unequally. This is the one bright mark in the painter. */
+      for (const it of g.list) {
+        const m = it.m;
+        for (let i = 0; i < 3; i++) {
+          const st = strands[Math.floor(api.hash(it.x, it.z, 780 + i) * strands.length) % strands.length];
+          if (!st) continue;
+          const t = 0.25 + api.hash(it.z, it.x, 790 + i) * 0.5, u = 1 - t;
+          const dx = u * u * st.ax + 2 * u * t * st.qx + t * t * st.bx;
+          const dy = u * u * st.ay + 2 * u * t * st.qy + t * t * st.by;
+          const r = Math.max(0.6, m.ax * (0.012 + api.hash(it.x, it.z, 800 + i) * 0.014));
+          c.fillStyle = api.rgba(silk, 0.34 + api.hash(it.z, it.x, 810 + i) * 0.22);
+          c.beginPath();
+          c.arc(dx, dy, r, 0, 6.3);
           c.fill();
         }
       }

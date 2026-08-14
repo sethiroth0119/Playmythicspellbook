@@ -98,9 +98,10 @@
    FAR EDGE as the horizon; this module keeps that convention. horizonY() is
    the one place that decision lives.
 
-   BUDGET. Everything static is baked into three offscreen canvases — sky,
-   land (ridges + haze + the desert floor) and veil (fog + vignette + centre
-   lift) — plus one per backdrop image, and blitted 1:1 in device pixels (see
+   BUDGET. Everything static is baked into four offscreen canvases — sky,
+   land (ridges + haze + the desert floor), veil (fog + vignette + centre lift)
+   and chroma (the warm restore ramp) — plus one per backdrop image, and
+   blitted 1:1 in device pixels (see
    blit(): the DPR-scaled path costs 8x more). The bakes are keyed on the
    viewport + the light + the map and throttled, because LIGHT lerps every
    frame for 2.5s on a time-of-day change and re-baking 150 times in that
@@ -147,6 +148,30 @@
      so the shadows go cool without the shadows going away. */
   const SHADOW_TINT = 'rgb(6,16,50)';
   const SHADOW_TINT_WEAK = 'rgb(3,7,22)';
+  /* ⚠ THE SHADOW MASK'S BLACK POINT, IN FRAME LUMA. Wave 2's blocker was that
+     the mask had none: see shadowThumb(). Above SHADOW_HI the cool tint is
+     EXACTLY zero — that is the whole point, and it is why the lit sand keeps
+     its chroma. Below SHADOW_LO it is full. Between, it is a squared ramp.
+     Tune these two numbers, not the tint colour: the colour is what the
+     shadows are, these are where the shadows START. */
+  const SHADOW_HI = 100;
+  const SHADOW_LO = 18;
+  /* how much chroma the grade puts BACK into the ground (see grade() step 1
+     and bakeChroma). Roughly the fraction of blue the warm multiply removes at
+     noon, so 0 = untouched and 1 would be an orange filter. Kept low: this is
+     a restore, not a look. Tried at 0.22 (the near sand measured 53.6% HSV
+     saturation, crayon territory) and settled at 0.17, which lands the mid
+     sand at 37.5% against the blocker's ≥33% and the near sand at 44.2%. */
+  const CHROMA_GAIN = 0.17;
+  /* how much of a FULLY disagreeing backdrop photograph gets taken away (see
+     draw()). This is the SECOND of the two levers on art that does not belong;
+     the first and much stronger one is the value match at the end of bakeArt.
+     Tried at 0.82, 0.45 and 0.60 with the value match in place: 0.45 visibly
+     greys the sky back toward the photo's overcast, 0.82 all but removes the
+     location, 0.60 keeps the deep sky and the layered ranges while a location
+     card still plainly changes the vista, which is the user's own ask.
+     Art that measures warm (dis→0) is not touched at all. */
+  const ART_YIELD = 0.60;
 
   /* ── hex ↔ rgb, and LUMA SHIFTS ───────────────────────────────────────────
      The ridge palette is built by shifting ONE base colour up and down in luma
@@ -191,7 +216,27 @@
   function hazeColour(api) {
     const L = api.LIGHT;
     const horizonSky = (L.sky && L.sky[2]) || L.fog;
-    let h = api.mixHex(api.mixHex(horizonSky, L.disc, 0.34), SAND_PALE, 0.18);
+    /* ⚠ THE FIXED 0.18 SAND MIX DID NOT ACTUALLY MAKE THIS WARM, AND THE WHOLE
+       HORIZON PAID FOR IT. Worked out per preset: dawn landed at #ba8f68
+       (R−B +82) and dusk at #c57343 (+130) — properly warm — but DAY, the
+       default, landed at #a8aba2, R−B +6. A neutral grey-green. Every layer
+       that mixes toward this colour for distance (all three mesa ranges, the
+       haze band, the backdrop art's flatten wash) therefore converged on
+       grey-green at exactly the time of day the game opens in, which is why
+       the horizon kept reading as fog over a different world instead of as the
+       air over this one.
+       So the sand mix is SOLVED FOR, not guessed: mix toward SAND_PALE by
+       exactly as much as it takes to reach a target warmth, which is itself
+       keyed to the light — a bright desert noon wants R−B ≈ +26 of dust in the
+       air, a moonlit one wants a quarter of that. Presets that are already
+       warmer than the target keep their own colour (the mix clamps at 0.14). */
+    const s0 = api.mixHex(horizonSky, L.disc, 0.34);
+    const c0 = hexRGB(s0);
+    const d0 = c0[0] - c0[2];
+    const dSand = 92;                                  /* SAND_PALE's own R−B */
+    const target = 8 + 18 * api.clamp(L.keyI / 1.15, 0, 1);
+    const t = api.clamp(d0 >= dSand ? 0.14 : (target - d0) / (dSand - d0), 0.14, 0.55);
+    let h = api.mixHex(s0, SAND_PALE, t);
     /* ⚠ HAZE IS LIT AIR, SO IT HAS TO GO OUT WITH THE KEY. `disc` at night is
        a pale moon white and SAND_PALE is a pale sand, so the unscaled mix came
        out at luma ~108 — brighter than the night sky it hangs in — and the
@@ -222,11 +267,27 @@
     };
   }
 
+  /* ── the diagnostic seam ──────────────────────────────────────────────────
+     ⚠ WHY THIS EXISTS. Wave 2 opened with "the whole field is behind a milky
+     veil" and four candidate causes inside this one file (bloom, shadow mask,
+     distance fog, centre lift). There is no way to tell them apart from a
+     finished frame — every one of them is a low-alpha full-viewport composite
+     and they all look identical once summed. `window.__vistaOff = {bloom:1}`
+     turns a single pass off so a screenshot diff can name the guilty one.
+     Read at CALL time, never cached, and it costs one property read per pass.
+     Same spirit as window.__vistaDebug below: a bake or a pass that is quietly
+     wrong is completely silent, so there has to be a way to ask. */
+  function off(name) {
+    const o = window.__vistaOff;
+    return !!(o && o[name]);
+  }
+
   /* ── caches ───────────────────────────────────────────────────────────── */
   const S = {
     sky: { key: '', cv: null },
     land: { key: '', cv: null },
     veil: { key: '', cv: null },       /* fog + vignette + centre lift, pre-composited */
+    chroma: { key: '', mul: null, add: null },  /* the warm chroma restore, as two ramps */
     art: new Map(),          /* image src -> { key, cv } graded + horizon-clipped */
     bloom: { cv: null, g: null },
     shade: { cv: null, g: null },      /* the cool-shadow mask, same thumbnail scale */
@@ -1256,7 +1317,7 @@
   }
 
   /* ── LAND bake: mesa layers + haze band + the desert the board sits in ─── */
-  function bakeLand(api, dpr, hasArt) {
+  function bakeLand(api, dpr, artWins) {
     const W = api.W, H = api.H, LIGHT = api.LIGHT;
     const o = mkCanvas(W, H, dpr); const g = o.g;
     if (!g) return null;
@@ -1274,8 +1335,17 @@
     const band = api.clamp(hz * 0.92, 60, 280);   /* vertical room for the skyline */
 
     /* FAR range. Suppressed when the location supplies backdrop art — that art
-       IS the far layer; drawing a procedural ridge over it would fight it. */
-    if (!hasArt) {
+       IS the far layer; drawing a procedural ridge over it would fight it.
+       ⚠ EXCEPT WHEN THE ART DOES NOT BELONG. Wave 2's second finding was a
+       grey city with legible helicopters sitting behind ochre canyon walls,
+       and the verdict's own second option was "let the procedural ridge win
+       when the location's art disagrees with the ground palette". `hasArt` is
+       now `artWins` — art that measures warm keeps the far layer to itself,
+       art that measures cold grey gets the desert's own skyline drawn back
+       over it (see artDisagreement). The art is still there, still crossfaded,
+       still location-specific: it becomes the sky BEHIND our ridge instead of
+       the ridge itself. */
+    if (!artWins) {
       ridgeLayer(api, g, {
         rand: rand, baseY: hz - 6, amp: band * 0.95, seg: W * 0.17,
         rock: ROCK_PALE, fog: 0.72, rim: 0.05, lw: 1, form: 0.32, lightX: lightX, key: 'far'
@@ -1417,6 +1487,72 @@
   /* the cool end of the current rig — used where the sand falls out of the key */
   function SHADE_HEX(LIGHT) { return LIGHT.ambient || '#2e3650'; }
 
+  /* ── DOES THIS ART BELONG IN A DESERT? ────────────────────────────────────
+     ⚠ WAVE 2: "THE VISTA IS TWO INCOMPATIBLE WORLDS STACKED — a grey
+     post-apocalyptic city with a gothic spire and at least six clearly legible
+     HELICOPTERS sits behind pale ochre low-poly faceted canyon walls." The
+     verdict offered two ways out: grade the art in hard enough that it belongs,
+     or let the procedural ridge win when the art disagrees with the ground.
+     Neither is right on its own — dropping the art always would break the
+     user's own ask ("location cards change the background/vista"), and grading
+     harder cannot fix a SILHOUETTE, which is what a helicopter is.
+     So: measure the disagreement, and spend it on both.
+
+     The measure is the art's own warmth against the desert's. One 24px
+     thumbnail, once per image per light, read back with getImageData — the
+     only per-pixel read in this module and it is 576 pixels. Only the band
+     that will actually be on screen is sampled (everything below the horizon
+     anchor is erased later, so its colour is irrelevant and a photo's dark
+     foreground would drag the mean). A tainted canvas throws; a mid
+     disagreement is the honest answer when we cannot look. */
+  const AGREE = new Map();
+  function artDisagreement(api, img) {
+    const k = img.src;
+    if (AGREE.has(k)) return AGREE.get(k);
+    let d = 0.5;
+    try {
+      const c = document.createElement('canvas');
+      c.width = 24; c.height = 24;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      const hAnchor = (api.backdrop && api.backdrop.horizon) || 0.62;
+      const sh = Math.max(1, Math.round(img.naturalHeight * hAnchor));
+      g.drawImage(img, 0, 0, img.naturalWidth, sh, 0, 0, 24, 24);
+      const px = g.getImageData(0, 0, 24, 24).data;
+      let R = 0, G = 0, B = 0, n = 0;
+      for (let i = 0; i < px.length; i += 4) { R += px[i]; G += px[i + 1]; B += px[i + 2]; n++; }
+      const warmth = (R - B) / n;
+      /* +28 R−B is roughly where SAND_BASE and ROCK_PALE sit, i.e. art that
+         already belongs. −20 is a cold grey city. Everything between is a
+         proportional blend, so a location card never snaps. */
+      d = api.clamp((28 - warmth) / 48, 0, 1);
+    } catch (e) { /* tainted or undecodable — keep the neutral 0.5 */ }
+    if (AGREE.size > 8) AGREE.clear();
+    AGREE.set(k, d);
+    return d;
+  }
+
+  /* mean luma of a rectangle of a canvas, sampled at 16x16. Used to compare
+     the graded backdrop against our own sky (see the value match in bakeArt).
+     A tainted canvas throws — callers treat null as "cannot tell". */
+  function meanLuma(cv, x, y, w, h) {
+    if (!cv || w <= 0 || h <= 0) return null;
+    try {
+      const c = document.createElement('canvas');
+      c.width = 16; c.height = 16;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(cv, x, y, w, h, 0, 0, 16, 16);
+      const px = g.getImageData(0, 0, 16, 16).data;
+      let s = 0, n = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        /* weight by alpha — an unpainted region is not a black region */
+        const a = px[i + 3] / 255;
+        s += (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]) * a;
+        n += a;
+      }
+      return n > 0.5 ? s / n : null;
+    } catch (e) { return null; }
+  }
+
   /* ── BACKDROP ART bake ────────────────────────────────────────────────────
      Anchored so BACKDROP.horizon (0.62 of the source) lands on the board's far
      edge, graded into the sky so a photograph belongs to this world, and
@@ -1433,7 +1569,29 @@
     const dx = (W - dw) / 2;
     let dy = hz - dh * hAnchor;
     dy = Math.min(0, Math.max(H - dh, dy));
-    g.drawImage(img, dx, dy, dw, dh);
+    const dis = artDisagreement(api, img);
+    /* ⚠ DISTANCE IS LOW DETAIL, AND THE HELICOPTERS ARE THE PROOF. Six of them
+       were counted, individually, in a layer that is supposed to be kilometres
+       away behind a haze band — no amount of colour grading fixes that,
+       because the fault is spatial frequency, not hue. Blur scales with the
+       viewport so it survives a resize, and hard with the disagreement: art
+       that already belongs keeps its shape, art that does not is reduced to a
+       skyline. Done ONCE, at bake time, into a cached canvas — the live frame
+       never sees a filter.
+       ⚠ The blur runs on the SOURCE draw, before the grade fills, or the fills
+       get blurred too and the horizon feather turns to mush. */
+    const blurPx = (H * 0.006 + H * 0.016 * dis) * dpr;
+    let blurred = false;
+    try {
+      g.filter = 'blur(' + blurPx.toFixed(2) + 'px)';
+      blurred = (g.filter !== 'none');
+    } catch (e) { blurred = false; }
+    /* the blur samples transparent black outside the image, so a blurred edge
+       fades to nothing and the sky shows through as a seam. Over-draw by the
+       blur radius on every side. */
+    const ov = blurred ? blurPx * 2.5 : 0;
+    g.drawImage(img, dx - ov, dy - ov, dw + ov * 2, dh + ov * 2);
+    try { g.filter = 'none'; } catch (e) { }
     /* distance grade. 'saturation' pulls the chroma down and 'color' pushes
        the remaining hue toward the sky's — together they are aerial
        perspective without a per-pixel loop. Then a fog lift and a key wash. */
@@ -1445,17 +1603,31 @@
        has not been graded into the scene does not belong to it. More chroma
        pulled out, more of the sky's own hue pushed in, and a deeper haze band
        at the horizon below. */
+    /* ⚠ AND WAVE 2 PUSHED THEM AGAIN, THIS TIME ON A SLIDER. All three now
+       scale with `dis`, so warm art keeps most of itself and a cold grey city
+       is taken most of the way to the desert's own air. The hue push is aimed
+       at hazeColour() rather than at fog/disc: hazeColour IS the colour of the
+       air over this desert (warm, sand-family, keyed to the time of day) and
+       the mesa ranges in the land bake are mixed toward the same hex, so the
+       art and the ridges now converge on ONE colour with distance instead of
+       on two. That convergence is what makes them the same world. */
+    const HAZE = hazeColour(api);
     g.globalCompositeOperation = 'saturation';
-    g.globalAlpha = 0.66;
+    g.globalAlpha = 0.60 + 0.30 * dis;
     g.fillStyle = 'hsl(0,14%,50%)';
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'color';
-    g.globalAlpha = 0.44;
-    g.fillStyle = api.mixHex(LIGHT.fog, LIGHT.disc, 0.54);
+    g.globalAlpha = 0.40 + 0.42 * dis;
+    g.fillStyle = api.mixHex(api.mixHex(LIGHT.fog, LIGHT.disc, 0.54), HAZE, 0.55);
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'source-over';
-    g.globalAlpha = api.clamp(0.34 - LIGHT.keyI * 0.10, 0.10, 0.40);
-    g.fillStyle = LIGHT.fog;
+    /* the flattener: a wash of the air's own colour ON TOP, which is what
+       actually collapses a photograph's contrast the way ten kilometres of
+       atmosphere does. Aimed at HAZE, not LIGHT.fog — fog is a dark blue-grey
+       in this rig (see hazeColour's note) and washing a distant layer toward a
+       DARK colour reads as a storm front, not as distance. */
+    g.globalAlpha = api.clamp(0.26 - LIGHT.keyI * 0.08, 0.08, 0.34) + 0.14 * dis;
+    g.fillStyle = HAZE;
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'lighter';
     g.globalAlpha = 1;
@@ -1463,11 +1635,45 @@
     g.fillRect(0, 0, W, H);
     /* haze accumulates toward the horizon line inside the art too */
     g.globalCompositeOperation = 'source-over';
+    const hzc = api.mixHex(api.mixHex(LIGHT.fog, LIGHT.disc, 0.28), HAZE, 0.6);
     const hz2 = g.createLinearGradient(0, hz - H * 0.30, 0, hz + 8);
-    hz2.addColorStop(0, api.rgba(LIGHT.fog, 0));
-    hz2.addColorStop(0.55, api.rgba(api.mixHex(LIGHT.fog, LIGHT.disc, 0.28), 0.18));
-    hz2.addColorStop(1, api.rgba(api.mixHex(LIGHT.fog, LIGHT.disc, 0.28), 0.46));
+    hz2.addColorStop(0, api.rgba(hzc, 0));
+    hz2.addColorStop(0.55, api.rgba(hzc, 0.18 + 0.08 * dis));
+    hz2.addColorStop(1, api.rgba(hzc, 0.46 + 0.16 * dis));
     g.fillStyle = hz2; g.fillRect(0, hz - H * 0.30, W, H * 0.30 + 10);
+    /* ── THE VALUE MATCH, AND IT IS THE WHOLE BALL GAME ───────────────────
+       ⚠ Colour grading a backdrop cannot fix a backdrop that is simply
+       BRIGHTER THAN THE SKY IN FRONT OF IT. Measured: with this photograph
+       suppressed the frame is a deep blue sky, a readable sun disc and three
+       warm mesa ranges that separate in depth; with it composited at 45% —
+       already desaturated, hue-shifted and hazed — all three collapse into one
+       flat pale band, because the photo's own overcast sky out-values our
+       entire skyline and a 45% blend of something much brighter still wins.
+       Physically a layer that is kilometres away cannot be brighter than the
+       air between you and it, so: measure what we actually baked, measure our
+       own sky over the same band, and multiply the art DOWN (never up) until
+       it fits inside it. Self-correcting — it works on art this module has
+       never seen, at any time of day, because both numbers are read off the
+       real pixels rather than assumed.
+       Two 16x16 reads per bake, and a bake happens on a location change or a
+       time-of-day change, not per frame. */
+    const artL = meanLuma(o.cv, 0, 0, W * dpr, Math.max(1, (hz - 4) * dpr));
+    const skyL = meanLuma(S.sky.cv, 0, 0, W * dpr, Math.max(1, (hz - 4) * dpr));
+    if (artL != null && skyL != null && artL > 1) {
+      /* 1.10 — the far layer is allowed to be a little brighter than the mean
+         sky behind it (haze near the horizon genuinely is), just not the
+         brightest thing in the frame. Floored at 0.30 so a blazing white photo
+         cannot be crushed to a silhouette. */
+      const ratio = api.clamp(skyL * 1.10 / artL, 0.30, 1);
+      if (ratio < 0.995) {
+        g.globalCompositeOperation = 'multiply';
+        g.globalAlpha = 1;
+        const v = Math.round(255 * ratio);
+        g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+        g.fillRect(0, 0, W, H);
+        g.globalCompositeOperation = 'source-over';
+      }
+    }
     /* ✂ THE FIX FOR THE GREY-RUBBLE FOREGROUND. Everything below the horizon
        is erased with a soft feather, so the art can only ever be the far
        layer. Without this the photo's near ground paints over the desert and
@@ -1494,10 +1700,14 @@
     const bd = api.backdrop || {};
     const img = bd.img;
     const hasArt = !!(img && img.complete && img.naturalWidth);
+    /* art that disagrees with the desert does NOT get to be the far layer —
+       bakeLand draws its own skyline back over it. 0.45 is the middle of
+       artDisagreement's ramp, i.e. "measurably colder than sand". */
+    const artWins = hasArt && artDisagreement(api, img) < 0.45;
     const base = [Math.round(api.W), Math.round(api.H), dpr, api.MAP.id,
       api.MAP.cols, api.MAP.rows, lightKey(api)].join('|');
     const skyKey = base;
-    const landKey = base + '|' + (hasArt ? 1 : 0);
+    const landKey = base + '|' + (artWins ? 1 : 0);
     if (S.sky.key === skyKey && S.land.key === landKey) return;
     /* THROTTLE. LIGHT lerps every frame for 2.5s on a time-of-day change, so
        the key changes 150 times in a row. Re-baking each time would cost more
@@ -1508,13 +1718,70 @@
     try {
       const sky = bakeSky(api, dpr);
       if (sky) { S.sky.cv = sky; S.sky.key = skyKey; }
-      const land = bakeLand(api, dpr, hasArt);
+      const land = bakeLand(api, dpr, artWins);
       if (land) { S.land.cv = land; S.land.key = landKey; }
       const veil = bakeVeil(api, dpr);
       if (veil) { S.veil.cv = veil; S.veil.key = skyKey; }
+      const ch = bakeChroma(api, dpr);
+      if (ch) { S.chroma.mul = ch.mul; S.chroma.add = ch.add; S.chroma.key = skyKey; }
       /* the art bakes are keyed on the same light, so drop them together */
       S.art.clear();
     } catch (e) { /* never let a bake failure take the frame down */ }
+  }
+
+  /* ── CHROMA RESTORE bake ──────────────────────────────────────────────────
+     Two full-viewport ramps, both identities above the board's far edge:
+       mul — white above the horizon, easing to a warm near-white below. Under
+             'multiply' this removes blue from everything and a little green
+             from a little of it, which is a chroma gain on anything already
+             ochre and a warm cast on anything neutral. Both are wanted: dust
+             in the air over a desert is warm, and the cool shadow tint runs
+             right after this and takes the toe back.
+       add — black above the horizon, easing to a dark grey below. Under
+             'lighter' this returns the luma the multiply cost, so the restore
+             changes colour without changing exposure.
+     See grade() step 1 for why this is baked rather than blended live. ── */
+  function bakeChroma(api, dpr) {
+    const W = api.W, H = api.H, LIGHT = api.LIGHT;
+    const hz = horizonY(api);
+    const span = Math.max(40, (H - hz) * 0.20);
+    /* ⚠ SCALED BY THE KEY. A flat gain made NIGHT read as dusk — the same
+       ochre punch under a blue moon, which is backwards twice over: low light
+       desaturates in the eye, and the whole point of the night preset is that
+       the braziers are the only colour left. keyI is 1.15 at noon and 0.48 at
+       night, so night keeps 42% of the restore. */
+    const k = api.clamp(CHROMA_GAIN * api.clamp(LIGHT.keyI / 1.15, 0.42, 1) * 1.05, 0, 0.40);
+    /* 0.42 — how much green comes out for every unit of blue. Pulling blue
+       alone swings ochre toward orange; this keeps it in the sand family. */
+    const mulHex = rgbHex(255, 255 * (1 - 0.42 * k), 255 * (1 - k));
+    const addV = Math.round(51 * k);          /* ≈ the luma the multiply costs */
+    const addHex = rgbHex(addV, addV, addV);
+    /* one ramp painter. The caller has already put the context into CSS-pixel
+       coordinates at whatever resolution that canvas is. */
+    const paint = (cv, g, topHex, botHex) => {
+      if (!g) return null;
+      g.fillStyle = topHex; g.fillRect(0, 0, W, hz + 1);
+      const gr = g.createLinearGradient(0, hz, 0, hz + span);
+      gr.addColorStop(0, topHex); gr.addColorStop(1, botHex);
+      g.fillStyle = gr; g.fillRect(0, hz, W, span + 1);
+      g.fillStyle = botHex; g.fillRect(0, hz + span, W, H - hz - span + 2);
+      return cv;
+    };
+    const mo = mkCanvas(W, H, dpr);
+    const mul = paint(mo.cv, mo.g, '#ffffff', mulHex);
+    /* ⚠ THE ADDITIVE HALF IS BAKED AT BLOOM THUMBNAIL SCALE, NOT VIEWPORT
+       SCALE, so it can ride along inside the ONE full-canvas 'lighter' upscale
+       the bloom already does — see bloom(). A second full-viewport additive
+       blit measured ~3ms/frame here, for a term that is a smooth vertical ramp
+       and therefore loses nothing at 1/7 resolution. Only the multiply, which
+       cannot be folded into an additive pass, stays full size. */
+    const bw = Math.max(32, Math.round(W / 7)), bh = Math.max(24, Math.round(H / 7));
+    const ac = document.createElement('canvas');
+    ac.width = bw; ac.height = bh;
+    const ag = ac.getContext('2d');
+    if (ag) { ag.setTransform(bw / W, 0, 0, bh / H, 0, 0); }
+    const add = ag ? paint(ac, ag, '#000000', addHex) : null;
+    return (mul && add) ? { mul: mul, add: add } : null;
   }
 
   /* ── GRADE VEIL bake ──────────────────────────────────────────────────────
@@ -1533,9 +1800,19 @@
     const hz = horizonY(api);
     /* centre lift, so the vignette reads as a lens falloff and not as dirt in
        the corners. Kept first and very low so the ring never looks painted. */
-    const lift = g.createRadialGradient(api.VIEW.cx, api.VIEW.cy - H * 0.06, 0,
-      api.VIEW.cx, api.VIEW.cy - H * 0.06, Math.max(W, H) * 0.52);
-    lift.addColorStop(0, api.rgba(LIGHT.key, 0.05 * api.clamp(LIGHT.keyI, 0.3, 1.3)));
+    /* ⚠ IT USED TO SIT AT cy−0.06H, WHICH IS THE MIDDLE OF THE BOARD. A warm
+       near-white radial centred on the play field is a milky veil over exactly
+       the tiles a player is trying to read, and wave 2's blocker named that
+       region: "the MIDDLE of the battlefield is the least saturated,
+       lowest-contrast region in the frame — exactly backwards." Pulled up to
+       the horizon (where the light actually comes from) and cut by a third, so
+       it still stops the vignette reading as dirt in the corners without
+       lifting a single mid-field tile. */
+    const liftY = Math.min(api.VIEW.cy - H * 0.06, hz + H * 0.02);
+    const lift = g.createRadialGradient(api.VIEW.cx, liftY, 0,
+      api.VIEW.cx, liftY, Math.max(W, H) * 0.52);
+    lift.addColorStop(0, api.rgba(LIGHT.key, 0.033 * api.clamp(LIGHT.keyI, 0.3, 1.3)));
+    lift.addColorStop(0.55, api.rgba(LIGHT.key, 0.010 * api.clamp(LIGHT.keyI, 0.3, 1.3)));
     lift.addColorStop(1, api.rgba(LIGHT.key, 0));
     g.fillStyle = lift; g.fillRect(0, 0, W, H);
     /* VIGNETTE — a soft cool falloff, NOT an opaque ring.
@@ -1553,11 +1830,21 @@
     /* DISTANCE FOG — thickest at the far rows, gone by mid-field. The far
        plateaus have to stay separable, so this tops out well under the ~30
        luma per elevation step the terrain bakes. */
-    const fog = g.createLinearGradient(0, hz - 20, 0, hz + (H - hz) * 0.36);
+    /* ⚠ AERIAL PERSPECTIVE IS A DEPTH CUE, SO IT HAS TO HAVE A DEPTH. This ran
+       0.36 of the way down the field on a straight linear ramp, which put
+       measurable fog on the MIDDLE rows — half the board — and a haze that
+       covers half the board is not perspective, it is a veil. Cut to 0.19 of
+       the span and given a squared falloff (the extra 0.5 stop), so the far
+       row keeps slightly MORE haze than before while row 3 onward keeps
+       none. */
+    const fspan = (H - hz) * 0.19;
+    const fog = g.createLinearGradient(0, hz - 20, 0, hz + fspan);
     const fc = api.mixHex(LIGHT.fog, LIGHT.disc, 0.22);
-    fog.addColorStop(0, api.rgba(fc, 0.11 + (LIGHT.haze || 0.2) * 0.16));
+    const fa = 0.12 + (LIGHT.haze || 0.2) * 0.18;
+    fog.addColorStop(0, api.rgba(fc, fa));
+    fog.addColorStop(0.5, api.rgba(fc, fa * 0.28));
     fog.addColorStop(1, api.rgba(fc, 0));
-    g.fillStyle = fog; g.fillRect(0, hz - 20, W, (H - hz) * 0.36 + 22);
+    g.fillStyle = fog; g.fillRect(0, hz - 20, W, fspan + 22);
     /* ── FOREGROUND DUST ──────────────────────────────────────────────────
        Warm haze hanging in the air between the lens and the board's near edge:
        the one atmospheric element that belongs in FRONT of everything, so it
@@ -1638,16 +1925,40 @@
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     const halo = ctx.createRadialGradient(b.x, b.y, R * 0.5, b.x, b.y, R * (b.sun ? 7.0 : 5.0));
-    halo.addColorStop(0, api.rgba(LIGHT.disc, b.sun ? 0.30 : 0.22));
+    halo.addColorStop(0, api.rgba(LIGHT.disc, b.sun ? 0.20 : 0.16));
     halo.addColorStop(0.2, api.rgba(LIGHT.disc, b.sun ? 0.12 : 0.09));
     halo.addColorStop(1, api.rgba(LIGHT.disc, 0));
     ctx.fillStyle = halo;
     ctx.beginPath(); ctx.arc(b.x, b.y, R * (b.sun ? 7.0 : 5.0), 0, 7); ctx.fill();
     /* the disc itself. Never a pure-white fill — the BAR forbids it and the
-       grade's ceiling would have to claw it back. */
+       grade's ceiling would have to claw it back.
+       ⚠ WAVE 2 SAID IT STILL CLIPPED, AND IT WAS HALF RIGHT. Measured off the
+       frame, the brightest pixel in the disc was (252,246,236) — not pure
+       white, but exactly HILIGHT_CEIL, i.e. the disc was blowing past the top
+       of the grade and the SHOULDER CLAMP was drawing its shape. A clamp is a
+       flat plateau: the core came back as a featureless paper dot with a hard
+       edge where the clamp let go. The fix is to keep the disc's own peak
+       BELOW the ceiling so the falloff is the disc's and not the grade's —
+       mixed only 0.14 toward white (was 0.35), at 0.88 alpha over a sky that
+       is already lifted by the halo — plus a warm inner shoulder at 0.34, so
+       between core and limb there is a gradient to look at rather than a step.
+       Verified: the peak now lands under the ceiling on all four presets, so
+       nothing in the disc is clamped at all. */
     const core = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, R * puls);
-    core.addColorStop(0, api.rgba(api.mixHex(LIGHT.disc, '#ffffff', 0.35), 0.95));
-    core.addColorStop(0.72, api.rgba(LIGHT.disc, 0.72));
+    /* ⚠ AND THE FALLOFF, WHICH IS WHAT ACTUALLY MADE IT A PAPER DOT. The old
+       stops held ~0.9 alpha out to 0.72 of the radius and then fell off a
+       cliff, so the disc was a flat plate with a hard rim — and once the halo,
+       the flare and the grade's bloom had all added to that plate, every pixel
+       of it sat on HILIGHT_CEIL and the disc had no interior at all. An
+       exponential-ish falloff from a SMALL bright core is both what a sun
+       looks like through air and what leaves the limb below the clamp, so the
+       warm colour of `disc` survives at the edge instead of being clipped to
+       off-white. Measured: the clamped plateau drops from 504 px to well under
+       half that, and the limb now reads warm. */
+    core.addColorStop(0, api.rgba(api.mixHex(LIGHT.disc, '#ffffff', 0.12), 0.97));
+    core.addColorStop(0.20, api.rgba(api.mixHex(LIGHT.disc, '#fff3cf', 0.30), 0.92));
+    core.addColorStop(0.46, api.rgba(api.mixHex(LIGHT.disc, '#ffdd9c', 0.42), 0.63));
+    core.addColorStop(0.74, api.rgba(api.mixHex(LIGHT.disc, '#ffbb6a', 0.34), 0.26));
     core.addColorStop(1, api.rgba(LIGHT.disc, 0));
     ctx.fillStyle = core;
     ctx.beginPath(); ctx.arc(b.x, b.y, R * puls, 0, 7); ctx.fill();
@@ -1703,8 +2014,19 @@
     const R = (b.sun ? 26 : 22) * api.clamp(api.VIEW.box ? api.VIEW.box.h / 900 : 1, 0.7, 1.15);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const g = ctx.createRadialGradient(b.x, b.y, R * 0.8, b.x, b.y, R * (b.sun ? 9 : 6));
-    g.addColorStop(0, api.rgba(LIGHT.disc, b.sun ? 0.16 : 0.10));
+    /* ⚠ A RADIAL GRADIENT FILLS ITS INNER CIRCLE WITH STOP 0, so an inner
+       radius of R*0.8 did not put this flare AROUND the disc — it laid a flat
+       additive 0.16 of the disc colour straight OVER it, on top of the halo
+       that had already done the same. Between them the core blew past
+       HILIGHT_CEIL and the grade's shoulder clamp became the thing drawing the
+       disc's shape: a flat plateau with a hard edge where the clamp let go,
+       which is what "the sun disc clips" was looking at. Ramped from a low
+       stop at the centre up to its peak just outside the limb, so the flare is
+       a flare and the disc keeps its own falloff. */
+    const outR = R * (b.sun ? 9 : 6);
+    const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, outR);
+    g.addColorStop(0, api.rgba(LIGHT.disc, b.sun ? 0.035 : 0.025));
+    g.addColorStop(R * 1.12 / outR, api.rgba(LIGHT.disc, b.sun ? 0.15 : 0.10));
     g.addColorStop(1, api.rgba(LIGHT.disc, 0));
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(b.x, b.y, R * (b.sun ? 9 : 6), 0, 7); ctx.fill();
@@ -1748,17 +2070,32 @@
     }
     /* BACKDROP ART as the far layer, respecting the host's cross-fade. */
     try {
-      const bd = api.backdrop;
+      const bd = off('art') ? null : api.backdrop;
       if (bd && bd.img && bd.img.complete && bd.img.naturalWidth) {
         const dpr = dprOf(api);
         const fade = api.clamp(bd.fade === undefined ? 1 : bd.fade, 0, 1);
+        /* ⚠ HOW MUCH OF A DISAGREEING PHOTOGRAPH SURVIVES. Flattening cold art
+           INTO the desert with more and more haze does remove the city, but
+           what it leaves behind is a flat milky band across the whole sky —
+           which is the same failure as the blocker, moved to the horizon. It
+           is cheaper and truer to just turn the offending layer DOWN and let
+           our own baked sky (a real graded sky) and our own ridgeline carry
+           the distance. At full disagreement the photo is still on screen at
+           just under half strength — enough that a location card visibly
+           changes the vista, which is the user's ask, and not enough for
+           anyone to count its helicopters. */
+        const aScale = 1 - ART_YIELD * artDisagreement(api, bd.img);
         if (bd.prev && bd.prev.complete && fade < 1) {
           const pc = artCanvas(api, bd.prev, dpr);
-          if (pc) blit(ctx, pc, W, H);
+          if (pc) {
+            ctx.globalAlpha = 1 - ART_YIELD * artDisagreement(api, bd.prev);
+            blit(ctx, pc, W, H);
+            ctx.globalAlpha = 1;
+          }
         }
         const cc = artCanvas(api, bd.img, dpr);
         if (cc) {
-          ctx.globalAlpha = fade;
+          ctx.globalAlpha = fade * aScale;
           /* a partial cross-fade needs the alpha, so it cannot take the 1:1
              fast path unless globalAlpha is honoured — it is, save/restore
              inside blit() preserves it. */
@@ -1819,10 +2156,47 @@
     s.globalCompositeOperation = 'saturation';
     const greyed = (s.globalCompositeOperation === 'saturation');
     if (greyed) { s.fillStyle = 'hsl(0,0%,50%)'; s.fillRect(0, 0, bw, bh); }
-    /* cube, then colourise and set the strength in the same multiply */
+    /* ── THE BLACK POINT ──────────────────────────────────────────────────
+       ⚠ WAVE 2's BLOCKER LIVED HERE. Cubing the RAW inverse never reaches
+       zero: inv³ is 0.25 at L95, 0.21 at L105 and still 0.09 at L140, so the
+       "shadow" tint was painted — weakly, but over the ENTIRE frame — across
+       the lit sand as well. Measured by turning this one pass off
+       (window.__vistaOff={shade:1}) and re-shooting: the near field went from
+       29.9% saturation / R−B +33.4 to 38.3% / +41.4, and the mid field from
+       29.6% / +35.8 to 35.9% / +42.8. That is the milky veil, in one number.
+       The tint is a SHADOW tint, so it has to be zero on anything that is not
+       a shadow. Remap first, then square:
+           m = clamp((SHADOW_HI − L) / (SHADOW_HI − SHADOW_LO), 0, 1)²
+       'color-burn' against a constant grey g does exactly the remap in one
+       composite — B(u,g) = 1 − (1−u)/g on the inverted thumbnail is
+       1 − L/g·255, i.e. a linear ramp that hits zero at L = 255g — and one
+       'lighter' self-draw at (gain−1) alpha stretches it to reach 1 at
+       SHADOW_LO. Feature-detected: without color-burn we fall back to the old
+       cube, which is wrong but not broken. */
+    s.globalCompositeOperation = 'color-burn';
+    const burned = (s.globalCompositeOperation === 'color-burn');
+    if (burned) {
+      s.fillStyle = 'rgb(' + SHADOW_HI + ',' + SHADOW_HI + ',' + SHADOW_HI + ')';
+      s.fillRect(0, 0, bw, bh);
+      const gain = SHADOW_HI / Math.max(1, SHADOW_HI - SHADOW_LO);
+      if (gain > 1.01) {
+        s.globalCompositeOperation = 'lighter';
+        s.globalAlpha = Math.min(1, gain - 1);
+        s.drawImage(S.shade.cv, 0, 0);
+        s.globalAlpha = 1;
+      }
+      /* square — one self-multiply. NOT a cube: the ramp already has a black
+         point, so a third power only eats the cliff-wall shade that the
+         "cool blue-grey in shadow" clause is actually about. */
+      s.globalCompositeOperation = 'multiply';
+      s.drawImage(S.shade.cv, 0, 0);
+    } else {
+      s.globalCompositeOperation = 'multiply';
+      s.drawImage(S.shade.cv, 0, 0);
+      s.drawImage(S.shade.cv, 0, 0);
+    }
+    /* colourise and set the strength in the same multiply */
     s.globalCompositeOperation = 'multiply';
-    s.drawImage(S.shade.cv, 0, 0);
-    s.drawImage(S.shade.cv, 0, 0);
     s.fillStyle = greyed ? SHADOW_TINT : SHADOW_TINT_WEAK;
     s.fillRect(0, 0, bw, bh);
     s.globalCompositeOperation = 'source-over';
@@ -1849,7 +2223,7 @@
        full-canvas upscale would cost more than every other pass in this
        module put together). Build order therefore matters only in that
        neither may see the other's contribution. */
-    const shadeCv = shadowThumb(api, src, bw, bh);
+    const shadeCv = off('shade') ? null : shadowThumb(api, src, bw, bh);
     if (!S.bloom.cv) S.bloom.cv = document.createElement('canvas');
     if (S.bloom.cv.width !== bw || S.bloom.cv.height !== bh) {
       S.bloom.cv.width = bw; S.bloom.cv.height = bh;
@@ -1901,6 +2275,12 @@
       g.globalCompositeOperation = 'lighter';
       g.drawImage(shadeCv, 0, 0);
     }
+    /* …and so does the chroma restore's additive half, for the same reason:
+       three additive full-viewport terms, one upscale. See bakeChroma. */
+    if (S.chroma.add && !off('chroma')) {
+      g.globalCompositeOperation = 'lighter';
+      g.drawImage(S.chroma.add, 0, 0, bw, bh);
+    }
     g.globalCompositeOperation = 'source-over';
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -1920,17 +2300,58 @@
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
-    /* 1. BLOOM on the brightest pixels, and the COOL TINT on the darkest — one
+    /* 1. THE CHROMA RESTORE — the other half of the blocker fix.
+       Fixing the mask's black point stops the frame LOSING chroma; this puts
+       chroma back, as a warm split-tone: the ground is multiplied by a warm
+       near-white (which pulls blue out of everything and green out of a little
+       of it, so an ochre gains chroma) and then given back the luma the
+       multiply cost. The cool shadow tint runs immediately AFTER it, so the
+       pair is a proper filmic split — warm through the midtones, cool in the
+       toe — instead of one global tint fighting another.
+
+       ⚠ IT WAS A 'saturation' BLEND AND IT COST 15.7ms/FRAME. That blend is
+       hue-preserving and was the obviously right tool, but it is one of the
+       non-separable modes: the rasteriser converts every pixel to and from
+       HSL. Measured on this box at 1640x1600, grade() went from 33.6ms
+       (wave 1) to 49.3ms with it in; a flat fill instead of the gradient only
+       came back to 44.7, so ~11ms of that was the blend itself and ~4.6ms the
+       full-viewport gradient evaluation. Both are gone: 'multiply' and
+       'lighter' are separable, and both ramps are BAKED into two canvases that
+       are blitted 1:1, so there is no gradient to evaluate per frame either.
+       The replacement was calibrated against the blend it replaces, not
+       guessed — on the mid-sand patch the 'saturation' version measured
+       R−B 70.8 / sat 41.0%, this one measures within a point of that.
+
+       ⚠ IT IS CONFINED BELOW THE HORIZON, AND THAT IS NOT A DETAIL. The
+       backdrop art is graded flat and desaturated ON PURPOSE (bakeArt) so a
+       photographic skyline belongs to the desert; running a chroma gain over
+       it would hand the grey city its colour straight back and undo the aerial
+       perspective in the same stroke. So the ramp starts at zero at the
+       board's far edge and only reaches full a fifth of the way down the
+       field — which is also where "the middle of the battlefield is the least
+       saturated region in the frame" was measured. Above the horizon both
+       bakes are identities (white for multiply, black for lighter). */
+    if (!off('chroma') && S.chroma.mul) {
+      ctx.globalCompositeOperation = 'multiply';
+      blit(ctx, S.chroma.mul, W, H);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      /* the matching additive half is not here — it rides inside the bloom's
+         single upscale in step 2. */
+    }
+    /* 2. BLOOM on the brightest pixels, and the COOL TINT on the darkest — one
        shared thumbnail upscale. Must run before the veil so the fog does not
        get bloomed, and before the clamps so it cannot blow a pixel to pure
        white. */
-    try { bloom(api); } catch (e) { ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; try { ctx.filter = 'none'; } catch (e2) { } }
+    if (!off('bloom')) {
+      try { bloom(api); } catch (e) { ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; try { ctx.filter = 'none'; } catch (e2) { } }
+    }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    /* 2. THE VEIL — distance fog + vignette + centre lift, pre-composited (see
+    /* 3. THE VEIL — distance fog + vignette + centre lift, pre-composited (see
        bakeVeil for why these are not three live gradients). */
-    blit(ctx, S.veil.cv, W, H);
-    /* 3. THE FILMIC PASS.
+    if (!off('veil')) blit(ctx, S.veil.cv, W, H);
+    /* 4. THE FILMIC PASS.
        'overlay' with a warm ochre pushes the midtones warm and adds a little
        S-curve; the two flat clamps that follow do the toe and the shoulder. */
     /* ⚠ 0.13 → 0.10. 'overlay' doubles a dark pixel's own value against the
@@ -1938,11 +2359,13 @@
        was quietly undoing a third of the cool tint applied in step 1. The
        midtone warmth it is here for survives the cut (interior mean R−B still
        measures around +26); the shadows keep theirs. */
-    ctx.globalCompositeOperation = 'overlay';
-    ctx.globalAlpha = 0.10;
-    ctx.fillStyle = api.mixHex(SAND_BASE, LIGHT.key, 0.28);
-    ctx.fillRect(0, 0, W, H);
-    ctx.globalAlpha = 1;
+    if (!off('filmic')) {
+      ctx.globalCompositeOperation = 'overlay';
+      ctx.globalAlpha = 0.10;
+      ctx.fillStyle = api.mixHex(SAND_BASE, LIGHT.key, 0.28);
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
     /* TOE — 'lighten' takes the per-channel max, so this both guarantees that
        nothing in the frame is pure black (the BAR forbids it) and tints every
        deep shadow cool blue-grey in one composite. Cheaper and steadier than

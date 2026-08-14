@@ -163,6 +163,48 @@
      saturation, crayon territory) and settled at 0.17, which lands the mid
      sand at 37.5% against the blocker's ≥33% and the near sand at 44.2%. */
   const CHROMA_GAIN = 0.17;
+  /* ⚠ THE COOL-SURFACE GATE. Round 4's failed clause: the warm restore above
+     is an UNCONDITIONAL multiply over everything below the horizon, so it
+     stripped blue from the things the BAR requires to STAY blue as happily as
+     it stripped it from sand. Measured W1 → round-3, same frame, only this
+     file differing: the water pool went R−B −3.5 → +15.9, the near-water band
+     −16.0 → +15.6 and a teal movement slab −13.5 → +2.7, i.e. every cool
+     surface crossed neutral into olive, and the cool population of the field
+     fell 16.25% → 10.76%. The BAR asks for "a blue-teal water pool … darker
+     and cooler" and "teal for movement range"; a restore that eats those is
+     not a restore.
+     So the multiply stays unconditional (it is a baked blit and gating it
+     per-pixel would cost a full-canvas upscale — measured 10.3ms on this box,
+     see coolThumb) and the blue it removed is handed BACK, additively, through
+     a per-frame mask keyed on (B−R). These two numbers are that mask's ramp,
+     in 8-bit (B−R): at or below COOL_LO nothing is given back and the pixel
+     keeps the full warm restore, at or above COOL_HI the restore is cancelled
+     EXACTLY and the pixel comes out of grade() with the chroma it went in
+     with. Sand measures B−R around −20 and −35, water and the teal slabs +4
+     to +16, so the gap is wide and the ramp can afford to be narrow. */
+  const COOL_LO = -14, COOL_HI = 2;
+  /* ⚠ THE MICRO-CONTRAST RESTORE — the other half of round 4's verdict.
+     The warm multiply is (1, 1−0.42k, 1−k); its luma is 1 − 0.3726k ≈ 0.933 at
+     noon, so it does not just shift hue, it SCALES every luma delta in the
+     frame down by 6.7%. That is exactly what the critic measured: median local
+     luma sd over 16px tiles fell in five of six field bands (near 3.20 → 2.92,
+     midlow 3.77 → 3.44, mid 5.56 → 5.37). The old fix was `addV`, a flat
+     additive grey that put the MEAN back and could not put the DELTAS back —
+     an additive term never restores a multiplicative loss.
+     A multiplicative restore needs either a per-pixel gain (a full-canvas self
+     'lighter' draw: 10.3ms, no) or a blend mode that IS a gain. 'color-dodge'
+     against a constant is one: B(Cb,Cs) = Cb/(1−Cs), a pure per-channel
+     multiply by 1/(1−Cs), from a flat fill that costs nothing. TONE_GAIN is
+     that multiplier. It is set ABOVE the 1/0.933 = 1.071 that merely undoes
+     the multiply, because the blocker asked for contrast, not for break-even.
+     TONE_PEDESTAL is subtracted first ('difference' with a near-black, also a
+     flat fill) so the gain lands as CONTRAST rather than as exposure: mean
+     ≈ (0.933·L − p)·g holds L while the deltas come out ×0.933·g. It is small
+     enough that everything it crushes is below the toe clamp's floor anyway
+     (SHADOW_FLOOR is 16/20/34 and 'lighten' runs last), so no shadow detail
+     that survives to the screen is lost to it. */
+  const TONE_PEDESTAL = 7;
+  const TONE_GAIN = 1.16;
   /* how much of a FULLY disagreeing backdrop photograph gets taken away (see
      draw()). This is the SECOND of the two levers on art that does not belong;
      the first and much stronger one is the value match at the end of bakeArt.
@@ -291,9 +333,38 @@
     art: new Map(),          /* image src -> { key, cv } graded + horizon-clipped */
     bloom: { cv: null, g: null },
     shade: { cv: null, g: null },      /* the cool-shadow mask, same thumbnail scale */
+    cool: { cv: null, g: null, live: null },  /* the cool-surface chroma give-back */
+    coolFail: false,         /* sticky: a tainted canvas must not throw every frame */
     lastBake: -1e9,
     drift: null
   };
+
+  /* ⚠ FEATURE-DETECT EVERY BLEND MODE BEFORE YOU RELY ON IT. Setting an
+     unsupported globalCompositeOperation is a silent no-op that leaves the
+     PREVIOUS op in place, so an unsupported 'color-dodge' would not disable
+     the tone pass — it would run it as whatever came before, which is how you
+     get a frame painted flat grey on one browser and nobody notices. Probed
+     once on a 1x1 scratch context and cached. */
+  let _opCv = null;
+  const _opOK = Object.create(null);
+  function opSupported(op) {
+    if (op in _opOK) return _opOK[op];
+    let ok = false;
+    try {
+      if (!_opCv) { _opCv = document.createElement('canvas'); _opCv.width = _opCv.height = 1; }
+      const g = _opCv.getContext('2d');
+      if (g) { g.globalCompositeOperation = 'source-over'; g.globalCompositeOperation = op; ok = (g.globalCompositeOperation === op); }
+    } catch (e) { ok = false; }
+    _opOK[op] = ok;
+    return ok;
+  }
+
+  /* the bloom/shade/cool thumbnail size. ONE definition, because three passes
+     sum into the same thumbnail and are upscaled together exactly once — if
+     these ever disagree the terms land at different scales and the sum is
+     nonsense. */
+  function thumbW(api) { return Math.max(32, Math.round(api.W / 7)); }
+  function thumbH(api) { return Math.max(24, Math.round(api.H / 7)); }
 
   function mkCanvas(w, h, dpr) {
     const c = document.createElement('canvas');
@@ -1738,23 +1809,35 @@
              in the air over a desert is warm, and the cool shadow tint runs
              right after this and takes the toe back.
        add — black above the horizon, easing to a dark grey below. Under
-             'lighter' this returns the luma the multiply cost, so the restore
-             changes colour without changing exposure.
+             'lighter' this returned the luma the multiply cost. ⚠ IT IS ONLY
+             BAKED ON THE FALLBACK PATH NOW: a flat additive term restores the
+             MEAN and cannot restore the DELTAS, which is why round 4 measured
+             local contrast down in five of six field bands. Where 'color-dodge'
+             exists the luma comes back multiplicatively instead — see
+             TONE_GAIN and toneRamp() — and this bake is skipped entirely.
      See grade() step 1 for why this is baked rather than blended live. ── */
+  /* the two numbers the chroma ramp and everything keyed to it share. Split
+     out because the cool give-back mask (coolThumb) and the tone ramp
+     (toneRamp) MUST use the same horizon and the same span as the multiply
+     they are compensating, or the compensation lands in the wrong place. */
+  function chromaSpan(api) { return Math.max(40, (api.H - horizonY(api)) * 0.20); }
+  /* ⚠ SCALED BY THE KEY. A flat gain made NIGHT read as dusk — the same
+     ochre punch under a blue moon, which is backwards twice over: low light
+     desaturates in the eye, and the whole point of the night preset is that
+     the braziers are the only colour left. keyI is 1.15 at noon and 0.48 at
+     night, so night keeps 42% of the restore. */
+  function chromaK(api) {
+    return api.clamp(CHROMA_GAIN * api.clamp(api.LIGHT.keyI / 1.15, 0.42, 1) * 1.05, 0, 0.40);
+  }
   function bakeChroma(api, dpr) {
-    const W = api.W, H = api.H, LIGHT = api.LIGHT;
+    const W = api.W, H = api.H;
     const hz = horizonY(api);
-    const span = Math.max(40, (H - hz) * 0.20);
-    /* ⚠ SCALED BY THE KEY. A flat gain made NIGHT read as dusk — the same
-       ochre punch under a blue moon, which is backwards twice over: low light
-       desaturates in the eye, and the whole point of the night preset is that
-       the braziers are the only colour left. keyI is 1.15 at noon and 0.48 at
-       night, so night keeps 42% of the restore. */
-    const k = api.clamp(CHROMA_GAIN * api.clamp(LIGHT.keyI / 1.15, 0.42, 1) * 1.05, 0, 0.40);
+    const span = chromaSpan(api);
+    const k = chromaK(api);
     /* 0.42 — how much green comes out for every unit of blue. Pulling blue
        alone swings ochre toward orange; this keeps it in the sand family. */
     const mulHex = rgbHex(255, 255 * (1 - 0.42 * k), 255 * (1 - k));
-    const addV = Math.round(51 * k);          /* ≈ the luma the multiply costs */
+    const addV = opSupported('color-dodge') ? 0 : Math.round(51 * k);
     const addHex = rgbHex(addV, addV, addV);
     /* one ramp painter. The caller has already put the context into CSS-pixel
        coordinates at whatever resolution that canvas is. */
@@ -1775,13 +1858,16 @@
        blit measured ~3ms/frame here, for a term that is a smooth vertical ramp
        and therefore loses nothing at 1/7 resolution. Only the multiply, which
        cannot be folded into an additive pass, stays full size. */
-    const bw = Math.max(32, Math.round(W / 7)), bh = Math.max(24, Math.round(H / 7));
-    const ac = document.createElement('canvas');
-    ac.width = bw; ac.height = bh;
-    const ag = ac.getContext('2d');
-    if (ag) { ag.setTransform(bw / W, 0, 0, bh / H, 0, 0); }
-    const add = ag ? paint(ac, ag, '#000000', addHex) : null;
-    return (mul && add) ? { mul: mul, add: add } : null;
+    let add = null;
+    if (addV > 0) {
+      const bw = thumbW(api), bh = thumbH(api);
+      const ac = document.createElement('canvas');
+      ac.width = bw; ac.height = bh;
+      const ag = ac.getContext('2d');
+      if (ag) { ag.setTransform(bw / W, 0, 0, bh / H, 0, 0); }
+      add = ag ? paint(ac, ag, '#000000', addHex) : null;
+    }
+    return mul ? { mul: mul, add: add } : null;
   }
 
   /* ── GRADE VEIL bake ──────────────────────────────────────────────────────
@@ -2212,11 +2298,173 @@
     return S.shade.cv;
   }
 
+  /* ── THE COOL-SURFACE GIVE-BACK ───────────────────────────────────────────
+     Round 4's blocker, in one function. The warm chroma multiply is a baked
+     full-viewport blit and it cannot see what it is painting over, so it takes
+     blue out of the water pool and the teal movement slabs exactly as
+     enthusiastically as it takes it out of sand.
+
+     ⚠ WHY THIS IS NOT A MASK ON THE MULTIPLY. The obvious fix is to build the
+     mask the way shadowThumb() does and gate the multiply with it — but a
+     multiply is per-pixel and a thumbnail mask is not, so gating it means
+     upscaling the mask to the full canvas and compositing there. Measured on
+     this box at 1640x1600: one extra full-canvas self-draw is 10.3ms, which is
+     most of a 60fps frame for a colour correction. So the multiply stays
+     unconditional and we ADD BACK what it took, in the one full-canvas
+     'lighter' upscale the bloom already performs (see bloom()) — free.
+
+     ⚠ IT MUST BE BUILT BEFORE THE MULTIPLY RUNS. The give-back is
+     k·B and 0.42k·G of the pixel's PRE-grade value; sampling after the
+     multiply would measure B(1−k) and give back too little, and, worse, the
+     multiply has already dragged the (B−R) the mask keys on across neutral —
+     which is the entire bug. grade() therefore calls this as its first act,
+     off the untouched frame.
+
+     The arithmetic, for a pixel at mask strength m and ramp r:
+       after the multiply   (R, G(1−0.42k), B(1−k))
+       this adds            (0, 0.42k·G·m·r·g, k·B·m·r·g)
+     so at m=1 the pixel leaves grade() with the chroma it arrived with, times
+     the tone gain g that the whole field gets (toneRamp). At m=0 it is
+     untouched and keeps the full warm restore. Nothing in between is a hue
+     rotation — it is the same restore, dialled down.
+
+     Costs one thumbnail downscale and one 117x114 getImageData + loop, which
+     measured 0.20ms and 0.90ms respectively at twice this size on this box. ── */
+  function coolThumb(api, src, bw, bh) {
+    if (S.coolFail) return null;
+    if (!S.cool.cv) S.cool.cv = document.createElement('canvas');
+    if (S.cool.cv.width !== bw || S.cool.cv.height !== bh) {
+      S.cool.cv.width = bw; S.cool.cv.height = bh;
+      S.cool.g = S.cool.cv.getContext('2d');
+    }
+    const g = S.cool.g; if (!g) return null;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'source-over';
+    g.globalAlpha = 1;
+    try { g.filter = 'none'; } catch (e) { }
+    g.clearRect(0, 0, bw, bh);
+    g.drawImage(src, 0, 0, bw, bh);
+    let im;
+    /* ⚠ STICKY ON FAILURE. getImageData throws on a tainted canvas, and the
+       board composites location art through the host's _bbAbs(). Everything is
+       same-origin today, but a throw every frame forever is a far worse
+       failure than losing the give-back, so one throw disables it for the
+       session and the warm restore simply runs ungated, as it did in round 3. */
+    try { im = g.getImageData(0, 0, bw, bh); }
+    catch (e) { S.coolFail = true; return null; }
+    const d = im.data;
+    const H = api.H, hz = horizonY(api), span = chromaSpan(api);
+    const k = chromaK(api);
+    /* ⚠ NO TONE GAIN FACTOR HERE. This term is added inside the bloom's
+       upscale, which runs BEFORE toneRamp(), so the gain is applied to it
+       downstream along with everything else — pre-scaling it would apply the
+       gain twice and overshoot the give-back by 16%. */
+    const kG = 0.42 * k, kB = k;
+    const lo = COOL_LO, inv = 1 / Math.max(1, COOL_HI - COOL_LO);
+    for (let j = 0; j < bh; j++) {
+      /* the row's ramp, sampled at the row centre in CSS pixels. Identical to
+         the vertical ramp bakeChroma paints, on purpose. */
+      let r = ((j + 0.5) * H / bh - hz) / span;
+      r = r < 0 ? 0 : r > 1 ? 1 : r;
+      const o0 = j * bw * 4;
+      if (r <= 0) { for (let i = 0; i < bw; i++) { const o = o0 + i * 4; d[o] = 0; d[o + 1] = 0; d[o + 2] = 0; d[o + 3] = 255; } continue; }
+      const cG = kG * r, cB = kB * r;
+      for (let i = 0; i < bw; i++) {
+        const o = o0 + i * 4;
+        const R = d[o], G = d[o + 1], B = d[o + 2];
+        let m = (B - R - lo) * inv;
+        if (m <= 0) { d[o] = 0; d[o + 1] = 0; d[o + 2] = 0; d[o + 3] = 255; continue; }
+        if (m > 1) m = 1;
+        d[o] = 0;
+        d[o + 1] = Math.min(255, (cG * G * m) | 0);
+        d[o + 2] = Math.min(255, (cB * B * m) | 0);
+        d[o + 3] = 255;
+      }
+    }
+    g.putImageData(im, 0, 0);
+    /* a 1px thumbnail blur = ~7px on the frame. The sum this joins is upscaled
+       NEAREST (see bloom), so without it the give-back arrives as visible 7px
+       blocks along the pool's rim. A colour bleeding a few pixels past a water
+       edge is what water does; a staircase is not. */
+    try {
+      g.filter = 'blur(1px)';
+      g.globalCompositeOperation = 'copy';
+      g.drawImage(S.cool.cv, 0, 0);
+      g.filter = 'none';
+      g.globalCompositeOperation = 'source-over';
+    } catch (e) { try { g.filter = 'none'; } catch (e2) { } g.globalCompositeOperation = 'source-over'; }
+    return S.cool.cv;
+  }
+
+  /* ── THE TONE RAMP: pedestal, then multiplicative gain ────────────────────
+     See TONE_GAIN. Two flat-fill passes, both confined below the horizon and
+     both feathered across the SAME span the chroma multiply uses, because they
+     exist to undo that multiply's luma compression and must not extend past
+     it — above the horizon lives the graded backdrop art, whose flatness is
+     deliberate (bakeArt), and a gain there would hand a photographic skyline
+     its contrast straight back.
+
+     ⚠ THE FEATHER IS N FLAT STRIPS, NOT A GRADIENT. A full-viewport linear
+     gradient measured ~4.6ms on this box (see grade() step 1); N fillRects of
+     a few pixels each measure nothing. At N=24 each step changes the gain by
+     0.6%, i.e. under one 8-bit level on a mid-field pixel — below the banding
+     threshold, and the two ramps are staggered anyway.
+
+     ⚠ 'difference' IS AN ABSOLUTE VALUE, and that is fine HERE and only here.
+     Below TONE_PEDESTAL a channel mirrors instead of clamping, but the toe
+     clamp at the end of grade() lifts every channel to at least 16/20/34, so
+     the mirrored range is entirely under the floor and never reaches a pixel. */
+  function toneRamp(api) {
+    if (!opSupported('color-dodge') || !opSupported('difference')) return;
+    const ctx = api.ctx, W = api.W, H = api.H;
+    const hz = horizonY(api), span = chromaSpan(api);
+    /* ⚠ PAINT IN DEVICE PIXELS ON WHOLE-PIXEL BOUNDARIES, NOT IN CSS UNITS.
+       Under a DPR transform a strip edge lands on a fractional device row, the
+       rasteriser antialiases it, and a PARTIALLY COVERED row gets the blend
+       applied at partial alpha — TWICE, once from each neighbouring strip.
+       Under 'multiply' or 'color-dodge' that compounds instead of averaging,
+       so the feather comes out as N faint bright lines across the far rows.
+       Snapping to integer device rows makes every row belong to exactly one
+       strip and the seam disappear. Same reasoning as blit(). */
+    const sy = ctx.canvas.height / Math.max(1, H), sx = ctx.canvas.width / Math.max(1, W);
+    const DW = Math.ceil(W * sx), DH = ctx.canvas.height;
+    const top = Math.max(0, Math.round(hz * sy)), bot = Math.min(DH, Math.round((hz + span) * sy));
+    if (bot <= 0) return;
+    const N = 24;
+    const strip = (level, lo, hi) => {
+      /* the flat body first, then the feather ABOVE it — the two never overlap */
+      if (bot < DH && level > 0) {
+        ctx.fillStyle = 'rgb(' + level + ',' + level + ',' + level + ')';
+        ctx.fillRect(0, bot, DW, DH - bot);
+      }
+      if (bot <= top) return;
+      let y0 = top;
+      for (let i = 0; i < N; i++) {
+        const y1 = i === N - 1 ? bot : Math.round(top + (bot - top) * ((i + 1) / N));
+        if (y1 <= y0) continue;
+        const v = Math.round(lo + (hi - lo) * ((i + 0.5) / N));
+        if (v > 0) { ctx.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')'; ctx.fillRect(0, y0, DW, y1 - y0); }
+        y0 = y1;
+      }
+    };
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'difference';
+    strip(TONE_PEDESTAL, 0, TONE_PEDESTAL);
+    /* Cb / (1 − Cs) — so the fill level that yields TONE_GAIN is 1 − 1/gain */
+    const dodge = Math.round(255 * (1 - 1 / TONE_GAIN));
+    ctx.globalCompositeOperation = 'color-dodge';
+    strip(dodge, 0, dodge);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+  }
+
   function bloom(api) {
     const ctx = api.ctx, W = api.W, H = api.H;
     const src = ctx.canvas;
     if (!src) return;
-    const bw = Math.max(32, Math.round(W / 7)), bh = Math.max(24, Math.round(H / 7));
+    const bw = thumbW(api), bh = thumbH(api);
     /* ⚠ THE SHADOW MASK IS BUILT FIRST, FROM THE UNTOUCHED FRAME. Both terms
        are keyed on the frame's own luminance and both are additive, so they
        share ONE upscale (see the note on nearest-neighbour below — a second
@@ -2281,6 +2529,14 @@
       g.globalCompositeOperation = 'lighter';
       g.drawImage(S.chroma.add, 0, 0, bw, bh);
     }
+    /* …and so does the COOL-SURFACE GIVE-BACK, which is the fourth additive
+       term and the reason the water pool and the teal movement slabs survive
+       the warm restore at all. Built in grade() step 0 from the pre-multiply
+       frame — see coolThumb — and already at this exact thumbnail scale. */
+    if (S.cool.live && !off('chroma')) {
+      g.globalCompositeOperation = 'lighter';
+      g.drawImage(S.cool.live, 0, 0);
+    }
     g.globalCompositeOperation = 'source-over';
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -2331,7 +2587,15 @@
        field — which is also where "the middle of the battlefield is the least
        saturated region in the frame" was measured. Above the horizon both
        bakes are identities (white for multiply, black for lighter). */
+    S.cool.live = null;
     if (!off('chroma') && S.chroma.mul) {
+      /* ⚠ STEP 0, AND IT HAS TO BE FIRST. The cool-surface give-back is keyed
+         on (B−R) of the frame as the actors left it; the multiply on the next
+         line is precisely what destroys that signal, dragging the water pool
+         and the teal movement slabs across neutral into olive. Sample, then
+         multiply. See coolThumb for the arithmetic and for why the give-back
+         is additive instead of a mask on the multiply. */
+      S.cool.live = coolThumb(api, ctx.canvas, thumbW(api), thumbH(api));
       ctx.globalCompositeOperation = 'multiply';
       blit(ctx, S.chroma.mul, W, H);
       ctx.globalCompositeOperation = 'source-over';
@@ -2348,6 +2612,23 @@
     }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+    /* 2b. THE TONE RAMP — pedestal, then multiplicative gain. Undoes the luma
+       compression the warm multiply in step 1 costs, and then some; this is
+       the only thing in the module that puts local CONTRAST back. See
+       TONE_GAIN.
+
+       ⚠ IT MUST RUN AFTER THE BLOOM, AND THE REASON IS NOT OBVIOUS. The bloom
+       is the frame CUBED (see bloom()), so a 16% gain applied before it is a
+       1.16³ = 1.56x gain on the bloom — and the bloom of warm sand is warm, so
+       feeding it a brightened frame pours red over the whole field. Measured
+       with the multiply disabled and only this pass moved: the near-water band
+       went R−B −16.3 (tone after bloom) to +15.3 (tone before bloom), a
+       31-point warm swing from a pass that is supposed to be achromatic. It is
+       achromatic only where it is the LAST thing that reads the frame.
+       For the same reason the cool give-back is NOT pre-scaled by the gain —
+       it is added inside the bloom's upscale, i.e. before this, so the gain
+       picks it up on its way past. See coolThumb. */
+    if (!off('tone')) toneRamp(api);
     /* 3. THE VEIL — distance fog + vignette + centre lift, pre-composited (see
        bakeVeil for why these are not three live gradients). */
     if (!off('veil')) blit(ctx, S.veil.cv, W, H);

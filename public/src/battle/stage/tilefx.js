@@ -116,6 +116,56 @@
    centre against 37.8 two thirds of the way out; on the L-shaped 7-tile test
    region it correctly measures flat, because a ring of tiles HAS no centre.
 
+   ── ROUND 5: THE EDGE IS WHAT MAKES A PANE A PANE ─────────────────────────
+   Round 4 hit its own numbers (measured again here: ON−OFF luma +47, ON B−R
+   −15 with p05 −32 / p95 +7, so the whole distribution is inside the band, not
+   just the mean) and the frame STILL read as overlapping sheets of frosted
+   glass at 1:1. Amplifying paint-on minus paint-off showed why, and it was not
+   the fill at all — it was three edges:
+     1. the selected unit's tile is NOT in its own move set, so the move region
+        had a one-tile hole in it and boundaryEdges traced all four sides of
+        that hole. The single brightest drawn line in the frame was a closed
+        loop round one cell in the middle of the pool — the exact mark the win
+        condition forbids. The selection is now folded into the move region's
+        mask (no hole, no inner boundary) and re-drawn on top RIMLESS at 0.34
+        strength as a hotter swell. See drawStates.
+     2. the boundary glint was col.core (near-white) at 0.100·A. That is a lit
+        LIP, and a lip is how the eye identifies a pane of glass. Now col.rim
+        at 0.048·A with a higher break threshold, and the whole rim is scaled
+        by region size (rimS) so a one- or two-tile pool does not get a closed
+        loop round it either.
+     3. MASK_STATE.blur 0.100 → 0.125. Measured across the boundary the ramp is
+        now ~36 device px with no overshoot — a monotone rise into the plateau,
+        no bright lip on top of it.
+   The interior falloff also went 0.46 → 0.56, which measures centre 62.5 dL
+   against outer 40.3 (1.55×) where round 4 measured 1.30 — "brightest at the
+   centre" with the outer ring still over the +40 contract. And `move.body` was
+   warmed #34b6ee → #4fb2de because the brightest fifth of the pool, which is
+   where the eye actually lands, was still cyan sand at p95 +23.
+   Cost of all of it: drawStates 17.9 → 18.7 ms in the harness.
+
+   ── ROUND 6: THE POOL HAD TO BE TEAL AGAIN, AND TEAL IS GREEN ─────────────
+   That last change lost a blind A/B outright. Three unlabelled crops (this
+   build, round 4, wave 1) were ranked cold on "is there a special region
+   here"; round 5 came LAST, described as "a milky pale wash … haze/fog, not a
+   game state; hard to say it is teal at all". It had traded the pool's entire
+   hue identity to fix a p95 the mean already satisfied.
+   The recovery is NOT the old #34b6ee — measured, that restores chroma and
+   takes mean B−R to +27.4, which is wave 1's "the sand is now cyan". Both
+   settings share one wrong premise: that the emissive is a BLUE light whose
+   only dial is how blue. Teal is green-dominant. move's emissive and its
+   multiply filter are now aquamarine (hue ≈ 165–170°), which lets the filter
+   run twice as hard (per-state cap `col.fc`, 0.20 for move, 0.10 and
+   bit-identical arithmetic for everyone else) and buys chroma out of the
+   green channel instead of out of the blue one. Interior, against identical
+   paint-off pixels: chroma 19.8 → 42.1, saturation 0.164 → 0.273, hue 123.7°,
+   mean B−R +2.6, ON−OFF luma +64.4, p95 B−R 38 → 28.
+   The pane read got the other half of the round: the boundary rim WASH was
+   the lit lip all along (0.040·A over a narrow band ≈ +17 luma on the dimmest
+   part of the pool), so it is 0.015·A over a band 1.6× wider. Both probes now
+   rise MONOTONELY over 39–54 device px with no local maximum on the boundary.
+   Cost: drawStates 18.7 → 18.6 ms in the harness (unchanged; same layer count).
+
    rimBand() and the old unclipped feather() are both gone. A rim stroke traces
    whatever the region's polygon is, so on a single tile it drew the tile; and
    the source-over feather in the ice painter was, at 1.9 tile radii, a milky
@@ -211,11 +261,54 @@ const COL = {
      looks like, rather than being a different material. The teal identity is
      carried by the ~40-level cool SHIFT against the surrounding sand, by the
      rim and by the halo bloom, not by staining the ground cyan. */
-  move:   { core: '#e8f2fa', body: '#34b6ee', rim: '#a6efff', filt: '#3cc4ff', k: 1.55, a: 1.28 },
+  /* ⚠ ROUND 5 warmed `body` from #34b6ee to #4fb2de to pull a p95 of B−R back
+     from +23. IT WAS THE WRONG TRADE AND ROUND 6 UNDID IT. A blind A/B put
+     that build LAST of three on "is there a special region here" — cold notes
+     called it "a milky pale wash … haze/fog, not a game state; hard to say it
+     is teal at all", because chasing a percentile the mean already satisfied
+     cost the pool its hue identity: measured, the interior fell to chroma 24
+     against sand's 46. A region nobody can name the colour of is not findable,
+     and no percentile is worth that.
+
+     ⚠ ROUND 6 — AND THE FIX IS NOT #34b6ee EITHER. Measured, reverting to it
+     does restore chroma (35.5) but takes the pool's mean B−R to +27.4 — the
+     same reading wave 1 had, i.e. sand repainted cyan, the thing the round-4
+     note above exists to prevent. Both of those are the SAME mistake made in
+     opposite directions: they treat the emissive as a blue light, so the only
+     dial is "how blue", and every setting is either colourless or a stain.
+     The pool is teal, and teal is GREEN-dominant, not blue-dominant. Once the
+     emissive is aquamarine (`body` hue ≈ 168°, `filt` ≈ 165°) the two goals
+     stop fighting: green is the channel warm sand has LEAST invested in after
+     blue, so G carries the whole chroma while B stays level with R.
+     Measured on the eroded pool interior against the identical paint-off
+     pixels (CRKpool.mjs, erode 14):
+         chroma (max−min)   42.1   (round 5: 19.8, target ≥ 34)
+         hue                123.7° (round 5: 139° at chroma 20, target ≥ 120°)
+         ON−OFF luma        +64.4  (target ≥ +40)
+         mean B−R           +2.6   (target ≤ +5; p95 +28, was +38)
+         saturation         0.273  (round 5: 0.164, wave 1: 0.324)
+     ⚠ THOSE TWO TARGETS PIN THE HUE ALMOST EXACTLY, so do not read 123.7° as
+     "nearly failed". With G the max channel, hue = (B−R)/chroma·60 + 120, so
+     "hue ≥ 120°" is just "B ≥ R" and "mean B−R ≤ +5" at chroma ≥ 34 caps the
+     hue at ~128°. Anything bluer than that is only reachable by staining the
+     sand. Aim B−R at +2..+3: it sits mid-band with margin on BOTH walls, which
+     matters because the vista's grade moves the sand under us between rounds.
+
+     ⚠ `halo` (optional, falls back to `body`) is the ONE place the light is
+     allowed to be properly cyan. It is the bloom escaping onto the surrounding
+     sand — outside the legal tiles, a thin fraction of the lit pixels, so it
+     barely moves the mean — and a cool cyan fringe round a green-teal pool is
+     what sells the whole thing as teal to the eye rather than to the meter. */
+  move:   { core: '#e6faf4', body: '#4ad1b2', rim: '#96eee8', halo: '#42cae0', filt: '#46ffd8', k: 1.55, a: 1.28, fc: 0.20 },
   attack: { core: '#fff0c8', body: '#ff8c10', rim: '#ffd07a', filt: '#ffd98a', k: 1.60, a: 1.62 },
   place:  { core: '#ccffd8', body: '#2fd070', rim: '#8ff0b0', filt: '#adffc4', k: 1.15, a: 1.30 },
   swap:   { core: '#e8d4ff', body: '#8a52f0', rim: '#c3a5ff', filt: '#d0b0ff', k: 1.20, a: 1.37 },
-  sel:    { core: '#f4fdff', body: '#8ae8ff', rim: '#e2feff', filt: '#8ce4ff', k: 1.45, a: 1.21 },
+  /* ⚠ `sel` is the hottest member of the MOVE family and is drawn INSIDE the
+     move pool, so it has to be the same light or it becomes a second, differently
+     coloured blob sitting in the middle of the region — which is how it read
+     when it was gold (round 3) and again, faintly, when move went aquamarine in
+     round 6 and `sel` stayed sky-blue. Same aquamarine, whiter and brighter. */
+  sel:    { core: '#f2fffb', body: '#a8e8d8', rim: '#dffff6', filt: '#8cf0dc', k: 1.45, a: 1.21, fc: 0.14 },
   hover:  { core: '#fff2e2', body: '#e8c894', rim: '#f5dcae', filt: '#fff2dc', k: 0.85, a: 0.95 }
 };
 
@@ -268,8 +361,16 @@ const MASK_SURF  = { base: 1.44, amp: 0.20, blur: 0.24, halo: 1.28, haloBlur: 0.
    of a tile — the 50% point still sits exactly on the tile boundary, so the
    answer to "may I stand here?" is unchanged and the region still stops where
    the rules stop. Do NOT push this past ~0.13: at 0.17 (round 2) the pool
-   stopped having a findable edge at all and read as fog over the quadrant. */
-const MASK_STATE = { base: 1.00, amp: 0.085, blur: 0.100, halo: 1.12, haloBlur: 0.20, tag: 'p4' };
+   stopped having a findable edge at all and read as fog over the quadrant.
+
+   ⚠ ROUND 5 — 0.125. Round 4's 0.10 measured right and still looked like a
+   sheet: at 1:1 the pool's edge was a clean straight line with a bright lip on
+   it, i.e. the cut edge of a pane of glass. 0.125 is the top of the range this
+   note has always allowed (the "do NOT push past ~0.13" is unchanged, and 0.17
+   is still the value that fogged the quadrant); combined with the softer rim
+   below the boundary now reads as light thinning out rather than as an object
+   ending. The 50% point is still exactly on the tile boundary. */
+const MASK_STATE = { base: 1.00, amp: 0.085, blur: 0.125, halo: 1.12, haloBlur: 0.20, tag: 'p5' };
 
 /* ⚠ SOLIDS NEED A TIGHTER MASK THAN LIQUIDS. MASK_SURF's 0.24 feather is right
    for a puddle, an oil slick or a gas cloud — those genuinely have no edge.
@@ -760,11 +861,19 @@ function fill(c, g) { c.fillRect(g.x0, g.y0, g.w, g.h); }
        stroke: there is no constant-width line anywhere on a tile perimeter.
    Everything is still one multiply blit + one additive blit + one halo blit per
    region per frame, all cached, with only the blit alpha breathing. */
-function drawPool(api, tiles, colKey, strength, lift, filtScale) {
+function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim) {
   const col = COL[colKey] || COL.move;
   const S = (strength || 1) * col.k;
   const g = group(api, tiles, lift, JIT_STATE, MASK_STATE);
   if (!g) return;
+  /* ⚠ ROUND 5 — THE RIM IS SCALED BY HOW MUCH REGION THERE IS TO TRACE.
+     On a big merged pool the boundary is a long, mostly-straight run and the
+     rim reads as light gathering at the edge. On ONE tile the same rim is a
+     closed loop round a single cell — the exact mark the win condition forbids
+     — and it is also unnecessary, because a lone pool that small is found by
+     its swell. `noRim` kills it outright (the selection, which sits INSIDE the
+     move pool and whose loop was the brightest drawn line in the frame). */
+  const rimS = noRim ? 0 : (g.list.length >= 3 ? 1 : 0.55);
 
   /* ⚠ THE MULTIPLY PASS CARRIES THE HUE, THE ADDITIVE PASS CARRIES THE LIFT —
      and the split is deliberate because the ground under this is not a fixed
@@ -795,10 +904,27 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale) {
          ON−OFF luma  ≥ +40      (was +26)
          ON B−R       ∈ [−20,+15] (was +17.5 off a −47.6 base)
      i.e. the sand keeps its own hue and simply gets brighter and cooler.
-     If you raise this cap again, re-measure both numbers, not one. */
+     If you raise this cap again, re-measure both numbers, not one.
+
+     ⚠⚠ ROUND 6 — THE CAP IS NOW PER STATE (`col.fc`, default 0.10) AND move's
+     IS 0.20. Round 4 was right that a 0.34 cyan multiply replaces the sand; it
+     was wrong to conclude the multiply had to be near-dead everywhere. What
+     actually did the damage was the FILTER'S HUE, not its strength: #3cc4ff
+     leaves blue at 1.00 and cuts red 0.765, so every extra point of it is a
+     point of B−R and the cap was the only thing holding the stain back.
+     move's filter is now aquamarine (#46ffd8: red ×0.275, green ×1.00, blue
+     ×0.847), which takes red away, leaves green whole and trims blue in step —
+     so twice the strength buys chroma and costs almost nothing in B−R.
+     Measured, the multiply half alone now supplies ~18 of the pool's 42 levels
+     of chroma, which is the half that survives on bright hazed-dusk ground
+     where the additive is washing out. Every other state keeps 0.10 and the
+     arithmetic below is bit-identical to round 4's for them (fc·0.9·S ≡
+     0.09·S at fc = 0.10), so their round-4 solved-for `a` values still hold —
+     do not raise a state's `fc` without re-tinting its `filt` the same way. */
   const A = S * (col.a == null ? 1 : col.a);          /* additive-half gain */
-  const filtA = Math.min(0.10, 0.09 * S) * (filtScale == null ? 1 : filtScale);
-  const tag = colKey + '|' + S.toFixed(3) + '|' + filtA.toFixed(3);
+  const fc = col.fc == null ? 0.10 : col.fc;
+  const filtA = Math.min(fc, fc * 0.9 * S) * (filtScale == null ? 1 : filtScale);
+  const tag = colKey + '|' + S.toFixed(3) + '|' + filtA.toFixed(3) + '|' + rimS.toFixed(2);
 
   /* (1) hue, FLAT across the union plus a gentle centre bias. Flat is the
      point: the round-2 version was a radial that reached only filtA·0.66 at the
@@ -829,7 +955,7 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale) {
      and it is deliberately weak — it says "there is light here", it must never
      be mistakable for "this tile is legal". */
   staticLayer(api, g, 'lighter', pulse * 0.85, 'o' + tag, (c) => {
-    c.fillStyle = api.rgba(col.body, 0.030 * A);
+    c.fillStyle = api.rgba(col.halo || col.body, 0.030 * A);
     fill(c, g);
   }, true);
 
@@ -875,7 +1001,13 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale) {
     let rsum = 0;
     for (const it of g.list) {
       const u = umax > 1e-3 ? Math.hypot(it.m.cx - g.cx, it.m.cy - g.cy) / umax : 0;
-      const f = 1 - 0.46 * u;
+      /* r5 0.46→0.56; r6 0.56→0.50. Round 6 gave the boundary back its ramp by
+         gutting the rim wash, and with the wash no longer propping the outer
+         ring up, 0.56 pushed the outermost quintile's own ON−OFF luma to 35.8
+         — under the +40 the contract holds every lit tile to. At 0.50 the
+         outer ring measures 42.4 and centre:edge is still 2.05 (round 4: 1.30,
+         so "brightest at the centre" survives with room). */
+      const f = 1 - 0.50 * u;
       rfs.push(f); rsum += f;
     }
     const rnorm = g.list.length / (rsum || 1);
@@ -924,7 +1056,7 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale) {
             half, so what survives is a glow fading inward from the edge.
        Two additive passes: a continuous wide dim wash that reads as a
        gradient, and a broken hairline that reads as a glint. */
-    const edges = boundaryEdges(g);
+    const edges = rimS > 0 ? boundaryEdges(g) : [];
     c.lineJoin = 'round';
     for (const e of edges) {
       const p = e.p;
@@ -936,11 +1068,27 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale) {
          interior too. Round caps + varying width + abutting segments cannot
          produce a smooth band. Width now varies per SIDE, which is still not
          uniform across the region but never changes mid-side, and butt caps
-         let consecutive sides abut instead of bulging. */
+         let consecutive sides abut instead of bulging.
+
+         ⚠ ROUND 6 — THE WASH WAS THE LIP. Probing luma across the boundary of
+         the paint-on minus paint-off frame, round 5 rose to a peak ON the
+         boundary and then DROPPED 8–13 levels into the interior. That profile
+         — bright edge, dimmer middle — is the definition of a pane of glass,
+         and it was this stroke: at 0.040·A over a 0.38–0.68 tile band it added
+         ~+17 luma exactly where the interior is at its dimmest (the region
+         falloff makes the outer ring the darkest part of the pool). Two
+         changes, and they have to go together: alpha 0.040 → 0.015 so the
+         addition is ~+6, and width 0.38 → 0.62 so what is left is a broad
+         inward gradient rather than a band with a crest. Re-probed, both
+         boundary crossings are now a MONOTONE rise over 39–54 device px into
+         the plateau with no local maximum on the boundary at all (round 5:
+         26–32 px and a +8..+13 lip; HEAD: 22–25 px and ~+15).
+         Do NOT restore the alpha without also narrowing the width — a dim WIDE
+         band is a gradient, a dim NARROW one is just a fainter pane edge. */
       const hw = api.hash(e.it.x, e.it.z, 300 + e.k);
       c.lineCap = 'butt';
-      c.strokeStyle = api.rgba(col.rim, 0.055 * A * (0.6 + hw * 0.8));
-      c.lineWidth   = g.ax * (0.30 + hw * 0.26);
+      c.strokeStyle = api.rgba(col.rim, 0.015 * A * rimS * (0.6 + hw * 0.8));
+      c.lineWidth   = g.ax * (0.62 + hw * 0.40);
       c.beginPath();
       c.moveTo(p[0].x, p[0].y);
       c.lineTo(p[1].x, p[1].y);
@@ -950,15 +1098,24 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale) {
       /* ── THE GLINT: a hairline, and this one IS broken. At ~1px wide its
          round caps are sub-pixel, so breaking it reads as a glint catching
          part of the edge rather than as beads. It is the reason a critic
-         cannot find a constant-width line tracing any perimeter. */
+         cannot find a constant-width line tracing any perimeter.
+
+         ⚠ ROUND 5 — IT WAS NEAR-WHITE AT 0.100·A AND THAT IS A LIT LIP, NOT A
+         GLINT. Amplified, the pool's boundary was a continuous bright white
+         band with square breaks in it, and at 1:1 that is precisely what tells
+         the eye "this is a translucent panel lying on the sand" — a sheet of
+         glass is identified by its edge, not by its middle. It is now the rim
+         colour rather than the core (so it cannot outrun the pool it belongs
+         to) at roughly half the alpha, and the break threshold is higher, so
+         more of any given side has no hairline on it at all. */
       c.lineCap = 'round';
       const pts = [p[0], mid2(p[0], p[1]), p[1], mid2(p[1], p[2]), p[2]];
       for (let i = 0; i < 4; i++) {
         const h  = api.hash(e.it.x * 4 + e.k, e.it.z * 4 + i, 311);
-        if (h < 0.35) continue;
+        if (h < 0.54) continue;
         const h2 = api.hash(e.it.z * 4 + i, e.it.x * 4 + e.k, 312);
-        c.strokeStyle = api.rgba(col.core, 0.100 * A * (0.5 + h2 * 0.9));
-        c.lineWidth   = Math.max(0.8, g.ax * (0.022 + h * 0.026));
+        c.strokeStyle = api.rgba(col.rim, 0.030 * A * rimS * (0.5 + h2 * 0.9));
+        c.lineWidth   = Math.max(0.8, g.ax * (0.020 + h * 0.022));
         c.beginPath();
         c.moveTo(pts[i].x, pts[i].y);
         c.lineTo(pts[i + 1].x, pts[i + 1].y);
@@ -1004,16 +1161,51 @@ function stateRegions(api, only) {
 function drawStates(api) {
   try {
     frameSync(api);
-    for (const r of stateRegions(api, null)) {
+    const sel = api.paint && api.paint.sel;
+    const selOk = !!(sel && isFinite(sel.x) && isFinite(sel.z));
+    const regions = stateRegions(api, null);
+
+    /* ⚠ ROUND 5 — THE SELECTION IS FOLDED INTO THE MOVE POOL'S MASK.
+       A selected unit stands on a tile that is NOT in its own move set (you
+       cannot move to where you already are), so the move region has a
+       one-tile HOLE in it exactly under the unit — and boundaryEdges dutifully
+       traced all four sides of that hole. Amplified, the single brightest
+       drawn line in the whole frame was a closed white loop round one cell in
+       the middle of the pool: a hard stroke tracing the full perimeter of a
+       tile, the one mark the win condition names outright. At 1:1 it, plus the
+       pool's own lip, is what made the highlight read as overlapping panes of
+       cut glass rather than as light.
+       Adding the tile to the move region closes the hole, so there is no inner
+       boundary to trace; the selection is then drawn on top RIMLESS, as a
+       hotter, whiter swell of the same teal. That is the round-3 intent —
+       "the pool and its origin are one idea" — finally true in the pixels.
+       Only when there IS a move pool: with move empty the selection is the
+       only mark on the board and needs its own (soft, small-region-scaled)
+       edge to be findable at all. */
+    if (selOk) {
+      for (const r of regions) {
+        if (r[0] !== 'move' || !r[1].length) continue;
+        if (!r[1].some(t => t.x === sel.x && t.z === sel.z)) r[1].push({ x: sel.x, z: sel.z });
+      }
+    }
+
+    for (const r of regions) {
       if (!r[1].length) continue;
       try { drawPool(api, r[1], r[0], 1, LIFT_STATE); } catch (e) {}
     }
-    /* selection: a single warm pool, hotter than a move tile, and no hard 3px
-       ring — the old one was the most obviously "drawn" mark on the board
-       because it sat on exactly one cell's perimeter. */
-    const sel = api.paint && api.paint.sel;
-    if (sel && isFinite(sel.x) && isFinite(sel.z)) {
-      try { drawPool(api, [{ x: sel.x, z: sel.z }], 'sel', 1.0, LIFT_STATE); } catch (e) {}
+    /* selection: the hottest member of the move family, and no hard ring — the
+       old one was the most obviously "drawn" mark on the board because it sat
+       on exactly one cell's perimeter. */
+    if (selOk) {
+      /* When it was merged, the move pool has ALREADY lit this tile, so the
+         selection only has to add the difference — at full strength the two
+         stack and the origin tile clips to white, which is a bead, which is
+         the read this file spent three rounds removing. */
+      const merged = regions.some(r => r[0] === 'move' && r[1].length > 1);
+      try {
+        drawPool(api, [{ x: sel.x, z: sel.z }], 'sel', merged ? 0.34 : 1.0,
+                 LIFT_STATE, merged ? 0 : null, merged);
+      } catch (e) {}
     }
     /* hover: barely there. It must not compete with the legal-move pool, or
        the player reads the cursor tile as a fifth game state. */

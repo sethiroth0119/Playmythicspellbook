@@ -629,6 +629,115 @@ function ringPath(g, P){
   for (let i = 1; i < P.length; i++) g.lineTo(P[i].x, P[i].y);
   g.closePath();
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   🫧 litContour — the region of the pool that yields to a tile highlight,
+   traced as TWO closed rings in grid space. This is the shape drawPool()
+   thins itself inside; it is deliberately not the tiles' own outline.
+
+   TWO WRONG SHAPES WERE SHOT BEFORE THIS ONE, AND BOTH FAILURES ARE THE
+   REASON THE CODE LOOKS LIKE THIS:
+
+   1. THE TILE QUADS THEMSELVES. Clipping the thinned pass to the projected
+      tile quads is the obvious reading of "per-tile", and side by side with
+      the previous build it put two hard rectangles inside the pond — a pale
+      block with a right-angle step down its right edge, a dark band with a
+      ruled top edge. That is the chessboard the whole board fought to kill,
+      back inside the water, which is a BAR violation on its own line.
+
+   2. ONE WOBBLED BLOB PER LIT TILE, unioned. The shape was organic but the
+      SET OPERATION was not expressible: "everything except this union" has to
+      be a clip, a clip is one path, and neither fill rule can complement a
+      union whose members overlap. Under evenodd a doubly-covered pixel flips
+      back to "outside" — so every place two lit tiles' blobs crossed came out
+      as a full-strength dark lens sitting exactly on the seam between them.
+      Shot, it read as a dark starfish with sharp cusps. Nonzero fails the
+      same way from the other side. This is a property of canvas paths, not a
+      bug to be tuned out.
+
+   SO THE REGION IS TRACED, NOT ASSEMBLED — the same trick bakeShore already
+   uses on the pool itself, applied to the lit set. Each lit tile drops a
+   Gaussian bump (σ = 0.60 tile, the pool's own); rays from the lit centroid
+   march out to the first crossing of two thresholds. Because the result is a
+   single simple ring, "outside it" IS expressible: rect + ring under evenodd,
+   exactly once round, no parity trap. Two rings give a graded band instead of
+   one step, and a step is what the eye reads as an edge.
+
+   THE THRESHOLDS ARE RADII IN DISGUISE. For an isolated tile, f(r) =
+   exp(−r²/2σ²), so 0.411 contours at r = 0.80 and 0.186 at r = 1.10. 0.80 is
+   the floor: it has to clear the tile's own corner radius (√2/2 = 0.707) or
+   the highlight would show from under full-strength water at the corners.
+   1.10 puts the feather band about a third of a tile wide — ~25 screen px at
+   this camera, enough to grade, not enough for one lit tile to bleach the
+   pond. Where tiles are adjacent the bumps sum (1.41 at a shared edge
+   midpoint) and the region welds solid, which is what keeps a seam from
+   appearing between two lit neighbours.
+
+   STAR-SHAPED, and that is a deliberate accepted limit — same trade bakeShore
+   documents. A ring-shaped move range would be traced as a filled blob; the
+   failure direction is over-covering, i.e. thinning a little water that did
+   not need it, never leaving a highlight buried, which is the direction that
+   costs a player a legal move.
+
+   CACHED ON THE LIT SET. The trace is ~15k exp() calls; the lit set changes
+   when the player selects something, not per frame. The rings are in GRID
+   space, so the cache survives camera movement too — only the projection is
+   redone per frame. Do not key this on anything per-frame. One slot is enough
+   because buildScatter makes at most one pool; a second pool would only make
+   the two thrash the slot and recompute, never return a wrong ring, since the
+   key is the lit tile list and lit tiles come from that pool's own tiles. */
+let _litRing = { key: '', inner: null, outer: null };
+function litContour(api, keys){
+  const key = keys.join(';');
+  if (_litRing.key === key && _litRing.inner) return _litRing;
+  const tiles = [];
+  let cx = 0, cz = 0;
+  for (let i = 0; i < keys.length; i++){
+    const p = keys[i].split(',');
+    const x = +p[0], z = +p[1];
+    tiles.push([x, z]); cx += x; cz += z;
+  }
+  cx /= tiles.length; cz /= tiles.length;
+  const S2 = 2 * 0.60 * 0.60;
+  const F = (px, pz) => {
+    let s = 0;
+    for (let i = 0; i < tiles.length; i++){
+      const dx = px - tiles[i][0], dz = pz - tiles[i][1];
+      s += Math.exp(-(dx * dx + dz * dz) / S2);
+    }
+    return s;
+  };
+  const THR_IN = 0.411, THR_OUT = 0.186;
+  const N = 64, STEP = 0.04, MAXR = 1.8 + Math.sqrt(tiles.length) * 1.3;
+  /* the bend, for the same reason bakeShore has one: a pure sum-of-Gaussians
+     contour is a smooth blob, and a smooth blob is the "uniform gradient, no
+     messy asymmetry" tell the BAR names. Phases are seeded off the lit set's
+     first tile so the outline is stable while that set is — a wobble that
+     animates is a shimmering edge, which is worse than no wobble at all. */
+  const h = api.hash;
+  const p1 = h(tiles[0][0], tiles[0][1], 311) * TAU;
+  const p2 = h(tiles[0][0], tiles[0][1], 313) * TAU;
+  const p3 = h(tiles[0][0], tiles[0][1], 317) * TAU;
+  const inner = [], outer = [];
+  for (let i = 0; i < N; i++){
+    const th = i / N * TAU, ct = Math.cos(th), st = Math.sin(th);
+    /* one factor for BOTH rings, so they can never cross each other */
+    const wob = 1 + 0.045 * Math.sin(th * 2.7 + p1)
+                  + 0.030 * Math.sin(th * 6.1 + p2)
+                  + 0.018 * Math.sin(th * 11.3 + p3);
+    let rIn = -1, rOut = -1;
+    for (let r = STEP; r <= MAXR; r += STEP){
+      const f = F(cx + r * ct, cz + r * st);
+      if (rIn < 0 && f < THR_IN) rIn = r;
+      if (f < THR_OUT){ rOut = r; break; }
+    }
+    if (rIn < 0) rIn = MAXR;
+    if (rOut < 0) rOut = MAXR;
+    inner.push({ x: cx + rIn * wob * ct, z: cz + rIn * wob * st });
+    outer.push({ x: cx + rOut * wob * ct, z: cz + rOut * wob * st });
+  }
+  _litRing = { key: key, inner: inner, outer: outer };
+  return _litRing;
+}
 /* append a closed polygon to the CURRENT path as a subpath. ringPath() cannot
    be used for this — it calls beginPath() every time, so it can only ever
    describe one loop. drawPool()'s per-tile clips need several loops in one
@@ -975,6 +1084,50 @@ function drawPool(api, it){
   dg.addColorStop(0.72, '#66808f');
   dg.addColorStop(1,    '#688292');
   g.fillStyle = dg; g.fillRect(RX, RY, RW, RH);
+
+  /* ── 2a. THE BED ────────────────────────────────────────────────────────
+     ⚠ THIS IS NOT DECORATION, IT IS A COUNTER-PATTERN. A critic reading the
+     round-2 frame found "hard-edged pale rectangles through the pool's
+     interior, aligned with the terrain tile grid" — and was right about the
+     cause: they are the spine's tile quads seen THROUGH translucent water,
+     present in HEAD too, not painted here. This module cannot delete them; it
+     does not own the ground. What it owns is whether they are the only
+     structure in the water, and a straight luma step is only readable as a
+     grid line while nothing else is competing at that scale.
+
+     So the depth ramp — which is a pure VERTICAL gradient and therefore
+     modulates every column identically, leaving a tile seam exactly as
+     visible at the top of the pool as at the bottom — is followed by a few
+     large, soft, ROTATED lobes that vary the water's darkness along the other
+     axis too. Half warm (silt), half cool (deep), because a bed made of one
+     colour is a vignette. Sizes overlap the tile pitch deliberately: a
+     mottle finer than a tile reads as noise on top of the grid, one coarser
+     than the pool reads as a vignette; at 0.13-0.39 of the pool's width the
+     step in a given seam is strong in one place and gone 40px later, which is
+     what stops the eye running the seam end to end.
+
+     Scaled by AM, so a lit tile does not pay for it — these are multiplies
+     and multiplies are what eat a movement highlight. */
+  {
+    g.globalAlpha = 1;
+    for (let i = 0; i < 7; i++){
+      const R  = B.w * (0.13 + hash(i, 7, 171) * 0.26);
+      const bx = B.x0 + B.w * (0.06 + hash(i, 11, 173) * 0.88);
+      const by = B.y0 + B.h * (0.06 + hash(i, 13, 175) * 0.88);
+      const c0 = hash(i, 17, 177) < 0.5 ? mix(DAMP_SAND, WATER_DEEP, 0.45)
+                                        : mix(WATER_DEEP, sky, 0.35);
+      const a0 = (0.085 + hash(i, 19, 179) * 0.105) * AM;
+      const bd = g.createRadialGradient(bx, by, 0, bx, by, R);
+      bd.addColorStop(0,    rgba(c0, a0));
+      bd.addColorStop(0.58, rgba(c0, a0 * 0.44));
+      bd.addColorStop(1,    rgba(c0, 0));
+      g.fillStyle = bd;
+      g.beginPath();
+      g.ellipse(bx, by, R, R * (0.36 + hash(i, 23, 181) * 0.50),
+                (hash(i, 29, 183) - 0.5) * 2.4, 0, TAU);
+      g.fill();
+    }
+  }
   g.globalCompositeOperation = 'source-over';
   g.globalAlpha = 1;
 
@@ -1541,40 +1694,53 @@ function drawPool(api, it){
   if (!litKeys.length){ paint(1, 1, false); return; }
   if (litKeys.length >= it.tiles.length){ paint(LIT_A, LIT_AM, true); return; }
 
-  /* the quads are taken at the POOL's own elevation, not each tile's, because
-     every wet tile sits at the pool floor by construction (okWater picks one
-     level) and because it is the plane tilefx paints the state fill on. */
-  const quads = [];
-  for (let i = 0; i < litKeys.length; i++){
-    const c = litKeys[i].split(',');
-    let q = null;
-    try { q = api.tilePoly ? api.tilePoly(+c[0], +c[1], 0, it.y) : null; } catch (e) { q = null; }
-    if (q && q.length > 2) quads.push(q);
-  }
-  /* a quad behind the camera projects to null. Rather than paint a partial
+  /* the rings are projected at the POOL's own elevation, not each tile's,
+     because every wet tile sits at the pool floor by construction (okWater
+     picks one level) and because it is the plane tilefx paints the fill on. */
+  let ring = null, RIN = null, ROUT = null;
+  try {
+    ring = litContour(api, litKeys);
+    RIN  = projRing(api, ring.inner, it.y);
+    ROUT = projRing(api, ring.outer, it.y);
+  } catch (e) { RIN = ROUT = null; }
+  /* a ring behind the camera projects to null. Rather than paint a partial
      mask — which would leave a lit tile at full water and hide the highlight,
      the one failure mode this whole file is written to avoid — fall back to
      the old whole-pool yield. Legibility beats prettiness on that trade. */
-  if (quads.length !== litKeys.length){ paint(LIT_A, LIT_AM, true); return; }
+  if (!RIN || !ROUT){ paint(LIT_A, LIT_AM, true); return; }
 
-  /* pass 1 — the dry-lit remainder of the pool, at full strength.
-     evenodd against a rect far larger than any canvas = "everything but". */
-  g.save();
-  g.beginPath();
-  g.rect(-2e4, -2e4, 4e4, 4e4);
-  for (let i = 0; i < quads.length; i++) subPoly(g, quads[i]);
-  g.clip('evenodd');
-  paint(1, 1, false);
-  g.restore();
-
-  /* pass 2 — only the tiles carrying a state fill, thinned. nonzero, so two
-     adjacent quads union instead of cancelling each other out. */
-  g.save();
-  g.beginPath();
-  for (let i = 0; i < quads.length; i++) subPoly(g, quads[i]);
-  g.clip();
-  paint(LIT_A, LIT_AM, true);
-  g.restore();
+  /* THE THREE BANDS. Strength runs 1 → 0.66 → 0.32 (and the multiplies
+     1 → 0.55 → 0.11) from open water to the middle of a lit tile, so what the
+     player sees is the pool getting shallow over the highlighted ground
+     rather than a lid being lifted off part of it. Two steps of ~0.34 read as
+     a gradient; the single step of 0.68 the first version made did not.
+     ⚠ The middle band keeps the reflection sheet (`lit` false) at its own
+     reduced alpha — dropping the sheet is a hard visual event, and doing it
+     one band early is exactly the contour this ramp exists to remove. */
+  const band = (clip, A, AM, lit) => {
+    g.save(); clip(); paint(A, AM, lit); g.restore();
+  };
+  /* outside the outer ring: untouched water. rect + ONE simple ring under
+     evenodd is an exact complement — it is only a union of several rings that
+     cannot be complemented this way (see litContour's note 2). */
+  band(() => {
+    g.beginPath();
+    g.rect(-2e4, -2e4, 4e4, 4e4);
+    subPoly(g, ROUT);
+    g.clip('evenodd');
+  }, 1, 1, false);
+  /* the feather band: inside the outer ring AND outside the inner one. Two
+     successive clips INTERSECT, which is how the subtraction is expressed
+     without asking one path to do it. */
+  band(() => {
+    g.beginPath(); subPoly(g, ROUT); g.clip();
+    g.beginPath();
+    g.rect(-2e4, -2e4, 4e4, 4e4);
+    subPoly(g, RIN);
+    g.clip('evenodd');
+  }, 0.66, 0.55, false);
+  /* over the lit tiles themselves: the thinned pool. */
+  band(() => { g.beginPath(); subPoly(g, RIN); g.clip(); }, LIT_A, LIT_AM, true);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

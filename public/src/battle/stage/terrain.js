@@ -93,22 +93,43 @@ const terrain = {
        direction — a shared angle across the field is the thing that makes
        procedural terrain read as wallpaper. */
     if (L > 0){
+      /* ⚠ WAVE 3 — THESE USED TO RUN THE FULL WIDTH OF THE TILE, u = 0 → 1,
+         two or three per tile, every tile. Sixty-odd strokes that each start
+         exactly on one tile boundary and stop exactly on the next is a drawn
+         grid wearing a geology costume: the eye reads the ENDPOINTS, and the
+         endpoints are the seams. Worse, at 8px scale they read as scratches on
+         glass, which is half of the "panes of tinted glass" complaint.
+         A bed outcrops for part of a face and pinches out. So each band now
+         gets its own u-span, its own dip, and a thickness that tapers to
+         nothing at both ends — the same construction the cliff-wall beds use,
+         for the same reason. */
       const ang = (hash(x, z, 401) - 0.5) * 0.9;
       const bands = 2 + ((hash(x, z, 402) * 3) | 0);
       for (let b = 0; b < bands; b++){
         const v0 = 0.12 + hash(x, z, b * 5 + 410) * 0.76;
         const drift = ang + (hash(x, z, b * 5 + 411) - 0.5) * 0.22;
-        const a = quadPt(P, 0.0, clamp(v0 - drift * 0.5, 0, 1));
-        const c = quadPt(P, 0.5, clamp(v0, 0, 1));
-        const bpt = quadPt(P, 1.0, clamp(v0 + drift * 0.5, 0, 1));
+        const ua = hash(x, z, b * 5 + 413) * 0.55;
+        const ub = Math.min(1, ua + 0.18 + hash(x, z, b * 5 + 414) * 0.50);
         const w = 0.9 + hash(x, z, b * 5 + 412) * 2.6;
+        const NS = 6, top = [], bot = [];
+        for (let k = 0; k <= NS; k++){
+          const q = k / NS, u = ua + (ub - ua) * q;
+          const taper = Math.sin(q * Math.PI);            /* pinch out both ends */
+          const v = clamp(v0 + drift * (u - 0.5) + (hash(x, z, b * 9 + 415 + k) - 0.5) * 0.03, 0, 1);
+          const p = quadPt(P, u, v);
+          top.push({ x: p.x, y: p.y - w * 0.55 * taper });
+          bot.push({ x: p.x, y: p.y + w * 0.45 * taper });
+        }
+        const band = (pts, col, alp, dy) => {
+          g.beginPath(); g.moveTo(pts[0].x, pts[0].y + dy);
+          for (let k = 1; k <= NS; k++) g.lineTo(pts[k].x, pts[k].y + dy);
+          for (let k = NS; k >= 0; k--) g.lineTo(pts[k].x, pts[k].y + dy + w * 0.5);
+          g.closePath();
+          g.fillStyle = rgba(col, alp); g.fill();
+        };
         /* a lit edge above and a shadowed edge below = a step, not a line */
-        g.lineWidth = w;
-        g.strokeStyle = rgba(api.mixHex(M.pale, M.lit, 0.4), 0.07 + hash(x, z, b + 420) * 0.07);
-        g.beginPath(); g.moveTo(a.x, a.y - w * 0.55);
-        g.quadraticCurveTo(c.x, c.y - w * 0.55, bpt.x, bpt.y - w * 0.55); g.stroke();
-        g.strokeStyle = rgba(M.deep, 0.09 + hash(x, z, b + 421) * 0.09);
-        g.beginPath(); g.moveTo(a.x, a.y); g.quadraticCurveTo(c.x, c.y, bpt.x, bpt.y); g.stroke();
+        band(top, api.mixHex(M.pale, M.lit, 0.4), 0.06 + hash(x, z, b + 420) * 0.06, -w * 0.5);
+        band(bot, M.deep, 0.07 + hash(x, z, b + 421) * 0.08, 0);
       }
       /* caliche crust: a pale bleached wash hugging the plateau's near rim,
          where the top face meets its own cliff edge */

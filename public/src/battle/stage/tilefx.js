@@ -166,6 +166,66 @@
    rise MONOTONELY over 39–54 device px with no local maximum on the boundary.
    Cost: drawStates 18.7 → 18.6 ms in the harness (unchanged; same layer count).
 
+   ── ROUND 7: THE POOL IS NOT TUNED AGAINST A FIXED GROUND ─────────────────
+   Round 6 shipped and the wave-3 critique of this layer came back as a
+   RESIDUAL rather than a gap: keep the pool at ON−OFF luma ≥ +55 with
+   saturation still below the sand's, but land the eroded interior at hue
+   145–155° with chroma ≥ 38 and mean B−R ≤ +18. Two things came out of trying
+   to hit it and both are worth more than the one constant that changed.
+
+   1. THOSE FOUR NUMBERS INTERSECT IN A SLIVER, AND IT IS ALGEBRA, NOT TUNING.
+      Over the lit interior GREEN is the max channel and RED the min, so
+          chroma  C = G − R      and      hue = 120 + 60·(B−R)/C.
+      "hue ≥ 145" is therefore exactly "B−R ≥ 0.4167·C", and with the ceiling
+      B−R ≤ 18 that forces C ≤ 43.2 — while "chroma ≥ 38" forces C ≥ 38. The
+      whole legal set is C ∈ [38, 43.2] with B−R pinned into a band barely two
+      levels wide, and the 155° end of the hue range is UNREACHABLE at any
+      legal chroma. Maximising the smallest of the three margins puts the
+      optimum at C ≈ 39.1, B−R ≈ 17.0, hue ≈ 146.1 with about one level of room
+      on each side; that is where this file now sits and there is no setting
+      with meaningfully more. Do not read 145.8° as "nearly failed", and do not
+      trade one margin for another — solve for the minimum.
+
+   2. THE GROUND MOVED UNDER THE TUNE, MID-ROUND. stage-terrain re-materialled
+      the sand while this was being measured. Same tilefx build, same camera,
+      same tiles, measured on the identical pixel set before and after their
+      change: interior hue 146.0 → 151.0, chroma 39.6 → 41.0, B−R +17.2 →
+      +21.2. The pool had drifted three degrees past the top of the hue band
+      and three levels over the B−R ceiling WITHOUT THIS FILE CHANGING A
+      CHARACTER. That is the honest reason `move.gain` moved #3099e4 → #3094d1
+      (the key light's green and blue each pulled back a few percent): it is a
+      re-solve against the new floor, not a new look. Re-measured on the new
+      ground: hue 145.8, chroma 39.6, ON−OFF luma +55.3, B−R +17.0, satON 0.241
+      against the sand's 0.446.
+      ⚠ SO RE-MEASURE THIS PAIR WHENEVER THE GROUND CHANGES. A highlight that
+      is half multiply and half gain is a function OF the ground, and the four
+      numbers are properties of the composite, not of the constants here.
+
+   ── AND HOW TO TELL LIGHT FROM FOG, MEASURED ──────────────────────────────
+   The wave-3 gap was "the sand texture underneath is GONE". Do not test that
+   with the high-pass ENERGY of the lit region: a layer that invents noise
+   raises it exactly like a layer that transmits the ground. Test it with the
+   regression of the pool's high-pass against the PAINT-OFF frame's high-pass
+   over the same pixels — the slope is the fraction of the ground that survives
+   the highlight and the correlation says how much of what you are looking at
+   is really the ground. Measured on the shipped build: slope 1.19, r 0.92,
+   i.e. the ground's own grain comes through at 119% (the key light amplifies
+   it, which is what a light does) and 84% of the variance inside the pool IS
+   the ground. It is lit sand, not fog, and that is now a number.
+
+   Two mid-scale "weather" passes were built to break up the interior and both
+   were REJECTED on that measurement — do not re-derive them:
+     • soft blobs punched into the EMISSIVE scratch with 'destination-out';
+     • the same, applied to the key-light read-back, as a gradient and again as
+       a blurred mask multiplied in as grey.
+   Both looked like a texture win and neither was: against a correctly-dated
+   paint-off frame they moved the transmission slope by under 0.03 and were
+   visually indistinguishable from the build without them in a same-tree A/B
+   (shots b0 vs b1). The apparent gain in the first measurements was
+   stage-terrain's new ground noise arriving mid-experiment, being amplified by
+   the gain and correlated against a STALE paint-off capture. If you test this
+   layer, shoot the paint-off reference in the same minute as the paint-on one.
+
    rimBand() and the old unclipped feather() are both gone. A rim stroke traces
    whatever the region's polygon is, so on a single tile it drew the tile; and
    the source-over feather in the ice painter was, at 1.9 tile radii, a milky
@@ -320,7 +380,7 @@ const COL = {
      in reverse: they are added, not multiplied, so they contribute their own
      colour and have to sit further round the wheel than the target. */
   move:   { core: '#c8d7ff', body: '#69c3ff', rim: '#b4e1f5', halo: '#42cae0',
-            filt: '#46ffd8', gain: '#3099e4', k: 1.55, a: 0.30, g: 0.565, fc: 0.20 },
+            filt: '#46ffd8', gain: '#3094d1', k: 1.55, a: 0.30, g: 0.565, fc: 0.20 },
   /* ⚠ EVERY STATE GETS A KEY LIGHT, not just move. The gap was measured on the
      move pool because that is the one the default harness lights, but "a soft
      emissive fill that glows WITHIN the ground" is the BAR's line about tile

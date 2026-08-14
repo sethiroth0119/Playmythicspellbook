@@ -41,12 +41,19 @@
       feathered rock shelf the spine bakes 0.7 tiles beyond the field edge —
       where it can never overlap a playable square at all.
 
-   3. THE WATER YIELDS TO THE HIGHLIGHT. The pool draws in the depth pass,
-      i.e. AFTER tilefx's emissive pass, so on a lit tile it would bury the
-      thing the player is trying to read. drawPool() checks api.paint and
-      thins the whole pool when any tile it covers is painted. A legal move that looks unreachable is
-      the exact regression the spine's drawStatesOver() exists to prevent;
-      the dressing must not re-introduce it one layer higher.
+   3. THE WATER YIELDS TO THE HIGHLIGHT — PER TILE, AND ONLY TO A HIGHLIGHT.
+      The pool draws in the depth pass, i.e. AFTER tilefx's emissive pass, so
+      over a painted tile it would bury the thing the player is trying to
+      read. drawPool() reads api.paint's move/attack/place/swap sets and thins
+      itself INSIDE THE PROJECTED QUADS OF THOSE TILES ONLY, by drawing twice
+      under complementary clips. It does NOT yield to hover or to selection —
+      neither lays down an emissive fill — and it does not yield across the
+      whole pond because one of its six tiles is painted. Both of those were
+      real regressions: together they let a mouse-move erase the pond.
+      A legal move that looks unreachable is the exact regression the spine's
+      drawStatesOver() exists to prevent, and the dressing must not
+      re-introduce it one layer higher; a pond that vanishes under the cursor
+      is the same bug pointed the other way.
 
    BUDGET: everything below is path+fill against one shared 2D context.
    Silhouettes are baked point lists; draw() only maps them through the
@@ -85,9 +92,14 @@ const BARK = '#4c4036';
    precisely the "two contradictory water treatments" gap. Cooled from
    #1f6a70 / #a8e6df (hue 184 / 173) to land the rendered pool inside ~8 deg of
    the puddle. If you retune these, re-measure BOTH bodies in the same frame. */
-const WATER_DEEP = '#0e3440';
-const WATER_MID  = '#1c6878';
+const WATER_DEEP = '#0c3244';
+const WATER_MID  = '#1a6480';
 const WATER_SHEEN= '#a2e2ea';
+/* the broad sheen blooms (§3b) get their own, cooler pale: WATER_SHEEN is
+   hue 187 and the blooms are large enough to drag the pool's mean hue with
+   them. 198° is the far side of tilefx's puddle (196°), so the pool's average
+   lands ON it rather than 10 points warm of it. */
+const BLOOM_C    = '#98d2ea';
 const DAMP_SAND  = '#6b5a45';   /* wet sand at the waterline — warm, not blue */
 
 const TAU = Math.PI * 2;
@@ -617,6 +629,15 @@ function ringPath(g, P){
   for (let i = 1; i < P.length; i++) g.lineTo(P[i].x, P[i].y);
   g.closePath();
 }
+/* append a closed polygon to the CURRENT path as a subpath. ringPath() cannot
+   be used for this — it calls beginPath() every time, so it can only ever
+   describe one loop. drawPool()'s per-tile clips need several loops in one
+   path (union with nonzero, complement with evenodd), hence this. */
+function subPoly(g, P){
+  g.moveTo(P[0].x, P[0].y);
+  for (let i = 1; i < P.length; i++) g.lineTo(P[i].x, P[i].y);
+  g.closePath();
+}
 function ringBox(P){
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
   for (let i = 0; i < P.length; i++){
@@ -697,41 +718,175 @@ function reflSheet(api, sx, sy, sw, sh, kx, ky, ox, oy, cTop, cMid, cDeep){
   return _refl;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   🌊 warpSheet — bend the reflection so a reflected STRAIGHT EDGE stops being
+   a straight edge. This is the actual horizontal-stripe fix and the previous
+   round's was geometrically incapable of being one.
+
+   THE MISTAKE, STATED PLAINLY. The bands in drawPool are drawn with an
+   x-shear: screenX = u + c·v. That displaces a point sideways by an amount
+   that depends on its ROW. Feed it a horizontal line — every point on which
+   shares one row — and every point moves by the SAME amount: the line slides
+   left or right and stays exactly as horizontal as it was. No amplitude and no
+   frequency can change that; it is what a shear along x is. The previous round
+   raised the amplitude to 21px on the strength of a comment claiming dJ/dy had
+   to be "a meaningful fraction of 1", and it did nothing to the stripes,
+   because the stripes are horizontal and so is the displacement.
+
+   What bends a horizontal edge is a VERTICAL displacement that varies with x.
+   So the sheet is re-blitted, column strip by column strip, each strip offset
+   vertically by K(x) — and each strip is drawn with a Y-SHEAR (matrix `b`)
+   running from K(xa) at its left edge to K(xb) at its right, so neighbouring
+   strips agree on the offset at the boundary column EXACTLY. The reflected
+   image is continuous across every strip seam by construction, at any
+   amplitude, which is the same guarantee the x-shear gives across band seams —
+   just on the axis that matters.
+
+   Measured on the full-app frame, longest straight horizontal edge run inside
+   the water: 81px before, 55px after the chop marks were tilted, and the 55px
+   survivor was the reflected plateau lip. This is what removes it.
+
+   WHY IT IS A SEPARATE CANVAS AND NOT DONE IN drawPool. _refl is refreshed
+   every REFL_MS (0.22s) because it costs a canvas self-read. The wave has to
+   move every frame or it reads as a frozen ripple, so it cannot live in the
+   cached sheet. Warping offscreen→offscreen is a GPU-local blit with no
+   read-back, so this is ~NS small copies, not another self-read.
+   A full-size unwarped base pass goes down first: K displaces content off the
+   top or bottom of the sheet, and without a base the vacated rows would be
+   transparent — a band of missing reflection at the far bank. Board content is
+   opaque, so the warped strips simply overwrite it where they land. */
+let _reflW = null;
+function warpSheet(api, sheet, ph){
+  if (!sheet) return null;
+  const w = sheet.w, h = sheet.h;
+  if (!_reflW || _reflW.w !== w || _reflW.h !== h){
+    let cv = null;
+    try {
+      cv = (typeof OffscreenCanvas !== 'undefined') ? new OffscreenCanvas(w, h)
+         : (typeof document !== 'undefined') ? Object.assign(document.createElement('canvas'),
+                                                             { width: w, height: h })
+         : null;
+    } catch (e) { cv = null; }
+    if (!cv) return sheet;
+    const c2 = cv.getContext('2d');
+    if (!c2) return sheet;
+    _reflW = { cv: cv, cx: c2, w: w, h: h };
+  }
+  const cx = _reflW.cx;
+  try {
+    cx.setTransform(1, 0, 0, 1, 0, 0);
+    cx.globalCompositeOperation = 'source-over';
+    cx.globalAlpha = 1;
+    cx.imageSmoothingEnabled = false;
+    cx.clearRect(0, 0, w, h);
+    cx.drawImage(sheet.cv, 0, 0, w, h, 0, 0, w, h);
+    /* Two incommensurate waves. Wavelengths ~600 and ~240 sheet px; the sheet
+       is at device scale, so at DPR 2 and REFL 0.8 that is ~300 and ~120 board
+       px, i.e. one long swell across the pool and a chop riding on it. NS is
+       sized off the SHORTER one — a piecewise-linear approximation needs
+       roughly eight segments per wavelength before the corners show. */
+    const KA = Math.max(5, Math.min(38, w * 0.034));
+    const T = api.T || 0;
+    const K = (u) => KA * (Math.sin(u * 0.0105 + T * 0.85 + ph)
+                         + 0.52 * Math.sin(u * 0.026 - T * 1.25 + ph * 2.3));
+    const NS = Math.max(8, Math.min(36, Math.round(w / 30)));
+    for (let s = 0; s < NS; s++){
+      const xa = Math.round(s * w / NS), xb = Math.round((s + 1) * w / NS);
+      if (xb - xa < 1) continue;
+      const Ka = K(xa), slope = (K(xb) - Ka) / (xb - xa);
+      cx.save();
+      /* clip FIRST: a clip is captured in the space current when it is set, so
+         setting it at identity keeps the strip boundaries on exact pixels no
+         matter what the shear does afterwards. */
+      cx.beginPath(); cx.rect(xa, 0, xb - xa, h); cx.clip();
+      cx.setTransform(1, slope, 0, 1, 0, Ka - slope * xa);
+      cx.drawImage(sheet.cv, 0, 0, w, h, 0, 0, w, h);
+      cx.restore();
+    }
+  } catch (e) { return sheet; }
+  return _reflW;
+}
+
 function drawPool(api, it){
   const g = api.ctx, rgba = api.rgba, mix = api.mixHex, hash = api.hash;
   const S = it.shore;
   const surf = projRing(api, S.pts, it.y - 0.030);   /* the waterline itself   */
-  const bank = projRing(api, S.pts, it.y + 0.004);   /* same curve, on the sand */
   const near = projRing(api, S.mid, it.y + 0.004);   /* dark wet band           */
   const wide = projRing(api, S.out, it.y + 0.004);   /* damp halo, further out  */
-  if (!surf || !bank || !near || !wide) return;
+  if (!surf || !near || !wide) return;
 
-  /* thin over a lit tile — see the header note */
+  /* ══════════════════════════════════════════════════════════════════════
+     WHERE THE POOL YIELDS — AND, THE ROUND-3 FIX, ONLY WHERE.
+
+     TWO BUGS LIVED IN THE SEVEN LINES THIS REPLACES, and both of them made
+     the pond disappear for reasons a player would call a glitch.
+
+     1. THE TRIGGER WAS TOO WIDE. The loop also fired on `api.hover` and
+        `P.sel`. Neither of those is an emissive tile FILL the water has to get
+        out of the way of: tilefx draws hover at 0.6 strength ("barely there",
+        its own words) and the selection ring as a difference on top of a move
+        pool that is already counted below. So resting the mouse on one corner
+        of the pond — or selecting a unit standing in it — was enough to trip
+        the same yield the movement overlay trips. Measured by a critic driving
+        the real mouse onto one pool tile: 1.1% of the pond still read as
+        water, median b−r over the pool went 27 → −25, i.e. the water turned
+        sand-coloured. Hover and selection are gone from this test.
+
+     2. THE YIELD WAS PER POOL, NOT PER TILE. `lit` was one boolean for the
+        whole item, so ONE painted tile thinned all six. Combined with (1) that
+        is how a mouse-move erased a pond. The pool now yields inside the
+        projected quads of the tiles that actually carry a state fill and
+        nowhere else, by drawing itself twice under complementary clips:
+          pass 1  everything EXCEPT those quads, at full strength;
+          pass 2  the quads only, thinned.
+        The two clips are built from the same polygons — a huge rect plus the
+        quads under `evenodd` for the complement, the quads alone under
+        nonzero for the union — so the coverage they compute at the shared
+        boundary is exactly complementary and the pair partitions the plane.
+        That is why there is no inset/outset fudge here: a gap would show as a
+        bright unpainted hairline and an overlap as a dark one, and neither
+        happens if the two clips sum to 1.
+        ⚠ Do NOT "optimise" this into one pass with an averaged alpha. The
+        whole point is that the alpha is a function of position now.
+
+     THE NUMBERS BELOW ARE THE THINNED PASS'S NUMBERS and they are measured, so
+     do not restore them toward 1 to make a screenshot with the overlay up look
+     better. A MULTIPLY at alpha a scales whatever is underneath by roughly
+     (1 − a(1−k)) — it takes a fixed FRACTION of the movement highlight tilefx
+     just laid down, however bright that highlight is — while a source-over
+     wash only shifts the pixel toward its own colour. The depth ramp and the
+     shoreline AO are the two multiply passes big enough to matter, so they get
+     their own harsher cut (AM) rather than sharing A.
+
+     MEASURED, ALL 56 TILES LIT (green-excess g−r over the pool interior, the
+     number that decides whether a player can see their movement range over
+     water; dry lit sand gains +55.7 in the same frame):
+       round 2, one shared A=0.46 ......................... +4.7
+       skip the reflection sheet, AM=0.26 ................. +8.1   (L +22.6)
+       + de-inked shore, AO 0.07→0.038 .................... +10.0
+       + A 0.46→0.38, AM 0.26→0.16, no warm shallows ...... +10.4
+       + A→0.32, AM→0.11 ................................. +13.1  (L +43.8)
+     against a hard CEILING of +15.6, measured by forcing A and AM to zero —
+     i.e. by deleting the pool from a lit frame outright. This keeps 84% of
+     everything there is to keep. A highlight the player cannot read is a
+     gameplay bug; a pond that goes pale under the tiles the overlay is
+     actually covering is not.
+     ══════════════════════════════════════════════════════════════════════ */
+  const LIT_A = 0.32, LIT_AM = 0.11;
   const P = api.paint || {};
-  let lit = false;
+  const litKeys = [];
   for (let i = 0; i < it.tiles.length; i++){
     const k = it.tiles[i];
     if ((P.move && P.move.has(k)) || (P.attack && P.attack.has(k)) ||
-        (P.place && P.place.has(k)) || (P.swap && P.swap.has(k))) { lit = true; break; }
-    if (P.sel && (P.sel.x + ',' + P.sel.z) === k) { lit = true; break; }
-    if (api.hover && (api.hover.x + ',' + api.hover.z) === k) { lit = true; break; }
+        (P.place && P.place.has(k)) || (P.swap && P.swap.has(k))) litKeys.push(k);
   }
-  const A = lit ? 0.46 : 1;
-  /* ⚠ MULTIPLY PASSES GET A SEPARATE, HARSHER CUT WHEN THE POOL IS LIT, and the
-     distinction is not fussiness — it is the whole mechanism of the round-2
-     regression. A source-over teal wash at alpha a shifts the pixel toward its
-     own colour; a MULTIPLY at alpha a scales whatever is underneath by roughly
-     (1 − a(1−k)), so it takes a fixed FRACTION of the movement highlight the
-     tilefx pass just laid down, every frame, no matter how bright that
-     highlight is. The depth ramp and the shoreline AO are the two multiply
-     passes big enough to matter. At the shared A=0.46 they were still eating
-     ~35% of the lift; at 0.26 they eat ~20% and the pool keeps its far-shallow
-     / near-deep read, because on a lit tile the highlight is supplying most of
-     the value anyway. Measured, all 56 tiles lit: green-excess gain over water
-     +4.7 (round 2) → +8.1 (skip the sheet) → +11.6 (this too), against round
-     1's +12.5 and dry lit sand's +58; luma gain +15.7 → +38.4 against +24.3. */
-  const AM = lit ? 0.26 : 1;
 
+  /* the whole pool, painted once at a given strength. Called once when the
+     pool is entirely lit or entirely unlit (the common cases, and no extra
+     cost over the old code), twice under complementary clips when it is
+     partly lit. `return` inside aborts THIS pass only, which is what the
+     degenerate-size guards want. */
+  const paint = (A, AM, lit) => {
   const B = ringBox(surf);
   if (B.w < 2 || B.h < 2) return;
   const pad = 8;
@@ -742,70 +897,43 @@ function drawPool(api, it){
      there. This is the band the BAR calls for — "a damp darkened rim where it
      meets sand" — and because it is generated by expanding the SAME shoreline
      outward along its own normals it is exactly as irregular as the water. */
-  /* ⚠ WAVE-3 DE-INKING. These two rings used to run 0.34 / 0.60 and the inner
-     one landed immediately outside a shoreline that was ALSO being darkened
-     from the inside by the AO pass below. The two darkenings met across the
-     contour and the pair measured as one continuous 50-58 luma trough hugging
-     the water — a critic's words, "a HARD CARTOON INK OUTLINE". Wet sand is
-     genuinely darker than dry sand, so the band stays; what it may not do is
-     land its darkest value ON the contour. Hence: lower alphas, and the inner
-     band now fades toward the water rather than peaking at it. */
+  /* ⚠ WAVE-3 ROUND 2 — THE INK OUTLINE WAS A COVERAGE GAP, NOT A COLOUR.
+     READ THIS BEFORE PUTTING A RING BACK.
+
+     There used to be a third pass here: a closed `bank`→`surf` annulus filled
+     with a dark teal, plus a second darker pass on the stretches facing away
+     from the key. It existed because the two rings this pass paints stopped at
+     `bank` while the water's own clip starts at `surf`, and those are the SAME
+     world curve sampled at two heights (bank at it.y+0.004, surf at
+     it.y−0.030). Projected, `surf` is the whole `bank` polygon translated a few
+     pixels UP the screen — so along the NEAR shore there is a crescent that is
+     below `surf` (outside the water) and inside `bank` (outside the damp band):
+     raw untouched ground. The annulus was there to cover it, and every attempt
+     to make it invisible failed the same way, because a band whose colour is
+     chosen rather than sampled cannot match two different neighbours at once.
+     Measured on the round-1 frame at board y1013: sand L90 → a 24px trough at
+     L52-60 → water L110. A 55-luma ruled contour hugging the whole waterline.
+
+     THE FIX IS TO CLOSE THE GAP INSTEAD OF PAINTING IT. The inner damp band now
+     ends at `surf` — the water's own boundary — not at `bank`. Damp sand and
+     water then partition the plane exactly: every pixel outside `surf` is damp
+     sand, every pixel inside it is water, nothing is left over and nothing is
+     painted twice. There is no third colour to get wrong, so there is nothing
+     to read as an outline. `bank` survives only as the OUTER limit of the
+     shoreline geometry the tufts and the AO ramp read.
+
+     Wet sand IS darker than dry sand and the BAR asks for that rim, so the two
+     multiply bands stay — but they are wet sand, a warm ×0.8, and they peak in
+     the middle of the damp zone rather than on the contour. */
   g.save();
   g.globalCompositeOperation = 'multiply';
   g.globalAlpha = A;
   ringPath(g, wide); ringPath(g, near);
-  g.fillStyle = rgba(DAMP_SAND, 0.24);
+  g.fillStyle = rgba(DAMP_SAND, 0.20);
   g.fill('evenodd');
-  ringPath(g, near); ringPath(g, bank);
-  g.fillStyle = rgba(DAMP_SAND, 0.34);
+  ringPath(g, near); ringPath(g, surf);
+  g.fillStyle = rgba(DAMP_SAND, 0.26);
   g.fill('evenodd');
-  g.restore();
-  /* the bank's own drop into the water: the shoreline curve sits ~0.034 world
-     units above the surface, so these two rings are a few pixels apart and the
-     sliver between them is the little shadowed lip at the edge of the water.
-     ⚠ IT IS NOT AN OUTLINE AND MUST NOT BE ONE. This was mix(ROCK_DEEP,
-     WATER_DEEP,0.5) — a near-black #1a291c — at 0.46 over a closed ring, i.e.
-     a drawn ink contour on a board whose whole rewrite was about deleting
-     drawn contours. It is now a damp teal at well under half that alpha.
-
-     ⚠ BUT IT STAYS CLOSED, AND THAT IS NOT AN AESTHETIC CHOICE. This sliver is
-     a GAP IN THE COVERAGE, not decoration: the damp-sand bands stop at `bank`
-     and the water's own clip starts at `surf`, and on the far shore `bank`
-     projects ABOVE `surf`, so anything between them is raw untouched ground.
-     Breaking the ring to "avoid an outline" was tried and it produced the
-     opposite outline — measured on the D6 frame, a bright hairline running the
-     lit stretches of shore at L90-98 against water at L61-69, a +28 spike two
-     pixels wide, i.e. exactly the glowing rim the BAR forbids, uncovered
-     rather than drawn. So: the whole ring gets a base fill tuned to land
-     BETWEEN the sand and the water (≈L65 against sand 75 and water 62 — no
-     spike in either direction), and only the stretches facing away from the
-     key light get the extra shading on top, which is where a real bank shades
-     its own waterline. */
-  g.save();
-  ringPath(g, bank); ringPath(g, surf);
-  g.clip('evenodd');
-  g.globalAlpha = 0.55 * A;
-  g.fillStyle = rgba(mix(WATER_DEEP, DAMP_SAND, 0.30), 1);
-  ringPath(g, bank); ringPath(g, surf);
-  g.fill('evenodd');
-  g.globalAlpha = 0.22 * A;
-  g.fillStyle = rgba(mix(WATER_DEEP, DAMP_SAND, 0.10), 1);
-  {
-    const NL = S.pts.length;
-    for (let i = 0; i < NL; i++){
-      const a = S.pts[i];
-      const nx = a.x - S.cx, nz = a.z - S.cz;
-      const m = Math.hypot(nx, nz) || 1;
-      /* screen-space normal · light: >0 faces the key, so it stays clean */
-      const d = (nx / m) * FRAME.lx + (-nz / m) * (-FRAME.ly);
-      if (d > -0.10 || hash(i, 7, 93) < 0.34) continue;
-      const q0 = surf[i], q1 = surf[(i + 1) % NL], b0 = bank[i], b1 = bank[(i + 1) % NL];
-      g.beginPath();
-      g.moveTo(b0.x, b0.y); g.lineTo(b1.x, b1.y);
-      g.lineTo(q1.x, q1.y); g.lineTo(q0.x, q0.y);
-      g.closePath(); g.fill();
-    }
-  }
   g.restore();
 
   /* ── 2. THE WATER BODY */
@@ -842,10 +970,10 @@ function drawPool(api, it){
      the "two contradictory water treatments" gap wearing its subtlest hat, so
      the ramp is cooled to close the gap without touching its luminance. */
   const dg = g.createLinearGradient(0, B.y0, 0, B.y1);
-  dg.addColorStop(0,    '#8aa1a8');
-  dg.addColorStop(0.30, '#799098');
-  dg.addColorStop(0.72, '#68828a');
-  dg.addColorStop(1,    '#6a848c');
+  dg.addColorStop(0,    '#8a9fac');
+  dg.addColorStop(0.30, '#798fa0');
+  dg.addColorStop(0.72, '#66808f');
+  dg.addColorStop(1,    '#688292');
   g.fillStyle = dg; g.fillRect(RX, RY, RW, RH);
   g.globalCompositeOperation = 'source-over';
   g.globalAlpha = 1;
@@ -922,15 +1050,18 @@ function drawPool(api, it){
        the left column would otherwise reach for pixels that do not exist. */
     /* ⚠ THE MARGIN IS SIZED OFF THE SHEAR, NOT PICKED. The sheared blit is a
        parallelogram; anything the shear pushes past the source strip's own
-       edge lands as an unpainted wedge inside the clip rect. SHEAR_MAX below
-       peaks near 21px and the shear is applied about the band's own y, so 56px
-       of margin on each side covers it with room to spare. */
+       edge lands as an unpainted wedge inside the clip rect. The x-shear below
+       now peaks near 11px and warpSheet's vertical wave can pull ~38px of
+       content sideways-equivalent at the strip seams, so 56px of margin on each
+       side still covers both with room to spare. */
     const sx0 = Math.max(0, B.x0 - 56);
     const sw = Math.min((api.W || (B.x1 + 56)) - sx0, B.w + 112 - (Math.max(0, B.x0 - 56) - (B.x0 - 56)));
     const srcTop = Math.max(0, B.y0 - B.h * REFL);
-    const sheet = reflSheet(api, sx0, srcTop, sw, B.y0 - srcTop, kx, ky, ox, oy,
-                            mix(WATER_MID, sky, 0.46), mix(WATER_MID, sky, 0.16),
-                            mix(WATER_DEEP, sky, 0.10));
+    const sheet = warpSheet(api,
+                            reflSheet(api, sx0, srcTop, sw, B.y0 - srcTop, kx, ky, ox, oy,
+                                      mix(WATER_MID, sky, 0.46), mix(WATER_MID, sky, 0.16),
+                                      mix(WATER_DEEP, sky, 0.10)),
+                            S.ph);
     if (sheet && kx > 0.01 && ky > 0.01 && REFL > 0.12 && sw > 4){
       const NB = Math.max(9, Math.min(26, Math.round(B.h / 17)));
       const nom = B.h / NB;
@@ -946,8 +1077,9 @@ function drawPool(api, it){
         const sy = srcEdge - srcH;
         srcEdge = sy;
         if (sy < srcTop - 1.5) break;
-        /* ⚠ THE SLIP IS A CONTINUOUS SHEAR, NOT A PER-BAND OFFSET. THIS IS THE
-           HORIZONTAL STRIPE BANDING FIX AND IT IS GEOMETRY, NOT TUNING.
+        /* ⚠ THE SLIP IS A CONTINUOUS SHEAR, NOT A PER-BAND OFFSET — which is
+           what keeps the BAND SEAMS invisible. (It is not the stripe fix; see
+           the note below and warpSheet().)
 
            It used to be one constant x-offset per band, built from per-band
            hash noise (±3.75px) times a per-band amplitude times a per-band
@@ -975,19 +1107,21 @@ function drawPool(api, it){
            needs. J itself is two incommensurate waves drifting on T at
            different rates, amplitude growing toward the near shore where chop
            is most legible, so the surface still never settles. */
-        /* ⚠ AMPLITUDE AND FREQUENCY ARE BOTH LOAD-BEARING, for a reason that is
-           not "more wobble is prettier". What is being reflected is a STEPPED
-           PLATEAU: the source strip is full of long horizontal tile-face edges,
-           and a reflection that displaces them by 3px over their own height
-           hands them back to the viewer as horizontal rules across the water —
-           the stripe banding, arriving from the source rather than from the
-           band seams. To bend a straight horizontal edge into something that
-           reads as a disturbed surface, dJ/dy has to be a meaningful fraction
-           of 1: at amp 21 and 0.030 rad/px it peaks near 0.8 px per px, so a
-           60px-tall reflected face is displaced ~45px across its own height and
-           arrives as a wave. Under ~0.25 the edges stay legibly straight. */
-        const amp0 = 5 + 16 * (yEdge - B.y0) / Math.max(1, B.h);
-        const amp1 = 5 + 16 * (yNext - B.y0) / Math.max(1, B.h);
+        /* ⚠ THIS SHEAR DOES NOT AND CANNOT TOUCH THE HORIZONTAL STRIPES, and an
+           earlier revision of this comment claimed it did. Displacing a point
+           along x by an amount that depends on its ROW moves every point of a
+           horizontal line by the same amount: the line slides sideways and
+           stays horizontal. The amplitude here was raised to 21px on that false
+           premise and it changed nothing measurable. Reflected horizontal edges
+           are bent by warpSheet(), one layer up, which displaces VERTICALLY as
+           a function of x — read the note there before touching either.
+
+           What the x-shear is genuinely for is the other axis: it bends the
+           reflected VERTICAL edges (cliff corners, the braziers' posts) and it
+           keeps neighbouring bands continuous while doing it. Amplitude is
+           modest for that job and does not want to grow. */
+        const amp0 = 3 + 8 * (yEdge - B.y0) / Math.max(1, B.h);
+        const amp1 = 3 + 8 * (yNext - B.y0) / Math.max(1, B.h);
         const J = (yy, am) => Math.sin(yy * 0.030 + api.T * 0.85 + S.ph) * am
                             + Math.sin(yy * 0.072 - api.T * 0.55 + S.ph * 2.3) * am * 0.38;
         const jxBot = J(yNext, amp1), jxTop = J(yEdge, amp0);
@@ -1075,7 +1209,15 @@ function drawPool(api, it){
        of the pool's interior on warm pale wash — measured, all 56 tiles lit,
        the pool's green-excess gain fell from +12.0 to +7.3. rings[0] at 0.16
        restores the band to about its old width. */
-    const sh = projRing(api, S.rings[0], it.y - 0.030);
+    /* ⚠ DROPPED OUTRIGHT ON A LIT POOL. shC is a WARM pale (g−r ≈ +17) and the
+       thing it is being painted over is a teal movement highlight (g−r ≈ +42):
+       every pixel of shallows drags the highlight back toward sand, which is
+       the exact axis the player reads the overlay on. Nothing else in the pool
+       has that problem — the depth ramp, the deep spots, the ripples and the
+       glints are all cooler than the highlight, so they tint without erasing.
+       Shallow water that only shows when the tile is not lit costs nothing:
+       there is a full-strength teal wash sitting on it instead. */
+    const sh = lit ? null : projRing(api, S.rings[0], it.y - 0.030);
     if (sh){
       g.save();
       ringPath(g, surf); ringPath(g, sh);
@@ -1167,10 +1309,17 @@ function drawPool(api, it){
     /* thinned with the rest of the pool over a lit tile — see the header note.
        ⚠ AM, not A: see the note by its declaration. This ring is a multiply and
        multiplies scale the highlight down by a fixed fraction. */
-    g.globalAlpha = 0.07 * AM;
+    /* ⚠ 0.038, DOWN FROM 0.07 — the last of the ink outline lived here. With
+       the bank annulus deleted (see §1) this ramp became the only thing left
+       darkening the contour, and on its own it measured a 19-luma trough in
+       the first ~20px of water: sand 87 → 61 at the waterline → 80 in the
+       interior. A dark line between two lighter things is an outline no matter
+       how softly it grades. Halved, and spread over a wider WMAX so the same
+       total occlusion is delivered across more pixels. */
+    g.globalAlpha = 0.038 * AM;
     g.lineJoin = 'round'; g.lineCap = 'round';
     g.strokeStyle = '#d9dade';
-    const NAO = 8, WMAX = B.w * 0.11 + 20;
+    const NAO = 8, WMAX = B.w * 0.15 + 26;
     for (let k = 0; k < NAO; k++){
       const lw = WMAX * (1 - k / NAO);
       if (lw < 0.6) continue;
@@ -1213,9 +1362,22 @@ function drawPool(api, it){
       const v  = (hash(i, 7, 125) + api.T * (0.008 + hash(i, 9, 127) * 0.012)) % 1;
       const px = B.x0 + B.w * u + Math.sin(api.T * (0.5 + hash(i, 11, 129)) + i) * 2.6;
       const py = B.y0 + B.h * v;
-      const len = B.w * (0.030 + hash(i, 13, 131) * 0.085);
-      const tilt = (hash(i, 17, 133) - 0.5) * 0.34;
-      const sag = (hash(i, 19, 135) - 0.5) * len * 0.30;
+      /* ⚠ LENGTH AND TILT ARE THE HORIZONTAL-RULE FIX, MEASURED. These marks
+         used to run up to 0.115·B.w long at a tilt of ±0.17 (±10°), i.e. up to
+         50px of near-horizontal stroke — and with ~1 mark per 900px² several of
+         them line up end to end by chance. Rendering the pool with the
+         reflection sheet switched OFF isolated them: the longest straight
+         horizontal edge run inside the water measured 125px, LONGER than with
+         the reflection on, so the chop was the biggest single source of the
+         "horizontal stripe banding", not the reflection it was blamed on.
+         Shorter (max 0.072·B.w) and, more importantly, tilted about a mean of
+         +0.34 rather than about ZERO: chop driven by one wind has a direction,
+         and any direction that is not the scanline is one a critic cannot read
+         as a ruled line. The spread still straddles horizontal, so a few marks
+         are flat — a field where none are is its own kind of pattern. */
+      const len = B.w * (0.022 + hash(i, 13, 131) * 0.050);
+      const tilt = 0.34 + (hash(i, 17, 133) - 0.5) * 1.05;
+      const sag = (hash(i, 19, 135) - 0.5) * len * 0.55;
       const a = (dark ? 0.085 + hash(i, 23, 137) * 0.110
                       : 0.070 + hash(i, 29, 139) * 0.125)
               * (0.55 + 0.45 * Math.sin(api.T * (0.8 + hash(i, 31, 141)) + i * 2.2)) * A;
@@ -1270,8 +1432,12 @@ function drawPool(api, it){
        pencil guides. 18-42% of the width, and it sags. */
     const len = 0.18 + hash(i, 17, 57) * 0.24;
     const x0 = B.x0 + B.w * u0, x1 = B.x0 + B.w * Math.min(1, u0 + len);
-    const sag = (hash(i, 19, 59) - 0.35) * B.h * 0.10;
-    const tilt = (hash(i, 29, 63) - 0.5) * B.h * 0.045;
+    /* ⚠ SAG AND TILT BOTH RAISED. At B.h·0.045 of tilt a 100px chord rises 4px
+       end to end, which is 2°, which is a horizontal line. These four chords
+       were the second-longest straight horizontal runs in the water after the
+       chop marks. At 0.13 they are unmistakably sloped and the sag bows them. */
+    const sag = (hash(i, 19, 59) - 0.35) * B.h * 0.17;
+    const tilt = (hash(i, 29, 63) - 0.5) * B.h * 0.13;
     g.lineWidth = 0.9 + hash(i, 23, 61) * 1.5;
     g.strokeStyle = rgba(mix(WATER_SHEEN, sky, 0.5),
                          (0.07 + 0.07 * (0.5 + 0.5 * Math.sin(api.T * 1.1 + i * 2.4))) * A);
@@ -1299,6 +1465,50 @@ function drawPool(api, it){
     g.fillStyle = sgd;
     g.beginPath(); g.ellipse(px, py, R * ax, R * ay, 0, 0, TAU); g.fill();
   }
+  /* ── 3b. BROAD SHEEN BLOOMS — THE ONE CUE THIS POOL SHARES WITH THE OTHER
+     WATER ON THE BOARD, and the reason it is here is not decoration.
+
+     There are two bodies of water in the frame and this module owns exactly
+     one of them. The other is tilefx's `puddle` surface fx on the right flank,
+     which is a translucent teal tint over whole tile faces carrying three or
+     four LARGE, SOFT, pale blue-white blooms and nothing else — no shoreline,
+     no reflection, no chop. A critic reading the frame cold called them "two
+     contradictory water treatments", and the half of that gap this module can
+     act on is the vocabulary: match hue (measured, pool 192° vs puddle 195-201°
+     median, chroma 34 vs 29, median luma 82 vs 81 — already inside a few
+     points), and then carry the ONE mark the other treatment is made of.
+
+     Two or three of them, far bigger than the glints above (0.22-0.46 of the
+     pool's width against the glints' ~0.04), very low alpha, drifting on their
+     own slow phases so they never sit where the glints do. They also break up
+     the interior at a scale nothing else in the pool works at, which is the
+     same reason the puddle reads as wet rather than as a tinted tile. */
+  {
+    const nBl = 2 + ((hash(3, 11, 151) * 2) | 0);
+    for (let i = 0; i < nBl; i++){
+      const R = B.w * (0.22 + hash(i, 13, 153) * 0.24);
+      const u = 0.16 + hash(i, 17, 155) * 0.68;
+      const v = 0.18 + hash(i, 19, 157) * 0.62;
+      const px = B.x0 + B.w * u + Math.sin(api.T * 0.21 + i * 2.7 + S.ph) * B.w * 0.035;
+      const py = B.y0 + B.h * v + Math.cos(api.T * 0.17 + i * 1.9) * B.h * 0.030;
+      const a = (0.016 + hash(i, 23, 159) * 0.014)
+              * (0.62 + 0.38 * Math.sin(api.T * 0.34 + i * 2.2)) * A;
+      const bl = g.createRadialGradient(px, py, 0, px, py, R);
+      /* ⚠ BLOOM_C, NOT WATER_SHEEN. WATER_SHEEN is hue 187 and these blooms are
+         big enough to move the whole pool's average: painting them in it pulled
+         the measured interior from 192° to 187° in one shot, i.e. AWAY from the
+         puddle at 196°, which is the opposite of what they are here to do.
+         BLOOM_C is 198° so the blooms pull the pool's mean the RIGHT way. */
+      bl.addColorStop(0,    rgba(mix(BLOOM_C, sky, 0.10), a));
+      bl.addColorStop(0.52, rgba(mix(BLOOM_C, sky, 0.16), a * 0.46));
+      bl.addColorStop(1,    rgba(BLOOM_C, 0));
+      g.fillStyle = bl;
+      g.beginPath();
+      g.ellipse(px, py, R, R * (0.42 + hash(i, 29, 161) * 0.36),
+                (hash(i, 31, 163) - 0.5) * 0.9, 0, TAU);
+      g.fill();
+    }
+  }
   g.globalCompositeOperation = 'source-over';
   g.restore();
 
@@ -1322,6 +1532,49 @@ function drawPool(api, it){
     else open = false;
   }
   g.stroke();
+  };  /* ── end paint() ─────────────────────────────────────────────────── */
+
+  /* ── THE DISPATCH ────────────────────────────────────────────────────────
+     Nothing lit, or everything lit: one pass, exactly as before, so the frame
+     the player spends 95% of their time looking at costs no more than it did.
+     Anything in between: two passes under complementary clips. */
+  if (!litKeys.length){ paint(1, 1, false); return; }
+  if (litKeys.length >= it.tiles.length){ paint(LIT_A, LIT_AM, true); return; }
+
+  /* the quads are taken at the POOL's own elevation, not each tile's, because
+     every wet tile sits at the pool floor by construction (okWater picks one
+     level) and because it is the plane tilefx paints the state fill on. */
+  const quads = [];
+  for (let i = 0; i < litKeys.length; i++){
+    const c = litKeys[i].split(',');
+    let q = null;
+    try { q = api.tilePoly ? api.tilePoly(+c[0], +c[1], 0, it.y) : null; } catch (e) { q = null; }
+    if (q && q.length > 2) quads.push(q);
+  }
+  /* a quad behind the camera projects to null. Rather than paint a partial
+     mask — which would leave a lit tile at full water and hide the highlight,
+     the one failure mode this whole file is written to avoid — fall back to
+     the old whole-pool yield. Legibility beats prettiness on that trade. */
+  if (quads.length !== litKeys.length){ paint(LIT_A, LIT_AM, true); return; }
+
+  /* pass 1 — the dry-lit remainder of the pool, at full strength.
+     evenodd against a rect far larger than any canvas = "everything but". */
+  g.save();
+  g.beginPath();
+  g.rect(-2e4, -2e4, 4e4, 4e4);
+  for (let i = 0; i < quads.length; i++) subPoly(g, quads[i]);
+  g.clip('evenodd');
+  paint(1, 1, false);
+  g.restore();
+
+  /* pass 2 — only the tiles carrying a state fill, thinned. nonzero, so two
+     adjacent quads union instead of cancelling each other out. */
+  g.save();
+  g.beginPath();
+  for (let i = 0; i < quads.length; i++) subPoly(g, quads[i]);
+  g.clip();
+  paint(LIT_A, LIT_AM, true);
+  g.restore();
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

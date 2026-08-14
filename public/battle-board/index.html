@@ -200,7 +200,7 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v120t3';
+<script>window.BB_BUILD='v120t4';
 "use strict";
 /* 🔌 BBX — THE STAGE HOOK SEAM.
    The board page is a classic (non-module) script, so it cannot `import`.
@@ -1278,7 +1278,17 @@ function levelLuma(L){
    variation stays — it just no longer OWNS the value. */
 const TONE = { corr:Object.create(null), geom:'', light:'', iter:0, pending:false,
                dead:false, err:0, stats:null };
-function toneCorr(x,z){ return TONE.corr[x+','+z] || 0; }
+/* ⚠ `window.__DBG_NOTONE` freezes the lock at zero correction. It is a DEBUG
+   SWITCH LIKE __DBG_NOMACRO / __DBG_NORESTORE and nothing in the render path
+   sets it — but unlike those two it is the one that makes them measurable.
+   The tone lock reads the FINISHED bake and pushes every tile centre back onto
+   its elevation target, so turning the macro pass off changes what it measures,
+   which changes TONE.corr, which changes M.want, which changes wallTop/wallBot
+   — and a macro-on/macro-off diff then reports a "leak" on cliff faces the
+   macro pass never touched. That is exactly how wave 3's first leak numbers
+   (max 21.2 luma on tile 6,0's wall) were manufactured. Freeze the lock in
+   BOTH halves of an A/B and the wall deltas that survive are real. */
+function toneCorr(x,z){ return window.__DBG_NOTONE ? 0 : (TONE.corr[x+','+z] || 0); }
 /* Two scopes, deliberately. Geometry (map, heightfield, viewport) invalidates
    the corrections outright — they are per-tile and the tiles have moved.
    The light only RESTARTS the iteration from a warm start, keeping the
@@ -1757,22 +1767,63 @@ function bakeTerrain(){
           spg.addColorStop(0, rgba(spC, 0.00));
           spg.addColorStop(1, rgba(spC, 0.52));
           g.fillStyle = spg; g.fill();
-          /* angular chips still clinging to the face — never round */
-          const chips = 3 + ((fh(70)*5)|0);
+          /* angular chips still clinging to the face — never round, and (wave
+             3) never the same size twice: the flat 0.030..0.105 radius band
+             with a fixed 0.8 aspect was the same uniform-sprite tell as the
+             plateau spall, applied to the cliff faces. Power law + per-chip
+             aspect + per-chip alpha. */
+          const chips = 2 + ((fh(70)*5)|0);
+          const faceH = Math.abs(B[i].y - P[i].y) || 20;
           for (let c2=0;c2<chips;c2++){
             const p = fw(fh(c2*7+71), 0.45 + fh(c2*7+72)*0.50);
-            const rr = (Math.abs(B[i].y - P[i].y) || 20) * (0.030 + fh(c2*7+73)*0.075);
+            const hz2 = fh(c2*7+73);
+            const rr = faceH * (0.014 + Math.pow(hz2, 2.5)*0.125);
             const rot = fh(c2*7+74)*6.283, sides = 4 + ((fh(c2*7+75)*3)|0);
+            const asp = 0.45 + fh(c2*7+69)*0.62;
             g.beginPath();
             for (let k2=0;k2<sides;k2++){
               const th = rot + (k2/sides)*6.283;
               const kr = rr * (0.5 + fh(c2*7 + 76 + k2)*0.9);
-              const qx = p.x + Math.cos(th)*kr, qy = p.y + Math.sin(th)*kr*0.8;
+              const qx = p.x + Math.cos(th)*kr, qy = p.y + Math.sin(th)*kr*asp;
               k2 ? g.lineTo(qx,qy) : g.moveTo(qx,qy);
             }
             g.closePath();
-            g.fillStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.35), 0.13 + fh(c2+80)*0.12);
+            g.fillStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.18 + fh(c2+81)*0.45),
+                               0.07 + hz2*0.16);
             g.fill();
+          }
+        }
+        /* ── THE FACE MUST NOT BE ONE VALUE FROM END TO END ───────────────
+           ⚠ WAVE 3: "the 566px-wide interior cliff reads as three flat panels
+           stacked on each other". The beds and the joints broke the face up in
+           TEXTURE, but its VALUE was still a single top-to-bottom gradient
+           repeated identically at every u — measured, several faces came out
+           with a luma standard deviation ALONG the face (alongSd) of 2.8–5.0,
+           i.e. flat. A real rim is lit unevenly: it noses forward and catches
+           the key, it recedes into a re-entrant and loses it. This is a slow
+           per-face wave in u, seeded with the face index so two tiles sharing
+           a rim never wave together, drawn as a soft vertical band. */
+        {
+          /* ⚠ TWO CONTINUOUS GRADIENTS ALONG u, NOT N DISCRETE BANDS. A first
+             cut filled 7 quads at 7 alphas and put 6 hard vertical joins on
+             every face — swapping one flat-panel read for a worse one. A
+             gradient carries one colour, so the lit lobes and the shadowed
+             re-entrants are two passes over the same full-face path. */
+          const ph0 = fh(120)*6.283, ph2 = fh(121)*6.283;
+          const wave = (u) => Math.sin(u*4.9 + ph0)*0.62 + Math.sin(u*11.3 + ph2)*0.38;
+          const e0 = fw(0, 0.5), e1 = fw(1, 0.5);
+          const facePath = () => { g.beginPath();
+            g.moveTo(P[i].x,P[i].y); g.lineTo(P[j].x,P[j].y);
+            g.lineTo(B[j].x,B[j].y); g.lineTo(B[i].x,B[i].y); g.closePath(); };
+          for (const sgn of [1,-1]){
+            const grd = g.createLinearGradient(e0.x, e0.y, e1.x, e1.y);
+            const bc = sgn > 0 ? mixHexRaw(wallTop, ROCK_PALE, 0.35)
+                               : mixHexRaw(wallBot, '#1c140e', 0.40);
+            for (let s=0; s<=12; s++){
+              const u = s/12, wv = wave(u)*sgn;
+              grd.addColorStop(u, rgba(bc, Math.max(0, wv) * 0.26));
+            }
+            facePath(); g.fillStyle = grd; g.fill();
           }
         }
         g.restore();
@@ -1886,45 +1937,133 @@ function bakeTerrain(){
     }
   }
 
-  /* ── 1a. OCCLUSION SNAPSHOT ───────────────────────────────────────────
+  /* ── 1a. OCCLUSION GUARD — THE EXACT VISIBLE-OWNER MASK ───────────────
      ⚠ WAVE 3 BLOCKER — "SOLIDS RENDER TRANSLUCENT / panes of tinted glass".
-     The macro pass below is clipped to the UNION OF ONE LEVEL'S TOP FACES.
-     A top face that is partly HIDDEN behind a nearer, higher tile is still in
-     that union, so every basin drift and every damp patch of level 0 was being
-     painted straight across the raised slab standing in front of it — and, via
-     the perspective lean of a side wall, straight across the cliff face too.
-     Measured on the bake alone (no vista, no tile states, no dressing:
-     __bbDebug.bakePng()) the level-0 drift strokes ran continuously over the
-     level-2 cliff band and pale sand blobs sat on the level-3 top.
-     Canvas-2D clip() can only INTERSECT, so the union cannot have its
-     occluders subtracted from it, and an even-odd path is not safe either —
-     two overlapping occluders flip the winding back to "inside".
-     So: SNAPSHOT the canvas immediately before a level's material pass, draw
-     that pass, then re-blit — from that snapshot — the drawn footprint (top
-     face plus wall quads) of every tile that is NOT on that level. The
-     snapshot is correct for both directions: tiles on lower levels already
-     carry their own material, tiles on higher levels have not been given
-     theirs yet, and either way the pixels being restored are pixels the level
-     just painted had no business touching.
-     Cost is two full-canvas drawImages per level, at BAKE time only (the bake
-     is blitted every frame; it is not re-run every frame), which is why this
-     is affordable where a per-level mask canvas would not have been.
-     ⚠ TWO INERT DEBUG SWITCHES live in this pass: `window.__DBG_NOMACRO`
-     skips the per-level material and `window.__DBG_NORESTORE` skips the
-     restore. Nothing sets them — they exist so the next critic can A/B the
-     leak with two console lines and a re-bake instead of patching the file,
-     which is how the numbers in these comments were measured. */
-  let SNAP = null, SNAPG = null;
+     Two passes below paint through a clip that is a UNION OF TOP FACES: the
+     per-level material (§1b, clipped to one level's tops) and the AO/cast
+     shadow pass (§3, clipped to the RECEIVING tile's top). A top face that is
+     partly HIDDEN behind a nearer, higher tile is still in that clip, so a
+     basin drift or a cliff-foot shadow gets painted straight across the raised
+     slab standing in front of it, and — via the perspective lean of a side
+     wall — across the cliff face too. Canvas-2D clip() can only INTERSECT, so
+     the union cannot have its occluders subtracted from it, and an even-odd
+     path is not safe either: two overlapping occluders flip the winding back
+     to "inside".
+
+     ⚠ ROUND 1 SHIPPED A HEURISTIC AND IT DID NOT CLOSE. It snapshotted the
+     canvas, drew the pass, then re-blitted the footprint of every tile ABOVE
+     the level being drawn. That misses two whole classes: a tile at the SAME
+     level as the pass (its own side wall sits under a same-level neighbour's
+     top face and is never restored) and every tile drawn LATER in the same
+     row. Measured with the tone lock frozen (`__DBG_NOTONE`, see toneCorr —
+     without it the lock re-solves between the two halves and manufactures a
+     fake delta on faces the macro never touched): 6.11% of all cliff-face
+     pixels still moved >2 luma when the macro pass was toggled, worst face
+     tile 1,1 at 84.4% of its pixels and a 19.7 luma peak. That is the "tan
+     ground streaks read through the navy cliff band" the critic saw.
+
+     So the guard is now EXACT rather than clever. `ownerMask(pred)` replays
+     the tile loop's own painter order into an alpha mask — walls then top
+     face, far rows first — writing WHITE where `pred(x,z)` owns the top face
+     and ERASING (destination-out) everywhere else. What survives is precisely
+     the pixels the pass is allowed to keep. `restoreOutside(bb)` then builds
+     SNAP × (1 - mask) in a scratch canvas and draws it source-over: the
+     compositor's own src*a + dst*(1-a) resolves to "pass result where the
+     mask is set, snapshot everywhere else", with the mask's antialiasing
+     giving a clean feathered join instead of a stair-stepped one.
+
+     Everything is bounded to a bbox because a clipped pass can only have
+     changed pixels inside its own clip bbox — that is what keeps four levels
+     of full-canvas compositing off the bake budget.
+
+     ⚠ THREE INERT DEBUG SWITCHES: `window.__DBG_NOMACRO` skips the per-level
+     material, `window.__DBG_NORESTORE` skips the guard, `window.__DBG_NOTONE`
+     freezes the tone lock. Nothing sets them — they exist so the next critic
+     can A/B a leak with three console lines and __bbDebug.rebake() instead of
+     patching the file, which is how every number in these comments was got. */
+  let SNAP = null, SNAPG = null, MASK = null, MASKG = null, SCR = null, SCRG = null;
   try {
     SNAP = TERRAIN.snap || (TERRAIN.snap = document.createElement('canvas'));
     if (SNAP.width !== pw || SNAP.height !== ph){ SNAP.width = pw; SNAP.height = ph; }
-    SNAPG = SNAP.getContext('2d');
-    SNAPG.setTransform(1,0,0,1,0,0);
-  } catch (e) { SNAP = null; SNAPG = null; }   /* no snapshot → old behaviour */
-  const snapTake = () => {
-    if (!SNAP || !SNAPG) return;
-    SNAPG.clearRect(0,0,pw,ph);
-    SNAPG.drawImage(cvT, 0, 0);
+    SNAPG = SNAP.getContext('2d'); SNAPG.setTransform(1,0,0,1,0,0);
+    MASK = TERRAIN.mask || (TERRAIN.mask = document.createElement('canvas'));
+    if (MASK.width !== pw || MASK.height !== ph){ MASK.width = pw; MASK.height = ph; }
+    MASKG = MASK.getContext('2d');
+    SCR = TERRAIN.scr || (TERRAIN.scr = document.createElement('canvas'));
+    if (SCR.width !== pw || SCR.height !== ph){ SCR.width = pw; SCR.height = ph; }
+    SCRG = SCR.getContext('2d'); SCRG.setTransform(1,0,0,1,0,0);
+  } catch (e) { SNAP = null; SNAPG = null; MASK = null; SCR = null; }  /* → unguarded */
+  const GUARD = !!(SNAP && SNAPG && MASK && MASKG && SCR && SCRG);
+  /* device-pixel bbox of a set of quads, clamped to the canvas and padded by
+     2px so an antialiased edge is never half-restored */
+  const quadBox = (quads) => {
+    let x0=1e9, y0=1e9, x1=-1e9, y1=-1e9;
+    for (const Q of quads) for (const p of Q){
+      if (p.x<x0) x0=p.x; if (p.x>x1) x1=p.x;
+      if (p.y<y0) y0=p.y; if (p.y>y1) y1=p.y;
+    }
+    if (x1 < x0) return null;
+    const bx = Math.max(0, Math.floor((x0-2)*DPR)), by = Math.max(0, Math.floor((y0-2)*DPR));
+    const bw = Math.min(pw, Math.ceil((x1+2)*DPR)) - bx, bh = Math.min(ph, Math.ceil((y1+2)*DPR)) - by;
+    return (bw > 0 && bh > 0) ? { bx, by, bw, bh } : null;
+  };
+  /* ⚠ clearRect + source-over, NOT globalCompositeOperation='copy'. 'copy'
+     clears the whole destination even when the drawImage is a small region,
+     which turns every bounded snapshot back into a full-canvas op — the exact
+     cost this bbox plumbing exists to avoid. */
+  const snapTake = (bb) => {
+    if (!GUARD) return;
+    if (bb){ SNAPG.clearRect(bb.bx, bb.by, bb.bw, bb.bh);
+             SNAPG.drawImage(cvT, bb.bx, bb.by, bb.bw, bb.bh, bb.bx, bb.by, bb.bw, bb.bh); }
+    else   { SNAPG.clearRect(0,0,pw,ph); SNAPG.drawImage(cvT, 0, 0); }
+  };
+  const maskQuad = (Q) => {
+    MASKG.beginPath(); MASKG.moveTo(Q[0].x, Q[0].y);
+    for (let k=1;k<Q.length;k++) MASKG.lineTo(Q[k].x, Q[k].y);
+    MASKG.closePath(); MASKG.fill();
+  };
+  /* Replay the tile loop's painter order into an alpha mask. Perimeter walls
+     are deliberately absent: they are only recorded for interior edges, and
+     out there they hang over the apron where no top face can reach them. */
+  /* Only the pixels inside `bb` are ever read back out of the mask, so both the
+     clear and the fills are bounded to it — a full-canvas clear per level plus
+     112 unbounded polygon fills was ~25ms of every bake for nothing. */
+  const hitsBox = (Q, bb) => {
+    let x0=1e9, y0=1e9, x1=-1e9, y1=-1e9;
+    for (const p of Q){ if (p.x<x0) x0=p.x; if (p.x>x1) x1=p.x;
+                        if (p.y<y0) y0=p.y; if (p.y>y1) y1=p.y; }
+    return !(x1*DPR < bb.bx || x0*DPR > bb.bx+bb.bw || y1*DPR < bb.by || y0*DPR > bb.by+bb.bh);
+  };
+  const ownerMask = (pred, bb) => {
+    if (!GUARD || !bb) return;
+    MASKG.setTransform(1,0,0,1,0,0);
+    MASKG.clearRect(bb.bx, bb.by, bb.bw, bb.bh);
+    MASKG.setTransform(DPR,0,0,DPR,0,0);
+    MASKG.fillStyle = '#fff';
+    for (let z=0; z<rows; z++) for (let x=0; x<cols; x++){
+      const WQ = walls[x+','+z];
+      if (WQ && WQ.length){
+        MASKG.globalCompositeOperation = 'destination-out';
+        for (const Q of WQ) if (hitsBox(Q, bb)) maskQuad(Q);
+      }
+      const P = poly[x+','+z]; if (!P || !hitsBox(P, bb)) continue;
+      MASKG.globalCompositeOperation = pred(x,z) ? 'source-over' : 'destination-out';
+      maskQuad(P);
+    }
+    MASKG.globalCompositeOperation = 'source-over';
+  };
+  const restoreOutside = (bb) => {
+    if (!GUARD || !bb || window.__DBG_NORESTORE) return;
+    SCRG.clearRect(bb.bx, bb.by, bb.bw, bb.bh);
+    SCRG.drawImage(SNAP, bb.bx, bb.by, bb.bw, bb.bh, bb.bx, bb.by, bb.bw, bb.bh);
+    SCRG.globalCompositeOperation = 'destination-out';
+    SCRG.drawImage(MASK, bb.bx, bb.by, bb.bw, bb.bh, bb.bx, bb.by, bb.bw, bb.bh);
+    SCRG.globalCompositeOperation = 'source-over';
+    g.save();
+    g.setTransform(1,0,0,1,0,0);
+    g.drawImage(SCR, bb.bx, bb.by, bb.bw, bb.bh, bb.bx, bb.by, bb.bw, bb.bh);
+    g.restore();
+    g.setTransform(DPR,0,0,DPR,0,0);
   };
 
   /* ── 1b. MACRO VARIATION, CLIPPED PER ELEVATION LEVEL ─────────────────
@@ -1965,7 +2104,6 @@ function bakeTerrain(){
        hard material edge on every interior seam of the plateau, i.e. redraw
        the grid — the whole point is that texture crosses seams WITHIN a level
        and stops at the cliff BETWEEN levels. */
-    snapTake();                  /* the canvas as the painter's algorithm left it */
     const levelPath = (want) => {
       g.beginPath();
       let n = 0;
@@ -1978,49 +2116,15 @@ function bakeTerrain(){
       }
       return n;
     };
-    /* THE OCCLUSION RESTORE (see §1a). Path = the drawn footprint of every
-       tile strictly ABOVE level `above`: its top face plus the interior wall
-       quads it painted. Returns the path's bbox so the re-blit is bounded.
-       ⚠ Only tiles above, and only ONE snapshot for the whole loop. The exact
-       form of this (re-snapshot per level, restore every tile not on that
-       level) was built and measured: it moved the leak on the cliff faces by
-       0.03 luma and cost 57ms of every bake, because a lower level's material
-       cannot reach a higher tile's wall in the first place — a wall hangs
-       BELOW its own top face and a higher top face is drawn above it. */
-    const otherPath = (above, exact) => {
-      let x0=1e9, y0=1e9, x1=-1e9, y1=-1e9, n=0;
-      const add = (Q) => {
-        g.moveTo(Q[0].x, Q[0].y);
-        for (let k=1;k<Q.length;k++) g.lineTo(Q[k].x, Q[k].y);
-        g.closePath();
-        for (const p of Q){
-          if (p.x<x0) x0=p.x; if (p.x>x1) x1=p.x;
-          if (p.y<y0) y0=p.y; if (p.y>y1) y1=p.y;
-        }
-        n++;
-      };
-      g.beginPath();
+    /* The clip bbox of one level, in device px — the only region a pass
+       clipped to that level can possibly have written. */
+    const levelBox = (want) => {
+      const qs = [];
       for (let z=0; z<rows; z++) for (let x=0; x<cols; x++){
-        const lvT = hfLevel(x,z);
-        if (exact ? (lvT === above) : (lvT <= above)) continue;
-        const P = poly[x+','+z]; if (P) add(P);
-        const WQ = walls[x+','+z]; if (WQ) for (const q of WQ) add(q);
+        if (hfLevel(x,z) !== want) continue;
+        const P = poly[x+','+z]; if (P) qs.push(P);
       }
-      return n ? { x0, y0, x1, y1 } : null;
-    };
-    const restoreOthers = (above, exact) => {
-      if (!SNAP || window.__DBG_NORESTORE) return;
-      g.save();
-      const bb = otherPath(above, exact);
-      if (bb){
-        g.clip();
-        const bx = Math.max(0, Math.floor(bb.x0) - 2), by = Math.max(0, Math.floor(bb.y0) - 2);
-        const bw = Math.min(W, Math.ceil(bb.x1) + 2) - bx;
-        const bh = Math.min(H, Math.ceil(bb.y1) + 2) - by;
-        if (bw > 0 && bh > 0)
-          g.drawImage(SNAP, bx*DPR, by*DPR, bw*DPR, bh*DPR, bx, by, bw, bh);
-      }
-      g.restore();
+      return qs.length ? quadBox(qs) : null;
     };
 
     /* a representative material + a projected point for a level */
@@ -2035,15 +2139,15 @@ function bakeTerrain(){
       const tiles = levelTiles[L];
       if (!tiles || !tiles.length) continue;
       if (window.__DBG_NOMACRO) continue;
-      /* ⚠ The TOP level is the one case the single snapshot cannot serve: its
-         material can only leak DOWNWARD, onto tiles that already carry theirs,
-         so restoring them from the pre-loop snapshot would erase it. One fresh
-         snapshot here — every lower level is finished by now — lets the last
-         pass restore "every tile not on this level" instead of "every tile
-         above it". Measured: it is what takes the worst cliff-face leak from
-         19.1 to single figures, for ~10ms on a bake that runs 5 times a map. */
-      const lastLv = (L === levelTiles.length - 1);
-      if (lastLv) snapTake();
+      /* ⚠ ONE SNAPSHOT PER LEVEL, TAKEN HERE. Round 1 took a single snapshot
+         before the whole loop and special-cased the top level; that is what
+         made a same-level side wall unrestorable, because by the time level L
+         ran, the snapshot no longer matched the canvas. Snapshotting inside
+         the loop means the "correct" state to fall back to is always literally
+         the state one instant before this level painted, whatever levels below
+         it have already contributed. Bounded to this level's clip bbox. */
+      const lvBox = levelBox(L);
+      snapTake(lvBox);
       g.save();
       const n = levelPath(L);
       if (!n){ g.restore(); continue; }
@@ -2177,7 +2281,14 @@ function bakeTerrain(){
           const a = strike + blk + (conj ? 1.35 : 0) + (hfStrHash(seedS, i*9+42) - 0.5) * 0.34;
           const jx = t[0] + (hfStrHash(seedS, i*9+43) - 0.5) * 1.2;
           const jz = t[1] + (hfStrHash(seedS, i*9+44) - 0.5) * 1.2;
-          const len = 0.28 + hfStrHash(seedS, i*9+45) * 0.72;
+          /* ⚠ WAVE 3: LENGTH IS A POWER LAW AND THE CEILING CAME DOWN. The
+             flat 0.28..1.00 band meant a third of all joints were ~a whole
+             tile long, and a tile-long straight thin line at this scale does
+             not read as a joint, it reads as a SCRATCH — the crop of the
+             plateau tops was covered in them. Most joints are now short
+             hairlines with the occasional long one, which is also the length
+             distribution a real joint set has. */
+          const len = 0.16 + Math.pow(hfStrHash(seedS, i*9+45), 2.2) * 0.62;
           /* two or three straight segments with a kink — joints step, they do
              not curve */
           const segs = 2 + ((hfStrHash(seedS, i*9+46) * 2) | 0);
@@ -2202,37 +2313,85 @@ function bakeTerrain(){
           line(mixHexRaw(M.deep, '#241b13', 0.45), 0.082 + hfStrHash(seedS, i*9+51)*0.082, 0, lw);
           line(mixHexRaw(M.pale, ROCK_PALE, 0.5), 0.05 + hfStrHash(seedS, i*9+52)*0.05, -lw*0.9, lw*0.7);
         }
-        /* spall: angular chips of broken rock, never round */
-        const nS = Math.max(6, tiles.length * 4);
+        /* ── SPALL: angular chips of broken rock ──────────────────────────
+           ⚠ WAVE 3 — THIS LOOP WAS THE "ONE PEBBLE SPRITE STAMPED ACROSS
+           EVERY FACE AT UNIFORM SIZE" the critic counted. terrain.js's lag
+           gravel had already been rewritten to a power law and was NOT the
+           element being described; this was. Every tell was here at once:
+           radius from a FLAT 0.030..0.105 band (so no chip is much bigger or
+           much smaller than its neighbour), y-radius pinned at 0.55 of x (one
+           aspect ratio, "varied only by rotation"), alpha pinned at 0.16 (one
+           value), and placement from a flat uniform over the level (an even
+           scatter — machine-made; real spall collects in aprons below the
+           joints it fell out of).
+           All four are now distributions: pow(h,2.7) size, per-chip aspect,
+           per-chip alpha, and placement biased into a handful of per-level
+           debris aprons with a minority of strays. Count is down a third — the
+           frequency of the element was itself part of the read. */
+        const nS = Math.max(5, Math.round(tiles.length * 2.6));
+        /* two or three debris aprons per level, in tile space */
+        const apN = 2 + ((hfStrHash(seedS, 6001) * 2) | 0);
+        const aps = [];
+        for (let i=0;i<apN;i++){
+          const t = tiles[(hfStrHash(seedS, i*3+6002) * tiles.length) | 0] || tiles[0];
+          aps.push({ x: t[0] + (hfStrHash(seedS, i*3+6003)-0.5)*0.9,
+                     z: t[1] + (hfStrHash(seedS, i*3+6004)-0.5)*0.9,
+                     r: 0.55 + hfStrHash(seedS, i*3+6005)*1.1 });
+        }
         for (let i=0;i<nS;i++){
-          const t = tiles[(hfStrHash(seedS, i*6+70) * tiles.length) | 0];
-          if (!t) continue;
-          const M = mat[t[0]+','+t[1]]; if (!M) continue;
-          const jx = t[0] + (hfStrHash(seedS, i*6+71) - 0.5) * 1.1;
-          const jz = t[1] + (hfStrHash(seedS, i*6+72) - 0.5) * 1.1;
+          const stray = hfStrHash(seedS, i*6+69) > 0.70;
+          let jx, jz, tRef;
+          if (stray){
+            const t = tiles[(hfStrHash(seedS, i*6+70) * tiles.length) | 0];
+            if (!t) continue;
+            tRef = t;
+            jx = t[0] + (hfStrHash(seedS, i*6+71) - 0.5) * 1.1;
+            jz = t[1] + (hfStrHash(seedS, i*6+72) - 0.5) * 1.1;
+          } else {
+            const ap = aps[(hfStrHash(seedS, i*6+70) * aps.length) | 0];
+            /* sqrt radius = uniform area in the apron, not a bullseye */
+            const rad = ap.r * Math.sqrt(hfStrHash(seedS, i*6+71));
+            const th0 = hfStrHash(seedS, i*6+72) * 6.283;
+            jx = ap.x + Math.cos(th0) * rad;
+            jz = ap.z + Math.sin(th0) * rad * 0.7;
+            tRef = [clamp(Math.round(jx),0,cols-1), clamp(Math.round(jz),0,rows-1)];
+            if (hfLevel(tRef[0], tRef[1]) !== L) continue;   /* stays on its own level */
+          }
+          const M = mat[tRef[0]+','+tRef[1]]; if (!M) continue;
           const c2 = project(gw(jx, jz, yL)); if (!c2) continue;
-          const rr = unit * (0.03 + hfStrHash(seedS, i*6+73) * 0.075);
+          const hz = hfStrHash(seedS, i*6+73);
+          /* POWER LAW, same reasoning as the lag gravel in terrain.js: many
+             grains, a few chips, the occasional block. A flat band is what
+             makes 30 of them read as one repeated sprite. */
+          const rr = unit * (0.012 + Math.pow(hz, 2.7) * 0.115);
           const rot = hfStrHash(seedS, i*6+74) * 6.283;
+          const asp = 0.34 + hfStrHash(seedS, i*6+68) * 0.56;
           g.beginPath();
           const sides = 4 + ((hfStrHash(seedS, i*6+75) * 3) | 0);
           for (let k2=0;k2<sides;k2++){
             const th = rot + (k2/sides) * 6.283;
-            const kr = rr * (0.55 + hfStrHash(seedS, i*6 + 76 + k2) * 0.8);
-            const px = c2.x + Math.cos(th) * kr, py = c2.y + Math.sin(th) * kr * 0.55;
+            const kr = rr * (0.5 + hfStrHash(seedS, i*6 + 76 + k2) * 0.95);
+            const px = c2.x + Math.cos(th) * kr, py = c2.y + Math.sin(th) * kr * asp;
             k2 ? g.lineTo(px, py) : g.moveTo(px, py);
           }
           g.closePath();
-          g.fillStyle = rgba(mixHexRaw(M.pale, ROCK_PALE, 0.4), 0.16);
+          g.fillStyle = rgba(mixHexRaw(M.pale, ROCK_PALE, 0.22 + hfStrHash(seedS, i*6+67)*0.5),
+                             0.07 + hz * 0.17);
           g.fill();
-          g.fillStyle = rgba(M.deep, 0.13);
-          g.beginPath();
-          g.ellipse(c2.x - lv.x*rr*1.2, c2.y - lv.z*rr*0.7 + rr*0.4, rr*1.05, rr*0.4, rot, 0, 7);
-          g.fill();
+          /* only a chip big enough to stand proud casts anything */
+          if (rr > unit * 0.035){
+            g.fillStyle = rgba(M.deep, 0.07 + hz*0.10);
+            g.beginPath();
+            g.ellipse(c2.x - lv.x*rr*1.2, c2.y - lv.z*rr*0.7 + rr*0.4, rr*1.05, rr*0.4*asp/0.55, rot, 0, 7);
+            g.fill();
+          }
         }
       }
       g.restore();
-      /* …and put back everything this level's material just leaked onto. */
-      restoreOthers(L, lastLv);
+      /* …and put back every pixel inside the clip that this level does not
+         actually own on screen (a nearer tile's top face, any cliff face). */
+      ownerMask((tx,tz) => hfLevel(tx,tz) === L, lvBox);
+      restoreOutside(lvBox);
     }
 
     /* the lighting passes below want the WHOLE field, not one level */
@@ -2639,19 +2798,29 @@ function bakeTerrain(){
       const rg = g.createLinearGradient(ci.x, ci.y, co.x, co.y);
       /* invisible where it lands on the tile, this tile's own surface across
          the old boundary, and the vista's fog by the time it reaches the sky */
-      const near = mixHexRaw(M.base, LIGHT.fog, 0.10);
+      /* ⚠ THE HAZE THIS RIM FADES INTO IS WARMED FIRST. LIGHT.fog is the
+         vista's atmospheric tint and it is free to be a cool slate; mixed
+         straight into the rim it turned the one piece of rock on the skyline
+         neutral blue-grey while the sand two tiles in front of it was ochre —
+         the "far rock is grey while the near rock is ochre" split, reproduced
+         inside the terrain layer. Distance desaturates and lifts; it does not
+         change hue family. So the fog gets 30% of the key before it is used
+         here, which keeps the rim on the ground's own hue axis whatever the
+         vista does with its sky. */
+      const hz = mixHexRaw(LIGHT.fog, LIGHT.key, 0.30);
+      const near = mixHexRaw(M.base, hz, 0.10);
       rg.addColorStop(0,    rgba(near, 0));
       rg.addColorStop(0.30, rgba(near, 0.80));
-      rg.addColorStop(0.52, rgba(mixHexRaw(M.base, LIGHT.fog, 0.20), 0.94));
-      rg.addColorStop(0.82, rgba(mixHexRaw(M.base, LIGHT.fog, 0.46), 0.62));
-      rg.addColorStop(1,    rgba(mixHexRaw(M.base, LIGHT.fog, 0.72), 0.06));
+      rg.addColorStop(0.52, rgba(mixHexRaw(M.base, hz, 0.20), 0.94));
+      rg.addColorStop(0.82, rgba(mixHexRaw(M.base, hz, 0.46), 0.62));
+      rg.addColorStop(1,    rgba(mixHexRaw(M.base, hz, 0.72), 0.06));
       g.fillStyle = rg; g.fill();
       /* a broken darker lip just under the outer margin: a rim is an edge of
          rock, and without it the strip reads as a flat cut-out of paper */
       g.save(); g.clip();
       for (let k=0;k<outer.length-1;k++){
         if (_sHash(x*13+k, 7, 33) < 0.34) continue;   /* broken, not continuous */
-        g.strokeStyle = rgba(mixHexRaw(M.deep, LIGHT.fog, 0.42),
+        g.strokeStyle = rgba(mixHexRaw(M.deep, mixHexRaw(LIGHT.fog, LIGHT.key, 0.30), 0.42),
                              0.10 + _sHash(x*13+k, 9, 34)*0.14);
         g.lineWidth = 1.0 + _sHash(x*13+k, 11, 35)*2.0;
         g.beginPath();
@@ -2660,6 +2829,87 @@ function bakeTerrain(){
         g.stroke();
       }
       g.restore();
+    }
+  }
+
+  /* ── 3c. GRAIN — THE FIELD MUST HAVE MATERIAL AT MORE THAN ONE SCALE ──
+     ⚠ WAVE 3: "a regular 1px crosshatch dither covers the entire field at one
+     constant scale — wallpaper, not material."
+     That crosshatch is not something this file draws. It is Skia's ORDERED
+     DITHER on the large gradients the whole bake is built from, it is applied
+     on a fixed lattice in DEVICE space, and canvas-2D exposes no way to turn
+     it off — which is why five rounds of changing what we draw never touched
+     it. The only move available is to put something louder and less regular on
+     top, which is also what a real surface has.
+     One deterministic noise tile carries a fine octave AND a bilinear coarse
+     octave, and it is laid down TWICE at different scales and rotations so its
+     own 256px period cannot line up with itself or with the dither lattice.
+     `source-atop` restricts it to pixels the terrain has already painted —
+     ground, cliff faces, apron, talus and the far rim all get it, and nothing
+     spills onto the transparent surround the vista shows through.
+     Amplitude is deliberately small: toneMeasure() reads a 5x5 patch median at
+     five points per tile, so grain at this scale averages out of the elevation
+     ramp instead of arguing with it (verified — the level means moved <0.4).
+     The tile is cached on TERRAIN.grain: it depends on nothing but its own
+     hash, so it survives every re-bake, and building it is ~65k hash calls. */
+  {
+    const NG = 256;
+    /* `window.__DBG_NOGRAIN` — fourth inert debug switch, same contract as the
+       other three: nothing sets it, it exists so the grain's look and its bake
+       cost can both be A/B'd from the console. */
+    let NC = window.__DBG_NOGRAIN ? null : TERRAIN.grain;
+    if (!NC && !window.__DBG_NOGRAIN){
+      try {
+        NC = TERRAIN.grain = document.createElement('canvas');
+        NC.width = NC.height = NG;
+        const ng = NC.getContext('2d');
+        const im = ng.createImageData(NG, NG), d = im.data;
+        /* coarse octave on a 32x32 lattice, bilinear so it is blobs and not
+           blocks — blocks would be a second regular grid, i.e. the disease */
+        const CO = 32, coarse = new Float32Array(CO*CO);
+        for (let i=0;i<CO*CO;i++) coarse[i] = _sHash(i%CO, (i/CO)|0, 7);
+        for (let y=0;y<NG;y++) for (let x=0;x<NG;x++){
+          const cx2 = (x/NG)*CO, cy2 = (y/NG)*CO;
+          const x0 = cx2|0, y0 = cy2|0, fx = cx2-x0, fy = cy2-y0;
+          const c00 = coarse[(y0%CO)*CO + (x0%CO)],       c10 = coarse[(y0%CO)*CO + ((x0+1)%CO)];
+          const c01 = coarse[((y0+1)%CO)*CO + (x0%CO)],   c11 = coarse[((y0+1)%CO)*CO + ((x0+1)%CO)];
+          const cv = (c00*(1-fx)+c10*fx)*(1-fy) + (c01*(1-fx)+c11*fx)*fy;
+          const s = (_sHash(x, y, 13)-0.5)*0.58 + (cv-0.5)*0.42;
+          const k = (y*NG + x)*4;
+          /* warm highlight / warm shadow, never neutral: a grey speckle over
+             ochre sand desaturates it and the BAR asks for warm midtones */
+          if (s > 0){ d[k]=255; d[k+1]=246; d[k+2]=226; }
+          else      { d[k]=30;  d[k+1]=22;  d[k+2]=14;  }
+          d[k+3] = Math.min(255, Math.abs(s) * 2 * 255 * 0.155);
+        }
+        ng.putImageData(im, 0, 0);
+      } catch (e) { NC = TERRAIN.grain = null; }
+    }
+    const pat = NC ? g.createPattern(NC, 'repeat') : null;
+    if (pat){
+      g.save();
+      /* ⚠ DEVICE PIXELS, AND NEAREST-NEIGHBOUR. Both matter and both were got
+         wrong first time. Drawn through the DPR transform with the default
+         imageSmoothingEnabled, the tile is BILINEARLY RESAMPLED — which turns
+         per-texel noise into smooth ramps, and smooth ramps are exactly what
+         Skia dithers. Measured: that version RAISED the ordered-dither share
+         of the field's high-frequency energy from 0.573 to 0.588, i.e. it fed
+         the disease. At identity transform with smoothing off, one texel is
+         one device pixel, the grain has flat spectrum, and the share falls. */
+      g.setTransform(1,0,0,1,0,0);
+      g.imageSmoothingEnabled = false;
+      g.globalCompositeOperation = 'source-atop';
+      g.fillStyle = pat;
+      g.fillRect(0, 0, pw, ph);
+      /* second laydown: ~3x coarser and rotated 0.62 rad, so the two periods
+         are mutually irrational on both axes and no repeat is findable */
+      g.globalAlpha = 0.62;
+      g.translate(pw*0.5, ph*0.5); g.rotate(0.62); g.scale(3.1, 2.7);
+      g.translate(-pw*0.5, -ph*0.5);
+      g.fillStyle = pat;
+      g.fillRect(-pw, -ph, pw*3, ph*3);
+      g.restore();
+      g.setTransform(DPR,0,0,DPR,0,0);
     }
   }
 
@@ -4561,6 +4811,19 @@ window.__bbDebug = {
      HUD on it, so a critic can judge the terrain layer by itself. Read-only. */
   bakePng: () => { try { return TERRAIN.cv ? TERRAIN.cv.toDataURL('image/png') : null; }
                    catch (e) { return null; } },
+  /* FORCE ONE RE-BAKE. The only mutator in this object, and it exists because
+     both guards at the top of bakeTerrain() are keyed on (map, viewport,
+     light): same inputs ⇒ early return ⇒ the canvas is not redrawn. So an A/B
+     against __DBG_NOMACRO / __DBG_NORESTORE is impossible from outside without
+     it — you set the flag, round-trip the time of day back to where it was,
+     and diff a canvas against itself. (We did. It reported 0.000 luma delta on
+     every wall pixel, which is the signature of this trap, not of a clean
+     bake.) Call it, wait ~3 frames for the tone lock to re-converge, then read
+     bakePng(). Nothing in the render path calls this. */
+  rebake: (n) => { const k = Math.max(1, n|0 || 4); let ms = 0;
+                   for (let i=0;i<k;i++){ TERRAIN.key = null; TERRAIN.at = -1e9;
+                     bakeTerrain(); ms = TERRAIN.ms; }
+                   return +ms.toFixed(2); },
   /* the geometry the bake actually drew: every tile's projected top face and
      the interior wall quads beneath it, in CSS px. A pixel probe needs this to
      ask "is any of the basin's material showing on a cliff face?" without

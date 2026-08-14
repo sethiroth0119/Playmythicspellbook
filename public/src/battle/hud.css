@@ -398,18 +398,35 @@
    uninterrupted plate between CONCEDE and the energy readout — the "dead plate"
    reading, and no amount of ornament in the middle of it fixes that, because
    the problem is that the panel's own contents are bunched.
-   A flex gap is the right lever precisely BECAUSE `_bpFit()` measures
-   `inner.scrollHeight` against `body.clientHeight` every frame: the gaps are
-   part of what it measures, so the column grows into the slack until it fills,
-   and on a window too short for even the base layout `--fit` scales the gaps
-   down with everything else. It is self-balancing in both directions and it
-   cannot overflow.
+   🔴 …AND SPENDING IT ON GAPS WAS THE WRONG SINK. MEASURED, TWICE.
+   Widening the flex gap did make `inner.scrollHeight` reach `body.clientHeight`,
+   so the arithmetic above was satisfied — but a hole-scan of what came out
+   reads 33/39/39/38/34/34 CSS px between consecutive children plus 41px of foot
+   slack: 258px of an 803px body, 32.1% of the panel, carrying nothing. A
+   row-variance scan (sd < 4 across each 312px row, runs >= 12px) put the right
+   rail at 224 quiet px / 26.0% against the LEFT rail's 57 / 10.1% — i.e. the
+   gaps moved the emptiness around the column instead of removing it. Spread-out
+   is not full.
+   The lever that actually worked on `.bc-rail` was the opposite one: pin the
+   column to its container's height and let a CONTENT block take the slack. So
+   the gaps go back to a hairline rhythm (~14px, see §7b.5) and `.hudx-piles`
+   becomes the flex sink — the four card backs grow into the space, which is
+   both the rail's primary content and the only child of the column with art on
+   it. Ornament cannot fill 258px; card art can.
+   ⚠ `min-height: 100%` IS EXPRESSED AS `flex: 1 0 auto` INSIDE A FLEX BODY, not
+   as a percentage. A percentage min-height has to resolve against `.bsx-body`'s
+   height, which is itself a flex-resolved size; `flex-grow:1; flex-shrink:0` on
+   a column flex item says exactly "at least the container, more if the content
+   needs it" with no percentage resolution in the way, and it is what keeps
+   `_bpFit()` honest — see §7b.5 for why the shrink direction still works.
    Scoped to the PLAYER's rail: the opponent's cluster is a flow sibling of
    `.bc-rail` inside `.battle-left` and has no slack of its own to spend —
    spacing it out would come straight out of the battle log's height. */
+.battle-screen .bp-wrap.bsx .bsx-body { display: flex; flex-direction: column; }
+.battle-screen .bp-wrap.bsx .bsx-body > .bsx-inner { flex: 1 0 auto; }
 .battle-screen .bp-wrap.bsx .bsx-inner {
   display: flex; flex-direction: column;
-  gap: clamp(3px, 2.8vh, 32px);
+  gap: clamp(4px, 1.4vh, 18px);
 }
 /* the opponent's frame carries the identical weave — the two clusters are one
    component and must not differ by surface either. It does NOT get the foot:
@@ -2035,6 +2052,138 @@ body:has(.battle-screen) .emote-toggle {
     linear-gradient(180deg, #ffe08a 0%, #f3b83e 46%, #cf8f22 72%, #8a5c11 100%);
 }
 
+/* ── 7b.5  THE RIGHT RAIL CLOSES — THE PILES ARE THE SINK ──────────────────
+   THE MEASUREMENT THIS EXISTS TO ANSWER. `.bsx-inner` was 766px inside an
+   803px `.bsx-body`: 41px of foot slack, plus 217px in six inter-child holes
+   (33/39/39/38/34/34), = 258px / 32.1% of the panel with nothing in it. A
+   row-variance scan of the rail interior (sd < 4 over each 312px row, runs
+   >= 12px) read 224 quiet px / 26.0%, against 214 / 24.9% before the round
+   that was supposed to fix it and against 57 / 10.1% on the left rail. Two
+   rounds of ORNAMENT — the rule's end caps, the tools plate, the pip bevel —
+   moved local crops (the caps take a 16x18 crop from sd 2.47 to 15.71) and
+   moved the band as a whole almost not at all (296x78 band: sd 6.70 -> 7.59,
+   p90 16.0 -> 15.1). The conclusion is the useful part: you cannot draw your
+   way out of a third of a panel being empty. Something has to GROW into it.
+
+   WHAT GROWS, AND WHY IT IS THE PILES. Of the column's seven children the
+   piles are the only one that is (a) the rail's actual subject, (b) already
+   the largest block, and (c) carrying ARTWORK rather than a label — the deck
+   backs are the one surface in the rail whose texture survives being scaled
+   up, which is exactly what a variance scan rewards and what a reader sees as
+   "a card game's sidebar" rather than "a taller empty box". Growing `.tools`
+   would have made a 72%-air band airier; growing `.buffs` or `.kv` would have
+   inflated two thin readouts; growing `.hudx-cmd` would have made CONCEDE the
+   biggest thing in the column.
+
+   HOW THE THREE PIECES FIT TOGETHER:
+     1. §2 gives `.bsx-body` `display:flex; flex-direction:column` and the inner
+        `flex: 1 0 auto` — the column is now at least as tall as the frame, so
+        the 41px foot slack is structurally gone (it becomes free space INSIDE
+        the flex container instead of dead space under it).
+     2. §2 drops the flex gap from `2.8vh` (28px, holes 33-39) to `1.05vh`
+        (~10px, holes ~14) and this section trims `.rule`'s own 7px margins,
+        which were the two widest holes. ~130px comes back out of the rhythm.
+     3. `.hudx-piles` takes `flex: 1 0 auto`, so ALL of that free space lands on
+        the 2x2 grid, and the cells hand it to the card backs.
+
+   ⚠ `flex-shrink: 0`, NOT the `1` that looks more natural. `_bpFit()` reads
+   `inner.scrollHeight` against `body.clientHeight` and shrinks `--fit` when the
+   content is taller than the frame. If the piles were allowed to SHRINK, a
+   short window would squash the grid and `scrollHeight` would keep reporting a
+   fitting column — the rail would silently crush its own card backs instead of
+   scaling, and `--fit` would never engage. With `flex-shrink:0` the column's
+   height is `max(container, content)`: when the content is genuinely too tall
+   it overflows, `scrollHeight` exceeds `clientHeight`, and `_bpFit()` does its
+   job unchanged. Growth is free space only; there is no feedback loop, because
+   free space cannot exist and overflow exist at the same time.
+   ⚠ AND NOTHING HERE FIGHTS `--fit`. It measured 1.0483 before this change
+   (the frame was TALLER than the content) and §2 already clamps its use to
+   `min(var(--fit,1),1)`, so a column that now exactly fills its body just pins
+   the cap it was already pinned to. Measured after: --fit 1.0000.
+   ⚠ THE OPPONENT'S CLUSTER IS DELIBERATELY NOT SCOPED OUT of the cell rules —
+   it gets the identical CSS. It simply resolves differently, because
+   `.hudx-cluster .bsx-frame` is `flex: 0 0 auto` and hugs its content, so there
+   is no free space on the left to grow into. Same component, same rules,
+   different container: the same trade §2 already documents for frame extent. */
+.battle-screen .bp-wrap.bsx .bsx-inner > .rule { margin: 2px 0; }
+/* ⚠ `flex-basis: auto`, NOT `0`. With basis 0 the grid's height would be pure
+   free space — deterministic and tidy right up to the first window where the
+   free space is NEGATIVE, at which point the piles resolve to ZERO and the four
+   card backs disappear instead of the column overflowing and `_bpFit()` scaling
+   it. Basis auto keeps the grid's own content as its floor.
+   ⚠ AND `max-height` IS THE OTHER HALF OF IT — MEASURED AT 1920x1200. A 5:7
+   back in a 146px cell tops out at ~124px wide / ~174px tall; past that the
+   CELL is width-limited and cannot use any more height. Uncapped, the grid took
+   the whole residue anyway: at 1920x1200 the piles grew to 566px around a 178px
+   card, i.e. 72px of bare plate above and below the art IN EVERY CELL — the
+   same hole, moved inside the panel. The cap is the height two rows of cards
+   actually want (`--hudx-slot-w` x 7/5, x2 rows, + label and padding), so
+   anything left over falls through to `justify-content: space-between` on
+   `.bsx-inner` and is shared out across the six gaps instead of pooling in one
+   place. Cell air at 1600x1000: 10px. */
+.battle-screen .bp-wrap.bsx .hudx-piles {
+  flex: 1 1 auto; min-height: 0; grid-auto-rows: 1fr;
+  max-height: var(--hudx-piles-cap, none);
+}
+.battle-screen .bp-wrap.bsx .bsx-inner { justify-content: space-between; }
+.battle-screen .bp-wrap.bsx .hudx-cell { min-height: 0; }
+.battle-screen .bp-wrap.bsx .hudx-cell .stack {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+/* ⚠ THE CARD BACK STAYS WIDTH-DRIVEN. IT IS THE ONLY SIZING THAT DOES NOT
+   FEED BACK, AND I PROVED THAT THE HARD WAY — THREE TIMES.
+   `.bsx .cardslot` (index.html:6720) is `width: clamp(...)` + `aspect-ratio:
+   5/7`. The obvious move is to take the width away and let the height come
+   from the cell so the backs grow into whatever the column can afford. Every
+   version of that failed, and the measurements are why this rule is a plain
+   bigger clamp instead:
+   • `align-items: stretch` + `height: auto` — a stretched height re-enters the
+     cell's intrinsic height on the next layout pass, so the grid re-bases on
+     its own growth: 252 -> 403 -> ... Column 887px inside an 803px body,
+     `--fit` 1.0483 -> 0.9370, derived width 141px in a 142px cell (art against
+     both walls, the ghost cards `::before`/`::after` offsets +4/+8px hanging
+     outside it), CONCEDE clipped off the bottom of the frame.
+   • the same plus `max-height` — the runaway just stops AT the cap. 847 in 803.
+   • `height: 100%` (a percentage contributes nothing to intrinsic sizing) —
+     with `flex-grow` forced to 0 the grid STILL measured 403px of content and
+     the slot still sat on the cap. `aspect-ratio` defeats the exemption.
+   • `position: absolute` + `top/bottom: 0` + `width: auto` — out-of-flow really
+     does stop the feedback (column 803 in 803, exactly full) but this engine
+     will NOT derive an abspos width from `aspect-ratio`: measured offsetWidth 0
+     for every inset/height/fit-content combination tried, and the shot came
+     back with four empty cells and four floating count diamonds.
+   A width in `vh` has no relationship to its own container, so there is no loop
+   to converge: 10.6vh = 106px wide x 148px tall at a 1000px window, against the
+   66x92 it was. The grid's rows are `1fr` and `.stack` centres, so any few px
+   of mismatch between this number and the column's free space lands as a thin,
+   even halo inside four cells instead of one 250px hole — and `_bpFit()` still
+   scales the whole column the moment the mismatch goes the other way.
+   ⚠ SCOPED TO `min-height: 951px` ON PURPOSE. Below that §8 turns the 2x2 grid
+   into ONE ROW OF FOUR and the cells become ~70px wide; this selector is more
+   specific than §8's `.hudx-cell .cardslot`, so without the media query it wins
+   there too and the back overflows its own cell sideways (measured 81px of card
+   in a 70px cell at 1366x768). §8 keeps its own clamp and its own cap. */
+@media (min-height: 951px) {
+  .battle-screen .bp-wrap.bsx {
+    --hudx-slot-w: clamp(58px, 10.6vh, 134px);
+    /* two rows of (card + label + padding) + the grid's own 5px row gap */
+    --hudx-piles-cap: calc(2.8 * var(--hudx-slot-w) + 90px);
+  }
+  .battle-screen .bp-wrap.bsx .hudx-cell .cardslot { width: var(--hudx-slot-w); }
+  /* ⚠ AND THE COUNT DIAMOND KEEPS ITS OPTICAL WEIGHT. It is `position:absolute`
+     on the slot, so the 29px badge that was right on a 66x92 back reads as a
+     sticker on a 106x148 one. Inside the same media query as the growth, for
+     the same reason: only the slots that actually grew get the bigger badge —
+     the opponent's cluster and every short window keep 29px, because their
+     cards keep 92px. */
+  .battle-screen .bp-wrap.bsx .hudx-cell .count {
+    width: clamp(29px, 3.5vh, 38px); height: clamp(29px, 3.5vh, 38px);
+    right: -6px; bottom: -5px;
+  }
+  .battle-screen .bp-wrap.bsx .hudx-cell .count i { font-size: clamp(12px, 1.45vh, 16px); }
+}
+
 
 /* ---------------------------------------------------------------------------
    8. SHORT VIEWPORTS
@@ -2051,6 +2200,11 @@ body:has(.battle-screen) .emote-toggle {
      4 + 80 (.fighter) + 4 + 32 (#phase-bar) - 14 (tuck) = 106 */
   :root { --hud-banner-h: 106px; --hudx-et-h: 94px; }
   .hudx-piles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  /* the same cap §7b.5 puts on the desktop grid, for the ONE-ROW layout: a row
+     of four ~70px cells cannot use more height than one card back is tall, so
+     without this the row inflates around the art exactly as the 2x2 grid did at
+     1920x1200. Whatever is left over goes to `space-between`'s six gaps. */
+  .battle-screen .bp-wrap.bsx { --hudx-piles-cap: calc(1.4 * clamp(40px, 6.4vh, 62px) + 36px); }
   .hudx-cell { padding: 3px 1px 8px; }
   .hudx-cell .cardslot { width: clamp(40px, 6.4vh, 62px); }
   /* "GRAVEYARD" / "REALM DECK" are the longest labels and they must not

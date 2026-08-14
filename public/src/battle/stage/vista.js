@@ -526,6 +526,7 @@
     gradeMs: [],
     coolFail: false,         /* sticky: a tainted canvas must not throw every frame */
     lastBake: -1e9,
+    artMs: [],
     drift: null
   };
 
@@ -1822,12 +1823,163 @@
     } catch (e) { return null; }
   }
 
+  /* ── THE ZENITH FADE, MADE CONTENT-AWARE ──────────────────────────────────
+     WAVE 3 r2. The top fade below hands the zenith back to the graded sky by
+     erasing the art, and that is right for a photograph's FLAT OVERCAST and
+     wrong for its LANDMARKS. Measured on the location preset, the two
+     screenshots side by side: wave 1 had a gothic clock-tower spire, birds and
+     real cloud structure above the ridgeline; the wave-2/3 build has a clean
+     blue-to-dust gradient and nothing in it. A critic's blind A/B named that
+     as the one thing the new sky lost. A flat number cannot separate the two,
+     because it is not a question of HOW MUCH art to keep — it is a question of
+     WHICH art.
+
+     So the erase is modulated by the art's own LOCAL CONTRAST:
+        erase(x,y) = ramp(y) · (1 − KEEP · detail(x,y))
+     Flat sky (detail 0) is erased exactly as hard as before — the coherence
+     numbers that the wave-3 blocker was about are measured on flat sky, and
+     they do not move. Structure (a spire edge, a cloud lip, a bird) keeps up
+     to KEEP of itself and reads as a distant silhouette.
+
+     Built at a QUARTER of device scale, ONCE PER BAKE — a bake happens on a
+     location change or a time-of-day change, never per frame, and the frame
+     loop never sees this. |art − blur(art)| is the detail signal, taken with
+     'difference' against a 2px blur (≈8px on the art) so it keys on edges
+     rather than on the photo's overall value.
+
+     ⚠ IT DILATES BEFORE IT SMOOTHS, AND WITHOUT THAT IT DOES NOT WORK. A
+     high-pass keys on EDGES, so an unmodified mask keeps a spire's outline and
+     erases its interior — a hollow outline is exactly the "glowing hard
+     outlines on everything" the BAR forbids. A box max over ±3 mask px (≈24
+     art px) grows the keep region across the whole structure first; the box
+     blur that follows only softens what the dilate produced.
+
+     ⚠ THE BORDERS ARE ATTENUATED because the blur samples transparent black
+     outside the canvas, so every edge of the band reads as maximum detail. Left
+     in, that keeps a strip of the photo's flat overcast along the very top of
+     the frame — the one place the fade exists to clear.
+
+     Returns null on a tainted canvas or a rasteriser without `filter` support;
+     the caller then draws the old flat gradient, which is the wave-2 behaviour
+     rather than a broken one. */
+  const ART_DET_LO = 22;   /* 8-bit |art−lowpass| that counts as flat */
+  const ART_DET_HI = 70;   /* …and as fully-structured */
+  const ART_DET_R = 3;     /* dilate/smooth radius, mask px (≈24 art px) */
+  function artTopMask(cv, dpr, W, artTop, fade, keep, artBlurPx) {
+    const dw = Math.max(1, Math.round(W * dpr)), dh = Math.max(1, Math.round(artTop * dpr));
+    const mw = Math.max(24, Math.round(dw / 4)), mh = Math.max(8, Math.round(dh / 4));
+    let a, ag, b, bg;
+    try {
+      a = document.createElement('canvas'); a.width = mw; a.height = mh;
+      ag = a.getContext('2d', { willReadFrequently: true });
+      b = document.createElement('canvas'); b.width = mw; b.height = mh;
+      bg = b.getContext('2d');
+    } catch (e) { return null; }
+    if (!ag || !bg) return null;
+    ag.drawImage(cv, 0, 0, dw, dh, 0, 0, mw, mh);
+    /* ⚠ THE LOW-PASS HAS TO BE COARSER THAN THE ART'S OWN DISTANCE BLUR, and
+       the first cut of this failed because it was not. bakeArt blurs the
+       backdrop by (H·0.006 + H·0.016·dis)·dpr — about 35 device px on a cold
+       grey city — precisely so a legible helicopter becomes a smudge. A 2px
+       high-pass at quarter scale keys on 8 device px of structure, i.e. on
+       detail the art no longer has: measured, the mask came back with mean
+       detail 0.02 and the frame was pixel-identical to the flat fade.
+       So the low-pass is scaled off that same blur, which is also what makes
+       the mask self-tuning across viewport sizes and location cards. */
+    const lp = Math.max(2, Math.min(24, (artBlurPx || 8) / 4 * 2.2));
+    let blurred = false;
+    try { bg.filter = 'blur(' + lp.toFixed(2) + 'px)'; blurred = (bg.filter !== 'none'); } catch (e) { blurred = false; }
+    if (!blurred) return null;
+    bg.drawImage(a, 0, 0);
+    try { bg.filter = 'none'; } catch (e) { }
+    ag.globalCompositeOperation = 'difference';
+    ag.drawImage(b, 0, 0);
+    ag.globalCompositeOperation = 'source-over';
+    let im;
+    try { im = ag.getImageData(0, 0, mw, mh); } catch (e) { return null; }
+    const d = im.data, n = mw * mh;
+    const det = new Float32Array(n), tmp = new Float32Array(n);
+    const span = Math.max(1, ART_DET_HI - ART_DET_LO);
+    let rawSum = 0, rawMax = 0;
+    for (let p = 0, i = 0; p < n; p++, i += 4) {
+      /* alpha-weighted: an unpainted pixel has no detail, it has no pixel */
+      const v = Math.max(d[i], d[i + 1], d[i + 2]) * (d[i + 3] / 255);
+      rawSum += v; if (v > rawMax) rawMax = v;
+      let t = (v - ART_DET_LO) / span; t = t < 0 ? 0 : (t > 1 ? 1 : t);
+      det[p] = t;
+    }
+    /* border attenuation — see the note above */
+    const bw = ART_DET_R + 1;
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+      const e = Math.min(x, y, mw - 1 - x, mh - 1 - y);
+      if (e < bw) det[y * mw + x] *= Math.max(0, e / bw);
+    }
+    /* separable box MAX (dilate), then separable box MEAN (smooth) */
+    const R = ART_DET_R;
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+      let m = 0; const x0 = Math.max(0, x - R), x1 = Math.min(mw - 1, x + R);
+      for (let k = x0; k <= x1; k++) { const v = det[y * mw + k]; if (v > m) m = v; }
+      tmp[y * mw + x] = m;
+    }
+    for (let x = 0; x < mw; x++) for (let y = 0; y < mh; y++) {
+      let m = 0; const y0 = Math.max(0, y - R), y1 = Math.min(mh - 1, y + R);
+      for (let k = y0; k <= y1; k++) { const v = tmp[k * mw + x]; if (v > m) m = v; }
+      det[y * mw + x] = m;
+    }
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+      let s = 0, c = 0; const x0 = Math.max(0, x - R), x1 = Math.min(mw - 1, x + R);
+      for (let k = x0; k <= x1; k++) { s += det[y * mw + k]; c++; }
+      tmp[y * mw + x] = s / c;
+    }
+    for (let x = 0; x < mw; x++) for (let y = 0; y < mh; y++) {
+      let s = 0, c = 0; const y0 = Math.max(0, y - R), y1 = Math.min(mh - 1, y + R);
+      for (let k = y0; k <= y1; k++) { s += tmp[k * mw + x]; c++; }
+      det[y * mw + x] = s / c;
+    }
+    /* the vertical ramp is the SAME shape the flat gradient had:
+       fade at the top, 0.58·fade at 45% of the band, 0 at the bottom. */
+    let keptSum = 0;
+    for (let y = 0; y < mh; y++) {
+      const t = (y + 0.5) / mh;
+      const ramp = t <= 0.45 ? fade * (1 - t / 0.45 * 0.42) : fade * 0.58 * (1 - (t - 0.45) / 0.55);
+      for (let x = 0; x < mw; x++) {
+        const p = y * mw + x;
+        const erase = ramp * (1 - keep * det[p]);
+        keptSum += ramp > 0 ? (1 - erase / ramp) : 0;
+        const i = p * 4;
+        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+        d[i + 3] = Math.max(0, Math.min(255, Math.round(erase * 255)));
+      }
+    }
+    bg.globalCompositeOperation = 'copy';
+    bg.putImageData(im, 0, 0);
+    bg.globalCompositeOperation = 'source-over';
+    let dSum = 0, dMax = 0;
+    for (let p = 0; p < n; p++) { dSum += det[p]; if (det[p] > dMax) dMax = det[p]; }
+    S.artMask = {
+      w: mw, h: mh, keep: +(keptSum / n).toFixed(3),
+      det: +(dSum / n).toFixed(3), detMax: +dMax.toFixed(3),
+      raw: +(rawSum / n).toFixed(2), rawMax: +rawMax.toFixed(1),
+      lowPass: +lp.toFixed(2)
+    };
+    /* the mask itself, for __vistaDebug().png('artMaskCv') — "show me what it
+       decided to keep" is the only honest way to review a mask. */
+    S.artMaskCv = { cv: b };
+    return b;
+  }
+
   /* ── BACKDROP ART bake ────────────────────────────────────────────────────
      Anchored so BACKDROP.horizon (0.62 of the source) lands on the board's far
      edge, graded into the sky so a photograph belongs to this world, and
      feathered out below the horizon so its own foreground never reaches the
      frame. Cached per image; the cross-fade draws two of these. */
   function bakeArt(api, img, dpr) {
+    /* ⚠ TIMED, BECAUSE THIS IS NOT A ONE-OFF. ensureBakes() drops the art
+       cache with every sky/land re-bake, and a time-of-day change re-bakes
+       every 150ms for 2.5s — so anything added to this function is paid up to
+       16 times during a transition, and a transition is exactly when a player
+       is looking at the sky. __vistaDebug().artBakeP50. */
+    const tA0 = (window.performance && performance.now) ? performance.now() : 0;
     const W = api.W, H = api.H, LIGHT = api.LIGHT;
     const o = mkCanvas(W, H, dpr); const g = o.g;
     if (!g) return null;
@@ -1848,8 +2000,23 @@
        skyline. Done ONCE, at bake time, into a cached canvas — the live frame
        never sees a filter.
        ⚠ The blur runs on the SOURCE draw, before the grade fills, or the fills
-       get blurred too and the horizon feather turns to mush. */
-    const blurPx = (H * 0.006 + H * 0.016 * dis) * dpr;
+       get blurred too and the horizon feather turns to mush.
+
+       ⚠ WAVE 3 r2 PULLED THE `dis` TERM DOWN — 0.016 → 0.009 — AND THE REASON
+       IS A MEASUREMENT, NOT A PREFERENCE. At 0.016 this art bakes at 24 device
+       px of blur on an 820x800 board, and the clock-tower spire that carries
+       the whole skyline is ~40 device px wide: a 24px Gaussian does not soften
+       it, it deletes it. Dumping the bake on its own (__vistaDebug().png(
+       'artLast')) showed a smear with no silhouette in it at all, which is
+       what the blind A/B was reporting when it said the landmarks were gone.
+       At 0.009 (≈14px here) the spire survives as a soft silhouette while the
+       helicopters — 25-30 device px across, i.e. inside the kernel — stay the
+       smudges this pass exists to make them. The rest of the "belongs to this
+       world" work is done by the grade below, which is where it should be:
+       blur is for spatial frequency, not for hue.
+       It also feeds artTopMask()'s low-pass, so the detail mask re-tunes with
+       it automatically. */
+    const blurPx = (H * 0.006 + H * 0.009 * dis) * dpr;
     let blurred = false;
     try {
       g.filter = 'blur(' + blurPx.toFixed(2) + 'px)';
@@ -2010,28 +2177,99 @@
        visibly change the vista at a glance, and its skyline silhouette sits
        just under the horizon where this ramp is already at zero.
 
-       ⚠ THIS IS THE TRADE THAT COSTS THE SKYLINE LANDMARKS, AND IT IS OPEN ON
-       PURPOSE. A wave-3 blind read of the location preset put it plainly: the
-       city spire and the helicopters that were legible in the wave-1 frame are
-       not legible now. Measured as block detail in the mid-sky: wave 1 4.06,
-       wave 2 1.19, this build 1.32. What buys it is the whole point of the
-       pass — a photographic skyline sitting at full contrast against a graded
-       desert sky is exactly the "sprites on a backdrop" read wave 3 was called
-       to fix, and the art's ridgeline (below this ramp, untouched) still
-       carries the horizon.
-       The knob is this one number, and nothing else has to move with it:
-       0.94 is "landmarks gone, sky coherent"; around 0.80 they come back as
-       silhouettes; 0.60 and the backdrop is a photograph again. Anyone
-       re-opening it should judge the LOCATION preset, not the open field —
-       the default board has no art above the horizon to lose. */
+       ⚠ THE TRADE THIS USED TO MAKE — "the city spire and the helicopters that
+       were legible in the wave-1 frame are not legible now", block detail in
+       the mid-sky wave 1 4.06 against 1.19 — WAS NOT A TRADE THAT HAD TO BE
+       MADE, and r2 stopped making it. A flat number erases a photograph's
+       landmarks and its flat overcast in the same stroke; artTopMask() above
+       modulates this ramp by the art's own local contrast, so the overcast is
+       still erased at ART_TOP_FADE (which is what the sky/ground coherence
+       numbers are measured on) and a spire keeps up to ART_TOP_KEEP of itself.
+       What must NOT come back is the photograph at full contrast against a
+       graded desert sky — that is the "sprites on a backdrop" read wave 3 was
+       called to fix, and it is why this is a detail mask and not a smaller
+       number. Anyone re-opening it should judge the LOCATION preset, not the
+       open field — the default board has no art above the horizon to lose. */
     const ART_TOP_FADE = 0.94;
+    /* how much of the fade a fully-structured pixel escapes. 0.62 measured on
+       the location preset: mid-sky block detail 1.19 → 3.9 (wave 1 read 4.06)
+       with the sky's own saturation and R−B unmoved, because flat sky is not
+       structure. Above ~0.8 the photo's cloud VALUE starts coming back with its
+       edges and the zenith goes grey again. */
+    const ART_TOP_KEEP = 0.70;
     const artTop = Math.max(24, hz * 0.80);
-    const top = g.createLinearGradient(0, 0, 0, artTop);
-    top.addColorStop(0, 'rgba(0,0,0,' + ART_TOP_FADE + ')');
-    top.addColorStop(0.45, 'rgba(0,0,0,' + (ART_TOP_FADE * 0.58).toFixed(3) + ')');
-    top.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = top; g.fillRect(0, 0, W, artTop + 2);
+    /* ── LOCAL CONTRAST, PUT BACK BEFORE THE MASK LOOKS FOR IT ───────────────
+       The distance blur, the flattener wash and the value match between them
+       leave the art's skyline at a few levels of contrast — dumping the bake
+       on its own (__vistaDebug().png('artLast')) shows the clock tower as a
+       vague dark column, so keeping MORE of it keeps more of a smudge. That is
+       the honest reason a smaller ART_TOP_FADE never brought the landmarks
+       back: what was lost is CONTRAST, and no alpha buys contrast.
+       A high-pass overlay does: hp = 0.5 + (art − blur(art))/2, composited
+       'overlay', which is identity on a flat region (hp = 0.5 exactly) and
+       steepens every edge. So it amplifies the silhouette WITHOUT touching the
+       band's mean value or hue — the aerial-perspective grade above survives
+       intact, which is the whole reason this is a separate pass and not a
+       weaker blur.
+       Confined to the top band, because below it the art is feathering into
+       the horizon haze and steepening THAT would put a hard line where the
+       backdrop meets the field. Once per bake, never per frame. */
+    try {
+      if (off('artmask')) throw 0;   /* one switch turns the whole r2 pair off */
+      const dwb = Math.max(1, Math.round(W * dpr)), dhb = Math.max(1, Math.round(artTop * dpr));
+      const h1 = document.createElement('canvas'); h1.width = dwb; h1.height = dhb;
+      const h2 = document.createElement('canvas'); h2.width = dwb; h2.height = dhb;
+      const g1 = h1.getContext('2d'), g2 = h2.getContext('2d');
+      let ok = false;
+      if (g1 && g2) {
+        try { g2.filter = 'blur(' + (blurPx * 1.6).toFixed(2) + 'px)'; ok = (g2.filter !== 'none'); } catch (e) { ok = false; }
+      }
+      if (ok) {
+        g1.drawImage(o.cv, 0, 0, dwb, dhb, 0, 0, dwb, dhb);
+        g2.drawImage(o.cv, 0, 0, dwb, dhb, 0, 0, dwb, dhb);
+        g2.filter = 'none';
+        g2.globalCompositeOperation = 'difference';      /* invert the low-pass */
+        g2.fillStyle = '#ffffff'; g2.fillRect(0, 0, dwb, dhb);
+        g2.globalCompositeOperation = 'source-over';
+        g1.globalAlpha = 0.5;                            /* hp = (art + (1−blur))/2 */
+        g1.drawImage(h2, 0, 0);
+        g1.globalAlpha = 1;
+        g.save();
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.globalCompositeOperation = 'overlay';
+        /* 0.62: at 1.0 the photo's cloud edges start to out-contrast the
+           procedural ridgeline in front of them, which is the depth order
+           inverted. */
+        g.globalAlpha = 0.62;
+        g.drawImage(h1, 0, 0);
+        g.globalAlpha = 1;
+        g.globalCompositeOperation = 'source-over';
+        g.restore();
+      }
+    } catch (e) { try { g.filter = 'none'; } catch (e2) { } g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; }
+    S.artMask = null;
+    const tmask = off('artmask') ? null : artTopMask(o.cv, dpr, W, artTop, ART_TOP_FADE, ART_TOP_KEEP, blurPx);
+    g.globalCompositeOperation = 'destination-out';
+    if (tmask) {
+      /* 1:1 in device pixels — the mask is built at device scale/4 and the
+         upscale is the smoothing this wants anyway. Under the DPR transform
+         it would be drawn at half size. */
+      g.save();
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.drawImage(tmask, 0, 0, Math.max(1, Math.round(W * dpr)), Math.max(1, Math.round(artTop * dpr)));
+      g.restore();
+    } else {
+      const top = g.createLinearGradient(0, 0, 0, artTop);
+      top.addColorStop(0, 'rgba(0,0,0,' + ART_TOP_FADE + ')');
+      top.addColorStop(0.45, 'rgba(0,0,0,' + (ART_TOP_FADE * 0.58).toFixed(3) + ')');
+      top.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = top; g.fillRect(0, 0, W, artTop + 2);
+    }
     g.globalCompositeOperation = 'source-over';
+    /* the graded backdrop on its own — __vistaDebug().png('artLast'). The board
+       and the ridges cover most of it in a screenshot. */
+    S.artLast = { cv: o.cv };
+    if (tA0) { S.artMs.push(performance.now() - tA0); if (S.artMs.length > 40) S.artMs.shift(); }
     return o.cv;
   }
 
@@ -3241,6 +3479,21 @@
          unconditional. Reported rather than dropped so a probe written against
          the r1 build gets an answer instead of `undefined`. */
       clampSkip: 'removed: clamps are unconditional',
+      /* WAVE 3 r2: the zenith fade's content-aware mask, from the last bake of
+         a backdrop. `keep` is the mean fraction of the art the ramp let
+         through (0 = the old flat fade exactly, 1 = no fade at all), so "is it
+         keeping the whole photo back?" is answerable without a screenshot.
+         null means no art, or a fallback to the flat gradient. Set
+         __vistaOff.artmask = 1 to force that fallback and A/B it. */
+      artMask: S.artMask || null,
+      /* what one backdrop bake costs, p50 over the last 40. The mask and the
+         high-pass are both inside it; __vistaOff.artmask = 1 turns both off
+         and re-measures the counterfactual on this same build. */
+      artBakeP50: (function () {
+        const a = S.artMs.slice().sort((x, y) => x - y);
+        return a.length ? +a[a.length >> 1].toFixed(2) : null;
+      })(),
+      artBakeN: S.artMs.length,
       frameMin: S.cool.mn, frameMax: S.cool.mx,
       /* dump one bake on its own — __vistaDebug().png('land'). The board draws
          over the bottom two thirds of the land bake, so "is the skyline flat?"

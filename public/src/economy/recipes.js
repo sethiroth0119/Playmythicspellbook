@@ -451,9 +451,15 @@ export const RECIPES = {
        tier prints better product than one that has not, which is the point.
        Putting even 0.02 of `holographicFoil` back into `boosterPacks` would
        re-darken the entire base line by the min rule above. tools/economy-
-       tests/run.mjs round 0e is the tripwire for exactly that mistake: it
+       tests/run.mjs round 0j is the tripwire for exactly that mistake: it
        walks every ECO_BUILDING_MAP output back to the ground and goes RED if
        a card id stops being reachable.
+       (This said "round 0e" until FIX-D2. 0e is the founding-mint round and it
+       EXISTS and is green, so a reader who followed the old pointer landed on a
+       real but unrelated test and concluded the card line was covered. The
+       matching pointer in node-city/index.html was wrong the same way. A bad
+       cross-reference to a round that does not exist is a typo; one to a round
+       that does is a trap.)
      ⚠ REJECTED: fixing this with ALT_FEEDSTOCK legs. It looks like the natural
        lever, and it is a trap — `availabilityMap()` (sim.js) only measures the
        inputs of the leg a firm is ALREADY running, so an alternate leg's
@@ -500,7 +506,72 @@ export const RECIPES = {
      and plastic from `petrochemicals`, so all four Distributor tiles — depot,
      railyard, warehouse, caravanpost — employed people and produced zero.
      Rooted on `timber` for the same measured reason as `cardStock` above: not
-     on sim.js's upkeep or procurement lists, so nothing strips it nightly. */
+     on sim.js's upkeep or procurement lists, so nothing strips it nightly.
+
+     🔴 THIS LINE IS ALSO A DELIBERATE CONSUMER-BASKET RETUNE, AND IT SHIPPED
+        ONCE WITHOUT SAYING SO. That is the real story of FIX-D2 and it is
+        written here because the next person to touch this line needs it.
+
+     `packagingMaterial` is an INPUT TO 13 GOODS, and only two of them are
+     cards. Re-rooting it moved every one of them. Measured with
+     Prices.deriveBase(true) on both recipe objects, changing NOTHING else:
+
+        packagingMaterial   4.477 → 0.974   −78.2%
+        packagedFood        3.440 → 2.723   −20.9%     snacks        −19.8%
+        beverages          −19.1%   frozenFood −13.4%  emergencyFood −13.2%
+        personalCare       −10.8%   processedMeat −8.3%  bottledWater −8.2%
+        cleaningProducts    −5.6%   emergencySupplies −3.3%
+        medicine            −2.0%   pharmaceuticals −0.9%  advancedMedicine −0.4%
+        (card ids, in scope of the card package: boosterPacks −7.5%,
+         cardBoxes −7.1%, starterDecks −6.6%, tournamentProducts −6.4%,
+         collectorPacks −2.9%)
+     19 of 258 derived ids moved. Eleven of them have nothing to do with cards.
+
+     ── WHY THE REPRICE IS KEPT, AND WHY THE OLD PRICE WAS THE WRONG ONE ──────
+     The obvious repair — keep a cardboard/plastic leg beside the timber leg so
+     the price survives — was tried on paper and is STRUCTURALLY IMPOSSIBLE, not
+     merely undesirable. Walking ECO_BUILDING_MAP (the round-0j walk) over every
+     candidate input:
+        cardboard  MAKEABLE, does NOT reach the ground   (recycledPaper below it)
+        woodPulp   not in the map at all                 (needs industrialWater)
+        industrialWater  not in the map at all           (no intake tile exists)
+        plastic    not in the map at all                 (no refinery, no chem tier)
+        recycledPaper    byproduct — nothing ever banks one
+     There is no producible non-timber input. And ALT_FEEDSTOCK is rejected for
+     this by measurement three comments up: sim.js `availabilityMap()` only sees
+     the leg a firm is already running, so an alternate leg reads as fully
+     available and manufactures product out of nothing.
+
+     So the price HAD to move. It also SHOULD have: 42% of the old 4.477 was
+     `plastic` alone (0.2 × 9.399 = 1.880 of 3.519 units of input cost), a
+     petrochemical no city in this game can refine, and most of the rest was
+     `cardboard`, half of which is near-free recycled fibre. 4.477 was the
+     derived price of a plastic-and-scrap composite that could not be
+     manufactured anywhere. 0.974 is the price of board pressed from roundwood a
+     forestry camp actually cuts. Wood packaging really is a fraction of the cost
+     of plastic packaging; the number fell because the MATERIAL changed.
+
+     ⚠ AND IT BOUGHT THOSE ELEVEN GOODS NOTHING. Measured on the same walk: not
+       one of them became producible. Nine (packagedFood, snacks, frozenFood,
+       emergencyFood, personalCareProducts, processedMeat, bottledWater,
+       cleaningProducts, pharmaceuticals) have no ECO_BUILDING_MAP row at all;
+       `beverages` and `medicine` are mapped and still dark for reasons below
+       them. The re-root changed ONLY what households and importers pay. Anyone
+       arguing this line back the other way is arguing about the consumer
+       basket, not about producibility, and should say so out loud.
+
+     ⚠ REJECTED: raising the timber coefficient to soften the fall. Swept it —
+       0.8→0.974, 1.1→1.218, 1.9→1.868, 4.0→3.573. Reaching 4.477 needs ≈5.1
+       timber per unit of board, which is not a yield, it is a number picked to
+       hit a target. Half the old price was plastic; no wood-rooted recipe can
+       reproduce a petrochemical price, so the honest move is to report the
+       retune rather than disguise it.
+
+     🔒 run.mjs ROUND 0k now snapshots the WHOLE derived catalogue. Any edit in
+        this file that moves any base price by >0.25% turns the gate red and
+        names the ids. If you meant it, re-baseline the snapshot in the same
+        commit — that is the point: the number changing is fine, the number
+        changing SILENTLY is what cost us this package. */
   packagingMaterial:  { in: { timber: 0.8 },                                       labor: 0.07, power: 0.12, ind: 'packaging' },
   /* 🖨 ONE MATERIAL INPUT, ON PURPOSE. The press's power and water are already
      charged through `power:` and firms.js's ctx coverage; naming `electricity`

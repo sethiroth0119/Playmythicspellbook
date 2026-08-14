@@ -39297,6 +39297,106 @@ const RESOURCES = [
   { id: 'wood',             name: 'Wood',             icon: '🪵', color: '#c08a4a' },
   { id: 'stone',            name: 'Stone',            icon: '🪨', color: '#a8a29a' },
   { id: 'cloth',            name: 'Cloth',            icon: '🧵', color: '#e0b8c8' },
+
+  /* ══ 🧰 THE CHAIN PROMOTION (v120t9 — 56 ids) ═══════════════════════════════
+     🔴 THIS LIST IS DERIVED, NOT CHOSEN. The rule, in one line:
+
+         promote = { every `out` id of ECO_BUILDING_MAP (ops join included) }
+                   ∩ MythicResourceChain.NEW_IDS
+
+     i.e. exactly the catalogue ids that now have a REAL PRODUCER standing behind
+     them, because this round wired 19 more buildings into the economy. Nothing
+     was hand-picked and nothing was promoted "because it looked useful".
+
+     WHY THAT RULE AND NOT "PROMOTE THE 245". RESOURCES_NEXT.md quotes the r12
+     notes on an id that is bankable but unmakeable — "worse than missing,
+     because the player's pile of it is real and inert" — and promoting the whole
+     catalogue would reproduce that 245 times in one commit. A resource is
+     promoted TOGETHER WITH ITS PRODUCER, never before it. That is why this block
+     is 56 rows and not 245, and why every row below also has:
+       • a producer in /src/city/production.data.js (CITY_PRODUCTION), and
+       • a terroir tier (the slot bag in /src/city/terroir.js re-derives to 70).
+
+     ⚠ NAME / ICON / COLOUR ARE COPIED VERBATIM FROM src/resources/chain.js and
+       must stay that way. node-city's RES_META seeds itself from that same
+       catalogue, so the two windows agree by construction; a "nicer" icon typed
+       in here alone would put a different glyph on the same resource in the camp
+       and in the city. The icons repeat within a category (all ten agriculture
+       ids are 🌾) because the catalogue assigns per-category glyphs — that is
+       its choice, not a defect introduced here, and it is not worth a hand
+       mirror of 56 emoji in two files to change.
+
+     ⚠ THIS DOES NOT MAKE THEM ECONOMY-WRITABLE. /src/economy still holds its own
+       inventory of all 258 chain ids and still writes NONE of them through
+       addRes/spendRes (economy/index.js §"never addRes a chain resource").
+       Promotion changes what the CAMP can hold, price, show and make. It does
+       not change how the closed loop accounts internally, and the gate
+       (tools/economy-tests/run.mjs round0p) asserts that boundary is intact.
+
+     ⚠ THE COUNT IS NOW 70. Every derived site follows for free — RESOURCE_IDS,
+       _ensureResources, the market guard, resourceCostHtml/_normCost/_facCostAt,
+       the admin editors, MythicCityBridge.resources → terroir — and the stash
+       floor scales itself (_resStashFloor: 143 × 70 = 10,010, up from 2,002).
+     ⚠ DO NOT EDIT THIS BLOCK BY HAND. round0p re-runs the derivation above
+       against the shipped node-city map and goes RED on any drift, in either
+       direction. Add a building to ECO_BUILDING_MAP and the gate will tell you
+       exactly which row to add here. */
+  { id: 'aluminumOre',             name: 'Aluminum Ore',            icon: '🪨', color: '#a8a29a' },
+  { id: 'anomalousEnergy',         name: 'Anomalous Energy',        icon: '🟣', color: '#b06bff' },
+  { id: 'arcaneCrystal',           name: 'Arcane Crystal',          icon: '🟣', color: '#b06bff' },
+  { id: 'beverages',               name: 'Beverages',               icon: '🍞', color: '#e0a86a' },
+  { id: 'boosterPacks',            name: 'Booster Packs',           icon: '🃏', color: '#d4af37' },
+  { id: 'bread',                   name: 'Bread',                   icon: '🍞', color: '#e0a86a' },
+  { id: 'cannedFood',              name: 'Canned Food',             icon: '🍞', color: '#e0a86a' },
+  { id: 'cardStock',               name: 'Card Stock',              icon: '🃏', color: '#d4af37' },
+  { id: 'cardboard',               name: 'Cardboard',               icon: '🪵', color: '#c08a4a' },
+  { id: 'cars',                    name: 'Cars',                    icon: '🚗', color: '#e08a5a' },
+  { id: 'clay',                    name: 'Clay',                    icon: '🪨', color: '#a8a29a' },
+  { id: 'coal',                    name: 'Coal',                    icon: '⚡', color: '#ffcf6b' },
+  { id: 'constructionComponents',  name: 'Construction Components', icon: '🧱', color: '#c2725a' },
+  { id: 'copperOre',               name: 'Copper Ore',              icon: '🪨', color: '#a8a29a' },
+  { id: 'corn',                    name: 'Corn',                    icon: '🌾', color: '#d9c46a' },
+  { id: 'cotton',                  name: 'Cotton',                  icon: '🌾', color: '#d9c46a' },
+  { id: 'crudeOil',                name: 'Crude Oil',               icon: '⚡', color: '#ffcf6b' },
+  { id: 'electricity',             name: 'Electricity',             icon: '⚡', color: '#ffcf6b' },
+  { id: 'fabric',                  name: 'Fabric',                  icon: '🧥', color: '#e0b8c8' },
+  { id: 'freshFish',               name: 'Fresh Fish',              icon: '🐟', color: '#6fc0d8' },
+  { id: 'freshWater',              name: 'Fresh Water',             icon: '💧', color: '#7fd6ff' },
+  { id: 'fruit',                   name: 'Fruit',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'gasoline',                name: 'Gasoline',                icon: '⚡', color: '#ffcf6b' },
+  { id: 'gravel',                  name: 'Gravel',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'herbs',                   name: 'Herbs',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'householdGoods',          name: 'Household Goods',         icon: '🧥', color: '#e0b8c8' },
+  { id: 'limestone',               name: 'Limestone',               icon: '🪨', color: '#a8a29a' },
+  { id: 'lumber',                  name: 'Lumber',                  icon: '🪵', color: '#c08a4a' },
+  { id: 'machineParts',            name: 'Machine Parts',           icon: '⚙️', color: '#b0b7c3' },
+  { id: 'maintenanceParts',        name: 'Maintenance Parts',       icon: '🚗', color: '#e08a5a' },
+  { id: 'metalComponents',         name: 'Metal Components',        icon: '⛓️', color: '#9fb4d8' },
+  { id: 'mythicResidue',           name: 'Mythic Residue',          icon: '🟣', color: '#b06bff' },
+  { id: 'naturalGas',              name: 'Natural Gas',             icon: '⚡', color: '#ffcf6b' },
+  { id: 'nickelOre',               name: 'Nickel Ore',              icon: '🪨', color: '#a8a29a' },
+  { id: 'packagingMaterial',       name: 'Packaging Material',      icon: '🃏', color: '#d4af37' },
+  { id: 'pigIron',                 name: 'Pig Iron',                icon: '⛓️', color: '#9fb4d8' },
+  { id: 'plantFiber',              name: 'Plant Fiber',             icon: '🌾', color: '#d9c46a' },
+  { id: 'potatoes',                name: 'Potatoes',                icon: '🌾', color: '#d9c46a' },
+  { id: 'preparedMeals',           name: 'Prepared Meals',          icon: '🍞', color: '#e0a86a' },
+  { id: 'printedCards',            name: 'Printed Cards',           icon: '🃏', color: '#d4af37' },
+  { id: 'recycledMetal',           name: 'Recycled Metal',          icon: '♻️', color: '#86e08a' },
+  { id: 'researchChemicals',       name: 'Research Chemicals',      icon: '💊', color: '#ff8aa0' },
+  { id: 'researchEquipment',       name: 'Research Equipment',      icon: '🛡️', color: '#7fa8c8' },
+  { id: 'rice',                    name: 'Rice',                    icon: '🌾', color: '#d9c46a' },
+  { id: 'sand',                    name: 'Sand',                    icon: '🪨', color: '#a8a29a' },
+  { id: 'seafood',                 name: 'Seafood',                 icon: '🐟', color: '#6fc0d8' },
+  { id: 'seaweed',                 name: 'Seaweed',                 icon: '🐟', color: '#6fc0d8' },
+  { id: 'shellfish',               name: 'Shellfish',               icon: '🐟', color: '#6fc0d8' },
+  { id: 'silica',                  name: 'Silica',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'soybeans',                name: 'Soybeans',                icon: '🌾', color: '#d9c46a' },
+  { id: 'sportingGoods',           name: 'Sporting Goods',          icon: '🧥', color: '#e0b8c8' },
+  { id: 'timber',                  name: 'Timber',                  icon: '🪵', color: '#c08a4a' },
+  { id: 'tires',                   name: 'Tires',                   icon: '🚗', color: '#e08a5a' },
+  { id: 'vegetables',              name: 'Vegetables',              icon: '🌾', color: '#d9c46a' },
+  { id: 'wheat',                   name: 'Wheat',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'zincOre',                 name: 'Zinc Ore',                icon: '🪨', color: '#a8a29a' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -223424,7 +223524,7 @@ render();
      bridge it registers, stays inert and warns once — the globals trap.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/city/index.js?v=v120u0seam"></script>
+<script type="module" src="src/city/index.js?v=v120t9chainprod1"></script>
 <!-- 🤝 TRADING — player-to-player swaps + LOT listings for the Resource
      Exchange. Registers window.MythicTrading and is INERT until the Market's
      Resources tab renders. index.html keeps the Supabase calls (Cloud/Profile

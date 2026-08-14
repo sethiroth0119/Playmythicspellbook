@@ -98,6 +98,19 @@ let bad = 0;
                                    pays differently depending on what the test
                                    process happened to simulate before it
 
+     ECON_TEST_SABOTAGE=no-producer round0p: delete the CITY_PRODUCTION building
+                                   that yields `timber`, i.e. promote an id into
+                                   RESOURCES and forget its producer. That is the
+                                   "real and inert" failure RESOURCES_NEXT.md is
+                                   written about, and nothing else in the repo
+                                   sees it: the vault renders the row at 0, the
+                                   market lists it, the audit is untouched
+     ECON_TEST_SABOTAGE=promo-drift round0p: add one plausible id (`flour`) to
+                                   PROMOTED_CHAIN_IDS without touching
+                                   ECO_BUILDING_MAP — a hand-extended promotion
+                                   list, which is the other direction the same
+                                   mistake arrives from
+
    ⚠ Every one of these must turn the gate RED. If you change these rounds, run
      all of them and check that they still do; an unset variable is the shipping
      path and does nothing. */
@@ -120,11 +133,18 @@ let CITY_MAP = null;
    Module scope because BOTH round0b (object literals) and round0d (the body of
    `function ecoHost()`) read the shipped file this way; the second copy was
    written and then deleted. */
-const srcBlockAfter = (src, decl) => {
+/* `open` defaults to '{' — every pre-existing caller reads an object literal.
+   round0p passes '[' to read index.html's `const RESOURCES = [ … ]`, which is
+   the same scan with the other bracket pair; giving it a parameter beats a
+   second copy of a scanner whose whole job is being fussy about strings and
+   comments. */
+const srcBlockAfter = (src, decl, open) => {
   if (!src) return null;
+  open = open || '{';
+  const close = open === '[' ? ']' : '}';
   const at = src.indexOf(decl);
   if (at < 0) return null;
-  let i = src.indexOf('{', at + decl.length - 1);
+  let i = src.indexOf(open, at + decl.length - 1);
   if (i < 0) return null;
   const start = i;
   let depth = 0;
@@ -137,8 +157,8 @@ const srcBlockAfter = (src, decl) => {
       for (; i < src.length; i++) { if (src[i] === '\\') { i++; continue; } if (src[i] === q) break; }
       continue;
     }
-    if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
+    if (c === open) depth++;
+    else if (c === close) { depth--; if (depth === 0) return src.slice(start, i + 1); }
   }
   return null;                       // unbalanced ⇒ nothing, never a guess
 };
@@ -3609,6 +3629,363 @@ const srcBlockAfter = (src, decl) => {
 
   if (fails) { bad++; console.log('\n=== ROUND 0n: ' + fails + ' FAILED ==='); }
   else console.log('\n=== ROUND 0n: ALL PASS ===');
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0p — 🧰 EVERY LEDGER RESOURCE HAS A PRODUCER, AND THE PROMOTION SET IS
+              A DERIVATION RATHER THAN A LIST SOMEBODY LIKED
+   ----------------------------------------------------------------------------
+   🔴 THE FAILURE THIS DEFENDS AGAINST IS THE ONE RESOURCES_NEXT.md IS ABOUT.
+   The r12 notes, verbatim:
+
+     > "A resource you can loot, bank, and be capped by — but cannot sell, spend,
+     >  make, or see. That is not 'wood is missing'; it is worse than missing,
+     >  because the player's pile of it is real and inert."
+
+   index.html's RESOURCES just grew 14 → 70. Every one of the 56 new ids is a
+   vault row, a market listing, a cost leg and a share of the stash cap from the
+   moment it appears in that array — and NONE of them is in SALVAGE_RES, so
+   unlike wood/stone/cloth there is not even a loot table behind them. An id
+   promoted without a producer is therefore strictly inert, and NOTHING ELSE IN
+   THIS REPO NOTICES: the vault renders it at 0, the market lists it, the audit
+   is untouched, the console is clean.
+
+   So this round asserts the two halves of "a resource is promoted TOGETHER with
+   its producer, never before it":
+
+     DERIVATION   the promoted set IS
+                    { every `out` id of ECO_BUILDING_MAP, ops join applied }
+                    ∩ MythicResourceChain.NEW_IDS
+                  recomputed here from the SHIPPED node-city file, and compared
+                  against BOTH copies that had to be written by hand (RESOURCES
+                  in index.html, PROMOTED_CHAIN_IDS in production.data.js).
+                  Neither copy may drift in either direction.
+     PRODUCER     every id in RESOURCE_IDS is yielded by some CITY_PRODUCTION
+                  building, plus the whole of auditCatalog() against the REAL 70
+                  rather than its own fallback list.
+
+   …and three things the promotion could have broken silently:
+
+     TERROIR      the slot bag has to sum to the ledger size or profileFor()
+                  turns the entire feature off behind one console.warn. Swept
+                  over every n from 1 to 258, failing on the WORST cell — not on
+                  three lucky points, and not on 70 alone.
+     ICONS        node-city's RES_META seeds itself from the catalogue with
+                  EXISTING KEYS WINNING, because those icons were chosen for that
+                  HUD (stone is 🪨 and not 🧱, which is CITY_STOCK.ingots). The
+                  seeding join is re-run here and the hand-picked glyphs are
+                  asserted by value.
+     RULE 2       promotion changes what the CAMP can hold, price, show and make.
+                  It must NOT make the chain writable through the ledger:
+                  /src/economy still calls neither addRes nor spendRes, and no
+                  node-city BUILDINGS row gen/use/costs a promoted id. Both are
+                  checked against comment-stripped source, so a mention in prose
+                  cannot pass for a call and a call cannot hide in a comment.
+
+   ── PROVE IT CAN FAIL ──────────────────────────────────────────────────────
+     ECON_TEST_SABOTAGE=no-producer   remove the CITY_PRODUCTION building that
+                                      yields `timber` — i.e. promote one id and
+                                      forget its producer, the exact mistake this
+                                      round exists for. Turns the producer check
+                                      AND auditCatalog rule 1 red.
+     ECON_TEST_SABOTAGE=promo-drift   add one plausible id (`flour`) to the
+                                      promoted set without touching the map. A
+                                      hand-extended list is the other way this
+                                      goes wrong, and it must be just as red.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0p-ledger-promotion ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+  const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  const NC_PATH  = join(here, '../../public/node-city/index.html');
+  const IDX_PATH = join(here, '../../public/index.html');
+  let NC = null, IDX = null;
+  try { NC = readFileSync(NC_PATH, 'utf8'); } catch (e) { NC = null; }
+  try { IDX = readFileSync(IDX_PATH, 'utf8'); } catch (e) { IDX = null; }
+
+  const litFrom = (src, decl, open) => {
+    const txt = srcBlockAfter(src, decl, open);
+    if (!txt) return null;
+    try { return (new Function('return (' + txt + ');'))(); } catch (e) { return null; }
+  };
+  /* BUILDINGS is NOT a pure literal — several rows price themselves off
+     STOCK_CAP_PER_WAREHOUSE and friends — so it is read the way round0f and
+     round0h already read it: evaluated inside a `with` over a Proxy that answers
+     0 for every free identifier. Only KEY NAMES matter to the Rule 2 check
+     below, and those survive the flattening intact. */
+  const looseFrom = (src, decl) => {
+    const txt = srcBlockAfter(src, decl);
+    if (!txt) return null;
+    try {
+      const scope = new Proxy({}, { has: () => true, get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+      return new Function('__s', 'with (__s) { return (' + txt + '); }')(scope);
+    } catch (e) { return null; }
+  };
+
+  const STATIC = litFrom(NC, 'const ECO_BUILDING_MAP = {');
+  const OPMAP  = litFrom(NC, 'const OP_ECO_MAP = {');
+  const BLDG   = looseFrom(NC, 'const BUILDINGS = {');
+  const STOCK  = litFrom(NC, 'const CITY_STOCK = {');
+  const METAH  = litFrom(NC, 'const RES_META = {');
+  const RES    = litFrom(IDX, 'const RESOURCES = [', '[');
+  const pm     = NC ? /const\s+OPS_PREFIX\s*=\s*'([^']*)'/.exec(NC) : null;
+  const PREFIX = pm ? pm[1] : null;
+
+  /* 🔴 THE VACUOUS-TRIPWIRE GUARD, same rule as round0b: a scrape that matches
+     nothing would "pass" every assertion below over empty sets, and that is a
+     worse state than having no round at all — the comments in index.html and
+     production.data.js both promise this check exists. Read fails ⇒ stop. */
+  const gotAll =
+    chk('read public/index.html and node-city/index.html',
+        !!NC && !!IDX && NC.length > 100000 && IDX.length > 1000000,
+        (NC ? NC.length : 'NC UNREADABLE') + ' / ' + (IDX ? IDX.length : 'IDX UNREADABLE')) &
+    chk('extracted ECO_BUILDING_MAP / OP_ECO_MAP / OPS_PREFIX / BUILDINGS / CITY_STOCK / RES_META / RESOURCES',
+        !!STATIC && !!OPMAP && !!PREFIX && !!BLDG && !!STOCK && !!METAH && Array.isArray(RES) && RES.length > 10,
+        [STATIC, OPMAP, BLDG, STOCK, METAH, RES].map(o => o ? (Array.isArray(o) ? o.length : Object.keys(o).length) : 'NULL').join('/') + ' prefix=' + PREFIX);
+
+  if (!gotAll) {
+    console.log('\n🔴 THE SOURCE COULD NOT BE READ — nothing below was checked.');
+    console.log('   If a declaration was renamed or moved, fix the `litFrom` markers in this round.');
+    console.log('   Do NOT delete it: index.html\'s RESOURCES block and production.data.js both');
+    console.log('   carry a comment saying round0p re-derives them.');
+    bad++; console.log('\n=== ROUND 0p: ' + fails + ' FAILED ===');
+  } else {
+    // ── 1. THE DERIVATION, re-run from the shipped map ─────────────────────
+    if (!global.window) global.window = { MythicCityBridge: { addCinders: async () => {} } };
+    const chain = await import('../../public/src/resources/chain.js');
+    const MAP = { ...STATIC };
+    for (const t of Object.keys(OPMAP)) MAP[PREFIX + t] = OPMAP[t];
+
+    const outs = new Set();
+    for (const k of Object.keys(MAP)) for (const o of (MAP[k].out || [])) outs.add(o);
+    const NEWSET = new Set(chain.NEW_IDS);
+    const DERIVED = Array.from(outs).filter(id => NEWSET.has(id)).sort();
+
+    /* Floors, not equalities: adding a building must not require editing this
+       file, but a scrape that suddenly returns a handful must fail. Both shipped
+       figures are printed every run so a real drop is visible. */
+    chk('the derivation is non-vacuous (map ' + Object.keys(MAP).length + ' buildings, ' +
+        outs.size + ' distinct outputs, catalogue ' + chain.NEW_IDS.length + ' new ids)',
+        Object.keys(MAP).length >= 40 && outs.size >= 40 && chain.NEW_IDS.length >= 200,
+        Object.keys(MAP).length + '/' + outs.size + '/' + chain.NEW_IDS.length);
+    console.log('\n  promotion rule: ECO_BUILDING_MAP.out (ops join) ∩ chain.NEW_IDS');
+    console.log('  → ' + DERIVED.length + ' ids: ' + DERIVED.join(', '));
+    console.log('  outputs NOT promoted because index.html already defines them: ' +
+                Array.from(outs).filter(id => !NEWSET.has(id)).sort().join(', ') + '\n');
+    chk('the derived promotion set has at least 50 ids (shipped: ' + DERIVED.length + ')',
+        DERIVED.length >= 50, String(DERIVED.length));
+
+    // ── 2. BOTH HAND COPIES ARE EXACTLY THE DERIVATION ─────────────────────
+    const PD = await import('../../public/src/city/production.data.js');
+    let PROMOTED = PD.PROMOTED_CHAIN_IDS.slice().sort();
+    if (SABOTAGE === 'promo-drift') {
+      PROMOTED = PROMOTED.concat(['flour']).sort();
+      console.log('   🧨 added `flour` to PROMOTED_CHAIN_IDS — a plausible id with no building behind it');
+    }
+    chk('production.data.js PROMOTED_CHAIN_IDS === the derivation (' + PROMOTED.length + ' vs ' + DERIVED.length + ')',
+        same(PROMOTED, DERIVED),
+        'only in the file: [' + PROMOTED.filter(x => !DERIVED.includes(x)).join(', ') +
+        '] · only in the derivation: [' + DERIVED.filter(x => !PROMOTED.includes(x)).join(', ') + ']');
+
+    const RIDS = RES.map(r => r.id);
+    /* 🔴 THE PRE-PROMOTION LEDGER, WRITTEN OUT AS A LITERAL — and it has to be.
+       The first draft of this section computed `LEGACY = RIDS.filter(id =>
+       !DERIVED.includes(id))`, which is the complement of DERIVED by
+       construction, so "nothing outside LEGACY ∪ DERIVED" was true of EVERY
+       possible RESOURCES array and the check could not fail. Driven: adding
+       `flour` to RESOURCES left it green. A literal is the only version of this
+       assertion that has any content — it is the r12 fourteen, it does not move,
+       and if it ever does that is a decision worth a red gate. */
+    const LEGACY14 = ['food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies', 'metal',
+                      'fuel', 'corruptedEssence', 'memoryShards', 'dna', 'wood', 'stone', 'cloth'];
+    chk('index.html RESOURCES = the 14 legacy ids + EXACTLY the derivation, in that order (' + RIDS.length + ')',
+        same(RIDS, LEGACY14.concat(DERIVED)),
+        RIDS.length + ' ids vs ' + (LEGACY14.length + DERIVED.length) + ' expected');
+    /* …and the same statement said as a SET, so the failure names the offender
+       instead of only saying the arrays differ. This is the criterion "no id was
+       promoted without a producer" in its contrapositive form: it is not enough
+       that the derivation ⊆ RESOURCES, nothing else may ride in beside it. */
+    const orphan = RIDS.filter(id => !LEGACY14.includes(id) && !DERIVED.includes(id));
+    const missing = DERIVED.filter(id => !RIDS.includes(id));
+    chk('no id was promoted that the derivation does not justify, and none it does was left out',
+        orphan.length === 0 && missing.length === 0,
+        'unjustified: [' + orphan.join(', ') + '] · missing: [' + missing.join(', ') + ']');
+
+    // ── 3. …AND THE LEDGER AND THE CATALOGUE AGREE ON WHAT EACH ONE IS ─────
+    const metaBad = [];
+    for (const id of DERIVED) {
+      const row = RES.find(r => r.id === id), c = chain.chainById(id);
+      if (!row || !c) { metaBad.push(id + ' → missing'); continue; }
+      if (row.name !== c.name)   metaBad.push(id + ' name ' + row.name + ' ≠ ' + c.name);
+      if (row.icon !== c.icon)   metaBad.push(id + ' icon ' + row.icon + ' ≠ ' + c.icon);
+      if (row.color !== c.color) metaBad.push(id + ' color ' + row.color + ' ≠ ' + c.color);
+    }
+    chk('every promoted RESOURCES row matches chain.js name/icon/colour verbatim — the camp and the city must print the same glyph',
+        metaBad.length === 0, metaBad.slice(0, 6).join(' | '));
+
+    // ── 4. THE PRODUCER. THIS IS THE TRIPWIRE. ─────────────────────────────
+    if (SABOTAGE === 'no-producer') {
+      const i = PD.CITY_PRODUCTION.findIndex(b => b.yields && b.yields.timber);
+      if (i >= 0) { console.log('   🧨 removed ' + PD.CITY_PRODUCTION[i].id + ' — `timber` is now promoted with no producer'); PD.CITY_PRODUCTION.splice(i, 1); }
+    }
+    const produced = new Set();
+    PD.CITY_PRODUCTION.forEach(b => Object.keys(b.yields || {}).forEach(r => produced.add(r)));
+    const noProd = RIDS.filter(id => !produced.has(id));
+    console.log('  ' + PD.CITY_PRODUCTION.length + ' CITY_PRODUCTION buildings yield ' + produced.size + ' distinct ids');
+    chk('EVERY id in RESOURCES has a building that yields it — else the pile is real and inert',
+        noProd.length === 0, 'no producer for: ' + noProd.join(', '));
+
+    /* auditCatalog against the REAL ledger, not its own fallback: rule 1 (a
+       producer), 2 (never priced only in what it makes), 3 (≥3 resource legs),
+       4 (every cost key is a real resource) and 5 (the top tier pulls a rare),
+       over all 71 buildings including the 56 generated ones. */
+    const problems = PD.auditCatalog(RIDS);
+    chk('auditCatalog() is clean against the live ' + RIDS.length + '-id ledger',
+        problems.length === 0, problems.slice(0, 8).join(' | ') + (problems.length > 8 ? ` … +${problems.length - 8}` : ''));
+    /* A producer with no way to be reached is the same bug one level up. */
+    const badPrereq = [];
+    for (const k of Object.keys(PD.CITY_PREREQ)) {
+      if (!PD.cityProdDef(k)) badPrereq.push(k + ' → not a building');
+      for (const need of (PD.CITY_PREREQ[k] || [])) if (!PD.cityProdDef(need)) badPrereq.push(k + ' needs ' + need + ' → not a building');
+    }
+    chk('every CITY_PREREQ key and every prerequisite names a real building',
+        badPrereq.length === 0, badPrereq.slice(0, 6).join(' | '));
+
+    // ── 5. TERROIR — swept, and failing on the worst cell ──────────────────
+    const T = (await import('../../public/src/city/terroir.js')).default;
+    chk('terroir FALLBACK_IDS (via resourceIds() with no host) === RESOURCES',
+        same(T.resourceIds().slice().sort(), RIDS.slice().sort()),
+        T.resourceIds().length + ' vs ' + RIDS.length);
+    chk('slotsFor(14) reproduces the shipped r12 row { RICH 3, COMMON 5, SCARCE 4, BARREN 2 } exactly',
+        JSON.stringify(T.slotsFor(14)) === JSON.stringify({ RICH: 3, COMMON: 5, SCARCE: 4, BARREN: 2 }),
+        JSON.stringify(T.slotsFor(14)));
+    let worstSum = null, worstNeg = null, worstBarren = null;
+    for (let n = 1; n <= 258; n++) {
+      const s = T.slotsFor(n);
+      const tot = s.RICH + s.COMMON + s.SCARCE + s.BARREN;
+      if (tot !== n && !worstSum) worstSum = 'n=' + n + ' sums to ' + tot + ' ' + JSON.stringify(s);
+      if (Math.min(s.RICH, s.COMMON, s.SCARCE, s.BARREN) < 0 && !worstNeg) worstNeg = 'n=' + n + ' ' + JSON.stringify(s);
+      const wantB = Math.min(2, Math.max(0, n - 1));
+      if (s.BARREN !== wantB && !worstBarren) worstBarren = 'n=' + n + ' BARREN ' + s.BARREN + ' want ' + wantB;
+    }
+    chk('the slot bag sums to n for EVERY n in 1…258 — a short bag silently disables terroir', !worstSum, worstSum);
+    chk('no slot count is ever negative across 1…258', !worstNeg, worstNeg);
+    chk('BARREN stays the absolute 2 the r12 reasoning fixed (clamped only below n=3)', !worstBarren, worstBarren);
+    /* And the live ledger actually gets a COMPLETE profile — the check that
+       would have caught 14-slots-against-70-ids. An `undefined` tier reads as a
+       NaN multiplier and silently zeroes a payout. */
+    const prof = T.profileFor('round0p-node', null, RIDS);
+    const holes = RIDS.filter(id => !prof[id]);
+    const tiers = {}; RIDS.forEach(id => { tiers[prof[id]] = (tiers[prof[id]] | 0) + 1; });
+    chk('profileFor() gives all ' + RIDS.length + ' ids a tier — ' + JSON.stringify(tiers),
+        holes.length === 0, holes.join(', '));
+    chk('…and it is NOT the all-COMMON degraded fallback (which is what a wrong bag looks like)',
+        tiers.COMMON !== RIDS.length && (tiers.BARREN | 0) === 2, JSON.stringify(tiers));
+
+    // ── 6. NODE-CITY: the deliberate icons survived the catalogue seeding ──
+    /* 🔴 THIS IS TESTED WITH A POISONED CATALOGUE ON PURPOSE, and the first
+       draft of it was worthless without that. The shipped chain.js happens to
+       give `stone` the same 🪨 the hand table does, so comparing the joined
+       result against the hand values passes whether the `!RES_META[r.id]` guard
+       is there or not — deleting the guard, or deleting the whole `stone` row,
+       both stayed green. Measured, not assumed.
+       So the join is re-run against a catalogue where stone is 🧱 (the glyph the
+       comment explicitly rejects, because 🧱 is CITY_STOCK.ingots and the two
+       would sit side by side in the same HUD) and wood is 🌲. If EXISTING KEYS
+       WIN, the hand glyphs survive that. If the guard is ever flipped, they do
+       not, and this line says so. */
+    const POISON = chain.RESOURCE_CHAIN.map(r => (
+      r.id === 'stone' ? { ...r, icon: '🧱' } : r.id === 'wood' ? { ...r, icon: '🌲' } : r));
+    chk('the poisoned catalogue really differs from the hand table (else the test below is vacuous)',
+        POISON.some(r => r.id === 'stone' && r.icon !== METAH.stone.ico) &&
+        POISON.some(r => r.id === 'wood' && r.icon !== METAH.wood.ico), 'poison did not take');
+    /* …and the join under test is the SHIPPED ONE, lifted out of node-city and
+       re-run here, not a paraphrase of it. round0f does the same with the ops
+       registration loop and for the same reason: a re-implementation tests the
+       copy in this file, and the guard that matters (`!RES_META[r.id]`) is one
+       character wide. Deleting it in node-city must turn this red. */
+    const SEED_BODY = srcBlockAfter(NC, 'for (const r of _chain.ALL)');
+    chk('lifted the RES_META seeding loop out of node-city (' + (SEED_BODY ? SEED_BODY.length : 'NULL') + ' chars)',
+        !!SEED_BODY && SEED_BODY.includes('RES_META'), String(SEED_BODY));
+    const SEEDED = { ...METAH };
+    if (SEED_BODY) {
+      try { new Function('RES_META', '_chain', 'for (const r of _chain.ALL) ' + SEED_BODY)(SEEDED, { ALL: POISON }); }
+      catch (e) { chk('the lifted seeding loop runs', false, e.message); }
+    }
+    const HAND = { stone: '🪨', metal: '🔩', food: '🥫', fuel: '⛽', wood: '🪵', cloth: '🧵' };
+    const stomped = Object.keys(HAND).filter(k => !SEEDED[k] || SEEDED[k].ico !== HAND[k]);
+    chk('RES_META keeps its hand-picked glyphs when the catalogue disagrees — existing keys WIN (stone stays 🪨, not 🧱)',
+        stomped.length === 0, stomped.map(k => k + ' is ' + (SEEDED[k] ? SEEDED[k].ico : 'GONE') + ' want ' + HAND[k]).join(', '));
+    const unnamed = DERIVED.filter(id => !SEEDED[id] || !SEEDED[id].ico || !SEEDED[id].name);
+    chk('every promoted id has a name and an icon in node-city RES_META — `RES_META[r].ico` is read UNGUARDED at the shortage warning',
+        unnamed.length === 0, unnamed.join(', '));
+
+    // ── 7. RULE 2 — promotion did NOT open a ledger write for the chain ────
+    /* Comments stripped first, in BOTH directions: /src/economy is full of prose
+       about addRes (that is how the rule is documented) and a real call must not
+       be able to hide inside a block comment either. */
+    const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1 ');
+    const ECOFILES = ['sim.js', 'index.js', 'firms.js', 'trade.js', 'recipes.js', 'logistics.js',
+                      'households.js', 'prices.js', 'bank.js', 'construction.js', 'endowment.js', 'bottleneck.js'];
+    const ecoHits = [];
+    for (const f of ECOFILES) {
+      let s = null;
+      try { s = readFileSync(join(here, '../../public/src/economy/' + f), 'utf8'); } catch (e) { continue; }
+      const code = strip(s);
+      for (const m of code.matchAll(/\b(addRes|spendRes)\s*\(/g)) ecoHits.push(f + ' → ' + m[1] + '(');
+    }
+    chk('/src/economy calls neither addRes nor spendRes anywhere in code (' + ECOFILES.length + ' files scanned) — the ONLY ledger write is the audited addCinders payout',
+        ecoHits.length === 0, ecoHits.join(', '));
+    /* The other half of the same rule, from the city side: economyTick banks
+       `def.gen` keys through MythicCityBridge.addRes and charges `def.use` /
+       `cost` keys through spendRes. If a promoted id ever appears in one of
+       those, the economy's private inventory and the camp ledger have been
+       joined and Rule 2 is broken — regardless of what /src/economy does. */
+    const PSET = new Set(DERIVED);
+    const bldHits = [];
+    for (const [k, d] of Object.entries(BLDG)) {
+      for (const slot of ['gen', 'use', 'cost']) {
+        for (const r of Object.keys((d && d[slot]) || {})) {
+          if (PSET.has(r) && !STOCK[r]) bldHits.push(k + '.' + slot + '.' + r);
+        }
+      }
+    }
+    /* Anti-vacuity: the loose eval must have produced a BUILDINGS with real
+       gen/use/cost maps on it. If it flattened them the check above would pass
+       over an empty set, which is the failure mode round0b's header warns about
+       and the reason `farm.gen.food` is named here by hand. */
+    const slotted = Object.keys(BLDG).filter(k => BLDG[k] && (BLDG[k].gen || BLDG[k].use)).length;
+    chk('BUILDINGS really carries gen/use maps (the loose eval did not flatten it): ' + slotted + ' rows, farm.gen.food present',
+        slotted >= 10 && !!(BLDG.farm && BLDG.farm.gen && BLDG.farm.gen.food), String(slotted));
+    chk('no node-city BUILDINGS row gens, uses or costs a promoted chain id (' + Object.keys(BLDG).length + ' rows) — the city banks none of them',
+        bldHits.length === 0, bldHits.join(', '));
+    chk('…and none of the 56 collides with a CITY_STOCK key (rations/ingots/planks…), which would make one id mean two things',
+        DERIVED.filter(id => STOCK[id]).length === 0, DERIVED.filter(id => STOCK[id]).join(', '));
+
+    // ── 8. THE CACHE-BUST PAIR ────────────────────────────────────────────
+    /* production.data.js imports chain.js WITH the query string so there is one
+       module instance rather than two. That only holds while the two strings
+       match, and nothing else would ever notice them diverging. */
+    const tagV = /src\/resources\/chain\.js\?v=([^"']+)/.exec(IDX);
+    let pdSrc = null;
+    try { pdSrc = readFileSync(join(here, '../../public/src/city/production.data.js'), 'utf8'); } catch (e) {}
+    /* Anchored on `from '…'` rather than on the bare path: the comment above the
+       import quotes the same URL to explain itself, and a looser pattern reads
+       the PROSE instead of the code — which is how a check like this ends up
+       green against a file that does not import anything at all. */
+    const impV = pdSrc ? /\bfrom\s*'[^']*resources\/chain\.js\?v=([^']+)'/.exec(pdSrc) : null;
+    chk('production.data.js imports chain.js at the SAME ?v= as index.html\'s script tag (one module instance, not two)',
+        !!tagV && !!impV && tagV[1] === impV[1],
+        (tagV ? tagV[1] : 'no tag') + ' vs ' + (impV ? impV[1] : 'no import'));
+
+    if (fails) { bad++; console.log('\n=== ROUND 0p: ' + fails + ' FAILED ==='); }
+    else console.log('\n=== ROUND 0p: ALL PASS ===');
+  }
 }
 
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {

@@ -2042,7 +2042,18 @@ const RES_META = {
    no edit to this file. Existing keys WIN — the icons above were chosen for
    this HUD specifically (stone is 🪨 not 🧱 because 🧱 is CITY_STOCK.ingots),
    and the catalogue must never quietly override a deliberate choice.
-   Absent module → this loop does nothing and the table is exactly as it was. */
+   Absent module → this loop does nothing and the table is exactly as it was.
+
+   ✅ THIS PAID OFF AT THE FIRST PROMOTION. 56 chain ids joined index.html's
+   RESOURCES this round (the ECO_BUILDING_MAP ∩ NEW_IDS set — every id some
+   building in the map above actually produces) and NOT ONE LINE OF THIS FILE
+   HAD TO CHANGE for them: they arrived here with a name and an icon, resIco /
+   resName resolve them, and the unguarded `RES_META[r].ico` at the shortage
+   warning cannot throw on any of them. None of the 56 collides with a key
+   above, so no deliberate icon was overridden — round0p of
+   tools/economy-tests/run.mjs re-runs this join and asserts exactly that,
+   naming stone 🪨 explicitly, so a future catalogue edit cannot quietly turn it
+   into 🧱 (which is CITY_STOCK.ingots and would sit next to it in this HUD). */
 try {
   const _chain = (typeof window !== 'undefined') && window.MythicResourceChain;
   if (_chain && Array.isArray(_chain.ALL)) {
@@ -2057,6 +2068,28 @@ const HUD_RES = ['food','water','metal','fuel','supplies','medicine','ammo'];
 // and feeds the bridge's sync list. Adding the two rare resources to it would
 // have quietly let raiders carry off memory shards, which is a balance change
 // nobody asked for. This list is display only.
+/* 🚫 THE 56 PROMOTED CHAIN IDS ARE DELIBERATELY NOT HERE, and this is the one
+   place in the promotion where "do the fifth site too" would have made things
+   worse. Three independent reasons, any one of which is sufficient:
+
+     1. NOTHING IN THIS CITY BANKS THEM. Rule 2 stands: /src/economy holds its
+        own inventory of the chain and never writes one through addRes. The only
+        producer of a promoted id is the camp's CITY_PRODUCTION building. So 56
+        chips here would read 0 forever however much the player owns — the "real
+        and inert" HUD, ported into the city instead of removed from the camp.
+     2. `updateHUD()` does `$('r-' + r).textContent` UNGUARDED, so every id on
+        this list must have a hand-written chip in #topbar. 56 more chips is a
+        topbar that no longer fits on a phone.
+     3. refreshLedgerMirror() walks this list every 2 seconds and one getRes per
+        id per pass. In 'parent' mode that is a direct call and free; in
+        'message' mode it is a postMessage round trip, and 12 → 68 of those every
+        two seconds is a real regression in a supported mode.
+
+   RES_META above still knows all 258, so every promoted id has a name and an
+   icon anywhere this file PRINTS one (resIco/resName, the build panel, the
+   inspect panel, the log). What it does not get is a permanent zero in the top
+   bar. If a future round makes the city bank a chain id, add its chip to
+   #topbar and its id here IN THE SAME COMMIT — the two are one edit. */
 const HUD_DISPLAY_RES = HUD_RES.concat(['memoryShards', 'corruptedEssence', 'wood', 'stone', 'cloth']);
 
 /* ════════════════════════════════════════════════════════════════════════

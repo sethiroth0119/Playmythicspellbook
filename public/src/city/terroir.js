@@ -56,18 +56,27 @@
    button, so it is not in this design anywhere.
    ════════════════════════════════════════════════════════════════════════════ */
 
-/* The eleven. Kept as a local constant rather than read from the bridge so the
-   module is testable with no host at all; `resourceIds()` prefers the host's
-   list when one is mounted, so a future twelfth resource needs no edit here. */
+/* 🧰 The chain ids promoted into index.html's RESOURCES, imported rather than
+   copied. See the FALLBACK_IDS note below for why a second copy would be a bug
+   rather than a duplication. */
+import { PROMOTED_CHAIN_IDS } from './production.data.js';
+
+/* The ledger, as this module sees it with no host mounted. Kept as a local
+   constant rather than read from the bridge so the module is testable with no
+   host at all; `resourceIds()` prefers the host's list when one is mounted.
+   🔴 A STALE FALLBACK IS WORSE THAN NONE, and the failure is silent: profileFor()
+   checks the slot bag against `ids.length`, and a mismatch degrades the whole
+   feature to all-COMMON behind a single console.warn. Eleven ids against a
+   14-slot bag did exactly that in r12, which is why the second half of this list
+   is now IMPORTED from production.data.js instead of being retyped — the same
+   array the producers and the ledger promotion are built from, so it cannot fall
+   behind a promotion. Only the legacy 11 + 3 remain a literal, because
+   index.html owns those and no module can import that file (the globals trap). */
 const FALLBACK_IDS = [
   'food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies',
   'metal', 'fuel', 'corruptedEssence', 'memoryShards', 'dna',
-  // 🪵 r12 — the construction raws. Kept in sync with index.html's RESOURCES;
-  // resourceIds() prefers the live bridge list, so this is only the no-host
-  // fallback, but a STALE fallback is worse than none: it would hand
-  // profileFor() 11 ids against a 14-slot bag and degrade to all-COMMON.
   'wood', 'stone', 'cloth',
-];
+].concat(PROMOTED_CHAIN_IDS);
 
 /* ════════════════════════════════════════════════════════════════════════════
    🎛 TERROIR_ECON — THE ONE TUNING TABLE. Nothing else in the game may hold a
@@ -110,7 +119,17 @@ export const TERROIR_ECON = {
          design's pressure preserved to within three points.
      ⚠ MUST SUM TO resourceIds().length. profileFor() checks and falls back to
        all-COMMON; that fallback is SILENT except for a console.warn, so a wrong
-       number here disables terroir without breaking anything visibly. */
+       number here disables terroir without breaking anything visibly.
+
+     🔴 …AND THAT IS EXACTLY WHAT THE CHAIN PROMOTION WOULD HAVE DONE. The ledger
+     went 14 → 70 in one commit. A fixed { 3, 5, 4, 2 } sums to 14, `bag.length
+     !== ids.length` would have been true for every player on every load, and
+     terroir would have switched itself off — every chain all-COMMON, every
+     ceiling gone, one console.warn nobody reads. A literal that has to be
+     re-typed by hand on every promotion IS the bug; so this table is now the
+     SHAPE (a 14-id reference profile) and `slotsFor()` below is the rule that
+     scales it. The three properties the r12 reasoning fixed are preserved
+     exactly, and slotsFor(14) reproduces this row byte for byte. */
   slots: { RICH: 3, COMMON: 5, SCARCE: 4, BARREN: 2 },
 
   /* 🌱 The node's own resource seam is forced RICH. The war map already tells
@@ -179,6 +198,51 @@ export function tierCeiling(key) {
   const t = tierDef(key);
   const s = Math.min(0.999, Math.max(0, t.sat));
   return t.yieldMul / (1 - s);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🔢 THE SLOT BAG FOR A LEDGER OF n RESOURCES.
+   ----------------------------------------------------------------------------
+   The r12 reasoning above stated three properties. They are RULES, not the row
+   of numbers they happened to produce at 14, so they are implemented as rules:
+
+     • BARREN IS AN ABSOLUTE 2, never a ratio. It is the count of chains a player
+       provably cannot out-build — "two things another player has to make for me"
+       is the amount of dependency this feature was tuned against. Scaling it
+       would mean every new resource made everyone lonelier, i.e. a tax on adding
+       content, which r12 rejected explicitly.
+     • RICH SCALES WITH THE LEDGER (3/14 = 21.4%), because a player's SELLABLE
+       surplus must not be diluted while their needs grow.
+     • SCARCE-OR-WORSE HOLDS ITS SHARE (6/14 = 42.9%) — that is the pressure the
+       design is tuned around. SCARCE takes whatever of that share BARREN does
+       not, so the absolute BARREN and the proportional pressure coexist.
+   COMMON is the remainder, so the bag ALWAYS sums to n exactly — which is the
+   invariant profileFor() checks and the one a hand-typed row kept breaking.
+
+   At n = 70 (the chain promotion) this gives RICH 15, COMMON 25, SCARCE 28,
+   BARREN 2: 21.4% rich, 42.9% scarce-or-worse, the same ground with a bigger
+   ledger under it.
+
+   ⚠ THIS IS STILL A REAL CHANGE FOR EXISTING PLAYERS and it cannot not be: the
+     shuffle now deals 70 ids instead of 14, so which chains a given node is rich
+     in moves. It is deterministic and stable from here (same node ⇒ same ground,
+     forever) and the node's own seam is still forced RICH.
+
+   ⚠ SMALL n IS CLAMPED, not left to go negative. A three-resource ledger cannot
+     hold 2 BARREN and still have anything COMMON; every count is floored at 0,
+     RICH at 1, and COMMON absorbs the remainder, so the bag sums to n for ANY
+     n ≥ 1 rather than silently disabling terroir on a tiny ledger. round0p
+     sweeps every n from 1 to 258 and fails on the worst cell. */
+const SLOT_REF_N = 14;                       // the ledger the ratios were tuned on
+export function slotsFor(n) {
+  n = Math.max(0, n | 0);
+  if (n <= 0) return { RICH: 0, COMMON: 0, SCARCE: 0, BARREN: 0 };
+  const REF = TERROIR_ECON.slots;
+  const barren = Math.min(REF.BARREN | 0, Math.max(0, n - 1));
+  const rich = Math.min(Math.max(1, Math.round(n * (REF.RICH | 0) / SLOT_REF_N)), n - barren);
+  const worse = Math.round(n * ((REF.SCARCE | 0) + (REF.BARREN | 0)) / SLOT_REF_N);
+  const scarce = Math.max(0, Math.min(worse - barren, n - barren - rich));
+  return { RICH: rich, COMMON: n - rich - scarce - barren, SCARCE: scarce, BARREN: barren };
 }
 
 /* ── Deterministic PRNG ─────────────────────────────────────────────────────
@@ -276,9 +340,14 @@ export function profileFor(nodeId, seamResId, ids) {
 
   // Build the slot bag and check it against the resource count. A short or long
   // bag is a tuning mistake; it must degrade to neutral, never to `undefined`.
+  /* 🔢 slotsFor(), not TERROIR_ECON.slots — the table is the 14-id reference
+     SHAPE and this is the rule that scales it to the live ledger. Reading the
+     literal here is what would have switched terroir off for every player the
+     moment RESOURCES went 14 → 70. */
+  const counts = slotsFor(ids.length);
   const bag = [];
-  Object.keys(TERROIR_ECON.slots).forEach(k => {
-    for (let i = 0; i < (TERROIR_ECON.slots[k] | 0); i++) bag.push(k);
+  Object.keys(counts).forEach(k => {
+    for (let i = 0; i < (counts[k] | 0); i++) bag.push(k);
   });
   if (bag.length !== ids.length) {
     try { console.warn('[terroir] slots sum to ' + bag.length + ' but there are ' + ids.length + ' resources — falling back to unsurveyed ground.'); } catch (e) {}
@@ -543,7 +612,7 @@ export function marketStripHtml(opts) {
    Wrapped: a failure inside terroir must never take the game down. Terroir is a
    feature; the game is the product. */
 const api = {
-  TERROIR_ECON, tierDef, tierCeiling, seamIdFor,
+  TERROIR_ECON, tierDef, tierCeiling, seamIdFor, slotsFor,
   profileFor, terroir, invalidate, resourceIds,
   tierOf, yieldMul, stackMul, opMul, opGrossMul, chainCeiling, soloDays,
   marketStripHtml,

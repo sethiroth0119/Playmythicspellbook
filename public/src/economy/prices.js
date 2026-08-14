@@ -166,7 +166,8 @@ export function bestLeg(id, availability) {
 
 /* Live state, per resource id. Persisted (serialize/load) so a market that was
    in a steel crisis when the tab closed is still in one when it reopens —
-   resetting prices on load would let a player dodge every shock by reloading. */
+   resetting prices on load would let a player dodge every bad market by
+   reloading. */
 let MKT = {};
 
 function row(id) {
@@ -230,9 +231,58 @@ export function targetMul(id, ctx) {
   // ── Production costs. If wages or power moved, the floor moved with them.
   if (ctx.costIndex) mul *= ctx.costIndex;
 
-  // ── Disasters. A raid, a fire, a blockade — a transient shock the city log
-  //    already knows about. Applied last so it multiplies the real price.
-  if (ctx.shock) mul *= ctx.shock;
+  /* ══════════════════════════════════════════════════════════════════════════
+     🌩 THERE IS NO DISASTER TERM HERE, AND IT IS NOT AN OVERSIGHT. READ THIS
+        BEFORE ADDING ONE BACK.
+     ──────────────────────────────────────────────────────────────────────────
+     This line used to be `if (ctx.shock) mul *= ctx.shock;` — a multiplier that
+     node-city built out of the city's raid timer and weather row, applied last
+     so it scaled the whole price target. It was REMOVED, along with the whole
+     counterweight built to pay for it, because nine consecutive attempts failed
+     to make it non-exploitable. `shock = 1` always is what this game shipped
+     before, and it is provably not exploitable for the dullest possible reason:
+     the multiplier never moves.
+
+     THE FEATURE'S DEFECT WAS THAT A DISASTER PAID THE PLAYER. The city's owner
+     draws a share of the day's municipal surplus, and a siege RAISED it:
+     measured on the pre-removal tree, 300 deterministic days at population 200,
+     claimed Cinder 5,762 calm → 5,910 at a realistic raid cadence → 6,885 at a
+     permanent 1.6. TWO INDEPENDENT CHANNELS produce that, and anyone rebuilding
+     this must close BOTH — closing either one alone was measured and is not
+     enough:
+
+       (a) THE PRICE CHANNEL. The shock raises prices; higher prices raise the
+           sales and corporate tax take; a bigger take is a bigger surplus for
+           the payout to draw on. Spending on inelastic staples is price ×
+           quantity, so scarcity GROWS the tax base rather than shrinking it —
+           114,769 🔥 of shopping calm against 120,729 🔥 under a permanent
+           shock. Six successive statistical fixes were tried. EVERY ONE held at
+           the cells its test sampled and inverted on an axis that test held
+           fixed: first population, then node identity, then warehouse count. A
+           fix verified by sampling a grid is a fix verified only at the grid.
+
+       (b) THE AFFORDABILITY CHANNEL, and this is the one that killed the last,
+           structural attempt. Benefits, freight and imports are all booked at
+           `Math.min(S.treasury, bill)` — CASH ACTUALLY PAID, not the bill owed.
+           The payout basis is `income − outgoings`. So a disaster that empties
+           the treasury SHRINKS booked outgoings and RAISES the surplus, with no
+           price multiplier anywhere in the path. Measured: a response billed and
+           paid in full at 3,244 🔥 removed 6,318 🔥 of recorded outgoings and
+           left the owner +61.3%. A SHOCK-NEUTRAL PRICE BASIS IS STRUCTURALLY
+           INCAPABLE OF TOUCHING THIS ONE, because prices are not in it. Closing
+           it needs a SHADOW TREASURY that books what was OWED rather than what
+           was paid — that is the honest starting point, and it is a change to
+           how every municipal payment in sim.js is recorded, not a coefficient.
+
+     ⚠ The counterweight that was built for (a) — an emergency response bill, an
+       austerity register, export blocking, an output-loss term — is gone too. It
+       was load-bearing ONLY for the feature it paid for; with no premium to
+       collect out of, every one of its terms is a charge for a disaster that no
+       longer has a price. Do not resurrect half of it.
+     ⚠ sim.js `shockOf()` survives as the guarded reader of `host.shock` and now
+       answers exactly 1 for every input. That is the chokepoint a
+       re-introduction must come back through; see its header.
+     ══════════════════════════════════════════════════════════════════════════ */
 
   return Math.max(E.minMul, Math.min(E.maxMul, mul));
 }

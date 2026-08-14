@@ -87,89 +87,6 @@ let bad = 0;
     ECON_TEST_SABOTAGE=draw-compound round0e: open the founding window's treasury
                                    allowance, reproducing the per-call clamp that
                                    let one sync take 91.15% of the treasury
-    ECON_TEST_SABOTAGE=disaster-premium round0i: zero ECON.shock.cost.emergencyPer,
-                                   which re-commits the SHIPPED prices-only
-                                   disaster mapping — the version under which a
-                                   siege measurably paid the player better than
-                                   peace. Under it §3's sweep reports 1,133 of
-                                   1,550 signal runs RICHER, worst
-                                   rho-6/pop120/600d ×1.60/cad3 at +95.68% with
-                                   0 🔥 billed. The three-probe version of §3 this
-                                   replaced would have caught only some of them,
-                                   which is the point of sweeping.
-                                   ⚠ The OTHER re-commit — putting the emergency
-                                   bill back on a RECEIPTS basis — cannot be done
-                                   from ECON, because it is a code shape and not
-                                   a number, so it is not a switch here. It is
-                                   done by hand in sim.js step 9b, and BECAUSE IT
-                                   IS DONE BY HAND THE EXACT RECIPE IS WRITTEN
-                                   DOWN: an earlier draft of this note quoted "4
-                                   richer cells, worst rho-6/pop120/600d at
-                                   +24.7%" without saying which shape produced it,
-                                   and NEITHER shape below reproduces that figure.
-                                   A number nobody can re-derive is not evidence,
-                                   so it is replaced by two that were re-measured
-                                   on this grid:
-                                     (a) BASIS ONLY — swap `surplusToday * share`
-                                         for `(S.flow.tax + S.flow.faucet) * share`
-                                         and change nothing else. 3 richer cells,
-                                         worst rho-6/pop120/240d ×1.12/day0 at
-                                         +5.52% with 254 🔥 billed, plus 2
-                                         monotonicity inversions. Red, but only
-                                         just — the surplus settlement and the
-                                         austerity register are still carrying it.
-                                     (b) THE WHOLE PRE-FIX-C2 SHAPE — basis (a),
-                                         PLUS settle out of the treasury alone
-                                         (drop the `surplusToday` bound and the
-                                         `surplusToday -= paid`), PLUS delete the
-                                         austerity register and its drain. 710
-                                         richer cells, worst shock-probe/pop45/600d
-                                         ×1.30/cad3 at +602.48% with 20,204 🔥
-                                         billed and paid, plus 338 inversions.
-                                   (b) is the honest re-commit and (a) is the
-                                   informative one: the basis alone is worth ~5%
-                                   and the three terms together are worth ~600%, so
-                                   the fix is the COMBINATION and no single line of
-                                   it may be reverted on the grounds that the round
-                                   still passes without the other two. Both confirm
-                                   the point the old note was making — the old basis
-                                   does not become safe by raising its coefficient,
-                                   because the charge is a share of a basis it
-                                   inflates.
-    ECON_TEST_SABOTAGE=disaster-austerity round0i §3: zero
-                                   ECON.shock.cost.austerityMul, which restores
-                                   the SELF-FUNDING BASIS exactly — the response
-                                   is billed and paid as before, but the surplus
-                                   it manufactures by leaving the city unable to
-                                   pay its benefits, imports and haulage flows
-                                   back to the owner. This is the round-2 defect
-                                   and it is a number, so it IS a switch. Under it
-                                   §3 fails BOTH ways: 16 richer cells, worst
-                                   rho-6/pop120/600d ×1.30/cad3 at +12.66% with
-                                   5,901 🔥 billed and paid, and 20 monotonicity
-                                   inversions. Note which way the coefficient runs
-                                   with the register off — on the tree as it stood
-                                   before this fix, RAISING emergencyPer from 2.2
-                                   to 8.0 made the worst cell WORSE (+61.9% →
-                                   +98.7%), because the charge is a share of a
-                                   basis it inflates. That is the whole reason the
-                                   correction is a separate term and not a bigger
-                                   coefficient.
-    ECON_TEST_SABOTAGE=frozen-shock round0i: make the shock sample budget
-                                   effectively unbounded, which is arithmetically
-                                   what a PER-CALL budget was against the host's
-                                   ~12,960-slice offline sweep — the frozen
-                                   premium, re-committed
-    ECON_TEST_SABOTAGE=shock-ratchet round0i §5: make ECON.shock.cost.recoveryDays
-                                   enormous. That is not an arbitrary poke — it is
-                                   the EXACT arithmetic that produced the ratchet:
-                                   a recovery window longer than the gap between
-                                   shock-producing events can never drain, so the
-                                   outstanding share never falls, no later event
-                                   can take the window over, and `shockSev` latches
-                                   at the worst severity the city has ever seen.
-                                   Under it §5 must report a window that never
-                                   closes and a drizzle billed at tornado rates.
 
      ECON_TEST_SABOTAGE=warm-residue round0m: carry `Logistics.congestionMul`
                                    across `Sim.reset()` by hand — the shipped
@@ -292,12 +209,16 @@ const srcBlockAfter = (src, decl) => {
    Prices, households, trade, bank and the firm registry were all cleared by hand
    and none of them restored the cold value either. Do not re-derive those.)
 
-   WHY THAT MATTERED SO MUCH: round 0i measures `calm` first and its 25 shocked
-   comparisons after, so the baseline and every number it is compared against sit
-   at DIFFERENT points in the residue history by construction. Its headline worst
-   cell was −0.18% against order noise of 1.9% — a tenth of the noise. Every
-   assertion in this gate that compares a before against an after was resting on
-   run.mjs's own claim that "Nothing here is random", and that claim was false.
+   WHY THAT MATTERED SO MUCH: the round this defect was found under (0i, the
+   disaster-economics sweep, since deleted with the feature it guarded) measured
+   a `calm` baseline FIRST and its shocked comparisons after, so the baseline and
+   every number compared against it sat at DIFFERENT points in the residue
+   history by construction. Its headline worst cell was −0.18% against order
+   noise of 1.9% — a tenth of the noise. Every assertion in this gate that
+   compares a before against an after was resting on run.mjs's own claim that
+   "Nothing here is random", and that claim was false. THAT IS NOT A HISTORICAL
+   NOTE: any future round that compares two runs inherits the same exposure, and
+   this round is what makes the comparison mean something.
 
    WHAT IS ASSERTED HERE, and §1 is the important one:
      1. STRUCTURAL. After `Sim.reset()` the economy modules hold ONE state, no
@@ -307,8 +228,11 @@ const srcBlockAfter = (src, decl) => {
      2. BEHAVIOURAL. The same configuration run in five different call orders
         gives bit-identical results, compared on the full serialised city and not
         merely on the headline number.
-     3. Shocked signals too, because that is the comparison round 0i actually
-        makes and an asymmetric one is the one that would bite.
+     3. A host that varies a field the model no longer reads changes NOTHING.
+        `host.shock` is that field: the disaster→prices term was removed and
+        sim.js `shockOf()` now answers 1 to every input, so a pulsed signal and a
+        calm one must produce bit-identical cities. Asserted rather than assumed,
+        because "the field is inert" is precisely the kind of claim that rots.
 
    Prove this round can fail: ECON_TEST_SABOTAGE=warm-residue, which re-commits
    the defect exactly — it carries `congestionMul` across the reset by hand.
@@ -412,8 +336,9 @@ const srcBlockAfter = (src, decl) => {
     { name: 'rho-6/pop45/wh0/600d calm', sig: calm, pop: 45, node: 'rho-6', wh: 0, days: 600 },
     { name: 'rho-6/pop45/wh1/240d calm', sig: calm, pop: 45, node: 'rho-6', wh: 1, days: 240 },
     { name: 'mu-12/pop200/wh3/240d calm', sig: calm, pop: 200, node: 'mu-12', wh: 3, days: 240 },
-    /* §3: a SHOCKED signal, because round 0i's comparison is calm-then-shocked
-       and a residue that only bit the shocked leg would be invisible above. */
+    /* A host that PULSES `host.shock`. It kept a residue that only bit the
+       shocked leg from hiding when the disaster term existed; it is kept now
+       because §3 below compares it against the calm run of the same cell. */
     { name: 'rho-6/pop120/wh1/240d ×1.30/cad6', sig: pulse(1.30, 6), pop: 120, node: 'rho-6', wh: 1, days: 240 },
   ];
   const ORDERS = [
@@ -452,6 +377,43 @@ const srcBlockAfter = (src, decl) => {
   chk('every configuration is bit-identical across all ' + ORDERS.length +
       ' call orders (' + CELLS.length + ' cells, compared on the whole city and not just the claim)',
       orderBad.length === 0, orderBad.slice(0, 4).join(' | '));
+
+  // ── 3. `host.shock` IS INERT ────────────────────────────────────────────
+  /* The disaster→prices feature was removed and sim.js `shockOf()` now answers
+     exactly 1 to every input, so a host that reports a violent, varying shock
+     must produce a city IDENTICAL to one that reports none at all. Compared on
+     the whole fingerprint, not the claim: a term that moved prices but happened
+     to leave the payout alone would pass a claim-only check.
+     ⚠ THIS IS A SAMPLE AND IT IS LABELLED AS ONE. The real guarantee is
+       structural and is checked by READING `shockOf()`, whose every branch
+       returns the literal 1. This cell exists so that re-wiring the field
+       without re-reading that function turns the gate red. */
+  const SHOCK_CELL = { pop: 120, node: 'shock-inert', wh: 1, days: 240 };
+  const inertCalm = drive(calm, SHOCK_CELL.pop, SHOCK_CELL.node, SHOCK_CELL.wh, SHOCK_CELL.days);
+  const inertPulse = drive(pulse(1.30, 6), SHOCK_CELL.pop, SHOCK_CELL.node, SHOCK_CELL.wh, SHOCK_CELL.days);
+  /* A signal at the far end of what the guard's old band could express, held on
+     EVERY day rather than pulsed — the shape that used to be the worst cell. */
+  const inertHeld = drive(() => 1.60, SHOCK_CELL.pop, SHOCK_CELL.node, SHOCK_CELL.wh, SHOCK_CELL.days);
+  /* And hostile values, which is the other half of what the guard is for: these
+     crashed the tick outright before it existed. */
+  const HOSTILE = ['abc', {}, NaN, Infinity, -5, true, [], 1e308, null, undefined];
+  let hostileBad = '';
+  for (const v of HOSTILE) {
+    let got = null;
+    try { got = drive(() => v, SHOCK_CELL.pop, SHOCK_CELL.node, SHOCK_CELL.wh, 60); }
+    catch (e) { hostileBad = JSON.stringify(String(v)) + ' THREW: ' + e.message; break; }
+    const ref = drive(calm, SHOCK_CELL.pop, SHOCK_CELL.node, SHOCK_CELL.wh, 60);
+    if (got.print !== ref.print) { hostileBad = JSON.stringify(String(v)) + ' moved the city'; break; }
+  }
+  chk('a pulsed shock signal leaves the city bit-identical to a calm one (' +
+      Math.round(inertCalm.claimed) + ' 🔥 both)',
+      inertPulse.print === inertCalm.print && inertPulse.claimed === inertCalm.claimed,
+      Math.round(inertPulse.claimed) + ' 🔥 against calm ' + Math.round(inertCalm.claimed) + ' 🔥');
+  chk('a shock held at 1.60 on EVERY day is inert too',
+      inertHeld.print === inertCalm.print && inertHeld.claimed === inertCalm.claimed,
+      Math.round(inertHeld.claimed) + ' 🔥 against calm ' + Math.round(inertCalm.claimed) + ' 🔥');
+  chk('every hostile host.shock value (' + HOSTILE.length +
+      ') neither throws nor moves the city', hostileBad === '', hostileBad);
 
   if (fails) { bad++; console.log('\n=== ROUND 0m: ' + fails + ' FAILED ==='); }
   else console.log('\n=== ROUND 0m: ALL PASS ===');
@@ -1283,16 +1245,21 @@ const srcBlockAfter = (src, decl) => {
     const bldSite = t => !!(t && t.bld && t.bld.k === 0);
 
     /* Lift the shipped function whole and hand it everything it reaches for.
-       ecoShock() is stubbed to 1: this round is about one boolean and the shock
-       curve has its own coverage. */
+       ⚠ THE LIST IS THE POINT: `new Function` resolves these names from the
+         parameter list, so anything ecoHost() reaches for and is NOT named here
+         throws ReferenceError and this round goes red. That is what makes the
+         lift honest rather than a re-implementation. It used to carry an
+         `ecoShock` stub; ecoHost no longer calls it (the disaster→prices term
+         was removed) and a stub for a function nobody calls is exactly the dead
+         scaffolding that makes the next reader hunt for a caller. */
     const runHost = (tiles, keyFn) => {
       const names = ['game', 'cityPop', 'ecoLogisticsCounts', 'bldSite', 'opsKeyOf',
-                     'ecoShock', 'roadUsed', 'roadCap'];
+                     'roadUsed', 'roadCap'];
       const fn = new Function(...names, 'return (function ecoHost() ' + BODY + ')();');
       return fn(
         { tiles, cov: { avg: 0.75, pct: { water: 1 } }, power: { factor: 1 } },
         () => 60, () => ({ warehouse: 3, depot: 2 }), bldSite, keyFn,
-        () => 1, () => 0, () => 1);
+        () => 0, () => 1);
     };
     const realKey = ty => PREFIX + ty;
     const asks = tiles => !!runHost(tiles, realKey).hasBank;
@@ -2893,825 +2860,6 @@ const srcBlockAfter = (src, decl) => {
     if (fails) { bad++; console.log('\n=== ROUND 0h: ' + fails + ' FAILED ==='); }
     else console.log('\n=== ROUND 0h: ALL PASS ===');
   }
-}
-/* ════════════════════════════════════════════════════════════════════════════
-   ROUND 0i — 🌩 A DISASTER MUST COST THE PLAYER, NOT PAY HIM
-   ----------------------------------------------------------------------------
-   THE DEFECT THIS ROUND EXISTS FOR, and it shipped:
-   node-city's `ecoShock()` maps weather and raids onto `host.shock`, and the
-   mapping only ever RAISES prices ("a disaster is a PREMIUM"). Higher prices are
-   a bigger sales and corporate tax take; the player's payout is a share of the
-   day's municipal surplus; so a SIEGE RAISED THE OWNER'S REAL CINDER INCOME.
-   Measured on the shipped tree over 300 deterministic economic days (the sim
-   uses no RNG — six repeats were bit-identical): claimed Cinder 5,762 calm →
-   5,910 at a realistic cadence, → 6,885 at a permanent 1.6 shock. Scanned over
-   twelve cities at the real raid cadence, NINE of them paid their owner more
-   during disasters than in peace.
-
-   It was invisible because NO ROUND IN THIS GATE HAS EVER SET `shock`. Round 3
-   of gauntlet2 pokes 3.5 at the price clamp and gauntlet2's property test rolls
-   a random one 5% of the time, and neither asks the only question that matters:
-   is the player better or worse off? So this round measures the CONSEQUENCE, in
-   claimed Cinder, over long deterministic runs.
-
-   ⚠ THE BASELINE HAS TO BE MATERIAL, and that is not a detail. Two of the
-     twelve probe cities are structurally insolvent — they claim 33 🔥 and 73 🔥
-     across 400 days, i.e. essentially nothing — and in that regime any
-     perturbation reads as a huge PERCENTAGE of nothing (±30% on a shift of
-     eight Cinder). The cities below are asserted to clear `MATERIAL` first, so
-     the round can never pass or fail on rounding noise.
-
-   Prove this round can fail: ECON_TEST_SABOTAGE=disaster-premium, which zeroes
-   the emergency-response term and so re-commits the exact shipped behaviour.
-   ════════════════════════════════════════════════════════════════════════════ */
-{
-  console.log('\n########## round0i-disaster-economics ##########');
-  let fails = 0;
-  const chk = (name, cond, extra) => {
-    if (cond) { console.log('✅ ' + name); return true; }
-    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
-  };
-
-  if (!global.window) {
-    global.window = { MythicCityBridge: { addCinders: async () => {} }, MythicResourceChain: null };
-    const chain = await import('../../public/src/resources/chain.js');
-    global.window.MythicResourceChain = { ALL: chain.RESOURCE_CHAIN };
-  }
-  const P = '../../public/src/economy/';
-  const Sim = await import(P + 'sim.js');
-  const HH = await import(P + 'households.js');
-  const Prices = await import(P + 'prices.js');
-  const { ECON } = await import(P + 'tuning.js');
-  const DAY = ECON.clock.dayMin;
-  /* 🔴 THE SHIPPED RECOVERY WINDOW, SNAPSHOT BEFORE ANY INJURY, AND §5 MEASURES
-     AGAINST THIS AND NEVER AGAINST THE LIVE VALUE.
-     Learned the hard way in this round: §5's first cut derived its own trailing
-     horizon from `ECON.shock.cost.recoveryDays`, and the `shock-ratchet`
-     sabotage sets exactly that constant. The assertions then measured over a
-     million-day horizon, went vacuous (`seen.slice(1e6)` is empty,
-     `Math.max(0, ...[])` is 0) and PASSED on the injured build — a test that
-     stops testing under the one injury it was written for. An assertion may not
-     take its own yardstick from the thing it is checking. */
-  const SHIPPED_RD = Math.ceil(ECON.shock.cost.recoveryDays);
-
-  /* 🧨 The injury: the shipped mapping, which had a premium and no cost. */
-  if (SABOTAGE === 'disaster-premium') ECON.shock.cost.emergencyPer = 0;
-  /* 🧨 …and the round-2 injury, which re-commits the SELF-FUNDING BASIS. With the
-     austerity register at 0 the response is still billed and still paid in full,
-     and the Cinder it takes out of the treasury still comes back as the smaller
-     benefit cheques, cancelled convoys and unpaid haulage bills that the payout
-     basis nets off as "outgoings". The charge buys itself back and the owner ends
-     up ahead of where peace left him. It lights up §3 and nothing else. */
-  if (SABOTAGE === 'disaster-austerity') ECON.shock.cost.austerityMul = 0;
-  /* 🧨 …and the second injury, which re-commits the OTHER shipped defect. The
-     frozen-premium bug was, in effect, a sample budget that never ran out —
-     a per-call meter re-issued on all 12,960 slices of the sweep is
-     arithmetically indistinguishable from an unbounded one. Making the budget
-     unbounded is therefore the faithful re-commit, and it must light up section
-     4 and nothing else (every other section takes a FRESH reading per day, so a
-     bigger budget cannot change them). */
-  if (SABOTAGE === 'frozen-shock') ECON.shock.cost.sampleDays = 1e9;
-  /* 🧨 …and the third, for §5. A recovery window longer than the gap between
-     shock-producing events can never drain to 0, so the outstanding share of the
-     last repair never falls, no later event can ever take the window over, and
-     `shockSev` latches at the worst severity the city has ever seen. That IS the
-     ratchet — re-committed through the one constant whose real value (4 economic
-     days against a ~40-minute mean event gap) created it in the first place. */
-  if (SABOTAGE === 'shock-ratchet') ECON.shock.cost.recoveryDays = 1e6;
-
-  // ── 1. THE GUARD ────────────────────────────────────────────────────────
-  /* `shock: host && host.shock ? host.shock : 1` was a TRUTHINESS test on a
-     number multiplied into every price in the city. 'abc' and {} crashed the
-     tick outright; the rest poisoned the market silently. Every one of these
-     must resolve to exactly 1 — neutral — and none may throw. */
-  const HOSTILE = [['abc', 'abc'], ['{}', {}], ['[]', []], ['NaN', NaN],
-                   ['Infinity', Infinity], ['-Infinity', -Infinity], ['true', true],
-                   ['-5', -5], ['1e308', 1e308], ["'2'", '2'], ['null', null],
-                   ['undefined', undefined], ['0', 0]];
-  let guardBad = [];
-  for (const [label, v] of HOSTILE) {
-    let got = null, threw = null;
-    try { got = Sim.shockOf({ shock: v }); } catch (e) { threw = e.message; }
-    if (threw || got !== 1) guardBad.push(label + ' → ' + (threw ? 'THREW ' + threw : got));
-  }
-  chk('the shock guard resolves every hostile value to exactly 1 (' +
-      HOSTILE.map(h => h[0]).join(', ') + ')', guardBad.length === 0, guardBad.join(' | '));
-  chk('a legitimate shock passes through untouched', Sim.shockOf({ shock: 1.3 }) === 1.3 &&
-      Sim.shockOf({}) === 1 && Sim.shockOf(null) === 1, String(Sim.shockOf({ shock: 1.3 })));
-
-  /* And end to end: a whole tick fed each hostile value must not throw and must
-     leave every price finite. The two that CRASHED sim.js are in this list. */
-  let tickBad = null;
-  Sim.reset('hostile'); HH.setPopulation(120); Sim.bootstrap();
-  for (const [label, v] of HOSTILE) {
-    try {
-      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true,
-                         infrastructure: 0.7, logisticsCounts: { warehouse: 2 }, shock: v });
-    } catch (e) { tickBad = label + ' threw ' + e.message; break; }
-    for (const m of Prices.movers()) {
-      if (!isFinite(m.price) || !isFinite(m.mul)) { tickBad = label + ' → ' + m.id + ' price ' + m.price; break; }
-    }
-    if (tickBad) break;
-  }
-  chk('a full tick survives every hostile shock with finite prices', !tickBad, tickBad);
-
-  // ── 2. THE PRICES MUST STILL MOVE ───────────────────────────────────────
-  /* The fix must not be "delete the shock". A disaster is still a premium; what
-     changed is that it now costs something as well.
-
-     🔴 THIS ASSERTION USED TO PASS ON NOISE, IN THE MOST EMBARRASSING WAY
-        AVAILABLE. It drove a shipped probe city 30 days calm and 30 days at
-        1.6 and asserted `higher > 0`. The measurement behind that ✅ was: 19 of
-        22 goods IDENTICAL to the last significant figure, two LOWER, and the
-        whole assertion carried by coal moving ×1.0004. The cause is ordinary
-        and is in prices.js: `targetMul` builds the supply/demand term FIRST and
-        clamps the product into `ECON.price.minMul … maxMul` (0.35 … 4.0), and in
-        every seeded city about half the goods are already pinned at 4.0 and most
-        of the rest at 0.35 — a target that is outside the band by 3× does not
-        care that it was multiplied by 1.6. So the premium is absorbed by the
-        clamp and never reaches the printed price.
-     So the premium is now tested where it can actually be observed: a market
-     driven through Prices directly, with supply ≈ demand, healthy cover and
-     several sellers, so every target lands MID-BAND. Every good must move by the
-     shock factor, and the round asserts the FACTOR, not merely the direction.
-     ⚠ AND THE SATURATION IS PRINTED, not hidden, because it is the reason §3's
-       economics do not rest on this at all — see the census below. */
-  const SYN = ['bread', 'medicine', 'clothing', 'lumber', 'coal', 'flour', 'wheat', 'freshWater'];
-  const synMarket = (shock) => {
-    Prices.reset();
-    for (let d = 0; d < 30; d++) {
-      for (let i = 0; i < SYN.length; i++) {
-        Prices.observe(SYN[i], { supply: 100 - i * 6, demand: 100, stock: 150, sellers: 3, imported: 0 });
-        Prices.step(SYN[i], 1, { unavailable: false, importPremium: 1, costIndex: 1, shock });
-      }
-    }
-    const out = {}; for (const id of SYN) out[id] = Prices.mulOf(id);
-    return out;
-  };
-  const SHOCK_PROBE = 1.6;
-  const synCalm = synMarket(1), synShock = synMarket(SHOCK_PROBE);
-  let synMoved = 0, synWorst = Infinity, synBest = 0, synInterior = 0;
-  for (const id of SYN) {
-    if (synCalm[id] > ECON.price.minMul * 1.001 && synShock[id] < ECON.price.maxMul * 0.999) synInterior++;
-    const r = synShock[id] / synCalm[id];
-    if (r > 1.000001) synMoved++;
-    synWorst = Math.min(synWorst, r); synBest = Math.max(synBest, r);
-  }
-  chk('the probe market is NOT clamp-saturated (' + synInterior + '/' + SYN.length +
-      ' goods interior to ' + ECON.price.minMul + '…' + ECON.price.maxMul + ')',
-      synInterior === SYN.length, String(synInterior));
-  chk('every good moves by the shock factor there (' + synMoved + '/' + SYN.length +
-      ' up, ×' + synWorst.toFixed(4) + '…×' + synBest.toFixed(4) + ' against ×' + SHOCK_PROBE + ')',
-      synMoved === SYN.length && Math.abs(synWorst - SHOCK_PROBE) < 0.01 &&
-      Math.abs(synBest - SHOCK_PROBE) < 0.01,
-      synMoved + ' moved, worst ×' + synWorst);
-
-  /* 🔴 AND THE HONEST COROLLARY, MEASURED AND PRINTED RATHER THAN CLAIMED.
-     HOW LITTLE THE PREMIUM DOES IN A SHIPPED CITY: same city, same 240 days,
-     only the multiplier different, a PERMANENT 1.6 moves the tax take
-     22,631 → 22,624 🔥 (−0.03%) and household shopping 113,265 → 113,277 🔥
-     (+0.01%). In a clamp-saturated city it is very nearly inert, and the
-     disaster economics rest on the emergency response in sim.js step 9b.
-
-     ⚠ BUT IT IS NOT DECORATIVE, and the earlier draft of this note said it was.
-       DELETING `if (ctx.shock) mul *= ctx.shock;` FROM prices.js AND RUNNING THE
-       GATE TURNS TWO ECONOMIC ASSERTIONS RED, not merely the price one —
-       re-measured on the swept round: 4 richer cells, worst rho-6/pop120/240d
-       ×1.30/day0 at +6.15%, AND 5 monotonicity inversions, worst
-       rho-6/pop120/240d/day0 ×1.12 → 1,716 🔥 against ×1.30 → 1,864 🔥. So the
-       premium carries no weight in the large saturated cities and carries real
-       weight in the thin ones, which is the opposite of what the aggregate above
-       suggests on its own. Both measurements are true and neither is the whole
-       story; that is the reason both are written down.
-       ⚠ WHY DELETING A PRICE RISE MAKES THE PLAYER RICHER, since it reads
-         backwards: the premium is what the emergency charge is ultimately
-         collected out of. Remove it and the disaster still blocks exports, still
-         bills a response and still registers the austerity — but the tax uplift
-         that paid for all three is gone, so the cells where the counterweight was
-         only just ahead fall behind. The premium is not the profit; it is the
-         funding.
-     The saturation itself is a prices.js matter — the clamp absorbs a transient
-     premium built from a different cause than the supply/demand term — and
-     prices.js is outside this package. The census below is what a later package
-     has to move; until then, nothing in this round may be written as though the
-     premium carries the mechanic. */
-  const censusAfter = (shock) => {
-    Prices.reset(); Sim.reset('px'); HH.setPopulation(200); Sim.bootstrap();
-    for (let d = 0; d < 30; d++)
-      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
-                         logisticsCounts: { warehouse: 3 }, shock });
-    const out = {}; for (const m of Prices.movers(400)) out[m.id] = m;
-    return out;
-  };
-  const cCalmPx = censusAfter(1), cShockPx = censusAfter(SHOCK_PROBE);
-  let pinned = 0, cityMoved = 0, cityFlat = 0, cityDown = 0, total = 0;
-  for (const id in cCalmPx) {
-    if (!(id in cShockPx)) continue;
-    total++;
-    if (cCalmPx[id].mul >= ECON.price.maxMul * 0.999 || cCalmPx[id].mul <= ECON.price.minMul * 1.001) pinned++;
-    const r = cShockPx[id].price / cCalmPx[id].price;
-    if (r > 1.000001) cityMoved++; else if (r < 0.999999) cityDown++; else cityFlat++;
-  }
-  console.log('    🏷 shipped-city census: ' + pinned + '/' + total + ' goods pinned at a price clamp; ' +
-              'under ×' + SHOCK_PROBE + ' only ' + cityMoved + ' moved up, ' + cityFlat +
-              ' were identical, ' + cityDown + ' fell — the clamp absorbs the premium here (see the note above).');
-
-  // ── 3. THE ECONOMICS ────────────────────────────────────────────────────
-  /* The realistic signal, reconstructed from the host's own constants rather
-     than invented: RAID_INTERVAL is 7200 s and an economic day is
-     clock.dayMin × 60 = 1200 s, so a raid cycle is exactly six economic days
-     and `raidWindowFrac` (0.15 = 1080 s) is sampled on one of them. SIEGE_EVERY
-     is 4, so every fourth wave is a siege. Nothing here is random. */
-  const RAID_CYCLE_DAYS = 6, SIEGE_EVERY = 4;
-  const raidSignal = d => (d % RAID_CYCLE_DAYS === RAID_CYCLE_DAYS - 1)
-    ? 1 + ((Math.floor(d / RAID_CYCLE_DAYS) + 1) % SIEGE_EVERY === 0 ? ECON.shock.siegeGain : ECON.shock.raidGain)
-    : 1;
-  const MATERIAL = 500;
-  const claim = (sig, pop, node, wh, DAYS) => {
-    Sim.reset(node); HH.setPopulation(pop); Sim.bootstrap();
-    let claimed = 0, emergency = 0, shockedDays = 0;
-    for (let d = 0; d < DAYS; d++) {
-      const sh = sig(d); if (sh > 1) shockedDays++;
-      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
-                         logisticsCounts: { warehouse: wh }, shock: sh });
-      claimed += Sim.claimPayout();
-      emergency += Sim.state().flow.emergency;
-    }
-    return { claimed, emergency, shockedDays, audit: Sim.state().lastAudit };
-  };
-  /* 🔴 THIS USED TO BE THREE HARDCODED (node, population, warehouse) PROBES AND
-     THAT IS THE MOST EXPENSIVE MISTAKE IN THIS PHASE. "A disaster makes the
-     player poorer" is a PROPERTY; three points are not a test of a property.
-     A critic changed ONE axis — the same node, the same warehouse count, only
-     the population — and the sign flipped: rho-6 / warehouse 1 / population 120
-     over 1,200 days paid 2,868 🔥 calm and 3,783 🔥 (+31.9%) under raids, and
-     two further cells (shock-probe/45/1200d +24.5%, rho-6/45/1200d +7.4%) went
-     the same way, all with the response billed in full. So the round SWEEPS and
-     fails on the WORST CELL rather than on an average — an average would have
-     hidden all three of those behind the sixty that were fine.
-     ⚠ THE HORIZON AXIS IS NOT DECORATION. Every one of the three inverted cells
-       was at 1,200 days; at 240 days all three read comfortably negative. A
-       property tested at one horizon is a property tested at one point.
-
-     🔴 AND THE SAME MISTAKE WAS STILL IN HERE ONE AXIS FURTHER OUT. The grid
-     above sweeps the CITY and holds the SIGNAL fixed at one hardcoded raid
-     cadence, and a second critic did to the signal exactly what the first did to
-     the population: rho-6 / pop 120 / warehouse 1 over 600 days is −7.7% under
-     the shipped cadence and was +61.9% under a severity-0.30 pulse every six
-     days, with 3,244 🔥 billed. One stream is not a test of a property either.
-     So the signal is now a FIRST-CLASS AXIS: magnitude × cadence, crossed with
-     node × population × horizon, and the shipped raid cadence is just one more
-     column in it.
-
-     🔴 PLUS THE ASSERTION THE ROUND WAS ACTUALLY MISSING — MONOTONICITY.
-     "No cell ends richer" cannot catch a counterweight that runs BACKWARDS in
-     severity, and this one did: at rho-6/pop120, cadence 30, the owner's claim
-     went −30.6% at ×1.10 and +17.3% at ×1.12. A worse disaster paying better is
-     a broken mechanic even on a grid where every cell happens to be negative, so
-     the round now also asserts that at a fixed cell a strictly larger magnitude
-     never produces a strictly larger claim.
-
-     ⚠ IMMATERIAL CELLS ARE SKIPPED, NOT PASSED, and the count is printed. Some
-       of these cities are structurally insolvent (a few hundred Cinder across
-       hundreds of days), and ±30% of nothing is noise, not a finding — but a
-       sweep that quietly skipped everything would also be "green", so the round
-       asserts that most of the grid really was measured.
-     ⚠ THE BAR IS NOT RAISED TO MAKE THIS GREEN, and it would be easy to: every
-       surviving failure is one pathological city (rho-6/pop120 claims 633 🔥
-       where its own neighbours at pop 160 and 200 claim 14,776 🔥 and 15,421 🔥),
-       and a materiality bar stated per DAY instead of per RUN would drop it and
-       both critics' reproductions with it. That is moving the goalposts, so the
-       bar stays where it was and the residual is reported instead. */
-  const NODES = [['shock-probe', 3], ['mu-12', 3], ['rho-6', 1]];
-  const POPS = [45, 120, 160, 200, 260, 330, 400];
-  const HORIZONS = [240, 600, 1200];
-  /* THE SIGNAL AXIS. Magnitudes span the host's own range — `raidGain` 0.12 and
-     `siegeGain` 0.30 sit inside it and `shock.max` 1.60 is the ceiling — and the
-     cadences span "denser than the host can produce" (3 days) to "rarer than a
-     session" (60 days).
-     🔴 `cad: 0` IS A CONSTANT SIGNAL AND IT IS **NOT** A PERMANENT SHOCK. It is
-     labelled `day0` because that is what it delivers: `ECON.shock.cost.sampleDays`
-     (= 1) refills the sample meter ONLY on a call that is not shocked, so a
-     constant signal runs shocked on day 0 and calm for ever after — MEASURED, 1
-     shocked day out of 600 against 100 for the cadence-6 column. A genuinely
-     permanent premium is unreachable through advance() BY DESIGN; that is the
-     frozen-premium fix, and §4 is what tests it. The column is kept because "the
-     city is hit on the day it is founded" is a real case and the nastiest one in
-     the grid — not because it is permanent. Do not re-label it `perm`.
-
-     🔴 AND IT IS THE ONE COLUMN WITH A TOLERANCE, WHICH IS STATED HERE RATHER
-        THAN BURIED. A shock on day 0 lands while `bootstrap()`'s seeding is still
-        the whole of the city's history: it moves the price level the first firms
-        take root against, and that shifts the city's trajectory for ever. The
-        shift is TINY and it is REAL — the null control below measures the model's
-        own insensitivity at 0.000%, so this is not noise — but it is out of the
-        counterweight's reach by construction, because the counterweight is a
-        charge proportional to severity acting on the days the disaster lasts, and
-        this disaster lasts one day out of 1,200.
-        THE EVIDENCE THAT THE TOLERANCE IS NOT HIDING A TUNABLE DEFECT, all
-        measured on this grid:
-          · with the counterweight OFF (emergencyPer 0, austerityMul 0) this
-            column has 217 richer cells of 252; at the shipped tuning it has 2;
-          · those 2 are +0.05% and +0.11% over 1,200 days;
-          · NO coefficient reaches them. austerityMul was swept 1.0 → 8.0 and the
-            residual is still there at 8.0, a setting that removes 99% of the
-            owner's income from every probe city.
-        So the bound is 0.25%, and every defect this round exists for goes
-        straight through it: the shipped prices-only mapping, the receipts basis
-        (+31.9%), the self-funding surplus basis (+61.9%), the blockade subsidy
-        (+17.3%) and the freight double-booking (+3.0%) are 12× to 250× the bound.
-        EVERY OTHER COLUMN IS ASSERTED AT ZERO TOLERANCE. */
-  const MAGS = [1.05, 1.12, 1.30, 1.60];
-  const CADS = [3, 6, 12, 30, 60, 0];
-  const FOUNDING_TOL = 0.0025;          // 0.25%, and only on the day0 column
-  /* …and monotonicity needs its own, larger, bound on that column, for a reason
-     worth writing down rather than averaging away: WHICH FIRMS TAKE ROOT IS A
-     DISCRETE FUNCTION OF THE SEEDED PRICE LEVEL. A ×1.30 founding day and a ×1.60
-     one do not seed the same city, so the claim 1,200 days later is not a smooth
-     function of the founding severity and no charge can make it one. Measured
-     worst inversion on this grid: rho-6/pop120/240d, ×1.30 → 1,655 🔥 against
-     ×1.60 → 1,680 🔥, which is 1.4% of that city's 1,756 🔥 calm baseline. The
-     bound is 2%, so the inversion this assertion was written for — rho-6/pop120
-     cadence 30, ×1.10 → −30.6% and ×1.12 → +17.3%, a 48-point swing — is 24×
-     over it and still fails. EVERY CADENCE COLUMN IS ASSERTED AT ZERO TOLERANCE;
-     this applies to the day0 column alone. */
-  const FOUNDING_MONO_TOL = 0.02;
-  const pulse = (mag, cad) => (cad === 0 ? () => mag : d => (d % cad === cad - 1 ? mag : 1));
-  const CELLS = NODES.length * POPS.length * HORIZONS.length;
-  console.log('\n  🌩 CLAIMED CINDER, SWEPT — ' + NODES.length + ' nodes × ' + POPS.length +
-              ' populations × ' + HORIZONS.length + ' horizons × (1 shipped raid cadence + ' +
-              MAGS.length + ' magnitudes × ' + CADS.length + ' cadences)\n');
-  const t0 = Date.now();
-  let worst = null, day0Worst = null, richer = [], measured = 0, skipped = 0, signals = 0,
-      billedEverywhere = true, auditOk = true, monoBad = [], day0Mono = 0;
-  for (const [node, wh] of NODES) {
-    for (const pop of POPS) {
-      for (const H of HORIZONS) {
-        const calm = claim(() => 1, pop, node, wh, H);
-        if (!(calm.claimed > MATERIAL)) { skipped++; continue; }
-        measured++;
-        /* Every signal this cell is driven with, the shipped raid cadence first
-           so it keeps its own identity in the printout. */
-        const runs = [{ label: 'raid-cadence', cad: null, mag: null, r: claim(raidSignal, pop, node, wh, H) }];
-        for (const cad of CADS) for (const mag of MAGS) {
-          runs.push({ label: '×' + mag + '/' + (cad ? 'cad' + cad : 'day0'), cad, mag,
-                      r: claim(pulse(mag, cad), pop, node, wh, H) });
-        }
-        for (const run of runs) {
-          signals++;
-          const pct = ((run.r.claimed - calm.claimed) / calm.claimed) * 100;
-          const cell = { where: node + '/pop' + pop + '/' + H + 'd  ' + run.label,
-                         calm: calm.claimed, raid: run.r.claimed, pct,
-                         bill: Math.round(run.r.emergency), day0: run.cad === 0 };
-          /* The tolerance is per COLUMN and it is 0 for all but the founding-day
-             one — see the note on CADS for the measurement that sets it. */
-          const allow = calm.claimed * (run.cad === 0 ? FOUNDING_TOL : 0);
-          if (run.cad === 0) { if (!day0Worst || pct > day0Worst.pct) day0Worst = cell; }
-          else if (!worst || pct > worst.pct) worst = cell;   // worst = closest to richer
-          if (run.r.claimed >= calm.claimed + allow) richer.push(cell);
-          if (!(run.r.emergency > 0)) billedEverywhere = false;
-          if (!(run.r.audit && run.r.audit.ok)) auditOk = false;
-        }
-        /* MONOTONE IN SEVERITY at each fixed cadence. MAGS is ascending, so the
-           claim must be non-increasing along it. Compared with a relative
-           tolerance so floating-point noise on a large claim is not a finding. */
-        for (const cad of CADS) {
-          const byMag = runs.filter(x => x.cad === cad).sort((a, b) => a.mag - b.mag);
-          for (let i = 1; i < byMag.length; i++) {
-            const lo = byMag[i - 1], hi = byMag[i];
-            /* Measured against the CALM baseline, not against the shocked claim:
-               the calm claim is the one quantity on this row that does not itself
-               move with severity, so it is the only stable denominator. */
-            const tol = cad === 0 ? calm.claimed * FOUNDING_MONO_TOL
-                                  : Math.max(1, Math.abs(lo.r.claimed) * 1e-6);
-            const over = hi.r.claimed - lo.r.claimed;
-            if (over > tol) {
-              monoBad.push(node + '/pop' + pop + '/' + H + 'd/' + (cad ? 'cad' + cad : 'day0') +
-                           ': ×' + lo.mag + ' → ' + Math.round(lo.r.claimed) + ' 🔥 but ×' +
-                           hi.mag + ' → ' + Math.round(hi.r.claimed) + ' 🔥 (+' +
-                           (over / calm.claimed * 100).toFixed(2) + '% of calm)');
-            } else if (cad === 0 && over > 0) {
-              day0Mono = Math.max(day0Mono, over / calm.claimed * 100);
-            }
-          }
-        }
-      }
-    }
-  }
-  /* Sorted worst-first so a capped listing is a listing of the WORST cells and
-     not merely of the first ones the loops happened to reach. */
-  richer.sort((a, b) => b.pct - a.pct);
-  console.log('    measured ' + measured + ' of ' + CELLS + ' cities, skipped ' + skipped +
-              ' with an immaterial calm baseline (≤ ' + MATERIAL + ' 🔥); ' + signals +
-              ' signal runs in ' + ((Date.now() - t0) / 1000).toFixed(0) + ' s');
-  const showCell = (tag, c) => console.log('    ' + tag + ' ' + c.where.padEnd(40) +
-              ' calm ' + String(c.calm).padStart(7) + ' 🔥 → disasters ' +
-              String(c.raid).padStart(7) + ' 🔥   ' + (c.pct >= 0 ? '+' : '') +
-              c.pct.toFixed(2) + '%   response bill ' + c.bill.toLocaleString() + ' 🔥');
-  if (worst) showCell('WORST CELL         ', worst);
-  /* Printed EVERY run, pass or fail, because it is the one column carrying a
-     tolerance and a silent tolerance is how a 0.11% residual becomes a 3% one. */
-  if (day0Worst) showCell('WORST day0 (≤' + (FOUNDING_TOL * 100).toFixed(2) + '%)', day0Worst);
-  /* Capped, and the cap is why: an injured build reports over a thousand richer
-     cells (ECON_TEST_SABOTAGE=disaster-premium prints 1,133 of 1,550) and a wall
-     of them buries every other line in the round. The worst is printed above and
-     the full count is in the assertion, which is what a reader needs. */
-  const SHOW = 12;
-  for (const c of richer.slice(0, SHOW)) console.log('    ❌ RICHER   ' + c.where.padEnd(40) +
-              ' calm ' + c.calm + ' 🔥 → ' + c.raid + ' 🔥 (+' + c.pct.toFixed(2) +
-              '%) with ' + c.bill.toLocaleString() + ' 🔥 billed');
-  if (richer.length > SHOW) console.log('    …and ' + (richer.length - SHOW) + ' more richer cells');
-  for (const m of monoBad.slice(0, SHOW)) console.log('    ❌ BACKWARDS ' + m);
-  if (monoBad.length > SHOW) console.log('    …and ' + (monoBad.length - SHOW) + ' more inversions');
-  chk('the sweep really measured the grid (' + measured + ' of ' + CELLS + ' cities material, ' +
-      signals + ' signals driven)',
-      measured >= CELLS * 0.75 && signals >= measured * (1 + MAGS.length * CADS.length),
-      measured + '/' + signals);
-  chk('NO configuration leaves the player richer (zero tolerance off the day0 ' +
-      'column) — worst ' + (worst ? worst.where + ' at ' + worst.pct.toFixed(2) + '%' : 'none') +
-      ', worst day0 ' + (day0Worst ? day0Worst.pct.toFixed(2) + '%' : 'none'),
-      richer.length === 0, richer.length + ' cells, worst 12: ' +
-      richer.slice(0, 12).map(c => c.where + ' +' + c.pct.toFixed(2) + '%').join(' | '));
-  chk('the counterweight is MONOTONE in severity at every fixed cadence ' +
-      '(zero tolerance off the day0 column; worst tolerated day0 backstep ' +
-      day0Mono.toFixed(2) + '% of calm, bound ' + (FOUNDING_MONO_TOL * 100).toFixed(0) + '%)',
-      monoBad.length === 0, monoBad.length + ' inversions, first: ' + (monoBad[0] || ''));
-  chk('the emergency response billed in every measured cell', billedEverywhere);
-  chk('the closed-loop audit survived every cell of the sweep', auditOk);
-  /* Calm weather must be EXACTLY the old economy: every cost term is keyed on
-     `shock − 1`, so at shock 1 nothing in this feature may execute. */
-  const calmA = claim(() => 1, 200, 'shock-probe', 3, 240);
-  chk('a calm city is bit-identical and never touches the disaster path',
-      calmA.emergency === 0, String(calmA.emergency));
-
-  // ── 4. OFFLINE CATCH-UP MUST NOT RUN AT A FROZEN PREMIUM ────────────────
-  /* Weather resets to clear on load, but `game.raid.timer` is SERIALISED and the
-     offline sweep deliberately does not run raidTick, so a save written inside
-     the raid window replays one frozen siege reading for the whole absence.
-
-     🔴 THIS BLOCK USED TO ASSERT ON A CALL SHAPE PRODUCTION NEVER MAKES, AND
-        THAT IS THE WHOLE LESSON OF IT. It drove the sweep as ONE
-        `Sim.advance(DAY * maxCatchUpDays, …)` and passed. The shipped host does
-        not do that: `offlineCatchUp()` runs
-            while (done < simSec) { dt = min(OFFLINE_SLICE_SEC, …);
-                                    await economyTick(dt / 60); }
-        i.e. ~12,960 SEPARATE advance() calls for the 36 h cap, each re-sampling
-        the same frozen host. Against the real shape the old per-call meter was
-        re-issued 12,960 times and the sweep ended at lastShock 1.6 having run
-        107 economic days — the defect, sitting behind this very ✅. So the loop
-        below is the host's loop, and the host's own two constants are read OUT
-        OF node-city rather than typed here: a copy would drift the day this
-        round is meant to catch a drift.
-     ⚠ Extraction failing is a HARD FAIL, not a skip — round 0b's rule. A round
-       that quietly stops testing the shipped path is worse than no round. */
-  let NCSRC = null;
-  try {
-    NCSRC = readFileSync(join(here, SABOTAGE === 'no-map'
-      ? '../../public/node-city/NOT-THERE.html'
-      : '../../public/node-city/index.html'), 'utf8');
-  } catch (e) { NCSRC = null; }
-  const ncConst = (name) => {
-    if (!NCSRC) return null;
-    const m = NCSRC.match(new RegExp('const\\s+' + name + '\\s*=\\s*([0-9.]+)\\s*;'));
-    return m ? Number(m[1]) : null;
-  };
-  const SLICE_SEC = ncConst('OFFLINE_SLICE_SEC'), CAP_H = ncConst('OFFLINE_CAP_H');
-  chk('read the host\'s own catch-up constants out of node-city/index.html',
-      !!(SLICE_SEC > 0 && CAP_H > 0), 'slice ' + SLICE_SEC + ' / cap ' + CAP_H);
-
-  const boot = (id) => { Prices.reset(); Sim.reset(id); HH.setPopulation(200); Sim.bootstrap(); };
-  const H = (shock) => ({ powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
-                          logisticsCounts: { warehouse: 3 }, shock });
-  /* THE SHIPPED SWEEP, slice for slice. Returns what the economy was running at
-     when the player got their city back. */
-  /* `sig(elapsedSec)` is what the HOST would report at that instant, so the same
-     loop can drive a frozen reading, a clear sky, or a city that really was
-     raided over and over. `shockedDays` is the honest exposure measure: how much
-     SIMULATED TIME actually ran at a premium, which is the quantity the defect
-     was unbounded in and the one no aggregate price number can confound. */
-  const sweep = (hours, sig) => {
-    const simSec = hours * 3600;
-    let done = 0, calls = 0, shockedDays = 0;
-    while (done < simSec - 1e-9) {
-      const dt = Math.min(SLICE_SEC || 10, simSec - done);
-      Sim.advance(dt / 60, H(sig(done)));
-      if (Sim.state().lastShock > 1) shockedDays += (dt / 60) / DAY;
-      done += dt; calls++;
-    }
-    return { calls, shockedDays, days: Sim.state().day, last: Sim.state().lastShock };
-  };
-  const FROZEN = () => 1.6;
-
-  const priceLevel = () => { let s = 0; for (const m of Prices.movers(400)) s += m.mul; return s; };
-  boot('catchup');
-  const swept = sweep(CAP_H || 36, FROZEN);
-  const pxSweep = priceLevel(), billAtReturn = Sim.state().flow.emergency;
-  boot('catchup-calm');
-  const calmSweep = sweep(CAP_H || 36, () => 1);
-  const pxCalmSweep = priceLevel();
-  /* What the SAME absence would honestly have contained. RAID_INTERVAL is 7200 s
-     and the ramp runs inside the last raidWindowFrac of it, so a 36 h absence is
-     eighteen raid cycles — a real city would have seen ~16 shocked economic
-     days. The frozen reading must buy a tiny fraction of that, not more of it. */
-  boot('catchup-real');
-  const realSweep = sweep(CAP_H || 36, (t) => ((t % 7200) > 7200 * (1 - ECON.shock.raidWindowFrac)) ? 1.6 : 1);
-  boot('live');
-  Sim.advance(DAY, H(1.6));
-  const afterLive = Sim.state().lastShock;
-
-  console.log('\n  🕓 THE ' + CAP_H + 'h SWEEP, driven in the host\'s own ' + SLICE_SEC + 's slices (' +
-              swept.calls.toLocaleString() + ' advance() calls, ' + swept.days + ' economic days)\n');
-  for (const [n, r] of [['frozen siege reading', swept], ['clear sky', calmSweep],
-                        ['a city really raided', realSweep]])
-    console.log('    ' + n.padEnd(24) + ' ran ' + r.shockedDays.toFixed(3).padStart(7) +
-                ' economic days at a premium, ended at shock ' + r.last);
-
-  chk('a ' + CAP_H + 'h catch-up driven in REAL ' + SLICE_SEC + 's slices ends CALM, a live day does not',
-      swept.last === 1 && afterLive === 1.6, 'sweep ' + swept.last + ' / live ' + afterLive);
-  /* 🔴 THE BOUND, AS A NUMBER. One frozen reading buys sampleDays of premium and
-     no more, however long the absence — plus at most the one slice that spends
-     the last sliver of the meter. This is the assertion the round was missing:
-     before the fix this figure was the ENTIRE sweep (107 of 107 economic days).
-     ⚠ Deliberately NOT a price comparison. The obvious test — "sweep prices
-       below three genuinely shocked days" — was in this round and was measuring
-       the wrong thing: the sliced path calls stepPrices ~12,960 times against
-       the 3-day path's 3, so the price integrator's step count swamped the
-       shock and the sliced sweep read HIGHER (Σmul 55.6 vs 51.0) even though it
-       ran a hundredth of the exposure. Two tick shapes are not comparable by
-       price level. Exposure in simulated days is the quantity in question. */
-  const bound = ECON.shock.cost.sampleDays + 2 * ((SLICE_SEC || 10) / 60) / DAY;
-  chk('the frozen reading buys at most ' + ECON.shock.cost.sampleDays + ' economic day(s) of premium (got ' +
-      swept.shockedDays.toFixed(3) + ', a real raid cadence would have been ' +
-      realSweep.shockedDays.toFixed(1) + ')',
-      swept.shockedDays <= bound && realSweep.shockedDays > swept.shockedDays * 4,
-      'sweep ' + swept.shockedDays + ' vs bound ' + bound + ' / real ' + realSweep.shockedDays);
-  /* …and it is not zero either. The fix must not be "delete the shock offline":
-     the sample the city DID observe still moves the market. */
-  chk('the offline sweep still moved prices above a clear sky',
-      swept.shockedDays > 0 && pxSweep > pxCalmSweep,
-      'shocked Σmul ' + pxSweep.toFixed(2) + ' vs calm Σmul ' + pxCalmSweep.toFixed(2));
-  /* The bound holds for a SHORT absence too — 3 h is the live-page probe that
-     found this, which advanced 9 economic days at a frozen 1.2997. */
-  boot('catchup-3h');
-  const short = sweep(3, FROZEN);
-  chk('a 3 h sweep (' + short.days + ' economic days) also ends CALM', short.last === 1, String(short.last));
-  /* 🚒 AND THE BILL STOPS TOO. resolveShock() RE-ARMS the recovery window every
-     time it sees sev > 0, so under the old per-call meter all 12,960 slices
-     re-armed it and the emergency response was still being invoiced on the last
-     day of the absence (1,631 🔥 on the final day alone, on the live page). Once
-     the meter is spent the shock resolves to 1, nothing re-arms, and the window
-     drains. Asserted on the SWEEP'S OWN final day — the day the player returns
-     to and the one they would be billed for. */
-  chk('the emergency bill is NOT still being invoiced when the player returns',
-      billAtReturn === 0, String(billAtReturn));
-
-  // ── 5. THE REPAIR WINDOW MUST NOT RATCHET ───────────────────────────────
-  /* 🔴 THE DEFECT THIS SECTION EXISTS FOR, and it sat behind §3's ✅ for a whole
-     round. `resolveShock()` armed the window with
-         S.shockSev = Math.max(S.shockSev, sev);
-         S.shockRecoveryLeft = ECON.shock.cost.recoveryDays;
-     and `shockSev` was cleared in exactly ONE place — runDay step 9b, when the
-     window fully expired. Because `recoveryDays` (4 economic days = 80 real
-     minutes) is LONGER than the gap between shock-producing events, the window
-     was re-armed before it could expire, so the level locked at the worst
-     severity the city had ever seen and every later drizzle was invoiced at it,
-     indefinitely. Measured pre-fix: one tornado-grade 1.33 on day 0 and then
-     nothing but 1.148 snow every third day left `shockSev` reading 0.330 on all
-     fifteen following days — 2.2× the true severity, for ever.
-
-     ⚠ WHY §3 CANNOT SEE IT, AND WHY THIS SECTION DRIVES WEATHER TOO. §3's signal
-       is RAIDS ONLY, and a raid fires on every SIXTH economic day with five
-       clean calm days between — the one cadence in which a 4-day window DOES
-       drain and the level DOES reset. RAID_INTERVAL 7200 s is six economic days,
-       so raids alone hold the window open 4 days in 6 and never ratchet. It is
-       node-city's own weather roll that closes the gaps: WX_ROLL_EVERY 150 s
-       with a 0.062 non-rain probability per roll is a ~40-minute mean gap,
-       comfortably inside the 80-minute window. A round that tests one of the two
-       signals the host actually feeds this term is testing the easy one.
-
-     🔑 THE SIGNAL IS BUILT FROM node-city's OWN ROWS, NOT FROM TYPED NUMBERS.
-        WEATHER, WX_CHANCES and WX_ROLL_EVERY are lifted out of the shipped HTML
-        and pushed back through ecoShock()'s published arithmetic
-        (hit = 1 − allMult × outdoorMult; ×weatherGain; +severeAdd if severe) so
-        that retuning a weather row retunes this round with it. Extraction
-        failing is a HARD FAIL — round 0b's rule.
-     🔑 DETERMINISTIC. The weather roll is a fixed-seed LCG, not Math.random, so
-        this run is bit-identical every time exactly as the rest of the gate is.
-
-     Prove it can fail: ECON_TEST_SABOTAGE=shock-ratchet. */
-  const ncLit = (re) => {
-    if (!NCSRC) return null;
-    const m = NCSRC.match(re);
-    try { return m ? Function('return (' + m[1] + ')')() : null; } catch (e) { return null; }
-  };
-  const ncNum2 = (name) => {
-    if (!NCSRC) return null;
-    const m = NCSRC.match(new RegExp('const\\s+' + name + '\\s*=\\s*([0-9.]+)\\s*[,;]'));
-    return m ? Number(m[1]) : null;
-  };
-  const WEATHER   = ncLit(/const\s+WEATHER\s*=\s*(\{[\s\S]*?\n\});/);
-  const WXCHANCE  = ncLit(/const\s+WX_CHANCES\s*=\s*(\[[\s\S]*?\n\]);/);
-  const WX_EVERY  = ncNum2('WX_ROLL_EVERY');
-  const RAID_IV   = ncNum2('RAID_INTERVAL');
-  const SIEGE_N   = ncNum2('SIEGE_EVERY');
-  chk('read node-city\'s OWN weather rows, roll cadence and raid clock',
-      !!(WEATHER && WXCHANCE && WXCHANCE.length && WX_EVERY > 0 && RAID_IV > 0 && SIEGE_N > 0),
-      'weather ' + (WEATHER ? Object.keys(WEATHER).length : 0) + ' rows / chances ' +
-      (WXCHANCE ? WXCHANCE.length : 0) + ' / roll ' + WX_EVERY + ' / raid ' + RAID_IV +
-      ' / siege ' + SIEGE_N);
-
-  if (WEATHER && WXCHANCE && WX_EVERY > 0 && RAID_IV > 0 && SIEGE_N > 0) {
-    const DAY_SEC = DAY * 60;
-    /* ecoShock()'s weather half, term for term. Rain reads exactly 1 here — it
-       has no allMult and no outdoorMult — which is correct and is why the
-       0.062 figure above excludes it. */
-    const wxMul = (type) => {
-      const W = WEATHER[type];
-      if (!W || type === 'clear') return 1;
-      const all = (typeof W.allMult === 'number') ? W.allMult : 1;
-      const out = (typeof W.outdoorMult === 'number') ? W.outdoorMult : 1;
-      const hit = Math.max(0, Math.min(1, 1 - all * out));
-      return 1 + hit * ECON.shock.weatherGain + (W.severe ? ECON.shock.severeAdd : 0);
-    };
-    /* The two ends of the real weather ladder, discovered rather than typed: the
-       worst row the sky can produce and the mildest row that is a shock at all. */
-    let SEVERE = { t: null, m: 1 }, MILD = { t: null, m: Infinity };
-    for (const t in WEATHER) {
-      const m = wxMul(t);
-      if (!(m > 1)) continue;
-      if (m > SEVERE.m) SEVERE = { t, m };
-      if (m < MILD.m) MILD = { t, m };
-    }
-    chk('the weather ladder has a severe end and a distinctly milder one (' +
-        SEVERE.t + ' ×' + SEVERE.m.toFixed(3) + ' vs ' + MILD.t + ' ×' + MILD.m.toFixed(3) + ')',
-        !!(SEVERE.t && MILD.t && SEVERE.m > MILD.m * 1.05));
-
-    const sevOf = (sh) => Math.max(0, Math.min(ECON.shock.cost.maxSeverity, sh - 1));
-
-    /* ── 5a. THE TRACE THAT NAILS IT ────────────────────────────────────────
-       One severe event, then nothing but the mildest shock in the game, spaced
-       just inside the recovery window. Every later day must be billed at the
-       MILD severity. Pre-fix every one of them read the severe severity. */
-    const GAP = Math.max(1, SHIPPED_RD - 1);        // just inside the shipped window
-    const TRACE_DAYS = 16;
-    Sim.reset('ratchet-trace'); HH.setPopulation(200); Sim.bootstrap();
-    const St = Sim.state();
-    const seen = [];
-    for (let d = 0; d < TRACE_DAYS; d++) {
-      const sh = d === 0 ? SEVERE.m : (d % GAP === 0 ? MILD.m : 1);
-      Sim.advance(DAY, H(sh));
-      seen.push(St.shockSev);
-    }
-    const sevSev = sevOf(SEVERE.m), mildSev = sevOf(MILD.m);
-    /* Days strictly after the severe event's own window has had time to drain.
-       Inside it the severe rate is CORRECT — one day after a tornado the city is
-       repairing a tornado. What may not happen is the clock being restarted. */
-    const after = seen.slice(SHIPPED_RD);
-    const worstAfter = Math.max(0, ...after);
-    chk('a mild shock after a severe one is billed at the MILD rate (' +
-        worstAfter.toFixed(3) + ' vs mild ' + mildSev.toFixed(3) + ', severe ' + sevSev.toFixed(3) + ')',
-        worstAfter <= mildSev + 1e-9,
-        'trace ' + seen.map(v => v.toFixed(3)).join(' '));
-    chk('…and the mild shock is still billed at all (the fix is not "stop billing")',
-        worstAfter >= mildSev - 1e-9, String(worstAfter));
-
-    /* ── 5b. THE COMBINED SIGNAL, OVER A LONG DETERMINISTIC RUN ─────────────
-       Weather AND raids, which is what the host actually feeds this term. */
-    /* mulberry32, not the textbook LCG this was written with first. `seed *
-       1103515245` overflows 2^53 in JS doubles, so the classic LCG silently
-       loses its low bits here and produced a visibly clumped stream — 240 days
-       of it contained exactly ONE calm stretch long enough to test the window's
-       closure with. Every step below is Math.imul / xor, i.e. exact in int32. */
-    let seed = 0x5eed >>> 0;
-    const rnd = () => {
-      seed = (seed + 0x6D2B79F5) | 0;
-      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-    const combined = (days) => {
-      seed = 0x5eed;
-      const out = [];
-      let t = 0, nextRoll = WX_EVERY * (0.6 + rnd() * 0.8), type = 'clear', until = 0;
-      const cycleDays = RAID_IV / DAY_SEC;
-      for (let d = 0; d < days; d++) {
-        let worst = 1;
-        const end = (d + 1) * DAY_SEC;
-        while (t < end) {
-          const at = Math.min(end, nextRoll);
-          if (until > t) worst = Math.max(worst, wxMul(type));
-          t = at;
-          if (t >= nextRoll - 1e-9) {
-            if (t >= until) {                       // the sky is free to change
-              type = 'clear';
-              const u = rnd(); let acc = 0;
-              for (const c of WXCHANCE) { acc += c.p; if (u < acc) { type = c.type; break; } }
-              if (type !== 'clear') {
-                const D = WEATHER[type].dur || [0, 0];
-                until = t + D[0] + rnd() * (D[1] - D[0]);
-                worst = Math.max(worst, wxMul(type));
-              }
-            }
-            nextRoll = t + WX_EVERY * (0.6 + rnd() * 0.8);
-          }
-        }
-        /* The walls, on the host's own clock: the ramp lands in the last
-           raidWindowFrac of each RAID_INTERVAL, and every SIEGE_EVERY-th wave is
-           a siege. Same reconstruction §3 documents. */
-        const raidDay = cycleDays >= 1 && (d % cycleDays) === Math.ceil(cycleDays) - 1;
-        const wave = Math.floor(d / cycleDays) + 1;
-        const raid = raidDay
-          ? 1 + (wave % SIEGE_N === 0 ? ECON.shock.siegeGain : ECON.shock.raidGain) : 1;
-        out.push(Math.min(ECON.shock.max, worst * raid));
-      }
-      return out;
-    };
-    /* 🔴 LONGER THAN §3's RUN, ON PURPOSE. The real combined signal is DENSE —
-       a ~40-minute mean gap against a 20-minute economic day leaves half the
-       calendar shocked — so a stretch of calm longer than the 4-day window is
-       genuinely rare: 240 days contained only three such days, which is not a
-       sample, it is an anecdote. The closure property is the one that needs
-       calm to be observable at all, so §5 runs long enough to see it happen
-       repeatedly rather than tuning the weather until it does. */
-    const COMBO_DAYS = 1200;
-    const SIG = combined(COMBO_DAYS);
-    const shockedInSig = SIG.filter(s => s > 1).length;
-    const driveCombined = (arr, node) => {
-      Sim.reset(node); HH.setPopulation(200); Sim.bootstrap();
-      const Sx = Sim.state();
-      const trail = [];
-      let claimed = 0, emergency = 0, openDays = 0, overBill = 0;
-      /* 🔴 THE SECOND HALF OF THE DEFECT: a window that is re-armed faster than
-         it drains never closes, so the level never gets cleared either. Asserted
-         where it is unambiguous — at the end of every calm stretch LONGER than
-         the shipped window. Inside a shorter stretch an open window is correct
-         (the city really is still repairing), so a bare "% of days open" would
-         be a threshold somebody picked, not a property. */
-      let calmRun = 0, stretchesChecked = 0, stillOpen = 0;
-      for (let d = 0; d < arr.length; d++) {
-        trail.push(sevOf(arr[d]));
-        Sim.advance(DAY, H(arr[d]));
-        claimed += Sim.claimPayout();
-        emergency += Sx.flow.emergency;
-        if (Sx.shockRecoveryLeft > 0) openDays++;
-        calmRun = (arr[d] > 1) ? 0 : calmRun + 1;
-        /* Every day of every stretch past the window's length, not just the
-           first: more samples, and it also catches a window that closes and is
-           then somehow re-armed by nothing at all. */
-        if (calmRun > SHIPPED_RD) {
-          stretchesChecked++;
-          if (Sx.shockRecoveryLeft > 0 || Sx.shockSev > 0) stillOpen++;
-        }
-        /* 🔴 THE RATCHET, AS ONE NUMBER: the severity the city is being billed
-           at, against the worst severity anything ACTUALLY did to it inside the
-           recovery window. A level that outlives its own cause by longer than the
-           window is the defect, whatever the cause was. */
-        const worstTrue = Math.max(0, ...trail.slice(Math.max(0, trail.length - SHIPPED_RD)));
-        overBill = Math.max(overBill, Sx.shockSev - worstTrue);
-      }
-      return { claimed, emergency, openDays, overBill, stretchesChecked, stillOpen,
-               audit: Sx.lastAudit };
-    };
-    /* ⚠ THE SAME NODE ID FOR BOTH RUNS, AND IT IS NOT A DETAIL. `Sim.reset(id)`
-       seeds the terrain and the seams FROM the id, so a calm baseline taken on a
-       different node is a different city — the first cut of this compared
-       'combo-calm' against 'combo' and read +91%, which measured the two nodes'
-       geology and nothing whatever about the weather. */
-    const cCalm = driveCombined(SIG.map(() => 1), 'combo');
-    const cReal = driveCombined(SIG, 'combo');
-    const cDelta = cReal.claimed - cCalm.claimed;
-    console.log('\n  🌩🌧 WEATHER + RAIDS, ' + COMBO_DAYS + ' deterministic economic days (' +
-                shockedInSig + ' shocked days)\n');
-    console.log('    claimed calm ' + cCalm.claimed + ' 🔥   with disasters ' + cReal.claimed +
-                ' 🔥   ' + (cDelta >= 0 ? '+' : '') + cDelta +
-                ' (' + (cDelta / Math.max(1, cCalm.claimed) * 100).toFixed(1) + '%)');
-    console.log('    repair window open on ' + cReal.openDays + '/' + COMBO_DAYS + ' days (' +
-                (cReal.openDays / COMBO_DAYS * 100).toFixed(1) + '%), response bill ' +
-                Math.round(cReal.emergency).toLocaleString() + ' 🔥, worst over-bill ' +
-                cReal.overBill.toFixed(4));
-
-    chk('the combined signal really is denser than raids alone (> ' +
-        Math.floor(COMBO_DAYS / (RAID_IV / DAY_SEC)) + ' shocked days)',
-        shockedInSig > Math.floor(COMBO_DAYS / (RAID_IV / DAY_SEC)) * 2, String(shockedInSig));
-    chk('there are calm days past the window to test closure on (' +
-        cReal.stretchesChecked + ')', cReal.stretchesChecked >= SHIPPED_RD,
-        String(cReal.stretchesChecked));
-    chk('the repair window CLOSES — on every calm day past the ' +
-        SHIPPED_RD + '-day window, the city is out of recovery (' +
-        (cReal.stretchesChecked - cReal.stillOpen) + '/' + cReal.stretchesChecked + ')',
-        cReal.stretchesChecked > 0 && cReal.stillOpen === 0,
-        cReal.stillOpen + ' of ' + cReal.stretchesChecked + ' still open');
-    chk('the billed severity NEVER outlives its cause (over-bill ' +
-        cReal.overBill.toFixed(4) + ' must be 0)', cReal.overBill <= 1e-9,
-        String(cReal.overBill));
-    chk('under weather AND raids the player is still POORER than in calm weather',
-        cReal.claimed < cCalm.claimed, 'calm ' + cCalm.claimed + ' vs ' + cReal.claimed);
-    chk('the closed-loop audit survived the combined signal',
-        !!(cReal.audit && cReal.audit.ok), JSON.stringify(cReal.audit));
-  }
-
-  if (fails) { bad++; console.log('\n=== ROUND 0i: ' + fails + ' FAILED ==='); }
-  else console.log('\n=== ROUND 0i: ALL PASS ===');
 }
 
 

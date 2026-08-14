@@ -3904,8 +3904,9 @@ function weatherTick(dt) {
       OPERATION IS NOT WHAT IT BUYS A TILE, because an op carries NO `gen`. The
       registration loop copies pop/crew/powerNeed/use/svc only, and an op's
       OUTPUT is the firm's, produced in the economy module, which weatherMult
-      never touches (the economy's own weather term is ecoShock(), city-wide and
-      derived from allMult × outdoorMult). So inside economyTick the multiplier
+      never touches (the economy has NO weather term of its own — the city-wide
+      one derived from allMult × outdoorMult went out with the disaster→prices
+      feature; see the block above ecoHost()). So inside economyTick the multiplier
       reaches an operation on exactly two lines: its `use` draw (:17226) and its
       `svc` supply (:17281). Measured live, one tile, per minute:
         op_agri   water 0.234 → 0.117 in a TORNADO (a saving) and → 0.249 in RAIN
@@ -17617,8 +17618,8 @@ function ecoLogisticsCounts() {
   for (const v of Object.values(ECO_LOGISTICS_OPS))   out[v] = out[v] || 0;
   /* hasOwnProperty, not a bare lookup: a tile typed 'constructor' or 'toString'
      would otherwise resolve up the prototype chain to a truthy Object member and
-     be credited as a logistics building — the identical guard the weather record
-     carries at ecoShock(). */
+     be credited as a logistics building. The same guard used to be carried by
+     the weather-record lookup in ecoShock(), which has since been removed. */
   const has = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
   /* Resolved per call, not once at load: `opsKeyOf` is a `const` arrow declared
      ~5,900 lines below this one, and a top-level read up here would hit its
@@ -17831,167 +17832,33 @@ function ecoBindRoster() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   🌩 DISASTERS → PRICES. The `host.shock` term, which was wired and dark.
+   🌩 DISASTERS DO NOT MOVE PRICES, AND THERE IS NO `ecoShock()` ANY MORE.
 
-   sim.js `stepPrices()` passes `shock: host && host.shock ? host.shock : 1` into
-   Prices.step, and prices.js `targetMul()` applies it LAST:
-       if (ctx.shock) mul *= ctx.shock;
-       return Math.max(E.minMul, Math.min(E.maxMul, mul));   // 0.35 … 4.0
-   So it is a raw multiplier on the whole price target, 1 = normal, and it lands
-   inside a clamp that also holds every other price term. That clamp is a
-   backstop, NOT a budget: a shock big enough to reach 4.0 on its own would pin
-   the entire market at the ceiling and delete supply/demand from the model. This
-   mapping therefore ships its own, much tighter ceiling (`max`) and never
-   returns below 1 — a disaster is a PREMIUM. Weather that HELPS (rain, farmMult
-   1.3) already shows up as extra supply through the normal ratio term; adding a
-   discount here would count it twice and in the wrong direction.
+   This is where the raid+weather → price multiplier was built. It read
+   `game.raid.timer` / `game.raid.wave` against RAID_INTERVAL and SIEGE_EVERY for
+   the siege ramp, and `WEATHER[wx.type]`'s own allMult × outdoorMult for the
+   storm, and handed the result to the economy as `host.shock`. All of it is
+   removed: the mapping, the `ECON.shock` group it read, the `shock` field on
+   ecoHost(), the `_ecoOfflineSweep` flag that suppressed it during catch-up, and
+   the whole counterweight sim.js grew to pay for it.
 
-   ⚠ THIS FUNCTION IS ONLY HALF OF THE MECHANIC, AND SHIPPING IT ALONE INVERTED
-     WHAT A CRISIS MEANT. A premium raises the sales and corporate tax take, the
-     player's payout is a share of the day's municipal surplus, and so a siege
-     measurably RAISED the owner's income: over 300 deterministic economic days,
-     claimed Cinder 5,762 calm → 5,910 at a realistic raid cadence, → 6,885 at a
-     permanent 1.6. The number this returns is now spent by sim.js on both
-     sides — the premium AND the destroyed output, the stopped convoys and the
-     emergency response that pay for it (ECON.shock.cost). Do not add a cost
-     term here: this function's job is to describe the city's weather, and the
-     economy's job is to price it.
+   WHY, IN ONE LINE: a siege measurably PAID the city's owner, and nine
+   consecutive rounds failed to stop it. `shock = 1` always is what this game
+   shipped before the attempt, and it is safe for the dullest possible reason —
+   the multiplier never moves.
 
-   ⚠ THE SIGNAL IS THE ONE THE CITY ALREADY HAS, not a new one.
-     • WEATHER — `wx.type` and the WEATHER row's OWN production multipliers.
-       Suppression is derived from `allMult × outdoorMult`, the same two numbers
-       weatherMult() multiplies into every outdoor building, so the price story
-       and the production story cannot disagree. A second hand-written "how bad
-       is a storm" table would drift away from the first retune of the weather.
-     • RAIDS — a wave is an INSTANT, not a duration, so "a raid is happening"
-       does not exist as live state. What does exist is `game.raid.timer`
-       counting down to a wave that `game.raid.wave % SIEGE_EVERY` already
-       classifies as a siege. Merchants price in a siege they can see coming;
-       the ramp runs only inside the last `raidWindowFrac` of the interval so
-       that a city not under threat sits at EXACTLY 1 rather than at some small
-       permanent premium that would make "normal" unobservable.
-
-   🔴 RULE 3 — PRIMITIVES ONLY, AND NEVER NaN.
-      ecoHost() is handed ACROSS the bridge. The live bug this file already paid
-      for was a host object stored BY REFERENCE leaking NaN into the panel while
-      every internal number stayed correct. Worse, the usual guards do not work
-      here: `Infinity` survives `x || 0`, and a truthy STRING survives
-      `Math.floor(x || 0)` (Math.floor('1e9') is 1e9, not 0). So every input goes
-      through `_shkNum`, which demands `typeof === 'number' && isFinite`, and the
-      result is re-checked before it leaves. Anything unrecognisable resolves to
-      exactly 1 — neutral — and the economy simply does not hear about the storm.
+   🔴 THE FULL POST-MORTEM IS IN prices.js `targetMul()`, at the removed hook.
+      It names the TWO independent channels that made a disaster profitable — the
+      price channel (a premium grows the tax base the payout draws from) and the
+      affordability channel (municipal bills are booked at cash PAID, so a
+      disaster that empties the treasury shrinks recorded outgoings and RAISES
+      the surplus, with no price term anywhere in the path). Read it before
+      rebuilding any of this, and note that the community/design doc's version of
+      the feature addresses neither.
+   ⚠ DO NOT RE-DERIVE THE MAPPING FROM THE CITY'S SIGNALS "because they are
+     already there". They are, and that was never the hard part.
    ════════════════════════════════════════════════════════════════════════════ */
 
-/* 🔢 RULE 4 — THE MAPPING CONSTANTS LIVE IN ECON, AND ONLY THERE.
-   This file used to declare its own `SHOCK_TUNING` literal and install it into
-   ECON `if (!ECON.shock)`. tuning.js now SHIPS the `shock` group (it has to:
-   sim.js reads the cost side of it), so that literal was a second copy of the
-   same numbers — the standing rejected design in this codebase, and one retune
-   away from the mapping and the simulation disagreeing about how bad a siege
-   is. The copy is gone; ECON.shock is the only authority and a build whose
-   economy module never loaded simply has no shock, exactly as before.
-   `on: 0` reads like a missing module and switches the whole term off, the same
-   contract ECON.construction already has (see bldCfg). */
-
-/* A finite JS number, or null. The ONLY accepted input shape — see the Infinity
-   and truthy-string bugs in the header above. */
-const _shkNum = (v) => (typeof v === 'number' && isFinite(v)) ? v : null;
-/* A tuning value, or its documented default if the group has been edited into
-   nonsense. A bad constant must degrade the term, never poison the price. */
-const _shkCfgNum = (v, dflt) => { const n = _shkNum(v); return n === null ? dflt : n; };
-
-const shockCfg = () => {
-  try {
-    const E = window.MythicEconomy;
-    if (!E || !E.ECON) return null;                 // no module → no shock, city ticks on
-    const C = E.ECON.shock;                         // ECON is the ONLY authority
-    return (C && C.on) ? C : null;
-  } catch (e) { return null; }
-};
-
-/* 🕓 THE OFFLINE SWEEP DECLARES ITSELF CALM, AND THE HONEST REASON IS THAT THE
-   CITY DOES NOT KNOW. Set for exactly the lifetime of offlineCatchUp's slice
-   loop — same try/finally as the `_bldOffline` flag beside it, for the same
-   reason: a flag whose lifetime is not the loop's is a flag that leaks.
-
-   Both signals ecoShock() reads are unobservable across an absence:
-     • THE SKY — `wx` is not serialised. It resets to 'clear' on load, so the
-       weather half of the term is already 1 for the whole sweep no matter what.
-     • THE WALLS — `game.raid.timer` IS serialised, and the sweep deliberately
-       does not run raidTick (raids are a thing you play, not a thing that
-       happens to a shut tab). So the timer is FROZEN at whatever instant the
-       save was written. A save stamped inside the last raidWindowFrac of the
-       cycle therefore reported a live siege for every slice of a 36-hour
-       catch-up — measured on the page: `game.raid.wave=4; game.raid.timer=1`
-       then `__nc.offline(3h)` advanced 9 economic days and finished with
-       snapshot().shock still 1.2997, billing emergency response the whole way.
-     A 36-hour absence spans eighteen 2-hour raid cycles. The frozen reading is
-     not a stale approximation of what happened, it is a reading of ONE INSTANT
-     replayed across a period in which the real answer was mostly 1 and is in
-     any case unknowable. Reporting 1 is the same decision the weather already
-     makes, and it is the NEUTRAL one, not a gift: since the disaster mapping
-     grew its cost side (ECON.shock.cost) a shock is a net negative, so a sweep
-     that claimed one would be charging the player for a siege nobody fought.
-
-   ⚠ sim.js meters this independently (see `S.shockBudgetDays`) and would cap a
-     frozen reading at ECON.shock.cost.sampleDays on its own. This flag is not
-     that guard's replacement — it is the host telling the truth about what it
-     can see, which is a different job. Two layers here on purpose: the last
-     time one side assumed the other was handling it, the term shipped dark. */
-let _ecoOfflineSweep = false;
-
-function ecoShock() {
-  const C = shockCfg();
-  if (!C) return 1;
-  if (_ecoOfflineSweep) return 1;                   // see the note above
-  let s = 1;
-
-  // ── The wave bearing down on the walls.
-  try {
-    const R = (typeof game !== 'undefined' && game && game.raid) || null;
-    const timer = _shkNum(R && R.timer);
-    const wave  = _shkNum(R && R.wave);
-    const iv    = _shkNum(typeof RAID_INTERVAL === 'number' ? RAID_INTERVAL : null);
-    const frac  = Math.max(0, Math.min(1, _shkCfgNum(C.raidWindowFrac, 0)));
-    if (timer !== null && wave !== null && iv !== null && iv > 0 && frac > 0) {
-      const win = iv * frac;
-      /* raidTick() lets the timer go momentarily negative before it resets, and
-         that instant is the most dangerous one in the cycle — clamp it to 0
-         (full ramp) rather than letting it fall out of the window. */
-      const t = Math.max(0, timer);
-      if (t < win) {
-        const ramp = Math.max(0, Math.min(1, 1 - t / win));
-        const every = _shkNum(typeof SIEGE_EVERY === 'number' ? SIEGE_EVERY : null);
-        const siege = every !== null && every > 0 && (Math.round(wave) % Math.round(every) === 0);
-        s *= 1 + ramp * Math.max(0, _shkCfgNum(siege ? C.siegeGain : C.raidGain, 0));
-      }
-    }
-  } catch (e) { /* a broken raid state must not price anything */ }
-
-  // ── The sky.
-  try {
-    const type = (typeof wx !== 'undefined' && wx) ? wx.type : null;
-    /* hasOwnProperty, not a bare lookup: `wx.type === 'constructor'` would
-       otherwise resolve to Object's constructor and read as a live weather row. */
-    const known = typeof type === 'string' && typeof WEATHER === 'object' &&
-                  Object.prototype.hasOwnProperty.call(WEATHER, type);
-    if (known && type !== 'clear') {
-      const W = WEATHER[type];
-      const all  = _shkCfgNum(W.allMult, 1);
-      const outd = _shkCfgNum(W.outdoorMult, 1);
-      // Lost outdoor output, 0..1. Snow (.88 × .8) reads .296; a storm .3.
-      const hit = Math.max(0, Math.min(1, 1 - all * outd));
-      s *= 1 + hit * Math.max(0, _shkCfgNum(C.weatherGain, 0)) +
-           (W.severe ? Math.max(0, _shkCfgNum(C.severeAdd, 0)) : 0);
-    }
-  } catch (e) { /* ditto for a broken weather row */ }
-
-  // ── The exit gate. One last finite check, because everything above multiplied.
-  const out = _shkNum(s);
-  if (out === null || !(out >= 1)) return 1;
-  const cap = Math.max(1, _shkCfgNum(C.max, 1));
-  return Math.min(cap, out);
-}
 
 function ecoHost() {
   const cov = (game.cov && game.cov.pct) || {};
@@ -18033,10 +17900,11 @@ function ecoHost() {
        already computed for other panels. */
     infrastructure: Math.max(0, Math.min(1, ((game.cov && game.cov.avg) || 0.5) * 0.7 +
                                             Math.min(1, roadUsed() / Math.max(1, roadCap())) * 0.3)),
-    /* 🌩 The disaster price multiplier sim.js has always read and nothing ever
-       set. A PRIMITIVE, computed fresh every tick — see ecoShock() above for the
-       range, the mapping and why a missing signal is exactly 1. */
-    shock: ecoShock(),
+    /* ⚠ NO `shock` FIELD. The disaster→prices term was removed; see the block
+       above ecoHost() and, for the measurements, prices.js `targetMul()`.
+       ⚠ EVERY VALUE IN THIS OBJECT IS A PRIMITIVE, COMPUTED FRESH. The live bug
+         this file already paid for was a host object stored BY REFERENCE leaking
+         NaN into the panel while every internal number stayed correct. */
   };
 }
 
@@ -23265,18 +23133,16 @@ async function offlineCatchUp(awayMsOverride) {
   _bldOffline = true; _bldDirty = false;
   _bldRebuildDue();
   try {
-    /* 🌩 THE ECONOMY HEARS NO STORM FOR THE LENGTH OF THE SWEEP.
-       `game.raid.timer` is serialised while `wx` is not, so without this the
-       slice loop below would price every one of its ~12,960 ticks off one
-       frozen raid clock. See the note on _ecoOfflineSweep at ecoShock().
-       ⚠ SET INSIDE THE `try`, NOT BESIDE `_bldOffline` ABOVE IT. The flag is
-         only released by the `finally`, so anything that can throw between the
-         two would leave the LIVE city permanently becalmed — every future
-         disaster silently priced at 1 with no error and no test that would see
-         it. `_bldRebuildDue()` sits in exactly that gap. `_bldOffline` carries
-         that exposure already and is not this package's to change; a second
-         flag does not have to inherit the bug. */
-    _ecoOfflineSweep = true;
+    /* 🌩 THERE WAS A SECOND FLAG HERE (`_ecoOfflineSweep`) AND IT WENT WITH THE
+       DISASTER TERM. Its job was to tell the economy "no storm" for the length
+       of the sweep, because `game.raid.timer` is serialised while `wx` is not —
+       so a save stamped inside the raid window priced every one of this loop's
+       ~12,960 slices off ONE frozen raid clock, i.e. a siege that lasted exactly
+       as long as the player was asleep.
+       ⚠ THE HAZARD IS NOT GONE, ONLY ITS CURRENT VICTIM. Anything future that
+         reads a live, time-varying city signal and hands it to the economy from
+         inside this loop inherits the same defect: the loop replays one instant
+         thousands of times. It is a property of catch-up, not of disasters. */
     while (done < simSec - 1e-9) {
       const dt = Math.min(OFFLINE_SLICE_SEC, simSec - done);
       await economyTick(dt / 60);
@@ -23331,7 +23197,6 @@ async function offlineCatchUp(awayMsOverride) {
   } finally {
     B.addRes = oAddRes; B.addCinders = oAddCin; B.spendRes = oSpend;
     _bldOffline = false;                  // same lifetime as the bridge patch
-    _ecoOfflineSweep = false;             // …and so is the becalmed economy
   }
   /* 🏗 ONE sync for the whole absence, and only now that the bridge is its own
      again. Per-completion this would be a firm reconcile inside the slice loop;
@@ -27740,20 +27605,14 @@ function animate() {
       list:  () => ecoBuildings(),
       sync:  () => ecoSync(),
       firms: () => { try { return window.MythicEconomy.firms(); } catch (e) { return null; } },
-      /* 🌩 THE SHOCK TERM, MADE FALSIFIABLE. `host()` is the SHIPPED ecoHost —
-         the same object the economy is handed, not a twin — and `shock()` is the
-         one number out of it. `wx` is the live weather record so a driver can
-         put a storm over the city by hand (rAF is dead in the capture pane, so
-         waiting for real weather is not a test). `shockCfg()` proves the
-         constants are being read from ECON rather than from a literal inline. */
+      /* 🏠 THE HOST OBJECT, MADE OBSERVABLE. `host()` is the SHIPPED ecoHost —
+         the same object the economy is handed, not a twin — so a driver can read
+         exactly what crosses the bridge on every tick. It carried a `shock()`
+         and a `shockCfg()` beside it while the disaster→prices term existed;
+         both are gone with the term, and `host()` no longer has a `shock` key at
+         all. `wx` stays: it is the live weather record, and weather still drives
+         production multipliers even though it no longer touches prices. */
       host:     () => ecoHost(),
-      shock:    () => ecoShock(),
-      shockCfg: () => shockCfg(),
-      /* 🕓 Is the economy currently being told "no storm" because a catch-up is
-         sweeping? The flag is a closure local (globals trap), so without this a
-         driver could only infer it from the shock number and could not tell
-         "becalmed by the sweep" from "genuinely clear sky". */
-      offlineSweep: () => _ecoOfflineSweep,
       wx,
       /* 🃏 THE DAILY CLOSE. `cards()` is cardOutput() straight from the module;
          `close(snap)` is the SHIPPED edge detector with the snapshot injected,

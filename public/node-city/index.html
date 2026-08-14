@@ -16386,9 +16386,30 @@ function ecoChainHtml(E) {
   const s = E.snapshot();
   const bank = !!(s && s.bank && s.bank.hasBank);
   const h = [];
+  /* 🔴 ONE BAD ROW MUST NOT COST THE TAB. ecoChainHtml is a SINGLE ecoSection,
+     so a throw anywhere in this map used to blank the whole Supply tab — every
+     other firm's Expansion / Borrow / Trace buttons went with it. Verified with
+     E.levelCheck() throwing for one firm id: 45 buttons and 15 rows collapsed
+     to "This part of the panel could not be drawn." and nothing else.
+     The row that failed still gets its ACTIONS, because the business whose
+     state cannot be described is precisely the one a player wants to act on;
+     only the description is missing, and it says so rather than pretending the
+     firm is fine. ecoSection stays as the last line of defence. */
+  const ecoRow = (make, id, name, out) => {
+    try { return make(); }
+    catch (e) {
+      try { console.warn('[eco] chain row failed', id, e); } catch (e2) {}
+      let act = '';
+      try { act = ecoActRow(id, name, out, bank); } catch (e2) { act = ''; }
+      return '<div class="eco-row"><span class="nm">' + logEsc(name || 'A business') +
+        '</span><span class="vl">could not be read</span></div>' + act;
+    }
+  };
   const rows = E.bottlenecks(6);
   h.push(rows.length
-    ? rows.map(d => E.renderFirm(d, E.levelCheck(d.firmId)) + ecoActRow(d.firmId, d.name, d.out, bank)).join('')
+    ? rows.map(d => ecoRow(() => E.renderFirm(d, E.levelCheck(d.firmId)) +
+                                 ecoActRow(d.firmId, d.name, d.out, bank),
+                           d.firmId, d.name, d.out)).join('')
     : '<div class="eco-empty">Every business is running at full rate.</div>');
   /* 🏢 EVERY business gets the action row, not only the struggling ones.
      cityReport() deliberately returns nothing for a firm that is HEALTHY and
@@ -16400,7 +16421,9 @@ function ecoChainHtml(E) {
   const rest = firms.filter(f => f && !shown.has(f.id));
   if (rest.length) {
     h.push('<div class="eco-h">🏢 Every other business</div>');
-    for (const f of rest) h.push(ecoActRow(f.id, f.name, f.out, bank));
+    // Same rule below the fold: these are rows too, and this loop is inside the
+    // same single ecoSection, so one bad firm here would blank the tab as well.
+    for (const f of rest) h.push(ecoRow(() => ecoActRow(f.id, f.name, f.out, bank), f.id, f.name, f.out));
   }
   if (!bank) {
     h.push('<div class="eco-tag">🏦 No bank is standing in this city, so nothing can borrow. ' +
@@ -25760,6 +25783,23 @@ function lifeWorkName(k) {
     return d ? (d.name || t.type) : null;
   } catch (e) { return null; }
 }
+/* 🔗 …and where the ECONOMY has them, for the people lifeWorkName can never
+   answer for. It only knows crewed TILES, so a citizen the model employs at a
+   firm with no tile of its own came back null and the slump row printed "is
+   struggling, with no work going" about somebody the talk panel had on the
+   books at the Waterworks.
+   🔴 MOOD EVENTS ONLY, DELIBERATELY. `left` / `hired` / `laid` / `moved` /
+   `strain` describe a TILE seat changing hands ("the Farm is a seat short"),
+   and naming a firm there would be a false statement about a building. slump
+   only ever says "at the X", which is true of an employer. `rally` was left
+   alone on purpose: "is doing well" claims nothing, so it was not lying. */
+function lifeEmpName(id) {
+  try {
+    const c = _citById.get(String(id));
+    const e = c ? citEmpInfo(c) : null;
+    return e ? e.name : null;
+  } catch (e) { return null; }
+}
 function lifeSnapshot() {
   const m = new Map();
   try {
@@ -25825,7 +25865,7 @@ function lifeDiff(before) {
     if (b.mood != null && a.mood != null && !_lifeMoodSeen.has(id)) {
       if (b.mood >= LIFE.SLUMP && a.mood < LIFE.SLUMP) {
         _lifeMoodSeen.add(id);
-        lifePush('slump', a.name, lifeWorkName(a.job), { mood: Math.round(a.mood) });
+        lifePush('slump', a.name, lifeWorkName(a.job) || lifeEmpName(id), { mood: Math.round(a.mood) });
       } else if (b.mood <= LIFE.RALLY && a.mood > LIFE.RALLY) {
         _lifeMoodSeen.add(id);
         lifePush('rally', a.name, lifeWorkName(a.job), { mood: Math.round(a.mood) });
@@ -26143,6 +26183,26 @@ function ctWork(c) {
   return { k: c.job, t, def, x, z, mult, gen, halted,
            svc: def.svc ? def.svc : null, name: def.name || t.type };
 }
+/* 🔗 The ONE line the hover tip says about their work, asked the same way and
+   in the same order as the talk panel's subheading: crewed tile first (it is
+   the stronger claim — a seat you can point at), then the ECONOMY, then the
+   genuinely idle case.
+   🔴 THIS USED TO BE `def ? … : 'no work right now'` AND IT WAS THE FIRST
+   THING A PLAYER SAW. Hovering somebody the economy had on a payroll read
+   "no work right now"; one click later the panel read "On the books at the
+   Waterworks". The tip is a separate call site from ctHtml, so it did not
+   inherit the bindRoster fix — which is exactly why it is a shared function
+   now rather than a second copy of the same ternary.
+   Returns ESCAPED html: the caller drops it straight into innerHTML. */
+function ctTipWork(c) {
+  const t = c && c.job ? game.tiles[c.job] : null;
+  const def = t ? BUILDINGS[t.type] : null;
+  if (def) return logEsc((def.name || t.type) + ' · tile ' + c.job);
+  let emp = null;
+  try { emp = citEmpInfo(c); } catch (e) { emp = null; }
+  if (emp) return logEsc(emp.name + ' · ' + emp.indIco + ' ' + emp.indName);
+  return 'no work right now';
+}
 /* The four terms citMoodTarget() is built from, recomputed so the panel can
    show WHY. ⚠ Cross-checked against citMoodTarget itself below: if the two
    ever disagree by more than a tenth of a point the breakdown is dropped
@@ -26151,13 +26211,28 @@ function ctTerms(c) {
   const cl = v => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0);
   const cov = (game.cov && game.cov.pct) || {};
   const t = c && c.job ? game.tiles[c.job] : null;
+  /* 🔗 ⚠ LABEL ONLY — THE VALUE BELOW MUST NOT MOVE. `work` is pinned at .25
+     for anybody with no crewed tile whether or not the economy employs them,
+     because that .25 is 12z's citMoodTarget and ctHtml drops the whole
+     breakdown when the two disagree by more than a tenth of a point. Paying
+     an employed citizen a higher term here would silently blank the section
+     it is trying to fix, and it would also be this panel inventing a number,
+     which is the standing rule's one prohibition.
+     What WAS wrong was the words: "no seat anywhere" printed three rows under
+     the "On the books at the Waterworks" subheading — the panel contradicting
+     itself two lines apart. So provenance now names the employer the rest of
+     the panel already names, and the arithmetic is untouched. */
+  const emp = t ? null : (() => { try { return citEmpInfo(c); } catch (e) { return null; } })();
   return [
     { k: 'morale', w: .40, v: cl((wellbeing.morale || 0) / 100), lab: 'City morale',
       src: 'wellbeing.morale' },
     { k: 'need', w: .25, v: cl((((+vitals.food || 0) + (+vitals.water || 0) + (+vitals.health || 0)) / 300)),
       lab: 'Food, water, health', src: 'the three vitals they live on' },
     { k: 'work', w: .20, v: !t ? .25 : t.damaged ? .15 : cl(typeof staffingRatio === 'function' ? staffingRatio() : 1),
-      lab: 'Their own work', src: !t ? 'no seat anywhere' : t.damaged ? 'their building is wrecked' : 'city staffing' },
+      lab: 'Their own work',
+      src: t ? (t.damaged ? 'their building is wrecked' : 'city staffing')
+             : emp ? 'no crewed tile — the ' + emp.name + ' pays them'
+                   : 'no seat anywhere' },
     { k: 'safe', w: .15, v: Number.isFinite(+cov.safety) ? cl(+cov.safety) : cl((+vitals.security || 0) / 100),
       lab: 'Safety', src: Number.isFinite(+cov.safety) ? 'safety coverage' : 'security vitals' },
   ];
@@ -26202,6 +26277,13 @@ const CT_GREET = {
 };
 function ctLines(c, W, terms) {
   const out = [];
+  /* 🔗 Asked ONCE, at the top, because TWO of the sentences below turn on it —
+     sentence 2 ("who employs you") and sentence 3 ("what is weighing on you").
+     Sentence 3 was missed when bindRoster landed and went on saying "It is
+     having nothing to do that wears at me" two lines under "I am on the books
+     at the Property Company". One reading, one answer, no way for the two to
+     drift apart again. */
+  const emp = W ? null : (() => { try { return citEmpInfo(c); } catch (e) { return null; } })();
   const band = ctBand(c.mood);
   const tone = c.mood < 40 ? 'dn' : c.mood > 70 ? 'up' : '';
   out.push({ text: ctPick(CT_GREET[band], c), tone,
@@ -26214,8 +26296,9 @@ function ctLines(c, W, terms) {
        seat anywhere" to anyone without a crewed tile, while
        /src/economy/households.js had them employed, paid and spending. The
        roster is a view onto that model now (citEmpSync), so ask it first and
-       only fall through to the idle lines when the answer is genuinely no. */
-    const emp = citEmpInfo(c);
+       only fall through to the idle lines when the answer is genuinely no.
+       (`emp` is read once at the top of ctLines — sentence 3 needs the same
+       answer this one gives.) */
     if (emp) {
       out.push({ text: 'I am on the books at the ' + emp.name + '. ' + emp.indIco + ' ' + emp.indName +
                        ' work — nothing you put up on a tile, but it is a wage.',
@@ -26259,11 +26342,23 @@ function ctLines(c, W, terms) {
     out.push({ text: 'There is not enough ' + worst + ' going round. That is what I think about.',
                tone: 'dn', why: 'vitals.' + worst + ' = ' + Math.round(v[worst]) + ', the lowest of the three' });
   } else if (low.k === 'work') {
-    out.push({ text: !W ? 'It is having nothing to do that wears at me. Not the money — the days.'
+    /* 🔗 THE FOURTH SURFACE THAT CONTRADICTED THE ECONOMY. The `work` term is
+       pinned at .25 for anyone with no crewed TILE, so it is very often the
+       weakest one — and this sentence read "It is having nothing to do that
+       wears at me" to somebody the panel had just put on the books at a firm.
+       The term being low is still TRUE for them, and the honest reading of why
+       is not idleness: the city has raised nothing they can hold a seat in.
+       Same tone, same branch, same number — only the sentence changes. */
+    out.push({ text: !W
+                 ? (emp ? 'The wage is fine. It is that there is nowhere in this city with my name over the door.'
+                        : 'It is having nothing to do that wears at me. Not the money — the days.')
                  : W.t.damaged ? 'It is the state of the ' + W.name + ' that wears at me.'
                  : 'We are spread far too thin. The city has hands for ' + Math.round(staffingRatio() * 100) +
                    '% of the crew jobs in it.',
-               tone: 'dn', why: !W ? 'no seat (term fixed at 25%)' : W.t.damaged ? 'workplace damaged (term fixed at 15%)'
+               tone: 'dn', why: !W
+                 ? (emp ? 'no crewed tile (term fixed at 25%) — the ' + emp.name + ' still pays them'
+                        : 'no seat (term fixed at 25%)')
+                 : W.t.damaged ? 'workplace damaged (term fixed at 15%)'
                  : 'staffingRatio() = ' + Math.round(staffingRatio() * 100) + '%' });
   } else {
     out.push({ text: 'It is not safe out here. Only ' + Math.round(low.v * 100) +
@@ -26510,11 +26605,10 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
   _ctHover = c.id;
   hover.visible = false;
   const tip = $('tiletip'); if (!tip) return;
-  const t = c.job ? game.tiles[c.job] : null, def = t ? BUILDINGS[t.type] : null;
   const mood = Number.isFinite(c.mood) ? c.mood : citMoodTarget(c);
   hoverKey = 'cit:' + c.id + ':' + Math.round(mood);
   tip.innerHTML = '<b class="tt">👤 ' + logEsc(c.name) + '</b>' +
-    '<span class="tsub">' + (def ? logEsc(def.name) + ' · tile ' + logEsc(c.job) : 'no work right now') + '</span>' +
+    '<span class="tsub">' + ctTipWork(c) + '</span>' +
     'Mood <span class="hl">' + mood.toFixed(0) + '</span> / 100 — ' + ctBand(mood) + '<br>' +
     '<span class="tbon">Click to talk to them</span>';
   tip.classList.add('on');
@@ -26561,6 +26655,11 @@ const CTALK_API = {
     const c = Number.isFinite(c0.mood) ? c0 : Object.assign({}, c0, { mood: citMoodTarget(c0) });
     return ctLines(c, ctWork(c), ctTerms(c));
   },
+  /* The hover tip's work line. Exposed because the tip itself is only
+     reachable through a pointermove over the 3D canvas, and a headless / non-
+     compositing pane reports that canvas as 0×0 — so the surface that a player
+     sees FIRST was also the only one no probe could read. */
+  tipWork: (id) => { const c = _citById.get(String(id)); return c ? ctTipWork(c) : null; },
   terms: (id) => { const c = _citById.get(String(id)); return c ? ctTerms(c) : null; },
   work: (id) => { const c = _citById.get(String(id)); return c ? ctWork(c) : null; },
   mates: (id) => { const c = _citById.get(String(id)); return c ? ctMates(c).map(m => m.name) : null; },

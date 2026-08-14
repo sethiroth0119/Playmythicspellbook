@@ -241,6 +241,133 @@ function cardOutput() {
   return out;
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   🌐 REAL CITY-TO-CITY TRADE — publish, discover, settle.
+   ----------------------------------------------------------------------------
+   🔴 NOT ONE SUPABASE CALL LIVES IN /src/economy, AND NONE MAY BE ADDED.
+   `Cloud` and `Profile` are top-level `const` in index.html — invisible to an
+   ES module (the globals trap, at the top of this file). The three network
+   operations therefore live over there, next to the client that can actually
+   make them, and reach this module through `MythicCityBridge.cityTrade`:
+
+       publish(payload) -> bool      upsert city_profiles + city_trade_offers
+       discover()       -> rows[]    other players' city_profiles
+       fill(offerId, n) -> row       the city_trade_fill(offer_id, units) RPC
+
+   This is the seam /src/trading/index.js already documents for the player
+   market ("The Supabase calls stay in index.html next to ResMarket, because
+   that is where Cloud, Profile and the realtime channel live"), and the shape
+   is identical: primitives across the bridge, decisions on the side that owns
+   the data.
+
+   🔴 AND IT MUST DEGRADE TO NOTHING AT ALL. sql/038 is NOT APPLIED. There is no
+      city_profiles table today, the client cannot know that, and it must not
+      care: every step below is independently guarded, and any failure — no
+      bridge, no network, no tables, an RLS refusal, a hostile row, a timeout —
+      ends with `Trade.ensureSimulated()` and a city that keeps trading against
+      the simulated neighbours it has always had. The migration upgrades the
+      partners; it does not enable the feature. */
+
+/* What this city publishes about itself. All primitives, freshly built — never
+   a reference into Trade's own state (the past live bug on the card seam was a
+   host object stored BY REFERENCE that leaked NaN into a panel). */
+function tradePublishPayload() {
+  const st = Sim.state();
+  const tr = Trade.state();
+  const sells = {}, buys = {};
+  for (const o of tr.offers) if (o && o.res) sells[o.res] = o.units;
+  /* The gaps this city structurally CANNOT make. A want gives the real
+     quantity; a gap with no want yet still advertises the smallest quantity
+     worth trading, so a neighbour can see the standing interest before this
+     city has run short — which is the whole mechanism behind exportInterest(). */
+  const wantUnits = {};
+  for (const w of tr.wants) if (w && w.res) wantUnits[w.res] = w.units;
+  for (const g of Bottleneck.structuralGaps()) {
+    if (!g || !g.res) continue;
+    buys[g.res] = wantUnits[g.res] || ECON.trade.minOffer;
+  }
+  const rows = [];
+  for (const o of tr.offers) {
+    rows.push({ side: 'sell', res: o.res, units: o.units, unitPrice: o.price, urgent: false });
+  }
+  for (const w of tr.wants) {
+    if (rows.length >= ECON.trade.maxOpenOffers * 2) break;
+    rows.push({ side: 'buy', res: w.res, units: w.units, unitPrice: w.maxPrice, urgent: !!w.urgent });
+  }
+  return {
+    nodeId: st.nodeId != null ? String(st.nodeId) : null,
+    specs: tr.active.slice(),
+    sells, buys, offers: rows,
+    day: st.day | 0,
+    population: Math.round(HH.population()),
+  };
+}
+
+/* One economic day's network round trip. Async, and the host must NOT await it
+   inside a tick — nothing here may touch the treasury or the inventory, and
+   nothing does: a confirmed fill is queued in trade.js and booked by match()
+   inside the next audited day. See the settlement block in trade.js. */
+async function tradeSync() {
+  const out = { published: false, discovered: 0, real: 0, requested: 0,
+                filled: 0, credited: 0, degraded: false, errors: [] };
+  if (!mounted) { out.degraded = true; out.errors.push('not-mounted'); return out; }
+  const nodeId = Sim.state().nodeId;
+  const net = (() => { try { const b = B(); return (b && b.cityTrade) || null; } catch (e) { return null; } })();
+  if (!net) {
+    /* The overwhelmingly common case: standalone, offline, signed out, or an
+       older host with no trade seam. Not an error and not logged as one. */
+    out.degraded = true;
+    Trade.ensureSimulated(nodeId);
+    return out;
+  }
+
+  // ── 1. PUBLISH. A failure here costs this city visibility, nothing else.
+  try {
+    if (typeof net.publish === 'function') out.published = !!(await net.publish(tradePublishPayload()));
+  } catch (e) { out.errors.push('publish'); }
+
+  // ── 2. DISCOVER.
+  let rows = null;
+  try {
+    if (typeof net.discover === 'function') rows = await net.discover();
+  } catch (e) { out.errors.push('discover'); rows = null; }
+  if (Array.isArray(rows) && rows.length) {
+    /* THE ONLY CALL THE NETWORK PATH NEEDS. Matching, freight and pricing work
+       against a real partner exactly as they do against a simulated one. */
+    out.discovered = Trade.setPartners(rows);
+  } else {
+    /* No rows is the offline answer AND the "nobody else has published yet"
+       answer, and they are indistinguishable from here. Both keep the partners
+       already on the books rather than emptying a market on a transient read —
+       a non-empty discovery replaces the real ones, this does not. */
+    out.degraded = true;
+  }
+  Trade.ensureSimulated(nodeId);
+  const partners = Trade.state().partners;
+  out.real = partners.filter(p => !p.simulated).length;
+
+  // ── 3. SETTLE. One RPC per planned line, and each one is caught alone.
+  if (out.real && typeof net.fill === 'function') {
+    const plan = Trade.planFills(Sim.state().treasury, Sim.state().day);
+    out.requested = plan.length;
+    for (const req of plan) {
+      let row = null;
+      try {
+        row = await net.fill(req.offerId, req.units);
+      } catch (e) {
+        /* A throw or a timeout credits NOTHING, by not calling recordFill at
+           all. That is the same outcome as a rejected row, reached without a
+           second code path that could disagree with the first. */
+        out.errors.push('fill');
+        continue;
+      }
+      const r = Trade.recordFill(req, row);
+      out.filled += r.filled; out.credited += r.credited;
+    }
+  }
+  return out;
+}
+
 /* ── PERSISTENCE ────────────────────────────────────────────────────────────
    The host stores this blob inside its own city save. Absent-tolerant on load,
    like everything else in this codebase that loads. */
@@ -258,6 +385,22 @@ const api = {
   // the city ⇄ economy seam
   syncBuildings, canBuild, pickAvailable, cardOutput,
   setPopulation: (n) => HH.setPopulation(n),
+
+  /* 🌐 THE TRADE NETWORK SEAM. `tradeSync()` is the whole of it for the host —
+     one call per economic day. The rest is exposed so a driver can exercise
+     each step alone, because the live path cannot be tested at all until
+     sql/038 is applied and a second player exists.
+     ⚠ `settle()` is `Trade.recordFill` itself, not a copy. A seam that
+       re-implemented the credit rule would be testing itself, and the rule it
+       enforces (credit `filled`, never the request) is the one that stops a
+       seller shipping the same 40 units twice. */
+  tradeSync,
+  tradePayload: tradePublishPayload,
+  tradePartners: (rows) => Trade.setPartners(rows),
+  tradePlan: (cash) => Trade.planFills(cash != null ? cash : Sim.state().treasury, Sim.state().day),
+  settle: (req, row) => Trade.recordFill(req, row),
+  tradePending: () => Trade.pendingSettlements(),
+  tradeStats: () => Trade.settleStats(),
 
   // reads for the UI
   snapshot: () => (mounted ? Sim.snapshot() : null),

@@ -32,7 +32,7 @@
 import { ECON } from './tuning.js';
 import { priceOf, basePrice } from './prices.js';
 import * as Endow from './endowment.js';
-import { INDUSTRIES, industryOf, DEPOSITS } from './recipes.js';
+import { INDUSTRIES, industryOf, DEPOSITS, producible } from './recipes.js';
 import * as Logistics from './logistics.js';
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -81,6 +81,13 @@ const S = {
   lastImported: {},      // resId → units imported this day
   lastExported: {},      // resId → units exported this day
   lastImportSpend: 0, lastExportRevenue: 0,
+  /* 🤝 SETTLED REMOTE FILLS waiting to be booked into the city.
+     A fill is confirmed OUTSIDE the economic day (the host awaits an RPC), and
+     nothing may move Cinder or goods out there — sim.js captures the audit
+     window's `before` at the top of runDay(), so a debit taken between two ticks
+     is a debit nobody counted. See `recordFill()`. */
+  settled: [],
+  settleLog: { requested: 0, filled: 0, credited: 0, rejected: 0, reasons: {} },
 };
 
 export function state() { return S; }
@@ -88,6 +95,12 @@ export function reset() {
   S.streak = {}; S.active = []; S.offers = []; S.wants = []; S.partners = [];
   S.nextOfferId = 1; S.lastImported = {}; S.lastExported = {};
   S.lastImportSpend = 0; S.lastExportRevenue = 0;
+  /* ⚠ EVERY NEW FIELD MUST BE CLEARED HERE. run.mjs round 0m fingerprints
+     Trade.state() after reset() and fails on any field that survives a churn of
+     dissimilar cities — that round exists because logistics.js forgot exactly
+     one field and quietly invalidated measurement across the whole gate. */
+  S.settled = [];
+  S.settleLog = { requested: 0, filled: 0, credited: 0, rejected: 0, reasons: {} };
 }
 
 /* ── SPECIALIZATION SCORING ─────────────────────────────────────────────────
@@ -164,8 +177,128 @@ export function specBonusFor(resId) {
    works solo — and they are derived from the SAME endowment function real nodes
    use, so a simulated neighbour is never something a real node could not be.
    ════════════════════════════════════════════════════════════════════════════ */
+
+/* 🔢 EVERY NUMBER THAT CROSSES THE BRIDGE IS SUSPECT UNTIL IT IS FINITE.
+   Remote rows are written by other players' clients. A NaN or an Infinity in
+   `sells` does not throw — it propagates through match() into `spend`, into the
+   treasury, and out through the audit as an un-diagnosable failure three days
+   later. Same class as the freight NaN round 1 of the gate was written for. */
+const fin = (v) => {
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  /* A numeric STRING is legitimate and has to pass: PostgREST hands `numeric`
+     columns back as strings on some deployments, so '25' really is 25 units.
+     ⚠ ANY OTHER TYPE IS NOT A QUANTITY, and this is not pedantry — a bare
+       `Number(v)` turns `true` into 1, and the gate caught exactly that:
+       `{ filled: true }` credited one unit of steel. `true` is not a quantity,
+       an array is not a quantity, and neither may move goods. */
+  if (typeof v === 'string' && v.trim() !== '') { const n = Number(v); return isFinite(n) ? n : 0; }
+  return 0;
+};
+
+/* An inventory map off the wire: positive finite quantities, catalogued ids
+   only. `producible()` is both the validity test and the width bound — an id
+   this build has never heard of cannot be traded anyway, and the catalogue is
+   258 entries, so a row claiming a hundred thousand keys cannot get through. */
+function cleanInventory(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const id in raw) {
+    if (!id || typeof id !== 'string') continue;
+    if (!producible(id)) continue;
+    const v = fin(raw[id]);
+    if (v > 0) out[id] = v;
+  }
+  return out;
+}
+
+/* One remote city, shaped for `match()`. Returns null for a row that cannot be
+   traded with at all — a partner with no id could never be settled against. */
+export function normalizePartner(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = raw.id != null ? String(raw.id) : '';
+  if (!id) return null;
+  const nodeId = raw.nodeId != null ? String(raw.nodeId) : id;
+  const p = {
+    id, nodeId,
+    name: (typeof raw.name === 'string' && raw.name.trim()) ? raw.name.trim() : partnerName(nodeId),
+    /* Specs decide price priority in match(), so an unknown key must be dropped
+       rather than carried: SPEC_BY_KEY[k] would be undefined and the specialist
+       test would throw on `.tests`. */
+    specs: Array.isArray(raw.specs) ? raw.specs.filter(k => typeof k === 'string' && SPEC_BY_KEY[k]) : [],
+    sells: cleanInventory(raw.sells),
+    buys: cleanInventory(raw.buys),
+    /* 🔴 EXPLICITLY FALSE, NEVER MERELY ABSENT. refreshPartners() rewrites the
+       inventory of every partner whose flag is truthy; a real city that arrived
+       without the flag would read falsy today and be left alone — but the flag
+       is also what the panel and the tests read to tell a real neighbour from a
+       fabricated one, and "undefined" is not an answer. */
+    simulated: !!raw.simulated,
+    /* The rows a settlement can actually be filled against. Present only on
+       real partners; a simulated city has no offer id because there is no row. */
+    offers: normalizeOffers(raw.offers),
+  };
+  return p;
+}
+
+/* A remote city's open SELL offers. `offerId` is opaque here on purpose — this
+   module never parses it, it only hands it back to the host to settle. */
+function normalizeOffers(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const o of raw) {
+    if (!o || typeof o !== 'object') continue;
+    const offerId = o.offerId != null ? String(o.offerId) : '';
+    const res = typeof o.res === 'string' ? o.res : '';
+    const units = fin(o.units);
+    if (!offerId || !res || !producible(res) || !(units > 0)) continue;
+    out.push({ offerId, res, units, unitPrice: fin(o.unitPrice), urgent: !!o.urgent });
+    if (out.length >= ECON.trade.maxOpenOffers) break;
+  }
+  return out;
+}
+
+/* 🌍 THE HOST HANDS OVER THE REAL NEIGHBOURS. This is the ONLY call the network
+   path needs — matching, freight and pricing already work against a real
+   partner exactly as they do against a fabricated one, because both are the
+   same shape and always were.
+
+   ⚠ REAL PARTNERS REPLACE REAL PARTNERS; SIMULATED ONES ARE KEPT.
+     Two reasons, and the first is the important one:
+       1. A city that discovers ONE real neighbour must not thereby lose the
+          four it was trading with. Production is planned a day ahead from
+          `exportInterest()` (see the note there — that chicken-and-egg deadlock
+          idled half the city), so shrinking the partner list on the day a real
+          city appears would cut the standing orders the plan was made against.
+       2. Discovery returning zero rows is the OFFLINE case, and offline must
+          keep working. Wiping the list there would leave the city with nobody
+          to trade with until sim.js re-seeded it a day later.
+     Dedupe is by id, so a re-discovery updates a partner in place rather than
+     stacking a second copy of the same city. */
 export function setPartners(list) {
-  S.partners = Array.isArray(list) ? list.filter(p => p && p.id) : [];
+  const incoming = [];
+  const seen = new Set();
+  for (const raw of (Array.isArray(list) ? list : [])) {
+    const p = normalizePartner(raw);
+    if (!p || seen.has(p.id)) continue;
+    seen.add(p.id); incoming.push(p);
+  }
+  const kept = S.partners.filter(p => p.simulated && !seen.has(p.id));
+  S.partners = incoming.concat(kept);
+  return S.partners.length;
+}
+
+/* 🛟 THE DEGRADE FLOOR. Called by the host when discovery failed, returned
+   nothing, or was never possible (offline, signed out, migration not applied).
+   Idempotent: with partners already on the books it does nothing, so a failing
+   network poll can call it every day without churning the market.
+   ⚠ The count mirrors what sim.js seeds on a cold day (`simulatedPartners(node,
+     4)`). It reads ECON first so that adding `trade.simPartners` to the tuning
+     table moves this without a code change; sim.js's own call site still holds
+     its literal and would have to follow. */
+export function ensureSimulated(nodeId) {
+  if (S.partners.length) return 0;
+  const n = ECON.trade.simPartners || 4;
+  S.partners = simulatedPartners(nodeId, n);
   return S.partners.length;
 }
 
@@ -274,6 +407,160 @@ export function buildWants(shortfall, nodeId, day) {
   return S.wants.slice();
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   🤝 SETTLEMENT AGAINST A REAL CITY — plan, confirm, book.
+   ----------------------------------------------------------------------------
+   THREE STEPS, AND THE MIDDLE ONE IS NOT IN THIS FILE.
+
+     planFills()   here — what this city would like to buy, and from which row.
+     the RPC       the HOST — `city_trade_fill(offer_id, units)`, next to Cloud
+                   and Profile in index.html, because those are top-level
+                   `const` over there and invisible to a module (the globals
+                   trap, CLAUDE.md). Not one network call lives in this file and
+                   none may be added; /src/trading/index.js documents the same
+                   seam and the same reason.
+     recordFill()  here — books EXACTLY what the server says was filled.
+
+   🔴 CREDIT `filled`, NEVER WHAT WE ASKED FOR. This is the whole reason the
+      fill is an RPC that takes `for update` on the row rather than a read
+      followed by a write: two cities filling the last 40 units of one offer
+      would otherwise both read 0 filled, both write 40, and the seller would
+      ship 80. The lock makes the server's answer authoritative — and an
+      authoritative answer is worth nothing if the client then credits its own
+      request. `filled` is the ONLY quantity that may move goods here, and it is
+      additionally clamped to what we asked for: a server (or a doctored proxy)
+      answering 900 to a request for 40 does not get to hand this city 900.
+
+   🔴 AND THE BOOKING HAPPENS INSIDE THE ECONOMIC DAY, NOT AT CONFIRMATION TIME.
+      sim.js takes the audit's `before` at the top of runDay(). Anything that
+      moved Cinder between two ticks is a movement nobody counted — that is
+      precisely how firms.js minted 721,771 🔥 with a clean audit (see the
+      charter note in sim.js). So a confirmed fill is QUEUED and drained by
+      match(), where sim.js pays for it out of the treasury and books it to
+      `flow.imports`, which the audit identity already subtracts.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* What this city will pay per unit for a remote fill.
+   ⚠ THE COUNTERPARTY OWNS `unit_price` ON THEIR OWN ROW. RLS lets a player
+     write any price into their own offer, so an unclamped quote is two attacks
+     at once: 0 is free goods forever, and 1e12 empties the treasury in one day.
+     The band is the SAME spread the local path already trades inside — nothing
+     new to tune, and no numeric literal here (Rule 4). A quote outside it is
+     not refused (that would let a hostile row block trade); it is clamped, and
+     the trade goes ahead at a price this city's own model can defend. */
+export function fillPrice(res, quoted) {
+  const local = priceOf(res);
+  const lo = local * (1 - ECON.trade.spreadPct);
+  const hi = local * (1 + ECON.trade.spreadPct) * ECON.trade.specPriority;
+  const q = fin(quoted);
+  if (!(q > 0)) return local * (1 + ECON.trade.spreadPct);
+  return Math.max(lo, Math.min(hi, q));
+}
+
+/* Units already confirmed and waiting to be booked, per resource. Planning has
+   to see these or a want gets ordered twice — once from the queue and once
+   again the next day before the queue drains. */
+function pendingUnits(res) {
+  let n = 0;
+  for (const s of S.settled) if (s.res === res) n += s.units;
+  return n;
+}
+
+/* 📋 THE ORDER BOOK THIS CITY WOULD LIKE FILLED, urgent wants first.
+   Returns [{offerId, res, units, unitPrice, partnerId, partnerName}] — plain
+   data, all of it primitives, for the host to hand to the RPC one row at a
+   time. Simulated partners are skipped: they have no row and no offer id, and
+   they are already traded with locally inside match(). */
+export function planFills(cashAvailable, day) {
+  const out = [];
+  const budget = Math.max(0, fin(cashAvailable));
+  const freight = Logistics.costPerUnit(ECON.logistics.tradeHops);
+  let spend = 0;
+  const wants = S.wants.slice().sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0));
+  for (const w of wants) {
+    let need = fin(w.units) - pendingUnits(w.res);
+    if (!(need > 0)) continue;
+    for (const p of S.partners) {
+      if (p.simulated || !Array.isArray(p.offers) || !p.offers.length) continue;
+      for (const o of p.offers) {
+        if (need <= 0) break;
+        if (o.res !== w.res) continue;
+        const price = fillPrice(o.res, o.unitPrice);
+        const delivered = price + freight;
+        if (delivered > w.maxPrice && !w.urgent) continue;
+        const afford = Math.floor((budget - spend) / Math.max(0.01, delivered));
+        const units = Math.floor(Math.min(need, o.units, afford));
+        if (units <= 0) continue;
+        out.push({ offerId: o.offerId, res: o.res, units, unitPrice: price,
+                   partnerId: p.id, partnerName: p.name });
+        spend += units * delivered;
+        need -= units;
+        /* The same bound the local offer book uses: how many open trade lines
+           this city runs at once. Without it one hungry day could fire a
+           hundred RPCs. */
+        if (out.length >= ECON.trade.maxOpenOffers) return out;
+      }
+    }
+  }
+  return out;
+}
+
+/* 🧾 BOOK ONE CONFIRMED FILL. `row` is whatever the RPC returned, untouched —
+   the host must NOT interpret it, because every interpretation is a chance to
+   substitute the requested quantity for the filled one.
+   Returns { credited, filled, reason }. `credited` is what this city will
+   actually receive, and it is 0 for every failure shape:
+     null / undefined row      the RPC returned nothing
+     {} or a malformed row     no `filled` key at all
+     filled: 0                 someone else took the last units (the race this
+                               whole path exists to survive)
+     filled: 'abc' / NaN /     not a number: fin() answers 0 and nothing moves
+     Infinity / -3
+   A throw or a timeout never reaches here at all — the host catches it and
+   calls nothing, which credits nothing. That is the same outcome by
+   construction rather than by another branch. */
+export function recordFill(req, row) {
+  S.settleLog.requested++;
+  const reject = (why) => {
+    S.settleLog.rejected++;
+    S.settleLog.reasons[why] = (S.settleLog.reasons[why] || 0) + 1;
+    return { credited: 0, filled: 0, reason: why };
+  };
+  if (!req || typeof req !== 'object') return reject('bad-request');
+  const res = typeof req.res === 'string' ? req.res : '';
+  const asked = fin(req.units);
+  if (!res || !producible(res) || !(asked > 0)) return reject('bad-request');
+  if (!row || typeof row !== 'object') return reject('no-row');
+  /* PostgREST hands `numeric` back as a STRING on some deployments, so fin()
+     goes through Number() rather than testing typeof — but 'abc' becomes NaN
+     and NaN is not finite, so a non-numeric answer still credits nothing. */
+  const filled = fin(row.filled);
+  if (!(filled > 0)) return reject(row.filled === undefined ? 'no-fill' : 'zero-fill');
+
+  // 🔴 THE INVARIANT. Never `asked`. Never `row.units`. Never `remaining`.
+  const units = Math.min(filled, asked);
+
+  S.settled.push({
+    res, units,
+    unitPrice: fillPrice(res, row.unit_price !== undefined ? row.unit_price : row.unitPrice),
+    offerId: req.offerId != null ? String(req.offerId) : '',
+    from: req.partnerId != null ? String(req.partnerId) : null,
+    fromName: req.partnerName != null ? String(req.partnerName) : null,
+  });
+  S.settleLog.filled += filled;
+  S.settleLog.credited += units;
+  return { credited: units, filled, reason: 'ok' };
+}
+
+/* Everything confirmed since the last economic day, emptied. Called by match()
+   and by nothing else — a second caller would book the same goods twice. */
+function drainSettled() { const q = S.settled; S.settled = []; return q; }
+
+/* Exposed for the panel and for tests. A queue that can only be READ here
+   cannot be drained by accident. */
+export function pendingSettlements() { return S.settled.map(s => ({ ...s })); }
+export function settleStats() { return { ...S.settleLog, reasons: { ...S.settleLog.reasons } }; }
+
 /* ── MATCHING ───────────────────────────────────────────────────────────────
    Match our wants against partner sells, and our offers against partner buys.
    Returns the trades that CLEARED, with freight already booked.
@@ -287,6 +574,35 @@ export function match(cashAvailable, day) {
   let spend = 0, revenue = 0;
   const hops = ECON.logistics.tradeHops;
   const carry = Logistics.throughput();
+
+  /* ── 0. SETTLED REMOTE FILLS, FIRST AND UNCONDITIONALLY.
+     These are already committed on the other city's row — `filled_units` went
+     up when the RPC answered — so they are not a trade this city may decline
+     today; they are a bill it has to pay. Hence they take the freight capacity
+     and the cash budget ahead of the local matching below.
+
+     ⚠ THEY ARE NOT CUT TO `carry` LIKE A LOCAL TRADE IS. Cutting a settled fill
+       would take 40 units off the seller's row and land 20 here: goods deleted
+       from the world to keep a haulage number tidy. The freight IS booked, so
+       an over-committed day shows up as congestion (which raises everyone's
+       costs the next day) rather than as vanished cargo — the honest signal.
+     ⚠ IF THE TREASURY CANNOT COVER IT, sim.js scales the whole day's imports
+       pro rata (`importPaid / spend`) and the units land reduced. Value is
+       conserved either way; the city just gets a part load. */
+  for (const s of drainSettled()) {
+    const freight = Logistics.costPerUnit(hops);
+    const delivered = s.unitPrice + freight;
+    Logistics.book(s.units, hops);
+    const cost = s.units * delivered;
+    spend += cost;
+    imports.push({ res: s.res, units: s.units, unitPrice: delivered, cost,
+                   from: s.from, fromName: s.fromName, urgent: false, settled: true,
+                   offerId: s.offerId });
+    S.lastImported[s.res] = (S.lastImported[s.res] || 0) + s.units;
+    /* Satisfy the want it was ordered against, so the local pass below does not
+       buy the same shortfall a second time from a simulated neighbour. */
+    for (const w of S.wants) if (w.res === s.res) { w.units = Math.max(0, w.units - s.units); break; }
+  }
 
   // ── IMPORTS: satisfy our wants, urgent first.
   const wants = S.wants.slice().sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0));
@@ -376,13 +692,24 @@ export function report(nodeId) {
     active: activeSpecializations(),
     streaks: { ...S.streak },
     offers: S.offers.slice(), wants: S.wants.slice(),
-    partners: S.partners.map(p => ({ id: p.id, name: p.name, simulated: !!p.simulated, specs: p.specs || [] })),
+    partners: S.partners.map(p => ({ id: p.id, name: p.name, simulated: !!p.simulated,
+                                     specs: p.specs || [], offers: (p.offers || []).length })),
+    real: S.partners.filter(p => !p.simulated).length,
     imported: { ...S.lastImported }, exported: { ...S.lastExported },
     importSpend: S.lastImportSpend, exportRevenue: S.lastExportRevenue,
+    settle: settleStats(), pending: S.settled.length,
     gaps: Endow.strategicGaps(nodeId), strengths: Endow.strengths(nodeId).slice(0, 8),
   };
 }
 
+/* ⚠ PARTNERS AND SETTLEMENTS ARE DELIBERATELY NOT SAVED.
+   Partners are re-discovered (or re-simulated) on the first day after a load,
+   so a save can never resurrect a neighbour that has since changed hands or
+   gone. And a confirmed-but-undrained fill is dropped on reload: the goods are
+   not credited and the Cinder is not spent, which loses the player a part load.
+   The alternative direction is far worse — a queue that survives a reload is a
+   queue that can be drained twice, and that credits goods nobody paid for.
+   Lose it, never duplicate it. */
 export function serialize() {
   return { v: 1, streak: { ...S.streak }, active: S.active.slice(), nextOfferId: S.nextOfferId };
 }

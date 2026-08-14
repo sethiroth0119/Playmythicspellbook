@@ -1629,6 +1629,53 @@ const MythicCityBridge = (() => {
     ];
   };
 
+  /* 🤝 CITY-TO-CITY TRADE — "YOUR CITY NEEDS OTHER CITIES."  ◄◄ HOOK ◄◄
+     ─────────────────────────────────────────────────────────────────────────
+     Three operations, called once per ECONOMIC DAY by MythicEconomy.tradeSync():
+       publish(payload)  -> bool   upsert this city into city_profiles and its
+                                   standing offers into city_trade_offers
+       discover()        -> rows   other players' city_profiles, shaped as
+                                   {id,name,nodeId,specs[],sells{},buys{},offers[]}
+       fill(offerId, n)  -> row    the city_trade_fill(offer_id, units) RPC,
+                                   which returns {filled, remaining, unit_price}
+
+     🔴 THE SUPABASE CALLS ARE ON THE PARENT'S SIDE AND MUST STAY THERE. `Cloud`
+        and `Profile` are top-level `const` in index.html and invisible to this
+        document as well as to /src/economy (the globals trap). This object is a
+        transport, not a data layer: it knows the three op names and nothing
+        about tables, policies or authentication.
+
+     🔴 EVERY ANSWER HERE IS ALLOWED TO BE "NO". sql/038 is not applied, so on
+        the live database today `discover()` returns nothing and `fill()` fails.
+        That is a supported state, not a failure: trade.js falls back to the
+        simulated partners it has always used, and the trade layer stays fully
+        playable offline. Never invent a partner here — a fabricated city
+        carrying another player's NAME would be a lie the panel prints.
+     ⚠ STANDALONE RETURNS NOTHING ON PURPOSE. A mock market would make the
+       degrade path untestable in the one mode where it is easiest to test. */
+  B.cityTrade = {
+    publish: async (payload) => {
+      if (B.mode === 'parent') { try { if (typeof P.cityTradePublish === 'function') return !!(await P.cityTradePublish(payload)); } catch (e) {} return false; }
+      if (B.mode === 'message') { return !!(await rpc('tradePublish', { payload })); }
+      return false;
+    },
+    discover: async () => {
+      if (B.mode === 'parent') { try { if (typeof P.cityTradeDiscover === 'function') return (await P.cityTradeDiscover()) || []; } catch (e) {} return []; }
+      if (B.mode === 'message') { return (await rpc('tradeDiscover', {})) || []; }
+      return [];
+    },
+    /* ⚠ RETURNS THE ROW UNCHANGED — never a number, never a boolean. The credit
+       rule (`filled`, never what was asked for) lives in trade.js recordFill()
+       and it can only be applied to a row it can still read. A transport that
+       "helpfully" returned `units` here would re-create the double-ship bug the
+       RPC's row lock exists to prevent. */
+    fill: async (offerId, units) => {
+      if (B.mode === 'parent') { try { if (typeof P.cityTradeFill === 'function') return await P.cityTradeFill(offerId, units); } catch (e) {} return null; }
+      if (B.mode === 'message') { return await rpc('tradeFill', { offerId, units }); }
+      return null;
+    },
+  };
+
   // City wellbeing -> the camp's RECONSTRUCTION meter. <<< CLAUDE CODE HOOK >>>
   // Pushed ~once a minute: { morale 0-100, hunger 0-100, sync 0-100,
   // alliedCamps, reconPerHr }. reconPerHr is the suggested Reconstruction
@@ -17499,6 +17546,9 @@ async function economyTick(dtMin) {
      reporting a simulated figure costs nobody anything; inventing the other two
      days would be a number with no production behind it. */
 let _ecoLastDay = null;
+/* The last trade round trip's report, for the diagnostics seam. Telemetry only:
+   nothing reads it to decide anything. */
+let _ecoTradeLast = null;
 function ecoDailyClose(snap) {
   try {
     const day = (snap && typeof snap.day === 'number' && isFinite(snap.day)) ? Math.floor(snap.day) : null;
@@ -17507,6 +17557,30 @@ function ecoDailyClose(snap) {
     if (day <= _ecoLastDay) return;                            // same day, or a reset save
     const spanned = day - _ecoLastDay;
     _ecoLastDay = day;
+
+    /* 🤝 THE TRADE ROUND TRIP — publish, discover, settle. Once per closed
+       economic day, on the same edge as the card close and for the same reason:
+       the offers this city publishes are the ones the day actually produced.
+
+       ⚠ FIRE AND FORGET, DELIBERATELY. economyTick() is not async here and must
+         not become so — a network round trip inside the tick would stall the
+         city on a slow request. Nothing in tradeSync() touches the treasury or
+         the inventory; a confirmed fill is queued in trade.js and booked by
+         match() inside the NEXT audited economic day. That is the whole reason
+         it is safe to run outside the tick at all (sim.js takes the audit's
+         `before` at the top of runDay — a debit taken out here is a debit
+         nobody counted).
+       ⚠ `.catch()` IS MANDATORY, NOT DEFENSIVE PADDING. A rejected promise with
+         no handler is an unhandled rejection in the console of every offline
+         player, and offline is the SHIPPING configuration until sql/038 is
+         applied. tradeSync() already swallows its own failures; this is the
+         backstop for the one it cannot (its own throw). */
+    try {
+      const E = window.MythicEconomy;
+      if (E && typeof E.tradeSync === 'function') {
+        Promise.resolve(E.tradeSync()).then((r) => { _ecoTradeLast = r || null; }).catch(() => {});
+      }
+    } catch (e) {}
 
     const r = window.MythicEconomy.cardOutput();
     if (!r) return;
@@ -27622,6 +27696,27 @@ function animate() {
       close:   (snap) => ecoDailyClose(snap),
       lastDay: () => _ecoLastDay,
       resetDay: () => { _ecoLastDay = null; return true; },
+      /* 🤝 CITY-TO-CITY TRADE, MADE DRIVABLE. The live path needs sql/038
+         applied AND a second player who has published — neither exists in a
+         test — so without a seam the only observable claim about this feature
+         would be its own description.
+         `net` is the bridge transport itself, so a driver can REPLACE it with a
+         stub that answers two real partners or a short fill and then watch what
+         the shipped code does with the answer. `sync()` is the shipped round
+         trip, awaited here (the tick fires it and forgets, which a test cannot
+         observe). `report()` is trade.js's own view of the market. */
+      trade: {
+        net:     () => MythicCityBridge.cityTrade,
+        setNet:  (o) => { MythicCityBridge.cityTrade = o; return true; },
+        sync:    () => { try { return window.MythicEconomy.tradeSync(); } catch (e) { return Promise.resolve({ threw: String(e) }); } },
+        last:    () => _ecoTradeLast,
+        report:  () => { try { return window.MythicEconomy.snapshot().trade; } catch (e) { return null; } },
+        payload: () => { try { return window.MythicEconomy.tradePayload(); } catch (e) { return null; } },
+        plan:    (cash) => { try { return window.MythicEconomy.tradePlan(cash); } catch (e) { return null; } },
+        fill:    (req, row) => { try { return window.MythicEconomy.settle(req, row); } catch (e) { return { threw: String(e) }; } },
+        pending: () => { try { return window.MythicEconomy.tradePending(); } catch (e) { return null; } },
+        stats:   () => { try { return window.MythicEconomy.tradeStats(); } catch (e) { return null; } },
+      },
       /* 🔗 THE ROSTER SEAM AND THE PANEL, made drivable.
          `bind()` is the SHIPPED ecoBindRoster — households.js's bindRoster with
          the live roster — not a local twin, so a test that calls it exercises

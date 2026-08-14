@@ -207280,6 +207280,189 @@ window.cityFetchMarketNodes = async () => {
     }).filter(n => n.id);
   } catch (e) { return []; }
 };
+/* ════════════════════════════════════════════════════════════════════════════
+   🤝 CITY-TO-CITY TRADE — the three network operations, and the ONLY place they
+   may live.  (sql/038_city_economy_trade.sql)
+   ----------------------------------------------------------------------------
+   /src/economy/trade.js holds ZERO Supabase calls by design and must keep
+   holding zero: `Cloud`, `Profile` and `App` are top-level `const` in this file
+   — global LEXICAL bindings, invisible to an ES module (CLAUDE.md, the globals
+   trap, which has already cost this project real time twice). So the module
+   computes what to publish and what to buy, and these three functions are the
+   only things that talk to the database. Exactly the seam
+   /src/trading/index.js already uses for the player market.
+
+   🔴 sql/038 IS NOT APPLIED. Every one of these must therefore be a graceful
+      no-answer TODAY: publish returns false, discover returns [], fill returns
+      null, and the city trades against its simulated neighbours exactly as it
+      did before this existed. Guarded per CLAUDE.md — "the app MUST still work
+      offline / before tables exist". None of them ever throws into the iframe.
+
+   ⚠ NO PII CROSSES. What goes out is the city's node, its earned
+     specializations and what it trades; what comes back adds a display name
+     from public_profiles, which exists to be public. Never owner_id, never
+     anything from auth.users.
+   ════════════════════════════════════════════════════════════════════════════ */
+function _cityTradeClient() {
+  try {
+    if (typeof initCloud !== 'function' || !initCloud()) return null;
+    if (!Cloud || !Cloud.client) return null;
+    if (!Profile.cloud || !Profile.cloud.signedIn || !Profile.cloud.userId) return null;
+    return Cloud.client;
+  } catch (e) { return null; }
+}
+/* 📤 PUBLISH. One row per (owner, node) — the table's own unique key — so this
+   is an upsert and not an insert that grows forever.
+   ⚠ OWNER ONLY. A hired mayor must not publish the city they are managing: RLS
+     stamps owner_id = auth.uid(), so a mayor's publish would file the OWNER's
+     node under the MAYOR's account and put two cities in the market claiming
+     the same ground. `cityOwnerIdentity().isOwner` is the same authority answer
+     the governance panel uses. */
+window.cityTradePublish = async function (payload) {
+  try {
+    const sb = _cityTradeClient();
+    if (!sb || !payload || typeof payload !== 'object') return false;
+    const nodeId = payload.nodeId != null ? String(payload.nodeId) : '';
+    if (!nodeId) return false;
+    let ident = {};
+    try { ident = window.cityOwnerIdentity() || {}; } catch (e) {}
+    if (ident.isOwner === false) return false;
+    const me = Profile.cloud.userId;
+    const specs = Array.isArray(payload.specs) ? payload.specs.map(String).slice(0, 12) : [];
+    const clean = (o) => {
+      const out = {};
+      if (o && typeof o === 'object') for (const k in o) {
+        const v = Number(o[k]);
+        // A NaN written into jsonb comes back as NaN for every reader of this
+        // row. Numbers only, and only real ones.
+        if (isFinite(v) && v > 0) out[String(k)] = Math.round(v * 100) / 100;
+      }
+      return out;
+    };
+    const prof = await sb.from('city_profiles').upsert({
+      owner_id: me, node_id: nodeId,
+      city_name: (Profile.name || Profile.username || 'Unnamed City') + '',
+      specializations: specs,
+      sells: clean(payload.sells), buys: clean(payload.buys),
+      economy_day: payload.day | 0,
+      population: Math.max(0, payload.population | 0),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'owner_id,node_id' }).select('id').maybeSingle();
+    /* A missing table (42P01) lands here as an error, not a throw. Return false
+       and say nothing: until the migration runs this is the NORMAL answer and a
+       console line every twenty minutes is noise, not a signal. */
+    if (!prof || prof.error || !prof.data || !prof.data.id) return false;
+    const cityId = prof.data.id;
+
+    /* Offers are REPLACED, not accumulated. A standing offer is a snapshot of
+       what the city has today; yesterday's is not a second, additional pledge.
+       Delete-then-insert is safe under the table's RLS because both statements
+       are scoped to owner_id = auth.uid() — a buyer's fill goes through the
+       SECURITY DEFINER RPC and never touches this path.
+       ⚠ Deliberately drops rows that other players had partly filled. The
+         alternative — keeping them — would leave a filled-against offer alive
+         after the goods behind it were consumed by the city itself. */
+    const rows = Array.isArray(payload.offers) ? payload.offers : [];
+    await sb.from('city_trade_offers').delete().eq('owner_id', me).eq('city_id', cityId);
+    const ins = rows.filter(r => r && (r.side === 'sell' || r.side === 'buy') &&
+                                  typeof r.res === 'string' && isFinite(+r.units) && +r.units > 0)
+                    .slice(0, 24)
+                    .map(r => ({
+                      owner_id: me, city_id: cityId, side: r.side, resource_id: r.res,
+                      units: Math.round(+r.units * 100) / 100,
+                      unit_price: Math.max(0, Math.round((+r.unitPrice || 0) * 100) / 100),
+                      urgent: !!r.urgent,
+                    }));
+    if (ins.length) { const w = await sb.from('city_trade_offers').insert(ins); if (w && w.error) return false; }
+    return true;
+  } catch (e) { return false; }
+};
+/* 📥 DISCOVER. Other players' cities, shaped exactly as trade.js's partner
+   record — {id, name, nodeId, specs[], sells{}, buys{}, offers[]}.
+   ⚠ OTHER PLAYERS ONLY (`.neq('owner_id', me)`). city_trade_fill() refuses a
+     self-fill anyway ("cannot fill your own offer" — otherwise a player could
+     launder goods between two of their own cities and farm the spread), so
+     filtering here just stops us wasting RPCs discovering ourselves.
+   ⚠ Returns [] on any failure, which trade.js reads as "no real neighbours"
+     and answers with its simulated ones. */
+window.cityTradeDiscover = async function () {
+  try {
+    const sb = _cityTradeClient();
+    if (!sb) return [];
+    const me = Profile.cloud.userId;
+    const r = await sb.from('city_profiles')
+      .select('id, owner_id, node_id, city_name, specializations, sells, buys, updated_at')
+      .neq('owner_id', me)
+      .order('updated_at', { ascending: false })
+      .limit(24);
+    if (!r || r.error || !Array.isArray(r.data) || !r.data.length) return [];
+    const ids = r.data.map(c => c && c.id).filter(Boolean);
+    /* The open sell offers of those cities, in ONE query rather than one per
+       city. `filled_units < units` cannot be expressed as a column filter in
+       PostgREST, so the open test is applied here — the partial index on the
+       table has the same predicate, so this is reading what that index covers. */
+    const byCity = {};
+    try {
+      const o = await sb.from('city_trade_offers')
+        .select('id, city_id, side, resource_id, units, filled_units, unit_price, urgent, expires_at')
+        .in('city_id', ids).eq('side', 'sell').limit(240);
+      if (o && !o.error && Array.isArray(o.data)) {
+        const now = Date.now();
+        for (const row of o.data) {
+          if (!row || !row.city_id) continue;
+          const units = (+row.units || 0) - (+row.filled_units || 0);
+          if (!(units > 0)) continue;
+          if (row.expires_at && Date.parse(row.expires_at) <= now) continue;
+          (byCity[row.city_id] = byCity[row.city_id] || []).push({
+            offerId: row.id, res: String(row.resource_id || ''),
+            units, unitPrice: +row.unit_price || 0, urgent: !!row.urgent,
+          });
+        }
+      }
+    } catch (e) { /* offers are optional; a city with none is still a partner */ }
+    return r.data.map(c => ({
+      id: String(c.id),
+      /* The city's own published name. NEVER an owner id — showing a raw
+         account id would be both ugly and an identifier leak — and never a
+         fabricated one either: an unnamed city gets null and trade.js derives a
+         deterministic map name for it. */
+      name: (typeof c.city_name === 'string' && c.city_name.trim()) ? c.city_name.trim() : null,
+      nodeId: c.node_id != null ? String(c.node_id) : String(c.id),
+      specs: Array.isArray(c.specializations) ? c.specializations : [],
+      sells: (c.sells && typeof c.sells === 'object') ? c.sells : {},
+      buys:  (c.buys  && typeof c.buys  === 'object') ? c.buys  : {},
+      offers: byCity[c.id] || [],
+      /* 🔴 EXPLICIT. trade.js will not overwrite a partner whose `simulated` is
+         false, and undefined is not an answer — see refreshPartners(). */
+      simulated: false,
+    })).filter(c => c.id);
+  } catch (e) { return []; }
+};
+/* 🤝 FILL. The counterparty path, and the only write a buyer is allowed to make
+   to somebody else's offer.
+   🔴 RETURNS THE ROW UNCHANGED. `filled` may legitimately be LESS than `units` —
+      the RPC takes `for update` on the row precisely so that two players
+      filling the last 40 units cannot both be told 40. trade.js credits
+      `filled` and nothing else; anything this function did to "simplify" the
+      answer (a boolean, the requested count) would put the double-ship straight
+      back in.
+   ⚠ `.rpc()` on a `returns table` function resolves to an ARRAY of rows. Taking
+     [0] here is not a convenience — treating the array itself as the row would
+     make `row.filled` undefined, which trade.js correctly refuses, and every
+     real fill would silently credit nothing. */
+window.cityTradeFill = async function (offerId, units) {
+  try {
+    const sb = _cityTradeClient();
+    if (!sb) return null;
+    const n = Number(units);
+    if (!offerId || !isFinite(n) || n <= 0) return null;
+    const r = await sb.rpc('city_trade_fill', { p_offer_id: String(offerId), p_units: n });
+    if (!r || r.error) return null;
+    const row = Array.isArray(r.data) ? r.data[0] : r.data;
+    return (row && typeof row === 'object') ? row : null;
+  } catch (e) { return null; }
+};
+
 window.citySpendCinders = (n) => {
   try {
     n = Math.floor(n) || 0; if (n <= 0) return false;

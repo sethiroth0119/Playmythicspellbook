@@ -3101,6 +3101,516 @@ const srcBlockAfter = (src, decl) => {
   else console.log('\n=== ROUND 0k: ALL PASS ===');
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0n — 🤝 REAL CITY-TO-CITY TRADE
+   ----------------------------------------------------------------------------
+   THE DEFECT THIS ROUND EXISTS FOR IS THE DOUBLE SHIP.
+
+   `city_trade_fill(offer_id, units)` takes `for update` on the offer row for one
+   reason: two cities filling the last 40 units of the same offer would otherwise
+   both read `filled_units = 0`, both write 40, and the seller would ship 80. The
+   lock makes the SERVER's answer authoritative — and an authoritative answer is
+   worth exactly nothing if the client then credits the number it ASKED for. That
+   substitution is a one-word edit, it looks completely reasonable in review
+   (`credit(req.units)` beside a variable called `filled`), and every green day in
+   the gate would stay green: the audit only tracks Cinder, and goods that appear
+   out of nowhere do not fail it.
+
+   So the invariant is asserted by SWEEPING the space rather than by sampling it:
+   every combination of what we asked for against what the server said, including
+   the server answering MORE than we asked, and the round fails on the worst cell.
+
+   WHAT ELSE IS HERE, and why each is not a comment:
+     §1 STRUCTURAL — /src/economy/trade.js contains no network call at all. That
+        is provable by READING it, and reading beats sampling: it holds for every
+        future partner shape, not for the ones this round happens to try. Comments
+        are stripped first, because that file legitimately DISCUSSES Supabase.
+     §3 DEGRADE — every failure shape the transport can produce (throw, null, {},
+        a non-numeric `filled`, an array, a timeout answered as null) credits
+        nothing and leaves the city trading. sql/038 IS NOT APPLIED, so this is
+        not an edge case: it is the shipping configuration.
+     §4 refreshPartners() must never overwrite a REAL partner's inventory with
+        fabricated numbers, and must still refill the simulated ones. The flag is
+        the only thing separating a real neighbour from an invention.
+     §6 Rule 1 with settlement live: a fill moves value between two parties and
+        must not mint. Driven for 240 consecutive days.
+
+   Prove this round can fail: ECON_TEST_SABOTAGE=settle-requested, which
+   re-commits the double ship exactly — the driver hands recordFill the quantity
+   it REQUESTED in place of the quantity the server filled.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0n-city-trade ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  if (!global.window) {
+    global.window = { MythicCityBridge: { addCinders: async () => {} }, MythicResourceChain: null };
+    const chain = await import('../../public/src/resources/chain.js');
+    global.window.MythicResourceChain = { ALL: chain.RESOURCE_CHAIN };
+  }
+  const PP = '../../public/src/economy/';
+  const Sim = await import(PP + 'sim.js');
+  const Trade = await import(PP + 'trade.js');
+  const HH = await import(PP + 'households.js');
+  const Logis = await import(PP + 'logistics.js');
+  const { ECON } = await import(PP + 'tuning.js');
+  await import(PP + 'index.js');                 // registers window.MythicEconomy
+  const E = global.window.MythicEconomy;
+  const DAY = ECON.clock.dayMin;
+  const HOST = { powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
+                 logisticsCounts: { warehouse: 2 } };
+
+  /* 🧨 THE INJURY: the client credits its own request instead of the server's
+     answer. Written at the CALL SITE rather than by editing trade.js, because
+     that is exactly the shape the bug takes in real code — the row is right
+     there and the wrong field is used. */
+  const SETTLE_SABOTAGE = SABOTAGE === 'settle-requested';
+  const settle = (req, row) => Trade.recordFill(req, SETTLE_SABOTAGE ? { ...row, filled: req.units } : row);
+
+  // ── §1 NOT ONE NETWORK CALL IN THE MODULE ────────────────────────────────
+  /* Strip comments FIRST. trade.js and economy/index.js both talk about
+     Supabase, Cloud and the bridge at length — a grep over the raw text would
+     be green only by luck and red for a doc edit. */
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+  const NET = [
+    ['supabase', /supabase/i], ['createClient', /createClient/], ['Cloud.', /\bCloud\s*\./],
+    ['fetch(', /\bfetch\s*\(/], ['XMLHttpRequest', /XMLHttpRequest/], ['WebSocket', /WebSocket/],
+    ['.rpc(', /\.rpc\s*\(/], ['.from(', /\.from\s*\(\s*['"]/], ['navigator.sendBeacon', /sendBeacon/],
+    ['Profile.', /\bProfile\s*\./],
+  ];
+  for (const f of ['trade.js', 'index.js']) {
+    const raw = readFileSync(join(here, '../../public/src/economy/' + f), 'utf8');
+    const src = stripComments(raw);
+    chk(f + ': the comment stripper actually ran (it is what makes this check honest)',
+        src.length < raw.length * 0.9, src.length + ' of ' + raw.length + ' chars left');
+    const hits = NET.filter(([, re]) => re.test(src)).map(([n]) => n);
+    chk('/src/economy/' + f + ' contains ZERO network calls — every one lives in ' +
+        'index.html next to Cloud and Profile (the globals trap)',
+        hits.length === 0, 'found: ' + hits.join(', '));
+    // Rule 2: a chain resource must never be written through the game ledger.
+    const led = ['addRes', 'spendRes', 'refundRes'].filter(n => new RegExp('\\b' + n + '\\s*\\(').test(src));
+    chk('/src/economy/' + f + ' never calls addRes/spendRes — Rule 2, the economy ' +
+        'holds its own inventory', led.length === 0, 'found: ' + led.join(', '));
+  }
+
+  // ── §2 THE INVARIANT, SWEPT ──────────────────────────────────────────────
+  /* Every ASKED × FILLED pair, including the server answering more than it was
+     asked for (a doctored proxy, or a future RPC change). The rule is one line:
+     credit min(filled, asked), and 0 for anything that is not a positive
+     finite number. */
+  Sim.reset('trade-n1'); HH.setPopulation(60); Sim.bootstrap();
+  const ASKED = [1, 2, 7, 13, 40, 199, 1000];
+  const answers = (a) => [0, 1, Math.max(1, a - 1), a, a + 1, a * 3, -a, a / 3];
+  let swept = 0, worst = null;
+  for (const asked of ASKED) {
+    for (const f of answers(asked)) {
+      const req = { offerId: 'o-' + asked + '-' + f, res: 'steel', units: asked,
+                    unitPrice: 10, partnerId: 'p1', partnerName: 'Farvale' };
+      const before = Trade.pendingSettlements().reduce((n, s) => n + s.units, 0);
+      const r = settle(req, { filled: f, remaining: 0, unit_price: 10 });
+      const after = Trade.pendingSettlements().reduce((n, s) => n + s.units, 0);
+      const expect = (f > 0) ? Math.min(f, asked) : 0;
+      swept++;
+      if (r.credited !== expect || Math.abs((after - before) - expect) > 1e-9) {
+        const over = r.credited - expect;
+        if (!worst || over > worst.over) worst = { asked, f, got: r.credited, expect, over, queued: after - before };
+      }
+    }
+  }
+  chk('settlement credits min(filled, asked) on all ' + swept + ' asked×filled cells — ' +
+      'NEVER what was requested (the double-ship bug)',
+      worst === null,
+      worst ? ('worst cell: asked ' + worst.asked + ', server filled ' + worst.f +
+               ' → credited ' + worst.got + ' (expected ' + worst.expect + '), queued ' + worst.queued) : '');
+
+  /* The non-numeric answers, which are the ones a JSON transport actually
+     produces. `numeric` comes back as a STRING from PostgREST on some
+     deployments, so '25' must work and 'abc' must not. */
+  const JUNK = [undefined, null, NaN, Infinity, -Infinity, 'abc', '', {}, [], true, false, () => 40];
+  let junkBad = [];
+  for (const v of JUNK) {
+    const req = { offerId: 'j', res: 'steel', units: 40, unitPrice: 10 };
+    let r; try { r = Trade.recordFill(req, { filled: v, unit_price: 10 }); }
+    catch (e) { junkBad.push(String(v) + ' THREW ' + e.message); continue; }
+    if (r.credited !== 0) junkBad.push(JSON.stringify(String(v)) + ' credited ' + r.credited);
+  }
+  chk('a non-numeric `filled` (' + JUNK.length + ' shapes) credits nothing and never throws',
+      junkBad.length === 0, junkBad.slice(0, 4).join(' | '));
+  const strNum = Trade.recordFill({ offerId: 's', res: 'steel', units: 40, unitPrice: 10 },
+                                  { filled: '25', unit_price: '9.5' });
+  chk('a numeric STRING fills normally — PostgREST returns `numeric` as a string',
+      strNum.credited === 25, 'credited ' + strNum.credited);
+
+  // ── §3 EVERY DEGRADE SHAPE, THROUGH THE SHIPPED tradeSync() ──────────────
+  /* Driven through window.MythicEconomy.tradeSync() with a stub bridge, so this
+     exercises the real orchestration — publish, discover, plan, settle — and not
+     a test-only twin of it. */
+  /* 🔴 THE OFFERS ARE DERIVED FROM THE CITY'S OWN STRATEGIC GAPS, NOT INVENTED.
+     The first version of this round used a hand-written shopping list (iron ore,
+     steel, bread) and planned ZERO fills for all 240 days — it asserted that
+     settlement was correct while never settling anything, which is precisely the
+     kind of test this project has shipped before. Two reasons it was vacuous,
+     both of them real behaviour worth knowing:
+       · a want's `maxPrice` is fixed at the price on the day it was raised, and
+         prices roughly double over the first day of a fresh city, so an
+         ordinary want will not pay today's price for anything;
+       · freight is ~3 🔥/unit at these hops, which is more than a loaf of bread
+         is worth — bulk goods legitimately do not travel.
+     A STRATEGIC GAP is the case that does clear: the city cannot mine it at any
+     price, so `urgent` bypasses the price test — the mechanism the whole feature
+     exists for. Deriving the ids from Endow keeps this true if the endowment
+     ever changes, instead of rotting into another vacuous round. */
+  const Endow = await import(PP + 'endowment.js');
+  const gapsOf = (node) => Endow.strategicGaps(node);
+  const realRows = (node) => {
+    const g = gapsOf(node);
+    return [
+      { id: 'city-A', name: 'Farvale', nodeId: 'node-A', specs: ['mining'],
+        sells: { ironOre: 500, coal: 400, steel: 120 }, buys: { bread: 200, medicine: 80 },
+        offers: g.slice(0, 2).map((res, i) => ({ offerId: 'off-A' + i, res, units: 300, unitPrice: 0 })) },
+      { id: 'city-B', name: 'Deepmere', nodeId: 'node-B', specs: ['agricultural'],
+        sells: { wheat: 900, bread: 300 }, buys: { steel: 150, lumber: 100 },
+        offers: g.slice(2, 3).map((res, i) => ({ offerId: 'off-B' + i, res, units: 200, unitPrice: 0 })) },
+    ];
+  };
+  /* The shortfall a city with those gaps really does raise. Injected through
+     the SHIPPED buildWants() — the same call sim.js makes — rather than by
+     writing into S.wants, so the urgency flag is set by the code under test. */
+  const wantGaps = (node, units) => {
+    const short = {};
+    for (const id of gapsOf(node)) short[id] = units;
+    Trade.buildWants(short, node, Sim.state().day);
+    return short;
+  };
+  const mkNet = (fill, node) => ({
+    publish: async () => true,
+    discover: async () => realRows(node || Sim.state().nodeId),
+    fill,
+  });
+  const mountFresh = (node) => { E.mount({ nodeId: node, population: 90 }); Sim.state().treasury = 250000; };
+
+  /* 🔴 THE FIRST SHAPE IS A SUCCESS, AND IT IS THE MOST IMPORTANT ONE HERE.
+     Every other entry in this list answers with a failure, so before it existed
+     §3 asserted the credit rule against an RPC THAT NEVER ONCE SUCCEEDED: a
+     tradeSync() that credited nothing at all, ever, was green through the whole
+     list. "Credits nothing on failure" is only half a spec; the other half is
+     "credits exactly `filled` on success", and success is the shape that runs in
+     production. It is checked below on four separate counts — the quantity the
+     transport was HANDED, the quantity credited, the queue, and the goods
+     actually landing after a day. */
+  const PARTIAL = 0.4;                       // the server fills 40% of every ask
+  const SUCCESS = 'a PARTIAL fill (the normal case)';
+  const SHAPES = [
+    [SUCCESS, async (id, units) => ({ filled: Math.floor(units * PARTIAL), remaining: 0, unit_price: 3 })],
+    ['the RPC throws',                 async () => { throw new Error('42P01 relation does not exist'); }],
+    ['the RPC returns null',           async () => null],
+    ['the RPC returns undefined',      async () => undefined],
+    ['a malformed row ({})',           async () => ({})],
+    ['a malformed row (no filled)',    async () => ({ remaining: 40, unit_price: 3 })],
+    ['a non-numeric filled',           async () => ({ filled: 'plenty', unit_price: 3 })],
+    ['filled: 0 (someone else took the last units)', async () => ({ filled: 0, remaining: 0, unit_price: 3 })],
+    ['the raw ARRAY, unwrapped',       async () => ([{ filled: 40, unit_price: 3 }])],
+    ['a timeout, answered as null',    async () => new Promise(r => setTimeout(() => r(null), 5))],
+    ['the whole seam is missing',      null],
+  ];
+  /* The shortfall each shape raises. NOT the same number as any offer size:
+     the offers below hold 300/300/200 units, so a plan built from the request
+     comes out [250, 250, 200] — a multiset that matches neither the want
+     ([250,250,250]) nor the offer ([300,300,200]). That is what lets the
+     success shape below tell "the transport was handed req.units" apart from
+     "it was handed the want" or "it was handed the whole offer". */
+  const WANT = 250;
+  let shapeBad = [], drive = [];
+  for (const [label, fill] of SHAPES) {
+    const wins = label === SUCCESS;
+    mountFresh('degrade-' + label.length);
+    /* 🔴 A SPY ON THE TRANSPORT, NOT JUST A STUB. The first version of this
+       loop measured nothing: a freshly mounted city has an EMPTY S.wants, so
+       planFills() returned [], tradeSync()'s fill loop never ran, and all ten
+       "failure shapes" were asserted against a transport that was never called
+       once. §3 is the ONLY coverage tradeSync()'s fill loop has — the
+       substitution `recordFill(req, {...row, filled: req.units})` in
+       economy/index.js would have shipped green through it. So the stub counts
+       its own calls and the gate below fails if any shape got zero. */
+    let calls = 0; const args = [];
+    /* The spy records its ARGUMENTS as well as its call count. `units` is the
+       only quantity that may reach the RPC — handing it the want, the offer
+       size or a doubled figure is a different bug from mis-crediting the
+       answer, and the credit assertions below cannot see it. */
+    const spy = fill ? (async (offerId, units) => { calls++; args.push({ offerId, units }); return fill(offerId, units); }) : null;
+    global.window.MythicCityBridge.cityTrade = spy ? mkNet(spy) : { publish: async () => false, discover: async () => [] };
+    /* THE CITY MUST WANT SOMETHING BEFORE IT CAN ASK FOR IT. Raised through the
+       shipped buildWants() off this node's own STRATEGIC gaps, exactly as §6
+       does — those are `urgent`, which is what gets them past the maxPrice test
+       on day 0 of a fresh city (see the vacuity note above §3's fixtures). */
+    const node = Sim.state().nodeId;
+    wantGaps(node, WANT);
+    let rep = null, threw = '';
+    try { rep = await E.tradeSync(); } catch (e) { threw = e.message; }
+    const pending = Trade.pendingSettlements();
+    const partners = Trade.state().partners.length;
+    /* Measured across the SETTLED ids only, and taken before the day runs: on
+       the success shape these goods must actually arrive, not merely be
+       counted. */
+    const invBefore = { ...Sim.inventory() };
+    let snap = null;
+    try { snap = Sim.advance(DAY, HOST); } catch (e) { threw = threw || ('day threw: ' + e.message); }
+    const audit = Sim.state().lastAudit;
+    const inv = Sim.inventory();
+    const settledIds = [...new Set(pending.map(s => s.res))];
+    const gain = settledIds.reduce((n, id) => n + ((inv[id] || 0) - (invBefore[id] || 0)), 0);
+    /* `seam` is false only for the last shape, which has no `fill` at all and
+       no real partner — it CANNOT reach the transport by construction, so it is
+       held to requested === 0 rather than to requested > 0. */
+    drive.push({ label, seam: !!fill, wins, node, args, requested: rep ? rep.requested : -1,
+                 real: rep ? rep.real : -1, calls, credited: rep ? rep.credited : -1,
+                 queued: pending.reduce((n, s) => n + s.units, 0),
+                 drained: Trade.pendingSettlements().length, gain: +gain.toFixed(3) });
+    if (threw) shapeBad.push(label + ' THREW ' + threw);
+    /* The success shape is EXEMPT from "credits nothing" and from "queues
+       nothing" — crediting is the entire point of it — and is held to the
+       stricter arithmetic below instead. It is still held to the audit and to
+       keeping its partners, like everything else. */
+    else if (!wins && rep && rep.credited) shapeBad.push(label + ' credited ' + rep.credited);
+    else if (!wins && pending.length) shapeBad.push(label + ' queued ' + pending.length);
+    else if (!partners) shapeBad.push(label + ' left the city with NO partners');
+    else if (!audit || !audit.ok) shapeBad.push(label + ' broke the audit');
+  }
+  console.log('\n  🧨 DEGRADE — did each shape actually REACH the transport?\n');
+  console.log('    real  requested  RPC calls  units asked  credited  queued  landed   shape');
+  for (const d of drive) {
+    console.log('    ' + String(d.real).padStart(4) + String(d.requested).padStart(11) +
+                String(d.calls).padStart(11) +
+                String(d.args.map(a => a.units).join('+') || '—').padStart(13) +
+                String(d.credited).padStart(10) + String(d.queued).padStart(8) +
+                String(d.gain).padStart(8) + '   ' + d.label);
+  }
+  console.log('');
+  const failShapes = drive.filter(d => !d.wins);
+  chk('all ' + failShapes.length + ' transport failure shapes credit nothing, keep partners ' +
+      'and leave the audit clean', shapeBad.length === 0, shapeBad.slice(0, 4).join(' | '));
+
+  /* ── THE SUCCESS SHAPE, HELD TO ARITHMETIC ────────────────────────────────
+     Four independent claims, because each one fails to a different mutation:
+       · the transport was handed the PLANNED quantity — not the want, not the
+         whole offer, not a doubled figure;
+       · tradeSync() credited exactly Σ floor(asked × 0.4), the server's answer
+         summed over the calls it actually made — a client that credited its own
+         request would report Σ asked = the double ship, and one that credited
+         nothing would report 0;
+       · that quantity is sitting in the settlement queue before the day runs;
+       · and one Sim.advance later the queue is empty and the goods are IN the
+         city. A LOWER BOUND and not an equality here on purpose: the ids are
+         this node's strategic gaps, which firms may consume inside the very day
+         the delivery lands, and a partner's `sells` can move the same id again
+         through the local matching pass — so the exact figure is not knowable
+         from here even though it happens to come out equal today. §5 asserts
+         the exact quantity, on a fixture isolated so nothing else can move. */
+  const win = drive.find(d => d.wins);
+  const rows = realRows(win.node);
+  const expectAsked = rows.flatMap(r => r.offers).map(o => Math.min(WANT, o.units)).sort((a, b) => a - b);
+  const sawAsked = win.args.map(a => a.units).slice().sort((a, b) => a - b);
+  const expectCredit = win.args.reduce((n, a) => n + Math.floor(a.units * PARTIAL), 0);
+  console.log('    ↳ success shape: asked ' + JSON.stringify(sawAsked) + ', plan expected ' +
+              JSON.stringify(expectAsked) + ', credited ' + win.credited + ' of ' + expectCredit +
+              ' expected, queued ' + win.queued + ', landed ' + win.gain + '\n');
+  chk('the RPC was handed the PLANNED units on every line (' + JSON.stringify(sawAsked) + ') — ' +
+      'not the want (' + WANT + ' each) and not the whole offer',
+      expectAsked.length > 0 && JSON.stringify(sawAsked) === JSON.stringify(expectAsked),
+      'expected ' + JSON.stringify(expectAsked));
+  chk('a PARTIAL fill credits exactly Σ floor(asked × ' + PARTIAL + ') = ' + expectCredit +
+      ' — the server\'s answer, summed over the calls it really made, never the request (Σ ' +
+      sawAsked.reduce((a, b) => a + b, 0) + ')',
+      expectCredit > 0 && win.credited === expectCredit, 'credited ' + win.credited);
+  chk('…and those ' + win.queued + ' units were QUEUED for the economic day rather than booked ' +
+      'between ticks (which is how firms.js once minted 721,771 🔥 with a clean audit)',
+      win.queued === expectCredit, 'queued ' + win.queued);
+  chk('…and one Sim.advance later the queue is drained and the goods are actually IN the city ' +
+      '(+' + win.gain + ' units of the settled ids)',
+      win.drained === 0 && win.gain > 0, 'drained-left ' + win.drained + ', gain ' + win.gain);
+  /* 🔴 THE ANTI-VACUITY GATE FOR §3, the same rubber-stamp guard §6 carries.
+     Everything above this line passes just as happily against a city that never
+     planned a fill — which is exactly what §3 did before this line existed. */
+  const seamShapes = drive.filter(d => d.seam);
+  const vacuous = seamShapes.filter(d => !(d.requested > 0) || !(d.calls > 0));
+  chk('…and every one of those ' + seamShapes.length + ' shapes ACTUALLY REACHED THE ' +
+      'TRANSPORT (' + seamShapes.reduce((n, d) => n + d.calls, 0) + ' RPC calls over ' +
+      seamShapes.reduce((n, d) => n + d.requested, 0) + ' planned lines) — without this ' +
+      '§3 asserts ten failure modes against an RPC it never calls',
+      seamShapes.length === SHAPES.length - 1 && vacuous.length === 0,
+      JSON.stringify(vacuous));
+  const noSeam = drive.filter(d => !d.seam);
+  chk('…and the one shape with no `fill` on the bridge plans nothing rather than ' +
+      'silently succeeding', noSeam.length === 1 && noSeam[0].requested === 0 && noSeam[0].calls === 0,
+      JSON.stringify(noSeam));
+
+  /* And with no bridge AT ALL — the shipping configuration until sql/038 runs. */
+  mountFresh('offline-city');
+  delete global.window.MythicCityBridge.cityTrade;
+  let offlineRep = null, offlineThrew = '';
+  try { offlineRep = await E.tradeSync(); } catch (e) { offlineThrew = e.message; }
+  for (let d = 0; d < 30; d++) Sim.advance(DAY, HOST);
+  chk('with NO trade seam on the bridge the city boots, degrades and keeps trading ' +
+      'against simulated partners (' + Trade.state().partners.length + ' of them)',
+      !offlineThrew && offlineRep && offlineRep.degraded &&
+      Trade.state().partners.length > 0 && Trade.state().partners.every(p => p.simulated),
+      offlineThrew || JSON.stringify(offlineRep));
+
+  // ── §4 REAL PARTNERS ARE REAL, AND STAY REAL ─────────────────────────────
+  mountFresh('mixed-city');
+  Trade.setPartners(Trade.simulatedPartners('mixed-city', 3));   // as sim.js seeds them
+  global.window.MythicCityBridge.cityTrade = mkNet(async () => null);
+  await E.tradeSync();
+  const mixed = Trade.state().partners;
+  const real = mixed.filter(p => !p.simulated), fake = mixed.filter(p => p.simulated);
+  chk('discovery adds the 2 real cities alongside the fabricated ones (' +
+      real.length + ' real, ' + fake.length + ' simulated)',
+      real.length === 2 && fake.length === 3, JSON.stringify(mixed.map(p => [p.name, p.simulated])));
+  chk('p.simulated is exactly FALSE on the real ones and exactly TRUE on the fabricated ' +
+      'ones — not undefined, which is what refreshPartners() would read as "leave it alone" ' +
+      'by accident rather than on purpose',
+      real.every(p => p.simulated === false) && fake.every(p => p.simulated === true),
+      JSON.stringify(mixed.map(p => p.simulated)));
+
+  /* Now run a day and prove refreshPartner() rewrote the fabricated inventories
+     and did NOT touch the real ones. The simulated partner is drained to zero
+     first so "it was refilled" is a visible event and not a coincidence. */
+  const realBefore = JSON.stringify(real.map(p => [p.id, p.sells, p.buys, p.offers]));
+  for (const p of fake) { p.sells = {}; p.buys = {}; }
+  Sim.advance(DAY, HOST);
+  const realAfter = JSON.stringify(Trade.state().partners.filter(p => !p.simulated)
+                                      .map(p => [p.id, p.sells, p.buys, p.offers]));
+  const refilled = Trade.state().partners.filter(p => p.simulated)
+                      .every(p => Object.keys(p.sells).length > 0 || Object.keys(p.buys).length > 0);
+  chk('a whole economic day later the REAL partners still hold the inventory the ' +
+      'network gave them — refreshPartners() did not overwrite them with fabricated numbers',
+      realBefore === realAfter, 'before ' + realBefore.slice(0, 160) + ' … after ' + realAfter.slice(0, 160));
+  chk('…while the SIMULATED partners were refilled, so the refresh really did run',
+      refilled, 'simulated partners came back empty');
+
+  // ── §5 END TO END: A FILL BECOMES GOODS, AND ONLY `filled` OF THEM ───────
+  /* Isolated on purpose: the only partner is a real city with EMPTY sells and
+     buys, so the local matching pass can neither import nor export and every
+     unit that moves this day came out of the settlement queue. */
+  const e2e = [];
+  for (const [asked, filled] of [[100, 40], [100, 100], [100, 0], [60, 25]]) {
+    mountFresh('e2e-' + asked + '-' + filled);
+    Trade.setPartners([{ id: 'city-A', name: 'Farvale', nodeId: 'node-A', specs: [],
+                         sells: {}, buys: {}, offers: [], simulated: false }]);
+    const invBefore = { ...Sim.inventory() }, treBefore = Sim.state().treasury;
+    const req = { offerId: 'off-X', res: 'steel', units: asked, unitPrice: 12,
+                  partnerId: 'city-A', partnerName: 'Farvale' };
+    const r = settle(req, { filled, remaining: 0, unit_price: 12 });
+    Sim.advance(DAY, HOST);
+    const got = (Sim.inventory().steel || 0) - (invBefore.steel || 0);
+    const paid = treBefore - Sim.state().treasury;
+    const want = Math.min(filled, asked);
+    e2e.push({ asked, filled, credited: r.credited, landed: +got.toFixed(3), want,
+               paid: Math.round(paid), audit: !!(Sim.state().lastAudit || {}).ok });
+  }
+  console.log('\n  🤝 SETTLEMENT, END TO END — asked / server filled / units landed\n');
+  console.log('    asked  filled  credited   landed  expected   audit');
+  for (const r of e2e) {
+    console.log('    ' + String(r.asked).padStart(5) + String(r.filled).padStart(8) +
+                String(r.credited).padStart(10) + String(r.landed).padStart(9) +
+                String(r.want).padStart(10) + (r.audit ? '      ok' : '    FAIL'));
+  }
+  console.log('');
+  /* 🔴 AN EQUALITY, NOT A CEILING. This read `landed > want + 1e-6` — "never
+     MORE than the server filled" — which is only the half of the rule that
+     catches the double ship. A settlement that delivered NOTHING at all passed
+     it just as happily: drop the drain, or queue the goods and never book them,
+     and every cell lands 0 ≤ want and the round stays green. The fixture is
+     isolated precisely so that the exact number is knowable (the only partner
+     is a real city with empty sells and buys, so nothing else can move steel),
+     so there is no excuse for asserting less than the exact number. */
+  const e2eBad = e2e.filter(r => Math.abs(r.landed - r.want) > 1e-6 || r.credited !== r.want || !r.audit);
+  chk('the units that actually LAND in the city are EXACTLY what the server filled — ' +
+      'no more (the double ship) and no fewer (a settlement that quietly delivers ' +
+      'nothing) — on every cell, and the audit stays clean through settlement',
+      e2eBad.length === 0, JSON.stringify(e2eBad));
+  const zero = e2e.find(r => r.filled === 0);
+  chk('filled: 0 lands NOTHING and moves no Cinder (the last-40-units race: both ' +
+      'buyers must not be told 40)',
+      zero && zero.landed === 0 && zero.credited === 0, JSON.stringify(zero));
+
+  // ── §6 RULE 1: A TRADE MOVES VALUE, IT DOES NOT MINT ─────────────────────
+  /* 240 consecutive days with settlement live on most of them. The audit is
+     re-checked every single day rather than at the end, because a mint on day 3
+     that is spent by day 240 leaves no trace in the closing balance. */
+  mountFresh('rule1-city');
+  Trade.setPartners(realRows('rule1-city'));
+  let auditBad = '', days = 0, minted = 0, filledTotal = 0, planned = 0;
+  for (let d = 0; d < 240; d++) {
+    if (d % 3 !== 2) {
+      wantGaps('rule1-city', 120);
+      const plan = Trade.planFills(Sim.state().treasury, Sim.state().day);
+      planned += plan.length;
+      for (const req of plan) {
+        // The server fills a random-but-deterministic PART of every request.
+        const part = Math.max(0, Math.floor(req.units * ((d % 5) / 4)));
+        const r = settle(req, { filled: part, remaining: 0, unit_price: req.unitPrice });
+        filledTotal += r.credited;
+      }
+    }
+    Sim.advance(DAY, HOST);
+    days++;
+    const a = Sim.state().lastAudit;
+    if (!a || !a.ok) { auditBad = 'day ' + d + ' ' + JSON.stringify(a); break; }
+    if (a.err > a.tol) minted++;
+  }
+  chk('Rule 1 — the closed-loop audit is clean on all ' + days + ' days with real ' +
+      'settlement running (' + Math.round(filledTotal) + ' units filled)',
+      auditBad === '' && minted === 0, auditBad || (minted + ' days minted'));
+  chk('…and payouts were never suspended, which is what a failed audit does',
+      Sim.state().payoutAllowed === true, 'payoutAllowed is false');
+  /* 🔴 THE ANTI-VACUITY GATE. Everything above this line would pass just as
+     happily against a city that never traded at all — which is exactly how the
+     first draft of this round passed while planning nothing. If settlement
+     stops happening, this round must go RED rather than quietly become a
+     rubber stamp. */
+  chk('…and settlement ACTUALLY RAN over those days (' + planned + ' fills planned, ' +
+      Math.round(filledTotal) + ' units credited) — without this the round above is a rubber stamp',
+      planned > 0 && filledTotal > 0, planned + ' planned / ' + filledTotal + ' credited');
+
+  // ── §7 THE PLAN NEVER OUTRUNS THE CASH OR THE OFFER ──────────────────────
+  mountFresh('plan-city');
+  Trade.setPartners(realRows('plan-city'));
+  Sim.advance(DAY, HOST);
+  wantGaps('plan-city', 500);
+  const plan = Trade.planFills(Sim.state().treasury, Sim.state().day);
+  const offerUnits = {};
+  for (const row of realRows('plan-city')) for (const o of row.offers) offerUnits[o.offerId] = o.units;
+  const planBad = plan.filter(p => !(p.units > 0) || p.units > offerUnits[p.offerId] ||
+                                   !isFinite(p.unitPrice) || p.unitPrice <= 0);
+  chk('every planned fill is positive, finite, priced, and within the offer it targets (' +
+      plan.length + ' lines)', plan.length > 0 && planBad.length === 0,
+      plan.length ? JSON.stringify(planBad.slice(0, 3)) : 'the plan was EMPTY — this check would pass vacuously');
+  /* A plan is capped by the cash on hand, and that has to be true against a
+     REAL budget rather than the 250,000 🔥 the fixture hands the city. */
+  const poor = Trade.planFills(1, Sim.state().day);
+  chk('a city with 1 🔥 plans nothing it cannot pay for', poor.length === 0, JSON.stringify(poor));
+  chk('the plan never exceeds the open-trade-line bound (ECON.trade.maxOpenOffers = ' +
+      ECON.trade.maxOpenOffers + ')', plan.length <= ECON.trade.maxOpenOffers, 'planned ' + plan.length);
+
+  // ── §8 A HOSTILE ROW CANNOT PRICE THE CITY OUT OR GIVE IT FREE GOODS ─────
+  const hostile = [0, -5, 1e12, NaN, Infinity, 'free', null];
+  const band = hostile.map(q => Trade.fillPrice('steel', q));
+  const local = (await import(PP + 'prices.js')).priceOf('steel');
+  const lo = local * (1 - ECON.trade.spreadPct), hi = local * (1 + ECON.trade.spreadPct) * ECON.trade.specPriority;
+  chk('a counterparty-controlled unit_price is clamped into this city\'s own spread ' +
+      '(' + lo.toFixed(2) + '–' + hi.toFixed(2) + ' 🔥) — 0 would be free goods forever ' +
+      'and 1e12 would empty the treasury in a day',
+      band.every(p => isFinite(p) && p >= lo - 1e-9 && p <= hi + 1e-9), JSON.stringify(band));
+
+  if (fails) { bad++; console.log('\n=== ROUND 0n: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0n: ALL PASS ===');
+}
+
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {
   console.log('\n########## ' + f + ' ##########');
   const r = spawnSync(process.execPath, [join(here, f)], { stdio: 'inherit' });

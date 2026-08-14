@@ -25,11 +25,35 @@ const S = {
   booked: 0,          // units booked this day
   lastRatio: 1,       // throughput fraction actually delivered
   lastCostPerUnit: 0,
+  /* 🔴 DECLARED HERE AND CLEARED BELOW, AND IT WAS NEITHER — this is the field
+     round 0m exists for, and it silently invalidated measurement across the
+     whole gate for as long as it was missing. It is WRITTEN by resolve() at the
+     END of an economic day and READ by costPerUnit() from the FIRST freight
+     quote of a day, including day 0, which happens before any resolve() has
+     ever run. Undeclared and uncleared, `S.congestionMul || 1` read 1 in a cold
+     process and THE PREVIOUS CITY'S FINAL CONGESTION in a warm one, so a
+     brand-new city with nothing booked was quoted freight at up to
+     `maxCongestionMul` entirely according to what the test process happened to
+     have simulated before it.
+     MEASURED, all calm, same configuration, same process:
+       rho-6 / pop45 / warehouse-0 / 600d → 3,102 🔥 cold
+                                          → 3,162 🔥 called again (+1.9%)
+     against a round 0i whose headline worst cell was −0.18% — a tenth of the
+     noise it was being read against.
+     ⚠ The commit that ADDED round 0m (4408564) describes exactly this fix in its
+       message and never made it: its diff touched households.js, sim.js and
+       run.mjs only, so the round shipped RED against the one carrier it names.
+       A create-on-first-use field is the defect class; declaring it is what makes
+       "what state does reset() leave" answerable by READING. */
+  congestionMul: 1,
   buildings: {},      // kind → count, for the panel
 };
 
 export function state() { return S; }
-export function reset() { S.capacity = 0; S.booked = 0; S.lastRatio = 1; S.lastCostPerUnit = 0; S.buildings = {}; }
+export function reset() {
+  S.capacity = 0; S.booked = 0; S.lastRatio = 1; S.lastCostPerUnit = 0;
+  S.congestionMul = 1; S.buildings = {};
+}
 
 /* Recompute capacity from the city's logistics buildings.
    `counts` is {warehouse: 3, terminal: 1, ...} — supplied by the host, because

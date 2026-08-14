@@ -2165,6 +2165,24 @@ const BUILDINGS = {
   weavery:  { name: 'Weavery',     ico: '🧶', cost: { cinder: 46, metal: 14, cloth: 10 }, pop: 2, crew: 2, powerNeed: 0.35, mesh: 'cannery',
               gen: { goods: 0.30 }, use: { cloth: 0.30 },
               desc: 'Bolts, blankets and boots. Makes Goods without touching ingots — the only leisure supply a metal-poor city can run.' },
+  /* ── 🃏 THE TWO MISSING LINKS OF THE OUROBOROS CHAIN ──────────────────────
+     The Card Shop has been in this list since r1 and printed NOTHING, because
+     `boosterPacks` needs `printedCards` and no tile in the city made them —
+     the seam's own note at ecoDailyClose() said so in as many words. These are
+     the two tiles that close it: forestry → sawmill → PAPER MILL → PRINT WORKS
+     → card shop, with Cinder walking back up all five.
+
+     ⚠ NO `gen:` AND NO `use:`, DELIBERATELY. A `gen` here would make them idle
+       earners in the city-resource layer — the exact objection that keeps the
+       Stadium out of ECO_BUILDING_MAP (:2287) — and their whole economic
+       output is the FIRM, which lives in the economy's own inventory and never
+       touches `RESOURCES`. `powerNeed` is real: a press draws off the grid.
+     ⚠ `mesh:` borrows an existing recipe (r12's convention, see Sawmill above);
+       a type with no `case` in buildMesh renders as an empty group. */
+  papermill:{ name: 'Paper Mill',  ico: '📄', cost: { cinder: 64, metal: 18, wood: 20 }, pop: 2, crew: 2, powerNeed: 0.45, mesh: 'cannery',
+              desc: 'Pulps and presses mill lumber into card stock. The first half of the Ouroboros chain — nothing prints without it.' },
+  printworks:{name: 'Print Works', ico: '🖨️', cost: { cinder: 96, metal: 26, wood: 10 }, pop: 2, crew: 2, powerNeed: 0.60, mesh: 'machineshop',
+              desc: 'Ouroboros Printing. Turns card stock into printed cards for the Card Shop to pack and sell.' },
   housing:  { name: 'Housing',       ico: '🏠', cost: { cinder: 26, metal: 10, supplies: 6 }, pop: 0, popCap: 6,
               desc: 'Shelters citizens. +6 population cap per level.' },
   barracks: { name: 'Barracks',      ico: '⚔️', cost: { cinder: 50, metal: 20, supplies: 8 }, pop: 0, garrison: 4, defense: 6,
@@ -2405,7 +2423,7 @@ const BUILD_SECTIONS = [
   { id: 'svc',   name: 'Food & Service',  ico: '🍽️', desc: 'Feeds the city. Coverage, not stockpiles — this is what stops the population falling.',
     items: ['foodtruck', 'restaurant', 'grocery', 'clinic', 'club'] },
   { id: 'chain', name: 'Refining',        ico: '🏭', desc: 'Raw into refined. Rations, ingots, components, planks and power.',
-    items: ['cannery', 'smelter', 'machineshop', 'sawmill', 'weavery', 'powerstation', 'warehouse'] },
+    items: ['cannery', 'smelter', 'machineshop', 'sawmill', 'weavery', 'papermill', 'printworks', 'powerstation', 'warehouse'] },
   { id: 'infra', name: 'Infrastructure', ico: '🛤️', desc: 'Links and stores. Producers beside a road work faster.',
     items: ['road', 'streetlight', 'depot', 'caravanpost', 'railyard', 'lot'] },
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
@@ -2431,6 +2449,8 @@ const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmi
   'railyard', 'stadium',
   // ── the material chain (r12) ──
   'lumbercamp', 'quarry', 'fibercroft', 'sawmill', 'weavery',
+  // ── the Ouroboros chain: the two links that made the Card Shop able to print
+  'papermill', 'printworks',
   // ── the financial district: the Forge remodelled. 'forge' is BACK in this
   //    list, which is what makes it placeable again; the other two are new.
   'forge', 'indexfund', 'holdco'];
@@ -3834,13 +3854,114 @@ function weatherTick(dt) {
     }
   }
 }
+/* ☔ THE WEATHER TWINS — the fifth instance of ONE bug class, and the first one
+   a `t.type === '…'` grep could not find.
+   ----------------------------------------------------------------------------
+   The class: a bare tile-type comparison that matches the STANDING tile and
+   silently misses its `op_` twin. It has now shipped five times — hasBank vs
+   `op_bank` (killed the whole DEBT rung), ecoLogisticsCounts vs `op_warehouse`
+   (a 280,000 🔥 licence granting zero freight), tileMult's `t.type === 'arena'`
+   vs `op_dojo` (morale never felt), and the three below. The sweep that caught
+   the first four could not see these: weatherMult compares a bare PARAMETER
+   named `type`, so the pattern everyone greps for isn't in the file.
+
+   MEASURED ON THE LIVE PAGE BEFORE THIS FIX (ratio of tileMult under weather to
+   tileMult under clear, so every other term cancels):
+     TORNADO   farm ×0.50  · op_agri ×1.00      RAIN  farm ×1.30 · op_agri ×1.00
+     SNOW      farm ×0.396 · op_agri ×0.88      (op_agri felt allMult and nothing else)
+     ANOMALY   siphon ×3   · op_smuggling ×1    ANOMALY reslab ×3 · op_research ×1
+     TORNADO   fuelrig ×0.50 · op_oil ×1.00     STORM fuelrig ×0.70 · op_oil ×1.00
+   The last pair is a FOURTH weather instance nobody had named: `outdoor` lives
+   on the BUILDINGS row, and the ops registration loop (:23518) copies name, ico,
+   pop, crew, powerNeed, use and svc — not `outdoor` — so every operation on an
+   open-air twin's mesh was weatherproof. A Smuggling Network denied ×3 in an
+   anomaly is a 600,000 🔥 licence paid for an effect it never receives.
+
+   THE RULE: an operation experiences the weather its standing twin experiences.
+   So the resolution is done ONCE, on the key, and the rest of the function is
+   left exactly as it was — an op resolves to its twin's type and then takes the
+   twin's branch, its twin's `outdoor` flag included. Anything without a twin
+   (and every standing tile) resolves to itself and is untouched.
+
+   ⚠⚠ READ THIS BEFORE TUNING ANY WEATHER NUMBER — WHAT PARITY ACTUALLY BUYS AN
+      OPERATION IS NOT WHAT IT BUYS A TILE, because an op carries NO `gen`. The
+      registration loop copies pop/crew/powerNeed/use/svc only, and an op's
+      OUTPUT is the firm's, produced in the economy module, which weatherMult
+      never touches (the economy's own weather term is ecoShock(), city-wide and
+      derived from allMult × outdoorMult). So inside economyTick the multiplier
+      reaches an operation on exactly two lines: its `use` draw (:17226) and its
+      `svc` supply (:17281). Measured live, one tile, per minute:
+        op_agri   water 0.234 → 0.117 in a TORNADO (a saving) and → 0.249 in RAIN
+        op_smuggling fuel 0.58 → 1.74 under ANOMALY, i.e. the ×3 lands entirely
+                     on the FUEL BILL, while the standing siphon's ×3 lands on
+                     its corruptedEssence `gen`.
+      That asymmetry is inherited, not introduced here — it is the same shape the
+      morale twin (round0g) already has — and the alternative was worse: leaving
+      the twins out means the multiplier the inspector prints and the multiplier
+      the tick charges disagree for half the buildings in the Operations section,
+      which is the class of bug this whole file has now been bitten by five
+      times. The honest fix for the OUTPUT half is to give the economy layer a
+      per-firm weather term; that is a different package and it is written down
+      here so whoever opens it does not have to rediscover this.
+
+   🚫 REJECTED: deriving the twins from OP_BP[…].mesh, and rejected for the same
+      reason ECO_LOGISTICS_OPS (:17405) and MORALE_VENUE_OPS (:16932) reject it —
+      mesh is geometry, the twin claim is about INDUSTRY. `op_fishing` renders on
+      the purifier mesh and is a fishing fleet, not a waterworks (ind `fishery` ≠
+      `waterworks`); a mesh-derived rule would hand it the purifier's rain ×1.35.
+      It is deliberately absent below and the live page confirms it must stay
+      that way. The gate (round0h) independently re-derives the twin set from
+      OP_BP + OP_ECO_MAP + ECO_BUILDING_MAP and goes RED if a future operation
+      joins the class without being listed here — that tripwire, not this
+      comment, is what stops instance six.
+   ⚠ KEYED BY OP TYPE, prefix applied at call time through opsKeyOf(). A
+     hand-written 'op_agri' literal is this same bug again one prefix change
+     later. Same contract as ECO_LOGISTICS_OPS. */
+const WEATHER_TWIN_OPS = {
+  mining: 'scrapmine', oil: 'fuelrig', gas: 'gasstation', agri: 'farm',
+  medical: 'clinic', research: 'reslab', cardshop: 'shop', dojo: 'arena',
+  warehouse: 'warehouse', smuggling: 'siphon',
+};
+let _wxTwinTypes = null;
+/* The standing tile type whose weather rules govern `type`; `type` itself for
+   everything that is not an op twin.
+   ⚠ Object.create(null), not {}: a tile typed 'constructor' would otherwise
+     resolve up the prototype chain to a truthy Object member and be "twinned"
+     with a function — the same guard ecoLogisticsCounts() carries at :17425.
+   ⚠ Resolved lazily inside a try/catch, and the memo is NOT written on the
+     failing path: `opsKeyOf` is a const arrow ~19,600 lines below this one, so a
+     call during boot lands in its temporal dead zone and THROWS (typeof throws
+     there too — that is why ecoHost().hasBank uses try/catch, not typeof).
+     Falling back to identity means "ops are not twinned yet", which is true
+     before OPERATIONS is registered; caching it would make it true forever. */
+function weatherTwinType(type) {
+  if (!_wxTwinTypes) {
+    const m = Object.create(null);
+    try { for (const o in WEATHER_TWIN_OPS) m[opsKeyOf(o)] = WEATHER_TWIN_OPS[o]; }
+    catch (e) { return type; }
+    _wxTwinTypes = m;
+  }
+  return (typeof type === 'string' && _wxTwinTypes[type]) || type;
+}
+/* Does weather move this building at all? ONE predicate, so the inspector's
+   "Open-air, current weather" row cannot disagree with the number weatherMult()
+   charged — the identical reason isMoraleVenue()/moraleVenueMult() were pulled
+   out of tileMult() and insFactors(). It answers on the RESOLVED key, so an
+   op_agri now gets the row its twin gets (it showed none at all in rain), and
+   siphon/reslab still get none, exactly as before: parity with the twin is the
+   whole claim, including where the twin shows nothing. */
+function weatherSensitive(type) {
+  const ty = weatherTwinType(type), def = BUILDINGS[ty];
+  return !!(def && def.outdoor) || ty === 'farm' || ty === 'purifier';
+}
 // Production multiplier from current weather for one building type.
 function weatherMult(type) {
   const W = WEATHER[wx.type]; if (!W || wx.type === 'clear') return 1;
-  if (W.anomaly && (type === 'siphon' || type === 'reslab')) return 3;   // rift labs feast
-  const def = BUILDINGS[type]; let m = W.allMult || 1;
-  if (type === 'farm' && W.farmMult != null) m *= W.farmMult;
-  else if (type === 'purifier' && W.waterMult != null) m *= W.waterMult;
+  const ty = weatherTwinType(type);                                      // op ⇒ its standing twin
+  if (W.anomaly && (ty === 'siphon' || ty === 'reslab')) return 3;       // rift labs feast
+  const def = BUILDINGS[ty]; let m = W.allMult || 1;
+  if (ty === 'farm' && W.farmMult != null) m *= W.farmMult;
+  else if (ty === 'purifier' && W.waterMult != null) m *= W.waterMult;
   else if (def && def.outdoor && W.outdoorMult != null) m *= W.outdoorMult;
   return m;
 }
@@ -16896,6 +17017,74 @@ const prodPerMin = {};   // display: net per-minute rates
    `factor` is what an under-powered building actually runs at. */
 game.power = { gen: 0, demand: 0, ratio: 1, factor: 1 };
 
+/* ════════════════════════════════════════════════════════════════════════════
+   🏟 THE VENUE FAMILY — tiles whose trade IS the crowd, so morale moves them.
+   ----------------------------------------------------------------------------
+   🔴 FOURTH INSTANCE OF THE BARE-STRING TILE-TYPE BUG CLASS. This was
+      `if (t.type === 'arena')`, written before OPERATIONS existed, and it stayed
+      that way after `op_dojo` — "Dojo", a 150,000 🔥 licence — landed on the
+      SAME arena mesh with `ind: 'venue'` in OP_ECO_MAP, whose row even carries
+      the comment `// ↔ arena`. The three earlier instances were
+      ecoLogisticsCounts() twice (`warehouse`, then `op_warehouse`) and
+      ecoHost().hasBank (`'bank'` vs `op_bank`, which killed the DEBT rung).
+
+   ⚠ WHY THIS ONE LOOKED HARMLESS AND WAS NOT. The first read of the sweep said
+     "ops have no `gen`, so tileMult never runs for them". That is false in both
+     halves. The production loop admits a tile on
+     `def.gen || def.use || def.svc || LEGACY_SERVICE[t.type]`, and every op
+     carries `use` and/or `svc` — so tileMult IS evaluated for op_dojo, and its
+     result scales BOTH the op's `def.use` goods draw and the `leisure` its
+     `def.svc` supplies. Measured on the live page at morale 49: `arena` ran at
+     ×0.982 with a "😊 City morale 49 — crowds follow it" row in the inspector,
+     `op_dojo` at ×1.000 with no such row at all. The band is [0.30, 2.00], so a
+     Dojo owner was silently denied up to +100% at a happy city and shielded
+     from −70% at a miserable one — the exact effect the standing twin exists to
+     feel.
+
+   ⚠ THE FEEDBACK LOOP IS PRE-EXISTING, NOT NEW. Morale scales the leisure a
+     venue supplies, and leisure coverage feeds the morale target back at
+     `(_leis - 1) * 14`. That loop already runs through `arena`, whose
+     LEGACY_SERVICE row supplies 0.8 leisure and is likewise multiplied by
+     `mult`. op_dojo joins an existing, damped loop (factor capped at 2.0,
+     product capped by TILE_MULT_CAP, morale eased toward target at 5%/s) — it
+     does not open a new one. Stated here because it is the first thing to look
+     at if morale ever runs away.
+
+   🚫 REJECTED: deriving this set from OP_BP[…].mesh. Same reason the logistics
+      table rejects it — mesh is geometry, the twin claim is about INDUSTRY. The
+      gate (round0g) re-derives the venue family from OP_BP + OP_ECO_MAP +
+      ECO_BUILDING_MAP and goes RED if an operation joins the `venue` industry
+      without being listed here. The tripwire, not this comment, is what stops a
+      fifth instance.
+
+   ⚠ THE KEY IS DERIVED THROUGH opsKeyOf, NEVER TYPED, exactly like
+     ECO_LOGISTICS_OPS and opsFindLab(): a hand-written 'op_dojo' is this same
+     bug again one prefix change later. Listed by OP TYPE; the prefix is applied
+     at call time. */
+const MORALE_VENUE_OPS = ['dojo'];
+let _moraleVenueTypes = null;
+function isMoraleVenue(ty) {
+  if (!_moraleVenueTypes) {
+    const s = new Set(['arena']);
+    /* try/catch, and the memo is NOT written on the failing path: `opsKeyOf` is
+       a `const` arrow declared ~6,500 lines below, so a call during boot lands
+       in its temporal dead zone and THROWS (`typeof` throws too — that is why
+       ecoHost().hasBank uses a try/catch rather than a typeof guard). Falling
+       back to the standing tile alone means "ops are not venues yet", which is
+       true before OPERATIONS is initialised, and caching that answer would make
+       it permanently true. */
+    try { for (const o of MORALE_VENUE_OPS) s.add(opsKeyOf(o)); }
+    catch (e) { return ty === 'arena'; }
+    _moraleVenueTypes = s;
+  }
+  return _moraleVenueTypes.has(ty);
+}
+/* ONE expression, called from tileMult() and from insFactors(). They were two
+   copies of `Math.max(.3, wellbeing.morale / 50)` and the inspector's job is to
+   print exactly what the tick charged — a decomposition that silently disagrees
+   with the total is the bug the insFactors header already warns about. */
+function moraleVenueMult() { return Math.max(.3, wellbeing.morale / 50); }
+
 /* The one production multiplier, extracted so the power pre-pass and the main
    pass cannot drift apart. `powered` is applied only to buildings that declare
    a powerNeed — see the BUILDINGS comment for why that is not retro-fitted. */
@@ -16906,7 +17095,7 @@ function tileMult(x, z, t, staff, powered) {
         * (gov.mayorName ? MAYOR_PROD : 1)
         * kalonCityBoost()
         * (1 + socketBoost(t));
-  if (t.type === 'arena') m *= Math.max(.3, wellbeing.morale / 50);   // crowds follow morale
+  if (isMoraleVenue(t.type)) m *= moraleVenueMult();   // crowds follow morale — arena AND its op twin
   /* 💹 THE FINANCIAL DISTRICT'S LIFT. Only Cinder EARNERS feel it — a farm does
      not sell anything, so an investment house has nothing to leverage there.
      ⚠ Deliberately ABOVE the Math.min() below, i.e. inside TILE_MULT_CAP. See
@@ -17271,17 +17460,19 @@ function ecoDailyClose(snap) {
     const units = fin(r.totalUnits), value = fin(r.value), exported = fin(r.exported);
     const packs = fin((r.units || {}).boosterPacks) + fin((r.units || {}).collectorPacks);
     /* ⚠ A ZERO DAY IS STILL PUSHED, ON PURPOSE.
-       Measured against the shipped economy: NOTHING supplies `printedCards`.
-       No entry in ECO_BUILDING_MAP outputs it, sim.js `bootstrap()` seeds only
-       water/power/food/landlord/deposits, and trade.js `refreshPartner()` sells
-       only a partner's endowment STRENGTHS (raw deposits) — so the one input
-       every Ouroboros recipe starts from cannot enter a city at all today. A
-       card shop therefore founds a healthy firm that reports
-       `lastBottleneck: printedCards` and produces 0 forever.
-       Suppressing zero reports would have left this seam looking wired and
-       behaving exactly as dark as it was before, and the first person to add a
-       print works upstream would have had no way to tell the difference. A zero
-       is a measurement: it says the chain ran and printed nothing. */
+       This note used to read "NOTHING supplies `printedCards`", and it was
+       true: no entry in ECO_BUILDING_MAP output it, sim.js `bootstrap()` seeds
+       only water/power/food/landlord/deposits, and trade.js `refreshPartner()`
+       sells only a partner's endowment STRENGTHS (raw deposits) — so the one
+       input every Ouroboros recipe starts from could not enter a city at all,
+       and a Card Shop founded a healthy firm reporting
+       `lastBottleneck: printedCards` that produced 0 forever.
+       THE PRINT WORKS AND PAPER MILL ROWS (:17600) ARE THE FIX. A city that
+       builds them prints real packs and this seam reports a real figure.
+       A city that has not built them still reports zero — and that zero is a
+       MEASUREMENT, not a bug: it says the chain ran and printed nothing.
+       Suppressing zero days would make an un-built chain and a broken one look
+       identical, which is precisely how this defect survived a whole round. */
     MythicCityBridge.pushCardOutput({
       day, spanned,
       units: Math.round(units), value: Math.round(value),
@@ -17306,29 +17497,84 @@ function ecoDailyClose(snap) {
      makes is the audited Cinder payout, through addCinders, which is the same
      path every other selling building already uses.
    ════════════════════════════════════════════════════════════════════════════ */
-function ecoLogisticsCounts() {
-  /* Which standing buildings give freight capacity. Every key here must exist
-     in ECON.logistics.capacity or it contributes nothing — the economy ignores
-     names it does not price, silently, so a typo reads as "no capacity".
+/* 🚚 WHICH STANDING TILES GIVE FREIGHT CAPACITY, as DATA rather than as a chain
+   of `t.type === '…'` tests. Every VALUE here must exist in
+   ECON.logistics.capacity or it contributes nothing — logistics.js:53 skips a
+   name it does not price, silently, so a typo reads as "no capacity".
 
-     ⚠ THE WAREHOUSE IS A REAL TILE AND WAS MISSED ONCE. An earlier version of
-       this function carried the comment "Warehouses do not exist as a tile type
-       here yet" and counted only Supply Depots. `warehouse` has been in
-       BUILDINGS all along, so every player who had built one was getting none
-       of its freight capacity and no error anywhere said so. Check BUILDINGS
-       before asserting a tile type is absent. */
-  let warehouse = 0, depot = 0, terminal = 0, railhead = 0;
+   ⚠ THE WAREHOUSE IS A REAL TILE AND WAS MISSED ONCE. An earlier version of
+     this function carried the comment "Warehouses do not exist as a tile type
+     here yet" and counted only Supply Depots. `warehouse` has been in BUILDINGS
+     all along, so every player who had built one was getting none of its
+     freight capacity and no error anywhere said so. Check BUILDINGS before
+     asserting a tile type is absent.
+
+   🔴 …AND THEN THE OP TWIN WAS MISSED IN THE SAME FUNCTION, THE SAME WAY. The
+      fix above was applied to the standing `warehouse` tile only, while
+      BUILDINGS also holds `op_warehouse` — "Warehouse Co.", whose own blueprint
+      text reads "Its real product is capacity" and whose licence costs 280,000
+      🔥 at City Hall. `t.type === 'warehouse'` does not match `op_warehouse`, so
+      the most expensive freight building in the game granted ZERO freight,
+      silently, exactly like the bug the comment above it warns about. This is
+      the same shape as ecoHost().hasBank testing `t.type === 'bank'` against an
+      `op_bank` tile, which killed the entire DEBT rung — third instance of one
+      bug class in one file.
+   ⚠ OP KEYS ARE DERIVED THROUGH opsKeyOf, NEVER TYPED. The table below is keyed
+     by OP TYPE (`warehouse`), not by tile type (`op_warehouse`); the prefix is
+     applied at call time. A hand-written 'op_warehouse' literal is this same bug
+     again one prefix change later — the ops loop refuses to hand-write its own
+     keys for exactly that reason (OP_ECO_MAP's header).
+
+   🚫 REJECTED: deriving the op twins from OP_BP[…].mesh. `salvage` ("Salvage
+      Operation") also renders on the warehouse mesh and is a scrap yard, not a
+      freight business — a mesh-derived rule would have handed it 900 units/day
+      of capacity the city does not have. The twin relationship is a claim about
+      INDUSTRY, not about geometry, so it is stated here explicitly and the gate
+      (round0f) independently re-derives the twin set from OP_BP + OP_ECO_MAP +
+      ECO_BUILDING_MAP and goes RED if a future operation joins the class without
+      being listed here. That tripwire — not this comment — is what stops this
+      bug happening a fourth time. */
+const ECO_LOGISTICS_TILES = { warehouse: 'warehouse', depot: 'depot', railyard: 'railhead' };
+const ECO_LOGISTICS_OPS   = { warehouse: 'warehouse' };
+
+function ecoLogisticsCounts() {
+  /* `terminal` is the only one of the four with no table row — it is an ANCHOR
+     property, not a building type — but the other three are seeded from the
+     tables so that adding a `port:` row above cannot produce `undefined + 1`,
+     which logistics.js would drop as non-finite and read as "no capacity". */
+  const out = { warehouse: 0, depot: 0, terminal: 0, railhead: 0 };
+  for (const v of Object.values(ECO_LOGISTICS_TILES)) out[v] = out[v] || 0;
+  for (const v of Object.values(ECO_LOGISTICS_OPS))   out[v] = out[v] || 0;
+  /* hasOwnProperty, not a bare lookup: a tile typed 'constructor' or 'toString'
+     would otherwise resolve up the prototype chain to a truthy Object member and
+     be credited as a logistics building — the identical guard the weather record
+     carries at ecoShock(). */
+  const has = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
+  /* Resolved per call, not once at load: `opsKeyOf` is a `const` arrow declared
+     ~5,900 lines below this one, and a top-level read up here would hit its
+     temporal dead zone and take the page down at boot. try/catch rather than
+     `typeof` for the same reason ecoHost().hasBank uses one — `typeof` on a
+     const in its TDZ THROWS instead of answering 'undefined'. Failing to an
+     empty map means "ops grant no freight", i.e. the old behaviour, which is the
+     safe direction to fall over in. */
+  const opTiles = {};
+  try {
+    for (const op in ECO_LOGISTICS_OPS) opTiles[opsKeyOf(op)] = ECO_LOGISTICS_OPS[op];
+  } catch (e) { /* pre-OPS boot: no op tiles can exist yet either */ }
+
   for (const t of Object.values(game.tiles)) {
     // 🏗 …and an unbuilt shed carries less than nothing: freight capacity the
-    //    economy would plan around and then not have.
-    if (t.damaged || bldSite(t)) continue;   // a damaged shed carries nothing
-    if (t.type === 'warehouse') warehouse += Math.max(1, t.lvl | 0);
-    else if (t.type === 'depot') depot += Math.max(1, t.lvl | 0);
-    else if (t.type === 'railyard') railhead += Math.max(1, t.lvl | 0);
-    else if (t.type === 'anchor' && t.anchor &&
-        ((NODE_TYPES[t.anchor.node.node_type] || {}).feeds || []).includes('__roads__')) terminal++;
+    //    economy would plan around and then not have. bldSite, not bldBusy — an
+    //    UPGRADING warehouse is a working warehouse and keeps its capacity,
+    //    consistent with the 33 read sites WP4 guarded.
+    if (!t || t.damaged || bldSite(t)) continue;   // a damaged shed carries nothing
+    const kind = has(ECO_LOGISTICS_TILES, t.type) ? ECO_LOGISTICS_TILES[t.type]
+               : has(opTiles, t.type)             ? opTiles[t.type] : null;
+    if (kind) { out[kind] += Math.max(1, t.lvl | 0); continue; }
+    if (t.type === 'anchor' && t.anchor &&
+        ((NODE_TYPES[t.anchor.node.node_type] || {}).feeds || []).includes('__roads__')) out.terminal++;
   }
-  return { warehouse, depot, terminal, railhead };
+  return out;
 }
 /* ════════════════════════════════════════════════════════════════════════════
    🏭 BUILDINGS → BUSINESSES.
@@ -17355,7 +17601,18 @@ const ECO_BUILDING_MAP = {
   farm:        { out: ['wheat', 'corn', 'rice', 'potatoes', 'soybeans', 'vegetables'], ind: 'farm' },
   hydrofarm:   { out: ['vegetables', 'fruit', 'herbs', 'potatoes'],                    ind: 'farm' },
   fibercroft:  { out: ['cotton', 'plantFiber'],                                        ind: 'farm' },
-  lumbercamp:  { out: ['timber', 'wood'],                                              ind: 'forestry' },
+  /* 🪵 `wood` WAS HERE AND IT WAS A TRAP. pickAvailable() ranks DEPOSITS by the
+     grade of the seam, not by list order, so on a node where the wood seam
+     graded higher the Lumber Camp produced `wood` — whose only consumer in the
+     whole 258-id catalogue is `woodPanels`, which no tile in this city makes.
+     That is a firm with a payroll and no possible customer, and it also stole
+     the forestry slot from `timber`, which is the ROOT OF THE ENTIRE OUROBOROS
+     CHAIN (timber → lumber → cardStock → printedCards → boosterPacks).
+     Measured over 200 nodes: 88 of them picked `wood` and had a permanently
+     dark card chain because of it. Dropping the id costs the 41 nodes that
+     have wood but no timber their Lumber Camp — and on exactly those nodes it
+     was a building that could never sell anything anyway. */
+  lumbercamp:  { out: ['timber'],                                                      ind: 'forestry' },
   quarry:      { out: ['stone', 'limestone', 'gravel', 'sand', 'clay', 'silica'],      ind: 'quarry' },
   scrapmine:   { out: ['ironOre', 'copperOre', 'aluminumOre', 'zincOre', 'nickelOre', 'coal'], ind: 'mine' },
   fuelrig:     { out: ['crudeOil', 'naturalGas'],                                      ind: 'oilfield' },
@@ -17384,8 +17641,16 @@ const ECO_BUILDING_MAP = {
   /* 🃏 THE PLAYER SHOP IS THE CARD SHOP. This is the seam that puts Mythic
      Spellbook itself inside the city economy: residents spend their `cards`
      budget here, and that Cinder flows back up the Ouroboros chain to the
-     printer, the paper mill and the forestry camp. */
+     printer, the paper mill and the forestry camp.
+     🔴 IT ONLY DOES THAT BECAUSE THE NEXT TWO ROWS EXIST. `boosterPacks` needs
+     `printedCards`, and firms.js `produce()` takes the MINIMUM over a recipe's
+     inputs — so for the whole life of this feature the shop founded a healthy
+     firm reporting `lastBottleneck: printedCards` and printed zero, forever.
+     Deleting either row below puts it straight back into that state; round 0e
+     of tools/economy-tests/run.mjs is the tripwire that says so. */
   shop:        { out: ['boosterPacks'],       ind: 'cardShop' },
+  papermill:   { out: ['cardStock'],          ind: 'paperMill' },
+  printworks:  { out: ['printedCards'],       ind: 'cardPrinter' },
   /* ── 🏗 FIVE STANDING TILES THAT WERE ALWAYS BUSINESSES AND WERE NEVER WIRED.
      Added with the construction round (SPEC_CONSTRUCTION §9) because the
      feature makes the question unavoidable: if a Construction Co. is now a
@@ -17507,6 +17772,17 @@ function ecoBindRoster() {
    1.3) already shows up as extra supply through the normal ratio term; adding a
    discount here would count it twice and in the wrong direction.
 
+   ⚠ THIS FUNCTION IS ONLY HALF OF THE MECHANIC, AND SHIPPING IT ALONE INVERTED
+     WHAT A CRISIS MEANT. A premium raises the sales and corporate tax take, the
+     player's payout is a share of the day's municipal surplus, and so a siege
+     measurably RAISED the owner's income: over 300 deterministic economic days,
+     claimed Cinder 5,762 calm → 5,910 at a realistic raid cadence, → 6,885 at a
+     permanent 1.6. The number this returns is now spent by sim.js on both
+     sides — the premium AND the destroyed output, the stopped convoys and the
+     emergency response that pay for it (ECON.shock.cost). Do not add a cost
+     term here: this function's job is to describe the city's weather, and the
+     economy's job is to price it.
+
    ⚠ THE SIGNAL IS THE ONE THE CITY ALREADY HAS, not a new one.
      • WEATHER — `wx.type` and the WEATHER row's OWN production multipliers.
        Suppression is derived from `allMult × outdoorMult`, the same two numbers
@@ -17532,26 +17808,16 @@ function ecoBindRoster() {
       exactly 1 — neutral — and the economy simply does not hear about the storm.
    ════════════════════════════════════════════════════════════════════════════ */
 
-/* 🔢 RULE 4 — THE MAPPING CONSTANTS LIVE IN ECON, NOT IN ecoHost().
-   They are DECLARED here only because this package may not edit
-   public/src/economy/* at all, and INSTALLED into ECON on first read (below).
-   The install is `if (!ECON.shock)`, so the day tuning.js ships its own `shock`
-   group that one wins and this literal becomes dead weight — there is exactly
-   one authority for these numbers at runtime and it is ECON.shock. `on: 0`
-   reads exactly like a missing module and switches the whole term off, the same
+/* 🔢 RULE 4 — THE MAPPING CONSTANTS LIVE IN ECON, AND ONLY THERE.
+   This file used to declare its own `SHOCK_TUNING` literal and install it into
+   ECON `if (!ECON.shock)`. tuning.js now SHIPS the `shock` group (it has to:
+   sim.js reads the cost side of it), so that literal was a second copy of the
+   same numbers — the standing rejected design in this codebase, and one retune
+   away from the mapping and the simulation disagreeing about how bad a siege
+   is. The copy is gone; ECON.shock is the only authority and a build whose
+   economy module never loaded simply has no shock, exactly as before.
+   `on: 0` reads like a missing module and switches the whole term off, the same
    contract ECON.construction already has (see bldCfg). */
-const SHOCK_TUNING = {
-  on: 1,
-  /* Ceiling on the COMBINED shock. A tornado during a siege multiplies out to
-     1.73; clamped here so the worst day in the game is a +60% market, which is
-     a crisis a player can trade through rather than a wall. */
-  max: 1.60,
-  raidWindowFrac: 0.15,   // last 15% of the raid interval — 18 min of a 2 h cycle
-  raidGain: 0.12,         // +12% at the moment an ordinary wave lands
-  siegeGain: 0.30,        // +30% for a siege (SIEGE_EVERY-th wave)
-  weatherGain: 0.50,      // premium per unit of lost outdoor output
-  severeAdd: 0.08,        // flat adder for WEATHER[..].severe
-};
 
 /* A finite JS number, or null. The ONLY accepted input shape — see the Infinity
    and truthy-string bugs in the header above. */
@@ -17564,15 +17830,46 @@ const shockCfg = () => {
   try {
     const E = window.MythicEconomy;
     if (!E || !E.ECON) return null;                 // no module → no shock, city ticks on
-    if (!E.ECON.shock) E.ECON.shock = SHOCK_TUNING; // register once, ECON is the authority
-    const C = E.ECON.shock;
+    const C = E.ECON.shock;                         // ECON is the ONLY authority
     return (C && C.on) ? C : null;
   } catch (e) { return null; }
 };
 
+/* 🕓 THE OFFLINE SWEEP DECLARES ITSELF CALM, AND THE HONEST REASON IS THAT THE
+   CITY DOES NOT KNOW. Set for exactly the lifetime of offlineCatchUp's slice
+   loop — same try/finally as the `_bldOffline` flag beside it, for the same
+   reason: a flag whose lifetime is not the loop's is a flag that leaks.
+
+   Both signals ecoShock() reads are unobservable across an absence:
+     • THE SKY — `wx` is not serialised. It resets to 'clear' on load, so the
+       weather half of the term is already 1 for the whole sweep no matter what.
+     • THE WALLS — `game.raid.timer` IS serialised, and the sweep deliberately
+       does not run raidTick (raids are a thing you play, not a thing that
+       happens to a shut tab). So the timer is FROZEN at whatever instant the
+       save was written. A save stamped inside the last raidWindowFrac of the
+       cycle therefore reported a live siege for every slice of a 36-hour
+       catch-up — measured on the page: `game.raid.wave=4; game.raid.timer=1`
+       then `__nc.offline(3h)` advanced 9 economic days and finished with
+       snapshot().shock still 1.2997, billing emergency response the whole way.
+     A 36-hour absence spans eighteen 2-hour raid cycles. The frozen reading is
+     not a stale approximation of what happened, it is a reading of ONE INSTANT
+     replayed across a period in which the real answer was mostly 1 and is in
+     any case unknowable. Reporting 1 is the same decision the weather already
+     makes, and it is the NEUTRAL one, not a gift: since the disaster mapping
+     grew its cost side (ECON.shock.cost) a shock is a net negative, so a sweep
+     that claimed one would be charging the player for a siege nobody fought.
+
+   ⚠ sim.js meters this independently (see `S.shockBudgetDays`) and would cap a
+     frozen reading at ECON.shock.cost.sampleDays on its own. This flag is not
+     that guard's replacement — it is the host telling the truth about what it
+     can see, which is a different job. Two layers here on purpose: the last
+     time one side assumed the other was handling it, the term shipped dark. */
+let _ecoOfflineSweep = false;
+
 function ecoShock() {
   const C = shockCfg();
   if (!C) return 1;
+  if (_ecoOfflineSweep) return 1;                   // see the note above
   let s = 1;
 
   // ── The wave bearing down on the walls.
@@ -19059,7 +19356,9 @@ function insFactors(x, z, t) {
   if (kb !== 1) f.push({ l: '🐲 Stabled Kalons, city-wide', v: kb });
   const sb = socketBoost(t);
   if (sb) { const c = cardById(t.card); f.push({ l: '🃏 ' + logEsc(c ? c.name : 'Socketed card') + ' — ⚡' + (c ? c.power : 0), v: 1 + sb }); }
-  if (t.type === 'arena') f.push({ l: '😊 City morale ' + Math.round(wellbeing.morale) + ' — crowds follow it', v: Math.max(.3, wellbeing.morale / 50) });
+  // Same predicate and same expression as tileMult(), on purpose: this row IS
+  // that term, and the two spent this project's whole life as separate literals.
+  if (isMoraleVenue(t.type)) f.push({ l: '😊 City morale ' + Math.round(wellbeing.morale) + ' — crowds follow it', v: moraleVenueMult() });
   if (def.powerNeed) f.push({ l: (game.power.factor < 1 ? '⚡ BROWNOUT — grid ' : '⚡ Powered — grid ') +
     game.power.gen.toFixed(1) + ' / ' + game.power.demand.toFixed(1) + ' per min', v: game.power.factor });
   return { b, f, lvlMul };
@@ -19339,7 +19638,14 @@ function insRisk(t, x, z) {
       (t.wear || 0) > 60 ? 'dn' : ''));
     if (!t.damaged) rows.push(insFac('⏳ Until it fails', (left / rate).toFixed(1) + ' hr at ' + rate.toFixed(1) + '%/hr'));
   }
-  if (def.outdoor || t.type === 'farm' || t.type === 'purifier') {
+  /* 🌦 THE ROW GOES THROUGH weatherSensitive(), NOT A SECOND COPY OF ITS RULE.
+     This line was the third bare-string comparison in the weather family: an
+     Agricultural Op. is charged the farm's ×0.50 in a tornado and showed NO
+     weather row at all, because `op_agri` is neither `farm` nor `purifier` and
+     the ops loop never copies `outdoor` onto the blueprint. A panel that omits
+     the factor the tick charged is the drift insFactors' own header warns
+     about. */
+  if (weatherSensitive(t.type)) {
     const wm = weatherMult(t.type);
     rows.push(insFac(WEATHER[wx.type].ico + ' Open-air, current weather', '×' + wm.toFixed(2), wm < 1 ? 'dn' : wm > 1 ? 'up' : ''));
   }
@@ -22827,6 +23133,18 @@ async function offlineCatchUp(awayMsOverride) {
   _bldOffline = true; _bldDirty = false;
   _bldRebuildDue();
   try {
+    /* 🌩 THE ECONOMY HEARS NO STORM FOR THE LENGTH OF THE SWEEP.
+       `game.raid.timer` is serialised while `wx` is not, so without this the
+       slice loop below would price every one of its ~12,960 ticks off one
+       frozen raid clock. See the note on _ecoOfflineSweep at ecoShock().
+       ⚠ SET INSIDE THE `try`, NOT BESIDE `_bldOffline` ABOVE IT. The flag is
+         only released by the `finally`, so anything that can throw between the
+         two would leave the LIVE city permanently becalmed — every future
+         disaster silently priced at 1 with no error and no test that would see
+         it. `_bldRebuildDue()` sits in exactly that gap. `_bldOffline` carries
+         that exposure already and is not this package's to change; a second
+         flag does not have to inherit the bug. */
+    _ecoOfflineSweep = true;
     while (done < simSec - 1e-9) {
       const dt = Math.min(OFFLINE_SLICE_SEC, simSec - done);
       await economyTick(dt / 60);
@@ -22881,6 +23199,7 @@ async function offlineCatchUp(awayMsOverride) {
   } finally {
     B.addRes = oAddRes; B.addCinders = oAddCin; B.spendRes = oSpend;
     _bldOffline = false;                  // same lifetime as the bridge patch
+    _ecoOfflineSweep = false;             // …and so is the becalmed economy
   }
   /* 🏗 ONE sync for the whole absence, and only now that the bridge is its own
      again. Per-completion this would be a firm reconcile inside the slice loop;
@@ -27212,6 +27531,11 @@ function animate() {
       host:     () => ecoHost(),
       shock:    () => ecoShock(),
       shockCfg: () => shockCfg(),
+      /* 🕓 Is the economy currently being told "no storm" because a catch-up is
+         sweeping? The flag is a closure local (globals trap), so without this a
+         driver could only infer it from the shock number and could not tell
+         "becalmed by the sweep" from "genuinely clear sky". */
+      offlineSweep: () => _ecoOfflineSweep,
       wx,
       /* 🃏 THE DAILY CLOSE. `cards()` is cardOutput() straight from the module;
          `close(snap)` is the SHIPPED edge detector with the snapshot injected,

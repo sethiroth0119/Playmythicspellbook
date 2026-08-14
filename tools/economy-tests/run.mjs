@@ -52,9 +52,43 @@ let bad = 0;
                                    that ignores the clamp
      ECON_TEST_SABOTAGE=reap-burn  round0e: burn a demolished firm's cash at the
                                   seam, exactly as Firms.reap() used to
+     ECON_TEST_SABOTAGE=dark-cards round0j: put `holographicFoil: 0.02` back into
+                                   the boosterPacks recipe. That is the SHIPPED
+                                   recipe, and because firms.js produce() takes
+                                   the MINIMUM over inputs, that one coefficient
+                                   — for a foil no city tile can make — is the
+                                   whole difference between a card economy and
+                                   `cardOutput()` returning totalUnits 0 forever
+     ECON_TEST_SABOTAGE=twin-blind round0f: drop ECO_LOGISTICS_OPS on the way
+                                   in — the exact pre-fix source for op_warehouse
+     ECON_TEST_SABOTAGE=venue-blind round0g: empty MORALE_VENUE_OPS on the way
+                                   in — the exact pre-fix source for op_dojo
+     ECON_TEST_SABOTAGE=wx-twin-blind round0h: empty WEATHER_TWIN_OPS on the way
+                                   in — the exact pre-fix source for op_agri,
+                                   op_smuggling, op_research and op_oil
     ECON_TEST_SABOTAGE=draw-compound round0e: open the founding window's treasury
                                    allowance, reproducing the per-call clamp that
                                    let one sync take 91.15% of the treasury
+    ECON_TEST_SABOTAGE=disaster-premium round0i: zero ECON.shock.cost.emergencyPer,
+                                   which re-commits the SHIPPED prices-only
+                                   disaster mapping — the version under which a
+                                   siege measurably paid the player better than
+                                   peace
+    ECON_TEST_SABOTAGE=frozen-shock round0i: make the shock sample budget
+                                   effectively unbounded, which is arithmetically
+                                   what a PER-CALL budget was against the host's
+                                   ~12,960-slice offline sweep — the frozen
+                                   premium, re-committed
+    ECON_TEST_SABOTAGE=shock-ratchet round0i §5: make ECON.shock.cost.recoveryDays
+                                   enormous. That is not an arbitrary poke — it is
+                                   the EXACT arithmetic that produced the ratchet:
+                                   a recovery window longer than the gap between
+                                   shock-producing events can never drain, so the
+                                   outstanding share never falls, no later event
+                                   can take the window over, and `shockSev` latches
+                                   at the worst severity the city has ever seen.
+                                   Under it §5 must report a window that never
+                                   closes and a drizzle billed at tornado rates.
 
    ⚠ Every one of these must turn the gate RED. If you change these rounds, run
      all of them and check that they still do; an unset variable is the shipping
@@ -444,6 +478,142 @@ const srcBlockAfter = (src, decl) => {
     else console.log('\n=== ROUND 0b: ALL PASS ===');
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0j — 🃏 PRODUCIBLE IS NOT THE SAME THING AS PRODUCIBLE-HERE
+   ----------------------------------------------------------------------------
+   🔴 WHAT ROUND 0b CANNOT SEE, AND WHY THAT MATTERED FOR A WHOLE ROUND.
+   0b asks `Recipes.producible(id)` of every output in ECO_BUILDING_MAP. That
+   predicate answers ONE question — "does this id have a recipe, a deposit or a
+   byproduct entry" — and `boosterPacks`, `printedCards`, `cardStock` and
+   `holographicFoil` all answered YES from the day they were written. 0b was
+   green. The card economy still produced NOTHING, in every city, forever.
+
+   The reason is a level up from the predicate:
+
+     · a recipe only runs if a FIRM makes each of its inputs
+     · a firm only exists where a BUILDING maps to that id (ECO_BUILDING_MAP)
+     · firms.js `produce()` takes the MINIMUM over the inputs (:363) —
+       "a line runs at the rate of its slowest input"
+
+   so ONE input with no building behind it darkens every step above it, in
+   perfect silence, with a healthy-looking firm reporting a bottleneck nobody
+   reads. `boosterPacks` needed `printedCards`; nothing made `printedCards`;
+   the Card Shop was structurally incapable of printing a single pack and
+   `cardOutput()` — the Foundation Reserve's feed — returned
+   {units:{}, totalUnits:0} for every player, forever.
+
+   THIS ROUND ASKS THE HARDER QUESTION: walk each mapped output back down its
+   PRIMARY leg and check the walk terminates in the ground. Roots are deposits
+   (a tile digs them, or trade imports them — trade.js sells partner endowment
+   STRENGTHS, which are deposits) and ids some other row of the map makes.
+   Byproducts are NOT roots: nothing in sim.js ever adds one to inventory.
+
+   ⚠ THE CARD LINE IS ASSERTED; THE REST IS REPORTED. Plenty of the map is
+     still dark for the same structural reason (the city has no chemical tier,
+     no refinery and no semiconductor fab), and turning that into a red today
+     would be a test nobody could make pass. The dark list is PRINTED on every
+     run so the number is visible and can be driven down deliberately, and the
+     Ouroboros ids — the ones a package was written to fix — are a hard fail.
+
+   Prove this round can fail: ECON_TEST_SABOTAGE=dark-cards, which puts
+   `holographicFoil` back into the `boosterPacks` recipe. That is not an
+   arbitrary poke: it is the SHIPPED recipe, and by the min rule above that one
+   0.02 coefficient is the whole difference between a card economy and a dead
+   one.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0j-chain-reachability ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  if (!CITY_MAP) {
+    /* Same vacuous-tripwire guard round 0c uses: with no map there is nothing
+       to walk, and "0 unreachable ids" would be a green that means nothing. */
+    console.log('🔴 round0b could not read ECO_BUILDING_MAP — this round has nothing to walk.');
+    bad++; console.log('\n=== ROUND 0j: 1 FAILED ===');
+  } else {
+    const R = await import('../../public/src/economy/recipes.js');
+    if (SABOTAGE === 'dark-cards') {
+      R.RECIPES.boosterPacks.in.holographicFoil = 0.02;
+      console.log('   🧨 restored `holographicFoil: 0.02` to the boosterPacks recipe (the shipped version)');
+    }
+
+    /* Every id ANY tile in the city can found a firm for. A deposit in this set
+       still has to be in the ground on a given node — pickAvailable decides
+       that per city — so this walk is about STRUCTURE, not about one node. */
+    const MAKEABLE = new Set();
+    for (const k of Object.keys(CITY_MAP)) for (const o of (CITY_MAP[k].out || [])) MAKEABLE.add(o);
+
+    const memo = new Map();
+    function reach(id, stack) {
+      if (R.isDeposit(id)) return true;             // the ground, or an import
+      if (R.isByproduct(id)) return false;          // nothing ever banks these
+      if (memo.has(id)) return memo.get(id);
+      if (stack.has(id)) return false;              // a cycle is not a root
+      if (!MAKEABLE.has(id)) { memo.set(id, false); return false; }
+      stack.add(id);
+      const leg = R.legsOf(id)[0] || { in: {} };
+      let ok = true;
+      for (const inp in (leg.in || {})) if (!reach(inp, stack)) { ok = false; break; }
+      stack.delete(id);
+      memo.set(id, ok);
+      return ok;
+    }
+    /* WHY THE PRIMARY LEG AND ONLY THE PRIMARY LEG. `legsOf()` returns the
+       ALT_FEEDSTOCK list when there is one, and an alternate leg is NOT a
+       second way to be reachable in practice: sim.js `availabilityMap()` only
+       measures the inputs of the leg a firm is ALREADY running, so an
+       alternate's inputs are missing from the map and read as fully available.
+       Measured: an electricity plant on a node with no fuel of any kind hopped
+       to the `biomass` leg and produced 1200 units from zero biomass. Counting
+       alternates here would let this round certify a chain that only "runs"
+       through that hole. legs[0] is also what prices.js derives base price
+       from, for the same reason. */
+
+    const dark = [], lit = [];
+    for (const id of Array.from(MAKEABLE).sort()) (reach(id, new Set()) ? lit : dark).push(id);
+
+    console.log('\n  ' + lit.length + ' of ' + MAKEABLE.size + ' mapped outputs reach the ground.');
+    console.log('  still dark (no city tile makes an input, somewhere below them):');
+    console.log('    ' + (dark.join(', ') || '— none —') + '\n');
+
+    // ── THE OUROBOROS LINE IS NOT ALLOWED TO BE DARK ────────────────────────
+    const LINE = ['boosterPacks', 'printedCards', 'cardStock', 'packagingMaterial'];
+    for (const id of LINE) {
+      chk('`' + id + '` reaches the ground — the Card Shop can actually print',
+          MAKEABLE.has(id) && reach(id, new Set()),
+          MAKEABLE.has(id) ? 'blocked below it' : 'NO ECO_BUILDING_MAP row makes it');
+    }
+    /* The two rows the whole fix hangs on. Named explicitly so deleting one is
+       a red with the reason attached, rather than four confusing failures. */
+    chk('the map still has a paper mill and a print works',
+        MAKEABLE.has('cardStock') && MAKEABLE.has('printedCards'),
+        'cardStock:' + MAKEABLE.has('cardStock') + ' printedCards:' + MAKEABLE.has('printedCards'));
+    /* A CEILING, WRITTEN DOWN AS A LITERAL — deliberately NOT `dark.length`
+       compared against itself. That shape is the exact tautology this package
+       exists to remove (gauntlet3's old card assertion was `x > 0 || price > 0`
+       and could not fail), and a self-comparison here would be the same
+       mistake wearing a different hat. The number is a CEILING and not an
+       equality because the list is expected to SHRINK as the city grows a
+       chemical tier; a round that had to be edited every time something got
+       FIXED would be edited into uselessness. Lower it when you lower it. */
+    const DARK_CEILING = 19;
+    chk('the dark list has not grown past the shipped ceiling of ' + DARK_CEILING,
+        dark.length <= DARK_CEILING, dark.length + ' dark ids');
+    chk('no Ouroboros id is on the dark list',
+        !dark.some(id => LINE.includes(id)), dark.filter(id => LINE.includes(id)).join(', '));
+
+    if (SABOTAGE === 'dark-cards') delete R.RECIPES.boosterPacks.in.holographicFoil;
+
+    if (fails) { bad++; console.log('\n=== ROUND 0j: ' + fails + ' FAILED ==='); }
+    else console.log('\n=== ROUND 0j: ALL PASS ===');
+  }
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    ROUND 0c — 🔴 A BUILDING BEING UPGRADED IS STILL A BUSINESS
    ----------------------------------------------------------------------------
@@ -1434,6 +1604,1196 @@ const srcBlockAfter = (src, decl) => {
   if (fails) { bad++; console.log('\n=== ROUND 0e: ' + fails + ' FAILED ==='); }
   else console.log('\n=== ROUND 0e: ALL PASS ===');
 }
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0f — 🚚 THE BARE-STRING TILE-TYPE BUG CLASS
+   ----------------------------------------------------------------------------
+   THIS IS THE THIRD TIME THE SAME MISTAKE HAS SHIPPED IN ONE FILE, so this round
+   is deliberately NOT a test for the third instance.
+
+     #1  ecoLogisticsCounts() counted only Supply Depots, with a comment claiming
+         "Warehouses do not exist as a tile type here yet". `warehouse` had been
+         in BUILDINGS all along; every player who built one got none of its 900
+         units/day and nothing anywhere said so.
+     #2  ecoHost().hasBank tested `t.type === 'bank'` against a tile that is
+         `op_bank`. Permanently false ⇒ the entire DEBT rung never executed.
+     #3  the fix for #1 was applied to the standing `warehouse` tile only, while
+         `op_warehouse` — "Warehouse Co.", a 280,000 🔥 licence whose own
+         blueprint says "Its real product is capacity" — went on granting ZERO
+         freight. Measured on the live page before the fix: injecting a
+         {type:'op_warehouse'} tile left logisticsCounts at {warehouse:3,depot:2}
+         and freight at 3600/day; the identical tile typed 'warehouse' gave
+         {warehouse:4} and 4500. A 900-unit difference, silent, for 280k.
+
+   A regression test that checks op_warehouse would leave instance #4 to be found
+   by a player, so the assertion here is a CLASS INVARIANT, and both sides of it
+   are re-derived from the shipped file rather than hand-listed:
+
+     WHO IS A TWIN   op O is the twin of city tile M when OP_BP[O].mesh === M
+                     *and* OP_ECO_MAP[O].ind === ECO_BUILDING_MAP[M].ind.
+                     🔴 MESH ALONE IS NOT ENOUGH and this is the trap the naive
+                        version of this test fell into: `salvage` ("Salvage
+                        Operation") also renders on the warehouse mesh, and a
+                        mesh-only rule hands a scrap yard 900 units/day of
+                        freight the city does not have. The industry is the
+                        claim; the geometry is a coincidence.
+     THE INVARIANT   for EVERY op type: a city containing one op tile must
+                     produce EXACTLY the counts of a city containing its twin
+                     when the twin is a logistics tile, and EXACTLY the empty
+                     counts otherwise. Add a new twin of a freight tile to
+                     OP_BP/OP_ECO_MAP and this round goes red until the guard is
+                     taught about it.
+
+   ⚠ THE SHIPPED FUNCTION IS LIFTED AND RUN, not copied — same technique as
+     round0d's ecoHost, and for the reason stated there: a copy tests a fiction
+     the moment the two drift.
+
+   Prove this round can fail:
+     ECON_TEST_SABOTAGE=no-map      the scrape reads nothing ⇒ hard fail, never a
+                                    vacuous pass (same switch round0b/0d honour)
+     ECON_TEST_SABOTAGE=twin-blind  drops ECO_LOGISTICS_OPS on the way in, which
+                                    is exactly the pre-fix source
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0f-tile-type-twins ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  let HTML = null;
+  try {
+    HTML = readFileSync(join(here, SABOTAGE === 'no-map'
+      ? '../../public/node-city/THIS-FILE-DOES-NOT-EXIST.html'
+      : '../../public/node-city/index.html'), 'utf8');
+  } catch (e) { HTML = null; }
+
+  /* Every one of these is brace-matched out of the shipped file. `new Function`
+     parses the block natively — prose comments and all — so no regex here has to
+     understand JavaScript, only to find a declaration. */
+  const lit = (decl) => {
+    const txt = srcBlockAfter(HTML, decl);
+    if (!txt) return null;
+    try { return new Function('return (' + txt + ');')(); } catch (e) { return null; }
+  };
+  /* Markers stop at the IDENTIFIER — srcBlockAfter takes the next `{` — so
+     re-aligning the `=` in the shipped file cannot silently un-read a table.
+     That is not hypothetical: ECO_LOGISTICS_OPS is column-aligned today. */
+  const OP_BP        = lit('const OP_BP');
+  const OP_ECO_MAP   = lit('const OP_ECO_MAP');
+  const CITY_ECO_MAP = lit('const ECO_BUILDING_MAP');
+  const LOG_TILES    = lit('const ECO_LOGISTICS_TILES');
+  const LOG_OPS_RAW  = lit('const ECO_LOGISTICS_OPS');
+  const LOG_OPS      = SABOTAGE === 'twin-blind' ? {} : LOG_OPS_RAW;
+  const BODY         = srcBlockAfter(HTML, 'function ecoLogisticsCounts()');
+  const prefixM      = HTML ? /const\s+OPS_PREFIX\s*=\s*'([^']*)'/.exec(HTML) : null;
+  const PREFIX       = prefixM ? prefixM[1] : null;
+
+  /* 🔴 A SCRAPE THAT MATCHED NOTHING MUST FAIL HARD. Round0b's header makes the
+     same point: the failure mode of an extraction test is not a wrong answer,
+     it is a green run over an empty set. If a declaration was renamed, rename
+     the marker — do not let this round pass quietly. */
+  const got =
+    chk('read ecoLogisticsCounts() out of node-city/index.html',
+        !!BODY && BODY.indexOf('ECO_LOGISTICS_TILES') > 0,
+        BODY ? BODY.length + ' chars, no table lookup in it' : 'UNREADABLE or unbalanced') &
+    chk('read OP_BP / OP_ECO_MAP / ECO_BUILDING_MAP / the two logistics tables',
+        !!OP_BP && !!OP_ECO_MAP && !!CITY_ECO_MAP && !!LOG_TILES && !!LOG_OPS_RAW,
+        [OP_BP, OP_ECO_MAP, CITY_ECO_MAP, LOG_TILES, LOG_OPS_RAW].map(o => o ? Object.keys(o).length : 'NULL').join('/')) &
+    chk('read OPS_PREFIX', !!PREFIX, String(PREFIX));
+
+  if (!got) {
+    console.log('\n🔴 ecoLogisticsCounts() COULD NOT BE READ — nothing below was checked.');
+    bad++; console.log('\n=== ROUND 0f: ' + fails + ' FAILED ===');
+  } else {
+    const CAP = (await import('../../public/src/economy/tuning.js')).ECON.logistics.capacity;
+    /* ⚠ COPIED VERBATIM from node-city (`const bldSite = t => …`), same as
+       round0c and round0d and for the same reason — a const arrow cannot be
+       imported out of an HTML module script. If it drifts, round0c fails first. */
+    const bldSite = t => !!(t && t.bld && t.bld.k === 0);
+    const opsKeyOf = ty => PREFIX + ty;
+
+    /* The shipped function, handed everything it reaches for. LOG_OPS is passed
+       in so the sabotage switch can blind it without editing the shipped file. */
+    const run = (tiles) => {
+      const names = ['game', 'bldSite', 'opsKeyOf', 'NODE_TYPES',
+                     'ECO_LOGISTICS_TILES', 'ECO_LOGISTICS_OPS'];
+      const fn = new Function(...names,
+        'return (function ecoLogisticsCounts() ' + BODY + ')();');
+      return fn({ tiles }, bldSite, opsKeyOf, {}, LOG_TILES, LOG_OPS);
+    };
+    const freight = (c) => Object.keys(c).reduce((s, k) => s + (CAP[k] || 0) * c[k], 0);
+    const one = (t) => run(t ? { '9,9': t } : {});
+    const EMPTY = one(null);
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+    // ── 1. THE INSTANCE, before and after ────────────────────────────────────
+    /* 🐛 THE SHIPPED PREDICATE, WRITTEN OUT. A green test that has only ever
+       seen the fixed code cannot tell you the bug was real. */
+    const PRE_FIX = (ty) => ty === 'warehouse' ? 1 : 0;
+    const OPW = opsKeyOf('warehouse');
+    chk("BEFORE: `t.type === 'warehouse'` scores the 280,000 🔥 Warehouse Co. at ZERO",
+        PRE_FIX(OPW) === 0, OPW);
+    const opCounts = one({ type: OPW, lvl: 1 });
+    chk('AFTER: one ' + OPW + ' grants exactly one warehouse of capacity',
+        opCounts.warehouse === 1 && freight(opCounts) - freight(EMPTY) === CAP.warehouse,
+        JSON.stringify(opCounts) + ' Δfreight=' + (freight(opCounts) - freight(EMPTY)));
+    chk('…the SAME counts as the standing twin, level for level',
+        same(one({ type: OPW, lvl: 3 }), one({ type: 'warehouse', lvl: 3 })),
+        JSON.stringify(one({ type: OPW, lvl: 3 })) + ' vs ' + JSON.stringify(one({ type: 'warehouse', lvl: 3 })));
+
+    // ── 2. 🏗 CONSTRUCTION CONSISTENCY, on the op exactly as on the tile ─────
+    const now = Date.now();
+    chk('🏗 a SITE Warehouse Co. grants nothing (a hole in the ground stores nothing)',
+        same(one({ type: OPW, lvl: 1, bld: { k: 0, l: 1, s: now, d: 900 } }), EMPTY));
+    chk('an UPGRADING Warehouse Co. still grants (bldSite, not bldBusy — WP4)',
+        same(one({ type: OPW, lvl: 1, bld: { k: 1, l: 2, s: now, d: 900 } }), one({ type: OPW, lvl: 1 })));
+    chk('a DAMAGED Warehouse Co. grants nothing', same(one({ type: OPW, lvl: 1, damaged: true }), EMPTY));
+
+    // ── 3. THE KEY IS DERIVED, NOT TYPED ────────────────────────────────────
+    chk("the shipped function contains NO hardcoded 'op_…' literal",
+        !/['"]op_[a-z]/.test(BODY), (BODY.match(/['"]op_[a-z][a-z_]*['"]/g) || []).join(','));
+    chk('the op keys go through opsKeyOf()', /opsKeyOf\s*\(/.test(BODY));
+    chk("the tables are keyed by OP TYPE, not tile type — no 'op_' key in ECO_LOGISTICS_OPS",
+        Object.keys(LOG_OPS_RAW).every(k => k.indexOf(PREFIX) !== 0), Object.keys(LOG_OPS_RAW).join(','));
+
+    // ── 4. THE CLASS INVARIANT — derived, never hand-listed ─────────────────
+    /* twin = same mesh AND same industry. See the header for why mesh alone is
+       the trap and not the rule. */
+    const twinOf = (op) => {
+      const mesh = (OP_BP[op] || {}).mesh;
+      if (!mesh || !CITY_ECO_MAP[mesh]) return null;
+      const oi = (OP_ECO_MAP[op] || {}).ind, ci = CITY_ECO_MAP[mesh].ind;
+      return (oi && oi === ci) ? mesh : null;
+    };
+    const expectFreight = [], expectNone = [];
+    for (const op of Object.keys(OP_BP)) {
+      const twin = twinOf(op);
+      (twin && LOG_TILES[twin] ? expectFreight : expectNone).push(op);
+    }
+    chk('the twin derivation is not vacuous: it finds at least one freight twin',
+        expectFreight.length > 0, 'freight twins: ' + expectFreight.join(','));
+    console.log('   ↳ derived freight twins: [' + expectFreight.join(', ') +
+                ']  ·  must grant nothing: [' + expectNone.join(', ') + ']');
+
+    let missed = [], overcredited = [];
+    for (const op of expectFreight) {
+      const ty = opsKeyOf(op);
+      if (!same(one({ type: ty, lvl: 2 }), one({ type: twinOf(op), lvl: 2 })))
+        missed.push(op + ' → ' + JSON.stringify(one({ type: ty, lvl: 2 })) +
+                    ' but its twin ' + twinOf(op) + ' → ' + JSON.stringify(one({ type: twinOf(op), lvl: 2 })));
+    }
+    for (const op of expectNone) {
+      const ty = opsKeyOf(op);
+      if (!same(one({ type: ty, lvl: 2 }), EMPTY))
+        overcredited.push(op + ' → ' + JSON.stringify(one({ type: ty, lvl: 2 })));
+    }
+    chk('🔴 EVERY derived freight twin is credited exactly like its standing tile — ' +
+        'THE CLASS, not the instance', missed.length === 0, missed.join(' | '));
+    chk('…and no other operation is credited any freight at all (salvage shares the ' +
+        'warehouse MESH and must still get nothing)', overcredited.length === 0, overcredited.join(' | '));
+
+    // ── 5. PROTOTYPE POLLUTION, the other way a bare lookup lies ────────────
+    chk("a tile typed 'constructor' is not credited as a logistics building",
+        same(one({ type: 'constructor', lvl: 1 }), EMPTY), JSON.stringify(one({ type: 'constructor', lvl: 1 })));
+
+    if (fails) { bad++; console.log('\n=== ROUND 0f: ' + fails + ' FAILED ==='); }
+    else console.log('\n=== ROUND 0f: ALL PASS ===');
+  }
+}
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0g — 🏟 THE SAME BUG CLASS, IN THE PRODUCTION MULTIPLIER
+   ----------------------------------------------------------------------------
+   Round 0f pinned the class down in ecoLogisticsCounts(). It is a FILE-WIDE
+   class, not a function-wide one, and the sweep that followed the freight fix
+   found a fourth live instance in tileMult():
+
+       if (t.type === 'arena') m *= Math.max(.3, wellbeing.morale / 50);
+
+   `op_dojo` — the Dojo operation, 150,000 🔥, OP_BP mesh 'arena', OP_ECO_MAP
+   `ind: 'venue'`, row commented `// ↔ arena` — never matched, so it never felt
+   morale at all. Measured on the live page at morale 49: arena ×0.982 with the
+   "😊 City morale 49 — crowds follow it" row in its inspector; op_dojo ×1.000
+   with no such row.
+
+   ⚠ THE FIRST SWEEP WROTE THIS OFF WITH A FALSE REASON — "operations have no
+     `gen`, so there is nothing for tileMult to scale". Both halves are wrong,
+     and this round asserts the truth of both so the excuse cannot be made
+     again:
+       · the production loop admits a tile on
+         `def.gen || def.use || def.svc || LEGACY_SERVICE[t.type]`, and
+       · every op in OP_BP carries `use` and/or `svc`,
+     therefore tileMult IS evaluated for every operation, and its result scales
+     the op's input draw and the coverage its `svc` supplies.
+
+   THE CLASS INVARIANT, re-derived from the shipped file, never hand-listed:
+     twin(op) = OP_BP[op].mesh, when that mesh is a real city building AND
+                OP_ECO_MAP[op].ind === ECO_BUILDING_MAP[mesh].ind.
+                (Mesh alone is the trap — see round0f's header.)
+     For every op: isMoraleVenue(opsKeyOf(op)) must be TRUE exactly when its
+     twin is one of the standing tiles isMoraleVenue() seeds itself with, and
+     FALSE otherwise. Give any future operation the `venue` industry on the
+     arena mesh and this round goes red until the guard is taught about it.
+
+   Prove this round can fail:
+     ECON_TEST_SABOTAGE=no-map       the scrape reads nothing ⇒ hard fail
+     ECON_TEST_SABOTAGE=venue-blind  empties MORALE_VENUE_OPS on the way in,
+                                     which is exactly the pre-fix source
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0g-morale-venue-twins ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  let HTML = null;
+  try {
+    HTML = readFileSync(join(here, SABOTAGE === 'no-map'
+      ? '../../public/node-city/THIS-FILE-DOES-NOT-EXIST.html'
+      : '../../public/node-city/index.html'), 'utf8');
+  } catch (e) { HTML = null; }
+
+  const lit = (decl) => {
+    const txt = srcBlockAfter(HTML, decl);
+    if (!txt) return null;
+    try { return new Function('return (' + txt + ');')(); } catch (e) { return null; }
+  };
+  const OP_BP        = lit('const OP_BP');
+  const OP_ECO_MAP   = lit('const OP_ECO_MAP');
+  const CITY_ECO_MAP = lit('const ECO_BUILDING_MAP');
+  const LEGACY_SVC   = lit('const LEGACY_SERVICE');
+  const VENUE_BODY   = srcBlockAfter(HTML, 'function isMoraleVenue(ty)');
+  const MULT_BODY    = srcBlockAfter(HTML, 'function tileMult(x, z, t, staff, powered)');
+  const FAC_BODY     = srcBlockAfter(HTML, 'function insFactors(x, z, t)');
+  const TICK_BODY    = srcBlockAfter(HTML, 'async function economyTick(dtMin)');
+  const opsListM     = HTML ? /const\s+MORALE_VENUE_OPS\s*=\s*\[([^\]]*)\]/.exec(HTML) : null;
+  const prefixM      = HTML ? /const\s+OPS_PREFIX\s*=\s*'([^']*)'/.exec(HTML) : null;
+  const PREFIX       = prefixM ? prefixM[1] : null;
+  const VENUE_OPS_RAW = opsListM
+    ? opsListM[1].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean) : null;
+  const VENUE_OPS    = SABOTAGE === 'venue-blind' ? [] : VENUE_OPS_RAW;
+  /* The standing half of the family, read back out of the function itself
+     (`new Set(['arena'])`) rather than typed here — so adding a second standing
+     venue widens the invariant instead of quietly falling outside it. */
+  const seedM        = VENUE_BODY ? /new Set\(\[([^\]]*)\]\)/.exec(VENUE_BODY) : null;
+  const SEED         = seedM
+    ? seedM[1].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean) : null;
+
+  const got =
+    chk('read isMoraleVenue() / tileMult() / insFactors() / economyTick() out of node-city',
+        !!VENUE_BODY && !!MULT_BODY && !!FAC_BODY && !!TICK_BODY,
+        [VENUE_BODY, MULT_BODY, FAC_BODY, TICK_BODY].map(b => b ? b.length : 'NULL').join('/')) &
+    chk('read OP_BP / OP_ECO_MAP / ECO_BUILDING_MAP / LEGACY_SERVICE',
+        !!OP_BP && !!OP_ECO_MAP && !!CITY_ECO_MAP && !!LEGACY_SVC,
+        [OP_BP, OP_ECO_MAP, CITY_ECO_MAP, LEGACY_SVC].map(o => o ? Object.keys(o).length : 'NULL').join('/')) &
+    chk('read MORALE_VENUE_OPS, its standing seed set, and OPS_PREFIX',
+        !!VENUE_OPS_RAW && !!SEED && SEED.length > 0 && !!PREFIX,
+        JSON.stringify(VENUE_OPS_RAW) + ' seed=' + JSON.stringify(SEED) + ' prefix=' + PREFIX);
+
+  if (!got) {
+    console.log('\n🔴 THE MORALE GUARD COULD NOT BE READ — nothing below was checked.');
+    bad++; console.log('\n=== ROUND 0g: ' + fails + ' FAILED ===');
+  } else {
+    const opsKeyOf = ty => PREFIX + ty;
+    /* The shipped predicate, lifted and run. `_moraleVenueTypes` is the module
+       `let` it memoises into; a fresh one per build means the memo cannot leak
+       between the sabotaged and un-sabotaged constructions. */
+    const buildVenue = (opsList) => new Function('opsKeyOf', 'MORALE_VENUE_OPS',
+      'let _moraleVenueTypes = null;\n' +
+      'return function isMoraleVenue(ty) ' + VENUE_BODY + ';')(opsKeyOf, opsList);
+    const isMoraleVenue = buildVenue(VENUE_OPS);
+
+    // ── 1. THE PREMISE the first sweep got wrong ─────────────────────────────
+    /* ⚠ "ops have no gen" was the excuse. The loop does not ask for gen. */
+    chk('the production loop admits a tile on use/svc, not on gen alone',
+        /!def\.gen\s*&&\s*!def\.use\s*&&\s*!def\.svc/.test(TICK_BODY),
+        'admission line not found in economyTick — re-read it before trusting this round');
+    const reached = (o) => !!(OP_BP[o].use || OP_BP[o].svc || OP_BP[o].gen || LEGACY_SVC[opsKeyOf(o)]);
+    const skipped = Object.keys(OP_BP).filter(o => !reached(o));
+    /* NOT "every op" — measured, `bank` and `warehouse` declare neither, so the
+       loop really does skip them and tileMult never sees them. That is exactly
+       why this is asserted per-op below instead of as a blanket claim: a sweep
+       that generalises from two rows is how the first one got this wrong. */
+    console.log('   ↳ ops the production loop never reaches (no gen/use/svc): [' +
+                skipped.join(', ') + '] — tileMult is not evaluated for these');
+    chk('most operations carry use and/or svc, so tileMult() runs for them',
+        skipped.length < Object.keys(OP_BP).length / 2, 'skipped: ' + skipped.join(','));
+    chk('…and tileMult() is what the loop then applies to that draw',
+        /tileMult\(/.test(TICK_BODY));
+
+    // ── 2. THE INSTANCE, before and after ────────────────────────────────────
+    const PRE_FIX = (ty) => ty === 'arena';           // the shipped predicate, verbatim
+    const OPD = opsKeyOf('dojo');
+    chk("BEFORE: `t.type === 'arena'` scores the Dojo operation as NOT a venue", !PRE_FIX(OPD), OPD);
+    chk('AFTER: ' + OPD + ' IS a venue and feels morale', isMoraleVenue(OPD) === true);
+    chk('…and the standing arena still does', isMoraleVenue('arena') === true);
+    /* The band the op was missing out on, printed so the report cannot round it
+       off: Math.max(.3, morale/50) over morale 0…100. */
+    const band = m => Math.max(.3, m / 50);
+    console.log('   ↳ morale band the Dojo now feels: ×' + band(0).toFixed(2) + ' at morale 0, ×' +
+                band(49).toFixed(3) + ' at the live-page morale 49, ×' + band(100).toFixed(2) + ' at 100');
+
+    // ── 3. THE CLASS INVARIANT — derived, never hand-listed ─────────────────
+    const twinOf = (op) => {
+      const mesh = (OP_BP[op] || {}).mesh;
+      if (!mesh || !CITY_ECO_MAP[mesh]) return null;
+      const oi = (OP_ECO_MAP[op] || {}).ind, ci = CITY_ECO_MAP[mesh].ind;
+      return (oi && oi === ci) ? mesh : null;
+    };
+    const expectVenue = [], expectNot = [];
+    for (const op of Object.keys(OP_BP)) {
+      const twin = twinOf(op);
+      (twin && SEED.indexOf(twin) >= 0 ? expectVenue : expectNot).push(op);
+    }
+    chk('the twin derivation is not vacuous: it finds at least one venue twin',
+        expectVenue.length > 0, 'venue twins: ' + expectVenue.join(','));
+    console.log('   ↳ derived venue twins: [' + expectVenue.join(', ') +
+                ']  ·  must NOT feel morale: [' + expectNot.join(', ') + ']');
+
+    const missed = expectVenue.filter(o => !isMoraleVenue(opsKeyOf(o)));
+    const spurious = expectNot.filter(o => isMoraleVenue(opsKeyOf(o)));
+    chk('🔴 EVERY derived venue twin feels morale — THE CLASS, not the instance',
+        missed.length === 0, missed.map(o => o + ' (twin ' + twinOf(o) + ')').join(' | '));
+    chk('…and no other operation does (a Fishing Company is not a crowd)',
+        spurious.length === 0, spurious.join(' | '));
+    chk('a tile type nobody declared is not a venue',
+        !isMoraleVenue('farm') && !isMoraleVenue('constructor') && !isMoraleVenue(undefined));
+    /* The guard is only worth anything for ops the tick actually evaluates. If a
+       future venue twin declares no gen/use/svc, tileMult never runs for it and
+       this whole round would be asserting about dead code — say so loudly. */
+    chk('every derived venue twin is an op the production loop actually reaches',
+        expectVenue.every(reached), expectVenue.filter(o => !reached(o)).join(','));
+
+    // ── 4. THE KEY IS DERIVED, NOT TYPED ────────────────────────────────────
+    const opLit = s => (s.match(/['"]op_[a-z][a-z_]*['"]/g) || []);
+    chk("no hardcoded 'op_…' literal in isMoraleVenue / tileMult / insFactors",
+        !opLit(VENUE_BODY).length && !opLit(MULT_BODY).length && !opLit(FAC_BODY).length,
+        [].concat(opLit(VENUE_BODY), opLit(MULT_BODY), opLit(FAC_BODY)).join(','));
+    chk('the op keys go through opsKeyOf()', /opsKeyOf\s*\(/.test(VENUE_BODY));
+    chk("MORALE_VENUE_OPS is keyed by OP TYPE, not tile type",
+        VENUE_OPS_RAW.every(k => k.indexOf(PREFIX) !== 0), VENUE_OPS_RAW.join(','));
+
+    // ── 5. THE PANEL PRINTS WHAT THE TICK CHARGED ───────────────────────────
+    /* Two copies of `Math.max(.3, wellbeing.morale / 50)` behind two copies of
+       the predicate is how the inspector starts lying about the tick. Both now
+       call the one helper, and neither may re-inline the expression. */
+    chk('tileMult() and insFactors() both gate on isMoraleVenue()',
+        /isMoraleVenue\s*\(/.test(MULT_BODY) && /isMoraleVenue\s*\(/.test(FAC_BODY));
+    chk('…and both take the value from moraleVenueMult(), not a re-typed literal',
+        /moraleVenueMult\s*\(/.test(MULT_BODY) && /moraleVenueMult\s*\(/.test(FAC_BODY) &&
+        !/wellbeing\.morale\s*\/\s*50/.test(MULT_BODY) && !/wellbeing\.morale\s*\/\s*50/.test(FAC_BODY),
+        'a re-inlined morale expression is back in tileMult or insFactors');
+
+    if (fails) { bad++; console.log('\n=== ROUND 0g: ' + fails + ' FAILED ==='); }
+    else console.log('\n=== ROUND 0g: ALL PASS ===');
+  }
+}
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0h — ☔ THE SAME BUG CLASS, IN THE WEATHER
+   ----------------------------------------------------------------------------
+   Rounds 0f and 0g pinned the class down in ecoLogisticsCounts() and in the
+   morale term. Both of those were found by grepping `t.type === '…'`. THAT GREP
+   IS STRUCTURALLY BLIND to weatherMult(), which compares a bare PARAMETER named
+   `type` — so three more live instances sat one line above the one 0g fixed
+   (`tileMult` reaches them through `* weatherMult(t.type)`), plus a fourth
+   nobody had named:
+
+     · `type === 'farm'`                     missed `op_agri` (Agricultural Op.)
+     · `W.anomaly && type === 'siphon'`      missed `op_smuggling`
+     · `W.anomaly && type === 'reslab'`      missed `op_research`
+     · `def.outdoor` — `outdoor` lives on the BUILDINGS row and the ops
+       registration loop copies name/ico/pop/crew/powerNeed/use/svc and NOT
+       `outdoor`, so every operation on an open-air twin's mesh was weatherproof:
+       `op_oil` on the Fuel Rig mesh is the live one.
+
+   MEASURED ON THE LIVE PAGE BEFORE THE FIX (tileMult under weather ÷ tileMult
+   under clear, so every other term cancels):
+     TORNADO farm ×0.50 · op_agri ×1.00   |  RAIN farm ×1.30 · op_agri ×1.00
+     SNOW    farm ×0.396 · op_agri ×0.88  |  ANOMALY siphon ×3 · op_smuggling ×1
+     ANOMALY reslab ×3 · op_research ×1   |  TORNADO fuelrig ×0.50 · op_oil ×1.00
+   A 3× production swing denied to a 600,000 🔥 licence, silently.
+
+   THE INVARIANT, and it is deliberately TOTAL rather than per-instance:
+     for EVERY op whose twin is non-null, and under EVERY row of WEATHER,
+       weatherMult(opsKeyOf(op)) === weatherMult(twin)
+     and for every op with NO twin, weatherMult is the plain indoor baseline.
+   twin(op) is re-derived here exactly as in 0f/0g — same mesh AND same industry
+   — never hand-listed, so an operation that joins the class turns this red
+   without anyone remembering to add a case. 🔴 MESH ALONE IS THE TRAP: op_fishing
+   renders on the purifier mesh and is a fishing fleet (ind `fishery`), not a
+   waterworks; a mesh rule would hand it the purifier's rain ×1.35. Asserted
+   below as an explicit negative.
+
+   ⚠ THE SHIPPED FUNCTIONS ARE LIFTED AND RUN, not copied, and so is the ops
+     REGISTRATION LOOP — the claim "an operation never carries `outdoor`" is the
+     load-bearing half of the op_oil defect, and a hand-built op blueprint here
+     would be asserting about a fiction.
+   ⚠ BUILDINGS is evaluated in a `with`-scope that answers 0 to every unknown
+     name (it references STOCK_CAP_PER_WAREHOUSE and friends). Only the `outdoor`
+     flags are read from it and those are literal `true`; nothing here depends on
+     a cost number, and a stubbed cost cannot fake an `outdoor`.
+
+   Prove this round can fail:
+     ECON_TEST_SABOTAGE=no-map        the scrape reads nothing ⇒ hard fail
+     ECON_TEST_SABOTAGE=wx-twin-blind empties WEATHER_TWIN_OPS on the way in,
+                                      which is exactly the pre-fix source
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0h-weather-twins ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  let HTML = null;
+  try {
+    HTML = readFileSync(join(here, SABOTAGE === 'no-map'
+      ? '../../public/node-city/THIS-FILE-DOES-NOT-EXIST.html'
+      : '../../public/node-city/index.html'), 'utf8');
+  } catch (e) { HTML = null; }
+
+  /* Two evaluators. `lit` is 0f/0g's; `loose` is the same thing inside a `with`
+     over a Proxy that answers 0 for every free identifier — BUILDINGS is the
+     only table that needs it, and it needs it because it cites constants
+     declared elsewhere in the file. */
+  const lit = (decl) => {
+    const txt = srcBlockAfter(HTML, decl);
+    if (!txt) return null;
+    try { return new Function('return (' + txt + ');')(); } catch (e) { return null; }
+  };
+  const loose = (decl) => {
+    const txt = srcBlockAfter(HTML, decl);
+    if (!txt) return null;
+    try {
+      const scope = new Proxy({}, { has: () => true,
+        get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+      return new Function('__s', 'with (__s) { return (' + txt + '); }')(scope);
+    } catch (e) { return null; }
+  };
+  const OP_BP        = lit('const OP_BP');
+  const OP_ECO_MAP   = lit('const OP_ECO_MAP');
+  const CITY_ECO_MAP = lit('const ECO_BUILDING_MAP');
+  const WEATHER      = lit('const WEATHER');
+  const TWIN_RAW     = lit('const WEATHER_TWIN_OPS');
+  const TWIN         = SABOTAGE === 'wx-twin-blind' ? {} : TWIN_RAW;
+  const BUILDINGS    = loose('const BUILDINGS');
+  const REG_BODY     = srcBlockAfter(HTML, 'for (const t of OPS_TYPES)');
+  const MULT_BODY    = srcBlockAfter(HTML, 'function weatherMult(type)');
+  const TWIN_BODY    = srcBlockAfter(HTML, 'function weatherTwinType(type)');
+  const SENS_BODY    = srcBlockAfter(HTML, 'function weatherSensitive(type)');
+  const RISK_BODY    = srcBlockAfter(HTML, 'function insRisk(t, x, z)');
+  const TILEM_BODY   = srcBlockAfter(HTML, 'function tileMult(x, z, t, staff, powered)');
+  const prefixM      = HTML ? /const\s+OPS_PREFIX\s*=\s*'([^']*)'/.exec(HTML) : null;
+  const PREFIX       = prefixM ? prefixM[1] : null;
+
+  /* 🔴 A SCRAPE THAT MATCHED NOTHING MUST FAIL HARD — round0b's point, and 0f's.
+     The failure mode of an extraction test is not a wrong answer, it is a green
+     run over an empty set. */
+  const got =
+    chk('read weatherMult / weatherTwinType / weatherSensitive / insRisk out of node-city',
+        !!MULT_BODY && !!TWIN_BODY && !!SENS_BODY && !!RISK_BODY && !!TILEM_BODY,
+        [MULT_BODY, TWIN_BODY, SENS_BODY, RISK_BODY, TILEM_BODY].map(b => b ? b.length : 'NULL').join('/')) &
+    chk('read WEATHER / BUILDINGS / OP_BP / OP_ECO_MAP / ECO_BUILDING_MAP / WEATHER_TWIN_OPS',
+        !!WEATHER && !!BUILDINGS && !!OP_BP && !!OP_ECO_MAP && !!CITY_ECO_MAP && !!TWIN_RAW,
+        [WEATHER, BUILDINGS, OP_BP, OP_ECO_MAP, CITY_ECO_MAP, TWIN_RAW].map(o => o ? Object.keys(o).length : 'NULL').join('/')) &
+    chk('read the ops registration loop and OPS_PREFIX', !!REG_BODY && !!PREFIX,
+        (REG_BODY ? REG_BODY.length : 'NULL') + ' / ' + PREFIX) &
+    chk('BUILDINGS really carries outdoor flags (the loose eval did not flatten it)',
+        !!BUILDINGS && Object.keys(BUILDINGS).some(k => BUILDINGS[k] && BUILDINGS[k].outdoor),
+        BUILDINGS ? Object.keys(BUILDINGS).filter(k => BUILDINGS[k] && BUILDINGS[k].outdoor).join(',') : 'NULL');
+
+  if (!got) {
+    console.log('\n🔴 THE WEATHER GUARD COULD NOT BE READ — nothing below was checked.');
+    bad++; console.log('\n=== ROUND 0h: ' + fails + ' FAILED ===');
+  } else {
+    const opsKeyOf = ty => PREFIX + ty;
+    /* THE SHIPPED REGISTRATION, RUN. This is what puts op_* rows into BUILDINGS,
+       and the whole op_oil defect is the fact that it does not copy `outdoor`. */
+    new Function('OPS_TYPES', 'OP_BP', 'BUILDINGS', 'opsKeyOf', 'BUILD_ORDER',
+                 'OP_ECO_MAP', 'ECO_BUILDING_MAP', 'for (const t of OPS_TYPES) ' + REG_BODY)
+      (Object.keys(OP_BP), OP_BP, BUILDINGS, opsKeyOf, [], OP_ECO_MAP, CITY_ECO_MAP);
+    chk('the registered operations exist in BUILDINGS and NONE of them carries `outdoor` — ' +
+        'the reason op_oil was weatherproof',
+        Object.keys(OP_BP).every(o => BUILDINGS[opsKeyOf(o)]) &&
+        Object.keys(OP_BP).every(o => !BUILDINGS[opsKeyOf(o)].outdoor),
+        Object.keys(OP_BP).filter(o => !BUILDINGS[opsKeyOf(o)] || BUILDINGS[opsKeyOf(o)].outdoor).join(','));
+
+    /* The three shipped functions, built over one live `wx` so a row can be put
+       over the city by assignment. `_wxTwinTypes` is the module `let` they
+       memoise into; a fresh one per build keeps the sabotaged and un-sabotaged
+       constructions from sharing a memo. */
+    const wx = { type: 'clear' };
+    const build = (keyFn, twins) => new Function('WEATHER', 'wx', 'BUILDINGS', 'opsKeyOf', 'WEATHER_TWIN_OPS',
+      'let _wxTwinTypes = null;\n' +
+      'function weatherTwinType(type) ' + TWIN_BODY + '\n' +
+      'function weatherSensitive(type) ' + SENS_BODY + '\n' +
+      'function weatherMult(type) ' + MULT_BODY + '\n' +
+      'return { weatherMult, weatherSensitive, weatherTwinType };')
+      (WEATHER, wx, BUILDINGS, keyFn, twins);
+    const A = build(opsKeyOf, TWIN);
+    const WX_ROWS = Object.keys(WEATHER);
+    const under = (w, fn) => { const s = wx.type; wx.type = w; try { return fn(); } finally { wx.type = s; } };
+
+    // ── 1. THE INSTANCES, before and after ───────────────────────────────────
+    /* 🐛 THE SHIPPED PREDICATES, WRITTEN OUT — a green test that has only ever
+       seen the fixed code cannot tell you the bug was real. */
+    const PRE_FARM = ty => ty === 'farm';
+    const PRE_RIFT = ty => ty === 'siphon' || ty === 'reslab';
+    const PRE_OUT  = ty => !!(BUILDINGS[ty] && BUILDINGS[ty].outdoor);
+    chk("BEFORE: `type === 'farm'` scores the Agricultural Op. as not-a-farm",
+        !PRE_FARM(opsKeyOf('agri')));
+    chk("BEFORE: the anomaly clause misses op_smuggling and op_research",
+        !PRE_RIFT(opsKeyOf('smuggling')) && !PRE_RIFT(opsKeyOf('research')));
+    chk("BEFORE: `def.outdoor` is false for op_oil though fuelrig is open-air",
+        !PRE_OUT(opsKeyOf('oil')) && PRE_OUT('fuelrig'));
+    const shown = [
+      ['tornado', 'farm', 'agri'], ['rain', 'farm', 'agri'], ['snow', 'farm', 'agri'],
+      ['anomaly', 'siphon', 'smuggling'], ['anomaly', 'reslab', 'research'],
+      ['tornado', 'fuelrig', 'oil'], ['storm', 'fuelrig', 'oil'],
+    ];
+    for (const [w, tile, op] of shown) {
+      const a = under(w, () => A.weatherMult(opsKeyOf(op))), b = under(w, () => A.weatherMult(tile));
+      chk('AFTER: ' + w.toUpperCase() + ' ' + tile + ' ×' + b + ' — ' + opsKeyOf(op) + ' now ×' + a, a === b,
+          'op ' + a + ' vs twin ' + b);
+    }
+
+    // ── 2. THE CLASS INVARIANT, every twin × every weather row ──────────────
+    const twinOf = (op) => {
+      const mesh = (OP_BP[op] || {}).mesh;
+      if (!mesh || !CITY_ECO_MAP[mesh]) return null;
+      const oi = (OP_ECO_MAP[op] || {}).ind, ci = CITY_ECO_MAP[mesh].ind;
+      return (oi && oi === ci) ? mesh : null;
+    };
+    const twins = Object.keys(OP_BP).filter(twinOf), orphans = Object.keys(OP_BP).filter(o => !twinOf(o));
+    chk('the twin derivation is not vacuous', twins.length > 0);
+    console.log('   ↳ derived weather twins: [' + twins.map(o => o + '→' + twinOf(o)).join(', ') + ']');
+    console.log('   ↳ operations with NO twin (must feel the plain indoor row): [' + orphans.join(', ') + ']');
+
+    const mismatch = [];
+    for (const w of WX_ROWS) for (const op of twins) {
+      const a = under(w, () => A.weatherMult(opsKeyOf(op))), b = under(w, () => A.weatherMult(twinOf(op)));
+      if (a !== b) mismatch.push(w + ': ' + op + ' ×' + a + ' vs ' + twinOf(op) + ' ×' + b);
+    }
+    chk('🔴 EVERY derived twin feels EXACTLY its standing twin\'s weather, in EVERY row — ' +
+        'THE CLASS, not the instance', mismatch.length === 0, mismatch.join(' | '));
+
+    const wrong = [];
+    for (const w of WX_ROWS) for (const op of orphans) {
+      const base = WEATHER[w] && w !== 'clear' ? (WEATHER[w].allMult || 1) : 1;
+      const a = under(w, () => A.weatherMult(opsKeyOf(op)));
+      if (a !== base) wrong.push(w + ': ' + op + ' ×' + a + ' (baseline ×' + base + ')');
+    }
+    chk('…and an operation with no twin gets the plain indoor baseline, nothing else',
+        wrong.length === 0, wrong.join(' | '));
+    /* 🔴 THE NEGATIVE THAT KILLS THE MESH SHORTCUT. op_fishing borrows the
+       purifier MESH; if anyone ever "simplifies" the table to OP_BP[…].mesh, a
+       fishing fleet starts collecting the waterworks' rain bonus and this goes
+       red. */
+    chk('op_fishing does NOT inherit the purifier it is drawn as (mesh ≠ industry)',
+        under('rain', () => A.weatherMult(opsKeyOf('fishing'))) !== under('rain', () => A.weatherMult('purifier')),
+        'rain: op_fishing ×' + under('rain', () => A.weatherMult(opsKeyOf('fishing'))) +
+        ' vs purifier ×' + under('rain', () => A.weatherMult('purifier')));
+
+    // ── 3. THE INSPECTOR PRINTS WHAT THE TICK CHARGED ───────────────────────
+    const rowMiss = twins.filter(o => A.weatherSensitive(opsKeyOf(o)) !== A.weatherSensitive(twinOf(o)));
+    chk('the weather ROW appears for an op exactly when it appears for its twin ' +
+        '(op_agri showed none at all)', rowMiss.length === 0,
+        rowMiss.map(o => o + ' ' + A.weatherSensitive(opsKeyOf(o)) + ' vs ' + twinOf(o) + ' ' + A.weatherSensitive(twinOf(o))).join(' | '));
+    chk('…and insRisk gates on weatherSensitive() rather than re-typing its rule',
+        /weatherSensitive\s*\(/.test(RISK_BODY) &&
+        !/t\.type\s*===\s*'(farm|purifier)'/.test(RISK_BODY),
+        'a re-typed farm/purifier comparison is back in insRisk');
+    chk('tileMult() still routes production through weatherMult()', /weatherMult\s*\(/.test(TILEM_BODY));
+
+    // ── 4. THE KEY IS DERIVED, NOT TYPED ────────────────────────────────────
+    const opLit = s => (s.match(/['"]op_[a-z][a-z_]*['"]/g) || []);
+    chk("no hardcoded 'op_…' literal in weatherMult / weatherTwinType / weatherSensitive / insRisk",
+        !opLit(MULT_BODY).length && !opLit(TWIN_BODY).length && !opLit(SENS_BODY).length && !opLit(RISK_BODY).length,
+        [].concat(opLit(MULT_BODY), opLit(TWIN_BODY), opLit(SENS_BODY), opLit(RISK_BODY)).join(','));
+    chk('the op keys go through opsKeyOf()', /opsKeyOf\s*\(/.test(TWIN_BODY));
+    chk('WEATHER_TWIN_OPS is keyed by OP TYPE, not tile type',
+        Object.keys(TWIN_RAW).every(k => k.indexOf(PREFIX) !== 0), Object.keys(TWIN_RAW).join(','));
+    chk('…and every value in it is a real standing building',
+        Object.values(TWIN_RAW).every(v => !!BUILDINGS[v] && v.indexOf(PREFIX) !== 0),
+        Object.values(TWIN_RAW).filter(v => !BUILDINGS[v]).join(','));
+
+    // ── 5. THE TWO WAYS A LOOKUP LIES ───────────────────────────────────────
+    chk("a tile typed 'constructor' resolves to itself, not up the prototype chain",
+        A.weatherTwinType('constructor') === 'constructor' && A.weatherTwinType(undefined) === undefined,
+        String(A.weatherTwinType('constructor')));
+    /* THE TDZ PATH. opsKeyOf is a const arrow ~19,600 lines below weatherMult;
+       a call during boot THROWS. The fallback must be identity AND must not be
+       memoised, or "ops are not twinned yet" becomes permanent. */
+    let tdz = true;
+    const T = build((t) => { if (tdz) throw new ReferenceError('TDZ'); return PREFIX + t; }, TWIN);
+    const duringBoot = under('tornado', () => T.weatherMult(opsKeyOf('agri')));
+    tdz = false;
+    const afterBoot = under('tornado', () => T.weatherMult(opsKeyOf('agri')));
+    chk('during boot the twin lookup fails SAFE to the old behaviour (×1 allMult), ' +
+        'and does NOT poison the memo',
+        duringBoot === 1 && afterBoot === under('tornado', () => A.weatherMult('farm')),
+        'boot ×' + duringBoot + ' then ×' + afterBoot);
+
+    if (fails) { bad++; console.log('\n=== ROUND 0h: ' + fails + ' FAILED ==='); }
+    else console.log('\n=== ROUND 0h: ALL PASS ===');
+  }
+}
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0i — 🌩 A DISASTER MUST COST THE PLAYER, NOT PAY HIM
+   ----------------------------------------------------------------------------
+   THE DEFECT THIS ROUND EXISTS FOR, and it shipped:
+   node-city's `ecoShock()` maps weather and raids onto `host.shock`, and the
+   mapping only ever RAISES prices ("a disaster is a PREMIUM"). Higher prices are
+   a bigger sales and corporate tax take; the player's payout is a share of the
+   day's municipal surplus; so a SIEGE RAISED THE OWNER'S REAL CINDER INCOME.
+   Measured on the shipped tree over 300 deterministic economic days (the sim
+   uses no RNG — six repeats were bit-identical): claimed Cinder 5,762 calm →
+   5,910 at a realistic cadence, → 6,885 at a permanent 1.6 shock. Scanned over
+   twelve cities at the real raid cadence, NINE of them paid their owner more
+   during disasters than in peace.
+
+   It was invisible because NO ROUND IN THIS GATE HAS EVER SET `shock`. Round 3
+   of gauntlet2 pokes 3.5 at the price clamp and gauntlet2's property test rolls
+   a random one 5% of the time, and neither asks the only question that matters:
+   is the player better or worse off? So this round measures the CONSEQUENCE, in
+   claimed Cinder, over long deterministic runs.
+
+   ⚠ THE BASELINE HAS TO BE MATERIAL, and that is not a detail. Two of the
+     twelve probe cities are structurally insolvent — they claim 33 🔥 and 73 🔥
+     across 400 days, i.e. essentially nothing — and in that regime any
+     perturbation reads as a huge PERCENTAGE of nothing (±30% on a shift of
+     eight Cinder). The cities below are asserted to clear `MATERIAL` first, so
+     the round can never pass or fail on rounding noise.
+
+   Prove this round can fail: ECON_TEST_SABOTAGE=disaster-premium, which zeroes
+   the emergency-response term and so re-commits the exact shipped behaviour.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0i-disaster-economics ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  if (!global.window) {
+    global.window = { MythicCityBridge: { addCinders: async () => {} }, MythicResourceChain: null };
+    const chain = await import('../../public/src/resources/chain.js');
+    global.window.MythicResourceChain = { ALL: chain.RESOURCE_CHAIN };
+  }
+  const P = '../../public/src/economy/';
+  const Sim = await import(P + 'sim.js');
+  const HH = await import(P + 'households.js');
+  const Prices = await import(P + 'prices.js');
+  const { ECON } = await import(P + 'tuning.js');
+  const DAY = ECON.clock.dayMin;
+  /* 🔴 THE SHIPPED RECOVERY WINDOW, SNAPSHOT BEFORE ANY INJURY, AND §5 MEASURES
+     AGAINST THIS AND NEVER AGAINST THE LIVE VALUE.
+     Learned the hard way in this round: §5's first cut derived its own trailing
+     horizon from `ECON.shock.cost.recoveryDays`, and the `shock-ratchet`
+     sabotage sets exactly that constant. The assertions then measured over a
+     million-day horizon, went vacuous (`seen.slice(1e6)` is empty,
+     `Math.max(0, ...[])` is 0) and PASSED on the injured build — a test that
+     stops testing under the one injury it was written for. An assertion may not
+     take its own yardstick from the thing it is checking. */
+  const SHIPPED_RD = Math.ceil(ECON.shock.cost.recoveryDays);
+
+  /* 🧨 The injury: the shipped mapping, which had a premium and no cost. */
+  if (SABOTAGE === 'disaster-premium') ECON.shock.cost.emergencyPer = 0;
+  /* 🧨 …and the second injury, which re-commits the OTHER shipped defect. The
+     frozen-premium bug was, in effect, a sample budget that never ran out —
+     a per-call meter re-issued on all 12,960 slices of the sweep is
+     arithmetically indistinguishable from an unbounded one. Making the budget
+     unbounded is therefore the faithful re-commit, and it must light up section
+     4 and nothing else (every other section takes a FRESH reading per day, so a
+     bigger budget cannot change them). */
+  if (SABOTAGE === 'frozen-shock') ECON.shock.cost.sampleDays = 1e9;
+  /* 🧨 …and the third, for §5. A recovery window longer than the gap between
+     shock-producing events can never drain to 0, so the outstanding share of the
+     last repair never falls, no later event can ever take the window over, and
+     `shockSev` latches at the worst severity the city has ever seen. That IS the
+     ratchet — re-committed through the one constant whose real value (4 economic
+     days against a ~40-minute mean event gap) created it in the first place. */
+  if (SABOTAGE === 'shock-ratchet') ECON.shock.cost.recoveryDays = 1e6;
+
+  // ── 1. THE GUARD ────────────────────────────────────────────────────────
+  /* `shock: host && host.shock ? host.shock : 1` was a TRUTHINESS test on a
+     number multiplied into every price in the city. 'abc' and {} crashed the
+     tick outright; the rest poisoned the market silently. Every one of these
+     must resolve to exactly 1 — neutral — and none may throw. */
+  const HOSTILE = [['abc', 'abc'], ['{}', {}], ['[]', []], ['NaN', NaN],
+                   ['Infinity', Infinity], ['-Infinity', -Infinity], ['true', true],
+                   ['-5', -5], ['1e308', 1e308], ["'2'", '2'], ['null', null],
+                   ['undefined', undefined], ['0', 0]];
+  let guardBad = [];
+  for (const [label, v] of HOSTILE) {
+    let got = null, threw = null;
+    try { got = Sim.shockOf({ shock: v }); } catch (e) { threw = e.message; }
+    if (threw || got !== 1) guardBad.push(label + ' → ' + (threw ? 'THREW ' + threw : got));
+  }
+  chk('the shock guard resolves every hostile value to exactly 1 (' +
+      HOSTILE.map(h => h[0]).join(', ') + ')', guardBad.length === 0, guardBad.join(' | '));
+  chk('a legitimate shock passes through untouched', Sim.shockOf({ shock: 1.3 }) === 1.3 &&
+      Sim.shockOf({}) === 1 && Sim.shockOf(null) === 1, String(Sim.shockOf({ shock: 1.3 })));
+
+  /* And end to end: a whole tick fed each hostile value must not throw and must
+     leave every price finite. The two that CRASHED sim.js are in this list. */
+  let tickBad = null;
+  Sim.reset('hostile'); HH.setPopulation(120); Sim.bootstrap();
+  for (const [label, v] of HOSTILE) {
+    try {
+      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true,
+                         infrastructure: 0.7, logisticsCounts: { warehouse: 2 }, shock: v });
+    } catch (e) { tickBad = label + ' threw ' + e.message; break; }
+    for (const m of Prices.movers()) {
+      if (!isFinite(m.price) || !isFinite(m.mul)) { tickBad = label + ' → ' + m.id + ' price ' + m.price; break; }
+    }
+    if (tickBad) break;
+  }
+  chk('a full tick survives every hostile shock with finite prices', !tickBad, tickBad);
+
+  // ── 2. THE PRICES MUST STILL MOVE ───────────────────────────────────────
+  /* The fix must not be "delete the shock". A disaster is still a premium; what
+     changed is that it now costs something as well. */
+  const priceAfter = (shock) => {
+    Prices.reset(); Sim.reset('px'); HH.setPopulation(200); Sim.bootstrap();
+    for (let d = 0; d < 30; d++) {
+      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
+                         logisticsCounts: { warehouse: 3 }, shock });
+    }
+    const out = {};
+    for (const m of Prices.movers(400)) out[m.id] = m.price;
+    return out;
+  };
+  const pxCalm = priceAfter(1), pxShock = priceAfter(1.6);
+  let higher = 0, lower = 0, sample = '';
+  for (const id in pxCalm) {
+    if (!(id in pxShock)) continue;
+    if (pxShock[id] > pxCalm[id] * 1.000001) { higher++; if (!sample) sample = id + ' ' + pxCalm[id].toFixed(3) + ' → ' + pxShock[id].toFixed(3); }
+    else if (pxShock[id] < pxCalm[id] * 0.999999) lower++;
+  }
+  chk('prices still move under a shock (' + higher + ' up, ' + lower + ' down)', higher > 0, sample || 'nothing moved');
+
+  // ── 3. THE ECONOMICS ────────────────────────────────────────────────────
+  /* The realistic signal, reconstructed from the host's own constants rather
+     than invented: RAID_INTERVAL is 7200 s and an economic day is
+     clock.dayMin × 60 = 1200 s, so a raid cycle is exactly six economic days
+     and `raidWindowFrac` (0.15 = 1080 s) is sampled on one of them. SIEGE_EVERY
+     is 4, so every fourth wave is a siege. Nothing here is random. */
+  const RAID_CYCLE_DAYS = 6, SIEGE_EVERY = 4;
+  const raidSignal = d => (d % RAID_CYCLE_DAYS === RAID_CYCLE_DAYS - 1)
+    ? 1 + ((Math.floor(d / RAID_CYCLE_DAYS) + 1) % SIEGE_EVERY === 0 ? ECON.shock.siegeGain : ECON.shock.raidGain)
+    : 1;
+  const DAYS = 240, MATERIAL = 500;
+  const claim = (sig, pop, node, wh) => {
+    Sim.reset(node); HH.setPopulation(pop); Sim.bootstrap();
+    let claimed = 0, emergency = 0, shockedDays = 0;
+    for (let d = 0; d < DAYS; d++) {
+      const sh = sig(d); if (sh > 1) shockedDays++;
+      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
+                         logisticsCounts: { warehouse: wh }, shock: sh });
+      claimed += Sim.claimPayout();
+      emergency += Sim.state().flow.emergency;
+    }
+    return { claimed, emergency, shockedDays, audit: Sim.state().lastAudit };
+  };
+  const CITIES = [['shock-probe', 200, 3], ['mu-12', 330, 3], ['rho-6', 45, 1]];
+  console.log('\n  🌩 CLAIMED CINDER over ' + DAYS + ' economic days — calm vs the real raid cadence\n');
+  for (const [node, pop, wh] of CITIES) {
+    const calm = claim(() => 1, pop, node, wh);
+    const raid = claim(raidSignal, pop, node, wh);
+    const delta = raid.claimed - calm.claimed;
+    const pct = (delta / Math.max(1, calm.claimed)) * 100;
+    console.log('    ' + (node + '/pop' + pop).padEnd(20) +
+                ' calm ' + String(calm.claimed).padStart(7) + ' 🔥   disasters ' + String(raid.claimed).padStart(7) +
+                ' 🔥   ' + (delta >= 0 ? '+' : '') + delta + ' (' + pct.toFixed(1) + '%)   ' +
+                'response bill ' + Math.round(raid.emergency).toLocaleString() + ' 🔥 over ' + raid.shockedDays + ' shocked days');
+    chk('  ' + node + ': the calm baseline is material (> ' + MATERIAL + ' 🔥)', calm.claimed > MATERIAL, String(calm.claimed));
+    chk('  ' + node + ': a disaster leaves the player POORER than calm weather', raid.claimed < calm.claimed,
+        'calm ' + calm.claimed + ' vs disasters ' + raid.claimed);
+    chk('  ' + node + ': the emergency response actually billed', raid.emergency > 0, String(raid.emergency));
+    chk('  ' + node + ': the closed-loop audit survived the disaster', !!(raid.audit && raid.audit.ok),
+        JSON.stringify(raid.audit));
+  }
+  /* Calm weather must be EXACTLY the old economy: every cost term is keyed on
+     `shock − 1`, so at shock 1 nothing in this feature may execute. */
+  const calmA = claim(() => 1, 200, 'shock-probe', 3);
+  chk('a calm city is bit-identical and never touches the disaster path',
+      calmA.emergency === 0, String(calmA.emergency));
+
+  // ── 4. OFFLINE CATCH-UP MUST NOT RUN AT A FROZEN PREMIUM ────────────────
+  /* Weather resets to clear on load, but `game.raid.timer` is SERIALISED and the
+     offline sweep deliberately does not run raidTick, so a save written inside
+     the raid window replays one frozen siege reading for the whole absence.
+
+     🔴 THIS BLOCK USED TO ASSERT ON A CALL SHAPE PRODUCTION NEVER MAKES, AND
+        THAT IS THE WHOLE LESSON OF IT. It drove the sweep as ONE
+        `Sim.advance(DAY * maxCatchUpDays, …)` and passed. The shipped host does
+        not do that: `offlineCatchUp()` runs
+            while (done < simSec) { dt = min(OFFLINE_SLICE_SEC, …);
+                                    await economyTick(dt / 60); }
+        i.e. ~12,960 SEPARATE advance() calls for the 36 h cap, each re-sampling
+        the same frozen host. Against the real shape the old per-call meter was
+        re-issued 12,960 times and the sweep ended at lastShock 1.6 having run
+        107 economic days — the defect, sitting behind this very ✅. So the loop
+        below is the host's loop, and the host's own two constants are read OUT
+        OF node-city rather than typed here: a copy would drift the day this
+        round is meant to catch a drift.
+     ⚠ Extraction failing is a HARD FAIL, not a skip — round 0b's rule. A round
+       that quietly stops testing the shipped path is worse than no round. */
+  let NCSRC = null;
+  try {
+    NCSRC = readFileSync(join(here, SABOTAGE === 'no-map'
+      ? '../../public/node-city/NOT-THERE.html'
+      : '../../public/node-city/index.html'), 'utf8');
+  } catch (e) { NCSRC = null; }
+  const ncConst = (name) => {
+    if (!NCSRC) return null;
+    const m = NCSRC.match(new RegExp('const\\s+' + name + '\\s*=\\s*([0-9.]+)\\s*;'));
+    return m ? Number(m[1]) : null;
+  };
+  const SLICE_SEC = ncConst('OFFLINE_SLICE_SEC'), CAP_H = ncConst('OFFLINE_CAP_H');
+  chk('read the host\'s own catch-up constants out of node-city/index.html',
+      !!(SLICE_SEC > 0 && CAP_H > 0), 'slice ' + SLICE_SEC + ' / cap ' + CAP_H);
+
+  const boot = (id) => { Prices.reset(); Sim.reset(id); HH.setPopulation(200); Sim.bootstrap(); };
+  const H = (shock) => ({ powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
+                          logisticsCounts: { warehouse: 3 }, shock });
+  /* THE SHIPPED SWEEP, slice for slice. Returns what the economy was running at
+     when the player got their city back. */
+  /* `sig(elapsedSec)` is what the HOST would report at that instant, so the same
+     loop can drive a frozen reading, a clear sky, or a city that really was
+     raided over and over. `shockedDays` is the honest exposure measure: how much
+     SIMULATED TIME actually ran at a premium, which is the quantity the defect
+     was unbounded in and the one no aggregate price number can confound. */
+  const sweep = (hours, sig) => {
+    const simSec = hours * 3600;
+    let done = 0, calls = 0, shockedDays = 0;
+    while (done < simSec - 1e-9) {
+      const dt = Math.min(SLICE_SEC || 10, simSec - done);
+      Sim.advance(dt / 60, H(sig(done)));
+      if (Sim.state().lastShock > 1) shockedDays += (dt / 60) / DAY;
+      done += dt; calls++;
+    }
+    return { calls, shockedDays, days: Sim.state().day, last: Sim.state().lastShock };
+  };
+  const FROZEN = () => 1.6;
+
+  const priceLevel = () => { let s = 0; for (const m of Prices.movers(400)) s += m.mul; return s; };
+  boot('catchup');
+  const swept = sweep(CAP_H || 36, FROZEN);
+  const pxSweep = priceLevel(), billAtReturn = Sim.state().flow.emergency;
+  boot('catchup-calm');
+  const calmSweep = sweep(CAP_H || 36, () => 1);
+  const pxCalmSweep = priceLevel();
+  /* What the SAME absence would honestly have contained. RAID_INTERVAL is 7200 s
+     and the ramp runs inside the last raidWindowFrac of it, so a 36 h absence is
+     eighteen raid cycles — a real city would have seen ~16 shocked economic
+     days. The frozen reading must buy a tiny fraction of that, not more of it. */
+  boot('catchup-real');
+  const realSweep = sweep(CAP_H || 36, (t) => ((t % 7200) > 7200 * (1 - ECON.shock.raidWindowFrac)) ? 1.6 : 1);
+  boot('live');
+  Sim.advance(DAY, H(1.6));
+  const afterLive = Sim.state().lastShock;
+
+  console.log('\n  🕓 THE ' + CAP_H + 'h SWEEP, driven in the host\'s own ' + SLICE_SEC + 's slices (' +
+              swept.calls.toLocaleString() + ' advance() calls, ' + swept.days + ' economic days)\n');
+  for (const [n, r] of [['frozen siege reading', swept], ['clear sky', calmSweep],
+                        ['a city really raided', realSweep]])
+    console.log('    ' + n.padEnd(24) + ' ran ' + r.shockedDays.toFixed(3).padStart(7) +
+                ' economic days at a premium, ended at shock ' + r.last);
+
+  chk('a ' + CAP_H + 'h catch-up driven in REAL ' + SLICE_SEC + 's slices ends CALM, a live day does not',
+      swept.last === 1 && afterLive === 1.6, 'sweep ' + swept.last + ' / live ' + afterLive);
+  /* 🔴 THE BOUND, AS A NUMBER. One frozen reading buys sampleDays of premium and
+     no more, however long the absence — plus at most the one slice that spends
+     the last sliver of the meter. This is the assertion the round was missing:
+     before the fix this figure was the ENTIRE sweep (107 of 107 economic days).
+     ⚠ Deliberately NOT a price comparison. The obvious test — "sweep prices
+       below three genuinely shocked days" — was in this round and was measuring
+       the wrong thing: the sliced path calls stepPrices ~12,960 times against
+       the 3-day path's 3, so the price integrator's step count swamped the
+       shock and the sliced sweep read HIGHER (Σmul 55.6 vs 51.0) even though it
+       ran a hundredth of the exposure. Two tick shapes are not comparable by
+       price level. Exposure in simulated days is the quantity in question. */
+  const bound = ECON.shock.cost.sampleDays + 2 * ((SLICE_SEC || 10) / 60) / DAY;
+  chk('the frozen reading buys at most ' + ECON.shock.cost.sampleDays + ' economic day(s) of premium (got ' +
+      swept.shockedDays.toFixed(3) + ', a real raid cadence would have been ' +
+      realSweep.shockedDays.toFixed(1) + ')',
+      swept.shockedDays <= bound && realSweep.shockedDays > swept.shockedDays * 4,
+      'sweep ' + swept.shockedDays + ' vs bound ' + bound + ' / real ' + realSweep.shockedDays);
+  /* …and it is not zero either. The fix must not be "delete the shock offline":
+     the sample the city DID observe still moves the market. */
+  chk('the offline sweep still moved prices above a clear sky',
+      swept.shockedDays > 0 && pxSweep > pxCalmSweep,
+      'shocked Σmul ' + pxSweep.toFixed(2) + ' vs calm Σmul ' + pxCalmSweep.toFixed(2));
+  /* The bound holds for a SHORT absence too — 3 h is the live-page probe that
+     found this, which advanced 9 economic days at a frozen 1.2997. */
+  boot('catchup-3h');
+  const short = sweep(3, FROZEN);
+  chk('a 3 h sweep (' + short.days + ' economic days) also ends CALM', short.last === 1, String(short.last));
+  /* 🚒 AND THE BILL STOPS TOO. resolveShock() RE-ARMS the recovery window every
+     time it sees sev > 0, so under the old per-call meter all 12,960 slices
+     re-armed it and the emergency response was still being invoiced on the last
+     day of the absence (1,631 🔥 on the final day alone, on the live page). Once
+     the meter is spent the shock resolves to 1, nothing re-arms, and the window
+     drains. Asserted on the SWEEP'S OWN final day — the day the player returns
+     to and the one they would be billed for. */
+  chk('the emergency bill is NOT still being invoiced when the player returns',
+      billAtReturn === 0, String(billAtReturn));
+
+  // ── 5. THE REPAIR WINDOW MUST NOT RATCHET ───────────────────────────────
+  /* 🔴 THE DEFECT THIS SECTION EXISTS FOR, and it sat behind §3's ✅ for a whole
+     round. `resolveShock()` armed the window with
+         S.shockSev = Math.max(S.shockSev, sev);
+         S.shockRecoveryLeft = ECON.shock.cost.recoveryDays;
+     and `shockSev` was cleared in exactly ONE place — runDay step 9b, when the
+     window fully expired. Because `recoveryDays` (4 economic days = 80 real
+     minutes) is LONGER than the gap between shock-producing events, the window
+     was re-armed before it could expire, so the level locked at the worst
+     severity the city had ever seen and every later drizzle was invoiced at it,
+     indefinitely. Measured pre-fix: one tornado-grade 1.33 on day 0 and then
+     nothing but 1.148 snow every third day left `shockSev` reading 0.330 on all
+     fifteen following days — 2.2× the true severity, for ever.
+
+     ⚠ WHY §3 CANNOT SEE IT, AND WHY THIS SECTION DRIVES WEATHER TOO. §3's signal
+       is RAIDS ONLY, and a raid fires on every SIXTH economic day with five
+       clean calm days between — the one cadence in which a 4-day window DOES
+       drain and the level DOES reset. RAID_INTERVAL 7200 s is six economic days,
+       so raids alone hold the window open 4 days in 6 and never ratchet. It is
+       node-city's own weather roll that closes the gaps: WX_ROLL_EVERY 150 s
+       with a 0.062 non-rain probability per roll is a ~40-minute mean gap,
+       comfortably inside the 80-minute window. A round that tests one of the two
+       signals the host actually feeds this term is testing the easy one.
+
+     🔑 THE SIGNAL IS BUILT FROM node-city's OWN ROWS, NOT FROM TYPED NUMBERS.
+        WEATHER, WX_CHANCES and WX_ROLL_EVERY are lifted out of the shipped HTML
+        and pushed back through ecoShock()'s published arithmetic
+        (hit = 1 − allMult × outdoorMult; ×weatherGain; +severeAdd if severe) so
+        that retuning a weather row retunes this round with it. Extraction
+        failing is a HARD FAIL — round 0b's rule.
+     🔑 DETERMINISTIC. The weather roll is a fixed-seed LCG, not Math.random, so
+        this run is bit-identical every time exactly as the rest of the gate is.
+
+     Prove it can fail: ECON_TEST_SABOTAGE=shock-ratchet. */
+  const ncLit = (re) => {
+    if (!NCSRC) return null;
+    const m = NCSRC.match(re);
+    try { return m ? Function('return (' + m[1] + ')')() : null; } catch (e) { return null; }
+  };
+  const ncNum2 = (name) => {
+    if (!NCSRC) return null;
+    const m = NCSRC.match(new RegExp('const\\s+' + name + '\\s*=\\s*([0-9.]+)\\s*[,;]'));
+    return m ? Number(m[1]) : null;
+  };
+  const WEATHER   = ncLit(/const\s+WEATHER\s*=\s*(\{[\s\S]*?\n\});/);
+  const WXCHANCE  = ncLit(/const\s+WX_CHANCES\s*=\s*(\[[\s\S]*?\n\]);/);
+  const WX_EVERY  = ncNum2('WX_ROLL_EVERY');
+  const RAID_IV   = ncNum2('RAID_INTERVAL');
+  const SIEGE_N   = ncNum2('SIEGE_EVERY');
+  chk('read node-city\'s OWN weather rows, roll cadence and raid clock',
+      !!(WEATHER && WXCHANCE && WXCHANCE.length && WX_EVERY > 0 && RAID_IV > 0 && SIEGE_N > 0),
+      'weather ' + (WEATHER ? Object.keys(WEATHER).length : 0) + ' rows / chances ' +
+      (WXCHANCE ? WXCHANCE.length : 0) + ' / roll ' + WX_EVERY + ' / raid ' + RAID_IV +
+      ' / siege ' + SIEGE_N);
+
+  if (WEATHER && WXCHANCE && WX_EVERY > 0 && RAID_IV > 0 && SIEGE_N > 0) {
+    const DAY_SEC = DAY * 60;
+    /* ecoShock()'s weather half, term for term. Rain reads exactly 1 here — it
+       has no allMult and no outdoorMult — which is correct and is why the
+       0.062 figure above excludes it. */
+    const wxMul = (type) => {
+      const W = WEATHER[type];
+      if (!W || type === 'clear') return 1;
+      const all = (typeof W.allMult === 'number') ? W.allMult : 1;
+      const out = (typeof W.outdoorMult === 'number') ? W.outdoorMult : 1;
+      const hit = Math.max(0, Math.min(1, 1 - all * out));
+      return 1 + hit * ECON.shock.weatherGain + (W.severe ? ECON.shock.severeAdd : 0);
+    };
+    /* The two ends of the real weather ladder, discovered rather than typed: the
+       worst row the sky can produce and the mildest row that is a shock at all. */
+    let SEVERE = { t: null, m: 1 }, MILD = { t: null, m: Infinity };
+    for (const t in WEATHER) {
+      const m = wxMul(t);
+      if (!(m > 1)) continue;
+      if (m > SEVERE.m) SEVERE = { t, m };
+      if (m < MILD.m) MILD = { t, m };
+    }
+    chk('the weather ladder has a severe end and a distinctly milder one (' +
+        SEVERE.t + ' ×' + SEVERE.m.toFixed(3) + ' vs ' + MILD.t + ' ×' + MILD.m.toFixed(3) + ')',
+        !!(SEVERE.t && MILD.t && SEVERE.m > MILD.m * 1.05));
+
+    const sevOf = (sh) => Math.max(0, Math.min(ECON.shock.cost.maxSeverity, sh - 1));
+
+    /* ── 5a. THE TRACE THAT NAILS IT ────────────────────────────────────────
+       One severe event, then nothing but the mildest shock in the game, spaced
+       just inside the recovery window. Every later day must be billed at the
+       MILD severity. Pre-fix every one of them read the severe severity. */
+    const GAP = Math.max(1, SHIPPED_RD - 1);        // just inside the shipped window
+    const TRACE_DAYS = 16;
+    Sim.reset('ratchet-trace'); HH.setPopulation(200); Sim.bootstrap();
+    const St = Sim.state();
+    const seen = [];
+    for (let d = 0; d < TRACE_DAYS; d++) {
+      const sh = d === 0 ? SEVERE.m : (d % GAP === 0 ? MILD.m : 1);
+      Sim.advance(DAY, H(sh));
+      seen.push(St.shockSev);
+    }
+    const sevSev = sevOf(SEVERE.m), mildSev = sevOf(MILD.m);
+    /* Days strictly after the severe event's own window has had time to drain.
+       Inside it the severe rate is CORRECT — one day after a tornado the city is
+       repairing a tornado. What may not happen is the clock being restarted. */
+    const after = seen.slice(SHIPPED_RD);
+    const worstAfter = Math.max(0, ...after);
+    chk('a mild shock after a severe one is billed at the MILD rate (' +
+        worstAfter.toFixed(3) + ' vs mild ' + mildSev.toFixed(3) + ', severe ' + sevSev.toFixed(3) + ')',
+        worstAfter <= mildSev + 1e-9,
+        'trace ' + seen.map(v => v.toFixed(3)).join(' '));
+    chk('…and the mild shock is still billed at all (the fix is not "stop billing")',
+        worstAfter >= mildSev - 1e-9, String(worstAfter));
+
+    /* ── 5b. THE COMBINED SIGNAL, OVER A LONG DETERMINISTIC RUN ─────────────
+       Weather AND raids, which is what the host actually feeds this term. */
+    /* mulberry32, not the textbook LCG this was written with first. `seed *
+       1103515245` overflows 2^53 in JS doubles, so the classic LCG silently
+       loses its low bits here and produced a visibly clumped stream — 240 days
+       of it contained exactly ONE calm stretch long enough to test the window's
+       closure with. Every step below is Math.imul / xor, i.e. exact in int32. */
+    let seed = 0x5eed >>> 0;
+    const rnd = () => {
+      seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const combined = (days) => {
+      seed = 0x5eed;
+      const out = [];
+      let t = 0, nextRoll = WX_EVERY * (0.6 + rnd() * 0.8), type = 'clear', until = 0;
+      const cycleDays = RAID_IV / DAY_SEC;
+      for (let d = 0; d < days; d++) {
+        let worst = 1;
+        const end = (d + 1) * DAY_SEC;
+        while (t < end) {
+          const at = Math.min(end, nextRoll);
+          if (until > t) worst = Math.max(worst, wxMul(type));
+          t = at;
+          if (t >= nextRoll - 1e-9) {
+            if (t >= until) {                       // the sky is free to change
+              type = 'clear';
+              const u = rnd(); let acc = 0;
+              for (const c of WXCHANCE) { acc += c.p; if (u < acc) { type = c.type; break; } }
+              if (type !== 'clear') {
+                const D = WEATHER[type].dur || [0, 0];
+                until = t + D[0] + rnd() * (D[1] - D[0]);
+                worst = Math.max(worst, wxMul(type));
+              }
+            }
+            nextRoll = t + WX_EVERY * (0.6 + rnd() * 0.8);
+          }
+        }
+        /* The walls, on the host's own clock: the ramp lands in the last
+           raidWindowFrac of each RAID_INTERVAL, and every SIEGE_EVERY-th wave is
+           a siege. Same reconstruction §3 documents. */
+        const raidDay = cycleDays >= 1 && (d % cycleDays) === Math.ceil(cycleDays) - 1;
+        const wave = Math.floor(d / cycleDays) + 1;
+        const raid = raidDay
+          ? 1 + (wave % SIEGE_N === 0 ? ECON.shock.siegeGain : ECON.shock.raidGain) : 1;
+        out.push(Math.min(ECON.shock.max, worst * raid));
+      }
+      return out;
+    };
+    /* 🔴 LONGER THAN §3's RUN, ON PURPOSE. The real combined signal is DENSE —
+       a ~40-minute mean gap against a 20-minute economic day leaves half the
+       calendar shocked — so a stretch of calm longer than the 4-day window is
+       genuinely rare: 240 days contained only three such days, which is not a
+       sample, it is an anecdote. The closure property is the one that needs
+       calm to be observable at all, so §5 runs long enough to see it happen
+       repeatedly rather than tuning the weather until it does. */
+    const COMBO_DAYS = DAYS * 5;
+    const SIG = combined(COMBO_DAYS);
+    const shockedInSig = SIG.filter(s => s > 1).length;
+    const driveCombined = (arr, node) => {
+      Sim.reset(node); HH.setPopulation(200); Sim.bootstrap();
+      const Sx = Sim.state();
+      const trail = [];
+      let claimed = 0, emergency = 0, openDays = 0, overBill = 0;
+      /* 🔴 THE SECOND HALF OF THE DEFECT: a window that is re-armed faster than
+         it drains never closes, so the level never gets cleared either. Asserted
+         where it is unambiguous — at the end of every calm stretch LONGER than
+         the shipped window. Inside a shorter stretch an open window is correct
+         (the city really is still repairing), so a bare "% of days open" would
+         be a threshold somebody picked, not a property. */
+      let calmRun = 0, stretchesChecked = 0, stillOpen = 0;
+      for (let d = 0; d < arr.length; d++) {
+        trail.push(sevOf(arr[d]));
+        Sim.advance(DAY, H(arr[d]));
+        claimed += Sim.claimPayout();
+        emergency += Sx.flow.emergency;
+        if (Sx.shockRecoveryLeft > 0) openDays++;
+        calmRun = (arr[d] > 1) ? 0 : calmRun + 1;
+        /* Every day of every stretch past the window's length, not just the
+           first: more samples, and it also catches a window that closes and is
+           then somehow re-armed by nothing at all. */
+        if (calmRun > SHIPPED_RD) {
+          stretchesChecked++;
+          if (Sx.shockRecoveryLeft > 0 || Sx.shockSev > 0) stillOpen++;
+        }
+        /* 🔴 THE RATCHET, AS ONE NUMBER: the severity the city is being billed
+           at, against the worst severity anything ACTUALLY did to it inside the
+           recovery window. A level that outlives its own cause by longer than the
+           window is the defect, whatever the cause was. */
+        const worstTrue = Math.max(0, ...trail.slice(Math.max(0, trail.length - SHIPPED_RD)));
+        overBill = Math.max(overBill, Sx.shockSev - worstTrue);
+      }
+      return { claimed, emergency, openDays, overBill, stretchesChecked, stillOpen,
+               audit: Sx.lastAudit };
+    };
+    /* ⚠ THE SAME NODE ID FOR BOTH RUNS, AND IT IS NOT A DETAIL. `Sim.reset(id)`
+       seeds the terrain and the seams FROM the id, so a calm baseline taken on a
+       different node is a different city — the first cut of this compared
+       'combo-calm' against 'combo' and read +91%, which measured the two nodes'
+       geology and nothing whatever about the weather. */
+    const cCalm = driveCombined(SIG.map(() => 1), 'combo');
+    const cReal = driveCombined(SIG, 'combo');
+    const cDelta = cReal.claimed - cCalm.claimed;
+    console.log('\n  🌩🌧 WEATHER + RAIDS, ' + COMBO_DAYS + ' deterministic economic days (' +
+                shockedInSig + ' shocked days)\n');
+    console.log('    claimed calm ' + cCalm.claimed + ' 🔥   with disasters ' + cReal.claimed +
+                ' 🔥   ' + (cDelta >= 0 ? '+' : '') + cDelta +
+                ' (' + (cDelta / Math.max(1, cCalm.claimed) * 100).toFixed(1) + '%)');
+    console.log('    repair window open on ' + cReal.openDays + '/' + COMBO_DAYS + ' days (' +
+                (cReal.openDays / COMBO_DAYS * 100).toFixed(1) + '%), response bill ' +
+                Math.round(cReal.emergency).toLocaleString() + ' 🔥, worst over-bill ' +
+                cReal.overBill.toFixed(4));
+
+    chk('the combined signal really is denser than raids alone (> ' +
+        Math.floor(COMBO_DAYS / (RAID_IV / DAY_SEC)) + ' shocked days)',
+        shockedInSig > Math.floor(COMBO_DAYS / (RAID_IV / DAY_SEC)) * 2, String(shockedInSig));
+    chk('there are calm days past the window to test closure on (' +
+        cReal.stretchesChecked + ')', cReal.stretchesChecked >= SHIPPED_RD,
+        String(cReal.stretchesChecked));
+    chk('the repair window CLOSES — on every calm day past the ' +
+        SHIPPED_RD + '-day window, the city is out of recovery (' +
+        (cReal.stretchesChecked - cReal.stillOpen) + '/' + cReal.stretchesChecked + ')',
+        cReal.stretchesChecked > 0 && cReal.stillOpen === 0,
+        cReal.stillOpen + ' of ' + cReal.stretchesChecked + ' still open');
+    chk('the billed severity NEVER outlives its cause (over-bill ' +
+        cReal.overBill.toFixed(4) + ' must be 0)', cReal.overBill <= 1e-9,
+        String(cReal.overBill));
+    chk('under weather AND raids the player is still POORER than in calm weather',
+        cReal.claimed < cCalm.claimed, 'calm ' + cCalm.claimed + ' vs ' + cReal.claimed);
+    chk('the closed-loop audit survived the combined signal',
+        !!(cReal.audit && cReal.audit.ok), JSON.stringify(cReal.audit));
+  }
+
+  if (fails) { bad++; console.log('\n=== ROUND 0i: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0i: ALL PASS ===');
+}
+
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {
   console.log('\n########## ' + f + ' ##########');
   const r = spawnSync(process.execPath, [join(here, f)], { stdio: 'inherit' });

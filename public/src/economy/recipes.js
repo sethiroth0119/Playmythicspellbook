@@ -409,25 +409,105 @@ export const RECIPES = {
   droneComponents:             { in: { advancedBatteries: 0.25, sensors: 0.2, aerospaceAluminum: 0.15, processors: 0.08 }, labor: 0.64, power: 0.58, ind: 'aerospace', band: 'advanced' },
 
   /* ── 🃏 THE OUROBOROS CARD ECONOMY ────────────────────────────────────────
-     The announcement's chain, exactly:
-        Wood → Pulp → Premium Paper → Card Stock
+     The announcement's chain:
+        Wood → Pulp → Card Stock
         Chemicals → Printing Ink
-        Card Stock + Ink + Holographic Materials → Ouroboros Printing
+        Card Stock (+ Ink + Holographic Materials) → Ouroboros Printing
                                                  → Packaging → Distribution
                                                  → Card Shops → Players
      🔗 FOUNDATION RESERVE. `boosterPacks` and `collectorPacks` are the two ids
      the Foundation Reserve seam reads (see index.js `cardOutput()`): a city
      that actually prints packs reports that volume to the host, which is how
      "NPCs buying cards puts Cinder back into that supply chain" reaches the
-     real game. The seam REPORTS; it never mints. */
-  cardStock:          { in: { premiumPaper: 1.1, protectiveCoating: 0.05 },        labor: 0.14, power: 0.22, ind: 'cardPrinter', band: 'skilled' },
+     real game. The seam REPORTS; it never mints.
+
+     ══ 🔴 WHY THE BASE CHAIN IS FOUR LINKS AND NOT NINE — READ BEFORE DEEPENING
+     This block shipped as a nine-link chain and PRODUCED NOTHING, in every
+     city, for the entire life of the feature. Measured, not guessed: a city
+     with the whole card chain founded by hand ran 600 days at population 600
+     and `cardOutput()` stayed {units:{}, totalUnits:0} — every card firm sat
+     HEALTHY with `lastBottleneck {key:'printedCards', pct:0}` and inventory 0
+     for printedCards / cardStock / holographicFoil on all 600 days.
+
+     The cause is structural, and it is NOT that these ids failed
+     `producible()` — they always passed it. A recipe only runs if some FIRM
+     makes each of its inputs, a firm only exists where a BUILDING maps to it
+     (ECO_BUILDING_MAP), and firms.js `produce()` takes the MINIMUM over
+     inputs — so ONE homeless input darkens the whole chain behind it. The city
+     has 52 building types and none of them is a chemical plant, a holographic
+     works, a pulp line or an industrial-water intake, so every id descending
+     from those was unreachable and always would be.
+
+     So the BASE product line is rooted in industry a city actually has —
+     forestry → sawmill → paper mill → press → shop — and every link is one
+     step from something a building makes:
+        timber → lumber → cardStock → printedCards → boosterPacks
+     Cinder flows back up all five (payUpstream in sim.js), which is the
+     announcement's sentence working rather than being quoted.
+
+     ⚠ INK, FOIL AND COATING ARE DELIBERATELY OFF THE BASE LINE. They keep
+       their full recipes and still gate the PREMIUM ids (`collectorPacks`,
+       `cardBoxes`, `tournamentProducts`) — a city that ever builds a chemical
+       tier prints better product than one that has not, which is the point.
+       Putting even 0.02 of `holographicFoil` back into `boosterPacks` would
+       re-darken the entire base line by the min rule above. tools/economy-
+       tests/run.mjs round 0e is the tripwire for exactly that mistake: it
+       walks every ECO_BUILDING_MAP output back to the ground and goes RED if
+       a card id stops being reachable.
+     ⚠ REJECTED: fixing this with ALT_FEEDSTOCK legs. It looks like the natural
+       lever, and it is a trap — `availabilityMap()` (sim.js) only measures the
+       inputs of the leg a firm is ALREADY running, so an alternate leg's
+       inputs are absent from the map and read as fully available. Measured: an
+       electricity plant on a node with no fuel at all hopped to the `biomass`
+       leg and produced 1200 units from zero biomass. Alternate legs would have
+       lit the card chain with product made out of nothing — a false green over
+       a worse bug. The pre-existing hole is reported separately; nothing here
+       leans on it. */
+  /* 📄 PULPWOOD, NOT PLANKS, AND NO WATER LINE. Both halves of that were
+     measured, and both cost a whole iteration:
+
+     • `freshWater` was an input here and it killed the mill. Households drink
+       first (runSubsistence), so industry gets the residual of the drinking
+       supply: the mill ran on days 3–4 and then sat at `freshWater 0.000` from
+       day 5 to day 600 while its wood availability climbed to 47%. The chain
+       died of thirst next to a warehouse full of wood. `industrialWater` is
+       the id that exists for exactly this and no city tile makes it. Water is
+       NOT ignored — the host's own coverage multiplies every firm's output
+       through firms.js `ctx.water`, which is one water figure for the whole
+       city rather than a second one that competes with the people.
+
+     • `lumber` was the input after that, and something worse happened: `lumber`
+       is on BOTH sim.js's `UPKEEP_GOODS` (:812) and its `PROCUREMENT` (:870)
+       lists, and both run AFTER production. Measured on node ouro-2: the
+       sawmill made 206 lumber every single day and city upkeep plus municipal
+       procurement bought every unit of it, so `S.INV.lumber` closed at exactly
+       0.0 on all 600 days and the mill's availability was 0.000 forever. That
+       hazard is not this chain's to fix (it starves `constructionComponents`
+       the same way, and sim.js is where the reservation would have to live) —
+       but a chain rooted on a good the city itself hoovers up is a chain that
+       works on some nodes and not others for reasons no player could ever see.
+
+     `timber` is on neither list, and a paper mill really does take roundwood
+     rather than sawn planks — so the mill sits BESIDE the sawmill on the
+     forestry camp's output rather than downstream of it. */
+  cardStock:          { in: { timber: 1.9 },                                      labor: 0.16, power: 0.24, ind: 'paperMill', band: 'skilled' },
   inkChemicals:       { in: { industrialChemicals: 0.5, solvents: 0.25, quartz: 0.05 }, labor: 0.16, power: 0.24, ind: 'chemPlant' },
   printingInk:        { in: { inkChemicals: 0.9, specialtyPolymers: 0.06 },        labor: 0.13, power: 0.19, ind: 'chemPlant', band: 'skilled' },
   holographicFoil:    { in: { holographicChemicals: 0.4, aluminum: 0.2, specialtyPolymers: 0.15 }, labor: 0.42, power: 0.58, ind: 'holoWorks', band: 'advanced' },
   protectiveCoating:  { in: { specialtyPolymers: 0.35, solvents: 0.15 },           labor: 0.15, power: 0.21, ind: 'chemPlant', band: 'skilled' },
-  packagingMaterial:  { in: { cardboard: 0.7, plastic: 0.2 },                      labor: 0.07, power: 0.12, ind: 'packaging' },
-  printedCards:       { in: { cardStock: 1.0, printingInk: 0.18, holographicFoil: 0.06 }, labor: 0.28, power: 0.34, ind: 'cardPrinter', band: 'skilled' },
-  boosterPacks:       { in: { printedCards: 0.85, packagingMaterial: 0.15, holographicFoil: 0.02 }, labor: 0.19, power: 0.21, ind: 'packaging' },
+  /* 📦 KRAFT BOARD, NOT PLASTIC. Was `cardboard 0.7 + plastic 0.2`; cardboard
+     descends from `recycledPaper` (a byproduct nothing ever adds to inventory)
+     and plastic from `petrochemicals`, so all four Distributor tiles — depot,
+     railyard, warehouse, caravanpost — employed people and produced zero.
+     Rooted on `timber` for the same measured reason as `cardStock` above: not
+     on sim.js's upkeep or procurement lists, so nothing strips it nightly. */
+  packagingMaterial:  { in: { timber: 0.8 },                                       labor: 0.07, power: 0.12, ind: 'packaging' },
+  /* 🖨 ONE MATERIAL INPUT, ON PURPOSE. The press's power and water are already
+     charged through `power:` and firms.js's ctx coverage; naming `electricity`
+     as a MATERIAL here was tried and rejected — it would have made every card
+     shop in the game depend on the node having coal in the ground. */
+  printedCards:       { in: { cardStock: 1.05 },                                   labor: 0.28, power: 0.34, ind: 'cardPrinter', band: 'skilled' },
+  boosterPacks:       { in: { printedCards: 0.85, packagingMaterial: 0.15 },       labor: 0.19, power: 0.21, ind: 'packaging' },
   starterDecks:       { in: { printedCards: 1.6, packagingMaterial: 0.25, paper: 0.1 }, labor: 0.24, power: 0.23, ind: 'packaging' },
   cardBoxes:          { in: { boosterPacks: 5.0, cardboard: 0.6 },                 labor: 0.16, power: 0.14, ind: 'packaging' },
   collectorPacks:     { in: { printedCards: 1.2, holographicFoil: 0.25, protectiveCoating: 0.1, packagingMaterial: 0.2 }, labor: 0.48, power: 0.36, ind: 'cardPrinter', band: 'skilled' },

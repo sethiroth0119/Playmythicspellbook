@@ -9,7 +9,7 @@ let fails=[]; const chk=(n,c,e)=>{if(!c){fails.push(n);console.log('❌ '+n+(e?'
 // Mirror node-city's ECO_BUILDING_MAP exactly.
 const MAP={farm:{out:['wheat','corn','rice','potatoes','soybeans','vegetables'],ind:'farm'},
  hydrofarm:{out:['vegetables','fruit','herbs','potatoes'],ind:'farm'},
- fibercroft:{out:['cotton','plantFiber'],ind:'farm'},lumbercamp:{out:['timber','wood'],ind:'forestry'},
+ fibercroft:{out:['cotton','plantFiber'],ind:'farm'},lumbercamp:{out:['timber'],ind:'forestry'},
  quarry:{out:['stone','limestone','gravel','sand','clay','silica'],ind:'quarry'},
  scrapmine:{out:['ironOre','copperOre','aluminumOre','zincOre','nickelOre','coal'],ind:'mine'},
  fuelrig:{out:['crudeOil','naturalGas'],ind:'oilfield'},
@@ -23,7 +23,8 @@ const MAP={farm:{out:['wheat','corn','rice','potatoes','soybeans','vegetables'],
  club:{out:['beverages'],ind:'venue'},arena:{out:['sportingGoods'],ind:'venue'},
  clinic:{out:['medicalSupplies'],ind:'clinic'},gasstation:{out:['gasoline'],ind:'transitCo'},
  housing:{out:['constructionComponents'],ind:'landlord'},depot:{out:['packagingMaterial'],ind:'distributor'},
- railyard:{out:['packagingMaterial'],ind:'distributor'},shop:{out:['boosterPacks'],ind:'cardShop'}};
+ railyard:{out:['packagingMaterial'],ind:'distributor'},shop:{out:['boosterPacks'],ind:'cardShop'},
+ papermill:{out:['cardStock'],ind:'paperMill'},printworks:{out:['printedCards'],ind:'cardPrinter'}};
 
 // every mapped id must be real
 let bogus=[]; const R=await import(P+'recipes.js');
@@ -80,9 +81,114 @@ chk('rebuilt tile gets a NEW business', atKey.length===1&&atKey[0].ind==='clinic
 const c1=E.snapshot().firms; E.syncBuildings(list()); E.syncBuildings(list());
 chk('syncBuildings is idempotent', E.snapshot().firms===c1, c1+' → '+E.snapshot().firms);
 
-// card economy reached
-const co=E.cardOutput();
-chk('card shop puts Ouroboros product in the economy', co.totalUnits>0||E.price('boosterPacks')>0, JSON.stringify(co).slice(0,80));
+/* ════════════════════════════════════════════════════════════════════════════
+   🃏 THE OUROBOROS CHAIN, END TO END — and why this section was rewritten.
+   ----------------------------------------------------------------------------
+   🔴 THE ASSERTION THAT USED TO LIVE HERE COULD NOT FAIL:
+
+       chk('card shop puts Ouroboros product in the economy',
+           co.totalUnits > 0 || E.price('boosterPacks') > 0, …)
+
+   `Prices.priceOf()` is base × multiplier and is ALWAYS > 0 — the base is
+   floored at ECON.price.rawFloor and the multiplier is clamped to a positive
+   band — so the right-hand side is a constant `true`. Measured before the fix:
+   that line printed ✅ while `cardOutput()` returned
+   {units:{}, totalUnits:0, value:0, exported:0} after 600 days at population
+   600, which is what a card economy that has never produced one card looks
+   like. It was the ONLY test covering the chain.
+
+   What replaces it tests OUTPUT and MONEY, both of which are zero when the
+   chain is broken:
+     • real units out of `cardOutput()`
+     • a card SHOP that actually printed
+     • Cinder that reached the printer, the mill, the sawmill and the forest —
+       "each company buys from the previous company using Cinder" is the claim,
+       so lifetimeRevenue at every rung is the evidence
+     • the closed-loop audit still clean with card production running (Rule 1)
+
+   ⚠ ITS OWN CITY, ITS OWN NODE. The chain starts at `timber`, which is a
+     DEPOSIT — a node without it founds no forestry camp and the test would be
+     measuring the ground rather than the chain. So the node is chosen by
+     asking `canBuild('timber')`, deterministically, and the search itself is
+     asserted rather than assumed.
+   ════════════════════════════════════════════════════════════════════════════ */
+const CARDMAP={lumbercamp:{out:['timber'],ind:'forestry'},sawmill:{out:['lumber'],ind:'sawmill'},
+ purifier:{out:['freshWater'],ind:'waterworks'},papermill:{out:['cardStock'],ind:'paperMill'},
+ printworks:{out:['printedCards'],ind:'cardPrinter'},depot:{out:['packagingMaterial'],ind:'distributor'},
+ shop:{out:['boosterPacks'],ind:'cardShop'},housing:{out:['constructionComponents'],ind:'landlord'},
+ farm:{out:['wheat','corn','rice','potatoes','soybeans','vegetables'],ind:'farm'},
+ grocery:{out:['bread'],ind:'grocer'}};
+
+/* 🧨 THE SAME SWITCH round0j USES, so ONE variable proves both halves of this
+   fix can fail: run.mjs round0j proves the STRUCTURE goes red, and this proves
+   the LIVE CITY does. `holographicFoil: 0.02` is the shipped boosterPacks
+   recipe; no city tile makes foil, and firms.js produce() takes the minimum
+   over inputs, so restoring it takes the whole chain back to zero output. */
+if(process.env.ECON_TEST_SABOTAGE==='dark-cards'){
+  R.RECIPES.boosterPacks.in.holographicFoil=0.02;
+  console.log('   🧨 restored `holographicFoil: 0.02` to boosterPacks — the card city must now print nothing');
+}
+
+let cardNode=null;
+for(let i=0;i<300&&!cardNode;i++){ E.mount({nodeId:'ouro-'+i,population:200}); if(E.canBuild('timber')) cardNode='ouro-'+i; }
+chk('found a node whose ground carries timber (the chain starts in the forest)', !!cardNode, String(cardNode));
+
+if(cardNode){
+  E.mount({nodeId:cardNode,population:300});
+  const ct={}; let cn=0;
+  const cbuild=(t,c)=>{for(let i=0;i<(c||1);i++)ct[(cn++)+',0']={type:t,lvl:1,damaged:false};};
+  cbuild('lumbercamp',3);cbuild('sawmill',1);cbuild('purifier',2);cbuild('papermill',1);
+  cbuild('printworks',1);cbuild('depot',1);cbuild('shop',1);cbuild('housing',30);
+  cbuild('farm',2);cbuild('grocery',1);
+  const clist=()=>Object.entries(ct).map(([k,t])=>{const m=CARDMAP[t.type];if(!m)return null;
+    const o=E.pickAvailable(m.out); return o?{key:k,out:o,ind:m.ind,lvl:t.lvl}:null;}).filter(Boolean);
+  const chost={powerFactor:1,waterFactor:1,logisticsCounts:{warehouse:3,depot:2},hasBank:true,
+               infrastructure:0.8,population:300};
+  E.syncBuildings(clist());
+  /* The chain has five rungs and each one needs the rung below it to have
+     stocked up first, so this is a LONG run on purpose — the first pack does
+     not leave the shop until roughly day 4. */
+  let peak=0, peakPacks=0, liveDays=0;
+  for(let d=0;d<600;d++){
+    E.syncBuildings(clist()); E.tick(20,chost);
+    const c=E.cardOutput();
+    if(c.totalUnits>0) liveDays++;
+    if(c.totalUnits>peak) peak=c.totalUnits;
+    const pk=(c.units.boosterPacks||0); if(pk>peakPacks) peakPacks=pk;
+  }
+  const co=E.cardOutput();
+  const rev=(id)=>Firms.alive().filter(f=>f.out===id).reduce((a,f)=>a+(f.lifetimeRevenue||0),0);
+  const made=(id)=>Firms.alive().filter(f=>f.out===id).reduce((a,f)=>a+(f.lastProduced||0),0);
+  console.log('  chain@'+cardNode+': timber '+made('timber').toFixed(0)+'/d → lumber '+made('lumber').toFixed(0)
+    +'/d → cardStock '+made('cardStock').toFixed(0)+'/d → printedCards '+made('printedCards').toFixed(0)
+    +'/d → boosterPacks '+made('boosterPacks').toFixed(0)+'/d');
+  console.log('  cardOutput '+JSON.stringify(co));
+
+  /* 🔴 MEASURED OVER THE WHOLE RUN, NOT ON THE LAST DAY. `cardOutput()` reads
+     `S.observed[id].supply`, which sim.js zeroes at the top of every runDay —
+     it is a ONE-DAY figure, which is exactly what the host's ecoDailyClose()
+     pushes. Asserting on a single closing day would make this test depend on
+     whether that particular day's demand trim happened to bite. `liveDays` is
+     the honest measure: on how many of 600 days did this city report card
+     product at all. Zero is what a broken chain scores, on every day. */
+  chk('the card chain PRODUCES — cardOutput() reported product on most days',
+      liveDays>300 && peak>0,
+      'liveDays='+liveDays+'/600 peak='+peak.toFixed(2)+' lastDay='+co.totalUnits.toFixed(3));
+  chk('a real card SHOP printed packs (not just the presses upstream)',
+      made('boosterPacks')>0 && peakPacks>0,
+      'shop/day='+made('boosterPacks').toFixed(2)+' peak packs reported='+peakPacks.toFixed(2));
+  chk('the printer runs — printedCards is a real, made id now',
+      made('printedCards')>0, 'printedCards/day='+made('printedCards').toFixed(2));
+  /* 💸 THE CINDER WALKS BACK UP. Each rung is paid by the one above it
+     (sim.js payUpstream), so a zero anywhere here means the chain is producing
+     on paper while nobody is buying from anybody. */
+  for(const [id,label] of [['printedCards','the print works'],['cardStock','the paper mill'],
+                           ['lumber','the sawmill'],['timber','the forestry camp']])
+    chk('Cinder reached '+label+' ('+id+')', rev(id)>0, id+' lifetimeRevenue='+rev(id).toFixed(2));
+
+  chk('Rule 1 — the audit is still clean with card production running',
+      !!(E.audit()&&E.audit().ok), JSON.stringify(E.audit()).slice(0,140));
+}
 
 console.log('\n=== GAUNTLET 3: '+(fails.length?fails.length+' FAILURES':'ALL PASS')+' ===');
 if(fails.length) process.exitCode=1;

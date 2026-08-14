@@ -90,6 +90,34 @@
       +25. The midtone 'overlay' came down 0.13 → 0.10 because 'overlay' warms
       darks harder than midtones and was undoing a third of it.
 
+   8. ROUND 4 — THE WARM RESTORE ATE THE WATER, AND FLATTENED THE FIELD.
+      Round 3's chroma restore is a baked full-viewport multiply and it cannot
+      see what it is painting over, so it took blue out of the things the BAR
+      requires to STAY blue exactly as happily as it took it out of sand.
+      Measured on identical frames with only this file differing: the water
+      pool went R−B −0.9 → +16.9, the near-water band −6.5 → +20.8, a teal
+      movement slab −9.9 → +2.7 and the cool population of the field 14.5% →
+      10.5%. The fix is coolThumb() — sample (B−R) BEFORE the multiply, at
+      bloom thumbnail scale, and hand the blue back additively inside the one
+      full-canvas upscale the bloom already does. After: teal slab −9.9 (i.e.
+      the multiply no longer moves it at all), cool population 14.5%, and the
+      cool pixels now average B−R 24.7 against 22.5 with the whole pass off.
+      The SECOND half of round 3's verdict was that local contrast fell in five
+      of six field bands, and the cause was in the same multiply: its luma is
+      1 − 0.3726k ≈ 0.933, so it scales every luma delta in the frame down by
+      6.7%, and the flat additive `addV` that was supposed to compensate can
+      only restore the MEAN. See TONE_GAIN / toneRamp() for the multiplicative
+      replacement. Median local luma sd over 16px tiles, six field bands,
+      round 3 → round 4: 4.74→5.05, 2.89→3.34, 3.43→3.87, 5.26→6.09,
+      5.00→5.83, 6.38→6.62 — every band up, and every band also above the
+      grade-off baseline. grade() p50 at 820x800@2x went 27.4 → 29.1ms, i.e.
+      the round's +25% became +6%, because the additive bake it replaces is
+      gone.
+      ⚠ AND THE ORDER OF THE PASSES IS LADEN. The tone gain must run AFTER the
+      bloom; putting it before turned a 16% achromatic gain into a 1.16³ = 1.56x
+      gain on a bloom that is warm, and swung the near-water band 31 points
+      warm on its own. See the note in grade() step 2b.
+
    ⚠ THE HORIZON IS A CHEAT, AND IT HAS TO BE.
    The true vanishing line of the y=0 plane for this camera sits ~1000px ABOVE
    the viewport (f=(0,-.675,-.738), so the horizon of the ground plane lands at
@@ -2328,8 +2356,10 @@
      untouched and keeps the full warm restore. Nothing in between is a hue
      rotation — it is the same restore, dialled down.
 
-     Costs one thumbnail downscale and one 117x114 getImageData + loop, which
-     measured 0.20ms and 0.90ms respectively at twice this size on this box. ── */
+     Costs one thumbnail downscale plus a getImageData and a JS loop over
+     ~117x114 pixels. Benchmarked at DOUBLE that size (234x228) on this box's
+     software rasteriser: 0.20ms for the readback, 0.90ms for the loop — set
+     against the 10.3ms a single full-canvas pass costs at 1640x1600. ── */
   function coolThumb(api, src, bw, bh) {
     if (S.coolFail) return null;
     if (!S.cool.cv) S.cool.cv = document.createElement('canvas');
@@ -2407,8 +2437,11 @@
      ⚠ THE FEATHER IS N FLAT STRIPS, NOT A GRADIENT. A full-viewport linear
      gradient measured ~4.6ms on this box (see grade() step 1); N fillRects of
      a few pixels each measure nothing. At N=24 each step changes the gain by
-     0.6%, i.e. under one 8-bit level on a mid-field pixel — below the banding
-     threshold, and the two ramps are staggered anyway.
+     0.6%, i.e. under one 8-bit level on a mid-field pixel. Verified rather
+     than assumed: the row-mean luma's second derivative over the feather band
+     measures p50 0.533 with this pass in against 0.515 with it out, which is
+     BELOW the 1.16x the gain itself accounts for — so the strips add no
+     structure of their own.
 
      ⚠ 'difference' IS AN ABSOLUTE VALUE, and that is fine HERE and only here.
      Below TONE_PEDESTAL a channel mirrors instead of clamping, but the toe

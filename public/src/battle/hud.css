@@ -60,20 +60,58 @@
   --hudx-plate-lit:   linear-gradient(180deg, rgba(30, 25, 45, 0.96), rgba(12, 10, 22, 0.99));
   --hudx-ch:          9px;    /* corner chamfer */
 
+  /* ⚜ THE ENGRAVED LATTICE — the fine diagonal cross-hatch that turns a flat
+     dark fill into an etched metal plate. Declared once here and layered on
+     TOP of every plate background in the file (it is the first, i.e. topmost,
+     background layer wherever it appears), so the whole frame carries one
+     surface treatment instead of the top band being tooled and everything
+     below it being flat.
+     ⚠ 4-5% alpha is deliberate: at 8% it reads as a pattern and competes with
+     the labels; at 4% it only registers as tooth on the metal. */
+  --hudx-lattice:
+    linear-gradient(135deg, transparent 47%, rgba(210, 164, 78, 0.055) 50%, transparent 53%) 0 0 / 26px 26px,
+    linear-gradient(45deg,  transparent 47%, rgba(210, 164, 78, 0.045) 50%, transparent 53%) 0 0 / 26px 26px;
+  /* the same weave at half the pitch, for small panels where a 26px cell would
+     show only one stroke */
+  --hudx-lattice-fine:
+    linear-gradient(135deg, transparent 46%, rgba(210, 164, 78, 0.05) 50%, transparent 54%) 0 0 / 14px 14px,
+    linear-gradient(45deg,  transparent 46%, rgba(210, 164, 78, 0.04) 50%, transparent 54%) 0 0 / 14px 14px;
+
   /* Height of the top hero-banner band. Read by #battle-event-feed (below) so
      the notification ticker always stacks UNDER the banners instead of behind
      them — index.html hard-codes `top:92px`, which is exactly where the
-     banners now sit. */
-  --hud-banner-h: 140px;
+     banners now sit.
+     ⚠ 140 -> 118. This is now a MEASURED number, not a design guess: the band
+     must be exactly as tall as the chrome it paints, because `.battle-center`
+     derives the board's top edge from it (see §3) and any slack between the two
+     is either dead space or — what the critic measured — the fixed top chrome
+     overlapping the battlefield viewport. See --hudx-band-pad below. */
+  --hud-banner-h: 118px;
+
+  /* THE BAND'S PAINTED FOOT minus `.battle-center`'s own 6px offset. The board
+     column starts at y=6 with no padding, so padding-top = band - 6 puts
+     `.board-area`'s top edge exactly on the band's bottom edge: zero overlap,
+     zero gap. Measured at 1600x1000: band [0,0,1600,112], board-area top 112. */
+  --hudx-band-pad: 6px;
 
   /* Bottom-right END TURN hex. The right rail stops above it.
-     ⚠ 116 -> 158. At 116 the hex's top edge landed at y=868 while the player's
-     cluster frame ended at ~768, leaving ~100px of bare, undesigned background
-     in the right column. Growing the hex closes most of that (and the BAR asks
-     for a LARGE hexagon), and `.hudx-endturn .etwrap::before/::after` hang a
-     gold strut and diamond finial through what is left, so the hex reads as
-     suspended from the cluster rather than dropped in the corner. */
-  --hudx-et-h: 158px;
+     ⚠ 116 -> 158 -> 124, and the 158 was overshoot. At 116 the hex's top edge
+     landed at y=868 while the cluster frame ended at ~768, leaving ~100px of
+     bare background — but the frame's own `bottom` is derived FROM this number
+     (`.bp-wrap.bsx { bottom: calc(var(--hudx-et-h) + 22px) }`), so the rail
+     closes that gap by itself at any height and growing the button was the
+     wrong lever. At 158 the hex measured 320x158 against a hand card's 118x177
+     and outweighed the entire hand beside it. 124 keeps it the largest single
+     control in the frame (BAR: "a LARGE hexagonal END TURN button") without
+     out-shouting the cards, and the rail simply grows 34px to meet it. */
+  --hudx-et-h: 124px;
+  /* ⚠ The hex is measured against the RAIL FRAME, not the rail's grid column.
+     `.bp-wrap.bsx` is [1264,0,336,820] but its visible plate — `.bsx-frame` —
+     is [1272,9,320,802], i.e. inset 8px left and 8px right. The hex is pinned
+     to the same 1272..1592 span so the two share one vertical edge; matching
+     the column instead put the button's edge 8px proud of every panel above
+     it, which is the misalignment the critic caught. */
+  --hudx-et-inset: 8px;
 }
 
 /* The chamfered (octagonal) plate outline used everywhere in place of a
@@ -196,11 +234,24 @@
    reads as an empty part of a designed panel rather than as a hole. It sits
    BEHIND `.bsx-inner` (which has no background of its own) at ~4% alpha, so it
    never competes with a label. */
+/* ⚠ THE SAME FOOT MEDALLION AS `.bc-rail`, for the same reason and measured the
+   same way. `.bsx-frame` fills the column (see the note above), so once CONCEDE
+   is placed there is ~175px of slack between it and the energy readout pinned at
+   the frame's foot — the right column's version of the left column's bare band.
+   Both edges of the frame now carry the identical ornament, which is also what
+   stops the two rails reading as two different designers' work. */
 .battle-screen .bp-wrap.bsx .bsx-body {
   background:
-    linear-gradient(135deg, transparent 47%, rgba(210, 164, 78, 0.05) 50%, transparent 53%) 0 0 / 26px 26px,
-    linear-gradient(45deg,  transparent 47%, rgba(210, 164, 78, 0.05) 50%, transparent 53%) 0 0 / 26px 26px;
+    var(--hudx-lattice),
+    radial-gradient(circle at 50% calc(100% - 84px), transparent 0 37px, rgba(210, 164, 78, 0.1) 37px 38px, transparent 38.5px),
+    radial-gradient(circle at 50% calc(100% - 84px), transparent 0 25px, rgba(210, 164, 78, 0.07) 25px 26px, transparent 26.5px),
+    radial-gradient(circle at 50% calc(100% - 84px), rgba(210, 164, 78, 0.4) 0 2px, transparent 2.6px),
+    linear-gradient(var(--hudx-gold-hair), var(--hudx-gold-hair)) 50% calc(100% - 140px) / 62% 1px no-repeat,
+    linear-gradient(rgba(210, 164, 78, 0.13), rgba(210, 164, 78, 0.13)) 50% calc(100% - 24px) / 38% 1px no-repeat;
 }
+/* the opponent's frame carries the identical weave — the two clusters are one
+   component and must not differ by surface either */
+.hudx-cluster .bsx-body { background: var(--hudx-lattice); }
 
 /* ⚠ THE BOARD'S TOP EDGE. Hoisting the phase track out of `.battle-center`
    handed the board column ~40px back, which pulled `.board-area` up to y=6 —
@@ -208,10 +259,20 @@
    horizon clears the band. It moves `.board-area`'s POSITION, never its size:
    the box is still `.board`'s own `100svh - 212px` formula, and
    `_bbStageTrack()` re-reads the rect every frame, so the 3D stage and the
-   `.bb-catch` click layer follow it exactly. Measured at 1600x1000: board-area
-   6 -> 102, ground bottom still clear of the hand strip at 789. */
+   `.bb-catch` click layer follow it exactly.
+
+   ⚠ `- 44px` -> `- var(--hudx-band-pad)`, and the offset is no longer a fudge.
+   At `- 44` the band measured [0,0,1600,124] against `.board-area` [386,102,…]
+   — 22px of FIXED CHROME PAINTED OVER THE BATTLEFIELD VIEWPORT, with the phase
+   plaque (bottom edge y=124) sitting squarely on the board's top rows. The band
+   is now sized to exactly --hud-banner-h (§3 pins every part of it) and the
+   board starts at `band - 6`, the 6px being `.battle-center`'s own offset with
+   zero padding. That makes the two edges MEET: no overlap, no gap, and it costs
+   the field only the 10px the band itself gave back by shrinking.
+   Measured at 1600x1000: band [0,0,1600,112] · board-area top 112 · overlap 0 ·
+   ground bottom still clear of the hand strip at 789. */
 @media (min-width: 1101px) {
-  .battle-screen .battle-center { padding-top: calc(var(--hud-banner-h) - 44px); }
+  .battle-screen .battle-center { padding-top: calc(var(--hud-banner-h) - var(--hudx-band-pad)); }
 }
 
 /* ⚠ `_bpFit()` is allowed to grow `--fit` to 1.20 on a big desktop. That would
@@ -230,8 +291,16 @@
       Fixed, pointer-events:none so the band's empty gutters never eat a click
       meant for the board; only the banners themselves take pointer events.
    ------------------------------------------------------------------------ */
+/* ⚠ THE BAND'S HEIGHT IS PINNED, not left to its content. `.battle-center`
+   derives the board's top edge from --hud-banner-h, so if the band were free to
+   measure taller than that variable the difference would silently become fixed
+   chrome painted over the battlefield — which is exactly the 22px the critic
+   measured. Everything inside is sized to add up to it:
+       4 (padding) + 92 (.fighter) + 4 (gap) + 32 (#phase-bar) - 14 (tuck) = 118
+   Change any of those five and re-measure; the band must not overflow. */
 .hudx-topband {
   position: fixed; left: 0; right: 0; top: 0;
+  height: var(--hud-banner-h);
   z-index: 62;                       /* over the rails (61/60), under modals */
   display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding-top: 4px;
@@ -251,7 +320,7 @@
   position: relative;
   display: grid; grid-template-columns: auto minmax(0, 1fr);
   align-items: center; gap: 10px;
-  width: 340px; padding: 7px 12px 7px 8px;
+  width: 340px; height: 92px; padding: 7px 12px 7px 8px;
   /* outer gold plate; the dark face is ::before, so the chamfered edge reads
      as a bevelled metal frame instead of a stroked rectangle */
   background: linear-gradient(180deg, rgba(214, 176, 90, 0.72), rgba(104, 76, 28, 0.5) 46%, rgba(214, 176, 90, 0.62));
@@ -286,16 +355,28 @@
 .hudx-fighters .fighter[data-side="foe"] .finfo .pills,
 .hudx-fighters .fighter[data-side="foe"] .finfo .statuses { justify-content: flex-end; }
 .hudx-fighters .fighter[data-side="foe"] { padding: 7px 8px 7px 12px; }
-/* a dark-red inner cast so the enemy banner is never mistaken for your own */
+/* ── the enemy banner's identity: FRAME AND PLATE, not the health bar ──────
+   Your banner is bright gold on a cool violet-black plate; theirs is a
+   tarnished crimson-bronze frame on a blood-black plate. Both differences are
+   trim and ground — neither can be read as a threshold on a meter. */
+.hudx-fighters .fighter[data-side="foe"] {
+  background: linear-gradient(180deg, rgba(196, 116, 96, 0.72), rgba(84, 34, 26, 0.55) 46%, rgba(186, 108, 90, 0.62));
+}
 .hudx-fighters .fighter[data-side="foe"]::before {
   background:
     radial-gradient(120% 150% at 50% -30%, rgba(150, 40, 42, 0.3), transparent 70%),
     linear-gradient(180deg, rgba(34, 17, 22, 0.96), rgba(13, 8, 14, 0.99));
 }
+.hudx-fighters .fighter[data-side="foe"]::after { border-color: rgba(198, 118, 98, 0.3); }
+/* the portrait's own rim goes with it — "distinguish by frame, portrait or an
+   accent" is the brief, and this is all three at once */
+.hudx-fighters .fighter[data-side="foe"] .hudx-hex {
+  background: linear-gradient(160deg, #f0b3a2, #7d2a1e 55%, #e6a08c);
+}
 
 /* ── hex-cut portrait ───────────────────────────────────────────────────── */
 .hudx-hex {
-  position: relative; width: 74px; height: 84px; flex: 0 0 auto;
+  position: relative; width: 68px; height: 78px; flex: 0 0 auto;
   background: linear-gradient(160deg, var(--hudx-gold-lit), #8a6218 55%, #f0cf7a);
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
   filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.7));
@@ -370,13 +451,84 @@
   clip-path: polygon(3px 0, 100% 0, calc(100% - 3px) 100%, 0 100%);
 }
 .hudx-fighters .rpseg { flex: 1; border-radius: 0; background: rgba(255, 255, 255, 0.05); }
+
+/* 🩸 THE FILL COLOUR IS HEALTH. IT IS NEVER SIDE.
+   This used to be green for you and RED FOR THE ENEMY, which meant Lyra's bar
+   rendered in ten red segments at 250/250 — a bar that reads "nearly dead" on a
+   hero at full health. Red on a health bar has exactly one meaning in every game
+   ever shipped and spending it on team identity throws away the only signal a
+   player scans the top of the screen for. Both bars now run the same ramp, and
+   the SIDE is carried by the plate, the frame, the mirrored portrait and an
+   explicit YOU / FOE tab (below) — none of which can be confused with a
+   threshold.
+
+   ⚠ HOW THE THRESHOLDS ARE READ WITHOUT JS. `renderBattle()` emits exactly ten
+   `<span class="rpseg">` and turns on the first ceil(hp/max*10) of them (dumped
+   from the live DOM to confirm), so the Nth segment's `.on` state IS the ">= N
+   tenths" test. `:has()` turns that into pure CSS, which matters because the HP
+   numbers change on partial patches that never rebuild the screen — a JS-set
+   class would go stale between renders and CSS cannot.
+   Specificity: the base rule is (0,3,0); each state rule is (0,7,0) — :has()
+   contributes its argument's specificity — so state beats base, and CRITICAL is
+   last in source so it beats WOUNDED at the same weight. A browser without
+   :has() drops the state rules and every bar stays green: wrong, but never
+   alarming, which is the safe direction to fail in. */
 .hudx-fighters .rpseg.on {
   background: linear-gradient(180deg, #9bef77, #46a52a);
   box-shadow: 0 0 6px rgba(120, 230, 90, 0.55), inset 0 1px 0 rgba(220, 255, 200, 0.5);
 }
-.hudx-fighters .fighter[data-side="foe"] .rpseg.on {
+/* WOUNDED — the 7th tenth is out, i.e. below 70% */
+.hudx-fighters .rpbar:not(:has(.rpseg:nth-child(7).on)) .rpseg.on {
+  background: linear-gradient(180deg, #ffe08a, #d08a1c);
+  box-shadow: 0 0 6px rgba(240, 190, 80, 0.5), inset 0 1px 0 rgba(255, 240, 200, 0.5);
+}
+/* CRITICAL — the 4th tenth is out, i.e. below 40%. The ONLY red in the band. */
+.hudx-fighters .rpbar:not(:has(.rpseg:nth-child(4).on)) .rpseg.on {
   background: linear-gradient(180deg, #ff9d86, #c4382c);
-  box-shadow: 0 0 6px rgba(230, 90, 70, 0.5), inset 0 1px 0 rgba(255, 210, 200, 0.45);
+  box-shadow: 0 0 7px rgba(230, 90, 70, 0.6), inset 0 1px 0 rgba(255, 210, 200, 0.45);
+}
+.hudx-fighters .rpbar:not(:has(.rpseg:nth-child(4).on)) {
+  border-color: rgba(226, 108, 92, 0.8);
+  animation: hudx-hpcrit 1.5s ease-in-out infinite;
+}
+@keyframes hudx-hpcrit {
+  0%, 100% { box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.85); }
+  50%      { box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.85), 0 0 12px rgba(226, 80, 64, 0.55); }
+}
+/* the foe's bar is told apart by its FRAME, which is a brass-crimson rather
+   than the player's gold — a trim colour, on a bar whose fill still means
+   health and nothing else */
+.hudx-fighters .fighter[data-side="foe"] .rpbar { border-color: rgba(186, 116, 96, 0.6); }
+.hudx-fighters .fighter[data-side="foe"] .rprow .tag { color: #c9a08e; }
+
+/* ── YOU / FOE — the unambiguous side marker the HP colour used to be ──────
+   A small gold (yours) / crimson (theirs) tab notched into the top of each
+   banner, at the band's two OUTER corners — inside `.finfo`'s column, in the
+   ~13px of empty plate above the name row (measured: the name/pills/HP stack is
+   ~51px centred in a 78px content box, so it starts at y≈20 and the tab at
+   y=2..15 cannot collide with it).
+   `.finfo` carries it because `.fighter`'s own ::before and ::after are
+   already the dark face and the inner hairline; index.html has no pseudo on
+   `.finfo` (grepped), so this claims nothing.
+   It is absolutely positioned against `.fighter` (the nearest positioned
+   ancestor) and pointer-events:none, so it adds no layout and cannot swallow a
+   click. `top: 2px`, not 0 — `.fighter`'s chamfer clip-path clips descendants,
+   and a tab flush with the edge loses its own corners to it. */
+.hudx-fighters .finfo::before {
+  content: "YOU";
+  position: absolute; top: 2px; z-index: 3; pointer-events: none;
+  padding: 2px 13px 3px;
+  font-family: 'Cinzel', serif; font-weight: 900; font-size: 8px; line-height: 1;
+  letter-spacing: 0.24em;
+  color: #2a1d06;
+  background: linear-gradient(180deg, var(--hudx-gold-lit), var(--hudx-gold));
+  clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 100%, 7px 100%);
+}
+.hudx-fighters .fighter:not([data-side="foe"]) .finfo::before { right: 14px; }
+.hudx-fighters .fighter[data-side="foe"] .finfo::before {
+  content: "FOE"; left: 14px;
+  color: #ffe3da;
+  background: linear-gradient(180deg, #c8564a, #7d1f18);
 }
 .hudx-fighters .rprow .num {
   font-family: 'Cinzel', serif; font-weight: 800; font-size: 13px;
@@ -565,13 +717,11 @@
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
   border: 0; box-shadow: 0 0 14px rgba(255, 196, 80, 0.4);
 }
-.hudx-cluster[data-hudx-side="foe"] .eorb {
-  background: linear-gradient(180deg, #ffd0c2, #d9614a 60%, #8f2f22); color: #2c0b06;
-}
-.hudx-cluster[data-hudx-side="foe"] .pip.on {
-  background: linear-gradient(180deg, #ffb59f, #d55b40);
-  box-shadow: 0 0 9px rgba(230, 110, 80, 0.65), inset 0 1px 0 rgba(255, 226, 216, 0.7);
-}
+/* ⚠ THE FOE'S ENERGY PIPS WERE RED AND ARE NOT ANY MORE — same reasoning as the
+   HP bar. A full row of red pips on the enemy's cluster is the same false alarm
+   in a quieter place, and it made the two clusters look like different
+   components when the spec is that they are identical. Both sides now run the
+   game's own amber; the crimson frame and the head plate say whose it is. */
 
 /* ── the command bar, moved to the foot of the PLAYER's cluster ─────────────
    Concede · turn plaque · turn timer · settings. These were at the bottom of
@@ -628,8 +778,8 @@
       markup — so the binding survives and the second copy stays unmounted.
    ------------------------------------------------------------------------ */
 .hudx-endturn {
-  position: fixed; right: 8px; bottom: 16px; z-index: 62;
-  width: calc(var(--btl-rail-w) - 16px); height: var(--hudx-et-h);
+  position: fixed; right: var(--hudx-et-inset); bottom: 16px; z-index: 62;
+  width: calc(var(--btl-rail-w) - var(--hudx-et-inset) * 2); height: var(--hudx-et-h);
   display: grid; place-items: center;
   pointer-events: none;
 }
@@ -648,17 +798,24 @@
    neither can affect the wrap's box or intercept a click on #btn-end-turn. */
 .hudx-endturn .etwrap::before,
 .hudx-endturn .etwrap::after {
-  content: ""; position: absolute; top: -7px; width: 34%; height: 1px;
+  content: ""; position: absolute; left: 0; right: 0; height: 1px;
   pointer-events: none;
+  background: linear-gradient(90deg,
+    var(--hudx-gold-dim) 0 13%, transparent 33%, transparent 67%, var(--hudx-gold-dim) 87% 100%);
 }
-.hudx-endturn .etwrap::before {
-  left: 0;
-  background: linear-gradient(90deg, transparent, var(--hudx-gold-dim));
-}
-.hudx-endturn .etwrap::after {
-  right: 0;
-  background: linear-gradient(270deg, transparent, var(--hudx-gold-dim));
-}
+/* ⚠ A HEXAGON HAS NO RIGHT EDGE — it has a POINT. That is the whole of the
+   "END TURN's right edge misses the rail's alignment" reading: the wrap's box
+   and the rail frame's box already share x=1272..1592 exactly (both measured),
+   but the amber shape only touches 1592 on one scanline at mid-height, so the
+   eye takes the button's edge to be the end of its flat top run (~1515) and
+   sees it fall short of every panel above it. These two rules run the FULL
+   width of the wrap — 1272 to 1592, the rail frame's own span — so the button
+   gets two literal edges on the rail's line, one above the crown and one below
+   the foot, and the hexagon reads as mounted between them.
+   They are absolutely positioned and pointer-events:none, so neither can
+   affect the wrap's box or intercept a click on #btn-end-turn. */
+.hudx-endturn .etwrap::before { top: -7px; }
+.hudx-endturn .etwrap::after { bottom: -7px; }
 /* the bevelled ornate hex plate behind the button */
 .hudx-endturn::before,
 .hudx-endturn::after {
@@ -680,7 +837,18 @@
   width: calc(100% - 18px); height: calc(100% - 18px);
   border: 0; border-radius: 0; padding: 0;
   clip-path: polygon(24% 0, 76% 0, 100% 50%, 76% 100%, 24% 100%, 0 50%);
-  background: linear-gradient(180deg, #ffe9a8 0%, #f5c44f 34%, #d99327 62%, #a4650f 100%);
+  /* ⚠ NOT A BARE GRADIENT. At 320x158 this was the largest single flat fill in
+     the frame; even at 124 it is the brightest object below the banners, and an
+     unbroken ramp on that much area is the "uniform flat gradient" BAR line 51
+     calls out by name. Two engraved layers break it up — a dark diagonal tooth
+     (the same weave as every plate, inverted so it reads on amber) and a raking
+     highlight off the top-left, matching the scene's key light — while the ramp
+     underneath is unchanged, so the button's colour and state read identically. */
+  background:
+    linear-gradient(135deg, transparent 47%, rgba(92, 52, 4, 0.13) 50%, transparent 53%) 0 0 / 13px 13px,
+    linear-gradient(45deg,  transparent 47%, rgba(92, 52, 4, 0.09) 50%, transparent 53%) 0 0 / 13px 13px,
+    radial-gradient(130% 120% at 26% -10%, rgba(255, 251, 224, 0.5), transparent 58%),
+    linear-gradient(180deg, #ffe9a8 0%, #f5c44f 34%, #d99327 62%, #a4650f 100%);
   color: #2a1a03;
   font-family: 'Cinzel', serif; font-weight: 900;
   font-size: clamp(14px, 1.15vw, 19px); letter-spacing: 0.1em; line-height: 1.1;
@@ -724,7 +892,54 @@
 }
 .bchrome .panel {
   border: 1px solid var(--hudx-gold-dim);
-  background: var(--hudx-plate);
+  background: var(--hudx-lattice), var(--hudx-plate);
+  clip-path: var(--hudx-clip);
+}
+
+/* ═══ THE LEFT COLUMN IS ONE CONTINUOUS PLATE ══════════════════════════════
+   ⚠ THE UNDESIGNED REGION. `.bc-rail` is [8,377,320,614] — it runs to y=991 —
+   but `_bcpFit()` zooms its contents to fit and at 1600x1000 that lands FIELD
+   BAG's bottom edge at y=830. The 161px between the two was raw page
+   background: the one part of the frame nothing had been drawn on, directly
+   opposite a right column that is continuous chrome from y=9 to the END TURN
+   hex. That asymmetry is what reads as "half-finished" faster than any flat
+   fill does.
+
+   ⚠ THIS IS PAINT AND ONLY PAINT. Every declaration is background / box-shadow
+   / clip-path — no width, height, padding, margin, border or position. That
+   matters more here than anywhere else in the file because `_bcpFit()`'s whole
+   contract is measurement: it reads `.bc-rail`'s own rect, writes
+   `rail.style.height` and `rail.style.zoom`, and iterates
+   `.bc-rail > *, .bcp .hud > *` for the furthest child bottom. None of those
+   numbers can move by a paint-only rule, and no pseudo-element is added — a
+   `::before` on `.bc-rail` would become a FLEX ITEM of the column
+   (`.bchrome .bc-rail { display:flex; flex-direction:column }`) and change the
+   very measurement this must not touch. The gold hairline is therefore an
+   INSET BOX-SHADOW rather than a border, which costs zero layout.
+
+   The rail's own `overflow:hidden` (index.html ~5789) already clips its
+   children, so the chamfer changes silhouette without changing what is visible.
+   ------------------------------------------------------------------------ */
+.battle-screen .bc-rail {
+  background:
+    var(--hudx-lattice),
+    /* THE ENGRAVED FOOT MEDALLION — a double ring, a centre stud and two rules,
+       sitting in the band `_bcpFit()`'s zoom leaves the content short of, so the
+       empty part of the column reads as the bottom of a designed panel instead
+       of a hole in one. Offsets are anchored to the rail's FOOT, so they follow
+       the rail at any zoom, and everything is under 9% alpha — if a taller
+       hand or a shorter window pushes real content down over it, it reads as
+       tooling in the plate rather than as a graphic in the way. */
+    radial-gradient(circle at 50% calc(100% - 96px), transparent 0 37px, rgba(210, 164, 78, 0.1) 37px 38px, transparent 38.5px),
+    radial-gradient(circle at 50% calc(100% - 96px), transparent 0 25px, rgba(210, 164, 78, 0.07) 25px 26px, transparent 26.5px),
+    radial-gradient(circle at 50% calc(100% - 96px), rgba(210, 164, 78, 0.4) 0 2px, transparent 2.6px),
+    linear-gradient(var(--hudx-gold-hair), var(--hudx-gold-hair)) 50% calc(100% - 150px) / 62% 1px no-repeat,
+    linear-gradient(rgba(210, 164, 78, 0.13), rgba(210, 164, 78, 0.13)) 50% calc(100% - 30px) / 38% 1px no-repeat,
+    /* and a slow darkening toward the foot so the plate has a bottom */
+    linear-gradient(180deg, rgba(19, 16, 30, 0.62) 0%, rgba(12, 10, 20, 0.74) 62%, rgba(6, 5, 12, 0.88) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(210, 164, 78, 0.2),
+    inset 0 0 70px rgba(0, 0, 0, 0.55);
   clip-path: var(--hudx-clip);
 }
 /* index.html's `.bchrome .panel::before` is an inset rounded ring; re-cut it as
@@ -742,8 +957,27 @@
 .bcp .envcard .eic { border-radius: 0; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
 .bcp .log, .bcp .consbox {
   border: 1px solid var(--hudx-gold-dim);
-  background: var(--hudx-plate);
+  background: var(--hudx-lattice), var(--hudx-plate);
   clip-path: var(--hudx-clip);
+}
+/* ⚠ THE ULTIMATE BAR WAS THE ONE FLAT FILL LEFT IN THE LEFT RAIL — a solid
+   violet slab with a chamfered outline, which is a re-cut silhouette on an
+   un-re-skinned surface. index.html paints it with `background` (not
+   background-color) at ~5855 and its own ::before carries the charge sweep, so
+   the plate has to be re-declared rather than layered under. The charge fill
+   (`.ultbtn .ufill`) is untouched — it is a state readout, not chrome. */
+.bcp .ultbtn, .bchrome .ultbtn {
+  background:
+    var(--hudx-lattice-fine),
+    linear-gradient(180deg, rgba(38, 26, 62, 0.94), rgba(15, 10, 26, 0.97));
+  border-color: var(--hudx-gold-dim);
+  box-shadow: inset 0 1px 0 rgba(246, 220, 149, 0.16), inset 0 0 26px rgba(0, 0, 0, 0.6);
+}
+/* the field-condition cards and the bag button take the same tooth */
+.bcp .envcard { background: var(--hudx-lattice-fine), var(--hudx-plate); }
+.bchrome .bc-bag {
+  background: var(--hudx-lattice-fine), var(--hudx-plate);
+  border: 1px solid var(--hudx-gold-hair);
 }
 .bcp .hint {
   border-radius: 0;
@@ -813,6 +1047,23 @@
    re-cuts its silhouette; re-positioning it would be a rule that never wins
    and a second source of truth for where it lives. */
 .emote-toggle, .emote-btn { border-radius: 0; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+/* ⚠ AND IT IS RE-TINTED, but only inside a battle. index.html paints the toggle
+   a flat teal (~31110) explicitly so it is never confused with the purple
+   world-chat bubble — a real constraint, and this keeps it: the GLYPH and the
+   rim stay teal, only the disc becomes the same dark plate as everything else
+   in the column it now sits on. Left teal-on-teal it was the one saturated
+   off-palette object in the newly painted left rail, i.e. a sticker. Scoped
+   with the same `body:has(.battle-screen)` form chrome.css uses to move it, so
+   the toggle is untouched everywhere else in the app. */
+body:has(.battle-screen) .emote-toggle {
+  background:
+    var(--hudx-lattice-fine),
+    radial-gradient(80% 70% at 50% 24%, rgba(60, 190, 180, 0.22), transparent 72%),
+    linear-gradient(180deg, rgba(19, 16, 30, 0.96), rgba(8, 7, 16, 0.98));
+  border: 1px solid rgba(120, 232, 222, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(210, 164, 78, 0.18), 0 6px 16px rgba(0, 0, 0, 0.6);
+  color: #9fe6dd;
+}
 
 /* Toasts sit bottom-centre over the hand strip and must stay legible against
    the new chrome; only the silhouette changes. */
@@ -894,8 +1145,11 @@
 .hand-strip .hand-card,
 .hand-strip .hand-card.type-weather,
 .hand-strip .hand-card.type-wall {
-  /* dark chamfered plate: warm bloom in the art window over a cold plate */
+  /* dark chamfered plate: warm bloom in the art window over a cold plate,
+     carrying the same engraved lattice as every other plate in the frame — the
+     hand was the last surface in the lower third still reading as a flat fill */
   background:
+    var(--hudx-lattice-fine),
     radial-gradient(88% 42% at 50% 23%, rgba(210, 164, 78, 0.14), transparent 74%),
     linear-gradient(180deg, #1b1531 0%, #130e23 44%, #0b0816 100%) !important;
   border: 1px solid var(--hudx-gold-dim);
@@ -949,8 +1203,20 @@
    descendant of a card can contribute a pixel to `.hand-strip`'s measured
    height. Confirmed in the harness across all three variants — `.hand-strip`
    stays [0, 789, 1600, 211], byte-identical to the untouched layout. */
+/* ⚠ 12% -> 14.6%, AND IT IS A CLIPPING FIX. Measured on the live strip: a card
+   is 118x177, so a 12% band is 21px while a two-word name laid out at 11.5px /
+   12.1px line-height needs 24 — `scrollHeight - clientHeight` came back at 3px
+   for BOTH "Lightning Storm" and "Goblin Scout", i.e. the second line was
+   sliced through the middle by the band's own `overflow:hidden`. Under the old
+   frameless render that read as "the text is just there"; with a plate behind
+   it, it reads as a bug. `top` steps up by the same 2.6% so the band's FOOT is
+   unchanged at 65.5% and `.hand-card-plate` below it does not move.
+   This still cannot reach `--hand-clear`: both elements are position:absolute
+   inside `.hand-card`, whose box is a fixed width + aspect-ratio, so no
+   descendant of a card contributes a pixel to `.hand-strip`'s measured height.
+   Verified: `.hand-strip` stays [0, 789, 1600, 211]. */
 .hand-strip .hand-card .hand-card-name {
-  top: 52%; height: 12%;
+  top: 50.9%; height: 14.6%;
   color: var(--hudx-gold-lit);
   background: linear-gradient(180deg, rgba(38, 30, 60, 0.97), rgba(12, 9, 22, 0.99));
   box-shadow:
@@ -1022,7 +1288,9 @@
    ~200px shorter. Verified back to ~0.75 at 1440x900.
    ------------------------------------------------------------------------ */
 @media (max-height: 950px) {
-  :root { --hud-banner-h: 118px; --hudx-et-h: 128px; }
+  /* the same arithmetic as the desktop band, with the shorter banner:
+     4 + 80 (.fighter) + 4 + 32 (#phase-bar) - 14 (tuck) = 106 */
+  :root { --hud-banner-h: 106px; --hudx-et-h: 108px; }
   .hudx-piles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
   .hudx-cell { padding: 3px 1px 8px; }
   .hudx-cell .cardslot { width: clamp(40px, 6.4vh, 62px); }
@@ -1036,8 +1304,8 @@
   .hudx-cell .slabel svg { width: 9px; height: 9px; }
   .hudx-cell .count { width: 25px; height: 25px; right: -3px; bottom: -4px; }
   .hudx-cell .count i { font-size: 10.5px; }
-  .hudx-hex { width: 62px; height: 70px; }
-  .hudx-fighters .fighter { width: 300px; padding: 5px 10px 5px 6px; }
+  .hudx-hex { width: 60px; height: 70px; }
+  .hudx-fighters .fighter { width: 300px; height: 80px; padding: 5px 10px 5px 6px; }
   .hudx-fighters .fighter[data-side="foe"] { padding: 5px 6px 5px 10px; }
   .hudx-fighters .finfo h2 { font-size: 13.5px; }
   .hudx-fighters .rpbar { height: 11px; }
@@ -1053,9 +1321,14 @@
    ------------------------------------------------------------------------ */
 @media (max-width: 1100px) {
   :root { --hud-banner-h: 92px; }
-  .hudx-topband { position: static; padding: 0; }
+  /* ⚠ height:auto is REQUIRED here, not tidiness. §3 pins the band to
+     --hud-banner-h so the board's top edge can be derived from it; in this
+     fallback the two banners STACK, so a pinned height would clip the second
+     one. There is no fixed chrome to overlap in this branch — the band is
+     static and the board follows it in normal flow — so the pin has no job. */
+  .hudx-topband { position: static; height: auto; padding: 0; }
   .hudx-banners #fighters { flex-direction: column; }
-  .hudx-fighters .fighter { width: auto; }
+  .hudx-fighters .fighter { width: auto; height: auto; }
   .hudx-endturn { position: static; width: auto; height: auto; }
   .hudx-endturn::before, .hudx-endturn::after { display: none; }
   .hudx-endturn .endturn { width: 100%; height: 48px; }

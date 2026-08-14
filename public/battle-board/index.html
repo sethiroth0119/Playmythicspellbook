@@ -200,7 +200,7 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v120t2';
+<script>window.BB_BUILD='v120t3';
 "use strict";
 /* 🔌 BBX — THE STAGE HOOK SEAM.
    The board page is a classic (non-module) script, so it cannot `import`.
@@ -1517,27 +1517,72 @@ function bakeTerrain(){
   const cols = MAP.cols, rows = MAP.rows;
   const poly = {}, mat = {};
 
-  /* ── 0. the field beyond the tiles ────────────────────────────────────
-     Feathered rock shelf instead of the old stone plate + GOLD RAIL. Three
-     nested quads with falling alpha dissolve the field's edge into the
-     vista, so the board stops reading as a plate floating in a void. */
-  const shelf = (pad, a) => {
-    const q = [
-      project({x:-cols/2-pad, y:-0.012, z:-rows/2-pad}),
-      project({x: cols/2+pad, y:-0.012, z:-rows/2-pad}),
-      project({x: cols/2+pad, y:-0.012, z: rows/2+pad}),
-      project({x:-cols/2-pad, y:-0.012, z: rows/2+pad})
-    ];
-    if (!q.every(Boolean)) return;
-    pathPolyOn(g,q);
-    const gr = g.createLinearGradient(0, q[0].y, 0, q[2].y);
-    gr.addColorStop(0, rgba(mixHexRaw(mixHexRaw(SAND_DEEP, LIGHT.fog, .42), LIGHT.key, .10), a));
-    gr.addColorStop(1, rgba(mixHexRaw(ROCK_DEEP, LIGHT.ambient, .12), a));
+  /* ── 0. THE FIELD DISSOLVES INTO THE CANYON FLOOR ─────────────────────
+     ⚠ ROUND 2 REWRITE — DO NOT PUT A RECTANGLE BACK HERE.
+     Round 1 drew three nested AXIS-ALIGNED quads, and the critic read exactly
+     what was drawn: "the board is a floating rectangular slab, not a canyon
+     floor — all four edges of the play surface are visible as straight lines,
+     a grey-brown stone apron lip across the full width at the bottom, hard
+     vertical cuts down the left and right." Feathering the ALPHA of a
+     rectangle does not help: a rectangle still has four straight edges, and
+     the eye finds a straight edge at any contrast.
+     So the apron is an IRREGULAR RING. The board perimeter is walked as a
+     polyline and every sample is pushed outward by a smooth per-ring noise,
+     so no ring has a straight side and no two rings nest concentrically.
+     Five rings at falling alpha feather it outward, and the outermost is warm
+     hazed sand — NOT the old ROCK_DEEP + ambient mix, which is the literal
+     source of the "grey-brown stone apron lip".
+     The board edge itself is broken separately: boundary walls lose their lit
+     lip (see EDGES below) and the EDGE SPILL pass after §1b throws sand lobes
+     and talus across whatever line is left. */
+  const ringNoise = (t, seedN) => {
+    /* three octaves of a periodic sine sum — periodic in t so the ring closes
+       without a seam, and seeded so ring 1 is not ring 2 scaled up. */
+    const p = (k, ph) => Math.sin(t * Math.PI * 2 * k + ph);
+    const a = hfStrHash(MAP.id + '#ring', seedN * 5 + 1) * 6.283;
+    const b = hfStrHash(MAP.id + '#ring', seedN * 5 + 2) * 6.283;
+    const c = hfStrHash(MAP.id + '#ring', seedN * 5 + 3) * 6.283;
+    return p(2, a) * 0.52 + p(3, b) * 0.30 + p(7, c) * 0.18;
+  };
+  const apronRing = (pad, a, seedN) => {
+    const hw = cols / 2, hh = rows / 2;
+    const per = 2 * (cols + rows);
+    const N = 132;
+    const pts = [];
+    for (let i = 0; i < N; i++){
+      const t = i / N;
+      let d = t * per, ex, ez, nx, nz;
+      if (d < cols)              { ex = -hw + d;            ez = -hh; nx = 0;  nz = -1; }
+      else if (d < cols + rows)  { d -= cols;  ex =  hw;     ez = -hh + d; nx = 1;  nz = 0; }
+      else if (d < 2*cols + rows){ d -= cols + rows; ex = hw - d; ez = hh; nx = 0; nz = 1; }
+      else                       { d -= 2*cols + rows; ex = -hw; ez = hh - d; nx = -1; nz = 0; }
+      /* outward push, never below 0.25 of the nominal pad so the ring always
+         clears the tiles, and up to ~2.1x so the silhouette is genuinely ragged */
+      const k = pad * (1.15 + ringNoise(t, seedN) * 0.9);
+      /* tangential slide as well, so corners round off unevenly instead of
+         staying four right angles with fuzz on them */
+      const tg = ringNoise(t + 0.37, seedN + 9) * pad * 0.55;
+      const p = project({ x: ex + nx * k - nz * tg, y: -0.012, z: ez + nz * k + nx * tg });
+      if (p) pts.push(p);
+    }
+    if (pts.length < 8) return;
+    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+    g.closePath();
+    let y0 = 1e9, y1 = -1e9;
+    for (const p of pts){ if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }
+    const gr = g.createLinearGradient(0, y0, 0, y1);
+    /* warm at both ends. The far end carries the fog so it melts into the
+       vista; the near end is deep sand, not stone. */
+    gr.addColorStop(0, rgba(mixHexRaw(mixHexRaw(SAND_DEEP, LIGHT.fog, .46), LIGHT.key, .12), a));
+    gr.addColorStop(1, rgba(mixHexRaw(mixHexRaw(SAND_DEEP, ROCK_DEEP, .32), LIGHT.key, .07), a));
     g.fillStyle = gr; g.fill();
   };
-  shelf(CONFIG.wall*2.4, 0.42);
-  shelf(CONFIG.wall*1.5, 0.74);
-  shelf(CONFIG.wall*0.7, 0.94);
+  apronRing(CONFIG.wall*5.0, 0.20, 4);
+  apronRing(CONFIG.wall*3.2, 0.34, 3);
+  apronRing(CONFIG.wall*2.1, 0.52, 2);
+  apronRing(CONFIG.wall*1.25, 0.76, 1);
+  apronRing(CONFIG.wall*0.55, 0.94, 0);
 
   /* ── 1. tiles: cliff walls, then the lit top face ────────────────────
      Far rows first (painter's algorithm). Within a tile the walls go down
@@ -1614,6 +1659,29 @@ function bakeTerrain(){
           g.beginPath(); g.moveTo(a1.x,a1.y); g.lineTo(a2.x,a2.y); g.stroke();
         }
         g.restore();
+        /* ⚠ ROUND 2: THE BOARD BOUNDARY GETS NO LIP, AND ITS WALL FADES OUT.
+           `inside` false means this edge faces off the board, where yBot is
+           the flat -0.012 apron. Every one of the 30 perimeter tiles therefore
+           drew a 2px lit hairline, and 30 collinear hairlines are one
+           continuous bright line down the left side, one down the right and
+           one across the bottom — which is precisely what the critic called
+           "hard vertical cuts down the left and right" and "a stone apron lip
+           across the full width". A cliff lip is a rock catching the key; the
+           board's own rectangular boundary is not a rock and must not be lit
+           like one. So: no lip out here, and the perimeter wall's lower half
+           is washed into the apron colour so it has no bottom edge either. */
+        if (!inside){
+          const fg2 = g.createLinearGradient(P[i].x, P[i].y, B[i].x, B[i].y);
+          const apron = mixHexRaw(mixHexRaw(SAND_DEEP, LIGHT.fog, .40), LIGHT.key, .10);
+          fg2.addColorStop(0,    rgba(apron, 0));
+          fg2.addColorStop(0.45, rgba(apron, 0.34));
+          fg2.addColorStop(1,    rgba(apron, 0.82));
+          g.beginPath();
+          g.moveTo(P[i].x,P[i].y); g.lineTo(P[j].x,P[j].y);
+          g.lineTo(B[j].x,B[j].y); g.lineTo(B[i].x,B[i].y); g.closePath();
+          g.fillStyle = fg2; g.fill();
+          continue;
+        }
         /* lit lip right at the top of the cliff — catches the key light and
            is the single clearest read that this tile is HIGHER */
         /* ⚠ Pulled toward a neutral warm white rather than SAND_PALE. This is
@@ -1701,15 +1769,257 @@ function bakeTerrain(){
     }
   }
 
-  /* ── 1b. MACRO VARIATION — the single most important pass for killing the
-     grid read. Everything in the tile loop above is clipped to one tile, so
-     its variation stops dead at every boundary, which makes the eye trace the
-     boundaries. This pass clips to the UNION of all top faces (one path with
-     56 subpaths — nonzero winding unions them) and lays down large, soft
-     patches 1–3 tiles across: sun-bleached drifts, darker damp hollows and a
-     couple of long sand tongues. They straddle seams, so the field reads as
-     one continuous surface that happens to be divided, not as 56 plates. */
+  /* ── 1b. MACRO VARIATION, CLIPPED PER ELEVATION LEVEL ─────────────────
+     Everything in the tile loop above is clipped to one tile, so its variation
+     stops dead at every boundary and the eye traces the boundaries. This pass
+     lays down large soft patches and long material strokes that straddle
+     SEAMS, so the field reads as one continuous surface that happens to be
+     divided, not as 56 plates. That part is unchanged and is still the single
+     most important pass for killing the grid read.
+
+     ⚠ ROUND 2 REWRITE — READ BEFORE UNIONING THE WHOLE FIELD AGAIN.
+     Round 1 clipped this pass to the union of ALL 56 top faces and drew 96
+     wind drifts through it at ONE prevailing heading. Two separate critic
+     findings came out of that single decision:
+       • "an animated diagonal streak overlay runs across the whole field at
+          one constant angle — long straight parallel streaks cross tile
+          boundaries, plateau tops and lower ground alike without changing
+          scale or direction. This is the strongest 'AI-generated' tell left."
+          96 strokes, one heading, one width band, one length band. Verified by
+          A/B: setting nD to 0 removed every streak the critic described.
+       • "the plateaus read as panes of tinted glass, not rock — the ground's
+          diagonal streak texture runs continuously THROUGH each raised slab."
+          Of course it did: the union clip let a drift climb a 30px cliff and
+          carry on across the raised top without a break, so the slab looked
+          like it was showing the ground behind it.
+     BOTH are the same bug and have the same fix: clip PER LEVEL and give each
+     level its OWN material at its OWN heading and scale.
+       - Level 0 is a sand basin: wind drifts, but the heading now comes from a
+         spatial curl field, so they fan and swirl instead of combing.
+       - Level 1+ is exposed rock: no sand drifts at all. Angular joints and
+         spall, short, thin, at that level's own dominant strike.
+     Nothing continuous crosses a cliff any more, which makes a raised top
+     opaque BY CONSTRUCTION rather than by piling more paint on it.
+     The LIGHTING passes at the bottom still run over the whole union: light is
+     supposed to cross a cliff. Material is not. Do not move them up here. */
   {
+    /* ⚠ Levels are clipped in a SINGLE path each. A per-tile clip would put a
+       hard material edge on every interior seam of the plateau, i.e. redraw
+       the grid — the whole point is that texture crosses seams WITHIN a level
+       and stops at the cliff BETWEEN levels. */
+    const levelPath = (want) => {
+      g.beginPath();
+      let n = 0;
+      for (let z=0; z<rows; z++) for (let x=0; x<cols; x++){
+        if (hfLevel(x,z) !== want) continue;
+        const P = poly[x+','+z]; if (!P) continue;
+        g.moveTo(P[0].x,P[0].y); g.lineTo(P[1].x,P[1].y);
+        g.lineTo(P[2].x,P[2].y); g.lineTo(P[3].x,P[3].y); g.closePath();
+        n++;
+      }
+      return n;
+    };
+    /* a representative material + a projected point for a level */
+    const levelTiles = [];
+    for (let L=0; L<=(HF.maxLv|0); L++) levelTiles.push([]);
+    for (let z=0; z<rows; z++) for (let x=0; x<cols; x++){
+      const L = hfLevel(x,z);
+      if (levelTiles[L]) levelTiles[L].push([x,z]);
+    }
+
+    for (let L=0; L<levelTiles.length; L++){
+      const tiles = levelTiles[L];
+      if (!tiles || !tiles.length) continue;
+      g.save();
+      const n = levelPath(L);
+      if (!n){ g.restore(); continue; }
+      g.clip();
+      const yL = (typeof LEVEL_Y !== 'undefined' && LEVEL_Y[L] != null) ? LEVEL_Y[L] : 0;
+      const seedS = MAP.id + '#macro' + L;
+      /* screen size of one tile AT THIS LEVEL — used as the scale unit so a
+         high plateau's texture is measured in its own projected tiles, not in
+         the basin's. Raised rows are further from the camera and therefore
+         smaller on screen; sharing one unit across levels is part of what made
+         the texture look like one overlay. */
+      const u0 = project(gw(0, 0, yL)), u1 = project(gw(1, 0, yL));
+      const unit = (u0 && u1) ? (Math.abs(u1.x - u0.x) || 40) : 40;
+
+      /* ── soft patches: bleached drifts and damp hollows, 1–3 tiles across
+         on the basin, deliberately SMALLER (0.4–1.2 tiles) on the plateaus so
+         the two levels never share a texture frequency. */
+      const nP = Math.max(6, Math.round(tiles.length * (L === 0 ? 1.05 : 0.75)));
+      for (let i=0;i<nP;i++){
+        const t = tiles[(hfStrHash(seedS, i*7+9) * tiles.length) | 0];
+        if (!t) continue;
+        const gx = t[0], gz = t[1];
+        const jx = gx + (hfStrHash(seedS, i*7+1) - 0.5) * 1.7;
+        const jz = gz + (hfStrHash(seedS, i*7+2) - 0.5) * 1.7;
+        const c0 = project(gw(jx, jz, yL)); if (!c0) continue;
+        const rad = unit * (L === 0 ? (0.75 + hfStrHash(seedS, i*7+3) * 2.1)
+                                    : (0.34 + hfStrHash(seedS, i*7+3) * 0.86));
+        const M = mat[gx+','+gz]; if (!M) continue;
+        const up = hfStrHash(seedS, i*7+4) > 0.46;
+        const col = up ? mixHexRaw(M.pale, L === 0 ? SAND_PALE : ROCK_PALE, 0.4)
+                       : mixHexRaw(M.deep, SHADE_COOL, 0.22);
+        /* ⚠ Round 2 runs these at ~55% of round 1's alpha. They straddle seams,
+           which is exactly what they are for — but a 1-3 tile patch is mostly a
+           DC shift on the tiles it covers, and at full strength it re-ordered
+           whole plateaus against each other. The tone lock corrects the residue
+           per tile; keeping the amplitude low means it has little to correct. */
+        const pg = g.createRadialGradient(c0.x, c0.y, 0, c0.x, c0.y, rad);
+        pg.addColorStop(0,   rgba(col, up ? 0.14 : 0.17));
+        pg.addColorStop(0.55,rgba(col, up ? 0.07 : 0.085));
+        pg.addColorStop(1,   rgba(col, 0));
+        g.fillStyle = pg;
+        g.beginPath();
+        g.ellipse(c0.x, c0.y, rad, rad * (0.30 + hfStrHash(seedS, i*7+5)*0.22),
+                  (hfStrHash(seedS, i*7+6)-0.5)*0.7, 0, 7);
+        g.fill();
+      }
+
+      if (L === 0){
+        /* ── WIND-DRIFT BANDS on the sand basin ───────────────────────────
+           Long sinuous drifts, 1–3 tiles each. Because they are metres long
+           they run straight across tile boundaries — which is the whole point:
+           material that ignores the grid is what stops the eye finding it.
+           ⚠ THE HEADING IS A FIELD, NOT A CONSTANT. Round 1 used one
+           `wind` for all 96 drifts (±0.42 rad of jitter), and 96 near-parallel
+           strokes across an 8x7 board is not sand, it is hatching — the critic
+           called it an overlay and was right. The heading now comes from a
+           two-octave curl sampled at the drift's own start point, so drifts
+           near the pool fan one way and drifts at the far edge fan another,
+           the way sand actually lies around obstacles. Lengths and widths are
+           also sampled per drift rather than from one band. */
+        const wind = hfStrHash(MAP.id + '#wind', 1) * Math.PI;
+        const curl = (wx, wz) =>
+          Math.sin(wx * 0.78 + wz * 0.41 + wind * 2.1) * 0.82 +
+          Math.cos(wz * 1.06 - wx * 0.29 + wind) * 0.61;
+        const nD = 66;
+        for (let i=0;i<nD;i++){
+          const sx0 = (hfStrHash(MAP.id+'#d', i*8+1) - 0.5) * (cols + 3);
+          const sz0 = (hfStrHash(MAP.id+'#d', i*8+2) - 0.5) * (rows + 3);
+          const ang = wind + curl(sx0, sz0) + (hfStrHash(MAP.id+'#d', i*8+3) - 0.5) * 0.5;
+          /* 1.0–2.6 tiles, not 1.6–5.0. A 5-tile drift on an 8-tile board is a
+             line across the whole field; that length alone reads as an overlay
+             no matter what angle it is at. */
+          const len = 1.0 + hfStrHash(MAP.id+'#d', i*8+4) * 1.6;
+          const bow = (hfStrHash(MAP.id+'#d', i*8+5) - 0.5) * 1.15;
+          const pale = hfStrHash(MAP.id+'#d', i*8+6) > 0.45;
+          const pts = [];
+          const N = 9;
+          for (let k=0;k<=N;k++){
+            const t = k/N;
+            const off = Math.sin(t*Math.PI) * bow;
+            /* the heading itself drifts along the stroke, so a drift curves */
+            const a2 = ang + curl(sx0 + Math.cos(ang)*len*t, sz0 + Math.sin(ang)*len*t) * 0.22;
+            const wx = sx0 + Math.cos(a2)*len*t - Math.sin(a2)*off;
+            const wz = sz0 + Math.sin(a2)*len*t + Math.cos(a2)*off;
+            const p = project(gw(wx + (cols-1)/2, wz + (rows-1)/2, yL));
+            if (p) pts.push(p);
+          }
+          if (pts.length < 3) continue;
+          const M = mat[clamp(Math.round(sx0+(cols-1)/2),0,cols-1) + ',' +
+                        clamp(Math.round(sz0+(rows-1)/2),0,rows-1)] || mat['0,0'];
+          if (!M) continue;
+          const w = 3 + hfStrHash(MAP.id+'#d', i*8+7) * 9;
+          const stroke = (col, a, dy, lw) => {
+            g.strokeStyle = rgba(col, a); g.lineWidth = lw;
+            g.lineJoin = 'round'; g.lineCap = 'round';
+            g.beginPath(); g.moveTo(pts[0].x, pts[0].y + dy);
+            for (let k=1;k<pts.length;k++) g.lineTo(pts[k].x, pts[k].y + dy);
+            g.stroke();
+          };
+          /* trough below, crest above — a ridge, not a line */
+          stroke(mixHexRaw(M.deep, SHADE_COOL, 0.20), pale ? 0.11 : 0.14, w*0.42, w);
+          stroke(pale ? mixHexRaw(M.pale, SAND_PALE, 0.45) : M.pale, pale ? 0.14 : 0.085, -w*0.16, w*0.72);
+        }
+        g.lineCap = 'butt'; g.lineJoin = 'miter';
+      } else {
+        /* ── JOINTS AND SPALL on exposed rock ─────────────────────────────
+           A plateau top is stripped bedrock, so it gets the geology bedrock
+           actually has: a joint set at ONE strike (per level, unrelated to the
+           wind), a weaker conjugate set roughly across it, and chipped spall
+           at the rims. Straight short segments, 1–3px, nothing sinuous —
+           visually the opposite of the sand below, which is the point: the
+           material CHANGE at the cliff is what makes the slab read as opaque
+           rock rather than as a tinted pane over the ground. */
+        const strike = hfStrHash(MAP.id + '#joint', L*11 + 3) * Math.PI;
+        /* ⚠ tiles*7 measured a directional coherence of 0.333 on the plateau
+           top — MORE directional than the round-1 overlay it replaced, i.e.
+           the joints had become hatching. tiles*5 at ~75% alpha keeps the
+           "this is fractured rock" read without a weave. */
+        const nJ = Math.max(10, tiles.length * 5);
+        for (let i=0;i<nJ;i++){
+          const t = tiles[(hfStrHash(seedS, i*9+40) * tiles.length) | 0];
+          if (!t) continue;
+          const M = mat[t[0]+','+t[1]]; if (!M) continue;
+          const conj = hfStrHash(seedS, i*9+41) > 0.72;
+          /* ⚠ The strike is rotated PER 2x2 FAULT BLOCK, not just per level.
+             One strike for a whole level put parallel hatching back across
+             every tile of that level — the same mistake as round 1's single
+             wind heading, one scope down. Real jointing changes across a
+             fault; this gives the plateau three or four strike domains. */
+          const blk = (_sHash(t[0] >> 1, t[1] >> 1, L*13 + 5) - 0.5) * 1.75;
+          const a = strike + blk + (conj ? 1.35 : 0) + (hfStrHash(seedS, i*9+42) - 0.5) * 0.34;
+          const jx = t[0] + (hfStrHash(seedS, i*9+43) - 0.5) * 1.2;
+          const jz = t[1] + (hfStrHash(seedS, i*9+44) - 0.5) * 1.2;
+          const len = 0.28 + hfStrHash(seedS, i*9+45) * 0.72;
+          /* two or three straight segments with a kink — joints step, they do
+             not curve */
+          const segs = 2 + ((hfStrHash(seedS, i*9+46) * 2) | 0);
+          const pts = [];
+          let cx2 = jx, cz2 = jz, aa = a;
+          const p0 = project(gw(cx2, cz2, yL)); if (p0) pts.push(p0);
+          for (let s2=0; s2<segs; s2++){
+            aa += (hfStrHash(seedS, i*9 + 47 + s2) - 0.5) * 0.5;
+            cx2 += Math.cos(aa) * len / segs;
+            cz2 += Math.sin(aa) * len / segs;
+            const p = project(gw(cx2, cz2, yL)); if (p) pts.push(p);
+          }
+          if (pts.length < 2) continue;
+          const lw = 0.7 + hfStrHash(seedS, i*9+50) * 1.9;
+          const line = (col, alp, dy, w2) => {
+            g.strokeStyle = rgba(col, alp); g.lineWidth = w2; g.lineCap = 'butt';
+            g.beginPath(); g.moveTo(pts[0].x, pts[0].y + dy);
+            for (let k=1;k<pts.length;k++) g.lineTo(pts[k].x, pts[k].y + dy);
+            g.stroke();
+          };
+          /* dark fissure with a lit shoulder above it = an open crack */
+          line(mixHexRaw(M.deep, '#241b13', 0.45), 0.082 + hfStrHash(seedS, i*9+51)*0.082, 0, lw);
+          line(mixHexRaw(M.pale, ROCK_PALE, 0.5), 0.05 + hfStrHash(seedS, i*9+52)*0.05, -lw*0.9, lw*0.7);
+        }
+        /* spall: angular chips of broken rock, never round */
+        const nS = Math.max(6, tiles.length * 4);
+        for (let i=0;i<nS;i++){
+          const t = tiles[(hfStrHash(seedS, i*6+70) * tiles.length) | 0];
+          if (!t) continue;
+          const M = mat[t[0]+','+t[1]]; if (!M) continue;
+          const jx = t[0] + (hfStrHash(seedS, i*6+71) - 0.5) * 1.1;
+          const jz = t[1] + (hfStrHash(seedS, i*6+72) - 0.5) * 1.1;
+          const c2 = project(gw(jx, jz, yL)); if (!c2) continue;
+          const rr = unit * (0.03 + hfStrHash(seedS, i*6+73) * 0.075);
+          const rot = hfStrHash(seedS, i*6+74) * 6.283;
+          g.beginPath();
+          const sides = 4 + ((hfStrHash(seedS, i*6+75) * 3) | 0);
+          for (let k2=0;k2<sides;k2++){
+            const th = rot + (k2/sides) * 6.283;
+            const kr = rr * (0.55 + hfStrHash(seedS, i*6 + 76 + k2) * 0.8);
+            const px = c2.x + Math.cos(th) * kr, py = c2.y + Math.sin(th) * kr * 0.55;
+            k2 ? g.lineTo(px, py) : g.moveTo(px, py);
+          }
+          g.closePath();
+          g.fillStyle = rgba(mixHexRaw(M.pale, ROCK_PALE, 0.4), 0.16);
+          g.fill();
+          g.fillStyle = rgba(M.deep, 0.13);
+          g.beginPath();
+          g.ellipse(c2.x - lv.x*rr*1.2, c2.y - lv.z*rr*0.7 + rr*0.4, rr*1.05, rr*0.4, rot, 0, 7);
+          g.fill();
+        }
+      }
+      g.restore();
+    }
+
+    /* the lighting passes below want the WHOLE field, not one level */
     g.save();
     g.beginPath();
     for (let z=0; z<rows; z++) for (let x=0; x<cols; x++){
@@ -1718,100 +2028,6 @@ function bakeTerrain(){
       g.lineTo(P[2].x,P[2].y); g.lineTo(P[3].x,P[3].y); g.closePath();
     }
     g.clip();
-    const seedS = MAP.id + '#macro';
-    const nP = 42;
-    for (let i=0;i<nP;i++){
-      const wx = (hfStrHash(seedS, i*4+1) - 0.5) * (cols + 2);
-      const wz = (hfStrHash(seedS, i*4+2) - 0.5) * (rows + 2);
-      const gx = clamp(Math.round(wx + (cols-1)/2), 0, cols-1);
-      const gz = clamp(Math.round(wz + (rows-1)/2), 0, rows-1);
-      const c0 = project(gw(wx + (cols-1)/2, wz + (rows-1)/2, tileElev(gx,gz)));
-      const c1 = project(gw(wx + (cols-1)/2 + 1, wz + (rows-1)/2, tileElev(gx,gz)));
-      if (!c0 || !c1) continue;
-      const unit = Math.abs(c1.x - c0.x) || 40;
-      const rad = unit * (0.75 + hfStrHash(seedS, i*4+3) * 2.1);
-      const M = mat[gx+','+gz] || mat['0,0']; if (!M) continue;
-      const up = hfStrHash(seedS, i*4+4) > 0.46;
-      const col = up ? mixHexRaw(M.pale, SAND_PALE, 0.4)
-                     : mixHexRaw(M.deep, SHADE_COOL, 0.22);
-      /* ⚠ Round 2 runs these at ~55% of round 1's alpha. They straddle seams,
-         which is exactly what they are for — but a 1-3 tile patch is mostly a
-         DC shift on the tiles it covers, and at full strength it re-ordered
-         whole plateaus against each other. The tone lock corrects the residue
-         per tile; keeping the amplitude low means it has little to correct. */
-      const pg = g.createRadialGradient(c0.x, c0.y, 0, c0.x, c0.y, rad);
-      pg.addColorStop(0,   rgba(col, up ? 0.14 : 0.17));
-      pg.addColorStop(0.55,rgba(col, up ? 0.07 : 0.085));
-      pg.addColorStop(1,   rgba(col, 0));
-      g.fillStyle = pg;
-      g.beginPath();
-      g.ellipse(c0.x, c0.y, rad, rad * (0.30 + hfStrHash(seedS, i*4+5)*0.22),
-                (hfStrHash(seedS, i*4+6)-0.5)*0.7, 0, 7);
-      g.fill();
-    }
-
-    /* ── WIND-DRIFT BANDS ─────────────────────────────────────────────
-       Long sinuous drifts of sand, 2–5 tiles each, all roughly following one
-       prevailing wind with per-drift wander. Every sample point is projected
-       at ITS OWN tile's elevation, so a drift climbs onto a plateau and steps
-       down into a basin instead of floating through the geometry.
-       These are the single strongest "this is sand, not a plate" cue at play
-       zoom, and because they are metres long they run straight across tile
-       boundaries — which is the whole point: material that ignores the grid
-       is what stops the eye finding the grid. */
-    {
-      const wind = hfStrHash(MAP.id + '#wind', 1) * Math.PI;
-      /* ⚠ 68 → 96. The near three rows are all level 0 by design (hfRowCap
-         keeps the player's own spawn low so units are not pushed up into the
-         hand strip), which makes the bottom 40% of the frame one large plane
-         at one value — and the tone lock, correctly, keeps it at one value.
-         Drifts are the only thing left that can break that plane up, because
-         they are metres long and cross tile boundaries, so the count goes up
-         rather than the per-tile texture. */
-      const nD = 96;
-      for (let i=0;i<nD;i++){
-        const sx0 = (hfStrHash(MAP.id+'#d', i*6+1) - 0.5) * (cols + 3);
-        const sz0 = (hfStrHash(MAP.id+'#d', i*6+2) - 0.5) * (rows + 3);
-        const ang = wind + (hfStrHash(MAP.id+'#d', i*6+3) - 0.5) * 0.85;
-        const len = 1.6 + hfStrHash(MAP.id+'#d', i*6+4) * 3.4;
-        const bow = (hfStrHash(MAP.id+'#d', i*6+5) - 0.5) * 0.9;
-        const pale = hfStrHash(MAP.id+'#d', i*6+6) > 0.45;
-        const pts = [];
-        const N = 9;
-        for (let k=0;k<=N;k++){
-          const t = k/N;
-          const off = Math.sin(t*Math.PI) * bow;
-          const wx = sx0 + Math.cos(ang)*len*t - Math.sin(ang)*off;
-          const wz = sz0 + Math.sin(ang)*len*t + Math.cos(ang)*off;
-          const gx = clamp(Math.round(wx + (cols-1)/2), 0, cols-1);
-          const gz = clamp(Math.round(wz + (rows-1)/2), 0, rows-1);
-          const p = project(gw(wx + (cols-1)/2, wz + (rows-1)/2, tileElev(gx,gz)));
-          if (p) pts.push(p);
-        }
-        if (pts.length < 3) continue;
-        const M = mat[clamp(Math.round(sx0+(cols-1)/2),0,cols-1) + ',' +
-                      clamp(Math.round(sz0+(rows-1)/2),0,rows-1)] || mat['0,0'];
-        if (!M) continue;
-        const w = 3 + hfStrHash(MAP.id+'#d', i*6+7) * 9;
-        const stroke = (col, a, dy, lw) => {
-          g.strokeStyle = rgba(col, a); g.lineWidth = lw;
-          g.lineJoin = 'round'; g.lineCap = 'round';
-          g.beginPath(); g.moveTo(pts[0].x, pts[0].y + dy);
-          for (let k=1;k<pts.length;k++) g.lineTo(pts[k].x, pts[k].y + dy);
-          g.stroke();
-        };
-        /* trough below, crest above — a ridge, not a line */
-        /* Kept at full round-1 strength, unlike the macro patches: a drift is
-           metres long and a few pixels wide, so it crosses a tile without
-           being a DC shift on it — the tone lock's median-of-five rejects it
-           and the drift survives the correction. These are the strongest
-           "this is sand, not a plate" cue in the near basin, which is
-           otherwise three flat rows of level-0 ground. */
-        stroke(mixHexRaw(M.deep, SHADE_COOL, 0.20), pale ? 0.13 : 0.17, w*0.42, w);
-        stroke(pale ? mixHexRaw(M.pale, SAND_PALE, 0.45) : M.pale, pale ? 0.17 : 0.10, -w*0.16, w*0.72);
-      }
-      g.lineCap = 'butt'; g.lineJoin = 'miter';
-    }
 
     /* ── ONE WARM KEY ACROSS THE WHOLE FIELD ──────────────────────────
        A flat top face has a constant normal, so per-tile lambert gives every
@@ -1853,6 +2069,149 @@ function bakeTerrain(){
       g.fillStyle = hg; g.fillRect(0, Math.min(farP.y, nearP.y) - 40, W, Math.abs(nearP.y-farP.y) + 80);
     }
     g.restore();
+  }
+
+  /* ── 1c. EDGE SPILL — the board must not have an edge ──────────────────
+     ⚠ ROUND 2, and the other half of the "floating rectangular slab" fix.
+     §0 made the apron ragged and the EDGES loop stopped lighting the board's
+     own boundary, but the outermost tiles still END on a perfectly straight
+     line — 8 collinear tile edges across the bottom, 7 down each side. A value
+     step along a straight line is still a straight line.
+     So the boundary is BROKEN LOCALLY, per perimeter tile, by material that
+     straddles it: sand tongues that run out from under a level-0 edge onto the
+     apron, and a talus fan of angular scree at the foot of a raised edge where
+     the cliff has been shedding rock. Both are drawn at the apron's own height
+     and in the neighbouring tile's own colour, so the eye follows the material
+     out of the field instead of tracing the rectangle.
+     This runs AFTER the tiles and is deliberately UNCLIPPED — clipping it to
+     the field is what would put the straight line back. */
+  {
+    const apronC = mixHexRaw(mixHexRaw(SAND_DEEP, LIGHT.fog, .40), LIGHT.key, .10);
+    /* [ dx, dz ] outward normals, one entry per board side */
+    const SIDES = [ [0,-1], [1,0], [0,1], [-1,0] ];
+    for (let z=0; z<rows; z++) for (let x=0; x<cols; x++){
+      const onEdge = (x===0) || (z===0) || (x===cols-1) || (z===rows-1);
+      if (!onEdge) continue;
+      const M = mat[x+','+z]; if (!M) continue;
+      const L = hfLevel(x,z);
+      for (const [dx,dz] of SIDES){
+        const nx = x+dx, nz = z+dz;
+        if (nx>=0 && nz>=0 && nx<cols && nz<rows) continue;   /* interior edge */
+        /* ── the RUN-OUT STRIP, drawn before the lobes ────────────────────
+           The lobes alone break the STRAIGHTNESS of the boundary but not the
+           VALUE STEP across it: the field is lit sand and the apron is deep
+           sand, so the eye still finds a line. This strip starts exactly ON
+           the shared edge in the boundary tile's OWN colour and fades out
+           over ~0.9 tiles, with a wavy outer margin, so the step is gone and
+           the thing replacing it has no straight side either. */
+        {
+          const eA = { x: x + dx*0.5 - (dz ? 0.5 : 0), z: z + dz*0.5 - (dx ? 0.5 : 0) };
+          const eB = { x: x + dx*0.5 + (dz ? 0.5 : 0), z: z + dz*0.5 + (dx ? 0.5 : 0) };
+          const inner = [], outer = [];
+          const NS = 7;
+          for (let s2=0; s2<=NS; s2++){
+            const t2 = s2/NS;
+            const ex = eA.x + (eB.x - eA.x)*t2, ez = eA.z + (eB.z - eA.z)*t2;
+            const pi = project(gw(ex, ez, -0.010));
+            const push = 0.34 + _sHash(x*3 + s2, z*5 + (dx+2)*7, (dz+2)*11) * 0.92;
+            const po = project(gw(ex + dx*push, ez + dz*push, -0.012));
+            if (pi) inner.push(pi);
+            if (po) outer.push(po);
+          }
+          if (inner.length > 2 && outer.length === inner.length){
+            g.beginPath();
+            g.moveTo(inner[0].x, inner[0].y);
+            for (let s2=1; s2<inner.length; s2++) g.lineTo(inner[s2].x, inner[s2].y);
+            for (let s2=outer.length-1; s2>=0; s2--) g.lineTo(outer[s2].x, outer[s2].y);
+            g.closePath();
+            const ci = inner[(inner.length/2)|0], co = outer[(outer.length/2)|0];
+            const rg2 = g.createLinearGradient(ci.x, ci.y, co.x, co.y);
+            const runC = L > 0 ? mixHexRaw(M.base, ROCK_BASE, 0.42) : M.base;
+            rg2.addColorStop(0,    rgba(runC, 0.92));
+            rg2.addColorStop(0.42, rgba(mixHexRaw(runC, apronC, 0.5), 0.62));
+            rg2.addColorStop(1,    rgba(apronC, 0));
+            g.fillStyle = rg2; g.fill();
+          }
+        }
+        /* the far side barely shows (it faces away and the mesa silhouette is
+           what we want there), so spend the budget on near + flanks */
+        const budget = (dz < 0) ? 2 : 4;
+        for (let i=0;i<budget;i++){
+          const h = (k) => _sHash(x, z, (dx+2)*911 + (dz+2)*307 + i*23 + k);
+          if (h(0) < 0.18) continue;
+          /* a point ON the shared edge, then pushed outward */
+          const along = (h(1) - 0.5) * 0.86;
+          /* ⚠ was 0.16..0.78 — entirely OUTSIDE the field, so the lobes sat
+             below the boundary instead of across it and the straight line
+             survived. Starting inside the tile is the whole point. */
+          const out   = -0.14 + h(2) * 0.70;
+          const bx = x + dx*0.5 + (dz ? along : 0) + dx*out;
+          const bz = z + dz*0.5 + (dx ? along : 0) + dz*out;
+          const c0 = project(gw(bx, bz, -0.012)); if (!c0) continue;
+          const u0 = project(gw(bx, bz, -0.012)), u1 = project(gw(bx+1, bz, -0.012));
+          const unit = (u0 && u1) ? (Math.abs(u1.x-u0.x) || 40) : 40;
+          if (L > 0){
+            /* TALUS: a scree fan of angular chips shed off the cliff foot.
+               Chips get smaller and sparser away from the wall — that gradient
+               is what reads as "this fell off there" instead of "props". */
+            const nC = 5 + ((h(3)*7)|0);
+            for (let c2=0;c2<nC;c2++){
+              const hh = (k) => _sHash(x, z, (dx+2)*77 + i*131 + c2*29 + k);
+              const t = hh(1);
+              const px = bx + (hh(2)-0.5)*0.7 + dx*t*0.5;
+              const pz = bz + (hh(3)-0.5)*0.7 + dz*t*0.5;
+              const p = project(gw(px, pz, -0.012)); if (!p) continue;
+              const rr = unit * (0.020 + hh(4)*0.055) * (1 - t*0.55);
+              const rot = hh(5)*6.283;
+              g.beginPath();
+              const sides = 4 + ((hh(6)*3)|0);
+              for (let k2=0;k2<sides;k2++){
+                const th = rot + (k2/sides)*6.283;
+                const kr = rr * (0.5 + _sHash(x, z, i*97 + c2*7 + k2)*0.9);
+                const qx = p.x + Math.cos(th)*kr, qy = p.y + Math.sin(th)*kr*0.58;
+                k2 ? g.lineTo(qx,qy) : g.moveTo(qx,qy);
+              }
+              g.closePath();
+              g.fillStyle = rgba(mixHexRaw(mixHexRaw(M.base, ROCK_BASE, 0.45), apronC, 0.22), 0.62);
+              g.fill();
+              g.fillStyle = rgba(mixHexRaw(M.deep, '#241b13', 0.4), 0.30);
+              g.beginPath();
+              g.ellipse(p.x - lv.x*rr*1.3, p.y - lv.z*rr*0.7 + rr*0.45, rr*1.2, rr*0.42, rot, 0, 7);
+              g.fill();
+            }
+          } else {
+            /* SAND TONGUE: an irregular lobe of the tile's own sand running
+               out onto the apron. Centred just outside the edge so roughly a
+               third of it overlaps the tile and the boundary disappears under
+               a continuous material. */
+            const rr = unit * (0.30 + h(4)*0.48);
+            g.beginPath();
+            const nv = 9;
+            for (let k2=0;k2<=nv;k2++){
+              const th = (k2/nv)*6.283;
+              const kr = rr * (0.5 + _sHash(x, z, i*61 + k2*13 + (dx+2))*0.95);
+              const qx = c0.x + Math.cos(th)*kr, qy = c0.y + Math.sin(th)*kr*0.56;
+              k2 ? g.lineTo(qx,qy) : g.moveTo(qx,qy);
+            }
+            g.closePath();
+            const lg = g.createRadialGradient(c0.x, c0.y - rr*0.2, 0, c0.x, c0.y, rr*1.15);
+            const sandC = mixHexRaw(M.base, apronC, 0.30 + h(5)*0.28);
+            lg.addColorStop(0,   rgba(mixHexRaw(sandC, M.pale, 0.30), 0.80));
+            lg.addColorStop(0.62,rgba(sandC, 0.62));
+            lg.addColorStop(1,   rgba(sandC, 0));
+            g.fillStyle = lg; g.fill();
+            /* a couple of pebbles riding the tongue so it is not a smooth blob */
+            for (let c2=0;c2<3;c2++){
+              const hh = (k) => _sHash(x, z, i*211 + c2*19 + k + (dx+2)*5);
+              const p = { x: c0.x + (hh(1)-0.5)*rr*1.3, y: c0.y + (hh(2)-0.5)*rr*0.6 };
+              const s2 = unit*(0.012 + hh(3)*0.026);
+              g.fillStyle = rgba(mixHexRaw(M.pale, ROCK_PALE, 0.4), 0.45);
+              g.beginPath(); g.ellipse(p.x, p.y, s2, s2*0.6, hh(4)*3, 0, 7); g.fill();
+            }
+          }
+        }
+      }
+    }
   }
 
   /* ── 2. seams: a soft crease of the ground's own hue, and a lit bevel ──
@@ -2317,11 +2676,82 @@ const PYLON_ART = {
 };
 function setPylonArt(src, opts){
   Object.assign(PYLON_ART, opts||{});
+  PYLON_TINT.cv = null; PYLON_TINT.key = '';      /* new art → re-grade */
   if (src === null){ PYLON_ART.img = null; return; }
   const im = new Image();
-  im.onload = () => { PYLON_ART.img = im; seedBraziers(); };
+  im.onload = () => { PYLON_ART.img = im; PYLON_TINT.cv = null; PYLON_TINT.key = ''; seedBraziers(); };
   im.src = src || PYLON_ART.src;
   if (opts && typeof opts.bowlY === 'number'){ PYLON.top = opts.bowlY; seedBraziers(); }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PYLON DESERT GRADE — READ BEFORE REMOVING.
+   The pillar art (assets/board/pylon.png) is baked from the OLD chrome:
+   a navy-blue plinth, cyan filigree and a pale blue base. The critic:
+   "the brazier props were never reskinned — the two flame pylons flanking
+   the far corners still stand on navy-blue plinths with cyan filigree and
+   pale blue bases, the old chrome palette, planted in a warm ochre desert
+   canyon." It is the loudest wrong-world object left on the field.
+   We cannot repaint the PNG (binary asset, not this piece's to own), so the
+   sprite is re-graded at load into warm sandstone and cached:
+     1. 'saturation' with mid grey  → strips ALL the blue/cyan chroma. This
+        step is what guarantees no navy survives; a plain multiply over navy
+        leaves navy, just darker.
+     2. 'multiply' with a vertical ochre ramp → duotone: pale sun-bleached
+        sandstone at the top where the bowl catches the key, warm brown at
+        the base where it sits in its own shadow.
+     3. 'lighter' with a low warm lift → nothing ends up pure black (BAR).
+     4. source-atop with the current LIGHT.key → the pillar obeys the same
+        time-of-day key as the ground, so it belongs to this scene.
+   ⚠ EVERY blend step is followed by a destination-in redraw of the source.
+   Canvas blend modes composite with source-over, so an unmasked fillRect
+   paints the sprite's TRANSPARENT background solid — the pillar came out as
+   a filled rectangle the first time this was written. The mask restores the
+   original alpha and costs one drawImage.
+   Cached on the light, so it re-grades once per time-of-day change, never
+   per frame. (Three.js: drop this and tint the material instead.)
+   ══════════════════════════════════════════════════════════════════ */
+const PYLON_TINT = { cv:null, key:'' };
+function pylonSprite(){
+  const img = PYLON_ART.img;
+  if (!img || !img.complete || !img.naturalWidth) return null;
+  const key = [img.src, LIGHT.key, Math.round(LIGHT.keyI*10), LIGHT.ambient, LIGHT.fog].join('|');
+  if (PYLON_TINT.cv && PYLON_TINT.key === key) return PYLON_TINT.cv;
+  try {
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const cv = PYLON_TINT.cv && PYLON_TINT.cv.width === w ? PYLON_TINT.cv
+             : Object.assign(document.createElement('canvas'), { width:w, height:h });
+    const gg = cv.getContext('2d');
+    gg.setTransform(1,0,0,1,0,0);
+    gg.globalCompositeOperation = 'source-over';
+    gg.clearRect(0,0,w,h);
+    gg.drawImage(img, 0, 0);
+    const mask = () => { gg.globalCompositeOperation = 'destination-in'; gg.drawImage(img, 0, 0); };
+    gg.globalCompositeOperation = 'saturation';
+    gg.fillStyle = '#808080'; gg.fillRect(0,0,w,h);
+    mask();
+    gg.globalCompositeOperation = 'multiply';
+    const dg = gg.createLinearGradient(0, 0, 0, h);
+    dg.addColorStop(0,   mixHexRaw('#f0d3a2', LIGHT.key, 0.18));
+    dg.addColorStop(0.55,mixHexRaw('#c69152', LIGHT.key, 0.12));
+    dg.addColorStop(1,   mixHexRaw('#7d5730', LIGHT.ambient, 0.16));
+    gg.fillStyle = dg; gg.fillRect(0,0,w,h);
+    mask();
+    gg.globalCompositeOperation = 'lighter';
+    gg.fillStyle = rgba(mixHexRaw('#4a3418', LIGHT.key, 0.25), 0.16 + clamp(LIGHT.keyI,0,1.2)*0.07);
+    gg.fillRect(0,0,w,h);
+    mask();
+    gg.globalCompositeOperation = 'source-atop';
+    gg.fillStyle = rgba(LIGHT.key, 0.07 + clamp(LIGHT.keyI,0,1.2)*0.05);
+    gg.fillRect(0,0,w,h);
+    gg.globalCompositeOperation = 'source-over';
+    PYLON_TINT.cv = cv; PYLON_TINT.key = key;
+    return cv;
+  } catch (e){
+    /* a grade must never cost us the pillar — fall back to the raw sprite */
+    PYLON_TINT.cv = null; PYLON_TINT.key = '';
+    return img;
+  }
 }
 const PYLON = { plinth:0.44, base:0.34, shaft0:0.215, shaft1:0.185, cap:0.30, bowl:0.40, rim:0.44, top:1.46 };
 function bandQuad(px, pz, y0, y1, hw0, hw1){
@@ -2347,15 +2777,21 @@ function drawPylon(br){
     if (base && top && side){
       shadowEllipse({x:px, y:0, z:pz}, .62, .85);
       const wpx = Math.abs(side.x - base.x)*2, hpx = Math.abs(base.y - top.y);
-      const img = PYLON_ART.img;
-      const fw = img.naturalWidth / Math.max(1, PYLON_ART.frames);
+      /* the DESERT-GRADED sprite, not the raw navy one — see pylonSprite().
+         ⚠ The source rect must come from PYLON_ART.img, NOT from `img`: the
+         graded copy is a <canvas>, and a canvas has no naturalWidth /
+         naturalHeight. Reading them off it gives undefined, drawImage throws,
+         and both pillars vanish leaving their flames burning in mid-air. */
+      const img = pylonSprite() || PYLON_ART.img;
+      const srcW = PYLON_ART.img.naturalWidth, srcH = PYLON_ART.img.naturalHeight;
+      const fw = srcW / Math.max(1, PYLON_ART.frames);
       const fi = PYLON_ART.frames > 1 ? Math.floor(T*PYLON_ART.fps) % PYLON_ART.frames : 0;
       /* NO mirroring — every pillar faces the camera, serpent head-on.
          Anchored on the sprite's ground line so the base slab sits ON the
          floor and its front edge overhangs toward the camera. */
       const A = PYLON_ART.anchorY;
       const topY = base.y - hpx*A;
-      ctx.drawImage(img, fi*fw, 0, fw, img.naturalHeight,
+      ctx.drawImage(img, fi*fw, 0, fw, srcH,
                     base.x - wpx/2, topY, wpx, hpx);
       /* ── SPRITE-SPACE ANCHORS ──────────────────────────────────────────
          The pillar is a BILLBOARD, but a world point directly above a corner

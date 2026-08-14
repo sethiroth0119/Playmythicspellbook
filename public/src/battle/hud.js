@@ -317,7 +317,34 @@ function start() {
   // wholesale. Observing childList on #app alone (no subtree, no attributes)
   // means every in-place patch the game does per tick — _cbxRender's string
   // diff, _bpFit's --fit write, the turn timer — costs this module nothing.
-  if (app) new MutationObserver(schedule).observe(app, { childList: true });
+  //
+  // ⚠ SYNCHRONOUS, NOT rAF-DEFERRED — this is a correctness fix, not a
+  // micro-optimisation. `renderBattle()` re-emits the whole screen in the
+  // LEGACY layout: END TURN back in the left rail, both hero cards back in the
+  // rail, no top band. Deferring the re-layout to requestAnimationFrame let
+  // that legacy frame REACH THE SCREEN after every card play — measured in the
+  // harness at #btn-end-turn = [8,853,320,48] (its legacy rect) 48ms after a
+  // rebuild, and still [8,649,320,36] at the following paint, against
+  // [1281,835,302,140] once the HUD settled. A whole-HUD flicker on every
+  // state change.
+  //
+  // A MutationObserver callback is a MICROTASK: it runs when the JS stack
+  // empties, i.e. after `renderBattle()`'s synchronous body (innerHTML +
+  // bindBattleEvents + bindBattlePiles) has completed but BEFORE the browser
+  // paints. Doing the work there means the legacy layout is never composited.
+  //
+  // Two things make this safe to do inline:
+  //   · relayout() early-outs on `scr.__hudx` and touches nothing on a screen
+  //     it has already laid out, so a burst of mutations costs one property
+  //     read each;
+  //   · it appends only to `.battle-screen`, never to #app itself, so it
+  //     cannot re-trigger this observer and loop.
+  // guard() still wraps it, so a throw here leaves the untouched (playable)
+  // layout rather than taking renderBattle's crash guard down with it.
+  //
+  // rAF coalescing is still right for the two paths where nothing is painting
+  // a stale frame — first start and resize — so schedule() is kept for those.
+  if (app) new MutationObserver(() => { guard(relayout); }).observe(app, { childList: true });
   // A resize changes the rail budget and therefore the cluster fit.
   window.addEventListener('resize', () => {
     const scr = document.querySelector('.battle-screen');

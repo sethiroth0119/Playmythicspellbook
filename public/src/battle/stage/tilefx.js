@@ -158,8 +158,8 @@
    run twice as hard (per-state cap `col.fc`, 0.20 for move, 0.10 and
    bit-identical arithmetic for everyone else) and buys chroma out of the
    green channel instead of out of the blue one. Interior, against identical
-   paint-off pixels: chroma 19.8 → 42.1, saturation 0.164 → 0.273, hue 123.7°,
-   mean B−R +2.6, ON−OFF luma +64.4, p95 B−R 38 → 28.
+   paint-off pixels: chroma 19.8 → 42.1, saturation 0.164 → 0.273, hue 124.3°,
+   mean B−R +3.0, ON−OFF luma +64.5, p95 B−R 38 → 28.
    The pane read got the other half of the round: the boundary rim WASH was
    the lit lip all along (0.040·A over a narrow band ≈ +17 luma on the dimmest
    part of the pool), so it is 0.015·A over a band 1.6× wider. Both probes now
@@ -283,23 +283,26 @@ const COL = {
      Measured on the eroded pool interior against the identical paint-off
      pixels (CRKpool.mjs, erode 14):
          chroma (max−min)   42.1   (round 5: 19.8, target ≥ 34)
-         hue                123.7° (round 5: 139° at chroma 20, target ≥ 120°)
-         ON−OFF luma        +64.4  (target ≥ +40)
-         mean B−R           +2.6   (target ≤ +5; p95 +28, was +38)
+         hue                124.3° (round 5: 139° at chroma 20, target ≥ 120°)
+         ON−OFF luma        +64.5  (target ≥ +40)
+         mean B−R           +3.0   (target ≤ +5; p95 +28, was +38)
          saturation         0.273  (round 5: 0.164, wave 1: 0.324)
      ⚠ THOSE TWO TARGETS PIN THE HUE ALMOST EXACTLY, so do not read 123.7° as
      "nearly failed". With G the max channel, hue = (B−R)/chroma·60 + 120, so
      "hue ≥ 120°" is just "B ≥ R" and "mean B−R ≤ +5" at chroma ≥ 34 caps the
      hue at ~128°. Anything bluer than that is only reachable by staining the
-     sand. Aim B−R at +2..+3: it sits mid-band with margin on BOTH walls, which
-     matters because the vista's grade moves the sand under us between rounds.
+     sand. Aim B−R at +3: it sits mid-band with margin on BOTH walls, which
+     matters twice over — the vista's grade moves the sand under us between
+     rounds, and the per-region breathing pulse means two runs of the same
+     build measure ±1.5 apart on their own. A value tuned to +4.5 measures
+     over +5 on an unlucky frame; there is nothing to win at the edge.
 
      ⚠ `halo` (optional, falls back to `body`) is the ONE place the light is
      allowed to be properly cyan. It is the bloom escaping onto the surrounding
      sand — outside the legal tiles, a thin fraction of the lit pixels, so it
      barely moves the mean — and a cool cyan fringe round a green-teal pool is
      what sells the whole thing as teal to the eye rather than to the meter. */
-  move:   { core: '#e6faf4', body: '#4ad1b2', rim: '#96eee8', halo: '#42cae0', filt: '#46ffd8', k: 1.55, a: 1.28, fc: 0.20 },
+  move:   { core: '#e6faf4', body: '#4ad1b4', rim: '#96eee8', halo: '#42cae0', filt: '#46ffd8', k: 1.55, a: 1.28, fc: 0.20 },
   attack: { core: '#fff0c8', body: '#ff8c10', rim: '#ffd07a', filt: '#ffd98a', k: 1.60, a: 1.62 },
   place:  { core: '#ccffd8', body: '#2fd070', rim: '#8ff0b0', filt: '#adffc4', k: 1.15, a: 1.30 },
   swap:   { core: '#e8d4ff', body: '#8a52f0', rim: '#c3a5ff', filt: '#d0b0ff', k: 1.20, a: 1.37 },

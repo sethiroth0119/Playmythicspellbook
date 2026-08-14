@@ -99,8 +99,16 @@ const S = {
   employed: { unskilled: 0, skilled: 0, technical: 0, advanced: 0 },
   /* jobs firms have POSTED but not filled */
   vacancies: { unskilled: 0, skilled: 0, technical: 0, advanced: 0 },
-  /* last tick's readouts, for the panel */
+  /* last tick's readouts, for the panel.
+     ⚠ `lastDividend` used to be created on first use inside payDividend(), which
+        meant a cold process and a warm one did not have the same SHAPE of state
+        object here. Nothing read it before it was written, so it was not itself a
+        source of drift — but see logistics.js `congestionMul` for the field on
+        which exactly that assumption was false and cost the gate its credibility.
+        Every readout is declared and every readout is cleared, so that "what does
+        reset() leave behind" is answerable by reading rather than by sampling. */
   lastIncome: 0, lastSpend: 0, lastRent: 0, lastTax: 0, lastBenefit: 0,
+  lastDividend: 0,
   unmetDemand: {},          // category → Cinder that wanted to be spent and could not
   satisfaction: {},         // category → 0..1 how well it was served
 };
@@ -112,6 +120,8 @@ export function reset() {
   S.employed = { unskilled: 0, skilled: 0, technical: 0, advanced: 0 };
   S.vacancies = { unskilled: 0, skilled: 0, technical: 0, advanced: 0 };
   S.unmetDemand = {}; S.satisfaction = {};
+  S.lastIncome = 0; S.lastSpend = 0; S.lastRent = 0; S.lastTax = 0;
+  S.lastBenefit = 0; S.lastDividend = 0;
 }
 
 export function population() { return S.pop.low + S.pop.mid + S.pop.high; }
@@ -218,7 +228,7 @@ export function payDividend(amount) {
   const t = S.pop.high > 0 ? 'high' : (S.pop.mid > 0 ? 'mid' : 'low');
   S.savings[t] += amount;
   S.lastIncome += amount;
-  S.lastDividend = (S.lastDividend || 0) + amount;
+  S.lastDividend += amount;   // declared in S and cleared by reset(); see the note there
 }
 
 /* Unemployment benefit, paid by the city treasury (sim.js debits it there).

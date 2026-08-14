@@ -171,6 +171,16 @@ let bad = 0;
                                    Under it §5 must report a window that never
                                    closes and a drizzle billed at tornado rates.
 
+     ECON_TEST_SABOTAGE=warm-residue round0m: carry `Logistics.congestionMul`
+                                   across `Sim.reset()` by hand — the shipped
+                                   defect, in which a field written at the END of
+                                   an economic day and read at the START of one
+                                   was simply absent from reset(). Under it a
+                                   fresh city is quoted freight at the PREVIOUS
+                                   city's congestion, and the same configuration
+                                   pays differently depending on what the test
+                                   process happened to simulate before it
+
    ⚠ Every one of these must turn the gate RED. If you change these rounds, run
      all of them and check that they still do; an unset variable is the shipping
      path and does nothing. */
@@ -253,6 +263,200 @@ const srcBlockAfter = (src, decl) => {
      If a future retune is meant to MOVE the shelf, update both columns
      together and say so in the commit. Do not widen SPEC_TOL to make a red
      round green — 4 seconds is rounding, 40 is a design change. */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0m — 🎲 THE HARNESS ITSELF MUST BE DETERMINISTIC
+   ----------------------------------------------------------------------------
+   THIS ROUND RUNS FIRST BECAUSE EVERY OTHER ROUND'S NUMBERS DEPEND ON IT.
+
+   THE DEFECT IT EXISTS FOR, and it silently invalidated measurement across the
+   whole gate for as long as it was there:
+   `Logistics.reset()` cleared five fields and left a sixth. `S.congestionMul` is
+   WRITTEN by `resolve()` at the end of an economic day and READ by
+   `costPerUnit()` from the first freight quote of a day — including day 0, which
+   happens before any `resolve()` has ever run. It was not declared on the state
+   object and not cleared by `reset()`, so `S.congestionMul || 1` read 1 in a cold
+   process and THE PREVIOUS CITY'S FINAL CONGESTION in a warm one. A brand-new
+   city with nothing booked was quoted freight at up to `maxCongestionMul`,
+   entirely according to what the test process happened to have simulated before.
+
+   MEASURED ON THE BROKEN TREE, all calm, same configuration, same process:
+     rho-6 / pop45 / warehouse-0 / 600d → 3,102 🔥 cold
+                                        → 3,162 🔥 called again (+1.9%)
+                                        → 3,102 🔥 after an intervening city
+   and neutralising THAT ONE FIELD and nothing else restored 3,102 exactly.
+   (The critic's stated hypothesis — `setNode()` early-returning without calling
+   `Endow.invalidate()` — was checked first and is WRONG twice over: `reset()`
+   calls `Endow.invalidate()` unconditionally, and the endowment is a pure
+   function of the node id, so its cache cannot carry a value that differs.
+   Prices, households, trade, bank and the firm registry were all cleared by hand
+   and none of them restored the cold value either. Do not re-derive those.)
+
+   WHY THAT MATTERED SO MUCH: round 0i measures `calm` first and its 25 shocked
+   comparisons after, so the baseline and every number it is compared against sit
+   at DIFFERENT points in the residue history by construction. Its headline worst
+   cell was −0.18% against order noise of 1.9% — a tenth of the noise. Every
+   assertion in this gate that compares a before against an after was resting on
+   run.mjs's own claim that "Nothing here is random", and that claim was false.
+
+   WHAT IS ASSERTED HERE, and §1 is the important one:
+     1. STRUCTURAL. After `Sim.reset()` the economy modules hold ONE state, no
+        matter what was simulated before. This is the guarantee you can check by
+        READING reset(), and it catches the whole class — every future field that
+        someone forgets to clear — rather than the cells this round samples.
+     2. BEHAVIOURAL. The same configuration run in five different call orders
+        gives bit-identical results, compared on the full serialised city and not
+        merely on the headline number.
+     3. Shocked signals too, because that is the comparison round 0i actually
+        makes and an asymmetric one is the one that would bite.
+
+   Prove this round can fail: ECON_TEST_SABOTAGE=warm-residue, which re-commits
+   the defect exactly — it carries `congestionMul` across the reset by hand.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0m-harness-determinism ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  if (!global.window) {
+    global.window = { MythicCityBridge: { addCinders: async () => {} }, MythicResourceChain: null };
+    const chain = await import('../../public/src/resources/chain.js');
+    global.window.MythicResourceChain = { ALL: chain.RESOURCE_CHAIN };
+  }
+  const P = '../../public/src/economy/';
+  const Sim = await import(P + 'sim.js');
+  const HH = await import(P + 'households.js');
+  const Prices = await import(P + 'prices.js');
+  const Firms = await import(P + 'firms.js');
+  const Trade = await import(P + 'trade.js');
+  const Logis = await import(P + 'logistics.js');
+  const Bank = await import(P + 'bank.js');
+  const { ECON } = await import(P + 'tuning.js');
+  const DAY = ECON.clock.dayMin;
+
+  /* 🧨 THE INJURY: `reset()` fails to clear one field of one module. Written as
+     "carry the value across the reset" rather than by editing logistics.js,
+     because that is precisely what the shipped bug DID — the field survived the
+     reset — and a sabotage that reproduces the mechanism is worth more than one
+     that reproduces the symptom. */
+  const RESIDUE = SABOTAGE === 'warm-residue';
+
+  const resetCity = (node) => {
+    const carried = Logis.state().congestionMul;
+    Sim.reset(node);
+    if (RESIDUE) Logis.state().congestionMul = carried;
+  };
+
+  /* THE FINGERPRINT. Deliberately WIDER than Sim.serialize(): the carrier this
+     round exists for lives in logistics.js, which does not ride the save at all,
+     so a fingerprint taken from the save file could never have seen it. Anything
+     a tick can READ has to be in here. */
+  const fingerprint = () => JSON.stringify({
+    sim: Sim.state(), hh: HH.state(), trade: Trade.state(), logistics: Logis.state(),
+    bank: Bank.serialize(), prices: Prices.movers(999), firms: Firms.all(),
+  });
+
+  const drive = (sig, pop, node, wh, days) => {
+    resetCity(node); HH.setPopulation(pop); Sim.bootstrap();
+    let claimed = 0;
+    for (let d = 0; d < days; d++) {
+      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
+                         logisticsCounts: { warehouse: wh }, shock: sig(d) });
+      claimed += Sim.claimPayout();
+    }
+    return { claimed, print: fingerprint() };
+  };
+  const calm = () => 1;
+  const pulse = (mag, cad) => d => (d % cad === cad - 1 ? mag : 1);
+
+  // ── 1. RESET IS A TRUE RESET ────────────────────────────────────────────
+  /* Take the state fingerprint immediately after reset(), cold, then again after
+     three deliberately dissimilar cities have been simulated. Any field the
+     reset forgets shows up here as a diff, named, whether or not it happens to
+     change a headline number today. */
+  resetCity('det-a');
+  const coldReset = fingerprint();
+  const churn = [['det-b', 200, 3, 90], ['rho-6', 45, 0, 120], ['mu-12', 330, 1, 60]];
+  const resetDiffs = [];
+  for (const [node, pop, wh, days] of churn) {
+    drive(calm, pop, node, wh, days);
+    resetCity('det-a');
+    const after = fingerprint();
+    if (after !== coldReset) {
+      /* Name the offending field rather than printing two 60 KB blobs. */
+      const a = JSON.parse(coldReset), b = JSON.parse(after);
+      const walk = (x, y, path) => {
+        if (JSON.stringify(x) === JSON.stringify(y)) return;
+        if (x && y && typeof x === 'object' && typeof y === 'object') {
+          for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) walk(x[k], y[k], path + '.' + k);
+          return;
+        }
+        resetDiffs.push('after ' + node + '/pop' + pop + ':' + path +
+                        ' cold=' + JSON.stringify(x) + ' warm=' + JSON.stringify(y));
+      };
+      walk(a, b, '');
+    }
+  }
+  chk('reset() leaves ONE state, whatever was simulated before (' +
+      churn.length + ' dissimilar cities churned through first)',
+      resetDiffs.length === 0, resetDiffs.slice(0, 6).join(' | '));
+
+  // ── 2. THE SAME CONFIGURATION, IN FIVE DIFFERENT CALL ORDERS ────────────
+  /* The orders are chosen to be the ones a round actually produces: cold, an
+     immediate repeat, after an unrelated city, after a DIFFERENT node (which is
+     the axis the critic's hypothesis blamed), and after a save/load cycle. */
+  const CELLS = [
+    { name: 'rho-6/pop45/wh0/600d calm', sig: calm, pop: 45, node: 'rho-6', wh: 0, days: 600 },
+    { name: 'rho-6/pop45/wh1/240d calm', sig: calm, pop: 45, node: 'rho-6', wh: 1, days: 240 },
+    { name: 'mu-12/pop200/wh3/240d calm', sig: calm, pop: 200, node: 'mu-12', wh: 3, days: 240 },
+    /* §3: a SHOCKED signal, because round 0i's comparison is calm-then-shocked
+       and a residue that only bit the shocked leg would be invisible above. */
+    { name: 'rho-6/pop120/wh1/240d ×1.30/cad6', sig: pulse(1.30, 6), pop: 120, node: 'rho-6', wh: 1, days: 240 },
+  ];
+  const ORDERS = [
+    ['cold', () => {}],
+    ['immediate repeat', function (c) { drive(c.sig, c.pop, c.node, c.wh, c.days); }],
+    ['after an unrelated city', () => { drive(calm, 260, 'det-b', 2, 120); }],
+    ['after a different node', () => { drive(calm, 45, 'det-c', 0, 120); }],
+    /* A reload is a real host event and it goes through a different door into the
+       same state: load() calls reset() itself. If load left anything behind, a
+       measurement taken after the player reloaded would not match one taken
+       before, and no round in this gate would have noticed. */
+    ['after a save/load', () => { const s = drive(calm, 160, 'det-d', 1, 90); void s; Sim.load(Sim.serialize()); }],
+  ];
+  let orderBad = [], cellRows = [];
+  for (const c of CELLS) {
+    let ref = null, row = [];
+    for (const [label, prep] of ORDERS) {
+      prep(c);
+      const got = drive(c.sig, c.pop, c.node, c.wh, c.days);
+      row.push(Math.round(got.claimed));
+      if (ref === null) ref = got;
+      else if (got.print !== ref.print || got.claimed !== ref.claimed) {
+        orderBad.push(c.name + ' [' + label + '] ' + Math.round(got.claimed) +
+                      ' 🔥 against cold ' + Math.round(ref.claimed) + ' 🔥' +
+                      (got.claimed === ref.claimed ? ' (claim equal, CITY differs)' : ''));
+      }
+    }
+    cellRows.push('    ' + c.name.padEnd(32) + row.map(v => String(v).padStart(8)).join(''));
+  }
+  console.log('\n  🎲 SAME CONFIGURATION, ' + ORDERS.length + ' CALL ORDERS — claimed 🔥\n');
+  console.log('    cell                              ' +
+              ORDERS.map(o => o[0].slice(0, 7).padStart(8)).join(''));
+  console.log('    ' + '-'.repeat(32 + ORDERS.length * 8));
+  for (const r of cellRows) console.log(r);
+  console.log('');
+  chk('every configuration is bit-identical across all ' + ORDERS.length +
+      ' call orders (' + CELLS.length + ' cells, compared on the whole city and not just the claim)',
+      orderBad.length === 0, orderBad.slice(0, 4).join(' | '));
+
+  if (fails) { bad++; console.log('\n=== ROUND 0m: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0m: ALL PASS ===');
+}
+
 {
   const P = '../../public/src/economy/';
   const { seconds } = await import(P + 'construction.js');

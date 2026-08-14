@@ -74,6 +74,15 @@ const S = {
           imports: 0, exports: 0, faucet: 0, payout: 0, freight: 0, interest: 0,
           civic: 0, infrastructure: 0, upkeep: 0, welfare: 0, unmetSubsistence: 0,
           founding: 0, estate: 0,
+          /* 💰 Declared, not created on first payout. `zeroFlow()` iterates the
+             keys that EXIST, so a key born mid-run made the flow object a
+             different shape in a warm process than in a cold one. Harmless here
+             (nothing reads it before it is written, and adding 0.0 to a sum is
+             exact) — but "reset() leaves the module in one known state" has to be
+             provable by reading, and a field that appears out of nowhere is not.
+             See logistics.js `congestionMul` for the same pattern where it was
+             NOT harmless and silently biased every measurement in the gate. */
+          dividends: 0,
           /* 🌩 What the disaster cost the city today. ALL THREE ARE READOUTS,
              not accounts: `emergency` is a slice of `imports` (the response is
              bought from outside — see step 9b), while `blocked` (export revenue
@@ -183,6 +192,12 @@ export function reset(nodeId) {
      the next reading it takes is a real observation, not a replay. */
   S.shockBudgetDays = (ECON.shock && ECON.shock.cost) ? ECON.shock.cost.sampleDays : 0;
   S.outputValue = {}; S.serviceValue = {}; S.observed = {}; S.demandEMA = {};
+  /* Cleared for the same reason as everything above it: after reset() this module
+     must hold ONE known state, so that "is a repeat run identical" is a question
+     answered by reading the code rather than by running it twice and hoping. This
+     one is a pure readout and carried no drift; `Logistics.congestionMul` looked
+     exactly as harmless and was the carrier of a 1.9% run-order swing. */
+  S.lastAudit = null;
   zeroFlow();
   HH.reset(); Firms.reset(); Bank.reset(); Trade.reset(); Logistics.reset(); Prices.reset();
   Endow.invalidate();
@@ -1447,7 +1462,7 @@ function runDay(days, host, shock) {
       const div = Firms.pay(f, (closed.profit - closed.tax) * ECON.firm.dividendRate);
       if (div > 0) {
         HH.payDividend(div);
-        S.flow.dividends = (S.flow.dividends || 0) + div;
+        S.flow.dividends += div;   // declared in S.flow; see the note there
       }
     }
 

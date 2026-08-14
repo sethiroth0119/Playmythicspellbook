@@ -156,6 +156,68 @@ export const ECON = {
      and in `distress` below. */
   firm: {
     startCashDays: 12,       // days of operating cost, seeded as cash at founding
+    /* ── 🏦 THE CHARTER FUND — where that seed cash COMES FROM ───────────────
+       🔴 RULE 1, AND IT WAS BROKEN HERE FOR THE WHOLE LIFE OF firms.js.
+       `Firms.found()` used to do `f.cash = dailyOperatingCost × startCashDays`
+       and debit NOTHING. Because the host founds firms from `syncBuildings`
+       (a 4 s setInterval) while sim.js captures the audit's `before` INSIDE
+       runDay, every one of those mints happened between audit windows and the
+       closed-loop audit never saw a Cinder of it. Measured on the pre-fix tree,
+       a city holding all 47 mapped tile types over 240 days minted 721,771 🔥
+       at founding (69 foundings — a bankrupt tile-owned firm is RE-founded at
+       the next sync, so it is a pump, not a one-off) plus 182,997 🔥 at
+       bootstrap, against −6,159 🔥 of audited flow, with a perfectly clean audit
+       and payouts still enabled.
+
+       So seed capital now comes out of an ACCOUNT. The charter fund is a real
+       balance inside `totalCinder()`; founding is a transfer out of it, and the
+       ONLY Cinder ever created for it is issued inside runDay, counted in
+       `S.flow.founding`, carried in the audit identity next to the export
+       faucet, and capped for the lifetime of the city by `lifetimeCap`.
+
+       ⚠ REJECTED: funding founding straight out of the treasury with no fund.
+         The treasury is 0 at bootstrap and households start at 0 savings, so
+         every seeded firm would open with no cash, pay no wages, and the city
+         would have no money in it at all — the export faucet cannot start an
+         economy that has nobody able to buy anything. The mint was load-
+         bearing; making it finite and audited is the fix, pretending it was
+         never needed is not.
+       ⚠ REJECTED: drawing the shortfall from the bank reserve. The reserve is
+         the credit capacity behind the DEBT rung (bank.js); spending it as
+         equity would quietly defund the ladder that the debt rung round exists
+         to keep alive. Treasury is the second source; the reserve is not. */
+    /* 🔢 THE NUMBERS ARE MEASURED, NOT PICKED. Scanning 120 cities (60 nodes ×
+       2 populations), bootstrap alone asks for a median of 74,600 🔥, 197,000 🔥
+       at p90 and 244,000 🔥 at the worst — an unusually rich node seeds 34
+       businesses. `seed` therefore has to clear ~250,000 or the FIRST building
+       a player puts up on a good node opens with literally nothing (that is not
+       hypothetical: at 200,000 it did, and round 0c caught it). Above that the
+       fund keeps a working balance for the buildings that follow. */
+    charter: {
+      seed: 300000,          // 🔥 issued ONCE at bootstrap, before any audit window
+      fundTarget: 80000,     // 🔥 the balance the fund is topped back up toward
+      maxPerDay: 4000,       // 🔥/day ceiling on issuance, mirroring the faucet's
+      /* 🔥 EVERY Cinder this city may ever create as seed capital, for its whole
+         life. For scale: the un-audited mint this replaces had reached 904,768 🔥
+         in one 240-day city and had no ceiling of any kind — it grew with every
+         founding, forever, and a bankrupt tile is re-founded. */
+      lifetimeCap: 700000,
+      /* How deep FOUNDING AS A WHOLE may dig into the city's own money in one
+         window, once the fund is dry. Not 1.0: the treasury also pays benefits,
+         imports and freight, and foundings that empty it starve the stabilisers
+         and the player's payout with them.
+
+         🔴 PER WINDOW, NOT PER FOUNDING — the distinction is the whole value of
+         this number. It was first written as a per-call clamp on the balance
+         REMAINING, which reads identically and behaves nothing like it: the
+         host founds every new tile in ONE `syncBuildings` pass, so N foundings
+         compounded to 1 − 0.65^N of the treasury. Nine tiles in a single sync
+         measured 91.15% taken (10,000.00 → 885.39 🔥) — a clamp whose comment
+         promised the opposite of what it did. sim.js now computes the allowance
+         once per founding window (`armFoundingWindow`) and decrements it, and
+         round0e asserts no single sync can beat it. */
+      treasuryDrawPct: 0.35,
+    },
     /* 💰 DIVIDENDS — the share of after-tax profit that reaches RESIDENTS.
        ----------------------------------------------------------------------
        🔴 WITHOUT THIS THE ECONOMY UNDER-CONSUMES AND CANNOT BE FIXED BY TUNING.

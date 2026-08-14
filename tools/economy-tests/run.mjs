@@ -44,9 +44,20 @@ let bad = 0;
      ECON_TEST_SABOTAGE=withdraw   round0c: withdraw an UPGRADING tile from the
                                    reconcile list for exactly one sync — the
                                    invariant at node-city:17117, violated once
+     ECON_TEST_SABOTAGE=seed-mint  round0e: credit one new firm its seed capital
+                                   out of nowhere, inside the between-tick gap —
+                                   the original firms.js mint, re-committed once
+     ECON_TEST_SABOTAGE=charter-cap round0e: push the lifetime founding tally
+                                   past its ceiling, i.e. a second issuance path
+                                   that ignores the clamp
+     ECON_TEST_SABOTAGE=reap-burn  round0e: burn a demolished firm's cash at the
+                                  seam, exactly as Firms.reap() used to
+    ECON_TEST_SABOTAGE=draw-compound round0e: open the founding window's treasury
+                                   allowance, reproducing the per-call clamp that
+                                   let one sync take 91.15% of the treasury
 
    ⚠ Every one of these must turn the gate RED. If you change these rounds, run
-     all three and check that they still do; an unset variable is the shipping
+     all of them and check that they still do; an unset variable is the shipping
      path and does nothing. */
 const SABOTAGE = process.env.ECON_TEST_SABOTAGE || '';
 if (SABOTAGE) console.log('🧨 ECON_TEST_SABOTAGE=' + SABOTAGE + ' — this run is DELIBERATELY injured and MUST fail.');
@@ -451,8 +462,16 @@ const srcBlockAfter = (src, decl) => {
        reads like a tidy-up.
      · With bldBusy there, an upgrading tile leaves the reconcile list for the
        length of the job — up to 24 hours. syncBuildings (economy/index.js:163)
-       then sets rung='BANKRUPT', Firms.reap() DELETES the firm, and its cash
-       leaves totalCinder(). No warn. No throw. No log line.
+       then sets rung='BANKRUPT' and Firms.reap() DELETES the firm: its id, its
+       lifetime revenue, its supplier set and its rung are gone, and a fresh
+       firm is founded on the rubble when the job ends. No warn. No throw. No
+       log line.
+       ⚠ IT USED TO TAKE THE CASH WITH IT TOO, and that is fixed — `reap()` now
+         hands a closing firm's balance to the treasury (sim.js `receiveEstate`)
+         so the money survives. That makes the MONEY assertion below blind to
+         this particular failure and the IDENTITY assertions the only ones that
+         still see it. Both are kept: money moving at this seam is a different
+         bug, and this is the round positioned to catch it.
      · And the gauntlet stays GREEN, because sim.js captures `before` INSIDE
        runDay (sim.js:820) while the host calls syncBuildings from a 4 s
        setInterval — i.e. always between ticks, never inside the audited
@@ -468,17 +487,26 @@ const srcBlockAfter = (src, decl) => {
                factory forgot everything".
      MONEY     totalCinder() is measured either side of EVERY syncBuildings
                call, not just either side of a tick. Across the upgrade window
-               that delta must be EXACTLY zero — a reap shows up here as a
-               large negative before any other test in this repo can see it.
+               that delta must be EXACTLY zero. It is the guard against ANY
+               Cinder crossing this seam — not, any longer, against the reap
+               itself: founding draws on the charter fund and a wind-up pays
+               into the treasury, so both halves are transfers and both read 0
+               here. Round 0e owns the demolition seam directly.
 
-   ⚠ MEASURED, NOT MODELLED: `Firms.found()` seeds a new firm with
-     dailyOperatingCost × ECON.firm.startCashDays out of nowhere (firms.js:88),
-     and because founding happens between ticks the day audit never sees that
-     either. So the cycle's books are closed here as
-        Δ totalCinder = Σ(faucet − imports − payout) + Σ(sync deltas)
-     with the sync term measured directly. That is the honest closure, and it
-     is what makes "the sync term is zero during an upgrade" a real assertion
-     rather than a tautology.
+   ⚠ MEASURED, NOT MODELLED — AND THE MEASUREMENT CHANGED WHAT IT PROVES.
+     `Firms.found()` USED to credit a new firm dailyOperatingCost ×
+     ECON.firm.startCashDays out of nowhere, and because founding happens
+     between ticks the day audit never saw a Cinder of it: this round measured
+     721,771 🔥 of it in a 240-day city against −6,159 🔥 of audited flow. Seed
+     capital now comes out of the CHARTER FUND (sim.js, `fundFounding`), which
+     is a term of totalCinder(), so a founding moves the total by ZERO and the
+     sync term below is zero at EVERY sync rather than only during an upgrade.
+     The books are still closed the honest way,
+        Δ totalCinder = Σ(faucet + founding − imports − payout) + Σ(sync deltas)
+     with the sync term measured directly — it is just that the sync term is
+     now expected to be flat 0, which is a much stronger statement than the
+     "measure whatever it minted and add it back" closure it replaces.
+     Round 0e owns the bound on the `founding` term itself.
 
    Prove this round can fail: ECON_TEST_SABOTAGE=withdraw.
    ════════════════════════════════════════════════════════════════════════════ */
@@ -547,7 +575,7 @@ const srcBlockAfter = (src, decl) => {
     const tick = () => {
       E.tick(DAY, host);
       const s = E.snapshot();
-      expected += s.flow.faucet - s.flow.imports - s.flow.payout;
+      expected += s.flow.faucet + (s.flow.founding || 0) - s.flow.imports - s.flow.payout;
       if (!s.audit || !s.audit.ok) auditBad = JSON.stringify(s.audit);
     };
     /* Every sync is weighed. `label` is only used to report where money moved. */
@@ -578,8 +606,18 @@ const srcBlockAfter = (src, decl) => {
     const dFound = sync();
     const born = firmAt(SUBJ);
     chk('completion founds the business', !!born, 'no firm at ' + SUBJ);
-    chk('founding SEEDS cash the day-audit never sees (firms.js:88) — measured, not assumed',
-        dFound > 0, 'sync moved ' + dFound.toFixed(2) + ' 🔥');
+    /* 🔴 THIS CHECK USED TO ASSERT `dFound > 0` — i.e. it PINNED the mint,
+       because at the time the mint was the truth and a test that models what
+       ought to happen instead of what does is worthless. Founding is now a
+       transfer out of the charter fund, so the honest assertion is the
+       opposite one, and it is stronger: no Cinder appears at the seam, and the
+       business is nevertheless capitalised. Both halves matter — "0 moved" is
+       also what a founding that funded NOTHING would print. */
+    chk('founding moves NO Cinder at the seam — seed capital is a transfer, not a mint',
+        Math.abs(dFound) < 1e-9, 'sync moved ' + dFound.toFixed(2) + ' 🔥');
+    chk('...and the business was actually capitalised out of the charter fund',
+        !!born && born.cash > 0 && born.cash <= born.seedWant + 1e-9,
+        born ? 'cash ' + born.cash.toFixed(2) + ' of seedWant ' + (born.seedWant || 0).toFixed(2) : 'no firm');
 
     // ── 3. TRADE for a while, so there is a book worth losing. ─────────────
     for (let d = 0; d < 14; d++) { sync(); tick(); }
@@ -635,7 +673,11 @@ const srcBlockAfter = (src, decl) => {
         absentDuring === 0, absentDuring + ' of 10 syncs withdrew it');
     chk('the firm id never changes during the upgrade', idChanged === 0,
         idChanged + ' of 10 syncs saw a different (or missing) firm');
-    chk('NO CINDER MOVES AT SYNC during an upgrade — a reap would show up here first',
+    /* ⚠ NOT the reap detector any more — see the header. A reap is a transfer
+       in both directions now, so this reads 0 either way; the identity checks
+       above are what catch the withdrawal. This still guards the seam against
+       anything that DOES move money across it. */
+    chk('NO CINDER MOVES AT SYNC during an upgrade',
         movedDuring.length === 0, movedDuring.join(', ') +
         ' (total ' + (syncTotal - upSyncStart).toFixed(2) + ' 🔥)');
 
@@ -675,8 +717,8 @@ const srcBlockAfter = (src, decl) => {
     console.log('\n  💰 place → build → complete → upgrade → complete');
     console.log('     totalCinder     ' + START.toFixed(2) + ' → ' + END.toFixed(2) +
                 '   (Δ ' + (END - START).toFixed(2) + ')');
-    console.log('     audited flows   ' + expected.toFixed(2) + '   (faucet − imports − payout)');
-    console.log('     founding seeds  ' + syncTotal.toFixed(2) + '   (measured at syncBuildings)');
+    console.log('     audited flows   ' + expected.toFixed(2) + '   (faucet + founding − imports − payout)');
+    console.log('     seam movement   ' + syncTotal.toFixed(2) + '   (measured at syncBuildings — must be 0)');
     console.log('     unexplained     ' + drift.toFixed(6) + '   (tolerance ' + tol.toFixed(4) + ')\n');
     chk('no Cinder was minted or burned outside the audited terms', Math.abs(drift) <= tol,
         'drift ' + drift.toFixed(6));
@@ -872,16 +914,20 @@ const srcBlockAfter = (src, decl) => {
     const host = () => runHost(tiles, realKey);
     chk('the shipped ecoHost reports hasBank for this city', host().hasBank === true);
 
-    /* The four terms of totalCinder(), read the way sim.js defines them. */
+    /* The FIVE terms of totalCinder(), read the way sim.js defines them.
+       ⚠ `charter` is the newest of them and it is the one a future edit is most
+       likely to forget: the charter fund is a real balance that founding draws
+       on, so leaving it out of this sum would read as a leak of exactly the
+       unspent seed capital and would send the next reader hunting a phantom. */
     const terms = () => { const s = E.snapshot();
       return { savings: s.savings, firmCash: s.firmCash, treasury: s.treasury,
-               reserve: s.bank.reserve, total: s.totalCinder }; };
+               charter: s.charter, reserve: s.bank.reserve, total: s.totalCinder }; };
     const SUM_TOL = 1e-6;
     let auditBad = null, flows = 0;
     const tick = () => {
       E.tick(DAY, host());
       const s = E.snapshot();
-      flows += s.flow.faucet - s.flow.imports - s.flow.payout;
+      flows += s.flow.faucet + (s.flow.founding || 0) - s.flow.imports - s.flow.payout;
       if (!s.audit || !s.audit.ok) auditBad = JSON.stringify(s.audit);
     };
 
@@ -1021,17 +1067,20 @@ const srcBlockAfter = (src, decl) => {
     console.log('     city loan book  lent ' + bk.lent.toFixed(2) + ' · repaid ' + bk.repaid.toFixed(2) +
                 ' · written ' + bk.written.toFixed(2) + ' · open ' + bk.loans);
     console.log('     terms  savings ' + T.savings.toFixed(2) + ' + firmCash ' + T.firmCash.toFixed(2) +
-                ' + treasury ' + T.treasury.toFixed(2) + ' + reserve ' + T.reserve.toFixed(2));
+                ' + treasury ' + T.treasury.toFixed(2) + ' + charter ' + T.charter.toFixed(2) +
+                ' + reserve ' + T.reserve.toFixed(2));
     console.log('     totalCinder     ' + START.toFixed(2) + ' → ' + END.toFixed(2) +
                 '   (Δ ' + (END - START).toFixed(2) + ')');
-    console.log('     audited flows   ' + flows.toFixed(2) + '   (faucet − imports − payout)');
+    console.log('     audited flows   ' + flows.toFixed(2) + '   (faucet + founding − imports − payout)');
     console.log('     unexplained     ' + drift.toFixed(6) + '   (tolerance ' + tol.toFixed(4) + ')\n');
-    chk('the four terms still sum to totalCinder()',
-        Math.abs((T.savings + T.firmCash + T.treasury + T.reserve) - T.total) < SUM_TOL,
-        (T.savings + T.firmCash + T.treasury + T.reserve).toFixed(6) + ' vs ' + T.total.toFixed(6));
-    /* ⚠ No syncBuildings runs inside this window — the city is fixed — so the
-       founding-seed term round0c has to measure is exactly zero here and the
-       closure is the plain audited one. */
+    chk('the five terms still sum to totalCinder()',
+        Math.abs((T.savings + T.firmCash + T.treasury + T.charter + T.reserve) - T.total) < SUM_TOL,
+        (T.savings + T.firmCash + T.treasury + T.charter + T.reserve).toFixed(6) + ' vs ' + T.total.toFixed(6));
+    /* ⚠ No syncBuildings runs inside this window — the city is fixed — so no
+       founding TRANSFER happens here at all. The `founding` term in `flows` is
+       still carried because the charter fund tops itself up inside runDay
+       whenever it is below target, and that issuance is audited creation like
+       the export faucet. */
     chk('RULE 1: no Cinder minted or burned with the DEBT RUNG LIVE',
         Math.abs(drift) <= tol, 'drift ' + drift.toFixed(6));
     chk('the day audit stayed clean throughout', !auditBad, auditBad);
@@ -1049,6 +1098,341 @@ const srcBlockAfter = (src, decl) => {
     if (fails) { bad++; console.log('\n=== ROUND 0d: ' + fails + ' FAILED ==='); }
     else console.log('\n=== ROUND 0d: ALL PASS ===');
   }
+}
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0e — 🏦 THE FOUNDING MINT, AND THE CEILING THAT NOW BOUNDS IT
+   ----------------------------------------------------------------------------
+   THE DEFECT THIS ROUND EXISTS FOR, measured on the pre-fix tree before a line
+   was changed:
+
+     firms.js:  f.cash = dailyOperatingCost(f) * ECON.firm.startCashDays
+
+   credited every new firm and debited nothing. A city holding all 47 mapped
+   tile types over 240 days minted 721,771 🔥 that way (69 foundings — a firm
+   that goes bankrupt is RE-founded on the next sync, so this is a pump and not
+   a one-off) plus 182,997 🔥 at bootstrap, against −6,159 🔥 of audited flow —
+   with ZERO failed day audits and payouts enabled throughout. The audit could
+   not see it because the host founds firms from `syncBuildings` on a 4 s
+   interval and `runDay` captures `before` at its own top: the creation happened
+   between the audit windows, every single time. That is Rule 1 — "Cinder is
+   never minted" — broken continuously, behind a green gate, for the whole life
+   of the file.
+
+   So this round asserts the two claims the fix rests on, and neither one is a
+   restatement of the day audit:
+
+     TRANSFER  totalCinder() is read either side of EVERY syncBuildings call and
+               must move by EXACTLY zero. Seed capital comes out of the charter
+               fund, which is a term of totalCinder(); if anyone ever restores a
+               credit in `found()` — or adds a second one — this is the check
+               that goes red, and it goes red at the seam where it happens
+               rather than in a drift number four hundred lines later.
+     WIND-UP   AND THE SEAM IS WALKED IN BOTH DIRECTIONS, because for one round
+               this round only ever walked it in one. The mint was fixed while
+               its mirror image was left running: `syncBuildings` marks a
+               DEMOLISHED tile's firm BANKRUPT, `Firms.reap()` deleted it, and
+               its whole cash balance left totalCinder() in the same between-tick
+               gap. Measured on the tree that shipped with the founding fix in
+               it: 12 demolitions in a 60-day city destroyed 42,612.05 🔥 —
+               8.73% of that city's entire money supply — and the next day's
+               audit read err=-0.000000, payoutAllowed=true. A round that adds
+               buildings and never removes one cannot tell those two states
+               apart, so this one now razes as well as builds, and the estate
+               (sim.js `receiveEstate`) makes the removal a transfer too.
+     CEILING   `charterIssued` is every Cinder this city has EVER created as
+               founding capital. It must never exceed ECON.firm.charter
+               .lifetimeCap, and — the half that stops this round from being
+               vacuous — it must actually REACH the cap in this run. A bound
+               nothing ever touches proves nothing about a bound.
+
+   And the consequence of the ceiling is asserted rather than assumed: once the
+   fund is dry and the treasury cannot cover, a founding is FUNDED SHORT. The
+   firm opens with less than it wanted (`seedShort > 0`), keeps existing, and
+   nothing is invented to make up the difference.
+
+   Prove this round can fail:
+     ECON_TEST_SABOTAGE=seed-mint    re-commits the original bug for one sync
+     ECON_TEST_SABOTAGE=charter-cap  pushes the lifetime tally past the ceiling
+     ECON_TEST_SABOTAGE=reap-burn    re-commits the DEMOLITION burn for one sync
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0e-charter-capital ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  if (!global.window) {
+    global.window = { MythicCityBridge: { addCinders: async () => {} }, MythicResourceChain: null };
+    const chain = await import('../../public/src/resources/chain.js');
+    global.window.MythicResourceChain = { ALL: chain.RESOURCE_CHAIN };
+  }
+  const P = '../../public/src/economy/';
+  const E = (await import(P + 'index.js')).default;
+  const Sim = await import(P + 'sim.js');
+  const { ECON } = await import(P + 'tuning.js');
+  const DAY = ECON.clock.dayMin;
+  const C = ECON.firm.charter;
+
+  E.mount({ nodeId: 'charter-0', population: 90 });
+  const host = { powerFactor: 1, waterFactor: 1, logisticsCounts: { warehouse: 3, depot: 2 },
+                 hasBank: true, infrastructure: 0.7 };
+
+  /* 🔴 A BRAND-NEW CITY'S ENTIRE MONEY SUPPLY IS THE CHARTER TRANCHE.
+     Households start at 0 savings and the treasury starts at 0 (sim.js reset),
+     so before the fix this equality was against a number that fell out of
+     however many firms bootstrap happened to seed and what they happened to
+     cost. Now it is a stated quantity, and that is the point. */
+  const START = E.totalCinder();
+  chk('a fresh city holds exactly the bootstrap charter tranche and not a Cinder more',
+      Math.abs(START - C.seed) < 1e-6, START.toFixed(2) + ' vs seed ' + C.seed.toFixed(2));
+  chk('the bootstrap tranche is counted against the lifetime allowance',
+      Math.abs(E.snapshot().charterIssued - C.seed) < 1e-6, String(E.snapshot().charterIssued));
+
+  /* A city that keeps building. Every tile is a real map entry so the founding
+     path is the shipped one; the point is the VOLUME, which is what drains the
+     allowance and gets us to the ceiling inside a test-sized run. */
+  const types = CITY_MAP ? Object.keys(CITY_MAP) : [];
+  chk('round0b handed over the real building map', types.length > 0, 'no map — nothing to build');
+
+  const tiles = {};
+  const list = () => Object.entries(tiles).map(([k, t]) => {
+    const m = CITY_MAP[t.type];
+    const o = m ? E.pickAvailable(m.out) : null;
+    return o ? { key: k, out: o, ind: m.ind, lvl: 1 } : null;
+  }).filter(Boolean);
+
+  let seamTotal = 0, worstSeam = 0, worstSeamAt = '', flows = 0, auditBad = null;
+  let overCap = 0, peakIssued = 0, minted = false;
+  /* 🪟 THE WINDOW DRAW. `winBase` is the treasury standing when the current
+     founding window opened (sim.js arms the allowance at the close of runDay,
+     so that is the balance right after a tick; before the very first tick the
+     window arms lazily off whatever is there when the first founding draws).
+     `winDrawn` is every Cinder foundings have taken out of the treasury since.
+     The bound is on the WINDOW — see below for why per-founding was a fiction. */
+  let winBase = Sim.state().treasury, winDrawn = 0;
+  let worstDrawPct = 0, worstDrawAt = '', drawOver = 0, worstDrawDetail = '';
+  /* Set by the demolition phase to the keys about to be removed, so the
+     reap-burn sabotage can destroy their cash INSIDE the measured window —
+     which is where `Firms.reap()` used to destroy it. Burning it before `t0` is
+     read would show up as end-of-run drift instead of as a seam crossing, and
+     would be testing the wrong assertion. */
+  let RAZE_DOOMED = null, burned = false;
+  const sync = (label) => {
+    const t0 = E.totalCinder();
+    const tre0 = Sim.state().treasury;
+    if (SABOTAGE === 'reap-burn' && RAZE_DOOMED && !burned) {
+      /* 🧨 THE DEMOLITION BURN, re-committed for exactly one sync: the firms
+         about to be reaped have their cash destroyed instead of handed to the
+         treasury — precisely what `Firms.reap()` did before `receiveEstate`
+         existed, in this same between-tick gap, and with the same spotless
+         audit on the following day. */
+      let lost = 0;
+      for (const k of RAZE_DOOMED) {
+        const f = E.firms().find(x => String(x.tileKey) === String(k));
+        if (f) { lost += f.cash; f.cash = 0; }
+      }
+      if (lost > 0) { burned = true;
+        console.log('   🧨 destroyed ' + lost.toFixed(2) + ' 🔥 of demolished firms\' cash'); }
+    }
+    if (SABOTAGE === 'draw-compound') {
+      /* 🧨 THE CEILING REMOVED, which is what the per-call clamp amounted to
+         once `syncBuildings` founded ten tiles in one pass: each founding got
+         its own share of whatever was left, so the "35%" bound multiplied out
+         to 1 − 0.65^N. Forcing the budget open reproduces the same end state —
+         a single sync draining the treasury the stabilisers run on. */
+      Sim.state().foundingDrawBudget = Infinity;
+    }
+    E.syncBuildings(list());
+    const drew = tre0 - Sim.state().treasury;
+    if (drew > 0) winDrawn += drew;
+    if (winBase > 1e-6) {
+      const pct = winDrawn / winBase;
+      if (pct > worstDrawPct) {
+        worstDrawPct = pct; worstDrawAt = label;
+        worstDrawDetail = winDrawn.toFixed(2) + ' 🔥 of a ' + winBase.toFixed(2) + ' 🔥 treasury';
+      }
+      if (winDrawn > winBase * C.treasuryDrawPct + Math.max(1e-6, winBase * 1e-9)) drawOver++;
+    }
+    if (SABOTAGE === 'seed-mint' && !minted) {
+      /* 🧨 THE ORIGINAL BUG, re-committed for exactly one sync: a firm is
+         credited its seed capital and nothing is debited, inside the same
+         between-tick gap `syncBuildings` really runs in. */
+      const f = E.firms().slice(-1)[0];
+      if (f) { f.cash += f.seedWant || 1000; minted = true;
+               console.log('   🧨 credited ' + f.name + ' ' + (f.seedWant || 1000).toFixed(2) + ' 🔥 out of nowhere'); }
+    }
+    const d = E.totalCinder() - t0;
+    seamTotal += d;
+    if (Math.abs(d) > Math.abs(worstSeam)) { worstSeam = d; worstSeamAt = label; }
+    return d;
+  };
+  const tick = () => {
+    E.tick(DAY, host);
+    const s = E.snapshot();
+    // A tick closes the founding window and opens the next one against `treasury`.
+    winBase = s.treasury; winDrawn = 0;
+    flows += s.flow.faucet + (s.flow.founding || 0) - s.flow.imports - s.flow.payout;
+    if (!s.audit || !s.audit.ok) auditBad = JSON.stringify(s.audit);
+    peakIssued = Math.max(peakIssued, s.charterIssued);
+    if (s.charterIssued > C.lifetimeCap + 1e-6) overCap++;
+  };
+
+  let short = null, key = 0;
+  for (let d = 0; d < 120 && types.length; d++) {
+    // three new buildings a day: enough churn to spend the allowance in 120 days
+    for (let i = 0; i < 3; i++) { tiles[(key++) + ',0'] = { type: types[key % types.length] }; }
+    sync('d' + d);
+    if (SABOTAGE === 'charter-cap' && d === 60) {
+      /* 🧨 A second issuance path that ignores the clamp — the shape of the
+         regression the ceiling exists to catch. */
+      Sim.state().charterIssued = C.lifetimeCap * 2;
+      console.log('   🧨 charterIssued forced to ' + (C.lifetimeCap * 2).toFixed(0) + ' 🔥');
+    }
+    if (!short) short = E.firms().find(f => (f.seedShort || 0) > 1e-6) || null;
+    tick();
+  }
+
+  /* ── 🏚 AND NOW THE OTHER DIRECTION ────────────────────────────────────────
+     Every sync above ADDED tiles. The burn only happens on REMOVAL, which is
+     why it survived a round built to catch exactly this class: `syncBuildings`
+     kills the firm on a tile that is gone, and until `receiveEstate` existed
+     `Firms.reap()` deleted its cash along with its record. The demolitions are
+     measured at the same seam, one sync at a time, and the per-sync bound is
+     tighter than the aggregate on purpose — a single razed factory is a single
+     large number, not accumulated float noise. */
+  const builtTiles = Object.keys(tiles).length;
+  const cashBeforeRaze = E.firms().reduce((n, f) => n + f.cash, 0);
+  const firmsBeforeRaze = E.snapshot().firms;
+  const estateBeforeRaze = E.snapshot().estateReceived || 0;
+  let razeSeam = 0, worstRaze = 0, worstRazeAt = '', razed = 0;
+  /* 🔬 THE BOUND IS IN ULPS, AND HERE IS WHY — MEASURED, NOT ASSUMED.
+     The first draft of this check asserted |Δ| < 1e-9 flat and went RED at
+     −1.164e-10 per raze. That was not a leak. `totalCinder()` sums savings +
+     every firm's cash + treasury + charter + reserve LEFT TO RIGHT, and reaping
+     a firm removes a term from the middle of that sum — so the same money
+     re-associates and the last bit of a ~680,000 🔥 double moves. Probed
+     directly: naive Δ was ±1.164e-10 or ±2.328e-10 (1–2 ulps; one ulp at that
+     magnitude is 1.51e-10) while a KAHAN-compensated sum of the identical terms
+     read exactly 0.000e+0 at every single raze. The transfer is exact to the
+     bit; only the summation order is not.
+     So the ceiling is 8 ulps of the money supply — about 1.2e-9 🔥 on this
+     city, five orders below one Cinder and fourteen below the 113,724.82 🔥 the
+     reap-burn sabotage pushes across this seam. Widening it to hide a real leak
+     is not available: a leak is a firm's whole balance sheet, not a bit. */
+  const ULPS = 8;
+  let razeTol = 0;
+  /* And the claim that owes nothing to floating point at all: every Cinder that
+     left the demolished firms ARRIVED in the treasury. Term to term, no sum of
+     350 doubles involved. */
+  let estateMismatch = [];
+  for (let d = 0; d < 20; d++) {
+    /* 🔴 THE RICHEST BUSINESSES GO FIRST, deliberately. Razing whatever tile
+       happens to be oldest picked near-broke firms and put 1.55 🔥 across the
+       seam — a bound that only ever sees small numbers is barely a bound. The
+       biggest balance in the city is the largest thing this seam can destroy,
+       so that is what gets pushed through it. */
+    const doomed = Object.keys(tiles)
+      .map(k => ({ k, cash: (E.firms().find(f => String(f.tileKey) === String(k)) || {}).cash || 0 }))
+      .sort((a, b) => b.cash - a.cash).slice(0, 3).map(x => x.k);
+    if (!doomed.length) break;
+    RAZE_DOOMED = doomed;
+    const doomedCash = doomed.reduce((n, k) => {
+      const f = E.firms().find(x => String(x.tileKey) === String(k));
+      return n + (f ? f.cash : 0);
+    }, 0);
+    const est0 = E.snapshot().estateReceived || 0;
+    razeTol = Math.max(razeTol, Math.abs(E.totalCinder()) * ULPS * Number.EPSILON);
+    for (const k of doomed) { delete tiles[k]; razed++; }
+    const dz = sync('raze' + d);
+    RAZE_DOOMED = null;
+    const arrived = (E.snapshot().estateReceived || 0) - est0;
+    if (Math.abs(arrived - doomedCash) > 1e-9)
+      estateMismatch.push('raze' + d + ' held ' + doomedCash.toFixed(6) +
+                          ' 🔥, treasury received ' + arrived.toFixed(6));
+    razeSeam += dz;
+    if (Math.abs(dz) > Math.abs(worstRaze)) { worstRaze = dz; worstRazeAt = 'raze' + d; }
+    tick();
+  }
+  const estateTaken = (E.snapshot().estateReceived || 0) - estateBeforeRaze;
+
+  const END = E.totalCinder();
+  const snap = E.snapshot();
+  const drift = (END - START) - flows - seamTotal;
+  const tol = Math.max(1, Math.abs(END) * 1e-6);
+
+  console.log('\n  🏦 120 days of continuous building, ' + builtTiles + ' tiles placed');
+  console.log('     totalCinder     ' + START.toFixed(2) + ' → ' + END.toFixed(2) +
+              '   (Δ ' + (END - START).toFixed(2) + ')');
+  console.log('     audited flows   ' + flows.toFixed(2) + '   (faucet + founding − imports − payout)');
+  console.log('     seam movement   ' + seamTotal.toFixed(2) + '   (worst single sync ' +
+              worstSeam.toFixed(2) + (worstSeamAt ? ' at ' + worstSeamAt : '') + ')');
+  console.log('     charter issued  ' + snap.charterIssued.toFixed(2) + ' of ' + C.lifetimeCap.toFixed(2) +
+              '   (fund holds ' + snap.charter.toFixed(2) + ')');
+  console.log('     unexplained     ' + drift.toFixed(6) + '   (tolerance ' + tol.toFixed(4) + ')');
+  console.log('     worst window draw ' + (100 * worstDrawPct).toFixed(2) + '% of the treasury' +
+              (worstDrawAt ? ' at ' + worstDrawAt : '') + '   (ceiling ' +
+              (100 * C.treasuryDrawPct).toFixed(0) + '%' +
+              (worstDrawDetail ? ', ' + worstDrawDetail : '') + ')\n');
+  console.log('  🏚 then 20 days of demolition, ' + razed + ' tiles razed');
+  console.log('     businesses      ' + firmsBeforeRaze + ' → ' + snap.firms +
+              '   (held ' + cashBeforeRaze.toFixed(2) + ' 🔥 before the first raze)');
+  console.log('     estate received ' + estateTaken.toFixed(2) + ' 🔥 into the treasury');
+  console.log('     raze seam       ' + razeSeam.toExponential(3) + '   (worst single raze ' +
+              worstRaze.toExponential(3) + (worstRazeAt ? ' at ' + worstRazeAt : '') +
+              ', ceiling ' + razeTol.toExponential(3) + ' = ' + ULPS + ' ulps)\n');
+
+  chk('NO CINDER MOVES AT ANY syncBuildings — founding is a transfer, at every seam',
+      Math.abs(seamTotal) < 1e-6, 'total ' + seamTotal.toFixed(6) + ', worst ' + worstSeam.toFixed(6) +
+      ' at ' + worstSeamAt);
+  /* 🔴 THE REMOVAL SEAM, ASSERTED PER SYNC. Prove it can fail with
+     ECON_TEST_SABOTAGE=reap-burn. */
+  chk('NO CINDER MOVES WHEN A BUILDING IS DEMOLISHED — the estate is a transfer, not a burn',
+      Math.abs(worstRaze) <= razeTol && Math.abs(razeSeam) <= razeTol * razed,
+      'total ' + razeSeam.toExponential(3) + ', worst ' + worstRaze.toExponential(3) +
+      ' at ' + worstRazeAt + ', ceiling ' + razeTol.toExponential(3) + ' (' + ULPS + ' ulps)');
+  chk('every Cinder a demolished business held ARRIVED in the treasury — term to term',
+      estateMismatch.length === 0, estateMismatch.slice(0, 3).join(' | '));
+  /* The non-vacuity half, and it is not optional: "0 moved at every raze" is
+     also what a run that razed nothing, or razed only broke firms, would print.
+     The demolitions have to have closed real businesses holding real money. */
+  chk('the demolitions actually wound up businesses that were HOLDING money',
+      razed > 0 && snap.firms < firmsBeforeRaze && estateTaken > 0,
+      razed + ' razed, firms ' + firmsBeforeRaze + '→' + snap.firms +
+      ', estate ' + estateTaken.toFixed(2) + ' 🔥');
+  chk('founding capital NEVER exceeds its lifetime ceiling',
+      overCap === 0 && snap.charterIssued <= C.lifetimeCap + 1e-6,
+      snap.charterIssued.toFixed(2) + ' issued of ' + C.lifetimeCap + ' (' + overCap + ' days over)');
+  chk('the ceiling actually BINDS in this run (a bound nothing touches proves nothing)',
+      peakIssued >= C.lifetimeCap - 1e-6, 'peak issued ' + peakIssued.toFixed(2) + ' of ' + C.lifetimeCap);
+  chk('every Cinder created for founding is carried in the audited `founding` flow',
+      Math.abs(drift) <= tol, 'drift ' + drift.toFixed(6));
+  chk('a founding the accounts cannot cover is FUNDED SHORT, not invented',
+      !!short && short.cash < short.seedWant && short.rung !== undefined,
+      short ? short.name + ' wanted ' + short.seedWant.toFixed(2) + ', got ' + short.cash.toFixed(2) +
+              ' (short ' + short.seedShort.toFixed(2) + ')'
+            : 'no under-funded firm appeared — the allowance was never exhausted');
+  /* 🔴 THE BOUND IS ON THE WINDOW, AND IT HAS TO BE CHECKED HERE BECAUSE THE
+     AUDIT CANNOT SEE IT. Founding is a TRANSFER, so a sync that moves the whole
+     treasury into ten new firms balances perfectly and the day audit reports
+     clean — the money is not minted, it is merely all gone from the account
+     that pays unemployment benefit, freight, imports and the player's payout.
+     `treasuryDrawPct` was written as the protection against exactly that and
+     did not provide it: applied per founding to the balance REMAINING, N tiles
+     in one `syncBuildings` pass took 1 − 0.65^N. Measured on the pre-fix tree,
+     nine tiles in a single sync took 91.15% (10,000.00 → 885.39 🔥).
+     Prove this can fail: ECON_TEST_SABOTAGE=draw-compound. */
+  chk('NO founding window takes more than treasuryDrawPct of the treasury, however many tiles found at once',
+      drawOver === 0 && worstDrawPct <= C.treasuryDrawPct + 1e-6,
+      'worst ' + (100 * worstDrawPct).toFixed(2) + '% at ' + (worstDrawAt || '?') +
+      ' (' + worstDrawDetail + '), ceiling ' + (100 * C.treasuryDrawPct).toFixed(0) +
+      '%, ' + drawOver + ' window(s) over');
+  chk('the day audit stayed clean throughout', !auditBad, auditBad);
+  chk('payouts were never suspended', snap.payoutAllowed === true);
+
+  if (fails) { bad++; console.log('\n=== ROUND 0e: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0e: ALL PASS ===');
 }
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {
   console.log('\n########## ' + f + ' ##########');

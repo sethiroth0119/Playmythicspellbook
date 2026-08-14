@@ -47,11 +47,33 @@ const S = {
   day: 0,               // economic days elapsed
   dayFrac: 0,           // partial day carried between ticks
   treasury: 0,          // the city's Cinder
+  /* 🏦 THE CHARTER FUND — capital held for founding businesses, and the
+     lifetime tally of what was ever created to fill it. Both are inside
+     totalCinder(), so drawing on the fund is a transfer the audit already
+     understands. See ECON.firm.charter for why this account exists at all. */
+  charter: 0,
+  charterIssued: 0,
+  /* Lifetime tally of wound-up firms' cash received into the treasury. Purely a
+     readout — the estate is a transfer and appears in no audit identity — but
+     without it nothing can tell "no firm ever closed holding cash" apart from
+     "the wind-up path is broken again". */
+  estateReceived: 0,
+  /* 🔴 THE TREASURY DRAW ALLOWANCE IS PER WINDOW, NOT PER FOUNDING.
+     `treasuryDrawPct` used to be applied to the REMAINING balance on every call,
+     and `syncBuildings` founds every new tile in ONE pass — so N foundings took
+     1 − 0.65^N of the treasury. Measured: nine tiles in a single sync took
+     91.15% (10,000.00 → 885.39 🔥), which is the exact opposite of what the
+     percentage is for ("a founding that empties it starves the stabilisers").
+     So the allowance is computed ONCE per founding window and decremented, and
+     the window is the gap between ticks — see `armFoundingWindow`. */
+  foundingDrawBudget: 0,
+  foundingDrawArmed: false,
   INV: {},              // resource id → units held by the city
   /* Per-day flow readouts, for the panel and the audit. */
   flow: { wages: 0, shopping: 0, b2b: 0, rent: 0, tax: 0, benefits: 0,
           imports: 0, exports: 0, faucet: 0, payout: 0, freight: 0, interest: 0,
-          civic: 0, infrastructure: 0, upkeep: 0, welfare: 0, unmetSubsistence: 0 },
+          civic: 0, infrastructure: 0, upkeep: 0, welfare: 0, unmetSubsistence: 0,
+          founding: 0, estate: 0 },
   payoutAllowed: true,
   payoutOwed: 0,        // accumulated, withdrawn by the host through the bridge
   lastAudit: null,
@@ -79,6 +101,8 @@ export function log() { return S.log.slice(); }
 export function reset(nodeId) {
   S.nodeId = nodeId == null ? null : String(nodeId);
   S.day = 0; S.dayFrac = 0; S.treasury = 0; S.INV = {};
+  S.charter = 0; S.charterIssued = 0; S.estateReceived = 0;
+  S.foundingDrawBudget = 0; S.foundingDrawArmed = false;
   S.payoutAllowed = true; S.payoutOwed = 0; S.log = []; S.booted = false;
   S.outputValue = {}; S.serviceValue = {}; S.observed = {}; S.demandEMA = {};
   zeroFlow();
@@ -106,6 +130,151 @@ function takeInv(id, n) {
   if (got > 0) S.INV[id] = have - got;
   return got;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🏦 CHARTER CAPITAL — the ONLY place a new business's seed cash comes from.
+   ----------------------------------------------------------------------------
+   🔴 THE BUG THIS REPLACES, and it is Rule 1 itself.
+   `Firms.found()` credited every new firm `dailyOperatingCost × startCashDays`
+   and debited nothing. The audit could not see it, and not by accident: the
+   host calls `syncBuildings` from a 4 s setInterval, while `runDay` captures
+   `before` at its own top — so every tile-founded firm was chartered in the gap
+   BETWEEN two audit windows, and the books balanced because the minting
+   happened while nobody was counting. Measured on the pre-fix tree, a city with
+   all 47 mapped tile types over 240 days: 721,771 🔥 minted at founding against
+   −6,159 🔥 of audited flow, audit clean, payouts enabled the whole way.
+
+   THE FIX IS TWO PARTS, and the second one is why this is not just the same
+   mint wearing a hat:
+
+     1. FOUNDING IS A TRANSFER. `fundFounding()` moves Cinder from the charter
+        fund (and, when that is dry, from the treasury) into the firm. Both
+        terms live inside `totalCinder()`, so a founding between ticks moves the
+        total by exactly zero and the next day's audit is undisturbed.
+     2. FILLING THE FUND IS AN AUDITED, BOUNDED FAUCET. `issueCharter()` is the
+        only creation, it happens INSIDE runDay where the audit window can see
+        it, it is counted in `S.flow.founding` and carried in the audit
+        identity, it is rate-limited per day, and it is capped for the lifetime
+        of the city by ECON.firm.charter.lifetimeCap. `audit()` asserts that cap
+        independently, so a future edit that bypasses the clamp fails the audit
+        instead of quietly printing money again.
+
+   WHAT HAPPENS WHEN NEITHER ACCOUNT CAN PAY: the firm founds with LESS, down to
+   nothing. It is not refused (the host has already built the building and taken
+   the player's money for it — refusing here would leave a tile that is a
+   business in the city and not one in the economy, which is the exact
+   desynchronisation round 0c exists to catch) and it is never topped up out of
+   thin air. It opens under-capitalised and the distress ladder takes it from
+   there, which is the announcement's "a store built somewhere with no customers
+   can lose money" arriving one step earlier.
+   ════════════════════════════════════════════════════════════════════════════ */
+function issueCharter(want) {
+  const cap = ECON.firm.charter.lifetimeCap;
+  const room = Math.max(0, cap - S.charterIssued);
+  const add = Math.max(0, Math.min(want, room));
+  if (add <= 0) return 0;
+  S.charter += add;
+  S.charterIssued += add;
+  return add;
+}
+
+/* Called once per economic day, from inside the audited window. Tops the fund
+   back toward its target so a city that keeps building keeps being able to
+   capitalise what it builds — until the lifetime allowance is spent, after
+   which new businesses are funded out of the city's own money or not at all. */
+function topUpCharter(days) {
+  const C = ECON.firm.charter;
+  const want = Math.min(Math.max(0, C.fundTarget - S.charter), C.maxPerDay * Math.max(0, days));
+  const got = issueCharter(want);
+  if (got > 0) S.flow.founding += got;
+  return got;
+}
+
+/* ── 🪟 THE FOUNDING WINDOW ──────────────────────────────────────────────────
+   🔴 THE BUG THIS EXISTS FOR, measured before it was written: `fundFounding`
+   applied `treasuryDrawPct` to the treasury balance REMAINING at that instant,
+   once per founding. But foundings are not spread out — `syncBuildings` walks
+   every new tile in a single pass, so N of them took 1 − 0.65^N of the city's
+   money: nine tiles in ONE sync took 91.15% of a 10,000 🔥 treasury, leaving
+   885.39 🔥. The percentage was written to protect the stabilisers ("a founding
+   that empties it starves the stabilisers") and instead it emptied them, which
+   is worse than having no ceiling at all because the comment says otherwise.
+
+   So the allowance is a BUDGET for a WINDOW: computed once against the balance
+   the foundings will actually draw on, decremented per founding, and refilled
+   at the close of each economic day.
+
+   ⚠ THE WINDOW IS ARMED AT THE END OF runDay, NOT AT THE TOP. Foundings happen
+     BETWEEN ticks (the host's 4 s `syncBuildings`), so the balance that matters
+     is the one standing when the day's benefits, imports, freight and payout
+     have already been paid. Arming at the top of the day would size the budget
+     from money the day then spends, and a sync landing after a heavy day could
+     still take far more than `treasuryDrawPct` of what was actually left.
+   ⚠ IT ALSO ARMS LAZILY. A city that is `load()`ed and built on before its
+     first tick would otherwise have a zero budget and found everything short,
+     so the first draw of an unarmed window sizes itself from the balance then. */
+function armFoundingWindow() {
+  S.foundingDrawBudget = Math.max(0, S.treasury) * ECON.firm.charter.treasuryDrawPct;
+  S.foundingDrawArmed = true;
+}
+
+/* The capital source firms.js calls at every founding. Charter fund first: it
+   exists for exactly this, and draining the treasury first would take the money
+   the city needs the same day for benefits, imports and freight. */
+function fundFounding(f, want) {
+  const need = Math.max(0, Number(want) || 0);
+  if (need <= 0) return 0;
+  let paid = Math.max(0, Math.min(S.charter, need));   // never a negative "draw"
+  S.charter -= paid;
+  if (paid < need - 1e-9) {
+    /* The fund is dry. The city may still back the business out of its own
+       treasury — that is a genuine investment of money the city earned, and it
+       is bounded, for the WHOLE window rather than per call, so no number of
+       foundings in one sync can empty the stabilisers. */
+    if (!S.foundingDrawArmed) armFoundingWindow();
+    const fromTreasury = Math.max(0, Math.min(need - paid, S.foundingDrawBudget, Math.max(0, S.treasury)));
+    S.foundingDrawBudget -= fromTreasury;
+    S.treasury -= fromTreasury;
+    paid += fromTreasury;
+  }
+  if (paid < need - 1e-9) {
+    logEvent('city', '🏦 ' + (f && f.name ? f.name : 'A new business') + ' opened under-capitalised — ' +
+                     Math.round(need - paid).toLocaleString() + ' 🔥 of seed capital could not be funded.');
+  }
+  return paid;
+}
+Firms.setCapitalSource(fundFounding);
+
+/* ── ⚰ THE ESTATE RECEIPT — the closing half of the same seam ────────────────
+   🔴 THE BUG THIS REPLACES IS THE MINT'S MIRROR IMAGE, in the same function, in
+   the same blind spot. `syncBuildings` marks a demolished tile's firm BANKRUPT
+   and `Firms.reap()` deleted it; its cash simply left `totalCinder()` between
+   two ticks, so the day audit balanced and payouts stayed enabled. Measured on
+   the shipping tree: 12 demolitions in a 60-day city destroyed 42,612.05 🔥,
+   8.73% of that city's money supply, err=-0.000000.
+
+   A closing business is wound up: what it still holds lands in the treasury as
+   the city's estate receipt — the same account, and the same reasoning, as the
+   expansion spend in `levelUp` (a firm's cash leaving the firm has to arrive
+   somewhere or it is destroyed, and destruction fails the audit exactly as
+   minting does, only quieter).
+
+   ⚠ IT IS NOT MUNICIPAL INCOME. `S.flow.estate` is recorded for the panel and
+     for diagnosis, and it is deliberately NOT in the payout's income terms
+     (tax + faucet): a city that bulldozes its own factories must not be able to
+     pay its owner out of the wreckage. It is a transfer, so the audit identity
+     is untouched — which is the entire point. */
+function receiveEstate(f, amount) {
+  const amt = Math.max(0, Number(amount) || 0);
+  if (amt <= 0) return 0;
+  S.treasury += amt;
+  S.flow.estate += amt;
+  S.estateReceived += amt;
+  logEvent('city', '⚰ ' + (f && f.name ? f.name : 'A business') + ' was wound up — ' +
+                   Math.round(amt).toLocaleString() + ' 🔥 of its remaining cash went to the city.');
+  return amt;
+}
+Firms.setEstateSink(receiveEstate);
 
 /* ════════════════════════════════════════════════════════════════════════════
    🏗 SEEDING — a city with no firms has no economy, so bootstrap one from what
@@ -165,6 +334,18 @@ export function bootstrap(opts) {
   S.booted = true;
   opts = opts || {};
   const nodeId = S.nodeId;
+
+  /* 🏦 THE FOUNDING TRANCHE, issued before a single firm exists.
+     This is the city's opening capital and it is the one issuance that is NOT
+     carried in a flow term — it happens before the first audit window opens, so
+     it is an INITIAL CONDITION in the same sense as the household savings the
+     city starts with, not a movement inside a day. (Flowing it would be worse
+     than useless: `runDay` zeroes the flows at line ~825, after taking
+     `before`, so the term would be wiped before the first audit ever read it,
+     and any attempt to carry it would show up as a phantom mint on day 1.)
+     It still counts against `charterIssued`, so the lifetime cap bounds the
+     bootstrap and everything after it together. */
+  issueCharter(ECON.firm.charter.seed);
 
   /* 1. WATER AND POWER — every other chain draws on them.
         `electricity` has alternate feedstocks, so seedChain tries the primary
@@ -824,6 +1005,13 @@ function runDay(days, host) {
   S.outputValue = {}; S.serviceValue = {}; S.observed = {};
   zeroFlow();
 
+  /* 🏦 THE FOUNDING FAUCET. Deliberately the first money to move in the day and
+     deliberately INSIDE the window: this is the only Cinder the economy creates
+     apart from the export faucet, so it must be visible to the same audit. It
+     fills the fund that the NEXT founding will draw on — foundings themselves
+     happen between ticks, from `syncBuildings`, and are pure transfers. */
+  topUpCharter(days);
+
   Logistics.setCapacity(host.logisticsCounts || {});
   /* Partners are established BEFORE production plans, not after trading. The
      production forecast reads their standing interest (exportFloorFor), so a
@@ -995,6 +1183,12 @@ function runDay(days, host) {
 
   S.day += 1;
 
+  /* 🪟 Arm the next founding window. Deliberately AFTER every account movement
+     this day makes — the foundings it bounds happen in the gap that starts
+     here, so the budget is a share of the money that is actually standing when
+     they land. See armFoundingWindow for the 91.15%-of-treasury bug this is. */
+  armFoundingWindow();
+
   // 11. THE AUDIT.
   audit(before);
   return snapshot();
@@ -1021,7 +1215,11 @@ function stepPrices(days, host) {
    🔍 THE AUDIT — proof that no Cinder was minted.
    ════════════════════════════════════════════════════════════════════════════ */
 export function totalCinder() {
-  return HH.totalSavings() + Firms.totalCash() + S.treasury + Bank.state().reserve;
+  /* 🏦 THE CHARTER FUND IS PART OF THE TOTAL. It has to be: founding draws on
+     it, and an account that is spent from but never counted is a leak that
+     looks like an expense. Counting it is also what turns founding from an
+     invisible mint into an ordinary transfer. */
+  return HH.totalSavings() + Firms.totalCash() + S.treasury + S.charter + Bank.state().reserve;
 }
 
 export function audit(before) {
@@ -1029,18 +1227,38 @@ export function audit(before) {
   const delta = after - before;
   /* What SHOULD have changed the total:
        + faucet    (export earnings entering from outside)
+       + founding  (charter capital issued into the fund — the ONLY other
+                    creation, bounded by ECON.firm.charter.lifetimeCap)
        − imports   (Cinder leaving for goods made elsewhere)
        − payout    (withdrawn by the player, held in payoutOwed)
      Everything else is a transfer and nets to zero. */
-  const expected = S.flow.faucet - S.flow.imports - S.flow.payout;
+  const expected = S.flow.faucet + S.flow.founding - S.flow.imports - S.flow.payout;
   const err = delta - expected;
   /* Tolerance scales with the size of the economy: floating-point error across
      several hundred transfers grows with the magnitudes involved, and a fixed
      epsilon would false-positive on a large city and miss a real leak on a
      small one. */
   const tol = Math.max(1, Math.abs(after) * 1e-6);
-  const ok = Math.abs(err) <= tol;
-  S.lastAudit = { ok, before, after, delta, expected, err, tol, day: S.day };
+  /* 🔴 THE BOUND ON FOUNDING CAPITAL, ASSERTED SEPARATELY FROM THE IDENTITY.
+     The day identity above only proves that what was created was RECORDED. It
+     says nothing about how much, and "recorded" is precisely the state the old
+     un-audited mint could have been talked into — an unbounded faucet that
+     balances its own books every day is still the Forge. `issueCharter()`
+     clamps to the lifetime cap; this checks the clamp rather than trusting it,
+     so a future edit that adds a second issuance path fails the audit on the
+     next tick instead of shipping. */
+  const capOk = S.charterIssued <= ECON.firm.charter.lifetimeCap + tol;
+  const ok = Math.abs(err) <= tol && capOk;
+  S.lastAudit = { ok, before, after, delta, expected, err, tol, day: S.day,
+                  founding: S.flow.founding, charter: S.charter,
+                  charterIssued: S.charterIssued,
+                  charterCap: ECON.firm.charter.lifetimeCap, capOk };
+  if (!capOk && S.payoutAllowed) {
+    logEvent('bad', '🔴 Charter capital exceeded its lifetime cap (' +
+                    Math.round(S.charterIssued).toLocaleString() + ' 🔥 of ' +
+                    ECON.firm.charter.lifetimeCap.toLocaleString() + ' 🔥).');
+    try { console.error('[economy] CHARTER CAP EXCEEDED', S.lastAudit); } catch (e) {}
+  }
   if (!ok) {
     /* 🔴 A FAILED AUDIT DISABLES THE PAYOUT. The simulation is still playable —
        the city keeps running — but it stops paying its owner until the books
@@ -1074,6 +1292,21 @@ export function snapshot() {
   return {
     day: S.day, nodeId: S.nodeId,
     treasury: S.treasury, payoutOwed: S.payoutOwed, payoutAllowed: S.payoutAllowed,
+    /* Exposed so a panel (and the gate) can read the founding faucet directly
+       rather than inferring it from a total that moved. */
+    charter: S.charter, charterIssued: S.charterIssued,
+    charterCap: ECON.firm.charter.lifetimeCap,
+    /* What is left of THIS window's treasury draw allowance. Exposed for the
+       same reason `charterIssued` is: a bound nobody can read is a bound nobody
+       notices breaking. It is deliberately NOT serialised — a window is the gap
+       between two ticks, and a save carrying a stale allowance would hand the
+       loaded city a second one. `reset()` disarms; the first draw re-arms. */
+    foundingDrawBudget: S.foundingDrawBudget,
+    /* Lifetime estate receipts. `flow.estate` is zeroed every runDay, and a
+       demolition happens BETWEEN two runDays — so the per-day figure is usually
+       already gone by the time anything reads it. This is the number that
+       proves the wind-up path actually ran. */
+    estateReceived: S.estateReceived,
     population: HH.population(), laborForce: HH.laborForce(),
     employed: HH.employedTotal(), vacancies: HH.vacancyTotal(),
     unemployment: HH.unemployment(),
@@ -1113,6 +1346,16 @@ export function serialize() {
   return {
     v: 1, nodeId: S.nodeId, day: S.day, dayFrac: S.dayFrac, demandEMA: dema,
     treasury: Math.round(S.treasury * 100) / 100,
+    /* 🔴 BOTH CHARTER FIELDS RIDE THE SAVE, and each for its own reason.
+       `charter` is a real balance inside totalCinder() — dropping it would
+       destroy the unspent fund on every reload (the save/load completeness
+       check in gauntlet2 is exactly the test that catches this class, and it
+       has caught three fields already). `charterIssued` is the lifetime tally
+       the cap is enforced against — dropping THAT would hand every reloaded
+       city a fresh allowance, which is an unbounded faucet operated by the save
+       button. */
+    charter: Math.round(S.charter * 100) / 100,
+    charterIssued: Math.round(S.charterIssued * 100) / 100,
     payoutOwed: Math.round(S.payoutOwed * 100) / 100,
     payoutAllowed: S.payoutAllowed, booted: S.booted,
     inv,
@@ -1127,6 +1370,22 @@ export function load(raw) {
   S.day = Math.max(0, raw.day | 0);
   S.dayFrac = Math.max(0, Math.min(1, Number(raw.dayFrac) || 0));
   S.treasury = Math.max(0, Number(raw.treasury) || 0);
+  /* 🔴 THE SAVE FILE IS NOT ALLOWED TO MINT EITHER, and this is the one field
+     where it could: `charter` is a term of totalCinder(), so a blob claiming a
+     fund of 10⁹ would hand the city a fortune on load. Clamp it to the largest
+     balance the fund can honestly hold (the bootstrap tranche, or the top-up
+     target if that is somehow larger) — the same reasoning gauntlet1's corrupt-
+     save round applies to every other number that arrives from disk. */
+  const fundMax = Math.max(ECON.firm.charter.seed, ECON.firm.charter.fundTarget);
+  S.charter = Math.min(fundMax, Math.max(0, Number(raw.charter) || 0));
+  /* An older save has no tally. Treat what it is CARRYING as already issued —
+     the alternative reads a pre-charter save as having spent nothing and gives
+     it the whole allowance a second time. Clamped to the cap at the top so a
+     garbage tally cannot suspend payouts for the rest of the city's life: the
+     audit's ceiling check exists to catch a CODE path that outruns the clamp,
+     and a corrupt byte on disk is not that. */
+  S.charterIssued = Math.min(ECON.firm.charter.lifetimeCap,
+                             Math.max(Number(raw.charterIssued) || 0, S.charter));
   S.payoutOwed = Math.max(0, Number(raw.payoutOwed) || 0);
   S.payoutAllowed = raw.payoutAllowed !== false;
   S.booted = !!raw.booted;

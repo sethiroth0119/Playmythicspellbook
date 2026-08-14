@@ -45,6 +45,56 @@ export const RUNG_META = {
 let FIRMS = [];
 let NEXT_ID = 1;
 
+/* ── 🏦 WHERE SEED CAPITAL COMES FROM ───────────────────────────────────────
+   🔴 THIS MODULE MAY NOT CREATE CINDER. It used to: `found()` wrote
+   `f.cash = dailyOperatingCost(f) × ECON.firm.startCashDays` and nothing
+   anywhere was debited. That is Rule 1, and it was invisible to the closed-loop
+   audit because the host founds firms from `syncBuildings` on a 4 s interval —
+   i.e. always BETWEEN the audit windows that runDay opens and closes.
+
+   sim.js owns every account, so sim.js owns the funding decision; it registers
+   the source here at import time. firms.js deliberately does NOT import sim.js:
+   sim.js already imports firms.js, and closing that cycle to get at a treasury
+   balance is how a module ends up half-initialised at load.
+
+   ⚠ NO SOURCE ⇒ NO CASH. The fallback is zero, never the old mint. A silent
+     fallback that prints money is exactly the bug this replaces, and it would
+     come back the first time somebody imported firms.js on its own. */
+let CAPITAL_SOURCE = null;
+let capitalWarned = false;
+export function setCapitalSource(fn) { CAPITAL_SOURCE = typeof fn === 'function' ? fn : null; }
+
+/* ── ⚰ AND WHERE A DEAD FIRM'S CASH GOES ────────────────────────────────────
+   🔴 THE OTHER HALF OF THE SAME SEAM, and it is the same Rule 1 violation
+   running backwards. Funding founding out of the charter fund closed the MINT;
+   `reap()` still closed the BURN's eyes. `syncBuildings` (economy/index.js)
+   marks a firm whose tile is gone `rung='BANKRUPT'; reported=true`, `reap()`
+   deleted it, and every Cinder of its `cash` left `totalCinder()` — in the
+   4 s between-tick gap, so the next day's audit saw a balanced day and said so.
+   Measured on the tree before this was written: demolishing 12 buildings in a
+   60-day city destroyed 42,612.05 🔥 (8.73% of that city's whole money supply)
+   and the next audit reported err=-0.000000, payoutAllowed=true. One demolition
+   in a mature city destroyed 7,321.62 🔥 — exactly the victim's cash.
+   "No Cinder was minted OR BURNED outside the audited terms" is the sentence
+   the gate uses; burning is not the safe direction, it is the other direction.
+
+   So a closing firm's remaining cash is HANDED OVER before the record is
+   dropped. sim.js registers the receiver (the treasury, as the estate receipt)
+   for the same reason it registers the capital source: it owns every account,
+   and firms.js may not import it back without closing a load-time cycle.
+
+   ⚠ NO SINK ⇒ NO REAP. The fail-safe is to KEEP the shell, not to burn it —
+     inverse of the founding fallback, and for the identical reason: the safe
+     direction is the one that cannot change totalCinder(). A kept shell is
+     detached from its tile so the host's reconcile loop stops re-reporting it.
+   ⚠ REJECTED: paying the bank off first. It is the more realistic order (a
+     liquidator settles creditors before the residual), but bank.js is not this
+     package's to change, and the estate is a transfer either way — which
+     account receives it does not affect the invariant. */
+let ESTATE_SINK = null;
+let estateWarned = false;
+export function setEstateSink(fn) { ESTATE_SINK = typeof fn === 'function' ? fn : null; }
+
 export function all() { return FIRMS.slice(); }
 export function alive() { return FIRMS.filter(f => f.rung !== 'BANKRUPT'); }
 export function byId(id) { return FIRMS.find(f => f.id === id) || null; }
@@ -84,7 +134,19 @@ export function found(out, opts) {
     inventory: 0,
     tileKey: opts.tileKey || null,   // optional link back to a node-city tile
   };
-  f.cash = dailyOperatingCost(f) * ECON.firm.startCashDays;
+  /* 💰 SEED CASH IS DRAWN, NOT PRINTED. `seedWant` is what the business would
+     like to open with; `f.cash` is what an account actually paid for it, which
+     may be less and may be nothing at all. A firm that could not be funded
+     opens broke and starts down the distress ladder on its own merits — which
+     is the honest outcome, and far better than a city that quietly mints a
+     buffer for every shopfront it puts up. */
+  f.seedWant = dailyOperatingCost(f) * ECON.firm.startCashDays;
+  f.cash = CAPITAL_SOURCE ? Math.max(0, CAPITAL_SOURCE(f, f.seedWant) || 0) : 0;
+  f.seedShort = Math.max(0, f.seedWant - f.cash);
+  if (!CAPITAL_SOURCE && !capitalWarned) {
+    capitalWarned = true;
+    try { console.warn('[economy] no capital source registered — firms are founding with no cash. sim.js registers it on import.'); } catch (e) {}
+  }
   FIRMS.push(f);
   return f;
 }
@@ -432,8 +494,35 @@ export function rollAverages(f, closed) {
    separate step so the tick that killed them can still show them in the log —
    a business that vanishes between frames never gets explained to the player. */
 export function reap() {
-  const dead = FIRMS.filter(f => f.rung === 'BANKRUPT' && f.reported);
-  FIRMS = FIRMS.filter(f => !(f.rung === 'BANKRUPT' && f.reported));
+  const dead = [], keep = [];
+  for (const f of FIRMS) {
+    if (!(f.rung === 'BANKRUPT' && f.reported)) { keep.push(f); continue; }
+    /* ⚰ THE ESTATE. Whatever the business still holds is money the city has;
+       deleting the record must not delete the money. A firm that walked the
+       distress ladder to BANKRUPT is broke by construction (badDays only grows
+       while cash <= 0), so this is usually exactly 0 — it is the DEMOLISHED
+       firm, killed at full health by syncBuildings, that carries a balance. */
+    const estate = Math.max(0, f.cash || 0);
+    if (estate > 0) {
+      const taken = ESTATE_SINK ? Math.max(0, Math.min(estate, ESTATE_SINK(f, estate) || 0)) : 0;
+      f.cash = estate - taken;
+      if (f.cash > 0) {
+        /* Nobody would take it, so it stays where it is and stays counted. The
+           shell is detached from its tile: still tile-owned, the host's
+           reconcile loop would re-mark it BANKRUPT on every single sync. */
+        f.tileKey = null;
+        keep.push(f);
+        if (!estateWarned) {
+          estateWarned = true;
+          try { console.warn('[economy] no estate sink registered — closed firms are being kept as shells rather than burned. sim.js registers it on import.'); } catch (e) {}
+        }
+        continue;
+      }
+    }
+    f.cash = 0;
+    dead.push(f);
+  }
+  FIRMS = keep;
   return dead;
 }
 

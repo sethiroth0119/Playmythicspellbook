@@ -118,6 +118,44 @@
       gain on a bloom that is warm, and swung the near-water band 31 points
       warm on its own. See the note in grade() step 2b.
 
+   9. WAVE 3 — THE SKY AND THE GROUND WERE FURTHER APART THAN IN WAVE 1, AND
+      THE SKY WAS NOT WHERE ANYONE THOUGHT IT WAS. Measured on the wave-2
+      frame: sunlit sand rgb(185,157,110) sat 41% R−B +75 L 160, against a sky
+      of rgb(76,79,84) sat 9% R−B −7 L 79 and a far ridge of rgb(84,85,83)
+      sat 3%. A moonlit night sky pasted over a noon desert, with a blazing sun
+      in it and the HUD reading "Daytime".
+      Two independent causes, and the second is the one that mattered:
+        (a) TIME_PRESETS.day.sky is ['#18243c','#31465f','#6b7f92'] — luma
+            34/68/121, a dusk sky the renderer has always called noon. Those
+            presets live in battle-board/index.html, which is stage-terrain's
+            file and also feeds the terrain's cliff shading correctly, so they
+            are not edited: skyStops() regrades them here, blended in by
+            dayness() so night comes out unchanged and dawn/dusk take only the
+            8–16% of the lift their sun elevation earns.
+        (b) THE LOCATION BACKDROP PHOTOGRAPH IS THE SKY. It is drawn over the
+            whole upper frame at near-full alpha, and bakeArt was grading it to
+            an achromatic slate: a 14% chroma ceiling from the 'saturation'
+            pass, a "hue push" whose fill carried 9% chroma of its own (so it
+            was a second desaturation), and a value match tied to the mean luma
+            of the dark preset sky. Proved by injection rather than by reading
+            the code: paint the sky a flat rgb(90,138,200) (HSV 55%) and the
+            screenshot measures 8.5%; turn off the art alone and the same
+            injected sky measures 52.7%.
+      Fixed at both: withChroma() so the two blends are handed the chroma they
+      are supposed to leave behind, a top fade so the art is a distant LAYER
+      and our own graded sky carries the zenith, and the fog band in the veil
+      pulled onto hazeColour's hue instead of LIGHT.fog's cold grey.
+      After, on the same frame: sky HSV saturation 12.3% → 23.5% against a mid
+      field of 31.2% (gap 18.8 → 7.7 points; the brief asked for ≤ 8), sky luma
+      119 → 159, far ridge R−B +30.2 → +34.7.
+      Also in this round: the sun disc stops clipping (see drawBody — the core
+      is 'source-over' from a capped colour now, and the clipped plateau inside
+      the disc's box goes 1984 px → 4 px on the raw board canvas); the sky's
+      ~7px horizontal banding is gone (see the two-stage upscale in bloom() —
+      the detrended row-luma autocorrelation at lag 14 falls 0.67/0.72 →
+      0.03/0.07); and the grade shares one thumbnail downscale between the
+      bloom and the shadow mask instead of taking two (see shadowThumb).
+
    ⚠ THE HORIZON IS A CHEAT, AND IT HAS TO BE.
    The true vanishing line of the y=0 plane for this camera sits ~1000px ABOVE
    the viewport (f=(0,-.675,-.738), so the horizon of the ground plane lands at
@@ -265,6 +303,120 @@
   /* add `d` to every channel — a flat luma shift that keeps the hue */
   function shiftL(hex, d) { const c = hexRGB(hex); return rgbHex(c[0] + d, c[1] + d, c[2] + d); }
 
+  /* ── CHROMA SETTER ────────────────────────────────────────────────────────
+     Returns `hex` with its hue and mid-lightness untouched and its chroma —
+     max(r,g,b) − min(r,g,b), in 8-bit — forced to `span`. Needed because the
+     two blend modes that grade the backdrop art, 'saturation' and 'color', are
+     both specified over SetSat/SetLum, which read the SOURCE's ABSOLUTE
+     channel spread. `hazeColour()` is deliberately pale (it is air), and a
+     pale colour carries very little spread, which is how a hue push aimed at
+     it silently became a second desaturation pass.
+
+     ⚠ A SPAN, NOT AN HSL SATURATION. The first cut of this took an HSL
+     saturation and undershot badly: at the pale lightness distant haze sits at
+     (l ≈ 0.77) an HSL saturation of 0.42 is a span of only 48, i.e. an HSV
+     saturation of 21% before any of the later passes touched it, against a
+     field measuring 41%. The blends consume a span, so this takes a span.
+     See ART_CHROMA. ── */
+  function withChroma(hex, span) {
+    const c = hexRGB(hex);
+    const mx = Math.max(c[0], c[1], c[2]), mn = Math.min(c[0], c[1], c[2]);
+    const mid = (mx + mn) / 2, cur = mx - mn;
+    /* a colour with no hue at all has no direction to scale along; give it the
+       desert's, so a neutral fog colour still lands warm rather than grey */
+    if (cur < 1.5) return rgbHex(mid + span * 0.5, mid + span * 0.06, mid - span * 0.5);
+    const k = span / cur;
+    return rgbHex(mid + (c[0] - mid) * k, mid + (c[1] - mid) * k, mid + (c[2] - mid) * k);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     WAVE 3'S BLOCKER: "THE SKY AND THE GROUND ARE FURTHER APART THAN IN WAVE 1"
+
+     Measured on the wave-2 frame: sunlit sand rgb(185,157,110), HSV sat 41%,
+     R−B +75, L 160.  Sky away from the sun rgb(76,79,84), sat 9%, R−B −7,
+     L 79.  Far ridge rgb(84,85,83), sat 3%, R−B +1.  A moonlit night sky
+     pasted above a noon desert, with a blazing sun disc in it.
+
+     ⚠ AND THE CAUSE WAS NOT WHERE IT LOOKED. The obvious suspect is the sky
+     gradient, and it is guilty of the LUMINANCE half — TIME_PRESETS.day.sky is
+     ['#18243c','#31465f','#6b7f92'], luma 34/68/121, a dusk sky that the
+     renderer has always called noon. But it is innocent of the CHROMA half.
+     Proved by injecting a flat sky and reading the board canvas back: painting
+     the sky rgb(90,138,200) (HSV sat 55%) and screenshotting gave a sky of
+     rgb(154,166,166), sat 8.5%. Turning ONE pass off — the backdrop art —
+     with the same injected sky gave rgb(96,142,201), sat 52.7%.
+     So the thing the player calls "the sky" is not this module's sky at all:
+     it is the LOCATION BACKDROP PHOTOGRAPH, drawn over the whole upper frame
+     at near-full alpha, and bakeArt was grading it to death:
+       • 'saturation' toward hsl(0,14%,50%) — a hard 14% chroma ceiling;
+       • 'color' toward mix(mix(fog,disc,.54), HAZE, .55), whose own HSL
+         saturation is 9%, so the pass that was supposed to push the photo's
+         hue onto the desert's axis was in fact a SECOND desaturation;
+       • the value match then multiplied the whole thing DOWN to the mean luma
+         of our own (dark preset) sky, which is where L 79 came from.
+     Every one of those is fixed below and each has its own note. The far ridge
+     is grey for the same reason — the ridge the critic measured is the
+     PHOTOGRAPH's ridge, not our procedural mesas (those measure R−B +35).
+     ══════════════════════════════════════════════════════════════════════ */
+
+  /* How much daylight is in this preset, 0..1. Keyed on the sun's ELEVATION,
+     not on keyI: dawn/dusk/day sit at keyI 0.95/1.00/1.15, which cannot
+     separate a low orange sun from noon, while elev 0.20/0.16/0.78 can. A moon
+     is never daylight however bright it is. */
+  /* ⚠ AT THE `day` PRESET THIS SATURATES, AND THAT IS A KNOWN TRADE, NOT AN
+     OVERSIGHT. elev 0.78 gives (0.78-0.12)/0.50 = 1.32, clamped to 1.0, so
+     skyStops() returns the DAY_* palette OUTRIGHT rather than a blend with
+     api.LIGHT.sky — i.e. at noon the sky no longer responds to TIME_PRESETS
+     at all. It is deliberate: wave 3's blocker was that the sky and the ground
+     were 21.8 saturation points apart and the preset's own sky is what put
+     them there. But it means that if the presets are ever retuned, day is the
+     one that will look like it ignored the change. The knob is the 0.50
+     divisor (raise it to leave headroom, e.g. 0.80 tops out at d≈0.83 and lets
+     a sixth of the preset back in); dawn/dusk at elev 0.20/0.16 are on the
+     ramp already at d 0.16/0.08 and are unaffected either way. */
+  function dayness(api) {
+    const L = api.LIGHT;
+    const sun = (L.body === 'sun') ? api.clamp(L.elev, 0, 1) : 0;
+    return api.clamp((sun - 0.12) / 0.50, 0, 1);
+  }
+
+  /* ── THE SKY, REGRADED INTO THE KEY THAT LIGHTS THE GROUND ────────────────
+     The three DAY_* stops are a desert noon: a real blue at the top, and a
+     warm dust band at the horizon that is on the SAND's hue axis, because the
+     air over a desert carries the desert. They are blended in by dayness(), so
+     night is bit-for-bit the preset it always was (day=0 → mixHex(x, y, 0) is
+     x) and dawn/dusk take only the 8–16% of the lift their sun elevation earns.
+     Do not "simplify" this by editing TIME_PRESETS — battle-board/index.html
+     belongs to stage-terrain and the presets also drive the terrain's own
+     cliff shading, which is correct as it stands. ── */
+  /* ⚠ THE MIDDLE STOP STAYS BLUE, AND THAT IS THE WHOLE TRICK. A gradient that
+     interpolates a blue zenith to a warm dust horizon passes through NEUTRAL on
+     the way, and a per-pixel saturation mean reads that crossover band as
+     achromatic — measured on the first cut: sat 21-25% at the top, 5-6% across
+     y 0.06-0.11 of the board, 29-31% at the horizon. Real hazy skies do the
+     same thing but they do it in the last few degrees above the horizon, which
+     here is behind the ridgeline and the board. So the middle stop is held on
+     the blue side and the warm dust is left to the bottom stop, which the
+     gradient (0 → max(hz*1.25, H*0.5)) puts at or below the board's far edge. */
+  /* ⚠ THESE ARE MORE SATURATED THAN THE SKY YOU WANT ON SCREEN, ON PURPOSE.
+     Between the sun's own glow, the light shafts, the veil's centre lift and
+     the bloom, the passes that run over the sky are all ADDITIVE and warm, and
+     an additive term pulls every pixel toward neutral. Measured end to end: a
+     zenith painted at chroma span 110 arrives in the screenshot at an HSV
+     saturation of 19.6%. The stops are therefore set by what comes OUT, not by
+     what looks right in the bake. */
+  const DAY_ZENITH = '#3f74bd';   /* (63,116,189) L 110, chroma span 126 */
+  const DAY_MIDSKY = '#6c9acd';   /* (108,154,205) L 145, span 97 — still blue */
+  const DAY_HORIZON = '#d3c3a0';  /* (211,195,160) L 192, R−B +51 — dust, not fog */
+  function skyStops(api) {
+    const L = api.LIGHT, d = dayness(api);
+    const s = (L.sky && L.sky.length === 3) ? L.sky : ['#18243c', '#31465f', '#6b7f92'];
+    if (d <= 0) return s.slice();
+    return [api.mixHex(s[0], DAY_ZENITH, d),
+    api.mixHex(s[1], DAY_MIDSKY, d),
+    api.mixHex(s[2], DAY_HORIZON, d)];
+  }
+
   /* ⚠ AERIAL PERSPECTIVE NEEDS A *LIGHT* HAZE COLOUR, AND `LIGHT.fog` IS NOT ONE.
      This is the whole reason round 2's depth ordering measured BACKWARDS (the
      MID range came out more saturated than the NEAR one at the same value).
@@ -285,7 +437,14 @@
      in the sand's family. */
   function hazeColour(api) {
     const L = api.LIGHT;
-    const horizonSky = (L.sky && L.sky[2]) || L.fog;
+    /* ⚠ WAVE 3: the bottom stop of the REGRADED sky, not of the raw preset.
+       Everything that lifts toward distance in this module — all the mesa
+       ranges, the haze band, the fog band in the veil, the backdrop art's hue
+       push — converges here, so if this still read the preset's cold #6b7f92
+       while the sky above it had been warmed, the ridges would converge on a
+       colour that is no longer in the frame. That is exactly the failure mode
+       the blocker describes, one layer down. */
+    const horizonSky = skyStops(api)[2] || L.fog;
     /* ⚠ THE FIXED 0.18 SAND MIX DID NOT ACTUALLY MAKE THIS WARM, AND THE WHOLE
        HORIZON PAID FOR IT. Worked out per preset: dawn landed at #ba8f68
        (R−B +82) and dusk at #c57343 (+130) — properly warm — but DAY, the
@@ -359,9 +518,12 @@
     veil: { key: '', cv: null },       /* fog + vignette + centre lift, pre-composited */
     chroma: { key: '', mul: null, add: null },  /* the warm chroma restore, as two ramps */
     art: new Map(),          /* image src -> { key, cv } graded + horizon-clipped */
-    bloom: { cv: null, g: null },
+    bloom: { cv: null, g: null, up: null, upg: null },  /* thumbnail + the quarter-size intermediate the upscale goes through */
     shade: { cv: null, g: null },      /* the cool-shadow mask, same thumbnail scale */
-    cool: { cv: null, g: null, live: null },  /* the cool-surface chroma give-back */
+    /* the cool-surface chroma give-back, + the frame's per-channel extremes.
+       key/age/reads/calls/ms belong to the READBACK CACHE — see coolThumb. */
+    cool: { cv: null, g: null, live: null, mn: null, mx: null, key: '', age: 1e9, reads: 0, calls: 0, ms: [] },
+    gradeMs: [],
     coolFail: false,         /* sticky: a tainted canvas must not throw every frame */
     lastBake: -1e9,
     drift: null
@@ -1377,10 +1539,11 @@
     const o = mkCanvas(W, H, dpr); const g = o.g;
     if (!g) return null;
     const hz = horizonY(api);
+    const st = skyStops(api);
     const grd = g.createLinearGradient(0, 0, 0, Math.max(hz * 1.25, H * 0.5));
-    grd.addColorStop(0, LIGHT.sky[0]);
-    grd.addColorStop(0.55, LIGHT.sky[1]);
-    grd.addColorStop(1, LIGHT.sky[2]);
+    grd.addColorStop(0, st[0]);
+    grd.addColorStop(0.55, st[1]);
+    grd.addColorStop(1, st[2]);
     g.fillStyle = grd; g.fillRect(0, 0, W, H);
     /* horizon glow, centred on the light's azimuth — the sky is brightest
        where the sun is, which is most of what makes a flat gradient read as
@@ -1392,8 +1555,15 @@
        — the far plateaus stopped separating. */
     const gl = g.createRadialGradient(b.x, b.y, 0, b.x, b.y, Math.max(W, H) * 0.42);
     const kI = api.clamp(LIGHT.keyI, 0.2, 1.3);
-    gl.addColorStop(0, api.rgba(LIGHT.disc, 0.17 * kI));
-    gl.addColorStop(0.4, api.rgba(LIGHT.disc, 0.055 * kI));
+    /* ⚠ SCALED DOWN AS THE SKY GETS BRIGHTER. These alphas were tuned against
+       the preset's dark noon sky (luma 34/68/121); over the regraded daylight
+       sky (128/165/192) the same additive turned the whole quarter-frame round
+       the sun into a featureless white blowout and swallowed the disc — which
+       is the "the sun disc still clips to pure white" note, seen from the
+       other side. A bright sky needs less glow, not the same glow. */
+    const gDim = 1 - 0.56 * dayness(api);
+    gl.addColorStop(0, api.rgba(LIGHT.disc, 0.17 * kI * gDim));
+    gl.addColorStop(0.4, api.rgba(LIGHT.disc, 0.055 * kI * gDim));
     gl.addColorStop(1, api.rgba(LIGHT.disc, 0));
     g.globalCompositeOperation = 'lighter';
     g.fillStyle = gl; g.fillRect(0, 0, W, hz + 40);
@@ -1710,14 +1880,50 @@
        the mesa ranges in the land bake are mixed toward the same hex, so the
        art and the ridges now converge on ONE colour with distance instead of
        on two. That convergence is what makes them the same world. */
+    /* ⚠ WAVE 3'S BLOCKER, HALF ONE: BOTH OF THESE PASSES WERE DESATURATIONS.
+       'saturation' and 'color' each take the SOURCE's HSL saturation. The old
+       fills were hsl(0,14%,50%) and mix(mix(fog,disc,.54),HAZE,.55) — HSL
+       saturation 14% and 9% — so the "hue push onto the desert's axis" was in
+       fact a second, harder chroma ceiling, and the photograph came out
+       achromatic slate. That is 100% of what the player sees as sky (the art
+       covers the frame above the horizon at near-full alpha), which is why the
+       measured sky sat 9% against sunlit sand's 41%.
+       The distance grade still has to REMOVE chroma — aerial perspective does —
+       but it has to leave the remainder ON THE AIR'S HUE, and the air here is
+       warm dust. So both fills are now built through satHSL() at ART_CHROMA:
+       same hue as HAZE, same lightness, with enough HSL saturation left that a
+       cold grey city comes out as a warm distant ridge instead of as a grey
+       one. The pass is still a flattener — it is the value match below and the
+       HAZE wash that collapse the photo's contrast — it just no longer
+       collapses its colour to neutral on the way. */
     const HAZE = hazeColour(api);
+    /* Chroma (8-bit span) the far layer is allowed to keep. The old ceiling
+       was hsl(0,14%,50%) — a span of 36 — and measured sky sat 8% / R−B −6.
+       A span of 48 (the HSL-0.42 first cut) only reached 8.7%. 96 is what
+       actually lands the sky inside the field's own saturation band; it is
+       still LESS chroma than the sunlit sand it hangs over, which is what
+       makes it read as distance rather than as a filter.
+       ⚠ AND IT IS SPENT DOWNSTREAM, so it is set by the measured frame rather
+       than by the bake: at 96 the sky came out at HSV 19.6% against a mid field
+       of 31.2%, because the haze wash and the key wash below both dilute it
+       again and every additive pass over the sky pulls toward neutral. */
+    const ART_CHROMA = 128;
+    const AIR = withChroma(HAZE, ART_CHROMA);
+    /* ⚠ THE FLOORS MATTER MORE THAN THE SLOPES. `dis` is low for art that
+       already reads warm, and at the old floors (0.60 / 0.40) only 40% of the
+       hue push landed — which is fine for the art's ROCK, and wrong for the
+       art's SKY, because a photograph's overcast is near-neutral whatever else
+       the picture is. Measured band by band on the frame: the strip the art
+       still covers (y 0.116-0.154 of the board) came out at HSV 6-19% while
+       the sky above it, which is ours, measured 28-43%. Raised until the art's
+       band stops being the hole in the middle of the sky. */
     g.globalCompositeOperation = 'saturation';
-    g.globalAlpha = 0.60 + 0.30 * dis;
-    g.fillStyle = 'hsl(0,14%,50%)';
+    g.globalAlpha = 0.72 + 0.22 * dis;
+    g.fillStyle = AIR;
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'color';
-    g.globalAlpha = 0.40 + 0.42 * dis;
-    g.fillStyle = api.mixHex(api.mixHex(LIGHT.fog, LIGHT.disc, 0.54), HAZE, 0.55);
+    g.globalAlpha = 0.64 + 0.26 * dis;
+    g.fillStyle = AIR;
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'source-over';
     /* the flattener: a wash of the air's own colour ON TOP, which is what
@@ -1726,11 +1932,17 @@
        in this rig (see hazeColour's note) and washing a distant layer toward a
        DARK colour reads as a storm front, not as distance. */
     g.globalAlpha = api.clamp(0.26 - LIGHT.keyI * 0.08, 0.08, 0.34) + 0.14 * dis;
-    g.fillStyle = HAZE;
+    /* the wash carries the same chroma the grade above just set. Washing with
+       raw HAZE (span ~51) put a third of the art's chroma straight back out
+       again — the flattener is supposed to flatten VALUE, not colour. */
+    g.fillStyle = withChroma(HAZE, ART_CHROMA * 0.62);
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'lighter';
     g.globalAlpha = 1;
-    g.fillStyle = api.rgba(LIGHT.key, 0.035 + LIGHT.keyI * 0.035);
+    /* dimmed on a bright sky for the same reason as bakeSky's gDim: an
+       additive near-white over a distance layer that is already pale is pure
+       chroma loss. */
+    g.fillStyle = api.rgba(LIGHT.key, (0.035 + LIGHT.keyI * 0.035) * (1 - 0.55 * dayness(api)));
     g.fillRect(0, 0, W, H);
     /* haze accumulates toward the horizon line inside the art too */
     g.globalCompositeOperation = 'source-over';
@@ -1783,6 +1995,42 @@
     cut.addColorStop(1, 'rgba(0,0,0,1)');
     g.fillStyle = cut; g.fillRect(0, hz - 26, W, 58);
     g.fillStyle = '#000'; g.fillRect(0, hz + 29, W, H - hz);
+    /* ── ✂ AND THE ZENITH, WHICH IS THE OTHER HALF OF THE BLOCKER ──────────
+       A backdrop photograph is a distant LAYER, not a dome: the sky above its
+       skyline belongs to this world, not to the photo. Drawn edge-to-edge the
+       art's own overcast covered the entire upper frame at near-full alpha, so
+       whatever this module painted as sky was invisible — measured by
+       injecting a flat rgb(90,138,200) sky and reading the canvas back: 8.5%
+       saturation with the art on, 52.7% with it off. Fading the art out toward
+       the top hands the zenith back to the graded sky, which is also the only
+       way the winCondition's "distant layers visibly desaturated and lifted
+       toward fog, nearer layers with more contrast" can be true — with the
+       photo covering everything there is only ONE layer up there.
+       Kept at ART_TOP_FADE rather than 1: the location card must still
+       visibly change the vista at a glance, and its skyline silhouette sits
+       just under the horizon where this ramp is already at zero.
+
+       ⚠ THIS IS THE TRADE THAT COSTS THE SKYLINE LANDMARKS, AND IT IS OPEN ON
+       PURPOSE. A wave-3 blind read of the location preset put it plainly: the
+       city spire and the helicopters that were legible in the wave-1 frame are
+       not legible now. Measured as block detail in the mid-sky: wave 1 4.06,
+       wave 2 1.19, this build 1.32. What buys it is the whole point of the
+       pass — a photographic skyline sitting at full contrast against a graded
+       desert sky is exactly the "sprites on a backdrop" read wave 3 was called
+       to fix, and the art's ridgeline (below this ramp, untouched) still
+       carries the horizon.
+       The knob is this one number, and nothing else has to move with it:
+       0.94 is "landmarks gone, sky coherent"; around 0.80 they come back as
+       silhouettes; 0.60 and the backdrop is a photograph again. Anyone
+       re-opening it should judge the LOCATION preset, not the open field —
+       the default board has no art above the horizon to lose. */
+    const ART_TOP_FADE = 0.94;
+    const artTop = Math.max(24, hz * 0.80);
+    const top = g.createLinearGradient(0, 0, 0, artTop);
+    top.addColorStop(0, 'rgba(0,0,0,' + ART_TOP_FADE + ')');
+    top.addColorStop(0.45, 'rgba(0,0,0,' + (ART_TOP_FADE * 0.58).toFixed(3) + ')');
+    top.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = top; g.fillRect(0, 0, W, artTop + 2);
     g.globalCompositeOperation = 'source-over';
     return o.cv;
   }
@@ -1878,6 +2126,16 @@
       g.fillStyle = botHex; g.fillRect(0, hz + span, W, H - hz - span + 2);
       return cv;
     };
+    /* ⚠ AND IT IS BAKED FULL WIDTH EVEN THOUGH IT IS A VERTICAL RAMP.
+       WAVE 3 r2 tried the obvious saving — bake it 4 device pixels wide (every
+       stop above is set on a vertical gradient, so the texture has no
+       horizontal content) and let drawImage stretch it, turning a 10.5MB
+       texture read into 26KB. It is SLOWER. Measured as a live paired A/B on
+       the board page, four alternating 3s windows: thin 34.8 frames/window and
+       grade p50 37.9ms, full-width 36.3 frames and p50 33.0ms. A scaled
+       drawImage costs about twice a 1:1 blit here whatever the source size —
+       the same reason bloom() upscales through a quarter-size intermediate
+       rather than bilinearly in one hop. Do not re-propose it. */
     const mo = mkCanvas(W, H, dpr);
     const mul = paint(mo.cv, mo.g, '#ffffff', mulHex);
     /* ⚠ THE ADDITIVE HALF IS BAKED AT BLOOM THUMBNAIL SCALE, NOT VIEWPORT
@@ -1925,8 +2183,13 @@
     const liftY = Math.min(api.VIEW.cy - H * 0.06, hz + H * 0.02);
     const lift = g.createRadialGradient(api.VIEW.cx, liftY, 0,
       api.VIEW.cx, liftY, Math.max(W, H) * 0.52);
-    lift.addColorStop(0, api.rgba(LIGHT.key, 0.033 * api.clamp(LIGHT.keyI, 0.3, 1.3)));
-    lift.addColorStop(0.55, api.rgba(LIGHT.key, 0.010 * api.clamp(LIGHT.keyI, 0.3, 1.3)));
+    /* …and dimmed again on a bright sky (see bakeSky's gDim). This lift is
+       centred at the horizon, so on the regraded daylight sky it was landing a
+       warm near-white on top of the one band that was already the palest in
+       the frame. */
+    const liftK = api.clamp(LIGHT.keyI, 0.3, 1.3) * (1 - 0.45 * dayness(api));
+    lift.addColorStop(0, api.rgba(LIGHT.key, 0.033 * liftK));
+    lift.addColorStop(0.55, api.rgba(LIGHT.key, 0.010 * liftK));
     lift.addColorStop(1, api.rgba(LIGHT.key, 0));
     g.fillStyle = lift; g.fillRect(0, 0, W, H);
     /* VIGNETTE — a soft cool falloff, NOT an opaque ring.
@@ -1953,7 +2216,15 @@
        none. */
     const fspan = (H - hz) * 0.19;
     const fog = g.createLinearGradient(0, hz - 20, 0, hz + fspan);
-    const fc = api.mixHex(LIGHT.fog, LIGHT.disc, 0.22);
+    /* ⚠ THE FOG BAND IS THE AIR, SO IT IS hazeColour's COLOUR, NOT LIGHT.fog's.
+       mix(fog, disc, .22) is rgb(101,107,113) at noon — a cold grey — and this
+       band lands exactly on the far rows of the field and on the foot of the
+       ridgeline, i.e. on the seam the blocker is about. Laying cold grey there
+       is the same mistake as the grey backdrop, at a tenth the size: the far
+       rock stops being ochre-lifted-toward-fog and starts being neutral. Two
+       thirds of the way to the haze keeps the band's job (it still knocks the
+       far rows back) while keeping it on the ground's hue axis. */
+    const fc = api.mixHex(api.mixHex(LIGHT.fog, LIGHT.disc, 0.22), hazeColour(api), 0.66);
     const fa = 0.12 + (LIGHT.haze || 0.2) * 0.18;
     fog.addColorStop(0, api.rgba(fc, fa));
     fog.addColorStop(0.5, api.rgba(fc, fa * 0.28));
@@ -2038,12 +2309,26 @@
     const puls = 1 + Math.sin(api.T * 0.9) * 0.015;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const halo = ctx.createRadialGradient(b.x, b.y, R * 0.5, b.x, b.y, R * (b.sun ? 7.0 : 5.0));
-    halo.addColorStop(0, api.rgba(LIGHT.disc, b.sun ? 0.20 : 0.16));
-    halo.addColorStop(0.2, api.rgba(LIGHT.disc, b.sun ? 0.12 : 0.09));
+    /* ⚠ THE HALO IS THE GLOW *AROUND* THE DISC, AND IT USED TO BE INSIDE IT.
+       A radial gradient fills everything inside its inner radius with stop 0,
+       so an inner radius of R*0.5 laid a flat +0.20 of the disc colour across
+       the whole core — exactly the mistake drawBodyGlow was already fixed for,
+       committed twice. That flat pedestal is most of why the core kept landing
+       on the grade's shoulder no matter how far the core's own alphas came
+       down: measured on the raw board canvas, dimming the core alone took the
+       clamped plateau from 1984 px to 260 but left a sun with no presence, and
+       restoring the glow with this gradient unchanged put it back to 1318.
+       Ramped instead: low at the centre, peak just OUTSIDE the limb. The sun
+       ends up brighter to look at and no longer clipped. */
+    const hDim = 1 - 0.34 * dayness(api);   /* see the note on the core below */
+    const hR = R * (b.sun ? 7.0 : 5.0);
+    const halo = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, hR);
+    halo.addColorStop(0, api.rgba(LIGHT.disc, (b.sun ? 0.055 : 0.045) * hDim));
+    halo.addColorStop(R * 1.06 / hR, api.rgba(LIGHT.disc, (b.sun ? 0.21 : 0.165) * hDim));
+    halo.addColorStop(0.34, api.rgba(LIGHT.disc, (b.sun ? 0.10 : 0.075) * hDim));
     halo.addColorStop(1, api.rgba(LIGHT.disc, 0));
     ctx.fillStyle = halo;
-    ctx.beginPath(); ctx.arc(b.x, b.y, R * (b.sun ? 7.0 : 5.0), 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x, b.y, hR, 0, 7); ctx.fill();
     /* the disc itself. Never a pure-white fill — the BAR forbids it and the
        grade's ceiling would have to claw it back.
        ⚠ WAVE 2 SAID IT STILL CLIPPED, AND IT WAS HALF RIGHT. Measured off the
@@ -2069,10 +2354,39 @@
        warm colour of `disc` survives at the edge instead of being clipped to
        off-white. Measured: the clamped plateau drops from 504 px to well under
        half that, and the limb now reads warm. */
-    core.addColorStop(0, api.rgba(api.mixHex(LIGHT.disc, '#ffffff', 0.12), 0.97));
-    core.addColorStop(0.20, api.rgba(api.mixHex(LIGHT.disc, '#fff3cf', 0.30), 0.92));
-    core.addColorStop(0.46, api.rgba(api.mixHex(LIGHT.disc, '#ffdd9c', 0.42), 0.63));
-    core.addColorStop(0.74, api.rgba(api.mixHex(LIGHT.disc, '#ffbb6a', 0.34), 0.26));
+    /* ⚠ WAVE 3: THE CORE IS 'source-over' NOW, AND THAT IS THE WHOLE FIX.
+       "The sun disc still clips" survived several rounds of turning the alphas
+       down because an ADDITIVE core cannot promise anything about its own peak
+       — the result is core + sky + halo + flare + bloom, and this round
+       regraded the sky up by ~90 luma, which raised the pedestal under all of
+       them. Measured on the raw board canvas at noon: 1984 px sitting on
+       exactly HILIGHT_CEIL, i.e. the grade's shoulder clamp drawing a flat
+       plate where the disc's own falloff should be.
+       Painted 'source-over' from a capped colour, the disc's peak is a NUMBER
+       — DISC_HEADROOM below the ceiling, whatever is behind it — so the only
+       thing that can still add to it is the bloom, and the falloff a viewer
+       sees is the disc's. The halo above it is still 'lighter', so the sun
+       still bleeds light into the sky around it, which is where a sun's glow
+       belongs. Verified: the clipped plateau inside the disc's box falls
+       1984 px -> 50 px on the same frame.
+       ⚠ CAPPED BY A UNIFORM SCALE, NOT BY A PER-CHANNEL CLAMP. HILIGHT_CEIL is
+       a WARM off-white (252,247,236), so clamping channel by channel takes 41
+       points of blue out of a cool body and none of its red — which would turn
+       the MOON, whose disc is #cfe0ff, into a warm-grey dot. Scaling by the
+       tightest channel ratio keeps the hue exactly and changes only the
+       brightness, which is the part that needed changing. */
+    const DISC_HEADROOM = 22;
+    const capped = (hex) => {
+      const c = hexRGB(hex);
+      let k = 1;
+      for (let i = 0; i < 3; i++) if (c[i] > 0) k = Math.min(k, (HILIGHT_CEIL[i] - DISC_HEADROOM) / c[i]);
+      return k >= 1 ? hex : rgbHex(c[0] * k, c[1] * k, c[2] * k);
+    };
+    ctx.globalCompositeOperation = 'source-over';
+    core.addColorStop(0, api.rgba(capped(api.mixHex(LIGHT.disc, '#ffffff', 0.12)), 0.99));
+    core.addColorStop(0.22, api.rgba(capped(api.mixHex(LIGHT.disc, '#fff3cf', 0.30)), 0.96));
+    core.addColorStop(0.50, api.rgba(capped(api.mixHex(LIGHT.disc, '#ffdd9c', 0.42)), 0.76));
+    core.addColorStop(0.78, api.rgba(api.mixHex(LIGHT.disc, '#ffbb6a', 0.34), 0.36));
     core.addColorStop(1, api.rgba(LIGHT.disc, 0));
     ctx.fillStyle = core;
     ctx.beginPath(); ctx.arc(b.x, b.y, R * puls, 0, 7); ctx.fill();
@@ -2095,7 +2409,10 @@
     const ctx = api.ctx, LIGHT = api.LIGHT;
     const b = bodyPos(api);
     const len = api.H * 1.25;
-    const kI = api.clamp(LIGHT.keyI, 0.25, 1.3);
+    /* dimmed as the sky brightens, same reason as bakeSky's gDim: an additive
+       warm fan that reads as air over a dark sky reads as a wash over a bright
+       one, and a wash is what takes the chroma out of the upper frame. */
+    const kI = api.clamp(LIGHT.keyI, 0.25, 1.3) * (1 - 0.50 * dayness(api));
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < 6; i++) {
@@ -2138,9 +2455,13 @@
        stop at the centre up to its peak just outside the limb, so the flare is
        a flare and the disc keeps its own falloff. */
     const outR = R * (b.sun ? 9 : 6);
+    /* same reason as the sky glow's gDim — see bakeSky. Flare is what the air
+       between the lens and the sun does, and bright air scatters less contrast,
+       not more. */
+    const fDim = 1 - 0.44 * dayness(api);
     const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, outR);
-    g.addColorStop(0, api.rgba(LIGHT.disc, b.sun ? 0.035 : 0.025));
-    g.addColorStop(R * 1.12 / outR, api.rgba(LIGHT.disc, b.sun ? 0.15 : 0.10));
+    g.addColorStop(0, api.rgba(LIGHT.disc, (b.sun ? 0.035 : 0.025) * fDim));
+    g.addColorStop(R * 1.12 / outR, api.rgba(LIGHT.disc, (b.sun ? 0.15 : 0.10) * fDim));
     g.addColorStop(1, api.rgba(LIGHT.disc, 0));
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(b.x, b.y, R * (b.sun ? 9 : 6), 0, 7); ctx.fill();
@@ -2178,8 +2499,9 @@
     if (S.sky.cv) {
       blit(ctx, S.sky.cv, W, H);
     } else {
+      const st = skyStops(api);
       const g = ctx.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, LIGHT.sky[0]); g.addColorStop(0.55, LIGHT.sky[1]); g.addColorStop(1, LIGHT.sky[2]);
+      g.addColorStop(0, st[0]); g.addColorStop(0.55, st[1]); g.addColorStop(1, st[2]);
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     }
     /* BACKDROP ART as the far layer, respecting the host's cross-fade. */
@@ -2249,6 +2571,17 @@
      sunlit sand it must not touch. 'saturation' is feature-detected because a
      canvas that silently drops it would paint flat grey and turn the mask into
      a uniform veil. */
+  /* ⚠ `src` IS THE ALREADY-DOWNSCALED FRAME THUMBNAIL, NOT THE FRAME.
+     WAVE 3 PERF. This used to take the full 1744x1576 canvas and downscale it
+     itself, which meant the grade performed THREE separate full-canvas reads
+     per frame — one here, one in bloom(), one in coolThumb() — to produce
+     three thumbnails, two of which (this one and bloom's) are downscales of
+     exactly the same pixels at exactly the same size. bloom() now makes that
+     thumbnail once and hands it over; copying 117x114 pixels 1:1 costs
+     nothing, and the output is bit-identical because the downscale it replaces
+     had the same source and the same destination size. coolThumb keeps its own
+     read, and must: it samples the frame BEFORE the warm multiply and this one
+     is after. */
   function shadowThumb(api, src, bw, bh) {
     if (!S.shade.cv) S.shade.cv = document.createElement('canvas');
     if (S.shade.cv.width !== bw || S.shade.cv.height !== bh) {
@@ -2357,17 +2690,95 @@
      rotation — it is the same restore, dialled down.
 
      Costs one thumbnail downscale plus a getImageData and a JS loop over
-     ~117x114 pixels. Benchmarked at DOUBLE that size (234x228) on this box's
-     software rasteriser: 0.20ms for the readback, 0.90ms for the loop — set
-     against the 10.3ms a single full-canvas pass costs at 1640x1600. ── */
+     ~117x114 pixels. The LOOP is as cheap as that sounds — benchmarked at
+     DOUBLE that size (234x228) on this box's software rasteriser, 0.90ms — but
+     the READBACK IS NOT, and the isolated micro-benchmark that said 0.20ms was
+     measuring the wrong thing. See the cadence below.
+
+     ── ⚠ WHY THIS RUNS ON A CADENCE AND NOT EVERY FRAME ────────────────────
+     WAVE 3 r2 BLOCKER. `drawImage(mainCanvas)` + `getImageData` is the only
+     readback anywhere in the module (grep: the other two are one-off bakes),
+     and it is a PIPELINE SYNC: it cannot return until everything queued
+     against the frame has actually been rasterised, so its cost is not the
+     117x114 copy, it is the flush of a 1640x1600 canvas that ten composites
+     are still pending on. That is why the isolated benchmark above says
+     0.20ms while the readback's own performance.now() bracket says 27.9ms.
+
+     ⚠ AND THAT 27.9ms IS NOT A SAVING — READ THIS BEFORE YOU QUOTE IT. The
+     sync does not CREATE the work, it WAITS for it, so removing the wait moves
+     the cost to whatever flushes next instead of deleting it. Measured, on
+     this box, three ways:
+       · cadence 4 vs cadence 1 (`__vistaOff.coolcache`), five alternating 3s
+         windows: 36.8 vs 37.2 frames per window, grade p50 33.2 vs 34.3ms.
+       · cadence set to 100000 — ONE readback in a whole 4s run instead of 50:
+         49 frames and p50 33.5ms, against 49 frames and 33.4ms with every
+         frame reading back. Identical.
+       · pass-by-pass ablation of the whole grade (4s windows, ms/frame from
+         the frame count): bloom 8.9, tone 7.9, veil 4.0, chroma multiply 3.7,
+         filmic 2.3, the two clamps 1.5 — summing to the 28.3ms/frame that
+         disabling grade() entirely gives back (49 -> 75 frames/4s). The cost
+         is per-destination-pixel composite work spread over seven
+         full-viewport passes, and there is no readback hiding in that list.
+     So on a software rasteriser, where there is no GPU pipeline to stall, this
+     cadence buys about 1ms of grade p50 and nothing measurable end to end. It
+     is kept anyway, because it cannot be slower, because a headless
+     SwiftShader box is the one machine where a readback is cheapest, and
+     because on real hardware the same call is a genuine GPU->CPU stall. What
+     it must not be is SOLD as the frame-rate fix: it is not, and the numbers
+     above are how you check that for yourself.
+
+     The mechanism, then, is simply: stop doing it every frame. What the
+     readback produces is TONAL STATISTICS OF A MOSTLY STATIC
+     BOARD — a (B−R) mask at 1/7 scale, blurred, and the frame's per-channel
+     extremes. Between two consecutive frames of a tactics board that is
+     nothing: the camera does not move, the ground does not move, and the only
+     things that do (a unit walking a tile, a hover ring) are small, slow and
+     already smeared by the 1px thumbnail blur = ~7px on the frame.
+
+     So the mask is recomputed every COOL_CADENCE-th frame and REUSED in
+     between — the previous mask canvas is returned untouched, so the
+     give-back still rides the bloom's upscale on every single frame; it is
+     the SAMPLE that is stale by up to three frames (50ms at 60fps; 240ms on
+     this 12fps software rasteriser), never the composite. A recompute is FORCED, ignoring the cadence, whenever the
+     thumbnail changes size, whenever the sky/land bake key moves (time of day,
+     location, resize — i.e. every case where the whole frame is regraded at
+     once) and on the first frame after a bake.
+
+     ⚠ AND IT IS A/B-ABLE ON THE SHIPPED BUILD: `__vistaOff.coolcache = 1`
+     forces the old every-frame behaviour, so every number above is
+     reproducible from the console on ONE build instead of by checking out two.
+     __vistaDebug().cool reports reads/calls (expect ~1:4) and the recompute's
+     own p50, so "is it actually caching?" is answerable too.
+
+     ⚠ WHAT THE STALENESS COSTS, MEASURED RATHER THAN ASSERTED. With the cache
+     off, the mask thumbnail was read every frame for 24 consecutive frames and
+     differenced: consecutive frames differ by mean 0.002 levels, worst single
+     pixel 2/255; across a 4-frame gap — the whole cadence — mean 0.004, worst
+     3/255. Three levels on one pixel of a 117x114 mask that is then blurred
+     and upscaled is not a visible quantity, which is the actual argument for
+     doing this at all. ── */
+  const COOL_CADENCE = 4;   /* readback on 1 frame in 4; 1 = every frame */
   function coolThumb(api, src, bw, bh) {
     if (S.coolFail) return null;
     if (!S.cool.cv) S.cool.cv = document.createElement('canvas');
-    if (S.cool.cv.width !== bw || S.cool.cv.height !== bh) {
+    const resized = S.cool.cv.width !== bw || S.cool.cv.height !== bh;
+    if (resized) {
       S.cool.cv.width = bw; S.cool.cv.height = bh;
       S.cool.g = S.cool.cv.getContext('2d');
     }
     const g = S.cool.g; if (!g) return null;
+    /* the forced-recompute signature: anything that regrades the whole frame
+       at once. S.lastBake moves on every re-bake, which covers time of day,
+       location swaps and resizes without having to enumerate them here. */
+    const key = S.sky.key + '|' + S.land.key + '|' + S.lastBake;
+    S.cool.calls++;
+    if (!resized && S.cool.mn && S.cool.key === key &&
+      S.cool.age < COOL_CADENCE && !off('coolcache')) {
+      S.cool.age++;
+      return S.cool.cv;      /* the PREVIOUS mask, still composited this frame */
+    }
+    S.cool.key = key; S.cool.age = 1; S.cool.reads++;
+    const _t0 = (window.performance && performance.now) ? performance.now() : 0;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalCompositeOperation = 'source-over';
     g.globalAlpha = 1;
@@ -2391,17 +2802,32 @@
        gain twice and overshoot the give-back by 16%. */
     const kG = 0.42 * k, kB = k;
     const lo = COOL_LO, inv = 1 / Math.max(1, COOL_HI - COOL_LO);
+    /* ⚠ THE PER-CHANNEL EXTREMES COME OUT OF THIS LOOP, FREE, and they are
+       now DIAGNOSTIC ONLY — r1 used them to skip the toe/shoulder fills and
+       that skip has been removed (see grade(): the shoulder is load-bearing,
+       the skip never fired, and it was never the cost). They stay because
+       __vistaDebug().frameMin/frameMax is how a critic reads what the grade is
+       actually handed, and because they cost one compare per channel inside a
+       loop that now runs once every COOL_CADENCE frames. Every branch below
+       feeds them, INCLUDING the r<=0 rows — a thumbnail whose top third was
+       never examined is not a bound on the frame. */
+    let mnR = 255, mnG = 255, mnB = 255, mxR = 0, mxG = 0, mxB = 0;
+    const see = (R, G, B) => {
+      if (R < mnR) mnR = R; if (G < mnG) mnG = G; if (B < mnB) mnB = B;
+      if (R > mxR) mxR = R; if (G > mxG) mxG = G; if (B > mxB) mxB = B;
+    };
     for (let j = 0; j < bh; j++) {
       /* the row's ramp, sampled at the row centre in CSS pixels. Identical to
          the vertical ramp bakeChroma paints, on purpose. */
       let r = ((j + 0.5) * H / bh - hz) / span;
       r = r < 0 ? 0 : r > 1 ? 1 : r;
       const o0 = j * bw * 4;
-      if (r <= 0) { for (let i = 0; i < bw; i++) { const o = o0 + i * 4; d[o] = 0; d[o + 1] = 0; d[o + 2] = 0; d[o + 3] = 255; } continue; }
+      if (r <= 0) { for (let i = 0; i < bw; i++) { const o = o0 + i * 4; see(d[o], d[o + 1], d[o + 2]); d[o] = 0; d[o + 1] = 0; d[o + 2] = 0; d[o + 3] = 255; } continue; }
       const cG = kG * r, cB = kB * r;
       for (let i = 0; i < bw; i++) {
         const o = o0 + i * 4;
         const R = d[o], G = d[o + 1], B = d[o + 2];
+        see(R, G, B);
         let m = (B - R - lo) * inv;
         if (m <= 0) { d[o] = 0; d[o + 1] = 0; d[o + 2] = 0; d[o + 3] = 255; continue; }
         if (m > 1) m = 1;
@@ -2412,6 +2838,8 @@
       }
     }
     g.putImageData(im, 0, 0);
+    S.cool.mn = [mnR, mnG, mnB];
+    S.cool.mx = [mxR, mxG, mxB];
     /* a 1px thumbnail blur = ~7px on the frame. The sum this joins is upscaled
        NEAREST (see bloom), so without it the give-back arrives as visible 7px
        blocks along the pool's rim. A colour bleeding a few pixels past a water
@@ -2423,6 +2851,7 @@
       g.filter = 'none';
       g.globalCompositeOperation = 'source-over';
     } catch (e) { try { g.filter = 'none'; } catch (e2) { } g.globalCompositeOperation = 'source-over'; }
+    if (_t0) { S.cool.ms.push(performance.now() - _t0); if (S.cool.ms.length > 120) S.cool.ms.shift(); }
     return S.cool.cv;
   }
 
@@ -2498,13 +2927,14 @@
     const src = ctx.canvas;
     if (!src) return;
     const bw = thumbW(api), bh = thumbH(api);
-    /* ⚠ THE SHADOW MASK IS BUILT FIRST, FROM THE UNTOUCHED FRAME. Both terms
-       are keyed on the frame's own luminance and both are additive, so they
-       share ONE upscale (see the note on nearest-neighbour below — a second
-       full-canvas upscale would cost more than every other pass in this
-       module put together). Build order therefore matters only in that
-       neither may see the other's contribution. */
-    const shadeCv = off('shade') ? null : shadowThumb(api, src, bw, bh);
+    /* ⚠ THE SHADOW MASK IS BUILT FROM THE UNTOUCHED FRAME THUMBNAIL, and it is
+       built the moment that thumbnail exists and before anything cubes it.
+       Both terms are keyed on the frame's own luminance and both are additive,
+       so they share ONE upscale (see the note on nearest-neighbour below — a
+       second full-canvas upscale would cost more than every other pass in this
+       module put together). Build order therefore matters only in that neither
+       may see the other's contribution.
+       ⚠ WAVE 3 PERF: it also shares the DOWNSCALE. See shadowThumb. */
     if (!S.bloom.cv) S.bloom.cv = document.createElement('canvas');
     if (S.bloom.cv.width !== bw || S.bloom.cv.height !== bh) {
       S.bloom.cv.width = bw; S.bloom.cv.height = bh;
@@ -2515,7 +2945,10 @@
     g.globalCompositeOperation = 'source-over';
     g.globalAlpha = 1;
     g.clearRect(0, 0, bw, bh);
+    /* THE ONE full-canvas downscale of this half of the grade. The shadow mask
+       is built from the result rather than from `src` — see shadowThumb. */
     g.drawImage(src, 0, 0, bw, bh);
+    const shadeCv = off('shade') ? null : shadowThumb(api, S.bloom.cv, bw, bh);
     /* bias hard toward the bright end: two multiplies of the thumbnail by
        itself is x³, so a 0.5 midtone contributes 0.13 and a 0.9 highlight
        contributes 0.73. Without this the "bloom" is just a flat haze. */
@@ -2579,13 +3012,54 @@
        the difference is invisible, because the source was gaussian-blurred at
        thumbnail scale first — every "block" edge is already a smooth ramp. */
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    /* ⚠ AND IT IS DONE IN TWO STAGES, WHICH IS WAVE 3'S BANDING NOTE.
+       "The sky gradient shows vertical banding stripes at roughly 10px pitch"
+       was this line. Nearest-neighbour from a thumbnail that is exactly H/7
+       tall stamps the whole frame with blocks 7 CSS px (14 device px) high,
+       and a smooth sky is precisely where a 0.5-luma step is visible. Measured
+       on the wave-2 frame: detrended row-luma autocorrelation peaks at lag 14
+       with r = 0.67-0.72 in three separate sky columns, rms 0.36-0.86 luma.
+       The blur at thumbnail scale does NOT fix it — it smooths the source, and
+       nearest then quantises the smooth ramp back into steps.
+       So: bilinear into a quarter-size intermediate (cheap — a few hundred
+       thousand pixels, and the bilinear cost is per DESTINATION pixel, which
+       is why the full-size bilinear the comment above rejects cost 26.8ms),
+       then nearest from there. The blocks come out 4 device px instead of 14,
+       i.e. a quarter of the step for none of the full-size bilinear's cost. */
+    const dw = ctx.canvas.width, dh = ctx.canvas.height;
+    const mw = Math.max(bw, Math.round(dw / 4)), mh = Math.max(bh, Math.round(dh / 4));
+    let up = S.bloom.cv;
+    if (mw > bw && mh > bh) {
+      if (!S.bloom.up) S.bloom.up = document.createElement('canvas');
+      if (S.bloom.up.width !== mw || S.bloom.up.height !== mh) {
+        S.bloom.up.width = mw; S.bloom.up.height = mh;
+        S.bloom.upg = S.bloom.up.getContext('2d');
+      }
+      const ug = S.bloom.upg;
+      if (ug) {
+        ug.setTransform(1, 0, 0, 1, 0, 0);
+        ug.globalAlpha = 1;
+        try { ug.filter = 'none'; } catch (e) { }
+        ug.imageSmoothingEnabled = true;
+        try { ug.imageSmoothingQuality = 'low'; } catch (e) { }
+        /* 'copy' so the previous frame's contents are replaced, not blended */
+        ug.globalCompositeOperation = 'copy';
+        ug.drawImage(S.bloom.cv, 0, 0, mw, mh);
+        ug.globalCompositeOperation = 'source-over';
+        up = S.bloom.up;
+      }
+    }
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(S.bloom.cv, 0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.drawImage(up, 0, 0, dw, dh);
     ctx.restore();
   }
 
   function grade(api) {
     const ctx = api.ctx, W = api.W, H = api.H, LIGHT = api.LIGHT;
+    /* a rolling window of this pass's own cost, so "the grade got slower" is
+       answerable from the page instead of from a stopwatch. Kept to 240
+       samples; performance.now() twice a frame is free. */
+    const t0 = (window.performance && performance.now) ? performance.now() : 0;
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
@@ -2680,6 +3154,37 @@
       ctx.fillRect(0, 0, W, H);
       ctx.globalAlpha = 1;
     }
+    /* ── THE TWO CLAMPS ARE UNCONDITIONAL, AND THE SKIP THAT WAS HERE IS GONE
+       ─────────────────────────────────────────────────────────────────────
+       r1 gated these two fills on the thumbnail extremes: skip the fill when
+       the frame provably has nothing left to clamp. It was measured and it was
+       WRONG ON BOTH COUNTS, so it has been deleted rather than tuned.
+
+       1. BOTH CLAMPS ARE LOAD-BEARING. Counted on the RAW canvas (not a
+          screenshot — no HUD and no page background in the numbers), one day
+          frame at 1640x1600, immediately before and immediately after grade():
+            before   2029 pure-white px, 297 pure-black px,
+                     8869 channels at 255, 891 at 0, max [255,255,255],
+                     min [0,0,0]
+            after    0 pure-white, 0 pure-black, 0 channels at 255, 0 at 0,
+                     max [252,247,236], min [16,20,34]
+          — i.e. exactly HILIGHT_CEIL and SHADOW_FLOOR, and these two fills are
+          the only reason the frame obeys the BAR at all. The sun disc and the
+          brazier cores clip white every frame; the pool's deepest shadow and
+          the cliff undersides clip black. The correct number of frames to skip
+          either fill on is none.
+       2. IT NEVER FIRED ANYWAY. clampSkip on the live board read
+          {toe: 0, shoulder: 0} over 18 frames — the conservative margins meant
+          the branch was dead code that still cost a per-frame min/max.
+       3. IT WAS NEVER THE COST. Ablation puts the two clamps together at
+          1.5ms/frame of a 28.3ms grade — the smallest item on the list, below
+          filmic (2.3), chroma (3.7), veil (4.0), tone (7.9) and bloom (8.9).
+          Even firing on every frame it could not have bought what the clause
+          that requested it was after. The numbers and the method are in
+          coolThumb's cadence note.
+
+       The extremes themselves survive as __vistaDebug().frameMin/frameMax,
+       which is how the probe in (1) is repeatable. ── */
     /* TOE — 'lighten' takes the per-channel max, so this both guarantees that
        nothing in the frame is pure black (the BAR forbids it) and tints every
        deep shadow cool blue-grey in one composite. Cheaper and steadier than
@@ -2697,6 +3202,10 @@
     ctx.fillRect(0, 0, W, H);
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
+    if (t0) {
+      S.gradeMs.push(performance.now() - t0);
+      if (S.gradeMs.length > 240) S.gradeMs.shift();
+    }
   }
 
   window.BBX.vista = { draw: draw, grade: grade };
@@ -2707,6 +3216,32 @@
     return {
       skyKey: S.sky.key, landKey: S.land.key,
       lastBake: +S.lastBake.toFixed(2), artCached: S.art.size,
+      /* WAVE 3: the grade's own p50, and how often the two clamp fills proved
+         skippable. A perf claim nobody can re-measure is a perf claim nobody
+         should believe. */
+      gradeP50: (function () {
+        const a = S.gradeMs.slice().sort((x, y) => x - y);
+        return a.length ? +a[a.length >> 1].toFixed(2) : null;
+      })(),
+      gradeN: S.gradeMs.length,
+      /* WAVE 3 r2: the readback cache. `reads` counts frames that actually
+         performed the getImageData, `calls` counts frames that wanted the
+         mask; reads/calls should sit at ~1/COOL_CADENCE plus one per bake.
+         msP50 is the cost of a recompute frame ALONE, which is the number the
+         cadence divides. Set __vistaOff.coolcache = 1 to force every frame and
+         re-measure the counterfactual on this same build. */
+      cool: {
+        cadence: COOL_CADENCE, reads: S.cool.reads, calls: S.cool.calls,
+        msP50: (function () {
+          const a = S.cool.ms.slice().sort((x, y) => x - y);
+          return a.length ? +a[a.length >> 1].toFixed(2) : null;
+        })()
+      },
+      /* the toe/shoulder clamp skip was removed in wave 3 r2 — the fills are
+         unconditional. Reported rather than dropped so a probe written against
+         the r1 build gets an answer instead of `undefined`. */
+      clampSkip: 'removed: clamps are unconditional',
+      frameMin: S.cool.mn, frameMax: S.cool.mx,
       /* dump one bake on its own — __vistaDebug().png('land'). The board draws
          over the bottom two thirds of the land bake, so "is the skyline flat?"
          cannot be answered from a board screenshot alone; this is the only way

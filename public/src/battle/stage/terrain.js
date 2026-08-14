@@ -140,37 +140,109 @@ const terrain = {
       }
     }
 
-    /* ── 3. PEBBLE FIELD ────────────────────────────────────────────────
-       Density varies per tile, and about a third of the tiles get almost
-       none: an even scatter everywhere is what makes generated ground look
-       machine-made. Each pebble is a lit cap plus a tiny contact shadow
-       offset along -lightVector, so they sit IN the sand. */
+    /* ── 3. LAG GRAVEL ──────────────────────────────────────────────────
+       ⚠ WAVE 3 REWRITE — THIS WAS THE STRONGEST "AI-GENERATED" TELL LEFT.
+       The critic counted "25-30 identical pale ellipses per tile, same size,
+       same aspect ratio, varied only by rotation, evenly scattered" and called
+       it the most-repeated element in the whole frame. They were describing
+       this loop exactly: one ellipse primitive, aspect pinned at 0.66, radius
+       from a flat 0.016..0.064 band, position from a flat uniform, and up to
+       31 of them on every single tile.
+       Three things were wrong and all three are fixed here:
+         SIZE — real lag gravel is a POWER LAW. Hundreds of grains for every
+           pebble, a handful of pebbles for every cobble. `pow(h, 3.1)` gives
+           that; a flat band gives the uniform-sprite read.
+         SHAPE — a third of the stones are now angular chips (4-6 sided
+           polygons), the ellipses' aspect runs 0.34..0.95, and the squash axis
+           is rotated per stone. No two are the same silhouette.
+         PLACEMENT — an even scatter is machine-made. Stones collect: wind
+           strips the fines out of a patch and leaves a gravel LAG behind, so
+           most of them sit in one or two clusters per tile with a few strays,
+           and roughly a third of tiles carry almost nothing. */
     const density = hash(x, z, 440);
-    /* Deliberately lumpy: roughly a third of tiles are near-bare. An even
-       scatter over every tile is exactly what makes generated ground read as
-       machine-made, and it also re-draws the grid one dot at a time. */
-    const count = density < 0.38 ? (2 + ((density * 6) | 0))
-                                 : (5 + ((density * 14) | 0)) + L * 4;
+    const bare = density < 0.34;
+    const count = bare ? (1 + ((density * 7) | 0))
+                       : (4 + ((density * 11) | 0)) + L * 2;
+    /* one or two lag patches per tile; strays are placed anywhere */
+    const lagN = 1 + ((hash(x, z, 441) * 2) | 0);
+    const lag = [];
+    for (let i = 0; i < lagN; i++)
+      lag.push({ u: 0.14 + hash(x, z, i * 5 + 442) * 0.72,
+                 v: 0.14 + hash(x, z, i * 5 + 443) * 0.72,
+                 r: 0.16 + hash(x, z, i * 5 + 444) * 0.26 });
     for (let i = 0; i < count; i++){
-      const u = 0.06 + hash(x, z, i * 3 + 450) * 0.88;
-      const v = 0.06 + hash(x, z, i * 3 + 451) * 0.88;
+      const stray = hash(x, z, i * 7 + 445) > 0.72;
+      let u, v;
+      if (stray){
+        u = 0.05 + hash(x, z, i * 3 + 450) * 0.90;
+        v = 0.05 + hash(x, z, i * 3 + 451) * 0.90;
+      } else {
+        const c0 = lag[(hash(x, z, i * 7 + 446) * lag.length) | 0];
+        /* sqrt-biased radius = uniform area inside the patch, not a bullseye */
+        const rad = c0.r * Math.sqrt(hash(x, z, i * 3 + 450));
+        const th = hash(x, z, i * 3 + 451) * 6.283;
+        u = clamp(c0.u + Math.cos(th) * rad, 0.04, 0.96);
+        v = clamp(c0.v + Math.sin(th) * rad * 0.72, 0.04, 0.96);
+      }
       const p = quadPt(P, u, v);
-      const s = r * (0.016 + hash(x, z, i * 3 + 452) * 0.048) * (1 + L * 0.22);
+      const hs = hash(x, z, i * 3 + 452);
+      /* POWER LAW. 0.008r is a grain you can barely resolve, 0.075r is a
+         cobble, and the exponent puts most of the population at the bottom. */
+      const s = r * (0.008 + Math.pow(hs, 3.1) * 0.068) * (1 + L * 0.18);
       const rot = hash(x, z, i + 460) * 3.14;
-      /* contact shadow first, so the stone sits on top of its own shadow */
-      g.fillStyle = rgba(M.deep, 0.22);
-      g.beginPath();
-      g.ellipse(p.x + shu * s * 1.5, p.y + shv * s * 0.9 + s * 0.35, s * 1.15, s * 0.55, rot, 0, 7);
-      g.fill();
-      g.fillStyle = rgba(api.mixHex(M.base, M.pale, 0.30 + hash(x, z, i + 461) * 0.45), 0.62);
-      g.beginPath(); g.ellipse(p.x, p.y, s, s * 0.66, rot, 0, 7); g.fill();
-      /* a single lit facet on the light-facing side */
-      if (s > r * 0.03){
-        g.fillStyle = rgba(M.pale, 0.24);
+      const squash = 0.34 + hash(x, z, i + 462) * 0.61;
+      const chip = hash(x, z, i + 463) > 0.66;      /* angular, not rounded */
+      /* contact shadow first, so the stone sits on top of its own shadow.
+         Only the ones big enough to cast one — a grain does not. */
+      if (s > r * 0.016){
+        g.fillStyle = rgba(M.deep, 0.14 + hs * 0.14);
         g.beginPath();
-        g.ellipse(p.x + lu * s * 0.3, p.y + lvv * s * 0.2 - s * 0.18, s * 0.45, s * 0.26, rot, 0, 7);
+        g.ellipse(p.x + shu * s * 1.5, p.y + shv * s * 0.9 + s * 0.35,
+                  s * 1.15, s * 0.55, rot, 0, 7);
         g.fill();
       }
+      g.fillStyle = rgba(api.mixHex(M.base, M.pale, 0.18 + hash(x, z, i + 461) * 0.62),
+                         0.42 + hash(x, z, i + 464) * 0.34);
+      g.beginPath();
+      if (chip){
+        const sides = 4 + ((hash(x, z, i + 465) * 3) | 0);
+        for (let k = 0; k < sides; k++){
+          const th = rot + (k / sides) * 6.283;
+          const kr = s * (0.55 + hash(x, z, i * 9 + 466 + k) * 0.85);
+          const qx = p.x + Math.cos(th) * kr, qy = p.y + Math.sin(th) * kr * squash;
+          k ? g.lineTo(qx, qy) : g.moveTo(qx, qy);
+        }
+        g.closePath();
+      } else {
+        g.ellipse(p.x, p.y, s, s * squash, rot, 0, 7);
+      }
+      g.fill();
+      /* a single lit facet on the light-facing side of the bigger stones */
+      if (s > r * 0.030){
+        g.fillStyle = rgba(M.pale, 0.16 + hs * 0.14);
+        g.beginPath();
+        g.ellipse(p.x + lu * s * 0.3, p.y + lvv * s * 0.2 - s * 0.18,
+                  s * 0.45, s * 0.26, rot, 0, 7);
+        g.fill();
+      }
+    }
+    /* ── 3b. GRIT AT A SECOND SCALE ─────────────────────────────────────
+       The field's only high-frequency content used to be the spine's one
+       stipple size plus Skia's own 1px gradient dither, and a single
+       frequency everywhere reads as wallpaper rather than as material. This
+       is a much finer, much fainter class than the gravel above — sub-pixel
+       flecks that give the sand a second grain size to sit at. */
+    const grit = bare ? 10 : 22;
+    for (let i = 0; i < grit; i++){
+      const p = quadPt(P, 0.03 + hash(x, z, i * 2 + 500) * 0.94,
+                          0.03 + hash(x, z, i * 2 + 501) * 0.94);
+      const s = r * (0.004 + hash(x, z, i + 502) * 0.011);
+      g.fillStyle = rgba(hash(x, z, i + 503) > 0.5 ? M.pale : M.deep,
+                         0.05 + hash(x, z, i + 504) * 0.09);
+      g.beginPath();
+      g.ellipse(p.x, p.y, s, s * (0.4 + hash(x, z, i + 505) * 0.5),
+                hash(x, z, i + 506) * 3, 0, 7);
+      g.fill();
     }
 
     /* ── 4. EXPOSED BEDROCK SLAB ────────────────────────────────────────

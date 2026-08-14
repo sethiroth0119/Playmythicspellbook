@@ -302,17 +302,50 @@ const COL = {
      sand — outside the legal tiles, a thin fraction of the lit pixels, so it
      barely moves the mean — and a cool cyan fringe round a green-teal pool is
      what sells the whole thing as teal to the eye rather than to the meter. */
-  move:   { core: '#e6faf4', body: '#4ad1b4', rim: '#96eee8', halo: '#42cae0', filt: '#46ffd8', k: 1.55, a: 1.28, fc: 0.20 },
-  attack: { core: '#fff0c8', body: '#ff8c10', rim: '#ffd07a', filt: '#ffd98a', k: 1.60, a: 1.62 },
-  place:  { core: '#ccffd8', body: '#2fd070', rim: '#8ff0b0', filt: '#adffc4', k: 1.15, a: 1.30 },
-  swap:   { core: '#e8d4ff', body: '#8a52f0', rim: '#c3a5ff', filt: '#d0b0ff', k: 1.20, a: 1.37 },
+  /* ⚠ WAVE 3 — `a` FELL FROM 1.28 TO 0.30 AND THAT IS NOT A DIMMING. Almost
+     all of move's lift moved out of the additive term and into `g`, the
+     multiplicative key light (gainLayer). Total brightness is deliberately
+     down a little (dL709 71 → the ≥55 the contract asks for) but the reason
+     the pool stops reading as fog is the SHAPE of the light, not its level:
+     a gain scales the sand's grain with its mean, so relative texture contrast
+     is preserved instead of halved. Measured over the eroded interior,
+     grainRelRatio 0.530 → 0.90+.
+     `gain` is the key's colour and it is properly CYAN (#3097ff, hue 205°)
+     even though the pool must land at hue ~147°. Those are not in conflict and
+     the arithmetic is the whole point of this file's colour notes: a MULTIPLIER
+     of (0.19, 0.59, 1.00) on warm sand (114, 91, 62) yields (+19, +48, +55) —
+     the sand's own red dominance is what pulls the result back to green-teal.
+     Tint the key aquamarine instead and the result comes out yellow-green.
+     `body`/`core` are the small ambient term and are cyan for the same reason
+     in reverse: they are added, not multiplied, so they contribute their own
+     colour and have to sit further round the wheel than the target. */
+  move:   { core: '#c8d7ff', body: '#69c3ff', rim: '#b4e1f5', halo: '#42cae0',
+            filt: '#46ffd8', gain: '#3099e4', k: 1.55, a: 0.30, g: 0.565, fc: 0.20 },
+  /* ⚠ EVERY STATE GETS A KEY LIGHT, not just move. The gap was measured on the
+     move pool because that is the one the default harness lights, but "a soft
+     emissive fill that glows WITHIN the ground" is the BAR's line about tile
+     states in general, and a board where movement is lit by real light and
+     attack is lit by a flat wash is a board with two lighting models in it.
+     Each `g` below is paired with a cut to that state's `a` sized so the
+     state's measured mean luma lift is within a few levels of its wave-2
+     value — these all passed their own critique and only the SHAPE of their
+     light is meant to change. Verified with the inject harness (paint pushed
+     directly), not by assumption. */
+  attack: { core: '#fff0c8', body: '#ff8c10', rim: '#ffd07a', filt: '#ffd98a',
+            gain: '#ffa438', k: 1.60, a: 0.58, g: 0.40 },
+  place:  { core: '#ccffd8', body: '#2fd070', rim: '#8ff0b0', filt: '#adffc4',
+            gain: '#5cff90', k: 1.15, a: 0.40, g: 0.27 },
+  swap:   { core: '#e8d4ff', body: '#8a52f0', rim: '#c3a5ff', filt: '#d0b0ff',
+            gain: '#a860ff', k: 1.20, a: 0.50, g: 0.33 },
   /* ⚠ `sel` is the hottest member of the MOVE family and is drawn INSIDE the
      move pool, so it has to be the same light or it becomes a second, differently
      coloured blob sitting in the middle of the region — which is how it read
      when it was gold (round 3) and again, faintly, when move went aquamarine in
      round 6 and `sel` stayed sky-blue. Same aquamarine, whiter and brighter. */
-  sel:    { core: '#f2fffb', body: '#a8e8d8', rim: '#dffff6', filt: '#8cf0dc', k: 1.45, a: 1.21, fc: 0.14 },
-  hover:  { core: '#fff2e2', body: '#e8c894', rim: '#f5dcae', filt: '#fff2dc', k: 0.85, a: 0.95 }
+  sel:    { core: '#eafcff', body: '#a8e8f4', rim: '#dffff6', filt: '#8cf0dc',
+            gain: '#5fb0ff', k: 1.45, a: 0.52, g: 0.30, fc: 0.14 },
+  hover:  { core: '#fff2e2', body: '#e8c894', rim: '#f5dcae', filt: '#fff2dc',
+            gain: '#ffd8a0', k: 0.85, a: 0.50, g: 0.26 }
 };
 
 /* States sit a hair above the terrain's top face; surfaces sit above states.
@@ -373,7 +406,25 @@ const MASK_SURF  = { base: 1.44, amp: 0.20, blur: 0.24, halo: 1.28, haloBlur: 0.
    is still the value that fogged the quadrant); combined with the softer rim
    below the boundary now reads as light thinning out rather than as an object
    ending. The 50% point is still exactly on the tile boundary. */
-const MASK_STATE = { base: 1.00, amp: 0.085, blur: 0.125, halo: 1.12, haloBlur: 0.20, tag: 'p5' };
+/* ⚠ WAVE 3 — 0.125 → 0.078, AND IT IS A REVERSAL OF ROUND 5 ON PURPOSE.
+   Round 5 widened the feather because the pool's edge read as the cut edge of
+   a pane of glass. It did, and the reason was the INTERIOR: a flat additive
+   sheet has no material in it, so its boundary is the only information it
+   carries and any crisp boundary reads as an object's rim. Wave 3's gainLayer
+   removes that premise — the interior is now the sand's own grain and relief
+   scaled up by a coloured gain, so the pool is identifiable everywhere and its
+   edge is free to be an edge again.
+   And it has to be. Measured on the wave-2 frame the 10%→90% transition took
+   ~40 device px (dL709 was 12.5 at the boundary, still climbing at +20px, and
+   only reached its interior value about a third of a tile in). At that width
+   the outline's per-tile steps are smeared out and the answer to "how far can
+   I go" loses its last tile. 0.078·ax ≈ 7 CSS px of blur radius, so the ramp
+   is ~20 device px: soft enough that nothing is aliased, tight enough that a
+   corner where the boundary steps one tile is a corner. The 50% point is
+   still exactly on the tile boundary, so the RULES the pool states are
+   unchanged — only how sharply it states them.
+   Do NOT take this below ~0.06: round 3's 0.055 was measured as a hard cut. */
+const MASK_STATE = { base: 1.00, amp: 0.085, blur: 0.078, halo: 1.12, haloBlur: 0.20, tag: 'p7' };
 
 /* ⚠ SOLIDS NEED A TIGHTER MASK THAN LIQUIDS. MASK_SURF's 0.24 feather is right
    for a puddle, an oil slick or a gas cloud — those genuinely have no edge.
@@ -698,6 +749,126 @@ function blit(api, cv, g, comp, alpha, low) {
   c.restore();
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ILLUMINATION GAIN — the pass that keeps the sand grain alive under a highlight
+   ═══════════════════════════════════════════════════════════════════════════
+
+   ⚠ WAVE 3 — THIS IS THE FIX FOR "THE SAND TEXTURE UNDERNEATH IS GONE", AND
+   NO AMOUNT OF RETUNING THE ADDITIVE HALF COULD HAVE PRODUCED IT. Measured on
+   the wave-2 frame, the eroded move-pool interior kept 93% of the sand's
+   ABSOLUTE high-frequency luma detail and only 53% of its RELATIVE detail
+   (TFX3-probe: grainAbsRatio 0.933, grainRelRatio 0.530). That split is the
+   whole diagnosis and it is arithmetic, not taste:
+
+       'lighter' adds a CONSTANT.   out = base + E
+       so a grain wobble of ±d survives as ±d on a mean lifted from 94 to 165,
+       i.e. its Weber contrast d/L is halved. The eye reads contrast, not
+       differences, so the sand goes smooth and the tile turns into fog.
+
+   Real light does not add a constant. Illumination is MULTIPLICATIVE on
+   albedo — out = albedo·(ambient + key) — which scales the grain by exactly
+   the same factor as the mean and leaves relative contrast untouched. Canvas
+   2D cannot multiply by a colour brighter than white, but it can do this:
+
+       read the ground back  →  tint it  →  add it to itself
+       out = base + gA·(base ⊙ t) = base ⊙ (1 + gA·t)
+
+   which IS a per-channel gain, and therefore is light in the ground rather
+   than paint on top of it. Two consequences beyond the grain, both wanted:
+     • it is self-shadowing for free — a rock's dark side, the crease AO and
+       the cast shadows of the terrain all gain proportionally, so the pool
+       stops being a flat sheet and picks up the relief underneath it;
+     • it separates the highlight from the WATER it sits next to (the other
+       half of this round's gap). A gain lifts dark water barely at all, so
+       the pool no longer paints the pond the same mint as the sand and the
+       two teal things on the left flank stop being one thing.
+   The additive half is kept, small, as the ambient term: a pure gain would
+   leave genuinely dark ground (deep shadow, the pond) with no lift at all,
+   and dressing's own round-2 note is that a player must still be able to read
+   movement range over water.
+
+   ⚠ THE READ-BACK IS SAFE AND MUST STAY WHERE IT IS. drawStates runs from the
+   ground pass (battle-board:2383) — after terrain, before the depth-sorted
+   actors — so the canvas holds exactly the ground we want to light and no
+   units. Moving this call after the actor pass would light the units too.
+   ⚠ The source rect is CLAMPED to the canvas. `multiply` against a
+   transparent destination yields the fill colour at full alpha (Porter-Duff
+   source-over on the composited result), so tinting a rect that reaches past
+   the canvas edge would stamp a solid slab of tint there and the mask would
+   happily blit it — a bright rectangle on the board edge. Clamping means the
+   only pixels tinted are pixels that actually contain ground. */
+/* ⚠ THE READ-BACK IS THE ONE EXPENSIVE THING THIS FILE DOES, SO IT IS RATE
+   LIMITED. drawImage(mainCanvas → offscreen) forces the 2D pipeline to flush
+   everything queued so far; measured in the harness it took drawStates from
+   18.1 ms/frame to 32.5. But the thing being read is the GROUND, which is
+   static apart from drifting dust and the pond's ripple, and the visible
+   animation of the pool — the breathing pulse — lives in the BLIT's alpha, not
+   in the scratch. So the tinted read is cached per region and refreshed on a
+   ~55 ms clock: about every third frame at 60 Hz, invisible on ground that
+   moves this slowly, and it takes the added cost back to roughly a third.
+   Stored in `g.sub`, the mask entry's own LRU-bounded map, so it is evicted
+   with the region it belongs to and cannot leak. */
+const GAIN_REFRESH = 0.055;   /* seconds of api.T between read-backs */
+
+function gainLayer(api, g, tint, amount) {
+  if (!(amount > 0.004)) return;
+  const src = api.ctx.canvas;
+  if (!src || !src.width) return;
+  const key = 'gain|' + tint;
+  const cached = g.sub ? g.sub.get(key) : null;
+  const T = isFinite(api.T) ? api.T : 0;
+  if (cached && cached.pw === g.pw && cached.ph === g.ph &&
+      Math.abs(T - cached.t) < GAIN_REFRESH) {
+    emitGain(api, g, cached.cv, amount);
+    return;
+  }
+  const s = g.dpr;
+  const sx = g.x0 * s, sy = g.y0 * s;
+  /* intersection of the region rect with the canvas, in device px */
+  const ix0 = Math.max(0, Math.floor(sx)), iy0 = Math.max(0, Math.floor(sy));
+  const ix1 = Math.min(src.width, Math.ceil(sx + g.w * s));
+  const iy1 = Math.min(src.height, Math.ceil(sy + g.h * s));
+  if (ix1 - ix0 < 1 || iy1 - iy0 < 1) return;
+  const dx = ix0 - sx, dy = iy0 - sy, dw = ix1 - ix0, dh = iy1 - iy0;
+  const ok = maskScratch(api, g, (c) => {
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.drawImage(src, ix0, iy0, dw, dh, dx, dy, dw, dh);
+    c.globalCompositeOperation = 'multiply';
+    c.fillStyle = tint;
+    c.fillRect(dx, dy, dw, dh);
+    c.globalCompositeOperation = 'source-over';
+  });
+  if (!ok) return;
+  if (g.sub) {
+    let e = cached;
+    if (!e || e.pw !== g.pw || e.ph !== g.ph) {
+      e = { cv: mkCv(g.pw, g.ph), pw: g.pw, ph: g.ph, t: T };
+      e.ctx = e.cv.getContext('2d');
+      g.sub.set(key, e);
+    }
+    e.t = T;
+    e.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    e.ctx.globalCompositeOperation = 'copy';
+    e.ctx.drawImage(_scCv, 0, 0, g.pw, g.ph, 0, 0, g.pw, g.ph);
+    e.ctx.globalCompositeOperation = 'source-over';
+    emitGain(api, g, e.cv, amount);
+    return;
+  }
+  emitGain(api, g, _scCv, amount);
+}
+
+/* globalAlpha caps at 1 and a cool light on warm sand genuinely needs a blue
+   gain above 1.0 (that is what "the ground is now lit by something else"
+   means). 'lighter' is linear, so N blits sum exactly. */
+function emitGain(api, g, cv, amount) {
+  let left = amount;
+  for (let i = 0; i < 4 && left > 0.004; i++) {
+    const a = Math.min(1, left);
+    blit(api, cv, g, 'lighter', a);
+    left -= a;
+  }
+}
+
 /* Render `fn` into the scratch and cut it to the region mask, ready for ONE
    composite. Compositing once is the whole point: it is what lets a 'multiply'
    wash cover a four-tile pool without double-darkening the three shared edges
@@ -864,7 +1035,7 @@ function fill(c, g) { c.fillRect(g.x0, g.y0, g.w, g.h); }
        stroke: there is no constant-width line anywhere on a tile perimeter.
    Everything is still one multiply blit + one additive blit + one halo blit per
    region per frame, all cached, with only the blit alpha breathing. */
-function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim) {
+function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) {
   const col = COL[colKey] || COL.move;
   const S = (strength || 1) * col.k;
   const g = group(api, tiles, lift, JIT_STATE, MASK_STATE);
@@ -925,6 +1096,18 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim) {
      0.09·S at fc = 0.10), so their round-4 solved-for `a` values still hold —
      do not raise a state's `fc` without re-tinting its `filt` the same way. */
   const A = S * (col.a == null ? 1 : col.a);          /* additive-half gain */
+  /* ⚠ WAVE 3 — THE LIFT IS NOW SPLIT THREE WAYS, NOT TWO. `A` is the AMBIENT
+     term (a constant, the only thing that lifts genuinely dark ground) and
+     `GA` is the KEY term (a multiplicative gain — see gainLayer). Most of the
+     brightness moved from A into GA, because a constant is what flattened the
+     sand grain. Anything derived from "how lit is this pool" — the escaping
+     bloom, the boundary rim — must therefore be scaled by BOTH or it silently
+     collapses when A is cut; `LIT` is that combined figure. The 2.4 is the
+     measured ratio of luma-per-unit-gain to luma-per-unit-additive on this
+     ground, so LIT stays ≈ the old A and every alpha written against it keeps
+     the value three rounds of critique settled on. */
+  const GA = S * (col.g == null ? 0 : col.g);         /* multiplicative gain  */
+  const LIT = A + GA * 1.55;
   const fc = col.fc == null ? 0.10 : col.fc;
   const filtA = Math.min(fc, fc * 0.9 * S) * (filtScale == null ? 1 : filtScale);
   const tag = colKey + '|' + S.toFixed(3) + '|' + filtA.toFixed(3) + '|' + rimS.toFixed(2);
@@ -951,15 +1134,48 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim) {
      march in lockstep. Applied to the BLIT alpha, never baked into a gradient —
      that is what keeps the whole emission a cached image and one composite. */
   const bph = api.hash(g.list[0].x, g.list[0].z, 7) * 6.283;
-  const pulse = 1 + Math.sin(api.T * 1.9 + bph) * 0.10;
+  /* ⚠ WAVE 3 — AMPLITUDE 0.10 → 0.05. The pulse now modulates a MULTIPLICATIVE
+     key light as well as the additive emission, and the two swings compound:
+     measured across two captures of the same build at different phases, the
+     eroded interior moved 11 levels of blue, 16° of hue and 0.12 of the grain
+     ratio. That is bigger than most of the deltas this file is tuned on — it
+     makes the pool un-measurable and, at 1:1, makes it visibly breathe rather
+     than shimmer. Half the depth is still plainly animated and reduces the
+     phase-to-phase spread to about ±0.7 of a level. */
+  const pulse = 1 + Math.sin(api.T * 1.9 + bph) * 0.05;
+
+  /* (1b) THE KEY LIGHT. Goes in immediately after the hue filter and before
+     anything additive, so what it amplifies is the ground plus its tint and
+     nothing this function has yet emitted. Uncached on purpose: it is a
+     function of what is currently on the canvas, and the canvas changes
+     whenever the vista, the dressing or a hazard does. Breathes on the same
+     per-region phase as the emission so the pool pulses as one light. */
+  if (GA > 0 && !noGain) gainLayer(api, g, col.gain || col.body, GA * (1 + (pulse - 1) * 0.5));
 
   /* (2) the bloom that escapes onto the surrounding sand, through the barely
      dilated halo mask. This is the ONLY thing allowed outside the legal tiles,
      and it is deliberately weak — it says "there is light here", it must never
      be mistakable for "this tile is legal". */
-  staticLayer(api, g, 'lighter', pulse * 0.85, 'o' + tag, (c) => {
-    c.fillStyle = api.rgba(col.halo || col.body, 0.030 * A);
+  /* ⚠ WAVE 3 — THE BLOOM IS NOW A RING, AND THE INTERIOR IS THE REASON.
+     This layer was a FLAT additive fill over the dilated mask, which covers
+     the pool as well as the sand around it. Inside the pool that is a constant
+     — precisely the thing that halves the sand's relative grain contrast and
+     turns the tile into fog — and it was buying nothing there, because the
+     emission layer below already lights the interior. Punching the pool's own
+     mask back out leaves only the part that was ever the point: the fraction
+     of a tile of light spilling onto the sand OUTSIDE the legal region. The
+     freed interior budget went into the key light, where it scales the grain
+     instead of flattening it.
+     It also helps the other half of this round's gap: a soft bloom just
+     outside the boundary is how an emissive pool ends, and it makes the
+     boundary locatable without putting a stroke on it. */
+  staticLayer(api, g, 'lighter', pulse * 0.85, 'o2' + tag, (c) => {
+    c.fillStyle = api.rgba(col.halo || col.body, 0.034 * LIT);
     fill(c, g);
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.globalCompositeOperation = 'destination-out';
+    if (g.mask) c.drawImage(g.mask.cv, 0, 0, g.mw, g.mh, 0, 0, g.pw, g.ph);
+    c.globalCompositeOperation = 'source-over';
   }, true);
 
   /* (3) the emission itself: interior + a soft per-tile lift + the rim.
@@ -1032,7 +1248,12 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim) {
     for (let i = 0; i < g.list.length; i++) {
       const it = g.list[i];
       const m = it.m;
-      const v  = (0.74 + api.hash(it.x, it.z, 7) * 0.52) * rfs[i] * rnorm;
+      /* ⚠ WAVE 3 — SPREAD ±26% → ±14%. The swells exist to give the pool
+         internal weather; with the key light in (gainLayer) the ground's own
+         relief and per-tile material now supply that for free, and at ±26% on
+         top of it the emission was ADDING tile-scale steps to a pool whose
+         win condition is that a contiguous run reads as ONE pool. */
+      const v  = (0.86 + api.hash(it.x, it.z, 7) * 0.28) * rfs[i] * rnorm;
       const rr = 1.78 + api.hash(it.z, it.x, 8) * 0.72;
       const ox = (api.hash(it.x, it.z, 11) - 0.5) * m.ax * 0.46;
       const oy = (api.hash(it.z, it.x, 12) - 0.5) * m.ay * 0.46;
@@ -1088,10 +1309,23 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim) {
          26–32 px and a +8..+13 lip; HEAD: 22–25 px and ~+15).
          Do NOT restore the alpha without also narrowing the width — a dim WIDE
          band is a gradient, a dim NARROW one is just a fainter pane edge. */
+      /* ⚠ WAVE 3 — 0.015 WAS TUNED AGAINST A 40-PIXEL FEATHER AND IS NOW HALF
+         OF A DIFFERENT PROBLEM. Round 6 killed the lip by making the wash so
+         dim and so wide that the boundary became a 40 device-px ramp with no
+         feature on it at all; measured, dL709 was still climbing at 20px out
+         and reached only 49 of its eventual 71. The critic's reading of that
+         frame: "a player can find the region but cannot count the legal tiles
+         at its edge". Both halves of the edge are fixed together — the mask's
+         feather is tightened (MASK_STATE.blur, see there) so the ramp is short
+         enough to be a boundary, and this wash goes back up enough to be seen.
+         It is STILL a wide inward gradient, not a band: 0.62–1.02 tiles wide
+         with butt caps, so it has no crest of its own to read as a pane edge.
+         The profile that must survive re-measurement is a MONOTONE rise with
+         no local maximum on the boundary — check it, do not assume it. */
       const hw = api.hash(e.it.x, e.it.z, 300 + e.k);
       c.lineCap = 'butt';
-      c.strokeStyle = api.rgba(col.rim, 0.015 * A * rimS * (0.6 + hw * 0.8));
-      c.lineWidth   = g.ax * (0.62 + hw * 0.40);
+      c.strokeStyle = api.rgba(col.rim, 0.040 * LIT * rimS * (0.6 + hw * 0.8));
+      c.lineWidth   = g.ax * (0.34 + hw * 0.26);
       c.beginPath();
       c.moveTo(p[0].x, p[0].y);
       c.lineTo(p[1].x, p[1].y);
@@ -1113,11 +1347,19 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim) {
          more of any given side has no hairline on it at all. */
       c.lineCap = 'round';
       const pts = [p[0], mid2(p[0], p[1]), p[1], mid2(p[1], p[2]), p[2]];
+      /* ⚠ WAVE 3 — the glint is what makes the boundary COUNTABLE. The wash
+         says "the light ends around here"; the corners where the outline steps
+         from one tile to the next are what let a player say "that is four
+         tiles wide", and at 0.030 with 46% of sides skipped there was too
+         little of it to resolve a step. More of the boundary carries a glint
+         now (threshold 0.54 → 0.44) and it is brighter — but it is still
+         hashed per sub-segment in both width and alpha and still skips, so
+         there is no constant-width line anywhere on any perimeter. */
       for (let i = 0; i < 4; i++) {
         const h  = api.hash(e.it.x * 4 + e.k, e.it.z * 4 + i, 311);
-        if (h < 0.54) continue;
+        if (h < 0.44) continue;
         const h2 = api.hash(e.it.z * 4 + i, e.it.x * 4 + e.k, 312);
-        c.strokeStyle = api.rgba(col.rim, 0.030 * A * rimS * (0.5 + h2 * 0.9));
+        c.strokeStyle = api.rgba(col.rim, 0.046 * LIT * rimS * (0.5 + h2 * 0.9));
         c.lineWidth   = Math.max(0.8, g.ax * (0.020 + h * 0.022));
         c.beginPath();
         c.moveTo(pts[i].x, pts[i].y);
@@ -1239,7 +1481,20 @@ function drawStatesOver(api) {
          cyan — the tile stays legible, which is the point, but it stops
          looking like fire. The additive half carries the re-assert instead,
          which brightens the hazard without recolouring it. */
-      try { drawPool(api, r[1], r[0], 0.85, LIFT_SURF + 0.004, 0.34); } catch (e) {}
+      /* ⚠ NO KEY LIGHT ON THE RE-ASSERT, FOR TWO REASONS AND BOTH MATTER.
+         (a) Correctness: gainLayer amplifies whatever is already on the canvas,
+         and by this point that is the HAZARD — a gain over burning oil scales
+         the flames, not the ground, so it says nothing about legality and it
+         drags the fire toward the state's hue, which is the exact regression
+         ("the tile stays legible but stops looking like fire") the filtScale
+         of 0.34 below already exists to prevent.
+         (b) Cost: the gain's canvas read-back forces a pipeline flush, and
+         this pass re-draws regions drawStates has ALREADY drawn — paying for a
+         second read of the same rect every frame on any board with a hazard on
+         a legal tile. Measured, dropping it here took drawStatesOver from 18.4
+         ms/frame back to ~0.1 when no hazard is present and removes one full
+         region read per hazard region when one is. */
+      try { drawPool(api, r[1], r[0], 0.85, LIFT_SURF + 0.004, 0.34, false, true); } catch (e) {}
     }
   } catch (e) {}
 }

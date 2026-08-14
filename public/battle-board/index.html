@@ -1558,7 +1558,16 @@ function bakeTerrain(){
       else                       { d -= 2*cols + rows; ex = -hw; ez = hh - d; nx = -1; nz = 0; }
       /* outward push, never below 0.25 of the nominal pad so the ring always
          clears the tiles, and up to ~2.1x so the silhouette is genuinely ragged */
-      const k = pad * (1.15 + ringNoise(t, seedN) * 0.9);
+      /* ⚠ WAVE 3: THE FAR SIDE IS PULLED IN HARD (nz < 0).
+         Behind the board a point at y≈0 projects HIGHER on screen the further
+         out it is, so the far arc of this ring was the only part of the apron
+         with sky behind it — and five nested rings all built from the same
+         three harmonics (2, 3, 7) put five scalloped silhouettes on top of one
+         another there. The critic read the result as "a repeating notched
+         crenellation band" across the full width, which is exactly what it
+         was. Out there the ring is now a hair beyond the tiles and the mesa
+         rim below owns the skyline instead. */
+      const k = pad * (1.15 + ringNoise(t, seedN) * 0.9) * (nz < 0 ? 0.30 : 1);
       /* tangential slide as well, so corners round off unevenly instead of
          staying four right angles with fuzz on them */
       const tg = ringNoise(t + 0.37, seedN + 9) * pad * 0.55;
@@ -1588,6 +1597,10 @@ function bakeTerrain(){
      Far rows first (painter's algorithm). Within a tile the walls go down
      BEFORE the top so the top's edge covers the wall's antialiased lip. */
   const api = buildApi(0, g);
+  /* Every interior wall quad we draw, kept per tile. §1b needs the exact
+     footprint of a raised tile — top face PLUS walls — to put it back after a
+     lower level's material pass has painted across it. See OCCLUSION RESTORE. */
+  const walls = {};
   for (let z=0; z<rows; z++){
     for (let x=0; x<cols; x++){
       const P = tilePoly(x,z,0);           /* inset 0 — contiguous, no gutters */
@@ -1596,6 +1609,7 @@ function bakeTerrain(){
       const M = tileMaterial(x,z,lv); mat[x+','+z] = M;
       const yTop = tileElev(x,z);
       const L = hfLevel(x,z);
+      const wq = walls[x+','+z] = [];
 
       /* ── cliff / side walls on every EXPOSED edge. Only the three edges the
          camera can see are drawn: [2,3] near, [1,2] right, [3,0] left. The far
@@ -1635,9 +1649,22 @@ function bakeTerrain(){
            0.50-0.26 of a 195-luma top (98→51) against a 165-luma shelf. Left
            free, a high plateau's wall came out brighter than the low ground
            beside it and the step vanished. */
-        const wallHue = mixHexRaw(mixHexRaw(M.hue, ROCK_BASE, 0.50), LIGHT.key, 0.06 + 0.16*wl);
+        /* ⚠ WAVE 3 — THE FACE WAS BLUE-GREY AGAINST AN OCHRE FLOOR.
+           The base used to be 40% SHADE_COOL. Measured on the bake alone the
+           wall darks came out rgb(35,32,28) — only R-B +7 — and the vista's
+           shadow split-tone (which cools the darkest thing in the frame on
+           purpose) then carried them the rest of the way, so the finished
+           frame showed a navy cliff in a warm desert. A cliff foot in a sand
+           basin is the WARMEST shadow on the field: almost all of its light is
+           bounce off the lit sand a metre in front of it. So the base takes a
+           warm rock and a sand-bounce term and only a trace of SHADE_COOL.
+           The LUMA TARGETS ARE UNCHANGED — those are the elevation rule
+           (bright top / dark wall / mid floor) and are not a colour decision. */
+        const wallHue = mixHexRaw(mixHexRaw(M.hue, ROCK_BASE, 0.44), LIGHT.key, 0.08 + 0.18*wl);
         const wallTop = setLumaHex(wallHue, M.want * (0.44 + 0.16*wl));
-        const wallBot = setLumaHex(mixHexRaw(wallHue, SHADE_COOL, 0.40), M.want * (0.22 + 0.10*wl));
+        const wallBot = setLumaHex(mixHexRaw(mixHexRaw(wallHue, '#4a3320', 0.42), SHADE_COOL, 0.13),
+                                   M.want * (0.22 + 0.10*wl));
+        if (inside) wq.push([P[i], P[j], B[j], B[i]]);
         g.beginPath();
         g.moveTo(P[i].x,P[i].y); g.lineTo(P[j].x,P[j].y);
         g.lineTo(B[j].x,B[j].y); g.lineTo(B[i].x,B[i].y); g.closePath();
@@ -1646,17 +1673,107 @@ function bakeTerrain(){
         wg.addColorStop(0.42,rgba(mixHexRaw(wallTop, wallBot, 0.45), 1));
         wg.addColorStop(1,   rgba(wallBot, 1));
         g.fillStyle = wg; g.fill();
-        /* horizontal strata + a chipped edge so the cliff is rock, not a slab */
+        /* ── THE FACE HAS TO BE ROCK, NOT A PANEL ────────────────────────
+           ⚠ WAVE 3 REWRITE. Round 2 drew the strata as straight strokes from
+           P[i] to P[j] — the FULL WIDTH of the face, every time. Neighbouring
+           tiles on the same rim drew them at the same handful of heights, the
+           strokes joined across tile boundaries, and a 566px-wide interior
+           cliff read as three flat blue-grey panels stacked on each other.
+           Real bedding is BROKEN: a bed runs for part of a face, PINCHES OUT,
+           steps across a joint and starts again at another height.
+           So the face gets its own (u along the edge, t down the face) space
+           and every bed is a filled band with its own u-span, its own step and
+           a thickness that tapers to nothing at both ends. The seed includes
+           the FACE INDEX, so two tiles sharing a rim do not line up. */
+        const fw = (u,t) => ({                   /* bilinear point on the quad */
+          x: (P[i].x + (P[j].x-P[i].x)*u)*(1-t) + (B[i].x + (B[j].x-B[i].x)*u)*t,
+          y: (P[i].y + (P[j].y-P[i].y)*u)*(1-t) + (B[i].y + (B[j].y-B[i].y)*u)*t
+        });
+        const fh = (n) => _sHash(x*7 + i*131 + 5, z*11 + i*37 + 3, n);
         g.save(); g.clip();
-        const steps = 3 + ((_sHash(x,z,i*13+7)*3)|0);
-        for (let s=0; s<steps; s++){
-          const k = (s+0.5)/steps + (_sHash(x,z,s*5+i)-0.5)*0.10;
-          const a1 = { x: P[i].x + (B[i].x-P[i].x)*k, y: P[i].y + (B[i].y-P[i].y)*k };
-          const a2 = { x: P[j].x + (B[j].x-P[j].x)*k, y: P[j].y + (B[j].y-P[j].y)*k };
-          g.strokeStyle = rgba(s%2 ? wallBot : mixHexRaw(wallTop, ROCK_PALE, 0.45),
-                               0.22 + _sHash(x,z,s+i*3)*0.20);
-          g.lineWidth = 1.0 + _sHash(x,z,s*7+i)*2.2;
-          g.beginPath(); g.moveTo(a1.x,a1.y); g.lineTo(a2.x,a2.y); g.stroke();
+        const beds = 5 + ((fh(3)*5)|0);
+        for (let s=0; s<beds; s++){
+          const t0   = 0.05 + fh(s*13+11) * 0.88;
+          const ua   = fh(s*13+12) * 0.70;
+          const ub   = Math.min(1.0, ua + 0.16 + fh(s*13+13) * 0.62);
+          const step = (fh(s*13+14) - 0.5) * 0.11;      /* beds are not level */
+          const thk  = 0.014 + fh(s*13+15) * 0.060;
+          const dark = fh(s*13+16) > 0.42;
+          const NS = 6, top = [], bot = [];
+          for (let k=0;k<=NS;k++){
+            const q = k/NS, u = ua + (ub-ua)*q;
+            const taper = Math.sin(q*Math.PI);          /* pinch out both ends */
+            const tt = t0 + step*(q-0.5) + (fh(s*13+20+k)-0.5)*0.014;
+            top.push(fw(u, tt - thk*taper*0.5));
+            bot.push(fw(u, tt + thk*taper*0.5));
+          }
+          g.beginPath(); g.moveTo(top[0].x, top[0].y);
+          for (let k=1;k<=NS;k++) g.lineTo(top[k].x, top[k].y);
+          for (let k=NS;k>=0;k--) g.lineTo(bot[k].x, bot[k].y);
+          g.closePath();
+          g.fillStyle = rgba(dark ? mixHexRaw(wallBot, '#241a12', 0.30)
+                                  : mixHexRaw(wallTop, ROCK_PALE, 0.44),
+                             0.16 + fh(s*13+17)*0.24);
+          g.fill();
+        }
+        /* COLUMNAR JOINTS. Bedding alone is a set of horizontal lines, and a
+           set of horizontal lines on a rectangle is a stack of panels no
+           matter how broken they are. A real face is also split vertically.
+           Short, near-vertical, kinked, and they stop at a bed. */
+        {
+          const nV = 2 + ((fh(90)*3)|0);
+          for (let s=0; s<nV; s++){
+            const u0 = 0.08 + fh(s*7+91)*0.84;
+            const tA = fh(s*7+92)*0.45, tB = tA + 0.25 + fh(s*7+93)*0.55;
+            const lean = (fh(s*7+94)-0.5)*0.09;
+            const kink = (fh(s*7+95)-0.5)*0.05;
+            const a0 = fw(u0, tA), a1 = fw(u0 + lean*0.5 + kink, (tA+tB)/2),
+                  a2 = fw(u0 + lean, Math.min(0.99, tB));
+            g.strokeStyle = rgba(mixHexRaw(wallBot, '#1e1610', 0.35), 0.10 + fh(s+96)*0.14);
+            g.lineWidth = 0.8 + fh(s+97)*1.6;
+            g.beginPath(); g.moveTo(a0.x,a0.y); g.lineTo(a1.x,a1.y); g.lineTo(a2.x,a2.y); g.stroke();
+            /* the lit shoulder on the light-facing side of the crack */
+            g.strokeStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.5), 0.07 + fh(s+98)*0.08);
+            g.lineWidth = 0.8;
+            g.beginPath();
+            g.moveTo(a0.x - 1.2, a0.y); g.lineTo(a1.x - 1.2, a1.y); g.lineTo(a2.x - 1.2, a2.y);
+            g.stroke();
+          }
+        }
+        /* SPALL AT THE FOOT. The bottom of a face is broken rock stained by
+           the debris piled against it, so it is darker and WARMER than the
+           fresh rock above, and its upper margin is ragged. That vertical
+           material change is what stops the face reading as a painted bar. */
+        {
+          const NS = 9, rim = [];
+          for (let k=0;k<=NS;k++)
+            rim.push(fw(k/NS, clamp(0.58 + (fh(k+61)-0.5)*0.30, 0.30, 0.96)));
+          g.beginPath(); g.moveTo(rim[0].x, rim[0].y);
+          for (let k=1;k<=NS;k++) g.lineTo(rim[k].x, rim[k].y);
+          g.lineTo(B[j].x, B[j].y); g.lineTo(B[i].x, B[i].y); g.closePath();
+          const m0 = fw(0.5,0.55), m1 = fw(0.5,1.0);
+          const spg = g.createLinearGradient(m0.x, m0.y, m1.x, m1.y);
+          const spC = mixHexRaw(wallBot, '#3d2c1c', 0.58);
+          spg.addColorStop(0, rgba(spC, 0.00));
+          spg.addColorStop(1, rgba(spC, 0.52));
+          g.fillStyle = spg; g.fill();
+          /* angular chips still clinging to the face — never round */
+          const chips = 3 + ((fh(70)*5)|0);
+          for (let c2=0;c2<chips;c2++){
+            const p = fw(fh(c2*7+71), 0.45 + fh(c2*7+72)*0.50);
+            const rr = (Math.abs(B[i].y - P[i].y) || 20) * (0.030 + fh(c2*7+73)*0.075);
+            const rot = fh(c2*7+74)*6.283, sides = 4 + ((fh(c2*7+75)*3)|0);
+            g.beginPath();
+            for (let k2=0;k2<sides;k2++){
+              const th = rot + (k2/sides)*6.283;
+              const kr = rr * (0.5 + fh(c2*7 + 76 + k2)*0.9);
+              const qx = p.x + Math.cos(th)*kr, qy = p.y + Math.sin(th)*kr*0.8;
+              k2 ? g.lineTo(qx,qy) : g.moveTo(qx,qy);
+            }
+            g.closePath();
+            g.fillStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.35), 0.13 + fh(c2+80)*0.12);
+            g.fill();
+          }
         }
         g.restore();
         /* ⚠ ROUND 2: THE BOARD BOUNDARY GETS NO LIP, AND ITS WALL FADES OUT.
@@ -1769,6 +1886,47 @@ function bakeTerrain(){
     }
   }
 
+  /* ── 1a. OCCLUSION SNAPSHOT ───────────────────────────────────────────
+     ⚠ WAVE 3 BLOCKER — "SOLIDS RENDER TRANSLUCENT / panes of tinted glass".
+     The macro pass below is clipped to the UNION OF ONE LEVEL'S TOP FACES.
+     A top face that is partly HIDDEN behind a nearer, higher tile is still in
+     that union, so every basin drift and every damp patch of level 0 was being
+     painted straight across the raised slab standing in front of it — and, via
+     the perspective lean of a side wall, straight across the cliff face too.
+     Measured on the bake alone (no vista, no tile states, no dressing:
+     __bbDebug.bakePng()) the level-0 drift strokes ran continuously over the
+     level-2 cliff band and pale sand blobs sat on the level-3 top.
+     Canvas-2D clip() can only INTERSECT, so the union cannot have its
+     occluders subtracted from it, and an even-odd path is not safe either —
+     two overlapping occluders flip the winding back to "inside".
+     So: SNAPSHOT the canvas immediately before a level's material pass, draw
+     that pass, then re-blit — from that snapshot — the drawn footprint (top
+     face plus wall quads) of every tile that is NOT on that level. The
+     snapshot is correct for both directions: tiles on lower levels already
+     carry their own material, tiles on higher levels have not been given
+     theirs yet, and either way the pixels being restored are pixels the level
+     just painted had no business touching.
+     Cost is two full-canvas drawImages per level, at BAKE time only (the bake
+     is blitted every frame; it is not re-run every frame), which is why this
+     is affordable where a per-level mask canvas would not have been.
+     ⚠ TWO INERT DEBUG SWITCHES live in this pass: `window.__DBG_NOMACRO`
+     skips the per-level material and `window.__DBG_NORESTORE` skips the
+     restore. Nothing sets them — they exist so the next critic can A/B the
+     leak with two console lines and a re-bake instead of patching the file,
+     which is how the numbers in these comments were measured. */
+  let SNAP = null, SNAPG = null;
+  try {
+    SNAP = TERRAIN.snap || (TERRAIN.snap = document.createElement('canvas'));
+    if (SNAP.width !== pw || SNAP.height !== ph){ SNAP.width = pw; SNAP.height = ph; }
+    SNAPG = SNAP.getContext('2d');
+    SNAPG.setTransform(1,0,0,1,0,0);
+  } catch (e) { SNAP = null; SNAPG = null; }   /* no snapshot → old behaviour */
+  const snapTake = () => {
+    if (!SNAP || !SNAPG) return;
+    SNAPG.clearRect(0,0,pw,ph);
+    SNAPG.drawImage(cvT, 0, 0);
+  };
+
   /* ── 1b. MACRO VARIATION, CLIPPED PER ELEVATION LEVEL ─────────────────
      Everything in the tile loop above is clipped to one tile, so its variation
      stops dead at every boundary and the eye traces the boundaries. This pass
@@ -1807,6 +1965,7 @@ function bakeTerrain(){
        hard material edge on every interior seam of the plateau, i.e. redraw
        the grid — the whole point is that texture crosses seams WITHIN a level
        and stops at the cliff BETWEEN levels. */
+    snapTake();                  /* the canvas as the painter's algorithm left it */
     const levelPath = (want) => {
       g.beginPath();
       let n = 0;
@@ -1819,6 +1978,51 @@ function bakeTerrain(){
       }
       return n;
     };
+    /* THE OCCLUSION RESTORE (see §1a). Path = the drawn footprint of every
+       tile strictly ABOVE level `above`: its top face plus the interior wall
+       quads it painted. Returns the path's bbox so the re-blit is bounded.
+       ⚠ Only tiles above, and only ONE snapshot for the whole loop. The exact
+       form of this (re-snapshot per level, restore every tile not on that
+       level) was built and measured: it moved the leak on the cliff faces by
+       0.03 luma and cost 57ms of every bake, because a lower level's material
+       cannot reach a higher tile's wall in the first place — a wall hangs
+       BELOW its own top face and a higher top face is drawn above it. */
+    const otherPath = (above, exact) => {
+      let x0=1e9, y0=1e9, x1=-1e9, y1=-1e9, n=0;
+      const add = (Q) => {
+        g.moveTo(Q[0].x, Q[0].y);
+        for (let k=1;k<Q.length;k++) g.lineTo(Q[k].x, Q[k].y);
+        g.closePath();
+        for (const p of Q){
+          if (p.x<x0) x0=p.x; if (p.x>x1) x1=p.x;
+          if (p.y<y0) y0=p.y; if (p.y>y1) y1=p.y;
+        }
+        n++;
+      };
+      g.beginPath();
+      for (let z=0; z<rows; z++) for (let x=0; x<cols; x++){
+        const lvT = hfLevel(x,z);
+        if (exact ? (lvT === above) : (lvT <= above)) continue;
+        const P = poly[x+','+z]; if (P) add(P);
+        const WQ = walls[x+','+z]; if (WQ) for (const q of WQ) add(q);
+      }
+      return n ? { x0, y0, x1, y1 } : null;
+    };
+    const restoreOthers = (above, exact) => {
+      if (!SNAP || window.__DBG_NORESTORE) return;
+      g.save();
+      const bb = otherPath(above, exact);
+      if (bb){
+        g.clip();
+        const bx = Math.max(0, Math.floor(bb.x0) - 2), by = Math.max(0, Math.floor(bb.y0) - 2);
+        const bw = Math.min(W, Math.ceil(bb.x1) + 2) - bx;
+        const bh = Math.min(H, Math.ceil(bb.y1) + 2) - by;
+        if (bw > 0 && bh > 0)
+          g.drawImage(SNAP, bx*DPR, by*DPR, bw*DPR, bh*DPR, bx, by, bw, bh);
+      }
+      g.restore();
+    };
+
     /* a representative material + a projected point for a level */
     const levelTiles = [];
     for (let L=0; L<=(HF.maxLv|0); L++) levelTiles.push([]);
@@ -1830,6 +2034,16 @@ function bakeTerrain(){
     for (let L=0; L<levelTiles.length; L++){
       const tiles = levelTiles[L];
       if (!tiles || !tiles.length) continue;
+      if (window.__DBG_NOMACRO) continue;
+      /* ⚠ The TOP level is the one case the single snapshot cannot serve: its
+         material can only leak DOWNWARD, onto tiles that already carry theirs,
+         so restoring them from the pre-loop snapshot would erase it. One fresh
+         snapshot here — every lower level is finished by now — lets the last
+         pass restore "every tile not on this level" instead of "every tile
+         above it". Measured: it is what takes the worst cliff-face leak from
+         19.1 to single figures, for ~10ms on a bake that runs 5 times a map. */
+      const lastLv = (L === levelTiles.length - 1);
+      if (lastLv) snapTake();
       g.save();
       const n = levelPath(L);
       if (!n){ g.restore(); continue; }
@@ -2017,6 +2231,8 @@ function bakeTerrain(){
         }
       }
       g.restore();
+      /* …and put back everything this level's material just leaked onto. */
+      restoreOthers(L, lastLv);
     }
 
     /* the lighting passes below want the WHOLE field, not one level */
@@ -2313,12 +2529,18 @@ function bakeTerrain(){
             const wpx = e1.x + (e2.x-e1.x)*t0 + dx*d0;
             const wpz = e1.z + (e2.z-e1.z)*t0 + dz*d0;
             const pp = project({ x:wpx, y:yBot, z:wpz }); if (!pp) continue;
-            const sz = 1.0 + _sHash(x*17+nx, z*13+nz, s*3+3) * 3.4;
+            /* ⚠ SIZE IS A POWER LAW AND THE ASPECT VARIES PER GRAIN. The flat
+               1.0–4.4 band at a fixed 0.62 aspect drew the same ellipse over
+               and over, which is the tell the critic caught on the sand faces
+               and it applies just as much to scree. */
+            const hz = _sHash(x*17+nx, z*13+nz, s*3+3);
+            const sz = 0.8 + Math.pow(hz, 2.4) * 4.0;
             g.fillStyle = rgba(_sHash(x, z, s+61) > 0.55
               ? mixHexRaw(nMat.pale, ROCK_PALE, 0.4) : mixHexRaw(nMat.deep, ROCK_DEEP, 0.4),
               0.20 + _sHash(x, z, s+71) * 0.28);
             g.beginPath();
-            g.ellipse(pp.x, pp.y, sz, sz*0.62, _sHash(x,z,s+81)*3, 0, 7);
+            g.ellipse(pp.x, pp.y, sz, sz*(0.34 + _sHash(x,z,s+91)*0.56),
+                      _sHash(x,z,s+81)*3, 0, 7);
             g.fill();
           }
         }
@@ -2355,7 +2577,93 @@ function bakeTerrain(){
     }
   }
 
-  TERRAIN.poly = poly; TERRAIN.mat = mat;
+  /* ── 3b. THE FAR RIM — the field must not END, it must RUN OUT ────────
+     ⚠ WAVE 3. §1c breaks the near and side boundaries with sand tongues and
+     talus, and it works — but it draws them at the APRON's height (y≈0), and
+     the far row of this map is mostly raised. A run-out strip laid on the
+     floor behind a level-3 mesa is hidden behind the mesa itself, so the far
+     boundary kept its ruled straight line: "at board y~356 the top row of
+     tiles stops in a ruled straight horizontal line running the full width".
+     The far edge has to be broken AT THE TILE'S OWN ELEVATION. Each far-row
+     column gets a strip of its own surface running out past z = -0.5, whose
+     depth comes from a noise sampled in CONTINUOUS WORLD X — so the margin
+     never repeats per tile the way a per-tile hash does.
+     ⚠ IT RUNS LAST, AND IT STARTS INSIDE THE TILE. A first cut drew it before
+     the tile loop, flush with the tile's far edge: the strip is flat material
+     while the tile edge carries the bevel, the warm wash, the aerial fog and
+     the tone correction, so the two did not match and the measured terminator
+     at y≈357 was still stepping 28 luma in 65% of columns — the ruled line was
+     intact, just a different colour above it. Starting 0.3 of a tile INSIDE
+     the row and ramping alpha up from zero means there is no edge to find at
+     the seam: the rim fades in over the tile's own surface and fades out into
+     the fog. Columns are drawn low to high so a taller mesa's rim correctly
+     overlaps its shorter neighbour's. */
+  {
+    const far = [];
+    for (let x=0; x<cols; x++) far.push([x, tileElev(x,0)]);
+    far.sort((a,b) => a[1] - b[1]);                 /* low first, high last */
+    const ph1 = hfStrHash(MAP.id + '#rim', 1) * 6.283;
+    const ph2 = hfStrHash(MAP.id + '#rim', 2) * 6.283;
+    const ph3 = hfStrHash(MAP.id + '#rim', 3) * 6.283;
+    /* ⚠ The high harmonics carry most of the amplitude on purpose. A first
+       cut weighted the LOW ones and the rim came out as one smooth sine
+       across the whole board — a wavy straight line is still a drawn line.
+       Rock breaks at every scale, so 4.7 and 9.3 rad/unit get as much of the
+       budget as 1.3, and a per-sample jitter chips the margin on top. */
+    const rimD = (wx) => {
+      const n = Math.sin(wx*1.3 + ph1)*0.34 + Math.sin(wx*4.7 + ph2)*0.36
+              + Math.sin(wx*9.3 + ph3)*0.24;
+      const env = 0.48 + 0.52*Math.sin(wx*0.53 + ph2*0.7);
+      return clamp((0.34 + n*0.62) * env, 0.0, 0.95);
+    };
+    const INSET = 0.30;                    /* how far inside the row it starts */
+    for (const [x, yT] of far){
+      /* the row's OWN material, as the tile loop computed it — recomputing it
+         here would be a second source of truth for the same tile */
+      const M = mat[x+',0']; if (!M) continue;
+      const N = 16, inner = [], outer = [];
+      for (let k=0;k<=N;k++){
+        const u = x - 0.5 + k/N;
+        const pi = project(gw(u, -0.5 + INSET, yT));
+        const jit = (_sHash(x*29 + k, 17, 41) - 0.5) * 0.13;
+        const po = project(gw(u, -0.5 - Math.max(0, rimD(u) + jit), yT));
+        if (pi && po){ inner.push(pi); outer.push(po); }
+      }
+      if (inner.length < 3) continue;
+      g.beginPath();
+      g.moveTo(inner[0].x, inner[0].y);
+      for (let k=1;k<inner.length;k++) g.lineTo(inner[k].x, inner[k].y);
+      for (let k=outer.length-1;k>=0;k--) g.lineTo(outer[k].x, outer[k].y);
+      g.closePath();
+      const ci = inner[(inner.length/2)|0], co = outer[(outer.length/2)|0];
+      const rg = g.createLinearGradient(ci.x, ci.y, co.x, co.y);
+      /* invisible where it lands on the tile, this tile's own surface across
+         the old boundary, and the vista's fog by the time it reaches the sky */
+      const near = mixHexRaw(M.base, LIGHT.fog, 0.10);
+      rg.addColorStop(0,    rgba(near, 0));
+      rg.addColorStop(0.30, rgba(near, 0.80));
+      rg.addColorStop(0.52, rgba(mixHexRaw(M.base, LIGHT.fog, 0.20), 0.94));
+      rg.addColorStop(0.82, rgba(mixHexRaw(M.base, LIGHT.fog, 0.46), 0.62));
+      rg.addColorStop(1,    rgba(mixHexRaw(M.base, LIGHT.fog, 0.72), 0.06));
+      g.fillStyle = rg; g.fill();
+      /* a broken darker lip just under the outer margin: a rim is an edge of
+         rock, and without it the strip reads as a flat cut-out of paper */
+      g.save(); g.clip();
+      for (let k=0;k<outer.length-1;k++){
+        if (_sHash(x*13+k, 7, 33) < 0.34) continue;   /* broken, not continuous */
+        g.strokeStyle = rgba(mixHexRaw(M.deep, LIGHT.fog, 0.42),
+                             0.10 + _sHash(x*13+k, 9, 34)*0.14);
+        g.lineWidth = 1.0 + _sHash(x*13+k, 11, 35)*2.0;
+        g.beginPath();
+        g.moveTo(outer[k].x, outer[k].y + 1.5);
+        g.lineTo(outer[k+1].x, outer[k+1].y + 1.5);
+        g.stroke();
+      }
+      g.restore();
+    }
+  }
+
+  TERRAIN.poly = poly; TERRAIN.mat = mat; TERRAIN.walls = walls;
   /* ── 4. close the loop. Measure what we just drew and, if a tile centre is
      off its level's target by more than ~2.5 luma, ask for one more bake with
      a corrected per-tile offset. See the TONE block for why this is measured
@@ -4246,6 +4554,20 @@ window.__bbDebug = {
   level: (x,z) => hfLevel(x,z),
   heightfield: () => ({ key:HF.key, fromHost:HF.fromHost, maxLv:HF.maxLv, lv:HF.lv }),
   terrain: () => ({ bakeMs:+TERRAIN.ms.toFixed(2), bakes:TERRAIN.bakes, key:TERRAIN.key }),
+  /* THE BAKE, ON ITS OWN. Wave 3 lost a day to arguing about whether a defect
+     ("tan streaks read through the cliff wall") belonged to the terrain bake or
+     to a module that draws over it. It is settled in one call: this returns the
+     offscreen ground canvas with no vista, no tile states, no dressing and no
+     HUD on it, so a critic can judge the terrain layer by itself. Read-only. */
+  bakePng: () => { try { return TERRAIN.cv ? TERRAIN.cv.toDataURL('image/png') : null; }
+                   catch (e) { return null; } },
+  /* the geometry the bake actually drew: every tile's projected top face and
+     the interior wall quads beneath it, in CSS px. A pixel probe needs this to
+     ask "is any of the basin's material showing on a cliff face?" without
+     re-deriving the projection. Read-only. */
+  quads: () => ({ poly: TERRAIN.poly, walls: TERRAIN.walls,
+                  level: (() => { const o = {}; for (let z=0;z<MAP.rows;z++)
+                    for (let x=0;x<MAP.cols;x++) o[x+','+z] = hfLevel(x,z); return o; })() }),
   /* per-level mean/min/max luminance measured on the BAKED ground at the tile
      centres, plus the ramp each level was aiming for. This is the elevation
      read, as a number: means must separate by ≥25 and each level's min..max

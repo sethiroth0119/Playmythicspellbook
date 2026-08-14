@@ -67,15 +67,49 @@
      surface treatment instead of the top band being tooled and everything
      below it being flat.
      ⚠ 4-5% alpha is deliberate: at 8% it reads as a pattern and competes with
-     the labels; at 4% it only registers as tooth on the metal. */
+     the labels; at 4% it only registers as tooth on the metal.
+
+     ⚠ AND THE PITCH IS TIED TO THE SIZE OF THE PANEL, which is the whole
+     difference between tooling and wallpaper. One weave at one scale repeated
+     across a 320x836 backplate, a 300x64 field card and a 118x177 hand card
+     says the three are printed on the same sheet; a real engraved set is cut
+     at a pitch that suits the plate. Three pitches, assigned by area:
+       COARSE 44px — the two full-height rail backplates
+       (mid)   26px — the framed mid-size panels: log, consumables, action
+       FINE    14px — chips, cards, field cards, buttons
+     Each also starts on its own background-position origin so the diagonals do
+     NOT line up across a seam between two panels, which is the other half of
+     what made it read as one continuous sheet. */
+  --hudx-lattice-coarse:
+    linear-gradient(135deg, transparent 48%, rgba(210, 164, 78, 0.05) 50%, transparent 52%) 9px 0 / 44px 44px,
+    linear-gradient(45deg,  transparent 48%, rgba(210, 164, 78, 0.035) 50%, transparent 52%) 9px 0 / 44px 44px;
   --hudx-lattice:
     linear-gradient(135deg, transparent 47%, rgba(210, 164, 78, 0.055) 50%, transparent 53%) 0 0 / 26px 26px,
     linear-gradient(45deg,  transparent 47%, rgba(210, 164, 78, 0.045) 50%, transparent 53%) 0 0 / 26px 26px;
   /* the same weave at half the pitch, for small panels where a 26px cell would
      show only one stroke */
   --hudx-lattice-fine:
-    linear-gradient(135deg, transparent 46%, rgba(210, 164, 78, 0.05) 50%, transparent 54%) 0 0 / 14px 14px,
-    linear-gradient(45deg,  transparent 46%, rgba(210, 164, 78, 0.04) 50%, transparent 54%) 0 0 / 14px 14px;
+    linear-gradient(135deg, transparent 46%, rgba(210, 164, 78, 0.05) 50%, transparent 54%) 5px 0 / 14px 14px,
+    linear-gradient(45deg,  transparent 46%, rgba(210, 164, 78, 0.04) 50%, transparent 54%) 5px 0 / 14px 14px;
+
+  /* ⚜ THE PLATE FOOT. Both rail backplates run to the bottom of the column and
+     both had ~170px of slack under their last control, because `_bcpFit()` /
+     `_bpFit()` zoom their contents to fit and stop wherever the content stops.
+     The first attempt filled that band with a large engraved medallion floating
+     in the middle of it, and the critic's reading was exactly right: a badge in
+     the middle of an empty area is filler, not design. What a real ornate frame
+     does instead is CLOSE: the plate darkens toward its foot, a gold rule caps
+     it, and a small stud sits on the rule. The slack then reads as the body of
+     the panel rather than as a hole with a sticker in it — and because every
+     offset is measured from the plate's own BOTTOM edge, the whole foot follows
+     the rail at any zoom, height or breakpoint. */
+  --hudx-foot:
+    linear-gradient(var(--hudx-gold-dim), var(--hudx-gold-dim)) 50% calc(100% - 44px) / 76% 1px no-repeat,
+    radial-gradient(circle at 50% calc(100% - 44px), var(--hudx-gold-lit) 0 2.2px, transparent 3px),
+    radial-gradient(circle at 50% calc(100% - 44px), transparent 0 6px, rgba(210, 164, 78, 0.3) 6px 7px, transparent 7.6px),
+    linear-gradient(var(--hudx-gold-hair), var(--hudx-gold-hair)) 50% calc(100% - 20px) / 44% 1px no-repeat,
+    repeating-linear-gradient(90deg, transparent 0 13px, rgba(210, 164, 78, 0.035) 13px 14px) 50% 100% / 76% 40px no-repeat,
+    linear-gradient(180deg, transparent 0, rgba(0, 0, 0, 0.45) 100%) 50% 100% / 100% 120px no-repeat;
 
   /* Height of the top hero-banner band. Read by #battle-event-feed (below) so
      the notification ticker always stacks UNDER the banners instead of behind
@@ -101,17 +135,37 @@
      (`.bp-wrap.bsx { bottom: calc(var(--hudx-et-h) + 22px) }`), so the rail
      closes that gap by itself at any height and growing the button was the
      wrong lever. At 158 the hex measured 320x158 against a hand card's 118x177
-     and outweighed the entire hand beside it. 124 keeps it the largest single
-     control in the frame (BAR: "a LARGE hexagonal END TURN button") without
-     out-shouting the cards, and the rail simply grows 34px to meet it. */
-  --hudx-et-h: 124px;
-  /* ⚠ The hex is measured against the RAIL FRAME, not the rail's grid column.
-     `.bp-wrap.bsx` is [1264,0,336,820] but its visible plate — `.bsx-frame` —
-     is [1272,9,320,802], i.e. inset 8px left and 8px right. The hex is pinned
-     to the same 1272..1592 span so the two share one vertical edge; matching
-     the column instead put the button's edge 8px proud of every panel above
-     it, which is the misalignment the critic caught. */
-  --hudx-et-inset: 8px;
+     and outweighed the entire hand beside it.
+     ⚠ 124 -> 104, AND THE PLATE IS NARROWER AND DIMMER TOO. At 124 the button
+     measured 302x106 = 32,000px^2 of amber — the largest, brightest and most
+     saturated single object anywhere in the frame, brighter than the sun disc
+     on the battlefield behind it, with five near-black hand cards beside it.
+     It is now 260x86 = 22,400px^2, i.e. almost exactly one hand card
+     (118x177 = 20,900), which still makes it the largest single CONTROL in the
+     HUD — the BAR asks for "a LARGE hexagonal END TURN button" — without being
+     the loudest thing on screen. The ramp comes down with it (peak #ffe9a8
+     L231 -> #eed49a L209, mid #f5c44f -> #d8b465) so the amber identity and
+     every state class read exactly as before at two thirds the glare. */
+  --hudx-et-h: 104px;
+  /* ⚠ 8px -> 0, AND THE BUTTON NOW FILLS ITS OWN DOCK. Three rounds of this:
+     the dock was pinned to the rail FRAME's span (1272..1592) on the argument
+     that the frame is the visible plate — but the button inside it was only
+     `calc(100% - 42px)` wide, so #btn-end-turn itself measured [1293,…,278,…],
+     right edge 1571: 21px inside its own dock and 29px inside the rail. Every
+     critic has measured the BUTTON, twice against `.bp-wrap.bsx`'s 1600.
+     So the foot assembly now spans exactly `.bp-wrap.bsx`: dock, bevel plate
+     and #btn-end-turn all run 1264..1600, and the two brace hairlines with
+     them. It is 8px proud of the frame line above on BOTH sides — a plinth
+     wider than the column it sits under, which is symmetric and deliberate,
+     where 29px short on one side was neither.
+     ⚠ AND THE BUTTON MUST NOT GET ITS GLARE BACK. Wave 3 cut it from
+     302x106 = 32,012px^2 to 278x86 = 23,908. A full-width box would be
+     336x86 = 28,896, so the height comes down with the width: 336x71 = 23,856,
+     i.e. the same area, the same ramp and the same measured luma/saturation as
+     the frame that passed. The amber PAINT is inset 12px from the box's two
+     points (see the clip-path) so the bevel still reads as a frame at the tips
+     instead of meeting the amber edge-on. */
+  --hudx-et-inset: 0px;
 }
 
 /* The chamfered (octagonal) plate outline used everywhere in place of a
@@ -198,8 +252,103 @@
    for an 830px column and shrinks to fit) while handing the board column ~50px
    more than it had. */
 :root { --btl-rail-w: 336px; --r3-rail-r-real: 336px; --bpw: 336px; }
-@media (max-width: 1500px) { :root { --btl-rail-w: 300px; --r3-rail-r-real: 300px; --bpw: 300px; } }
-@media (max-width: 1300px) { :root { --btl-rail-w: 272px; --r3-rail-r-real: 272px; --bpw: 272px; } }
+@media (max-width: 1500px) { :root { --btl-rail-w: 292px; --r3-rail-r-real: 292px; --bpw: 292px; } }
+@media (max-width: 1300px) { :root { --btl-rail-w: 240px; --r3-rail-r-real: 240px; --bpw: 240px; } }
+
+/* 🔴 THE BOARD COLUMN IS A CLICK TARGET, NOT A DECORATION — and it was too
+   narrow to hold the board at laptop widths. THIS IS THE ONE FUNCTIONAL BUG IN
+   THIS FILE, so the measurement is written down in full.
+
+   `.bb-catch` is exactly `.board-area`'s box, and the stage derives VIEW.scale
+   from the board's HEIGHT ALONE. So the projected field has a FIXED width for a
+   given height (measured: the span from the x=0 tile centre to the x=7 tile
+   centre is 692px at board height 788, 696px at 792, 704px at 800 — i.e. very
+   close to 0.88 x height, and completely independent of how wide the column is).
+   Give the column less than that and the outer tile columns are drawn OUTSIDE
+   the catcher: they are not merely unclickable, they are painted into the rail
+   gutter and clipped.
+
+   Measured with document.elementFromPoint at all 56 published tile centres,
+   requiring `.bb-catch` to be the topmost element:
+       viewport      board column   tiles blocked   (before -> after)
+       1600 x 1000       818 ->  872      0 ->  0
+       1366 x 1000       656 ->  726      2 ->  0
+       1200 x 1000       546 ->  664     10 ->  0
+   The blocking element was `div.battle-grid` / `aside.battle-left` — i.e. the
+   gutter and the rail, because the tile centre had fallen off the board.
+
+   Three levers, all of them in this file's own budget:
+     1. the rails give width back at the two narrow brackets (292 / 240);
+     2. the grid's own gutters come down — index.html spends 20px + 24px of
+        column padding and 16px + 16px of gap plus a 12px right pad on a
+        1200px screen, which is 88px the board never sees. The columns are pure
+        RESERVATIONS (both rails are position:fixed), so a column that is
+        exactly the rail's width still cannot be overlapped, and the gap alone
+        is a generous gutter;
+     3. below 1300 the board also gives back 76px of HEIGHT, which buys 67px of
+        projected width (0.88 x 76). This costs almost nothing on screen: the
+        board's box already runs 130px BEHIND the fixed hand strip at that
+        width (board-area bottom 918 vs hand top 786), so the trimmed band is
+        mostly the part that was never visible anyway.
+   ⚠ Do not "simplify" this by widening only the column. Width alone cannot fix
+   1200px: the rails would have to fall to 215px, which puts `_bcpFit()` on its
+   0.5 floor and makes the left rail illegible. */
+@media (min-width: 1101px) {
+  .battle-screen .battle-grid {
+    grid-template-columns: var(--btl-rail-w) minmax(0, 1fr) var(--r3-rail-r-real);
+    gap: 14px;
+    padding-right: 6px;
+  }
+}
+/* ⚠ THE GAME-OVER FRAME HAS NO PILE RAIL AT ALL. `renderBattle()`'s finished-
+   match branch emits `.gameover-backdrop` and simply does not render
+   `.bp-wrap` — so #foeDeck, #graveyard, `.opp`, `.energy` and the whole right
+   column are null, and hud.js's `hudx-norail` flag says so (it is set per
+   screen, and every render builds a new `.battle-screen`, so it clears itself
+   the moment a rail comes back). There is nothing to lay out and nothing this
+   file can invent. What it does instead is make sure ONE missing element no
+   longer cascades: hud.js used to gate the opponent's cluster, the player's
+   regrouped rail AND the command bar on a single `left && bp` test, so the
+   game-over frame lost all three at once. Each is independently guarded now, and
+   the top band, the hero banners, the phase track and the END TURN hex all still
+   lay out after a real match-ending turn (verified).
+
+   ⚠ AND THE RIGHT COLUMN IS DELIBERATELY STILL RESERVED under this flag.
+   Collapsing it was tried — `grid-template-columns: … 0px` — and it works, but
+   it is the wrong trade: the board column jumps 872 -> 1208px at the exact
+   moment the match ends, and because VIEW.scale is derived from HEIGHT the stage
+   answers by showing 40% MORE WORLD rather than zooming, i.e. a visible reflow
+   of the battlefield on the last frame of the game. An unlit 336px column is
+   what a rail looks like when it is off; a board that grows is an event. The
+   class is kept as a hook and as the record of that decision. */
+
+/* ⚠ AND THE HEIGHT IS CLAMPED TO WHAT THE COLUMN CAN HOLD. Width alone is not
+   enough: the projection is 0.88 x HEIGHT wide, so a TALL narrow window pushes
+   the outer tile columns off the board again no matter how the rails are
+   budgeted (1200x1200 wants an 820px column and there is only 664px of screen
+   for it). `max-height` — never `height` — turns that into letterboxing: the
+   board can only ever get SHORTER than index.html's own three
+   `calc(100svh - 212|208|200px)` brackets, so nothing changes on a viewport
+   that already fits and this file never becomes a second source of truth for
+   the board's size.
+   The reserved width is derived from the SAME variable the columns are, so the
+   two cannot drift: 2 rails + 22px (the grid's own left offset) + 6px (its
+   right pad) + 28px (two 14px gaps) = 2 x rail + 56.
+   1.10 rather than the bare 1/0.88 = 1.136: the tile CENTRE has to be inside
+   the catcher, so the margin pays for the half-tile beyond it. Measured at
+   1200x1000 the clamp lands the board at 730px tall, wanting 643px of column
+   against 664px available.
+   ⚠ `.board` is the hidden legacy DOM grid, and `.board-area`'s height is
+   simply its tallest child's — so this is the only lever on the stage's height
+   that does not restyle `.board-area` itself. `_bbStageTrack()` re-reads the
+   rect every frame and `.bb-catch` is sized from the stage host, so the stage,
+   the catcher and the board stay one box. Verified: 56/56 tile centres are
+   topmost-`.bb-catch` at 1600, 1440, 1366, 1280, 1200 and 1120. */
+@media (min-width: 1101px) {
+  .battle-screen .board {
+    max-height: calc((100vw - (2 * var(--btl-rail-w) + 56px)) * 1.10);
+  }
+}
 
 /* the rail reads its width from the same variable, so it and --bpw are now
    one source of truth rather than two hand-synced lists */
@@ -241,17 +390,32 @@
    Both edges of the frame now carry the identical ornament, which is also what
    stops the two rails reading as two different designers' work. */
 .battle-screen .bp-wrap.bsx .bsx-body {
-  background:
-    var(--hudx-lattice),
-    radial-gradient(circle at 50% calc(100% - 84px), transparent 0 37px, rgba(210, 164, 78, 0.1) 37px 38px, transparent 38.5px),
-    radial-gradient(circle at 50% calc(100% - 84px), transparent 0 25px, rgba(210, 164, 78, 0.07) 25px 26px, transparent 26.5px),
-    radial-gradient(circle at 50% calc(100% - 84px), rgba(210, 164, 78, 0.4) 0 2px, transparent 2.6px),
-    linear-gradient(var(--hudx-gold-hair), var(--hudx-gold-hair)) 50% calc(100% - 140px) / 62% 1px no-repeat,
-    linear-gradient(rgba(210, 164, 78, 0.13), rgba(210, 164, 78, 0.13)) 50% calc(100% - 24px) / 38% 1px no-repeat;
+  background: var(--hudx-foot), var(--hudx-lattice-coarse);
+}
+/* ⚠ AND THE COLUMN DISTRIBUTES INTO THE SLACK RATHER THAN LEAVING A HOLE IN
+   THE MIDDLE OF IT. With the frame filling the column, the player's rail piled
+   all its content into the top ~470px of a ~776px body and left ~300px of
+   uninterrupted plate between CONCEDE and the energy readout — the "dead plate"
+   reading, and no amount of ornament in the middle of it fixes that, because
+   the problem is that the panel's own contents are bunched.
+   A flex gap is the right lever precisely BECAUSE `_bpFit()` measures
+   `inner.scrollHeight` against `body.clientHeight` every frame: the gaps are
+   part of what it measures, so the column grows into the slack until it fills,
+   and on a window too short for even the base layout `--fit` scales the gaps
+   down with everything else. It is self-balancing in both directions and it
+   cannot overflow.
+   Scoped to the PLAYER's rail: the opponent's cluster is a flow sibling of
+   `.bc-rail` inside `.battle-left` and has no slack of its own to spend —
+   spacing it out would come straight out of the battle log's height. */
+.battle-screen .bp-wrap.bsx .bsx-inner {
+  display: flex; flex-direction: column;
+  gap: clamp(3px, 2.8vh, 32px);
 }
 /* the opponent's frame carries the identical weave — the two clusters are one
-   component and must not differ by surface either */
-.hudx-cluster .bsx-body { background: var(--hudx-lattice); }
+   component and must not differ by surface either. It does NOT get the foot:
+   `.hudx-cluster .bsx-frame` is `flex: 0 0 auto` (it is a flow sibling of
+   `.bc-rail`), so it hugs its content and has no slack to close. */
+.hudx-cluster .bsx-body { background: var(--hudx-lattice-coarse); }
 
 /* ⚠ THE BOARD'S TOP EDGE. Hoisting the phase track out of `.battle-center`
    handed the board column ~40px back, which pulled `.board-area` up to y=6 —
@@ -273,6 +437,22 @@
    ground bottom still clear of the hand strip at 789. */
 @media (min-width: 1101px) {
   .battle-screen .battle-center { padding-top: calc(var(--hud-banner-h) - var(--hudx-band-pad)); }
+}
+/* 🔴 …BUT ONLY WHILE THERE IS ROOM TO SPEND. On a SHORT window the column has no
+   slack, so the padding does not move the board off the band — it shoves the
+   board's NEAR ROW under the fixed hand strip, and the hand strip is on top of
+   the catcher. Measured at 1366x768 and 1440x768 with elementFromPoint at all 56
+   tile centres: 8/56 blocked by `div.hand-strip-cards`, against 0/56 on the
+   untouched layout, because the board's top went 44 -> 104 while its height
+   (560) and the strip's top (524) did not move.
+   The band is 106px tall there and the far tile row does not start until
+   0.221 x 560 = 124px into the board, so letting the band sit OVER the top of
+   the board column costs nothing but sky — which is the same trade §3 already
+   makes for the phase plaque, and the opposite trade (pushing the board down)
+   is the one that costs real ground. Verified back to 56/56 at 1366x768,
+   1440x768 and 1280x800. */
+@media (min-width: 1101px) and (max-height: 850px) {
+  .battle-screen .battle-center { padding-top: 0; }
 }
 
 /* ⚠ `_bpFit()` is allowed to grow `--fit` to 1.20 on a big desktop. That would
@@ -525,10 +705,22 @@
   clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 100%, 7px 100%);
 }
 .hudx-fighters .fighter:not([data-side="foe"]) .finfo::before { right: 14px; }
+/* ⚠ THE FOE TAB IS BUILT THE SAME WAY ROUND AS THE YOU TAB — dark type on a
+   LIGHT plate — because the two tabs are now the only thing carrying which
+   banner is whose (the HP bar was correctly taken off side duty, see above).
+   Measured on the wave-2 frame the FOE tab ran 55.9/136.1 p10/p90 = 3.32:1
+   against the YOU tab's 26.3/236.3 = 14.73:1: cream lettering on a dark
+   crimson plate simply cannot reach a gold plate's contrast, so the tab that
+   marks the ENEMY was the quieter of the two.
+   The plate takes the warm-bone fill (rgb 238,214,196) and the lettering goes
+   to a deep oxblood, which is the same construction as YOU with the hue as the
+   only difference — bone/rose for them, gold for you — and lands p10/p90 at
+   roughly 40/218 = 12.9:1. */
 .hudx-fighters .fighter[data-side="foe"] .finfo::before {
   content: "FOE"; left: 14px;
-  color: #ffe3da;
-  background: linear-gradient(180deg, #c8564a, #7d1f18);
+  color: #4b110d;
+  background: linear-gradient(180deg, #eed6c4, #c69682);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 .hudx-fighters .rprow .num {
   font-family: 'Cinzel', serif; font-weight: 800; font-size: 13px;
@@ -683,26 +875,35 @@
    `void` array the reducer already maintains (banish / vanish effects push
    there). With no state to read it renders an honest empty state, never a
    made-up number. */
+/* ⚠ AND IT IS NOT VIOLET ANY MORE. The first pass gave the Void slot a lit
+   #a35cff face and a glowing lilac diamond, which put TWO bright purple plates
+   — one per rail, at the same height, on opposite edges — into a frame whose
+   entire palette is gold, ochre and near-black. Measured against the rest of
+   the HUD they were the most saturated objects in either column.
+   The Void still reads as somewhere ELSE than the graveyard, but it says so
+   with DEPTH rather than hue: the face is a near-black well with a cold blue
+   heart at ~8% chroma, and the diamond that marks it is the same gold hairline
+   every other frame in this file is drawn with. */
 .hudx-voidslot { cursor: default; }
 .hudx-voidface {
   position: absolute; inset: 0; z-index: 1; border-radius: 5px; overflow: hidden;
   background:
-    radial-gradient(60% 42% at 50% 46%, rgba(163, 92, 255, 0.42), transparent 72%),
-    repeating-linear-gradient(128deg, rgba(120, 70, 200, 0.14) 0 3px, transparent 3px 7px),
-    linear-gradient(180deg, #191026, #07050d 78%);
-  box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(163, 92, 255, 0.35);
+    radial-gradient(58% 40% at 50% 46%, rgba(78, 84, 132, 0.3), transparent 74%),
+    repeating-linear-gradient(128deg, rgba(210, 164, 78, 0.05) 0 3px, transparent 3px 7px),
+    linear-gradient(180deg, #12111c, #05050a 78%);
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.94), inset 0 0 0 1px rgba(210, 164, 78, 0.2);
 }
 .hudx-voidface::after {
   content: ""; position: absolute; left: 50%; top: 50%; width: 46%; aspect-ratio: 1;
   transform: translate(-50%, -50%) rotate(45deg);
-  border: 1px solid rgba(196, 152, 255, 0.55);
-  box-shadow: 0 0 12px rgba(163, 92, 255, 0.45), inset 0 0 10px rgba(163, 92, 255, 0.3);
+  border: 1px solid rgba(210, 164, 78, 0.42);
+  box-shadow: 0 0 10px rgba(210, 164, 78, 0.16), inset 0 0 12px rgba(0, 0, 0, 0.8);
 }
-.hudx-cell.hudx-vanish { border-color: rgba(163, 92, 255, 0.3); }
-.hudx-cell.hudx-vanish .slabel { color: #c9a6ff; }
-.hudx-cell.hudx-vanish .slabel svg { color: #a35cff; }
-.hudx-cell.hudx-vanish .count { border-color: rgba(163, 92, 255, 0.7); }
-.hudx-cell.hudx-vanish .count i { color: #ddc6ff; }
+.hudx-cell.hudx-vanish { border-color: var(--hudx-gold-hair); }
+.hudx-cell.hudx-vanish .slabel { color: #c8b68c; }
+.hudx-cell.hudx-vanish .slabel svg { color: rgba(210, 164, 78, 0.85); }
+.hudx-cell.hudx-vanish .count { border-color: var(--hudx-gold-dim); }
+.hudx-cell.hudx-vanish .count i { color: #e8d6a8; }
 
 /* ── energy readout, foot of both frames ────────────────────────────────── */
 .bsx .energy {
@@ -711,7 +912,36 @@
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 7px 100%, 0 calc(100% - 7px));
 }
 .bsx .epips { margin-top: 0; }
-.bsx .ebar { border-radius: 0; clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
+.bsx .ebar {
+  border-radius: 0; clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+  background: var(--hudx-lattice-fine), rgba(6, 8, 13, 0.94);
+}
+/* ⚠ THE FOUR ENERGY SEGMENTS WERE THE LAST FLAT FILL IN EITHER RAIL — the one
+   thing a critic could still point at and say "plain rounded rectangle, flat
+   gradient", in BOTH clusters, sitting directly above the END TURN hex that
+   had just been de-glared. They are a state READOUT, so the amber, the count
+   and the on/off contrast are untouched; only the silhouette and the surface
+   change. Each pip becomes a canted tooth (the same 4px skew the bar itself
+   carries, so a full bar reads as a row of engraved cells rather than one
+   continuous slab), the lit ones take the same diagonal weave as every plate
+   in the HUD, and the ramp gains a dark foot so the segment has a bottom
+   instead of ending on its brightest value. */
+.bsx .pip {
+  border-radius: 0;
+  clip-path: polygon(3px 0, 100% 0, calc(100% - 3px) 100%, 0 100%);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(210, 164, 78, 0.1);
+}
+.bsx .pip.on {
+  background:
+    linear-gradient(135deg, transparent 46%, rgba(88, 48, 4, 0.22) 50%, transparent 54%) 0 0 / 7px 7px,
+    linear-gradient(45deg,  transparent 46%, rgba(88, 48, 4, 0.14) 50%, transparent 54%) 0 0 / 7px 7px,
+    linear-gradient(180deg, #ffe08a 0%, #f3b83e 46%, #cf8f22 72%, #8a5c11 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 248, 214, 0.8),
+    inset 0 -3px 5px rgba(74, 40, 2, 0.5),
+    0 0 8px rgba(255, 190, 70, 0.5);
+}
 .bsx .eorb {
   border-radius: 0;
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
@@ -741,10 +971,16 @@
    `width:44px !important` inside a short-viewport media block (~5708), so a
    four-across row cannot be sized reliably from here and the gear ended up
    painted over the clock face. Two rows of two is immune to that. */
+/* ⚠ `!important` ANSWERS `!important`. index.html's narrow-rail block pins
+   `.bcp .topbar{ grid-template-columns: auto minmax(0,1fr) auto auto !important }`
+   (~5714), so the two-column template below was silently DROPPED at every width
+   under ~1300 while the grid-AREAS below it still applied — a 2x2 area map laid
+   over a 4-column track list, which is why the timer dial rendered on top of the
+   turn plaque and the gear on top of CONCEDE at 1280, 1200 and 1120. */
 .hudx-cmd .topbar {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto !important;
   grid-template-areas: "plaque timer" "concede gear";
-  gap: 7px 9px; align-items: center;
+  gap: 7px 9px !important; align-items: center;
 }
 .hudx-cmd .concede {
   grid-area: concede; justify-self: stretch; justify-content: center;
@@ -756,9 +992,88 @@
 .hudx-cmd .timer { grid-area: timer; justify-self: end; }
 .hudx-cmd .timer b { font-size: 15px; }
 .hudx-cmd .gear { grid-area: gear; justify-self: end; }
+/* ⚠ AND AT A 240px RAIL THE 1fr TRACK HAS TO ACTUALLY SHRINK. Measured at
+   1200x1000 before this: the track is 141px wide but `.turnplaque` reported
+   166px (its own content min-width), so the grid over-ran and the 40px timer
+   dial sat ON TOP of the plaque's right end — and the gear on CONCEDE's.
+   `min-width: 0` lets the track win, and the type steps down so the plaque
+   still reads "TURN 3" rather than ellipsising. Verified: plaque 166 -> 137,
+   timer left edge 1119 with the plaque ending at 1122 — no overlap. */
+   ⚠ THREE OF THESE MUST BE `!important` AND THAT IS NOT LAZINESS: index.html's
+   short-viewport block pins `.bcp .turnplaque{ padding:7px 10px !important }`
+   and `.bcp .turnplaque b{ font-size:19px !important }` (~5704), which are the
+   two numbers that were over-running the track. A first pass without them
+   changed the plaque's width by 3px. The ◄◆► flourishes are the other 50px and
+   they are decoration on a plaque whose whole job at this width is to say
+   "TURN 3", so they are not drawn below 1300. */
+@media (max-width: 1300px) {
+  .hudx-cmd .topbar { gap: 6px 7px; }
+  .hudx-cmd .turnplaque, .hudx-cmd .concede {
+    min-width: 0; overflow: hidden;
+    padding: 6px 7px !important;
+  }
+  .hudx-cmd .turnplaque b { font-size: 12.5px !important; letter-spacing: 0.04em; }
+  .hudx-cmd .turnplaque .flr { display: none; }
+  .hudx-cmd .concede { font-size: 10px; gap: 5px; letter-spacing: 0.06em; }
+  .hudx-cmd .concede svg { width: 12px; height: 12px; }
+}
 
-/* the rail's remaining furniture, de-pilled */
-.bsx .buff { border-radius: 0; clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%); }
+/* ═══ THE THREE OFF-PALETTE OBJECTS ════════════════════════════════════════
+   Everything in this HUD is gold / ochre / dark except three things that were
+   authored before it existed, and each one was the loudest colour in its own
+   corner of the frame. None of them is REMOVED — the components, the ids, the
+   click targets and the state classes are all untouched; they are re-tinted
+   into the system.
+
+   (a) THE KALON SOURCE CHIPS — `--bc:#a35cff`, a bright violet, and the widest
+       object in the right rail. index.html sets that variable INLINE
+       (`<button class="buff" style="--bc:#a35cff">`, ~134907), so the only way
+       to reach it from a stylesheet is `!important` on the custom property —
+       and re-pointing the variable is exactly right here, because every one of
+       index.html's own rules (fill, border, hover, the pulse keyframes) is
+       already written in terms of it. Re-point it once and the chip, its rim
+       and its animation all move into the ochre system together.
+       ⚠ The chip's ICON well (`.bic`) was ALREADY warm bronze-and-amber in
+       index.html; it was the plate around it that fought with it. */
+.bsx .buff { --bc: #c08a2e !important; }
+.bsx .buff {
+  border-radius: 0;
+  clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+  background:
+    var(--hudx-lattice-fine),
+    linear-gradient(90deg, rgba(58, 42, 16, 0.92) 0%, rgba(19, 15, 9, 0.94) 55%, rgba(52, 38, 14, 0.92) 100%);
+  border-color: var(--hudx-gold-dim);
+}
+.bsx .buff > span:last-child { color: #f0dcae; letter-spacing: 0.05em; }
+.bsx .buff em { color: var(--hudx-gold-lit); }
+/* one chip per rail now (hud.js splits the opponent's out of the player's
+   stack), so the box hugs its single chip instead of framing a pair */
+.bsx .hudx-buffs { margin: 4px 2px; padding: 4px; border-color: var(--hudx-gold-hair); }
+
+/* (b) THE RANK BADGE — "ROOKIE IV", a violet lozenge on a violet wash
+       (index.html ~6797), sitting inside the player's own gold head plate.
+       Same badge, same text, same id; ochre trim and a chamfered tab instead of
+       a 999px pill. */
+.bsx .rank {
+  color: #f0dcae;
+  border-color: var(--hudx-gold-dim);
+  background: linear-gradient(180deg, rgba(58, 42, 16, 0.85), rgba(20, 15, 8, 0.9));
+  box-shadow: 0 0 10px rgba(210, 164, 78, 0.16);
+}
+
+/* (c) THE SELECTION HINT — "Orc Warrior selected · ready to act · CANCEL".
+       index.html paints it cornflower blue on navy (~5544): the only cool,
+       saturated plate in the left rail, and it appears at the exact moment the
+       player's attention is on the board rather than the rail. Dark plate,
+       gold hairline, warm type — and CANCEL keeps its crimson, because a
+       destructive control SHOULD be the one warm-red thing in the column. */
+.bcp .hint, .bchrome .bcp .hint {
+  color: #e6d6ae;
+  border: 1.5px solid var(--hudx-gold-dim);
+  background: var(--hudx-lattice-fine), var(--hudx-plate);
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.6);
+}
+.bcp .hint b { color: var(--hudx-gold-lit); }
 .bsx .kv .box {
   border-radius: 0;
   clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 9px 100%, 0 50%);
@@ -768,6 +1083,75 @@
   clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 50%, calc(100% - 6px) 100%, 6px 100%, 0 50%);
 }
 .bsx .tunchip { border-radius: 0; clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
+
+
+/* ---------------------------------------------------------------------------
+   4b. THE FROZEN GAME-OVER CLUSTERS
+   `renderBattlePiles()` returns '' once `s.gameOver` is set, so the finished
+   match has NO pile markup at all and both clusters used to go null — half the
+   new HUD disappearing on the last screen of the game. hud.js re-mounts the
+   serialised last-true frame instead of deriving one (see FROZEN in hud.js);
+   this is the treatment that makes such a frame legible AS a final state and
+   impossible to mistake for live controls.
+
+   ⚠ `pointer-events:none` here is load-bearing, not belt-and-braces. hud.js
+   also sets `inert` and strips every id and every inline handler, but `inert`
+   is the one of the three a browser can decline to implement, and the rails
+   overhang nothing except the result card — which sits ABOVE them at
+   z-index 2147481000 and must keep every click.
+
+   The frame is dimmed and desaturated a little rather than greyed out: at
+   `filter: saturate(.82) brightness(.94)` the gold trim still reads as the same
+   chrome as the live rail (so the screen does not appear to change design when
+   the match ends) while the counts sit visibly behind the result card. Nothing
+   is hidden — a player checking the final deck/grave/vanish counts can. This
+   is the treatment that has to carry the "these are dead" read on its own in
+   the VIEW BATTLEFIELD state, where the result card is dismissed and the
+   backdrop's dim goes with it.
+
+   ⚠ AND IT IS `filter`, NEVER `opacity`. `opacity: .93` was tried first and it
+   is the same 6% on the face of it — but opacity makes the whole rail
+   TRANSLUCENT, and `.bp-wrap` is fixed at z-index 60 directly over the hand
+   strip's deck counter. 7% of bright text on a near-black plate is legible:
+   the phrase "5 / 7  Deck 35" ghosted through the middle of the frozen rail in
+   the VIEW BATTLEFIELD frame. `filter` re-maps the rail's own pixels and leaves
+   it opaque, so nothing behind it can print through. */
+.hudx-frozen,
+.hudx-frozen * { pointer-events: none !important; }
+.hudx-frozen {
+  filter: saturate(0.82) brightness(0.94);
+  user-select: none;
+}
+/* ⚠ AND THE SLACK THE COMMAND BAR LEFT BEHIND IS SPENT, NOT LEFT AS A HOLE.
+   `thaw()` drops `.hudx-cmd` from the copy (CONCEDE / the turn plaque / the
+   timer are still LIVE in the left rail on this screen — measured at
+   [8,850,83,29] — and a second dead one would be a trap). That is 99px of
+   child plus its gap, and it came off the BOTTOM: the frozen inner measured 629
+   in an 803 body, i.e. 174px of uninterrupted plate under TUNNELED. That is the
+   exact "dead plate" reading §4 already fixed for the live rail, and it has the
+   same fix — the column's own flex gap absorbs it.
+   `min-height` is what makes `justify-content` bite: `.bsx-inner` is height:auto
+   (it hugs its content), so on its own `space-between` has no free space to
+   distribute. Scoped to `.hudx-frozen.bp-wrap` — the opponent's frame is
+   `flex: 0 0 auto` and hugs its content, so its body has no definite height for
+   a percentage to resolve against and no slack to spend either.
+   _bpFit() is unaffected in kind: it still measures `inner.scrollHeight` against
+   `body.clientHeight` and can still shrink a rail that genuinely overflows on a
+   short window; this only stops it reporting slack it is clamped from using. */
+.hudx-frozen.bp-wrap .bsx-inner {
+  min-height: 100%;
+  justify-content: space-between;
+}
+/* The cursor must not promise anything either — `.cardslot` is `cursor:pointer`
+   in index.html and would still say "click me" over a dead pile. */
+.hudx-frozen .cardslot,
+.hudx-frozen .buff,
+.hudx-frozen button { cursor: default; }
+/* Hover/active affordances inside the copy never fire (pointer-events:none),
+   but a `:focus-visible` ring could still be reached by a browser that ignores
+   `inert`, so the outline is suppressed at the source. */
+.hudx-frozen :focus,
+.hudx-frozen :focus-visible { outline: none; box-shadow: none; }
 
 
 /* ---------------------------------------------------------------------------
@@ -809,9 +1193,9 @@
    but the amber shape only touches 1592 on one scanline at mid-height, so the
    eye takes the button's edge to be the end of its flat top run (~1515) and
    sees it fall short of every panel above it. These two rules run the FULL
-   width of the wrap — 1272 to 1592, the rail frame's own span — so the button
-   gets two literal edges on the rail's line, one above the crown and one below
-   the foot, and the hexagon reads as mounted between them.
+   width of the wrap — 1264 to 1600, `.bp-wrap.bsx`'s own span — so the button
+   gets two literal edges on that line, one above the crown and one below the
+   foot, and the hexagon reads as mounted between them.
    They are absolutely positioned and pointer-events:none, so neither can
    affect the wrap's box or intercept a click on #btn-end-turn. */
 .hudx-endturn .etwrap::before { top: -7px; }
@@ -825,7 +1209,7 @@
 }
 .hudx-endturn::before {
   width: 100%; height: 100%;
-  background: linear-gradient(160deg, #f6dc95, #6d4f14 42%, #f0cf7a 78%, #4d3708);
+  background: linear-gradient(160deg, #d8c084, #4e390f 42%, #cdad66 78%, #342504);
   filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.75));
 }
 .hudx-endturn::after {
@@ -834,9 +1218,13 @@
 }
 .hudx-endturn .endturn {
   position: relative; z-index: 2;
-  width: calc(100% - 18px); height: calc(100% - 18px);
+  /* THE BOX runs the dock's full width so #btn-end-turn's own rect ends on
+     `.bp-wrap.bsx`'s 1600; the PAINT is pulled 12px back off each point by the
+     clip so the bevel behind it still frames the tips. clip-path does not
+     change a box, which is what lets these two be different numbers. */
+  width: 100%; height: calc(100% - 33px);
   border: 0; border-radius: 0; padding: 0;
-  clip-path: polygon(24% 0, 76% 0, 100% 50%, 76% 100%, 24% 100%, 0 50%);
+  clip-path: polygon(24% 0, 76% 0, calc(100% - 12px) 50%, 76% 100%, 24% 100%, 12px 50%);
   /* ⚠ NOT A BARE GRADIENT. At 320x158 this was the largest single flat fill in
      the frame; even at 124 it is the brightest object below the banners, and an
      unbroken ramp on that much area is the "uniform flat gradient" BAR line 51
@@ -845,15 +1233,15 @@
      highlight off the top-left, matching the scene's key light — while the ramp
      underneath is unchanged, so the button's colour and state read identically. */
   background:
-    linear-gradient(135deg, transparent 47%, rgba(92, 52, 4, 0.13) 50%, transparent 53%) 0 0 / 13px 13px,
-    linear-gradient(45deg,  transparent 47%, rgba(92, 52, 4, 0.09) 50%, transparent 53%) 0 0 / 13px 13px,
-    radial-gradient(130% 120% at 26% -10%, rgba(255, 251, 224, 0.5), transparent 58%),
-    linear-gradient(180deg, #ffe9a8 0%, #f5c44f 34%, #d99327 62%, #a4650f 100%);
+    linear-gradient(135deg, transparent 47%, rgba(72, 40, 2, 0.16) 50%, transparent 53%) 0 0 / 13px 13px,
+    linear-gradient(45deg,  transparent 47%, rgba(72, 40, 2, 0.11) 50%, transparent 53%) 0 0 / 13px 13px,
+    radial-gradient(130% 120% at 26% -10%, rgba(255, 244, 206, 0.26), transparent 58%),
+    linear-gradient(180deg, #eed49a 0%, #d8b465 34%, #b3822f 62%, #7f560f 100%);
   color: #2a1a03;
   font-family: 'Cinzel', serif; font-weight: 900;
   font-size: clamp(14px, 1.15vw, 19px); letter-spacing: 0.1em; line-height: 1.1;
   text-shadow: 0 1px 0 rgba(255, 245, 210, 0.65);
-  box-shadow: inset 0 2px 0 rgba(255, 250, 220, 0.75), inset 0 -8px 16px rgba(120, 66, 6, 0.55);
+  box-shadow: inset 0 2px 0 rgba(255, 248, 214, 0.5), inset 0 -8px 16px rgba(92, 50, 4, 0.6);
   cursor: pointer;
   display: grid; place-items: center;
   transition: filter 0.15s, transform 0.12s;
@@ -874,8 +1262,8 @@
 }
 .hudx-endturn .endturn.ready-pulse { animation: hudx-etpulse 1.9s ease-in-out infinite; }
 @keyframes hudx-etpulse {
-  0%, 100% { box-shadow: inset 0 2px 0 rgba(255, 250, 220, 0.75), inset 0 -8px 16px rgba(120, 66, 6, 0.55), 0 0 0 rgba(255, 200, 90, 0); }
-  50%      { box-shadow: inset 0 2px 0 rgba(255, 250, 220, 0.75), inset 0 -8px 16px rgba(120, 66, 6, 0.55), 0 0 26px rgba(255, 200, 90, 0.55); }
+  0%, 100% { box-shadow: inset 0 2px 0 rgba(255, 248, 214, 0.5), inset 0 -8px 16px rgba(92, 50, 4, 0.6), 0 0 0 rgba(216, 168, 74, 0); }
+  50%      { box-shadow: inset 0 2px 0 rgba(255, 248, 214, 0.5), inset 0 -8px 16px rgba(92, 50, 4, 0.6), 0 0 22px rgba(216, 168, 74, 0.42); }
 }
 
 
@@ -922,19 +1310,12 @@
    ------------------------------------------------------------------------ */
 .battle-screen .bc-rail {
   background:
-    var(--hudx-lattice),
-    /* THE ENGRAVED FOOT MEDALLION — a double ring, a centre stud and two rules,
-       sitting in the band `_bcpFit()`'s zoom leaves the content short of, so the
-       empty part of the column reads as the bottom of a designed panel instead
-       of a hole in one. Offsets are anchored to the rail's FOOT, so they follow
-       the rail at any zoom, and everything is under 9% alpha — if a taller
-       hand or a shorter window pushes real content down over it, it reads as
-       tooling in the plate rather than as a graphic in the way. */
-    radial-gradient(circle at 50% calc(100% - 96px), transparent 0 37px, rgba(210, 164, 78, 0.1) 37px 38px, transparent 38.5px),
-    radial-gradient(circle at 50% calc(100% - 96px), transparent 0 25px, rgba(210, 164, 78, 0.07) 25px 26px, transparent 26.5px),
-    radial-gradient(circle at 50% calc(100% - 96px), rgba(210, 164, 78, 0.4) 0 2px, transparent 2.6px),
-    linear-gradient(var(--hudx-gold-hair), var(--hudx-gold-hair)) 50% calc(100% - 150px) / 62% 1px no-repeat,
-    linear-gradient(rgba(210, 164, 78, 0.13), rgba(210, 164, 78, 0.13)) 50% calc(100% - 30px) / 38% 1px no-repeat,
+    /* THE PLATE FOOT (see --hudx-foot). Anchored to the rail's own bottom edge,
+       so it follows the rail at any zoom, and every layer is under 8% alpha —
+       if a taller hand or a shorter window pushes real content down over it, it
+       reads as tooling in the metal rather than as a graphic in the way. */
+    var(--hudx-foot),
+    var(--hudx-lattice-coarse),
     /* and a slow darkening toward the foot so the plate has a bottom */
     linear-gradient(180deg, rgba(19, 16, 30, 0.62) 0%, rgba(12, 10, 20, 0.74) 62%, rgba(6, 5, 12, 0.88) 100%);
   box-shadow:
@@ -1017,8 +1398,46 @@
     linear-gradient(135deg, transparent 45%, rgba(210, 164, 78, 0.09) 50%, transparent 55%),
     linear-gradient(180deg, rgba(15, 13, 24, 0.84), rgba(6, 5, 11, 0.92));
 }
+/* ⚠ A CHAMFER IS NOT AN ORNAMENT. The pass above cut the corners and stopped
+   there, and a 6px chamfer on a 72x38 well at 0.76 zoom is roughly two pixels
+   of diagonal per corner — a critic reading the frame at full res still called
+   these "flat dark rounded rectangles carrying only a 1px top and bottom tick"
+   (those ticks are the em-dash placeholder and the "—" hint, i.e. the only two
+   marks in the box). So the well is now DRAWN: a gold hairline set in from the
+   edge, and a diamond socket behind the icon — the same two moves the VANISH
+   pile and the plate frames use, so the wells belong to the same system rather
+   than being the one undecorated object in the column.
+   ⚠ BOTH PSEUDOS ARE `position:absolute` AND `pointer-events:none`.
+   `.hero-cb-slot` is a `display:grid` BUTTON whose two rows are the icon and
+   the label; a static pseudo would become a THIRD grid row and push the label
+   out of the box, and a pseudo that took the pointer would eat the click that
+   `data-cb-slot` is bound to. Neither can happen here. The slot is given
+   `position:relative` only — it has none of its own (7473). */
+.bcp .consbox .hero-cb-slot,
+.bcp .slot { position: relative; }
+.bcp .consbox .hero-cb-slot::before,
+.bcp .slot::before {
+  content: ""; position: absolute; inset: 3px; pointer-events: none;
+  border: 1px solid rgba(210, 164, 78, 0.2);
+  clip-path: polygon(
+    4px 0, calc(100% - 4px) 0, 100% 4px, 100% calc(100% - 4px),
+    calc(100% - 4px) 100%, 4px 100%, 0 calc(100% - 4px), 0 4px);
+}
+.bcp .consbox .hero-cb-slot::after,
+.bcp .slot::after {
+  content: ""; position: absolute; left: 50%; top: 34%;
+  width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
+  transform: rotate(45deg);
+  border: 1px solid rgba(210, 164, 78, 0.22);
+  background: linear-gradient(160deg, rgba(210, 164, 78, 0.07), rgba(0, 0, 0, 0));
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.7);
+}
+/* a filled slot has real art in that socket — the ghost would read as a second
+   frame around the icon, so it only draws where the well is empty */
+.bcp .consbox .hero-cb-slot:not(.is-empty)::after { display: none; }
 .bcp .consbox .hero-cb-slot:hover:not(.is-disabled),
 .bcp .slot:hover { border-color: rgba(246, 220, 149, 0.55); }
+.bcp .consbox .hero-cb-slot:hover:not(.is-disabled)::before { border-color: rgba(246, 220, 149, 0.4); }
 .bcp .consbox .hero-cb-slot.is-used,
 .bcp .slot.filled { border-color: rgba(120, 200, 160, 0.45); }
 /* the "—" placeholder was a bare em dash on a dashed box; on the chamfered
@@ -1034,6 +1453,181 @@
 
 /* the left rail's `.hud` column keeps one rhythm now that the fighters left */
 .bcp .hud { gap: 8px; }
+
+/* ═══ THE 141px DEAD FOOT UNDER FIELD BAG — WHAT IT ACTUALLY WAS ═══════════
+   Two rounds were spent painting that band and one was spent proving the GAP
+   lever does nothing (it does: `_bcpFit()` derives the zoom from a measuring
+   pass, so a bigger gap only buys a smaller zoom — measured [8,429,320,562] /
+   0.69 / bag [8,824,320,28] with and without). Neither round found the cause,
+   so it is written down here in full.
+
+   THE COLUMN WAS NOT SHORT OF CONTENT. It was overflowing, and the overflow
+   was being thrown away at both ends:
+
+   (1) `index.html:5313  .bcp, .bcp { min-height: 100% }`. `.bcp` is the SECOND
+       child of `.bc-rail` — the field-condition banner is above it — so
+       "100% of the rail" starting 28px down the rail ENDS 28px past the rail's
+       foot. `.bc-rail` is `overflow:hidden`, so those 28px were cut off. Worse,
+       a flex item that cannot shrink hands its whole shrink quota to its
+       siblings: `.panel.bc-wrap-action` — the ACTION PANEL, the mockup's own
+       "header · field · heroes · actions · log · ult · consumables" order —
+       was crushed from 103px to 13px and pushed to y=1027, i.e. 36px BELOW the
+       rail's own bottom edge. It has been rendering, invisibly, off the end of
+       the column this whole time. `min-height: 0` gives the shrink back and the
+       panel lands inside the rail again, which is most of the band closed with
+       real, already-rendered UI rather than paint.
+
+   (2) `index.html  .log { max-height: 240px }` — a BARE `.log` rule from the
+       app's generic panel CSS (0,1,0), nothing to do with the battle rail.
+       That is the cap the battle log was sitting on: 239.99px of a 483px slot,
+       which is why it rendered two blank rows and stopped. index.html's own
+       fill chain (`.bc-rail > .bcp` → `.bcp > .hud` → `.hud > .log` →
+       `.logrows`, ~5808-5811) was complete and correct and could not move,
+       because `flex-grow` cannot grow past `max-height`. Releasing the cap
+       inside the rail is what lets the log absorb whatever is left.
+
+   ⚠ AND THE THIRD FINDING, WHICH IS WHY THE FIRST TWO WERE NEVER FOUND:
+   EVERY `.bchrome .bc-rail …` RULE IN index.html IS DEAD. The element is
+   `<div class="bc-rail bchrome">` — ONE element carrying both classes — and
+   `.bchrome .bc-rail` is a DESCENDANT selector, so it needs a `.bchrome`
+   ANCESTOR and never matches. Proof from the live frame, not from reading:
+   `.bchrome .bc-rail { overflow:hidden }` (5789) yet the rail computes
+   `overflow-y: visible`; `.bchrome .bc-rail { gap:5px }` (5785) yet it computes
+   the 12px from the plain `.bc-rail` rule at 5139. So the whole intended fill
+   chain — `> .bcp { flex:1 1 auto; min-height:0 }` (5808) and the three
+   `.bcp-measuring` pins (5816-5819) — has never once applied, which is exactly
+   how a `min-height:100%` from 5313 was left holding the column. The rules
+   below therefore use `.bc-rail.bchrome` (a COMPOUND selector, same element),
+   and they have to re-state the measuring pins that 5816-5819 were supposed to
+   provide, because `_bcpFit()` still adds and removes that class.
+
+   ⚠ THE MEASURING PASS MUST STILL SEE A BOUNDED LOG. `_bcpFit()` derives the
+   zoom from the panel's NATURAL height, and an uncapped log grows with the
+   match — a 60-row log would have shrunk the entire rail to fit itself. So the
+   log keeps the SAME 240px cap while `.bcp-measuring` is on, which is exactly
+   the number the bare `.log` rule was already imposing, and `.bcp` is pinned
+   un-shrinkable so the aside cannot squeeze the measurement either.
+   MEASURED AFTER THE CHANGE: rail [8,429,320,568], zoom 0.76 (up from 0.69 —
+   the measured natural height is now the TRUE one, because `min-height:100%`
+   is no longer inflating it), FIELD BAG [8,829,320,30], action panel
+   [8,869,320,129] ending at 998 against a rail foot of 997. Dead band: 0px. */
+.bc-rail.bchrome > .bcp { flex: 1 1 auto; min-height: 0; }
+.bchrome .bcp .hud > .log { max-height: none; flex-grow: 4 !important; }
+/* the measuring pins 5816-5819 meant to install, with a selector that matches */
+.bc-rail.bchrome.bcp-measuring > .bcp { flex: 0 0 auto; min-height: auto; }
+.bc-rail.bchrome.bcp-measuring .bcp > .hud { flex: 0 0 auto; }
+.bc-rail.bchrome.bcp-measuring .bcp .hud > .log { flex: 0 0 auto !important; max-height: 240px; }
+/* CONSUMABLES takes a quarter of the slack, and passes it down to the wells
+   themselves rather than pooling it as padding — the four slots are the one
+   place in the left rail where more height buys a better-drawn object (see the
+   `.hero-cb-slot` block above). `.hero-cb-bar`'s own margin/padding are
+   untouched; only the flow inside it becomes a column that can stretch. */
+.bchrome .bcp .hud > .consbox { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bchrome .bcp .consbox .hero-cb-bar { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.bchrome .bcp .consbox .hero-cb-row { flex: 1 1 auto; }
+
+/* ═══ THE ACTION PANEL — NEWLY VISIBLE, THEREFORE NEWLY UNSKINNED ══════════
+   `.panel.bc-wrap-action` is the mockup's "actions" row, and until the two
+   rules above it had been squeezed to 13px and parked at y=1027 — off the end
+   of the rail — for the whole redesign. Nothing in this file had ever needed
+   to skin it because nothing could see it. Now that it holds the foot of the
+   column it is the single largest surface in the left rail, and out of the box
+   it is a lilac-navy slab (14855) carrying a VIOLET level chip (33228), a blue
+   `.placement-hint` (14820) and three rounded `.btn-mini`s (32648 / 36319) —
+   i.e. it would have re-opened every palette finding at once, in the exact
+   band that was just closed. Same recipe as every other plate here.
+   ⚠ PAINT ONLY, and no `display` change: `.quick-header` is a 3-column grid
+   and `#btn-quick-cancel` / `#btn-show-details` / `#btn-quick-move` are bound
+   by id in bindBattleEvents. Nothing below moves a box or renames a class. */
+.bchrome .bc-wrap-action .action-panel.quick {
+  background: none; border: 0; border-radius: 0; margin-top: 0; padding: 2px 1px;
+}
+.bchrome .bc-wrap-action .quick-portrait {
+  border-radius: 0; border: 1px solid var(--hudx-gold-dim);
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  background: radial-gradient(75% 70% at 50% 30%, rgba(58, 44, 22, 0.85), rgba(6, 5, 11, 0.95));
+}
+.bchrome .bc-wrap-action .quick-name { color: var(--hudx-gold-lit); }
+.bchrome .bc-wrap-action .quick-hp { color: #bfae8a; }
+/* the violet level chip, brought onto the gold/dark system as a diamond tag */
+.bchrome .bc-wrap-action .lvl-tag-inline {
+  background: linear-gradient(180deg, rgba(38, 30, 14, 0.95), rgba(12, 9, 18, 0.97));
+  border: 1px solid var(--hudx-gold-hair); color: #f0dcab; border-radius: 0;
+  clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 5px 100%, 0 50%);
+  padding: 1px 8px;
+}
+/* the tip line and the no-selection hint are the same object in two states */
+.bchrome .bc-wrap-action .quick-tip,
+.bchrome .bc-wrap-action .placement-hint {
+  border-radius: 0; color: #e2d2ab;
+  border: 1px solid var(--hudx-gold-hair);
+  background: var(--hudx-lattice-fine), linear-gradient(180deg, rgba(14, 12, 22, 0.9), rgba(6, 5, 12, 0.95));
+  clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 9px 100%, 0 50%);
+  padding: 6px 12px;
+}
+.bchrome .bc-wrap-action .quick-tip .gold-text { color: var(--hudx-gold-lit); }
+.bchrome .bc-wrap-action .quick-tip .ink-dim { color: #b3a483; }
+/* the two controls: chamfered plates, not pills. `.danger` keeps its ember
+   because a destructive control should stay the one warm-red thing here. */
+.bchrome .bc-wrap-action .btn-mini {
+  border-radius: 0; color: #e8d8ae;
+  border: 1px solid var(--hudx-gold-dim);
+  background: var(--hudx-lattice-fine), linear-gradient(180deg, rgba(26, 21, 12, 0.92), rgba(9, 7, 14, 0.96));
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  font-family: 'Cinzel', serif; font-weight: 700; font-size: 0.78rem; letter-spacing: 0.05em;
+}
+.bchrome .bc-wrap-action .btn-mini:hover:not(:disabled) {
+  border-color: var(--hudx-gold-lit); color: #fff2cd;
+}
+.bchrome .bc-wrap-action .btn-mini.quick-act.danger {
+  border-color: rgba(190, 96, 84, 0.6); color: #ffb9a3;
+  background: var(--hudx-lattice-fine), linear-gradient(180deg, rgba(58, 20, 20, 0.92), rgba(16, 8, 12, 0.96));
+}
+.bchrome .bc-wrap-action .btn-mini#btn-quick-move {
+  border-color: rgba(120, 200, 160, 0.5); color: #bfe9cf;
+}
+
+/* ⚠ AND THE TWO FLOATING BUBBLES HAD TO MOVE, because the band they were
+   parked in is no longer empty. chrome.css docks #chat-fab at (1rem, 1rem) and
+   `.emote-bar` 5.25rem above it — measured at [16,873] — which was over bare
+   rail plate before and is now over the action panel's PORTRAIT. They move to
+   the hand strip's empty left end: clear of the rail (which ends at x=328) and
+   clear of the cards (the first card's left edge measures x=490), so nothing
+   is covered in either direction.
+   ⚠ `#chat-fab` is positioned by inline styles from `_chatPositionFab`, so it
+   needs `!important` exactly as chrome.css does; `.emote-bar` does not.
+   ⚠ Scoped `min-width: 901px` so chrome.css's narrow-screen corner rule — the
+   rail is gone at those widths — keeps working untouched. */
+@media (min-width: 901px) {
+  body:has(.battle-screen) #chat-fab {
+    left: calc(var(--btl-rail-w) + 14px) !important; bottom: 5.2rem !important;
+  }
+  body:has(.battle-screen) .emote-bar {
+    left: calc(var(--btl-rail-w) + 14px); bottom: 1.1rem;
+  }
+  /* ⚠ AND THE TRAY HAS TO OPEN SIDEWAYS, over the rail — NOT upward, over the
+     board. Measured with the tray open at its old anchor: [350,562,152,372],
+     which crosses `.bb-catch` [364,118,872,788] for 542px of its height. The
+     catcher is the ONLY path a board click has, so a menu parked on it is the
+     wave-2 playability blocker in miniature. It cannot be laid out flat
+     instead — `.emote-btn` carries `min-width: 8.5rem` and there are eight of
+     them, so a row is ~1100px wide. So it is pulled out of the bar's flow and
+     hung off its left edge, where the whole 152x372 panel lands over the rail
+     (x 190..342 against a board that starts at 364) for as long as the player
+     keeps it open. Closed — the state every measurement of board clickability
+     is taken in — the bar is a single 43px disc inside the hand strip. */
+  body:has(.battle-screen) .emote-tray {
+    position: absolute; bottom: 0; right: calc(100% + 8px); left: auto;
+    transform-origin: bottom right;
+  }
+}
+
+/* the foe's CPU / rank tag was the last cool-grey chip in the left head plate */
+.hudx-cluster[data-hudx-side="foe"] .hudx-head .tag {
+  color: #edd7c6;
+  border-color: rgba(190, 96, 84, 0.55);
+  background: linear-gradient(180deg, rgba(62, 24, 24, 0.9), rgba(22, 10, 12, 0.94));
+}
 
 
 /* ---------------------------------------------------------------------------
@@ -1290,7 +1884,7 @@ body:has(.battle-screen) .emote-toggle {
 @media (max-height: 950px) {
   /* the same arithmetic as the desktop band, with the shorter banner:
      4 + 80 (.fighter) + 4 + 32 (#phase-bar) - 14 (tuck) = 106 */
-  :root { --hud-banner-h: 106px; --hudx-et-h: 108px; }
+  :root { --hud-banner-h: 106px; --hudx-et-h: 94px; }
   .hudx-piles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
   .hudx-cell { padding: 3px 1px 8px; }
   .hudx-cell .cardslot { width: clamp(40px, 6.4vh, 62px); }

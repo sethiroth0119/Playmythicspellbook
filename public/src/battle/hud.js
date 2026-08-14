@@ -68,13 +68,48 @@ function guard(fn) {
    one-line CLASSIC script, which does run in that scope, and read the Void
    pile through it. If anything about this fails the vanish slot renders its
    honest empty state rather than a made-up number. */
+/* ── THE HOVER-MENU "STICK", AND THE FIX THAT WAS MEASURED AND REJECTED ────
+   Wave 3 asked for "hover menu and character box stick on the previous unit for
+   2 of 8 units on a clean sweep with the pointer parked off-board between".
+   That was chased here, and the finding is recorded so it is not chased again.
+
+   THE MEASUREMENT (real Playwright pointer, all 8 live units, pointer parked at
+   (18,460) off the board for 700ms between each):
+     · App._bbHover.unitId retargets correctly 8/8 — never the previous unit;
+     · the hover menu opens on the hovered unit 8/8 and carries `class="show"`
+       with the right `_uhmUnitId`, so 0/8 stick;
+     · on every park the menu goes to `uhm-closing` — it IS being dismissed;
+     · the CHARACTER BOX does stay up after the pointer leaves, and that is
+       DESIGNED: `_cbxArmHide()` gives it a 10-SECOND auto-dismiss
+       (`CBX_HIDE_MS = 10000`) precisely so you can read it, and its subject is
+       correct on all 8 units. It is not stuck, it is still counting down.
+
+   THE THEORY THAT LOOKED RIGHT AND IS WRONG: `_bbSoftHideHoverMenu()` early-outs
+   on `_bbMenuHovered()`, which tests `_BBS._ptr` — written only by the catcher's
+   own handlers, so it is STALE the moment the pointer leaves the board. A
+   document-level mousemove that keeps `_BBS._ptr` honest was written, injected
+   through this same classic-script seam, and then measured: with the menu open
+   on Orc Warrior the menu rect is [641,393,272,61] and the last on-board pointer
+   is (661,645) — 191px below it, nowhere near BB_MENU_HALO (28). `_bbMenuHovered()`
+   returns FALSE with the stale pointer and FALSE with the live one. The halo
+   never suppresses this hide, so the listener bought nothing and cost a handler
+   on every mouse move across the whole app. It was removed.
+
+   What DID measure as broken on every render is the click catcher — see
+   rearmCatcher() below. */
 function installStateBridge() {
   if (window.__hudxVoid) return;
   try {
     const s = document.createElement('script');
     s.textContent =
       'window.__hudxVoid=function(){try{return{player:((App.state.player.void)||[]).length,' +
-      'ai:((App.state.ai.void)||[]).length};}catch(e){return null;}};';
+      'ai:((App.state.ai.void)||[]).length};}catch(e){return null;}};' +
+      /* `App.state.gameOver` is the ONLY thing that distinguishes "the rail is
+         missing because the match ended" from "the rail is missing because the
+         state is half-built". The freeze below is gated on it, so it needs the
+         same lexical-scope seam. Returns null — never false — when it cannot
+         read the state, so the caller can fall back to the DOM marker. */
+      'window.__hudxOver=function(){try{return !!App.state.gameOver;}catch(e){return null;}};';
     (document.head || document.documentElement).appendChild(s);
     s.remove();
   } catch (e) { /* CSP or no head — the empty state is the fallback */ }
@@ -175,15 +210,175 @@ function fitCluster(root, host) {
   } catch (e) {}
 }
 
+/* ══ THE GAME-OVER FRAME: FREEZE THE LAST TRUE RAIL, NEVER INVENT ONE ══════
+   `renderBattlePiles()` opens with
+
+       if (!s || !s.player || !s.ai || s.gameOver) return '';      // ~134697
+
+   so the moment a match ends the game DELETES the pile markup: no `.bp-wrap`,
+   no #foeDeck, no #graveyard, no `.opp`, no `.energy`. Both clusters are built
+   by MOVING those nodes, so with nothing to move `.bp-wrap.bsx` and
+   `.hudx-cluster[data-hudx-side="foe"]` went null and half the new HUD vanished
+   on the last screen of the game. index.html is not this piece's to edit, so
+   the source markup cannot be brought back.
+
+   ⚠ WHAT WAS REJECTED, AND WHY THIS IS NOT THAT. Re-deriving a rail from
+   `App.state` at game over would mean this file MAKING UP pile counts for a
+   finished match — the one thing the brief forbids. What is kept instead is the
+   LAST FRAME THAT WAS TRUE: every successful relayout serialises the two
+   clusters exactly as the game rendered them, and the game-over screen re-mounts
+   those bytes. Every number on it was produced by index.html, one render ago,
+   from real state. Nothing is computed here.
+
+   ⚠ AND IT IS MOUNTED DEAD. The restored nodes are `inert` + `aria-hidden` +
+   `pointer-events:none` (hud.css `.hudx-frozen`), and every `id` is stripped to
+   `data-hudx-was-id` so no live code can address, re-bind or write into a
+   frozen deck — `bindBattlePiles()` has already run and found nothing by the
+   time these mount, and they must never look like a control on a screen whose
+   controls are gone. The command bar is dropped from the copy for the same
+   reason: CONCEDE is still LIVE in the left rail on this screen, and a second
+   dead one would be a trap.
+
+   The freeze is scoped to the finished match by `App.state.gameOver` (with the
+   `.gameover-backdrop` node as the DOM fallback), so a mid-match render that
+   somehow lost its rail still gets today's honest empty column. */
+const FROZEN = { rail: null, foe: null };
+
+function snapshot(bp, foeRoot) {
+  try {
+    if (bp) FROZEN.rail = bp.outerHTML;
+    if (foeRoot) FROZEN.foe = foeRoot.outerHTML;
+  } catch (e) { /* a failed snapshot just means the previous one is kept */ }
+}
+
+function matchIsOver(scr) {
+  try {
+    if (typeof window.__hudxOver === 'function') {
+      const v = window.__hudxOver();
+      if (v === true) return true;
+      if (v === false) return false;      // null = could not read; fall through
+    }
+  } catch (e) {}
+  return !!(scr && (scr.querySelector('.gameover-backdrop') ||
+                    document.querySelector('.gameover-backdrop')));
+}
+
+/* Rebuild one cached cluster as an inert frozen frame. */
+function thaw(html, tag) {
+  const box = document.createElement('div');
+  box.innerHTML = html;
+  const n = box.firstElementChild;
+  if (!n) return null;
+  n.classList.add('hudx-frozen');
+  n.setAttribute('data-hudx-frozen', tag);
+  n.setAttribute('aria-hidden', 'true');
+  try { n.inert = true; } catch (e) { /* older engines: the CSS still kills it */ }
+  // Ids first — a duplicate id is how a frozen copy would start stealing
+  // getElementById() from something live.
+  if (n.id) { n.setAttribute('data-hudx-was-id', n.id); n.removeAttribute('id'); }
+  n.querySelectorAll('[id]').forEach((el) => {
+    el.setAttribute('data-hudx-was-id', el.id);
+    el.removeAttribute('id');
+  });
+  // CONCEDE / prefs / the turn plaque are still live in the left rail here.
+  n.querySelectorAll('.hudx-cmd').forEach((el) => el.remove());
+  // Inline handlers survive innerHTML; strip them so an inert frame is inert
+  // even if a browser ignores `inert` and something forwards a synthetic event.
+  n.querySelectorAll('[onclick],[oncontextmenu],[onmousedown]').forEach((el) => {
+    el.removeAttribute('onclick'); el.removeAttribute('oncontextmenu'); el.removeAttribute('onmousedown');
+  });
+  return n;
+}
+
+/* `.bsx-inner` is scaled by --fit, which _bpFit() writes on a later frame from
+   a measurement. The snapshot is taken before that write, so the restored rail
+   starts at --fit:1 and can overflow `.bsx-body` (overflow:hidden). Measure it
+   once here, the same way _bpFit does, so the frozen frame is never clipped.
+   _bpFit() still finds it afterwards (it selects `.bp-wrap` by class) and will
+   refine the number on its own ticker. */
+function fitFrozenRail(n) {
+  try {
+    const body = n.querySelector('.bsx-body');
+    const inner = n.querySelector('.bsx-inner');
+    if (!body || !inner) return;
+    const avail = body.clientHeight, need = inner.scrollHeight;
+    if (avail && need && need > avail) {
+      inner.style.setProperty('--fit', Math.max(0.55, avail / need).toFixed(3));
+    }
+  } catch (e) {}
+}
+
+function restoreFrozen(scr, left) {
+  if (!FROZEN.rail && !FROZEN.foe) return;      // never saw a live rail
+  if (!matchIsOver(scr)) return;
+  if (FROZEN.rail && !scr.querySelector('.bp-wrap')) {
+    const n = thaw(FROZEN.rail, 'rail');
+    if (n) { scr.appendChild(n); fitFrozenRail(n); }
+  }
+  if (FROZEN.foe && left && !left.querySelector('.hudx-cluster[data-hudx-side="foe"]')) {
+    const n = thaw(FROZEN.foe, 'foe');
+    if (n) { left.insertBefore(n, left.firstChild); fitCluster(n, left); }
+  }
+}
+
+/* ── THE BOARD IS UNCLICKABLE FOR ~60ms AFTER EVERY renderBattle() ──────────
+   `.bb-catch` is a child of `.board-area`, and `renderBattle()` rebuilds the
+   whole screen with `innerHTML =`, so the catcher is destroyed on every state
+   change. index.html re-creates it in `_bbStageCatcher()`, which is only
+   reached from `_bbStageMount()` — and that runs off the app's rAF ticker, so
+   for one to four frames after every card play there is NOTHING listening on
+   the battlefield. Measured: `document.querySelector('.bb-catch')` is null the
+   instant `renderBattleNow()` returns.
+
+   The fix is not to re-implement the catcher — that would duplicate the pointer
+   normalisation and the hover-halo state, and get them wrong. `_bbStageCatcher`
+   and `_bbStageTrack` are plain top-level FUNCTION DECLARATIONS in a classic
+   script, which (unlike the `const` globals in CLAUDE.md's globals trap) DO
+   land on `window`. So this calls index.html's own re-arm, from inside the
+   MutationObserver callback, i.e. after renderBattle's synchronous body and
+   BEFORE the browser paints. `_bbStageCatcher` early-outs when a catcher is
+   already there, so on any render that did not destroy it this costs one
+   `querySelector`.
+   Everything is typeof-guarded: if either function ever stops being global the
+   catcher is simply left to the rAF ticker, which is today's behaviour. */
+function rearmCatcher() {
+  try {
+    const area = document.querySelector('.board-area');
+    if (!area) return;
+    if (typeof window._bbStageCatcher === 'function') window._bbStageCatcher(area);
+    if (typeof window._bbStageTrack === 'function') window._bbStageTrack(area);
+  } catch (e) { /* the ticker will get there a few frames later */ }
+}
+
 function relayout() {
   const scr = document.querySelector('.battle-screen');
   if (!scr) return;
+  rearmCatcher();                    // before the early-out: every render kills it
   if (scr.__hudx) return;            // already laid out — the cheap early-out
   scr.__hudx = 1;
 
   const left = scr.querySelector('.battle-left');
   const bp = scr.querySelector('.bp-wrap');
   const fighters = scr.querySelector('#fighters');
+  /* ⚠ THE GAME-OVER SCREEN IS A DIFFERENT SCREEN, AND THE PILE RAIL IS NOT
+     MISSING BY ACCIDENT — THE GAME DELETES IT ON PURPOSE (renderBattlePiles
+     early-returns '' on `s.gameOver`, ~134697). Both clusters are built by
+     MOVING those nodes, so with nothing to move `.bp-wrap.bsx` and
+     `.hudx-cluster[data-hudx-side="foe"]` used to go null and half the new HUD
+     disappeared on the last screen of the match. `restoreFrozen()` re-mounts the
+     LAST TRUE frame instead — see the long note above it for why that is not the
+     same thing as inventing a rail. `hudx-norail` still flags the screen (the
+     right column stays reserved either way) so hud.css can tell a frozen rail
+     from a live one.
+
+     Everything that still exists keeps its new home regardless. Measured with
+     `App.state.gameOver` forced and one frame allowed to settle: `.hudx-topband`
+     [0,0,1600,118], #fighters [437,4,726,92], #phase-bar [460,86,681,32],
+     `.hudx-endturn` [1264,880,336,104], #btn-end-turn [1264,897,336,71], the
+     command bar still bound in `.bc-rail`, and `window.__hudxErr` null. Every
+     section below is independently guarded: one missing element must never take
+     the band, the rail or END TURN down with it. */
+  if (!bp) { scr.classList.add('hudx-norail'); restoreFrozen(scr, left); }
 
   /* ── 1. TOP BAND: the two hero banners, then the phase track ─────────── */
   const band = mk('div', 'hudx-topband');
@@ -233,6 +428,28 @@ function relayout() {
       if (c) piles.appendChild(c);
     });
     piles.appendChild(vanishCell('ai'));
+
+    /* ⚠ THE TWO IDENTICAL "KALON SOURCE x3" CHIPS ARE NOT A DUPLICATE — THEY
+       ARE TWO SIDES' COUNTERS STACKED IN ONE RAIL. index.html renders
+       `<div class="buffs">${_buff(s.ai.kalonsRemaining)}${_buff(s.player
+       .kalonsRemaining)}</div>` (~134932): the FIRST is the opponent's, the
+       SECOND is yours, and because the label is the same string on both they
+       read as the same chip printed twice. Splitting them by side is the whole
+       fix — one per cluster, under that side's own name plate, and it is also
+       the last piece of the opponent-parity brief. The `.buffs` box is MOVED
+       when only one chip is left over so `_buff`'s click binding and its
+       `title` survive; a second box is built for the foe only when both
+       exist. */
+    const buffs = bp.querySelector('#buffs, .buffs');
+    if (buffs) {
+      const chips = Array.from(buffs.querySelectorAll(':scope > .buff'));
+      if (chips.length > 1) {
+        const foeBuffs = mk('div', 'buffs hudx-buffs');
+        foeBuffs.appendChild(chips[0]);           // MOVE — id-less, listener intact
+        L.inner.appendChild(foeBuffs);
+      }
+      buffs.classList.add('hudx-buffs');
+    }
 
     L.frame.appendChild(foeEnergy(fighters && fighters.querySelector('.fighter[data-side="foe"]')));
 
@@ -291,6 +508,15 @@ function relayout() {
 
     fitCluster(L.root, left);
   }
+
+  /* ── 3b. FREEZE-FRAME the two clusters as the game just rendered them.
+        This is the ONLY place the game-over rail's contents can come from —
+        see the note on FROZEN. It runs after every successful relayout, so
+        what a finished match shows is the state at its final render, never a
+        value this file worked out. Two outerHTML reads per render; relayout()
+        early-outs on `scr.__hudx`, so that is once per renderBattle(), not per
+        tick. ─────────────────────────────────────────────────────────────── */
+  if (bp) snapshot(bp, scr.querySelector('.hudx-cluster[data-hudx-side="foe"]'));
 
   /* ── 4. END TURN: the rail's LIVE button, moved to the bottom-right hex.
         (index.html carries a second #btn-end-turn inside the unused

@@ -149,19 +149,45 @@ if(cardNode){
      stocked up first, so this is a LONG run on purpose — the first pack does
      not leave the shop until roughly day 4. */
   let peak=0, peakPacks=0, liveDays=0;
+  const RUNGS=['timber','lumber','cardStock','printedCards','boosterPacks'];
+  const supSum={}; for(const id of RUNGS) supSum[id]=0;
   for(let d=0;d<600;d++){
     E.syncBuildings(clist()); E.tick(20,chost);
     const c=E.cardOutput();
     if(c.totalUnits>0) liveDays++;
     if(c.totalUnits>peak) peak=c.totalUnits;
     const pk=(c.units.boosterPacks||0); if(pk>peakPacks) peakPacks=pk;
+    /* Accumulated INSIDE the loop because sim.js zeroes S.observed at the top of
+       every runDay — read it after the run and you get one arbitrary day. */
+    const ob=Sim.state().observed||{};
+    for(const id of RUNGS) supSum[id]+=((ob[id]||{}).supply)||0;
   }
   const co=E.cardOutput();
   const rev=(id)=>Firms.alive().filter(f=>f.out===id).reduce((a,f)=>a+(f.lifetimeRevenue||0),0);
   const made=(id)=>Firms.alive().filter(f=>f.out===id).reduce((a,f)=>a+(f.lastProduced||0),0);
-  console.log('  chain@'+cardNode+': timber '+made('timber').toFixed(0)+'/d → lumber '+made('lumber').toFixed(0)
-    +'/d → cardStock '+made('cardStock').toFixed(0)+'/d → printedCards '+made('printedCards').toFixed(0)
-    +'/d → boosterPacks '+made('boosterPacks').toFixed(0)+'/d');
+  /* 🔴 TWO DIFFERENT NUMBERS, AND THE HEADLINE USED TO PRINT THE WRONG ONE.
+     `f.lastProduced` is what a firm's LINE ran at — its capacity given inputs,
+     labour and power. sim.js then TRIMS what actually reaches the market to the
+     firm's share of demand, and it is the trimmed figure that lands in
+     `S.observed[id].supply`, which is what cardOutput() feeds the Foundation
+     Reserve. This line printed capacity and called it "/d": it read
+     "boosterPacks 76/d" beside a cardOutput of 1.687 — off by ~45x — so the one
+     summary line a reader actually reads overstated the card economy by a factor
+     nobody could see. The assertions were always on observed supply and were
+     never wrong; only the headline was.
+
+     ⚠ AND IT IS A MEAN OVER 600 DAYS, NOT THE CLOSING DAY. The first repair here
+       printed the last tick's observed supply and read
+       `cardStock 0.00/d (cap 90) → printedCards 0.00/d (cap 86)` beside a
+       cardOutput of 0.279 — true, and just as misleading the other way, because
+       whether an intermediate rung sells on any ONE day depends on whether that
+       day's demand trim happened to bite (the same reason the assertion below
+       counts liveDays instead of the last day). Capacity is kept in brackets on
+       purpose: the GAP between the two columns is the interesting quantity — it
+       is how much of this chain is idle for want of buyers. */
+  const rung=(id)=>id+' '+(supSum[id]/600).toFixed(2)+'/d (cap '+made(id).toFixed(0)+')';
+  console.log('  chain@'+cardNode+' — mean OBSERVED supply/day over 600d, line capacity in brackets:');
+  console.log('    '+RUNGS.map(rung).join(' → '));
   console.log('  cardOutput '+JSON.stringify(co));
 
   /* 🔴 MEASURED OVER THE WHOLE RUN, NOT ON THE LAST DAY. `cardOutput()` reads

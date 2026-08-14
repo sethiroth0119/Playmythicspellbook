@@ -59,8 +59,26 @@ let bad = 0;
                                    — for a foil no city tile can make — is the
                                    whole difference between a card economy and
                                    `cardOutput()` returning totalUnits 0 forever
+     ECON_TEST_SABOTAGE=price-drift round0k: nudge the packagingMaterial timber
+                                   coefficient 0.8 → 1.9 — the "soften the fall"
+                                   retune FIX-D2 considered and rejected. It is a
+                                   perfectly reasonable-looking recipe edit that
+                                   moves 13 consumer goods, which is the whole
+                                   point: 0k is red for a change nothing else in
+                                   this gate can see
      ECON_TEST_SABOTAGE=twin-blind round0f: drop ECO_LOGISTICS_OPS on the way
                                    in — the exact pre-fix source for op_warehouse
+     ECON_TEST_SABOTAGE=stale-workplaces round0f §7: evaluate workplaceTypes()
+                                   against a BUILDINGS the ops registration loop
+                                   has NOT run over. That is precisely what the
+                                   `const WORKPLACES = Object.keys(BUILDINGS)…`
+                                   snapshot did, three thousand lines too early
+     ECON_TEST_SABOTAGE=cap-typo   round0f §9: mistype a value of
+                                   ECO_LOGISTICS_TILES ('railhead' → 'railheed').
+                                   Before §9 existed this passed EVERY check in
+                                   the gate, because a key missing from
+                                   ECON.logistics.capacity contributes 0 and both
+                                   sides of every count comparison were 0
      ECON_TEST_SABOTAGE=venue-blind round0g: empty MORALE_VENUE_OPS on the way
                                    in — the exact pre-fix source for op_dojo
      ECON_TEST_SABOTAGE=wx-twin-blind round0h: empty WEATHER_TWIN_OPS on the way
@@ -73,7 +91,70 @@ let bad = 0;
                                    which re-commits the SHIPPED prices-only
                                    disaster mapping — the version under which a
                                    siege measurably paid the player better than
-                                   peace
+                                   peace. Under it §3's sweep reports 1,133 of
+                                   1,550 signal runs RICHER, worst
+                                   rho-6/pop120/600d ×1.60/cad3 at +95.68% with
+                                   0 🔥 billed. The three-probe version of §3 this
+                                   replaced would have caught only some of them,
+                                   which is the point of sweeping.
+                                   ⚠ The OTHER re-commit — putting the emergency
+                                   bill back on a RECEIPTS basis — cannot be done
+                                   from ECON, because it is a code shape and not
+                                   a number, so it is not a switch here. It is
+                                   done by hand in sim.js step 9b, and BECAUSE IT
+                                   IS DONE BY HAND THE EXACT RECIPE IS WRITTEN
+                                   DOWN: an earlier draft of this note quoted "4
+                                   richer cells, worst rho-6/pop120/600d at
+                                   +24.7%" without saying which shape produced it,
+                                   and NEITHER shape below reproduces that figure.
+                                   A number nobody can re-derive is not evidence,
+                                   so it is replaced by two that were re-measured
+                                   on this grid:
+                                     (a) BASIS ONLY — swap `surplusToday * share`
+                                         for `(S.flow.tax + S.flow.faucet) * share`
+                                         and change nothing else. 3 richer cells,
+                                         worst rho-6/pop120/240d ×1.12/day0 at
+                                         +5.52% with 254 🔥 billed, plus 2
+                                         monotonicity inversions. Red, but only
+                                         just — the surplus settlement and the
+                                         austerity register are still carrying it.
+                                     (b) THE WHOLE PRE-FIX-C2 SHAPE — basis (a),
+                                         PLUS settle out of the treasury alone
+                                         (drop the `surplusToday` bound and the
+                                         `surplusToday -= paid`), PLUS delete the
+                                         austerity register and its drain. 710
+                                         richer cells, worst shock-probe/pop45/600d
+                                         ×1.30/cad3 at +602.48% with 20,204 🔥
+                                         billed and paid, plus 338 inversions.
+                                   (b) is the honest re-commit and (a) is the
+                                   informative one: the basis alone is worth ~5%
+                                   and the three terms together are worth ~600%, so
+                                   the fix is the COMBINATION and no single line of
+                                   it may be reverted on the grounds that the round
+                                   still passes without the other two. Both confirm
+                                   the point the old note was making — the old basis
+                                   does not become safe by raising its coefficient,
+                                   because the charge is a share of a basis it
+                                   inflates.
+    ECON_TEST_SABOTAGE=disaster-austerity round0i §3: zero
+                                   ECON.shock.cost.austerityMul, which restores
+                                   the SELF-FUNDING BASIS exactly — the response
+                                   is billed and paid as before, but the surplus
+                                   it manufactures by leaving the city unable to
+                                   pay its benefits, imports and haulage flows
+                                   back to the owner. This is the round-2 defect
+                                   and it is a number, so it IS a switch. Under it
+                                   §3 fails BOTH ways: 16 richer cells, worst
+                                   rho-6/pop120/600d ×1.30/cad3 at +12.66% with
+                                   5,901 🔥 billed and paid, and 20 monotonicity
+                                   inversions. Note which way the coefficient runs
+                                   with the register off — on the tree as it stood
+                                   before this fix, RAISING emergencyPer from 2.2
+                                   to 8.0 made the worst cell WORSE (+61.9% →
+                                   +98.7%), because the charge is a share of a
+                                   basis it inflates. That is the whole reason the
+                                   correction is a separate term and not a bigger
+                                   coefficient.
     ECON_TEST_SABOTAGE=frozen-shock round0i: make the shock sample budget
                                    effectively unbounded, which is arithmetically
                                    what a PER-CALL budget was against the host's
@@ -1647,11 +1728,46 @@ const srcBlockAfter = (src, decl) => {
      round0d's ecoHost, and for the reason stated there: a copy tests a fiction
      the moment the two drift.
 
+   ────────────────────────────────────────────────────────────────────────────
+   §6–§9 WERE ADDED AFTER THE SWEEP THAT FOUND #1–#6 WAS SHOWN TO BE BLIND.
+   Every hunt so far grepped `t.type === '…'` (or, for the weather family, a bare
+   parameter named `type`). Two more shapes had never been looked at, and both
+   were live:
+
+     (a) LIST MEMBERSHIP — `TRUCK_STOPS.includes(t.type)`. Three of that list's
+         six entries are derived twins (gasstation↔op_gas, scrapmine↔op_mining,
+         fuelrig↔op_oil), so those three operations generated no freight traffic
+         and were not truck endpoints. MEASURED LIVE, one probe city (3 roads,
+         one housing, two probe tiles): scrapmine gave {commuteDest 2, truckStops
+         2, trucks 2} and op_mining gave {3, 3, 0} — 3 being the "no stops at all,
+         fall back to every road" answer.
+     (b) A LOAD-ORDER SNAPSHOT, a shape nobody had named. `const WORKPLACES =
+         Object.keys(BUILDINGS).filter(…)` is a top-level const evaluated ~3,100
+         lines ABOVE the ops registration loop, so it froze BUILDINGS before any
+         op_ row existed and NO OPERATION COULD EVER BE A COMMUTE DESTINATION.
+         MEASURED LIVE: 45 workplace types, 0 of them op_; 60 and 15 after the
+         fix, with all 15 op types satisfying the very predicate it filters on.
+         There is no string and no list here — the defect is purely WHEN the
+         expression ran, which is why §7 asserts on the SHAPE as well as on the
+         behaviour.
+
+   §6 and §7 therefore drive the two SHIPPED CONSUMERS — agentEndpoints() and
+   desiredAgentCounts() — over a probe city, and fail on the WORST CELL of the
+   op × twin sweep rather than on an average or on three lucky points. §8/§9 are
+   the same class read backwards: a PRICE WITH NO PRODUCER (ECON.logistics
+   .capacity prices `port` and `airfreight` and nothing in the city grants
+   either) and a VALUE THAT NAMES NOTHING (a typo in ECO_LOGISTICS_TILES made
+   both sides of every existing comparison equally zero and passed).
+
    Prove this round can fail:
      ECON_TEST_SABOTAGE=no-map      the scrape reads nothing ⇒ hard fail, never a
                                     vacuous pass (same switch round0b/0d honour)
      ECON_TEST_SABOTAGE=twin-blind  drops ECO_LOGISTICS_OPS on the way in, which
                                     is exactly the pre-fix source
+     ECON_TEST_SABOTAGE=wx-twin-blind empties the op→standing-tile twin table
+                                    §6 reads, which is the pre-fix TRUCK_STOPS
+     ECON_TEST_SABOTAGE=stale-workplaces §7: the pre-fix load-order snapshot
+     ECON_TEST_SABOTAGE=cap-typo    §9: a mistyped logistics value
    ════════════════════════════════════════════════════════════════════════════ */
 {
   console.log('\n########## round0f-tile-type-twins ##########');
@@ -1679,15 +1795,124 @@ const srcBlockAfter = (src, decl) => {
   /* Markers stop at the IDENTIFIER — srcBlockAfter takes the next `{` — so
      re-aligning the `=` in the shipped file cannot silently un-read a table.
      That is not hypothetical: ECO_LOGISTICS_OPS is column-aligned today. */
+  /* 0h's evaluator: a `with` over a Proxy answering 0 to every free identifier.
+     BUILDINGS is the only table that needs it, because its rows cite constants
+     declared elsewhere. §7 reads `crew`/`gen`/`defense` off it and those are
+     literals; a stubbed cost cannot fake one. */
+  const loose = (decl) => {
+    const txt = srcBlockAfter(HTML, decl);
+    if (!txt) return null;
+    try {
+      const scope = new Proxy({}, { has: () => true,
+        get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+      return new Function('__s', 'with (__s) { return (' + txt + '); }')(scope);
+    } catch (e) { return null; }
+  };
+  /* Array literals have no `{`, so srcBlockAfter cannot reach them — and a LIST
+     is half of what this round now exists to check. Non-greedy to the first `]`,
+     which is exact for a flat list of strings and returns null rather than a
+     guess for anything nested. */
+  const arrLit = (name) => {
+    const m = HTML ? new RegExp('const\\s+' + name + '\\s*=\\s*(\\[[^\\]]*\\])\\s*;').exec(HTML) : null;
+    if (!m) return null;
+    try { const v = new Function('return (' + m[1] + ');')(); return Array.isArray(v) ? v : null; }
+    catch (e) { return null; }
+  };
+  /* Comments are prose in this file and full of the very identifiers §6 greps
+     for ("`TRUCK_STOPS.includes(t.type)`" appears in two headers describing the
+     bug). A structural check that counts them is a check that can never go
+     green, so strip them — same scanner discipline as srcBlockAfter, strings
+     preserved because the guard lists ARE strings. */
+  const stripComments = (src) => {
+    if (!src) return '';
+    let out = '', last = '';                 // last significant char, for regex/division
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i], d = src[i + 1];
+      if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) break; i = e + 1; continue; }
+      if (c === '/' && d === '/') { const e = src.indexOf('\n', i + 2); if (e < 0) break; out += '\n'; i = e; continue; }
+      /* 🔴 REGEX LITERALS, or this scanner desynchronises and never recovers.
+         node-city is full of `/['"]op_[a-z]/`-shaped tests; a `/` that is not a
+         comment used to be emitted raw, the apostrophe inside it opened a
+         phantom string, and every block comment for the next 200k characters
+         survived into "code". The standard disambiguator: a `/` starts a regex
+         only when the previous significant character cannot end an expression. */
+      if (c === '/' && (last === '' || '(,=:[!&|?{};+-*%~^<>'.includes(last))) {
+        out += c; i++;
+        for (let cls = false; i < src.length; i++) {
+          const r = src[i]; out += r;
+          if (r === '\\') { out += src[++i]; continue; }
+          if (r === '[') cls = true; else if (r === ']') cls = false;
+          else if (r === '/' && !cls) break;
+          else if (r === '\n') break;         // unterminated ⇒ it was division
+        }
+        last = '/'; continue;
+      }
+      if (c === '"' || c === "'") {
+        /* Bounded to one line. A single-quoted JS string cannot span a newline,
+           so if no closing quote appears before it this was not a string at all
+           and treating it as one is exactly how the desync happened. */
+        const nl = src.indexOf('\n', i);
+        let j = i + 1, closed = -1;
+        for (; j < src.length && (nl < 0 || j < nl); j++) {
+          if (src[j] === '\\') { j++; continue; }
+          if (src[j] === c) { closed = j; break; }
+        }
+        if (closed < 0) { out += c; last = c; continue; }
+        out += src.slice(i, closed + 1); i = closed; last = c; continue;
+      }
+      if (c === '`') {
+        let j = i + 1;
+        for (; j < src.length; j++) { if (src[j] === '\\') { j++; continue; } if (src[j] === '`') break; }
+        out += src.slice(i, j + 1); i = j; last = '`'; continue;
+      }
+      out += c;
+      if (!/\s/.test(c)) last = c;
+    }
+    return out;
+  };
+
   const OP_BP        = lit('const OP_BP');
   const OP_ECO_MAP   = lit('const OP_ECO_MAP');
   const CITY_ECO_MAP = lit('const ECO_BUILDING_MAP');
-  const LOG_TILES    = lit('const ECO_LOGISTICS_TILES');
+  const LOG_TILES_RAW= lit('const ECO_LOGISTICS_TILES');
+  /* The mistyped value the `cap-typo` switch injects. It is deliberately a
+     PLAUSIBLE typo of a real key, because that is the failure §9 exists for. */
+  const LOG_TILES    = SABOTAGE === 'cap-typo'
+    ? { ...LOG_TILES_RAW, railyard: 'railheed' } : LOG_TILES_RAW;
   const LOG_OPS_RAW  = lit('const ECO_LOGISTICS_OPS');
   const LOG_OPS      = SABOTAGE === 'twin-blind' ? {} : LOG_OPS_RAW;
+  const LOG_UNIMPL   = arrLit('ECO_LOGISTICS_UNIMPLEMENTED');
   const BODY         = srcBlockAfter(HTML, 'function ecoLogisticsCounts()');
   const prefixM      = HTML ? /const\s+OPS_PREFIX\s*=\s*'([^']*)'/.exec(HTML) : null;
   const PREFIX       = prefixM ? prefixM[1] : null;
+  /* ⚠ THE MODULE SCRIPT ONLY, not the whole file. node-city is an HTML document
+     and its prose is full of apostrophes ("the city's"); fed the markup, the
+     stripper takes the first one as a string opener and desynchronises — which
+     it did, silently, and §7 then "found" a WORKPLACES snapshot inside the very
+     comment that describes the bug. The self-check below is the guard: a
+     correctly stripped source contains no `/*` at all. */
+  const jsAt        = HTML ? HTML.indexOf('<script type="module">') : -1;
+  const SRC         = jsAt >= 0 ? stripComments(HTML.slice(jsAt)) : '';
+
+  // ── §6/§7 scaffolding: the shipped agent guards and everything they reach ──
+  const BUILDINGS_RAW = loose('const BUILDINGS');
+  const REG_BODY      = srcBlockAfter(HTML, 'for (const t of OPS_TYPES)');
+  const WX_TWIN_RAW   = lit('const WEATHER_TWIN_OPS');
+  const WX_TWIN       = SABOTAGE === 'wx-twin-blind' ? {} : WX_TWIN_RAW;
+  const AGENTS_LIT    = lit('const AGENTS');
+  const WEATHER_LIT   = lit('const WEATHER');
+  const TRUCK_STOPS   = arrLit('TRUCK_STOPS');
+  const FN = {};
+  for (const [k, decl] of Object.entries({
+    weatherTwinType: 'function weatherTwinType(type)', twinTileType: 'function twinTileType(type)',
+    isTruckStop: 'function isTruckStop(ty)', workplaceTypes: 'function workplaceTypes()',
+    tileAt: 'function tileAt(x, z)', isRoad: 'function isRoad(x, z)',
+    allRoadKeys: 'function allRoadKeys()', roadsAdjacentTo: 'function roadsAdjacentTo(match)',
+    roadsAdjacentToTypes: 'function roadsAdjacentToTypes(types)',
+    roadsAdjacentToAnchors: 'function roadsAdjacentToAnchors()',
+    agentEndpoints: 'function agentEndpoints(kind, agent)',
+    desiredAgentCounts: 'function desiredAgentCounts()',
+  })) FN[k] = srcBlockAfter(HTML, decl);
 
   /* 🔴 A SCRAPE THAT MATCHED NOTHING MUST FAIL HARD. Round0b's header makes the
      same point: the failure mode of an extraction test is not a wrong answer,
@@ -1700,7 +1925,20 @@ const srcBlockAfter = (src, decl) => {
     chk('read OP_BP / OP_ECO_MAP / ECO_BUILDING_MAP / the two logistics tables',
         !!OP_BP && !!OP_ECO_MAP && !!CITY_ECO_MAP && !!LOG_TILES && !!LOG_OPS_RAW,
         [OP_BP, OP_ECO_MAP, CITY_ECO_MAP, LOG_TILES, LOG_OPS_RAW].map(o => o ? Object.keys(o).length : 'NULL').join('/')) &
-    chk('read OPS_PREFIX', !!PREFIX, String(PREFIX));
+    chk('read OPS_PREFIX', !!PREFIX, String(PREFIX)) &
+    chk('read ECO_LOGISTICS_UNIMPLEMENTED (§8 needs the explicit declaration, not a guess)',
+        Array.isArray(LOG_UNIMPL), String(LOG_UNIMPL)) &
+    chk('read the twelve shipped agent guards + BUILDINGS + AGENTS + WEATHER + TRUCK_STOPS + the ops loop',
+        Object.values(FN).every(Boolean) && !!BUILDINGS_RAW && !!REG_BODY && !!AGENTS_LIT &&
+        !!WEATHER_LIT && !!WX_TWIN_RAW && Array.isArray(TRUCK_STOPS),
+        Object.entries(FN).filter(([, v]) => !v).map(([k]) => k).join(',') + ' | ' +
+        [BUILDINGS_RAW, REG_BODY, AGENTS_LIT, WEATHER_LIT, WX_TWIN_RAW, TRUCK_STOPS]
+          .map(o => o ? 'ok' : 'NULL').join('/')) &
+    chk('the comment stripper left real code behind AND removed every block comment ' +
+        '(a desynced stripper reads prose as code — it did, once)',
+        SRC.length > 200000 && SRC.indexOf('function ecoLogisticsCounts()') > 0 && SRC.indexOf('/*') < 0,
+        SRC.length + ' chars, first surviving /* at ' + SRC.indexOf('/*') +
+        ' :: ' + SRC.slice(Math.max(0, SRC.indexOf('/*')), SRC.indexOf('/*') + 90));
 
   if (!got) {
     console.log('\n🔴 ecoLogisticsCounts() COULD NOT BE READ — nothing below was checked.');
@@ -1796,6 +2034,217 @@ const srcBlockAfter = (src, decl) => {
     // ── 5. PROTOTYPE POLLUTION, the other way a bare lookup lies ────────────
     chk("a tile typed 'constructor' is not credited as a logistics building",
         same(one({ type: 'constructor', lvl: 1 }), EMPTY), JSON.stringify(one({ type: 'constructor', lvl: 1 })));
+
+    /* ══ §6/§7 — THE TWO SHAPES THE `t.type === '…'` SWEEP CANNOT SEE ═══════
+       The SHIPPED consumers are assembled and run over a probe city. Nothing
+       here is a copy of a guard: agentEndpoints, desiredAgentCounts, the two
+       road-adjacency helpers, isTruckStop, workplaceTypes and the twin resolver
+       are all lifted from node-city, and the ops REGISTRATION LOOP is lifted
+       too — "no op_ row exists yet" is the load-bearing half of §7 and a
+       hand-built BUILDINGS here would be asserting about a fiction.
+       ⚠ COPIED VERBATIM, and only these: `key`, `NEI` (a const arrow and a const
+         array — srcBlockAfter needs a `{`, and neither carries a tile-type
+         comparison to get wrong). Same concession round0c/0d/0f make for
+         `bldSite`, for the same stated reason. */
+    const buildGuards = (BLD) => {
+      const city = { tiles: {}, anchors: [] };
+      const api = new Function(
+        'game', 'bldSite', 'opsKeyOf', 'OPS_TYPES', 'BUILDINGS', 'TRUCK_STOPS',
+        'POLICE_SOURCES', 'WEATHER_TWIN_OPS', 'WEATHER', 'wx', 'wellbeing', 'AGENTS',
+        'let nightAmt = 0;\nlet _wxTwinTypes = null;\nlet _workplaceTypes = null;\n' +
+        "const key = (x, z) => x + ',' + z;\nconst NEI = [[0,-1],[1,0],[0,1],[-1,0]];\n" +
+        Object.entries(FN).map(([k, b]) => {
+          const args = { weatherTwinType: 'type', twinTileType: 'type', isTruckStop: 'ty',
+            workplaceTypes: '', tileAt: 'x, z', isRoad: 'x, z', allRoadKeys: '',
+            roadsAdjacentTo: 'match', roadsAdjacentToTypes: 'types', roadsAdjacentToAnchors: '',
+            agentEndpoints: 'kind, agent', desiredAgentCounts: '' }[k];
+          return 'function ' + k + '(' + args + ') ' + b + '\n';
+        }).join('') +
+        'return { agentEndpoints, desiredAgentCounts, isTruckStop, workplaceTypes, twinTileType };')
+        (city, bldSite, opsKeyOf, Object.keys(OP_BP), BLD, TRUCK_STOPS,
+         arrLit('POLICE_SOURCES') || [], WX_TWIN, WEATHER_LIT, { type: 'clear' },
+         { morale: 50 }, AGENTS_LIT);
+      /* THE PROBE CITY. Three road tiles, not four: desiredAgentCounts() floors
+         trucks at 1 once `roads >= 4` ("ambient street life"), and a floor is
+         exactly the kind of thing that turns a broken guard green. Two probe
+         tiles so the truck endpoint set can reach 2 and skip the `stops.length
+         < 2 ⇒ use every road` fallback — with one tile the fallback answer and
+         the correct answer are both "some roads" and nothing is measured. */
+      api.probe = (ty) => {
+        for (const k of Object.keys(city.tiles)) delete city.tiles[k];
+        for (let x = 1; x <= 3; x++) city.tiles[x + ',5'] = { type: 'road', lvl: 1, bld: null };
+        city.tiles['2,6'] = { type: 'housing', lvl: 1, bld: null };
+        if (ty) { city.tiles['1,4'] = { type: ty, lvl: 1, bld: null };
+                  city.tiles['3,4'] = { type: ty, lvl: 1, bld: null }; }
+        return { commuteDest: api.agentEndpoints('civilian').to.length,
+                 truckStops: api.agentEndpoints('truck').to.length,
+                 trucks: api.desiredAgentCounts().truck };
+      };
+      return api;
+    };
+    /* Two BUILDINGS: one the registration loop has run over, one it has not.
+       The second IS the pre-fix world and the `stale-workplaces` switch keeps
+       it — a fix whose old behaviour cannot be reproduced cannot be shown to
+       have been needed. */
+    const mkBld = (registered) => {
+      const B = loose('const BUILDINGS');
+      if (registered) new Function('OPS_TYPES', 'OP_BP', 'BUILDINGS', 'opsKeyOf', 'BUILD_ORDER',
+        'OP_ECO_MAP', 'ECO_BUILDING_MAP', 'for (const t of OPS_TYPES) ' + REG_BODY)
+        (Object.keys(OP_BP), OP_BP, B, opsKeyOf, [], OP_ECO_MAP, { ...CITY_ECO_MAP });
+      return B;
+    };
+    const BLD_POST = mkBld(true), BLD_PRE = mkBld(false);
+    const G = buildGuards(SABOTAGE === 'stale-workplaces' ? BLD_PRE : BLD_POST);
+    const CONTROL = G.probe(null);          // no probe tile: the fallback answer
+
+    // ── 6. 📋 LIST-SHAPED GUARDS — the shape no `===` grep prints ───────────
+    console.log('   ↳ probe city control (no probe tile) = ' + JSON.stringify(CONTROL) +
+                '  — every number here is the "fall back to every road" answer');
+    /* Every top-level SCREAMING_CASE array of standing building types is a guard
+       list by construction, discovered rather than hand-listed so a future one
+       is armed the day it is written. */
+    const guardLists = [];
+    for (const m of SRC.matchAll(/\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*(\[[^\]]*\])\s*;/g)) {
+      let v = null; try { v = new Function('return (' + m[2] + ');')(); } catch (e) { v = null; }
+      if (!Array.isArray(v) || v.length < 2) continue;
+      if (!v.every(s => typeof s === 'string' && s.indexOf(PREFIX) !== 0 && BLD_PRE[s])) continue;
+      /* 🚫 REGISTRIES ARE NOT GUARDS. BUILD_ORDER starts life as a list of
+         standing types and is then APPENDED TO by the ops registration loop, so
+         it satisfies the shape above and has ten op twins in it — and it is not
+         a guard at all, it is the build menu. A list the ops loop extends has
+         already been taught about operations by construction. */
+      if (new RegExp('\\b' + m[1] + '\\s*\\.\\s*push\\s*\\(').test(SRC)) {
+        console.log('   ↳ ' + m[1] + ' is a REGISTRY (the ops loop pushes into it), not a guard list — skipped');
+        continue;
+      }
+      guardLists.push({ name: m[1], list: v });
+    }
+    chk('found the LIST-shaped guards at all (a discovery that matches nothing passes vacuously)',
+        guardLists.length > 0, guardLists.map(g => g.name).join(','));
+    for (const g of guardLists) {
+      g.twins = Object.keys(OP_BP).filter(o => twinOf(o) && g.list.includes(twinOf(o)));
+      console.log('   ↳ guard list ' + g.name + ' = [' + g.list.join(', ') + ']  ·  op twins in it: [' +
+                  (g.twins.join(', ') || 'NONE — exempt until one appears') + ']');
+    }
+    /* THE STRUCTURAL HALF. A list whose set contains an op twin may not be read
+       by a bare membership test anywhere in the file. This is what generalises:
+       it fires for a list this round has never heard of. */
+    const rawUse = [];
+    for (const g of guardLists) {
+      if (!g.twins.length) continue;
+      for (const m of SRC.matchAll(new RegExp('\\b' + g.name + '\\s*\\.\\s*(includes|indexOf)\\s*\\(([^)]*\\)?[^)]*)\\)', 'g')))
+        if (!/twinTileType\s*\(/.test(m[2])) rawUse.push(g.name + '.' + m[1] + '(' + m[2].trim() + ')');
+      for (const m of SRC.matchAll(new RegExp('roadsAdjacentToTypes\\s*\\(\\s*' + g.name + '\\s*\\)', 'g')))
+        rawUse.push(m[0]);
+    }
+    chk('🔴 no guard list with an op twin is read by a BARE membership test — THE CLASS',
+        rawUse.length === 0, rawUse.join(' | '));
+    /* THE BEHAVIOURAL HALF, swept, failing on the WORST CELL. */
+    const measured = {}, meas = (ty) => (measured[ty] = measured[ty] || G.probe(ty));
+    let worstList = null;
+    for (const op of Object.keys(OP_BP)) {
+      const tw = twinOf(op); if (!tw) continue;
+      const a = meas(opsKeyOf(op)), b = meas(tw);
+      if (JSON.stringify(a) !== JSON.stringify(b) && !worstList)
+        worstList = opsKeyOf(op) + ' ' + JSON.stringify(a) + '  vs its twin ' + tw + ' ' + JSON.stringify(b);
+    }
+    chk("🔴 EVERY derived twin is the SAME truck source and the same endpoint as its " +
+        'standing tile, measured through the shipped agentEndpoints/desiredAgentCounts',
+        !worstList, 'WORST CELL — ' + worstList);
+    console.log('   ↳ ' + Object.keys(OP_BP).filter(o => G.isTruckStop(opsKeyOf(o))).map(opsKeyOf).join(', ') +
+                ' generate freight;  standing truck stops: ' + TRUCK_STOPS.join(', '));
+    chk('BEFORE: the raw list scores all three freight operations at ZERO',
+        !['mining', 'oil', 'gas'].some(o => TRUCK_STOPS.includes(opsKeyOf(o))));
+
+    // ── 7. 🕒 THE LOAD-ORDER SNAPSHOT ───────────────────────────────────────
+    /* THE SHAPE. Any top-level `const X = Object.keys(BUILDINGS)…` declared
+       ABOVE the registration loop has this bug automatically, whatever it is
+       called and whatever it filters on — so the assertion is about position,
+       not about WORKPLACES. */
+    const regAt = SRC.indexOf('for (const t of OPS_TYPES)');
+    const snaps = [];
+    /* ⚠ ANCHORED AT COLUMN 0 (`^` with /m). That is what "top-level" means in
+       this file, and it is the whole distinction: workplaceTypes()'s own
+       `const list = Object.keys(BUILDINGS)…` is INDENTED and runs per call,
+       which is the fix. Without the anchor this check reports the fix as the
+       bug — it did on the first run. */
+    for (const m of SRC.matchAll(/^const\s+(\w+)\s*=\s*Object\.(keys|values|entries)\s*\(\s*BUILDINGS\s*\)/gm))
+      if (m.index < regAt) snaps.push(m[1] + ' at char ' + m.index + ' (registration loop at ' + regAt + ')');
+    chk('🔴 no top-level Object.keys(BUILDINGS) snapshot is taken ABOVE the ops registration ' +
+        'loop — THE SHAPE, not the instance', regAt > 0 && snaps.length === 0, snaps.join(' | '));
+    const WP = G.workplaceTypes();
+    const wpOps = Object.keys(OP_BP).filter(o => WP.includes(opsKeyOf(o)));
+    console.log('   ↳ workplace types: ' + WP.length + ', of which operations: ' + wpOps.length +
+                '/' + Object.keys(OP_BP).length);
+    chk('every operation whose blueprint gives it crew is a WORKPLACE (the snapshot had none of them)',
+        wpOps.length === Object.keys(OP_BP).length,
+        Object.keys(OP_BP).filter(o => !WP.includes(opsKeyOf(o))).join(','));
+    /* PARITY, swept, worst cell. An op that shipped with crew:0 beside a twin
+       that has crew turns this red — the untaught-op case. */
+    let worstWp = null;
+    for (const op of Object.keys(OP_BP)) {
+      const tw = twinOf(op); if (!tw) continue;
+      const a = WP.includes(opsKeyOf(op)), b = WP.includes(tw);
+      if (a !== b && !worstWp) worstWp = opsKeyOf(op) + '=' + a + ' vs twin ' + tw + '=' + b;
+    }
+    chk('…and an operation is a commute destination exactly when its standing twin is',
+        !worstWp, 'WORST CELL — ' + worstWp);
+    let worstDest = null;
+    for (const op of Object.keys(OP_BP)) {
+      const a = meas(opsKeyOf(op));
+      if (a.commuteDest === CONTROL.commuteDest && !worstDest)
+        worstDest = opsKeyOf(op) + ' ' + JSON.stringify(a) + ' — identical to the no-workplace fallback';
+    }
+    chk('…and the shipped agentEndpoints() really routes commuters to each one',
+        !worstDest, 'WORST CELL — ' + worstDest);
+    /* THE MEMO TRAP, the same one weatherTwinType()/isMoraleVenue() carry: an
+       answer computed before the ops exist must not be cached, or "operations
+       are not workplaces" becomes permanently true. */
+    const preG = buildGuards(BLD_PRE);
+    const preCount = preG.workplaceTypes().length;
+    chk('BEFORE: the pre-registration BUILDINGS yields a workplace set with NO operation in it',
+        preCount < WP.length && !preG.workplaceTypes().some(t => t.indexOf(PREFIX) === 0),
+        preCount + ' types vs ' + WP.length);
+
+    // ── 8. 🚢 THE CLASS BACKWARDS: A PRICE WITH NO PRODUCER ─────────────────
+    /* Sweep every building type in the game plus the anchor branch through the
+       shipped counter and collect which capacity kinds anything can actually
+       grant. `port` (8,800/day) and `airfreight` (2,100/day) are granted by
+       nothing, so node-city declares them unimplemented and this checks the
+       declaration against reality rather than trusting it. */
+    const reach = new Set();
+    const probes = Object.keys(BLD_POST).map(ty => ({ type: ty, lvl: 1 }))
+      .concat([{ type: 'anchor', lvl: 1, anchor: { node: { node_type: '__t' } } }]);
+    for (const p of probes) {
+      const fn = new Function('game', 'bldSite', 'opsKeyOf', 'NODE_TYPES', 'ECO_LOGISTICS_TILES',
+        'ECO_LOGISTICS_OPS', 'return (function ecoLogisticsCounts() ' + BODY + ')();');
+      const c = fn({ tiles: { '9,9': p } }, bldSite, opsKeyOf,
+                   { __t: { feeds: ['__roads__'] } }, LOG_TILES, LOG_OPS);
+      for (const k in c) if (c[k] > 0) reach.add(k);
+    }
+    console.log('   ↳ capacity kinds reachable from some tile: [' + [...reach].join(', ') +
+                ']  ·  declared unimplemented: [' + LOG_UNIMPL.join(', ') + ']');
+    const orphanCap = Object.keys(CAP).filter(k => !reach.has(k) && !LOG_UNIMPL.includes(k));
+    chk('🔴 every key of ECON.logistics.capacity is reachable from some tile, or is ' +
+        'explicitly declared unimplemented', orphanCap.length === 0,
+        orphanCap.map(k => k + ' priced at ' + CAP[k] + '/day and granted by nothing').join(', '));
+    chk('…and nothing REACHABLE is hiding on the unimplemented list (it cannot be used to ' +
+        'silence a live kind)', !LOG_UNIMPL.some(k => reach.has(k)),
+        LOG_UNIMPL.filter(k => reach.has(k)).join(','));
+    chk('…and the unimplemented list names only real capacity keys',
+        LOG_UNIMPL.every(k => k in CAP), LOG_UNIMPL.filter(k => !(k in CAP)).join(','));
+
+    // ── 9. 💥 A VALUE THAT NAMES NOTHING ────────────────────────────────────
+    /* ecoLogisticsCounts()'s own header requires every value of the two tables
+       to be a capacity kind, and NOTHING CHECKED IT. A typo ('railheed') makes
+       the count land on a key ECON does not price, so it contributes 0 — and
+       every comparison in §1–§4 stays green because both sides are equally
+       zero. That is the same failure mode as a test that samples three points. */
+    const badVal = Object.entries(LOG_TILES).concat(Object.entries(LOG_OPS_RAW))
+      .filter(([, v]) => !(v in CAP)).map(([k, v]) => k + ' → ' + v);
+    chk('🔴 every VALUE of ECO_LOGISTICS_TILES/ECO_LOGISTICS_OPS is a priced kind in ' +
+        'ECON.logistics.capacity', badVal.length === 0,
+        badVal.join(', ') + ' — priced kinds are [' + Object.keys(CAP).join(', ') + ']');
 
     if (fails) { bad++; console.log('\n=== ROUND 0f: ' + fails + ' FAILED ==='); }
     else console.log('\n=== ROUND 0f: ALL PASS ===');
@@ -2303,6 +2752,13 @@ const srcBlockAfter = (src, decl) => {
 
   /* 🧨 The injury: the shipped mapping, which had a premium and no cost. */
   if (SABOTAGE === 'disaster-premium') ECON.shock.cost.emergencyPer = 0;
+  /* 🧨 …and the round-2 injury, which re-commits the SELF-FUNDING BASIS. With the
+     austerity register at 0 the response is still billed and still paid in full,
+     and the Cinder it takes out of the treasury still comes back as the smaller
+     benefit cheques, cancelled convoys and unpaid haulage bills that the payout
+     basis nets off as "outgoings". The charge buys itself back and the owner ends
+     up ahead of where peace left him. It lights up §3 and nothing else. */
+  if (SABOTAGE === 'disaster-austerity') ECON.shock.cost.austerityMul = 0;
   /* 🧨 …and the second injury, which re-commits the OTHER shipped defect. The
      frozen-premium bug was, in effect, a sample budget that never ran out —
      a per-call meter re-issued on all 12,960 slices of the sweep is
@@ -2357,25 +2813,104 @@ const srcBlockAfter = (src, decl) => {
 
   // ── 2. THE PRICES MUST STILL MOVE ───────────────────────────────────────
   /* The fix must not be "delete the shock". A disaster is still a premium; what
-     changed is that it now costs something as well. */
-  const priceAfter = (shock) => {
-    Prices.reset(); Sim.reset('px'); HH.setPopulation(200); Sim.bootstrap();
+     changed is that it now costs something as well.
+
+     🔴 THIS ASSERTION USED TO PASS ON NOISE, IN THE MOST EMBARRASSING WAY
+        AVAILABLE. It drove a shipped probe city 30 days calm and 30 days at
+        1.6 and asserted `higher > 0`. The measurement behind that ✅ was: 19 of
+        22 goods IDENTICAL to the last significant figure, two LOWER, and the
+        whole assertion carried by coal moving ×1.0004. The cause is ordinary
+        and is in prices.js: `targetMul` builds the supply/demand term FIRST and
+        clamps the product into `ECON.price.minMul … maxMul` (0.35 … 4.0), and in
+        every seeded city about half the goods are already pinned at 4.0 and most
+        of the rest at 0.35 — a target that is outside the band by 3× does not
+        care that it was multiplied by 1.6. So the premium is absorbed by the
+        clamp and never reaches the printed price.
+     So the premium is now tested where it can actually be observed: a market
+     driven through Prices directly, with supply ≈ demand, healthy cover and
+     several sellers, so every target lands MID-BAND. Every good must move by the
+     shock factor, and the round asserts the FACTOR, not merely the direction.
+     ⚠ AND THE SATURATION IS PRINTED, not hidden, because it is the reason §3's
+       economics do not rest on this at all — see the census below. */
+  const SYN = ['bread', 'medicine', 'clothing', 'lumber', 'coal', 'flour', 'wheat', 'freshWater'];
+  const synMarket = (shock) => {
+    Prices.reset();
     for (let d = 0; d < 30; d++) {
-      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
-                         logisticsCounts: { warehouse: 3 }, shock });
+      for (let i = 0; i < SYN.length; i++) {
+        Prices.observe(SYN[i], { supply: 100 - i * 6, demand: 100, stock: 150, sellers: 3, imported: 0 });
+        Prices.step(SYN[i], 1, { unavailable: false, importPremium: 1, costIndex: 1, shock });
+      }
     }
-    const out = {};
-    for (const m of Prices.movers(400)) out[m.id] = m.price;
+    const out = {}; for (const id of SYN) out[id] = Prices.mulOf(id);
     return out;
   };
-  const pxCalm = priceAfter(1), pxShock = priceAfter(1.6);
-  let higher = 0, lower = 0, sample = '';
-  for (const id in pxCalm) {
-    if (!(id in pxShock)) continue;
-    if (pxShock[id] > pxCalm[id] * 1.000001) { higher++; if (!sample) sample = id + ' ' + pxCalm[id].toFixed(3) + ' → ' + pxShock[id].toFixed(3); }
-    else if (pxShock[id] < pxCalm[id] * 0.999999) lower++;
+  const SHOCK_PROBE = 1.6;
+  const synCalm = synMarket(1), synShock = synMarket(SHOCK_PROBE);
+  let synMoved = 0, synWorst = Infinity, synBest = 0, synInterior = 0;
+  for (const id of SYN) {
+    if (synCalm[id] > ECON.price.minMul * 1.001 && synShock[id] < ECON.price.maxMul * 0.999) synInterior++;
+    const r = synShock[id] / synCalm[id];
+    if (r > 1.000001) synMoved++;
+    synWorst = Math.min(synWorst, r); synBest = Math.max(synBest, r);
   }
-  chk('prices still move under a shock (' + higher + ' up, ' + lower + ' down)', higher > 0, sample || 'nothing moved');
+  chk('the probe market is NOT clamp-saturated (' + synInterior + '/' + SYN.length +
+      ' goods interior to ' + ECON.price.minMul + '…' + ECON.price.maxMul + ')',
+      synInterior === SYN.length, String(synInterior));
+  chk('every good moves by the shock factor there (' + synMoved + '/' + SYN.length +
+      ' up, ×' + synWorst.toFixed(4) + '…×' + synBest.toFixed(4) + ' against ×' + SHOCK_PROBE + ')',
+      synMoved === SYN.length && Math.abs(synWorst - SHOCK_PROBE) < 0.01 &&
+      Math.abs(synBest - SHOCK_PROBE) < 0.01,
+      synMoved + ' moved, worst ×' + synWorst);
+
+  /* 🔴 AND THE HONEST COROLLARY, MEASURED AND PRINTED RATHER THAN CLAIMED.
+     HOW LITTLE THE PREMIUM DOES IN A SHIPPED CITY: same city, same 240 days,
+     only the multiplier different, a PERMANENT 1.6 moves the tax take
+     22,631 → 22,624 🔥 (−0.03%) and household shopping 113,265 → 113,277 🔥
+     (+0.01%). In a clamp-saturated city it is very nearly inert, and the
+     disaster economics rest on the emergency response in sim.js step 9b.
+
+     ⚠ BUT IT IS NOT DECORATIVE, and the earlier draft of this note said it was.
+       DELETING `if (ctx.shock) mul *= ctx.shock;` FROM prices.js AND RUNNING THE
+       GATE TURNS TWO ECONOMIC ASSERTIONS RED, not merely the price one —
+       re-measured on the swept round: 4 richer cells, worst rho-6/pop120/240d
+       ×1.30/day0 at +6.15%, AND 5 monotonicity inversions, worst
+       rho-6/pop120/240d/day0 ×1.12 → 1,716 🔥 against ×1.30 → 1,864 🔥. So the
+       premium carries no weight in the large saturated cities and carries real
+       weight in the thin ones, which is the opposite of what the aggregate above
+       suggests on its own. Both measurements are true and neither is the whole
+       story; that is the reason both are written down.
+       ⚠ WHY DELETING A PRICE RISE MAKES THE PLAYER RICHER, since it reads
+         backwards: the premium is what the emergency charge is ultimately
+         collected out of. Remove it and the disaster still blocks exports, still
+         bills a response and still registers the austerity — but the tax uplift
+         that paid for all three is gone, so the cells where the counterweight was
+         only just ahead fall behind. The premium is not the profit; it is the
+         funding.
+     The saturation itself is a prices.js matter — the clamp absorbs a transient
+     premium built from a different cause than the supply/demand term — and
+     prices.js is outside this package. The census below is what a later package
+     has to move; until then, nothing in this round may be written as though the
+     premium carries the mechanic. */
+  const censusAfter = (shock) => {
+    Prices.reset(); Sim.reset('px'); HH.setPopulation(200); Sim.bootstrap();
+    for (let d = 0; d < 30; d++)
+      Sim.advance(DAY, { powerFactor: 1, waterFactor: 1, hasBank: true, infrastructure: 0.7,
+                         logisticsCounts: { warehouse: 3 }, shock });
+    const out = {}; for (const m of Prices.movers(400)) out[m.id] = m;
+    return out;
+  };
+  const cCalmPx = censusAfter(1), cShockPx = censusAfter(SHOCK_PROBE);
+  let pinned = 0, cityMoved = 0, cityFlat = 0, cityDown = 0, total = 0;
+  for (const id in cCalmPx) {
+    if (!(id in cShockPx)) continue;
+    total++;
+    if (cCalmPx[id].mul >= ECON.price.maxMul * 0.999 || cCalmPx[id].mul <= ECON.price.minMul * 1.001) pinned++;
+    const r = cShockPx[id].price / cCalmPx[id].price;
+    if (r > 1.000001) cityMoved++; else if (r < 0.999999) cityDown++; else cityFlat++;
+  }
+  console.log('    🏷 shipped-city census: ' + pinned + '/' + total + ' goods pinned at a price clamp; ' +
+              'under ×' + SHOCK_PROBE + ' only ' + cityMoved + ' moved up, ' + cityFlat +
+              ' were identical, ' + cityDown + ' fell — the clamp absorbs the premium here (see the note above).');
 
   // ── 3. THE ECONOMICS ────────────────────────────────────────────────────
   /* The realistic signal, reconstructed from the host's own constants rather
@@ -2387,8 +2922,8 @@ const srcBlockAfter = (src, decl) => {
   const raidSignal = d => (d % RAID_CYCLE_DAYS === RAID_CYCLE_DAYS - 1)
     ? 1 + ((Math.floor(d / RAID_CYCLE_DAYS) + 1) % SIEGE_EVERY === 0 ? ECON.shock.siegeGain : ECON.shock.raidGain)
     : 1;
-  const DAYS = 240, MATERIAL = 500;
-  const claim = (sig, pop, node, wh) => {
+  const MATERIAL = 500;
+  const claim = (sig, pop, node, wh, DAYS) => {
     Sim.reset(node); HH.setPopulation(pop); Sim.bootstrap();
     let claimed = 0, emergency = 0, shockedDays = 0;
     for (let d = 0; d < DAYS; d++) {
@@ -2400,27 +2935,208 @@ const srcBlockAfter = (src, decl) => {
     }
     return { claimed, emergency, shockedDays, audit: Sim.state().lastAudit };
   };
-  const CITIES = [['shock-probe', 200, 3], ['mu-12', 330, 3], ['rho-6', 45, 1]];
-  console.log('\n  🌩 CLAIMED CINDER over ' + DAYS + ' economic days — calm vs the real raid cadence\n');
-  for (const [node, pop, wh] of CITIES) {
-    const calm = claim(() => 1, pop, node, wh);
-    const raid = claim(raidSignal, pop, node, wh);
-    const delta = raid.claimed - calm.claimed;
-    const pct = (delta / Math.max(1, calm.claimed)) * 100;
-    console.log('    ' + (node + '/pop' + pop).padEnd(20) +
-                ' calm ' + String(calm.claimed).padStart(7) + ' 🔥   disasters ' + String(raid.claimed).padStart(7) +
-                ' 🔥   ' + (delta >= 0 ? '+' : '') + delta + ' (' + pct.toFixed(1) + '%)   ' +
-                'response bill ' + Math.round(raid.emergency).toLocaleString() + ' 🔥 over ' + raid.shockedDays + ' shocked days');
-    chk('  ' + node + ': the calm baseline is material (> ' + MATERIAL + ' 🔥)', calm.claimed > MATERIAL, String(calm.claimed));
-    chk('  ' + node + ': a disaster leaves the player POORER than calm weather', raid.claimed < calm.claimed,
-        'calm ' + calm.claimed + ' vs disasters ' + raid.claimed);
-    chk('  ' + node + ': the emergency response actually billed', raid.emergency > 0, String(raid.emergency));
-    chk('  ' + node + ': the closed-loop audit survived the disaster', !!(raid.audit && raid.audit.ok),
-        JSON.stringify(raid.audit));
+  /* 🔴 THIS USED TO BE THREE HARDCODED (node, population, warehouse) PROBES AND
+     THAT IS THE MOST EXPENSIVE MISTAKE IN THIS PHASE. "A disaster makes the
+     player poorer" is a PROPERTY; three points are not a test of a property.
+     A critic changed ONE axis — the same node, the same warehouse count, only
+     the population — and the sign flipped: rho-6 / warehouse 1 / population 120
+     over 1,200 days paid 2,868 🔥 calm and 3,783 🔥 (+31.9%) under raids, and
+     two further cells (shock-probe/45/1200d +24.5%, rho-6/45/1200d +7.4%) went
+     the same way, all with the response billed in full. So the round SWEEPS and
+     fails on the WORST CELL rather than on an average — an average would have
+     hidden all three of those behind the sixty that were fine.
+     ⚠ THE HORIZON AXIS IS NOT DECORATION. Every one of the three inverted cells
+       was at 1,200 days; at 240 days all three read comfortably negative. A
+       property tested at one horizon is a property tested at one point.
+
+     🔴 AND THE SAME MISTAKE WAS STILL IN HERE ONE AXIS FURTHER OUT. The grid
+     above sweeps the CITY and holds the SIGNAL fixed at one hardcoded raid
+     cadence, and a second critic did to the signal exactly what the first did to
+     the population: rho-6 / pop 120 / warehouse 1 over 600 days is −7.7% under
+     the shipped cadence and was +61.9% under a severity-0.30 pulse every six
+     days, with 3,244 🔥 billed. One stream is not a test of a property either.
+     So the signal is now a FIRST-CLASS AXIS: magnitude × cadence, crossed with
+     node × population × horizon, and the shipped raid cadence is just one more
+     column in it.
+
+     🔴 PLUS THE ASSERTION THE ROUND WAS ACTUALLY MISSING — MONOTONICITY.
+     "No cell ends richer" cannot catch a counterweight that runs BACKWARDS in
+     severity, and this one did: at rho-6/pop120, cadence 30, the owner's claim
+     went −30.6% at ×1.10 and +17.3% at ×1.12. A worse disaster paying better is
+     a broken mechanic even on a grid where every cell happens to be negative, so
+     the round now also asserts that at a fixed cell a strictly larger magnitude
+     never produces a strictly larger claim.
+
+     ⚠ IMMATERIAL CELLS ARE SKIPPED, NOT PASSED, and the count is printed. Some
+       of these cities are structurally insolvent (a few hundred Cinder across
+       hundreds of days), and ±30% of nothing is noise, not a finding — but a
+       sweep that quietly skipped everything would also be "green", so the round
+       asserts that most of the grid really was measured.
+     ⚠ THE BAR IS NOT RAISED TO MAKE THIS GREEN, and it would be easy to: every
+       surviving failure is one pathological city (rho-6/pop120 claims 633 🔥
+       where its own neighbours at pop 160 and 200 claim 14,776 🔥 and 15,421 🔥),
+       and a materiality bar stated per DAY instead of per RUN would drop it and
+       both critics' reproductions with it. That is moving the goalposts, so the
+       bar stays where it was and the residual is reported instead. */
+  const NODES = [['shock-probe', 3], ['mu-12', 3], ['rho-6', 1]];
+  const POPS = [45, 120, 160, 200, 260, 330, 400];
+  const HORIZONS = [240, 600, 1200];
+  /* THE SIGNAL AXIS. Magnitudes span the host's own range — `raidGain` 0.12 and
+     `siegeGain` 0.30 sit inside it and `shock.max` 1.60 is the ceiling — and the
+     cadences span "denser than the host can produce" (3 days) to "rarer than a
+     session" (60 days).
+     🔴 `cad: 0` IS A CONSTANT SIGNAL AND IT IS **NOT** A PERMANENT SHOCK. It is
+     labelled `day0` because that is what it delivers: `ECON.shock.cost.sampleDays`
+     (= 1) refills the sample meter ONLY on a call that is not shocked, so a
+     constant signal runs shocked on day 0 and calm for ever after — MEASURED, 1
+     shocked day out of 600 against 100 for the cadence-6 column. A genuinely
+     permanent premium is unreachable through advance() BY DESIGN; that is the
+     frozen-premium fix, and §4 is what tests it. The column is kept because "the
+     city is hit on the day it is founded" is a real case and the nastiest one in
+     the grid — not because it is permanent. Do not re-label it `perm`.
+
+     🔴 AND IT IS THE ONE COLUMN WITH A TOLERANCE, WHICH IS STATED HERE RATHER
+        THAN BURIED. A shock on day 0 lands while `bootstrap()`'s seeding is still
+        the whole of the city's history: it moves the price level the first firms
+        take root against, and that shifts the city's trajectory for ever. The
+        shift is TINY and it is REAL — the null control below measures the model's
+        own insensitivity at 0.000%, so this is not noise — but it is out of the
+        counterweight's reach by construction, because the counterweight is a
+        charge proportional to severity acting on the days the disaster lasts, and
+        this disaster lasts one day out of 1,200.
+        THE EVIDENCE THAT THE TOLERANCE IS NOT HIDING A TUNABLE DEFECT, all
+        measured on this grid:
+          · with the counterweight OFF (emergencyPer 0, austerityMul 0) this
+            column has 217 richer cells of 252; at the shipped tuning it has 2;
+          · those 2 are +0.05% and +0.11% over 1,200 days;
+          · NO coefficient reaches them. austerityMul was swept 1.0 → 8.0 and the
+            residual is still there at 8.0, a setting that removes 99% of the
+            owner's income from every probe city.
+        So the bound is 0.25%, and every defect this round exists for goes
+        straight through it: the shipped prices-only mapping, the receipts basis
+        (+31.9%), the self-funding surplus basis (+61.9%), the blockade subsidy
+        (+17.3%) and the freight double-booking (+3.0%) are 12× to 250× the bound.
+        EVERY OTHER COLUMN IS ASSERTED AT ZERO TOLERANCE. */
+  const MAGS = [1.05, 1.12, 1.30, 1.60];
+  const CADS = [3, 6, 12, 30, 60, 0];
+  const FOUNDING_TOL = 0.0025;          // 0.25%, and only on the day0 column
+  /* …and monotonicity needs its own, larger, bound on that column, for a reason
+     worth writing down rather than averaging away: WHICH FIRMS TAKE ROOT IS A
+     DISCRETE FUNCTION OF THE SEEDED PRICE LEVEL. A ×1.30 founding day and a ×1.60
+     one do not seed the same city, so the claim 1,200 days later is not a smooth
+     function of the founding severity and no charge can make it one. Measured
+     worst inversion on this grid: rho-6/pop120/240d, ×1.30 → 1,655 🔥 against
+     ×1.60 → 1,680 🔥, which is 1.4% of that city's 1,756 🔥 calm baseline. The
+     bound is 2%, so the inversion this assertion was written for — rho-6/pop120
+     cadence 30, ×1.10 → −30.6% and ×1.12 → +17.3%, a 48-point swing — is 24×
+     over it and still fails. EVERY CADENCE COLUMN IS ASSERTED AT ZERO TOLERANCE;
+     this applies to the day0 column alone. */
+  const FOUNDING_MONO_TOL = 0.02;
+  const pulse = (mag, cad) => (cad === 0 ? () => mag : d => (d % cad === cad - 1 ? mag : 1));
+  const CELLS = NODES.length * POPS.length * HORIZONS.length;
+  console.log('\n  🌩 CLAIMED CINDER, SWEPT — ' + NODES.length + ' nodes × ' + POPS.length +
+              ' populations × ' + HORIZONS.length + ' horizons × (1 shipped raid cadence + ' +
+              MAGS.length + ' magnitudes × ' + CADS.length + ' cadences)\n');
+  const t0 = Date.now();
+  let worst = null, day0Worst = null, richer = [], measured = 0, skipped = 0, signals = 0,
+      billedEverywhere = true, auditOk = true, monoBad = [], day0Mono = 0;
+  for (const [node, wh] of NODES) {
+    for (const pop of POPS) {
+      for (const H of HORIZONS) {
+        const calm = claim(() => 1, pop, node, wh, H);
+        if (!(calm.claimed > MATERIAL)) { skipped++; continue; }
+        measured++;
+        /* Every signal this cell is driven with, the shipped raid cadence first
+           so it keeps its own identity in the printout. */
+        const runs = [{ label: 'raid-cadence', cad: null, mag: null, r: claim(raidSignal, pop, node, wh, H) }];
+        for (const cad of CADS) for (const mag of MAGS) {
+          runs.push({ label: '×' + mag + '/' + (cad ? 'cad' + cad : 'day0'), cad, mag,
+                      r: claim(pulse(mag, cad), pop, node, wh, H) });
+        }
+        for (const run of runs) {
+          signals++;
+          const pct = ((run.r.claimed - calm.claimed) / calm.claimed) * 100;
+          const cell = { where: node + '/pop' + pop + '/' + H + 'd  ' + run.label,
+                         calm: calm.claimed, raid: run.r.claimed, pct,
+                         bill: Math.round(run.r.emergency), day0: run.cad === 0 };
+          /* The tolerance is per COLUMN and it is 0 for all but the founding-day
+             one — see the note on CADS for the measurement that sets it. */
+          const allow = calm.claimed * (run.cad === 0 ? FOUNDING_TOL : 0);
+          if (run.cad === 0) { if (!day0Worst || pct > day0Worst.pct) day0Worst = cell; }
+          else if (!worst || pct > worst.pct) worst = cell;   // worst = closest to richer
+          if (run.r.claimed >= calm.claimed + allow) richer.push(cell);
+          if (!(run.r.emergency > 0)) billedEverywhere = false;
+          if (!(run.r.audit && run.r.audit.ok)) auditOk = false;
+        }
+        /* MONOTONE IN SEVERITY at each fixed cadence. MAGS is ascending, so the
+           claim must be non-increasing along it. Compared with a relative
+           tolerance so floating-point noise on a large claim is not a finding. */
+        for (const cad of CADS) {
+          const byMag = runs.filter(x => x.cad === cad).sort((a, b) => a.mag - b.mag);
+          for (let i = 1; i < byMag.length; i++) {
+            const lo = byMag[i - 1], hi = byMag[i];
+            /* Measured against the CALM baseline, not against the shocked claim:
+               the calm claim is the one quantity on this row that does not itself
+               move with severity, so it is the only stable denominator. */
+            const tol = cad === 0 ? calm.claimed * FOUNDING_MONO_TOL
+                                  : Math.max(1, Math.abs(lo.r.claimed) * 1e-6);
+            const over = hi.r.claimed - lo.r.claimed;
+            if (over > tol) {
+              monoBad.push(node + '/pop' + pop + '/' + H + 'd/' + (cad ? 'cad' + cad : 'day0') +
+                           ': ×' + lo.mag + ' → ' + Math.round(lo.r.claimed) + ' 🔥 but ×' +
+                           hi.mag + ' → ' + Math.round(hi.r.claimed) + ' 🔥 (+' +
+                           (over / calm.claimed * 100).toFixed(2) + '% of calm)');
+            } else if (cad === 0 && over > 0) {
+              day0Mono = Math.max(day0Mono, over / calm.claimed * 100);
+            }
+          }
+        }
+      }
+    }
   }
+  /* Sorted worst-first so a capped listing is a listing of the WORST cells and
+     not merely of the first ones the loops happened to reach. */
+  richer.sort((a, b) => b.pct - a.pct);
+  console.log('    measured ' + measured + ' of ' + CELLS + ' cities, skipped ' + skipped +
+              ' with an immaterial calm baseline (≤ ' + MATERIAL + ' 🔥); ' + signals +
+              ' signal runs in ' + ((Date.now() - t0) / 1000).toFixed(0) + ' s');
+  const showCell = (tag, c) => console.log('    ' + tag + ' ' + c.where.padEnd(40) +
+              ' calm ' + String(c.calm).padStart(7) + ' 🔥 → disasters ' +
+              String(c.raid).padStart(7) + ' 🔥   ' + (c.pct >= 0 ? '+' : '') +
+              c.pct.toFixed(2) + '%   response bill ' + c.bill.toLocaleString() + ' 🔥');
+  if (worst) showCell('WORST CELL         ', worst);
+  /* Printed EVERY run, pass or fail, because it is the one column carrying a
+     tolerance and a silent tolerance is how a 0.11% residual becomes a 3% one. */
+  if (day0Worst) showCell('WORST day0 (≤' + (FOUNDING_TOL * 100).toFixed(2) + '%)', day0Worst);
+  /* Capped, and the cap is why: an injured build reports over a thousand richer
+     cells (ECON_TEST_SABOTAGE=disaster-premium prints 1,133 of 1,550) and a wall
+     of them buries every other line in the round. The worst is printed above and
+     the full count is in the assertion, which is what a reader needs. */
+  const SHOW = 12;
+  for (const c of richer.slice(0, SHOW)) console.log('    ❌ RICHER   ' + c.where.padEnd(40) +
+              ' calm ' + c.calm + ' 🔥 → ' + c.raid + ' 🔥 (+' + c.pct.toFixed(2) +
+              '%) with ' + c.bill.toLocaleString() + ' 🔥 billed');
+  if (richer.length > SHOW) console.log('    …and ' + (richer.length - SHOW) + ' more richer cells');
+  for (const m of monoBad.slice(0, SHOW)) console.log('    ❌ BACKWARDS ' + m);
+  if (monoBad.length > SHOW) console.log('    …and ' + (monoBad.length - SHOW) + ' more inversions');
+  chk('the sweep really measured the grid (' + measured + ' of ' + CELLS + ' cities material, ' +
+      signals + ' signals driven)',
+      measured >= CELLS * 0.75 && signals >= measured * (1 + MAGS.length * CADS.length),
+      measured + '/' + signals);
+  chk('NO configuration leaves the player richer (zero tolerance off the day0 ' +
+      'column) — worst ' + (worst ? worst.where + ' at ' + worst.pct.toFixed(2) + '%' : 'none') +
+      ', worst day0 ' + (day0Worst ? day0Worst.pct.toFixed(2) + '%' : 'none'),
+      richer.length === 0, richer.length + ' cells, worst 12: ' +
+      richer.slice(0, 12).map(c => c.where + ' +' + c.pct.toFixed(2) + '%').join(' | '));
+  chk('the counterweight is MONOTONE in severity at every fixed cadence ' +
+      '(zero tolerance off the day0 column; worst tolerated day0 backstep ' +
+      day0Mono.toFixed(2) + '% of calm, bound ' + (FOUNDING_MONO_TOL * 100).toFixed(0) + '%)',
+      monoBad.length === 0, monoBad.length + ' inversions, first: ' + (monoBad[0] || ''));
+  chk('the emergency response billed in every measured cell', billedEverywhere);
+  chk('the closed-loop audit survived every cell of the sweep', auditOk);
   /* Calm weather must be EXACTLY the old economy: every cost term is keyed on
      `shock − 1`, so at shock 1 nothing in this feature may execute. */
-  const calmA = claim(() => 1, 200, 'shock-probe', 3);
+  const calmA = claim(() => 1, 200, 'shock-probe', 3, 240);
   chk('a calm city is bit-identical and never touches the disaster path',
       calmA.emergency === 0, String(calmA.emergency));
 
@@ -2713,7 +3429,7 @@ const srcBlockAfter = (src, decl) => {
        sample, it is an anecdote. The closure property is the one that needs
        calm to be observable at all, so §5 runs long enough to see it happen
        repeatedly rather than tuning the weather until it does. */
-    const COMBO_DAYS = DAYS * 5;
+    const COMBO_DAYS = 1200;
     const SIG = combined(COMBO_DAYS);
     const shockedInSig = SIG.filter(s => s > 1).length;
     const driveCombined = (arr, node) => {
@@ -2792,6 +3508,245 @@ const srcBlockAfter = (src, decl) => {
 
   if (fails) { bad++; console.log('\n=== ROUND 0i: ' + fails + ' FAILED ==='); }
   else console.log('\n=== ROUND 0i: ALL PASS ===');
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0k — 💰 BASE-PRICE DRIFT: A RECIPE EDIT MAY NOT SILENTLY REPRICE THE
+              CONSUMER BASKET
+   ----------------------------------------------------------------------------
+   🔴 THE BUG THIS ROUND EXISTS FOR, WITH ITS NUMBER.
+   The card package re-rooted `packagingMaterial` from {cardboard 0.7, plastic
+   0.2} to {timber 0.8} so the Ouroboros chain could actually run. It could not
+   have been more clearly in scope, and it was correct. It also moved 19 of the
+   258 derived base prices, and ELEVEN of them have nothing to do with cards:
+
+     packagingMaterial 4.477→0.974 −78.2%   packagedFood −20.9%   snacks −19.8%
+     beverages −19.1%   frozenFood −13.4%   emergencyFood −13.2%
+     personalCareProducts −10.8%   processedMeat −8.3%   bottledWater −8.2%
+     cleaningProducts −5.6%   emergencySupplies −3.3%   medicine −2.0%
+     pharmaceuticals −0.9%   advancedMedicine −0.4%
+
+   Nobody noticed. Every round was green, because every round asked whether the
+   chain PRODUCED, whether the audit BALANCED, whether the ids were REACHABLE —
+   and none of those questions can see a price. `packagingMaterial` is an input
+   to 13 goods; one recipe line rewrote what households pay for food, medicine
+   and cleaning products, and rewrote the denomination of the `value` figure
+   cardOutput() hands the Foundation Reserve. It reached the gate as a footnote
+   reading "packaging firms now trade".
+
+   THE CLASS OF BUG IS "A RECIPE EDIT REPRICES UNRELATED GOODS", AND IT WILL
+   RECUR, because prices.js derives every price from the graph — which is the
+   right design and is exactly why one coefficient reaches everywhere. The only
+   defence against a derived catalogue is a snapshot of the derived catalogue.
+
+   ── WHAT THIS ROUND ASSERTS ────────────────────────────────────────────────
+   BASELINE below is the WHOLE derived catalogue — every id deriveBase() knows,
+   not a watchlist, because a watchlist only ever contains the ids somebody
+   already thought of, and the eleven goods above were precisely the ids nobody
+   thought of. Any id moving more than DRIFT_TOL, appearing, or disappearing is
+   a RED that names it. Base prices are a pure function of ECON and RECIPES with
+   no clock, no RNG and no node in them, so this is exactly reproducible and the
+   tolerance can be tight.
+
+   ⚠ GOING RED HERE IS NOT "YOU BROKE SOMETHING". It is "you changed prices, say
+     so". Re-baseline in the SAME commit that moves them, and put the numbers in
+     the commit message. That is the entire deliverable: the number changing is
+     fine, the number changing in silence is what cost a package.
+
+   ⚠ WHY THIS IS NOT A RUBBER STAMP, PROVEN ON EVERY RUN. A snapshot test that
+     is never exercised rots into an assertion that passes because nothing
+     called it. §2 below therefore re-runs the detector against the ACTUAL
+     pre-card-package recipe and requires it to fire and to name
+     `packagingMaterial` plus the consumer goods. So this round demonstrates,
+     every time it runs, that it would have caught the change that created it.
+     (That is deliberately not a `dark-cards`-style env switch: the historical
+     case is the one case worth checking unconditionally.)
+
+   Prove the round can fail from the outside too: ECON_TEST_SABOTAGE=price-drift
+   nudges the `packagingMaterial` timber coefficient 0.8→1.9 — the "soften the
+   fall" retune that was considered and rejected — and §1 must go red naming it.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0k-base-price-drift ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  const R = await import('../../public/src/economy/recipes.js');
+  const P = await import('../../public/src/economy/prices.js');
+
+  /* The baseline, packed several ids to a row purely so 258 numbers stay
+     reviewable in a diff. 8 significant figures — deriveBase() is deterministic,
+     so anything looser would let a real move hide inside the rounding. */
+  const BASELINE_ROWS = [
+  'acids:9.70038 adhesives:6.3074081 advancedAlloys:32.687785 advancedBatteries:27.348391',
+  'advancedMedicine:93.882588 advancedMicrochips:121.45881 advancedSensors:78.387204',
+  'aerospaceAluminum:43.973653 agriculturalMachinery:25.463368 aluminum:6.8920429',
+  'aluminumOre:2.0228571 animalFeed:0.91375884 anomalousEnergy:219.14286',
+  'anomalousMatter:255.66667 anomalySensors:140.72752 appliances:22.029748',
+  'arcaneCrystal:292.19048 artificialIntelligenceHardware:216.62864 asphalt:1.5697984',
+  'automationSystems:117.67078 aviationFuel:5.6777831 batteries:12.496193 beverages:2.1041269',
+  'biomass:0.55310685 books:11.738103 boosterPacks:7.6536281 bottledWater:2.3080658',
+  'bread:1.812369 brick:1.2361633 buses:121.42305 cannedFood:2.9304904 cardBoxes:47.516575',
+  'cardStock:3.1244433 cardboard:2.3419063 cars:73.233381 cement:1.7912744 cheese:15.493517',
+  'chemicalFeedstock:6.3513932 circuitBoards:20.344229 classifiedTechnology:260.45006',
+  'clay:0.4956 cleaningChemicals:8.2873659 cleaningProducts:8.4066824 clothing:6.7391939',
+  'coal:1.2872727 cobalt:9.44 collectorPacks:27.643281 commercialWaste:0.0375',
+  'communicationComponents:21.343569 communicationDevices:37.661254',
+  'communicationEquipment:39.936347 compositeMaterials:13.738718 compost:0.2655',
+  'computerComponents:49.967544 computers:82.456878 concrete:2.1236238',
+  'constructionComponents:10.084747 constructionEquipment:43.398836',
+  'constructionGlass:4.2179363 containmentEquipment:294.7911 containmentMaterials:75.594533',
+  'cookingOil:1.6896892 copper:6.5221682 copperOre:2.1784615 copperWire:9.2099571',
+  'corn:0.52168421 cotton:0.90109091 crudeOil:1.5308108 dairy:4.6434556',
+  'dataStorageHardware:84.067089 deliveryVehicles:78.939968 diagnosticEquipment:97.293603',
+  'diesel:3.6174495 dimensionalMaterial:438.28571 displays:31.072665 droneComponents:72.232696',
+  'eggs:1.6729544 electricVehicles:122.03991 electricalComponents:9.8613182 electricity:0.25',
+  'electronicComponents:16.709527 electronicWaste:0.0375 emergencyEquipment:29.949767',
+  'emergencyFood:4.3821729 emergencySupplies:8.9645 engines:20.21532 fabric:4.3908501',
+  'factoryEquipment:56.305207 fertilizer:5.4768835 fiberOpticCable:11.813466 flour:1.110262',
+  'freightVehicles:122.36547 freshFish:1.0325 freshWater:0.54575 frozenFood:3.2111626',
+  'fruit:0.826 furniture:8.1092477 furnitureComponents:4.3685868 gasoline:3.8039851',
+  'generators:19.871934 glass:2.2793239 goldOre:12.586667 gravel:0.38123077',
+  'hazardousMaterialEquipment:99.678009 hazardousWaste:0.0375 heavyMachinery:40.352319',
+  'herbs:1.77 holographicChemicals:35.492001 holographicChips:117.29301',
+  'holographicComponents:65.516705 holographicFoil:42.232737 holographicProjectors:171.04253',
+  'householdGoods:9.1321553 hydrogen:3.328898 industrialChemicals:8.6128014',
+  'industrialFuel:3.7663208 industrialGas:2.9236515 industrialMachinery:25.425414',
+  'industrialRobots:187.86378 industrialVehicles:64.509265 industrialWaste:0.0375',
+  'industrialWater:0.413 inkChemicals:10.927511 insulation:7.7057634 ironOre:1.77',
+  'leather:3.6591235 limestone:0.53869565 lithium:6.2933333 livestock:6.1641174',
+  'lumber:1.4203267 luxuryGoods:12.389771 machineParts:11.652847 maintenanceParts:15.394149',
+  'meat:3.7511366 medicalChemicals:14.003373 medicalEquipment:27.77018',
+  'medicalSupplies:9.0690974 medicalWaste:0.0375 medicine:16.288482 metalAlloys:10.174337',
+  'metalComponents:9.4131702 microchips:77.135205 miningEquipment:46.59934',
+  'mythicEssence:191.75 mythicResidue:122.72 naturalGas:1.3814634 naturalGasFuel:2.6110522',
+  'networkingEquipment:66.186754 nickelOre:3.776 nuclearFuel:67.831038',
+  'officeSupplies:7.6524872 opticalComponents:12.568518 organicWaste:0.0375',
+  'packagedFood:2.7229497 packagingMaterial:0.97428667 paint:8.2623044 paper:5.957267',
+  'personalCareProducts:4.1167307 petrochemicals:4.3801518 pharmaceuticals:46.122885',
+  'pigIron:4.8655528 plantFiber:0.76246154 plastic:9.3987366 plasticFeedstock:6.5214581',
+  'platinumOre:22.656 plumbingComponents:6.641336 plywood:2.3325514 potatoes:0.45054545',
+  'poultry:3.1887602 prefabricatedComponents:12.364236 premiumPaper:7.1042187',
+  'preparedMeals:2.4493443 printedCards:6.6146853 printingInk:13.771023',
+  'processedMeat:4.5851538 processors:158.40091 protectiveCoating:8.0584548',
+  'protectiveEquipment:15.545745 pumps:14.369309 quantumComponents:117.60093 quartz:1.4576471',
+  'rareEarthMinerals:35.4 rareMinerals:30.975 rawMilk:2.9221055 rawWater:0.25',
+  'realityFragments:681.77778 realityMatter:383.5 realityStabilizationComponents:203.97022',
+  'reclaimedIndustrialMaterials:3.6164379 reclaimedWater:0.25 recycledElectronics:3.3774909',
+  'recycledGlass:0.441025 recycledMetal:0.53395 recycledPaper:0.38055 recycledPlastic:0.48675',
+  'reinforcedConcrete:4.7111748 reinforcedContainmentMaterials:177.97682',
+  'relayComponents:55.224305 researchChemicals:25.718649 researchEquipment:157.79398',
+  'residentialWaste:0.0375 restaurantSupplies:3.2942137 rice:0.6195 robotics:103.78761',
+  'rubber:6.8652713 sand:0.413 satelliteComponents:105.55551 satelliteSystems:325.27674',
+  'seafood:1.18 seaweed:0.85448276 secureElectronics:113.60715 securityEquipment:33.797785',
+  'seeds:1.239 semiconductorChemicals:25.254676 semiconductorMaterials:62.055083',
+  'sensors:36.152988 servers:296.8389 sheetMetal:10.501739 shellfish:1.9061538 shoes:5.3817367',
+  'signalProcessors:135.59598 silica:0.63538462 siliconWafers:30.297312 silverOre:8.0914286',
+  'smartphones:60.858049 snacks:1.6781959 solvents:8.0852792 soulEnergy:322.94737',
+  'soybeans:0.6608 specializedMedicalSupplies:89.51962 specialtyPolymers:12.468306',
+  'sportingGoods:8.5685637 starterDecks:14.537948 steel:8.0434746 stone:0.51625',
+  'structuralSteel:12.383997 sugar:1.7457198 sugarCrops:0.58305882 surgicalSupplies:16.446494',
+  'surveillanceEquipment:79.704619 syntheticFiber:7.3362476 timber:0.68833333 tires:9.7773829',
+  'titanium:7.08 tournamentProducts:45.828122 toys:7.5384717 trucks:108.10154',
+  'tungsten:10.298182 turbines:37.939574 vegetables:0.708 vehicleParts:15.970069',
+  'wastewater:0.0375 wheat:0.55066667 wiring:13.437501 wood:0.72882353 woodPanels:2.1337304',
+  'woodPulp:2.6176727 zincOre:3.3317647',
+  ];
+  const BASELINE = {};
+  for (const row of BASELINE_ROWS) for (const cell of row.split(' ')) {
+    const c = cell.lastIndexOf(':');
+    if (c > 0) BASELINE[cell.slice(0, c)] = Number(cell.slice(c + 1));
+  }
+
+  /* 0.25%. Tight because there is nothing stochastic to absorb: the same ECON
+     and the same RECIPES give the same doubles on every run. Loose enough that
+     a pure reflow of the relaxation (SWEEPS, ordering) does not cry wolf.
+     `medicine` moved 2.0% and `pharmaceuticals` 0.9% in the change above, so a
+     1% tolerance would have MISSED pharmaceuticals — which is the argument
+     against picking a comfortable number. */
+  const DRIFT_TOL = 0.0025;
+
+  /* Returns the whole delta, sorted worst-first. Never an average and never a
+     count on its own: the point of this round is to NAME the goods that moved,
+     because "3 prices drifted" tells a reviewer nothing about whether dinner
+     got cheaper. */
+  function drift(actual) {
+    const moved = [], added = [], gone = [];
+    for (const id in BASELINE) {
+      if (!(id in actual)) { gone.push(id); continue; }
+      const d = (actual[id] - BASELINE[id]) / Math.max(1e-12, BASELINE[id]);
+      if (Math.abs(d) > DRIFT_TOL) moved.push({ id, from: BASELINE[id], to: actual[id], pct: d * 100 });
+    }
+    for (const id in actual) if (!(id in BASELINE)) added.push(id);
+    moved.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+    return { moved, added, gone };
+  }
+  const cell = m => m.id + ' ' + m.from.toPrecision(6) + '→' + m.to.toPrecision(6) +
+                    ' (' + (m.pct >= 0 ? '+' : '') + m.pct.toFixed(2) + '%)';
+  function show(d, cap) {
+    if (d.moved.length) {
+      console.log('     WORST CELL: ' + cell(d.moved[0]));
+      for (const m of d.moved.slice(0, cap || 24)) console.log('       ' + cell(m));
+      if (d.moved.length > (cap || 24)) console.log('       … and ' + (d.moved.length - (cap || 24)) + ' more');
+    }
+    if (d.added.length) console.log('     NEW ids not in the baseline: ' + d.added.join(', '));
+    if (d.gone.length)  console.log('     ids that VANISHED from the catalogue: ' + d.gone.join(', '));
+  }
+
+  if (SABOTAGE === 'price-drift') {
+    R.RECIPES.packagingMaterial.in.timber = 1.9;
+    console.log('   🧨 packagingMaterial timber 0.8 → 1.9 (the rejected "soften the fall" retune)');
+  }
+
+  // ── §1 THE TRIPWIRE ──────────────────────────────────────────────────────
+  const now = P.deriveBase(true);
+  const nIds = Object.keys(now).length, nBase = Object.keys(BASELINE).length;
+  chk('the derived catalogue is still ' + nBase + ' ids wide', nIds === nBase,
+      'deriveBase() now returns ' + nIds);
+  const d1 = drift(now);
+  if (!chk('NO base price has drifted past ' + (DRIFT_TOL * 100).toFixed(2) + '% — ' +
+           'a recipe edit did not silently reprice the catalogue',
+           d1.moved.length === 0 && d1.added.length === 0 && d1.gone.length === 0,
+           d1.moved.length + ' moved, ' + d1.added.length + ' new, ' + d1.gone.length + ' gone')) {
+    show(d1);
+    console.log('     → If you MEANT this, re-baseline BASELINE_ROWS in the same commit');
+    console.log('       (regenerate: for each id, `id:` + Number(deriveBase(true)[id].toPrecision(8)))');
+    console.log('       and put these percentages in the commit message.');
+  }
+
+  // ── §2 THE DETECTOR MUST BE ABLE TO FIRE, ON THE HISTORICAL CASE ──────────
+  /* Swap in the EXACT pre-card-package recipe and require the detector to
+     catch it AND to name the goods a reader would care about. If this ever goes
+     green, §1's green means nothing. */
+  const SHIPPED = R.RECIPES.packagingMaterial;
+  R.RECIPES.packagingMaterial = { in: { cardboard: 0.7, plastic: 0.2 },
+                                  labor: 0.07, power: 0.12, ind: 'packaging' };
+  const d2 = drift(P.deriveBase(true));
+  const named = d2.moved.map(m => m.id);
+  const MUST_NAME = ['packagingMaterial', 'packagedFood', 'snacks', 'beverages', 'frozenFood',
+                     'emergencyFood', 'personalCareProducts', 'processedMeat', 'bottledWater',
+                     'cleaningProducts', 'medicine', 'pharmaceuticals'];
+  const missed = MUST_NAME.filter(id => !named.includes(id));
+  chk('self-test — reverting packagingMaterial to {cardboard,plastic} FIRES this round',
+      d2.moved.length > 0, 'the detector saw nothing; §1 is a rubber stamp');
+  chk('self-test — and it names all ' + MUST_NAME.length + ' goods the original change moved',
+      missed.length === 0, 'missed: ' + missed.join(', '));
+  if (d2.moved.length) {
+    console.log('   ↳ this is what the gate WOULD have printed had this round existed:');
+    show(d2, 14);
+  }
+  R.RECIPES.packagingMaterial = SHIPPED;
+  if (SABOTAGE === 'price-drift') R.RECIPES.packagingMaterial.in.timber = 0.8;
+  /* Recompute so nothing after this round reads a poisoned `_base`. deriveBase
+     memoises, and §2 left the cache holding the counterfactual catalogue. */
+  P.deriveBase(true);
+
+  if (fails) { bad++; console.log('\n=== ROUND 0k: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0k: ALL PASS ===');
 }
 
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {

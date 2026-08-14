@@ -3078,8 +3078,25 @@ const AGENTS = {
   dwell: [1.5, 4.5],               // seconds paused at a destination
   nightCivFactor: 0.35,            // fewer pedestrians after dark
 };
-// Buildings trucks deliver to/from; police numbers scale with these:
+/* Buildings trucks deliver to/from; police numbers scale with these.
+   🔴 SEVENTH INSTANCE OF THE BARE-STRING TILE-TYPE BUG CLASS, AND THE FIRST IN A
+      SHAPE THE SWEEP COULD NOT SEE. Every earlier hunt grepped `t.type === '…'`.
+      This is a LIST, and the comparison is `TRUCK_STOPS.includes(t.type)` — the
+      grep prints nothing and the bug is identical. Three of the six entries are
+      derived twins (gasstation↔op_gas, scrapmine↔op_mining, fuelrig↔op_oil, all
+      three already listed in WEATHER_TWIN_OPS and re-derived by gate round 0h),
+      so measured on the live page BEFORE this fix: a city whose only industry was
+      operations produced ZERO truck traffic and no truck endpoints — the three
+      ops scored `false` where their standing twins scored `true`.
+   ⚠ THE LIST STAYS A LIST OF STANDING TILES. Writing 'op_gas' into it would be
+     the SAME bug one OPS_PREFIX change later (OP_ECO_MAP's header makes this
+     point); the twin is resolved at CALL time through twinTileType(), whose keys
+     come from opsKeyOf(). Read it through isTruckStop(), never directly — gate
+     round 0f asserts that no raw `.includes(t.type)` on this list survives. */
 const TRUCK_STOPS = ['depot', 'gasstation', 'forge', 'munitions', 'scrapmine', 'fuelrig'];
+/* Declared here beside the list it guards rather than beside twinTileType(),
+   because the thing a reader needs to not get wrong is THIS list. */
+function isTruckStop(ty) { return TRUCK_STOPS.includes(twinTileType(ty)); }
 /* 🚓 Where patrol cars come from. A police station is the obvious source and
    the only one of the three whose purpose is patrolling. */
 const POLICE_SOURCES = ['police', 'tower', 'barracks'];
@@ -3943,6 +3960,22 @@ function weatherTwinType(type) {
   }
   return (typeof type === 'string' && _wxTwinTypes[type]) || type;
 }
+/* ↔ THE SAME RESOLUTION, FOR GUARDS THAT HAVE NOTHING TO DO WITH WEATHER.
+   WEATHER_TWIN_OPS was named for its first caller, but what it actually states
+   is the op→standing-tile INDUSTRY twin — which is exactly the question a truck
+   route, a commute destination and an inspector row all ask. So there is ONE
+   table and ONE resolver, and this is a one-line alias over it rather than a
+   second table: two tables of the same claim is how this bug class keeps
+   shipping. The call sites read `twinTileType(t.type) === 'shop'`, which says
+   what it means; `weatherTwinType(t.type)` there would not.
+   ⚠ NOT merged INTO weatherTwinType, and not the other way round: gate round 0h
+     lifts `function weatherTwinType(type)`'s body in isolation with only
+     WEATHER/wx/BUILDINGS/opsKeyOf/WEATHER_TWIN_OPS in scope, so that body must
+     stay free of any dependency this file adds later.
+   ⚠ A function declaration, not a const arrow: isTruckStop() sits ~850 lines
+     ABOVE this point and would otherwise reach a temporal dead zone if anything
+     ever calls it during module evaluation. */
+function twinTileType(type) { return weatherTwinType(type); }
 /* Does weather move this building at all? ONE predicate, so the inspector's
    "Open-air, current weather" row cannot disagree with the number weatherMult()
    charged — the identical reason isMoraleVenue()/moraleVenueMult() were pulled
@@ -17559,6 +17592,20 @@ function ecoDailyClose(snap) {
       bug happening a fourth time. */
 const ECO_LOGISTICS_TILES = { warehouse: 'warehouse', depot: 'depot', railyard: 'railhead' };
 const ECO_LOGISTICS_OPS   = { warehouse: 'warehouse' };
+/* 🚢 THE SAME CLASS RUNNING BACKWARDS: A PRICE WITH NO PRODUCER.
+   ECON.logistics.capacity prices six kinds. Four are reachable — warehouse and
+   depot and railhead from the table above, `terminal` from the anchor branch
+   below — and `port` (8,800/day) and `airfreight` (2,100/day) are reachable from
+   NOTHING: no BUILDINGS row, no tile type, no anchor property anywhere in the
+   city grants either. They are the largest and third-largest numbers in the
+   table and a reader pricing a logistics build would reasonably assume both are
+   live. Rather than invent a building or delete a tuned number (tuning.js is not
+   this package's to edit), they are DECLARED UNIMPLEMENTED here, next to the
+   code that would implement them, and gate round 0f asserts that every key of
+   ECON.logistics.capacity is either reachable from some tile or named on this
+   line. Adding a `port:` row above and forgetting this list, or the reverse,
+   turns the gate red. */
+const ECO_LOGISTICS_UNIMPLEMENTED = ['port', 'airfreight'];
 
 function ecoLogisticsCounts() {
   /* `terminal` is the only one of the four with no table row — it is an ANCHOR
@@ -17669,8 +17716,12 @@ const ECO_BUILDING_MAP = {
      `printedCards`, and firms.js `produce()` takes the MINIMUM over a recipe's
      inputs — so for the whole life of this feature the shop founded a healthy
      firm reporting `lastBottleneck: printedCards` and printed zero, forever.
-     Deleting either row below puts it straight back into that state; round 0e
-     of tools/economy-tests/run.mjs is the tripwire that says so. */
+     Deleting either row below puts it straight back into that state; round 0j
+     of tools/economy-tests/run.mjs is the tripwire that says so. (This said
+     "round 0e" until FIX-D2. 0e is the founding-mint round and it EXISTS, so a
+     reader following the old pointer landed on a real, green, unrelated test
+     and concluded the card line was covered. A wrong cross-reference to a round
+     that does not exist is a typo; one to a round that does is a trap.) */
   shop:        { out: ['boosterPacks'],       ind: 'cardShop' },
   papermill:   { out: ['cardStock'],          ind: 'paperMill' },
   printworks:  { out: ['printedCards'],       ind: 'cardPrinter' },
@@ -19645,7 +19696,12 @@ function insSystems(t, x, z) {
     const e = game.expedition;
     rows.push(insFac('🚪 Expedition', e ? 'out — back in ' + Math.max(0, Math.ceil(e.until - performance.now() / 1000)) + 's' : 'ready'));
   }
-  if (t.type === 'arena') rows.push(insFac('⚔️ Duels', 'income scales with morale ' + Math.round(wellbeing.morale)));
+  /* twinTileType, not `t.type === 'arena'`: op_dojo took the morale multiplier
+     from isMoraleVenue() in the same round the venue family was fixed, but this
+     row — in the SAME panel — kept the bare comparison, so a Dojo was charged the
+     morale term and never told it was. The row and the multiplier must agree;
+     that is the whole reason insFactors() exists. */
+  if (twinTileType(t.type) === 'arena') rows.push(insFac('⚔️ Duels', 'income scales with morale ' + Math.round(wellbeing.morale)));
   if (!rows.length) return '';
   return insCardHtml('Systems', '', rows.join(''));
 }
@@ -20245,13 +20301,21 @@ function openInspect(k) {
           } else toast('Could not lease — player not found.', 'bad');
         }
       };
-    } else if (t.type === 'arena') {
+    /* twinTileType, not a bare `t.type`, for both of these — op_dojo and
+       op_cardshop are industry twins of arena and shop and got NO action button
+       at all (measured live: `btn-action` stayed display:none on both, while the
+       standing twins showed one). Note where they land: the standing arena and
+       shop both carry `def.sockets`, so THEY take the socket branch above and
+       these two branches are only ever reached by their socket-less op twins.
+       That is pre-existing and is not changed here — what is fixed is a panel
+       with no action at all on a 150,000 🔥 licence. */
+    } else if (twinTileType(t.type) === 'arena') {
       act.style.display = 'block'; act.textContent = '⚔️ Queue for a Duel';
       act.onclick = async () => {
         const ok = await MythicCityBridge.queueDuel();
         toast(ok ? '⚔️ Entering matchmaking — the crowd roars!' : '⚔️ Matchmaking is only available inside the full game (bridge: ' + MythicCityBridge.mode + ').', ok ? 'good' : undefined);
       };
-    } else if (t.type === 'shop') {
+    } else if (twinTileType(t.type) === 'shop') {
       act.style.display = 'block'; act.textContent = '🛒 Open Marketplace';
       act.onclick = async () => {
         const ok = await MythicCityBridge.openMarket();
@@ -20549,17 +20613,24 @@ function allRoadKeys() {
   for (const k in game.tiles) if (game.tiles[k].type === 'road') out.push(k);
   return out;
 }
-function roadsAdjacentToTypes(types) {
+/* ⚠ TAKES A PREDICATE, and roadsAdjacentToTypes() is the thin list wrapper over
+     it. A list argument is exactly the shape that hid instance #7 (TRUCK_STOPS,
+     see its header): `types.includes(t.type)` compares a bare tile type and so
+     misses every `op_` twin, and no `t.type === '…'` grep prints it. Callers
+     whose set has op twins pass a resolver — `roadsAdjacentTo(isTruckStop)` —
+     while a caller with no twins keeps the list form. */
+function roadsAdjacentTo(match) {
   const out = new Set();
   for (const [k, t] of Object.entries(game.tiles)) {
     // 🏗 Nobody commutes to a site. This is what keeps agentEndpoints() —
     //    homes, workplaces, truck stops — from routing traffic to a hole.
-    if (!types.includes(t.type) || bldSite(t)) continue;
+    if (!match(t.type) || bldSite(t)) continue;
     const [x, z] = k.split(',').map(Number);
     for (const [dx, dz] of NEI) if (isRoad(x + dx, z + dz)) out.add(key(x + dx, z + dz));
   }
   return [...out];
 }
+function roadsAdjacentToTypes(types) { return roadsAdjacentTo(ty => types.includes(ty)); }
 function roadsAdjacentToAnchors() {
   const out = new Set();
   for (const a of game.anchors) for (const [dx, dz] of NEI) if (isRoad(a.x + dx, a.z + dz)) out.add(key(a.x + dx, a.z + dz));
@@ -20586,7 +20657,43 @@ function bfsPath(startK, goalK) {
   return null;
 }
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-const WORKPLACES = Object.keys(BUILDINGS).filter(t => BUILDINGS[t].crew || BUILDINGS[t].gen || BUILDINGS[t].defense);
+/* 🔴 EIGHTH INSTANCE OF THE BUG CLASS, IN A SHAPE NOBODY HAD NAMED: A LOAD-ORDER
+      SNAPSHOT. This was
+        const WORKPLACES = Object.keys(BUILDINGS).filter(t => …crew || …gen || …defense);
+      — a top-level `const`, evaluated ~3,100 lines ABOVE the loop that iterates
+      OPS_TYPES, which is what puts every `op_` row into
+      BUILDINGS. So it froze BUILDINGS while it still held only standing tiles and
+      NO OPERATION COULD EVER BE A COMMUTE DESTINATION. There is no bare string
+      here for the `t.type === '…'` sweep to find, and no list either: the defect
+      is purely WHEN the expression ran.
+      MEASURED off the shipped file before the fix: 45 types in the snapshot, 0 of
+      them `op_`; 60 types once the registration loop has run, and all 15 op types
+      satisfy the very predicate the filter uses. A city built entirely of
+      operations sent its citizens to `roads` — the "no workplaces at all"
+      fallback — and the Needs panel told them so.
+   ⚠ THE FIX IS THE TIMING, NOT THE PREDICATE. Same filter, evaluated on demand.
+     Memoised only once the ops really are registered, and the memo is NOT written
+     on the early path — caching "no operations exist yet" would make it
+     permanently true, which is the identical trap isMoraleVenue()/weatherTwinType()
+     document for their own TDZ fallbacks.
+   🚫 REJECTED: re-adding a top-level const below the registration loop. It would
+      work today and break the next time anything registers a building type (the
+      ops loop is not promised to be the last one). Gate round 0f now fails on ANY
+      top-level `Object.keys(BUILDINGS)` snapshot declared above that loop, which
+      is what stops the ninth instance. */
+let _workplaceTypes = null;
+function workplaceTypes() {
+  if (_workplaceTypes) return _workplaceTypes;
+  const list = Object.keys(BUILDINGS).filter(t => BUILDINGS[t].crew || BUILDINGS[t].gen || BUILDINGS[t].defense);
+  /* try/catch, not `typeof`: OPS_TYPES/opsKeyOf are `const` ~3,100 lines below
+     and `typeof` on a const in its TDZ THROWS rather than answering 'undefined'
+     — the same reason ecoHost().hasBank uses one. */
+  let registered = false;
+  try { registered = OPS_TYPES.length > 0 && OPS_TYPES.every(t => !!BUILDINGS[opsKeyOf(t)]); }
+  catch (e) { registered = false; }
+  if (registered) _workplaceTypes = list;
+  return list;
+}
 const worldOf = k => { const [x, z] = k.split(',').map(Number); return { x: x - HALF + .5, z: z - HALF + .5 }; };
 // ANY building can be visited (people go home, trucks deliver everywhere,
 // police check in) — anchors and roads excepted.
@@ -20610,7 +20717,7 @@ function agentEndpoints(kind, agent) {
   const roads = allRoadKeys();
   if (kind === 'civilian') {
     const home = roadsAdjacentToTypes(['housing']);
-    const work = roadsAdjacentToTypes(WORKPLACES);
+    const work = roadsAdjacentToTypes(workplaceTypes());
     let from = home.length ? home : roads;
     // commute: heading home after work, back to work after home
     let to = (agent && agent.phase === 'home') ? home : work;
@@ -20618,7 +20725,7 @@ function agentEndpoints(kind, agent) {
     return { from, to };
   }
   if (kind === 'truck') {
-    let stops = roadsAdjacentToTypes(TRUCK_STOPS).concat(roadsAdjacentToAnchors());
+    let stops = roadsAdjacentTo(isTruckStop).concat(roadsAdjacentToAnchors());
     if (stops.length < 2) stops = roads;
     return { from: stops, to: stops };
   }
@@ -20668,7 +20775,9 @@ function desiredAgentCounts() {
     // 🏗 A site generates no residents, no deliveries and no patrols.
     if (t.damaged || bldSite(t)) continue;
     if (t.type === 'housing') housing += t.lvl;
-    if (TRUCK_STOPS.includes(t.type)) truckSrc++;
+    // isTruckStop, NOT TRUCK_STOPS.includes — an Oil Company IS a truck source,
+    // and a raw list membership is how three of them were invisible here.
+    if (isTruckStop(t.type)) truckSrc++;
     if (POLICE_SOURCES.includes(t.type)) policeSrc++;
   }
   const severe = WEATHER[wx.type] && WEATHER[wx.type].severe;
@@ -27506,6 +27615,16 @@ function animate() {
        `bubbles` is the live list so a test can assert nodes are reclaimed. */
     bubbleTick: (dt) => bubbleTick(dt), bubbles: () => _bubbles,
     agents: () => agents, despawnAgent, manageAgents,
+    /* 🚚 THE AGENT GUARDS. TRUCK_STOPS / the workplace set / the twin resolver
+       are module-scope consts, so before this seam existed the ONLY way to check
+       whether an operation generated freight or received commuters was to watch
+       the road for a truck — and rAF is dead in the capture pane, so no truck
+       ever moves. These are the shipped functions, not copies. */
+    endpoints: (kind) => agentEndpoints(kind),
+    workplaces: () => workplaceTypes(),
+    truckStop: (ty) => isTruckStop(ty),
+    twinTile: (ty) => twinTileType(ty),
+    counts: () => desiredAgentCounts(),
     // 🎥 The render trio. `renderer.info.memory.geometries` is the only honest
     //    read on the tile/agent buffer leak, and the bubble overlay cannot be
     //    checked at all without the camera it projects through.

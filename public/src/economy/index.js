@@ -117,9 +117,9 @@ function mount(opts) {
      🔴 `hadState` ALONE IS ALSO SUFFICIENT, AND IT IS THE SECOND DOOR. If this
         module was handed ANY state at all then the city already exists,
         whatever the blob says about itself — which is the whole of the
-        `booted: false` defect: the save claimed it had never bootstrapped, and
-        sim.js `load()` believed it, AFTER `clampLoadedCinder()` had run. That
-        is fixed at source (sim.js now sets `S.booted = true` unconditionally in
+        `booted: false` defect: the save claimed it had never bootstrapped and
+        sim.js `load()` believed it. That is fixed at source (sim.js now sets
+        `S.booted = true` unconditionally in
         load()), but the two are deliberately independent: this one lives at the
         level that KNOWS whether a save was handed over, so a future edit to
         load() cannot silently reopen it. Reverting either one alone leaves the
@@ -200,26 +200,20 @@ function tick(dtMin, host) {
             if (res === false) back();
             else {
               lastPayoutAt = Date.now();
-              /* 💸 THE DELIVERY, TALLIED FOR LIFE — and this is the ONLY line in
-                 the codebase allowed to do it. `clampLoadedCinder()` §3 sizes
-                 the payoutOwed a save may claim as
-                     ceiling − totalCinder − payoutLifetime − importsLifetime
-                 so this tally is what CLOSES the headroom once the money has
-                 actually reached the player. Without it the loader read every
-                 city as having paid its owner nothing, ever, and re-granted the
-                 whole lifetime figure as fresh headroom on each load: one edited
-                 `payoutOwed` on an ordinary 200-day city delivered 5,997 →
-                 10,485 → 10,564 → … 🔥, once per page reload, 81,106 🔥 over
-                 eight, with `lastAudit.ok` true the entire time.
+              /* 💸 THE DELIVERY, CONFIRMED — and this is the ONLY line in the
+                 codebase allowed to say so. It retires `payoutInFlight` and adds
+                 to `payoutLifetime`; until it (or `back()`) runs, the money is
+                 parked in `payoutInFlight` and therefore SURVIVES A TAB CLOSE.
                  ⚠ IT IS DELIBERATELY NOT IN claimPayout(). Tallying the CLAIM
                    would count money a rejecting bridge hands straight back via
-                   refundPayout(), and because §3 subtracts this term the next
-                   reload would then confiscate exactly that refund. Claim and
-                   delivery are separate events; only the second one is real.
+                   refundPayout(), so a single Cinder would appear in two ledgers
+                   at once. Claim and delivery are separate events; only the
+                   second one is real.
                  Guarded by `gen` for the same reason `back()` is: a confirmation
                  that lands after a remount belongs to a city that no longer
-                 exists, and crediting it against the new one would tighten a
-                 stranger's ceiling. */
+                 exists. `mount()` calls `Sim.reset()`, which zeroes
+                 `payoutInFlight`, so an ungated call here would decrement a
+                 stranger's books. */
               if (gen === mountGen) Sim.notePayoutDelivered(owed);
             }
           })

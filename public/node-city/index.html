@@ -23590,24 +23590,41 @@ let _pendingEconomy = null;
    itself, so the gate was green over a wide-open hole. That is why this is
    derived HERE, in the one function that has the parsed save in scope, and
    handed to the one production `E.mount` call below.
-   ⚠ DEFAULT-FALSE IS THE NEW-CITY PATH AND IT MUST STAY THAT WAY: a genuinely
-     new player reaches `if (!j)` with `loadUnsafe` false, keeps this false, and
-     still receives their opening capital. Everything else — a lived save, an
-     unsafe read, unparseable JSON, a throw mid-load — sets it TRUE, because
-     "we do not know whether this city existed" must never mint. */
-let _pendingEstablished = false;
+
+   🔴 IT IS INITIALISED TO THE REFUSING VALUE, AND THE OPPOSITE SHIPPED.
+      It used to start `false` — i.e. GRANT THE TRANCHE — and was raised only by
+      statements INSIDE `loadState()`. `loadState()` runs behind an `await`
+      inside boot's `try`, whose `catch` logs "city boot (non-fatal)" and then
+      FALLS THROUGH to the one `E.mount` call. So anything that threw before
+      loadState reached its first assignment — `spawnAnchors()`, a rejected
+      bridge read, a renderer throw — left the flag at `false` and bought a
+      fresh 300,000 🔥 founding tranche plus the whole 700,000 🔥 lifetime
+      allowance. A guard whose failure mode is "grant" is not a guard, and this
+      one could be tripped by a bad network rather than by an attacker.
+
+   ⚠ SO THERE IS EXACTLY ONE STATEMENT ANYWHERE THAT LOWERS IT, and it demands
+     POSITIVE evidence of a genuinely new city: a clean, trusted read that found
+     no save at all (`!j` with `loadUnsafe` false). A brand-new player reaches
+     that line and still receives their opening capital. Every other outcome —
+     a lived save, an unsafe read, unparseable JSON, a throw anywhere, or never
+     reaching loadState in the first place — keeps this TRUE, because "we do not
+     know whether this city existed" must never mint. */
+let _pendingEstablished = true;
 
 async function loadState() {
   try {
     const j = await MythicCityBridge.loadCity();
     // A read we cannot trust must never license an empty save. See saveNow().
     _loadFailed = !!MythicCityBridge.loadUnsafe;
-    /* An ambiguous read is not a new city. `loadUnsafe` is false for a clean
-       "no rows" answer (bridge :1963) and true only for a refusal, a throw or a
-       save stamped for somebody else — so this cannot cost a real new player
-       their tranche, and it stops a forced read failure from buying one. */
-    if (_loadFailed) _pendingEstablished = true;
-    if (!j) { _loadDone = true; return; }
+    /* 🔴 THE ONE STATEMENT IN THE FILE THAT LOWERS `_pendingEstablished`, and
+       the only evidence that licenses it: the bridge answered cleanly and there
+       is NO save. `loadUnsafe` is false for a clean "no rows" answer and true
+       only for a refusal, a throw, or a save stamped for somebody else — so an
+       ambiguous read keeps the flag up and buys no tranche, while a real new
+       player still gets their opening capital. Read the `_pendingEstablished`
+       header: the default is the refusing value precisely so that failing to
+       reach this line is safe. */
+    if (!j) { _loadDone = true; if (!_loadFailed) _pendingEstablished = false; return; }
     let s = null;
     try { s = JSON.parse(j); }
     catch (e) { _loadDone = true; _loadFailed = true; _pendingEstablished = true; console.warn('[city] save is not valid JSON - refusing to overwrite it', e); return; }
@@ -23624,11 +23641,17 @@ async function loadState() {
        there is nothing to hand it yet. Absent ⇒ null ⇒ a fresh economy, which
        is the correct reading of a save written before this feature existed. */
     _pendingEconomy = (s.economy && typeof s.economy === 'object') ? s.economy : null;
-    /* 🔴 …AND THE ANSWER TO "DID THIS CITY ALREADY EXIST". Tiles are the only
+    /* 🔴 …AND THE POSITIVE ANSWER TO "DID THIS CITY ALREADY EXIST". Tiles are
        durable evidence, and they are exactly the evidence a player deleting the
-       `economy` key leaves behind. `||` because an unsafe read above has
-       already decided the question and must not be overruled by a payload we
-       do not trust. Read the header on `_pendingEstablished` for the numbers.
+       `economy` key leaves behind. `||` because it may only ever RAISE the flag:
+       nothing in a payload we did not fully trust is allowed to talk the answer
+       back down to "new city".
+       ⚠ BELT AND BRACES SINCE THE DEFAULT BECAME `true`. On the shipped tree
+         this line cannot change the outcome — reaching it at all means a save
+         parsed, which is already established. It stays because it states the
+         evidence in the code rather than in a comment, so flipping the
+         initialiser back does not silently reopen the deleted-key door on its
+         own. Read the header on `_pendingEstablished` for the numbers.
        ⚠ THE MIGRATION COST, stated rather than hidden: a save written before
          /src/economy existed, or one whose blob came back null because the
          module failed to import, also has tiles and no economy — so it gets NO
@@ -23859,7 +23882,10 @@ async function loadState() {
     _loadDone = true; _loadFailed = true;
     /* …and it must not buy a founding tranche either. A throw anywhere in the
        load leaves us unable to say whether this city existed, and unknown never
-       mints. See the `_pendingEstablished` header. */
+       mints. Restated rather than relied on: this is a RE-raise, since the flag
+       now defaults to the refusing value and only the clean no-save branch above
+       ever lowers it — a throw AFTER that branch is the one path where this
+       line does real work. See the `_pendingEstablished` header. */
     _pendingEstablished = true;
     console.warn('city load failed', e);
   }

@@ -55,52 +55,33 @@ const S = {
   charterIssued: 0,
   /* 🚰 LIFETIME TALLY OF THE EXPORT FAUCET — the twin of `charterIssued`, and it
      exists for the same reason: those two are the ONLY ways Cinder is ever
-     created, so together they are the exact ceiling on what this city can
-     honestly hold. `flow.faucet` is zeroed every runDay and was therefore
-     useless to a loader. See `loadedCinderCeiling()` for what this buys —
-     without it, the ceiling has to be derived from the day count alone, which
-     is ~3,000× looser than what a city actually earns. */
+     created, so together they say how much money this city has ever made.
+     `flow.faucet` is zeroed every runDay and is therefore useless to anything
+     that wants a lifetime figure. A readout, and the panel's answer to "where
+     did this city's money come from". */
   faucetLifetime: 0,
-  /* 🔴 THE TWO SUBTRACTION TERMS OF THE SAME IDENTITY, AND LEAVING THEM OUT MADE
-     THE LOAD CEILING A PER-RELOAD ALLOWANCE INSTEAD OF A CEILING.
-     ------------------------------------------------------------------------
-     `clampLoadedCinder()` §3 bounds `payoutOwed` by the headroom the ceiling has
-     left over the balances on the books, and the identity it is built from is
+  /* 💸 THE TWO SUBTRACTION TERMS OF THE LIFETIME IDENTITY
 
          created (= charterIssued + faucetLifetime)
              = totalCinder + imports + payoutDelivered + payoutOwed
 
-     `charterIssued` and `faucetLifetime` are lifetime tallies precisely because
-     `S.flow.*` is wiped by `zeroFlow()` at the top of every runDay. The two
-     SUBTRACTION terms never got the same treatment, so a loader read both as
-     zero and handed the city its ENTIRE lifetime spend-and-payout back as fresh
-     headroom — and delivering the money did not close it, because nothing
-     recorded the delivery either. The next load re-opened it in full.
+     kept as lifetime tallies for the same reason their two creation twins are:
+     `S.flow.*` is wiped by `zeroFlow()` at the top of every runDay, so nothing
+     else in the module can say what this city has spent abroad or handed its
+     owner over its life.
 
-     MEASURED through the exact call node-city makes, on an ordinary 200-day
-     city with ONE edited number (`payoutOwed`) and no day lever:
-       5,997 → 10,485 → 10,564 → 10,645 → 10,730 → 10,814 → 10,896 → 10,975 🔥
-       into Profile.gems, one grant per page reload, 81,106 🔥 over 8 reloads,
-       still rising, `lastAudit.ok === true` throughout.
-     With the day lever on top (`day` + `faucetLifetime` + `payoutOwed`, treasury
-     deliberately LEFT ALONE so the §2 total clamp does not eat the forgery):
-       13,166,610 🔥 in one cycle and 79,020,933 🔥 over six, unbounded.
-
-     ⚠ THESE ARE SUBTRACTION TERMS, so a forger's lever on them points DOWN, and
-       zeroing them buys back exactly the headroom that shipped unconditionally
-       before this existed. That is not a reason to skip them — it is the
-       difference between "one edited number pays forever" and "the forgery has
-       to be rewritten, consistently, on every single reload". The city is
-       client-authoritative; see clampLoadedCinder()'s header for the honest
-       limit of every clamp in this file. */
+     ⚠ READOUTS, NOT ENFORCEMENT. A load-time clamp used to consume both to size
+       a ceiling on `payoutOwed`; that clamp is gone (see the header above
+       `audit()` for the three measured reasons). Nothing on disk can prove a
+       city really spent what it says it spent, and building an arbitration on
+       these would repeat exactly that mistake. They are here so the panel and
+       the gate can ask where the money went. */
   importsLifetime: 0,
   /* ⚠ CONFIRMED DELIVERY ONLY — never incremented by `claimPayout()`. A claim
-     that the bridge then refuses is put back by `refundPayout()`, and if the
-     claim had been tallied here the refund would look like money the city had
-     already handed over: the headroom would close against Cinder the player
-     never received, and the next reload would confiscate it. index.js increments
-     this in the `.then()` and nowhere else. Round 0s §2's bridge-down round-trip
-     is what holds that line. */
+     the bridge then refuses is put back by `refundPayout()`, and a claim tallied
+     at claim time would make a refund look like money the player had already
+     received. index.js increments this in the `.then()` and nowhere else, and
+     round 0s §4's bridge-down round-trip is what holds that line. */
   payoutLifetime: 0,
   /* Lifetime tally of wound-up firms' cash received into the treasury. Purely a
      readout — the estate is a transfer and appears in no audit identity — but
@@ -145,6 +126,38 @@ const S = {
           freightAsImport: 0 },
   payoutAllowed: true,
   payoutOwed: 0,        // accumulated, withdrawn by the host through the bridge
+  /* 💸 CLAIMED, HANDED TO THE BRIDGE, NOT YET SETTLED — AND THE PLAYER'S MONEY
+     DIED HERE ON EVERY TAB CLOSE UNTIL THIS FIELD EXISTED.
+     ------------------------------------------------------------------------
+     `claimPayout()` debits `payoutOwed` SYNCHRONOUSLY and returns; the bridge
+     confirms or refuses a network round trip later, and only then does
+     `notePayoutDelivered()` or `refundPayout()` run. Commit cd68272 fixed the
+     REJECTION path — a refusal now goes back on `payoutOwed`. It did not, and
+     could not, fix the path where nothing settles at all because the page is
+     gone: `pagehide`, `visibilitychange` and the 800ms `saveSoon` timer all
+     write the save wherever the RPC happens to be, and a save written in that
+     window recorded the amount NOWHERE. It had left the treasury on the day it
+     was drawn, it was not on `payoutOwed`, and it was not in `payoutLifetime`.
+
+     MEASURED on the tree before this field existed, one ordinary 200-day city,
+     save taken mid-RPC and reloaded: 19.00 🔥 gone from the file permanently,
+     with `lastAudit.ok === true` — because none of it happens inside runDay's
+     window, which is the same blind spot the founding mint and the save-file
+     mint lived in.
+
+     THE FIX IS TO MAKE THE IN-FLIGHT AMOUNT A FIRST-CLASS TERM: claim moves it
+     `payoutOwed → payoutInFlight`, both settlement paths move it back out, it
+     is SERIALIZED, and `load()` moves whatever the save carries back onto
+     `payoutOwed` — because an RPC result that has not arrived by the time the
+     page is reloaded died with the page, and the only safe reading of "we do
+     not know whether the player got it" is to owe it again. The worst case of
+     that reading is paying a tick's payout twice after a browser crash that
+     killed the page between a successful `addCinders` and the next save; the
+     worst case of the other reading is silently destroying the player's money,
+     which is what shipped. `payoutOwed` is deliberately NOT a term of
+     `totalCinder()`, and neither is this — the Cinder left the city's accounts
+     on the day it was drawn — so neither field can move the audited total. */
+  payoutInFlight: 0,
   lastAudit: null,
   log: [],              // [{day, kind, msg}]
   booted: false,
@@ -173,7 +186,12 @@ export function reset(nodeId) {
   S.charter = 0; S.charterIssued = 0; S.faucetLifetime = 0; S.estateReceived = 0;
   S.importsLifetime = 0; S.payoutLifetime = 0;
   S.foundingDrawBudget = 0; S.foundingDrawArmed = false;
-  S.payoutAllowed = true; S.payoutOwed = 0; S.log = []; S.booted = false;
+  /* ⚠ `payoutInFlight` IS ZEROED HERE AND THAT IS WHY index.js GUARDS ITS
+     SETTLEMENT WITH `mountGen`. reset() runs on every mount; a promise from the
+     previous city landing afterwards must not decrement a term that now belongs
+     to a different city. */
+  S.payoutAllowed = true; S.payoutOwed = 0; S.payoutInFlight = 0;
+  S.log = []; S.booted = false;
   S.outputValue = {}; S.serviceValue = {}; S.observed = {}; S.demandEMA = {};
   /* Cleared for the same reason as everything above it: after reset() this module
      must hold ONE known state, so that "is a repeat run identical" is a question
@@ -198,17 +216,13 @@ export function setNode(nodeId) {
 }
 
 /* 💸 EVERY CINDER THAT LEAVES THE CITY GOES THROUGH HERE, and it is one call
-   rather than five `S.flow.imports += x` sites for exactly one reason: the
-   lifetime tally has to be EXACT or `clampLoadedCinder()` §3 mis-sizes the
-   headroom in one of the two directions that costs someone money. Too small a
-   tally leaks (that was the whole of round 3); too large a one confiscates
-   payouts a rejecting bridge never delivered.
+   rather than five `S.flow.imports += x` sites so that the lifetime tally is
+   exact — a readout assembled from five call sites is a readout that drifts.
    ⚠ TALLYING AT THE END OF runDay WOULD HAVE BEEN WRONG, and it was the obvious
      first shape. `runPartial()` also runs production and shopping, both of which
      import, and the next `runDay` opens with `zeroFlow()` — so a day-end tally
-     silently drops every partial tick's imports and the ceiling drifts open by
-     however long the host ticks below one whole day. Tally where the money
-     actually moves. */
+     silently drops every partial tick's imports, by however long the host ticks
+     below one whole day. Tally where the money actually moves. */
 function addImports(amount) {
   if (!(amount > 0)) return;
   S.flow.imports += amount;
@@ -463,7 +477,9 @@ export function bootstrap(opts) {
      something upstream let bootstrap run anyway" — and the correct answer to
      both is the same: no tranche. */
   if (opts.established) {
-    /* Never silent, for the same reason clampLoadedCinder() is never silent. */
+    /* Never silent. A refusal nobody can see is indistinguishable from a
+       refusal that did not fire — which is how the re-arm shipped in the
+       first place. */
     logEvent('bad', '🔴 This city already existed — no founding tranche was issued.');
     try { console.warn('[economy] established city bootstrapped — the founding tranche is NOT re-armed.'); } catch (e) {}
   } else {
@@ -1463,259 +1479,79 @@ export function totalCinder() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   🔴 THE SECOND AUDIT — THE ONE THE DAY AUDIT STRUCTURALLY CANNOT PERFORM.
+   🔴 WHAT A DOCTORED SAVE CAN STILL DO — AND WHY THERE IS NO CLAMP HERE.
    ----------------------------------------------------------------------------
-   `audit()` below reads `before` INSIDE runDay. Everything that moves money
-   outside that window is invisible to it, and this project has now shipped
-   three separate Rule 1 violations in exactly that gap: the founding mint
-   (between ticks, from syncBuildings), the setPopulation destruction (before
-   Sim.advance, from index.js tick) and this one — `load()`, which runs before
-   any window has opened at all.
+   A load-time clamp used to live at exactly this spot. It derived a ceiling on
+   `totalCinder()` from `charterIssued + faucetLifetime`, bounded all five
+   balance terms and `payoutOwed` by it, and scaled the whole total back if the
+   sum still exceeded it. IT WAS REMOVED DELIBERATELY, and this comment is here
+   so that nobody rebuilds it. It failed in three separate ways, all measured.
 
-   MEASURED on the pre-fix tree, from an honest 40-day city holding 298,394 🔥:
+   ── 1. IT DID NOT WORK: THE CEILING'S OWN INPUT WAS ON THE SAME DISK ────────
+   Every rail in it was f(S.day), and `S.day` arrives from the save like
+   everything else. It was bounded only from ABOVE, at one year of continuous
+   round-the-clock play (26,280 economic days — 131× an honest 200-day city),
+   and the faucet allowance underneath it was PER DAY, so a doctored `day`
+   multiplied the whole allowance directly. A four-field edit — `day`,
+   `faucetLifetime`, `payoutOwed`, with `treasury` left deliberately HONEST so
+   the total clamp had nothing to eat — turned the owner payout into an
+   ≈7,500 gems per real hour faucet into real `Profile.gems`. The gate certified
+   that forgery as PASSING, because the round asserted against a bound the
+   forgery had itself just moved. A clamp whose ceiling is attacker-supplied is
+   a decoration; making it tighter only moves the number the forger has to edit.
 
-     doctor treasury                 → totalCinder 1,000,298,330.49  (+999,999,936)
-     doctor bank.reserve             → totalCinder 1,000,298,394.00  (+1,000,000,000)
-     doctor households.savings.low   → totalCinder 1,000,296,764.07  (+999,998,370)
-     doctor firms.firms[0].cash      → totalCinder 1,000,296,815.33  (+999,998,421)
-     doctor charter (the clamped one)→ totalCinder       375,291.96  (+76,898)
+   ── 2. IT ARBITRATED HONEST MONEY USING AN IDENTITY THAT IS ROUTINELY FALSE ─
+   The bound on `payoutOwed` was the headroom left under
 
-   Four of the five terms of `totalCinder()` had NO magnitude bound at all —
-   `Math.max(0, Number(x) || 0)` in four different files, each of which is NaN
-   safety and nothing more. Every doctored save then passed the day audit for
-   the rest of the city's life, because the day audit only ever asks whether the
-   DAY balanced. And the fifth, `charter`, was clamped to `max(seed, fundTarget)`
-   — a bound well above what the fund honestly holds mid-life, so it leaked
-   76,898 🔥 too.
+       created = totalCinder + imports + payoutDelivered + payoutOwed
 
-   ── WHY THIS CEILING IS EXACT AND NOT A GUESS ──────────────────────────────
-   There are exactly two ways Cinder is ever created:
-     • `issueCharter()`, tallied for life in `charterIssued`, hard-capped by
-       ECON.firm.charter.lifetimeCap and rate-limited to `maxPerDay`;
-     • the export faucet, tallied for life in `faucetLifetime`, hard-clamped
-       every day to `ECON.faucet.maxPerMin × ECON.clock.dayMin`.
-   Everything else in the model is a transfer. So for any honest city, at any
-   moment:
+   and that identity does NOT hold while a payout RPC is in flight.
+   `claimPayout()` debits `payoutOwed` synchronously; the delivery is confirmed
+   and tallied a network round trip later. For the whole of that window the
+   claimed Cinder is in no term of the sum. node-city writes its save in exactly
+   that window — `pagehide`, `visibilitychange` and the 800ms `saveSoon` timer
+   all land wherever the RPC happens to be. Money that a clamp cannot account
+   for is money a clamp will eventually take, and it has no way to notice that
+   it did: it zeroes the field and logs a forgery.
+   See `S.payoutInFlight`, which makes that window survivable — it is a
+   first-class term now, serialized, and put back on `payoutOwed` on load.
 
-       totalCinder()  ≤  charterIssued + faucetLifetime
+   ── 3. THE THREAT WAS ALWAYS SECOND-ORDER, AND HERE IS THE RESIDUAL ────────
+   🔴 STATE IT PLAINLY: A DOCTORED SAVE CAN STILL INFLATE THIS CITY'S MONEY.
+      `treasury`, `charter`, `bank.reserve`, every `savings` tier, every firm's
+      `cash` and `payoutOwed` are coerced for NaN and for sign on the way in and
+      are NOT bounded for magnitude. Editing one raises what the city holds, and
+      `payoutOwed` in particular is the one field that crosses the bridge into
+      real `Profile.gems`.
 
-   That is not an estimate — it is the day audit's own identity summed over the
-   city's life, with the two subtractions (imports, payout) dropped. Measured
-   over 12 randomised cities × 200 days the worst headroom was +44.44 🔥 and it
-   was never negative, which is what makes it safe to enforce: an honest save is
-   never touched, and a doctored one has nowhere to hide.
+      That is the SAME TIER of exposure this app already has. The city is
+      client-authoritative: `payCost` is client-side, the save is written by the
+      client, and a user with devtools open can reach the host's `addGems`
+      directly and skip all of this. The only thing the save file added was that
+      the exploit became copy-pasteable — worth a cheap guard, not worth a
+      several-hundred-line clamp that carries a critical bypass of its own AND
+      adjudicates honest players' balances on a false identity.
 
-   ⚠ THE HONEST LIMIT OF THIS, STATED PLAINLY. The city is client-authoritative;
-     a console user can already reach the host's addGems. What this stops is the
-     PERSISTED-FILE version — no console, survives reloads, copy-pasteable. It
-     is a floor, not the only defence. And a forger who doctors `day`,
-     `faucetLifetime` and `charterIssued` CONSISTENTLY still buys headroom,
-     because an old city may honestly be rich; every field below is therefore
-     clamped by what the day count structurally allows, so the forgery has to
-     stay internally consistent instead of being one edited number.
+      🔴 THE REAL FIX IS SERVER-SIDE AUTHORITY: the payout computed and credited
+      by a Postgres function against state the client cannot write, the way
+      `chat_send()` moved the profanity mask and the rate limit off the client
+      (CLAUDE.md). DO NOT REBUILD A LOAD-TIME CLAMP HERE WITHOUT SOLVING THAT
+      FIRST — without server authority the ceiling's inputs sit on the same disk
+      as the balances it claims to bound, which is defect 1 above restated, and
+      the honest player pays for it, which is defect 2.
+
+   WHAT DELIBERATELY SURVIVED, because each is cheap, exact, and bounds a CODE
+   path rather than a value read off disk:
+     • `audit()` below — the closed-loop day identity, plus `capOk`, which holds
+       `charterIssued` to its lifetime cap and suspends the payout the moment a
+       code path outruns it.
+     • `load()` holding `charterIssued` to that same lifetime cap — not a
+       forgery bound but the opposite: a corrupt tally must not be able to
+       suspend a real player's payouts for the rest of the city's life.
+     • The two independent refusals that stop a second founding tranche —
+       `bootstrap()`'s `established` check and load()'s unconditional
+       `S.booted = true`.
    ════════════════════════════════════════════════════════════════════════════ */
-
-/* The largest `day` a save is allowed to claim. NOT a tuning number — it does
-   not change one outcome for an honest city, it only stops a doctored `day`
-   from buying an unbounded ceiling below. Derived from ECON.clock so it reads
-   as what it is: ONE YEAR of continuous, twenty-four-hours-a-day play at 20
-   real minutes per economic day. It is in this file rather than in ECON for the
-   same reason `LOG_MAX` is — nothing in the simulation reads it.
-
-   🔴 IT USED TO SAY A CENTURY (2,628,000 days) AND THAT WAS THE WHOLE LEVER.
-      `faucetMax` below is a per-day allowance, so `days` multiplies it directly:
-      at a century the allowance was 47,304,018,000 🔥 and a save doctored with
-      `day` + `faucetLifetime` + a balance loaded at totalCinder 1,000,298,159
-      against an honest 298,251 — the clamp was present, correctly written, and
-      bounded nothing. A century is not a bound, it is a decoration.
-
-   ⚠ WHY THIS CANNOT CONFISCATE FROM A GENUINELY OLD CITY. Clamping `day` only
-     lowers the two allowances below; it does not touch a balance directly.
-     `charterMax` is already pinned at the 700,000 lifetime cap from day ~100 on,
-     so it is unaffected. That leaves the faucet allowance, and the margin there
-     is 16× (500 🔥/day allowed against a measured worst of 30.35 🔥/day) — so a
-     city would have to be SIXTEEN YEARS of continuous round-the-clock play old
-     before the clamp reached its honest export earnings. Round 0s §2a measures
-     that margin every run and goes red if a tuning change ever eats it, so the
-     clamp can never start quietly confiscating a real player's exports. */
-const SAVE_MAX_DAY = Math.ceil((365 * 24 * 60) / ECON.clock.dayMin);
-
-/* 🚰 WHAT THE EXPORT FAUCET HONESTLY EARNS IN A DAY, as opposed to what it is
-   structurally permitted to earn.
-   ────────────────────────────────────────────────────────────────────────────
-   `ECON.faucet.maxPerMin × ECON.clock.dayMin` = 18,000 🔥/day is the clamp
-   `runDay` applies to a single day's export income. It is a safety rail set
-   hundreds of times above anything the model produces, which is fine as a rail
-   and useless as a ceiling: measured over 50 city configurations (10 nodes ×
-   5 populations × 400 days) the worst SUSTAINED rate was 20.97 🔥/day, and the
-   gate's own narrower sweep finds 30.35 🔥/day — the structural cap is 590×
-   loose. Multiplied by a doctored day count that is the entire save-mint lever,
-   so the load ceiling uses THIS number instead.
-
-     measured worst sustained  30.35 🔥/day   → allowance 500 🔥/day  (16× margin)
-     measured worst single day 474.30 🔥      → covered by the per-day allowance
-                                                and again by the burst below
-
-   The burst exists because the first days of a city are lumpy — a single day
-   legitimately hit 474 🔥 while the lifetime average was 21 — and a one-day-old
-   save must never be clamped. It is not a per-day allowance, it is a one-off
-   floor under the whole lifetime bound.
-
-   🔴 THESE ARE NOT GUESSES AND THEY ARE NOT ALLOWED TO ROT. Round 0s sweeps
-      honest cities and asserts none of them ever earns within a wide factor of
-      the allowance; if a tuning change raises real export income, the GATE goes
-      red rather than the clamp quietly confiscating a player's money. */
-const HONEST_FAUCET_PER_DAY = 500;
-const FAUCET_BURST = 20000;
-function honestFaucetMax(days) {
-  /* Never above what the per-day structural clamp could have produced either —
-     for a very young city the structural bound is the tighter of the two, and
-     taking the min means this can only ever be stricter than what shipped. */
-  return Math.min(ECON.faucet.maxPerMin * ECON.clock.dayMin * days,
-                  FAUCET_BURST + HONEST_FAUCET_PER_DAY * days);
-}
-
-export function loadedCinderCeiling() {
-  const C = ECON.firm.charter;
-  /* `day + 1`, not `day`: a save is written mid-day, so the day in progress has
-     already been able to issue and to earn. Resolving the ambiguity upward is
-     the only safe direction — the opposite one confiscates honest money. */
-  const days = Math.max(0, S.day) + 1;
-  /* What the two creation paths could STRUCTURALLY have produced by this day.
-     These bound the two tallies; the tallies themselves are what the ceiling is
-     actually built from, because they are far tighter. */
-  const charterMax = Math.min(C.lifetimeCap, C.seed + C.maxPerDay * days);
-  /* 🚰 THE HONEST RATE, NOT THE STRUCTURAL RAIL — see honestFaucetMax(). This
-     term used to be `ECON.faucet.maxPerMin × ECON.clock.dayMin × days`, i.e.
-     18,000 🔥/day against a measured 20.97 🔥/day, with `days` attacker-supplied
-     up to SAVE_MAX_DAY. That is how a doctored save still reached 1.0003 BILLION
-     with every one of the five balance clamps working exactly as written. */
-  const faucetMax  = honestFaucetMax(days);
-  /* 🔴 THE CEILING IS THE TALLIES, NOT THE STRUCTURAL MAXIMA. Using the maxima
-     would have been ~55% loose on a 40-day city (464,000 🔥 against an honest
-     298,394 🔥) purely because the maxima describe a city that has never spent
-     anything. `charterIssued` and `faucetLifetime` are what this city actually
-     created, and `total = created − imports − payout` means they bound it
-     exactly. Measured over 12 randomised cities × 200 days the worst headroom
-     was +44.44 🔥 and never negative.
-     Both tallies are themselves clamped on load to the maxima above, so a
-     forger cannot simply raise the ceiling by editing them — the day count has
-     to move too, and then every other field has to agree with it. */
-  const ceiling = Math.min(S.charterIssued, charterMax) + Math.min(S.faucetLifetime, faucetMax);
-  /* 🔴 +1 🔥 OF SLACK, AND IT IS NOT A FUDGE FACTOR. `serialize()` rounds the
-     money fields to 2dp and each one may round UP; across a treasury, a charter
-     fund, a reserve and thirty firms that is a few hundredths of a Cinder of
-     honest drift the identity above does not model. One Cinder is four orders
-     of magnitude below the thinnest headroom ever measured and eight below the
-     smallest doctored value this has to catch. */
-  return { charterMax, faucetMax, ceiling: ceiling + 1 };
-}
-
-/* Applied by `load()` AFTER every sub-module has loaded, because the ceiling is
-   on the TOTAL and four different files hold pieces of it. Returns the list of
-   terms it had to touch, so the caller can say so out loud — a clamp that fires
-   silently is indistinguishable from a clamp that does not fire. */
-function clampLoadedCinder() {
-  const { ceiling } = loadedCinderCeiling();
-  const clamped = [];
-  /* 1. NO SINGLE TERM MAY EXCEED THE WHOLE CITY'S CEILING. This is what stops
-        the four one-field doctors above, and it stops them at the field, which
-        is where a reader can see which one was forged. */
-  if (S.treasury > ceiling) { clamped.push('treasury ' + Math.round(S.treasury)); S.treasury = ceiling; }
-  if (S.charter  > ceiling) { clamped.push('charter ' + Math.round(S.charter));   S.charter  = ceiling; }
-  if (Bank.state().reserve > ceiling) {
-    clamped.push('bank.reserve ' + Math.round(Bank.state().reserve));
-    Bank.scaleReserve(ceiling / Bank.state().reserve);
-  }
-  if (HH.totalSavings() > ceiling) {
-    clamped.push('households.savings ' + Math.round(HH.totalSavings()));
-    HH.scaleSavings(ceiling / HH.totalSavings());
-  }
-  if (Firms.totalCash() > ceiling) {
-    clamped.push('firms.cash ' + Math.round(Firms.totalCash()));
-    Firms.scaleCash(ceiling / Firms.totalCash());
-  }
-  /* 2. AND THE SUM MAY NOT EITHER. Five terms each just under the ceiling still
-        add to five times it, so the whole total is scaled back proportionally
-        rather than any one term being singled out — the loader cannot know
-        which field was forged, and picking one would be a guess that quietly
-        destroys the honest four. */
-  const total = totalCinder();
-  if (total > ceiling * (1 + 1e-9) + 1e-6) {
-    const k = ceiling / total;
-    clamped.push('TOTAL ' + Math.round(total) + '→' + Math.round(ceiling));
-    S.treasury *= k; S.charter *= k;
-    Bank.scaleReserve(k); HH.scaleSavings(k); Firms.scaleCash(k);
-  }
-  /* ── 3. 🔴 AND `payoutOwed`, WHICH IS THE ONLY ONE THAT LEAVES THE CITY ─────
-     THE MISS THAT MADE EVERYTHING ABOVE ORNAMENTAL. `payoutOwed` is a save
-     field, it is deliberately NOT a term of `totalCinder()` (the money left the
-     city's accounts on the day it was drawn — see refundPayout()'s header), and
-     so §1 and §2 above never once looked at it. Every account this function
-     bounds stays INSIDE the simulation. `payoutOwed` is the single field that
-     crosses the bridge into `Profile.gems`, i.e. into real player currency, and
-     it shipped with `Math.max(0, Number(raw.payoutOwed) || 0)` — NaN safety and
-     no ceiling at all.
-
-     MEASURED on the tree that had all five clamps above working perfectly,
-     doctoring this ONE field and nothing else:
-
-       totalCinder      298,251.05  ← UNCHANGED, so the clamp never looked
-       state.payoutOwed 1,000,000,000.00
-       after ONE tick: delivered to the player 1,000,000,022 🔥
-       lastAudit.ok     true
-
-     THE BOUND IS THE HEADROOM, NOT THE CEILING, and that is tighter and exact.
-     Over a city's life the identity is
-
-         created = totalCinder + imports + payoutDelivered + payoutOwed
-
-     and `ceiling` is `created` (+1 🔥 of rounding slack). So the most that can
-     honestly still be owed is what the ceiling has left AFTER the balances on
-     the books AND the two terms that already left the city. It self-consistently
-     makes room for the real case that grows this field: a bridge that has been
-     rejecting for hours. Every refund put back on `payoutOwed` was drawn out of
-     the treasury first, so `totalCinder()` went DOWN by the same amount, nothing
-     was delivered so `payoutLifetime` did not move, and the headroom opened by
-     exactly as much. Round 0s §2's round-trip asserts that case directly rather
-     than trusting this paragraph.
-
-     🔴 AND THE TWO SUBTRACTED TERMS ARE THE WHOLE OF ROUND 3. This line used to
-     read `ceiling - totalCinder()`, i.e. it dropped `imports` and
-     `payoutDelivered` from an identity its own header states in full — and the
-     paragraph above it argued they "only make it slacker, never tighter", which
-     is true of the BOUND and catastrophic for the LEDGER. Both terms describe
-     money that has already left the city, so leaving them out re-grants the
-     city's entire lifetime spend-and-payout as fresh headroom, and delivering
-     against that headroom did not close it because nothing tallied the
-     delivery. The clamp was a per-reload allowance, not a ceiling:
-
-       one edited number (`payoutOwed`), ordinary 200-day city, no day lever —
-       5,997 → 10,485 → 10,564 → 10,645 → 10,730 → 10,814 → 10,896 → 10,975 🔥
-       into Profile.gems, one grant PER PAGE RELOAD, 81,106 🔥 over eight,
-       still rising, audit green throughout.
-
-     See `S.importsLifetime` / `S.payoutLifetime` for why the two needed lifetime
-     tallies at all, and Round 0s §5 for the loop that would have caught this —
-     §2 measures a SINGLE load and is structurally unable to see a ratchet. */
-  const headroom = Math.max(0, ceiling - totalCinder() - S.payoutLifetime - S.importsLifetime);
-  /* Reported to 2dp rather than rounded, because §2 above can leave the headroom
-     at exactly zero on an already-forged save and a whole-number `0→0` would
-     read as a no-op clamp. It is not a no-op: the fractional carry really is
-     confiscated, and a save that reached §2 has already proven itself forged. */
-  if (S.payoutOwed > headroom + 1e-6) {
-    clamped.push('payoutOwed ' + S.payoutOwed.toFixed(2) + '→' + headroom.toFixed(2));
-    S.payoutOwed = headroom;
-  }
-  if (clamped.length) {
-    /* 🔴 NEVER SILENT. The whole reason this class of bug survived is that
-       nothing anywhere said a word when money appeared. */
-    logEvent('bad', '🔴 The save claimed more Cinder than this city can hold — clamped to ' +
-                    Math.round(ceiling).toLocaleString() + ' 🔥.');
-    try { console.warn('[economy] save exceeded the honest Cinder ceiling; clamped: ' + clamped.join(', ')); } catch (e) {}
-  }
-  return clamped;
-}
 
 export function audit(before) {
   const after = totalCinder();
@@ -1775,7 +1611,12 @@ export function claimPayout() {
   if (!S.payoutAllowed) return 0;
   const whole = Math.floor(S.payoutOwed);
   if (whole < 1) return 0;
+  /* 🔴 THE CLAIM IS A TRANSFER BETWEEN TWO SAVE FIELDS, NOT A DELETION — and
+     that is the whole of `payoutInFlight`. It used to be `S.payoutOwed -= whole`
+     and nothing else, so between this line and the bridge's answer the money was
+     in NO field at all. See `S.payoutInFlight` for the 19.00 🔥 that measured. */
   S.payoutOwed -= whole;
+  S.payoutInFlight += whole;
   return whole;
 }
 
@@ -1804,43 +1645,42 @@ export function claimPayout() {
    ⚠ THE CALLER MUST REFUND WHEN THERE IS NO BRIDGE AT ALL, TOO. The old code
      read `if (bridge && typeof bridge.addCinders === 'function')` AFTER the
      claim, so a missing bridge dropped the money on the floor down the same
-     hole with no rejection involved. See index.js. */
+     hole with no rejection involved. See index.js.
+
+   ⚠ AND IT RETIRES THE IN-FLIGHT TERM, because this IS the settlement. The
+     amount moves `payoutInFlight → payoutOwed`; forgetting the first half would
+     leave a phantom on the books that `load()` would then credit a SECOND time
+     onto `payoutOwed`, which is a mint operated by a flaky network. */
 export function refundPayout(amount) {
   const amt = Math.max(0, Number(amount) || 0);
   if (!(amt > 0)) return 0;
+  S.payoutInFlight = Math.max(0, S.payoutInFlight - amt);
   S.payoutOwed += amt;
   return amt;
 }
 
-/* 🔴 THE OTHER SIDE OF THE SAME PROMISE — the tally that closes the headroom.
+/* 🔴 THE OTHER SIDE OF THE SAME PROMISE — the confirmed delivery.
    ----------------------------------------------------------------------------
    Called by index.js ONLY when the bridge has confirmed, and deliberately not by
-   `claimPayout()`. `claimPayout()` is optimistic by construction: it decrements
-   `payoutOwed` synchronously and the delivery is settled a microtask later, so
-   tallying there would count money the player may never receive — and because
-   `clampLoadedCinder()` §3 SUBTRACTS this tally from the headroom, an
-   over-count is not a cosmetic error. It would close the ceiling against Cinder
-   that a rejecting bridge put straight back on `payoutOwed`, and the next reload
-   would confiscate it. That is the exact failure `owed-confiscate` sabotages
-   round 0s §2 into, and it is why the two halves are separate functions.
+   `claimPayout()`. `claimPayout()` is optimistic by construction: it moves the
+   money to `payoutInFlight` synchronously and the delivery is settled a network
+   round trip later, so tallying there would count money the player may never
+   receive — and `refundPayout()` would then have to un-tally it, which is two
+   code paths that can disagree about the same Cinder. Claim and delivery are
+   separate events; only the second one is real.
 
-   Nothing in the simulation reads this. It exists so that a save can be asked
-   the one question the day audit never can: "how much has this city ALREADY
-   handed its owner?" Without it, every reload handed the whole lifetime figure
-   back as fresh headroom — 81,106 🔥 over eight reloads from one edited byte.
+   This is where the in-flight term is RETIRED: the amount leaves
+   `payoutInFlight` and lands in the lifetime tally, which is the only ledger
+   that can answer "how much has this city already handed its owner?".
 
-   ⚠ ONE WINDOW STAYS OPEN AND IT IS BOUNDED, STATED HERE RATHER THAN IN A
-     COMMIT MESSAGE. `claimPayout()` decrements synchronously and this runs a
-     microtask later, so a save written BETWEEN the two records neither the
-     `payoutOwed` (already gone) nor the delivery (not yet tallied). The next
-     load's headroom is then wider by exactly one tick's payout — tens of 🔥 —
-     and it does not compound, because every later delivery is tallied normally.
-     It errs toward the player, and closing it properly means making the claim
-     and the delivery one transaction, which is a bridge-protocol change and not
-     something /src/economy can do alone. */
+   ⚠ NOTHING IN THE SIMULATION READS `payoutLifetime`. It is a readout, and it
+     is deliberately still here after the load clamp that used to consume it was
+     removed: it is the only record that a payout ever actually ARRIVED, and the
+     day audit structurally cannot say so (it closes before the promise does). */
 export function notePayoutDelivered(amount) {
   const amt = Math.max(0, Number(amount) || 0);
   if (!(amt > 0)) return 0;
+  S.payoutInFlight = Math.max(0, S.payoutInFlight - amt);
   S.payoutLifetime += amt;
   return amt;
 }
@@ -1853,6 +1693,9 @@ export function snapshot() {
   return {
     day: S.day, nodeId: S.nodeId,
     treasury: S.treasury, payoutOwed: S.payoutOwed, payoutAllowed: S.payoutAllowed,
+    /* Exposed so "the payout is stuck in the bridge" is readable rather than
+       inferred from a balance that quietly stopped moving. */
+    payoutInFlight: S.payoutInFlight,
     /* Exposed so a panel (and the gate) can read the founding faucet directly
        rather than inferring it from a total that moved. */
     charter: S.charter, charterIssued: S.charterIssued,
@@ -1917,24 +1760,21 @@ export function serialize() {
        button. */
     charter: Math.round(S.charter * 100) / 100,
     charterIssued: Math.round(S.charterIssued * 100) / 100,
-    /* 🚰 The other half of the load ceiling. Dropping this would not lose the
-       player a Cinder, but it would make `loadedCinderCeiling()` fall back to
-       the day-derived faucet bound, which is ~3,000× what a city actually
-       earns — i.e. the clamp would still be there and would no longer bite. */
+    /* 🚰 Lifetime readouts, all four of them. None is enforcement — they answer
+       "where did this city's money come from and where did it go" across a
+       reload, which `S.flow.*` structurally cannot because `zeroFlow()` wipes it
+       every runDay. An older save carries none of them; `load()` reads a missing
+       one as 0 and the city simply starts tallying from today. */
     faucetLifetime: Math.round(S.faucetLifetime * 100) / 100,
-    /* 💸 The two SUBTRACTION terms of the same identity. Dropping either one
-       does not lose the player a Cinder — it re-opens the payoutOwed headroom by
-       whatever this city has already spent abroad or already paid its owner, on
-       EVERY load, which is what turned the round-2 ceiling into a per-reload
-       allowance worth 81,106 🔥 over eight reloads. See clampLoadedCinder() §3.
-       ⚠ An older save carries neither key; `load()` reads a missing one as 0,
-         which is the same open headroom for exactly one load and then closes
-         permanently as the city runs. That is the correct direction for a
-         migration: a real player's save is never confiscated, and the leak is
-         bounded by one reload's honest lifetime figures rather than repeating. */
     importsLifetime: Math.round(S.importsLifetime * 100) / 100,
     payoutLifetime: Math.round(S.payoutLifetime * 100) / 100,
     payoutOwed: Math.round(S.payoutOwed * 100) / 100,
+    /* 🔴 THE FIELD THE PLAYER'S MONEY USED TO DIE IN. Without this key a save
+       written between `claimPayout()` and the bridge's answer records the
+       claimed Cinder NOWHERE — measured at 19.00 🔥 destroyed on one ordinary
+       tab close. `load()` moves it back onto `payoutOwed`. See
+       `S.payoutInFlight`. */
+    payoutInFlight: Math.round(S.payoutInFlight * 100) / 100,
     payoutAllowed: S.payoutAllowed, booted: S.booted,
     inv,
     households: HH.serialize(), firms: Firms.serialize(),
@@ -1945,74 +1785,53 @@ export function serialize() {
 export function load(raw) {
   if (!raw || typeof raw !== 'object') { reset(S.nodeId); return false; }
   reset(raw.nodeId != null ? raw.nodeId : S.nodeId);
-  /* 🔴 DAY FIRST, AND CLAMPED. Every ceiling below is derived from it, so a
-     save claiming `day: 2e9` (which `| 0` happily accepted — int32 is 2.1
-     billion) used to buy an effectively infinite allowance for the clamps that
-     follow. See SAVE_MAX_DAY. */
-  S.day = Math.min(SAVE_MAX_DAY, Math.max(0, raw.day | 0));
+  /* ⚠ NaN AND SIGN ONLY. `day` used to be clamped from above as well, because
+     every rail in the load clamp was f(S.day) and a doctored day count bought
+     the allowance; that clamp is gone and so is its bound — see the header above
+     `audit()` for why, and for what a doctored save can still do. Nothing below
+     derives an allowance from this number any more. */
+  S.day = Math.max(0, raw.day | 0);
   S.dayFrac = Math.max(0, Math.min(1, Number(raw.dayFrac) || 0));
-  /* 🚰 Loaded BEFORE the balances, because it is half of the ceiling they are
-     measured against, and itself clamped to what the daily faucet cap could
-     structurally have produced in this many days. */
-  /* ⚠ THE SAME BOUND `loadedCinderCeiling()` USES, and it has to be the same one
-     or the clamp and the ceiling disagree about what an honest city can earn.
-     Both go through honestFaucetMax() for exactly that reason. */
-  S.faucetLifetime = Math.min(honestFaucetMax(S.day + 1),
-                              Math.max(0, Number(raw.faucetLifetime) || 0));
-  /* 🔴 THE SAVE FILE IS NOT ALLOWED TO MINT EITHER — and this comment used to
-     say `charter` was "the one field where it could", which was false and cost
-     four unbounded terms. `treasury`, `bank.reserve`, `households.savings` and
-     every firm's `cash` are terms of totalCinder() too, and each was coerced
-     for NaN and never bounded for magnitude; each took the total to 1.0003
-     BILLION from an honest 298,394 in the adversarial pass. The ceiling that
-     bounds all five together is `clampLoadedCinder()`, applied at the bottom of
-     this function once every sub-module has loaded. Read its header before
-     touching any of this.
-     `charter` keeps its own tighter clamp on top: the fund can never honestly
-     hold more than the bootstrap tranche or the top-up target. */
+  /* 🚰 A lifetime readout. NaN and sign only, for the same reason as `day`. */
+  S.faucetLifetime = Math.max(0, Number(raw.faucetLifetime) || 0);
+  /* ⚠ NaN AND SIGN ONLY, AND THAT IS A KNOWN, DOCUMENTED RESIDUAL. `treasury`,
+     `bank.reserve`, `households.savings` and every firm's `cash` are terms of
+     totalCinder() and none of them is bounded for magnitude — a doctored save
+     can still inflate this city's money. Read the header above `audit()` before
+     "fixing" that here: the clamp that used to do it had a critical bypass of
+     its own and adjudicated honest players' balances on a false identity.
+     `charter` keeps its own tighter bound, which is not a forgery bound: the
+     fund cannot honestly hold more than the bootstrap tranche or the top-up
+     target, so a garbage value there would visibly distort the panel. */
   S.treasury = Math.max(0, Number(raw.treasury) || 0);
   const fundMax = Math.max(ECON.firm.charter.seed, ECON.firm.charter.fundTarget);
   S.charter = Math.min(fundMax, Math.max(0, Number(raw.charter) || 0));
   /* An older save has no tally. Treat what it is CARRYING as already issued —
      the alternative reads a pre-charter save as having spent nothing and gives
-     it the whole allowance a second time. Clamped to the cap at the top so a
-     garbage tally cannot suspend payouts for the rest of the city's life: the
-     audit's ceiling check exists to catch a CODE path that outruns the clamp,
-     and a corrupt byte on disk is not that. */
-  /* ⚠ AND CLAMPED BY THE DAY COUNT AS WELL AS BY THE LIFETIME CAP. This tally
-     is one of the two terms `loadedCinderCeiling()` is built from, so an
-     unbounded one is a lever on the ceiling itself: `issueCharter` can only
-     ever have produced the bootstrap seed plus `maxPerDay` for each day lived,
-     which is a much tighter bound than the lifetime cap for the first hundred
-     days of a city and is exactly as true. */
+     it the whole allowance a second time.
+     🔴 THE `lifetimeCap` BOUND STAYS, AND IT IS NOT A FORGERY BOUND — it points
+     the other way. `audit()` suspends the payout when `charterIssued` exceeds
+     the cap, because that check exists to catch a CODE path that outruns
+     `issueCharter()`. A corrupt byte on disk is not that, and without this line
+     one would permanently lock a real player out of their own payouts. */
   S.charterIssued = Math.min(ECON.firm.charter.lifetimeCap,
-                             ECON.firm.charter.seed + ECON.firm.charter.maxPerDay * (S.day + 1),
                              Math.max(Number(raw.charterIssued) || 0, S.charter));
-  /* 💸 THE TWO SUBTRACTION TALLIES, loaded here because `clampLoadedCinder()` §3
-     subtracts both from the headroom it allows `payoutOwed` and therefore has to
-     have them on the books before it runs.
-     Bounded above by everything this city could ever have CREATED: the identity
-     is `created = totalCinder + imports + payoutDelivered + payoutOwed` with
-     every term non-negative, so neither of these can honestly exceed `created`.
-     ⚠ AND THE BOUND THAT MATTERS POINTS THE OTHER WAY — AND CANNOT BE ENFORCED
-       HERE. These are SUBTRACTIONS, so a forger lowers them rather than raising
-       them, and the floor is zero, which is precisely the behaviour that shipped
-       before they existed. Nothing on disk can prove a city really did spend
-       what it says it spent, and nothing in this module survives a reload to
-       remember. What the two tallies buy is that a forgery must now be rewritten
-       consistently on EVERY reload instead of one edited number paying out
-       forever — 81,106 🔥 over eight reloads, measured, from a single field. The
-       server-authoritative version of this is the only complete answer and is
-       out of scope for /src/economy; see clampLoadedCinder()'s header for the
-       same caveat stated for the balances. */
-  const createdMax = S.charterIssued + S.faucetLifetime;
-  S.importsLifetime = Math.min(createdMax, Math.max(0, Number(raw.importsLifetime) || 0));
-  S.payoutLifetime  = Math.min(createdMax, Math.max(0, Number(raw.payoutLifetime) || 0));
-  /* NaN safety only at this point — the CEILING on this field is applied by
-     `clampLoadedCinder()` at the bottom of this function, because it is derived
-     from the headroom left under `totalCinder()` and four other files have not
-     loaded their share of that total yet. See clampLoadedCinder() §3. */
-  S.payoutOwed = Math.max(0, Number(raw.payoutOwed) || 0);
+  /* 💸 The two lifetime spend readouts. NaN and sign only — they used to be
+     bounded by `charterIssued + faucetLifetime` to size a load-time ceiling that
+     no longer exists, and nothing reads them for arbitration now. */
+  S.importsLifetime = Math.max(0, Number(raw.importsLifetime) || 0);
+  S.payoutLifetime  = Math.max(0, Number(raw.payoutLifetime) || 0);
+  /* 🔴 AND THE IN-FLIGHT CLAIM COMES BACK AS OWED. A serialized `payoutInFlight`
+     means the save was written between `claimPayout()` and the bridge's answer,
+     and that answer died with the page — no `.then()` and no `.catch()` will
+     ever run for it. The only two readings are "assume it arrived" (which
+     destroys the player's money whenever it did not, and that is precisely what
+     shipped: 19.00 🔥 gone on one ordinary tab close) and "assume it did not"
+     (which at worst pays one tick's payout twice). Owe it again.
+     ⚠ ADDED, NOT ASSIGNED, and `payoutInFlight` is left at zero: a save can
+       legitimately carry both fields, and the claim is settled by this line. */
+  S.payoutOwed = Math.max(0, Number(raw.payoutOwed) || 0) +
+                 Math.max(0, Number(raw.payoutInFlight) || 0);
   /* ⚠ A save written while the disaster feature existed carries four extra keys
      (emergencyDue, emergencyOffset, shockRecoveryLeft, shockSev). They are
      IGNORED rather than migrated, and that is the correct direction: every one
@@ -2025,12 +1844,9 @@ export function load(raw) {
      SAVE ARGUE OTHERWISE. It read `S.booted = !!raw.booted`, so a save carrying
      `booted: false` walked out of load() with the flag down, and `bootstrap()`'s
      `if (S.booted) return false` therefore let it straight through to
-     `issueCharter(ECON.firm.charter.seed)`.
-     THE PART THAT MADE IT INVISIBLE: `clampLoadedCinder()` is the LAST line of
-     this function, so the 300,000 🔥 was issued AFTER the only ceiling that
-     could have caught it had already run and passed. Textbook of the structural
-     blind spot — money moving between the load and the first tick, where no
-     audit window is open.
+     `issueCharter(ECON.firm.charter.seed)`. Textbook of the structural blind
+     spot — money moving between the load and the first tick, where no audit
+     window is open at all.
      MEASURED on the tree before this line changed, one edited boolean on an
      otherwise honest 60-day save, nothing else touched:
          charterIssued  300,000.00 → 600,000.00
@@ -2066,10 +1882,6 @@ export function load(raw) {
   }
   HH.load(raw.households); Firms.load(raw.firms);
   Bank.load(raw.bank); Trade.load(raw.trade); Prices.load(raw.prices);
-  /* 🔴 LAST, AND IT HAS TO BE LAST. The ceiling is on `totalCinder()`, whose
-     five terms live in four different files; nothing before this line can see
-     the whole number. See clampLoadedCinder()'s header for the measurements. */
-  clampLoadedCinder();
   return true;
 }
 

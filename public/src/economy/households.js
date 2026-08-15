@@ -473,20 +473,14 @@ export function settle(days) {
 /* Total Cinder held by residents — one of the terms sim.js audits. */
 export function totalSavings() { let n = 0; for (const t of TIERS) n += S.savings[t]; return n; }
 
-/* 🔴 LOAD-TIME CLAMP ONLY — see sim.js `clampLoadedCinder()`.
-   `HH.load()` coerces every figure through num() so a save cannot make savings
-   NaN or negative, but it never bounded the MAGNITUDE: a blob claiming
-   `savings.low = 1e9` loaded intact and took `totalCinder()` to 1,000,296,764
-   from an honest 298,394, and passed the day audit forever afterwards because
-   `load()` runs outside runDay. Bounding it here alone would be arbitrary
-   (nothing in this module knows what the city may honestly hold), so sim.js
-   owns the ceiling and scales every term of totalCinder() back through this.
-   ⚠ NOT a gameplay lever. Nothing but the loader may call it. */
-export function scaleSavings(f) {
-  const k = Math.max(0, Math.min(1, Number(f)));
-  if (!(k < 1)) return;
-  for (const t of TIERS) S.savings[t] *= k;
-}
+/* ⚠ THERE USED TO BE A `scaleSavings()` HERE and it is deliberately gone. Its
+   only caller was sim.js's load-time Cinder clamp, which scaled every term of
+   totalCinder() back to a ceiling derived from the save's own `day` count. That
+   clamp was removed — see the header above sim.js `audit()` for the three
+   measured reasons, and for the residual it leaves. `HH.load()` still coerces
+   every figure through num() for NaN and sign; it does NOT bound magnitude, and
+   a scaling hook with no caller is an invitation to rebuild the thing that
+   consumed it. */
 
 /* Reset the per-tick readouts. Called at the top of each tick by sim.js. */
 export function beginTick() {

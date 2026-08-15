@@ -216,11 +216,13 @@ let bad = 0;
                                    i.e. destroy an emptied tier's savings before
                                    `runDay` opens its window. Measured on the
                                    shipped tree: 3,987.58 🔥 gone, audit green
-     ECON_TEST_SABOTAGE=save-mint  round0s §2 AND gauntlet1 §7b: write the raw
-                                   save value into state with no ceiling, which
-                                   is what sim.js, bank.js, households.js and
-                                   firms.js each did. One edited field took an
-                                   honest 298,394 🔥 city to 1,000,298,330 🔥
+     ECON_TEST_SABOTAGE=inflight-drop round0s §2b: write the save WITHOUT the
+                                   `payoutInFlight` key — serialize() verbatim as
+                                   it shipped. A save taken between claimPayout()
+                                   and the bridge's answer then records the
+                                   claimed Cinder NOWHERE: 19.00 🔥 destroyed on
+                                   one ordinary tab close, permanently, from the
+                                   saved file, lastAudit.ok true throughout
      ECON_TEST_SABOTAGE=rearm-caller round0s §3: strip `established` back out of
                                    node-city's own E.mount() literal — i.e. the
                                    production caller that passed no flag at all
@@ -230,48 +232,42 @@ let bad = 0;
                                    300,000.00 / 300,000.00 with the full
                                    700,000 🔥 allowance back
      ECON_TEST_SABOTAGE=rearm-derive round0s §3: keep the flag but make
-                                   loadState's derivation answer `false` for a
-                                   save with tiles — the same hole one level up
+                                   loadState's tiles derivation answer `false`
+                                   for a save with tiles — the same hole one
+                                   level up
+     ECON_TEST_SABOTAGE=boot-open  round0s §3b: initialise node-city's
+                                   `_pendingEstablished` back to `false`, i.e.
+                                   FAIL OPEN. It is only ever lowered inside
+                                   loadState(), which runs behind an await inside
+                                   boot's try — whose catch logs "non-fatal" and
+                                   falls straight through to the one E.mount
+                                   call. So any throw before that assignment
+                                   (spawnAnchors, a rejected bridge read, a
+                                   renderer fault) bought a fresh 300,000 🔥
+                                   founding tranche off a bad network
      ⚠ ECON_TEST_SABOTAGE=rearm is RETIRED. It flipped an argument this file
        passed itself, so it only ever proved the refusal inside /src/economy
        fires — while the one production caller passed nothing and the hole
-       stayed wide open under a green gate. The two switches above break the
-       SHIPPED call instead. See §3's header.
+       stayed wide open under a green gate. The switches above break the
+       SHIPPED call and the SHIPPED initialiser instead. See §3's header.
      ECON_TEST_SABOTAGE=payout-drop round0s §4: restore `.catch(() => {})`, i.e.
                                    drop whatever claimPayout() took and the
                                    bridge then refused. 10,193 🔥 in neither
                                    ledger over 400 ticks, audit green throughout
-     ECON_TEST_SABOTAGE=owed-ratchet round0s §5: drop `payoutLifetime` and
-                                   `importsLifetime` out of the save on the way
-                                   in — the round-2 loader exactly, which read
-                                   both subtraction terms of its own identity as
-                                   zero and therefore re-granted the city's whole
-                                   lifetime spend-and-payout as fresh headroom on
-                                   EVERY load. One edited `payoutOwed` on an
-                                   ordinary 200-day city: 81,106 🔥 delivered over
-                                   eight page reloads and still rising, audit
-                                   green throughout
 
-     ── round0s §2, the three switches for the field the ceiling did not cover ──
-     ECON_TEST_SABOTAGE=payout-save round0s §2 AND gauntlet1 §7b: restore
-                                   sim.js's `S.payoutOwed = Math.max(0,
-                                   Number(raw.payoutOwed) || 0)` — NaN safety and
-                                   NO ceiling. `payoutOwed` is not a term of
-                                   totalCinder(), so all five balance clamps saw
-                                   nothing; it is also the ONLY field that
-                                   crosses the bridge into Profile.gems. One
-                                   edited field delivered 1,000,000,022 🔥 to the
-                                   player on the next tick, lastAudit.ok true
-     ECON_TEST_SABOTAGE=faucet-rail round0s §2: put the ceiling's faucet term back
-                                   on the STRUCTURAL rail (18,000 🔥/day against a
-                                   measured honest 20.97 🔥/day) with `day` back
-                                   at a century. This is the pair that made the
-                                   five balance clamps ornamental — worst
-                                   forgeable save 1,000,291,404 🔥
-     ECON_TEST_SABOTAGE=owed-confiscate round0s §2: a payoutOwed clamp that is too
-                                   TIGHT rather than absent. Proves the other
-                                   half — that a reload does not eat the Cinder a
-                                   rejecting bridge failed to deliver
+     ── 🗑 RETIRED WITH THE LOAD-TIME CINDER CLAMP, AND NOT TO BE REVIVED ───────
+     `save-mint`, `payout-save`, `faucet-rail`, `owed-confiscate`,
+     `faucet-margin` and `owed-ratchet` all sabotaged `clampLoadedCinder()` /
+     `loadedCinderCeiling()`, which have been REMOVED from sim.js. Read the
+     header above sim.js `audit()` before writing anything like them again: the
+     clamp derived every rail from the save's own `day` count, so a four-field
+     edit was worth ≈7,500 gems per real hour of real Profile.gems — and the
+     round that was supposed to bound it read the forger's own ceiling as the
+     yardstick and certified the forgery as PASSING. The rounds that graded it
+     went with it. What SURVIVED is the half that measures a player being
+     harmed: §2a (a rejecting bridge's Cinder comes back after a reload) and
+     §2b (a claim in flight when the page dies comes back too).
+
      ── round0s §6 and round0u, the three doors this package closed ────────────
      ECON_TEST_SABOTAGE=ops-swallow round0u: re-commit `Operations.fetchFailed =
                                    false` on a PostgREST `{error}` response, i.e.
@@ -300,18 +296,51 @@ let bad = 0;
        that copy — reverting either alone must still refuse, reverting both must
        re-arm 300,000 🔥. The shipped tree is never written to.
 
-     ECON_TEST_SABOTAGE=faucet-margin round0s §2a: drop the load ceiling's faucet
-                                   allowance to 50 🔥/day, i.e. what it would look
-                                   like if a tuning change had raised real export
-                                   income to within a whisker of the clamp. The
-                                   guard against the clamp confiscating honest
-                                   export earnings on reload
-
    ⚠ Every one of these must turn the gate RED. If you change these rounds, run
      all of them and check that they still do; an unset variable is the shipping
      path and does nothing. */
 const SABOTAGE = process.env.ECON_TEST_SABOTAGE || '';
-if (SABOTAGE) console.log('🧨 ECON_TEST_SABOTAGE=' + SABOTAGE + ' — this run is DELIBERATELY injured and MUST fail.');
+/* 🔴 AN UNRECOGNISED SWITCH ABORTS, AND THIS IS NOT PEDANTRY.
+   A sabotage that no round reads is INERT: it prints "this run is DELIBERATELY
+   injured and MUST fail" and then the gate goes green, which reads as "the
+   defect is closed" when it means "nothing was injured". This file's own first
+   rule is that a sabotage nobody has watched go red is a comment. Six switches
+   were retired with the load-time Cinder clamp (see the catalogue above) and
+   anyone re-running them from an old note would otherwise get a reassuring
+   green. Add the name here in the same commit that adds the switch. */
+const SABOTAGES = [
+  'bogus-id', 'boot-open', 'boot-presweep', 'cancel-blind', 'cancel-sited', 'cap-typo',
+  'charter-cap', 'dark-cards', 'draw-compound', 'free-repair', 'inflight-drop', 'lab-ungated',
+  'loot-ledger', 'loot-promo', 'no-map', 'no-producer', 'ops-found-inline',
+  'ops-found-unguarded', 'ops-grant-unknown', 'ops-swallow', 'ops-zombie', 'payout-drop',
+  'pop-zero', 'price-drift', 'promo-drift', 'reap-burn', 'rearm-caller', 'rearm-derive',
+  'refund-raw', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
+  'sell-pump', 'settle-requested', 'stale-workplaces', 'twin-blind', 'venue-blind',
+  'warm-residue', 'withdraw', 'wx-twin-blind',
+];
+const RETIRED_SABOTAGES = {
+  rearm: 'retired: it flipped an argument this file passed itself — see round0s §3',
+  'save-mint': 'retired with the load-time Cinder clamp — see the catalogue above',
+  'payout-save': 'retired with the load-time Cinder clamp — see the catalogue above',
+  'faucet-rail': 'retired with the load-time Cinder clamp — see the catalogue above',
+  'faucet-margin': 'retired with the load-time Cinder clamp — see the catalogue above',
+  'owed-confiscate': 'retired with the load-time Cinder clamp — round0s §2a covers the honest half',
+  'owed-ratchet': 'retired with the load-time Cinder clamp — see the catalogue above',
+};
+if (SABOTAGE) {
+  if (RETIRED_SABOTAGES[SABOTAGE]) {
+    console.error('🧨 ECON_TEST_SABOTAGE=' + SABOTAGE + ' is RETIRED — ' + RETIRED_SABOTAGES[SABOTAGE] +
+                  '.\n   Refusing to run: a green gate under an inert switch reads as a closed defect.');
+    process.exit(2);
+  }
+  if (!SABOTAGES.includes(SABOTAGE)) {
+    console.error('🧨 ECON_TEST_SABOTAGE=' + SABOTAGE + ' is not a switch this file knows.' +
+                  '\n   Refusing to run rather than reporting a green gate on an injury nobody applied.' +
+                  '\n   Known: ' + SABOTAGES.join(', '));
+    process.exit(2);
+  }
+  console.log('🧨 ECON_TEST_SABOTAGE=' + SABOTAGE + ' — this run is DELIBERATELY injured and MUST fail.');
+}
 
 /* Filled by round 0b, consumed by round 0c: the real ECO_BUILDING_MAP as read
    out of node-city/index.html. 0c reconciles against the SAME map the city
@@ -5364,50 +5393,44 @@ const srcBlockAfter = (src, decl, open) => {
      §4  400 ticks against a bridge that rejected every call: 10,193 🔥 claimed
          out of the sim, 0 🔥 delivered, present in NEITHER ledger, audit clean.
 
-   🔴 AND THE ONE §2 STILL COULD NOT SEE AFTER ALL OF THAT, which is the whole
-      of round 2. Every clamp §2 asserted bounds a term of `totalCinder()` — the
-      five accounts that stay INSIDE the simulation. `payoutOwed` is a save
-      field, is deliberately NOT one of those terms, and is the ONLY field that
-      crosses the bridge into `Profile.gems`. So the ceiling architecture never
-      read it, and on the tree where all five of those clamps were working:
+   🗑 AND WHAT THIS ROUND USED TO ASSERT AND DELIBERATELY NO LONGER DOES.
+      §2 was a doctored-save sweep graded against sim.js's load-time Cinder
+      clamp, and §5 was the reload-ratchet round that graded the same clamp over
+      eight cycles. THE CLAMP HAS BEEN REMOVED and those sections went with it.
+      The short version, because a deleted test is exactly the kind of thing that
+      gets quietly rebuilt:
+        • every rail in it was f(S.day), and `S.day` came off the same disk as
+          the forgery. A four-field save edit was worth ≈7,500 gems per real
+          hour of real Profile.gems — and §2 asserted against a bound the
+          forgery had itself just moved, so THE GATE CERTIFIED THAT FORGERY AS
+          PASSING;
+        • the identity it enforced (`created = totalCinder + imports +
+          payoutDelivered + payoutOwed`) is FALSE for the whole duration of
+          every payout RPC, and node-city saves in exactly that window;
+        • the threat was always second-order — this city is
+          client-authoritative, `payCost` is client-side, and a console user can
+          already reach `addGems`. A save file only made it copy-pasteable.
+      sim.js documents the residual in full above `audit()`. What SURVIVES here
+      is the half of §2 that measured a PLAYER being harmed rather than the
+      house: §2a, a rejecting bridge's Cinder is still owed after a reload, and
+      §2b, a claim that was in flight when the page died comes back too.
 
-        after doctoring ONLY payoutOwed = 1e9:
-          totalCinder      298,251.05   ← UNCHANGED, so the clamp never looked
-          state.payoutOwed 1,000,000,000.00
-          after ONE tick: delivered to the player 1,000,000,022 🔥
-          lastAudit.ok     true
-
-      The package had clamped the five accounts that stay in and left unbounded
-      the one that leaves. §2 now measures WORTH — `totalCinder() + payoutOwed`,
-      everything a save can still turn into real currency — and `payoutOwed` is
-      clamped to the headroom left under the ceiling. See sim.js
-      clampLoadedCinder() §3.
-
-   Prove this round can fail — one switch per boundary, each re-committing the
+   Prove this round can fail — one switch per boundary, each re-committing a
    shipped defect verbatim and nothing else:
      ECON_TEST_SABOTAGE=pop-zero     §1: restores households.js's
                                      `if (S.pop[t] === 0) S.savings[t] = 0`
-     ECON_TEST_SABOTAGE=payout-save  §2: restores sim.js's unclamped
-                                     `S.payoutOwed = Math.max(0, …)` — the round
-                                     2 defect above (reddens gauntlet1 §7b too)
-     ECON_TEST_SABOTAGE=faucet-rail  §2: puts the ceiling's faucet term back on
-                                     the 18,000 🔥/day structural rail with `day`
-                                     back at a century — the lever that made the
-                                     five balance clamps ornamental
-     ECON_TEST_SABOTAGE=owed-confiscate §2: a payoutOwed clamp that is too TIGHT,
-                                     eating what a rejecting bridge never
-                                     delivered — the opposite failure
-     ECON_TEST_SABOTAGE=faucet-margin §2a: drops the load ceiling's faucet
-                                     allowance to within a whisker of what a city
-                                     honestly earns
-     ECON_TEST_SABOTAGE=save-mint    §2: writes the raw save value into state
-                                     with no ceiling, as all four loaders did
-                                     (this switch reddens gauntlet1 §7b too)
+     ECON_TEST_SABOTAGE=inflight-drop §2b: writes the save WITHOUT
+                                     `payoutInFlight` — serialize() exactly as it
+                                     shipped, which recorded a claim in flight
+                                     nowhere at all
      ECON_TEST_SABOTAGE=rearm-caller §3: strips `established` out of node-city's
                                      own E.mount() literal — the production
                                      caller as it actually shipped
-     ECON_TEST_SABOTAGE=rearm-derive §3: makes loadState's derivation answer
-                                     `false` for a save with tiles
+     ECON_TEST_SABOTAGE=rearm-derive §3: makes loadState's tiles derivation
+                                     answer `false` for a save with tiles
+     ECON_TEST_SABOTAGE=boot-open    §3b: initialises node-city's
+                                     `_pendingEstablished` back to `false`, i.e.
+                                     a guard that FAILS OPEN on any boot throw
      (§6 takes no switch — it rebuilds /src/economy with a refusal reverted)
      ECON_TEST_SABOTAGE=payout-drop  §4: restores `.catch(() => {})`, i.e. drops
                                      whatever claimPayout() took and the bridge
@@ -5494,247 +5517,124 @@ const srcBlockAfter = (src, decl, open) => {
         'the audit went red, which means this round is measuring the wrong boundary');
   }
 
-  /* ── §2 A SAVE FILE MAY NOT MINT ───────────────────────────────────────────
-     Four of the five terms of totalCinder() arrived from disk unbounded. Same
-     doctors gauntlet1 §7b runs, asserted here against the CEILING so the two
-     files agree on the rule rather than on a number.
+  /* ── §2 THE PLAYER'S PAYOUT SURVIVES THE PAGE ──────────────────────────────
+     🔴 THE WINDOW. `claimPayout()` debits `payoutOwed` SYNCHRONOUSLY and the
+     bridge answers a network round trip later. Between those two moments the
+     Cinder is not in the treasury (it left on the day it was drawn), and until
+     this package it was on no save field either. node-city writes its save in
+     exactly that window: `pagehide`, `visibilitychange` and the 800ms
+     `saveSoon` timer all fire wherever the RPC happens to be, and `addCinders`
+     in 'message' mode is an RPC across a postMessage bridge.
 
-     🔴 WHAT THIS SECTION MEASURES NOW, AND WHY IT CHANGED. It used to assert on
-        `totalCinder()`. That is the sum of the five accounts that stay INSIDE
-        the simulation, and it is not what a save is worth to a player — the
-        field that crosses the bridge into `Profile.gems` is `payoutOwed`, which
-        is deliberately not one of the five and which this round therefore never
-        once read. Doctoring that ONE field, on a tree where all five clamps
-        below were present and working exactly as written:
+     Commit cd68272 closed the REJECTION path — a refusal goes back on
+     `payoutOwed` via refundPayout(). It could not close the path where nothing
+     settles AT ALL because the page is gone: no `.then`, no `.catch`, ever.
 
-          totalCinder      298,251.05  ← UNCHANGED, so every assertion here passed
-          state.payoutOwed 1,000,000,000.00
-          after ONE tick: delivered to the player 1,000,000,022 🔥
-          lastAudit.ok     true
+     §2a is the rejection path, kept verbatim so this package cannot regress it.
+     §2b is the tab close, which is new, and which measured 19.00 🔥 destroyed
+     from the saved file on one ordinary close before `S.payoutInFlight`
+     existed — with `lastAudit.ok === true` throughout, because none of it
+     happens inside runDay's window.
 
-        So the quantity under test is `totalCinder() + payoutOwed` — everything
-        the save can still turn into real currency, in the city's books or queued
-        to leave them. Call it what the save is WORTH. The ceiling bounds that,
-        because the identity it is built from
-            created = totalCinder + imports + payoutDelivered + payoutOwed
-        already contains the term.
-
-     ⚠ AND THE LEVER DOCTORS ARE NOW MEASURED AGAINST THE HONEST BLOB. The bound
-       used to be re-read out of `loadedCinderCeiling()` AFTER the doctored save
-       had loaded — i.e. the forger supplied both the attack and the yardstick,
-       so `day: 2e9` raised the bar to 47,304,018,000 🔥 and the assertion could
-       not fail. It is now the honest city's own allowance, plus one pinned
-       literal that no input can move at all. */
+     ⚠ WHAT THIS SECTION REPLACED. It used to be a doctored-save sweep asserting
+       against `loadedCinderCeiling()`. See this round's header: the clamp is
+       gone and the sweep went with it, because it graded a bound whose own
+       inputs came off the same disk as the forgery. */
   {
-    /* ── §2a THE MARGIN UNDER THE FAUCET ALLOWANCE, MEASURED NOT ASSUMED ──────
-       sim.js's load ceiling stopped using the 18,000 🔥/day structural rail and
-       started using HONEST_FAUCET_PER_DAY = 500 🔥/day, because the rail is 858×
-       looser than anything the model produces and `days` multiplies it. That
-       swap is only safe while real export income stays far below the allowance
-       — if a tuning change ever raised it, the clamp would start quietly
-       confiscating a real player's export earnings on reload, which is the
-       failure mode this whole package exists to prevent, pointed the other way.
-       So the margin is MEASURED here every run. A tuning change that eats it
-       reddens the GATE instead of a player's balance. */
-    /* ← HONEST_FAUCET_PER_DAY in sim.js, pinned here on purpose: a test that
-       imported the constant would pass no matter what it was changed to.
-       Prove this can fail: ECON_TEST_SABOTAGE=faucet-margin drops the allowance
-       to 50 🔥/day, i.e. what it would look like if a tuning change had raised
-       real export income to within a whisker of the clamp. */
-    const ALLOWANCE = SABOTAGE === 'faucet-margin' ? 50 : 500;
-    let worstRate = 0, worstWhere = '';
-    for (const nodeId of ['ouro-2', 'sol-1', 'kaer-1', 'nyx-4']) {
-      for (const pop of [130, 900]) {
-        E.mount({ nodeId, population: pop });
-        for (let i = 0; i < 250; i++) E.tick(DAY, { ...host, population: pop });
-        const st = Sim.state();
-        const rate = st.faucetLifetime / (st.day + 1);
-        if (rate > worstRate) { worstRate = rate; worstWhere = nodeId + ' pop ' + pop; }
-      }
-    }
-    console.log('   honest export faucet: worst sustained ' + worstRate.toFixed(2) +
-                ' 🔥/day (' + worstWhere + ') against a load allowance of ' + ALLOWANCE +
-                ' 🔥/day — margin ' + (ALLOWANCE / Math.max(0.01, worstRate)).toFixed(1) + '×');
-    chk('the load ceiling\'s faucet allowance is still far above what a city honestly earns',
-        worstRate * 4 < ALLOWANCE,
-        'worst honest rate ' + worstRate.toFixed(2) + ' 🔥/day is within 4× of the ' + ALLOWANCE +
-        ' 🔥/day allowance — sim.js HONEST_FAUCET_PER_DAY must be raised BEFORE this ships, ' +
-        'or the load clamp will confiscate real export earnings on reload');
+    /* ── §2a A REJECTING BRIDGE'S CINDER IS STILL OWED AFTER A RELOAD ─────────
+       The real case that grows this field is a bridge that has been refusing
+       for hours. Every refund was drawn out of the treasury first, so a reload
+       that dropped it would be taking money the player never received. */
+    E.mount({ nodeId: 'blind-owed-roundtrip', population: 320 });
+    const dead = global.window.MythicCityBridge.addCinders;
+    global.window.MythicCityBridge.addCinders = async () => { throw new Error('rpc timeout'); };
+    for (let i = 0; i < 200; i++) { E.tick(DAY, { ...host, population: 320 }); await flush(); }
+    global.window.MythicCityBridge.addCinders = dead;
+    const owedBefore = Sim.state().payoutOwed;
+    /* THE PRODUCTION CALL SHAPE — node-city hands the parsed blob to E.mount as
+       `state`; it never calls E.load(). A round that used the other seam would
+       be certifying a path production does not take. */
+    const b2 = JSON.parse(JSON.stringify(E.serialize()));
+    E.mount({ nodeId: 'blind-owed-roundtrip', population: 320, state: b2 });
+    const owedAfter = Sim.state().payoutOwed;
+    console.log('   a city whose bridge REFUSED for 200 ticks is owed ' + owedBefore.toFixed(2) +
+                ' 🔥 — after a save/load round trip it is owed ' + owedAfter.toFixed(2) + ' 🔥');
+    chk('the bridge-down case is not vacuous — real Cinder really did pile up',
+        owedBefore > 1, 'payoutOwed ' + owedBefore.toFixed(2) + ' — nothing accumulated, nothing tested');
+    chk('…and a reload does NOT lose what a rejecting bridge failed to deliver',
+        Math.abs(owedAfter - owedBefore) < 0.05,
+        owedBefore.toFixed(2) + ' 🔥 owed → ' + owedAfter.toFixed(2) + ' 🔥 after reload');
 
-    E.mount({ nodeId: 'blind-save', population: 130 });
-    for (let i = 0; i < 40; i++) E.tick(DAY, host);
+    /* ── §2b THE TAB CLOSE: A CLAIM IN FLIGHT WHEN THE PAGE DIES ──────────────
+       The bridge ACCEPTS the call and never answers — which is what a dead
+       parent, a closed tab or a killed background page looks like from in here.
+       No handler runs, so neither notePayoutDelivered() nor refundPayout() can
+       help; the only thing that can is the save itself. */
+    E.mount({ nodeId: 'blind-tabclose', population: 320 });
+    global.window.MythicCityBridge.addCinders = async () => {};
+    for (let i = 0; i < 150; i++) { E.tick(DAY, { ...host, population: 320 }); await flush(); }
+    let handed = 0;
+    global.window.MythicCityBridge.addCinders = (n) => { handed += n; return new Promise(() => {}); };
+    E.tick(DAY, { ...host, population: 320 });
+    await flush();                       // nothing can settle — the promise never resolves
+    const owedAtSave = Sim.state().payoutOwed;
+    const inFlightAtSave = Sim.state().payoutInFlight;
     const blob = JSON.parse(JSON.stringify(E.serialize()));
-    E.load(JSON.parse(JSON.stringify(blob)));
-    const honest = E.totalCinder();
-    /* `lever: true` marks a doctor that edits an INPUT TO THE CEILING rather
-       than a balance. Those are held to a different — and weaker — promise, and
-       the round says so out loud rather than averaging them in. See the two
-       assertions below. */
-    const doctors = [
-      ['treasury',               (s) => { s.treasury = 1e9; }],
-      ['bank.reserve',           (s) => { s.bank.reserve = 1e9; }],
-      ['households.savings.low', (s) => { s.households.savings.low = 1e9; }],
-      ['firms.firms[0].cash',    (s) => { if (s.firms.firms[0]) s.firms.firms[0].cash = 1e9; }],
-      ['charter',                (s) => { s.charter = 1e9; }],
-      /* 🔴 THE FIELD THIS ROUND USED TO BE COMPLETELY BLIND TO. Not a term of
-         totalCinder(), so `over` and `worstGain` above cannot see it at all —
-         it is caught only by the WORTH measurement (totalCinder + payoutOwed)
-         that this loop now takes. On the pre-fix tree it delivered 1,000,000,022
-         🔥 into Profile.gems on the very next tick. */
-      ['payoutOwed',             (s) => { s.payoutOwed = 1e9; }],
-      /* `day` alone is a lever on the ceiling — and a dead one, because
-         `charterIssued` and `faucetLifetime` are clamped to the day count from
-         BELOW as well (a save cannot claim to have earned what it never
-         recorded). Kept as a doctor precisely so that stays true. */
-      ['day + treasury',         (s) => { s.day = 2e9; s.treasury = 1e9; }, true],
-      /* 🔴 THE DOCTOR THIS ROUND USED TO NAME AND NOT RUN. The label said
-         "faucetLifetime + day" and the body never touched `day` — so the day
-         count stayed at the honest 40, the faucet allowance stayed at 738,000 🔥
-         and the round passed on a forgery it had not actually attempted. With
-         `day` really set, on the pre-fix tree, this took an honest 298,251 🔥
-         city to 1,000,298,159 🔥 (+999,999,908). The three fields have to move
-         TOGETHER — that is the whole point of an internally-consistent forgery
-         and it is the only lever left. */
-      ['day + faucetLifetime + treasury',
-                                 (s) => { s.day = 2e9; s.faucetLifetime = 1e9; s.treasury = 1e9; }, true],
-      /* …and the same forgery with the bridge field on top, which is the worst
-         single save this round knows how to write. */
-      ['day + faucetLifetime + treasury + payoutOwed',
-                                 (s) => { s.day = 2e9; s.faucetLifetime = 1e9; s.treasury = 1e9;
-                                          s.payoutOwed = 1e9; }, true],
-      /* 🔴 THE SAME FORGERY WITH `treasury` DELIBERATELY LEFT ALONE — and this
-         omission is the whole row. Every lever doctor above sets treasury = 1e9,
-         which §2's TOTAL clamp then scales back to the ceiling; the ceiling is
-         spent, so the headroom left for `payoutOwed` is nil and the column
-         printed a reassuring `owed 0.00`. The round was measuring a forgery that
-         had already spent its own budget on a field that stays INSIDE the
-         simulation. Leave the treasury honest and the entire forged allowance
-         routes to the one field that crosses the bridge into Profile.gems —
-         which is what an attacker would obviously do, and what this round never
-         once tried. Measured on the round-2 tree it delivered 13,166,610 🔥 into
-         the player's wallet on the next tick, and again on every reload. */
-      ['day + faucetLifetime + payoutOwed (treasury LEFT HONEST)',
-                                 (s) => { s.day = 2e9; s.faucetLifetime = 1e9;
-                                          s.payoutOwed = 1e9; }, true],
-    ];
-    /* 🔴 THE BOUND, DERIVED FROM THE HONEST BLOB AND FROM A PINNED LITERAL —
-       NEVER FROM THE DOCTORED SAVE. `leverBound` used to be read out of
-       `loadedCinderCeiling()` after the doctored save had already loaded, so the
-       forger set the yardstick as well as the forgery. It is now the honest
-       city's own allowance, measured before any doctoring happens. */
-    E.load(JSON.parse(JSON.stringify(blob)));
-    const honestCeil = Sim.loadedCinderCeiling();
-    const leverBound = honestCeil.faucetMax;
-    /* 🔴 AND ONE NUMBER NO INPUT CAN MOVE. The lever doctors DO still buy
-       headroom — an old city may honestly be rich, and nothing on disk can prove
-       otherwise — so the residual is reported, not hidden. What is asserted is
-       that the residual stays under a literal written here, which is the ONLY
-       form of this check that a regression cannot quietly widen: putting
-       SAVE_MAX_DAY back to a century, or raising HONEST_FAUCET_PER_DAY, reddens
-       this line. At the constants that shipped it is 13,860,001 🔥; before this
-       package it was 1,000,300,001 🔥, and the assertion that was supposed to
-       bound it read the attacker's own 47,304,018,000 🔥 as the limit. */
-    const MAX_FORGEABLE_WORTH = 15e6;
-    let over = 0, worstGain = 0, worstName = '', worstLever = 0, worstWorth = 0, worstWorthName = '';
-    console.log('   honest worth ' + honest.toFixed(2) + ' 🔥  (ceiling ' + honestCeil.ceiling.toFixed(2) +
-                ', faucet allowance ' + leverBound.toFixed(2) + ')');
-    for (const [name, mut, lever] of doctors) {
-      const s = JSON.parse(JSON.stringify(blob));
-      mut(s);
-      E.load(s);
-      if (SABOTAGE === 'save-mint') {
-        /* 🧨 THE SHIPPED LOADERS, re-committed: the raw value straight into
-           state with no ceiling — `Math.max(0, Number(raw.x) || 0)`, which is
-           exactly what sim.js, bank.js, households.js and firms.js each did. */
-        Sim.state().treasury = Math.max(0, Number(s.treasury) || 0);
-        Bank.state().reserve = Math.max(0, Number(s.bank.reserve) || 0);
-        HH.state().savings.low = Math.max(0, Number(s.households.savings.low) || 0);
-        const f0 = Firms.all()[0];
-        if (f0 && s.firms.firms[0]) f0.cash = Math.max(0, Number(s.firms.firms[0].cash) || 0);
-      }
-      if (SABOTAGE === 'payout-save') {
-        /* 🧨 sim.js's shipped `S.payoutOwed = Math.max(0, Number(raw.payoutOwed)
-           || 0)`, re-committed — NaN safety and no ceiling, which is what let
-           one edited field deliver a billion Cinder through the bridge. */
-        Sim.state().payoutOwed = Math.max(0, Number(s.payoutOwed) || 0);
-      }
-      if (SABOTAGE === 'faucet-rail') {
-        /* 🧨 THE CEILING'S OWN LEVER, re-committed: `faucetMax` back to the
-           STRUCTURAL per-day rail (18,000 🔥/day) instead of the honest earning
-           rate, and `day` back to a century. This is the pair that made the
-           five balance clamps ornamental. Applied by re-loading with the raw
-           values pushed past the clamps sim.js now applies. */
-        Sim.state().day = Math.max(0, s.day | 0);
-        Sim.state().faucetLifetime = Math.min(ECON.faucet.maxPerMin * ECON.clock.dayMin * (Sim.state().day + 1),
-                                              Math.max(0, Number(s.faucetLifetime) || 0));
-        Sim.state().treasury = Math.min(Sim.loadedCinderCeiling().ceiling,
-                                        Math.max(0, Number(s.treasury) || 0));
-      }
-      const tot = E.totalCinder(), owed = Sim.state().payoutOwed;
-      /* WORTH — everything this save can still become real currency: the five
-         accounts inside the sim, plus the one queued to leave it. */
-      const worth = tot + owed;
-      const ceil = Sim.loadedCinderCeiling().ceiling;
-      if (worth > ceil + 1e-6) over++;
-      if (worth > worstWorth) { worstWorth = worth; worstWorthName = name; }
-      if (lever) worstLever = Math.max(worstLever, worth - honest);
-      else if (worth - honest > worstGain) { worstGain = worth - honest; worstName = name; }
-      console.log('   doctor ' + name.padEnd(38) + ' → worth ' + worth.toFixed(2).padStart(16) +
-                  '  (cinder ' + tot.toFixed(2) + ' + owed ' + owed.toFixed(2) + ')' +
-                  (lever ? '   ← edits the ceiling itself' : ''));
+    if (SABOTAGE === 'inflight-drop') {
+      /* 🧨 serialize() AS IT SHIPPED — there was no `payoutInFlight` key, so a
+         save written in this window recorded the claimed Cinder nowhere: not in
+         the treasury, not on `payoutOwed`, not in `payoutLifetime`. The amount
+         is simply gone from the file, permanently, and no later tick can find
+         it because nothing remembers that it was ever drawn. */
+      delete blob.payoutInFlight;
     }
-    chk('a doctored save is not WORTH more than what this city can honestly hold',
-        over === 0, over + ' of ' + doctors.length + ' doctored saves loaded above the ceiling');
-    chk('…and doctoring a BALANCE returns 1e9 as a rounding error, not a fortune',
-        worstGain < honest * 0.01,
-        'worst gain ' + worstGain.toFixed(2) + ' 🔥 on `' + worstName + '` against an honest ' + honest.toFixed(2));
-    /* 🔴 STATED AS THE WEAKER PROMISE IT IS. Editing the ceiling's own inputs
-       still buys headroom; what it may never do is escape the pinned literal. */
-    console.log('   ⚠ the ceiling-lever doctors are worth up to ' + worstLever.toFixed(2) +
-                ' 🔥 above honest — this city\'s own faucet allowance is ' + leverBound.toFixed(2) +
-                ' 🔥, so the residual is bought with the DAY COUNT and is reported, not denied');
-    chk('…and the worst forgeable save in this round stays under the pinned ' +
-        MAX_FORGEABLE_WORTH.toLocaleString() + ' 🔥 ceiling-of-ceilings',
-        worstWorth < MAX_FORGEABLE_WORTH,
-        'worst worth ' + worstWorth.toFixed(2) + ' 🔥 on `' + worstWorthName +
-        '` — SAVE_MAX_DAY or HONEST_FAUCET_PER_DAY has been loosened in sim.js');
-    E.load(JSON.parse(JSON.stringify(blob)));
-    chk('…and an honest save round-trips untouched',
-        Math.abs(E.totalCinder() - honest) < 0.05, honest + ' → ' + E.totalCinder());
-    /* 🔴 THE OTHER HALF OF THE payoutOwed CLAMP, AND THE ONE THAT COULD HAVE
-       COST A PLAYER MONEY IF THE BOUND WERE WRONG. The clamp is the headroom
-       under the ceiling, and the real case that grows this field is a bridge
-       that has been rejecting — refundPayout() puts the money back on
-       `payoutOwed` after the treasury has already been debited. If the bound did
-       not open by exactly as much as the refunds closed the balances, a reload
-       would confiscate every Cinder the bridge failed to deliver. */
-    {
-      E.mount({ nodeId: 'blind-owed-roundtrip', population: 320 });
-      const dead = global.window.MythicCityBridge.addCinders;
-      global.window.MythicCityBridge.addCinders = async () => { throw new Error('rpc timeout'); };
-      for (let i = 0; i < 200; i++) { E.tick(DAY, { ...host, population: 320 }); await flush(); }
-      global.window.MythicCityBridge.addCinders = dead;
-      const owedBefore = Sim.state().payoutOwed;
-      const b2 = JSON.parse(JSON.stringify(E.serialize()));
-      E.load(b2);
-      if (SABOTAGE === 'owed-confiscate') {
-        /* 🧨 A payoutOwed clamp that is too TIGHT rather than absent — the
-           failure this half of the check exists for. Bounding the field by
-           anything that does not grow as refunds shrink the balances confiscates
-           every Cinder a rejecting bridge failed to deliver, on the next reload,
-           silently. This switch is what proves the check is not decoration. */
-        Sim.state().payoutOwed = 0;
-      }
-      const owedAfter = Sim.state().payoutOwed;
-      console.log('   a city whose bridge was down for 200 ticks is owed ' + owedBefore.toFixed(2) +
-                  ' 🔥 — after a save/load round-trip it is owed ' + owedAfter.toFixed(2) + ' 🔥');
-      chk('the bridge-down case is not vacuous — real Cinder really did pile up',
-          owedBefore > 1, 'payoutOwed ' + owedBefore.toFixed(2) + ' — nothing accumulated, nothing tested');
-      chk('…and a reload does NOT confiscate what a rejecting bridge failed to deliver',
-          Math.abs(owedAfter - owedBefore) < 0.05,
-          owedBefore.toFixed(2) + ' 🔥 owed → ' + owedAfter.toFixed(2) +
-          ' 🔥 after reload — the payoutOwed clamp is biting an HONEST save');
-    }
+    chk('the tab-close fixture is not vacuous — an RPC really was left unanswered',
+        handed > 0 && inFlightAtSave > 0,
+        'handed ' + handed.toFixed(2) + ' 🔥, payoutInFlight ' + inFlightAtSave.toFixed(2) +
+        ' — nothing was in flight when the save was taken, so nothing is under test');
+    chk('…and the save carries the in-flight claim as a field of its own',
+        Math.abs((+blob.payoutInFlight || 0) - handed) < 0.05 || SABOTAGE === 'inflight-drop',
+        'serialize() wrote payoutInFlight=' + blob.payoutInFlight + ' against ' + handed.toFixed(2) + ' 🔥 in flight');
+
+    // THE RELOAD. The page died; the RPC result died with it.
+    E.mount({ nodeId: 'blind-tabclose', population: 320, state: blob });
+    const owedBack = Sim.state().payoutOwed;
+    const recovered = owedBack - owedAtSave;
+    console.log('   page died mid-RPC with ' + handed.toFixed(2) + ' 🔥 in flight — saved owed ' +
+                owedAtSave.toFixed(2) + ' 🔥, reloaded owed ' + owedBack.toFixed(2) +
+                ' 🔥 (recovered ' + recovered.toFixed(2) + ' 🔥)');
+    chk('a payout in flight when the page died is back on payoutOwed after the reload',
+        Math.abs(recovered - handed) < 0.05,
+        'recovered ' + recovered.toFixed(2) + ' 🔥 of the ' + handed.toFixed(2) +
+        ' 🔥 handed to a bridge that never answered — the rest is in NEITHER ledger');
+    /* THE PLAYER'S SIDE OF THE SAME QUESTION, asserted independently of the
+       field names. Everything this city ever created, less what it spent abroad
+       and what it still holds, is what it has drawn for its owner; every Cinder
+       of that must be findable on one of the three payout fields. The shortfall
+       IS the money that was destroyed. */
+    const st = Sim.state();
+    const drawn = st.charterIssued + st.faucetLifetime - st.importsLifetime - Sim.totalCinder();
+    const accounted = st.payoutLifetime + st.payoutOwed + st.payoutInFlight;
+    const short = drawn - accounted;
+    console.log('   the owner\'s ledger after the reload: drawn ' + drawn.toFixed(2) +
+                ' 🔥, accounted for ' + accounted.toFixed(2) + ' 🔥, SHORT ' + short.toFixed(2) + ' 🔥');
+    chk('…and the player is not short — every Cinder drawn for the owner is on a save field',
+        Math.abs(short) < 1,
+        short.toFixed(2) + ' 🔥 left the city for its owner and is in no ledger at all');
+    /* …and the retry actually pays it, because a balance restored to a field
+       nothing claims from is a consolation number on a panel. */
+    let paid = 0;
+    global.window.MythicCityBridge.addCinders = async (n) => { paid += n; };
+    for (let i = 0; i < 30; i++) { E.tick(DAY, { ...host, population: 320 }); await flush(); }
+    console.log('   bridge came back — ' + paid.toFixed(2) + ' 🔥 paid out of the ' +
+                owedBack.toFixed(2) + ' 🔥 that was owed on load');
+    chk('…and the recovered amount is really paid once the bridge answers again',
+        paid >= Math.floor(owedBack) - 1,
+        'paid ' + paid.toFixed(2) + ' of ' + owedBack.toFixed(2));
+    chk('…and payoutInFlight never goes negative or strands a balance',
+        Sim.state().payoutInFlight >= -1e-9 && Sim.state().payoutInFlight < paid + 1,
+        'payoutInFlight ' + Sim.state().payoutInFlight);
+    global.window.MythicCityBridge.addCinders = BRIDGE0;
   }
 
   /* ── §3 DELETING THE SAVE KEY MAY NOT RE-ARM THE FOUNDING TRANCHE ──────────
@@ -5809,10 +5709,19 @@ const srcBlockAfter = (src, decl, open) => {
     chk('node-city derives `established` in loadState from the parsed save',
         !!derivLine && !!initLine,
         'init: ' + initLine + '  derivation: ' + derivLine);
-    /* The default MUST be false or a genuinely new player is denied their
-       opening capital — the failure mode opposite to the one under test. */
-    chk('…and it defaults to false, so a brand-new city still gets its tranche',
-        !!initLine && /=\s*false\s*;/.test(initLine), initLine);
+    /* 🔴 AND THE DEFAULT MUST BE THE REFUSING ONE. It shipped as `false` — i.e.
+       GRANT — and was raised only from inside loadState(), which runs behind an
+       await inside boot's try, whose catch logs "non-fatal" and then falls
+       through to the one E.mount call. §3b drives that boot. */
+    chk('…and it defaults to TRUE, the refusing value, so a boot that never reaches loadState grants nothing',
+        !!initLine && /=\s*true\s*;/.test(initLine), initLine);
+    /* …and exactly ONE statement in the whole file may lower it. A second one is
+       a second way to fail open, and it would not have to be inside loadState
+       for boot()'s catch to skip past it. */
+    const lowerSites = (ncSrc.match(/_pendingEstablished\s*=\s*false/g) || []).length;
+    chk('…and EXACTLY ONE statement in node-city ever lowers it',
+        lowerSites === 1,
+        lowerSites + ' assignments of `_pendingEstablished = false` — each one is a way to fail open');
     const rhs = String(derivLine || 'false;').slice(String(derivLine || '').indexOf('=') + 1).replace(/;\s*$/, '');
     const deriveRaw = new Function('_pendingEstablished', 's', 'return !!(' + rhs + ');');
     const derive = (prior, s) => (SABOTAGE === 'rearm-derive' ? false : deriveRaw(prior, s));
@@ -5867,6 +5776,80 @@ const srcBlockAfter = (src, decl, open) => {
         derive(false, { tiles: {} }) === false, 'rhs: ' + rhs);
     chk('…and never talks an unsafe read back down to "new city"',
         derive(true, { tiles: {} }) === true, 'rhs: ' + rhs);
+
+    /* ── §3b THE GUARD MUST FAIL CLOSED ──────────────────────────────────────
+       🔴 THE DEFECT, AND IT NEEDED NO ATTACKER AT ALL. `_pendingEstablished`
+       shipped initialised to `false` — GRANT THE TRANCHE — and was raised only
+       by statements INSIDE `loadState()`. boot() is, in shape:
+
+           try { await spawnAnchors(); await loadState(); … }
+           catch (e) { console.warn('city boot (non-fatal):', e); }
+           …
+           E.mount({ …, established: _pendingEstablished });
+
+       so ANY throw before loadState reached its first assignment — spawnAnchors,
+       a rejected bridge read, a renderer fault — landed in that catch, fell
+       straight through, and handed a LIVED city a fresh 300,000 🔥 founding
+       tranche with the entire 700,000 🔥 lifetime allowance re-armed. A guard
+       whose failure mode is "grant" is not a guard, and this one was tripped by
+       a bad network rather than by an exploit.
+
+       THE MODEL IS COMPILED FROM THE SHIPPED TEXT — the initialiser and the one
+       lowering statement are both extracted above — so an edit to either
+       reddens this round rather than a shape re-typed here.
+       Prove it can fail: ECON_TEST_SABOTAGE=boot-open puts the initialiser back
+       to `false`. */
+    const initRhs = (SABOTAGE === 'boot-open')
+      ? 'false'
+      : String(initLine).replace(/^let\s+_pendingEstablished\s*=\s*/, '').replace(/;\s*$/, '');
+    /* node-city's ONE lowering statement, lifted verbatim. It reads `j` (what
+       the bridge answered) and `_loadFailed` (whether that answer is trusted). */
+    const lowerLine = lines.find((l) => /_pendingEstablished\s*=\s*false/.test(l));
+    chk('§3b can read node-city\'s initialiser and its one lowering statement',
+        !!initLine && !!lowerLine, 'init: ' + initLine + '   lower: ' + lowerLine);
+    /* THE BOOT, MODELLED: run `steps`, swallow whatever it throws exactly as
+       boot()'s "non-fatal" catch does, then answer with the flag as it stands —
+       which is precisely what the one E.mount call downstream reads. */
+    const bootFlag = new Function('steps', 'j', '_loadFailed', `
+      let _loadDone = false, _pendingEstablished = ${initRhs};
+      const loadState = () => { ${lowerLine} };
+      try { steps(); loadState(); } catch (e) { /* 'city boot (non-fatal)' */ }
+      return _pendingEstablished;`);
+    const stepsOk = () => {};
+    const stepsThrow = () => { throw new Error('spawnAnchors: WebGPU device lost'); };
+
+    /* A lived city that then remounts through node-city's OWN compiled call with
+       no economy blob — the deleted-key shape, reached by accident. */
+    const livedRemount = (flag, tag) => {
+      E.mount({ nodeId: 'blind-failclosed', population: 150 });
+      for (let i = 0; i < 60; i++) E.tick(DAY, host);
+      const lived = E.totalCinder();
+      E.mount(mkOpts('blind-failclosed', () => 150, null, flag));
+      const got = E.totalCinder();
+      console.log('   [' + tag + '] established=' + flag + ' — lived ' + lived.toFixed(2) +
+                  ' 🔥 → remount ' + got.toFixed(2) + ' 🔥');
+      return got;
+    };
+
+    chk('a boot that THROWS before loadState refuses the tranche',
+        livedRemount(bootFlag(stepsThrow, null, false), 'boot threw') < 1,
+        'a renderer or bridge fault re-armed the founding tranche — the guard fails OPEN');
+    chk('…and an untrusted read of "no save" refuses it too',
+        livedRemount(bootFlag(stepsOk, null, true), 'unsafe read') < 1,
+        'loadUnsafe bought a tranche');
+    chk('…and a boot that DID find a save refuses it',
+        livedRemount(bootFlag(stepsOk, '{"tiles":{"0,0":{}}}', false), 'save present') < 1,
+        'a parsed save bought a tranche');
+    /* THE OTHER DIRECTION, and it is the one a fail-closed default risks: a
+       genuinely new player must still receive their opening capital. */
+    const newFlag = bootFlag(stepsOk, null, false);
+    E.mount(mkOpts('blind-failclosed-new', () => 150, null, newFlag));
+    console.log('   [brand new] clean read, no save → established=' + newFlag +
+                ' → totalCinder ' + E.totalCinder().toFixed(2) + ' 🔥');
+    chk('…while a clean read that found NO save still pays the bootstrap tranche',
+        newFlag === false && Math.abs(E.totalCinder() - ECON.firm.charter.seed) < 1e-6,
+        'flag ' + newFlag + ', totalCinder ' + E.totalCinder().toFixed(2) +
+        ' vs seed ' + ECON.firm.charter.seed);
   }
 
   /* ── §4 A REJECTED PAYOUT IS THE PLAYER'S MONEY, NOT THE HOUSE'S ───────────
@@ -5933,130 +5916,27 @@ const srcBlockAfter = (src, decl, open) => {
     global.window.MythicCityBridge.addCinders = BRIDGE0;
   }
 
-  /* ── §5 A CEILING IS NOT AN ALLOWANCE — THE RELOAD RATCHET ─────────────────
-     🔴 THE DEFECT §2 IS STRUCTURALLY UNABLE TO SEE. §2 doctors a save, loads it
-     ONCE, and asks whether the result is worth more than the ceiling. Every
-     assertion in it passed on a tree where the clamp handed out its full
-     allowance AGAIN ON EVERY LOAD — because a single measurement cannot tell a
-     ceiling from a per-reload grant. That distinction is the entire difference
-     between "a forgery is worth one bounded lump" and "a forgery is an income".
-
-     THE MECHANISM, and it was an omission rather than a mistake. The identity
-     `clampLoadedCinder()` §3 states in its own header is
-
-         created = totalCinder + imports + payoutDelivered + payoutOwed
-
-     and it bounded `payoutOwed` by `ceiling − totalCinder()` — dropping two of
-     the four terms. `S.flow.imports` and `S.flow.payout` are wiped by
-     `zeroFlow()` every runDay, which is precisely why `faucetLifetime` exists as
-     the twin of `charterIssued`; the same twin was never added for the two
-     SUBTRACTION terms. So the loader read every city as having imported nothing
-     and paid its owner nothing, ever, and re-granted the whole lifetime figure
-     as headroom. Delivering the money did not close it, because nothing recorded
-     the delivery.
-
-     MEASURED on the round-2 tree, through the exact call node-city makes
-     (`E.mount({nodeId, population, state})`), ordinary 200-day city, ONE edited
-     number (`payoutOwed`) and no day lever:
-        5,997 → 10,485 → 10,564 → 10,645 → 10,730 → 10,814 → 10,896 → 10,975 🔥
-        delivered into Profile.gems, one grant per page reload, 81,106 🔥 over
-        eight and still rising, `lastAudit.ok === true` throughout.
-     With the day lever and the treasury left honest: 13,166,610 🔥 in the first
-     cycle and 79,020,933 🔥 over six — unbounded in the number of reloads.
-
-     WHAT THIS SECTION ASSERTS is not a magnitude but a SHAPE: a forged save
-     reloaded N times must not deliver materially more than the same city
-     reloaded N times without any forgery at all. The honest control is run
-     first, on the same city, the same cadence and the same tick count, so the
-     comparison cannot be gamed by a tuning change.
-
-     Prove it can fail: ECON_TEST_SABOTAGE=owed-ratchet drops the two lifetime
-     tallies out of the save on the way in, which is the round-2 loader exactly
-     — `payoutLifetime` and `importsLifetime` read as zero and the headroom
-     re-opens in full on every load. */
-  {
-    const N = 8, TICKS = 3;
-    let delivered = 0;
-    global.window.MythicCityBridge.addCinders = async (n) => { delivered += n; };
-
-    E.mount({ nodeId: 'blind-ratchet', population: 260 });
-    for (let i = 0; i < 200; i++) { E.tick(DAY, { ...host, population: 260 }); await flush(); }
-    const blob0 = JSON.parse(JSON.stringify(E.serialize()));
-
-    /* THE HONEST CONTROL. The same city, reloaded and ticked exactly as the
-       forged run is, with nothing edited. Whatever this delivers is what those
-       reloads are WORTH, and the forgery is allowed no more than it. */
-    const run = async (doctor) => {
-      let blob = JSON.parse(JSON.stringify(blob0)), total = 0;
-      const per = [];
-      for (let r = 0; r < N; r++) {
-        const s = JSON.parse(JSON.stringify(blob));
-        if (doctor) doctor(s);
-        E.mount({ nodeId: 'blind-ratchet', population: 260, state: s });
-        delivered = 0;
-        for (let i = 0; i < TICKS; i++) { E.tick(DAY, { ...host, population: 260 }); await flush(); }
-        total += delivered; per.push(delivered);
-        blob = JSON.parse(JSON.stringify(E.serialize()));
-      }
-      return { total, per };
-    };
-    const honestRun = await run(null);
-    const forged = await run((s) => {
-      s.payoutOwed = 1e9;
-      if (SABOTAGE === 'owed-ratchet') {
-        /* 🧨 THE ROUND-2 LOADER, RE-COMMITTED. Not a synthetic switch: a save
-           written before `payoutLifetime`/`importsLifetime` existed carries
-           neither key, and `load()` reads a missing one as 0 — which IS the
-           pre-fix behaviour, and is exactly why those two keys had to start
-           being written. With them absent on every cycle the headroom re-opens
-           to the city's whole lifetime spend-and-payout, once per reload. */
-        delete s.payoutLifetime; delete s.importsLifetime;
-      }
-    });
-    console.log('   ' + N + ' reload+tick cycles, honest control : ' + honestRun.total.toFixed(2) +
-                ' 🔥  ' + JSON.stringify(honestRun.per.map((x) => +x.toFixed(0))));
-    console.log('   ' + N + ' reload+tick cycles, payoutOwed=1e9 : ' + forged.total.toFixed(2) +
-                ' 🔥  ' + JSON.stringify(forged.per.map((x) => +x.toFixed(0))));
-    chk('the honest control is not vacuous — the bridge really was paid',
-        honestRun.total > 1,
-        'nothing was delivered across ' + N + ' cycles; this section proves nothing');
-    /* 🔴 THE ASSERTION. `+ 200` is one honest cycle's worth of slack on a control
-       that delivers ~80 🔥 per cycle — enough that ordinary run-to-run variation
-       between two 8-cycle runs of the same city cannot redden it, and four
-       orders of magnitude below the 81,106 🔥 the defect was worth. */
-    chk('a forged payoutOwed does NOT re-grant itself on every reload',
-        forged.total <= honestRun.total + 200,
-        'forged ' + forged.total.toFixed(2) + ' 🔥 vs honest ' + honestRun.total.toFixed(2) +
-        ' 🔥 over ' + N + ' reloads — the load clamp is a per-reload ALLOWANCE, not a ceiling; ' +
-        'per cycle ' + JSON.stringify(forged.per.map((x) => +x.toFixed(0))));
-    /* …and the two tallies have to be tallies, not decorations: if either stayed
-       at zero the subtraction above would be subtracting a constant and the
-       assertion would pass for the wrong reason. Read off the HONEST 200-day
-       blob rather than off whatever state the last forged mount left behind —
-       the tail state is three days old and may legitimately have imported
-       nothing in them, which made the first draft of this line fail for a reason
-       that had nothing to do with the defect. */
-    console.log('   200 honest days tallied: payoutLifetime ' + (+blob0.payoutLifetime).toFixed(2) +
-                ' 🔥, importsLifetime ' + (+blob0.importsLifetime).toFixed(2) + ' 🔥');
-    chk('…because confirmed delivery is tallied for the city\'s life, and serialized',
-        blob0.payoutLifetime > 1,
-        'payoutLifetime ' + blob0.payoutLifetime + ' after 200 paid days — index.js is not calling ' +
-        'notePayoutDelivered(), or serialize() is not writing it');
-    chk('…and so is every Cinder that leaves the city as an import',
-        blob0.importsLifetime > 1,
-        'importsLifetime ' + blob0.importsLifetime + ' — sim.js addImports() is not being reached');
-    global.window.MythicCityBridge.addCinders = BRIDGE0;
-  }
+  /* ── §5 IS GONE, AND ON PURPOSE ────────────────────────────────────────────
+     It ran eight reload+tick cycles against an honest control to prove that the
+     load-time Cinder clamp was a CEILING rather than a per-reload allowance.
+     That clamp has been removed from sim.js, so this section had nothing left
+     to grade — the correct answer to "does a forged `payoutOwed` re-grant
+     itself on every reload" is now "there is no grant to re-issue; the field is
+     loaded as written, and sim.js says so out loud above `audit()`".
+     ⚠ ITS TWO NON-CLAMP ASSERTIONS WERE REAL AND ARE KEPT ELSEWHERE: that
+       confirmed delivery is tallied for the city's life and serialized, and
+       that imports are too. §2b now reads both off the live state as part of
+       the owner's-ledger check, which is a stronger test than "> 1" because it
+       has to BALANCE. */
 
   /* ── §6 `booted: false` IN THE SAVE IS THE SECOND DOOR TO THE SAME TRANCHE ──
      Closing §3 is NOT sufficient, and this is why. `load()` ended with
-     `S.booted = !!raw.booted`, `bootstrap()` opens with `if (S.booted) return
-     false`, and `clampLoadedCinder()` is the LAST line of `load()`. So a save
-     that says `booted: false` walks straight back into
-     `issueCharter(ECON.firm.charter.seed)` — with the state fully loaded, the
-     `established` flag irrelevant because a state WAS handed over, and the only
-     ceiling that could have caught it already behind. Textbook of the
-     structural blind spot: money moving between the load and the first tick.
+     `S.booted = !!raw.booted` and `bootstrap()` opens with `if (S.booted)
+     return false`. So a save that says `booted: false` walks straight back into
+     `issueCharter(ECON.firm.charter.seed)` — with the state fully loaded and
+     the `established` flag irrelevant because a state WAS handed over. Textbook
+     of the structural blind spot: money moving between the load and the first
+     tick, where no audit window is open at all.
 
      MEASURED ON THE FIXED-FOR-§3 TREE, one edited boolean on an otherwise
      honest 60-day save, through the production call `E.mount({ …, state })`:

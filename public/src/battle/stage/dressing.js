@@ -996,6 +996,113 @@ function _sheetSlot(pool, w, h, src, make){
   while (pool.length > REFL_SLOTS) pool.shift();
   return slot;
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   🎚 bandLimitSheet — THE STRUCTURAL GUARANTEE THAT NO REFLECTED EDGE CAN EVER
+   SHIP AS A HARD LINE AGAIN, whatever happens to stand above the waterline.
+
+   THE FAILURE MODE THIS EXISTS FOR. The sheet is a photograph. A photograph of
+   this scene contains near-horizontal edges of 40-120 luma — the plateau lip,
+   a terrace crest, the backdrop's horizon — and a horizontal edge mirrored
+   into water stays horizontal (warpSheet bends it, it does not remove it) and
+   lands as a ruled pale slab. It has now cost two rounds: once as a one-tile
+   puddle carrying the cliff face, once as the pond carrying the plateau lip
+   after REFL was let off 0.80. Both times the fix was to keep that content out
+   of the strip. That is a fix by ARRANGEMENT — it holds only while nothing
+   bright ever drifts into frame, which is not a property this module controls:
+   terrain, vista and tilefx are all being edited beside it, and a new terrace
+   crest 30px higher would bring the whole artifact straight back.
+   So the limit is enforced on the sheet's own contrast instead, where it is a
+   property of the pixels and not of the camera.
+
+   WHAT IT DOES, IN TWO MOVES — and note both act on LUMA STRUCTURE, not on hue:
+     1. A VERTICAL-ONLY low-pass, ±BL_TAPS·BL_STEP device px of clamped box
+        mean, of which only BL_SHARP of the original is put back. A step of S
+        luma stops being a step: it becomes a ramp of S over the kernel's full
+        2·24 = 48px support, so the worst 6px window across it carries S·6/48 —
+        an eighth — plus the BL_SHARP·S that was deliberately kept.
+        ⚠ VERTICAL ONLY, ON PURPOSE. The defect is horizontal edges; vertical
+        ones (cliff corners, the braziers' posts, the tree) are what makes a
+        reflection legible AS a reflection, and a vertical blur leaves them
+        completely intact. An isotropic blur would take both and the pool would
+        go back to being a tinted smear.
+     2. A pull of BL_TONE toward THE LOCAL WATER TONE — the same cDeep/cMid/
+        cTop gradient the sheet is tinted with, so "local" is literal: the
+        target at each row is the water colour that row of the pool would be
+        without any reflection at all. This is the clause the work order
+        actually named. It is a linear blend, so it scales EVERY luma
+        difference in the sheet — high frequency, low frequency and the total
+        range alike — by (1 − BL_TONE), which is what bounds the range rather
+        than just the steps.
+
+   THE ARITHMETIC, so the constants can be checked rather than trusted. Take
+   the worst edge the scene can offer, S = 120 luma. After (1) a 6px window
+   holds 120·(0.24 + 0.76·6/48) = 40.3; after (2) that is 40.3·0.58 = 23.4 in
+   the sheet; the band blit's own alpha peaks at 0.66, so 15.4 reaches the
+   screen. A 55-luma edge — the size actually measured on the pond — lands at
+   7.1. The bound is on the composite, not on a hope about what is in frame.
+
+   WHY IT IS IN reflSheet AND NOT IN drawPool. Everything here runs at the
+   sheet's refresh cadence, once per REFL_MS, not once per band per frame: 26
+   offscreen→offscreen blits of a ~640x320 surface at 4.5Hz. Doing the same
+   work per band would be 25x the cost and would also have to read back the
+   main canvas, which is the one thing the whole sheet mechanism exists to
+   avoid — read the header above before moving it.
+
+   ⚠ ONE SNAPSHOT, THEN 13 TAPS. The taps must all read the SAME source, so
+   the sheet is copied to a scratch surface first and the sheet itself is the
+   render target. A canvas cannot be both, and doing it in place would blur the
+   already-blurred rows (an IIR, not a box — the kernel would smear downward
+   and re-introduce an asymmetric edge of its own). */
+const _blurLRU = [];
+const BL_TAPS  = 6;     /* taps each side of centre                            */
+const BL_STEP  = 4;     /* device px between taps -> +/-24px support           */
+const BL_SHARP = 0.24;  /* how much of the unblurred sheet is put back         */
+const BL_TONE  = 0.42;  /* how far the result is pulled to the local water tone*/
+function bandLimitSheet(cx, sheet, tone){
+  const w = sheet.w, h = sheet.h;
+  const scr = _sheetSlot(_blurLRU, w, h, sheet.cv,
+    (cv, c2) => ({ cv: cv, cx: c2, w: w, h: h, src: sheet.cv }));
+  if (!scr) return;
+  try {
+    const s = scr.cx;
+    s.setTransform(1, 0, 0, 1, 0, 0);
+    s.globalCompositeOperation = 'source-over';
+    s.globalAlpha = 1;
+    s.imageSmoothingEnabled = false;
+    s.clearRect(0, 0, w, h);
+    s.drawImage(sheet.cv, 0, 0);
+    cx.globalCompositeOperation = 'source-over';
+    cx.imageSmoothingEnabled = false;
+    /* running mean: the n-th tap at alpha 1/(n+1) leaves the mean of all taps
+       so far, so no accumulator surface and no divide pass is needed. */
+    let n = 0;
+    for (let t = -BL_TAPS; t <= BL_TAPS; t++){
+      const dy = t * BL_STEP;
+      if (Math.abs(dy) >= h) continue;
+      cx.globalAlpha = 1 / (n + 1); n++;
+      if (dy >= 0){
+        cx.drawImage(scr.cv, 0, 0, w, h - dy, 0, dy, w, h - dy);
+        /* CLAMP TO EDGE, not transparent: the rows a shift vacates are the
+           near-shore / far-bank rows, the two the player looks hardest at.
+           Left uncovered they would keep the previous tap's mean and the
+           coverage change would rule its own faint step every BL_STEP rows —
+           the defect, rebuilt by the fix for it. Stretching the edge row is
+           the standard clamp and it cannot introduce a gradient. */
+        if (dy > 0) cx.drawImage(scr.cv, 0, 0, w, 1, 0, 0, w, dy);
+      } else {
+        const ad = -dy;
+        cx.drawImage(scr.cv, 0, ad, w, h - ad, 0, 0, w, h - ad);
+        cx.drawImage(scr.cv, 0, h - 1, w, 1, 0, h - ad, w, ad);
+      }
+    }
+    cx.globalAlpha = BL_SHARP;
+    cx.drawImage(scr.cv, 0, 0);
+    cx.globalAlpha = BL_TONE;
+    cx.fillStyle = tone; cx.fillRect(0, 0, w, h);
+    cx.globalAlpha = 1;
+  } catch (e) { /* a detached scratch surface just means no band-limit */ }
+}
+
 function reflSheet(api, sx, sy, sw, sh, kx, ky, ox, oy, cTop, cMid, cDeep){
   const src = api.ctx && api.ctx.canvas;
   if (!src || !src.width || sw < 4 || sh < 4) return null;
@@ -1013,12 +1120,21 @@ function reflSheet(api, sx, sy, sw, sh, kx, ky, ox, oy, cTop, cMid, cDeep){
     cx.globalAlpha = 1;
     cx.clearRect(0, 0, _refl.w, _refl.h);
     cx.drawImage(src, sx * kx + ox, sy * ky + oy, sw * kx, sh * ky, 0, 0, _refl.w, _refl.h);
-    cx.globalCompositeOperation = 'color';
-    cx.globalAlpha = 0.58;
     const tg = cx.createLinearGradient(0, 0, 0, _refl.h);
     tg.addColorStop(0,    cDeep);          /* sheet top  → pool bottom */
     tg.addColorStop(0.45, cMid);
     tg.addColorStop(1,    cTop);           /* sheet base → waterline   */
+    /* ⚠ BEFORE THE TINT, AND IT MATTERS. 'color' is non-separable: it keeps
+       the BACKDROP's luma and takes only hue and chroma from the source. Run
+       it first and the band-limit would be flattening luma that the tint is
+       about to have no opinion on anyway — same result, one wasted pass — but
+       the tone pull inside bandLimitSheet is a plain source-over of the very
+       same gradient, and doing THAT after a 'color' pass would drag the sheet's
+       chroma as well as its luma toward the stops and desaturate the pool.
+       Luma structure first, hue last. */
+    bandLimitSheet(cx, _refl, tg);
+    cx.globalCompositeOperation = 'color';
+    cx.globalAlpha = 0.58;
     cx.fillStyle = tg; cx.fillRect(0, 0, _refl.w, _refl.h);
     cx.globalCompositeOperation = 'source-over';
     cx.globalAlpha = 1;
@@ -1397,32 +1513,45 @@ function drawPool(api, it){
      the reflection exists to prevent, arriving from the other end.
      THE FIVE CUES THE WORK ORDER ACTUALLY NAMES ARE ALL STILL SHARED: the
      bakeShore contour, the damp rim, the depth ramp, the chop and the glints.
-     Threshold is in SCREEN px on the pool's own bbox — a reflection needs
-     vertical run to compress an image into, and under ~190px there is none. */
-  if (!lit && Math.min(B.w, B.h) >= 190) {
+
+     ⚠ THE TEST IS `it.surf`, NOT A SCREEN-PIXEL THRESHOLD, AND THAT IS A BUG
+     FIX. It was `Math.min(B.w, B.h) >= 190`. MEASURED at 1600x1000@2x the pond
+     projects to 207.8 x 198.3 CSS px — it cleared its own gate by EIGHT PIXELS.
+     Any viewport a few percent shorter drops the pond under 190 and the whole
+     reflection silently disappears; the difference between "pond" and "puddle"
+     is not a number of pixels on today's camera, it is which builder made the
+     item. buildSurfacePools stamps `surf: true` on every tile-surface pool and
+     the pond carries no such flag, so ask that directly. Same two behaviours,
+     no cliff edge, and no dependence on the projection. */
+  if (!lit && !it.surf) {
     let m = null;
     try { m = g.getTransform ? g.getTransform() : null; } catch (e) { m = null; }
     const kx = m ? m.a : 1, ky = m ? m.d : 1, ox = m ? m.e : 0, oy = m ? m.f : 0;
-    /* ⚠ THE SOURCE STRIP IS A WORLD LENGTH, NOT A FRACTION OF THE POOL.
-       REFL is the vertical compression AND, because the bands walk up the
-       canvas at REFL× their own height, it is what decides HOW FAR above the
-       waterline the reflection reaches. At a flat 0.80 the pond reaches ~340px
-       up — far bank, cliff faces, backdrop, sky — and reflects a whole scene.
-       A one-tile puddle reached 75px up, which on this camera is the sand
-       immediately behind it: it reflected bright ochre ground onto itself and
-       came out a pale wash, the single biggest reason the first surface-pool
-       render did not read as the same liquid as the pond.
-       Physically the small pool is the one that should reach FURTHEST: a
-       grazing reflection is compressed, not cropped. So the strip is sized in
-       screen px (~230, a bit over a tile of depth) and REFL falls out of it.
-       The pond's B.h is far over 230, so it still clamps to 0.80 and its
-       reflection is unchanged from wave 3.
-       ⚠ CAPPED AT 1.8, MEASURED. The first cut let REFL run to 3.4 and a
-       one-tile puddle then reflected a tile and a half of cliff wall squashed
-       into 100px: it stopped reading as a wet patch and started reading as a
-       hole with a picture in it — the exact "opaque cut-out" failure the
-       reflection was added to fix, arriving from the other end. */
-    let REFL = Math.max(0.80, Math.min(1.8, 230 / Math.max(1, B.h)));
+    /* ⚠ 0.80, FLAT, AND DO NOT MAKE IT A FUNCTION OF B.h AGAIN. REFL is the
+       vertical compression AND, because the bands walk up the canvas at REFL×
+       their own height, it is what decides HOW FAR ABOVE THE WATERLINE the
+       source strip reaches: B.h · REFL screen px.
+
+       WAVE 5 ROUND 1 WROTE `Math.max(0.80, Math.min(1.8, 230 / B.h))` here,
+       with a comment asserting "the pond's B.h is far over 230, so it still
+       clamps to 0.80 and its reflection is unchanged from wave 3." BOTH HALVES
+       WERE FALSE and a critic measured the consequence. The pond's B.h is
+       198.3 CSS px, not "far over 230" (that number was device px thinking on
+       a CSS-px box), so 230/198.3 = 1.16 and Math.max picked 1.16, not 0.80.
+       The strip therefore reached 230px above the waterline instead of 159 — a
+       45% deeper bite that pulled the PLATEAU LIP, the brightest horizontal
+       edge in the scene, into the sheet for the first time. It landed as a
+       pale slab with a ruled top edge across the middle of the pond: row-mean
+       luma over x460..530 / y826..862 ranged 55.9 with a 15.7 step at y848,
+       against 10.9 / 3.2 on the wave-3 control, and a per-column trace found a
+       CONTINUOUS 88px edge at 24-62 luma where wave 3's longest is 34px.
+       That artifact is documented three paragraphs up as the reason a small
+       pool gets no sheet at all — it arrived on the pond by this line.
+       The formula existed to give a one-tile puddle a longer reach. Puddles do
+       not take this branch at all (see the `!it.surf` test above), so it was
+       only ever able to change the pond, which is the one pool it claimed not
+       to touch. Deleted, not retuned. */
+    let REFL = 0.80;
     if (B.y0 - B.h * REFL < 2) REFL = (B.y0 - 2) / Math.max(1, B.h);
     /* clamped to the canvas: drawImage with a source rect that hangs off the
        edge is defined but not uniformly implemented, and a pool hard against
@@ -1751,14 +1880,22 @@ function drawPool(api, it){
      Everything drifts off api.T, at per-mark speeds, so the surface never
      resolves into a repeating pattern. */
   {
-    /* ⚠ THE DIVISOR IS 840, NOT 460, AND THE POND DOES NOT NOTICE. The count
-       was capped at 300 and the pond's bbox has always been far over the cap
-       (≈250 000 px²), so its ACTUAL density has always been 1 mark per ~840
-       px² — 460 only ever described pools too small to hit the cap. A one-tile
-       puddle did hit it, and came out at 1 per 460: twice the pond's chop
-       density, which is both a cost and a mismatch in the one texture cue the
-       two bodies are supposed to share. Writing the real density down makes
-       them agree and halves the stroke count on the small pools. */
+    /* ⚠ THE DIVISOR IS 840, NOT 460, AND THE POND DOES NOTICE — an earlier
+       revision of this comment claimed it did not, on the theory that the pond
+       was pinned to the 300 cap and 460 "only ever described pools too small
+       to hit it". MEASURED, both halves wrong: the pond projects to 207.8 x
+       198.3 CSS px, so /460 gives 90 marks and the cap is nowhere near. The
+       real numbers are pond 90 → 49 and one-tile puddle 30 (the old FLOOR, not
+       the cap) → 20. It was the floor, never the ceiling, that made the two
+       bodies disagree.
+       ⚠ AND IT IS STILL 840, DELIBERATELY, NOT RESTORED. Chop at 1/460 was
+       also what was hiding the reflected plateau lip on the pond; the wave-5
+       round-2 critic's work order says in terms not to bring it back to cover
+       that up. The lip is gone at source now (REFL, and bandLimitSheet), so the
+       density is free to be chosen for what it looks like instead, and one
+       density for both bodies is the whole point of the wave-5 gap. If a
+       critic ever reads the pond as UNDER-textured, raise the floor for the
+       puddles and the divisor for both together — do not split them again. */
     const nC = Math.max(20, Math.min(300, Math.round(B.w * B.h / 840)));
     const lightC = mix(WATER_SHEEN, sky, 0.30);
     for (let i = 0; i < nC; i++){

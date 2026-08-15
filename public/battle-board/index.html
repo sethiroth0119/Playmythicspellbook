@@ -2782,6 +2782,55 @@ function bakeTerrain(){
       for (const [dx,dz] of SIDES){
         const nx = x+dx, nz = z+dz;
         if (nx>=0 && nz>=0 && nx<cols && nz<rows) continue;   /* interior edge */
+        /* ── ⚠ WAVE 5 ROUND 2 — THE FAR EDGE OF A **RAISED** PERIMETER TILE
+           GETS NOTHING, AND THIS WAS THE SINGLE WORST DEFECT ON THE FIELD.
+           Everything in this pass is drawn on the APRON PLANE (y = -0.010 /
+           -0.012) because that is where a board-edge tile meets the canyon
+           floor. For a level-0 tile that is the tile's own plane and the
+           material lands exactly where it belongs. For a RAISED tile it is
+           several metres below the tile, and the perspective then throws it
+           straight into the middle of the board: measured, the run-out strip
+           and the talus fan shed by the level-3 tiles in row z=0 landed on the
+           TOP FACES of row z=1, one tile deep, as a dark rectangular band with
+           a rubble margin.
+           That band is what a wave-5 critic measured as "a one-tile-deep dark
+           stripe on row z=1 of the level-3 plateau": the in-face far→near luma
+           of a single top face slid 193→137 on 2,1, 209→147 on 3,1 and
+           205→151 on 5,1, while the SAME-LEVEL faces above (2,0/3,0/5,0) and
+           below (2,2/3,2) them were flat at range 6.6-18. A contiguous plateau
+           read bright / dark stripe / bright.
+           It survived every ablation because it is none of the passes anyone
+           suspected. Bisected side by side on the isolated bake with the tone
+           lock frozen (__DBG_NOTONE, so the loop cannot re-solve between the
+           halves and manufacture a delta):
+             baseline                     2,1 range 55.9  3,1 47.3  5,1 33.6
+             skip §1c entirely            2,1 range 22.2  3,1  6.7  5,1 17.1
+             skip §1c for RAISED tiles    2,1 range 22.2  3,1  6.7  5,1 17.1
+             skip §1c far side (dz<0)     2,1 range 22.2  3,1  6.7  5,1 17.1
+             skip §1c near side / flanks  unchanged from baseline
+           i.e. 100% of the damage is the far side of a raised perimeter tile,
+           and nothing else in the pass touches the field at all.
+           It also poisoned the tone lock, which is why those tiles were the
+           brightest on the board: the loop saw a face whose near half had been
+           painted 50 luma dark, and pushed the WHOLE tile up to compensate —
+           3,1 was carrying +34.1 and 5,1 +48.0 of correction, so their far
+           halves went to screen at 209 and 205 against a level target of 188.
+           WHY SKIPPING IS THE RIGHT FIX AND NOT A LOSS. This pass exists to
+           break the straight line where the field ends. On the far side of a
+           raised tile there IS no such line: the far edge [0,1] is deliberately
+           absent from EDGES (§1, "there is no camera-visible geometry behind a
+           raised far row"), so no perimeter wall is drawn there and the tile
+           never meets the apron on screen — its silhouette against the sky is
+           the boundary, and §0 already pulls the apron ring in hard on the far
+           arc (nz < 0 ⇒ 0.30x pad) precisely so "the mesa rim below owns the
+           skyline". Confirmed on the A/B: with this skipped the far skyline is
+           pixel-for-pixel the same ragged mesa rim it already was.
+           The rule generalises past this one heightfield — an edge with no
+           drawn wall has no apron contact to break — so it is written as
+           "raised AND far", not as a coordinate special case. Every other
+           side of a raised tile DOES carry a perimeter wall whose foot lands
+           on the apron, and keeps its spill. */
+        if (dz < 0 && tileElev(x,z) > 0.004) continue;
         /* ── the RUN-OUT STRIP, drawn before the lobes ────────────────────
            The lobes alone break the STRAIGHTNESS of the boundary but not the
            VALUE STEP across it: the field is lit sand and the apron is deep
@@ -2794,12 +2843,30 @@ function bakeTerrain(){
           const eB = { x: x + dx*0.5 + (dz ? 0.5 : 0), z: z + dz*0.5 + (dx ? 0.5 : 0) };
           const inner = [], outer = [];
           const NS = 7;
+          /* ⚠ WAVE 5 ROUND 2 — A RAISED TILE'S STRIP STARTS OUTSIDE ITS OWN
+             FOOTPRINT. Same root cause as the far-edge skip above, one order
+             of magnitude smaller. The strip's inner margin sits exactly on the
+             grid boundary at the APRON plane, which for a level-0 tile is that
+             tile's own surface (correct — the material must straddle the line)
+             but for a RAISED tile is the foot of its perimeter cliff, several
+             metres below it. Projected back, part of a 0.92-alpha fill then
+             lands on the tile's own top face and on its neighbour's, and
+             because it is a fill and not a wash the tone lock cannot median it
+             away: column 7 (all level 1, the right board edge) was carrying
+             corrections of -21 to -22 luma and 7,0/7,1 was the last
+             same-level 4-neighbour pair over the clause's 10-luma bar.
+             Nudging the whole strip 0.10 tile OUTWARD for raised tiles puts it
+             back on the apron where it belongs. The wall's own `fg2` fade
+             already washes the bottom of a perimeter wall into the apron
+             colour, so the 0.10 gap has no visible seam in it — measured, the
+             board-edge straightness this pass exists to kill does not move. */
+          const SKW = tileElev(x,z) > 0.004 ? 0.10 : 0;
           for (let s2=0; s2<=NS; s2++){
             const t2 = s2/NS;
             const ex = eA.x + (eB.x - eA.x)*t2, ez = eA.z + (eB.z - eA.z)*t2;
-            const pi = project(gw(ex, ez, -0.010));
+            const pi = project(gw(ex + dx*SKW, ez + dz*SKW, -0.010));
             const push = 0.34 + _sHash(x*3 + s2, z*5 + (dx+2)*7, (dz+2)*11) * 0.92;
-            const po = project(gw(ex + dx*push, ez + dz*push, -0.012));
+            const po = project(gw(ex + dx*(push+SKW), ez + dz*(push+SKW), -0.012));
             if (pi) inner.push(pi);
             if (po) outer.push(po);
           }

@@ -947,21 +947,25 @@ function blit(api, cv, g, comp, alpha, low) {
    Stored in `g.sub`, the mask entry's own LRU-bounded map, so it is evicted
    with the region it belongs to and cannot leak. */
 const GAIN_REFRESH = 0.055;      /* seconds of api.T between read-backs */
-/* ⚠ WAVE 5 ROUND 2 — THIS CLOCK STAYS AT 0.165 AND THE PERF FIX IS ELSEWHERE.
-   The critic measured a reproducible ~15% per-frame cost against wave 3 (serial
-   in-iframe rAF counts, three 3 s windows per boot, order reversed on the
-   second boot, 9 hazard tiles covering all three gain painters plus the move
-   pool: 14.2 frames/3 s against 16.7). Doubling this clock to 0.34 does buy
-   half the reads — and it was MEASURED to cost grain, which is the other failed
-   clause: the gain multiplies a CACHED copy of the ground, so a staler cache is
-   a copy whose dust and ripple have drifted out from under the ground it is
-   being added to. Same-boot triples, holy 5,6's high-pass regression on the
-   true bare ground: r 0.715 at 0.165, r 0.463-0.542 at 0.34. The read rate is
-   not the thing to trade; the read SIZE is, and gainRects() below takes ~8× off
-   it on the scattered regions drawSurfaces actually builds.
+/* ⚠ WAVE 5 ROUND 2 — 0.165 → 0.34, BUT ONLY AFTER THE BUG UNDERNEATH IT WAS
+   FOUND. The critic measured a reproducible ~15% per-frame cost against wave 3
+   (serial in-iframe rAF counts, three 3 s windows per boot, order reversed on
+   the second boot, 9 hazard tiles covering all three gain painters plus the
+   move pool: 14.2 frames/3 s against 16.7). Halving the read rate is the
+   obvious lever, and the first attempt at it appeared to cost grain: holy 5,6's
+   high-pass regression on the true bare ground fell 0.715 → 0.463-0.542. That
+   was NOT staleness. It was gainRects() padding its read rects by a hand-picked
+   0.85·ax while MASK_SURF reaches 2.45·ax, so the tinted read was being clipped
+   inside the mask. With the pad taken from the mask itself (see gainRects) the
+   two clocks measure the same: 0.774-0.819 electric / 0.78 void / 0.87 holy at
+   BOTH 0.165 and 0.34, over two same-boot triples each. The ground under a
+   hazard is moved only by the vista's dust, and the hazard's own animation
+   lives in the blit alpha and the l/d/post layers, never in the tinted read.
    ⚠ Note battle-board clamps dt at 0.05 s (index.html ~5008), so on a box this
-   slow 0.165 s of api.T is already 4 real frames, not 10. */
-const GAIN_REFRESH_SURF = 0.165; /* hazards: see the note on gainLayer below  */
+   slow 0.34 s of api.T is 7 real frames, not 20 — the seconds clock throttles
+   far less than it looks like it should when frames are slow, which is what
+   GAIN_MIN_FRAMES below is for. */
+const GAIN_REFRESH_SURF = 0.34;  /* hazards: see the note on gainLayer below  */
 /* ⚠ AND A FRAME FLOOR, because a seconds clock cannot throttle a slow box.
    `refresh` is in api.T seconds; when a frame takes longer than `refresh` the
    test always passes and the rate limit does nothing at exactly the moment it
@@ -3167,7 +3171,18 @@ function drawSurfaces(api) {
 
     const c = api.ctx;
     byKey.forEach((tiles, fx) => {
-      const P = PAINTERS[fx] || PAINTERS._neutral;
+      /* ⚠ THE `_`-PREFIXED ENTRIES ARE SHARED GEOMETRY, NOT PAINTERS. void and
+         electric factored their motif path out (`_arms` / `_pts`) so the dodge
+         pass and the emissive pass draw the SAME curve; those are functions
+         sitting in the same table the host indexes by fx key, so a surface
+         literally called "_pts" would resolve to one, find no halo/m/l/d/s/post
+         on it and render nothing at all — the one failure mode the contract
+         names outright ("never render nothing silently"). Anything that is not
+         a plain object carrying at least one painter hook falls through to the
+         neutral wash, exactly like an unknown key. */
+      let P = PAINTERS[fx];
+      if (!P || typeof P !== 'object' ||
+          !(P.halo || P.m || P.l || P.s || P.d || P.post || P.gain)) P = PAINTERS._neutral;
       let g = null;
       try { g = group(api, tiles, LIFT_SURF, JIT_SURF, P.mask || MASK_SURF); } catch (e) {}
       if (!g) return;

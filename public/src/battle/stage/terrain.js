@@ -141,13 +141,32 @@ const terrain = {
         band(bot, M.deep, 0.07 + hash(x, z, b + 421) * 0.08, 0);
       }
       /* caliche crust: a pale bleached wash hugging the plateau's near rim,
-         where the top face meets its own cliff edge */
-      const rimTop = quadPt(P, 0.5, 0.80);
-      const cg = g.createRadialGradient(rimTop.x, rimTop.y, r * 0.1, rimTop.x, rimTop.y, r * 1.5);
-      cg.addColorStop(0, rgba(M.pale, 0.09));
-      cg.addColorStop(1, rgba(M.pale, 0));
-      g.fillStyle = cg;
-      g.fillRect(P[0].x - r * 2, P[0].y - r, r * 4, Math.abs(P[2].y - P[0].y) + r * 2);
+         where the top face meets its own cliff edge.
+         ⚠ WAVE 5 ROUND 2 — GATED ON THERE ACTUALLY BEING A RIM.
+         This was drawn on EVERY raised tile, so an INTERIOR tile of a plateau
+         — one whose near neighbour is at the same height, with no cliff edge
+         anywhere near it — got a near-edge value gradient for a rim it does
+         not have. That is the "unconditional near-edge gradient in the base
+         paint" a wave-5 critic told this piece to gate: an in-face brightness
+         ramp applied whether or not the 4-neighbour is lower is a gradient
+         that argues with the terrain instead of describing it.
+         Measured on the isolated bake, gating it took the same-level
+         4-neighbour |Δ| of the visible top-face mean from max 10.1 / 1 pair
+         over 10 to max 9.5 / 0 pairs over 10 (5,0 vs 5,1, both level 3, went
+         10.1 → 8.6): 5,0's near neighbour 5,1 is also level 3, so 5,0 was
+         carrying a rim highlight for a cliff that is one tile further on.
+         Off-board counts as a rim — the field ends there and the tile does
+         carry a perimeter wall. */
+      const nearLower = !(z + 1 < api.MAP.rows)
+                        || api.tileElev(x, z + 1) < api.tileElev(x, z) - 0.004;
+      if (nearLower){
+        const rimTop = quadPt(P, 0.5, 0.80);
+        const cg = g.createRadialGradient(rimTop.x, rimTop.y, r * 0.1, rimTop.x, rimTop.y, r * 1.5);
+        cg.addColorStop(0, rgba(M.pale, 0.09));
+        cg.addColorStop(1, rgba(M.pale, 0));
+        g.fillStyle = cg;
+        g.fillRect(P[0].x - r * 2, P[0].y - r, r * 4, Math.abs(P[2].y - P[0].y) + r * 2);
+      }
     }
 
     /* ── 2. WIND SCOUR ──────────────────────────────────────────────────

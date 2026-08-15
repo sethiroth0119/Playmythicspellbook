@@ -380,7 +380,7 @@ const COL = {
      in reverse: they are added, not multiplied, so they contribute their own
      colour and have to sit further round the wheel than the target. */
   move:   { core: '#c8d7ff', body: '#69c3ff', rim: '#b4e1f5', halo: '#42cae0',
-            filt: '#46ffd8', gain: '#3094d1', k: 1.55, a: 0.30, g: 0.565, fc: 0.20 },
+            filt: '#46ffd8', gain: '#2a8fca', k: 1.55, a: 0.22, g: 0.70, fc: 0.28 },
   /* ⚠ EVERY STATE GETS A KEY LIGHT, not just move. The gap was measured on the
      move pool because that is the one the default harness lights, but "a soft
      emissive fill that glows WITHIN the ground" is the BAR's line about tile
@@ -868,9 +868,19 @@ function blit(api, cv, g, comp, alpha, low) {
    moves this slowly, and it takes the added cost back to roughly a third.
    Stored in `g.sub`, the mask entry's own LRU-bounded map, so it is evicted
    with the region it belongs to and cannot leak. */
-const GAIN_REFRESH = 0.055;   /* seconds of api.T between read-backs */
+const GAIN_REFRESH = 0.055;      /* seconds of api.T between read-backs */
+const GAIN_REFRESH_SURF = 0.165; /* hazards: see the note on gainLayer below  */
 
-function gainLayer(api, g, tint, amount) {
+/* ⚠ WAVE 5 — THE SURFACE PATH ASKS FOR A SLOWER CLOCK, AND IT IS NOT A
+   MICRO-OPTIMISATION. Three hazard regions each declaring a gain added three
+   more pipeline flushes per refresh, measured at 33-34 frames per 4 s window
+   against 37 without them (standalone board, 820x800@2x, native rAF, 8 hazard
+   tiles + a move pool). The move pool needs the 55 ms clock because it sits on
+   ground the STATES are lighting and pulsing; a hazard sits on terrain that
+   only the vista's dust moves, and its own pulse lives in the blit alpha, not
+   in the tinted read. `refresh` lets drawSurfaces ask for a third of the read
+   rate and take the cost back. */
+function gainLayer(api, g, tint, amount, refresh) {
   if (!(amount > 0.004)) return;
   const src = api.ctx.canvas;
   if (!src || !src.width) return;
@@ -878,7 +888,7 @@ function gainLayer(api, g, tint, amount) {
   const cached = g.sub ? g.sub.get(key) : null;
   const T = isFinite(api.T) ? api.T : 0;
   if (cached && cached.pw === g.pw && cached.ph === g.ph &&
-      Math.abs(T - cached.t) < GAIN_REFRESH) {
+      Math.abs(T - cached.t) < (refresh || GAIN_REFRESH)) {
     emitGain(api, g, cached.cv, amount);
     return;
   }
@@ -997,6 +1007,63 @@ function halo(api, g, colour, alpha, comp) {
     c.fillStyle = api.rgba(colour, 1);
     c.fillRect(g.x0, g.y0, g.w, g.h);
   }, true);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SOFT MOTIF — a path drawn as light instead of as a stroke
+   ═══════════════════════════════════════════════════════════════════════════
+
+   ⚠ WAVE 5 — WHY THE THREE ARCANE PAINTERS NEEDED THIS AND THE OTHERS DID NOT.
+   void, electric and holy were the last three painters still drawing their
+   identity with ctx.stroke(): a 3-arm spiral at lineWidth ax·0.045 α0.30, a
+   white lightning polyline at ax·0.035 α0.90 with a shadowBlur, and two
+   concentric ellipse OUTLINES per holy tile at ax·0.03. Measured on the
+   rendered frame, all three had the same signature — a near-opaque hairline
+   lying ON the sand with no interaction with it: high-pass regression of the
+   painted tile against the same pixels unpainted came out near zero slope,
+   i.e. the mark REPLACED the ground rather than lighting it, which is the
+   sticker read this whole file exists to delete. `ice` and `web` already
+   learned the lesson in their own headers ("ice detail is TEXTURE, not
+   linework"), and `fire.post` already learned the drawing technique (a chain
+   of soft blobs riding the spine, each falling to zero laterally as well as
+   vertically). This is that technique factored out so all three can use it.
+
+   A chain of radial falloffs has no edge in ANY direction, so there is no
+   width to read as a drawn line — and because the chain is emissive and goes
+   into the region scratch, it composites 'lighter' ONCE over the material,
+   exactly like the move pool's emission. The other half of the pair is
+   gainLayer() — see PAINTERS.gain below. */
+function glowChain(c, api, pts, col, rad, alpha, taper) {
+  if (!pts || pts.length < 2 || !(rad > 0.4) || !(alpha > 0.004)) return;
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  if (!(total > 0.5)) return;
+  /* 0.55 of a radius between blobs: closer wastes fill, wider beads. */
+  const step = Math.max(1.4, rad * 0.55);
+  let done = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const seg = Math.hypot(b.x - a.x, b.y - a.y);
+    if (!(seg > 0.01)) continue;
+    const n = Math.max(1, Math.ceil(seg / step));
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      /* u is position along the WHOLE path, so a taper fades the mark in and
+         out at its ends. An arc that starts and stops at full strength has two
+         hard caps, and two hard caps are two more drawn marks. */
+      const u = (done + seg * t) / total;
+      const f = taper ? Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, u))), 0.65) : 1;
+      const A = alpha * f;
+      if (A <= 0.004) continue;
+      const R = rad * (0.55 + 0.45 * f);
+      radial(c, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, R, R, R, [
+        [0,    api.rgba(col, A)],
+        [0.42, api.rgba(col, A * 0.40)],
+        [1,    api.rgba(col, 0)]
+      ]);
+    }
+    done += seg;
+  }
 }
 
 /* Assemble a region: jittered polygons, per-tile metrics, membership set, the
@@ -1562,12 +1629,16 @@ function drawStatesOver(api) {
 /* ═══════════════════════════════════════════════════════════════════════════
    B) FIELD SURFACES
 
-   Each painter is { halo, m, l, s, post }, all optional:
+   Each painter is { halo, m, gain, l, s, post }, all optional:
 
      halo(api, g)      → [[colour, alpha, comp], …]  drawn FIRST through the
                          dilated mask: damp sand, scorch, cold, spill light.
                          Follows the pool's own irregular outline outwards.
      m(api, c, g)      content blitted with 'multiply'   — the material itself
+     gain(api, g)      → [tintColour, amount] — the KEY LIGHT (see gainLayer):
+                         re-read the ground, tint it, add it to itself, so the
+                         hazard's light scales the sand's own grain instead of
+                         adding a constant over it. Runs between m and s/l.
      l(api, c, g)      content blitted with 'lighter'    — sheen, glow, ripples
      s(api, c, g)      content blitted with 'source-over'— solid objects on sand
      post(api, c, g)   unclipped, straight onto the main canvas — anything that
@@ -2323,29 +2394,43 @@ const PAINTERS = {
   /* ── VOID (rift) ── a hole. Deliberately NOT pure black: the BAR forbids it,
      and a true 0,0,0 hole reads as a rendering failure rather than as depth. */
   void: {
+    /* ⚠ WAVE 5 — 0.88/0.66 WAS "REPLACE THE GROUND", NOT "DARKEN IT". At that
+       alpha the rift's own multiply buried every bit of sand grain under it,
+       so whatever the emissive did on top had nothing to interact with and the
+       spiral could only ever read as line-art on a black plate. The critic's
+       phrasing is the spec: a SLIGHTLY DARKENED, HUE-SHIFTED tile with the
+       emission composited over it. 0.62/0.44 still reads as a hole (it is the
+       darkest material in the table by a wide margin) and leaves the ground
+       measurable underneath, which is what the gain below then amplifies. */
     halo: () => [['#1a1030', 0.34, 'multiply']],
+    gain: () => ['#5a2fb0', 0.30],
     m(api, c, g) {
       for (const it of g.list) {
         const m = it.m;
         radial(c, m.cx, m.cy, m.ax, m.ay, m.ax * 1.55, [
-          [0, api.rgba('#120b1e', 0.88)], [0.5, api.rgba('#150e24', 0.66)], [1, api.rgba('#150e24', 0)]
+          [0, api.rgba('#120b1e', 0.62)], [0.5, api.rgba('#150e24', 0.44)], [1, api.rgba('#150e24', 0)]
         ]);
       }
     },
     l(api, c, g) {
+      /* TWO arms, not three, and neither is a stroke. Three evenly-phased arms
+         of constant width is a LOGO — evenly-spaced identical marks are the
+         BAR's own "AI-generated game" tell. Two arms at unequal radial pitch,
+         each drawn as a tapered chain of falloffs, read as matter being drawn
+         into the rift. Per-tile phase and pitch off api.hash so no two rifts
+         spiral alike. */
       for (const it of g.list) {
         const m = it.m, sy = m.ay / m.ax;
-        for (let i = 0; i < 3; i++) {
-          const a0 = api.T * (0.5 + i * 0.2) + i * 2.1;
-          c.strokeStyle = api.rgba(i % 2 ? '#a35cff' : '#4fd0ff', 0.30);
-          c.lineWidth = Math.max(1, m.ax * 0.045);
-          c.beginPath();
-          for (let k = 0; k <= 22; k++) {
-            const a = a0 + k * 0.30, rr = m.ax * (0.14 + k * 0.038);
-            const px = m.cx + Math.cos(a) * rr, py = m.cy + Math.sin(a) * rr * sy;
-            k ? c.lineTo(px, py) : c.moveTo(px, py);
+        for (let i = 0; i < 2; i++) {
+          const a0 = api.T * (0.42 + i * 0.17) + i * 3.1 + api.hash(it.x, it.z, 900 + i) * 6.283;
+          const pitch = 0.034 + api.hash(it.z, it.x, 910 + i) * 0.012;
+          const pts = [];
+          for (let k = 0; k <= 20; k++) {
+            const a = a0 + k * 0.32, rr = m.ax * (0.12 + k * pitch);
+            pts.push({ x: m.cx + Math.cos(a) * rr, y: m.cy + Math.sin(a) * rr * sy });
           }
-          c.stroke();
+          glowChain(c, api, pts, i % 2 ? '#a35cff' : '#4fd0ff',
+                    m.ax * (0.085 + api.hash(it.x, it.z, 920 + i) * 0.035), 0.30, true);
         }
       }
     }
@@ -2422,6 +2507,14 @@ const PAINTERS = {
   electric: {
     halo: (api) => [['#1a2440', 0.26, 'multiply'],
                     ['#5a9cff', 0.10 * (0.6 + 0.4 * Math.sin(api.T * 9.3)), 'lighter']],
+    /* ⚠ WAVE 5 — THE ARC HAS TO LIGHT THE PATCH, NOT BE DRAWN ON IT. An
+       electric arc is by far the brightest thing in its own frame, so the
+       ground under it should visibly brighten and its grain should come up
+       with it. That is a GAIN, not a fill: it re-reads the sand and scales it,
+       so the wet patch's own relief and the terrain's crease AO all rise
+       together. Flickering on the same 7 Hz clock as the branches below so the
+       light and the thing emitting it agree. */
+    gain: (api) => ['#4d86d8', 0.26 * (0.55 + 0.45 * Math.sin(api.T * 13.7))],
     m(api, c, g) {
       for (const it of g.list) {
         const m = it.m;
@@ -2431,25 +2524,28 @@ const PAINTERS = {
       }
     },
     l(api, c, g) {
+      /* ⚠ NO STROKE, NO shadowBlur. The old branch was a 0.90-alpha near-white
+         polyline — the single most opaque mark in the whole surface table —
+         with a canvas shadow standing in for a glow. Measured, it sat on the
+         sand with no transmission at all: a white zigzag decal. It is now a
+         two-pass chain of falloffs, wide and dim for the corona and tight and
+         hot for the core, so the arc has a soft body with a bright spine and
+         no width anywhere that the eye can call a line. */
       const seed = Math.floor(api.T * 7);
       for (const it of g.list) {
         const m = it.m;
-        c.save();
-        c.strokeStyle = api.rgba('#bcdcff', 0.90);
-        c.lineWidth = Math.max(0.9, m.ax * 0.035);
-        c.shadowColor = api.rgba('#78b4ff', 0.9); c.shadowBlur = m.ax * 0.22;
         for (let b = 0; b < 2; b++) {
           const a = api.hash(it.x + seed, it.z, b) * 6.283;
           let px = m.cx - Math.cos(a) * m.ax * 0.9, py = m.cy - Math.sin(a) * m.ay * 0.9;
-          c.beginPath(); c.moveTo(px, py);
+          const pts = [{ x: px, y: py }];
           for (let s = 0; s < 5; s++) {
             px += Math.cos(a) * m.ax * 0.38 + (api.hash(it.z + seed, it.x, b * 5 + s) - 0.5) * m.ax * 0.5;
             py += Math.sin(a) * m.ay * 0.38 + (api.hash(it.x + seed, it.z, b * 7 + s) - 0.5) * m.ay * 0.5;
-            c.lineTo(px, py);
+            pts.push({ x: px, y: py });
           }
-          c.stroke();
+          glowChain(c, api, pts, '#5f9ae8', m.ax * 0.115, 0.20, true);   /* corona */
+          glowChain(c, api, pts, '#cfe6ff', m.ax * 0.042, 0.34, true);   /* core   */
         }
-        c.restore();
       }
     }
   },
@@ -2457,19 +2553,67 @@ const PAINTERS = {
   /* ── HOLY ── consecrated ground: the sand is BRIGHTENED, never covered with
      an opaque plate, and the light rises off it. No outline anywhere. */
   holy: {
-    halo: (api) => [['#ffd98a', 0.14 * (0.9 + Math.sin(api.T * 1.3) * 0.1), 'lighter']],
+    /* ⚠ EVERY ADDITIVE ALPHA IN THIS PAINTER WAS CUT ~4×, AND THAT IS THE
+       POINT, NOT A SIDE EFFECT. First pass of the rewrite kept the old
+       additive stack (halo 0.14, region radial 0.26) AND added the gain at
+       0.62; measured on the fixed tile quads that came out at luma ratio 1.51
+       with the grain regression at slope 0.59 / r 0.762 — WORSE than the
+       stroked version it replaced (0.79 / 0.885), because two thirds of the
+       lift was still a constant and the red channel was clipping on the
+       brighter sand grains, which shears the top off the grain distribution.
+       A gain cannot show you the ground if a constant has already washed it
+       out. So the constants are small, the gain carries the lift, and the
+       tint lost some red (#e8b464 → #d0a860) to keep the peaks off 255. */
+    halo: (api) => [['#ffd98a', 0.035 * (0.9 + Math.sin(api.T * 1.3) * 0.1), 'lighter']],
+    /* ⚠ WAVE 5 — THE CONCENTRIC RING OUTLINES ARE DELETED, NOT SOFTENED, AND
+       THE COMMENT ABOVE FINALLY MATCHES THE CODE. Three expanding stroked
+       ellipses per tile is a HUD element, not consecrated ground: at 1:1 they
+       were the most obviously drawn mark left on the field, two clean nested
+       outlines per tile running on across the sand and straight over the cliff
+       band beside it because the surface mask spills 1.44 tile radii and a
+       stroke inside it spills with it. Nothing about that says "this ground is
+       holy" — it says "a circle was drawn here".
+       What the painter's own note always claimed it did — "the sand is
+       BRIGHTENED" — is now literally what it does, via the key-light gain:
+       out = sand ⊙ (1 + gA·warm), i.e. the ground's own grain, relief and
+       crease AO all scale up together and the tile reads as the same sand
+       under more light. That is the strongest gain in the table on purpose;
+       holy is the one surface whose entire identity IS illumination. */
+    gain: (api) => ['#c0a878', 0.50 * (0.92 + 0.08 * Math.sin(api.T * 1.3))],
+    /* a whisper of a warm multiply so the brightened sand also shifts hue
+       rather than just getting lighter — the "slightly darkened hue-shifted
+       tile" half of the pair. Blue is the attenuated channel, so what the gain
+       lifts is already warmer than bare sand. */
+    m(api, c, g) {
+      for (const it of g.list) {
+        const m = it.m;
+        radial(c, m.cx, m.cy, m.ax, m.ay, m.ax * 1.6, [
+          [0, api.rgba('#fff0cc', 0.16)], [0.6, api.rgba('#fff0cc', 0.10)], [1, api.rgba('#fff0cc', 0)]
+        ]);
+      }
+    },
     l(api, c, g) {
       for (const it of g.list) {
         const m = it.m, sy = m.ay / m.ax;
         radial(c, m.cx, m.cy, m.ax, m.ay, m.ax * 1.6, [
-          [0, api.rgba('#ffe6b0', 0.26)], [0.55, api.rgba('#ffdc94', 0.13)], [1, api.rgba('#ffd070', 0)]
+          [0, api.rgba('#ffe6b0', 0.060)], [0.55, api.rgba('#ffdc94', 0.030)], [1, api.rgba('#ffd070', 0)]
         ]);
+        /* Where the rings were: three soft, off-centre, unequal swells that
+           breathe out of phase. Same "the light pools unevenly" idea the move
+           pool's per-tile swells use, and for the same reason — a mark with a
+           centre and no boundary cannot be read as an outline. */
         for (let i = 0; i < 3; i++) {
-          const ph = (api.T * 0.28 + api.hash(it.x, it.z, i) + i / 3) % 1;
-          const rr = m.ax * (0.15 + ph * 0.95);
-          c.strokeStyle = api.rgba('#fff2cc', 0.20 * (1 - ph));
-          c.lineWidth = Math.max(0.8, m.ax * 0.03);
-          c.beginPath(); c.ellipse(m.cx, m.cy, rr, rr * sy, 0, 0, 6.3); c.stroke();
+          const ph = (api.T * 0.20 + api.hash(it.x, it.z, i + 40) + i / 3) % 1;
+          const br = 0.30 + 0.70 * Math.sin(Math.PI * ph);
+          const a  = api.hash(it.z, it.x, i + 41) * 6.283;
+          const d  = api.hash(it.x, it.z, i + 42) * m.ax * 0.46;
+          const rr = m.ax * (0.44 + api.hash(it.z, it.x, i + 43) * 0.40);
+          radial(c, m.cx + Math.cos(a) * d, m.cy + Math.sin(a) * d * sy,
+                 m.ax, m.ay, rr, [
+            [0,    api.rgba('#fff4d6', 0.035 * br)],
+            [0.45, api.rgba('#ffe6a8', 0.016 * br)],
+            [1,    api.rgba('#ffd070', 0)]
+          ]);
         }
       }
     },
@@ -2599,6 +2743,19 @@ function drawSurfaces(api) {
          a layer wrongly marked static freezes its animation, which is why the
          flags sit next to the painter that owns them. */
       if (P.m) { try { staticLayer(api, g, 'multiply', 1, 'm', cc => P.m(api, cc, g)); } catch (e) {} }
+      /* 2b. THE KEY LIGHT, for the painters whose identity is illumination.
+         Same mechanism and the same ordering rule as the move pool's (see
+         gainLayer): it goes in after the material multiply and before anything
+         additive, so what it amplifies is the ground plus its tint and nothing
+         this painter has yet emitted. Only void, electric and holy declare it
+         — the read-back is the one expensive call in this file and a puddle
+         has no business brightening the sand it lies in. gainLayer is itself
+         rate-limited (GAIN_REFRESH) and cached in g.sub, so a static hazard
+         costs one read every ~55 ms, not one per frame. */
+      if (P.gain) { try {
+        const gn = P.gain(api, g);
+        if (gn && gn[0] && gn[1] > 0.004) gainLayer(api, g, gn[0], gn[1], GAIN_REFRESH_SURF);
+      } catch (e) {} }
       if (P.s) { try {
         if (P.sStatic) staticLayer(api, g, 'source-over', 1, 's', cc => P.s(api, cc, g));
         else           layer(api, g, 'source-over', 1, cc => P.s(api, cc, g));

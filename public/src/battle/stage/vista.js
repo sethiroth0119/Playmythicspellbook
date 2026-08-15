@@ -213,7 +213,10 @@
      nearly the same blue (the part that does the cooling) for half the luma,
      so the shadows go cool without the shadows going away. */
   const SHADOW_TINT = 'rgb(6,16,50)';
-  const SHADOW_TINT_WEAK = 'rgb(3,7,22)';
+  /* ⚠ DEAD SINCE WAVE 5 and kept only so the note above still reads: the cool
+     bounce is computed in JS now (postMap), so there is no 'saturation' blend
+     to feature-detect and no weak fallback to fall back to. */
+  const SHADOW_TINT_WEAK = 'rgb(3,7,22)';   /* unused */
   /* ⚠ THE SHADOW MASK'S BLACK POINT, IN FRAME LUMA. Wave 2's blocker was that
      the mask had none: see shadowThumb(). Above SHADOW_HI the cool tint is
      EXACTLY zero — that is the whole point, and it is why the lit sand keeps
@@ -248,7 +251,11 @@
      EXACTLY and the pixel comes out of grade() with the chroma it went in
      with. Sand measures B−R around −20 and −35, water and the teal slabs +4
      to +16, so the gap is wide and the ramp can afford to be narrow. */
-  const COOL_LO = -14, COOL_HI = 2;
+  /* ⚠ SUPERSEDED BY GATE_LO/GATE_HI (see the grade). These were tuned for
+     wave 3's additive give-back against (B−R); the give-back survives, but the
+     mask it runs through is now (B − warm mean), which separates the pond from
+     shaded sand twice as well. Kept for the reader of the note above. */
+  const COOL_LO = -14, COOL_HI = 2;         /* unused */
   /* ⚠ THE MICRO-CONTRAST RESTORE — the other half of round 4's verdict.
      The warm multiply is (1, 1−0.42k, 1−k); its luma is 1 − 0.3726k ≈ 0.933 at
      noon, so it does not just shift hue, it SCALES every luma delta in the
@@ -318,6 +325,11 @@
      saturation of 21% before any of the later passes touched it, against a
      field measuring 41%. The blends consume a span, so this takes a span.
      See ART_CHROMA. ── */
+  /* the 8-bit chroma span (max−min) of a colour — what withChroma sets. */
+  function chromaSpanOf(hex) {
+    const c = hexRGB(hex);
+    return Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]);
+  }
   function withChroma(hex, span) {
     const c = hexRGB(hex);
     const mx = Math.max(c[0], c[1], c[2]), mn = Math.min(c[0], c[1], c[2]);
@@ -1555,6 +1567,23 @@
     const grd = g.createLinearGradient(0, 0, 0, Math.max(hz * 1.25, H * 0.5));
     grd.addColorStop(0, st[0]);
     grd.addColorStop(0.55, st[1]);
+    /* ⚠ THE CROSSOVER STOP, AND IT IS THE LAST ACHROMATIC THING IN THE FRAME.
+       A gradient from a blue mid-sky (108,154,205) to a warm dust horizon
+       (211,195,160) passes through NEUTRAL on the way, and the sun's own
+       additive glow sits on top of exactly that band and flattens it further.
+       Measured on the wave-3 app crop in 24px blocks over y 0.13-0.24: a run
+       of them at rgb(151,160,151) / (167,175,167) / (161,175,161) — R−B within
+       ±1, green the largest channel, sat 5-8%. That is the "one neutral patch
+       left in an otherwise warm backdrop", and it is NOT the haze band and NOT
+       the backdrop art: both were regraded warm in this same round and neither
+       moved these blocks.
+       A three-stop ramp cannot avoid the crossover — but a four-stop one can
+       route around it. The extra stop is the midpoint of the two neighbours
+       with its chroma forced back up to 60% of the mid-sky's own span, so the
+       ramp bends through a dusty blue-green instead of through grey. Nothing
+       else changes: both endpoints are untouched. */
+    const cross = withChroma(api.mixHex(st[1], st[2], 0.52), Math.round(chromaSpanOf(st[1]) * 0.60));
+    grd.addColorStop(0.80, cross);
     grd.addColorStop(1, st[2]);
     g.fillStyle = grd; g.fillRect(0, 0, W, H);
     /* horizon glow, centred on the light's azimuth — the sky is brightest
@@ -2416,6 +2445,18 @@
        still covers (y 0.116-0.154 of the board) came out at HSV 6-19% while
        the sky above it, which is ours, measured 28-43%. Raised until the art's
        band stops being the hole in the middle of the sky. */
+    /* ⚠ WAVE 5 RAISED BOTH FLOORS AGAIN, and this time the evidence is a
+       coordinate rather than a band average. The one achromatic thing left in
+       the frame after wave 3's regrade is IN THE ART, not in our own layers:
+       24px blocks over the ridge band of the app crop measure rgb(151,160,151)
+       / rgb(167,175,167) / rgb(161,175,161) — R−B within ±1, green the largest
+       channel, sat 5-8% — i.e. the photograph's own grey-green mountains
+       surviving a hue push that only landed at 64%. The procedural haze band
+       was fixed in the same round (see bakeLand) and did NOT move these, which
+       is how we know they are the art. At 0.80 the 'color' pass hands a
+       near-neutral art pixel the air's own hue almost entirely, which is the
+       whole point of an aerial-perspective layer: at ten kilometres you are
+       looking at the air, not at the rock. */
     g.globalCompositeOperation = 'saturation';
     g.globalAlpha = 0.72 + 0.22 * dis;
     g.fillStyle = AIR;
@@ -2821,7 +2862,9 @@
     const nz = nearY(api);
     const dspan = Math.max(24, H - nz);
     const dr = mulberry32(strHash((api.MAP.id || 'map') + '|dust'));
-    const dcol = api.mixHex(LIGHT.fog, LIGHT.disc, 0.5);
+    /* same again: mix(fog, disc, .5) is rgb(156,157,150), a neutral. Warm dust
+       is the entire point of this band. */
+    const dcol = api.mixHex(api.mixHex(LIGHT.fog, LIGHT.disc, 0.5), hazeColour(api), 0.55);
     g.save();
     g.beginPath(); g.rect(0, nz - 6, W, H - nz + 8); g.clip();
     for (let i = 0; i < 11; i++) {
@@ -3085,7 +3128,13 @@
     ctx.save();
     for (const d of S.drift) {
       const x = ((d.ph + api.T * d.sp) % 1.4 - 0.2) * (W + d.w * 2) - d.w;
-      const col = api.mixHex(LIGHT.fog, LIGHT.disc, 0.35);
+      /* ⚠ NEUTRAL, AND SITTING EXACTLY WHERE THE CLAUSE MEASURED. mix(fog,
+         disc, .35) is rgb(127,130,130) at noon — R−B −3, green the largest
+         channel — and these wisps are laid at y = hz−30…hz+40, i.e. across the
+         most distant ridge, live, over everything the bakes just warmed. Same
+         mistake as the haze band and the veil's fog band, in the one layer
+         that is not baked. Pulled two thirds onto the air's own colour. */
+      const col = api.mixHex(api.mixHex(LIGHT.fog, LIGHT.disc, 0.35), hazeColour(api), 0.66);
       const g = ctx.createRadialGradient(x, d.y, 0, x, d.y, d.w);
       g.addColorStop(0, api.rgba(col, d.a));
       g.addColorStop(1, api.rgba(col, 0));
@@ -3253,6 +3302,12 @@
   const GROUND_HI = 150, GROUND_LO = 45;
   /* extra warm restore at full shade, as a multiple of the depth ramp's own.
      Measured, not guessed: see the sweep numbers in the wave-5 report. */
+  /* ⚠ 3.0 AND A WIDER RAMP (GROUND_HI 165) WERE TRIED AND MEASURED THE SAME:
+     on the critic's own same-depth pair the shaded box went chroma 33.7 → 32.2,
+     which is inside this harness's own run-to-run noise (shoot.mjs measures
+     meanAbs 0.39-2.26 between fresh boots of one build). The restore is
+     already at the point where more k stops buying chroma, so it stays where
+     the A/B is cleanest. */
   const SHADOW_CHROMA = 1.9;
   /* extra gain at full shade — the texture half of the clause, and it goes in
      the MULTIPLY, not in the gain term.
@@ -3429,7 +3484,7 @@
            sand at R−B ≥ 24, nothing at R−B ≤ 6. The base restore (wave 3's) is
            untouched by this and still runs everywhere the cool gate allows. */
         let warm = (R - B - WARM_LO) * wInv; warm = warm < 0 ? 0 : warm > 1 ? 1 : warm;
-        let kk = k * r * (1 + SHADOW_CHROMA * sg * warm) * (1 - cool);
+        let kk = k * r * (1 + SHADOW_CHROMA * sg * warm);
         if (kk > 0.42) kk = 0.42;
         const w = GAIN_BASE;
         const gainDiv = 1 / (1 + w);
@@ -3459,10 +3514,33 @@
         M[o] = (mR * 255) | 0; M[o + 1] = (mG * 255) | 0; M[o + 2] = (mB * 255) | 0; M[o + 3] = 255;
         /* the additive half, pre-divided by the map because it is composited
            one pass EARLIER than the multiply that will scale it. */
-        const t2 = sd * SHADOW_TINT_K;
+        /* ⚠ THE COOL BOUNCE IS SCALED BY WHAT IT IS LANDING ON. Halving the
+           navy globally (which is what "shadows keep their material" needs on
+           sand) took it off the WATER too, and the pond is one of the places
+           the wave-3 tint was doing real work: measured on the app frame, the
+           pond interior went rgb(46,70,86) → (51,71,74), i.e. blue over green
+           collapsed from +16 to +3. So a surface the cool gate already
+           recognises keeps the full bounce — slightly more than wave 3's, to
+           make up for the tone gain it used to be multiplied by — and warm
+           ground in shade gets half. */
+        const t2 = sd * (SHADOW_TINT_K + (1.15 - SHADOW_TINT_K) * cool);
+        /* ⚠ THE COOL SURFACES GET WAVE 3's GIVE-BACK, NOT A GATE ON THE
+           MULTIPLY, AND THAT IS A CORRECTION TO THIS ROUND'S FIRST CUT. Gating
+           the restore is exact arithmetic and it still measured wrong: the app
+           frame's pond went rgb(46,70,86) → (51,71,74) — blue over green from
+           +16 to +3 — with the gate in and did not move when the gate was
+           widened twice, because more than the multiply had changed underneath
+           it (the tone gain used to multiply the give-back and the tint, and
+           the pedestal is a factor here rather than an offset). Restoring the
+           EXACT wave-3 term — k·B and 0.42k·G through the same (B − warm mean)
+           mask, scaled by TONE_GAIN because that is what wave 3's ordering
+           gave it — puts the water back where a passing wave-3 critic left it
+           and leaves the shaded-ground work to the boost above, which the mask
+           keeps off cool surfaces anyway. */
+        const gb = cool * TONE_GAIN * kk;
         const cR = (noVeil ? 0 : col[p * 3]) + tint[0] * t2;
-        const cG = (noVeil ? 0 : col[p * 3 + 1]) + tint[1] * t2;
-        const cB = (noVeil ? 0 : col[p * 3 + 2]) + tint[2] * t2;
+        const cG = (noVeil ? 0 : col[p * 3 + 1]) + tint[1] * t2 + 0.42 * gb * G0;
+        const cB = (noVeil ? 0 : col[p * 3 + 2]) + tint[2] * t2 + gb * B;
         A[o] = Math.min(255, cR / mR) | 0;
         A[o + 1] = Math.min(255, cG / mG) | 0;
         A[o + 2] = Math.min(255, cB / mB) | 0;

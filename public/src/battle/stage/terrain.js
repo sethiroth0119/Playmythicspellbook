@@ -52,11 +52,20 @@ function quadPt(P, u, v){
 
 /* An irregular closed blob in screen space. Radii are per-vertex so nothing
    here is ever a circle — circles are the "AI-generated game" tell. */
+/* ⚠ WAVE 5 — `n` USED TO BE 9 AND `k` USED TO SWING 0.62..1.24, AND AT THE
+   SLAB'S SIZE THAT IS NOT AN IRREGULAR BLOB, IT IS A DRAWN POLYGON. Cropped at
+   4x, the level-3 tops were carrying dark triangular silhouettes with hard
+   straight sides meeting at a point — the same "mountain glyph" shape repeated
+   across the plateau, which is precisely the evenly-repeated-prop tell the BAR
+   forbids. Nine straight segments around a 0.5-squashed ellipse gives visible
+   facets; the radius swing then turns two adjacent facets into an apex.
+   Callers now pass more segments, and the radius swing here is tighter, so the
+   outline is a rock rather than a rendered n-gon. */
 function blobPath(g, cx, cy, r, squash, n, seed, hash){
   g.beginPath();
   for (let i = 0; i <= n; i++){
     const a = (i / n) * Math.PI * 2;
-    const k = 0.62 + hash(seed + i * 7, seed * 3 + i, i) * 0.62;
+    const k = 0.82 + hash(seed + i * 7, seed * 3 + i, i) * 0.28;
     const px = cx + Math.cos(a) * r * k;
     const py = cy + Math.sin(a) * r * k * squash;
     i ? g.lineTo(px, py) : g.moveTo(px, py);

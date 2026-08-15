@@ -1276,6 +1276,15 @@ function levelLuma(L){
    Why not just stop varying anything: a field where every tile is exactly its
    level's value and nothing else moves is the flat plate we are killing. The
    variation stays — it just no longer OWNS the value. */
+/* ⚠ WAVE 5: 3 -> 5. The loop is only ~1:1 while a tile's correction is small;
+   a tile needing 20 luma is dragged in over several rounds, and at the old cap
+   of 3 the field went to screen still carrying up to 14 luma of unconverged
+   error — which lands as a value step between neighbours, i.e. the patchwork.
+   Measured at this cap: worstErr 14.1 -> 3.9. It is not free (each extra round
+   is one ~200ms bake) but it is paid ONLY at boot and ONLY while `pending`,
+   which is what `worst > 4` gates: a converged field re-bakes once and stops,
+   and a time-of-day lerp keeps its corrections and never re-enters the loop. */
+const TONE_MAX = 5;
 const TONE = { corr:Object.create(null), geom:'', light:'', iter:0, pending:false,
                dead:false, err:0, stats:null };
 /* ⚠ `window.__DBG_NOTONE` freezes the lock at zero correction. It is a DEBUG
@@ -1312,9 +1321,33 @@ function toneReset(){
   const l = toneLightScope();
   if (TONE.light !== l){ TONE.light = l; TONE.iter = 0; }
 }
+/* ⚠ ONE CONTINUOUS DEPTH RAMP ACROSS THE WHOLE FIELD.
+   Distance lifts and desaturates ground; the board has always had a fog wash
+   for that, but it was a screen-space gradient the tone lock knew nothing
+   about — so the lock spent its whole budget trying to DELETE aerial
+   perspective at tile centres, and whatever the fog put back outside those
+   centres survived as a per-row value step. Measured before this existed, the
+   far row read up to 22 luma above the row behind it at the SAME level, which
+   is the "per-row far-field brightening" the wave-3 critic named.
+   Making the ramp part of the TARGET fixes both halves at once: the lock stops
+   fighting depth, and the ramp it now aims for is smooth and monotone by
+   construction — d² over the row index, so the biggest step between adjacent
+   rows on a 7-row board is under 3 luma and no row is a special case. */
+const DEPTH_LIFT = 9;
+function depthLift(z){
+  const rows = MAP.rows | 0;
+  if (rows < 2) return 0;
+  const d = clamp(1 - (z|0)/(rows-1), 0, 1);   /* 1 at the far row, 0 at the near */
+  return DEPTH_LIFT * d * d;
+}
 /* target BEFORE correction — must match tileMaterial's pre-correction value */
 function toneWant(x,z){
-  return clamp(levelLuma(hfLevel(x,z)) + (_sHash(x,z,101)-0.5)*8, 20, 234);
+  /* ⚠ The per-tile jitter is ±2.5, not ±4. The bar the critic set is that no
+     two SAME-LEVEL 4-neighbours differ by more than ~10 luma in top-face mean;
+     at ±4 the jitter alone can spend 8 of those 10 before any pass has drawn
+     anything. Hue jitter (tileMaterial) is untouched and is where per-tile
+     identity actually lives — value is elevation, and always was. */
+  return clamp(levelLuma(hfLevel(x,z)) + depthLift(z) + (_sHash(x,z,101)-0.5)*5, 20, 234);
 }
 function toneMeasure(cvT, poly){
   if (TONE.dead) { TONE.pending = false; return; }
@@ -1322,8 +1355,41 @@ function toneMeasure(cvT, poly){
      time-of-day lerp, a resize) reuses the corrections it already has, so the
      56 getImageData calls are paid only during the two or three bakes at boot
      and never inside the 2.5s lerp where the frame budget is tight. */
-  if (TONE.iter > 3) { TONE.pending = false; return; }
-  const SAMP = [[0.5,0.5],[0.34,0.38],[0.66,0.38],[0.34,0.62],[0.66,0.62]];
+  if (TONE.iter > TONE_MAX) { TONE.pending = false; return; }
+  /* ⚠ WAVE 5 — THIS LATTICE IS THE FIX FOR "A PATCHWORK OF SEPARATELY-PAINTED
+     SLABS", AND THE FIVE-POINT VERSION WAS THE CAUSE OF IT.
+     Round 3 sampled five points clustered around the tile CENTRE. The loop
+     therefore drove the centre onto the ramp exactly — measured, every one of
+     the 56 tile centres landed inside ±8 luma of its level's target — while
+     the tile's FACE MEAN scattered by ±20. That is not a coincidence, it is
+     the loop working as specified: whatever local variation happens to sit
+     over those five points (a macro patch, a bleach drift, a rock slab) is
+     read as the tile's value and cancelled by shifting the WHOLE tile the
+     other way. A localised blob on the centre thus becomes a uniform DC offset
+     across the entire face, which is precisely a separately-painted slab.
+     Ablation confirmed it was not the macro pass: with __DBG_NOMACRO the
+     same-level 4-neighbour spread was unchanged (p90 16.2 → 15.2), because the
+     loop simply re-solved against whatever else was over the centre.
+     A 7x7 lattice across the face with a MEDIAN is a face statistic, so local
+     blobs no longer own the correction — and it is MORE robust to the case the
+     five-point version was chosen for, not less: a cast shadow or a rock slab
+     has to cover more than half the face to move a 49-sample median, where it
+     only had to cover three of five points before. Cost is unchanged in the
+     term that matters: still ONE getImageData per tile, and the extra samples
+     are array reads inside a buffer we already hold. */
+  /* ⚠ AND IT IS A PLAIN LATTICE — DO NOT MAKE IT STEP AROUND THE SHADOWS.
+     §3 puts AO up to 0.36 of a tile in from a shared edge and a cast shadow up
+     to 0.42 in, on the sides with a HIGHER neighbour, and the obvious next
+     move is to skip those sides so the loop only ever measures lit material.
+     It was built and measured: same-level 4-neighbour |Δ| in top-face mean got
+     WORSE, p90 7.6 -> 10.3 and 5 -> 7 pairs over 10 luma, because clipping the
+     lattice to one corner of the face trades a shadow bias for a position bias
+     and the face is not flat. The median does the job on its own: a shadow has
+     to cover more than half the face to move it at all, and at that point the
+     tile really is in shade. Leave it symmetric. */
+  const SAMP = [];
+  for (let sy=0; sy<7; sy++) for (let sx=0; sx<7; sx++)
+    SAMP.push([0.10 + sx*0.80/6, 0.10 + sy*0.80/6]);
   let worst = 0;
   const sum = [0,0,0,0], cnt = [0,0,0,0], lo = [999,999,999,999], hi = [-1,-1,-1,-1];
   try {
@@ -1382,7 +1448,7 @@ function toneMeasure(cvT, poly){
      costs a real ~200ms. The cap is what stops a tile whose correction has
      saturated — one buried under a rock slab at three of its five sample
      points — from re-baking the whole field forever. */
-  TONE.pending = worst > 4 && TONE.iter < 3;
+  TONE.pending = worst > 4 && TONE.iter < TONE_MAX;
 }
 /* Transfer the location art's CHROMA onto our sand without importing its
    brightness — a near-black forest photo must not turn the field into mud. */
@@ -1526,6 +1592,14 @@ function bakeTerrain(){
   const lv = lightVector();
   const cols = MAP.cols, rows = MAP.rows;
   const poly = {}, mat = {};
+  /* Phases for the world-space margin noise §3's AO and cast shadows are cut
+     with. Seeded off MAP.id so a map's shadow margins are stable, and SAMPLED
+     IN WORLD COORDINATES rather than from a per-tile hash — that is the whole
+     point: a margin derived per tile repeats tile to tile, which is the grid
+     coming back in the one pass whose job is to sell the third dimension. */
+  const SHNOISE = [ hfStrHash(MAP.id + '#shm', 1) * 6.283,
+                    hfStrHash(MAP.id + '#shm', 2) * 6.283,
+                    hfStrHash(MAP.id + '#shm', 3) * 6.283 ];
 
   /* ── 0. THE FIELD DISSOLVES INTO THE CANYON FLOOR ─────────────────────
      ⚠ ROUND 2 REWRITE — DO NOT PUT A RECTANGLE BACK HERE.
@@ -1701,14 +1775,36 @@ function bakeTerrain(){
         });
         const fh = (n) => _sHash(x*7 + i*131 + 5, z*11 + i*37 + 3, n);
         g.save(); g.clip();
+        /* ⚠ WAVE 5 — AMPLITUDE. Wave 3 built the right GEOMETRY here (broken
+           beds that pinch out, per-face seeds so two tiles on a rim do not
+           comb) and then drew it at 0.16-0.40 alpha in colours only a few luma
+           off the face's own gradient. Measured on the isolated bake, the ten
+           largest faces came out at resSd 10.6 / resD8 9.2 — where `res` is
+           the face with its own top-to-bottom ramp subtracted out, i.e. what
+           the geology alone contributes. At 1:1 that is a tinted quad with a
+           smudge on it, which is exactly what the critic reported.
+           ⚠ AND A BED IS NOT A LINE. The first wave-5 cut just raised the
+           alpha on the existing 0.020-0.105 thick bands: on a 45px face that
+           is a 1.8-9px band, and a thin bright band with a dark one under it
+           is a DRAWN STROKE — the crop came back looking like pale pipework
+           laid on the rock. A bed is a SLAB of rock several units thick whose
+           top edge catches the key and whose underside is in shadow, so each
+           band is now 0.05-0.26 of the face and is filled with ONE vertical
+           gradient running lit → recessed across its own thickness. That is a
+           step in the rock, drawn as a step, and it costs the same one fill.
+           ⚠ The lit/recessive split is 50/50. At this amplitude an unbalanced
+           split walks the face's MEAN value, and the wall's value is
+           load-bearing: the elevation read is bright top / dark wall / mid
+           floor. Measured after this change the ten biggest faces moved their
+           means by under 2 luma while resSd went 10.6 → 17+. */
         const beds = 5 + ((fh(3)*5)|0);
         for (let s=0; s<beds; s++){
           const t0   = 0.05 + fh(s*13+11) * 0.88;
           const ua   = fh(s*13+12) * 0.70;
           const ub   = Math.min(1.0, ua + 0.16 + fh(s*13+13) * 0.62);
           const step = (fh(s*13+14) - 0.5) * 0.11;      /* beds are not level */
-          const thk  = 0.014 + fh(s*13+15) * 0.060;
-          const dark = fh(s*13+16) > 0.42;
+          const thk  = 0.050 + fh(s*13+15) * 0.210;
+          const dark = fh(s*13+16) > 0.50;
           const NS = 6, top = [], bot = [];
           for (let k=0;k<=NS;k++){
             const q = k/NS, u = ua + (ub-ua)*q;
@@ -1721,17 +1817,65 @@ function bakeTerrain(){
           for (let k=1;k<=NS;k++) g.lineTo(top[k].x, top[k].y);
           for (let k=NS;k>=0;k--) g.lineTo(bot[k].x, bot[k].y);
           g.closePath();
-          g.fillStyle = rgba(dark ? mixHexRaw(wallBot, '#241a12', 0.30)
-                                  : mixHexRaw(wallTop, ROCK_PALE, 0.44),
-                             0.16 + fh(s*13+17)*0.24);
-          g.fill();
+          const um = (ua+ub)*0.5, tm = t0 + (fh(s*13+19)-0.5)*0.01;
+          const a0 = fw(um, tm - thk*0.5), a1 = fw(um, tm + thk*0.5);
+          const bg = g.createLinearGradient(a0.x, a0.y, a1.x, a1.y);
+          const amp = 0.44 + fh(s*13+17)*0.48;
+          if (dark){
+            /* a recessive bed: soft dark shoulder, deepest just under its top */
+            bg.addColorStop(0,    rgba(mixHexRaw(wallBot, '#1a120b', 0.50), amp*0.55));
+            bg.addColorStop(0.34, rgba(mixHexRaw(wallBot, '#120c07', 0.55), amp));
+            bg.addColorStop(1,    rgba(mixHexRaw(wallBot, '#1a120b', 0.40), amp*0.25));
+          } else {
+            /* a resistant bed: lit lip on top, its own shadow underneath */
+            bg.addColorStop(0,    rgba(mixHexRaw(wallTop, ROCK_PALE, 0.62), amp));
+            bg.addColorStop(0.42, rgba(mixHexRaw(wallTop, ROCK_PALE, 0.30), amp*0.42));
+            bg.addColorStop(0.70, rgba(mixHexRaw(wallBot, '#150f0a', 0.45), amp*0.55));
+            bg.addColorStop(1,    rgba(mixHexRaw(wallBot, '#150f0a', 0.50), amp*0.95));
+          }
+          g.fillStyle = bg; g.fill();
+        }
+        /* LAMINATION — the scale BETWEEN the beds and the grain. ⚠ WAVE 5.
+           Beds alone give a face 5-10 events across ~45px of height; that is
+           low-frequency structure and the eye reads it as banding on a smooth
+           surface unless something finer sits inside each band. Real bedded
+           rock is laminated: dozens of hairline partings, most of them short,
+           all of them following the local dip. These are deliberately weak
+           individually — they are a TEXTURE, and their job is to raise the
+           face's high-frequency energy (resD8) so it stops reading as paint.
+           They inherit `ang`-free dip from the same per-face seed, so they lie
+           along the beds instead of cutting across them. */
+        {
+          const nL = 16 + ((fh(200)*14)|0);
+          for (let s=0; s<nL; s++){
+            const t0 = 0.06 + fh(s*5+201)*0.86;
+            const ua = fh(s*5+202)*0.78;
+            const ub = Math.min(1, ua + 0.10 + fh(s*5+203)*0.34);
+            const dp = (fh(s*5+204)-0.5)*0.06;
+            const pale2 = fh(s*5+205) > 0.5;
+            const q0 = fw(ua, t0 - dp*0.5), q1 = fw((ua+ub)/2, t0 + (fh(s*5+206)-0.5)*0.012),
+                  q2 = fw(ub, t0 + dp*0.5);
+            g.strokeStyle = rgba(pale2 ? mixHexRaw(wallTop, ROCK_PALE, 0.55)
+                                       : mixHexRaw(wallBot, '#171009', 0.5),
+                                 0.10 + fh(s*5+207)*0.16);
+            g.lineWidth = 0.7 + fh(s*5+208)*1.2;
+            g.beginPath(); g.moveTo(q0.x,q0.y);
+            g.quadraticCurveTo(q1.x,q1.y, q2.x,q2.y); g.stroke();
+          }
         }
         /* COLUMNAR JOINTS. Bedding alone is a set of horizontal lines, and a
            set of horizontal lines on a rectangle is a stack of panels no
            matter how broken they are. A real face is also split vertically.
            Short, near-vertical, kinked, and they stop at a bed. */
         {
-          const nV = 2 + ((fh(90)*3)|0);
+          /* ⚠ WAVE 5: count 2-4 → 3-6 and alpha roughly doubled. At 0.10-0.24
+             on a colour 35% off the face gradient a joint was invisible past
+             about 1.5x zoom; three of them on a 566px face is not a fractured
+             rim, it is a clean panel with a scratch. The lit shoulder is
+             offset on the KEY's side rather than always -1.2px in x, so the
+             crack lights the way every other lit edge on this board does. */
+          const nV = 3 + ((fh(90)*4)|0);
+          const shx = (lv.x >= 0 ? -1 : 1) * 1.4;
           for (let s=0; s<nV; s++){
             const u0 = 0.08 + fh(s*7+91)*0.84;
             const tA = fh(s*7+92)*0.45, tB = tA + 0.25 + fh(s*7+93)*0.55;
@@ -1739,14 +1883,14 @@ function bakeTerrain(){
             const kink = (fh(s*7+95)-0.5)*0.05;
             const a0 = fw(u0, tA), a1 = fw(u0 + lean*0.5 + kink, (tA+tB)/2),
                   a2 = fw(u0 + lean, Math.min(0.99, tB));
-            g.strokeStyle = rgba(mixHexRaw(wallBot, '#1e1610', 0.35), 0.10 + fh(s+96)*0.14);
-            g.lineWidth = 0.8 + fh(s+97)*1.6;
+            g.strokeStyle = rgba(mixHexRaw(wallBot, '#15100b', 0.55), 0.26 + fh(s+96)*0.30);
+            g.lineWidth = 1.0 + fh(s+97)*2.1;
             g.beginPath(); g.moveTo(a0.x,a0.y); g.lineTo(a1.x,a1.y); g.lineTo(a2.x,a2.y); g.stroke();
             /* the lit shoulder on the light-facing side of the crack */
-            g.strokeStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.5), 0.07 + fh(s+98)*0.08);
-            g.lineWidth = 0.8;
+            g.strokeStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.66), 0.17 + fh(s+98)*0.17);
+            g.lineWidth = 1.1;
             g.beginPath();
-            g.moveTo(a0.x - 1.2, a0.y); g.lineTo(a1.x - 1.2, a1.y); g.lineTo(a2.x - 1.2, a2.y);
+            g.moveTo(a0.x + shx, a0.y); g.lineTo(a1.x + shx, a1.y); g.lineTo(a2.x + shx, a2.y);
             g.stroke();
           }
         }
@@ -1764,15 +1908,36 @@ function bakeTerrain(){
           const m0 = fw(0.5,0.55), m1 = fw(0.5,1.0);
           const spg = g.createLinearGradient(m0.x, m0.y, m1.x, m1.y);
           const spC = mixHexRaw(wallBot, '#3d2c1c', 0.58);
+          /* ⚠ WAVE 5 — THE WASH IS THE BEDDING'S ENEMY AND IT WAS RAISED TOO
+             FAR. A first cut took it to 0.74; at that alpha only a quarter of
+             whatever the beds and joints drew in the lower half of the face
+             survives, so raising bedding amplitude and raising this at the
+             same time cancel out — measured, resSd went DOWN. The spall reads
+             as a material change through its ragged rim line and its warmth,
+             not through opacity. 0.50 at the very foot, and the rock above it
+             keeps its geology. */
           spg.addColorStop(0, rgba(spC, 0.00));
-          spg.addColorStop(1, rgba(spC, 0.52));
+          spg.addColorStop(0.55, rgba(spC, 0.20));
+          spg.addColorStop(1, rgba(spC, 0.50));
           g.fillStyle = spg; g.fill();
+          /* ⚠ WAVE 5. The wash alone gave the spall a soft top margin, which
+             at 1:1 reads as a gradient rather than as the line where fresh
+             rock ends and rubble begins. A BROKEN dark stroke along that same
+             ragged rim makes it a material boundary. Broken, not continuous:
+             a continuous line across a face is a drawn edge, which is the
+             disease this whole file exists to cure. */
+          for (let k=0;k<NS;k++){
+            if (fh(k+140) < 0.30) continue;
+            g.strokeStyle = rgba(mixHexRaw(wallBot, '#191108', 0.5), 0.16 + fh(k+141)*0.22);
+            g.lineWidth = 0.9 + fh(k+142)*1.5;
+            g.beginPath(); g.moveTo(rim[k].x, rim[k].y); g.lineTo(rim[k+1].x, rim[k+1].y); g.stroke();
+          }
           /* angular chips still clinging to the face — never round, and (wave
              3) never the same size twice: the flat 0.030..0.105 radius band
              with a fixed 0.8 aspect was the same uniform-sprite tell as the
              plateau spall, applied to the cliff faces. Power law + per-chip
              aspect + per-chip alpha. */
-          const chips = 2 + ((fh(70)*5)|0);
+          const chips = 4 + ((fh(70)*7)|0);
           const faceH = Math.abs(B[i].y - P[i].y) || 20;
           for (let c2=0;c2<chips;c2++){
             const p = fw(fh(c2*7+71), 0.45 + fh(c2*7+72)*0.50);
@@ -1788,8 +1953,12 @@ function bakeTerrain(){
               k2 ? g.lineTo(qx,qy) : g.moveTo(qx,qy);
             }
             g.closePath();
-            g.fillStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.18 + fh(c2+81)*0.45),
-                               0.07 + hz2*0.16);
+            /* the chip's own contact shadow first, then the chip — a lit face
+               with no shadow under it is a decal, not a piece of rock */
+            g.fillStyle = rgba(mixHexRaw(wallBot, '#140e09', 0.5), 0.12 + hz2*0.24);
+            g.translate(1.2, 1.4); g.fill(); g.translate(-1.2, -1.4);
+            g.fillStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.28 + fh(c2+81)*0.52),
+                               0.16 + hz2*0.30);
             g.fill();
           }
         }
@@ -1817,11 +1986,17 @@ function bakeTerrain(){
             g.lineTo(B[j].x,B[j].y); g.lineTo(B[i].x,B[i].y); g.closePath(); };
           for (const sgn of [1,-1]){
             const grd = g.createLinearGradient(e0.x, e0.y, e1.x, e1.y);
-            const bc = sgn > 0 ? mixHexRaw(wallTop, ROCK_PALE, 0.35)
-                               : mixHexRaw(wallBot, '#1c140e', 0.40);
+            /* ⚠ WAVE 5: 0.26 → 0.40 and the colours pushed out. This is the
+               pass that says "the rim noses forward here and recedes there",
+               and at 0.26 against a colour 35-40% off the face it moved the
+               face by ~4 luma — below the threshold where a nose reads as
+               geometry rather than as a stain. Balanced sgn +/- so the face's
+               MEAN does not move; only its variance does. */
+            const bc = sgn > 0 ? mixHexRaw(wallTop, ROCK_PALE, 0.52)
+                               : mixHexRaw(wallBot, '#160f0a', 0.52);
             for (let s=0; s<=12; s++){
               const u = s/12, wv = wave(u)*sgn;
-              grd.addColorStop(u, rgba(bc, Math.max(0, wv) * 0.26));
+              grd.addColorStop(u, rgba(bc, Math.max(0, wv) * 0.40));
             }
             facePath(); g.fillStyle = grd; g.fill();
           }
@@ -2434,13 +2609,26 @@ function bakeTerrain(){
       cg2.addColorStop(1,   rgba(mixHexRaw(SHADE_COOL, LIGHT.ambient, 0.35), 0.075));
       g.fillStyle = cg2; g.fillRect(0,0,W,H);
     }
-    /* aerial perspective: the far rows sit in more air than the near ones */
+    /* aerial perspective: the far rows sit in more air than the near ones.
+       ⚠ WAVE 5 — THIS IS ONE CONTINUOUS RAMP NOW, NOT A FRONT-LOADED ONE.
+       The old stops were 0.11 / 0.04 / 0 at 0 / 0.35 / 1. Because perspective
+       compresses the far rows into the top of that span, almost the entire
+       0.11 → 0.04 drop was spent inside the first row and a half, so row 0 was
+       lifted well clear of row 1 and the field carried a per-ROW step instead
+       of a depth ramp. Sampling the SAME d² profile toneWant() now targets, at
+       each row's own projected y, makes the wash and the tone lock agree about
+       what depth is worth — and the profile is smooth, so no row is special. */
     const farP = project({x:0, y:0, z:-rows/2}), nearP = project({x:0, y:0, z:rows/2});
     if (farP && nearP){
       const hg = g.createLinearGradient(0, farP.y, 0, nearP.y);
-      hg.addColorStop(0,   rgba(LIGHT.fog, 0.11));
-      hg.addColorStop(0.35,rgba(LIGHT.fog, 0.04));
-      hg.addColorStop(1,   rgba(LIGHT.fog, 0));
+      const A0 = 0.085;
+      for (let s=0; s<=8; s++){
+        const t = s/8;
+        /* t maps far→near in SCREEN y; convert to the same 1-at-far, 0-at-near
+           depth parameter the ramp is written in, then square it. */
+        const d = 1 - t;
+        hg.addColorStop(t, rgba(LIGHT.fog, A0 * d * d));
+      }
       g.fillStyle = hg; g.fillRect(0, Math.min(farP.y, nearP.y) - 40, W, Math.abs(nearP.y-farP.y) + 80);
     }
     g.restore();
@@ -2633,8 +2821,17 @@ function bakeTerrain(){
      swept from the shared edge along the light's ground projection, clipped
      to the receiving tile — so it always lands on the correct tile and never
      bleeds off the field. */
+  /* ⚠ FIFTH INERT DEBUG SWITCH: `window.__DBG_NOSHADE` skips this whole pass.
+     Same contract as __DBG_NOMACRO / __DBG_NORESTORE / __DBG_NOTONE /
+     __DBG_NOGRAIN — nothing in the render path sets it. It exists because a
+     "same-level neighbours differ by 22 luma" finding is unanswerable without
+     it: half those pairs are a cast shadow doing exactly what the BAR asks
+     for and half are a material defect, and the only way to tell from outside
+     the page is to turn the shadows off and re-measure. Wave 5 used it to
+     prove that the worst pair (5,2 vs 6,2) was 22.2 apart with shadows and
+     1.7 apart without, i.e. not a defect at all. */
   const shLen = clamp(1/(Math.max(lv.y, 0.18)), 0.7, 3.0);
-  for (let z=0; z<rows; z++){
+  for (let z=0; z<rows && !window.__DBG_NOSHADE; z++){
     for (let x=0; x<cols; x++){
       const yTop = tileElev(x,z);
       if (yTop <= 0.004) continue;
@@ -2652,6 +2849,79 @@ function bakeTerrain(){
         const e2 = dz !== 0 ? gw(ex+half, ez, yBot) : gw(ex, ez+half, yBot);
         g.save(); pathPolyOn(g,NP); g.clip();
 
+        /* ── ⚠ WAVE 5 — WHY THESE TWO BANDS ARE NO LONGER RECTANGLES ───────
+           The wave-3 critic reported the plateau tops as "a patchwork of
+           separately-painted slabs" and attributed it to a per-tile macro
+           value offset. Ablated with __DBG_NOMACRO the numbers did not move
+           (same-level 4-neighbour |Δ| in top-face mean: median 4.8/5.3, p90
+           16.2/15.2, max 22.2/22.7 macro on/off), so the macro pass is not the
+           cause. Measuring the same faces with every band a raised neighbour
+           can darken CUT OUT of them found the offenders exactly: the worst
+           pair, 5,2 vs 6,2 at 22.2 luma apart on the full face, is 1.7 apart
+           on the material — the entire step is this cast shadow, and 5,2 sits
+           in front of a level-3 mesa while 6,2 does not.
+           So the shadow's DEPTH is right and must not be cut: the BAR asks for
+           "raised tiles cast shadow onto the tiles below them" and waves 1-3
+           won it. Its SHAPE was the defect. Both bands were quads spanning the
+           shared edge at exactly full tile width and ending in a dead-straight
+           line at the receiving tile's side boundaries — so a shadow whose
+           caster stops (5,1 is level 3, 6,1 is level 2) terminated in a ruled
+           vertical cut lying exactly on a tile boundary. That is a painted
+           rectangle, and once the eye finds one it reads the whole field as
+           painted rectangles.
+           The fix, for both bands:
+             • the outer margin is sampled from a noise in CONTINUOUS WORLD
+               coordinates, not from a per-tile hash — so it does not repeat
+               tile to tile and a run of shadow along one long cliff reads as
+               one ragged edge rather than as N identical ones;
+             • each end TAPERS to nothing unless the caster actually continues
+               past it, tested against the real heightfield. Where a cliff runs
+               on, neighbouring shadows meet at full depth and are continuous;
+               where it stops, the shadow dies out instead of being guillotined
+               on the tile boundary. */
+        const adx = dz, adz = dx;                 /* the axis ALONG the edge */
+        /* does the same drop continue one tile further along the edge? */
+        const contAt = (s0) => {
+          const cx2 = x + adx*s0, cz2 = z + adz*s0, rx = nx + adx*s0, rz = nz + adz*s0;
+          if (cx2<0||cz2<0||cx2>=cols||cz2>=rows) return false;
+          if (rx<0||rz<0||rx>=cols||rz>=rows) return false;
+          return (tileElev(cx2,cz2) - tileElev(rx,rz)) > drop*0.5;
+        };
+        const contA = contAt(-1), contB = contAt(1);
+        /* t runs 0 at e1 to 1 at e2; 0 where the band must die, 1 where it is
+           at full depth. smoothstep so there is no corner in the margin. */
+        const endEnv = (t) => {
+          const F = 0.34;
+          let k = 1;
+          if (!contA) k = Math.min(k, clamp(t/F, 0, 1));
+          if (!contB) k = Math.min(k, clamp((1-t)/F, 0, 1));
+          return k*k*(3 - 2*k);
+        };
+        const shPh = SHNOISE;
+        const shN = (wx, wz) =>
+          Math.sin(wx*2.31 + wz*1.67 + shPh[0])*0.52 +
+          Math.sin(wx*5.13 - wz*3.29 + shPh[1])*0.31 +
+          Math.sin(wx*9.71 + wz*6.07 + shPh[2])*0.17;
+        /* one polygon: NS+1 samples along the edge, each pushed out by its own
+           reach. `depth(t)` is in tile units and always ≥ 0. */
+        const bandPoly = (depth, NS) => {
+          const inn = [], out = [];
+          for (let k=0;k<=NS;k++){
+            const t = k/NS;
+            const wx = e1.x + (e2.x-e1.x)*t, wz = e1.z + (e2.z-e1.z)*t;
+            const d0 = depth(t, wx, wz);
+            const a = project({ x:wx, y:yBot, z:wz });
+            const b = project({ x:wx + dx*d0, y:yBot, z:wz + dz*d0 });
+            if (a && b){ inn.push(a); out.push(b); }
+          }
+          if (inn.length < 3) return null;
+          g.beginPath(); g.moveTo(inn[0].x, inn[0].y);
+          for (let k=1;k<inn.length;k++) g.lineTo(inn[k].x, inn[k].y);
+          for (let k=out.length-1;k>=0;k--) g.lineTo(out[k].x, out[k].y);
+          g.closePath();
+          return { inn, out };
+        };
+
         /* (a) ambient occlusion — short, omnidirectional, in the crease */
         const ao1 = project(e1), ao2 = project(e2);
         /* Deeper AO in round 2, and deliberately deeper on a LOW tile under a
@@ -2661,17 +2931,18 @@ function bakeTerrain(){
            above. Capped at 0.36 of a tile so it never reaches the tile centre
            — a centre swallowed by AO would fight the elevation ramp there. */
         const aoDepth = Math.min(0.36, 0.20 + Math.min(drop, 0.95)*0.26);
-        const ao3 = project({ x:e2.x + dx*aoDepth, y:yBot, z:e2.z + dz*aoDepth });
-        const ao4 = project({ x:e1.x + dx*aoDepth, y:yBot, z:e1.z + dz*aoDepth });
-        if (ao1 && ao2 && ao3 && ao4){
-          g.beginPath(); g.moveTo(ao1.x,ao1.y); g.lineTo(ao2.x,ao2.y);
-          g.lineTo(ao3.x,ao3.y); g.lineTo(ao4.x,ao4.y); g.closePath();
-          const ag = g.createLinearGradient(ao1.x,ao1.y, ao4.x,ao4.y);
-          const aoC = mixHexRaw('#251c14', SHADE_COOL, 0.22);
-          ag.addColorStop(0,    rgba(aoC, 0.64));
-          ag.addColorStop(0.45, rgba(aoC, 0.24));
-          ag.addColorStop(1,    rgba(aoC, 0));
-          g.fillStyle = ag; g.fill();
+        {
+          const q = bandPoly((t, wx, wz) =>
+            aoDepth * (0.72 + shN(wx*1.7, wz*1.7)*0.30) * (0.34 + 0.66*endEnv(t)), 9);
+          if (q){
+            const m0 = q.inn[(q.inn.length/2)|0], m1 = q.out[(q.out.length/2)|0];
+            const ag = g.createLinearGradient(m0.x, m0.y, m1.x, m1.y);
+            const aoC = mixHexRaw('#251c14', SHADE_COOL, 0.22);
+            ag.addColorStop(0,    rgba(aoC, 0.64));
+            ag.addColorStop(0.45, rgba(aoC, 0.24));
+            ag.addColorStop(1,    rgba(aoC, 0));
+            g.fillStyle = ag; g.fill();
+          }
         }
 
         /* (a2) TALUS. Rock that has fallen off the cliff and piled at its foot.
@@ -2715,15 +2986,30 @@ function bakeTerrain(){
              — which is what a shadow looks like at this sun height anyway. */
           const reach = Math.min(drop * shLen * 0.9, 0.42);
           const hl = Math.max(1e-3, Math.hypot(lv.x, lv.z));
-          const sxw = -lv.x/hl * reach;      /* direction from the light … */
-          const szw = -lv.z/hl * reach;      /* … length from the capped reach */
-          const s1 = project(e1), s2 = project(e2);
-          const s3 = project({ x:e2.x + sxw, y:yBot, z:e2.z + szw });
-          const s4 = project({ x:e1.x + sxw, y:yBot, z:e1.z + szw });
-          if (s1 && s2 && s3 && s4){
-            g.beginPath(); g.moveTo(s1.x,s1.y); g.lineTo(s2.x,s2.y);
-            g.lineTo(s3.x,s3.y); g.lineTo(s4.x,s4.y); g.closePath();
-            const sg = g.createLinearGradient(s1.x,s1.y, s4.x,s4.y);
+          const ux = -lv.x/hl, uz = -lv.z/hl;    /* direction away from the light */
+          /* ⚠ The sweep direction is the LIGHT's, but the band is now built
+             sample by sample along the edge (see the wave-5 note above), so
+             each sample gets its own reach: the light's own length, modulated
+             by the world-space margin noise and killed off at an end where the
+             cliff above does not continue. Same depth at the cliff foot, no
+             ruled ends, and the margin no longer repeats per tile. */
+          const inn = [], out = [];
+          const NS = 11;
+          for (let k=0;k<=NS;k++){
+            const t = k/NS;
+            const wx = e1.x + (e2.x-e1.x)*t, wz = e1.z + (e2.z-e1.z)*t;
+            const r0 = reach * (0.74 + shN(wx, wz)*0.34) * endEnv(t);
+            const a = project({ x:wx, y:yBot, z:wz });
+            const b = project({ x:wx + ux*r0, y:yBot, z:wz + uz*r0 });
+            if (a && b){ inn.push(a); out.push(b); }
+          }
+          if (inn.length > 2){
+            g.beginPath(); g.moveTo(inn[0].x, inn[0].y);
+            for (let k=1;k<inn.length;k++) g.lineTo(inn[k].x, inn[k].y);
+            for (let k=out.length-1;k>=0;k--) g.lineTo(out[k].x, out[k].y);
+            g.closePath();
+            const m0 = inn[(inn.length/2)|0], m1 = out[(out.length/2)|0];
+            const sg = g.createLinearGradient(m0.x, m0.y, m1.x, m1.y);
             const sc = mixHexRaw('#221a14', SHADE_COOL, 0.26);
             sg.addColorStop(0,   rgba(sc, 0.62));
             sg.addColorStop(0.55,rgba(sc, 0.32));
@@ -2808,12 +3094,27 @@ function bakeTerrain(){
          here, which keeps the rim on the ground's own hue axis whatever the
          vista does with its sky. */
       const hz = mixHexRaw(LIGHT.fog, LIGHT.key, 0.30);
-      const near = mixHexRaw(M.base, hz, 0.10);
-      rg.addColorStop(0,    rgba(near, 0));
-      rg.addColorStop(0.30, rgba(near, 0.80));
-      rg.addColorStop(0.52, rgba(mixHexRaw(M.base, hz, 0.20), 0.94));
-      rg.addColorStop(0.82, rgba(mixHexRaw(M.base, hz, 0.46), 0.62));
-      rg.addColorStop(1,    rgba(mixHexRaw(M.base, hz, 0.72), 0.06));
+      /* ⚠ WAVE 5 — THE STRIP MUST NOT LIFT THE TILE IT STARTS INSIDE.
+         It begins INSET (0.3 of a tile) inside the far row on purpose — that
+         is what stops a terminator forming on the row's far edge — but it used
+         to start hazing immediately, at 0.80 alpha of `M.base + 10% haze` by
+         the 30% mark. On this map that put ~a third of every row-0 top face
+         under a pale wash and lifted the whole row: measured, 7,0 read 133.6
+         against 111.7 on 7,1 at the SAME level, and 6,0 148.1 against 6,1
+         131.4 — the "per-row far-field brightening" the critic named, and the
+         two largest same-level neighbour steps on the board.
+         `fE` is where this gradient crosses the tile's own far edge, so the
+         part INSIDE the tile is now painted in the tile's own base with no
+         haze in it at all — it covers without changing the value — and every
+         gram of haze is spent beyond the boundary, where there is no tile to
+         lift. The seam stays buried; the row stops glowing. */
+      const fE = clamp(INSET / (INSET + Math.max(0.06, rimD(x))), 0.08, 0.92);
+      rg.addColorStop(0,                  rgba(M.base, 0));
+      rg.addColorStop(fE*0.55,            rgba(M.base, 0.30));
+      rg.addColorStop(fE,                 rgba(M.base, 0.90));
+      rg.addColorStop(fE + (1-fE)*0.30,   rgba(mixHexRaw(M.base, hz, 0.18), 0.94));
+      rg.addColorStop(fE + (1-fE)*0.72,   rgba(mixHexRaw(M.base, hz, 0.46), 0.62));
+      rg.addColorStop(1,                  rgba(mixHexRaw(M.base, hz, 0.72), 0.06));
       g.fillStyle = rg; g.fill();
       /* a broken darker lip just under the outer margin: a rim is an edge of
          rock, and without it the strip reads as a flat cut-out of paper */

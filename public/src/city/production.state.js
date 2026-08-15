@@ -42,6 +42,72 @@ export function terroirFactor(host, p, resId) {
    base building — the number the design rests on, readable from the UI. */
 export function chainCeilingFor(resId) { return chainCeiling(resId); }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   🔴 TERROIR SCALES THE WHOLE CYCLE — OUTPUT *AND* INPUTS. THE ONE NUMBER.
+   ----------------------------------------------------------------------------
+   THE DEFECT THIS EXISTS FOR, MEASURED END-TO-END THROUGH collect() ITSELF, not
+   modelled: `pending()` multiplied the yield by the terroir factor and
+   `collect()` charged the inputs FLAT. So one cycle's value ratio was
+
+       ratio(player) = ratio(catalogue) × tf
+
+   and `tf` reaches RICH.yieldMul × SEAM_BONUS_MUL = 1.60 × 3 = 4.80 on the
+   node's own seam. Driven on the shipped payout path, 36 h / 6 cycles, ledger
+   deltas priced at index.html's RESOURCE_CINDER_VALUE:
+
+       chain_aluminumOre @seam   240🔥 of fuel in → 1,152🔥 of ore out   4.800×
+       wellhead          @seam    90🔥 in         → 3,456🔥 out         38.400×
+       ALL 56 chain producers and ALL 14 legacy producers Cinder-positive.
+
+   The Refinery sells any ledger id for Cinder through addCinders → addGems →
+   Profile.gems, so that was REAL currency created by standing on good ground,
+   for free, forever. Repricing could not fix it: the amplification is a
+   MULTIPLIER on whatever the price is, it hits the legacy shelf hardest (the
+   shelf a price change here cannot reach), and pricing against 4.80 puts a
+   tier-0 good at 0.208🔥 — which `addGems()`'s `Math.floor` pays as literally 0
+   for every ordinary-ground sale under 5 units. So the fix is here: charge the
+   cycle's inputs by the same factor its output was scaled by.
+
+   ⚠ WHAT TERROIR STILL MEANS, because this deliberately does NOT nerf it. Rich
+   ground still gives 4.8× the THROUGHPUT per cycle, per crew slot, per tile and
+   per 6 h — "a fuel node IS a fuel city" is intact. What it stops doing is
+   manufacturing VALUE out of nothing: a cycle now converts inputs into output at
+   the catalogue's own ratio on every ground, and the payoff for good ground is
+   volume, which is what the design says it is.
+
+   🔴 ONE NUMBER, THREE CALL SITES, COMPUTED ONCE. haltState() checks one cycle,
+   pending()'s inputCap loop decides how many cycles it can PROMISE, and
+   collect() CHARGES. If any two of those disagree the panel promises cycles the
+   spend path then refuses — verbatim the "banked 🥫 270 (6 cycles) → Not enough
+   Water" bug documented at the inputCap loop below. So all three go through
+   these two functions and nothing multiplies by `tf` by hand.
+
+   ⚠ MAX over the yields, not the first one. Every building in CITY_PRODUCTION is
+   single-output today, so max === the only value; the loop is written for the
+   general case, and MAX is the conservative side — charging by the largest
+   factor can only make the cycle's ratio ≤ the catalogue's, never more. */
+export function inputTerroirScale(host, p, def) {
+  try {
+    const ys = (def && def.yields) ? Object.keys(def.yields) : [];
+    let m = 0;
+    for (const k of ys) m = Math.max(m, terroirFactor(host, p, k));
+    return (typeof m === 'number' && isFinite(m) && m > 0) ? m : 1;
+  } catch (e) { return 1; }
+}
+
+/* The charge for `cycles` cycles of one input leg, at `perCycle` already scaled
+   by level. Rounds UP so a fractional charge can never be farmed to zero.
+   ⚠ THE ε IS NOT DECORATION. tf 1.6 is 1.6000000000000000888 in IEEE 754, so
+     10 × 6 × 1.6 evaluates to 96.00000000000001 and a bare Math.ceil would take
+     97 — one unit of silent over-charge per collect, on the commonest ground in
+     the game. Snap to the integer when we are within 1e-9 of one. */
+export function inputCharge(perCycle, cycles, tf) {
+  const n = (perCycle || 0) * (cycles || 0) * (typeof tf === 'number' && isFinite(tf) && tf > 0 ? tf : 1);
+  if (!(n > 0)) return 0;
+  const r = Math.round(n);
+  return (Math.abs(n - r) < 1e-9) ? r : Math.ceil(n);
+}
+
 /* ⏱ THE IDLE CONTRACT IS NOT REDECLARED HERE.
    6h collection / 36h offline cap are the game's EXISTING policy
    (OP_COLLECT_CD_MS, OP_ACCRUAL_CAP_H) and arrive through the bridge, exactly
@@ -216,13 +282,27 @@ export function haltState(host, p) {
   // 4️⃣ NO INPUTS — named to the exact resource, because "missing inputs" on a
   //    building with three of them tells the player nothing actionable.
   const inputs = def.inputs || {};
+  /* 🗺 …AT THE SAME TERROIR FACTOR THE PAYOUT USES. This check is what tells the
+     player the cycle is short, so it has to name the number collect() will
+     actually take — see the inputTerroirScale block. It said `× lvl` flat while
+     the charge scaled by tf, which on rich ground reported "you have enough"
+     for a cycle the spend path refuses. */
+  const tfIn = inputTerroirScale(host, p, def);
+  /* ⚠ AND IT SAYS WHY THE NUMBER IS NOT THE ONE ON THE CARD. The blueprint card
+     prints the CATALOGUE per-cycle figures for both legs (production.render.js's
+     ioLine is terroir-blind on purpose — it describes the building, not this
+     ground), so a bare scaled figure here would look like a typo. Naming the
+     factor turns a contradiction into the explanation of the buff. */
+  const terrNote = (Math.abs(tfIn - 1) > 1e-9)
+    ? ` 🗺 This ground runs it at ×${tfIn.toFixed(2)} — it eats ×${tfIn.toFixed(2)} the listed inputs and makes ×${tfIn.toFixed(2)} the listed output.`
+    : '';
   for (const k in inputs) {
-    const need = (inputs[k] | 0) * lvl;
+    const need = inputCharge((inputs[k] | 0) * lvl, 1, tfIn);
     const got = host.getRes(k) | 0;
     if (got < need) {
       return {
         code: HALT.NO_INPUTS, running: false,
-        reason: `⛔ NO ${String(host.resName(k)).toUpperCase()} — ${def.name} burns ${need} ${host.resName(k)} per cycle and you have ${got}.`,
+        reason: `⛔ NO ${String(host.resName(k)).toUpperCase()} — ${def.name} burns ${need} ${host.resName(k)} per cycle and you have ${got}.${terrNote}`,
         fix: `Produce or loot ${need - got} more ${host.resName(k)}.`,
       };
     }
@@ -252,6 +332,15 @@ export function pending(host, p) {
 
   const lvl = p.level | 0 || 1;
 
+  /* 🗺 THE TERROIR FACTORS, COMPUTED ONCE AND USED BY BOTH HALVES OF THE CYCLE.
+     Hoisted above the affordability loop on purpose: the promise below and the
+     yield below THAT must be scaled by the same numbers, and `collect()` charges
+     off `tf` from this very return. Recomputing it anywhere else is how the
+     promise and the charge drift apart. */
+  const terr = {};
+  for (const k in def.yields) terr[k] = terroirFactor(host, p, k);
+  const tfIn = inputTerroirScale(host, p, def);
+
   /* 🔴 ONLY PROMISE CYCLES THE INPUTS CAN ACTUALLY FUND.
      haltState() checks ONE cycle of inputs; collect() charges inputs × level ×
      cycles. Measured consequence: the panel rendered "banked 🥫 270 (6 cycles)"
@@ -261,17 +350,26 @@ export function pending(host, p) {
      Clamping here (rather than halting on inputs × cycles) is the kinder half
      of the fix: a player with one cycle's water still gets that one cycle, and
      `inputLimited` lets the panel say why the other five are waiting. */
+  /* 🗺 …AND IT COSTS `tf` TIMES AS MUCH, because the output is worth `tf` times
+     as much. THIS LOOP IS HALF OF THE FIX, NOT AN AFTERTHOUGHT: if collect()
+     charges by tf and this does not, `pending()` promises 6 cycles on rich
+     ground and the spend path refuses them — the exact bug the paragraph above
+     documents, re-created by the fix meant to be safe. Affordability is
+     inverted through the SAME inputCharge() the spend uses, then verified
+     against it, so a float edge can never leave the promise one unit over. */
   let inputLimited = false, inputCap = Infinity;
   const inputsFor1 = def.inputs || {};
   for (const k in inputsFor1) {
     const per = (inputsFor1[k] | 0) * lvl;
     if (per <= 0) continue;
-    const affordable = Math.floor((host.getRes(k) | 0) / per);
+    const have = host.getRes(k) | 0;
+    let affordable = Math.max(0, Math.floor(have / (per * tfIn)));
+    while (affordable > 0 && inputCharge(per, affordable, tfIn) > have) affordable--;
     if (affordable < inputCap) inputCap = affordable;
   }
   if (isFinite(inputCap) && inputCap < cycles) { cycles = Math.max(0, inputCap); inputLimited = true; }
   if (cycles <= 0) {
-    return { cycles: 0, gain: {}, halt, inputLimited, cappedByTime: elapsedRaw > capMs, accruedMs: elapsed, elapsedMs: elapsedRaw, nextMs: cd - (elapsedRaw % cd) };
+    return { cycles: 0, gain: {}, halt, inputLimited, tf: tfIn, terroir: terr, cappedByTime: elapsedRaw > capMs, accruedMs: elapsed, elapsedMs: elapsedRaw, nextMs: cd - (elapsedRaw % cd) };
   }
   const throttle = (typeof halt.throttle === 'number') ? halt.throttle : 1;
   /* 🏙 VITALS MULTIPLIER — HOOK ONLY, NOT IMPLEMENTED (§4.5).
@@ -289,11 +387,8 @@ export function pending(host, p) {
      Applied here (not in the renderer) so the promise and the payout come from
      one expression; `pending()` is the only thing `collect()` trusts. */
   const gain = {};
-  const terr = {};
   for (const k in def.yields) {
-    const tf = terroirFactor(host, p, k);
-    terr[k] = tf;
-    const n = Math.floor((def.yields[k] | 0) * lvl * cycles * throttle * vitals * tf);
+    const n = Math.floor((def.yields[k] | 0) * lvl * cycles * throttle * vitals * terr[k]);
     if (n > 0) gain[k] = n;
   }
   /* 🔴 BARREN GROUND MUST NOT CHARGE INPUTS FOR A ZERO PAYOUT.
@@ -308,7 +403,7 @@ export function pending(host, p) {
      nothing, which is the guarantee. */
   if (!Object.keys(gain).length) {
     return {
-      cycles: 0, gain: {}, halt, terroir: terr, terroirStalled: true,
+      cycles: 0, gain: {}, halt, terroir: terr, tf: tfIn, terroirStalled: true,
       why: 'This ground is too poor to have produced a whole unit yet — the building keeps accruing.',
       inputLimited, cappedByTime: elapsedRaw > capMs, accruedMs: elapsed, elapsedMs: elapsedRaw,
       nextMs: cd - (elapsedRaw % cd),
@@ -331,7 +426,7 @@ export function pending(host, p) {
       if (take > 0) { gain[k] = take; room -= take; } else delete gain[k];
     }
   }
-  return { cycles, gain, halt, clipped, inputLimited, terroir: terr, cappedByTime: elapsedRaw > capMs, accruedMs: elapsed, elapsedMs: elapsedRaw, nextMs: cd - (elapsedRaw % cd) };
+  return { cycles, gain, halt, clipped, inputLimited, terroir: terr, tf: tfIn, cappedByTime: elapsedRaw > capMs, accruedMs: elapsed, elapsedMs: elapsedRaw, nextMs: cd - (elapsedRaw % cd) };
 }
 
 /* Collect one building. Inputs are consumed atomically with the payout — a
@@ -349,10 +444,19 @@ export function collect(host, placedId) {
     // explanation whenever it supplied one.
     return { ok: false, why: (pend.halt && !pend.halt.running) ? pend.halt.reason : (pend.why || 'Nothing banked yet.'), halt: pend.halt, terroirStalled: !!pend.terroirStalled };
   }
-  // Charge the inputs for the cycles actually paid out, atomically.
+  /* Charge the inputs for the cycles actually paid out, atomically — AND AT THE
+     SAME TERROIR FACTOR pending() SCALED THE OUTPUT BY. This statement is the
+     one the whole inputTerroirScale block exists for: it read
+     `(def.inputs[k]|0) * lvl * pend.cycles`, FLAT, against a yield multiplied by
+     `tf`, and that asymmetry made every cycle on good ground create Cinder value
+     out of nothing (4.800× chain / 38.400× legacy, measured).
+     🔴 `pend.tf`, NEVER a fresh terroirFactor() call. The number that priced the
+     promise is the number that charges, by construction — recomputing it here
+     would reintroduce exactly the drift the shared helper prevents. */
   const inputCost = {};
+  const tfIn = (typeof pend.tf === 'number' && isFinite(pend.tf) && pend.tf > 0) ? pend.tf : 1;
   for (const k in (def.inputs || {})) {
-    const n = (def.inputs[k] | 0) * (p.level | 0 || 1) * pend.cycles;
+    const n = inputCharge((def.inputs[k] | 0) * (p.level | 0 || 1), pend.cycles, tfIn);
     if (n > 0) inputCost[k] = n;
   }
   if (Object.keys(inputCost).length) {

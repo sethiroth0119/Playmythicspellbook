@@ -188,6 +188,23 @@ export function report() {
   };
 }
 
+/* 🔴 LOAD-TIME CLAMP ONLY — see sim.js `clampLoadedCinder()`.
+   `load()` below does `Math.max(0, Number(raw.reserve) || 0)` — NaN safety with
+   no bound on magnitude. A save doctored to `bank.reserve = 1e9` took
+   `totalCinder()` to 1,000,298,394 from an honest 298,394 and passed every day
+   audit after it, because `load()` runs outside runDay's window. The lender's
+   reserve is a term of totalCinder(); sim.js owns the ceiling and scales it back
+   through here.
+   ⚠ NOT a gameplay lever, and NOT a write-down: a loan book that outruns the
+     reserve is an ordinary state for this lender (`borrow()` clamps the request
+     to the reserve, and a write-off already eats it). Nothing but the loader
+     may call this. */
+export function scaleReserve(f) {
+  const k = Math.max(0, Math.min(1, Number(f)));
+  if (!(k < 1)) return;
+  LENDER.reserve *= k;
+}
+
 export function serialize() {
   return {
     v: 1, reserve: Math.round(LENDER.reserve * 100) / 100, hasBank: LENDER.hasBank,

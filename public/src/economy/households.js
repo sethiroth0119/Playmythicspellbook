@@ -163,10 +163,70 @@ export function setPopulation(total) {
     assigned += S.pop[TIERS[i]];
   }
   S.pop.high = Math.max(0, total - assigned);
-  /* ⚠ Savings follow the people. A tier that shrank must not keep the savings
-     of residents who are no longer there — that Cinder would be spendable by
-     nobody and would break the closed-loop audit in sim.js. */
-  for (const t of TIERS) if (S.pop[t] === 0) { S.savings[t] = 0; }
+  redistributeEmptiedTiers();
+}
+
+/* 🔴 THE DESTRUCTION THIS REPLACES, AND IT WAS RULE 1 IN THE ONE PLACE THE
+   AUDIT STRUCTURALLY CANNOT LOOK.
+   ----------------------------------------------------------------------------
+   This used to be one line:
+
+       for (const t of TIERS) if (S.pop[t] === 0) { S.savings[t] = 0; }
+
+   and the comment above it claimed the zeroing PREVENTED breaking the audit.
+   It had it exactly backwards. A tier whose headcount rounds to zero had its
+   whole savings balance DELETED — `HH.totalSavings()` is a term of sim.js's
+   `totalCinder()`, so that is Cinder destroyed, not Cinder tidied away.
+
+   It was invisible for a structural reason, not a subtle one: `sim.js runDay`
+   takes `before = totalCinder()` INSIDE itself, and index.js `tick()` calls
+   `HH.setPopulation(h.population)` BEFORE `Sim.advance(...)`. The destruction
+   was therefore complete before the audit window opened, so `delta` and
+   `expected` both missed it and `lastAudit.ok` stayed true forever. Anything
+   that moves money outside runDay is invisible to the day audit; this lived in
+   exactly that gap, and so did the retired founding mint and the save-file mint.
+
+   MEASURED on the pre-fix tree (400 randomised population moves on one city):
+     17 destructive calls, 3,987.58 🔥 destroyed, worst single call
+     savings 1,368.08 → 0.00, and `lastAudit.ok === true` throughout with
+     err = 0.00. The live trigger is ordinary: ecoHost() passes
+     `population: cityPop()`, which moves on every migration and on every
+     housing build or demolish.
+
+   THE FIX IS CONSERVATION, NOT TIDINESS. The residents who left do not take
+   the money out of the city — it passes to the tiers that remain, weighted by
+   headcount, which is a transfer and moves `totalCinder()` by zero. When NO
+   tier survives (the city emptied completely) the balance is parked in `low`:
+   with no population `demand()` and `chargeRent()` generate nothing, so it
+   simply sits, and `setPopulation`'s fresh-seed branch puts the returning
+   residents back in `low` where they can reach it again.
+
+   ⚠ REJECTED: moving setPopulation inside the audit window instead. It would
+     have made the transfer *visible* without making it *correct* — the audit
+     would have gone red every time a tier emptied, on a live path, and the
+     obvious next move is to widen the tolerance. Destroying money and telling
+     the truth about it is still destroying money. */
+function redistributeEmptiedTiers() {
+  let orphaned = 0;
+  for (const t of TIERS) {
+    if (S.pop[t] === 0 && S.savings[t] !== 0) { orphaned += S.savings[t]; S.savings[t] = 0; }
+  }
+  if (!(orphaned > 0)) return;
+  let live = 0;
+  for (const t of TIERS) if (S.pop[t] > 0) live += S.pop[t];
+  if (live <= 0) { S.savings.low += orphaned; return; }
+  /* Weighted by headcount, and the LAST surviving tier takes the remainder
+     rather than its own share — three divisions of a float do not sum back to
+     the original, and "nearly conserved" is the same failure one decimal place
+     down. The residue is ~1e-10 🔥; it must be zero. */
+  let handed = 0, last = null;
+  for (const t of TIERS) if (S.pop[t] > 0) last = t;
+  for (const t of TIERS) {
+    if (S.pop[t] <= 0 || t === last) continue;
+    const share = orphaned * (S.pop[t] / live);
+    S.savings[t] += share; handed += share;
+  }
+  S.savings[last] += orphaned - handed;
 }
 
 /* ── JOB POSTING ────────────────────────────────────────────────────────────
@@ -412,6 +472,21 @@ export function settle(days) {
 
 /* Total Cinder held by residents — one of the terms sim.js audits. */
 export function totalSavings() { let n = 0; for (const t of TIERS) n += S.savings[t]; return n; }
+
+/* 🔴 LOAD-TIME CLAMP ONLY — see sim.js `clampLoadedCinder()`.
+   `HH.load()` coerces every figure through num() so a save cannot make savings
+   NaN or negative, but it never bounded the MAGNITUDE: a blob claiming
+   `savings.low = 1e9` loaded intact and took `totalCinder()` to 1,000,296,764
+   from an honest 298,394, and passed the day audit forever afterwards because
+   `load()` runs outside runDay. Bounding it here alone would be arbitrary
+   (nothing in this module knows what the city may honestly hold), so sim.js
+   owns the ceiling and scales every term of totalCinder() back through this.
+   ⚠ NOT a gameplay lever. Nothing but the loader may call it. */
+export function scaleSavings(f) {
+  const k = Math.max(0, Math.min(1, Number(f)));
+  if (!(k < 1)) return;
+  for (const t of TIERS) S.savings[t] *= k;
+}
 
 /* Reset the per-tick readouts. Called at the top of each tick by sim.js. */
 export function beginTick() {

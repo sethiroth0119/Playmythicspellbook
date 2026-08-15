@@ -527,6 +527,20 @@ export function reap() {
 }
 
 export function totalCash() { let n = 0; for (const f of FIRMS) n += f.cash; return n; }
+
+/* 🔴 LOAD-TIME CLAMP ONLY — see sim.js `clampLoadedCinder()`.
+   `load()` below does `cash: Math.max(0, Number(r.cash) || 0)`, which is NaN
+   safety and nothing else: a save doctored to `firms[0].cash = 1e9` took
+   `totalCinder()` to 1,000,296,815 from an honest 298,394 and every subsequent
+   day audit read clean, because `load()` runs outside runDay's window. sim.js
+   owns the ceiling (only it knows what the whole city may honestly hold) and
+   scales the five terms of totalCinder() back through helpers like this one.
+   ⚠ NOT a gameplay lever. Nothing but the loader may call it. */
+export function scaleCash(f) {
+  const k = Math.max(0, Math.min(1, Number(f)));
+  if (!(k < 1)) return;
+  for (const fm of FIRMS) fm.cash *= k;
+}
 export function totalDebt()  { let n = 0; for (const f of FIRMS) n += f.debt; return n; }
 
 export function serialize() {

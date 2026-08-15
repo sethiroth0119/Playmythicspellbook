@@ -59,6 +59,14 @@ function warnOnce(msg) {
 
 let mounted = false;
 let lastPayoutAt = 0;
+/* 🔴 WHICH CITY IS ON THE BOOKS. Bumped by every mount(), and captured before
+   the payout crosses the bridge so a rejection that lands AFTER a remount is
+   discarded instead of refunded. `mount()` calls `Sim.reset()`, which zeroes
+   `payoutOwed` — so without this, an in-flight rejection from the previous city
+   would be credited to the new one, which is a mint by way of a stale promise.
+   Narrow, but it is the same shape as every other defect in this file: money
+   moving outside the window anything is watching. */
+let mountGen = 0;
 
 /* ── MOUNT ──────────────────────────────────────────────────────────────────
    Called by the host once the bridge exists. `nodeId` decides the ground the
@@ -68,15 +76,38 @@ function mount(opts) {
   const nodeId = opts.nodeId != null ? opts.nodeId : null;
   Sim.setNode(nodeId);
 
+  let hadState = false;
   if (opts.state) {
     Sim.load(opts.state);
     Sim.setNode(nodeId);            // a save from another node must not move the ground
+    hadState = true;
   } else {
     Sim.reset(nodeId);
   }
   if (typeof opts.population === 'number') HH.setPopulation(opts.population);
-  Sim.bootstrap();
+  /* 🔴 `established` — THE SAVE-KEY RE-ARM, AND THE HALF OF IT THIS MODULE CAN
+     ACTUALLY REACH. sim.js `bootstrap()` issues a 300,000 🔥 founding tranche
+     and re-opens the 700,000 🔥 lifetime allowance whenever it is called on a
+     fresh state. node-city reads a missing `economy` key as `null`
+     (node-city/index.html, `_pendingEconomy = (s.economy && …) ? s.economy :
+     null`) and then mounts with `state: null` — so DELETING that one key from
+     the save re-arms the tranche, with no console and surviving reloads.
+
+     Nothing inside /src/economy persists across a reload except the blob it is
+     handed, so this module structurally cannot tell a brand-new city from an
+     established one that lost its economy key. The host can, and it is one
+     line: node-city already has the parsed save in `loadState`, so
+
+         E.mount({ nodeId, population: cityPop(), state: _pendingEconomy,
+                   established: !!(s.tiles && Object.keys(s.tiles).length) })
+
+     ⚠ STILL OUTSTANDING. node-city/index.html was outside this package's edit
+       set, so today nothing passes `established` and the re-arm remains open in
+       production. The seam and the refusal are here, tested, and cost one line
+       to switch on. Passing nothing is exactly the old behaviour. */
+  Sim.bootstrap({ established: !hadState && opts.established === true });
   mounted = true;
+  mountGen++;
 
   /* 🔍 SELF-CHECKS. These are cheap, run once, and report rather than throw —
      a broken recipe must show up in the console with the offending id, not
@@ -114,13 +145,68 @@ function tick(dtMin, host) {
 
     /* 💰 THE ONE WRITE TO THE REAL LEDGER, and it is audited on the way out.
        `claimPayout` returns 0 whenever the closed-loop audit has failed, so a
-       simulation that cannot account for its own money pays nothing. */
+       simulation that cannot account for its own money pays nothing.
+
+       🔴 AND IT IS ONLY SPENT WHEN THE BRIDGE CONFIRMS. This block used to read
+
+           Promise.resolve(bridge.addCinders(owed)).catch(() => {});
+
+       against a `claimPayout()` that decrements `payoutOwed` unconditionally
+       and synchronously. So every rejection destroyed the player's money: the
+       treasury had been debited on the day it was drawn and `flow.payout`
+       recorded, which satisfied the day audit, and the Cinder then existed in
+       NEITHER ledger. Measured against a bridge that rejected every call over
+       400 ticks: 10,193 🔥 claimed, 0 🔥 delivered, `lastAudit.ok` true the
+       whole way — because none of this happens inside runDay's window, which is
+       the same blind spot the founding mint and the save-file mint lived in.
+       'message' mode makes it ordinary rather than exotic: `addCinders` is an
+       RPC there and rejects on a timeout or a dead parent.
+
+       ⚠ THE `else` IS NOT DEFENSIVE PADDING. The bridge test used to sit AFTER
+         the claim, so a missing bridge dropped the money down the same hole with
+         no rejection involved at all. Whatever is claimed and not delivered goes
+         back on the books, every path, no exceptions. */
     const owed = Sim.claimPayout();
     if (owed > 0) {
       const bridge = B();
       if (bridge && typeof bridge.addCinders === 'function') {
-        Promise.resolve(bridge.addCinders(owed)).catch(() => {});
-        lastPayoutAt = Date.now();
+        const gen = mountGen;                       // see mountGen's declaration
+        const back = () => { if (gen === mountGen) Sim.refundPayout(owed); };
+        Promise.resolve(bridge.addCinders(owed))
+          .then((res) => {
+            /* An explicit `false` is a refusal, not a delivery — the host's
+               addCinders returns a boolean in bridge mode. `undefined` is the
+               ordinary success of a void async function and must NOT be read as
+               a rejection, or every successful payout would be paid twice. */
+            if (res === false) back();
+            else {
+              lastPayoutAt = Date.now();
+              /* 💸 THE DELIVERY, TALLIED FOR LIFE — and this is the ONLY line in
+                 the codebase allowed to do it. `clampLoadedCinder()` §3 sizes
+                 the payoutOwed a save may claim as
+                     ceiling − totalCinder − payoutLifetime − importsLifetime
+                 so this tally is what CLOSES the headroom once the money has
+                 actually reached the player. Without it the loader read every
+                 city as having paid its owner nothing, ever, and re-granted the
+                 whole lifetime figure as fresh headroom on each load: one edited
+                 `payoutOwed` on an ordinary 200-day city delivered 5,997 →
+                 10,485 → 10,564 → … 🔥, once per page reload, 81,106 🔥 over
+                 eight, with `lastAudit.ok` true the entire time.
+                 ⚠ IT IS DELIBERATELY NOT IN claimPayout(). Tallying the CLAIM
+                   would count money a rejecting bridge hands straight back via
+                   refundPayout(), and because §3 subtracts this term the next
+                   reload would then confiscate exactly that refund. Claim and
+                   delivery are separate events; only the second one is real.
+                 Guarded by `gen` for the same reason `back()` is: a confirmation
+                 that lands after a remount belongs to a city that no longer
+                 exists, and crediting it against the new one would tighten a
+                 stranger's ceiling. */
+              if (gen === mountGen) Sim.notePayoutDelivered(owed);
+            }
+          })
+          .catch(back);
+      } else {
+        Sim.refundPayout(owed);
       }
     }
     return snap;

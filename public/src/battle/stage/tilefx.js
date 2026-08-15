@@ -510,9 +510,18 @@ const COL = {
      ground-independent floor that keeps a lit tile findable there. It was cut
      0.22 → 0.20 only to pay for the level the greener key added.
      `kbias` is the region-scale centre falloff, see gainLayer. */
+  /* ⚠ WAVE 5 ROUND 4 — `hfix` IS THE PER-TILE HUE CORRECTION AND ONLY `move`
+     CARRIES IT. Round 3 fixed the pool's mean hue and its chroma; what it left
+     open is the SPREAD, which is a linear function of the ground's own chroma
+     under each tile and therefore cannot be cancelled by any single tint. See
+     the long note above groundChroma(). It is on `move` alone because move is
+     the state the gap was measured on, the state that covers most ground (so
+     the ground varies most under it), and the first state drawn — a pool that
+     reads the canvas for BARE ground has to be drawn before anything else has
+     lit it, which `sel` and the states-over re-assert are not. */
   move:   { core: '#bfe2d8', body: '#69cdd5', rim: '#b4e1f5', halo: '#42cae0',
             filt: '#46ffd8', gain: '#1ba985', kmode: 'color', kbias: 0.30,
-            k: 1.55, a: 0.20, g: 0.37, fc: 0.28 },
+            hfix: 1, k: 1.55, a: 0.20, g: 0.37, fc: 0.28 },
   /* ⚠ EVERY STATE GETS A KEY LIGHT, not just move. The gap was measured on the
      move pool because that is the one the default harness lights, but "a soft
      emissive fill that glows WITHIN the ground" is the BAR's line about tile
@@ -1231,13 +1240,268 @@ function gainRects(g) {
    per READ-BACK, not per frame — the read is rate limited to GAIN_REFRESH, so
    at 60 Hz it is one fill every ~3 frames on regions that ask for it, and the
    hazards (which do not) pay nothing at all. */
+/* ═══════════════════════════════════════════════════════════════════════════
+   PER-TILE HUE CORRECTION — because the pool's hue is a FUNCTION of the
+   ground, and a global tint cannot cancel a function
+   ═══════════════════════════════════════════════════════════════════════════
+
+   ⚠⚠ WAVE 5 ROUND 4 — READ THIS BEFORE TOUCHING `hfix`, HFIX_A/B/XFER, THE
+   `field` OPTION ON gainLayer(), OR groundChroma(). Round 3 moved the key onto
+   a 'color' blend and that fixed the MEAN (aggregate hue 156.8 → 147.1, chroma
+   22.2 → 40.7, both in spec). What it did NOT fix is the SPREAD, and the
+   measurement that names why is this: over 7 lit tiles of one boot, lit frame
+   against the identical pixels of that same boot's paint-off frame, the
+   composite's CIELAB hue is a near-deterministic LINEAR FUNCTION of the bare
+   ground's chroma under it —
+
+       hue = 186.0 − 1.47 · C_bare        r = −0.94, residual spread ±2°
+       (1,4  C_bare 17.1 → hue 160.2  …  1,6  C_bare 29.4 → hue 141.4)
+
+   and that is arithmetic, not an accident. The pool is a vector sum in Lab:
+   the multiply half emits `ground ⊗ filt`, whose a/b magnitude scales with the
+   GROUND's own chroma and whose direction is the aquamarine-filtered sand's
+   (~140°); the 'color' key and the additive both emit a fixed chromaticity
+   further round the wheel. More chromatic ground → a longer green vector in
+   the sum → a greener composite. The pond shore at 1,4 is nearly neutral, so
+   its sum is dominated by the fixed terms and lands at 160; the dry sand at
+   1,6 is chromatic and drags to 141.
+   ⚠ A GLOBAL RE-TINT CANNOT CLOSE THIS. It slides the whole line and swaps
+   which END falls out of the window — which is exactly what rounds 1-3 kept
+   rediscovering, and it is why the sweep recorded in COL.move's note plateaus.
+   The only fix is to make one of the fixed terms per-tile, keyed on the very
+   quantity that predicts the error.
+
+   ⚠ AND IT MUST NOT BE PER-CELL. The blind A/B this round won was won on ONE
+   sentence — "P reads as ONE continuous emissive mass … Q is a stack of
+   translucent glass panes, I can count individual cells with different
+   brightness and hue". Painting each tile quad its own corrected tint would
+   hand that complaint straight back. So the correction is a smooth FIELD: one
+   soft elliptical blob of the tile's own tint per tile, radius 1.9·ax, drawn
+   into the key's tint fill so overlapping neighbours cross-fade. A tile centre
+   gets its own tint exactly (2·ax > 1.9·ax, so no neighbour reaches it) and
+   everything between is an interpolation with no edge anywhere.
+
+   ⚠ THE READ IS ONE getImageData PER REGION PER 1.6 s, NOT ONE PER TILE.
+   gainLayer already pulls the region off the canvas every ~55 ms; this pulls
+   the same region ONCE into a ≤96 px thumbnail and reads that. The ground
+   under a tile is moved only by the vista's dust — it is the slowest-changing
+   thing this file depends on — so the clock is 30× gainLayer's and the frame
+   floor is 20. Measured cost is inside the capture-to-capture null. */
+function _srgbLin(u) { u /= 255; return u <= 0.04045 ? u / 12.92 : Math.pow((u + 0.055) / 1.055, 2.4); }
+function _linSrgb(v) {
+  v = v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(Math.max(0, v), 1 / 2.4) - 0.055;
+  return Math.max(0, Math.min(255, Math.round(v * 255)));
+}
+function rgb2lab(r, g, b) {
+  const R = _srgbLin(r), G = _srgbLin(g), B = _srgbLin(b);
+  const X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+  const Y = (R * 0.2126 + G * 0.7152 + B * 0.0722);
+  const Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+  const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  const fx = f(X), fy = f(Y), fz = f(Z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+function lab2rgb(L, a, bb) {
+  const fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - bb / 200;
+  const inv = (t) => { const t3 = t * t * t; return t3 > 0.008856 ? t3 : (t - 16 / 116) / 7.787; };
+  const X = inv(fx) * 0.95047, Y = inv(fy), Z = inv(fz) * 1.08883;
+  return [_linSrgb(X *  3.2406 + Y * -1.5372 + Z * -0.4986),
+          _linSrgb(X * -0.9689 + Y *  1.8758 + Z *  0.0415),
+          _linSrgb(X *  0.0557 + Y * -0.2040 + Z *  1.0570)];
+}
+/* Rotate a hex colour GREEN-WARD by `deg` at constant Lab L and C. Positive
+   `deg` lowers the hue angle. Memoised: the call sites quantise `deg` to whole
+   degrees, so a stable board hits the map every frame. */
+const _hexRot = new Map();
+function rotHue(hex, deg) {
+  const d = Math.round(deg);
+  if (!d || typeof hex !== 'string' || hex.length < 7) return hex;
+  const key = hex + '|' + d;
+  const hit = _hexRot.get(key);
+  if (hit) return hit;
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  if (!(isFinite(r) && isFinite(g) && isFinite(b))) return hex;
+  const L = rgb2lab(r, g, b);
+  const C = Math.hypot(L[1], L[2]), th = Math.atan2(L[2], L[1]) - d * Math.PI / 180;
+  const o = lab2rgb(L[0], C * Math.cos(th), C * Math.sin(th));
+  const s = '#' + ((1 << 24) + (o[0] << 16) + (o[1] << 8) + o[2]).toString(16).slice(1);
+  if (_hexRot.size > 256) _hexRot.clear();
+  _hexRot.set(key, s);
+  return s;
+}
+
+/* The straight line above, as constants. HFIX_A/HFIX_B are the fit of composite
+   hue against the chroma THIS FUNCTION measures (a ≤96 px thumbnail of the
+   region, per-pixel Lab, mean a/b over a 0.34·a ellipse at the tile centre) —
+   NOT against a critic's full-resolution figure, which is a different estimator
+   and would put a scale error straight into the correction. Re-fit both if you
+   change GC_MINI or the sample ellipse.
+   HFIX_XFER is how many degrees of COMPOSITE hue one degree of KEY TINT hue
+   buys, measured by applying a known per-tile rotation and regressing the
+   resulting move. COL.move's own note measured 1.3 for a global tint change;
+   the field measures its own value because a local blob is not a global fill. */
+/* ⚠⚠ THE MODEL IS DIFFERENTIAL — `C_i − C̄`, NOT `C_i` — AND THAT IS NOT A
+   REFACTOR, IT IS WHAT MAKES THE CORRECTION SURVIVE THE VISTA.
+   The first cut of this used the absolute fit (hue = 185.6 − 2.82·C, solved on
+   one boot) and on that boot it was excellent: 7 tiles 160.2/150.7/147.9/145.1
+   /142.6/142.6/141.4 → 154.1/150.8/150.0/148.3/147.4/146.4/146.4, i.e. spread
+   18.8° → 7.7° and 3/7 → 7/7 inside 145-155. Then the vista module — which is
+   being rebuilt in the same wave — changed its grade under me, the ground came
+   up ~11 levels of luma and ~3 of chroma, and the SAME build measured
+   160.4/158.4/152.2/151.5/149.1/148.6/147.7: the spread was back because an
+   ABSOLUTE fit hard-codes one ground.
+   Both effects are real and they are different: TILE-TO-TILE inside a board the
+   hue is driven by the ground's CHROMA (that is this gap), while BOARD-TO-BOARD
+   it is driven by the ground's LUMINANCE, because a 'color' key emits
+   SetLum(tint, Lum(ground)) and a brighter ground therefore makes the key —
+   the bluest large term in the sum — a bigger share of it. Keying the
+   correction on `C_i − C̄` cancels the second effect exactly: every tile is
+   corrected relative to the light its OWN region is standing in, so a grade
+   change slides C̄ and every δ with it and the correction does not care.
+   What is left vista-dependent is the region's mean hue, and that is not this
+   mechanism's business — it is `gain`'s, it was tuned in round 3, and the
+   critic measured it in window at 147.1 aggregate. HFIX_LEVEL is the ONE
+   number here that touches it, and it exists only to put the centre of the
+   distribution on 150 rather than on the mean's own resting place. Re-fit
+   HFIX_LEVEL (and nothing else) if the ground art moves again. */
+const HFIX_B = 3.83;          /* deg of composite hue per unit of C_bare */
+const HFIX_LEVEL = -3.4;      /* deg the whole pool moves green-ward */
+const HFIX_XFER = 1.00;       /* deg of composite per deg of KEY TINT hue */
+const HFIX_MAX = 18;          /* degrees of tint rotation, hard clamp */
+const HFIX_CMIN = 6, HFIX_CMAX = 34;   /* trusted range of measured C_bare */
+const GC_REFRESH = 1.6;       /* seconds of api.T between thumbnail reads */
+/* ⚠ 5, NOT 20. gainLayer's floor is 3 and exists because a slow box must not
+   read every frame; this read is a ≤96 px thumbnail, an order of magnitude
+   cheaper, and at 20 it was the FRAME floor and not the seconds clock that
+   bound in the harness (~5 fps → one read per 4 s), so the correction was
+   being computed from ground up to four seconds old while the board was still
+   settling. At 5 the 1.6 s clock is what binds on every box. */
+const GC_MIN_FRAMES = 5;
+const GC_MINI = 96;           /* longest side of the thumbnail, device px */
+/* ⚠ THE SAMPLE ELLIPSE HAS TO MATCH THE QUAD THE GAP IS MEASURED ON, WHICH IS
+   THE 0.80 INSET. At 0.34 it was a small disc at the tile CENTRE, and on a tile
+   whose centre happens to carry a dressing rock or a patch of grass that disc
+   is not the tile's ground: 3,5 measured C 11.4 against a full-resolution
+   0.80-quad figure of 28.3 — third lowest by one estimator and fifth by the
+   other — and a correction keyed on the wrong ranking moves the wrong tile.
+   0.72 is the ellipse inscribed in (very nearly) that quad. */
+const GC_SAMPLE = 0.72;
+let _gcCv = null, _gcC = null;
+
+/* Mean bare-ground chroma under each tile of `g`, index-aligned with g.list.
+   Called at the TOP of drawPool, before this pool has emitted anything, so
+   what it reads is the ground + terrain + dressing and nothing else. Returns
+   the previous answer (or null) on any failure — a tainted canvas, a
+   zero-area region, a getImageData that throws — because a missing correction
+   is round 3's shipped behaviour and a thrown one is a dead frame. */
+function groundChroma(api, g) {
+  if (!g || !g.sub) return null;
+  const T = isFinite(api.T) ? api.T : 0;
+  const N = frameNo(api);
+  const cached = g.sub.get('gc');
+  const stale = cached ? (Math.abs(T - cached.t) >= GC_REFRESH && N - cached.n >= GC_MIN_FRAMES) : true;
+  if (cached && cached.k === g.list.length && !stale) return cached.C;
+  const src = api.ctx.canvas;
+  if (!src || !src.width) return cached ? cached.C : null;
+  const s = g.dpr;
+  const sx0 = Math.max(0, Math.floor(g.x0 * s)), sy0 = Math.max(0, Math.floor(g.y0 * s));
+  const sx1 = Math.min(src.width, Math.ceil(g.x1 * s)), sy1 = Math.min(src.height, Math.ceil(g.y1 * s));
+  const sw = sx1 - sx0, sh = sy1 - sy0;
+  if (sw < 2 || sh < 2) return cached ? cached.C : null;
+  const k = Math.min(1, GC_MINI / Math.max(sw, sh));
+  const dw = Math.max(2, Math.round(sw * k)), dh = Math.max(2, Math.round(sh * k));
+  let img;
+  try {
+    if (!_gcCv || _gcCv.width !== dw || _gcCv.height !== dh) {
+      _gcCv = mkCv(dw, dh);
+      _gcC = _gcCv.getContext('2d', { willReadFrequently: true });
+    }
+    _gcC.setTransform(1, 0, 0, 1, 0, 0);
+    _gcC.globalCompositeOperation = 'copy';
+    _gcC.drawImage(src, sx0, sy0, sw, sh, 0, 0, dw, dh);
+    _gcC.globalCompositeOperation = 'source-over';
+    img = _gcC.getImageData(0, 0, dw, dh);
+  } catch (e) { return cached ? cached.C : null; }
+  const d = img.data;
+  const fx = dw / sw, fy = dh / sh;
+  const C = [], AB = [];
+  for (const it of g.list) {
+    const m = it.m;
+    /* ⚠ SAMPLE THE 0.80-INSET QUAD, NOT A DISC AT THE CENTRE. This is the
+       exact pixel set the gap is measured on, and on a projected tile the
+       difference is not cosmetic: the quad is a squashed diamond whose corners
+       are most of its area, and an inscribed ellipse throws all of them away.
+       1,4's own note in COL.move records that its 0.80 quad "genuinely
+       overlaps the water pond" — the pond is in the CORNERS, so the ellipse
+       was measuring sand on the one tile whose whole problem is that it is not
+       standing on sand. Cost is a point-in-polygon test per THUMBNAIL pixel,
+       and a tile is ~12x9 of those. */
+    const P = [];
+    let px0 = Infinity, py0 = Infinity, px1 = -Infinity, py1 = -Infinity;
+    for (const q of it.q) {
+      const X = ((m.cx + (q.x - m.cx) * 0.80) * s - sx0) * fx;
+      const Y = ((m.cy + (q.y - m.cy) * 0.80) * s - sy0) * fy;
+      P.push(X, Y);
+      if (X < px0) px0 = X; if (X > px1) px1 = X;
+      if (Y < py0) py0 = Y; if (Y > py1) py1 = Y;
+    }
+    const np = P.length >> 1;
+    const ix0 = Math.max(0, Math.floor(px0)), ix1 = Math.min(dw - 1, Math.ceil(px1));
+    const iy0 = Math.max(0, Math.floor(py0)), iy1 = Math.min(dh - 1, Math.ceil(py1));
+    let sa = 0, sb = 0, sl = 0, n = 0;
+    for (let y = iy0; y <= iy1; y++) {
+      const yc = y + 0.5;
+      for (let x = ix0; x <= ix1; x++) {
+        const xc = x + 0.5;
+        let inside = false;
+        for (let i = 0, j = np - 1; i < np; j = i++) {
+          const xi = P[i * 2], yi = P[i * 2 + 1], xj = P[j * 2], yj = P[j * 2 + 1];
+          if ((yi > yc) !== (yj > yc) && xc < (xj - xi) * (yc - yi) / (yj - yi) + xi) inside = !inside;
+        }
+        if (!inside) continue;
+        const o = (y * dw + x) * 4;
+        if (d[o + 3] < 8) continue;
+        const L = rgb2lab(d[o], d[o + 1], d[o + 2]);
+        sa += L[1]; sb += L[2]; sl += L[0]; n++;
+      }
+    }
+    /* A tile so small in the thumbnail that the polygon caught nothing falls
+       back to the single pixel at its centre rather than to NaN — NaN would
+       drop the tile out of C̄ and quietly bias every other tile's correction. */
+    if (!n) {
+      const cxp = Math.max(0, Math.min(dw - 1, Math.round((m.cx * s - sx0) * fx)));
+      const cyp = Math.max(0, Math.min(dh - 1, Math.round((m.cy * s - sy0) * fy)));
+      const o = (cyp * dw + cxp) * 4;
+      const L = rgb2lab(d[o], d[o + 1], d[o + 2]);
+      sa = L[1]; sb = L[2]; sl = L[0]; n = 1;
+    }
+    C.push(Math.hypot(sa / n, sb / n));
+    AB.push([+(sa / n).toFixed(2), +(sb / n).toFixed(2), +(sl / n).toFixed(2)]);
+  }
+  g.sub.set('gc', { C, t: T, n: N, k: g.list.length });
+  /* A read-only diagnostic seam. Costs one property write per refresh and is
+     how HFIX_A/B/XFER above were fitted; leaving it in means the next round
+     can re-fit without editing the module first. */
+  try {
+    const d0 = (window.__TFX = window.__TFX || {});
+    const rec = {};
+    for (let i = 0; i < g.list.length; i++) rec[g.list[i].x + ',' + g.list[i].z] = [+C[i].toFixed(2)].concat(AB[i] || []);
+    (d0.gc = d0.gc || {})[g.list.map((t) => t.x + ',' + t.z).sort().join(' ')] = { t: T, C: rec };
+  } catch (e) {}
+  return C;
+}
+
 function gainLayer(api, g, tint, amount, refresh, opts) {
   if (!(amount > 0.004)) return;
   const src = api.ctx.canvas;
   if (!src || !src.width) return;
   const mode = (opts && opts.mode) || 'multiply';
   const bias = (opts && opts.bias > 0) ? opts.bias : 0;
-  const key = 'gain|' + tint + '|' + mode + '|' + bias;
+  /* ⚠ THE FIELD IS PART OF THE CACHE KEY. It changes only when groundChroma()
+     refreshes, and the call site quantises it to whole degrees, so on a settled
+     board this is one stable string and the read-back rate limit still holds. */
+  const field = (opts && opts.field && opts.field.length) ? opts.field : null;
+  const key = 'gain|' + tint + '|' + mode + '|' + bias + '|' + (field ? field.sig : '');
   const cached = g.sub ? g.sub.get(key) : null;
   const T = isFinite(api.T) ? api.T : 0;
   const N = frameNo(api);
@@ -1274,6 +1538,30 @@ function gainLayer(api, g, tint, amount, refresh, opts) {
       c.globalCompositeOperation = mode;
       c.fillStyle = tint;
       c.fillRect(dx, dy, dw, dh);
+      /* THE PER-TILE HUE FIELD. Same composite op as the flat fill above, so
+         under 'color' each blob is another SetLum(tint, Lum(ground)) and the
+         luminance the ground supplies survives every one of them untouched —
+         all that varies across the region is WHICH chromaticity is carried.
+         Overlapping blobs cross-fade in RGB at equal luminance, i.e. the hue
+         interpolates; there is no cell edge anywhere. Clipped to this read
+         rect because 'color' (like 'multiply') against a TRANSPARENT
+         destination degrades to source-over and would stamp a solid blob of
+         tint outside the read — the same trap the rect clamp above exists for. */
+      if (field) {
+        c.save();
+        c.beginPath(); c.rect(dx, dy, dw, dh); c.clip();
+        for (const f of field) {
+          const bx = f.cx * s - sx, by = f.cy * s - sy;
+          const R = Math.max(6, f.ax * s * 1.9);
+          if (bx + R < dx || bx - R > dx + dw || by + R < dy || by - R > dy + dh) continue;
+          radial(c, bx, by, f.ax * s, f.ay * s, R, [
+            [0,    api.rgba(f.tint, 1)],
+            [0.50, api.rgba(f.tint, 0.55)],
+            [1,    api.rgba(f.tint, 0)]
+          ]);
+        }
+        c.restore();
+      }
       if (done) done.push([dx, dy, dw, dh]);
       drew++;
     }
@@ -1630,6 +1918,43 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
   const S = (strength || 1) * col.k;
   const g = group(api, tiles, lift, JIT_STATE, MASK_STATE);
   if (!g) return;
+
+  /* ── PER-TILE HUE CORRECTION ────────────────────────────────────────────
+     Read the BARE ground now: nothing this function emits has landed yet, so
+     the thumbnail is terrain + dressing and only that. See the long note above
+     groundChroma() for why the correction has to be per tile and why it must
+     be a smooth field rather than a per-cell tint.
+     Only the UNDER pass takes it (`strength` 1). drawStatesOver re-asserts at
+     0.85 over tiles that already carry a hazard AND this pool's own light, so
+     its read would be of lit ground and its "correction" would be garbage; it
+     keeps the base tint, which is round 3's shipped behaviour and is what it
+     was judged on. `hfix` is set only on the states whose key is a 'color'
+     blend and which are drawn first — see COL. */
+  let hrot = null, hsig = '';
+  if (col.hfix && !noGain && (strength == null || strength >= 0.99)) {
+    const C = groundChroma(api, g);
+    if (C && C.length === g.list.length) {
+      /* The region's own mean is the reference — see the note on HFIX_B. A
+         tile with less chroma than its neighbours composites BLUER than they
+         do and is rotated green-ward to meet them, and vice versa; the mean
+         itself is moved only by HFIX_LEVEL. */
+      const cl = [];
+      let csum = 0, cn = 0;
+      for (let i = 0; i < C.length; i++) {
+        const v = isFinite(C[i]) ? Math.max(HFIX_CMIN, Math.min(HFIX_CMAX, C[i])) : NaN;
+        cl.push(v);
+        if (isFinite(v)) { csum += v; cn++; }
+      }
+      const cbar = cn ? csum / cn : 0;
+      hrot = [];
+      for (let i = 0; i < cl.length; i++) {
+        const need = (cn && isFinite(cl[i])) ? HFIX_LEVEL - HFIX_B * (cl[i] - cbar) : HFIX_LEVEL;
+        hrot.push(Math.max(-HFIX_MAX, Math.min(HFIX_MAX, Math.round(need / HFIX_XFER))));
+      }
+      hsig = hrot.join(',');
+      if (!/[^0,]/.test(hsig)) { hrot = null; hsig = ''; }
+    }
+  }
   /* ⚠ ROUND 5 — THE RIM IS SCALED BY HOW MUCH REGION THERE IS TO TRACE.
      On a big merged pool the boundary is a long, mostly-straight run and the
      rim reads as light gathering at the edge. On ONE tile the same rim is a
@@ -1753,8 +2078,20 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
      function of what is currently on the canvas, and the canvas changes
      whenever the vista, the dressing or a hazard does. Breathes on the same
      per-region phase as the emission so the pool pulses as one light. */
-  if (GA > 0 && !noGain) gainLayer(api, g, col.gain || col.body, GA * (1 + (pulse - 1) * 0.5),
-                                   null, col.kmode ? { mode: col.kmode, bias: col.kbias } : null);
+  if (GA > 0 && !noGain) {
+    let kopts = col.kmode ? { mode: col.kmode, bias: col.kbias } : null;
+    if (kopts && hrot) {
+      const base = col.gain || col.body;
+      const fld = [];
+      for (let i = 0; i < g.list.length; i++) {
+        const m = g.list[i].m;
+        fld.push({ cx: m.cx, cy: m.cy, ax: m.ax, ay: m.ay, tint: rotHue(base, hrot[i]) });
+      }
+      fld.sig = hsig;
+      kopts.field = fld;
+    }
+    gainLayer(api, g, col.gain || col.body, GA * (1 + (pulse - 1) * 0.5), null, kopts);
+  }
 
   /* (2) the bloom that escapes onto the surrounding sand, through the barely
      dilated halo mask. This is the ONLY thing allowed outside the legal tiles,
@@ -1803,7 +2140,7 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
      simply average the gradient away. The swells are the biggest of those, so
      the falloff is also folded into them (`rf` below). Anything that puts the
      whole bias in one layer has to run that layer so hard it clips. */
-  staticLayer(api, g, 'lighter', pulse, 'e' + tag, (c) => {
+  staticLayer(api, g, 'lighter', pulse, 'e' + tag + '|' + hsig, (c) => {
     c.fillStyle = api.rgba(col.body, 0.052 * A);
     fill(c, g);
     radial(c, g.cx, g.cy, g.ax, g.ay, R * 1.02, [
@@ -1886,10 +2223,22 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
       const rr = 1.78 + api.hash(it.z, it.x, 8) * 0.72;
       const ox = (api.hash(it.x, it.z, 11) - 0.5) * m.ax * 0.46;
       const oy = (api.hash(it.z, it.x, 12) - 0.5) * m.ay * 0.46;
+      /* ⚠ THE ADDITIVE FOLLOWS THE KEY, BY THE SAME ANGLE, AND NO FURTHER.
+         The swells are ~15% of the pool's light, so their own transfer to the
+         composite is weak (COL.move's note has the sweep: 89° of body/core
+         rotation moved the worst tile 10°) — rotating them by their OWN
+         inverse transfer would be ±80° and would make each tile a visibly
+         different colour up close for a couple of degrees of gain. Rotating
+         them by the KEY's angle costs nothing, pulls the same direction, and
+         keeps every swell inside the same family of teals. The FLAT fill and
+         the region radial above stay on the base colour: they are region-scale
+         and have no business being per-tile. */
+      const bodyT = hrot ? rotHue(col.body, hrot[i]) : col.body;
+      const coreT = hrot ? rotHue(col.core, hrot[i]) : col.core;
       radial(c, m.cx + ox, m.cy + oy, m.ax, m.ay, m.ax * rr, [
-        [0,    api.rgba(col.core, 0.068 * A * v)],
-        [0.42, api.rgba(col.body, 0.052 * A * v)],
-        [1,    api.rgba(col.body, 0)]
+        [0,    api.rgba(coreT, 0.068 * A * v)],
+        [0.42, api.rgba(bodyT, 0.052 * A * v)],
+        [1,    api.rgba(bodyT, 0)]
       ]);
     }
 
@@ -3312,37 +3661,78 @@ const PAINTERS = {
      No wash at all, so the sand's own material still shows: that is the point
      of the hazard. */
   crack: {
-    sStatic: true,
-    s(api, c, g) {
-      const lv = api.lightVector();
+    /* ⚠⚠ WAVE 5 ROUND 4 — THE FISSURE WAS THE LAST ctx.stroke() IDENTITY LEFT
+       IN THIS TABLE AND IT WAS SITTING IN THE WORST LAYER FOR ONE. It was a
+       4-arm polyline at lineWidth ax·0.042, ROUND caps, colour #241a10 at
+       alpha 0.62 — and `s` composites SOURCE-OVER at alpha 1, so 62% of the
+       sand under the mark was simply gone. That is exactly the signature wave
+       5 deleted from void, electric and holy ("a near-opaque hairline lying ON
+       the sand with no interaction with it"), and it was the more visible for
+       being the only painter that draws its mark ON TOP of a lit move pool: in
+       the surfaced frame it read as a chunky brown scribble laid over the
+       emission with no blending at all.
+       The fix is the one those three already proved, and both halves matter:
+         • the mark is a glowChain — a chain of radial falloffs with no edge in
+           ANY direction, so there is no width left to read as a drawn line;
+         • it moved from `s` (source-over) to `m` (MULTIPLY), so it SCALES the
+           sand under it instead of replacing it and every bit of grain, relief
+           and dressing shadow reads straight through the fissure.
+       The lit lip is the same path offset toward the light, in `l` (additive)
+       rather than as a second stroke. Both layers are cached: the fracture is
+       a function of the tile hash only, nothing here reads api.T, so this
+       costs one extra blit per frame and no extra fill. */
+    lStatic: true,
+    /* ONE path, shared by the dark half and the lit lip, so the lip cannot
+       drift off its own fissure — the same reason void factored out `_arms`. */
+    _frac(api, it) {
+      const m = it.m, out = [];
+      for (let i = 0; i < 4; i++) {
+        const a = api.hash(it.x, it.z, i) * 6.283;
+        let px = m.cx, py = m.cy;
+        const pts = [clampTile(m, px, py, 0.92)];
+        for (let k = 0; k < 4; k++) {
+          px += Math.cos(a + (api.hash(it.z, it.x, i * 4 + k) - 0.5) * 1.5) * m.ax * 0.34;
+          py += Math.sin(a + (api.hash(it.x, it.z, i * 4 + k) - 0.5) * 1.5) * m.ay * 0.34;
+          pts.push(clampTile(m, px, py, 0.92));
+        }
+        out.push(pts);
+      }
+      return out;
+    },
+    m(api, c, g) {
       for (const it of g.list) {
         const m = it.m, sy = m.ay / m.ax;
-        const branch = (col, alpha, lw, dx, dy) => {
-          c.strokeStyle = api.rgba(col, alpha);
-          c.lineWidth = Math.max(0.7, m.ax * lw);
-          c.lineCap = 'round';
-          for (let i = 0; i < 4; i++) {
-            const a = api.hash(it.x, it.z, i) * 6.283;
-            let px = m.cx + dx, py = m.cy + dy;
-            c.beginPath(); c.moveTo(px, py);
-            for (let s = 0; s < 4; s++) {
-              px += Math.cos(a + (api.hash(it.z, it.x, i * 4 + s) - 0.5) * 1.5) * m.ax * 0.34;
-              py += Math.sin(a + (api.hash(it.x, it.z, i * 4 + s) - 0.5) * 1.5) * m.ay * 0.34;
-              c.lineTo(px, py);
-            }
-            c.stroke();
-          }
-        };
-        branch(api.mixHex('#c9b78c', (api.LIGHT && api.LIGHT.key) || '#ffd9a0', 0.35), 0.30, 0.055,
-               -lv.x * m.ax * 0.04, -m.ay * 0.04);   /* lit lip */
-        branch('#241a10', 0.62, 0.042, 0, 0);        /* the fissure itself */
-        for (let i = 0; i < 10; i++) {               /* displaced grit */
+        const fr = PAINTERS.crack._frac(api, it);
+        for (let i = 0; i < fr.length; i++)
+          glowChain(c, api, fr[i], '#3b2a1b', Math.max(1.0, m.ax * 0.058),
+                    0.50 + api.hash(it.x, it.z, 60 + i) * 0.14, true, true);
+        /* displaced grit. Also multiply now — at source-over these were ten
+           opaque dots per tile, which is ten more tiny stickers. As a darkening
+           they are what they are meant to be: crumbs of shadow in the sand. */
+        for (let i = 0; i < 10; i++) {
           const a = api.hash(it.x, it.z, i + 70) * 6.283;
           const d = api.hash(it.z, it.x, i + 71) * m.ax * 0.85;
-          c.fillStyle = api.rgba('#2a2015', 0.30);
-          c.beginPath();
-          c.arc(m.cx + Math.cos(a) * d, m.cy + Math.sin(a) * d * sy, Math.max(0.6, m.ax * 0.020), 0, 6.3);
-          c.fill();
+          const r = Math.max(0.6, m.ax * 0.020);
+          radial(c, m.cx + Math.cos(a) * d, m.cy + Math.sin(a) * d * sy, r, r, r * 2.2, [
+            [0, api.rgba('#2a2015', 0.34)], [1, api.rgba('#2a2015', 0)]
+          ]);
+        }
+      }
+    },
+    /* THE LIT LIP — the sun catching the raised edge of the crack. Offset
+       against the light vector so it lands on the light-facing side of the
+       same fissure, dimmer and slightly wider than the dark half so it reads
+       as a soft catch of light rather than as a second line beside the first. */
+    l(api, c, g) {
+      const lv = api.lightVector();
+      for (const it of g.list) {
+        const m = it.m;
+        const fr = PAINTERS.crack._frac(api, it);
+        const ox = -lv.x * m.ax * 0.05, oy = -m.ay * 0.05;
+        for (let i = 0; i < fr.length; i++) {
+          const p2 = fr[i].map((p) => ({ x: p.x + ox, y: p.y + oy }));
+          glowChain(c, api, p2, api.mixHex('#c9b78c', (api.LIGHT && api.LIGHT.key) || '#ffd9a0', 0.35),
+                    Math.max(1.0, m.ax * 0.062), 0.15, true, true);
         }
       }
     }

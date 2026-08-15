@@ -538,10 +538,13 @@
     t: { cv: null, g: null },          /* …and at thumbnail scale, read back */
     bloom: { cv: null, g: null },      /* the additive sum, thumbnail scale */
     up: { cv: null, g: null },         /* quarter-size intermediate, additive pass */
-    mup: { cv: null, g: null },        /* …and the one the multiply map goes through */
+    /* ⚠ `mup` IS GONE — WAVE 5 ROUND 2. It was the quarter-scale buffer the W/7
+       multiply map was bilineared into before the nearest blit to full size.
+       The map is built at dw/4 now (see MAP_DIV), so that buffer would have been
+       a 1:1 copy of it. Deleting it is what pays for the finer map. */
     /* THE MAP. `pos` is the positional half (bakePost: veil attenuation +
-       colour, one bake); mulR/addR/gainR are the three thumbnails postMap()
-       writes; key/age/reads/calls/ms belong to the READBACK CADENCE. */
+       colour, one bake); mulR/addR/gainR are the three quarter-scale planes
+       postMap() writes; key/age/reads/calls/ms belong to the READBACK CADENCE. */
     post: {
       pos: null, key: '', age: 1e9, ready: false, fail: false,
       mulR: { cv: null, g: null }, addR: { cv: null, g: null },
@@ -550,9 +553,6 @@
       gainR: { cv: null, g: null },
       mn: null, mx: null, reads: 0, calls: 0, ms: []
     },
-    /* the last map generation the multiply's quarter-scale intermediate was
-       built from, so a cadence frame does not rebuild an identical upscale. */
-    mupKey: '',
     /* ⚠ REMOVED IN ROUND 3 — `full` was the frame at FULL device resolution,
        composited 'lighter' at a UNIFORM alpha as the tone gain. It is gone and
        it must not come back; see THE UNIFORM GAIN CLIPPED THE FRAME. `fullOK`
@@ -562,6 +562,8 @@
     /* where the body is and whether the ridgeline is in front of it, sampled
        once per world bake — see discVisible(). */
     disc: null,
+    /* terrainTopY()'s cache — the elevation-aware horizon, keyed on the bake. */
+    topY: null,
     gradeMs: [],
     lastBake: -1e9,
     artMs: [],
@@ -594,6 +596,38 @@
      nonsense. */
   function thumbW(api) { return Math.max(32, Math.round(api.W / 7)); }
   function thumbH(api) { return Math.max(24, Math.round(api.H / 7)); }
+  /* ── THE MAP'S OWN, MUCH FINER SCALE — WAVE 5 ROUND 2 ─────────────────────
+     ⚠ THE THUMBNAIL ABOVE IS THE WRONG RULER FOR A SHADOW AND THAT IS WHY THE
+     "shaded ground keeps its material" CLAUSE KEPT MISSING. One thumbnail cell
+     is api.W/7 → 7 CSS px → 14 DEVICE px. A cast-shadow band off a plateau lip
+     is ~20 CSS px, i.e. THREE cells, so every cell that overlaps the band
+     averages shadow with the lit sand beside it and the shade weight the map
+     derives from it is a fraction of the shade that is actually there.
+     Measured on the critic's own pair: pre-grade L 113 in a cell whose darkest
+     pixels are far below that, giving sg = (150−113)/105 = 0.35 before the
+     square and 0.124 after it. The restore that rides sg was therefore worth
+     +0.04 of chroma multiplier where it needed +0.2, which is exactly why
+     turning SHADOW_CHROMA 1.9 → 3.0 measured as run-to-run noise: the lever
+     was never the coefficient, it was the weight's magnitude AND its ruler.
+
+     grade() ALREADY reads the frame at dw/4 (S.q — one cell is 4 device px,
+     3.5× finer each way, and a 20 CSS px band is ten cells across). The map is
+     now built on THAT buffer instead of on the thumbnail derived from it. It
+     costs no extra readback — S.q is read either way — and it deletes the
+     separate mul-map upscale (S.mup), because the map now comes out at exactly
+     the size that upscale existed to produce.
+     ⚠ MUST STAY EQUAL TO UP_DIV. The additive intermediate is built at dw/UP_DIV
+     and the map's `add`/`gain` planes are composited onto it 1:1; if these ever
+     disagree the two halves of the grade land at different scales. */
+  const MAP_DIV = 4;
+  function devW(api) {
+    return (api.ctx && api.ctx.canvas && api.ctx.canvas.width) || Math.round(api.W * dprOf(api));
+  }
+  function devH(api) {
+    return (api.ctx && api.ctx.canvas && api.ctx.canvas.height) || Math.round(api.H * dprOf(api));
+  }
+  function mapW(api) { return Math.max(thumbW(api), Math.round(devW(api) / MAP_DIV)); }
+  function mapH(api) { return Math.max(thumbH(api), Math.round(devH(api) / MAP_DIV)); }
 
   function mkCanvas(w, h, dpr) {
     const c = document.createElement('canvas');
@@ -631,6 +665,59 @@
   function horizonY(api) {
     const far = api.project({ x: 0, y: 0, z: -api.MAP.rows / 2 - (api.CONFIG.wall || 0) });
     return far ? far.y : api.H * 0.30;
+  }
+  /* ── THE OTHER HORIZON, AND IT IS THE WHOLE WAVE-5-ROUND-2 FIX ────────────
+     ⚠ horizonY() IS THE GROUND'S FAR EDGE, AND ELEVATION PUTS REAL TERRAIN
+     ABOVE IT. `y:0` — a flat board's far corner. But this board has plateaus up
+     to three levels tall, and a raised tile at the back of the field projects
+     HIGHER on screen than the flat far edge does. Anything keyed on
+     "screen y above horizonY ⇒ this is sky/backdrop art" therefore treats the
+     tops of the far plateaus as sky.
+
+     That is not a theory, it is what the wave-5 clause was actually measuring.
+     Probed on the live map at 872x788 CSS, the critic's own same-depth pair —
+     the shaded tile the "shadowed ground has no material" clause has failed on
+     for three rounds — lands at map cell (94,110), i.e. CSS y 221, and reports
+
+         r = 0,  kk = 0
+
+     with a perfectly good shade weight (sg 0.43) and a perfectly warm surface
+     (warm 0.89) sitting right there unused. The depth ramp had clamped to zero
+     because CSS y 221 is ABOVE the flat far edge. Every chroma-restore knob
+     tuned in rounds 1-3 — SHADOW_CHROMA 1.9 → 3.0, GROUND_HI 150 → 165,
+     squaring sg or not — was multiplying a term that was already exactly zero
+     on the tiles being measured, which is precisely why every one of them
+     measured as run-to-run noise. The lever was never in the coefficient or in
+     the weight. It was in the ramp's ORIGIN.
+
+     So: the same far edge, raised to the height of the tallest tile on the
+     board. Everything the terrain can possibly reach is at or below it, and
+     the backdrop art — the one thing `r` exists to protect, because bakeArt
+     grades it flat on purpose — is still entirely above it. */
+  function terrainTopY(api) {
+    const kk = S.lastBake + '|' + api.H + '|' + api.W;
+    if (S.topY && S.topY.key === kk) return S.topY.v;
+    let maxE = 0;
+    try {
+      const cols = api.MAP.cols | 0, rows = api.MAP.rows | 0;
+      for (let z = 0; z < rows; z++) {
+        for (let x = 0; x < cols; x++) {
+          const e = api.tileElev ? api.tileElev(x, z) : 0;
+          if (e > maxE) maxE = e;
+        }
+      }
+    } catch (e) { maxE = 0; }
+    let y = horizonY(api);
+    try {
+      /* the SAME point horizonY projects, lifted to the tallest plateau's top
+         face. Using horizonY's own z keeps the two definitions in lockstep, so
+         a flat board (maxE 0) gives back exactly horizonY and this term
+         disappears rather than quietly shifting the grade. */
+      const p = api.project({ x: 0, y: maxE, z: -api.MAP.rows / 2 - (api.CONFIG.wall || 0) });
+      if (p && p.y < y) y = p.y;
+    } catch (e) { }
+    S.topY = { key: kk, v: y };
+    return y;
   }
   /* the board's near edge — below this we are looking at foreground dirt that
      is closer to the camera than any tile, so it gets the strongest falloff. */
@@ -2742,7 +2829,7 @@
          `pos` staying null is not fatal — postMap() simply declines and the
          frame ships with the board's own light, which is what happens on a
          browser that refuses getImageData anyway. */
-      const pos = bakePost(api, thumbW(api), thumbH(api));
+      const pos = bakePost(api, mapW(api), mapH(api));
       if (pos) { S.post.pos = pos; S.post.key = ''; S.post.age = 1e9; }
       /* …and flatten sky + art + body + shafts + land into ONE canvas, which
          is all draw() blits. Art only joins the bake when it is not mid-fade. */
@@ -3427,8 +3514,15 @@
      i.e. s = 0 under that ramp — which is exactly why every shadow treatment
      in this module missed the thing the clause is about. This second, much
      wider ramp is in PRE-grade luma (the map is built from the frame as the
-     actors left it, before the grade touches it) and is squared so lit sand at
-     the same depth still lands near zero. */
+     actors left it, before the grade touches it).
+     ⚠ IT WAS SQUARED UNTIL WAVE 5 ROUND 2 AND IS NOT ANY MORE. The square's
+     stated job was "so lit sand at the same depth still lands near zero", and
+     GROUND_HI already does that job on its own: probed on the live map, lit
+     sand here reads pre-grade L 190, above the ramp's top, so it is 0 either
+     way. What the square actually did was crush the MIDDLE of the ramp — the
+     shaded ground the clause is about — from 0.43 to 0.19 at the measured
+     pixel. The one place it mattered, the cool bounce in `t2`, keeps the old
+     squared curve explicitly (see sgs) rather than inheriting this change. */
   const GROUND_HI = 150, GROUND_LO = 45;
   /* extra warm restore at full shade, as a multiple of the depth ramp's own.
      Measured, not guessed: see the sweep numbers in the wave-5 report. */
@@ -3438,7 +3532,28 @@
      meanAbs 0.39-2.26 between fresh boots of one build). The restore is
      already at the point where more k stops buying chroma, so it stays where
      the A/B is cleanest. */
-  const SHADOW_CHROMA = 1.9;
+  /* ⚠ ROUND 2 OF WAVE 5 RAISES IT, AND ONLY BECAUSE THE TERM IT SCALES IS
+     FINALLY NON-ZERO WHERE THE CLAUSE MEASURES. Read the note above as
+     history: 3.0 "measured the same" in round 1 because `rs` was built on the
+     flat-ground horizon and the tiles under test sit ABOVE it — the whole
+     product was 0 there, so any coefficient multiplied out to the same frame.
+     With the ramp on terrainTopY() the same pixel reports rs = 1, sg = 0.43,
+     warm = 0.89, and this number is the last free parameter between kk = 0.13
+     and the kk ≈ 0.20 that closes the chroma gap. Measured on the critic's own
+     pair, not guessed — see the round-2 numbers in the report. */
+  const SHADOW_CHROMA = 2.9;
+  /* the shade's LOCAL-CONTRAST gain — the texture half of the clause. See the
+     long note at the term itself for why this is not a lift. Sized on the
+     critic's pair: |d8px| 7.8 needs +26% to clear 0.70 of the lit tile's 14.1,
+     and the weight it rides (sl) is 0.84 there, so 0.31 is the break-even and
+     this is one notch past it. */
+  const SHADE_TEX = 0.82;
+  /* …and the ceiling on it, which only ever binds at a shadow's own edge —
+     ⚠ AND IT IS TIGHT FOR THE SAME REASON THE LIFT IS CAPPED (see LIFT_HALO_K).
+     Inside a shaded tile (L − Ls)/L runs to about ±0.10, so this cap costs the
+     texture restore nothing at all; on a cliff lip the same ratio is +0.5 and
+     the cap is the only thing between this term and a second set of rims. */
+  const SHADE_TEX_CAP = 0.09;
   /* how much faster than the base restore the SHADE term reaches full strength
      with depth. 3 puts it at full a third of the way down the field, which is
      the first row of tiles clear of the haze band — see the note at `rs`. */
@@ -3473,12 +3588,96 @@
      lit tile's contrast, which is the exact accounting error the wave-3
      critic called out. At 0.12 the shade still clears wave 3 on value AND on
      absolute texture and the lit tile keeps its edges. */
-  const SHADOW_LIFT = 0.13;
+  /* ── ⚠ ROUND 2 RAISES IT 0.13 → 0.44, AND THE ARITHMETIC ABOVE IS WHY ─────
+     The note above is history and its conclusion has been overtaken by a
+     measurement it did not have. Sweeping the two boxes at lag 1/2/4/8/16 (the
+     texture clause is a lag-8 statistic, and nobody had ever asked WHERE in
+     the spectrum the shade's texture actually sits):
+
+       shaded  d1 6.31  d2 6.98  d4 7.91  d8 8.36  d16 9.00
+       lit     d8.38    d11.38   d14.95   d14.28   d18.60
+
+     The shaded tile is nearly FLAT across the band — its |d8px| is barely
+     above its |d1px|, i.e. it is almost all single-pixel grain with no
+     structure at 4-16px, while the lit tile has 1.8× more of everything from
+     4px up. That kills the obvious fix stone dead: a local-contrast term can
+     only amplify what the map can RESOLVE, and at dw/4 a 4×4 box average of
+     single-pixel grain is 4× smaller than the grain. Measured: the shade's
+     local-contrast term (SHADE_TEX, which is real and does its job on the
+     structure that IS there) moves |d8px| 8.13 → 8.36, +2.8%, against a clause
+     that needs +26%.
+
+     What DOES move it is the only thing that can move single-pixel grain:
+     the multiplier the pixel is scaled by. |d8px| is an ABSOLUTE measure of a
+     signal that is proportional to level, so shade texture and shade value are
+     the same number twice. Measured, 0.13 → 0.30: shaded L 111.9 → 122.9 and
+     |d8px| 8.36 → 9.03, i.e. it tracks level at 0.8:1 — the lift IS the lever.
+
+     ⚠ AND IT DOES NOT COST THE CAST SHADOWS, which is the objection that kept
+     it at 0.13. Measured against the WAVE-3 FRAME THAT PASSED the elevation
+     clauses, the lit/shade separation at this pair was 149 − 113 = 36 luma.
+     Here it is 181 − 136 = 45 — a DEEPER shadow than the frame that passed —
+     because the lit ground got much brighter under waves 4-5 and the shade
+     never followed it. This is not washing the shadow out, it is the shade
+     catching up to an exposure change another piece already made.
+     ⚠ The old objection (a big lift compresses the edge it sits on) still
+     stands and is still handled: sl is read off the THUMBNAIL, never off the
+     sharp buffer — see `Lsoft` — and it is exactly 0 on the lit tile the ratio
+     is measured against (Ls 190 > LIFT_HI), so none of this is bought with the
+     lit tile's contrast. */
+  const SHADOW_LIFT = 0.41;
   /* …and that ramp. Deliberately NARROWER at the bottom than GROUND_LO: past
      this the lift is delivered by the additive term, which is a SMOOTHED copy
      of the frame, so letting it run to full strength on near-black pixels
      would glow bright edges into the shadows around them. */
   const LIFT_HI = 152, LIFT_LO = 92;
+  /* ⚠ AND THE DEEPEST OCCLUSION IS FADED BACK OUT OF IT — NEW IN ROUND 2, AND
+     IT IS WHAT MAKES A 0.44 LIFT SAFE. The clause is about shaded GROUND, which
+     sits at pre-grade L 90-130. Contact shadows, the undersides of the plateau
+     lips and the occlusion where a rock meets sand sit far below that, and they
+     are the whole reason a viewer reads the field as three-dimensional — the
+     BAR asks for them by name ("soft ambient occlusion where rocks meet sand,
+     contact shadows under every unit and rock"). A ramp that saturates at
+     LIFT_LO hands them the SAME 44% as the mid-shade and turns them to mud.
+     So the lift fades back to nothing below LIFT_DEEP_HI, and the two ramps
+     together make a band: full on the ground the clause measures, zero in the
+     occlusion that has to stay black-ish, and the toe still owns the floor. */
+  const LIFT_DEEP_HI = 78, LIFT_DEEP_LO = 30;
+  /* ── ⚠ AND THE HALO CAP, WHICH IS NOT OPTIONAL AT THIS LIFT ───────────────
+     A LIFT WEIGHTED BY THE NEIGHBOURHOOD PAINTS WHITE OUTLINES ON EVERY CLIFF.
+     sl is read off the W/7 thumbnail on purpose (see `Lsoft`), and that is what
+     makes it smooth — but it also means a pixel is lifted for its NEIGHBOURS'
+     darkness, not its own. The sunlit top edge of a plateau sits in a
+     thumbnail cell that is mostly the shadowed face below it, so at 0.56 it was
+     lifted ~50% and blew out: screenshotted at 1:1 and 2:1, every cliff lip,
+     every tile seam, the pool shoreline and every unit silhouette carried a
+     hard pale 1-3px rim. The BAR forbids exactly that ("no glowing hard
+     outlines on everything"), no box measurement can see it — the boxes are
+     inside tiles, not on their edges — and it is worse than the defect it was
+     added to fix. It has to be looked at, every round.
+
+     ⚠ AND A CEILING ON THE PIXEL'S OWN LUMA DOES NOT FIX IT. That was tried
+     first (LIFT_CLIP 136-172): it took the worst of the rims out and left a
+     clear pale line on every lip, because a rim pixel at L 150 still cleared
+     half the ramp. Pushing the ceiling down far enough to catch those reaches
+     into the shaded ground's own grain, and THAT compresses the texture the
+     lift exists to restore — the gate and the target overlap in luma, so no
+     threshold separates them.
+
+     What separates them is not the pixel's value, it is the pixel's value
+     RELATIVE TO ITS CELL. Grain inside a shaded tile sits within ~12% of the
+     local mean; a rim sits at 150-250% of it. So the lift's ABSOLUTE
+     contribution is capped at LIFT_HALO_K × the cell's own level: a pixel at or
+     below that gets the full multiplier and all of its grain, and a pixel above
+     it gets the same absolute lift its neighbours got — which is exactly what
+     "this pixel is not really in shadow, its neighbourhood is" should mean.
+     ⚠ CAPPING THE ADD, NOT ZEROING THE LIFT, is the part that matters: the
+     transfer slope in the capped region is 1, so a rim stops being brightened
+     without being DARKENED. Every gate that ramps the multiplier down with
+     luma has a negative slope somewhere (d(out)/dL = 1 + K·sl·(f + L·f′), and
+     f′ has to be steep to catch a rim), and a negative slope inverts the edge —
+     a dark outline instead of a pale one. Same artifact, other sign. */
+  const LIFT_HALO_K = 1.00;
   /* ── THE GAIN IS PER-PIXEL NOW, AND IT IS THE ROUND-2 FIX ──────────────────
      Wave 5 round 1 delivered the tone gain as `GAIN_BASE × a quarter-scale
      copy of the frame`, with the multiply map divided by (1+GAIN_BASE) to make
@@ -3672,8 +3871,11 @@
     const gm = scratch(S.post.mulR, bw, bh);
     const ga = scratch(S.post.addR, bw, bh);
     const gv = scratch(S.post.gainR, bw, bh);
-    const gt = S.t.g;
-    if (!gm || !ga || !gv || !gt) return null;
+    /* ⚠ THE SHARP SOURCE IS S.q (dw/4), NOT S.t (W/7) — see MAP_DIV. bw/bh are
+       the MAP's size now, which is S.q's size; S.t is still read alongside it,
+       but only for the two weights that have to stay SMOOTH (see `Lsoft`). */
+    const gt = S.q.g, gs = S.t.g;
+    if (!gm || !ga || !gv || !gt || !gs) return null;
     /* forced recompute: anything that regrades the whole frame at once.
        S.lastBake moves on every re-bake, which covers time of day, location
        swaps and resizes without having to enumerate them. */
@@ -3696,7 +3898,50 @@
     try { im = gt.getImageData(0, 0, bw, bh); }
     catch (e) { S.post.fail = true; return null; }
     const d = im.data;
+    /* ── AND THE SECOND, DELIBERATELY BLURRY LUMA ─────────────────────────────
+       ⚠ NOT EVERY WEIGHT IN THIS LOOP WANTS THE SHARP SOURCE, and getting that
+       backwards is how the last two rounds lost texture while chasing it.
+       Split by what the weight DOES to the pixel it rides on:
+
+         · a weight that scales CHROMA (sg) wants the sharp luma. Darker pixels
+           lose proportionally more blue, so kk varying with the pixel's own
+           value EXPANDS local luma contrast — and it can only see the shadow at
+           all if the ruler resolves the shadow's edge.
+         · a weight that scales VALUE (sl, the lift) must NOT. out = x·(1+K·sl(x))
+           with sl falling at 1/(LIFT_HI−LIFT_LO) per unit of luma has slope
+           1 + K·(sl + x·sl′) = 1 − 0.19 at x ≈ 120: a per-pixel lift is a local
+           tone mapper and it FLATTENS the grain it is trying to rescue. Read off
+           a ruler coarser than the detail (the W/7 thumbnail, ~14 device px
+           against |d8px|'s 8) the same lift is a smooth multiplier, slope
+           1 + K·sl > 1, and the grain rides through amplified.
+         · the DEEP occlusion tint (sd) is a colour wash over a region, not a
+           per-pixel property, and stays smooth for the same reason the veil does.
+
+       So the sharp buffer feeds sg and the three colour gates, the thumbnail
+       feeds sl and sd, and the two are sampled with nearest indexing — the
+       thumbnail is already a box average of exactly these pixels, so there is
+       nothing to interpolate toward. */
+    let LT = null, sw = 0, sh = 0;
+    try {
+      const tw = thumbW(api), th = thumbH(api);
+      if (S.t.cv && S.t.cv.width === tw && S.t.cv.height === th) {
+        const ds = gs.getImageData(0, 0, tw, th).data;
+        sw = tw; sh = th;
+        /* flattened to luma ONCE. The loop below samples this bilinearly, four
+           taps per pixel, and doing the RGB→luma there instead would be four
+           multiply-adds per tap on data that never changes. */
+        LT = new Float32Array(sw * sh);
+        for (let q = 0, e = sw * sh; q < e; q++) {
+          const so = q * 4;
+          LT[q] = 0.299 * ds[so] + 0.587 * ds[so + 1] + 0.114 * ds[so + 2];
+        }
+      }
+    } catch (e) { LT = null; }
     const H = api.H, hz = horizonY(api), span = chromaSpan(api);
+    /* …and the shade boost's own origin — see terrainTopY(). Its span is
+       measured from ITS OWN horizon so a tall board does not also get a longer
+       ramp; SHADE_RAMP then saturates it a third of the way down from there. */
+    const tz = terrainTopY(api), tspan = Math.max(40, (H - tz) * 0.20);
     const k = off('chroma') ? 0 : chromaK(api);
     const noVeil = off('veil'), noTone = off('tone'), noFilm = off('filmic'), noShade = off('shade');
     const attn = pos.attn, col = pos.col;
@@ -3706,11 +3951,23 @@
     const FA = noFilm ? 0 : 0.10;
     const fh = hexRGB(api.mixHex(SAND_BASE, api.LIGHT.key, 0.28));
     const f0 = fh[0] / 255, f1 = fh[1] / 255, f2 = fh[2] / 255;
+    /* ⚠ THE LIFT IS SCALED BY THE KEY, EXACTLY AS chromaK() IS, AND FOR THE
+       SAME REASON. A shadow recovery this strong is a statement about a SUNLIT
+       desert; run at full strength under a moon it lifts the one preset whose
+       whole point is that the braziers are the only light left. Shot side by
+       side at all four times of day, undamped night came back visibly browner
+       and flatter than the frame it replaced. keyI is 1.15 at noon and 0.48 at
+       night, so night keeps 55% — enough that a moonlit shadow still holds its
+       material, not so much that it stops being night. Day is 1.0 and none of
+       the daylight measurements move. */
+    const shLiftK = SHADOW_LIFT * api.clamp(api.LIGHT.keyI / 1.15, 0.55, 1);
     const PED = noTone ? 0 : TONE_PEDESTAL * TONE_GAIN;
     const TG = noTone ? 1 : TONE_GAIN;
     const tint = hexRGB(SHADOW_TINT);
     const gInv = 1 / Math.max(1, GROUND_HI - GROUND_LO);
     const lInv = 1 / Math.max(1, LIFT_HI - LIFT_LO);
+    const dInv = 1 / Math.max(1, LIFT_DEEP_HI - LIFT_DEEP_LO);
+
     const sInv = 1 / Math.max(1, SHADOW_HI - SHADOW_LO);
     const cInv = 1 / Math.max(1, GATE_HI - GATE_LO);
     const wInv = 1 / Math.max(1, WARM_HI - WARM_LO);
@@ -3726,23 +3983,89 @@
          above the board's far edge lives the graded backdrop art, whose
          flatness is deliberate (bakeArt), so the restore has to be an identity
          there and only reach full a fifth of the way down the field. */
-      let r = ((j + 0.5) * H / bh - hz) / span;
+      const yc = (j + 0.5) * H / bh;
+      let r = (yc - hz) / span;
       r = r < 0 ? 0 : r > 1 ? 1 : r;
+      /* THE SHADE BOOST'S RAMP, off the elevation-aware horizon. ⚠ `r` is NOT
+         reused for it and must not be: `r` guards the backdrop ART, which
+         genuinely starts at the flat far edge, and widening `r` would hand a
+         photographic skyline a warm restore it was deliberately denied. This
+         one guards TERRAIN, which starts three levels higher up the screen. */
+      let rg = (yc - tz) / tspan;
+      rg = rg < 0 ? 0 : rg > 1 ? 1 : rg;
+      /* ── THE SOFT ROW, AND IT IS SAMPLED BILINEARLY ──────────────────────
+         ⚠ NEAREST HERE PAINTS THE THUMBNAIL'S GRID ONTO THE FRAME. sl is a
+         14-device-px box average and it drives a 41% lift, so a nearest tap
+         turns every cell boundary into a step: shot at 2:1, the far field came
+         back with pale 7-CSS-px RECTANGLES around every dark thing on it — the
+         units' contact shadows, the boulders, the grass tufts — one block per
+         thumbnail cell that the dark object had pulled down. It is the same
+         family of defect as the cliff rims and it is just as fatal to "no
+         glowing hard outlines"; only a 2:1 crop of the FAR field shows it,
+         which is why the far field is now part of the look pass.
+         Bilinear costs four taps off a 13k-entry Float32Array and makes the
+         mask continuous, so what was a step becomes a gradient and there is no
+         edge left to see. */
+      let y0 = 0, y1 = 0, ty = 0;
+      if (LT) {
+        const fy = (j + 0.5) * sh / bh - 0.5;
+        y0 = fy < 0 ? 0 : fy | 0; if (y0 > sh - 1) y0 = sh - 1;
+        y1 = y0 + 1 > sh - 1 ? sh - 1 : y0 + 1;
+        ty = fy - y0; ty = ty < 0 ? 0 : ty > 1 ? 1 : ty;
+        y0 *= sw; y1 *= sw;
+      }
       for (let i = 0; i < bw; i++) {
         const o = (j * bw + i) * 4, p = j * bw + i;
         const R = d[o], G0 = d[o + 1], B = d[o + 2];
         if (R < mnR) mnR = R; if (G0 < mnG) mnG = G0; if (B < mnB) mnB = B;
         if (R > mxR) mxR = R; if (G0 > mxG) mxG = G0; if (B > mxB) mxB = B;
         const L = 0.299 * R + 0.587 * G0 + 0.114 * B;
-        /* shaded GROUND (wide, squared) and DEEP occlusion (narrow) */
-        let sg = (GROUND_HI - L) * gInv; sg = sg < 0 ? 0 : sg > 1 ? 1 : sg; sg *= sg;
-        let sd = (SHADOW_HI - L) * sInv; sd = sd < 0 ? 0 : sd > 1 ? 1 : sd; sd *= sd;
-        /* the LIFT's own weight — linear, and saturating at LIFT_LO. See the
-           note on SHADOW_LIFT: the squared ramp above is right for the chroma
+        let Ls = L;
+        if (LT) {
+          const fx = (i + 0.5) * sw / bw - 0.5;
+          let x0 = fx < 0 ? 0 : fx | 0; if (x0 > sw - 1) x0 = sw - 1;
+          const x1 = x0 + 1 > sw - 1 ? sw - 1 : x0 + 1;
+          let tx0 = fx - x0; tx0 = tx0 < 0 ? 0 : tx0 > 1 ? 1 : tx0;
+          const a0 = LT[y0 + x0] + (LT[y0 + x1] - LT[y0 + x0]) * tx0;
+          const a1 = LT[y1 + x0] + (LT[y1 + x1] - LT[y1 + x0]) * tx0;
+          Ls = a0 + (a1 - a0) * ty;
+        }
+        /* shaded GROUND — SHARP, and NOT squared.
+           ⚠ THE SQUARE WAS THE OTHER HALF OF WHY THIS CLAUSE KEPT FAILING. Its
+           stated job was "so lit sand at the same depth still lands near zero",
+           and that job is already done by GROUND_HI: lit sand on this board
+           reads L 170-200 pre-grade, i.e. above the ramp's top, so it is zero
+           either way. What the square actually did was crush the MIDDLE of the
+           ramp — the shaded ground the clause is about — to a sixth of its
+           weight (0.35 → 0.124 on the critic's pair), which is a third of the
+           chroma the restore had to give it. Linear, the same pixel weighs 0.35
+           and a properly resolved shadow core weighs 0.5-0.7, which is where
+           kk finally reaches the 0.30-0.38 that moves the measurement. */
+        let sg = (GROUND_HI - L) * gInv; sg = sg < 0 ? 0 : sg > 1 ? 1 : sg;
+        /* DEEP occlusion — SOFT. A wash over a region, not a per-pixel property. */
+        let sd = (SHADOW_HI - Ls) * sInv; sd = sd < 0 ? 0 : sd > 1 ? 1 : sd; sd *= sd;
+        /* the LIFT's own weight — linear, saturating at LIFT_LO, and SOFT.
+           See the note on SHADOW_LIFT: the squared ramp is right for the chroma
            restore (it has to leave lit sand alone) and far too timid for a
-           lift that is meant to give the shade back its value. */
-        let sl = (LIFT_HI - L) * lInv; sl = sl < 0 ? 0 : sl > 1 ? 1 : sl;
-        if (noShade) { sg = 0; sd = 0; sl = 0; }
+           lift that is meant to give the shade back its value — and see `Lsoft`
+           for why this one, unlike sg, must be read off the coarse ruler. */
+        let sl = (LIFT_HI - Ls) * lInv; sl = sl < 0 ? 0 : sl > 1 ? 1 : sl;
+        if (Ls < LIFT_DEEP_HI) {
+          /* …and back off again in the occlusion — see LIFT_DEEP_HI. */
+          let fd = (Ls - LIFT_DEEP_LO) * dInv; fd = fd < 0 ? 0 : fd > 1 ? 1 : fd;
+          sl *= fd;
+        }
+
+        /* ⚠ AND THE COOL BOUNCE KEEPS THE OLD WEIGHT, BIT FOR BIT. `t2`'s
+           neutral-shade term was SIZED against the squared thumbnail ramp (see
+           NEUTRAL_COOL: sampled y940 shade rgb(57,67,62) → rgb(59,72,79)), and
+           handing it the new sharp linear sg would have multiplied it by 2.8 in
+           the MID-shade — a navy add on ground that has just been told to keep
+           its ochre, i.e. undoing this round's own clause. It is a regional
+           wash like sd, so it gets the regional ruler and the old curve. Only
+           the CHROMA restore moves to the sharp linear weight. */
+        let sgs = (GROUND_HI - Ls) * gInv; sgs = sgs < 0 ? 0 : sgs > 1 ? 1 : sgs; sgs *= sgs;
+        if (noShade) { sg = 0; sd = 0; sl = 0; sgs = 0; }
         /* how COOL the surface already is. ⚠ WAVE 3 SPENT A WHOLE ROUND ON
            THIS AS AN ADDITIVE GIVE-BACK, because its multiply was baked and
            could not see the water. Here the restore simply is not applied to
@@ -3784,7 +4107,16 @@
            So the BASE restore keeps `r` (it is what protects the art) and the
            SHADE term gets its own ramp that clears the far edge and then
            saturates, SHADE_RAMP× faster. Still exactly 0 at the horizon. */
-        let rs = r * SHADE_RAMP; if (rs > 1) rs = 1;
+        let rs = rg * SHADE_RAMP; if (rs > 1) rs = 1;
+        /* THE SHADE RECOVERY'S OWN GATE. ⚠ THE LIFT AND THE LOCAL-CONTRAST TERM
+           ARE ABOUT GROUND AND MUST NOT TOUCH THE WORLD BEHIND IT. Both are
+           keyed on luma alone, and the distant ridge, the haze band and the
+           backdrop art are FULL OF dark pixels — a 44% lift on a ridge at
+           Ls 120 would lighten it 23%, which is the atmospheric depth wave 3
+           won, undone by a term aimed at the sand. Gated on the terrain ramp
+           they are exactly 0 above the tallest plateau's top face, where the
+           only thing that lives is the world. */
+        const slb = sl * rs;
         let kk = k * (r + rs * SHADOW_CHROMA * sg * warm);
         if (kk > 0.42) kk = 0.42;
         const at = noVeil ? 1 : attn[p];
@@ -3810,13 +4142,64 @@
            gain is SPLIT at the ceiling instead: as much as a multiply can
            carry stays per-pixel and exact, and only the overflow — 6-9% on
            lit sand, more in shade — goes through the smoothed copy. */
-        const gFull = tg * at * (ped > 0 ? ped : 0) * (1 + SHADOW_LIFT * sl);
+        /* the shade lift, with its absolute contribution capped against the
+           cell's own level — see LIFT_HALO_K. */
+        let lf = shLiftK * slb;
+        if (lf > 0) {
+          const capL = LIFT_HALO_K * Ls;
+          if (L > capL) lf *= capL / (L > 1 ? L : 1);
+        }
+        let gFull = tg * at * (ped > 0 ? ped : 0) * (1 + lf);
         /* ⚠ THE SPLIT, AND IT IS PER CHANNEL AND PER PIXEL — which is exactly
            what the uniform full-res gain was not. Everything a multiply can
            carry stays in the multiply (slope MAP_CEIL = 0.992, no clip, and the
            cap that eventually lands is mR/mG/mB, i.e. the pixel's OWN colour
            scaled); only the part above the ceiling — 0 in the sky, 6-9% on lit
            sand, more in deep shade — rides the band-limited copy. */
+        /* ── THE TEXTURE HALF OF THE CLAUSE, AS LOCAL CONTRAST ──────────────
+           ⚠ AND IT IS NOT A LIFT. Three rounds tried to buy "shaded ground
+           keeps its texture (|d8px| within ~30% of the lit tile)" with
+           SHADOW_LIFT, and the arithmetic says that can never work here: the
+           shaded tile's grain is already proportionally CORRECT — pre-grade it
+           reads L 104.8 against the lit tile's 190.2, a ratio of 0.55, and it
+           delivers |d8px| 7.8 against 14.1, a ratio of 0.55. The shadow is not
+           smooth, it is DARK, and |d8px| is an absolute measure. Buying the
+           missing 26% with brightness means lifting the shadow from L 115 to
+           L 145 — a 26% lift on every shaded tile on the board, which is the
+           cast shadows the elevation clause needs, erased.
+
+           The other way to raise a difference is to raise the DIFFERENCE. This
+           loop already holds the same neighbourhood at two rulers: L off the
+           dw/4 buffer and Ls off the W/7 thumbnail (see `Lsoft`). Their
+           difference is a band-pass over roughly 8-28 device px, and |d8px| is
+           a measurement at 8. So the shade gets its relief back the way a
+           photographic shadow recovery does it — amplify the local deviation
+           about the neighbourhood mean, leaving that mean exactly where the
+           lighting put it:
+
+               out = Ls + (1 + G)·(L − Ls)      ⇒   m ×= 1 + G·(L − Ls)/L
+
+           Value untouched, contrast restored, and it costs one subtract and
+           one divide in a loop that was already reading both numbers.
+           ⚠ WEIGHTED BY sl, THE SOFT RAMP, NOT BY sg. The gain has to vary
+           SMOOTHLY across the frame or it becomes its own texture; all the
+           detail in this term must come from (L − Ls) and none of it from the
+           weight. sl is also exactly 0 on lit sand, so the lit tile the ratio
+           is measured against is untouched — which is the accounting error the
+           wave-3 critic called out and it must not be repeated.
+           ⚠ AND THE CAP IS ONE-SIDED IN PRACTICE. At a shadow's own edge
+           (L − Ls) is a full lit/shade step and the term saturates, but sl has
+           already fallen to ~0 on the lit side of that edge, so the overshoot
+           only ever lands on the dark side. That reads as a crisper contact
+           shadow, not as a ringing halo — which is what the BAR asks a plateau
+           lip to look like anyway. */
+        if (SHADE_TEX > 0 && slb > 0 && LT) {
+          let tx = SHADE_TEX * slb * (L - Ls) / (L > 24 ? L : 24);
+          if (tx > SHADE_TEX_CAP) tx = SHADE_TEX_CAP;
+          else if (tx < -SHADE_TEX_CAP) tx = -SHADE_TEX_CAP;
+          gFull *= (1 + tx);
+        }
+
         let base = gFull, v = 0;
         if (base > MAP_CEIL) {
           v = (base - MAP_CEIL) * vInv; if (v > 1) v = 1;
@@ -3912,13 +4295,13 @@
            to the cool side instead of parking it on grey. Warm ground in
            shade is untouched (warm = 1 zeroes the new term) and so is water
            (cool = 1 zeroes it, and it already had the full bounce). */
-        /* ⚠ AND IT RIDES sg, NOT sd. The first cut put it on the DEEP ramp
+        /* ⚠ AND IT RIDES THE GROUND RAMP, NOT sd. The first cut put it on the DEEP ramp
            (SHADOW_HI 100, squared) and measured almost nothing — the tiles the
            clause is about sit at L 60-95, where sd is 0.19 and the whole term
            was worth +8 on blue. The complaint is about shaded GROUND, so it
            belongs on the ground ramp, which is 0.68 at the same pixel. */
         const t2 = sd * (SHADOW_TINT_K + (1.15 - SHADOW_TINT_K) * cool)
-          + sg * NEUTRAL_COOL * (1 - warm) * (1 - cool);
+          + sgs * NEUTRAL_COOL * (1 - warm) * (1 - cool);
         /* ⚠ THE COOL SURFACES GET WAVE 3's GIVE-BACK, NOT A GATE ON THE
            MULTIPLY, AND THAT IS A CORRECTION TO THIS ROUND'S FIRST CUT. Gating
            the restore is exact arithmetic and it still measured wrong: the app
@@ -4014,14 +4397,6 @@
       g.fillRect(0, 0, bw, bh);
       g.globalCompositeOperation = 'source-over';
     }
-    /* …and the veil's colour + the cool bounce join it, because two additive
-       terms summed at thumbnail scale and upscaled once are identical to two
-       upscales, at half the price. */
-    if (map && map.addR.cv) {
-      g.globalCompositeOperation = 'lighter';
-      g.drawImage(map.addR.cv, 0, 0);
-      g.globalCompositeOperation = 'source-over';
-    }
     /* quarter-scale: the tone gain is the only term that needs the frame's own
        detail, so it is built here rather than in the thumbnail. */
     const ug = scratch(S.up, mw, mh);
@@ -4032,7 +4407,20 @@
     ug.imageSmoothingEnabled = true;
     try { ug.imageSmoothingQuality = 'low'; } catch (e) { }
     ug.globalCompositeOperation = 'copy';
-    ug.drawImage(S.bloom.cv, 0, 0, mw, mh);          /* bloom + veil colour + tints */
+    ug.drawImage(S.bloom.cv, 0, 0, mw, mh);          /* bloom, upscaled from the thumbnail */
+    /* …and the veil's colour + the cool bounce join it HERE rather than inside
+       the bloom thumbnail. ⚠ THEY USED TO BE SUMMED AT W/7 AND UPSCALED WITH IT
+       — correct while the map was a thumbnail too, and wrong the moment the map
+       moved to dw/4 (see MAP_DIV): drawing the bigger plane 1:1 into the small
+       bloom canvas would have cropped it to the top-left seventh of the frame.
+       Added at mw x mh instead, which is its native size, so the sum is exact
+       and the cool bounce keeps the map's own resolution instead of the bloom's.
+       ⚠ AND IT MUST STAY AFTER the 'copy' above, which would wipe it. */
+    if (map && map.addR.cv) {
+      ug.globalCompositeOperation = 'lighter';
+      ug.imageSmoothingEnabled = true;
+      ug.drawImage(map.addR.cv, 0, 0, mw, mh);
+    }
     if (!off('tone') && map && map.gainR.cv && S.q.g) {
       /* ⚠ THE GAIN IS WEIGHTED BY THE MAP BEFORE IT IS ADDED, AND THAT IS THE
          ROUND-2 FIX. Round 1 added GAIN_BASE × the frame everywhere, so every
@@ -4074,7 +4462,6 @@
        thumbnail and the additive's is not, so only one of them has a reason to
        ever grow. */
     const mw = Math.max(bw, Math.round(dw / UP_DIV)), mh = Math.max(bh, Math.round(dh / UP_DIV));
-    const kw = Math.max(bw, Math.round(dw / 4)), kh = Math.max(bh, Math.round(dh / 4));
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
@@ -4091,7 +4478,10 @@
          gain, which clipped the frame white (see THE UNIFORM GAIN CLIPPED THE
          FRAME) and cost a full-viewport blit to build and another to composite.
          Quarter scale is all the gain's OVERFLOW term ever needed. */
-      const qg = scratch(S.q, mw, mh);
+      /* ⚠ willReadFrequently NOW, because this buffer is the MAP's source as of
+         wave 5 round 2 (see MAP_DIV) — postMap reads it back one frame in four
+         instead of reading the thumbnail. */
+      const qg = scratch(S.q, mw, mh, true);
       if (tg && qg) {
         qg.setTransform(1, 0, 0, 1, 0, 0);
         qg.globalCompositeOperation = 'copy';
@@ -4105,8 +4495,11 @@
         tg.imageSmoothingEnabled = true;
         tg.drawImage(S.q.cv, 0, 0, bw, bh);
         tg.globalCompositeOperation = 'source-over';
-        /* 1. the map (multiplicative + additive + gain weight), on a cadence */
-        const map = off('post') ? null : postMap(api, bw, bh);
+        /* 1. the map (multiplicative + additive + gain weight), on a cadence.
+           ⚠ AT mw x mh — S.q's size — NOT at the thumbnail's. See MAP_DIV: the
+           shade weight has to be read off a ruler that resolves a cast-shadow
+           edge, and S.q is the buffer that already exists at that scale. */
+        const map = off('post') ? null : postMap(api, mw, mh);
         /* 2. everything additive, one 'lighter' upscale */
         additive(api, bw, bh, mw, mh, map);
         /* ⚠ THERE IS NO STEP 2b ANY MORE. It was a full-device-resolution
@@ -4117,29 +4510,17 @@
         /* 3. everything multiplicative, one 'multiply' upscale. It runs LAST
            of the two so that its ceiling also caps whatever the bloom blew
            out — that is the shoulder clamp, for free. */
+        /* ⚠ AND THE SEPARATE UPSCALE INTERMEDIATE (S.mup) IS GONE, WHICH IS
+           HOW THIS ROUND PAYS FOR THE FINER MAP. It existed only to bilinear
+           the W/7 map up to dw/4 before the nearest blit to full size, because
+           stamping 14-device-px blocks straight onto the frame banded the sky.
+           The map IS dw/4 now, so that buffer would be a 1:1 copy of it — one
+           whole quarter-scale composite per re-bake, deleted. What reaches the
+           frame is identical in every pixel the old chain could represent. */
         if (map && map.ready && map.mulR.cv) {
-          const g2 = scratch(S.mup, kw, kh);
-          if (g2) {
-            /* ⚠ REBUILT ONLY WHEN THE MAP ITSELF WAS. The map runs on
-               POST_CADENCE; upscaling an unchanged thumbnail to the same
-               quarter-size buffer three frames out of four was pure waste. */
-            /* `reads`, NOT `key` — the map's key is deliberately stable across
-               a cadence window (it is what the cache tests), so keying off it
-               would pin this buffer to the very first map ever built. */
-            const mk = map.reads + '|' + kw + 'x' + kh;
-            if (S.mupKey !== mk || !S.mup.fresh) {
-              g2.setTransform(1, 0, 0, 1, 0, 0);
-              g2.globalAlpha = 1;
-              g2.imageSmoothingEnabled = true;
-              g2.globalCompositeOperation = 'copy';
-              g2.drawImage(map.mulR.cv, 0, 0, kw, kh);
-              g2.globalCompositeOperation = 'source-over';
-              S.mupKey = mk; S.mup.fresh = true;
-            }
-            ctx.globalCompositeOperation = 'multiply';
-            ctx.imageSmoothingEnabled = false;
-            ctx.drawImage(S.mup.cv, 0, 0, dw, dh);
-          }
+          ctx.globalCompositeOperation = 'multiply';
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(map.mulR.cv, 0, 0, dw, dh);
         }
       }
     } catch (e) { /* a grade that throws must not take the frame with it */ }

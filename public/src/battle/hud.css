@@ -1598,7 +1598,7 @@
    comment claimed `padding: 3px 14px` here paid for the growth so the row was
    unchanged. THAT WAS FALSE TWICE OVER and a critic measured it false, so the
    arithmetic is spelled out:
-     • the padding declaration never applied. chrome.css:297 sets
+     • the padding declaration never applied. chrome.css:298 sets
        `padding: 0 var(--r3-3) !important` on the same element, and !important
        beats specificity, so the computed padding was `0px 12px` before and
        after. The dead rule has been deleted rather than !important-ed —
@@ -1612,9 +1612,16 @@
    scrollHeight == clientHeight == 538, `.bcp`'s foot sits 123.6 CSS px ABOVE
    the rail's foot, and `.logrows` still gets 142 rail px. Nothing clips and
    nothing overflows; the zoom does re-solve, so everything under the log in the
-   left rail sits a few CSS px lower than it did at f73161b. That shift is real,
-   it is this rule's doing, and it is not a defect — but do not write "unmoved"
-   in this file again without a probe behind it.
+   left rail sits a few CSS px off where it did at f73161b (a critic pixel-diffed
+   the rail and got 2-6 CSS px depending on depth). That shift is real, it is
+   this block's doing, and it is not a defect — but do not write "unmoved" in
+   this file again without a probe behind it.
+   ⚠ SIZING THE TWIN, by contrast, moves NOTHING: it changes one `auto` track
+   inside a row whose height the 42px live plate already set. MEASURED, this
+   frame against the previous round's at 1600x1000@2x, banded: the log-header row
+   meanAbs 1.475 / 1.25% of px over 8, the left rail ABOVE the log 0.032 / 0.03%,
+   BELOW the log 0.067 / 0.00%, the board 0.606 / 0.99% and the right rail
+   0.000 / 0.00% — i.e. the title moved and nothing else did.
    ⚠ THE TWIN IS `visibility: hidden`, NOT `display: none`. `.loghead` is
    `grid-template-columns: auto 1fr auto`; removing the third column from the
    flow moves the centred title off the header's optical centre. Hidden, it

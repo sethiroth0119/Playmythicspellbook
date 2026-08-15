@@ -194,6 +194,15 @@ let bad = 0;
                                      If a future edit makes §3c redden here too,
                                      that stub has been un-chained from ECON_ON
                                      again; see the bldDuration note in mkCity.
+     ECON_TEST_SABOTAGE=refund-blind round0r §3e: re-commit the shipped refund —
+                                   nobody asks the stash ceiling before promising
+                                   a 100% refund (bldRefundFit's headroom read →
+                                   `null`, so `free` stays Infinity, the fit is
+                                   always whole, no dialog is raised and every
+                                   promise site prints "refunded in full"). addRes
+                                   still clamps, so a Power Station cancelled at a
+                                   full 2,000-unit vault returns its Cinder and
+                                   destroys all 400 units of materials in silence
      ECON_TEST_SABOTAGE=refund-raw  round0r §4: strip bldLoad's two clamps, i.e.
                                    pass a save's `pc` and `pr` through unbounded
                                    and unvalidated, as shipped
@@ -376,7 +385,7 @@ const SABOTAGES = [
   'loot-ledger', 'loot-promo', 'no-map', 'no-producer', 'nobridge-drop', 'ops-found-inline',
   'ops-found-unguarded', 'ops-grant-unknown', 'ops-swallow', 'ops-zombie', 'payout-drop',
   'payout-blind', 'pop-zero', 'price-drift', 'promo-drift', 'reap-burn', 'rearm-caller',
-  'refund-raw', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
+  'refund-blind', 'refund-raw', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
   'sell-pump', 'settle-requested', 'stale-deliver', 'stale-refund', 'stale-workplaces',
   'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind',
 ];
@@ -4729,8 +4738,8 @@ const srcBlockAfter = (src, decl, open) => {
    (§1 reads boot()'s own text) and behaviourally (§2 drives it).
 
    SABOTAGE (each MUST redden this round; each re-commits the pre-fix source):
-     boot-presweep · cancel-sited · cancel-blind · ops-zombie · refund-raw ·
-     free-repair · lab-ungated
+     boot-presweep · cancel-sited · cancel-blind · ops-zombie · refund-blind ·
+     refund-raw · free-repair · lab-ungated
    ════════════════════════════════════════════════════════════════════════════ */
 {
   console.log('\n########## round0r-boot-order ##########');
@@ -4836,6 +4845,9 @@ const srcBlockAfter = (src, decl, open) => {
     bldPaid:        fnText(NC, 'bldPaid'),
     bldRecord:      fnText(NC, 'bldRecord'),
     bldOrderRefund: fnText(NC, 'bldOrderRefund'),
+    bldRefundFit:   fnText(NC, 'bldRefundFit'),
+    bldRefundLabel: fnText(NC, 'bldRefundLabel'),
+    bldConfirmLossy: fnText(NC, 'bldConfirmLossy'),
     bldPayRefund:   fnText(NC, 'bldPayRefund'),
     bldCancel:      fnText(NC, 'bldCancel'),
     bldLoad:        fnText(NC, 'bldLoad'),
@@ -4883,6 +4895,16 @@ const srcBlockAfter = (src, decl, open) => {
       ['Math.min(Math.max(0, Math.round(+raw.pc || 0)), Math.max(0, Math.round(+cap.cinder || 0)))',
        'Math.max(0, Math.round(+raw.pc || 0))'],
       ['const lim = Math.max(0, Math.round(+cap[r] || 0));', 'const lim = Infinity;'],
+    ]),
+    /* 🧨 THE PRE-FIX REFUND, RE-COMMITTED WHERE IT ACTUALLY LIVED: nobody asked
+       the ceiling. One anchor, and it is enough — with no headroom read `free`
+       stays Infinity, so the fit is always `whole`, no dialog is raised, and
+       every promise site prints "refunded in full" while addRes clamps. That is
+       byte-for-byte the shipped behaviour, not an injury: the shipped code had
+       no bldRefundFit at all and the shipped bldPayRefund was the two lines
+       still under this one. */
+    bldRefundFit: unfix(SRC0.bldRefundFit, 'refund-blind', [
+      ['const h = await MythicCityBridge.resourceHeadroom();', 'const h = null;'],
     ]),
     opsFindLab:     unfix(SRC0.opsFindLab,     'lab-ungated', [['if (bldSite(t)) continue;', '']]),
     opsResearchAdj: unfix(SRC0.opsResearchAdj, 'lab-ungated', [['if (t.damaged || bldSite(t)) continue;', 'if (t.damaged) continue;']]),
@@ -4966,12 +4988,46 @@ const srcBlockAfter = (src, decl, open) => {
       const MAX_LVL = ${MAXL}, UPGRADE_MULT = ${UPM};
       const BUILD_CINDER_MULT = ${BCM}, BUILD_RES_MULT = ${BRM};
       const OPS_RESEARCH_R = ${RADIUS}, GRID = 24, OPS_PREFIX = 'op_';
+      /* 📦 THE PARENT LEDGER'S CEILING, MODELLED AS index.html's addRes ACTUALLY
+         ENFORCES IT — free = cap - units, drop the lot when free <= 0, clamp
+         otherwise, and say nothing to the caller. spy.writes records what was
+         ASKED FOR (every section above this one reads it that way) and
+         spy.landed records what the ledger TOOK. The whole §3e defect lives in
+         the gap between those two.
+         With no __ctx.cap there is no ceiling, and resourceHeadroom answers the
+         UNKNOWN shape ({cap:0, free:Infinity}) — which is what a parent with no
+         cityResourceHeadroom hook returns, and what every section above runs
+         under, so none of them changes behaviour. */
+      const LEDGER = __ctx.ledger || {};
+      const LCAP = __ctx.cap | 0;
+      const lUnits = () => { let t = 0; for (const k in LEDGER) t += LEDGER[k] | 0; return t; };
       const MythicCityBridge = {
         mode: 'standalone',
         addCinders: async (n) => { spy.writes.push({ phase: spy.phase, call: 'addCinders', n: n }); return true; },
-        addRes:     async (r, n) => { spy.writes.push({ phase: spy.phase, call: 'addRes', r: r, n: n }); return true; },
+        addRes:     async (r, n) => {
+          spy.writes.push({ phase: spy.phase, call: 'addRes', r: r, n: n });
+          let add = Math.floor(n); if (!add) return;
+          if (LCAP > 0 && add > 0) { const free = LCAP - lUnits(); add = free <= 0 ? 0 : Math.min(add, free); }
+          if (add > 0) LEDGER[r] = (LEDGER[r] | 0) + add;
+          spy.landed[r] = (spy.landed[r] | 0) + add;
+        },
+        resourceHeadroom: async () => (LCAP > 0
+          ? { cap: LCAP, units: lUnits(), free: Math.max(0, LCAP - lUnits()) }
+          : { cap: 0, units: 0, free: Infinity }),
         spendRes: async () => true, spendCinders: async () => true,
       };
+      /* The lossy-cancel dialog. __ctx.answer is undefined in every scenario
+         that does not set it, so the default is "no" — a section that trips the
+         dialog without meaning to loses its cancel loudly rather than sliding
+         through. */
+      function confirm(msg) { spy.confirms.push(msg); return __ctx.answer === true; }
+      const _bldCancelling = new Set();
+      /* 🏗 THE UPGRADE-RACE REFUND, SCRAPED AS A STATEMENT AND THEN RUN. It is
+         one branch inside a 90-line click handler, so it cannot be lifted as a
+         function — but it is the SECOND call site of bldPayRefund and it had the
+         same defect, so a round that only drove bldCancel would have graded half
+         the bug. See §3e (7). */
+      ${ctx.raceSrc ? 'async function raceRefund(cost) ' + ctx.raceSrc : ''}
       const bldCfg = () => ECON_ON ? { on: true, maxSec: 86400, formulaV: 1, exemptTypes: [] } : null;
       /* 🔴 THIS STUB LIES UNLESS IT IS CHAINED TO ECON_ON, AND THE LIE HID A
          LIVE DEFECT FOR A WHOLE ROUND. The shipped chain is
@@ -4997,7 +5053,10 @@ const srcBlockAfter = (src, decl, open) => {
         spy.finished.push({ key: k, at: __NOW, phase: spy.phase });
         return true;
       }
-      function logEvent() {} function toast() {} function computeLinks() {} function manageAgents() {}
+      function logEvent() {}
+      // What the PLAYER READS. §3e grades the sentence, not just the ledger.
+      function toast(m, kind) { spy.toasts.push({ m: m, kind: kind }); }
+      function computeLinks() {} function manageAgents() {}
       function updateHUD() {} function saveNow() {} function saveSoon() {} function openInspect() {}
       function ecoSync() { spy.ecoSync.push(spy.phase); }
       function dropTileMesh() {} function refreshRoadArea() {} function placeMeshAt() {}
@@ -5042,6 +5101,9 @@ const srcBlockAfter = (src, decl, open) => {
         bldNormalize: bldNormalize, bldSweep: bldSweep, bldFinishAll: bldFinishAll,
         bldCancel: bldCancel, bldLoad: bldLoad, bldOrderRefund: bldOrderRefund,
         bldPayRefund: bldPayRefund, costOf: costOf, bldSite: bldSite,
+        bldRefundFit: bldRefundFit, bldRefundLabel: bldRefundLabel,
+        ledger: LEDGER, ledgerUnits: lUnits,
+        raceRefund: (typeof raceRefund === 'function' ? raceRefund : null),
         opsReconcile: opsReconcile, opsFindLab: opsFindLab, opsResearchAdj: opsResearchAdj,
         rebuildDue: _bldRebuildDue,
         next: () => _bldNext, parkNext: () => { _bldNext = Infinity; },
@@ -5053,7 +5115,7 @@ const srcBlockAfter = (src, decl, open) => {
       };`;
     return new Function('__ctx', S)(ctx);
   };
-  const mkSpy = () => ({ writes: [], finished: [], ecoSync: [], unsite: [], phase: 'load' });
+  const mkSpy = () => ({ writes: [], landed: {}, confirms: [], toasts: [], finished: [], ecoSync: [], unsite: [], phase: 'load' });
   const cinPerSec = (type) => {
     const d = BLDG[type]; const g = d && d.gen && +d.gen.cinder;
     return g > 0 ? g / CPD / 60 : 0;          // per-minute figure → per-hour → per-second
@@ -5336,6 +5398,259 @@ const srcBlockAfter = (src, decl, open) => {
     chk('…and it is still a SITE afterwards, and still completes nothing in the gap',
         spy.finished.length === 0 && !!api.game.tiles['12,12'].bld,
         JSON.stringify(spy.finished));
+  }
+
+  /* ── §3e A CANCEL MAY NOT PROMISE WHAT THE VAULT CANNOT HOLD ────────────────
+     🔴 THE LIVE PLAYER-HARM BUG. bldPayRefund returns materials through
+     MythicCityBridge.addRes, which lands in index.html's addRes() — and that
+     CLAMPS to the stash cap and drops the overflow behind a "STASH FULL" toast.
+     Cancelling was advertised as a 100% refund in three separate places (the
+     Site Board's button title, the long-order confirm, and the cancel toast,
+     which printed costLabel(r.refund) — what was ASKED FOR, never what landed).
+
+     MEASURED ON THIS HARNESS, before the fix, cancelling a Power Station site
+     (costOf → 20,000 🔥 + 300 metal + 100 supplies = 400 units):
+       vault 0/2,000      → 400 of 400 units banked, "refunded in full"   ✔ true
+       vault 1,800/2,000  → 200 of 400 units banked, "refunded in full"   ✘ 200 lost
+       vault 2,000/2,000  →   0 of 400 units banked, "refunded in full"   ✘ 400 lost
+     The Cinder leg was never affected — addCinders has no ceiling — which is
+     precisely why it read as working.
+
+     THE PROPERTY UNDER TEST IS NOT "nothing is ever lost". A player at a full
+     vault who wants a mis-clicked 24-hour order gone is allowed to take the
+     loss, and refusing them would BRICK the tile for a day — the one state
+     node-city's demolish comment calls "the only deliberately unrecoverable
+     state in the whole design". The property is that THE PROMISE AND THE
+     OUTCOME AGREE, and that nothing goes without being counted out loud first:
+       · room available → no question asked, everything arrives
+       · partial room   → the shortfall is named BEFORE anything moves, and "no"
+                          leaves the order, the tile and the ledger untouched
+       · no room        → same, and "yes" reports what actually arrived
+     `spy.writes` is what the bridge was ASKED for; `spy.landed` is what the
+     ledger TOOK. The defect is the gap between them, so both are asserted.
+
+     SABOTAGE: refund-blind (re-commits "nobody asked the ceiling"). */
+  {
+    const chain = await import('../../public/src/resources/chain.js');
+    const CHAIN = new Set(chain.NEW_IDS);
+    const CAP = 2000;
+    /* costOf, lifted — no price is written down here. A retune moves these
+       numbers and the round still means the same thing. */
+    const price = mkCity({ spy: mkSpy(), B: BLDG }).costOf('powerstation', 1);
+    const pr = { ...price }; delete pr.cinder;
+    const WANT = Object.values(pr).reduce((a, b) => a + b, 0);
+    const mkRec = () => ({ k: 0, l: 1, s: Date.now(), d: 3600, fv: 1, pc: price.cinder | 0, pr: { ...pr } });
+    console.log('   the order under test: costOf(powerstation,1) = ' + JSON.stringify(price) +
+                '  → resource leg ' + WANT + ' units, cap ' + CAP);
+
+    chk('§3e the resource leg is big enough to overflow a ' + CAP + '-unit vault',
+        WANT > 0 && WANT < CAP, WANT + ' units — a leg of 0 would make every case below vacuous');
+
+    /* THE PROMISE STRINGS THEMSELVES. FIVE places told the player the refund was
+       100%, and the fifth was only found by this check: the Site Board's 🧨
+       button title, the Demolish button's label, the long-order confirm, the
+       dossier's countdown note, and a line of plain HTML in the Site Board's
+       footer. None of them passes through a number the cases above can drive, so
+       nothing else in this round can see them.
+       ⚠ THE RULE IS "DO NOT WRITE THE PHRASE ANYWHERE", COMMENTS INCLUDED, and
+         that is a deliberate simplification rather than an oversight.
+         stripComments cannot reliably separate prose from markup in a 1.7 MB
+         HTML document — an apostrophe in ordinary body text ("don't") opens a
+         string as far as the stepper is concerned and can carry it across a
+         comment boundary, so a comment that QUOTES the old wording shows up here
+         as if it were shipping text. Rewording two comments in node-city was
+         cheaper than a JS/HTML parser, and "describe the old promise, never
+         reproduce it" is a rule a reader can follow. The failure direction is
+         safe either way: this over-reports, it cannot under-report.
+       bldRefundLabel builds its own "… refunded" + " in full." from two separate
+       literals joined at run time, on the `whole` branch only, which is why the
+       one honest use of that sentence is not a hit. */
+    {
+      const shown = stripComments(NC);
+      const hits = ['100% refund', 'full refund', 'refunded in full', 'refunds the order in full',
+                    'refunds the upgrade in full']
+        .filter(p => shown.indexOf(p) >= 0);
+      chk('§3e no UNCONDITIONAL "100% refund" promise is left anywhere a player can read it',
+          hits.length === 0,
+          'still promising: ' + JSON.stringify(hits) + ' — the refund is 100% of the Cinder and ' +
+          'only as much of the materials as the vault will take');
+    }
+
+    /* One scenario, driven through the production call shape: the player paid
+       at placement (so the units left the vault), then refilled to `held`. */
+    const run = async (held, answer) => {
+      const spy = mkSpy();
+      const api = mkCity({ spy: spy, B: BLDG, cap: CAP, ledger: { food: held }, answer: answer });
+      api.game.tiles['4,4'] = { type: 'powerstation', lvl: 1, rot: 0, bld: mkRec() };
+      const before = api.ledgerUnits();
+      const r = await api.bldCancel('4,4');
+      /* WHAT THE PLAYER IS TOLD, built the way all three toasts build it. */
+      const said = r ? api.bldRefundLabel(r) : null;
+      /* WHAT THE PLAYER IS PROMISED, itemised: the Cinder plus the fit. */
+      const promised = {};
+      if (r) { if (r.refund.cinder) promised.cinder = r.refund.cinder;
+               for (const k in r.fit.fit) if (r.fit.fit[k]) promised[k] = r.fit.fit[k]; }
+      const got = {};
+      const cin = spy.writes.filter(w => w.call === 'addCinders').reduce((a, w) => a + w.n, 0);
+      if (cin) got.cinder = cin;
+      for (const k in spy.landed) if (spy.landed[k]) got[k] = spy.landed[k];
+      const norm = (o) => JSON.stringify(Object.keys(o).sort().map(k => k + ':' + o[k]));
+      return { r, spy, said, promised, got, agree: norm(promised) === norm(got),
+               moved: api.ledgerUnits() - before, tile: api.game.tiles['4,4'],
+               resAsked: spy.writes.filter(w => w.call === 'addRes') };
+    };
+
+    // ── (1) ROOM AVAILABLE — the promise was always true here, and stays true.
+    {
+      const s = await run(0, true);
+      console.log('   room available : said "' + s.said + '"');
+      chk('§3e room available — no question is asked and the whole refund arrives',
+          s.spy.confirms.length === 0 && s.moved === WANT && s.r && s.r.fit.whole,
+          'confirms ' + s.spy.confirms.length + ', banked ' + s.moved + ' of ' + WANT +
+          ', landed ' + JSON.stringify(s.spy.landed));
+      chk('§3e room available — PROMISE === OUTCOME',
+          s.agree && / in full\.$/.test(s.said),
+          'promised ' + JSON.stringify(s.promised) + ' vs landed ' + JSON.stringify(s.got) + ' :: ' + s.said);
+    }
+
+    // ── (2) PARTIAL ROOM — half the leg fits. This is the case that lied.
+    {
+      const held = CAP - Math.floor(WANT / 2), fits = Math.floor(WANT / 2);
+      const no = await run(held, false);
+      chk('§3e partial room — the shortfall is named BEFORE anything moves',
+          no.spy.confirms.length === 1 &&
+          no.spy.confirms[0].indexOf(String(WANT - fits)) >= 0 &&
+          no.spy.confirms[0].indexOf('LOST') >= 0,
+          JSON.stringify(no.spy.confirms));
+      chk('§3e partial room — "no" leaves the order, the tile and the ledger untouched',
+          no.r === null && !!no.tile && !!no.tile.bld && no.spy.writes.length === 0 && no.moved === 0,
+          'returned ' + JSON.stringify(no.r) + ', tile ' + JSON.stringify(no.tile && !!no.tile.bld) +
+          ', writes ' + JSON.stringify(no.spy.writes) + ', moved ' + no.moved);
+
+      const yes = await run(held, true);
+      console.log('   partial room   : said "' + yes.said + '"');
+      chk('§3e partial room — PROMISE === OUTCOME (' + fits + ' of ' + WANT + ' units)',
+          yes.agree && yes.moved === fits && yes.r.fit.lostUnits === WANT - fits,
+          'promised ' + JSON.stringify(yes.promised) + ' vs landed ' + JSON.stringify(yes.got) +
+          ', banked ' + yes.moved + ' :: ' + yes.said);
+      chk('§3e partial room — and it does NOT say "in full"',
+          !/in full/.test(yes.said) && yes.said.indexOf('no room') >= 0, yes.said);
+      /* The full leg is still handed to the ledger. Withholding the overflow
+         ourselves would make US the destroyer, and would throw away units that
+         DO fit wherever the forecast is pessimistic (a hired mayor's uncapped
+         salvage delta) — see bldRefundFit's header. */
+      chk('§3e partial room — the ledger is still asked for the WHOLE leg, not the fit',
+          yes.resAsked.reduce((a, w) => a + w.n, 0) === WANT,
+          JSON.stringify(yes.resAsked));
+    }
+
+    // ── (3) NO ROOM AT ALL — the worst case, and the one that read as fine.
+    {
+      const s = await run(CAP, true);
+      console.log('   no room at all : said "' + s.said + '"');
+      chk('§3e no room — PROMISE === OUTCOME (0 of ' + WANT + ' units, Cinder still whole)',
+          s.agree && s.moved === 0 && s.r.fit.fitUnits === 0 && s.r.fit.lostUnits === WANT &&
+          (s.promised.cinder | 0) === (price.cinder | 0),
+          'promised ' + JSON.stringify(s.promised) + ' vs landed ' + JSON.stringify(s.got) + ' :: ' + s.said);
+      chk('§3e no room — the toast names every unit that did not make it',
+          !/in full/.test(s.said) && s.said.indexOf(String(WANT)) >= 0, s.said);
+    }
+
+    // ── (4) AN UNREADABLE CEILING IS NOT A FULL ONE ───────────────────────────
+    /* cityResourceHeadroom answers {cap:0} both when there is no ceiling to
+       report and while a hired mayor's owner-ledger is connecting — and in that
+       second state cityAddRes QUEUES rather than banks, so nothing is clamped.
+       Reading a 0 cap as "everything will be destroyed" would put a full-loss
+       dialog in front of every cancel in someone else's city. */
+    {
+      const spy = mkSpy();
+      const api = mkCity({ spy: spy, B: BLDG });          // no cap ⇒ {cap:0, free:Infinity}
+      api.game.tiles['4,4'] = { type: 'powerstation', lvl: 1, rot: 0, bld: mkRec() };
+      const r = await api.bldCancel('4,4');
+      chk('§3e an UNKNOWN ceiling asks nothing and promises everything',
+          spy.confirms.length === 0 && !!r && r.fit.whole && r.fit.fitUnits === WANT,
+          'confirms ' + JSON.stringify(spy.confirms) + ', fit ' + JSON.stringify(r && r.fit));
+    }
+
+    // ── (5) RULE 2 — no chain resource reaches the camp ledger through a refund.
+    {
+      const chainId = chain.NEW_IDS.find(id => !BLDG.powerstation.cost[id]) || 'timber';
+      const spy = mkSpy();
+      const api = mkCity({ spy: spy, B: BLDG, cap: CAP, ledger: {}, answer: true });
+      const rec = api.bldLoad({ ...mkRec(), pr: { ...pr, [chainId]: 5000 } }, 1, 'powerstation');
+      api.game.tiles['4,4'] = { type: 'powerstation', lvl: 1, rot: 0, bld: rec };
+      const r = await api.bldCancel('4,4');
+      const asked = spy.writes.filter(w => w.call === 'addRes').map(w => w.r);
+      chk('§3e RULE 2 — no chain id reaches addRes through the refund (' + chainId + ')',
+          asked.every(k => !CHAIN.has(k)), JSON.stringify(asked));
+      chk('§3e RULE 2 — and none is counted into the fit the player is promised',
+          !!r && Object.keys(r.fit.want).every(k => !CHAIN.has(k)) &&
+                 Object.keys(r.fit.fit).every(k => !CHAIN.has(k)),
+          JSON.stringify(r && r.fit));
+    }
+
+    // ── (7) THE OTHER CALL SITE: THE UPGRADE-RACE REFUND ─────────────────────
+    /* bldPayRefund has TWO callers. The second is the branch in the Upgrade
+       button that fires when the tile changed while payCost was in flight — the
+       player did not ask for anything, the game charged them and then could not
+       deliver — and it carried the identical defect: "refunded in full" over a
+       clamped addRes. There is no dialog to raise on a path the player did not
+       initiate, so the requirement here is narrower and absolute: pay everything
+       and NAME any shortfall.
+       The branch is one `if` inside a 90-line click handler, so it is SCRAPED AS
+       A STATEMENT and EXECUTED — the same technique §5 uses for loadState's
+       damage/order line. A string comparison would not have caught that the old
+       code ignored bldPayRefund's return value. */
+    {
+      const raceSrc = srcBlockAfter(NC, 'if (live !== t || bldBusy(t)) {');
+      const ok = chk('§3e the upgrade-race refund branch is where this round thinks it is',
+          !!raceSrc && raceSrc.indexOf('bldPayRefund') > 0 && raceSrc.indexOf('toast(') > 0,
+          'scraped ' + JSON.stringify(raceSrc && raceSrc.slice(0, 80)));
+      if (ok) {
+        // Same vault, same price, same clamp — the only difference is the caller.
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, cap: CAP, ledger: { food: CAP }, raceSrc: raceSrc });
+        await api.raceRefund(price);
+        const said = spy.toasts.length ? spy.toasts[0].m : '';
+        const landedUnits = Object.values(spy.landed).reduce((a, b) => a + b, 0);
+        console.log('   upgrade race   : said "' + said + '"');
+        chk('§3e upgrade race — the whole leg is still handed to the ledger',
+            spy.writes.filter(w => w.call === 'addRes').reduce((a, w) => a + w.n, 0) === WANT,
+            JSON.stringify(spy.writes));
+        chk('§3e upgrade race — and the player is TOLD the materials did not arrive',
+            landedUnits === 0 && !/in full/.test(said) && said.indexOf(String(WANT)) >= 0 &&
+            said.indexOf('no room') >= 0,
+            'banked ' + landedUnits + ' units and said :: ' + said);
+        chk('§3e upgrade race — the Cinder leg is still paid whole (it has no ceiling)',
+            spy.writes.filter(w => w.call === 'addCinders').reduce((a, w) => a + w.n, 0) === (price.cinder | 0),
+            JSON.stringify(spy.writes.filter(w => w.call === 'addCinders')));
+        // …and with room, it still reads as the clean unwind it is.
+        const spy2 = mkSpy();
+        const api2 = mkCity({ spy: spy2, B: BLDG, cap: CAP, ledger: {}, raceSrc: raceSrc });
+        await api2.raceRefund(price);
+        chk('§3e upgrade race — with room, everything arrives and it says so',
+            api2.ledgerUnits() === WANT && / in full\.$/.test(spy2.toasts[0].m),
+            api2.ledgerUnits() + ' of ' + WANT + ' units :: ' + spy2.toasts[0].m);
+      }
+    }
+
+    // ── (6) TWO CLICKS, ONE REFUND ────────────────────────────────────────────
+    /* bldCancel used to clear `t.bld` synchronously before its first await, so a
+       second click found nothing. The honesty check awaits BEFORE anything is
+       cleared — it has to, because "no" must leave the order intact — so the
+       latch inside bldCancel is now what stands between a double-click and a
+       double refund. */
+    {
+      const spy = mkSpy();
+      const api = mkCity({ spy: spy, B: BLDG, cap: CAP, ledger: {}, answer: true });
+      api.game.tiles['4,4'] = { type: 'powerstation', lvl: 1, rot: 0, bld: mkRec() };
+      const [a, b] = await Promise.all([api.bldCancel('4,4'), api.bldCancel('4,4')]);
+      const cin = spy.writes.filter(w => w.call === 'addCinders').reduce((s, w) => s + w.n, 0);
+      chk('§3e two clicks on one order pay exactly one refund',
+          !!a !== !!b && cin === (price.cinder | 0) && api.ledgerUnits() === WANT,
+          'returned ' + JSON.stringify([!!a, !!b]) + ', ' + cin + ' 🔥 paid (expected ' +
+          (price.cinder | 0) + '), ' + api.ledgerUnits() + ' units banked (expected ' + WANT + ')');
+    }
   }
 
   /* ── §4 THE SAVE MAY NOT SET ITS OWN REFUND ─────────────────────────────────

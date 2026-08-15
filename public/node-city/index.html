@@ -759,7 +759,7 @@
   <div class="card" id="bldcard">
     <h2>Under Construction <span class="rcount" id="bldcount"></span></h2>
     <div id="bldlist"></div>
-    <div class="bfoot"><span id="bldcrews"></span> A site produces nothing until it finishes; an upgrade keeps working meanwhile. Cancelling refunds the order in full. Click a row to inspect it.</div>
+    <div class="bfoot"><span id="bldcrews"></span> A site produces nothing until it finishes; an upgrade keeps working meanwhile. Cancelling gives the Cinder back whole, and the materials as far as your vault has room. Click a row to inspect it.</div>
   </div>
   <div class="card rtiphost" id="raidcard">
     <span class="rtip"><b>⚔ Raider Threat</b>When the timer hits zero a wave attacks. Your Defense total is compared against the wave's strength.<span class="use">Raise Defense: hire soldiers · build Watchtowers and Walls · slot cards into the Defense Deck.</span></span>
@@ -18582,15 +18582,154 @@ function bldOrderRefund(rec) {
   }
   return out;
 }
+/* 📦 HOW MUCH OF A REFUND'S RESOURCE LEG WILL ACTUALLY ARRIVE.
+   🔴 THIS EXISTS BECAUSE "100% REFUND" WAS A LIE AT THE STASH CAP, AND IT
+      DESTROYED PLAYERS' MATERIALS. MythicCityBridge.addRes lands in index.html's
+      addRes(), which CLAMPS to the vault ceiling and drops the overflow behind
+      nothing but a "STASH FULL" toast. MEASURED on this tree before the fix:
+      cancelling a Power Station site (costOf → 20,000 🔥 + 300 metal + 100
+      supplies) with a full 2,000-unit vault returned the 20,000 🔥, printed
+      "300 🔩 100 📦 refunded in full" in three places, and banked ZERO of the
+      400 units. At 1,800/2,000 it banked 200 of 400 and said the same thing.
+      The Cinder leg was never affected — addCinders has no ceiling.
+
+   THE CONTRACT: `cap > 0` IS THE ONLY READING THAT BINDS. cityResourceHeadroom
+   answers {cap:0, units:0, free:0} while a hired mayor's owner-ledger is still
+   connecting — and in exactly that state cityAddRes QUEUES rather than banks,
+   so nothing is clamped at all. Reading that 0 as "everything will be
+   destroyed" would put a full-loss dialog in front of every cancel in someone
+   else's city for the second it takes to connect. A cap that is not > 0
+   therefore means UNKNOWN, and unknown means CARRY ON — the same rule
+   B.resourceHeadroom's own header sets for the producers, for the same reason.
+
+   ⚠ IT MAY BE PESSIMISTIC. IT MAY NEVER BE OPTIMISTIC. With CityMgr.active (a
+     mayor running someone else's city) the hook reports the MAYOR's own vault
+     while cityAddRes writes the owner's uncapped salvage delta, so the forecast
+     can predict a loss that does not happen. Under-promise / over-deliver is
+     the safe direction; the other direction is the bug this closes. Making that
+     case exact needs a new hook in public/index.html and is not this package's
+     to add.
+   ⚠ IT WALKS THE SAME KEY ORDER addRes WILL SEE. The bridge is called once per
+     resource and each call re-reads the ceiling, so the LAST key in the dict is
+     the one that gets squeezed. A fit that split the free space proportionally
+     would name the wrong resource in the dialog.
+   ⚠ REJECTED — MythicCityBridge.refundRes (index.html's UNCAPPED _refundRes).
+     It is the right tool for an unwind the same call stack just made, and it is
+     wrong here twice over. (a) A cancel can land HOURS after the charge, so the
+     player may have refilled to the cap in between: place → refill → cancel
+     would pump the vault above its ceiling, repeatably, and vault space is sold
+     in the Vendor Market. _refundRes' own header draws that line — "unwinding a
+     deduction THIS call stack just made", never a gain. (b) There is no
+     window.cityRefundRes; the only reachable _refundRes writes the VIEWER's
+     stash, so in 'parent' mode a hired mayor's refund would land in their own
+     vault instead of the owner's. (b) rules it out for the upgrade-race path
+     too, which would otherwise qualify under (a). */
+async function bldRefundFit(refund) {
+  const want = {}, fit = {}, lost = {};
+  let wantUnits = 0, fitUnits = 0, lostUnits = 0;
+  for (const r in (refund || {})) {
+    if (r === 'cinder') continue;             // currency has no stash ceiling
+    const v = Math.max(0, Math.round(+refund[r] || 0));
+    if (v > 0) { want[r] = v; wantUnits += v; }
+  }
+  let free = Infinity, cap = 0, units = 0;
+  try {
+    const h = await MythicCityBridge.resourceHeadroom();
+    if (h && (h.cap | 0) > 0 && Number.isFinite(h.free)) {
+      cap = h.cap | 0; units = h.units | 0; free = Math.max(0, h.free);
+    }
+  } catch (e) {}                              // an unreadable ceiling is not a full one
+  for (const r in want) {
+    const take = Math.max(0, Math.min(want[r], free));   // free may be Infinity
+    if (take > 0) { fit[r] = take; fitUnits += take; free -= take; }
+    const miss = want[r] - take;
+    if (miss > 0) { lost[r] = miss; lostUnits += miss; }
+  }
+  return { cap, units, want, wantUnits, fit, fitUnits, lost, lostUnits, whole: lostUnits === 0 };
+}
+
+/* 🧾 ONE SENTENCE FOR A REFUND, AND ONE ONLY. The Site Board, the Demolish
+   button and the upgrade-race path each used to write their own "refunded in
+   full", which is how the same lie got printed in three places at once. Takes
+   bldCancel's return shape: `refund` is what was handed to the ledger, `fit` is
+   what the ledger will take. Leads with ' — ', or '.' when there is nothing to
+   say, so callers just append it to their own sentence. */
+function bldRefundLabel(r) {
+  const f = r && r.fit;
+  const got = {};
+  const cin = Math.max(0, Math.round((r && r.refund && +r.refund.cinder) || 0));
+  if (cin > 0) got.cinder = cin;
+  if (f) for (const k in f.fit) got[k] = f.fit[k];
+  const lost = (f && f.lostUnits > 0) ? f.lostUnits : 0;
+  if (!Object.keys(got).length && !lost) return '.';
+  let s = Object.keys(got).length ? ' — ' + costLabel(got) + ' refunded' : ' — nothing came back';
+  if (lost) {
+    s += ', but your vault had no room for ' + costLabel(f.lost) +
+         ' — ' + lost + ' unit' + (lost === 1 ? '' : 's') + ' lost.';
+  } else s += ' in full.';
+  return s;
+}
+
+/* 📦 THE LOSSY-CANCEL QUESTION. Asked BEFORE the order is touched, because a
+   "no" has to leave everything exactly where it was — and because the answer is
+   genuinely the player's to give: freeing vault space and cancelling again gets
+   every unit back, and eating the loss to free the crew slot NOW is a legitimate
+   choice a 24-hour mis-click makes for people.
+   ⚠ REJECTED — refusing the cancel outright whenever the refund will not fit.
+     It reads safer and it is not: bldCancel is also what the 🧨 Demolish button
+     calls on a site, so a full vault would BRICK a mis-clicked 24-hour order for
+     a day. The demolish comment below names that exact state as "the only
+     deliberately unrecoverable state in the whole design" and refuses to allow
+     it. The player is shown the number and decides.
+   ⚠ REJECTED — softening the wording and letting the materials evaporate. A
+     refund that quietly pays less than it promises is the worst of the options;
+     the point of this dialog is that nothing is lost without being counted out
+     loud first.
+   gcConfirm is the PARENT game's modal and this page is an iframe, so that name
+   is not in scope here — same fallback, same contract as bldConfirmLong. A modal
+   that THREW is not consent. */
+async function bldConfirmLossy(nm, rec, fit) {
+  const cin = Math.max(0, Math.round((rec && +rec.pc) || 0));
+  const msg = 'Cancelling ' + ((rec && rec.k === 1) ? 'the upgrade of ' + nm : nm) + ' returns ' +
+    (cin > 0 ? cin.toLocaleString() + ' 🔥 and ' : '') + fit.wantUnits + ' units of materials.\n\n' +
+    'Your vault is holding ' + fit.units.toLocaleString() + ' of ' + fit.cap.toLocaleString() +
+    ' units, so only ' + fit.fitUnits + ' of them will fit. ' + costLabel(fit.lost) +
+    ' — ' + fit.lostUnits + ' unit' + (fit.lostUnits === 1 ? '' : 's') + ' — would be LOST.\n\n' +
+    'Free up ' + fit.lostUnits + ' units of vault space and cancel again to get everything back.\n\n' +
+    'Cancel anyway and lose them?';
+  try {
+    return !!(await (typeof gcConfirm === 'function' ? gcConfirm(msg) : Promise.resolve(confirm(msg))));
+  } catch (e) { return false; }
+}
+
 /* ⚠ MUTATES its argument (deletes `cinder` as it pays it) — pass a copy if the
    dict is needed afterwards. Same two-step the demolish refund has always
    used: Cinder goes through addCinders, everything else through addRes.
    Rule 2: every key here came out of costOf()/def.cost, so they are all
-   index.html RESOURCES ids. A chain id must never reach addRes. */
+   index.html RESOURCES ids. A chain id must never reach addRes.
+   RETURNS THE FIT — what the ledger will actually take — so no caller can
+   print "refunded in full" without having asked. */
 async function bldPayRefund(refund) {
   if (refund.cinder) { await MythicCityBridge.addCinders(refund.cinder); delete refund.cinder; }
+  /* THE BINDING READ, taken as late as it can be: one statement before the
+     writes. bldCancel takes an EARLIER one to decide whether to ask, because a
+     question must be asked before anything moves; if the two disagree (a
+     production tick landed inside the unsite round-trip) THIS one is the record
+     and it is what the toast and the log print. */
+  const fit = await bldRefundFit(refund);
+  /* PAY EVERYTHING, PROMISE THE FIT. Handing addRes only `fit` would make US
+     the one destroying the overflow, and in the modes where the forecast is
+     pessimistic (see bldRefundFit) it would throw away units that DO fit. The
+     ledger clamps or it does not; either way the player is never told more than
+     the smaller of the two. */
   for (const r in refund) if (refund[r]) await MythicCityBridge.addRes(r, refund[r]);
+  return fit;
 }
+
+/* 🔒 ONE CANCEL PER TILE AT A TIME. See bldCancel's header — the honesty check
+   awaits before `t.bld` is cleared, so the old "cleared synchronously before the
+   first await" guarantee is gone and something has to stand in for it. */
+const _bldCancelling = new Set();
 /* 🧨 CANCEL ONE ORDER. A site (k=0) has nothing standing, so cancelling it
    removes the tile; an upgrade (k=1) cancels only the undelivered level and
    leaves the working building exactly where it is. Both refund 100% of what
@@ -18631,9 +18770,29 @@ async function bldPayRefund(refund) {
         reads the tile's own type and cannot be knocked out by a dead bridge, so
         "is this an operation" and "can the register tell us which one" are now
         two separate questions and only the first decides whether we must ask.
-        Gate: run.mjs round0r §3c, sabotage `cancel-blind`. */
+        Gate: run.mjs round0r §3c, sabotage `cancel-blind`.
+
+   🔴 AND THE REFUND IS NOT ALLOWED TO PROMISE WHAT THE VAULT CANNOT HOLD.
+      addRes clamps to the stash cap and drops the overflow, so this function
+      used to hand back 20,000 🔥 and ZERO of 400 units of materials while three
+      separate strings said "refunded in full". bldRefundFit is asked BEFORE
+      anything moves, and when something would be lost the player is told the
+      exact number and decides. See bldRefundFit for what was rejected and why —
+      in particular why the uncapped refundRes is not the answer here.
+      Gate: run.mjs round0r §3e, sabotage `refund-blind`. */
 async function bldCancel(kk) {
   const t = game.tiles[kk]; const rec = t && t.bld; if (!rec) return null;
+  /* 🔒 THE LATCH, AND IT IS LOAD-BEARING IN A WAY IT DID NOT USED TO BE.
+     This function cleared `t.bld` SYNCHRONOUSLY before its first await, and the
+     Site Board's cancel handler still says so in as many words — a second click
+     found no record and returned null, so no latch was needed. The honesty check
+     below awaits BEFORE anything is cleared, and it has to: a question the
+     player answers "no" to must leave the order exactly where it was. Two fast
+     clicks would then both pass the `!rec` test and both pay the refund. Taken
+     synchronously, keyed on the tile, released in the finally. */
+  if (_bldCancelling.has(kk)) return null;
+  _bldCancelling.add(kk);
+  try {
   /* Read BEFORE anything is deleted: opsRowForKey resolves through the TILE's
      type, and the k=0 branch below removes the tile. k=1 never removes a tile
      and never touches the licence — the building is standing and stays sited. */
@@ -18646,6 +18805,20 @@ async function bldCancel(kk) {
     try { toast('🏭 The business register is not answering — the cancel was not made. Try again in a moment.', 'bad'); } catch (e) {}
     return null;
   }
+  const refund = bldOrderRefund(rec);
+  const nm = (BUILDINGS[t.type] || {}).name || t.type;
+  /* 📦 THE PROMISE IS TESTED BEFORE THE ORDER IS TOUCHED. Nothing below this
+     point can be undone cheaply — the licence is released, the tile is removed
+     and the mesh is dropped — so the one question worth asking goes here, where
+     "no" costs nothing at all. */
+  const fore = await bldRefundFit(refund);
+  if (!fore.whole && !(await bldConfirmLossy(nm, rec, fore))) return null;
+  /* ⚠ RE-READ AFTER THE DIALOG. Nothing can move behind a native confirm() in
+     this frame today, so this is defensive — it is here so this stays correct
+     the day gcConfirm() (a non-blocking modal) becomes reachable from the
+     iframe, exactly as the upgrade button's crew re-test is. The order can have
+     completed on the 4-second sweep, or the tile can have been demolished. */
+  if (game.tiles[kk] !== t || t.bld !== rec) return null;
   delete t.bld;
   if (opRow) {
     let ok = false;
@@ -18659,8 +18832,6 @@ async function bldCancel(kk) {
     try { if (OPS.live && OPS.live.id === opRow.id) OPS.live = null; } catch (e) {}
     try { if (_opsNetKey && _opsNetKey === kk) opsNetworkClose(); } catch (e) {}
   }
-  const refund = bldOrderRefund(rec);
-  const nm = (BUILDINGS[t.type] || {}).name || t.type;
   if (rec.k === 0) {
     try { dropTileMesh(t); } catch (e) {}
     const [x, z] = kk.split(',').map(Number);
@@ -18668,12 +18839,14 @@ async function bldCancel(kk) {
     try { refreshRoadArea(x, z); } catch (e) {}
     if (selectedKey === kk) { $('inspect').classList.remove('open'); selectedKey = null; }
   }
-  await bldPayRefund({ ...refund });
+  const fit = await bldPayRefund({ ...refund });
+  const out = { key: kk, kind: rec.k, refund, fit };
   logEvent('city', '🏗 ' + (rec.k === 1 ? 'Upgrade of ' + nm : nm + ' construction') +
-           ' at ' + kk + ' cancelled — ' + (Object.keys(refund).length ? costLabel(refund) + ' refunded' : 'nothing to refund') + '.');
+           ' at ' + kk + ' cancelled' + bldRefundLabel(out));
   try { computeLinks(); manageAgents(); updateHUD(); saveSoon(); } catch (e) {}
   if (rec.k === 1 && selectedKey === kk) { try { openInspect(kk); } catch (e) {} }
-  return { key: kk, kind: rec.k, refund };
+  return out;
+  } finally { _bldCancelling.delete(kk); }
 }
 
 /* ═══ 🏗 THE PLAYER-FACING SURFACE ══════════════════════════════════════════
@@ -18730,7 +18903,14 @@ async function bldConfirmLong(what, durSec) {
   const msg = what + ' takes ' + fmtCountdown(durSec) + ' to build — it would be finished at about '
     + bldLandLabel(durSec) + '.\n\n'
     + 'The full cost is charged now and a crew is tied up for the whole job. '
-    + 'You can cancel at any time for a 100% refund.\n\nStart the order?';
+    /* 📦 NOT "a 100% refund" ANY MORE, AND THE CAVEAT IS NOT WEASELLING. The
+       Cinder always comes back whole (addCinders has no ceiling); the materials
+       go through addRes, which clamps to the vault. Promising 100% here and
+       then clamping at cancel time is the lie this package was opened to fix,
+       and the cancel dialog now counts the shortfall out loud — but the honest
+       place to set the expectation is in front of the charge. */
+    + 'You can cancel at any time: the Cinder always comes back in full, and so '
+    + 'do the materials as long as your vault has room for them.\n\nStart the order?';
   try {
     return !!(await (typeof gcConfirm === 'function' ? gcConfirm(msg) : Promise.resolve(confirm(msg))));
   } catch (e) { return false; }
@@ -18772,8 +18952,10 @@ function bldInspectCard() {
     : '🏗 Under construction — <b>' + fmtCountdown(left) + '</b> left';
   host.querySelector('.bibar i').style.width = pct.toFixed(1) + '%';
   host.querySelector('.binote').textContent = rec.k === 1
-    ? 'It keeps working at L' + t.lvl + ' for the whole job — output, jobs, population and defence are all unchanged. Cancelling refunds the upgrade in full and the building stays.'
-    : 'Nothing stands here yet: it produces nothing, employs nobody and defends nothing until it is finished. Cancelling refunds the order in full.';
+    /* The same caveat bldConfirmLong carries, for the same reason: the Cinder
+       leg is uncapped and the materials leg is not. */
+    ? 'It keeps working at L' + t.lvl + ' for the whole job — output, jobs, population and defence are all unchanged. Cancelling refunds the upgrade and the building stays: the Cinder in full, the materials as far as your vault has room.'
+    : 'Nothing stands here yet: it produces nothing, employs nobody and defends nothing until it is finished. Cancelling refunds the order — the Cinder in full, the materials as far as your vault has room.';
 }
 
 /* 🏗 THE SITE BOARD — every live job in one place, with a countdown and a
@@ -18817,7 +18999,7 @@ function renderBuildBoard() {
         '<span class="bmeta"><span class="bcd" data-bcd="' + logEsc(k) + '">' +
           fmtCountdown(bldRemain(t)) + '</span> left · ' +
           (t.bld.k === 1 ? 'upgrading, still working' : 'site') + ' · tile ' + logEsc(k) + '</span></span>' +
-        '<button class="hbtn" type="button" data-bcancel="' + logEsc(k) + '" title="Cancel this order — full refund">🧨</button></div>';
+        '<button class="hbtn" type="button" data-bcancel="' + logEsc(k) + '" title="Cancel this order — refunds the Cinder in full, and the materials as far as your vault has room">🧨</button></div>';
     }).join('');
   }
   /* Read the key back off the node rather than building an attribute selector
@@ -18836,11 +19018,18 @@ $('bldlist').addEventListener('click', async (ev) => {
     const kk = c.getAttribute('data-bcancel');
     const t = game.tiles[kk]; if (!t || !t.bld) return;
     const nm = (BUILDINGS[t.type] || {}).name || t.type;
-    /* No latch of its own: bldCancel() clears `t.bld` synchronously before its
-       first await, so a second click finds no record and returns null. */
+    /* No latch of its own: bldCancel() holds `_bldCancelling` for the tile from
+       its first synchronous statement, so a second click returns null.
+       ⚠ THIS USED TO SAY "clears `t.bld` synchronously before its first await".
+         That stopped being true when the refund honesty check went in — it
+         awaits a headroom read, and possibly a dialog, before anything is
+         cleared. The latch inside bldCancel is what replaced that guarantee. */
     const r = await bldCancel(kk);
+    /* 📦 The sentence comes from bldRefundLabel, which reads what the ledger
+       ACTUALLY took — not from r.refund, which is what we asked it for. Those
+       two are the same number only when the vault had room. */
     if (r) toast('🧨 ' + nm + (r.kind === 1 ? ' upgrade' : ' construction') + ' cancelled' +
-      (Object.keys(r.refund).length ? ' — ' + costLabel(r.refund) + ' refunded in full.' : '.'), 'good');
+      bldRefundLabel(r), (r.fit && r.fit.lostUnits > 0) ? 'bad' : 'good');
     try { renderBuildBoard(); } catch (e) {}
     return;
   }
@@ -20722,10 +20911,19 @@ function openInspect(k) {
   /* 🏗 A site says CANCEL and says FULL refund, because that is what the button
      does there — printing "50% refund" over an action that returns 100% of the
      order is a lie in the safe direction, which is still a lie, and it is the
-     label a player reads before committing to undoing a 24-hour mistake. */
+     label a player reads before committing to undoing a 24-hour mistake.
+     📦 THE PARENTHESIS HERE ONCE CLAIMED 100%, AND IT WAS ONE OF FIVE PLACES
+     THAT DID. The order's Cinder does come back whole; its materials go through
+     addRes and stop at the vault ceiling. The label no longer claims a number it
+     cannot keep, and the cancel counts any shortfall out loud before it happens
+     — see bldRefundFit.
+     ⚠ Do not re-type the old wording here or anywhere else in this file, not
+       even inside a comment: run.mjs round0r §3e greps the source for it, and
+       its comment-stripper cannot reliably tell prose from markup in an HTML
+       document. Describe the old promise; never reproduce it. */
   dem.textContent = t.type === 'road'
     ? '🧨 Demolish road — ' + ROAD_DEMOLISH_COST + ' ₵'
-    : bldSite(t) ? '🧨 Cancel construction (full refund)'
+    : bldSite(t) ? '🧨 Cancel construction (refunds the order)'
     : '🧨 Demolish (50% refund)';
   /* 🏗 The countdown card, at the #insbonus anchor OUTSIDE #inspanes — painted
      for the open here and repainted from updateHUD's 0.5s beat thereafter.
@@ -20828,8 +21026,20 @@ $('btn-upgrade').onclick = guardedAction(async () => {
        it is exactly reversible and mints nothing. */
   const live = game.tiles[k];
   if (live !== t || bldBusy(t)) {
-    await bldPayRefund({ ...bldOrderRefund(bldPaid(cost)) });
-    toast('⚠ That building changed while the upgrade was being paid for — the cost was refunded in full.', 'bad');
+    /* 📦 AND IT REPORTS WHAT ARRIVED, NOT WHAT WAS SENT. Same clamp, same lie:
+       this claimed the whole cost was back while addRes dropped whatever the
+       vault had no room for. There is no dialog here — the player did not ask for
+       this, the game charged them and then could not deliver — so the only
+       honest move is to pay everything and name any shortfall out loud.
+       ⚠ NOT refundRes. This IS a same-call-stack unwind and would qualify on
+         that count, but there is no window.cityRefundRes and the reachable one
+         writes the viewer's own stash, which is the wrong vault for a hired
+         mayor. See bldRefundFit's rejection note. */
+    const sent = bldOrderRefund(bldPaid(cost));
+    const fit = await bldPayRefund({ ...sent });
+    toast('⚠ That building changed while the upgrade was being paid for' +
+          bldRefundLabel({ refund: sent, fit }) +
+          (fit.lostUnits > 0 ? ' Spend some stash before ordering it again.' : ''), 'bad');
     updateHUD(); return;
   }
   t.spent = (t.spent || 0) + ((cost && cost.cinder) | 0);
@@ -20888,8 +21098,15 @@ $('btn-demolish').onclick = guardedAction(async () => {
      unrecoverable state in the whole design. The two actions are the same
      action here, so they are the same code — one refund policy, one place. */
   if (bldSite(t)) {
+    /* ⚠ GUARDED ON `r` NOW. This toasted "Construction cancelled." even when
+       bldCancel returned null, which is a refusal — a dark register, a failed
+       unsite, and (since the honesty check) a player who answered "no" to the
+       lossy-cancel dialog. Every one of those already says its own piece or
+       needs no piece said; announcing a cancel that did not happen was a small
+       lie before and would be a loud one now. */
     const r = await bldCancel(selectedKey);
-    toast('🧨 Construction cancelled' + (r && Object.keys(r.refund).length ? ' — ' + costLabel(r.refund) + ' refunded in full.' : '.'), 'good');
+    if (r) toast('🧨 Construction cancelled' + bldRefundLabel(r),
+                 (r.fit && r.fit.lostUnits > 0) ? 'bad' : 'good');
     return;
   }
   /* ⚠ The tile comes off the board BEFORE the refund is awaited. The guard above

@@ -1178,9 +1178,25 @@
       first. hud.js MOVES the rail's live node here — it never re-emits the
       markup — so the binding survives and the second copy stays unmounted.
    ------------------------------------------------------------------------ */
+/* ⚠ THE DOCK IS THE RAIL'S WIDTH; THE HEX IS NOT — AND THAT SEPARATION IS THE
+   ANSWER TO "END TURN IS THE LARGEST AND MOST SATURATED OBJECT IN THE FRAME".
+   Measured before: the amber plate was 336 x 71 = 23,856 px2 at rgb(199,159,81),
+   chroma 113, sat 59%. It got that wide because the DOCK is deliberately the
+   rail's full span (the two braces have to land on `.bp-wrap.bsx`'s own edges,
+   see the note on `.etwrap::before`) and the button was simply `width: 100%` of
+   it. Those are two different jobs. `--hudx-et-w` gives the shape its own
+   width — 256px, i.e. 24% less amber — while the dock, the braces and the
+   alignment argument are all untouched, and the 40px of brace now showing each
+   side of the crown is what the note below wanted in the first place: the
+   hexagon reads as MOUNTED BETWEEN two rails rather than as a slab that is the
+   rail. Colour comes down in the ramp itself, at `.hudx-endturn .endturn`.
+   It stays LARGE on purpose — BAR line 46 asks for "a large hexagonal END TURN
+   button, amber gradient, bevelled ornate border" and it is the primary action
+   of the screen. Large is the brief; largest-in-frame was the defect. */
 .hudx-endturn {
   position: fixed; right: var(--hudx-et-inset); bottom: 16px; z-index: 62;
   width: calc(var(--btl-rail-w) - var(--hudx-et-inset) * 2); height: var(--hudx-et-h);
+  --hudx-et-w: min(100%, 256px);
   display: grid; place-items: center;
   pointer-events: none;
 }
@@ -1225,12 +1241,12 @@
   pointer-events: none;
 }
 .hudx-endturn::before {
-  width: 100%; height: 100%;
+  width: var(--hudx-et-w); height: 100%;
   background: linear-gradient(160deg, #d8c084, #4e390f 42%, #cdad66 78%, #342504);
   filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.75));
 }
 .hudx-endturn::after {
-  width: calc(100% - 9px); height: calc(100% - 9px);
+  width: calc(var(--hudx-et-w) - 9px); height: calc(100% - 9px);
   background: linear-gradient(180deg, rgba(46, 30, 6, 0.95), rgba(16, 10, 3, 0.98));
 }
 .hudx-endturn .endturn {
@@ -1239,21 +1255,28 @@
      `.bp-wrap.bsx`'s 1600; the PAINT is pulled 12px back off each point by the
      clip so the bevel behind it still frames the tips. clip-path does not
      change a box, which is what lets these two be different numbers. */
-  width: 100%; height: calc(100% - 33px);
+  width: var(--hudx-et-w); height: calc(100% - 33px);
   border: 0; border-radius: 0; padding: 0;
-  clip-path: polygon(24% 0, 76% 0, calc(100% - 12px) 50%, 76% 100%, 24% 100%, 12px 50%);
+  clip-path: polygon(20% 0, 80% 0, calc(100% - 12px) 50%, 80% 100%, 20% 100%, 12px 50%);
   /* ⚠ NOT A BARE GRADIENT. At 320x158 this was the largest single flat fill in
      the frame; even at 124 it is the brightest object below the banners, and an
      unbroken ramp on that much area is the "uniform flat gradient" BAR line 51
      calls out by name. Two engraved layers break it up — a dark diagonal tooth
      (the same weave as every plate, inverted so it reads on amber) and a raking
-     highlight off the top-left, matching the scene's key light — while the ramp
-     underneath is unchanged, so the button's colour and state read identically. */
+     highlight off the top-left, matching the scene's key light.
+     ⚠ AND THE RAMP ITSELF CAME DOWN, MEASURED. It was #eed49a/#d8b465/#b3822f/
+     #7f560f — per-stop chroma 84/115/132/112, and the plate sampled
+     rgb(199,159,81) chroma 113 sat 59%, the most saturated object in the frame.
+     The stops below are the same four values walked toward brass: 59/81/102/90,
+     ~25% less chroma at every stop. It is still an amber gradient (BAR line 46
+     asks for one) and the dark-on-gold label keeps its contrast, because the
+     change is chroma, not value — the top stop moves 238->233 luma and the
+     bottom 127->116. */
   background:
-    linear-gradient(135deg, transparent 47%, rgba(72, 40, 2, 0.16) 50%, transparent 53%) 0 0 / 13px 13px,
-    linear-gradient(45deg,  transparent 47%, rgba(72, 40, 2, 0.11) 50%, transparent 53%) 0 0 / 13px 13px,
-    radial-gradient(130% 120% at 26% -10%, rgba(255, 244, 206, 0.26), transparent 58%),
-    linear-gradient(180deg, #eed49a 0%, #d8b465 34%, #b3822f 62%, #7f560f 100%);
+    linear-gradient(135deg, transparent 47%, rgba(72, 40, 2, 0.18) 50%, transparent 53%) 0 0 / 13px 13px,
+    linear-gradient(45deg,  transparent 47%, rgba(72, 40, 2, 0.13) 50%, transparent 53%) 0 0 / 13px 13px,
+    radial-gradient(130% 120% at 26% -10%, rgba(255, 244, 206, 0.22), transparent 58%),
+    linear-gradient(180deg, #e9d7ae 0%, #cfb27e 34%, #a5813f 62%, #74521a 100%);
   color: #2a1a03;
   font-family: 'Cinzel', serif; font-weight: 900;
   font-size: clamp(14px, 1.15vw, 19px); letter-spacing: 0.1em; line-height: 1.1;
@@ -1534,6 +1557,49 @@
 .bc-rail.bchrome.bcp-measuring > .bcp { flex: 0 0 auto; min-height: auto; }
 .bc-rail.bchrome.bcp-measuring .bcp > .hud { flex: 0 0 auto; }
 .bc-rail.bchrome.bcp-measuring .bcp .hud > .log { flex: 0 0 auto !important; max-height: 240px; }
+
+/* ── THE BATTLE-LOG HEADER: ONE CONTROL, AND BIG ENOUGH TO HIT ─────────────
+   MEASURED at 1600x1000: `#btn-open-battle-log` renders 18.7 x 18.7 CSS px at
+   [26,571] — under the 24x24 minimum target — and the header carries a SECOND
+   button (`aria-label="Search log"`, index.html:140657) whose entire onclick is
+   the same `_openBattleLog()`. Two controls, one behaviour, both too small.
+
+   ⚠ WHY 26px OF CSS MEASURES 18.7. index.html sizes them `width:26px;
+   height:26px` (5658) and that rule is correct — but the whole left rail is
+   inside `_bcpFit()`'s zoom, which reads 0.72-0.76 on these viewports, so the
+   BOX a finger or a pointer actually gets is 26 x zoom. Anything sized here has
+   to be sized in the rail's own units and then checked AFTER the zoom, which is
+   why the number below is 36 and not 24.
+   ⚠ AND THE HEADER'S PADDING PAYS FOR IT, so the row does not get taller. 36 +
+   2x6 = 48, which is what 26 + 2x11 already was. A taller header would push
+   `.bcp`'s natural height up, `_bcpFit()` would zoom DOWN to compensate, and the
+   button would come back out the same size it went in — the feedback loop this
+   file has already documented three times in another form.
+   ⚠ THE TWIN IS `visibility: hidden`, NOT `display: none`. `.loghead` is
+   `grid-template-columns: auto 1fr auto`; removing the third column from the
+   flow moves the centred title off the header's optical centre. Hidden, it
+   keeps its column, loses its pointer events and leaves the a11y tree — one
+   control, still balanced. */
+.battle-screen .bcp .loghead { padding: 6px 14px; }
+.battle-screen .bcp .loghead > button:not(#btn-open-battle-log) {
+  visibility: hidden; pointer-events: none;
+}
+/* the chevron becomes a proper plate on the same gold/dark system as the rest
+   of the chrome — hex-cut, not a bare glyph and not a rounded rectangle */
+.battle-screen .bcp .loghead #btn-open-battle-log {
+  width: 36px; height: 36px; min-width: 36px;
+  border: 1px solid var(--hudx-gold-hair);
+  background: linear-gradient(180deg, rgba(30, 24, 12, 0.85), rgba(10, 8, 15, 0.92));
+  clip-path: polygon(50% 0, 100% 27%, 100% 73%, 50% 100%, 0 73%, 0 27%);
+  color: var(--hudx-gold-lit);
+}
+.battle-screen .bcp .loghead #btn-open-battle-log:hover {
+  border-color: var(--hudx-gold-dim); color: #ffe9b4;
+}
+/* …and the whole header is the real target. hud.js forwards a click on the row
+   to the button (see wireLogHead), so the affordance a player aims at is
+   ~250 x 48 in rail units, not a 36px chevron. */
+.battle-screen .bcp .loghead { cursor: pointer; }
 /* CONSUMABLES takes a quarter of the slack, and passes it down to the wells
    themselves rather than pooling it as padding — the four slots are the one
    place in the left rail where more height buys a better-drawn object (see the
@@ -2159,29 +2225,117 @@ body:has(.battle-screen) .emote-toggle {
    of mismatch between this number and the column's free space lands as a thin,
    even halo inside four cells instead of one 250px hole — and `_bpFit()` still
    scales the whole column the moment the mismatch goes the other way.
-   ⚠ SCOPED TO `min-height: 951px` ON PURPOSE. Below that §8 turns the 2x2 grid
-   into ONE ROW OF FOUR and the cells become ~70px wide; this selector is more
-   specific than §8's `.hudx-cell .cardslot`, so without the media query it wins
-   there too and the back overflows its own cell sideways (measured 81px of card
-   in a 70px cell at 1366x768). §8 keeps its own clamp and its own cap. */
-@media (min-height: 951px) {
-  .battle-screen .bp-wrap.bsx {
-    --hudx-slot-w: clamp(58px, 10.6vh, 134px);
-    /* two rows of (card + label + padding) + the grid's own 5px row gap */
-    --hudx-piles-cap: calc(2.8 * var(--hudx-slot-w) + 90px);
-  }
-  .battle-screen .bp-wrap.bsx .hudx-cell .cardslot { width: var(--hudx-slot-w); }
-  /* ⚠ AND THE COUNT DIAMOND KEEPS ITS OPTICAL WEIGHT. It is `position:absolute`
-     on the slot, so the 29px badge that was right on a 66x92 back reads as a
-     sticker on a 106x148 one. Inside the same media query as the growth, for
-     the same reason: only the slots that actually grew get the bigger badge —
-     the opponent's cluster and every short window keep 29px, because their
-     cards keep 92px. */
-  .battle-screen .bp-wrap.bsx .hudx-cell .count {
-    width: clamp(29px, 3.5vh, 38px); height: clamp(29px, 3.5vh, 38px);
-    right: -6px; bottom: -5px;
-  }
-  .battle-screen .bp-wrap.bsx .hudx-cell .count i { font-size: clamp(12px, 1.45vh, 16px); }
+   🔴 …AND `10.6vh` BEHIND A `min-height: 951px` GATE WAS THE WRONG NUMBER AND
+   THE WRONG GATE. MEASURED SIDE BY SIDE, and this is the whole reason §7b.6
+   below exists:
+     · a vh clamp has no relationship to the rail's FREE space, only to the
+       window. Below 951px §8's `1.4 * clamp(40px,6.4vh,62px) + 36px` pinned the
+       grid to 117px at 900 and 105px at 768 while the body kept 713 / 581 —
+       so `justify-content: space-between` poured the entire residue into the
+       six inter-child holes: 48.8/49.8/49.8/53.8/49.8/49.8 at 1440x900 with
+       44.0% of the body carrying nothing, and 29.7-34.7 / 34.3% at 1366x768.
+       That is the "spread-out is not full" failure §2 already recorded, back
+       again through a media query.
+     · the gate ALSO said the growth was only safe above 951px because §8
+       collapsed the grid to one row of four ~70px cells and a `--hudx-slot-w`
+       back would overflow it sideways. True — but §8's collapse exists for the
+       LEFT cluster's sake (it is a flow sibling of `.bc-rail` and `_bcpFit()`
+       hits its 0.5 floor when the 2x2 grid is there), and it was applied to
+       BOTH clusters. The player's rail is a full-height fixed column with
+       ~700px of body on the same screen; it never needed the collapse and was
+       the only thing paying for it. §8 is now scoped to `.hudx-cluster`, so
+       this selector has no one to fight and the gate has no job.
+   So the card is sized off THE RAIL'S OWN FREE SPACE, in the same units the
+   free space is measured in — see §7b.6 for the arithmetic. */
+.battle-screen .bp-wrap.bsx .hudx-cell .cardslot { width: var(--hudx-slot-w); }
+/* ⚠ AND THE COUNT DIAMOND KEEPS ITS OPTICAL WEIGHT. It is `position:absolute`
+   on the slot, so the 29px badge that was right on a 66x92 back reads as a
+   sticker on a 106x148 one. It used to be gated on the same media query as the
+   growth; now that the growth is continuous the badge tracks THE CARD instead
+   of the window — one number, no second breakpoint to keep in sync, and a
+   short window that can only afford a 46px back gets the small badge it always
+   got because the badge is a fraction of that back. */
+.battle-screen .bp-wrap.bsx .hudx-cell .count {
+  width: clamp(24px, calc(var(--hudx-slot-w) * 0.3), 38px);
+  height: clamp(24px, calc(var(--hudx-slot-w) * 0.3), 38px);
+  right: -6px; bottom: -5px;
+}
+.battle-screen .bp-wrap.bsx .hudx-cell .count i {
+  font-size: clamp(10.5px, calc(var(--hudx-slot-w) * 0.125), 16px);
+}
+
+
+/* ── 7b.6  THE PILES ARE SIZED OFF THE RAIL'S FREE SPACE, NOT OFF `vh` ─────
+   THE ARITHMETIC, ALL OF IT MEASURED ON THIS BUILD (probe: the six gaps
+   between consecutive `.bsx-inner` children, plus body height and the sum of
+   the children's heights).
+
+   `.bsx-body`'s height is exact and has no content in it:
+       body = 100vh - var(--hudx-et-h) - 93px
+     measured 803 @1000 (et 104), 713 @900, 581 @768, 433 @620 (et 94) — the
+     93px being the rail's top inset, the frame padding and the ENERGY readout
+     pinned to the frame's foot. Every one of those four lands exact.
+
+   Of that, the six children that are NOT the piles are content-sized and
+   between them measure 285 @1000 / 282.6 @900 / 277 @768 / 277 @620 (head 36,
+   rule 1, buffs 48, tools 62/59.6/54, kv 39, cmd 99). Call it ~280 with a
+   small vh term in `.tools`. The inner's own padding is 12 (7 top, 4 bottom,
+   +1). `.bsx-inner`'s flex `gap` is `clamp(4px, 1.4vh, 18px)`, i.e. the hole
+   the six gaps fall back to WHEN THERE IS NO RESIDUE TO DISTRIBUTE.
+
+   So the height the grid is allowed to take, if the six holes are to come out
+   at the flex gap and nothing wider:
+       avail = body - 280 - 12 - 6 * 1.4vh
+     = 422 @1000 · 342.8 @900 · 227.5 @768 · 92 @620
+   which is a straight line in `vh` to within a few px. Deliberately fitted
+   ~2-12px UNDER it, so a little residue always survives and the holes land AT
+   the flex gap rather than the grid overflowing and dragging `--fit` down:
+       avail ≈ 88vh - 460px      → 420 · 332 · 215.8 · 85.6
+   and the grid's own overhead is two labels + two lots of cell padding + the
+   5px row gap = 87px, so
+       slot = (88vh - 547px) / 2.8        (the 2.8 is 2 rows x the 7/5 back)
+
+   ⚠ …AND THE `460px` WAS RE-MEASURED ONCE THE FIRST VERSION WAS ON SCREEN,
+   because a fit is not a measurement. At `- 460` the six holes came out
+   18.6/19.6/19.6/23.5/19.6/19.6 @1600x1000, 17.4-22.3 @1440x900 and
+   15.6-20.5 @1366x768: a residue of 36.5 / 33.7 / 34.0 px above the flex gap,
+   i.e. the SAME ~34px at every viewport, which is a constant error and not a
+   slope error. So the constant absorbs it — `- 430`, leaving ~5px of residue
+   rather than 34 — and the two constants are now written as one term plus the
+   grid's own overhead (`--hudx-grid-oh`), so a branch that changes the cell
+   chrome changes both halves together instead of drifting apart.
+
+   ⚠ THE CELL IS STILL THE OTHER CEILING, and it is a WIDTH, so it is expressed
+   as one: `(--bpw - 45px) / 2` is the cell (145.5 / 123.5 / 97.5 at the three
+   rail widths, measured 145.75 / 123.6 / 97.7) and the back keeps 14px of
+   shoulder inside it — 14, not 8, because `.count` is `right: -6px` on the
+   SLOT and a back that fills its cell pushes the count diamond out through the
+   cell's own clip-path. Without this ceiling the
+   free-space term wins on a tall window and the back overflows its own cell —
+   the same sideways overflow the old `min-height: 951px` gate was there to
+   prevent, now expressed against the thing that actually constrains it instead
+   of against the window height.
+
+   ⚠ AND THE 42px FLOOR IS LOAD-BEARING, NOT A SAFETY NET. `_bpFit()` only
+   engages when `inner.scrollHeight` exceeds `body.clientHeight`; at 1200x620
+   the free-space term goes NEGATIVE (85.6 - 87 < 0) and an honest zero would
+   make the column fit, `--fit` would go to 1 and the rail would stop scaling on
+   exactly the window that needs it most. 42px keeps the grid at ~170, the
+   column at ~500 in a 433 body, and `--fit` engaging at ~0.86 — it read 0.9352
+   before this change and must keep reading below 1. */
+.battle-screen .bp-wrap.bsx {
+  /* two rows of (card + label + cell padding) + the grid's own 5px row gap.
+     §8b re-declares it for the compact cells a very short window uses, and it
+     is ONE variable because it appears on BOTH sides of the arithmetic — as
+     the grid's overhead in the cap and as the part of the free space the grid
+     does not spend on card. Two literals here drifted apart once already. */
+  --hudx-grid-oh: 87px;
+  --hudx-slot-w: clamp(
+    42px,
+    min(calc((88vh - 430px - var(--hudx-grid-oh)) / 2.8),
+        calc((var(--bpw) - 45px) / 2 - 14px)),
+    134px);
+  --hudx-piles-cap: calc(2.8 * var(--hudx-slot-w) + var(--hudx-grid-oh));
 }
 
 
@@ -2194,35 +2348,74 @@ body:has(.battle-screen) .emote-toggle {
    legibility regression, not a style choice. So on a short screen the piles
    collapse to ONE row of four: same four piles, same order, same components,
    ~200px shorter. Verified back to ~0.75 at 1440x900.
+
+   🔴 …AND EVERY RULE IN THAT COLLAPSE IS NOW SCOPED TO `.hudx-cluster`, i.e.
+   TO THE OPPONENT. It used to be unscoped, so the PLAYER's rail — which is
+   the one thing on the screen the collapse was never about — paid for it too,
+   and that single fact is where 44.0% of an empty right rail at 1440x900 came
+   from (measured holes 48.8/49.8/49.8/53.8/49.8/49.8; see §7b.6). The player's
+   rail is `position: fixed`, full height, and has ~700px of body of its own on
+   the same window: `_bcpFit()` cannot see it, `.bc-rail` does not share a
+   millimetre with it, and its 2x2 grid costs the battle log nothing.
+   ⚠ SO THE TWO CLUSTERS' COMPOSITION DIVERGES ON A SHORT WINDOW, DELIBERATELY,
+   and it is the same trade §2 already makes for frame extent: same component,
+   same cells, same order, same four piles — different container, so a
+   different wrap. The opponent's frame is `flex: 0 0 auto` inside a shared
+   column and hugs its content; the player's fills a column of its own. Making
+   them wrap identically means one of the two is wrong about its own container,
+   and the version where the player's rail was wrong is what the last three
+   rounds were spent measuring.
    ------------------------------------------------------------------------ */
 @media (max-height: 950px) {
   /* the same arithmetic as the desktop band, with the shorter banner:
      4 + 80 (.fighter) + 4 + 32 (#phase-bar) - 14 (tuck) = 106 */
   :root { --hud-banner-h: 106px; --hudx-et-h: 94px; }
-  .hudx-piles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-  /* the same cap §7b.5 puts on the desktop grid, for the ONE-ROW layout: a row
-     of four ~70px cells cannot use more height than one card back is tall, so
-     without this the row inflates around the art exactly as the 2x2 grid did at
-     1920x1200. Whatever is left over goes to `space-between`'s six gaps. */
-  .battle-screen .bp-wrap.bsx { --hudx-piles-cap: calc(1.4 * clamp(40px, 6.4vh, 62px) + 36px); }
-  .hudx-cell { padding: 3px 1px 8px; }
-  .hudx-cell .cardslot { width: clamp(40px, 6.4vh, 62px); }
+  .hudx-cluster .hudx-piles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .hudx-cluster .hudx-cell { padding: 3px 1px 8px; }
+  .hudx-cluster .hudx-cell .cardslot { width: clamp(40px, 6.4vh, 62px); }
   /* "GRAVEYARD" / "REALM DECK" are the longest labels and they must not
      ellipsize into "GRAVEYARI" — at four across the cell is ~62px, so the
      tracking goes to zero before the type does. */
-  .hudx-cell .slabel {
+  .hudx-cluster .hudx-cell .slabel {
     font-size: 7px; letter-spacing: 0.02em; gap: 2px; padding-bottom: 3px;
     text-overflow: ellipsis;
   }
-  .hudx-cell .slabel svg { width: 9px; height: 9px; }
-  .hudx-cell .count { width: 25px; height: 25px; right: -3px; bottom: -4px; }
-  .hudx-cell .count i { font-size: 10.5px; }
+  .hudx-cluster .hudx-cell .slabel svg { width: 9px; height: 9px; }
+  .hudx-cluster .hudx-cell .count { width: 25px; height: 25px; right: -3px; bottom: -4px; }
+  .hudx-cluster .hudx-cell .count i { font-size: 10.5px; }
   .hudx-hex { width: 60px; height: 70px; }
   .hudx-fighters .fighter { width: 300px; height: 80px; padding: 5px 10px 5px 6px; }
   .hudx-fighters .fighter[data-side="foe"] { padding: 5px 6px 5px 10px; }
   .hudx-fighters .finfo h2 { font-size: 13.5px; }
   .hudx-fighters .rpbar { height: 11px; }
   .hudx-fighters .rprow .num { font-size: 12px; }
+}
+
+
+/* ---------------------------------------------------------------------------
+   8b. VERY SHORT WINDOWS — the player's rail is genuinely over-full
+   MEASURED at 1200x620: `.bsx-body` is 433px and the six non-pile children
+   already want 277 of it, so the free-space term in §7b.6 goes NEGATIVE. There
+   is no 2-row grid that fits; the 42px floor deliberately over-asks so that
+   `_bpFit()` engages and scales the column, which is the mechanism that exists
+   for exactly this window.
+   What the floor must NOT do is over-ask by more than it has to: at the full
+   87px of grid overhead the column came out at 538 in a 433 body and `--fit`
+   fell to 0.805, i.e. the whole rail — CONCEDE, TUNNELED, the deck counts —
+   rendered 20% smaller than designed, where the layout it replaced read 0.9352.
+   So on a window this short the CELLS go compact (the same chrome §8 gives the
+   opponent) and `--hudx-grid-oh` comes down with them. Same 42px card, ~35px
+   less overhead, `--fit` back to ~0.86 with the card VISUALLY the size it was.
+   Scoped to the player's rail: the opponent's cluster is already compact here
+   via §8. */
+@media (max-height: 700px) {
+  .battle-screen .bp-wrap.bsx { --hudx-grid-oh: 52px; }
+  .battle-screen .bp-wrap.bsx .hudx-cell { padding: 3px 1px 6px; }
+  .battle-screen .bp-wrap.bsx .hudx-cell .slabel {
+    font-size: 7px; letter-spacing: 0.02em; gap: 2px; padding-bottom: 3px;
+    text-overflow: ellipsis;
+  }
+  .battle-screen .bp-wrap.bsx .hudx-cell .slabel svg { width: 9px; height: 9px; }
 }
 
 

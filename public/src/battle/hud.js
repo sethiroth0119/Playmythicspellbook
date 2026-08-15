@@ -308,6 +308,36 @@ function fitFrozenRail(n) {
   } catch (e) {}
 }
 
+/* ── THE BATTLE-LOG HEADER IS THE TARGET, NOT THE 19px CHEVRON ─────────────
+   MEASURED: `#btn-open-battle-log` comes out 18.7 x 18.7 CSS px at [26,571] —
+   index.html sizes it 26x26 and `_bcpFit()`'s zoom (0.72-0.76 on these
+   viewports) does the rest. hud.css puts it back over 24 by sizing it in the
+   rail's own units, and this makes the whole ~250x48 header row open the log so
+   the affordance is not a single small glyph in the first place.
+
+   ⚠ THE HEADER'S OWN BUTTONS ARE EXCLUDED, or the live `onclick` would fire and
+   then this would fire it again — `_openBattleLog()` twice in one gesture.
+   ⚠ AND IT IS A LISTENER ON THE LIVE NODE, NOT A CLONE OR AN INLINE HANDLER.
+   `renderBattle()` re-emits `.loghead` on every state change, so the flag lives
+   on the element and dies with it; a fresh header simply gets wired again on
+   the next relayout, and a header that has already been wired costs one
+   property read. Nothing here re-emits markup, so index.html's own binding on
+   `#btn-open-battle-log` is untouched.
+   ⚠ Guarded and silent: if the button is missing this does nothing at all, and
+   the header keeps whatever behaviour index.html gave it. */
+function wireLogHead(scr) {
+  const head = scr.querySelector('.bcp .loghead');
+  if (!head || head.__hudxLog) return;
+  head.__hudxLog = 1;
+  head.addEventListener('click', (e) => {
+    try {
+      if (e.target && e.target.closest && e.target.closest('button')) return;
+      const b = head.querySelector('#btn-open-battle-log');
+      if (b) b.click();
+    } catch (_) {}
+  });
+}
+
 function restoreFrozen(scr, left) {
   if (!FROZEN.rail && !FROZEN.foe) return;      // never saw a live rail
   if (!matchIsOver(scr)) return;
@@ -528,6 +558,11 @@ function relayout() {
     dock.appendChild(etwrap);
     scr.appendChild(dock);
   }
+
+  /* ── 5. The battle-log header becomes the log's hit target. Last, and on its
+        own, so a missing header can never cost the band, the rail or END TURN
+        their relayout. ──────────────────────────────────────────────────── */
+  wireLogHead(scr);
 }
 
 function schedule() {

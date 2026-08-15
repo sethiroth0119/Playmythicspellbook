@@ -23574,20 +23574,47 @@ addEventListener('visibilitychange', () => {
 });
 /* 🏙 The economy blob read by loadState and consumed once by boot(). */
 let _pendingEconomy = null;
+/* 🏙 …AND WHETHER THIS CITY ALREADY EXISTED, which is the question the blob
+   itself structurally cannot answer.
+   🔴 THE DEFECT THIS EXISTS FOR, measured on the tree before it did: a lived
+   180-day city (charterIssued 300,000.00 🔥, totalCinder 293,295.48 🔥) whose
+   save had its `economy` key deleted came back from a reload with
+   charterIssued 300,000.00 and totalCinder 300,000.00 — a FRESH founding
+   tranche plus the whole 700,000 🔥 lifetime allowance re-armed (headroom back
+   to 400,000.00), from removing one JSON key, with nothing in the console, and
+   repeatable on every reload.
+   /src/economy already carried the refusal (`bootstrap({ established })`) and
+   sim.js's own comment wrote out the line below verbatim — but node-city was
+   outside that package's edit set, so NOTHING passed the flag and the refusal
+   could never fire. The test that covered it passed `established: true`
+   itself, so the gate was green over a wide-open hole. That is why this is
+   derived HERE, in the one function that has the parsed save in scope, and
+   handed to the one production `E.mount` call below.
+   ⚠ DEFAULT-FALSE IS THE NEW-CITY PATH AND IT MUST STAY THAT WAY: a genuinely
+     new player reaches `if (!j)` with `loadUnsafe` false, keeps this false, and
+     still receives their opening capital. Everything else — a lived save, an
+     unsafe read, unparseable JSON, a throw mid-load — sets it TRUE, because
+     "we do not know whether this city existed" must never mint. */
+let _pendingEstablished = false;
 
 async function loadState() {
   try {
     const j = await MythicCityBridge.loadCity();
     // A read we cannot trust must never license an empty save. See saveNow().
     _loadFailed = !!MythicCityBridge.loadUnsafe;
+    /* An ambiguous read is not a new city. `loadUnsafe` is false for a clean
+       "no rows" answer (bridge :1963) and true only for a refusal, a throw or a
+       save stamped for somebody else — so this cannot cost a real new player
+       their tranche, and it stops a forced read failure from buying one. */
+    if (_loadFailed) _pendingEstablished = true;
     if (!j) { _loadDone = true; return; }
     let s = null;
     try { s = JSON.parse(j); }
-    catch (e) { _loadDone = true; _loadFailed = true; console.warn('[city] save is not valid JSON - refusing to overwrite it', e); return; }
+    catch (e) { _loadDone = true; _loadFailed = true; _pendingEstablished = true; console.warn('[city] save is not valid JSON - refusing to overwrite it', e); return; }
     /* A payload that parsed but carries no tiles is a corrupt or truncated
        save, NOT an empty city. Treat it as unsafe so it cannot be written back
        over the real one. */
-    if (!s || !s.tiles) { _loadDone = true; _loadFailed = true; return; }
+    if (!s || !s.tiles) { _loadDone = true; _loadFailed = true; _pendingEstablished = true; return; }
     /* ⏳ THE STAMP THAT NOTHING USED TO READ. serialize() has written savedAt
        since v1; this is the line that finally makes an absence mean something.
        Absent ⇒ 0 ⇒ no catch-up, which is the correct reading of a save that
@@ -23597,6 +23624,21 @@ async function loadState() {
        there is nothing to hand it yet. Absent ⇒ null ⇒ a fresh economy, which
        is the correct reading of a save written before this feature existed. */
     _pendingEconomy = (s.economy && typeof s.economy === 'object') ? s.economy : null;
+    /* 🔴 …AND THE ANSWER TO "DID THIS CITY ALREADY EXIST". Tiles are the only
+       durable evidence, and they are exactly the evidence a player deleting the
+       `economy` key leaves behind. `||` because an unsafe read above has
+       already decided the question and must not be overruled by a payload we
+       do not trust. Read the header on `_pendingEstablished` for the numbers.
+       ⚠ THE MIGRATION COST, stated rather than hidden: a save written before
+         /src/economy existed, or one whose blob came back null because the
+         module failed to import, also has tiles and no economy — so it gets NO
+         founding tranche either. That is deliberate. Nothing on disk can
+         distinguish it from a deleted key, the tranche is simulated firm
+         capital and never Profile.gems, and such a city simply capitalises its
+         firms out of its own treasury while sim.js logs the refusal where the
+         player can see it. Granting on an unknown is what this whole package
+         exists to stop. */
+    _pendingEstablished = _pendingEstablished || !!(s.tiles && Object.keys(s.tiles).length);
     if (s.raid) {
       game.raid = s.raid;
       /* ⏱ Rescale the countdown into the CURRENT interval. A save written under
@@ -23815,6 +23857,10 @@ async function loadState() {
     // Anything that threw mid-load leaves game.tiles half-built. Saving that
     // back would replace a real city with a fragment of itself.
     _loadDone = true; _loadFailed = true;
+    /* …and it must not buy a founding tranche either. A throw anywhere in the
+       load leaves us unable to say whether this city existed, and unknown never
+       mints. See the `_pendingEstablished` header. */
+    _pendingEstablished = true;
     console.warn('city load failed', e);
   }
 }
@@ -27534,7 +27580,19 @@ function animate() {
       const nodeId = (game.anchors && game.anchors[0] && game.anchors[0].node && game.anchors[0].node.id)
                   || (MythicCityBridge.cityKey && MythicCityBridge.cityKey())
                   || 'local-city';
-      E.mount({ nodeId, population: cityPop(), state: _pendingEconomy });
+      /* 🔴 `established` IS LOAD-BEARING AND WAS MISSING FOR THE WHOLE LIFE OF
+         THIS FEATURE. Without it a lived city that arrives with no economy blob
+         is read as brand new and issued a fresh 300,000 🔥 founding tranche with
+         the entire 700,000 🔥 lifetime allowance re-armed — measured at
+         charterIssued 300,000.00 / totalCinder 293,295.48 in, 300,000.00 /
+         300,000.00 back out, from deleting one key. It is derived in loadState()
+         from the parsed save, because this is the only call site and loadState
+         is the only place that has ever seen the file. See
+         `_pendingEstablished` for the derivation and what each branch costs. */
+      E.mount({ nodeId, population: cityPop(), state: _pendingEconomy, established: _pendingEstablished });
+      /* The blob is consumed; the VERDICT is not. A remount (there is none
+         today) would arrive with state:null, and answering "brand new" a second
+         time is the exact shape of the bug above — so this stays latched. */
       _pendingEconomy = null;
       const card = $('ecocard');
       if (card) {

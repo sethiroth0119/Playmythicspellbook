@@ -24,8 +24,12 @@
      unemployment mechanic entirely. A test that does not match the host's
      constraints will confidently point the wrong way. */
 import { spawnSync } from 'child_process';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
+/* mkdir/readdir/write/rm are for round0s §6, which proves its two refusals can
+   fail by REBUILDING /src/economy into a temp directory with one line reverted
+   and importing that copy — the shipped tree is never written to. */
+import { readFileSync, mkdirSync, readdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 const here = dirname(fileURLToPath(import.meta.url));
 let bad = 0;
@@ -217,10 +221,22 @@ let bad = 0;
                                    is what sim.js, bank.js, households.js and
                                    firms.js each did. One edited field took an
                                    honest 298,394 🔥 city to 1,000,298,330 🔥
-     ECON_TEST_SABOTAGE=rearm      round0s §3: mount an established city with no
-                                   economy blob and let bootstrap() issue a
-                                   fresh 300,000 🔥 tranche — the deleted-save-
-                                   key path
+     ECON_TEST_SABOTAGE=rearm-caller round0s §3: strip `established` back out of
+                                   node-city's own E.mount() literal — i.e. the
+                                   production caller that passed no flag at all
+                                   for the whole life of the feature. A lived
+                                   180-day city, charterIssued 300,000.00 /
+                                   totalCinder 293,295.48, remounts at
+                                   300,000.00 / 300,000.00 with the full
+                                   700,000 🔥 allowance back
+     ECON_TEST_SABOTAGE=rearm-derive round0s §3: keep the flag but make
+                                   loadState's derivation answer `false` for a
+                                   save with tiles — the same hole one level up
+     ⚠ ECON_TEST_SABOTAGE=rearm is RETIRED. It flipped an argument this file
+       passed itself, so it only ever proved the refusal inside /src/economy
+       fires — while the one production caller passed nothing and the hole
+       stayed wide open under a green gate. The two switches above break the
+       SHIPPED call instead. See §3's header.
      ECON_TEST_SABOTAGE=payout-drop round0s §4: restore `.catch(() => {})`, i.e.
                                    drop whatever claimPayout() took and the
                                    bridge then refused. 10,193 🔥 in neither
@@ -256,6 +272,34 @@ let bad = 0;
                                    TIGHT rather than absent. Proves the other
                                    half — that a reload does not eat the Cinder a
                                    rejecting bridge failed to deliver
+     ── round0s §6 and round0u, the three doors this package closed ────────────
+     ECON_TEST_SABOTAGE=ops-swallow round0u: re-commit `Operations.fetchFailed =
+                                   false` on a PostgREST `{error}` response, i.e.
+                                   record a successful read of a table that was
+                                   never read. The city then sees no licence and
+                                   the free-licence grant writes a SECOND
+                                   permanent corp_operations row
+     ECON_TEST_SABOTAGE=ops-grant-unknown round0u: keep the honest flag but drop
+                                   cityOpsGrantFree's `unknown-state` refusal, so
+                                   it grants against a list it cannot vouch for
+     ECON_TEST_SABOTAGE=ops-found-unguarded round0u §7: re-commit the FOURTH route
+                                   — the Just Business "Found" button calling
+                                   `_opCreateLocal(a.op, 0, 'free-licence')`
+                                   inline, with the write-seam refusal removed
+                                   too. This is the shape that SHIPPED past a
+                                   green round 0u: fetchFailed was correctly
+                                   true and the branch never asked. INSERTS=1
+     ECON_TEST_SABOTAGE=ops-found-inline round0u §7: delete ONLY the delegation,
+                                   leaving _opCreateLocal's own free-licence
+                                   refusal in place. Behaviour still looks
+                                   clean (INSERTS=0) — this switch exists to
+                                   prove the TEXT assertion catches a re-inlined
+                                   branch that a behaviour test cannot see
+     ⚠ round0s §6 takes no switch. It proves its two refusals by REBUILDING
+       /src/economy into a temp directory with one line reverted and importing
+       that copy — reverting either alone must still refuse, reverting both must
+       re-arm 300,000 🔥. The shipped tree is never written to.
+
      ECON_TEST_SABOTAGE=faucet-margin round0s §2a: drop the load ceiling's faucet
                                    allowance to 50 🔥/day, i.e. what it would look
                                    like if a tuning change had raised real export
@@ -5359,9 +5403,12 @@ const srcBlockAfter = (src, decl, open) => {
      ECON_TEST_SABOTAGE=save-mint    §2: writes the raw save value into state
                                      with no ceiling, as all four loaders did
                                      (this switch reddens gauntlet1 §7b too)
-     ECON_TEST_SABOTAGE=rearm        §3: mounts an established city with no
-                                     economy blob and lets bootstrap() issue a
-                                     fresh tranche — the deleted-save-key path
+     ECON_TEST_SABOTAGE=rearm-caller §3: strips `established` out of node-city's
+                                     own E.mount() literal — the production
+                                     caller as it actually shipped
+     ECON_TEST_SABOTAGE=rearm-derive §3: makes loadState's derivation answer
+                                     `false` for a save with tiles
+     (§6 takes no switch — it rebuilds /src/economy with a refusal reverted)
      ECON_TEST_SABOTAGE=payout-drop  §4: restores `.catch(() => {})`, i.e. drops
                                      whatever claimPayout() took and the bridge
                                      then refused
@@ -5695,33 +5742,131 @@ const srcBlockAfter = (src, decl, open) => {
      missing `economy` key as null and mounts with `state: null` — so removing
      one key from the save hands the city a fresh 300,000 🔥 tranche and the
      whole 700,000 🔥 lifetime allowance, again and again.
-     ⚠ THIS IS THE HALF OF THE FIX THAT LIVES IN /src/economy. Nothing in the
-       module survives a reload except the blob it is handed, so only the HOST
-       can tell a new city from an established one that lost its economy key;
-       `established` is the flag it says so with. node-city was outside this
-       package's edit set — see index.js mount() for the one line still
-       outstanding, and read this round as proving the refusal works, not as
-       proving the production path is closed. */
+
+     🔴 WHY THIS ROUND WAS REWRITTEN, AND IT IS THE LESSON OF THE WHOLE PACKAGE.
+        The first version of it read
+
+            E.mount({ nodeId: 'blind-rearm', population: 150, established: true })
+
+        i.e. it passed the flag ITSELF and then proved the refusal fires. The
+        only production caller — node-city's one `E.mount(…)` — passed no flag
+        at all, so `bootstrap()` could never see one and the hole was fully
+        open with a green round sitting on top of it. Measured on that tree,
+        through the real production call: a lived 180-day city with
+        charterIssued 300,000.00 / totalCinder 293,295.48 came back from a
+        stateless remount at charterIssued 300,000.00 / totalCinder 300,000.00,
+        headroom restored to 400,000.00.
+
+        A TEST THAT EXERCISES A SEAM PRODUCTION DOES NOT USE CERTIFIES NOTHING.
+        So this round no longer writes the call. It READS node-city's own
+        `E.mount({ … })` argument literal out of the shipped file, READS the
+        `_pendingEstablished` derivation out of `loadState()`, executes that
+        derivation against a save, and mounts with whatever the two of them
+        produce. If node-city stops passing the flag, or derives it wrongly, or
+        someone edits the literal, this goes red — because the thing under test
+        is the shipped text, not a shape written here.
+
+     Prove it can fail:
+       ECON_TEST_SABOTAGE=rearm-caller  strips `established:` back out of the
+                                        extracted call — the defect verbatim
+       ECON_TEST_SABOTAGE=rearm-derive  keeps the flag but makes loadState's
+                                        derivation answer `false` for a lived
+                                        save, i.e. the same hole one level up */
   {
+    const NC = join(here, '../../public/node-city/index.html');
+    const ncSrc = readFileSync(NC, 'utf8');
+
+    /* 1. THE CALL, as shipped. `srcBlockAfter` brace-matches over comments and
+          strings, which node-city needs — the surrounding prose is full of
+          braces and apostrophes.
+          ⚠ MATCH ONLY A CALL THAT REALLY TAKES AN OBJECT LITERAL, and count
+            them. `E.mount()` also appears inside a comment at the citizens
+            bind site, and an unanchored indexOf lands there and brace-matches
+            something unrelated. Counting is the other half: a SECOND mount call
+            added later would otherwise sail past this round untested. */
+    let mountLit = null, mountSites = 0;
+    for (let i = ncSrc.indexOf('E.mount('); i >= 0; i = ncSrc.indexOf('E.mount(', i + 1)) {
+      if (!/^\s*\{/.test(ncSrc.slice(i + 'E.mount('.length))) continue;
+      mountSites++;
+      if (!mountLit) mountLit = srcBlockAfter(ncSrc.slice(i), 'E.mount');
+    }
+    chk('node-city still has exactly one E.mount({…}) call this round can read',
+        !!mountLit && mountSites === 1,
+        'matched ' + mountSites + ' call sites, literal ' + (mountLit ? 'read' : 'UNREADABLE'));
+    /* 🔴 THE ASSERTION THE OLD ROUND COULD NOT MAKE, because it was the caller.
+          `established` missing here IS the defect, and nothing else in the gate
+          looks at the production call site. */
+    chk('…and THE PRODUCTION CALL PASSES `established` (it passed nothing for the whole life of the feature)',
+        !!mountLit && /[\s,{]established\s*:/.test(mountLit),
+        'E.mount literal: ' + String(mountLit).replace(/\s+/g, ' ').slice(0, 200));
+
+    /* 2. THE DERIVATION, as shipped, and then EXECUTED. Taking the right-hand
+          side rather than re-typing the expression is the point: a derivation
+          that stops looking at the save reddens this round. */
+    const lines = ncSrc.split('\n').map((l) => l.trim());
+    const initLine  = lines.find((l) => /^let _pendingEstablished\s*=/.test(l));
+    const derivLine = lines.find((l) => /^_pendingEstablished\s*=\s*_pendingEstablished\s*\|\|/.test(l));
+    chk('node-city derives `established` in loadState from the parsed save',
+        !!derivLine && !!initLine,
+        'init: ' + initLine + '  derivation: ' + derivLine);
+    /* The default MUST be false or a genuinely new player is denied their
+       opening capital — the failure mode opposite to the one under test. */
+    chk('…and it defaults to false, so a brand-new city still gets its tranche',
+        !!initLine && /=\s*false\s*;/.test(initLine), initLine);
+    const rhs = String(derivLine || 'false;').slice(String(derivLine || '').indexOf('=') + 1).replace(/;\s*$/, '');
+    const deriveRaw = new Function('_pendingEstablished', 's', 'return !!(' + rhs + ');');
+    const derive = (prior, s) => (SABOTAGE === 'rearm-derive' ? false : deriveRaw(prior, s));
+
+    /* 3. THE CALL, COMPILED FROM THE SHIPPED TEXT. `rearm-caller` deletes the
+          `established` property from that text and nothing else — which is
+          exactly the tree the adversary measured. */
+    const litForRun = (SABOTAGE === 'rearm-caller')
+      ? String(mountLit).replace(/,?\s*established\s*:\s*[^,}]+/, '')
+      : String(mountLit);
+    const mkOpts = new Function('nodeId', 'cityPop', '_pendingEconomy', '_pendingEstablished',
+                                'return (' + litForRun + ');');
+
+    // A lived city, through the ordinary boot path.
     E.mount({ nodeId: 'blind-rearm', population: 150 });
     for (let i = 0; i < 60; i++) E.tick(DAY, host);
     const livedIssued = E.snapshot().charterIssued;
-    // The host now mounts the SAME city with its economy key deleted.
-    E.mount({ nodeId: 'blind-rearm', population: 150,
-              established: SABOTAGE === 'rearm' ? false : true });
+    const livedTotal = E.totalCinder();
+
+    /* THE PLAYER DELETES THE `economy` KEY. What loadState then holds is a save
+       with tiles and no economy — so `_pendingEconomy` is null and the flag is
+       whatever node-city's own expression makes of it. */
+    const livedSave = { tiles: { '0,0': { type: 'anchor' }, '3,4': { type: 'house' }, '5,2': { type: 'shop' } } };
+    const establishedFlag = derive(false, livedSave);
+    const opts = mkOpts('blind-rearm', () => 150, null, establishedFlag);
+    console.log('   loadState derived established=' + establishedFlag +
+                ' → E.mount(' + JSON.stringify(opts) + ')');
+    E.mount(opts);
     const after = E.snapshot();
-    console.log('   lived charterIssued ' + livedIssued.toFixed(2) +
-                ' → after a stateless remount ' + after.charterIssued.toFixed(2) +
+    console.log('   lived charterIssued ' + livedIssued.toFixed(2) + ' (totalCinder ' + livedTotal.toFixed(2) +
+                ') → after the stateless remount ' + after.charterIssued.toFixed(2) +
                 ' (totalCinder ' + E.totalCinder().toFixed(2) + ')');
     chk('an established city that arrives with no economy blob is issued NO fresh tranche',
         after.charterIssued < 1e-6 && E.totalCinder() < 1e-6,
         'charterIssued ' + after.charterIssued.toFixed(2) + ', totalCinder ' + E.totalCinder().toFixed(2) +
-        ' — deleting one save key re-armed the whole allowance');
-    // …and a genuinely new city still gets its opening capital, or nothing works.
-    E.mount({ nodeId: 'blind-rearm-new', population: 150 });
+        ' — deleting one save key re-armed the whole allowance THROUGH THE PRODUCTION CALL');
+
+    /* …and a genuinely new city still gets its opening capital, through the SAME
+       compiled call with the SAME derivation — node-city reaches `if (!j)` and
+       never raises the flag, which is the `false` passed here. */
+    E.mount(mkOpts('blind-rearm-new', () => 150, null, false));
     chk('…while a genuinely new city still receives exactly the bootstrap tranche',
         Math.abs(E.totalCinder() - ECON.firm.charter.seed) < 1e-6,
         E.totalCinder().toFixed(2) + ' vs seed ' + ECON.firm.charter.seed);
+
+    /* The derivation itself, on the two inputs that decide a player's outcome.
+       Without this a derivation stuck at `true` would pass everything above and
+       silently deny every new city its founding capital. */
+    chk('…and the shipped derivation answers TRUE for a save with tiles',
+        derive(false, livedSave) === true, 'rhs: ' + rhs);
+    chk('…and does not invent tiles that are not there',
+        derive(false, { tiles: {} }) === false, 'rhs: ' + rhs);
+    chk('…and never talks an unsafe read back down to "new city"',
+        derive(true, { tiles: {} }) === true, 'rhs: ' + rhs);
   }
 
   /* ── §4 A REJECTED PAYOUT IS THE PLAYER'S MONEY, NOT THE HOUSE'S ───────────
@@ -5901,6 +6046,131 @@ const srcBlockAfter = (src, decl, open) => {
         blob0.importsLifetime > 1,
         'importsLifetime ' + blob0.importsLifetime + ' — sim.js addImports() is not being reached');
     global.window.MythicCityBridge.addCinders = BRIDGE0;
+  }
+
+  /* ── §6 `booted: false` IN THE SAVE IS THE SECOND DOOR TO THE SAME TRANCHE ──
+     Closing §3 is NOT sufficient, and this is why. `load()` ended with
+     `S.booted = !!raw.booted`, `bootstrap()` opens with `if (S.booted) return
+     false`, and `clampLoadedCinder()` is the LAST line of `load()`. So a save
+     that says `booted: false` walks straight back into
+     `issueCharter(ECON.firm.charter.seed)` — with the state fully loaded, the
+     `established` flag irrelevant because a state WAS handed over, and the only
+     ceiling that could have caught it already behind. Textbook of the
+     structural blind spot: money moving between the load and the first tick.
+
+     MEASURED ON THE FIXED-FOR-§3 TREE, one edited boolean on an otherwise
+     honest 60-day save, through the production call `E.mount({ …, state })`:
+         charterIssued  300,000.00 → 600,000.00
+         totalCinder    293,295.48 → 593,295.48        (+300,000 🔥, one reload)
+         eight reloads: charterIssued pinned at the 700,000 🔥 lifetime cap and
+         totalCinder settled at 492,514.87 against an honest 293,295.48
+     It is worth strictly MORE than the deleted-key door, because the city keeps
+     every firm, every balance and every day it had lived.
+
+     TWO INDEPENDENT REFUSALS NOW STAND IN FRONT OF IT, and this section proves
+     each one holds ALONE by rebuilding /src/economy with the other reverted:
+       A. sim.js `load()` sets `S.booted = true` unconditionally — a save is
+          proof the city exists. This is the one that CATCHES it on the shipped
+          tree: `bootstrap()` returns at its first line and never reads `opts`.
+       B. index.js `mount()` passes `established: hadState || …` — if any state
+          was handed over, no tranche, whatever the blob claims about itself.
+     Reverting BOTH must re-arm, or this section is asserting nothing. */
+  {
+    E.mount({ nodeId: 'blind-booted', population: 150 });
+    for (let i = 0; i < 60; i++) E.tick(DAY, host);
+    const blob = JSON.parse(JSON.stringify(E.serialize()));
+    const honestIssued = E.snapshot().charterIssued, honestTotal = E.totalCinder();
+    chk('the §6 fixture is not vacuous — the city really did draw its tranche',
+        honestIssued > 1, 'charterIssued ' + honestIssued.toFixed(2));
+
+    /* THE PRODUCTION CALL SHAPE. node-city hands the parsed save straight to
+       E.mount as `state`; the only thing changed here is one boolean inside it,
+       which is all a save editor has to do. */
+    const doctored = JSON.parse(JSON.stringify(blob)); doctored.booted = false;
+    E.mount({ nodeId: 'blind-booted', population: 150, state: doctored });
+    const f6 = E.snapshot();
+    console.log('   honest save charterIssued ' + honestIssued.toFixed(2) + ' / totalCinder ' + honestTotal.toFixed(2) +
+                '  →  booted:false ' + f6.charterIssued.toFixed(2) + ' / ' + E.totalCinder().toFixed(2));
+    chk('a save claiming `booted:false` is issued NO fresh founding tranche',
+        Math.abs(f6.charterIssued - honestIssued) < 1 && Math.abs(E.totalCinder() - honestTotal) < 1,
+        'charterIssued ' + f6.charterIssued.toFixed(2) + ' vs honest ' + honestIssued.toFixed(2) +
+        ', totalCinder ' + E.totalCinder().toFixed(2) + ' vs honest ' + honestTotal.toFixed(2));
+    chk('…and refusal A is the one that catches it — load() ignores raw.booted',
+        Sim.state().booted === true,
+        'S.booted came out of load() as ' + Sim.state().booted + ', so bootstrap() ran on a loaded save');
+
+    /* The ratchet, because a one-shot check would miss a door that only opens
+       on the second reload — which is how the pre-fix version behaved. */
+    let cur = JSON.parse(JSON.stringify(blob)), worst = 0;
+    for (let k = 0; k < 8; k++) {
+      cur.booted = false;
+      E.mount({ nodeId: 'blind-booted', population: 150, state: cur });
+      worst = Math.max(worst, E.totalCinder());
+      cur = JSON.parse(JSON.stringify(E.serialize()));
+    }
+    console.log('   eight booted:false reloads — worst totalCinder ' + worst.toFixed(2) +
+                ' against an honest ' + honestTotal.toFixed(2));
+    chk('…and it does not ratchet over repeated reloads either',
+        worst <= honestTotal + 1, 'worst ' + worst.toFixed(2) + ' vs honest ' + honestTotal.toFixed(2) +
+        ' 🔥 — the door reopens on a later reload');
+
+    /* ── AND NOW BREAK IT, FOR REAL. Not a flag written here: a REBUILT copy of
+          /src/economy with one line reverted to what shipped, imported through
+          its own index.js, driven through the same production call. Anything
+          less would be this round grading its own homework — see §3's header. */
+    const ECODIR = join(here, '../../public/src/economy');
+    const simSrc = readFileSync(join(ECODIR, 'sim.js'), 'utf8');
+    const idxSrc = readFileSync(join(ECODIR, 'index.js'), 'utf8');
+    const loadBlk = srcBlockAfter(simSrc, 'export function load(raw)');
+    const CALLER_OK  = 'established: hadState || opts.established === true';
+    const CALLER_OLD = 'established: !hadState && opts.established === true';
+    chk('§6 can find both refusals in the source it is about to revert',
+        !!loadBlk && loadBlk.indexOf('S.booted = true;') >= 0 && idxSrc.indexOf(CALLER_OK) >= 0,
+        'load() block ' + (loadBlk ? 'read' : 'UNREADABLE') + ', caller anchor ' +
+        (idxSrc.indexOf(CALLER_OK) >= 0 ? 'found' : 'MISSING') +
+        ' — the sabotage anchors have drifted and the can-fail proof below is vacuous');
+
+    const tmpRoots = [];
+    const rebuild = async (tag, edits) => {
+      const dst = join(tmpdir(), 'econ-sab-' + tag + '-' + process.pid + '-' + Date.now());
+      mkdirSync(dst, { recursive: true });
+      tmpRoots.push(dst);
+      for (const fn of readdirSync(ECODIR)) {
+        if (!fn.endsWith('.js')) continue;
+        let t = readFileSync(join(ECODIR, fn), 'utf8');
+        for (const [find, repl] of (edits[fn] || [])) t = t.split(find).join(repl);
+        writeFileSync(join(dst, fn), t);
+      }
+      return (await import(pathToFileURL(join(dst, 'index.js')).href)).default;
+    };
+    const REVERT_A = { 'sim.js': [[loadBlk, loadBlk.replace('S.booted = true;', 'S.booted = !!raw.booted;')]] };
+    const REVERT_B = { 'index.js': [[CALLER_OK, CALLER_OLD]] };
+
+    const probe = async (tag, edits) => {
+      const M = await rebuild(tag, edits);
+      M.mount({ nodeId: 'sab-' + tag, population: 150 });
+      for (let i = 0; i < 60; i++) M.tick(DAY, host);
+      const base = M.totalCinder();
+      const s = JSON.parse(JSON.stringify(M.serialize())); s.booted = false;
+      M.mount({ nodeId: 'sab-' + tag, population: 150, state: s });
+      const got = M.totalCinder();
+      console.log('   [' + tag + '] honest ' + base.toFixed(2) + ' → booted:false ' + got.toFixed(2) +
+                  '  (delta ' + (got - base).toFixed(2) + ' 🔥)');
+      return got - base;
+    };
+
+    const dA = await probe('revert-load', REVERT_A);
+    chk('refusal B holds ALONE — with load() reverted, the caller still refuses',
+        dA < 1, 'reverting sim.js load() alone re-armed ' + dA.toFixed(2) + ' 🔥');
+    const dB = await probe('revert-caller', REVERT_B);
+    chk('refusal A holds ALONE — with the caller reverted, load() still refuses',
+        dB < 1, 'reverting index.js mount() alone re-armed ' + dB.toFixed(2) + ' 🔥');
+    const dAB = await probe('revert-both', { ...REVERT_A, ...REVERT_B });
+    chk('…and reverting BOTH really does re-arm the tranche — the defect is real and this proof is not vacuous',
+        dAB > ECON.firm.charter.seed * 0.5,
+        'both refusals reverted and totalCinder only moved ' + dAB.toFixed(2) +
+        ' 🔥 — §6 is asserting nothing, find out what else is closing this');
+    for (const d of tmpRoots) { try { rmSync(d, { recursive: true, force: true }); } catch (e) {} }
   }
 
   if (fails) { bad++; console.log('\n=== ROUND 0s: ' + fails + ' FAILED ==='); }
@@ -6638,6 +6908,387 @@ const srcBlockAfter = (src, decl, open) => {
 
   if (fails) { bad++; console.log('\n=== ROUND 0t: ' + fails + ' FAILED ==='); }
   else console.log('\n=== ROUND 0t: ALL PASS ===');
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0u — 🏗 A SWALLOWED POSTGREST ERROR MAY NOT BUY A SECOND FREE LICENCE
+   ----------------------------------------------------------------------------
+   THE ONLY ROUND HERE THAT GUARDS A WRITE TO THE DATABASE, and the reason it is
+   the worst of the three defects this package closed: everything else in this
+   file bounds Cinder inside a simulation that a reload can re-derive. This one
+   ends with `Cloud.client.from('corp_operations').insert(…)` — a permanent row
+   that nothing in the codebase ever removes.
+
+   THE MECHANISM, and it is two ordinary bugs meeting:
+     1. supabase-js RESOLVES on failure. An RLS refusal, a bad column or a 5xx
+        comes back as `{ data: null, error: {…} }`; it does not throw. `opFetch`
+        read that with `if (r && !r.error && Array.isArray(r.data)) cloud = r.data;`
+        — no else — so an error response left `cloud` as `[]` and continued down
+        the success path.
+     2. The caller then ran `try { await opFetch(); Operations.fetchFailed = false; }`,
+        recording a SUCCESSFUL read of a table it had never read.
+   The city therefore sees no Construction Co., the free-licence auto-grant that
+   this session added fires, and a duplicate row is written beside the one that
+   was already there.
+
+   MEASURED against the shipped source before the fix, `{code:'42501', message:
+   'permission denied for table corp_operations'}` and a player who already held
+   the cloud licence:
+       healthy read → fetchFailed false, 1 row visible, grant refused,  0 written
+       error  read  → fetchFailed FALSE, 0 rows visible, grant ISSUED,  1 WRITTEN
+                      and it returned {ok:true, existed:false}
+
+   🔴 THE PRODUCTION CALL SHAPE, because that is the whole lesson of this
+      package. Nothing below is re-typed: `opFetch`, `_opCreateLocal`,
+      `_opsAllRows`, `_jbLocalOpsList` and `cityOpsGrantFree` are all read out of
+      public/index.html and compiled, and the caller is the literal
+      `try { await opFetch(); … }` line lifted out of corpFetchMine. The stubs
+      are only the Supabase client, the profile and the econ table. If any of
+      those functions changes shape, this round reads the new shape.
+
+   Prove it can fail — each switch re-commits one half of the shipped defect
+   into the extracted source and nothing else:
+     ECON_TEST_SABOTAGE=ops-swallow        opFetch records success on an error
+                                           response (the `fetchFailed = false`
+                                           the caller used to do)
+     ECON_TEST_SABOTAGE=ops-grant-unknown  the grant drops its `unknown-state`
+                                           refusal and writes against a list it
+                                           cannot vouch for
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0u-free-licence-against-an-unknown-read ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+  const IDX = join(here, '../../public/index.html');
+  const idxSrc = readFileSync(IDX, 'utf8');
+  const blk = (decl) => srcBlockAfter(idxSrc, decl);
+
+  const SRC = {
+    opFetch:        blk('async function opFetch()'),
+    grant:          blk('window.cityOpsGrantFree = async function (opType)'),
+    createLocal:    blk('async function _opCreateLocal(opType, cost, fundedBy)'),
+    allRows:        blk('function _opsAllRows()'),
+    localList:      blk('function _jbLocalOpsList()'),
+    /* §7's subject: the zero-price branch of the Just Business "Found" button.
+       `construction` is startup 0 in OPS_ECON, so a real click lands here. */
+    found:          blk('if ((e.startup | 0) <= 0)'),
+  };
+  const missing = Object.keys(SRC).filter((k) => !SRC[k]);
+  chk('round0u can read all six shipped functions out of public/index.html',
+      !missing.length, 'unreadable: ' + missing.join(', ') + ' — a declaration was renamed and this round is vacuous');
+
+  /* 🧨 §7's switches are applied HERE, to the extracted source itself, rather
+     than inside build() where the older two live. §7f is a TEXT assertion, so
+     an injury that only reached the compiled copy would leave that check
+     reading the healthy file and passing — a switch that cannot turn its own
+     assertion red is the same vacuous-green shape this round exists to end.
+       ops-found-inline     the delegation is replaced by the old inline create
+       ops-found-unguarded  …and _opCreateLocal's write-seam refusal goes too,
+                            which together are exactly the branch that shipped */
+  if (!missing.length && (SABOTAGE === 'ops-found-inline' || SABOTAGE === 'ops-found-unguarded')) {
+    const inlined = SRC.found.replace(
+      /const _g = \(typeof window\.cityOpsGrantFree === 'function'\)[\s\S]*?: \{ ok: false, error: 'no-grant-fn' \};/,
+      "const _g = { ok: await _opCreateLocal(a.op, 0, 'free-licence'), existed: false };");
+    if (inlined === SRC.found) throw new Error('SABOTAGE ' + SABOTAGE + ' matched nothing — the delegation was reshaped and this switch is inert');
+    SRC.found = inlined;
+  }
+  if (!missing.length && SABOTAGE === 'ops-found-unguarded') {
+    const unguarded = SRC.createLocal.replace(
+      /if \(\(cost \| 0\) <= 0 && fundedBy === 'free-licence'[\s\S]*?return false;\s*\}/, '');
+    if (unguarded === SRC.createLocal) throw new Error('SABOTAGE ops-found-unguarded matched nothing — the write-seam refusal was reshaped and this switch is inert');
+    SRC.createLocal = unguarded;
+  }
+
+  /* THE CALLER, lifted rather than written. corpFetchMine is the path that
+     decides whether the app believes it knows the player's operations, and the
+     defect was half in that line. Asserting on its TEXT is what stops somebody
+     re-adding `Operations.fetchFailed = false` after the await.
+
+     🔴 WHAT THIS ANCHOR COST, and why it is not `find(/^try \{ await opFetch\(\);/)`
+        any more. That regex matches THREE lines in public/index.html, and
+        `find()` returns the FIRST — the tail of `_opCreateLocal`
+        (`try { await opFetch(); } catch (e) {}`), roughly 1200 lines ABOVE
+        corpFetchMine. So both text assertions below were reading a line that
+        never had the defect and never could, and `runCaller` was compiled from
+        the wrong call site. MEASURED: half of the defect was re-committed on
+        the real corpFetchMine line —
+          `try { await opFetch(); Operations.fetchFailed = false; } catch (e) {…}`
+        — and this round printed ALL PASS and the whole gauntlet went green,
+        with the bug sitting in the shipped file. A round that certifies a seam
+        production does not use certifies nothing.
+
+     THE ANCHOR IS NOW THE CATCH BODY, which is unique to corpFetchMine: it is
+     the only caller in the file that resets `Operations.list` and raises
+     `fetchFailed` when opFetch throws. Matching on `await opFetch();` anywhere
+     in the line (not anchored at ^) also means re-adding the assignment cannot
+     slide the match off this line and quietly pass. And we assert there is
+     EXACTLY ONE — if a second caller ever grows that catch body, this round
+     must be pointed at the right one deliberately rather than silently taking
+     whichever came first. */
+  const callerCands = idxSrc.split('\n').map((l) => l.trim())
+    .filter((l) => /await opFetch\(\);/.test(l) && /Operations\.list = \[\]; Operations\.fetchFailed = true;/.test(l));
+  chk('exactly one corpFetchMine caller line, and this round reads it',
+      callerCands.length === 1,
+      'found ' + callerCands.length + ' candidates — this round is reading the wrong call site: ' +
+      JSON.stringify(callerCands));
+  const callerLine = callerCands[0];
+  chk('…and the corpFetchMine caller line is still there to be read', !!callerLine, String(callerLine));
+  chk('…and it no longer clears fetchFailed after the await (that WAS half the defect)',
+      !!callerLine && !/await opFetch\(\);\s*Operations\.fetchFailed\s*=\s*false/.test(callerLine),
+      callerLine);
+
+  /* `callerLine` gates the harness too: runCaller is COMPILED from it, so an
+     unresolved anchor must fail the round above rather than compile the string
+     "undefined" and throw something unrelated halfway down. */
+  if (!missing.length && callerLine) {
+    /* One PostgREST error shape, used everywhere below. Resolves. Never throws
+       — which is the entire point and what the old code assumed away. */
+    const PG_ERR = { data: null, error: { code: '42501', message: 'permission denied for table corp_operations' } };
+
+    const build = (opts) => {
+      const o = opts || {};
+      const state = {
+        inserts: 0,                       // real corp_operations.insert() calls
+        toasts: [],                       // what the player was actually told
+        Operations: { list: [], _fetched: 0, fetchFailed: false },
+        Profile: { jbLocalOps: [], cloud: { signedIn: o.signedIn !== false } },
+        Corp: { mine: o.noCorp ? null : { id: 'corp-1' }, _memberErr: o.memberErr || null },
+      };
+      const cloudRows = o.cloudHas ? [{ id: 'cloud-1', corp_id: 'corp-1', op_type: 'construction', workers: 0, level: 1, meta: {} }] : [];
+      state.Cloud = { client: { from: () => ({
+        select: () => ({ eq: () => ({ limit: async () => (o.readFails ? PG_ERR : { data: cloudRows, error: null }) }) }),
+        insert: async (row) => { state.inserts++; cloudRows.push({ id: 'cloud-' + state.inserts, ...row }); return { data: null, error: null }; },
+      }) } };
+      let src = SRC;
+      if (SABOTAGE === 'ops-swallow') {
+        /* 🧨 THE SHIPPED BEHAVIOUR, re-committed: a read that failed is recorded
+           as a read that succeeded. This is precisely `fetchFailed = false`
+           after the await plus the missing `else` on the error branch. */
+        src = { ...src, opFetch: src.opFetch.replace('Operations.fetchFailed = !cloudOk;', 'Operations.fetchFailed = false;')
+                                            .replace('if (cloudOk) Operations._fetched = Date.now();', 'Operations._fetched = Date.now();') };
+      }
+      if (SABOTAGE === 'ops-grant-unknown') {
+        /* 🧨 The other half: grant against a list we cannot vouch for. */
+        src = { ...src, grant: src.grant.replace(/if \(!known\(\)\) return \{ ok: false, error: 'unknown-state' \};/, '') };
+      }
+      /* index.html publishes the grant as `window.cityOpsGrantFree`, and the
+         Found branch reaches it THROUGH window — so the harness carries a real
+         window object and the branch resolves it exactly as production does.
+         `noGrantFn` leaves it unpublished to exercise the missing-helper
+         fallback, which must REFUSE rather than fall back to the old create. */
+      const win = {};
+      const env = {
+        Operations: state.Operations, Profile: state.Profile, Corp: state.Corp, Cloud: state.Cloud,
+        initCloud: () => true, saveProfile: () => {},
+        showToast: (t) => { state.toasts.push(String(t)); },
+        _opsAdoptOwnedCompanies: () => {}, _opAfterFound: () => {}, _jbSendData: () => {},
+        _opEcon: (t) => (t === 'construction' ? { startup: 0, maxWorkers: 6 } : null),
+        OP_LABELS: { construction: 'Construction Co.' },
+        Date: global.Date,
+        window: win,
+        NO_GRANT_FN: !!o.noGrantFn,
+      };
+      const names = Object.keys(env);
+      const api = new Function(...names, `
+        function _jbLocalOpsList() ${src.localList}
+        function _opsAllRows() ${src.allRows}
+        async function opFetch() ${src.opFetch}
+        async function _opCreateLocal(opType, cost, fundedBy) ${src.createLocal}
+        const cityOpsGrantFree = async function (opType) ${src.grant};
+        if (!NO_GRANT_FN) window.cityOpsGrantFree = cityOpsGrantFree;
+        /* THE PRODUCTION CALL SHAPE of the Found button: 'a' is the action
+           object the Just Business click handler posts, 'e' is _opEcon(a.op)
+           computed one line above the branch. The branch body is verbatim;
+           only the wrapper handing it 'a' and 'e' is ours. */
+        async function opFoundBranch(a) {
+          const e = _opEcon(a.op);
+          ${src.found.replace(/^\{/, '').replace(/\}$/, '')}
+          return 'fell-through';
+        }
+        return { opFetch, grant: cityOpsGrantFree, rows: _opsAllRows, opFound: opFoundBranch };
+      `)(...names.map((n) => env[n]));
+      return { state, api };
+    };
+
+    /* The production caller, verbatim from corpFetchMine — compiled from the
+       line read above so it cannot drift away from what ships. */
+    const runCaller = new Function('opFetch', 'Operations', 'return (async () => { ' + callerLine + ' })();');
+
+    const scenario = async (label, opts) => {
+      const { state, api } = build(opts);
+      await runCaller(api.opFetch, state.Operations);
+      const g = await api.grant('construction');
+      const held = api.rows().filter((r) => r && r.op_type === 'construction').length;
+      console.log('   ' + label.padEnd(42) + ' fetchFailed=' + String(state.Operations.fetchFailed).padEnd(5) +
+                  ' visible=' + api.rows().length + ' inserts=' + state.inserts +
+                  ' grant=' + JSON.stringify(g));
+      return { ...state, grant: g, held, api };
+    };
+
+    // ── 1. THE HEALTHY CONTROL. Nothing may regress for the ordinary player. ──
+    const okHeld = await scenario('healthy read, player HAS the licence', { cloudHas: true });
+    chk('a healthy read reports success', okHeld.Operations.fetchFailed === false);
+    chk('…and the grant sees the existing licence and writes nothing',
+        okHeld.grant.ok === true && okHeld.grant.existed === true && okHeld.inserts === 0,
+        JSON.stringify(okHeld.grant) + ' inserts ' + okHeld.inserts);
+
+    // ── 2. THE DEFECT. An error response, and a player who already holds it. ──
+    const bad = await scenario('🔴 PostgREST {error}, player HAS it', { cloudHas: true, readFails: true });
+    chk('a PostgREST {error} response is recorded as a FAILED fetch',
+        bad.Operations.fetchFailed === true,
+        'fetchFailed=' + bad.Operations.fetchFailed + ' — the app believes it read a table it never read');
+    chk('…and NO free licence is granted while the player\'s licences are unknown',
+        bad.grant.ok === false && bad.grant.error === 'unknown-state',
+        JSON.stringify(bad.grant));
+    chk('…and NOT ONE corp_operations row is written',
+        bad.inserts === 0 && bad.Profile.jbLocalOps.length === 0,
+        'inserts ' + bad.inserts + ', local rows ' + bad.Profile.jbLocalOps.length +
+        ' — a duplicate permanent licence, from a transient RLS blip');
+
+    // ── 3. THE SAME HOLE ONE TABLE UPSTREAM: corp_members errored, so Corp.mine
+    //       is null for a player who may well be in a corp with a licence. ──
+    const memErr = await scenario('🔴 corp_members read errored', { noCorp: true, memberErr: 'permission denied' });
+    chk('a failed corp_members lookup also counts as an unknown read',
+        memErr.Operations.fetchFailed === true, 'fetchFailed=' + memErr.Operations.fetchFailed);
+    chk('…and it grants nothing either',
+        memErr.grant.ok === false && memErr.inserts === 0,
+        JSON.stringify(memErr.grant) + ' inserts ' + memErr.inserts);
+
+    // ── 4. IDEMPOTENCE, run twice, against the real _opCreateLocal. ──
+    const { state: st4, api: api4 } = build({ cloudHas: false });
+    await runCaller(api4.opFetch, st4.Operations);
+    const g4a = await api4.grant('construction');
+    const g4b = await api4.grant('construction');
+    const rows4 = api4.rows().filter((r) => r && r.op_type === 'construction').length;
+    console.log('   grant ×2 on a clean empty read           inserts=' + st4.inserts +
+                ' rows=' + rows4 + ' first=' + JSON.stringify(g4a) + ' second=' + JSON.stringify(g4b));
+    chk('a new player IS granted the free licence on a trustworthy read',
+        g4a.ok === true && g4a.existed === false, JSON.stringify(g4a));
+    chk('…and running the grant again writes NOTHING more — exactly one licence exists',
+        g4b.ok === true && g4b.existed === true && st4.inserts === 1 && rows4 === 1,
+        'inserts ' + st4.inserts + ', rows ' + rows4 + ', second ' + JSON.stringify(g4b));
+
+    // ── 5. …and idempotence holds for a player who ALREADY held it, twice. ──
+    const { state: st5, api: api5 } = build({ cloudHas: true });
+    await runCaller(api5.opFetch, st5.Operations);
+    const g5a = await api5.grant('construction');
+    const g5b = await api5.grant('construction');
+    const rows5 = api5.rows().filter((r) => r && r.op_type === 'construction').length;
+    console.log('   grant ×2, player already holds it        inserts=' + st5.inserts + ' rows=' + rows5);
+    chk('…and a player who already holds it gets no second row from two grants',
+        st5.inserts === 0 && rows5 === 1 && g5a.existed === true && g5b.existed === true,
+        'inserts ' + st5.inserts + ', rows ' + rows5);
+
+    /* ── 6. A FAILED READ MAY NOT DELETE THE PLAYER'S OWN OPERATION EITHER.
+           opFetch de-dupes locals against the corp list; doing that on a read
+           that failed drops a real local row on the floor. */
+    const { state: st6, api: api6 } = build({ cloudHas: true, readFails: true });
+    st6.Profile.jbLocalOps.push({ id: 'local_mining_1', op_type: 'mining', meta: {} });
+    await runCaller(api6.opFetch, st6.Operations);
+    chk('a failed read does not silently drop the player\'s own local operations',
+        st6.Profile.jbLocalOps.length === 1 && api6.rows().some((r) => r.op_type === 'mining'),
+        'locals ' + st6.Profile.jbLocalOps.length + ', visible ' + JSON.stringify(api6.rows().map((r) => r.op_type)));
+
+    /* ══ 7. THE FOURTH ROUTE — the Just Business "Found" button ═══════════════
+       🔴 WHY THIS SECTION EXISTS. §§1-6 above were green, and the duplicate row
+          was still one click away in production. The scope that produced them
+          named `cityOpsGrantFree / opsAcquireFree / opsGrantNodeLicences`; the
+          city's three entry points were correctly funnelled into the first
+          (node-city :24321 → `P.cityOpsGrantFree`) and the work stopped at the
+          edge of that list. `opFound` reaches the SAME
+          `_opCreateLocal(a.op, 0, 'free-licence')` INSERT by a different door
+          and never asked whether the books could be read.
+       MEASURED against the shipped source before this fix, `{code:'42501'}`,
+       player already holding the cloud licence:
+           cityOpsGrantFree  error → fetchFailed=true, INSERTS=0, unknown-state
+           opFound           error → fetchFailed=true, INSERTS=1, and the player
+                                     was toasted "licence issued — free"
+       fetchFailed was CORRECT throughout. The read half of the fix worked; the
+       branch simply never consulted it. That is the whole lesson: a round that
+       drives one caller certifies one caller.
+       Everything below runs the branch text lifted out of public/index.html, so
+       re-inlining the create makes this section fail rather than drift. */
+
+    const found = async (label, opts) => {
+      const { state, api } = build(opts);
+      await runCaller(api.opFetch, state.Operations);
+      await api.opFound({ kind: 'opFound', op: 'construction' });
+      console.log('   ' + label.padEnd(42) + ' fetchFailed=' + String(state.Operations.fetchFailed).padEnd(5) +
+                  ' visible=' + api.rows().length + ' inserts=' + state.inserts +
+                  ' toast=' + JSON.stringify(state.toasts));
+      return { ...state, api };
+    };
+
+    // ── 7a. The healthy player who already holds it: unchanged, still refused.
+    const f1 = await found('opFound  healthy, player HAS it', { cloudHas: true });
+    chk('§7 opFound on a healthy read grants nothing to a player who has it',
+        f1.inserts === 0 && f1.Profile.jbLocalOps.length === 0,
+        'inserts ' + f1.inserts);
+
+    // ── 7b. THE DEFECT: error response, player already holds the cloud row. ──
+    const f2 = await found('🔴 opFound, PostgREST {error}, HAS it', { cloudHas: true, readFails: true });
+    chk('§7 a PostgREST {error} still reports a FAILED fetch on this route',
+        f2.Operations.fetchFailed === true, 'fetchFailed=' + f2.Operations.fetchFailed);
+    chk('§7 opFound writes NO corp_operations row while the licences are unknown',
+        f2.inserts === 0 && f2.Profile.jbLocalOps.length === 0,
+        'inserts ' + f2.inserts + ', local rows ' + f2.Profile.jbLocalOps.length +
+        ' — a permanent duplicate licence from one click on a transient RLS blip');
+    chk('§7 …and the player is told to retry, not told a licence was issued',
+        f2.toasts.length === 1 && /try again/i.test(f2.toasts[0]) && !/issued/i.test(f2.toasts.join(' ')),
+        JSON.stringify(f2.toasts));
+
+    // ── 7c. THE FEATURE STILL WORKS. A new player on a trustworthy read must
+    //        still get the free licence, or the fix is just a removal. ──
+    const f3 = await found('opFound  healthy, NEW player', { cloudHas: false });
+    chk('§7 a new player on a trustworthy read IS still granted the free licence',
+        f3.inserts === 1 && f3.api.rows().filter((r) => r && r.op_type === 'construction').length === 1,
+        'inserts ' + f3.inserts + ' rows ' + JSON.stringify(f3.api.rows().map((r) => r.op_type)));
+
+    // ── 7d. IDEMPOTENCE ON THIS ROUTE: click Found twice, one row. ──
+    const { state: st7, api: api7 } = build({ cloudHas: false });
+    await runCaller(api7.opFetch, st7.Operations);
+    await api7.opFound({ kind: 'opFound', op: 'construction' });
+    await api7.opFound({ kind: 'opFound', op: 'construction' });
+    const rows7 = api7.rows().filter((r) => r && r.op_type === 'construction').length;
+    console.log('   opFound ×2 on a clean empty read           inserts=' + st7.inserts + ' rows=' + rows7);
+    chk('§7 clicking Found twice writes exactly one licence',
+        st7.inserts === 1 && rows7 === 1, 'inserts ' + st7.inserts + ', rows ' + rows7);
+
+    // ── 7e. The helper going missing must REFUSE, never fall back to the old
+    //        inline create — that fallback is how this defect survives a fix. ──
+    const f4 = await found('opFound, grant fn MISSING, error read', { cloudHas: true, readFails: true, noGrantFn: true });
+    chk('§7 a missing cityOpsGrantFree refuses rather than re-opening the hole',
+        f4.inserts === 0 && f4.Profile.jbLocalOps.length === 0, 'inserts ' + f4.inserts);
+
+    /* ── 7g. THE REGRESSION THAT WOULD HURT EVERY HONEST PLAYER, pinned here
+           because the write-seam refusal turns on `_fetched && !fetchFailed`
+           and an offline player has never talked to Supabase at all. opFetch
+           counts that as TRUSTWORTHY — there is no read to have failed — and it
+           must keep doing so, or "unknown state" quietly grows to mean "signed
+           out" and the free licence is denied to everyone playing offline. */
+    const f5 = await found('opFound  OFFLINE, new player', { signedIn: false, noCorp: true, cloudHas: false });
+    chk('§7 an offline player is still granted the free licence',
+        f5.Profile.jbLocalOps.length === 1 && f5.Operations.fetchFailed === false,
+        'local rows ' + f5.Profile.jbLocalOps.length + ', fetchFailed=' + f5.Operations.fetchFailed +
+        ' — the refusal has started eating signed-out players');
+
+    /* ── 7f. THE TEXT ASSERTION, because 7a-7e cannot see a re-inlined branch
+           that _opCreateLocal's own refusal happens to cover. The branch must
+           DELEGATE; the free-licence create belongs to cityOpsGrantFree alone.
+           `ops-found-inline` exists to prove this line does the catching. */
+    chk('§7 the opFound branch delegates and does not create the licence itself',
+        /window\.cityOpsGrantFree/.test(SRC.found) && !/_opCreateLocal/.test(SRC.found),
+        'the Just Business branch reaches _opCreateLocal directly again: ' + SRC.found);
+    chk('§7 …and _opCreateLocal still refuses a free licence against an unread list',
+        /fundedBy === 'free-licence'/.test(SRC.createLocal) && /fetchFailed/.test(SRC.createLocal),
+        'the write-seam refusal is gone — the next caller reopens this');
+  }
+
+  if (fails) { bad++; console.log('\n=== ROUND 0u: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0u: ALL PASS ===');
 }
 
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {

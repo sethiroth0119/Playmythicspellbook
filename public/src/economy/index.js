@@ -101,11 +101,30 @@ function mount(opts) {
          E.mount({ nodeId, population: cityPop(), state: _pendingEconomy,
                    established: !!(s.tiles && Object.keys(s.tiles).length) })
 
-     ⚠ STILL OUTSTANDING. node-city/index.html was outside this package's edit
-       set, so today nothing passes `established` and the re-arm remains open in
-       production. The seam and the refusal are here, tested, and cost one line
-       to switch on. Passing nothing is exactly the old behaviour. */
-  Sim.bootstrap({ established: !hadState && opts.established === true });
+     ✅ WIRED. node-city now derives it in `loadState()` from the parsed save
+       (`_pendingEstablished`) and passes it here — see node-city/index.html,
+       the `E.mount({ … established: _pendingEstablished })` call. Before that
+       line existed the ONLY production caller passed no flag at all, so this
+       refusal could never fire and the round that tested it passed
+       `established: true` itself: a green test sitting on top of a fully open
+       hole. MEASURED on the tree that had this refusal and no caller for it —
+       a lived 180-day city, charterIssued 300,000.00 / totalCinder 293,295.48,
+       remounted with the economy key deleted came back charterIssued 300,000.00
+       / totalCinder 300,000.00, i.e. a fresh tranche AND the whole 700,000 🔥
+       allowance re-armed (headroom back to 400,000.00), from deleting one JSON
+       key, with no console and surviving reloads.
+
+     🔴 `hadState` ALONE IS ALSO SUFFICIENT, AND IT IS THE SECOND DOOR. If this
+        module was handed ANY state at all then the city already exists,
+        whatever the blob says about itself — which is the whole of the
+        `booted: false` defect: the save claimed it had never bootstrapped, and
+        sim.js `load()` believed it, AFTER `clampLoadedCinder()` had run. That
+        is fixed at source (sim.js now sets `S.booted = true` unconditionally in
+        load()), but the two are deliberately independent: this one lives at the
+        level that KNOWS whether a save was handed over, so a future edit to
+        load() cannot silently reopen it. Reverting either one alone leaves the
+        door shut; run.mjs breaks each in turn to prove it. */
+  Sim.bootstrap({ established: hadState || opts.established === true });
   mounted = true;
   mountGen++;
 

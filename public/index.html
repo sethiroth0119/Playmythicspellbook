@@ -80214,6 +80214,24 @@ function _ownsBankOp() {
    widening that inference again. */
 async function _opCreateLocal(opType, cost, fundedBy) {
   if ((Operations.list || []).some(function (x) { return x && x.op_type === opType; })) { showToast('You already operate that.', 3400); return false; }
+  /* 🔴 LAST LINE BEFORE A PERMANENT ROW, AND IT NOW GUARDS THE FREE CASE ITSELF.
+     The guard above re-reads `Operations.list`, which is EMPTY for exactly the
+     reason the caller was fooled — a corp_operations read that errored — so it
+     cannot catch this on its own. Two callers pass 'free-licence'; one of them
+     shipped without the refusal and wrote a duplicate row (measured: INSERTS=1
+     on a `{code:'42501'}` read against a player who already held the licence).
+     Closing only that caller leaves the next one to rediscover it, so the
+     REFUSAL LIVES AT THE WRITE as well: a licence that costs nothing may not be
+     created against books we cannot vouch for.
+     ⚠ SCOPED TO FREE GRANTS ON PURPOSE. A PAID founding (personal Cinder, or
+       the MT bank stake at cost 0 with no `fundedBy`) has already taken the
+       player's money by the time it reaches here — refusing it would charge
+       them for nothing. Those paths are unchanged. */
+  if ((cost | 0) <= 0 && fundedBy === 'free-licence'
+      && !(Operations._fetched && !Operations.fetchFailed)) {
+    try { console.warn('[ops] free licence refused — operations list unread or unreadable', opType); } catch (e) {}
+    return false;
+  }
   const localOp = {
     id: 'local_' + opType + '_' + Date.now(),
     corp_id: (Corp.mine && Corp.mine.id) || 'local',
@@ -80321,7 +80339,11 @@ function _opEcon(t) {
   return merged;
 }
 try { window.__mg = window.__mg || {}; window.__mg.opsEcon = { table: OPS_ECON, live: _opEcon, computed: _opComputed }; } catch (e) {}
-const Operations = { list: [], _fetched: 0 };
+/* `_fetched` is "when did a TRUSTWORTHY read last complete" — 0 means never, and
+   opFetch() only stamps it when the cloud leg actually succeeded. `fetchFailed`
+   is the other half of the same answer. Both are read by cityOpsGrantFree, which
+   must never hand out a licence against a list it cannot vouch for. */
+const Operations = { list: [], _fetched: 0, fetchFailed: false };
 // 💾 Personally-funded businesses live on the PROFILE (Profile.jbLocalOps,
 // cloud-synced via __jbLocalOps__). They used to be pushed into Operations.list
 // in MEMORY ONLY — the very next fetch (or a reload) wiped them even though the
@@ -80332,23 +80354,61 @@ function _jbLocalOpsList() {
   if (!Array.isArray(Profile.jbLocalOps)) Profile.jbLocalOps = [];
   return Profile.jbLocalOps;
 }
+/* 🔴 A POSTGREST ERROR IS NOT AN EMPTY TABLE, AND THIS FUNCTION USED TO SAY IT
+   WAS. The supabase-js client RESOLVES with `{ data: null, error: {…} }` on an
+   RLS refusal, a bad column or a 5xx — it does not throw. The line here read
+   `if (r && !r.error && Array.isArray(r.data)) cloud = r.data;`, so an error
+   response left `cloud` as `[]` and fell through to the success path. The
+   caller in corpFetchMine then ran `await opFetch(); Operations.fetchFailed =
+   false;` and recorded a SUCCESSFUL read of a table it had never read.
+   WHAT THAT COST, reproduced against the shipped source with a
+   `{code:'42501', message:'permission denied for table corp_operations'}`
+   response and a player who already held the cloud licence:
+       healthy read   → fetchFailed false, list 1 row,  grant refused, 0 rows written
+       error  read    → fetchFailed FALSE, list 0 rows, grant ISSUED, 1 row written
+   The city sees no Construction Co., the free-licence auto-grant fires, and
+   `_opCreateLocal` INSERTs a second permanent `corp_operations` row (:80229)
+   beside the one that was already there. Durable, in the database, from a
+   transient RLS blip.
+   SO THE READ NOW REPORTS ITSELF. `fetchFailed` is owned here and here only —
+   the caller no longer clears it — and it is true whenever ANY leg of the cloud
+   answer was not proven good. `_fetched` is stamped only on a trustworthy read,
+   so "never read" and "read failed" stay distinguishable from "read clean and
+   empty", which is the distinction cityOpsGrantFree turns on. */
 async function opFetch() {
   try {
     let cloud = [];
-    if (Corp.mine && initCloud() && Profile.cloud && Profile.cloud.signedIn) {
+    /* Starts true and is DEMOTED, never promoted: every path that could not
+       prove it saw the player's rows has to land on false. */
+    let cloudOk = true;
+    const signedIn = !!(Profile.cloud && Profile.cloud.signedIn);
+    if (Corp.mine && initCloud() && signedIn) {
+      cloudOk = false;
       const r = await Cloud.client.from('corp_operations').select('*').eq('corp_id', Corp.mine.id).limit(40);
-      if (r && !r.error && Array.isArray(r.data)) cloud = r.data;
+      if (r && !r.error && Array.isArray(r.data)) { cloud = r.data; cloudOk = true; }
+      else { try { console.warn('[ops] corp_operations read failed', (r && r.error) || r); } catch (e2) {} }
+    } else if (signedIn && Corp._memberErr) {
+      /* The SAME hole one table upstream. `Corp.mine` is null here not because
+         the player has no corporation but because the corp_members lookup
+         errored (:81238) — so there may be corp rows we simply cannot see, and
+         claiming a clean read of them is the identical mistake. */
+      cloudOk = false;
     }
     const locals = _jbLocalOpsList();
     const cloudTypes = {};
     cloud.forEach((x) => { if (x && x.op_type) cloudTypes[x.op_type] = 1; });
-    const keep = locals.filter((x) => x && x.op_type && !cloudTypes[x.op_type]);
-    if (keep.length !== locals.length) { Profile.jbLocalOps = keep; try { saveProfile(); } catch (e) {} }
+    /* ⚠ AND THE DE-DUPE ONLY RUNS ON A TRUSTED READ. Dropping a local row
+       because the corp "does not own" that type, on the strength of a read that
+       failed, deletes the player's own operation. */
+    const keep = cloudOk ? locals.filter((x) => x && x.op_type && !cloudTypes[x.op_type]) : locals.slice();
+    if (cloudOk && keep.length !== locals.length) { Profile.jbLocalOps = keep; try { saveProfile(); } catch (e) {} }
     Operations.list = cloud.concat(keep);
-    Operations._fetched = Date.now();
+    Operations.fetchFailed = !cloudOk;
+    if (cloudOk) Operations._fetched = Date.now();
     return Operations.list;
   } catch (e) {
     Operations.list = _jbLocalOpsList().slice();
+    Operations.fetchFailed = true;
     return Operations.list;
   }
 }
@@ -81383,7 +81443,13 @@ async function _corpEnsureRun() {
         // buildings against this list and used to delete every sited building
         // when it came back empty. Record the failure so cityOpsState can say
         // "I do not know" instead of "you own nothing".
-        try { await opFetch(); Operations.fetchFailed = false; } catch (e) { Operations.list = []; Operations.fetchFailed = true; }
+        /* ⚠ THE FLAG IS NO LONGER CLEARED HERE. This line used to read
+           `await opFetch(); Operations.fetchFailed = false;` — which recorded a
+           successful read whenever opFetch did not THROW, and a PostgREST
+           `{error}` response resolves rather than throwing. opFetch owns the
+           flag now and sets it both ways; the catch stays as defence against a
+           throw from anywhere else in the call. */
+        try { await opFetch(); } catch (e) { Operations.list = []; Operations.fetchFailed = true; }
       }
     } else if (!Corp._memberErr) {
       // Only wipe when the lookup SUCCEEDED and genuinely found nothing. A
@@ -82516,14 +82582,53 @@ function _jbHandleAction(a) {
                 bought and is NOT compensated: after the fact a paid licence and
                 a granted one are the same row, so a refund would be a faucet
                 pointed at a charge nobody can identify. */
+          /* 🔴 THE FOURTH ROUTE TO THE SAME FREE ROW, AND THE ONE THAT WAS LEFT
+                OPEN. cityOpsGrantFree grew a `known()` refusal because a
+                swallowed PostgREST error makes "you don't own one" a lie; the
+                city's three entry points (cityOpsGrantFree ← opsAcquireFree ←
+                opsGrantNodeLicences) were funnelled through it. THIS branch —
+                the Just Business "Found" button — was not, and it reaches the
+                identical `_opCreateLocal(…, 'free-licence')` INSERT.
+                MEASURED against the shipped source, `{code:'42501'}` on the
+                corp_operations read, player ALREADY holding the cloud licence:
+                  cityOpsGrantFree  error → fetchFailed=true, INSERTS=0, refused
+                  opFound (here)    error → fetchFailed=true, INSERTS=1, and the
+                                            player is toasted "licence issued"
+                One click, one permanent duplicate corp_operations row, and
+                nothing in the codebase ever removes one. `fetchFailed` was
+                CORRECTLY true the whole time — this branch simply never asked.
+                SO IT ASKS NOW, by delegating rather than by growing a second
+                copy of the refusal: cityOpsGrantFree already owns the price
+                re-check, the ownership test, the read-before-write and the
+                idempotence. A fifth caller should route here too. */
           if ((e.startup | 0) <= 0) {
+            /* Authoritative when it says YES — a row we can see is a row that
+               exists — and worth nothing when it says NO, which is the whole
+               bug. So a hit short-circuits and a miss decides nothing. */
             const _held = (typeof _opsAllRows === 'function')
               ? _opsAllRows() : (Operations.list || []);
             if (_held.some(function (x) { return x && x.op_type === a.op; })) {
               showToast('You already operate that.', 3400); _jbSendData(); return;
             }
-            const madeFree = await _opCreateLocal(a.op, 0, 'free-licence');
-            if (madeFree) showToast('🏗 ' + ((OP_LABELS && OP_LABELS[a.op]) || a.op) + ' licence issued — free. Hire workers to start production.', 6000);
+            /* ⚠ The fallback for a missing grant function is the REFUSAL, never
+               the old inline create. Re-opening the hole because a helper went
+               missing is how this defect survived its own fix once already. */
+            const _g = (typeof window.cityOpsGrantFree === 'function')
+              ? await window.cityOpsGrantFree(a.op)
+              : { ok: false, error: 'no-grant-fn' };
+            if (_g && _g.ok && _g.existed === false) {
+              /* cityOpsGrantFree issues the success toast itself — one row, one
+                 message, wherever the licence was claimed from. */
+            } else if (_g && _g.ok) {
+              showToast('You already operate that.', 3400);
+            } else if (_g && _g.error === 'not-free') {
+              showToast('⚠ That operation is no longer free — reopen Just Business for the current price.', 4200);
+            } else {
+              /* unknown-state: we could not read the player's operations, so we
+                 do not know whether granting would duplicate. Costs them a
+                 retry; granting wrongly costs a permanent row. */
+              showToast('⚠ Could not read your operations just now — try again in a moment.', 4200);
+            }
             _jbSendData(); return;
           }
 
@@ -208614,9 +208719,24 @@ window.cityOpsCityHall = function () {
    IDEMPOTENT BY OWNERSHIP, never by a flag. _opsAllRows() spans the corp list
    AND the profile-local list, and the profile-local list is on disk before any
    network call, so booting twice with a node held cannot produce two licences
-   even offline. The remaining seam — a corp row that exists in the cloud but
-   has not been fetched yet — is closed by the opFetch() below AND self-heals
-   anyway: opFetch drops a local row whose type the corp already owns (:80063). */
+   even offline.
+
+   🔴 …AND OWNERSHIP IS ONLY IDEMPOTENT IF THE BOOKS CAN BE READ. This header
+      used to close its remaining seam — "a corp row that exists in the cloud
+      but has not been fetched yet" — with "the opFetch() below", and that was
+      true only for a fetch that THREW. supabase-js resolves an RLS refusal or a
+      5xx as `{ data:null, error:{…} }`, and opFetch treated that as an empty
+      table; `held()` then answered "no" about rows it had never seen and this
+      function granted a SECOND Construction Co., writing a permanent
+      corp_operations row (:80229). Measured against the shipped source, error
+      response, player already holding the cloud licence: grant issued,
+      `{ok:true, existed:false}`, one row written.
+      SO THE READ MUST NOW SAY SO, AND AN UNPROVEN READ REFUSES. opFetch owns
+      `fetchFailed`/`_fetched`; below, a state we cannot vouch for returns
+      `unknown-state` and writes nothing. The callers (city boot for a node
+      holder, the locked-card click) both retry, so a refusal costs a player
+      nothing but a later grant — where granting wrongly costs a duplicate row
+      that no code path removes. */
 window.cityOpsGrantFree = async function (opType) {
   try {
     const t = String(opType || '');
@@ -208625,10 +208745,20 @@ window.cityOpsGrantFree = async function (opType) {
     if ((e.startup | 0) > 0) return { ok: false, error: 'not-free' };
     const held = () => _opsAllRows().some((o) => o && o.op_type === t);
     if (held()) return { ok: true, existed: true };
+    /* "Do we actually know what this player owns?" — a completed read that
+       reported no failure. Anything else (never read, or read and failed) is
+       unknown, and unknown may not grant. */
+    const known = () => !!Operations._fetched && !Operations.fetchFailed;
     // Read the list before writing to it. Granting against a list we have never
     // read is how a player ends up with a local row beside a corp row.
-    try { if (typeof opFetch === 'function' && !Operations._fetched) await opFetch(); } catch (e2) {}
+    if (!known()) { try { if (typeof opFetch === 'function') await opFetch(); } catch (e2) {} }
     if (held()) return { ok: true, existed: true };
+    /* 🔴 THE REFUSAL. Held-ness above is authoritative when it says YES (a row
+       we can see is a row that exists); it is worthless when it says NO against
+       a failed read. So the last gate before a permanent row gets written is
+       whether the list is trustworthy at all. Not an error to the player — the
+       caller retries on the ops beat, and the locked card stays clickable. */
+    if (!known()) return { ok: false, error: 'unknown-state' };
     const made = await _opCreateLocal(t, 0, 'free-licence');
     if (!made) return { ok: true, existed: true };
     try { showToast('🏗 ' + ((OP_LABELS && OP_LABELS[t]) || t) + ' licence issued — free. Place it in your city from the build menu.', 6000); } catch (e2) {}

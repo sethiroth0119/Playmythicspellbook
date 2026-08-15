@@ -454,13 +454,18 @@ export function bootstrap(opts) {
      The host is the only party that can tell "brand new city" from "established
      city whose economy key was deleted": nothing in /src/economy survives a
      reload except the save it is being handed. So the decision is the host's
-     and arrives as a flag. Passing nothing keeps the old behaviour exactly, so
-     this is inert until node-city wires it — see index.js `mount()` for the
-     one-line change that is still outstanding. */
+     and arrives as a flag.
+
+     ✅ WIRED AS OF THIS PACKAGE. node-city derives it in `loadState()` from the
+     parsed save and index.js `mount()` also raises it whenever it handed over
+     ANY state at all. Reaching this branch therefore means one of two things —
+     "the city has tiles but no economy blob", or "we were handed a save and
+     something upstream let bootstrap run anyway" — and the correct answer to
+     both is the same: no tranche. */
   if (opts.established) {
     /* Never silent, for the same reason clampLoadedCinder() is never silent. */
-    logEvent('bad', '🔴 This city already existed but arrived with no economy — no founding tranche was issued.');
-    try { console.warn('[economy] established city mounted with no saved economy — the bootstrap tranche is NOT re-armed.'); } catch (e) {}
+    logEvent('bad', '🔴 This city already existed — no founding tranche was issued.');
+    try { console.warn('[economy] established city bootstrapped — the founding tranche is NOT re-armed.'); } catch (e) {}
   } else {
     issueCharter(ECON.firm.charter.seed);
   }
@@ -2016,7 +2021,36 @@ export function load(raw) {
      loader has never thrown on an unknown key — it reads what it names — which
      is why nothing has to be done to drop them. */
   S.payoutAllowed = raw.payoutAllowed !== false;
-  S.booted = !!raw.booted;
+  /* 🔴 A SAVE IS PROOF THE CITY ALREADY EXISTS — AND THIS LINE USED TO LET THE
+     SAVE ARGUE OTHERWISE. It read `S.booted = !!raw.booted`, so a save carrying
+     `booted: false` walked out of load() with the flag down, and `bootstrap()`'s
+     `if (S.booted) return false` therefore let it straight through to
+     `issueCharter(ECON.firm.charter.seed)`.
+     THE PART THAT MADE IT INVISIBLE: `clampLoadedCinder()` is the LAST line of
+     this function, so the 300,000 🔥 was issued AFTER the only ceiling that
+     could have caught it had already run and passed. Textbook of the structural
+     blind spot — money moving between the load and the first tick, where no
+     audit window is open.
+     MEASURED on the tree before this line changed, one edited boolean on an
+     otherwise honest 60-day save, nothing else touched:
+         charterIssued  300,000.00 → 600,000.00
+         totalCinder    293,295.48 → 593,295.48   (+300,000 🔥, first reload)
+         and ratcheting to the 700,000 🔥 lifetime cap over eight reloads:
+         totalCinder settled at 492,514.87 against an honest 293,295.48.
+     Unlike the deleted-economy-key door this one costs the player NOTHING —
+     the city keeps every firm, every balance and every day it had lived.
+     THE FIX IS UNCONDITIONAL AND LOSSLESS. `serialize()` only ever runs on a
+     mounted economy, and `mount()` always calls `bootstrap()` first, so every
+     honestly written save has `booted: true` already; there is no legitimate
+     save this discards information from. The founding tranche exists for a city
+     that does not exist yet, and a save is the one piece of evidence that
+     settles that question. `raw.booted` is not read at all any more — a field
+     the loader must ignore, in the same spirit as the retired disaster keys
+     above. index.js `mount()` carries the second, independent refusal (it
+     passes `established` whenever it handed over ANY state), so reverting this
+     line alone does not reopen the door — see the round in run.mjs that breaks
+     each of the two in turn. */
+  S.booted = true;
   if (raw.demandEMA && typeof raw.demandEMA === 'object') {
     for (const id in raw.demandEMA) {
       const v = Number(raw.demandEMA[id]);

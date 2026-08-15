@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120w7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -223524,7 +223524,7 @@ render();
      bridge it registers, stays inert and warns once — the globals trap.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/city/index.js?v=v120t9chainprod1"></script>
+<script type="module" src="src/city/index.js?v=v120w7city1"></script>
 <!-- 🤝 TRADING — player-to-player swaps + LOT listings for the Resource
      Exchange. Registers window.MythicTrading and is INERT until the Market's
      Resources tab renders. index.html keeps the Supabase calls (Cloud/Profile

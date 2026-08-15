@@ -18347,10 +18347,68 @@ async function bldPayRefund(refund) {
    the order charged and nothing more — the standing building's own 50% is
    demolish's business, not cancel's.
    `t.bld` is cleared FIRST, before the await, for the same reason bldFinish
-   does it: the 4-second sweep and a second click both have to find nothing. */
+   does it: the 4-second sweep and a second click both have to find nothing.
+
+   🔴 AND THE LICENCE COMES BACK, WHICH IT DID NOT. READ THIS BEFORE SIMPLIFYING.
+      This function used to `delete game.tiles[kk]` for k=0 and say nothing to
+      the operations layer, so a cancelled operation's licence stayed SITED at a
+      grid square with no tile on it. opsReconcile's boot branch exists for
+      exactly that shape — "the op knows where it stands but the save did not
+      carry the tile" — and it rebuilds the tile with `bld: null`, i.e.
+      FINISHED. So place → cancel (refunded in full) → reload handed the player a
+      free, instant, crew-slot-free operation. Three ordinary UI actions, no
+      console, no save editing. Applied to op_construction it is a BOOTSTRAP: a
+      free Construction Co. lifts the municipal duration ceiling and raises crew
+      slots and build speed, which unlocks the whole gated feature.
+      ⚠ AND IF THE UNSITE FAILS, THE CANCEL IS REFUSED WHOLE. Paying the refund
+        and leaving the licence sited is the same exploit by accident. Nothing
+        has moved at the point we find out, so putting the order back and asking
+        the player to click again is both honest and cheap — where completing
+        the cancel would be unrecoverable. Gate: run.mjs round0r §3.
+      🔴 AND THE REFUSAL KEYS OFF THE TILE TYPE, NOT OFF WHETHER A ROW RESOLVED.
+        THIS IS THE SAME EXPLOIT A SECOND TIME and it was reproduced live, on the
+        "fixed" build, for a free Construction Co. The first fix read
+        `opRow = (rec.k === 0) ? opsRowForKey(kk) : null` and treated `null` as
+        "this tile is not an operation". It is NOT: `opsRowForKey` → `opsRowAt`
+        reads the CACHED `OPS.st`, and `opsRefresh` writes `{ ops: [],
+        unavailable: true }` whenever `_opsParent()` is null and the bridge is
+        not `standalone` — that is `message` mode BY DESIGN, an older parent with
+        no `cityOpsState`, or a parent whose call threw. `st.manager` (a hired
+        mayor in the owner's city) does the same: `st.ops` holds the MAYOR's
+        rows, so the owner's sited building resolves to null. In every one of
+        those the 🧨 button deleted the tile, paid the refund and left the licence
+        sited — and opsReconcile's boot branch rebuilt it next load. `opsTypeOf`
+        reads the tile's own type and cannot be knocked out by a dead bridge, so
+        "is this an operation" and "can the register tell us which one" are now
+        two separate questions and only the first decides whether we must ask.
+        Gate: run.mjs round0r §3c, sabotage `cancel-blind`. */
 async function bldCancel(kk) {
   const t = game.tiles[kk]; const rec = t && t.bld; if (!rec) return null;
+  /* Read BEFORE anything is deleted: opsRowForKey resolves through the TILE's
+     type, and the k=0 branch below removes the tile. k=1 never removes a tile
+     and never touches the licence — the building is standing and stays sited. */
+  const isOp = (rec.k === 0) && !!opsTypeOf(t.type);
+  const opRow = isOp ? (() => { try { return opsRowForKey(kk); } catch (e) { return null; } })() : null;
+  if (isOp && !opRow) {
+    /* The register cannot tell us which licence this is, so we cannot release
+       it — refused exactly as a failed unsite is refused, and for the identical
+       reason: nothing has moved yet. */
+    try { toast('🏭 The business register is not answering — the cancel was not made. Try again in a moment.', 'bad'); } catch (e) {}
+    return null;
+  }
   delete t.bld;
+  if (opRow) {
+    let ok = false;
+    try { const r = await opsUnsite(opRow.id); ok = !!(r && r.ok); } catch (e) { ok = false; }
+    if (!ok) {
+      t.bld = rec;                              // nothing has moved yet — put it back
+      try { toast('🏭 Could not release the business licence — the cancel was not made. Try again in a moment.', 'bad'); } catch (e) {}
+      return null;
+    }
+    // The live lab / network panel belongs to a business that is no longer sited.
+    try { if (OPS.live && OPS.live.id === opRow.id) OPS.live = null; } catch (e) {}
+    try { if (_opsNetKey && _opsNetKey === kk) opsNetworkClose(); } catch (e) {}
+  }
   const refund = bldOrderRefund(rec);
   const nm = (BUILDINGS[t.type] || {}).name || t.type;
   if (rec.k === 0) {
@@ -18582,9 +18640,50 @@ function bldLoad(raw, lvl, type) {
     if (l <= lvl) return null;            // the upgrade already landed in a newer write
     if (l > lvl + 1) l = lvl + 1;         // a save may never grant a multi-level jump
   }
-  return { k, l, s, d: d0, fv: (+raw.fv) | 0,
-           pc: Math.max(0, Math.round(+raw.pc || 0)),
-           pr: (raw.pr && typeof raw.pr === 'object') ? raw.pr : null };
+  /* 🔴 THE REFUND BASIS IS ATTACKER-CONTROLLED UNTIL IT IS CLAMPED HERE.
+     `pc` and `pr` used to come off disk as `Math.max(0, Math.round(+raw.pc||0))`
+     and `typeof raw.pr === 'object' ? raw.pr : null` — an unbounded number and
+     an arbitrary object with unvalidated keys. They flow bldOrderRefund →
+     bldPayRefund → addCinders → addGems → Profile.gems + saveProgressCloud.
+     That was the FIRST attacker-controlled MAGNITUDE in the city save format:
+     the pre-existing demolish refund derives from costOf() and is bounded by the
+     price table, and this one was not bounded by anything. Unvalidated `pr` keys
+     were also a RULE 2 hole — a chain resource id in the save would have reached
+     addRes, and chain ids are not camp ledger ids.
+     THE BOUND IS costOf(type, l), which is exactly what the order was charged:
+     the two placement sites pass `costOf(placeType)` and `costOf(t.type, target)`
+     to bldRecord, so an honest record clamps to ITSELF and place→cancel stays
+     exactly zero. `pr` is whitelisted against the SAME dict, which is stronger
+     than a ledger-id whitelist — a key that is not in this building's price is
+     not a key this order could have paid, whatever ledger it belongs to.
+     ⚠ THE HONEST COST OF THE CLAMP, stated so the next reader does not "fix" it:
+       bldPaid's header says a refund must NOT be re-derived from costOf, because
+       a retune between the order and the cancel would refund a number that was
+       never paid. That still holds and the paid figure is still what is
+       refunded — this is a CEILING only. A price CUT mid-order therefore
+       under-refunds an old record by the size of the cut. That is the direction
+       we take deliberately; the other direction is an unbounded mint. */
+  const cap = bldRefundCap(type, l);
+  const pc = Math.min(Math.max(0, Math.round(+raw.pc || 0)), Math.max(0, Math.round(+cap.cinder || 0)));
+  let pr = null;
+  if (raw.pr && typeof raw.pr === 'object' && !Array.isArray(raw.pr)) {
+    for (const r in raw.pr) {
+      if (r === 'cinder') continue;             // currency is pc's business, never addRes's
+      const lim = Math.max(0, Math.round(+cap[r] || 0));
+      const v = Math.min(Math.max(0, Math.round(+raw.pr[r] || 0)), lim);
+      if (v > 0) { if (!pr) pr = {}; pr[r] = v; }
+    }
+  }
+  return { k, l, s, d: d0, fv: (+raw.fv) | 0, pc, pr };
+}
+/* The most a saved order is allowed to CLAIM it paid, per resource. Its own
+   function because bldLoad runs before window.MythicEconomy exists and must not
+   throw: costOf() reads BUILDINGS (a module const, always there) and no ECON
+   value, but a tile type that is not in BUILDINGS would take `def.tierCost` on
+   undefined down with it — and a load helper that throws takes the whole city
+   save with it. An unreadable price refunds NOTHING, which is the safe end. */
+function bldRefundCap(type, lvl) {
+  try { return costOf(type, lvl) || {}; } catch (e) { return {}; }
 }
 
 /* 🚧 THE SITE LOOK. A foundation pad, four corner posts and two tie beams —
@@ -18779,10 +18878,51 @@ function bldSweep(nowMs) {
    ⚠ IF THE ECONOMY MODULE IS ABSENT — its documented right; a 404 on
      /src/economy/* is survivable everywhere else in this file — we do NOT
      leave jobs parked with an unbounded `d`. WE COMPLETE THEM ALL. A paid-for
-     tile is never held hostage to a CDN hiccup or to a cached tuning.js. */
-function bldNormalize() {
+     tile is never held hostage to a CDN hiccup or to a cached tuning.js.
+
+   🔴 `defer` EXISTS BECAUSE THIS FUNCTION SHIPPED A CINDER MINT. READ THIS
+      BEFORE TAKING IT OUT AGAIN.
+      The tail of this function used to be an unconditional `bldSweep(Date.now())`
+      — and boot() calls bldNormalize() ~118 lines BEFORE it awaits
+      offlineCatchUp(). So every job already due was COMPLETED AT THE WALL CLOCK
+      before the absence was simulated, and the catch-up — which monkey-patches
+      MythicCityBridge.addRes/addCinders/spendRes for its whole slice loop, so
+      every credit inside it is a REAL LEDGER WRITE — then paid that building for
+      the ENTIRE absence, including the hours it was still a hole in the ground.
+      The in-loop virtual sweep was dead code on a cold boot: _bldRebuildDue()
+      built an EMPTY list, because this line had already cleared the queue.
+      Measured on the gate's harness: 12 Clubs, 6 h away, each job due 2 h in —
+      honest 14.400 🔥, shipped 21.600 🔥, MINT +7.200 🔥, i.e. 24 building-hours
+      nobody built. It scales with output multipliers and with absence length up
+      to OFFLINE_CAP_H.
+      Worse, the sweep ran with `_bldOffline === false`, so it fired the FULL
+      trailer including ecoSync() — firms founded, drawing charter capital,
+      before the absence existed.
+      bldSweep's own header calls this exact scenario "a Cinder mint, and it is
+      the single most dangerous thing this feature could have done". It was.
+      🔴 THE AUDIT COULD NOT SEE IT AND STILL CANNOT. sim.js takes
+         `before = totalCinder()` INSIDE runDay; this all happens outside that
+         window, so a green gauntlet says nothing about it. The check that would
+         have caught it is run.mjs ROUND 0r, which drives THIS function in
+         boot()'s real order and asserts the load→catch-up gap is sealed.
+      So: `bldNormalize(true)` applies the two ECON bounds (which the catch-up
+      NEEDS applied before it runs, or it sweeps against an unclamped duration)
+      and COMPLETES NOTHING. It returns a reason string when the module is
+      absent, and the caller finishes the leftovers AFTER the catch-up. A live
+      call with no argument — the __nc seam, any future caller — keeps the old
+      self-contained behaviour, because outside boot there is no catch-up to be
+      early for. */
+function bldNormalize(defer) {
   const C = bldCfg();
-  if (!C) { bldFinishAll('the construction module did not load'); return; }
+  if (!C) {
+    /* Deferred, the degrade path is STRICTLY BETTER, not weaker: jobs that come
+       due inside the absence now complete at their own hour via the in-loop
+       sweep, and only what is left (an unbounded `d`) is finished wholesale
+       afterwards. Nothing is parked either way — that is the promise above and
+       it is unchanged. Round 0r §2b holds it. */
+    if (defer) return 'the construction module did not load';
+    bldFinishAll('the construction module did not load'); return null;
+  }
   for (const t of Object.values(game.tiles)) {
     if (!t || !t.bld) continue;
     t.bld.d = Math.min(t.bld.d, C.maxSec);          // the absolute ceiling, applied once
@@ -18798,8 +18938,10 @@ function bldNormalize() {
     }
   }
   /* The completion engine lands in its own package; guarded so this function is
-     correct both before and after it exists. */
-  try { if (typeof bldSweep === 'function') bldSweep(Date.now()); } catch (e) {}
+     correct both before and after it exists.
+     ⚠ NOT ON THE DEFERRED PATH — see the header. On boot this sweep is the mint. */
+  if (!defer) { try { if (typeof bldSweep === 'function') bldSweep(Date.now()); } catch (e) {} }
+  return null;
 }
 
 /* ── Raids: threat waves, towers defend, ammo is the fuel of defense ── */
@@ -23597,11 +23739,20 @@ async function loadState() {
                      building the player already paid for — the safe direction. */
                   bld: bldLoad(td.b, lvl, td.type) };
       /* 🏗 ONE BLOCKING STATE, WITH A DEFINED PRECEDENCE. A tile that carries
-         both a live order and a damage flag drops the damage: a site cannot be
-         damaged (damageTile refuses one), so the pair only exists in a save
-         written across that change, and leaving both would offer the player a
-         repair bill on a hole in the ground. */
-      if (t.bld) t.damaged = false;
+         both a live SITE order and a damage flag drops the damage: a site
+         cannot be damaged (damageTile refuses one), so the pair only exists in
+         a save written across that change, and leaving both would offer the
+         player a repair bill on a hole in the ground.
+         🔴 `t.bld.k === 0` IS LOAD-BEARING AND USED TO BE MISSING. This line
+            tested nothing but `t.bld`, and the comment justifying it claimed
+            the (bld && damaged) pair was unreachable by construction. That is
+            true for k=0 and FALSE for k=1: damageTile() and decayTick() both
+            refuse only `bldSite(t)`, so a STANDING building that happens to be
+            mid-upgrade can be damaged by a raid or by wear — and an upgrade
+            window is up to 24 h wide. Every reload then wiped the flag and
+            waived REPAIR_COST_FRAC (0.4) × costOf(). A free repair, on a timer
+            the player is already watching. Gate: run.mjs round0r §5. */
+      if (t.bld && t.bld.k === 0) t.damaged = false;
       /* 🏟 Rehydrate through the module so a save written by an older build,
          or one with a corrupted `stad`, comes back as a valid stadium rather
          than as whatever JSON happened to be on disk. Guarded: the module is
@@ -24599,13 +24750,71 @@ async function opsReconcile(boot) {
       //    authority, and a business the player owns must not vanish.
       const x = o.site.x | 0, z = o.site.y | 0;
       if (inGrid(x, z)) {
-        /* 🏗 `bld: null` EXPLICITLY, for shape parity with the other three tile
-           constructors — and an operation resurrected from its licence comes
-           back FINISHED, which is correct: the licence is paid and the site is
-           recorded, so there is nothing left to build. */
-        const nt = { type: opsKeyOf(o.type), lvl: 1, rot: (o.site.rot | 0) & 3, bld: null };
+        /* 🏗 IT COMES BACK AS A SITE, NOT AS A FINISHED BUILDING, AND THAT LINE
+           IS A SECURITY BOUNDARY RATHER THAN A COSMETIC CHOICE.
+           This branch used to write `bld: null` — finished — reasoning that the
+           licence is paid so there is nothing left to build. That made this
+           branch the AMPLIFIER for every route to a dangling licence: whatever
+           bug leaves a licence sited with no tile, this converts into a free,
+           instant, crew-slot-free operation on the next load. Two such routes
+           have already been found in one feature (bldCancel not unsiting, then
+           bldCancel refusing to notice an operation when the register was down),
+           and applied to op_construction the payout is a free Construction Co.,
+           which lifts the municipal duration ceiling and raises crew slots and
+           build speed — i.e. it unlocks the whole gated feature.
+           So the honest case is served and the exploit is not: the player who
+           genuinely lost a tile to a failed write gets their building back and
+           waits out one build, and the refund basis is EMPTY (`bldRecord(…, {})`
+           → pc 0, pr null), so cancelling it hands back nothing. There is no
+           longer any Cinder in reaching this branch.
+
+           🔴 AND THE RECORD IS WRITTEN BY HAND, READING NO ECON VALUE. THE
+              PREVIOUS ATTEMPT WAS `bldRecord(0, 1, bldDuration(…), {})` AND IT
+              WAS INERT ON 100% OF REAL BOOTS. opsReconcile(true) is awaited by
+              the loadState wrapper — the tile-rehydration pass bldLoad's own
+              header describes: "RUNS BEFORE window.MythicEconomy EXISTS … ECON
+              is undefined for the ENTIRE tile-rehydration pass on 100% of page
+              loads." The economy module is imported ~1000 lines further down
+              boot(), at the bldNormalize(true) site. So bldCfg() was null here,
+              bldProfile returned null, bldDuration returned 0, bldRecord
+              returned null — and the tile landed `bld: null`, i.e. FINISHED.
+              The exact pre-fix behaviour, now shipping behind a comment that
+              claimed the opposite. `boot === true` is the ONLY way into this
+              branch, so that line never once executed under the conditions it
+              was written for. The note it carried read the null as "a city with
+              no timers at all"; it is not, it is every boot of a healthy one.
+              Hence: no call that can return null, no ECON read, no branch. The
+              literal below cannot express a finished building.
+           🏗 `d` IS A PLACEHOLDER AND IS DELIBERATELY THE LARGEST ONE THE RECORD
+              CAN CARRY — not a duration, and NOT a tuning number (Rule 4: the
+              only construction seconds in this file come from bldDuration).
+              bldNormalize(true) runs later in the same boot, after the module
+              mounts, and applies the two bounds it already applies to every
+              record on the board: `d = min(d, C.maxSec)` and, on a formulaV
+              mismatch, `d = min(d, bldDuration(…))`. BOTH CAN ONLY SHORTEN, so
+              the placeholder must start ABOVE the true duration — a short one
+              could never be lifted and would brick a 15-minute build forever.
+              It resolves to the real op duration before the first frame.
+           ⚠ `fv: -1`, not 0. bldNormalize rescales only when fv differs from
+              C.formulaV, and -1 is a value no formulaV can take, so the rescale
+              is unconditional. `fv: 0` is bldRecord's "written with no config"
+              marker and would collide with a formulaV of 0.
+           ⚠ FAILS TOWARD "STILL BUILDING", WHICH IS THE OPPOSITE OF bldLoad's
+              rule and is correct here. bldLoad resolves ambiguity toward
+              COMPLETION because the player already paid for that building and
+              parking it forever is unrecoverable. Nothing has been paid for THIS
+              one — only the licence — so completion is the exploit, and the
+              anti-park guarantee is kept by the other two paths instead: with
+              ECON up the maxSec clamp bounds it, and with ECON absent
+              bldNormalize(true) reports and boot()'s bldFinishAll completes it
+              after the catch-up, exactly as it does for every other order in a
+              module-less city. Gate: run.mjs round0r §3d. */
+        const nt = { type: opsKeyOf(o.type), lvl: 1, rot: (o.site.rot | 0) & 3,
+                     bld: { k: 0, l: 1, s: Date.now(), d: Number.MAX_SAFE_INTEGER,
+                            fv: -1, pc: 0, pr: null } };
         game.tiles[k] = nt;
         nt.mesh = buildMesh(nt.type, 1, x, z); placeMeshAt(nt.mesh, x, z, nt.rot); refreshRoadArea(x, z);
+        if (nt.bld) { try { applyBuildLook(nt); } catch (e) {} }
         continue;
       }
     }
@@ -24868,20 +25077,32 @@ function opsLab(row) {
   if (row) OPS.live = { id: row.id, lab };
   return lab;
 }
-// The one sited lab in this city, as { key, tile, row, lab } — or null.
+/* The one sited lab in this city, as { key, tile, row, lab } — or null.
+   🔴 THE bldSite GATE WAS MISSING HERE, AND THIS WAS THE ONLY PRODUCTION READ
+      SITE IN THE FILE WITHOUT ONE. An Anomaly Lab that was still a foundation
+      pad produced Anomaly X — which sells for Cinder — and consumed the
+      player's reagents for it. opsLabTick() opens with
+      `const f = opsFindLab(); if (!f) return;`, so this one line is the whole of
+      "an unbuilt lab produces nothing and consumes nothing".
+   ⚠ bldSite, NOT bldBusy. A lab UPGRADING to a higher tier (k=1) is standing and
+     working and must keep running, exactly like every other k=1 building.
+     Gate: run.mjs round0r §6. */
 function opsFindLab() {
   for (const [k, t] of Object.entries(game.tiles)) {
     if (t.type !== opsKeyOf('smuggling')) continue;
+    if (bldSite(t)) continue;
     const row = opsRowForKey(k); if (!row) continue;
     return { key: k, tile: t, row, lab: opsLab(row) };
   }
   return null;
 }
-// A Research op or a Research Spire within Chebyshev radius 3 of the lab.
+/* A Research op or a Research Spire within Chebyshev radius 3 of the lab.
+   🏗 Same omission as opsFindLab above, in the same round: a Research Spire that
+      is still a hole in the ground paid the containment adjacency bonus. */
 function opsResearchAdj(k) {
   const [x, z] = k.split(',').map(Number);
   for (const [kk, t] of Object.entries(game.tiles)) {
-    if (t.damaged) continue;
+    if (t.damaged || bldSite(t)) continue;
     if (t.type !== 'reslab' && t.type !== opsKeyOf('research')) continue;
     const [ax, az] = kk.split(',').map(Number);
     if (Math.max(Math.abs(ax - x), Math.abs(az - z)) <= OPS_RESEARCH_R) return true;
@@ -27358,13 +27579,25 @@ function animate() {
      loadState() rehydrated every build order without reading one ECON value,
      because ECON did not exist yet — the import above is where it arrives.
      bldNormalize() applies the two bounds that need it (the absolute maxSec
-     ceiling and the formulaV rescale) and completes anything already due.
+     ceiling and the formulaV rescale).
      ⚠ DELIBERATELY OUTSIDE THE try ABOVE. If the import 404s or mount() throws
        we land in that catch — and that is precisely the case where every
        in-flight job must be COMPLETED rather than left parked behind a module
        that never arrived. Putting this call inside the try would brick a
-       paid-for tile on exactly the failure the degrade path exists for. */
-  try { bldNormalize(); } catch (e) { console.warn('[city] bldNormalize', e); }
+       paid-for tile on exactly the failure the degrade path exists for.
+     🔴 `true` = DEFER EVERY COMPLETION. IT IS NOT DECORATION, AND DROPPING IT
+        PUTS A CINDER MINT BACK. This call sits ~118 lines ABOVE the
+        `await offlineCatchUp()` below. Completing anything here finishes it at
+        the WALL CLOCK, before the absence is simulated, and the catch-up then
+        pays the building for hours it did not exist — through a monkey-patched
+        bridge, i.e. as real ledger writes. Measured at +7.200 🔥 on 12 Clubs
+        over a 6 h absence, and it also fires ecoSync() (founding firms, drawing
+        charter capital) before the absence exists. The bounds must be applied
+        here — the catch-up sweeps against `d` — but nothing may FINISH until
+        after the catch-up. See bldNormalize's header and run.mjs round0r.
+        `_bldDeferredFinish` is the degrade path's leftovers, collected below. */
+  let _bldDeferredFinish = null;
+  try { _bldDeferredFinish = bldNormalize(true); } catch (e) { console.warn('[city] bldNormalize', e); }
 
   try {
     const mod = await import('../src/resonance/house.city.js?v=' + (window.NC_BUILD || 'r8'));
@@ -27501,8 +27734,19 @@ function animate() {
      (a refresh under OFFLINE_MIN_MS, a save with no stamp, a throw above): the
      first 4 s beat is otherwise the earliest anything completes, and boot()
      starts the render loop at the very end. Anything it finishes here gets the
-     full trailer, because `_bldOffline` is already back to false. */
+     full trailer, because `_bldOffline` is already back to false.
+     🏗 IT IS ALSO NOW THE FIRST COMPLETION IN THE WHOLE BOOT. bldNormalize(true)
+        above deliberately finishes nothing, so this line is what completes the
+        jobs that came due while the tab was shut — at the wall clock, but only
+        AFTER the absence has been paid at the virtual clock. That ordering is
+        the fix for the boot-order mint; do not add a second sweep above it. */
   try { bldSweep(Date.now()); } catch (e) { console.warn('[bld] boot sweep', e); }
+  /* 🏗 …AND THE DEGRADE PATH'S LEFTOVERS. When /src/economy 404s there is no
+     maxSec to clamp `d` with, so a job with an absurd duration would survive
+     every sweep above and park a paid-for tile forever. bldNormalize(true)
+     reported that case instead of acting on it; this is where it is acted on,
+     which is after the catch-up and therefore no longer a mint. */
+  try { if (_bldDeferredFinish) bldFinishAll(_bldDeferredFinish); } catch (e) { console.warn('[bld] deferred finishAll', e); }
   /* 🛏 THE HOUSE'S BACKSTOP. If offlineCatchUp ran, every House was already
      paid slice by slice and the watermark is at now, so this settles 0 — it is
      not a second payment path, it is the same one asked whether anything is

@@ -120,6 +120,51 @@ let bad = 0;
                                    lootable. Reddens COVERAGE — the guard that
                                    forces the NEXT promotion to declare itself
 
+     ECON_TEST_SABOTAGE=boot-presweep round0r §1/§2: put the pre-catch-up sweep
+                                   back — call bldNormalize() in its completing
+                                   form from boot(), i.e. re-commit the boot-order
+                                   mint verbatim. Reddens THE GAP and the
+                                   never-mint bound
+     ECON_TEST_SABOTAGE=cancel-sited round0r §3: blind bldCancel to the operation
+                                   row (`opsRowForKey(kk)` → `null`), which is
+                                   exactly the pre-fix source: the licence stays
+                                   sited and the next boot reconcile resurrects
+                                   the building FINISHED
+     ECON_TEST_SABOTAGE=cancel-blind round0r §3c: decide "is this tile an
+                                   operation?" from whether a ROW RESOLVED
+                                   (`!!opsTypeOf(t.type)` → `!!opsRowForKey(kk)`)
+                                   instead of from the tile's own type. That is
+                                   the round-1 source, and it hands out the SAME
+                                   free operation whenever the register is down —
+                                   `message` mode, an older parent, a hired
+                                   manager. Reddens the refusal
+     ECON_TEST_SABOTAGE=ops-zombie  round0r §3c/§3d: let opsReconcile's boot
+                                   branch resurrect a dangling licence as a
+                                   FINISHED building again. TWO patches, and the
+                                   second is the one that matters: it re-commits
+                                   the ROUND-2 source verbatim —
+                                   `bldRecord(0, 1, bldDuration(…), {})` — which
+                                   is not a deleted line but an INERT one. It
+                                   reads as a fix and returns null on every real
+                                   boot, because opsReconcile(true) is awaited by
+                                   loadState, before the economy module exists,
+                                   so bldCfg() is null → bldDuration 0 →
+                                   bldRecord null → `bld: null` → FINISHED.
+                                   ⚠ It reddens §3d ONLY. §3c runs with ECON up,
+                                     where bldRecord answers normally, so §3c
+                                     stays GREEN under this sabotage — which is
+                                     exactly how the defect shipped for a round.
+                                     If a future edit makes §3c redden here too,
+                                     that stub has been un-chained from ECON_ON
+                                     again; see the bldDuration note in mkCity.
+     ECON_TEST_SABOTAGE=refund-raw  round0r §4: strip bldLoad's two clamps, i.e.
+                                   pass a save's `pc` and `pr` through unbounded
+                                   and unvalidated, as shipped
+     ECON_TEST_SABOTAGE=free-repair round0r §5: restore loadState's unconditional
+                                   `if (t.bld) t.damaged = false;`
+     ECON_TEST_SABOTAGE=lab-ungated round0r §6: remove the bldSite gate from
+                                   opsFindLab and opsResearchAdj
+
    ⚠ Every one of these must turn the gate RED. If you change these rounds, run
      all of them and check that they still do; an unset variable is the shipping
      path and does nothing. */
@@ -4381,6 +4426,755 @@ const srcBlockAfter = (src, decl, open) => {
 
     if (fails) { bad++; console.log('\n=== ROUND 0q: ' + fails + ' FAILED ==='); }
     else console.log('\n=== ROUND 0q: ALL PASS ===');
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0r — 🏗 THE LOAD → CATCH-UP GAP, AND FOUR CONSTRUCTION CLAMPS
+   ----------------------------------------------------------------------------
+   🔴 WHY THIS ROUND HAD TO BE WRITTEN, AND WHY NOTHING ELSE IN THIS FILE COULD
+      HAVE CAUGHT WHAT IT CATCHES.
+
+   sim.js takes `before = totalCinder()` INSIDE runDay. Every conservation
+   assertion in this gate therefore has a WINDOW, and anything that moves money
+   outside that window is invisible to it — on load, on boot, between ticks, in a
+   bridge callback. The construction feature put a Cinder mint in exactly that
+   gap and the gate stayed green for a whole session. A green gate proves nothing
+   about the gap. This round is the gap.
+
+   THE DEFECT, as shipped on this branch before the fix:
+     boot() called `bldNormalize()`, whose tail was `bldSweep(Date.now())`, and
+     awaited `offlineCatchUp()` ~118 lines LATER. So every job already due was
+     COMPLETED AT THE WALL CLOCK before the absence was simulated. offlineCatchUp
+     monkey-patches MythicCityBridge.addRes/addCinders/spendRes for its whole
+     slice loop, so the entire absence was then paid to a building that had not
+     been standing for it — REAL ledger writes, on the most ordinary path a
+     player can take (close the tab with something under construction). The
+     in-loop virtual sweep was dead code on a cold boot: `_bldRebuildDue()` built
+     an EMPTY list, because the queue had already been cleared.
+     Worse, bldNormalize's sweep ran with `_bldOffline === false`, so it fired
+     the full trailer including ecoSync() — firms founded and drawing charter
+     capital before the absence was simulated.
+     bldSweep's own header describes this scenario verbatim and calls it "a
+     Cinder mint, and it is the single most dangerous thing this feature could
+     have done". The code did the thing the comment warned about.
+
+   MEASURED ON THIS HARNESS, before the fix (§2's board — 12 Clubs, 6 h absence,
+   every job due 2 h in, level 1, no multipliers):
+     honest 14.400 🔥   pre-sweep 21.600 🔥   MINT +7.200 🔥
+     = 24 unearned building-hours, i.e. 12 buildings × the 2 h they did not exist
+   The absolute figure scales with output multipliers and with absence length up
+   to OFFLINE_CAP_H = 36 h; the round asserts ZERO, not a threshold.
+
+   WHAT IS UNDER TEST IS THE SHIPPED CODE, NOT A COPY OF IT. bldNormalize,
+   bldSweep, _bldRebuildDue, bldFinishAll, bldCancel, bldOrderRefund,
+   bldPayRefund, bldLoad, costOf/baseCost/scaleCost, bldSite, opsReconcile,
+   opsFindLab and opsResearchAdj are LIFTED VERBATIM out of
+   public/node-city/index.html and executed here.
+   WHAT IS MODELLED, stated plainly so nobody mistakes it for the real thing:
+     · bldFinish — mesh work is not economics; the stub does what matters
+       (clears `bld`, lands the level) and records WHEN it fired;
+     · offlineCatchUp's slice loop — re-walked here with the SAME
+       OFFLINE_SLICE_SEC and the SAME `vnow >= _bldNext` early-out, but with a
+       linear per-tile Cinder rate (`gen.cinder / CINDER_PERIOD_DIV / 60`) in
+       place of economyTick;
+     · the ops manifest and its RPCs.
+   The ORDER, which is the whole defect, is the shipped order both structurally
+   (§1 reads boot()'s own text) and behaviourally (§2 drives it).
+
+   SABOTAGE (each MUST redden this round; each re-commits the pre-fix source):
+     boot-presweep · cancel-sited · cancel-blind · ops-zombie · refund-raw ·
+     free-repair · lab-ungated
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0r-boot-order ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  let NC = null;
+  try {
+    NC = readFileSync(join(here, SABOTAGE === 'no-map'
+      ? '../../public/node-city/THIS-FILE-DOES-NOT-EXIST.html'
+      : '../../public/node-city/index.html'), 'utf8');
+  } catch (e) { NC = null; }
+
+  /* Whole `[async ]function NAME(…) { … }` text — round0q's scraper with the
+     `async` prefix carried through, because bldCancel, bldPayRefund and
+     opsReconcile are all async and a lifted body that has lost its `async`
+     cannot be awaited. */
+  const fnText = (src, name) => {
+    if (!src) return null;
+    const at = src.indexOf('function ' + name + '(');
+    if (at < 0) return null;
+    const body = srcBlockAfter(src, 'function ' + name + '(');
+    if (!body) return null;
+    const bo = src.indexOf('{', src.indexOf(')', at));
+    if (bo < 0 || bo > src.indexOf(body, at) + 1) return null;
+    return (src.slice(Math.max(0, at - 6), at) === 'async ' ? 'async ' : '') + src.slice(at, bo) + body;
+  };
+  /* 🔴 COMMENTS OUT, AND THIS IS NOT TIDINESS — IT IS THE ROUND WORKING AT ALL.
+     §1 below reasons about WHERE calls appear in boot(), and boot() is 300 lines
+     of prose that NAMES those calls: the fix's own comment says "this call sits
+     ~118 lines above the `await offlineCatchUp()` below". Scanning raw text
+     found that sentence first, put `catchAt` hundreds of characters too early,
+     and the ordering assertion passed no matter what the code did — caught by
+     reverting the product code and watching §1 stay green. A prose mention is
+     not a call site. Strings are stepped over too, for the same reason
+     srcBlockAfter does it. */
+  const stripComments = (src) => {
+    if (!src) return src;
+    let out = '';
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i], d = src[i + 1];
+      if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); i = (e < 0 ? src.length : e + 1); continue; }
+      if (c === '/' && d === '/') { const e = src.indexOf('\n', i + 2); i = (e < 0 ? src.length : e - 1); continue; }
+      if (c === '"' || c === "'" || c === '`') {
+        const q = c; out += c; i++;
+        for (; i < src.length; i++) { out += src[i]; if (src[i] === '\\') { out += src[++i]; continue; } if (src[i] === q) break; }
+        continue;
+      }
+      out += c;
+    }
+    return out;
+  };
+  // A one-line `const NAME = …;` declaration, verbatim.
+  const lineConst = (src, name) => {
+    if (!src) return null;
+    const m = new RegExp('const\\s+' + name + '\\s*=\\s*[^\\n]+;').exec(src);
+    return m ? m[0] : null;
+  };
+  const num = (src, name) => {
+    if (!src) return NaN;
+    const m = new RegExp('\\b' + name + '\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)').exec(src);
+    return m ? +m[1] : NaN;
+  };
+  /* BUILDINGS is not a pure literal — see round0p's note. Same Proxy trick. */
+  const looseFrom = (src, decl) => {
+    const txt = srcBlockAfter(src, decl);
+    if (!txt) return null;
+    try {
+      const scope = new Proxy({}, { has: () => true, get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+      return new Function('__s', 'with (__s) { return (' + txt + '); }')(scope);
+    } catch (e) { return null; }
+  };
+
+  /* 🧨 THE SABOTAGE IS APPLIED TO THE LIFTED SOURCE, not to the harness. Each
+     patch below turns the shipped text back into the exact text that shipped
+     before the fix, which is the strongest form this file has: the round is then
+     graded against the real defect rather than against an injured stub.
+     ⚠ A patch that matches NOTHING would leave the round green under sabotage —
+       a vacuous tripwire, the failure mode this whole gate is built to distrust.
+       `patchOk` is asserted before anything else runs. */
+  let patchOk = true, patchTried = 0;
+  const unfix = (txt, key, pairs) => {
+    if (SABOTAGE !== key || !txt) return txt;
+    let out = txt;
+    for (const p of pairs) {
+      patchTried++;
+      if (out.indexOf(p[0]) < 0) { patchOk = false; console.log('   🧨 patch MISSED: ' + JSON.stringify(p[0].slice(0, 60))); continue; }
+      out = out.split(p[0]).join(p[1]);
+    }
+    return out;
+  };
+
+  const BLDG      = looseFrom(NC, 'const BUILDINGS = {');
+  const BOOT_SRC0 = fnText(NC, 'boot');
+  const SRC0 = {
+    _bldRebuildDue: fnText(NC, '_bldRebuildDue'),
+    bldSweep:       fnText(NC, 'bldSweep'),
+    bldFinishAll:   fnText(NC, 'bldFinishAll'),
+    bldNormalize:   fnText(NC, 'bldNormalize'),
+    bldPaid:        fnText(NC, 'bldPaid'),
+    bldRecord:      fnText(NC, 'bldRecord'),
+    bldOrderRefund: fnText(NC, 'bldOrderRefund'),
+    bldPayRefund:   fnText(NC, 'bldPayRefund'),
+    bldCancel:      fnText(NC, 'bldCancel'),
+    bldLoad:        fnText(NC, 'bldLoad'),
+    bldRefundCap:   fnText(NC, 'bldRefundCap'),
+    scaleCost:      fnText(NC, 'scaleCost'),
+    baseCost:       fnText(NC, 'baseCost'),
+    costOf:         fnText(NC, 'costOf'),
+    opsReconcile:   fnText(NC, 'opsReconcile'),
+    opsFindLab:     fnText(NC, 'opsFindLab'),
+    opsResearchAdj: fnText(NC, 'opsResearchAdj'),
+  };
+  /* Each entry below re-commits the pre-fix source for one defect, on the way
+     into the sandbox. The anchors are the exact expressions the fixes added, so
+     a rename breaks the SABOTAGE (loudly, via patchOk) rather than the round. */
+  const SRC = { ...SRC0,
+    bldCancel: unfix(unfix(SRC0.bldCancel, 'cancel-sited', [
+      /* the pre-fix bldCancel had no idea an operation lived on the tile */
+      ['opsRowForKey(kk)', 'null'],
+    ]), 'cancel-blind', [
+      /* ROUND 1's source, verbatim in effect: "this tile is an operation" was
+         decided by whether a row RESOLVED, so a register that cannot answer —
+         `message` mode, an older parent, a hired manager — read as "not an
+         operation" and the cancel went through, licence still sited. */
+      ['!!opsTypeOf(t.type)', '!!opsRowForKey(kk)'],
+    ]),
+    /* 🔴 THIS PATCH RE-COMMITS ROUND 2'S SOURCE VERBATIM, NOT AN INJURY.
+       It used to DELETE the resurrection line, which reddened §3d only in a way
+       the product never failed. What actually shipped was the line PRESENT and
+       INERT: `bldRecord(0, 1, bldDuration(…), {})` returns null whenever
+       bldCfg() is null, which is every real boot (see §3d). Restoring the call
+       is therefore the honest sabotage — it looks like a fix, reads like a fix,
+       and lands `bld: null` on 100% of page loads. A sabotage that can only
+       redden a round by removing code cannot grade code that is merely dead. */
+    /* ⚠ TWO SINGLE-LINE ANCHORS, NEVER ONE SPANNING THE LINE BREAK. The first
+       attempt matched across the newline and its continuation indent, missed on
+       a whitespace difference, and reddened the round through `patchOk` instead
+       of through the defect — a sabotage that fails for the wrong reason grades
+       nothing. Single-line anchors cannot drift that way. */
+    opsReconcile: unfix(SRC0.opsReconcile, 'ops-zombie', [
+      ['bld: { k: 0, l: 1, s: Date.now(), d: Number.MAX_SAFE_INTEGER,', 'bld: null };'],
+      ['fv: -1, pc: 0, pr: null } };',
+       'try { nt.bld = bldRecord(0, 1, bldDuration(nt.type, 1, 0, bldSpeed()), {}); } catch (e) { nt.bld = null; }'],
+    ]),
+    bldLoad: unfix(SRC0.bldLoad, 'refund-raw', [
+      ['Math.min(Math.max(0, Math.round(+raw.pc || 0)), Math.max(0, Math.round(+cap.cinder || 0)))',
+       'Math.max(0, Math.round(+raw.pc || 0))'],
+      ['const lim = Math.max(0, Math.round(+cap[r] || 0));', 'const lim = Infinity;'],
+    ]),
+    opsFindLab:     unfix(SRC0.opsFindLab,     'lab-ungated', [['if (bldSite(t)) continue;', '']]),
+    opsResearchAdj: unfix(SRC0.opsResearchAdj, 'lab-ungated', [['if (t.damaged || bldSite(t)) continue;', 'if (t.damaged) continue;']]),
+  };
+  const BLDSITE = lineConst(NC, 'bldSite');
+  const CPD     = num(NC, 'CINDER_PERIOD_DIV');
+  const SLICE   = num(NC, 'OFFLINE_SLICE_SEC');
+  const CAP_H   = num(NC, 'OFFLINE_CAP_H');
+  const BCM     = num(NC, 'BUILD_CINDER_MULT');
+  const BRM     = num(NC, 'BUILD_RES_MULT');
+  const UPM     = num(NC, 'UPGRADE_MULT');
+  const MAXL    = num(NC, 'MAX_LVL');
+  const RADIUS  = num(NC, 'OPS_RESEARCH_R');
+  /* loadState's damage/order precedence is ONE STATEMENT inside a 400-line
+     function, so it is scraped as a statement rather than lifted as a function —
+     and then EXECUTED below, so this is not a string comparison dressed up as a
+     test. */
+  const DMG_HITS = NC ? (NC.match(/if \(t\.bld[^\n]*?\)\s*t\.damaged = false;/g) || []) : [];
+  const DMG_STMT = unfix(DMG_HITS.length === 1 ? DMG_HITS[0] : null, 'free-repair',
+                         [['if (t.bld && t.bld.k === 0)', 'if (t.bld)']]);
+
+  const missing = Object.keys(SRC).filter(k => !SRC[k]);
+  const gotAll =
+    chk('read node-city/index.html (' + (NC ? NC.length : 'UNREADABLE') + ' chars)', !!NC && NC.length > 100000) &
+    chk('lifted every function under test' + (missing.length ? '' : ' (' + Object.keys(SRC).length + ')'),
+        missing.length === 0, 'MISSING: ' + missing.join(',')) &
+    chk('lifted bldSite, the damage/order statement and the shipped constants',
+        !!BLDSITE && !!DMG_STMT && !!BLDG && !!BOOT_SRC0 &&
+        [CPD, SLICE, CAP_H, BCM, BRM, UPM, MAXL, RADIUS].every(Number.isFinite),
+        'bldSite=' + !!BLDSITE + ' dmg×' + DMG_HITS.length + '=' + JSON.stringify(DMG_STMT) + ' bldgs=' + (BLDG ? Object.keys(BLDG).length : 'NULL') +
+        ' [' + [CPD, SLICE, CAP_H, BCM, BRM, UPM, MAXL, RADIUS].join(',') + ']');
+
+  if (!gotAll) {
+    console.log('\n🔴 THE SOURCE COULD NOT BE READ — nothing below was checked.');
+    console.log('   If a function was renamed or moved, fix the scrape markers in this round.');
+    console.log('   Do NOT delete it: bldSweep\'s header in node-city/index.html names the exact');
+    console.log('   mint this round exists to keep out, and the audit in sim.js is structurally');
+    console.log('   blind to it — nothing else in this gate can see the load→catch-up gap.');
+    bad++; console.log('\n=== ROUND 0r: ' + fails + ' FAILED ===');
+  } else {
+
+  /* ── §1 THE ORDER, READ OUT OF boot() ITSELF ────────────────────────────────
+     Model-free and one line of reasoning: NOTHING may complete a build order
+     before the absence has been simulated, so the first completion call in
+     boot() must come AFTER `await offlineCatchUp(`. `bldNormalize(true)` is the
+     deferring form — it applies the two ECON bounds (which the catch-up needs
+     BEFORE it runs, or it sweeps against an unclamped duration) and completes
+     nothing. */
+  const BOOT_SRC = unfix(stripComments(BOOT_SRC0), 'boot-presweep', [['bldNormalize(true)', 'bldNormalize()']]);
+  {
+    chk('boot() still contains code after the comments are stripped (' + BOOT_SRC.length + ' of ' + BOOT_SRC0.length + ' chars)',
+        BOOT_SRC.length > 4000 && BOOT_SRC.length < BOOT_SRC0.length * 0.9,
+        'a stripper that returns everything, or nothing, makes §1 vacuous');
+    const catchAt = BOOT_SRC.indexOf('await offlineCatchUp(');
+    const firstFinish = ['bldSweep(', 'bldFinishAll(', 'bldFinish('].reduce((acc, tok) => {
+      const i = BOOT_SRC.indexOf(tok);
+      return (i >= 0 && (acc < 0 || i < acc)) ? i : acc;
+    }, -1);
+    chk('boot() awaits offlineCatchUp() BEFORE anything can complete a build order',
+        catchAt >= 0 && firstFinish > catchAt,
+        'offlineCatchUp@' + catchAt + ' firstCompletionCall@' + firstFinish);
+    chk('boot() calls bldNormalize in its DEFERRING form — bldNormalize(true)',
+        BOOT_SRC.indexOf('bldNormalize(true)') >= 0,
+        BOOT_SRC.slice(Math.max(0, BOOT_SRC.indexOf('bldNormalize(')), BOOT_SRC.indexOf('bldNormalize(') + 40));
+  }
+
+  /* ── THE SANDBOX ───────────────────────────────────────────────────────────
+     One scope per scenario, holding the lifted functions and the stubs they
+     close over. `_bldOffline`/`_bldDue`/`_bldNext` are `let` at node-city's
+     module scope and are declared the same way here, because _bldRebuildDue
+     ASSIGNS them and a const copy would silently diverge. */
+  const mkCity = (ctx) => {
+    const S = `
+      const spy = __ctx.spy, BUILDINGS = __ctx.B, MANIFEST = __ctx.manifest || { ops: [] };
+      const game = { tiles: {} };
+      const OPS = { st: null, at: 0, booted: false, placing: new Set(), lastEffPush: 0, live: null };
+      const OP_BP = {};
+      let selectedKey = null, _opsNetKey = null, __NOW = Date.now();
+      let _bldOffline = false, _bldDirty = false, _bldDue = [], _bldNext = Infinity;
+      let ECON_ON = __ctx.econOn !== false;
+      const MAX_LVL = ${MAXL}, UPGRADE_MULT = ${UPM};
+      const BUILD_CINDER_MULT = ${BCM}, BUILD_RES_MULT = ${BRM};
+      const OPS_RESEARCH_R = ${RADIUS}, GRID = 24, OPS_PREFIX = 'op_';
+      const MythicCityBridge = {
+        mode: 'standalone',
+        addCinders: async (n) => { spy.writes.push({ phase: spy.phase, call: 'addCinders', n: n }); return true; },
+        addRes:     async (r, n) => { spy.writes.push({ phase: spy.phase, call: 'addRes', r: r, n: n }); return true; },
+        spendRes: async () => true, spendCinders: async () => true,
+      };
+      const bldCfg = () => ECON_ON ? { on: true, maxSec: 86400, formulaV: 1, exemptTypes: [] } : null;
+      /* 🔴 THIS STUB LIES UNLESS IT IS CHAINED TO ECON_ON, AND THE LIE HID A
+         LIVE DEFECT FOR A WHOLE ROUND. The shipped chain is
+         bldDuration -> bldProfile -> bldCfg() -> window.MythicEconomy, and
+         bldProfile's FIRST line returns null when bldCfg() does — so the real
+         bldDuration returns 0 for exactly as long as bldCfg() returns null.
+         This stub used to be an unconditional __ctx.dur, which silently
+         asserted "ECON is up" in every scenario that wanted a duration.
+         The ONE call site where that matters is opsReconcile's boot branch,
+         which is awaited BY loadState — i.e. the one pass bldLoad's own header
+         says runs before window.MythicEconomy exists, on 100% of page loads. So
+         the amplifier case was graded in a state the product never reaches, and
+         the ops-zombie sabotage reddened the round only by DELETING the
+         resurrection line rather than by making it INERT, which is what
+         actually happened. Chained here, econOn:false means what it says on the
+         tin: no ECON, therefore no duration — the real boot ordering. See §3d. */
+      const bldDuration = () => ECON_ON ? (__ctx.dur | 0) : 0;
+      const bldSpeed = () => 1;
+      function applyBuildLook() {}
+      function bldFinish(k, t) {
+        if (!t || !t.bld) return false;
+        const r = t.bld; if (r.k === 1) t.lvl = r.l; delete t.bld;
+        spy.finished.push({ key: k, at: __NOW, phase: spy.phase });
+        return true;
+      }
+      function logEvent() {} function toast() {} function computeLinks() {} function manageAgents() {}
+      function updateHUD() {} function saveNow() {} function saveSoon() {} function openInspect() {}
+      function ecoSync() { spy.ecoSync.push(spy.phase); }
+      function dropTileMesh() {} function refreshRoadArea() {} function placeMeshAt() {}
+      function buildMesh() { return { mesh: true }; }
+      function costLabel(c) { return Object.keys(c).join('+'); }
+      function opsNetworkClose() { _opsNetKey = null; }
+      const $ = () => ({ classList: { remove: () => {} } });
+      const key = (x, z) => x + ',' + z;
+      const inGrid = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID;
+      const opsKeyOf = (t) => OPS_PREFIX + t;
+      const opsTypeOf = (b) => (b && b.indexOf(OPS_PREFIX) === 0) ? b.slice(OPS_PREFIX.length) : null;
+      function opsRowAt(x, z, opType) {
+        /* 🔴 blindRegister IS THE SHIPPED FAILURE SHAPE, NOT AN INVENTED ONE.
+           opsRowAt reads the CACHED OPS.st, and opsRefresh writes
+           { ops: [], unavailable: true } whenever _opsParent() is null and the
+           bridge is not standalone — 'message' mode by design, an older parent
+           with no cityOpsState, or a parent whose call threw. st.manager has the
+           same effect (the manifest holds the MAYOR's rows, not the owner's).
+           MANIFEST below still carries the licence, SITED, because the server
+           side is unaffected — only the client's view is dark. */
+        if (__ctx.blindRegister) return null;
+        return MANIFEST.ops.find(o => o.type === opType && o.site && (o.site.x | 0) === (x | 0) && (o.site.y | 0) === (z | 0)) || null;
+      }
+      function opsRowForKey(k) {
+        const t = game.tiles[k]; if (!t) return null;
+        const ot = opsTypeOf(t.type); if (!ot) return null;
+        const p = k.split(',').map(Number); return opsRowAt(p[0], p[1], ot);
+      }
+      async function opsRefresh() { return { ops: __ctx.blindRegister ? [] : MANIFEST.ops, unavailable: !!__ctx.blindRegister, manager: false }; }
+      async function opsGrantNodeLicences() {}
+      async function opsUnsite(id) {
+        spy.unsite.push(id);
+        if (__ctx.unsiteFails) return { ok: false };
+        const o = MANIFEST.ops.find(q => q.id === id); if (o) o.site = null;
+        return { ok: true };
+      }
+      function opsLab(row) { return (row && row.lab) || { tier: 1 }; }
+      ${BLDSITE}
+      ${Object.keys(SRC).map(k => SRC[k]).join('\n')}
+      return {
+        game: game, OPS: OPS,
+        bldNormalize: bldNormalize, bldSweep: bldSweep, bldFinishAll: bldFinishAll,
+        bldCancel: bldCancel, bldLoad: bldLoad, bldOrderRefund: bldOrderRefund,
+        bldPayRefund: bldPayRefund, costOf: costOf, bldSite: bldSite,
+        opsReconcile: opsReconcile, opsFindLab: opsFindLab, opsResearchAdj: opsResearchAdj,
+        rebuildDue: _bldRebuildDue,
+        next: () => _bldNext, parkNext: () => { _bldNext = Infinity; },
+        setOffline: (v) => { _bldOffline = v; }, setNow: (v) => { __NOW = v; },
+        /* boot() in one call: the economy module finishes importing, so bldCfg()
+           and bldDuration start answering. §3d uses it to cross the exact
+           boundary opsReconcile sits on the wrong side of. */
+        setEcon: (v) => { ECON_ON = !!v; },
+      };`;
+    return new Function('__ctx', S)(ctx);
+  };
+  const mkSpy = () => ({ writes: [], finished: [], ecoSync: [], unsite: [], phase: 'load' });
+  const cinPerSec = (type) => {
+    const d = BLDG[type]; const g = d && d.gen && +d.gen.cinder;
+    return g > 0 ? g / CPD / 60 : 0;          // per-minute figure → per-hour → per-second
+  };
+
+  /* ── §2 THE GAP IS SEALED, AND THE ABSENCE IS PAID ONCE ─────────────────────
+     The board: 12 Clubs, every one of them a k=0 site that came DUE 2 h into a
+     6 h absence. Honest pay is 4 h of Club output each. Under the pre-sweep the
+     buildings were finished at the wall clock before slice 0, so they were paid
+     for all 6 h — including the 2 h they were still a hole in the ground. */
+  {
+    const NOW = Date.now(), awayH = 6, dueOffH = 2;
+    const awayMs = awayH * 3600000, saveAt = NOW - awayMs;
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG });
+    const N = 12, DUR = 3 * 3600;
+    for (let i = 0; i < N; i++) {
+      const dueAt = saveAt + dueOffH * 3600000;
+      api.game.tiles[i + ',0'] = { type: 'club', lvl: 1, rot: 0, born: 0, earn: 0,
+                                   bld: { k: 0, l: 1, s: dueAt - DUR * 1000, d: DUR, fv: 1, pc: 0, pr: null } };
+    }
+    const rate = cinPerSec('club');
+
+    // ── the gap: everything boot() does between loadState() and the catch-up ──
+    spy.phase = 'gap';
+    api.setNow(NOW);
+    api.bldNormalize(SABOTAGE === 'boot-presweep' ? false : true);
+    const gapDone = spy.finished.length, gapWrites = spy.writes.length, gapSync = spy.ecoSync.length;
+    chk('THE GAP IS SEALED — nothing completes between loadState() and offlineCatchUp()',
+        gapDone === 0, gapDone + ' build order(s) completed at the WALL CLOCK, before the absence was simulated');
+    chk('THE GAP IS SEALED — no ledger write and no ecoSync() in the gap',
+        gapWrites === 0 && gapSync === 0,
+        gapWrites + ' bridge write(s), ' + gapSync + ' ecoSync() — ecoSync founds firms, and a firm founded here draws its charter capital before the absence exists');
+
+    // ── offlineCatchUp's slice loop, modelled (see the header) ──
+    spy.phase = 'catchup';
+    api.setOffline(true); api.rebuildDue();
+    const simSec = Math.min(awayMs, CAP_H * 3600000) / 1000;
+    let done = 0, credited = 0;
+    while (done < simSec - 1e-9) {
+      const dt = Math.min(SLICE, simSec - done);
+      for (const kk in api.game.tiles) {
+        const t = api.game.tiles[kk];
+        if (api.bldSite(t)) continue;                 // a hole in the ground earns nothing
+        credited += cinPerSec(t.type) * dt;
+      }
+      done += dt;
+      const vnow = saveAt + done * 1000;
+      if (vnow >= api.next()) {
+        api.setNow(vnow); api.bldSweep(vnow); api.rebuildDue();
+        if (api.next() <= vnow) api.parkNext();
+      }
+    }
+    api.setOffline(false);
+    spy.phase = 'post';
+    api.setNow(Date.now()); api.bldSweep(Date.now());
+
+    const honest = N * rate * (awayH - dueOffH) * 3600;
+    const slack  = N * rate * SLICE;               // the slice-boundary under-credit, by design
+    const mint   = credited - honest;
+    console.log('   6 h absence · 12 Clubs · each due 2 h in · rate ' + (rate * 3600).toFixed(4) + ' 🔥/h');
+    console.log('   honest ' + honest.toFixed(3) + ' 🔥   credited ' + credited.toFixed(3) +
+                ' 🔥   delta ' + (mint >= 0 ? '+' : '') + mint.toFixed(3) + ' 🔥   (' +
+                (mint / (rate * 3600)).toFixed(2) + ' unearned building-hours)');
+    chk('RULE 1 — the absence never pays for time a building did not exist',
+        mint <= 1e-9, 'MINTED ' + mint.toFixed(3) + ' 🔥 — the whole absence was credited to a building finished at the wall clock');
+    chk('…and it is not under-paid beyond one slice boundary per job',
+        credited >= honest - slack - 1e-9, 'credited ' + credited.toFixed(3) + ' vs honest ' + honest.toFixed(3));
+    chk('every completion landed at the hour it happened, inside the catch-up',
+        spy.finished.length === N && spy.finished.every(f => f.phase === 'catchup'),
+        spy.finished.length + ' completion(s): ' + JSON.stringify(spy.finished.map(f => f.phase).filter((v, i, a) => a.indexOf(v) === i)));
+  }
+
+  /* ── §2b THE DEGRADE PATH STILL COMPLETES EVERYTHING ────────────────────────
+     bldNormalize is DELIBERATELY outside boot()'s economy try block: when
+     /src/economy 404s, `d` carries no ceiling and a job must never be left
+     parked behind a module that never arrived. Deferring the completion must not
+     turn that guarantee off — it moves it after the catch-up, where it is also
+     no longer a mint. A job that is due still completes at its own hour inside
+     the loop; anything left (an unbounded `d`) is finished by bldFinishAll. */
+  {
+    const NOW = Date.now(), awayMs = 6 * 3600000, saveAt = NOW - awayMs;
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG, econOn: false });     // bldCfg() → null
+    api.game.tiles['1,1'] = { type: 'club', lvl: 1, rot: 0, bld: { k: 0, l: 1, s: saveAt - 3600000, d: 3 * 3600, fv: 1, pc: 0, pr: null } };
+    api.game.tiles['2,2'] = { type: 'club', lvl: 1, rot: 0, bld: { k: 0, l: 1, s: saveAt, d: 40 * 24 * 3600, fv: 1, pc: 0, pr: null } };
+    spy.phase = 'gap';
+    const deferred = api.bldNormalize(true);
+    chk('degrade path — bldNormalize(true) reports the module is gone instead of completing in the gap',
+        typeof deferred === 'string' && deferred.length > 0 && spy.finished.length === 0,
+        'returned ' + JSON.stringify(deferred) + ', ' + spy.finished.length + ' completed in the gap');
+    spy.phase = 'catchup';
+    api.setOffline(true); api.rebuildDue();
+    let done = 0; const simSec = awayMs / 1000;
+    while (done < simSec - 1e-9) {
+      const dt = Math.min(SLICE, simSec - done); done += dt;
+      const vnow = saveAt + done * 1000;
+      if (vnow >= api.next()) { api.setNow(vnow); api.bldSweep(vnow); api.rebuildDue(); if (api.next() <= vnow) api.parkNext(); }
+    }
+    api.setOffline(false);
+    spy.phase = 'post';
+    api.setNow(Date.now()); api.bldSweep(Date.now());
+    if (deferred) api.bldFinishAll(deferred);
+    const parked = Object.keys(api.game.tiles).filter(k => api.game.tiles[k].bld);
+    chk('degrade path — NO TILE IS PARKED: every in-flight order completed by the end of boot',
+        parked.length === 0, 'still building: ' + JSON.stringify(parked));
+    chk('degrade path — the 40-DAY order was finished by bldFinishAll, not left behind a missing module',
+        spy.finished.length === 2, JSON.stringify(spy.finished.map(f => f.key + '@' + f.phase)));
+  }
+
+  /* ── §3 CANCEL RETURNS THE LICENCE ──────────────────────────────────────────
+     bldCancel() deleted the tile for k=0 and never unsited the operation, so the
+     licence stayed sited — and opsReconcile's boot branch then rebuilt the tile
+     with `bld: null`, i.e. FINISHED. Place → cancel (full refund) → reload was a
+     free, instant, crew-slot-free operation. Applied to op_construction it is a
+     BOOTSTRAP: a free Construction Co. lifts the municipal duration ceiling and
+     raises crew slots and build speed, unlocking the whole gated feature with
+     three ordinary UI clicks and no console. */
+  {
+    const manifest = { ops: [{ id: 'lic-1', type: 'construction', site: { nodeId: 'n', x: 5, y: 6, rot: 0, sitedAt: Date.now(), eff: 1 } }] };
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG, manifest: manifest });
+    api.game.tiles['5,6'] = { type: 'op_construction', lvl: 1, rot: 0,
+                              bld: { k: 0, l: 1, s: Date.now(), d: 3600, fv: 1, pc: 400, pr: { metal: 3 } } };
+    await api.bldCancel('5,6');
+    chk('cancelling an operation SITE unsites its licence',
+        spy.unsite.indexOf('lic-1') >= 0 && manifest.ops[0].site === null,
+        'opsUnsite calls ' + JSON.stringify(spy.unsite) + ', site ' + JSON.stringify(manifest.ops[0].site));
+    chk('…and the refund was paid exactly once',
+        spy.writes.filter(w => w.call === 'addCinders').length === 1 &&
+        spy.writes.filter(w => w.call === 'addCinders')[0].n === 400,
+        JSON.stringify(spy.writes));
+    // …and now the reload. This is the real opsReconcile boot branch.
+    const spy2 = mkSpy();
+    const api2 = mkCity({ spy: spy2, B: BLDG, manifest: manifest });   // save has no tile at 5,6
+    await api2.opsReconcile(true);
+    chk('PLACE → CANCEL → RELOAD does not resurrect a finished operation',
+        !api2.game.tiles['5,6'],
+        'reload produced ' + JSON.stringify(api2.game.tiles['5,6']) + ' — bld:null means FINISHED, and this one is op_construction');
+  }
+  {
+    /* The bridge can refuse. A cancel that pays the refund and leaves the
+       licence sited is the exploit again by accident, so it is REFUSED whole —
+       nothing has moved at that point and the player can click again. */
+    const manifest = { ops: [{ id: 'lic-2', type: 'construction', site: { nodeId: 'n', x: 7, y: 7, rot: 0 } }] };
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG, manifest: manifest, unsiteFails: true });
+    api.game.tiles['7,7'] = { type: 'op_construction', lvl: 1, rot: 0,
+                              bld: { k: 0, l: 1, s: Date.now(), d: 3600, fv: 1, pc: 400, pr: null } };
+    const r = await api.bldCancel('7,7');
+    chk('a cancel whose unsite FAILS pays nothing and puts the order back',
+        r === null && spy.writes.length === 0 && !!(api.game.tiles['7,7'] && api.game.tiles['7,7'].bld),
+        'returned ' + JSON.stringify(r) + ', writes ' + JSON.stringify(spy.writes) + ', tile ' + JSON.stringify(api.game.tiles['7,7']));
+  }
+  /* ── §3c THE SAME EXPLOIT A SECOND TIME — A DARK REGISTER IS NOT "NOT AN OP" ──
+     Round 1 fixed §3 by reading `opRow = (rec.k === 0) ? opsRowForKey(kk) : null`
+     and treating `null` as "this tile is not an operation". It is not: null is
+     ALSO "this IS an operation and the register cannot say which one", which is
+     `message` bridge mode BY DESIGN, an older parent with no cityOpsState, a
+     parent that threw, or a hired manager whose manifest holds their OWN rows.
+     In all of those the 🧨 button deleted the tile, paid the refund in full and
+     left the licence sited — and opsReconcile's boot branch handed the licence
+     back as a finished building on the next load. It was reproduced live on the
+     round-1 build for a free Construction Co., which is the bootstrap: municipal
+     ceiling lifted, crew slots and build speed raised, whole feature unlocked.
+     The refusal now keys off opsTypeOf(t.type) — the TILE's own type, which no
+     dead bridge can take away. */
+  {
+    const manifest = { ops: [{ id: 'lic-3', type: 'construction', site: { nodeId: 'n', x: 9, y: 9, rot: 0, sitedAt: Date.now(), eff: 1 } }] };
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG, manifest: manifest, blindRegister: true });
+    api.game.tiles['9,9'] = { type: 'op_construction', lvl: 1, rot: 0,
+                              bld: { k: 0, l: 1, s: Date.now(), d: 3600, fv: 1, pc: 400, pr: { metal: 3 } } };
+    // a plain municipal site, on the same dark register — this must still cancel
+    api.game.tiles['2,2'] = { type: 'club', lvl: 1, rot: 0,
+                              bld: { k: 0, l: 1, s: Date.now(), d: 3600, fv: 1, pc: 40, pr: null } };
+    const r = await api.bldCancel('9,9');
+    const still = api.game.tiles['9,9'];
+    chk('a cancel is REFUSED when the register cannot resolve an operation tile',
+        r === null && !!still && !!still.bld,
+        'returned ' + JSON.stringify(r) + ', tile ' + JSON.stringify(still));
+    chk('…nothing was refunded and the licence stayed BOUND to the plot',
+        spy.writes.length === 0 && spy.unsite.length === 0 && manifest.ops[0].site !== null,
+        'writes ' + JSON.stringify(spy.writes) + ' unsite ' + JSON.stringify(spy.unsite) +
+        ' site ' + JSON.stringify(manifest.ops[0].site));
+    const r2 = await api.bldCancel('2,2');
+    chk('…and the refusal is NOT blanket — a municipal site still cancels and refunds',
+        !!r2 && !api.game.tiles['2,2'] && spy.writes.filter(w => w.call === 'addCinders').length === 1,
+        'returned ' + JSON.stringify(r2) + ', writes ' + JSON.stringify(spy.writes));
+  }
+  {
+    /* THE AMPLIFIER. Whatever route ever leaves a licence sited with no tile,
+       opsReconcile's boot branch is what turns it into money. It used to write
+       `bld: null` — FINISHED. Now it writes a SITE with an EMPTY refund basis,
+       so the honest player gets their building back and the exploiter gets a
+       hole in the ground that refunds nothing. */
+    const manifest = { ops: [{ id: 'lic-4', type: 'construction', site: { nodeId: 'n', x: 9, y: 9, rot: 0 } }] };
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG, manifest: manifest, dur: 3600 });
+    await api.opsReconcile(true);                       // save carries no tile at 9,9
+    const nt = api.game.tiles['9,9'];
+    chk('a dangling licence resurrects as a SITE, never as a finished operation',
+        !!nt && !!nt.bld && nt.bld.k === 0,
+        'reconcile produced ' + JSON.stringify(nt && { type: nt.type, lvl: nt.lvl, bld: nt.bld }) +
+        ' — bld:null means FINISHED, and this one is op_construction');
+    chk('…with an EMPTY refund basis, so the resurrection is worth no Cinder',
+        !!nt && !!nt.bld && (nt.bld.pc | 0) === 0 && !nt.bld.pr,
+        JSON.stringify(nt && nt.bld));
+    await api.bldCancel('9,9');
+    chk('…and cancelling that resurrected site pays out nothing at all',
+        spy.writes.length === 0 && manifest.ops[0].site === null,
+        'writes ' + JSON.stringify(spy.writes) + ' site ' + JSON.stringify(manifest.ops[0].site));
+  }
+
+  /* ── §3d THE AMPLIFIER ON THE REAL BOOT PATH — ECON IS NOT UP YET ───────────
+     🔴 THE CASE ABOVE PASSED WHILE THE PRODUCT WAS STILL BROKEN, AND THIS IS WHY.
+     It ran with ECON up (`dur: 3600`), and opsReconcile's boot branch NEVER runs
+     with ECON up. `opsReconcile(true)` is awaited by the loadState wrapper, i.e.
+     inside the tile-rehydration pass bldLoad's own header describes: "RUNS
+     BEFORE window.MythicEconomy EXISTS … ECON is undefined for the ENTIRE
+     tile-rehydration pass on 100% of page loads." The economy module is imported
+     ~1000 lines later in boot(), at the bldNormalize(true) site.
+     So the round-2 fix — `nt.bld = bldRecord(0, 1, bldDuration(…), {})` — was
+     INERT on every real boot: bldCfg() null → bldProfile null → bldDuration 0 →
+     bldRecord returns null → the tile lands `bld: null`, which is FINISHED. The
+     pre-fix behaviour, shipped behind a comment that says the opposite. Its
+     author anticipated the null and then misread it as "a city with no timers at
+     all" — it is not, it is every boot of a perfectly healthy city.
+     `boot === true` is the ONLY way into that branch, so the line never executed
+     under the conditions it was written for.
+     THE PROPERTY UNDER TEST IS STRUCTURAL: the branch must be incapable of
+     producing a finished building WITHOUT reading ECON at all. The duration it
+     writes is then corrected by bldNormalize(true) — which runs after the module
+     mounts and already applies the maxSec clamp and the formulaV rescale to
+     every record on the board — and that second half is asserted here too. */
+  {
+    const manifest = { ops: [{ id: 'lic-5', type: 'construction', site: { nodeId: 'n', x: 11, y: 11, rot: 0 } }] };
+    const spy = mkSpy();
+    // econOn:false === window.MythicEconomy undefined === the real reconcile.
+    const api = mkCity({ spy: spy, B: BLDG, manifest: manifest, econOn: false, dur: 3600 });
+    await api.opsReconcile(true);
+    const nt = api.game.tiles['11,11'];
+    chk('the boot resurrection is a SITE even though ECON is not up yet',
+        !!nt && !!nt.bld && nt.bld.k === 0,
+        'reconcile produced ' + JSON.stringify(nt && { type: nt.type, lvl: nt.lvl, bld: nt.bld }) +
+        ' — bld:null is FINISHED, and this is the state EVERY real boot is in');
+    chk('…and it does not depend on a duration it cannot know yet',
+        !!nt && !!nt.bld && Number.isFinite(nt.bld.d) && nt.bld.d > 0,
+        'd=' + JSON.stringify(nt && nt.bld && nt.bld.d) + ' — a 0/NaN duration is due on the spot, i.e. finished');
+    chk('…with an EMPTY refund basis, so it is still worth no Cinder',
+        !!nt && !!nt.bld && (nt.bld.pc | 0) === 0 && !nt.bld.pr, JSON.stringify(nt && nt.bld));
+    /* Nothing may complete it in the gap either — §1/§2's property, re-asserted
+       on the record this branch writes, because a placeholder duration that
+       reads as "already due" would be the same exploit wearing a site's hat. */
+    const dueNow = api.bldSweep(Date.now());
+    chk('…and it is NOT already due — a wall-clock sweep in the gap finishes nothing',
+        spy.finished.length === 0 && !!api.game.tiles['11,11'].bld,
+        'swept ' + JSON.stringify(spy.finished) + ' (' + dueNow + ')');
+  }
+  {
+    /* THE SECOND HALF: the placeholder is a placeholder, not a number. This is
+       the same tile after boot() has imported the economy module and called
+       bldNormalize(true) — the only two bounds in the file that read ECON. The
+       clamp can only SHORTEN, so the record is written long ON PURPOSE and
+       arrives at the true op duration here. Were it written short, min() could
+       never lift it and a 15-minute build would be permanent. */
+    const manifest = { ops: [{ id: 'lic-6', type: 'construction', site: { nodeId: 'n', x: 12, y: 12, rot: 0 } }] };
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG, manifest: manifest, econOn: false, dur: 900 });
+    await api.opsReconcile(true);                 // loadState: no ECON
+    const raw = { ...api.game.tiles['12,12'].bld };
+    api.setEcon(true);                            // the import lands
+    api.bldNormalize(true);                       // boot()'s bldNormalize(true)
+    const fixed = api.game.tiles['12,12'].bld;
+    console.log('   resurrection d: ' + raw.d + 's (fv ' + raw.fv + ') → after bldNormalize ' +
+                (fixed && fixed.d) + 's (fv ' + (fixed && fixed.fv) + ')');
+    chk('bldNormalize resolves the placeholder to the real op duration',
+        !!fixed && fixed.d === 900 && fixed.k === 0,
+        JSON.stringify(fixed) + ' — expected the 900s bldDuration answer');
+    chk('…and it is still a SITE afterwards, and still completes nothing in the gap',
+        spy.finished.length === 0 && !!api.game.tiles['12,12'].bld,
+        JSON.stringify(spy.finished));
+  }
+
+  /* ── §4 THE SAVE MAY NOT SET ITS OWN REFUND ─────────────────────────────────
+     `pc`/`pr` came off disk unclamped and unvalidated and flow
+     bldOrderRefund → bldPayRefund → addCinders → addGems → Profile.gems. That is
+     the first attacker-controlled MAGNITUDE in the city save format (the
+     pre-existing demolish refund is bounded by costOf). Unvalidated `pr` keys
+     also let a CHAIN resource id reach addRes, which is a Rule 2 violation:
+     chain ids are not camp ledger ids and nothing must ever bank one. */
+  {
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG });
+    const chain = await import('../../public/src/resources/chain.js');
+    const CHAIN = new Set(chain.NEW_IDS);
+    const chainId = chain.NEW_IDS.find(id => !BLDG.club.cost[id]) || 'timber';
+    const doctored = { k: 0, l: 1, s: Date.now() - 1000, d: 3600, fv: 1,
+                       pc: 999999999,
+                       pr: { metal: 999999, cinder: 1e9, [chainId]: 5000, ['__proto__']: 1 } };
+    const rec = api.bldLoad(doctored, 1, 'club');
+    const cap = api.costOf('club', 1);
+    const refund = api.bldOrderRefund(rec);
+    await api.bldPayRefund({ ...refund });
+    const paidCin = spy.writes.filter(w => w.call === 'addCinders').reduce((a, w) => a + w.n, 0);
+    const resKeys = spy.writes.filter(w => w.call === 'addRes').map(w => w.r);
+    console.log('   doctored save claimed pc=999,999,999 + ' + JSON.stringify(doctored.pr));
+    console.log('   costOf(club,1) = ' + JSON.stringify(cap) + '   refunded = ' + JSON.stringify(refund));
+    chk('a doctored save refunds no more Cinder than costOf(type, lvl)',
+        paidCin <= (cap.cinder | 0), paidCin + ' 🔥 vs cap ' + (cap.cinder | 0));
+    chk('…and no more of any resource than costOf(type, lvl)',
+        Object.keys(refund).every(r => r === 'cinder' || refund[r] <= (cap[r] | 0)),
+        JSON.stringify(refund) + ' vs ' + JSON.stringify(cap));
+    chk('RULE 2 — no chain resource id reaches addRes from a save (' + chainId + ')',
+        resKeys.every(r => !CHAIN.has(r)), JSON.stringify(resKeys));
+    chk('…and no invented key survives either (cinder / __proto__ / unpriced ids)',
+        resKeys.every(r => r !== 'cinder' && r !== '__proto__' && (cap[r] | 0) > 0), JSON.stringify(resKeys));
+  }
+
+  /* ── §5 A RELOAD IS NOT A FREE REPAIR ───────────────────────────────────────
+     loadState dropped the damage flag on ANY tile with a live order. The
+     justifying comment says the (bld && damaged) pair is unreachable by
+     construction — true for k=0, and FALSE for k=1: damageTile() and decayTick()
+     refuse only bldSite(t), so a STANDING building that happens to be upgrading
+     can be damaged, and an upgrade window is up to 24 h wide. The reload waived
+     REPAIR_COST_FRAC × costOf(). */
+  {
+    const drop = new Function('t', DMG_STMT + ' return t;');
+    const upgrading = drop({ bld: { k: 1, l: 2 }, damaged: true });
+    const site      = drop({ bld: { k: 0, l: 1 }, damaged: true });
+    console.log('   statement under test, verbatim: ' + DMG_STMT);
+    chk('a STANDING building damaged mid-upgrade keeps its damage across a reload',
+        upgrading.damaged === true, 'k=1 tile came back damaged=' + upgrading.damaged + ' — that is a free repair');
+    chk('…and a construction SITE still cannot come back damaged',
+        site.damaged === false, 'k=0 tile came back damaged=' + site.damaged);
+  }
+
+  /* ── §6 A HOLE IN THE GROUND PRODUCES NOTHING ───────────────────────────────
+     opsFindLab() was the one production read site in the file with no bldSite
+     gate (opsResearchAdj the same, for its adjacency bonus): an Anomaly Lab that
+     was still a foundation pad produced Anomaly X — sellable for Cinder — and
+     consumed the player's reagents. opsLabTick() is `const f = opsFindLab(); if
+     (!f) return;`, so the gate here is the whole of "produces nothing, consumes
+     nothing". An UPGRADING lab (k=1) is standing and must keep working. */
+  {
+    const manifest = { ops: [{ id: 'lab-1', type: 'smuggling', site: { x: 3, y: 3, rot: 0 }, lab: { tier: 2 } }] };
+    const spy = mkSpy();
+    const api = mkCity({ spy: spy, B: BLDG, manifest: manifest });
+    const T = api.game.tiles;
+    T['3,3'] = { type: 'op_smuggling', lvl: 1, rot: 0, bld: { k: 0, l: 1, s: Date.now(), d: 3600, fv: 1 } };
+    T['4,4'] = { type: 'reslab', lvl: 1, rot: 0, bld: { k: 0, l: 1, s: Date.now(), d: 3600, fv: 1 } };
+    chk('a sited-but-UNBUILT Anomaly Lab is not found — so it produces and consumes nothing',
+        api.opsFindLab() === null, JSON.stringify(api.opsFindLab()));
+    chk('an unbuilt Research Spire pays no adjacency bonus',
+        api.opsResearchAdj('3,3') === false, 'adjacency granted by a foundation pad');
+    T['3,3'].bld = { k: 1, l: 2, s: Date.now(), d: 3600, fv: 1 };   // standing, upgrading
+    T['4,4'].bld = null;
+    chk('…and a STANDING lab still works while it upgrades, with a real Spire next to it',
+        !!api.opsFindLab() && api.opsResearchAdj('3,3') === true,
+        'findLab=' + !!api.opsFindLab() + ' adj=' + api.opsResearchAdj('3,3'));
+  }
+
+  chk('the sabotage patches all landed (' + patchTried + ' applied)', patchOk,
+      'a patch that matches nothing leaves this round green under sabotage — fix the anchors');
+
+    if (fails) { bad++; console.log('\n=== ROUND 0r: ' + fails + ' FAILED ==='); }
+    else console.log('\n=== ROUND 0r: ALL PASS ===');
   }
 }
 

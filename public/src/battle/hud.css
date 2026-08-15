@@ -1577,26 +1577,57 @@
    button (`aria-label="Search log"`, index.html:140657) whose entire onclick is
    the same `_openBattleLog()`. Two controls, one behaviour, both too small.
 
-   ⚠ WHY 26px OF CSS MEASURES 18.7. index.html sizes them `width:26px;
-   height:26px` (5658) and that rule is correct — but the whole left rail is
-   inside `_bcpFit()`'s zoom, which reads 0.72-0.76 on these viewports, so the
-   BOX a finger or a pointer actually gets is 26 x zoom. Anything sized here has
-   to be sized in the rail's own units and then checked AFTER the zoom, which is
-   why the number below is 36 and not 24.
-   ⚠ AND THE HEADER'S PADDING PAYS FOR IT, so the row does not get taller. 42 +
-   2x3 = 48, which is what 26 + 2x11 already was. A taller header would push
-   `.bcp`'s natural height up, `_bcpFit()` would zoom DOWN to compensate, and the
-   button would come back out the same size it went in — the feedback loop this
-   file has already documented three times in another form.
+   ⚠ WHY 24px OF CSS MEASURES 18.7. The buttons are sized `24px` by
+   chrome.css:303 (which outranks index.html:5658's 26px on source order — same
+   specificity, later file) and that rule is correct — but the whole left rail
+   is inside `_bcpFit()`'s zoom, which reads 0.72-0.77 on these viewports, so
+   the BOX a finger or a pointer actually gets is 24 x zoom. Anything sized here
+   has to be sized in the rail's own units and then checked AFTER the zoom,
+   which is why the number below is 42 and not 24.
    ⚠ 42 IS THE SMALLEST NUMBER THAT CLEARS 24 AT THE WORST ZOOM MEASURED (0.59 at
    1366x768): 36px cleared it at 1600x1000 (27.7) and 1440x900 (26.6) and came
-   out 21.2 there. 42 x 0.59 = 24.8.
+   out 21.2 there. 42 x 0.59 = 24.8. MEASURED after this block: 32.33 CSS px at
+   1600x1000 (zoom 0.77) and 24.77 at 1366x768 (zoom 0.59).
+   ⚠ AND 42 IS STILL NOT ENOUGH AT 1200x620, where `_bcpFit()` is pinned to its
+   0.5 floor: the plate comes out 21.0 CSS px there. Nothing sized in rail units
+   can fix that — the floor is a floor — which is why the row-wide forwarding
+   below is not a nicety. At 1200x620 the forwarded row measures 212 x 22 CSS px
+   and that, not the plate, is the target a player actually hits.
+
+   ⚠ AND YES, THE ROW GETS TALLER — 10 rail px. An earlier revision of this
+   comment claimed `padding: 3px 14px` here paid for the growth so the row was
+   unchanged. THAT WAS FALSE TWICE OVER and a critic measured it false, so the
+   arithmetic is spelled out:
+     • the padding declaration never applied. chrome.css:297 sets
+       `padding: 0 var(--r3-3) !important` on the same element, and !important
+       beats specificity, so the computed padding was `0px 12px` before and
+       after. The dead rule has been deleted rather than !important-ed —
+       vertical padding is exactly what we do NOT want here.
+     • the row was never 26 + 2x11 either. Its height is
+       `max(--r3-row-sm, tallest child) + 1px bottom rule` = max(32, 24) + 1 =
+       33 rail px. With the 42px plate it is 42 + 1 = 43 (44 where the zoom
+       rounds the rule up — measured 43 at 1600x1000, 44 at 1366x768/1200x620).
+   MEASURED CONSEQUENCE at 1600x1000, and the reason 10px is acceptable rather
+   than merely tolerated: `_bcpFit()` absorbs it in the rows below. `.bcp`
+   scrollHeight == clientHeight == 538, `.bcp`'s foot sits 123.6 CSS px ABOVE
+   the rail's foot, and `.logrows` still gets 142 rail px. Nothing clips and
+   nothing overflows; the zoom does re-solve, so everything under the log in the
+   left rail sits a few CSS px lower than it did at f73161b. That shift is real,
+   it is this rule's doing, and it is not a defect — but do not write "unmoved"
+   in this file again without a probe behind it.
    ⚠ THE TWIN IS `visibility: hidden`, NOT `display: none`. `.loghead` is
    `grid-template-columns: auto 1fr auto`; removing the third column from the
    flow moves the centred title off the header's optical centre. Hidden, it
-   keeps its column, loses its pointer events and leaves the a11y tree — one
-   control, still balanced. */
-.battle-screen .bcp .loghead { padding: 3px 14px; }
+   keeps its column, loses its pointer events and leaves the a11y tree.
+   ⚠ AND KEEPING THE COLUMN IS NOT ENOUGH — IT HAS TO BE THE SAME COLUMN.
+   `auto` tracks size to their content, so growing only the live button made the
+   two `auto` tracks 42 and 24: MEASURED `grid-template-columns` resolved to
+   `41.98px 287.85px 23.99px`, which walked the centred "Battle Log" title
+   (42-24)/2 = 9 rail px = 6.93 CSS px right of the header's content centre. So
+   the twin is sized to match the live plate below. MEASURED AFTER: tracks
+   `41.98px 269.85px 41.98px` (1600x1000), `41.98/321.29/41.98` (1366x768),
+   `42/300.81/42` (1200x620), and the title's centre lands on the header's
+   content centre to 0.00 CSS px at all three. */
 /* …and the header may not be SHRUNK to pay for the log rows. `.log` is a flex
    column and `.loghead` is a default `flex-shrink: 1` item in it; measured at
    1200x620 (where `_bcpFit()` is already on its 0.5 floor) the row was squeezed
@@ -1604,8 +1635,13 @@
    header. The rows below already clip (`.logrows { overflow: hidden }`), so
    they are the right place for the squeeze to land. */
 .battle-screen .bcp .log > .loghead { flex: 0 0 auto; }
+/* the twin's ONLY job is to be exactly as wide as the live plate, so the
+   header's two `auto` tracks match and the title lands on the centre. Height
+   comes with it so the hidden box cannot become the tallest child and set the
+   row height on its own. */
 .battle-screen .bcp .loghead > button:not(#btn-open-battle-log) {
   visibility: hidden; pointer-events: none;
+  width: 42px; min-width: 42px; height: 42px;
 }
 /* the chevron becomes a proper plate on the same gold/dark system as the rest
    of the chrome — hex-cut, not a bare glyph and not a rounded rectangle */
@@ -1620,8 +1656,9 @@
   border-color: var(--hudx-gold-dim); color: #ffe9b4;
 }
 /* …and the whole header is the real target. hud.js forwards a click on the row
-   to the button (see wireLogHead), so the affordance a player aims at is
-   ~250 x 48 in rail units, not a 36px chevron. */
+   to the button (see wireLogHead), so the affordance a player aims at is the
+   whole row — MEASURED 394 x 43 in rail units, 303 x 33 CSS px after the zoom
+   at 1600x1000 — not the plate alone. */
 .battle-screen .bcp .loghead { cursor: pointer; }
 /* CONSUMABLES takes a quarter of the slack, and passes it down to the wells
    themselves rather than pooling it as padding — the four slots are the one

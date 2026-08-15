@@ -424,9 +424,22 @@
    spacing it out would come straight out of the battle log's height. */
 .battle-screen .bp-wrap.bsx .bsx-body { display: flex; flex-direction: column; }
 .battle-screen .bp-wrap.bsx .bsx-body > .bsx-inner { flex: 1 0 auto; }
+/* ⚠ `1.4vh` -> `0.85vh`, AND THE PILES TAKE EVERY PIXEL OF IT (§7b.6's constant
+   moves with this number — they are one change).
+   THE MEASUREMENT THAT FORCED IT. Once the grid was sized off free space the
+   six holes stopped being residue and became STRUCTURE: at 1600x1000 the column
+   over-ran its body by 47px (so `space-between` had nothing left to hand out)
+   and the holes still read 17.9/18.9/18.9/22.7/18.9/18.9. Growing the grid by
+   another 30px moved them 0.7px. What is actually in a hole is this gap plus
+   the two children's own margins (`.rule`'s 2+2, `.hudx-piles`'s 4, and the
+   index.html plates' own), which peaks at ~10px — so the widest hole is
+   `gap + 10` and no amount of sink brings it under 20 while the gap is 14.
+   0.85vh is 8.5 / 7.65 / 6.5 at the three viewports, i.e. a widest hole of
+   ~18.5 with the rhythm still even, and the ~30px it releases goes straight
+   into the card backs rather than back into the holes it came out of. */
 .battle-screen .bp-wrap.bsx .bsx-inner {
   display: flex; flex-direction: column;
-  gap: clamp(4px, 1.4vh, 18px);
+  gap: clamp(4px, 0.85vh, 11px);
 }
 /* the opponent's frame carries the identical weave — the two clusters are one
    component and must not differ by surface either. It does NOT get the foot:
@@ -1570,24 +1583,34 @@
    BOX a finger or a pointer actually gets is 26 x zoom. Anything sized here has
    to be sized in the rail's own units and then checked AFTER the zoom, which is
    why the number below is 36 and not 24.
-   ⚠ AND THE HEADER'S PADDING PAYS FOR IT, so the row does not get taller. 36 +
-   2x6 = 48, which is what 26 + 2x11 already was. A taller header would push
+   ⚠ AND THE HEADER'S PADDING PAYS FOR IT, so the row does not get taller. 42 +
+   2x3 = 48, which is what 26 + 2x11 already was. A taller header would push
    `.bcp`'s natural height up, `_bcpFit()` would zoom DOWN to compensate, and the
    button would come back out the same size it went in — the feedback loop this
    file has already documented three times in another form.
+   ⚠ 42 IS THE SMALLEST NUMBER THAT CLEARS 24 AT THE WORST ZOOM MEASURED (0.59 at
+   1366x768): 36px cleared it at 1600x1000 (27.7) and 1440x900 (26.6) and came
+   out 21.2 there. 42 x 0.59 = 24.8.
    ⚠ THE TWIN IS `visibility: hidden`, NOT `display: none`. `.loghead` is
    `grid-template-columns: auto 1fr auto`; removing the third column from the
    flow moves the centred title off the header's optical centre. Hidden, it
    keeps its column, loses its pointer events and leaves the a11y tree — one
    control, still balanced. */
-.battle-screen .bcp .loghead { padding: 6px 14px; }
+.battle-screen .bcp .loghead { padding: 3px 14px; }
+/* …and the header may not be SHRUNK to pay for the log rows. `.log` is a flex
+   column and `.loghead` is a default `flex-shrink: 1` item in it; measured at
+   1200x620 (where `_bcpFit()` is already on its 0.5 floor) the row was squeezed
+   to 38.4 local px around a 42px button, i.e. the plate hanging out of its own
+   header. The rows below already clip (`.logrows { overflow: hidden }`), so
+   they are the right place for the squeeze to land. */
+.battle-screen .bcp .log > .loghead { flex: 0 0 auto; }
 .battle-screen .bcp .loghead > button:not(#btn-open-battle-log) {
   visibility: hidden; pointer-events: none;
 }
 /* the chevron becomes a proper plate on the same gold/dark system as the rest
    of the chrome — hex-cut, not a bare glyph and not a rounded rectangle */
 .battle-screen .bcp .loghead #btn-open-battle-log {
-  width: 36px; height: 36px; min-width: 36px;
+  width: 42px; height: 42px; min-width: 42px;
   border: 1px solid var(--hudx-gold-hair);
   background: linear-gradient(180deg, rgba(30, 24, 12, 0.85), rgba(10, 8, 15, 0.92));
   clip-path: polygon(50% 0, 100% 27%, 100% 73%, 50% 100%, 0 73%, 0 27%);
@@ -2256,8 +2279,8 @@ body:has(.battle-screen) .emote-toggle {
    short window that can only afford a 46px back gets the small badge it always
    got because the badge is a fraction of that back. */
 .battle-screen .bp-wrap.bsx .hudx-cell .count {
-  width: clamp(24px, calc(var(--hudx-slot-w) * 0.3), 38px);
-  height: clamp(24px, calc(var(--hudx-slot-w) * 0.3), 38px);
+  width: clamp(24px, calc(var(--hudx-slot-w) * 0.27), 38px);
+  height: clamp(24px, calc(var(--hudx-slot-w) * 0.27), 38px);
   right: -6px; bottom: -5px;
 }
 .battle-screen .bp-wrap.bsx .hudx-cell .count i {
@@ -2280,30 +2303,79 @@ body:has(.battle-screen) .emote-toggle {
    between them measure 285 @1000 / 282.6 @900 / 277 @768 / 277 @620 (head 36,
    rule 1, buffs 48, tools 62/59.6/54, kv 39, cmd 99). Call it ~280 with a
    small vh term in `.tools`. The inner's own padding is 12 (7 top, 4 bottom,
-   +1). `.bsx-inner`'s flex `gap` is `clamp(4px, 1.4vh, 18px)`, i.e. the hole
-   the six gaps fall back to WHEN THERE IS NO RESIDUE TO DISTRIBUTE.
+   +1). `.bsx-inner`'s flex `gap` is the hole the six gaps fall back to WHEN
+   THERE IS NO RESIDUE TO DISTRIBUTE — it was `clamp(4px, 1.4vh, 18px)` when
+   this was first derived and §2 has since taken it to `0.85vh` for reasons
+   that are in §2's own note.
 
    So the height the grid is allowed to take, if the six holes are to come out
    at the flex gap and nothing wider:
-       avail = body - 280 - 12 - 6 * 1.4vh
-     = 422 @1000 · 342.8 @900 · 227.5 @768 · 92 @620
-   which is a straight line in `vh` to within a few px. Deliberately fitted
-   ~2-12px UNDER it, so a little residue always survives and the holes land AT
-   the flex gap rather than the grid overflowing and dragging `--fit` down:
-       avail ≈ 88vh - 460px      → 420 · 332 · 215.8 · 85.6
+       avail = body - 280 - 12 - 6 * gap
+     = 422 @1000 · 342.8 @900 · 227.5 @768 · 92 @620   (at the old 1.4vh gap)
+   which is a straight line in `vh` to within a few px — and after the two
+   corrections below, with the gap now at 0.85vh, that line is:
+       avail ≈ 88vh - 461px
    and the grid's own overhead is two labels + two lots of cell padding + the
-   5px row gap = 87px, so
-       slot = (88vh - 547px) / 2.8        (the 2.8 is 2 rows x the 7/5 back)
+   5px row gap = 75px (`--hudx-grid-oh`), so
+       slot = (88vh - 461px - oh) / 2.8   (the 2.8 is 2 rows x the 7/5 back)
 
-   ⚠ …AND THE `460px` WAS RE-MEASURED ONCE THE FIRST VERSION WAS ON SCREEN,
-   because a fit is not a measurement. At `- 460` the six holes came out
-   18.6/19.6/19.6/23.5/19.6/19.6 @1600x1000, 17.4-22.3 @1440x900 and
-   15.6-20.5 @1366x768: a residue of 36.5 / 33.7 / 34.0 px above the flex gap,
-   i.e. the SAME ~34px at every viewport, which is a constant error and not a
-   slope error. So the constant absorbs it — `- 430`, leaving ~5px of residue
-   rather than 34 — and the two constants are now written as one term plus the
-   grid's own overhead (`--hudx-grid-oh`), so a branch that changes the cell
-   chrome changes both halves together instead of drifting apart.
+   ⚠ BOTH NUMBERS WERE RE-SPLIT AGAINST THE RENDERED GRID, and the split matters
+   even though the SUM does not. At `441 / 87` the cap came out 439 @1600x1000
+   while the grid actually got 417.4 — `flex-shrink` on `.hudx-piles` quietly
+   took the last 22 — so the rows ended ~5px shorter than the card they held and
+   `.stack`'s centring cropped ~2.5px off the top and bottom of every back. The
+   HOLES were unaffected (the grid was already taking all the free space either
+   way), which is exactly why this does not show up in the hole scan and has to
+   be read off the cells. `461 / 75` is the same total with the overhead measured
+   rather than assumed — cap 418.8 against 416 of free space — so the cap stops
+   promising the grid a height the column cannot give it.
+
+   RESULT, MEASURED AFTER — no-content share of `.bsx-body` and the six
+   inter-child holes, against the work order's <=20% / <=20px and against the
+   layout this replaced:
+       1440x900   44.0% / 48.8-53.8  ->  13.9% / 13.1-18.1   inner 713 in 713
+       1366x768   34.3% / 29.7-34.7  ->  15.5% / 11.5-16.5   inner 581 in 581
+       1600x1000  16.8% / 19.0-24.0  ->  12.7% / 13.5-18.5   inner 803 in 803
+       1200x620   22.2% / 12.8-17.5  ->  13.5% /  8.0- 9.8   inner 500 in 433,
+                                          i.e. `--fit` 0.866 — still engaging,
+                                          which is the constraint on that one.
+   The three that must not overflow land ON their body to the pixel (803/803,
+   713/713, 581/581), so `--fit` is 1.0 at all three and the rail is at design
+   size. The card back goes 106 -> 122.8 @1600x1000 and 57.6 -> 91.4 @1440x900;
+   at 1366x768 it barely moves (49.1 -> 49.9) and the win there is the LAYOUT —
+   a 2x2 grid in 123.5px cells with full-size labels, instead of one row of four
+   62px cells with "REALM DECK" ellipsized (see §8).
+   And the card fits its row at every one: slot 122.8x172 in a 174.5 stack,
+   91.4x128 in 132, 49.9x69.9 in 73.5.
+
+   ⚠ THE ONE VIEWPORT THIS DOES NOT CLOSE, MEASURED SO NOBODY RE-FINDS IT AS
+   NEW: 1920x1200 reads 26.2% / 40.3-45.3. The free-space term wants a 192px
+   back there and the CELL ceiling below pins it at 131.5, so ~250px has nowhere
+   to go. That is not a regression — the layout this replaced reads 26.4% /
+   ~42px on the same window (10.6vh = 127.2px card, cap 446 in a 1003 body), so
+   the two are within 0.2pp of each other. Closing it needs a WIDER rail, and
+   rail width is the board's size budget (it rescales the 3D stage), which is
+   not a trade this piece may make on its own.
+
+   ⚠ …AND THE `460px` WAS RE-MEASURED TWICE ON SCREEN, because a fit is not a
+   measurement — and the second measurement corrected the FIRST ONE'S READING,
+   which is the part worth keeping:
+     · at `- 460` the holes read 18.6-23.5 @1600x1000 / 17.4-22.3 @1440x900 /
+       15.6-20.5 @1366x768, ~34px more than the flex gap at every viewport. That
+       looked like a constant error in this fit, so the constant took it: `- 430`.
+     · at `- 430` the grid grew by 30px, the column now OVER-ran its body by 47 /
+       38 / 37 (so `space-between` had no free space left at all) — and the holes
+       moved 0.7px, to 17.9-22.7 / 16.7-21.5 / 14.8-19.5. THE ~34px WAS NEVER
+       RESIDUE. It is the children's own margins plus the flex gap; see the note
+       on `.bsx-inner`'s gap in §2. Sinking more into the grid could not have
+       closed it and a third round of the same move would not have either.
+   So the fit went back to where the column lands ON its body — `- 441` with the
+   gap at 0.85vh, then `- 461` with the overhead corrected to 75 (the split note
+   above), i.e. 0 over-run at all three: inner 803/803, 713/713, 581/581. The
+   HOLE size is fixed where it actually lives, in §2's gap. The two constants are
+   one term plus the grid's own overhead (`--hudx-grid-oh`), so a branch that
+   changes the cell chrome changes both halves together instead of drifting
+   apart.
 
    ⚠ THE CELL IS STILL THE OTHER CEILING, and it is a WIDTH, so it is expressed
    as one: `(--bpw - 45px) / 2` is the cell (145.5 / 123.5 / 97.5 at the three
@@ -2318,21 +2390,22 @@ body:has(.battle-screen) .emote-toggle {
 
    ⚠ AND THE 42px FLOOR IS LOAD-BEARING, NOT A SAFETY NET. `_bpFit()` only
    engages when `inner.scrollHeight` exceeds `body.clientHeight`; at 1200x620
-   the free-space term goes NEGATIVE (85.6 - 87 < 0) and an honest zero would
-   make the column fit, `--fit` would go to 1 and the rail would stop scaling on
-   exactly the window that needs it most. 42px keeps the grid at ~170, the
-   column at ~500 in a 433 body, and `--fit` engaging at ~0.86 — it read 0.9352
-   before this change and must keep reading below 1. */
+   the free-space term resolves to 11.6px of card ((545.6 - 461 - 52) / 2.8),
+   which is not a card — and an honest 11.6 would make the column FIT, `--fit`
+   would go to 1 and the rail would stop scaling on exactly the window that
+   needs it most. 42px keeps the grid at 169.6, the column at 500 in a 433 body,
+   and `--fit` engaging at 0.866 — it read 0.9352 before this change and must
+   keep reading below 1. Both measured. */
 .battle-screen .bp-wrap.bsx {
   /* two rows of (card + label + cell padding) + the grid's own 5px row gap.
      §8b re-declares it for the compact cells a very short window uses, and it
      is ONE variable because it appears on BOTH sides of the arithmetic — as
      the grid's overhead in the cap and as the part of the free space the grid
      does not spend on card. Two literals here drifted apart once already. */
-  --hudx-grid-oh: 87px;
+  --hudx-grid-oh: 75px;
   --hudx-slot-w: clamp(
     42px,
-    min(calc((88vh - 430px - var(--hudx-grid-oh)) / 2.8),
+    min(calc((88vh - 461px - var(--hudx-grid-oh)) / 2.8),
         calc((var(--bpw) - 45px) / 2 - 14px)),
     134px);
   --hudx-piles-cap: calc(2.8 * var(--hudx-slot-w) + var(--hudx-grid-oh));
@@ -2347,7 +2420,9 @@ body:has(.battle-screen) .emote-toggle {
    straight onto that floor (0.5 vs 0.67 without this HUD), which is a
    legibility regression, not a style choice. So on a short screen the piles
    collapse to ONE row of four: same four piles, same order, same components,
-   ~200px shorter. Verified back to ~0.75 at 1440x900.
+   ~200px shorter. Verified back to ~0.75 at 1440x900; re-measured this round at
+   0.73 there and 0.77 at 1600x1000, i.e. the scoping below did not cost the
+   left rail anything.
 
    🔴 …AND EVERY RULE IN THAT COLLAPSE IS NOW SCOPED TO `.hudx-cluster`, i.e.
    TO THE OPPONENT. It used to be unscoped, so the PLAYER's rail — which is

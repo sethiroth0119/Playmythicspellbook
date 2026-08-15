@@ -515,16 +515,27 @@
   const S = {
     sky: { key: '', cv: null },
     land: { key: '', cv: null },
-    veil: { key: '', cv: null },       /* fog + vignette + centre lift, pre-composited */
-    chroma: { key: '', mul: null, add: null },  /* the warm chroma restore, as two ramps */
     art: new Map(),          /* image src -> { key, cv } graded + horizon-clipped */
-    bloom: { cv: null, g: null, up: null, upg: null },  /* thumbnail + the quarter-size intermediate the upscale goes through */
-    shade: { cv: null, g: null },      /* the cool-shadow mask, same thumbnail scale */
-    /* the cool-surface chroma give-back, + the frame's per-channel extremes.
-       key/age/reads/calls/ms belong to the READBACK CACHE — see coolThumb. */
-    cool: { cv: null, g: null, live: null, mn: null, mx: null, key: '', age: 1e9, reads: 0, calls: 0, ms: [] },
+    /* ── the grade's working set. Every one of these is a scratch canvas that
+       scratch() sizes on demand; none of them is viewport-sized, which is the
+       whole point of the wave-5 restructure (see the GRADE header). ── */
+    /* sky + art + body + shafts + land, composited once (see bakeWorld).
+       `art` records whether the art layer is IN the bake or still live. */
+    world: { key: '', cv: null, art: false },
+    q: { cv: null, g: null },          /* the frame at quarter scale — ONE read */
+    t: { cv: null, g: null },          /* …and at thumbnail scale, read back */
+    bloom: { cv: null, g: null },      /* the additive sum, thumbnail scale */
+    up: { cv: null, g: null },         /* quarter-size intermediate, additive pass */
+    mup: { cv: null, g: null },        /* …and the one the multiply map goes through */
+    /* THE MAP. `pos` is the positional half (bakePost: veil attenuation +
+       colour, one bake); mulR/addR/gainR are the three thumbnails postMap()
+       writes; key/age/reads/calls/ms belong to the READBACK CADENCE. */
+    post: {
+      pos: null, key: '', age: 1e9, ready: false, fail: false,
+      mulR: { cv: null, g: null }, addR: { cv: null, g: null },
+      mn: null, mx: null, reads: 0, calls: 0, ms: []
+    },
     gradeMs: [],
-    coolFail: false,         /* sticky: a tainted canvas must not throw every frame */
     lastBake: -1e9,
     artMs: [],
     drift: null
@@ -1746,7 +1757,18 @@
 
     /* ── the haze band, exactly where the horizon meets the far edge ── */
     const hb = g.createLinearGradient(0, hz - band * 0.34, 0, hz + 34);
-    const hazeCol = api.mixHex(LIGHT.fog, LIGHT.disc, 0.34);
+    /* ⚠ WAVE 5: THIS BAND WAS THE LAST NEUTRAL THING IN THE FRAME, and it is
+       the same mistake the veil's fog band was fixed for one layer up —
+       mix(fog, disc, .34) resolves at noon to rgb(125,128,129): R−B −4, G the
+       largest channel, i.e. a grey-green. It is laid at up to 0.28 alpha over
+       exactly the pixels a critic calls "the most distant hazed ridge", which
+       is why that ridge measured rgb(155,165,153) / sat 11% / hue 90 while
+       every other layer around it had been regraded warm. Air over a desert
+       carries the desert (see hazeColour), so the band is pulled two thirds of
+       the way onto the haze's own hue: rgb(195,184,159), R−B +36. It still
+       lifts and flattens the far ridge — that is its job — it just no longer
+       does it in a colour that is not in the picture. */
+    const hazeCol = api.mixHex(api.mixHex(LIGHT.fog, LIGHT.disc, 0.34), hazeColour(api), 0.68);
     const hA = 0.17 + (LIGHT.haze || 0.2) * 0.5;
     hb.addColorStop(0, api.rgba(hazeCol, 0));
     hb.addColorStop(0.66, api.rgba(hazeCol, hA));
@@ -2640,7 +2662,15 @@
       api.MAP.cols, api.MAP.rows, lightKey(api)].join('|');
     const skyKey = base;
     const landKey = base + '|' + (artWins ? 1 : 0);
-    if (S.sky.key === skyKey && S.land.key === landKey) return;
+    /* ⚠ THE WORLD BAKE HAS ITS OWN KEY, because the art can change without the
+       light or the layout changing — a location card swap is exactly that.
+       While the host is cross-fading, the key is pinned to 'fade' so a 0.35s
+       dissolve cannot thrash a 150ms-throttled bake; the frame after it lands,
+       the key moves to the new image's src and the art joins the bake. */
+    const fade = bd.fade === undefined ? 1 : bd.fade;
+    const settled = !(hasArt && bd.prev && bd.prev.complete && fade < 1);
+    const worldKey = landKey + '|' + (settled ? (hasArt ? img.src : '-') : 'fade');
+    if (S.sky.key === skyKey && S.land.key === landKey && S.world.key === worldKey) return;
     /* THROTTLE. LIGHT lerps every frame for 2.5s on a time-of-day change, so
        the key changes 150 times in a row. Re-baking each time would cost more
        than the rest of the renderer put together; the stale bake is visually
@@ -2652,35 +2682,44 @@
       if (sky) { S.sky.cv = sky; S.sky.key = skyKey; }
       const land = bakeLand(api, dpr, artWins);
       if (land) { S.land.cv = land; S.land.key = landKey; }
-      const veil = bakeVeil(api, dpr);
-      if (veil) { S.veil.cv = veil; S.veil.key = skyKey; }
-      const ch = bakeChroma(api, dpr);
-      if (ch) { S.chroma.mul = ch.mul; S.chroma.add = ch.add; S.chroma.key = skyKey; }
+      /* the positional half of the grade, at thumbnail scale (see bakePost).
+         `pos` staying null is not fatal — postMap() simply declines and the
+         frame ships with the board's own light, which is what happens on a
+         browser that refuses getImageData anyway. */
+      const pos = bakePost(api, thumbW(api), thumbH(api));
+      if (pos) { S.post.pos = pos; S.post.key = ''; S.post.age = 1e9; }
+      /* …and flatten sky + art + body + shafts + land into ONE canvas, which
+         is all draw() blits. Art only joins the bake when it is not mid-fade. */
+      const world = bakeWorld(api, dpr, settled);
+      if (world) { S.world.cv = world; S.world.key = worldKey; S.world.art = settled; }
       /* the art bakes are keyed on the same light, so drop them together */
       S.art.clear();
     } catch (e) { /* never let a bake failure take the frame down */ }
   }
 
-  /* ── CHROMA RESTORE bake ──────────────────────────────────────────────────
-     Two full-viewport ramps, both identities above the board's far edge:
-       mul — white above the horizon, easing to a warm near-white below. Under
-             'multiply' this removes blue from everything and a little green
-             from a little of it, which is a chroma gain on anything already
-             ochre and a warm cast on anything neutral. Both are wanted: dust
-             in the air over a desert is warm, and the cool shadow tint runs
-             right after this and takes the toe back.
-       add — black above the horizon, easing to a dark grey below. Under
-             'lighter' this returned the luma the multiply cost. ⚠ IT IS ONLY
-             BAKED ON THE FALLBACK PATH NOW: a flat additive term restores the
-             MEAN and cannot restore the DELTAS, which is why round 4 measured
-             local contrast down in five of six field bands. Where 'color-dodge'
-             exists the luma comes back multiplicatively instead — see
-             TONE_GAIN and toneRamp() — and this bake is skipped entirely.
-     See grade() step 1 for why this is baked rather than blended live. ── */
-  /* the two numbers the chroma ramp and everything keyed to it share. Split
-     out because the cool give-back mask (coolThumb) and the tone ramp
-     (toneRamp) MUST use the same horizon and the same span as the multiply
-     they are compensating, or the compensation lands in the wrong place. */
+  /* ── THE POSITIONAL HALF OF THE GRADE, AT THUMBNAIL SCALE ────────────────
+     WAVE 5. Wave 3 baked the fog, the vignette, the centre lift and the
+     foreground dust into ONE full-viewport RGBA veil and blitted it, and baked
+     the warm chroma restore into a second full-viewport canvas and multiplied
+     it. Two 1840x1680 textures, read every frame, to carry information that is
+     entirely smooth — the fastest-changing thing in either of them is the
+     dust, whose smallest feature is ~150 CSS px across.
+
+     They are now baked at THUMBNAIL scale and read back ONCE per bake into two
+     plain arrays: `attn` (what the veil layers leave of the destination, i.e.
+     the product of every (1−alpha)) and `col` (what they add, i.e. the
+     premultiplied colour). Those two arrays are the positional half of an
+     affine grade, and postMap() finishes the other half per frame. Nothing
+     about the look is meant to change here; what changes is that the veil
+     stops being a composite and becomes two numbers per thumbnail pixel.
+
+     ⚠ WHY (attn, col) AND NOT THE RGBA ITSELF. source-over is
+     `dst·(1−a) + c·a`, which is affine in dst — so a stack of source-over
+     layers is ALSO affine, with a single scalar attenuation and a per-channel
+     offset. Splitting it that way is exact (not an approximation), and it is
+     the only form that can be folded into the per-frame chroma map, which is a
+     MULTIPLY. Keeping the veil as an RGBA blit would have cost a whole extra
+     full-viewport pass to say the same thing. ── */
   function chromaSpan(api) { return Math.max(40, (api.H - horizonY(api)) * 0.20); }
   /* ⚠ SCALED BY THE KEY. A flat gain made NIGHT read as dusk — the same
      ochre punch under a blue moon, which is backwards twice over: low light
@@ -2690,69 +2729,21 @@
   function chromaK(api) {
     return api.clamp(CHROMA_GAIN * api.clamp(api.LIGHT.keyI / 1.15, 0.42, 1) * 1.05, 0, 0.40);
   }
-  function bakeChroma(api, dpr) {
-    const W = api.W, H = api.H;
-    const hz = horizonY(api);
-    const span = chromaSpan(api);
-    const k = chromaK(api);
-    /* 0.42 — how much green comes out for every unit of blue. Pulling blue
-       alone swings ochre toward orange; this keeps it in the sand family. */
-    const mulHex = rgbHex(255, 255 * (1 - 0.42 * k), 255 * (1 - k));
-    const addV = opSupported('color-dodge') ? 0 : Math.round(51 * k);
-    const addHex = rgbHex(addV, addV, addV);
-    /* one ramp painter. The caller has already put the context into CSS-pixel
-       coordinates at whatever resolution that canvas is. */
-    const paint = (cv, g, topHex, botHex) => {
-      if (!g) return null;
-      g.fillStyle = topHex; g.fillRect(0, 0, W, hz + 1);
-      const gr = g.createLinearGradient(0, hz, 0, hz + span);
-      gr.addColorStop(0, topHex); gr.addColorStop(1, botHex);
-      g.fillStyle = gr; g.fillRect(0, hz, W, span + 1);
-      g.fillStyle = botHex; g.fillRect(0, hz + span, W, H - hz - span + 2);
-      return cv;
-    };
-    /* ⚠ AND IT IS BAKED FULL WIDTH EVEN THOUGH IT IS A VERTICAL RAMP.
-       WAVE 3 r2 tried the obvious saving — bake it 4 device pixels wide (every
-       stop above is set on a vertical gradient, so the texture has no
-       horizontal content) and let drawImage stretch it, turning a 10.5MB
-       texture read into 26KB. It is SLOWER. Measured as a live paired A/B on
-       the board page, four alternating 3s windows: thin 34.8 frames/window and
-       grade p50 37.9ms, full-width 36.3 frames and p50 33.0ms. A scaled
-       drawImage costs about twice a 1:1 blit here whatever the source size —
-       the same reason bloom() upscales through a quarter-size intermediate
-       rather than bilinearly in one hop. Do not re-propose it. */
-    const mo = mkCanvas(W, H, dpr);
-    const mul = paint(mo.cv, mo.g, '#ffffff', mulHex);
-    /* ⚠ THE ADDITIVE HALF IS BAKED AT BLOOM THUMBNAIL SCALE, NOT VIEWPORT
-       SCALE, so it can ride along inside the ONE full-canvas 'lighter' upscale
-       the bloom already does — see bloom(). A second full-viewport additive
-       blit measured ~3ms/frame here, for a term that is a smooth vertical ramp
-       and therefore loses nothing at 1/7 resolution. Only the multiply, which
-       cannot be folded into an additive pass, stays full size. */
-    let add = null;
-    if (addV > 0) {
-      const bw = thumbW(api), bh = thumbH(api);
-      const ac = document.createElement('canvas');
-      ac.width = bw; ac.height = bh;
-      const ag = ac.getContext('2d');
-      if (ag) { ag.setTransform(bw / W, 0, 0, bh / H, 0, 0); }
-      add = ag ? paint(ac, ag, '#000000', addHex) : null;
-    }
-    return mul ? { mul: mul, add: add } : null;
+
+  /* a canvas of exactly bw x bh device pixels whose drawing coordinates are
+     still the viewport's CSS pixels, so every gradient below can keep the
+     geometry it was authored with. */
+  function mkThumbCanvas(api, bw, bh) {
+    const c = document.createElement('canvas');
+    c.width = bw; c.height = bh;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (g) g.setTransform(bw / Math.max(1, api.W), 0, 0, bh / Math.max(1, api.H), 0, 0);
+    return { cv: c, g: g };
   }
 
-  /* ── GRADE VEIL bake ──────────────────────────────────────────────────────
-     ⚠ MEASURED, NOT GUESSED. grade() originally painted the distance fog, the
-     vignette and the centre lift as three live gradients over the full
-     viewport, and cost 37ms/frame on this box's software rasteriser — a
-     full-viewport RADIAL gradient alone measured 12.3ms, versus 0.9ms for a
-     flat fill and ~1ms for a drawImage. All three depend only on the viewport
-     and the light rig, so they are baked into one RGBA veil and blitted. The
-     remaining live work in grade() is the bloom and the three blend fills,
-     which have to see the actual frame. ── */
-  function bakeVeil(api, dpr) {
+  function bakePost(api, bw, bh) {
     const W = api.W, H = api.H, LIGHT = api.LIGHT;
-    const o = mkCanvas(W, H, dpr); const g = o.g;
+    const o = mkThumbCanvas(api, bw, bh); const g = o.g;
     if (!g) return null;
     const hz = horizonY(api);
     /* centre lift, so the vignette reads as a lens falloff and not as dirt in
@@ -2804,11 +2795,9 @@
     /* ⚠ THE FOG BAND IS THE AIR, SO IT IS hazeColour's COLOUR, NOT LIGHT.fog's.
        mix(fog, disc, .22) is rgb(101,107,113) at noon — a cold grey — and this
        band lands exactly on the far rows of the field and on the foot of the
-       ridgeline, i.e. on the seam the blocker is about. Laying cold grey there
-       is the same mistake as the grey backdrop, at a tenth the size: the far
-       rock stops being ochre-lifted-toward-fog and starts being neutral. Two
-       thirds of the way to the haze keeps the band's job (it still knocks the
-       far rows back) while keeping it on the ground's hue axis. */
+       ridgeline. Laying cold grey there is the same mistake as the grey
+       backdrop, at a tenth the size. Two thirds of the way to the haze keeps
+       the band's job while keeping it on the ground's hue axis. */
     const fc = api.mixHex(api.mixHex(LIGHT.fog, LIGHT.disc, 0.22), hazeColour(api), 0.66);
     const fa = 0.12 + (LIGHT.haze || 0.2) * 0.18;
     fog.addColorStop(0, api.rgba(fc, fa));
@@ -2818,7 +2807,7 @@
     /* ── FOREGROUND DUST ──────────────────────────────────────────────────
        Warm haze hanging in the air between the lens and the board's near edge:
        the one atmospheric element that belongs in FRONT of everything, so it
-       is baked into the veil (which composites last) rather than into the land.
+       lives in the pass that composites last rather than in the land bake.
 
        ⚠ IT IS ALSO THE ONLY THING THIS MODULE CAN PUT OVER THE BOARD MODULE'S
        NEAR-EDGE SHADOW BANDS. battle-board paints its own near wall and two
@@ -2868,8 +2857,25 @@
       g.fillStyle = gr; g.beginPath(); g.arc(x, y, rx, 0, 7); g.fill(); g.restore();
     }
     g.restore();
-    return o.cv;
+    /* ── and now read the whole stack back as (attenuation, added colour) ──
+       ONE getImageData over ~131x120 px, once per bake. getImageData is
+       UNPREMULTIPLIED, so `a` is the composite alpha of every layer above and
+       `c` their composite colour: attn = 1−a is exactly what the destination
+       keeps, and c·a is exactly what they add. */
+    let im = null;
+    try { im = g.getImageData(0, 0, bw, bh); } catch (e) { return null; }
+    const d = im.data, n = bw * bh;
+    const attn = new Float32Array(n), col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const a = d[i * 4 + 3] / 255;
+      attn[i] = 1 - a;
+      col[i * 3] = d[i * 4] * a;
+      col[i * 3 + 1] = d[i * 4 + 1] * a;
+      col[i * 3 + 2] = d[i * 4 + 2] * a;
+    }
+    return { attn: attn, col: col, w: bw, h: bh };
   }
+
   function artCanvas(api, img, dpr) {
     if (!img || !img.complete || !img.naturalWidth) return null;
     const k = img.src;
@@ -2887,8 +2893,13 @@
   }
 
   /* ── per-frame passes ───────────────────────────────────────────────────── */
-  function drawBody(api) {
-    const ctx = api.ctx, LIGHT = api.LIGHT;
+  /* ⚠ ctx IS AN ARGUMENT, NOT api.ctx, AND THAT IS THE WHOLE WORLD-BAKE.
+     The disc, its halo and the light shafts are pure functions of LIGHT, VIEW
+     and MAP — nothing in them reads the frame — so they are painted ONCE into
+     the world bake instead of every frame. See bakeWorld(). */
+  function drawBody(api, ctx) {
+    ctx = ctx || api.ctx;
+    const LIGHT = api.LIGHT;
     const b = bodyPos(api);
     const R = (b.sun ? 26 : 22) * api.clamp(api.VIEW.box ? api.VIEW.box.h / 900 : 1, 0.7, 1.15);
     const puls = 1 + Math.sin(api.T * 0.9) * 0.015;
@@ -2990,8 +3001,9 @@
      land bake so the ridgeline cuts them off, which is what makes them read as
      air rather than as an overlay. Deliberately near-invisible per shaft —
      they are meant to be felt, not counted. */
-  function drawShafts(api) {
-    const ctx = api.ctx, LIGHT = api.LIGHT;
+  function drawShafts(api, ctx) {
+    ctx = ctx || api.ctx;
+    const LIGHT = api.LIGHT;
     const b = bodyPos(api);
     const len = api.H * 1.25;
     /* dimmed as the sky brightens, same reason as bakeSky's gDim: an additive
@@ -3005,7 +3017,13 @@
          ⚠ The first pass ran these at 0.055 and they read as a hard triangular
          BEAM hanging off the disc — an effect, not air. The apex is also
          pushed above the disc so no shaft comes to a visible point. */
-      const a = Math.PI * 0.5 + (i - 2.5) * 0.19 + Math.sin(api.T * 0.09 + i * 1.7) * 0.012;
+      /* ⚠ THE 0.012-RAD WOBBLE USED TO READ api.T AND IT IS GONE. The shafts
+         are baked into the world canvas now (see bakeWorld), so a term that
+         changes every frame would either be frozen at an arbitrary phase or,
+         worse, jump the next time a light change forced a re-bake. It was
+         never the thing that made the frame feel alive — drawDrift is, and it
+         is still live. */
+      const a = Math.PI * 0.5 + (i - 2.5) * 0.19 + Math.sin(i * 1.7) * 0.012;
       const wob = 0.026 + (i % 3) * 0.008;
       const oy = b.y - api.H * 0.05;
       const gg = ctx.createLinearGradient(b.x, oy, b.x + Math.cos(a) * len, oy + Math.sin(a) * len);
@@ -3077,714 +3095,555 @@
     ctx.restore();
   }
 
+  /* ── THE WORLD BAKE ───────────────────────────────────────────────────────
+     Sky, backdrop art, sun/moon, light shafts and the ridgeline+desert floor,
+     composited ONCE into a single viewport canvas.
+
+     ⚠ WAVE 5 PERF, AND IT IS THE BIGGEST SINGLE ITEM IN THE FRAME — bigger
+     than the grade. Measured by stubbing the two entry points on the live
+     board page (scratchpad/vw5-abl.mjs, masks `nodraw` / `nograde`, three
+     3000ms windows each): draw() cost 21.4ms/frame at wave 3 against the
+     grade's 37.7, and every millisecond of it was spent re-compositing layers
+     that had not changed — two full-viewport blits, up to two more for the
+     art's cross-fade, six full-height gradient triangles for the shafts and
+     four radial gradients for the disc and its halo, all pure functions of
+     LIGHT + VIEW + MAP. They are baked on exactly the cadence bakeSky and
+     bakeLand already use, and draw() is now ONE blit plus the two things that
+     genuinely move (the flare, which has to sit over the ridge, and the drift
+     wisps).
+
+     ⚠ EXCEPT DURING A LOCATION CROSS-FADE. BACKDROP.fade animates over ~0.35s
+     and the bakes are throttled to 150ms, so baking a mid-fade art layer in
+     would either thrash the bake or freeze the dissolve. While fade < 1 the
+     world is baked WITHOUT art and draw() composites both art layers live, as
+     wave 3 did — i.e. the expensive path is the one that only runs while a
+     location card is actually changing. ── */
+  function bakeWorld(api, dpr, withArt) {
+    const W = api.W, H = api.H;
+    const o = mkCanvas(W, H, dpr); const g = o.g;
+    if (!g) return null;
+    if (S.sky.cv) blit(g, S.sky.cv, W, H);
+    if (withArt) drawArt(api, g, 1);
+    try { drawBody(api, g); drawShafts(api, g); } catch (e) { }
+    if (S.land.cv) blit(g, S.land.cv, W, H);
+    return o.cv;
+  }
+  /* the backdrop art layer(s), at whatever cross-fade the host reports. Shared
+     by the world bake (steady state) and draw() (mid-fade). */
+  function drawArt(api, ctx, fadeScale) {
+    try {
+      const bd = off('art') ? null : api.backdrop;
+      if (!(bd && bd.img && bd.img.complete && bd.img.naturalWidth)) return;
+      const dpr = dprOf(api);
+      const W = api.W, H = api.H;
+      const fade = api.clamp(bd.fade === undefined ? 1 : bd.fade, 0, 1);
+      /* ⚠ HOW MUCH OF A DISAGREEING PHOTOGRAPH SURVIVES. Flattening cold art
+         INTO the desert with more and more haze does remove the city, but what
+         it leaves behind is a flat milky band across the whole sky — the same
+         failure as the blocker, moved to the horizon. It is cheaper and truer
+         to turn the offending layer DOWN and let our own graded sky and our
+         own ridgeline carry the distance. At full disagreement the photo is
+         still on screen at just under half strength — enough that a location
+         card visibly changes the vista, which is the user's ask, and not
+         enough for anyone to count its helicopters. */
+      const aScale = 1 - ART_YIELD * artDisagreement(api, bd.img);
+      if (bd.prev && bd.prev.complete && fade < 1) {
+        const pc = artCanvas(api, bd.prev, dpr);
+        if (pc) {
+          ctx.globalAlpha = (1 - ART_YIELD * artDisagreement(api, bd.prev)) * fadeScale;
+          blit(ctx, pc, W, H);
+          ctx.globalAlpha = 1;
+        }
+      }
+      const cc = artCanvas(api, bd.img, dpr);
+      if (cc) {
+        ctx.globalAlpha = fade * aScale * fadeScale;
+        /* a partial cross-fade needs the alpha, so it cannot take the 1:1 fast
+           path unless globalAlpha is honoured — it is, save/restore inside
+           blit() preserves it. */
+        blit(ctx, cc, W, H);
+        ctx.globalAlpha = 1;
+      }
+    } catch (e) { ctx.globalAlpha = 1; }
+  }
+
   function draw(api) {
-    const ctx = api.ctx, W = api.W, H = api.H, LIGHT = api.LIGHT;
+    const ctx = api.ctx, W = api.W, H = api.H;
     try { ensureBakes(api); } catch (e) { }
-    /* SKY */
-    if (S.sky.cv) {
-      blit(ctx, S.sky.cv, W, H);
+    if (S.world.cv) {
+      blit(ctx, S.world.cv, W, H);
+      if (!S.world.art) drawArt(api, ctx, 1);
     } else {
+      drawFallback(api);
+    }
+    /* …and the body's bloom spills back over the ridge it is behind. */
+    try { drawBodyGlow(api); drawDrift(api); } catch (e) { }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  /* the pre-bake frame: one flat sky so the very first paint is not a void */
+  function drawFallback(api) {
+    const ctx = api.ctx, W = api.W, H = api.H;
+    {
       const st = skyStops(api);
       const g = ctx.createLinearGradient(0, 0, 0, H);
       g.addColorStop(0, st[0]); g.addColorStop(0.55, st[1]); g.addColorStop(1, st[2]);
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     }
-    /* BACKDROP ART as the far layer, respecting the host's cross-fade. */
-    try {
-      const bd = off('art') ? null : api.backdrop;
-      if (bd && bd.img && bd.img.complete && bd.img.naturalWidth) {
-        const dpr = dprOf(api);
-        const fade = api.clamp(bd.fade === undefined ? 1 : bd.fade, 0, 1);
-        /* ⚠ HOW MUCH OF A DISAGREEING PHOTOGRAPH SURVIVES. Flattening cold art
-           INTO the desert with more and more haze does remove the city, but
-           what it leaves behind is a flat milky band across the whole sky —
-           which is the same failure as the blocker, moved to the horizon. It
-           is cheaper and truer to just turn the offending layer DOWN and let
-           our own baked sky (a real graded sky) and our own ridgeline carry
-           the distance. At full disagreement the photo is still on screen at
-           just under half strength — enough that a location card visibly
-           changes the vista, which is the user's ask, and not enough for
-           anyone to count its helicopters. */
-        const aScale = 1 - ART_YIELD * artDisagreement(api, bd.img);
-        if (bd.prev && bd.prev.complete && fade < 1) {
-          const pc = artCanvas(api, bd.prev, dpr);
-          if (pc) {
-            ctx.globalAlpha = 1 - ART_YIELD * artDisagreement(api, bd.prev);
-            blit(ctx, pc, W, H);
-            ctx.globalAlpha = 1;
-          }
-        }
-        const cc = artCanvas(api, bd.img, dpr);
-        if (cc) {
-          ctx.globalAlpha = fade * aScale;
-          /* a partial cross-fade needs the alpha, so it cannot take the 1:1
-             fast path unless globalAlpha is honoured — it is, save/restore
-             inside blit() preserves it. */
-          blit(ctx, cc, W, H);
-          ctx.globalAlpha = 1;
-        }
-      }
-    } catch (e) { ctx.globalAlpha = 1; }
-    /* the body sits behind the ridgeline… */
-    try { drawBody(api); drawShafts(api); } catch (e) { }
-    /* …the ridges, haze band and desert floor occlude it… */
-    blit(ctx, S.land.cv, W, H);
-    /* …and its bloom spills back over them. */
-    try { drawBodyGlow(api); drawDrift(api); } catch (e) { }
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
   }
-
   /* ── GRADE ────────────────────────────────────────────────────────────────
-     Runs after the depth-sorted actors. Composited fills and one tiny
-     downsampled bloom — a full-viewport getImageData every frame is far too
-     expensive and is not needed for any of this. */
-  /* ── THE COOL-SHADOW MASK ─────────────────────────────────────────────────
-     Round 3's second failed clause: the key was warm but so were the shadows.
-     Getting "cool blue-grey in shadow" out of canvas-2D without a per-pixel
-     loop needs a term that scales with DARKNESS, and the flat-fill blend modes
-     cannot do that on their own — 'screen' with a navy comes closest but it
-     still moves a lit midtone by a third of what it moves a black, which is
-     enough to drag the warm interior mean down with it.
-     So: build a mask at thumbnail scale — invert the frame, desaturate it,
-     cube it — and add the tint through that. inv³ is ~0.58 on a near-black,
-     ~0.41 on a shadowed cliff wall, ~0.21 on the interior mean and ~0.02 on
-     lit sand, i.e. it lands almost entirely in the shadows.
-     ⚠ IT MUST BE DESATURATED BEFORE THE CUBE. Without that step the mask is
-     the PER-CHANNEL inverse, and a warm highlight's blue channel is its
-     darkest one — so the "shadow" tint would pour blue into exactly the
-     sunlit sand it must not touch. 'saturation' is feature-detected because a
-     canvas that silently drops it would paint flat grey and turn the mask into
-     a uniform veil. */
-  /* ⚠ `src` IS THE ALREADY-DOWNSCALED FRAME THUMBNAIL, NOT THE FRAME.
-     WAVE 3 PERF. This used to take the full 1744x1576 canvas and downscale it
-     itself, which meant the grade performed THREE separate full-canvas reads
-     per frame — one here, one in bloom(), one in coolThumb() — to produce
-     three thumbnails, two of which (this one and bloom's) are downscales of
-     exactly the same pixels at exactly the same size. bloom() now makes that
-     thumbnail once and hands it over; copying 117x114 pixels 1:1 costs
-     nothing, and the output is bit-identical because the downscale it replaces
-     had the same source and the same destination size. coolThumb keeps its own
-     read, and must: it samples the frame BEFORE the warm multiply and this one
-     is after. */
-  function shadowThumb(api, src, bw, bh) {
-    if (!S.shade.cv) S.shade.cv = document.createElement('canvas');
-    if (S.shade.cv.width !== bw || S.shade.cv.height !== bh) {
-      S.shade.cv.width = bw; S.shade.cv.height = bh;
-      S.shade.g = S.shade.cv.getContext('2d');
+     Runs after the depth-sorted actors, and is THREE full-viewport composites.
+
+     ⚠ IT USED TO BE EIGHT, AND THAT WAS THE WAVE-5 PERF CLAUSE. Wave 3 spent
+     a chroma multiply, the bloom's upscale, a 'difference' tone pedestal, a
+     'color-dodge' tone gain, a veil blit, a filmic 'overlay' fill and two
+     clamp fills on every frame. Measured per primitive on the real 1840x1680
+     surface (scratchpad/vw5-micro2.mjs — six copies of ONE op per frame, timed
+     by frame count so a deferred draw cannot hide inside a performance.now()
+     bracket):
+         source-over blit 3.6ms   multiply blit 5.5   overlay fill 5.5
+         lighten fill     4.5     darken fill   3.6   difference fill 4.2
+         COLOR-DODGE fill 9.0     color-dodge blit 10.9   self-blit 15.5
+         nearest upscale (quarter→full) 7.7, and 4.5 when clipped below the horizon
+     Two things fall straight out of that table. The tone gain was built on the
+     most expensive primitive canvas 2D offers here, and the cheapest way to
+     move a whole frame is a blit. So:
+
+       · everything MULTIPLICATIVE — the warm chroma restore, the veil's
+         attenuation (vignette + fog + dust), the filmic warm tilt, the tone
+         pedestal and the highlight ceiling — collapses into ONE per-frame
+         RGB map, built at thumbnail scale and composited with a single
+         'multiply' upscale.
+       · everything ADDITIVE — the bloom, the cool shadow bounce, the veil's
+         own colour and the tone GAIN — collapses into the ONE 'lighter'
+         upscale the bloom was already performing.
+       · the toe stays a flat 'lighten' fill, because "nothing in the frame is
+         pure black" has to be a guarantee and not an approximation.
+
+     ⚠ THE TONE GAIN IS THE ONE TERM THAT COULD NOT STAY MULTIPLICATIVE, and
+     that is arithmetic, not taste: a 'multiply' cannot produce a factor above
+     1, and the only canvas ops that can ('color-dodge', or drawing the canvas
+     onto itself) measured 9.0ms and 15.5ms — between a third and a half of the
+     whole frame budget for a 16% gain. It is delivered instead as a 'lighter'
+     of a QUARTER-scale copy of the frame, which is exact for anything smoother
+     than ~8 device px and costs nothing because that upscale was already
+     happening. What it gives up is 16% of the contrast on detail FINER than
+     that; what it buys is two whole passes.
+
+     ⚠ AND THE MAP IS WHERE THE SHADOWS GOT THEIR MATERIAL BACK — see postMap.
+     A per-frame map can be keyed on what the pixel IS, which a baked ramp
+     could never be, so the warm restore is now stronger exactly where the
+     ground is in shade instead of uniform across the row. ── */
+
+  /* how much of SHADOW_TINT survives. ⚠ CUT FROM 1.0 IN WAVE 5 AND THE REASON
+     IS THE WHOLE "shadowed ground has no material" CLAUSE: the tint is a navy
+     ADD, and adding blue to an ochre that is still ochre (R>B) walks it toward
+     neutral before it ever reaches cool. On the measured pair it was worth
+     −20 chroma on the shaded tile. A cool bounce belongs in the DEEPEST
+     occlusion only; the mid-shade keeps its hue and gets its chroma from the
+     restore instead. */
+  const SHADOW_TINT_K = 0.5;
+  /* THE SHADED-GROUND WEIGHT. ⚠ SHADOW_HI/SHADOW_LO (100/18) never touched the
+     shaded GROUND at all — the critic's shaded tile measures L 113 post-grade,
+     i.e. s = 0 under that ramp — which is exactly why every shadow treatment
+     in this module missed the thing the clause is about. This second, much
+     wider ramp is in PRE-grade luma (the map is built from the frame as the
+     actors left it, before the grade touches it) and is squared so lit sand at
+     the same depth still lands near zero. */
+  const GROUND_HI = 150, GROUND_LO = 45;
+  /* extra warm restore at full shade, as a multiple of the depth ramp's own.
+     Measured, not guessed: see the sweep numbers in the wave-5 report. */
+  const SHADOW_CHROMA = 1.9;
+  /* extra gain at full shade — the texture half of the clause, and it goes in
+     the MULTIPLY, not in the gain term.
+     ⚠ THE FIRST CUT PUT IT IN THE GAIN AND MEASURED BACKWARDS. Raising `w` in
+     shade moves that pixel's gain from the per-pixel multiply into the
+     quarter-scale copy, so the shaded ground came out LIFTED and SMOOTHER:
+     |d8px| 8.4 → 6.9 against a lit tile that only went 14.6 → 14.0, i.e. the
+     texture ratio fell from 0.575 to 0.493 while the clause asks for 0.7.
+     Delivered through the map instead it is per-pixel, so it scales the
+     shade's own grain with it. The map's ceiling is what pays for it: GAIN_BASE
+     is sized so a fully shaded pixel lands ON MAP_CEIL and a lit one sits
+     ~12% below it. */
+  const SHADOW_LIFT = 0.05;
+  /* headroom under the multiply's own ceiling of 1.0. The map carries
+     TONE_GAIN × warm × filmic × attenuation and is then DIVIDED by (1+gain),
+     so the gain has to be big enough to bring the brightest map value under 1.
+     At TONE_GAIN 1.16 and a filmic tilt of ~1.04 the minimum is ~0.21. */
+  const GAIN_BASE = 0.21;
+  /* …and the map is capped just under 1 so the frame cannot contain a pure
+     white channel: the multiply runs AFTER the additive pass, so whatever the
+     bloom blew out to 255 leaves at 255·0.985 = 251. That is the shoulder
+     clamp, for free, in a pass that was happening anyway. */
+  const MAP_CEIL = 0.992;
+  /* ⚠ WHERE THE COOL-SURFACE GATE STARTS, AND IT IS NOT COOL_LO. COOL_LO/HI
+     (−14…+2) were tuned in wave 3 for an ADDITIVE give-back, where being
+     generous only cost a little chroma. As a GATE on the warm restore that
+     range is actively wrong: it starts protecting at B−R = −14, i.e. at a
+     warm-but-desaturated ochre — which is precisely what a shaded sand tile
+     measures, and precisely the thing the clause says has lost its material.
+     Measured on the app frame at y700 with the old range: shaded chroma moved
+     33.3 → 35.2 while the same build moved the standalone's shade by 12, i.e.
+     the gate was eating three quarters of the restore exactly where it was
+     needed. The gate now begins at B−R = 0 — a surface has to actually BE cool
+     to be protected. Water (B−R ≈ +30) and the teal move pool (≈ +25) still
+     clear it with room to spare. */
+  const GATE_LO = -2, GATE_HI = 8;
+  /* …and where the shade boost is allowed to act at all: R−B, i.e. how ochre
+     the surface already is. See the loop. */
+  const WARM_LO = 6, WARM_HI = 24;
+  /* the map is rebuilt on one frame in four — see the cadence note below. */
+  const POST_CADENCE = 4;
+
+  function scratch(rec, w, h, ro) {
+    if (!rec.cv) rec.cv = document.createElement('canvas');
+    if (rec.cv.width !== w || rec.cv.height !== h) {
+      rec.cv.width = w; rec.cv.height = h;
+      try { rec.g = rec.cv.getContext('2d', ro ? { willReadFrequently: true } : undefined); }
+      catch (e) { rec.g = rec.cv.getContext('2d'); }
+      rec.fresh = false;
     }
-    const s = S.shade.g; if (!s) return null;
-    s.setTransform(1, 0, 0, 1, 0, 0);
-    s.globalCompositeOperation = 'source-over';
-    s.globalAlpha = 1;
-    try { s.filter = 'none'; } catch (e) { }
-    s.clearRect(0, 0, bw, bh);
-    s.drawImage(src, 0, 0, bw, bh);
-    /* invert */
-    s.globalCompositeOperation = 'difference';
-    s.fillStyle = '#ffffff';
-    s.fillRect(0, 0, bw, bh);
-    /* desaturate — feature-detected, see the note above */
-    s.globalCompositeOperation = 'saturation';
-    const greyed = (s.globalCompositeOperation === 'saturation');
-    if (greyed) { s.fillStyle = 'hsl(0,0%,50%)'; s.fillRect(0, 0, bw, bh); }
-    /* ── THE BLACK POINT ──────────────────────────────────────────────────
-       ⚠ WAVE 2's BLOCKER LIVED HERE. Cubing the RAW inverse never reaches
-       zero: inv³ is 0.25 at L95, 0.21 at L105 and still 0.09 at L140, so the
-       "shadow" tint was painted — weakly, but over the ENTIRE frame — across
-       the lit sand as well. Measured by turning this one pass off
-       (window.__vistaOff={shade:1}) and re-shooting: the near field went from
-       29.9% saturation / R−B +33.4 to 38.3% / +41.4, and the mid field from
-       29.6% / +35.8 to 35.9% / +42.8. That is the milky veil, in one number.
-       The tint is a SHADOW tint, so it has to be zero on anything that is not
-       a shadow. Remap first, then square:
-           m = clamp((SHADOW_HI − L) / (SHADOW_HI − SHADOW_LO), 0, 1)²
-       'color-burn' against a constant grey g does exactly the remap in one
-       composite — B(u,g) = 1 − (1−u)/g on the inverted thumbnail is
-       1 − L/g·255, i.e. a linear ramp that hits zero at L = 255g — and one
-       'lighter' self-draw at (gain−1) alpha stretches it to reach 1 at
-       SHADOW_LO. Feature-detected: without color-burn we fall back to the old
-       cube, which is wrong but not broken. */
-    s.globalCompositeOperation = 'color-burn';
-    const burned = (s.globalCompositeOperation === 'color-burn');
-    if (burned) {
-      s.fillStyle = 'rgb(' + SHADOW_HI + ',' + SHADOW_HI + ',' + SHADOW_HI + ')';
-      s.fillRect(0, 0, bw, bh);
-      const gain = SHADOW_HI / Math.max(1, SHADOW_HI - SHADOW_LO);
-      if (gain > 1.01) {
-        s.globalCompositeOperation = 'lighter';
-        s.globalAlpha = Math.min(1, gain - 1);
-        s.drawImage(S.shade.cv, 0, 0);
-        s.globalAlpha = 1;
-      }
-      /* square — one self-multiply. NOT a cube: the ramp already has a black
-         point, so a third power only eats the cliff-wall shade that the
-         "cool blue-grey in shadow" clause is actually about. */
-      s.globalCompositeOperation = 'multiply';
-      s.drawImage(S.shade.cv, 0, 0);
-    } else {
-      s.globalCompositeOperation = 'multiply';
-      s.drawImage(S.shade.cv, 0, 0);
-      s.drawImage(S.shade.cv, 0, 0);
-    }
-    /* colourise and set the strength in the same multiply */
-    s.globalCompositeOperation = 'multiply';
-    s.fillStyle = greyed ? SHADOW_TINT : SHADOW_TINT_WEAK;
-    s.fillRect(0, 0, bw, bh);
-    s.globalCompositeOperation = 'source-over';
-    /* a gentle blur so the tint does not inherit the frame's hard edges — a
-       shadow's colour bleeds, its geometry does not need to be exact */
-    try {
-      s.filter = 'blur(2px)';
-      s.globalCompositeOperation = 'copy';
-      s.drawImage(S.shade.cv, 0, 0);
-      s.filter = 'none';
-      s.globalCompositeOperation = 'source-over';
-    } catch (e) { try { s.filter = 'none'; } catch (e2) { } s.globalCompositeOperation = 'source-over'; }
-    return S.shade.cv;
+    return rec.g;
   }
 
-  /* ── THE COOL-SURFACE GIVE-BACK ───────────────────────────────────────────
-     Round 4's blocker, in one function. The warm chroma multiply is a baked
-     full-viewport blit and it cannot see what it is painting over, so it takes
-     blue out of the water pool and the teal movement slabs exactly as
-     enthusiastically as it takes it out of sand.
+  /* ── THE PER-FRAME MAP ────────────────────────────────────────────────────
+     One readback of a ~131x120 thumbnail of the frame, one JS loop, three
+     thumbnails out:
+       mul   the multiply map (RGB): warm restore, filmic tilt, veil
+             attenuation, tone pedestal, ceiling — everything multiplicative.
+       add   what has to be ADDED (RGB): the veil's own colour and the deep
+             cool bounce, pre-divided by `mul` because it is composited before
+             the multiply runs.
+       gain  a greyscale weight for the tone gain, boosted in shade.
 
-     ⚠ WHY THIS IS NOT A MASK ON THE MULTIPLY. The obvious fix is to build the
-     mask the way shadowThumb() does and gate the multiply with it — but a
-     multiply is per-pixel and a thumbnail mask is not, so gating it means
-     upscaling the mask to the full canvas and compositing there. Measured on
-     this box at 1640x1600: one extra full-canvas self-draw is 10.3ms, which is
-     most of a 60fps frame for a colour correction. So the multiply stays
-     unconditional and we ADD BACK what it took, in the one full-canvas
-     'lighter' upscale the bloom already performs (see bloom()) — free.
+     ⚠ WHY A READBACK AT ALL, AND WHY IT IS NOT THE COST. `drawImage(main)` +
+     `getImageData` is a PIPELINE SYNC — it cannot return until everything
+     queued against the frame has rasterised — so its own performance.now()
+     bracket reads ~28ms while the work it waits for is work the frame owed
+     anyway. Measured three ways in wave 3 (cadence 4 vs 1; cadence 100000 vs
+     1; and a full pass-by-pass ablation) it is worth about 1ms of grade p50
+     and nothing end to end on this software rasteriser. The cadence is kept
+     because on real hardware the same call is a genuine GPU→CPU stall, and
+     because what it samples — the tonal statistics of a board that does not
+     move — is stale by nothing that matters. `__vistaOff.coolcache = 1` still
+     forces every frame so the counterfactual is measurable on this build.
 
-     ⚠ IT MUST BE BUILT BEFORE THE MULTIPLY RUNS. The give-back is
-     k·B and 0.42k·G of the pixel's PRE-grade value; sampling after the
-     multiply would measure B(1−k) and give back too little, and, worse, the
-     multiply has already dragged the (B−R) the mask keys on across neutral —
-     which is the entire bug. grade() therefore calls this as its first act,
-     off the untouched frame.
-
-     The arithmetic, for a pixel at mask strength m and ramp r:
-       after the multiply   (R, G(1−0.42k), B(1−k))
-       this adds            (0, 0.42k·G·m·r·g, k·B·m·r·g)
-     so at m=1 the pixel leaves grade() with the chroma it arrived with, times
-     the tone gain g that the whole field gets (toneRamp). At m=0 it is
-     untouched and keeps the full warm restore. Nothing in between is a hue
-     rotation — it is the same restore, dialled down.
-
-     Costs one thumbnail downscale plus a getImageData and a JS loop over
-     ~117x114 pixels. The LOOP is as cheap as that sounds — benchmarked at
-     DOUBLE that size (234x228) on this box's software rasteriser, 0.90ms — but
-     the READBACK IS NOT, and the isolated micro-benchmark that said 0.20ms was
-     measuring the wrong thing. See the cadence below.
-
-     ── ⚠ WHY THIS RUNS ON A CADENCE AND NOT EVERY FRAME ────────────────────
-     WAVE 3 r2 BLOCKER. `drawImage(mainCanvas)` + `getImageData` is the only
-     readback anywhere in the module (grep: the other two are one-off bakes),
-     and it is a PIPELINE SYNC: it cannot return until everything queued
-     against the frame has actually been rasterised, so its cost is not the
-     117x114 copy, it is the flush of a 1640x1600 canvas that ten composites
-     are still pending on. That is why the isolated benchmark above says
-     0.20ms while the readback's own performance.now() bracket says 27.9ms.
-
-     ⚠ AND THAT 27.9ms IS NOT A SAVING — READ THIS BEFORE YOU QUOTE IT. The
-     sync does not CREATE the work, it WAITS for it, so removing the wait moves
-     the cost to whatever flushes next instead of deleting it. Measured, on
-     this box, three ways:
-       · cadence 4 vs cadence 1 (`__vistaOff.coolcache`), five alternating 3s
-         windows: 36.8 vs 37.2 frames per window, grade p50 33.2 vs 34.3ms.
-       · cadence set to 100000 — ONE readback in a whole 4s run instead of 50:
-         49 frames and p50 33.5ms, against 49 frames and 33.4ms with every
-         frame reading back. Identical.
-       · pass-by-pass ablation of the whole grade (4s windows, ms/frame from
-         the frame count): bloom 8.9, tone 7.9, veil 4.0, chroma multiply 3.7,
-         filmic 2.3, the two clamps 1.5 — summing to the 28.3ms/frame that
-         disabling grade() entirely gives back (49 -> 75 frames/4s). The cost
-         is per-destination-pixel composite work spread over seven
-         full-viewport passes, and there is no readback hiding in that list.
-     So on a software rasteriser, where there is no GPU pipeline to stall, this
-     cadence buys about 1ms of grade p50 and nothing measurable end to end. It
-     is kept anyway, because it cannot be slower, because a headless
-     SwiftShader box is the one machine where a readback is cheapest, and
-     because on real hardware the same call is a genuine GPU->CPU stall. What
-     it must not be is SOLD as the frame-rate fix: it is not, and the numbers
-     above are how you check that for yourself.
-
-     The mechanism, then, is simply: stop doing it every frame. What the
-     readback produces is TONAL STATISTICS OF A MOSTLY STATIC
-     BOARD — a (B−R) mask at 1/7 scale, blurred, and the frame's per-channel
-     extremes. Between two consecutive frames of a tactics board that is
-     nothing: the camera does not move, the ground does not move, and the only
-     things that do (a unit walking a tile, a hover ring) are small, slow and
-     already smeared by the 1px thumbnail blur = ~7px on the frame.
-
-     So the mask is recomputed every COOL_CADENCE-th frame and REUSED in
-     between — the previous mask canvas is returned untouched, so the
-     give-back still rides the bloom's upscale on every single frame; it is
-     the SAMPLE that is stale by up to three frames (50ms at 60fps; 240ms on
-     this 12fps software rasteriser), never the composite. A recompute is FORCED, ignoring the cadence, whenever the
-     thumbnail changes size, whenever the sky/land bake key moves (time of day,
-     location, resize — i.e. every case where the whole frame is regraded at
-     once) and on the first frame after a bake.
-
-     ⚠ AND IT IS A/B-ABLE ON THE SHIPPED BUILD: `__vistaOff.coolcache = 1`
-     forces the old every-frame behaviour, so every number above is
-     reproducible from the console on ONE build instead of by checking out two.
-     __vistaDebug().cool reports reads/calls (expect ~1:4) and the recompute's
-     own p50, so "is it actually caching?" is answerable too.
-
-     ⚠ WHAT THE STALENESS COSTS, MEASURED RATHER THAN ASSERTED. With the cache
-     off, the mask thumbnail was read every frame for 24 consecutive frames and
-     differenced: consecutive frames differ by mean 0.002 levels, worst single
-     pixel 2/255; across a 4-frame gap — the whole cadence — mean 0.004, worst
-     3/255. Three levels on one pixel of a 117x114 mask that is then blurred
-     and upscaled is not a visible quantity, which is the actual argument for
-     doing this at all. ── */
-  const COOL_CADENCE = 4;   /* readback on 1 frame in 4; 1 = every frame */
-  function coolThumb(api, src, bw, bh) {
-    if (S.coolFail) return null;
-    if (!S.cool.cv) S.cool.cv = document.createElement('canvas');
-    const resized = S.cool.cv.width !== bw || S.cool.cv.height !== bh;
-    if (resized) {
-      S.cool.cv.width = bw; S.cool.cv.height = bh;
-      S.cool.g = S.cool.cv.getContext('2d');
+     ⚠ AND IT IS WHY THE SHADOWS HAVE MATERIAL AGAIN. Wave 3's warm restore was
+     a BAKED vertical ramp: it could only know how far down the screen a pixel
+     was, so lit sand and the tile in its shadow at the same depth got exactly
+     the same treatment — and since a multiply is proportional, the darker one
+     came out with proportionally less chroma. Measured on the wave-3 frame at
+     constant depth: lit chroma 69.7, shaded 26.4. Here the restore is scaled
+     by (1 + SHADOW_CHROMA·sg) where sg is the pixel's own shade, so shade gets
+     MORE blue pulled out of it, not less — which is what "keeps its material"
+     means for an ochre. The cool bounce is a separate, much weaker term on the
+     deep mask only, so it lands in the occlusion instead of greying the whole
+     shadow. ── */
+  function postMap(api, bw, bh) {
+    if (S.post.fail) return null;
+    const gm = scratch(S.post.mulR, bw, bh);
+    const ga = scratch(S.post.addR, bw, bh);
+    const gt = S.t.g;
+    if (!gm || !ga || !gt) return null;
+    /* forced recompute: anything that regrades the whole frame at once.
+       S.lastBake moves on every re-bake, which covers time of day, location
+       swaps and resizes without having to enumerate them. */
+    const key = S.sky.key + '|' + S.land.key + '|' + S.lastBake + '|' + bw + 'x' + bh;
+    S.post.calls++;
+    if (S.post.ready && S.post.key === key && S.post.age < POST_CADENCE && !off('coolcache')) {
+      S.post.age++;
+      return S.post;
     }
-    const g = S.cool.g; if (!g) return null;
-    /* the forced-recompute signature: anything that regrades the whole frame
-       at once. S.lastBake moves on every re-bake, which covers time of day,
-       location swaps and resizes without having to enumerate them here. */
-    const key = S.sky.key + '|' + S.land.key + '|' + S.lastBake;
-    S.cool.calls++;
-    if (!resized && S.cool.mn && S.cool.key === key &&
-      S.cool.age < COOL_CADENCE && !off('coolcache')) {
-      S.cool.age++;
-      return S.cool.cv;      /* the PREVIOUS mask, still composited this frame */
-    }
-    S.cool.key = key; S.cool.age = 1; S.cool.reads++;
+    const pos = S.post.pos;
+    if (!pos || pos.w !== bw || pos.h !== bh) return null;
+    S.post.key = key; S.post.age = 1; S.post.reads++;
     const _t0 = (window.performance && performance.now) ? performance.now() : 0;
+    let im;
+    /* ⚠ STICKY ON FAILURE. getImageData throws on a tainted canvas, and the
+       board composites location art through the host's _bbAbs(). Everything is
+       same-origin today, but a throw every frame forever is a far worse
+       failure than losing the grade, so one throw disables the map for the
+       session and the frame simply ships ungraded rather than not at all. */
+    try { im = gt.getImageData(0, 0, bw, bh); }
+    catch (e) { S.post.fail = true; return null; }
+    const d = im.data;
+    const H = api.H, hz = horizonY(api), span = chromaSpan(api);
+    const k = off('chroma') ? 0 : chromaK(api);
+    const noVeil = off('veil'), noTone = off('tone'), noFilm = off('filmic'), noShade = off('shade');
+    const attn = pos.attn, col = pos.col;
+    /* the filmic warm tilt, as the exact 'overlay' blend it replaces. Wave 3
+       painted this as a full-viewport fill at 0.10 alpha; evaluated per pixel
+       here it is the same curve for none of the 5.5ms. */
+    const FA = noFilm ? 0 : 0.10;
+    const fh = hexRGB(api.mixHex(SAND_BASE, api.LIGHT.key, 0.28));
+    const f0 = fh[0] / 255, f1 = fh[1] / 255, f2 = fh[2] / 255;
+    const PED = noTone ? 0 : TONE_PEDESTAL * TONE_GAIN;
+    const TG = noTone ? 1 : TONE_GAIN;
+    const tint = hexRGB(SHADOW_TINT);
+    const gInv = 1 / Math.max(1, GROUND_HI - GROUND_LO);
+    const sInv = 1 / Math.max(1, SHADOW_HI - SHADOW_LO);
+    const cInv = 1 / Math.max(1, GATE_HI - GATE_LO);
+    const wInv = 1 / Math.max(1, WARM_HI - WARM_LO);
+    const md = gm.createImageData(bw, bh), ad = ga.createImageData(bw, bh);
+    const M = md.data, A = ad.data;
+    let mnR = 255, mnG = 255, mnB = 255, mxR = 0, mxG = 0, mxB = 0;
+    for (let j = 0; j < bh; j++) {
+      /* the depth ramp, sampled at the row centre in CSS pixels — the same
+         ramp the baked chroma canvas used to paint, and for the same reason:
+         above the board's far edge lives the graded backdrop art, whose
+         flatness is deliberate (bakeArt), so the restore has to be an identity
+         there and only reach full a fifth of the way down the field. */
+      let r = ((j + 0.5) * H / bh - hz) / span;
+      r = r < 0 ? 0 : r > 1 ? 1 : r;
+      for (let i = 0; i < bw; i++) {
+        const o = (j * bw + i) * 4, p = j * bw + i;
+        const R = d[o], G0 = d[o + 1], B = d[o + 2];
+        if (R < mnR) mnR = R; if (G0 < mnG) mnG = G0; if (B < mnB) mnB = B;
+        if (R > mxR) mxR = R; if (G0 > mxG) mxG = G0; if (B > mxB) mxB = B;
+        const L = 0.299 * R + 0.587 * G0 + 0.114 * B;
+        /* shaded GROUND (wide, squared) and DEEP occlusion (narrow) */
+        let sg = (GROUND_HI - L) * gInv; sg = sg < 0 ? 0 : sg > 1 ? 1 : sg; sg *= sg;
+        let sd = (SHADOW_HI - L) * sInv; sd = sd < 0 ? 0 : sd > 1 ? 1 : sd; sd *= sd;
+        if (noShade) { sg = 0; sd = 0; }
+        /* how COOL the surface already is. ⚠ WAVE 3 SPENT A WHOLE ROUND ON
+           THIS AS AN ADDITIVE GIVE-BACK, because its multiply was baked and
+           could not see the water. Here the restore simply is not applied to
+           anything the frame says is already cool — exact, free, and it cannot
+           overshoot the way an add-back can. */
+        /* ⚠ THE GATE IS BLUE AGAINST THE WARM MEAN, NOT AGAINST RED. (B−R) is
+           what wave 3's additive give-back keyed on, and as a GATE it is too
+           weak: the pond measures B−R ≈ +20 pre-grade but a thumbnail cell
+           anywhere near its shore averages that down toward zero, and half a
+           gate on a full-strength multiply took the pool from chroma 31 to 15.
+           B − (R+G)/2 is ~+20 on the pond and ~−20 on shaded sand — twice the
+           separation, from the same three numbers. */
+        let cool = (B - (R + G0) * 0.5 - GATE_LO) * cInv; cool = cool < 0 ? 0 : cool > 1 ? 1 : cool;
+        /* ⚠ AND THE SHADE BOOST ONLY LANDS ON A SURFACE THAT HAS A MATERIAL.
+           "Keeps its material" is a statement about ochre; pulling blue out of
+           something that is already neutral does not restore anything, it
+           invents a hue. Worse, the shade weight is highest exactly where the
+           WATER is (a pool is dark), so an ungated boost took the pond's blue
+           down from rgb(59,80,90) to (62,76,75) — chroma 31 → 13 — wherever a
+           thumbnail cell straddled the shoreline and diluted the cool gate.
+           So the boost is scaled by how warm the pixel already is: full on
+           sand at R−B ≥ 24, nothing at R−B ≤ 6. The base restore (wave 3's) is
+           untouched by this and still runs everywhere the cool gate allows. */
+        let warm = (R - B - WARM_LO) * wInv; warm = warm < 0 ? 0 : warm > 1 ? 1 : warm;
+        let kk = k * r * (1 + SHADOW_CHROMA * sg * warm) * (1 - cool);
+        if (kk > 0.42) kk = 0.42;
+        const w = GAIN_BASE;
+        const gainDiv = 1 / (1 + w);
+        const at = noVeil ? 1 : attn[p];
+        /* the tone pedestal, as a factor rather than a 'difference' fill: the
+           old chain was 1.16·(x − 7), and −7 of a pixel at local luma L is
+           −7/L of it. Exact at the local mean, and the deep end it is wrong
+           about is under the toe's floor anyway. */
+        const ped = 1 - r * PED / (L > 10 ? L : 10);
+        /* ⚠ THE TONE GAIN RAMPS IN WITH DEPTH, exactly as wave 3's strip pass
+           did, and it is not cosmetic: above the board's far edge lives the
+           graded backdrop art, whose flatness is deliberate (bakeArt), and a
+           gain there hands a photographic skyline its contrast straight back.
+           It is ALSO what buys the field its texture: the map is capped at
+           MAP_CEIL, so whatever gain the SKY demands sets GAIN_BASE for the
+           whole frame — a global 1.16 forced GAIN_BASE to 0.36 and dropped the
+           per-pixel slope (and with it |d8px|) by a fifth. Ramped, the sky asks
+           for 1.0 and the field's own 1.16 fits under the ceiling at 0.21. */
+        const tg = 1 + (TG - 1) * r;
+        const base = tg * at * (ped > 0 ? ped : 0) * gainDiv * (1 + SHADOW_LIFT * sg);
+        let mR = base, mG = base * (1 - 0.42 * kk), mB = base * (1 - kk);
+        if (FA) {
+          mR *= ovf(R, f0, FA); mG *= ovf(G0, f1, FA); mB *= ovf(B, f2, FA);
+        }
+        if (mR > MAP_CEIL) mR = MAP_CEIL; if (mG > MAP_CEIL) mG = MAP_CEIL; if (mB > MAP_CEIL) mB = MAP_CEIL;
+        if (mR < 0.02) mR = 0.02; if (mG < 0.02) mG = 0.02; if (mB < 0.02) mB = 0.02;
+        M[o] = (mR * 255) | 0; M[o + 1] = (mG * 255) | 0; M[o + 2] = (mB * 255) | 0; M[o + 3] = 255;
+        /* the additive half, pre-divided by the map because it is composited
+           one pass EARLIER than the multiply that will scale it. */
+        const t2 = sd * SHADOW_TINT_K;
+        const cR = (noVeil ? 0 : col[p * 3]) + tint[0] * t2;
+        const cG = (noVeil ? 0 : col[p * 3 + 1]) + tint[1] * t2;
+        const cB = (noVeil ? 0 : col[p * 3 + 2]) + tint[2] * t2;
+        A[o] = Math.min(255, cR / mR) | 0;
+        A[o + 1] = Math.min(255, cG / mG) | 0;
+        A[o + 2] = Math.min(255, cB / mB) | 0;
+        A[o + 3] = 255;
+      }
+    }
+    gm.putImageData(md, 0, 0); ga.putImageData(ad, 0, 0);
+    S.post.mn = [mnR, mnG, mnB]; S.post.mx = [mxR, mxG, mxB];
+    S.post.ready = true;
+    if (_t0) { S.post.ms.push(performance.now() - _t0); if (S.post.ms.length > 120) S.post.ms.shift(); }
+    return S.post;
+  }
+  /* the 'overlay' blend as a MULTIPLIER on the channel it is applied to, at
+     alpha a against constant source s. Returns 1 for a black pixel, where the
+     blend is a no-op and the division would not be defined. */
+  function ovf(x, s, a) {
+    if (x < 1) return 1;
+    const u = x / 255;
+    const ov = u < 0.5 ? 2 * u * s : 1 - 2 * (1 - u) * (1 - s);
+    return ((1 - a) * u + a * ov) / u;
+  }
+
+  /* ── THE ADDITIVE PASS ────────────────────────────────────────────────────
+     Bloom + tone gain + veil colour + cool bounce, summed at thumbnail /
+     quarter scale and composited with ONE 'lighter' upscale.
+
+     ⚠ NEAREST-NEIGHBOUR THROUGH A QUARTER-SIZE INTERMEDIATE, ON PURPOSE.
+     Bilinear-upscaling a thumbnail straight to 1840x1680 measured 26.8ms here;
+     nearest is 7.7 and the difference is invisible BECAUSE of the
+     intermediate. Wave 3's banding note ("the sky shows vertical stripes at
+     ~10px pitch") was nearest from a thumbnail exactly H/7 tall stamping
+     14-device-px blocks across a smooth sky: detrended row-luma
+     autocorrelation peaked at lag 14, r 0.67-0.72. Bilinear into a quarter-size
+     buffer first (cheap — the bilinear cost is per DESTINATION pixel) and
+     nearest from there makes the blocks 4 device px.
+     ⚠ AND THE GAIN TERM IS WHY THE INTERMEDIATE IS NOW LOAD-BEARING RATHER
+     THAN COSMETIC: the tone gain is `w · (a quarter-scale copy of the frame)`,
+     so the frame's own detail down to ~8 device px rides through it. At
+     thumbnail scale the gain would have been a local MEAN and the field would
+     have lost its grain. */
+  function additive(api, bw, bh, mw, mh, map) {
+    const ctx = api.ctx;
+    const g = scratch(S.bloom, bw, bh);
+    if (!g) return;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalCompositeOperation = 'source-over';
     g.globalAlpha = 1;
     try { g.filter = 'none'; } catch (e) { }
     g.clearRect(0, 0, bw, bh);
-    g.drawImage(src, 0, 0, bw, bh);
-    let im;
-    /* ⚠ STICKY ON FAILURE. getImageData throws on a tainted canvas, and the
-       board composites location art through the host's _bbAbs(). Everything is
-       same-origin today, but a throw every frame forever is a far worse
-       failure than losing the give-back, so one throw disables it for the
-       session and the warm restore simply runs ungated, as it did in round 3. */
-    try { im = g.getImageData(0, 0, bw, bh); }
-    catch (e) { S.coolFail = true; return null; }
-    const d = im.data;
-    const H = api.H, hz = horizonY(api), span = chromaSpan(api);
-    const k = chromaK(api);
-    /* ⚠ NO TONE GAIN FACTOR HERE. This term is added inside the bloom's
-       upscale, which runs BEFORE toneRamp(), so the gain is applied to it
-       downstream along with everything else — pre-scaling it would apply the
-       gain twice and overshoot the give-back by 16%. */
-    const kG = 0.42 * k, kB = k;
-    const lo = COOL_LO, inv = 1 / Math.max(1, COOL_HI - COOL_LO);
-    /* ⚠ THE PER-CHANNEL EXTREMES COME OUT OF THIS LOOP, FREE, and they are
-       now DIAGNOSTIC ONLY — r1 used them to skip the toe/shoulder fills and
-       that skip has been removed (see grade(): the shoulder is load-bearing,
-       the skip never fired, and it was never the cost). They stay because
-       __vistaDebug().frameMin/frameMax is how a critic reads what the grade is
-       actually handed, and because they cost one compare per channel inside a
-       loop that now runs once every COOL_CADENCE frames. Every branch below
-       feeds them, INCLUDING the r<=0 rows — a thumbnail whose top third was
-       never examined is not a bound on the frame. */
-    let mnR = 255, mnG = 255, mnB = 255, mxR = 0, mxG = 0, mxB = 0;
-    const see = (R, G, B) => {
-      if (R < mnR) mnR = R; if (G < mnG) mnG = G; if (B < mnB) mnB = B;
-      if (R > mxR) mxR = R; if (G > mxG) mxG = G; if (B > mxB) mxB = B;
-    };
-    for (let j = 0; j < bh; j++) {
-      /* the row's ramp, sampled at the row centre in CSS pixels. Identical to
-         the vertical ramp bakeChroma paints, on purpose. */
-      let r = ((j + 0.5) * H / bh - hz) / span;
-      r = r < 0 ? 0 : r > 1 ? 1 : r;
-      const o0 = j * bw * 4;
-      if (r <= 0) { for (let i = 0; i < bw; i++) { const o = o0 + i * 4; see(d[o], d[o + 1], d[o + 2]); d[o] = 0; d[o + 1] = 0; d[o + 2] = 0; d[o + 3] = 255; } continue; }
-      const cG = kG * r, cB = kB * r;
-      for (let i = 0; i < bw; i++) {
-        const o = o0 + i * 4;
-        const R = d[o], G = d[o + 1], B = d[o + 2];
-        see(R, G, B);
-        let m = (B - R - lo) * inv;
-        if (m <= 0) { d[o] = 0; d[o + 1] = 0; d[o + 2] = 0; d[o + 3] = 255; continue; }
-        if (m > 1) m = 1;
-        d[o] = 0;
-        d[o + 1] = Math.min(255, (cG * G * m) | 0);
-        d[o + 2] = Math.min(255, (cB * B * m) | 0);
-        d[o + 3] = 255;
-      }
-    }
-    g.putImageData(im, 0, 0);
-    S.cool.mn = [mnR, mnG, mnB];
-    S.cool.mx = [mxR, mxG, mxB];
-    /* a 1px thumbnail blur = ~7px on the frame. The sum this joins is upscaled
-       NEAREST (see bloom), so without it the give-back arrives as visible 7px
-       blocks along the pool's rim. A colour bleeding a few pixels past a water
-       edge is what water does; a staircase is not. */
-    try {
-      g.filter = 'blur(1px)';
-      g.globalCompositeOperation = 'copy';
-      g.drawImage(S.cool.cv, 0, 0);
-      g.filter = 'none';
-      g.globalCompositeOperation = 'source-over';
-    } catch (e) { try { g.filter = 'none'; } catch (e2) { } g.globalCompositeOperation = 'source-over'; }
-    if (_t0) { S.cool.ms.push(performance.now() - _t0); if (S.cool.ms.length > 120) S.cool.ms.shift(); }
-    return S.cool.cv;
-  }
-
-  /* ── THE TONE RAMP: pedestal, then multiplicative gain ────────────────────
-     See TONE_GAIN. Two flat-fill passes, both confined below the horizon and
-     both feathered across the SAME span the chroma multiply uses, because they
-     exist to undo that multiply's luma compression and must not extend past
-     it — above the horizon lives the graded backdrop art, whose flatness is
-     deliberate (bakeArt), and a gain there would hand a photographic skyline
-     its contrast straight back.
-
-     ⚠ THE FEATHER IS N FLAT STRIPS, NOT A GRADIENT. A full-viewport linear
-     gradient measured ~4.6ms on this box (see grade() step 1); N fillRects of
-     a few pixels each measure nothing. At N=24 each step changes the gain by
-     0.6%, i.e. under one 8-bit level on a mid-field pixel. Verified rather
-     than assumed: the row-mean luma's second derivative over the feather band
-     measures p50 0.533 with this pass in against 0.515 with it out, which is
-     BELOW the 1.16x the gain itself accounts for — so the strips add no
-     structure of their own.
-
-     ⚠ 'difference' IS AN ABSOLUTE VALUE, and that is fine HERE and only here.
-     Below TONE_PEDESTAL a channel mirrors instead of clamping, but the toe
-     clamp at the end of grade() lifts every channel to at least 16/20/34, so
-     the mirrored range is entirely under the floor and never reaches a pixel. */
-  function toneRamp(api) {
-    if (!opSupported('color-dodge') || !opSupported('difference')) return;
-    const ctx = api.ctx, W = api.W, H = api.H;
-    const hz = horizonY(api), span = chromaSpan(api);
-    /* ⚠ PAINT IN DEVICE PIXELS ON WHOLE-PIXEL BOUNDARIES, NOT IN CSS UNITS.
-       Under a DPR transform a strip edge lands on a fractional device row, the
-       rasteriser antialiases it, and a PARTIALLY COVERED row gets the blend
-       applied at partial alpha — TWICE, once from each neighbouring strip.
-       Under 'multiply' or 'color-dodge' that compounds instead of averaging,
-       so the feather comes out as N faint bright lines across the far rows.
-       Snapping to integer device rows makes every row belong to exactly one
-       strip and the seam disappear. Same reasoning as blit(). */
-    const sy = ctx.canvas.height / Math.max(1, H), sx = ctx.canvas.width / Math.max(1, W);
-    const DW = Math.ceil(W * sx), DH = ctx.canvas.height;
-    const top = Math.max(0, Math.round(hz * sy)), bot = Math.min(DH, Math.round((hz + span) * sy));
-    if (bot <= 0) return;
-    const N = 24;
-    const strip = (level, lo, hi) => {
-      /* the flat body first, then the feather ABOVE it — the two never overlap */
-      if (bot < DH && level > 0) {
-        ctx.fillStyle = 'rgb(' + level + ',' + level + ',' + level + ')';
-        ctx.fillRect(0, bot, DW, DH - bot);
-      }
-      if (bot <= top) return;
-      let y0 = top;
-      for (let i = 0; i < N; i++) {
-        const y1 = i === N - 1 ? bot : Math.round(top + (bot - top) * ((i + 1) / N));
-        if (y1 <= y0) continue;
-        const v = Math.round(lo + (hi - lo) * ((i + 0.5) / N));
-        if (v > 0) { ctx.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')'; ctx.fillRect(0, y0, DW, y1 - y0); }
-        y0 = y1;
-      }
-    };
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'difference';
-    strip(TONE_PEDESTAL, 0, TONE_PEDESTAL);
-    /* Cb / (1 − Cs) — so the fill level that yields TONE_GAIN is 1 − 1/gain */
-    const dodge = Math.round(255 * (1 - 1 / TONE_GAIN));
-    ctx.globalCompositeOperation = 'color-dodge';
-    strip(dodge, 0, dodge);
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.restore();
-  }
-
-  function bloom(api) {
-    const ctx = api.ctx, W = api.W, H = api.H;
-    const src = ctx.canvas;
-    if (!src) return;
-    const bw = thumbW(api), bh = thumbH(api);
-    /* ⚠ THE SHADOW MASK IS BUILT FROM THE UNTOUCHED FRAME THUMBNAIL, and it is
-       built the moment that thumbnail exists and before anything cubes it.
-       Both terms are keyed on the frame's own luminance and both are additive,
-       so they share ONE upscale (see the note on nearest-neighbour below — a
-       second full-canvas upscale would cost more than every other pass in this
-       module put together). Build order therefore matters only in that neither
-       may see the other's contribution.
-       ⚠ WAVE 3 PERF: it also shares the DOWNSCALE. See shadowThumb. */
-    if (!S.bloom.cv) S.bloom.cv = document.createElement('canvas');
-    if (S.bloom.cv.width !== bw || S.bloom.cv.height !== bh) {
-      S.bloom.cv.width = bw; S.bloom.cv.height = bh;
-      S.bloom.g = S.bloom.cv.getContext('2d');
-    }
-    const g = S.bloom.g; if (!g) return;
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.globalCompositeOperation = 'source-over';
-    g.globalAlpha = 1;
-    g.clearRect(0, 0, bw, bh);
-    /* THE ONE full-canvas downscale of this half of the grade. The shadow mask
-       is built from the result rather than from `src` — see shadowThumb. */
-    g.drawImage(src, 0, 0, bw, bh);
-    const shadeCv = off('shade') ? null : shadowThumb(api, S.bloom.cv, bw, bh);
-    /* bias hard toward the bright end: two multiplies of the thumbnail by
-       itself is x³, so a 0.5 midtone contributes 0.13 and a 0.9 highlight
-       contributes 0.73. Without this the "bloom" is just a flat haze. */
-    g.globalCompositeOperation = 'multiply';
-    g.drawImage(S.bloom.cv, 0, 0);
-    g.drawImage(S.bloom.cv, 0, 0);
-    g.drawImage(S.bloom.cv, 0, 0);
-    g.globalCompositeOperation = 'source-over';
-    /* ⚠ THE BLUR HAPPENS DOWN HERE, ON THE THUMBNAIL.
-       It used to be `ctx.filter='blur(9px)'` on the UPSCALE, i.e. a 9px
-       gaussian over the full 1640x1600 device-pixel canvas — measured at
-       ~30ms/frame on this box's software rasteriser, which is the whole frame
-       budget for one cosmetic pass. Blurring 75x72 px costs nothing, and the
-       bilinear upscale that follows does most of the spreading anyway. */
-    try {
-      /* 'copy', not 'source-over': drawing a canvas onto ITSELF with the
-         default op composites the blurred copy over the sharp original and
-         you get a halo, not a blur. */
-      g.filter = 'blur(3.5px)';
-      g.globalCompositeOperation = 'copy';
+    if (!off('bloom')) {
+      g.drawImage(S.t.cv, 0, 0);
+      /* bias hard toward the bright end: three self-multiplies is x⁴, so a 0.5
+         midtone contributes 0.06 and a 0.9 highlight 0.66. Without this the
+         "bloom" is a flat haze over the whole field. */
+      g.globalCompositeOperation = 'multiply';
       g.drawImage(S.bloom.cv, 0, 0);
-      g.filter = 'none';
+      g.drawImage(S.bloom.cv, 0, 0);
+      g.drawImage(S.bloom.cv, 0, 0);
       g.globalCompositeOperation = 'source-over';
-    } catch (e) { g.filter = 'none'; g.globalCompositeOperation = 'source-over'; }
-    /* ⚠ 0.42 with an x³ curve washed the whole field: the sand is bright
-       enough that "the brightest pixels" was most of the board. x⁵ and a
-       quarter of the gain keeps the bloom on the sun, the water sheen and the
-       lit tiles, which is what it is for. The gain used to be `globalAlpha` on
-       the upscale; it is a multiply by a flat grey now, because the upscale is
-       shared with the shadow tint and the two need different strengths. */
-    g.globalCompositeOperation = 'multiply';
-    g.fillStyle = 'rgb(77,77,77)';                 /* 77/255 ≈ the old 0.30 */
-    g.fillRect(0, 0, bw, bh);
-    /* …and the cool shadow term joins it. Both are additive, so summing them
-       in the thumbnail and adding once is identical to adding them
-       separately. */
-    if (shadeCv) {
-      g.globalCompositeOperation = 'lighter';
-      g.drawImage(shadeCv, 0, 0);
+      try {
+        /* 'copy', not 'source-over': drawing a canvas onto ITSELF with the
+           default op composites the blurred copy over the sharp original and
+           you get a halo, not a blur. */
+        g.filter = 'blur(3.5px)';
+        g.globalCompositeOperation = 'copy';
+        g.drawImage(S.bloom.cv, 0, 0);
+        g.filter = 'none';
+        g.globalCompositeOperation = 'source-over';
+      } catch (e) { try { g.filter = 'none'; } catch (e2) { } g.globalCompositeOperation = 'source-over'; }
+      /* ⚠ 0.42 with an x³ curve washed the whole field: the sand is bright
+         enough that "the brightest pixels" was most of the board. A quarter of
+         the gain keeps the bloom on the sun, the water sheen and the lit
+         tiles, which is what it is for. */
+      g.globalCompositeOperation = 'multiply';
+      g.fillStyle = 'rgb(77,77,77)';
+      g.fillRect(0, 0, bw, bh);
+      g.globalCompositeOperation = 'source-over';
     }
-    /* …and so does the chroma restore's additive half, for the same reason:
-       three additive full-viewport terms, one upscale. See bakeChroma. */
-    if (S.chroma.add && !off('chroma')) {
+    /* …and the veil's colour + the cool bounce join it, because two additive
+       terms summed at thumbnail scale and upscaled once are identical to two
+       upscales, at half the price. */
+    if (map && map.addR.cv) {
       g.globalCompositeOperation = 'lighter';
-      g.drawImage(S.chroma.add, 0, 0, bw, bh);
+      g.drawImage(map.addR.cv, 0, 0);
+      g.globalCompositeOperation = 'source-over';
     }
-    /* …and so does the COOL-SURFACE GIVE-BACK, which is the fourth additive
-       term and the reason the water pool and the teal movement slabs survive
-       the warm restore at all. Built in grade() step 0 from the pre-multiply
-       frame — see coolThumb — and already at this exact thumbnail scale. */
-    if (S.cool.live && !off('chroma')) {
-      g.globalCompositeOperation = 'lighter';
-      g.drawImage(S.cool.live, 0, 0);
+    /* quarter-scale: the tone gain is the only term that needs the frame's own
+       detail, so it is built here rather than in the thumbnail. */
+    const ug = scratch(S.up, mw, mh);
+    if (!ug) return;
+    ug.setTransform(1, 0, 0, 1, 0, 0);
+    ug.globalAlpha = 1;
+    try { ug.filter = 'none'; } catch (e) { }
+    ug.imageSmoothingEnabled = true;
+    try { ug.imageSmoothingQuality = 'low'; } catch (e) { }
+    ug.globalCompositeOperation = 'copy';
+    ug.drawImage(S.bloom.cv, 0, 0, mw, mh);          /* bloom + veil colour + tints */
+    if (!off('tone')) {
+      /* …and the tone gain: w × the frame, at quarter scale. ⚠ w IS UNIFORM,
+         so it is globalAlpha rather than a second map — the shade's extra gain
+         lives in the multiply map instead, where it is per-pixel (see
+         SHADOW_LIFT). That is one less thumbnail out of the loop and one less
+         quarter-scale composite per frame. */
+      ug.globalCompositeOperation = 'lighter';
+      ug.globalAlpha = GAIN_BASE;
+      ug.drawImage(S.q.cv, 0, 0);
+      ug.globalAlpha = 1;
     }
-    g.globalCompositeOperation = 'source-over';
-    ctx.save();
+    ug.globalCompositeOperation = 'source-over';
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 1;
-    /* ⚠ NEAREST-NEIGHBOUR ON PURPOSE. Bilinear-upscaling the thumbnail to the
-       full 1640x1600 canvas measured 26.8ms/frame here; nearest is 8.5ms and
-       the difference is invisible, because the source was gaussian-blurred at
-       thumbnail scale first — every "block" edge is already a smooth ramp. */
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    /* ⚠ AND IT IS DONE IN TWO STAGES, WHICH IS WAVE 3'S BANDING NOTE.
-       "The sky gradient shows vertical banding stripes at roughly 10px pitch"
-       was this line. Nearest-neighbour from a thumbnail that is exactly H/7
-       tall stamps the whole frame with blocks 7 CSS px (14 device px) high,
-       and a smooth sky is precisely where a 0.5-luma step is visible. Measured
-       on the wave-2 frame: detrended row-luma autocorrelation peaks at lag 14
-       with r = 0.67-0.72 in three separate sky columns, rms 0.36-0.86 luma.
-       The blur at thumbnail scale does NOT fix it — it smooths the source, and
-       nearest then quantises the smooth ramp back into steps.
-       So: bilinear into a quarter-size intermediate (cheap — a few hundred
-       thousand pixels, and the bilinear cost is per DESTINATION pixel, which
-       is why the full-size bilinear the comment above rejects cost 26.8ms),
-       then nearest from there. The blocks come out 4 device px instead of 14,
-       i.e. a quarter of the step for none of the full-size bilinear's cost. */
-    const dw = ctx.canvas.width, dh = ctx.canvas.height;
-    const mw = Math.max(bw, Math.round(dw / 4)), mh = Math.max(bh, Math.round(dh / 4));
-    let up = S.bloom.cv;
-    if (mw > bw && mh > bh) {
-      if (!S.bloom.up) S.bloom.up = document.createElement('canvas');
-      if (S.bloom.up.width !== mw || S.bloom.up.height !== mh) {
-        S.bloom.up.width = mw; S.bloom.up.height = mh;
-        S.bloom.upg = S.bloom.up.getContext('2d');
-      }
-      const ug = S.bloom.upg;
-      if (ug) {
-        ug.setTransform(1, 0, 0, 1, 0, 0);
-        ug.globalAlpha = 1;
-        try { ug.filter = 'none'; } catch (e) { }
-        ug.imageSmoothingEnabled = true;
-        try { ug.imageSmoothingQuality = 'low'; } catch (e) { }
-        /* 'copy' so the previous frame's contents are replaced, not blended */
-        ug.globalCompositeOperation = 'copy';
-        ug.drawImage(S.bloom.cv, 0, 0, mw, mh);
-        ug.globalCompositeOperation = 'source-over';
-        up = S.bloom.up;
-      }
-    }
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(up, 0, 0, dw, dh);
-    ctx.restore();
+    ctx.drawImage(S.up.cv, 0, 0, ctx.canvas.width, ctx.canvas.height);
   }
 
   function grade(api) {
-    const ctx = api.ctx, W = api.W, H = api.H, LIGHT = api.LIGHT;
+    const ctx = api.ctx;
     /* a rolling window of this pass's own cost, so "the grade got slower" is
-       answerable from the page instead of from a stopwatch. Kept to 240
-       samples; performance.now() twice a frame is free. */
+       answerable from the page instead of from a stopwatch. */
     const t0 = (window.performance && performance.now) ? performance.now() : 0;
+    const dw = ctx.canvas.width, dh = ctx.canvas.height;
+    const bw = thumbW(api), bh = thumbH(api);
+    const mw = Math.max(bw, Math.round(dw / 4)), mh = Math.max(bh, Math.round(dh / 4));
     ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
-    /* 1. THE CHROMA RESTORE — the other half of the blocker fix.
-       Fixing the mask's black point stops the frame LOSING chroma; this puts
-       chroma back, as a warm split-tone: the ground is multiplied by a warm
-       near-white (which pulls blue out of everything and green out of a little
-       of it, so an ochre gains chroma) and then given back the luma the
-       multiply cost. The cool shadow tint runs immediately AFTER it, so the
-       pair is a proper filmic split — warm through the midtones, cool in the
-       toe — instead of one global tint fighting another.
-
-       ⚠ IT WAS A 'saturation' BLEND AND IT COST 15.7ms/FRAME. That blend is
-       hue-preserving and was the obviously right tool, but it is one of the
-       non-separable modes: the rasteriser converts every pixel to and from
-       HSL. Measured on this box at 1640x1600, grade() went from 33.6ms
-       (wave 1) to 49.3ms with it in; a flat fill instead of the gradient only
-       came back to 44.7, so ~11ms of that was the blend itself and ~4.6ms the
-       full-viewport gradient evaluation. Both are gone: 'multiply' and
-       'lighter' are separable, and both ramps are BAKED into two canvases that
-       are blitted 1:1, so there is no gradient to evaluate per frame either.
-       The replacement was calibrated against the blend it replaces, not
-       guessed — on the mid-sand patch the 'saturation' version measured
-       R−B 70.8 / sat 41.0%, this one measures within a point of that.
-
-       ⚠ IT IS CONFINED BELOW THE HORIZON, AND THAT IS NOT A DETAIL. The
-       backdrop art is graded flat and desaturated ON PURPOSE (bakeArt) so a
-       photographic skyline belongs to the desert; running a chroma gain over
-       it would hand the grey city its colour straight back and undo the aerial
-       perspective in the same stroke. So the ramp starts at zero at the
-       board's far edge and only reaches full a fifth of the way down the
-       field — which is also where "the middle of the battlefield is the least
-       saturated region in the frame" was measured. Above the horizon both
-       bakes are identities (white for multiply, black for lighter). */
-    S.cool.live = null;
-    if (!off('chroma') && S.chroma.mul) {
-      /* ⚠ STEP 0, AND IT HAS TO BE FIRST. The cool-surface give-back is keyed
-         on (B−R) of the frame as the actors left it; the multiply on the next
-         line is precisely what destroys that signal, dragging the water pool
-         and the teal movement slabs across neutral into olive. Sample, then
-         multiply. See coolThumb for the arithmetic and for why the give-back
-         is additive instead of a mask on the multiply. */
-      S.cool.live = coolThumb(api, ctx.canvas, thumbW(api), thumbH(api));
-      ctx.globalCompositeOperation = 'multiply';
-      blit(ctx, S.chroma.mul, W, H);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 1;
-      /* the matching additive half is not here — it rides inside the bloom's
-         single upscale in step 2. */
-    }
-    /* 2. BLOOM on the brightest pixels, and the COOL TINT on the darkest — one
-       shared thumbnail upscale. Must run before the veil so the fog does not
-       get bloomed, and before the clamps so it cannot blow a pixel to pure
-       white. */
-    if (!off('bloom')) {
-      try { bloom(api); } catch (e) { ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; try { ctx.filter = 'none'; } catch (e2) { } }
-    }
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-    /* 2b. THE TONE RAMP — pedestal, then multiplicative gain. Undoes the luma
-       compression the warm multiply in step 1 costs, and then some; this is
-       the only thing in the module that puts local CONTRAST back. See
-       TONE_GAIN.
-
-       ⚠ IT MUST RUN AFTER THE BLOOM, AND THE REASON IS NOT OBVIOUS. The bloom
-       is the frame CUBED (see bloom()), so a 16% gain applied before it is a
-       1.16³ = 1.56x gain on the bloom — and the bloom of warm sand is warm, so
-       feeding it a brightened frame pours red over the whole field. Measured
-       with the multiply disabled and only this pass moved: the near-water band
-       went R−B −16.3 (tone after bloom) to +15.3 (tone before bloom), a
-       31-point warm swing from a pass that is supposed to be achromatic. It is
-       achromatic only where it is the LAST thing that reads the frame.
-       For the same reason the cool give-back is NOT pre-scaled by the gain —
-       it is added inside the bloom's upscale, i.e. before this, so the gain
-       picks it up on its way past. See coolThumb. */
-    if (!off('tone')) toneRamp(api);
-    /* 3. THE VEIL — distance fog + vignette + centre lift, pre-composited (see
-       bakeVeil for why these are not three live gradients). */
-    if (!off('veil')) blit(ctx, S.veil.cv, W, H);
-    /* 4. THE FILMIC PASS.
-       'overlay' with a warm ochre pushes the midtones warm and adds a little
-       S-curve; the two flat clamps that follow do the toe and the shoulder. */
-    /* ⚠ 0.13 → 0.10. 'overlay' doubles a dark pixel's own value against the
-       ochre, so it warms the SHADOWS harder than it warms the midtones — it
-       was quietly undoing a third of the cool tint applied in step 1. The
-       midtone warmth it is here for survives the cut (interior mean R−B still
-       measures around +26); the shadows keep theirs. */
-    if (!off('filmic')) {
-      ctx.globalCompositeOperation = 'overlay';
-      ctx.globalAlpha = 0.10;
-      ctx.fillStyle = api.mixHex(SAND_BASE, LIGHT.key, 0.28);
-      ctx.fillRect(0, 0, W, H);
-      ctx.globalAlpha = 1;
-    }
-    /* ── THE TWO CLAMPS ARE UNCONDITIONAL, AND THE SKIP THAT WAS HERE IS GONE
-       ─────────────────────────────────────────────────────────────────────
-       r1 gated these two fills on the thumbnail extremes: skip the fill when
-       the frame provably has nothing left to clamp. It was measured and it was
-       WRONG ON BOTH COUNTS, so it has been deleted rather than tuned.
-
-       1. BOTH CLAMPS ARE LOAD-BEARING. Counted on the RAW canvas (not a
-          screenshot — no HUD and no page background in the numbers), one day
-          frame at 1640x1600, immediately before and immediately after grade():
-            before   2029 pure-white px, 297 pure-black px,
-                     8869 channels at 255, 891 at 0, max [255,255,255],
-                     min [0,0,0]
-            after    0 pure-white, 0 pure-black, 0 channels at 255, 0 at 0,
-                     max [252,247,236], min [16,20,34]
-          — i.e. exactly HILIGHT_CEIL and SHADOW_FLOOR, and these two fills are
-          the only reason the frame obeys the BAR at all. The sun disc and the
-          brazier cores clip white every frame; the pool's deepest shadow and
-          the cliff undersides clip black. The correct number of frames to skip
-          either fill on is none.
-       2. IT NEVER FIRED ANYWAY. clampSkip on the live board read
-          {toe: 0, shoulder: 0} over 18 frames — the conservative margins meant
-          the branch was dead code that still cost a per-frame min/max.
-       3. IT WAS NEVER THE COST. Ablation puts the two clamps together at
-          1.5ms/frame of a 28.3ms grade — the smallest item on the list, below
-          filmic (2.3), chroma (3.7), veil (4.0), tone (7.9) and bloom (8.9).
-          Even firing on every frame it could not have bought what the clause
-          that requested it was after. The numbers and the method are in
-          coolThumb's cadence note.
-
-       The extremes themselves survive as __vistaDebug().frameMin/frameMax,
-       which is how the probe in (1) is repeatable. ── */
-    /* TOE — 'lighten' takes the per-channel max, so this both guarantees that
-       nothing in the frame is pure black (the BAR forbids it) and tints every
-       deep shadow cool blue-grey in one composite. Cheaper and steadier than
-       a per-pixel curve, and it cannot be defeated by anything drawn earlier.
-       It is LAST for exactly that reason — the veil and the overlay run before
-       it, so neither can reintroduce a crushed black. */
+    try { ctx.filter = 'none'; } catch (e) { }
+    try {
+      /* 0. ONE read of the frame — to quarter, then to thumbnail. Wave 3 read
+         the full canvas three separate times (bloom, shadow mask, cool mask)
+         to produce thumbnails of the same pixels at the same size. */
+      const qg = scratch(S.q, mw, mh);
+      const tg = scratch(S.t, bw, bh, true);
+      if (qg && tg) {
+        qg.setTransform(1, 0, 0, 1, 0, 0);
+        qg.globalCompositeOperation = 'copy';
+        qg.globalAlpha = 1;
+        qg.imageSmoothingEnabled = true;
+        qg.drawImage(ctx.canvas, 0, 0, mw, mh);
+        qg.globalCompositeOperation = 'source-over';
+        tg.setTransform(1, 0, 0, 1, 0, 0);
+        tg.globalCompositeOperation = 'copy';
+        tg.globalAlpha = 1;
+        tg.imageSmoothingEnabled = true;
+        tg.drawImage(S.q.cv, 0, 0, bw, bh);
+        tg.globalCompositeOperation = 'source-over';
+        /* 1. the map (multiplicative + additive + gain weight), on a cadence */
+        const map = off('post') ? null : postMap(api, bw, bh);
+        /* 2. everything additive, one 'lighter' upscale */
+        additive(api, bw, bh, mw, mh, map);
+        /* 3. everything multiplicative, one 'multiply' upscale. It runs LAST
+           of the two so that its ceiling also caps whatever the bloom blew
+           out — that is the shoulder clamp, for free. */
+        if (map && map.ready && map.mulR.cv) {
+          const g2 = scratch(S.mup, mw, mh);
+          if (g2) {
+            g2.setTransform(1, 0, 0, 1, 0, 0);
+            g2.globalAlpha = 1;
+            g2.imageSmoothingEnabled = true;
+            g2.globalCompositeOperation = 'copy';
+            g2.drawImage(map.mulR.cv, 0, 0, mw, mh);
+            g2.globalCompositeOperation = 'source-over';
+            ctx.globalCompositeOperation = 'multiply';
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(S.mup.cv, 0, 0, dw, dh);
+          }
+        }
+      }
+    } catch (e) { /* a grade that throws must not take the frame with it */ }
+    /* 4. TOE — 'lighten' takes the per-channel max, so this both guarantees
+       that nothing in the frame is pure black (the BAR forbids it) and tints
+       every deep shadow cool blue-grey in one composite. It is LAST because it
+       is the only unconditional guarantee in the pass: nothing after it can
+       reintroduce a crushed black.
+       ⚠ The matching SHOULDER fill is gone, and it is not missing: the
+       multiply map is capped at MAP_CEIL, so no channel can leave this
+       function above 251. Counted on the raw canvas, not a screenshot. */
     ctx.globalCompositeOperation = 'lighten';
+    ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgb(' + SHADOW_FLOOR[0] + ',' + SHADOW_FLOOR[1] + ',' + SHADOW_FLOOR[2] + ')';
-    ctx.fillRect(0, 0, W, H);
-    /* SHOULDER — the mirror image: 'darken' caps every channel below 255, so
-       no pixel is pure white, and because the cap is warm the clipped
-       highlights read as sunlight rather than paper. */
-    ctx.globalCompositeOperation = 'darken';
-    ctx.fillStyle = 'rgb(' + HILIGHT_CEIL[0] + ',' + HILIGHT_CEIL[1] + ',' + HILIGHT_CEIL[2] + ')';
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, dw, dh);
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
     if (t0) {
@@ -3809,23 +3668,27 @@
         return a.length ? +a[a.length >> 1].toFixed(2) : null;
       })(),
       gradeN: S.gradeMs.length,
-      /* WAVE 3 r2: the readback cache. `reads` counts frames that actually
-         performed the getImageData, `calls` counts frames that wanted the
-         mask; reads/calls should sit at ~1/COOL_CADENCE plus one per bake.
-         msP50 is the cost of a recompute frame ALONE, which is the number the
-         cadence divides. Set __vistaOff.coolcache = 1 to force every frame and
-         re-measure the counterfactual on this same build. */
-      cool: {
-        cadence: COOL_CADENCE, reads: S.cool.reads, calls: S.cool.calls,
+      /* THE MAP'S READBACK CADENCE. `reads` counts frames that actually ran the
+         getImageData + loop, `calls` counts frames that wanted the map; the
+         ratio should sit at ~1/POST_CADENCE plus one per bake. msP50 is the
+         cost of a recompute frame ALONE, which is the number the cadence
+         divides. Set __vistaOff.coolcache = 1 to force every frame and
+         re-measure the counterfactual on this same build. `pos` says whether
+         the positional bake exists — without it the map declines and the frame
+         ships with the board's own light, which is the tainted-canvas path. */
+      post: {
+        cadence: POST_CADENCE, reads: S.post.reads, calls: S.post.calls,
+        pos: !!S.post.pos, ready: S.post.ready, failed: S.post.fail,
         msP50: (function () {
-          const a = S.cool.ms.slice().sort((x, y) => x - y);
+          const a = S.post.ms.slice().sort((x, y) => x - y);
           return a.length ? +a[a.length >> 1].toFixed(2) : null;
         })()
       },
-      /* the toe/shoulder clamp skip was removed in wave 3 r2 — the fills are
-         unconditional. Reported rather than dropped so a probe written against
-         the r1 build gets an answer instead of `undefined`. */
-      clampSkip: 'removed: clamps are unconditional',
+      /* wave 5: the grade is three composites and neither clamp is a fill any
+         more — the shoulder is MAP_CEIL inside the multiply. Reported rather
+         than dropped so a probe written against wave 3 gets an answer. */
+      clampSkip: 'removed: toe is a fill, shoulder is MAP_CEIL',
+      passes: ['lighter(additive)', 'multiply(map)', 'lighten(toe)'],
       /* WAVE 3: the backdrop's detail field, from the last bake. `keep` is the
          mean fraction of the art the zenith ramp let through (0 = the old flat
          fade exactly, 1 = no fade at all) and `det` the mean of the field
@@ -3845,7 +3708,7 @@
         return a.length ? +a[a.length >> 1].toFixed(2) : null;
       })(),
       artBakeN: S.artMs.length,
-      frameMin: S.cool.mn, frameMax: S.cool.mx,
+      frameMin: S.post.mn, frameMax: S.post.mx,
       /* dump one bake on its own — __vistaDebug().png('land'). The board draws
          over the bottom two thirds of the land bake, so "is the skyline flat?"
          cannot be answered from a board screenshot alone; this is the only way

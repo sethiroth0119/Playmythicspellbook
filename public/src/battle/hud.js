@@ -401,13 +401,42 @@ function relayout() {
      right column stays reserved either way) so hud.css can tell a frozen rail
      from a live one.
 
-     Everything that still exists keeps its new home regardless. Measured with
-     `App.state.gameOver` forced and one frame allowed to settle: `.hudx-topband`
-     [0,0,1600,118], #fighters [437,4,726,92], #phase-bar [460,86,681,32],
-     `.hudx-endturn` [1264,880,336,104], #btn-end-turn [1264,897,336,71], the
-     command bar still bound in `.bc-rail`, and `window.__hudxErr` null. Every
-     section below is independently guarded: one missing element must never take
-     the band, the rail or END TURN down with it. */
+     Everything that still exists keeps its new home regardless — RE-MEASURED
+     THROUGH A REAL MATCH-ENDING TURN, not through a forced flag, because the
+     previous revision of this comment measured it the easy way and got one line
+     of it WRONG. Method, so it can be repeated: drop the AI hero the way the
+     game's own effects do (`currentHp: 0, alive: false`), then press the REAL
+     `#btn-end-turn`, so the game's own end-of-turn pipeline sets
+     `state.gameOver`, mounts `.gameover-backdrop` and re-renders. It does —
+     `App.state.gameOver` came back 'player' with nothing forced, on both runs.
+     At 1600x1000, identical on two independent boots:
+       .gameover-backdrop [0,0,1600,1000] · .gameover-modal [520,74,560,852.1]
+       .hudx-topband      [0,0,1600,118]
+       #fighters          [437,4,726,92], 2 banners, HP "0 / 250" and "250 / 250"
+       #phase-bar         [459.7,86,680.5,32.4]
+       .hudx-endturn      [1264,880,336,104]
+       .hudx-endturn .endturn  [1304,896.5,256,71]
+       [data-hudx-frozen=rail] [1264,0,336,874] · =foe [8,9,320,411.8]
+       #btn-concede       [8,901.5,90.6,32]   (still live in the left rail)
+       .hudx-norail true · window.__hudxErr null
+
+     🔴 THE LINE THAT WAS FALSE, AND WHY IT LOOKED TRUE. The old comment claimed
+     `#btn-end-turn [1264,897,336,71]` on this screen. It is NULL here — and that
+     is CORRECT, not a bug. A match ends on the turn HANDOVER, so `s.turn` is
+     'ai' by the time the game-over frame renders, and `_bcEndTurn()`
+     (index.html:141268) early-returns
+     `<button class="endturn waiting" disabled>ENEMY ACTING…</button>`, which
+     carries NO id. Forcing `App.state.gameOver` mid-player-turn leaves
+     `s.turn === 'player'` — the one thing the real path never does — so the
+     forced test rendered the id'd button and the claim passed.
+     THE HEX ITSELF IS NOT EMPTY and never was: `.hudx-endturn .endturn` is
+     [1304,896.5,256,71] carrying "ENEMY ACTING…", styled by hud.css's
+     `.endturn.waiting` (cold, inert, the same hexagon). So anything on this
+     screen that wants END TURN must select `.hudx-endturn .endturn`, never
+     `#btn-end-turn`.
+
+     Every section below is independently guarded: one missing element must never
+     take the band, the rail or END TURN down with it. */
   if (!bp) { scr.classList.add('hudx-norail'); restoreFrozen(scr, left); }
 
   /* ── 1. TOP BAND: the two hero banners, then the phase track ─────────── */

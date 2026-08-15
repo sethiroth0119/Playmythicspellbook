@@ -120,6 +120,39 @@ let bad = 0;
                                    lootable. Reddens COVERAGE — the guard that
                                    forces the NEXT promotion to declare itself
 
+     ECON_TEST_SABOTAGE=sell-promo  round0t §1: promote a fake id (`flour`) into
+                                   RESOURCES without giving it a price, i.e. the
+                                   exact shape of the defect — 59 ids reached the
+                                   Refinery shelf priced at `|| 3` because nobody
+                                   had to say. Reddens PRICE COVERAGE
+     ECON_TEST_SABOTAGE=sell-pump   round0t §3/§3b: double one chain building's
+                                   yield — in the CATALOGUE, so the driven collect
+                                   sees it too — until a cycle's output outsells
+                                   the inputs it ate. Reddens NOT-A-PUMP and the
+                                   driven ratio together, at 2.000×. DERIVATION
+                                   stays green on purpose: the parity price of a
+                                   bigger yield still floors to 1, so the failure
+                                   is isolated to the thing that actually moved
+     ECON_TEST_SABOTAGE=sell-asym   round0t §3b: patch the SHIPPED
+                                   production.state.js so collect() charges its
+                                   inputs FLAT again while pending() still scales
+                                   the yield by terroir — the original defect, put
+                                   back into the module the round actually runs.
+                                   Reddens the driven ratio at 4.800× with 56/56
+                                   chain producers Cinder-positive. If this one is
+                                   ever GREEN, §3b has stopped measuring the payout
+                                   path and is certifying the catalogue again
+     ECON_TEST_SABOTAGE=sell-cap    round0t §3b: patch pending()'s affordability
+                                   loop back to FLAT while collect() keeps charging
+                                   by tf — the fix's own failure mode, and the
+                                   "banked 🥫 270 (6 cycles) → Not enough Water" bug
+                                   production.state.js documents. Reddens the
+                                   promise-vs-charge round with "promised 6 paid 2"
+     ECON_TEST_SABOTAGE=sell-default round0t §1b: re-commit the pre-fix table —
+                                   drop every derived price and let `|| 3` price
+                                   the ledger again. Reddens COVERAGE, DERIVATION
+                                   and the driven ratios together
+
      ECON_TEST_SABOTAGE=boot-presweep round0r §1/§2: put the pre-catch-up sweep
                                    back — call bldNormalize() in its completing
                                    form from boot(), i.e. re-commit the boot-order
@@ -164,6 +197,71 @@ let bad = 0;
                                    `if (t.bld) t.damaged = false;`
      ECON_TEST_SABOTAGE=lab-ungated round0r §6: remove the bldSite gate from
                                    opsFindLab and opsResearchAdj
+
+     ECON_TEST_SABOTAGE=settle-requested round0n: credit the units REQUESTED
+                                   rather than the units the row says were
+                                   FILLED — the rule that stops a seller
+                                   shipping the same 40 units twice
+                                   (this switch predates the block below and was
+                                   simply missing from this index, which
+                                   declares itself complete; it works)
+
+     ── round0s, the five boundaries the day audit cannot see ──────────────────
+     ECON_TEST_SABOTAGE=pop-zero   round0s §1: restore households.js's
+                                   `if (S.pop[t] === 0) { S.savings[t] = 0; }`,
+                                   i.e. destroy an emptied tier's savings before
+                                   `runDay` opens its window. Measured on the
+                                   shipped tree: 3,987.58 🔥 gone, audit green
+     ECON_TEST_SABOTAGE=save-mint  round0s §2 AND gauntlet1 §7b: write the raw
+                                   save value into state with no ceiling, which
+                                   is what sim.js, bank.js, households.js and
+                                   firms.js each did. One edited field took an
+                                   honest 298,394 🔥 city to 1,000,298,330 🔥
+     ECON_TEST_SABOTAGE=rearm      round0s §3: mount an established city with no
+                                   economy blob and let bootstrap() issue a
+                                   fresh 300,000 🔥 tranche — the deleted-save-
+                                   key path
+     ECON_TEST_SABOTAGE=payout-drop round0s §4: restore `.catch(() => {})`, i.e.
+                                   drop whatever claimPayout() took and the
+                                   bridge then refused. 10,193 🔥 in neither
+                                   ledger over 400 ticks, audit green throughout
+     ECON_TEST_SABOTAGE=owed-ratchet round0s §5: drop `payoutLifetime` and
+                                   `importsLifetime` out of the save on the way
+                                   in — the round-2 loader exactly, which read
+                                   both subtraction terms of its own identity as
+                                   zero and therefore re-granted the city's whole
+                                   lifetime spend-and-payout as fresh headroom on
+                                   EVERY load. One edited `payoutOwed` on an
+                                   ordinary 200-day city: 81,106 🔥 delivered over
+                                   eight page reloads and still rising, audit
+                                   green throughout
+
+     ── round0s §2, the three switches for the field the ceiling did not cover ──
+     ECON_TEST_SABOTAGE=payout-save round0s §2 AND gauntlet1 §7b: restore
+                                   sim.js's `S.payoutOwed = Math.max(0,
+                                   Number(raw.payoutOwed) || 0)` — NaN safety and
+                                   NO ceiling. `payoutOwed` is not a term of
+                                   totalCinder(), so all five balance clamps saw
+                                   nothing; it is also the ONLY field that
+                                   crosses the bridge into Profile.gems. One
+                                   edited field delivered 1,000,000,022 🔥 to the
+                                   player on the next tick, lastAudit.ok true
+     ECON_TEST_SABOTAGE=faucet-rail round0s §2: put the ceiling's faucet term back
+                                   on the STRUCTURAL rail (18,000 🔥/day against a
+                                   measured honest 20.97 🔥/day) with `day` back
+                                   at a century. This is the pair that made the
+                                   five balance clamps ornamental — worst
+                                   forgeable save 1,000,291,404 🔥
+     ECON_TEST_SABOTAGE=owed-confiscate round0s §2: a payoutOwed clamp that is too
+                                   TIGHT rather than absent. Proves the other
+                                   half — that a reload does not eat the Cinder a
+                                   rejecting bridge failed to deliver
+     ECON_TEST_SABOTAGE=faucet-margin round0s §2a: drop the load ceiling's faucet
+                                   allowance to 50 🔥/day, i.e. what it would look
+                                   like if a tuning change had raised real export
+                                   income to within a whisker of the clamp. The
+                                   guard against the clamp confiscating honest
+                                   export earnings on reload
 
    ⚠ Every one of these must turn the gate RED. If you change these rounds, run
      all of them and check that they still do; an unset variable is the shipping
@@ -4073,8 +4171,20 @@ const srcBlockAfter = (src, decl, open) => {
    The bug class is "ADDING TO `RESOURCES` CHANGES SOMETHING THAT READS
    `RESOURCE_IDS` FOR A DIFFERENT PURPOSE", and there WILL be more promotions —
    RESOURCES_NEXT.md has 258 chain ids queued behind these 56. A round that only
-   asserted "the fix is present" would be green the day someone adds a fourth
-   reward site. So this one MEASURES OUTPUT:
+   asserted "the fix is present" — a grep for `_lootResRows` — would be green the
+   day one of these three sites is rewritten to draw the same wrong pool a
+   different way. So this one MEASURES OUTPUT:
+
+   ⚠ AND IT MEASURES EXACTLY THREE SITES, WHICH IS LESS THAN THIS HEADER USED TO
+     CLAIM. The sentence above read "…would be green the day someone adds a
+     fourth reward site"; that overstated the round by one claim. COMPOSITION
+     scrapes `_campGrantLoot`, `_smugglerDeal` and `_campLootContainer` BY NAME
+     (see the `stmtIn` / `fnText` calls below) and draws from what it finds
+     there. A brand-new fourth reward site reading RESOURCE_IDS is invisible to
+     it — nothing here enumerates reward sites, and nothing can, short of a
+     whole-file scan for `addRes` that this round does not do. What COVERAGE
+     does cover is the other half: a new ID cannot arrive undeclared. A new
+     SITE still can, and finding it is a reviewer's job, not this round's.
 
      COMPOSITION  evaluate the real pick expression scraped out of each of the
                   three call sites and draw >= 100,000 times. The observed set of
@@ -5176,6 +5286,1358 @@ const srcBlockAfter = (src, decl, open) => {
     if (fails) { bad++; console.log('\n=== ROUND 0r: ' + fails + ' FAILED ==='); }
     else console.log('\n=== ROUND 0r: ALL PASS ===');
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0s — 🔴 THE BLIND SPOT ITSELF: CONSERVATION OUTSIDE runDay's WINDOW
+   ----------------------------------------------------------------------------
+   THIS IS THE ROUND THE OTHER TWENTY NEEDED AND DID NOT HAVE.
+
+   `sim.js runDay` takes `before = totalCinder()` INSIDE itself. Everything that
+   moves money outside that window — on load, on reset, in setPopulation, in a
+   bridge callback — is structurally invisible to the closed-loop audit, and
+   `lastAudit.ok` stays true through all of it. That is not a subtle gap; it is
+   where EVERY Rule 1 violation this project has shipped has lived:
+
+     • the founding mint      between ticks, from syncBuildings   (round 0e)
+     • the boot-order mint    between loadState and catch-up      (round 0r §1)
+     • setPopulation          before Sim.advance, from index.js tick   (§1 here)
+     • the save-file mint     before any window opens at all          (§2 here)
+     • the destroyed payout   in a rejected promise after the tick    (§4 here)
+
+   And the gate could not see any of them, because gauntlet2's headline
+   conservation assertion reads `lastAudit.ok` — i.e. it asks the audited system
+   whether it approved of itself. A green gate proves nothing whatsoever about
+   this class. So this round never reads `lastAudit`. It reads `totalCinder()`
+   either side of each boundary, with its own arithmetic, and asserts the number.
+
+   MEASURED ON THE PRE-FIX TREE, each with a number before anything changed:
+     §1  400 randomised population moves on one city: 17 destructive calls,
+         3,987.58 🔥 destroyed, worst single call savings 1,368.08 → 0.00, and
+         `lastAudit.ok === true` with err 0.00 throughout.
+     §2  one edited field in a JSON save took an honest 298,394 🔥 city to
+         1,000,298,330 🔥, and every day audit after it read clean.
+     §4  400 ticks against a bridge that rejected every call: 10,193 🔥 claimed
+         out of the sim, 0 🔥 delivered, present in NEITHER ledger, audit clean.
+
+   🔴 AND THE ONE §2 STILL COULD NOT SEE AFTER ALL OF THAT, which is the whole
+      of round 2. Every clamp §2 asserted bounds a term of `totalCinder()` — the
+      five accounts that stay INSIDE the simulation. `payoutOwed` is a save
+      field, is deliberately NOT one of those terms, and is the ONLY field that
+      crosses the bridge into `Profile.gems`. So the ceiling architecture never
+      read it, and on the tree where all five of those clamps were working:
+
+        after doctoring ONLY payoutOwed = 1e9:
+          totalCinder      298,251.05   ← UNCHANGED, so the clamp never looked
+          state.payoutOwed 1,000,000,000.00
+          after ONE tick: delivered to the player 1,000,000,022 🔥
+          lastAudit.ok     true
+
+      The package had clamped the five accounts that stay in and left unbounded
+      the one that leaves. §2 now measures WORTH — `totalCinder() + payoutOwed`,
+      everything a save can still turn into real currency — and `payoutOwed` is
+      clamped to the headroom left under the ceiling. See sim.js
+      clampLoadedCinder() §3.
+
+   Prove this round can fail — one switch per boundary, each re-committing the
+   shipped defect verbatim and nothing else:
+     ECON_TEST_SABOTAGE=pop-zero     §1: restores households.js's
+                                     `if (S.pop[t] === 0) S.savings[t] = 0`
+     ECON_TEST_SABOTAGE=payout-save  §2: restores sim.js's unclamped
+                                     `S.payoutOwed = Math.max(0, …)` — the round
+                                     2 defect above (reddens gauntlet1 §7b too)
+     ECON_TEST_SABOTAGE=faucet-rail  §2: puts the ceiling's faucet term back on
+                                     the 18,000 🔥/day structural rail with `day`
+                                     back at a century — the lever that made the
+                                     five balance clamps ornamental
+     ECON_TEST_SABOTAGE=owed-confiscate §2: a payoutOwed clamp that is too TIGHT,
+                                     eating what a rejecting bridge never
+                                     delivered — the opposite failure
+     ECON_TEST_SABOTAGE=faucet-margin §2a: drops the load ceiling's faucet
+                                     allowance to within a whisker of what a city
+                                     honestly earns
+     ECON_TEST_SABOTAGE=save-mint    §2: writes the raw save value into state
+                                     with no ceiling, as all four loaders did
+                                     (this switch reddens gauntlet1 §7b too)
+     ECON_TEST_SABOTAGE=rearm        §3: mounts an established city with no
+                                     economy blob and lets bootstrap() issue a
+                                     fresh tranche — the deleted-save-key path
+     ECON_TEST_SABOTAGE=payout-drop  §4: restores `.catch(() => {})`, i.e. drops
+                                     whatever claimPayout() took and the bridge
+                                     then refused
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0s-outside-the-audit-window ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+  if (!global.window) {
+    global.window = { MythicCityBridge: { addCinders: async () => {} }, MythicResourceChain: null };
+    const chain = await import('../../public/src/resources/chain.js');
+    global.window.MythicResourceChain = { ALL: chain.RESOURCE_CHAIN };
+  }
+  const P = '../../public/src/economy/';
+  const E = (await import(P + 'index.js')).default;
+  const Sim = await import(P + 'sim.js');
+  const HH = await import(P + 'households.js');
+  const Bank = await import(P + 'bank.js');
+  const Firms = await import(P + 'firms.js');
+  const { ECON } = await import(P + 'tuning.js');
+  const DAY = ECON.clock.dayMin;
+  const host = { powerFactor: 1, waterFactor: 0.9, logisticsCounts: { warehouse: 2, depot: 1 },
+                 hasBank: true, infrastructure: 0.6 };
+  /* The bridge is swapped in §4 and must be handed back exactly as found —
+     round0s is not the last thing in this process. */
+  const BRIDGE0 = global.window.MythicCityBridge.addCinders;
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  /* ── §1 setPopulation MOVES PEOPLE, NEVER MONEY ────────────────────────────
+     ecoHost() passes `population: cityPop()` on EVERY tick, and index.js calls
+     HH.setPopulation() before Sim.advance() — so this boundary is crossed on
+     every migration and every housing build or demolish, and it is crossed
+     before the audit window opens. A tier whose headcount rounds to zero used
+     to have its savings balance deleted outright. */
+  {
+    E.mount({ nodeId: 'blind-pop', population: 400 });
+    for (let i = 0; i < 60; i++) E.tick(DAY, { ...host, population: 400 });
+    let destroyed = 0, calls = 0, worst = 0, worstAt = '';
+    let seedRng = 1234567;
+    const rnd = () => { seedRng = (seedRng * 1103515245 + 12345) & 0x7fffffff; return seedRng / 0x7fffffff; };
+    for (let i = 0; i < 400; i++) {
+      const before = Sim.totalCinder();
+      const sBefore = HH.totalSavings();
+      const pre = { ...HH.state().savings };
+      /* Deliberately violent: a ±70% swing empties a tier regularly, which is
+         the whole trigger. Seeded, so a failure is reproducible. */
+      E.setPopulation(Math.max(1, Math.round(HH.population() * (0.3 + rnd() * 1.4))));
+      if (SABOTAGE === 'pop-zero') {
+        /* 🧨 THE SHIPPED END STATE, re-committed exactly — households.js used to
+           finish setPopulation with
+             `for (const t of TIERS) if (S.pop[t] === 0) { S.savings[t] = 0; }`
+           and its comment claimed the zeroing PREVENTED breaking the audit.
+           ⚠ THE RESTORE IS THE POINT, and the first draft of this switch left it
+             out and was therefore INERT — a sabotage that passed. Zeroing the
+             empty tiers *after* the fix has already emptied them destroys
+             nothing, so the pre-call balances have to be put back first; only
+             then does zeroing reproduce the loss. A sabotage nobody has watched
+             go red is a comment, which is this file's own first rule. */
+        const st = HH.state();
+        for (const t of ['low', 'mid', 'high']) st.savings[t] = pre[t];
+        for (const t of ['low', 'mid', 'high']) if (st.pop[t] === 0) st.savings[t] = 0;
+      }
+      const d = before - Sim.totalCinder();
+      if (Math.abs(d) > 1e-6) {
+        calls++; destroyed += d;
+        if (Math.abs(d) > Math.abs(worst)) {
+          worst = d;
+          worstAt = 'savings ' + sBefore.toFixed(2) + ' → ' + HH.totalSavings().toFixed(2);
+        }
+      }
+      E.tick(DAY, { ...host, population: HH.population() });
+    }
+    console.log('   400 randomised population moves — tiers now ' + JSON.stringify(HH.state().pop));
+    chk('setPopulation conserves totalCinder across a tier emptying',
+        calls === 0,
+        calls + ' call(s) moved money outside the audit window, ' + destroyed.toFixed(2) +
+        ' 🔥 net; worst ' + worst.toFixed(2) + ' 🔥 (' + worstAt + ')');
+    chk('…and the day audit was NEVER the thing that noticed — it stayed green throughout',
+        !!(Sim.state().lastAudit && Sim.state().lastAudit.ok),
+        'the audit went red, which means this round is measuring the wrong boundary');
+  }
+
+  /* ── §2 A SAVE FILE MAY NOT MINT ───────────────────────────────────────────
+     Four of the five terms of totalCinder() arrived from disk unbounded. Same
+     doctors gauntlet1 §7b runs, asserted here against the CEILING so the two
+     files agree on the rule rather than on a number.
+
+     🔴 WHAT THIS SECTION MEASURES NOW, AND WHY IT CHANGED. It used to assert on
+        `totalCinder()`. That is the sum of the five accounts that stay INSIDE
+        the simulation, and it is not what a save is worth to a player — the
+        field that crosses the bridge into `Profile.gems` is `payoutOwed`, which
+        is deliberately not one of the five and which this round therefore never
+        once read. Doctoring that ONE field, on a tree where all five clamps
+        below were present and working exactly as written:
+
+          totalCinder      298,251.05  ← UNCHANGED, so every assertion here passed
+          state.payoutOwed 1,000,000,000.00
+          after ONE tick: delivered to the player 1,000,000,022 🔥
+          lastAudit.ok     true
+
+        So the quantity under test is `totalCinder() + payoutOwed` — everything
+        the save can still turn into real currency, in the city's books or queued
+        to leave them. Call it what the save is WORTH. The ceiling bounds that,
+        because the identity it is built from
+            created = totalCinder + imports + payoutDelivered + payoutOwed
+        already contains the term.
+
+     ⚠ AND THE LEVER DOCTORS ARE NOW MEASURED AGAINST THE HONEST BLOB. The bound
+       used to be re-read out of `loadedCinderCeiling()` AFTER the doctored save
+       had loaded — i.e. the forger supplied both the attack and the yardstick,
+       so `day: 2e9` raised the bar to 47,304,018,000 🔥 and the assertion could
+       not fail. It is now the honest city's own allowance, plus one pinned
+       literal that no input can move at all. */
+  {
+    /* ── §2a THE MARGIN UNDER THE FAUCET ALLOWANCE, MEASURED NOT ASSUMED ──────
+       sim.js's load ceiling stopped using the 18,000 🔥/day structural rail and
+       started using HONEST_FAUCET_PER_DAY = 500 🔥/day, because the rail is 858×
+       looser than anything the model produces and `days` multiplies it. That
+       swap is only safe while real export income stays far below the allowance
+       — if a tuning change ever raised it, the clamp would start quietly
+       confiscating a real player's export earnings on reload, which is the
+       failure mode this whole package exists to prevent, pointed the other way.
+       So the margin is MEASURED here every run. A tuning change that eats it
+       reddens the GATE instead of a player's balance. */
+    /* ← HONEST_FAUCET_PER_DAY in sim.js, pinned here on purpose: a test that
+       imported the constant would pass no matter what it was changed to.
+       Prove this can fail: ECON_TEST_SABOTAGE=faucet-margin drops the allowance
+       to 50 🔥/day, i.e. what it would look like if a tuning change had raised
+       real export income to within a whisker of the clamp. */
+    const ALLOWANCE = SABOTAGE === 'faucet-margin' ? 50 : 500;
+    let worstRate = 0, worstWhere = '';
+    for (const nodeId of ['ouro-2', 'sol-1', 'kaer-1', 'nyx-4']) {
+      for (const pop of [130, 900]) {
+        E.mount({ nodeId, population: pop });
+        for (let i = 0; i < 250; i++) E.tick(DAY, { ...host, population: pop });
+        const st = Sim.state();
+        const rate = st.faucetLifetime / (st.day + 1);
+        if (rate > worstRate) { worstRate = rate; worstWhere = nodeId + ' pop ' + pop; }
+      }
+    }
+    console.log('   honest export faucet: worst sustained ' + worstRate.toFixed(2) +
+                ' 🔥/day (' + worstWhere + ') against a load allowance of ' + ALLOWANCE +
+                ' 🔥/day — margin ' + (ALLOWANCE / Math.max(0.01, worstRate)).toFixed(1) + '×');
+    chk('the load ceiling\'s faucet allowance is still far above what a city honestly earns',
+        worstRate * 4 < ALLOWANCE,
+        'worst honest rate ' + worstRate.toFixed(2) + ' 🔥/day is within 4× of the ' + ALLOWANCE +
+        ' 🔥/day allowance — sim.js HONEST_FAUCET_PER_DAY must be raised BEFORE this ships, ' +
+        'or the load clamp will confiscate real export earnings on reload');
+
+    E.mount({ nodeId: 'blind-save', population: 130 });
+    for (let i = 0; i < 40; i++) E.tick(DAY, host);
+    const blob = JSON.parse(JSON.stringify(E.serialize()));
+    E.load(JSON.parse(JSON.stringify(blob)));
+    const honest = E.totalCinder();
+    /* `lever: true` marks a doctor that edits an INPUT TO THE CEILING rather
+       than a balance. Those are held to a different — and weaker — promise, and
+       the round says so out loud rather than averaging them in. See the two
+       assertions below. */
+    const doctors = [
+      ['treasury',               (s) => { s.treasury = 1e9; }],
+      ['bank.reserve',           (s) => { s.bank.reserve = 1e9; }],
+      ['households.savings.low', (s) => { s.households.savings.low = 1e9; }],
+      ['firms.firms[0].cash',    (s) => { if (s.firms.firms[0]) s.firms.firms[0].cash = 1e9; }],
+      ['charter',                (s) => { s.charter = 1e9; }],
+      /* 🔴 THE FIELD THIS ROUND USED TO BE COMPLETELY BLIND TO. Not a term of
+         totalCinder(), so `over` and `worstGain` above cannot see it at all —
+         it is caught only by the WORTH measurement (totalCinder + payoutOwed)
+         that this loop now takes. On the pre-fix tree it delivered 1,000,000,022
+         🔥 into Profile.gems on the very next tick. */
+      ['payoutOwed',             (s) => { s.payoutOwed = 1e9; }],
+      /* `day` alone is a lever on the ceiling — and a dead one, because
+         `charterIssued` and `faucetLifetime` are clamped to the day count from
+         BELOW as well (a save cannot claim to have earned what it never
+         recorded). Kept as a doctor precisely so that stays true. */
+      ['day + treasury',         (s) => { s.day = 2e9; s.treasury = 1e9; }, true],
+      /* 🔴 THE DOCTOR THIS ROUND USED TO NAME AND NOT RUN. The label said
+         "faucetLifetime + day" and the body never touched `day` — so the day
+         count stayed at the honest 40, the faucet allowance stayed at 738,000 🔥
+         and the round passed on a forgery it had not actually attempted. With
+         `day` really set, on the pre-fix tree, this took an honest 298,251 🔥
+         city to 1,000,298,159 🔥 (+999,999,908). The three fields have to move
+         TOGETHER — that is the whole point of an internally-consistent forgery
+         and it is the only lever left. */
+      ['day + faucetLifetime + treasury',
+                                 (s) => { s.day = 2e9; s.faucetLifetime = 1e9; s.treasury = 1e9; }, true],
+      /* …and the same forgery with the bridge field on top, which is the worst
+         single save this round knows how to write. */
+      ['day + faucetLifetime + treasury + payoutOwed',
+                                 (s) => { s.day = 2e9; s.faucetLifetime = 1e9; s.treasury = 1e9;
+                                          s.payoutOwed = 1e9; }, true],
+      /* 🔴 THE SAME FORGERY WITH `treasury` DELIBERATELY LEFT ALONE — and this
+         omission is the whole row. Every lever doctor above sets treasury = 1e9,
+         which §2's TOTAL clamp then scales back to the ceiling; the ceiling is
+         spent, so the headroom left for `payoutOwed` is nil and the column
+         printed a reassuring `owed 0.00`. The round was measuring a forgery that
+         had already spent its own budget on a field that stays INSIDE the
+         simulation. Leave the treasury honest and the entire forged allowance
+         routes to the one field that crosses the bridge into Profile.gems —
+         which is what an attacker would obviously do, and what this round never
+         once tried. Measured on the round-2 tree it delivered 13,166,610 🔥 into
+         the player's wallet on the next tick, and again on every reload. */
+      ['day + faucetLifetime + payoutOwed (treasury LEFT HONEST)',
+                                 (s) => { s.day = 2e9; s.faucetLifetime = 1e9;
+                                          s.payoutOwed = 1e9; }, true],
+    ];
+    /* 🔴 THE BOUND, DERIVED FROM THE HONEST BLOB AND FROM A PINNED LITERAL —
+       NEVER FROM THE DOCTORED SAVE. `leverBound` used to be read out of
+       `loadedCinderCeiling()` after the doctored save had already loaded, so the
+       forger set the yardstick as well as the forgery. It is now the honest
+       city's own allowance, measured before any doctoring happens. */
+    E.load(JSON.parse(JSON.stringify(blob)));
+    const honestCeil = Sim.loadedCinderCeiling();
+    const leverBound = honestCeil.faucetMax;
+    /* 🔴 AND ONE NUMBER NO INPUT CAN MOVE. The lever doctors DO still buy
+       headroom — an old city may honestly be rich, and nothing on disk can prove
+       otherwise — so the residual is reported, not hidden. What is asserted is
+       that the residual stays under a literal written here, which is the ONLY
+       form of this check that a regression cannot quietly widen: putting
+       SAVE_MAX_DAY back to a century, or raising HONEST_FAUCET_PER_DAY, reddens
+       this line. At the constants that shipped it is 13,860,001 🔥; before this
+       package it was 1,000,300,001 🔥, and the assertion that was supposed to
+       bound it read the attacker's own 47,304,018,000 🔥 as the limit. */
+    const MAX_FORGEABLE_WORTH = 15e6;
+    let over = 0, worstGain = 0, worstName = '', worstLever = 0, worstWorth = 0, worstWorthName = '';
+    console.log('   honest worth ' + honest.toFixed(2) + ' 🔥  (ceiling ' + honestCeil.ceiling.toFixed(2) +
+                ', faucet allowance ' + leverBound.toFixed(2) + ')');
+    for (const [name, mut, lever] of doctors) {
+      const s = JSON.parse(JSON.stringify(blob));
+      mut(s);
+      E.load(s);
+      if (SABOTAGE === 'save-mint') {
+        /* 🧨 THE SHIPPED LOADERS, re-committed: the raw value straight into
+           state with no ceiling — `Math.max(0, Number(raw.x) || 0)`, which is
+           exactly what sim.js, bank.js, households.js and firms.js each did. */
+        Sim.state().treasury = Math.max(0, Number(s.treasury) || 0);
+        Bank.state().reserve = Math.max(0, Number(s.bank.reserve) || 0);
+        HH.state().savings.low = Math.max(0, Number(s.households.savings.low) || 0);
+        const f0 = Firms.all()[0];
+        if (f0 && s.firms.firms[0]) f0.cash = Math.max(0, Number(s.firms.firms[0].cash) || 0);
+      }
+      if (SABOTAGE === 'payout-save') {
+        /* 🧨 sim.js's shipped `S.payoutOwed = Math.max(0, Number(raw.payoutOwed)
+           || 0)`, re-committed — NaN safety and no ceiling, which is what let
+           one edited field deliver a billion Cinder through the bridge. */
+        Sim.state().payoutOwed = Math.max(0, Number(s.payoutOwed) || 0);
+      }
+      if (SABOTAGE === 'faucet-rail') {
+        /* 🧨 THE CEILING'S OWN LEVER, re-committed: `faucetMax` back to the
+           STRUCTURAL per-day rail (18,000 🔥/day) instead of the honest earning
+           rate, and `day` back to a century. This is the pair that made the
+           five balance clamps ornamental. Applied by re-loading with the raw
+           values pushed past the clamps sim.js now applies. */
+        Sim.state().day = Math.max(0, s.day | 0);
+        Sim.state().faucetLifetime = Math.min(ECON.faucet.maxPerMin * ECON.clock.dayMin * (Sim.state().day + 1),
+                                              Math.max(0, Number(s.faucetLifetime) || 0));
+        Sim.state().treasury = Math.min(Sim.loadedCinderCeiling().ceiling,
+                                        Math.max(0, Number(s.treasury) || 0));
+      }
+      const tot = E.totalCinder(), owed = Sim.state().payoutOwed;
+      /* WORTH — everything this save can still become real currency: the five
+         accounts inside the sim, plus the one queued to leave it. */
+      const worth = tot + owed;
+      const ceil = Sim.loadedCinderCeiling().ceiling;
+      if (worth > ceil + 1e-6) over++;
+      if (worth > worstWorth) { worstWorth = worth; worstWorthName = name; }
+      if (lever) worstLever = Math.max(worstLever, worth - honest);
+      else if (worth - honest > worstGain) { worstGain = worth - honest; worstName = name; }
+      console.log('   doctor ' + name.padEnd(38) + ' → worth ' + worth.toFixed(2).padStart(16) +
+                  '  (cinder ' + tot.toFixed(2) + ' + owed ' + owed.toFixed(2) + ')' +
+                  (lever ? '   ← edits the ceiling itself' : ''));
+    }
+    chk('a doctored save is not WORTH more than what this city can honestly hold',
+        over === 0, over + ' of ' + doctors.length + ' doctored saves loaded above the ceiling');
+    chk('…and doctoring a BALANCE returns 1e9 as a rounding error, not a fortune',
+        worstGain < honest * 0.01,
+        'worst gain ' + worstGain.toFixed(2) + ' 🔥 on `' + worstName + '` against an honest ' + honest.toFixed(2));
+    /* 🔴 STATED AS THE WEAKER PROMISE IT IS. Editing the ceiling's own inputs
+       still buys headroom; what it may never do is escape the pinned literal. */
+    console.log('   ⚠ the ceiling-lever doctors are worth up to ' + worstLever.toFixed(2) +
+                ' 🔥 above honest — this city\'s own faucet allowance is ' + leverBound.toFixed(2) +
+                ' 🔥, so the residual is bought with the DAY COUNT and is reported, not denied');
+    chk('…and the worst forgeable save in this round stays under the pinned ' +
+        MAX_FORGEABLE_WORTH.toLocaleString() + ' 🔥 ceiling-of-ceilings',
+        worstWorth < MAX_FORGEABLE_WORTH,
+        'worst worth ' + worstWorth.toFixed(2) + ' 🔥 on `' + worstWorthName +
+        '` — SAVE_MAX_DAY or HONEST_FAUCET_PER_DAY has been loosened in sim.js');
+    E.load(JSON.parse(JSON.stringify(blob)));
+    chk('…and an honest save round-trips untouched',
+        Math.abs(E.totalCinder() - honest) < 0.05, honest + ' → ' + E.totalCinder());
+    /* 🔴 THE OTHER HALF OF THE payoutOwed CLAMP, AND THE ONE THAT COULD HAVE
+       COST A PLAYER MONEY IF THE BOUND WERE WRONG. The clamp is the headroom
+       under the ceiling, and the real case that grows this field is a bridge
+       that has been rejecting — refundPayout() puts the money back on
+       `payoutOwed` after the treasury has already been debited. If the bound did
+       not open by exactly as much as the refunds closed the balances, a reload
+       would confiscate every Cinder the bridge failed to deliver. */
+    {
+      E.mount({ nodeId: 'blind-owed-roundtrip', population: 320 });
+      const dead = global.window.MythicCityBridge.addCinders;
+      global.window.MythicCityBridge.addCinders = async () => { throw new Error('rpc timeout'); };
+      for (let i = 0; i < 200; i++) { E.tick(DAY, { ...host, population: 320 }); await flush(); }
+      global.window.MythicCityBridge.addCinders = dead;
+      const owedBefore = Sim.state().payoutOwed;
+      const b2 = JSON.parse(JSON.stringify(E.serialize()));
+      E.load(b2);
+      if (SABOTAGE === 'owed-confiscate') {
+        /* 🧨 A payoutOwed clamp that is too TIGHT rather than absent — the
+           failure this half of the check exists for. Bounding the field by
+           anything that does not grow as refunds shrink the balances confiscates
+           every Cinder a rejecting bridge failed to deliver, on the next reload,
+           silently. This switch is what proves the check is not decoration. */
+        Sim.state().payoutOwed = 0;
+      }
+      const owedAfter = Sim.state().payoutOwed;
+      console.log('   a city whose bridge was down for 200 ticks is owed ' + owedBefore.toFixed(2) +
+                  ' 🔥 — after a save/load round-trip it is owed ' + owedAfter.toFixed(2) + ' 🔥');
+      chk('the bridge-down case is not vacuous — real Cinder really did pile up',
+          owedBefore > 1, 'payoutOwed ' + owedBefore.toFixed(2) + ' — nothing accumulated, nothing tested');
+      chk('…and a reload does NOT confiscate what a rejecting bridge failed to deliver',
+          Math.abs(owedAfter - owedBefore) < 0.05,
+          owedBefore.toFixed(2) + ' 🔥 owed → ' + owedAfter.toFixed(2) +
+          ' 🔥 after reload — the payoutOwed clamp is biting an HONEST save');
+    }
+  }
+
+  /* ── §3 DELETING THE SAVE KEY MAY NOT RE-ARM THE FOUNDING TRANCHE ──────────
+     `Sim.reset()` zeroes `charterIssued` and `booted`, and node-city reads a
+     missing `economy` key as null and mounts with `state: null` — so removing
+     one key from the save hands the city a fresh 300,000 🔥 tranche and the
+     whole 700,000 🔥 lifetime allowance, again and again.
+     ⚠ THIS IS THE HALF OF THE FIX THAT LIVES IN /src/economy. Nothing in the
+       module survives a reload except the blob it is handed, so only the HOST
+       can tell a new city from an established one that lost its economy key;
+       `established` is the flag it says so with. node-city was outside this
+       package's edit set — see index.js mount() for the one line still
+       outstanding, and read this round as proving the refusal works, not as
+       proving the production path is closed. */
+  {
+    E.mount({ nodeId: 'blind-rearm', population: 150 });
+    for (let i = 0; i < 60; i++) E.tick(DAY, host);
+    const livedIssued = E.snapshot().charterIssued;
+    // The host now mounts the SAME city with its economy key deleted.
+    E.mount({ nodeId: 'blind-rearm', population: 150,
+              established: SABOTAGE === 'rearm' ? false : true });
+    const after = E.snapshot();
+    console.log('   lived charterIssued ' + livedIssued.toFixed(2) +
+                ' → after a stateless remount ' + after.charterIssued.toFixed(2) +
+                ' (totalCinder ' + E.totalCinder().toFixed(2) + ')');
+    chk('an established city that arrives with no economy blob is issued NO fresh tranche',
+        after.charterIssued < 1e-6 && E.totalCinder() < 1e-6,
+        'charterIssued ' + after.charterIssued.toFixed(2) + ', totalCinder ' + E.totalCinder().toFixed(2) +
+        ' — deleting one save key re-armed the whole allowance');
+    // …and a genuinely new city still gets its opening capital, or nothing works.
+    E.mount({ nodeId: 'blind-rearm-new', population: 150 });
+    chk('…while a genuinely new city still receives exactly the bootstrap tranche',
+        Math.abs(E.totalCinder() - ECON.firm.charter.seed) < 1e-6,
+        E.totalCinder().toFixed(2) + ' vs seed ' + ECON.firm.charter.seed);
+  }
+
+  /* ── §4 A REJECTED PAYOUT IS THE PLAYER'S MONEY, NOT THE HOUSE'S ───────────
+     claimPayout() decremented `payoutOwed` unconditionally and index.js did
+     `.catch(() => {})`. The treasury had already been debited and `flow.payout`
+     recorded on the day of the draw, so the day audit was satisfied — and the
+     Cinder was in neither ledger. `addCinders` in 'message' mode is an RPC and
+     rejects on a timeout or a dead parent, so this is an ordinary Tuesday, not
+     an exploit. */
+  {
+    E.mount({ nodeId: 'blind-payout', population: 320 });
+    let refusals = 0, delivered = 0, rejecting = true, lastN = 0;
+    let destroyed = 0, worstLoss = 0;
+    global.window.MythicCityBridge.addCinders = async (n) => {
+      lastN = n;
+      if (rejecting) { refusals++; throw new Error('rpc timeout — the parent is gone'); }
+      delivered += n;
+    };
+    /* ⚠ MEASURED PER TICK, NOT AS A RUNNING TOTAL — and the first draft of this
+       round got it wrong in the direction that flatters the fix. The SAME Cinder
+       is re-claimed and re-refused every tick, so summing what the bridge was
+       offered counts one retry 300 times (988,068 🔥 of "claims" against ~6,000 🔥
+       of real money). The only honest question is per attempt: did what the
+       bridge refused come straight back onto the books before the next tick? */
+    for (let i = 0; i < 300; i++) {
+      lastN = 0;
+      E.tick(DAY, { ...host, population: 320 });
+      const afterClaim = Sim.state().payoutOwed;   // claimPayout() already ran, synchronously
+      await flush();                                // let the rejection handler run
+      if (SABOTAGE === 'payout-drop') {
+        /* 🧨 `.catch(() => {})`, re-committed: whatever the claim took and the
+           bridge then refused is simply dropped, which is the shipped end
+           state to the Cinder. */
+        Sim.state().payoutOwed = afterClaim;
+      }
+      if (lastN > 0) {
+        const restored = Sim.state().payoutOwed - afterClaim;
+        const lost = lastN - restored;
+        if (lost > 1e-6) { destroyed += lost; worstLoss = Math.max(worstLoss, lost); }
+      }
+    }
+    const owedBack = Sim.state().payoutOwed;
+    console.log('   bridge REJECTED every call — ' + refusals + ' refusals, delivered ' +
+                delivered.toFixed(2) + ' 🔥, still on the books ' + owedBack.toFixed(2) + ' 🔥');
+    chk('the bridge really did refuse, so this section is not vacuous', refusals > 0,
+        'nothing was ever claimed — the payout never fired and nothing was tested');
+    chk('a rejected payout is restored to payoutOwed, not destroyed',
+        destroyed < 1e-6 && delivered === 0,
+        destroyed.toFixed(2) + ' 🔥 destroyed across ' + refusals + ' refusals (worst single ' +
+        worstLoss.toFixed(2) + ' 🔥) — that money is in neither ledger');
+    /* THE RETRY, EXPLICITLY. The restored balance is not a consolation number
+       on a panel: the next tick claims it again, and this time the bridge is
+       alive. */
+    rejecting = false;
+    const owedAtRecovery = Sim.state().payoutOwed;
+    for (let i = 0; i < 40; i++) { E.tick(DAY, { ...host, population: 320 }); await flush(); }
+    console.log('   bridge RECOVERED — delivered ' + delivered.toFixed(2) +
+                ' 🔥 of the ' + owedAtRecovery.toFixed(2) + ' 🔥 that was owed when it came back');
+    chk('…and the retry pays it out once the bridge is alive again',
+        delivered >= Math.floor(owedAtRecovery) - 1,
+        'delivered ' + delivered.toFixed(2) + ' of ' + owedAtRecovery.toFixed(2));
+    chk('…and never pays it twice (payoutOwed never goes negative)',
+        Sim.state().payoutOwed >= -1e-9, String(Sim.state().payoutOwed));
+    global.window.MythicCityBridge.addCinders = BRIDGE0;
+  }
+
+  /* ── §5 A CEILING IS NOT AN ALLOWANCE — THE RELOAD RATCHET ─────────────────
+     🔴 THE DEFECT §2 IS STRUCTURALLY UNABLE TO SEE. §2 doctors a save, loads it
+     ONCE, and asks whether the result is worth more than the ceiling. Every
+     assertion in it passed on a tree where the clamp handed out its full
+     allowance AGAIN ON EVERY LOAD — because a single measurement cannot tell a
+     ceiling from a per-reload grant. That distinction is the entire difference
+     between "a forgery is worth one bounded lump" and "a forgery is an income".
+
+     THE MECHANISM, and it was an omission rather than a mistake. The identity
+     `clampLoadedCinder()` §3 states in its own header is
+
+         created = totalCinder + imports + payoutDelivered + payoutOwed
+
+     and it bounded `payoutOwed` by `ceiling − totalCinder()` — dropping two of
+     the four terms. `S.flow.imports` and `S.flow.payout` are wiped by
+     `zeroFlow()` every runDay, which is precisely why `faucetLifetime` exists as
+     the twin of `charterIssued`; the same twin was never added for the two
+     SUBTRACTION terms. So the loader read every city as having imported nothing
+     and paid its owner nothing, ever, and re-granted the whole lifetime figure
+     as headroom. Delivering the money did not close it, because nothing recorded
+     the delivery.
+
+     MEASURED on the round-2 tree, through the exact call node-city makes
+     (`E.mount({nodeId, population, state})`), ordinary 200-day city, ONE edited
+     number (`payoutOwed`) and no day lever:
+        5,997 → 10,485 → 10,564 → 10,645 → 10,730 → 10,814 → 10,896 → 10,975 🔥
+        delivered into Profile.gems, one grant per page reload, 81,106 🔥 over
+        eight and still rising, `lastAudit.ok === true` throughout.
+     With the day lever and the treasury left honest: 13,166,610 🔥 in the first
+     cycle and 79,020,933 🔥 over six — unbounded in the number of reloads.
+
+     WHAT THIS SECTION ASSERTS is not a magnitude but a SHAPE: a forged save
+     reloaded N times must not deliver materially more than the same city
+     reloaded N times without any forgery at all. The honest control is run
+     first, on the same city, the same cadence and the same tick count, so the
+     comparison cannot be gamed by a tuning change.
+
+     Prove it can fail: ECON_TEST_SABOTAGE=owed-ratchet drops the two lifetime
+     tallies out of the save on the way in, which is the round-2 loader exactly
+     — `payoutLifetime` and `importsLifetime` read as zero and the headroom
+     re-opens in full on every load. */
+  {
+    const N = 8, TICKS = 3;
+    let delivered = 0;
+    global.window.MythicCityBridge.addCinders = async (n) => { delivered += n; };
+
+    E.mount({ nodeId: 'blind-ratchet', population: 260 });
+    for (let i = 0; i < 200; i++) { E.tick(DAY, { ...host, population: 260 }); await flush(); }
+    const blob0 = JSON.parse(JSON.stringify(E.serialize()));
+
+    /* THE HONEST CONTROL. The same city, reloaded and ticked exactly as the
+       forged run is, with nothing edited. Whatever this delivers is what those
+       reloads are WORTH, and the forgery is allowed no more than it. */
+    const run = async (doctor) => {
+      let blob = JSON.parse(JSON.stringify(blob0)), total = 0;
+      const per = [];
+      for (let r = 0; r < N; r++) {
+        const s = JSON.parse(JSON.stringify(blob));
+        if (doctor) doctor(s);
+        E.mount({ nodeId: 'blind-ratchet', population: 260, state: s });
+        delivered = 0;
+        for (let i = 0; i < TICKS; i++) { E.tick(DAY, { ...host, population: 260 }); await flush(); }
+        total += delivered; per.push(delivered);
+        blob = JSON.parse(JSON.stringify(E.serialize()));
+      }
+      return { total, per };
+    };
+    const honestRun = await run(null);
+    const forged = await run((s) => {
+      s.payoutOwed = 1e9;
+      if (SABOTAGE === 'owed-ratchet') {
+        /* 🧨 THE ROUND-2 LOADER, RE-COMMITTED. Not a synthetic switch: a save
+           written before `payoutLifetime`/`importsLifetime` existed carries
+           neither key, and `load()` reads a missing one as 0 — which IS the
+           pre-fix behaviour, and is exactly why those two keys had to start
+           being written. With them absent on every cycle the headroom re-opens
+           to the city's whole lifetime spend-and-payout, once per reload. */
+        delete s.payoutLifetime; delete s.importsLifetime;
+      }
+    });
+    console.log('   ' + N + ' reload+tick cycles, honest control : ' + honestRun.total.toFixed(2) +
+                ' 🔥  ' + JSON.stringify(honestRun.per.map((x) => +x.toFixed(0))));
+    console.log('   ' + N + ' reload+tick cycles, payoutOwed=1e9 : ' + forged.total.toFixed(2) +
+                ' 🔥  ' + JSON.stringify(forged.per.map((x) => +x.toFixed(0))));
+    chk('the honest control is not vacuous — the bridge really was paid',
+        honestRun.total > 1,
+        'nothing was delivered across ' + N + ' cycles; this section proves nothing');
+    /* 🔴 THE ASSERTION. `+ 200` is one honest cycle's worth of slack on a control
+       that delivers ~80 🔥 per cycle — enough that ordinary run-to-run variation
+       between two 8-cycle runs of the same city cannot redden it, and four
+       orders of magnitude below the 81,106 🔥 the defect was worth. */
+    chk('a forged payoutOwed does NOT re-grant itself on every reload',
+        forged.total <= honestRun.total + 200,
+        'forged ' + forged.total.toFixed(2) + ' 🔥 vs honest ' + honestRun.total.toFixed(2) +
+        ' 🔥 over ' + N + ' reloads — the load clamp is a per-reload ALLOWANCE, not a ceiling; ' +
+        'per cycle ' + JSON.stringify(forged.per.map((x) => +x.toFixed(0))));
+    /* …and the two tallies have to be tallies, not decorations: if either stayed
+       at zero the subtraction above would be subtracting a constant and the
+       assertion would pass for the wrong reason. Read off the HONEST 200-day
+       blob rather than off whatever state the last forged mount left behind —
+       the tail state is three days old and may legitimately have imported
+       nothing in them, which made the first draft of this line fail for a reason
+       that had nothing to do with the defect. */
+    console.log('   200 honest days tallied: payoutLifetime ' + (+blob0.payoutLifetime).toFixed(2) +
+                ' 🔥, importsLifetime ' + (+blob0.importsLifetime).toFixed(2) + ' 🔥');
+    chk('…because confirmed delivery is tallied for the city\'s life, and serialized',
+        blob0.payoutLifetime > 1,
+        'payoutLifetime ' + blob0.payoutLifetime + ' after 200 paid days — index.js is not calling ' +
+        'notePayoutDelivered(), or serialize() is not writing it');
+    chk('…and so is every Cinder that leaves the city as an import',
+        blob0.importsLifetime > 1,
+        'importsLifetime ' + blob0.importsLifetime + ' — sim.js addImports() is not being reached');
+    global.window.MythicCityBridge.addCinders = BRIDGE0;
+  }
+
+  if (fails) { bad++; console.log('\n=== ROUND 0s: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0s: ALL PASS ===');
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0t — 💰 NO LEDGER ID SELLS AT A PRICE NOBODY CHOSE
+   ----------------------------------------------------------------------------
+   🔴 THE DEFECT THIS ROUND EXISTS FOR, MEASURED, NOT ASSERTED.
+   `RESOURCE_CINDER_VALUE` held 11 entries and `_resCinderValue` ended in `|| 3`.
+   That was a crash guard while RESOURCES was 11 rows. Then the chain promotion
+   took RESOURCES to 70, and `_refineryList()` — which returns ALL of RESOURCES —
+   put 59 rows on the Refinery shelf at a price nobody had ever chosen. The
+   promotion commit does not mention pricing, because nothing made it.
+
+   Measured against the SHIPPED producer shelf (CITY_PRODUCTION), on the tree
+   before this round:
+
+     a tier-0 chain building eats {fuel:10} = 40 🔥 and yields 40 units
+       sell the 10 fuel          10 × 4 =  40 🔥
+       sell the 40 units at 3    40 × 3 = 120 🔥        ratio 3.000×
+     over one 36 h OFFLINE_CAP collect (6 cycles): 720 🔥 gross for 240 🔥 of
+     fuel, +480 🔥 net, per building, forever
+
+     47 of the 56 promoted producers were Cinder-positive: 30 tier-0 at 3.000×
+     and 17 tier-1 at 1.077×. `_refinerySellRes` pays through addCinders →
+     addGems → Profile.gems, so this is REAL currency, not city script.
+
+   ── WHY THIS BUG CLASS SURVIVES A GREEN GATE ────────────────────────────────
+   The same reason the loot dilution did: promoting an id changes the behaviour
+   of every site that reads RESOURCES for a DIFFERENT question. round0q closed
+   "what does a scavenging run bring back?". This closes "what is it worth?".
+   Nothing pinned sale pricing, so the next promotion re-opened it in silence —
+   which is exactly the failure mode round0q was written to end, on the other
+   half of the same defect.
+
+   ── 🔴 THE CORRECTION: THIS ROUND USED TO CERTIFY SOMETHING FALSE ───────────
+   Revision 1 of this round ended with the line "NOT ONE chain producer is
+   Cinder-positive — worst 1.000×". That was measured off CITY_PRODUCTION's BASE
+   yields, and it is false for every player who has ever registered a camp node,
+   because the shipped payout does not pay base yields.
+
+   The asymmetry, scraped out of public/src/city/production.state.js and asserted
+   below rather than described:
+
+       pending()  const n = Math.floor((def.yields[k]|0) * lvl * cycles
+                                        * throttle * vitals * tf);   ← × terroir
+       collect()  const n = (def.inputs[k]|0) * (p.level|0||1) * pend.cycles;
+                                                                     ← FLAT
+
+   Output is multiplied by the terroir factor. The inputs charged for that same
+   output are not. So the value ratio of one cycle is
+
+       ratio(player) = ratio(catalogue) × tf
+
+   and `tf` is up to `RICH.yieldMul × SEAM_BONUS_MUL × stackMul(rank 1)`
+   = 1.60 × 3 × 1 = 4.80 (all three read from terroir.js by this round, never
+   typed). RESOURCES going 14 → 70 fed terroir's resourceIds(), so slotsFor(70)
+   = {RICH:15, COMMON:25, SCARCE:28, BARREN:2} now deals RICH ground to chain
+   ids routinely — 15 of 70, 21.4%.
+
+   What that does to the number this round used to print:
+
+       measured at            chain worst   chain positive   legacy worst
+       tf = 1 (revision 1)      1.000×          0 / 56          8.000×
+       RICH ground (1.60)       1.600×         56 / 56         12.800×
+       MAX_TF      (4.80)       4.800×         56 / 56         38.400×
+
+   So the certified "worst 1.000×, nothing is Cinder-positive" was true of the
+   catalogue and true of nobody. ALL 56 chain producers are Cinder-positive on
+   rich ground, and the pre-existing Wellhead pin of 8.000× is 38.400× on a
+   seamed node — an integer pin that read as a containment guarantee it did not
+   give.
+
+   ── ⚠ WHY REPRICING COULD NOT DO IT, so nobody re-derives the rejected fix ──
+   🔴 PRICING IS THE WRONG LEVER AND THE ARITHMETIC SAID SO. The obvious in-file
+   remedy — re-derive every price against the worst ground,
+   `value(out) = max(1, floor(Σ in.qty × value(in) / (yield × MAX_TF)))` — was
+   computed before being rejected. It does not work:
+
+       chain_aluminumOre (tier 0)  exact 0.625 → 0.208🔥 at MAX_TF
+       chain_beverages   (tier 1)  exact 1.741 → 1           → 0.574×  ok
+       chain_cars        (tier 2)  exact 3.750 → 3           → 0.800×  ok
+
+   Sub-1 prices ARE expressible (`_refineryYield` divides by 0.2 perfectly well),
+   so the first draft's stated reason — "1 is the smallest price the table can
+   express" — was simply wrong. The real reason is better: `addGems()` does
+   `Math.floor(amount || 0)` (index.html :64691), so a tier-0 good priced at
+   0.208🔥 pays LITERALLY ZERO for every ordinary-ground sale under 5 units. A
+   reprice against the worst ground makes the commonest sale in the game free.
+   It also cannot touch the LEGACY producers at all — and those were the dominant
+   term (38.400× against 4.800×).
+
+   ── ✅ THE FIX THAT LANDED, AND WHERE ───────────────────────────────────────
+   `public/src/city/production.state.js`, under an explicit scope extension:
+   `collect()` now charges its inputs by the SAME terroir factor `pending()`
+   multiplied the output by, and the affordability loop, the one-cycle halt check
+   and the charge all take that factor from ONE shared helper
+   (`inputTerroirScale` / `inputCharge`) so the promise and the charge cannot
+   drift — scaling one and not the other is verbatim the "banked 🥫 270 (6
+   cycles) → Not enough Water" bug that file documents.
+   Terroir still means what its own comment claims: 4.8× the THROUGHPUT per
+   cycle, per crew slot, per tile. What it stopped doing is manufacturing value.
+   Driven, at the seam, 36 h:  chain 4.800× → 1.000×, 56/56 Cinder-positive → 0;
+   legacy 38.400× → 8.000×, i.e. back to the pre-existing hand-catalogue pumps
+   §4 pins, with the terroir multiplier gone from both shelves at once.
+   ⚠ NOTHING BELOW IS PINNED ANY MORE. §3b runs the shipped module.
+
+   ── WHAT THIS ROUND ASSERTS ─────────────────────────────────────────────────
+     COVERAGE     every id in RESOURCES has an OWN entry in the table, and the
+                  fall-through is MEASURED rather than assumed: the shipped
+                  `_resCinderValue` text is evaluated over a Proxy that returns a
+                  poison value for any missing key, so an id that reaches `|| 3`
+                  is caught however the fallback is spelled.
+     DERIVATION   the 59 prices this round set are re-derived from the shipped
+                  CITY_PRODUCTION and compared by value:
+                      value(out) = max(1, floor( Σ in.qty × value(in) / yield ))
+                  Retune CHAIN_TIER and the gate names the new number. The table
+                  in index.html is a MIRROR — it has to be, because index.html
+                  cannot import an ES module — and this is what makes it safe.
+     PAYOUT       🔴 THE SECTION THAT COST THIS ROUND TWO REVISIONS. §3b LOADS
+                  production.state.js FROM SOURCE, mounts a fake host and a real
+                  terroir seed, and RUNS one 36 h collect per producer on three
+                  grounds (unsurveyed tf 1.000 · dealt · the node's own seam,
+                  tf 4.800). The ratio is the measured ledger delta priced at
+                  `_resCinderValue` — not a model, not a scrape, not a pin.
+                  Revision 1 measured base yields (a ratio no player gets);
+                  revision 2 scraped two statements and modelled `ratio × tf`,
+                  then pinned the products, which had to be retired by hand the
+                  day the defect was fixed. Neither could survive the code
+                  changing under it. This can.
+     BASELINE     no chain producer is Cinder-positive on ANY ground, terroir
+                  cannot raise a cycle's value ratio in either shelf, and the
+                  charge is exactly inputs × cycles × tf rounded up — never
+                  under (a faucet), never more than one unit per input leg over
+                  (a stealth nerf). The legacy shelf's PRE-EXISTING base pumps
+                  are out of scope and §4 pins them to the Cinder.
+     RULE 4       no price literal at a call site: the sale and the conversion
+                  name `_resCinderValue`/`REFINERY_CONVERT_SPREAD` and no digit.
+     DUPES        `_campLootContainer` passed `res1.name` to an exclusion filter
+                  that compares `r.id`, so the two container slots could always
+                  roll the same resource. Drawn, not read.
+
+   ── PROVE IT CAN FAIL ──────────────────────────────────────────────────────
+     ECON_TEST_SABOTAGE=sell-promo   promote `flour` with no price. COVERAGE red.
+     ECON_TEST_SABOTAGE=sell-pump    double one chain building's yield so its
+                                     cycle outsells its inputs. The RATIO pins go
+                                     red, ALONE — the parity price of a bigger
+                                     yield still floors to 1, so DERIVATION stays
+                                     green and the failure is isolated.
+     ECON_TEST_SABOTAGE=sell-default re-commit the pre-fix table. COVERAGE,
+                                     DERIVATION and the driven ratios all red.
+     ECON_TEST_SABOTAGE=sell-asym    🔴 THE ONE THAT MATTERS. Patch the SHIPPED
+                                     production.state.js source so collect()
+                                     charges its inputs FLAT again — the original
+                                     defect, put back — and drive it. The driven
+                                     ratio goes red at 4.800×, 56/56 chain
+                                     producers Cinder-positive. If this is ever
+                                     green, §3b has stopped measuring the payout.
+     ECON_TEST_SABOTAGE=sell-cap     patch pending()'s affordability loop back to
+                                     FLAT while collect() keeps charging by tf —
+                                     the fix's own failure mode. The
+                                     promise-vs-charge round goes red with
+                                     "promised 6 paid 2".
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0t-refinery-pricing ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  let IDX = null;
+  try { IDX = readFileSync(join(here, '../../public/index.html'), 'utf8'); } catch (e) { IDX = null; }
+
+  const litFrom = (src, decl, open) => {
+    const t = srcBlockAfter(src, decl, open);
+    if (!t) return null;
+    try { return (new Function('return (' + t + ');'))(); } catch (e) { return null; }
+  };
+  const fnText = (src, name) => {
+    if (!src) return null;
+    const at = src.indexOf('function ' + name + '(');
+    if (at < 0) return null;
+    const body = srcBlockAfter(src, 'function ' + name + '(');
+    if (!body) return null;
+    const bo = src.indexOf('{', src.indexOf(')', at));
+    if (bo < 0) return null;
+    return src.slice(at, bo) + body;
+  };
+  const stmtIn = (src, fname, from, to) => {
+    const f = fnText(src, fname); if (!f) return null;
+    const a = f.indexOf(from); if (a < 0) return null;
+    const b = f.indexOf(to, a); if (b < 0) return null;
+    return f.slice(a, b);
+  };
+  const strip = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  let RES     = litFrom(IDX, 'const RESOURCES = [', '[');
+  let VAL     = litFrom(IDX, 'const RESOURCE_CINDER_VALUE = {');
+  const VALFN   = fnText(IDX, '_resCinderValue');
+  const LISTFN  = fnText(IDX, '_refineryList');
+  const GROSS   = stmtIn(IDX, '_refinerySellRes', 'const gross =', ';');
+  const YIELDFN = fnText(IDX, '_refineryYield');
+  const CONTBLK = stmtIn(IDX, '_campLootContainer', 'const resPool =', '// 🎒 Roll an item');
+
+  let PD = null;
+  try { PD = await import('../../public/src/city/production.data.js'); } catch (e) { PD = null; }
+
+  /* 🗺 TERROIR — READ, NEVER TYPED. Revision 1 of this round did not import this
+     module at all, which is precisely why it certified a ratio no player gets.
+     Every terroir number below comes out of TERROIR_ECON / SEAM_BONUS_MUL /
+     stackMul, so retuning terroir.js reprints these pins instead of silently
+     invalidating them. */
+  let TER = null;
+  try { TER = await import('../../public/src/city/terroir.js'); } catch (e) { TER = null; }
+  /* …and the PAYOUT PATH itself, as source. The asymmetry is a property of these
+     two statements, not of the catalogue, so it is scraped and asserted rather
+     than assumed — a future edit that closes it MUST redden this round. */
+  let PSRC = null;
+  try { PSRC = readFileSync(join(here, '../../public/src/city/production.state.js'), 'utf8'); } catch (e) { PSRC = null; }
+
+  /* 🔴 THE VACUOUS-TRIPWIRE GUARD, same rule as round0p and round0q. Every
+     assertion below is over a scraped set; a scrape that matched nothing would
+     pass all of them over empty input, and index.html's pricing block promises
+     in writing that this round re-derives it. Read fails ⇒ stop. */
+  const gotAll =
+    chk('read public/index.html and production.data.js',
+        !!IDX && IDX.length > 1000000 && !!PD && Array.isArray(PD.CITY_PRODUCTION),
+        (IDX ? IDX.length : 'IDX UNREADABLE') + ' / ' + (PD ? 'PD ok' : 'PD UNREADABLE')) &
+    chk('extracted RESOURCES / RESOURCE_CINDER_VALUE',
+        Array.isArray(RES) && RES.length > 10 && !!VAL && Object.keys(VAL).length > 10,
+        [RES && RES.length, VAL && Object.keys(VAL).length].join(' / ')) &
+    chk('scraped _resCinderValue / _refineryList / the gross statement / _refineryYield / the container draw',
+        !!VALFN && !!LISTFN && !!GROSS && !!YIELDFN && !!CONTBLK,
+        ['_resCinderValue', '_refineryList', 'gross stmt', '_refineryYield', 'container draw']
+          .filter((n, i) => ![VALFN, LISTFN, GROSS, YIELDFN, CONTBLK][i]).join(', ') + ' NOT FOUND') &
+    chk('read terroir.js and production.state.js (the PAYOUT PATH, not the catalogue)',
+        !!TER && !!TER.TERROIR_ECON && typeof TER.stackMul === 'function' &&
+        typeof TER.SEAM_BONUS_MUL === 'number' && !!PSRC && PSRC.length > 2000,
+        [TER ? 'terroir ok' : 'terroir UNREADABLE', PSRC ? 'production.state ok' : 'production.state UNREADABLE'].join(' / '));
+
+  if (!gotAll) {
+    console.log('\n🔴 THE SOURCE COULD NOT BE READ — nothing below was checked.');
+    console.log('   If a declaration or function was renamed, fix the markers in this round.');
+    console.log('   Do NOT delete it: index.html\'s RESOURCE_CINDER_VALUE block promises');
+    console.log('   round0t re-derives all 59 prices from CITY_PRODUCTION.');
+    bad++; console.log('\n=== ROUND 0t: ' + fails + ' FAILED ===');
+  } else {
+    /* 🔴 THE HAND-PRICED SET, WRITTEN OUT AS A LITERAL — and it has to be, for
+       exactly round0p's reason. The first draft computed the derived set as
+       "everything in RESOURCES that is not in RESOURCE_CINDER_VALUE", which is
+       empty by construction once the fix is in, so DERIVATION would have been a
+       green tick over zero ids. These 11 are the r12 staples whose prices were
+       chosen by a person; everything else in the ledger must be derived. */
+    const HAND_PRICED = ['food', 'water', 'ammo', 'supplies', 'metal', 'energyDrink',
+                         'fuel', 'medicine', 'corruptedEssence', 'memoryShards', 'dna'];
+
+    if (SABOTAGE === 'sell-promo') {
+      RES = RES.concat([{ id: 'flour', name: 'Flour', icon: '🌾', color: '#e8d7a0' }]);
+      console.log('   🧨 promoted `flour` into RESOURCES without giving it a price');
+    }
+    if (SABOTAGE === 'sell-default') {
+      const v = {}; for (const k of HAND_PRICED) v[k] = VAL[k];
+      VAL = v;
+      console.log('   🧨 dropped all 59 derived prices — `|| 3` prices the ledger again');
+    }
+
+    const RIDS = RES.map(r => r.id);
+    const own  = id => Object.prototype.hasOwnProperty.call(VAL, id);
+
+    // ── 1. COVERAGE ───────────────────────────────────────────────────────
+    /* WHY the whole ledger and not some subset: `_refineryList()` returns all of
+       RESOURCES, so every ledger row is a Sell button. Asserted, not assumed —
+       if someone narrows the shelf later this line says so and the requirement
+       can be narrowed with it. */
+    chk('_refineryList() puts the WHOLE ledger on the shelf, so every ledger id is a sale price',
+        /\bRESOURCES\b/.test(strip(LISTFN)), strip(LISTFN).trim());
+    const unpriced = RIDS.filter(id => !own(id));
+    chk('every id in RESOURCES has an EXPLICIT price (' + RIDS.filter(own).length + ' of ' + RIDS.length + ')',
+        unpriced.length === 0, 'no RESOURCE_CINDER_VALUE entry: ' + unpriced.join(', '));
+
+    /* ── 1b. …and the fall-through is MEASURED, not inferred ────────────────
+       Evaluate the SHIPPED `_resCinderValue` over a Proxy that answers a poison
+       value for any key the table does not own. An id that still reaches the
+       fallback comes back poisoned no matter how the fallback is written —
+       `|| 3`, `?? 3`, or a named default a later edit introduces. This is the
+       version of the check that cannot be outwitted by a rename. */
+    const MISS = -999;
+    const probe = new Proxy({ ...VAL }, {
+      has: () => true,
+      get: (t, k) => (Object.prototype.hasOwnProperty.call(t, k) ? t[k] : MISS),
+    });
+    let priceOf = null;
+    try {
+      priceOf = new Function('RESOURCE_CINDER_VALUE', VALFN + '\n return _resCinderValue;')(probe);
+    } catch (e) { priceOf = null; }
+    chk('the shipped _resCinderValue is evaluable (the measurement below is not vacuous)',
+        typeof priceOf === 'function' && priceOf('fuel') === VAL.fuel,
+        priceOf ? 'fuel -> ' + priceOf('fuel') + ', expected ' + VAL.fuel : 'could not evaluate');
+    if (typeof priceOf === 'function') {
+      const fellThrough = RIDS.filter(id => priceOf(id) === MISS);
+      chk('NO ledger id reaches the `|| 3` fallback — it is a crash guard, not a price (' +
+          RIDS.length + ' ids priced from the table)',
+          fellThrough.length === 0,
+          fellThrough.length + ' ids default: ' + fellThrough.join(', '));
+    }
+
+    // ── 2. DERIVATION ─────────────────────────────────────────────────────
+    /* Every producer, as {out id → building}. Single-output by construction
+       today; the loop is written for the general case so a two-output building
+       does not silently pick one. */
+    const PRODUCERS = [];
+    for (const b of PD.CITY_PRODUCTION) {
+      if (!b.yields) continue;
+      for (const o of Object.keys(b.yields)) {
+        PRODUCERS.push({ def: b.id, out: o, y: b.yields[o], inputs: { ...(b.inputs || {}) },
+                         chain: b.id.indexOf('chain_') === 0 });
+      }
+    }
+    if (SABOTAGE === 'sell-pump') {
+      const t = PRODUCERS.find(p => p.def === 'chain_timber');
+      /* Mutate the CATALOGUE too, not only this round's copy — §3b drives the
+         real module against PD.CITY_PRODUCTION, so a pump that only existed in
+         a local array would redden §3 and leave the driven round green, which
+         would read as "the payout is fine" for a building that is not. */
+      const b = PD.CITY_PRODUCTION.find(x => x.id === 'chain_timber');
+      if (b && b.yields) b.yields.timber = (b.yields.timber | 0) * 2;
+      if (t) { t.y *= 2; console.log('   🧨 doubled chain_timber\'s yield to ' + t.y + ' — one cycle now outsells its inputs'); }
+    }
+    const byOut = {}; for (const p of PRODUCERS) byOut[p.out] = p;
+    /* 🔴 PRICES COME FROM THE SHIPPED FUNCTION, FALLBACK AND ALL — NOT FROM
+       `VAL[id] || 0`. The first draft of this round did the latter and the
+       `sell-default` sabotage (drop every derived price) left NOT-A-PUMP GREEN:
+       a missing entry read as 0, so every ratio came out 0.000 and the round
+       cheerfully certified the exact defect it exists for. Driving the sabotage
+       is what found it. What a player is actually PAID is `_resCinderValue(id)`,
+       so that is what the ratio has to be measured in. */
+    const V = (typeof priceOf === 'function')
+      ? new Function('RESOURCE_CINDER_VALUE', VALFN + '\n return _resCinderValue;')({ ...VAL })
+      : (id => VAL[id] || 0);
+    const inValue = p => Object.entries(p.inputs).reduce((s, [i, q]) => s + q * V(i), 0);
+    /* The parity rule, in one line. `max(1, …)` is the crash guard the table's
+       comment names — a price of 0 would make _refineryYield divide by zero. */
+    const parity = p => Math.max(1, Math.floor(inValue(p) / p.y));
+
+    const DERIVED_IDS = RIDS.filter(id => !HAND_PRICED.includes(id));
+    chk('the derived-price set is the ledger minus the 11 hand-priced staples (' + DERIVED_IDS.length + ')',
+        DERIVED_IDS.length >= 50, String(DERIVED_IDS.length));
+    const noProducer = DERIVED_IDS.filter(id => !byOut[id]);
+    chk('every derived-price id has a CITY_PRODUCTION producer to derive from',
+        noProducer.length === 0, 'no producer: ' + noProducer.join(', '));
+    const wrong = DERIVED_IDS.filter(id => byOut[id] && VAL[id] !== parity(byOut[id]))
+      .map(id => id + ' shipped ' + VAL[id] + ' derived ' + parity(byOut[id]) +
+                 ' (' + inValue(byOut[id]) + '🔥 / ' + byOut[id].y + ')');
+    chk('every derived price === max(1, floor(inputValue / yield)) re-derived from the shipped shelf',
+        wrong.length === 0, wrong.join(' · '));
+
+    // ── 3. THE CATALOGUE RATIO (base yields — necessary, NOT sufficient) ──
+    /* ⚠ THIS IS THE NUMBER REVISION 1 STOPPED AT. It is kept because it is the
+       thing the PRICES are derived against and the `sell-pump` sabotage acts on
+       it — but on its own it certifies a ratio no player receives. §3b is the
+       one that measures what is actually paid out. */
+    const ratio = p => (p.y * V(p.out)) / Math.max(1e-9, inValue(p));
+    const chainP = PRODUCERS.filter(p => p.chain && inValue(p) > 0);
+    const rank = chainP.slice().sort((a, b) => ratio(b) - ratio(a));
+    console.log('\n  chain producers — sell the CYCLE OUTPUT vs sell the CYCLE INPUTS (BASE yields)');
+    for (const p of rank.slice(0, 5)) {
+      console.log('    ' + p.def.padEnd(26) + ' out ' + String(p.y * V(p.out)).padStart(4) +
+                  '🔥  in ' + String(inValue(p)).padStart(4) + '🔥  ratio ' + ratio(p).toFixed(3));
+    }
+    console.log('    … ' + chainP.length + ' chain producers, worst ' + ratio(rank[0]).toFixed(3) +
+                ', best ' + ratio(rank[rank.length - 1]).toFixed(3));
+    const pumps = chainP.filter(p => ratio(p) > 1.0000001)
+      .map(p => p.def + ' ' + ratio(p).toFixed(3) + '×');
+    chk('at BASE yields no chain producer is Cinder-positive (' +
+        chainP.length + ' producers, worst ' + ratio(rank[0]).toFixed(3) + '× — see §3b, this is NOT what a player gets)',
+        pumps.length === 0, pumps.join(', '));
+
+    // ── 3b. 🗺 THE PAYOUT PATH, **DRIVEN** — not modelled, not scraped ─────
+    /* 🔴 WHY THIS SECTION WAS REWRITTEN, AND IT IS THE THIRD TIME THIS ROUND HAS
+       BEEN WRONG ABOUT THE SAME NUMBER. Revision 1 measured CITY_PRODUCTION's
+       base yields and certified "worst 1.000×" — true of the catalogue and true
+       of nobody, because the shipped payout multiplies the yield by terroir.
+       Revision 2 fixed that by SCRAPING the two statements and MODELLING the
+       result as `ratio × tf`, then PINNING the products as fixed-point strings.
+       That was honest about an unfixed defect, but it was still arithmetic this
+       file did, about code this file only read — and the pins had to be retired
+       by hand the moment the defect was fixed or they would certify a shape the
+       game no longer has.
+       So this section now RUNS THE SHIPPED MODULE. production.state.js is loaded
+       from its own source text, given a fake host and a real terroir seed, and
+       one 36 h collect is executed per producer. The ratio below is the actual
+       ledger delta — units the module SPENT, priced at `_resCinderValue`, versus
+       units it BANKED — with nothing in between for this round to get wrong.
+       There is no pin left to go stale.
+
+       THE DEFECT IT CAUGHT, and the reason it is worth the machinery:
+         pending()  scaled the yield by tf;  collect() charged the inputs FLAT.
+         Driven, at the seam (tf 4.800), 36 h / 6 cycles:
+           chain_aluminumOre   240🔥 in → 1,152🔥 out    4.800×   (56/56 chain +ve)
+           wellhead             90🔥 in → 3,456🔥 out   38.400×   (14/14 legacy +ve)
+         After collect() charges by the same tf:
+           chain_aluminumOre 1,152🔥 in → 1,152🔥 out    1.000×   ( 0/56 chain +ve)
+           wellhead            432🔥 in → 3,456🔥 out    8.000×   ( 8/14, the
+           pre-existing hand-catalogue pumps of §4 — terroir no longer multiplies
+           them, which is the half that WAS in scope) */
+
+    /* 🎛 EVERY TERROIR NUMBER IS READ, NOT TYPED. Retune terroir.js and this
+       reprints. TF_MAX is what the harness below has to actually reach for its
+       measurement to mean anything, so it is asserted, not assumed. */
+    const MAX_TIER_MUL = Math.max(...Object.keys(TER.TERROIR_ECON.tiers)
+      .map(k => TER.TERROIR_ECON.tiers[k].yieldMul));
+    const STACK1 = TER.stackMul('food', 1);          // rank 1 = sat^0 = the best rank
+    const TF_MAX = MAX_TIER_MUL * TER.SEAM_BONUS_MUL * STACK1;
+    /* ⚠ TF_MAX uses the SEAM bonus for every id, including chain ids. Under the
+       ten random war-map yield keys (_TW_RES_KEYS) a chain id can never win a
+       seam — every alias in TERROIR_ECON.seamAliases resolves to a legacy
+       staple. But seamIdFor() returns a raw key that is already a ledger id, and
+       node.resourceYield is author-controlled (the TW admin node editor writes
+       arbitrary keys), so `{ timber: 10 }` on a node makes timber the seam. The
+       worst case is therefore reachable, and measuring at the comfortable case
+       is the same mistake as measuring at tf = 1. */
+
+    /* 🔌 THE HOST SEAM, MOUNTED. terroir.js reads window.MythicCityBridge and
+       nothing else, so this is the whole of "which ground am I standing on". */
+    let SEAM = null, NODE = null;
+    globalThis.window = globalThis.window || {};
+    globalThis.window.MythicCityBridge = {
+      resources: RES,
+      terroirSeed: () => (NODE ? { nodeId: NODE, seamKey: SEAM } : null),
+    };
+
+    /* 📦 Load production.state.js FROM ITS OWN SOURCE TEXT. Two reasons and both
+       matter: (1) it proves the bytes on disk are what ran, the same discipline
+       `_resCinderValue` gets in §1b; (2) it is the only way to SABOTAGE the
+       shipped payout path, and a round that cannot be made to fail is a comment.
+       Relative specifiers do not resolve inside a data: URL, so they are
+       rewritten to the very files on disk — the same absolute URLs `import()`
+       already used, so Node hands back the SAME module instances and
+       PD.CITY_PRODUCTION is one object shared by this round and the code under
+       test (which is what makes `sell-pump` reach the driven measurement too). */
+    const CITYDIR = new URL('../../public/src/city/', import.meta.url).href;
+    const loadPS = (patch) => {
+      let src = typeof patch === 'function' ? patch(PSRC) : PSRC;
+      src = src.replace(/(from\s*['"])\.\/([\w.\-]+)(['"])/g, (m, a, f, z) => a + CITYDIR + f + z);
+      return import('data:text/javascript;charset=utf-8,' + encodeURIComponent(src));
+    };
+
+    /* 🧰 The fake host — every legacy binding the module is allowed to touch,
+       and a plain object ledger so the delta IS the measurement. Deliberately
+       generous (huge stash, huge crew, a level-3 Power Plant placed alongside)
+       so that nothing but the input/output arithmetic can move the number. */
+    const HOUR = 3600000;
+    const mkHost = (seed) => {
+      const led = Object.create(null);
+      for (const id of RIDS) led[id] = seed;
+      let st = { placed: [] };
+      return {
+        led,
+        state: () => st, setState: (s) => { st = s; return true; }, save: () => true,
+        getRes: (k) => led[k] | 0,
+        addRes: (k, n) => { led[k] = (led[k] | 0) + (n | 0); },
+        refundRes: (k, n) => { led[k] = (led[k] | 0) + (n | 0); },
+        spendRes: (k, n) => { if ((led[k] | 0) < n) return false; led[k] -= n; return true; },
+        resName: (k) => k, resMeta: (k) => ({ id: k, name: k, icon: '📦', color: '#fff' }),
+        gems: () => 1e9, addGems: () => true, spendGems: () => true,
+        resourceCap: () => 1e9, resourceUnits: () => 0,
+        workerPool: () => 100000,
+        collectCdMs: 6 * HOUR, accrualCapH: 36,
+      };
+    };
+    /* One 36 h collect (6 cycles) of one building on one ground, measured off
+       the ledger. `ground` is null for UNSURVEYED (every id COMMON, tf exactly
+       1.000 — the identity terroir.js's own comment calls load-bearing), a node
+       id for dealt ground, or the building's own output id to force the seam. */
+    const runCollect = (PSMOD, def, ground, seamId, seedUnits) => {
+      NODE = ground; SEAM = seamId || null;
+      const host = mkHost(seedUnits == null ? 5e6 : seedUnits);
+      const st = host.state();
+      st.placed = [
+        { id: 'pp', defId: 'powerplant', level: 3, lastCollect: Date.now(), buffer: {}, workers: 6, x: 0, y: 0, z: 0, rotation_y: 0, scale: 1 },
+        { id: 'sub', defId: def.id, level: 1, lastCollect: Date.now() - 36 * HOUR, buffer: {}, workers: 0, x: 0, y: 0, z: 0, rotation_y: 0, scale: 1 },
+      ];
+      host.setState(st);
+      const out = Object.keys(def.yields)[0];
+      const p = st.placed[1];
+      const tf = PSMOD.terroirFactor(host, p, out);
+      const promised = PSMOD.pending(host, p);
+      const before = { ...host.led };
+      const r = PSMOD.collect(host, 'sub');
+      let inV = 0, outV = 0;
+      const spent = {};
+      for (const k of RIDS) {
+        const d = (host.led[k] | 0) - (before[k] | 0);
+        if (d > 0) outV += d * V(k); else if (d < 0) { inV += -d * V(k); spent[k] = -d; }
+      }
+      return { ok: !!r.ok, why: r.why, tf, promised: promised.cycles | 0, paid: r.cycles | 0,
+               inV, outV, spent, ratio: inV > 0 ? outV / inV : (outV > 0 ? Infinity : 0) };
+    };
+
+    let PSMOD = null;
+    try {
+      PSMOD = await loadPS((src) => {
+        if (SABOTAGE === 'sell-asym') {
+          console.log('   🧨 collect() charges its inputs FLAT again — the terroir asymmetry, put back');
+          return src.replace('inputCharge((def.inputs[k] | 0) * (p.level | 0 || 1), pend.cycles, tfIn)',
+                             '(def.inputs[k] | 0) * (p.level | 0 || 1) * pend.cycles');
+        }
+        if (SABOTAGE === 'sell-cap') {
+          console.log('   🧨 pending()\'s affordability loop goes back to FLAT while collect() charges by tf');
+          return src.replace('let affordable = Math.max(0, Math.floor(have / (per * tfIn)));',
+                             'let affordable = Math.max(0, Math.floor(have / per));')
+                    .replace('while (affordable > 0 && inputCharge(per, affordable, tfIn) > have) affordable--;', '');
+        }
+        return src;
+      });
+    } catch (e) { PSMOD = null; }
+
+    const drivable = !!PSMOD && typeof PSMOD.collect === 'function' && typeof PSMOD.pending === 'function' &&
+                     typeof PSMOD.terroirFactor === 'function';
+    chk('production.state.js — THE SHIPPED PAYOUT PATH — loaded from its own source and is drivable',
+        drivable, PSMOD ? 'module loaded but collect/pending/terroirFactor missing' : 'the module did not evaluate');
+
+    if (drivable) {
+      const RUNNABLE = PD.CITY_PRODUCTION.filter(b => b.yields && b.inputs && Object.keys(b.inputs).length &&
+                                                      Object.keys(b.yields).length);
+      const M = [];
+      for (const d of RUNNABLE) {
+        const out = Object.keys(d.yields)[0];
+        M.push({
+          def: d.id, out, chain: d.id.indexOf('chain_') === 0,
+          flat: runCollect(PSMOD, d, null, null),                  // unsurveyed, tf 1.000
+          dealt: runCollect(PSMOD, d, 'round0t-node', null),       // dealt ground, tf 0.15…1.60
+          seam: runCollect(PSMOD, d, 'round0t-node', out),         // the seam,   tf 4.800
+        });
+      }
+      const halted = M.filter(m => !m.flat.ok || !m.dealt.ok || !m.seam.ok)
+        .map(m => m.def + ' (' + [m.flat, m.dealt, m.seam].filter(x => !x.ok).map(x => x.why).join(' / ') + ')');
+      chk('every one of the ' + M.length + ' producers actually RAN a 36 h collect on all three grounds ' +
+          '(a halted building measures nothing — this is the vacuity guard)',
+          M.length >= 60 && halted.length === 0, halted.slice(0, 5).join(' · '));
+
+      /* The harness must genuinely stand on the worst ground, or "≤ 1.000× at
+         MAX_TF" is a claim about somewhere else. */
+      const notMax = M.filter(m => Math.abs(m.seam.tf - TF_MAX) > 1e-9)
+        .map(m => m.def + ' tf ' + m.seam.tf.toFixed(3));
+      chk('the seam run really is the WORST GROUND — measured tf === TF_MAX (tier ×' + MAX_TIER_MUL.toFixed(3) +
+          ' × seam ×' + TER.SEAM_BONUS_MUL.toFixed(3) + ' × rank-1 stack ×' + STACK1.toFixed(3) +
+          ' = ' + TF_MAX.toFixed(3) + ') for all ' + M.length,
+          notMax.length === 0, notMax.slice(0, 5).join(', '));
+      const notOne = M.filter(m => Math.abs(m.flat.tf - 1) > 1e-9).map(m => m.def + ' tf ' + m.flat.tf.toFixed(3));
+      chk('…and the unsurveyed run is EXACTLY tf 1.000 — the identity terroir.js promises for a player with no node',
+          notOne.length === 0, notOne.slice(0, 5).join(', '));
+
+      /* ── 🔴 THE HEADLINE. No pin, no model: the measured ledger delta. ──── */
+      const chainM = M.filter(m => m.chain), legacyM = M.filter(m => !m.chain);
+      const worstOf = (set, g) => set.reduce((a, m) => Math.max(a, m[g].ratio), 0);
+      const posOf = (set, g) => set.filter(m => m[g].ratio > 1.0000001).length;
+      console.log('\n  🗺 DRIVEN — one 36 h collect per producer, ledger delta priced at _resCinderValue:');
+      console.log('    ground                          chain worst   +ve      legacy worst   +ve');
+      for (const [label, g] of [['unsurveyed (tf 1.000)', 'flat'], ['dealt ground', 'dealt'],
+                                ['AT THE SEAM (tf ' + TF_MAX.toFixed(3) + ')', 'seam']]) {
+        console.log('    ' + label.padEnd(31) + worstOf(chainM, g).toFixed(3).padStart(8) + '×  ' +
+                    (posOf(chainM, g) + '/' + chainM.length).padStart(6) + '   ' +
+                    worstOf(legacyM, g).toFixed(3).padStart(10) + '×  ' +
+                    (posOf(legacyM, g) + '/' + legacyM.length).padStart(6));
+      }
+      const cPos = [];
+      for (const m of chainM) for (const g of ['flat', 'dealt', 'seam']) {
+        if (m[g].ratio > 1.0000001) cPos.push(m.def + ' @' + g + ' ' + m[g].ratio.toFixed(3) + '× (tf ' + m[g].tf.toFixed(3) + ')');
+      }
+      chk('🔴 NO CHAIN PRODUCER IS CINDER-POSITIVE ON ANY GROUND — measured, worst ' +
+          Math.max(worstOf(chainM, 'flat'), worstOf(chainM, 'dealt'), worstOf(chainM, 'seam')).toFixed(3) +
+          '× over ' + chainM.length + ' producers × 3 grounds (was 4.800×, 56/56, at the seam)',
+          cPos.length === 0, cPos.slice(0, 6).join(' · '));
+
+      /* ── TERROIR IS VALUE-NEUTRAL, BOTH DIRECTIONS, AND THE BOUND IS EXACT ─
+         Up: good ground must not multiply the ratio — that was the defect, and
+         it is the half a reprice could never have reached on the legacy shelf.
+         Down: it must not DIVIDE it either. A fix that simply overcharged inputs
+         would satisfy the first test and quietly nerf the feature, so the
+         downward side is bounded too — and NOT by a hand-picked band.
+
+         🔴 THE BAND USED TO BE `> -0.01` AND THAT WAS A GUESS. It went red on
+         chain_beverages (0.718 → 0.701 on SCARCE ground) and the honest reading
+         is that integer rounding IS a real cost: `ceil` on the charge against
+         `floor` on the yield, and on poor ground the quantities are small enough
+         for one unit to be 2.4% of the cycle. So the assertion is now the exact
+         thing that is true — the charge sits between the real-valued cost and
+         one unit per input leg above it — instead of a tolerance chosen to make
+         the observed number pass. Under-charging by even a fraction is a faucet
+         and is caught by the same line. */
+      const defById = {}; for (const d of RUNNABLE) defById[d.id] = d;
+      const amp = [], drift = [];
+      for (const m of M) for (const g of ['dealt', 'seam']) {
+        const r = m[g], def = defById[m.def];
+        if (r.ratio - m.flat.ratio > 1e-6) amp.push(m.def + ' @' + g + ' ' + m.flat.ratio.toFixed(3) + '→' + r.ratio.toFixed(3));
+        let exact = 0, oneUnit = 0;
+        for (const k of Object.keys(def.inputs)) { exact += (def.inputs[k] | 0) * r.paid * r.tf * V(k); oneUnit += V(k); }
+        const over = r.inV - exact;
+        if (over < -1e-9) drift.push(m.def + ' @' + g + ' UNDER-charged by ' + (-over).toFixed(3) + '🔥');
+        else if (over > oneUnit + 1e-9) drift.push(m.def + ' @' + g + ' over-charged ' + over.toFixed(3) +
+                                                   '🔥 > one unit per leg (' + oneUnit + '🔥)');
+      }
+      chk('terroir CANNOT raise the value ratio of a cycle on any ground — the amplification is gone ' +
+          '(' + M.length + ' producers × 2 grounds)',
+          amp.length === 0, amp.slice(0, 6).join(' · '));
+      chk('…and the charge is EXACTLY inputs × cycles × tf, rounded up — never under (a faucet) and never ' +
+          'more than one unit per input leg over (a stealth nerf)',
+          drift.length === 0, drift.slice(0, 6).join(' · '));
+      /* The ε inside inputCharge, driven. 1.6 is 1.6000000000000000888 in IEEE
+         754, so 10 × 6 × 1.6 evaluates to 96.00000000000001 and a bare ceil
+         takes 97 — one unit of silent over-charge per collect on COMMON-rich
+         ground, i.e. on most of the map. */
+      chk('inputCharge() snaps IEEE noise instead of billing it — 10 × 6 × tf 1.6 charges 96, not 97',
+          typeof PSMOD.inputCharge === 'function' && PSMOD.inputCharge(10, 6, 1.6) === 96,
+          typeof PSMOD.inputCharge === 'function' ? 'charged ' + PSMOD.inputCharge(10, 6, 1.6) : 'inputCharge is not exported');
+
+      /* ── THE PROMISE AND THE CHARGE ARE ONE NUMBER ────────────────────────
+         🔴 THE BUG THIS EXISTS FOR IS THE FIX'S OWN FAILURE MODE. `pending()`
+         decides how many cycles it can afford and `collect()` charges for them.
+         Scale one by tf and not the other and the panel banks "🥫 270 (6
+         cycles)" and the Collect button answers "Not enough Water" — the exact
+         regression production.state.js documents at its inputCap loop. Driven on
+         a DELIBERATELY SHORT ledger, on rich ground, where the two disagree. */
+      const short = [];
+      for (const d of RUNNABLE) {
+        const out = Object.keys(d.yields)[0];
+        const per = Math.max(...Object.values(d.inputs).map(n => n | 0));
+        // Enough for ~2 cycles at tf 4.8 and nowhere near 6 — the band where a
+        // flat affordability check over-promises by a factor of tf.
+        const r = runCollect(PSMOD, d, 'round0t-node', out, Math.ceil(per * 2 * TF_MAX));
+        if (!r.ok) { short.push(d.id + ' REFUSED: ' + r.why); continue; }
+        if (r.promised !== r.paid) short.push(d.id + ' promised ' + r.promised + ' paid ' + r.paid);
+      }
+      chk('on a SHORT ledger every producer pays exactly the cycles pending() promised — the promise and ' +
+          'the charge are the same number (' + RUNNABLE.length + ' producers)',
+          short.length === 0, short.slice(0, 6).join(' · '));
+
+      /* ── THE LEGACY SHELF, MEASURED AT THE SEAM ───────────────────────────
+         The hand catalogue's base pumps are PRE-EXISTING and out of scope (§4
+         pins them to the Cinder). What was in scope was terroir multiplying
+         them, and this is that number: the Wellhead was 38.400× at the seam. */
+      const wh = M.find(m => m.def === 'wellhead');
+      if (wh) console.log('\n  wellhead (the worst legacy pump) — unsurveyed ' + wh.flat.ratio.toFixed(3) +
+                          '× · at the seam ' + wh.seam.ratio.toFixed(3) + '× (was 38.400× — §4 pins the base)');
+      const legAmp = legacyM.filter(m => m.seam.ratio - m.flat.ratio > 1e-6).map(m => m.def);
+      chk('the LEGACY shelf is fixed by the same edit — terroir no longer multiplies the pre-existing pumps ' +
+          '(' + legacyM.length + ' producers, worst at the seam ' + worstOf(legacyM, 'seam').toFixed(3) +
+          '×, unchanged from unsurveyed ' + worstOf(legacyM, 'flat').toFixed(3) + '×)',
+          legAmp.length === 0, legAmp.join(', '));
+    }
+
+    // ── 4. THE PINNED LEGACY BASELINE, PER BUILDING ───────────────────────
+    /* 🔴 THESE ARE PRE-EXISTING AND THEY ARE NOT FIXED. The hand-written catalog
+       has been Cinder-positive since it shipped — the Wellhead turns 5 supplies
+       (15 🔥) into 60 water (120 🔥), 8.000× before terroir and 38.400× on a
+       seamed node. Repricing food/water/metal is a camp-wide balance change and
+       it is not this round's; silently leaving it unmeasured is how it stayed
+       invisible. So it is pinned AS INTEGERS (out 🔥 / in 🔥 — no float compare,
+       nothing to drift), which makes the pre-existing pumps a written-down
+       number that cannot grow, and stops a NEW legacy producer hiding inside a
+       known-bad set. §3c pins what terroir then multiplies these by. */
+    const LEGACY_PIN = {
+      wellhead:   [120, 15], refinery:    [152, 76], depot:     [150, 94],
+      hydroponics: [90, 60], foundry:     [120, 80], sump:       [64, 50],
+      apothecary:  [90, 70], timberyard:  [55, 48],
+    };
+    const legacyP = PRODUCERS.filter(p => !p.chain && inValue(p) > 0);
+    const legacyPos = {};
+    for (const p of legacyP) if (ratio(p) > 1.0000001) legacyPos[p.def] = [p.y * V(p.out), inValue(p)];
+    const pinKeys = Object.keys(LEGACY_PIN).sort(), posKeys = Object.keys(legacyPos).sort();
+    console.log('\n  legacy (hand-priced) producers that are Cinder-positive — PRE-EXISTING, pinned:');
+    for (const k of posKeys) console.log('    ' + k.padEnd(14) + ' out ' + String(legacyPos[k][0]).padStart(4) +
+                                         '🔥  in ' + String(legacyPos[k][1]).padStart(4) + '🔥  ratio ' +
+                                         (legacyPos[k][0] / legacyPos[k][1]).toFixed(3));
+    chk('the pre-existing legacy pumps are EXACTLY the pinned set, to the Cinder (' + posKeys.length + ')',
+        pinKeys.length === posKeys.length &&
+        pinKeys.every(k => legacyPos[k] && legacyPos[k][0] === LEGACY_PIN[k][0] && legacyPos[k][1] === LEGACY_PIN[k][1]),
+        'pinned [' + pinKeys.join(',') + '] observed [' + posKeys.join(',') + ']' +
+        posKeys.filter(k => LEGACY_PIN[k] && (legacyPos[k][0] !== LEGACY_PIN[k][0] || legacyPos[k][1] !== LEGACY_PIN[k][1]))
+          .map(k => ' · ' + k + ' ' + JSON.stringify(legacyPos[k]) + ' vs pinned ' + JSON.stringify(LEGACY_PIN[k])).join(''));
+
+    // ── 5. RULE 4 — no price literal at a call site ───────────────────────
+    /* 0 and 1 are structural everywhere in this file (guards, `| 0`, array
+       indices); any OTHER digit in a pricing expression is a number that
+       escaped the table, which is how `|| 3` became the price of 59 goods. */
+    const onlyStructural = s => !(strip(s).replace(/\b[01]\b/g, '').match(/\d/));
+    chk('the SALE reads its price from _resCinderValue and names no number',
+        /_resCinderValue\s*\(/.test(strip(GROSS)) && onlyStructural(GROSS), strip(GROSS).trim());
+    chk('the CONVERSION prices both legs through _resCinderValue and takes its cut from config',
+        /_resCinderValue\s*\(/.test(strip(YIELDFN)) && /REFINERY_CONVERT_SPREAD/.test(strip(YIELDFN)) &&
+        onlyStructural(YIELDFN), strip(YIELDFN).trim());
+
+    // ── 6. THE CONTAINER'S DUPLICATE EXCLUSION, DRAWN ─────────────────────
+    /* Evaluate the shipped draw. `_lootResRows` is stubbed with a WEIGHTED bag
+       (rows repeat, which is how the real one encodes weights) so the filter has
+       to remove every copy, and with names that differ from ids — which is the
+       whole bug: `pick(res1.name)` was filtered against `r.id`. */
+    const rows = [];
+    for (const r of RES.slice(0, 8)) for (let i = 0; i < 3; i++) rows.push({ id: r.id, name: r.name, icon: r.icon, color: r.color });
+    const mkDraw = (body) => {
+      try { return new Function('_lootResRows', 'cont', body + '\n return [res1, res2];'); }
+      catch (e) { return null; }
+    };
+    const draw = mkDraw(CONTBLK);
+    chk('the shipped container draw is evaluable', !!draw, 'could not compile the scraped block');
+    if (draw) {
+      const cont = { resMin: 1, resMax: 5 };
+      let dupes = 0, n = 20000, nulls = 0;
+      for (let i = 0; i < n; i++) {
+        const [a, b] = draw(() => rows, cont);
+        if (!a || !b) { nulls++; continue; }
+        if (a.id === b.id) dupes++;
+      }
+      chk('the container rolls TWO DIFFERENT resources — the exclusion actually excludes (' +
+          n.toLocaleString('en-US') + ' draws, ' + dupes + ' duplicates)',
+          dupes === 0 && nulls === 0, dupes + ' duplicate pairs, ' + nulls + ' null draws');
+      /* …and the check is not vacuous: put the DEFECT back — pass the display
+         name to a filter that compares ids — and the same measurement must find
+         duplicates at ~1/8 of draws. A tripwire nobody has driven is a comment. */
+      const broken = mkDraw(CONTBLK.replace('pick(res1 ? res1.id : null)', 'pick(res1 ? res1.name : null)'));
+      let bd = 0;
+      if (broken && CONTBLK.indexOf('res1.id') >= 0) {
+        for (let i = 0; i < 20000; i++) { const [a, b] = broken(() => rows, { resMin: 1, resMax: 5 }); if (a && b && a.id === b.id) bd++; }
+      }
+      chk('…and that measurement CAN fail — the pre-fix `res1.name` draw duplicates (' +
+          (bd / 200).toFixed(2) + '% of draws)',
+          bd > 1000, 'the name/id sabotage produced ' + bd + ' duplicates; the check may be vacuous');
+    }
+  }
+
+  if (fails) { bad++; console.log('\n=== ROUND 0t: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0t: ALL PASS ===');
 }
 
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {

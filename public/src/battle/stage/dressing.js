@@ -1041,6 +1041,18 @@ function _sheetSlot(pool, w, h, src, make){
    screen. A 55-luma edge — the size actually measured on the pond — lands at
    7.1. The bound is on the composite, not on a hope about what is in frame.
 
+   AND MEASURED AS A POSITIVE CONTROL, because arithmetic in a comment proves
+   nothing. Two frames from the same tree with only this file swapped, REFL
+   deliberately forced to 1.60 — twice the reach that produced the failure, so
+   the plateau lip is unquestionably inside the strip:
+     band-limit OFF   row-mean range 45.9, max row step 16.6, 57px edge run
+     band-limit ON    row-mean range 21.7, max row step  2.4, 31px edge run
+   Same source strip, same everything else. The step falls 7x and the interior
+   edge run falls to exactly what the shipped REFL 0.80 build measures. That is
+   the limit doing the work, not the choice of strip. The OFF frame is also
+   the standing reproduction: if these constants are ever retuned, force REFL
+   back to 1.60 and re-shoot the pair before believing the new ones.
+
    WHY IT IS IN reflSheet AND NOT IN drawPool. Everything here runs at the
    sheet's refresh cadence, once per REFL_MS, not once per band per frame: 26
    offscreen→offscreen blits of a ~640x320 surface at 4.5Hz. Doing the same
@@ -1550,7 +1562,17 @@ function drawPool(api, it){
        The formula existed to give a one-tile puddle a longer reach. Puddles do
        not take this branch at all (see the `!it.surf` test above), so it was
        only ever able to change the pond, which is the one pool it claimed not
-       to touch. Deleted, not retuned. */
+       to touch. Deleted, not retuned.
+       RE-MEASURED as a clean A/B after the fact, both frames shot from the
+       same tree with only this file swapped (the artifact's exact size depends
+       on what terrain has above the waterline that day, so the critic's 55.9
+       and this 30.2 are the same defect at two tree states): the 230/B.h
+       version 30.2 range / 4.5 max row step / a CONTINUOUS 112px edge at
+       x438..549; this version 6.8 / 2.3 / 31px, against 10.9 / 3.2 / 34px on
+       the wave-3 control. Reproduced on a second boot at 11.3 / 1.5.
+       ⚠ AND THIS IS NO LONGER THE ONLY THING STANDING BETWEEN THE POND AND
+       THAT SLAB — bandLimitSheet() is, and it holds whatever is in frame. Read
+       its header before you reach for REFL to fix a contrast problem again. */
     let REFL = 0.80;
     if (B.y0 - B.h * REFL < 2) REFL = (B.y0 - 2) / Math.max(1, B.h);
     /* clamped to the canvas: drawImage with a source rect that hangs off the

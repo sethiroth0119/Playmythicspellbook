@@ -203,6 +203,13 @@ let bad = 0;
                                    still clamps, so a Power Station cancelled at a
                                    full 2,000-unit vault returns its Cinder and
                                    destroys all 400 units of materials in silence
+     ECON_TEST_SABOTAGE=demolish-blind round0r §3f: re-commit the shipped 🧨
+                                   demolish tail — no honesty question, the raw
+                                   `for (const k in refund) … addRes(k, …)` loop
+                                   back in place of bldPayRefund, and no toast.
+                                   Demolishing a mid-upgrade building at a full
+                                   vault then destroys BOTH refund legs with
+                                   nothing at all said to the player
      ECON_TEST_SABOTAGE=refund-raw  round0r §4: strip bldLoad's two clamps, i.e.
                                    pass a save's `pc` and `pr` through unbounded
                                    and unvalidated, as shipped
@@ -460,7 +467,7 @@ const SABOTAGE = process.env.ECON_TEST_SABOTAGE || '';
    green. Add the name here in the same commit that adds the switch. */
 const SABOTAGES = [
   'bogus-id', 'boot-open', 'boot-presweep', 'cancel-blind', 'cancel-sited', 'cap-typo',
-  'charter-cap', 'dark-cards', 'defer-closed', 'defer-noSave', 'defer-nostamp', 'defer-open',
+  'charter-cap', 'dark-cards', 'defer-closed', 'defer-noSave', 'defer-nostamp', 'defer-open', 'demolish-blind',
   'defer-deadbtn', 'defer-park', 'defer-serverwrite', 'draw-compound', 'eco-erase', 'load-catch-open',
   'faucet-untallied', 'free-repair', 'halt-flat', 'imports-untallied', 'inflight-drop', 'lab-ungated',
   'loot-ledger', 'loot-promo', 'no-map', 'no-producer', 'nobridge-drop', 'ops-found-inline',
@@ -5008,6 +5015,7 @@ const stripComments = (src) => {
   const BRM     = num(NC, 'BUILD_RES_MULT');
   const UPM     = num(NC, 'UPGRADE_MULT');
   const MAXL    = num(NC, 'MAX_LVL');
+  const RDC     = num(NC, 'ROAD_DEMOLISH_COST');
   const RADIUS  = num(NC, 'OPS_RESEARCH_R');
   /* loadState's damage/order precedence is ONE STATEMENT inside a 400-line
      function, so it is scraped as a statement rather than lifted as a function —
@@ -5124,6 +5132,11 @@ const stripComments = (src) => {
       const MAX_LVL = ${MAXL}, UPGRADE_MULT = ${UPM};
       const BUILD_CINDER_MULT = ${BCM}, BUILD_RES_MULT = ${BRM};
       const OPS_RESEARCH_R = ${RADIUS}, GRID = 24, OPS_PREFIX = 'op_';
+      const ROAD_DEMOLISH_COST = ${RDC};
+      /* 🏠 node-city reaches for window.MythicHouse behind a try/catch. Modelled
+         rather than left to throw, so §3f can assert the sleeping cards are NOT
+         handed back on a demolish the player answered "no" to. */
+      const window = __ctx.win || {};
       /* 📦 THE PARENT LEDGER'S CEILING, MODELLED AS index.html's addRes ACTUALLY
          ENFORCES IT — free = cap - units, drop the lot when free <= 0, clamp
          otherwise, and say nothing to the caller. spy.writes records what was
@@ -5164,6 +5177,13 @@ const stripComments = (src) => {
          same defect, so a round that only drove bldCancel would have graded half
          the bug. See §3e (7). */
       ${ctx.raceSrc ? 'async function raceRefund(cost) ' + ctx.raceSrc : ''}
+      /* 🧨 THE DEMOLISH BUTTON'S WHOLE CLICK HANDLER, SCRAPED AND RUN — same
+         technique, same reason as raceRefund above. The demolish refund is not a
+         function anywhere; it is a tail inside the handler, which is exactly how
+         it came to diverge from the cancel path in the first place. Grading a
+         copy of it here would have graded this file, not the product. */
+      async function payCost(c) { spy.paid.push(c); return __ctx.payFails !== true; }
+      ${ctx.demSrc ? 'async function demolishClick() ' + ctx.demSrc : ''}
       const bldCfg = () => ECON_ON ? { on: true, maxSec: 86400, formulaV: 1, exemptTypes: [] } : null;
       /* 🔴 THIS STUB LIES UNLESS IT IS CHAINED TO ECON_ON, AND THE LIE HID A
          LIVE DEFECT FOR A WHOLE ROUND. The shipped chain is
@@ -5240,6 +5260,8 @@ const stripComments = (src) => {
         bldRefundFit: bldRefundFit, bldRefundLabel: bldRefundLabel,
         ledger: LEDGER, ledgerUnits: lUnits,
         raceRefund: (typeof raceRefund === 'function' ? raceRefund : null),
+        demolishClick: (typeof demolishClick === 'function' ? demolishClick : null),
+        select: (k) => { selectedKey = k; }, selected: () => selectedKey,
         opsReconcile: opsReconcile, opsFindLab: opsFindLab, opsResearchAdj: opsResearchAdj,
         rebuildDue: _bldRebuildDue,
         next: () => _bldNext, parkNext: () => { _bldNext = Infinity; },
@@ -5251,7 +5273,7 @@ const stripComments = (src) => {
       };`;
     return new Function('__ctx', S)(ctx);
   };
-  const mkSpy = () => ({ writes: [], landed: {}, confirms: [], toasts: [], finished: [], ecoSync: [], unsite: [], phase: 'load' });
+  const mkSpy = () => ({ writes: [], landed: {}, confirms: [], toasts: [], finished: [], ecoSync: [], unsite: [], paid: [], house: [], phase: 'load' });
   const cinPerSec = (type) => {
     const d = BLDG[type]; const g = d && d.gen && +d.gen.cinder;
     return g > 0 ? g / CPD / 60 : 0;          // per-minute figure → per-hour → per-second
@@ -5815,6 +5837,254 @@ const stripComments = (src) => {
           !!a !== !!b && cin === (price.cinder | 0) && api.ledgerUnits() === WANT,
           'returned ' + JSON.stringify([!!a, !!b]) + ', ' + cin + ' 🔥 paid (expected ' +
           (price.cinder | 0) + '), ' + api.ledgerUnits() + ' units banked (expected ' + WANT + ')');
+    }
+  }
+
+  /* ── §3f …AND THE 🧨 BUTTON PAYS THE SAME REFUND THE SAME WAY ──────────────
+     🔴 THE SIBLING OF §3e, REPRODUCED ON THE SHIPPED PAGE THROUGH ORDINARY UI
+     CLICKS. §3e closed the CANCEL refund. The DEMOLISH refund is a tail inside
+     the 🧨 click handler rather than a function anywhere, and it built its dict
+     and handed it straight to a raw loop:
+         for (const k in refund) if (refund[k]) await MythicCityBridge.addRes(k, refund[k]);
+     addRes clamps to the vault ceiling, so demolishing at the cap destroyed the
+     lot — and unlike the cancel path there was no dialog, no toast and no log
+     line, so nothing a player could read said it had happened.
+
+     IT HAS TWO LEGS AND BOTH GO THROUGH THE SAME CLAMP:
+       · 50% of costOf(type, lvl) — the standing building;
+       · 100% of the order's own pc/pr when the building is MID-UPGRADE (k=1).
+     A round that only demolished an idle building would grade half of it, so
+     every case below runs on a standing L2 Power Station with a live L3 order.
+
+     MEASURED ON THIS HARNESS against the pre-fix handler (see the numbers the
+     section prints): the two legs together are worth several hundred units, and
+     at a full vault every one of them evaporated while the player was told
+     nothing at all.
+
+     THE PROPERTY IS §3e's, WORD FOR WORD: the promise and the outcome agree,
+     and nothing goes without being counted out loud first. It is asserted here
+     against the SAME machinery — bldRefundFit / bldConfirmLossy / bldPayRefund /
+     bldRefundLabel — because two divergent refund payers is what caused this.
+
+     SABOTAGE: demolish-blind (re-commits the raw loop and the silence).
+     ⚠ refund-blind reddens this section too, and should: both paths ask the
+       same bldRefundFit. */
+  {
+    const chain = await import('../../public/src/resources/chain.js');
+    const CHAIN = new Set(chain.NEW_IDS);
+    const CAP = 2000;
+    /* 🧨 THE PRE-FIX TAIL, RE-COMMITTED WHERE IT ACTUALLY LIVED. Three anchors,
+       each a single line (see the ops-zombie note on why never across a break):
+       the honesty question goes, the one-call payer becomes the two shipped
+       lines again, and the sentence the player reads goes with them. */
+    const demSrc = unfix(srcBlockAfter(NC, "$('btn-demolish').onclick = guardedAction(async () => "),
+      'demolish-blind', [
+        ['if (!fore.whole && !(await bldConfirmLossy(', 'if (false && !(await bldConfirmLossy('],
+        ['const fit = await bldPayRefund({ ...refund });',
+         'if (refund.cinder) { await MythicCityBridge.addCinders(refund.cinder); delete refund.cinder; }\n' +
+         '  const fit = { cap: 0, units: 0, want: {}, wantUnits: 0, fit: {}, fitUnits: 0, lost: {}, lostUnits: 0, whole: true };\n' +
+         '  for (const k in refund) if (refund[k]) await MythicCityBridge.addRes(k, refund[k]);'],
+        ["  toast('🧨 ' + nm + ' demolished'", "  if (0) toast('🧨 ' + nm + ' demolished'"],
+      ]);
+    const gotDem = chk('§3f the 🧨 click handler is where this round thinks it is',
+        !!demSrc && demSrc.indexOf('costOf(') > 0 && demSrc.indexOf('bldOrderRefund(') > 0 &&
+        demSrc.indexOf('ROAD_DEMOLISH_COST') > 0 && demSrc.indexOf('bldCancel(') > 0 &&
+        Number.isFinite(RDC),
+        'scraped ' + JSON.stringify(demSrc && demSrc.slice(0, 80)) + ' roadCost=' + RDC);
+
+    if (gotDem) {
+      const probe = mkCity({ spy: mkSpy(), B: BLDG });
+      const STAND = probe.costOf('powerstation', 2);          // the level actually reached
+      const ORDER = probe.costOf('powerstation', 3);          // the level never delivered
+      const half = {}; for (const k in STAND) half[k] = Math.floor(STAND[k] * .5);
+      const oPr = { ...ORDER }; delete oPr.cinder;
+      /* The refund the handler must produce: 50% of the standing L2 plus 100%
+         of the L3 order. Derived from costOf, so a retune moves it and the
+         section still means the same thing — no price is written down here. */
+      const WANT = {};
+      for (const k in half) if (k !== 'cinder' && half[k]) WANT[k] = half[k];
+      for (const k in oPr) if (oPr[k]) WANT[k] = (WANT[k] || 0) + oPr[k];
+      const UNITS = Object.values(WANT).reduce((a, b) => a + b, 0);
+      const STAND_UNITS = Object.keys(half).filter(k => k !== 'cinder').reduce((a, k) => a + half[k], 0);
+      const ORDER_UNITS = Object.values(oPr).reduce((a, b) => a + b, 0);
+      const CIN = (half.cinder | 0) + (ORDER.cinder | 0);
+      console.log('   mid-upgrade demolish: standing L2 half-refund ' + STAND_UNITS +
+                  ' units + L3 order ' + ORDER_UNITS + ' units = ' + UNITS + ' units, ' +
+                  CIN.toLocaleString() + ' 🔥, cap ' + CAP);
+      chk('§3f BOTH legs are non-empty — a one-legged case would grade half the bug',
+          STAND_UNITS > 0 && ORDER_UNITS > 0 && UNITS < CAP,
+          'standing ' + STAND_UNITS + ' + order ' + ORDER_UNITS + ' of ' + CAP);
+
+      /* One scenario, driven through the PRODUCTION call shape: select the
+         tile, then run the shipped click handler. */
+      const run = async (held, answer, extra) => {
+        const spy = mkSpy();
+        const house = [];
+        const api = mkCity({ spy: spy, B: BLDG, cap: CAP, ledger: { food: held }, answer: answer,
+                             demSrc: demSrc,
+                             win: { MythicHouse: { onDemolish: (t) => house.push(t.type) } },
+                             ...(extra || {}) });
+        api.game.tiles['4,4'] = { type: 'powerstation', lvl: 2, rot: 0,
+                                  bld: { k: 1, l: 3, s: Date.now(), d: 3600, fv: 1,
+                                         pc: ORDER.cinder | 0, pr: { ...oPr } } };
+        api.select('4,4');
+        const before = api.ledgerUnits();
+        await api.demolishClick();
+        const said = spy.toasts.length ? spy.toasts[spy.toasts.length - 1].m : '';
+        const cin = spy.writes.filter(w => w.call === 'addCinders').reduce((a, w) => a + w.n, 0);
+        const got = {}; if (cin) got.cinder = cin;
+        for (const k in spy.landed) if (spy.landed[k]) got[k] = spy.landed[k];
+        return { spy, said, house, got, cin, moved: api.ledgerUnits() - before,
+                 tile: api.game.tiles['4,4'],
+                 resAsked: spy.writes.filter(w => w.call === 'addRes') };
+      };
+      /* PROMISE === OUTCOME, read the way a player reads it: the sentence must
+         name every unit that arrived and every unit that did not. */
+      const agrees = (s, fitUnits) => {
+        const lost = UNITS - fitUnits;
+        const landed = Object.values(s.spy.landed).reduce((a, b) => a + b, 0);
+        if (landed !== fitUnits) return false;
+        if (s.cin !== CIN) return false;
+        if (lost > 0) return /no room/.test(s.said) && s.said.indexOf(String(lost)) >= 0 && !/in full/.test(s.said);
+        return / in full\.$/.test(s.said);
+      };
+
+      // ── (1) ROOM AVAILABLE ────────────────────────────────────────────────
+      {
+        const s = await run(0, true);
+        console.log('   room available : said "' + s.said + '"');
+        chk('§3f room available — no question, both legs arrive, and it says so',
+            s.spy.confirms.length === 0 && s.moved === UNITS && agrees(s, UNITS) &&
+            !s.tile && s.house.length === 1,
+            'confirms ' + s.spy.confirms.length + ', banked ' + s.moved + ' of ' + UNITS +
+            ', 🔥 ' + s.cin + ' of ' + CIN + ' :: ' + s.said);
+      }
+
+      // ── (2) PARTIAL ROOM — the case that destroyed materials in silence ────
+      {
+        const fits = Math.floor(UNITS / 2), held = CAP - fits;
+        const no = await run(held, false);
+        chk('§3f partial room — the shortfall is named BEFORE anything moves',
+            no.spy.confirms.length === 1 && no.spy.confirms[0].indexOf(String(UNITS - fits)) >= 0 &&
+            no.spy.confirms[0].indexOf('LOST') >= 0 && /[Dd]emolish/.test(no.spy.confirms[0]),
+            JSON.stringify(no.spy.confirms));
+        chk('§3f partial room — "no" leaves the tile, the order, the House and the ledger untouched',
+            !!no.tile && !!no.tile.bld && no.spy.writes.length === 0 && no.moved === 0 &&
+            no.house.length === 0 && no.spy.toasts.length === 0,
+            'tile ' + JSON.stringify(!!no.tile && !!no.tile.bld) + ', writes ' + no.spy.writes.length +
+            ', house ' + no.house.length + ', moved ' + no.moved);
+
+        const yes = await run(held, true);
+        console.log('   partial room   : said "' + yes.said + '"');
+        chk('§3f partial room — PROMISE === OUTCOME (' + fits + ' of ' + UNITS + ' units)',
+            yes.moved === fits && agrees(yes, fits),
+            'banked ' + yes.moved + ' of ' + UNITS + ', 🔥 ' + yes.cin + ' :: ' + yes.said);
+        chk('§3f partial room — the ledger is still asked for BOTH whole legs, not the fit',
+            yes.resAsked.reduce((a, w) => a + w.n, 0) === UNITS, JSON.stringify(yes.resAsked));
+      }
+
+      // ── (3) NO ROOM AT ALL — the reproduction case ─────────────────────────
+      {
+        const s = await run(CAP, true);
+        console.log('   no room at all : said "' + s.said + '"');
+        chk('§3f no room — PROMISE === OUTCOME (0 of ' + UNITS + ' units, Cinder still whole)',
+            s.moved === 0 && agrees(s, 0) && !s.tile,
+            'banked ' + s.moved + ', 🔥 ' + s.cin + ' of ' + CIN + ' :: ' + s.said);
+        chk('§3f no room — the player is TOLD, in a toast, that nothing came back',
+            s.spy.toasts.length === 1 && s.spy.toasts[0].kind === 'bad' &&
+            s.said.indexOf(String(UNITS)) >= 0,
+            JSON.stringify(s.spy.toasts));
+      }
+
+      // ── (4) AN UNREADABLE CEILING IS NOT A FULL ONE ───────────────────────
+      {
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, demSrc: demSrc });   // no cap ⇒ {cap:0, free:Infinity}
+        api.game.tiles['4,4'] = { type: 'powerstation', lvl: 2, rot: 0,
+                                  bld: { k: 1, l: 3, s: Date.now(), d: 3600, fv: 1,
+                                         pc: ORDER.cinder | 0, pr: { ...oPr } } };
+        api.select('4,4');
+        await api.demolishClick();
+        /* ⚠ NULL-SAFE ON PURPOSE: under `demolish-blind` there is no toast at
+           all, and a section that THREW would leave this round red for the
+           wrong reason — a crash grades nothing. */
+        chk('§3f an UNKNOWN ceiling asks nothing and demolishes without a dialog',
+            spy.confirms.length === 0 && !api.game.tiles['4,4'] &&
+            / in full\.$/.test((spy.toasts[0] || {}).m || ''),
+            'confirms ' + JSON.stringify(spy.confirms) + ' :: ' + JSON.stringify(spy.toasts));
+      }
+
+      // ── (5) RULE 2 — no chain resource reaches the camp ledger ─────────────
+      {
+        const chainId = chain.NEW_IDS.find(id => !ORDER[id]) || 'timber';
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, cap: CAP, ledger: {}, answer: true, demSrc: demSrc });
+        const rec = api.bldLoad({ k: 1, l: 3, s: Date.now(), d: 3600, fv: 1,
+                                  pc: ORDER.cinder | 0, pr: { ...oPr, [chainId]: 5000 } },
+                                2, 'powerstation');
+        api.game.tiles['4,4'] = { type: 'powerstation', lvl: 2, rot: 0, bld: rec };
+        api.select('4,4');
+        await api.demolishClick();
+        const asked = spy.writes.filter(w => w.call === 'addRes').map(w => w.r);
+        chk('§3f RULE 2 — no chain id reaches addRes through the demolish refund (' + chainId + ')',
+            asked.length > 0 && asked.every(k => !CHAIN.has(k)), JSON.stringify(asked));
+      }
+
+      // ── (6) THE IDLE BUILDING AND THE ROAD ARE NOT REGRESSED ──────────────
+      /* The 50% leg on its own is what 🧨 has always paid, and a road is CHARGED
+         rather than refunded. Both run through the same handler, so both are
+         driven here — a fix that only thought about the k=1 case would show up
+         as a road that stopped charging or a demolish that stopped paying. */
+      {
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, cap: CAP, ledger: {}, demSrc: demSrc });
+        api.game.tiles['4,4'] = { type: 'powerstation', lvl: 2, rot: 0 };   // idle, no order
+        api.select('4,4');
+        await api.demolishClick();
+        chk('§3f an IDLE building still pays exactly its 50% leg and nothing more',
+            api.ledgerUnits() === STAND_UNITS && spy.confirms.length === 0 &&
+            spy.writes.filter(w => w.call === 'addCinders').reduce((a, w) => a + w.n, 0) === (half.cinder | 0),
+            api.ledgerUnits() + ' of ' + STAND_UNITS + ' units, writes ' + JSON.stringify(spy.writes));
+
+        const spyR = mkSpy();
+        const apiR = mkCity({ spy: spyR, B: BLDG, cap: CAP, ledger: {}, demSrc: demSrc });
+        apiR.game.tiles['5,5'] = { type: 'road', lvl: 1, rot: 0 };
+        apiR.select('5,5');
+        await apiR.demolishClick();
+        chk('§3f a road is still CHARGED ' + RDC + ' 🔥 and refunds nothing',
+            spyR.paid.length === 1 && spyR.paid[0].cinder === RDC &&
+            spyR.writes.length === 0 && !apiR.game.tiles['5,5'],
+            'paid ' + JSON.stringify(spyR.paid) + ', writes ' + JSON.stringify(spyR.writes));
+
+        const spyF = mkSpy();
+        const apiF = mkCity({ spy: spyF, B: BLDG, cap: CAP, ledger: {}, payFails: true, demSrc: demSrc });
+        apiF.game.tiles['5,5'] = { type: 'road', lvl: 1, rot: 0 };
+        apiF.select('5,5');
+        await apiF.demolishClick();
+        chk('§3f …and an unaffordable road is not lifted',
+            !!apiF.game.tiles['5,5'] && spyF.toasts.length === 1,
+            'tile ' + !!apiF.game.tiles['5,5'] + ' :: ' + JSON.stringify(spyF.toasts));
+      }
+
+      // ── (7) A SITE STILL ROUTES THROUGH bldCancel, NOT THROUGH THIS TAIL ──
+      /* One refund policy for a hole in the ground. If the 🧨 tail ever grew its
+         own site branch it would be a third payer, which is how this started. */
+      {
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, cap: CAP, ledger: {}, answer: true, demSrc: demSrc });
+        const price = api.costOf('powerstation', 1);
+        const sPr = { ...price }; delete sPr.cinder;
+        const sUnits = Object.values(sPr).reduce((a, b) => a + b, 0);
+        api.game.tiles['4,4'] = { type: 'powerstation', lvl: 1, rot: 0,
+                                  bld: { k: 0, l: 1, s: Date.now(), d: 3600, fv: 1,
+                                         pc: price.cinder | 0, pr: { ...sPr } } };
+        api.select('4,4');
+        await api.demolishClick();
+        chk('§3f a SITE is cancelled at 100% of the order — one refund policy, not two',
+            api.ledgerUnits() === sUnits && !api.game.tiles['4,4'] &&
+            spy.writes.filter(w => w.call === 'addCinders').reduce((a, w) => a + w.n, 0) === (price.cinder | 0),
+            api.ledgerUnits() + ' of ' + sUnits + ' units :: ' + JSON.stringify(spy.toasts));
+      }
     }
   }
 

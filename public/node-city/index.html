@@ -18687,16 +18687,25 @@ function bldRefundLabel(r) {
      loud first.
    gcConfirm is the PARENT game's modal and this page is an iframe, so that name
    is not in scope here — same fallback, same contract as bldConfirmLong. A modal
-   that THREW is not consent. */
-async function bldConfirmLossy(nm, rec, fit) {
-  const cin = Math.max(0, Math.round((rec && +rec.pc) || 0));
-  const msg = 'Cancelling ' + ((rec && rec.k === 1) ? 'the upgrade of ' + nm : nm) + ' returns ' +
+   that THREW is not consent.
+
+   🧨 IT ASKS FOR THE DEMOLISH BUTTON TOO, WHICH IS WHY IT TAKES WORDS RATHER
+      THAN A BUILD RECORD. It used to read `rec.k` and `rec.pc` itself and hard-
+      wire the verb "cancel", so the 🧨 button could not have used it without a
+      second copy — and a second copy is exactly what the demolish refund was
+      (see the 🧨 handler's header). `lead` is the whole first clause, `verb` is
+      the word the two follow-up sentences conjugate, `cin` is the Cinder leg the
+      caller already computed from bldOrderRefund. One dialog, two callers, and
+      neither can drift from the other's wording. */
+async function bldConfirmLossy(lead, verb, cin, fit) {
+  cin = Math.max(0, Math.round(+cin || 0));
+  const msg = lead + ' returns ' +
     (cin > 0 ? cin.toLocaleString() + ' 🔥 and ' : '') + fit.wantUnits + ' units of materials.\n\n' +
     'Your vault is holding ' + fit.units.toLocaleString() + ' of ' + fit.cap.toLocaleString() +
     ' units, so only ' + fit.fitUnits + ' of them will fit. ' + costLabel(fit.lost) +
     ' — ' + fit.lostUnits + ' unit' + (fit.lostUnits === 1 ? '' : 's') + ' — would be LOST.\n\n' +
-    'Free up ' + fit.lostUnits + ' units of vault space and cancel again to get everything back.\n\n' +
-    'Cancel anyway and lose them?';
+    'Free up ' + fit.lostUnits + ' units of vault space and ' + verb + ' again to get everything back.\n\n' +
+    verb.charAt(0).toUpperCase() + verb.slice(1) + ' anyway and lose them?';
   try {
     return !!(await (typeof gcConfirm === 'function' ? gcConfirm(msg) : Promise.resolve(confirm(msg))));
   } catch (e) { return false; }
@@ -18812,7 +18821,8 @@ async function bldCancel(kk) {
      and the mesh is dropped — so the one question worth asking goes here, where
      "no" costs nothing at all. */
   const fore = await bldRefundFit(refund);
-  if (!fore.whole && !(await bldConfirmLossy(nm, rec, fore))) return null;
+  if (!fore.whole && !(await bldConfirmLossy('Cancelling ' + (rec.k === 1 ? 'the upgrade of ' + nm : nm),
+                                             'cancel', refund.cinder | 0, fore))) return null;
   /* ⚠ RE-READ AFTER THE DIALOG. Nothing can move behind a native confirm() in
      this frame today, so this is defensive — it is here so this stays correct
      the day gcConfirm() (a non-blocking modal) becomes reachable from the
@@ -21074,7 +21084,15 @@ $('btn-upgrade').onclick = guardedAction(async () => {
   } finally { if (reserved) bldReleaseCrew(); }
 });
 $('btn-demolish').onclick = guardedAction(async () => {
-  const t = game.tiles[selectedKey]; if (!t) return;
+  /* 🔑 THE TILE KEY IS TAKEN ONCE, HERE, AND EVERY LINE BELOW USES IT. This
+     handler used to re-read `selectedKey` after its awaits — harmless while the
+     only await on the building path came after the tile was already gone, and
+     NOT harmless now that the honesty question below awaits a modal. A player
+     who clicks another tile while the dialog is up would otherwise have the
+     WRONG building torn out from under the answer they just gave. The road
+     branch had the same window across payCost. */
+  const kk = selectedKey;
+  const t = game.tiles[kk]; if (!t) return;
   /* 🛤 A road is CHARGED for, not refunded. Paid before anything is torn down —
      payCost is the only thing that can fail here, and a half-demolished tile
      with the ledger untouched would be unrecoverable. */
@@ -21082,10 +21100,10 @@ $('btn-demolish').onclick = guardedAction(async () => {
     const rc = { cinder: ROAD_DEMOLISH_COST };
     if (!(await payCost(rc))) { toast('Clearing a road costs ' + ROAD_DEMOLISH_COST + ' ₵.', 'bad'); return; }
     dropTileMesh(t);
-    const [rx, rz] = selectedKey.split(',').map(Number);
-    delete game.tiles[selectedKey];
+    const [rx, rz] = kk.split(',').map(Number);
+    delete game.tiles[kk];
     refreshRoadArea(rx, rz);
-    $('inspect').classList.remove('open'); selectedKey = null;
+    if (selectedKey === kk) { $('inspect').classList.remove('open'); selectedKey = null; }
     toast('🧨 Road cleared — ' + ROAD_DEMOLISH_COST + ' ₵.', 'good');
     logEvent('city', 'Cleared a road tile (-' + ROAD_DEMOLISH_COST + ' ₵)');
     computeLinks(); manageAgents(); updateHUD(); saveSoon();
@@ -21104,22 +21122,11 @@ $('btn-demolish').onclick = guardedAction(async () => {
        lossy-cancel dialog. Every one of those already says its own piece or
        needs no piece said; announcing a cancel that did not happen was a small
        lie before and would be a loud one now. */
-    const r = await bldCancel(selectedKey);
+    const r = await bldCancel(kk);
     if (r) toast('🧨 Construction cancelled' + bldRefundLabel(r),
                  (r.fit && r.fit.lostUnits > 0) ? 'bad' : 'good');
     return;
   }
-  /* ⚠ The tile comes off the board BEFORE the refund is awaited. The guard above
-     already stops a double-click, but this also closes the window where a raid
-     tick or an autosave could observe a building that has already been paid out
-     for. Order: remove, then pay. */
-  /* 🛏 A House with cards asleep in it must give them back BEFORE the tile is
-     removed, and bank whatever Resonance they had already earned — the
-     building is gone, there is no "later" to collect in. Force-collect
-     deliberately ignores the 6h gate for the same reason. */
-  try { if (window.MythicHouse) window.MythicHouse.onDemolish(t); } catch (e) {}
-  const refund = {}; const c = costOf(t.type, t.lvl);
-  for (const k in c) refund[k] = Math.floor(c[k] * .5);
   /* 🏗 TWO REFUNDS ON A BUILDING THAT WAS MID-UPGRADE (k=1), and they are
      different in kind, which is why they are added rather than blended:
        · 50% of costOf(type, t.lvl) — the STANDING building, at the level it
@@ -21130,20 +21137,61 @@ $('btn-demolish').onclick = guardedAction(async () => {
          numbers payCost took, not what costOf() would quote today.
      Neither mints: one is a fraction of a price paid at placement, the other is
      bounded by what this order charged and can be paid out exactly once,
-     because `t.bld` goes with the tile. */
+     because `t.bld` goes with the tile.
+
+     🔴 AND BOTH LEGS GO THROUGH addRes, WHICH CLAMPS. THIS BUTTON DESTROYED
+        PLAYERS' MATERIALS AND SAID NOTHING AT ALL. The dict below used to be
+        handed straight to a bare `for (…) addRes(k, refund[k])` loop — no
+        ceiling read, no dialog, no toast, no log line, so the only trace was the
+        parent's own "stash full" notice, which names no number and is not shown
+        at all when the vault is exactly full. MEASURED on the shipped page, one
+        click, a standing L2 Power Station upgrading to L3 at a full 2,000-unit
+        vault: 78,750 🔥 came back, the ledger was asked for 1,181 🔩 + 394 📦 =
+        1,575 units, and it banked ZERO of them, silently.
+        The cancel path had the identical defect and was fixed first; this is the
+        sibling, and it is fixed with the SAME machinery on purpose —
+        bldRefundFit asks the ceiling before anything moves, bldConfirmLossy puts
+        the exact number in front of the player, bldPayRefund pays and reports,
+        bldRefundLabel writes the one sentence. Two divergent refund payers is
+        how the two of them drifted apart in the first place, so there is one.
+        ⚠ NOT a refusal when the refund will not fit. See bldConfirmLossy's
+          header: a full vault must never brick a demolish, because "mis-clicked
+          building you cannot get rid of" is the one state this design refuses to
+          allow. The player is shown the number and decides.
+        Gate: run.mjs round0r §3f, sabotage `demolish-blind`. */
+  const nm = (BUILDINGS[t.type] || {}).name || t.type;
+  const refund = {}; const c = costOf(t.type, t.lvl);
+  for (const k in c) refund[k] = Math.floor(c[k] * .5);
   const rec = t.bld || null;
-  if (rec) {
-    const back = bldOrderRefund(rec);
-    for (const r in back) refund[r] = (refund[r] || 0) + back[r];
-    delete t.bld;                    // the order dies with the building
-  }
+  if (rec) { const back = bldOrderRefund(rec); for (const r in back) refund[r] = (refund[r] || 0) + back[r]; }
+  /* 📦 ASKED BEFORE THE FIRST THING MOVES — before the House gives its sleeping
+     cards back, before the order is dropped and before the tile leaves the
+     board. "No" has to cost exactly nothing, and above this line it does. */
+  const fore = await bldRefundFit(refund);
+  if (!fore.whole && !(await bldConfirmLossy('Demolishing ' + nm, 'demolish', refund.cinder | 0, fore))) return;
+  /* ⚠ RE-READ AFTER THE DIALOG, for bldCancel's reason: nothing can move behind
+     a native confirm() in this frame today, so this is here so it stays correct
+     the day gcConfirm() (a non-blocking modal) is reachable from the iframe. */
+  if (game.tiles[kk] !== t) return;
+  /* ⚠ The tile comes off the board BEFORE the refund is awaited. The guard above
+     already stops a double-click, but this also closes the window where a raid
+     tick or an autosave could observe a building that has already been paid out
+     for. Order: remove, then pay. */
+  /* 🛏 A House with cards asleep in it must give them back BEFORE the tile is
+     removed, and bank whatever Resonance they had already earned — the
+     building is gone, there is no "later" to collect in. Force-collect
+     deliberately ignores the 6h gate for the same reason. */
+  try { if (window.MythicHouse) window.MythicHouse.onDemolish(t); } catch (e) {}
+  if (rec) delete t.bld;             // the order dies with the building
   dropTileMesh(t);
-  const [x, z] = selectedKey.split(',').map(Number);
-  delete game.tiles[selectedKey];
+  const [x, z] = kk.split(',').map(Number);
+  delete game.tiles[kk];
   refreshRoadArea(x, z);
-  $('inspect').classList.remove('open'); selectedKey = null;
-  if (refund.cinder) { await MythicCityBridge.addCinders(refund.cinder); delete refund.cinder; }
-  for (const k in refund) if (refund[k]) await MythicCityBridge.addRes(k, refund[k]);
+  if (selectedKey === kk) { $('inspect').classList.remove('open'); selectedKey = null; }
+  const fit = await bldPayRefund({ ...refund });
+  toast('🧨 ' + nm + ' demolished' + bldRefundLabel({ refund: refund, fit: fit }),
+        fit.lostUnits > 0 ? 'bad' : 'good');
+  logEvent('city', '🧨 ' + nm + ' at ' + kk + ' demolished' + bldRefundLabel({ refund: refund, fit: fit }));
   computeLinks(); updateHUD(); saveSoon();
 });
 

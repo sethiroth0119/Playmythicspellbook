@@ -4147,6 +4147,15 @@
         let lf = shLiftK * slb;
         if (lf > 0) {
           const capL = LIFT_HALO_K * Ls;
+          /* ⚠ LINEAR, NOT SQUARED — AND THAT WAS MEASURED, NOT ASSUMED. A
+             squared falloff (q²) is the obvious way to hit a rim harder than
+             the grain, and it does; it also took the chroma gap on the critic's
+             own pair from 9.5 straight back to 15.8, because cutting `lf`
+             cuts gFull, which cuts the per-pixel gain OVERFLOW `v`, and `v`
+             rides a copy of the frame that carries the pixel's own colour —
+             so less of it is a quieter, less saturated shade. Half a point of
+             rim is not worth six points of the clause this round exists to
+             close. Linear it stays. */
           if (L > capL) lf *= capL / (L > 1 ? L : 1);
         }
         let gFull = tg * at * (ped > 0 ? ped : 0) * (1 + lf);

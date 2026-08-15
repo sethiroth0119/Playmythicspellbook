@@ -1286,7 +1286,7 @@ function levelLuma(L){
    and a time-of-day lerp keeps its corrections and never re-enters the loop. */
 const TONE_MAX = 5;
 const TONE = { corr:Object.create(null), geom:'', light:'', iter:0, pending:false,
-               dead:false, err:0, stats:null };
+               dead:false, err:0, stats:null, prevErr:null };
 /* ⚠ `window.__DBG_NOTONE` freezes the lock at zero correction. It is a DEBUG
    SWITCH LIKE __DBG_NOMACRO / __DBG_NORESTORE and nothing in the render path
    sets it — but unlike those two it is the one that makes them measurable.
@@ -1316,10 +1316,10 @@ function toneReset(){
   const g = toneGeomScope();
   if (TONE.geom !== g){
     TONE.geom = g; TONE.corr = Object.create(null); TONE.iter = 0;
-    TONE.light = ''; TONE.pending = false;
+    TONE.light = ''; TONE.pending = false; TONE.prevErr = null;
   }
   const l = toneLightScope();
-  if (TONE.light !== l){ TONE.light = l; TONE.iter = 0; }
+  if (TONE.light !== l){ TONE.light = l; TONE.iter = 0; TONE.prevErr = null; }
 }
 /* ⚠ ONE CONTINUOUS DEPTH RAMP ACROSS THE WHOLE FIELD.
    Distance lifts and desaturates ground; the board has always had a fog wash
@@ -1390,6 +1390,70 @@ function toneMeasure(cvT, poly){
   const SAMP = [];
   for (let sy=0; sy<7; sy++) for (let sx=0; sx<7; sx++)
     SAMP.push([0.10 + sx*0.80/6, 0.10 + sy*0.80/6]);
+  /* ⚠ AND EVERY SAMPLE IS OCCLUSION-TESTED. This is not optional, it is what
+     makes a wide lattice legal at all. A tile's projected quad is NOT the
+     region it owns on screen: at these step heights a nearer raised tile's top
+     face, and the side walls hanging off it, cover a real fraction of the quad
+     belonging to the tile behind. The five-point version got away with
+     ignoring that because its points huddled around the centre. Widened
+     naively, the loop read the wall in front of tile 5,1 as if it were 5,1 and
+     asked for +96 luma of correction — the clamp — while 1,1 asked for +50 and
+     3,1 for +35; the whole field went to screen with the loop pinned open and
+     the far row 17 luma clear of the row behind it. Measured with the test in
+     place those corrections fall to single digits.
+     The test replays the same painter order the tile loop uses (z outer, x
+     inner; a tile's own walls go down before its own top, so they never
+     occlude it) and only tiles DRAWN LATER can cover this one. Bounded to a
+     ±2 x / +3 z window: past that no quad on this camera can reach back. */
+  /* Built ONCE PER TILE, not once per sample: the candidate list is filtered by
+     bounding box first, which on this board leaves 0-3 quads to test instead of
+     ~80. Measured, that is the difference between +8ms and +300ms on a bake, and
+     a bake that doubles in cost is a regression whatever it buys. */
+  const occludersOf = (P, x0g, z0g) => {
+    let ax0=1e9, ay0=1e9, ax1=-1e9, ay1=-1e9;
+    for (let i2=0;i2<P.length;i2++){
+      if (P[i2].x<ax0) ax0=P[i2].x; if (P[i2].x>ax1) ax1=P[i2].x;
+      if (P[i2].y<ay0) ay0=P[i2].y; if (P[i2].y>ay1) ay1=P[i2].y;
+    }
+    const idx0 = z0g*MAP.cols + x0g, out = [];
+    const add = (Q) => {
+      let bx0=1e9, by0=1e9, bx1=-1e9, by1=-1e9;
+      for (let i2=0;i2<Q.length;i2++){
+        if (Q[i2].x<bx0) bx0=Q[i2].x; if (Q[i2].x>bx1) bx1=Q[i2].x;
+        if (Q[i2].y<by0) by0=Q[i2].y; if (Q[i2].y>by1) by1=Q[i2].y;
+      }
+      if (bx1 < ax0 || bx0 > ax1 || by1 < ay0 || by0 > ay1) return;
+      out.push({ Q, bx0, by0, bx1, by1 });
+    };
+    for (let zz=z0g; zz<Math.min(MAP.rows, z0g+4); zz++)
+      for (let xx=Math.max(0,x0g-2); xx<Math.min(MAP.cols, x0g+3); xx++){
+        if (zz*MAP.cols + xx <= idx0) continue;          /* drawn earlier: cannot cover */
+        const WQ = TERRAIN.walls && TERRAIN.walls[xx+','+zz];
+        if (WQ) for (let w=0; w<WQ.length; w++) add(WQ[w]);
+        const NP = poly[xx+','+zz];
+        if (NP) add(NP);
+      }
+    return out;
+  };
+  const occl = (OC, P, u, v) => {
+    if (!OC.length) return false;
+    const px = P[0].x + (P[1].x-P[0].x)*u, py = P[0].y + (P[1].y-P[0].y)*u;
+    const qx = P[3].x + (P[2].x-P[3].x)*u, qy = P[3].y + (P[2].y-P[3].y)*u;
+    const sx2 = px + (qx-px)*v, sy2 = py + (qy-py)*v;
+    for (let o=0; o<OC.length; o++){
+      const E = OC[o];
+      if (sx2 < E.bx0 || sx2 > E.bx1 || sy2 < E.by0 || sy2 > E.by1) continue;
+      const Q = E.Q;
+      let pos = 0, neg = 0;
+      for (let i2=0;i2<Q.length;i2++){
+        const a = Q[i2], b = Q[(i2+1)%Q.length];
+        const cr = (b.x-a.x)*(sy2-a.y) - (b.y-a.y)*(sx2-a.x);
+        if (cr > 0) pos++; else if (cr < 0) neg++;
+      }
+      if (!(pos && neg)) return true;
+    }
+    return false;
+  };
   let worst = 0;
   const sum = [0,0,0,0], cnt = [0,0,0,0], lo = [999,999,999,999], hi = [-1,-1,-1,-1];
   try {
@@ -1408,8 +1472,11 @@ function toneMeasure(cvT, poly){
       const bh = Math.min(cvT.height - by, Math.ceil((y1-y0)*DPR)+3);
       if (bw < 3 || bh < 3) continue;
       const img = gr.getImageData(bx, by, bw, bh).data;
+      const kc = k.split(','), kx = +kc[0], kz = +kc[1];
+      const OC = occludersOf(P, kx, kz);
       const vals = [];
       for (let s=0; s<SAMP.length; s++){
+        if (occl(OC, P, SAMP[s][0], SAMP[s][1])) continue;
         const p = quadPt(P, SAMP[s][0], SAMP[s][1]);
         const cx = Math.round(p.x*DPR) - bx, cy = Math.round(p.y*DPR) - by;
         let acc = 0, n = 0;
@@ -1422,17 +1489,30 @@ function toneMeasure(cvT, poly){
         }
         if (n) vals.push(acc/n);
       }
-      if (!vals.length) continue;
+      /* A tile so buried that almost nothing of it survives has no measurable
+         value; correcting it off two stray samples would be noise, and its
+         correction would then leak onto whatever IS visible of it. Leave it
+         wherever the ramp put it. */
+      if (vals.length < 6) continue;
       vals.sort((a,b) => a-b);
       const got = vals[vals.length >> 1];
-      const c = k.split(','), x = +c[0], z = +c[1];
+      const x = kx, z = kz;
       const L = hfLevel(x,z);
       sum[L] += got; cnt[L]++;
       if (got < lo[L]) lo[L] = got;
       if (got > hi[L]) hi[L] = got;
       const err = got - toneWant(x,z);
       if (Math.abs(err) > worst) worst = Math.abs(err);
-      TONE.corr[k] = clamp((TONE.corr[k] || 0) - err, -96, 96);
+      /* ⚠ WAVE 5: the clamp was ±96 and it let a tile RUN AWAY. `want` is
+         itself clamped to 236, so once a tile's correction pushes past roughly
+         +48 the request stops being honoured — and if the tile still measures
+         low (setLumaHex has to desaturate a strongly-hued sand to reach the
+         top of the range, so the response goes sub-unity up there) the loop
+         keeps adding. Observed: tile 5,1 pinned at +96 while its neighbour at
+         the same level sat at +35 for the same outcome. ±48 is the largest
+         correction the value range can actually deliver; past that the honest
+         answer is that the tile has hit the ceiling, not that it needs more. */
+      TONE.corr[k] = clamp((TONE.corr[k] || 0) - err, -48, 48);
     }
   } catch (e) {
     /* getImageData can throw on a tainted canvas. The ground must still draw:
@@ -1448,7 +1528,12 @@ function toneMeasure(cvT, poly){
      costs a real ~200ms. The cap is what stops a tile whose correction has
      saturated — one buried under a rock slab at three of its five sample
      points — from re-baking the whole field forever. */
-  TONE.pending = worst > 4 && TONE.iter < TONE_MAX;
+  /* ⚠ AND IT STOPS WHEN IT STOPS IMPROVING. A tile at the ceiling keeps
+     reporting the same error for ever; without this the loop spends every one
+     of TONE_MAX's bakes on a residual it cannot remove, on every boot. */
+  const gained = TONE.prevErr == null ? 99 : (TONE.prevErr - worst);
+  TONE.prevErr = worst;
+  TONE.pending = worst > 4 && gained > 0.75 && TONE.iter < TONE_MAX;
 }
 /* Transfer the location art's CHROMA onto our sand without importing its
    brightness — a near-black forest photo must not turn the field into mud. */
@@ -1820,7 +1905,7 @@ function bakeTerrain(){
           const um = (ua+ub)*0.5, tm = t0 + (fh(s*13+19)-0.5)*0.01;
           const a0 = fw(um, tm - thk*0.5), a1 = fw(um, tm + thk*0.5);
           const bg = g.createLinearGradient(a0.x, a0.y, a1.x, a1.y);
-          const amp = 0.44 + fh(s*13+17)*0.48;
+          const amp = 0.56 + fh(s*13+17)*0.54;
           if (dark){
             /* a recessive bed: soft dark shoulder, deepest just under its top */
             bg.addColorStop(0,    rgba(mixHexRaw(wallBot, '#1a120b', 0.50), amp*0.55));
@@ -1855,10 +1940,10 @@ function bakeTerrain(){
             const pale2 = fh(s*5+205) > 0.5;
             const q0 = fw(ua, t0 - dp*0.5), q1 = fw((ua+ub)/2, t0 + (fh(s*5+206)-0.5)*0.012),
                   q2 = fw(ub, t0 + dp*0.5);
-            g.strokeStyle = rgba(pale2 ? mixHexRaw(wallTop, ROCK_PALE, 0.55)
-                                       : mixHexRaw(wallBot, '#171009', 0.5),
-                                 0.10 + fh(s*5+207)*0.16);
-            g.lineWidth = 0.7 + fh(s*5+208)*1.2;
+            g.strokeStyle = rgba(pale2 ? mixHexRaw(wallTop, ROCK_PALE, 0.62)
+                                       : mixHexRaw(wallBot, '#120c07', 0.55),
+                                 0.15 + fh(s*5+207)*0.22);
+            g.lineWidth = 0.8 + fh(s*5+208)*1.4;
             g.beginPath(); g.moveTo(q0.x,q0.y);
             g.quadraticCurveTo(q1.x,q1.y, q2.x,q2.y); g.stroke();
           }
@@ -1879,16 +1964,22 @@ function bakeTerrain(){
           for (let s=0; s<nV; s++){
             const u0 = 0.08 + fh(s*7+91)*0.84;
             const tA = fh(s*7+92)*0.45, tB = tA + 0.25 + fh(s*7+93)*0.55;
-            const lean = (fh(s*7+94)-0.5)*0.09;
-            const kink = (fh(s*7+95)-0.5)*0.05;
+            /* ⚠ WAVE 5 — LEAN AND KINK WERE 0.09 / 0.05, i.e. these were
+               near-perfectly VERTICAL. Vertical lines crossing horizontal beds
+               at right angles is a grid, and once the bedding got the amplitude
+               it needed the pair started reading as pipework laid on the rock
+               rather than as fractured stone. A joint set has a dip: give it
+               one, per joint, and kink it hard enough to see. */
+            const lean = (fh(s*7+94)-0.5)*0.34;
+            const kink = (fh(s*7+95)-0.5)*0.16;
             const a0 = fw(u0, tA), a1 = fw(u0 + lean*0.5 + kink, (tA+tB)/2),
                   a2 = fw(u0 + lean, Math.min(0.99, tB));
             g.strokeStyle = rgba(mixHexRaw(wallBot, '#15100b', 0.55), 0.26 + fh(s+96)*0.30);
             g.lineWidth = 1.0 + fh(s+97)*2.1;
             g.beginPath(); g.moveTo(a0.x,a0.y); g.lineTo(a1.x,a1.y); g.lineTo(a2.x,a2.y); g.stroke();
             /* the lit shoulder on the light-facing side of the crack */
-            g.strokeStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.66), 0.17 + fh(s+98)*0.17);
-            g.lineWidth = 1.1;
+            g.strokeStyle = rgba(mixHexRaw(wallTop, ROCK_PALE, 0.60), 0.11 + fh(s+98)*0.13);
+            g.lineWidth = 1.0;
             g.beginPath();
             g.moveTo(a0.x + shx, a0.y); g.lineTo(a1.x + shx, a1.y); g.lineTo(a2.x + shx, a2.y);
             g.stroke();
@@ -2054,12 +2145,43 @@ function bakeTerrain(){
 
       /* ── material: mottle, drift and grain, all seeded per tile ────────── */
       g.save(); pathPolyOn(g,P); g.clip();
-      const blobs = 4 + ((_sHash(x,z,11)*3)|0);
+      /* ⚠ WAVE 5 — MOTTLE IS NOW DC-NEUTRAL PER TILE, BY CONSTRUCTION.
+         This is the "per-tile macro value offset" the wave-3 critic asked to be
+         clamped, and it was never the §1b macro pass: ablated with
+         __DBG_NOMACRO the same-level 4-neighbour spread did not improve (it got
+         slightly worse). It was here. Four to six blobs, each up to 0.77r
+         across, each independently rolling light-or-dark at `hash > 0.48`, is a
+         BINOMIAL: a tile that happens to roll four darks in a row loses ~50
+         luma over the half of its face they land on, and its same-level
+         neighbour that rolled four lights gains as much. Round 2 halved the
+         alpha because one blob was moving a tile CENTRE by ±11 — that treated
+         the symptom. The tone lock cannot save this either: it takes a median
+         over the face and a cluster covering under half of it does not move a
+         median, so the offset survives to screen as a uniformly mis-valued
+         slab. Measured on tile 2,1: its far half read 195 and its near half 143
+         with nothing between them but this.
+         Blobs now come in LIGHT/DARK TWINS: one bump, its lit lobe offset
+         along the key and its shaded lobe offset the other way, sharing a
+         centre and a radius. ⚠ BALANCING THE TILE'S TOTAL IS NOT ENOUGH AND
+         WAS TRIED FIRST — equal counts at independent positions still let all
+         three darks land on the near third and all three lights on the far
+         third, which is exactly the 195-over-143 split tile 2,1 was showing,
+         and the measured spread did not move. The cancellation has to be
+         LOCAL. Twinning them also makes each one read as a bump catching the
+         key rather than as a stain, which is what mottle on rock looks like. */
+      const blobs = 4 + 2*((_sHash(x,z,11)*2)|0);
       for (let b=0; b<blobs; b++){
-        const u = _sHash(x,z,b*3+21), v = _sHash(x,z,b*3+22), s = _sHash(x,z,b*3+23);
-        const p = quadPt(P, 0.08 + u*0.84, 0.08 + v*0.84);
+        const pair = b >> 1;                      /* the light/dark twin index */
+        const u = _sHash(x,z,pair*3+21), v = _sHash(x,z,pair*3+22);
+        const s = _sHash(x,z,pair*3+23);          /* shared radius: equal areas */
         const rr = r * (0.22 + s*0.55);
-        const up = _sHash(x,z,b*3+24) > 0.48;
+        const up = (b & 1) === 0;
+        /* the two lobes straddle the bump's centre along the light direction,
+           by a fraction of their own radius — close enough that they cancel
+           where it matters (the tile's value) and far enough apart to read */
+        const off = (up ? 0.30 : -0.30);
+        const p0 = quadPt(P, 0.08 + u*0.84, 0.08 + v*0.84);
+        const p = { x: p0.x + lv.x * rr * off, y: p0.y + lv.z * rr * off * 0.55 };
         const col = up ? mixHexRaw(M.lit, M.pale, 0.5) : mixHexRaw(M.base, M.deep, 0.55);
         /* ⚠ HALVED IN ROUND 2. At 0.20-0.40 alpha a single mottle blob moved a
            tile centre by ±11 luma — a third of an elevation step — so the
@@ -3108,11 +3230,26 @@ function bakeTerrain(){
          haze in it at all — it covers without changing the value — and every
          gram of haze is spent beyond the boundary, where there is no tile to
          lift. The seam stays buried; the row stops glowing. */
+      /* ⚠ AND `M.base` IS NOT WHAT THE FACE ACTUALLY MEASURES. base is the
+         tile's pre-pass target; by the time the seams, the bevel falloff, the
+         key wash and the grain have gone over it the face sits ~8% below that.
+         Painting raw base over the far third of a row-0 tile therefore still
+         lifted the row — after the haze was moved outside the boundary, rows 0
+         and 1 were STILL 12-17 luma apart at the same level. Mixing a third of
+         M.shd in lands the strip on what the face is really at, and the alpha
+         inside the tile is held down as well: the strip only has to be opaque
+         by the time it crosses the edge, not before it. */
       const fE = clamp(INSET / (INSET + Math.max(0.06, rimD(x))), 0.08, 0.92);
-      rg.addColorStop(0,                  rgba(M.base, 0));
-      rg.addColorStop(fE*0.55,            rgba(M.base, 0.30));
-      rg.addColorStop(fE,                 rgba(M.base, 0.90));
-      rg.addColorStop(fE + (1-fE)*0.30,   rgba(mixHexRaw(M.base, hz, 0.18), 0.94));
+      /* ⚠ Tried and REVERTED: mixing LIGHT.fog into this colour to "match" the
+         aerial wash. It cannot help — the tone lock measures the FINISHED bake,
+         strip included, so whatever this pass does to a row-0 face is already
+         inside the value the loop balances. Measured, it made the same-level
+         neighbour spread slightly worse (max 16.3 -> 16.8). Leave it alone. */
+      const inC = mixHexRaw(M.base, M.shd, 0.30);
+      rg.addColorStop(0,                  rgba(inC, 0));
+      rg.addColorStop(fE*0.70,            rgba(inC, 0.20));
+      rg.addColorStop(fE,                 rgba(inC, 0.72));
+      rg.addColorStop(fE + (1-fE)*0.30,   rgba(mixHexRaw(inC, hz, 0.18), 0.94));
       rg.addColorStop(fE + (1-fE)*0.72,   rgba(mixHexRaw(M.base, hz, 0.46), 0.62));
       rg.addColorStop(1,                  rgba(mixHexRaw(M.base, hz, 0.72), 0.06));
       g.fillStyle = rg; g.fill();

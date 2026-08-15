@@ -934,24 +934,50 @@ function ringBox(P){
    render target, never a node in the page. If neither exists the caller simply
    gets null and the pool draws without a reflection rather than throwing. */
 const REFL_MS = 0.22;
-let _refl = null;
+/* ⚠ A CACHE OF ONE BECAME A CACHE OF FOUR IN WAVE 5, AND THE REASON IS THE
+   SURFACE POOLS. This used to be a single `let _refl` matched on (w,h,src).
+   That is correct while the board has exactly ONE body of water: the pond
+   bakes its sheet once and re-reads it every REFL_MS. The moment a second pool
+   of a DIFFERENT SIZE draws in the same frame, a one-slot cache misses on
+   every single draw — so it allocates a fresh OffscreenCanvas per pool per
+   frame and the amortisation the whole comment above is about is gone.
+   A tiny LRU keyed on size restores it: each pool keeps its own sheet, each
+   sheet still refreshes at most every REFL_MS. Four slots covers the pond plus
+   the three puddles _seedBattleSurfaces can place; a fifth simply evicts the
+   least recently used one rather than growing without bound. */
+const REFL_SLOTS = 4;
+const _reflLRU = [];
+function _sheetSlot(pool, w, h, src, make){
+  for (let i = 0; i < pool.length; i++){
+    const s = pool[i];
+    if (s.w === w && s.h === h && s.src === src){
+      /* touch: move to the back so the front is always the coldest */
+      if (i !== pool.length - 1){ pool.splice(i, 1); pool.push(s); }
+      return s;
+    }
+  }
+  let cv = null;
+  try {
+    cv = (typeof OffscreenCanvas !== 'undefined') ? new OffscreenCanvas(w, h)
+       : (typeof document !== 'undefined') ? Object.assign(document.createElement('canvas'),
+                                                           { width: w, height: h })
+       : null;
+  } catch (e) { cv = null; }
+  if (!cv) return null;
+  const cx = cv.getContext('2d');
+  if (!cx) return null;
+  const slot = make(cv, cx);
+  pool.push(slot);
+  while (pool.length > REFL_SLOTS) pool.shift();
+  return slot;
+}
 function reflSheet(api, sx, sy, sw, sh, kx, ky, ox, oy, cTop, cMid, cDeep){
   const src = api.ctx && api.ctx.canvas;
   if (!src || !src.width || sw < 4 || sh < 4) return null;
   const w = Math.max(4, Math.round(sw * kx)), h = Math.max(4, Math.round(sh * ky));
-  if (!_refl || _refl.w !== w || _refl.h !== h || _refl.src !== src){
-    let cv = null;
-    try {
-      cv = (typeof OffscreenCanvas !== 'undefined') ? new OffscreenCanvas(w, h)
-         : (typeof document !== 'undefined') ? Object.assign(document.createElement('canvas'),
-                                                             { width: w, height: h })
-         : null;
-    } catch (e) { cv = null; }
-    if (!cv) return null;
-    const cx = cv.getContext('2d');
-    if (!cx) return null;
-    _refl = { cv: cv, cx: cx, w: w, h: h, src: src, at: -1e9, key: '' };
-  }
+  const _refl = _sheetSlot(_reflLRU, w, h, src,
+    (cv, cx) => ({ cv: cv, cx: cx, w: w, h: h, src: src, at: -1e9, key: '' }));
+  if (!_refl) return null;
   const key = [Math.round(sx), Math.round(sy), cTop, cDeep].join('|');
   if (api.T - _refl.at < REFL_MS && key === _refl.key) return _refl;
   _refl.at = api.T; _refl.key = key;
@@ -1012,23 +1038,15 @@ function reflSheet(api, sx, sy, sw, sh, kx, ky, ox, oy, cTop, cMid, cDeep){
    top or bottom of the sheet, and without a base the vacated rows would be
    transparent — a band of missing reflection at the far bank. Board content is
    opaque, so the warped strips simply overwrite it where they land. */
-let _reflW = null;
+/* same LRU, same reason — see _sheetSlot. One warp target per distinct sheet
+   size, so N pools of N sizes cost N cached canvases, not N allocations a frame. */
+const _warpLRU = [];
 function warpSheet(api, sheet, ph){
   if (!sheet) return null;
   const w = sheet.w, h = sheet.h;
-  if (!_reflW || _reflW.w !== w || _reflW.h !== h){
-    let cv = null;
-    try {
-      cv = (typeof OffscreenCanvas !== 'undefined') ? new OffscreenCanvas(w, h)
-         : (typeof document !== 'undefined') ? Object.assign(document.createElement('canvas'),
-                                                             { width: w, height: h })
-         : null;
-    } catch (e) { cv = null; }
-    if (!cv) return sheet;
-    const c2 = cv.getContext('2d');
-    if (!c2) return sheet;
-    _reflW = { cv: cv, cx: c2, w: w, h: h };
-  }
+  const _reflW = _sheetSlot(_warpLRU, w, h, sheet.cv,
+    (cv, c2) => ({ cv: cv, cx: c2, w: w, h: h, src: sheet.cv }));
+  if (!_reflW) return sheet;
   const cx = _reflW.cx;
   try {
     cx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1132,9 +1150,13 @@ function drawPool(api, it){
      ══════════════════════════════════════════════════════════════════════ */
   const LIT_A = 0.32, LIT_AM = 0.11;
   const P = api.paint || {};
+  /* ykeys ⊇ tiles: a surface pool also declares the neighbours its grown
+     shoreline laps onto — see buildSurfacePools. The pond has no ykeys and
+     falls through to exactly the wave-3 behaviour. */
+  const YK = it.ykeys || it.tiles;
   const litKeys = [];
-  for (let i = 0; i < it.tiles.length; i++){
-    const k = it.tiles[i];
+  for (let i = 0; i < YK.length; i++){
+    const k = YK[i];
     if ((P.move && P.move.has(k)) || (P.attack && P.attack.has(k)) ||
         (P.place && P.place.has(k)) || (P.swap && P.swap.has(k))) litKeys.push(k);
   }
@@ -1150,6 +1172,21 @@ function drawPool(api, it){
   const pad = 8;
   const RX = B.x0 - pad, RY = B.y0 - pad, RW = B.w + pad * 2, RH = B.h + pad * 2;
   const sky = (api.LIGHT && api.LIGHT.sky && api.LIGHT.sky[2]) || '#6b7f92';
+
+  /* ⚠ SS — THE SCALE TERM THAT MAKES "SAME TREATMENT" TRUE AT TWO SIZES.
+     Wave 5 gave this painter a second client: one-tile `puddle` surfaces,
+     roughly a fifth of the pond's bbox. Every mark below whose size is written
+     in PIXELS rather than as a fraction of the pool — the specular glints
+     (2.4-6.8px), the ripple strokes (0.9-2.6px), the chop strokes (0.8-3.2px)
+     — is therefore five times bigger RELATIVE to a puddle than to the pond,
+     and the first render of it showed exactly that: seven fat glints in a
+     column and ripple arcs that looked drawn on with a pen. A shared painter
+     whose marks do not scale is not a shared treatment; it is the same code
+     producing two materials, which is the gap this round exists to close.
+     Floored at 0.40 so a very small pool still gets marks a display can
+     resolve, and capped at 1 so the pond is untouched — the pond measures
+     B.w/B.h well over 210 at every viewport this board runs at. */
+  const SS = Math.max(0.40, Math.min(1, Math.min(B.w, B.h) / 210));
 
   /* ── 1. DAMP SAND. Two nested rings, both multiply, the outer one barely
      there. This is the band the BAR calls for — "a damp darkened rim where it
@@ -1203,7 +1240,17 @@ function drawPool(api, it){
      greys the ground out, multiply keeps its grain visible THROUGH the water,
      which is most of what makes it read as liquid rather than as paint. */
   g.globalCompositeOperation = 'multiply';
-  g.globalAlpha = AM;
+  /* ⚠ AND THE RAMP IS SHALLOWER ON A SMALL POOL — the (0.55 + 0.45·SS) term.
+     This multiply is DEPTH: how much of the bed's light the water column eats
+     on the way back up. A pond a metre deep eats most of it; a puddle on one
+     tile is a centimetre of water over sand and eats almost none, which is why
+     a real puddle is BRIGHTER than a pond, not darker. Measured on the first
+     surface-pool render, which applied the pond's full ramp to both: pond
+     median luma 84.3 against the puddles' 61.5, a 23-point gap that made them
+     read as two different liquids on the one axis colour had already agreed
+     on. Scaling the ramp with the pool closes it without touching the tint
+     below, which is where the hue identity lives. Pond: SS = 1, unchanged. */
+  g.globalAlpha = AM * (0.55 + 0.45 * SS);
   /* ⚠ THE DEPTH RAMP IS WHY THIS READS AS WATER AND NOT AS A HOLE.
      Round 1 of this rewrite multiplied by a near-uniform dark blue and the
      result was a flat navy silhouette — a shape cut out of the board, not a
@@ -1247,10 +1294,15 @@ function drawPool(api, it){
   g.globalCompositeOperation = 'source-over';
   g.globalAlpha = 1;
 
+  /* the body tint. WATER_DEEP is a very dark navy, so this wash is the other
+     half of "how deep does this look" — scaled with the pool for the same
+     reason the multiply above is, and NOT by as much, because this is where
+     the pool's HUE identity lives and the two bodies must agree on that. */
+  const bgS = 0.72 + 0.28 * SS;
   const bg = g.createLinearGradient(0, B.y0, 0, B.y1);
-  bg.addColorStop(0,    rgba(mix(WATER_MID, sky, 0.55), 0.20 * A));
-  bg.addColorStop(0.45, rgba(WATER_MID, 0.22 * A));
-  bg.addColorStop(1,    rgba(WATER_DEEP, 0.24 * A));
+  bg.addColorStop(0,    rgba(mix(WATER_MID, sky, 0.55), 0.20 * A * bgS));
+  bg.addColorStop(0.45, rgba(WATER_MID, 0.22 * A * bgS));
+  bg.addColorStop(1,    rgba(WATER_DEEP, 0.24 * A * bgS));
   g.fillStyle = bg; g.fillRect(RX, RY, RW, RH);
 
   /* ── 2b. THE REFLECTION SHEET ─────────────────────────────────────────
@@ -1308,11 +1360,44 @@ function drawPool(api, it){
      can share the same pixels, so on a lit pool the highlight wins outright.
      The depth ramp, chop, ripples and AO all still scale by A — they tint, they
      do not overwrite, and the water keeps reading as water without them. */
-  if (!lit) {
+  /* ⚠ AND SKIPPED ON A SMALL POOL, WHICH IS PHYSICS AND NOT A SHORTCUT.
+     A body of water mirrors when it is deep enough and long enough that the
+     grazing ray hits the surface instead of the bed. The pond is; a puddle a
+     few centimetres deep on a single tile is not — what you see in one is its
+     BED, sand and grain, tinted and darkened. That is also what was measured:
+     with the sheet on, a one-tile puddle came out carrying a squashed
+     photograph of the cliff face above it with the reflected plateau lip
+     landing as a pale straight-edged slab across two thirds of the water. It
+     read as a hole with a picture in it — the exact "opaque cut-out" failure
+     the reflection exists to prevent, arriving from the other end.
+     THE FIVE CUES THE WORK ORDER ACTUALLY NAMES ARE ALL STILL SHARED: the
+     bakeShore contour, the damp rim, the depth ramp, the chop and the glints.
+     Threshold is in SCREEN px on the pool's own bbox — a reflection needs
+     vertical run to compress an image into, and under ~190px there is none. */
+  if (!lit && Math.min(B.w, B.h) >= 190) {
     let m = null;
     try { m = g.getTransform ? g.getTransform() : null; } catch (e) { m = null; }
     const kx = m ? m.a : 1, ky = m ? m.d : 1, ox = m ? m.e : 0, oy = m ? m.f : 0;
-    let REFL = 0.80;
+    /* ⚠ THE SOURCE STRIP IS A WORLD LENGTH, NOT A FRACTION OF THE POOL.
+       REFL is the vertical compression AND, because the bands walk up the
+       canvas at REFL× their own height, it is what decides HOW FAR above the
+       waterline the reflection reaches. At a flat 0.80 the pond reaches ~340px
+       up — far bank, cliff faces, backdrop, sky — and reflects a whole scene.
+       A one-tile puddle reached 75px up, which on this camera is the sand
+       immediately behind it: it reflected bright ochre ground onto itself and
+       came out a pale wash, the single biggest reason the first surface-pool
+       render did not read as the same liquid as the pond.
+       Physically the small pool is the one that should reach FURTHEST: a
+       grazing reflection is compressed, not cropped. So the strip is sized in
+       screen px (~230, a bit over a tile of depth) and REFL falls out of it.
+       The pond's B.h is far over 230, so it still clamps to 0.80 and its
+       reflection is unchanged from wave 3.
+       ⚠ CAPPED AT 1.8, MEASURED. The first cut let REFL run to 3.4 and a
+       one-tile puddle then reflected a tile and a half of cliff wall squashed
+       into 100px: it stopped reading as a wet patch and started reading as a
+       hole with a picture in it — the exact "opaque cut-out" failure the
+       reflection was added to fix, arriving from the other end. */
+    let REFL = Math.max(0.80, Math.min(1.8, 230 / Math.max(1, B.h)));
     if (B.y0 - B.h * REFL < 2) REFL = (B.y0 - 2) / Math.max(1, B.h);
     /* clamped to the canvas: drawImage with a source rect that hangs off the
        edge is defined but not uniformly implemented, and a pool hard against
@@ -1394,7 +1479,13 @@ function drawPool(api, it){
         const J = (yy, am) => Math.sin(yy * 0.030 + api.T * 0.85 + S.ph) * am
                             + Math.sin(yy * 0.072 - api.T * 0.55 + S.ph * 2.3) * am * 0.38;
         const jxBot = J(yNext, amp1), jxTop = J(yEdge, amp0);
-        g.globalAlpha = (0.66 - 0.22 * t) * A;
+        /* ⚠ AND THE SHEET IS WEAKER ON A SMALL POOL (the (0.30 + 0.70·SS)
+           term). Depth of field is not the only thing that scales: a puddle a
+           few centimetres deep shows its BED, and what a player reads as "that
+           is a puddle, not a mirror" is that the sand grain survives through
+           it. At full alpha on a one-tile pool the blit is an opaque
+           photograph of the bank covering the entire item. */
+        g.globalAlpha = (0.66 - 0.22 * t) * A * (0.30 + 0.70 * SS);
         g.save();
         /* ⚠ NEAREST-NEIGHBOUR ON PURPOSE. The blit is downscaled vertically by
            REFL, and bilinear smoothing eats exactly the high frequencies we
@@ -1588,7 +1679,14 @@ function drawPool(api, it){
     g.globalAlpha = 0.038 * AM;
     g.lineJoin = 'round'; g.lineCap = 'round';
     g.strokeStyle = '#d9dade';
-    const NAO = 8, WMAX = B.w * 0.15 + 26;
+    /* ⚠ THE FIXED 26px TERM IS SCALED BY SS. WMAX is how far in from the bank
+       the occlusion ramp reaches, and B.w·0.15 is the part that scales with
+       the pool. The +26 does not: on the pond it is a fifth of the ramp and on
+       a one-tile puddle it was most of it, so the ramp covered 58% of the
+       puddle's width against 19% of the pond's and the small pool came out
+       uniformly dark — a bank shadow that has swallowed the whole pool is not
+       a bank shadow, it is a tint. */
+    const NAO = 8, WMAX = B.w * 0.15 + 26 * SS;
     for (let k = 0; k < NAO; k++){
       const lw = WMAX * (1 - k / NAO);
       if (lw < 0.6) continue;
@@ -1650,7 +1748,7 @@ function drawPool(api, it){
       const a = (dark ? 0.085 + hash(i, 23, 137) * 0.110
                       : 0.070 + hash(i, 29, 139) * 0.125)
               * (0.55 + 0.45 * Math.sin(api.T * (0.8 + hash(i, 31, 141)) + i * 2.2)) * A;
-      g.lineWidth = 0.8 + hash(i, 37, 143) * 2.4;
+      g.lineWidth = (0.8 + hash(i, 37, 143) * 2.4) * SS;
       g.lineCap = 'round';
       g.strokeStyle = rgba(dark ? WATER_DEEP : lightC, Math.max(0, a));
       g.beginPath();
@@ -1677,18 +1775,57 @@ function drawPool(api, it){
        second for three faint lines. Only the visible ARC WINDOW animates. */
     const ring = projRing(api, S.rings[k], it.y - 0.030);
     if (!ring) continue;
-    const span = 0.16 + hash(k, 3, 41) * 0.20;                 /* 16-36% of the rim */
+    /* ⚠ WAVE 5 — THESE ARCS WERE THE "CONTINUOUS PALE CONTOUR LINE AROUND THE
+       WHOLE PERIMETER" THE CRITIC READ AS A CARTOON INK OUTLINE IN LIGHT.
+       Nothing here ever drew a closed ring, and that is exactly how it fooled
+       three rounds of review: three OPEN arcs of 16-36% of the rim each, at
+       insets of only 0.16/0.26/0.36 tile, sum to as much as 108% of the
+       perimeter. Drop them at three seeded phases that drift apart on T and on
+       a good fraction of frames they tile the rim with barely a break — three
+       pale hairlines end to end all the way round read as one contour, because
+       that is what they are.
+       THREE CHANGES, EACH AIMED AT A DIFFERENT HALF OF THAT:
+         • spans 0.10-0.24 (max 72% of the rim across all three, so they cannot
+           close even in the worst phase alignment);
+         • every arc is COSINE-WINDOWED to zero alpha at both ends, drawn as a
+           run of short segments rather than one stroked path. A stroke that
+           starts and stops at full alpha has two hard ends, and a hard end is
+           the tell that a human drew it; a lap that fades in and out has none.
+           This is the same reason the waterline in §4 is broken, not closed.
+         • width scales with the pool (SS) and the alpha is down a third.
+       A LAP IS STILL WORTH DRAWING. Delete these outright and the shoreline
+       loses the one cue that says the water is moving against its bank. The
+       fix is that no viewer can point at where one begins. */
+    const span = 0.10 + hash(k, 3, 41) * 0.14;
     const from = ((hash(k, 7, 43) + api.T * 0.012 * (k % 2 ? 1 : -1)) % 1 + 1) % 1;
-    const i0 = (from * N) | 0, i1 = i0 + Math.max(4, (span * N) | 0);
-    g.lineWidth = 1.2 + k * 0.45;
-    g.strokeStyle = rgba(mix(WATER_SHEEN, sky, 0.34),
-                         (0.11 - k * 0.022) * (0.6 + 0.4 * Math.sin(api.T * 0.9 + k)) * A);
-    g.beginPath();
-    for (let i = i0; i <= i1; i++){
-      const q = ring[i % N];
-      (i === i0) ? g.moveTo(q.x, q.y) : g.lineTo(q.x, q.y);
+    const i0 = (from * N) | 0, nSeg = Math.max(6, (span * N) | 0);
+    const aBase = (0.075 - k * 0.016) * (0.6 + 0.4 * Math.sin(api.T * 0.9 + k)) * A;
+    g.lineWidth = (1.2 + k * 0.45) * SS;
+    /* ⚠ BUTT CAPS AND BUCKETS, AND BOTH OF THOSE ARE BUG FIXES.
+       The first cut of this window stroked every segment separately with
+       lineCap 'round' under 'lighter'. A round cap sticks out half a linewidth
+       past each end, so consecutive segments OVERLAP at every shared vertex
+       and composite twice there — the arc came out as a string of pale BEADS
+       following the shoreline, which is worse than the continuous line it
+       replaced. Butt caps meet exactly, with no overlap and no gap.
+       Bucketing (one stroked polyline per alpha step instead of one per
+       segment) then cuts the joints from ~24 to 7, and each is a butt-to-butt
+       meeting of two lines of near-equal alpha. */
+    const NBK = 7;
+    for (let b = 0; b < NBK; b++){
+      const s0 = Math.round(b * nSeg / NBK), s1 = Math.round((b + 1) * nSeg / NBK);
+      if (s1 <= s0) continue;
+      const w = 0.5 - 0.5 * Math.cos(((s0 + s1) * 0.5) / nSeg * TAU);
+      const aSeg = aBase * w;
+      if (aSeg < 0.004) continue;
+      g.strokeStyle = rgba(mix(WATER_SHEEN, sky, 0.34), aSeg);
+      g.beginPath();
+      for (let s = s0; s <= s1; s++){
+        const q = ring[(i0 + s) % N];
+        (s === s0) ? g.moveTo(q.x, q.y) : g.lineTo(q.x, q.y);
+      }
+      g.stroke();
     }
-    g.stroke();
   }
   for (let i = 0; i < 4; i++){
     /* irregular depth: hash, not i/n. Two chords may sit close together and a
@@ -1707,15 +1844,36 @@ function drawPool(api, it){
        chop marks. At 0.13 they are unmistakably sloped and the sag bows them. */
     const sag = (hash(i, 19, 59) - 0.35) * B.h * 0.17;
     const tilt = (hash(i, 29, 63) - 0.5) * B.h * 0.13;
-    g.lineWidth = 0.9 + hash(i, 23, 61) * 1.5;
-    g.strokeStyle = rgba(mix(WATER_SHEEN, sky, 0.5),
-                         (0.07 + 0.07 * (0.5 + 0.5 * Math.sin(api.T * 1.1 + i * 2.4))) * A);
-    g.beginPath();
-    g.moveTo(x0, y);
-    g.bezierCurveTo(x0 + (x1 - x0) * 0.34, y + sag,
-                    x0 + (x1 - x0) * 0.68, y + sag * 0.3 + tilt,
-                    x1, y + tilt);
-    g.stroke();
+    /* the free chords get the same treatment as the arcs above and for the
+       same reason: they were the "hand-drawn pale ripple arcs across its
+       interior" half of the critic's sentence. Drawn as a windowed run of
+       short segments off the same bezier, so each chord fades in and out
+       instead of starting and stopping. Width scales with the pool. */
+    g.lineWidth = (0.9 + hash(i, 23, 61) * 1.5) * SS;
+    const aCh = (0.055 + 0.055 * (0.5 + 0.5 * Math.sin(api.T * 1.1 + i * 2.4))) * A;
+    const cC = mix(WATER_SHEEN, sky, 0.5);
+    const NCH = 7, PER = 3;          /* 7 alpha steps, 3 line segments each */
+    const bez = (t) => {
+      const u = 1 - t, dx = x1 - x0;
+      return {
+        x: u*u*u*x0 + 3*u*u*t*(x0 + dx*0.34) + 3*u*t*t*(x0 + dx*0.68) + t*t*t*x1,
+        y: u*u*u*y  + 3*u*u*t*(y + sag)      + 3*u*t*t*(y + sag*0.3 + tilt) + t*t*t*(y + tilt)
+      };
+    };
+    /* butt caps, one stroked polyline per alpha step — same reasoning as the
+       shore arcs above: round caps under 'lighter' bead at every joint. */
+    for (let b = 0; b < NCH; b++){
+      const w = 0.5 - 0.5 * Math.cos((b + 0.5) / NCH * TAU);
+      const aSeg = aCh * w;
+      if (aSeg < 0.004) continue;
+      g.strokeStyle = rgba(cC, aSeg);
+      g.beginPath();
+      for (let s = 0; s <= PER; s++){
+        const p = bez((b * PER + s) / (NCH * PER));
+        s ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y);
+      }
+      g.stroke();
+    }
   }
   /* specular glints, drifting. Seeded so no two land in the same place. */
   for (let i = 0; i < 7; i++){
@@ -1724,7 +1882,7 @@ function drawPool(api, it){
     const px = B.x0 + B.w * u + Math.sin(api.T * 0.6 + i) * B.w * 0.01;
     const py = B.y0 + B.h * (0.10 + drift * 0.80);
     const tw = 0.40 + 0.60 * Math.sin(api.T * 1.6 + i * 2.1 + S.ph);
-    const R = 2.4 + hash(i, 41, 79) * 4.4;
+    const R = (2.4 + hash(i, 41, 79) * 4.4) * SS;
     /* per-glint aspect: seven identical ovals is a sticker sheet */
     const ax = 1.5 + hash(i, 43, 81) * 1.9, ay = 0.55 + hash(i, 47, 83) * 0.5;
     const sgd = g.createRadialGradient(px, py, 0, px, py, R * ax);
@@ -1808,7 +1966,10 @@ function drawPool(api, it){
      the player spends 95% of their time looking at costs no more than it did.
      Anything in between: four bands under nested clips. */
   if (!litKeys.length){ paint(1, 1, false); return; }
-  if (litKeys.length >= it.tiles.length){ paint(LIT_A, LIT_AM, true); return; }
+  /* the all-lit fast path is against the DECLARED set, not the wet set: with
+     ykeys wider than tiles, `>= it.tiles.length` would fire while a wet tile
+     was still dark and thin the whole pool for nothing. */
+  if (litKeys.length >= YK.length){ paint(LIT_A, LIT_AM, true); return; }
 
   /* the rings are projected at the POOL's own elevation, not each tile's,
      because every wet tile sits at the pool floor by construction (okWater
@@ -1892,7 +2053,7 @@ function drawPool(api, it){
    pool, or if it wanders more than 0.75 tile off the board. Water climbing a
    cliff is a worse failure than water on a grid.
    ══════════════════════════════════════════════════════════════════════════ */
-function bakeShore(api, pool, poolY, seq, cols, rows){
+function bakeShore(api, pool, poolY, seq, cols, rows, grow){
   const tiles = [];
   let cx = 0, cz = 0;
   for (const k of pool){
@@ -1919,7 +2080,7 @@ function bakeShore(api, pool, poolY, seq, cols, rows){
     }
     return s;
   };
-  const tooHigh = (px, pz) => {
+  const offGround = (px, pz) => {
     /* stay ON the play surface. Round 1 of this rewrite allowed 0.75 tile of
        overshoot onto the spine's feathered shelf and the pool's near lobe
        visibly hung over the apron lip; -0.52 keeps the waterline inside the
@@ -1929,20 +2090,97 @@ function bakeShore(api, pool, poolY, seq, cols, rows){
     const gx = Math.round(px), gz = Math.round(pz);
     const cxi = gx < 0 ? 0 : (gx > cols - 1 ? cols - 1 : gx);
     const czi = gz < 0 ? 0 : (gz > rows - 1 ? rows - 1 : gz);
-    return api.tileElev(cxi, czi) > poolY + 0.02;
+    const e = api.tileElev(cxi, czi);
+    if (e > poolY + 0.02) return true;
+    /* ⚠ AND IT MUST NOT POUR OFF A LEDGE EITHER — new in wave 5, and it only
+       became reachable with `grow`. The pond is flood-filled on the LOWEST
+       level, so no sample of its shoreline can ever find ground BELOW it and
+       this half of the test would never fire. A surface puddle is painted
+       wherever the host says, including the top of a plateau — and a shoreline
+       grown 0.13 tile past the quad on the cliff side would then hang in the
+       air over the drop, projected onto whatever is at the bottom. Guarded on
+       `grow` so the pond's trace is bit-for-bit what wave 3 shipped. */
+    if (grow > 0 && e < poolY - 0.02) return true;
+    return false;
   };
 
   const ph1 = seq() * TAU, ph2 = seq() * TAU, ph3 = seq() * TAU;
   const a1 = 0.075 + seq() * 0.055, a2 = 0.038 + seq() * 0.042, a3 = 0.018 + seq() * 0.026;
+
+  /* ── 🫧 `grow`: BURY THE RULED QUAD EDGE (surface pools only) ────────────
+     The Gaussian field above is tuned for a FLOOD-FILLED pond, where σ=0.60
+     puts the contour between a tile's inscribed circle (0.50) and its corner
+     (0.707) — the water cuts the corners off and bulges over the edges, and
+     that asymmetry is what stops it reading as a staircase.
+
+     A `puddle` SURFACE is a different problem. The host paints it on exact
+     tiles and tilefx fills those tile quads, so the wet ground the player can
+     already see reaches all the way to the quad's CORNERS. Contour the same
+     Gaussian over it and the waterline lands INSIDE those corners: the ruled
+     quad edge sticks out past the organic shoreline and the whole exercise is
+     pointless. So a surface pool traces `max(gaussian, union-of-quads + grow)`
+     — the shoreline is at least `grow` tiles outside the last painted quad,
+     everywhere, corners included.
+
+     The offset is not constant. A constant offset from a square is a rounded
+     square, which is still a drawn shape; two incommensurate harmonics on
+     `grow` itself (plus the k-harmonics below, which apply to every pool) make
+     the margin wander between roughly 0.05 and 0.25 tile.
+
+     ⚠ THE seq() CALLS ARE GUARDED ON `grow`. `seq` is the SAME stream
+     buildScatter uses for every rock, tuft and tree placed after the pond, so
+     an unconditional two extra draws here would re-scatter the entire field
+     and make this round's A/B diff unreadable. The pond passes no grow, takes
+     no extra draws, and its scatter is byte-identical to wave 3's. */
+  const G = grow > 0 ? grow : 0;
+  const ph4 = G > 0 ? seq() * TAU : 0, ph5 = G > 0 ? seq() * TAU : 0;
+  /* distance from (px,pz) to the union of the wet tiles' unit quads; negative
+     inside. Chebyshev inside / Euclidean outside, i.e. the real box SDF. */
+  const boxD = (px, pz) => {
+    let best = Infinity;
+    for (let i = 0; i < tiles.length; i++){
+      const dx = Math.abs(px - tiles[i][0]) - 0.5;
+      const dz = Math.abs(pz - tiles[i][1]) - 0.5;
+      const ax = dx > 0 ? dx : 0, az = dz > 0 ? dz : 0;
+      const d = (ax > 0 || az > 0) ? Math.sqrt(ax * ax + az * az) : (dx > dz ? dx : dz);
+      if (d < best) best = d;
+    }
+    return best;
+  };
   const N = 112;
   const rad = new Array(N);
   for (let i = 0; i < N; i++){
     const th = (i / N) * TAU;
     const ux = Math.cos(th), uz = Math.sin(th);
+    const gr = G > 0
+      ? Math.max(0.045, G * (1 + 0.44 * Math.sin(th * 3.3 + ph4)
+                               + 0.24 * Math.sin(th * 7.9 + ph5)))
+      : 0;
+    /* ⚠ THE ELEVATION PROBE IS JITTERED ON A GROWN POOL, AND THAT IS THE FIX
+       FOR A RULED EDGE, NOT A FLOURISH. offGround() resolves a sample to a
+       tile with Math.round(), so its answer flips on the exact grid line —
+       and a shoreline stopped by that test therefore runs dead straight along
+       the tile boundary for as long as the drop does. Measured on the first
+       surface-pool render: a 40px straight vertical edge on the plateau puddle
+       and a 60px one on the right flank, which is the ruled quad edge we came
+       here to bury coming back in as the CUT rather than as the fill.
+       Displacing the probe by a smooth ±0.11 tile that varies with the ray
+       angle makes that boundary wander instead. The water may now climb 0.1
+       tile up a rock in places and stop 0.1 tile short in others, which is
+       what a waterline against rock does. Pond unaffected: G is 0 there.
+       ⚠ TWO INCOMMENSURATE TERMS PER AXIS, NOT ONE. A single sin(5.1θ) probe
+       offset cut the pool into five even lobes and the puddle read as a
+       starfish — an evenly-spaced anything is the BAR's headline tell, and it
+       does not stop being one because the spacing is angular. */
+    const jx = G > 0 ? 0.070 * Math.sin(th * 4.3 + ph5)
+                     + 0.045 * Math.sin(th * 2.1 + ph4 * 1.7) : 0;
+    const jz = G > 0 ? 0.070 * Math.sin(th * 3.1 + ph4)
+                     + 0.045 * Math.sin(th * 6.7 + ph5 * 1.3) : 0;
     let r = 0.04, last = 0.04;
     while (r < 4){
       const px = cx + ux * r, pz = cz + uz * r;
-      if (F(px, pz) < THR || tooHigh(px, pz)) break;
+      const wet = F(px, pz) >= THR || (gr > 0 && boxD(px, pz) <= gr);
+      if (!wet || offGround(px + jx, pz + jz)) break;
       last = r; r += 0.03;
     }
     rad[i] = last;
@@ -1957,9 +2195,20 @@ function bakeShore(api, pool, poolY, seq, cols, rows){
   for (let i = 0; i < N; i++){
     const th = (i / N) * TAU;
     const ux = Math.cos(th), uz = Math.sin(th);
-    const k = 1 + a1 * Math.sin(th * 2.7 + ph1)
-                + a2 * Math.sin(th * 6.1 + ph2)
-                + a3 * Math.sin(th * 11.3 + ph3);
+    /* ⚠ THE HARMONICS ARE DAMPED ON A GROWN POOL, and the reason is spill, not
+       taste. They are a MULTIPLIER on the radius: on the pond (r ≈ 1.8 tiles)
+       ±13% is ±0.23 tile of wobble on a shoreline that is already well clear of
+       any tile the player needs to read. On a ONE-TILE puddle traced at
+       r ≈ 0.64-0.84, the same ±13% is the difference between burying the quad
+       edge and lapping a third of the way across the neighbouring square —
+       where the pool would dim a movement highlight it has no business
+       touching, because drawPool only yields over tiles it declares. 0.6 keeps
+       the shoreline unmistakably irregular and keeps the spill under ~0.2 tile
+       at the corners. */
+    const kH = a1 * Math.sin(th * 2.7 + ph1)
+             + a2 * Math.sin(th * 6.1 + ph2)
+             + a3 * Math.sin(th * 11.3 + ph3);
+    const k = 1 + (G > 0 ? kH * 0.60 : kH);
     const r = Math.max(0.12, sm[i] * k);
     pts.push({ x: cx + ux * r, z: cz + uz * r });
     /* the damp halo: the same curve pushed out along its own radius by an
@@ -2003,7 +2252,154 @@ function bakeShore(api, pool, poolY, seq, cols, rows){
    BUILD — the scatter
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* ══════════════════════════════════════════════════════════════════════════
+   🫧 SURFACE POOLS — the second half of "there is only ONE water on this board"
+
+   THE GAP THIS CLOSES, stated as the wave-3 critic measured it. Colour had
+   already converged: the pond rendered rgb(57,84,94) hue 196 chroma 38 against
+   the right-flank water's rgb(63,94,99) hue 188 chroma 32 — eight degrees
+   apart, which nobody can see. The TREATMENT had not. The pond has a baked
+   organic shoreline, a two-band damp rim, a reflection sheet, wind chop and
+   lapping rings. The other water — tilefx's `puddle` surface fx, painted from
+   the host's `board:surfaces` message — is a translucent teal fill inside the
+   TILE QUAD with a specular streak, so its boundary is four ruled straight
+   lines meeting at right angles. Two materials, one field.
+
+   THE FIX IS NOT TO COPY THE VOCABULARY, IT IS TO USE THE SAME PAINTER. Every
+   tile the host paints with a water surface gets a REAL pool item here: the
+   same bakeShore contour, the same drawPool, the same damp rim, chop, glints
+   and per-tile highlight yield. The only difference is bakeShore's `grow`,
+   which pushes the shoreline ~0.15 tile OUTSIDE the union of the painted
+   quads — because tilefx has already coloured the ground right out to those
+   quads' corners, and a waterline that landed inside them would leave the
+   ruled edge showing past the organic one. Grown, the straight edge is buried
+   under water on all four sides.
+
+   WHY THIS IS STILL "PAINT ON TOP OF A FINISHED FRAME" (rule 1 in the header):
+   api.surfaces is READ, never written. Nothing here marks a tile, blocks it,
+   or tells the host anything. If the host stops painting the tile, the pool
+   disappears on the next frame. tilefx keeps drawing its fill underneath ours
+   and that is fine — it is wet ground under water, in the same hue.
+
+   ⚠ WHY THE REBUILD LIVES IN items() AND NOT IN build(). The spine's
+   syncDressing() keys on `MAP.id | cols | rows | HF.key` — surfaces are not in
+   that key and this module may not edit the spine to put them there. But
+   SURFACES is REPLACED wholesale on every `surfaces` message (the host diffs
+   and only sends on change), so an identity check on api.surfaces is a free,
+   exact change detector. The signature is only recomputed when that reference
+   moves, so the steady-state per-frame cost is one `!==`. */
+const WATER_FX = { puddle: 1, sea: 1 };
+/* Bounded so a pathological host cannot turn a whole board of painted tiles
+   into 56 pools with 56 reflection sheets. _seedBattleSurfaces places at most
+   four water tiles; spells add a few more. */
+const SURF_MAX_TILES = 14, SURF_MAX_POOLS = 5;
+
+function waterKeys(surfaces){
+  if (!surfaces) return [];
+  const out = [];
+  for (const k in surfaces){
+    if (!WATER_FX[surfaces[k]]) continue;
+    out.push(k);
+    if (out.length >= SURF_MAX_TILES) break;
+  }
+  out.sort();
+  return out;
+}
+
+function buildSurfacePools(api, keys, pondTiles){
+  const items = [];
+  const MAP = api.MAP || {};
+  const cols = MAP.cols | 0, rows = MAP.rows | 0;
+  if (!keys.length || cols < 2 || rows < 2) return items;
+
+  /* parse + drop anything off-board or already under the pond. A puddle inside
+     the pond would bake a second shoreline a few pixels inside the first,
+     which is a contour line — exactly the artefact this whole file keeps
+     deleting. The pond wins; its water is already there. */
+  const cell = new Map();
+  for (const k of keys){
+    const p = k.split(','), x = +p[0], z = +p[1];
+    if (!isFinite(x) || !isFinite(z) || x < 0 || z < 0 || x >= cols || z >= rows) continue;
+    if (pondTiles && pondTiles.has(k)) continue;
+    cell.set(x + ',' + z, { x: x, z: z, e: api.tileElev(x, z) });
+  }
+  if (!cell.size) return items;
+
+  /* group by 4-connectivity AND equal elevation. Two puddles on different
+     levels are two pools: bakeShore's contour is a single closed ring at ONE
+     height, and a ring spanning a cliff is water climbing a wall. */
+  const seen = new Set();
+  const groups = [];
+  for (const [k, c] of cell){
+    if (seen.has(k)) continue;
+    const grp = [], q = [k];
+    seen.add(k);
+    while (q.length){
+      const kk = q.shift();
+      const cc = cell.get(kk);
+      grp.push(cc);
+      const nb = [(cc.x + 1) + ',' + cc.z, (cc.x - 1) + ',' + cc.z,
+                  cc.x + ',' + (cc.z + 1), cc.x + ',' + (cc.z - 1)];
+      for (const n of nb){
+        if (seen.has(n)) continue;
+        const nn = cell.get(n);
+        if (!nn || Math.abs(nn.e - cc.e) > 0.02) continue;
+        seen.add(n); q.push(n);
+      }
+    }
+    groups.push(grp);
+    if (groups.length >= SURF_MAX_POOLS) break;
+  }
+
+  for (let gi = 0; gi < groups.length; gi++){
+    const grp = groups[gi];
+    const set = new Set();
+    let far = Infinity, lo = Infinity;
+    for (const c of grp){
+      set.add(c.x + ',' + c.z);
+      if (c.z < far) far = c.z;
+      if (c.e < lo) lo = c.e;
+    }
+    /* seeded off the group's own anchor tile, NOT off a running counter: the
+       host repaints surfaces in arbitrary order and a counter would make the
+       same puddle wobble whenever an unrelated tile caught fire. */
+    const a = grp[0];
+    const seq = mkSeq(api.hash, fnv(MAP.id) + a.x * 131 + a.z * 17,
+                                fnv('surf:' + MAP.id) + a.z * 97 + a.x * 7);
+    let shore = null;
+    try { shore = bakeShore(api, set, lo, seq, cols, rows, 0.13); } catch (e) { shore = null; }
+    if (!shore) continue;
+    /* 🫧 THE YIELD SET IS WIDER THAN THE WET SET, ON SURFACE POOLS ONLY.
+       A grown shoreline laps up to ~0.2 tile onto its 4-neighbours. drawPool
+       thins the water over tiles that carry a state fill — and if the tile it
+       is lapping onto is a legal move the player must still be able to read
+       that highlight through the water. So a surface pool declares its
+       neighbours too: when one of them is painted, the pool yields there as
+       well. On an unpainted board this costs one extra `has()` per neighbour
+       and changes nothing. The pond does NOT do this: its shoreline is a flood
+       fill of tiles it owns and three critic rounds have measured its overlay
+       legibility as it stands — widening its yield set would change those
+       numbers for no gap anybody has reported. */
+    const yk = new Set(set);
+    for (const c of grp){
+      yk.add((c.x + 1) + ',' + c.z); yk.add((c.x - 1) + ',' + c.z);
+      yk.add(c.x + ',' + (c.z + 1)); yk.add(c.x + ',' + (c.z - 1));
+    }
+    items.push({
+      x: shore.cx, z: far - 0.5, kind: 'water',
+      y: lo, shore: shore, tiles: Array.from(set), ykeys: Array.from(yk), surf: true,
+      /* depth key matches the pond's convention (FARTHEST wet row − 0.5), so
+         anything standing on a wet tile is drawn after the water and nothing
+         nearer the camera is drawn before it. */
+      draw: function (a2) { drawPool(a2, this); }
+    });
+  }
+  return items;
+}
+
 const CACHE = { key: '', items: [] };
+const SURF = { ref: undefined, sig: '', items: [] };
+const MERGED = { key: null, list: [] };
 
 function buildScatter(api){
   const MAP = api.MAP || {};
@@ -2297,6 +2693,11 @@ const dressing = {
       /* a bad bake must never take the board with it: ship an empty field */
       CACHE.items = []; CACHE.key = key;
     }
+    /* the heightfield just moved, so every surface pool's floor moved with it.
+       `undefined` (not null) forces items() to re-derive the signature even if
+       api.surfaces is still the very same object. */
+    SURF.ref = undefined; SURF.sig = ''; SURF.items = [];
+    MERGED.key = null;
   },
 
   items(api){
@@ -2326,7 +2727,36 @@ const dressing = {
       FRAME.T = api.T || 0;
     } catch (e){}
 
-    return CACHE.items;
+    /* 🫧 surface pools. One reference compare in the steady state; a signature
+       walk only when the host replaced the surfaces map; a bake only when the
+       set of WATER tiles inside it actually changed (fire spreading two tiles
+       away must not re-bake a puddle's shoreline). */
+    try {
+      if (api.surfaces !== SURF.ref){
+        SURF.ref = api.surfaces;
+        const keys = waterKeys(api.surfaces);
+        const sig = keys.join(';');
+        if (sig !== SURF.sig){
+          SURF.sig = sig;
+          let pond = null;
+          for (const it of CACHE.items)
+            if (it && it.kind === 'water' && it.tiles) pond = new Set(it.tiles);
+          SURF.items = keys.length ? buildSurfacePools(api, keys, pond) : [];
+          MERGED.key = null;
+        }
+      }
+    } catch (e){ SURF.items = []; }
+
+    /* one array, rebuilt only when either half changed — items() is called
+       every frame and `concat` per frame is garbage the depth sort does not
+       need. */
+    if (!SURF.items.length) return CACHE.items;
+    const mk = CACHE.key + '#' + SURF.sig;
+    if (MERGED.key !== mk){
+      MERGED.key = mk;
+      MERGED.list = CACHE.items.concat(SURF.items);
+    }
+    return MERGED.list;
   }
 };
 

@@ -226,6 +226,72 @@
    the gain and correlated against a STALE paint-off capture. If you test this
    layer, shoot the paint-off reference in the same minute as the paint-on one.
 
+   ── WAVE 5: THE LAST THREE STROKED PAINTERS, AND A RE-SOLVE ───────────────
+   1. void / electric / holy were still drawing their identity with
+      ctx.stroke() and it measured exactly as it looked. On the SAME pixels
+      (the surfaced tile quads, inset 14 device px — see the note under
+      glowChain about why a per-painter diff mask is not comparable across
+      builds), the regression of the painted tile's high-pass on the same
+      ground unpainted went:
+                        HEAD slope/r          now slope/r
+          void          0.59 / 0.823          0.68 / 0.946
+          electric      0.71 / 0.882          0.72 / 0.969
+          holy          0.79 / 0.885          0.92 / 0.81-0.91
+      r is the number that answers "is what I am looking at the ground?";
+      electric lands on 0.969, i.e. 94% of the variance inside an arc-lit tile
+      is the sand. ⚠ holy's r swings run to run and it is NOT the parameters:
+      three shots of two different gain settings gave 0.896 / 0.808 / 0.803
+      with the slope steady at 0.91-0.93, because post()'s five rising motes
+      are unclipped sub-2px additive dots whose positions animate — they add
+      real high-frequency structure inside the measured quad and decorrelate
+      it by phase. Judge holy on the slope; the slope is stable and it is up.
+      Holy's gain is 0.40 rather than the 0.50 the first pass used because the
+      board is not one brightness: on the raised plateau tiles, which start at
+      luma 132 instead of 97, 0.50 measured luma ratio 1.44 with slope 0.73,
+      i.e. it was pushing red toward the ceiling and flattening the grain. At
+      0.40 the same tiles measure 1.40 / 0.83 and the dark set is unchanged.
+      A multiplicative light is a function of the ground it lands on, so a
+      gain has to be tuned against the BRIGHTEST ground on the board, not the
+      most convenient. The motifs are chains of radial
+      falloffs (glowChain) composited 'lighter' through the region scratch,
+      over a material multiply that was CUT so there is still ground to see —
+      void's was 0.88/0.66 and buried it — plus the key-light gain.
+   2. holy's two concentric stroked ellipses per tile are DELETED, not
+      softened. See the note on the painter.
+   3. THE MOVE POOL WAS RE-SOLVED AGAINST THE WAVE-5 GROUND, exactly as the
+      round-7 warning above says to. Measured before touching anything, the
+      shipped constants gave hue 132.3 / chroma 32.8 — a full 13 degrees below
+      the window the file believed it was sitting in, WITHOUT THIS FILE
+      CHANGING, because vista/terrain/dressing moved underneath it again.
+      fc 0.20 → 0.28, gain #3094d1 → #2a8fd2, g 0.565 → 0.70, a 0.30 → 0.22.
+      Re-measured on a fresh same-minute pair:
+          hue 150.7 (window 145-155)   chroma 50.7 (>= 38)   dL +62.1 (>= 55)
+          satON 0.30 against the sand's 0.53
+          grain slope 1.27 / r 0.884   (before: 1.28 / 0.922)
+      and the SPREAD, which is what "straddles the window" actually names:
+      48x48px patch hues went min 49 / p10 96 / p50 131 / p90 163 with 12 of 95
+      patches inside the window, to min 66 / p10 132 / p50 152 / p90 165 with
+      32 of 98 inside — the bottom of the distribution came up 17 degrees and
+      the count inside the window nearly tripled.
+      ⚠ RUN-TO-RUN SPREAD ON THESE NUMBERS IS REAL: four same-code pairs
+      measured hue 146.0-150.7 and slope 1.27-1.31. Do not re-tune on a single
+      shot, and do not read a 0.03 move in r as a change.
+      ⚠ THE SPREAD HAS A FLOOR AND IT IS STRUCTURAL. Patch hue against the
+      UNLIT luma of the same patch measures r = -0.62, slope -1.04: one degree
+      of hue per level of ground. That is what a multiplicative light IS — it
+      cannot help but be a function of what it lands on — and the only thing
+      that flattens it is the additive constant, which is precisely what the
+      grain contract forbids raising. Do not chase the last patches.
+   4. AND THE LUMA SLOPE UNDER-REPORTS A COOL LIGHT ON WARM GROUND. Per
+      channel the pool measures slope 0.84 / 1.43 / 1.89 (R/G/B) against a
+      gain tint of (0.165, 0.561, 0.824) at GA 1.085, i.e. slope_c ≈ 1 + GA·t_c
+      to within a few percent on G and B. That IS out = albedo ⊙ (ambient +
+      key). Sand grain is red-dominant and this light's red multiplier is the
+      small one, so the luma-only slope lands below the per-channel ones. Use
+      w5t-chan-style per-channel numbers before concluding the grain is
+      invented; and note that there is no noise field anywhere in drawPool to
+      invent it with — every layer is a gradient, a gain read-back or a rim.
+
    rimBand() and the old unclipped feather() are both gone. A rim stroke traces
    whatever the region's polygon is, so on a single tile it drew the tile; and
    the source-over feather in the ice painter was, at 1.9 tile radii, a milky
@@ -380,7 +446,7 @@ const COL = {
      in reverse: they are added, not multiplied, so they contribute their own
      colour and have to sit further round the wheel than the target. */
   move:   { core: '#c8d7ff', body: '#69c3ff', rim: '#b4e1f5', halo: '#42cae0',
-            filt: '#46ffd8', gain: '#2a8fca', k: 1.55, a: 0.22, g: 0.70, fc: 0.28 },
+            filt: '#46ffd8', gain: '#2a8fd2', k: 1.55, a: 0.22, g: 0.70, fc: 0.28 },
   /* ⚠ EVERY STATE GETS A KEY LIGHT, not just move. The gap was measured on the
      move pool because that is the one the default harness lights, but "a soft
      emissive fill that glows WITHIN the ground" is the BAR's line about tile
@@ -2579,7 +2645,7 @@ const PAINTERS = {
        crease AO all scale up together and the tile reads as the same sand
        under more light. That is the strongest gain in the table on purpose;
        holy is the one surface whose entire identity IS illumination. */
-    gain: (api) => ['#c0a878', 0.50 * (0.92 + 0.08 * Math.sin(api.T * 1.3))],
+    gain: (api) => ['#c0a878', 0.40 * (0.92 + 0.08 * Math.sin(api.T * 1.3))],
     /* a whisper of a warm multiply so the brightened sand also shifts hue
        rather than just getting lighter — the "slightly darkened hue-shifted
        tile" half of the pair. Blue is the attenuated channel, so what the gain

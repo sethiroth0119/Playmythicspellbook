@@ -39455,6 +39455,120 @@ const CONSUMABLE_RESOURCES = {
 // no-op stub so any lingering caller is harmless; no ticker is registered.
 function _tickSatiation() { /* survival needs removed — no-op */ }
 const RESOURCE_IDS = RESOURCES.map(r => r.id);
+
+/* ══ 🎁 THE LOOT POOL IS NOT THE LEDGER ═══════════════════════════════════════
+   🔴 THE DEFECT THIS BLOCK EXISTS FOR, MEASURED ON THE COMMIT BEFORE IT.
+   RESOURCES answers ONE question: "what can the camp HOLD?". Three random-reward
+   sites were reading RESOURCE_IDS to answer a completely DIFFERENT one — "what
+   does a scavenging run BRING BACK?" — and the two answers were the same array
+   only for as long as the ledger happened to BE the 14 camp staples. The chain
+   promotion took RESOURCES 14 → 70, and with NO CODE CHANGE at any of the three
+   sites it diluted every pool 5× in a single commit — measured by evaluating the
+   shipped draw expression at each site on three trees, share of draws that is
+   one of the 14 the player can actually use:
+
+                          f8563fad (14)   8587778 (70, pre-fix)   with this block
+     _campGrantLoot         100.00%           20.04%                  100.00%
+     _smugglerDeal          100.00%           20.07%                  100.00%
+     container resPool      100.00%           20.12%                  100.00%
+     _resStashFloor()        2,002            10,010                   2,002
+
+   round0q in tools/economy-tests/run.mjs re-measures all three on every gate run
+   and prints these percentages; ECON_TEST_SABOTAGE=loot-ledger re-commits the
+   pre-fix draw and reprints the middle column.
+
+   So every expedition's food / ammo / water / metal / supplies income fell to
+   ×0.20 overnight, and 4 drops in 5 became an id the player has no consumer
+   for: not in CONSUMABLE_RESOURCES, in no craft recipe, and /src/economy is
+   FORBIDDEN to spend it (Rule 2 — the chain is never addRes/spendRes'd from the
+   economy). A drop you cannot eat, burn, craft or spend is not income; against a
+   shared stash ceiling it is a tax.
+
+   ── THE MECHANISM, AND WHY NOT THE OTHER TWO ────────────────────────────────
+   An explicit, WEIGHTED ALLOW-LIST. `LOOT_RES_IDS` names what the field yields;
+   every other ledger id is drawn at `LOOT_RES_WEIGHTS.offPool`.
+
+   · NOT "exclude whatever is in the chain catalogue". That set lives only on
+     `window.MythicResourceChain`, an ES module imported at the BOTTOM of this
+     file. A loot table whose composition depends on whether a module has
+     finished loading is the same accident one level down: a slow or failed load
+     and the pool is silently all 70 again.
+   · NOT "filter by whether something has a consumer". Craft recipes and facility
+     costs are ADMIN-AUTHORED AT RUNTIME (Forge.campCosts / getAllCraftRecipes),
+     so the pool would shift under a player the moment an admin publishes a
+     catalog — a loot table nobody can reason about or pin.
+
+   An allow-list is the only one of the three that is a DECISION rather than a
+   side-effect, and the only one a future promotion cannot move on its own.
+
+   ⚠ ADDING AN ID TO RESOURCES DOES NOT ADD IT TO LOOT, ON PURPOSE. That is the
+     whole point. round0q fails if a ledger id is neither in this list nor
+     justified by the chain derivation, so the next promotion has to SAY which
+     it is instead of silently taking a fifth of everyone's food.
+   ⚠ THE WEIGHTS BELOW ARE THE CONFIG HOME. No call site may name a number. */
+const LOOT_RES_WEIGHTS = {
+  /* The camp staples, at the pre-promotion rate: an expedition brings home
+     exactly what it brought home before the ledger grew. 1 is not arbitrary —
+     it is "unchanged", which is the only defensible target for a promotion that
+     was never meant to be an economy change. */
+  pool: 1,
+  /* Everything else in RESOURCES. Zero on purpose: chain goods are MADE in the
+     city (CITY_PRODUCTION → host.addRes, see /src/city/production.state.js) and
+     are not lying in a ruin. Kept as a NUMBER rather than an `if` so a future
+     round that wants a trickle changes one value here and round0q reprints the
+     composition it moved to, instead of someone editing a call site. */
+  offPool: 0,
+};
+/* Weight resolution. Ids are repeated `weight × this` times in the draw bag, so
+   a plain uniform pick over the bag IS a weighted pick over the ledger — the
+   same one-line `arr[Math.floor(rnd()*arr.length)]` every call site already had,
+   with no float accumulation and no second RNG draw (the smuggler board is
+   deterministic per window and must keep consuming exactly one rng() per pick). */
+const LOOT_WEIGHT_SCALE = 20;
+/* 🔴 A LITERAL, DELIBERATELY, AND IT MUST STAY ONE.
+   The first draft computed this as `RESOURCE_IDS.filter(id => !CHAIN.has(id))`,
+   which is derived from the very array whose growth caused the bug — the pool
+   would have re-widened on the next promotion and this comment would have been
+   a lie. These are the 14 ids the camp could scavenge before the promotion, they
+   are what the loot quantities and the stash floor were tuned against, and if
+   this list ever changes that is a design decision worth a red gate. */
+const LOOT_RES_IDS = ['food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies', 'metal',
+                      'fuel', 'corruptedEssence', 'memoryShards', 'dna', 'wood', 'stone', 'cloth'];
+let _lootBag = null, _lootBagFor = -1;
+function _lootResBag() {
+  if (_lootBag && _lootBagFor === RESOURCE_IDS.length) return _lootBag;
+  const inPool = new Set(LOOT_RES_IDS);
+  const bag = [];
+  for (const id of RESOURCE_IDS) {
+    const w = inPool.has(id) ? LOOT_RES_WEIGHTS.pool : LOOT_RES_WEIGHTS.offPool;
+    const n = Math.max(0, Math.round(w * LOOT_WEIGHT_SCALE));
+    for (let i = 0; i < n; i++) bag.push(id);
+  }
+  /* 🔴 NEVER HAND BACK AN EMPTY BAG. Every call site does bag[floor(r*len)] and
+     would get `undefined` — i.e. addRes(undefined, n), a resource key of
+     "undefined" in Profile.salvage that counts against the cap forever. If both
+     weights are ever set to 0, or LOOT_RES_IDS is emptied, degrade to the old
+     whole-ledger behaviour: diluted is survivable, corrupt is not. */
+  _lootBag = bag.length ? bag : RESOURCE_IDS.slice();
+  _lootBagFor = RESOURCE_IDS.length;
+  return _lootBag;
+}
+/* Pick one lootable resource id. `rnd` is optional and takes a 0..1 generator so
+   the deterministic smuggler board can pass its own seeded PRNG; it consumes
+   exactly one draw, same as the _smugPick it replaced. */
+function _lootResPick(rnd) {
+  const bag = _lootResBag();
+  const r = (typeof rnd === 'function') ? rnd() : Math.random();
+  return bag[Math.floor(r * bag.length)];
+}
+/* The same bag as RESOURCES ROWS, for the container-reward site, which needs
+   name/icon/colour and picks with an exclusion. Rows repeat exactly as ids do,
+   so a uniform pick over this array is the identical weighted draw. */
+function _lootResRows() {
+  const byId = {};
+  for (const r of RESOURCES) byId[r.id] = r;
+  return _lootResBag().map(id => byId[id]).filter(Boolean);
+}
 // Resources ARE the salvage ledger. _ensureResources aliases Profile.salvage
 // and one-time-folds any legacy Profile.resources into it so no progress is
 // lost when the two economies merge.
@@ -39541,11 +39655,33 @@ const RES_STASH_BASE = 2000;
    ⚠ RES_STASH_BASE stays as a hard floor underneath it. A player can never end
      up with less room than they have today, whatever happens to the ledger.
    ⚠ Vault rows and Warehouse staff still stack ON TOP, unchanged — see the two
-     branches below. This only moves the base they start from. */
+     branches below. This only moves the base they start from.
+
+   ══ 🔴 CORRECTION (v120t9-loot). "143 × 14 = 2,002, so today's number is
+      unchanged" WAS TRUE PER KIND AND FALSE IN TOTAL, and the promotion proved
+      it. getResourceUnits() sums EVERY resource against ONE ceiling, so the
+      denominator moving 14 → 70 moved the FLOOR 2,002 → 10,010 (live-confirmed)
+      — and a player who only ever collects the legacy 14 could suddenly hold
+      10,010 of them. That is a 5× stash buff nobody designed, handed to every
+      account including ones that never open the city.
+
+      SO THE DENOMINATOR IS NOW THE LOOT POOL, NOT THE LEDGER, and the reasoning
+      above survives intact because it was always about the wrong set:
+        · The rule exists so BREADTH FORCED ON THE PLAYER is not punished. After
+          the loot fix the only kinds a player accumulates without choosing to
+          are the ones loot pays in — LOOT_RES_IDS, which is exactly the set the
+          143 was calibrated against. 14 × 143 = 2,002, unchanged, as promised.
+        · The other 56 arrive ONLY from CITY_PRODUCTION, which the player builds
+          on purpose — and the same catalogue sells the Warehouse whose entire
+          stated job is raising this ceiling (`_cityProdStorage()` → storageBonus,
+          added on top a few lines below). Growing the FREE floor for city kinds
+          pays twice for the same problem.
+        · Still derived, not a literal: it tracks LOOT_RES_IDS.length, so widening
+          the loot pool widens the floor with it and this stays one edit. */
 const RES_STASH_PER_KIND = 143;
 function _resStashFloor() {
   try {
-    const kinds = (typeof RESOURCE_IDS !== 'undefined' && RESOURCE_IDS.length) ? RESOURCE_IDS.length : 14;
+    const kinds = (typeof LOOT_RES_IDS !== 'undefined' && LOOT_RES_IDS.length) ? LOOT_RES_IDS.length : 14;
     return Math.max(RES_STASH_BASE, kinds * RES_STASH_PER_KIND);
   } catch (e) { return RES_STASH_BASE; }
 }
@@ -65901,12 +66037,16 @@ function _campGrantLoot(tier, mul) {
   out.push(`<span class="cinder-icon"></span> ${gem} salvage`);
   // 🧰 Survival resources — the loot run hauls back raw materials. More on
   // riskier tiers; quantities scale with the loot multiplier + Intel Center.
-  if (typeof RESOURCE_IDS !== 'undefined') {
+  /* 🎁 Drawn from the LOOT POOL, not from RESOURCE_IDS. Reading the ledger here
+     is what made every haul 80% chain goods the day RESOURCES grew — see "THE
+     LOOT POOL IS NOT THE LEDGER" next to RESOURCE_IDS. The drop COUNT and the
+     quantities are untouched; only which ids are eligible changed. */
+  if (typeof _lootResPick === 'function') {
     const tierMul = (tier === 'deepRun') ? 3 : (tier === 'raid') ? 2 : 1;
     const drops = 2 + Math.floor(Math.random() * 3) + (tier === 'deepRun' ? 2 : tier === 'raid' ? 1 : 0);
     const got = {};
     for (let i = 0; i < drops; i++) {
-      const rid = RESOURCE_IDS[Math.floor(Math.random() * RESOURCE_IDS.length)];
+      const rid = _lootResPick();
       const qty = Math.max(1, Math.round((2 + Math.random() * 4) * tierMul * lm * (1 + qBonus)));
       addRes(rid, qty); got[rid] = (got[rid] || 0) + qty;
     }
@@ -77154,7 +77294,16 @@ function _rollUnitSalvage(unit) {
     // dump the same resource 5 times in one body.
     try {
       if (typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) {
-        const campSet = (typeof RESOURCE_IDS !== 'undefined') ? new Set(RESOURCE_IDS) : new Set();
+        /* 🎁 "Exotic" means "not one of the staples the rolls above already
+           handed out", so the set to subtract is the LOOT POOL — not
+           RESOURCE_IDS, which answers the unrelated "what can the camp hold?".
+           Behaviour is IDENTICAL today (SALVAGE_RES ∩ the 56 promoted chain ids
+           is empty — measured, 136 exotics either way), but the old form was a
+           live instance of the same class as the loot dilution: the next
+           promotion of an id that IS in SALVAGE_RES — leather, ironOre,
+           steelPlating — would have deleted it from the exotic table without
+           anyone touching this line. round0q pins the size. */
+        const campSet = (typeof LOOT_RES_IDS !== 'undefined') ? new Set(LOOT_RES_IDS) : new Set();
         const exotic = SALVAGE_RES.filter(r => r && r.id && !campSet.has(r.id));
         if (exotic.length) {
           // Base 55% chance, scaled by rarity/level. Guaranteed for any
@@ -155954,13 +156103,23 @@ function renderMarketStock() {
 // the facilities whitelist and can't be reset by a reload.
 // ============================================================================
 const SMUGGLER_WINDOW_MS = 12 * 3600000;            // rotates every 12 hours
-/* 🔁 DERIVED, not copied. This was a hand-maintained duplicate of the 11 ids
-   in RESOURCES; a twelfth resource would have been silently un-smuggleable.
-   RESOURCE_IDS is declared far earlier in source order, so the guard is only
-   here for the standalone-parse case. */
-const SMUGGLER_RES = (typeof RESOURCE_IDS !== 'undefined' && RESOURCE_IDS.length)
-  ? RESOURCE_IDS.slice()
-  : ['food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies', 'metal', 'fuel', 'corruptedEssence', 'memoryShards', 'dna'];
+/* 🔁 SMUGGLER_RES IS GONE — it was `RESOURCE_IDS.slice()`.
+   That was written to fix a real bug (a hand-kept duplicate of the 11 ids, so a
+   twelfth resource was silently un-smuggleable) and it over-corrected: deriving
+   the smuggler's goods from the LEDGER meant the chain promotion made ~80% of
+   all deals want or pay in a resource no camp player can produce or use.
+   Sampling the whole board — 6 deals (the Lv4 maximum, see _smugglerDealCount)
+   × 20,000 windows = 122,010 resource legs — the legacy share went from 100% to
+   20.07% in a single commit. round0q re-measures exactly that.
+
+   The board now draws from the loot pool via `_lootResPick(rng)`, which takes
+   the deterministic per-window PRNG and consumes EXACTLY ONE draw — the same as
+   the `_smugPick(rng, …)` it replaces — so the rest of every deal (value,
+   quantities, want/give split) is bit-identical to before. Only the ids move.
+   ⚠ THE LEG COUNT IS THE PROOF OF THAT CLAIM, not decoration: the sample yields
+     122,010 resource legs before the change and 122,010 after. A pick that
+     consumed a second rng() would desynchronise every downstream branch and the
+     count would move. It does not. */
 const SMUGGLER_WANT_RARITY = ['common', 'uncommon', 'rare'];
 function _smugglerWindow() { return Math.floor(Date.now() / SMUGGLER_WINDOW_MS); }
 // Deterministic PRNG (mulberry32) so a given (window,index) always yields the
@@ -156002,7 +156161,7 @@ function _smugglerDeal(i) {
   // WANT side — mostly resources (the sink), sometimes Cinder or a spare card.
   const wr = rng();
   let want;
-  if (wr < 0.6) want = { kind: 'res', id: _smugPick(rng, SMUGGLER_RES), qty: _smugInt(rng, 8, 14) + Math.round(value / 6) };
+  if (wr < 0.6) want = { kind: 'res', id: _lootResPick(rng), qty: _smugInt(rng, 8, 14) + Math.round(value / 6) };
   else if (wr < 0.82) want = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 3, 6)) };
   else want = { kind: 'cardDup', rarity: _smugPick(rng, SMUGGLER_WANT_RARITY) };
   // GIVE side — pay in Cinder, resources, or (occasionally) a card.
@@ -156010,12 +156169,12 @@ function _smugglerDeal(i) {
   let give;
   if (want.kind === 'cardDup') {
     if (gr < 0.5) give = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 6, 10)) };
-    else give = { kind: 'res', id: _smugPick(rng, SMUGGLER_RES), qty: Math.round(value / 3) + _smugInt(rng, 5, 15) };
+    else give = { kind: 'res', id: _lootResPick(rng), qty: Math.round(value / 3) + _smugInt(rng, 5, 15) };
   } else if (gr < 0.4) {
     give = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 4, 8)) };
   } else if (gr < 0.8) {
-    let id = _smugPick(rng, SMUGGLER_RES);
-    if (want.kind === 'res' && id === want.id) id = _smugPick(rng, SMUGGLER_RES);
+    let id = _lootResPick(rng);
+    if (want.kind === 'res' && id === want.id) id = _lootResPick(rng);
     give = { kind: 'res', id, qty: Math.round(value / 4) + _smugInt(rng, 6, 18) };
   } else {
     const pool = _smugglerCardPool();
@@ -169848,7 +170007,22 @@ function _campLootContainer(containerId) {
     ] : [],
   } : { rarity, name: 'Hidden Card', class: 'Survivor', sigil: '?', stats: [] };
   // 📦 Pick 2 random resources + an item.
-  const resPool = (typeof RESOURCES !== 'undefined' && Array.isArray(RESOURCES)) ? RESOURCES : [];
+  /* 🎁 The weighted LOOT-POOL rows, not the raw RESOURCES array — a container in
+     a ruin pays in what a scavenger finds. Reading RESOURCES here made 80% of
+     container slots a chain good the moment the ledger grew; see "THE LOOT POOL
+     IS NOT THE LEDGER" next to RESOURCE_IDS. Rows repeat by weight, so the
+     uniform pick below is the weighted draw and the exclusion still works. */
+  /* 🔴 NO `|| RESOURCES` FALLBACK HERE, AND THAT IS THE POINT.
+     The first version of this fix kept the old expression as a guard:
+       (typeof _lootResRows === 'function') ? _lootResRows() : RESOURCES
+     `_lootResRows` is a hoisted top-level declaration in this same file, so the
+     right-hand branch was DEAD — and what it was dead code FOR was the exact bug
+     above: the whole 70-id ledger, 80% of it unusable. A guard whose fallback is
+     the defect re-arms it the moment anything makes the guard true, and nothing
+     would have reported it. round0q asserts this line names no ledger array.
+     The never-empty degradation lives inside _lootResBag(), which is one place
+     and is tested; it does not need a second, worse copy here. */
+  const resPool = _lootResRows();
   const lo = Math.max(0, cont.resMin | 0) || 1;
   const hi = Math.max(lo, cont.resMax | 0) || 5;
   const pick = (excludeId) => {

@@ -111,6 +111,15 @@ let bad = 0;
                                    list, which is the other direction the same
                                    mistake arrives from
 
+     ECON_TEST_SABOTAGE=loot-ledger round0q: point the three reward sites back at
+                                   RESOURCE_IDS / RESOURCES, i.e. re-commit the
+                                   pre-fix code. Reddens COMPOSITION and reprints
+                                   the ~20%-legacy dilution the round exists for
+     ECON_TEST_SABOTAGE=loot-promo  round0q: promote a fake id (`flour`) into
+                                   RESOURCES without saying whether it is
+                                   lootable. Reddens COVERAGE — the guard that
+                                   forces the NEXT promotion to declare itself
+
    ⚠ Every one of these must turn the gate RED. If you change these rounds, run
      all of them and check that they still do; an unset variable is the shipping
      path and does nothing. */
@@ -3985,6 +3994,393 @@ const srcBlockAfter = (src, decl, open) => {
 
     if (fails) { bad++; console.log('\n=== ROUND 0p: ' + fails + ' FAILED ==='); }
     else console.log('\n=== ROUND 0p: ALL PASS ===');
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0q — 🎁 THE LOOT POOL IS NOT THE LEDGER
+   ----------------------------------------------------------------------------
+   🔴 THE DEFECT THIS ROUND EXISTS FOR, MEASURED, NOT ASSERTED.
+   `RESOURCES` answers ONE question: "what can the camp HOLD?". Three random-
+   reward sites were reading it — via RESOURCE_IDS — to answer a completely
+   DIFFERENT one: "what does a scavenging run BRING BACK?". The two answers were
+   the same array only for as long as the ledger happened to BE the 14 camp
+   staples. Then commit 3a5d7da4 ("Promote the 56 producible chain resources
+   into the camp ledger") took RESOURCES 14 → 70, and with NOT ONE LINE CHANGED
+   at any of the three sites every loot pool was diluted 5× in a single commit.
+
+   Measured by evaluating the SHIPPED expression at each site, on three trees:
+
+     site                    f8563fad (14)   8587778 (70, pre-fix)   fixed
+     _campGrantLoot           100.00%          20.04%               100.00%
+     _smugglerDeal            100.00%          20.07%               100.00%
+     container resPool        100.00%          20.12%               100.00%
+     _resStashFloor()          2,002           10,010                2,002
+
+   …where the percentage is the share of drawn resources that is one of the 14
+   the player can actually EAT, BURN, CRAFT OR SPEND. So every expedition's
+   food / ammo / water / metal / supplies income fell to ×0.20 overnight and 4
+   drops in 5 became an id with no consumer: not in CONSUMABLE_RESOURCES, in no
+   craft recipe, and /src/economy is FORBIDDEN to spend it (Rule 2). A drop you
+   cannot use is not income; against a shared stash ceiling it is a tax.
+
+   ── WHY THE ROUND IS SHAPED THIS WAY ────────────────────────────────────────
+   The bug class is "ADDING TO `RESOURCES` CHANGES SOMETHING THAT READS
+   `RESOURCE_IDS` FOR A DIFFERENT PURPOSE", and there WILL be more promotions —
+   RESOURCES_NEXT.md has 258 chain ids queued behind these 56. A round that only
+   asserted "the fix is present" would be green the day someone adds a fourth
+   reward site. So this one MEASURES OUTPUT:
+
+     COMPOSITION  evaluate the real pick expression scraped out of each of the
+                  three call sites and draw >= 100,000 times. The observed set of
+                  ids must be EXACTLY the declared loot pool. This is what goes
+                  red if a site is pointed back at the ledger, however it is
+                  spelled — no grep to outwit, no fix to name.
+     COVERAGE     every id in RESOURCES must be CLASSIFIED: lootable (in
+                  LOOT_RES_IDS) or city-made (in the chain derivation round0p
+                  already computes). An id that is neither is a promotion nobody
+                  decided the loot status of, and that is the whole failure mode.
+     WIRING       the pool ⊆ the ledger (an id in the pool with no RESOURCES row
+                  would be drawable by _lootResPick and invisible to
+                  _lootResRows, so the smuggler and the container would disagree
+                  about what exists), the weights live in config and no call site
+                  names a number, and the bag is never empty.
+     STASH        _resStashFloor() is derived from the LOOT pool, not the ledger.
+
+   ⚠ THE COMPOSITION CHECK IS DELIBERATELY BLIND TO THE FIX'S MECHANISM. It
+     evaluates whatever text is at the call site today. Rewrite the pool as a
+     filter, a tier flag or a second array and this round keeps working; point
+     any site back at RESOURCES and it goes red no matter how it is written.
+
+   ── PROVE IT CAN FAIL ──────────────────────────────────────────────────────
+     ECON_TEST_SABOTAGE=loot-ledger  re-commit the pre-fix draw at all three
+                                     sites. COMPOSITION goes red and reprints the
+                                     ~20% dilution above — the regression itself.
+     ECON_TEST_SABOTAGE=loot-promo   promote a fake id (`flour`) into RESOURCES
+                                     without declaring it lootable. COMPOSITION
+                                     stays GREEN — that is the fix working, an
+                                     unrelated promotion may not move the pool —
+                                     and COVERAGE goes red instead, which is the
+                                     assertion that forces the next promotion to
+                                     SAY which side the new id is on.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0q-loot-pool ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+
+  let IDX = null;
+  try { IDX = readFileSync(join(here, '../../public/index.html'), 'utf8'); } catch (e) { IDX = null; }
+
+  /* Whole `function NAME(…) { … }` text. srcBlockAfter brace-matches the BODY;
+     the signature is the slice from `function` to the `{` it stopped at, so the
+     two together are the function verbatim — parameters, comments and all. It is
+     re-evaluated here rather than copied, which is the only version of this
+     round that can catch an edit to the shipped file. */
+  const fnText = (src, name) => {
+    if (!src) return null;
+    const at = src.indexOf('function ' + name + '(');
+    if (at < 0) return null;
+    const body = srcBlockAfter(src, 'function ' + name + '(');
+    if (!body) return null;
+    const bo = src.indexOf('{', src.indexOf(')', at));
+    if (bo < 0 || bo > src.indexOf(body, at) + 1) return null;
+    return src.slice(at, bo) + body;
+  };
+  /* The text of one statement INSIDE a named function, between two anchors.
+     Anchored inside the function rather than on a file-wide regex because
+     `const rid =` and `const resPool =` are ordinary words that appear in prose
+     and in other functions; scoping to the function is what stops this scraping
+     a comment and then passing vacuously over it. */
+  const stmtIn = (src, fname, from, to) => {
+    const f = fnText(src, fname); if (!f) return null;
+    const a = f.indexOf(from); if (a < 0) return null;
+    const b = f.indexOf(to, a); if (b < 0) return null;
+    return f.slice(a, b);
+  };
+  const litOf = (src, decl, open) => {
+    if (!src || src.indexOf(decl) < 0) return null;
+    const t = srcBlockAfter(src, decl, open);
+    if (!t) return null;
+    try { return (new Function('return (' + t + ');'))(); } catch (e) { return null; }
+  };
+
+  const RES        = litOf(IDX, 'const RESOURCES = [', '[');
+  const LOOT_IDS   = litOf(IDX, 'const LOOT_RES_IDS = [', '[');
+  const WEIGHTS    = litOf(IDX, 'const LOOT_RES_WEIGHTS = {');
+  const scaleM     = IDX ? /const\s+LOOT_WEIGHT_SCALE\s*=\s*(\d+)/.exec(IDX) : null;
+  const baseM      = IDX ? /const\s+RES_STASH_BASE\s*=\s*(\d+)/.exec(IDX) : null;
+  const perKindM   = IDX ? /const\s+RES_STASH_PER_KIND\s*=\s*(\d+)/.exec(IDX) : null;
+  const campPick   = stmtIn(IDX, '_campGrantLoot', 'const rid =', ';');
+  const contPool   = stmtIn(IDX, '_campLootContainer', 'const resPool =', '\n  const lo =');
+  const contPick   = stmtIn(IDX, '_campLootContainer', 'const pick = (excludeId)', '\n  const res1');
+  const smugDeal   = fnText(IDX, '_smugglerDeal');
+
+  /* 🔴 THE VACUOUS-TRIPWIRE GUARD, same rule as round0b and round0p: a scrape
+     that matched nothing would "pass" every measurement below over an empty
+     sample, which is strictly worse than having no round — index.html's loot
+     block promises in writing that this check exists. Read fails ⇒ stop. */
+  const gotAll =
+    chk('read public/index.html', !!IDX && IDX.length > 1000000, IDX ? String(IDX.length) : 'UNREADABLE') &
+    chk('extracted RESOURCES / LOOT_RES_IDS / LOOT_RES_WEIGHTS / LOOT_WEIGHT_SCALE',
+        Array.isArray(RES) && RES.length > 10 && Array.isArray(LOOT_IDS) && LOOT_IDS.length > 0 && !!WEIGHTS && !!scaleM,
+        [RES && RES.length, LOOT_IDS && LOOT_IDS.length, WEIGHTS && JSON.stringify(WEIGHTS), scaleM && scaleM[1]].join(' / ')) &
+    chk('scraped the live draw expression out of all three reward sites',
+        !!campPick && !!contPool && !!contPick && !!smugDeal,
+        ['campPick', 'contPool', 'contPick', 'smugglerDeal'].filter((n, i) => ![campPick, contPool, contPick, smugDeal][i]).join(',') + ' NOT FOUND');
+
+  if (!gotAll) {
+    console.log('\n🔴 THE SOURCE COULD NOT BE READ — nothing below was checked.');
+    console.log('   If a declaration or function was renamed, fix the markers in this round.');
+    console.log('   Do NOT delete it: index.html\'s "THE LOOT POOL IS NOT THE LEDGER" block');
+    console.log('   promises this round re-measures all three sites.');
+    bad++; console.log('\n=== ROUND 0q: ' + fails + ' FAILED ===');
+  } else {
+    let RIDS = RES.map(r => r.id);
+    let RESROWS = RES.slice();
+    if (SABOTAGE === 'loot-promo') {
+      RESROWS = RESROWS.concat([{ id: 'flour', name: 'Flour', icon: '🌾', color: '#e8d7a0' }]);
+      RIDS = RESROWS.map(r => r.id);
+      console.log('   🧨 promoted `flour` into RESOURCES without declaring it lootable');
+    }
+
+    // ── 1. WIRING ─────────────────────────────────────────────────────────
+    /* The pool must be a SUBSET of the ledger. _lootResPick draws ids from the
+       bag while _lootResRows maps the same bag through RESOURCES and drops the
+       misses, so an id in the pool with no RESOURCES row is drawable by the
+       loot run and the smuggler but INVISIBLE to the container — one pool
+       meaning two different things, and addRes() would bank a key the vault
+       cannot render. */
+    const strays = LOOT_IDS.filter(id => !RIDS.includes(id));
+    chk('the loot pool is a subset of the ledger — every lootable id has a RESOURCES row (' + LOOT_IDS.length + ' ids)',
+        strays.length === 0, 'not in RESOURCES: ' + strays.join(', '));
+    chk('the loot pool is not the whole ledger — it is a DECISION, not a copy of RESOURCES (' + LOOT_IDS.length + ' of ' + RIDS.length + ')',
+        LOOT_IDS.length < RIDS.length, LOOT_IDS.length + ' vs ' + RIDS.length);
+    chk('no duplicate ids in the loot pool (a repeat is a silent double weight)',
+        new Set(LOOT_IDS).size === LOOT_IDS.length, LOOT_IDS.length + ' entries, ' + new Set(LOOT_IDS).size + ' distinct');
+    /* Rule 4's shape, applied to loot: the mix lives in config. A number at a
+       call site is how the last four tuning arguments got lost. */
+    chk('the weights live in LOOT_RES_WEIGHTS config, both named and numeric (pool=' + WEIGHTS.pool + ', offPool=' + WEIGHTS.offPool + ')',
+        typeof WEIGHTS.pool === 'number' && typeof WEIGHTS.offPool === 'number' && WEIGHTS.pool > 0 && WEIGHTS.offPool >= 0,
+        JSON.stringify(WEIGHTS));
+    /* Where each site gets its IDS from. This is a source assertion and it is
+       deliberately weaker than the composition measurement below — it exists so
+       a FAILURE NAMES THE SITE, because "20% of draws were off-pool" does not
+       tell you which of the three regressed. */
+    const strip = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    for (const [site, txt] of [['_campGrantLoot', campPick], ['_smugglerDeal', smugDeal], ['_campLootContainer', contPool + contPick]]) {
+      const code = strip(txt);
+      chk(site + ' draws its ids from the loot pool and names no ledger array',
+          /_lootRes(Pick|Rows)\s*\(/.test(code) && !/\b(RESOURCE_IDS|RESOURCES|SMUGGLER_RES)\b/.test(code),
+          (/_lootRes(Pick|Rows)\s*\(/.test(code) ? '' : 'no _lootRes* call; ') +
+          'ledger arrays referenced: [' + ((code.match(/\b(RESOURCE_IDS|RESOURCES|SMUGGLER_RES)\b/g) || []).join(', ')) + ']');
+    }
+    /* Rule 4's shape applied to the draw itself: the two sites whose draw is a
+       single expression may not name a number. 0 and 1 are structural (array
+       indices, Math.floor/Math.random bounds, the `|| 1` guards); anything else
+       is a weight or a pool size that escaped LOOT_RES_WEIGHTS.
+       ⚠ _smugglerDeal is EXCLUDED ON PURPOSE and not asserted over: its 45/170
+         deal sizes and 0.6/0.82 branch odds are real, legitimate tuning that has
+         nothing to do with which resource a deal names. Asserting "no literals"
+         there would be a green tick for a claim that is simply false. */
+    for (const [site, txt] of [['_campGrantLoot', campPick], ['_campLootContainer', contPool + contPick]]) {
+      const tuning = (strip(txt).match(/\b\d+(\.\d+)?\b/g) || []).filter(n => n !== '0' && n !== '1');
+      chk(site + ' names no tuning literal at the draw site — the mix is config, not code',
+          tuning.length === 0, tuning.join(','));
+    }
+
+    // ── 2. COVERAGE ───────────────────────────────────────────────────────
+    /* Every ledger id must be classified. This is the assertion that makes the
+       NEXT promotion declare itself: add an id to RESOURCES and it is either
+       lootable (say so in LOOT_RES_IDS) or city-made (it came from the chain
+       derivation), and if it is neither, nobody decided — which is exactly the
+       state that shipped 56 undecided ids into three reward tables. */
+    let CHAIN_IDS = [];
+    try {
+      const chain = await import('../../public/src/resources/chain.js');
+      const pd = await import('../../public/src/city/production.data.js');
+      const promoted = pd.PROMOTED_CHAIN_IDS || [];
+      CHAIN_IDS = promoted.slice();
+      chk('read the chain-promoted id set to classify against (' + CHAIN_IDS.length + ' ids, chain catalogue ' + (chain.CHAIN_BY_ID ? Object.keys(chain.CHAIN_BY_ID).length : 0) + ')',
+          CHAIN_IDS.length > 0, String(CHAIN_IDS.length));
+    } catch (e) {
+      chk('read the chain-promoted id set to classify against', false, String(e && e.message));
+    }
+    const unclassified = RIDS.filter(id => !LOOT_IDS.includes(id) && !CHAIN_IDS.includes(id));
+    chk('every one of the ' + RIDS.length + ' ledger ids is CLASSIFIED — lootable (' + LOOT_IDS.length + ') or city-made (' + CHAIN_IDS.length + ')',
+        unclassified.length === 0,
+        'undeclared: [' + unclassified.join(', ') + '] — add it to LOOT_RES_IDS if a scavenger finds it, or promote it through the chain if the city makes it');
+
+    // ── 3. COMPOSITION — the deliverable ──────────────────────────────────
+    /* Rebuild the live loot machinery by EVALUATING the shipped function texts,
+       then run the shipped draw expression from each call site against it. What
+       is measured is real output, not the presence of a fix. */
+    const parts = [];
+    parts.push('const LOOT_RES_IDS = ' + JSON.stringify(LOOT_IDS) + ';');
+    parts.push('const LOOT_RES_WEIGHTS = ' + JSON.stringify(WEIGHTS) + ';');
+    parts.push('const LOOT_WEIGHT_SCALE = ' + scaleM[1] + ';');
+    if (/let\s+_lootBag\s*=/.test(IDX)) parts.push('let _lootBag = null, _lootBagFor = -1;');
+    for (const fn of ['_lootResBag', '_lootResPick', '_lootResRows', '_smugRng', '_smugInt', '_smugPick']) {
+      const t = fnText(IDX, fn); if (t) parts.push(t);
+    }
+    parts.push('const SMUGGLER_WANT_RARITY = ' + JSON.stringify(litOf(IDX, 'const SMUGGLER_WANT_RARITY = ', '[') || ['common']) + ';');
+    if (IDX.indexOf('const SMUGGLER_RES = ') >= 0) {
+      const a = IDX.indexOf('const SMUGGLER_RES = ');
+      const b = IDX.indexOf('\nconst SMUGGLER_WANT_RARITY', a);
+      if (b > a) parts.push(IDX.slice(a, b));
+    }
+    /* The smuggler's non-loot dependencies, stubbed: the board's window is the
+       loop variable here so many windows can be sampled, and the card pool is
+       admin content that has nothing to do with which RESOURCE a deal names. */
+    parts.push('let __WIN = 0; function _smugglerWindow(){ return __WIN; } function _smugglerCardPool(){ return []; } function __setWin(w){ __WIN = w; }');
+    parts.push(smugDeal);
+    parts.push('function __campPick(){ ' + campPick + '; return rid; }');
+    parts.push('function __contRows(){ ' + contPool + '; return resPool; }');
+    parts.push('function __contPick(resPool, lo, hi){ ' + contPick + ' return pick; }');
+    if (SABOTAGE === 'loot-ledger') {
+      /* Re-commit the pre-fix draw: the reward sites read the LEDGER again.
+         Overriding the two helpers reproduces the regression whatever the call
+         sites say, and the composition assertions must not survive it. */
+      parts.push('_lootResPick = function(rnd){ const r = (typeof rnd === "function") ? rnd() : Math.random(); return RESOURCE_IDS[Math.floor(r * RESOURCE_IDS.length)]; };');
+      parts.push('_lootResRows = function(){ return RESOURCES.slice(); };');
+      console.log('   🧨 the three reward sites draw from RESOURCE_IDS / RESOURCES again (the pre-fix code)');
+    }
+    parts.push('return { __campPick, __contRows, __contPick, _smugglerDeal, __setWin };');
+
+    let S = null;
+    try {
+      S = (new Function('RESOURCES', 'RESOURCE_IDS',
+        (SABOTAGE === 'loot-ledger' ? 'var _lootResPick, _lootResRows;\n' : '') + parts.join('\n')))(RESROWS, RIDS);
+    } catch (e) {
+      chk('the scraped loot machinery evaluates', false, String(e && e.message));
+    }
+
+    if (S) {
+      const PULLS = 120000;
+      const setEq = (a, b) => a.size === b.size && [...a].every(x => b.has(x));
+      const POOL = new Set(LOOT_IDS);
+      const share = (n, d) => (100 * n / d).toFixed(2) + '%';
+      const report = (site, inPool, total, seen) => {
+        console.log('   ' + site.padEnd(20) + total + ' draws · ' + share(inPool, total) +
+                    ' from the loot pool · ' + seen.size + ' distinct ids');
+      };
+
+      // 3a. _campGrantLoot
+      {
+        let inPool = 0; const seen = new Set();
+        for (let i = 0; i < PULLS; i++) { const id = S.__campPick(); seen.add(id); if (POOL.has(id)) inPool++; }
+        report('_campGrantLoot', inPool, PULLS, seen);
+        chk('_campGrantLoot pays ONLY in lootable resources over ' + PULLS + ' draws — an expedition brings home what it brought home before the promotion',
+            inPool === PULLS && setEq(seen, POOL),
+            share(inPool, PULLS) + ' in pool; off-pool ids drawn: [' + [...seen].filter(x => !POOL.has(x)).slice(0, 8).join(', ') + ']');
+      }
+      // 3b. _smugglerDeal — the whole board, over many windows
+      {
+        /* Every deal index the Black Market can reach (Lv4 → 6, see
+           _smugglerDealCount), across enough 12-hour windows that the sample is
+           the board a player actually sees rather than one lucky rotation. */
+        const DEALS = 6, WINDOWS = 20000;
+        let legs = 0, inPool = 0; const seen = new Set();
+        for (let w = 0; w < WINDOWS; w++) {
+          S.__setWin(w);
+          for (let i = 0; i < DEALS; i++) {
+            const d = S._smugglerDeal(i);
+            for (const side of [d.want, d.give]) {
+              if (side && side.kind === 'res') { legs++; seen.add(side.id); if (POOL.has(side.id)) inPool++; }
+            }
+          }
+        }
+        report('_smugglerDeal', inPool, legs, seen);
+        chk('every smuggler deal wants and pays in a lootable resource over ' + legs + ' legs — the board never asks for a good the camp cannot get',
+            legs > 100000 && inPool === legs && setEq(seen, POOL),
+            legs + ' legs, ' + share(inPool, legs) + ' in pool; off-pool: [' + [...seen].filter(x => !POOL.has(x)).slice(0, 8).join(', ') + ']');
+      }
+      // 3c. container rewards
+      {
+        const rows = S.__contRows();
+        const pick = S.__contPick(rows, 1, 5);
+        let inPool = 0; const seen = new Set();
+        for (let i = 0; i < PULLS; i++) { const r = pick(); if (!r) continue; seen.add(r.id); if (POOL.has(r.id)) inPool++; }
+        report('container resPool', inPool, PULLS, seen);
+        chk('container rewards pay ONLY in lootable resources over ' + PULLS + ' draws (' + rows.length + ' weighted rows)',
+            inPool === PULLS && setEq(seen, POOL),
+            share(inPool, PULLS) + ' in pool; off-pool: [' + [...seen].filter(x => !POOL.has(x)).slice(0, 8).join(', ') + ']');
+        /* The rows carry the metadata the reward modal renders. A row that lost
+           its name or icon in the weighting would print "undefined" at the
+           player, which is how a pool rewrite goes wrong without moving a
+           single percentage. */
+        chk('every weighted container row still carries id + name + icon (the modal renders these)',
+            rows.length > 0 && rows.every(r => r && r.id && r.name && r.icon),
+            String(rows.filter(r => !r || !r.id || !r.name || !r.icon).length) + ' malformed rows');
+      }
+      /* THE BAG IS NEVER EMPTY. Every call site does bag[floor(r*len)] and would
+         get `undefined` — addRes(undefined, n) banks a literal "undefined" key
+         into Profile.salvage that counts against the cap forever and no UI can
+         clear. Diluted is survivable; corrupt is not. */
+      {
+        let degraded = null;
+        try {
+          const f = new Function('RESOURCES', 'RESOURCE_IDS',
+            'const LOOT_RES_IDS = []; const LOOT_RES_WEIGHTS = { pool: 0, offPool: 0 }; const LOOT_WEIGHT_SCALE = ' + scaleM[1] + ';' +
+            'let _lootBag = null, _lootBagFor = -1;' + fnText(IDX, '_lootResBag') + ' return _lootResBag();');
+          degraded = f(RESROWS, RIDS);
+        } catch (e) {}
+        chk('an empty or zero-weighted pool degrades to the whole ledger, never to an empty bag (undefined would be banked forever)',
+            Array.isArray(degraded) && degraded.length === RIDS.length,
+            degraded ? String(degraded.length) : 'THREW');
+      }
+    }
+
+    // ── 4. THE STASH CAP ──────────────────────────────────────────────────
+    /* RESOURCES_NEXT.md argued 143/kind keeps the allowance flat, and that is
+       true PER KIND and false IN TOTAL: getResourceUnits() sums EVERY resource
+       against ONE ceiling, so moving the denominator 14 → 70 moved the floor
+       2,002 → 10,010 and handed a 5× stash buff to every account, including the
+       ones that never open the city. DECISION: the denominator is the LOOT POOL,
+       because the only kinds a player accumulates WITHOUT CHOOSING TO are the
+       ones loot pays in — which is the set the 143 was calibrated against. The
+       other 56 arrive only from CITY_PRODUCTION, which the player builds on
+       purpose, and the same catalogue sells the Warehouse whose stated job is
+       raising this ceiling. */
+    const floorFn = fnText(IDX, '_resStashFloor');
+    let floorVal = null;
+    try {
+      floorVal = (new Function('RESOURCE_IDS', 'LOOT_RES_IDS', 'RES_STASH_BASE', 'RES_STASH_PER_KIND',
+        floorFn + ' return _resStashFloor();'))(RIDS, LOOT_IDS, +baseM[1], +perKindM[1]);
+    } catch (e) {}
+    chk('_resStashFloor() = ' + floorVal + ' — the legacy-14 allowance is its pre-promotion value (' + perKindM[1] + ' × ' + LOOT_IDS.length + '), NOT the 10,010 the promotion silently granted',
+        floorVal === Math.max(+baseM[1], LOOT_IDS.length * +perKindM[1]) && floorVal === 2002,
+        String(floorVal));
+    chk('the floor is DERIVED from the loot pool, not from RESOURCE_IDS and not a literal — widening the pool widens the floor with it',
+        !!floorFn && /LOOT_RES_IDS/.test(floorFn) && !/RESOURCE_IDS/.test(floorFn),
+        (floorFn || '').replace(/\s+/g, ' ').slice(0, 160));
+
+    // ── 5. THE SAME CLASS, ONE LEVEL OVER: the exotic-salvage table ────────
+    /* _rollUnitSalvage subtracts "the staples the rolls above already handed
+       out" from SALVAGE_RES to get its exotic table. It was subtracting
+       RESOURCE_IDS — the ledger — so the day an id that IS in SALVAGE_RES gets
+       promoted (leather, ironOre, steelPlating are all queued), it would vanish
+       from the exotic table with nobody touching this line. Identical output
+       today; pinned so it stays that way. */
+    const SALV = litOf(IDX, 'const SALVAGE_RES = [', '[');
+    const rollFn = fnText(IDX, '_rollUnitSalvage');
+    if (SALV && rollFn) {
+      const exoticVsPool = SALV.filter(r => r && r.id && !LOOT_IDS.includes(r.id)).length;
+      const exoticVsLedger = SALV.filter(r => r && r.id && !RIDS.includes(r.id)).length;
+      chk('_rollUnitSalvage subtracts the LOOT POOL from SALVAGE_RES, not the ledger (' + exoticVsPool + ' exotics)',
+          /LOOT_RES_IDS/.test(rollFn), 'still reads RESOURCE_IDS');
+      chk('…and the exotic table is unchanged by the promotion — ' + exoticVsPool + ' either way, so this was a latent trap and not a live bug',
+          exoticVsPool === exoticVsLedger && exoticVsPool > 100,
+          'vs pool ' + exoticVsPool + ' / vs ledger ' + exoticVsLedger);
+    } else {
+      chk('read SALVAGE_RES and _rollUnitSalvage', false, 'SALVAGE_RES=' + !!SALV + ' fn=' + !!rollFn);
+    }
+
+    if (fails) { bad++; console.log('\n=== ROUND 0q: ' + fails + ' FAILED ==='); }
+    else console.log('\n=== ROUND 0q: ALL PASS ===');
   }
 }
 

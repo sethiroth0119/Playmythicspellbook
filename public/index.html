@@ -206992,7 +206992,15 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120t9';
+  /* 🔴 THIS IS A DEPLOY KNOB — the FIFTH, and it is not on CLAUDE.md's list.
+     sw.js is network-first for navigations and for /src/, and CACHE-FIRST for
+     everything else. The city page is loaded here as an iframe SUB-RESOURCE,
+     not as a navigation, so it takes the cache-first branch: this ?v= is the
+     only thing in the URL that can bust it. It sat at 120t9 through an entire
+     rewrite of the city and its economy — bump it with the other four or a
+     returning player can be served the old city out of cache while every
+     other knob says the deploy landed. */
+  f.src = 'node-city/index.html?v=120w8';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);

@@ -300,6 +300,87 @@ let bad = 0;
                                    bridge then refused. 10,193 🔥 in neither
                                    ledger over 400 ticks, audit green throughout
 
+     ── COVER, the three fixes that had no round at all ────────────────────────
+     🔴 ALL THREE WERE FOUND THE SAME WAY: copy the product tree outside the
+        repo, revert ONE hunk of this session's 67, run the gate and both syntax
+        checks. 21 of the 67 came back green. These are the three that a player
+        can be hurt by, and each one's round below drives the SHIPPED statement
+        rather than a shape this file wrote — which is what all three were
+        missing. See each section's header for the caller it mirrors.
+     ECON_TEST_SABOTAGE=save-gone  round0s §3e: re-commit the pre-fix saveSoon()
+                                   timer body — `_saveWouldErase()` and a
+                                   one-argument `saveCity(serialize())`. That
+                                   function NO LONGER EXISTS (it became
+                                   `_savePolicy()`), so the reverted tree throws
+                                   a ReferenceError on EVERY autosave: the city
+                                   simply stops saving, silently, and neither the
+                                   gate nor `_synckcheck.mjs` could see it —
+                                   an undefined free variable is valid syntax.
+                                   §3e catches it TWICE, on purpose: the lifted
+                                   writers are executed (so the ReferenceError is
+                                   caught and reported as a failure, not a stack
+                                   trace) AND every identifier the save path
+                                   calls is checked against node-city's own
+                                   declarations, so a call on a branch this
+                                   scenario does not take is caught too
+     ECON_TEST_SABOTAGE=load-catch-open round0s §3d: strip the verdict downgrade
+                                   out of loadState()'s catch clause, i.e. let a
+                                   load that threw mid-way keep asserting the
+                                   founding decision it derived before the throw.
+                                   `_cityVerdict` is what boot()'s one E.mount
+                                   call passes as `established`, so this is the
+                                   founding tranche being issued off a half-built
+                                   city. ⚠ The downgrade is deliberately
+                                   CONDITIONAL — §3d asserts an ESTABLISHED city
+                                   that threw in the renderer is NOT deferred,
+                                   because deferring it would block the saves of
+                                   a city already proved to exist
+     ECON_TEST_SABOTAGE=faucet-untallied round0s §7: drop `S.faucetLifetime +=
+                                   faucet` from runDay, i.e. stop tallying one
+                                   of the two ways this city can make Cinder.
+                                   Reddens the lifetime identity at -176.15 🔥
+                                   — money that exists and that neither creation
+                                   path admits to making
+     ECON_TEST_SABOTAGE=imports-untallied round0s §7: drop `S.importsLifetime +=
+                                   amount` from addImports(). Reddens the same
+                                   identity at +11,195.44 🔥 in the other
+                                   direction. ⚠ It injures the HELPER, not one
+                                   of the four call sites that adopted it this
+                                   session — see §7's header for the measurement
+                                   that forced that choice, and for what §7
+                                   therefore does and does not cover
+     ECON_TEST_SABOTAGE=halt-flat  round0t §3c: re-commit haltState()'s FLAT
+                                   one-cycle input figure (`(inputs[k]|0) * lvl`)
+                                   into the shipped production.state.js, while
+                                   collect() keeps charging by terroir.
+                                   `pending()` opens with
+                                   `if (!halt.running || cycles <= 0) return
+                                   { cycles: 0 … }`, so this verdict does not
+                                   explain a stall, IT CAUSES ONE: measured on
+                                   poor ground (tf 0.150–0.450) it halts 30 of
+                                   140 producer×ground probes that could afford
+                                   the cycle, and on rich ground (tf 4.800) it
+                                   calls a building "running" for a cycle
+                                   collect() cannot fund
+     ECON_TEST_SABOTAGE=defer-deadbtn round0s §3f: delete the block that
+                                   dispatches 🔄 Retry now and ↻ Reload above
+                                   ecoAction's `if (!E || !E.ready())` gate. A
+                                   deferred economy is never ready, so both
+                                   buttons on the deferral panel become inert —
+                                   and once the backoff list is exhausted the
+                                   panel itself says "Retrying · on request",
+                                   i.e. the dead button is all a signed-out
+                                   player has left
+     ECON_TEST_SABOTAGE=defer-park round0r §1/§2b: delete boot()'s
+                                   `try { if (_bldDeferredFinish) bldFinishAll(…) }`.
+                                   `bldNormalize(true)` defers every completion,
+                                   so without this statement its report is
+                                   computed and discarded and every in-flight
+                                   order parks FOREVER whenever /src/economy
+                                   404s. §2b used to perform that hand-off with
+                                   a line of its own, which is why the deletion
+                                   was invisible
+
      ── round0w, the three payout fixes that shipped with no round on them ─────
      🔴 ALL THREE WENT GREEN UNDER A FULL REVERT BEFORE THIS ROUND EXISTED. They
         were found by copying the tree outside the repo, reverting one fix and
@@ -380,12 +461,12 @@ const SABOTAGE = process.env.ECON_TEST_SABOTAGE || '';
 const SABOTAGES = [
   'bogus-id', 'boot-open', 'boot-presweep', 'cancel-blind', 'cancel-sited', 'cap-typo',
   'charter-cap', 'dark-cards', 'defer-closed', 'defer-noSave', 'defer-nostamp', 'defer-open',
-  'defer-serverwrite', 'draw-compound', 'eco-erase',
-  'free-repair', 'inflight-drop', 'lab-ungated',
+  'defer-deadbtn', 'defer-park', 'defer-serverwrite', 'draw-compound', 'eco-erase', 'load-catch-open',
+  'faucet-untallied', 'free-repair', 'halt-flat', 'imports-untallied', 'inflight-drop', 'lab-ungated',
   'loot-ledger', 'loot-promo', 'no-map', 'no-producer', 'nobridge-drop', 'ops-found-inline',
   'ops-found-unguarded', 'ops-grant-unknown', 'ops-swallow', 'ops-zombie', 'payout-drop',
   'payout-blind', 'pop-zero', 'price-drift', 'promo-drift', 'reap-burn', 'rearm-caller',
-  'refund-blind', 'refund-raw', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
+  'refund-blind', 'refund-raw', 'save-gone', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
   'sell-pump', 'settle-requested', 'stale-deliver', 'stale-refund', 'stale-workplaces',
   'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind',
 ];
@@ -458,6 +539,38 @@ const srcBlockAfter = (src, decl, open) => {
     else if (c === close) { depth--; if (depth === 0) return src.slice(start, i + 1); }
   }
   return null;                       // unbalanced ⇒ nothing, never a guess
+};
+
+/* 🔴 COMMENTS OUT, AND THIS IS NOT TIDINESS — IT IS THE ROUNDS WORKING AT ALL.
+   Any round that reasons about WHERE a call appears, or about WHICH functions a
+   block calls, has to read code and not prose — and node-city is prose that
+   NAMES its own call sites. round0r §1 learned this the hard way: boot()'s own
+   comment says "this call sits ~118 lines above the `await offlineCatchUp()`
+   below", a raw scan found that sentence first, put `catchAt` hundreds of
+   characters too early, and the ordering assertion passed no matter what the
+   code did. round0s §3e has the same exposure from the other direction — the
+   erasure-guard header names `_saveWouldErase`, `saveNow()` and `saveSoon()` in
+   running text, so an un-stripped scan of the save path would "find" every
+   function it is trying to prove still exists.
+   Strings are stepped over too, for the same reason srcBlockAfter does it.
+   ⚠ MODULE SCOPE ON PURPOSE. It lived inside round0r's block until round0s §3e
+     needed it; a second copy was written and then deleted, exactly as the
+     srcBlockAfter header above describes. One fussy scanner, one place. */
+const stripComments = (src) => {
+  if (!src) return src;
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); i = (e < 0 ? src.length : e + 1); continue; }
+    if (c === '/' && d === '/') { const e = src.indexOf('\n', i + 2); i = (e < 0 ? src.length : e - 1); continue; }
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c; out += c; i++;
+      for (; i < src.length; i++) { out += src[i]; if (src[i] === '\\') { out += src[++i]; continue; } if (src[i] === q) break; }
+      continue;
+    }
+    out += c;
+  }
+  return out;
 };
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -4770,31 +4883,9 @@ const srcBlockAfter = (src, decl, open) => {
     if (bo < 0 || bo > src.indexOf(body, at) + 1) return null;
     return (src.slice(Math.max(0, at - 6), at) === 'async ' ? 'async ' : '') + src.slice(at, bo) + body;
   };
-  /* 🔴 COMMENTS OUT, AND THIS IS NOT TIDINESS — IT IS THE ROUND WORKING AT ALL.
-     §1 below reasons about WHERE calls appear in boot(), and boot() is 300 lines
-     of prose that NAMES those calls: the fix's own comment says "this call sits
-     ~118 lines above the `await offlineCatchUp()` below". Scanning raw text
-     found that sentence first, put `catchAt` hundreds of characters too early,
-     and the ordering assertion passed no matter what the code did — caught by
-     reverting the product code and watching §1 stay green. A prose mention is
-     not a call site. Strings are stepped over too, for the same reason
-     srcBlockAfter does it. */
-  const stripComments = (src) => {
-    if (!src) return src;
-    let out = '';
-    for (let i = 0; i < src.length; i++) {
-      const c = src[i], d = src[i + 1];
-      if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); i = (e < 0 ? src.length : e + 1); continue; }
-      if (c === '/' && d === '/') { const e = src.indexOf('\n', i + 2); i = (e < 0 ? src.length : e - 1); continue; }
-      if (c === '"' || c === "'" || c === '`') {
-        const q = c; out += c; i++;
-        for (; i < src.length; i++) { out += src[i]; if (src[i] === '\\') { out += src[++i]; continue; } if (src[i] === q) break; }
-        continue;
-      }
-      out += c;
-    }
-    return out;
-  };
+  /* §1 below reasons about WHERE calls appear in boot(), so it reads code and
+     not prose — see the `stripComments` header at module scope for the exact
+     sentence in boot() that made this round pass no matter what the code did. */
   // A one-line `const NAME = …;` declaration, verbatim.
   const lineConst = (src, name) => {
     if (!src) return null;
@@ -4954,6 +5045,38 @@ const srcBlockAfter = (src, decl, open) => {
      BEFORE it runs, or it sweeps against an unclamped duration) and completes
      nothing. */
   const BOOT_SRC = unfix(stripComments(BOOT_SRC0), 'boot-presweep', [['bldNormalize(true)', 'bldNormalize()']]);
+
+  /* 🔴 THE DEGRADE HAND-OFF, LIFTED AS THREE STATEMENTS AND THEN EXECUTED BY §2b.
+     ----------------------------------------------------------------------------
+     §2b used to write its own `if (deferred) api.bldFinishAll(deferred);`, and
+     that one harness line was the whole reason the shipped hand-off could be
+     DELETED with this gate still green. `bldNormalize(true)` deliberately
+     finishes nothing and returns a report instead; if boot() then drops that
+     report on the floor, `_bldDeferredFinish` is a write-only variable and every
+     in-flight order parks forever the moment /src/economy 404s — which is not
+     hypothetical, ADVERSARIAL_FINDINGS §5.7 quotes a real log line of the
+     degrade path firing on this machine. A test that performs the product's job
+     for it certifies its own line, not the product's.
+     So the three statements are scraped out of boot() and RUN. `bootStmt` takes
+     the whole physical line, from the comment-stripped text, so the try/catch
+     that production wraps each one in comes along — including the `catch` that
+     swallows, which is part of the shape under test. */
+  const bootStmt = (needle) => {
+    if (!BOOT_SRC) return null;
+    const i = BOOT_SRC.indexOf(needle);
+    if (i < 0) return null;
+    const a = BOOT_SRC.lastIndexOf('\n', i) + 1;
+    const b = BOOT_SRC.indexOf('\n', i);
+    const line = BOOT_SRC.slice(a, b < 0 ? BOOT_SRC.length : b).trim();
+    return line || null;
+  };
+  const DEFER_DECL   = bootStmt('let _bldDeferredFinish');
+  const DEFER_ASSIGN = bootStmt('_bldDeferredFinish = bldNormalize(');
+  /* 🧨 defer-park models the revert exactly: the LINE IS GONE, so the scrape
+     comes back null — which is what a deleted statement looks like to a round
+     that reads the shipped text rather than trusting one. */
+  const DEFER_FINISH = SABOTAGE === 'defer-park' ? null : bootStmt('bldFinishAll(_bldDeferredFinish)');
+
   {
     chk('boot() still contains code after the comments are stripped (' + BOOT_SRC.length + ' of ' + BOOT_SRC0.length + ' chars)',
         BOOT_SRC.length > 4000 && BOOT_SRC.length < BOOT_SRC0.length * 0.9,
@@ -4969,6 +5092,19 @@ const srcBlockAfter = (src, decl, open) => {
     chk('boot() calls bldNormalize in its DEFERRING form — bldNormalize(true)',
         BOOT_SRC.indexOf('bldNormalize(true)') >= 0,
         BOOT_SRC.slice(Math.max(0, BOOT_SRC.indexOf('bldNormalize(')), BOOT_SRC.indexOf('bldNormalize(') + 40));
+    /* …AND THE OTHER HALF OF THE SAME FIX. Deferring is only safe if somebody
+       later ACTS on what was deferred. These two statements are what §2b runs;
+       the assertion here is that they exist at all and are in the right order,
+       because a deleted hand-off cannot be caught by driving it. */
+    chk('boot() keeps bldNormalize(true)\'s degrade report AND acts on it',
+        !!DEFER_DECL && !!DEFER_ASSIGN && !!DEFER_FINISH,
+        'decl ' + JSON.stringify(DEFER_DECL) + ' assign ' + JSON.stringify(DEFER_ASSIGN) +
+        ' finish ' + JSON.stringify(DEFER_FINISH) +
+        ' — without the finish, `_bldDeferredFinish` is computed and discarded and a paid-for tile parks forever');
+    const finishAt = DEFER_FINISH ? BOOT_SRC.indexOf('bldFinishAll(_bldDeferredFinish)') : -1;
+    chk('…and it acts on it AFTER the catch-up, where a completion is no longer a mint',
+        finishAt > catchAt,
+        'deferred finishAll@' + finishAt + ' vs offlineCatchUp@' + catchAt);
   }
 
   /* ── THE SANDBOX ───────────────────────────────────────────────────────────
@@ -5195,7 +5331,23 @@ const srcBlockAfter = (src, decl, open) => {
      parked behind a module that never arrived. Deferring the completion must not
      turn that guarantee off — it moves it after the catch-up, where it is also
      no longer a mint. A job that is due still completes at its own hour inside
-     the loop; anything left (an unbounded `d`) is finished by bldFinishAll. */
+     the loop; anything left (an unbounded `d`) is finished by bldFinishAll.
+
+     🔴 THIS SECTION DRIVES boot()'s OWN THREE STATEMENTS, NOT ITS OWN COPY OF
+        THEM. It used to call `api.bldNormalize(true)` and then, twelve lines
+        later, `if (deferred) api.bldFinishAll(deferred)` — a line THIS FILE
+        wrote. So the section certified that bldFinishAll completes things, which
+        was never in doubt, while the shipped hand-off in boot() could be deleted
+        outright with both gates green from end to end. That is the exact shape
+        of a round that "passes by exercising a shape production does not use".
+        `bootDefer` below compiles the scraped `let _bldDeferredFinish = null;`,
+        the scraped `try { _bldDeferredFinish = bldNormalize(true); } catch …`
+        and the scraped
+        `try { if (_bldDeferredFinish) bldFinishAll(_bldDeferredFinish); } catch …`
+        and runs THOSE. Delete the third statement in node-city and this section
+        leaves a tile parked, exactly as a player's city would — and §1 above
+        goes red first, because a deleted statement cannot be driven at all.
+        Prove it can fail: ECON_TEST_SABOTAGE=defer-park. */
   {
     const NOW = Date.now(), awayMs = 6 * 3600000, saveAt = NOW - awayMs;
     const spy = mkSpy();
@@ -5203,7 +5355,20 @@ const srcBlockAfter = (src, decl, open) => {
     api.game.tiles['1,1'] = { type: 'club', lvl: 1, rot: 0, bld: { k: 0, l: 1, s: saveAt - 3600000, d: 3 * 3600, fv: 1, pc: 0, pr: null } };
     api.game.tiles['2,2'] = { type: 'club', lvl: 1, rot: 0, bld: { k: 0, l: 1, s: saveAt, d: 40 * 24 * 3600, fv: 1, pc: 0, pr: null } };
     spy.phase = 'gap';
-    const deferred = api.bldNormalize(true);
+    /* boot()'s two halves, in boot()'s own words. `bldNormalize` and
+       `bldFinishAll` arrive as parameters, so the lifted statements close over
+       this sandbox's tiles exactly as they close over node-city's. A missing
+       statement degrades to a no-op rather than a throw, so the FAILURE this
+       section reports is the player-visible one — a parked tile — and not a
+       stack trace from the harness. */
+    const bootDefer = (DEFER_DECL && DEFER_ASSIGN && DEFER_FINISH)
+      ? new Function('bldNormalize', 'bldFinishAll', 'console',
+          DEFER_DECL + '\n' + DEFER_ASSIGN + '\n' +
+          'return { report: function () { return _bldDeferredFinish; },' +
+          '         finish: function () { ' + DEFER_FINISH + ' } };')
+        (api.bldNormalize, api.bldFinishAll, console)
+      : { report: () => null, finish: () => {} };
+    const deferred = bootDefer.report();
     chk('degrade path — bldNormalize(true) reports the module is gone instead of completing in the gap',
         typeof deferred === 'string' && deferred.length > 0 && spy.finished.length === 0,
         'returned ' + JSON.stringify(deferred) + ', ' + spy.finished.length + ' completed in the gap');
@@ -5218,7 +5383,7 @@ const srcBlockAfter = (src, decl, open) => {
     api.setOffline(false);
     spy.phase = 'post';
     api.setNow(Date.now()); api.bldSweep(Date.now());
-    if (deferred) api.bldFinishAll(deferred);
+    bootDefer.finish();               // boot()'s statement, not this file's
     const parked = Object.keys(api.game.tiles).filter(k => api.game.tiles[k].bld);
     chk('degrade path — NO TILE IS PARKED: every in-flight order completed by the end of boot',
         parked.length === 0, 'still building: ' + JSON.stringify(parked));
@@ -5755,6 +5920,9 @@ const srcBlockAfter = (src, decl, open) => {
      • setPopulation          before Sim.advance, from index.js tick   (§1 here)
      • the save-file mint     before any window opens at all          (§2 here)
      • the destroyed payout   in a rejected promise after the tick    (§4 here)
+     • the founding verdict   decided inside a catch clause    (§3d/load here)
+     • the save that never    happened, because the writer named a function
+       ran at all             that had been renamed away       (§3e/save here)
 
    And the gate could not see any of them, because gauntlet2's headline
    conservation assertion reads `lastAudit.ok` — i.e. it asks the audited system
@@ -6303,6 +6471,101 @@ const srcBlockAfter = (src, decl, open) => {
     chk('…and resolving it issues NO second tranche',
         Math.abs(E.snapshot().charterIssued - livedCharter) < 1e-6,
         'charterIssued ' + E.snapshot().charterIssued.toFixed(2) + ' vs ' + livedCharter.toFixed(2));
+
+    /* ── §3d A LOAD THAT THREW MID-WAY MAY NOT ASSERT A FOUNDING DECISION ─────
+       🔴 THE OTHER CATCH. §3b models boot()'s catch — the one that runs when
+          loadState() never got started. This one is loadState()'s OWN catch,
+          which runs when the read succeeded, the verdict was derived from it,
+          and then something further down threw: the tile loop, a road refresh,
+          a renderer fault, a citizen record the mesh could not build.
+
+       The verdict has ALREADY been written by then. `_cityVerdict` is the value
+       boot()'s single `E.mount({ …, established: _cityVerdict })` passes, so
+       leaving a 'new' standing after a half-completed load is a 300,000 🔥
+       founding tranche issued off a city we stopped reading half way through —
+       and `_loadFailed` is true, so nothing later re-reads and corrects it. The
+       shipped catch answers that with one line:
+
+           if (_cityVerdict === 'new') _cityVerdict = 'unknown';
+
+       CALLER MIRRORED: `async function loadState()`'s catch clause, feeding
+       boot()'s one E.mount literal — the same `mkOpts` §3/§3b compile from.
+       Nothing else in this gate executes that clause; reverting the line left
+       the gate and both syntax checks green.
+
+       ⚠ AND IT IS CONDITIONAL, WHICH IS THE HALF THAT PROTECTS AN HONEST PLAYER.
+         An unconditional `_cityVerdict = 'unknown'` was tried and rejected: a
+         throw AFTER the payload parsed leaves a verdict derived from REAL
+         evidence ('established', from tiles on disk), and deferring that city
+         costs it nothing it was owed while blocking its server writes for a
+         renderer bug — trading one harm for a bigger one, which is the mistake
+         this whole package exists to stop. So all three inputs are asserted, not
+         just the interesting one.
+       🧨 load-catch-open removes the downgrade from the EXTRACTED clause. */
+    {
+      const lsSrc = srcBlockAfter(ncSrc, 'async function loadState()');
+      const warnAt = lsSrc ? lsSrc.indexOf("console.warn('city load failed'") : -1;
+      /* The LAST `catch (e) {` before that warn is loadState's outer one — the
+         inner guards (JSON.parse, citLoad, lifeLoad) all close above it. */
+      const catchAt = warnAt >= 0 ? lsSrc.lastIndexOf('catch (e) {', warnAt) : -1;
+      let CATCH = catchAt >= 0 ? lsSrc.slice(lsSrc.indexOf('{', catchAt) + 1, warnAt) : null;
+      chk('§3d/load can read loadState\'s outer catch clause out of the shipped file',
+          !!CATCH && CATCH.indexOf('_loadFailed = true') >= 0 && CATCH.length < lsSrc.length * 0.5,
+          'clause ' + (CATCH ? CATCH.length + ' chars' : 'UNREADABLE') +
+          ' — a rename or a reshape made this section vacuous, do NOT delete it');
+      /* Separate from the scrape check on purpose: "I could not read it" and
+         "I read it and it never mentions the verdict" are different failures and
+         the second one is the defect. */
+      chk('§3d/load …and that clause SAYS SOMETHING about the founding verdict',
+          !!CATCH && CATCH.indexOf('_cityVerdict') >= 0,
+          'loadState\'s catch does not touch `_cityVerdict` at all, so whatever was derived before ' +
+          'the throw is what boot()\'s E.mount will act on — including a \'new\' that buys a tranche');
+      if (SABOTAGE === 'load-catch-open' && CATCH) {
+        const hit = CATCH.replace(/if \(_cityVerdict === 'new'\) _cityVerdict = 'unknown';/, '');
+        if (hit === CATCH) throw new Error('SABOTAGE load-catch-open matched nothing — loadState\'s catch was reshaped and this switch is inert');
+        CATCH = hit;
+      }
+      if (CATCH) {
+        /* The clause, compiled. `_loadDone`/`_loadFailed` are module-scope `let`s
+           in node-city and are declared the same way here because the clause
+           ASSIGNS them; `e` is the caught error. */
+        const loadCatch = new Function('_cityVerdict', 'e',
+          'let _loadDone = false, _loadFailed = false;\n' + CATCH + '\nreturn _cityVerdict;');
+        const boom = new Error('citLoad: a resident whose workplace the mesh could not build');
+        chk('§3d/load a load that threw while the verdict still said \'new\' STOPS SAYING SO',
+            loadCatch('new', boom) === 'unknown',
+            'catch left the verdict at ' + JSON.stringify(loadCatch('new', boom)) +
+            ' — a half-read city asserting a founding decision it cannot justify');
+        chk('§3d/load …but an ESTABLISHED city that threw is left alone, not deferred',
+            loadCatch('established', boom) === 'established',
+            'a renderer fault deferred a city we had already proved exists — that blocks its ' +
+            'server writes and denies it nothing it was owed, which is the trade this package exists to refuse');
+        chk('§3d/load …and an already-undecided verdict stays undecided',
+            loadCatch('unknown', boom) === 'unknown', 'got ' + loadCatch('unknown', boom));
+
+        /* THE PRODUCTION SHAPE, END TO END: derive the verdict from the payload
+           exactly as loadState does, throw where loadState can throw, run the
+           shipped clause, and hand the result to the shipped E.mount literal. */
+        const loadThrew = (j, unsafe) => {
+          let v = new Function('return (' + initRhs + ');')();
+          try { v = verdict(j, unsafe); throw boom; } catch (err) { return loadCatch(v, err); }
+        };
+        const vNew = loadThrew('{"tiles":{}}', false);
+        E.mount(mkOpts('blind-loadthrow-new', () => 150, null, vNew));
+        console.log('   [load threw] payload {"tiles":{}} clean read → verdict=' + vNew +
+                    ' → totalCinder ' + E.totalCinder().toFixed(2) + ' 🔥' + (E.deferred() ? '  (DEFERRED)' : ''));
+        chk('§3d/load a half-completed load issues NO founding tranche through the production mount',
+            vNew === 'unknown' && E.deferred() === true && E.totalCinder() < 1e-6,
+            'verdict ' + vNew + ', deferred ' + E.deferred() + ', totalCinder ' + E.totalCinder().toFixed(2) +
+            ' 🔥 — the load stopped half way and the city was founded anyway');
+        const vLived = loadThrew(livedSave, false);
+        E.mount(mkOpts('blind-loadthrow-lived', () => 150, null, vLived));
+        chk('§3d/load …while a city with tiles on disk is NOT deferred by the same fault',
+            vLived === 'established' && E.deferred() === false,
+            'verdict ' + vLived + ', deferred ' + E.deferred() +
+            ' — an unconditional downgrade blocks an established city\'s saves for a renderer bug');
+      }
+    }
   }
 
   /* ── §3c DEFERRAL MAY NOT COST THE PLAYER THEIR CITY ───────────────────────
@@ -6486,6 +6749,299 @@ const srcBlockAfter = (src, decl, open) => {
       chk('§3c …but a blob that carries a real economy still outranks the stamp',
           vdict(JSON.stringify({ tiles: { '0,0': {} }, ecoDefer: 1, economy: { day: 9 } }), true) === 'established',
           'a bootstrapped economy is the strongest evidence there is and must win');
+    }
+  }
+
+  /* ── §3e THE TWO SAVE WRITERS THEMSELVES, LIFTED AND RUN ───────────────────
+     🔴 THE COVERAGE GAP THIS SECTION WAS WRITTEN FOR, AND IT IS A NASTY ONE.
+     §3c above drives `_savePolicy()` directly. Nothing in this gate had ever
+     driven the two functions that CALL it. So when the save-policy fix at
+     `saveSoon()`'s timer call site was reverted on its own, the tree that came
+     back called `_saveWouldErase()` — A FUNCTION THAT NO LONGER EXISTS, because
+     the same commit renamed and reshaped it into `_savePolicy()`. Every autosave
+     in that tree throws a ReferenceError and the city silently stops saving.
+
+     BOTH GATES WERE GREEN ON IT. The economy gauntlet never ran the writers, and
+     `_synckcheck.mjs` cannot help by construction: an undefined free variable is
+     perfectly valid JavaScript and only fails when the line executes. That is
+     the single worst shape a coverage hole can have — the product is broken for
+     every player on an ordinary path and every automated check says fine.
+
+     CALLERS MIRRORED: `saveSoon()` is the debounced writer behind the ~25
+     build/demolish/hire call sites and `bldCancel`'s post-refund save;
+     `saveNow()` is the synchronous one behind the 60 s autosave, `pagehide` and
+     `visibilitychange`. Both are lifted VERBATIM here, together with the
+     `_savePolicy()` they call, and executed — including running the 800 ms timer
+     callback, which is where the reverted call site lives.
+
+     TWO INDEPENDENT DETECTORS, deliberately:
+       1. EXECUTE. The lifted writers run in a scope holding only what node-city
+          actually declares. A call to anything else is a ReferenceError, caught
+          and reported as a FAILED ASSERTION rather than a harness stack trace.
+       2. READ. Every identifier the save path calls is checked against
+          node-city's own declarations. Detector 1 only sees the branches a
+          scenario takes; a gone function behind an `if` needs detector 2.
+     🧨 save-gone re-commits the pre-fix timer body verbatim and must redden both.
+
+     ⚠ WHAT IS MODELLED, said plainly: `serialize()` (its own 60-field body is
+       §3c's subject, not this one's), the bridge, and the timer. What is REAL is
+       the two writers, the policy they consult, and the order they consult it
+       in. */
+  {
+    const ncW = readFileSync(join(here, '../../public/node-city/index.html'), 'utf8');
+    const declFn = (name) => {
+      const b = srcBlockAfter(ncW, 'function ' + name + '()');
+      return b ? 'function ' + name + '() ' + b : null;
+    };
+    let SOON = declFn('saveSoon');
+    const NOW = declFn('saveNow'), POL = declFn('_savePolicy');
+    chk('§3e/save lifted saveSoon(), saveNow() and _savePolicy() out of the shipped file',
+        !!SOON && !!NOW && !!POL && SOON.indexOf('setTimeout') >= 0 && NOW.indexOf('saveCity') >= 0,
+        'saveSoon ' + (SOON ? SOON.length + 'b' : 'UNREADABLE') + ', saveNow ' + (NOW ? NOW.length + 'b' : 'UNREADABLE') +
+        ', _savePolicy ' + (POL ? POL.length + 'b' : 'UNREADABLE') + ' — a rename made this section vacuous');
+
+    if (SOON && NOW && POL) {
+      /* 🧨 THE REVERT, RE-COMMITTED WORD FOR WORD out of the commit that fixed
+         it. Not an injury invented here: this is the text that was in the file. */
+      if (SABOTAGE === 'save-gone') {
+        /* ⚠ NO LINE ENDINGS IN THESE ANCHORS. node-city/index.html is CRLF, so
+           a pattern ending in '\n' matches nothing and the switch runs inert —
+           which it did, loudly, thanks to the throw below. */
+        const pairs = [
+          ['const pol = _savePolicy();', ''],
+          ["if (pol === 'none') {", 'if (_saveWouldErase()) {'],
+          ["MythicCityBridge.saveCity(serialize(), { localOnly: pol === 'local' });", 'MythicCityBridge.saveCity(serialize());'],
+        ];
+        for (const [from, to] of pairs) {
+          if (SOON.indexOf(from) < 0) throw new Error('SABOTAGE save-gone matched nothing at ' + JSON.stringify(from.trim()) + ' — saveSoon was reshaped and this switch is inert');
+          SOON = SOON.split(from).join(to);
+        }
+      }
+
+      /* ── DETECTOR 2: EVERY CALL IN THE SAVE PATH MUST STILL RESOLVE ────────
+         Comments stripped first — the erasure-guard header directly above
+         `_savePolicy()` names `_saveWouldErase`, `saveNow()` and `saveSoon()` in
+         running prose, so an un-stripped scan would cheerfully "find" the very
+         function it is trying to prove is gone. */
+      const HOSTG = ['if', 'for', 'while', 'switch', 'catch', 'return', 'function', 'typeof', 'do', 'else', 'new',
+                     'setTimeout', 'clearTimeout', 'JSON', 'Object', 'Number', 'Math', 'String', 'Array', 'Date',
+                     'console', 'isNaN', 'parseInt', 'parseFloat', 'Boolean', 'Promise', 'Set', 'Map', 'Error'];
+      /* …and string BODIES emptied for the same reason. The blocked-save warning
+         reads "…before a clean load (loadDone=", and `load (` is an identifier
+         followed by a paren as far as any regex is concerned. Found by running
+         this scan on the shipped tree and watching it report `load` as a
+         function node-city does not declare. */
+      const noStr = (s) => {
+        let out = '';
+        for (let i = 0; i < s.length; i++) {
+          const c = s[i];
+          if (c === '"' || c === "'" || c === '`') {
+            const q = c; out += c; i++;
+            for (; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === q) break; }
+            out += q; continue;
+          }
+          out += c;
+        }
+        return out;
+      };
+      const scan = noStr(stripComments(SOON + '\n' + NOW + '\n' + POL));
+      const called = [];
+      /* 🔴 LOOKBEHIND, NOT A CONSUMED LEADING CHARACTER — and the difference is
+         this detector working at all. The first draft used
+         `(^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(`, which swallows the open paren, so
+         in `if (_saveWouldErase())` the `if` match consumed `(` and the call
+         INSIDE it was never looked at. Measured: the save-gone switch left this
+         assertion green while detector 1 was throwing a ReferenceError two
+         sections down — the exact "guard shaped like a guard" this file exists
+         to distrust. `.foo(` is excluded so method calls on the bridge and on
+         console are not mistaken for free identifiers. */
+      const callRe = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/g;
+      for (let m = callRe.exec(scan); m; m = callRe.exec(scan)) {
+        if (HOSTG.indexOf(m[1]) < 0 && called.indexOf(m[1]) < 0) called.push(m[1]);
+      }
+      const gone = called.filter((n) => !(new RegExp('(?:function|const|let|var)\\s+' + n + '\\b').test(ncW)));
+      chk('§3e/save every function the save path calls is still DECLARED in node-city (' + called.length + ' checked)',
+          called.length >= 3 && gone.length === 0,
+          'called ' + JSON.stringify(called) + ' — UNDECLARED: ' + JSON.stringify(gone) +
+          '. A save path that names a function the file no longer has throws a ReferenceError on ' +
+          'every write, and neither the gauntlet nor _synckcheck.mjs can see it');
+
+      /* ── DETECTOR 1: RUN THEM ─────────────────────────────────────────────
+         One fresh scope per scenario. `_loadDone`/`_loadFailed`/`_cityVerdict`
+         arrive as parameters because node-city holds them at module scope and
+         the writers only READ them. `saveTimer` is declared here for the same
+         reason it is declared there — both writers assign it. */
+      const mkWriters = new Function(
+        'game', 'MythicCityBridge', 'console', 'setTimeout', 'clearTimeout', 'serialize',
+        '_loadDone', '_loadFailed', '_cityVerdict',
+        'let saveTimer = null;\n' + POL + '\n' + SOON + '\n' + NOW + '\n' +
+        'return { saveSoon: saveSoon, saveNow: saveNow, policy: _savePolicy };');
+      const drive = (v, loadDone, loadFailed, tiles, how) => {
+        const wrote = [];
+        let cb = null;
+        const game = { tiles: tiles };
+        const quiet = { warn: () => {}, log: () => {}, error: () => {} };
+        const W = mkWriters(game,
+          { saveCity: (j, o) => { wrote.push({ bytes: String(j).length, localOnly: !!(o && o.localOnly) }); return Promise.resolve(true); } },
+          quiet,
+          (fn) => { cb = fn; return 1; }, () => { cb = null; },
+          () => JSON.stringify({ tiles: game.tiles }),
+          loadDone, loadFailed, v);
+        let threw = null;
+        try {
+          if (how === 'soon') { W.saveSoon(); if (cb) cb(); } else { W.saveNow(); }
+        } catch (e) { threw = e; }
+        return { wrote: wrote, threw: threw, armed: cb !== null || how !== 'soon' };
+      };
+      const ANCHOR_ONLY = { '0,0': { type: 'anchor' } };
+      const REAL_CITY   = { '0,0': { type: 'anchor' }, '3,4': { type: 'house' }, '5,2': { type: 'shop' } };
+
+      /* THE HEADLINE. A deferred city with real tiles is the commonest shape
+         there is — every signed-out or offline session — and it is the one the
+         debounced writer serves after every single build click. */
+      const soonDefer = drive('unknown', true, true, REAL_CITY, 'soon');
+      chk('§3e/save saveSoon()\'s timer callback RUNS — the shipped save path resolves every name it uses',
+          soonDefer.threw === null,
+          soonDefer.threw ? (soonDefer.threw.name + ': ' + soonDefer.threw.message +
+            ' — thrown by node-city\'s OWN saveSoon body. Every autosave in this tree dies here ' +
+            'and the player\'s city is never written') : '');
+      chk('§3e/save …it armed the 800 ms timer rather than writing inline', soonDefer.armed,
+          'setTimeout was never called — the debounce is gone and every click is a Supabase write');
+      chk('§3e/save …and a deferred city with real tiles is written, LOCAL ONLY',
+          soonDefer.wrote.length === 1 && soonDefer.wrote[0].localOnly === true,
+          JSON.stringify(soonDefer.wrote) + ' — this is the write that keeps a signed-out player\'s city');
+
+      const soonEmpty = drive('unknown', true, true, ANCHOR_ONLY, 'soon');
+      chk('§3e/save …while an EMPTY deferred city writes nothing at all',
+          soonEmpty.threw === null && soonEmpty.wrote.length === 0,
+          JSON.stringify(soonEmpty.wrote) + (soonEmpty.threw ? ' threw ' + soonEmpty.threw.message : ''));
+
+      const soonDecided = drive('new', true, false, ANCHOR_ONLY, 'soon');
+      chk('§3e/save …and a DECIDED city off a clean load writes both, server included',
+          soonDecided.threw === null && soonDecided.wrote.length === 1 && soonDecided.wrote[0].localOnly === false,
+          JSON.stringify(soonDecided.wrote) + (soonDecided.threw ? ' threw ' + soonDecided.threw.message : '') +
+          ' — a brand-new player is genuinely empty and MUST still save');
+
+      /* The synchronous writer, on the same three shapes. It is the one that
+         fires from `pagehide`, so it is the last chance a session gets. */
+      const nowDefer   = drive('unknown', true, true, REAL_CITY, 'now');
+      const nowEmpty   = drive('unknown', true, true, ANCHOR_ONLY, 'now');
+      const nowUnknown = drive('established', true, true, ANCHOR_ONLY, 'now');
+      chk('§3e/save saveNow() runs too, and answers the same three shapes the same way',
+          nowDefer.threw === null && nowEmpty.threw === null && nowUnknown.threw === null &&
+          nowDefer.wrote.length === 1 && nowDefer.wrote[0].localOnly === true &&
+          nowEmpty.wrote.length === 0 && nowUnknown.wrote.length === 0,
+          'deferred+tiles ' + JSON.stringify(nowDefer.wrote) + ', deferred+empty ' + JSON.stringify(nowEmpty.wrote) +
+          ', failed load+empty ' + JSON.stringify(nowUnknown.wrote) +
+          (nowDefer.threw ? ' :: THREW ' + nowDefer.threw.message : ''));
+      /* …and the erasure guard the whole family exists for is still shut. */
+      chk('§3e/save a failed load with an empty city still writes NOTHING, through both writers',
+          drive('established', true, true, ANCHOR_ONLY, 'soon').wrote.length === 0 && nowUnknown.wrote.length === 0,
+          'the original erasure guard — one row per user, upserted, no history');
+    }
+
+    /* ── §3f THE DEFERRAL PANEL'S BUTTONS MUST ACTUALLY DO SOMETHING ─────────
+       🔴 THE ONE CONTROL A DEFERRED PLAYER HAS, AND IT WAS ONE `if` FROM DEAD.
+       `ecoAction()` opens `if (!E || !E.ready()) return false;` — and a deferred
+       economy is BY DEFINITION not ready. So the two buttons `ecoDeferHtml()`
+       renders, 🔄 Retry now and ↻ Reload the page, are dispatched in a block
+       ABOVE that gate. Delete that block and both buttons are inert: the click
+       lands, `ecoAction` returns false, and nothing happens ever again.
+
+       WHY THAT IS PLAYER HARM AND NOT A COSMETIC MISS. `ecoDeferHtml` prints
+       "Retrying · automatically" only while `_ecoDeferTries` is inside
+       ECO_DEFER_BACKOFF_SEC; once the backoff list is exhausted it prints
+       "on request", i.e. the panel tells the player in as many words that the
+       button is now the only thing left. For a signed-out player the automatic
+       retry can never succeed (cityStateLoad raises `loadUnsafe`
+       unconditionally — see §3c), so "on request" is where they END UP, and the
+       request does nothing. Their founding tranche is unreachable from the UI.
+
+       CALLER MIRRORED: node-city's economy panel click handler → `ecoAction(act,
+       arg)`, with the action ids taken from `ecoDeferHtml()`'s own `ecoBtn(…)`
+       calls rather than from a list written here — so a THIRD button added to
+       that panel without a dispatch fails this section on the day it lands.
+       🧨 defer-deadbtn deletes the dispatch block, which is the revert exactly. */
+    {
+      const lift = (sig) => {
+        const b = srcBlockAfter(ncW, 'function ' + sig);
+        return b ? 'function ' + sig + ' ' + b : null;
+      };
+      let ACT = lift('ecoAction(act, arg)');
+      const PANEL = lift('ecoDeferHtml()');
+      const ANCH = "if (E && typeof E.deferred === 'function' && E.deferred())";
+      chk('§3f/panel lifted ecoAction() and ecoDeferHtml() out of the shipped file',
+          !!ACT && !!PANEL && ACT.indexOf('E.ready()') > 0,
+          'ecoAction ' + (ACT ? ACT.length + 'b' : 'UNREADABLE') + ', ecoDeferHtml ' + (PANEL ? PANEL.length + 'b' : 'UNREADABLE'));
+
+      if (ACT && PANEL) {
+        if (SABOTAGE === 'defer-deadbtn') {
+          const a = ACT.indexOf(ANCH);
+          const blk = a >= 0 ? srcBlockAfter(ACT.slice(a), ANCH) : null;
+          if (!blk) throw new Error('SABOTAGE defer-deadbtn matched nothing — ecoAction was reshaped and this switch is inert');
+          const rest = ACT.slice(a + ANCH.length);
+          ACT = ACT.slice(0, a) + rest.slice(rest.indexOf(blk) + blk.length);
+        }
+        /* The buttons the panel really offers, read off the panel. */
+        const OFFERED = [];
+        for (const m of stripComments(PANEL).matchAll(/ecoBtn\('([a-z]+)'/g)) if (OFFERED.indexOf(m[1]) < 0) OFFERED.push(m[1]);
+        chk('§3f/panel the deferral panel offers the buttons this section thinks it does',
+            OFFERED.length >= 2, 'ecoBtn ids found in ecoDeferHtml: ' + JSON.stringify(OFFERED));
+
+        const gateAt = ACT.indexOf('E.ready()');
+        for (const id of OFFERED) {
+          const at = ACT.indexOf("act === '" + id + "'");
+          chk('§3f/panel ecoAction dispatches \'' + id + '\' ABOVE the ready() gate',
+              at >= 0 && at < gateAt,
+              at < 0 ? 'no dispatch for \'' + id + '\' anywhere in ecoAction — the panel renders a button that does nothing'
+                     : 'dispatch@' + at + ' is BELOW the ready() gate@' + gateAt +
+                       ', and a deferred economy is never ready, so the button is dead');
+        }
+
+        /* …AND THEN CLICKED. A text check alone cannot tell a dispatch that runs
+           from one that returns early two lines above it. */
+        const fired = [];
+        const renderEco = function () { fired.push('renderEco'); };
+        const mkAction = new Function('window', 'ecoDeferRetry', 'renderEco', 'location', 'console',
+                                      ACT + '\nreturn ecoAction;');
+        const clickWhileDeferred = (id) => {
+          fired.length = 0;
+          renderEco._last = 'stale';
+          const act = mkAction(
+            { MythicEconomy: { deferred: () => true, ready: () => false } },
+            (manual) => { fired.push('ecoDeferRetry(' + manual + ')'); },
+            renderEco,
+            { reload: () => { fired.push('location.reload'); } },
+            { warn: () => {}, log: () => {} });
+          let ret = null, threw = null;
+          try { ret = act(id, ''); } catch (e) { threw = e; }
+          return { ret: ret, fired: fired.slice(), threw: threw, cleared: renderEco._last === null };
+        };
+        const retry = clickWhileDeferred('ecoretry');
+        chk('§3f/panel 🔄 Retry now RE-READS the city records and repaints',
+            retry.threw === null && retry.ret === true &&
+            retry.fired.indexOf('ecoDeferRetry(true)') >= 0 && retry.fired.indexOf('renderEco') >= 0 && retry.cleared,
+            'returned ' + retry.ret + ', fired ' + JSON.stringify(retry.fired) + ', repaint cache cleared ' + retry.cleared +
+            (retry.threw ? ', threw ' + retry.threw.message : '') +
+            ' — once the backoff gives up, this button is the ONLY way a signed-out player reaches their founding capital');
+        const reload = clickWhileDeferred('ecoreload');
+        chk('§3f/panel ↻ Reload the page actually reloads it',
+            reload.threw === null && reload.ret === true && reload.fired.indexOf('location.reload') >= 0,
+            'returned ' + reload.ret + ', fired ' + JSON.stringify(reload.fired));
+
+        /* THE HONEST INVERSE: the block is gated on `deferred()`, so a RUNNING
+           economy must not reach it — otherwise 'ecoretry' would re-open the
+           founding question on a city that has already answered it. */
+        fired.length = 0;
+        const live = mkAction({ MythicEconomy: { deferred: () => false, ready: () => false } },
+                              (m) => { fired.push('ecoDeferRetry(' + m + ')'); }, renderEco,
+                              { reload: () => { fired.push('location.reload'); } }, { warn: () => {}, log: () => {} });
+        let liveRet = null; try { liveRet = live('ecoretry', ''); } catch (e) { liveRet = 'THREW ' + e.message; }
+        chk('§3f/panel …and a NON-deferred economy never takes that path',
+            liveRet === false && fired.length === 0,
+            'returned ' + liveRet + ', fired ' + JSON.stringify(fired) +
+            ' — the deferral controls must not be reachable once the question is answered');
+      }
     }
   }
 
@@ -6695,6 +7251,138 @@ const srcBlockAfter = (src, decl, open) => {
         'both refusals reverted and totalCinder only moved ' + dAB.toFixed(2) +
         ' 🔥 — §6 is asserting nothing, find out what else is closing this');
     for (const d of tmpRoots) { try { rmSync(d, { recursive: true, force: true }); } catch (e) {} }
+  }
+
+  /* ── §7 THE LIFETIME IDENTITY — THE ONE CROSS-CHECK THAT SPANS A WHOLE CITY ─
+     🔴 EVERY OTHER CONSERVATION TEST IN THIS FILE IS A DAY, A TICK OR A SEAM.
+     `audit()` closes the loop inside one `runDay`; §1–§4 above each watch one
+     boundary. Nothing asked the question that covers all of them at once:
+
+         created  = charterIssued + faucetLifetime
+                  = totalCinder + importsLifetime + payoutLifetime
+                    + payoutOwed + payoutInFlight
+
+     Those two creation terms are, by sim.js's own statement, the ONLY ways
+     Cinder is ever made; the five on the right are everywhere it can be. The
+     identity is written down in the header above `S.faucetLifetime` and in the
+     one above `audit()` — and, until this section, it was written down and
+     never once evaluated.
+
+     WHY IT IS WORTH ITS OWN SECTION AND NOT JUST ANOTHER READOUT CHECK. The
+     four sites that keep those tallies honest — three `addImports()` calls and
+     one `S.faucetLifetime += faucet` — were all reverted one at a time by the
+     COVER sweep and the gate stayed green on every one of them, because
+     `S.flow.imports` (which the day audit does read) is still incremented by
+     the old code and the lifetime twin simply falls behind. A tally that only
+     ever under-counts is invisible to every per-day test there is. This is the
+     test that has to BALANCE, so it sees them.
+
+     ⚠ MEASURED THROUGH serialize(), WHICH ROUNDS TO 2 dp, so the tolerance is
+       0.05 🔥 across five rounded terms and not 1e-9. That is deliberate: it is
+       the same public surface a panel or a save reads, and the defects this
+       catches are thousands of Cinder wide (36,018 🔥 of imports on the pop-80
+       city below). Measured residual on the shipped tree: 0.0066 🔥 worst.
+     ⚠ AND IT IS NOT A CLAMP. Nothing here bounds a loaded value or arbitrates a
+       balance — read the header above sim.js `audit()` before turning it into
+       one. It grades CODE PATHS on a city this process just simulated.
+
+     CALLER MIRRORED: `E.tick()` from node-city's economy hook and `E.serialize()`
+     from serialize()'s `economy:` field — the two calls the city makes every
+     session, nothing lifted or modelled.
+     🧨 imports-untallied / faucet-untallied re-commit one tally site each, into
+        a REBUILT copy of /src/economy in a temp directory. The shipped tree is
+        never written to. */
+  {
+    const ECODIR7 = join(here, '../../public/src/economy');
+    const simSrc7 = readFileSync(join(ECODIR7, 'sim.js'), 'utf8');
+    /* Each anchor is the exact statement the fix added, so a rename breaks the
+       SABOTAGE loudly rather than leaving it inert.
+       ⚠ REGEXES, WITH `\s*` ACROSS THE LINE BREAKS, because sim.js is CRLF —
+         a literal '…;\n    return;' anchor matches nothing and the switch runs
+         inert. Measured: it did, and the round went green under it.
+       🔴 AND THE IMPORT SWITCH INJURES `addImports()` ITSELF, NOT ONE OF ITS
+          CALL SITES — measured, and the measurement is worth recording because
+          it bounds what this section can honestly claim.
+          Four sites adopted `addImports()` in this session (runSubsistence:823,
+          applyCredits:1028, payUpstream:1064, runDay's import bill:1239). Each
+          was reverted here one at a time and the identity did not move by a
+          single Cinder, because NONE OF THOSE FOUR BRANCHES EXECUTES on a city
+          this gate can simulate: `runSubsistence` always finds a local seller,
+          `applyCredits` always finds a payee, `payUpstream` is not reached, and
+          `traded.spend` is 0 until the trade layer matches a real partner. All
+          of a simulated city's imports arrive through the freight site at :1298,
+          which is older than this session.
+          So the switch removes the tally line inside `addImports()`, which
+          proves this section CAN see an untallied import — and the four
+          adoption sites are honestly recorded as UNREACHABLE by this gate's
+          city shapes rather than as covered. Do not "fix" that by asserting on
+          `S.flow.imports`: the whole point is that the day flow is already
+          right and the lifetime twin is what falls behind. */
+    const UNTALLY = {
+      'imports-untallied': [/S\.importsLifetime \+= amount;/, '', 'addImports\'s lifetime tally'],
+      'faucet-untallied':  [/S\.faucetLifetime \+= faucet;/, '', 'runDay\'s faucet tally'],
+    };
+    const tmp7 = [];
+    let MOD = E;
+    if (UNTALLY[SABOTAGE]) {
+      const [from, to, label] = UNTALLY[SABOTAGE];
+      if (!from.test(simSrc7)) throw new Error('SABOTAGE ' + SABOTAGE + ' matched nothing at ' + label + ' — sim.js was reshaped and this switch is inert');
+      const dst = join(tmpdir(), 'econ-ident-' + process.pid + '-' + Date.now());
+      mkdirSync(dst, { recursive: true });
+      tmp7.push(dst);
+      for (const fn of readdirSync(ECODIR7)) {
+        if (!fn.endsWith('.js')) continue;
+        let t = readFileSync(join(ECODIR7, fn), 'utf8');
+        if (fn === 'sim.js') t = t.replace(from, to);
+        writeFileSync(join(dst, fn), t);
+      }
+      MOD = (await import(pathToFileURL(join(dst, 'index.js')).href)).default;
+      console.log('   🧨 one lifetime tally site reverted: ' + label);
+    }
+
+    /* Three cities chosen for what they EXERCISE, not for variety: pop 80 runs
+       a large import bill (36k 🔥), pop 320 accumulates the largest unclaimed
+       payout, pop 45 runs long enough for the faucet and the import tally to
+       both matter. All three are ordinary `mount → tick × N` sessions. */
+    const rows = [];
+    let worst = 0;
+    for (const [pop, days] of [[80, 200], [320, 150], [45, 250]]) {
+      MOD.mount({ nodeId: 'ident-' + pop, population: pop, established: 'new' });
+      for (let i = 0; i < days; i++) MOD.tick(DAY, { ...host, population: pop });
+      const s = MOD.serialize();
+      const created = s.charterIssued + s.faucetLifetime;
+      const held = MOD.totalCinder() + s.importsLifetime + s.payoutLifetime + s.payoutOwed + s.payoutInFlight;
+      const err = created - held;
+      if (Math.abs(err) > Math.abs(worst)) worst = err;
+      rows.push({ pop, days, created, held, err, imp: s.importsLifetime, fau: s.faucetLifetime,
+                  owed: s.payoutOwed, pay: s.payoutLifetime + s.payoutOwed + s.payoutInFlight });
+    }
+    console.log('\n  🧾 LIFETIME IDENTITY — created (charter + faucet) vs held (total + imports + delivered + owed + in-flight):');
+    for (const r of rows) {
+      console.log('    pop ' + String(r.pop).padStart(3) + ' × ' + String(r.days).padStart(3) + 'd   created ' +
+                  r.created.toFixed(2).padStart(12) + '   held ' + r.held.toFixed(2).padStart(12) +
+                  '   err ' + r.err.toFixed(4).padStart(10) + '   [imports ' + r.imp.toFixed(2) +
+                  ' · faucet ' + r.fau.toFixed(2) + ' · owner ' + r.pay.toFixed(2) + ']');
+    }
+    /* ⚠ THE VACUITY GUARD, AND IT ALREADY EARNED ITS KEEP. The first draft asked
+       for a large `payoutOwed`, which is what a standalone probe leaves behind —
+       but §4 above installs a LIVE `addCinders` on the shared window bridge, so
+       by the time this section runs the payouts are being delivered and land in
+       `payoutLifetime` instead. Both are terms of the identity; what matters is
+       that the owner's leg is non-trivial, not which side of the bridge it is
+       sitting on. Asking for the wrong one made this section red on a healthy
+       tree, which is how it was found. */
+    chk('§7/ident the three cities really ran — imports and the owner\'s leg are both non-trivial',
+        rows.every((r) => r.created > 1) && rows.some((r) => r.imp > 1000) && rows.some((r) => r.pay > 100),
+        'a city that imported nothing and paid its owner nothing balances vacuously: ' +
+        JSON.stringify(rows.map((r) => r.pop + ': imp ' + r.imp.toFixed(0) + ' owner ' + r.pay.toFixed(0))));
+    chk('🔴 §7/ident LIFETIME IDENTITY — every Cinder this city ever made is still accounted for ' +
+        '(worst err ' + worst.toFixed(4) + ' 🔥 over ' + rows.length + ' cities)',
+        Math.abs(worst) < 0.05,
+        'created − held = ' + worst.toFixed(4) + ' 🔥. A POSITIVE residual means a term on the right is ' +
+        'under-counted (a lifetime tally site was skipped); a NEGATIVE one means Cinder exists that ' +
+        'neither creation path admits to making, which is a Rule 1 violation the day audit cannot see');
+    for (const d of tmp7) { try { rmSync(d, { recursive: true, force: true }); } catch (e) {} }
   }
 
   if (fails) { bad++; console.log('\n=== ROUND 0s: ' + fails + ' FAILED ==='); }
@@ -7212,6 +7900,13 @@ const srcBlockAfter = (src, decl, open) => {
                              'let affordable = Math.max(0, Math.floor(have / per));')
                     .replace('while (affordable > 0 && inputCharge(per, affordable, tfIn) > have) affordable--;', '');
         }
+        if (SABOTAGE === 'halt-flat') {
+          console.log('   🧨 haltState() measures ONE cycle of inputs FLAT again, while collect() charges by tf');
+          const hit = src.replace('const need = inputCharge((inputs[k] | 0) * lvl, 1, tfIn);',
+                                  'const need = (inputs[k] | 0) * lvl;');
+          if (hit === src) throw new Error('SABOTAGE halt-flat matched nothing — haltState was reshaped and this switch is inert');
+          return hit;
+        }
         return src;
       });
     } catch (e) { PSMOD = null; }
@@ -7336,6 +8031,113 @@ const srcBlockAfter = (src, decl, open) => {
       chk('on a SHORT ledger every producer pays exactly the cycles pending() promised — the promise and ' +
           'the charge are the same number (' + RUNNABLE.length + ' producers)',
           short.length === 0, short.slice(0, 6).join(' · '));
+
+      /* ── §3c THE HALT REASON IS THE THIRD SURFACE THAT QUOTES THE CHARGE ───
+         🔴 AND IT IS THE ONE THAT CAN STOP A BUILDING DEAD.
+         `pending()` opens with `if (!halt.running || cycles <= 0) return
+         { cycles: 0 … }` — so haltState's NO_INPUTS verdict does not merely
+         explain a stall, IT CAUSES ONE. It measures ONE cycle of inputs, and it
+         has to measure that cycle at the SAME terroir factor collect() will
+         charge, or the two disagree in whichever direction the ground leans:
+
+           tf < 1 (POOR ground)  the flat figure is BIGGER than the real charge,
+                                 so a player who can afford the cycle is told
+                                 "⛔ NO WATER" and pending() returns 0 cycles.
+                                 THE BUILDING IS STOPPED AND PAYS NOTHING, on
+                                 exactly the ground that is already worst for
+                                 them. This is the harm; the other direction is
+                                 only a wrong number on a panel.
+           tf > 1 (RICH ground)  the flat figure is SMALLER, so haltState says
+                                 "running" for a cycle collect() cannot fund.
+                                 pending()'s affordability loop then clamps it to
+                                 0 anyway, so the player is not robbed — they are
+                                 shown a running building that produces nothing
+                                 and told no reason.
+
+         SO BOTH DIRECTIONS ARE ASSERTED, at the exact boundary: seed each input
+         leg with EXACTLY `inputCharge(perCycle × lvl, 1, tf)` and the building
+         must run and pay one cycle; seed one unit less on every leg and it must
+         halt with NO_INPUTS. A round that only tested "enough" or only tested
+         "nothing" cannot see a threshold that has moved by a factor of tf.
+
+         CALLER MIRRORED: `pending()`'s own `haltState(host, p)` call at the top
+         of the payout path, and production.render.js:119's `pend.halt ||
+         haltState(host, p)` — the panel line the player reads. Driven through
+         PSMOD, the module loaded from the shipped source, on the same two
+         grounds §3b measures.
+         🧨 halt-flat re-commits the pre-fix statement into that source. */
+      {
+        const HALT_NO_INPUTS = (PSMOD.HALT && PSMOD.HALT.NO_INPUTS) || 'NO_INPUTS';
+        /* One probe: one building, one ground, every input leg seeded to the
+           scaled one-cycle charge plus `delta`. The powerplant is present for
+           the same reason runCollect places one — so nothing halts on power. */
+        const haltProbe = (def, ground, seamId, delta) => {
+          NODE = ground; SEAM = seamId || null;
+          const host = mkHost(0);
+          const st = host.state();
+          st.placed = [
+            { id: 'pp', defId: 'powerplant', level: 3, lastCollect: Date.now(), buffer: {}, workers: 6, x: 0, y: 0, z: 0, rotation_y: 0, scale: 1 },
+            { id: 'sub', defId: def.id, level: 1, lastCollect: Date.now() - 36 * HOUR, buffer: {}, workers: 0, x: 0, y: 0, z: 0, rotation_y: 0, scale: 1 },
+          ];
+          host.setState(st);
+          const p = st.placed[1];
+          const tf = PSMOD.inputTerroirScale(host, p, def);
+          for (const k in (def.inputs || {})) {
+            host.led[k] = Math.max(0, PSMOD.inputCharge((def.inputs[k] | 0) * 1, 1, tf) + delta);
+          }
+          const halt = PSMOD.haltState(host, p);
+          const pend = PSMOD.pending(host, p);
+          const r = PSMOD.collect(host, 'sub');
+          return { tf, code: halt && halt.code, running: !!(halt && halt.running),
+                   cycles: pend.cycles | 0, ok: !!r.ok, paid: r.cycles | 0, why: r.why };
+        };
+        const atThreshold = [], belowThreshold = [];
+        let probes = 0, poor = 0, rich = 0;
+        for (const d of RUNNABLE) {
+          for (const [g, s] of [['round0t-node', null], ['round0t-node', Object.keys(d.yields)[0]]]) {
+            const on = haltProbe(d, g, s, 0);
+            probes++;
+            if (on.tf < 1 - 1e-9) poor++; else if (on.tf > 1 + 1e-9) rich++;
+            if (on.code === HALT_NO_INPUTS) {
+              atThreshold.push(d.id + ' @tf ' + on.tf.toFixed(3) + ' halt=' + on.code +
+                               ' cycles=' + on.cycles + ' collect=' + (on.ok ? 'ok×' + on.paid : String(on.why).slice(0, 48)));
+            }
+            const under = haltProbe(d, g, s, -1);
+            if (under.code !== HALT_NO_INPUTS) {
+              belowThreshold.push(d.id + ' @tf ' + under.tf.toFixed(3) + ' halt=' + under.code + '/' + under.running);
+            }
+          }
+        }
+        console.log('\n  ⛔ HALT THRESHOLD — ' + probes + ' producer×ground probes, ' + poor +
+                    ' on ground POORER than 1.000 and ' + rich + ' richer');
+        chk('§3c/halt the probe really stood on ground where terroir MOVES the charge (' + poor + ' poor, ' + rich + ' rich)',
+            poor + rich > 0 && probes >= 60,
+            'every probe landed at tf 1.000, so a flat halt figure and a scaled one are the same number ' +
+            'and this section proves nothing');
+        /* ⚠ THE ASSERTION IS ON haltState's VERDICT, NOT ON collect() SUCCEEDING,
+           and the difference was measured rather than assumed. Seeding exactly
+           `inputCharge(per, 1, tf)` and demanding a paid cycle went red on 42 of
+           140 probes at tf 4.800 — because pending()'s affordability floor reads
+           `Math.floor(have / (per * tfIn))`, and inputCharge's ε-snap can return
+           a `have` that is 96 against a `per * tfIn` of 96.00000000000001, so the
+           floor is 0 for a player holding EXACTLY what they will be charged.
+           That is a real (small, pre-existing) edge in the affordability floor
+           and it is NOT what this section is about — asserting it here would put
+           a red round on a defect this package did not touch and cannot fix.
+           What is asserted is the thing the hunk changed: where haltState draws
+           the line. */
+        chk('§3c/halt a player holding EXACTLY one cycle\'s scaled charge is NOT halted for NO_INPUTS ' +
+            '(' + probes + ' probes)',
+            atThreshold.length === 0,
+            atThreshold.slice(0, 5).join(' · ') +
+            ' — on poor ground a flat halt figure is BIGGER than the real charge, so it stops a building ' +
+            'the player can afford to run, and pending() returns 0 cycles for it');
+        chk('§3c/halt …and one unit short on every leg DOES halt with NO_INPUTS (' + probes + ' probes)',
+            belowThreshold.length === 0,
+            belowThreshold.slice(0, 5).join(' · ') +
+            ' — on rich ground a flat halt figure is SMALLER than the real charge, so the panel calls a ' +
+            'building "running" for a cycle collect() cannot fund');
+      }
 
       /* ── THE LEGACY SHELF, MEASURED AT THE SEAM ───────────────────────────
          The hand catalogue's base pumps are PRE-EXISTING and out of scope (§4

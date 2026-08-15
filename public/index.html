@@ -61662,10 +61662,15 @@ function _nodeTierCtx() { return { pledgeTierId: NodeTierState.pledgeTierId }; }
 // The node whose tier speaks for this player. Their best one; null when they
 // own none, which the module resolves to Free — "no node in the city" is a
 // real tier, not an error.
-function _myTierNode() {
+// ⚠ `userId` is optional and defaults to ME. It exists because the tier pill on
+//   a node city has to be able to ask "what does the OWNER of THIS city own?" —
+//   a hired mayor is looking at somebody else's city, and answering with the
+//   mayor's own nodes there would be a confident wrong number. Every other
+//   caller passes nothing and keeps the original meaning.
+function _myTierNode(userId) {
   try {
     const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
-    const me = (Profile.cloud && Profile.cloud.userId) || null;
+    const me = userId || (Profile.cloud && Profile.cloud.userId) || null;
     const mine = ((FoundationReserve && FoundationReserve.nodes) || [])
       .filter((n) => n && n.owner_id === me);
     /* 🏙 CITY NODES COUNT TOO, and in practice they are the ones that matter:
@@ -61684,9 +61689,14 @@ function _myTierNode() {
       }
     } catch (e) {}
     if (!mine.length || !T) return mine[0] || null;
+    // ⚠ Rank with the PLEDGE context only when the subject is me. pledge_purchases
+    //   is readable for yourself and nobody else, so folding my pledge into a
+    //   ranking of ANOTHER player's nodes would sort their nodes by my purchases.
+    const _rankCtx = (!userId || userId === ((Profile.cloud && Profile.cloud.userId) || null))
+      ? _nodeTierCtx() : {};
     let best = mine[0], bestRank = -1;
     for (const n of mine) {
-      const rank = T.TIERS.findIndex((x) => x.id === T.resolveTier(n, _nodeTierCtx()).id);
+      const rank = T.TIERS.findIndex((x) => x.id === T.resolveTier(n, _rankCtx).id);
       if (rank > bestRank) { bestRank = rank; best = n; }
     }
     return best;
@@ -207107,58 +207117,126 @@ function _openNodeCity(nodeId, _resolved) {
    It never arrives, because the two ids are not the same kind of thing:
      • App._cityNodeId is a TERRITORY-WAR node — 'N-25' (tw_node_owners.node_id)
      • FoundationReserve.nodes are PRN rows — economy_nodes.id, a UUID
-   economy_nodes carries no column referencing a TW node, so the lookup cannot
-   match, ever. It could not match BEFORE this pill existed either: the original
-   code did the same find(), got null, and handed null to resolveTier — which
-   answers the player's PLEDGE tier, or Free. That produced a stable, correct-
-   for-the-data answer, and I turned it into a permanent "checking…" plus a
-   nodeFetch() every 8s (each one an extra corpEnsure round-trip) for every
-   player with a city open. That is strictly worse than what it replaced.
+   economy_nodes carries no column referencing a TW node (checked again against
+   sql/029 and sql/033 — there is still none), so THAT lookup cannot match, ever.
+   Removing the "checking…" state was right. Keeping the dead find() was not.
 
-   So the fallback is the answer, not a placeholder: no resolvable PRN means the
-   rate really is the pledge/Free tier, and the pill should say so plainly. The
-   find() stays, so the day a TW node does carry a PRN reference the pill starts
-   showing it with no further change.
+   🔴 AND THE FIND() WAS LOOKING IN THE WRONG TABLE THE WHOLE TIME.
+   The note above concluded "a link between a TW node and a PRN does not exist,
+   so the node's own tier is unknowable". That conclusion was wrong, and it made
+   the pill say FREE to every player who owns a node. The join that does exist is
+   the trivial one: App._cityNodeId is a TW node id, and _twForge().nodes is
+   keyed by exactly those ids — SAME ID SPACE, no schema change needed. A TW node
+   carries `tier` directly, and tiers.js's resolveTier already accepts that shape
+   (it reads `node.tier` OR `node.meta.tier`, deliberately, for this reason). The
+   old code simply searched the PRN array with a TW id and never searched the TW
+   array at all. See _cityTierResolve below. */
+/* 🎯 WHERE THE PILL'S NUMBER COMES FROM, AND WHICH OF THE THREE WAYS IT CAME.
+   Returns { node, tier, path, kind, subjectIsMe }. `path` is not decoration —
+   it is printed into the tooltip, because the last bug in this pill was an
+   unexplained number ("checking tier…") that nobody could reason about. If the
+   pill ever looks wrong again, hovering it says which branch produced it.
 
-   ⚠ What this does NOT do is make the pill reflect the NODE's tier on a node
-     city — the original request. That needs a link between a TW node and a PRN,
-     which does not exist in the schema. Inventing one in the client would just
-     be a guess wearing a number. */
+     'city-node'  — this city's own TW node carries a tier. The honest join.
+     'owner-best' — it does not, so we answer with the best tier among the nodes
+                    the city's owner actually holds (PRNs + owned city nodes).
+                    "The level of the node they own" is still well defined even
+                    when this city cannot be tied to one specific node.
+     'pledge'     — they hold no node at all. resolveTier(null) then answers the
+                    pledge tier, or Free.
+   ⚠ 'pledge' IS THE CORRECT ANSWER for a player with no nodes, not a failure
+     mode. Do not "fix" it into something louder.
+   ⚠ The subject is the CITY'S OWNER, not the viewer — a hired mayor is looking
+     at somebody else's city. pledge_purchases is only readable for yourself, so
+     when the subject is not me the pledge context is dropped rather than
+     substituting mine; that is why 'pledge' on someone else's city says Free. */
+function _cityTierResolve() {
+  const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+  if (!T) return null;
+  const meId = (Profile.cloud && Profile.cloud.userId) || null;
+  const subject = App._cityOwnerId || meId || null;
+  const subjectIsMe = !App._cityOwnerId || (!!meId && App._cityOwnerId === meId);
+  const ctx = subjectIsMe ? _nodeTierCtx() : {};
+  // PATH A — this city's own node, found in the id space App._cityNodeId is
+  // actually from. Only counts when a tier is really stamped on it: an untiered
+  // node tells us nothing about its owner's standing, and treating "no tier set"
+  // as an answer would print Free over a player who has a node elsewhere.
+  try {
+    const twNodes = (typeof _twForge === 'function') ? ((_twForge() || {}).nodes || []) : [];
+    const cityNode = App._cityNodeId
+      ? (twNodes.find((n) => n && n.id === App._cityNodeId) || null) : null;
+    if (cityNode && cityNode.tier && T.tierById(cityNode.tier)) {
+      return { node: cityNode, tier: T.resolveTier(cityNode, ctx), path: 'city-node', kind: 'tw', subjectIsMe };
+    }
+  } catch (e) {}
+  // PATH B — the owner's own nodes. _myTierNode already ranks PRNs and owned
+  // city nodes together and returns the best; reusing it means there is one
+  // ranker in this file, not two that can disagree about a player's rate.
+  try {
+    const best = _myTierNode(subject);
+    if (best) {
+      const prn = ((FoundationReserve && FoundationReserve.nodes) || []).indexOf(best) >= 0;
+      return { node: best, tier: T.resolveTier(best, ctx), path: 'owner-best', kind: prn ? 'prn' : 'tw', subjectIsMe };
+    }
+  } catch (e) {}
+  // PATH C — no node anywhere. The pledge tier, or Free, and that is the truth.
+  return { node: null, tier: T.resolveTier(null, ctx), path: 'pledge', kind: null, subjectIsMe };
+}
+/* The tooltip text for each path. Split out so the pill and its 2s resync build
+   the same string from the same place. */
+function _cityTierWhy(res, T) {
+  const who = res.subjectIsMe ? 'you' : (App._cityOwnerName || 'the owner');
+  const nm = (res.node && (res.node.name || res.node.id)) || 'the node';
+  if (res.path === 'city-node') return 'Read from THIS CITY\'S node (' + nm + '). ';
+  if (res.path === 'owner-best') {
+    return 'No tier is set on this city\'s node, so this is the best tier among the nodes '
+      + who + ' own' + (res.subjectIsMe ? '' : 's') + ' — ' + nm + '. ';
+  }
+  return res.subjectIsMe
+    ? 'You hold no node, so this is your pledge rate. '
+    : 'No node is visible for ' + who + ' from here, so this is the Free rate. ';
+}
 function _cityTierPill() {
   const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
   if (!T) return;                                    // module absent → no pill, no feature
   const old = document.getElementById('node-city-tier');
   if (old) { try { old.remove(); } catch (e) {} }
-  /* 🔌 THE PILL STATES THE RATE THE PLAYER ACTUALLY EARNS AT.
-     A previous pass split this into "free camp" vs "not loaded yet" and printed
-     "checking tier…" for the second. That was wrong about the data: the find()
-     below compares a TERRITORY-WAR node id ('N-25') against economy_nodes.id
-     (a UUID), so it never matches and "not loaded yet" never resolves — see the
-     note on the removed _cityTierEnsureNodes above. The pill sat on "checking"
-     forever and re-fetched every 8 seconds.
-     resolveTier(null) is not a fallback here, it is the correct answer: with no
-     resolvable PRN the rate IS the player's pledge tier, or Free. The find()
-     stays so a real PRN reference would be picked up automatically if one is
-     ever added to the schema. */
-  const _nodes = (FoundationReserve && FoundationReserve.nodes) || [];
-  const node = _nodes.find((n) => n && n.id === App._cityNodeId) || null;
-  const tier = T.resolveTier(node, _nodeTierCtx());
+  const res = _cityTierResolve();
+  if (!res) return;
+  const tier = res.tier, node = res.node;
   const canEdit = (typeof isAdmin === 'function') && isAdmin();
   const p = document.createElement('button');
   p.id = 'node-city-tier';
   p.textContent = '🔌 ' + tier.name + ' · ' + tier.rate + '%' + (canEdit ? ' ✎' : '');
-  // Remember what we drew, so the 2s refresh can skip a no-op rebuild.
-  try { App._cityTierKey = tier.id + ':' + tier.rate + ':' + (canEdit ? 1 : 0); } catch (e) {}
-  p.title = (node
-      ? 'Node tier — '
-      : 'Your tier — no PRN is attached to this city, so this is your pledge rate. ')
+  // Remember what we drew, so the 2s refresh can skip a no-op rebuild. `path` is
+  // part of the key: the rate can stay 5% while the REASON changes (the admin
+  // stamps this city's node with the tier the owner already had), and the
+  // tooltip would otherwise keep explaining the old branch.
+  try { App._cityTierKey = tier.id + ':' + tier.rate + ':' + res.path + ':' + (canEdit ? 1 : 0); } catch (e) {}
+  p.title = '🔌 ' + tier.name + ' — ' + _cityTierWhy(res, T)
     + tier.rate + '% Cinder pool share, ' + (tier.rate + T.RESOURCE_BONUS_PCT) + '% resource generation.'
     + (canEdit ? ' Click to assign.' : '');
-  p.style.cssText = 'position:fixed;top:52px;left:16px;z-index:2147483301;padding:6px 13px;border-radius:999px;'
+  /* 📐 BOTTOM-LEFT, AND NOT BY TASTE. This was top:52px, stacked under the owner
+     badge — directly on top of the city's own top-left content, and WHICH thing
+     it covered changed with the width:
+       · ≥ ~1700px  #topbar fits on one row, --topbarh is 60px, #leftcol starts at
+                    60 — the pill (52…82) sat across the "VITAL SIGNS" heading and
+                    made it unreadable. That is the reported bug.
+       · ≤ ~1600px  #topbar WRAPS, --topbarh becomes ~103px, #leftcol drops clear —
+                    and the pill instead covered the second row of resource chips
+                    (City Time at 16,55…120,90 at 1600 wide).
+     So no top offset works at every width: the two things it can hit move in
+     opposite directions. Nudging the number would just choose which width to be
+     broken at. The bottom-left corner is the one part of the city that is empty
+     BY CONSTRUCTION at every width — #leftcol is `max-height:calc(100% -
+     var(--topbarh) - 140px)`, so it never reaches the bottom band, and every
+     bottom-anchored city element (#buildbar, #toasts, #ctrlhint) is centred with
+     left:50%. Nothing to collide with, at any width, in either wrap state. */
+  p.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:2147483301;padding:6px 13px;border-radius:999px;'
     + 'font-family:Cinzel,serif;font-weight:700;font-size:11.5px;letter-spacing:.07em;color:#0f0b04;'
     + 'background:linear-gradient(180deg,' + tier.accent + ',rgba(0,0,0,.25));border:1px solid rgba(0,0,0,.4);'
     + 'box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:' + (canEdit ? 'pointer' : 'default');
-  if (canEdit) p.onclick = () => { try { _cityTierModal(node); } catch (e) {} };
+  if (canEdit) p.onclick = () => { try { _cityTierModal(node, res.kind); } catch (e) {} };
   document.body.appendChild(p);
 }
 /* 🔁 Keep the pill honest as data arrives. FoundationReserve.nodes lands after
@@ -207172,19 +207250,32 @@ function _cityTierPillSync() {
     if (!document.getElementById('node-city-tier')) return;   // city not open
     const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
     if (!T) return;
-    const _nodes = (FoundationReserve && FoundationReserve.nodes) || [];
-    const node = _nodes.find((n) => n && n.id === App._cityNodeId) || null;
+    const res = _cityTierResolve();
+    if (!res) return;
     const canEdit = (typeof isAdmin === 'function') && isAdmin();
-    const tier = T.resolveTier(node, _nodeTierCtx());
-    const key = tier.id + ':' + tier.rate + ':' + (canEdit ? 1 : 0);
+    // Same key _cityTierPill stamps, built the same way — see the note there on
+    // why `path` is in it.
+    const key = res.tier.id + ':' + res.tier.rate + ':' + res.path + ':' + (canEdit ? 1 : 0);
     if (key === App._cityTierKey) return;                     // nothing changed
     _cityTierPill();
   } catch (e) {}
 }
-function _cityTierModal(node) {
+function _cityTierModal(node, kind) {
   const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
   if (!T) return;
   if (!node) { showToast('🔌 No PRN is attached to this city — its owner is on the Free tier (0.5%). Nothing to assign.', 5600); return; }
+  /* ⚠ THIS MODAL WRITES TO economy_nodes AND ONLY economy_nodes.
+     Now that the pill can resolve a TERRITORY-WARS node (the 'city-node' path),
+     it can hand one here — and `update … .eq('id','N-05')` on economy_nodes
+     matches nothing and returns no error. That is the silent-no-op trap
+     _cityTierAssign already guards against, and it would have shown the
+     "run sql/029" toast, which is the wrong diagnosis entirely. TW node tiers
+     are owned by the City Nodes admin panel (it sets node.tier and publishes
+     it); say so rather than opening a dialog that cannot save. */
+  if (kind === 'tw') {
+    showToast('🔌 ' + (node.name || node.id) + ' is a City Node — set its tier in City Nodes → Admin → Node, not here.', 6000);
+    return;
+  }
   const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
   const cur = T.resolveTier(node, _nodeTierCtx());
   const ov = document.createElement('div');

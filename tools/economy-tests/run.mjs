@@ -448,6 +448,81 @@ let bad = 0;
                                    clean (INSERTS=0) — this switch exists to
                                    prove the TEXT assertion catches a re-inlined
                                    branch that a behaviour test cannot see
+     ── COVER2: five paths whose SILENT revert destroys property or voids the ──
+     ──          feature, and which a full-revert sweep found unguarded        ──
+     🔴 FOUND THE SAME WAY AS THE BLOCK ABOVE, and measured before a line of
+        this was written: copy the product tree outside the repo, reverse-apply
+        ONE REAL HUNK of this branch's diff, run the gate and both syntax
+        checks. Every hunk below came back CLEAN and GREEN, exit 0.
+        ⚠ The demolish/cancel pair (h111/h112) was on that list too and is NOT
+          here: round0r §3f already reddens on all three of h111, h112 and the
+          two together. It was added one commit after the sweep was taken.
+     ECON_TEST_SABOTAGE=save-noborder round0r §7: stop serialize() writing the
+                                   `b` key — hunk h137 reversed. `s` and `d` are
+                                   the ONLY record that a 24-hour job is
+                                   running, so EVERY PAID ORDER ON THE BOARD
+                                   vanishes on the next save, and bldLoad's
+                                   resolve-toward-COMPLETION rule then hands the
+                                   building over finished on the reload with the
+                                   Cinder already spent
+     ECON_TEST_SABOTAGE=load-nolvl round0r §7: take the `lvl` binding back out of
+                                   loadState's tile statement — h145 reversed —
+                                   so `bldLoad(td.b, lvl, td.type)` reads a free
+                                   identifier and throws ReferenceError on the
+                                   first tile of every load. NO CITY LOADS AT
+                                   ALL, and an undefined free variable is valid
+                                   syntax, so `_synckcheck.mjs` cannot see it.
+                                   §7 catches it by EXECUTING the statement with
+                                   `lvl` deliberately absent from the parameter
+                                   list — the shape round0s §3e uses for
+                                   `save-gone`
+     ECON_TEST_SABOTAGE=gate-ungated round0r §8: turn BOTH placement refusals in
+                                   the order-gate decorator into `if (false)` —
+                                   h156's whole point, reversed. Unlimited
+                                   queued jobs past bldSlots(), and a 3h23 arena
+                                   placeable with no Construction Co., i.e. the
+                                   entire municipal-ceiling design defeated
+     ECON_TEST_SABOTAGE=cap-race   round0r §8: drop `+ _pendingOf(placeType)`
+                                   from tryPlace's per-type count AND the two
+                                   reservation declarations — h096. Two clicks
+                                   15 ms apart on DIFFERENT squares then both
+                                   pass a `cap: 1` check, which used to be a
+                                   click and a refund away and is now a day-long
+                                   unwinnable tile
+     ECON_TEST_SABOTAGE=place-nobld round0r §8: drop `bld: bldRecord(…)` off the
+                                   placed tile — h098. Every building goes up
+                                   instantly: no timer, no site, nothing to
+                                   cancel. The headline feature is simply not
+                                   there and nothing else in this gate says so
+     ECON_TEST_SABOTAGE=beat-dead  round0r §9a: delete `bldSweep(Date.now())`
+                                   from animate()'s 4-second block — h180. It is
+                                   the only thing in the live page that
+                                   completes a due order, so the countdown
+                                   reaches zero and the building sits inert
+                                   until the player reloads or places something
+                                   else
+     ECON_TEST_SABOTAGE=offline-nosweep round0r §9b: delete the in-loop sweep
+                                   from offlineCatchUp — h142 — so the scrape
+                                   comes back null, which is what a deleted
+                                   statement looks like from here (same shape as
+                                   defer-park). OFFLINE COMPLETION STOPS
+                                   ENTIRELY: a 24-hour build never finishes
+                                   while the tab is closed, and boot()'s
+                                   hand-off cannot save it because
+                                   bldNormalize(true) defers rather than
+                                   completes
+     ECON_TEST_SABOTAGE=licence-paywalled round0u §8: put the 350,000 🔥 fee back
+                                   in OPS_ECON and delete the override clamp —
+                                   h014 + h017, which is how they would be
+                                   reverted, the table saying one thing and the
+                                   clamp having the last word. Every Cinder
+                                   earner in the game sits above the free
+                                   municipal ceiling, so this re-paywalls the
+                                   whole feature behind income the player cannot
+                                   earn yet. ⚠ Everything ELSE in round0u stubs
+                                   `_opEcon` at startup 0, so all of it grades
+                                   the grant while taking the zero on faith
+
      ⚠ round0s §6 takes no switch. It proves its two refusals by REBUILDING
        /src/economy into a temp directory with one line reverted and importing
        that copy — reverting either alone must still refuse, reverting both must
@@ -476,6 +551,9 @@ const SABOTAGES = [
   'refund-blind', 'refund-raw', 'save-gone', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
   'sell-pump', 'settle-requested', 'stale-deliver', 'stale-refund', 'stale-workplaces',
   'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind',
+  // ── COVER2, the four fixes a revert could delete under a green gate ──
+  'save-noborder', 'load-nolvl', 'gate-ungated', 'cap-race', 'place-nobld',
+  'beat-dead', 'offline-nosweep', 'licence-paywalled',
 ];
 const RETIRED_SABOTAGES = {
   rearm: 'retired: it flipped an argument this file passed itself — see round0s §3',
@@ -4860,6 +4938,10 @@ const stripComments = (src) => {
    SABOTAGE (each MUST redden this round; each re-commits the pre-fix source):
      boot-presweep · cancel-sited · cancel-blind · ops-zombie · refund-blind ·
      refund-raw · free-repair · lab-ungated
+     …and §7-§9, each of which re-commits one REAL HUNK of this branch's diff
+     rather than a pre-fix source that predates it:
+     save-noborder · load-nolvl · gate-ungated · cap-race · place-nobld ·
+     beat-dead · offline-nosweep
    ════════════════════════════════════════════════════════════════════════════ */
 {
   console.log('\n########## round0r-boot-order ##########');
@@ -4875,6 +4957,13 @@ const stripComments = (src) => {
       ? '../../public/node-city/THIS-FILE-DOES-NOT-EXIST.html'
       : '../../public/node-city/index.html'), 'utf8');
   } catch (e) { NC = null; }
+
+  /* 🔧 THE REAL ECON.construction, for §8's crew arithmetic. bldSlots(),
+     bldSpeed() and the municipal ceiling are all `C.<something>` reads, so a
+     sandbox that invents its own config would grade numbers this file chose
+     rather than the ones the product ships (Rule 4). Imported rather than
+     written down; Node caches the module, so this costs nothing. */
+  const ECON_C = (await import(pathToFileURL(join(here, '../../public/src/economy/tuning.js')).href)).ECON.construction;
 
   /* Whole `[async ]function NAME(…) { … }` text — round0q's scraper with the
      `async` prefix carried through, because bldCancel, bldPayRefund and
@@ -4898,6 +4987,33 @@ const stripComments = (src) => {
     if (!src) return null;
     const m = new RegExp('const\\s+' + name + '\\s*=\\s*[^\\n]+;').exec(src);
     return m ? m[0] : null;
+  };
+  /* …AND THE SAME THING FOR ONE THAT DOES NOT FIT ON A LINE. lineConst's regex
+     is anchored to `[^\n]+;`, so it silently returns null for `bldRemain` (two
+     lines) and silently returns a TRUNCATED declaration for `bldOpType`, whose
+     arrow body carries its own `;` inside a try. Either failure hands §8 a
+     sandbox that is wrong rather than absent, which is the worse of the two.
+     This walks to the terminating semicolon at bracket depth 0, stepping over
+     strings and comments for the reason the srcBlockAfter header gives. */
+  const constDecl = (src, name) => {
+    if (!src) return null;
+    const at = new RegExp('const\\s+' + name + '\\s*=').exec(src);
+    if (!at) return null;
+    let i = at.index, depth = 0;
+    for (; i < src.length; i++) {
+      const c = src[i], d = src[i + 1];
+      if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) return null; i = e + 1; continue; }
+      if (c === '/' && d === '/') { const e = src.indexOf('\n', i + 2); if (e < 0) return null; i = e; continue; }
+      if (c === '"' || c === "'" || c === '`') {
+        const q = c; i++;
+        for (; i < src.length; i++) { if (src[i] === '\\') { i++; continue; } if (src[i] === q) break; }
+        continue;
+      }
+      if ('([{'.indexOf(c) >= 0) depth++;
+      else if (')]}'.indexOf(c) >= 0) depth--;
+      else if (c === ';' && depth === 0) return src.slice(at.index, i + 1);
+    }
+    return null;                        // unterminated ⇒ nothing, never a guess
   };
   const num = (src, name) => {
     if (!src) return NaN;
@@ -4956,6 +5072,20 @@ const stripComments = (src) => {
     opsReconcile:   fnText(NC, 'opsReconcile'),
     opsFindLab:     fnText(NC, 'opsFindLab'),
     opsResearchAdj: fnText(NC, 'opsResearchAdj'),
+    /* 🏗 §8's CREW ARITHMETIC, lifted for the same reason as everything above
+       it: the order gate's first refusal is literally `bldCommitted() >=
+       bldSlots()`, so a sandbox that stubbed either number would grade its own
+       inequality. bldSlots reads the real ECON slot table through bldCfg;
+       bldCommitted is the one that counts orders still inside their payCost. */
+    bldCoTiles:     fnText(NC, 'bldCoTiles'),
+    bldWorkersOf:   fnText(NC, 'bldWorkersOf'),
+    bldSlots:       fnText(NC, 'bldSlots'),
+    bldActive:      fnText(NC, 'bldActive'),
+    bldCommitted:   fnText(NC, 'bldCommitted'),
+    bldNextFreeSec: fnText(NC, 'bldNextFreeSec'),
+    bldCrewBusyMsg: fnText(NC, 'bldCrewBusyMsg'),
+    bldCoHint:      fnText(NC, 'bldCoHint'),
+    tryPlace:       fnText(NC, 'tryPlace'),
   };
   /* Each entry below re-commits the pre-fix source for one defect, on the way
      into the sandbox. The anchors are the exact expressions the fixes added, so
@@ -5006,8 +5136,41 @@ const stripComments = (src) => {
     ]),
     opsFindLab:     unfix(SRC0.opsFindLab,     'lab-ungated', [['if (bldSite(t)) continue;', '']]),
     opsResearchAdj: unfix(SRC0.opsResearchAdj, 'lab-ungated', [['if (t.damaged || bldSite(t)) continue;', 'if (t.damaged) continue;']]),
+    /* 🧨 §8's TWO SWITCHES, BOTH RE-COMMITTING A REAL HUNK OF THIS BRANCH.
+       cap-race drops the `+ _pendingOf(placeType)` term, which is the whole of
+       h096's code change: the per-type count goes back to reading only tiles
+       that are already written, and two clicks 15 ms apart on different squares
+       both pass a `cap: 1` check.
+       place-nobld drops the order record off the placed tile — h098 — so the
+       building goes up instantly and the entire timer feature is void with the
+       gate still green. */
+    tryPlace: unfix(unfix(SRC0.tryPlace, 'cap-race', [
+      [' + _pendingOf(placeType)', ''],
+    ]), 'place-nobld', [
+      ['earn: 0, bld: bldRecord(0, 1, durSec, cost) };', 'earn: 0 };'],
+    ]),
   };
   const BLDSITE = lineConst(NC, 'bldSite');
+  const BLDBUSY = constDecl(NC, 'bldBusy');
+  const BLDREM  = constDecl(NC, 'bldRemain');
+  const BLDOPTY = constDecl(NC, 'bldOpType');
+  /* 🔒 THE RESERVATION DECLARATIONS, LIFTED RATHER THAN RETYPED. h096 deletes
+     `_pendingType` and `_pendingOf` outright, so a copy written here would keep
+     §8 green through exactly the revert it exists to catch — the same trap §2b
+     fell into with boot()'s hand-off. Null ⇒ the section reports a missing
+     declaration, which is what a deleted `const` looks like from here, and the
+     real hunk revert is caught exactly that way.
+     ⚠ THE `cap-race` SWITCH DELIBERATELY LEAVES THESE ALONE and injures the
+       COUNT instead (see tryPlace's unfix above). Nulling them here reddened §8
+       through the scrape check, which proves the round notices a missing
+       declaration and proves nothing about the race; dropping only
+       `+ _pendingOf(placeType)` leaves the reservation being taken and released
+       and simply never read, so the two-clicks scenario fails the way a player
+       meets it — with two cap-1 buildings on the board. */
+  const PLACING     = constDecl(NC, '_placing');
+  const PENDING_MAP = constDecl(NC, '_pendingType');
+  const PENDING_OF  = constDecl(NC, '_pendingOf');
+  const CAPB    = num(NC, 'CAP_PER_BUILDING');
   const CPD     = num(NC, 'CINDER_PERIOD_DIV');
   const SLICE   = num(NC, 'OFFLINE_SLICE_SEC');
   const CAP_H   = num(NC, 'OFFLINE_CAP_H');
@@ -5032,9 +5195,13 @@ const stripComments = (src) => {
         missing.length === 0, 'MISSING: ' + missing.join(',')) &
     chk('lifted bldSite, the damage/order statement and the shipped constants',
         !!BLDSITE && !!DMG_STMT && !!BLDG && !!BOOT_SRC0 &&
-        [CPD, SLICE, CAP_H, BCM, BRM, UPM, MAXL, RADIUS].every(Number.isFinite),
+        [CPD, SLICE, CAP_H, BCM, BRM, UPM, MAXL, RADIUS, CAPB].every(Number.isFinite),
         'bldSite=' + !!BLDSITE + ' dmg×' + DMG_HITS.length + '=' + JSON.stringify(DMG_STMT) + ' bldgs=' + (BLDG ? Object.keys(BLDG).length : 'NULL') +
-        ' [' + [CPD, SLICE, CAP_H, BCM, BRM, UPM, MAXL, RADIUS].join(',') + ']');
+        ' [' + [CPD, SLICE, CAP_H, BCM, BRM, UPM, MAXL, RADIUS, CAPB].join(',') + ']') &
+    chk('lifted the four one-line bld predicates and the placement reservations',
+        !!BLDBUSY && !!BLDREM && !!BLDOPTY && !!PLACING,
+        'bldBusy=' + JSON.stringify(BLDBUSY) + ' bldRemain=' + JSON.stringify(BLDREM) +
+        ' bldOpType=' + JSON.stringify(BLDOPTY) + ' _placing=' + JSON.stringify(PLACING));
 
   if (!gotAll) {
     console.log('\n🔴 THE SOURCE COULD NOT BE READ — nothing below was checked.');
@@ -5133,6 +5300,36 @@ const stripComments = (src) => {
       const BUILD_CINDER_MULT = ${BCM}, BUILD_RES_MULT = ${BRM};
       const OPS_RESEARCH_R = ${RADIUS}, GRID = 24, OPS_PREFIX = 'op_';
       const ROAD_DEMOLISH_COST = ${RDC};
+      /* 🏗 §8's placement scaffolding. Everything here is a stub for something
+         tryPlace touches on the way past — the parts UNDER TEST (the per-type
+         count, the reservation multiset, the order record, both refusals) are
+         lifted out of node-city, never written here. _placing, _pendingType and
+         _pendingOf arrive as the SHIPPED declarations (see PLACING / PENDING
+         above): they are module-level consts beside tryPlace, and h096 deletes
+         two of them, so a copy typed here would keep the round green through
+         exactly the revert it exists to catch.
+         NOTE FOR EDITORS — this whole block is a TEMPLATE LITERAL. No backticks
+         and no dollar-brace in the prose, or the sandbox stops parsing. */
+      const CAP_PER_BUILDING = ${CAPB}, ROAD_PER_DEPOT = 0, ROAD_PER_CONVOY = 0;
+      let placeType = __ctx.placeType || 'club', placeRot = 0;
+      let CARDS = [];
+      ${PLACING || 'const _placing = new Set();'}
+      ${PENDING_MAP || ''}
+      ${PENDING_OF || ''}
+      function tileAt(x, z) { return game.tiles[key(x, z)] || null; }
+      function canRotate() { return true; }
+      function freeCards() { return CARDS.slice(); }
+      function popUsed() { return 0; }
+      function popCap() { return 9999; }
+      function roadCapParts() { return { cap: 9999 }; }
+      function roadUsed() { return 0; }
+      function allRoadKeys() { return []; }
+      function fmtCountdown(sec) { return Math.round(sec) + 's'; }
+      function logEsc(s) { return String(s); }
+      /* The long-order dialog. Default YES, because every §8 scenario is about
+         a REFUSAL that must fire before this is ever reached; a section that
+         needs the "no" answer passes __ctx.longAnswer === false explicitly. */
+      async function bldConfirmLong(what, durSec) { spy.longConfirms.push(durSec); return __ctx.longAnswer !== false; }
       /* 🏠 node-city reaches for window.MythicHouse behind a try/catch. Modelled
          rather than left to throw, so §3f can assert the sleeping cards are NOT
          handed back on a demolish the player answered "no" to. */
@@ -5182,9 +5379,30 @@ const stripComments = (src) => {
          function anywhere; it is a tail inside the handler, which is exactly how
          it came to diverge from the cancel path in the first place. Grading a
          copy of it here would have graded this file, not the product. */
-      async function payCost(c) { spy.paid.push(c); return __ctx.payFails !== true; }
+      /* ⏳ __ctx.payDelay IS THE WHOLE OF §8's RACE. The defect is that the cap
+         is counted BEFORE the await on payCost and the tile is written AFTER
+         it, so two clicks that overlap that await both see the same count. A
+         payCost that resolves in the same microtask cannot reproduce it; one
+         real timer tick can. Unset in every other scenario, nothing changes. */
+      async function payCost(c) {
+        spy.paid.push(c);
+        if (__ctx.payDelay) await new Promise(r => setTimeout(r, __ctx.payDelay));
+        return __ctx.payFails !== true;
+      }
       ${ctx.demSrc ? 'async function demolishClick() ' + ctx.demSrc : ''}
-      const bldCfg = () => ECON_ON ? { on: true, maxSec: 86400, formulaV: 1, exemptTypes: [] } : null;
+      /* ⚠ THE FIRST FOUR KEYS ARE UNCHANGED, DELIBERATELY. Every section above
+         §8 runs against this literal, and swapping in the real ECON.exemptTypes
+         would silently change what bldNormalize does to a road in §2. The crew
+         and ceiling keys are ADDED for §8 and read by lifted code only
+         (bldSlots / bldSpeed / the order gate), so nothing older can see them.
+         Their VALUES come from the shipped ECON.construction — Rule 4: the
+         municipal ceiling is the number the design turns on and this file does
+         not get to pick its own. */
+      const bldCfg = () => ECON_ON ? { on: true, maxSec: 86400, formulaV: 1, exemptTypes: [],
+                                       municipal: ${JSON.stringify(ECON_C.municipal)},
+                                       slots: ${JSON.stringify(ECON_C.slots)},
+                                       speed: ${JSON.stringify(ECON_C.speed)},
+                                       confirmOverSec: ${ECON_C.confirmOverSec | 0} } : null;
       /* 🔴 THIS STUB LIES UNLESS IT IS CHAINED TO ECON_ON, AND THE LIE HID A
          LIVE DEFECT FOR A WHOLE ROUND. The shipped chain is
          bldDuration -> bldProfile -> bldCfg() -> window.MythicEconomy, and
@@ -5214,6 +5432,20 @@ const stripComments = (src) => {
       function toast(m, kind) { spy.toasts.push({ m: m, kind: kind }); }
       function computeLinks() {} function manageAgents() {}
       function updateHUD() {} function saveNow() {} function saveSoon() {} function openInspect() {}
+      /* §9a's neighbours on the 4-second beat. animate()'s block is scraped and
+         RUN whole — the point is that bldSweep is IN it — so every sibling call
+         needs a body. Each records itself, so §9a can also assert the beat did
+         not stop working for everything else. */
+      const performance = { now: () => __NOW };
+      function evaluateNeeds() { spy.beat.push('evaluateNeeds'); }
+      function caravanTick() { spy.beat.push('caravanTick'); }
+      function expeditionTick() { spy.beat.push('expeditionTick'); }
+      function refugeeTick() { spy.beat.push('refugeeTick'); }
+      function decayTick() { spy.beat.push('decayTick'); }
+      function nodeXpTick() { spy.beat.push('nodeXpTick'); }
+      function finTick() { spy.beat.push('finTick'); }
+      function finCount() { return 0; }
+      function finRefreshMarket() { spy.beat.push('finRefreshMarket'); }
       function ecoSync() { spy.ecoSync.push(spy.phase); }
       function dropTileMesh() {} function refreshRoadArea() {} function placeMeshAt() {}
       function buildMesh() { return { mesh: true }; }
@@ -5251,7 +5483,38 @@ const stripComments = (src) => {
       }
       function opsLab(row) { return (row && row.lab) || { tier: 1 }; }
       ${BLDSITE}
+      ${BLDBUSY}
+      ${BLDREM}
+      ${BLDOPTY}
+      /* Storage, not logic — the same reason _bldOffline and friends are
+         declared here rather than lifted (see this sandbox's header). What the
+         crew gate actually DOES with the counter is bldReserveCrew /
+         bldReleaseCrew / bldCommitted, and those are lifted. */
+      let _pendingOrders = 0;
+      const bldReserveCrew = () => { _pendingOrders++; };
+      const bldReleaseCrew = () => { _pendingOrders = Math.max(0, _pendingOrders - 1); };
       ${Object.keys(SRC).map(k => SRC[k]).join('\n')}
+      /* 🏗 THE ORDER GATE, WRAPPED THE WAY node-city WRAPS IT — its own two
+         statements, over the tryPlace lifted directly above. §8 drives the real
+         decorator over the real base, so a refusal that fails to fire shows up
+         as a tile on the board, which is what the player would see. */
+      ${ctx.gateSrc ? 'const _tryPlaceOrderBase = tryPlace;\n      tryPlace = async function (x, z) ' + ctx.gateSrc + ';' : ''}
+      /* 🏗 loadState's tile-rehydration statement, animate()'s 4-second block and
+         offlineCatchUp's construction statements — each scraped and RUN, never
+         re-typed. See §7, §9a and §9b for why each one has to be the shipped
+         text and not a copy of it. The one-iteration for-loop around the load
+         statement is not decoration: the shipped statement lives inside a
+         for-of loop and opens with three continue guards, which are a
+         SyntaxError outside a loop. */
+      /* ⚠ __out, NOT a pre-declared t. The scraped statement declares its own
+         const t, which SHADOWS anything of that name outside the loop body —
+         the first attempt read the outer binding and got null on a healthy
+         tree, i.e. the section failed for its own reason instead of the
+         product's. The copy-out is the last statement in the block, so a
+         continue guard that fires correctly yields no tile. */
+      ${ctx.loadSrc ? 'function loadTile(k, td) { let __out = null; for (let _o = 0; _o < 1; _o++) {' + ctx.loadSrc + '\n        __out = t;\n      } return __out; }' : ''}
+      ${ctx.beatSrc ? 'let sysTimer = 0;\n      function beatTick(sec) { sysTimer += sec; if (sysTimer >= 4) ' + ctx.beatSrc + ' }' : ''}
+      ${ctx.offSrc ? 'async function offlineDrive(simSec, vFrom, OFFLINE_SLICE_SEC) ' + ctx.offSrc : ''}
       return {
         game: game, OPS: OPS,
         bldNormalize: bldNormalize, bldSweep: bldSweep, bldFinishAll: bldFinishAll,
@@ -5270,10 +5533,19 @@ const stripComments = (src) => {
            and bldDuration start answering. §3d uses it to cross the exact
            boundary opsReconcile sits on the wrong side of. */
         setEcon: (v) => { ECON_ON = !!v; },
+        // §7 / §8 / §9 — the scraped production statements, exposed to be driven.
+        loadTile:   (typeof loadTile === 'function' ? loadTile : null),
+        beatTick:   (typeof beatTick === 'function' ? beatTick : null),
+        offlineDrive: (typeof offlineDrive === 'function' ? offlineDrive : null),
+        tryPlace:   (x, z) => tryPlace(x, z),
+        setPlaceType: (v) => { placeType = v; },
+        slots:      () => bldSlots(),
+        committed:  () => bldCommitted(),
+        offline:    () => _bldOffline,
       };`;
     return new Function('__ctx', S)(ctx);
   };
-  const mkSpy = () => ({ writes: [], landed: {}, confirms: [], toasts: [], finished: [], ecoSync: [], unsite: [], paid: [], house: [], phase: 'load' });
+  const mkSpy = () => ({ writes: [], landed: {}, confirms: [], toasts: [], finished: [], ecoSync: [], unsite: [], paid: [], house: [], beat: [], longConfirms: [], phase: 'load' });
   const cinPerSec = (type) => {
     const d = BLDG[type]; const g = d && d.gen && +d.gen.cinder;
     return g > 0 ? g / CPD / 60 : 0;          // per-minute figure → per-hour → per-second
@@ -6164,6 +6436,503 @@ const stripComments = (src) => {
     chk('…and a STANDING lab still works while it upgrades, with a real Spire next to it',
         !!api.opsFindLab() && api.opsResearchAdj('3,3') === true,
         'findLab=' + !!api.opsFindLab() + ' adj=' + api.opsResearchAdj('3,3'));
+  }
+
+  /* ── §7 THE ORDER SURVIVES A SAVE, AND THE LOAD STATEMENT STILL COMPILES ────
+     🔴 THE TWO HUNKS THIS SECTION EXISTS FOR, AND WHAT REVERTING EITHER COSTS.
+
+     h137 adds the `...(t.bld ? { b: {…} } : {})` spread to serialize()'s tile
+     record. `s` and `d` are the ONLY record that a 24-hour job is running, so
+     without that key EVERY PAID ORDER ON THE BOARD VANISHES on the next save —
+     and bldLoad's governing principle ("every ambiguity resolves toward
+     COMPLETION") then hands the player the finished building for free on the
+     reload. The Cinder was spent. Measured against the shipped tree: revert
+     h137, both syntax checks CLEAN, gate GREEN, exit 0.
+
+     h145 splits `lvl` out of the tile literal into its own `const`, because
+     `bld: bldLoad(td.b, lvl, td.type)` needs to READ it. Revert it and `lvl`
+     is a free identifier inside the tile loop — a ReferenceError on the first
+     tile of every load, i.e. no city loads at all. An undefined free variable
+     is valid syntax, so `_synckcheck.mjs` cannot see it: measured, both syntax
+     checks CLEAN and the gate GREEN, exactly as with h137.
+
+     HOW A ReferenceError IS CAUGHT HERE, since that is the whole trick: the
+     scraped statement is EXECUTED, in a `new Function` whose parameters are
+     exactly what loadState legitimately has in scope. `lvl` is deliberately NOT
+     among them. If the statement declares it, the call returns a tile; if the
+     declaration has been reverted away, reading it throws, and the throw is
+     caught and reported as a FAILED check rather than as a stack trace — the
+     shape round0s §3e uses for `save-gone`.
+
+     THE PRODUCTION CALLERS THIS MIRRORS: `serialize()` (its own `tiles[k] = {…}`
+     literal, evaluated) → JSON → `loadState()` (its own tile statement, run) →
+     the real `bldLoad`. Nothing between them is re-typed, so the round-trip
+     under test is the one an ordinary tab close and reopen performs.
+
+     SABOTAGE: save-noborder (h137) · load-nolvl (h145). */
+  {
+    /* The serialize literal. Scoped to serialize() first: `tiles[k] =` also
+       matches spawnAnchors' `game.tiles[k] = { type: 'anchor', … }` six
+       thousand lines above, and srcBlockAfter would happily return THAT — a
+       three-key literal with no `b` and no `stad`, i.e. a scrape that reads as
+       "the fix is missing" on a healthy tree. The decl must also stop BEFORE
+       the brace, or srcBlockAfter starts its scan at the next one it finds:
+       an anchor of `tiles[k] = { type: t.type,` returned the `house:` IIFE's
+       body instead of the record. */
+    const SER_FN = NC.slice(NC.indexOf('function serialize()'));
+    const SER_LIT = unfix(srcBlockAfter(SER_FN, 'tiles[k] ='), 'save-noborder', [
+      ['...(t.bld ? { b: {', '...(false ? { b: {'],
+    ]);
+    /* loadState's tile statement: the loop body, cut immediately after the
+       statement that calls bldLoad. Taken WITH its `continue` guards, because
+       they are part of what production runs — hence the one-iteration `for`
+       wrapper in the sandbox. */
+    const LOOP = srcBlockAfter(NC, 'for (const [k, td] of Object.entries(s.tiles))');
+    const bldAt = LOOP ? LOOP.indexOf('bld: bldLoad(') : -1;
+    const stopAt = bldAt >= 0 ? LOOP.indexOf('};', bldAt) : -1;
+    /* ⚠ TWO SINGLE-LINE ANCHORS, NEVER ONE ACROSS THE BREAK — the ops-zombie
+       rule. Together they are h145 reversed, verbatim: the binding goes and the
+       expression moves back inline, so `lvl` in the bldLoad call is free. */
+    const LOAD_STMT = unfix(stopAt > 0 ? LOOP.slice(1, stopAt + 2) : null, 'load-nolvl', [
+      ['const lvl = Math.min(BUILDINGS[td.type].maxLvl || MAX_LVL, td.lvl | 0) || 1;', ''],
+      ['const t = { type: td.type, lvl, damaged: !!td.dmg,',
+       'const t = { type: td.type, lvl: Math.min(BUILDINGS[td.type].maxLvl || MAX_LVL, td.lvl | 0) || 1, damaged: !!td.dmg,'],
+    ]);
+
+    const gotSer = chk('§7 serialize()\'s tile record and loadState()\'s tile statement are where this round thinks they are',
+        !!SER_LIT && !!LOAD_STMT && SER_LIT.indexOf('stad:') > 0 && LOAD_STMT.indexOf('bldLoad(') > 0,
+        'literal ' + JSON.stringify(SER_LIT && SER_LIT.slice(0, 60)) + ' stmt ' + JSON.stringify(LOAD_STMT && LOAD_STMT.slice(0, 60)));
+
+    if (gotSer) {
+      /* ⏳ A 24-HOUR ORDER, TWO HOURS IN. The numbers come from ECON's own
+         ceiling, so a retune moves them and the section still means the same
+         thing. */
+      const DUR = ECON_C.maxSec, NOW = Date.now(), STARTED = NOW - 2 * 3600000;
+      const live = { type: 'powerstation', lvl: 2, damaged: false, rot: 0, wear: 0, born: 0, spent: 0, earn: 0,
+                     bld: { k: 1, l: 3, s: STARTED, d: DUR, fv: 1, pc: 4321, pr: { metal: 7 } } };
+      const done = { type: 'club', lvl: 1, damaged: false, rot: 0, wear: 0, born: 0, spent: 0, earn: 0 };
+
+      /* serialize()'s OWN literal, evaluated. Only `t` and `window` are in
+         scope, which is all it reads. */
+      const ser = new Function('t', 'window', 'return (' + SER_LIT + ');');
+      let sLive = null, sDone = null, serThrew = null;
+      try { sLive = ser(live, {}); sDone = ser(done, {}); } catch (e) { serThrew = String(e); }
+      chk('§7 serialize() writes the build order onto the tile it belongs to',
+          !!sLive && !!sLive.b && sLive.b.d === DUR && sLive.b.k === 1 && sLive.b.l === 3,
+          serThrew || 'saved b = ' + JSON.stringify(sLive && sLive.b) +
+          ' — with no `b` key the order is GONE and bldLoad completes the building for free on the next load');
+      chk('§7 …and the start stamp survives as a full millisecond epoch, not a 32-bit truncation',
+          !!sLive && sLive.b && sLive.b.s === STARTED && sLive.b.s > 2147483647,
+          'saved s = ' + JSON.stringify(sLive && sLive.b && sLive.b.s) + ' vs ' + STARTED);
+      chk('§7 …and it carries the refund basis the cancel path pays against',
+          !!sLive && sLive.b && sLive.b.pc === 4321 && sLive.b.pr && sLive.b.pr.metal === 7,
+          JSON.stringify(sLive && sLive.b));
+      chk('§7 a FINISHED tile writes no `b` key at all — no existing save grows by a byte',
+          !!sDone && !('b' in sDone), JSON.stringify(sDone && sDone.b));
+
+      /* loadState's own statement, RUN. `lvl` is not a parameter — see the
+         header. Everything else is what loadState really has in scope. */
+      const probe = mkCity({ spy: mkSpy(), B: BLDG, loadSrc: LOAD_STMT });
+      probe.game.cityAge = 999999;
+      const roundTrip = (saved) => {
+        try { return { t: probe.loadTile('4,4', JSON.parse(JSON.stringify(saved))) }; }
+        catch (e) { return { err: e }; }
+      };
+      const rt = roundTrip(sLive || {});
+      chk('§7 loadState\'s tile statement RUNS — every identifier it reads is one it declares or is given',
+          !rt.err, 'threw ' + (rt.err && (rt.err.name + ': ' + rt.err.message)) +
+          ' — an undefined free variable is valid syntax, so neither _synckcheck.mjs nor a behaviour test above can see this');
+      const back = rt.t && rt.t.bld;
+      chk('§7 THE ROUND TRIP — a 24-hour order two hours in comes back still running',
+          !!back && back.k === 1 && back.l === 3 && back.d === DUR &&
+          Math.abs((back.s + back.d * 1000 - NOW) / 1000 - (DUR - 7200)) < 60,
+          'reloaded bld = ' + JSON.stringify(back) +
+          ' — null here means the building was handed over FINISHED, with the Cinder already spent');
+      chk('§7 …and the reloaded tile kept its level, which is the same binding bldLoad reads',
+          !!rt.t && rt.t.lvl === 2, 'lvl = ' + JSON.stringify(rt.t && rt.t.lvl));
+      /* THE HONEST PLAYER ON THE UNHAPPY PATH: a save written before this
+         feature has no `b` on any tile, and must load as a finished building —
+         never as a hole in the ground nobody can clear. */
+      const old = roundTrip({ type: 'club', lvl: 1, rot: 0, wear: 0, born: 0 });
+      chk('§7 a pre-feature save still loads, with every building FINISHED',
+          !old.err && !!old.t && !old.t.bld,
+          old.err ? String(old.err) : 'bld = ' + JSON.stringify(old.t && old.t.bld));
+    }
+  }
+
+  /* ── §8 THE ORDER GATE, AND THE CAP RACE UNDERNEATH IT ──────────────────────
+     🔴 THE THREE HUNKS THIS SECTION EXISTS FOR.
+
+     h156 is the order-gate decorator — the block that wraps tryPlace and holds
+     BOTH placement refusals. Revert it and they go together: unlimited queued
+     jobs past bldSlots(), and a 3h23 arena placeable in a city with no
+     Construction Co., which is the entire municipal-ceiling design defeated in
+     one hunk. Measured: both syntax checks CLEAN, gate GREEN, exit 0.
+
+     h096/h097/h099 are the `_pendingType` multiset. The per-type cap is counted
+     from `game.tiles` BEFORE `await payCost` and the tile is written AFTER it,
+     so two clicks on two DIFFERENT squares both read count 0 and both pass a
+     `cap: 1` check. `_placing` does not cover it — it is per-SQUARE by design.
+     That was survivable when a duplicate was a click and a refund away; with a
+     24-hour timer it is a day-long unwinnable tile. Measured: GREEN.
+
+     h098 puts `bld: bldRecord(0, 1, durSec, cost)` on the placed tile. Revert
+     it and every building goes up instantly: no timer, no site, nothing to
+     cancel — the headline feature is void and nothing else in this gate says
+     so. Measured: GREEN.
+
+     THE PRODUCTION CALLER THIS MIRRORS is a click on the shop card: the shipped
+     `tryPlace = async function (x, z)` decorator over the shipped
+     `async function tryPlace(x, z)`, both lifted, with the real bldSlots /
+     bldCommitted / bldCoTiles arithmetic underneath and the real ECON slot
+     table behind bldCfg(). The stubs are the mesh, the ledger and the dialogs.
+
+     ⚠ WHAT THE GUARDS MUST NOT DO TO AN HONEST PLAYER, asserted here because a
+       refusal is only half a design: an exempt type (durSec 0 — roads, walls,
+       lots, decor) goes straight through with no crew test and no ceiling test,
+       and TWO legitimate concurrent placements of a type whose cap allows both
+       must BOTH land. The multiset is a multiset for that second reason; a Set
+       would have thrown one of them away.
+
+     SABOTAGE: gate-ungated (h156) · cap-race (h096) · place-nobld (h098). */
+  {
+    /* The gate wrapper's own function body. Sliced from its declaration first:
+       `tryPlace = async function (x, z)` matches the OPERATIONS wrapper too,
+       and that one is ~75 lines earlier — scraping it would grade the ops gate
+       while claiming to grade the order gate. */
+    const GATE_AT = NC.indexOf('const _tryPlaceOrderBase = tryPlace;');
+    const GATE_SRC = unfix(GATE_AT < 0 ? null : srcBlockAfter(NC.slice(GATE_AT), 'tryPlace = async function (x, z)'),
+      'gate-ungated', [
+        /* h156 reversed in effect: both refusals stop refusing. The wrapper
+           itself stays, so this grades the REFUSALS rather than the scrape.
+           ⚠ SINGLE-LINE ANCHORS, and the first attempt here proved why the
+             ops-zombie header insists on it: an anchor of
+             `…bldSlots()) {\n      toast(bldCrewBusyMsg()` matched NOTHING,
+             because node-city has CRLF line endings. It reddened the round
+             through `patchOk` instead of through the defect, and REFUSAL 1
+             stayed green under a switch that claimed to remove it.
+           The crew test appears twice in the wrapper (once before the long-order
+           dialog, once after it) and unfix replaces every occurrence — which is
+           correct: h156 takes both away together. */
+        ['if (bldCommitted() >= bldSlots())', 'if (false)'],
+        ['if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldCoTiles().length)', 'if (false)'],
+      ]);
+
+    const gotGate = chk('§8 the order gate is where this round thinks it is',
+        !!GATE_SRC && GATE_SRC.indexOf('_tryPlaceOrderBase') > 0 && GATE_SRC.indexOf('bldReserveCrew()') > 0 &&
+        !!PENDING_MAP && !!PENDING_OF,
+        'gate ' + JSON.stringify(GATE_SRC && GATE_SRC.slice(0, 70)) +
+        ' _pendingType=' + JSON.stringify(PENDING_MAP) + ' _pendingOf=' + JSON.stringify(PENDING_OF) +
+        ' — a missing reservation declaration IS the h096 revert, seen from here');
+
+    if (gotGate) {
+      /* A cap-1 building, DERIVED. The comment beside _pendingType names six of
+         them; naming one here would rot the day that building is retuned.
+         `requiresCard` and `concourse` are excluded because they add a refusal
+         of their own — this section is about the CAP, and a scenario that lost
+         its race to a missing Structure card would pass for the wrong reason.
+         `pop` is NOT excluded: popCap() is stubbed wide open, so the population
+         branch never fires, and excluding it leaves no candidate at all. */
+      const CAP1 = Object.keys(BLDG).find(t => BLDG[t] && BLDG[t].cap === 1 && !BLDG[t].requiresCard && !BLDG[t].concourse);
+      const CAPN = Object.keys(BLDG).find(t => BLDG[t] && !BLDG[t].cap && !BLDG[t].requiresCard &&
+                                              !BLDG[t].concourse && !BLDG[t].pop && !BLDG[t].decor && t !== 'road');
+      chk('§8 the map still has a cap-1 building and an uncapped one to race',
+          !!CAP1 && !!CAPN, 'cap1=' + CAP1 + ' capN=' + CAPN);
+
+      /* 🏭 op_* IS NOT IN THE BUILDINGS LITERAL. node-city registers every
+         operation into BUILDINGS from OP_BP at runtime, ~3,000 lines below the
+         literal this round reads — the same registration loop round0f's
+         `stale-workplaces` switch is about. That loop is NOT what §8 grades:
+         the term under test is `bldOpType(placeType) === null` in the ceiling
+         refusal, and it needs a def to exist at all to get that far. So one is
+         supplied, with the shape ops really have (cost {} — index.html gives
+         every op an empty cost dict, the licence having been paid at City Hall)
+         and nothing else. */
+      const B_OPS = { ...BLDG, op_construction: { name: 'Construction Co.', cost: {} } };
+
+      const mkPlace = (extra) => mkCity({ spy: mkSpy(), B: BLDG, dur: 3600, payDelay: 5, ...(extra || {}) });
+
+      // ── (1) THE CAP RACE — two clicks, two squares, one slot in the design ──
+      {
+        const api = mkPlace({ placeType: CAP1 });
+        await Promise.all([api.tryPlace(1, 1), api.tryPlace(2, 2)]);
+        const n = Object.keys(api.game.tiles).length;
+        chk('§8 two fast clicks on DIFFERENT squares cannot both beat a cap-1 building',
+            n === 1, 'placed ' + n + ' — the per-type count is read before payCost and the tile written after it, so both clicks saw 0');
+      }
+      // ── (2) …AND THE HONEST PLAYER STILL GETS BOTH LEGITIMATE PLACEMENTS ────
+      {
+        const api = mkPlace({ placeType: CAPN });
+        await Promise.all([api.tryPlace(1, 1), api.tryPlace(2, 2)]);
+        const n = Object.keys(api.game.tiles).length;
+        chk('§8 …and two legitimate concurrent placements of an uncapped type BOTH land',
+            n === 2, 'placed ' + n + ' of 2 — a Set here instead of a multiset throws one of them away');
+      }
+      // ── (3) h098 — the placed tile actually carries the order ───────────────
+      {
+        const api = mkPlace({ placeType: CAPN });
+        await api.tryPlace(3, 3);
+        const t = api.game.tiles['3,3'];
+        chk('§8 a placed building carries its build order — the whole feature',
+            !!t && !!t.bld && t.bld.k === 0 && t.bld.d === 3600 && t.bld.l === 1,
+            'tile = ' + JSON.stringify(t && t.bld) + ' — null means it went up instantly and there is nothing to cancel, time or refund');
+        chk('§8 …and the order records what payCost was actually handed, as the refund basis',
+            !!t && !!t.bld && t.bld.pc === (api.costOf(CAPN).cinder | 0),
+            'pc = ' + JSON.stringify(t && t.bld && t.bld.pc) + ' vs charged ' + JSON.stringify(api.costOf(CAPN)));
+      }
+      // ── (4) REFUSAL ONE — no free crew ──────────────────────────────────────
+      {
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, dur: 3600, gateSrc: GATE_SRC, placeType: CAPN });
+        /* The number comes from the lifted bldSlots() over the real ECON slot
+           table — not from a constant here, or the fixture would fill a number
+           this file chose and the refusal would be graded against itself. */
+        const slots = api.slots();
+        chk('§8 the free Municipal Works crew is a real, bounded number',
+            slots === ECON_C.municipal.slots && slots > 0, 'bldSlots() = ' + slots);
+        for (let i = 0; i < slots; i++)
+          api.game.tiles['9,' + i] = { type: CAPN, lvl: 1, rot: 0, bld: { k: 0, l: 1, s: Date.now(), d: 3600, fv: 1, pc: 0, pr: null } };
+        await api.tryPlace(5, 5);
+        chk('§8 REFUSAL 1 — with every crew working, a new order is refused before anything is charged',
+            !api.game.tiles['5,5'] && spy.paid.length === 0 && spy.toasts.length === 1 &&
+            spy.toasts[0].kind === 'bad' && /crew/i.test(spy.toasts[0].m),
+            'tile ' + JSON.stringify(!!api.game.tiles['5,5']) + ', payCost ' + spy.paid.length +
+            ', said ' + JSON.stringify(spy.toasts.map(t => t.m)) +
+            ' — with no gate there is no queue, so this is an unbounded number of paid 24-hour jobs');
+      }
+      // ── (5) REFUSAL TWO — the municipal ceiling ─────────────────────────────
+      {
+        const LONG = ECON_C.municipal.maxSec + 1;
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, dur: LONG, gateSrc: GATE_SRC, placeType: CAPN });
+        await api.tryPlace(6, 6);
+        chk('§8 REFUSAL 2 — a job over the municipal ceiling is refused with no Construction Co. standing',
+            !api.game.tiles['6,6'] && spy.paid.length === 0 && spy.toasts.length === 1 &&
+            /Municipal Works/.test(spy.toasts[0].m),
+            'tile ' + JSON.stringify(!!api.game.tiles['6,6']) + ', payCost ' + spy.paid.length +
+            ', said ' + JSON.stringify(spy.toasts.map(t => t.m)) +
+            ' — every Cinder earner in the game sits above this ceiling, so without it the Co. gates nothing');
+        /* …AND THE GATE OPENS. A refusal that cannot be satisfied is a wall, so
+           the same order with a COMPLETED Co. standing must go through. */
+        const spy2 = mkSpy();
+        const api2 = mkCity({ spy: spy2, B: BLDG, dur: LONG, gateSrc: GATE_SRC, placeType: CAPN });
+        api2.game.tiles['0,9'] = { type: 'op_construction', lvl: 1, rot: 0 };   // finished, undamaged
+        await api2.tryPlace(6, 6);
+        chk('§8 …and a COMPLETED Construction Co. opens it — the refusal is a gate, not a wall',
+            !!api2.game.tiles['6,6'] && !!api2.game.tiles['6,6'].bld,
+            'tile ' + JSON.stringify(api2.game.tiles['6,6']) + ', said ' + JSON.stringify(spy2.toasts.map(t => t.m)));
+        /* …and an UNFINISHED Co. does not, or the bootstrap is free: place a
+           Co., place an arena in the same breath, cancel the Co. */
+        const spy3 = mkSpy();
+        const api3 = mkCity({ spy: spy3, B: BLDG, dur: LONG, gateSrc: GATE_SRC, placeType: CAPN });
+        api3.game.tiles['0,9'] = { type: 'op_construction', lvl: 1, rot: 0,
+                                   bld: { k: 0, l: 1, s: Date.now(), d: 900, fv: 1, pc: 0, pr: null } };
+        await api3.tryPlace(6, 6);
+        chk('§8 …but a Construction Co. that is still a hole in the ground supervises nothing',
+            !api3.game.tiles['6,6'], 'a site counted as a standing Co. — place Co., place arena, cancel Co. is then free');
+      }
+      // ── (6) THE OPS EXEMPTION, AND THE EXEMPT TYPES ────────────────────────
+      {
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: B_OPS, dur: ECON_C.municipal.maxSec + 1, gateSrc: GATE_SRC, placeType: 'op_construction' });
+        await api.tryPlace(7, 7);
+        chk('§8 an op_* is exempt from the ceiling — the licence was already paid at City Hall',
+            !!api.game.tiles['7,7'], 'said ' + JSON.stringify(spy.toasts.map(t => t.m)) +
+            ' — charging twice for one business, and op_construction is the one that unlocks the rest');
+        /* 🛤 THE HONEST PLAYER PAVING A GRID. durSec 0 ⇒ exempt or no economy
+           module: no timer, no slot, no gate. This must never be refused for
+           want of a crew, and it must not consume one either. */
+        const spy2 = mkSpy();
+        const api2 = mkCity({ spy: spy2, B: BLDG, dur: 0, gateSrc: GATE_SRC, placeType: 'road' });
+        for (let i = 0; i < 6; i++) await api2.tryPlace(i, 8);
+        const roads = Object.keys(api2.game.tiles).length;
+        chk('§8 an EXEMPT type is never refused and never takes a crew slot — paving a grid still works',
+            roads === 6 && spy2.toasts.length === 0 && api2.committed() === 0,
+            'placed ' + roads + ' of 6, said ' + JSON.stringify(spy2.toasts.map(t => t.m)) + ', committed ' + api2.committed());
+      }
+      // ── (7) THE RESERVATION IS RELEASED — a refusal may not leak a crew ────
+      {
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, dur: 3600, gateSrc: GATE_SRC, placeType: CAPN, payFails: true });
+        await api.tryPlace(2, 7);
+        await api.tryPlace(3, 7);
+        chk('§8 a FAILED payment releases both reservations — a bad bridge may not lock the city out for the session',
+            api.committed() === 0 && Object.keys(api.game.tiles).length === 0,
+            'committed ' + api.committed() + ' with nothing on the board — the finally that releases them spans the whole await');
+      }
+    }
+  }
+
+  /* ── §9 A FINISHED BUILDING GOES UP BY ITSELF — AWAKE AND ASLEEP ────────────
+     🔴 THE TWO HUNKS THIS SECTION EXISTS FOR, AND WHY §2 COULD NOT SEE EITHER.
+
+     h180 is `try { bldSweep(Date.now()); } catch (e) {}` on animate()'s
+     4-second beat. It is the ONLY thing in the live page that completes a due
+     order. Revert it and a building the player watched count down to zero sits
+     inert until they reload or place something else — the timer runs out and
+     nothing happens. Measured against the shipped tree: both syntax checks
+     CLEAN, gate GREEN, exit 0.
+
+     h142 is the in-loop sweep inside offlineCatchUp: `const vnow = vFrom +
+     done * 1000; if (vnow >= _bldNext) { bldSweep(vnow); … }`. Revert it and
+     OFFLINE COMPLETION STOPS ENTIRELY — a 24-hour build never finishes while
+     the tab is closed, and the boot hand-off §1 checks cannot save it because
+     bldNormalize(true) defers rather than completes. Measured: GREEN.
+
+     🔴 WHY THIS IS NOT ALREADY COVERED BY §2, WHICH DRIVES A SLICE LOOP.
+        §2's loop is THIS FILE'S loop. It re-walks the absence with the same
+        constants and then calls `api.bldSweep(vnow)` from a line run.mjs wrote,
+        so it proves bldSweep completes things — which was never in doubt —
+        while the shipped statement that CALLS it could be deleted outright with
+        the gate green from end to end. That is the identical trap §2b's header
+        describes for boot()'s hand-off, and the fix is the same one: scrape
+        offlineCatchUp's own four statements and RUN THOSE. §9b's loop supplies
+        only the slice arithmetic (`dt`, `done`) that the economy owns; every
+        construction statement in it is the shipped text.
+
+     THE PRODUCTION CALLERS THIS MIRRORS: animate()'s `if (sysTimer >= 4)` block,
+     scraped whole and executed on a rising clock; and offlineCatchUp's
+     `_bldOffline = true` / `_bldRebuildDue()` / the vnow sweep / the `_bldDirty`
+     trailer, scraped as four statements and executed in that order.
+
+     SABOTAGE: beat-dead (h180) · offline-nosweep (h142). */
+  {
+    /* animate()'s 4-second block. `if (sysTimer >= 4)` appears once in code;
+       the scrape is taken from the comment-stripped source so a sentence that
+       mentions it cannot be found first — the rule §1's header sets out. */
+    const NC_CODE = stripComments(NC);
+    const BEAT_SRC = unfix(srcBlockAfter(NC_CODE, 'if (sysTimer >= 4)'), 'beat-dead', [
+      /* h180 reversed: the statement is simply gone. Its exact text appears
+         once — boot()'s sweep has a different catch body — so this cannot slide
+         onto the wrong call site. */
+      ['try { bldSweep(Date.now()); } catch (e) {}', ''],
+    ]);
+    /* offlineCatchUp's construction statements. Comment-stripped for the same
+       reason, and taken from the function body so `if (_bldDirty)` cannot match
+       bldSweep's own trailer. */
+    const OFF_FN = fnText(NC_CODE, 'offlineCatchUp');
+    const offStmt = (needle) => {
+      if (!OFF_FN) return null;
+      const i = OFF_FN.indexOf(needle); if (i < 0) return null;
+      const a = OFF_FN.lastIndexOf('\n', i) + 1, b = OFF_FN.indexOf('\n', i);
+      return (OFF_FN.slice(a, b < 0 ? OFF_FN.length : b).trim()) || null;
+    };
+    const offBlock = (needle) => {
+      if (!OFF_FN) return null;
+      const body = srcBlockAfter(OFF_FN, needle);
+      return body ? needle + ' ' + body : null;
+    };
+    const OFF_INIT  = offStmt('_bldOffline = true; _bldDirty = false;');
+    const OFF_BUILD = offStmt('_bldRebuildDue();');
+    const OFF_VNOW  = offStmt('const vnow = vFrom + done * 1000;');
+    /* 🧨 offline-nosweep models h142 as an EMPTY statement rather than a null
+       scrape. Both are true of the revert — the text is gone, so the structural
+       read finds nothing AND the loop stops completing anything — but only the
+       second one is a fact about the player. A null here would redden the
+       readability check above and skip §9b entirely, i.e. prove that this round
+       notices a missing statement while proving nothing about what its absence
+       costs. The structural half is not lost: reverse-applying the real h142
+       makes offBlock return null and the check fires on its own. */
+    const OFF_SWEEP = SABOTAGE === 'offline-nosweep' ? ' ' : offBlock('if (vnow >= _bldNext)');
+    const OFF_SYNC  = offBlock('if (_bldDirty)');
+
+    const gotBeat = chk('§9 animate()\'s 4-second block and offlineCatchUp\'s four construction statements are readable',
+        !!BEAT_SRC && !!OFF_INIT && !!OFF_BUILD && !!OFF_VNOW && !!OFF_SWEEP && !!OFF_SYNC &&
+        BEAT_SRC.indexOf('finTick(') > 0,
+        'beat ' + JSON.stringify(BEAT_SRC && BEAT_SRC.slice(0, 50)) + ' init ' + JSON.stringify(OFF_INIT) +
+        ' rebuild ' + JSON.stringify(OFF_BUILD) + ' vnow ' + JSON.stringify(OFF_VNOW) +
+        ' sweep ' + JSON.stringify(OFF_SWEEP && OFF_SWEEP.slice(0, 40)) + ' sync ' + JSON.stringify(OFF_SYNC && OFF_SYNC.slice(0, 40)) +
+        ' — a missing statement here IS the revert, seen from this side');
+
+    // ── §9a THE LIVE BEAT ──────────────────────────────────────────────────
+    if (BEAT_SRC) {
+      /* ⚠ THE FIXTURE IS DUE IN REAL TIME, NOT ON __NOW. The scraped statement
+         is `bldSweep(Date.now())` — the shipped call reads the wall clock, and
+         that is the point of it, so the order under it has to be genuinely due
+         against the same clock. A record dated off the sandbox's __NOW would
+         make this section pass or fail on which clock the harness happened to
+         hand it, which is not a property of the product. */
+      const NOW = Date.now();
+      const spy = mkSpy();
+      const api = mkCity({ spy: spy, B: BLDG, beatSrc: BEAT_SRC });
+      api.game.tiles['1,1'] = { type: 'club', lvl: 1, rot: 0, bld: { k: 0, l: 1, s: NOW - 11000, d: 10, fv: 1, pc: 0, pr: null } };
+      api.setNow(NOW);
+      api.beatTick(3.9);                              // under the 4 s threshold
+      chk('§9a the beat does not fire early — it is a 4-second timer, not a per-frame sweep',
+          spy.beat.length === 0 && spy.finished.length === 0,
+          JSON.stringify(spy.beat) + ' — the job IS due; what has not arrived yet is the beat');
+      api.beatTick(0.2);                              // 4.1 s: the beat comes round
+      chk('§9a THE COMPLETION BEAT — a due building goes up on its own, with no reload and no other click',
+          spy.finished.length === 1 && spy.finished[0].key === '1,1' && !api.game.tiles['1,1'].bld,
+          'completed ' + spy.finished.length + ', beat ran ' + JSON.stringify(spy.beat) +
+          ' — without this the countdown reaches zero and the building just sits there until the player reloads');
+      chk('§9a …and the rest of the 4-second beat still ran, so this is the real block',
+          spy.beat.indexOf('finTick') >= 0 && spy.beat.indexOf('decayTick') >= 0,
+          JSON.stringify(spy.beat));
+    }
+
+    // ── §9b THE OFFLINE SWEEP, DRIVEN THROUGH offlineCatchUp'S OWN STATEMENTS ─
+    if (OFF_INIT && OFF_BUILD && OFF_VNOW && OFF_SWEEP && OFF_SYNC) {
+      /* The shipped statements, in the shipped order, with only the slice
+         arithmetic supplied. `_bldNext`, `_bldOffline` and `_bldDirty` are the
+         sandbox's own module-scope bindings, so the lifted code assigns the
+         same variables node-city's does. */
+      const OFF_BODY = '{\n' +
+        '  let done = 0;\n' +
+        '  ' + OFF_INIT + '\n' +
+        '  ' + OFF_BUILD + '\n' +
+        '  while (done < simSec - 1e-9) {\n' +
+        '    const dt = Math.min(OFFLINE_SLICE_SEC, simSec - done);\n' +
+        '    done += dt;\n' +
+        '    ' + OFF_VNOW + '\n' +
+        '    ' + OFF_SWEEP + '\n' +
+        '  }\n' +
+        '  _bldOffline = false;\n' +
+        '  ' + OFF_SYNC + '\n' +
+        '}';
+      /* Three orders across a 6 h absence: due 2 h in, due 5 h in, and one that
+         is still running when the player comes back.
+         🔴 WHY THE ABSENCE IS DRIVEN TWICE AND NOT TIMED. The completion STAMP
+            cannot be read from here — bldSweep hands bldFinish(k, t) and not the
+            clock it was called with, so a stub cannot record vnow without
+            inventing a signature production does not have. WHICH jobs complete
+            over WHICH span is the same property and is a real observable: at
+            3 h only the 2 h job may be up, at 6 h both. A sweep pinned to the
+            wall clock (the h141/h142 failure) finishes all three immediately;
+            a sweep that never runs finishes none. */
+      const NOW = Date.now();
+      const mkRun = async (awayH) => {
+        const saveAt = NOW - awayH * 3600000;
+        const spy = mkSpy();
+        const api = mkCity({ spy: spy, B: BLDG, offSrc: OFF_BODY });
+        const mk = (dueH, durH) => ({ type: 'club', lvl: 1, rot: 0,
+          bld: { k: 0, l: 1, s: saveAt + (dueH - durH) * 3600000, d: durH * 3600, fv: 1, pc: 0, pr: null } });
+        api.game.tiles['1,1'] = mk(2, 3);
+        api.game.tiles['2,2'] = mk(5, 1);
+        api.game.tiles['3,3'] = mk(30, 24);           // still building on return
+        spy.phase = 'catchup';
+        api.setNow(saveAt);
+        await api.offlineDrive(awayH * 3600, saveAt, SLICE);
+        return { spy, api, done: spy.finished.map(f => f.key).sort() };
+      };
+      const r3 = await mkRun(3), r6 = await mkRun(6);
+      console.log('   driven through offlineCatchUp\'s OWN statements — 3 h absence: ' +
+                  JSON.stringify(r3.done) + '   6 h absence: ' + JSON.stringify(r6.done));
+      chk('§9b THE OFFLINE SWEEP — the orders that came due while the tab was closed completed',
+          r6.done.length === 2 && r6.done[0] === '1,1' && r6.done[1] === '2,2',
+          'completed ' + JSON.stringify(r6.done) +
+          ' — with no sweep in the loop a 24-hour build never finishes while the player is away');
+      chk('§9b …and only the ones the VIRTUAL clock had reached: 3 h away finishes the 2 h job and not the 5 h one',
+          r3.done.length === 1 && r3.done[0] === '1,1' && !!r3.api.game.tiles['2,2'].bld,
+          'after 3 h: ' + JSON.stringify(r3.done) +
+          ' — completing the 5 h job here is the wall-clock sweep, i.e. paying for time the building did not exist');
+      chk('§9b …and an order that is genuinely still running is left alone',
+          !!r6.api.game.tiles['3,3'].bld, 'a 24-hour order was completed 24 hours early');
+      chk('§9b the offline flag is set for the sweep and cleared after it — the ledger window closes',
+          r6.api.offline() === false && r6.spy.ecoSync.length === 1,
+          'offline=' + r6.api.offline() + ' ecoSync ' + r6.spy.ecoSync.length +
+          ' — one sync for the whole absence, and only once the bridge is its own again');
+    }
   }
 
   chk('the sabotage patches all landed (' + patchTried + ' applied)', patchOk,
@@ -8550,6 +9319,11 @@ const stripComments = (src) => {
      ECON_TEST_SABOTAGE=ops-grant-unknown  the grant drops its `unknown-state`
                                            refusal and writes against a list it
                                            cannot vouch for
+     ECON_TEST_SABOTAGE=licence-paywalled  §8 only: the 350,000 🔥 fee goes back
+                                           into OPS_ECON and the override clamp
+                                           is deleted. §1-§7 stay GREEN under
+                                           it, on purpose — they stub the price,
+                                           which is exactly why §8 had to exist
    ════════════════════════════════════════════════════════════════════════════ */
 {
   console.log('\n########## round0u-free-licence-against-an-unknown-read ##########');
@@ -8881,6 +9655,104 @@ const stripComments = (src) => {
     chk('§7 …and _opCreateLocal still refuses a free licence against an unread list',
         /fundedBy === 'free-licence'/.test(SRC.createLocal) && /fetchFailed/.test(SRC.createLocal),
         'the write-seam refusal is gone — the next caller reopens this');
+  }
+
+  /* ── §8 THE LICENCE IS ACTUALLY FREE, AND STAYS FREE THROUGH AN OVERRIDE ────
+     🔴 EVERYTHING ABOVE THIS SECTION STUBS THE PRICE. §7's sandbox hands the
+        extracted code `_opEcon: (t) => (t === 'construction' ? { startup: 0 …`
+        — a number this file wrote. So all of round0u grades the GRANT while
+        taking the zero on faith, and the three hunks that produce that zero
+        could be reverted with the whole gate green. Measured on the shipped
+        tree: revert h014 (the table entry back to 350,000), h016
+        (OPS_FREE_LICENCE deleted) and h017 (the override clamp deleted), both
+        syntax checks CLEAN, gate GREEN, exit 0.
+
+     WHY THAT MATTERS MORE THAN IT LOOKS. City construction timers put every
+     Cinder earner in the game above the free Municipal Works ceiling (gas
+     station 1h53, arena 3h23 — round0's own table), so the Construction Co. is
+     the thing that unlocks income at all, and 350,000 🔥 is node income a
+     player without a node does not have. A silent revert re-paywalls the
+     headline feature behind the key to the door you need the key to open, and
+     no assertion anywhere would say so — the city would just quietly refuse
+     itself with `not-free` and the shop card would keep its padlock.
+
+     THE PRODUCTION CALLER THIS MIRRORS is `_opEcon(t)`, lifted out of
+     public/index.html with its real OPS_ECON table and its real
+     OPS_FREE_LICENCE clamp, and asked the question every price site asks it.
+     Nothing here is re-typed and no price is written down: the assertion is
+     `startup === 0` for the free licence and `> 0` for the ones that are not,
+     so a retune of any other operation moves nothing here.
+
+     SABOTAGE: licence-paywalled (h014 + h017 together, which is how they would
+     be reverted — the table says one thing and the clamp is the last word). */
+  {
+    const SRC8 = {
+      table:  srcBlockAfter(idxSrc, 'const OPS_ECON = {'),
+      free:   /const OPS_FREE_LICENCE = \{[^\n]*\};/.exec(idxSrc),
+      econ:   srcBlockAfter(idxSrc, 'function _opEcon(t)'),
+      ovr:    srcBlockAfter(idxSrc, 'function getOpsEconOverrides()'),
+    };
+    const got8 = chk('§8 OPS_ECON, OPS_FREE_LICENCE and _opEcon are all readable out of public/index.html',
+        !!SRC8.table && !!SRC8.free && !!SRC8.econ && !!SRC8.ovr,
+        'table=' + !!SRC8.table + ' freeList=' + JSON.stringify(SRC8.free && SRC8.free[0]) +
+        ' _opEcon=' + !!SRC8.econ + ' overrides=' + !!SRC8.ovr +
+        ' — a deleted OPS_FREE_LICENCE IS the h016 revert, seen from here');
+
+    if (got8) {
+      /* 🧨 h014 + h017 reversed, on the extracted source: the fee comes back in
+         the table and the clamp that has the last word is deleted. Two single-
+         line anchors, per the ops-zombie rule. */
+      let table = SRC8.table, econ = SRC8.econ, sabOk = true;
+      if (SABOTAGE === 'licence-paywalled') {
+        const t2 = table.replace('construction: { startup: 0,', 'construction: { startup: 350000,');
+        const e2 = econ.replace('if (OPS_FREE_LICENCE[t]) merged.startup = 0;', '');
+        if (t2 === table || e2 === econ) sabOk = false;
+        table = t2; econ = e2;
+      }
+      chk('§8 the licence-paywalled switch landed', sabOk,
+          'an anchor matched nothing — the switch is inert and this section would stay green under it');
+
+      /* _opEcon, compiled over the real table and the real free list. The
+         override hook is a parameter so §8 can publish a stale catalog through
+         the same seam getOpsEconOverrides() reads. */
+      const mkEcon = (overrides) => new Function('__ov', 'return (function () {' +
+        '  const OPS_ECON = ' + table + ';' +
+        '  ' + SRC8.free[0] +
+        '  function getOpsEconOverrides() { return __ov; }' +
+        '  function _opEcon(t) ' + econ +
+        '  return { _opEcon, OPS_ECON, OPS_FREE_LICENCE };' +
+        '})();')(overrides || null);
+
+      const E = mkEcon(null);
+      const co = E._opEcon('construction');
+      chk('§8 THE CONSTRUCTION CO. LICENCE IS FREE — startup 0, from the shipped table',
+          !!co && (co.startup | 0) === 0,
+          'startup = ' + JSON.stringify(co && co.startup) +
+          ' — this is the change that unblocks all city income; at any other number the feature is paywalled');
+      chk('§8 …and the free list is the documentation, so the table and the clamp cannot disagree',
+          !!E.OPS_FREE_LICENCE && E.OPS_FREE_LICENCE.construction === 1,
+          'OPS_FREE_LICENCE = ' + JSON.stringify(E.OPS_FREE_LICENCE));
+      /* THE HALF THE TABLE CANNOT DO. A Catalog published before this change
+         still carries construction:{startup:350000}; every player who has ever
+         received it merges that on top. The clamp is what makes the table's 0
+         true for them too. */
+      const stale = mkEcon({ construction: { startup: 350000 } });
+      chk('§8 …and a STALE PUBLISHED OVERRIDE cannot put the fee back',
+          (stale._opEcon('construction').startup | 0) === 0,
+          'a published catalog re-priced the licence at ' + stale._opEcon('construction').startup +
+          ' 🔥 — every player who has that catalog is paywalled and the city refuses itself with not-free');
+      chk('§8 …while an override of anything ELSE on the same row still applies',
+          stale._opEcon('construction').maxWorkers === E._opEcon('construction').maxWorkers &&
+          mkEcon({ construction: { maxWorkers: 3 } })._opEcon('construction').maxWorkers === 3,
+          'the clamp has started eating unrelated overrides — free means free to ACQUIRE, not "this row is frozen"');
+      /* …AND IT IS NOT "EVERYTHING IS FREE". A clamp that zeroed every startup
+         would pass every assertion above and hand the whole ops shelf away. */
+      const priced = Object.keys(E.OPS_ECON).filter(t => !E.OPS_FREE_LICENCE[t]);
+      const wrong = priced.filter(t => (E._opEcon(t).startup | 0) <= 0);
+      chk('§8 …and every operation NOT on the free list still costs what it costs (' + priced.length + ' checked)',
+          priced.length > 3 && wrong.length === 0,
+          'free by accident: ' + JSON.stringify(wrong) + ' of ' + JSON.stringify(priced));
+    }
   }
 
   if (fails) { bad++; console.log('\n=== ROUND 0u: ' + fails + ' FAILED ==='); }

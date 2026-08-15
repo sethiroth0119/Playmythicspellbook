@@ -55,6 +55,15 @@
       re-introduce it one layer higher; a pond that vanishes under the cursor
       is the same bug pointed the other way.
 
+   4. THERE IS ONLY ONE WATER ON THIS BOARD (wave 5). The pond is not the only
+      wet thing the player sees: the host paints `water` surfaces through
+      `board:surfaces`, and tilefx fills those TILE QUADS. Two waters with two
+      treatments is a gap a critic measured and named. So every water-surface
+      tile also gets a real pool item from this module, through the same
+      bakeShore + drawPool the pond uses — see the SURFACE POOLS header above
+      buildSurfacePools(). api.surfaces is READ ONLY; nothing here paints,
+      clears or blocks a tile.
+
    BUDGET: everything below is path+fill against one shared 2D context.
    Silhouettes are baked point lists; draw() only maps them through the
    projection and fills. No per-pixel work, no getImageData, no offscreen
@@ -86,12 +95,17 @@ const SHADOW = '#241f22';   /* cool-warm dark, deliberately NOT #000 */
 const SCRUB_TONES = ['#7d7433', '#6a6b3a', '#8d7c42', '#5f6636', '#94824a'];
 const BARK = '#4c4036';
 /* ⚠ HUE, NOT TASTE. These three are the pool's whole colour identity and they
-   are set against the OTHER water on the board: tilefx's `puddle` surface fx,
-   which this module neither owns nor can edit, measures hue 190-192. A pool at
-   172 and a puddle at 192 on the same field is two different liquids, which is
-   precisely the "two contradictory water treatments" gap. Cooled from
-   #1f6a70 / #a8e6df (hue 184 / 173) to land the rendered pool inside ~8 deg of
-   the puddle. If you retune these, re-measure BOTH bodies in the same frame. */
+   were set against the OTHER water on the board: tilefx's `puddle` surface fx,
+   which measures hue 190-192. A pool at 172 and a puddle at 192 on the same
+   field is two different liquids, which was the "two contradictory water
+   treatments" gap. Cooled from #1f6a70 / #a8e6df (hue 184 / 173) to land the
+   rendered pool inside ~8 deg of the puddle.
+   ⚠ WAVE 5: THE PUDDLE IS NOW ONE OF OURS TOO — every water-surface tile gets
+   a pool item from this file — so these stops set the hue of EVERY body of
+   water in the frame at once, and the tilefx fill they used to be chasing now
+   sits UNDER one of our pools rather than beside it. Measured on the same
+   frame after the change: pond hue 184.8 chroma 25, surface pools hue 189.2
+   chroma 26. Retune and re-measure both. */
 const WATER_DEEP = '#0c3244';
 const WATER_MID  = '#1a6480';
 const WATER_SHEEN= '#a2e2ea';
@@ -627,6 +641,17 @@ function ringPath(g, P){
   g.beginPath();
   g.moveTo(P[0].x, P[0].y);
   for (let i = 1; i < P.length; i++) g.lineTo(P[i].x, P[i].y);
+  g.closePath();
+}
+/* the same ring at every `st`-th point, for passes where the geometry is
+   buried under a stroke tens of pixels wide and the extra vertices are pure
+   cost. Only the shoreline AO ramp uses it — the FILLS all take the full ring,
+   because their edge IS the waterline the player looks at. */
+function ringPathStride(g, P, st){
+  if (st <= 1 || P.length < st * 4) return ringPath(g, P);
+  g.beginPath();
+  g.moveTo(P[0].x, P[0].y);
+  for (let i = st; i < P.length; i += st) g.lineTo(P[i].x, P[i].y);
   g.closePath();
 }
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1694,11 +1719,12 @@ function drawPool(api, it){
        so five steps there are as smooth as eight are here. Measured on the
        standalone board with four wet tiles: 36 → 39 frames per 4s window. */
     const NAO = SS >= 0.7 ? 8 : 5, WMAX = B.w * 0.15 + 26 * SS;
+    const aoStride = SS >= 0.7 ? 1 : 2;
     for (let k = 0; k < NAO; k++){
       const lw = WMAX * (1 - k / NAO);
       if (lw < 0.6) continue;
       g.lineWidth = lw;
-      ringPath(g, surf);
+      ringPathStride(g, surf, aoStride);
       g.stroke();
     }
     g.restore();
@@ -1890,8 +1916,12 @@ function drawPool(api, it){
       g.stroke();
     }
   }
-  /* specular glints, drifting. Seeded so no two land in the same place. */
-  for (let i = 0; i < 7; i++){
+  /* specular glints, drifting. Seeded so no two land in the same place.
+     Count scales with the pool for the same reason the chop density does:
+     seven on a one-tile puddle is seven times the pond's glints-per-area, and
+     they landed as a visible column of pale ovals in the first render. */
+  const nGl = SS >= 0.7 ? 7 : 4;
+  for (let i = 0; i < nGl; i++){
     const u = 0.10 + hash(i, 31, 71) * 0.80;
     const drift = (api.T * 0.045 + hash(i, 37, 73)) % 1;
     const px = B.x0 + B.w * u + Math.sin(api.T * 0.6 + i) * B.w * 0.01;
@@ -1907,24 +1937,24 @@ function drawPool(api, it){
     g.fillStyle = sgd;
     g.beginPath(); g.ellipse(px, py, R * ax, R * ay, 0, 0, TAU); g.fill();
   }
-  /* ── 3b. BROAD SHEEN BLOOMS — THE ONE CUE THIS POOL SHARES WITH THE OTHER
-     WATER ON THE BOARD, and the reason it is here is not decoration.
+  /* ── 3b. BROAD SHEEN BLOOMS — a large-scale interior mark, and the reason it
+     is here is not decoration.
 
-     There are two bodies of water in the frame and this module owns exactly
-     one of them. The other is tilefx's `puddle` surface fx on the right flank,
-     which is a translucent teal tint over whole tile faces carrying three or
-     four LARGE, SOFT, pale blue-white blooms and nothing else — no shoreline,
-     no reflection, no chop. A critic reading the frame cold called them "two
-     contradictory water treatments", and the half of that gap this module can
-     act on is the vocabulary: match hue (measured, pool 192° vs puddle 195-201°
-     median, chroma 34 vs 29, median luma 82 vs 81 — already inside a few
-     points), and then carry the ONE mark the other treatment is made of.
+     ⚠ ITS ORIGINAL JUSTIFICATION IS OBSOLETE AND THE PASS IS NOT. It was added
+     in wave 3 as the one cue this pool could share with the OTHER water in the
+     frame — tilefx's `puddle` surface fx, a translucent teal tint over whole
+     tile faces carrying three or four LARGE, SOFT, pale blue-white blooms and
+     nothing else. Wave 5 closed that gap at the root instead: every water
+     surface is now drawn by THIS painter, so there is no foreign treatment
+     left to borrow a mark from. The blooms stay because of the second half of
+     the argument below — they break up the interior at a scale nothing else in
+     the pool works at, and BLOOM_C still steers the pool's mean hue.
 
      Two or three of them, far bigger than the glints above (0.22-0.46 of the
      pool's width against the glints' ~0.04), very low alpha, drifting on their
      own slow phases so they never sit where the glints do. They also break up
-     the interior at a scale nothing else in the pool works at, which is the
-     same reason the puddle reads as wet rather than as a tinted tile. */
+     the interior at a scale nothing else in the pool works at, which is what
+     stops a wide flat middle reading as a tinted panel. */
   {
     const nBl = 2 + ((hash(3, 11, 151) * 2) | 0);
     for (let i = 0; i < nBl; i++){
@@ -1938,9 +1968,9 @@ function drawPool(api, it){
       const bl = g.createRadialGradient(px, py, 0, px, py, R);
       /* ⚠ BLOOM_C, NOT WATER_SHEEN. WATER_SHEEN is hue 187 and these blooms are
          big enough to move the whole pool's average: painting them in it pulled
-         the measured interior from 192° to 187° in one shot, i.e. AWAY from the
-         puddle at 196°, which is the opposite of what they are here to do.
-         BLOOM_C is 198° so the blooms pull the pool's mean the RIGHT way. */
+         the measured interior from 192° to 187° in one shot. BLOOM_C is 198°,
+         so they pull the mean the other way and the pool lands where the
+         palette note at the top of this file says it should. */
       bl.addColorStop(0,    rgba(mix(BLOOM_C, sky, 0.10), a));
       bl.addColorStop(0.52, rgba(mix(BLOOM_C, sky, 0.16), a * 0.46));
       bl.addColorStop(1,    rgba(BLOOM_C, 0));
@@ -2162,7 +2192,17 @@ function bakeShore(api, pool, poolY, seq, cols, rows, grow){
     }
     return best;
   };
-  const N = 112;
+  /* ⚠ 112 RAYS IS A POND'S BUDGET. Everything downstream — the three baked
+     rings, the three projRing() calls a frame, every ringPath fill and clip,
+     the AO ramp's strokes — is O(N), and drawPool reads N back off
+     S.pts.length, so this one number sets the per-frame cost of a pool. On the
+     pond's ~2000px perimeter 112 points is a sample every 18px, which is what
+     the contour needs. On a one-tile puddle the perimeter is ~560px and 112
+     points is a sample every 5px: three times more geometry than the shape can
+     express, paid every frame, on up to four extra pools. 72 keeps the puddle
+     at ~8px per segment — still finer than the pond's — and takes a third off
+     the per-frame path work. */
+  const N = G > 0 ? 72 : 112;
   const rad = new Array(N);
   for (let i = 0; i < N; i++){
     const th = (i / N) * TAU;
@@ -2395,10 +2435,16 @@ function buildSurfacePools(api, keys, pondTiles){
        fill of tiles it owns and three critic rounds have measured its overlay
        legibility as it stands — widening its yield set would change those
        numbers for no gap anybody has reported. */
+    /* ⚠ ON-BOARD NEIGHBOURS ONLY. The host never paints a state on a tile that
+       does not exist, so an off-board key in here could never be lit — and
+       drawPool's all-lit fast path tests `litKeys.length >= ykeys.length`, so
+       one unlightable key would make a fully-lit puddle miss the fast path
+       forever and take the four-band route for nothing. */
     const yk = new Set(set);
+    const addY = (x, z) => { if (x >= 0 && z >= 0 && x < cols && z < rows) yk.add(x + ',' + z); };
     for (const c of grp){
-      yk.add((c.x + 1) + ',' + c.z); yk.add((c.x - 1) + ',' + c.z);
-      yk.add(c.x + ',' + (c.z + 1)); yk.add(c.x + ',' + (c.z - 1));
+      addY(c.x + 1, c.z); addY(c.x - 1, c.z);
+      addY(c.x, c.z + 1); addY(c.x, c.z - 1);
     }
     items.push({
       x: shore.cx, z: far - 0.5, kind: 'water',

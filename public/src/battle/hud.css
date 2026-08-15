@@ -1600,20 +1600,35 @@
    below is not a nicety. At 1200x620 the forwarded row measures 212 x 22 CSS px
    and that, not the plate, is the target a player actually hits.
 
-   ⚠ AND YES, THE ROW GETS TALLER — 10 rail px. An earlier revision of this
-   comment claimed `padding: 3px 14px` here paid for the growth so the row was
-   unchanged. THAT WAS FALSE TWICE OVER and a critic measured it false, so the
-   arithmetic is spelled out:
+   ⚠ AND YES, THE ROW GETS TALLER — 11 rail px, 12 where the zoom rounds. An
+   early revision of this comment claimed `padding: 3px 14px` here paid for the
+   growth so the row was unchanged; that was false twice over and a critic
+   measured it false. The correction that replaced it then got the BASELINE
+   wrong by one px — for the same reason, a formula standing in for a probe. So
+   both builds have now been booted and read, and every number below is an
+   offsetHeight, not a derivation:
      • the padding declaration never applied. chrome.css:298 sets
        `padding: 0 var(--r3-3) !important` on the same element, and !important
        beats specificity, so the computed padding was `0px 12px` before and
-       after. The dead rule has been deleted rather than !important-ed —
-       vertical padding is exactly what we do NOT want here.
-     • the row was never 26 + 2x11 either. Its height is
-       `max(--r3-row-sm, tallest child) + 1px bottom rule` = max(32, 24) + 1 =
-       33 rail px. With the 42px plate it is 42 + 1 = 43 (44 where the zoom
-       rounds the rule up — measured 43 at 1600x1000, 44 at 1366x768/1200x620).
-   MEASURED CONSEQUENCE at 1600x1000, and the reason 10px is acceptable rather
+       after — CONFIRMED in both builds. The dead rule has been deleted rather
+       than !important-ed — vertical padding is exactly what we do NOT want.
+     • the row was never 26 + 2x11 — and it was not 33 either. `.loghead` is
+       `box-sizing: border-box` with `min-height: 32px`, so the bottom rule
+       lives INSIDE the box and the height is `max(32, tallestChild + rule)`,
+       NOT `max(32, child) + rule`. At f73161b that is max(32, 24 + 1.3) = 32,
+       the min-height winning outright: MEASURED in a worktree at f73161b,
+       offsetHeight 32 at 1600x1000, 1440x900, 1920x1200, 1366x768 AND
+       1200x620 — the same 32 at all five, which is exactly what a floor looks
+       like.
+     • with the 42px plate the child finally clears the floor: max(32, 42+rule).
+       The rule is 1 CSS px expressed in RAIL units, i.e. 1/zoom, so it thickens
+       as `_bcpFit()` shrinks the rail — MEASURED border-bottom 1.282 / 1.370 /
+       1.695 / 2.000 at zoom 0.78 / 0.74 / 0.59 / 0.50 — and the row lands on
+       MEASURED offsetHeight 43 at 1600x1000, 43 at 1440x900, 44 at 1366x768,
+       44 at 1280x800 and 44 at 1200x620.
+     • so the growth is 43 - 32 = 11 rail px, and 12 at the shorter viewports
+       where the thicker rule carries the row to 44.
+   MEASURED CONSEQUENCE at 1600x1000, and the reason 11px is acceptable rather
    than merely tolerated: `_bcpFit()` absorbs it in the rows below. `.bcp`
    scrollHeight == clientHeight == 538, `.bcp`'s foot sits 123.6 CSS px ABOVE
    the rail's foot, and `.logrows` still gets 142 rail px. Nothing clips and

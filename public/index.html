@@ -60868,7 +60868,8 @@ function openCityHall() {
           '<div class="small-text" style="color:#8a7a4a;margin-top:6px">↑ pay taxes/fees · support the Reserve · keep ops running &nbsp;·&nbsp; ↓ smuggling · member crimes/raids · dodged taxes.' + (owner ? '' : ' Only the founder/CEO can file.') + '</div>' +
         '</div>';
       const rows = CITY_LICENSES.map(L => {
-        const has = held.indexOf(L.id) >= 0;
+        const has = cityHoldsLicense(L.id);
+        const viaNodes = cityLicenseByNodes(L.id);
         const resStr = Object.keys(L.res).length ? Object.keys(L.res).map(k => L.res[k] + '× ' + ((_meta(k).name) || k)).join(' · ') : '—';
         const meets = L.illicit || comp >= L.minCompliance;
         let right;
@@ -60878,7 +60879,9 @@ function openCityHall() {
            removed". The rows were never gone; the client drew the empty state
            with total confidence. When the read failed, say so. */
         if (Corp.licensesUnknown && !has) right = '<span class="small-text" style="color:#e0c070;white-space:nowrap">⚠ could not load</span>';
-        else if (has) right = '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap">✓ HELD</span>';
+        else if (has) right = viaNodes
+          ? '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap" title="Granted because your corporation operates a Reserve node">✓ HELD <span class="small-text" style="color:#9fc48a;font-weight:600">· via nodes</span></span>'
+          : '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap">✓ HELD</span>';
         else if (!owner) right = '<span class="small-text" style="color:#8a7a4a;white-space:nowrap">founder files</span>';
         else if (!meets) right = '<span class="small-text" style="color:#ff9a6b;white-space:nowrap">🔒 need ' + L.minCompliance + '</span>';
         else right = '<button data-ch-license="' + esc(L.id) + '" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.5);background:rgba(212,175,55,0.14);color:#ffcf5a;font-weight:800;white-space:nowrap">File →</button>';
@@ -60886,7 +60889,10 @@ function openCityHall() {
           '<div style="font-size:1.3rem">' + L.icon + '</div>' +
           '<div style="flex:1;min-width:0"><div style="color:#ffe6b0;font-weight:800">' + esc(L.name) + (L.illicit ? ' <span class="small-text" style="color:#e0a0ff">· ILLICIT</span>' : '') + '</div>' +
             '<div class="small-text" style="color:#b59a66">' + esc(L.blurb) + '</div>' +
-            '<div class="small-text" style="color:#8a7a4a">Fee ' + L.cinder.toLocaleString() + ' 🔥 · ' + resStr + (L.illicit ? '' : ' · min compliance ' + L.minCompliance) + '</div></div>' +
+            // "Fee 0 🔥" reads like a bug, not a decision. Say what is true.
+            '<div class="small-text" style="color:#8a7a4a">' + (L.cinder > 0 ? 'Fee ' + L.cinder.toLocaleString() + ' 🔥' : 'No fee') + ' · ' + resStr +
+              (L.illicit ? '' : ' · min compliance ' + L.minCompliance) +
+              (viaNodes ? ' · <span style="color:#9fc48a">waived — you operate a Reserve node</span>' : '') + '</div></div>' +
           right +
         '</div>';
       }).join('');
@@ -61974,7 +61980,9 @@ async function nodeEstablish(typeId, fromTreasury) {
   if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to operate Reserve nodes.', 3000); return false; }
   if (!Corp.mine) { showToast('🏛️ Only registered corporations operate Reserve nodes — found or join one in City Hall.', 4600); return false; }
   const reqLic = NODE_REQUIRED_LICENSE[t.id];
-  if (reqLic && (Corp.licenses || []).indexOf(reqLic) < 0) {
+  // cityHoldsLicense, not a raw Corp.licenses read — a corp already operating a
+  // Reserve node holds Construction by derivation. See the helper's header.
+  if (reqLic && !cityHoldsLicense(reqLic)) {
     const lic = _cityLicense(reqLic);
     showToast('📜 ' + t.name + ' needs your corporation to hold the ' + (lic ? lic.name : reqLic + ' license') + '. File for it in City Hall → Licensing.', 6000);
     return false;
@@ -81186,7 +81194,15 @@ try {
 const CITY_LICENSES = [
   { id: 'mining',       name: 'Mining License',       icon: '⛏',  cinder: 80000,  res: { metal: 200 },                              minCompliance: 50, blurb: 'Permits Mining Reserve nodes.' },
   { id: 'oil',          name: 'Oil License',          icon: '⛽', cinder: 120000, res: { fuel: 300, metal: 150 },                   minCompliance: 60, blurb: 'Permits Fuel Reserve nodes.' },
-  { id: 'construction', name: 'Construction License', icon: '🏗', cinder: 100000, res: { metal: 300 },                              minCompliance: 55, blurb: 'Permits Manufacturing & Storage nodes.' },
+  /* 🏗 NO FEE, BY DECISION. Construction is the one licence that gates a
+     player's whole industrial chain — Manufacturing and Storage nodes, and
+     through them the city's Construction Co. Charging 100,000 🔥 for the
+     permission to start building put the entry fee on the wrong side of the
+     thing it unlocks. The 300× Metal and the compliance floor stay: the cost
+     is meant to be materials and standing, not cash.
+     ⚠ THIS IS THE ONLY LICENCE WITH cinder: 0. The other eight are unchanged
+       and deliberately so — do not "tidy" them to match. */
+  { id: 'construction', name: 'Construction License', icon: '🏗', cinder: 0,      res: { metal: 300 },                              minCompliance: 55, blurb: 'Permits Manufacturing & Storage nodes.' },
   { id: 'medical',      name: 'Medical License',      icon: '⚕️', cinder: 90000,  res: { medicine: 60, supplies: 120 },             minCompliance: 50, blurb: 'Permits Supply Reserve nodes.' },
   { id: 'agriculture',  name: 'Agriculture License',  icon: '🌾', cinder: 60000,  res: { water: 200, food: 150 },                   minCompliance: 40, blurb: 'Food & biomass operations (ops update).' },
   { id: 'logistics',    name: 'Logistics License',    icon: '🚚', cinder: 70000,  res: { fuel: 180, supplies: 120 },                minCompliance: 45, blurb: 'Permits Convoy Reserve nodes.' },
@@ -81195,6 +81211,45 @@ const CITY_LICENSES = [
   { id: 'smuggling',    name: 'Smuggling License',    icon: '🕶', cinder: 60000,  res: {},                                          minCompliance: 0,  illicit: true, blurb: 'Off-ledger trade. No compliance gate — flagged by the Foundation.' },
 ];
 function _cityLicense(id) { return CITY_LICENSES.find(l => l.id === id) || null; }
+/* 📜 A LICENCE CAN BE HELD, OR IT CAN BE EARNED BY WHAT YOU ALREADY OPERATE.
+   A corporation that runs ANY Reserve node holds the Construction License
+   outright — no fee, no materials, no compliance floor. The reasoning is that
+   the licence permits Manufacturing and Storage nodes, so a corp already
+   operating in the Reserve has self-evidently cleared the bar the permit
+   exists to test; making it re-apply (and blocking it on a compliance score it
+   may not have yet) locked established players out of the industry their own
+   nodes feed.
+
+   🔴 DERIVED, NOT WRITTEN. This does NOT insert a corp_licenses row. That
+      matters for three reasons: the insert policy requires the founder, so a
+      non-founder member would silently fail; an RPC that rejects would leave
+      the entitlement half-granted; and a row written from node ownership would
+      outlive the node that justified it. Reading it live means the entitlement
+      is exactly as true as the node list is, and it costs nothing to revoke.
+
+   ⚠ It also survives a failed corp_licenses read on purpose. `licensesUnknown`
+     deliberately shows "could not load" rather than "not held" (see the render)
+     — but a node-derived grant does not depend on that read at all, so it stays
+     correct while the shelf is unknown.
+
+   ⚠ CONSTRUCTION ONLY. The other eight licences are unaffected; owning a node
+     grants no entitlement to Mining, Oil, Research or anything else. */
+function cityHoldsLicense(id) {
+  try {
+    if ((Corp.licenses || []).indexOf(id) >= 0) return true;
+    if (id !== 'construction') return false;
+    return ((FoundationReserve && FoundationReserve.nodes) || []).length > 0;
+  } catch (e) { return false; }
+}
+// True only when the hold comes from node ownership rather than a filed permit —
+// used to label the row honestly instead of claiming the corp filed for it.
+function cityLicenseByNodes(id) {
+  try {
+    return id === 'construction'
+      && (Corp.licenses || []).indexOf(id) < 0
+      && ((FoundationReserve && FoundationReserve.nodes) || []).length > 0;
+  } catch (e) { return false; }
+}
 // Reserve-node type → required corporation licence.
 const NODE_REQUIRED_LICENSE = { mining: 'mining', fuel: 'oil', mfg: 'construction', storage: 'construction', supply: 'medical', convoy: 'logistics', security: 'security', research: 'research' };
 async function cityHallApplyLicense(licId) {

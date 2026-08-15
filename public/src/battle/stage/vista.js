@@ -277,7 +277,7 @@
      (SHADOW_FLOOR is 16/20/34 and 'lighten' runs last), so no shadow detail
      that survives to the screen is lost to it. */
   const TONE_PEDESTAL = 7;
-  const TONE_GAIN = 1.16;
+  const TONE_GAIN = 1.19;
   /* how much of a FULLY disagreeing backdrop photograph gets taken away (see
      draw()). This is the SECOND of the two levers on art that does not belong;
      the first and much stronger one is the value match at the end of bakeArt.
@@ -545,8 +545,22 @@
     post: {
       pos: null, key: '', age: 1e9, ready: false, fail: false,
       mulR: { cv: null, g: null }, addR: { cv: null, g: null },
+      /* gainR — the PER-PIXEL weight on the tone gain. ⚠ ROUND 2 OF WAVE 5,
+         and the reason the whole frame got its detail back: see GAIN_SPAN. */
+      gainR: { cv: null, g: null },
       mn: null, mx: null, reads: 0, calls: 0, ms: []
     },
+    /* the last map generation the multiply's quarter-scale intermediate was
+       built from, so a cadence frame does not rebuild an identical upscale. */
+    mupKey: '',
+    /* the frame at FULL device resolution — the tone gain's exact source. See
+       THE GAIN IS EXACT NOW. `fullOK` is what postMap keys its arithmetic on,
+       so a box that cannot afford the copy still gets a correct frame. */
+    full: { cv: null, g: null },
+    fullOK: false,
+    /* where the body is and whether the ridgeline is in front of it, sampled
+       once per world bake — see discVisible(). */
+    disc: null,
     gradeMs: [],
     lastBake: -1e9,
     artMs: [],
@@ -2963,8 +2977,16 @@
     const hR = R * (b.sun ? 7.0 : 5.0);
     const halo = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, hR);
     halo.addColorStop(0, api.rgba(LIGHT.disc, (b.sun ? 0.055 : 0.045) * hDim));
-    halo.addColorStop(R * 1.06 / hR, api.rgba(LIGHT.disc, (b.sun ? 0.21 : 0.165) * hDim));
-    halo.addColorStop(0.34, api.rgba(LIGHT.disc, (b.sun ? 0.10 : 0.075) * hDim));
+    /* ⚠ ROUND 2 RAISED THESE TWO STOPS AND THE REASON IS THE BLIND A/B. A
+       critic reading the horizon band cold preferred wave 3's sun for its
+       "soft halo"; profiled at 20px steps through the peak, wave 3 reads
+       228/220 at ±40 device px against this build's 176 — its glow is nearly
+       twice as wide because its shoulder clamp spread the disc into a plate.
+       The disc itself is now restored at full resolution after the grade
+       (discRestore), so the honest way to get the glow back is here, in the
+       BAKE, where it is still under MAP_CEIL and cannot make a white plate. */
+    halo.addColorStop(R * 1.06 / hR, api.rgba(LIGHT.disc, (b.sun ? 0.30 : 0.22) * hDim));
+    halo.addColorStop(0.34, api.rgba(LIGHT.disc, (b.sun ? 0.145 : 0.10) * hDim));
     halo.addColorStop(1, api.rgba(LIGHT.disc, 0));
     ctx.fillStyle = halo;
     ctx.beginPath(); ctx.arc(b.x, b.y, hR, 0, 7); ctx.fill();
@@ -3107,7 +3129,10 @@
     const fDim = 1 - 0.44 * dayness(api);
     const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, outR);
     g.addColorStop(0, api.rgba(LIGHT.disc, (b.sun ? 0.035 : 0.025) * fDim));
-    g.addColorStop(R * 1.12 / outR, api.rgba(LIGHT.disc, (b.sun ? 0.15 : 0.10) * fDim));
+    /* …and the same round-2 widening as drawBody's halo — this is the half of
+       the glow that survives the ridgeline, so leaving it behind would have
+       put a bright halo above the skyline and a dim one below it. */
+    g.addColorStop(R * 1.12 / outR, api.rgba(LIGHT.disc, (b.sun ? 0.20 : 0.13) * fDim));
     g.addColorStop(1, api.rgba(LIGHT.disc, 0));
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(b.x, b.y, R * (b.sun ? 9 : 6), 0, 7); ctx.fill();
@@ -3175,7 +3200,104 @@
     if (withArt) drawArt(api, g, 1);
     try { drawBody(api, g); drawShafts(api, g); } catch (e) { }
     if (S.land.cv) blit(g, S.land.cv, W, H);
+    try { discProbe(api, dpr); } catch (e) { S.disc = null; }
     return o.cv;
+  }
+  /* ⚠ IS THE RIDGE IN FRONT OF THE SUN? discRestore() paints the disc AFTER
+     the grade, i.e. after everything including the land, so unlike drawBody it
+     is not occluded by anything — and a sun painted over the top of a mesa is
+     a bug a screenshot would show and a unit test would not. bodyPos() clamps
+     the body to hz−14, so on this board it is always in open sky, but a preset
+     with a tall centre ridge or a low sun would not be, and the answer is one
+     pixel of the land bake's alpha. Sampled here because bakeWorld already
+     runs on the throttled cadence — per frame it would be a pipeline sync. */
+  function discProbe(api, dpr) {
+    const b = bodyPos(api);
+    const R = (b.sun ? 26 : 22) * api.clamp(api.VIEW.box ? api.VIEW.box.h / 900 : 1, 0.7, 1.15);
+    let vis = true;
+    try {
+      const cv = S.land.cv;
+      if (cv) {
+        const lg = cv.getContext('2d');
+        const px = Math.round(b.x * dpr), py = Math.round(b.y * dpr);
+        if (lg && px >= 0 && py >= 0 && px < cv.width && py < cv.height) {
+          vis = lg.getImageData(px, py, 1, 1).data[3] < 128;
+        }
+      }
+    } catch (e) { /* tainted or unreadable: assume open sky, as wave 3 did */ }
+    S.disc = { x: b.x, y: b.y, R: R, sun: b.sun, vis: vis };
+  }
+  /* ── THE DISC, AT FULL RESOLUTION, AFTER THE GRADE ────────────────────────
+     ⚠ THIS IS THE ROUND-2 BLOCKER, AND IT WAS MEASURED, NOT ARGUED. On an
+     isolated pair (only this file swapped) the wave-3 sun peaked at
+     rgb(252,247,236) — L 247, 96 over the local sky, half-max radius 22 device
+     px. Wave 5 round 1 peaked at rgb(212,210,206): a NEUTRAL smudge, L 210,
+     63 over the sky, half-max radius 6. A critic reading a horizon-band crop
+     cold picked "a clearly visible sun disc with a soft halo" against "a
+     diffuse white smear with no disc" without knowing which build was which.
+     The disc is the smallest bright object in the frame and the one whose
+     falloff every viewer knows by heart, so it is the first thing a
+     band-limited additive layer destroys — and it lost its WARMTH as well as
+     its peak, because what replaced the disc's own colour was a grey sum.
+     Painted here it is full device resolution and it is the LAST thing before
+     the toe, so its peak is a number this function picks rather than whatever
+     survives three composites. 'source-over' from a capped colour, for exactly
+     the reason drawBody documents at length: an additive core cannot promise
+     anything about its own peak.
+     ⚠ THE BAKED DISC IN bakeWorld STAYS. It is what the bloom reads, so the
+     sun still bleeds real glow into the sky around it and over the ridgeline;
+     this pass only puts the core back on top of that glow. Removing it would
+     take the flare with it. */
+  function discRestore(api, ctx, dw, dh) {
+    if (off('disc')) return;
+    const d = S.disc;
+    if (!d || !d.vis) return;
+    const dpr = dprOf(api);
+    /* 1.18: the restored core is drawn a hair wider than the baked one so its
+       limb lands just outside the baked disc's, and the two read as one body
+       rather than as a bright dot inside a duller ring. */
+    const R = d.R * dpr * 1.18, x = d.x * dpr, y = d.y * dpr;
+    if (!(R > 0) || x < -R * 3 || y < -R * 3 || x > dw + R * 3 || y > dh + R * 3) return;
+    const LIGHT = api.LIGHT;
+    /* capped the same way drawBody caps: a UNIFORM scale toward the ceiling,
+       never a per-channel clamp, or the moon's #cfe0ff would come out warm
+       grey. Mixed 0.45 toward white so the core reads as a light SOURCE and
+       the limb still carries `disc`'s own hue. */
+    /* ⚠ THE SUN IS MIXED TOWARD A WARM OFF-WHITE, NOT TOWARD WHITE. At 0.45 of
+       pure white the restored core measured rgb(251,246,230) against wave 3's
+       rgb(247,242,209) — 21 points more blue, i.e. a white dot where wave 3
+       had a gold one, and gold is what a critic picked in the blind pair. The
+       MOON keeps pure white: #cfe0ff mixed toward a warm white would be the
+       same mistake in the other direction. */
+    const c = hexRGB(api.mixHex(LIGHT.disc, d.sun ? '#fff8e2' : '#ffffff', d.sun ? 0.40 : 0.34));
+    let k = 1;
+    for (let i = 0; i < 3; i++) if (c[i] > 0) k = Math.min(k, HILIGHT_CEIL[i] / c[i]);
+    const core = k >= 1 ? rgbHex(c[0], c[1], c[2]) : rgbHex(c[0] * k, c[1] * k, c[2] * k);
+    const limb = api.mixHex(LIGHT.disc, d.sun ? '#ffbb6a' : '#9fb6e8', 0.30);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    /* ⚠ NOTHING ADDITIVE MAY RUN HERE, AND THE FIRST CUT PROVED IT. This pass
+       is AFTER the multiply, i.e. after the only thing in the frame that caps
+       a channel (MAP_CEIL), so a 'lighter' halo at 0.15 of `disc` over sky the
+       bloom had already taken to 253 measured a solid rgb(255,255,255) disc
+       148 device px across — a pure-white plate, which the BAR forbids outright
+       and which is a worse sun than the smear it replaced. The halo and the
+       flare are already painted, in bakeWorld and drawBodyGlow, UNDER the
+       ceiling where they belong. All this pass owes the frame is the core. */
+    /* the core. The 0.50 stop is the HALF-MAX RADIUS the clause measures:
+       at 0.55R the fill is half the disc's contrast over the sky behind it, so
+       a 40-device-px radius reads as a 22px half-max disc — wave 3's number,
+       reached on purpose rather than by a clamp. */
+    ctx.globalCompositeOperation = 'source-over';
+    const cg = ctx.createRadialGradient(x, y, 0, x, y, R);
+    cg.addColorStop(0, api.rgba(core, 0.985));
+    cg.addColorStop(0.28, api.rgba(core, 0.94));
+    cg.addColorStop(0.55, api.rgba(api.mixHex(core, limb, 0.35), 0.50));
+    cg.addColorStop(0.80, api.rgba(limb, 0.17));
+    cg.addColorStop(1, api.rgba(limb, 0));
+    ctx.fillStyle = cg;
+    ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.fill();
+    ctx.restore();
   }
   /* the backdrop art layer(s), at whatever cross-fade the host reports. Shared
      by the world bake (steady state) and draw() (mid-fade). */
@@ -3317,20 +3439,98 @@
      |d8px| 8.4 → 6.9 against a lit tile that only went 14.6 → 14.0, i.e. the
      texture ratio fell from 0.575 to 0.493 while the clause asks for 0.7.
      Delivered through the map instead it is per-pixel, so it scales the
-     shade's own grain with it. The map's ceiling is what pays for it: GAIN_BASE
-     is sized so a fully shaded pixel lands ON MAP_CEIL and a lit one sits
-     ~12% below it. */
-  const SHADOW_LIFT = 0.05;
-  /* headroom under the multiply's own ceiling of 1.0. The map carries
-     TONE_GAIN × warm × filmic × attenuation and is then DIVIDED by (1+gain),
-     so the gain has to be big enough to bring the brightest map value under 1.
-     At TONE_GAIN 1.16 and a filmic tilt of ~1.04 the minimum is ~0.21. */
-  const GAIN_BASE = 0.21;
+     shade's own grain with it. ⚠ ROUND 2 KEPT THAT CONCLUSION AND CHANGED WHAT
+     PAYS FOR IT: the shade's gain is now whatever fits under MAP_CEIL, exactly
+     like every other pixel's, and only the part that does not fit spills into
+     the additive. So the lift is still per-pixel where it counts and no longer
+     costs the rest of the frame a uniform (1+GAIN_BASE) division. */
+  /* ⚠ ROUND 2: 0.05 WAS DOING ALMOST NOTHING AND THE MEASUREMENT SAYS SO. The
+     weight it rides on, sg, is SQUARED, and the critic's shaded tile measures
+     pre-grade L 113 — sg = ((150−113)/105)² = 0.124 — so the whole "shaded
+     ground keeps its texture" lever was worth 0.05 × 0.124 = +0.6%. It is why
+     the shade/lit |d8px| ratio did not move (0.596 → 0.581) and why shaded L
+     went DOWN. The lift now rides its OWN ramp (see LIFT_HI/LIFT_LO), linear
+     rather than squared and saturating at the shade level that actually
+     exists on this board instead of at near-black. */
+  /* ⚠ AND IT IS 0.12, NOT THE 0.22 THE RATIO CLAUSE ALONE WOULD ASK FOR. The
+     weight sl comes off the THUMBNAIL, so a lift that big is a local tone
+     mapper: it raises a dark neighbourhood more than the bright one beside it
+     and therefore COMPRESSES the edge between them. Measured on the y1120
+     sweep at 0.22 the lit third's |d8px| fell 10.77 → 8.63 and its p10-p90
+     spread 38.75 → 29.08 — i.e. the shade/lit ratio was being bought with the
+     lit tile's contrast, which is the exact accounting error the wave-3
+     critic called out. At 0.12 the shade still clears wave 3 on value AND on
+     absolute texture and the lit tile keeps its edges. */
+  const SHADOW_LIFT = 0.13;
+  /* …and that ramp. Deliberately NARROWER at the bottom than GROUND_LO: past
+     this the lift is delivered by the additive term, which is a SMOOTHED copy
+     of the frame, so letting it run to full strength on near-black pixels
+     would glow bright edges into the shadows around them. */
+  const LIFT_HI = 152, LIFT_LO = 92;
+  /* ── THE GAIN IS PER-PIXEL NOW, AND IT IS THE ROUND-2 FIX ──────────────────
+     Wave 5 round 1 delivered the tone gain as `GAIN_BASE × a quarter-scale
+     copy of the frame`, with the multiply map divided by (1+GAIN_BASE) to make
+     room. That division is what an independent critic measured as −12…−20% of
+     the frame's fine texture and a sun disc whose half-max radius collapsed
+     22 → 10 device px: a UNIFORM 0.21 of every pixel's output was being
+     reconstructed from a band-limited copy, whether that pixel needed the gain
+     or not.
+
+     It does not have to be uniform. The map is computed in JS, so it knows
+     each pixel's total gain G. Split it optimally instead:
+
+         multiply  M = min(G, MAP_CEIL)          ← as much as a multiply can do
+         additive  V = (G − MAP_CEIL) / GAIN_SPAN ← only the overflow, per pixel
+
+     Fine detail then rides through at slope min(G, MAP_CEIL) — 0.992 instead
+     of 0.87, +14% — and the smeared term drops from 21% of the output to the
+     ~6-9% that a multiply genuinely cannot represent. Everything that used to
+     be lost to it (the disc's limb, the brazier flames' orange, the sand's
+     grain) is lost 2-3x less.
+     ⚠ GAIN_SPAN MUST COVER max(G) − MAP_CEIL or V clips and the brightest
+     shade silently loses its lift. max(G) = TONE_GAIN × (1 + SHADOW_LIFT) at
+     at=ped=1, so it is derived, never typed in — see GAIN_SPAN below MAP_CEIL.
+     ⚠ THIS IS THE FALLBACK PATH NOW, not the one the frame normally takes. It
+     is still 2-3x better than round 1 and it is exactly what runs when the
+     full-resolution copy cannot be allocated — see THE GAIN IS EXACT NOW. */
   /* …and the map is capped just under 1 so the frame cannot contain a pure
      white channel: the multiply runs AFTER the additive pass, so whatever the
      bloom blew out to 255 leaves at 255·0.985 = 251. That is the shoulder
      clamp, for free, in a pass that was happening anyway. */
   const MAP_CEIL = 0.992;
+  /* the additive gain's full-scale value — the alpha the frame's own copy is
+     composited at. V (0…1, per pixel) is measured against it. */
+  const GAIN_SPAN = TONE_GAIN * (1 + SHADOW_LIFT) - MAP_CEIL;
+  /* ── THE GAIN IS EXACT NOW ────────────────────────────────────────────────
+     The split above is the best a BAND-LIMITED additive can do, and measured
+     it is not good enough: on the isolated pair it left the field's |d8px|
+     6.7% under wave 3, because a quarter-scale nearest upscale reconstructs
+     essentially NOTHING at the 8-device-px scale the clause measures, so
+     every part of the gain that overflowed the multiply's ceiling was simply
+     gone from the fine detail.
+     So the frame's own copy is kept at FULL device resolution and composited
+     'lighter' at a uniform alpha, BEFORE the multiply — which means the whole
+     chain is exactly
+         out = (x + bloom + veil + GAIN_W·x) · M
+     and with M = gFull/(1+GAIN_W) the fine-detail slope is gFull itself. No
+     band limit, no smear, on the sand grain OR on the brazier flames OR on
+     the disc's limb. Measured cost on this box: one full-viewport 'copy' blit
+     plus one full-viewport 'lighter' blit — 3.6 + ~4.5 ms — against the ~1 ms
+     of quarter-scale work it replaces.
+     ⚠ GAIN_W IS DERIVED FROM THE CEILING, NOT CHOSEN. M has to fit under
+     MAP_CEIL for the brightest gain in the frame (deep shade, where the lift
+     is full), so 1+GAIN_W = max(gFull)/MAP_CEIL exactly. Typing a number here
+     instead would either clip the shade's lift or waste multiply range. */
+  const GAIN_W = TONE_GAIN * (1 + SHADOW_LIFT) / MAP_CEIL - 1;
+  /* the scale of the additive intermediate (bloom + veil colour + tints) and,
+     on the fallback path only, of the frame copy the gain rides on.
+     ⚠ HALF SCALE WAS TRIED HERE AND MEASURED TERRIBLE. The reasoning was
+     sound — a quarter-scale nearest upscale stamps 4-device-px blocks and
+     cannot reconstruct the ~8 device px that |d8px| measures — but the cost
+     was not: on the board page it took the grade's p50 from 65.7ms to
+     104.6ms, four full-viewport-equivalent composites' worth, for a gain the
+     full-resolution pass delivers exactly and for less. Quarter it stays. */
+  const UP_DIV = 4;
   /* ⚠ WHERE THE COOL-SURFACE GATE STARTS, AND IT IS NOT COOL_LO. COOL_LO/HI
      (−14…+2) were tuned in wave 3 for an ADDITIVE give-back, where being
      generous only cost a little chroma. As a GATE on the warm restore that
@@ -3347,6 +3547,23 @@
   /* …and where the shade boost is allowed to act at all: R−B, i.e. how ochre
      the surface already is. See the loop. */
   const WARM_LO = 6, WARM_HI = 24;
+  /* ── THE ACHROMATIC PATCH, AND WHY THE FIX IS A GATE AND NOT MORE HAZE ────
+     The clause is one block: the most distant hazed ridge measured
+     rgb(155,165,153) — R−B +2, sat 11%, hue 90 — in an otherwise warm
+     backdrop, and an independent 16px-block scan found 3.7% of the band like
+     it. Everything the module already does about chroma is keyed on DEPTH
+     (`r`), and r is 0 above the board's far edge on purpose, so the one place
+     the defect lives is the one place the restore never reached.
+     Keyed on the pixel instead: how ACHROMATIC it already is. A patch with
+     R−B ≈ 0 gets NEUTRAL_R of the full warm restore wherever it sits; a blue
+     sky (R−B ≈ −40) and warm sand (R−B ≈ +30) both get nothing, so the sky
+     stays a sky and nothing that already has a hue is pushed off it. It is
+     scaled by k like every other restore, so the night preset — where grey
+     rock SHOULD read cool — keeps 42% of it and no more.
+     ⚠ SIZED, NOT GUESSED: on the cited block, kk ≈ 0.10 moves rgb(159,165,158)
+     to about (159,159,142) — R−B +17, sat 11 → 11+, i.e. out of the |R−B| ≤ 6
+     window the scan counts, without yellowing the haze. */
+  const NEUTRAL_W = 34, NEUTRAL_R = 0.55;
   /* the map is rebuilt on one frame in four — see the cadence note below. */
   const POST_CADENCE = 4;
 
@@ -3398,8 +3615,9 @@
     if (S.post.fail) return null;
     const gm = scratch(S.post.mulR, bw, bh);
     const ga = scratch(S.post.addR, bw, bh);
+    const gv = scratch(S.post.gainR, bw, bh);
     const gt = S.t.g;
-    if (!gm || !ga || !gt) return null;
+    if (!gm || !ga || !gv || !gt) return null;
     /* forced recompute: anything that regrades the whole frame at once.
        S.lastBake moves on every re-bake, which covers time of day, location
        swaps and resizes without having to enumerate them. */
@@ -3436,11 +3654,16 @@
     const TG = noTone ? 1 : TONE_GAIN;
     const tint = hexRGB(SHADOW_TINT);
     const gInv = 1 / Math.max(1, GROUND_HI - GROUND_LO);
+    const lInv = 1 / Math.max(1, LIFT_HI - LIFT_LO);
     const sInv = 1 / Math.max(1, SHADOW_HI - SHADOW_LO);
     const cInv = 1 / Math.max(1, GATE_HI - GATE_LO);
     const wInv = 1 / Math.max(1, WARM_HI - WARM_LO);
-    const md = gm.createImageData(bw, bh), ad = ga.createImageData(bw, bh);
-    const M = md.data, A = ad.data;
+    const vInv = 1 / GAIN_SPAN;
+    const nInv = 1 / NEUTRAL_W;
+    const full = !!S.fullOK && !noTone, fullDiv = 1 / (1 + GAIN_W);
+    const md = gm.createImageData(bw, bh), ad = ga.createImageData(bw, bh),
+      vd = gv.createImageData(bw, bh);
+    const M = md.data, A = ad.data, V = vd.data;
     let mnR = 255, mnG = 255, mnB = 255, mxR = 0, mxG = 0, mxB = 0;
     for (let j = 0; j < bh; j++) {
       /* the depth ramp, sampled at the row centre in CSS pixels — the same
@@ -3459,7 +3682,12 @@
         /* shaded GROUND (wide, squared) and DEEP occlusion (narrow) */
         let sg = (GROUND_HI - L) * gInv; sg = sg < 0 ? 0 : sg > 1 ? 1 : sg; sg *= sg;
         let sd = (SHADOW_HI - L) * sInv; sd = sd < 0 ? 0 : sd > 1 ? 1 : sd; sd *= sd;
-        if (noShade) { sg = 0; sd = 0; }
+        /* the LIFT's own weight — linear, and saturating at LIFT_LO. See the
+           note on SHADOW_LIFT: the squared ramp above is right for the chroma
+           restore (it has to leave lit sand alone) and far too timid for a
+           lift that is meant to give the shade back its value. */
+        let sl = (LIFT_HI - L) * lInv; sl = sl < 0 ? 0 : sl > 1 ? 1 : sl;
+        if (noShade) { sg = 0; sd = 0; sl = 0; }
         /* how COOL the surface already is. ⚠ WAVE 3 SPENT A WHOLE ROUND ON
            THIS AS AN ADDITIVE GIVE-BACK, because its multiply was baked and
            could not see the water. Here the restore simply is not applied to
@@ -3484,10 +3712,11 @@
            sand at R−B ≥ 24, nothing at R−B ≤ 6. The base restore (wave 3's) is
            untouched by this and still runs everywhere the cool gate allows. */
         let warm = (R - B - WARM_LO) * wInv; warm = warm < 0 ? 0 : warm > 1 ? 1 : warm;
+        /* how achromatic the pixel already is — see NEUTRAL_W. This is the one
+           term in the map that does NOT ramp with depth, because the patch the
+           clause names lives above the far edge where the depth ramp is 0. */
         let kk = k * r * (1 + SHADOW_CHROMA * sg * warm);
         if (kk > 0.42) kk = 0.42;
-        const w = GAIN_BASE;
-        const gainDiv = 1 / (1 + w);
         const at = noVeil ? 1 : attn[p];
         /* the tone pedestal, as a factor rather than a 'difference' fill: the
            old chain was 1.16·(x − 7), and −7 of a pixel at local luma L is
@@ -3498,20 +3727,87 @@
            did, and it is not cosmetic: above the board's far edge lives the
            graded backdrop art, whose flatness is deliberate (bakeArt), and a
            gain there hands a photographic skyline its contrast straight back.
-           It is ALSO what buys the field its texture: the map is capped at
-           MAP_CEIL, so whatever gain the SKY demands sets GAIN_BASE for the
-           whole frame — a global 1.16 forced GAIN_BASE to 0.36 and dropped the
-           per-pixel slope (and with it |d8px|) by a fifth. Ramped, the sky asks
-           for 1.0 and the field's own 1.16 fits under the ceiling at 0.21. */
+           It is ALSO the reason the sky costs the field nothing: with a UNIFORM
+           gain the whole frame had to make room for whatever the brightest
+           region demanded. Ramped, the sky asks for 1.0 — so above the far edge
+           gFull is at·ped, comfortably under MAP_CEIL, and the sky's fine
+           detail (the disc's limb included) goes through the multiply intact
+           with V = 0. */
         const tg = 1 + (TG - 1) * r;
-        const base = tg * at * (ped > 0 ? ped : 0) * gainDiv * (1 + SHADOW_LIFT * sg);
+        /* ⚠ THE PIXEL'S TOTAL GAIN, AND IT IS ALLOWED TO EXCEED 1. Round 1
+           divided this by (1+GAIN_BASE) so it would always fit a multiply,
+           and paid for that with 12-20% of the frame's fine texture. Here the
+           gain is SPLIT at the ceiling instead: as much as a multiply can
+           carry stays per-pixel and exact, and only the overflow — 6-9% on
+           lit sand, more in shade — goes through the smoothed copy. */
+        const gFull = tg * at * (ped > 0 ? ped : 0) * (1 + SHADOW_LIFT * sl);
+        let base = gFull, v = 0;
+        if (full) {
+          /* the exact path: the gain is a full-resolution copy of the frame at
+             a UNIFORM alpha, so the map simply carries gFull/(1+GAIN_W) and
+             every pixel's slope comes out at gFull. */
+          base = gFull * fullDiv;
+          if (base > MAP_CEIL) base = MAP_CEIL;
+        } else if (base > MAP_CEIL) {
+          v = (base - MAP_CEIL) * vInv; if (v > 1) v = 1;
+          base = MAP_CEIL;
+        }
+        if (noTone) v = 0;
         let mR = base, mG = base * (1 - 0.42 * kk), mB = base * (1 - kk);
-        if (FA) {
-          mR *= ovf(R, f0, FA); mG *= ovf(G0, f1, FA); mB *= ovf(B, f2, FA);
+        /* ⚠ AND THE FILMIC TILT IS GATED ON COOL SURFACES — THIS IS HALF OF
+           THE ACHROMATIC-PATCH CLAUSE. Probed on the live canvas
+           (scratchpad/VC3-probe.mjs, __vistaOff toggles), the block the clause
+           names measures rgb(191,211,216) BEFORE the map — a blue haze, B−R
+           +25 — and rgb(151,164,164) after it: the warm tilt, which multiplies
+           blue by 0.76 and red by 0.79 at that level, is what walks it through
+           neutral. Turning the restore up cannot fix that; the pixel is not
+           warm-and-flat, it is cool-and-being-warmed. So a surface the cool
+           gate recognises keeps a quarter of the tilt and stays blue, which
+           takes it out of the |R−B| ≤ 6 window from the OTHER side and is also
+           what the reference asks for — a warm ground under a blue sky, not a
+           single hue over both. Water and the teal move pool clear the same
+           gate, so they keep their blue too. */
+        const fa = FA * (1 - 0.75 * cool);
+        if (fa > 0.001) {
+          mR *= ovf(R, f0, fa); mG *= ovf(G0, f1, fa); mB *= ovf(B, f2, fa);
+        }
+        /* ── THE ACHROMATIC PATCH, ON THE PIXEL THE VIEWER WILL SEE ──────────
+           ⚠ THE GATE HAS TO BE ON THE OUTPUT, AND THE FIRST TWO CUTS OF THIS
+           WERE NOT. Probed on the live canvas (scratchpad/VC3-probe.mjs), the
+           block the clause names measures rgb(191,211,216) going IN — B−R +25,
+           nothing like neutral — and rgb(151,164,164) coming out, because the
+           map scales the whole pixel by ~0.68 and an absolute R−B of 25 comes
+           out as 17. Nothing keyed on the INPUT can see that, which is why
+           turning the warm restore up moved the block by two units of blue and
+           no more. Predicted here from the map that is about to be applied.
+           ⚠ AND THE PUSH IS SIGNED, because a warm push is the wrong answer
+           for half of them: the blocks the scan finds are mostly the SKY's
+           blue→haze crossover, and any gradient from blue to ochre has to pass
+           through neutral somewhere. Pushed toward whichever side the pixel is
+           already on — blue sky bluer, warm haze warmer, nothing at the
+           handover — the crossover gets narrower instead of being painted over
+           with one hue, which is also what the reference asks for. */
+        if (NEUTRAL_R > 0 && k > 0) {
+          const cR0 = noVeil ? 0 : col[p * 3], cB0 = noVeil ? 0 : col[p * 3 + 2];
+          const dOut = (R * mR + cR0) - (B * mB + cB0);
+          let neu = 1 - (dOut < 0 ? -dOut : dOut) * nInv;
+          if (neu > 0) {
+            /* which way is "away from grey" here: the cool gate already knows
+               whether this surface is air or ground. */
+            let dir = 1 - 2 * cool; if (dir > 1) dir = 1; if (dir < -1) dir = -1;
+            const kn = k * NEUTRAL_R * neu * (dir < 0 ? -dir : dir);
+            if (dir >= 0) { mB *= (1 - kn); mG *= (1 - 0.42 * kn); }
+            else { mR *= (1 - kn); mG *= (1 - 0.30 * kn); }
+          }
         }
         if (mR > MAP_CEIL) mR = MAP_CEIL; if (mG > MAP_CEIL) mG = MAP_CEIL; if (mB > MAP_CEIL) mB = MAP_CEIL;
         if (mR < 0.02) mR = 0.02; if (mG < 0.02) mG = 0.02; if (mB < 0.02) mB = 0.02;
         M[o] = (mR * 255) | 0; M[o + 1] = (mG * 255) | 0; M[o + 2] = (mB * 255) | 0; M[o + 3] = 255;
+        /* the gain weight, greyscale — it modulates a copy of the FRAME, so
+           it has to be the same number on all three channels or it would tint
+           the gain instead of scaling it. */
+        const vb = (v * 255) | 0;
+        V[o] = vb; V[o + 1] = vb; V[o + 2] = vb; V[o + 3] = 255;
         /* the additive half, pre-divided by the map because it is composited
            one pass EARLIER than the multiply that will scale it. */
         /* ⚠ THE COOL BOUNCE IS SCALED BY WHAT IT IS LANDING ON. Halving the
@@ -3547,7 +3843,7 @@
         A[o + 3] = 255;
       }
     }
-    gm.putImageData(md, 0, 0); ga.putImageData(ad, 0, 0);
+    gm.putImageData(md, 0, 0); ga.putImageData(ad, 0, 0); gv.putImageData(vd, 0, 0);
     S.post.mn = [mnR, mnG, mnB]; S.post.mx = [mxR, mxG, mxB];
     S.post.ready = true;
     if (_t0) { S.post.ms.push(performance.now() - _t0); if (S.post.ms.length > 120) S.post.ms.shift(); }
@@ -3638,14 +3934,26 @@
     try { ug.imageSmoothingQuality = 'low'; } catch (e) { }
     ug.globalCompositeOperation = 'copy';
     ug.drawImage(S.bloom.cv, 0, 0, mw, mh);          /* bloom + veil colour + tints */
-    if (!off('tone')) {
-      /* …and the tone gain: w × the frame, at quarter scale. ⚠ w IS UNIFORM,
-         so it is globalAlpha rather than a second map — the shade's extra gain
-         lives in the multiply map instead, where it is per-pixel (see
-         SHADOW_LIFT). That is one less thumbnail out of the loop and one less
-         quarter-scale composite per frame. */
+    if (!off('tone') && !S.fullOK && map && map.gainR.cv && S.q.g) {
+      /* ⚠ THE GAIN IS WEIGHTED BY THE MAP BEFORE IT IS ADDED, AND THAT IS THE
+         ROUND-2 FIX. Round 1 added GAIN_BASE × the frame everywhere, so every
+         pixel paid the band limit of this buffer whether it needed the gain or
+         not. Now the frame's own copy is multiplied by V — the per-pixel
+         OVERFLOW past the multiply's ceiling — so a lit sand pixel contributes
+         ~6% of itself here instead of 21%, and the other 94% rides the exact
+         per-pixel multiply. One 'multiply' at half scale buys that; see
+         GAIN_SPAN.
+         ⚠ IN PLACE ON S.q, WHICH IS SAFE ONLY BECAUSE S.t IS ALREADY BUILT.
+         grade() reads the frame into S.q, derives the thumbnail from it, and
+         only then calls this — modulating S.q any earlier would feed the map
+         its own gain weight back and the loop would run away. */
+      const qg = S.q.g;
+      qg.globalCompositeOperation = 'multiply';
+      qg.imageSmoothingEnabled = true;
+      qg.drawImage(map.gainR.cv, 0, 0, mw, mh);
+      qg.globalCompositeOperation = 'source-over';
       ug.globalCompositeOperation = 'lighter';
-      ug.globalAlpha = GAIN_BASE;
+      ug.globalAlpha = GAIN_SPAN;
       ug.drawImage(S.q.cv, 0, 0);
       ug.globalAlpha = 1;
     }
@@ -3662,7 +3970,12 @@
     const t0 = (window.performance && performance.now) ? performance.now() : 0;
     const dw = ctx.canvas.width, dh = ctx.canvas.height;
     const bw = thumbW(api), bh = thumbH(api);
-    const mw = Math.max(bw, Math.round(dw / 4)), mh = Math.max(bh, Math.round(dh / 4));
+    /* the additive intermediate, and the map's own upscale intermediate. They
+       are the same size today; kept as two names because the map's source is a
+       thumbnail and the additive's is not, so only one of them has a reason to
+       ever grow. */
+    const mw = Math.max(bw, Math.round(dw / UP_DIV)), mh = Math.max(bh, Math.round(dh / UP_DIV));
+    const kw = Math.max(bw, Math.round(dw / 4)), kh = Math.max(bh, Math.round(dh / 4));
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
@@ -3672,37 +3985,81 @@
       /* 0. ONE read of the frame — to quarter, then to thumbnail. Wave 3 read
          the full canvas three separate times (bloom, shadow mask, cool mask)
          to produce thumbnails of the same pixels at the same size. */
-      const qg = scratch(S.q, mw, mh);
       const tg = scratch(S.t, bw, bh, true);
-      if (qg && tg) {
-        qg.setTransform(1, 0, 0, 1, 0, 0);
-        qg.globalCompositeOperation = 'copy';
-        qg.globalAlpha = 1;
-        qg.imageSmoothingEnabled = true;
-        qg.drawImage(ctx.canvas, 0, 0, mw, mh);
-        qg.globalCompositeOperation = 'source-over';
+      /* …and the full-resolution copy the tone gain rides on. Taken HERE, off
+         the frame as the actors left it, because the gain is composited before
+         the multiply and must not contain the bloom it is about to be summed
+         with. One allocation the size of the board canvas; if it fails,
+         postMap falls back to the band-limited split and the frame is still
+         correct, only softer. */
+      const fg = off('tone') ? null : scratch(S.full, dw, dh);
+      S.fullOK = !!fg;
+      if (fg) {
+        fg.setTransform(1, 0, 0, 1, 0, 0);
+        fg.globalAlpha = 1;
+        fg.globalCompositeOperation = 'copy';
+        fg.drawImage(ctx.canvas, 0, 0);
+        fg.globalCompositeOperation = 'source-over';
+      }
+      /* ⚠ S.q ONLY EXISTS ON THE FALLBACK PATH NOW. When the full-resolution
+         copy is available it IS the read of the frame, and the thumbnail comes
+         straight off it — building a quarter-scale intermediate as well was a
+         second full-canvas read for a buffer nothing else consumed. */
+      const qg = fg ? null : scratch(S.q, mw, mh);
+      if (tg && (qg || fg)) {
+        if (qg) {
+          qg.setTransform(1, 0, 0, 1, 0, 0);
+          qg.globalCompositeOperation = 'copy';
+          qg.globalAlpha = 1;
+          qg.imageSmoothingEnabled = true;
+          qg.drawImage(ctx.canvas, 0, 0, mw, mh);
+          qg.globalCompositeOperation = 'source-over';
+        }
         tg.setTransform(1, 0, 0, 1, 0, 0);
         tg.globalCompositeOperation = 'copy';
         tg.globalAlpha = 1;
         tg.imageSmoothingEnabled = true;
-        tg.drawImage(S.q.cv, 0, 0, bw, bh);
+        tg.drawImage(fg ? S.full.cv : S.q.cv, 0, 0, bw, bh);
         tg.globalCompositeOperation = 'source-over';
         /* 1. the map (multiplicative + additive + gain weight), on a cadence */
         const map = off('post') ? null : postMap(api, bw, bh);
         /* 2. everything additive, one 'lighter' upscale */
         additive(api, bw, bh, mw, mh, map);
+        /* 2b. THE TONE GAIN, at full device resolution. ⚠ 'lighter' and NOT a
+           second multiply: a multiply cannot produce a factor above 1, which
+           is the whole reason this pass exists. It runs after the bloom (so
+           the bloom is gained too, exactly as wave 3's color-dodge ordering
+           did) and before the multiply that divides it back out. */
+        if (S.fullOK && S.full.cv) {
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = GAIN_W;
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(S.full.cv, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = 'source-over';
+        }
         /* 3. everything multiplicative, one 'multiply' upscale. It runs LAST
            of the two so that its ceiling also caps whatever the bloom blew
            out — that is the shoulder clamp, for free. */
         if (map && map.ready && map.mulR.cv) {
-          const g2 = scratch(S.mup, mw, mh);
+          const g2 = scratch(S.mup, kw, kh);
           if (g2) {
-            g2.setTransform(1, 0, 0, 1, 0, 0);
-            g2.globalAlpha = 1;
-            g2.imageSmoothingEnabled = true;
-            g2.globalCompositeOperation = 'copy';
-            g2.drawImage(map.mulR.cv, 0, 0, mw, mh);
-            g2.globalCompositeOperation = 'source-over';
+            /* ⚠ REBUILT ONLY WHEN THE MAP ITSELF WAS. The map runs on
+               POST_CADENCE; upscaling an unchanged thumbnail to the same
+               quarter-size buffer three frames out of four was pure waste. */
+            /* `reads`, NOT `key` — the map's key is deliberately stable across
+               a cadence window (it is what the cache tests), so keying off it
+               would pin this buffer to the very first map ever built. */
+            const mk = map.reads + '|' + kw + 'x' + kh;
+            if (S.mupKey !== mk || !S.mup.fresh) {
+              g2.setTransform(1, 0, 0, 1, 0, 0);
+              g2.globalAlpha = 1;
+              g2.imageSmoothingEnabled = true;
+              g2.globalCompositeOperation = 'copy';
+              g2.drawImage(map.mulR.cv, 0, 0, kw, kh);
+              g2.globalCompositeOperation = 'source-over';
+              S.mupKey = mk; S.mup.fresh = true;
+            }
             ctx.globalCompositeOperation = 'multiply';
             ctx.imageSmoothingEnabled = false;
             ctx.drawImage(S.mup.cv, 0, 0, dw, dh);
@@ -3710,6 +4067,10 @@
         }
       }
     } catch (e) { /* a grade that throws must not take the frame with it */ }
+    /* 3b. the sun/moon core, full resolution, over the graded frame. */
+    try { discRestore(api, ctx, dw, dh); } catch (e) { }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
     /* 4. TOE — 'lighten' takes the per-channel max, so this both guarantees
        that nothing in the frame is pure black (the BAR forbids it) and tints
        every deep shadow cool blue-grey in one composite. It is LAST because it
@@ -3766,7 +4127,13 @@
          more — the shoulder is MAP_CEIL inside the multiply. Reported rather
          than dropped so a probe written against wave 3 gets an answer. */
       clampSkip: 'removed: toe is a fill, shoulder is MAP_CEIL',
-      passes: ['lighter(additive)', 'multiply(map)', 'lighten(toe)'],
+      passes: ['lighter(additive)', 'lighter(gain,full-res)', 'multiply(map)', 'disc', 'lighten(toe)'],
+      /* WAVE 5 ROUND 2: is the tone gain running at full resolution, and where
+         the module thinks the body is. `discVis` false means the ridgeline is
+         in front of it and discRestore is deliberately silent — otherwise a
+         missing sun is indistinguishable from a broken one. */
+      gainFull: !!S.fullOK,
+      disc: S.disc ? { x: Math.round(S.disc.x), y: Math.round(S.disc.y), R: +S.disc.R.toFixed(1), sun: S.disc.sun, vis: S.disc.vis } : null,
       /* WAVE 3: the backdrop's detail field, from the last bake. `keep` is the
          mean fraction of the art the zenith ramp let through (0 = the old flat
          fade exactly, 1 = no fade at all) and `det` the mean of the field

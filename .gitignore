@@ -71,3 +71,11 @@ mythic-game-api/
 # Cloudflare upload for the same reason (public/.assetsignore). File stays on
 # disk; compress or convert to a sprite sheet if it is ever wanted in-game.
 public/assets/Units/unit frames/New units/*.gif
+
+# Gauntlet debug captures. The screenshot harness lives in the session scratchpad
+# and writes there; some builder agents nonetheless emit their isolated-bake PNGs
+# and .meta.json probes to a shots/ dir at the repo root. That is 40MB+ of
+# regenerable debug output per run and must never reach git history — the
+# checkpoint commits during a wave use `git add -A`, so without this rule one
+# stray bake lands in the repo permanently.
+/shots/

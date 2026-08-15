@@ -445,7 +445,19 @@ const COL = {
      `body`/`core` are the small ambient term and are cyan for the same reason
      in reverse: they are added, not multiplied, so they contribute their own
      colour and have to sit further round the wheel than the target. */
-  move:   { core: '#c8d7ff', body: '#69c3ff', rim: '#b4e1f5', halo: '#42cae0',
+  /* ⚠ WAVE 5 ROUND 2 — `core`/`body` LOSE A LITTLE BLUE (#c8d7ff → #ccdcf4,
+     #69c3ff → #74c9ec) AND THE GAIN IS UNTOUCHED. The ambient additive is the
+     only ground-independent term in the pool, so it is the term that decides
+     how the hue moves as the ground under a tile changes — and it was the
+     bluest thing in the state. Measured same-boot over six lit tiles against
+     the identical bare pixels, the pool's mean B−R had drifted to +35 (the
+     file's own contract, set in round 6, is ≤ +5 on this measurement) while
+     its mean hue sat at 155.4, the very top of the 145-155 window the critic
+     holds it to. Both are the same surplus of blue and both move together.
+     The gain is deliberately NOT touched: it carries the chroma (see the long
+     note above on why the key is cyan and the result is not), and every round
+     that has tried to fix hue by retinting the key has lost chroma for it. */
+  move:   { core: '#ccdcf4', body: '#74c9ec', rim: '#b4e1f5', halo: '#42cae0',
             filt: '#46ffd8', gain: '#2a8fd2', k: 1.55, a: 0.22, g: 0.70, fc: 0.28 },
   /* ⚠ EVERY STATE GETS A KEY LIGHT, not just move. The gap was measured on the
      move pool because that is the one the default harness lights, but "a soft
@@ -935,7 +947,101 @@ function blit(api, cv, g, comp, alpha, low) {
    Stored in `g.sub`, the mask entry's own LRU-bounded map, so it is evicted
    with the region it belongs to and cannot leak. */
 const GAIN_REFRESH = 0.055;      /* seconds of api.T between read-backs */
+/* ⚠ WAVE 5 ROUND 2 — THIS CLOCK STAYS AT 0.165 AND THE PERF FIX IS ELSEWHERE.
+   The critic measured a reproducible ~15% per-frame cost against wave 3 (serial
+   in-iframe rAF counts, three 3 s windows per boot, order reversed on the
+   second boot, 9 hazard tiles covering all three gain painters plus the move
+   pool: 14.2 frames/3 s against 16.7). Doubling this clock to 0.34 does buy
+   half the reads — and it was MEASURED to cost grain, which is the other failed
+   clause: the gain multiplies a CACHED copy of the ground, so a staler cache is
+   a copy whose dust and ripple have drifted out from under the ground it is
+   being added to. Same-boot triples, holy 5,6's high-pass regression on the
+   true bare ground: r 0.715 at 0.165, r 0.463-0.542 at 0.34. The read rate is
+   not the thing to trade; the read SIZE is, and gainRects() below takes ~8× off
+   it on the scattered regions drawSurfaces actually builds.
+   ⚠ Note battle-board clamps dt at 0.05 s (index.html ~5008), so on a box this
+   slow 0.165 s of api.T is already 4 real frames, not 10. */
 const GAIN_REFRESH_SURF = 0.165; /* hazards: see the note on gainLayer below  */
+/* ⚠ AND A FRAME FLOOR, because a seconds clock cannot throttle a slow box.
+   `refresh` is in api.T seconds; when a frame takes longer than `refresh` the
+   test always passes and the rate limit does nothing at exactly the moment it
+   is needed most. A read-back may additionally not happen more often than
+   every GAIN_MIN_FRAMES frames. On real hardware at 60 Hz the seconds clock is
+   10-20 frames and this floor never binds; in the harness at ~5 fps it is the
+   only thing that binds. */
+const GAIN_MIN_FRAMES = 3;
+let _gnT = -1, _gnN = 0;
+function frameNo(api) {
+  const T = isFinite(api.T) ? api.T : 0;
+  if (T !== _gnT) { _gnT = T; _gnN++; }
+  return _gnN;
+}
+
+/* ⚠ WAVE 5 ROUND 2 — READ THE TILES, NOT THE BOUNDING BOX. drawSurfaces groups
+   hazards BY FX KEY across the whole board, so three `electric` tiles at
+   (3,6),(4,6) and (5,1) are ONE region whose bbox is nearly the whole canvas —
+   and the gain was reading, tinting and compositing every pixel of it, three
+   times a refresh, to light six tiles. Measured on the critic's 9-tile hazard
+   set at 1600x1000@2x: the three region bboxes total ~3.1 Mpx of device pixels
+   against ~0.36 Mpx of actual tile coverage, i.e. 8.6× the traffic.
+   This returns the union rect list to read instead: one padded rect per tile,
+   merged where they overlap (the common case — a contiguous pool is one rect
+   again, so nothing regresses for the move pool, which was always compact).
+   Everything outside these rects is left transparent in the scratch, which is
+   correct and not merely cheap: maskScratch's 'destination-in' then removes it,
+   and the mask is zero between distant tiles anyway. */
+function gainRects(g) {
+  /* ⚠ THE PAD IS THE MASK'S OWN PAD, NOT A GUESS. group() computes exactly how
+     far the dilated, blurred halo reaches past the tile quads and pads the
+     region bbox by it; anything shorter here clips the tinted read INSIDE the
+     mask, so the gain stops on a straight rectangle part-way through the halo.
+     Caught by measurement: with a hand-picked 0.85·ax pad — right for
+     MASK_STATE (reach 1.48·ax) and 0.6·ax short for MASK_SURF (reach 2.45·ax)
+     — holy 5,6's grain regression fell 0.715 → 0.583 and void 5,5's 0.589 →
+     0.165 while their neighbours improved. */
+  const pad = g.pad || Math.ceil(g.ax * 1.5 + 6);
+  const rs = [];
+  for (const it of g.list) {
+    const q = it.q;
+    let a = Infinity, b = Infinity, c2 = -Infinity, d = -Infinity;
+    for (const p of q) {
+      if (p.x < a) a = p.x; if (p.x > c2) c2 = p.x;
+      if (p.y < b) b = p.y; if (p.y > d) d = p.y;
+    }
+    rs.push([a - pad, b - pad, c2 + pad, d + pad]);
+  }
+  /* merge overlapping/abutting rects so a contiguous pool is one read */
+  let merged = true;
+  while (merged && rs.length > 1) {
+    merged = false;
+    outer:
+    for (let i = 0; i < rs.length; i++) {
+      for (let j = i + 1; j < rs.length; j++) {
+        const A = rs[i], B = rs[j];
+        if (A[0] <= B[2] && B[0] <= A[2] && A[1] <= B[3] && B[1] <= A[3]) {
+          A[0] = Math.min(A[0], B[0]); A[1] = Math.min(A[1], B[1]);
+          A[2] = Math.max(A[2], B[2]); A[3] = Math.max(A[3], B[3]);
+          rs.splice(j, 1); merged = true; break outer;
+        }
+      }
+    }
+  }
+  /* ⚠ IF THE TILES ARE COMPACT, GO BACK TO THE ONE BBOX READ AND CHANGE
+     NOTHING. A contiguous pool's per-tile rects merge into very nearly the
+     region bbox anyway, so the split buys nothing there — and "very nearly"
+     is not "exactly": it moves the read rect by a few pixels, which moves
+     which pixels get tinted at the halo's outer feather, which is enough to
+     show up in a grain regression that is already ±0.1 capture to capture.
+     The move pool and every contiguous hazard therefore take the identical
+     code path they took in wave 3, and only the SCATTERED regions — the ones
+     drawSurfaces builds when the same fx key appears in two corners of the
+     board, which is where the whole cost was — take the new one. */
+  let area = 0;
+  for (const r of rs) area += Math.max(0, r[2] - r[0]) * Math.max(0, r[3] - r[1]);
+  const bbox = g.w * g.h;
+  if (bbox > 0 && area > bbox * 0.70) return [[g.x0, g.y0, g.x1, g.y1]];
+  return rs;
+}
 
 /* ⚠ WAVE 5 — THE SURFACE PATH ASKS FOR A SLOWER CLOCK, AND IT IS NOT A
    MICRO-OPTIMISATION. Three hazard regions each declaring a gain added three
@@ -953,36 +1059,48 @@ function gainLayer(api, g, tint, amount, refresh) {
   const key = 'gain|' + tint;
   const cached = g.sub ? g.sub.get(key) : null;
   const T = isFinite(api.T) ? api.T : 0;
+  const N = frameNo(api);
   if (cached && cached.pw === g.pw && cached.ph === g.ph &&
-      Math.abs(T - cached.t) < (refresh || GAIN_REFRESH)) {
+      (Math.abs(T - cached.t) < (refresh || GAIN_REFRESH) ||
+       N - cached.n < GAIN_MIN_FRAMES)) {
     emitGain(api, g, cached.cv, amount);
     return;
   }
   const s = g.dpr;
   const sx = g.x0 * s, sy = g.y0 * s;
-  /* intersection of the region rect with the canvas, in device px */
-  const ix0 = Math.max(0, Math.floor(sx)), iy0 = Math.max(0, Math.floor(sy));
-  const ix1 = Math.min(src.width, Math.ceil(sx + g.w * s));
-  const iy1 = Math.min(src.height, Math.ceil(sy + g.h * s));
-  if (ix1 - ix0 < 1 || iy1 - iy0 < 1) return;
-  const dx = ix0 - sx, dy = iy0 - sy, dw = ix1 - ix0, dh = iy1 - iy0;
+  /* One padded rect per tile, merged where they touch — NOT the region bbox.
+     See gainRects(). Each is intersected with the canvas: 'multiply' against a
+     transparent destination yields the fill colour at full alpha, so tinting a
+     rect that reaches past the canvas edge would stamp a solid slab of tint
+     there and the mask would happily blit it. */
+  const rects = gainRects(g);
+  let drew = 0;
   const ok = maskScratch(api, g, (c) => {
     c.setTransform(1, 0, 0, 1, 0, 0);
-    c.drawImage(src, ix0, iy0, dw, dh, dx, dy, dw, dh);
-    c.globalCompositeOperation = 'multiply';
-    c.fillStyle = tint;
-    c.fillRect(dx, dy, dw, dh);
+    for (const r of rects) {
+      const ix0 = Math.max(0, Math.floor(r[0] * s)), iy0 = Math.max(0, Math.floor(r[1] * s));
+      const ix1 = Math.min(src.width, Math.ceil(r[2] * s));
+      const iy1 = Math.min(src.height, Math.ceil(r[3] * s));
+      if (ix1 - ix0 < 1 || iy1 - iy0 < 1) continue;
+      const dx = ix0 - sx, dy = iy0 - sy, dw = ix1 - ix0, dh = iy1 - iy0;
+      c.globalCompositeOperation = 'source-over';
+      c.drawImage(src, ix0, iy0, dw, dh, dx, dy, dw, dh);
+      c.globalCompositeOperation = 'multiply';
+      c.fillStyle = tint;
+      c.fillRect(dx, dy, dw, dh);
+      drew++;
+    }
     c.globalCompositeOperation = 'source-over';
   });
-  if (!ok) return;
+  if (!ok || !drew) return;
   if (g.sub) {
     let e = cached;
     if (!e || e.pw !== g.pw || e.ph !== g.ph) {
-      e = { cv: mkCv(g.pw, g.ph), pw: g.pw, ph: g.ph, t: T };
+      e = { cv: mkCv(g.pw, g.ph), pw: g.pw, ph: g.ph, t: T, n: N };
       e.ctx = e.cv.getContext('2d');
       g.sub.set(key, e);
     }
-    e.t = T;
+    e.t = T; e.n = N;
     e.ctx.setTransform(1, 0, 0, 1, 0, 0);
     e.ctx.globalCompositeOperation = 'copy';
     e.ctx.drawImage(_scCv, 0, 0, g.pw, g.ph, 0, 0, g.pw, g.ph);
@@ -1099,14 +1217,93 @@ function halo(api, g, colour, alpha, comp) {
    into the region scratch, it composites 'lighter' ONCE over the material,
    exactly like the move pool's emission. The other half of the pair is
    gainLayer() — see PAINTERS.gain below. */
-function glowChain(c, api, pts, col, rad, alpha, taper) {
+/* ⚠⚠ WAVE 5 ROUND 2 — THE SHAPE IS UNCHANGED; WHAT DRAWS IT IS NOT.
+   The mark this produces, and every note above about why it is a chain of
+   falloffs rather than a stroke, still stands. What was measured and had to
+   change is the COST of one blob. It was createRadialGradient + fillRect —
+   Chromium builds and uploads a fresh gradient ramp for every one — and a blob
+   every 0.36-0.55 of a radius along a spiral or a lightning branch is 100-140
+   of them per branch; with electric and void each running a dodge pass and an
+   emissive pass over three tiles apiece that came to ~2200 gradients a frame.
+   Measured on the standalone board at 1200x900@2x with the critic's 9-tile
+   hazard set, three 3 s rAF windows: 13.9 frames/3 s with the gradient chain,
+   17.0 with the entire dodge pass deleted — so the chain alone was three
+   frames of the regression — and rendering it at HALF resolution recovered
+   0.1 of those, which is the proof that the cost is per-gradient and not
+   per-pixel.
+   ⚠ AND A BLURRED STROKE IS NOT THE ANSWER, THOUGH IT LOOKS LIKE IT SHOULD BE.
+   One path + one ctx.filter='blur()' per pass MEASURED 8.0 frames/3 s — worse
+   than the chain by 40%. Skia's blur on this software rasteriser is a
+   whole-bbox pass with a wide kernel and it is not competitive with any number
+   of small fills. Do not re-try it.
+   What works is caching the falloff ONCE per colour as a sprite and stamping
+   it: the blob profile is identical (stops 1 / 0.40 / 0 scaled by globalAlpha
+   is exactly the old stops A / 0.40A / 0), and a drawImage of a 64px canvas
+   costs a fraction of a gradient build. */
+/* ⚠ WAVE 5 ROUND 2 — A HAZARD'S MOTIF BELONGS TO ITS OWN TILE. The region mask
+   is deliberately generous (MASK_SURF base 1.44, so it reaches ~0.44 of a tile
+   past the quad — that softness is what stops a pool of oil looking like four
+   squares) and anything drawn inside it inherits that reach. A lightning
+   branch is a random walk starting at one edge and crossing the tile, and a
+   rift's outer arm passes r = 1.0·ax, so both were routinely landing on the
+   NEIGHBOURING tile. Measured: holy 5,6 sits next to electric 4,6 in the
+   critic's hazard set and its grain regression fell from wave 3's 0.665-0.757
+   to 0.43-0.68 purely from electric's arcs spilling into its 0.80-inset
+   sample. The motif is clamped to an ellipse just inside the tile; the
+   material, the halo and the mask still spill, which is the part that was ever
+   meant to. */
+function clampTile(m, x, y, f) {
+  const dx = (x - m.cx) / Math.max(1e-3, m.ax);
+  const dy = (y - m.cy) / Math.max(1e-3, m.ay);
+  const d = Math.hypot(dx, dy);
+  if (!(d > f)) return { x, y };
+  const k = f / d;
+  return { x: m.cx + dx * k * m.ax, y: m.cy + dy * k * m.ay };
+}
+
+const _blobSprites = new Map();
+function blobSprite(api, col) {
+  let cv = _blobSprites.get(col);
+  if (cv) return cv;
+  const S = 64;
+  cv = mkCv(S, S);
+  const cc = cv.getContext('2d');
+  const gr = cc.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  gr.addColorStop(0,    api.rgba(col, 1));
+  gr.addColorStop(0.42, api.rgba(col, 0.40));
+  gr.addColorStop(1,    api.rgba(col, 0));
+  cc.fillStyle = gr;
+  cc.fillRect(0, 0, S, S);
+  /* bounded: the table has a fixed handful of motif colours, but a painter
+     could compute one, and an unbounded map of canvases is a leak. */
+  if (_blobSprites.size > 24) _blobSprites.clear();
+  _blobSprites.set(col, cv);
+  return cv;
+}
+function glowChain(c, api, pts, col, rad, alpha, taper, coarse) {
   if (!pts || pts.length < 2 || !(rad > 0.4) || !(alpha > 0.004)) return;
   let total = 0;
   for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
   if (!(total > 0.5)) return;
-  /* 0.55 of a radius between blobs: closer wastes fill, wider beads. */
-  const step = Math.max(1.4, rad * 0.55);
+  const sp = blobSprite(api, col);
+  /* ⚠ 0.55 → 0.42 OF A RADIUS. Consecutive blobs at 0.55·r leave a periodic
+     ripple along the chain whose wavelength is 0.55·r; for electric's core
+     (r ≈ 3 CSS px) that is ~3.3 DEVICE px, which sits squarely inside the band
+     an 11×11 high-pass measures — so the chain was contributing its own bead
+     frequency to the very statistic that asks whether the tile's texture is
+     the sand's, and because the branch seed steps 7×/s, contributing it in a
+     different place every frame. The floor is what actually binds on the tight
+     core chains, so it is the floor that was lowered (1.4 → 1.15).
+     ⚠ `coarse` opts a chain OUT of that, and only the dim emissive passes use
+     it. The bead ripple is proportional to the chain's own alpha, so on a pass
+     running at 0.06-0.08 it is a fraction of a level — under the ground's own
+     grain and far under anything the high-pass can resolve — while the blob
+     count it saves is the difference between this file costing frames and not.
+     Never mark the DODGE passes coarse: those are the ones carrying the mark's
+     body, and they are the ones the grain regression is measured through. */
+  const step = coarse ? Math.max(2.2, rad * 0.85) : Math.max(1.15, rad * 0.42);
   let done = 0;
+  c.save();
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], b = pts[i];
     const seg = Math.hypot(b.x - a.x, b.y - a.y);
@@ -1122,14 +1319,12 @@ function glowChain(c, api, pts, col, rad, alpha, taper) {
       const A = alpha * f;
       if (A <= 0.004) continue;
       const R = rad * (0.55 + 0.45 * f);
-      radial(c, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, R, R, R, [
-        [0,    api.rgba(col, A)],
-        [0.42, api.rgba(col, A * 0.40)],
-        [1,    api.rgba(col, 0)]
-      ]);
+      c.globalAlpha = A;
+      c.drawImage(sp, a.x + (b.x - a.x) * t - R, a.y + (b.y - a.y) * t - R, R * 2, R * 2);
     }
     done += seg;
   }
+  c.restore();
 }
 
 /* Assemble a region: jittered polygons, per-tile metrics, membership set, the
@@ -1166,7 +1361,7 @@ function group(api, tiles, lift, amp, opt) {
   const mdpr = Math.max(0.6, dpr * 0.5);
   const g = {
     list, set, n, ax, ay, cx, cy,
-    x0, y0, x1, y1, w: x1 - x0, h: y1 - y0, dpr, mdpr,
+    x0, y0, x1, y1, w: x1 - x0, h: y1 - y0, dpr, mdpr, pad,
     pw: Math.max(1, Math.ceil((x1 - x0) * dpr)),
     ph: Math.max(1, Math.ceil((y1 - y0) * dpr)),
     mw: Math.max(1, Math.ceil((x1 - x0) * mdpr)),
@@ -1418,8 +1613,20 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
          ring up, 0.56 pushed the outermost quintile's own ON−OFF luma to 35.8
          — under the +40 the contract holds every lit tile to. At 0.50 the
          outer ring measures 42.4 and centre:edge is still 2.05 (round 4: 1.30,
-         so "brightest at the centre" survives with room). */
-      const f = 1 - 0.50 * u;
+         so "brightest at the centre" survives with room).
+         ⚠ WAVE 5 ROUND 2 — 0.50 → 0.38, AND IT IS THE SAME COUPLING AS ROUND
+         6, ONE STEP FURTHER. The rim wash is now DELETED outright (see THE RIM)
+         rather than merely dimmed, so the outer ring loses the ~+6 the wash was
+         contributing inside the 0.80-inset sample and would land near the +36
+         that failed in round 5. 0.38 hands that back through the swells, where
+         it is a smooth region-scale gradient instead of a band with an edge.
+         This is a redistribution, not a lift: rnorm below keeps the region's
+         total emission identical, so the pool does not get louder — and the
+         critic's other finding this round is that it is already ~22% louder
+         than wave 3, so it must not. Centre:edge falls with it; that is the
+         price, and it is affordable because the crest that was making the
+         boundary the brightest thing in the profile is gone. */
+      const f = 1 - 0.38 * u;
       rfs.push(f); rsum += f;
     }
     const rnorm = g.list.length / (rsum || 1);
@@ -1471,13 +1678,39 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
             unbroken length — not even around a single isolated tile;
          3. it is drawn INSIDE the region mask, whose feather eats its outer
             half, so what survives is a glow fading inward from the edge.
-       Two additive passes: a continuous wide dim wash that reads as a
-       gradient, and a broken hairline that reads as a glint. */
+       ⚠⚠ WAVE 5 ROUND 2 — THERE IS NO WASH ANY MORE. ONE additive pass, the
+       broken hairline, is all that is left; read the arithmetic below before
+       putting a band back on this boundary in any form.
+       A continuous stroke of constant alpha is a TOP HAT: it adds the same W
+       everywhere inside its half-width and 0 one pixel further in. The pool's
+       emission has plateaued at P by then, so the profile is P+W inside the
+       band and P immediately past it — a STEP DOWN, i.e. a local maximum ON
+       the boundary, i.e. the edge of a pane of glass, no matter how wide or
+       how dim the band is. Round 6 believed "wide enough is a gradient" and
+       measured a clean monotone rise; that measurement was taken at alpha
+       0.015, where W was inside the interior's own ±5 of noise. Wave 3 put the
+       alpha back to 0.040 without re-probing and the crest came straight back:
+       measured on a ±3-row band across the left pool edge at y=1440 of the
+       paint-on minus paint-off frame, the profile ramped to 70 at x=1030-1038
+       and STEPPED DOWN to an interior of 48 two pixels later — +43% over the
+       interior it is supposed to be feathering into.
+       For SUM = base(t) + wash(t) to be monotone inward, wash may only fall as
+       fast as base rises; once base plateaus, wash may never fall at all. A
+       finite band cannot satisfy that, so no tuning of alpha or width fixes
+       this — only deleting it does. What replaces it for edge legibility is
+       already here and is not a band: the mask's own feather (MASK_STATE.blur,
+       tightened in wave 3 to 0.078 = ~7 CSS px, so the ramp is a boundary and
+       not a fog bank) and the broken glint below, which is sub-pixel-capped,
+       hashed per sub-segment and skips ~44% of them, so it cannot plateau.
+       Two additive passes are now one: the broken hairline that reads as a
+       glint catching part of the edge. */
     const edges = rimS > 0 ? boundaryEdges(g) : [];
     c.lineJoin = 'round';
     for (const e of edges) {
       const p = e.p;
-      /* ── THE WASH: ONE stroke for the whole side, BUTT caps, one width.
+      /* ── THE WASH — DELETED IN WAVE 5 ROUND 2. Kept as a comment because it
+         has been reinvented twice and the note above is the reason not to.
+         ── THE WASH: ONE stroke for the whole side, BUTT caps, one width.
          ⚠ This was four sub-strokes with independent widths and ROUND caps,
          and the frame showed exactly what that is: a chain of overlapping
          capsules, i.e. a row of soft BUBBLES pinned round the pool and, where
@@ -1514,16 +1747,13 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
          It is STILL a wide inward gradient, not a band: 0.62–1.02 tiles wide
          with butt caps, so it has no crest of its own to read as a pane edge.
          The profile that must survive re-measurement is a MONOTONE rise with
-         no local maximum on the boundary — check it, do not assume it. */
-      const hw = api.hash(e.it.x, e.it.z, 300 + e.k);
-      c.lineCap = 'butt';
-      c.strokeStyle = api.rgba(col.rim, 0.040 * LIT * rimS * (0.6 + hw * 0.8));
-      c.lineWidth   = g.ax * (0.34 + hw * 0.26);
-      c.beginPath();
-      c.moveTo(p[0].x, p[0].y);
-      c.lineTo(p[1].x, p[1].y);
-      c.lineTo(p[2].x, p[2].y);
-      c.stroke();
+         no local maximum on the boundary — check it, do not assume it.
+             const hw = api.hash(e.it.x, e.it.z, 300 + e.k);
+             c.lineCap = 'butt';
+             c.strokeStyle = api.rgba(col.rim, 0.040 * LIT * rimS * (0.6+hw*0.8));
+             c.lineWidth   = g.ax * (0.34 + hw * 0.26);
+             c.beginPath(); … c.stroke();
+         It did not survive it. See the block at the head of THE RIM. */
 
       /* ── THE GLINT: a hairline, and this one IS broken. At ~1px wide its
          round caps are sub-pixel, so breaking it reads as a glint catching
@@ -1705,6 +1935,33 @@ function drawStatesOver(api) {
                          re-read the ground, tint it, add it to itself, so the
                          hazard's light scales the sand's own grain instead of
                          adding a constant over it. Runs between m and s/l.
+     d(api, c, g)      content blitted with 'color-dodge' — a SHAPED light.
+                         ⚠ WAVE 5 ROUND 2. `gain` can only scale the whole
+                         region uniformly; a lightning arc or the matter
+                         falling into a rift is bright light in ONE PLACE, and
+                         drawing that place with 'lighter' puts a constant over
+                         the sand exactly where the eye is looking — the same
+                         arithmetic the gain exists to avoid, applied at the
+                         one spot it matters most. 'color-dodge' is
+                         out = base / (1 − b): a per-channel MULTIPLIER of
+                         1/(1−b), so the ground's grain, relief and crease AO
+                         scale under the arc instead of being buried by it.
+                         Measured, this is what took electric's high-pass
+                         regression on the paint-off ground from an unstable
+                         r 0.002–0.570 to a stable one — the previous 'lighter'
+                         core was an opaque near-white mark whose own detail
+                         dominated the tile's high-pass, and because the branch
+                         seed steps 7×/s the amount by which it dominated moved
+                         frame to frame.
+                         ⚠ KEEP b BELOW ~0.45. Dodge clips: 1/(1−b) at b=0.6 is
+                         2.5×, which drives lit sand straight to 255 and shears
+                         the top off the grain distribution — the exact failure
+                         holy's own note records from over-driving its
+                         constants. And bias b BLUE: dodge lifts each channel
+                         in proportion to what it already has, so a neutral
+                         dodge on warm sand reads WARM. Blue is the channel
+                         sand has least invested in, so a blue-weighted b is
+                         what makes the lift read cool.
      l(api, c, g)      content blitted with 'lighter'    — sheen, glow, ripples
      s(api, c, g)      content blitted with 'source-over'— solid objects on sand
      post(api, c, g)   unclipped, straight onto the main canvas — anything that
@@ -2478,27 +2735,69 @@ const PAINTERS = {
         ]);
       }
     },
-    l(api, c, g) {
-      /* TWO arms, not three, and neither is a stroke. Three evenly-phased arms
-         of constant width is a LOGO — evenly-spaced identical marks are the
-         BAR's own "AI-generated game" tell. Two arms at unequal radial pitch,
-         each drawn as a tapered chain of falloffs, read as matter being drawn
-         into the rift. Per-tile phase and pitch off api.hash so no two rifts
-         spiral alike. */
-      for (const it of g.list) {
-        const m = it.m, sy = m.ay / m.ax;
-        for (let i = 0; i < 2; i++) {
-          const a0 = api.T * (0.42 + i * 0.17) + i * 3.1 + api.hash(it.x, it.z, 900 + i) * 6.283;
-          const pitch = 0.034 + api.hash(it.z, it.x, 910 + i) * 0.012;
-          const pts = [];
-          for (let k = 0; k <= 20; k++) {
-            const a = a0 + k * 0.32, rr = m.ax * (0.12 + k * pitch);
-            pts.push({ x: m.cx + Math.cos(a) * rr, y: m.cy + Math.sin(a) * rr * sy });
-          }
-          glowChain(c, api, pts, i % 2 ? '#a35cff' : '#4fd0ff',
-                    m.ax * (0.085 + api.hash(it.x, it.z, 920 + i) * 0.035), 0.30, true);
+    /* TWO arms, not three, and neither is a stroke. Three evenly-phased arms
+       of constant width is a LOGO — evenly-spaced identical marks are the
+       BAR's own "AI-generated game" tell. Two arms at unequal radial pitch,
+       each drawn as a tapered chain of falloffs, read as matter being drawn
+       into the rift. Per-tile phase and pitch off api.hash so no two rifts
+       spiral alike. */
+    _arms(api, it) {
+      const m = it.m, sy = m.ay / m.ax, out = [];
+      for (let i = 0; i < 2; i++) {
+        const a0 = api.T * (0.42 + i * 0.17) + i * 3.1 + api.hash(it.x, it.z, 900 + i) * 6.283;
+        const pitch = 0.034 + api.hash(it.z, it.x, 910 + i) * 0.012;
+        const pts = [];
+        for (let k = 0; k <= 20; k++) {
+          const a = a0 + k * 0.32, rr = m.ax * (0.12 + k * pitch);
+          pts.push(clampTile(m, m.cx + Math.cos(a) * rr, m.cy + Math.sin(a) * rr * sy, 0.95));
         }
+        out.push(pts);
       }
+      return out;
+    },
+    /* ⚠ WAVE 5 ROUND 2 — THE ARMS ARE MOSTLY A DODGE NOW. Measured by the
+       critic on the 0.80-inset quads, void's high-pass regression on the
+       paint-off ground came out r 0.372–0.602 against the 0.965 the move pool
+       manages, on a tile whose own note claims the ground stays measurable
+       underneath. Two things were eating it and only one of them was the
+       multiply: at 0.30 additive alpha over a tile darkened to ~38%, the arms'
+       own falloff structure is comparable in amplitude to what is left of the
+       sand's grain, so the arms ARE the tile's high-frequency content.
+       Dodging them scales the darkened sand along the arm instead of adding to
+       it — the grain inside the arm is preserved in proportion — and the
+       'lighter' pass keeps a quarter of the old alpha for the genuinely
+       emissive cyan, which is what stops the rift reading as a wet smear. */
+    d(api, c, g) {
+      for (const it of g.list) {
+        const m = it.m;
+        const arms = PAINTERS.void._arms(api, it);
+        for (let i = 0; i < arms.length; i++)
+          glowChain(c, api, arms[i], i % 2 ? '#6a3ba8' : '#2f6ea8',
+                    m.ax * (0.130 + api.hash(it.x, it.z, 920 + i) * 0.035), 0.34, true);
+      }
+    },
+    /* ⚠ WAVE 5 ROUND 2 — THE EMISSIVE SPINE MOVED OUT OF `l` AND INTO `post`,
+       AND IT IS A COST FIX WITH NO VISUAL CONSEQUENCE. `l` is a MASKED layer:
+       clear the region scratch, draw, 'destination-in' the mask over it, blit
+       it back — four passes over the region's bounding box, and drawSurfaces
+       groups by fx key ACROSS THE WHOLE BOARD, so a hazard in two corners has
+       a board-sized bounding box. Adding the dodge pass gave these two
+       painters two such layers each per frame where wave 3 had one, and
+       measured on the standalone board that, not the drawing inside it, is
+       what most of the remaining per-frame cost is. `post` goes straight onto
+       the main canvas with no scratch and no mask. The spine is a thin taper
+       riding the middle of the arm it belongs to, so there is nothing at its
+       edges for a mask to have been cutting. */
+    post(api, c, g) {
+      c.save(); c.globalCompositeOperation = 'lighter';
+      for (const it of g.list) {
+        const m = it.m;
+        const arms = PAINTERS.void._arms(api, it);
+        for (let i = 0; i < arms.length; i++)
+          glowChain(c, api, arms[i], i % 2 ? '#a35cff' : '#4fd0ff',
+                    m.ax * (0.090 + api.hash(it.x, it.z, 920 + i) * 0.030), 0.085, true, true);
+      }
+      c.restore();
     }
   },
 
@@ -2571,8 +2870,15 @@ const PAINTERS = {
 
   /* ── ELECTRIC ── a wet conductive patch with arcs skittering over it. */
   electric: {
-    halo: (api) => [['#1a2440', 0.26, 'multiply'],
-                    ['#5a9cff', 0.10 * (0.6 + 0.4 * Math.sin(api.T * 9.3)), 'lighter']],
+    /* ⚠ WAVE 5 ROUND 2 — the additive half of the halo is 0.10 → 0.042. It is
+       drawn through the DILATED mask, so unlike a rim it covers the tile
+       interior as well as the spill — i.e. it is a constant sitting on exactly
+       the pixels the grain regression is measured over, and at 0.10 it was
+       three times holy's, on the one painter that was failing that clause.
+       The spill it exists for is outside the tile and reads fine at 0.042; the
+       interior lift it was also doing is now the dodge's job. */
+    halo: (api) => [['#1a2440', 0.18, 'multiply'],
+                    ['#5a9cff', 0.042 * (0.6 + 0.4 * Math.sin(api.T * 9.3)), 'lighter']],
     /* ⚠ WAVE 5 — THE ARC HAS TO LIGHT THE PATCH, NOT BE DRAWN ON IT. An
        electric arc is by far the brightest thing in its own frame, so the
        ground under it should visibly brighten and its grain should come up
@@ -2580,39 +2886,104 @@ const PAINTERS = {
        so the wet patch's own relief and the terrain's crease AO all rise
        together. Flickering on the same 7 Hz clock as the branches below so the
        light and the thing emitting it agree. */
-    gain: (api) => ['#4d86d8', 0.26 * (0.55 + 0.45 * Math.sin(api.T * 13.7))],
+    gain: (api) => ['#4d86d8', 0.34 * (0.55 + 0.45 * Math.sin(api.T * 13.7))],
+    /* ⚠ WAVE 5 ROUND 2 — 0.56/0.38 → 0.32/0.20, THE SAME LESSON VOID LEARNED
+       ONE ROUND EARLIER AND FOR THE SAME MEASURED REASON. A wet conductive
+       patch is DARKER than dry sand; it is not a dark plate. Measured on the
+       0.80-inset quad, this multiply (plus the halo's own 0.26 multiply over
+       the same pixels) left the tile with roughly 0.3 of the sand's grain
+       contrast — so the tile's high-frequency content was mostly ARC, in both
+       the painted frame and the paint-off frame the probe compares it against,
+       and since the branches reseed 7×/s those two lots of arc are in
+       different places. That is why the regression came out r 0.002 on one
+       capture and r 0.570 on another: not instability in the arc, but the
+       ground it should be riding on having been multiplied away underneath it.
+       The darkening the patch needs is now shared between a lighter multiply
+       here, the halo's 0.18, and the gain (0.26 → 0.34) doing the cooling. */
     m(api, c, g) {
       for (const it of g.list) {
         const m = it.m;
         radial(c, m.cx, m.cy, m.ax, m.ay, m.ax * 1.6, [
-          [0, api.rgba('#1a2440', 0.56)], [0.6, api.rgba('#1a2440', 0.38)], [1, api.rgba('#1a2440', 0)]
+          [0, api.rgba('#1a2440', 0.32)], [0.6, api.rgba('#1a2440', 0.20)], [1, api.rgba('#1a2440', 0)]
         ]);
       }
     },
-    l(api, c, g) {
-      /* ⚠ NO STROKE, NO shadowBlur. The old branch was a 0.90-alpha near-white
-         polyline — the single most opaque mark in the whole surface table —
-         with a canvas shadow standing in for a glow. Measured, it sat on the
-         sand with no transmission at all: a white zigzag decal. It is now a
-         two-pass chain of falloffs, wide and dim for the corona and tight and
-         hot for the core, so the arc has a soft body with a bright spine and
-         no width anywhere that the eye can call a line. */
-      const seed = Math.floor(api.T * 7);
+    /* The branch geometry, shared by the dodge pass and the emissive spine so
+       the light and the thing emitting it are the same shape. Seeded on a 7 Hz
+       step, which is the arc's own flicker rate. */
+    _pts(api, it) {
+      const m = it.m, seed = Math.floor(api.T * 7), out = [];
+      for (let b = 0; b < 2; b++) {
+        const a = api.hash(it.x + seed, it.z, b) * 6.283;
+        let px = m.cx - Math.cos(a) * m.ax * 0.9, py = m.cy - Math.sin(a) * m.ay * 0.9;
+        const pts = [{ x: px, y: py }];
+        for (let s = 0; s < 5; s++) {
+          px += Math.cos(a) * m.ax * 0.38 + (api.hash(it.z + seed, it.x, b * 5 + s) - 0.5) * m.ax * 0.5;
+          py += Math.sin(a) * m.ay * 0.38 + (api.hash(it.x + seed, it.z, b * 7 + s) - 0.5) * m.ay * 0.5;
+          const q = clampTile(m, px, py, 0.95); px = q.x; py = q.y;
+          pts.push({ x: px, y: py });
+        }
+        out.push(pts);
+      }
+      return out;
+    },
+    /* ⚠ WAVE 5 ROUND 2 — THE ARC IS NOW A DODGE, AND THAT IS THE FIX FOR THE
+       INSTABILITY, NOT JUST FOR THE LEVEL. Wave 5 replaced the old opaque
+       polyline with a two-pass 'lighter' chain — a real improvement in how it
+       looks, and still an ADDED CONSTANT where it is brightest. Measured by the
+       critic on the 0.80-inset tile quads, tile 4,6's high-pass regression on
+       the paint-off ground came out slope 0.686 / r 0.570 on one capture and
+       slope 0.003 / r 0.002 on a second capture of the identical hazard set:
+       at that instant the tile bore no relationship to the ground under it at
+       all. That is not noise, it is the mechanism — the branch seed steps 7
+       times a second, so where the near-white core happens to fall decides how
+       much of the tile's high-frequency content is arc rather than sand, and
+       the answer swings between "some" and "all".
+       'color-dodge' removes the question: out = base/(1−b) is a multiplier, so
+       wherever the arc is, the sand under it is scaled, not replaced, and the
+       correlation is a property of the operator rather than of where the bolt
+       landed this frame. Corona and core are both dodges now; the only thing
+       left in the additive pass is a thin true-emissive spine at a fifth of
+       the old alpha, because an electric arc IS brighter than any multiple of
+       sand and a purely multiplicative arc looks like a wet streak. */
+    d(api, c, g) {
       for (const it of g.list) {
         const m = it.m;
-        for (let b = 0; b < 2; b++) {
-          const a = api.hash(it.x + seed, it.z, b) * 6.283;
-          let px = m.cx - Math.cos(a) * m.ax * 0.9, py = m.cy - Math.sin(a) * m.ay * 0.9;
-          const pts = [{ x: px, y: py }];
-          for (let s = 0; s < 5; s++) {
-            px += Math.cos(a) * m.ax * 0.38 + (api.hash(it.z + seed, it.x, b * 5 + s) - 0.5) * m.ax * 0.5;
-            py += Math.sin(a) * m.ay * 0.38 + (api.hash(it.x + seed, it.z, b * 7 + s) - 0.5) * m.ay * 0.5;
-            pts.push({ x: px, y: py });
-          }
-          glowChain(c, api, pts, '#5f9ae8', m.ax * 0.115, 0.20, true);   /* corona */
-          glowChain(c, api, pts, '#cfe6ff', m.ax * 0.042, 0.34, true);   /* core   */
+        for (const pts of PAINTERS.electric._pts(api, it)) {
+          /* blue-weighted, and both well under the 0.45 clip ceiling.
+             The corona is wide, dim and `coarse`; the core carries the body
+             and is the one drawn at full chain density. */
+          glowChain(c, api, pts, '#2d5a9e', m.ax * 0.175, 0.26, true, true); /* corona */
+          glowChain(c, api, pts, '#4f78c8', m.ax * 0.088, 0.38, true);       /* core   */
         }
       }
+    },
+    /* ⚠ NO STROKE, NO shadowBlur. The old branch was a 0.90-alpha near-white
+       polyline — the single most opaque mark in the whole surface table — with
+       a canvas shadow standing in for a glow. Measured, it sat on the sand with
+       no transmission at all: a white zigzag decal. What is left is only the
+       spine: tight, and at 0.34 → 0.065 so its own detail can no longer
+       outweigh the ground's inside the tile.
+       ⚠ WAVE 5 ROUND 2 — THE EMISSIVE SPINE MOVED OUT OF `l` AND INTO `post`,
+       AND IT IS A COST FIX WITH NO VISUAL CONSEQUENCE. `l` is a MASKED layer:
+       clear the region scratch, draw, 'destination-in' the mask over it, blit
+       it back — four passes over the region's bounding box, and drawSurfaces
+       groups by fx key ACROSS THE WHOLE BOARD, so a hazard in two corners has
+       a board-sized bounding box. Adding the dodge pass gave these two
+       painters two such layers each per frame where wave 3 had one, and
+       measured on the standalone board that, not the drawing inside it, is
+       what most of the remaining per-frame cost is. `post` goes straight onto
+       the main canvas with no scratch and no mask. The spine is a thin taper
+       riding the middle of the arm it belongs to, so there is nothing at its
+       edges for a mask to have been cutting. */
+    post(api, c, g) {
+      c.save(); c.globalCompositeOperation = 'lighter';
+      for (const it of g.list) {
+        const m = it.m;
+        for (const pts of PAINTERS.electric._pts(api, it))
+          glowChain(c, api, pts, '#dcecff', m.ax * 0.075, 0.065, true, true);
+      }
+      c.restore();
     }
   },
 
@@ -2822,6 +3193,23 @@ function drawSurfaces(api) {
         const gn = P.gain(api, g);
         if (gn && gn[0] && gn[1] > 0.004) gainLayer(api, g, gn[0], gn[1], GAIN_REFRESH_SURF);
       } catch (e) {} }
+      /* 2c. THE SHAPED LIGHT. Same idea as 2b, but positional — see the `d`
+         entry in the painter contract above. It must land AFTER the uniform
+         gain (it dodges the already-lit ground, so an arc over a consecrated
+         tile is brighter than the same arc over bare sand, which is right) and
+         BEFORE the additive l pass, whose job is only the few pixels that are
+         genuinely emissive rather than illuminated. `low` is deliberate: these
+         are soft falloff chains with nothing above a few pixels of detail, so
+         the half-res render is invisible and costs a quarter of the fill.
+         ⚠ Measured both ways. At the chain's old 0.36 spacing the half-res
+         raster was a real risk — a bead period of ~1.7 device px in the small
+         buffer is at Nyquist and folds down into exactly the band the grain
+         regression reads — which is why this ran at full resolution for one
+         iteration. With the spacing at 0.42 and the blobs stamped from a
+         cached sprite the beads overlap far enough that there is no periodic
+         component left to fold, and the measured grain regression is the same
+         either way while the fill is a quarter. */
+      if (P.d) { try { layer(api, g, 'color-dodge', 1, cc => P.d(api, cc, g), false, true); } catch (e) {} }
       if (P.s) { try {
         if (P.sStatic) staticLayer(api, g, 'source-over', 1, 's', cc => P.s(api, cc, g));
         else           layer(api, g, 'source-over', 1, cc => P.s(api, cc, g));

@@ -3419,6 +3419,12 @@
      occlusion only; the mid-shade keeps its hue and gets its chroma from the
      restore instead. */
   const SHADOW_TINT_K = 0.5;
+  /* …and how much MORE than that a shadow with no material left in it gets.
+     See the third case at `t2`: this is the term that stops a shaded tile with
+     R−B ≈ 0 from sitting on neutral forever. Sized so the sampled y940 shade
+     rgb(57,67,62) lands near rgb(59,72,79) — a blue-grey with a hue, which is
+     both what the BAR asks for and what wave 3 happened to have there. */
+  const NEUTRAL_COOL = 1.1;
   /* THE SHADED-GROUND WEIGHT. ⚠ SHADOW_HI/SHADOW_LO (100/18) never touched the
      shaded GROUND at all — the critic's shaded tile measures L 113 post-grade,
      i.e. s = 0 under that ramp — which is exactly why every shadow treatment
@@ -3897,7 +3903,31 @@
            recognises keeps the full bounce — slightly more than wave 3's, to
            make up for the tone gain it used to be multiplied by — and warm
            ground in shade gets half. */
-        const t2 = sd * (SHADOW_TINT_K + (1.15 - SHADOW_TINT_K) * cool);
+        /* ── ⚠ AND THE THIRD CASE, WHICH IS THE ONE THAT WAS DEAD GREY ───────
+           There are not two kinds of shadow here, there are three, and until
+           this round only two of them were served. Sampled on the isolated
+           pair, the darkest third of each constant-depth row:
+
+             y1180  rgb(114, 91, 54)  R−B +60   warm ground in shade — the
+                    warm restore owns it, keeps its ochre, gets HALF the navy
+             pond   B − (R+G)/2 ≈ +20          a genuinely cool surface — the
+                    cool gate owns it, gets the FULL navy plus the give-back
+             y940   rgb( 57, 67, 62)  R−B −5    NEITHER. warm = 0 so the ochre
+                    restore is off; cool = 0.2 so the bounce is at half. It
+                    lands on the exact midpoint of two gates and comes out
+                    NEUTRAL — the "shadows go flat and grey" the clause names,
+                    and the same defect the achromatic-patch clause names, in
+                    the ground rather than in the sky.
+
+           A shadow with no ochre material left in it is a shadow lit only by
+           the sky, and the BAR is explicit about what that looks like: "cool
+           blue-grey in shadow". So the bounce's weight is not `cool` alone —
+           it is "cool OR not-warm", which sends the third case the whole way
+           to the cool side instead of parking it on grey. Warm ground in
+           shade is untouched (warm = 1 zeroes the new term) and so is water
+           (cool = 1 zeroes it, and it already had the full bounce). */
+        const t2 = sd * (SHADOW_TINT_K + (1.15 - SHADOW_TINT_K) * cool
+          + NEUTRAL_COOL * (1 - warm) * (1 - cool));
         /* ⚠ THE COOL SURFACES GET WAVE 3's GIVE-BACK, NOT A GATE ON THE
            MULTIPLY, AND THAT IS A CORRECTION TO THIS ROUND'S FIRST CUT. Gating
            the restore is exact arithmetic and it still measured wrong: the app

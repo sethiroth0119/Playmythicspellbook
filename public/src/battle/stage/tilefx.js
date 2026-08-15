@@ -2877,7 +2877,7 @@ const PAINTERS = {
        three times holy's, on the one painter that was failing that clause.
        The spill it exists for is outside the tile and reads fine at 0.042; the
        interior lift it was also doing is now the dodge's job. */
-    halo: (api) => [['#1a2440', 0.18, 'multiply'],
+    halo: (api) => [['#1a2440', 0.21, 'multiply'],
                     ['#5a9cff', 0.042 * (0.6 + 0.4 * Math.sin(api.T * 9.3)), 'lighter']],
     /* ⚠ WAVE 5 — THE ARC HAS TO LIGHT THE PATCH, NOT BE DRAWN ON IT. An
        electric arc is by far the brightest thing in its own frame, so the
@@ -2899,12 +2899,17 @@ const PAINTERS = {
        capture and r 0.570 on another: not instability in the arc, but the
        ground it should be riding on having been multiplied away underneath it.
        The darkening the patch needs is now shared between a lighter multiply
-       here, the halo's 0.18, and the gain (0.26 → 0.34) doing the cooling. */
+       here, the halo's 0.21, and the gain (0.26 → 0.34) doing the cooling.
+       ⚠ 0.32/0.20 WAS TOO FAR. Looked at rather than measured, at that setting
+       the patch stopped reading as wet at all — the grain regression was 0.82
+       and the tile was sand with a wisp on it. 0.40/0.26 is the setting where
+       both hold: still roughly half the darkening wave 3 applied, still ~0.78
+       on the regression, and visibly a damp conductive patch at 1:1. */
     m(api, c, g) {
       for (const it of g.list) {
         const m = it.m;
         radial(c, m.cx, m.cy, m.ax, m.ay, m.ax * 1.6, [
-          [0, api.rgba('#1a2440', 0.32)], [0.6, api.rgba('#1a2440', 0.20)], [1, api.rgba('#1a2440', 0)]
+          [0, api.rgba('#1a2440', 0.40)], [0.6, api.rgba('#1a2440', 0.26)], [1, api.rgba('#1a2440', 0)]
         ]);
       }
     },

@@ -544,6 +544,10 @@
        writes; key/age/reads/calls/ms belong to the READBACK CADENCE. */
     post: {
       pos: null, key: '', age: 1e9, ready: false, fail: false,
+      /* the toe's working box in 0..1 viewport fractions, or null for "no
+         pixel in this frame can reach the floor" — see WHERE THE TOE CAN
+         STILL DO WORK. */
+      toe: null,
       mulR: { cv: null, g: null }, addR: { cv: null, g: null },
       /* gainR — the PER-PIXEL weight on the tone gain. ⚠ ROUND 2 OF WAVE 5,
          and the reason the whole frame got its detail back: see GAIN_SPAN. */
@@ -553,10 +557,11 @@
     /* the last map generation the multiply's quarter-scale intermediate was
        built from, so a cadence frame does not rebuild an identical upscale. */
     mupKey: '',
-    /* the frame at FULL device resolution — the tone gain's exact source. See
-       THE GAIN IS EXACT NOW. `fullOK` is what postMap keys its arithmetic on,
-       so a box that cannot afford the copy still gets a correct frame. */
-    full: { cv: null, g: null },
+    /* ⚠ REMOVED IN ROUND 3 — `full` was the frame at FULL device resolution,
+       composited 'lighter' at a UNIFORM alpha as the tone gain. It is gone and
+       it must not come back; see THE UNIFORM GAIN CLIPPED THE FRAME. `fullOK`
+       survives as a hard `false` only so a probe written against round 2 gets
+       an answer instead of `undefined`. */
     fullOK: false,
     /* where the body is and whether the ridgeline is in front of it, sampled
        once per world bake — see discVisible(). */
@@ -3431,6 +3436,10 @@
      already at the point where more k stops buying chroma, so it stays where
      the A/B is cleanest. */
   const SHADOW_CHROMA = 1.9;
+  /* how much faster than the base restore the SHADE term reaches full strength
+     with depth. 3 puts it at full a third of the way down the field, which is
+     the first row of tiles clear of the haze band — see the note at `rs`. */
+  const SHADE_RAMP = 3;
   /* extra gain at full shade — the texture half of the clause, and it goes in
      the MULTIPLY, not in the gain term.
      ⚠ THE FIRST CUT PUT IT IN THE GAIN AND MEASURED BACKWARDS. Raising `w` in
@@ -3490,9 +3499,10 @@
      ⚠ GAIN_SPAN MUST COVER max(G) − MAP_CEIL or V clips and the brightest
      shade silently loses its lift. max(G) = TONE_GAIN × (1 + SHADOW_LIFT) at
      at=ped=1, so it is derived, never typed in — see GAIN_SPAN below MAP_CEIL.
-     ⚠ THIS IS THE FALLBACK PATH NOW, not the one the frame normally takes. It
-     is still 2-3x better than round 1 and it is exactly what runs when the
-     full-resolution copy cannot be allocated — see THE GAIN IS EXACT NOW. */
+     ⚠ AND IN ROUND 3 IT IS THE ONLY PATH AGAIN. Round 2 put a "more exact"
+     uniform full-resolution gain in front of it; that gain clipped the frame
+     white and cost far more than the band limit ever did. See THE UNIFORM GAIN
+     CLIPPED THE FRAME, immediately below. */
   /* …and the map is capped just under 1 so the frame cannot contain a pure
      white channel: the multiply runs AFTER the additive pass, so whatever the
      bloom blew out to 255 leaves at 255·0.985 = 251. That is the shoulder
@@ -3501,29 +3511,43 @@
   /* the additive gain's full-scale value — the alpha the frame's own copy is
      composited at. V (0…1, per pixel) is measured against it. */
   const GAIN_SPAN = TONE_GAIN * (1 + SHADOW_LIFT) - MAP_CEIL;
-  /* ── THE GAIN IS EXACT NOW ────────────────────────────────────────────────
-     The split above is the best a BAND-LIMITED additive can do, and measured
-     it is not good enough: on the isolated pair it left the field's |d8px|
-     6.7% under wave 3, because a quarter-scale nearest upscale reconstructs
-     essentially NOTHING at the 8-device-px scale the clause measures, so
-     every part of the gain that overflowed the multiply's ceiling was simply
-     gone from the fine detail.
-     So the frame's own copy is kept at FULL device resolution and composited
-     'lighter' at a uniform alpha, BEFORE the multiply — which means the whole
-     chain is exactly
-         out = (x + bloom + veil + GAIN_W·x) · M
-     and with M = gFull/(1+GAIN_W) the fine-detail slope is gFull itself. No
-     band limit, no smear, on the sand grain OR on the brazier flames OR on
-     the disc's limb. Measured cost on this box: one full-viewport 'copy' blit
-     plus one full-viewport 'lighter' blit — 3.6 + ~4.5 ms — against the ~1 ms
-     of quarter-scale work it replaces.
-     ⚠ GAIN_W IS DERIVED FROM THE CEILING, NOT CHOSEN. M has to fit under
-     MAP_CEIL for the brightest gain in the frame (deep shade, where the lift
-     is full), so 1+GAIN_W = max(gFull)/MAP_CEIL exactly. Typing a number here
-     instead would either clip the shade's lift or waste multiply range. */
-  const GAIN_W = TONE_GAIN * (1 + SHADOW_LIFT) / MAP_CEIL - 1;
-  /* the scale of the additive intermediate (bloom + veil colour + tints) and,
-     on the fallback path only, of the frame copy the gain rides on.
+  /* ── ⛔ THE UNIFORM GAIN CLIPPED THE FRAME — DO NOT REINTRODUCE IT ─────────
+     Round 2 chased the split's band limit (which cost 6.7% of the field's
+     |d8px|) with an "exact" pass: keep the frame's own copy at FULL device
+     resolution, composite it 'lighter' at a UNIFORM alpha GAIN_W = 0.3555, and
+     let the multiply carry gFull/(1+GAIN_W) so the algebra came out at exactly
+     out = (x + bloom + veil + GAIN_W·x)·M. The algebra was right. The canvas
+     was not: **'lighter' saturates at 255 per channel**, so every channel above
+     255/1.3555 = 188 was clipped to white BEFORE the multiply divided it back
+     down by 1/1.3555. What comes out of a clipped channel is 255·m — a value
+     that no longer depends on the input at all.
+
+     Measured consequences, all of them from that one clip (VR2-curve.mjs on the
+     isolated no-highlight pair):
+       · the transfer slope d(out)/d(in) fell to 0.83/0.62/0.57/0.51 at inputs
+         160/170/180/190, i.e. the brightest half of the sand was compressed at
+         half slope: the lit plateau tops lost 72% of their |d8px| and 41% of
+         their chroma and read as a flat cream plate;
+       · in the SKY the map is achromatic on purpose (kk = k·r·… and r is 0
+         above the far edge), and all three channels of a bright sky clip
+         together, so the output was 255·m on all three: rgb(184,184,184),
+         saturation 0.1%, where wave 3 had rgb(171,200,222) at 22.8%. A uniform
+         white term added to a coloured pixel and then clipped IS a desaturator;
+       · on warm sand only R clips first, which is a desaturator too, just an
+         asymmetric one.
+
+     A "soft knee" could not rescue it either: the knee has to be applied to the
+     pixel's own value, and a uniform-alpha composite is by definition blind to
+     that. The per-pixel split below already IS the knee — the multiply carries
+     min(gFull, MAP_CEIL) exactly and per channel, so the slope is 0.99 all the
+     way up and the cap is the pixel's own R:G:B ratio scaled, never a white
+     add. Its band limit costs 6.7% of |d8px| on the overflow only; the clip
+     cost 72% on everything bright. Ten times the disease of the cure.
+     ⚠ It also cost two full-viewport composites per frame (the copy and the
+     'lighter'), which is most of the perf clause. Deleting it is the fix for
+     both. ── */
+  /* the scale of the additive intermediate (bloom + veil colour + tints) and
+     of the frame copy the gain rides on.
      ⚠ HALF SCALE WAS TRIED HERE AND MEASURED TERRIBLE. The reasoning was
      sound — a quarter-scale nearest upscale stamps 4-device-px blocks and
      cannot reconstruct the ~8 device px that |d8px| measures — but the cost
@@ -3531,6 +3555,35 @@
      104.6ms, four full-viewport-equivalent composites' worth, for a gain the
      full-resolution pass delivers exactly and for less. Quarter it stays. */
   const UP_DIV = 4;
+  /* ── ⛔ REJECTED: "EXPAND WITH 'source-over', THEN BLEND AT 1:1" ────────────
+     Both of the grade's full-viewport passes are a SCALED drawImage under a
+     blend mode, which an isolated micro-benchmark says is the worst shape a
+     canvas-2D composite can take. Measured at 1640x1600 device px, 12
+     iterations each, with a 1x1 getImageData after EVERY call to force
+     rasterisation (queued canvas work times as 0.00ms otherwise — that is how
+     an earlier round mismeasured all of this):
+
+         lighter,  quarter -> full, nearest .......... 7.51 ms
+         lighter,  full    -> full, 1:1     .......... 3.32 ms
+         multiply, quarter -> full, nearest .......... 7.90 ms
+         multiply, full    -> full, 1:1     .......... 3.54 ms
+         source-over, quarter -> full, nearest ....... 1.74 ms
+         multiply, quarter -> full, BILINEAR ......... 25.83 ms
+         lighten fillRect, full ...................... 3.02 ms
+
+     On those numbers, expanding to a full-size buffer with 'source-over' and
+     then blending 1:1 should cost 5.06 against 7.51 and 5.28 against 7.90 —
+     about 5ms a frame, for bit-identical output.
+     ⚠ IT MEASURES BACKWARDS IN THE REAL PAGE AND THAT IS WHY IT IS NOT HERE.
+     Interleaved on the board page, two reps each: additive expand only 44/42
+     frames, both expands 43/45, multiply expand only 46/49, NEITHER 47/47.
+     The frame is memory-BANDWIDTH bound, not blend-ALU bound: each expansion
+     is another 10.5MB surface written and read every frame, and that costs
+     more than the blend loop it saves. The micro-benchmark measures one op
+     against a warm cache and does not model that.
+     ⚠ The last row is real though, and it is why imageSmoothingEnabled is
+     false on both composites: a bilinear scaled multiply is 3.3x the nearest
+     one. Do not "improve" the upscale quality here. ── */
   /* ⚠ WHERE THE COOL-SURFACE GATE STARTS, AND IT IS NOT COOL_LO. COOL_LO/HI
      (−14…+2) were tuned in wave 3 for an ADDITIVE give-back, where being
      generous only cost a little chroma. As a GATE on the warm restore that
@@ -3564,6 +3617,13 @@
      to about (159,159,142) — R−B +17, sat 11 → 11+, i.e. out of the |R−B| ≤ 6
      window the scan counts, without yellowing the haze. */
   const NEUTRAL_W = 34, NEUTRAL_R = 0.55;
+  /* how far ABOVE the floor a thumbnail cell still counts as "could contain a
+     pixel at the floor". ⚠ DELIBERATELY HUGE. A thumbnail cell is a 7x7-CSS-px
+     mean, so a cell reading 90 can hold a pixel at 0 and only a margin near the
+     floor's own working range makes that safe. 96 keeps the whole lower half of
+     the tonal range inside the box and still skips the sky, the lit field and
+     the backdrop — which is most of the frame, and all of the saving. */
+  const TOE_MARGIN = 96;
   /* the map is rebuilt on one frame in four — see the cadence note below. */
   const POST_CADENCE = 4;
 
@@ -3660,11 +3720,14 @@
     const wInv = 1 / Math.max(1, WARM_HI - WARM_LO);
     const vInv = 1 / GAIN_SPAN;
     const nInv = 1 / NEUTRAL_W;
-    const full = !!S.fullOK && !noTone, fullDiv = 1 / (1 + GAIN_W);
     const md = gm.createImageData(bw, bh), ad = ga.createImageData(bw, bh),
       vd = gv.createImageData(bw, bh);
     const M = md.data, A = ad.data, V = vd.data;
     let mnR = 255, mnG = 255, mnB = 255, mxR = 0, mxG = 0, mxB = 0;
+    /* the toe's working box, in THUMBNAIL cells — see WHERE THE TOE CAN STILL
+       DO WORK. Empty (x1 < x0) means no cell in the frame can reach the floor
+       and the fill is skipped outright. */
+    let toeX0 = bw, toeY0 = bh, toeX1 = -1, toeY1 = -1;
     for (let j = 0; j < bh; j++) {
       /* the depth ramp, sampled at the row centre in CSS pixels — the same
          ramp the baked chroma canvas used to paint, and for the same reason:
@@ -3715,7 +3778,22 @@
         /* how achromatic the pixel already is — see NEUTRAL_W. This is the one
            term in the map that does NOT ramp with depth, because the patch the
            clause names lives above the far edge where the depth ramp is 0. */
-        let kk = k * r * (1 + SHADOW_CHROMA * sg * warm);
+        /* ⚠ THE SHADE BOOST DOES NOT RIDE THE DEPTH RAMP. It used to — kk was
+           k·r·(1 + SHADOW_CHROMA·sg·warm) — and that is why the clause passed
+           on the two NEAR rows and failed on the two far ones. `r` exists for
+           exactly one reason: above the board's far edge sits the graded
+           backdrop art, whose flatness is deliberate (bakeArt), so the restore
+           has to be an identity THERE. It does not follow that the restore
+           should still be at a third strength a third of the way down the
+           field, which is where half the shaded tiles are.
+           Measured on the isolated pair, lit−shade chroma gap by row with the
+           boost on `r`: 33.5 / 38.0 / 9.4 / 25.6 at y820/940/1060/1180 — the
+           two rows that pass are the two where r is already near 1.
+           So the BASE restore keeps `r` (it is what protects the art) and the
+           SHADE term gets its own ramp that clears the far edge and then
+           saturates, SHADE_RAMP× faster. Still exactly 0 at the horizon. */
+        let rs = r * SHADE_RAMP; if (rs > 1) rs = 1;
+        let kk = k * (r + rs * SHADOW_CHROMA * sg * warm);
         if (kk > 0.42) kk = 0.42;
         const at = noVeil ? 1 : attn[p];
         /* the tone pedestal, as a factor rather than a 'difference' fill: the
@@ -3741,14 +3819,14 @@
            carry stays per-pixel and exact, and only the overflow — 6-9% on
            lit sand, more in shade — goes through the smoothed copy. */
         const gFull = tg * at * (ped > 0 ? ped : 0) * (1 + SHADOW_LIFT * sl);
+        /* ⚠ THE SPLIT, AND IT IS PER CHANNEL AND PER PIXEL — which is exactly
+           what the uniform full-res gain was not. Everything a multiply can
+           carry stays in the multiply (slope MAP_CEIL = 0.992, no clip, and the
+           cap that eventually lands is mR/mG/mB, i.e. the pixel's OWN colour
+           scaled); only the part above the ceiling — 0 in the sky, 6-9% on lit
+           sand, more in deep shade — rides the band-limited copy. */
         let base = gFull, v = 0;
-        if (full) {
-          /* the exact path: the gain is a full-resolution copy of the frame at
-             a UNIFORM alpha, so the map simply carries gFull/(1+GAIN_W) and
-             every pixel's slope comes out at gFull. */
-          base = gFull * fullDiv;
-          if (base > MAP_CEIL) base = MAP_CEIL;
-        } else if (base > MAP_CEIL) {
+        if (base > MAP_CEIL) {
           v = (base - MAP_CEIL) * vInv; if (v > 1) v = 1;
           base = MAP_CEIL;
         }
@@ -3841,9 +3919,35 @@
         A[o + 1] = Math.min(255, cG / mG) | 0;
         A[o + 2] = Math.min(255, cB / mB) | 0;
         A[o + 3] = 255;
+        /* ── WHERE THE TOE CAN STILL DO WORK ────────────────────────────────
+           The toe is a full-viewport 'lighten' fill, and a full-viewport fill
+           under a blend mode measures 3.02ms on this box — a tenth of the
+           whole grade, spent almost entirely on pixels that are nowhere near
+           the floor. It only changes a pixel whose channel is BELOW
+           SHADOW_FLOOR, so track the box that could contain one.
+           This cell's output is (R + A)·m = R·m + c, and every other term the
+           grade adds (bloom, gain) is >= 0, so R·m + c is a LOWER BOUND on
+           what leaves the pass. TOE_MARGIN covers the spread inside a cell —
+           the thumbnail is a 7x7-CSS-px mean, so one dark pixel in a bright
+           cell moves the mean by about a fiftieth of its depth. See TOE_MARGIN
+           for why it is as wide as it is, and note the box is only ever a
+           SPEED optimisation: get it wrong and a shadow keeps a crushed black,
+           which the extremes check in the critic's own script will catch. */
+        const oR = R * mR + cR, oG = G0 * mG + cG, oB = B * mB + cB;
+        if (oR < SHADOW_FLOOR[0] + TOE_MARGIN || oG < SHADOW_FLOOR[1] + TOE_MARGIN ||
+          oB < SHADOW_FLOOR[2] + TOE_MARGIN) {
+          if (i < toeX0) toeX0 = i; if (i > toeX1) toeX1 = i;
+          if (j < toeY0) toeY0 = j; if (j > toeY1) toeY1 = j;
+        }
       }
     }
     gm.putImageData(md, 0, 0); ga.putImageData(ad, 0, 0); gv.putImageData(vd, 0, 0);
+    /* …widened by one cell on every side, because the box is derived from cell
+       MEANS and the pixels that made a cell dark can sit against its edge. */
+    S.post.toe = toeX1 < toeX0 ? null : {
+      x0: (toeX0 - 1) / bw, y0: (toeY0 - 1) / bh,
+      x1: (toeX1 + 2) / bw, y1: (toeY1 + 2) / bh
+    };
     S.post.mn = [mnR, mnG, mnB]; S.post.mx = [mxR, mxG, mxB];
     S.post.ready = true;
     if (_t0) { S.post.ms.push(performance.now() - _t0); if (S.post.ms.length > 120) S.post.ms.shift(); }
@@ -3934,7 +4038,7 @@
     try { ug.imageSmoothingQuality = 'low'; } catch (e) { }
     ug.globalCompositeOperation = 'copy';
     ug.drawImage(S.bloom.cv, 0, 0, mw, mh);          /* bloom + veil colour + tints */
-    if (!off('tone') && !S.fullOK && map && map.gainR.cv && S.q.g) {
+    if (!off('tone') && map && map.gainR.cv && S.q.g) {
       /* ⚠ THE GAIN IS WEIGHTED BY THE MAP BEFORE IT IS ADDED, AND THAT IS THE
          ROUND-2 FIX. Round 1 added GAIN_BASE × the frame everywhere, so every
          pixel paid the band limit of this buffer whether it needed the gain or
@@ -3986,58 +4090,35 @@
          the full canvas three separate times (bloom, shadow mask, cool mask)
          to produce thumbnails of the same pixels at the same size. */
       const tg = scratch(S.t, bw, bh, true);
-      /* …and the full-resolution copy the tone gain rides on. Taken HERE, off
-         the frame as the actors left it, because the gain is composited before
-         the multiply and must not contain the bloom it is about to be summed
-         with. One allocation the size of the board canvas; if it fails,
-         postMap falls back to the band-limited split and the frame is still
-         correct, only softer. */
-      const fg = off('tone') ? null : scratch(S.full, dw, dh);
-      S.fullOK = !!fg;
-      if (fg) {
-        fg.setTransform(1, 0, 0, 1, 0, 0);
-        fg.globalAlpha = 1;
-        fg.globalCompositeOperation = 'copy';
-        fg.drawImage(ctx.canvas, 0, 0);
-        fg.globalCompositeOperation = 'source-over';
-      }
-      /* ⚠ S.q ONLY EXISTS ON THE FALLBACK PATH NOW. When the full-resolution
-         copy is available it IS the read of the frame, and the thumbnail comes
-         straight off it — building a quarter-scale intermediate as well was a
-         second full-canvas read for a buffer nothing else consumed. */
-      const qg = fg ? null : scratch(S.q, mw, mh);
-      if (tg && (qg || fg)) {
-        if (qg) {
-          qg.setTransform(1, 0, 0, 1, 0, 0);
-          qg.globalCompositeOperation = 'copy';
-          qg.globalAlpha = 1;
-          qg.imageSmoothingEnabled = true;
-          qg.drawImage(ctx.canvas, 0, 0, mw, mh);
-          qg.globalCompositeOperation = 'source-over';
-        }
+      /* ⚠ ONE quarter-scale read, and the thumbnail comes off THAT rather than
+         off the canvas again. Round 2 replaced this with a copy at FULL device
+         resolution; that buffer existed only to feed the uniform 'lighter'
+         gain, which clipped the frame white (see THE UNIFORM GAIN CLIPPED THE
+         FRAME) and cost a full-viewport blit to build and another to composite.
+         Quarter scale is all the gain's OVERFLOW term ever needed. */
+      const qg = scratch(S.q, mw, mh);
+      if (tg && qg) {
+        qg.setTransform(1, 0, 0, 1, 0, 0);
+        qg.globalCompositeOperation = 'copy';
+        qg.globalAlpha = 1;
+        qg.imageSmoothingEnabled = true;
+        qg.drawImage(ctx.canvas, 0, 0, mw, mh);
+        qg.globalCompositeOperation = 'source-over';
         tg.setTransform(1, 0, 0, 1, 0, 0);
         tg.globalCompositeOperation = 'copy';
         tg.globalAlpha = 1;
         tg.imageSmoothingEnabled = true;
-        tg.drawImage(fg ? S.full.cv : S.q.cv, 0, 0, bw, bh);
+        tg.drawImage(S.q.cv, 0, 0, bw, bh);
         tg.globalCompositeOperation = 'source-over';
         /* 1. the map (multiplicative + additive + gain weight), on a cadence */
         const map = off('post') ? null : postMap(api, bw, bh);
         /* 2. everything additive, one 'lighter' upscale */
         additive(api, bw, bh, mw, mh, map);
-        /* 2b. THE TONE GAIN, at full device resolution. ⚠ 'lighter' and NOT a
-           second multiply: a multiply cannot produce a factor above 1, which
-           is the whole reason this pass exists. It runs after the bloom (so
-           the bloom is gained too, exactly as wave 3's color-dodge ordering
-           did) and before the multiply that divides it back out. */
-        if (S.fullOK && S.full.cv) {
-          ctx.globalCompositeOperation = 'lighter';
-          ctx.globalAlpha = GAIN_W;
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(S.full.cv, 0, 0);
-          ctx.globalAlpha = 1;
-          ctx.globalCompositeOperation = 'source-over';
-        }
+        /* ⚠ THERE IS NO STEP 2b ANY MORE. It was a full-device-resolution
+           'lighter' of the frame onto itself; it clipped every channel over 188
+           to white and it was one of the two composites the perf clause named.
+           The gain it delivered now rides inside step 2 (weighted per pixel by
+           the map's gain channel) and inside step 3 (the multiply's own slope). */
         /* 3. everything multiplicative, one 'multiply' upscale. It runs LAST
            of the two so that its ceiling also caps whatever the bloom blew
            out — that is the shoulder clamp, for free. */
@@ -4078,11 +4159,26 @@
        reintroduce a crushed black.
        ⚠ The matching SHOULDER fill is gone, and it is not missing: the
        multiply map is capped at MAP_CEIL, so no channel can leave this
-       function above 251. Counted on the raw canvas, not a screenshot. */
-    ctx.globalCompositeOperation = 'lighten';
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = 'rgb(' + SHADOW_FLOOR[0] + ',' + SHADOW_FLOOR[1] + ',' + SHADOW_FLOOR[2] + ')';
-    ctx.fillRect(0, 0, dw, dh);
+       function above 251. Counted on the raw canvas, not a screenshot.
+       ⚠ AND IT IS NO LONGER A FULL-VIEWPORT FILL. A blended fill over the
+       whole canvas measures 3.02ms here and the map already knows, per
+       thumbnail cell, whether that cell's output can come anywhere near the
+       floor — see WHERE THE TOE CAN STILL DO WORK. Outside that box the fill
+       provably changes nothing, so not drawing it there is free. When the map
+       is absent (first frame, tainted canvas, `off('post')`) the box is
+       unknown and the fill covers everything, exactly as before. */
+    const tb = (S.post.ready && !off('post')) ? S.post.toe : { x0: 0, y0: 0, x1: 1, y1: 1 };
+    if (tb) {
+      const tx = Math.max(0, tb.x0 * dw), ty = Math.max(0, tb.y0 * dh);
+      const tw = Math.min(dw, tb.x1 * dw) - tx, th = Math.min(dh, tb.y1 * dh) - ty;
+      if (tw > 0 && th > 0) {
+        ctx.globalCompositeOperation = 'lighten';
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = 'rgb(' + SHADOW_FLOOR[0] + ',' + SHADOW_FLOOR[1] + ',' + SHADOW_FLOOR[2] + ')';
+        ctx.fillRect(tx, ty, tw, th);
+        S.toeArea = +(tw * th / (dw * dh)).toFixed(3);
+      } else S.toeArea = 0;
+    } else S.toeArea = 0;
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
     if (t0) {
@@ -4127,11 +4223,18 @@
          more — the shoulder is MAP_CEIL inside the multiply. Reported rather
          than dropped so a probe written against wave 3 gets an answer. */
       clampSkip: 'removed: toe is a fill, shoulder is MAP_CEIL',
-      passes: ['lighter(additive)', 'lighter(gain,full-res)', 'multiply(map)', 'disc', 'lighten(toe)'],
-      /* WAVE 5 ROUND 2: is the tone gain running at full resolution, and where
-         the module thinks the body is. `discVis` false means the ridgeline is
-         in front of it and discRestore is deliberately silent — otherwise a
-         missing sun is indistinguishable from a broken one. */
+      /* what fraction of the viewport the toe fill actually covered last
+         frame. 1 = the whole canvas (no map yet); 0 = the map proved no pixel
+         could reach the floor. This is the number to look at if a shadow ever
+         comes back crushed — see WHERE THE TOE CAN STILL DO WORK. */
+      toeArea: S.toeArea === undefined ? null : S.toeArea,
+      passes: ['lighter(additive+gain)', 'multiply(map)', 'disc', 'lighten(toe)'],
+      /* ROUND 3: always false, and deliberately still reported. The
+         full-resolution uniform gain is deleted — see THE UNIFORM GAIN CLIPPED
+         THE FRAME — so a probe that finds `true` here is running round 2.
+         `disc` says where the module thinks the body is; `vis` false means the
+         ridgeline is in front of it and discRestore is deliberately silent,
+         otherwise a missing sun is indistinguishable from a broken one. */
       gainFull: !!S.fullOK,
       disc: S.disc ? { x: Math.round(S.disc.x), y: Math.round(S.disc.y), R: +S.disc.R.toFixed(1), sun: S.disc.sun, vis: S.disc.vis } : null,
       /* WAVE 3: the backdrop's detail field, from the last bake. `keep` is the

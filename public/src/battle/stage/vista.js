@@ -544,10 +544,6 @@
        writes; key/age/reads/calls/ms belong to the READBACK CADENCE. */
     post: {
       pos: null, key: '', age: 1e9, ready: false, fail: false,
-      /* the toe's working box in 0..1 viewport fractions, or null for "no
-         pixel in this frame can reach the floor" — see WHERE THE TOE CAN
-         STILL DO WORK. */
-      toe: null,
       mulR: { cv: null, g: null }, addR: { cv: null, g: null },
       /* gainR — the PER-PIXEL weight on the tone gain. ⚠ ROUND 2 OF WAVE 5,
          and the reason the whole frame got its detail back: see GAIN_SPAN. */
@@ -3423,8 +3419,9 @@
      See the third case at `t2`: this is the term that stops a shaded tile with
      R−B ≈ 0 from sitting on neutral forever. Sized so the sampled y940 shade
      rgb(57,67,62) lands near rgb(59,72,79) — a blue-grey with a hue, which is
-     both what the BAR asks for and what wave 3 happened to have there. */
-  const NEUTRAL_COOL = 1.1;
+     both what the BAR asks for and what wave 3 happened to have there.
+     ⚠ Measured against the ground ramp sg, not the deep ramp — see t2. */
+  const NEUTRAL_COOL = 0.8;
   /* THE SHADED-GROUND WEIGHT. ⚠ SHADOW_HI/SHADOW_LO (100/18) never touched the
      shaded GROUND at all — the critic's shaded tile measures L 113 post-grade,
      i.e. s = 0 under that ramp — which is exactly why every shadow treatment
@@ -3623,13 +3620,6 @@
      to about (159,159,142) — R−B +17, sat 11 → 11+, i.e. out of the |R−B| ≤ 6
      window the scan counts, without yellowing the haze. */
   const NEUTRAL_W = 34, NEUTRAL_R = 0.55;
-  /* how far ABOVE the floor a thumbnail cell still counts as "could contain a
-     pixel at the floor". ⚠ DELIBERATELY HUGE. A thumbnail cell is a 7x7-CSS-px
-     mean, so a cell reading 90 can hold a pixel at 0 and only a margin near the
-     floor's own working range makes that safe. 96 keeps the whole lower half of
-     the tonal range inside the box and still skips the sky, the lit field and
-     the backdrop — which is most of the frame, and all of the saving. */
-  const TOE_MARGIN = 96;
   /* the map is rebuilt on one frame in four — see the cadence note below. */
   const POST_CADENCE = 4;
 
@@ -3730,10 +3720,6 @@
       vd = gv.createImageData(bw, bh);
     const M = md.data, A = ad.data, V = vd.data;
     let mnR = 255, mnG = 255, mnB = 255, mxR = 0, mxG = 0, mxB = 0;
-    /* the toe's working box, in THUMBNAIL cells — see WHERE THE TOE CAN STILL
-       DO WORK. Empty (x1 < x0) means no cell in the frame can reach the floor
-       and the fill is skipped outright. */
-    let toeX0 = bw, toeY0 = bh, toeX1 = -1, toeY1 = -1;
     for (let j = 0; j < bh; j++) {
       /* the depth ramp, sampled at the row centre in CSS pixels — the same
          ramp the baked chroma canvas used to paint, and for the same reason:
@@ -3926,8 +3912,13 @@
            to the cool side instead of parking it on grey. Warm ground in
            shade is untouched (warm = 1 zeroes the new term) and so is water
            (cool = 1 zeroes it, and it already had the full bounce). */
-        const t2 = sd * (SHADOW_TINT_K + (1.15 - SHADOW_TINT_K) * cool
-          + NEUTRAL_COOL * (1 - warm) * (1 - cool));
+        /* ⚠ AND IT RIDES sg, NOT sd. The first cut put it on the DEEP ramp
+           (SHADOW_HI 100, squared) and measured almost nothing — the tiles the
+           clause is about sit at L 60-95, where sd is 0.19 and the whole term
+           was worth +8 on blue. The complaint is about shaded GROUND, so it
+           belongs on the ground ramp, which is 0.68 at the same pixel. */
+        const t2 = sd * (SHADOW_TINT_K + (1.15 - SHADOW_TINT_K) * cool)
+          + sg * NEUTRAL_COOL * (1 - warm) * (1 - cool);
         /* ⚠ THE COOL SURFACES GET WAVE 3's GIVE-BACK, NOT A GATE ON THE
            MULTIPLY, AND THAT IS A CORRECTION TO THIS ROUND'S FIRST CUT. Gating
            the restore is exact arithmetic and it still measured wrong: the app
@@ -3949,35 +3940,9 @@
         A[o + 1] = Math.min(255, cG / mG) | 0;
         A[o + 2] = Math.min(255, cB / mB) | 0;
         A[o + 3] = 255;
-        /* ── WHERE THE TOE CAN STILL DO WORK ────────────────────────────────
-           The toe is a full-viewport 'lighten' fill, and a full-viewport fill
-           under a blend mode measures 3.02ms on this box — a tenth of the
-           whole grade, spent almost entirely on pixels that are nowhere near
-           the floor. It only changes a pixel whose channel is BELOW
-           SHADOW_FLOOR, so track the box that could contain one.
-           This cell's output is (R + A)·m = R·m + c, and every other term the
-           grade adds (bloom, gain) is >= 0, so R·m + c is a LOWER BOUND on
-           what leaves the pass. TOE_MARGIN covers the spread inside a cell —
-           the thumbnail is a 7x7-CSS-px mean, so one dark pixel in a bright
-           cell moves the mean by about a fiftieth of its depth. See TOE_MARGIN
-           for why it is as wide as it is, and note the box is only ever a
-           SPEED optimisation: get it wrong and a shadow keeps a crushed black,
-           which the extremes check in the critic's own script will catch. */
-        const oR = R * mR + cR, oG = G0 * mG + cG, oB = B * mB + cB;
-        if (oR < SHADOW_FLOOR[0] + TOE_MARGIN || oG < SHADOW_FLOOR[1] + TOE_MARGIN ||
-          oB < SHADOW_FLOOR[2] + TOE_MARGIN) {
-          if (i < toeX0) toeX0 = i; if (i > toeX1) toeX1 = i;
-          if (j < toeY0) toeY0 = j; if (j > toeY1) toeY1 = j;
-        }
       }
     }
     gm.putImageData(md, 0, 0); ga.putImageData(ad, 0, 0); gv.putImageData(vd, 0, 0);
-    /* …widened by one cell on every side, because the box is derived from cell
-       MEANS and the pixels that made a cell dark can sit against its edge. */
-    S.post.toe = toeX1 < toeX0 ? null : {
-      x0: (toeX0 - 1) / bw, y0: (toeY0 - 1) / bh,
-      x1: (toeX1 + 2) / bw, y1: (toeY1 + 2) / bh
-    };
     S.post.mn = [mnR, mnG, mnB]; S.post.mx = [mxR, mxG, mxB];
     S.post.ready = true;
     if (_t0) { S.post.ms.push(performance.now() - _t0); if (S.post.ms.length > 120) S.post.ms.shift(); }
@@ -4190,25 +4155,23 @@
        ⚠ The matching SHOULDER fill is gone, and it is not missing: the
        multiply map is capped at MAP_CEIL, so no channel can leave this
        function above 251. Counted on the raw canvas, not a screenshot.
-       ⚠ AND IT IS NO LONGER A FULL-VIEWPORT FILL. A blended fill over the
-       whole canvas measures 3.02ms here and the map already knows, per
-       thumbnail cell, whether that cell's output can come anywhere near the
-       floor — see WHERE THE TOE CAN STILL DO WORK. Outside that box the fill
-       provably changes nothing, so not drawing it there is free. When the map
-       is absent (first frame, tainted canvas, `off('post')`) the box is
-       unknown and the fill covers everything, exactly as before. */
-    const tb = (S.post.ready && !off('post')) ? S.post.toe : { x0: 0, y0: 0, x1: 1, y1: 1 };
-    if (tb) {
-      const tx = Math.max(0, tb.x0 * dw), ty = Math.max(0, tb.y0 * dh);
-      const tw = Math.min(dw, tb.x1 * dw) - tx, th = Math.min(dh, tb.y1 * dh) - ty;
-      if (tw > 0 && th > 0) {
-        ctx.globalCompositeOperation = 'lighten';
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = 'rgb(' + SHADOW_FLOOR[0] + ',' + SHADOW_FLOOR[1] + ',' + SHADOW_FLOOR[2] + ')';
-        ctx.fillRect(tx, ty, tw, th);
-        S.toeArea = +(tw * th / (dw * dh)).toFixed(3);
-      } else S.toeArea = 0;
-    } else S.toeArea = 0;
+       ⚠ AND IT STAYS A FULL-VIEWPORT FILL. A blended fill over the whole
+       canvas measures 3.02ms here, a tenth of the grade, so round 3 tried to
+       bound it to the box of thumbnail cells whose output could reach the
+       floor. TWO measurements killed that. First, the pixels this rescues are
+       SCATTERED, not clustered: patching the fill out and counting channels
+       below the floor gives 48,546 (day) / 82,037 (dusk) / 55,272 (night) /
+       82,301 (dawn) out of 2.62M at 820x800@2x — 1.9-3.1% of the frame, from
+       corner to corner — so the bounding box came out as the whole viewport
+       (`toeArea` 1.000 at every viewport tried) and saved exactly nothing.
+       Second, that same count is the proof the pass is load-bearing rather
+       than insurance: it is 50-80 thousand pixels of crushed shadow per frame,
+       and it is where the deep shade gets its cool blue-grey. Do not remove
+       it, and do not bound it with a rectangle. */
+    ctx.globalCompositeOperation = 'lighten';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgb(' + SHADOW_FLOOR[0] + ',' + SHADOW_FLOOR[1] + ',' + SHADOW_FLOOR[2] + ')';
+    ctx.fillRect(0, 0, dw, dh);
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
     if (t0) {
@@ -4253,11 +4216,6 @@
          more — the shoulder is MAP_CEIL inside the multiply. Reported rather
          than dropped so a probe written against wave 3 gets an answer. */
       clampSkip: 'removed: toe is a fill, shoulder is MAP_CEIL',
-      /* what fraction of the viewport the toe fill actually covered last
-         frame. 1 = the whole canvas (no map yet); 0 = the map proved no pixel
-         could reach the floor. This is the number to look at if a shadow ever
-         comes back crushed — see WHERE THE TOE CAN STILL DO WORK. */
-      toeArea: S.toeArea === undefined ? null : S.toeArea,
       passes: ['lighter(additive+gain)', 'multiply(map)', 'disc', 'lighten(toe)'],
       /* ROUND 3: always false, and deliberately still reported. The
          full-resolution uniform gain is deleted — see THE UNIFORM GAIN CLIPPED

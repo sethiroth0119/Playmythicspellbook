@@ -457,8 +457,62 @@ const COL = {
      The gain is deliberately NOT touched: it carries the chroma (see the long
      note above on why the key is cyan and the result is not), and every round
      that has tried to fix hue by retinting the key has lost chroma for it. */
-  move:   { core: '#ccdcf4', body: '#74c9ec', rim: '#b4e1f5', halo: '#42cae0',
-            filt: '#46ffd8', gain: '#2a8fd2', k: 1.55, a: 0.22, g: 0.70, fc: 0.28 },
+  /* ⚠⚠ WAVE 5 ROUND 3 — THE KEY IS NOW A 'color' BLEND, AND THAT IS WHAT
+     FINALLY CLOSED THE HUE GAP. Read this before touching `gain`, `kmode`,
+     `g` or `a`; four rounds have been spent on the wrong knob.
+
+     THE MEASUREMENT THAT SETTLED IT. Same boot, one tree, one dressing state,
+     the module hot-swapped by eval between captures, 7 lit tiles, 0.80-inset
+     quads, CIELAB, lit against the identical pixels of that boot's own
+     paint-off frame. The critic's model was that the pool's per-tile hue
+     converges on the hue of `core`/`body` — the ADDITIVE half — so retinting
+     those green-ward would walk the whole distribution down onto 145-155.
+     Swept directly (body/core rotated 237°→205→190→178→168→158→148 at fixed
+     Lab L and C, everything else held):
+         worst tile   189.3 → 187.2 → 185.8 → 184.1 → 180.9 → 179.9 → 179.6
+         best tile    156.2 → 153.7 → 152.9 → 149.3 → 142.9 → 142.3 → 143.5
+     The worst tile PLATEAUS at ~180 while the best falls out of the window at
+     the third step: the critic's own stopping rule ("stop before 1,6 falls
+     under 145") fires 20° before its own target is reached. The additive is
+     ~15% of the pool's light; it cannot be the asymptote.
+     What actually set the per-tile hue was this function's KEY, and with a
+     'multiply' key it could not be anything else: multiply emits `ground ⊗
+     tint`, whose CHROMATICITY is the ground's own chromaticity times the
+     tint's. Warm sand is R≫G>B and the pond shore is nearly neutral, so a
+     single tint painted two tiles 30° apart no matter what the tint was.
+     Retinting the key green-ward does move the mean (237°→154° of key hue
+     walks the pool 169.0 → 137.9) and, contrary to this file's own older note,
+     it RAISES chroma while doing it (24.2 → 40.9) — but it does not compress:
+     the span stayed 26-38° everywhere on that ladder.
+     'color' is the fix because it removes the ground from the light's colour
+     WITHOUT removing the ground: SetLum(tint, Lum(ground)) is the tint's
+     chromaticity carried at the ground's own luminance, so relief, shading,
+     dressing shadow and sand grain all still modulate it — measured, the
+     interior's 11×11 high-pass regression on the paint-off ground went r
+     0.703-0.991 → 0.672-0.992 at slope 1.50 → 1.63, i.e. the grain reads
+     THROUGH the pool slightly harder than before, not less.
+     Measured, HEAD vs this build on the same boot (7 tiles, sand-only figure
+     excludes 1,4, whose 0.80 quad genuinely overlaps the water pond and whose
+     ground therefore is not sand):
+         all-7 mean hue   168.6 → 151.8     span 32.0 → 20.9
+         sand mean hue    165.3 → 149.5     span 21.9 →  9.5   in-window 0/6 → 5/6
+         chroma           24.3  → 42.5      (the gap's own bar was ≥ 38)
+         ON−OFF luma      54.1  → 58.5
+     ⚠ `gain` IS NOW A HUE AND A CHROMA, NOT A BRIGHTNESS. Under 'color' the
+     tint's LUMINANCE is discarded — only its hue and chroma survive — so
+     making it lighter or darker does nothing and `g` is the only level knob.
+     #1ba985 is Lab L62 C45 h169; the pool lands ~19° below the tint because
+     the ground it is added to is still warm sand. h168 measures 149.5 and
+     h170 measures 152.2, so ±1° of tint is ±1.3° of pool: this is a fine
+     adjustment, make it in single degrees.
+     ⚠ AND `a` IS NOT DEAD WEIGHT. The key is proportional to the ground's
+     luminance, so on a genuinely dark location it fades out; `a` is the
+     ground-independent floor that keeps a lit tile findable there. It was cut
+     0.22 → 0.20 only to pay for the level the greener key added.
+     `kbias` is the region-scale centre falloff, see gainLayer. */
+  move:   { core: '#bfe2d8', body: '#69cdd5', rim: '#b4e1f5', halo: '#42cae0',
+            filt: '#46ffd8', gain: '#1ba985', kmode: 'color', kbias: 0.30,
+            k: 1.55, a: 0.20, g: 0.37, fc: 0.28 },
   /* ⚠ EVERY STATE GETS A KEY LIGHT, not just move. The gap was measured on the
      move pool because that is the one the default harness lights, but "a soft
      emissive fill that glows WITHIN the ground" is the BAR's line about tile
@@ -480,8 +534,19 @@ const COL = {
      coloured blob sitting in the middle of the region — which is how it read
      when it was gold (round 3) and again, faintly, when move went aquamarine in
      round 6 and `sel` stayed sky-blue. Same aquamarine, whiter and brighter. */
+  /* ⚠ WAVE 5 ROUND 3 — `sel` FOLLOWS move ONTO THE 'color' KEY, and it has to.
+     It is drawn INSIDE the move pool; leaving it on a 'multiply' key with a
+     sky-blue tint while the pool around it became a single-chromaticity green
+     -teal would put a differently-coloured blob in the middle of the region —
+     exactly the failure the note above this line has recorded twice already.
+     Its tint is 11° cooler than move's and a little less chromatic, so the
+     selection reads as the hot, whiter centre of the SAME light rather than as
+     a second colour. `g` is scaled by move's own 0.37/0.70, because under
+     'color' the emitted light is far brighter per unit of `g` than the
+     multiply key was and the old numbers would have blown out. */
   sel:    { core: '#eafcff', body: '#a8e8f4', rim: '#dffff6', filt: '#8cf0dc',
-            gain: '#5fb0ff', k: 1.45, a: 0.52, g: 0.30, fc: 0.14 },
+            gain: '#07ae9a', kmode: 'color', kbias: 0.26,
+            k: 1.45, a: 0.52, g: 0.16, fc: 0.14 },
   hover:  { core: '#fff2e2', body: '#e8c894', rim: '#f5dcae', filt: '#fff2dc',
             gain: '#ffd8a0', k: 0.85, a: 0.50, g: 0.26 }
 };
@@ -878,12 +943,91 @@ function buildMask(api, g, opt, tag) {
   return true;
 }
 
+/* ⚠ WAVE 5 ROUND 3 — BLIT THE TILES, NOT THE BOUNDING BOX, AND THIS IS WHERE
+   THE FRAMES WERE. Round 2 fixed the READ side of exactly this (see gainRects:
+   drawSurfaces groups hazards by fx key across the whole board, so three
+   `electric` tiles in three corners are ONE region whose bbox is nearly the
+   whole canvas) and left the WRITE side alone — every masked layer still
+   composited the full bbox, and the hazard painters run four to six of those a
+   frame, uncached, one of them a 'color-dodge'.
+   Measured, one boot, 5 rounds, 8 s in-iframe rAF windows, order rotated per
+   round, the critic's own 9-tile hazard set + the move pool: disabling the
+   'color-dodge' layer alone took the build from 44.5 to 54.0 frames while
+   disabling the hazard read-backs entirely changed nothing (44.5). The read
+   rate the critic pointed at was not the cost; the blend AREA was.
+   The rect list is gainRects', so it is the same geometry, already merged and
+   therefore non-overlapping — which matters here in a way it did not there:
+   these blits are 'lighter' and 'color-dodge', and drawing one pixel twice
+   would double it. Rects are snapped to whole SOURCE pixels and the
+   destination is derived back from them, so each rect samples the scratch on
+   exactly the grid the single full-region drawImage would have used and the
+   output is the same pixels, not merely similar ones. Compact regions — the
+   move pool and every contiguous hazard — get one rect equal to the bbox and
+   take the identical code path they always did. */
+function blitRects(g, low) {
+  /* keyed on the buffer size as well as the flag: a region object outlives a
+     viewport resize, and a rect list computed for the old pw/ph would sample
+     the wrong pixels rather than merely the wrong area. */
+  const key = (low ? '_brl' : '_brf') + '|' + g.pw + 'x' + g.ph + '|' + g.mw + 'x' + g.mh;
+  if (g._brk === key) return g._br;
+  let out = null;
+  try {
+    const PW = low ? g.mw : g.pw, PH = low ? g.mh : g.ph;
+    if (g.w > 0 && g.h > 0 && PW > 0 && PH > 0) {
+      const sx = PW / g.w, sy = PH / g.h;
+      const rs = [];
+      for (const r of gainRects(g)) {
+        const a = Math.max(0, Math.floor((r[0] - g.x0) * sx));
+        const b = Math.max(0, Math.floor((r[1] - g.y0) * sy));
+        const c2 = Math.min(PW, Math.ceil((r[2] - g.x0) * sx));
+        const d = Math.min(PH, Math.ceil((r[3] - g.y0) * sy));
+        if (c2 - a >= 1 && d - b >= 1) rs.push([a, b, c2, d]);
+      }
+      /* the floor/ceil above can push two rects that gainRects left separate
+         into contact or overlap; merge again on the integer grid or a
+         'lighter' blit doubles the seam. */
+      let merged = true;
+      while (merged && rs.length > 1) {
+        merged = false;
+        outer:
+        for (let i = 0; i < rs.length; i++) {
+          for (let j = i + 1; j < rs.length; j++) {
+            const A = rs[i], B = rs[j];
+            if (A[0] < B[2] && B[0] < A[2] && A[1] < B[3] && B[1] < A[3]) {
+              A[0] = Math.min(A[0], B[0]); A[1] = Math.min(A[1], B[1]);
+              A[2] = Math.max(A[2], B[2]); A[3] = Math.max(A[3], B[3]);
+              rs.splice(j, 1); merged = true; break outer;
+            }
+          }
+        }
+      }
+      let area = 0;
+      for (const r of rs) area += (r[2] - r[0]) * (r[3] - r[1]);
+      /* one rect that is the whole buffer is the old path; say so with null so
+         the hot loop below does not pay for a list it cannot use. */
+      if (rs.length && rs.length <= 8 && area < PW * PH * 0.86) out = rs;
+    }
+  } catch (e) { out = null; }
+  g._brk = key; g._br = out;
+  return out;
+}
+
 function blit(api, cv, g, comp, alpha, low) {
   const c = api.ctx;
+  const PW = low ? g.mw : g.pw, PH = low ? g.mh : g.ph;
   c.save();
   c.globalCompositeOperation = comp || 'source-over';
   c.globalAlpha = (alpha == null ? 1 : alpha);
-  c.drawImage(cv, 0, 0, low ? g.mw : g.pw, low ? g.mh : g.ph, g.x0, g.y0, g.w, g.h);
+  const rs = blitRects(g, low);
+  if (rs) {
+    const kx = g.w / PW, ky = g.h / PH;
+    for (const r of rs) {
+      c.drawImage(cv, r[0], r[1], r[2] - r[0], r[3] - r[1],
+                  g.x0 + r[0] * kx, g.y0 + r[1] * ky, (r[2] - r[0]) * kx, (r[3] - r[1]) * ky);
+    }
+  } else {
+    c.drawImage(cv, 0, 0, PW, PH, g.x0, g.y0, g.w, g.h);
+  }
   c.restore();
 }
 
@@ -965,7 +1109,23 @@ const GAIN_REFRESH = 0.055;      /* seconds of api.T between read-backs */
    slow 0.34 s of api.T is 7 real frames, not 20 — the seconds clock throttles
    far less than it looks like it should when frames are slow, which is what
    GAIN_MIN_FRAMES below is for. */
-const GAIN_REFRESH_SURF = 0.34;  /* hazards: see the note on gainLayer below  */
+/* ⚠ WAVE 5 ROUND 3 — 0.34 → 0.62, AND THIS IS THE PERF REPAIR THE CRITIC ASKED
+   FOR. Their number: with 9 hazard tiles + the move pool, HEAD ran 15.80
+   frames/3 s against wave 3's 17.60, −10.2%, and they located the whole of it
+   in "the hazard gain read-backs plus the color-dodge pass" — with the move
+   pool alone the two builds tied at 18.00. The read-backs are the half that
+   can be given back without undoing GAP 1 (the void/electric/holy painters
+   that PASSED this round are the color-dodge half, and they stay).
+   Doubling this clock halves those flushes. The evidence that it is free is
+   already in the round-2 note above: the grain regression under a hazard
+   measured the SAME at 0.165 and at 0.34 (0.774-0.819 electric / 0.78 void /
+   0.87 holy, two same-boot triples each) once gainRects stopped clipping the
+   read, because what the read contains — the terrain under the hazard — is
+   moved only by the vista's dust, while everything a viewer sees animate lives
+   in the blit alpha and in the l/d/post layers. A clock that was invisible at
+   2× is not suddenly visible at 4×. GAIN_MIN_FRAMES still floors it on a slow
+   box; that floor is what actually binds in the harness. */
+const GAIN_REFRESH_SURF = 0.62;  /* hazards: see the note on gainLayer below  */
 /* ⚠ AND A FRAME FLOOR, because a seconds clock cannot throttle a slow box.
    `refresh` is in api.T seconds; when a frame takes longer than `refresh` the
    test always passes and the rate limit does nothing at exactly the moment it
@@ -1056,11 +1216,28 @@ function gainRects(g) {
    only the vista's dust moves, and its own pulse lives in the blit alpha, not
    in the tinted read. `refresh` lets drawSurfaces ask for a third of the read
    rate and take the cost back. */
-function gainLayer(api, g, tint, amount, refresh) {
+/* ⚠ WAVE 5 ROUND 3 — `opts.mode` AND `opts.bias`, AND `mode` IS THE ROUND'S
+   WHOLE FIX. See the long COLOUR note on COL.move. In one sentence: with
+   'multiply' the key light this function emits is `ground ⊗ tint`, so its
+   CHROMATICITY is a function of the ground it lands on and every tile of a
+   pool comes out a different hue; with 'color' (SetLum(tint, Lum(ground)) —
+   a CSS non-separable blend, in canvas-2D since Chrome 48) it is the tint's
+   chromaticity at the ground's own LUMINANCE, so the light has ONE colour and
+   the ground still supplies every bit of the shading, relief and grain that
+   modulates it. It is the same single fillRect either way — this costs nothing.
+   `bias` is a region-scale radial dimming baked into the tinted read: white at
+   the region centre falling to (1−bias) at its outer radius, so the DOMINANT
+   term of the pool's light is brightest in the middle. It is one extra fill
+   per READ-BACK, not per frame — the read is rate limited to GAIN_REFRESH, so
+   at 60 Hz it is one fill every ~3 frames on regions that ask for it, and the
+   hazards (which do not) pay nothing at all. */
+function gainLayer(api, g, tint, amount, refresh, opts) {
   if (!(amount > 0.004)) return;
   const src = api.ctx.canvas;
   if (!src || !src.width) return;
-  const key = 'gain|' + tint;
+  const mode = (opts && opts.mode) || 'multiply';
+  const bias = (opts && opts.bias > 0) ? opts.bias : 0;
+  const key = 'gain|' + tint + '|' + mode + '|' + bias;
   const cached = g.sub ? g.sub.get(key) : null;
   const T = isFinite(api.T) ? api.T : 0;
   const N = frameNo(api);
@@ -1081,6 +1258,11 @@ function gainLayer(api, g, tint, amount, refresh) {
   let drew = 0;
   const ok = maskScratch(api, g, (c) => {
     c.setTransform(1, 0, 0, 1, 0, 0);
+    /* kept so the bias pass below can only touch pixels this pass actually
+       wrote. `multiply` against a TRANSPARENT destination yields the fill
+       colour at full alpha (the same trap the clamp above exists for), so a
+       bias fill over an unwritten rect would stamp a grey slab there. */
+    const done = bias > 0 ? [] : null;
     for (const r of rects) {
       const ix0 = Math.max(0, Math.floor(r[0] * s)), iy0 = Math.max(0, Math.floor(r[1] * s));
       const ix1 = Math.min(src.width, Math.ceil(r[2] * s));
@@ -1089,10 +1271,26 @@ function gainLayer(api, g, tint, amount, refresh) {
       const dx = ix0 - sx, dy = iy0 - sy, dw = ix1 - ix0, dh = iy1 - iy0;
       c.globalCompositeOperation = 'source-over';
       c.drawImage(src, ix0, iy0, dw, dh, dx, dy, dw, dh);
-      c.globalCompositeOperation = 'multiply';
+      c.globalCompositeOperation = mode;
       c.fillStyle = tint;
       c.fillRect(dx, dy, dw, dh);
+      if (done) done.push([dx, dy, dw, dh]);
       drew++;
+    }
+    if (done && done.length) {
+      /* Region-scale centre bias, in DEVICE px of the scratch (the transform
+         is identity in here, unlike every other maskScratch caller). One
+         gradient, reused for every rect, so the ramp is continuous across a
+         split read rather than restarting per rect. */
+      const cx = (g.cx - g.x0) * s, cy = (g.cy - g.y0) * s;
+      const R = Math.max(24, 0.62 * Math.hypot(g.w || 0, g.h || 0) * s);
+      const k = Math.round(255 * (1 - bias));
+      const grd = c.createRadialGradient(cx, cy, 0, cx, cy, R);
+      grd.addColorStop(0, '#ffffff');
+      grd.addColorStop(1, 'rgb(' + k + ',' + k + ',' + k + ')');
+      c.globalCompositeOperation = 'multiply';
+      c.fillStyle = grd;
+      for (const d of done) c.fillRect(d[0], d[1], d[2], d[3]);
     }
     c.globalCompositeOperation = 'source-over';
   });
@@ -1499,7 +1697,20 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
      ground, so LIT stays ≈ the old A and every alpha written against it keeps
      the value three rounds of critique settled on. */
   const GA = S * (col.g == null ? 0 : col.g);         /* multiplicative gain  */
-  const LIT = A + GA * 1.55;
+  /* ⚠ WAVE 5 ROUND 3 — THE COEFFICIENT IS PER KEY MODE, AND FORGETTING THAT
+     WOULD HAVE SILENTLY GUTTED THE CYAN FRINGE. LIT is a proxy for "how much
+     light is in this pool", and everything derived from it — the escaping
+     halo bloom (0.034·LIT) and the broken boundary glint — is written against
+     the value earlier rounds settled on. A 'color' key emits far more light
+     per unit of `g` than a 'multiply' key does, so move's `g` fell 0.70 → 0.37
+     for the same measured lift (ON−OFF luma 58.3 → 61.1 on a same-boot pair);
+     at the old 1.55 that would have quietly cut LIT by 41% and taken the halo
+     and the rim down with it. 3.0 is solved from that pair so LIT lands within
+     1% of HEAD's, i.e. the bloom and the glint are bit-for-bit the strength
+     three rounds of critique tuned them to. It matters beyond bookkeeping: the
+     halo is the one place this file lets the light be properly CYAN, and it is
+     what sells a green-teal pool as teal to the eye rather than to the meter. */
+  const LIT = A + GA * (col.kmode === 'color' ? 3.0 : 1.55);
   const fc = col.fc == null ? 0.10 : col.fc;
   const filtA = Math.min(fc, fc * 0.9 * S) * (filtScale == null ? 1 : filtScale);
   const tag = colKey + '|' + S.toFixed(3) + '|' + filtA.toFixed(3) + '|' + rimS.toFixed(2);
@@ -1542,7 +1753,8 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
      function of what is currently on the canvas, and the canvas changes
      whenever the vista, the dressing or a hazard does. Breathes on the same
      per-region phase as the emission so the pool pulses as one light. */
-  if (GA > 0 && !noGain) gainLayer(api, g, col.gain || col.body, GA * (1 + (pulse - 1) * 0.5));
+  if (GA > 0 && !noGain) gainLayer(api, g, col.gain || col.body, GA * (1 + (pulse - 1) * 0.5),
+                                   null, col.kmode ? { mode: col.kmode, bias: col.kbias } : null);
 
   /* (2) the bloom that escapes onto the surrounding sand, through the barely
      dilated halo mask. This is the ONLY thing allowed outside the legal tiles,
@@ -1616,8 +1828,21 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
          gutting the rim wash, and with the wash no longer propping the outer
          ring up, 0.56 pushed the outermost quintile's own ON−OFF luma to 35.8
          — under the +40 the contract holds every lit tile to. At 0.50 the
-         outer ring measures 42.4 and centre:edge is still 2.05 (round 4: 1.30,
-         so "brightest at the centre" survives with room).
+         outer ring measured 42.4.
+         ⚠⚠ AND THE "centre:edge is still 2.05" THIS COMMENT USED TO CLAIM HERE
+         WAS NOT TRUE OF THE SHIPPED FRAME AND IS DELETED. Measured the way a
+         critic measures it — mean ON−OFF luma per TILE, ordered by that tile's
+         distance from the region centroid, inner half over outer half — wave 3
+         was 1.06 and wave-5-r2 was 1.01. 2.05 was a within-layer figure for
+         this radial alone, and this radial is not the pool: the flat fill, the
+         halo, the hue filter and (since wave 3) the key light are all uniform
+         across the region, and the key light is now ~70% of the pool's lift.
+         A redistribution inside 15% of the light cannot move the ratio, which
+         is why raising `f` back to 0.55 was measured and changed nothing
+         (c:e 1.007 at 0.38 against 0.979 at 0.55 — both inside the ±0.015
+         two-captures-of-the-same-build null). The centre bias that DOES move
+         it now lives in the key itself, as gainLayer's `bias`; this term stays
+         at 0.38 because that is what killed the crest.
          ⚠ WAVE 5 ROUND 2 — 0.50 → 0.38, AND IT IS THE SAME COUPLING AS ROUND
          6, ONE STEP FURTHER. The rim wash is now DELETED outright (see THE RIM)
          rather than merely dimmed, so the outer ring loses the ~+6 the wash was

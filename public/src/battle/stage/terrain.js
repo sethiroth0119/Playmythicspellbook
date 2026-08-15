@@ -284,20 +284,32 @@ const terrain = {
       const u = 0.22 + hash(x, z, 471) * 0.56;
       const v = 0.22 + hash(x, z, 472) * 0.56;
       const p = quadPt(P, u, v);
-      const rr = r * (0.20 + hash(x, z, 473) * 0.34);
+      const rr = r * (0.18 + hash(x, z, 473) * 0.26);
       /* seat it: darkened sand banked up against the upwind side */
-      blobPath(g, p.x + shu * rr * 0.22, p.y + shv * rr * 0.14 + rr * 0.12, rr * 1.12, 0.5, 9, 900 + x * 13 + z, hash);
-      g.fillStyle = rgba(M.deep, 0.22); g.fill();
-      blobPath(g, p.x, p.y, rr, 0.52, 9, 900 + x * 13 + z, hash);
+      blobPath(g, p.x + shu * rr * 0.22, p.y + shv * rr * 0.14 + rr * 0.12, rr * 1.12, 0.5, 15, 900 + x * 13 + z, hash);
+      g.fillStyle = rgba(M.deep, 0.13); g.fill();
+      blobPath(g, p.x, p.y, rr, 0.52, 15, 900 + x * 13 + z, hash);
       /* ⚠ 0.68 alpha in round 1. A slab is the biggest thing this module puts
          on a tile and it lands near the middle, so at that strength it could
          move a tile's measured centre value by ±20 luma — most of an elevation
          step — and the spine's whole point is that value means HEIGHT. At 0.40
          the slab still reads as a different material catching the key; it just
-         no longer argues about which plateau it is on. */
+         no longer argues about which plateau it is on.
+         ⚠ WAVE 5 — AND IT MUST BE VALUE-NEUTRAL, NOT MERELY WEAK. 0.40/0.40
+         across a pale→deep gradient plus a 0.22 seat under it is a NET DARK
+         event: measured on the isolated bake it cost a level-3 top up to 17
+         luma of face mean against its unslabbed same-level neighbour, and the
+         spine's tone lock cannot see it (the loop takes a median over the face
+         and a slab covers well under half of one), so it survived as a
+         permanent per-tile offset — the "patchwork of separately-painted
+         slabs" the wave-3 critic reported, drawn by the thing literally named
+         slab. The two halves are now balanced around the tile's own base and
+         the seat is halved, so the slab reads as a different MATERIAL catching
+         the key without voting on the tile's value at all. */
       const sg = g.createLinearGradient(p.x + lu * rr, p.y - rr * 0.6, p.x - lu * rr, p.y + rr * 0.6);
-      sg.addColorStop(0, rgba(api.mixHex(M.pale, M.lit, 0.5), 0.40));
-      sg.addColorStop(1, rgba(api.mixHex(M.base, M.deep, 0.45), 0.40));
+      sg.addColorStop(0, rgba(api.mixHex(M.pale, M.lit, 0.5), 0.34));
+      sg.addColorStop(0.5, rgba(M.base, 0.30));
+      sg.addColorStop(1, rgba(api.mixHex(M.base, M.deep, 0.45), 0.30));
       g.fillStyle = sg; g.fill();
       /* fracture lines across the slab */
       g.strokeStyle = rgba(M.deep, 0.26); g.lineWidth = 0.8;

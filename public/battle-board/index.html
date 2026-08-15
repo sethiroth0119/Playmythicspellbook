@@ -5136,6 +5136,14 @@ window.__bbDebug = {
      centres, plus the ramp each level was aiming for. This is the elevation
      read, as a number: means must separate by ≥25 and each level's min..max
      spread must stay inside ~±10. */
+  /* the per-tile corrections the closed loop is carrying, and the target each
+     one is aiming at. A tile whose correction keeps growing while its error
+     does not shrink is a tile the loop cannot reach — that is a different bug
+     from "the ramp is wrong" and the two are indistinguishable from outside
+     without this. Read-only copy. */
+  toneCorr: () => { const o = {}; for (let z=0;z<MAP.rows;z++) for (let x=0;x<MAP.cols;x++){
+                      const k = x+','+z; o[k] = { corr:+(TONE.corr[k]||0).toFixed(1),
+                        want:+toneWant(x,z).toFixed(1), L:hfLevel(x,z) }; } return o; },
   tone: () => ({ stats:TONE.stats, worstErr:+TONE.err.toFixed(2), iter:TONE.iter,
                  dead:TONE.dead, want:[0,1,2,3].map(L => +levelLuma(L).toFixed(1)) }),
   /* which tiles carry a hazard. Needed to read a luminance probe of the LIVE

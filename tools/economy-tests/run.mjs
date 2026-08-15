@@ -291,6 +291,30 @@ let bad = 0;
                                    bridge then refused. 10,193 🔥 in neither
                                    ledger over 400 ticks, audit green throughout
 
+     ── round0w, the three payout fixes that shipped with no round on them ─────
+     🔴 ALL THREE WENT GREEN UNDER A FULL REVERT BEFORE THIS ROUND EXISTED. They
+        were found by copying the tree outside the repo, reverting one fix and
+        running the gate — the method every switch here is supposed to encode.
+     ECON_TEST_SABOTAGE=stale-refund  round0w §3: drop the `gen === mountGen` test
+                                   from index.js's `back()`, so a rejection that
+                                   lands after a remount refunds into the NEW
+                                   city. MEASURED: city B, day 0, never ticked,
+                                   came back owed 8,029.00 🔥 of city A's money
+     ECON_TEST_SABOTAGE=stale-deliver round0w §4: drop the same test from the
+                                   `notePayoutDelivered` arm, so a confirmation
+                                   that lands after a remount is booked against
+                                   the new city. MEASURED: city B, day 0,
+                                   payoutLifetime 8,029.00 🔥 for money it never
+                                   paid anyone — and the term that says "a payout
+                                   ARRIVED" is the one it corrupts
+     ECON_TEST_SABOTAGE=nobridge-drop round0w §5: empty the `else` that refunds
+                                   when there is no bridge at all. MEASURED: 400
+                                   bridgeless ticks left 8,469.00 🔥 stranded in
+                                   `payoutInFlight` where nothing retries it —
+                                   when the bridge came back only 100.00 🔥 was
+                                   ever delivered, against 8,569.00 🔥 on the
+                                   shipped tree
+
      ── 🗑 RETIRED WITH THE LOAD-TIME CINDER CLAMP, AND NOT TO BE REVIVED ───────
      `save-mint`, `payout-save`, `faucet-rail`, `owed-confiscate`,
      `faucet-margin` and `owed-ratchet` all sabotaged `clampLoadedCinder()` /
@@ -349,12 +373,12 @@ const SABOTAGES = [
   'charter-cap', 'dark-cards', 'defer-closed', 'defer-noSave', 'defer-nostamp', 'defer-open',
   'defer-serverwrite', 'draw-compound', 'eco-erase',
   'free-repair', 'inflight-drop', 'lab-ungated',
-  'loot-ledger', 'loot-promo', 'no-map', 'no-producer', 'ops-found-inline',
+  'loot-ledger', 'loot-promo', 'no-map', 'no-producer', 'nobridge-drop', 'ops-found-inline',
   'ops-found-unguarded', 'ops-grant-unknown', 'ops-swallow', 'ops-zombie', 'payout-drop',
   'payout-blind', 'pop-zero', 'price-drift', 'promo-drift', 'reap-burn', 'rearm-caller',
   'refund-raw', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
-  'sell-pump', 'settle-requested', 'stale-workplaces', 'twin-blind', 'venue-blind',
-  'warm-residue', 'withdraw', 'wx-twin-blind',
+  'sell-pump', 'settle-requested', 'stale-deliver', 'stale-refund', 'stale-workplaces',
+  'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind',
 ];
 const RETIRED_SABOTAGES = {
   rearm: 'retired: it flipped an argument this file passed itself — see round0s §3',
@@ -7777,6 +7801,423 @@ const srcBlockAfter = (src, decl, open) => {
 
   if (fails) { bad++; console.log('\n=== ROUND 0v: ' + fails + ' FAILED ==='); }
   else console.log('\n=== ROUND 0v: ALL PASS ===');
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0w — 💸 THE THREE PAYOUT REFUSALS NOBODY WAS WATCHING
+   ----------------------------------------------------------------------------
+   🔴 WHY THIS ROUND EXISTS. Three fixes to the one write that reaches the
+      player's real wallet shipped with NO round on them. Each was reverted in a
+      copy of the tree outside the repo and the whole gate stayed GREEN:
+
+        A. `const back = () => { if (gen === mountGen) Sim.refundPayout(owed); }`
+           reverted to an unconditional refund               → gate GREEN
+        B. `if (gen === mountGen) Sim.notePayoutDelivered(owed)`
+           reverted to an unconditional tally                → gate GREEN
+        C. the missing-bridge `else { Sim.refundPayout(owed); }`
+           replaced with a comment                           → gate GREEN
+
+      Round 0v covers a DIFFERENT pair (the bridge's boolean and the
+      `res !== true` test) and passes happily with all three of the above gone.
+      An unguarded fix is a fix with a half-life.
+
+   ── 🔴 THE PRODUCTION CALL SHAPE, AND EXACTLY HOW FAR IT REACHES ────────────
+   Every scenario below is driven through:
+     • `E.mount({ nodeId, population: …, state: …, established: … })` — the
+       shipped literal at node-city/index.html:28095, asserted below to still be
+       the ONE mount call in the file;
+     • `MythicEconomy.tick(dtMin, ecoHost())` — node-city:17791, behind the same
+       `ready()` gate the host uses;
+     • the REAL `MythicCityBridge` IIFE, read out of node-city and evaluated —
+       `B.addCinders` in 'message' mode, with its own 1800 ms `rpcEx` timeout.
+   Nothing here is a hand-written stand-in for either side of the seam.
+
+   ⚠ AND THE HONEST LIMIT, STATED RATHER THAN GLOSSED. node-city's boot IIFE
+     calls `E.mount()` exactly ONCE per page load (§1 asserts the count), so a
+     SECOND mount is not something the shipped host does today — its own comment
+     at node-city:28096 says so in as many words: "A remount (there is none
+     today) would arrive with state:null". The second live `mountGen` bump is
+     `E2.resolve({ established: 'new', state: null })` in `ecoDeferRetry()`
+     (node-city:16785), and §2 proves why THAT one cannot currently carry a stale
+     payout: a deferred module is inert, so nothing has been claimed when it
+     fires. §2 is the round that fails if a future edit lets `tick()` run while
+     deferred — which is the only way the resolve() bump becomes dangerous.
+     §3 and §4 then drive the remount the host's own comment anticipates. Both
+     are labelled for what they are; neither is dressed up as something the
+     shipped host does today.
+
+   ⚠ §5's `else` is likewise reached whenever `window.MythicCityBridge` is absent
+     or carries no `addCinders`. Shipped node-city assigns the bridge at
+     top level (line 2072) before the module is imported, so that state is not
+     reachable THERE — but `B()` in index.js is written as
+     `(typeof window !== 'undefined' ? window.MythicCityBridge : null) || null`
+     and is re-read on EVERY tick precisely so the bridge may be absent or
+     swapped, which node-city itself does (`B.addCinders` is replaced and
+     restored around the offline catch-up, node-city:23723/23816). Every mount of
+     `window.MythicEconomy` outside node-city — this gate's own rounds included —
+     lives in that state permanently. The rule the `else` encodes is not
+     situational: whatever `claimPayout()` took and nothing delivered goes back on
+     the books, every path, no exceptions.
+
+   Prove it can fail:
+     ECON_TEST_SABOTAGE=stale-refund   §3 headline: unconditional refund
+     ECON_TEST_SABOTAGE=stale-deliver  §4 headline: unconditional delivery tally
+     ECON_TEST_SABOTAGE=nobridge-drop  §5 headline: the `else` emptied
+   …and each section ALSO applies its own revert internally and asserts the
+   money really is destroyed, so a section that has quietly stopped measuring
+   anything fails on its own without the switch. A proof that cannot show the
+   defect is not a proof — round0v §2's first draft was inert for exactly that
+   reason and this round inherits the lesson rather than the mistake.
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0w-stale-and-bridgeless-payouts ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+  const F = (n) => (+n).toFixed(2);
+  const NCPATH = join(here, '../../public/node-city/index.html');
+  const ncSrc = readFileSync(NCPATH, 'utf8');
+  const ECODIR = join(here, '../../public/src/economy');
+  const idxTxt = readFileSync(join(ECODIR, 'index.js'), 'utf8');
+  const DAY = 20;
+  const host = { powerFactor: 1, waterFactor: 1, logisticsCounts: { warehouse: 2 }, hasBank: false, infrastructure: 0.6 };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const savedBridge = global.window ? global.window.MythicCityBridge : undefined;
+
+  /* ── §1 THE ANCHORS AND THE SHAPE ─────────────────────────────────────────
+     🔴 EVERY ANCHOR IS COUNTED, NOT TESTED FOR PRESENCE. A revert-proof whose
+        substitution matches nothing is the vacuous green this whole file exists
+        to distrust — and the first draft of this round hit it for real: the tree
+        is CRLF, so the multi-line `\n`-joined anchor for §5 matched zero
+        occurrences and BOTH the fixed and the reverted build produced byte-
+        identical output and identical numbers. The `else` anchor is a regex over
+        whitespace for that reason, and every count below must be exactly 1. */
+  const A_REFUND_OK = 'const back = () => { if (gen === mountGen) Sim.refundPayout(owed); };';
+  const A_REFUND_OLD = 'const back = () => { Sim.refundPayout(owed); };';
+  const A_DELIV_OK = 'if (gen === mountGen) Sim.notePayoutDelivered(owed);';
+  const A_DELIV_OLD = 'Sim.notePayoutDelivered(owed);';
+  const RE_NOBRIDGE = /\}\s*else\s*\{\s*Sim\.refundPayout\(owed\);\s*\}/g;
+  const A_NOBRIDGE_OLD = '} else { /* reverted: whatever was claimed is simply not put back */ }';
+
+  const nRefund = idxTxt.split(A_REFUND_OK).length - 1;
+  const nDeliv = idxTxt.split(A_DELIV_OK).length - 1;
+  const nBridge = (idxTxt.match(RE_NOBRIDGE) || []).length;
+  chk('§1 the mountGen refund guard is where this round thinks it is (×1)', nRefund === 1, 'found ' + nRefund);
+  chk('§1 the mountGen delivery guard is where this round thinks it is (×1)', nDeliv === 1, 'found ' + nDeliv);
+  chk('§1 the missing-bridge refund `else` is where this round thinks it is (×1)', nBridge === 1, 'found ' + nBridge);
+
+  /* The shipped mount literal. §3/§4 replay THIS call twice; if it is reshaped,
+     they are replaying something node-city no longer does. */
+  const nMount = (ncSrc.match(/E\.mount\(\{/g) || []).length;
+  const mountLit = (ncSrc.match(/E\.mount\(\{[\s\S]{0,200}?\);/) || [''])[0];
+  chk('§1 node-city still makes exactly ONE E.mount({…}) call', nMount === 1, 'found ' + nMount +
+      ' — if a real remount has appeared, §3/§4 stop being hypothetical and this comment must be rewritten');
+  chk('§1 …and it passes both `state:` and `established:`, which is the shape §3/§4 replay',
+      /state:\s*_pendingEconomy/.test(mountLit) && /established:\s*_cityVerdict/.test(mountLit),
+      'the literal reads: ' + mountLit.replace(/\s+/g, ' '));
+  chk('§1 …and ecoDeferRetry still calls E2.resolve({…}) — the second live mountGen bump',
+      /E2\.resolve\(\{/.test(ncSrc), 'the resolve() caller is gone; §2 is measuring a path nobody walks');
+  chk('§1 …and the host gates its tick on ready(), so a deferred module is never ticked by production',
+      /window\.MythicEconomy\.ready\(\)/.test(ncSrc) && /window\.MythicEconomy\.tick\(dtMin,\s*ecoHost\(\)\)/.test(ncSrc),
+      'node-city no longer gates economyTick on ready() — §2\'s premise is broken');
+
+  /* ── THE REAL BRIDGE, LIFTED (same technique as round0v §1) ────────────────
+     Deliberately a SECOND copy of makeBridge rather than a shared helper: this
+     one takes a `delay`, because the whole of §4 is a reply that lands AFTER the
+     remount, and round0v has no reason to want that. Two rounds that must be
+     able to fail independently should not share a fixture. */
+  const BRIDGE_BODY = srcBlockAfter(ncSrc, 'const MythicCityBridge = (() =>');
+  chk('§1 can read the shipped MythicCityBridge out of node-city',
+      !!BRIDGE_BODY && BRIDGE_BODY.length > 5000,
+      BRIDGE_BODY ? BRIDGE_BODY.length + ' bytes' : 'UNREADABLE — the bridge was reshaped and this round is vacuous');
+
+  const memStore = new Map();
+  const fakeLS = {
+    getItem: (k) => (memStore.has(k) ? memStore.get(k) : null),
+    setItem: (k, v) => memStore.set(k, String(v)), removeItem: (k) => memStore.delete(k),
+  };
+  const makeBridge = (opts) => {
+    const listeners = [];
+    const w = {
+      addEventListener: (t, f) => { if (t === 'message') listeners.push(f); },
+      parent: {
+        postMessage: (m) => {
+          if (!opts.reply) return;                        // silence → the shipped 1800 ms timeout
+          setTimeout(() => listeners.forEach((f) => f({ data: { type: 'mythic-city-reply', id: m.id, result: opts.reply(m) } })),
+                     opts.delay || 1);
+        },
+      },
+    };
+    const fn = new Function('window', 'localStorage', 'location', 'URLSearchParams', 'console', 'setTimeout',
+      'return (() => ' + BRIDGE_BODY + ')();');
+    const B = fn(w, fakeLS, { search: '?bridge=message' }, URLSearchParams, console, setTimeout);
+    B.mode = 'message';
+    return B;
+  };
+
+  const tmpRoots = [];
+  let seq = 0;
+  /* One module INSTANCE per scenario. `mounted`, `mountGen` and the sim state
+     are module-level, so a shared instance would let one scenario's in-flight
+     promise settle inside the next one's books — which is the very bug under
+     test, arriving as a harness artefact. */
+  const buildEco = async (tag, revs) => {
+    revs = revs || {};
+    const dst = join(tmpdir(), 'econ-0w-' + tag + '-' + process.pid + '-' + (++seq));
+    mkdirSync(dst, { recursive: true }); tmpRoots.push(dst);
+    let touched = 0;
+    for (const fn of readdirSync(ECODIR)) {
+      if (!fn.endsWith('.js')) continue;
+      let t = readFileSync(join(ECODIR, fn), 'utf8');
+      if (fn === 'index.js') {
+        const before = t;
+        if (revs.refund) t = t.split(A_REFUND_OK).join(A_REFUND_OLD);
+        if (revs.deliver) t = t.split(A_DELIV_OK).join(A_DELIV_OLD);
+        if (revs.nobridge) t = t.replace(RE_NOBRIDGE, A_NOBRIDGE_OLD);
+        if (t !== before) touched++;
+      }
+      writeFileSync(join(dst, fn), t);
+    }
+    /* A revert that changed nothing would make the "and now it breaks" half of
+       every section pass on the SHIPPED code. Every caller gates on the §1
+       counts so this cannot normally fire; it is the backstop, and it throws
+       rather than warns because a silent no-op revert is the exact failure this
+       round was written to end. */
+    if ((revs.refund || revs.deliver || revs.nobridge) && !touched) {
+      throw new Error('round0w: a revert for [' + Object.keys(revs).join(',') + '] matched nothing — the anchors have drifted');
+    }
+    return (await import(pathToFileURL(join(dst, 'index.js')).href)).default;
+  };
+
+  if (BRIDGE_BODY) {
+    /* ── §2 THE LIVE mountGen BUMP, AND WHY IT IS CURRENTLY HARMLESS ─────────
+       Mirrors: node-city boot `E.mount({… established: _cityVerdict })` with
+       `_cityVerdict === 'unknown'`, then `ecoDeferRetry()` →
+       `E2.resolve({ established: 'new', state: null })`.
+       resolve() bumps mountGen exactly as mount() does, so if a deferred module
+       could claim a payout, THIS is where a stale settlement would land on a
+       city founded seconds ago. It cannot, because `tick()` returns null while
+       deferred and the host does not even call it (ready() is false). That is a
+       property, not a coincidence, and this section is what notices if it stops
+       being true. */
+    const D = await buildEco('deferred', {});
+    global.window.MythicCityBridge = makeBridge({});
+    D.mount({ nodeId: 'defer-city', population: 320, state: null, established: 'unknown' });
+    chk('§2 an `unknown` verdict mounts DEFERRED, and the host\'s ready() gate keeps tick() away',
+        D.deferred() === true && D.ready() === false && D.snapshot() === null,
+        'deferred ' + D.deferred() + ' ready ' + D.ready());
+    let ticked = 0;
+    for (let i = 0; i < 400; i++) if (D.tick(DAY, host) !== null) ticked++;
+    chk('§2 …and tick() is inert on its own too, so nothing is ever claimed while the verdict is open',
+        ticked === 0, ticked + ' of 400 ticks advanced a city whose founding question is undecided');
+    const resolved = D.resolve({ established: 'new', state: null });
+    const rs = D.snapshot();
+    chk('§2 …so when resolve() bumps mountGen there is nothing in flight to strand',
+        resolved === true && rs && rs.payoutInFlight < 1e-9 && rs.payoutOwed < 1e-9,
+        'resolved ' + resolved + (rs ? ' inFlight ' + F(rs.payoutInFlight) + ' owed ' + F(rs.payoutOwed) : ' snapshot null'));
+    /* 🔴 THE THREE FIELDS EVERY SECTION BELOW MEASURES. `payoutLifetime` was
+       tracked but unreadable outside sim.js until cfde63c exposed it, and
+       dropping it again turns §4 into a comparison against `undefined` — which
+       fails, but for a reason nobody reading the output would understand. Asked
+       here so the message names the cause. */
+    chk('§2 …and snapshot() exposes the three payout terms the sections below read',
+        rs && typeof rs.payoutOwed === 'number' && typeof rs.payoutInFlight === 'number' &&
+        typeof rs.payoutLifetime === 'number',
+        'snapshot() reports owed=' + (rs && typeof rs.payoutOwed) + ' inFlight=' + (rs && typeof rs.payoutInFlight) +
+        ' lifetime=' + (rs && typeof rs.payoutLifetime) + ' — a payout figure nobody can read is a payout figure ' +
+        'nobody notices going wrong, which is how 570.00 🔥 of "delivered" money reached no wallet');
+
+    /* ── THE REMOUNT DRIVER, shared by §3 and §4 ────────────────────────────
+       The shipped literal, twice. City A runs 400 days against a bridge whose
+       answer has not arrived; the page then mounts city B (state:null — the
+       remount node-city:28096 describes); THEN city A's answers land.
+       `Sim.reset()` has zeroed payoutOwed and payoutInFlight in between, which
+       is exactly why the settlement must be discarded rather than applied. */
+    const stale = async (tag, revs, bridgeOpts, settleMs) => {
+      const M = await buildEco(tag, revs);
+      global.window.MythicCityBridge = makeBridge(bridgeOpts);
+      /* ⚠ THE NODE IDS ARE FIXED, NOT DERIVED FROM `tag`. The ground a city
+         stands on is a function of its node id, so tagging them would give the
+         shipped run and the reverted run different endowments and the two
+         printed figures would not be comparable — which is the whole output of
+         this section. Only the temp directory varies. */
+      M.mount({ nodeId: 'stale-A', population: 320, state: null, established: 'new' });
+      for (let i = 0; i < 400; i++) M.tick(DAY, host);
+      const a = M.snapshot();
+      M.mount({ nodeId: 'stale-B', population: 320, state: null, established: 'new' });
+      const fresh = M.snapshot();
+      await sleep(settleMs);
+      const b = M.snapshot();
+      console.log('   [' + tag + '] cityA left ' + F(a.payoutInFlight) + ' 🔥 in flight → cityB (day ' + b.day +
+                  ') owed ' + F(b.payoutOwed) + '  inFlight ' + F(b.payoutInFlight) +
+                  '  lifetime ' + F(b.payoutLifetime) + ' 🔥');
+      return { a, fresh, b };
+    };
+
+    /* ── §3 A REJECTION THAT ARRIVES AFTER THE REMOUNT IS NOT THE NEW CITY'S ──
+       Bridge: a parent that never answers, so every addCinders resolves `false`
+       at the shipped 1800 ms timeout — the ordinary case, not an exotic one.
+       Reverted, `back()` credits city A's 8,029 🔥 onto city B's `payoutOwed`,
+       and city B pays it to the player out of a treasury that was never debited.
+       That is a mint: the Cinder left city A's books on the day it was drawn and
+       city A no longer exists.
+
+       🔴 EVERY REVERT BELOW IS GATED ON THE §1 COUNT. If a fix has already been
+       removed from index.js the anchor is gone, §1 has said so in as many words,
+       and re-running the revert would only rediscover that — while `buildEco`'s
+       backstop would take the whole gate down with a stack trace instead of a
+       readable red. A missing anchor fails the proof; it does not crash it. */
+    const SAB = (name, n) => (SABOTAGE === name && n === 1);
+    const s3 = await stale('refund' + (SAB('stale-refund', nRefund) ? '-SABOTAGED' : ''),
+                           SAB('stale-refund', nRefund) ? { refund: true } : {}, {}, 2200);
+    chk('§3 city A actually left money in flight — otherwise this section tested nothing',
+        s3.a.payoutInFlight > 100, 'inFlight ' + F(s3.a.payoutInFlight) + ' 🔥');
+    chk('§3 a rejection that lands after a remount is DISCARDED, not refunded onto the new city',
+        s3.b.payoutOwed < 1 && s3.b.day === 0,
+        'city B has done ' + s3.b.day + ' days and is owed ' + F(s3.b.payoutOwed) +
+        ' 🔥 — that is city A\'s payout, minted onto a city whose treasury never paid it');
+
+    const s3rev = nRefund === 1 ? await stale('refund-reverted', { refund: true }, {}, 2200) : null;
+    chk('§3 …and reverting the guard really does mint it — this section is not vacuous',
+        !!s3rev && s3rev.b.payoutOwed > 100 && Math.abs(s3rev.b.payoutOwed - s3rev.a.payoutInFlight) < 1,
+        s3rev ? 'guard reverted and city B came back owed only ' + F(s3rev.b.payoutOwed) +
+        ' 🔥 against ' + F(s3rev.a.payoutInFlight) + ' 🔥 in flight — find out what else is closing this'
+              : 'the guard text is not in index.js at all, so this proof could not be run — see §1');
+
+    /* ── §4 …AND NEITHER IS A CONFIRMATION ───────────────────────────────────
+       Bridge: the host DOES answer `true`, 1200 ms later — inside the 1800 ms
+       window, so this is a genuine success arriving late, which is the common
+       case on a loaded parent. `notePayoutDelivered` is the only line in the
+       codebase allowed to say a payout arrived; reverted, it says so about city
+       B for 8,329 🔥 that city B never paid anyone. It also retires an in-flight
+       term that belongs to a different city — and `payoutInFlight` is what
+       `serialize()` writes and `load()` puts back on `payoutOwed`, so a save
+       taken in that window loses the new city's real payout. */
+    const s4 = await stale('deliver' + (SAB('stale-deliver', nDeliv) ? '-SABOTAGED' : ''),
+                           SAB('stale-deliver', nDeliv) ? { deliver: true } : {}, { reply: () => true, delay: 1200 }, 1700);
+    chk('§4 city A actually left money in flight — otherwise this section tested nothing',
+        s4.a.payoutInFlight > 100, 'inFlight ' + F(s4.a.payoutInFlight) + ' 🔥');
+    chk('§4 a confirmation that lands after a remount is DISCARDED, not booked against the new city',
+        s4.b.payoutLifetime < 1e-6 && s4.b.day === 0,
+        'city B has done ' + s4.b.day + ' days and reports payoutLifetime ' + F(s4.b.payoutLifetime) +
+        ' 🔥 — the one figure that means "a payout ARRIVED" now describes a city that has paid nobody');
+
+    const s4rev = nDeliv === 1 ? await stale('deliver-reverted', { deliver: true }, { reply: () => true, delay: 1200 }, 1700) : null;
+    chk('§4 …and reverting the guard really does corrupt it — this section is not vacuous',
+        !!s4rev && s4rev.b.payoutLifetime > 100 && Math.abs(s4rev.b.payoutLifetime - s4rev.a.payoutInFlight) < 1,
+        s4rev ? 'guard reverted and city B reported only ' + F(s4rev.b.payoutLifetime) +
+        ' 🔥 delivered against ' + F(s4rev.a.payoutInFlight) + ' 🔥 in flight'
+              : 'the guard text is not in index.js at all, so this proof could not be run — see §1');
+
+    /* ── §5 NO BRIDGE AT ALL IS A FAILED DELIVERY LIKE ANY OTHER ─────────────
+       claimPayout() has ALREADY moved the money `payoutOwed → payoutInFlight` by
+       the time the bridge is consulted — that is the whole point of the in-flight
+       term and it is why the bridge test cannot be a precondition. With the
+       `else` emptied nothing ever settles it: `payoutInFlight` grows without
+       bound, nothing retries it (the next tick claims only NEW money), and the
+       player is paid nothing for as long as the page lives. The measurement is
+       the recovery, not the balance: the bridge comes back, and the shipped tree
+       delivers everything it parked while the reverted tree delivers only what
+       it happened to claim afterwards. */
+    const bridgeless = async (tag, revs) => {
+      const M = await buildEco(tag, revs);
+      global.window.MythicCityBridge = null;                 // B() → null → the `else`
+      M.mount({ nodeId: 'nobridge', population: 320, state: null, established: 'new' });  // fixed id — see stale()
+      for (let i = 0; i < 400; i++) M.tick(DAY, host);
+      const s1 = M.snapshot();
+      let wallet = 0;
+      const B = makeBridge({ reply: () => true });
+      const inner = B.addCinders;
+      B.addCinders = async (n) => { const r = await inner(n); if (r === true) wallet += Math.floor(n); return r; };
+      global.window.MythicCityBridge = B;
+      for (let i = 0; i < 5; i++) M.tick(DAY, host);
+      await sleep(400);
+      const s2 = M.snapshot();
+      console.log('   [' + tag + '] 400 bridgeless ticks → owed ' + F(s1.payoutOwed) + '  inFlight ' + F(s1.payoutInFlight) +
+                  ' 🔥 | bridge returns → wallet ' + F(wallet) + '  stranded ' + F(s2.payoutInFlight) + ' 🔥');
+      return { s1, s2, wallet };
+    };
+
+    const n5 = await bridgeless('nobridge' + (SAB('nobridge-drop', nBridge) ? '-SABOTAGED' : ''),
+                                SAB('nobridge-drop', nBridge) ? { nobridge: true } : {});
+    chk('§5 with no bridge at all the money stays on payoutOwed, where the next tick retries it',
+        n5.s1.payoutOwed > 100 && n5.s1.payoutInFlight < 1e-6,
+        'owed ' + F(n5.s1.payoutOwed) + '  inFlight ' + F(n5.s1.payoutInFlight) +
+        ' 🔥 — money parked in flight with no bridge to settle it is money nothing will ever hand over');
+    chk('§5 …so when the bridge comes back the player is paid ALL of it',
+        n5.wallet > 100 && n5.s2.payoutInFlight < 1e-6 && n5.s2.payoutOwed < 1,
+        'only ' + F(n5.wallet) + ' 🔥 reached the wallet, ' + F(n5.s2.payoutInFlight) + ' 🔥 still stranded');
+
+    const n5rev = nBridge === 1 ? await bridgeless('nobridge-reverted', { nobridge: true }) : null;
+    chk('§5 …and emptying the `else` really does strand it — this section is not vacuous',
+        !!n5rev && n5rev.s1.payoutInFlight > 100 && n5rev.wallet < n5rev.s1.payoutInFlight / 2,
+        n5rev ? 'the `else` was emptied and ' + F(n5rev.s1.payoutInFlight) + ' 🔥 in flight still delivered ' +
+        F(n5rev.wallet) + ' 🔥 — find out what else is closing this'
+              : 'the refund `else` is not in index.js at all, so this proof could not be run — see §1');
+    if (n5rev) console.log('   shipped vs reverted, same 405 ticks: ' + F(n5.wallet) + ' 🔥 delivered vs ' +
+                F(n5rev.wallet) + ' 🔥, with ' + F(n5rev.s2.payoutInFlight) + ' 🔥 stranded on the reverted tree');
+
+    for (const d of tmpRoots) { try { rmSync(d, { recursive: true, force: true }); } catch (e) {} }
+  }
+
+  /* ── §6 THE TWO BUMPS NO BEHAVIOUR TEST CAN REACH, AND THE DOOR THEY LEAVE ──
+     🔴 FOUND BY THE SAME METHOD, AND HONESTLY UNGUARDABLE BY BEHAVIOUR. Three
+        more edits from this session were reverted one at a time in a copy of the
+        tree outside the repo and left the gate GREEN even with §2–§5 in place:
+          • `mountGen++` in mount()'s DEFERRED branch
+          • `mountGen++` in resolve()
+          • `load()`'s `deferred = false; deferCtx = null;`
+        None of them can be made to fail by driving the module, and that is a
+        FACT ABOUT THE CODE rather than a gap in the round: §2 proves a deferred
+        module claims nothing, so there is never anything in flight when either
+        of those two bumps happens. A behavioural round for them would have to
+        manufacture a state production cannot produce, which is precisely what
+        this round is not allowed to do.
+
+     🔴 …AND THE HOLE THEY POINT AT, WHICH IS REAL. `load()` sets `mounted = true`
+        after `Sim.load(raw)` — it replaces the entire simulation, exactly as
+        mount() does — and it does NOT bump `mountGen`. So a settlement in flight
+        across a `load()` would be applied to the loaded books. It is worse than
+        the mount case: `Sim.load()` has ALREADY moved the save's `payoutInFlight`
+        back onto `payoutOwed`, so a late `refundPayout()` credits the same Cinder
+        a SECOND time. Today that is unreachable for one reason only — nothing in
+        node-city calls `MythicEconomy.load()`; the host hands its blob to
+        `mount({state})` instead.
+
+     ⚠ DELIBERATELY NOT FIXED HERE, AND THE REASON IS THE ONE THIS PACKAGE WAS
+       CREATED BY. Adding `mountGen++` to load() looks obviously right and is
+       almost certainly right — but it is a behaviour change to the money path
+       with no production caller to measure it against, made by the package whose
+       job is to build the net. The last time someone picked the obvious answer
+       on this path ("fail closed") it bricked every new player. So the decision
+       is DEFERRED and the precondition is wired instead: the assertion below goes
+       RED the moment anything in node-city calls `load()`, which is the only way
+       the hole becomes reachable. Whoever wires it up gets told, in the same
+       commit, that they now have to decide. */
+  const idxLoad = srcBlockAfter(idxTxt, 'function load(raw)');
+  const idxMount = srcBlockAfter(idxTxt, 'function mount(opts)');
+  const idxResolve = srcBlockAfter(idxTxt, 'function resolve(opts)');
+  const bumps = (s) => (s ? (s.match(/mountGen\+\+/g) || []).length : -1);
+  chk('§6 mount() bumps mountGen on BOTH of its exits — the decided one and the deferred one',
+      bumps(idxMount) === 2, 'found ' + bumps(idxMount) + ' — a mount that does not bump leaves the previous ' +
+      'city\'s in-flight promises pointing at the new city\'s books');
+  chk('§6 resolve() bumps it too — it is the second live transition and mounts a city that did not exist before',
+      bumps(idxResolve) === 1, 'found ' + bumps(idxResolve));
+  /* The conditional is the whole point: it permits today's tree AND fails the
+     day load() acquires a caller without acquiring the bump. */
+  const hostCallsLoad = /MythicEconomy\.load\(|\bE\.load\(|\bE2\.load\(/.test(ncSrc);
+  chk('§6 load() either bumps mountGen and clears the deferral, or has no host caller at all',
+      (bumps(idxLoad) === 1 && /deferred = false/.test(idxLoad)) || !hostCallsLoad,
+      'node-city now calls MythicEconomy.load(), and load() replaces the whole simulation without bumping mountGen — ' +
+      'a settlement still in flight will be applied to the loaded books, and because Sim.load() has already moved ' +
+      '`payoutInFlight` back onto `payoutOwed` a late refund pays the same Cinder twice. Decide it now: see §6\'s header.');
+
+  if (global.window) global.window.MythicCityBridge = savedBridge;
+
+  if (fails) { bad++; console.log('\n=== ROUND 0w: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0w: ALL PASS ===');
 }
 
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {

@@ -231,20 +231,56 @@ let bad = 0;
                                    totalCinder 293,295.48, remounts at
                                    300,000.00 / 300,000.00 with the full
                                    700,000 🔥 allowance back
-     ECON_TEST_SABOTAGE=rearm-derive round0s §3: keep the flag but make
-                                   loadState's tiles derivation answer `false`
-                                   for a save with tiles — the same hole one
-                                   level up
+     ECON_TEST_SABOTAGE=defer-closed round0s §3: collapse cityEcoVerdict's third
+                                   value into 'established' — i.e. FAIL CLOSED,
+                                   the tree this package fixed. A brand-new
+                                   player whose very first city read is ambiguous
+                                   (an RLS hiccup, a momentary offline, a save
+                                   stamped for somebody else) is PERMANENTLY
+                                   denied the 300,000 🔥 founding tranche:
+                                   measured charterIssued 0.00 🔥, forever, and
+                                   their city can never capitalise a firm
+     ECON_TEST_SABOTAGE=defer-open round0s §3: collapse it into 'new' instead —
+                                   the tree BEFORE that fix. The same ambiguous
+                                   read now buys a fresh 300,000 🔥 tranche and
+                                   re-arms the whole 700,000 🔥 allowance. The two
+                                   switches are the two horns this round exists
+                                   to prove nobody has to pick between
      ECON_TEST_SABOTAGE=boot-open  round0s §3b: initialise node-city's
-                                   `_pendingEstablished` back to `false`, i.e.
-                                   FAIL OPEN. It is only ever lowered inside
-                                   loadState(), which runs behind an await inside
-                                   boot's try — whose catch logs "non-fatal" and
-                                   falls straight through to the one E.mount
-                                   call. So any throw before that assignment
+                                   `_cityVerdict` back to a DECIDED value, i.e.
+                                   answer the founding question before any
+                                   evidence exists. It is only ever derived
+                                   inside loadState(), which runs behind an await
+                                   inside boot's try — whose catch logs
+                                   "non-fatal" and falls straight through to the
+                                   one E.mount call. So any throw before that
                                    (spawnAnchors, a rejected bridge read, a
-                                   renderer fault) bought a fresh 300,000 🔥
-                                   founding tranche off a bad network
+                                   renderer fault) decides it off a bad network
+                                   instead of deferring it
+     ECON_TEST_SABOTAGE=defer-noSave round0s §3c: put back the FIRST attempt at
+                                   deferral, which blocked BOTH save writers
+                                   while the founding question was open. It
+                                   traded a denied tranche for a deleted city:
+                                   `window.cityStateLoad` raises
+                                   `__cityLoadUnsafe` unconditionally whenever
+                                   there is no Cloud client or no
+                                   Profile.cloud.userId, so a signed-out or
+                                   offline player is 'unknown' as a STEADY STATE
+                                   and the retry can never clear it. Measured
+                                   through the shipped bridge: verdict 'unknown',
+                                   localStorage keys written 0, cityStateSave
+                                   calls 0 — every session, forever
+     ECON_TEST_SABOTAGE=defer-serverwrite round0s §3c: let a deferred session
+                                   write the ACCOUNT row as well. That is the
+                                   hazard the block was invented for and it is
+                                   real: measured, one deferred session's empty
+                                   city lands on top of a 400-day save the read
+                                   was merely refused
+     ECON_TEST_SABOTAGE=defer-nostamp round0s §3c: drop the `ecoDefer` term from
+                                   cityEcoVerdict, so the deferral's own local
+                                   save is read back as proof of an established
+                                   city — a brand-new offline player talked out
+                                   of their 300,000 🔥 by their own autosave
      ⚠ ECON_TEST_SABOTAGE=rearm is RETIRED. It flipped an argument this file
        passed itself, so it only ever proved the refusal inside /src/economy
        fires — while the one production caller passed nothing and the hole
@@ -310,16 +346,19 @@ const SABOTAGE = process.env.ECON_TEST_SABOTAGE || '';
    green. Add the name here in the same commit that adds the switch. */
 const SABOTAGES = [
   'bogus-id', 'boot-open', 'boot-presweep', 'cancel-blind', 'cancel-sited', 'cap-typo',
-  'charter-cap', 'dark-cards', 'draw-compound', 'free-repair', 'inflight-drop', 'lab-ungated',
+  'charter-cap', 'dark-cards', 'defer-closed', 'defer-noSave', 'defer-nostamp', 'defer-open',
+  'defer-serverwrite', 'draw-compound', 'eco-erase',
+  'free-repair', 'inflight-drop', 'lab-ungated',
   'loot-ledger', 'loot-promo', 'no-map', 'no-producer', 'ops-found-inline',
   'ops-found-unguarded', 'ops-grant-unknown', 'ops-swallow', 'ops-zombie', 'payout-drop',
-  'pop-zero', 'price-drift', 'promo-drift', 'reap-burn', 'rearm-caller', 'rearm-derive',
+  'payout-blind', 'pop-zero', 'price-drift', 'promo-drift', 'reap-burn', 'rearm-caller',
   'refund-raw', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
   'sell-pump', 'settle-requested', 'stale-workplaces', 'twin-blind', 'venue-blind',
   'warm-residue', 'withdraw', 'wx-twin-blind',
 ];
 const RETIRED_SABOTAGES = {
   rearm: 'retired: it flipped an argument this file passed itself — see round0s §3',
+  'rearm-derive': 'retired with the two-valued flag it injured — the verdict is three-valued now; see round0s §3 defer-closed / defer-open',
   'save-mint': 'retired with the load-time Cinder clamp — see the catalogue above',
   'payout-save': 'retired with the load-time Cinder clamp — see the catalogue above',
   'faucet-rail': 'retired with the load-time Cinder clamp — see the catalogue above',
@@ -5700,31 +5739,56 @@ const srcBlockAfter = (src, decl, open) => {
         !!mountLit && /[\s,{]established\s*:/.test(mountLit),
         'E.mount literal: ' + String(mountLit).replace(/\s+/g, ' ').slice(0, 200));
 
-    /* 2. THE DERIVATION, as shipped, and then EXECUTED. Taking the right-hand
-          side rather than re-typing the expression is the point: a derivation
-          that stops looking at the save reddens this round. */
+    /* 2. THE DERIVATION, as shipped, and then EXECUTED.
+          🔴 IT IS NO LONGER A BOOLEAN, AND THAT IS THIS SECTION'S WHOLE SUBJECT.
+          `_pendingEstablished` was a two-valued flag, and BOTH of its defaults
+          were wrong. Shipped as `false` it minted a fresh 300,000 🔥 tranche off
+          any boot error; flipped to `true` to close that, it PERMANENTLY DENIED
+          a brand-new player their tranche whenever their very first city read
+          was ambiguous — `loadUnsafe` is true for an RLS refusal, a throw, or a
+          save stamped for somebody else, i.e. one bad network moment, and
+          nothing ever lowered the flag again. Measured on that tree: brand-new
+          player, ambiguous first read, charterIssued 0.00 🔥 against the
+          300,000.00 🔥 a founded city receives, forever.
+
+          So node-city now answers with one of THREE values from a pure function,
+          `cityEcoVerdict(j, unsafe)`, and this round reads that function's body
+          out of the shipped file and runs every branch of it. 'unknown' is not a
+          third kind of answer — it is the refusal to answer, and what it buys is
+          a DEFERRED mount: no tranche issued, none refused, resolved from the
+          next trustworthy read. */
     const lines = ncSrc.split('\n').map((l) => l.trim());
-    const initLine  = lines.find((l) => /^let _pendingEstablished\s*=/.test(l));
-    const derivLine = lines.find((l) => /^_pendingEstablished\s*=\s*_pendingEstablished\s*\|\|/.test(l));
-    chk('node-city derives `established` in loadState from the parsed save',
-        !!derivLine && !!initLine,
-        'init: ' + initLine + '  derivation: ' + derivLine);
-    /* 🔴 AND THE DEFAULT MUST BE THE REFUSING ONE. It shipped as `false` — i.e.
-       GRANT — and was raised only from inside loadState(), which runs behind an
-       await inside boot's try, whose catch logs "non-fatal" and then falls
-       through to the one E.mount call. §3b drives that boot. */
-    chk('…and it defaults to TRUE, the refusing value, so a boot that never reaches loadState grants nothing',
-        !!initLine && /=\s*true\s*;/.test(initLine), initLine);
-    /* …and exactly ONE statement in the whole file may lower it. A second one is
-       a second way to fail open, and it would not have to be inside loadState
-       for boot()'s catch to skip past it. */
-    const lowerSites = (ncSrc.match(/_pendingEstablished\s*=\s*false/g) || []).length;
-    chk('…and EXACTLY ONE statement in node-city ever lowers it',
-        lowerSites === 1,
-        lowerSites + ' assignments of `_pendingEstablished = false` — each one is a way to fail open');
-    const rhs = String(derivLine || 'false;').slice(String(derivLine || '').indexOf('=') + 1).replace(/;\s*$/, '');
-    const deriveRaw = new Function('_pendingEstablished', 's', 'return !!(' + rhs + ');');
-    const derive = (prior, s) => (SABOTAGE === 'rearm-derive' ? false : deriveRaw(prior, s));
+    const initLine   = lines.find((l) => /^let _cityVerdict\s*=/.test(l));
+    const verdictSrc = srcBlockAfter(ncSrc, 'function cityEcoVerdict(j, unsafe)');
+    chk('node-city derives the verdict in one readable function over the parsed save',
+        !!verdictSrc && !!initLine,
+        'init: ' + initLine + '  cityEcoVerdict: ' + (verdictSrc ? 'read' : 'UNREADABLE'));
+    /* 🔴 AND THE DEFAULT MUST BE THE UNDECIDED ONE. Not 'established' (which
+       denies a new player on a boot fault) and not 'new' (which mints on one).
+       §3b drives the boot that reaches E.mount without loadState ever running. */
+    chk('…and it defaults to \'unknown\' — neither granting nor refusing before any evidence exists',
+        !!initLine && /=\s*'unknown'\s*;/.test(initLine), initLine);
+    /* …and exactly ONE statement outside that function may write a DECIDED value
+       into the verdict. Each extra one is another place a guess can be made
+       where boot()'s catch would skip past the evidence. The one that is allowed
+       is ecoDeferRetry's, and it fires only on a trusted read. */
+    const decideSites = (ncSrc.match(/_cityVerdict\s*=\s*'(new|established)'/g) || []);
+    chk('…and EXACTLY ONE statement outside loadState decides it after the fact',
+        decideSites.length === 2,
+        decideSites.length + ' decided assignments (' + decideSites.join(', ') +
+        ') — loadState\'s re-affirm plus ecoDeferRetry\'s is two; anything more is another guess');
+    /* 🧨 The two ways to break a three-valued state, both re-committed into the
+       EXTRACTED body and nothing else: collapse 'unknown' toward the refusing
+       answer (defer-closed — the tree this package fixed) or toward the granting
+       one (defer-open — the tree before it). */
+    let verdictBody = String(verdictSrc);
+    if (SABOTAGE === 'defer-closed' || SABOTAGE === 'defer-open') {
+      const to = SABOTAGE === 'defer-closed' ? "'established'" : "'new'";
+      const hit = verdictBody.replace(/'unknown'/g, to);
+      if (hit === verdictBody) throw new Error('SABOTAGE ' + SABOTAGE + ' matched nothing — cityEcoVerdict was reshaped and this switch is inert');
+      verdictBody = hit;
+    }
+    const verdict = new Function('j', 'unsafe', 'return (function cityEcoVerdict(j, unsafe) ' + verdictBody + ')(j, unsafe);');
 
     /* 3. THE CALL, COMPILED FROM THE SHIPPED TEXT. `rearm-caller` deletes the
           `established` property from that text and nothing else — which is
@@ -5732,22 +5796,22 @@ const srcBlockAfter = (src, decl, open) => {
     const litForRun = (SABOTAGE === 'rearm-caller')
       ? String(mountLit).replace(/,?\s*established\s*:\s*[^,}]+/, '')
       : String(mountLit);
-    const mkOpts = new Function('nodeId', 'cityPop', '_pendingEconomy', '_pendingEstablished',
+    const mkOpts = new Function('nodeId', 'cityPop', '_pendingEconomy', '_cityVerdict',
                                 'return (' + litForRun + ');');
 
     // A lived city, through the ordinary boot path.
-    E.mount({ nodeId: 'blind-rearm', population: 150 });
+    E.mount({ nodeId: 'blind-rearm', population: 150, established: 'new' });
     for (let i = 0; i < 60; i++) E.tick(DAY, host);
     const livedIssued = E.snapshot().charterIssued;
     const livedTotal = E.totalCinder();
 
     /* THE PLAYER DELETES THE `economy` KEY. What loadState then holds is a save
-       with tiles and no economy — so `_pendingEconomy` is null and the flag is
-       whatever node-city's own expression makes of it. */
-    const livedSave = { tiles: { '0,0': { type: 'anchor' }, '3,4': { type: 'house' }, '5,2': { type: 'shop' } } };
-    const establishedFlag = derive(false, livedSave);
+       with tiles and no economy — so `_pendingEconomy` is null and the verdict is
+       whatever node-city's own function makes of it. */
+    const livedSave = JSON.stringify({ tiles: { '0,0': { type: 'anchor' }, '3,4': { type: 'house' }, '5,2': { type: 'shop' } } });
+    const establishedFlag = verdict(livedSave, false);
     const opts = mkOpts('blind-rearm', () => 150, null, establishedFlag);
-    console.log('   loadState derived established=' + establishedFlag +
+    console.log('   loadState derived verdict=' + establishedFlag +
                 ' → E.mount(' + JSON.stringify(opts) + ')');
     E.mount(opts);
     const after = E.snapshot();
@@ -5760,96 +5824,330 @@ const srcBlockAfter = (src, decl, open) => {
         ' — deleting one save key re-armed the whole allowance THROUGH THE PRODUCTION CALL');
 
     /* …and a genuinely new city still gets its opening capital, through the SAME
-       compiled call with the SAME derivation — node-city reaches `if (!j)` and
-       never raises the flag, which is the `false` passed here. */
-    E.mount(mkOpts('blind-rearm-new', () => 150, null, false));
+       compiled call with the SAME derivation — node-city's bridge answered
+       cleanly and found nothing, which is the 'new' this produces. */
+    E.mount(mkOpts('blind-rearm-new', () => 150, null, verdict(null, false)));
     chk('…while a genuinely new city still receives exactly the bootstrap tranche',
         Math.abs(E.totalCinder() - ECON.firm.charter.seed) < 1e-6,
         E.totalCinder().toFixed(2) + ' vs seed ' + ECON.firm.charter.seed);
 
-    /* The derivation itself, on the two inputs that decide a player's outcome.
-       Without this a derivation stuck at `true` would pass everything above and
-       silently deny every new city its founding capital. */
-    chk('…and the shipped derivation answers TRUE for a save with tiles',
-        derive(false, livedSave) === true, 'rhs: ' + rhs);
-    chk('…and does not invent tiles that are not there',
-        derive(false, { tiles: {} }) === false, 'rhs: ' + rhs);
-    chk('…and never talks an unsafe read back down to "new city"',
-        derive(true, { tiles: {} }) === true, 'rhs: ' + rhs);
+    /* THE DERIVATION ITSELF, on every evidence shape that decides a player's
+       outcome. Without this a derivation stuck on one value would pass
+       everything above and silently deny (or mint) forever. */
+    const vcases = [
+      ['a save with tiles, clean read',        livedSave, false, 'established'],
+      ['a save with tiles, UNSAFE read',       livedSave, true,  'established'],
+      ['a save carrying an economy blob',      JSON.stringify({ tiles: {}, economy: { day: 5 } }), true, 'established'],
+      ['unparseable JSON (a save exists)',     '{not json',        false, 'established'],
+      ['a payload with no tiles key',          '{"army":{}}',      false, 'established'],
+      ['NO save, clean read',                  null,               false, 'new'],
+      ['an empty saved city, clean read',      '{"tiles":{}}',     false, 'new'],
+      ['NO save, UNSAFE read',                 null,               true,  'unknown'],
+      ['an empty saved city, UNSAFE read',     '{"tiles":{}}',     true,  'unknown'],
+    ];
+    for (const [label, j, unsafe, want] of vcases) {
+      const got = verdict(j, unsafe);
+      chk('…verdict(' + label + ') = ' + want, got === want, 'got ' + got);
+    }
 
-    /* ── §3b THE GUARD MUST FAIL CLOSED ──────────────────────────────────────
-       🔴 THE DEFECT, AND IT NEEDED NO ATTACKER AT ALL. `_pendingEstablished`
-       shipped initialised to `false` — GRANT THE TRANCHE — and was raised only
-       by statements INSIDE `loadState()`. boot() is, in shape:
+    /* ── §3b AN AMBIGUOUS READ MAY COST NOTHING IN EITHER DIRECTION ───────────
+       🔴 TWO DEFECTS, ONE LINE, AND FIXING EITHER ONE ALONE CAUSED THE OTHER.
+       `_pendingEstablished` shipped initialised to `false` — GRANT — and was
+       raised only by statements INSIDE `loadState()`. boot() is, in shape:
 
            try { await spawnAnchors(); await loadState(); … }
            catch (e) { console.warn('city boot (non-fatal):', e); }
            …
-           E.mount({ …, established: _pendingEstablished });
+           E.mount({ …, established: <the flag> });
 
        so ANY throw before loadState reached its first assignment — spawnAnchors,
        a rejected bridge read, a renderer fault — landed in that catch, fell
-       straight through, and handed a LIVED city a fresh 300,000 🔥 founding
-       tranche with the entire 700,000 🔥 lifetime allowance re-armed. A guard
-       whose failure mode is "grant" is not a guard, and this one was tripped by
-       a bad network rather than by an exploit.
+       straight through, and handed a LIVED city a fresh 300,000 🔥 tranche with
+       the whole 700,000 🔥 allowance re-armed, off a bad network.
+       The fix flipped the initialiser to `true`. That closed the mint and opened
+       the opposite wound: a BRAND-NEW player whose first read was ambiguous was
+       permanently denied their 300,000 🔥 and could never capitalise a firm.
 
-       THE MODEL IS COMPILED FROM THE SHIPPED TEXT — the initialiser and the one
-       lowering statement are both extracted above — so an edit to either
-       reddens this round rather than a shape re-typed here.
-       Prove it can fail: ECON_TEST_SABOTAGE=boot-open puts the initialiser back
-       to `false`. */
+       So the third value. The model below is compiled from the SHIPPED
+       initialiser and the SHIPPED verdict function, and it asserts BOTH
+       invariants at once: an ambiguous read never costs the tranche, and never
+       hands out a second one.
+       Prove it can fail: boot-open puts the initialiser back to a granting
+       value; defer-closed / defer-open collapse the third value into one of the
+       other two, which is each of the two shipped defects in turn. */
     const initRhs = (SABOTAGE === 'boot-open')
-      ? 'false'
-      : String(initLine).replace(/^let\s+_pendingEstablished\s*=\s*/, '').replace(/;\s*$/, '');
-    /* node-city's ONE lowering statement, lifted verbatim. It reads `j` (what
-       the bridge answered) and `_loadFailed` (whether that answer is trusted). */
-    const lowerLine = lines.find((l) => /_pendingEstablished\s*=\s*false/.test(l));
-    chk('§3b can read node-city\'s initialiser and its one lowering statement',
-        !!initLine && !!lowerLine, 'init: ' + initLine + '   lower: ' + lowerLine);
+      ? "'new'"
+      : String(initLine).replace(/^let\s+_cityVerdict\s*=\s*/, '').replace(/;\s*$/, '');
     /* THE BOOT, MODELLED: run `steps`, swallow whatever it throws exactly as
-       boot()'s "non-fatal" catch does, then answer with the flag as it stands —
-       which is precisely what the one E.mount call downstream reads. */
-    const bootFlag = new Function('steps', 'j', '_loadFailed', `
-      let _loadDone = false, _pendingEstablished = ${initRhs};
-      const loadState = () => { ${lowerLine} };
-      try { steps(); loadState(); } catch (e) { /* 'city boot (non-fatal)' */ }
-      return _pendingEstablished;`);
+       boot()'s "non-fatal" catch does, then answer with the verdict as it
+       stands — which is precisely what the one E.mount call downstream reads. */
+    const bootVerdict = (steps, j, unsafe) => {
+      let v = new Function('return (' + initRhs + ');')();
+      try { steps(); v = verdict(j, unsafe); } catch (e) { /* 'city boot (non-fatal)' */ }
+      return v;
+    };
     const stepsOk = () => {};
     const stepsThrow = () => { throw new Error('spawnAnchors: WebGPU device lost'); };
 
     /* A lived city that then remounts through node-city's OWN compiled call with
        no economy blob — the deleted-key shape, reached by accident. */
     const livedRemount = (flag, tag) => {
-      E.mount({ nodeId: 'blind-failclosed', population: 150 });
+      E.mount({ nodeId: 'blind-failclosed', population: 150, established: 'new' });
       for (let i = 0; i < 60; i++) E.tick(DAY, host);
       const lived = E.totalCinder();
       E.mount(mkOpts('blind-failclosed', () => 150, null, flag));
       const got = E.totalCinder();
-      console.log('   [' + tag + '] established=' + flag + ' — lived ' + lived.toFixed(2) +
-                  ' 🔥 → remount ' + got.toFixed(2) + ' 🔥');
+      console.log('   [' + tag + '] verdict=' + flag + ' — lived ' + lived.toFixed(2) +
+                  ' 🔥 → remount ' + got.toFixed(2) + ' 🔥' + (E.deferred() ? '  (DEFERRED)' : ''));
       return got;
     };
 
-    chk('a boot that THROWS before loadState refuses the tranche',
-        livedRemount(bootFlag(stepsThrow, null, false), 'boot threw') < 1,
+    chk('a boot that THROWS before loadState grants no tranche',
+        livedRemount(bootVerdict(stepsThrow, null, false), 'boot threw') < 1,
         'a renderer or bridge fault re-armed the founding tranche — the guard fails OPEN');
-    chk('…and an untrusted read of "no save" refuses it too',
-        livedRemount(bootFlag(stepsOk, null, true), 'unsafe read') < 1,
+    chk('…and it DEFERS rather than deciding, so the question survives the fault',
+        E.deferred() === true, 'a boot fault decided the founding question on no evidence at all');
+    chk('…and an untrusted read of "no save" grants nothing either',
+        livedRemount(bootVerdict(stepsOk, null, true), 'unsafe read') < 1,
         'loadUnsafe bought a tranche');
-    chk('…and a boot that DID find a save refuses it',
-        livedRemount(bootFlag(stepsOk, '{"tiles":{"0,0":{}}}', false), 'save present') < 1,
-        'a parsed save bought a tranche');
-    /* THE OTHER DIRECTION, and it is the one a fail-closed default risks: a
-       genuinely new player must still receive their opening capital. */
-    const newFlag = bootFlag(stepsOk, null, false);
-    E.mount(mkOpts('blind-failclosed-new', () => 150, null, newFlag));
-    console.log('   [brand new] clean read, no save → established=' + newFlag +
+    chk('…and that one defers too — an RLS blip may not answer this question',
+        E.deferred() === true, 'an ambiguous read was answered');
+    chk('…and a boot that DID find a save refuses it outright, no deferral',
+        livedRemount(bootVerdict(stepsOk, livedSave, false), 'save present') < 1 && E.deferred() === false,
+        'a parsed save bought a tranche, or was left undecided when the evidence was in hand');
+
+    /* 🔴 THE HALF THE FAIL-CLOSED FIX BROKE: the brand-new player. Both the clean
+       read and the ambiguous one must leave them able to receive their capital —
+       the first immediately, the second the moment a trustworthy read lands. */
+    const newVerdict = bootVerdict(stepsOk, null, false);
+    E.mount(mkOpts('blind-failclosed-new', () => 150, null, newVerdict));
+    console.log('   [brand new] clean read, no save → verdict=' + newVerdict +
                 ' → totalCinder ' + E.totalCinder().toFixed(2) + ' 🔥');
     chk('…while a clean read that found NO save still pays the bootstrap tranche',
-        newFlag === false && Math.abs(E.totalCinder() - ECON.firm.charter.seed) < 1e-6,
-        'flag ' + newFlag + ', totalCinder ' + E.totalCinder().toFixed(2) +
+        newVerdict === 'new' && Math.abs(E.totalCinder() - ECON.firm.charter.seed) < 1e-6,
+        'verdict ' + newVerdict + ', totalCinder ' + E.totalCinder().toFixed(2) +
         ' vs seed ' + ECON.firm.charter.seed);
+
+    const ambiguous = bootVerdict(stepsOk, null, true);
+    E.mount(mkOpts('blind-newplayer-ambiguous', () => 150, null, ambiguous));
+    const deniedAtBoot = E.totalCinder();
+    chk('a BRAND-NEW player whose first read is ambiguous is not decided against',
+        ambiguous === 'unknown' && E.deferred() === true && deniedAtBoot < 1e-6,
+        'verdict ' + ambiguous + ', deferred ' + E.deferred() + ', totalCinder ' + deniedAtBoot.toFixed(2));
+    chk('…and a deferred economy writes NOTHING into the save, so the evidence survives',
+        E.serialize() === null && E.ready() === false,
+        'serialize() returned ' + (E.serialize() === null ? 'null' : 'a ' + JSON.stringify(E.serialize()).length + '-byte blob') +
+        ', ready() ' + E.ready() + ' — a deferred blob in the save reads as an established city next boot');
+    // …and the retry lands. This is the line the old tree could never reach.
+    const resolved = E.resolve({ established: verdict(null, false), state: null });
+    console.log('   [brand new, ambiguous] deferred at ' + deniedAtBoot.toFixed(2) +
+                ' 🔥 → a later trusted read resolves it to ' + E.totalCinder().toFixed(2) + ' 🔥');
+    chk('…and a later TRUSTWORTHY read still pays them their founding tranche IN FULL',
+        resolved === true && E.deferred() === false &&
+        Math.abs(E.totalCinder() - ECON.firm.charter.seed) < 1e-6,
+        'resolved ' + resolved + ', totalCinder ' + E.totalCinder().toFixed(2) +
+        ' vs seed ' + ECON.firm.charter.seed + ' — the fail-closed flip left this at 0.00 forever');
+
+    /* …AND THE OTHER INVARIANT, at the same seam: an ambiguous read for an
+       ESTABLISHED player must not hand out a SECOND tranche when it resolves. */
+    E.mount({ nodeId: 'blind-established-ambiguous', population: 150, established: 'new' });
+    for (let i = 0; i < 60; i++) E.tick(DAY, host);
+    const livedBlob = E.serialize();
+    const livedCharter = E.snapshot().charterIssued;
+    E.mount(mkOpts('blind-established-ambiguous', () => 150, null, verdict(null, true)));
+    chk('an ESTABLISHED player whose read is ambiguous is deferred, not re-founded',
+        E.deferred() === true && E.totalCinder() < 1e-6,
+        'deferred ' + E.deferred() + ', totalCinder ' + E.totalCinder().toFixed(2));
+    E.resolve({ established: verdict(JSON.stringify({ tiles: { '0,0': {} }, economy: livedBlob }), false), state: livedBlob });
+    console.log('   [established, ambiguous] lived charterIssued ' + livedCharter.toFixed(2) +
+                ' 🔥 → after deferral and resolve ' + E.snapshot().charterIssued.toFixed(2) + ' 🔥');
+    chk('…and resolving it issues NO second tranche',
+        Math.abs(E.snapshot().charterIssued - livedCharter) < 1e-6,
+        'charterIssued ' + E.snapshot().charterIssued.toFixed(2) + ' vs ' + livedCharter.toFixed(2));
+  }
+
+  /* ── §3c DEFERRAL MAY NOT COST THE PLAYER THEIR CITY ───────────────────────
+     🔴 THE ROUND THAT HAD TO BE WRITTEN BECAUSE §3's FIX WENT TOO FAR.
+     §3 stopped node-city deciding the founding question on ambiguous evidence.
+     The first implementation of that also blocked BOTH save writers while the
+     verdict was 'unknown', reasoning that a write during an unproven read could
+     land on a real city the server had merely refused to show. True of the
+     ACCOUNT row. False of everything else — and it made the same trade this
+     package exists to stop, one size larger.
+
+     `window.cityStateLoad` (public/index.html) opens with
+         if (!Cloud || !Cloud.ready || !Cloud.client || !Profile.cloud ||
+             !Profile.cloud.userId) { window.__cityLoadUnsafe = true; return null; }
+     so a signed-out or offline player gets an unsafe, empty read UNCONDITIONALLY
+     — not as a blip, as their steady state, and `_openNodeCity` explicitly
+     supports reaching the city that way. MEASURED on that tree, driving the
+     SHIPPED bridge IIFE against a signed-out parent: verdict 'unknown', all four
+     automatic retries 'unknown', localStorage keys written 0, cityStateSave
+     calls 0. Nothing anywhere, every session, forever — while the panel
+     promised "Retrying automatically" and "nothing has been lost". The pre-
+     deferral tree denied that player their tranche; this one deleted their city.
+
+     SO THE TWO RISKS ARE SEPARATED, and this section drives the shipped
+     `_savePolicy()`, the shipped `cityEcoVerdict()`, the shipped `ecoDefer:`
+     field out of serialize(), the shipped loadState re-affirm line and the
+     shipped bridge, through three full save/load SESSIONS.
+     Prove it can fail: defer-noSave / defer-serverwrite / defer-nostamp. */
+  {
+    const NC2 = join(here, '../../public/node-city/index.html');
+    const nc = readFileSync(NC2, 'utf8');
+    const BRIDGE = srcBlockAfter(nc, 'const MythicCityBridge = (() =>');
+    let VERDICT = srcBlockAfter(nc, 'function cityEcoVerdict(j, unsafe)');
+    let POLICY = srcBlockAfter(nc, 'function _savePolicy()');
+    /* The two one-liners are read as TEXT and compiled, so this section cannot
+       drift away from what serialize() and loadState() actually do. */
+    const STAMP_LINE = (nc.match(/^\s*ecoDefer: .*$/m) || [])[0];
+    const RAISE_LINE = (nc.match(/^\s*if \(_pendingEconomy \|\| .*_cityVerdict = 'established';\s*$/m) || [])[0];
+    chk('§3c can read the bridge, _savePolicy, cityEcoVerdict, the ecoDefer stamp and loadState\'s re-affirm',
+        !!BRIDGE && !!VERDICT && !!POLICY && !!STAMP_LINE && !!RAISE_LINE,
+        'bridge ' + (BRIDGE ? BRIDGE.length + 'b' : 'UNREADABLE') + ', policy ' + (POLICY ? 'ok' : 'UNREADABLE') +
+        ', verdict ' + (VERDICT ? 'ok' : 'UNREADABLE') + ', stamp ' + JSON.stringify(STAMP_LINE) +
+        ', re-affirm ' + JSON.stringify(RAISE_LINE) + ' — a rename made this section vacuous');
+
+    if (BRIDGE && VERDICT && POLICY && STAMP_LINE && RAISE_LINE) {
+      /* 🧨 Each switch re-commits ONE of the three things that were wrong, into
+         the extracted text and nothing else. A switch that matches nothing
+         throws rather than running inert. */
+      if (SABOTAGE === 'defer-noSave') {
+        const hit = POLICY.replace("if (_cityVerdict === 'unknown') return real ? 'local' : 'none';",
+                                   "if (_cityVerdict === 'unknown') return 'none';");
+        if (hit === POLICY) throw new Error('SABOTAGE defer-noSave matched nothing — _savePolicy was reshaped and this switch is inert');
+        POLICY = hit;
+      }
+      if (SABOTAGE === 'defer-serverwrite') {
+        const hit = POLICY.replace("return real ? 'local' : 'none';", "return real ? 'full' : 'none';");
+        if (hit === POLICY) throw new Error('SABOTAGE defer-serverwrite matched nothing — _savePolicy was reshaped and this switch is inert');
+        POLICY = hit;
+      }
+      if (SABOTAGE === 'defer-nostamp') {
+        const hit = VERDICT.replace(/\s*if \(s\.ecoDefer\) return unsafe \? 'unknown' : 'new';/, '');
+        if (hit === VERDICT) throw new Error('SABOTAGE defer-nostamp matched nothing — the ecoDefer term was reshaped and this switch is inert');
+        VERDICT = hit;
+      }
+
+      const vdict = new Function('j', 'unsafe', 'return (function cityEcoVerdict(j,unsafe)' + VERDICT + ')(j,unsafe);');
+      const policy = new Function('_cityVerdict', '_loadDone', '_loadFailed', 'game',
+                                  'return (function _savePolicy()' + POLICY + ')();');
+      const stamp = new Function('_cityVerdict',
+        'return (' + STAMP_LINE.trim().replace(/^ecoDefer:\s*/, '').replace(/,$/, '') + ');');
+      const reaffirm = new Function('_pendingEconomy', 's', '_cityVerdict', RAISE_LINE.trim() + ' return _cityVerdict;');
+
+      /* THE PARENT, modelled line for line off public/index.html — because the
+         whole defect lives in what that file answers a signed-out player. */
+      const makeParent = (o) => {
+        const P = {
+          getRes: () => 0, addCinders: () => {},
+          __cityLoadUnsafe: false, serverRow: o.serverRow || null, serverWrites: 0,
+          cityStateLoad: async () => {
+            if (!o.signedIn || o.rls) { P.__cityLoadUnsafe = true; return null; }
+            P.__cityLoadUnsafe = false; return P.serverRow;
+          },
+          cityStateSave: async (json) => { if (!o.signedIn) return; P.serverWrites++; P.serverRow = json; return true; },
+          cityStateUserId: () => (o.signedIn ? o.uid : null),
+        };
+        return P;
+      };
+      const makeBridge = (P, store) => {
+        const LS = { getItem: (k) => (store.has(k) ? store.get(k) : null),
+                     setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+        const fn = new Function('window', 'localStorage', 'location', 'URLSearchParams', 'console', 'setTimeout',
+                                'return (() => ' + BRIDGE + ')();');
+        return fn({ parent: P, addEventListener: () => {} }, LS, { search: '' }, URLSearchParams, console, setTimeout);
+      };
+      /* ONE node-city SESSION: boot → loadCity → verdict → play → save, in the
+         shipped call shape and through the shipped bridge. */
+      const session = async (tag, popts, store, build) => {
+        const P = makeParent(popts), B = makeBridge(P, store);
+        const j = await B.loadCity();
+        const unsafe = !!B.loadUnsafe;
+        let v = vdict(j, unsafe), loadFailed = unsafe;
+        const game = { tiles: { '0,0': { type: 'anchor' } } };
+        let pendingEconomy = null;
+        if (j) {
+          let s = null; try { s = JSON.parse(j); } catch (e) { s = null; }
+          if (s && s.tiles) {
+            game.tiles = s.tiles;
+            pendingEconomy = (s.economy && typeof s.economy === 'object') ? s.economy : null;
+            v = reaffirm(pendingEconomy, s, v);
+          } else loadFailed = true;
+        }
+        const restored = Object.keys(game.tiles).filter((k) => game.tiles[k].type !== 'anchor').length;
+        if (build) for (const [k, t] of build) game.tiles[k] = t;
+        const pol = policy(v, true, loadFailed, game);
+        if (pol !== 'none') {
+          await B.saveCity(JSON.stringify({ tiles: game.tiles, economy: pendingEconomy,
+                                            ecoDefer: stamp(v), savedAt: 1 }),
+                           { localOnly: pol === 'local' });
+        }
+        console.log('   [' + tag + '] unsafe=' + unsafe + ' verdict=' + v + ' restored=' + restored +
+                    ' policy=' + pol + ' → localStorage ' + store.size + ' key(s), cityStateSave ' + P.serverWrites);
+        return { v, pol, P, restored };
+      };
+      const BUILD = [['3,4', { type: 'house' }], ['5,2', { type: 'shop' }]];
+
+      /* ── the signed-out player, across three sessions ───────────────────── */
+      const devA = new Map();
+      const a1 = await session('signed out, builds a house', { signedIn: false }, devA, BUILD);
+      chk('§3c a signed-out player is DEFERRED, not decided', a1.v === 'unknown', 'verdict ' + a1.v);
+      chk('§3c …and their city IS written — to this device',
+          a1.pol === 'local' && devA.size === 1,
+          'policy ' + a1.pol + ', localStorage keys ' + devA.size +
+          ' — blocking the local write deletes the city of every player who has not signed in');
+      chk('§3c …while the account row is left untouched',
+          a1.P.serverWrites === 0 && a1.P.serverRow === null,
+          'cityStateSave calls ' + a1.P.serverWrites + ' — a deferred session wrote the row it cannot read');
+
+      const a2 = await session('comes back, still offline', { signedIn: false }, devA, [['6,6', { type: 'farm' }]]);
+      chk('§3c …the city comes BACK next session', a2.restored === 2, 'restored ' + a2.restored + ' tiles');
+      chk('§3c …and is STILL deferred — its own autosave is not evidence of an established city',
+          a2.v === 'unknown' && a2.pol === 'local',
+          'verdict ' + a2.v + ' — the `ecoDefer` stamp is what stops a brand-new offline player being ' +
+          'permanently refused their 300,000 🔥 by their own save');
+
+      const a3 = await session('signs in, server has no city', { signedIn: true, uid: 'u-1', serverRow: null }, devA, []);
+      chk('§3c …and the first trustworthy read decides it: new city, tranche due',
+          a3.v === 'new' && a3.pol === 'full' && a3.P.serverWrites === 1,
+          'verdict ' + a3.v + ', policy ' + a3.pol + ', server writes ' + a3.P.serverWrites);
+
+      /* ── the established player whose read blips ─────────────────────────── */
+      const REAL = JSON.stringify({ tiles: { '0,0': { type: 'anchor' }, '1,1': { type: 'house' },
+                                             '2,2': { type: 'mill' }, '7,7': { type: 'bank' } },
+                                    economy: { day: 400, treasury: 57.71, charterIssued: 300000 }, savedAt: 1 });
+      const devB = new Map();
+      const b1 = await session('RLS blip, builds anyway', { signedIn: true, uid: 'u-9', rls: true, serverRow: REAL }, devB, BUILD);
+      chk('§3c an ESTABLISHED player\'s ambiguous read defers too — no second tranche',
+          b1.v === 'unknown', 'verdict ' + b1.v);
+      chk('§3c …and their 400-day save is NOT overwritten by the deferred session',
+          b1.P.serverWrites === 0 && b1.P.serverRow === REAL,
+          'cityStateSave calls ' + b1.P.serverWrites + ' — this is the hazard the block was invented for, and it is real');
+      const b2 = await session('read recovers', { signedIn: true, uid: 'u-9', serverRow: REAL }, devB, []);
+      const b2eco = JSON.parse(b2.P.serverRow).economy;
+      chk('§3c …and the lived city loads back intact, established, charterIssued 300,000.00 🔥',
+          b2.v === 'established' && b2.restored === 3 && b2eco &&
+          Math.abs(b2eco.charterIssued - 300000) < 1e-9 && Math.abs(b2eco.treasury - 57.71) < 1e-9,
+          'verdict ' + b2.v + ', tiles ' + b2.restored + ', economy ' + JSON.stringify(b2eco));
+
+      /* ── an EMPTY deferred city still writes nothing, anywhere ───────────── */
+      const devC = new Map();
+      const c1 = await session('deferred, nothing built', { signedIn: false }, devC, []);
+      chk('§3c a deferred city with nothing in it writes nothing at all',
+          c1.pol === 'none' && devC.size === 0 && c1.P.serverWrites === 0,
+          'policy ' + c1.pol + ', localStorage keys ' + devC.size);
+
+      /* ── and the stamp read straight through the verdict function ────────── */
+      const deferBlob = JSON.stringify({ tiles: { '0,0': {}, '3,4': {} }, ecoDefer: 1 });
+      chk('§3c verdict(our own deferred blob, UNSAFE read) = unknown', vdict(deferBlob, true) === 'unknown',
+          'got ' + vdict(deferBlob, true));
+      chk('§3c verdict(our own deferred blob, CLEAN read) = new', vdict(deferBlob, false) === 'new',
+          'got ' + vdict(deferBlob, false));
+      chk('§3c …but a blob that carries a real economy still outranks the stamp',
+          vdict(JSON.stringify({ tiles: { '0,0': {} }, ecoDefer: 1, economy: { day: 9 } }), true) === 'established',
+          'a bootstrapped economy is the strongest evidence there is and must win');
+    }
   }
 
   /* ── §4 A REJECTED PAYOUT IS THE PLAYER'S MONEY, NOT THE HOUSE'S ───────────
@@ -6002,8 +6300,15 @@ const srcBlockAfter = (src, decl, open) => {
     const simSrc = readFileSync(join(ECODIR, 'sim.js'), 'utf8');
     const idxSrc = readFileSync(join(ECODIR, 'index.js'), 'utf8');
     const loadBlk = srcBlockAfter(simSrc, 'export function load(raw)');
-    const CALLER_OK  = 'established: hadState || opts.established === true';
-    const CALLER_OLD = 'established: !hadState && opts.established === true';
+    /* ⚠ THE ANCHOR MOVED WITH THE THREE-VALUED VERDICT, AND IT IS STILL THE SAME
+       REFUSAL. `mount()` used to read `established: hadState || opts.established
+       === true`; it now derives a three-valued verdict, and `hadState` is still
+       the term that says "we were handed a blob, so this city exists, whatever
+       the caller believes". The revert neuters exactly that term and nothing
+       else — `hadState && false` — so a doctored `booted:false` save reaches
+       bootstrap() with the caller's own verdict instead of the state's. */
+    const CALLER_OK  = "const verdict = hadState ? 'established' : verdictOf(opts.established);";
+    const CALLER_OLD = "const verdict = (hadState && false) ? 'established' : verdictOf(opts.established);";
     chk('§6 can find both refusals in the source it is about to revert',
         !!loadBlk && loadBlk.indexOf('S.booted = true;') >= 0 && idxSrc.indexOf(CALLER_OK) >= 0,
         'load() block ' + (loadBlk ? 'read' : 'UNREADABLE') + ', caller anchor ' +
@@ -7169,6 +7474,309 @@ const srcBlockAfter = (src, decl, open) => {
 
   if (fails) { bad++; console.log('\n=== ROUND 0u: ' + fails + ' FAILED ==='); }
   else console.log('\n=== ROUND 0u: ALL PASS ===');
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ROUND 0v — 💸 A CONFIRMATION THAT CANNOT DETECT A FAILURE, AND A SAVE THAT
+              ERASES WHAT IT CANNOT READ
+   ----------------------------------------------------------------------------
+   Two defects, one shape: a value that means "I do not know" being read as "yes".
+
+   ── §1/§2 THE PAYOUT-DELIVERY CONFIRMATION ─────────────────────────────────
+   index.js guarded the delivery with `if (res === false) back(); else
+   notePayoutDelivered(owed)`, and its own comment said "addCinders in 'message'
+   mode is an RPC that rejects on timeout or a dead parent." IT DID NOT REJECT.
+   node-city's `rpc()` resolved `null` from an 1800 ms setTimeout, resolved
+   `null` again when postMessage threw, and `B.addCinders` then did
+   `await rpc(...); return;` — returning `undefined` on EVERY path, success and
+   failure alike. `undefined !== false`, so a timed-out payout was booked as
+   DELIVERED and the player's Cinder was destroyed. It is the exact case the
+   comment named, and the comment is what made it look handled.
+
+   MEASURED on the tree before the fix, through the production call shape (the
+   real bridge lifted out of node-city, a parent that never answers, 400 ticks):
+       addCinders resolved  undefined   on timeout
+       addCinders resolved  undefined   when postMessage threw
+       addCinders resolved  undefined   on a genuine success
+       payoutOwed       0.98 🔥
+       payoutInFlight   0.00 🔥
+       payoutLifetime 570.00 🔥   ← booked as delivered
+       actually in the wallet  0.00 🔥
+
+   ── §3 THE ECONOMY BLOB ────────────────────────────────────────────────────
+   node-city's serialize() wrote `economy: window.MythicEconomy ?
+   window.MythicEconomy.serialize() : null`, and index.js answers `null` whenever
+   it is not mounted. So ONE failed import of /src/economy — a 404, a cache miss,
+   an offline moment, a throw in mount() — meant the very next save wrote
+   `economy: null` over a lived economy and it came back at zero, silently. The
+   `house:` and `stad:` fields twenty lines above had preserved their
+   previously-loaded blob for exactly this reason since they were written.
+
+   MEASURED on the pre-fix text against a 400-day blob (treasury 57.71 🔥,
+   charterIssued 300,000.00 🔥, 8 firms): module present → a blob, module absent
+   → null.
+
+   🔴 THE PRODUCTION CALL SHAPE, throughout. The bridge is the real
+      `MythicCityBridge` IIFE read out of public/node-city/index.html and
+      evaluated; the payout path is the real `MythicEconomy.tick()`; the save
+      field is the real `economy:` expression read out of serialize(). Nothing
+      below is re-typed.
+
+   Prove it can fail:
+     ECON_TEST_SABOTAGE=payout-blind  rebuild /src/economy with the delivery test
+                                      reverted to `res === false`, i.e. the
+                                      shipped guard that could not see a timeout
+     ECON_TEST_SABOTAGE=eco-erase     revert node-city's `economy:` field to
+                                      `window.MythicEconomy ? …serialize() :
+                                      null`, i.e. the line that nulled a city
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0v-a-failed-credit-must-be-detectable ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+  const NCPATH = join(here, '../../public/node-city/index.html');
+  const ncSrc = readFileSync(NCPATH, 'utf8');
+  const DAY = 20;
+  const host = { powerFactor: 1, waterFactor: 1, logisticsCounts: { warehouse: 2 }, hasBank: false, infrastructure: 0.6 };
+
+  /* ── THE REAL BRIDGE, LIFTED ───────────────────────────────────────────────
+     Everything about this defect lives in the seam between two files, so a
+     hand-written stub of either side would test the seam that was never broken.
+     The IIFE closes over `window`, `localStorage` and `location` only, which is
+     why it can be evaluated at all — the globals trap works in our favour here. */
+  const BRIDGE_BODY = srcBlockAfter(ncSrc, 'const MythicCityBridge = (() =>');
+  chk('§1 can read the shipped MythicCityBridge out of node-city',
+      !!BRIDGE_BODY && BRIDGE_BODY.length > 5000,
+      BRIDGE_BODY ? BRIDGE_BODY.length + ' bytes' : 'UNREADABLE — the bridge was reshaped and this round is vacuous');
+
+  const memStore = new Map();
+  const fakeLS = {
+    getItem: (k) => (memStore.has(k) ? memStore.get(k) : null),
+    setItem: (k, v) => memStore.set(k, String(v)), removeItem: (k) => memStore.delete(k),
+  };
+  /* Which bridge TEXT makeBridge compiles. Normally the shipped one; §2 swaps in
+     the reverted copy for the length of one build so the two halves of the
+     defect can be re-committed independently. */
+  let BRIDGE_BODY_ACTIVE = BRIDGE_BODY;
+  /* `mode` is forced through the bridge's OWN `?bridge=` switch rather than by
+     poking B.mode, so the mode-detection path is the shipped one too. */
+  const makeBridge = (opts) => {
+    const listeners = [];
+    const w = {
+      addEventListener: (t, f) => { if (t === 'message') listeners.push(f); },
+      parent: {
+        postMessage: (m) => {
+          if (opts.postMessageThrows) throw new Error('dead parent');
+          if (!opts.reply) return;                        // silence → the 1800ms timeout
+          setTimeout(() => listeners.forEach((f) => f({ data: { type: 'mythic-city-reply', id: m.id, result: opts.reply(m) } })), 1);
+        },
+      },
+    };
+    const fn = new Function('window', 'localStorage', 'location', 'URLSearchParams', 'console', 'setTimeout',
+      'return (() => ' + BRIDGE_BODY_ACTIVE + ')();');
+    const B = fn(w, fakeLS, { search: '?bridge=' + (opts.mode || 'message') }, URLSearchParams, console, setTimeout);
+    B.mode = opts.mode || 'message';
+    return B;
+  };
+
+  if (BRIDGE_BODY) {
+    /* ── §1 THE SIGNAL ITSELF ────────────────────────────────────────────────
+       Six answers the bridge can give, and the two that used to be
+       indistinguishable are the first two. */
+    const cases = [
+      ['a parent that never answers (timeout)', { }, false],
+      ['postMessage throws (dead parent)', { postMessageThrows: true }, false],
+      ['the host confirms', { reply: () => true }, true],
+      ['the host REFUSES', { reply: () => false }, false],
+      ['an older host that acks with no value', { reply: () => undefined }, true],
+      ['standalone (the mock ledger)', { mode: 'standalone' }, true],
+    ];
+    for (const [label, opts, want] of cases) {
+      const B = makeBridge(opts);
+      const got = await B.addCinders(1234);
+      chk('§1 addCinders → ' + JSON.stringify(want) + '  (' + label + ')',
+          got === want, 'resolved ' + JSON.stringify(got) +
+          ' — a value that cannot distinguish delivered from destroyed is what booked 570.00 🔥 that never arrived');
+    }
+    const okB = makeBridge({ reply: () => true });
+    chk('§1 …and nothing owed is not a failure',
+        (await okB.addCinders(0)) === true, 'addCinders(0) must not make the economy re-owe a payout it never claimed');
+
+    /* ── §2 THE PRODUCTION PAYOUT PATH ───────────────────────────────────────
+       🔴 THE DEFECT NEEDED BOTH FILES, AND SO DOES THE PROOF THAT IT IS CLOSED.
+       Two independent refusals now stand in front of it:
+         A. the bridge resolves a strict boolean, so a timeout is `false`;
+         B. index.js books a delivery only on `res === true`, so anything that is
+            not a positive confirmation is refunded.
+       Either one ALONE saves the money — and that is exactly why a switch that
+       reverts only one of them goes green. The first version of this section
+       reverted only B and was INERT for that reason, which is the same vacuous
+       green this file exists to distrust. So §2 reverts each in turn, asserts
+       the money survives both times, and then reverts BOTH and asserts the money
+       is destroyed — because a proof that cannot show the defect is not a proof.
+       `payout-blind` applies the both-reverted build to the headline checks. */
+    const ECODIR = join(here, '../../public/src/economy');
+    const idxTxt = readFileSync(join(ECODIR, 'index.js'), 'utf8');
+    const GUARD_OK = 'if (res !== true) back();';
+    const GUARD_OLD = 'if (res === false) back();';
+    /* The bridge half, reverted in the EXTRACTED text: `await rpc(…); return;`
+       is what shipped, and it returns `undefined` on every path. */
+    const bridgeOld = BRIDGE_BODY.replace(
+      /if \(B\.mode === 'message'\) \{\s*const r = await rpcEx\('addCinders'[\s\S]*?return r\.result !== false;\s*\}/,
+      "if (B.mode === 'message') { await rpc('addCinders', { n }); return; }");
+    chk('§2 can find both refusals it is about to revert',
+        idxTxt.indexOf(GUARD_OK) >= 0 && bridgeOld !== BRIDGE_BODY,
+        'index.js anchor ' + (idxTxt.indexOf(GUARD_OK) >= 0 ? 'found' : 'MISSING') +
+        ', bridge anchor ' + (bridgeOld !== BRIDGE_BODY ? 'found' : 'MISSING') +
+        ' — the anchors have drifted and the can-fail proof below is vacuous');
+
+    const tmpRoots = [];
+    const buildEco = async (tag, revertGuard) => {
+      const dst = join(tmpdir(), 'econ-0v-' + tag + '-' + process.pid + '-' + Date.now());
+      mkdirSync(dst, { recursive: true }); tmpRoots.push(dst);
+      for (const fn of readdirSync(ECODIR)) {
+        if (!fn.endsWith('.js')) continue;
+        let t = readFileSync(join(ECODIR, fn), 'utf8');
+        if (revertGuard && fn === 'index.js') t = t.split(GUARD_OK).join(GUARD_OLD);
+        writeFileSync(join(dst, fn), t);
+      }
+      return (await import(pathToFileURL(join(dst, 'index.js')).href)).default;
+    };
+
+    /* One module instance per scenario: `mounted`, `mountGen` and the sim state
+       are module-level, and sharing them across scenarios would let one
+       scenario's in-flight promise settle inside the next one's books.
+       `wallet` counts only what the bridge said it DELIVERED — it is the number
+       the player would actually see, and the whole defect is the gap between it
+       and `payoutLifetime`. */
+    const runPayout = async (tag, bridgeOpts, rev) => {
+      rev = rev || {};
+      const M = await buildEco(tag, !!rev.guard);
+      const body = rev.bridge ? bridgeOld : BRIDGE_BODY;
+      const B = (function () {
+        const saved = BRIDGE_BODY_ACTIVE; BRIDGE_BODY_ACTIVE = body;
+        try { return makeBridge(bridgeOpts); } finally { BRIDGE_BODY_ACTIVE = saved; }
+      })();
+      let wallet = 0;
+      const inner = B.addCinders;
+      B.addCinders = async (n) => { const r = await inner(n); if (r === true) wallet += Math.floor(n); return r; };
+      global.window.MythicCityBridge = B;
+      M.mount({ nodeId: 'payout-' + tag, population: 320, established: 'new' });
+      for (let i = 0; i < 400; i++) M.tick(DAY, host);
+      await new Promise((r) => setTimeout(r, 2200));    // every 1800 ms rpc has now settled
+      const snap = M.snapshot();
+      const life = snap.payoutLifetime != null ? snap.payoutLifetime : 0;
+      console.log('   [' + tag + '] owed ' + snap.payoutOwed.toFixed(2) +
+                  '  inFlight ' + snap.payoutInFlight.toFixed(2) +
+                  '  bookedDelivered ' + life.toFixed(2) +
+                  '  actuallyInWallet ' + wallet.toFixed(2) + ' 🔥');
+      return { snap, wallet, life };
+    };
+
+    const REV = SABOTAGE === 'payout-blind' ? { guard: true, bridge: true } : {};
+    const dead = await runPayout('timeout', {}, REV);
+    chk('§2 a payout the bridge never confirms is RE-OWED, not destroyed',
+        dead.life < 1e-6 && dead.snap.payoutInFlight < 1e-6 && dead.snap.payoutOwed > 1,
+        'bookedDelivered ' + dead.life.toFixed(2) + ' 🔥 against ' + dead.wallet.toFixed(2) +
+        ' 🔥 actually delivered — the timeout was read as a success and the money is in neither ledger');
+
+    const throwy = await runPayout('pm-throws', { postMessageThrows: true }, REV);
+    chk('§2 …and so is one whose postMessage threw',
+        throwy.life < 1e-6 && throwy.snap.payoutInFlight < 1e-6 && throwy.snap.payoutOwed > 1,
+        'bookedDelivered ' + throwy.life.toFixed(2) + ' 🔥 against ' + throwy.wallet.toFixed(2) + ' 🔥 delivered');
+
+    const good = await runPayout('confirmed', { reply: () => true }, REV);
+    chk('§2 …while a GENUINE success still books as delivered, exactly once',
+        good.life > 1 && Math.abs(good.life - good.wallet) < 1e-6 && good.snap.payoutInFlight < 1e-6,
+        'bookedDelivered ' + good.life.toFixed(2) + ' 🔥 vs wallet ' + good.wallet.toFixed(2) +
+        ' 🔥 — a mismatch is a payout counted twice or lost');
+    chk('§2 …and a refused payout comes back too',
+        (await runPayout('refused', { reply: () => false }, REV)).life < 1e-6,
+        'an explicit refusal was booked as a delivery');
+
+    /* ── AND NOW BREAK IT, FOR REAL — one refusal at a time, then both. ────── */
+    const onlyBridge = await runPayout('revert-bridge', {}, { bridge: true });
+    chk('§2 refusal B holds ALONE — with the bridge blind again, index.js still refunds',
+        onlyBridge.life < 1e-6 && onlyBridge.snap.payoutOwed > 1,
+        'reverting the bridge alone destroyed ' + onlyBridge.life.toFixed(2) + ' 🔥');
+    const onlyGuard = await runPayout('revert-guard', {}, { guard: true });
+    chk('§2 refusal A holds ALONE — with `res === false` back, the bridge\'s `false` still catches it',
+        onlyGuard.life < 1e-6 && onlyGuard.snap.payoutOwed > 1,
+        'reverting index.js alone destroyed ' + onlyGuard.life.toFixed(2) + ' 🔥');
+    const both = await runPayout('revert-both', {}, { guard: true, bridge: true });
+    console.log('   [revert-both] the shipped tree: ' + both.life.toFixed(2) +
+                ' 🔥 booked as delivered, ' + both.wallet.toFixed(2) + ' 🔥 actually delivered');
+    chk('§2 …and reverting BOTH really does destroy the money — the defect is real and this proof is not vacuous',
+        both.life > 1 && both.wallet < 1e-6,
+        'both refusals reverted and only ' + both.life.toFixed(2) + ' 🔥 was mis-booked — §2 is asserting nothing, ' +
+        'find out what else is closing this');
+    for (const d of tmpRoots) { try { rmSync(d, { recursive: true, force: true }); } catch (e) {} }
+  }
+
+  /* ── §3 THE SAVE MAY NOT ERASE WHAT IT CANNOT READ ─────────────────────────
+     The `economy:` field is read out of serialize() and run against the two
+     module states that matter. `_lastEconomyBlob` is declared inside the harness
+     so the extracted expression's assignment to it is observable — that
+     assignment is the fix. */
+  const ecoField = srcBlockAfter(ncSrc, 'economy: (function ()');
+  chk('§3 can read node-city\'s `economy:` save field',
+      !!ecoField, 'UNREADABLE — the field was reshaped and this section is vacuous');
+  if (ecoField) {
+    const body = (SABOTAGE === 'eco-erase')
+      ? '{ try { return window.MythicEconomy ? window.MythicEconomy.serialize() : null; } catch (e) { return null; } }'
+      : ecoField;
+    const runField = new Function('window', '_last', `
+      let _lastEconomyBlob = _last;
+      const out = (function () ${body})();
+      return { out, kept: _lastEconomyBlob };`);
+
+    const lived = { day: 400, treasury: 57.71, charterIssued: 300000, firms: { firms: [1, 2, 3, 4, 5, 6, 7, 8] } };
+    const liveMod = { ready: () => true, serialize: () => lived };
+    const deferredMod = { ready: () => false, serialize: () => null };
+
+    // 1. the module is there: the blob is written AND remembered.
+    const r1 = runField({ MythicEconomy: liveMod }, null);
+    chk('§3 a mounted economy writes its blob',
+        r1.out === lived && r1.kept === lived, 'wrote ' + JSON.stringify(r1.out));
+
+    // 2. the module 404s on the NEXT session, after loadState stashed the blob.
+    const r2 = runField({}, lived);
+    console.log('   module absent, last known blob day ' + lived.day + '/treasury ' + lived.treasury.toFixed(2) +
+                ' 🔥 → save writes ' + (r2.out ? 'day ' + r2.out.day + '/treasury ' + (+r2.out.treasury).toFixed(2) + ' 🔥' : JSON.stringify(r2.out)));
+    chk('§3 …and a FAILED import of /src/economy does not null it',
+        r2.out === lived,
+        'the save wrote ' + JSON.stringify(r2.out) + ' over a lived economy — one 404 erases the whole city economy');
+
+    // 3. registered but not mounted — the deferred case, and the same door.
+    const r3 = runField({ MythicEconomy: deferredMod }, lived);
+    chk('§3 …nor does a registered-but-unmounted module (the deferred case)',
+        r3.out === lived,
+        'wrote ' + JSON.stringify(r3.out) + ' — `E && E.serialize()` is null whenever mounted is false');
+
+    // 4. a throw inside serialize() is the third door onto the same field.
+    const r4 = runField({ MythicEconomy: { ready: () => true, serialize: () => { throw new Error('corrupt'); } } }, lived);
+    chk('§3 …nor a throw inside serialize()', r4.out === lived, 'wrote ' + JSON.stringify(r4.out));
+
+    // 5. …and the round trip: what survived loads back intact.
+    const roundTripped = JSON.parse(JSON.stringify({ tiles: { '0,0': {} }, economy: r2.out }));
+    chk('§3 …and the surviving blob reloads intact',
+        roundTripped.economy && roundTripped.economy.day === 400 &&
+        Math.abs(roundTripped.economy.treasury - 57.71) < 1e-9 &&
+        Math.abs(roundTripped.economy.charterIssued - 300000) < 1e-9,
+        JSON.stringify(roundTripped.economy));
+
+    /* And the seed: loadState must stash the blob in the first place, or the
+       fallback above is always empty and §3 passes on a variable nobody fills. */
+    chk('§3 …and loadState seeds it, so the fallback is not permanently null',
+        /_lastEconomyBlob\s*=\s*_pendingEconomy\s*;/.test(ncSrc),
+        'nothing in loadState assigns `_lastEconomyBlob` — the guard above can only ever return null');
+  }
+
+  if (fails) { bad++; console.log('\n=== ROUND 0v: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0v: ALL PASS ===');
 }
 
 for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {

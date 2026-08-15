@@ -1629,8 +1629,21 @@ export function claimPayout() {
    books — treasury debited on the day it was drawn, `flow.payout` recorded, the
    day audit perfectly satisfied — and it never arrived in the player's wallet.
    It existed in NEITHER ledger. Reachable in production without any exploit:
-   `MythicCityBridge.addCinders` in 'message' mode is an RPC that rejects on
-   timeout or a dead parent. There was no retry and no re-credit path.
+   `MythicCityBridge.addCinders` in 'message' mode is an RPC over postMessage,
+   and it can time out or hit a dead parent. There was no retry and no re-credit
+   path.
+
+   ⚠ THIS COMMENT USED TO SAY THAT RPC "REJECTS ON TIMEOUT OR A DEAD PARENT",
+     AND THAT WAS FALSE — index.js was written against the claim and inherited
+     the bug. node-city's `rpc()` RESOLVED `null` from an 1800 ms setTimeout and
+     `null` again when postMessage threw, and `B.addCinders` returned `undefined`
+     on every path, so the caller's `if (res === false) refund` never fired and a
+     timed-out payout was booked as delivered. MEASURED, 400 ticks against a
+     parent that never answered: 570.00 🔥 booked into `payoutLifetime`, 0.00 🔥
+     in the wallet. The bridge now resolves a strict boolean and index.js refunds
+     on anything that is not `true`. A comment describing a contract the other
+     file does not keep is worse than no comment: this one cost the money the
+     function below exists to save.
 
    MEASURED on the pre-fix tree, 400 ticks against a bridge that rejected every
    call: 10,193 🔥 claimed out of the sim, 0 🔥 delivered, `lastAudit.ok === true`
@@ -1696,6 +1709,14 @@ export function snapshot() {
     /* Exposed so "the payout is stuck in the bridge" is readable rather than
        inferred from a balance that quietly stopped moving. */
     payoutInFlight: S.payoutInFlight,
+    /* 💸 …AND THE ONE FIGURE THAT SAYS A PAYOUT ACTUALLY ARRIVED, which was
+       tracked but unreadable outside this module. Its own header calls it "the
+       only record that a payout ever actually ARRIVED" and then nothing could
+       see it — so the defect where every timed-out payout was booked as
+       delivered (570.00 🔥 "delivered", 0.00 🔥 in the wallet) was invisible to
+       the panel AND to the gate. A number nobody can read is a number nobody
+       notices going wrong; run.mjs round0v reads this one. */
+    payoutLifetime: S.payoutLifetime,
     /* Exposed so a panel (and the gate) can read the founding faucet directly
        rather than inferring it from a total that moved. */
     charter: S.charter, charterIssued: S.charterIssued,

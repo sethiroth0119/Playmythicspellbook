@@ -67,6 +67,42 @@ let lastPayoutAt = 0;
    Narrow, but it is the same shape as every other defect in this file: money
    moving outside the window anything is watching. */
 let mountGen = 0;
+/* ⏳ MOUNTED, BUT THE BOOTSTRAP DECISION HAS NOT BEEN MADE — the third state.
+   `mounted` stays FALSE while this is true, deliberately: `ready()`, `tick()`,
+   `snapshot()` and `serialize()` all gate on `mounted`, and every one of them
+   would be wrong on an un-bootstrapped simulation. `tick()` would advance a city
+   with no firms and no charter; `serialize()` would write that emptiness into
+   the save and the NEXT boot would read the blob as proof of an established
+   city — turning a two-second network blip into a permanent refusal, which is
+   the exact defect deferral exists to end. So a deferred economy is inert and
+   invisible to the save, and `deferred()` is how the host tells that apart from
+   "the module never loaded". */
+let deferred = false;
+let deferCtx = null;                 // {nodeId, population} — replayed by resolve()
+
+/* Boolean or string → one of three verdicts. `true`/`'established'` and
+   `false`/`'new'` are answers; `'unknown'` (or any other non-absent value) is
+   the refusal to answer, and it is the only value that costs the player nothing
+   in either direction.
+
+   ⚠ AN ABSENT FLAG MEANS 'new', AND THAT IS NOT THE FAIL-OPEN DEFAULT THIS
+     PACKAGE EXISTS TO KILL. `mount()` with no state and no flag is the literal
+     statement "found a fresh city on this node" — it is what every test harness
+     and every future embedder means by it, and it is what this module has always
+     done (`opts.established === true` read an absent flag as `false`). The
+     dangerous default was never here: it was in node-city, where the flag is
+     DERIVED FROM A SAVE and an unreadable save used to collapse into one of the
+     two answers. That is now three-valued at source — `_cityVerdict` is
+     initialised to 'unknown' and is one of the three strings on every path
+     including a throw before loadState runs — so the production caller can no
+     longer reach this branch at all, and run.mjs asserts that its `E.mount({…})`
+     literal still passes an explicit verdict. Deferring an absent flag instead
+     would only move the guess into callers that have nothing to guess about. */
+function verdictOf(v) {
+  if (v === true || v === 'established') return 'established';
+  if (v === false || v === 'new' || v === undefined) return 'new';
+  return 'unknown';
+}
 
 /* ── MOUNT ──────────────────────────────────────────────────────────────────
    Called by the host once the bridge exists. `nodeId` decides the ground the
@@ -124,7 +160,31 @@ function mount(opts) {
         level that KNOWS whether a save was handed over, so a future edit to
         load() cannot silently reopen it. Reverting either one alone leaves the
         door shut; run.mjs breaks each in turn to prove it. */
-  Sim.bootstrap({ established: hadState || opts.established === true });
+  /* 🔴 …AND THE THIRD ANSWER, WHICH IS TO NOT ANSWER.
+     `established` used to be read as `=== true`, i.e. a boolean with a default.
+     Both defaults are wrong: `false` mints a fresh 300,000 🔥 tranche on any
+     boot error, and `true` — the "fail closed" fix — PERMANENTLY DENIED a
+     brand-new player their tranche whenever their very first city read was
+     ambiguous (an RLS hiccup, a momentary offline, a save stamped for somebody
+     else). Measured on that tree: charterIssued 0.00 🔥 against the 300,000.00 🔥
+     a founded city receives, and nothing ever lowered it again.
+
+     So an unrecognised or explicitly unknown verdict DEFERS: no bootstrap, no
+     issuance, no refusal, no serialisation, and the host resolves it from the
+     next trustworthy read through `resolve()` below. `hadState` still decides on
+     its own — being handed a blob is proof the city exists whatever the caller
+     believes, and it is the second door described above. */
+  const verdict = hadState ? 'established' : verdictOf(opts.established);
+  if (verdict === 'unknown') {
+    deferred = true;
+    mounted = false;
+    deferCtx = { nodeId, population: (typeof opts.population === 'number') ? opts.population : null };
+    mountGen++;                     // a payout in flight from a previous city is not ours
+    try { console.warn('[economy] mounted DEFERRED — the host could not say whether this city already existed. No founding tranche has been issued OR refused; call resolve() when a trustworthy read arrives.'); } catch (e) {}
+    return true;
+  }
+  deferred = false; deferCtx = null;
+  Sim.bootstrap({ established: verdict === 'established' });
   mounted = true;
   mountGen++;
 
@@ -145,6 +205,45 @@ function mount(opts) {
     if (!v.ok) console.warn('[economy] endowment guarantees violated', v.violations);
   } catch (e) { /* diagnostics must never break the mount */ }
 
+  return true;
+}
+
+/* ── ⏳ RESOLVE ─────────────────────────────────────────────────────────────
+   The other half of a deferred mount, and the ONLY way out of it. The host calls
+   this when — and only when — a trustworthy read has finally answered the
+   question `mount()` refused to guess at.
+
+   🔴 IT REFUSES AN 'unknown' JUST AS HARD AS mount() DOES. A retry that came
+      back inconclusive is not new evidence, and accepting it here would put the
+      guess back one function along, which is exactly how a three-valued state
+      decays into a boolean with extra steps.
+
+   ⚠ `Sim.bootstrap()` is idempotent by its own first line (`if (S.booted) return
+     false`), so a double resolve cannot issue a second tranche even if a retry
+     and a button land together. That guard is load-bearing here, not incidental.
+
+   ⚠ mountGen IS BUMPED AGAIN. The deferred window is real time — a payout can
+     have been claimed and be in flight from before it, and confirming it against
+     the books of a city that has only just been founded would credit the wrong
+     ledger. Same reasoning as mount()'s own bump. */
+function resolve(opts) {
+  if (!deferred) return false;
+  opts = opts || {};
+  let hadState = false;
+  const nodeId = deferCtx ? deferCtx.nodeId : Sim.state().nodeId;
+  if (opts.state) {
+    Sim.load(opts.state);
+    Sim.setNode(nodeId);
+    hadState = true;
+  }
+  const verdict = hadState ? 'established' : verdictOf(opts.established);
+  if (verdict === 'unknown') return false;      // still nothing to decide on
+  if (deferCtx && typeof deferCtx.population === 'number') HH.setPopulation(deferCtx.population);
+  Sim.bootstrap({ established: verdict === 'established' });
+  deferred = false; deferCtx = null;
+  mounted = true;
+  mountGen++;
+  try { console.warn('[economy] deferred mount RESOLVED as "' + verdict + '" — charterIssued ' + Sim.snapshot().charterIssued.toFixed(2) + ' 🔥'); } catch (e) {}
   return true;
 }
 
@@ -193,11 +292,31 @@ function tick(dtMin, host) {
         const back = () => { if (gen === mountGen) Sim.refundPayout(owed); };
         Promise.resolve(bridge.addCinders(owed))
           .then((res) => {
-            /* An explicit `false` is a refusal, not a delivery — the host's
-               addCinders returns a boolean in bridge mode. `undefined` is the
-               ordinary success of a void async function and must NOT be read as
-               a rejection, or every successful payout would be paid twice. */
-            if (res === false) back();
+            /* 🔴 ONLY `true` IS A DELIVERY. THIS TEST USED TO BE `res === false`
+               AND IT COULD NOT DETECT THE FAILURE IT WAS WRITTEN TO CATCH.
+               The comment above it claimed "addCinders in 'message' mode is an
+               RPC that rejects on timeout or a dead parent". It did not reject:
+               node-city's `rpc()` resolved `null` from an 1800 ms setTimeout and
+               `null` again when postMessage threw, and `B.addCinders` then did
+               `await rpc(...); return;` — so it returned `undefined` on EVERY
+               path, success and failure alike. `undefined !== false`, so a
+               timed-out payout was booked as delivered and the player's Cinder
+               was destroyed. MEASURED, 400 ticks against a parent that never
+               answered: payoutLifetime 570.00 🔥 "delivered", payoutInFlight
+               0.00 🔥, and 0.00 🔥 in the wallet.
+
+               The bridge now returns a strict boolean (see B.addCinders), so the
+               safe reading is the strict one: anything that is not a positive
+               confirmation goes back on the books. `undefined` included — a
+               bridge that cannot say "delivered" has not delivered.
+
+               ⚠ THE DIRECTION IS DELIBERATE, and it is the opposite of the old
+                 comment's fear. Re-owing at worst pays a queue the audit
+                 reconciles (`payoutOwed` is not a term of `totalCinder()`, so a
+                 refund moves the audited total by exactly zero and the next tick
+                 simply tries the bridge again); reading a silence as success
+                 destroys real money with nothing left to reconcile from. */
+            if (res !== true) back();
             else {
               lastPayoutAt = Date.now();
               /* 💸 THE DELIVERY, CONFIRMED — and this is the ONLY line in the
@@ -470,16 +589,29 @@ async function tradeSync() {
 /* ── PERSISTENCE ────────────────────────────────────────────────────────────
    The host stores this blob inside its own city save. Absent-tolerant on load,
    like everything else in this codebase that loads. */
+/* ⚠ `null` HERE IS NOT "NO ECONOMY", IT IS "NO ANSWER", AND THE HOST MUST NOT
+     WRITE IT OVER A LIVED ONE. node-city used to do exactly that —
+     `economy: window.MythicEconomy ? …serialize() : null` — so one failed import
+     of this module, or one deferred mount, erased the player's whole city
+     economy on the next save. The host now keeps the last blob it knows is real
+     and only overwrites it when a MOUNTED module answers with one; see
+     `_lastEconomyBlob` in node-city/index.html. This side stays honest and
+     returns null, because inventing a blob for an unmounted simulation would be
+     the same lie one layer down. */
 function serialize() { return mounted ? Sim.serialize() : null; }
-function load(raw) { const ok = Sim.load(raw); mounted = true; return ok; }
+function load(raw) { const ok = Sim.load(raw); mounted = true; deferred = false; deferCtx = null; return ok; }
 
 /* ════════════════════════════════════════════════════════════════════════════
    THE PUBLIC SURFACE
    ════════════════════════════════════════════════════════════════════════════ */
 const api = {
   // lifecycle
-  mount, tick, serialize, load,
+  mount, tick, serialize, load, resolve,
   ready: () => mounted,
+  /* ⏳ "Mounted, but the founding decision has not been made." Distinct from
+     `!ready()`, which is also true when the module never loaded at all — the
+     host renders a different, and much more reassuring, panel for each. */
+  deferred: () => deferred,
 
   // the city ⇄ economy seam
   syncBuildings, canBuild, pickAvailable, cardOutput,

@@ -1476,14 +1476,41 @@ const MythicCityBridge = (() => {
     if (!d || d.type !== 'mythic-city-reply') return;
     const w = rpcWait[d.id]; if (w) { delete rpcWait[d.id]; w(d.result); }
   });
-  function rpc(op, args) {
+  /* 🔴 rpc() CANNOT SAY "I FAILED", AND THAT DESTROYED REAL MONEY.
+     It resolves `null` from the 1800 ms setTimeout, resolves `null` when
+     postMessage throws (a dead parent), and a host answering `null` resolves
+     `null` too — three different outcomes, one indistinguishable value. The
+     economy's payout path read that through `B.addCinders`, which did
+     `await rpc(...); return;` and therefore returned `undefined` on EVERY path,
+     success and failure alike. index.js then booked a TIMED-OUT payout as
+     delivered (`if (res === false) refund; else notePayoutDelivered`) and the
+     Cinder existed in neither ledger. MEASURED on the tree before this comment:
+     400 ticks against a parent that never answered → payoutLifetime 570.00 🔥
+     "delivered", payoutInFlight 0.00, and 0.00 🔥 actually in the wallet.
+
+     So the transport now reports its OWN outcome separately from the host's
+     answer. `rpcEx` resolves `{ ok, result }`: `ok:false` means the message
+     never got an answer (timeout) or never left (postMessage threw), and is
+     NOT a host reply. `rpc()` keeps the old shape for the ~dozen callers that
+     only want the value and already treat null as "no".
+
+     ⚠ REJECTED: making rpc() reject on timeout. Every existing caller does a
+       bare `await rpc(...)` inside code with no try/catch, so a rejection would
+       turn a slow parent into an unhandled rejection that takes out whatever
+       tick it happened inside. A returned verdict cannot be ignored by accident
+       *and* cannot break a caller that ignores it. */
+  function rpcEx(op, args) {
     return new Promise((resolve) => {
       const id = ++rpcSeq;
-      rpcWait[id] = resolve;
-      try { window.parent.postMessage({ type: 'mythic-city', id, op, args }, '*'); } catch (e) { resolve(null); }
-      setTimeout(() => { if (rpcWait[id]) { delete rpcWait[id]; resolve(null); } }, 1800);
+      let done = false;
+      const fin = (v) => { if (done) return; done = true; delete rpcWait[id]; resolve(v); };
+      rpcWait[id] = (result) => fin({ ok: true, result });
+      try { window.parent.postMessage({ type: 'mythic-city', id, op, args }, '*'); }
+      catch (e) { fin({ ok: false, result: null, why: 'postMessage threw' }); return; }
+      setTimeout(() => fin({ ok: false, result: null, why: 'timeout' }), 1800);
     });
   }
+  function rpc(op, args) { return rpcEx(op, args).then((r) => r.result); }
 
   // ── handshake: confirm someone is actually listening ────────────────
   // If we detected 'message' mode (we're in an iframe) but the parent has
@@ -1541,11 +1568,34 @@ const MythicCityBridge = (() => {
     if (B.mode === 'message') { return (await rpc('getCinders', {})) | 0; }
     return mockLedger().cinders | 0;
   };
+  /* 💰 THE ONE BRIDGE CALL THAT MOVES THE PLAYER'S REAL WALLET, AND THE ONLY
+     ONE WHOSE RETURN VALUE IS LOAD-BEARING.
+     🔴 IT USED TO RETURN `undefined` ON EVERY PATH — success, timeout, dead
+     parent, thrown host — so /src/economy could not tell a delivered payout
+     from a destroyed one and booked both as delivered. It now resolves a
+     STRICT BOOLEAN: `true` means the Cinder reached a ledger, and ANYTHING
+     ELSE means it did not. Callers must treat only `true` as delivery; see
+     index.js, which refunds on everything else.
+     ⚠ `!n` returns true on purpose: nothing owed is nothing lost, and returning
+       false there would have the economy re-owe a payout it never claimed. */
   B.addCinders = async (n) => {
-    n = Math.floor(n); if (!n) return;
-    if (B.mode === 'parent') { try { (typeof P.cityAddCinders === 'function' ? P.cityAddCinders : P.addCinders)(n); } catch (e) {} return; }
-    if (B.mode === 'message') { await rpc('addCinders', { n }); return; }
-    const L = mockLedger(); L.cinders = Math.max(0, L.cinders + n); mockSave();
+    n = Math.floor(n); if (!n) return true;
+    if (B.mode === 'parent') {
+      /* A throw here is the parent's ledger refusing or missing. It used to be
+         swallowed into a bare `return`, which read as success. */
+      try { (typeof P.cityAddCinders === 'function' ? P.cityAddCinders : P.addCinders)(n); return true; }
+      catch (e) { try { console.warn('[MythicCityBridge] addCinders threw in parent mode — NOT delivered', e); } catch (e2) {} return false; }
+    }
+    if (B.mode === 'message') {
+      const r = await rpcEx('addCinders', { n });
+      // A timeout or a postMessage that threw is NOT a delivery, whatever the
+      // host would have said. This is the case the 570.00 🔥 came from.
+      if (!r.ok) { try { console.warn('[MythicCityBridge] addCinders ' + r.why + ' — NOT delivered (' + n + ' 🔥 re-owed)'); } catch (e) {} return false; }
+      // The host answers `true` on success and `false` on a refusal; an older
+      // host that answers nothing at all has still ACKED, so that is a delivery.
+      return r.result !== false;
+    }
+    const L = mockLedger(); L.cinders = Math.max(0, L.cinders + n); mockSave(); return true;
   };
   B.spendCinders = async (n) => {
     n = Math.floor(n); if (n <= 0) return true;
@@ -1948,7 +1998,28 @@ const MythicCityBridge = (() => {
   }
   function cityKey() { const u = cityOwnerId(); return u ? (CITYKEY_BASE + ':' + u) : CITYKEY_BASE; }
 
-  B.saveCity = async (json) => {
+  /* 💾 `opts.localOnly` — WRITE THIS DEVICE, NEVER THE SERVER ROW.
+     🔴 THE DEFECT THAT PUT IT HERE. The city save used to be one indivisible
+     act: localStorage AND the `city_state` upsert, together or not at all. So
+     when node-city grew a reason to distrust the SERVER half — a read it was
+     refused, which may be hiding a real city behind it — the only tool it had
+     was to block the whole call. MEASURED on that tree, driving this IIFE
+     against a signed-out parent (`cityStateLoad` answers null and raises
+     `__cityLoadUnsafe` unconditionally when there is no Cloud/userId):
+     verdict 'unknown', every save blocked, `localStorage` keys written 0 — the
+     player builds a city and NOTHING is written anywhere, on every session,
+     forever, because the retry re-reads the same signed-out parent and can
+     never clear. That is not a blip, it is the steady state of playing before
+     signing in, on a new device, or offline — which `_openNodeCity` explicitly
+     supports — and it breaks CLAUDE.md's "must still work offline".
+     The two halves are now separable because they carry different risks:
+       · localStorage is THIS browser's own scratch. It can lose nothing that
+         is not already here, so it is always safe to write.
+       · the `city_state` upsert is one row per user with no history, so a
+         single write over a save we were refused is permanent loss.
+     Deferral suspends the FOUNDING DECISION and the server write. It does not
+     suspend the player's city. See `_savePolicy()`. */
+  B.saveCity = async (json, opts) => {
     try {
       // Stamp the owner INTO the payload so a read can always self-check, even
       // from the un-namespaced legacy key.
@@ -1957,6 +2028,7 @@ const MythicCityBridge = (() => {
       if (u) { try { const o = JSON.parse(json); o._owner = u; out = JSON.stringify(o); } catch (e) {} }
       localStorage.setItem(cityKey(), out);
     } catch (e) {}
+    if (opts && opts.localOnly) return;
     if (B.mode === 'parent') { try { if (typeof P.cityStateSave === 'function') P.cityStateSave(json); } catch (e) {} }
     else if (B.mode === 'message') { rpc('saveCity', { json }); }
   };
@@ -16418,6 +16490,15 @@ function ecoBtn(act, arg, label, off, tip) {
      panel. */
 function ecoAction(act, arg) {
   const E = window.MythicEconomy;
+  /* ⏳ THE TWO DEFERRED ACTIONS ARE DISPATCHED ABOVE THE `ready()` GATE, and
+     that is the point of them: a deferred economy is by definition NOT ready,
+     so a button behind that gate would be the only control on a panel that
+     exists to offer exactly one. */
+  if (E && typeof E.deferred === 'function' && E.deferred()) {
+    if (act === 'ecoretry') { ecoDeferRetry(true); renderEco._last = null; renderEco(); return true; }
+    if (act === 'ecoreload') { try { location.reload(); } catch (e) {} return true; }
+    return false;
+  }
   if (!E || !E.ready()) return false;
   try {
     if (act === 'trace') { ecoTrace = String(arg || '') || null; }
@@ -16595,9 +16676,178 @@ function ecoTradeHtml(E) {
   return h.join('');
 }
 
+/* ══ ⏳ THE DEFERRED ECONOMY ═══════════════════════════════════════════════════
+   The city read came back untrustworthy AND empty, so `_cityVerdict` is
+   'unknown' and /src/economy mounted without bootstrapping: no founding tranche
+   issued, none refused, the question left exactly as it was found. Read the
+   `_cityVerdict` header for why neither answer was allowed to be guessed.
+
+   🔴 DEFERRAL SUSPENDS THE FOUNDING DECISION. IT DOES NOT SUSPEND THE CITY.
+      The first version of it also blocked both save writers, and that turned a
+      few seconds of caution for one player into permanent, every-session data
+      loss for a whole class of them: `window.cityStateLoad` raises
+      `__cityLoadUnsafe` unconditionally when there is no Cloud client or no
+      `Profile.cloud.userId`, so a signed-out or offline player is 'unknown' as
+      a STEADY STATE and the retry below can never clear it. Measured on that
+      tree: verdict 'unknown', all four retries 'unknown', localStorage keys
+      written 0, city_state writes 0. The city keeps saving to this device now —
+      see `_savePolicy()` and the `ecoDefer` stamp in serialize(). Only the
+      account-level write waits.
+
+   THIS IS THE PART THAT MAKES DEFERRAL SURVIVABLE RATHER THAN A LIMBO. Three
+   things resolve it, in the order a player meets them:
+     1. an automatic retry on a short backoff — the overwhelmingly common cause
+        is a transient RLS/network blip and it clears in seconds, before the
+        player has read anything;
+     2. the panel's Retry button, for when it does not;
+     3. a reload, when the retry finds the save this session failed to load.
+
+   ⚠ 2/5/15/45 SECONDS IS NOT AN ECONOMY NUMBER AND DOES NOT BELONG IN ECON.
+     It prices nothing and appears in no formula — it is retry policy for a
+     network read, the same class as the bridge's 1800 ms RPC timeout, which
+     also lives at its call site. Putting it in ECON would say the economy tuner
+     may change how often the city talks to Supabase.
+   ⚠ AND IT IS BOUNDED. An unbounded poll against a refusing backend is a
+     denial-of-service the player is paying for; after the last attempt the panel
+     stops promising and hands the decision to the button. */
+const ECO_DEFER_BACKOFF_SEC = [2, 5, 15, 45];
+let _ecoDeferTries = 0, _ecoDeferTimer = null, _ecoDeferSaid = null, _ecoDeferBusy = false;
+
+/* ⚠ EVERY WORD HERE IS CHECKED AGAINST `_savePolicy()`, because the first
+   version of this panel LIED to the one player who saw it most. It promised
+   "Retrying automatically" and "nothing has been lost" to signed-out players,
+   for whom the retry was structurally incapable of ever succeeding and whose
+   work was being discarded continuously. The city now saves to this device
+   while deferred, so that is what it says. */
+function ecoDeferAnnounce() {
+  _ecoDeferSaid = null;
+  try { toast('🕒 City records unavailable — your city is saving to THIS DEVICE only and no founding capital has been issued yet. Retrying…', 'bad'); } catch (e) {}
+  try { console.warn('[city] economy DEFERRED — the first read was untrusted and empty, so neither "new city" nor "existing city" is provable. No tranche issued, no tranche refused. The city keeps saving to localStorage; the city_state row is left untouched until a trustworthy read arrives.'); } catch (e) {}
+  ecoDeferSchedule();
+}
+
+function ecoDeferSchedule() {
+  if (_ecoDeferTimer) return;
+  const wait = ECO_DEFER_BACKOFF_SEC[Math.min(_ecoDeferTries, ECO_DEFER_BACKOFF_SEC.length - 1)];
+  if (_ecoDeferTries >= ECO_DEFER_BACKOFF_SEC.length) return;   // the button owns it from here
+  _ecoDeferTimer = setTimeout(() => { _ecoDeferTimer = null; ecoDeferRetry(false); }, wait * 1000);
+}
+
+/* 🔴 THE RESOLUTION, AND THE ONE THING IT MAY NOT DO IS GUESS AGAIN.
+   It re-reads through the SAME bridge call boot() used and runs the SAME
+   `cityEcoVerdict` over the answer — there is no second copy of the decision.
+     'new'          the server really has no city → resolve, issue the tranche,
+                    promote the save from 'local' to 'full', and flush.
+     'established'  the server HAS a city that this session failed to load. The
+                    economy is deliberately NOT resolved here: `game.tiles` holds
+                    an empty city, and mounting the real economy onto it would
+                    pair a lived economy with a city that is not there — and
+                    promoting the save to 'full' would then write that emptiness
+                    over the real save. A reload runs loadState against a read
+                    that now works, which is the whole fix. So: say so, offer it.
+                    (Nothing has been lost meanwhile: the deferred session wrote
+                    to this device only, so the server row is untouched.)
+     'unknown'      still nothing to decide on. Back off and try again. */
+async function ecoDeferRetry(manual) {
+  /* 🔴 GATED ON THE VERDICT, NOT ON THE MODULE. It used to require
+     `E.deferred()`, which meant a player who hit BOTH failures at once — an
+     untrusted read and a 404 on /src/economy — was left behind a save block with
+     no retry and no panel able to lift it. The save block is the host's, so its
+     escape hatch must be the host's too. The module is consulted only for the
+     half that is actually its business. */
+  if (_cityVerdict !== 'unknown') return false;
+  if (_ecoDeferBusy) return false;
+  _ecoDeferBusy = true; _ecoDeferTries++;
+  let j = null, unsafe = true;
+  try { j = await MythicCityBridge.loadCity(); unsafe = !!MythicCityBridge.loadUnsafe; }
+  catch (e) { j = null; unsafe = true; }
+  _ecoDeferBusy = false;
+  const v = cityEcoVerdict(j, unsafe);
+  if (v === 'unknown') {
+    _ecoDeferSaid = manual ? 'Still no answer from your city records. Nothing has been decided and nothing has been lost.' : null;
+    renderEco._last = null; ecoDeferSchedule(); return false;
+  }
+  if (v === 'established') {
+    _ecoDeferSaid = 'Your saved city is readable again — reload the page to restore it. Nothing was granted or refused in the meantime.';
+    renderEco._last = null;
+    try { toast('💾 Your city records are back. Reload to restore your city.', 'good'); } catch (e) {}
+    return false;
+  }
+  /* 'new' — a trusted read that found nothing. This player is genuinely new, and
+     this is the line the fail-closed tree could never reach: they get their
+     founding tranche after all.
+     ⚠ THE MODULE IS OPTIONAL HERE. If it 404'd there is no economy to resolve,
+       but the read was still trustworthy — so the save block must lift anyway.
+       Refusing to unblock because a module is missing would punish the player
+       twice for one bad session. */
+  const E2 = window.MythicEconomy;
+  if (E2 && typeof E2.deferred === 'function' && E2.deferred()) {
+    const ok = E2.resolve({ established: 'new', state: null });
+    if (!ok) { _ecoDeferSaid = 'The economy could not start. Reloading the page is safe.'; renderEco._last = null; return false; }
+  }
+  _cityVerdict = 'new';
+  /* The read that just answered is the clean load `_savePolicy()` wants, and it
+     is what promotes this session from 'local' to 'full' — the work done during
+     the deferral has been on this device all along and now reaches the account
+     on the very next write. */
+  _loadDone = true; _loadFailed = false;
+  _ecoDeferSaid = null;
+  try { toast('🏙 City records confirmed — your economy is open for business.', 'good'); } catch (e) {}
+  try { saveNow(); } catch (e) {}
+  try { ecoSync(); } catch (e) {}
+  renderEco._last = null; renderEco();
+  return true;
+}
+
+/* What the player actually sees. Every sentence here is a promise the code above
+   keeps, and it is written from `_savePolicy()` rather than from an assumption.
+   🔴 IT USED TO SAY "it is not being saved" AND THAT WAS THE TRUE PART. The
+      deferral blocked both writers, so a signed-out player — for whom
+      `cityStateLoad` raises `loadUnsafe` unconditionally and the retry can
+      therefore never succeed — was told "Retrying automatically" and "nothing
+      has been lost" while every session's work was discarded. The city now
+      keeps itself on this device while the founding question is open, so the
+      panel reports WHERE it is being kept and names the one thing that is
+      genuinely still pending. Sign-in is offered because for the commonest
+      cause — never having signed in — it is the actual fix, and no number of
+      retries is. */
+function ecoDeferHtml() {
+  const more = _ecoDeferTries < ECO_DEFER_BACKOFF_SEC.length;
+  const local = _savePolicy() === 'local';
+  const h = [];
+  h.push('<div class="eco-fix" style="background:#2a1620;border-color:#5a2530;color:#ffb0bc">' +
+    '🕒 <b>City records unavailable.</b> Your city plays normally and ' +
+    (local ? 'is being <b>saved on this device</b>' : 'will be <b>saved on this device</b> as soon as you build something') +
+    ', but nothing is written to your account and no founding capital has been issued — because a refused read ' +
+    'cannot tell a brand-new city from an existing one, and guessing either way costs you. Nothing has been ' +
+    'decided and nothing has been lost.</div>');
+  if (_ecoDeferSaid) h.push('<div class="eco-fix">' + logEsc(_ecoDeferSaid) + '</div>');
+  h.push('<div class="eco-h">⏳ Waiting on a trustworthy read</div>');
+  h.push('<div class="eco-flow">' +
+    '<div class="k">Attempts</div><div class="v">' + _ecoDeferTries + '</div>' +
+    '<div class="k">Retrying</div><div class="v">' + (more ? 'automatically' : 'on request') + '</div>' +
+    '<div class="k">Saving to</div><div class="v">' + (local ? 'this device' : 'this device (nothing yet)') + '</div>' +
+    '<div class="k">Capital issued</div><div class="v">0 🔥</div></div>');
+  h.push('<div class="eco-tag">Signed out? Signing in is what resolves this — the records cannot be read ' +
+    'until the game knows whose city to ask for.</div>');
+  h.push('<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' +
+    ecoBtn('ecoretry', '', '🔄 Retry now', _ecoDeferBusy, 'Re-read your city records and start the economy') +
+    ecoBtn('ecoreload', '', '↻ Reload the page', false, 'Reloads the city — safe, nothing is pending') + '</div>');
+  return h.join('');
+}
+
 function renderEco() {
   const host = $('ecobody'); if (!host) return;
-  const E = window.MythicEconomy; if (!E || !E.ready()) return;
+  const E = window.MythicEconomy; if (!E) return;
+  /* ⏳ The deferred panel replaces the whole body — there is no snapshot to
+     render, and a blank card would read as a broken feature rather than as a
+     paused one. */
+  if (typeof E.deferred === 'function' && E.deferred()) {
+    const d = ecoDeferHtml();
+    if (d !== renderEco._last) { renderEco._last = d; host.innerHTML = d; }
+    return;
+  }
+  if (!E.ready()) return;
   const h = [];
   /* The last verdict and the requested chain ride EVERY tab. An answer that
      vanished because the 4 s repaint landed while the player was on another tab
@@ -23131,11 +23381,57 @@ function serialize() {
                  gain: Math.round(+game.fin.last.gain || 0),
                  rows: (Array.isArray(game.fin.last.rows) ? game.fin.last.rows : []).slice(0, 24) }
              : null },
-    /* 🏙 THE ECONOMY BLOB. Guarded and absent-tolerant on both sides: a build
-       where /src/economy never loaded writes null, and loadState treats null as
-       "no economy yet" rather than as an empty one. Same contract as `house`
-       above — state that exists nowhere else must ride the save. */
-    economy: (function () { try { return window.MythicEconomy ? window.MythicEconomy.serialize() : null; } catch (e) { return null; } })(),
+    /* 🏙 THE ECONOMY BLOB. Same contract as `house` and `stad` above — state that
+       exists nowhere else must ride the save.
+       🔴 IT USED TO READ `window.MythicEconomy ? …serialize() : null`, AND ONE
+          FAILED IMPORT OF /src/economy PERMANENTLY ERASED THE PLAYER'S ENTIRE
+          CITY ECONOMY. A 404, a cache miss, an offline moment or a throw in
+          mount() leaves `window.MythicEconomy` absent (or index.js's
+          `serialize()` returning null because it is not mounted) — and the very
+          next save then wrote `economy: null` over a lived economy, which came
+          back at zero on the following load with nothing in the console.
+          MEASURED against a blob of a 400-day city (treasury 57.71 🔥,
+          charterIssued 300,000.00 🔥, 8 firms): module present → a blob, module
+          absent → null. The city's own degrade path — "every failure here is
+          survivable and the city must not care" — was quietly deleting the save.
+       So this now does exactly what `house:` and `stad:` twenty lines above do:
+       when the module cannot answer, it writes back the last blob we KNOW is
+       real. `_lastEconomyBlob` is seeded by loadState and refreshed here on every
+       successful serialize, so a session that loses the module mid-flight keeps
+       everything up to its last save instead of losing the city.
+       ⚠ `E.ready()` AND NOT JUST `E`. A registered-but-unmounted module answers
+         `serialize()` with null perfectly happily (index.js: `return mounted ?
+         … : null`), which is the same erasure through a different door — and it
+         is the door a DEFERRED economy comes through. Only a mounted, resolved
+         economy is allowed to overwrite the field. */
+    economy: (function () {
+      try {
+        const E = window.MythicEconomy;
+        const blob = (E && typeof E.ready === 'function' && E.ready()) ? E.serialize() : null;
+        if (blob && typeof blob === 'object') { _lastEconomyBlob = blob; return blob; }
+        return _lastEconomyBlob;
+      } catch (e) { return _lastEconomyBlob; }
+    })(),
+    /* ⏳ …AND THE HANDWRITING THAT SAYS "I WROTE THIS WHILE UNDECIDED".
+       🔴 WITHOUT IT, LETTING A DEFERRED CITY SAVE LOCALLY WOULD TALK A
+          BRAND-NEW PLAYER OUT OF THEIR 300,000 🔥 BY WAY OF THEIR OWN AUTOSAVE.
+          The deferral resolves by re-reading through `MythicCityBridge.loadCity`,
+          which falls back to localStorage when the server will not answer — so
+          the very next read finds OUR blob, sees tiles in it, and
+          `cityEcoVerdict` calls that an established city. The player would then
+          be permanently refused the founding tranche for the crime of having
+          played offline, which is the exact harm this whole package exists to
+          stop, re-entered through the persistence door.
+       So a save written while `_cityVerdict === 'unknown'` says so, and
+       `cityEcoVerdict` treats such a payload as NO EVIDENCE either way: it is
+       our own undecided handwriting, not the server's answer. The key is absent
+       (JSON.stringify drops `undefined`) the moment the verdict is decided, so
+       a resolved city's save carries no trace of the deferral it came through.
+       ⚠ It is deliberately NOT a reason to refuse the save's tiles. loadState
+         still restores every tile in it — a deferred city is a real city and
+         must come back exactly as the player left it. Only the FOUNDING
+         question is suspended. */
+    ecoDefer: (_cityVerdict === 'unknown') ? 1 : undefined,
     syncPct: citySync(), savedAt: Date.now() });
 }
 let saveTimer = null;
@@ -23143,10 +23439,11 @@ function saveSoon() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    // Same erasure guard as saveNow() — this is the OTHER writer, and it fires
-    // on a timer, so it is the one most likely to land during a failed boot.
-    if (_saveWouldErase()) { try { console.warn('[city] deferred save BLOCKED - empty city, unproven load'); } catch (e) {} return; }
-    MythicCityBridge.saveCity(serialize());
+    // Same policy as saveNow() — this is the OTHER writer, and it fires on a
+    // timer, so it is the one most likely to land during a failed boot.
+    const pol = _savePolicy();
+    if (pol === 'none') { try { console.warn('[city] deferred save BLOCKED - empty city, unproven load'); } catch (e) {} return; }
+    MythicCityBridge.saveCity(serialize(), { localOnly: pol === 'local' });
   }, 800);
 }
 /* 💾 SAVE NOW — synchronous entry, for the two moments a 800 ms timer cannot
@@ -23171,21 +23468,93 @@ function saveSoon() {
    ⚠ A refused write is not the same as no write: cityStateSave already reports
    RLS refusals loudly. This guards the opposite case — a SUCCESSFUL write of
    nothing. */
+/* 🔴 …AND WHY THE ANSWER IS THREE-VALUED TOO, AFTER A ROUND THAT COST A WHOLE
+   CLASS OF PLAYERS THEIR CITY.
+   The first attempt at deferral made this function return `true` for
+   `_cityVerdict === 'unknown'`, i.e. BLOCK EVERY WRITE while the founding
+   question was open. The reasoning was sound about the server row and wrong
+   about everything else, because it treated "save" as one indivisible act.
+
+   🔴 WHAT IT ACTUALLY DID, MEASURED against the shipped bridge and a signed-out
+      parent. `window.cityStateLoad` (public/index.html) opens with
+        if (!Cloud || !Cloud.ready || !Cloud.client || !Profile.cloud ||
+            !Profile.cloud.userId) { window.__cityLoadUnsafe = true; return null; }
+      so a signed-out or offline player gets `loadUnsafe` and a null payload
+      UNCONDITIONALLY — not as a blip, as their steady state:
+        bridge mode 'parent' · cityStateLoad null · loadUnsafe true
+        verdict 'unknown' · player builds a house → save blocked
+        retries 1..4: still 'unknown', still blocked, then the backoff gives up
+        localStorage keys written: 0     parent cityStateSave calls: 0
+      Nothing on the server, nothing on the device, no way out. Every session,
+      forever. The pre-deferral tree denied that player their tranche; this one
+      deleted their city, which is strictly worse and is the same mistake —
+      trading one harm for a bigger one — the deferral was invented to stop.
+      It also breaks CLAUDE.md's "the app MUST still work offline".
+
+   SO THE TWO RISKS ARE SEPARATED, because they are not the same risk:
+     · localStorage is this browser's own scratch. A deferred city writing here
+       can lose nothing that is not already in this browser. ALWAYS SAFE.
+     · `city_state` is one row per user, upserted, no history. Writing it while
+       the read was refused can overwrite a real city, permanently. NEVER while
+       the verdict is 'unknown'.
+   → 'none'   nothing worth writing AND we cannot prove the city is really
+              empty. The original erasure guard, unchanged.
+     'local'  the founding question is open but the CITY is not: keep it on this
+              device, leave the server row alone.
+     'full'   decided. Write both, as always.
+
+   ⚠ AND THE DEFERRED BLOB IS STAMPED `ecoDefer` (see serialize()), because a
+     local save is exactly the thing that could talk a brand-new player out of
+     their tranche: the retry re-reads through the same bridge, finds OUR save,
+     and reads tiles as proof of an established city. `cityEcoVerdict` therefore
+     treats an `ecoDefer` payload as carrying NO evidence either way — it is our
+     own undecided handwriting, not the server's answer.
+   ⚠ AN EMPTY deferred city still writes nothing. There is nothing to keep, and
+     a tile-less local blob is only more state for the next boot to reason
+     about. The tile test is the same one the escape hatch below has always used.
+
+   ── TWO ALTERNATIVES CONSIDERED AND REJECTED ────────────────────────────────
+   1. "AN UN-PROVABLE IDENTITY IS A DECIDED STATE — a player the server cannot
+      even name has no server-side city, so call them 'new' and pay the tranche."
+      Tempting, and it removes the deferral for the commonest case. Rejected: a
+      signed-out player may have a perfectly good city on the server and simply
+      be offline. Calling them 'new' issues a founding tranche into a local
+      economy that then has to be reconciled with the real one, and the only
+      honest reconciliation is to throw one of them away. Deferring costs that
+      player a startup loan until they sign in; deciding costs them a real
+      economy. The whole package's rule applies to itself: do not decide on
+      evidence that cannot distinguish the two cases.
+   2. "MIGRATE THE ANONYMOUS LOCAL CITY INTO THE ACCOUNT ON SIGN-IN" — read the
+      un-namespaced key when the namespaced one misses, if the blob is unstamped
+      and carries `ecoDefer`. It would save the offline layout of a player who
+      builds signed-out, closes the tab, and signs in later (today that layout
+      is simply not found: `cityKey()` changes and the read misses cleanly, no
+      brick, no loss on the server — and signing in DURING the session keeps
+      everything, because `game.tiles` is already in memory when the retry
+      promotes the save to 'full'). Rejected because the anonymous slot is
+      shared by everyone who plays signed-out in this browser, so adoption would
+      let one person's account absorb another's city and then upsert it to the
+      server — re-opening, through a new door, exactly the cross-write the
+      "AN ABSENT STAMP IS NOT A MATCH" guard in the bridge was written to close.
+      Not worth it to recover a layout the player can rebuild. */
 let _loadDone = false, _loadFailed = false;
-function _saveWouldErase() {
+function _savePolicy() {
   try {
-    if (_loadDone && !_loadFailed) return false;
-    for (const k in game.tiles) { const t = game.tiles[k]; if (t && t.type !== 'anchor') return false; }
-    return true;   // nothing to save AND we cannot prove the city is really empty
-  } catch (e) { return true; }
+    let real = false;
+    for (const k in game.tiles) { const t = game.tiles[k]; if (t && t.type !== 'anchor') { real = true; break; } }
+    if (_cityVerdict === 'unknown') return real ? 'local' : 'none';
+    if (_loadDone && !_loadFailed) return 'full';
+    return real ? 'full' : 'none';   // the pre-existing tile escape hatch
+  } catch (e) { return 'none'; }
 }
 function saveNow() {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  if (_saveWouldErase()) {
-    try { console.warn('[city] save BLOCKED — refusing to write an empty city before a clean load (loadDone=' + _loadDone + ' loadFailed=' + _loadFailed + ')'); } catch (e) {}
+  const pol = _savePolicy();
+  if (pol === 'none') {
+    try { console.warn('[city] save BLOCKED — refusing to write an empty city before a clean load (loadDone=' + _loadDone + ' loadFailed=' + _loadFailed + ' verdict=' + _cityVerdict + ')'); } catch (e) {}
     return;
   }
-  try { MythicCityBridge.saveCity(serialize()); } catch (e) { console.warn('saveNow', e); }
+  try { MythicCityBridge.saveCity(serialize(), { localOnly: pol === 'local' }); } catch (e) { console.warn('saveNow', e); }
 }
 /* 🔴 THE r5 PERSISTENCE HOLE, AND WHY IT NEEDED ITS OWN TRIGGER.
    Before this round, every quantity that ACCUMULATED (food, metal, cinder) went
@@ -23574,6 +23943,13 @@ addEventListener('visibilitychange', () => {
 });
 /* 🏙 The economy blob read by loadState and consumed once by boot(). */
 let _pendingEconomy = null;
+/* 💾 …AND THE LAST BLOB WE KNOW IS REAL, which is a DIFFERENT job and needs its
+   own variable. `_pendingEconomy` is deliberately nulled the moment mount()
+   consumes it (a remount arriving with a stale blob is its own bug). This one is
+   never consumed: it is the erase guard for the save's `economy` field, refreshed
+   on every successful serialize and read back whenever the module cannot answer.
+   See the `economy:` field in serialize() for what it cost to not have it. */
+let _lastEconomyBlob = null;
 /* 🏙 …AND WHETHER THIS CITY ALREADY EXISTED, which is the question the blob
    itself structurally cannot answer.
    🔴 THE DEFECT THIS EXISTS FOR, measured on the tree before it did: a lived
@@ -23602,36 +23978,114 @@ let _pendingEconomy = null;
       allowance. A guard whose failure mode is "grant" is not a guard, and this
       one could be tripped by a bad network rather than by an attacker.
 
-   ⚠ SO THERE IS EXACTLY ONE STATEMENT ANYWHERE THAT LOWERS IT, and it demands
-     POSITIVE evidence of a genuinely new city: a clean, trusted read that found
-     no save at all (`!j` with `loadUnsafe` false). A brand-new player reaches
-     that line and still receives their opening capital. Every other outcome —
-     a lived save, an unsafe read, unparseable JSON, a throw anywhere, or never
-     reaching loadState in the first place — keeps this TRUE, because "we do not
-     know whether this city existed" must never mint. */
-let _pendingEstablished = true;
+   ⚠ SO THERE WAS EXACTLY ONE STATEMENT ANYWHERE THAT LOWERED IT, and it
+     demanded POSITIVE evidence of a genuinely new city: a clean, trusted read
+     that found no save at all (`!j` with `loadUnsafe` false).
+
+   🔴 …AND THAT TRADED A MONEY LEAK FOR PERMANENT PLAYER HARM, WHICH IS WHY THE
+      FLAG BELOW IS NO LONGER A FLAG.
+      `loadUnsafe` is true for an RLS refusal, a throw, OR a save stamped for
+      somebody else — i.e. one bad network moment. So a BRAND-NEW player whose
+      very first city read was ambiguous never reached the lowering statement and
+      was PERMANENTLY DENIED the 300,000 🔥 founding tranche: their city could
+      never capitalise a firm, forever, from a blip. MEASURED on the tree that
+      shipped it — brand-new player, first read ambiguous — charterIssued 0.00 🔥
+      against the 300,000.00 🔥 a founded city receives, charter headroom 0.00 🔥.
+
+      🔴 NEITHER DEFAULT IS CORRECT. Fail-open hands out free money on any boot
+         error; fail-closed bricks a new player on any network blip. Both are the
+         same mistake: DECIDING ON AMBIGUOUS EVIDENCE. So the state is now
+         THREE-VALUED and the third value is not a decision at all —
+
+           'established'  a save came back. No tranche.
+           'new'          a TRUSTED read found nothing. Tranche issued.
+           'unknown'      the read was refused/threw/was somebody else's, and it
+                          found nothing. DECIDE NOTHING.
+
+      On 'unknown' the economy mounts DEFERRED: no bootstrap, so no tranche is
+      issued AND none is refused, the question is left exactly as it was found,
+      and it is resolved the moment a trustworthy read arrives (an automatic
+      retry on a short backoff, or the panel's Retry button). See
+      `cityEcoVerdict`, `ecoDeferRetry` and `_savePolicy`.
+      ⚠ DEFERRAL SUSPENDS THE FOUNDING DECISION ONLY. It does NOT suspend the
+        player's city: `_savePolicy()` still writes to this device, because the
+        version that blocked both writers deleted the city of every player whose
+        read is unsafe as a STEADY STATE — signed out, offline, a new device.
+        Read that function's header for the measured numbers. */
+let _cityVerdict = 'unknown';
+
+/* 🔴 THE WHOLE DECISION, IN ONE PURE FUNCTION OVER THE EVIDENCE.
+   It is a function and not four scattered assignments for two reasons: the four
+   assignments are what made "an ambiguous read" and "a corrupt save" collapse
+   into one answer, and the gate can only drive a decision it can call
+   (run.mjs round0v reads this body out of this file and runs every branch).
+
+   ── WHY EACH BRANCH ANSWERS THE WAY IT DOES ─────────────────────────────────
+   A save that CAME BACK is positive evidence and outranks `unsafe` entirely:
+   `unsafe` means "we cannot prove there ISN'T one", which a payload in hand
+   already answers. That ordering matters — the flag can be raised by
+   `P.__cityLoadUnsafe` while a perfectly good save is returned alongside it, and
+   reading the flag first would defer a city that loaded fine.
+
+   Unparseable JSON, or a payload with no `tiles`, is a corrupt or truncated
+   save — and a save that exists is a city that existed. 'established' (no
+   tranche) is both the safe answer and, critically, a DECIDED one: that player
+   can play and save and start over. Calling it 'unknown' would be a lie about a
+   read that succeeded, and would strand them behind the deferral's save block
+   forever, because a retry would fetch the same broken bytes every time.
+
+   An empty-tiles save is the one case where `unsafe` decides: a player who saved
+   before placing anything is genuinely new, but only a trusted read may say so.
+
+   ⚠ THE `economy` BLOB IS CHECKED BEFORE THE TILE COUNT ON PURPOSE. A blob means
+     bootstrap has already run and the charter has already been issued — that is
+     the strongest evidence there is, and it is the term a save-file editor
+     deleting the key is trying to remove. The tile count then catches exactly
+     that deletion, which is the defect this whole flag was born for.
+
+   ⚠ …AND `ecoDefer` IS THE ONE PIECE OF EVIDENCE THAT IS OUR OWN. A deferred
+     city saves locally (it must — blocking that deleted every signed-out
+     player's city; see `_savePolicy`), and that blob has tiles. Read as
+     ordinary evidence it says "an established city exists", which would refuse
+     a brand-new offline player their tranche forever, off their own autosave.
+     A blob we wrote while undecided is not an answer to the question, so it is
+     scored as none: fall through to the trust flag exactly as if no save had
+     been found. It sits BELOW the economy check on purpose — a blob means
+     bootstrap really did run, and that outranks anything the stamp claims. */
+function cityEcoVerdict(j, unsafe) {
+  if (j) {
+    let s = null;
+    try { s = JSON.parse(j); } catch (e) { return 'established'; }
+    if (!s || typeof s !== 'object' || !s.tiles) return 'established';
+    if (s.economy && typeof s.economy === 'object') return 'established';
+    if (s.ecoDefer) return unsafe ? 'unknown' : 'new';
+    if (Object.keys(s.tiles).length) return 'established';
+    return unsafe ? 'unknown' : 'new';
+  }
+  return unsafe ? 'unknown' : 'new';
+}
 
 async function loadState() {
   try {
     const j = await MythicCityBridge.loadCity();
     // A read we cannot trust must never license an empty save. See saveNow().
     _loadFailed = !!MythicCityBridge.loadUnsafe;
-    /* 🔴 THE ONE STATEMENT IN THE FILE THAT LOWERS `_pendingEstablished`, and
-       the only evidence that licenses it: the bridge answered cleanly and there
-       is NO save. `loadUnsafe` is false for a clean "no rows" answer and true
-       only for a refusal, a throw, or a save stamped for somebody else — so an
-       ambiguous read keeps the flag up and buys no tranche, while a real new
-       player still gets their opening capital. Read the `_pendingEstablished`
-       header: the default is the refusing value precisely so that failing to
-       reach this line is safe. */
-    if (!j) { _loadDone = true; if (!_loadFailed) _pendingEstablished = false; return; }
+    /* 🔴 THE ONLY PLACE THE VERDICT IS DERIVED FROM A FIRST READ, and it is
+       derived HERE because this is the one function that has both the payload
+       and the trust flag in scope. It replaces four assignments that used to be
+       spread across this function and its catch, three of which said the same
+       thing ("stay refusing") for reasons that were not the same. */
+    _cityVerdict = cityEcoVerdict(j, _loadFailed);
+    if (!j) { _loadDone = true; return; }
     let s = null;
     try { s = JSON.parse(j); }
-    catch (e) { _loadDone = true; _loadFailed = true; _pendingEstablished = true; console.warn('[city] save is not valid JSON - refusing to overwrite it', e); return; }
+    catch (e) { _loadDone = true; _loadFailed = true; console.warn('[city] save is not valid JSON - refusing to overwrite it', e); return; }
     /* A payload that parsed but carries no tiles is a corrupt or truncated
        save, NOT an empty city. Treat it as unsafe so it cannot be written back
-       over the real one. */
-    if (!s || !s.tiles) { _loadDone = true; _loadFailed = true; _pendingEstablished = true; return; }
+       over the real one. (The VERDICT reads it as 'established' — see
+       cityEcoVerdict: a broken save is still proof a city existed, and the two
+       questions are different ones.) */
+    if (!s || !s.tiles) { _loadDone = true; _loadFailed = true; return; }
     /* ⏳ THE STAMP THAT NOTHING USED TO READ. serialize() has written savedAt
        since v1; this is the line that finally makes an absence mean something.
        Absent ⇒ 0 ⇒ no catch-up, which is the correct reading of a save that
@@ -23641,17 +24095,29 @@ async function loadState() {
        there is nothing to hand it yet. Absent ⇒ null ⇒ a fresh economy, which
        is the correct reading of a save written before this feature existed. */
     _pendingEconomy = (s.economy && typeof s.economy === 'object') ? s.economy : null;
+    /* 💾 …AND THE LAST BLOB WE KNOW IS REAL. Same contract as the `house` and
+       `stad` tile fields: state that exists nowhere else must survive a session
+       in which its module never loaded. serialize() falls back to this rather
+       than writing `economy: null` over a lived economy — see the `economy:`
+       field there and the numbers in its header. */
+    _lastEconomyBlob = _pendingEconomy;
     /* 🔴 …AND THE POSITIVE ANSWER TO "DID THIS CITY ALREADY EXIST". Tiles are
        durable evidence, and they are exactly the evidence a player deleting the
-       `economy` key leaves behind. `||` because it may only ever RAISE the flag:
-       nothing in a payload we did not fully trust is allowed to talk the answer
-       back down to "new city".
-       ⚠ BELT AND BRACES SINCE THE DEFAULT BECAME `true`. On the shipped tree
-         this line cannot change the outcome — reaching it at all means a save
-         parsed, which is already established. It stays because it states the
-         evidence in the code rather than in a comment, so flipping the
-         initialiser back does not silently reopen the deleted-key door on its
-         own. Read the header on `_pendingEstablished` for the numbers.
+       `economy` key leaves behind. It may only ever RAISE the verdict: nothing
+       in a payload we did not fully trust may talk the answer back down.
+       ⚠ BELT AND BRACES. `cityEcoVerdict` already reached 'established' from the
+         same two terms on the same payload, so on the shipped tree this line
+         cannot change the outcome. It stays because it states the evidence in
+         the code beside the parse rather than only inside a function one screen
+         up, so a future edit to that function cannot silently reopen the
+         deleted-key door on its own.
+       ⚠ AND IT SKIPS OUR OWN DEFERRED HANDWRITING, for the same reason
+         cityEcoVerdict does. `ecoDefer` marks a blob this client wrote while
+         the founding question was open; its tiles are the player's own offline
+         work, not proof that a server-side city exists. Without this term the
+         line below would re-raise a deferred save to 'established' one
+         statement after the function above deliberately declined to — and the
+         belt would quietly undo the braces.
        ⚠ THE MIGRATION COST, stated rather than hidden: a save written before
          /src/economy existed, or one whose blob came back null because the
          module failed to import, also has tiles and no economy — so it gets NO
@@ -23660,8 +24126,9 @@ async function loadState() {
          capital and never Profile.gems, and such a city simply capitalises its
          firms out of its own treasury while sim.js logs the refusal where the
          player can see it. Granting on an unknown is what this whole package
-         exists to stop. */
-    _pendingEstablished = _pendingEstablished || !!(s.tiles && Object.keys(s.tiles).length);
+         exists to stop. (The blob-nulling half of that hazard is now closed at
+         source: serialize() can no longer drop a loaded economy.) */
+    if (_pendingEconomy || (!s.ecoDefer && Object.keys(s.tiles).length)) _cityVerdict = 'established';
     if (s.raid) {
       game.raid = s.raid;
       /* ⏱ Rescale the countdown into the CURRENT interval. A save written under
@@ -23848,7 +24315,7 @@ async function loadState() {
            Yielding here is free: the render loop has not started yet
            (setAnimationLoop runs at the END of boot, long after loadState is
            awaited), so nothing can observe a half-built grid, and saves are
-           still blocked by _loadDone/_saveWouldErase until the load completes.
+           still blocked by _loadDone/_savePolicy until the load completes.
 
            ⚠ MessageChannel, NOT setTimeout — same reason the offline catch-up
              uses it, and it was MEASURED there: a timer inside a frame the
@@ -23880,13 +24347,17 @@ async function loadState() {
     // Anything that threw mid-load leaves game.tiles half-built. Saving that
     // back would replace a real city with a fragment of itself.
     _loadDone = true; _loadFailed = true;
-    /* …and it must not buy a founding tranche either. A throw anywhere in the
-       load leaves us unable to say whether this city existed, and unknown never
-       mints. Restated rather than relied on: this is a RE-raise, since the flag
-       now defaults to the refusing value and only the clean no-save branch above
-       ever lowers it — a throw AFTER that branch is the one path where this
-       line does real work. See the `_pendingEstablished` header. */
-    _pendingEstablished = true;
+    /* …and it must not buy a founding tranche, NOR cost one. A throw anywhere in
+       the load leaves us unable to say whether this city existed, and the answer
+       to "we do not know" is to not answer: 'unknown' defers the decision instead
+       of guessing it in either direction.
+       ⚠ NOT AN UNCONDITIONAL RESET. A throw AFTER the payload parsed (the tile
+         loop, citLoad, a renderer) leaves a verdict that was derived from real
+         evidence, and throwing that away would deny the tranche to a city we had
+         already proved existed — no, worse: it would defer a city that does not
+         need deferring, blocking its saves for a renderer bug. Only an
+         un-decided verdict stays un-decided. See the `_cityVerdict` header. */
+    if (_cityVerdict === 'new') _cityVerdict = 'unknown';
     console.warn('city load failed', e);
   }
 }
@@ -27613,12 +28084,19 @@ function animate() {
          charterIssued 300,000.00 / totalCinder 293,295.48 in, 300,000.00 /
          300,000.00 back out, from deleting one key. It is derived in loadState()
          from the parsed save, because this is the only call site and loadState
-         is the only place that has ever seen the file. See
-         `_pendingEstablished` for the derivation and what each branch costs. */
-      E.mount({ nodeId, population: cityPop(), state: _pendingEconomy, established: _pendingEstablished });
+         is the only place that has ever seen the file.
+
+         🔴 …AND IT IS THREE-VALUED, BECAUSE A BOOLEAN HAS NO WAY TO SAY "DO NOT
+            DECIDE". Passing `true` on an ambiguous read permanently denied a
+            brand-new player their 300,000 🔥; passing `false` hands out free
+            money on any boot error. `'unknown'` mounts the module DEFERRED — no
+            bootstrap at all, so neither happens — and `ecoDeferRetry()` resolves
+            it from the next trustworthy read. See `_cityVerdict`. */
+      E.mount({ nodeId, population: cityPop(), state: _pendingEconomy, established: _cityVerdict });
       /* The blob is consumed; the VERDICT is not. A remount (there is none
          today) would arrive with state:null, and answering "brand new" a second
-         time is the exact shape of the bug above — so this stays latched. */
+         time is the exact shape of the bug above — so this stays latched.
+         `_lastEconomyBlob` keeps its own copy: see serialize(). */
       _pendingEconomy = null;
       const card = $('ecocard');
       if (card) {
@@ -27659,6 +28137,21 @@ function animate() {
       setInterval(() => { ecoSync(); ecoBindRoster(); renderEco(); }, 4000);
     }
   } catch (e) { console.warn('[city] economy module unavailable', e); }
+  /* ⏳ A DEFERRED CITY IS NOT A FAILED ONE, AND THE PLAYER MUST BE TOLD WHICH.
+     Nothing about deferral is fatal: the city ticks, builds, raids and renders
+     exactly as it does without the economy feature, and it SAVES — to this
+     device (see `_savePolicy`, and the measured cost of the version that did
+     not). What IS different is that nothing reaches the account and no founding
+     capital has been issued, and a player who is not told that would believe
+     their work was banked on the server. So: a toast now, the panel below every
+     4 s, and an automatic retry that usually clears it before either is read.
+     🔴 DELIBERATELY OUTSIDE THE try ABOVE, and keyed on the VERDICT rather than
+        on `E.deferred()`. The save block is the HOST's, and it engages whether or
+        not /src/economy loaded — so a player who hits both failures at once (an
+        untrusted read AND a 404 on the module) must still get the warning and
+        still get the retry that lifts it. Announcing from inside that try made
+        the worst case the silent one. */
+  if (_cityVerdict === 'unknown') { try { ecoDeferAnnounce(); } catch (e) {} }
   /* 🏗 THE SECOND HALF OF THE LOAD PATH, and the first moment it can run.
      loadState() rehydrated every build order without reading one ECON value,
      because ECON did not exist yet — the import above is where it arrives.

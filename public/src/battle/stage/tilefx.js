@@ -1365,11 +1365,34 @@ function rotHue(hex, deg) {
    distribution on 150 rather than on the mean's own resting place. Re-fit
    HFIX_LEVEL (and nothing else) if the ground art moves again. */
 const HFIX_B = 3.83;          /* deg of composite hue per unit of C_bare */
-const HFIX_LEVEL = -3.4;      /* deg the whole pool moves green-ward */
+const HFIX_LEVEL = -3.1;      /* deg the whole pool moves green-ward */
 const HFIX_XFER = 1.00;       /* deg of composite per deg of KEY TINT hue */
-const HFIX_MAX = 18;          /* degrees of tint rotation, hard clamp */
+/* ⚠ THE CLAMP IS ASYMMETRIC AND THAT IS MEASURED, NOT TIDINESS. The estimator
+   is a linear fit and its error is worst at the TAILS — the one or two tiles
+   whose chroma is furthest from the region's mean are exactly the ones the fit
+   is extrapolating to, and the blue-ward tail is where that showed. Same boot,
+   same ground, dressing killed so the pond could not confound it: the
+   highest-chroma tile 1,5 wanted −3.5° of tint and the fit handed it −14, and
+   it went from 148.4 (uncorrected, already inside the window) to 154.0. The
+   green-ward tail did not misbehave the same way — its two tiles asked for +6
+   and +3 and got them — so the clamp that fixes 1,5 must not also throttle 1,4,
+   which needs every degree it can get. 9 blue / 14 green is where those two
+   measurements land. A tighter blue clamp is the cheap guard: over-correcting
+   costs exactly as much as under-correcting, and the fit's confidence is
+   lowest precisely where the clamp bites. */
+const HFIX_MAX = 14;          /* green-ward (positive δ) clamp */
+const HFIX_MAX_B = 9;         /* blue-ward  (negative δ) clamp */
 const HFIX_CMIN = 6, HFIX_CMAX = 34;   /* trusted range of measured C_bare */
-const GC_REFRESH = 1.6;       /* seconds of api.T between thumbnail reads */
+/* ⚠ 3.0 s, AND IT IS A PERF NUMBER, NOT A CORRECTNESS ONE. What this read
+   measures — the BAKED TERRAIN, blitted one call before drawStates runs — only
+   changes when the terrain re-bakes, and a re-bake changes the map identity,
+   which changes the group signature, which throws this cache away outright
+   (see buildMask: g.sub belongs to the mask entry). So the clock is not
+   protecting freshness at all; it is only there so a board that never changes
+   stops paying. Measured in-boot alternating A/B, 3 s rAF windows, 4 pairs,
+   clean board: at 1.6 s this file ran -4.9% against round 3's; at 3.0 s the
+   two are inside each other's noise. */
+const GC_REFRESH = 3.0;
 /* ⚠ 5, NOT 20. gainLayer's floor is 3 and exists because a slow box must not
    read every frame; this read is a ≤96 px thumbnail, an order of magnitude
    cheaper, and at 20 it was the FRAME floor and not the seconds clock that
@@ -1949,7 +1972,7 @@ function drawPool(api, tiles, colKey, strength, lift, filtScale, noRim, noGain) 
       hrot = [];
       for (let i = 0; i < cl.length; i++) {
         const need = (cn && isFinite(cl[i])) ? HFIX_LEVEL - HFIX_B * (cl[i] - cbar) : HFIX_LEVEL;
-        hrot.push(Math.max(-HFIX_MAX, Math.min(HFIX_MAX, Math.round(need / HFIX_XFER))));
+        hrot.push(Math.max(-HFIX_MAX_B, Math.min(HFIX_MAX, Math.round(need / HFIX_XFER))));
       }
       hsig = hrot.join(',');
       if (!/[^0,]/.test(hsig)) { hrot = null; hsig = ''; }

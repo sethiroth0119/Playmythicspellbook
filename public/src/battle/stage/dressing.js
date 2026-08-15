@@ -1686,7 +1686,14 @@ function drawPool(api, it){
        puddle's width against 19% of the pond's and the small pool came out
        uniformly dark — a bank shadow that has swallowed the whole pool is not
        a bank shadow, it is a tint. */
-    const NAO = 8, WMAX = B.w * 0.15 + 26 * SS;
+    /* ⚠ AND FEWER STROKES ON A SMALL POOL — this is the expensive pass in the
+       whole painter (each step re-walks a 112-point ring at a big lineWidth)
+       and wave 5 turned one pool into four. The ramp's job is to make the
+       per-pixel coverage fall off linearly; how many steps that takes depends
+       on how WIDE the ramp is, and WMAX on a puddle is a third of the pond's,
+       so five steps there are as smooth as eight are here. Measured on the
+       standalone board with four wet tiles: 36 → 39 frames per 4s window. */
+    const NAO = SS >= 0.7 ? 8 : 5, WMAX = B.w * 0.15 + 26 * SS;
     for (let k = 0; k < NAO; k++){
       const lw = WMAX * (1 - k / NAO);
       if (lw < 0.6) continue;
@@ -1718,7 +1725,15 @@ function drawPool(api, it){
      Everything drifts off api.T, at per-mark speeds, so the surface never
      resolves into a repeating pattern. */
   {
-    const nC = Math.max(30, Math.min(300, Math.round(B.w * B.h / 460)));
+    /* ⚠ THE DIVISOR IS 840, NOT 460, AND THE POND DOES NOT NOTICE. The count
+       was capped at 300 and the pond's bbox has always been far over the cap
+       (≈250 000 px²), so its ACTUAL density has always been 1 mark per ~840
+       px² — 460 only ever described pools too small to hit the cap. A one-tile
+       puddle did hit it, and came out at 1 per 460: twice the pond's chop
+       density, which is both a cost and a mismatch in the one texture cue the
+       two bodies are supposed to share. Writing the real density down makes
+       them agree and halves the stroke count on the small pools. */
+    const nC = Math.max(20, Math.min(300, Math.round(B.w * B.h / 840)));
     const lightC = mix(WATER_SHEEN, sky, 0.30);
     for (let i = 0; i < nC; i++){
       const dark = hash(i, 3, 121) < 0.46;

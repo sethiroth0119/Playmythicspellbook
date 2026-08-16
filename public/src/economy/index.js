@@ -371,6 +371,38 @@ function syncBuildings(list) {
     if (!Recipes.producible(b.out)) continue;
     wanted.set(String(b.key), b);
   }
+  /* 🔴 A BAD READ MUST NEVER CLOSE A BUSINESS. Measured on a live city: 39
+     firms alive against a highest issued id of 877 — 838 businesses founded
+     and destroyed in 67 economic days, on a city that can only support 36.
+     Every one of those reaps threw away that firm's cash, workers, suppliers
+     and rung, so the economy could never compound: 9 residents and a 2,416
+     treasury on a 153-tile city. The player reported it as "my city was
+     removed", which is exactly what it looks like from inside.
+     The cause is that `wanted` is trusted unconditionally. It is built from the
+     host's ecoBuildings(), which returns [] when the economy is not mounted and
+     drops EVERY tile at once if pickAvailable() cannot resolve the ground —
+     both transient. One bad 4-second tick therefore bankrupts the whole city.
+     Two guards, in order of bluntness:
+       1. An EMPTY wanted list while tile-owned firms exist is never a real
+          city. It is a failed read. Skip the reconcile entirely.
+       2. Otherwise a firm must be missing on TWO CONSECUTIVE syncs before it
+          is closed. A genuine demolition stays missing and closes on the next
+          tick (4s later); a flapping read never gets its second strike.
+     ⚠ This debounces ONLY the tile-missing reason. A firm the distress ladder
+       marked BANKRUPT elsewhere is untouched and still reaps below. */
+  const tileOwned = Firms.all().filter(f => f.tileKey).length;
+  if (wanted.size === 0 && tileOwned > 0) {
+    if (!syncBuildings._warned) {
+      syncBuildings._warned = true;
+      try { console.warn('[economy] syncBuildings got an EMPTY building list while ' + tileOwned +
+        ' tile-owned firms exist — treating it as a failed read and closing nothing.'); } catch (e) {}
+    }
+    return { added: 0, removed: 0, skipped: 'empty-list' };
+  }
+  /* Collect the closures first, then decide whether the SHAPE of them is
+     believable. Deciding per firm cannot tell a demolition from a failed read;
+     deciding on the batch can. */
+  const doomed = [];
   for (const f of Firms.all()) {
     if (!f.tileKey) continue;              // bootstrap firms are not tile-owned
     const b = wanted.get(String(f.tileKey));
@@ -378,10 +410,38 @@ function syncBuildings(list) {
        square. A key that now names a different business is not the same
        business — without this check a Sawmill rebuilt as a Clinic would keep
        the sawmill's balance sheet, payroll and supplier history. */
-    if (!b || b.out !== f.out || b.ind !== f.ind) {
-      f.rung = 'BANKRUPT'; f.reported = true; removed++;
-    }
+    if (!b || b.out !== f.out || b.ind !== f.ind) doomed.push(f);
   }
+  /* ⚠ DEBOUNCE THE BATCH, NOT THE FIRM. An earlier version of this guard made
+     EVERY closure wait for a second sighting, which also delayed the ordinary
+     case — one building demolished, one business closed — and turned
+     gauntlet3's "demolishing buildings closes their businesses" red. A player
+     demolishes one tile at a time and syncs run every 4s, so a handful of
+     closures in a single sync is normal play and closes immediately. A batch
+     large enough to be most of the city is not something a player can do
+     between two ticks; that is a failed read, and it waits for corroboration.
+     MASS_CLOSE is deliberately generous: the failure this exists to stop takes
+     out EVERY tile-owned firm at once, so it does not need a tight bar. */
+  /* THE BAR IS "ALL OF THEM", not a tuned fraction. The observed failure is
+     all-or-nothing — ecoBuildings() returns [] or resolves no ground at all, so
+     EVERY tile-owned firm is doomed in the same sync. A partial batch, even a
+     large one, is a thing the host can legitimately mean: gauntlet3 demolishes
+     10 tiles of 25 in one go and must still close them. Picking a fraction that
+     happened to let that through would be tuning the guard to the test rather
+     than to the fault. 4 is a floor so a 2-firm city is not governed by noise. */
+  if (tileOwned >= 4 && doomed.length >= tileOwned) {
+    const sig = doomed.map(f => f.tileKey).sort().join('|');
+    if (syncBuildings._massSig !== sig) {
+      syncBuildings._massSig = sig;        // first sighting — corroborate before closing
+      try { console.warn('[economy] syncBuildings would close ' + doomed.length + ' of ' + tileOwned +
+        ' tile-owned firms in one sync — waiting for a second sighting before closing any.'); } catch (e) {}
+      Firms.reap();                        // still reap anything the distress ladder bankrupted
+      return { added: 0, removed: 0, skipped: 'mass-close-deferred' };
+    }
+    // same set missing twice running — it is real.
+  }
+  syncBuildings._massSig = null;
+  for (const f of doomed) { f.rung = 'BANKRUPT'; f.reported = true; removed++; }
   Firms.reap();
   const have = new Set(Firms.alive().map(f => String(f.tileKey)).filter(Boolean));
   for (const [key, b] of wanted) {

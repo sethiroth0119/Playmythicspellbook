@@ -60,6 +60,24 @@
   --hudx-plate-lit:   linear-gradient(180deg, rgba(30, 25, 45, 0.96), rgba(12, 10, 22, 0.99));
   --hudx-ch:          9px;    /* corner chamfer */
 
+  /* ── THE YOU / FOE TAB AND THE GUTTER THE HERO NAME OWES IT ───────────────
+     ONE mechanism, so it gets ONE set of numbers. The tab is an absolutely
+     positioned pseudo that paints OVER the banner's text column, and the hero
+     name is a full-width row underneath it — so the only thing that can keep
+     the two apart is the name reserving the tab's column. If the tab's width
+     and the name's reservation are written down in two places they drift, and
+     the drift is invisible until a hero has a long name. See §3's tab block for
+     the measurement that forced this.
+       gutter = tab inset from the name column's edge  (--hudx-tab-x)
+              + the tab's own width                    (--hudx-tab-w)
+              + 4px of clearance so the ellipsis never touches the plate
+     ⚠ --hudx-tab-w is a PIN, not a description: the tab is sized to it
+     (box-sizing:border-box, centred type) rather than measured from it, so no
+     font substitution can widen the tab past the space reserved for it. */
+  --hudx-tab-w:       52px;
+  --hudx-tab-x:       14px;
+  --hudx-tab-gutter:  calc(var(--hudx-tab-x) + var(--hudx-tab-w) + 4px);
+
   /* ⚜ THE ENGRAVED LATTICE — the fine diagonal cross-hatch that turns a flat
      dark fill into an etched metal plate. Declared once here and layered on
      TOP of every plate background in the file (it is the first, i.e. topmost,
@@ -736,29 +754,212 @@
 .hudx-fighters .fighter[data-side="foe"] .rprow .tag { color: #c9a08e; }
 
 /* ── YOU / FOE — the unambiguous side marker the HP colour used to be ──────
-   A small gold (yours) / crimson (theirs) tab notched into the top of each
-   banner, at the band's two OUTER corners — inside `.finfo`'s column, in the
-   ~13px of empty plate above the name row (measured: the name/pills/HP stack is
-   ~51px centred in a 78px content box, so it starts at y≈20 and the tab at
-   y=2..15 cannot collide with it).
+   A small gold (yours) / crimson (theirs) tab at each banner's outer end.
    `.finfo` carries it because `.fighter`'s own ::before and ::after are
    already the dark face and the inner hairline; index.html has no pseudo on
-   `.finfo` (grepped), so this claims nothing.
-   It is absolutely positioned against `.fighter` (the nearest positioned
-   ancestor) and pointer-events:none, so it adds no layout and cannot swallow a
-   click. `top: 2px`, not 0 — `.fighter`'s chamfer clip-path clips descendants,
-   and a tab flush with the edge loses its own corners to it. */
+   `.finfo` (grepped), so this claims nothing. pointer-events:none, so it adds
+   no layout and cannot swallow a click. `top: 2px`, not 0 — the chamfer
+   clip-path clips descendants and a tab flush with the edge loses its corners.
+
+   🔴 THE CONTAINING BLOCK IS `.finfo`, NOT `.fighter` — AND THAT IS THE WHOLE
+      BUG THIS BLOCK USED TO HAVE. The previous revision of this comment said
+      the tab was "positioned against `.fighter` (the nearest positioned
+      ancestor)… in the ~13px of empty plate above the name row… y=2..15 cannot
+      collide with it". Every word of that was true when it was written and none
+      of it is true now: §3's own `.hudx-fighters .fighter > * { position:
+      relative; z-index: 1; }` (added later, to lift the children over the dark
+      face) makes `.finfo` ITSELF the nearest positioned ancestor. So `top:2px`
+      is 2px below the NAME COLUMN's top, not the banner's, and `right:14px` is
+      14px in from the name column's edge — i.e. the tab is not above the name
+      row at all, it is ON it.
+
+      MEASURED, real match, both banners, `Cedric Survivor Gunmen of the Ninth` /
+      `Lyra Survivor The Wise of the Ember Reach` (the ellipsised names off the
+      bug report), tab rect derived from the pseudo's used style against
+      `.finfo`'s padding box, name rect = the text's own layout rect clipped by
+      its box:
+        1280x800  YOU tab [838.3,14.7,40.9,10.4] vs name [719.2,11.1,171.2,15]
+                  -> intersection 40.9 x 10.4  (the ENTIRE tab)
+        1440x900  46.0 x 11.7 · 1600x1000 51.2 x 13 · 1920x1200 51.2 x 13
+      The FOE tab is the same collision mirrored. Short names miss it only by
+      luck — "Sir Cedric" stops 54px short of the tab; the moment the name is
+      long enough to ellipsize, the h2 box is the full column and the ink runs
+      under the plate.
+
+   ⚠ THE FIX IS RESERVATION, NOT RELOCATION, AND BOTH ALTERNATIVES WERE COSTED.
+     · Moving the tab back over the empty plate needs `.fighter` as the
+       containing block, i.e. dropping `position:relative` from `.fighter > *`.
+       That rule is what puts the whole banner body over `.fighter::before`;
+       unpicking it to move a 52px tab trades a guaranteed stacking bug for a
+       cosmetic one. Rejected.
+     · A negative `top` cannot do it either: `.finfo` is CENTRED in the banner,
+       so its offset from the plate's top moves with the content (measured
+       12.4px with no status chips, 2.5px with one) and with every breakpoint.
+       A fixed offset would be right at one content length and wrong at the next.
+     So the name row — and ONLY the name row, the pills / statuses / HP rows all
+     sit clear of the tab (measured) — reserves the tab's column below. */
 .hudx-fighters .finfo::before {
   content: "YOU";
   position: absolute; top: 2px; z-index: 3; pointer-events: none;
-  padding: 2px 13px 3px;
+  /* pinned width + centred type, NOT padding + intrinsic width: --hudx-tab-w
+     is what the gutter below is computed from, so the tab must not be free to
+     measure wider than it. 52px reproduces the intrinsic 51.2px (YOU) / 49.2px
+     (FOE) to within a pixel and has the side effect of making the two tabs
+     exactly the same size, which they were not. */
+  box-sizing: border-box; width: var(--hudx-tab-w); text-align: center;
+  padding: 2px 0 3px;
   font-family: 'Cinzel', serif; font-weight: 900; font-size: 8px; line-height: 1;
   letter-spacing: 0.24em;
   color: #2a1d06;
   background: linear-gradient(180deg, var(--hudx-gold-lit), var(--hudx-gold));
   clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 100%, 7px 100%);
 }
-.hudx-fighters .fighter:not([data-side="foe"]) .finfo::before { right: 14px; }
+/* ⚠ NO text-indent CORRECTION, deliberately: 0.24em of tracking is applied
+   after the LAST glyph too, so today's `padding: 2px 13px` already sits the ink
+   ~1.2px left of the plate's centre. Centring inside the pinned box reproduces
+   that same 1.2px, so the tab looks identical rather than newly re-centred. */
+.hudx-fighters .fighter:not([data-side="foe"]) .finfo::before { right: var(--hudx-tab-x); }
+
+/* THE GUTTER. `.finfo` is the tab's containing block and `h2` stretches to
+   `.finfo`'s full width, so the tab's column is exactly the last
+   (--hudx-tab-x + --hudx-tab-w) px of the name row on the player's side and
+   the first that many on the foe's. Padding — not margin, not a shorter
+   width — because `text-overflow: ellipsis` is computed on the CONTENT box, so
+   the reservation and the truncation point become the same number and a name
+   of any length simply ellipsizes earlier.
+   ⚠ THE CONTENT BOX IS THE POINT, AND IT IS EASY TO MIS-MEASURE. `overflow`
+   clips at the PADDING box, `text-overflow` ellipsizes at the CONTENT box. A
+   probe that clipped the name's range rect at the padding box reported this fix
+   as still colliding on the player's side; it is the content box that bounds the
+   painted string.
+
+   MEASURED AFTER, real match, four viewports, both banners, stock names /
+   the report's long names / a 53-character name — name-vs-tab intersection is
+   EMPTY in all 72 rect-maths cases, clearing the plate by 4.00px.
+
+   ⚠ AND RE-MEASURED IN PAINTED PIXELS, BECAUSE THE RECT MATHS ABOVE IS ONLY AS
+     GOOD AS ITS TAB RECT — AND THAT RECT IS INFERRED. A pseudo-element has no
+     node, so every probe here reconstructs it from `getComputedStyle`, and the
+     reconstruction went wrong the moment this block pinned `box-sizing:
+     border-box`: Chrome then reports the BORDER-box height, the probe added the
+     padding to it again, and the tab came out 18px tall instead of 13. A
+     5px-too-tall tab invented a 2.16px "overlap" with the foe's first element
+     pill that does not exist (real clearance 2.4px). So the acceptance number is
+     the PAINTED one, which needs no reconstruction: screenshot the row, hide the
+     tab, screenshot again — the changed pixels ARE the tab (52x13 here, 49x13
+     and 51x13 on HEAD, which is what "the two tabs were not the same size" and
+     `--hudx-tab-w` are about). Then, with the tab hidden, blank the name and
+     count the name pixels standing inside that footprint. 4 names x 4 viewports
+     x 2 banners:
+                                    HEAD                  this sheet
+       name ink eclipsed by tab     24 of 32 cases        0 of 32
+                                    up to 533px           0px
+       name ink showing through
+       the tab's chamfered corner   24 of 32, up to 80px  0 of 32
+       nearest approach             -63px (overlapping)   +4px clear
+     The name still paints 787-1310px of its own ink in every one of those
+     cases, so nothing was bought by shrinking the readout to a stub.
+
+   WHAT IT COSTS. The name column goes 242 -> 172px at 1600/1920 and 214 -> 144px
+   at 1280/1440 (unzoomed), i.e. ~22 and ~16 characters. Five of the six stock
+   heroes still fit whole at the smallest of these; "Zarra, the Brood Queen"
+   (153.5px against a 115.2px column at 1280x800) now ellipsizes. Trading the
+   tail of one long name for a side marker that is never printed over the name
+   is the right way round; what was NOT acceptable was buying the clearance by
+   shrinking the readout to a stub — or, as the revision below documents, by
+   quietly deleting the ▲level chip. */
+.hudx-fighters .fighter:not([data-side="foe"]) .finfo h2 { padding-right: var(--hudx-tab-gutter); }
+.hudx-fighters .fighter[data-side="foe"] .finfo h2 { padding-left: var(--hudx-tab-gutter); }
+
+/* ── WHAT THE GUTTER TAKES MUST COME OFF THE NAME, NEVER OFF THE ▲LEVEL CHIP ──
+   🔴 THE CLAIM THIS BLOCK REPLACES WAS FALSE, AND IT WAS FALSE IN THE DIRECTION
+      THAT HID A REGRESSION. The paragraph above used to end "…now ellipsizes,
+      where before it fit and pushed the ▲level chip out of the row instead".
+      Nothing was pushed out: before the gutter, Zarra's name fit AND her chip
+      painted. Measured the only way that can settle it — screenshot the chip's
+      own rect, hide the chip, screenshot again, diff — because `text-overflow`
+      does NOT move an overflowing box, it only stops painting it, so
+      `getBoundingClientRect()` cheerfully reports a chip that is not on screen.
+      9 names x 4 viewports x both banners, player ▲12 (a 33x16px clip) /
+      foe ▲9 (29x16), one browser session so the sheets are comparable:
+
+        chip pixels painted       HEAD        gutter only      + this rule
+        Zarra foe                 182-251     0 and 3   GONE   261-262  whole
+        Zarra mine                167-217     18-82            298-304  whole
+        the report's long names   0 (all)     0 (all)          261-303  whole
+        Thane/Aria/Vex mine       119-304     unchanged        254-303  whole
+        the five short names      unchanged   unchanged        unchanged
+      Across all 72 cases: 0 regressed, 40 improved, and no chip is clipped at
+      any viewport by any name any more.
+
+   AND THE CHIP WAS NEVER SAFE ON HEAD EITHER — this rule is not a revert, it
+   fixes a defect the gutter only made reachable. index.html emits the readout as
+   ONE ellipsizing run with the chip LAST (`<h2>NAME<span class="lvl">▲n</span>`,
+   _bcpFighter ~141434), so the chip is the FIRST thing the ellipsis eats. On
+   HEAD's own sheet, renamed to the bug report's "Cedric Survivor Gunmen of the
+   Ninth", the chip already paints 0 pixels on both banners at all four
+   viewports; four of the six SHIPPED starter heroes already lose part of it on
+   the player's side (Thane 119/528 at 1440x900), and on HEAD the chip's own box
+   runs under the YOU tab in 13 of 72 cases, by up to 21.25px. Any long name
+   loses the enemy's level readout, gutter or no gutter.
+
+   THE FIX IS TO END THE SHARED RUN, and it needs one span that CSS cannot
+   conjure: `text-overflow` needs a box of its own to ellipsize in, and an
+   anonymous flex item cannot be given `overflow`/`text-overflow` (neither is an
+   inherited property), so hud.js moves the name's text nodes into
+   `.hudx-hname` — the established "wrap, never re-emit" move it already makes
+   for the portrait. Then the row is a flex line with exactly one shrinkable
+   item, and the gutter is paid out of the NAME's width instead of out of
+   whatever happens to be last.
+   ⚠ `:has(.hudx-hname)` IS THE DEGRADE PATH, not a flourish. If hud.js is not
+     loaded (or throws before the wrapper), h2 keeps today's block layout rather
+     than becoming a flex row whose only shrinkable item is an ANONYMOUS one
+     that cannot be given `overflow`/`text-overflow` — that row would refuse to
+     shrink and push the chip straight back under the tab. Measured by deleting
+     the wrapper from the live DOM and re-running the whole sweep against this
+     sheet: name-vs-tab intersection stays EMPTY in every case (the gutter is
+     what holds that), and only the chip falls back to HEAD's own failure mode
+     (7 of 36 clipped). The degrade is never worse than the file it replaces.
+   ⚠ `align-items: baseline`, not the flex default `stretch`: stretch would
+     size the gold chip to the full row and it is a small hexagon sitting on the
+     name's baseline. THE ROW DOES NOT MOVE — measured against the same sheet
+     without the flex rules, all four viewports, both banners: h2 14.84 / 16.50,
+     `.finfo` 52.84 / 56.50, `.rprow` top 54.42 / 60.25, max delta 0.000px. So
+     nothing under the name (pills, statuses, HP bar) shifts, and §8's phase
+     plaque arithmetic further down still holds.
+   ⚠ NO `text-align` OVERRIDE, and that is a measured decision, not an
+     oversight. The mirror is done by `justify-content`; the span inherits
+     `.finfo`'s `text-align: right` on the foe's side, and the obvious worry is
+     that this ellipsizes the HEAD of the name ("…he Brood Queen") — a hero is
+     identified by the START of their name. Tested at 1600x1000 on the foe
+     banner with `text-align: right` forced on the span and the row screenshot
+     both ways: IDENTICAL, "ZARRA, THE BR…" either way. Chrome puts the ellipsis
+     at the line's end edge regardless of alignment, and a name that fits is
+     content-sized so alignment cannot show at all. An override here would have
+     been an inert rule that the next reader takes for load-bearing. */
+.hudx-fighters .finfo h2:has(.hudx-hname) { display: flex; align-items: baseline; }
+.hudx-fighters .fighter[data-side="foe"] .finfo h2:has(.hudx-hname) { justify-content: flex-end; }
+.hudx-fighters .finfo h2 .hudx-hname {
+  /* ⚠ `min-width: 0` is belt-and-braces, MEASURED as such: a flex item's
+     automatic minimum size is already zero when its own `overflow` is not
+     `visible`, so forcing `min-width: auto` back on changes nothing here
+     (name 140.5px, chip flush, identical to the digit). It stays so the rule
+     does not silently depend on `overflow: hidden` never moving. */
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The chip is the one item that must never shrink and never be clipped.
+   ⚠ `line-height: normal` IS NOT COSMETIC AND IT IS NOT INHERITED NOISE — it
+   keeps the gold plate the size it has always been. A flex item is blockified,
+   and a BLOCK box's height is its line-height (the inherited 1.1 x 9px = 9.9px)
+   where an INLINE box's is the font's own ascent+descent (12px). Left alone the
+   chip silently loses 2px of plate: measured, its painted pixels drop 262 -> 223
+   (foe) and 305 -> 257 (player) and its top slides 19.58 -> 21.58 at 1280x800,
+   24.75 -> 26.75 at 1600x1000. `normal` hands the box back the font metrics the
+   inline box was using, and the top returns to 19.58 / 24.75 exactly.
+   Scoped to the flex row: with the chip still inline this value would instead
+   feed the h2's line box, and the row's height is not this rule's business. */
+.hudx-fighters .finfo h2:has(.hudx-hname) .lvl { flex: 0 0 auto; line-height: normal; }
 /* ⚠ THE FOE TAB IS BUILT THE SAME WAY ROUND AS THE YOU TAB — dark type on a
    LIGHT plate — because the two tabs are now the only thing carrying which
    banner is whose (the HP bar was correctly taken off side duty, see above).
@@ -771,7 +972,7 @@
    only difference — bone/rose for them, gold for you — and lands p10/p90 at
    roughly 40/218 = 12.9:1. */
 .hudx-fighters .fighter[data-side="foe"] .finfo::before {
-  content: "FOE"; left: 14px;
+  content: "FOE"; left: var(--hudx-tab-x);
   color: #4b110d;
   background: linear-gradient(180deg, #eed6c4, #c69682);
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.28);
@@ -817,7 +1018,65 @@
    `.battle-center` further down: `.board`'s height is a fixed
    `100svh - 212px`, so padding only slides the whole field DOWN and buries the
    near rows (and the units standing on them) behind the hand strip. Costing
-   the board real ground to move a bar off empty sky is the worse trade. */
+   the board real ground to move a bar off empty sky is the worse trade.
+
+   🔴 THE REVISION OF THIS NOTE BEFORE THIS ONE REPORTED A GAP AS AN OVERLAP.
+      Recorded, not quietly deleted, because it is the SAME failure mode as the
+      "the tab at y=2..15 cannot collide with it" line in §3 above — a sentence
+      that reads like a measurement and is not one, in the one file where that
+      is the whole safety net. It claimed the plaque buried the HP bar at
+      1280x800 / 1440x900 / 1600x1000 / 1920x1200 and quoted overlap heights of
+      6.97 / 5.82 / 2.25px. RE-MEASURED, real match (`startBattleWithPrep`,
+      cedric vs zarra), both banners, at all four: THERE IS NO INTERSECTION AT
+      ANY OF THEM. `#phase-bar`'s top sits BELOW `.rprow`'s bottom by
+        1280x800  +3.58   1440x900  +3.58   1600x1000  +7.75   1920x1200  +7.75
+      (+ve = clear; `.rpbar` clears by a further 2.5px). Only the HORIZONTAL
+      extents in it were real — the columns genuinely do line up, 236.89px at
+      1600/1920 — which is exactly what made it read as a measurement. The
+      sign of one number was the whole error, and `elementFromPoint` cannot have
+      "confirmed the plaque is ON TOP" at those widths because there was no
+      intersection to sample. Still clear at UI zoom 0.9 / 0.8 (+2.80 / +1.95 at
+      1280x800, +7.45 / +5.63 at 1600x1000).
+      Its causal sentence was false too: "its top is bannerBottom - 14 at every
+      viewport". Measured, the plaque's top is `.hudx-banners`' bottom minus 10
+      on this band and minus 14 on the short one — because §8 re-tucks it.
+
+   🔴 FOUND AND NOT FIXED — AND IT IS THE SHORT BAND, NOT THE WIDE ONES. Where
+      the plaque really does bury the HP row is §8's
+      `(min-width: 1101px) and (max-height: 760px)` band, the one that exists so
+      a short window keeps its sky. MEASURED there, both banners:
+        `.rprow`  97.17 x 4.38   29.2% of a 15px row   gapY -4.38
+        `.rpbar`  74.63 x 1.88   18.8% of a 10px bar   gapY -1.88
+      `elementFromPoint` at each intersection's centre returns `DIV.phz-bar` /
+      `BUTTON.phz-cell past`: the plaque IS on top here. Identical at 1280x720,
+      1280x760, 1280x640, 1366x700, 1600x720 and 1920x760, and at UI zoom
+      1.0 / 0.9 / 0.8 (29.2 / 30.8 / 35.8% of the row).
+      ⚠ PRE-EXISTING, NOT A REGRESSION — all 15 viewport x zoom probes re-run
+        against HEAD's own sheet (swapped in by `link.href`) come back
+        identical to the digit, so §3's YOU/FOE gutter did not cause it.
+      ⚠ NOT A CORNER CASE — 1366x768, the commonest short laptop and the
+        viewport §8 was tuned against, lands in this band the moment browser
+        chrome is subtracted.
+
+      THE ARITHMETIC, so the pass that owns this does not re-derive it. Between
+      the two bands the plaque's top climbs 16px (12 of banner + 4 of deeper
+      tuck) while the HP row's bottom climbs only 8.04: `.fighter` loses 12
+      (80 -> 68) but the `.finfo` stack loses only 4.09 (52.84 -> 48.75), and
+      `.finfo` is CENTRED, so the free space beneath it merely halves,
+      8.58 -> 4.63. +3.58 - 7.96 = -4.38. Both candidate fixes were costed and
+      both need a sweep this pass is not:
+        · tuck -18 -> -13 clears by +0.62, and drops the plaque's bottom from
+          84.41 to 89.41 — 5px deeper over `.board-area` ([266,4,747.6,520] at
+          1280x720). That is precisely the overlay depth §8a's 56-tile
+          `elementFromPoint` sweep signed off, so the sweep must be re-run.
+        · lifting the stack instead (`.finfo { margin-bottom: 10px }` scoped to
+          §8) clears by +0.25 and does not move the plaque at all — but 10px is
+          more than the 9.25px of slack `.finfo` has inside that 68px plate, so
+          it pins the column to the plate's TOP and the first status chip to
+          appear overflows. `.statuses` measures 0px in this match and does not
+          always.
+      So it stays a band-geometry pass with §8a's sweep attached: deliberately
+      NOT bundled into a text-collision fix, and NOT harmless. */
 .hudx-phaserow { display: flex; justify-content: center; margin-top: -14px; }
 .hudx-phaserow #phase-bar {
   margin: 0; border-radius: 0; border: 1px solid var(--hudx-gold-dim);
@@ -2946,7 +3205,16 @@ body:has(.battle-screen) .emote-toggle {
      index.html:35887 and its Cinzel caps make it 24 tall, 3.6 taller than a
      cell, so it and not the cells was setting the row. That 4px is not
      cosmetic: it is 4px of band that --hud-banner-h did not know about, i.e.
-     exactly the silent overflow §3 forbids. */
+     exactly the silent overflow §3 forbids.
+     🔴 THIS -18px IS WHERE THE PLAQUE-OVER-HP-BAR DEFECT LIVES — measured
+        `.rprow` 97.17 x 4.38 (29.2%) and `.rpbar` 74.63 x 1.88 buried at every
+        viewport in this band, `elementFromPoint` returning `DIV.phz-bar`. It is
+        the deeper tuck (14px below the banners' bottom here against 10px on the
+        tall band) plus the centred `.finfo` keeping 4.09 of the 12px `.fighter`
+        gives up. Pre-existing, and NOT fixed here: the full measurement, both
+        costed fixes and why each needs §8a's 56-tile sweep re-run are written
+        up against `.hudx-phaserow`'s base rule (search "FOUND AND NOT FIXED").
+        Do not change this number without that sweep. */
   .hudx-phaserow { margin-top: -18px; }
   .hudx-phaserow #phase-bar { padding: 2px 16px; }
   .hudx-phaserow .phz-cell { padding: 2px 8px; }

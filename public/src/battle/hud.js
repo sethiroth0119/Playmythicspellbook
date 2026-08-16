@@ -458,6 +458,46 @@ function relayout() {
       p.parentElement.insertBefore(hex, p);
       hex.appendChild(p);
     });
+
+    /* 📛 THE HERO NAME GETS ITS OWN BOX SO THE ▲LEVEL CHIP CANNOT BE
+       ELLIPSIZED AWAY — the one thing hud.css cannot do for itself.
+       index.html renders the whole readout as ONE ellipsizing run with the chip
+       LAST in it (`_bcpFighter`, ~141434):
+           <h2>NAME<span class="lvl">▲12</span></h2>
+       `h2` is `white-space:nowrap; overflow:hidden; text-overflow:ellipsis`, so
+       when the row runs out of room the chip is the FIRST thing to go — the
+       ellipsis eats it before it eats a single letter of the name. That is a
+       property of HEAD, not of the YOU/FOE gutter §3 added: measured on HEAD's
+       own sheet (screenshot the chip's rect, hide the chip, diff), with the
+       banner hero renamed to the bug report's own "Cedric Survivor Gunmen of
+       the Ninth", the chip paints 0 of 464 (foe ▲9) and 0 of 528 (player ▲12)
+       pixels at 1280x800, 1440x900, 1600x1000 and 1920x1200. It is already
+       gone. The gutter merely moves the threshold down far enough that "Zarra,
+       the Brood Queen" — a SHIPPED starter hero — crosses it: 182-251/464 down
+       to 0 and 3 on the foe banner.
+       CSS alone cannot fix that. `text-overflow` needs a box to ellipsize in,
+       an anonymous flex item cannot be given `overflow`/`text-overflow` (they
+       are not inherited properties), and index.html is not this piece's to
+       edit. So the name — everything in the h2 that is not the chip — is moved
+       into a span of its own, which hud.css then makes the only shrinkable item
+       in the row. Same trick, same guard and same "move, never re-emit" rule as
+       the portrait wrapper above: the text NODES are moved, so nothing is
+       re-serialised, `h2.textContent` is unchanged, and a name is never routed
+       through innerHTML (escapeHtml already ran; re-emitting would be a second
+       chance to get that wrong).
+       ⚠ hud.css keys the flex row off `h2:has(.hudx-hname)`, so if this file
+       ever fails to load or throws before here, the banner degrades to exactly
+       today's behaviour instead of to a broken row. */
+    fighters.querySelectorAll('.fighter .finfo > h2').forEach((h2) => {
+      const first = h2.firstElementChild;
+      if (first && first.classList.contains('hudx-hname')) return;   // already done
+      const chip = h2.querySelector('.lvl');
+      const wrap = mk('span', 'hudx-hname');
+      h2.insertBefore(wrap, h2.firstChild);
+      // everything up to (not including) the chip is the name; with no chip the
+      // loop simply drains the h2, which is the right answer either way.
+      while (wrap.nextSibling && wrap.nextSibling !== chip) wrap.appendChild(wrap.nextSibling);
+    });
   }
   // The phase track is chrome, not board furniture; hoisting it out of
   // `.battle-center` keeps it clear of the banners AND gives the board column

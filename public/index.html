@@ -46899,6 +46899,12 @@ async function cloudSyncProfile() {
       // 🏳 District Node the camp is registered to (Reconstruction Network).
       // ⚠ NEVER emit null here — see _stripUnknownCampNode() below.
       __campNodeId__:        (typeof Profile.campNodeId === 'string' && Profile.campNodeId) ? Profile.campNodeId : null,
+      // 🏛 The map node you fly your flag over (see _twMakeCapital). ONE scalar,
+      // which is what makes "one capital per owner" structural. Unlike
+      // __campNodeId__ a null here is harmless — the hydration half below only
+      // assigns when it reads a non-empty string, so a blank never overwrites a
+      // capital set on another device.
+      __twCapitalNodeId__:   (typeof Profile.twCapitalNodeId === 'string' && Profile.twCapitalNodeId) ? Profile.twCapitalNodeId : null,
       // 🤝 AI trade history — rep, delivery counts and any live contract.
       // ⚠ Profile.* is NOT synced automatically; a key only travels if it is
       // named here AND read back in the hydration block. Without both halves
@@ -48221,6 +48227,10 @@ async function cloudFetchProfile() {
       if (typeof f.__campSurvivorId__ === 'string') Profile.campSurvivorId = f.__campSurvivorId__;
       // 🏳 Camp's registered District Node + Reconstruction Network state.
       if (typeof f.__campNodeId__ === 'string') Profile.campNodeId = f.__campNodeId__;
+      // 🏛 Map capital — the other half of __twCapitalNodeId__ above. Without
+      // this line the key would upload and never come back, and the capital
+      // would silently reset on every reload.
+      if (typeof f.__twCapitalNodeId__ === 'string' && f.__twCapitalNodeId__) Profile.twCapitalNodeId = f.__twCapitalNodeId__;
       // 🤝 AI trade history — the other half of __aiTrade__ above.
       if (f.__aiTrade__ && typeof f.__aiTrade__ === 'object') Profile.aiTrade = f.__aiTrade__;
       // 🚚 Rigs MERGE rather than replace. A straight assignment would let an
@@ -61799,7 +61809,10 @@ async function _nodeMakeCapital(nodeId) {
     const all = (FoundationReserve && FoundationReserve.nodes) || [];
     const target = all.find(n => n && n.id === nodeId);
     if (!target) return false;
-    if (!(await gcConfirm('🏛 Make this your <b>capital</b>?<br><br>Your current capital becomes a town and starts feeding this one instead.'))) return false;
+    // Plain text: gcConfirm escapes via _gcBody, so markup would render as a
+    // literal "<b>". This never showed because the only button pointing here
+    // passed a TW node id and bailed above — see _twMakeCapital.
+    if (!(await gcConfirm('🏛 Make this your capital?\n\nYour current capital becomes a town and starts feeding this one instead.'))) return false;
     let r;
     try { r = await Cloud.client.rpc('node_set_main', { p_node_id: nodeId }); }
     catch (e) { showToast('⚠ Network error — capital unchanged.', 3600); return false; }
@@ -61824,6 +61837,92 @@ async function _nodeMakeCapital(nodeId) {
   } catch (e) { return false; }
 }
 try { window.__mg = window.__mg || {}; window.__mg._nodeMakeCapital = _nodeMakeCapital; } catch (e) {}
+/* 🏛 THE CAPITAL YOU PICK ON THE MAP — a DIFFERENT thing from the PRN capital
+   above, and the reason "🏛 Make capital" in the node modal did nothing at all.
+
+   The button handed the modal's node id straight to _nodeMakeCapital(). That
+   function looks its argument up in FoundationReserve.nodes, and the two are not
+   the same id space:
+     • the node modal shows TERRITORY-WAR nodes — 'N-01' (tw_node_owners.node_id)
+     • FoundationReserve.nodes are PRN rows      — economy_nodes.id, a UUID
+   so the find() missed on EVERY click and the very next line was `return false`.
+   No confirm, no toast, no console entry, measured at 0.00ms — which is exactly
+   what "the button does nothing" feels like from the outside. The same mismatch
+   made the badge read 🏘 TOWN on every node forever, because _nodeIsMain() reads
+   meta.role and a TW node carries no meta at all. _cityTierResolve's long note
+   on the tier pill records this identical trap: economy_nodes still has no
+   column referencing a TW node, so that lookup can never be made to work.
+
+   ⚠ THIS IS THEREFORE A NEW CONCEPT, DELIBERATELY DEFINED — not a wiring fix.
+     sql/033's capital belongs to PRNs and cannot describe a map node. The map
+     capital is the one node, among those you own, that you fly your flag over.
+   ⚠ It is PRESENTATIONAL. It pays nothing and boosts nothing. _nodeTownBoost is
+     PRN arithmetic and must NOT be borrowed to invent a payout here — a bonus
+     minted off a flag the player moves at will is a Cinder-minting bug waiting
+     to be written. If the map capital is ever given economics, they belong in a
+     closed loop that is audited like every other payout in this file.
+
+   Storage is Profile.twCapitalNodeId, modelled exactly on Profile.campNodeId:
+   ONE scalar, so "one capital per owner" is STRUCTURAL rather than enforced —
+   setting a second cannot create a second, it overwrites the first, and there is
+   no state in which two exist to reconcile. It rides the existing profile sync
+   (__twCapitalNodeId__ appears in the save payload AND in the hydration block —
+   a Profile key travels only if it is in both), so it survives reload and
+   reaches the player's other devices without needing a migration. */
+function getTwCapitalNodeId() { try { return (Profile && Profile.twCapitalNodeId) || null; } catch (e) { return null; } }
+function _twIsCapital(nodeId) { return !!nodeId && getTwCapitalNodeId() === nodeId; }
+/* Set (or move) the map capital. Ownership is read from the same
+   _twNodeOwnerUser() the modal already gates its buttons on, so the button and
+   the action can never disagree about who owns what.
+   ⚠ Degrades instead of throwing. Signed out we cannot say whose node this is,
+     so it declines with a message rather than stamping a capital we cannot
+     attribute to anyone. Offline-but-signed-in still works: the owner map is
+     cached, the write is local, and saveProgressCloud() is best-effort and is
+     allowed to fail without the capital being lost. */
+async function _twMakeCapital(nodeId) {
+  try {
+    if (!nodeId) return false;
+    const me = (Profile && Profile.cloud && Profile.cloud.userId) || null;
+    if (!me) { showToast('⚠ Sign in to set your capital.', 3200); return false; }
+    const t = (typeof _twForge === 'function') ? _twForge() : null;
+    const nodes = (t && t.nodes) || [];
+    const node = nodes.find(n => n && n.id === nodeId) || null;
+    if (!node) { showToast('⚠ That node is not on the map.', 3200); return false; }
+    const own = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(nodeId) : null;
+    if (!own || own.user_id !== me) {
+      showToast('⚠ You can only make a node you OWN your capital.', 3600); return false;
+    }
+    const prevId = getTwCapitalNodeId();
+    if (prevId === nodeId) { showToast('🏛 ' + node.name + ' is already your capital.', 2600); return false; }
+    const prev = prevId ? (nodes.find(n => n && n.id === prevId) || null) : null;
+    // ⚠ PLAIN TEXT, and no escapeHtml(). gcConfirm runs its argument through
+    //   _gcBody, which escapes the whole string and turns \n into <br> — so
+    //   markup here renders as literal "<b>" on screen and a pre-escaped name
+    //   would come out double-escaped.
+    const ask = '🏛 Make ' + node.name + ' your capital?'
+      + (prev ? '\n\n' + prev.name + ' goes back to being a town.' : '');
+    if (!(await gcConfirm(ask))) return false;
+    // One field, so the old capital is demoted by the same assignment that
+    // promotes the new one — there is no window in which two are set.
+    Profile.twCapitalNodeId = nodeId;
+    try { saveProfile(); } catch (e) {}
+    try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+    showToast('🏛 ' + node.name + ' is now your capital.'
+      + (prev ? ' ' + prev.name + ' is a town again.' : ''), 4200);
+    // renderTerritoryWars() DIRECTLY. render() is rAF-batched, and the badge has
+    // to change on this click rather than on whichever later frame happens to
+    // run — the same reason the hub tile bypasses render().
+    try {
+      if (App.screen === 'territoryWars' && typeof renderTerritoryWars === 'function') renderTerritoryWars();
+      else render();
+    } catch (e) {}
+    return true;
+  } catch (e) {
+    try { showToast('⚠ Could not set the capital.', 3200); } catch (_) {}
+    return false;
+  }
+}
+try { window.__mg = window.__mg || {}; window.__mg._twMakeCapital = _twMakeCapital; } catch (e) {}
 function _nodeTierLabel(n) {
   try {
     const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
@@ -68879,6 +68978,13 @@ function loadForge() {
       // survives later admin edits to the survivor template.
       if (typeof p.campSurvivorId === 'string') Profile.campSurvivorId = p.campSurvivorId;
       if (Array.isArray(p.campTraits)) Profile.campTraits = p.campTraits.filter(x => typeof x === 'string');
+      /* 🏛 Map capital (see _twMakeCapital). saveProfile() stringifies the whole
+         Profile, so it is always WRITTEN — but this local load is a whitelist,
+         and a key missing from it is dropped on every refresh and then written
+         back out blank, which is how the value disappears from storage too.
+         The cloud half (__twCapitalNodeId__) only covers signed-in players;
+         this line is what makes the capital survive a reload offline. */
+      if (typeof p.twCapitalNodeId === 'string') Profile.twCapitalNodeId = p.twCapitalNodeId;
       // 🏘 Owned houses — every house the player has bought (with stash +
       // interior decoration). Same whitelist gap: every refresh wiped them
       // until cloud-sync arrived seconds later (and meanwhile the player
@@ -221773,24 +221879,34 @@ function renderTerritoryWars() {
             ? ('You are the hired mayor of this city. Build and run it on the owner\'s behalf'
                + (_terms ? ' — ' + escapeHtml(_terms) : '') + '.')
             : 'Connected settler — build a city that supplies this node. Everything you gather goes to your camp storage.';
-        /* 🏛 CAPITAL / TOWN. Only the OWNER may re-designate, and only on a node
-           they own — a mayor runs a city, they do not choose the player's
-           capital. The capital badge is shown to everyone; the button is not. */
-        const _isMain = (typeof _nodeIsMain === 'function') && _nodeIsMain(selNode);
-        const _roleBadge = _isMain
-          ? '<span class="tw-nd-cap" title="Your capital — towns feed it a share of their tier.">🏛 CAPITAL</span>'
-          : '<span class="tw-nd-town" title="A town. Its tier feeds your capital.">🏘 TOWN</span>';
-        const _capBtn = (_iOwnIt && !_isMain)
-          ? `<button class="btn-mini" onclick="__mg._nodeMakeCapital('${escapeHtml(selNode.id)}')" title="Make this your capital. Your current capital becomes a town.">🏛 Make capital</button>`
+        /* 🏛 CAPITAL / TOWN. selNode is a MAP node, so this is the map capital
+           (_twMakeCapital) — NOT the PRN one. Handing selNode.id to
+           _nodeMakeCapital was the whole bug: that function searches PRN uuids,
+           a TW id such as 'N-01' can never match one, and it returned false
+           before showing so much as a confirm. See _twMakeCapital for the full
+           post-mortem and for why the map capital is its own concept.
+           Only the OWNER may re-designate — a mayor runs a city, they do not
+           choose the player's capital.
+           The badge is now owner-only too. It used to be shown to everyone, but
+           _nodeIsMain() on a TW node is always false, so every visitor was told
+           "🏘 TOWN" about somebody else's node — a label that was both wrong and
+           about a hierarchy that is none of their business. */
+        const _isCap = (typeof _twIsCapital === 'function') && _twIsCapital(selNode.id);
+        const _roleBadge = !_iOwnIt ? ''
+          : _isCap
+            ? '<span class="tw-nd-cap" title="Your capital — the one node you fly your flag over.">🏛 CAPITAL</span>'
+            : '<span class="tw-nd-town" title="A town. Make it your capital to fly your flag here instead.">🏘 TOWN</span>';
+        const _capBtn = (_iOwnIt && !_isCap)
+          ? `<button class="btn-mini" onclick="__mg._twMakeCapital('${escapeHtml(selNode.id)}')" title="Make this your capital. Your current capital becomes a town.">🏛 Make capital</button>`
           : '';
-        const _boost = _isMain && (typeof _nodeTownBoost === 'function') ? _nodeTownBoost(selNode) : 1;
-        const _boostLine = (_isMain && _boost > 1)
-          ? `<div class="tw-nd-claim-hint">🏘 Towns are feeding this capital <b>+${Math.round((_boost - 1) * 100)}%</b> accrual.</div>`
-          : '';
+        /* The "+N% accrual" line that used to sit here was PRN arithmetic
+           (_nodeTownBoost reads meta.role), so on a map node it evaluated to 1
+           and rendered nothing on every node, every time. Removed rather than
+           re-pointed: the map capital deliberately pays nothing. */
         return `<div class="tw-nd-claim mine"><div class="tw-nd-claim-row">
             <button class="btn-mini btn-primary" onclick="__mg._openNodeCity('${escapeHtml(selNode.id)}')">${_lbl}</button>
             ${_capBtn}${_roleBadge}
-          </div><div class="tw-nd-claim-hint">${_hint}</div>${_boostLine}</div>`;
+          </div><div class="tw-nd-claim-hint">${_hint}</div></div>`;
       })()}
       ${(typeof _nodePowerSectionHtml === 'function') ? _nodePowerSectionHtml(selNode) : ''}
       ${(typeof _ownershipSectionHtml === 'function') ? _ownershipSectionHtml() : ''}

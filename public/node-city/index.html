@@ -1405,9 +1405,26 @@
   .rl.t-warn .rlbadge { background: #5a3212; color: #ffcda0; border-color: rgba(255,122,47,.7); }
   .rl.t-gold .rlbadge { background: #4a3c12; color: #f6e0a0; border-color: rgba(212,175,55,.7); }
   .rl.t-ok   .rlbadge { background: #1c3d2c; color: #9cebab; border-color: rgba(76,175,122,.6); }
-  /* Reuses the raid card's own warnpulse, so "imminent" looks the same on the
-     launcher as it did on the panel it replaced. */
-  .rl.urgent { animation: warnpulse 1s infinite; }
+  /* 🔴 NOT warnpulse. That keyframe animates box-shadow ALONE, from
+     `0 0 0 transparent` to a red glow — and box-shadow is a single property, so
+     at the trough it REPLACES .rl's base `0 6px 18px rgba(0,0,0,.55)` with
+     nothing. Measured: an urgent launcher reported `box-shadow: rgba(0,0,0,0)
+     0px 0px 0px 0px` while every calm neighbour kept its elevation. So the most
+     urgent chip in the dock spent half of every second sitting FLATTER than the
+     ones with nothing wrong — the opposite of what the animation is for.
+     This keeps the base shadow in both stops and adds the glow on top of it.
+     Left warnpulse untouched: #raidcard and #daypill have no base elevation to
+     lose, and changing a shared keyframe to fix one consumer is how the next
+     person inherits a puzzle. */
+  @keyframes rlpulse {
+    0%, 100% { box-shadow: 0 6px 18px rgba(0,0,0,.55), 0 0 0 rgba(192,71,63,0); }
+    50%      { box-shadow: 0 6px 18px rgba(0,0,0,.55), 0 0 16px rgba(192,71,63,.55); }
+  }
+  .rl.urgent { animation: rlpulse 1s infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    /* Hold the lit state rather than flashing it — the urgency still reads. */
+    .rl.urgent { animation: none; box-shadow: 0 6px 18px rgba(0,0,0,.55), 0 0 16px rgba(192,71,63,.55); }
+  }
   /* The raid launcher prints the live countdown INSTEAD of a badge — a number
      that changes every half second is not a badge, it is the readout, and the
      brief for this change calls it out by name as the one thing that must
@@ -29183,7 +29200,14 @@ const RAILS = [
 let _railOpen = null;                    // id of the panel currently in #rmbody
 const _railBtn = new Map();              // id -> button
 const _railSlot = new Map();             // id -> placeholder left behind in the rail
-let _logSeen = 0;                        // game.log.length as of the last City Log open
+/* game.log.length as of the last City Log open.
+   🔴 null, NOT 0. A saved city loads with its whole history already in game.log,
+   so seeding this at 0 made every one of those lines "unread" and hung a badge
+   on the 📜 launcher the moment the page opened — an unread count for events the
+   player watched happen yesterday. null means "not established yet"; the first
+   badge derivation adopts the current length and reports nothing unread, so the
+   badge only ever counts lines written AFTER this session started looking. */
+let _logSeen = null;
 
 /* ════ THE BADGE DERIVATION ════
    Every state below is READ OFF THE RENDERED PANEL, never re-derived. There is
@@ -29246,6 +29270,9 @@ function railState(r) {
     case 'synccard': { const s = num('syncpct'); return s == null ? {} : { badge: s + '%' }; }
     case 'logcard': {
       const n = (game.log && game.log.length) | 0;
+      // First derivation after a load adopts the restored history as already
+      // seen — see the _logSeen declaration. Everything from here is genuinely new.
+      if (_logSeen === null) _logSeen = n;
       const unread = Math.max(0, n - _logSeen);
       return unread ? { badge: unread > 99 ? '99+' : unread } : {};
     }

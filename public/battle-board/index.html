@@ -243,6 +243,9 @@ const CONFIG = {
      backdrop  : the environment BEHIND the board — the world this location
                  sits in. Drawn behind the arena and graded by the sky, so a
                  location card changes the whole horizon, not just the floor.
+     horizon   : 0..1 down the BACKDROP art, where its ground line sits. That
+                 line is anchored to the board's far edge, so getting it wrong
+                 slides the whole world up or down. Defaults to 0.62.
      timeOfDay : null keeps the current sky, or force 'dawn|day|dusk|night'
      tint      : optional extra colour grade over the ground
    Play one with:  Board.setLocation('dark-forest')
@@ -265,7 +268,10 @@ function setLocations(table, keepDefault){
   for (const k in table){
     const L = table[k]; if (!L) continue;
     LOCATIONS[k] = { name:L.name || k, image:L.image || null, backdrop:L.backdrop || null,
-                     timeOfDay:L.timeOfDay || null, tint:L.tint || null };
+                     timeOfDay:L.timeOfDay || null, tint:L.tint || null,
+                     /* 0..1 down the BACKDROP art, where its ground line is.
+                        Anchored to the board's far edge — see syncBackdropPlate. */
+                     horizon:(typeof L.horizon === 'number') ? L.horizon : 0.62 };
   }
 }
 
@@ -365,7 +371,12 @@ const PAINT = { move:new Set(), attack:new Set(), place:new Set(), swap:new Set(
 /* dead units' grave markers, pushed by the game */
 const TOMBS = [];
 const GROUND = { img:null, prev:null, fade:1, key:null };
-const BACKDROP = { img:null, prev:null, fade:1, horizon:0.62 };  /* horizon height in the source art */
+/* BACKDROP.img is the PLATE that gets drawn; BACKDROP.src is the file that was
+   loaded. See the block comment on syncBackdropPlate() for why they differ.
+   BACKDROP.horizon is plate-relative (what every painter consumes);
+   BACKDROP.srcHorizon is art-relative (what a location registers). */
+const BACKDROP = { img:null, prev:null, fade:1, horizon:0.62,
+                   src:null, srcHorizon:0.62, plateKey:'' };
 function loadLocation(id, instant){
   const loc = LOCATIONS[id]; if (!loc) return;
   const im = new Image();
@@ -378,12 +389,110 @@ function loadLocation(id, instant){
     const bd = new Image();
     bd.onload = () => {
       BACKDROP.prev = instant ? null : BACKDROP.img;
-      BACKDROP.img = bd; BACKDROP.fade = instant ? 1 : 0;
+      BACKDROP.src = bd;
+      BACKDROP.srcHorizon = (typeof loc.horizon === 'number') ? loc.horizon : 0.62;
+      BACKDROP.plateKey = '';
+      /* if the plate cannot be built (no 2d context, no projection yet) the raw
+         art still ships — a worse anchor, never a blank sky. */
+      BACKDROP.img = bd; BACKDROP.horizon = BACKDROP.srcHorizon;
+      syncBackdropPlate();
+      BACKDROP.fade = instant ? 1 : 0;
     };
     bd.src = loc.backdrop;
   }
   MAP.location = id;
   if (loc.timeOfDay) setTimeOfDay(loc.timeOfDay);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   THE BACKDROP PLATE — why the file that is loaded is not the image
+   that is drawn.
+   ══════════════════════════════════════════════════════════════════
+   Both backdrop painters — drawOneBackdrop() below, and the vista module's
+   bakeArt(), which is the one that actually ships — place the art identically:
+
+     sc = max(W/nw, H/nh) * 1.02        cover the viewport
+     dy = hz - dh*BACKDROP.horizon      put the ART'S horizon on the board's
+                                        FAR EDGE, which is the whole contract
+     dy = min(0, max(H - dh, dy))       …but never expose an edge
+
+   That last line is a clamp, and on art that is not far WIDER than it is tall
+   it is the line that wins. Measured on the shipped stage — 1600x1000, far
+   edge y 225.6, dark-forest backdrop 1200x960, horizon 0.62:
+
+     anchor asks for dy -583.8, the clamp returns dy -305.6
+     ⇒ the art's own horizon lands at y 503.9, i.e. 278 px BELOW the edge it
+       is supposed to meet, and the effective horizon is 0.407, not 0.62
+     ⇒ what reaches the frame is source rows 225-391 of 960 — 17.3% of the
+       painting, taken from the middle of its sky. Smoke and roof tops; no
+       ground line, no base to any landmark. Everything below the far edge is
+       feathered away by bakeArt, so nothing else of the art is ever seen.
+
+   That is the "battlefield background does not render correctly" report, and
+   no scale fixes it: the art carries 62% of its height above its ground line
+   and 38% below, while the band on screen above the board is 1600x226, i.e.
+   7:1. Cover is the right call. The clamp only binds because the plate is too
+   SHORT below its horizon for the anchor to be reachable at all.
+
+   So the loader builds a plate — the art on a canvas tall enough that
+   H - dh <= dy, with the pad BELOW the horizon (which every painter feathers
+   away, so it is never on screen) filled from the art's own bottom row. The
+   plate duck-types as an image: drawImage() takes a canvas, and naturalWidth /
+   naturalHeight / complete / src are the only four properties the painters
+   read off it. Nothing downstream changes, no re-encode is paid, and
+   artDisagreement() — which samples rows 0..nh*horizon — sees exactly the same
+   pixels it saw before, because the pad is all below the horizon.
+
+   ⚠ REJECTED: lowering BACKDROP.horizon. Once the clamp binds, dy is already
+   AT its limit, so on this stage every declared horizon >= 0.406 produces the
+   identical dy. The knob is dead in precisely the case that needs it.
+   ⚠ REJECTED: cropping to a wide strip instead of padding. A 1200x260 strip
+   flips the cover to height-fit (sc 3.9), zooms the art 3x horizontally and
+   clamps again. Height is the axis that is short; height is what to add.
+   ⚠ The plate is quantised to PLATE_STEP so a drag-resize cannot thrash the
+   vista's world bake (one bake ~126 ms) once per pixel of window height. */
+const PLATE_STEP = 64;
+function backdropPlateSize(){
+  const src = BACKDROP.src;
+  if (!src || !src.complete || !src.naturalWidth) return null;
+  const nw = src.naturalWidth, nh = src.naturalHeight;
+  if (!(W > 0 && H > 0)) return null;
+  let hz = H * 0.30;
+  try { const far = project({ x:0, y:0, z:-MAP.rows/2 - CONFIG.wall }); if (far) hz = far.y; }
+  catch (e) { /* pre-buildStage: the 0.30 default is what horizonY falls back to */ }
+  const hRow = clamp(BACKDROP.srcHorizon, 0.05, 0.95) * nh;
+  /* H*nw/W forces the plate's aspect to be no wider than the viewport's, which
+     pins the cover to WIDTH-fit (sc = 1.02*W/nw). That makes the second term —
+     the height the clamp needs — exact instead of circular, because dh*horizon
+     collapses to sc*hRow and no longer depends on the plate height at all. */
+  const need = Math.max(H*nw/W, (H - hz)*nw/(1.02*W) + hRow) * 1.02;
+  const h = Math.max(nh, Math.ceil(need / PLATE_STEP) * PLATE_STEP);
+  return { nw, nh, h, hRow };
+}
+function syncBackdropPlate(){
+  try {
+    const p = backdropPlateSize(); if (!p) return;
+    const key = BACKDROP.src.src + '|' + p.h;
+    if (BACKDROP.plateKey === key) return;
+    if (p.h === p.nh){                       /* art already tall enough: use it raw */
+      BACKDROP.plateKey = key;
+      BACKDROP.img = BACKDROP.src; BACKDROP.horizon = BACKDROP.srcHorizon;
+      return;
+    }
+    const cv = document.createElement('canvas');
+    cv.width = p.nw; cv.height = p.h;
+    const g = cv.getContext('2d'); if (!g) return;
+    g.drawImage(BACKDROP.src, 0, 0);
+    /* the art's own bottom row, stretched. Never seen — it lives below the
+       horizon — but a flat fill would be a lie to anything that ever samples
+       the plate, and this costs one drawImage. */
+    g.drawImage(BACKDROP.src, 0, p.nh-1, p.nw, 1, 0, p.nh, p.nw, p.h - p.nh);
+    cv.naturalWidth = p.nw; cv.naturalHeight = p.h; cv.complete = true;
+    cv.src = BACKDROP.src.src + '#plate' + p.h;
+    BACKDROP.plateKey = key;
+    BACKDROP.img = cv;
+    BACKDROP.horizon = p.hRow / p.h;
+  } catch (e) { /* keep whatever is already on screen */ }
 }
 /* ⚠ NO LONGER THE GROUND PATH. The terrain renderer (see bakeTerrain) paints
    per-tile sand-and-rock material with elevation, bevels and contact shadows;
@@ -1093,6 +1202,11 @@ function drawOneBackdrop(img, alpha){
   const dx = (W-dw)/2;
   /* BACKDROP.horizon = where the horizon sits in the source image (0..1) */
   let dy = anchorY - dh*BACKDROP.horizon;
+  /* ⚠ THIS CLAMP USED TO BE THE BUG, AND IT IS LEFT IN AS A GUARD ONLY.
+     It silently overrode the anchor by 278 px on the shipped stage until
+     syncBackdropPlate() started supplying a plate tall enough for the anchor
+     to be reachable; with a plate it is never the binding constraint. Do not
+     "fix" the anchor by loosening this — fix the plate. */
   dy = Math.min(0, Math.max(H - dh, dy));      /* never expose an edge */
   ctx.globalAlpha = alpha;
   ctx.drawImage(img, dx, dy, dw, dh);
@@ -5079,6 +5193,11 @@ function frame(now){
      as the fallback. The stage modules are `type=module` and therefore deferred,
      so the first frame or two runs entirely on the fallbacks — that is fine; a
      throw is not, because frameErr latches and freezes the board forever. */
+  /* the backdrop plate is a function of the VIEWPORT (see syncBackdropPlate),
+     so it is re-checked here rather than only at load. The guard is a string
+     compare against a quantised height — a resize rebuilds it, a steady frame
+     does nothing. It must run BEFORE the vista hook, which reads BACKDROP. */
+  try { syncBackdropPlate(); } catch (e) {}
   const api = buildApi(dt);
   if (window.BBX.vista && window.BBX.vista.draw){
     try { window.BBX.vista.draw(api); } catch (e) { drawSky(); drawShards(); }

@@ -192196,9 +192196,37 @@ function adminRemoveCraftingRecipe(recipeId) {
 // Prices decay slowly back toward their base value so a single big buy
 // doesn't permanently shift a market. Cloud-synced via the forge JSONB.
 // ============================================================================
-const CX_PRICE_TICK_BUY    = 0.012;   // +1.2% per buy
+// 🔒 ONE rate for both trade directions, and that is load-bearing — see the
+// SPLIT-INDEPENDENCE invariant on cxImpactedPrice. It used to be +1.2% per buy
+// against −1.0% per sell; an up leg that moves the mark FURTHER than the
+// matching down leg means the sell path sits ABOVE the buy path, and a trader
+// who accumulates and then liquidates the same barrels collects the gap. That
+// is round 4 of FUELARB, measured at +62,829 on a 10M profile. Buy and sell
+// must move the mark by exactly reciprocal factors or the spread is not the
+// only thing standing between a round trip and a faucet.
+const CX_PRICE_TICK_TRADE  = 0.012;   // ±1.2% per unit traded, both directions
+// Crafting is one-directional supply pressure with no matching sell leg, so it
+// is allowed to differ — but only DOWNWARD. A craft bump smaller than the sell
+// drop means selling into your own craft-pump loses, which is the safe side. A
+// craft tick ABOVE CX_PRICE_TICK_TRADE would be a faucet; do not raise it.
 const CX_PRICE_TICK_CRAFT  = 0.008;   // +0.8% per crafted unit
-const CX_PRICE_TICK_SELL   = 0.010;   // -1.0% per sold unit
+// 🔒 Units of exchange pressure that ONE unit of the underlying exerts, per
+// asset. Default 1. This exists because the same mark is reachable from venues
+// that count in different lots, and impact has to cost the same wherever you
+// buy it or the two venues arbitrage each other:
+//   a Crash Exchange 'fuel' share costs ~¢100 and used to move the mark a full
+//   1.2%; a barrel of fuel costs ~¢88 and moved it 1/20th of that, because the
+//   gas station pre-divided its barrels by FC_NPC_CX_UNITS_PER_BBL before
+//   calling the kernel. So mark-impact was ~17.6x cheaper bought as paper than
+//   bought as fuel, and the trade was: buy physical at the pump, shove the mark
+//   with a handful of cheap shares, dump the physical into it. Measured on the
+//   tree before this package: +87,298 (400 bbl + 300 shares), profitable across
+//   most of the grid.
+// Keeping the scale HERE — on the price row, not at one call site — is the point.
+// cxImpactedPrice applies it, so every writer of this mark inherits it: the
+// pump, the order desk, crafting, expeditions, fishing, p2p, and anything added
+// later. Pre-dividing at a call site is how the two venues drifted apart.
+const CX_IMPACT_SCALE      = { fuel: 0.05 };   // 1 bbl = 1 share = 0.05 units
 const CX_PRICE_MIN_FACTOR  = 0.35;    // floor at 35% of base
 const CX_PRICE_MAX_FACTOR  = 3.50;    // ceiling at 350% of base
 const CX_DECAY_FACTOR      = 0.04;    // 4% drift toward base per tick
@@ -192523,7 +192551,26 @@ function getMarketPrice(id) {
     const base = _cxBasePrice(id);
     cx.prices[id] = { base, current: base, delta24h: 0, lastTick: Date.now(), volume24h: 0 };
   }
-  return cx.prices[id];
+  const p = cx.prices[id];
+  // 🔒 Stamp the per-asset impact scale onto the row, and BACKFILL it on every
+  // read — rows written by an older build have no impactScale, and a row that
+  // reaches cxImpactedPrice without one would silently price fuel at 20x the
+  // impact, which is the cross-venue arbitrage this scale exists to close.
+  // Recomputed every read rather than trusted from the save: it is a tuning
+  // constant, not player state, and a hand-edited profile must not be able to
+  // choose how hard its own orders move the market.
+  p.impactScale = (CX_IMPACT_SCALE && CX_IMPACT_SCALE[id]) || 1;
+  // 🔒 Self-healing floor. Every writer already clamps to base*MIN, but a save
+  // written by an older build (or a hand-edited profile) could carry a current
+  // below it, and cxImpactedPrice's "a sale never raises the price" guarantee —
+  // which the ⛽ NPC vendor's no-free-round-trip invariant rests on — is only
+  // true while p.current >= base*MIN. Re-establish it on read so the guarantee
+  // holds for every caller, not just the ones that arrived through a writer.
+  if (typeof p.base === 'number' && p.base > 0 && typeof p.current === 'number') {
+    const floor = p.base * CX_PRICE_MIN_FACTOR;
+    if (!(p.current >= floor)) p.current = floor;   // !(>=) also catches NaN
+  }
+  return p;
 }
 
 // Tick the decay: prices drift back toward their base value over time.
@@ -192549,15 +192596,91 @@ function tickMarketDecay() {
   try { saveForge(); } catch (e) {}
 }
 
+// ── PURE PRICE-IMPACT KERNEL ────────────────────────────────────────────────
+// bumpMarketPriceUp / dropMarketPriceDown are the only WRITERS of p.current on
+// the trade path; this is the arithmetic they share. It exists as a separate
+// pure function so a caller can QUOTE off the post-impact mark without moving
+// the market — the ⛽ NPC fuel vendor does exactly that, and the round-trip
+// invariant documented at fcNpcQuote() depends on the quote and the subsequent
+// write being THE SAME NUMBER. Do not inline this back into the two writers:
+// a second copy of the expression is precisely how the vendor's buy and sell
+// legs drifted apart and printed money.
+//
+// Two properties the vendor's proof leans on, both visible right here:
+//   dir > 0 ⇒ result >= p.current  (bump factor >= 1; the Math.min ceiling is
+//                                   only reachable from below)
+//   dir < 0 ⇒ result <= p.current  (drop factor <= 1, AND p.current is never
+//                                   below p.base * CX_PRICE_MIN_FACTOR — every
+//                                   writer clamps to it and getMarketPrice
+//                                   re-clamps on read — so BOTH arms of the
+//                                   Math.max are <= p.current)
+//
+// ── 🔒 THE SPLIT-INDEPENDENCE INVARIANT (FUELARB round 4) ───────────────────
+// THE MARK IS p0 · ρ^(units bought − units sold), ONE ρ FOR BOTH DIRECTIONS:
+// price impact is a continuous, exactly reciprocal function of quantity, so the
+// mark depends only on the NET quantity traded and never on how the order was
+// chopped into lots — and the sell path is therefore the exact mirror of the
+// buy path, leaving the spread as the only P&L on any closed round trip.
+//
+// Both halves of that sentence were false before, and each was a separate door:
+//
+//   NOT CONTINUOUS. The old form was LINEAR IN THE LOT — (1 ± tick·n) applied
+//   once per call — so impact depended on how you split the order. Buying 100
+//   units as one lot cost 1 + 1.2 = ×2.2; as a hundred lots of 1 it cost
+//   1.012^100 = ×3.30. Worse, the fuel vendor reached this through the old
+//   _fcCxUnits, which ROUNDED barrels to whole units: an 11-bbl buy and a
+//   29-bbl sell each spent exactly ONE unit, so a barrel bought moved the mark
+//   3.2x as far as a barrel sold. Accumulate 1,243 bbl in 11-bbl lots (avg paid
+//   ¢186/bbl, mark pinned at the 350% ceiling), liquidate in 29-bbl lots (avg
+//   received ¢236/bbl, mark still at ¢227) ⇒ +62,829 Cinder, four button
+//   shapes, no shock, no hedge, no leverage. ρ^n composes — ρ^a·ρ^b = ρ^(a+b) —
+//   so under this form every split of the same total lands on the same mark and
+//   the exploit has nothing to arbitrage.
+//
+//   NOT RECIPROCAL. buy was +1.2%/unit against sell −1.0%/unit. An up leg that
+//   moves the mark further than the matching down leg lifts the whole sell path
+//   above the buy path; the gap grows with size and eventually outruns the 5%
+//   vendor spread on its own, step function or not. dir<0 now applies ρ^(−n),
+//   the exact reciprocal of the dir>0 factor, so N units up then N units down
+//   returns the mark to where it started (to within a float ulp) — checkable by
+//   reading, and pinned by §10 of tools/economy-tests/fuelarb.mjs.
+//
+// ⚠ WHY THE KERNEL AND NOT THE VENDOR. Round 2 fixed the hedge and the exploit
+//   walked through the Crash Exchange; round 3 fixed the settle path and the
+//   exploit walked through order splitting. Every one of those doors moved THIS
+//   NUMBER through THIS FUNCTION — bumpMarketPriceUp / dropMarketPriceDown are
+//   the only writers of p.current on the trade path and they both call here. A
+//   guard placed here therefore covers the pump, the exchange order desk, p2p
+//   fills, expeditions, fishing, the shop, crafting and anything added later,
+//   without any of them having to remember it exists. That is the difference
+//   between an invariant and an enumeration, and the enumeration has now failed
+//   three times.
+// ⚠ `qty` is deliberately NOT floored to an integer any more. The old
+//   Math.max(1, qty|0) is precisely what made a fractional 0.55-unit order
+//   round up to a full unit, and it also silently charged a full unit of impact
+//   to a zero-quantity trade. Fractional and zero quantities are both meaningful
+//   and both must pass through unrounded.
+// ⚠ REJECTED — keeping the linear form and special-casing fuel. That is a
+//   fourth patch on the same wound: it leaves every other asset split-dependent
+//   and leaves the next instrument that reads a mark to rediscover this.
+function cxImpactedPrice(p, qty, dir, reason) {
+  // The scale rides on the row (see getMarketPrice) so that quantity means the
+  // same thing to every venue: one barrel and one CX share are one unit of the
+  // same underlying and must move this mark by the same amount.
+  const n = Math.max(0, +qty || 0) * (typeof p.impactScale === 'number' && p.impactScale > 0 ? p.impactScale : 1);
+  const rate = (dir > 0 && reason === 'craft') ? CX_PRICE_TICK_CRAFT : CX_PRICE_TICK_TRADE;
+  const factor = Math.pow(1 + rate, dir > 0 ? n : -n);
+  if (dir > 0) return Math.min(p.base * CX_PRICE_MAX_FACTOR, p.current * factor);
+  return Math.max(p.base * CX_PRICE_MIN_FACTOR, p.current * factor);
+}
+
 // Move a price up. `qty` is the # of units traded (drives the bump
 // magnitude). Returns the new current price for the caller to log.
 function bumpMarketPriceUp(id, qty, reason) {
   if (!id) return null;
   tickMarketDecay();
   const p = getMarketPrice(id);
-  const tick = (reason === 'craft' ? CX_PRICE_TICK_CRAFT : CX_PRICE_TICK_BUY);
-  const bump = 1 + (tick * Math.max(1, qty | 0));
-  p.current = Math.min(p.base * CX_PRICE_MAX_FACTOR, p.current * bump);
+  p.current = cxImpactedPrice(p, qty, +1, reason);
   p.delta24h = ((p.current - p.base) / p.base) * 100;
   p.volume24h = (p.volume24h | 0) + Math.max(1, qty | 0);
   p.lastTick = Date.now();
@@ -192574,9 +192697,7 @@ function dropMarketPriceDown(id, qty, reason) {
   if (!id) return null;
   tickMarketDecay();
   const p = getMarketPrice(id);
-  const tick = CX_PRICE_TICK_SELL;
-  const drop = 1 - (tick * Math.max(1, qty | 0));
-  p.current = Math.max(p.base * CX_PRICE_MIN_FACTOR, p.current * drop);
+  p.current = cxImpactedPrice(p, qty, -1, reason);
   p.delta24h = ((p.current - p.base) / p.base) * 100;
   p.volume24h = (p.volume24h | 0) + Math.max(1, qty | 0);
   p.lastTick = Date.now();
@@ -193165,7 +193286,31 @@ function _cxExecuteBuy(id, qty, _pxOverride) {
   qty = Math.max(1, qty | 0);
   const meta = (typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[id]) || null;
   if (!meta) return { ok: false, msg: 'This channel is read-only. Trade only Resources.' };
-  const px = (typeof _pxOverride === 'number') ? _pxOverride : (getMarketPrice(id).current || _cxBasePrice(id));
+  // 🔒 POST-IMPACT, and the override may only ever raise the price. Two holes
+  // lived on this line, both found while closing FUELARB round 4 and both
+  // predating it:
+  //   A. it quoted the PRE-impact mark while bumpMarketPriceUp below moved the
+  //      mark for real, so buy-then-sell-back bought at ¢100 and sold at the
+  //      ¢350 ceiling the buy itself had just created. Measured on the tree
+  //      before this change: +83,785 Cinder for one 400-share wash cycle, +54,344
+  //      at 250, +20,561 at 100 — no inventory, no hedge, repeatable. This is
+  //      FUELARB round 1 ("quoted the pre-impact mark") living unfixed on the
+  //      order desk, which is why the fix is the same one: price the leg from
+  //      the mark AFTER its own impact, exactly as fcNpcBuy does.
+  //   B. _pxOverride is the value of a TEXT INPUT the player types (cx-buy-px,
+  //      wired at the buyGo handler) and it was used verbatim as the price
+  //      charged. Typing 0.01 bought 500 shares for ¢6 and selling them back at
+  //      the real mark returned ¢157,089; typing both legs returned +44,882,771.
+  //      Clamping the override to be no better than the mark keeps whatever
+  //      limit-order intent the field had — you may always choose to pay MORE —
+  //      while removing the direction that mints.
+  // tickMarketDecay first so this quote and the write below agree, the same
+  // reason fcNpcMark does it.
+  try { tickMarketDecay(); } catch (e) {}
+  const _pRow = getMarketPrice(id);
+  let _mark = cxImpactedPrice(_pRow, qty, +1, 'buy');
+  if (!isFinite(_mark) || _mark <= 0) _mark = _cxBasePrice(id);
+  const px = (typeof _pxOverride === 'number' && isFinite(_pxOverride)) ? Math.max(_pxOverride, _mark) : _mark;
   const gross = px * qty;
   const fee   = gross * 0.004;
   // 🏛 Foundation Reserve quote — replaces the raw market price with one
@@ -193233,7 +193378,18 @@ function _cxExecuteSell(id, qty, _pxOverride) {
   const _cxSellPos = Profile.cxHoldings[id] || { qty: 0, avgCost: 0 };
   const have = _cxSellPos.qty | 0;
   if (have < qty) return { ok: false, msg: 'Insufficient CX shares. Holding ' + have + ' share' + (have === 1 ? '' : 's') + ', need ' + qty + '. Buy on the market first.' };
-  const marketPx = (typeof _pxOverride === 'number') ? _pxOverride : (getMarketPrice(id).current || _cxBasePrice(id));
+  // 🔒 The mirror of the buy leg — see the long note in _cxExecuteBuy. Quote the
+  // mark AFTER this sell's own downward impact, and let a typed override only
+  // ever LOWER what the player receives. Selling at the pre-impact mark is the
+  // half of the wash trade that collected: the buy leg pumped the mark to the
+  // ceiling and this leg paid out against it before dropMarketPriceDown moved
+  // it back. Both legs must be priced from their own post-impact mark or the
+  // pair is a faucet no spread can cover.
+  try { tickMarketDecay(); } catch (e) {}
+  const _pRowS = getMarketPrice(id);
+  let _markS = cxImpactedPrice(_pRowS, qty, -1, 'sell');
+  if (!isFinite(_markS) || _markS <= 0) _markS = _cxBasePrice(id);
+  const marketPx = (typeof _pxOverride === 'number' && isFinite(_pxOverride)) ? Math.min(_pxOverride, _markS) : _markS;
   // 🏛 Foundation Reserve sell quote — symmetric 4% markdown + slippage so
   // big dumps eat themselves. Wash trading round-trip pays the 8% spread.
   const quote = _cxQuoteSell(id, qty, marketPx);
@@ -200425,6 +200581,13 @@ const FC_EVENTS = [
   { id: 'theft',   ico: '🥷', nm: 'Worker Theft',       sev: 1, d: 'An employee skims the till.' },
   { id: 'spike',   ico: '📈', nm: 'Price Spike',        sev: 2, d: 'Regional supply crunch — NPC price jumps.' },
   { id: 'short',   ico: '🚱', nm: 'Fuel Shortage',      sev: 3, d: 'Pipelines dry up across the sector.' },
+  // 🛢 The mirror of 'spike'. Added in round 3 of FUELARB: once payouts were
+  // capped by the EXOGENOUS ledger and every rolled shock pushed the mark UP, a
+  // SHORT position could only ever break even or lose. A rolled downward shock is
+  // the one thing that can pay it, and making the RNG two-sided also removes the
+  // one-way bet a LONG had. Forced from the Events tab it is self-caused and
+  // pays nothing, exactly like a forced spike.
+  { id: 'glut',    ico: '📉', nm: 'Refinery Glut',      sev: 2, d: 'Refineries flood the sector — pump price collapses.' },
   { id: 'inspect', ico: '📋', nm: 'Inspection',         sev: 1, d: 'Inspectors audit your station.' },
   { id: 'boom',    ico: '💥', nm: 'Explosion Accident', sev: 3, d: 'Catastrophic ignition on the lot.' },
 ];
@@ -200465,6 +200628,23 @@ function ensureFuelCommand() {
   if (s.hedge === undefined)          s.hedge = null;
   if (s.pos === undefined)            s.pos = null;
   if (s.loan === undefined)           s.loan = null;
+  // 📒 EXOGENOUS-IMPACT LEDGERS — see the ⛽ block below. Monotone ¢/bbl totals
+  // of how far the NPC mark has been moved up / down by something the player did
+  // NOT choose. Only DIFFERENCES matter, so they may grow without bound.
+  // ⚠ These replaced the round-2 SELF-impact ledgers (s.selfLift / s.selfDrop),
+  // which are now dead and deliberately not initialised — see the ⛽ block for
+  // why counting the self side was the wrong way round.
+  // ⚠ Default 0 is the SAFE direction for an old save: a derivative struck by an
+  // earlier build carries no exo watermark, so `s.exoLift - 0` measures only the
+  // exogenous rise accrued SINCE this update (the ledger starts at 0 here), and
+  // the pre-existing self-caused rise it was hoping to collect is denied.
+  if (typeof s.exoLift !== 'number' || !isFinite(s.exoLift)) s.exoLift = 0;
+  if (typeof s.exoDrop !== 'number' || !isFinite(s.exoDrop)) s.exoDrop = 0;
+  // Stamp any derivative carried over from a pre-v120w10 save with the ledger as
+  // it stands RIGHT NOW, so it can only ever be paid for moves that happen from
+  // here on. Doing it explicitly beats relying on `|| 0` reading correctly.
+  if (s.hedge && typeof s.hedge.exoLift !== 'number') { s.hedge.exoLift = s.exoLift; s.hedge.exoDrop = s.exoDrop; }
+  if (s.pos   && typeof s.pos.exoLift   !== 'number') { s.pos.exoLift   = s.exoLift; s.pos.exoDrop   = s.exoDrop; }
   if (!s.upgrades || typeof s.upgrades !== 'object') s.upgrades = { tank: 1, pump: 4, wall: 1, turret: 0, gen: 1, sec: 1, ref: 1 };
   if (!Array.isArray(s.log))          s.log = [];
   if (typeof s.lastTickAt !== 'number') s.lastTickAt = 0;
@@ -200553,29 +200733,392 @@ function fcBuyUpg(id) {
   return true;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ⛽ NPC VENDOR PRICING — anchored to the Crash Exchange, round-trip-proof
+// ---------------------------------------------------------------------------
+// THE BUG (live; players were farming it). The vendor quoted the BUY leg from
+// the mark BEFORE the buy's own price impact and the SELL leg from the mark
+// AFTER it: fcNpcBuy read s.npc, then lowered s.supply, then fcRecalcNpc()
+// raised s.npc — and fcNpcSell read that new, higher s.npc. Measured against
+// the shipped build (start: supply 50, npc ¢88, buy N then immediately sell N):
+//       N=50    paid  4,400   got   4,263   →   −137   (the spread still held)
+//       N=200   paid 17,600   got  18,050   →   +450
+//       N=1000  paid 88,000   got 116,850   → +28,850
+//       N=4000  paid 352,000  got 584,440   → +232,440
+// The hedge was a second, worse door — the buy leg paid min(npc, hedge.price)
+// while the sell leg always collected the full npc, so it printed at ANY size:
+//       hedge @¢60, N=50    paid  3,000   got   4,263   →  +1,263
+//       hedge @¢30, N=1000  paid 30,000   got 116,850   → +86,850
+//
+// REJECTED — widening the 5% spread. Price impact is LINEAR in qty while the
+// spread is a constant fraction, so any fixed spread is only a size threshold:
+// at 5% the exploit opened at ~167 bbl; at 20% it would open at ~700 bbl. The
+// defect is the ASYMMETRY between the two legs, not the width of the cut.
+//
+// THE SECOND BUG, found after the above shipped (round 2; this is the one the
+// ledger below exists for). Closing the buy/sell pair left the DERIVATIVES open,
+// and they settle against the same mark the pair moves. fcNpcQuote capped the
+// buy at s.hedge.price while fcSettleHedge paid out (s.npc - hedge.price) * qty
+// — so the buyer bought at the pre-impact mark and was then handed back the
+// price rise their own buy had just caused. Four plain UI clicks, no exotic
+// input; measured on the shipped build, default tank (fuelCap 1250, cx fuel at
+// base 100, npc ¢88), Lock → Buy → Settle → Sell:
+//       N=137   net    +503
+//       N=200   net  +1,365
+//       N=500   net  +9,954
+//       N=1250  net +41,055
+// and worse than the bug it replaced in one way: it did not decay. Repeated on
+// one profile the exchange pins at its 35% floor by cycle 3 and every cycle
+// after that nets a flat positive forever — 12 cycles = +337,603 from a 10M
+// start. The SAME mechanism sat in fcOpenPos/fcClosePos with 4x leverage and no
+// stake ceiling, which is strictly worse: open LONG ¢5,000,000 → buy 1250 bbl →
+// close → +14,926,840 on one click sequence, linear in the stake.
+//
+// REJECTED — bounding hedge qty to s.fuelCap (what round 2 actually shipped).
+// s.fuelCap is *exactly* the quantity you can buy, so the bound is precisely the
+// size that makes the combo pay. A cap on the notional cannot fix a payout that
+// is funded by the holder's own trade; only removing that funding can.
+// REJECTED — charging a premium to lock. Same objection as widening the spread:
+// a premium is a price the exploit pays out of its own proceeds, i.e. a higher
+// bar for the identical trick, and it taxes honest hedgers to do it.
+//
+// THE THIRD BUG (round 3), and why the round-2 ledger design was doomed to it.
+// Round 2 tracked the SELF side: every gas-station order booked its own mark
+// move to s.selfLift/s.selfDrop, and a derivative subtracted what had accrued
+// since it was struck. That is an ENUMERATION — it is correct exactly as long as
+// every player-chosen way to move the fuel mark remembers to call the wrapper.
+// One did not, and it was the biggest one: the Crash Exchange's own player
+// orders. _cxExecuteBuy / _cxExecuteSell call bumpMarketPriceUp('fuel', …) /
+// dropMarketPriceDown directly, they need NO inventory (CX shares are pure
+// paper), and requirement 2 of the round-2 brief — "derive the NPC price from
+// the exchange" — is precisely what made them move the mark this station settles
+// against. Measured on the round-2 tree (default tank, cx fuel at base 100,
+// npc ¢88; the only extra beat is fcTick's 30s fcRecalcNpc):
+//       open LONG ¢5,000,000 → _cxExecuteBuy('fuel', 50) for ¢5,249 → close
+//       ⇒ close returned +17,000,000 on the ¢5,000,000 stake = +11,994,751 net
+//   linear in the stake (¢1,000,000 → +2,394,751), and repeatable. Same door for
+//   the hedge (Lock 1250 → cx buy 50 → Settle = +60,751) and for a SHORT
+//   (+18,000,000 on a ¢5,000,000 stake by dumping CX shares).
+//
+// So the ledger is INVERTED. Round 3 books the EXOGENOUS side instead:
+//
+// THE INVARIANT, in one sentence:
+//   Each leg of the vendor is priced from the mark AFTER its own price impact,
+//   and every payout the station makes — the sell leg, the hedge, the position —
+//   is capped by the part of the mark's move that a named, player-unchooseable
+//   source is on record as having caused, so any move not on that record pays
+//   nothing and a player can never end a sequence of their own actions holding
+//   more Cinder than they started with.
+//
+// In five words: ONLY A RECORDED SHOCK PAYS. Two monotone ledgers on s make it
+// checkable by reading:
+//   • s.exoLift / s.exoDrop are written by _fcExoMove() and by NOTHING else.
+//     grep the file: it has exactly one caller, the ROLLED branch of _fcShock().
+//   • a derivative stamps both ledgers when it is STRUCK (hedge.exoLift/exoDrop,
+//     pos.exoLift/exoDrop); _fcSettleMark() credits it, in the direction that
+//     PAYS, with min(actual move, exogenous move since the strike), and charges
+//     it the full move in the direction that COSTS.
+//   Write M for the mark move since the strike and X for the recorded exogenous
+//   move. Then a hedge or long is paid min(M, X) <= X and a short is paid
+//   min(−M, X_down) <= X_down. Every unrecorded ¢ of M — a gas-station buy, a
+//   Crash Exchange order, a p2p fill, a forced event, an expedition, a fishing
+//   trip, decay, another player's trade arriving over cx_prices, and anything
+//   added next year — contributes 0. That is the whole difference from round 2:
+//   the default for an unknown mark move flipped from "pays" to "pays nothing".
+// ⚠ WHY THAT IS THE RIGHT DEFAULT. Forgetting to record an exogenous source now
+//   costs a hedger some legitimate payout — a fairness bug, visible, bounded, and
+//   fixable by adding one call. Under round 2, forgetting to record a SELF source
+//   minted Cinder — and it did, twice, at 8-figure scale. Fail-closed is not a
+//   style preference here; it is the only direction whose failure mode is not a
+//   faucet.
+// ⚠ WHAT IS ALLOWED TO PAY, and what deliberately is not:
+//   • PAYS — a ROLLED 'spike' / 'short' / 'glut' from fcTick's RNG. The player
+//     cannot choose it, cannot time it and spends nothing to get it. This is what
+//     keeps the hedge and both position sides worth buying.
+//   • DOES NOT PAY — a FORCED spike/short/glut. The Events tab ships a "Force
+//     Trigger" button for every event (_fcRenderEvents, data-fc-fire), so a
+//     chosen shock was a free +50% mark: Lock 1250 → Force Trigger → Settle
+//     measured +55,440 for three clicks and no Cinder spent.
+//   • DOES NOT PAY, and this is a REJECTED design, not an oversight — a price
+//     arriving from the cloud (_cxCloudMergeRow) even though another player's
+//     trade genuinely is exogenous. The merge writes an ABSOLUTE price, so after
+//     local decay has walked our own pump back down, re-merging the cloud row
+//     restores it — and that restoration is indistinguishable from someone else's
+//     demand. Two colluding accounts would turn it into a metronome. A hedge no
+//     longer paying on another player's move is the price of not shipping round 4.
+//   • DOES NOT PAY, same reasoning — tickMarketDecay(). Mean reversion is
+//     unchosen, but it is proportional to how far the mark is from base, so the
+//     bigger your own pump the bigger the "exogenous" fall that follows it, and
+//     "pump, open SHORT, wait" is this exploit with a timer.
+//   ⚠ THE SEAM, if a genuinely unchooseable source is ever added: call
+//     _fcExoMove(dir, units, reason). That is the only way in, on purpose.
+//
+// Why that is STRUCTURAL — readable in five steps, no sweep required. Write
+// p0 for the exchange fuel price before the pair, u = _fcCxUnits(q),
+// B(p)=cxImpactedPrice(p,u,+1) and S(p)=cxImpactedPrice(p,u,-1), and
+// f(x)=_fcClamp(x*ANCHOR, MIN, MAX):
+//   1. fcNpcQuote(q, +1) charges ask = f(B(p0)); the write that follows applies
+//      B to the same p with the same u, so the mark really becomes B(p0).
+//   2. fcNpcQuote(q, -1) then pays from f(S(B(p0))).
+//   3. cxImpactedPrice is monotone by construction (see its comment): S(x) <= x
+//      for every x, at BOTH clamps. Hence S(B(p0)) <= B(p0).
+//   4. f is non-decreasing (a clamp of a positive multiple), so
+//      bidMark = f(S(B(p0))) <= f(B(p0)) = ask.
+//   5. bid = bidMark * (1 - FC_NPC_SPREAD) < ask, and Cinder is an integer:
+//      cost = ceil(q*ask) >= q*ask > q*bid >= floor(q*bid) = revenue.
+//   ⇒ strict loss for EVERY q >= 1, at every clamp.
+//
+// ⚠ THE FOURTH BUG (round 4), and exactly what steps 1–5 above do NOT say.
+//   Read them again: every line is about ONE PAIR — one buy of q followed by one
+//   sell of the same q. They are true, and §1 of the test has always passed. But
+//   a player does not have to close in the same lot size they opened in, and
+//   nothing above constrains a SEQUENCE. Under the old kernel the mark was not a
+//   function of net barrels at all: impact was linear per CALL, and _fcCxUnits
+//   ROUNDED barrels to whole units, so a barrel bought moved the mark 3.2x as
+//   far as a barrel sold once you picked the lot sizes (11 up, 29 down — both
+//   exactly one unit). Accumulate to the tank cap in 11-bbl lots, liquidate in
+//   29-bbl lots:
+//         113 buys of 11 bbl  → −231,164   (avg ¢186/bbl, mark at the ceiling)
+//          43 sells of 29 bbl → +293,993   (avg ¢236/bbl, mark still ¢227)
+//         ⇒ NET +62,829 Cinder, from a market at base, with no shock, no hedge,
+//           no leverage and no Crash Exchange — four ordinary pump clicks.
+//   Note what the exogenous ledger could not do about it: NOTHING was settling.
+//   No hedge, no position, no payout capped by _fcSettleMark. Round 3's guard is
+//   about what DERIVATIVES may be paid for; this money came straight out of the
+//   pump's own two legs. A settlement guard cannot see it, which is why the fix
+//   is not another clause here — it is in the kernel, at cxImpactedPrice.
+//
+// THE ROUND-4 INVARIANT, in one sentence:
+//   The mark is p0 · ρ^(units bought − units sold) with ONE ρ for both
+//   directions, so price impact is a continuous, exactly reciprocal function of
+//   quantity that depends only on NET quantity and never on how an order was
+//   split — which makes the sell path the exact mirror of the buy path and
+//   leaves FC_NPC_SPREAD as the only P&L on any closed round trip.
+//   It lives in cxImpactedPrice() and in _fcCxUnits(); read those two and the
+//   sequence case is closed for every lot size, every split, and every path
+//   that reaches the mark, including ones this file has never heard of.
+//   Steps 1–5 remain true and are now the single-pair corollary of it.
+// ⚠ Note what is NOT in that chain any more: the hedge. Round 2's fcNpcQuote
+//   capped the ask at min(·, s.hedge.price) and the proof carried an H term
+//   through both legs to stay true. It WAS true — and useless, because the
+//   exploit never needed the pair to profit; it took its money out through
+//   fcSettleHedge instead. The cap is gone. A hedge is now ONE instrument with
+//   ONE payout, settled in cash: paying min(mark, strike) at the pump AND
+//   collecting (mark - strike) at settlement was drawing the identical price
+//   difference twice, and the pump half is what let the buy leg be priced off
+//   the pre-impact mark. Removing it also makes fcNpcQuote a pure function of
+//   the exchange, which is why steps 1–5 no longer need the H case analysis.
+//   The hedge keeps its real value: it still pays, in full, on any move the
+//   holder did not cause (see §5 of tools/economy-tests/fuelarb.mjs).
+//
+// ⚠ s.supply survives, but ONLY as the local demand/sentiment index that
+//   fcTick's sales model reads. It no longer prices anything. Letting a
+//   player-movable local index set the price is the whole bug.
+// ═══════════════════════════════════════════════════════════════════════════
+const FC_NPC_CX_ANCHOR       = 0.88;    // ¢/bbl per 1.0 of the exchange 'fuel' price.
+                                        // _cxBasePrice('fuel') is 100 (SALVAGE_RES has
+                                        // no `value` for fuel → catalog default), so the
+                                        // vendor still opens at ¢88 — the number it
+                                        // shipped with — and moves only when the
+                                        // exchange moves.
+const FC_NPC_SPREAD          = 0.05;    // the vendor's cut. NOT the exploit guard (see
+                                        // REJECTED above); it is what makes the round
+                                        // trip a strict loss rather than a wash.
+const FC_NPC_MIN             = 22;      // hard rails on the quoted price. The exchange
+const FC_NPC_MAX             = 320;     // band (35%–350% of base) already pins the mark
+                                        // to ¢30.8–¢308; these are belt-and-braces and
+                                        // preserve the vendor's original range.
+const FC_NPC_SUPPLY_PER_BBL  = 1 / 40;  // sentiment-index move per barrel traded. Feeds
+                                        // fcTick's demand model only.
+const FC_NPC_EVENT_SHOCK_BBL = 680;     // shock a 'spike'/'short' event applies, in the
+                                        // same barrels unit as a trade (it goes through
+                                        // _fcCxUnits too). 680 bbl = 34 units, and the
+                                        // kernel is now ρ^n rather than (1 + tick·n), so
+                                        // 1.012^34 = +50% — the same shock this event has
+                                        // always applied (¢88 → ¢123–¢144, where the old
+                                        // supply-index versions landed). It was 840 bbl
+                                        // when 42 units meant 1 + 0.012·42 = +50%; the
+                                        // barrels changed so the SHOCK would not.
+const FC_NPC_CX_UNITS_PER_BBL = CX_IMPACT_SCALE.fuel;
+                                        // 20 bbl = 1 unit of exchange pressure. ⚠ This is
+                                        // now an ALIAS of the asset's own impact scale, not
+                                        // a second copy of the number — the gas station
+                                        // used to divide by it before calling the kernel
+                                        // while the Crash Exchange did not, and that
+                                        // divergence was worth +87,298 a cycle. One number,
+                                        // one place, applied by the kernel to every venue.
+                                        // The
+                                        // exchange's tick (CX_PRICE_TICK_TRADE, 1.2%/unit)
+                                        // is calibrated for shop items bought ONE at a
+                                        // time; fuel moves in hundreds of barrels. Feeding
+                                        // it raw barrels pinned fuel to the 350% ceiling on
+                                        // any order over ~209 bbl, and since the buyer now
+                                        // pays the post-impact mark that turned a routine
+                                        // 200 bbl fill from ¢17,600 into ¢59,840. At 1/20
+                                        // a 200 bbl order costs ¢19,832 — the market impact
+                                        // is real and visible, not confiscatory. (¢19,712
+                                        // under the retired linear kernel; ρ^10 vs 1+0.12
+                                        // is a 0.6% difference, so this calibration
+                                        // survived the round-4 rewrite unchanged.)
+
+// Barrels → units of exchange pressure. ⚠ The QUOTE (fcNpcMark) and the WRITE
+// (bumpMarketPriceUp / dropMarketPriceDown) must pass the SAME number, or the
+// mark the player was charged and the mark the market lands on diverge — which
+// is the exact shape of the bug this whole block exists to kill. Both go
+// through here; fcNpcQuoteMatchesWrite in the test pins it.
+// ⚠ LINEAR AND EXACT — no Math.round, no max(1, …). This function used to be
+//   Math.max(1, Math.round(qty * FC_NPC_CX_UNITS_PER_BBL)), a STEP function, and
+//   that step was FUELARB round 4. Barrels-per-unit-of-pressure was not constant
+//   under it: 1 bbl/unit at qty=1, 29 bbl/unit at qty=29 (round(1.45) = 1),
+//   collapsing back to 15 at qty=30. So an 11-bbl BUY and a 29-bbl SELL each
+//   spent ONE unit of impact while the sell moved 2.6x the barrels — the sell
+//   path sat above the buy path and the 5% spread could not cover the gap.
+//   Measured: accumulate 1,243 bbl in 11-bbl lots, liquidate in 29-bbl lots
+//   ⇒ +62,829 Cinder. Multiplied out through the ρ^n kernel, exact linearity
+//   here is what makes the mark a function of NET BARRELS and nothing else:
+//   ρ^(k·a) · ρ^(k·b) = ρ^(k·(a+b)) for any split. Rounding breaks that identity
+//   and rounding is the whole bug. Keep it fractional.
+// ⚠ AND IT IS NOW THE IDENTITY. The 1/20 scaling moved onto the price row as
+//   p.impactScale (see CX_IMPACT_SCALE / getMarketPrice), because applying it
+//   HERE applied it only to orders that came through the gas station. The Crash
+//   Exchange's own fuel orders went straight to bumpMarketPriceUp('fuel', qty)
+//   and were never divided, so one ¢100 share shoved the mark as hard as twenty
+//   ¢88 barrels and the two venues arbitraged each other (+87,298 measured).
+//   A barrel is a barrel wherever it is traded; the scale belongs to the ASSET,
+//   not to one of the desks that trades it. This function stays as the named
+//   seam so the call sites still read as "barrels → units of pressure", and so
+//   the quote/write pairing it documents keeps a single place to be checked.
+function _fcCxUnits(qty) { return Math.max(0, +qty || 0); }
+
+// The vendor's mark: the Crash Exchange fuel price, scaled and railed. A pure
+// function of the exchange and NOTHING else — that is what makes step 4 above
+// checkable by reading. `impactQty`/`impactDir` ask for the mark as it will be
+// AFTER a trade of that size lands, without moving the market.
+function fcNpcMark(impactQty, impactDir) {
+  let px = null;
+  try {
+    tickMarketDecay();                       // settle any pending decay FIRST, so the
+                                             // quote and the write that follows agree
+    const p = getMarketPrice('fuel');
+    px = impactDir ? cxImpactedPrice(p, _fcCxUnits(impactQty), impactDir, impactDir > 0 ? 'gasStation:npcBuy' : 'gasStation:npcSell')
+                   : p.current;
+  } catch (e) { px = null; }
+  // Exchange unreachable (offline / pre-migration profile): fall back to its
+  // deterministic base rather than to a stale local index.
+  if (typeof px !== 'number' || !isFinite(px) || px <= 0) {
+    try { px = _cxBasePrice('fuel'); } catch (e2) { px = 0; }
+  }
+  if (!isFinite(px) || px <= 0) return FC_NPC_MIN;
+  return _fcClamp(px * FC_NPC_CX_ANCHOR, FC_NPC_MIN, FC_NPC_MAX);
+}
+
+// Ask and bid for `qty` barrels, both derived from the SAME mark. bid <= ask by
+// construction — this single expression is the guard.
+// ⚠ NO hedge term here, deliberately — see the ⚠ note in the block above. This
+// is a pure function of the crash exchange, and it must stay one: the moment a
+// player-held object can lower the ask, the buy leg stops being priced from its
+// own impact and the whole proof above collapses. The hedge's value is paid in
+// cash by fcSettleHedge(), once.
+function fcNpcQuote(qty, dir) {
+  const ask = fcNpcMark(qty, dir);
+  return { ask: ask, bid: ask * (1 - FC_NPC_SPREAD) };
+}
+
+// Move the exchange fuel price because the PLAYER chose to. Books nothing — the
+// ledgers record the exogenous side now, and "player chose it" is precisely the
+// case that must stay off them. It exists as a named function anyway so that the
+// gas station's own writes read as a deliberate category at every call site, and
+// so that the pair (this / _fcExoMove) is the complete list of ways this file
+// touches the fuel mark.
+// ⚠ Do NOT add ledger bookkeeping back in here. Round 2 did exactly that and the
+// exploit walked straight around it through _cxExecuteBuy — see the ⛽ block.
+// Returns the signed mark move, for logging.
+function _fcSelfMove(dir, qty, reason) {
+  const s = ensureFuelCommand();
+  const before = fcNpcMark();                  // live mark, not the possibly stale s.npc
+  _fcWriteMark(dir, qty, reason);
+  return s.npc - before;
+}
+
+// 📒 THE ONLY WRITER of s.exoLift / s.exoDrop, and therefore the only way any
+// payout in this file can ever become non-zero. Brackets the write with the mark
+// before and after and books the move to the matching one-sided ledger.
+// ⚠ Two one-sided ledgers, never one signed one: a signed ledger would let an up
+// move and a down move cancel, and "shock it up, shock it back, keep the payout"
+// is the same exploit wearing a hat.
+// ⚠ The booking is clamped to the requested direction, so an upward exogenous
+// shock can only ever credit exoLift. Without that clamp a stray decay tick
+// landing inside the bracket could credit exoDrop, which is the one thing the
+// REJECTED-decay note in the ⛽ block says must never happen.
+function _fcExoMove(dir, qty, reason) {
+  const s = ensureFuelCommand();
+  const before = fcNpcMark();
+  _fcWriteMark(dir, qty, reason);
+  const move = s.npc - before;
+  if (dir > 0) s.exoLift += Math.max(0, move);
+  else         s.exoDrop += Math.max(0, -move);
+  return move;
+}
+
+// Shared write half of the two above. One copy so the self and exogenous paths
+// can never drift into moving the market by different amounts.
+function _fcWriteMark(dir, qty, reason) {
+  try {
+    if (dir > 0) { if (typeof bumpMarketPriceUp === 'function') bumpMarketPriceUp('fuel', qty, reason); }
+    else         { if (typeof dropMarketPriceDown === 'function') dropMarketPriceDown('fuel', qty, reason); }
+  } catch (e) {}
+  fcRecalcNpc();
+}
+
+// The mark a derivative settles against. `strike` is where it was struck, `dir`
+// is +1 for an instrument that pays on a RISE (hedge, long) and -1 for one that
+// pays on a FALL (short), and exo0* are the ledger readings stamped at the
+// strike. Read the two returns:
+//   pays-on-rise : credited min(actual rise, exogenous rise), charged every ¢ of
+//                  a fall.
+//   pays-on-fall : credited min(actual fall, exogenous fall), charged every ¢ of
+//                  a rise.
+// So the profitable direction is capped by the exogenous ledger and the losing
+// direction is not capped at all. A player alone, with no rolled shock in the
+// window, gets exo* = 0 and settles at exactly `strike` however hard they shoved
+// the market — through the pump, the Crash Exchange, a p2p fill or anything
+// added later. That is the whole guard, and it is four lines.
+function _fcSettleMark(strike, dir, exo0Lift, exo0Drop) {
+  const s = ensureFuelCommand();
+  const net = s.npc - strike;
+  if (dir > 0) {
+    const exoUp = Math.max(0, (s.exoLift || 0) - (exo0Lift || 0));
+    return strike + (net > 0 ? Math.min(net, exoUp) : net);
+  }
+  const exoDown = Math.max(0, (s.exoDrop || 0) - (exo0Drop || 0));
+  return strike + (net < 0 ? -Math.min(-net, exoDown) : net);
+}
+
 function fcRecalcNpc() {
   const s = ensureFuelCommand();
   s.lastNpc = s.npc;
-  const base = 88, k = 70;
-  s.npc = _fcClamp(base + k * (50 - s.supply) / 50, 22, 320);
+  s.npc = fcNpcMark();
   s.npcHist.push(s.npc);
   if (s.npcHist.length > 40) s.npcHist.shift();
 }
 function fcNpcBuy(qty) {
   const s = ensureFuelCommand();
   qty = Math.max(1, qty | 0);
-  let unit = s.npc;
-  if (s.hedge) unit = Math.min(unit, s.hedge.price);
-  const cost = Math.round(qty * unit);
+  // Quote from the POST-impact mark (step 1 of the invariant). fcNpcQuote does
+  // not write, so a refused order leaves the market untouched.
+  const unit = fcNpcQuote(qty, +1).ask;
+  const cost = Math.ceil(qty * unit);          // ceil: rounding may only widen the loss
   if ((Profile.gems | 0) < cost) return notEnoughToast('cinder', cost, Profile.gems | 0);
   if (s.fuel + qty > s.fuelCap) { showToast('Exceeds storage capacity (' + s.fuelCap + ' bbl). Buy fewer or upgrade tanks.'); return false; }
   Profile.gems = (Profile.gems | 0) - cost;
   try { _serverMirrorCharge(cost, 'Fuel Command: Buy fuel from NPC'); } catch (e) {}
   s.fuel += qty;
-  s.supply = _fcClamp(s.supply - qty / 40, 3, 100);
-  fcRecalcNpc();
-  // 📈 Buying from NPC vendor → market price up (matches global rule).
-  try { if (typeof bumpMarketPriceUp === 'function') bumpMarketPriceUp('fuel', qty, 'gasStation:npcBuy'); } catch (e) {}
+  s.supply = _fcClamp(s.supply - qty * FC_NPC_SUPPLY_PER_BBL, 3, 100);
+  // 📈 Buying from the NPC vendor → exchange fuel price UP. This is the price
+  // impact the quote above was taken from, applied for real — same _fcCxUnits.
+  // It is player-chosen, so it never reaches the exogenous ledger and no
+  // derivative can settle against it.
+  _fcSelfMove(+1, _fcCxUnits(qty), 'gasStation:npcBuy');
   _fcLog('warn', 'Bought ' + qty + ' bbl from NPC @ ¢' + Math.round(unit) + ' → −¢' + _fcFmt(cost) + '.');
   showToast('Bought ' + qty + ' bbl for ¢' + _fcFmt(cost), 3200);
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
@@ -200585,14 +201128,17 @@ function fcNpcSell(qty) {
   const s = ensureFuelCommand();
   qty = Math.max(1, qty | 0);
   if (qty > s.fuel) { showToast('Not enough fuel.'); return false; }
-  const rev = Math.round(qty * s.npc * 0.95);
+  const unit = fcNpcQuote(qty, -1).bid;
+  const rev  = Math.floor(qty * unit);         // floor: rounding may only widen the loss
   s.fuel -= qty;
   addGems(rev, 'Fuel Command: NPC sale');
-  s.supply = _fcClamp(s.supply + qty / 40, 3, 100);
-  fcRecalcNpc();
-  // 📉 Selling to NPC → market price down.
-  try { if (typeof dropMarketPriceDown === 'function') dropMarketPriceDown('fuel', qty, 'gasStation:npcSell'); } catch (e) {}
-  _fcLog('good', 'Dumped ' + qty + ' bbl to NPC @ ¢' + Math.round(s.npc * 0.95) + ' → +¢' + _fcFmt(rev) + '.');
+  s.supply = _fcClamp(s.supply + qty * FC_NPC_SUPPLY_PER_BBL, 3, 100);
+  // 📉 Selling to the NPC → exchange fuel price DOWN. Same call the bid above
+  // was quoted from, applied for real — same _fcCxUnits. Player-chosen, so it
+  // never reaches the exogenous ledger and a SHORT cannot settle against its
+  // own dump.
+  _fcSelfMove(-1, _fcCxUnits(qty), 'gasStation:npcSell');
+  _fcLog('good', 'Dumped ' + qty + ' bbl to NPC @ ¢' + Math.round(unit) + ' → +¢' + _fcFmt(rev) + '.');
   showToast('Sold ' + qty + ' bbl for ¢' + _fcFmt(rev), 3200);
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
   return true;
@@ -200746,8 +201292,20 @@ function fcToggleInsurance() {
 }
 function fcLockHedge(qty) {
   const s = ensureFuelCommand();
-  qty = Math.max(1, qty | 0);
-  s.hedge = { price: s.npc, qty: qty };
+  // ⚠ Locking a hedge is free and fcSettleHedge() pays into Profile.gems, so the
+  //   notional is still bounded to the inventory a hedge could plausibly cover.
+  //   ⚠ This bound is NOT what stops FUELARB — round 2 shipped exactly this line
+  //   and the exploit stayed live, because s.fuelCap is precisely the quantity
+  //   you can buy, i.e. the bound was the size that made the combo pay. What
+  //   stops it is `lift` below. Keep the cap anyway: it limits the damage of any
+  //   FUTURE mispriced move, self-caused or not.
+  qty = _fcClamp(Math.max(1, qty | 0), 1, Math.max(1, s.fuelCap | 0));
+  fcRecalcNpc();                 // strike at the LIVE mark; a stale s.npc read from
+                                 // a save is a strike price the player can pick
+  // The exo readings are the watermark. fcSettleHedge pays this hedge only as far
+  // as the EXOGENOUS ledger has moved between here and settlement, so the only
+  // move it can be paid for is a recorded shock nobody chose.
+  s.hedge = { price: s.npc, qty: qty, exoLift: s.exoLift, exoDrop: s.exoDrop };
   _fcLog('info', 'Hedge locked: ' + qty + ' bbl @ ¢' + Math.round(s.npc) + '.');
   showToast('Price hedge locked.', 3000);
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
@@ -200755,7 +201313,11 @@ function fcLockHedge(qty) {
 function fcSettleHedge() {
   const s = ensureFuelCommand();
   if (!s.hedge) return false;
-  const diff = (s.npc - s.hedge.price) * s.hedge.qty;
+  // A hedge pays on a RISE, so dir = +1: credited min(actual rise, exogenous
+  // rise since the strike) and nothing at all for a rise it caused itself,
+  // whichever system it used to cause it.
+  const mark = _fcSettleMark(s.hedge.price, +1, s.hedge.exoLift, s.hedge.exoDrop);
+  const diff = (mark - s.hedge.price) * s.hedge.qty;
   const gain = Math.round(Math.max(0, diff));
   addGems(gain, 'Fuel Command: hedge settled');
   _fcLog(gain > 0 ? 'good' : 'warn', 'Hedge settled — ' + (gain > 0 ? '+' : '') + _fcFmt(gain) + '₵ banked.');
@@ -200770,15 +201332,29 @@ function fcOpenPos(side, stake) {
   if ((Profile.gems | 0) < stake) return notEnoughToast('cinder', stake, Profile.gems | 0);
   Profile.gems = (Profile.gems | 0) - stake;
   try { _serverMirrorCharge(stake, 'Fuel Command: Open position (' + side + ')'); } catch (e) {}
-  s.pos = { side: side, entry: s.npc, stake: stake };
+  fcRecalcNpc();                 // enter at the LIVE mark, same reason as fcLockHedge
+  // Both watermarks: a LONG is paid only for a recorded exogenous rise, a SHORT
+  // only for a recorded exogenous fall. fcClosePos caps against the matching one.
+  s.pos = { side: side, entry: s.npc, stake: stake, exoLift: s.exoLift, exoDrop: s.exoDrop };
   _fcLog('info', 'Opened ' + side.toUpperCase() + ' ¢' + _fcFmt(stake) + ' @ ¢' + Math.round(s.npc) + '.');
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
 }
 function fcClosePos() {
   const s = ensureFuelCommand();
   if (!s.pos) return false;
-  const move = (s.npc - s.pos.entry) / s.pos.entry;
   const dir  = s.pos.side === 'long' ? 1 : -1;
+  // ⚠ THE SAME BUG AS THE HEDGE, and strictly worse here: `move` is levered 4x
+  //   and `stake` has no ceiling, so pricing it off a mark the holder just
+  //   shoved was an unbounded faucet — measured on the round-1 build, open LONG
+  //   ¢5,000,000 then buy 1250 bbl then close returned +14,926,840; measured on
+  //   the round-2 build, the identical shove routed through one ¢5,249 Crash
+  //   Exchange order returned +17,000,000. Both are linear in the stake.
+  //   _fcSettleMark caps the paying direction at the EXOGENOUS ledger, so with no
+  //   rolled shock in the window this lands exactly on s.pos.entry, `move` is 0
+  //   and the position returns precisely its stake — break-even, never a mint,
+  //   no matter which system was used to shove the mark.
+  const mark = _fcSettleMark(s.pos.entry, dir, s.pos.exoLift, s.pos.exoDrop);
+  const move = (mark - s.pos.entry) / s.pos.entry;
   const pl   = Math.round(s.pos.stake * (1 + dir * move * 4));
   const payout = Math.max(0, pl);
   const delta  = pl - s.pos.stake;
@@ -200825,8 +201401,56 @@ function fcRefine(qty) {
 }
 
 // --- RNG events ---
+// Apply an event's fuel-price shock. `forced` decides which door it goes
+// through, and that is the whole point: a shock the player PRESSED is booked to
+// the self-impact ledger so their own hedge/position cannot be paid for it, while
+// a shock the RNG rolled stays exogenous and pays out normally. Same magnitude
+// either way — the market moves identically for everyone; only the ledger differs.
+// `dir` defaults to +1: 'spike' and 'short' are both shortages and push the pump
+// price UP. 'glut' is the mirror and passes -1 — it is the ONLY thing that ever
+// credits s.exoDrop, i.e. the only reason a SHORT position can pay. Without it
+// the short side would be an instrument that can lose and never win, which is
+// the "fixed by neutering" failure §5 of the test exists to catch.
+function _fcShock(forced, reason, dir) {
+  const units = _fcCxUnits(FC_NPC_EVENT_SHOCK_BBL);
+  const d = (dir | 0) < 0 ? -1 : +1;
+  // ⚠ A FORCED shock now moves the mark NOT AT ALL, and this reverses the
+  //   round-3 decision recorded above it ("same magnitude either way — the
+  //   market moves identically for everyone; only the ledger differs"). That
+  //   decision protected the DERIVATIVES and could never have protected the
+  //   pump, because the physical sell leg's price IS the mark. Booking a chosen
+  //   shock to the self ledger stops a hedge being paid for it and does nothing
+  //   about the barrels in the tank:
+  //       buy 1,250 bbl in 25-bbl lots → press Force Trigger 'Price Spike'
+  //       (free, one click, no Cinder) → dump the 1,250 bbl into the +50% mark
+  //       ⇒ +66,473 measured on this tree, +71,796 before this package.
+  //   Repeatable: the mark decays back toward base on its own over a few hours,
+  //   so it is a per-day faucet rather than a per-click one, which is exactly
+  //   the shape of every other FUELARB round.
+  //   A player-chosen mark move must cost at least what it can pay out. Both
+  //   pump legs satisfy that by construction — you are charged the post-impact
+  //   mark on the way in. A free button cannot satisfy it at any magnitude, so
+  //   the magnitude is zero. The event still fires: fcFireEvent applies its
+  //   damage, threat and reputation effects and writes its log line. It just no
+  //   longer prints money for pressing it.
+  //   ⚠ REJECTED — charging Cinder for a Force Trigger. That prices the button
+  //     rather than removing the faucet, and the correct price would have to
+  //     exceed the largest inventory anyone could dump into it, which is
+  //     s.fuelCap and therefore unbounded by upgrades.
+  if (forced) return;
+  _fcExoMove(d, units, reason);
+}
 function fcFireEvent(forceId) {
   const s = ensureFuelCommand();
+  // ⚠ FORCED means the price shock below was CHOSEN, not rolled — the Events tab
+  //   ships a "Force Trigger" button for every event, including the two that
+  //   move the fuel price (_fcRenderEvents, `data-fc-fire`). That made
+  //   Lock hedge 1250 → Force Trigger 'Price Spike' → Settle a three-click,
+  //   zero-cost faucet: measured +55,440 the first time and +274,999 over six
+  //   cycles before the exchange ceiling pinned it. A chosen shock is a
+  //   self-caused shock, so it is booked to the ledger; a ROLLED one is genuinely
+  //   exogenous and is not, which is what keeps the hedge worth buying.
+  const forced = !!forceId;
   let ev;
   if (forceId) ev = FC_EVENTS.find(e => e.id === forceId);
   else {
@@ -200862,8 +201486,20 @@ function fcFireEvent(forceId) {
     }
     case 'contam': { const f = Math.min(s.fuel, _fcRnd(60, 160)); s.fuel -= f; s.repQuality -= 10; msg = f + ' bbl scrapped, quality reputation hit.'; break; }
     case 'theft':  { const c = _fcRnd(300, 1000); Profile.gems = Math.max(0, (Profile.gems | 0) - c); s.repReli -= 3; msg = '¢' + c + ' skimmed from register.'; break; }
-    case 'spike':  { s.supply = Math.max(5, s.supply - _fcRnd(15, 30)); fcRecalcNpc(); msg = 'NPC fuel price surged — good time to sell.'; break; }
-    case 'short':  { s.supply = Math.max(3, s.supply - _fcRnd(25, 40)); fcRecalcNpc(); msg = 'SECTOR SHORTAGE declared — demand spikes.'; break; }
+    // 📈 These two used to move the price by moving s.supply. s.supply no longer
+    //    prices anything (see the NPC VENDOR PRICING block), so the shock is
+    //    applied to the exchange instead — which is now the price. It also means
+    //    a sector shortage is visible to every player on the Crash Exchange,
+    //    not just inside this one station's private index.
+    case 'spike':  { s.supply = Math.max(5, s.supply - _fcRnd(15, 30));
+                     _fcShock(forced, 'gasStation:spike');
+                     msg = 'NPC fuel price surged — good time to sell.'; break; }
+    case 'short':  { s.supply = Math.max(3, s.supply - _fcRnd(25, 40));
+                     _fcShock(forced, 'gasStation:short');
+                     msg = 'SECTOR SHORTAGE declared — demand spikes.'; break; }
+    case 'glut':   { s.supply = Math.min(100, s.supply + _fcRnd(15, 30));
+                     _fcShock(forced, 'gasStation:glut', -1);
+                     msg = 'Refinery glut — pump price collapsed.'; break; }
     case 'inspect':{
       if (s.security < 40 || s.damage > 30) { const fine = _fcRnd(600, 1800); Profile.gems = Math.max(0, (Profile.gems | 0) - fine); msg = 'Failed inspection — ¢' + fine + ' fine.'; }
       else msg = 'Passed inspection — reputation +.';
@@ -201058,8 +201694,11 @@ function fcBuyFromStation(ownerId, qty) {
     // Decrement listing stock locally so the directory updates without a refresh.
     row.stock = Math.max(0, (row.stock | 0) - qty);
     row.updatedAt = Date.now();
-    // 📈 Market price up — fuel was bought.
-    try { if (typeof bumpMarketPriceUp === 'function') bumpMarketPriceUp('fuel', qty, 'gasStation:p2p'); } catch (e) {}
+    // 📈 Market price up — fuel was bought. Through _fcSelfMove, not _fcExoMove:
+    // this is a PLAYER-CHOSEN order that lifts the same mark the hedge and the
+    // position settle against, so it must stay off the exogenous ledger or it
+    // becomes the next FUELARB door (buy p2p to pump, settle the hedge).
+    _fcSelfMove(+1, qty, 'gasStation:p2p');
     // Transaction record in Crash Exchange txnLog (already handled by bumpMarketPriceUp via recordMarketTxn).
     _fcLog('good', 'Bought ' + qty + ' bbl from ' + (row.stationName || 'a station') + ' @ ¢' + unit + ' → −¢' + _fcFmt(total) + '.');
     showToast('⛽ Bought ' + qty + ' bbl for ¢' + _fcFmt(total) + ' — fuel added to inventory.', 4200);

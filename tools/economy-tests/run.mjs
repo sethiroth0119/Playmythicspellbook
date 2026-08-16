@@ -10524,7 +10524,10 @@ const stripComments = (src) => {
   else console.log('\n=== ROUND 0w: ALL PASS ===');
 }
 
-for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs']) {
+/* ⚠ fuelarb.mjs was written in round 2 of FUELARB and never wired in here, so
+   the gate ran green for the whole of round 3 while the exploit was live in a
+   file the gate did not open. A tripwire nobody runs is a comment. */
+for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs', 'fuelarb.mjs']) {
   console.log('\n########## ' + f + ' ##########');
   const r = spawnSync(process.execPath, [join(here, f)], { stdio: 'inherit' });
   if (r.status !== 0) bad++;

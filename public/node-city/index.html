@@ -157,11 +157,31 @@
      scrim dims, the box catches its own clicks, and everything underneath —
      the map, the HUD, the build bar — stays live. Clicking another building
      swaps the dossier; clicking bare ground closes it, through the pointerup
-     handler that already existed. The box is inset from the top bar and the
-     build bar so it can never sit on top of either. */
+     handler that already existed. The box is inset from the whole top band and
+     from the build bar so it can never sit on top of either.
+     ⚠ The bottom inset was 72px and that claim was FALSE — #railmodal's own
+     comment already worked out the right number and said so. #buildbar is 78px
+     tall and its top sits 92px off the bottom at every size tested, so 72px let
+     a long dossier reach y=innerHeight-72 and lap 20px over the build bar
+     (measured at 1280×720: box bottom 648, build bar top 628). 100px is the
+     same measured clearance #railmodal uses; keep the two in step.
+     🔴 THE TOP INSET WAS `--topbarh + 4px` AND THAT WAS THE SAME MISTAKE ONE
+     EDGE UP. `--topbarh` measures #topbar ALONE, but the top band is three
+     stacked strips: #topbar, then #daypill (top: topbarh-2, 35px tall), then
+     #railbar (top: topbarh+34, 28px tall, bottom edge topbarh+62). +4px only
+     cleared the first of the three. Measured at 1280×720 with the dossier open
+     on a real building: #insbox [140,107→1140,622] vs #railbar [12,137→1268,165]
+     — a 1000×28 strip of the dock buried, NINE launchers (People…Log, 57–102px
+     wide) fully covered — and 274×29 of #daypill on top of that. #inspect is
+     z-index 44 over #railbar's 43, so elementsFromPoint at the dock's centre
+     came back insmeta/inshdmain/inshd/insbox ABOVE rlico. And because this
+     scrim is pointer-events:none (see above), those nine buttons stayed
+     CLICKABLE while unreadable, which is worse than covering them outright.
+     +74px is not a new number: it is exactly what #railmodal already pads for
+     this same band (topbarh + 34 + 28 + gutter). Keep the two in step. */
   #inspect{display:none;position:fixed;inset:0;z-index:44;background:rgba(4,3,10,.55);
     align-items:center;justify-content:center;pointer-events:none;
-    padding:calc(var(--topbarh) + 4px) 14px 72px;}
+    padding:calc(var(--topbarh) + 74px) 14px 100px;}
   #inspect.open{display:flex;}
   #insbox{width:min(1000px,96vw);max-height:100%;display:flex;flex-direction:column;pointer-events:auto;
     position:relative;background:linear-gradient(180deg,rgba(18,15,32,.985),rgba(8,7,16,.995));
@@ -332,7 +352,12 @@
   #shopveil{position:absolute;inset:0;z-index:60;display:none;background:rgba(4,3,10,.74)}
   #shopveil.on{display:block}
   #shopwrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-    width:min(1040px,94vw);max-height:84vh;display:flex;flex-direction:column;
+    /* 1040 → 1300: the detail rail (below) takes 252px off the grid, and at the
+       old cap that dropped the palette from 7 columns of 140px to 5 — the same
+       information problem in a different shape. Buying the width back keeps the
+       grid at 7 columns at 1280 (94vw=1203 there) and gives it 8 at 1600/1920.
+       Still capped at 94vw, so it can never outgrow the veil. */
+    width:min(1300px,94vw);max-height:84vh;display:flex;flex-direction:column;
     background:linear-gradient(180deg,rgba(18,15,32,.985),rgba(8,7,16,.995));
     border:1px solid rgba(212,175,55,.55);border-radius:12px;
     box-shadow:0 30px 90px rgba(0,0,0,.75), inset 0 0 70px rgba(212,175,55,.045);overflow:hidden}
@@ -346,7 +371,32 @@
     border:1px solid rgba(212,175,55,.4);color:#e8dcc0;font-family:'Cinzel','Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;
     font-size:.7rem;letter-spacing:.1em;text-transform:uppercase}
   #shopclose:hover{background:rgba(212,175,55,.16);color:#ffd166}
-  #shopbody{overflow:auto;padding:4px 20px 20px}
+  /* #shopmain is the grid+rail row. #shopwrap is a flex COLUMN with a 84vh cap,
+     so this needs flex:1 + min-height:0 or the row refuses to shrink and the
+     scroller inside it grows the modal past its cap instead of scrolling. */
+  #shopmain{display:flex;flex:1;min-height:0}
+  #shopbody{flex:1;min-width:0;overflow:auto;padding:4px 20px 20px}
+  /* 🧭 DETAIL RAIL — the permanent home for the build-shop tooltip.
+     Width is 236 (= #uitip's width) + 2×8 padding, so the docked card lands on
+     the rail's content box exactly and never needs to be resized. Paid for by
+     the widened #shopwrap above, not out of the grid: measured after, the
+     palette is 7×121px at 1280 and 8×123px at 1600/1920 — it was 7×140 / 7×140
+     before, so no card lost a column. pointer-events:none keeps the rail out
+     of the pointerover delegation — hovering it must not count as leaving the
+     card, or the tip would flicker itself away. */
+  #shoprail{flex:none;width:252px;padding:8px;border-left:1px solid rgba(212,175,55,.22);
+    background:linear-gradient(180deg,rgba(212,175,55,.05),transparent 160px);pointer-events:none;
+    overflow:hidden}
+  #shoprailhint{font-size:.7rem;line-height:1.6;color:#8b93ad;padding:2px 3px}
+  /* The docked tip sits ON the hint, so the hint is readable text under an
+     opaque panel — i.e. exactly the bug this change exists to remove. Hide it
+     while the tip is up. */
+  #shoprail.busy #shoprailhint{visibility:hidden}
+  /* Below this the rail would starve the grid (at 900px the modal is 846 wide,
+     leaving 554px of grid = 4 columns). Drop the rail and let #uitip fall back
+     to its floating placement — the fallback is still viewport-clamped, and a
+     window this narrow is not the reported case. */
+  @media (max-width:900px){ #shoprail{display:none} }
   .shopsec{margin-top:18px}
   .shopsec h3{margin:0 0 3px;font-family:'Cinzel',Georgia,'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;font-size:.74rem;letter-spacing:.2em;
     text-transform:uppercase;color:#d9b45a;display:flex;align-items:center;gap:8px}
@@ -543,10 +593,28 @@
     font-size:12.5px;animation:tin .25s ease-out;box-shadow:0 8px 24px rgba(0,0,0,.6);max-width:min(480px,92vw);text-align:center;}
   .toast.good{border-color:#2c5a40;} .toast.bad{border-color:#5a2320;}
   .toast .tn{margin-left:7px;opacity:.62;font-size:11px;font-variant-numeric:tabular-nums;}
-  /* 🍞 THE DOSSIER OWNS THE MIDDLE OF THE SCREEN. #inspect pads 72px at the
-     bottom, so docking the rail into that gutter clears the box at every width
-     (it is up to 1000px / 96vw wide, so a side-dock would not). */
-  body.ins-open #toasts{bottom:10px;}
+  /* 🍞 THE DOSSIER OWNS THE MIDDLE OF THE SCREEN. #inspect pads 100px at the
+     bottom, so docking the toast into that gutter clears the box at every width
+     (it is up to 1000px / 96vw wide, so a side-dock at full width would not).
+     ⚠ THE GUTTER IS NOT EMPTY — #buildbar LIVES IN IT, and dropping the toast to
+     bottom:10px put it straight on top. Measured at 1280×720 with the dossier
+     open and one toast up: the toast is [548,676 → 732,710] and #buildbar is
+     [572,628 → 708,706], so the toast covered the "Inspect" label (49×11) and
+     the "Build" label (40×11) outright — the two buttons that leave the mode
+     the toast is talking about. #toasts is pointer-events:none, so exactly as
+     with the dossier-over-rail-bar bug, they stayed clickable while unreadable.
+     Moving the toast UP is not available: the free band between #insbox's
+     bottom (innerHeight−100) and #buildbar's top (innerHeight−92) is 8px.
+     So it moves SIDEWAYS instead, into the bottom-left corner, which is empty
+     in this mode. That is only safe because #buildbar is permanently TWO
+     buttons and 136px wide, centred — the 28-tile strip that justified its
+     `max-width:calc(100% - 20px)` is dead code (`if (false)`, see the Build bar
+     block). The width cap is the arithmetic for that: the bar's left edge is
+     50vw − 68, so a toast starting at x=12 must stop by 50vw − 90 to keep a
+     10px gap, and it is capped at 360px so wide screens do not get a banner.
+     Checked at 820 (the narrowest breakpoint), 1280, 1600 and 1920. */
+  body.ins-open #toasts{bottom:10px;left:12px;transform:none;align-items:flex-start;}
+  body.ins-open #toasts > .toast{max-width:min(360px,calc(50vw - 90px));}
   /* A three-high rail is 114px and the gutter is 72px, so capping the position
      alone still clipped the footer. With the dossier open only the newest toast
      shows — it is the one that explains the action just taken. */
@@ -903,7 +971,19 @@
 <div id="buildbar"></div>
 <div id="shopveil"><div id="shopwrap">
   <div id="shophead"><h2>🛒 Build</h2><button id="shopclose" type="button">✖ Close</button></div>
-  <div id="shopbody"></div>
+  <!-- 🧭 The build shop is a GRID + a DETAIL RAIL, not a grid with a floating
+       card over it. Reason, measured at 1280×800 before this existed: hovering
+       "Restaurant" put #uitip at [231,521 → 467,662], which covered the names
+       AND the cost lines of Cannery, Smelting Works and Machine Shop on the row
+       below (109×12 px over "Smelting Works", 119×15 px over its cost). Any
+       floating tip anchored to a card in a dense grid does that — flipping it
+       above just moves the damage to the row above. The rail is a column the
+       cards can never be in, so the overlap is impossible by construction
+       rather than avoided by arithmetic. See the dock branch in place(). -->
+  <div id="shopmain">
+    <div id="shopbody"></div>
+    <aside id="shoprail"><div id="shoprailhint">Hover a building to read what it does. Its details open here, beside the grid, so nothing is ever covered.</div></aside>
+  </div>
 </div></div>
 <button id="adminbtn" class="display" title="Admin: swap 3D models for buildings, people & vehicles">⚙ Models</button>
 <div id="adminpanel">
@@ -1446,9 +1526,9 @@
        #buildbar — and 100px is MEASURED, not copied: the build bar is 78px
        tall and its top sits exactly 92px off the bottom at every width and
        height tested (1280x800, 1600x900, 1920x1080, 1280x720), because its
-       buttons are one non-wrapping row with overflow-x:auto. #inspect's 72px
-       is 20px short of that and does overlap it; this is not the place to fix
-       the dossier, but it is the place not to repeat it. */
+       buttons are one non-wrapping row with overflow-x:auto. #inspect used to
+       be 20px short of that and did overlap it; it is 100px now too, so if this
+       number ever moves, move that one with it. */
     padding: calc(var(--topbarh) + 74px) 14px 100px; }
   #railmodal.open { display: flex; }
   #rmbox { width: min(560px, 94vw); max-height: 100%; display: flex; flex-direction: column;
@@ -1592,12 +1672,161 @@
     var s = el.querySelector(':scope > .rtip, :scope > .stip');
     return s ? s.innerHTML : null;
   }
+  // 🧭 The build shop's detail rail, or null when this host is not in the shop
+  // (or the rail is display:none under the 900px media query). Looked up per
+  // hover rather than cached: #shopwrap is inside the veil that toggles, and a
+  // cached rect goes stale the moment the modal opens at a new size.
+  function dockRail(h) {
+    if (!h.closest || !h.closest('#shopwrap')) return null;
+    var rail = document.getElementById('shoprail');
+    if (!rail) return null;
+    var rr = rail.getBoundingClientRect();
+    return rr.width > 0 ? { el: rail, r: rr } : null;
+  }
+  // 📦 THE PANELS THAT OWN THE MIDDLE OF THE SCREEN, as one union rect, or null
+  // when none is open. #insbox (the building dossier) and #rmbox (the rail
+  // modal) are both display:none until their scrim opens, so offsetWidth is the
+  // whole test. The UNION rather than the nearer of the two because they can be
+  // open together (a rail modal over an open dossier) and #rmbox's 560px column
+  // sits inside #insbox's 1000px one — dock beside the union and both are clear.
+  function openBoxRect() {
+    var u = null;
+    ['insbox', 'rmbox'].forEach(function (id) {
+      var b = document.getElementById(id); if (!b || !b.offsetWidth) return;
+      var q = b.getBoundingClientRect(); if (q.width < 1 || q.height < 1) return;
+      u = u ? { left: Math.min(u.left, q.left), right: Math.max(u.right, q.right),
+                top: Math.min(u.top, q.top), bottom: Math.max(u.bottom, q.bottom) }
+            : { left: q.left, right: q.right, top: q.top, bottom: q.bottom };
+    });
+    return u;
+  }
+  /* 🚪 DOCK THE CARD IN THE SIDE GUTTER BESIDE AN OPEN PANEL.
+     Shared by the #rmbox branch and the topbar branch below — one placement
+     rule, so a fix to either can never drift from the other.
+     RIGHT IS TRIED FIRST and wins every tie, deliberately: both panels are
+     CENTRED, so the two gutters are always the same width, and preferring one
+     side gives the player a single place to look. It also keeps the card off
+     the toast, which docks BOTTOM-LEFT while the dossier is open (see the
+     `body.ins-open #toasts` block).
+     ⚠ NARROWING IS THE POINT. The old #rmbox branch demanded room for the full
+     236px card and fell through to anchored placement when it did not fit —
+     which is exactly how the topbar tips ended up on the dossier. #insbox is
+     `min(1000px,96vw)`, so at 1280 the gutter is (1280−1000)/2 = 140px and 236
+     never fits at the width the bug was reported at. A 124px column is still
+     the entire tooltip (measured: the tallest topbar card, Stone, goes 236×141
+     → 124×227, and the gutter is 537px tall — nothing is cut); an overlap is
+     not. Below MINW the card would be a ribbon, so it gives up instead and the
+     caller falls back to its old placement.
+     📏 The dock therefore engages from ~1248px of viewport width up, which is
+     where (vw−1000)/2 first reaches MINW+2M. Under ~1042px #insbox is on its
+     96vw arm and the gutter is 2vw — there is NO non-overlapping placement at
+     those sizes and shrinking the dossier to invent one would cost more than it
+     buys, so those widths keep today's behaviour. 1280/1600/1920 all dock. */
+  var MINW = 108;
+  function dockBeside(bx, hostRect, floorY) {
+    tip.style.width = '';                       // natural width first
+    var w = tip.offsetWidth;
+    var roomR = innerWidth - bx.right - 2 * M, roomL = bx.left - 2 * M;
+    var side = 0, room = 0;
+    if (roomR >= w) { side = 1; room = w; }
+    else if (roomL >= w) { side = -1; room = w; }
+    else if (Math.max(roomR, roomL) >= MINW) {
+      side = roomR >= roomL ? 1 : -1;
+      room = Math.floor(Math.max(roomR, roomL));
+    }
+    if (!side) return false;
+    if (room < w) { tip.style.width = room + 'px'; w = tip.offsetWidth; }
+    var ht = tip.offsetHeight;                  // re-measured AFTER any narrowing
+    var left = side > 0 ? bx.right + M : bx.left - M - w;
+    var top = Math.max(floorY, Math.min(hostRect.top, innerHeight - M - ht));
+    tip.style.left = Math.round(left) + 'px';
+    tip.style.top = Math.round(top) + 'px';
+    return true;
+  }
   function place(h) {
     var r = h.getBoundingClientRect();
+    // Drop any width a previous DOCKED hover pinned on, or this one measures
+    // the last card's column and every branch below places from a stale w.
+    tip.style.width = '';
     // Measure AFTER the content is in, or the height is last hover's.
     var w = tip.offsetWidth, ht = tip.offsetHeight;
     var left = r.left + r.width / 2 - w / 2;
     var top = r.bottom + GAP;
+    // ── Docked: the shop grid is dense, so there is no "beside the card" that
+    // is not on top of another card. Put the tip in the rail's column instead.
+    // Horizontally pinned (the rail is the only x-range with no cards in it);
+    // vertically it tracks the host's top so the eye does not have to hunt,
+    // clamped into the rail so it can never ride up over #shopclose or spill
+    // out of the modal's rounded bottom edge.
+    var d = dockRail(h);
+    if (d) {
+      var pad = 8;
+      left = d.r.left + pad;
+      top = Math.max(d.r.top + pad, Math.min(r.top, d.r.bottom - pad - ht));
+      // A tip taller than the rail would hang out of the modal; sit it at the
+      // rail's top and let its own scrollbar-free overflow be the rail's.
+      if (ht > d.r.height - 2 * pad) top = d.r.top + pad;
+      tip.style.left = Math.round(left) + 'px';
+      tip.style.top = Math.round(top) + 'px';
+      return;
+    }
+    // ── Rail-modal hosts go in the SCRIM GUTTER beside #rmbox. Same argument
+    // as the shop rail, different geometry: #rmbox is a 560px column centred in
+    // the viewport, so the free space is outside it rather than inside. Anchored
+    // to the host, the tip had nowhere to go but back over the panel — measured
+    // at 1280×720, the Vital Signs card is 611px tall, taller than the room
+    // below it, so the tip flipped up to y=69 and covered the panel's own
+    // "Vital Signs" title (236×19) plus three rail buttons; and in the Army
+    // panel the "−" button's tip covered the "+ Hire" button beside it (44×15)
+    // and the "0 × Militia" row it belongs to (166×17). The gutter is scrim over
+    // an already-dimmed HUD, so nothing readable lives there.
+    // ⚠ This branch used to own its side-picking arithmetic; it now shares
+    // dockBeside() with the topbar branch below, which also NARROWS the card
+    // when the gutter is short. That is a strict gain here too: #railmodal.wide
+    // is 880px, so at 1280 its gutter is 200px and the old code gave up and fell
+    // back to anchored placement. Measured with the Econ panel open at 1280×720,
+    // the fifteen topbar cards now dock at 184px wide, 15/15 clear.
+    var box = h.closest && h.closest('#rmbox');
+    if (box && dockBeside(box.getBoundingClientRect(), r, M)) return;
+    // ── Topbar hosts clear the WHOLE top band, not just their own chip.
+    // The top of the screen is three stacked strips of live readouts — #topbar
+    // (which WRAPS to two rows at 1280 wide, see the --topbarh comment),
+    // #daypill and #railbar. Anchored to the chip alone, a row-1 tip opened at
+    // y=44 and ran to y=154: measured at 1280×720 that buried Stone, Cloth,
+    // Population and City Time on row 2, the whole day/weather pill, and eight
+    // rail buttons — 104 covered readouts across the twelve chips. Everything
+    // in the band is a number the player may be reading BECAUSE they are
+    // hovering a related one, so the tip goes under the band, over the scene.
+    if (h.closest && h.closest('#topbar')) {
+      var band = 0;
+      ['topbar', 'daypill', 'railbar'].forEach(function (id) {
+        var e = document.getElementById(id); if (!e) return;
+        var cs = getComputedStyle(e);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return;
+        var br = e.getBoundingClientRect();
+        if (br.height > 0) band = Math.max(band, br.bottom);
+      });
+      /* 🔴 CLEARING THE BAND IS NOT ENOUGH WHEN A PANEL IS OPEN. The band ends
+         at y=165 at 1280×720 and #inspect's top inset puts #insbox at y=177, so
+         "just under the band" and "the top of the dossier" are TWELVE PIXELS
+         apart — the card landed square on the dossier header. And because
+         #inspect is pointer-events:none by design (see its block), the chips
+         stay hoverable with a building open, so this is ordinary play: open a
+         building, glance at your Cinder. Measured before this branch existed,
+         1280×720, dossier open on the Construction Co. at tile 8,8 — the Cinder
+         chip put the card at [131,175 → 367,298.8] against #insbox
+         [140,177 → 1140,622]: a 227×121.8 bite that covered the building name
+         (151×22.1 of "Construction Co."), "🏭 Operations", "tile 8,8",
+         "lot value 20 ₵", the Staff row and its value — 7 readable elements,
+         and ALL 15 of 15 chips hit, 12 of 15 at 1920×1080.
+         So the same gutter dock the #rmbox branch uses, with the band as the
+         vertical floor instead of the viewport margin: the gutter's TOP is the
+         topbar itself, and floorY is what keeps the card out of it. */
+      var floorY = Math.max(M, band + GAP);
+      var obx = openBoxRect();
+      if (obx && dockBeside(obx, r, floorY)) return;
+      if (band > top) top = band + GAP;
+    }
     // Flip above when there is no room below but there is room above.
     if (top + ht > innerHeight - M && r.top - GAP - ht >= M) top = r.top - GAP - ht;
     // Clamp both axes. Clamping LAST means a flip can never push it back out.
@@ -1611,9 +1840,18 @@
     if (h !== host) { host = h; tip.innerHTML = html; }
     tip.classList.add('on'); tip.setAttribute('aria-hidden', 'false');
     place(h);
+    railBusy(!!dockRail(h));
   }
   function hide() {
     host = null; tip.classList.remove('on'); tip.setAttribute('aria-hidden', 'true');
+    railBusy(false);
+  }
+  // The rail's idle hint is readable text that the docked card would sit on
+  // top of — the exact failure mode this whole change removes. Hide it while
+  // docked. visibility (not display) so the rail's width never reflows.
+  function railBusy(on) {
+    var rail = document.getElementById('shoprail');
+    if (rail) rail.classList.toggle('busy', !!on);
   }
   var SEL = '[data-tip], [data-tipres], .res, .rtiphost, .shopcard';
   document.addEventListener('pointerover', function (ev) {
@@ -18749,6 +18987,65 @@ function bldCoTiles() {
   if (!ty) return [];
   return Object.entries(game.tiles).filter(([, t]) => t && t.type === ty && !t.damaged && !bldBusy(t));
 }
+/* 🗺 A CLAIMED RESERVE NODE SATISFIES THE MUNICIPAL CEILING.
+   THE BUG THIS EXISTS FOR, AND WHY THE OBVIOUS FIX WAS NOT ENOUGH. A node owner
+   ("Hidn Studios") reported being told "Needs a Construction Co." TWICE. The
+   first fix worked on the LICENCE: index.html dropped CITY_LICENSES.construction
+   to cinder 0 and cityHoldsLicense() now derives it from node ownership, and
+   opsGrantNodeLicences() hands the free op_construction licence to any node
+   holder at boot. All of that is correct and is untouched here — it was just
+   answering a different question. MEASURED on the shipped tree, standalone, 3
+   anchors, licence granted: opsRowsOf('construction').all.length = 1 and
+   bldCoTiles().length = 0, so 21 of the 68 build cards still carried
+   "Needs a Construction Co." and a real __nc.place('gasstation',2,2) was refused
+   ("1:52:45 to raise — more than the free Municipal Works crew will take on
+   (40:00)") with 210,209 🔥 unspent and no tile written.
+   The licence is the right to OWN the business. bldCoTiles() asks whether one is
+   STANDING. Holding the licence does not site the building, so the two never met.
+
+   ⚠ REJECTED — AUTO-SITING THE CO. It writes a building into the player's city
+     that they did not place, on a tile this code would have to choose; it can
+     fail for want of a free square; it goes through payCost for the materials;
+     and it silently hands out crew slots and the 1.2× speed multiplier, which is
+     an economy change nobody asked for. The player's complaint is a locked menu,
+     not a missing mesh.
+   ⚠ REJECTED — LOOSENING bldCoTiles() ITSELF. bldSlots() and bldSpeed() iterate
+     it per TILE and read that tile's WORKERS. A phantom entry with no tile key
+     would feed bldWorkersOf() a key that is not in game.tiles, and the honest
+     answer to "how many crews does a node lend this city" is none.
+   SO: THE CEILING ONLY. Node ownership answers the yes/no question the ceiling
+   asks ("does this player command construction capability at all"); it lends no
+   crews and no speed. bldSlots()/bldSpeed() keep reading bldCoTiles() alone, and
+   so does the "A 🏗 Construction Co. adds crews." suffix on the crew refusal —
+   that sentence stays TRUE for a node owner, because a sited Co. really is what
+   would add crews.
+
+   🔴 READ SYNCHRONOUSLY, THROUGH game.anchors, AND THAT IS THE POINT. game.anchors
+      is filled by spawnAnchors() from MythicCityBridge.fetchNodes() at boot,
+      before loadState — it IS the existing seam, and it is what the anchors on
+      the map are drawn from, so this can never disagree with what the player can
+      see. Never a bare global and never a fresh fetchNodes() here: this predicate
+      is called from bldDecorateShop() while it paints and from the locked card's
+      own onclick, and an async read in a sync gate is precisely how a card comes
+      to look unlocked and then refuse. One predicate, three gates, no drift.
+   ⚠ MANAGER MODE IS EXCLUDED. A hired mayor's anchors are the MAYOR's nodes, not
+     the owner's, and spawnAnchors() runs for whoever is looking. Lifting somebody
+     else's ceiling off your own nodes is the same authority leak opsAcquireFree()
+     already refuses a licence write for; refused here for the same reason.
+   ⚠ The try/catch around OPS is not decoration: OPS is a `const` declared in the
+     ops layer thousands of lines BELOW this one, so `typeof OPS` throws on the
+     temporal dead zone rather than answering 'undefined'. Before that layer
+     exists there is no manager mode, which is the answer the catch gives. */
+function bldNodeCo() {
+  try { if (OPS && OPS.st && OPS.st.manager) return false; } catch (e) {}
+  try { return ((game.anchors || []).length > 0); } catch (e) { return false; }
+}
+/* THE ONE PREDICATE ALL THREE CEILING GATES TEST — the shop card's lock, the
+   placement gate and the upgrade gate. They used to spell `!bldCoTiles().length`
+   out three times; a fourth reading of node ownership written three times is a
+   drift bug waiting to happen, and the one thing this must never do is unlock a
+   card that the placement then refuses. */
+function bldHasCo() { return bldCoTiles().length > 0 || bldNodeCo(); }
 /* 0 when the manifest is unavailable, which is SAFE here and only here: this
    is read at order time and never re-anchors a live deadline. */
 function bldWorkersOf(k) { try { return (opsRowForKey(k) || {}).workers | 0; } catch (e) { return 0; } }
@@ -21290,7 +21587,10 @@ $('btn-upgrade').onclick = guardedAction(async () => {
        for the same reasons — an upgrade occupies a crew slot exactly like a
        new build, and an upgrade is where the long durations actually live. */
     if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
-    if (bldOpType(t.type) === null && durSec > bldCfg().municipal.maxSec && !bldCoTiles().length) {
+    /* bldHasCo(), not bldCoTiles().length — a claimed Reserve node satisfies the
+       ceiling as well as a sited Co. does. Same predicate as the placement gate
+       and the shop card. */
+    if (bldOpType(t.type) === null && durSec > bldCfg().municipal.maxSec && !bldHasCo()) {
       toast('🔒 That upgrade takes ' + fmtCountdown(durSec) + ' — more than the free Municipal Works crew will take on (' +
             fmtCountdown(bldCfg().municipal.maxSec) + '). ' + bldCoHint(), 'bad');
       return;
@@ -25688,7 +25988,10 @@ function opsDecorateShop() {
       toast(bldCrewBusyMsg() + (bldCoTiles().length ? '' : ' A 🏗 Construction Co. adds crews.'), 'bad');
       return;
     }
-    if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldCoTiles().length) {
+    /* bldHasCo(), not bldCoTiles().length. THE CARD AND THIS LINE MUST AGREE —
+       an unlocked card that is then refused here is the worst outcome available,
+       so both call the one predicate rather than two copies of the same test. */
+    if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldHasCo()) {
       toast('🔒 A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise — more than the free Municipal Works crew will take on (' +
             fmtCountdown(C.municipal.maxSec) + '). ' + bldCoHint(), 'bad');
       return;
@@ -25742,7 +26045,11 @@ function opsDecorateShop() {
 function bldDecorateShop() {
   const body = document.getElementById('shopbody'); if (!body) return;
   const C = bldCfg(); if (!C) return;      // feature off ⇒ the shop is exactly what it always was
-  const hasCo = bldCoTiles().length > 0;
+  /* THE SIGN ON THE DOOR READS THE SAME PREDICATE AS THE LOCK. bldHasCo() is
+     what the order gate tests, so a card is faded here if and only if the
+     placement would refuse it — including for a node owner, whose claimed node
+     satisfies the ceiling and who therefore never sees this message at all. */
+  const hasCo = bldHasCo();
   body.querySelectorAll('[data-build]').forEach((card) => {
     const type = card.getAttribute('data-build');
     const def = BUILDINGS[type]; if (!def) return;
@@ -29045,7 +29352,17 @@ function animate() {
          yet" rather than throwing in the middle of a test. */
       slots:  () => (typeof bldSlots === 'function' ? bldSlots() : null),
       speed:  () => (typeof bldSpeed === 'function' ? bldSpeed() : null),
-      hasCo:  () => (typeof bldCoTiles === 'function' ? bldCoTiles().length > 0 : null),
+      /* 🏗 hasCo() IS THE GATE PREDICATE, not the tile count — the three ceiling
+         gates test bldHasCo(), so a driver that read the tile count would be
+         measuring something the shipped code no longer asks. The two halves are
+         split out beside it because "the ceiling is lifted" and "a Co. is
+         standing" stopped being the same fact when node ownership started
+         satisfying the ceiling, and a test for the node-owner case has to be
+         able to tell them apart. coTiles() is also what bldSlots()/bldSpeed()
+         still read, so it stays observable on its own. */
+      hasCo:   () => (typeof bldHasCo === 'function' ? bldHasCo() : null),
+      coTiles: () => (typeof bldCoTiles === 'function' ? bldCoTiles().length : null),
+      nodeCo:  () => (typeof bldNodeCo === 'function' ? bldNodeCo() : null),
       active: () => (typeof bldActive === 'function' ? bldActive() : null),
       /* The in-flight crew reservations, and the number the gate actually
          tests. A race test cannot see this any other way: `pending` is nonzero

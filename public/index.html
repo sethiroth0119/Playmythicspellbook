@@ -161513,8 +161513,50 @@ function _csEnterStation(view) {
 // 🛏️ Bed fixture — the rest a bed grants every owned hero. One source of truth
 // so the modal text and the apply logic always agree. Throttled (cooldown) so a
 // bed isn't a free infinite-rest button.
-const BED_REST_FX = { stress: 40, fatigue: 40, energyPct: 0.40, energyMin: 8, cooldownMs: 10 * 60 * 1000 };
-function _bedRestCooldownLeft() { return Math.max(0, BED_REST_FX.cooldownMs - (Date.now() - ((Profile && Profile._csBedRestAt) || 0))); }
+// `minVsIdle` replaced a hardcoded `energyMin: 8` that made the bed POINTLESS at
+// low level. The floor has to be judged against what idle regen hands you for
+// free over the bed's OWN cooldown window, and 8 lost that race: measured at
+// Lv1, a bed gave +8 per 10 min while walking away gave +10 — the bed was
+// strictly worse until Lv5, and exactly break-even at Lv3. A flat number cannot
+// stay correct here because it silently rots the moment anyone retunes
+// HERO_REGEN_PER_TICK, HERO_REGEN_TICK_MS or the cooldown, so the floor is now
+// DERIVED from the idle rate (see _bedRestEnergyGain) and this is the multiple.
+const BED_REST_FX = { stress: 40, fatigue: 40, energyPct: 0.40, minVsIdle: 1.6, cooldownMs: 10 * 60 * 1000 };
+// 🕒 TWIN OF THE CLOCK-BACKWARD GUARD IN getHeroEnergy (search `lastRestAt >
+// Date.now()`) — keep the two in step; this feature has two wall-clock stamps
+// and fixing only one leaves half the feature bricked, which is exactly how
+// this bug shipped. `_csBedRestAt` lives on Profile and saveProfile() does
+// JSON.stringify(Profile), so a bad value survives a reload the same way
+// lastRestAt did. If the clock moves back, the stamp is left in the FUTURE,
+// (now - stamp) goes NEGATIVE and subtracting a negative makes the cooldown
+// LONGER, not shorter. Measured before this line existed, with the stamp 7 days
+// ahead: _applyBedRest() returned waitMs 605400000 — 168.2 h of "cooldown" on a
+// 10-minute timer — still 144.2 h at +1 real day and 24.2 h at +6, unlocking
+// only at +7d 11min. Passive regen recovered fine; the bed stayed locked.
+// Re-anchor rather than clamping the elapsed term at 0: clamping alone pins the
+// readout at a full cooldown for the whole jump, which is still a week-long
+// lockout. Re-anchoring costs the player at most one 10-min cooldown and can
+// never GRANT a rest, which is the safe direction (the tempting "just clear the
+// stamp" makes the bed free after any clock fiddle). No saveProfile() here on
+// purpose — this is called from the rest-panel render path, and getHeroEnergy's
+// guard likewise leaves persistence to the next ordinary save; the guard is
+// idempotent, so a reload that restores the future stamp just re-anchors again.
+function _bedRestCooldownLeft() {
+  if (Profile && Profile._csBedRestAt > Date.now()) Profile._csBedRestAt = Date.now();
+  return Math.max(0, BED_REST_FX.cooldownMs - (Date.now() - ((Profile && Profile._csBedRestAt) || 0)));
+}
+// What idle regen alone hands a hero over one bed cooldown, and the bed's floor.
+// Both are FUNCTIONS, not consts: BED_REST_FX is initialised ~29k lines above
+// HERO_REGEN_PER_TICK / HERO_REGEN_TICK_MS in this same script, so reading those
+// in the object literal above would hit the temporal dead zone and throw at load.
+// Reading them at call time is after both are live.
+function _bedRestIdleEquiv() { return (BED_REST_FX.cooldownMs / HERO_REGEN_TICK_MS) * HERO_REGEN_PER_TICK; }
+// Energy a bed grants a hero whose cap is `max`. Pass 0 to get the bare floor
+// (what the modal banner quotes). Callers still clamp to the hero's cap.
+function _bedRestEnergyGain(max) {
+  const floor = Math.ceil(_bedRestIdleEquiv() * BED_REST_FX.minVsIdle);
+  return Math.max(floor, Math.ceil((max | 0) * BED_REST_FX.energyPct));
+}
 // Apply the bed rest to EVERY owned hero. Returns a result object the caller
 // turns into UI: { ok, restored, count } | { ok:false, waitMs } | { ok:false, empty:true }.
 function _applyBedRest() {
@@ -161532,7 +161574,7 @@ function _applyBedRest() {
     const e = getHeroEnergy(hid);           // settles regen + clamps first
     const max = getHeroBattleMax(hid);
     const before = e.energy | 0;
-    e.energy = Math.min(max, before + Math.max(BED_REST_FX.energyMin, Math.ceil(max * BED_REST_FX.energyPct)));
+    e.energy = Math.min(max, before + _bedRestEnergyGain(max));
     e.lastRestAt = Date.now();
     restored += (e.energy - before);
     if ((e.fatigue | 0) > 0) e.fatigue = Math.max(0, (e.fatigue | 0) - BED_REST_FX.fatigue);
@@ -190474,6 +190516,26 @@ function getHeroEnergy(heroId) {
   }
   // Clamp energy from saves that exceed the new per-hero cap.
   if (e.energy > max) e.energy = max;
+  // 🕒 THE CLOCK WENT BACKWARD — re-anchor, do not trust the stamp.
+  // lastRestAt is a wall-clock stamp, so anything that moves the system clock
+  // back leaves it in the FUTURE: a manual clock change, a timezone/DST
+  // correction, or an NTP resync on a device that booted with a dead RTC.
+  // The regen maths below takes WHOLE ticks from (now - lastRestAt); a negative
+  // difference floors to a NEGATIVE tick count, `ticks > 0` is false, and the
+  // hero silently stops regenerating for exactly as long as the jump was.
+  // Measured before this line existed: a stamp 7 days ahead pinned a hero at
+  // 2/20 for seven real days, and because the stamp is saved with the profile,
+  // reloading did not clear it — the hero was simply bricked.
+  // Re-anchoring to now costs the player at most the partial tick they had
+  // accrued and can NEVER add energy, which is the safe direction. The tempting
+  // alternative — trusting the future stamp and letting it drain down — is how
+  // you mint a free bar: jump the clock forward, bank the ticks, jump it back.
+  // ⚠ THIS GUARD HAS A TWIN: _bedRestCooldownLeft() does the same re-anchor for
+  // Profile._csBedRestAt, the bed-rest cooldown stamp. They are the only two
+  // wall-clock stamps in the energy feature and they must not drift apart —
+  // the bed one was missed the first time round and left the bed path locked
+  // for the full duration of a backward jump while regen here recovered fine.
+  if (e.lastRestAt > Date.now()) e.lastRestAt = Date.now();
   // ⏳ Battle-stamina regen — +5 battles per HERO_REGEN_TICK_MS since the
   // last update. Consume whole ticks only so the timer never drifts; once
   // full, keep lastRestAt pinned to now so the next drain restarts cleanly.
@@ -190631,7 +190693,7 @@ function openHeroRestPanel(opts) {
         + '<div style="font-weight:800;color:#f3d27a;font-size:1.02rem">🛏️ ' + esc(bed.name || 'Bed') + '</div>'
         + '<div style="color:#cdbf9c;font-style:italic;font-size:0.84rem;margin:0.15rem 0 0.45rem">' + esc(detail) + '</div>'
         + '<div style="color:#dfe7ff;font-size:0.84rem;line-height:1.5">Resting here gives <b>every hero</b> '
-          + '<b style="color:#ffd166">+' + pct + '% battles</b> (min ' + BED_REST_FX.energyMin + '), '
+          + '<b style="color:#ffd166">+' + pct + '% battles</b> (min ' + _bedRestEnergyGain(0) + '), '
           + '<b style="color:#9be29b">−' + BED_REST_FX.fatigue + ' fatigue</b> and '
           + '<b style="color:#c9a8ff">−' + BED_REST_FX.stress + ' stress</b>. Cooldown ' + cd + ' min.</div>'
         + '<button id="hr-bedrest" ' + (ready ? '' : 'disabled')

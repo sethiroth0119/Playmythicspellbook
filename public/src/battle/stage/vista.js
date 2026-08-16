@@ -171,11 +171,57 @@
    blit(): the DPR-scaled path costs 8x more). The bakes are keyed on the
    viewport + the light + the map and throttled, because LIGHT lerps every
    frame for 2.5s on a time-of-day change and re-baking 150 times in that
-   window would drop frames. Measured on this box's SOFTWARE rasteriser, the
-   whole board renders at ~82ms/frame without this module and ~89ms with it;
-   on a GPU-composited canvas the delta is a fraction of that. Canvas-2D only:
-   the header at battle-board:2240 records that the WebGL path produced no
-   fragments on real hardware. No imports, no DOM, no postMessage, no deps.
+   window would drop frames. Canvas-2D only: the header at battle-board:2240
+   records that the WebGL path produced no fragments on real hardware.
+   No imports, no DOM, no postMessage, no deps.
+
+   ⚠ THE MEASUREMENT PROTOCOL, AND IT IS NOT OPTIONAL — WAVE 6.
+   The paragraph that used to live here said "~82ms/frame without this module
+   and ~89ms with it", i.e. +8.5%. It described no box anyone can find, and it
+   was contradicted 3100 lines further down by the wave-5 ablation (draw 21.4 +
+   grade 37.7 = 66% of an 89ms frame). Replaced by a stated protocol and a
+   RANGE, because the range is the truth on this box. Plateau board (horizonY
+   185.1 / terrainTopY 121.6), 1640x1600 device px, three ablations:
+
+       board alone ......  217.3 / 137.6 / 177.5 ms/frame
+       + vista ..........  +36.1 /  +68.2 /  +70.1   (+17% / +50% / +40%)
+         draw() .........   13.1 /   22.9 /   25.4
+         grade() ........   19.1 /   45.3 /   44.7
+
+   ⚠ QUOTE THE SHARE, NOT THE MILLISECONDS. The absolute figures move by 60%
+   between runs minutes apart — this box is shared and the software rasteriser
+   is at the mercy of whatever else is on it — but every arm of one ablation
+   moves together, so the SHARE is stable to a few points within a run. The
+   first row was a 24-frame window and is the outlier; rows two and three are
+   back-to-back 16-frame windows with the full arm run twice and averaged, and
+   they agree. Read the module as roughly a third to a half again on top of the
+   board here, not as +8.5% and not as the 82% an unflushed run reports.
+
+   ⚠ AND THE PROTOCOL IS THE WHOLE FINDING. Those are windows with
+   `ctx.getImageData(0,0,1,1)` after EVERY frame. Without that flush the same
+   ablation reports the board at 3.14 ms/frame and grade() at 18.8 — i.e.
+   "grade is 4.5x the rest of the board", which is what an independent critic
+   measured and reported. It is an artifact. A single full-viewport 'lighten'
+   fillRect micro-benchmarks at 1.63 ms here, and the board blits a
+   full-viewport terrain canvas, the actors and the HUD; it cannot cost 3.14 ms
+   in total. What happens is that this pane never composites, so nothing forces
+   the board's display list to rasterise — except postMap's getImageData, which
+   is the only readback in the frame. Ablate grade() and the frame's raster
+   work disappears from the clock with it, and every cost in the frame gets
+   attributed to the one pass that was honest enough to sync.
+   Two rules fall out and they apply to every future round:
+     · flush EVERY frame, in EVERY arm of the ablation, or the arm that reads
+       pixels pays for the arms that do not;
+     · never trust a per-frame performance.now() bracket in this file. See the
+       note at the end of grade(), and __vistaDebug().framePeriodP50, which is
+       a wall-clock frame period and is the one timing here that cannot lie.
+   ⚠ AND THE FLUSHED BRACKET IS STILL NOT AN ATTRIBUTION. With
+   __vistaOff.flush on, gradeP50 goes 0.40 → 32.4 ms against a framePeriodP50
+   of 36.7 — 88% of the frame lands inside grade's bracket, because the sync it
+   now performs is waiting for everything the frame drew BEFORE it. That is a
+   sanity check that the pass is being rasterised at all, nothing more. The
+   ablation above is the only attribution.
+   On a GPU-composited canvas the delta is a fraction of all of this.
    ══════════════════════════════════════════════════════════════════════════ */
 (function () {
   "use strict";
@@ -565,6 +611,10 @@
     /* terrainTopY()'s cache — the elevation-aware horizon, keyed on the bake. */
     topY: null,
     gradeMs: [],
+    /* the interval between consecutive grade() entries — a FRAME time, and the
+       only timing in this module that survives a non-compositing rasteriser.
+       See the note at the bottom of grade(). */
+    gradeDt: [], gradeAt: 0,
     lastBake: -1e9,
     artMs: [],
     drift: null
@@ -3643,6 +3693,76 @@
      together make a band: full on the ground the clause measures, zero in the
      occlusion that has to stay black-ish, and the toe still owns the floor. */
   const LIFT_DEEP_HI = 78, LIFT_DEEP_LO = 30;
+  /* ══ WAVE 6 — THE DEEP-OCCLUSION CROSSOVER ════════════════════════════════
+     ⚠ THE LIFT FADES OUT OF THE OCCLUSION AND THE CHROMA RESTORE NEVER DID,
+     AND THAT IS WHY THE BAR'S "cool blue-grey in shadow" HAD INVERTED.
+     `sg` is (GROUND_HI − L)/105 and it SATURATES at L ≤ 45, so the warm restore
+     runs at MAXIMUM strength in exactly the pixels the BAR wants cool — while
+     the note on SHADOW_TINT_K says in as many words that "a cool bounce belongs
+     in the DEEPEST occlusion only". The code and the comment disagreed, and the
+     code won.
+
+     Measured on the shipped wave-5 build, boot()ed onto the plateau board
+     (horizonY 185.1 / terrainTopY 121.6 — the same board the ramp-origin fix
+     was proved on), mean R−B of every pixel in a pre-grade luma band, one
+     frame, pre-grade → post-grade:
+
+         L  0–25   −3.5 → −14.7     the toe owns it; already cool  ✔
+         L 25–40  +11.0 →  +5.6     the navy bounce, cooling a little
+         L 40–55  +15.7 → +22.3     WARMED
+         L 55–78  +23.9 → +43.9     WARMED BY +20
+         L 78–100 +34.3 → +58.9     WARMED BY +25  ← and this one is CORRECT
+
+     The last row is the shaded-ground clause doing its job and must not move.
+     The two rows above it are contact shadows, plateau undersides and the
+     occlusion where rock meets sand — the things the BAR asks for BY NAME —
+     and the grade was handing them the largest warm push in the frame.
+
+     ⚠ AND THE FIX IS A MULTIPLY ON RED, NOT MORE NAVY. Sizing the additive
+     tint to flip R−B negative needs t2 ≈ 0.9, and SHADOW_TINT's own luma is 18,
+     so that is +16 luma onto a contact shadow: the milky-cliff failure the
+     SHADOW_TINT note already records, reproduced. Taking red away instead
+     costs almost nothing in value, because red carries 0.299 of luma and the
+     blue the restore stops eating carries 0.114 back — arithmetic on the
+     L 55–78 row: R−B +43.9 → ~0 for −1.7 luma. A cool shadow, still a shadow.
+
+     Two ramps, both on the pixel's OWN (sharp) luma, and both sized so that
+     they are as close to zero as they can be made where the passing clause is
+     measured — the shaded-ground boxes read pre-grade L 82–167. That is the
+     discipline this file learned the hard way, run in reverse: prove the term
+     you ADD is (near) zero where the thing that already passes is measured.
+
+     ⚠ AND THE BAND IS 66/22, NOT THE LIFT'S 78/30, BECAUSE THE RAMP'S TOP IS
+     THE ONLY THING THAT COSTS THE PASSING CLAUSE ANYTHING. Swept on the boxes
+     the clause is scored on (same-tile lit/shade pairs, 24x12 device px on tile
+     top faces, warm only), mean absolute chroma gap lit−shade over the six
+     bands, against 10.08 with this whole block switched off:
+
+         DEEP_HI 58  … 10.49     DEEP_HI 72  … 13.0 (and the y240 band alone
+         DEEP_HI 66  … 11.93      goes 4.20 → 12.64: it breaks)
+         DEEP_HI 78  … 13.2      DEEP_HI 96  … 15.5
+
+     The shade boxes average pre-grade L 82–167, so a ramp that reaches up to
+     78 clips their darker grain and takes chroma off the very measurement the
+     restore exists to serve. 66 buys the whole cooling for +1.85 of gap, which
+     is inside the spread of the metric across bands.
+     ⚠ DEEP_WARM_CUT IS NOT THE LEVER AND THE SWEEP SAYS SO: 0.85 vs 1.0 at the
+     same ramp moved L<55 by 0.4 and the gap by 0.27. The cooling all comes from
+     DEEP_COOL. Kept as a named constant only so the next reader can see that
+     it was tried. ── */
+  const DEEP_HI = 66, DEEP_LO = 22;
+  const DEEP_WARM_CUT = 1.0;
+  /* …and the cool multiply, as a multiple of the same `k` every other restore
+     in this loop is scaled by, so it inherits chromaK()'s day/night ramp. */
+  const DEEP_COOL = 12;
+  /* ⚠ AND IT IS CAPPED, WHICH IS NOT COSMETIC. k·DEEP_COOL is 2.14 at noon, so
+     without a cap `1 − kdc` goes NEGATIVE below dp 0.47 and the map's own
+     mR < 0.02 floor catches it — a hard clip across a whole region, with the
+     additive's cR/mR term saturating at 255 on the other side of it. Capped,
+     the transfer is a ramp into a plateau: continuous, no edge, and mR never
+     falls below 0.28 of what the rest of the map asked for. The cap binds
+     below pre-grade L 51. */
+  const DEEP_COOL_CAP = 0.72;
   /* ── ⚠ AND THE HALO CAP, WHICH IS NOT OPTIONAL AT THIS LIFT ───────────────
      A LIFT WEIGHTED BY THE NEIGHBOURHOOD PAINTS WHITE OUTLINES ON EVERY CLIFF.
      sl is read off the W/7 thumbnail on purpose (see `Lsoft`), and that is what
@@ -3973,6 +4093,7 @@
     const wInv = 1 / Math.max(1, WARM_HI - WARM_LO);
     const vInv = 1 / GAIN_SPAN;
     const nInv = 1 / NEUTRAL_W;
+    const pInv = 1 / Math.max(1, DEEP_HI - DEEP_LO);
     const md = gm.createImageData(bw, bh), ad = ga.createImageData(bw, bh),
       vd = gv.createImageData(bw, bh);
     const M = md.data, A = ad.data, V = vd.data;
@@ -4117,7 +4238,16 @@
            they are exactly 0 above the tallest plateau's top face, where the
            only thing that lives is the world. */
         const slb = sl * rs;
-        let kk = k * (r + rs * SHADOW_CHROMA * sg * warm);
+        /* ── THE DEEP-OCCLUSION WEIGHT — see THE DEEP-OCCLUSION CROSSOVER ───
+           1 below DEEP_LO, 0 above DEEP_HI, off the pixel's OWN luma (the same
+           sharp ruler `sg` uses, because this is a per-pixel property and not a
+           regional wash). Cancelled on anything the cool gate already
+           recognises: the pond is dark and would otherwise collect the whole
+           term on top of the give-back it already has. */
+        let dp = (DEEP_HI - L) * pInv; dp = dp < 0 ? 0 : dp > 1 ? 1 : dp;
+        dp *= (1 - cool);
+        if (noShade) dp = 0;
+        let kk = k * (r + rs * SHADOW_CHROMA * sg * warm) * (1 - DEEP_WARM_CUT * dp);
         if (kk > 0.42) kk = 0.42;
         const at = noVeil ? 1 : attn[p];
         /* the tone pedestal, as a factor rather than a 'difference' fill: the
@@ -4233,6 +4363,27 @@
         if (fa > 0.001) {
           mR *= ovf(R, f0, fa); mG *= ovf(G0, f1, fa); mB *= ovf(B, f2, fa);
         }
+        /* ── AND THE COOL HALF OF THE CROSSOVER — A MULTIPLY, ON RED ──────────
+           Withdrawing the warm restore (above) only stops the occlusion getting
+           WARMER; it cannot make it cool, because a multiply on a blue channel
+           that is already near zero has almost nothing to work with. The cool
+           has to come off the red end. Same shape as the signed push a dozen
+           lines below — mR down, mG down by a third as much so the result is a
+           blue-GREY and not a blue — and scaled by `k` like every other restore
+           here, so the night preset keeps 42% of it and no more.
+           ⚠ IT RUNS BEFORE THE ACHROMATIC PATCH ON PURPOSE, and the patch is
+           gated against it: `dir` is +1 on any surface the cool gate does not
+           recognise, so an occlusion this term has just steered to R−B ≈ 0
+           lands exactly in the middle of NEUTRAL_W and the patch would push it
+           straight back to warm. The patch exists for the SKY's blue→haze
+           crossover (see its own note); the deep ground shade is not a pixel
+           that has lost its hue by accident, it is one we are deliberately
+           putting on the other side of neutral. */
+        if (dp > 0) {
+          let kdc = k * DEEP_COOL * dp;
+          if (kdc > DEEP_COOL_CAP) kdc = DEEP_COOL_CAP;
+          mR *= (1 - kdc); mG *= (1 - 0.30 * kdc);
+        }
         /* ── THE ACHROMATIC PATCH, ON THE PIXEL THE VIEWER WILL SEE ──────────
            ⚠ THE GATE HAS TO BE ON THE OUTPUT, AND THE FIRST TWO CUTS OF THIS
            WERE NOT. Probed on the live canvas (scratchpad/VC3-probe.mjs), the
@@ -4257,7 +4408,7 @@
             /* which way is "away from grey" here: the cool gate already knows
                whether this surface is air or ground. */
             let dir = 1 - 2 * cool; if (dir > 1) dir = 1; if (dir < -1) dir = -1;
-            const kn = k * NEUTRAL_R * neu * (dir < 0 ? -dir : dir);
+            const kn = k * NEUTRAL_R * neu * (dir < 0 ? -dir : dir) * (1 - dp);
             if (dir >= 0) { mB *= (1 - kn); mG *= (1 - 0.42 * kn); }
             else { mR *= (1 - kn); mG *= (1 - 0.30 * kn); }
           }
@@ -4564,9 +4715,31 @@
     ctx.fillRect(0, 0, dw, dh);
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
+    /* ── ⚠ THIS BRACKET IS A LIE UNLESS YOU FLUSH, AND IT LIED FOR A WHOLE
+       ROUND — see THE MEASUREMENT PROTOCOL in the header. Everything above is
+       queued canvas work; performance.now() around it measures the time to
+       BUILD a display list, not to rasterise one. Measured on this box:
+       gradeP50 reported 0.40 ms over 240 frames in the same session in which a
+       per-frame-flushed ablation put grade() at 19.1 ms — 48x out.
+       So the number is only reported as a cost when the flush is on, and the
+       flush is opt-in because a 1x1 getImageData here is a genuine pipeline
+       sync on real hardware and would cost the game a stall every frame to
+       serve a debug counter. `__vistaOff.flush = 1` turns it on.
+       ⚠ AND framePeriodP50 IS THE ONE NUMBER THAT CANNOT LIE. grade() is
+       called exactly once per frame, so the interval between two entries is a
+       frame time — wall clock, no bracket, no flush, free. It cannot attribute
+       cost to this module on its own; that is what stubbing BBX.vista.grade
+       and diffing the period is for, and that ablation is the only honest one
+       (see the header). */
+    if (off('flush')) { try { ctx.getImageData(0, 0, 1, 1); } catch (e) { } }
     if (t0) {
       S.gradeMs.push(performance.now() - t0);
       if (S.gradeMs.length > 240) S.gradeMs.shift();
+      if (S.gradeAt) {
+        S.gradeDt.push(t0 - S.gradeAt);
+        if (S.gradeDt.length > 240) S.gradeDt.shift();
+      }
+      S.gradeAt = t0;
     }
   }
 
@@ -4578,11 +4751,31 @@
     return {
       skyKey: S.sky.key, landKey: S.land.key,
       lastBake: +S.lastBake.toFixed(2), artCached: S.art.size,
-      /* WAVE 3: the grade's own p50, and how often the two clamp fills proved
-         skippable. A perf claim nobody can re-measure is a perf claim nobody
-         should believe. */
+      /* WAVE 3: the grade's own p50. A perf claim nobody can re-measure is a
+         perf claim nobody should believe.
+         ⚠ WAVE 6: AND IT WAS ITSELF THE CLAIM NOBODY SHOULD HAVE BELIEVED. On
+         a rasteriser that defers, this bracket times display-list construction
+         and reads 0.40 ms against an ablation's 19.1. It is therefore reported
+         as null unless __vistaOff.flush is on, rather than reported as a small
+         number that a future round would take for "free". `gradeFlushed` says
+         which regime produced it, and `gradeRawP50` is the unflushed bracket,
+         kept only so a probe written against wave 3 still gets its field and
+         can see how far off it is. */
+      gradeFlushed: off('flush'),
       gradeP50: (function () {
+        if (!off('flush')) return null;
         const a = S.gradeMs.slice().sort((x, y) => x - y);
+        return a.length ? +a[a.length >> 1].toFixed(2) : null;
+      })(),
+      gradeRawP50: (function () {
+        const a = S.gradeMs.slice().sort((x, y) => x - y);
+        return a.length ? +a[a.length >> 1].toFixed(2) : null;
+      })(),
+      /* THE FRAME PERIOD, and it is the honest one — see the note at the end of
+         grade(). Stub BBX.vista.grade (or .draw) and diff this to attribute
+         cost; that ablation needs no flush and cannot be deferred away. */
+      framePeriodP50: (function () {
+        const a = S.gradeDt.slice().sort((x, y) => x - y);
         return a.length ? +a[a.length >> 1].toFixed(2) : null;
       })(),
       gradeN: S.gradeMs.length,
@@ -4590,8 +4783,13 @@
          getImageData + loop, `calls` counts frames that wanted the map; the
          ratio should sit at ~1/POST_CADENCE plus one per bake. msP50 is the
          cost of a recompute frame ALONE, which is the number the cadence
-         divides. Set __vistaOff.coolcache = 1 to force every frame and
-         re-measure the counterfactual on this same build. `pos` says whether
+         divides — and it is a bracket around a getImageData, so unlike
+         gradeP50 it does force its own work; what it cannot separate is the
+         work the sync was WAITING for. Set __vistaOff.coolcache = 1 to force
+         every frame and re-measure the counterfactual on this same build; on
+         this box, and under a per-frame flush, that counterfactual is inside
+         run-to-run noise, which is not what msP50's 70 ms suggests.
+         `pos` says whether
          the positional bake exists — without it the map declines and the frame
          ships with the board's own light, which is the tainted-canvas path. */
       post: {

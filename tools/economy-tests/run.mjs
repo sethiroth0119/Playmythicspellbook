@@ -5078,6 +5078,16 @@ const stripComments = (src) => {
        inequality. bldSlots reads the real ECON slot table through bldCfg;
        bldCommitted is the one that counts orders still inside their payCost. */
     bldCoTiles:     fnText(NC, 'bldCoTiles'),
+    /* 🗺 THE CEILING PREDICATE, and it is NOT bldCoTiles any more. All three
+       ceiling gates (shop card, placement, upgrade) test bldHasCo(), which is
+       "a Co. is standing OR this player holds a claimed Reserve node" — so a
+       sandbox that lifted only bldCoTiles would ReferenceError the moment the
+       gate ran, and one that stubbed bldHasCo would grade its own answer.
+       bldNodeCo reads game.anchors, which mkCity's city already declares as []
+       — i.e. the sandbox default is "no node owned", which is exactly the state
+       REFUSAL 2 below is about. */
+    bldHasCo:       fnText(NC, 'bldHasCo'),
+    bldNodeCo:      fnText(NC, 'bldNodeCo'),
     bldWorkersOf:   fnText(NC, 'bldWorkersOf'),
     bldSlots:       fnText(NC, 'bldSlots'),
     bldActive:      fnText(NC, 'bldActive'),
@@ -6615,7 +6625,15 @@ const stripComments = (src) => {
            dialog, once after it) and unfix replaces every occurrence — which is
            correct: h156 takes both away together. */
         ['if (bldCommitted() >= bldSlots())', 'if (false)'],
-        ['if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldCoTiles().length)', 'if (false)'],
+        /* ⚠ RETARGETED when the ceiling gate stopped spelling out
+           `!bldCoTiles().length` and started calling `!bldHasCo()`. The old
+           anchor matched NOTHING against the new source, which is the exact
+           failure the CRLF note above describes — REFUSAL 2 would have stayed
+           green under a switch that claimed to remove it. It reddens through
+           patchOk rather than through the defect, so if you are reading this
+           because the round went red, the fix is to re-point the anchor at the
+           line the gate actually ships, never to delete it. */
+        ['if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldHasCo())', 'if (false)'],
       ]);
 
     const gotGate = chk('§8 the order gate is where this round thinks it is',
@@ -6730,6 +6748,33 @@ const stripComments = (src) => {
         await api3.tryPlace(6, 6);
         chk('§8 …but a Construction Co. that is still a hole in the ground supervises nothing',
             !api3.game.tiles['6,6'], 'a site counted as a standing Co. — place Co., place arena, cancel Co. is then free');
+        /* 🗺 A CLAIMED RESERVE NODE OPENS THE SAME GATE, WITH NO CO. TILE AT ALL.
+           The reported bug, twice: a node owner was handed the free
+           op_construction LICENCE and still read "Needs a Construction Co.",
+           because the licence is the right to OWN the business while the gate
+           asks whether one is STANDING. game.anchors is what spawnAnchors()
+           fills from MythicCityBridge.fetchNodes(), so this is the real seam —
+           note there is no op_construction tile anywhere in this city. */
+        const spy4 = mkSpy();
+        const api4 = mkCity({ spy: spy4, B: BLDG, dur: LONG, gateSrc: GATE_SRC, placeType: CAPN });
+        api4.game.anchors = [{ node: { id: 'n1', node_type: 'mfg' }, x: 3, z: 3, link: 0, key: '3,3' }];
+        await api4.tryPlace(6, 6);
+        chk('§8 …and a CLAIMED NODE opens it too, with no Co. tile standing — the twice-reported bug',
+            !!api4.game.tiles['6,6'] && !!api4.game.tiles['6,6'].bld &&
+            !Object.values(api4.game.tiles).some(t => t && t.type === 'op_construction'),
+            'tile ' + JSON.stringify(api4.game.tiles['6,6']) + ', said ' + JSON.stringify(spy4.toasts.map(t => t.m)) +
+            ' — holding a node must satisfy the ceiling, or the node owner is locked out of every Cinder earner');
+        /* …AND IT STILL DEGRADES. An empty anchor list is not "unknown", it is
+           "no node", and it must land back on the ceiling exactly as before —
+           otherwise this fix silently unlocks the whole game for everyone. */
+        const spy5 = mkSpy();
+        const api5 = mkCity({ spy: spy5, B: BLDG, dur: LONG, gateSrc: GATE_SRC, placeType: CAPN });
+        api5.game.anchors = [];
+        await api5.tryPlace(6, 6);
+        chk('§8 …but NO node still hits the ceiling — the grant degrades, it does not open the gate for everyone',
+            !api5.game.tiles['6,6'] && spy5.paid.length === 0 && /Municipal Works/.test((spy5.toasts[0] || {}).m || ''),
+            'tile ' + JSON.stringify(!!api5.game.tiles['6,6']) + ', payCost ' + spy5.paid.length +
+            ', said ' + JSON.stringify(spy5.toasts.map(t => t.m)));
       }
       // ── (6) THE OPS EXEMPTION, AND THE EXEMPT TYPES ────────────────────────
       {

@@ -147,24 +147,33 @@
      L231 -> #eed49a L209, mid #f5c44f -> #d8b465) so the amber identity and
      every state class read exactly as before at two thirds the glare. */
   --hudx-et-h: 104px;
-  /* ⚠ 8px -> 0, AND THE BUTTON NOW FILLS ITS OWN DOCK. Three rounds of this:
-     the dock was pinned to the rail FRAME's span (1272..1592) on the argument
-     that the frame is the visible plate — but the button inside it was only
-     `calc(100% - 42px)` wide, so #btn-end-turn itself measured [1293,…,278,…],
-     right edge 1571: 21px inside its own dock and 29px inside the rail. Every
-     critic has measured the BUTTON, twice against `.bp-wrap.bsx`'s 1600.
-     So the foot assembly now spans exactly `.bp-wrap.bsx`: dock, bevel plate
-     and #btn-end-turn all run 1264..1600, and the two brace hairlines with
-     them. It is 8px proud of the frame line above on BOTH sides — a plinth
+  /* ⚠ 8px -> 0, AND IT IS THE **DOCK** THAT FILLS THE RAIL — NOT THE BUTTON.
+     The dock was once pinned to the rail FRAME's span (1272..1592) on the
+     argument that the frame is the visible plate, and every critic measured the
+     BUTTON instead, twice against `.bp-wrap.bsx`'s own right edge. So the inset
+     went to 0 and `.hudx-endturn` (the dock), its two brace hairlines and the
+     bevel plate now span exactly `.bp-wrap.bsx`: 1264..1600 at 1600x1000,
+     measured. It is 8px proud of the frame line above on BOTH sides — a plinth
      wider than the column it sits under, which is symmetric and deliberate,
      where 29px short on one side was neither.
-     ⚠ AND THE BUTTON MUST NOT GET ITS GLARE BACK. Wave 3 cut it from
-     302x106 = 32,012px^2 to 278x86 = 23,908. A full-width box would be
-     336x86 = 28,896, so the height comes down with the width: 336x71 = 23,856,
-     i.e. the same area, the same ramp and the same measured luma/saturation as
-     the frame that passed. The amber PAINT is inset 12px from the box's two
-     points (see the clip-path) so the bevel still reads as a frame at the tips
-     instead of meeting the amber edge-on. */
+
+     🔴 THIS NOTE USED TO CLAIM "dock, bevel plate and #btn-end-turn all run
+     1264..1600" and "336x71 = 23,856". BOTH WERE FALSE AGAINST THE LIVE BUILD
+     and stayed false for two rounds after §5 deliberately narrowed the hex — the
+     file carried two mutually exclusive accounts of the same number, and the
+     brief's own rule is that these headers ARE the specification, so a false one
+     is load-bearing. #btn-end-turn is NOT the dock: it is `--hudx-et-w` wide,
+     centred in it, and it was measured at [1304, 896.5, 256, 71] = 18,176px^2
+     before this round — 5,680px^2 (24%) smaller than the sentence above it
+     claimed. The dock/plinth argument is the half that was true; the button's
+     own span belongs to §5 and lives there now, with the ranking that fixes it.
+     ⚠ AND THE BUTTON MUST NOT GET ITS GLARE BACK. That constraint is real and
+     survives: the wave-3 frame that passed was 260x86 = 22,400px^2, and §5 holds
+     the button under it while putting it back above every other control. The
+     amber PAINT is inset 12px from the box's two points (see the clip-path) so
+     the bevel still reads as a frame at the tips instead of meeting the amber
+     edge-on, and the CHROMA cut (~25% at every stop, §5) is untouched — that,
+     not the area, is what answered "the most saturated object in the frame". */
   --hudx-et-inset: 0px;
 }
 
@@ -436,10 +445,19 @@
    `gap + 10` and no amount of sink brings it under 20 while the gap is 14.
    0.85vh is 8.5 / 7.65 / 6.5 at the three viewports, i.e. a widest hole of
    ~18.5 with the rhythm still even, and the ~30px it releases goes straight
-   into the card backs rather than back into the holes it came out of. */
+   into the card backs rather than back into the holes it came out of.
+   ⚠ THE CAP GOES 11px -> 9.5px, AND IT IS THE SAME ARITHMETIC READ AT THE TOP
+   END. "The widest hole is `gap + 10`" is exact — measured 18.5 against a gap of
+   8.5 at 1600x1000 — so any gap above 10px puts the widest hole over the work
+   order's <=20px on its own, with zero residue in it. 0.85vh crosses 10 at
+   1177px of viewport height, and §7b.6a now removes the residue that used to
+   mask the question on exactly those windows. 9.5 keeps the widest hole at ~19.5
+   from 1118px of height up, and it is INERT on every viewport this file is tuned
+   against (0.85vh is 8.5 / 7.65 / 6.5 / 5.3 at 1000 / 900 / 768 / 620 — all
+   below the old cap and the new one alike). */
 .battle-screen .bp-wrap.bsx .bsx-inner {
   display: flex; flex-direction: column;
-  gap: clamp(4px, 0.85vh, 11px);
+  gap: clamp(4px, 0.85vh, 9.5px);
 }
 /* the opponent's frame carries the identical weave — the two clusters are one
    component and must not differ by surface either. It does NOT get the foot:
@@ -1204,18 +1222,61 @@
    rail's full span (the two braces have to land on `.bp-wrap.bsx`'s own edges,
    see the note on `.etwrap::before`) and the button was simply `width: 100%` of
    it. Those are two different jobs. `--hudx-et-w` gives the shape its own
-   width — 256px, i.e. 24% less amber — while the dock, the braces and the
-   alignment argument are all untouched, and the 40px of brace now showing each
-   side of the crown is what the note below wanted in the first place: the
-   hexagon reads as MOUNTED BETWEEN two rails rather than as a slab that is the
-   rail. Colour comes down in the ramp itself, at `.hudx-endturn .endturn`.
+   width — i.e. less amber — while the dock, the braces and the alignment
+   argument are all untouched, and the brace now showing each side of the crown
+   is what the note in §0 wanted in the first place: the hexagon reads as
+   MOUNTED BETWEEN two rails rather than as a slab that is the rail. Colour
+   comes down in the ramp itself, at `.hudx-endturn .endturn`.
+
+   🔴 …AND ROUND 3 THEN OVERSHOT, MEASURED. `min(100%, 256px)` x `calc(100% -
+   33px)` put #btn-end-turn at [1304, 896.5, 256, 71] = 18,176px^2 at 1600x1000.
+   Ranked by area over every interactive element in `.battle-screen` (buttons +
+   `.cardslot`, >8px, visible) that is TENTH: four pile cardslots at 21,125 each
+   (#yourDeck, #graveyard and the two empty realm/vanish slots — §7b.6 grew them)
+   and five hand cards at 20,886 each all beat it. At 1920x1200 it is twelfth
+   (hand cards 160x240 = 38,400). So the sentence this section is held to — "it
+   is the largest single CONTROL in the HUD" — was false on the build that
+   carried it, and by the biggest margin on the widest screens, because
+   `--hudx-et-w` and `--hudx-et-h` were two fixed pixel constants while the hand
+   and the piles both scale with the viewport.
+
+   THE FIX IS THE SHAPE'S TWO INSETS, NOT THE DOCK AND NOT `--hudx-et-h`:
+     · the width becomes `max(calc(100% - 56px), min(100%, 240px))`, i.e. 28px of
+       brace on EACH side of the crown wherever the rail can afford it, with a
+       240px floor so the narrowest rail (240px at <=1200 wide) keeps exactly the
+       button it ships today rather than shrinking to 184. Resolves 280 / 240 /
+       240 at the three rail widths (336 / 292 / 240) — 28px of brace per side at
+       336, 26 at 292, and 0 at 240 where the floor bites, which is what ships
+       there today. Strictly >= the old `min(100%, 256px)` at every rail width.
+     · the vertical inset goes 33px -> 26px, so the button is 78 of the dock's
+       104 instead of 71. `--hudx-et-h` IS NOT TOUCHED — it is the term in
+       §7b.6's `body = 100vh - et_h - 93`, and every constant in that section is
+       fitted against 104 / 94. Growing the button inside its own dock costs the
+       rail arithmetic nothing; growing the dock would re-open all of it.
+   MEASURED AFTER at 1600x1000: [1292, 893, 280, 78] = 21,840px^2 — FIRST of 37
+   controls, ahead of the 21,125 cardslot and the 20,886 hand card, and still
+   BELOW the 22,400 (260x86) wave-3 frame that passed review. 20% more amber
+   than round 3, 8% less than wave 2's 23,856, and the ~25% chroma cut in the
+   ramp below is untouched, which is the half of round 3 that actually answered
+   "the largest and most saturated object in the frame".
+   ⚠ AND THE CLAIM IS NOW SCOPED, because it cannot hold everywhere and pretending
+   otherwise is how it went false the first time. The dock is the RAIL's width
+   and §0 forbids this file changing that, so END TURN's absolute ceiling is
+   336 x (104 - 26) = 26,208px^2 — under a 1920x1200 hand card's 38,400. Measured
+   at 1920x1200 it ranks FOURTEENTH of 37: five hand cards at 38,400 and eight
+   pile cardslots at 24,208 (both clusters', now that §7b.7 brings the foe's four
+   to parity) sit above it, and there is no lever inside this piece that changes
+   that — the hand and the piles scale with the viewport, the rail does not.
+   What IS true at every viewport, and is what the size clause should have said
+   all along: END TURN is the largest single control in the HUD that is not a
+   CARD FACE. Measured, recorded, and NOT to be "fixed" by growing the dock.
    It stays LARGE on purpose — BAR line 46 asks for "a large hexagonal END TURN
    button, amber gradient, bevelled ornate border" and it is the primary action
    of the screen. Large is the brief; largest-in-frame was the defect. */
 .hudx-endturn {
   position: fixed; right: var(--hudx-et-inset); bottom: 16px; z-index: 62;
   width: calc(var(--btl-rail-w) - var(--hudx-et-inset) * 2); height: var(--hudx-et-h);
-  --hudx-et-w: min(100%, 256px);
+  --hudx-et-w: max(calc(100% - 56px), min(100%, 240px));
   display: grid; place-items: center;
   pointer-events: none;
 }
@@ -1274,7 +1335,7 @@
      `.bp-wrap.bsx`'s 1600; the PAINT is pulled 12px back off each point by the
      clip so the bevel behind it still frames the tips. clip-path does not
      change a box, which is what lets these two be different numbers. */
-  width: var(--hudx-et-w); height: calc(100% - 33px);
+  width: var(--hudx-et-w); height: calc(100% - 26px);
   border: 0; border-radius: 0; padding: 0;
   clip-path: polygon(20% 0, 80% 0, calc(100% - 12px) 50%, 80% 100%, 20% 100%, 12px 50%);
   /* ⚠ NOT A BARE GRADIENT. At 320x158 this was the largest single flat fill in
@@ -2087,6 +2148,66 @@ body:has(.battle-screen) .emote-toggle {
     linear-gradient(180deg, rgba(140, 30, 38, 0.82), rgba(52, 12, 18, 0.9));
 }
 
+/* ── 7b.1b  ✦ ULT-STATE — THE ONE §7b.1's OWN SCAN WALKED PAST ─────────────
+   🔴 §7b.1 above ends "an automated scan of the whole screen returns this
+   element and nothing else". `.bc-cancel` is genuinely fixed (re-measured this
+   round: border-radius 0, a 6-point clip-path, 6 background layers) — but the
+   scan that produced that sentence MISSED a second one, and it is the same
+   defect class, in the same rail, 24px smaller.
+
+   RE-RUN OF §7b.1's OWN SCAN (painted, border-radius != 0, no clip-path, <= 1
+   background layer) over every visible element >= 8px in `.battle-screen`
+   INCLUDING the hand strip, at 1600x1000: 619 elements, 119 painted, 16
+   rounded, 16 rounded+painted, 15 of those unclipped, and exactly ONE with
+   <= 1 background layer — `span.ult-state`, 30.1x18.2 after `_bcpFit`'s zoom
+   (33x20 unscaled), border-radius 20px, background-image none, background-color
+   rgba(255,255,255,0.12), clip-path none, at [286, 737.6] on the Ultimate
+   button in the LEFT rail. Its ARMED state is the same 20px pill with a single
+   two-stop `linear-gradient(rgb(245,196,83), rgb(201,141,31))` and still no
+   clip — so BOTH states are stadium pills. Source: index.html:5864 (armed) and
+   5868 (`.ultbtn.used .ult-state`, the flat one). This file already restyles
+   `.ultbtn` ITSELF at §6 (the plate) and re-cuts its silhouette — grep showed
+   no rule anywhere in hud.css for `.ult-state`, i.e. the button was re-skinned
+   and the chip riding on it was not.
+
+   ⚠ SPECIFICITY, THE SAME WAY §7b.1 DOES IT — NOT `!important`. index.html
+   carries `.bchrome .ultbtn .ult-state` (0,3,0) for armed and
+   `.bchrome .ultbtn.used .ult-state` (0,4,0) for used. Matching each one
+   exactly and relying on hud.css's later source order is enough, and it keeps
+   the two states independent so a future change to one cannot silently take the
+   other with it.
+   ⚠ PAINT ONLY — no padding, margin, font or size change. `.ult-state` is a
+   flex item inside `.ultbtn`, which sits in `.bc-rail`, which `_bcpFit()`
+   measures and zooms; one pixel of box here re-enters that fit. `clip-path`
+   does not change a box, which is what lets the silhouette be re-cut for free
+   (the same argument §5 makes for #btn-end-turn's own clip).
+   ⚠ AND THE STATE READOUT KEEPS ITS TWO VALUES. Armed is gold and lit, used is
+   dim and cold — that contrast is the information, and it is untouched. Only
+   the silhouette and the surface change: the chamfered hex-chip cut this file
+   uses for `.hint` / `.bc-cancel`, plus the fine lattice, so the chip reads as
+   a small engraved plaque set into the violet plate instead of a browser pill
+   printed on it. */
+.bchrome .ultbtn .ult-state,
+.bcp .ultbtn .ult-state {
+  border-radius: 0;
+  clip-path: polygon(
+    5px 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 5px 100%, 0 50%);
+  background:
+    var(--hudx-lattice-fine),
+    linear-gradient(180deg, rgba(255, 252, 232, 0.42) 0 6%, transparent 6%),
+    linear-gradient(180deg, #f7dc9a 0%, #e3bb5c 44%, #c08c22 72%, #8d6413 100%);
+  box-shadow: inset 0 0 0 1px rgba(74, 46, 4, 0.45), 0 0 12px rgba(212, 175, 55, 0.5);
+}
+/* USED: the same engraved chip, cold. Two layers and a clip, so it leaves the
+   scan by all three of its tests rather than by one of them. */
+.bchrome .ultbtn.used .ult-state,
+.bcp .ultbtn.used .ult-state {
+  background:
+    var(--hudx-lattice-fine),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.07));
+  box-shadow: inset 0 0 0 1px rgba(210, 164, 78, 0.22);
+}
+
 /* ── 7b.2  THE TWO TOOL MEDALLIONS WERE FLOATING, NOT MOUNTED ──────────────
    `.bsx .tools` (index.html:6767) is an OPEN band — `border-top` and
    `border-bottom` hairlines with `justify-content:space-around` — so the two
@@ -2254,11 +2375,15 @@ body:has(.battle-screen) .emote-toggle {
    (the frame was TALLER than the content) and §2 already clamps its use to
    `min(var(--fit,1),1)`, so a column that now exactly fills its body just pins
    the cap it was already pinned to. Measured after: --fit 1.0000.
-   ⚠ THE OPPONENT'S CLUSTER IS DELIBERATELY NOT SCOPED OUT of the cell rules —
-   it gets the identical CSS. It simply resolves differently, because
-   `.hudx-cluster .bsx-frame` is `flex: 0 0 auto` and hugs its content, so there
-   is no free space on the left to grow into. Same component, same rules,
-   different container: the same trade §2 already documents for frame extent. */
+   🔴 THIS NOTE USED TO SAY "THE OPPONENT'S CLUSTER IS DELIBERATELY NOT SCOPED
+   OUT of the cell rules — it gets the identical CSS. It simply resolves
+   differently." THAT WAS FALSE AND IT COST THE OPPONENT ITS CARD ART: every
+   selector below is scoped to `.bp-wrap.bsx`, so the foe's slots never matched
+   the width rule at all and kept index.html's 66px clamp inside a 145.5px cell.
+   The reasoning was right — `.hudx-cluster .bsx-frame` is `flex: 0 0 auto` and
+   hugs its content, so the RIGHT rail's free-space term is meaningless on the
+   left — but the conclusion has to be a rule of the foe's own, off the LEFT
+   rail's free space. It is §7b.7 below, with the sweep that sets its constant. */
 .battle-screen .bp-wrap.bsx .bsx-inner > .rule { margin: 2px 0; }
 /* ⚠ `flex-basis: auto`, NOT `0`. With basis 0 the grid's height would be pure
    free space — deterministic and tidy right up to the first window where the
@@ -2413,14 +2538,51 @@ body:has(.battle-screen) .emote-toggle {
    And the card fits its row at every one: slot 122.8x172 in a 174.5 stack,
    91.4x128 in 132, 49.9x69.9 in 73.5.
 
-   ⚠ THE ONE VIEWPORT THIS DOES NOT CLOSE, MEASURED SO NOBODY RE-FINDS IT AS
-   NEW: 1920x1200 reads 26.2% / 40.3-45.3. The free-space term wants a 192px
-   back there and the CELL ceiling below pins it at 131.5, so ~250px has nowhere
-   to go. That is not a regression — the layout this replaced reads 26.4% /
-   ~42px on the same window (10.6vh = 127.2px card, cap 446 in a 1003 body), so
-   the two are within 0.2pp of each other. Closing it needs a WIDER rail, and
-   rail width is the board's size budget (it rescales the 3D stage), which is
-   not a trade this piece may make on its own.
+   🔴 THIS IS NOT ONE VIEWPORT. IT IS A FAMILY, AND THE OLD NOTE HERE NAMED
+   ONLY 1920x1200 (26.2% / 40.3-45.3) AS IF IT WERE A ONE-OFF. It is not — the
+   boundary follows from this section's own two terms and can be written down.
+   `--hudx-slot-w` is `min(freeTerm, cellTerm)`; the freeTerm rises with vh and
+   the cellTerm does not, so above the height where they cross, EVERY further
+   pixel of window is residue that `justify-content: space-between` pours into
+   the six inter-child holes. The crossing is at
+       88vh = 461px + oh + 2.8 x cellTerm
+   i.e. ~875px of viewport height at a 240px rail, ~957px at 292, ~1027px at 336
+   — and above it the residue is exactly
+       SURPLUS = 88vh - 461px - oh - 2.8 x --hudx-slot-w
+   MEASURED, hole scan of the six gaps plus no-content share of `.bsx-body`,
+   with `_bpFit()`/`_bcpFit()` forced before reading (SURPLUS predicted vs the
+   residue actually observed above the 8.5-11px rhythm + the children's own
+   margins):
+       1440x1080  24.5% / 32.6-37.6   surplus 107.8 predicted · ~110 observed
+       1920x1200  27.4% / 42.3-47.3   surplus 151.8 predicted · ~162 observed
+       1200x1200  40.8% / 64.7-69.7   surplus 286.2 predicted · ~296 observed
+   1200x1200 is TWICE the emptiness bar and 3.5x the hole bar, and appeared
+   nowhere in this file. `.bsx-inner` lands on `.bsx-body` at 1003/1003 there, so
+   this is pure distributed slack, not overflow.
+
+   WHAT IS FIXED HERE, AND WHAT IS NOT — BOTH MEASURED. The `<=20px` half is a
+   DESTINATION problem and it is closed below: SURPLUS is now spent as symmetric
+   head/foot padding inside `.bsx-inner`, so `space-between` gets back exactly
+   the residue §2 tuned the rhythm against and the holes return to gap+margins at
+   every viewport in the family. The `<=20%` half is a WIDTH problem and it is
+   not closable inside this piece:
+     · the card is width-driven with `aspect-ratio: 5/7` (§7b.5 records three
+       failed attempts to make it height-driven), and its width ceiling is the
+       cell, which is the RAIL's width;
+     · at 1200x1200 the rail is 240 x 1003 — a 4.2:1 column. Four 5:7 backs in
+       two columns of 97.5px want ~309px of height including labels; the six
+       other children want 285. There is no arrangement of THIS content that
+       fills 1003px, and the two that were tried both failed on their own
+       measurement: growing the CELL past the card puts 72px of bare plate above
+       and below the art in every cell (§7b.5, measured at 1920x1200), and
+       letting the FRAME hug its content puts ~180px of bare page background
+       between the rail's foot and the END TURN hex (§2, measured).
+     · so closing it needs a WIDER rail, and §0 forbids this file touching rail
+       width — it is `--bpw`'s source of truth AND the board column's budget.
+   The number therefore stays honest rather than gamed: padding the children out
+   to swallow the residue would move `emptyPct` without moving the row-variance
+   scan §7b.5 actually trusts, which is the "you cannot draw your way out of it"
+   trap this section already fell into once.
 
    ⚠ …AND THE `460px` WAS RE-MEASURED TWICE ON SCREEN, because a fit is not a
    measurement — and the second measurement corrected the FIRST ONE'S READING,
@@ -2474,6 +2636,192 @@ body:has(.battle-screen) .emote-toggle {
         calc((var(--bpw) - 45px) / 2 - 14px)),
     134px);
   --hudx-piles-cap: calc(2.8 * var(--hudx-slot-w) + var(--hudx-grid-oh));
+  /* THE RESIDUE THE GRID COULD NOT TAKE — the column's height identity, written
+     out term by term rather than as a fitted `88vh - Npx`, so a reader can check
+     it and so it follows `--hudx-et-h`, `--hudx-grid-oh` and §2's gap clamp on
+     its own instead of being re-fitted whenever one of them moves:
+         body   = 100vh - --hudx-et-h - 93px          (§7b.6, four exact reads)
+         inner padding                     11px       (7 top + 4 bottom)
+         the six non-pile children        285px       (36+1+48+62+39+99)
+         their own margins                 40px       (measured, all seven)
+         the six flex gaps              6 x gap
+         the grid                       2.8 x slot + oh
+       surplus = body - 11 - 285 - 40 - 6gap - (2.8 slot + oh)
+     Derived from the RESOLVED slot, so it is correct in all three branches of
+     the clamp above (free-space term, cell ceiling, 42px floor / 134px cap) and
+     not only in the one branch this round happened to measure.
+     ⚠ THE FIRST VERSION OF THIS REUSED `88vh - 461px` — the fit the SLOT is
+     derived from — and under-shot by exactly 6.9vh - 72px, because that fit
+     folds the margins and the gap into one constant. Measured at 1920x1200 it
+     left 10.8px of residue, 1.8 per hole, which pushed the widest hole to 22.0
+     and failed the bar by 2px after all the work. Written out in full it lands
+     on 162.6 against 162.6 observed. Do not re-collapse it into a constant. */
+  --hudx-surplus: max(0px, calc(100vh - var(--hudx-et-h) - 429px
+                                - 6 * clamp(4px, 0.85vh, 9.5px)
+                                - 2.8 * var(--hudx-slot-w)
+                                - var(--hudx-grid-oh)));
+}
+
+/* ── 7b.6a  THE SURPLUS IS SPENT AT THE PLATE'S HEAD AND FOOT, NOT IN THE SIX
+      HOLES ─────────────────────────────────────────────────────────────────
+   `justify-content: space-between` (§7b.5) is the right rule while the residue
+   is the design rhythm; above the crossing derived in §7b.6 it is the WRONG
+   sink, because it multiplies one un-spendable number by six. Taking the
+   surplus out as padding on `.bsx-inner` hands `space-between` exactly the
+   residue §2 fitted the 0.85vh rhythm against, and the holes go back to
+   gap+margins at every viewport in the family.
+
+   ⚠ SYMMETRIC, NOT POOLED AT THE FOOT — and the file has already measured why.
+   §4 and §7b.5 both rejected a single band of slack at ONE end: 174px of
+   uninterrupted plate under TUNNELED is the "dead plate" reading, and it is
+   what "the panel's own contents are bunched" means. Split evenly the column is
+   CENTRED in a taller plate, which is a frame inset rather than a hole, and both
+   ends already carry ornament — `.bsx-frame`'s braces and `.hudx-dia t` above,
+   `--hudx-foot`'s rule, stud, hairline and darkening ramp (anchored to
+   `.bsx-body`'s own bottom edge, §3) below.
+   ⚠ AND IT IS INERT ON EVERY VIEWPORT THIS SECTION ALREADY PASSES — that is the
+   point of deriving SURPLUS rather than picking a breakpoint. It evaluates to
+   <= 0 (so `max(0px, …)` returns 0) at 1600x1000 (344 vs 2.8x122.84 = 343.96),
+   1440x900, 1366x768, 1280x800 and 1200x620, i.e. every window in §7b.6's own
+   results table. Nothing in the tuned band moves by a pixel.
+   ⚠ PADDING, NOT A FLEX SPACER OR A MARGIN. `.bsx-inner` is `box-sizing:
+   border-box` (measured) and `flex: 1 0 auto` inside `.bsx-body`, so padding
+   comes out of the CONTENT box and `inner.scrollHeight` still equals
+   `body.clientHeight` — `_bpFit()` reads exactly the same two numbers it read
+   before and `--fit` stays 1.0000. A `::before`/`::after` flex spacer was the
+   obvious alternative and is worse: it becomes a flex ITEM, so `space-between`
+   puts a gap on the far side of it too and the hole count goes 6 -> 8.
+   ⚠ `:not(.bsx-compact)` because index.html re-declares the padding at
+   `5px 8px 3px` for the compact rail (index.html:6826) and this rule would
+   otherwise silently put it back to 7/4. The compact rail is a <=700px-tall
+   window, where SURPLUS is 0 anyway — so the exclusion costs nothing and stops
+   the two padding sources drifting.
+
+   RESULT, MEASURED AFTER, same probe and same boxes as §7b.6's table —
+   no-content share of `.bsx-body` / the six inter-child holes, with the piles
+   grid, `_bpFit()` and `_bcpFit()` all forced before reading:
+       1440x1080  24.5% / 32.6-37.6  ->  24.5% / 14.2-19.2   inner 883/883
+       1920x1200  27.4% / 42.3-47.3  ->  27.4% / 14.5-19.5   inner 1003/1003
+       1200x1200  40.8% / 64.7-69.7  ->  40.8% / 14.5-19.5   inner 1003/1003
+   and INERT, to the tenth, on every viewport already passing:
+       1600x1000  12.7% / 13.5-18.5  (padding 7/4, surplus 0)
+       1440x900   13.9% / 13.0-18.0  (padding 7.05/4.05, surplus 0.1)
+       1366x768   15.5% / 11.5-16.5  ·  1280x800  15.0% / 11.8-16.8
+       1200x620   13.5% /  8.0- 9.8  --fit 0.8660, padding 5/3 (.bsx-compact)
+       1366x660   13.8% /  9.1-10.9  --fit 0.9422
+   `--fit` is 1.0000 at every window that must not overflow, before and after,
+   and the emptiness column is unchanged BY DESIGN — see the note above for why
+   moving it would be gaming the metric rather than closing it. */
+.battle-screen .bp-wrap.bsx:not(.bsx-compact) .bsx-inner {
+  padding-top:    calc(7px + var(--hudx-surplus) / 2);
+  padding-bottom: calc(4px + var(--hudx-surplus) / 2);
+}
+
+
+/* ── 7b.7  THE OPPONENT'S CLUSTER NEVER GOT THE CELL RULE AT ALL ───────────
+   🔴 §7b.5 states "THE OPPONENT'S CLUSTER IS DELIBERATELY NOT SCOPED OUT of the
+   cell rules — it gets the identical CSS. It simply resolves differently."
+   MEASURED, THAT IS NOT WHAT HAPPENS. `getComputedStyle(foeSlot)
+   .getPropertyValue('--hudx-slot-w')` returns the EMPTY STRING: the variable is
+   declared on `.battle-screen .bp-wrap.bsx` (§7b.6) and applied by
+   `.battle-screen .bp-wrap.bsx .hudx-cell .cardslot` (§7b.5), both scoped to the
+   PLAYER's rail, so the opponent's slots keep index.html's own `clamp()` at
+   `.hudx-cell .cardslot`'s own `clamp(48px, 6.6vh, 78px)` at §6. This is not a
+   container difference resolving differently — it is a selector that never
+   matches.
+
+   WHAT IT COSTS, MEASURED. At 1600x1000 both clusters have the SAME 296px pile
+   grid, the SAME `grid-template-columns: 145.5px 145.5px` and the same 9px
+   labels — and the card back inside is 122.8x172 on the player against 66x92.4
+   on the foe. Fill of cell width 84.4% vs 45.4%, i.e. 11.4px of shoulder per
+   side against 39.8px, in cells of identical width; by area 29.4% of a player
+   cell is bare plate against 66.0% of every foe cell. Same shape at 1920x1200
+   (90.4% vs 53.6%) and 1440x1080 (88.7% vs 57.7%). The spec line this misses is
+   the header's own "The OPPONENT's identical cluster -> LEFT edge".
+
+   🔴 AND FULL PARITY IS NOT FREE — THIS IS THE MEASUREMENT THAT SETS THE RULE.
+   The opponent's cluster is a flow SIBLING of `.bc-rail` inside `.battle-left`,
+   and `_bcpFit()` zooms `.bc-rail` into whatever height the cluster leaves. Card
+   width swept at 1600x1000, re-running `_bcpFit()` at each step:
+       66px (today) zoom 0.95 · cluster 411.8 · rail 562.2 · fill 45.4%
+       78px         zoom 0.89 · cluster 445.4 · rail 528.6 · fill 53.6%
+       88px         zoom 0.85 · cluster 473.4 · rail 506.1 · fill 60.5%
+       98px         zoom 0.80 · cluster 501.4 · rail 472.6 · fill 67.4%
+      118px         zoom 0.71 · cluster 557.4 · rail 416.6 · fill 81.1%
+      122.8px       zoom 0.68 · cluster 570.9 · rail 403.1 · fill 84.4%
+   Handing the foe the player's own number at 1000px of window takes the battle
+   log, the Ultimate button and the consumables down 28%. The SAME sweep at
+   1920x1200 is the opposite story:
+       78px zoom 1.11 · 98px 1.04 · 118px 1.04 · 131.5px 0.98
+   i.e. at 1200px of window height full parity costs the left rail essentially
+   nothing, because `.battle-left` is 200px taller and `.bc-rail` is not.
+
+   🔴 AND AT 1000px OF WINDOW HEIGHT THIS FILE HAS ALREADY REFUSED THIS TRADE
+   ONCE, WITH NUMBERS — §6's `9.2vh -> 6.6vh` note, twenty lines of it: a foe
+   card of 9.2vh (= 92px at 1000) put `.bc-rail`'s top at y=466 and `_bcpFit`'s
+   zoom at 0.64 against 0.80 untouched, i.e. the Battle Log, the LOCATION /
+   WEATHER cards and CONSUMABLES all ~20% smaller, and 6.6vh (= 66px, today's
+   value) is what that note bought the rail back with. 88px is 8.8vh — 4% off
+   the number that was rejected. Re-taking a trade the file measured and refused,
+   because a later critic measured only the cluster and not the rail, is exactly
+   how a header stops being a specification. So it is NOT re-taken.
+
+   SO THE FOE'S CARD IS SIZED OFF THE **LEFT** RAIL'S FREE SPACE, exactly the way
+   §7b.6 sizes the player's off the RIGHT rail's — same structure, different
+   container, which is what §7b.5's sentence claimed and this now actually does.
+   The left rail's free space is `.battle-left`'s height, and `.bc-rail`'s need
+   does not grow with it, so:
+       clamp(66px, 66px + (100vh - 1000px) x 0.3275, (--bpw - 45px)/2 - 14px)
+     · 66px up to 1000px of window height — §6's refusal is preserved intact and
+       this rule is INERT at 1600x1000 and everywhere below it;
+     · 0.3275 is not a fit, it is (131.5 - 66) / 200: the distance from §6's
+       value to the cell ceiling at a 336px rail, over the 200px of window
+       height in which the sweep above shows `.battle-left` gaining the room;
+     · the ceiling is the IDENTICAL 14px-shoulder cell rule the player has, so
+       from 1200px of window height up the two clusters resolve to the SAME
+       NUMBER and are pixel-identical, which is where two of the three
+       measurements that opened this section were taken.
+   ⚠ WHAT IS THEREFORE NOT CLOSED, SAID PLAINLY: at 1600x1000 the foe's cell is
+   still 45.4% filled against the player's 84.4%. That is a refusal, not a miss —
+   §6's measurement is the reason, it is 20% of the battle log's legibility, and
+   the only lever that would close it without paying that is a WIDER left rail,
+   which §0 forbids this file for the same reason it forbids the right one.
+   ⚠ INSIDE `@media (min-height: 951px)` ON PURPOSE. §8 collapses the opponent to
+   one row of four below 951px with `.hudx-cluster .hudx-cell .cardslot` (0,3,0);
+   this selector is (0,4,0) and would beat it from anywhere in the file. The
+   media query, not specificity, is what keeps §8 in charge of short windows.
+   ⚠ AND THE COUNT DIAMOND TRACKS THE CARD, for the same reason §7b.5 gives on
+   the player's side: a 29px badge that is right on a 66px back is a sticker on a
+   132px one. Same fractions, same clamps — one component, one rule shape.
+
+   MEASURED AFTER — foe card, foe fill of cell width, against the PLAYER's on
+   the same window, plus what it cost `.bc-rail` (`_bcpFit`'s zoom, this build):
+       1600x1000   66x92.4    45.4%  ->  unchanged  (§6's refusal, above)
+                   zoom 0.95 -> 0.95
+       1440x1080   71.3x99.8  57.7%  ->   92.2x129.1  74.6%  (player 88.7%)
+                   zoom 0.98 -> 0.86
+       1920x1200   78x109.2   53.6%  ->  131.5x184.1  90.4%  (player 90.4%) —
+                   the two clusters are now PIXEL-IDENTICAL, zoom 1.11 -> 0.98
+       1200x1200   78x109.2   80.0%  ->   83.5x116.9  85.6%  (player 83.0%) —
+                   also identical (both on the cell ceiling), zoom 1.00
+   Below 951px nothing moves: 1440x900 / 1366x768 / 1366x660 / 1200x620 all keep
+   §8's one-row-of-four collapse, verified unchanged. */
+@media (min-height: 951px) {
+  .battle-screen .hudx-cluster {
+    --hudx-foe-slot-w: clamp(
+      66px,
+      calc(66px + (100vh - 1000px) * 0.3275),
+      calc((var(--bpw) - 45px) / 2 - 14px));
+  }
+  .battle-screen .hudx-cluster .hudx-cell .cardslot { width: var(--hudx-foe-slot-w); }
+  .battle-screen .hudx-cluster .hudx-cell .count {
+    width: clamp(24px, calc(var(--hudx-foe-slot-w) * 0.27), 38px);
+    height: clamp(24px, calc(var(--hudx-foe-slot-w) * 0.27), 38px);
+    right: -6px; bottom: -5px;
+  }
+  .battle-screen .hudx-cluster .hudx-cell .count i {
+    font-size: clamp(10.5px, calc(var(--hudx-foe-slot-w) * 0.125), 16px);
+  }
 }
 
 

@@ -97,13 +97,42 @@ function guard(fn) {
 
    What DID measure as broken on every render is the click catcher — see
    rearmCatcher() below. */
+/* ⚠ THE GATE IS ON `__hudxVoidCards`, THE NEWEST SYMBOL — NOT ON `__hudxVoid`.
+   The bridge grew a second reader (the vanish VIEWER needs the cards, not just
+   their count). Gating on the oldest symbol would let a page that already has
+   the count-only bridge skip the install and leave the viewer permanently
+   unreadable; gating on the newest one means the whole seam is re-emitted
+   whenever any part of it is missing. Both functions are idempotent
+   assignments, so re-emitting is free.
+
+   ⚠ AND THE CARD READER HANDS BACK PLAIN STRINGS, NEVER THE LIVE CARD OBJECTS.
+   `App.state[side].void` holds the reducer's own card objects, and several
+   effects push a card that is still referenced by `state.units` /
+   `state[side].graveyard` (index.html ~88473: the graveyard entry is SPLICED
+   OUT and the same object pushed to `void`). Handing those across the seam
+   would give a styling module a live handle on battle state it has no business
+   holding. Four scalar fields are copied out instead — id (for the art
+   resolver), name, icon, type — so nothing this file touches can be written
+   back into the match. */
 function installStateBridge() {
-  if (window.__hudxVoid) return;
+  if (window.__hudxVoidCards) return;
   try {
     const s = document.createElement('script');
     s.textContent =
       'window.__hudxVoid=function(){try{return{player:((App.state.player.void)||[]).length,' +
       'ai:((App.state.ai.void)||[]).length};}catch(e){return null;}};' +
+      /* Returns null — never [] — when the state cannot be read, so "the pile is
+         empty" and "the bridge failed" stay distinguishable at the call site.
+         `void` entries are NOT uniform: index.html:88474 pushes a bare
+         `{id, name, type:'unit'}` for a unit that died and was banished, while
+         88125 pushes the whole hand card. Every field is therefore coerced
+         defensively and a missing one becomes ''. */
+      'window.__hudxVoidCards=function(side){try{var a=App.state[side==="ai"?"ai":"player"].void;' +
+      'if(!Array.isArray(a))return null;return a.map(function(c){c=c||{};return{' +
+      'id:(typeof c.id==="string"||typeof c.id==="number")?String(c.id):"",' +
+      'name:(c.name==null?"":String(c.name)),' +
+      'icon:(c.icon==null?"":String(c.icon)),' +
+      'type:(c.type==null?"":String(c.type))};});}catch(e){return null;}};' +
       /* `App.state.gameOver` is the ONLY thing that distinguishes "the rail is
          missing because the match ended" from "the rail is missing because the
          state is half-built". The freeze below is gated on it, so it needs the
@@ -136,22 +165,237 @@ function cellFor(slot) {
   return cell;
 }
 
-/* The vanish / Void pile. This is genuinely new UI — the game has a `void`
-   array per side (banish, vanishGrave*, hand-banish and Void-cost effects all
-   push to it) but has never had a pile for it anywhere in the battle HUD. */
+/* ══ THE VANISH PILE, AND WHY IT USED TO LIE ═══════════════════════════════
+   This is genuinely new UI — the game has a `void` array per side (banish,
+   vanishGrave*, hand-banish and Void-cost effects all push to it) but has never
+   had a pile for it anywhere in the battle HUD.
+
+   🔴 WHAT WAS WRONG. The cell rendered `cardslot empty hudx-voidslot` for EVERY
+   count. MEASURED, live match, three cards seeded into `App.state.player.void`
+   and re-rendered through the game's own `renderBattleNow()`:
+       .hudx-vanish .hudx-voidslot  class="cardslot empty hudx-voidslot"
+       img elements 0 · .hudx-voidface 1 · count "3" · cursor "default"
+       role null · tabindex null · click -> 0 overlays anywhere in the document
+   i.e. the slot said "3" while painting the *empty* placeholder next to a deck
+   stack that was painting a real card back for the same kind of number, and
+   there was no way to find out WHICH three cards had gone.
+
+   THE FIX, AND ITS TWO HALVES:
+     · >0 cards  -> the SAME markup index.html's own `_slot()` emits
+       (`<img class="cbk">`, no `.empty`), so `.bsx .cardslot` / `.cbk` /
+       `:hover` / the stacked ::before-::after shadow cards all apply without a
+       line of new skin, and the pile matches the deck beside it exactly;
+     · clicking opens a viewer built from the bridge (see openVoidView).
+
+   ⚠ AN EMPTY PILE STILL RENDERS TODAY'S EMPTY STATE. A card back over a count
+   of 0 is a picture of a card that is not there. `filled` is false for 0, for a
+   null count, and for a bridge that cannot hand over the array at all.
+
+   ⚠ AND `filled` IS KEYED ON THE **CARDS**, NOT ON THE COUNT. The two readers
+   can disagree — an older cached bridge has `__hudxVoid` and no
+   `__hudxVoidCards` — and a card back that opens nothing is a worse bug than
+   the one being fixed, because it looks like a working control. Gating the
+   card back on the same read the viewer will do makes "clickable" and
+   "openable" one fact instead of two.
+
+   ⚠ PLAYER ONLY, DELIBERATELY. Making the OPPONENT's banish pile browsable is a
+   gameplay-information change (it is hidden knowledge in every card game that
+   has the zone), not a HUD change, so the foe's cell is untouched: empty face,
+   count, not clickable. If that is wanted it is the owner's call, not this
+   file's. */
 function vanishCell(side) {
   const v = (typeof window.__hudxVoid === 'function') ? window.__hudxVoid() : null;
   const n = v && typeof v[side] === 'number' ? v[side] : null;
+  const cards = (side === 'player') ? voidCards() : null;
+  const filled = !!(cards && cards.length);
+
   const cell = mk('div', 'hudx-cell hudx-vanish');
   cell.appendChild(mk('div', 'slabel', SVG_VANISH + 'VANISH'));
   const stack = mk('div', 'stack');
-  const slot = mk('div', 'cardslot empty hudx-voidslot');
-  slot.title = (side === 'ai' ? "Opponent's" : 'Your') + ' Vanish pile — cards banished out of play to the Void';
-  slot.appendChild(mk('span', 'hudx-voidface'));
+  const slot = mk('div', 'cardslot hudx-voidslot' + (filled ? ' hudx-voidfull' : ' empty'));
+  slot.title = (side === 'ai' ? "Opponent's" : 'Your') + ' Vanish pile — cards banished out of play to the Void'
+             + (filled ? ' — click to view' : '');
+
+  if (filled) {
+    /* THE BACK IS COPIED FROM THE DECK STACK IN THE SAME RAIL, not hard-coded.
+       index.html's `_slot()` uses `getCardBackImage('player')` (index.html
+       135369), which is the player's CHOSEN back — a literal path here would
+       put the default back on the vanish pile and the player's own back on the
+       deck two cells away. `#yourDeck` has already been moved into this grid by
+       the time this runs, so its img is in the document and its src is the
+       answer. The literal is only the last resort. */
+    const img = mk('img', 'cbk');
+    img.setAttribute('src', cardBackSrc());
+    img.setAttribute('alt', '');
+    img.setAttribute('draggable', 'false');
+    /* A 404 on the back must not leave a broken-image glyph where the empty
+       well used to be — fall all the way back to today's face. */
+    img.addEventListener('error', () => {
+      try { img.remove(); slot.insertBefore(mk('span', 'hudx-voidface'), slot.firstChild); } catch (_) {}
+    });
+    slot.appendChild(img);
+    slot.setAttribute('role', 'button');
+    slot.setAttribute('tabindex', '0');
+    slot.addEventListener('click', () => openVoidView());
+    slot.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openVoidView(); }
+    });
+  } else {
+    slot.appendChild(mk('span', 'hudx-voidface'));
+  }
+
   slot.appendChild(mk('span', 'count grey', '<i>' + (n == null ? '—' : n) + '</i>'));
   stack.appendChild(slot);
   cell.appendChild(stack);
   return cell;
+}
+
+const CARDBACK_FALLBACK = 'assets/artwork/cardback.png?v=5';
+
+function cardBackSrc() {
+  try {
+    const im = document.querySelector('#yourDeck img.cbk');
+    const src = im && im.getAttribute('src');
+    if (src) return src;
+  } catch (e) {}
+  return CARDBACK_FALLBACK;
+}
+
+/* ══ THE VANISH VIEWER ═════════════════════════════════════════════════════
+   index.html already owns a pile viewer — `App._pileView = 'player'|'ai'|'realm'`
+   plus `render()` (index.html 135631-135744) — and adding a `'void'` branch to
+   it would be the right place for this. It is not available: this piece may not
+   edit index.html, and `App._pileView` is read only by that function's own
+   `if` ladder, so setting it from here would re-render the battle screen with
+   NO modal at all and cost a frame for nothing.
+
+   So the modal is built here — but it is built out of the game's OWN modal
+   parts (`.modal-backdrop` > `.ds-modal`, `.btn-mini` for the close button, the
+   74px `auto-fill` tile grid, `getCardArt(id)` for the face) so it is the same
+   object as the graveyard viewer rather than a second dialect of modal in the
+   same HUD. z-index 1400 is copied from that viewer for the same reason:
+   `.modal-backdrop`'s own default is 2147483647, which would put a pile list
+   ABOVE the surveil modal (2147483000) and above the result card.
+
+   ⚠ IT HANGS OFF `document.body`, NOT OFF `.battle-screen`. `renderBattle()`
+   replaces #app's children wholesale on every state change, so a modal parented
+   inside the screen is destroyed mid-read by anything that ticks — the turn
+   timer included. On body it survives, and relayout() refreshes its list from
+   the bridge on every rebuild instead (see the call at the top of relayout), so
+   what it shows is never one state change stale.
+
+   ⚠ NAMES GO IN AS `textContent`. `escapeHtml` already ran on this data once
+   inside index.html; routing a card name back through innerHTML here would be a
+   second chance to get that wrong, and this file's rule everywhere else is that
+   nothing is re-emitted from a string. */
+const VOID_MODAL_CLS = 'hudx-voidmodal';
+let voidOpen = false;
+
+function voidCards() {
+  try {
+    if (typeof window.__hudxVoidCards !== 'function') return null;
+    const a = window.__hudxVoidCards('player');
+    return Array.isArray(a) ? a : null;
+  } catch (e) { return null; }
+}
+
+function voidTile(c) {
+  const tile = mk('div', 'hudx-vtile');
+  const face = mk('div', 'hudx-vface');
+  let art = null;
+  try { if (typeof window.getCardArt === 'function' && c.id) art = window.getCardArt(c.id); } catch (e) {}
+  if (art) {
+    const im = mk('img');
+    im.setAttribute('src', String(art));
+    im.setAttribute('alt', '');
+    im.setAttribute('draggable', 'false');
+    // Same fallback ladder index.html uses: art, then the card's own glyph.
+    im.addEventListener('error', () => {
+      try { im.remove(); face.classList.add('hudx-vglyph'); face.textContent = c.icon || '🕊'; } catch (_) {}
+    });
+    face.appendChild(im);
+  } else {
+    face.classList.add('hudx-vglyph');
+    face.textContent = c.icon || '🕊';
+  }
+  const nm = mk('div', 'hudx-vname');
+  nm.textContent = c.name || '?';
+  tile.title = (c.name || '?') + (c.type ? ' — ' + c.type : '');
+  tile.appendChild(face);
+  tile.appendChild(nm);
+  return tile;
+}
+
+function onVoidKey(e) {
+  // Capture + stopPropagation: while this is the top layer, Escape belongs to
+  // it and must not also reach whatever the battle screen does with the key.
+  if (e.key === 'Escape') { e.stopPropagation(); closeVoidView(); }
+}
+
+function closeVoidView() {
+  voidOpen = false;
+  try { document.removeEventListener('keydown', onVoidKey, true); } catch (e) {}
+  try { document.querySelectorAll('.' + VOID_MODAL_CLS).forEach((n) => n.remove()); } catch (e) {}
+}
+
+/* Re-fill the open list from the bridge. Called on every battle rebuild, so a
+   card vanished while the list is open appears in it; a pile that has been
+   emptied (Void -> deck / grave effects exist) closes the list rather than
+   showing a stale one. Never throws — it is called from relayout()'s hot path. */
+function refreshVoidView() {
+  try {
+    const bd = document.querySelector('.' + VOID_MODAL_CLS);
+    if (!bd) { voidOpen = false; return; }
+    const cards = voidCards();
+    if (!cards || !cards.length) { closeVoidView(); return; }
+    const sub = bd.querySelector('.hudx-vsub');
+    if (sub) sub.textContent = '(' + cards.length + ' card' + (cards.length === 1 ? '' : 's') + ')';
+    const grid = bd.querySelector('.hudx-vgrid');
+    if (!grid) return;
+    grid.textContent = '';
+    cards.forEach((c) => grid.appendChild(voidTile(c)));
+  } catch (e) { /* a stale list is still better than taking the relayout down */ }
+}
+
+function openVoidView() {
+  try {
+    if (voidOpen && document.querySelector('.' + VOID_MODAL_CLS)) return;
+    closeVoidView();                       // never two backdrops
+    const cards = voidCards();
+    if (!cards || !cards.length) return;   // nothing to show, and nothing invented
+
+    const bd = mk('div', 'modal-backdrop ' + VOID_MODAL_CLS);
+    bd.style.zIndex = '1400';
+    const box = mk('div', 'ds-modal');
+
+    const head = mk('div', 'hudx-vhead');
+    const ttl = mk('div', 'hudx-vtitle');
+    ttl.appendChild(mk('span', 'hudx-vtitle-ic', SVG_VANISH));
+    const t = mk('span');
+    t.textContent = 'Your Vanish Pile';
+    ttl.appendChild(t);
+    ttl.appendChild(mk('span', 'hudx-vsub'));
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'btn-mini';
+    x.textContent = '✖ Close';
+    x.addEventListener('click', closeVoidView);
+    head.appendChild(ttl);
+    head.appendChild(x);
+
+    const note = mk('div', 'hudx-vnote');
+    note.textContent = 'Cards banished out of play. They are not in your deck, hand or graveyard.';
+
+    box.appendChild(head);
+    box.appendChild(note);
+    box.appendChild(mk('div', 'hudx-vgrid'));
+    bd.appendChild(box);
+    bd.addEventListener('click', (e) => { if (e.target === bd) closeVoidView(); });
+    document.body.appendChild(bd);
+    voidOpen = true;
+    document.addEventListener('keydown', onVoidKey, true);
+    refreshVoidView();
+  } catch (e) { closeVoidView(); }
 }
 
 /* The opponent has no energy readout anywhere in the UI today — only the orbs
@@ -382,8 +626,12 @@ function rearmCatcher() {
 
 function relayout() {
   const scr = document.querySelector('.battle-screen');
-  if (!scr) return;
+  if (!scr) { closeVoidView(); return; }   // left the battle: the list is not about anything
   rearmCatcher();                    // before the early-out: every render kills it
+  // Same reason as rearmCatcher: this must run on EVERY render, not only the
+  // one that lays the screen out. The vanish list is a snapshot of `void`, and
+  // `void` changes on exactly the renders the early-out skips.
+  if (voidOpen) refreshVoidView();
   if (scr.__hudx) return;            // already laid out — the cheap early-out
   scr.__hudx = 1;
 

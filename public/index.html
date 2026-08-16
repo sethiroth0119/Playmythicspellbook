@@ -6828,12 +6828,18 @@
   @media (max-width: 1300px){ .bp-wrap.bsx{ width:248px; } }
   /* 🪪 Rail-width mirror. `.cbx-float` is anchored beside the rail but is its
      SIBLING, so it can't read a custom property set on `.bp-wrap` — it has to
-     come from a shared ancestor. ⚠ Keep these three values identical to the
-     `.bp-wrap.bsx` widths directly above; if they drift, the character box
-     drifts off the rail's border. */
-  :root{ --bpw: 300px; }
-  @media (max-width: 1500px){ :root{ --bpw: 274px; } }
-  @media (max-width: 1300px){ :root{ --bpw: 248px; } }
+     come from a shared ancestor.
+     ⚠ THE THREE `:root{ --bpw }` DECLARATIONS THAT USED TO LIVE HERE (300/274/
+     248px) ARE GONE ON PURPOSE. src/battle/hud.css now derives --bpw,
+     --btl-rail-w AND --r3-rail-r-real from ONE number per breakpoint, and also
+     sets `.bp-wrap.bsx`'s width from that same number, so the rail and the
+     character box cannot drift apart any more. Re-adding a --bpw here would
+     recreate exactly the two-sources-of-truth bug the comment above warns
+     about — it would still LOSE to hud.css (same :root specificity, hud.css is
+     the last stylesheet), so it would only mislead the next reader.
+     The `.bp-wrap.bsx` widths directly above are likewise overridden by
+     hud.css; they remain as the no-hud.css fallback, matching
+     `var(--bpw, 300px)` at `.cbx-float`. */
   /* the rail hides itself under 1100px (phones) — the floating box goes too */
   @media (max-width: 1100px){ .cbx-float{ display:none; } }
   /* 📖 READABLE RIGHT RAIL (v118x0). The rail had NO fit logic: ~970px of content
@@ -7078,6 +7084,17 @@
    The 560px design was built for a 1920 desktop. On a 1440-wide screen — a
    Surface Pro 13" is exactly that at 2× — 560 + 214 + margins left the board
    about 630px, which is why it looked crushed. */
+/* ⚠ --btl-rail-w below is NOT the value the battle screen runs on any more.
+   src/battle/chrome.css overrode it (440/320/280) and src/battle/hud.css now
+   overrides BOTH (336/300/272 at 1500/1300), deriving --btl-rail-w,
+   --r3-rail-r-real and --bpw from one number per breakpoint. hud.css is the
+   last stylesheet, and media queries add no specificity, so its :root wins at
+   every width — including inside the 1599/1279 brackets below, which are
+   narrower brackets but earlier source. These stay as the no-stylesheet
+   fallback ONLY. Editing them will not move the rails; edit hud.css.
+   --btl-rail-r is a different variable and still live (see the warning at the
+   `.bp-wrap` fallback further up: it does NOT describe the rail's real width —
+   --r3-rail-r-real does). */
 :root {
   --btl-rail-w: 560px;    /* left rail */
   --btl-rail-r: 214px;    /* right rail */
@@ -13772,7 +13789,15 @@
      ──────────────────────────────────────────────────────────────────── */
   #battle-event-feed {
     position: fixed;
-    top: 92px; left: 50%;
+    /* ⚠ This used to be a hard `top: 92px`, which is exactly the band the two
+       hero banners now occupy (src/battle/hud.css) — the chips stacked BEHIND
+       them at z-index 2147481000 and read as garbage. `--hud-banner-h` is
+       declared on :root by hud.css (140px, 118px on short screens, 92px below
+       1100px where the banner band is abandoned) and the 92px fallback keeps
+       the old position if hud.css ever fails to load. hud.css also carries the
+       same rule and wins on source order; this is the belt to that's braces,
+       so the ticker is correct even if the stylesheet order is reshuffled. */
+    top: calc(var(--hud-banner-h, 92px) + 8px); left: 50%;
     transform: translateX(-50%);
     display: flex; flex-direction: column; align-items: center;
     gap: 6px;
@@ -36441,7 +36466,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w8';
+  window.BUILD_VERSION = 'v120w9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -103657,7 +103682,13 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // _bbMapFromEditor converts one to the other WITHOUT touching the stored
 // format, so the editor keeps saving exactly what it saves today.
 // ═══════════════════════════════════════════════════════════════════════════
-const BB_VER = 'v119k4';
+// ⚠ MUST match `window.BB_BUILD` at the top of public/battle-board/index.html
+// EXACTLY. It is the iframe's cache-buster (?v=BB_VER) AND the value the stage
+// self-heal below compares against; if they diverge the self-heal reloads the
+// frame once and then every client keeps serving the STALE board from the edge
+// cache forever. Bump both together, in the same commit. This is not a deploy
+// bump — version.txt / BUILD_VERSION / sw.js CACHE_VERSION are separate knobs.
+const BB_VER = 'v120w9';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -181051,7 +181082,11 @@ function mountSpectatorOverlays() {
   if (!opp) {
     opp = document.createElement('div');
     opp.id = 'spec-opp-hand';
-    opp.style.cssText = 'position:fixed;top:84px;left:50%;transform:translateX(-50%);z-index:9050;max-width:min(96vw,1040px);pointer-events:none';
+    // ⚠ top was a hard 84px — the same top-centre band the hero banners now
+    // occupy (src/battle/hud.css --hud-banner-h). Spectating overlays a real
+    // battle screen, so the face-up opponent hand landed on top of the banners.
+    // The 84px fallback keeps the pre-HUD position if hud.css is absent.
+    opp.style.cssText = 'position:fixed;top:calc(var(--hud-banner-h, 84px) + 8px);left:50%;transform:translateX(-50%);z-index:9050;max-width:min(96vw,1040px);pointer-events:none';
     document.body.appendChild(opp);
   }
   opp.innerHTML = _specOppHandHtml();
@@ -207065,7 +207100,7 @@ function _openNodeCity(nodeId, _resolved) {
      rewrite of the city and its economy — bump it with the other four or a
      returning player can be served the old city out of cache while every
      other knob says the deploy landed. */
-  f.src = 'node-city/index.html?v=120w8';
+  f.src = 'node-city/index.html?v=120w9';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -224145,6 +224180,30 @@ render();
 <link rel="stylesheet" href="src/battle/units.css?v=120k6">
 <link rel="stylesheet" href="src/battle/chrome.css?v=120k6">
 <link rel="stylesheet" href="src/battle/alive.css?v=120k6">
+<!-- 🛡 HUD RELAYOUT — hero banners on top, player cluster right, foe cluster left,
+     hex END TURN bottom-right, dark/gold ornate skin (battlefield overhaul).
+     ⚠ hud.css MUST stay AFTER chrome.css. chrome.css was the battle layout's
+       authority only because it was the last of the four battle sheets; hud.css
+       beats it on plain source order at equal specificity, not with !important.
+       Move it above chrome.css and the whole relayout silently reverts to the
+       old rails. (draw.css / frames.css / idle.css load after this point but
+       declare none of the rail variables, so they are not in the argument.)
+     ⚠ hud.css owns `--bpw` / `--btl-rail-w` / `--r3-rail-r-real` now, derived
+       from ONE number per breakpoint. The legacy `--bpw` declarations further up
+       this file lose on source order and are dead — do not add a second list, or
+       `.cbx-float` drifts off the pile rail again.
+     hud.js is a MutationObserver re-layout, not a one-shot: renderBattle() does a
+     full `root.innerHTML =` rebuild every state change, so it re-parents the LIVE
+     nodes (never clones — every id and every listener bound by bindBattleEvents /
+     bindBattlePiles has to survive) after each render, rAF-coalesced and keyed so
+     a no-op render costs nothing. It must never touch .board-area / .bb-catch /
+     #bb-stage-host / .bb-stage / .wx-canvas — all board clicks travel
+     .bb-catch → postMessage → iframe pickTile, with no error if you break it.
+     The three STAGE modules (vista/tilefx/dressing) are NOT loaded here — the
+     battle-board iframe loads them itself.
+     Bump ?v= on every change — the service worker caches these like any asset. -->
+<link rel="stylesheet" href="src/battle/hud.css?v=120t4">
+<script type="module" src="src/battle/hud.js?v=120t4"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

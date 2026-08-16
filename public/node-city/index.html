@@ -24395,6 +24395,16 @@ function _savePolicy() {
   try {
     let real = false;
     for (const k in game.tiles) { const t = game.tiles[k]; if (t && t.type !== 'anchor') { real = true; break; } }
+    /* 🔴 A PARTIAL LOAD CAN NEVER WRITE THE SERVER. This is checked FIRST,
+       above the escape hatch below, because that hatch is exactly what defeats
+       it: `real` is true for any city with one building left standing, so a
+       load that restored 5 of 466 tiles would return 'full' and overwrite the
+       461 that are still safe on the server. 'local' keeps the player playing
+       while the server copy waits for a clean reload — or for a support
+       restore, which is the whole point.
+       Verified by driving a save containing an unknown tile type through the
+       real loadState(): before this line the policy came back 'full'. */
+    if (_loadPartial) return real ? 'local' : 'none';
     if (_cityVerdict === 'unknown') return real ? 'local' : 'none';
     if (_loadDone && !_loadFailed) return 'full';
     return real ? 'full' : 'none';   // the pre-existing tile escape hatch
@@ -24866,6 +24876,12 @@ let _lastEconomyBlob = null;
         read is unsafe as a STEADY STATE — signed out, offline, a new device.
         Read that function's header for the measured numbers. */
 let _cityVerdict = 'unknown';
+/* null, or {held, lost, type, grid} when loadState restored FEWER tiles than the
+   save contained. Set once per load and never cleared by anything but the next
+   load, because the condition it describes — "what is in memory is a fragment of
+   what is on the server" — stays true for the whole session. Read by
+   _savePolicy(), which refuses to write the server while it is set. */
+let _loadPartial = null;
 
 /* 🔴 THE WHOLE DECISION, IN ONE PURE FUNCTION OVER THE EVIDENCE.
    It is a function and not four scattered assignments for two reasons: the four
@@ -24919,6 +24935,7 @@ function cityEcoVerdict(j, unsafe) {
 }
 
 async function loadState() {
+  _loadPartial = null;      // this load's verdict, not the last one's
   try {
     const j = await MythicCityBridge.loadCity();
     // A read we cannot trust must never license an empty save. See saveNow().
@@ -25073,10 +25090,25 @@ async function loadState() {
        Counts BUILDINGS only (roads have no mesh here), which is the work that
        actually costs anything. */
     let _meshesBuilt = 0;
+    /* 🔴 COUNT WHAT THE SAVE HELD AGAINST WHAT WE ACTUALLY PUT BACK.
+       Every `continue` below is SILENT. A tile whose type is not in BUILDINGS,
+       or whose key falls outside the grid, is dropped without a word — and the
+       load still ends at `_loadFailed = false`, so `_savePolicy()` returns
+       'full' and the next autosave writes the SHRUNKEN city over the good one
+       on the server. That is a city "randomly vanishing": not a delete, a
+       partial restore promoted to the truth.
+       The existing defence only covers a load that THREW (see the catch) or one
+       that came back with no buildings at all (`real` in _savePolicy is a
+       boolean — "is there ≥1 building?" — never a comparison). A load that
+       restores 5 of 466 tiles satisfies both and overwrites.
+       `_skipAnchor` is the one legitimate skip: the anchor is already standing,
+       so it is not a loss. Everything else is. */
+    let _wantTiles = 0, _skipAnchor = 0, _skipType = 0, _skipGrid = 0;
     for (const [k, td] of Object.entries(s.tiles)) {
-      if (game.tiles[k]) continue;                 // anchor already there
-      if (!BUILDINGS[td.type]) continue;
-      const [x, z] = k.split(',').map(Number); if (!inGrid(x, z)) continue;
+      _wantTiles++;
+      if (game.tiles[k]) { _skipAnchor++; continue; }   // anchor already there
+      if (!BUILDINGS[td.type]) { _skipType++; continue; }
+      const [x, z] = k.split(',').map(Number); if (!inGrid(x, z)) { _skipGrid++; continue; }
       /* ⚠ THE CLAMP IS PER-BUILDING, NOT THE GLOBAL MAX_LVL. It read
          `Math.min(MAX_LVL, …)` = 3, which was correct while every building
          topped out at 3 — the moment one declares `maxLvl: 4` (the Resting
@@ -25194,6 +25226,33 @@ async function loadState() {
        no tile is touched. */
     try { citLoad(s.cits); citRefresh(true); } catch (e) { console.warn('[citizens] load', e); }
     try { lifeLoad(s.life); } catch (e) { console.warn('[life] load', e); }
+    /* 🔴 A LOAD THAT LOST TILES IS NOT A CLEAN LOAD, even though nothing threw.
+       If the save held tiles we did not put back for any reason other than "the
+       anchor was already standing", the city in memory is a FRAGMENT of the one
+       on disk. Licensing a full save here is what overwrites a real city with
+       that fragment — the failure a player experiences as "my city vanished".
+       We do NOT try to repair it: we refuse to promote it. `_loadFailed` sends
+       _savePolicy() down the 'local' path, so the player can keep playing and
+       the SERVER COPY IS LEFT INTACT for a reload or a support restore.
+       Reported loudly on purpose — a silent downgrade here is how this went
+       unnoticed in the first place. */
+    const _lost = _skipType + _skipGrid;
+    if (_lost > 0) {
+      /* ⚠ _loadFailed ALONE IS NOT ENOUGH, and this was caught by testing the
+         guard rather than reading it. _savePolicy()'s last line is
+         `return real ? 'full' : 'none'` — the pre-existing tile escape hatch —
+         so a city that still has ANY building sails past a raised _loadFailed
+         and writes 'full' regardless. _loadPartial is checked ABOVE that hatch. */
+      _loadPartial = { held: _wantTiles, lost: _lost, type: _skipType, grid: _skipGrid };
+      _loadDone = true; _loadFailed = true;
+      try {
+        console.error('[city] PARTIAL LOAD — refusing to overwrite the server copy. save held ' +
+          _wantTiles + ' tiles; ' + _lost + ' were dropped (' + _skipType + ' unknown type, ' +
+          _skipGrid + ' off-grid). The city on the server is UNCHANGED.');
+      } catch (e) {}
+      try { toast('⚠ Your city did not load completely — it is being kept safe and will not be overwritten. Reload to try again.', 'bad'); } catch (e) {}
+      return;
+    }
     // A clean, complete load. This is the ONLY place that licenses an empty save.
     _loadDone = true; _loadFailed = false;
   } catch (e) {

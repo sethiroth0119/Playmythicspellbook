@@ -61627,6 +61627,19 @@ const NODE_MAX_PER_CORP      = 6;
 const NODE_EFF_DECAY_PER_HR  = 2.2;          // efficiency % lost per idle hour
 const NODE_EFF_FLOOR         = 20;
 const NODE_PAYOUT_CAP        = 250000;       // hard cap per collect (anti-abuse ceiling)
+/* 🔒 The highest node level the PAYOUT will price — deliberately 1, because 1 is
+   the only level this app can honestly produce. nodeEstablish and the gift claim
+   both INSERT level 1 and nothing anywhere updates it (city_set_node_level is
+   the Territory-Wars node, a different table entirely). But `level` is a COLUMN
+   on a row its owner may UPDATE — sql/029's en_upd — so the unclamped
+   `1 + .25(level−1)` in _nodeClaimable was an unbounded multiplier one PATCH
+   away: MEASURED level:400 → the full 250,000 🔥 cap for an 84,420 🔥 claim, and
+   even a modest level:10 pays ×3.25.
+   ⚠ RAISE THIS ONLY TOGETHER WITH THE WRITER THAT PRODUCES LEVELS, and only if
+     that writer is server-side (an RPC / SECURITY DEFINER). Raising it because a
+     UI shows "LV 3" would re-open the door: the client cannot tell a levelled
+     node from a PATCHed one, only the thing that granted the level can. */
+const NODE_PAY_MAX_LEVEL     = 1;
 // 🌍 GLOBAL REWARD POOL — a flat 50,000,000 <span class="cinder-icon"></span> Cinder pool that funds every
 // node collect across all corps. Funded baseline lives in code (the FLOOR
 // below); if the Foundation Treasury (taxes/fines/bail/license fees) ever
@@ -61671,14 +61684,26 @@ async function nodePoolFetch() {
      an empty map — i.e. exactly the pre-tier economy. An absent module must
      cost the FEATURE, never a payout. Same contract _opComputed already holds
      with window.MythicTerroir. */
-const NodeTierState = { pledgeTierId: null, fetched: 0 };
-// The founder package this player actually bought. One read, cached for the
-// session — pledge_purchases only changes when money moves, and a node payout
+const NodeTierState = { pledgeTierId: null, fetched: 0, userId: null };
+// The founder package this player actually bought. One read, cached for ten
+// minutes — pledge_purchases only changes when money moves, and a node payout
 // must never block on a network round trip.
+/* 🔒 THIS VALUE NOW BOUNDS A CINDER PAYOUT (see the invariant above
+   _nodePaidTier), so two things about the cache had to tighten:
+     ⚠ IT IS KEYED BY USER. A sign-out and sign-in inside the ten-minute window
+       would otherwise price one account's collect with another account's
+       purchases — harmless while this only drew a pill, not harmless now.
+     ⚠ FAILURES ARE NOT CACHED. `fetched` used to be stamped BEFORE the query,
+       so one failed SELECT (offline blip, RLS, table missing) pinned "no
+       pledge" for ten minutes — and under the new rule that quietly pays a
+       paying Eternal operator at the Free rate for every collect in that
+       window. Stamping only on success costs one SELECT per retry and can never
+       over-pay: an unknown pledge always resolves DOWN to Free. */
 async function nodeTierFetchPledge() {
   try {
+    const who = (typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.userId) || null;
+    if (NodeTierState.userId !== who) { NodeTierState.userId = who; NodeTierState.pledgeTierId = null; NodeTierState.fetched = 0; }
     if (NodeTierState.fetched && (Date.now() - NodeTierState.fetched) < 600000) return NodeTierState.pledgeTierId;
-    NodeTierState.fetched = Date.now();
     if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
     const r = await Cloud.client.from('pledge_purchases')
       .select('tier_id,status,created_at').eq('user_id', Profile.cloud.userId)
@@ -61698,10 +61723,117 @@ async function nodeTierFetchPledge() {
       if (rank > bestRank) { bestRank = rank; best = row.tier_id; }
     }
     NodeTierState.pledgeTierId = best;
+    NodeTierState.fetched = Date.now();          // ⚠ ON SUCCESS ONLY — see above
     return best;
   } catch (e) { return null; }
 }
 function _nodeTierCtx() { return { pledgeTierId: NodeTierState.pledgeTierId }; }
+/* 🔒🔒 THE ONE RULE FOR A CINDER PAYOUT. READ THIS BEFORE ADDING ANY MULTIPLIER.
+   ══════════════════════════════════════════════════════════════════════════
+   INVARIANT: **no number that scales a Cinder payout may be read, unclamped,
+   out of a row the player being paid can write.** A payout input is either
+   clamped here to the range honest play can produce, or it comes from a table
+   the beneficiary cannot write at all.
+
+   economy_nodes is exactly such a row. Its UPDATE policy is
+
+       en_upd  using (owner_id = auth.uid() or is_admin())
+
+   and sql/029's own header says why that is the whole story: "RLS gates rows,
+   not JSONB keys. If per-key control is ever wanted it needs a SECURITY DEFINER
+   setter, not a policy." An owner may therefore PATCH any column and any meta
+   key of their OWN node with nothing but their own JWT — no admin, no devtools
+   beyond one fetch(). So every value `_nodeRealPay` pulls out of a node row is
+   an UNTRUSTED CLAIM. `_nodeMetaWrite` made the node's meta safe to WRITE; this
+   rule is the other half — what it is safe to BELIEVE.
+
+   THE DOOR THAT FORCED IT, measured on this build with the real resolver and
+   the real policy, one 21,000-point claim (honest Free = 84,420 🔥):
+     · meta.tier — reached the payout multiplier through _cityTierResolve →
+       resolveTier, which gives an override precedence over a purchase. A plain
+       player stamping tier:'eternal' on their own node (in-app:
+       `_cityTierAssign(FoundationReserve.nodes[0],'eternal')` from the console —
+       isAdmin() is only consulted to draw the pill's ✎, never inside the
+       writer) was paid 100,800 🔥, ×1.194, and it persisted across a CAS
+       collect (meta.tier still 'eternal', rev 2).
+
+   ⚠ AND IT WAS NEVER THE ONLY DOOR, WHICH IS THE ENTIRE POINT. Same policy,
+     same row, all measured BEFORE this change:
+       · meta.eff  — _nodeEff subtracts idle decay from it and never caps it.
+                     eff:1000000 → ×10,050 on the accrual: a ONE-point claim
+                     honestly worth 4 🔥 paid 40,200 🔥, and a 21,000-point
+                     claim paid the full 250,000 🔥 cap.
+       · level     — 1 + .25(level−1), unbounded. level:400 → 250,000 🔥.
+       · meta.claimedPoints — `fresh = myPoints − claimedPoints`, so a NEGATIVE
+                     marker ADDS to the claim: −1,000,000 → 250,000 🔥.
+       · a TOWN's meta.tier — _nodeTownBoost scales each town's contribution by
+                     its tier share, so stamping nine towns lifted the CAPITAL
+                     from 85,749 🔥 to 161,280 🔥 (×1.88, the +60% cap).
+       · the POOL SLICE — `pool.avail × tier rate`. The comment this round
+                     inherited says the slice "never binds"; that is true only
+                     while the pool is full. With 2,000,000 🔥 left in the pool
+                     an honest Free collect is 10,000 🔥 and a self-stamped
+                     Eternal one is 250,000 🔥 — ×25, the worst of them all.
+     Four rounds of this exploit were closed one door at a time. The rule below
+     is stated once and applied at every point where the payout reads the row,
+     which is what makes it checkable by READING: any new arithmetic in
+     _nodeRealPay / _nodeClaimable / _nodeEff / _nodeTownBoost that reads a node
+     field and is not clamped here is a bug on sight.
+
+   ⚠ WHAT IS DELIBERATELY NOT CLAMPED, AND WHY — checked one field at a time, so
+     the next reader does not have to redo it:
+       · meta.riskClear   → decides WHETHER an honest accrual is payable now or
+                            only after a Defend. Forging it skips a resource
+                            cost; the amount is unchanged.
+       · meta.role        → which node is the capital. The database enforces one
+                            (sql/033's partial unique index), and every node in
+                            the sum is already one the player owns and paid to
+                            establish. With town tiers now bounded above, the
+                            boost a forged role can reach is the same one honest
+                            play reaches.
+       · status/readyAt   → skip the build wait. Earlier, not bigger.
+       · meta.lastTick    → freezes idle decay, i.e. free maintenance. Bounded by
+                            the eff clamp: it can hold eff at 100 and no higher.
+       · meta.cityLink    → already clamped 0…100 on the line it is read.
+     None of these can raise the AMOUNT, and every one of them is byte-identical
+     to the value an honest client writes — so no client-side Math.min could tell
+     them apart even if we wanted one. Closing those needs a server rule (a
+     SECURITY DEFINER setter or an RPC that owns the write), not a clamp here.
+   ══════════════════════════════════════════════════════════════════════════ */
+/* 💳 THE TIER THE OWNER ACTUALLY PAID FOR — the ONLY tier signal allowed to
+   RAISE Cinder. Returns a tiers.js tier object, or null when it cannot be known.
+   ⚠ `resolveTier(null, …)` — THE FIRST ARGUMENT IS THE NODE, AND THE NODE IS
+     THE OVERRIDE. Passing null is not a shortcut, it is the fix: tiers.js
+     resolves override → purchase → Free, so with no node there is no override
+     branch left to take and no future edit to a node row can reach this number.
+     Structural, not a check that a later patch can forget to run.
+   ⚠ STILL ONE RESOLVER. This is tiers.js's resolveTier through the existing
+     _nodeTierCtx() seam — the very function _cityTierResolve calls. What changed
+     is the ARGUMENT, not the resolver: the pill, the tier label and the resource
+     perk keep reading the node (meta.tier remains a real, admin-assignable
+     thing), and only the Cinder path stops trusting it.
+   ⚠ ctx.pledgeTierId comes from nodeTierFetchPledge()'s SELECT on
+     pledge_purchases — written only by the pledge-webhook edge function with the
+     SERVICE-ROLE key after Stripe verifies the payment (supabase/functions/
+     pledge-webhook, worker.js ~575). A player's own JWT never writes that table,
+     which is the whole reason it is allowed to price money.
+   ⚠ null MEANS "PASS THROUGH UNCHANGED", never "clamp to zero". A 404'd
+     tiers.js must cost the FEATURE and never a payout — the same contract the
+     note above _nodeTierPoolShare already holds. */
+function _nodePaidTier() {
+  try {
+    const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+    if (!T || typeof T.resolveTier !== 'function') return null;
+    return T.resolveTier(null, _nodeTierCtx()) || null;
+  } catch (e) { return null; }
+}
+// The same answer as a percent (0.5 … 20), or null when unknowable. Every
+// Cinder-facing tier clamp below is `Math.min(whatever the row claims, this)`.
+function _nodePaidRate() {
+  const t = _nodePaidTier();
+  const r = Number(t && t.rate);
+  return (isFinite(r) && r > 0) ? r : null;
+}
 // The node whose tier speaks for this player. Their best one; null when they
 // own none, which the module resolves to Free — "no node in the city" is a
 // real tier, not an error.
@@ -61750,7 +61882,23 @@ function _nodeTierPoolShare(n) {
     const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
     if (!T || typeof T.cinderPoolShare !== 'function') return NODE_POOL_MAX_SLICE;
     const v = Number(T.cinderPoolShare(n, _nodeTierCtx()));
-    return (isFinite(v) && v > 0) ? v : NODE_POOL_MAX_SLICE;
+    if (!(isFinite(v) && v > 0)) return NODE_POOL_MAX_SLICE;
+    /* 🔒 BOUNDED BY WHAT THE OWNER PAID FOR — see the invariant above
+       _nodePaidTier. cinderPoolShare resolves through the NODE, so meta.tier
+       (owner-writable, sql/029) sets it, and BOTH callers of this function are
+       Cinder arithmetic: the pool slice in _nodeRealPay and the per-town share
+       in _nodeTownBoost. One bound here therefore closes both, and there is no
+       third caller (grep `_nodeTierPoolShare`).
+       MEASURED before this line: with 2,000,000 🔥 left in the global pool an
+       honest Free collect paid 10,000 🔥 and a self-stamped Eternal one paid
+       250,000 🔥 — ×25. The inherited comment that "the slice never binds" was
+       only ever true with a full pool.
+       ⚠ min(), so an admin GRANT no longer raises Cinder while a demotion still
+         lowers it, and an honest purchase is unaffected (paid Eternal keeps
+         0.20 because 0.20 ≤ 0.20). What sql/029 was actually for — the pill, the
+         label and the resource perk — is untouched; they do not call this. */
+    const paid = _nodePaidRate();
+    return (paid === null) ? v : Math.min(v, paid / 100);
   } catch (e) { return NODE_POOL_MAX_SLICE; }
 }
 function _nodeTierResBonus(yields) {
@@ -61937,6 +62085,131 @@ function _nodeTierLabel(n) {
     return T ? T.tierLabel(n, _nodeTierCtx()) : '';
   } catch (e) { return ''; }
 }
+/* 🔢 Number formatter for TOP-LEVEL node code.
+   🔴 THE DEAD COLLECT BUTTON WAS THIS, AND IT WAS A FAUCET, NOT A NO-OP.
+      nodeCollect's success line formatted the pool tail with `numF(...)`. Every
+      `numF` in this file is a `const` local to a RENDERER — one inside
+      openFoundationReserve, one inside the City Hall panel, one inside an admin
+      relic editor. nodeCollect is a top-level function, so `numF` was never in
+      its scope and that line threw ReferenceError — *after* addCinders(pay) had
+      already credited the player. The surrounding catch turned it into
+      "⚠ Payout failed — try again." and skipped the nodeFetch() that refreshes
+      the row, so FoundationReserve.nodes kept claimedPoints at its old value,
+      _nodeClaimable kept returning the full amount, and the button kept
+      offering the same claim.
+      Measured on the shipped path (node_payouts present, 20,000 fresh points →
+      80,000 claimable): 8 clicks credited 8 × 80,000 = 640,000 Cinder and wrote
+      8 node_payouts rows for ONE claim, while the UI never moved.
+      It survived testing because the tail is inside a conditional that only
+      evaluates when the pool ledger exists — with node_payouts absent numF is
+      never reached and the very same code paid exactly once.
+   ⚠ Do NOT "fix" this by hoisting one of the renderers' numF consts to the top
+     level: they are identical three-line formatters and the two renderers
+     shadow anything global anyway. A named top-level helper is the seam. */
+function _frNumF(n) { n = Number(n) || 0; return n >= 1000 ? n.toLocaleString() : String(n); }
+
+/* 🔒 COLLECTS IN FLIGHT, BY NODE ID.
+   Two fast clicks used to be two full payouts. The handler's only guard was
+   `if (b.disabled) return` and nothing ever set `disabled`, so both clicks read
+   the same (myPoints − claimedPoints) accrual, both passed every gate and both
+   reached addCinders. Measured: two concurrent nodeCollect('node-A') credited
+   160,000 for an 80,000 claim.
+   ⚠ Released in `finally`, so a throw anywhere in the payout can never wedge
+     the button permanently shut — that failure mode would look exactly like the
+     bug this whole change exists to fix. */
+const NodeCollectsInFlight = new Set();
+
+/* 🔌 THE OWNER'S TIER, APPLIED TO THE PAYOUT — the second half of this fix.
+   The tier table was already in the payout path: _nodeTierPoolShare feeds
+   tiers.js's rate into the pool SLICE below. But the slice is a CEILING —
+       slice = pool.avail × rate/100
+   and against the 50,000,000 pool that is 250,000 at Free and 10,000,000 at
+   Eternal, while a real accrual is a few tens of thousands. The ceiling
+   therefore never binds, and every tier collected exactly the same Cinder.
+   That is the reported "payouts ignore the owner node tier": the tier was in
+   the code, and inert.
+
+   So the rate is applied to the AMOUNT as well, with the same meaning tiers.js
+   already gives it on the resource side (`resourceShare` — a percentage added
+   ON TOP of normal output):
+
+       payout = min( accrual × townBoost × (1 + rate/100),   ← the tier gain
+                     NODE_PAYOUT_CAP,                        ← existing 250,000
+                     pool.avail × rate/100,                  ← existing slice
+                     pool.avail )                            ← existing
+
+   Free 0.5% → ×1.005 … Eternal 20% → ×1.20, hard-clamped to
+   NODE_TIER_PAYOUT_MAX_BP. The most this mechanism can ever add to a live
+   payout is 20%, underneath ceilings that already existed — a bounded gain on a
+   6h-per-node cooldown, not a new faucet.
+
+   ⚠ ×1 IS THE FALLBACK, AND DELIBERATELY BELOW FREE'S ×1.005. Signed out,
+     offline, tiers.js 404ing, or a rate we cannot honestly resolve all land on
+     ×1 — the exact pre-change payout. A missing module costs the FEATURE and can
+     never pay better than the honest answer. That is the same contract the note
+     above _nodeTierPoolShare already holds.
+
+   🔴 AND THE RATE COMES FROM THE PURCHASE, NOT FROM THE NODE. This function used
+     to take _cityTierResolve()'s answer whole, and that answer prefers
+     meta.tier — a JSONB key the payee may PATCH on their own row (sql/029:
+     "RLS gates rows, not JSONB keys"). MEASURED: a plain player stamping
+     tier:'eternal' on their own node turned an honest 84,420 🔥 claim into
+     100,800 🔥, ×1.194, path 'owner-best', persisting across a CAS collect.
+     See the invariant above _nodePaidTier.
+     So the multiplier now starts from _nodePaidTier() — pledge_purchases, which
+     only the payment webhook writes — and the node override may only ever LOWER
+     it. `rate = min(paid, override)` is the whole rule: a self-stamp can cost a
+     player Cinder and can never earn them any, while an admin DEMOTION (a
+     refund, a chargeback, a correction — the case tiers.js's `if (ov) return ov`
+     exists for) still works. An admin GRANT keeps moving the pill, the tier
+     label and the resource perk; raising Cinder is what a purchase is for.
+   ⚠ IT STILL USES _cityTierResolve() — for the override half and for the `path`
+     the toast prints, so the pill and the payout still explain themselves with
+     one vocabulary. There is no second resolver: the paid half is tiers.js's
+     resolveTier called with the node argument omitted (see _nodePaidTier).
+   ⚠ The override is only consulted when res.subjectIsMe. _cityTierResolve's
+     subject is App._cityOwnerId whenever a node-city overlay is open, which can
+     be SOMEBODY ELSE's city, and their standing must never price my payout.
+     ⚠ CHANGED DELIBERATELY: the previous round returned a neutral ×1 in that
+       case, which made my own payout depend on whose city overlay happened to be
+       open — a 0.5% loss for visiting a friend. The paid rate is mine by
+       construction (pledge_purchases is only readable for yourself), so the
+       foreign-subject case now pays my honest paid rate and only skips the
+       override arm. An old assertion expecting bp 10000 there is testing the
+       workaround, not the rule.
+
+   ⚠ RETURNED IN BASIS POINTS, AND THAT IS NOT PEDANTRY. The obvious
+     `Math.floor(amount * (1 + rate/100))` loses a Cinder to IEEE754: at the Free
+     rate 80000 * 1.005 evaluates to 80399.99999999999, so the player is paid
+     80,399 for a number the UI computes as 80,400 elsewhere. `bp` keeps the
+     whole calculation in exact integers (amount × bp is well under 2^53 for any
+     amount this cap allows), so the payout is reproducible rather than
+     float-dependent. */
+const NODE_TIER_PAYOUT_MAX_BP = 12000;   // Eternal (20%) — the ceiling on this whole mechanism
+function _nodeOwnerTierMul() {
+  const OFF = { bp: 10000, mul: 1, rate: 0, name: 'untiered', path: 'none' };
+  try {
+    // ① THE CEILING — what they PAID for. Nothing below may raise it, so the
+    //    whole function is bounded by a table only the payment webhook writes.
+    const paid = _nodePaidTier();
+    if (!paid) return OFF;                                       // pre-tier build / module absent
+    let rate = Number(paid.rate), name = paid.name || 'tier', path = 'paid';
+    if (!isFinite(rate) || rate <= 0) return OFF;
+    // ② THE OVERRIDE — may only LOWER it. Demotion is a real admin act; a grant
+    //    (or a self-stamp, which RLS cannot tell apart from one) is not money.
+    try {
+      const res = (typeof _cityTierResolve === 'function') ? _cityTierResolve() : null;
+      if (res && res.tier && res.subjectIsMe) {
+        const ovr = Number(res.tier.rate);
+        if (isFinite(ovr) && ovr >= 0 && ovr < rate) { rate = ovr; name = res.tier.name || name; path = res.path || 'override'; }
+      }
+    } catch (e) {}                                               // resolver trouble → the paid rate stands
+    if (!(rate > 0)) return OFF;
+    const bp = Math.min(NODE_TIER_PAYOUT_MAX_BP, Math.max(10000, 10000 + Math.round(rate * 100)));
+    return { bp: bp, mul: bp / 10000, rate: rate, name: name, path: path };
+  } catch (e) { return OFF; }
+}
+
 // The real expected payout for a node: bounded accrual, clamped to a % slice
 // of the remaining global pool (unless the pool ledger isn't set up → legacy
 // bounded-only behavior, so existing players never regress).
@@ -61949,9 +62222,18 @@ function _nodeRealPay(n) {
      every other player. Boosting accrual means the capital fills faster from
      its own standing, while the pool still bounds any single claim exactly as
      before. _nodeTownBoost returns 1 for towns, so their payout is untouched. */
-  const bounded = Math.floor(_nodeClaimable(n) * _nodeTownBoost(n));
+  /* 🔌 …and the OWNER'S TIER now scales the AMOUNT, not just the ceiling — see
+     _nodeOwnerTierMul for why the ceiling alone never bound.
+     ⚠ Re-clamped to NODE_PAYOUT_CAP here because _nodeClaimable applies that cap
+       BEFORE these multipliers. Without the re-clamp the tier gain (and the town
+       boost before it) could lift a single collect past the documented 250,000
+       anti-abuse ceiling, which is the sort of quiet drift this file has been
+       bitten by before. */
+  const accrual = Math.floor(_nodeClaimable(n) * _nodeTownBoost(n));       // unchanged
+  const bounded = Math.min(NODE_PAYOUT_CAP,
+    Math.floor(accrual * _nodeOwnerTierMul().bp / 10000));                 // exact integers
   const pool = FoundationReserve.nodePool;
-  if (!pool || pool.legacy) return bounded;
+  if (!pool || pool.legacy) return Math.max(0, bounded);
   const slice = Math.floor((pool.avail || 0) * _nodeTierPoolShare(n));
   return Math.max(0, Math.min(bounded, slice, pool.avail | 0));
 }
@@ -61987,7 +62269,18 @@ function _nodeEff(n) {
     // RAISES the efficiency floor (up to 70 at link 100) — the node bleeds
     // slower and can't drop as far while its cities stand.
     const _link = Math.max(0, Math.min(100, (m.cityLink | 0)));
-    let v = (m.eff != null ? m.eff : 100) - hrs * NODE_EFF_DECAY_PER_HR * (1 - (_link / 100) * 0.6);
+    /* 🔒 EFFICIENCY IS A PERCENTAGE, SO IT IS CLAMPED TO ONE — see the invariant
+       above _nodePaidTier. Every writer in this file stores exactly 100
+       (nodeEstablish, nodeMaintain, nodeDefend, the gift claim) and time only
+       ever subtracts, so this is a no-op on honest data; it is not a no-op on a
+       row whose owner PATCHed it. `eff` multiplies the accrual in
+       _nodeClaimable, and MEASURED before this clamp: meta.eff:1000000 turned a
+       one-point claim honestly worth 4 🔥 into 40,200 🔥 and a 21,000-point
+       claim into the full 250,000 🔥 cap. cityLink was already clamped on the
+       line above for the same reason — this is that line's missing twin. */
+    const _stored = Number(m.eff != null ? m.eff : 100);
+    let v = (isFinite(_stored) ? Math.max(0, Math.min(100, _stored)) : 100)
+      - hrs * NODE_EFF_DECAY_PER_HR * (1 - (_link / 100) * 0.6);
     const rk = _nodeActiveRisk(n);
     if (rk) v -= rk.effHit;                               // ⚠️ active hazard gouges efficiency
     return Math.max(NODE_EFF_FLOOR + Math.round(_link * 0.5), Math.round(v));
@@ -62042,14 +62335,41 @@ function _nodeClaimable(n) {
   const rk = _nodeActiveRisk(n);
   if (rk && rk.lock) return 0;                            // ⚠️ locked down until defended
   const m = n.meta || {};
-  const fresh = Math.max(0, (FoundationReserve.myPoints | 0) - (m.claimedPoints | 0));
-  const lvlMul = 1 + 0.25 * ((n.level | 0) - 1);
+  /* 🔒 THE TWO ROW FIELDS THIS LINE READS ARE OWNER-WRITABLE — see the invariant
+     above _nodePaidTier.
+     ⚠ claimedPoints is floored at 0. It is a SUBTRAHEND, so a negative marker
+       does not reduce the claim, it ADDS to it: MEASURED at −1,000,000 the
+       21,000-point claim paid the full 250,000 🔥 cap instead of 84,420 🔥.
+       (_nodeMetaWrite's monotonic floor stops US ever writing one; nothing stops
+       a PATCH, and this is the reader's half of that guard.)
+     ⚠ level is clamped to NODE_PAY_MAX_LEVEL. Nothing in the app writes it above
+       1 and there is no upgrade path, so the honest value is untouched; level:400
+       MEASURED 250,000 🔥. */
+  const claimed = Math.max(0, Number(m.claimedPoints) || 0);
+  const fresh = Math.max(0, (FoundationReserve.myPoints | 0) - claimed);
+  const lvl = Math.max(1, Math.min(NODE_PAY_MAX_LEVEL, (n.level | 0) || 1));
+  const lvlMul = 1 + 0.25 * (lvl - 1);
   const eff = _nodeEff(n) / 100;
   return Math.min(NODE_PAYOUT_CAP, Math.floor(fresh * NODE_CINDER_PER_POINT * lvlMul * eff * frNodePayoutMul()));
 }
 function _nodeCooldownLeft(n) {
   const m = n.meta || {};
-  return Math.max(0, ((m.lastClaim | 0) + NODE_CLAIM_COOLDOWN_MS) - Date.now());
+  /* 🔴 `m.lastClaim | 0` TRUNCATED A MILLISECOND TIMESTAMP TO 32 BITS, so the
+     documented "collect once per 6h per node" bound above has never once
+     applied. Date.now() is ~1.79e12; `| 0` wraps that to ~1.95e8, and
+     1.95e8 + 6h − now is enormously negative, so Math.max clamped it to 0 on
+     every call. Both readers were affected identically: nodeCollect's `cd > 0`
+     refusal never fired, and the row's "Cooldown Nh" label was unreachable
+     code. Found while proving that a reload could not re-claim a balance — the
+     reload was safe for a different reason (the server claim marker), and this
+     was hiding behind it.
+     ⚠ Number() rather than `| 0`: these are timestamps, and the ONLY correct
+       coercion for a value larger than 2^31 is one that does not truncate.
+       A missing/garbage lastClaim reads as 0 → no cooldown, which is the
+       pre-existing behaviour for a node that has never been collected. */
+  const last = Number(m.lastClaim);
+  if (!isFinite(last) || last <= 0) return 0;
+  return Math.max(0, (last + NODE_CLAIM_COOLDOWN_MS) - Date.now());
 }
 // ⚠️ NODE RISK EVENTS — raids, sabotage, SCP breach, convoy attacks. Like
 // the AI Director, a hazard is a DETERMINISTIC function of (node, 6h window)
@@ -62166,7 +62486,11 @@ async function nodeEstablish(typeId, fromTreasury) {
     const ins = await Cloud.client.from('economy_nodes').insert({
       owner_id: me, corp_id: Corp.mine.id, name: Corp.mine.tag + ' ' + t.name,
       node_type: t.id, resource: t.proc, level: 1, status: 'building',
-      meta: { readyAt: Date.now() + t.buildH * 3600000, claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now(), funded: fromTreasury ? 'treasury' : 'personal' },
+      // rev: 0 seeds the optimistic-lock version — see _nodeMetaWrite. An INSERT
+      // is not a CAS (there is no prior value to swap against; the row's
+      // existence is the guarantee), so this is the one place rev is set rather
+      // than bumped, and it keeps new nodes off the legacy `is.null` branch.
+      meta: { readyAt: Date.now() + t.buildH * 3600000, claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now(), rev: 0, funded: fromTreasury ? 'treasury' : 'personal' },
     });
     if (ins && ins.error) throw ins.error;
   } catch (e) {
@@ -62180,6 +62504,176 @@ async function nodeEstablish(typeId, fromTreasury) {
   await nodeFetch();
   return true;
 }
+/* 🔒🔒 THE ONE RULE FOR economy_nodes.meta. READ THIS BEFORE ADDING ANY WRITER.
+   ────────────────────────────────────────────────────────────────────────────
+   INVARIANT: **no caller may build a `meta` object.** Every write to
+   economy_nodes.meta goes through _nodeMetaWrite(), which
+     (1) RE-READS the row from the server,
+     (2) applies the caller's patch to THAT FRESH meta — never to the local row,
+     (3) bumps a monotonic `meta.rev`, and
+     (4) UPDATEs with `WHERE meta->rev = <the rev it just read>`.
+   Zero rows back means the write LOST and nothing happened; the caller must
+   treat that as a failure and must not have moved money or materials first.
+
+   WHY A HELPER AND NOT THREE MORE PATCHES. This exploit was closed and reopened
+   three times, each time through a DIFFERENT writer, because the fix kept
+   landing in nodeCollect while the rule was never stated:
+     • round 1 — the UPDATE filtered only `.eq('id').eq('owner_id')`, so it
+       matched unconditionally and `.select('id')` returned a row to EVERY
+       caller. That proves "this node is mine", never "this claim was unspent".
+       MEASURED (two tabs racing, myPoints 21,000 / 90,000): 310,300 🔥 paid for
+       an honest 60,300 🔥 claim, 2 node_payouts rows. Same myPoints: 120,600.
+     • round 2/3 — a predicate was added, but it compared the stored marker
+       against the CALLER'S OWN proposed value (`.lt('meta->claimedPoints',
+       nowPts)`). nowPts is FoundationReserve.myPoints, a PER-TAB snapshot, so
+       two tabs holding different myPoints BOTH matched. `WHERE version = ?`
+       means the version you READ. MEASURED on that source: same 310,300 🔥 for
+       the 60,300 🔥 claim, while the same-myPoints case — the only one the
+       tests covered — correctly refused.
+     • round 3 — nodeMaintain() and nodeDefend() wrote the WHOLE meta jsonb from
+       the STALE LOCAL row with a bare `.eq('id').eq('owner_id')`, rolling
+       claimedPoints and lastClaim BACKWARDS on the server and re-arming a claim
+       that had already been paid. No race, no devtools: the Maintain button
+       sits beside Collect and is always enabled. MEASURED: Collect → Maintain
+       (stale tab) → Collect paid 120,600 🔥 for a 60,300 🔥 claim; ten
+       maintain→collect cycles paid 663,300 — 11×. nodeDefend did it too.
+   A per-door patch cannot close a door nobody has found yet. Routing every
+   writer through one function can, and it is provable by READING: grep this
+   file for `from('economy_nodes').update` — if a hit is not inside this
+   function, the invariant is broken.
+
+   ⚠ THE VERSION IS `rev`, NOT `claimedPoints`. claimedPoints only moves when a
+     payout is collected, so Maintain and Defend could never CAS against it —
+     and "the writer that does not touch the version" is exactly the door round
+     3 walked through. `rev` is bumped by EVERY write, so any write invalidates
+     every other in-flight write, whatever field it was interested in.
+   ⚠ `->` NOT `->>`. `->` compares as jsonb, where a number is numeric and
+     compares numerically. `->>` yields text, where equality is byte equality
+     and any difference in numeric spelling silently misses the row — turning
+     this lock back into the blind write it replaced.
+   ⚠ TWO BRANCHES INSTEAD OF AN `.or(...)`. On a row written before this change
+     `meta->'rev'` is SQL NULL, and `NULL = anything` is NULL, so a bare `.eq`
+     would match zero rows and brick every legacy node. The fresh read above
+     already told us which case we are in, so we pick the matching single
+     predicate. `is.null` is itself a perfectly good test-and-set: whoever
+     writes first replaces the NULL with a number and the loser stops matching.
+     Both are plain documented filter forms; neither needs the logical-operator
+     parser. (New rows are seeded `rev: 0` at INSERT, so this branch only ever
+     serves rows that predate this change.)
+   ⚠ A non-numeric `rev` (never written by this app) takes the null branch and
+     matches nothing — the node refuses rather than writes. Refusing on data we
+     cannot reason about is the correct direction for a money path.
+
+   Postgres makes this airtight under real concurrency, not just in a harness:
+   at READ COMMITTED an UPDATE that blocks on a concurrent writer re-evaluates
+   its WHERE against the NEW row version (EvalPlanQual) once that writer
+   commits. The loser therefore re-tests `rev` against the just-written value,
+   fails, and updates nothing. That is why the re-read in step (1) is NOT
+   sufficient on its own — two tabs can both re-read before either writes, which
+   is precisely the case that reopened rounds 1 and 2.
+
+   `mutate(freshMeta, freshRow)` returns a patch object, or `null` to ABORT
+   (used by callers that need to re-gate against server truth before writing).
+   A patch value of `undefined` DELETES that key — `Object.assign` cannot
+   express a delete, and the admin tier override genuinely needs one: "clear the
+   override" and "set it to free" are different states.
+   `opts.cols` are extra top-level columns to write, and may be a function of
+   (freshMeta, freshRow) because the value can depend on the row we just read.
+   `opts.anyOwner` drops the owner_id filter for the admin path, which writes
+   other players' nodes and leans on RLS instead. */
+async function _nodeMetaWrite(n, mutate, opts) {
+  opts = opts || {};
+  if (!n || !n.id) return { ok: false, reason: 'gone' };
+  const me = (typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.userId) || null;
+  if (!me) return { ok: false, reason: 'signedout' };
+  if (typeof initCloud !== 'function' || !initCloud() || typeof Cloud === 'undefined' || !Cloud || !Cloud.client) {
+    return { ok: false, reason: 'offline' };
+  }
+  // ── (1) READ. A FAILED READ MUST REFUSE, NOT FALL BACK. Offline, RLS-blocked
+  //    and row-deleted all mean "I cannot tell what has already been written",
+  //    and acting on the stale local row in that state is the whole bug.
+  let row = null;
+  try {
+    const rd = await Cloud.client.from('economy_nodes')
+      .select('id,owner_id,corp_id,status,level,meta').eq('id', n.id).limit(1);
+    if (rd && rd.error) throw rd.error;
+    row = (rd && rd.data && rd.data[0]) || null;
+  } catch (e) { return { ok: false, reason: 'offline' }; }
+  if (!row) return { ok: false, reason: 'gone' };
+  const fresh = (row.meta && typeof row.meta === 'object' && !Array.isArray(row.meta)) ? row.meta : {};
+  // ── (2) ADOPT server truth onto the local row FIRST. Every _node* helper
+  //    (_nodeClaimable, _nodeCooldownLeft, _nodeActive, _nodeEff, _nodeRealPay,
+  //    _nodeActiveRisk) reads n.meta, so this one assignment re-points ALL of
+  //    them at the fresh row instead of re-plumbing each one — and it is what
+  //    lets the mutator below re-gate honestly.
+  n.meta = fresh;
+  if (row.status) n.status = row.status;
+  if (row.level != null) n.level = row.level;
+  if (row.corp_id !== undefined) n.corp_id = row.corp_id;
+  if (row.owner_id !== undefined) n.owner_id = row.owner_id;
+  // ── (3) MUTATE THE FRESH COPY. The caller never sees, and never supplies, a
+  //    whole meta object — that is the structural half of this fix.
+  let patch;
+  try { patch = mutate ? mutate(fresh, row) : {}; }
+  catch (e) { return { ok: false, reason: 'abort' }; }
+  if (!patch) return { ok: false, reason: 'abort' };
+  const rev = (typeof fresh.rev === 'number' && isFinite(fresh.rev)) ? fresh.rev : null;
+  const next = Object.assign({}, fresh);
+  for (const k in patch) {
+    if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
+    if (patch[k] === undefined) delete next[k]; else next[k] = patch[k];
+  }
+  next.rev = (rev === null ? 0 : rev) + 1;
+  /* ⚠ MONOTONIC FLOOR — belt and braces, and deliberately not the primary
+     defence. The CAS already stops a stale meta reaching the server, because a
+     stale meta cannot be built here at all. This exists for the door nobody has
+     found: if some future patch ever tries to move the claim marker or the
+     cooldown stamp BACKWARDS, the write silently keeps the higher value instead
+     of re-arming a paid claim. It can only ever cost a player a payout they
+     already banked, never grant one. */
+  for (const k of ['claimedPoints', 'lastClaim']) {
+    const was = Number(fresh[k]), now = Number(next[k]);
+    if (isFinite(was) && was > 0 && (!isFinite(now) || now < was)) next[k] = was;
+  }
+  // ── (4) SWAP, pinned to the rev we READ.
+  const cols = (typeof opts.cols === 'function') ? (opts.cols(fresh, row) || {}) : (opts.cols || {});
+  let rows;
+  try {
+    let q = Cloud.client.from('economy_nodes')
+      .update(Object.assign({}, cols, { meta: next, updated_at: new Date().toISOString() }))
+      .eq('id', n.id);
+    if (!opts.anyOwner) q = q.eq('owner_id', me);
+    q = (rev === null) ? q.is('meta->rev', null)
+                       : q.eq('meta->rev', rev);
+    // `.select('id')` is what makes zero rows OBSERVABLE: supabase resolves with
+    // NO error when a filter matches nothing, so without it "committed",
+    // "RLS refused" and "CAS lost" are indistinguishable — and nodeFetch loads
+    // every node in the CORP, not just mine, so a team-mate's PRN lands here.
+    const up = await q.select('id');
+    if (up && up.error) throw up.error;
+    rows = (up && up.data) || [];
+  } catch (e) { return { ok: false, reason: 'error' }; }
+  if (!rows.length) return { ok: false, reason: 'lost' };
+  /* Mirror onto the local row the instant the server confirms, BEFORE the caller
+     moves anything. The renderer and the next click read only this row, so
+     without the mirror a failed nodeFetch would leave the button re-armed —
+     which is how a shipped ReferenceError once turned into a repeatable faucet. */
+  n.meta = next;
+  if (cols.status) n.status = cols.status;
+  return { ok: true, meta: next, prev: fresh, row: row };
+}
+/* One place to phrase a lost/failed meta write, so every caller says something
+   true and specific instead of a generic "try again" that hides which of the
+   four very different failures happened. */
+function _nodeWriteWhy(res, n, verb) {
+  const nm = (n && n.name) || 'That PRN';
+  const r = res && res.reason;
+  if (r === 'signedout') return '☁ Sign in to ' + verb + '.';
+  if (r === 'offline') return '⚠ Could not reach the server — ' + verb + ' was not applied and nothing on your node changed. Check your connection and try again.';
+  if (r === 'gone') return '⚠ ' + nm + ' no longer exists.';
+  if (r === 'lost') return '⚠ ' + nm + ' changed on the server first (another tab or device), or it is not yours — nothing was applied. Reopen the Reserve and try again.';
+  return '⚠ ' + nm + ' — ' + verb + ' failed. Nothing was applied. Try again.';
+}
 async function nodeCollect(nodeId) {
   const n = (FoundationReserve.nodes || []).find(x => x.id === nodeId);
   if (!n) return false;
@@ -62189,40 +62683,123 @@ async function nodeCollect(nodeId) {
   if (cd > 0) { showToast('⏳ Payout on cooldown — ' + Math.ceil(cd / 3600000) + 'h left.', 3200); return false; }
   const rkLock = _nodeActiveRisk(n);
   if (rkLock && rkLock.lock) { showToast('⚠ ' + rkLock.icon + ' ' + rkLock.name + ' — ' + (n.name || 'the node') + ' is locked down. Defend it first.', 6000); return false; }
+  /* ⚠ CHEAP PRE-CHECK ONLY — this reads the LOCAL row, which may be minutes or
+     hours stale (nodeFetch runs on panel open, there is no poll). It exists to
+     refuse an obviously-empty claim without spending a network round trip. The
+     number that is actually PAID is re-derived from a fresh server read below;
+     never promote this one back into the payout. */
   const bounded = _nodeClaimable(n);
   if (bounded <= 0) { showToast('No new contribution to convert. Deposit resources to the Reserve, then collect — nodes pay for ACTIVE supply, not idling.', 5600); return false; }
-  // 🌍 Draw from the real, finite global pool (a share of the Treasury).
-  try { await nodePoolFetch(); } catch (e) {}
-  const pool = FoundationReserve.nodePool || { avail: 0, legacy: true };
-  let pay = bounded;
-  if (!pool.legacy) {
-    pay = _nodeRealPay(n);
-    if (pay <= 0) {
-      showToast('🌍 The global reward pool is depleted. It refills as the Foundation Treasury grows (taxes, fines, bail & license fees) — try again once it does.', 6400);
+  const me = (Profile.cloud && Profile.cloud.userId) || null;
+  if (!me) { showToast('Sign in to collect PRN payouts.', 3200); return false; }
+  // 🔒 One collect per node at a time — see NodeCollectsInFlight. This is taken
+  //    AFTER the cheap refusals so a rejected click never holds the lock.
+  if (NodeCollectsInFlight.has(n.id)) return false;
+  NodeCollectsInFlight.add(n.id);
+  try {
+    // 🌍 Draw from the real, finite global pool (a share of the Treasury).
+    try { await nodePoolFetch(); } catch (e) {}
+    /* 💳 …and make sure we have actually ASKED what this player paid for, since
+       that purchase is now the ceiling on every tier multiplier in the payout
+       (see the invariant above _nodePaidTier). Cached for ten minutes, so this
+       is a no-op on all but the first collect of a session; without it a player
+       who opens the Reserve straight from a cold load could be priced off a null
+       pledge — which is the safe direction, but it is the wrong ANSWER. */
+    try { await nodeTierFetchPledge(); } catch (e) {}
+    const pool = FoundationReserve.nodePool || { avail: 0, legacy: true };
+    /* ✅ CLAIM FIRST, PAY SECOND — and pay ONLY if the claim actually landed.
+       Everything that used to sit inline here (the fresh re-read, adopting
+       server truth onto the local row, re-running the gates, and the
+       compare-and-swap) now lives in _nodeMetaWrite — READ ITS HEADER. It moved
+       because this exploit reopened three times through writers that were NOT
+       this function, and a fix that lives in nodeCollect can only ever close
+       nodeCollect's door.
+       ⚠ ORDER IS THE RELOAD GUARANTEE. The claim marker is committed to the
+         server BEFORE any Cinder moves, so a refresh, crash or closed tab
+         mid-flow loses the payout (recoverable, and the honest direction) and
+         can never pay it twice: after reload nodeFetch brings claimedPoints
+         forward and _nodeClaimable is 0. Never reverse these two. */
+    let pay = 0, claimable = 0, refuse = '', resync = false;
+    const wr = await _nodeMetaWrite(n, function () {
+      /* Re-run every gate the STALE local row waved through, now that
+         _nodeMetaWrite has pointed n.meta at the fresh server row.
+         `_nodeClaimable` already returns 0 for a node under construction or
+         risk-locked, so the first two buy no extra safety — they exist purely so
+         the REFUSAL NAMES THE REAL REASON. A player whose node was raided from
+         another device should not be told "you have no new contribution". */
+      if (!_nodeActive(n)) { refuse = 'That node is still under construction.'; return null; }
+      const rkS = _nodeActiveRisk(n);
+      if (rkS && rkS.lock) { refuse = '⚠ ' + rkS.icon + ' ' + rkS.name + ' — ' + (n.name || 'the node') + ' is locked down. Defend it first.'; return null; }
+      const cdS = _nodeCooldownLeft(n);
+      if (cdS > 0) { refuse = '⏳ Payout on cooldown — ' + Math.ceil(cdS / 3600000) + 'h left. (Another tab or device may have already collected this one.)'; return null; }
+      /* The AUTHORITATIVE accrual, and the only one the payout may be built
+         from. `bounded` above is the stale pre-check and must never be promoted
+         back into the payout — a stale local row reads HIGHER than the truth. */
+      claimable = _nodeClaimable(n);
+      if (claimable <= 0) {
+        refuse = 'No new contribution to convert — this PRN has already been collected for your current contribution. Deposit more resources to the Reserve, then collect.';
+        resync = true; return null;
+      }
+      /* Pay exactly what the button PRINTED. The row label and the disabled
+         state are both built from _nodeRealPay, so computing the payout any
+         other way here would make the label a lie — and the label is the only
+         thing the player can check. It already folds in the town boost, the
+         owner tier, the 250,000 cap and the pool slice, and it is reading the
+         FRESH meta, so the label and the payout still agree. */
+      pay = _nodeRealPay(n);
+      if (pay <= 0) {
+        refuse = pool.legacy
+          ? 'No new contribution to convert. Deposit resources to the Reserve, then collect.'
+          : '🌍 The global reward pool is depleted. It refills as the Foundation Treasury grows (taxes, fines, bail & license fees) — try again once it does.';
+        return null;
+      }
+      return { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: Date.now(), eff: _nodeEff(n), lastTick: Date.now(), status: 'active' };
+    }, { cols: { status: 'active' } });
+    if (!wr.ok) {
+      // 'abort' is one of OUR gates declining on fresh data and already carries
+      // a specific message; every other reason is the write itself failing or
+      // losing, and none of them may pay.
+      showToast(wr.reason === 'abort' ? refuse : _nodeWriteWhy(wr, n, 'collect'), 5600);
+      if (resync || wr.reason === 'lost' || wr.reason === 'gone') { try { await nodeFetch(); } catch (e) {} }
       return false;
     }
-  }
-  try {
-    const m = Object.assign({}, n.meta || {}, { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: Date.now(), eff: _nodeEff(n), lastTick: Date.now(), status: 'active' });
-    const up = await Cloud.client.from('economy_nodes').update({ status: 'active', meta: m, updated_at: new Date().toISOString() }).eq('id', n.id).eq('owner_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
     if (!pool.legacy) {
       try {
-        const ins = await Cloud.client.from('node_payouts').insert({ node_id: n.id, corp_id: n.corp_id || (Corp.mine && Corp.mine.id) || null, user_id: Profile.cloud.userId, amount: pay });
+        const ins = await Cloud.client.from('node_payouts').insert({ node_id: n.id, corp_id: n.corp_id || (Corp.mine && Corp.mine.id) || null, user_id: me, amount: pay });
         if (ins && ins.error) throw ins.error;
         pool.paid += pay; pool.avail = Math.max(0, pool.avail - pay);
       } catch (e) {
-        // Pool ledger unavailable mid-collect → don't double-bill the pool;
-        // fall back to the bounded amount so the operator still gets paid.
-        pay = bounded;
+        // Pool ledger unavailable mid-collect → don't double-bill the pool.
+        // Clamp rather than reassign: `claimable` is the untiered accrual, so the
+        // old `pay = bounded` here could hand a tiered operator MORE than the
+        // slice-limited amount they were about to be paid.
+        // ⚠ `claimable` (server truth), NOT `bounded` (the stale pre-check) — a
+        //   stale local row reads HIGHER than the truth, so clamping to it would
+        //   reopen the over-payment on exactly the tab this fix is about.
+        pay = Math.max(0, Math.min(pay, claimable));
       }
     }
-    if (typeof addCinders === 'function') addCinders(pay);
-    const tail = (!pool.legacy && pool.total > 0) ? ' · pool ' + numF(pool.avail) + '/' + numF(pool.total) + ' 🔥 left' : '';
-    showToast('🔌 ' + (n.name || 'PRN') + ' payout collected — +' + pay.toLocaleString() + ' 🔥' + tail + '.', 5200);
-    await nodeFetch();
+    // Unreachable today (pay > 0 was checked and the clamp above only takes the
+    // min with `bounded`, which is also > 0) — but a SILENT return here is the
+    // exact shape of the bug this whole change exists to fix, so it speaks.
+    if (pay <= 0) { showToast('⚠ Nothing was paid out — the claim has been reset, try again.', 4200); return false; }
+    // addGems persists itself (saveProgressCloud + the canonical wallet row), so
+    // the credit survives a reload without an extra saveProfile here.
+    if (typeof addCinders === 'function') addCinders(pay); else addGems(pay, 'PRN payout');
+    const tier = _nodeOwnerTierMul();
+    const tail = (!pool.legacy && pool.total > 0) ? ' · pool ' + _frNumF(pool.avail) + '/' + _frNumF(pool.total) + ' 🔥 left' : '';
+    showToast('🔌 ' + (n.name || 'PRN') + ' payout collected — +' + pay.toLocaleString() + ' 🔥'
+      + (tier.mul > 1 ? ' · ' + tier.name + ' tier ×' + tier.mul.toFixed(3) : '') + tail + '.', 5200);
+    try { await nodeFetch(); } catch (e) {}
     return true;
-  } catch (e) { showToast('⚠ Payout failed — try again.', 3000); return false; }
+  } catch (e) {
+    // Total: the click handler chains .then(), so a rejection here would leave
+    // the panel un-rendered and look exactly like the dead button being fixed.
+    showToast('⚠ Payout failed — try again.', 3000);
+    return false;
+  } finally {
+    NodeCollectsInFlight.delete(n.id);
+  }
 }
 async function nodeMaintain(nodeId) {
   const n = (FoundationReserve.nodes || []).find(x => x.id === nodeId);
@@ -62233,9 +62810,32 @@ async function nodeMaintain(nodeId) {
   if (!spendResources(up)) { showToast('Not enough resources to maintain.'); return false; }
   try { saveProfile(); } catch (e) {}
   try {
-    const m = Object.assign({}, n.meta || {}, { eff: 100, lastTick: Date.now() });
-    const r = await Cloud.client.from('economy_nodes').update({ status: (n.status === 'building' ? 'building' : 'active'), meta: m, updated_at: new Date().toISOString() }).eq('id', n.id).eq('owner_id', Profile.cloud.userId);
-    if (r && r.error) throw r.error;
+    /* 🔴 THIS FUNCTION WAS THE THIRD DOOR INTO THE PAYOUT EXPLOIT, AND IT NEEDED
+       NO RACE — see _nodeMetaWrite's header for the rule this now obeys.
+       It used to build `Object.assign({}, n.meta, …)` from the STALE LOCAL row
+       and write the WHOLE meta jsonb with a bare `.eq('id').eq('owner_id')`.
+       nodeFetch() only runs when the Reserve panel is opened, so a second tab
+       holds meta.claimedPoints and meta.lastClaim from whenever it last looked —
+       and Maintain shipped them back to the server, rolling the claim marker
+       BACKWARDS and re-arming a payout that had already been banked. The
+       Maintain button sits beside Collect and is always enabled, so the whole
+       exploit was three clicks.
+       MEASURED before this change: Collect → Maintain (stale tab) → Collect paid
+       120,600 🔥 for a 60,300 🔥 claim; ten maintain→collect cycles paid 663,300
+       — 11×, for 10 × {80 fuel, 60 supplies}.
+       The mutator only returns the two fields this function actually owns, so
+       there is no longer a stale meta anywhere in here TO write back — and the
+       CAS makes it lose outright to a concurrent collect. */
+    const wr = await _nodeMetaWrite(n, function () { return { eff: 100, lastTick: Date.now() }; },
+      // From the FRESH row, not the local one: a node that finished building
+      // elsewhere must not be pushed back to 'building' by a stale tab.
+      { cols: function (fresh, row) { return { status: (row.status === 'building' ? 'building' : 'active') }; } });
+    if (!wr.ok) {
+      try { addSalvage(up); saveProfile(); } catch (_) {}
+      showToast(_nodeWriteWhy(wr, n, 'maintenance') + ' Your materials were refunded.', 5200);
+      if (wr.reason === 'lost' || wr.reason === 'gone') { try { await nodeFetch(); } catch (e) {} }
+      return false;
+    }
     showToast('🛠 ' + (n.name || 'PRN') + ' maintained — efficiency restored to 100%.', 4200);
     await nodeFetch();
     return true;
@@ -62259,13 +62859,25 @@ async function nodeDefend(nodeId) {
   if (!(await gcConfirm('Defend ' + (n.name || 'the node') + ' against the ' + rk.name + '?\n\nCost: ' + cstr + '\nRepels the threat & restores efficiency for this window.'))) return false;
   if (!spendResources(cost)) { showToast('Not enough resources to mount a defense.'); return false; }
   try { saveProfile(); } catch (e) {}
-  try {
-    const m = Object.assign({}, n.meta || {}, { riskClear: _nodeRiskWindow(), eff: 100, lastTick: Date.now() });
-    const r = await Cloud.client.from('economy_nodes').update({ status: 'active', meta: m, updated_at: new Date().toISOString() }).eq('id', n.id).eq('owner_id', Profile.cloud.userId);
-    if (r && r.error) throw r.error;
-  } catch (e) {
+  /* 🔴 IDENTICAL SHAPE TO nodeMaintain, AND IT WAS THE SAME DOOR — it too wrote
+     the WHOLE meta from the stale local row with a bare `.eq('id').eq('owner_id')`.
+     MEASURED before this change: Collect → Defend (stale tab) → Collect paid
+     140,700 🔥 for a 60,300 🔥 claim. Same rule, same helper. */
+  let alreadyClear = false;
+  const wr = await _nodeMetaWrite(n, function () {
+    /* Re-check the threat on FRESH data. Another tab or device may have already
+       defended this window, and charging a second time for one threat is the
+       same class of bug as paying twice for one claim — the resources are
+       refunded below instead. */
+    if (!_nodeActiveRisk(n)) { alreadyClear = true; return null; }
+    return { riskClear: _nodeRiskWindow(), eff: 100, lastTick: Date.now() };
+  }, { cols: { status: 'active' } });
+  if (!wr.ok) {
     try { addSalvage(cost); saveProfile(); } catch (_) {}
-    showToast('⚠ Defense failed — refunded.', 4200);
+    showToast(alreadyClear
+      ? '🛡 ' + (n.name || 'That PRN') + ' was already defended this window (another tab or device) — your materials were refunded.'
+      : _nodeWriteWhy(wr, n, 'the defense') + ' Your materials were refunded.', 5200);
+    if (wr.reason === 'lost' || wr.reason === 'gone' || alreadyClear) { try { await nodeFetch(); } catch (e) {} }
     return false;
   }
   showToast('🛡 ' + (n.name || 'PRN') + ' secured — ' + rk.name + ' repelled, efficiency restored.', 5600);
@@ -62706,7 +63318,13 @@ function openFoundationReserve() {
       if (nbuild) nbuild.onclick = () => { const id = (document.getElementById('fr-node-pick') || {}).value; const ft = !!(document.getElementById('fr-node-treasury') || {}).checked; if (id) nodeEstablish(id, ft).then(ok => { if (ok) render(); }); };
       const tdep = document.getElementById('fr-treas-dep');
       if (tdep) tdep.onclick = () => { const a = parseInt((document.getElementById('fr-treas-amt') || {}).value, 10) || 0; corpTreasuryDeposit(a).then(ok => { if (ok) render(); }); };
-      host.querySelectorAll('[data-node-collect]').forEach(b => { b.onclick = () => { if (b.disabled) return; nodeCollect(b.getAttribute('data-node-collect')).then(() => render()); }; });
+      // 🔒 Disable on click, exactly like Defend above. This is the UI half of the
+      //    re-entrancy guard — NodeCollectsInFlight is the half that actually
+      //    protects the money, because a disabled attribute is one devtools edit
+      //    away. render() rebuilds the row, so the button is re-enabled by the
+      //    redraw rather than by a hand-written restore that could be missed on
+      //    an early-return path.
+      host.querySelectorAll('[data-node-collect]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; nodeCollect(b.getAttribute('data-node-collect')).then(() => render()); }; });
       host.querySelectorAll('[data-node-maintain]').forEach(b => { b.onclick = () => { nodeMaintain(b.getAttribute('data-node-maintain')).then(() => render()); }; });
       host.querySelectorAll('[data-node-defend]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; nodeDefend(b.getAttribute('data-node-defend')).then(() => render()); }; });
     };
@@ -177628,7 +178246,8 @@ async function claimGift(g) {
           owner_id: Profile.cloud.userId, corp_id: Corp.mine.id,
           name: ((Corp.mine.tag || 'CORP') + ' ' + t.name), node_type: t.id,
           resource: t.proc || '', level: 1, status: 'active',
-          meta: { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now(), funded: 'gift' },
+          // rev: 0 — the optimistic-lock version, seeded at INSERT. See _nodeMetaWrite.
+          meta: { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now(), rev: 0, funded: 'gift' },
         });
         if (ins && ins.error) {
           // Put it back in the inbox. Players no longer hold UPDATE on gifts
@@ -208253,15 +208872,29 @@ async function _cityTierAssign(node, tierId) {
     if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
       showToast('☁ Signed out — the tier was not saved.', 4200); return false;
     }
-    const r = await Cloud.client.from('economy_nodes')
-      .update({ meta: meta, updated_at: new Date().toISOString() }).eq('id', node.id).select('id');
-    if (r && r.error) throw r.error;
-    // ⚠ RLS scopes economy_nodes UPDATE to the OWNER (policy en_upd). Assigning
-    //   a tier on someone else's node needs sql/029; without it the statement
-    //   matches no rows and returns no error, so check the returned row rather
-    //   than trusting silence — the same silent-no-op trap _boeAdjust hit.
-    if (!r || !Array.isArray(r.data) || r.data.length === 0) {
-      showToast('⚠ Tier not saved — run sql/029 so admins can set tiers on other players\' nodes.', 6000);
+    /* 🔒 THE FOURTH WRITER OF economy_nodes.meta, AND IT OBEYS THE SAME RULE —
+       see _nodeMetaWrite's header. This one is admin-gated, but it wrote the
+       whole meta jsonb from a local row too, so it could roll a player's
+       claimedPoints / lastClaim backwards and re-arm a paid PRN payout exactly
+       the way nodeMaintain did. "Only admins can reach it" is not a reason to
+       leave a rollback in a money path.
+       ⚠ anyOwner: the point of this modal is stamping OTHER players' nodes, so
+         there is deliberately no owner_id filter and RLS (policy en_upd +
+         sql/029) is the boundary — unchanged from before.
+       ⚠ `tierId || undefined` DELETES the key rather than writing a falsy one.
+         "Clear the override" and "set it to Free" are different states, and
+         conflating them would strip a paying player's tier the first time an
+         admin undid a change. */
+    const wr = await _nodeMetaWrite(node, function () { return { tier: tierId || undefined }; }, { anyOwner: true });
+    if (!wr.ok) {
+      // A lost CAS here is still overwhelmingly the sql/029 case: without it the
+      // UPDATE matches no rows and returns no error, the same silent-no-op trap
+      // _boeAdjust hit. Keep naming it, and repaint the pill so the optimistic
+      // tier above does not linger as a lie.
+      showToast(wr.reason === 'lost'
+        ? '⚠ Tier not saved — run sql/029 so admins can set tiers on other players\' nodes (or the node changed under you; reopen and retry).'
+        : _nodeWriteWhy(wr, node, 'the tier change'), 6000);
+      try { _cityTierPill(); } catch (e) {}
       return false;
     }
     showToast('🔌 ' + (node.name || 'PRN') + ' → ' + (tierId ? (((typeof window !== 'undefined' && window.MythicNodeTiers && window.MythicNodeTiers.tierById(tierId)) || {}).name || tierId) : 'override cleared'), 4200);

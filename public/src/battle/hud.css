@@ -652,9 +652,113 @@
 .hudx-hex .portrait .lbl { display: none; }
 
 /* ── banner body ────────────────────────────────────────────────────────── */
+/* 🔴 THE STATUS ROW IS OPTIONAL AND THE PLATE IS NOT. THAT IS WHY THIS IS A
+      GRID AND NOT A COLUMN, AND IT IS A BUG FIX, NOT A REFACTOR.
+   `.fighter`'s height is PINNED (92 / 80 / 68 across the three bands) because
+   `--hud-banner-h` is what `.battle-center` derives the board's top edge from —
+   see §3's header. `.finfo` is CENTRED inside that pinned plate. So every pixel
+   the info column grows is a pixel that leaves the plate, half of it downward,
+   straight into the phase plaque, which is tucked UP into the banner by 10-14px
+   and paints on top of it.
+   `<div class="statuses">` is the only row in the column whose PRESENCE is
+   optional: `_bcpFighter` (index.html:141460) emits it for any hero carrying a
+   poison / burn / stun / buff effect, and `.statuses:empty { display: none }`
+   below is what hides it the rest of the time. One ordinary `.schip` is 17px,
+   plus the 3px row gap = 20px of new column, i.e. 10px further down — and there
+   were only 3.58px (1280x800 / 1440x900) or 7.75px (1600x1000 / 1920x1200) of
+   clearance to the plaque.
+
+   MEASURED BEFORE, real match (`startBattleWithPrep`), UI zoom asserted 1 (see
+   §3 — the battle screen is exempt from `_uiAutoScale`, so read the zoom before
+   believing a pixel), both banners, ONE status chip given to each hero through
+   `hero.statusEffects` and re-rendered by the app's own `renderBattleNow`, so
+   this is the shipped markup and not injected HTML. `.rprow` (the whole HP row)
+   against `#phase-bar`:
+       1280x800   .rprow 106.17 x 7.84   .rpbar  82.63 x 5.34   .tag 16.55 x 5.84
+       1440x900   .rprow 214.00 x 7.84   .rpbar 125.64 x 5.34   .tag 16.55 x 5.84
+       1600x1000  .rprow 236.89 x 2.25   .rpbar clear by 0.25   .tag clear by 0.75
+       1920x1200  .rprow 236.88 x 2.25   .rpbar clear by 0.25   .tag clear by 0.75
+   `.tag` is the literal word "HP" and it loses 5.84 of its 12px at the two
+   narrow viewports. `elementFromPoint` at each intersection's centre returns
+   `BUTTON.phz-cell past` (1280/1440) and `DIV.phz-bar` (1600/1920): the plaque
+   is ON TOP, so this is a hidden readout and not a harmless neighbour.
+   Identical on both banners and unchanged on HEAD's own sheet — pre-existing.
+
+   🔴 AND THE SWEEP THAT SAID OTHERWISE WAS RUN ON THE WRONG MATCH. The revision
+      of this file before this one swept all pairs of the banner's thirteen boxes
+      and concluded "Nothing else in the banner intersects anything else at any
+      of the four", then sent the next pass to the `max-height: 760px` band with
+      "it is the short band, not the wide ones". Every one of those probes ran on
+      a match where `.statuses` measured 0x0, which the sweep even wrote down two
+      screens further up ("`.statuses` measures 0px in this match and does not
+      always") without going back and re-running anything. Give either hero one
+      chip and the wide bands fail too, ~1.8x deeper than the short-band figure
+      the note was protecting (7.84 against 4.38). A sweep that only covers the
+      state your test match happens to be in is not a sweep.
+
+   THE FIX: `.pills` and `.statuses` SHARE ONE ROW. Both are single-line chip
+   strips (`display:flex; flex-wrap:nowrap; overflow:hidden`), so the column
+   height becomes IDENTICAL with and without status chips — 52.84 / 56.50 either
+   way — and the plaque clearance stops depending on whether the hero is
+   poisoned. Nothing is moved, hidden or truncated to buy it.
+     · the `.statuses` track is `auto` and the `.pills` track is `1fr`, so the
+       chips are sized to their content and the ELEMENT PILLS absorb the squeeze.
+       That is deliberate: the pills are static identity that the portrait's
+       accent colour also carries, the chips are volatile combat state you have
+       to react to this turn. Three chips are 99.2px against a 214px column at
+       the narrowest band, so in practice the chips never clip at all.
+     · `grid-row: 2` is PINNED on both, not left to auto-placement. Auto-placement
+       is "sparse": on the foe's side the DOM order is pills-then-statuses but the
+       mirrored columns are 2-then-1, the column cursor would go backwards, and
+       the row cursor would advance — putting the two strips on separate rows on
+       one banner and the same row on the other. Measured that way round first.
+     · `.rprow` and `h2` are NOT pinned to a row, only spanned across both
+       columns. That way a hero with no elements AND no statuses (both boxes
+       `display:none`) leaves no empty row 2 behind, which would otherwise cost
+       a phantom 3px of row gap.
+   ⚠ The alternatives were costed and are all worse: growing `--hud-banner-h`
+     when a chip appears makes the board jump mid-match (the board's top edge is
+     derived from it); shrinking the gaps and the pill/chip heights recovers only
+     ~16 of the 20px and squeezes the type to do it; moving the plaque down is
+     §8a's 56-tile sweep, which cannot be re-run from a HUD-only harness.
+
+   MEASURED AFTER, same harness, same 4 viewports, chips = 0, 1 and 3:
+       .finfo height   52.84 (1280/1440) · 56.50 (1600/1920) — the SAME number
+                       at every chip count, so the clearance is too
+       .rprow gapY     +3.58 (1280/1440) · +7.75 (1600/1920), no intersection
+     and the whole all-pairs sweep re-run at 4 viewports x 2 name sets x 3 chip
+     counts = 24 cases returns the one pre-existing hex-tip pair and nothing
+     else. The hero name is untouched by all of this: 12 characters at 1280x800,
+     13 (foe) / 14 (player) at 1600x1000, identical with 0 and with 3 chips.
+
+   WHAT IT COSTS, MEASURED. The only thing that gives is the tail of an element
+   pill on a TWO-element hero once the chips are wide enough to need the room —
+   the chips themselves never lost a pixel in any case measured:
+     column 214px (1280x800 / 1440x900)   1 chip: nothing clipped
+                                          2 chips: 11.73px off "SHADOW"
+                                          3 chips: 46.14px off "SHADOW"
+     column 242px (1600x1000 / 1920x1200) 1-2 chips: nothing clipped
+                                          3 chips: 18.14px off "SHADOW"
+   A one-element hero ("LIGHT", 63.8px) never clips at any chip count at any of
+   the four. That is the right way round: the pill is a static element tag the
+   portrait's accent colour also carries, and the price of NOT paying it was the
+   HP bar and the word "HP" painted under an opaque plaque. */
 .hudx-fighters .finfo {
-  display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 3px 6px; min-width: 0; padding: 0;
 }
+/* every other row is full width; only the two chip strips share row 2 */
+.hudx-fighters .finfo > * { grid-column: 1 / -1; }
+.hudx-fighters .finfo > .pills    { grid-row: 2; grid-column: 1; }
+.hudx-fighters .finfo > .statuses { grid-row: 2; grid-column: 2; }
+/* the foe's column is mirrored, so the two tracks swap with it: the pills stay
+   on the OUTSIDE (the plate's edge) and the chips on the inside, exactly as the
+   player's side reads left-to-right. */
+.hudx-fighters .fighter[data-side="foe"] .finfo { grid-template-columns: auto minmax(0, 1fr); }
+.hudx-fighters .fighter[data-side="foe"] .finfo > .pills    { grid-column: 2; }
+.hudx-fighters .fighter[data-side="foe"] .finfo > .statuses { grid-column: 1; }
 .hudx-fighters .finfo h2 {
   margin: 0; font-family: 'Cinzel', serif; font-weight: 900;
   font-size: 15px; letter-spacing: 0.03em; line-height: 1.1;
@@ -681,8 +785,19 @@
   clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);   /* slanted tab, not a pill */
 }
 .hudx-fighters .pill svg { width: 10px; height: 10px; }
+/* ⚠ THE VERTICAL PADDING IS 0 AND THAT IS LOAD-BEARING, not a style choice.
+   The chip strip shares row 2 with the element pills (see `.finfo`'s grid
+   above), so the row is as tall as the TALLER of the two. At `padding: 1px 5px`
+   a chip measured 17px against a 15px pill: the row grew 2px the moment a hero
+   was poisoned, the centred column pushed 1px further down, and the HP row's
+   clearance under the phase plaque went 3.58 -> 2.58px at 1280x800 — still
+   clear, but back to depending on the hero's status again, which is the whole
+   defect this pair of rules exists to end. Dropping the padding takes the chip
+   to exactly 15px (0 + 1px border + 13px line box + 1px border + 0) and the
+   column height becomes IDENTICAL with 0, 1, 2 or 3 chips, measured. The 13px
+   line box is untouched, so no glyph is clipped by `.statuses`' overflow. */
 .hudx-fighters .schip {
-  display: inline-flex; align-items: center; gap: 2px; padding: 1px 5px;
+  display: inline-flex; align-items: center; gap: 2px; padding: 0 5px;
   font-size: 9px; color: var(--sc, #ffc24a);
   border: 1px solid color-mix(in srgb, var(--sc, #ffc24a) 55%, transparent);
   background: rgba(8, 6, 14, 0.8);
@@ -1007,17 +1122,38 @@
    `.hudx-hex`, `.portrait`} plus `#phase-bar`, both banners, the report's long
    names, at 1280x800 / 1440x900 / 1600x1000 / 1920x1200 with UI zoom asserted 1
    (nesting pairs — `.rpbar` inside `.rprow`, `.portrait` inside `.hudx-hex` —
-   excluded, they are containment not collision):
-     HEAD        tab x name-ink   49.23 x 12.84 … 51.16 x 13   ← the defect
-                 .hudx-hex x #phase-bar  68 x 3  (.portrait 63.22 x 0.61)
-     this sheet  .hudx-hex x #phase-bar  68 x 3  (.portrait 63.22 x 0.61)
-   Nothing else in the banner intersects anything else at any of the four. The
-   hex/plaque pair is byte-identical on both sheets — pre-existing, and 0.61px
-   off the chamfered bottom point of the portrait hides no readout, so it is
-   judged harmless HERE. It is NOT harmless in the `max-height: 760px` band,
-   where the same pair measures 50 x 9 and the HP row goes under the plaque with
-   it; that one is written up in full against `.hudx-phaserow` below (search
-   "FOUND AND NOT FIXED") and is deliberately left for a band-geometry pass. */
+   excluded, they are containment not collision).
+
+   🔴 AND IT IS RUN AT 0, 1 AND 3 STATUS CHIPS, BECAUSE THE REVISION OF THIS
+      BLOCK BEFORE THIS ONE WAS RUN AT 0 AND CONCLUDED THE BANNER WAS CLEAN.
+      `.statuses` is `display:none` while it is empty, so a sweep on a match
+      where nobody is poisoned never even puts the box in the list — and the row
+      it adds is what pushed the HP row under the plaque at ALL FOUR viewports.
+      That sentence ("Nothing else in the banner intersects anything else at any
+      of the four") is recorded here as WRONG rather than deleted, because it is
+      the third time in this file a claim that reads like a measurement covered
+      only the state the test match happened to be in. Chip counts are part of
+      the sweep now; so is the state a hero with no elements is in.
+     BEFORE (HEAD's sheet, chips = 1)
+       .rprow x #phase-bar   106.17 x 7.84 (1280) · 214.00 x 7.84 (1440)
+                             236.89 x 2.25 (1600) · 236.88 x 2.25 (1920)
+       .rpbar x #phase-bar    82.63 x 5.34 (1280) · 125.64 x 5.34 (1440)
+       .rprow .tag ("HP")     16.55 x 5.84 at both narrow viewports
+       tab x name-ink         49.23 x 12.84 … 51.16 x 13   ← §3's own defect
+       .hudx-hex x #phase-bar 60 x 5 (1280/1440, .portrait 55.22 x 2.61)
+                              68 x 3 (1600/1920, .portrait 63.22 x 0.61)
+     THIS SHEET (chips = 0, 1 and 3, all four viewports, identical in all nine)
+       .hudx-hex x #phase-bar 60 x 5 (1280/1440, .portrait 55.22 x 2.61)
+                              68 x 3 (1600/1920, .portrait 63.22 x 0.61)
+   That one pair is the only intersection left, it is byte-identical on HEAD and
+   at every chip count, and it is the chamfered BOTTOM POINT of the hex — 2.61px
+   of a 65px portrait at the narrow bands, 0.61px of a 73px one at the wide.
+   No readout lives there, so it is judged harmless HERE. (The earlier note gave
+   0.61px for all four; 2.61px is the narrow-band figure it missed.) It is NOT
+   harmless in the `max-height: 760px` band, where the same pair measures 50 x 9
+   and the HP row goes under the plaque with it; that one is written up in full
+   against `.hudx-phaserow` below (search "FOUND AND NOT FIXED") and is
+   deliberately left for a band-geometry pass. */
 /* ⚠ THE FOE TAB IS BUILT THE SAME WAY ROUND AS THE YOU TAB — dark type on a
    LIGHT plate — because the two tabs are now the only thing carrying which
    banner is whose (the HP bar was correctly taken off side duty, see above).
@@ -1099,8 +1235,27 @@
       viewport". Measured, the plaque's top is `.hudx-banners`' bottom minus 10
       on this band and minus 14 on the short one — because §8 re-tucks it.
 
-   🔴 FOUND AND NOT FIXED — AND IT IS THE SHORT BAND, NOT THE WIDE ONES. Where
-      the plaque really does bury the HP row is §8's
+   🔴 …AND "THE WIDE ONES ARE CLEAR" WAS ONLY TRUE OF A HERO WITH NO STATUS
+      EFFECTS, WHICH THIS NOTE DID NOT SAY. The +3.58 / +7.75 clearances above,
+      and the "IT IS THE SHORT BAND, NOT THE WIDE ONES" headline below, were all
+      measured on a match where `.statuses` was 0x0. Give either hero one
+      ordinary `.schip` and, on the sheet those figures were taken from, `.rprow`
+      went under `#phase-bar` at ALL FOUR of the wide viewports — 106.17 x 7.84
+      (1280x800), 214.00 x 7.84 (1440x900), 236.89 x 2.25 (1600x1000),
+      236.88 x 2.25 (1920x1200), with `elementFromPoint` returning the plaque —
+      i.e. ~1.8x the depth this block was protecting for the short band. That is
+      FIXED, at the source, by `.finfo`'s two-column grid in §3: the status
+      strip shares the pills' row, so the column height no longer depends on the
+      hero's status and the clearance above is now the clearance at 0, 1 and 3
+      chips alike (measured, all four, identical to 0.00px).
+      The short-band overlap below survives that fix, unchanged and undeepened —
+      which is what makes it a band-geometry defect and not this one. Re-measured
+      at 1366x700 on this sheet: 97.17 x 4.38 at 0, 1 and 3 chips, against
+      97.17 x 15 (the WHOLE 15px HP row, the whole 10px bar, the whole word "HP")
+      at 1 chip on HEAD's sheet.
+
+   🔴 FOUND AND NOT FIXED — THE SHORT BAND, WITH OR WITHOUT STATUS CHIPS. Where
+      the plaque still buries the HP row is §8's
       `(min-width: 1101px) and (max-height: 760px)` band, the one that exists so
       a short window keeps its sky. MEASURED there, both banners:
         `.rprow`  97.17 x 4.38   29.2% of a 15px row   gapY -4.38
@@ -3287,7 +3442,11 @@ body:has(.battle-screen) .emote-toggle {
   .hudx-hex { width: 50px; height: 58px; }
   .hudx-fighters .fighter { height: 68px; padding: 5px 10px 5px 6px; gap: 8px; }
   .hudx-fighters .finfo h2 { font-size: 12.5px; }
-  .hudx-fighters .finfo { gap: 2px; }
+  /* ⚠ ROW gap only. `.finfo` is a two-track GRID (see §3) since the status
+     strip started sharing the pills' row, so a bare `gap: 2px` here would
+     quietly take the COLUMN gap between a pill and a status chip from 6px to
+     2px as a side effect of a rule that only ever meant to tighten the stack. */
+  .hudx-fighters .finfo { gap: 2px 6px; }
   .hudx-fighters .rpbar { height: 10px; }
   .hudx-fighters .rprow { gap: 6px; }
   .hudx-fighters .rprow .num { font-size: 11px; }

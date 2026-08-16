@@ -467,14 +467,25 @@ function relayout() {
        `h2` is `white-space:nowrap; overflow:hidden; text-overflow:ellipsis`, so
        when the row runs out of room the chip is the FIRST thing to go — the
        ellipsis eats it before it eats a single letter of the name. That is a
-       property of HEAD, not of the YOU/FOE gutter §3 added: measured on HEAD's
-       own sheet (screenshot the chip's rect, hide the chip, diff), with the
-       banner hero renamed to the bug report's own "Cedric Survivor Gunmen of
-       the Ninth", the chip paints 0 of 464 (foe ▲9) and 0 of 528 (player ▲12)
-       pixels at 1280x800, 1440x900, 1600x1000 and 1920x1200. It is already
-       gone. The gutter merely moves the threshold down far enough that "Zarra,
-       the Brood Queen" — a SHIPPED starter hero — crosses it: 182-251/464 down
-       to 0 and 3 on the foe banner.
+       property of HEAD, not of the YOU/FOE gutter §3 added.
+       MEASURED WITHOUT A SCREENSHOT, because the harness pane does not
+       composite and `text-overflow` does not move an overflowing box — it just
+       stops painting it, so `getBoundingClientRect()` reports a chip that is
+       not on screen. The honest test is the chip's rect against `h2`'s CONTENT
+       box: `h2` is `overflow:hidden` with zero padding, so everything past that
+       edge is clipped away. On HEAD's own sheet, UI zoom asserted 1 (see
+       hud.css §3 — the battle screen is exempt from `_uiAutoScale`, and reading
+       a stale zoom is how the earlier numbers in these files went wrong), with
+       the banner heroes renamed to the bug report's names, the chip's right
+       edge sits OUTSIDE that box by
+         1280x800 · 1440x900   117.14 (foe ▲1) · 154.16 (player ▲1)
+         1600x1000 · 1920x1200 122.78 · 163.89
+       against a chip ~23px wide — i.e. entirely gone, at all four, before this
+       file changes anything. And it is not only long names: `Zarra, the Brood
+       Queen`, a SHIPPED starter hero, already loses 7.14px off the right edge
+       of her chip at 1280x800 and 0.55px at 1600x1000. The gutter would deepen
+       that to the whole chip; this wrapper takes it to 0px outside the box in
+       all 24 measured cases instead.
        CSS alone cannot fix that. `text-overflow` needs a box to ellipsize in,
        an anonymous flex item cannot be given `overflow`/`text-overflow` (they
        are not inherited properties), and index.html is not this piece's to

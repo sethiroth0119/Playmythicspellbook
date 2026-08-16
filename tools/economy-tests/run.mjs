@@ -554,6 +554,8 @@ const SABOTAGES = [
   // ── COVER2, the four fixes a revert could delete under a green gate ──
   'save-noborder', 'load-nolvl', 'gate-ungated', 'cap-race', 'place-nobld',
   'beat-dead', 'offline-nosweep', 'licence-paywalled',
+  // ── PRICES, round0x: the three halves of the Black River faucet ──
+  'br-abs-price', 'br-free-salvage', 'br-batch-40',
 ];
 const RETIRED_SABOTAGES = {
   rearm: 'retired: it flipped an argument this file passed itself — see round0s §3',
@@ -10522,6 +10524,212 @@ const stripComments = (src) => {
 
   if (fails) { bad++; console.log('\n=== ROUND 0w: ' + fails + ' FAILED ==='); }
   else console.log('\n=== ROUND 0w: ALL PASS ===');
+}
+
+/* ══ ROUND 0x — BLACK RIVER MAY NOT OUTBID THE FOUNDATION RESERVE ════════════
+   THE DEFECT THIS ROUND EXISTS FOR, measured on the commit before it:
+   `brSell` paid an ABSOLUTE Cinder price (fuel black 16) with no Foundation
+   levy, against the Reserve's ₵11.05 net for the same fuel — 1.448× — and then
+   handed out 25% of the sold volume as FREE salvage on top, 1.538×. Worse, the
+   batch itself minted: 40 crude (₵160 at the Reserve) became 28 fuel (₵364)
+   plus plastics and chemicals, 6.74× per crude end to end. The gas-station
+   ceiling shipped the round before did not reach any of it, because that
+   ceiling was scoped to the OSIM block while the fuel it priced lives here.
+
+   THE INVARIANT, in one sentence, and every check below is a leg of it:
+     no unmetered route may pay more Cinder per unit than the Foundation Reserve
+     pays for that unit, and no conversion may turn its inputs into more Reserve
+     value than they were worth times the Extraction Field refinery's own margin.
+
+   🔴 IT MEASURES `Profile.gems`, NOT A FORMULA, and it does not re-implement a
+      line of the pricing. Every constant and every function is EXTRACTED out of
+      public/index.html by brace-matching and evaluated. A round carrying its own
+      copy of the arithmetic cannot see a change to the shipped arithmetic —
+      which is exactly how the ceiling was shipped past a green gate last time.
+
+   🔴 AND IT COUNTS THE SALVAGE AS MONEY. The kickback is bought out of the sale
+      now (`cash = gross - kickVal`), so "per unit" has to mean cash PLUS the
+      Cinder value of the resources — otherwise deleting the deduction reads as
+      the player being paid LESS and the round goes green on the old mint.
+
+   Prove it can fail — each switch re-commits one half of the shipped defect
+   into the extracted source and nothing else:
+     ECON_TEST_SABOTAGE=br-abs-price     BR_MARKET back to absolute Cinder
+                                         (fuel 9/16) and `_brSellPrice` returns
+                                         it raw, levy and oracle gone
+     ECON_TEST_SABOTAGE=br-free-salvage  the kickback is minted on top again
+                                         (`cash = gross`), the 1.448 → 1.538 leg
+     ECON_TEST_SABOTAGE=br-batch-40      `_brCrudePerBatch` reads the admin field
+                                         directly and the field is 40 — the
+                                         derived floor deleted, recipe minting
+   ════════════════════════════════════════════════════════════════════════════ */
+{
+  console.log('\n########## round0x-black-river-may-not-outbid-the-reserve ##########');
+  let fails = 0;
+  const chk = (name, cond, extra) => {
+    if (cond) { console.log('✅ ' + name); return true; }
+    fails++; console.log('❌ ' + name + (extra ? ' :: ' + extra : '')); return false;
+  };
+  const idx = readFileSync(join(here, '../../public/index.html'), 'utf8');
+  /* One-liner `const`/`function` declarations: srcBlockAfter would read the
+     first brace, which for `function f(a){…}` is the body — correct — but for
+     `const X = { … };` on one line it is also correct. Both shapes below go
+     through it, so there is a single scanner and no second copy. */
+  const decl = (d, open) => srcBlockAfter(idx, d, open);
+  const SRC = {
+    reservePrice: decl('const OSIM_RESERVE_PRICE ='),
+    machines:     decl('const OSIM_MACHINES ='),
+    brRefine:     decl('const BR_REFINE ='),
+    brMarket:     decl('const BR_MARKET ='),
+    brWeight:     decl('const BR_UNIT_WEIGHT ='),
+    resValue:     decl('const RESOURCE_CINDER_VALUE ='),
+    mul:          decl('function _brMul(kind, black)'),
+    margin:       decl('function _brRefineMargin()'),
+    floor:        decl('function _brCrudeFloor()'),
+    perBatch:     decl('function _brCrudePerBatch()'),
+    reserve:      decl('function _brReserve(kind)'),
+    sellPrice:    decl('function _brSellPrice(kind, black)'),
+    skim:         decl('function _osimSellSkim()'),
+    sell:         decl('function brSell(kind, black)'),
+  };
+  const capMatch = idx.match(/const OSIM_STATION_MUL_MAX\s*=\s*([0-9.]+)/);
+  const missing = Object.keys(SRC).filter((k) => !SRC[k]);
+  chk('round0x can read all fourteen shipped declarations out of public/index.html',
+      !missing.length && !!capMatch,
+      'unreadable: ' + missing.join(', ') + (capMatch ? '' : ' OSIM_STATION_MUL_MAX') +
+      ' — a declaration was renamed and this round is vacuous');
+
+  if (!missing.length && capMatch) {
+    let brMarket = SRC.brMarket, sellPrice = SRC.sellPrice, sell = SRC.sell, perBatch = SRC.perBatch, brRefine = SRC.brRefine;
+    /* 🧨 The injuries are spliced into the EXTRACTED text, never the tree. Each
+       throws if its anchor has moved: a switch that patches nothing is the
+       un-watched tripwire this round is built not to be. */
+    const injure = (name, s, find, repl) => {
+      if (SABOTAGE !== name) return s;
+      const re = new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\n/g, '\\r?\\n'));
+      if (!re.test(s)) throw new Error('SABOTAGE ' + name + ' matched nothing — the shipped shape moved and this switch is inert');
+      console.log('🧨 injured: ' + name);
+      return s.replace(re, () => repl);
+    };
+    /* ⚠ The whole literal is replaced, not prepended to. The first draft of this
+       switch spliced the old rows in after the opening brace and left the
+       shipped rows behind them — later keys win in an object literal, so the
+       injury was inert, §1 and §3 stayed green and only §2 (which the price
+       change reached by another route) went red. A switch that patches a value
+       something else immediately overwrites is the un-watched tripwire again. */
+    brMarket  = injure('br-abs-price', brMarket, brMarket,
+                       '{ fuel: { legal: 9, black: 16 }, plastics: { legal: 14, black: 26 }, chemicals: { legal: 22, black: 44 } }');
+    sellPrice = injure('br-abs-price', sellPrice, '{ return Math.max(0, Math.round(_brReserve(kind) * _brMul(kind, black))); }',
+                       '{ const r = BR_MARKET[kind] || {}; return (black ? r.black : r.legal) | 0; }');
+    sell      = injure('br-abs-price', sell, 'const gross = Math.round(have * unit * (1 - _osimSellSkim()));', 'const gross = have * unit;');
+    sell      = injure('br-free-salvage', sell, 'const cash = gross - kickVal;', 'const cash = gross;');
+    perBatch  = injure('br-batch-40', perBatch, '{ return Math.max(BR_REFINE.crudePerBatch | 0, _brCrudeFloor()); }', '{ return BR_REFINE.crudePerBatch | 0; }');
+    brRefine  = injure('br-batch-40', brRefine, 'crudePerBatch: 400', 'crudePerBatch: 40');
+
+    /* The host. Only NON-pricing plumbing is stubbed — wallet, inventory, log,
+       toasts, saves. `addGems` is the real seam the exploit was measured on, so
+       the round reads `Profile.gems` the way a player's wallet would. */
+    const harness = `
+      const Profile = { gems: 0, blackRiver: null };
+      const Forge = { blackRiver: {} };
+      const salvage = {};
+      let br = null;
+      function ensureBlackRiver() { return br; }
+      function addGems(n) { Profile.gems += (n | 0); }
+      function addRes(id, n) { salvage[id] = (salvage[id] | 0) + (n | 0); }
+      function showToast() {} function _brLog() {} function saveProfile() {} function saveForge() {}
+      function _brClamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+      function _brChance() { return false; }   // no raid: it is not part of the price
+      function brTriggerRaid() {}
+      function _resCinderValue(id) { return RESOURCE_CINDER_VALUE[id] || 3; }
+      const OSIM_STATION_MUL_MAX = ${capMatch[1]};
+      const OSIM_RESERVE_PRICE = ${SRC.reservePrice};
+      const OSIM_MACHINES = ${SRC.machines};
+      const RESOURCE_CINDER_VALUE = ${SRC.resValue};
+      const BR_REFINE = ${brRefine};
+      const BR_MARKET = ${brMarket};
+      const BR_UNIT_WEIGHT = ${SRC.brWeight};
+      function _brMul(kind, black) ${SRC.mul}
+      function _brRefineMargin() ${SRC.margin}
+      function _brCrudeFloor() ${SRC.floor}
+      function _brCrudePerBatch() ${perBatch}
+      function _brReserve(kind) ${SRC.reserve}
+      function _brSellPrice(kind, black) ${sellPrice}
+      function _osimSellSkim() ${SRC.skim}
+      function brSell(kind, black) ${sell}
+      /* ONE SALE, measured end to end. Returns what the player WALKS AWAY WITH
+         per unit: Cinder that reached the wallet plus the Cinder value of the
+         salvage the sale bought them. Anything less would score the kickback
+         deduction as a loss and go green on the mint it replaced. */
+      function probe(kind, qty, black) {
+        Profile.gems = 0; for (const k in salvage) delete salvage[k];
+        br = { fuel: 0, plastics: 0, chemicals: 0, crude: 0, refineries: 1, wanted: 0, rep: 0 };
+        br[kind] = qty;
+        brSell(kind, black);
+        let kickVal = 0;
+        for (const k in salvage) kickVal += salvage[k] * _resCinderValue(k);
+        return { perUnit: (Profile.gems + kickVal) / qty, cash: Profile.gems, kickVal };
+      }
+      /* The Reserve's NET price — the levy applies there too, and comparing a
+         gross Black River price against a net Reserve price would have called
+         the shipped 1.448x exploit a 1.23x one. */
+      function reserveNet(kind) { return _brReserve(kind) * (1 - _osimSellSkim()); }
+      return { probe, reserveNet, _brReserve, _brMul, _brCrudeFloor, _brCrudePerBatch, _brRefineMargin, _brSellPrice, BR_REFINE, BR_MARKET, OSIM_RESERVE_PRICE };
+    `;
+    let H = null;
+    try { H = new Function(harness)(); } catch (e) { chk('the extracted Black River pricing compiles', false, String(e && e.message)); }
+
+    if (H) {
+      // ── §1 THE CEILING, on real wallet deltas, for every commodity and both doors
+      for (const kind of ['fuel', 'plastics', 'chemicals']) {
+        const net = H.reserveNet(kind);
+        for (const black of [false, true]) {
+          const r = H.probe(kind, 100, black);
+          chk('§1 ' + kind + (black ? ' black-market' : ' legal') + ' pays ≤ the Reserve net (₵' +
+              net.toFixed(2) + '/unit)',
+              r.perUnit <= net + 1e-9,
+              '₵' + r.perUnit.toFixed(2) + '/unit = ' + (r.perUnit / net).toFixed(3) +
+              '× the Reserve — an unmetered route is outbidding the guaranteed buyer, which is a faucet');
+        }
+      }
+      // ── §2 the salvage is bought out of the sale, not minted on top of it
+      const f = H.probe('fuel', 100, true);
+      chk('§2 the salvage kickback is paid for out of the sale (cash + salvage === gross)',
+          f.kickVal > 0 && Math.abs((f.cash + f.kickVal) - Math.round(100 * H._brSellPrice('fuel', true) * 0.85)) <= 1,
+          'cash ' + f.cash + ' + salvage ' + f.kickVal + ' — free salvage is a second payout on the same units');
+      // ── §3 there is no absolute Cinder price left to inherit
+      let abs = 0;
+      for (const k of Object.keys(H.BR_MARKET)) for (const d of ['legal', 'black'])
+        if (+H.BR_MARKET[k][d] > 1) abs++;
+      chk('§3 BR_MARKET holds FRACTIONS of the Reserve, never absolute Cinder (all ≤ 1)',
+          abs === 0, abs + ' entries above 1 — a future buyer can inherit a hardcoded price only if one exists');
+      chk('§3 …and a garbage multiplier degrades TO the ceiling, never past it',
+          H._brMul('fuel', true) <= 1 && H._brMul('nope', true) <= 1,
+          String(H._brMul('nope', true)));
+      // ── §4 the recipe cannot mint: batch value out ≤ crude in × the field's own margin
+      const perBatch = H._brCrudePerBatch();
+      const inValue = perBatch * (H.OSIM_RESERVE_PRICE.oil | 0);
+      const y = H.BR_REFINE.yield;
+      const outValue = y.fuel * H._brReserve('fuel') + y.plastics * H._brReserve('plastics') + y.chemicals * H._brReserve('chemicals');
+      const margin = H._brRefineMargin();
+      chk('§4 one batch is worth ≤ its crude × the Extraction Field refinery margin (' + margin.toFixed(3) + '×)',
+          outValue <= inValue * margin + 1e-9,
+          '₵' + inValue + ' of crude → ₵' + outValue + ' = ' + (outValue / inValue).toFixed(2) +
+          '× — the RECIPE is minting before a price is even quoted');
+      // ── §5 the floor is derived, so an admin save cannot reopen §4
+      chk('§5 the batch cost has a derived floor and the shipped value clears it',
+          H._brCrudeFloor() > 0 && perBatch >= H._brCrudeFloor(),
+          'floor ' + H._brCrudeFloor() + ', charged ' + perBatch);
+      H.BR_REFINE.crudePerBatch = 1;          // the degenerate admin economy save
+      chk('§5 …and an admin economy save setting crudePerBatch to 1 is still floored',
+          H._brCrudePerBatch() === H._brCrudeFloor(),
+          'charged ' + H._brCrudePerBatch() + ' against floor ' + H._brCrudeFloor() +
+          ' — a cloud-shared admin config reopens the 6.74× loop');
+    }
+  }
+
+  if (fails) { bad++; console.log('\n=== ROUND 0x: ' + fails + ' FAILED ==='); }
+  else console.log('\n=== ROUND 0x: ALL PASS ===');
 }
 
 /* ⚠ fuelarb.mjs was written in round 2 of FUELARB and never wired in here, so

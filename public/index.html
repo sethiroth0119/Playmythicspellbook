@@ -161066,9 +161066,13 @@ function openBlackRiverEconEditor() {
     get: () => (Forge.brEcon && typeof Forge.brEcon === 'object') ? Forge.brEcon : (Forge.brEcon = {}),
     set: (t) => { Forge.brEcon = t; },
     onApply: () => { try { applyBrEconOverrides(); } catch (e) {} },
-    labels: { upgrades: 'RIG UPGRADES', refine: 'REFINERY', market: 'MARKET PRICES', roles: 'CREW WAGES',
-              risk: 'RISK TIERS', buyCompany: 'Buy the company (🔥)', crudePerBatch: 'Crude per batch',
-              fireChance: 'Refinery fire chance (0-1)', legal: 'Legal price', black: 'Black-market price',
+    // ⚠ `legal`/`black` are FRACTIONS OF THE FOUNDATION RESERVE now, not Cinder
+    //   prices — anything above 1 is clamped back to 1 by `_brMul` on read, and
+    //   `crudePerBatch` cannot go below `_brCrudeFloor()`. Label them honestly so
+    //   an admin does not type 16 in here expecting ₵16 and find it silently 1×.
+    labels: { upgrades: 'RIG UPGRADES', refine: 'REFINERY', market: 'MARKET (× of Reserve)', roles: 'CREW WAGES',
+              risk: 'RISK TIERS', buyCompany: 'Buy the company (🔥)', crudePerBatch: 'Crude per batch (floor applies)',
+              fireChance: 'Refinery fire chance (0-1)', legal: 'Legal × of Reserve (≤1)', black: 'Black-market × of Reserve (≤1)',
               cost: 'Cost 🔥', wage: 'Wage 🔥', mult: 'Payout ×', threat: 'Threat ×', escape: 'Escape turns' },
   });
 }
@@ -199221,17 +199225,158 @@ const BR_RISK = {
   med:  { label:'Medium', mult:1.8, threat:1.15, escape:4, note:'Contested zone. Real money, real danger.' },
   high: { label:'High',   mult:3.0, threat:1.7,  escape:6, note:'Hot zone. Massive payout, brutal escape.' },
 };
+/* ══ 🏭 THE REFINERY COMPLEX — WHAT IT COSTS, WHAT IT PAYS, AND WHY ═══════════
+   🔴 THE DEFECT, MEASURED ON THE COMMIT BEFORE THIS ONE (real Profile.gems
+   deltas through the shipped functions, 100 units per probe, wallet reset
+   between probes; `_osimState.inv.fuel = 100` then `Profile.blackRiver.fuel`
+   reads 100, so the Extraction Field and this screen hold the SAME fuel):
+
+     Foundation Reserve, `_OSIM.sellRes('fuel')` ..... ₵11.05/fuel  ← the ceiling
+     best gas station at its cap, `_OSIM.sellStation`  ₵11.05/fuel  (capped last round)
+     `brSell('fuel', true)` .......................... ₵16.00/fuel  = 1.448×
+       + `addRes('fuel', 25)` free salvage on top .... ₵17.00/fuel  = 1.538×
+
+   `brSell` paid straight through `addGems` with NO Foundation levy, and the
+   Extraction Field is gated on `refineries >= 1` (`_osimOpen`), so EVERY field
+   owner necessarily owns this door. The station ceiling shipped last round did
+   not reach it: a ceiling is only a ceiling over every buyer of a commodity, and
+   that one was scoped to the OSIM block while the fuel it priced is this object.
+
+   🔴 AND THE BIGGER ONE, WHICH THE PRICES ONLY HALF EXPLAIN. A batch consumed 40
+   crude and produced 28 fuel + 14 plastics + 9 chemicals. At the field's own
+   Reserve prices that is ₵160 of crude turned into ₵364 of FUEL ALONE — the
+   RECIPE minted 2.28× before a single price was quoted. Measured end to end,
+   crude → batch → black market, including the 18% fire loss:
+       ₵917 expected per 40 crude, against ₵136 for selling the crude
+       at the Reserve = ₵22.9/crude vs ₵3.40/crude — 6.74×.
+   Capping prices alone could not have closed that, which is why the input side
+   moved too.
+
+   🔒 THE INVARIANT, ONE SENTENCE, COVERING BOTH BLOCKS:
+      **No unmetered route may pay more Cinder per unit than the Foundation
+      Reserve pays for that unit, and no conversion may turn its inputs into more
+      Reserve value than they were worth times the Extraction Field refinery's
+      own published margin.**
+
+   ✅ WHY IT IS PROVABLE BY READING RATHER THAN BY GREPPING FOR DOORS.
+      · There is no absolute Cinder price for a Black River commodity anywhere.
+        `BR_MARKET` holds FRACTIONS, clamped to `OSIM_STATION_MUL_MAX` on READ by
+        `_brMul` — the same constant and the same fail-to-the-ceiling shape as
+        `_osimStationMul`. A future buyer cannot inherit a number, because there
+        is no number; it would have to invent one, which is visible in review.
+      · `_brSellPrice` is the ONLY function that turns a Black River commodity
+        into money, and `brSell` is its only caller. The UI prints the same
+        function, so the shown price is the paid price.
+      · The one commodity both systems trade — fuel — is priced from
+        `OSIM_RESERVE_PRICE.fuel` directly, NOT through `_osimSellPrice`. That is
+        deliberate: `_osimSellPrice` multiplies in Market Insight and spike
+        events (both >= 1), so reading the raw table keeps Black River at or
+        BELOW the field's own best price, never level with an inflated one.
+      · The salvage kickback is bought OUT OF the sale, not minted on top of it
+        (`cash = gross - kickVal`). This is what makes "per unit" mean the total
+        value the player walks away with, and it is why the hook could be kept
+        rather than deleted.
+      · `crudePerBatch` cannot be tuned back under the margin: `_brCrudePerBatch`
+        returns `max(shipped/admin value, _brCrudeFloor())`, and the floor is
+        derived from the yield, not typed.
+      · Plastics and chemicals have no Reserve price of their own because nothing
+        else in the game produces or buys them. `_brReserve` DERIVES them from
+        the batch residual — the recipe graph is the price, per ECONOMY.md — so
+        an admin who edits `yield` moves their price automatically instead of
+        opening a gap between the two.
+
+   💲 WHAT THE OWNER ASKED AND WHAT WAS ACTUALLY DONE — READ BEFORE "FIXING" THIS.
+      The ask was "increase the resources and prices ×10". The resources went ×10
+      exactly: `crudePerBatch` 40 → 400. The PRICES did not, and must not: the
+      preceding four rounds all ended the same way — every Cinder a player is
+      PAID is a faucet, and ×10 on `BR_MARKET` would have multiplied the 6.74×
+      leak to 67×. The prices are now derived, and they land where the closed
+      loop puts them (fuel down, plastics/chemicals up, per-crude yield down 5×).
+
+   ⚠ WHAT THIS DELIBERATELY DOES NOT COVER. `_brpResolveRunOutcome` still hands
+     out crude + fuel + Cinder for winning a roguelite extraction run; that is a
+     METERED route (one battle per run) and is out of scope here, like the PRN
+     contracts documented above `OSIM_STATIONS`. Say so if it should change.
+
+   ⚠ THE HONEST COST. Selling fuel here is now exactly the Reserve price at
+     `black` and 55% of it at `legal`, so a rational player sells fuel at the
+     Reserve and uses this screen for plastics and chemicals, which only the
+     batch can make. That is the same trade the gas stations took: any premium
+     over the Reserve is a mint, so the mini-game has to be interesting for a
+     reason other than price. */
 const BR_REFINE = {
-  crudePerBatch: 40,
+  // 💲 ×10, INPUT COST (40 → 400). The one number the owner's "×10" lands on
+  //    cleanly: it is a resource requirement with no price attached, so raising
+  //    it narrows the loop instead of widening it. `_brCrudePerBatch()` is what
+  //    the game reads — never this field directly — so the derived floor applies.
+  crudePerBatch: 400,
   yield: { fuel: 28, plastics: 14, chemicals: 9 },
   fireChance: 0.18,
 };
-// Black-market premium vs legal pricing.
+// Black-market premium vs legal pricing — as a FRACTION OF THE FOUNDATION
+// RESERVE price for that commodity, never as an absolute Cinder number.
+// 1.00 = exactly what the Reserve pays; the ceiling. 0.55 mirrors the shipped
+// legal:black ratio (9:16, 14:26, 22:44 ≈ 0.50–0.56) so the choice between a
+// quiet sale and a hot one keeps the shape it always had.
 const BR_MARKET = {
-  fuel:      { legal: 9,  black: 16 },
-  plastics:  { legal: 14, black: 26 },
-  chemicals: { legal: 22, black: 44 },
+  fuel:      { legal: 0.55, black: 1.00 },
+  plastics:  { legal: 0.55, black: 1.00 },
+  chemicals: { legal: 0.55, black: 1.00 },
 };
+// Relative worth of the batch's two exclusive products, used ONLY as a ratio to
+// split the residual in `_brReserve`. These are the old legal prices (14 and 22)
+// kept for their proportion, deliberately not for their magnitude — the magnitude
+// comes from the crude the batch burned.
+const BR_UNIT_WEIGHT = { plastics: 14, chemicals: 22 };
+// The multiplier a Black River buyer applies to the Reserve price. Clamped on
+// READ, and an out-of-range or missing value degrades TO THE CEILING, never past
+// it — same shape as `_osimStationMul`, so both halves fail the same way.
+function _brMul(kind, black) { const row = BR_MARKET[kind] || {}; const m = +row[black ? 'black' : 'legal']; return (m >= 0 && m <= OSIM_STATION_MUL_MAX) ? m : OSIM_STATION_MUL_MAX; }
+// The Extraction Field refinery's own value margin, read off its recipe rather
+// than typed: 2 oil (₵4 each) → 1 fuel (₵13) = 1.625×. It is the only other
+// refining step in the game, it is already pinned by an existing round, and
+// reusing it means this batch can never be a better deal than that machine.
+function _brRefineMargin() { try { const r = OSIM_MACHINES.refinery; const inV = Math.max(1, (+r.ratio || 2)) * (OSIM_RESERVE_PRICE[r.consumes] | 0); const outV = OSIM_RESERVE_PRICE[r.produces] | 0; if (inV > 0 && outV > 0) return outV / inV; } catch (e) {} return 1; }
+// Least crude a batch may burn: enough that the whole batch — the fuel leg at its
+// Reserve price, plus the ₵1 minimum `_brReserve` puts under the other two — does
+// not beat `_brRefineMargin()`. Derived from the yield, so editing the yield moves
+// it. 28 fuel + 14 + 9 → 60 crude today.
+// ⚠ The `+ plastics + chemicals` term is not cosmetic. Without it the floor was
+//   56, and at exactly 56 the residual is zero, so `Math.max(1, …)` in
+//   `_brReserve` invented ₵23 of value the crude had not paid for — 1.77× against
+//   a 1.625× margin, measured. A floor has to cover every term of the thing it
+//   floors, including the clamps.
+function _brCrudeFloor() {
+  try {
+    const d = (OSIM_RESERVE_PRICE.oil | 0) * _brRefineMargin();
+    const need = (BR_REFINE.yield.fuel | 0) * (OSIM_RESERVE_PRICE.fuel | 0) + (BR_REFINE.yield.plastics | 0) + (BR_REFINE.yield.chemicals | 0);
+    return d > 0 ? Math.ceil(need / d) : 0;
+  } catch (e) { return 0; }
+}
+// 🔒 What the game actually charges per batch. The admin economy editor may raise
+//    `BR_REFINE.crudePerBatch`, never lower it below the derived floor — that is
+//    the leg that stops a cloud-shared admin save from reopening the 6.74× loop.
+function _brCrudePerBatch() { return Math.max(BR_REFINE.crudePerBatch | 0, _brCrudeFloor()); }
+/* The Foundation Reserve's value for one unit of a Black River commodity.
+   · fuel — the Reserve buys it directly, so use its table price. Raw, not
+     `_osimSellPrice`: that adds Market Insight and spike multipliers (>= 1) and
+     this must stay at or under the field's price, never track it upward.
+   · plastics / chemicals — nothing else in the game makes or buys them, so they
+     have no price of their own. They are worth exactly what is left of the
+     batch's value budget (crude burned × the refinery margin) after the fuel
+     leg is paid for, split by `BR_UNIT_WEIGHT`. `Math.floor` biases the split
+     DOWN so rounding can only ever cost the player, not mint. */
+function _brReserve(kind) {
+  if (kind === 'fuel') return OSIM_RESERVE_PRICE.fuel | 0;
+  const budget = _brCrudePerBatch() * (OSIM_RESERVE_PRICE.oil | 0) * _brRefineMargin();
+  const rest = Math.max(0, budget - (BR_REFINE.yield.fuel | 0) * (OSIM_RESERVE_PRICE.fuel | 0));
+  const denom = (BR_REFINE.yield.plastics | 0) * BR_UNIT_WEIGHT.plastics + (BR_REFINE.yield.chemicals | 0) * BR_UNIT_WEIGHT.chemicals;
+  const unit = denom > 0 ? rest / denom : 0;
+  return Math.max(1, Math.floor(unit * (BR_UNIT_WEIGHT[kind] || 0)));
+}
+// 🔒 THE ONLY function that turns a Black River commodity into a Cinder price.
+//    Bounded by construction: `_brReserve` is the oracle, `_brMul` <= 1.
+function _brSellPrice(kind, black) { return Math.max(0, Math.round(_brReserve(kind) * _brMul(kind, black))); }
 const BR_ROLES = {
   Driver:    { icon:'🪖', perk:'-1 escape turn',          wage:120, color:'#e6b660' },
   Mechanic:  { icon:'🔧', perk:'+3 hull repair / turn',   wage:140, color:'#7d858f' },
@@ -199607,8 +199752,12 @@ function brBuildRefinery() {
 }
 function brRefineBatch() {
   const s = ensureBlackRiver();
-  if (s.refineries < 1 || s.crude < BR_REFINE.crudePerBatch) return false;
-  s.crude -= BR_REFINE.crudePerBatch;
+  // 🔒 `_brCrudePerBatch()`, never `BR_REFINE.crudePerBatch` — the derived floor
+  //    is what stops an admin economy save from restoring the 40-crude batch that
+  //    turned ₵160 of crude into ₵364 of fuel. Same number the UI prints.
+  const perBatch = _brCrudePerBatch();
+  if (s.refineries < 1 || s.crude < perBatch) return false;
+  s.crude -= perBatch;
   if (_brChance(BR_REFINE.fireChance)) {
     const dmg = _brRand(400 + Math.random() * 500);
     Profile.gems = Math.max(0, (Profile.gems | 0) - dmg);
@@ -199630,30 +199779,56 @@ function brSell(kind, black) {
   const s = ensureBlackRiver();
   const have = (s[kind] | 0);
   if (have <= 0) return false;
-  const price = black ? BR_MARKET[kind].black : BR_MARKET[kind].legal;
-  const gross = have * price;
-  addGems(gross, 'Black River: oil sold');
-  s[kind] = 0;
-  // 🛒 Ecosystem hook: refined fuel that was just sold also flows into the
+  if (!BR_MARKET[kind]) return false;
+  // 🔒 One oracle, one levy. `_brSellPrice` <= the Foundation Reserve price for
+  //    this commodity, and `_osimSellSkim()` is the SAME 15% levy the Reserve
+  //    charges — this used to pay ₵16/fuel gross against the Reserve's ₵11.05
+  //    net, which is 1.448× on real Profile.gems. See the block above BR_MARKET.
+  const unit = _brSellPrice(kind, black);
+  const gross = Math.round(have * unit * (1 - _osimSellSkim()));
+  // 🛒 Ecosystem hook: refined product that was just sold also flows into the
   //    player's salvage stores (a portion converts back to game fuel/resources)
   //    so the oil-co is a real supplier for the rest of the game.
-  try {
-    const gameMap = { fuel:'fuel', plastics:'scrapMetal', chemicals:'corruptedEssence' };
-    const sid = gameMap[kind];
-    if (sid && typeof addRes === 'function') {
-      // 25% of sold volume returns to player salvage as game resource.
-      addRes(sid, Math.max(1, Math.floor(have * 0.25)));
-    }
-  } catch (e) {}
+  //    🔴 It is BOUGHT OUT OF THE SALE, not minted on top. It used to be free,
+  //    and free salvage is a second payout on the same units — ₵1.00/fuel more
+  //    through `_refinerySellRes`, which is what took the old black-market route
+  //    from 1.448× the Reserve to 1.538×. Deducting its Cinder value is what
+  //    makes "never more per unit than the Reserve" true of the TOTAL the player
+  //    walks away with, and it is why the hook could be kept rather than cut.
+  //    `_resCinderValue` is the Refinery's own price for the salvage and
+  //    `_refinerySellRes` taxes it again, so the deduction slightly OVER-charges
+  //    the player — deliberate: round toward the ceiling holding, never past it.
+  const gameMap = { fuel: 'fuel', plastics: 'scrapMetal', chemicals: 'corruptedEssence' };
+  const sid = gameMap[kind];
+  let kickN = sid ? Math.max(1, Math.floor(have * 0.25)) : 0;
+  let kickUnit = 0;
+  try { if (kickN && typeof _resCinderValue === 'function') kickUnit = _resCinderValue(sid) | 0; } catch (e) {}
+  // 🔒 The salvage can never be worth more than the sale it is bought out of.
+  //    Without this trim the `Math.max(1, …)` above still handed out a unit on a
+  //    sale too small to pay for it — measured at 1.65× the refinery margin in the
+  //    degenerate admin config, i.e. the last place the kickback could still mint.
+  //    Trimming here (rather than clamping `cash` at 0) is what makes
+  //    `cash + kickVal === gross` an identity instead of an approximation.
+  if (kickN && kickUnit > 0 && kickN * kickUnit > gross) kickN = Math.floor(gross / kickUnit);
+  const kickVal = kickN * kickUnit;
+  const cash = gross - kickVal;
+  addGems(cash, 'Black River: refined product sold');
+  s[kind] = 0;
+  try { if (kickN && typeof addRes === 'function') addRes(sid, kickN); } catch (e) {}
+  // Report `cash` — what actually reached the wallet — plus the salvage it bought.
+  // The old copy reported `gross`, which was also what was paid; now they differ
+  // and a toast that overstates the payout is how a "missing Cinder" bug report
+  // gets filed against a working sale.
+  const kickTxt = kickN ? ' (+' + kickN + ' salvage)' : '';
   if (black) {
     s.wanted = _brClamp(s.wanted + 8 + have * 0.15, 0, 100);
-    _brLog('warn', 'Black-market sale: ' + have + ' ' + kind + ' → ¢' + gross.toLocaleString() + '. Heat rising (' + Math.round(s.wanted) + '%).');
-    showToast('💵 Black-market sale: +¢' + gross.toLocaleString() + '. Heat rising.', 4200);
+    _brLog('warn', 'Black-market sale: ' + have + ' ' + kind + ' @ ¢' + unit + ' → ¢' + cash.toLocaleString() + kickTxt + '. Heat rising (' + Math.round(s.wanted) + '%).');
+    showToast('💵 Black-market sale: +¢' + cash.toLocaleString() + kickTxt + '. Heat rising.', 4200);
     if (s.wanted > 66 && _brChance(0.5)) brTriggerRaid();
   } else {
     s.rep += 1;
-    _brLog('good', 'Legal sale: ' + have + ' ' + kind + ' → ¢' + gross.toLocaleString() + '. +1 rep.');
-    showToast('💵 Legal sale: +¢' + gross.toLocaleString() + '. +1 rep.', 3600);
+    _brLog('good', 'Legal sale: ' + have + ' ' + kind + ' @ ¢' + unit + ' → ¢' + cash.toLocaleString() + kickTxt + '. +1 rep.');
+    showToast('💵 Legal sale: +¢' + cash.toLocaleString() + kickTxt + '. +1 rep.', 3600);
   }
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
   return true;
@@ -200394,25 +200569,174 @@ function _osimOfflineCapMs() { try { const a = Forge.blackRiver && Forge.blackRi
 function _osimEstDayKey() { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); } catch (e) { return new Date().toISOString().slice(0, 10); } }
 // Roll the trading day if the EST date changed since last save: fresh PRN node
 // contracts + gas-station prices reset to base. Returns true if it rolled.
-function _osimDailyRollover() { if (!_osimState) return false; const today = _osimEstDayKey(); if (_osimState.dayKey === today) return false; const first = !_osimState.dayKey; _osimState.dayKey = today; if (first) return false; _osimSeedPRN(); (_osimState.stations || []).forEach(s => { s.price = s.base || s.price; }); _osimState.priceEvent = null; if (_osimOpenFlag) { _osimToast('📅 New trading day (EST) — PRN contracts refreshed, prices reset.', 'good'); _osimRenderEventBar(); if (_osimCurrentPanel === 'network' && _O('modal').classList.contains('on')) _osimRenderNetwork(); if (_osimCurrentPanel === 'sell' && _O('modal').classList.contains('on')) _osimRenderSell(); } return true; }
+function _osimDailyRollover() { if (!_osimState) return false; const today = _osimEstDayKey(); if (_osimState.dayKey === today) return false; const first = !_osimState.dayKey; _osimState.dayKey = today; if (first) return false; _osimSeedPRN(); _osimState.stations = _osimNormStations(_osimState.stations).map(s => ({ ...s, mul: s.base })); _osimState.priceEvent = null; if (_osimOpenFlag) { _osimToast('📅 New trading day (EST) — PRN contracts refreshed, prices reset.', 'good'); _osimRenderEventBar(); if (_osimCurrentPanel === 'network' && _O('modal').classList.contains('on')) _osimRenderNetwork(); if (_osimCurrentPanel === 'sell' && _O('modal').classList.contains('on')) _osimRenderSell(); } return true; }
 // Reconcile two Extraction snapshots (local vs cloud) — newest save wins so a
 // stale cloud copy can't rewind a field saved more recently on another device.
 function _osimMergeExtraction(a, b) { if (!a || typeof a !== 'object') return (b && typeof b === 'object') ? b : null; if (!b || typeof b !== 'object') return a; return ((b.lastTick | 0) > (a.lastTick | 0)) ? b : a; }
 
 // ── REGISTRIES (mutable: admin can add keys via Forge config) ───────────────
-const OSIM_PARTS = { pipe: { name: 'Steel Pipe', cost: 18, ic: '🔧' }, motor: { name: 'Motor', cost: 38, ic: '⚙️' }, valve: { name: 'Valve', cost: 26, ic: '🎚️' }, drillbit: { name: 'Drill Bit', cost: 48, ic: '🔩' } };
+/* ══ 💲 EXTRACTION FIELD PRICING — ×10, AND ONLY ON THE COST SIDE ══════════════
+   🔴 WHAT WAS ASKED AND WHAT WAS MEASURED. The ask was "increase the resources
+   and prices ×10 — the prices are too low, players are exploiting this". Every
+   number below that a player PAYS is ×10. Not one number a player is PAID moved,
+   and that asymmetry is the whole point of this block.
+
+   Measured on the commit before this one, one WEAR CYCLE per machine (repair
+   25%→100%, then produce the 50 units that take it back to the condition floor),
+   selling at the Foundation Reserve after the 15% levy:
+
+       pumpjack   in  32₵ → out 170₵   5.31×
+       drill      in  37₵ → out 298₵   8.05×
+       refinery   in  47₵ → out 213₵   4.53×  (net of the 100 oil it burns)
+       deepcore   in  72₵ → out 170₵   2.36×
+       refinery selling that fuel to gas stations instead      9.04×
+
+   All four are Cinder-POSITIVE, and `_osimEarn` writes Profile.gems — REAL
+   currency. ×10 on the cost tables turns the ENTRY price from 104–372₵ into
+   1,040–3,720₵ and leaves those output numbers untouched.
+
+   🔴 THAT LAST ROW WAS THE ONE THAT MATTERED AND ×10 DID NOT CLOSE IT. After the
+   multiplier the four Reserve routes are all cost-NEGATIVE (0.24–0.81×) but the
+   gas-station route was still 1.62× — 473₵ in, 765₵ out — because the station
+   price was an absolute number that random-walked to a 26₵ cap against a 13₵
+   Reserve. It is closed now, but NOT by anything in this block: see the
+   invariant above `OSIM_STATIONS`. Do not read this block as having fixed it.
+
+   ⚠ WHY THE OUTPUT SIDE WAS DELIBERATELY NOT MULTIPLIED. `OSIM_RESERVE_PRICE`,
+     the station prices, `cinPer` in `_osimNewContract`, the emergency reward and
+     `nodeDeliver`'s payout are all OUTPUT VALUE. Reading "prices ×10" onto them
+     would have multiplied a live Cinder faucet by ten instead of closing it —
+     the opposite of the ask. They stay exactly where they were.
+
+   ⚠ WHY THE PART QUANTITIES WERE NOT ALSO MULTIPLIED. `parts: { pipe: 2 }` is a
+     resource AMOUNT and the pipe's `cost` is its PRICE; multiplying both puts the
+     parts half of a build at ×100, not ×10. The money axis is multiplied once.
+     `OSIM_CORE_PHASES` is the one requirement table with no price attached to it,
+     so that is where "resources ×10" lands cleanly.
+
+   ⚠ REPAIR INVERTS AT THIS SCALE AND THAT IS A REPORTED FINDING, NOT AN OVERSIGHT.
+     `_osimRepairCost` derives its cash leg from `craft`, so a pumpjack repair goes
+     32₵ → 315₵ against 170₵ of output — repairing becomes irrational and players
+     will stop. `_osimCondFactor` floors at 0.25, so an unrepaired machine never
+     stops; it just runs 4× slower forever at zero recurring cost. That is
+     DIRECTIONALLY what the ask wanted (less Cinder printed) but it makes the
+     repair button a trap. Fixing it properly means dropping the 0.6 coefficient
+     in `_osimRepairCost` to 0.06, which is a retune and not this round's ×10.
+
+   🔴 THE INVARIANT THIS DOES NOT REACH, STATED SO NOBODY RE-DERIVES IT AS A WIN.
+   Every Cinder COST in this field is optional and every Cinder INCOME is not —
+   provable by reading two functions: `_osimCondFactor` floors at 0.25 so
+   production never requires a repair, and every `_osimEarn` call site is fed by a
+   machine buffer that fills from nothing. No multiplier on any cost table can
+   bound that; only the OUTPUT side can. ×10 raises the entry fee tenfold and
+   leaves the steady state exactly where it was. */
+const OSIM_PARTS = { pipe: { name: 'Steel Pipe', cost: 180, ic: '🔧' }, motor: { name: 'Motor', cost: 380, ic: '⚙️' }, valve: { name: 'Valve', cost: 260, ic: '🎚️' }, drillbit: { name: 'Drill Bit', cost: 480, ic: '🔩' } };
 const OSIM_MACHINES = {
-  pumpjack: { name: 'Pumpjack', ic: '🛢️', parts: { pipe: 2, motor: 1 }, craft: 30, kind: 'producer', produces: 'oil', rate: 2.4, cap: 25, shape: 'pump', desc: 'Pumps crude oil from underground reserves.' },
-  drill: { name: 'Mining Drill', ic: '⛏️', parts: { drillbit: 1, motor: 1, pipe: 1 }, craft: 42, kind: 'producer', produces: 'ore', rate: 3.0, cap: 20, shape: 'rig', desc: 'Bores into bedrock to extract raw ore.' },
-  refinery: { name: 'Refinery', ic: '🏭', parts: { valve: 2, motor: 1, pipe: 2 }, craft: 65, kind: 'converter', consumes: 'oil', ratio: 2, produces: 'fuel', rate: 3.6, cap: 18, shape: 'refinery', desc: 'Converts 2 oil → 1 fuel. Needs oil in storage.' },
-  deepcore: { name: 'Deep Core Extractor', ic: '🌋', premium: true, bpKey: 'deepcore', parts: { drillbit: 2, motor: 2, pipe: 3, valve: 1 }, craft: 120, kind: 'producer', produces: 'oil', rate: 1.5, cap: 42, shape: 'rig', desc: 'Aza-grade rig. Triple-depth crude extraction.' },
+  pumpjack: { name: 'Pumpjack', ic: '🛢️', parts: { pipe: 2, motor: 1 }, craft: 300, kind: 'producer', produces: 'oil', rate: 2.4, cap: 25, shape: 'pump', desc: 'Pumps crude oil from underground reserves.' },
+  drill: { name: 'Mining Drill', ic: '⛏️', parts: { drillbit: 1, motor: 1, pipe: 1 }, craft: 420, kind: 'producer', produces: 'ore', rate: 3.0, cap: 20, shape: 'rig', desc: 'Bores into bedrock to extract raw ore.' },
+  refinery: { name: 'Refinery', ic: '🏭', parts: { valve: 2, motor: 1, pipe: 2 }, craft: 650, kind: 'converter', consumes: 'oil', ratio: 2, produces: 'fuel', rate: 3.6, cap: 18, shape: 'refinery', desc: 'Converts 2 oil → 1 fuel. Needs oil in storage.' },
+  deepcore: { name: 'Deep Core Extractor', ic: '🌋', premium: true, bpKey: 'deepcore', parts: { drillbit: 2, motor: 2, pipe: 3, valve: 1 }, craft: 1200, kind: 'producer', produces: 'oil', rate: 1.5, cap: 42, shape: 'rig', desc: 'Aza-grade rig. Triple-depth crude extraction.' },
 };
 const OSIM_TIER = { 1: { rateMul: 1, capMul: 1, label: 'I' }, 2: { rateMul: 0.66, capMul: 1.5, label: 'II' }, 3: { rateMul: 0.45, capMul: 2.2, label: 'III' } };
-const OSIM_BLUEPRINTS = { tier2: { name: 'Tier II Upgrade License', aza: 8, desc: 'Unlocks Tier II upgrades on any machine.' }, tier3: { name: 'Tier III Upgrade License', aza: 18, desc: 'Unlocks Tier III upgrades. Requires Tier II.' }, deepcore: { name: 'Deep Core Blueprint', aza: 25, desc: 'Unlocks the Deep Core Extractor.' } };
-const OSIM_RESEARCH = { supply: { name: 'Efficient Supply', ic: '📦', max: 3, costs: [6, 12, 20], desc: 'Reduces all parts costs.', eff: l => (l * 10) + '% cheaper parts' }, hardened: { name: 'Hardened Components', ic: '🛡️', max: 3, costs: [8, 16, 26], desc: 'Slows machine wear.', eff: l => [0, 25, 45, 60][l] + '% slower decay' }, automation: { name: 'Automation Relay', ic: '🤖', max: 2, costs: [18, 30], desc: 'Auto-collects full machines; L2 adds capacity.', eff: l => l >= 2 ? 'Auto-collect + 10% cap' : l >= 1 ? 'Auto-collect' : '—' }, market: { name: 'Market Insight', ic: '📈', max: 2, costs: [10, 20], desc: 'Higher sell prices everywhere.', eff: l => (l * 10) + '% better prices' }, tuning: { name: 'Resonance Tuning', ic: '🎚️', max: 3, costs: [14, 24, 40], desc: 'Permanent global production speed.', eff: l => '+' + (l * 5) + '% speed' } };
+/* ◈ SUPPLY DEPOT BLUEPRINTS + R&D — Aza cost ×10 (INPUT COST).
+   ⚠ `_OSIM.exchangeAza` (₵220 → ◈1) was deliberately LEFT ALONE. It is the only
+     Cinder→Aza mint in this file, so it is the exchange rate every Aza price here
+     is really denominated in: ×10 on the Aza numbers alone moves a Deep Core
+     Blueprint from 5,500₵ to 55,000₵ — exactly ×10 on BOTH routes. Multiplying
+     the exchange too would have compounded it to ×100.
+   🔴 BUT READ THIS BEFORE CALLING THE AZA SIDE FIXED. index.html's canonical peg
+     is 1 ◈ = $1 USD = 5,000 ₵; this field mints ◈ at 220 ₵ (and `nodeDeliver`
+     hands out 1 ◈ per 20 fuel ≈ 221 ₵, the same rate). Aza in here is therefore
+     ~22.7× cheaper than Aza anywhere else in the game, and ×10 does not change
+     that ratio by one point — it rescales both sides of it. If the exploit being
+     reported is players buying real-money goods with field-farmed Aza, the number
+     to change is the 220 in `exchangeAza`, not these. */
+const OSIM_BLUEPRINTS = { tier2: { name: 'Tier II Upgrade License', aza: 80, desc: 'Unlocks Tier II upgrades on any machine.' }, tier3: { name: 'Tier III Upgrade License', aza: 180, desc: 'Unlocks Tier III upgrades. Requires Tier II.' }, deepcore: { name: 'Deep Core Blueprint', aza: 250, desc: 'Unlocks the Deep Core Extractor.' } };
+const OSIM_RESEARCH = { supply: { name: 'Efficient Supply', ic: '📦', max: 3, costs: [60, 120, 200], desc: 'Reduces all parts costs.', eff: l => (l * 10) + '% cheaper parts' }, hardened: { name: 'Hardened Components', ic: '🛡️', max: 3, costs: [80, 160, 260], desc: 'Slows machine wear.', eff: l => [0, 25, 45, 60][l] + '% slower decay' }, automation: { name: 'Automation Relay', ic: '🤖', max: 2, costs: [180, 300], desc: 'Auto-collects full machines; L2 adds capacity.', eff: l => l >= 2 ? 'Auto-collect + 10% cap' : l >= 1 ? 'Auto-collect' : '—' }, market: { name: 'Market Insight', ic: '📈', max: 2, costs: [100, 200], desc: 'Higher sell prices everywhere.', eff: l => (l * 10) + '% better prices' }, tuning: { name: 'Resonance Tuning', ic: '🎚️', max: 3, costs: [140, 240, 400], desc: 'Permanent global production speed.', eff: l => '+' + (l * 5) + '% speed' } };
 const OSIM_RESERVE_PRICE = { oil: 4, ore: 7, fuel: 13 };
+/* ══ ⛽ GAS STATIONS — THE FUEL ARB, AND THE INVARIANT THAT CLOSES IT ══════════
+   🔴 THE DEFECT, MEASURED ON THE COMMIT BEFORE THIS ONE (2,000,000-tick sim of
+   the shipped walk, plus the shipped ×10 cost tables):
+
+     the walk was  s.price = clamp(11, 26, s.price + round((Math.random()-0.4)*3))
+     round((U-0.4)*3) is  -1 @ 23.33%, 0 @ 33.33%, +1 @ 33.33%, +2 @ 10%
+                                                        → MEAN +0.30 PER 7s TICK.
+     A mean-positive walk against a hard cap does not wander, it PINS:
+       one station   mean 25.07₵   at the 26₵ cap 51.7% of the time
+       best of three mean 25.87₵   at the 26₵ cap 88.7% of the time
+     against a Foundation Reserve that values fuel at 13₵. The station was a
+     standing 2× premium over the game's own declared price of fuel.
+
+     One refinery wear cycle (repair 25→100 = ₵293 + 1 pipe ₵180 = ₵473 in;
+     50 fuel out, net of the 100 oil it burns, 15% levy):
+       Foundation Reserve 13₵ ............. out ₵213 → 0.45×   (cost-negative)
+       station at the 26₵ cap ............. out ₵765 → 1.62×   ← REAL Profile.gems
+       ditto + Market Insight L2 .......... out ₵893 → 1.89×
+     and it is not one-shot: dumping 50 fuel knocked 26→10, which the +0.3 drift
+     walked back to the cap in a mean of 48.3 ticks = 5.6 min, against a 7.5 h
+     production time for a SINGLE fuel. The ×10 cost pass above raised every
+     honest cost tenfold and left this route exactly where it was.
+
+   🔒 THE INVARIANT. **A route a player can repeat without limit may never pay
+      more Cinder per unit than the Foundation Reserve pays for that unit.**
+      `OSIM_RESERVE_PRICE`, read through `_osimSellPrice`, is the field's ONE
+      price oracle; every unmetered buyer is a discount off it, never a premium.
+
+   ✅ WHY THIS IS PROVABLE BY READING AND NOT ONE MORE PATCHED DOOR. A clamp on
+      `sellStation` would have left `s.price` in state, still walking to 26, still
+      shown in the UI, still readable by the next buyer somebody writes — the
+      shape of bug this file has already had four rounds of. So the absolute
+      price is GONE FROM STATE. A station stores only `mul`, a fraction of the
+      reserve, and its bid is DERIVED by `_osimStationBid` — the only function in
+      the file that turns a station into money. There is no absolute station price
+      left in state for a future buyer to inherit by accident.
+
+   ❌ A CLAIM THAT USED TO SIT HERE AND WAS FALSE — LEFT IN AS A WARNING. It said
+      "`grep .price` across the OSIM block now returns nothing; there is no number
+      left to exceed the ceiling." That was true of the OSIM block and worthless,
+      because the fuel this block prices is `Profile.blackRiver.fuel` — the SAME
+      object Black River sells. `BR_MARKET.fuel.black = 16` (~line 199230) paid
+      ₵16.00/fuel with no levy against this ceiling's ₵11.05, measured, one click
+      away on the Refinery Complex screen that every field owner must already own.
+      A ceiling is only a ceiling over the whole set of buyers of a commodity, and
+      a grep scoped to one block cannot see the others. The Black River half of
+      this invariant is now stated and enforced above `BR_MARKET`; read both.
+
+   ⚠ WHAT THIS DELIBERATELY DOES NOT COVER, SO NOBODY READS IT AS BROADER THAN IT
+     IS. PRN contracts (`_osimNewContract`: fuel 16₵/u + ₵20 + Aza),
+     `nodeDeliver` (2₵/fuel + ◈1 per 20 fuel ≈ 13₵/fuel) and the emergency
+     payout still pay ABOVE 13₵ for fuel. They are exempt because they are
+     METERED, not unlimited: four PRN slots, a fixed `need` each, reseeded at
+     most once per EST trading day by `_osimDailyRollover`. The invariant is
+     about the unmetered routes. If the owner wants the metered premium gone too,
+     the number to change is `cinPer` in `_osimNewContract` — say so and it is a
+     one-line change, but it is a design call, not a leak.
+
+   ⚠ THE HONEST COST OF THE CEILING. With the ceiling AT parity the stations can
+     at best MATCH the Foundation Reserve, so a rational player just uses the
+     Reserve and the Gas Stations tab becomes flavour. That is the price of the
+     door being shut; the alternative is a premium, and any premium is a mint.
+     If stations need to matter again, give them a NON-PRICE edge (no levy, a
+     bulk bonus, a daily quota) rather than raising this ceiling back. */
+const OSIM_STATION_MUL_MIN = 0.55;   // worst bid a station will ever make: 55% of reserve
+const OSIM_STATION_MUL_MAX = 1.00;   // 🔒 THE CEILING. Never raise above 1 — see above.
+const OSIM_STATION_REVERT = 0.12;    // per tick, pull back toward the station's own base
+const OSIM_STATION_NOISE = 0.08;     // per tick, ±0.04 — ZERO mean, unlike the old walk
+const OSIM_STATION_DIP = 0.03;       // mul lost per fuel sold (50 fuel still floors it)
+const OSIM_STATIONS = [
+  { name: 'Ridgeline Fuel Co.', base: 0.88 },
+  { name: 'Cinder Pumps #7', base: 0.94 },
+  { name: 'Aza Coast Station', base: 0.78 },
+];
+function _osimFreshStations() { return OSIM_STATIONS.map(s => ({ name: s.name, base: s.base, mul: s.base })); }
 const OSIM_DECAY_PER_UNIT = 1.5; // condition % lost per UNIT produced — realistic wear that scales with output, not wall-clock seconds (admin-tunable via registry.decayPerUnit)
-const OSIM_CORE_PHASES = [{ name: 'Phase I — Foundation', req: { ore: 40, fuel: 30 }, lore: 'Lay the structural lattice of the dormant Cinder Core.' }, { name: 'Phase II — Conduits', req: { fuel: 60, oil: 40, aza: 10 }, lore: 'Thread Aza-charged conduits through the reactor housing.' }, { name: 'Phase III — Ignition', req: { fuel: 100, aza: 25 }, lore: 'Channel the final charge to reignite the Core and resonate the network.' }];
+/* ◆ CINDER CORE — the one requirement table in this file that is pure resource
+   AMOUNTS with no price attached, so "increase the resources ×10" lands here
+   without compounding against a ×10 price. It is a SINK (contributeCore only
+   ever subtracts), so ×10 cannot widen a faucet. The `aza` legs (10→100, 25→250)
+   are the largest player-facing number in this change: 350 ◈ per reconstruction
+   cycle, ≈77,000 ₵ at the field's own 220 ₵/◈ exchange. */
+const OSIM_CORE_PHASES = [{ name: 'Phase I — Foundation', req: { ore: 400, fuel: 300 }, lore: 'Lay the structural lattice of the dormant Cinder Core.' }, { name: 'Phase II — Conduits', req: { fuel: 600, oil: 400, aza: 100 }, lore: 'Thread Aza-charged conduits through the reactor housing.' }, { name: 'Phase III — Ignition', req: { fuel: 1000, aza: 250 }, lore: 'Channel the final charge to reignite the Core and resonate the network.' }];
 const OSIM_NODE_NAMES = ['PRN-01 · Cinder Basin', 'PRN-02 · Aza Foundry', 'PRN-03 · Ridgeline Relay', 'PRN-04 · Reserve Hub'];
 // admin/custom content (kept separate so it persists independently)
 const _osimCustomParts = {}, _osimCustomBlueprints = {}, _osimCustomMachines = {}, _osimCustomMachineMeshes = {}, _osimCustomResearch = {};
@@ -200420,6 +200744,11 @@ const OSIM_RND_TYPES = { parts: 'cheaper parts', decay: 'slower decay', speed: '
 // Build a custom R&D perk's effect-text fn from its type + per-level magnitude.
 function _osimMakeResearchEff(type, per) { return l => { if (type === 'autocollect') return l >= 1 ? 'Auto-collect' : '—'; const pct = Math.round(l * per * 100); return (type === 'speed' ? '+' : '') + pct + '% ' + (OSIM_RND_TYPES[type] || ''); }; }
 function _osimRegisterCustomResearch(key, def) { const d = { name: def.name, ic: def.ic || '🔬', type: def.type, per: def.per || 0, max: def.max || 3, costs: Array.isArray(def.costs) ? def.costs : [10], custom: true, desc: def.desc || ('Custom perk · ' + (OSIM_RND_TYPES[def.type] || '')) }; d.eff = _osimMakeResearchEff(d.type, d.per); _osimCustomResearch[key] = d; OSIM_RESEARCH[key] = d; }
+// 💲 Pricing epoch — bump whenever OSIM_PARTS/OSIM_MACHINES.craft/OSIM_BLUEPRINTS
+// are repriced, so a cloud-shared admin registry saved against the OLD numbers
+// cannot silently overwrite the new ones. See the block in _osimApplyAdminConfig.
+// 2 = the ×10 cost pass (parts, craft, blueprint Aza).
+const OSIM_PRICE_EPOCH = 2;
 // 🛠 Admin price/registry overrides from Forge.blackRiver.extraction.registry — applied on open.
 function _osimApplyAdminConfig() {
   try {
@@ -200430,7 +200759,29 @@ function _osimApplyAdminConfig() {
     if (cust.blueprints) for (const k in cust.blueprints) { _osimCustomBlueprints[k] = cust.blueprints[k]; OSIM_BLUEPRINTS[k] = cust.blueprints[k]; }
     if (cust.machines) for (const k in cust.machines) { _osimCustomMachines[k] = cust.machines[k]; OSIM_MACHINES[k] = cust.machines[k]; }
     if (cust.research) for (const k in cust.research) { _osimRegisterCustomResearch(k, cust.research[k]); }
-    const reg = a.registry || {};
+    let reg = a.registry || {};
+    /* 🔴 A REPRICING OF THE TABLES ABOVE IS SILENTLY UNDONE BY A STALE ADMIN SAVE.
+       The three lines further down overwrite OSIM_PARTS[k].cost, MACHINES[k].craft
+       and BLUEPRINTS[k].aza from Forge.blackRiver.extraction.registry, which is
+       CLOUD-SHARED — so if any admin ever pressed "Save pricing", every player
+       loads that admin's snapshot of the OLD numbers and the ×10 above never
+       reaches a single client. Nothing in the file made that visible; the shipped
+       table is not the effective price, `registry ?? table` is.
+
+       The guard is an epoch rather than a per-key patch, because the next
+       repricing has exactly the same problem: a registry stamped with an older
+       epoch than the tables it would overwrite has its PRICE keys dropped and the
+       shipped numbers win. Bump OSIM_PRICE_EPOCH whenever those tables change.
+
+       ⚠ Only the keys this epoch actually repriced are dropped. `partCx`,
+         `research` (max/costs overrides), `decayPerUnit`, `reservePrice` and
+         `sellSkim` are NOT touched by the ×10, so an admin's tuning of those is
+         still theirs and survives. */
+    if ((a.priceEpoch | 0) < OSIM_PRICE_EPOCH) {
+      const { parts: _staleParts, machines: _staleMachines, blueprints: _staleBP, ...kept } = reg;
+      if (_staleParts || _staleMachines || _staleBP) { try { console.warn('[osim] admin pricing registry predates OSIM_PRICE_EPOCH ' + OSIM_PRICE_EPOCH + ' — using the shipped parts/craft/blueprint prices. Re-save in System → Admin to override again.'); } catch (e) {} }
+      reg = kept;
+    }
     if (reg.research) for (const k in reg.research) { if (OSIM_RESEARCH[k]) { const o = reg.research[k]; if (Array.isArray(o.costs) && o.costs.length) OSIM_RESEARCH[k].costs = o.costs.map(n => Math.max(1, n | 0)); if (typeof o.max === 'number') OSIM_RESEARCH[k].max = Math.max(1, o.max | 0); } }
     if (reg.parts) for (const k in reg.parts) { if (OSIM_PARTS[k] && typeof reg.parts[k].cost === 'number') OSIM_PARTS[k].cost = reg.parts[k].cost; }
     if (reg.reservePrice) for (const k in reg.reservePrice) { if (typeof reg.reservePrice[k] === 'number') OSIM_RESERVE_PRICE[k] = reg.reservePrice[k]; }
@@ -200449,7 +200800,7 @@ function _osimFreshState() {
   //    ready for the refinery to turn into plastics/fuel.
   const inv = {};
   [['oil', 'crude'], ['ore', 'ore'], ['fuel', 'fuel']].forEach(([k, brk]) => { Object.defineProperty(inv, k, { enumerable: true, configurable: true, get: () => { ensureBlackRiver(); return Profile.blackRiver[brk] | 0; }, set: v => { ensureBlackRiver(); Profile.blackRiver[brk] = Math.max(0, Math.round(v)); } }); });
-  const st = { inv: inv, parts: pp, builtMachines: bm, blueprints: { tier2: false, tier3: false, deepcore: false }, research: { supply: 0, hardened: 0, automation: 0, market: 0, tuning: 0 }, placed: [], buildType: null, moveRef: null, stations: [{ name: 'Ridgeline Fuel Co.', price: 18, base: 18 }, { name: 'Cinder Pumps #7', price: 20, base: 20 }, { name: 'Aza Coast Station', price: 16, base: 16 }], prn: [], prestige: 0, core: { phase: 0, done: false, contributed: {} }, priceEvent: null, emergency: null, muted: false, stats: { produced: { oil: 0, ore: 0, fuel: 0 }, earned: 0 }, lastTick: Date.now(), dayKey: _osimEstDayKey(), nodeId: null, fuelToNode: 0 };
+  const st = { inv: inv, parts: pp, builtMachines: bm, blueprints: { tier2: false, tier3: false, deepcore: false }, research: { supply: 0, hardened: 0, automation: 0, market: 0, tuning: 0 }, placed: [], buildType: null, moveRef: null, stations: _osimFreshStations(), prn: [], prestige: 0, core: { phase: 0, done: false, contributed: {} }, priceEvent: null, emergency: null, muted: false, stats: { produced: { oil: 0, ore: 0, fuel: 0 }, earned: 0 }, lastTick: Date.now(), dayKey: _osimEstDayKey(), nodeId: null, fuelToNode: 0 };
   // 💰 cash / aza are LIVE VIEWS of the real wallet — every spend/earn in the
   //    ported code hits Profile.gems / Profile.sovereigns (and the Foundation Tax).
   Object.defineProperty(st, 'cash', { configurable: true, get: () => (typeof getCinders === 'function' ? getCinders() : (Profile.gems | 0)), set: v => { Profile.gems = Math.max(0, Math.round(v)); } });
@@ -200629,7 +200980,7 @@ function _osimRefreshTop() { const c = _O('v-cash'); if (c) c.textContent = '₵
 // ── Persistence (Profile.blackRiver.extraction) + REAL-TIME accrual ─────────
 function _osimSnapshot() { return { parts: _osimState.parts, builtMachines: _osimState.builtMachines, blueprints: _osimState.blueprints, research: _osimState.research, stations: _osimState.stations, prn: _osimState.prn, prestige: _osimState.prestige, core: _osimState.core, muted: _osimState.muted, stats: _osimState.stats, lastTick: Date.now(), dayKey: _osimState.dayKey, nodeId: _osimState.nodeId, fuelToNode: _osimState.fuelToNode, placed: _osimState.placed.map(m => ({ type: m.type, tier: m.tier, condition: m.condition, buffer: m.buffer, gx: m.gx, gz: m.gz })) }; }
 function _osimSave() { try { ensureBlackRiver(); Profile.blackRiver.extraction = _osimSnapshot(); saveProfile && saveProfile(); } catch (e) {} }
-function _osimApplySnapshot(d) { _osimState.placed.forEach(m => { _osimScene.remove(m.group); m.label.remove(); }); _osimTiles.forEach(t => t.userData.occupied = false); _osimState.parts = { ..._osimState.parts, ...(d.parts || {}) }; _osimState.builtMachines = { ..._osimState.builtMachines, ...(d.builtMachines || {}) }; _osimState.blueprints = { ..._osimState.blueprints, ...(d.blueprints || {}) }; _osimState.research = { ..._osimState.research, ...(d.research || {}) }; _osimState.stations = d.stations || _osimState.stations; _osimState.prn = (d.prn && d.prn.length) ? d.prn : _osimState.prn; _osimState.prestige = d.prestige || 0; _osimState.core = d.core || { phase: 0, done: false, contributed: {} }; _osimState.muted = !!d.muted; if (d.stats) _osimState.stats = d.stats; _osimState.lastTick = d.lastTick || Date.now(); _osimState.dayKey = d.dayKey || _osimEstDayKey(); _osimState.nodeId = d.nodeId || null; _osimState.fuelToNode = d.fuelToNode | 0; _osimState.placed = []; _osimEnsureKeys(); (d.placed || []).forEach(s => { if (!OSIM_MACHINES[s.type]) return; const tile = _osimTiles.find(t => t.userData.gx === s.gx && t.userData.gz === s.gz); if (tile && !tile.userData.occupied) _osimSpawnMachine(s.type, tile, s); }); _osimSetCoreVisual(); _osimRefreshTop(); }
+function _osimApplySnapshot(d) { _osimState.placed.forEach(m => { _osimScene.remove(m.group); m.label.remove(); }); _osimTiles.forEach(t => t.userData.occupied = false); _osimState.parts = { ..._osimState.parts, ...(d.parts || {}) }; _osimState.builtMachines = { ..._osimState.builtMachines, ...(d.builtMachines || {}) }; _osimState.blueprints = { ..._osimState.blueprints, ...(d.blueprints || {}) }; _osimState.research = { ..._osimState.research, ...(d.research || {}) }; _osimState.stations = _osimNormStations(d.stations || _osimState.stations); /* 🔒 a pre-ceiling save carries an absolute `price` up to 26₵ — normalise on the way in so no stale number can outlive the fix */ _osimState.prn = (d.prn && d.prn.length) ? d.prn : _osimState.prn; _osimState.prestige = d.prestige || 0; _osimState.core = d.core || { phase: 0, done: false, contributed: {} }; _osimState.muted = !!d.muted; if (d.stats) _osimState.stats = d.stats; _osimState.lastTick = d.lastTick || Date.now(); _osimState.dayKey = d.dayKey || _osimEstDayKey(); _osimState.nodeId = d.nodeId || null; _osimState.fuelToNode = d.fuelToNode | 0; _osimState.placed = []; _osimEnsureKeys(); (d.placed || []).forEach(s => { if (!OSIM_MACHINES[s.type]) return; const tile = _osimTiles.find(t => t.userData.gx === s.gx && t.userData.gz === s.gz); if (tile && !tile.userData.occupied) _osimSpawnMachine(s.type, tile, s); }); _osimSetCoreVisual(); _osimRefreshTop(); }
 function _osimLoadFromProfile() { try { const d = (Profile.blackRiver && Profile.blackRiver.extraction); if (d && typeof d === 'object' && (d.placed || d.parts)) { _osimApplySnapshot(d); return true; } } catch (e) {} return false; }
 // Catch up production for the wall-clock time the field was closed (capped).
 function _osimOfflineCatchUp() { try { const last = _osimState.lastTick || Date.now(); let elapsed = Date.now() - last; if (elapsed < 5000) { _osimState.lastTick = Date.now(); return; } elapsed = Math.min(elapsed, _osimOfflineCapMs()); const secs = elapsed / 1000; let any = 0; for (const m of _osimState.placed) any += _osimStepMachine(m, secs); _osimState.lastTick = Date.now(); if (any > 0) _osimToast('⛏ While you were away: +' + any + ' units produced', 'good'); } catch (e) {} }
@@ -200735,7 +201086,7 @@ function _osimScheduleEvent() { const id = setTimeout(_osimTriggerEvent, 45000 +
 function _osimRenderEventBar() { const bar = _O('eventbar'); if (!bar) return; let h = ''; if (_osimState.priceEvent && Date.now() < _osimState.priceEvent.until) { const cd = Math.ceil((_osimState.priceEvent.until - Date.now()) / 1000); h += '<div class="osim-echip spike">📈 ' + _osimState.priceEvent.resource + ' spike ×' + _osimState.priceEvent.mult.toFixed(1) + '<div class="cd">' + cd + 's left</div></div>'; } if (_osimState.emergency && Date.now() < _osimState.emergency.until) { const cd = Math.ceil((_osimState.emergency.until - Date.now()) / 1000); h += '<div class="osim-echip emerg">🛰️ Emergency: ' + _osimState.emergency.progress + '/' + _osimState.emergency.need + ' ' + _osimState.emergency.resource + '<div class="cd">' + cd + 's left · ◈' + _osimState.emergency.rewardAza + '</div></div>'; } bar.innerHTML = h; }
 
 // ── Tutorial ────────────────────────────────────────────────────────────────
-const _OSIM_TUT = [{ t: 'Welcome to Black River Petroleum', b: 'Build an extraction empire: pump oil, mine ore, refine fuel, and sell it. Drag to orbit, scroll to zoom.' }, { t: '1 · Shop for Parts', b: 'Buy parts with Cinder ₵ in the Shop. Parts craft machines and repair them.' }, { t: '2 · Craft Machinery', b: 'In Craft, combine parts into machines: Pumpjacks make oil, Drills make ore, Refineries make fuel.' }, { t: '3 · Build on the Field', b: 'In Build, pick a machine then click an empty tile to deploy it. Buffers fill over time — even while you\'re away.' }, { t: '4 · Collect & Sell', b: 'Click a machine to manage it, or Collect everything. Sell at the Market — stations pay more for fuel.' }, { t: '5 · PRN & Cinder Core', b: 'Fulfill PRN node contracts for Aza Coin ◈, then reignite the Cinder Core to prestige.' }, { t: '6 · Make it yours', b: 'Repair worn machines, buy R&D perks, and link your field to a real District Node to rebuild it with fuel. (Admins set prices, R&D and 3D models in System → Admin.)' }];
+const _OSIM_TUT = [{ t: 'Welcome to Black River Petroleum', b: 'Build an extraction empire: pump oil, mine ore, refine fuel, and sell it. Drag to orbit, scroll to zoom.' }, { t: '1 · Shop for Parts', b: 'Buy parts with Cinder ₵ in the Shop. Parts craft machines and repair them.' }, { t: '2 · Craft Machinery', b: 'In Craft, combine parts into machines: Pumpjacks make oil, Drills make ore, Refineries make fuel.' }, { t: '3 · Build on the Field', b: 'In Build, pick a machine then click an empty tile to deploy it. Buffers fill over time — even while you\'re away.' }, { t: '4 · Collect & Sell', b: 'Click a machine to manage it, or Collect everything. Sell at the Market — the Foundation Reserve is the guaranteed price; stations bid under it.' }, { t: '5 · PRN & Cinder Core', b: 'Fulfill PRN node contracts for Aza Coin ◈, then reignite the Cinder Core to prestige.' }, { t: '6 · Make it yours', b: 'Repair worn machines, buy R&D perks, and link your field to a real District Node to rebuild it with fuel. (Admins set prices, R&D and 3D models in System → Admin.)' }];
 function _osimShowTutorial() { _osimTutStep = 0; _osimRenderTut(); _O('tutorial').style.display = 'flex'; _O('modal').classList.remove('on'); }
 function _osimRenderTut() { const s = _OSIM_TUT[_osimTutStep]; _O('tuttitle').textContent = s.t; _O('tutbody').textContent = s.b; _O('tutstep').textContent = (_osimTutStep + 1) + ' / ' + _OSIM_TUT.length; _O('tutback').style.visibility = _osimTutStep ? 'visible' : 'hidden'; _O('tutnext').textContent = _osimTutStep === _OSIM_TUT.length - 1 ? 'Start Playing' : 'Next'; }
 function _osimCloseTut() { _O('tutorial').style.display = 'none'; try { localStorage.setItem('osim_tut_done', '1'); } catch (e) {} }
@@ -200761,7 +201112,13 @@ function _osimOpen() {
   _osimScheduleEvent();
   // live timers: expiry sweep, station drift, autosave, net-worth history
   _osimIv(() => { let changed = false; if (_osimState.priceEvent && Date.now() >= _osimState.priceEvent.until) { _osimState.priceEvent = null; changed = true; } if (_osimState.emergency && Date.now() >= _osimState.emergency.until) { _osimState.emergency = null; changed = true; } _osimRenderEventBar(); if (changed && _osimCurrentPanel === 'network' && _O('modal').classList.contains('on')) _osimRenderNetwork(); }, 1000);
-  _osimIv(() => { _osimState.stations.forEach(s => { s.price = Math.max(11, Math.min(26, s.price + Math.round((Math.random() - 0.4) * 3))); }); if (_osimCurrentPanel === 'sell' && _osimSellTab === 'stations' && _O('modal').classList.contains('on')) _osimRenderSell(); }, 7000);
+  // ⛽ Station drift — mean-reverting toward each station's own base, ZERO mean.
+  // The walk this replaces was `clamp(11,26, price + round((Math.random()-0.4)*3))`,
+  // whose step averaged +0.30 and therefore pinned the best of three stations at
+  // the 26₵ cap 88.7% of the time (2M-tick sim). Reverting to `base` instead of
+  // random-walking is what makes the mean a design number rather than whichever
+  // barrier the drift happens to point at. See the block above OSIM_STATIONS.
+  _osimIv(() => { _osimState.stations.forEach(s => { const b = (+s.base >= OSIM_STATION_MUL_MIN && +s.base <= OSIM_STATION_MUL_MAX) ? +s.base : OSIM_STATION_MUL_MAX; s.mul = Math.max(OSIM_STATION_MUL_MIN, Math.min(OSIM_STATION_MUL_MAX, _osimStationMul(s) + (b - _osimStationMul(s)) * OSIM_STATION_REVERT + (Math.random() - 0.5) * OSIM_STATION_NOISE)); }); if (_osimCurrentPanel === 'sell' && _osimSellTab === 'stations' && _O('modal').classList.contains('on')) _osimRenderSell(); }, 7000);
   _osimIv(() => { _osimWorthHistory.push(_osimNetWorth()); if (_osimWorthHistory.length > 80) _osimWorthHistory.shift(); if (_osimCurrentPanel === 'system' && _osimSysTab === 'stats' && _O('modal').classList.contains('on')) _osimRenderSystem(); }, 3000);
   _osimIv(() => { if (_osimDailyRollover()) _osimRefreshTop(); }, 60000);
   _osimIv(() => _osimSave(), 15000);
@@ -200819,7 +201176,23 @@ function _osimRenderShop() { const pt = _O('ptitle'); pt.textContent = 'Supply D
 function _osimRenderCraft() { _O('ptitle').textContent = 'Fabrication'; _O('psub').textContent = 'ASSEMBLE PARTS INTO MACHINERY'; let h = '<div class="grid2">'; for (const k in OSIM_MACHINES) { const m = OSIM_MACHINES[k]; if (!_osimMachineUnlocked(k)) continue; const reqList = Object.entries(m.parts || {}).map(([pk, n]) => { if (!OSIM_PARTS[pk]) return ''; const ok = (_osimState.parts[pk] || 0) >= n; return '<span style="color:' + (ok ? '#9fffc4' : '#e08b8b') + '">' + _osimEsc(OSIM_PARTS[pk].name) + ' ' + (_osimState.parts[pk] || 0) + '/' + n + '</span>'; }).filter(Boolean).join(' · ') || '<span style="color:#9fffc4">no parts</span>'; const can = Object.entries(m.parts || {}).every(([pk, n]) => (_osimState.parts[pk] || 0) >= n) && _osimState.cash >= m.craft; const cu = _osimCustomMachines[k]; h += '<div class="osim-card ' + (m.premium ? 'prem' : '') + '"><div class="row"><h3><span class="ic">' + (m.ic || '🔧') + '</span>' + _osimEsc(m.name) + (m.premium ? '<span class="osim-badge t3">AZA</span>' : '') + (cu ? '<span class="osim-badge custom">CUSTOM</span>' : '') + '</h3><span class="have">Built: ' + (_osimState.builtMachines[k] || 0) + '</span></div><div class="desc">' + _osimEsc(m.desc || '') + '</div><div class="reqs">Output: <b>' + _osimMachineOutTxt(m) + '</b> · cap ' + m.cap + '<br>Needs: ' + reqList + ' + <span class="price">₵' + m.craft + '</span></div><div class="row"><span class="have">' + (can ? 'Ready' : 'Missing materials') + '</span><button class="osim-buy green" ' + (can ? '' : 'disabled') + ' onclick="_OSIM.craftMachine(\'' + k + '\')">Craft</button></div></div>'; } h += '</div>'; if (!_osimState.blueprints.deepcore) h += '<div class="empty">🌋 Unlock the <b>Deep Core Blueprint</b> in the Shop (Aza) to fabricate the highest-output rig. Author your own machines in System → Admin.</div>'; _O('pbody').innerHTML = h; }
 function _osimRenderBuild() { _O('ptitle').textContent = 'Deploy Machinery'; _O('psub').textContent = 'PLACE FABRICATED MACHINES ON THE FIELD'; if (!Object.values(_osimState.builtMachines).some(v => v > 0)) { _O('pbody').innerHTML = '<div class="empty">No machines fabricated yet.<br>Buy parts in the Shop, then Craft a machine first.</div>'; return; } let h = '<div class="grid2">'; for (const k in OSIM_MACHINES) { const m = OSIM_MACHINES[k], n = _osimState.builtMachines[k] || 0; if (n <= 0) continue; h += '<div class="osim-card ' + (m.premium ? 'prem' : '') + '"><div class="row"><h3><span class="ic">' + (m.ic || '🔧') + '</span>' + _osimEsc(m.name) + '</h3><span class="have">Available: <b style="color:#f0c75e">' + n + '</b></span></div><div class="desc">' + _osimEsc(m.desc || '') + '</div><div class="row"><span class="have">Click to enter build mode</span><button class="osim-buy" onclick="_OSIM.startBuild(\'' + k + '\')">Build</button></div></div>'; } h += '</div>'; _O('pbody').innerHTML = h; }
 function _osimSellPrice(r) { let p = OSIM_RESERVE_PRICE[r]; if (_osimState.priceEvent && _osimState.priceEvent.resource === r && Date.now() < _osimState.priceEvent.until) p *= _osimState.priceEvent.mult; return Math.round(p * _osimMarketMult()); }
-function _osimRenderSell() { _O('ptitle').textContent = 'Market'; _O('psub').textContent = 'SELL OUTPUT FOR CINDER'; const skimPct = Math.round(_osimSellSkim() * 100); let h = '<div class="tabs"><div class="osim-tab ' + (_osimSellTab === 'reserve' ? 'act' : '') + '" onclick="_OSIM.setSellTab(\'reserve\')">🏛️ Foundation Reserve</div><div class="osim-tab ' + (_osimSellTab === 'stations' ? 'act' : '') + '" onclick="_OSIM.setSellTab(\'stations\')">⛽ Gas Stations</div></div>'; if (_osimSellTab === 'reserve') { h += '<div class="statline">Guaranteed buyer at a stable floor. A <b>' + skimPct + '% Foundation levy</b> applies to all sales.' + (_osimState.priceEvent && Date.now() < _osimState.priceEvent.until ? ' <b style="color:#f0c75e">📈 ' + _osimState.priceEvent.resource + ' spike active!</b>' : '') + '</div>'; for (const r of ['oil', 'ore', 'fuel']) { const pr = _osimSellPrice(r), up = pr > Math.round(OSIM_RESERVE_PRICE[r] * _osimMarketMult()); h += '<div class="osim-sellrow"><div class="info"><b>' + r.toUpperCase() + '</b> · ₵' + pr + ' each' + (up ? ' 📈' : '') + '<div class="qty">In storage: ' + _osimState.inv[r] + '</div></div><div style="display:flex;gap:6px"><button class="osim-buy" ' + (_osimState.inv[r] < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellRes(\'' + r + '\',1)">Sell 1</button><button class="osim-buy green" ' + (_osimState.inv[r] < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellRes(\'' + r + '\',\'all\')">Sell All</button></div></div>'; } } else { h += '<div class="statline">Player stations buy <b>fuel</b> at premium, fluctuating rates (' + skimPct + '% levy applies).</div><div class="osim-sellrow" style="background:rgba(212,175,55,.07)"><div class="info">Your Fuel storage<div class="qty">Available: ' + _osimState.inv.fuel + '</div></div></div>'; _osimState.stations.forEach((s, i) => { const pr = Math.round(s.price * _osimMarketMult()); h += '<div class="osim-sellrow"><div class="info"><b>' + _osimEsc(s.name) + '</b> · ₵' + pr + '/fuel<div class="station">recovers over time</div></div><div style="display:flex;gap:6px"><button class="osim-buy" ' + (_osimState.inv.fuel < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellStation(' + i + ',1)">Sell 1</button><button class="osim-buy green" ' + (_osimState.inv.fuel < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellStation(' + i + ',\'all\')">Sell All</button></div></div>'; }); } _O('pbody').innerHTML = h; }
+/* ⛽ A station's live bid, in Cinder per fuel. THE ONLY function that turns a
+   station into money — the UI, the sale and the net-worth line all call it, so
+   what is displayed is exactly what is paid.
+   It returns a price that ALREADY includes Market Insight and any fuel price
+   event, because it is derived from `_osimSellPrice('fuel')`. Callers must NOT
+   multiply by `_osimMarketMult()` again — the old `sellStation` did, which is
+   how Market Insight L2 turned the 26₵ cap into an effective 31₵.
+   `mul` is clamped on READ as well as on write: a save written before this
+   change carries no `mul` at all, and `undefined` must degrade to the ceiling,
+   never past it. */
+function _osimStationMul(s) { const m = +(s && s.mul); return (m >= OSIM_STATION_MUL_MIN && m <= OSIM_STATION_MUL_MAX) ? m : OSIM_STATION_MUL_MAX; }
+function _osimStationBid(s) { return Math.max(1, Math.round(_osimSellPrice('fuel') * _osimStationMul(s))); }
+// Migrate/repair the station list: pre-ceiling saves stored an absolute `price`
+// (walked as high as 26₵) and a `base` in Cinder, both meaningless now. Anything
+// that is not a valid mul is re-seeded from the shipped table by position.
+function _osimNormStations(list) { const src = Array.isArray(list) ? list : []; return OSIM_STATIONS.map((def, i) => { const old = src[i] || {}; const b = +old.base; const base = (b >= OSIM_STATION_MUL_MIN && b <= OSIM_STATION_MUL_MAX) ? b : def.base; const m = +old.mul; return { name: typeof old.name === 'string' && old.name ? old.name : def.name, base: base, mul: (m >= OSIM_STATION_MUL_MIN && m <= OSIM_STATION_MUL_MAX) ? m : base }; }); }
+function _osimRenderSell() { _O('ptitle').textContent = 'Market'; _O('psub').textContent = 'SELL OUTPUT FOR CINDER'; const skimPct = Math.round(_osimSellSkim() * 100); let h = '<div class="tabs"><div class="osim-tab ' + (_osimSellTab === 'reserve' ? 'act' : '') + '" onclick="_OSIM.setSellTab(\'reserve\')">🏛️ Foundation Reserve</div><div class="osim-tab ' + (_osimSellTab === 'stations' ? 'act' : '') + '" onclick="_OSIM.setSellTab(\'stations\')">⛽ Gas Stations</div></div>'; if (_osimSellTab === 'reserve') { h += '<div class="statline">Guaranteed buyer at a stable floor. A <b>' + skimPct + '% Foundation levy</b> applies to all sales.' + (_osimState.priceEvent && Date.now() < _osimState.priceEvent.until ? ' <b style="color:#f0c75e">📈 ' + _osimState.priceEvent.resource + ' spike active!</b>' : '') + '</div>'; for (const r of ['oil', 'ore', 'fuel']) { const pr = _osimSellPrice(r), up = pr > Math.round(OSIM_RESERVE_PRICE[r] * _osimMarketMult()); h += '<div class="osim-sellrow"><div class="info"><b>' + r.toUpperCase() + '</b> · ₵' + pr + ' each' + (up ? ' 📈' : '') + '<div class="qty">In storage: ' + _osimState.inv[r] + '</div></div><div style="display:flex;gap:6px"><button class="osim-buy" ' + (_osimState.inv[r] < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellRes(\'' + r + '\',1)">Sell 1</button><button class="osim-buy green" ' + (_osimState.inv[r] < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellRes(\'' + r + '\',\'all\')">Sell All</button></div></div>'; } } else { h += '<div class="statline">Player stations bid on <b>fuel</b> at fluctuating rates, <b>never above</b> the Foundation Reserve (₵' + _osimSellPrice('fuel') + ') — shop for the best bid, or just take the Reserve (' + skimPct + '% levy applies).</div><div class="osim-sellrow" style="background:rgba(212,175,55,.07)"><div class="info">Your Fuel storage<div class="qty">Available: ' + _osimState.inv.fuel + '</div></div></div>'; _osimState.stations.forEach((s, i) => { const pr = _osimStationBid(s); /* 🔒 the SAME function the sale uses, so the shown price is the paid price */ h += '<div class="osim-sellrow"><div class="info"><b>' + _osimEsc(s.name) + '</b> · ₵' + pr + '/fuel<div class="station">' + Math.round(_osimStationMul(s) * 100) + '% of Reserve · recovers over time</div></div><div style="display:flex;gap:6px"><button class="osim-buy" ' + (_osimState.inv.fuel < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellStation(' + i + ',1)">Sell 1</button><button class="osim-buy green" ' + (_osimState.inv.fuel < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellStation(' + i + ',\'all\')">Sell All</button></div></div>'; }); } _O('pbody').innerHTML = h; }
 function _osimRenderResearch() { _O('ptitle').textContent = 'Research & Development'; _O('psub').textContent = 'SPEND AZA COIN ON PERMANENT PERKS'; let h = '<div class="statline">R&amp;D perks are permanent and carry across reconstruction cycles.</div><div class="grid2">'; for (const k in OSIM_RESEARCH) { const r = OSIM_RESEARCH[k], lvl = _osimState.research[k], maxed = lvl >= r.max, cost = maxed ? 0 : r.costs[lvl]; h += '<div class="osim-card prem"><div class="row"><h3><span class="ic">' + r.ic + '</span>' + r.name + '</h3><span class="have">Lv ' + lvl + '/' + r.max + '</span></div><div class="desc">' + r.desc + '</div><div class="reqs">Current: <b>' + r.eff(lvl) + '</b>' + (maxed ? '' : '<br>Next: <b>' + r.eff(lvl + 1) + '</b>') + '</div><div class="row"><span class="' + (maxed ? 'have' : 'priceA') + '">' + (maxed ? 'Maxed' : '◈' + cost) + '</span><button class="osim-buy aza" ' + (maxed || _osimState.aza < cost ? 'disabled' : '') + ' onclick="_OSIM.buyResearch(\'' + k + '\')">' + (maxed ? 'Complete' : 'Research') + '</button></div></div>'; } h += '</div>'; _O('pbody').innerHTML = h; }
 function _osimRenderNetwork() { _O('ptitle').textContent = 'Planetary Reconstruction Network'; _O('psub').textContent = 'NODE CONTRACTS · CINDER CORE'; let h = '<div class="tabs"><div class="osim-tab ' + (_osimNetTab === 'nodes' ? 'act' : '') + '" onclick="_OSIM.setNetTab(\'nodes\')">🛰️ Node Contracts</div><div class="osim-tab ' + (_osimNetTab === 'core' ? 'act' : '') + '" onclick="_OSIM.setNetTab(\'core\')">◆ Cinder Core</div></div>';
   if (_osimNetTab === 'nodes') { if (_osimState.emergency && Date.now() < _osimState.emergency.until) { const em = _osimState.emergency, have = _osimState.inv[em.resource], pct = Math.min(100, Math.round(em.progress / em.need * 100)), cd = Math.max(0, Math.ceil((em.until - Date.now()) / 1000)); h += '<div class="osim-sellrow emerg"><div class="info"><b style="color:#4fd6d6">🛰️ EMERGENCY CONTRACT</b> · ' + cd + 's left<br>Deliver <b>' + em.need + ' ' + em.resource + '</b> · <span class="price">₵' + em.rewardCinder + '</span> + <span class="priceA">◈' + em.rewardAza + '</span><div class="qty">Delivered ' + em.progress + '/' + em.need + ' · hold ' + have + '</div><div class="pbar"><div style="width:' + pct + '%"></div></div></div><button class="osim-buy aza" ' + (have < 1 ? 'disabled' : '') + ' onclick="_OSIM.deliverEmergency()">Deliver</button></div>'; } h += _osimRenderNodeLink(); }
@@ -200879,7 +201252,7 @@ function _osimRenderAdmin() {
 // ── Admin custom-content persistence (Forge.blackRiver.extraction.custom) ────
 function _osimSaveCustom() { try { if (!Forge.blackRiver) Forge.blackRiver = {}; if (!Forge.blackRiver.extraction) Forge.blackRiver.extraction = {}; const research = {}; for (const k in _osimCustomResearch) { const r = _osimCustomResearch[k]; research[k] = { name: r.name, ic: r.ic, type: r.type, per: r.per, max: r.max, costs: r.costs, desc: r.desc }; } Forge.blackRiver.extraction.custom = { parts: _osimCustomParts, blueprints: _osimCustomBlueprints, machines: _osimCustomMachines, research }; saveForge && saveForge(); } catch (e) {} }
 // 💲 Save admin pricing overrides (parts/machines/blueprints/reserve/skim/research) → Forge + apply live.
-function _osimSavePricing(reg, sellSkim, extra) { try { if (!Forge.blackRiver) Forge.blackRiver = {}; if (!Forge.blackRiver.extraction) Forge.blackRiver.extraction = {}; const E = Forge.blackRiver.extraction; E.registry = Object.assign({}, E.registry, reg); if (typeof sellSkim === 'number') E.sellSkim = Math.max(0, Math.min(0.9, sellSkim)); if (extra) { if (typeof extra.prodSecondsMul === 'number' && extra.prodSecondsMul > 0) E.prodSecondsMul = extra.prodSecondsMul; if (typeof extra.offlineCapHours === 'number' && extra.offlineCapHours > 0) E.offlineCapHours = extra.offlineCapHours; } saveForge && saveForge(); _osimApplyAdminConfig(); } catch (e) {} }
+function _osimSavePricing(reg, sellSkim, extra) { try { if (!Forge.blackRiver) Forge.blackRiver = {}; if (!Forge.blackRiver.extraction) Forge.blackRiver.extraction = {}; const E = Forge.blackRiver.extraction; E.registry = Object.assign({}, E.registry, reg); E.priceEpoch = OSIM_PRICE_EPOCH; /* stamp: a save made against the CURRENT tables is deliberate and must survive the epoch guard */ if (typeof sellSkim === 'number') E.sellSkim = Math.max(0, Math.min(0.9, sellSkim)); if (extra) { if (typeof extra.prodSecondsMul === 'number' && extra.prodSecondsMul > 0) E.prodSecondsMul = extra.prodSecondsMul; if (typeof extra.offlineCapHours === 'number' && extra.offlineCapHours > 0) E.offlineCapHours = extra.offlineCapHours; } saveForge && saveForge(); _osimApplyAdminConfig(); } catch (e) {} }
 
 // ── Model upload (.glb → device-local via IDB) ──────────────────────────────
 function _osimSetModelUrl(mkey, url) { try { if (!Forge.blackRiver) Forge.blackRiver = {}; if (!Forge.blackRiver.extraction) Forge.blackRiver.extraction = {}; const E = Forge.blackRiver.extraction; if (!E.models) E.models = {}; if (mkey === 'core') E.models.core = url; else if (mkey === 'node') E.models.node = url; else if (mkey.indexOf('cm_') === 0) { if (!E.models.machines) E.models.machines = {}; E.models.machines[mkey.slice(3)] = url; } saveForge && saveForge(); } catch (e) {} }
@@ -200956,7 +201329,11 @@ window._OSIM = {
   startBuild: k => { _osimState.buildType = k; _osimState.moveRef = null; _O('modal').classList.remove('on'); _O('buildtext').textContent = '🏗️ Placing ' + OSIM_MACHINES[k].name + ' — click an empty tile'; _O('buildbanner').classList.add('on'); },
   setSellTab: t => { _osimSellTab = t; _osimRenderSell(); },
   sellRes: (r, qty) => { const have = _osimState.inv[r]; if (have < 1) return; const n = qty === 'all' ? have : Math.min(qty, have); const g = Math.round(n * _osimSellPrice(r) * (1 - _osimSellSkim())); _osimState.inv[r] -= n; _osimEarn(g); _osimSfx('sell'); _osimRefreshTop(); _osimRenderSell(); _osimToast('Sold ' + n + ' ' + r + ' → +₵' + g, 'good'); },
-  sellStation: (i, qty) => { const have = _osimState.inv.fuel; if (have < 1) return; const s = _osimState.stations[i]; const n = qty === 'all' ? have : Math.min(qty, have); const g = Math.round(n * Math.round(s.price * _osimMarketMult()) * (1 - _osimSellSkim())); _osimState.inv.fuel -= n; _osimEarn(g); s.price = Math.max(10, s.price - Math.ceil(n * 0.4)); _osimSfx('sell'); _osimRefreshTop(); _osimRenderSell(); _osimToast('Sold ' + n + ' fuel → ' + _osimEsc(s.name) + ' → +₵' + g, 'good'); },
+  // 🔒 Bounded by `_osimStationBid` — at most the Foundation Reserve price for
+  //    fuel, Market Insight and price events already inside it (do NOT reapply
+  //    _osimMarketMult here; the old code did, and that is how L2 research turned
+  //    the 26₵ cap into 31₵ paid). Selling still walks the station's `mul` down.
+  sellStation: (i, qty) => { const have = _osimState.inv.fuel; if (have < 1) return; const s = _osimState.stations[i]; if (!s) return; const n = qty === 'all' ? have : Math.min(qty, have); const g = Math.round(n * _osimStationBid(s) * (1 - _osimSellSkim())); _osimState.inv.fuel -= n; _osimEarn(g); s.mul = Math.max(OSIM_STATION_MUL_MIN, _osimStationMul(s) - n * OSIM_STATION_DIP); _osimSfx('sell'); _osimRefreshTop(); _osimRenderSell(); _osimToast('Sold ' + n + ' fuel → ' + _osimEsc(s.name) + ' → +₵' + g, 'good'); },
   setNetTab: t => { _osimNetTab = t; _osimRenderNetwork(); },
   nodeRegister: id => { const n = _osimNodeById(id); if (!n) return; _osimState.nodeId = id; _osimSave(); _osimSfx('aza'); _osimToast('🏙️ Linked to ' + _osimNodeName(n) + ' — fuel you deliver now rebuilds it.', 'aza'); _osimRenderNetwork(); },
   nodeLeave: () => { _osimState.nodeId = null; _osimState.fuelToNode = 0; _osimSave(); _osimToast('🚪 Unlinked from the district.', 'good'); _osimRenderNetwork(); },
@@ -200999,10 +201376,11 @@ function _osimResetProgress() { _osimState.placed.forEach(m => { _osimScene.remo
 let _osimGL = null;
 function _brRenderRefinery(s) {
   const refCost = 3000 + s.refineries * 2000;
-  const canBatch = s.refineries > 0 && s.crude >= BR_REFINE.crudePerBatch;
+  const perBatch = _brCrudePerBatch();   // 🔒 the effective cost, floor included
+  const canBatch = s.refineries > 0 && s.crude >= perBatch;
   return '<div class="br-panel">' +
       '<h3>🏭 Refinery Complex — ' + s.refineries + ' unit' + (s.refineries === 1 ? '' : 's') + '</h3>' +
-      '<p class="br-muted">Crude oil is worthless until refined. Each batch burns <b style="color:#e8dcc4">' + BR_REFINE.crudePerBatch + ' crude</b> → <b style="color:#e8dcc4">' + BR_REFINE.yield.fuel + ' fuel · ' + BR_REFINE.yield.plastics + ' plastics · ' + BR_REFINE.yield.chemicals + ' chemicals</b>. Refineries can catch fire — a blaze destroys the batch and costs cinder.</p>' +
+      '<p class="br-muted">Crude oil is worthless until refined. Each batch burns <b style="color:#e8dcc4">' + perBatch + ' crude</b> → <b style="color:#e8dcc4">' + BR_REFINE.yield.fuel + ' fuel · ' + BR_REFINE.yield.plastics + ' plastics · ' + BR_REFINE.yield.chemicals + ' chemicals</b>. Refineries can catch fire — a blaze destroys the batch and costs cinder.</p>' +
       '<div style="margin:14px 0;">' + _brBar('Crude in storage', s.crude, Math.max(400, s.crude), '#e8a13a') + '</div>' +
       '<div class="br-grid2">' +
         '<button class="br-btn br-btn-primary"' + (canBatch ? '' : ' disabled') + ' id="br-refine">⚗️ Refine Batch ×1</button>' +
@@ -201039,11 +201417,15 @@ function _brBindRefinery() {
 
 function _brRenderMarket(s) {
   const wColor = s.wanted > 66 ? '#e8593a' : s.wanted > 33 ? '#e6b660' : '#5dca8c';
+  const skimPct = Math.round(_osimSellSkim() * 100);
   const rows = Object.keys(BR_MARKET).map(k => {
-    const p = BR_MARKET[k]; const have = s[k];
+    // 🔒 `_brSellPrice` is the SAME function the sale uses, so what is shown is
+    //    what is paid. The old row printed BR_MARKET's absolute numbers, which
+    //    is how a ₵16 fuel price sat in the UI next to an ₵11.05 ceiling.
+    const have = s[k], lp = _brSellPrice(k, false), bp = _brSellPrice(k, true);
     return '<div class="br-row">' +
       '<span class="br-row-ico">' + (k === 'fuel' ? '⛽' : k === 'plastics' ? '🧱' : '⚗️') + '</span>' +
-      '<div class="br-row-info"><b>' + k + '</b><small>Have ' + _brFmt(have) + ' · legal <span class="br-price">¢' + p.legal + '</span> · black <span class="br-price">¢' + p.black + '</span>/unit</small></div>' +
+      '<div class="br-row-info"><b>' + k + '</b><small>Have ' + _brFmt(have) + ' · legal <span class="br-price">¢' + lp + '</span> · black <span class="br-price">¢' + bp + '</span>/unit · Reserve ¢' + _brReserve(k) + '</small></div>' +
       '<div style="display:flex;gap:6px;">' +
         '<button class="br-btn"' + (have > 0 ? '' : ' disabled') + ' data-br-sell="' + k + '" data-br-black="0">Legal</button>' +
         '<button class="br-btn br-btn-danger"' + (have > 0 ? '' : ' disabled') + ' data-br-sell="' + k + '" data-br-black="1">Black</button>' +
@@ -201058,7 +201440,7 @@ function _brRenderMarket(s) {
     '<div class="br-panel">' +
       '<h3>💰 Sell Refined Product</h3>' +
       rows +
-      '<p class="br-muted" style="margin-top:8px;">A portion of sold volume returns to your game salvage as fuel / scrap / corrupted essence.</p>' +
+      '<p class="br-muted" style="margin-top:8px;">Buyers bid a fraction of the <b>Foundation Reserve</b> price and never above it; a <b>' + skimPct + '% Foundation levy</b> applies, same as the Reserve. A portion of sold volume returns to your game salvage as fuel / scrap / corrupted essence, and its value is taken out of the sale.</p>' +
     '</div>';
 }
 function _brBindMarket() {

@@ -3571,6 +3571,14 @@
   .vs-tv-portrait .forge-thumb-slot { width: 100%; height: 100%; display: flex; align-items: flex-end; justify-content: center; }
   .vs-xcom-bigportrait .forge-thumb-slot img { width: 100%; height: 100%; object-fit: contain; object-position: bottom center; }
   .vs-tv-portrait .forge-thumb-slot img { width: 100%; height: 100%; object-fit: contain; }
+  /* 🖼 COVER-FIT static thumb. _cardFaceArt(card,'cover') used to bake object-fit
+     straight into its own <img>; it now reuses _forgeRowThumb, whose markup is
+     shared with the Forge list / Deck Builder through _forgeThumbCache and is
+     therefore fixed at `contain`. !important is required, not decorative: the
+     cached markup carries an INLINE object-fit, and only a flagged rule can beat
+     it. Without this the deck-select deck-box fronts and modal rows would
+     letterbox instead of filling their frame. */
+  .forge-thumb-slot.forge-thumb-cover img { width: 100%; height: 100%; object-fit: cover !important; }
 
   /* ============================================================
      🃏 MASTER-DUEL POLISH — a duel-start plate in OUR palette:
@@ -116796,6 +116804,27 @@ function bindDeckChooserModal() {
 // 🃏 Consistent card face: card art (light) → custom sprite (force-loaded, bounded)
 // → emoji. Fixes card rows/tiles that showed the unicorn emoji for a sprite-only
 // card just because its sprite was not resident in memory (placeholder/streaming).
+//
+// 🖼 STATIC, NEVER ANIMATED — every caller of this function is a LIST/TILE/GRID
+// surface (deck-select tiles + the deck-select modal's top-8 rows, pack-opening
+// summary, card shop, bestiary). None of them is the battle board, which draws
+// through unitBoardVisual/_boardSpriteHtml directly and still animates.
+//
+// It USED to return _boardSpriteHtml(occ) — the animated <img class="bsprite"> —
+// and call _ensureBoardSpriteAnim(), starting the 33ms board ticker that src-swaps
+// every .bsprite on the page. On a 367-card library that is the exact thrash the
+// Card-Forge list-row thumbnail below was written to kill: the deck-select screen
+// paints 120 hero tiles + the modal's 8 rows = 128 animated sprites against a
+// sprite LRU capped at 48, and every lazily-arriving thumb calls
+// _lazyScheduleRender() → a FULL render() → the portalled modal is destroyed and
+// rebuilt. MEASURED on that library, opening the modal: 128 .bsprite elements,
+// 3 modal rebuilds and 8 ticker src-swaps from ONE click (5 rebuilds / 65 swaps
+// when the thumbnail tier is cold, with the ticker then running forever). That is
+// the "modal flickers in and out" report.
+//
+// The fix is NOT a second mechanism — it is the one twenty lines below. _forgeRowThumb
+// resolves a single STATIC frame, force-loads a streamed asset ONCE, and swaps that
+// one slot in place (_forgeThumbSwap) instead of re-rendering the screen.
 function _cardFaceArt(card, fit) {
   if (!card) return '🃏';
   const cover = (fit === 'cover');
@@ -116803,13 +116832,12 @@ function _cardFaceArt(card, fit) {
     const id = card.id;
     const isHero = card.type === 'hero';
     const spriteKey = isHero ? ('h_' + id) : ('u_' + id);
+    // Published/cloud art still wins outright — getCardArt prefers Forge.cardArtUrl /
+    // card.artUrl, and that canonical URL must outrank the derived thumbnail caches
+    // (a thumb: record is never revoked, so it can pin the OLD art after a re-art).
     const art = (typeof getCardArt === 'function') ? (getCardArt(id) || getCardArt(spriteKey)) : null;
     if (art && typeof art === 'string') return '<img src="' + art + '" alt="" style="width:100%;height:100%;object-fit:' + (cover ? 'cover' : 'contain') + ';border-radius:3px" decoding="async" loading="lazy">';
-    if (typeof _boardSpriteHtml === 'function') {
-      const occ = isHero ? { heroId: id, icon: card.icon } : { cardId: id, id: id, type: 'unit', icon: card.icon };
-      const bs = _boardSpriteHtml(occ);
-      if (bs) { try { if (typeof _ensureBoardSpriteAnim === 'function') _ensureBoardSpriteAnim(); } catch (e) {} return bs; }
-    }
+    if (typeof _forgeRowThumb === 'function') return _forgeRowThumb(card, cover);
   } catch (e) {}
   return (card.icon || '🃏');
 }
@@ -116931,12 +116959,19 @@ function _forgeThumbSwap(cardId, html) {
     }
   } catch (e) {}
 }
-function _forgeRowThumb(card) {
+// `cover` only decorates the SLOT with a class; it must never change what goes into
+// _forgeThumbCache. That cache is shared with the Deck Builder (see _mkImg in the
+// db3 tile builder), which stores a differently-shaped <img> under the same card id,
+// and _forgeThumbSwap writes one html string into every matching slot — so baking the
+// fit into the cached markup would let whichever surface resolved first dictate the
+// other's framing. A CSS rule on the slot wins over the cached img's inline
+// object-fit instead, which keeps one cache correct for both fits.
+function _forgeRowThumb(card, cover) {
   if (!card) return '🃏';
   const id = card.id;
   const isHero = card.type === 'hero';
   const spriteKey = isHero ? ('h_' + id) : ('u_' + id);
-  const wrap = (inner) => '<span class="forge-thumb-slot" data-fthumb="' + escapeHtml(String(id)) +
+  const wrap = (inner) => '<span class="forge-thumb-slot' + (cover ? ' forge-thumb-cover' : '') + '" data-fthumb="' + escapeHtml(String(id)) +
     '" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%">' + inner + '</span>';
 
   // 0) Already resolved once this session — reuse the cached static thumbnail (no flicker).
@@ -117124,7 +117159,37 @@ function renderDeckSelectModal(deckOptions) {
 // filter on the element, and either one creates a containing block for fixed
 // descendants, which pins modals to the page box instead of the screen.
 // Returns the host (or null when the modal isn't open, after tearing down).
-function _portalModalToBody(backdropId, hostId, isOpen) {
+//
+// `preserveIfUnchanged` (opt-in — see bindDeckSelectModal): when the freshly
+// rendered copy is byte-identical to the one already mounted, KEEP the mounted
+// node and throw the fresh one away. The screen behind a modal re-renders for
+// reasons that have nothing to do with the modal — every lazily-streamed
+// thumbnail calls _lazyScheduleRender() — and each of those renders otherwise
+// destroys and recreates the modal's whole DOM. MEASURED on a 367-card library:
+// one click to open the deck-select modal produced 3 full rebuilds of it, which
+// is the flicker. Preserving is the right half of the fix rather than suppressing
+// render(): the screen underneath genuinely does need to repaint as art arrives,
+// and a modal that is bit-for-bit the same has no reason to be rebuilt for it.
+//
+// ⚠ The comparison is against the LIVE mounted node, not against a signature
+// captured at mount time. That is deliberate and it is what makes this work: the
+// static-thumb tier repaints a resolved thumbnail by writing it straight into the
+// mounted slot (_forgeThumbSwap), so the live node runs AHEAD of any stored copy.
+// A render that follows a swap regenerates markup which now matches what is already
+// on screen — comparing live catches that and preserves; comparing to a stored
+// pre-swap signature would rebuild every time, which is exactly what measured as
+// 3 rebuilds per open even after the sprites were made static.
+//
+// ⚠ This holds only while every binder decorates the mounted node with JS
+// PROPERTIES and `.onclick`, neither of which serialises into outerHTML (see the
+// backdrop guard in bindDeckSelectModal — that is why it sets `back._dsBackBound`
+// and not a data- attribute). If a future binder sets an attribute the comparison
+// simply stops matching and we fall back to rebuilding, i.e. today's behaviour —
+// this can go stale and lose its benefit, never render a wrong modal.
+//
+// Opt-in because the other four callers bind with addEventListener in places, and
+// a preserved node must only ever be re-bound idempotently.
+function _portalModalToBody(backdropId, hostId, isOpen, preserveIfUnchanged) {
   let host = document.getElementById(hostId);
   if (!isOpen) { if (host) { try { host.remove(); } catch (e) {} } return null; }
   if (!host) { host = document.createElement('div'); host.id = hostId; document.body.appendChild(host); }
@@ -117132,18 +117197,36 @@ function _portalModalToBody(backdropId, hostId, isOpen) {
   // re-render can never leave a stale duplicate behind (appendChild MOVES it).
   let inline = null;
   document.querySelectorAll('#' + backdropId).forEach((el) => { if (!inline && !host.contains(el)) inline = el; });
-  if (inline) { host.innerHTML = ''; host.appendChild(inline); }
+  host._mgPreserved = false;
+  if (inline) {
+    const mounted = preserveIfUnchanged ? host.firstElementChild : null;
+    if (mounted && mounted.outerHTML === inline.outerHTML) {
+      try { inline.remove(); } catch (e) {}   // drop the duplicate; the mounted node stays put
+      host._mgPreserved = true;
+      return host;
+    }
+    host.innerHTML = ''; host.appendChild(inline);
+  }
   return host;
 }
 function bindDeckSelectModal(deckOptions) {
-  const _dsHost = _portalModalToBody('ds-modal-backdrop', 'ds-modal-host', !!App.deckSelectModalKey);
+  const _dsHost = _portalModalToBody('ds-modal-backdrop', 'ds-modal-host', !!App.deckSelectModalKey, true);
   if (!App.deckSelectModalKey) {
     if (App._dsModalEsc) { document.removeEventListener('keydown', App._dsModalEsc); App._dsModalEsc = null; }
     return;
   }
   const close = () => { App.deckSelectModalKey = null; render(); };
   const back = document.getElementById('ds-modal-backdrop');
-  if (back) back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  // ⚠ ONCE PER NODE. Every other handler here is an idempotent `.onclick =`, so a
+  // re-render can reassign them freely — but addEventListener STACKS. The node now
+  // survives re-renders (preserveIfUnchanged above), so without this guard each
+  // repaint of the screen behind the modal would add another backdrop listener and
+  // close() would run N times per click. The flag is a JS property, not an
+  // attribute, so it stays out of the preserve signature.
+  if (back && !back._dsBackBound) {
+    back._dsBackBound = true;
+    back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  }
   const x = document.getElementById('ds-modal-close');
   if (x) x.onclick = close;
   // Esc-to-close

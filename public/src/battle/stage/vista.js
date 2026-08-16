@@ -588,6 +588,14 @@
        multiply map was bilineared into before the nearest blit to full size.
        The map is built at dw/4 now (see MAP_DIV), so that buffer would have been
        a 1:1 copy of it. Deleting it is what pays for the finer map. */
+    /* ⚠ …AND `up2` IS NOT `mup` COMING BACK. `mup` was a QUARTER-scale buffer
+       that re-expressed a coarser map at the size the map is already built at —
+       a 1:1 copy, pure waste. `up2` is a HALF-scale buffer that exists to carry
+       an INTERPOLATION the quarter-scale planes cannot represent: it is where
+       the 4-device-px nearest block gets cut to 2 and its step halved. Both of
+       grade()'s upscales borrow it in turn (additive first, multiply second),
+       so it costs one buffer, not two. See upBlit(). */
+    up2: { cv: null, g: null },
     /* THE MAP. `pos` is the positional half (bakePost: veil attenuation +
        colour, one bake); mulR/addR/gainR are the three quarter-scale planes
        postMap() writes; key/age/reads/calls/ms belong to the READBACK CADENCE. */
@@ -3906,6 +3914,79 @@
      ⚠ The last row is real though, and it is why imageSmoothingEnabled is
      false on both composites: a bilinear scaled multiply is 3.3x the nearest
      one. Do not "improve" the upscale quality here. ── */
+  /* ── THE 4-PIXEL BLOCK, AND THE ONE UPSCALE THAT IS ALLOWED TO COST ───────
+     The clause above is right that you must not turn imageSmoothingEnabled on
+     for the blits to full size, and it is still enforced below. But it was
+     being read as "the block step is the price of the grade", and that was
+     never measured — only the bilinear alternative was.
+
+     MEASURED, this build, 1280x720 device px, 5 interleaved blocks of 12 reps
+     (interleaved so drift hits all three equally — run in sequence the same
+     three shapes moved 0.30-0.70ms between blocks), with a 1x1 getImageData
+     after EVERY call to force rasterisation (queued canvas work times as
+     0.00ms otherwise — the same trap the table above names):
+
+         multiply, quarter -> full, nearest  (was) ...... 1.20 ms
+         multiply, quarter -> full, bilinear high ....... 7.30 ms   ← +6.10, refused
+         bilinear quarter -> HALF (source-over, small) .. 0.00 ms
+         TWO-STAGE: that, then nearest half -> full ..... 1.80 ms   ← +0.60 ms
+
+     The interpolation is free when it runs on a buffer a QUARTER of the
+     viewport's area with no blend mode on it; what costs is filtering while
+     also blending across every one of the 921,600 destination pixels. So the
+     smoothing happens small, and the composite to full size stays nearest —
+     the clause's actual constraint, honoured exactly.
+
+     What it buys, measured on the board frame through the {rung:1} switch
+     below as the excess 8-bit RED step at the 4px block boundary over the step
+     between interior pixels, shadow pixels only (luma <= 110):
+         near strip  13.18 -> 4.31 levels   (-67%)
+         field        7.28 -> 2.28 levels   (-69%)
+     The block is 2 device px instead of 4, and because the half-scale buffer
+     is interpolated rather than replicated, the step across it is halved
+     again rather than merely moved.
+     ⚠ AND IT COSTS NO SCENE DETAIL, which is the thing to check if you are
+     tempted to go further. Gradients at ODD x — block interior in BOTH builds,
+     so the map contributes no step to either — are unchanged: p99 16.99 ->
+     17.03, max 118.01 -> 117.89, mean 2.307 -> 2.310, against an old-vs-old
+     repeat of 16.92 / 118.01 / 2.306. The rung smooths the GAIN FIELD, not the
+     frame. Timed around the real grade() call the whole change is invisible:
+     p50 264.0ms -> 264.1ms, and 263.8 -> 264.1 on the repeat pair.
+     ⚠ IT IS NOT A FULL-RESOLUTION MAP AND MUST NOT BECOME ONE. Building the
+     map itself at half scale was tried and measured terrible (65.7 -> 104.6ms;
+     see UP_DIV). This changes only how the quarter-scale map is RESAMPLED on
+     its way to the frame, which is why it costs 0.3ms instead of 39. ── */
+  function upBlit(ctx, srcCv, dw, dh, mode) {
+    /* the half-scale rung. Clamped to the destination so a viewport small
+       enough for the thumbnail floor to dominate mw/mh can never ask for an
+       intermediate LARGER than the frame it is expanding into. */
+    const hw = Math.max(1, Math.min(dw, srcCv.width * 2));
+    const hh = Math.max(1, Math.min(dh, srcCv.height * 2));
+    /* `window.__vistaOff = {rung:1}` drops back to the single nearest blit, so
+       the block step can be measured both ways on ONE page without a reload —
+       same units, same time of day, same tone lock. Every number in the header
+       comment above was taken through this switch. Same contract as the other
+       `off()` flags: read at call time, never cached. */
+    const hg = off('rung') ? null : scratch(S.up2, hw, hh);
+    if (!hg) {                      /* no buffer: the old path, still correct */
+      ctx.globalCompositeOperation = mode;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(srcCv, 0, 0, dw, dh);
+      return;
+    }
+    hg.globalCompositeOperation = 'copy';   /* 'copy' — no clearRect, and no
+                                               stale half-frame bleeding through */
+    hg.imageSmoothingEnabled = true;
+    /* 'low' on purpose: the table above prices high at 7.30ms against low's
+       2.70 for the same shape, and at a 2x expansion of an already smooth
+       map the two are visually indistinguishable. */
+    try { hg.imageSmoothingQuality = 'low'; } catch (e) { }
+    hg.drawImage(srcCv, 0, 0, hw, hh);
+    hg.globalCompositeOperation = 'source-over';
+    ctx.globalCompositeOperation = mode;
+    ctx.imageSmoothingEnabled = false;      /* ⚠ STAYS FALSE — see the table */
+    ctx.drawImage(S.up2.cv, 0, 0, dw, dh);
+  }
   /* ⚠ WHERE THE COOL-SURFACE GATE STARTS, AND IT IS NOT COOL_LO. COOL_LO/HI
      (−14…+2) were tuned in wave 3 for an ADDITIVE give-back, where being
      generous only cost a little chroma. As a GATE on the warm restore that
@@ -4605,9 +4686,10 @@
       ug.globalAlpha = 1;
     }
     ug.globalCompositeOperation = 'source-over';
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(S.up.cv, 0, 0, ctx.canvas.width, ctx.canvas.height);
+    /* ⚠ VIA THE HALF-SCALE RUNG — see upBlit(). This blit used to stamp the
+       additive plane as 4-device-px blocks, which is half of the mosaic the
+       frame was measured for; the composite to full size is still nearest. */
+    upBlit(ctx, S.up.cv, ctx.canvas.width, ctx.canvas.height, 'lighter');
   }
 
   function grade(api) {
@@ -4678,9 +4760,10 @@
            whole quarter-scale composite per re-bake, deleted. What reaches the
            frame is identical in every pixel the old chain could represent. */
         if (map && map.ready && map.mulR.cv) {
-          ctx.globalCompositeOperation = 'multiply';
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(map.mulR.cv, 0, 0, dw, dh);
+          /* ⚠ VIA THE HALF-SCALE RUNG — see upBlit(). The multiply carries the
+             per-pixel shade term, so this is the blit that put a 4-device-px
+             staircase on every cast shadow edge on the board. */
+          upBlit(ctx, map.mulR.cv, dw, dh, 'multiply');
         }
       }
     } catch (e) { /* a grade that throws must not take the frame with it */ }

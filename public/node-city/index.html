@@ -17930,6 +17930,140 @@ const prodPerMin = {};   // display: net per-minute rates
    `factor` is what an under-powered building actually runs at. */
 game.power = { gen: 0, demand: 0, ratio: 1, factor: 1 };
 
+/* 📦 ════ THE STASH SPLIT ════════════════════════════════════════════════════
+   The player's vault (index.html getResourceCap/getResourceUnits) is ONE ceiling
+   shared by EVERY resource. When the city makes more in a tick than the vault
+   can take, something has to go short — and deciding WHICH is this function's
+   entire job.
+
+   🔴 WHAT IT REPLACES, AND THE MEASUREMENT. This used to be four lines inline in
+      economyTick's tile loop:
+          madeR = Math.min(madeR, _ledgerFree);
+          _ledgerFree = Math.max(0, _ledgerFree - madeR);
+      i.e. the whole vault headroom was handed out FIRST-COME-FIRST-SERVED over
+      `Object.entries(game.tiles)` — BUILD ORDER, which has nothing to do with
+      what the city produces. A city making 129.9 food / 69.7 water / 38.9 metal
+      a minute, left for 6 h with an EMPTY 2,000-unit vault, came back to
+          metal 1,999 · food 1 · water 0
+      and the SAME city with its farms placed before its mines came back to
+          food 1,597 · metal 398 · water 2.
+      Same rates, same cap, only the build order changed.
+
+   🔴 AND PROPORTIONAL-BY-RATE ALONE IS NOT ENOUGH — MEASURED TOO. Splitting the
+      headroom in proportion to production makes the FLOW right (gained metal
+      1,995 / food 5,690 / water 3,053 against rates of 18 % / 53 % / 29 %) and
+      still leaves the vault holding metal 1,995 · food 2 · water 2. The reason
+      is a RATCHET: moraleTick eats food and water every tick, which frees
+      exactly that much room, and a share of it goes to metal — which is never
+      eaten, so metal only ever climbs. Any rule that looks solely at FLOW loses
+      to it eventually.
+
+   ⭐ SO THE RULE IS ABOUT HOLDINGS, NOT FLOW:
+        no city-produced resource may take more room while it already holds MORE
+        than its production share of the space those resources occupy.
+      Stage 1 hands the headroom to whoever is BELOW that share, largest deficit
+      first (proportionally, never sequentially). Stage 2 gives anything still
+      spare to whoever still wants it — so a roomy vault never idles a producer
+      merely for being ahead, and the throttle only bites when space is scarce.
+
+   ⚠ THE SHARES ARE MEASURED OVER THE CITY-PRODUCED SET ONLY. `held` is the
+     whole ledger, but the pool summed below covers just the ids in `want`. A
+     player's 400 looted wood sits in the same shared cap and is none of this
+     city's business; counting it would make every target unreachable and the
+     rule would silently degrade back to plain proportional.
+   ⚠ NOTHING IS EVER TAKEN AWAY. A save that already ratcheted keeps its metal —
+     jettisoning a player's resources to rebalance a ratio is not a fix. The
+     ratchet stops, and the room that frees up goes to the starved side.
+   ⚠ `free === Infinity` (an unknown or older ceiling) means "carry on": never
+     idle a city because the cap could not be READ.
+
+   Returns { out, factor, want, fair }:
+     want   total units asked for across every ledger resource this tick
+     out    units actually granted, per resource;  sum(out) <= free  always
+     factor sum(out)/want — the aggregate share that got through, for the HUD
+     fair   true when the holdings rule actually had to arbitrate */
+function _stashSplit(want, free, held) {
+  const out = {};
+  let total = 0;
+  for (const r in want) { out[r] = 0; total += Math.max(0, want[r] || 0); }
+  const all = () => { for (const r in want) out[r] = Math.max(0, want[r] || 0); return { out, factor: 1, want: total, fair: false }; };
+  if (!Number.isFinite(free) || total <= free) return all();
+  if (!(free > 0) || !(total > 0)) return { out, factor: 0, want: total, fair: false };
+  const heldOf = (r) => Math.max(0, (held && held[r]) || 0);
+
+  // The space THESE resources will share once this tick's headroom is spent.
+  let pool = free;
+  for (const r in want) pool += heldOf(r);
+
+  // ── stage 1 — the deficit against each resource's production share.
+  const room = {}; let roomTotal = 0;
+  for (const r in want) {
+    const w = Math.max(0, want[r] || 0);
+    const target = pool * (w / total);
+    room[r] = Math.min(w, Math.max(0, target - heldOf(r)));
+    roomTotal += room[r];
+  }
+  let given = 0;
+  if (roomTotal > 0) {
+    const f1 = Math.min(1, free / roomTotal);
+    for (const r in want) { out[r] = room[r] * f1; given += out[r]; }
+  }
+  // ── stage 2 — headroom still going spare, split over what is still wanted.
+  const spare = free - given;
+  if (spare > 1e-12) {
+    let restTotal = 0;
+    for (const r in want) restTotal += Math.max(0, Math.max(0, want[r] || 0) - out[r]);
+    if (restTotal > 1e-12) {
+      const f2 = Math.min(1, spare / restTotal);
+      for (const r in want) out[r] += Math.max(0, Math.max(0, want[r] || 0) - out[r]) * f2;
+    }
+  }
+  let sum = 0; for (const r in want) sum += out[r];
+  return { out, factor: sum / total, want: total, fair: true };
+}
+/* 📉 ════ THE RATE THE PANEL IS ALLOWED TO PRINT ═════════════════════════════
+   One resource's share of the headroom, applied to that resource's own rate.
+
+   🔴 THE BUG THIS EXISTS TO MAKE IMPOSSIBLE, measured on this tree. The tick
+      used to advertise `_ledgerRate[r] * _split.factor` — the AGGREGATE share,
+      sum(out)/sum(want), the same number for every resource. But stage 1 of
+      _stashSplit deliberately grants NOTHING to a resource that already holds
+      more than its production share, so the aggregate is exactly the wrong
+      number to reach for: it is non-zero while that resource's own grant is 0.
+      The reported city (130.26 food / 70.79 water / 39.18 metal a minute) at a
+      ratcheted, choked vault, 20 minutes:
+          food   HUD 15.81/min   banked 18.85/min
+          water  HUD  8.59/min   banked 10.25/min
+          metal  HUD  4.75/min   banked  0.00/min   ← 0 units in 20 minutes
+      and renderResources() multiplies that rate by 60*24, so the panel promised
+      6,840 metal a day that could never arrive. Wrong in BOTH directions: the
+      aggregate is dragged DOWN by the metal nobody is paying, so the two
+      resources that ARE being paid were under-reported as well.
+
+   ⭐ THE RULE, which is the one the header at the Cinder branch already states —
+      "the panel can never promise a number the tick does not pay":
+        advertised rate  =  own rate x (own grant / own want)
+      so out[r] === 0 prints exactly 0, always, with no tolerance to tune.
+
+   ⚠ WHY A NAMED FUNCTION AND NOT AN INLINE EXPRESSION. The previous shape of
+     this line was also one inline expression, and the only thing that could
+     have caught it is a property relating the printed rate to the ALLOCATION —
+     which no test could reach while it lived inside economyTick's closure.
+     Pulled out here so __nc.stashRateCheck() can falsify it directly; putting
+     `rate * factor` back turns that check red on the ratcheted case.
+   ⚠ `want <= 0` returns 0 rather than dividing: a resource nothing asked for
+     this tick has no share to scale, and 0/0 would print NaN into the HUD. */
+function _stashRate(rate, want, out) {
+  if (!(want > 1e-12)) return 0;
+  // clamp: _stashSplit never grants more than was asked, but a share above 1
+  // would print a rate the tick cannot pay — the exact failure being fixed.
+  return (rate || 0) * Math.min(1, Math.max(0, out || 0) / want);
+}
+/* 🏰 Set by economyTick whenever _stashSplit had to bite; null otherwise. The
+   whole point is that the throttle is VISIBLE — see the advisor row in
+   renderNeeds() and the "vault was full" line in the away report. */
+let _stashChoke = null;
+
 /* ════════════════════════════════════════════════════════════════════════════
    🏟 THE VENUE FAMILY — tiles whose trade IS the crowd, so morale moves them.
    ----------------------------------------------------------------------------
@@ -18158,6 +18292,12 @@ async function economyTick(dtMin) {
     const _hr = await MythicCityBridge.resourceHeadroom();
     if (_hr && Number.isFinite(_hr.free)) _ledgerFree = Math.max(0, _hr.free);
   } catch (e) { _ledgerFree = Infinity; }
+  /* 📦 …AND THE HEADROOM IS STAGED, NOT SPENT IN TILE ORDER. See _stashSplit()
+     and the note at the deposit below: the tile loop only records what each
+     LEDGER resource wants this tick; who actually gets the room is decided once,
+     after every tile has been counted. */
+  const _ledgerWant = {};   // ledger res -> units this tick, BEFORE the vault clamp
+  const _ledgerRate = {};   // ...and the per-minute rate behind each of them
 
   for (const [k, t] of Object.entries(game.tiles)) {
     const def = BUILDINGS[t.type]; if (!def) continue;
@@ -18207,28 +18347,45 @@ async function economyTick(dtMin) {
       //    go through the same divisor, so the panel can never promise a number
       //    the tick does not pay.
       const genR = (r === 'cinder') ? cinderRate(def.gen[r]) : def.gen[r];
-      let madeR = genR * mult * om * dtMin;
-      /* 📦 A LEDGER RESOURCE THE VAULT CANNOT TAKE IS NOT PRODUCED.
-         Same shape as the city-stock clamp above: production is limited to the
-         room left, and the rate the HUD prints drops to 0 when there is none —
-         so the panel never advertises output the tick will not deliver.
-         `_ledgerFree` is decremented as we go, so several farms in one tick
-         share the remaining space instead of each seeing the full headroom.
+      const madeR = genR * mult * om * dtMin;
+      /* 📦 A LEDGER RESOURCE THE VAULT CANNOT TAKE IS NOT PRODUCED — BUT WHICH
+         ONE GOES SHORT IS NOT DECIDED HERE ANY MORE.
+         🔴 THE BUG THIS REPLACES, measured on this tree. The clamp used to read
+            `madeR = Math.min(madeR, _ledgerFree)` right here and decrement
+            `_ledgerFree` in place, i.e. the whole vault headroom was handed out
+            FIRST-COME-FIRST-SERVED over `Object.entries(game.tiles)` — which is
+            BUILD ORDER, and has nothing to do with what the city produces.
+            A city making 129.9 food / 69.7 water / 38.9 metal a minute, left for
+            6 h with an EMPTY 2,000-unit vault, came back to:
+                metal 1,999 · food 1 · water 0
+            The same city with the farms placed before the mines came back to
+                food 1,597 · metal 398 · water 2
+            Identical rates, identical cap — only the order the tiles were built
+            in changed. That is the reported "my stash fills with the wrong
+            resource".
+            It is a RATCHET, not a one-off: moraleTick eats food and water every
+            slice, which frees exactly that much headroom, which this line then
+            handed straight back to the first tile in build order. Whatever is
+            never eaten (metal) therefore climbs monotonically until it owns the
+            entire vault.
+         ⚠ THE CAP ITSELF IS REAL AND IS NOT THE BUG. 240 units a minute into a
+           shared 2,000-unit stash is a genuinely full vault; the player has to
+           be told that (see _stashChoke, the advisor row and the away report).
+           What is fixed here is that the room left is now split in PROPORTION to
+           what each resource is producing.
          ⚠ CINDER IS EXEMPT. It is currency, not a stash unit; it has no
            resource cap and must never be idled by a full vault. */
-      if (r !== 'cinder' && Number.isFinite(_ledgerFree)) {
-        madeR = Math.min(madeR, _ledgerFree);
-        _ledgerFree = Math.max(0, _ledgerFree - madeR);
+      if (r === 'cinder') {
+        game.frac.cinder = (game.frac.cinder || 0) + madeR;
+        prodPerMin.cinder = (prodPerMin.cinder || 0) + genR * mult * om;
+        /* 🧾 LIFETIME CINDER, PER TILE. The exact amount is already in hand here
+           with `t` in scope — this is the whole cost of a real Ledger tab. Only
+           Cinder is banked: goods are city stock, not this building's money. */
+        t.earn = (t.earn || 0) + madeR;
+      } else {
+        _ledgerWant[r] = (_ledgerWant[r] || 0) + madeR;
+        _ledgerRate[r] = (_ledgerRate[r] || 0) + genR * mult * om;
       }
-      if (madeR > 0) game.frac[r] = (game.frac[r] || 0) + madeR;
-      // Rate shown = rate actually payable. A full vault reads as idle, which
-      // is the truth and is what tells the player to spend or expand.
-      const _payable = (r === 'cinder' || madeR > 0 || !Number.isFinite(_ledgerFree));
-      prodPerMin[r] = (prodPerMin[r] || 0) + (_payable ? genR * mult * om : 0);
-      /* 🧾 LIFETIME CINDER, PER TILE. The exact amount is already in hand here
-         with `t` in scope — this is the whole cost of a real Ledger tab. Only
-         Cinder is banked: goods are city stock, not this building's money. */
-      if (r === 'cinder') t.earn = (t.earn || 0) + madeR;
       if (r === 'water') waterNetRaw += def.gen[r] * mult;   // see waterNetRaw
     }
     // 🍽 SERVICES: convert refined stock into COVERAGE.
@@ -18242,6 +18399,44 @@ async function economyTick(dtMin) {
     // Buildings that were already doing a service job before this layer landed.
     const L = LEGACY_SERVICE[t.type];
     if (L) supply[L.need] += L.supply * mult;
+  }
+  /* 📦 ══ THE STASH SPLIT ══ every tile has now been counted, so the room left
+     can be shared out once, fairly, instead of raced for.
+     The budget is `_ledgerFree` MINUS the fractions already sitting in
+     game.frac: those are last tick's leftovers and they get deposited by the
+     same loop below, so ignoring them lets the whole-unit deposit overshoot the
+     headroom by up to one unit per resource and addRes drops the difference —
+     and addRes drops it in game.frac key order, which is the very bias this
+     whole change exists to remove. Under-producing by <1 unit per resource is
+     the safe direction; dropping on arrival is not. */
+  {
+    let _carry = 0;
+    for (const r in game.frac) if (r !== 'cinder') _carry += Math.max(0, game.frac[r] || 0);
+    const _budget = Number.isFinite(_ledgerFree) ? Math.max(0, _ledgerFree - _carry) : Infinity;
+    /* `game.res` is the ledger mirror — refreshed every 2 s online and kept
+       exact through the offline catch-up by its bridge wrapper. It is already
+       load-bearing for the consumer gate and the kitchen fallback, so reading
+       holdings from it adds no new trust. If it is cold (all zeroes) every
+       deficit is maximal and the split degrades to plain proportional, which is
+       the safe direction. */
+    const _split = _stashSplit(_ledgerWant, _budget, game.res);
+    for (const r in _ledgerWant) {
+      const made = _split.out[r] || 0;
+      if (made > 0) game.frac[r] = (game.frac[r] || 0) + made;
+      /* Rate shown = rate actually payable, at THIS resource's own fraction of
+         its own request — not the aggregate factor, which is a different number
+         for every resource stage 1 refuses. See _stashRate's header for the
+         measurement: the aggregate printed 4.75 metal/min against 0 banked. */
+      prodPerMin[r] = (prodPerMin[r] || 0) + _stashRate(_ledgerRate[r] || 0, _ledgerWant[r] || 0, made);
+    }
+    /* 🏰 …AND THE PLAYER IS TOLD. An invisible clamp reads as a bug — that is
+       exactly how this shipped: with the producers idled by the clamp, addRes
+       never overflowed, so the "STASH FULL" toast never fired and the only
+       symptom was resources quietly not arriving. Read by the advisor list and
+       by the offline report. */
+    _stashChoke = (_split.factor < 1 && _split.want > 0)
+      ? { factor: _split.factor, perMin: _split.want / Math.max(1e-9, dtMin), free: _ledgerFree }
+      : null;
   }
   // Non-building supply that no tile owns.
   supply.water += Math.max(0, waterNetRaw);      // ⚠ un-throttled on purpose — see above
@@ -23084,6 +23279,19 @@ function evaluateNeeds() {
   }
   // Food source at all
   if (!buildings.some(([k, t]) => (t.type === 'farm' || t.type === 'hydrofarm') && !t.damaged)) add('farm', '🌾', 'No working farms — the city produces no food of its own.', false);
+  /* 🏰 THE VAULT IS THE THROTTLE, AND IT HAS TO SAY SO OUT LOUD.
+     A city producing 240 units a minute into a shared 2,000-unit stash is
+     capped essentially all of the time, and the clamp that enforces it is
+     silent by construction: the producers idle, so addRes never overflows and
+     the "STASH FULL" toast in index.html never fires. The player saw resources
+     simply not arrive. This row is the only place the game explains it. */
+  if (_stashChoke) {
+    const pct = Math.round(_stashChoke.factor * 100);
+    add('stashfull', '🏰', 'STASH FULL — your vault has no room left, so the city is running at ' +
+      pct + '% of the ' + Math.round(_stashChoke.perMin) + '/min it could produce. The room that does ' +
+      'free up goes to whichever resource is furthest below its share of your output. Spend some ' +
+      'stash, or buy Vault Containers in the Vendor Market.', pct < 50);
+  }
   // Workers
   if (staffingRatio() < 1) add('workers', '👷', 'Not enough workers — hire ' + Math.max(1, crewNeeded() - game.army.workers) + ' more to fully crew the buildings.', false);
   // Housing
@@ -24590,6 +24798,7 @@ async function offlineCatchUp(awayMsOverride) {
   const before = { pop: cityPop(), vitals: { ...vitals }, stock: { ...game.stock } };
   const t0 = performance.now();
   let done = 0, slices = 0;
+  let chokeSlices = 0, chokeSum = 0;      // 🏰 see the sample inside the loop
   /* 🏗 THE VIRTUAL CLOCK'S ZERO. The absence runs FORWARD from the moment the
      save was written, so the wall-clock time at slice `done` is `vFrom + done*1000`.
      `_offlineFrom` is that moment; when a TEST injects an override there is no
@@ -24617,6 +24826,12 @@ async function offlineCatchUp(awayMsOverride) {
     while (done < simSec - 1e-9) {
       const dt = Math.min(OFFLINE_SLICE_SEC, simSec - done);
       await economyTick(dt / 60);
+      /* 🏰 HOW MUCH OF THE ABSENCE THE VAULT ATE. Sampled per slice because
+         _stashChoke is a per-tick reading; a player who came back to a fraction
+         of what the panel promised needs the reason on the report, not just a
+         short number. `chokeSum` is the summed factor, so chokeSum/chokeSlices
+         is the average share that actually got through while it was biting. */
+      if (_stashChoke) { chokeSlices++; chokeSum += _stashChoke.factor; }
       vitalsTick(dt);
       /* 🍽 THE CITIZENS EAT WHILE YOU ARE AWAY. moraleTick is not cosmetic — it
          is a LEDGER SPEND of popUsed() × 0.015 food AND water per minute
@@ -24687,6 +24902,12 @@ async function offlineCatchUp(awayMsOverride) {
     awayMs, simSec, capped, slices, costMs: Math.round(costMs),
     lostMs: capped ? awayMs - OFFLINE_CAP_MS : 0,
     cinder, gained, spent, stockDelta,
+    /* 🏰 null when the vault never bound. `share` is the average fraction of the
+       city's output the stash could actually accept while it did. */
+    stashChoke: chokeSlices ? {
+      slices: chokeSlices, of: slices || 1,
+      share: chokeSum / chokeSlices,
+    } : null,
     popBefore: +before.pop.toFixed(2), popAfter: +cityPop().toFixed(2),
     vitalsBefore: before.vitals,
     vitalsAfter: { ...vitals },
@@ -24748,6 +24969,20 @@ function awayReportHtml(rep) {
        running while the renderer started), and telling a player that "0m of
        that produced nothing" is the kind of notice that teaches people to stop
        reading notices. */
+  /* 🏰 THE OTHER CAP — the one that is not about time. A player whose vault was
+     full for the whole absence gets a "Produced" list a fraction of the size the
+     HUD's per-minute figures led them to expect, and before this line the panel
+     said nothing at all about why. It is deliberately worded as a FULL VAULT
+     rather than a nerf: the resources were not lost in transit, they were never
+     made, and the way to get them is to make room. */
+  if (rep.stashChoke && rep.stashChoke.slices > 0) {
+    const pct = Math.round(rep.stashChoke.share * 100);
+    const most = rep.stashChoke.slices >= rep.stashChoke.of * 0.9;
+    h += '<div class="abcap">🏰 <b>Your vault was full' + (most ? ' for the whole absence' : ' for part of it') +
+      '.</b> The city held back to <b>' + pct + '%</b> of its output. What room there was went to ' +
+      'whichever resource was furthest below its share of what you produce, so the list above is the ' +
+      'mix this city makes. Spend some stash, or buy Vault Containers, to bank the rest.</div>';
+  }
   if (rep.capped && rep.lostMs >= 60000) {
     h += '<div class="abcap">⏱ <b>Accrual capped at ' + OFFLINE_CAP_H + ' hours.</b> ' +
       'You were away ' + fmtAway(rep.awayMs) + ', so <b>' + fmtAway(rep.lostMs) +
@@ -29253,6 +29488,122 @@ function animate() {
        both halves the only comparison available is step() against step(), which
        compares the code to itself and can never fail. */
     offline: (ms) => offlineCatchUp(ms),
+    stashChoke: () => (_stashChoke ? { ..._stashChoke } : null),
+    // The advisor list is the ONLY live place the vault throttle is explained,
+    // so it needs to be drivable without a click — the pane never paints.
+    evaluateNeeds,
+    /* 🏰 THE STASH-SPLIT TEST, AND WHY IT IS A PURE-FUNCTION TEST.
+       The defect was never in the arithmetic of one building — every individual
+       `Math.min(madeR, _ledgerFree)` was correct. It was that the pool was
+       consumed IN ORDER, so the only thing that could have caught it is a
+       property of the WHOLE tick's allocation, which cannot be checked one tile
+       at a time. That is why the old shape had no test that could fail.
+
+       Five properties, each one falsifiable:
+         ORDER   permuting the keys of `want` must not change a single number.
+                 THIS IS THE ONE THE SHIPPED BUG BROKE, and the first-come
+                 allocator fails it outright.
+         FITS    sum(out) never exceeds `free`.
+         ASKED   out[r] never exceeds want[r].
+         EVEN    with an EMPTY vault and tight room, the split is exactly
+                 proportional to production — skew 0 across resources.
+         FAIR    a resource already holding more than its production share of
+                 the pool gets nothing while another is still below its share.
+       ⚠ FALSIFIED IN PRACTICE: swapping the body for the retired allocator
+         (`Math.min(want[r], left)` walking the keys) turns EVEN's skew from 0 to
+         0.185 and drops ORDER and FAIR, with `pass:false`. */
+    stashSplitCheck: () => {
+      const cases = [];
+      const shuffle = (o) => { const k = Object.keys(o).reverse(); const n = {}; for (const x of k) n[x] = o[x]; return n; };
+      const run = (name, want, free, held, expect) => {
+        const s = _stashSplit(want, free, held);
+        const s2 = _stashSplit(shuffle(want), free, held);
+        let sum = 0, lo = Infinity, hi = -Infinity, order = true, asked = true;
+        for (const r in want) {
+          sum += s.out[r];
+          if (Math.abs((s2.out[r] || 0) - s.out[r]) > 1e-12) order = false;
+          if (s.out[r] > (want[r] || 0) + 1e-12) asked = false;
+          if (want[r] > 0) { const sh = s.out[r] / want[r]; lo = Math.min(lo, sh); hi = Math.max(hi, sh); }
+        }
+        const skew = (hi >= lo) ? hi - lo : 0;
+        const fits = !Number.isFinite(free) || sum <= free + 1e-9;
+        const extra = expect ? expect(s, skew) : true;
+        cases.push({ name, factor: +s.factor.toFixed(6), sum: +sum.toFixed(6), free,
+                     skew: +skew.toFixed(12), order, fits, asked, extra,
+                     out: Object.fromEntries(Object.keys(s.out).map(k => [k, +s.out[k].toFixed(4)])),
+                     pass: order && fits && asked && extra });
+      };
+      // The reported city, one 10 s slice: 129.9 food / 69.7 water / 38.9 metal.
+      const tick = { food: 129.9 / 6, water: 69.7 / 6, metal: 38.9 / 6 };
+      const EMPTY = { food: 0, water: 0, metal: 0 };
+      // EVEN — empty vault, 4 units of room. The old allocator gave food all 4.
+      run('even split, empty vault', tick, 4, EMPTY, (s, skew) => skew < 1e-9);
+      // FAIR — the ratcheted save: metal already owns the vault. It must get
+      // nothing, and every freed unit must go to the two that are starved.
+      run('ratcheted vault', tick, 6, { food: 2, water: 2, metal: 1995 },
+          (s) => s.out.metal < 1e-9 && s.out.food > 0 && s.out.water > 0);
+      // No room at all.
+      run('vault dead full', tick, 0, EMPTY, (s) => s.factor === 0);
+      // Plenty of room: nobody is throttled, not even the resource that is ahead.
+      run('roomy', tick, 10000, { food: 0, water: 0, metal: 1900 },
+          (s) => Math.abs(s.out.metal - tick.metal) < 1e-9 && s.factor === 1);
+      // Unknown ceiling must never idle the city.
+      run('unknown ceiling', tick, Infinity, EMPTY, (s) => s.factor === 1);
+      run('exactly fits', { food: 10, metal: 5 }, 15, EMPTY, (s) => s.factor === 1);
+      return { pass: cases.every(c => c.pass), cases };
+    },
+    /* 📉 THE PANEL'S PROMISE, PINNED TO THE TICK'S PAYMENT.
+       stashSplitCheck above proves the ALLOCATION is fair. It says nothing about
+       the number the HUD prints, and that is exactly where the regression got
+       in: the split was correct and the Resources panel still promised 6,840
+       metal a day into a vault that paid 0. So this check relates the two.
+
+       Three properties, each falsifiable, none with a tolerance to tune:
+         STARVED  out[r] === 0  =>  advertised rate is exactly 0.
+                  THIS IS THE ONE `rate * _split.factor` BREAKS.
+         PAYABLE  advertised rate never exceeds the units actually granted,
+                  expressed per minute (out[r] / dtMin).
+         SHARE    advertised rate === own rate x own grant / own want.
+       The rate formula is a PARAMETER so the falsification needs no edit and
+       cannot rot: `_stashRate` (the shipped one, and economyTick's only caller)
+       is the default, and the retired aggregate can be handed straight in.
+       ⚠ FALSIFIED IN PRACTICE — the retired formula, run through this check:
+           __nc.stashRateCheck((rate, want, out, s) => rate * s.factor)
+         reports metal advertised 3.9142 against granted 0 on 'ratcheted vault'
+         — STARVED and PAYABLE both false, `pass:false`. The expectations are
+         read off _stashSplit's own `out`, so no tuning of a rate formula can
+         satisfy them; only paying what you advertise can. */
+    stashRateCheck: (fn) => {
+      const rateOf = fn || ((rate, want, out) => _stashRate(rate, want, out));
+      const dtMin = 1 / 6;                       // one 10 s slice, the shipped beat
+      const perMin = { food: 130.26, water: 70.79, metal: 39.18 };   // the reported city
+      const cases = [];
+      const run = (name, free, held) => {
+        const want = {};
+        for (const r in perMin) want[r] = perMin[r] * dtMin;
+        const s = _stashSplit(want, free, held);
+        const rows = {};
+        let starved = true, payable = true, share = true;
+        for (const r in want) {
+          const adv = rateOf(perMin[r], want[r], s.out[r] || 0, s);
+          const paid = (s.out[r] || 0) / dtMin;
+          if ((s.out[r] || 0) <= 1e-12 && adv > 1e-12) starved = false;
+          if (adv > paid + 1e-9) payable = false;
+          if (Math.abs(adv - perMin[r] * ((s.out[r] || 0) / want[r])) > 1e-9) share = false;
+          rows[r] = { advertised: +adv.toFixed(4), granted: +paid.toFixed(4) };
+        }
+        cases.push({ name, free, factor: +s.factor.toFixed(6), rows,
+                     starved, payable, share, pass: starved && payable && share });
+      };
+      // The reported failure: metal has ratcheted and owns the vault, so stage 1
+      // grants it nothing while the aggregate factor is still ~0.1.
+      run('ratcheted vault', 4, { food: 20, water: 20, metal: 1960 });
+      run('dead full', 0, { food: 20, water: 20, metal: 1960 });
+      run('empty vault, tight room', 4, { food: 0, water: 0, metal: 0 });
+      run('roomy', 10000, { food: 0, water: 0, metal: 1900 });
+      run('unknown ceiling', Infinity, { food: 0, water: 0, metal: 0 });
+      return { pass: cases.every(c => c.pass), cases };
+    },
     awayReport: () => _awayReport,
     showAway: (r) => showAwayReport(r || _awayReport),
     offlineConst: { capH: OFFLINE_CAP_H, sliceSec: OFFLINE_SLICE_SEC, minMs: OFFLINE_MIN_MS },

@@ -1561,7 +1561,7 @@
    `min-width: 0` lets the track win, and the type steps down so the plaque
    still reads "TURN 3" rather than ellipsising. Verified: plaque 166 -> 137,
    timer left edge 1119 with the plaque ending at 1122 — no overlap. */
-   ⚠ THREE OF THESE MUST BE `!important` AND THAT IS NOT LAZINESS: index.html's
+/* ⚠ THREE OF THESE MUST BE `!important` AND THAT IS NOT LAZINESS: index.html's
    short-viewport block pins `.bcp .turnplaque{ padding:7px 10px !important }`
    and `.bcp .turnplaque b{ font-size:19px !important }` (~5704), which are the
    two numbers that were over-running the track. A first pass without them

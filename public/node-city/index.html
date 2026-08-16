@@ -743,6 +743,23 @@
   <div class="card" id="needscard">
     <h2>The People Need…</h2>
     <div id="needslist"></div>
+    <!-- 🗣 WHAT THEY ARE SAYING, in the same place as what they need.
+         The citizen line already existed, but ONLY as a #bubbles world label
+         that floats over a walking agent for BUBBLE_LIFE seconds and is then
+         gone — so the most human thing the city says was the one thing the
+         player could not go back and read. This section is the same content
+         with a scrollback: railSaid() renders the rolling log bubbleTick
+         records, and falls back to the live roster (citBubbleForCit, the same
+         function the bubbles use) so the panel is never blank just because no
+         citizen happened to be on screen in the last minute.
+         ⚠ It lives INSIDE #needscard, not beside it — one card, one launcher,
+           and evaluateNeeds keeps owning #needslist without knowing this is
+           here. -->
+    <div id="saidsec">
+      <h3 id="saidhd">🗣 On the street</h3>
+      <div id="saidlist"></div>
+      <div class="saidfoot" id="saidfoot"></div>
+    </div>
   </div>
   <div class="card" id="repaircard">
     <h2>Repairs <span class="rcount" id="repaircount"></span></h2>
@@ -789,6 +806,54 @@
       <button class="hbtn" data-logf="env">🌩 Weather</button>
     </div>
     <div id="loglist"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     🎛 THE RAIL DOCK — one launcher row, one modal, twelve panels.
+     ─────────────────────────────────────────────────────────────────────────
+     #leftcol and #rightcol above are now a STASH: display:none, still in the
+     DOM, still painted by every renderer on the 0.5 s HUD beat and the 4 s
+     system beat. Opening a launcher MOVES the one .card node into #rmbody and
+     closing puts it back where it was. That is the whole mechanism, and it is
+     deliberate:
+       · the ten renderers are untouched. renderVitals still writes
+         #vitalsbody, renderBuildBoard still writes #bldlist, /src/economy
+         still owns #ecocard. Nothing knows or cares which parent it is under.
+       · there is exactly ONE copy of each panel. The rejected design was to
+         render panel content into the modal on open — that is two DOM trees
+         for one renderer, and the HUD beat would keep repainting the copy the
+         player is NOT looking at. This bug has shipped in this file before
+         (see the #bldcount note at renderBuildBoard) and it is invisible in
+         review, because the stale tree looks perfectly fine.
+     WHY IT COLLAPSED AT ALL: measured at 1280x800, the left rail was 268px of
+     unbroken text that ran off the bottom of the viewport, and the right rail
+     clipped "THE PEOPLE NEED…" to its own header. Two opaque walls over the
+     3D city the player is here to look at.
+     ⚠ WHAT MUST SURVIVE THE COLLAPSE IS URGENCY. A raider countdown and a
+       CRITICAL vital used to be readable with no click at all. railSync()
+       puts both back on the launcher itself — see the badge derivation there,
+       which READS THE RENDERED PANELS rather than re-deriving any threshold. -->
+<div id="railbar"></div>
+
+<!-- 🪟 THE ONE MODAL. Not ten dialogs — the header text, the badge and the
+     chrome are all data, and #rmbody is an empty host the card moves into.
+     ⚠ z-index 42 is NOT taste, and it is BELOW #inspect (44) for the same
+       reason #inspect is below #cardpicker (read that comment at the
+       dossier). The Raider Threat panel's own "🃏 Defense Deck" button opens
+       #cardpicker at z-index 45; anything higher here and the picker opens
+       BEHIND the modal that launched it. #shopveil (60) still covers it,
+       which is right — the build shop is a mode. #railbar itself is 43, one
+       ABOVE this, so the dock stays live while a panel is open. -->
+<div id="railmodal" role="dialog" aria-modal="true" aria-labelledby="rmtitle" aria-hidden="true">
+  <div id="rmbox">
+    <div id="rmhd">
+      <span id="rmico" aria-hidden="true"></span>
+      <span id="rmtitle"></span>
+      <span id="rmbadge"></span>
+      <button id="rmx" type="button" aria-label="Close panel">✖</button>
+    </div>
+    <div id="rmbody"></div>
   </div>
 </div>
 
@@ -1254,6 +1319,212 @@
   .wfrow .wfb{flex:0 0 70px;height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;}
   .wfrow .wfb > i{display:block;height:100%;}
   .wfrow .wfv{flex:0 0 30px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;}
+</style>
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   🎛 THE RAIL DOCK — see the block comment on #railbar in the body.
+   Appended LAST on purpose, the same convention as the gilded-panel block
+   above it: the `display:none` on the two rails has to beat the original
+   `display:flex` at equal specificity, so no existing rule had to be edited.
+   ══════════════════════════════════════════════════════════════════════ */
+
+  /* 🗄 THE STASH. NOT `visibility:hidden` and NOT off-screen positioning:
+     display:none takes the two rails out of layout AND out of paint, which is
+     the point — they were the most expensive thing on the screen (two
+     backdrop-filter:blur columns repainting twelve panels every 0.5 s over a
+     live 3D canvas). Every renderer writes innerHTML and toggles classes;
+     none of them measures a rect, so none of them can tell. */
+  #leftcol, #rightcol { display: none; }
+
+  /* ── the launcher row ─────────────────────────────────────────────────
+     Pinned under #daypill rather than beside it. The pill is centred at
+     top:calc(var(--topbarh) - 8px) and measures 24px tall, so its bottom edge
+     is topbarh+16 — +34 leaves an 18px gutter instead of racing the pill for
+     the middle of the screen, and it leaves the WHOLE viewport width for the
+     row, which is what stops 12 launchers overflowing at 1280 (measured: all
+     twelve are 1123px of a 1256px track, one row, at every width tested).
+     ⚠ +26 was the first try and it left THREE pixels. Measured, not eyeballed:
+       at 1280 the topbar wraps to two rows and both elements move together,
+       so the gap has to be big enough at the tightest width, not the widest.
+     pointer-events:none on the track so the gaps between buttons never eat a
+     camera drag; each button turns them back on. */
+  /* ⚠ z-index 43 sits ABOVE #railmodal (42) and below #inspect (44) and
+     #cardpicker (45), and that ordering is the design, not an accident: the
+     launcher row stays LIT AND CLICKABLE while a panel is open, so switching
+     panels is one click instead of close-then-open, and the raid countdown is
+     still readable while the player is reading something else. It is the same
+     argument the dossier makes for its click-through backdrop. The two
+     heavier dialogs above it do cover the row, which is correct — they are
+     modes, this is a dock. */
+  #railbar { position: absolute; top: calc(var(--topbarh) + 34px); left: 12px; right: 12px;
+    z-index: 43; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
+    gap: 6px; pointer-events: none; }
+  .rl { pointer-events: auto; position: relative; display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px 5px 8px; cursor: pointer; color: var(--bone);
+    border: 1px solid rgba(212,175,55,.42); border-radius: 8px;
+    background: linear-gradient(180deg, rgba(23,19,42,.94), rgba(9,8,19,.96));
+    box-shadow: 0 6px 18px rgba(0,0,0,.5); transition: border-color .15s, transform .1s;
+    backdrop-filter: blur(6px); }
+  .rl:hover { border-color: var(--gold); }
+  .rl:active { transform: translateY(1px); }
+  .rl:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .rl .rlico { font-size: 15px; line-height: 1; }
+  /* ⚠ letter-spacing applies after the LAST character too — padding-right
+     cancels exactly that, the same trick .bbtn .bname uses further up. */
+  .rl .rlname { font-family: 'Cinzel', Georgia, 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji', serif;
+    font-size: 9.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: #e6d9b2; white-space: nowrap; padding-right: .1em; }
+  /* ⚠ THE BADGE IS THE WHOLE ARGUMENT FOR COLLAPSING THE RAILS AT ALL.
+     Without it a CRITICAL vital and a raid two minutes out are one click away
+     from being invisible, and this change would be a downgrade dressed as
+     tidying.
+     ⚠ IT IS ABSOLUTELY POSITIONED, and that is a width decision, not a style
+       one. In the flex flow each badge cost 23px of the row (17px pill + 6px
+       gap); with eleven of them that is 253px, and the measured worst case —
+       all twelve launchers, a h:mm:ss clock, two-digit counts — came to
+       1380px against a 1256px track at 1280 wide, so the row wrapped onto a
+       second line over the map AND ran under the modal's top padding. Out of
+       flow it costs nothing: the same worst case is ~1000px. This is the
+       corner-chip pattern .opsbadge already uses further down this file.
+       ⚠ top:-8 / right:-6, plus 5px of extra right padding on a badged
+         button, because at -5/-4 the pill sat ON the last letter — "SYNC 0%"
+         rendered as "SYN€". Out of flow does not mean out of the way: it has
+         to clear the label's own box, not just the border.
+       It pokes 8px above the button; the gutter under #daypill is 18px. */
+  .rl.has-badge { padding-right: 15px; }
+  .rl .rlbadge { display: none; position: absolute; top: -8px; right: -6px;
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    font-size: 9.5px; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums;
+    background: #2a2338; color: var(--bone); border: 1px solid rgba(255,255,255,.14);
+    box-shadow: 0 2px 6px rgba(0,0,0,.6); }
+  .rl.has-badge .rlbadge { display: block; }
+  .rl.t-bad  { border-color: rgba(224,90,70,.85); }
+  .rl.t-bad  .rlbadge { background: #5c1f1a; color: #ffd0c6; border-color: rgba(224,90,70,.85); }
+  .rl.t-bad  .rlname { color: #ffb08a; }
+  .rl.t-warn { border-color: rgba(255,122,47,.7); }
+  .rl.t-warn .rlbadge { background: #5a3212; color: #ffcda0; border-color: rgba(255,122,47,.7); }
+  .rl.t-gold .rlbadge { background: #4a3c12; color: #f6e0a0; border-color: rgba(212,175,55,.7); }
+  .rl.t-ok   .rlbadge { background: #1c3d2c; color: #9cebab; border-color: rgba(76,175,122,.6); }
+  /* Reuses the raid card's own warnpulse, so "imminent" looks the same on the
+     launcher as it did on the panel it replaced. */
+  .rl.urgent { animation: warnpulse 1s infinite; }
+  /* The raid launcher prints the live countdown INSTEAD of a badge — a number
+     that changes every half second is not a badge, it is the readout, and the
+     brief for this change calls it out by name as the one thing that must
+     stay readable with nothing open. */
+  .rl .rlclock { font-family: 'Cinzel', Georgia, 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji', serif;
+    font-size: 12px; font-weight: 800; letter-spacing: .04em; color: #ffb08a;
+    font-variant-numeric: tabular-nums; display: none; }
+  .rl.has-clock .rlclock { display: block; }
+  .rl.has-clock .rlname { display: none; }
+  .rl.open { border-color: var(--ember); box-shadow: 0 0 14px rgba(255,122,47,.35); }
+
+  /* ── the one modal ────────────────────────────────────────────────────
+     position:fixed and inset:0 like #inspect. Backdrop closes; #rmbox eats
+     its own clicks. See the z-index note in the body. */
+  #railmodal { display: none; position: fixed; inset: 0; z-index: 42;
+    background: rgba(4,3,10,.6); align-items: flex-start; justify-content: center;
+    /* Top padding clears the launcher row (topbarh + 34 + 29 + gutter) so the
+       box never sits on top of the dock that opened it. Bottom clears
+       #buildbar — and 100px is MEASURED, not copied: the build bar is 78px
+       tall and its top sits exactly 92px off the bottom at every width and
+       height tested (1280x800, 1600x900, 1920x1080, 1280x720), because its
+       buttons are one non-wrapping row with overflow-x:auto. #inspect's 72px
+       is 20px short of that and does overlap it; this is not the place to fix
+       the dossier, but it is the place not to repeat it. */
+    padding: calc(var(--topbarh) + 74px) 14px 100px; }
+  #railmodal.open { display: flex; }
+  #rmbox { width: min(560px, 94vw); max-height: 100%; display: flex; flex-direction: column;
+    position: relative; overflow: hidden; border-radius: 12px;
+    background: linear-gradient(180deg, rgba(18,15,32,.985), rgba(8,7,16,.995));
+    border: 1px solid rgba(212,175,55,.55);
+    box-shadow: 0 30px 90px rgba(0,0,0,.75), inset 0 0 70px rgba(212,175,55,.045); }
+  /* Panels that are mostly a wide table read better with the room. */
+  #railmodal.wide #rmbox { width: min(880px, 96vw); }
+  #rmbox::before { content: ""; position: absolute; inset: 5px; border: 1px solid rgba(212,175,55,.16);
+    border-radius: 8px; pointer-events: none; z-index: 1; }
+  #rmhd { display: flex; align-items: center; gap: 10px; padding: 13px 15px 12px;
+    border-bottom: 1px solid rgba(212,175,55,.3);
+    background: linear-gradient(180deg, rgba(212,175,55,.07), transparent); }
+  #rmico { font-size: 19px; line-height: 1; }
+  #rmtitle { flex: 1; min-width: 0; font-family: 'Cinzel', Georgia, 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji', serif;
+    font-size: 14px; letter-spacing: .12em; text-transform: uppercase; color: #f0d68f;
+    text-shadow: 0 1px 8px rgba(212,175,55,.35); }
+  #rmbadge { display: none; padding: 2px 9px; border-radius: 11px; font-size: 10.5px;
+    font-variant-numeric: tabular-nums; background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.12); color: var(--bone); }
+  #rmbadge.on { display: block; }
+  #rmbadge.t-bad { background: rgba(192,71,63,.28); color: #ffb3a6; border-color: rgba(224,90,70,.6); }
+  #rmbadge.t-warn { background: rgba(255,122,47,.2); color: #ffc79a; border-color: rgba(255,122,47,.5); }
+  #rmbadge.t-gold { background: rgba(212,175,55,.18); color: #f0d68f; border-color: rgba(212,175,55,.45); }
+  #rmbadge.t-ok { background: rgba(76,175,122,.16); color: #8ce39a; border-color: rgba(76,175,122,.4); }
+  #rmx { flex: none; background: none; border: 0; color: var(--mist); font-size: 14px;
+    cursor: pointer; padding: 2px 4px; border-radius: 5px; line-height: 1; }
+  #rmx:hover { color: var(--bone); background: rgba(255,255,255,.07); }
+  #rmbody { overflow-y: auto; padding: 13px 15px 15px; }
+
+  /* The card is now furniture INSIDE the modal, so it drops its own frame —
+     a gilded box inside a gilded box reads as a rendering mistake. The h2
+     goes too: #rmtitle already names the panel, and its count (#repaircount /
+     #bldcount) is carried by #rmbadge. Nothing is removed from the DOM, so
+     every renderer that writes into those spans still lands. */
+  #rmbody > .card { display: block; background: none; border: 0; border-radius: 0;
+    box-shadow: none; padding: 0; backdrop-filter: none; width: 100%; }
+  #rmbody > .card::before { display: none; }
+  #rmbody > .card > h2 { display: none; }
+  /* Panels sized for a 232px rail get their air back at 530px. */
+  #rmbody .need { font-size: 13px; padding: 7px 0; gap: 10px; }
+  #rmbody .need .nico { font-size: 16px; }
+  #rmbody #needslist .allgood { font-size: 13px; }
+  /* 🔓 RELEASE THE RAIL-ERA HEIGHT CAPS — every one of these is a number that
+     only ever made sense inside a 232px column with its own scrollbar:
+     #needscard 190px, #repairlist / #bldlist 156px, #loglist 176px. In a
+     530px modal they are an arbitrary clip, and #needscard's was worse than
+     arbitrary — it SILENTLY ATE the street-voices section. The rows were in
+     the DOM, laid out, 240px tall and reporting a correct rect; they simply
+     painted below the card's own clip, so every DOM assertion passed while
+     the screen showed an empty heading. Found by measuring the box chain,
+     not by reading the CSS. #rmbody does the scrolling for all of them now. */
+  #rmbody #needscard { max-height: none; overflow: visible; }
+  #rmbody #repairlist, #rmbody #bldlist, #rmbody #loglist { max-height: none; }
+  #rmbody #vitalscard .vrow, #rmbody .arow, #rmbody .urow { font-size: 13px; }
+  #rmbody .rfoot, #rmbody .bfoot, #rmbody #campcard .foot { font-size: 11.5px; }
+  #rmbody #raidtimer { font-size: 30px; }
+  #rmbody #raidmeta { font-size: 12.5px; }
+  /* The rail's own tooltip spans must stay invisible in here: the delegated
+     engine at the top of this file reads them for innerHTML only, and
+     #inspect's .rtip rule does not reach a card that is not inside #inspect. */
+  #rmbody .rtip { display: none; }
+
+  /* ── 🗣 the street-voices block inside the People panel ───────────────
+     Hidden in the stash and shown in the modal: in a 232px rail it was never
+     going to be readable, which is the whole reason the speech lived in a
+     floating world label in the first place. */
+  #saidsec { display: none; }
+  #rmbody #saidsec { display: block; margin-top: 14px; border-top: 1px solid rgba(212,175,55,.25);
+    padding-top: 11px; }
+  #saidhd { font-family: 'Cinzel', Georgia, 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji', serif;
+    font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: #c9a86a;
+    margin-bottom: 8px; font-weight: 700; }
+  #saidlist { display: flex; flex-direction: column; gap: 7px; max-height: 240px; overflow-y: auto; }
+  .saidrow { border-left: 2px solid rgba(212,175,55,.4); padding: 2px 0 2px 10px; }
+  .saidrow.bad { border-left-color: rgba(224,90,70,.7); }
+  .saidrow.good { border-left-color: rgba(76,175,122,.7); }
+  .saidrow .swho { display: block; font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: #948da8; margin-bottom: 1px; }
+  .saidrow .stxt { font-size: 12.5px; line-height: 1.5; color: var(--bone); }
+  .saidnone { font-size: 12px; color: var(--mist); line-height: 1.5; }
+  .saidfoot { font-size: 10px; color: var(--mist); margin-top: 9px; line-height: 1.5; }
+
+  /* Narrow: drop the launcher labels to icon+badge before the row can wrap
+     into the 3D view. Measured, like the names: twelve icon-only launchers
+     come to ~740px including gaps, so one row survives well below the
+     smallest width this game is played at. 1150 rather than 900 because the
+     labelled worst case (~1180px of content) needs a 1174px track. */
+  @media (max-width: 1150px) {
+    .rl .rlname { display: none; }
+    .rl { padding: 6px 9px; }
+  }
 </style>
 <div id="toasts"></div>
 <!-- ⏳ Offline catch-up report. Populated and opened by showAwayReport(); empty
@@ -26683,8 +26954,14 @@ const CIT_SAY = {
     'Work at the {W}. It is not a building you put up, but it pays.'],
   econHigh: ['Good work going at the {W}.', 'The {W} keeps me busy and keeps me paid.'],
 };
-function citBubbleFor(a) {
-  const c = citOf(a);
+function citBubbleFor(a) { return citBubbleForCit(citOf(a)); }
+/* 🗣 Split out of citBubbleFor so the People modal can ask the same question
+   about a PERSON rather than about a walking agent. The bubble layer only ever
+   has the handful of citizens currently on screen; the modal wants the roster.
+   One function, so the two can never drift into saying different things about
+   the same citizen — which is the entire point of citSeqOf picking the variant
+   instead of Math.random. */
+function citBubbleForCit(c) {
   if (!c || !Number.isFinite(c.mood)) return null;
   const t = c.job ? game.tiles[c.job] : null;
   const def = t ? BUILDINGS[t.type] : null;
@@ -28136,6 +28413,12 @@ function bubbleTick(dt) {
       // next frame, so the opacity transition has a starting value to run from
       requestAnimationFrame(() => el.classList.add('on'));
       _bubbles.push({ el, agent: a, t: BUBBLE_LIFE });
+      /* 📝 …and into the scrollback the People modal reads. A world bubble is
+         gone in BUBBLE_LIFE seconds and a player who looked away has no way
+         back to it, so the SPOKEN line is recorded here — at the one place
+         that knows a citizen actually said it — rather than the modal
+         re-rolling its own lines and inventing speech that never happened. */
+      railSaid.push(line.text, who, line.tone);
     }
   }
 
@@ -28858,6 +29141,370 @@ function animate() {
   setTimeout(() => $('boot').classList.add('done'), 350);
   renderer.setAnimationLoop(animate);
 })();
+
+/* ════════════════════════════════════════════════════════════════════════
+   15. 🎛 THE RAIL DOCK — launcher row + one modal.
+   ─────────────────────────────────────────────────────────────────────────
+   Read the block comment on #railbar in the body first; this is the driver.
+   ⚠ WHY THIS BLOCK IS LAST IN THE MODULE, and not tidily up beside the
+     renderers it serves: it WRAPS updateHUD and openInspect. A function
+     declaration is a mutable binding, so reassigning it here re-points every
+     existing call site — animate()'s 0.5 s beat, the dossier's row clicks,
+     __nc.build.beat — at the wrapper. Declared any earlier and the
+     declarations below it would hoist straight over the wrap.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* The registry IS the row: order here is the order on screen, and the three
+   panels that hide themselves sit early so the row does not visibly reflow
+   around them when they appear. `title` is what the modal header and the
+   button's tooltip say in full; `name` is the shorter thing that has to fit
+   on a button TWELVE TIMES on one line.
+   ⚠ THE NAMES ARE MEASURED, NOT CHOSEN BY TASTE. The first cut used the panel
+     headings ("Garrison", "Building", "City Log", "Economy") and the worst
+     case — all twelve visible, a h:mm:ss raid clock, two-digit badges — came
+     to 1520px against a 1256px track at 1280 wide, so the row silently
+     wrapped onto a second line over the map. These names bring the same worst
+     case to ~1180px. Lengthen one and re-measure, or it wraps again. */
+const RAILS = [
+  { id: 'needscard',  ico: '😊', name: 'People', title: 'The People Need…' },
+  { id: 'vitalscard', ico: '📉', name: 'Vitals', title: 'Vital Signs' },
+  { id: 'raidcard',   ico: '⚔',  name: 'Raid',   title: 'Raider Threat', clock: true },
+  { id: 'repaircard', ico: '🔧', name: 'Repair', title: 'Repairs' },
+  { id: 'bldcard',    ico: '🏗', name: 'Build',  title: 'Under Construction' },
+  { id: 'ecocard',    ico: '🏭', name: 'Econ',   title: 'The Living Economy', wide: true },
+  { id: 'moralecard', ico: '🎭', name: 'Morale', title: 'City Morale' },
+  { id: 'armycard',   ico: '🪖', name: 'Army',   title: 'Population & Garrison' },
+  { id: 'campcard',   ico: '🏕', name: 'Camp',   title: 'Camp Upkeep Coverage' },
+  { id: 'synccard',   ico: '🔗', name: 'Sync',   title: 'City ↔ Node Sync' },
+  { id: 'govcard',    ico: '🏛', name: 'Gov',    title: 'Governance' },
+  { id: 'logcard',    ico: '📜', name: 'Log',    title: 'City Log' },
+];
+
+let _railOpen = null;                    // id of the panel currently in #rmbody
+const _railBtn = new Map();              // id -> button
+const _railSlot = new Map();             // id -> placeholder left behind in the rail
+let _logSeen = 0;                        // game.log.length as of the last City Log open
+
+/* ════ THE BADGE DERIVATION ════
+   Every state below is READ OFF THE RENDERED PANEL, never re-derived. There is
+   no second copy of "what counts as critical" anywhere in this block, and that
+   is deliberate: a launcher that computed its own thresholds would be a second
+   opinion about the city, and the two would drift the first time somebody
+   retuned VITAL_STATUS or the coverage gates. The renderers already ran (this
+   is called from the tail of updateHUD), so the DOM is the freshest and the
+   only authoritative answer.
+   Returns { hide, badge, tone, clock, urgent }; every field is optional. */
+function railState(r) {
+  const card = document.getElementById(r.id);
+  if (!card) return { hide: true };
+  const q = (sel) => document.querySelectorAll(sel).length;
+  const num = (id) => { const e = document.getElementById(id);
+                        const m = /-?\d+/.exec(e ? e.textContent : ''); return m ? +m[0] : null; };
+  switch (r.id) {
+    case 'needscard': {
+      const crit = q('#needslist .need.crit'), all = q('#needslist .need');
+      if (!all) return { badge: '✓', tone: 'ok' };
+      // The count is the CRITICAL count when there is one — "3" beside a red
+      // frame means three things are actually on fire, not three notes.
+      return { badge: crit || all, tone: crit ? 'bad' : 'warn', urgent: crit >= 3 };
+    }
+    case 'vitalscard': {
+      // vs-cri / vs-col are written by renderVitals' row(); .vstat exists
+      // nowhere else in this file, so this cannot pick up the output block.
+      const bad = q('#vitalsbody .vstat.vs-cri, #vitalsbody .vstat.vs-col');
+      return bad ? { badge: bad, tone: 'bad', urgent: true } : {};
+    }
+    case 'raidcard': {
+      // ⏱ The countdown itself, not a badge. raidTick writes #raidtimer every
+      // frame and toggles .warn on the card; both are simply relayed.
+      const t = document.getElementById('raidtimer');
+      const warn = card.classList.contains('warn');
+      return { clock: t ? t.textContent : '—', tone: warn ? 'bad' : '', urgent: warn };
+    }
+    // 🔧 🏗 The two self-hiding cards. `.on` is renderRepairs' and
+    //    renderBuildBoard's own emptiness verdict — the launcher does not
+    //    re-count damaged tiles, it asks the card whether it is showing.
+    //    A launcher for an empty board is noise and a "0" badge is worse.
+    case 'repaircard':
+      return card.classList.contains('on') ? { badge: num('repaircount'), tone: 'bad' } : { hide: true };
+    case 'bldcard':
+      return card.classList.contains('on') ? { badge: num('bldcount'), tone: 'gold' } : { hide: true };
+    // 🏭 The economy card ships display:none and the mount clears it. If
+    //    /src/economy 404s that never happens, so the launcher never appears
+    //    and the city ticks on exactly as before — same contract as the card.
+    case 'ecocard':
+      return card.style.display === 'none' ? { hide: true } : {};
+    case 'moralecard': {
+      const m = num('moraleval'), h = num('hungerval');
+      return { badge: m, tone: (m != null && m < 30) || (h != null && h > 70) ? 'bad'
+                            : (m != null && m < 50) || (h != null && h > 35) ? 'warn' : '' };
+    }
+    case 'campcard': {
+      const short = q('#campup .bad');
+      return short ? { badge: short, tone: 'warn' } : {};
+    }
+    case 'synccard': { const s = num('syncpct'); return s == null ? {} : { badge: s + '%' }; }
+    case 'logcard': {
+      const n = (game.log && game.log.length) | 0;
+      const unread = Math.max(0, n - _logSeen);
+      return unread ? { badge: unread > 99 ? '99+' : unread } : {};
+    }
+    default: return {};
+  }
+}
+
+/* The 0.5 s repaint of the row. Cheap on purpose — it touches a node only when
+   the value it would write has actually changed, because this runs on the
+   finest beat in the city and twelve unconditional innerHTML writes per beat
+   over a live canvas is exactly the cost the rails were collapsed to avoid. */
+function railSync() {
+  for (const r of RAILS) {
+    const btn = _railBtn.get(r.id); if (!btn) continue;
+    const st = railState(r);
+    const hide = !!st.hide;
+    if (btn._hid !== hide) { btn._hid = hide; btn.style.display = hide ? 'none' : ''; }
+    if (hide) continue;
+    const badge = st.badge == null ? '' : String(st.badge);
+    if (btn._badge !== badge) {
+      btn._badge = badge;
+      btn.querySelector('.rlbadge').textContent = badge;
+      btn.classList.toggle('has-badge', badge !== '' && !st.clock);
+    }
+    if (st.clock != null) {
+      if (btn._clock !== st.clock) { btn._clock = st.clock; btn.querySelector('.rlclock').textContent = st.clock; }
+      btn.classList.add('has-clock');
+    }
+    const tone = st.tone || '';
+    if (btn._tone !== tone) {
+      btn._tone = tone;
+      btn.classList.remove('t-bad', 't-warn', 't-gold', 't-ok');
+      if (tone) btn.classList.add('t-' + tone);
+    }
+    btn.classList.toggle('urgent', !!st.urgent);
+  }
+  if (!_railOpen) return;
+  const r = RAILS.find((x) => x.id === _railOpen);
+  const st = r ? railState(r) : { hide: true };
+  /* 🧹 The panel emptied itself while the player was reading it — the last
+     repair landed, the last build finished, and the card went display:none
+     UNDER them. Close rather than leave an empty gilded box on screen. */
+  if (st.hide) { railClose(); return; }
+  railBadge(st);
+  if (_railOpen === 'needscard') railSaidRender();
+}
+
+function railBadge(st) {
+  const el = document.getElementById('rmbadge'); if (!el) return;
+  const txt = st.clock != null ? st.clock : st.badge == null ? '' : String(st.badge);
+  el.textContent = txt;
+  el.classList.toggle('on', txt !== '');
+  el.classList.remove('t-bad', 't-warn', 't-gold', 't-ok');
+  if (st.tone) el.classList.add('t-' + st.tone);
+}
+
+/* Another overlay owns the screen. Escape and the backdrop both defer to it
+   rather than closing out from underneath — #cardpicker in particular is
+   opened BY the Raider Threat panel's Defense Deck button, so it is reachable
+   with this modal open by design. */
+function _railBlocked() {
+  if (document.getElementById('cardpicker') || document.getElementById('pp-ov')) return true;
+  for (const id of ['awayback', 'citback', 'adminpanel']) {
+    const e = document.getElementById(id); if (e && e.classList.contains('open')) return true;
+  }
+  const sv = document.getElementById('shopveil');
+  return !!(sv && sv.style.display && sv.style.display !== 'none');
+}
+
+function railOpen(id) {
+  const r = RAILS.find((x) => x.id === id); if (!r) return false;
+  const card = document.getElementById(id); if (!card) return false;
+  if (railState(r).hide) return false;
+  if (_railOpen === id) { railClose(); return false; }
+  if (_railOpen) railClose();
+  // 🏛 One dialog at a time. The dossier is the other body-level panel and it
+  //    is NOT aria-modal, so without this the two would sit on top of each
+  //    other with the dossier's click-through backdrop over this one's.
+  try { if (document.getElementById('inspect').classList.contains('open')) closeInspect(); } catch (e) {}
+
+  /* 🔁 THE MOVE. A placeholder takes the card's exact place in the rail, so
+     putting it back is a replaceChild and the rail's order can never drift —
+     an index or a nextSibling reference would go stale the moment another
+     card was moved, which with twelve launchers is every other click. */
+  let slot = _railSlot.get(id);
+  if (!slot) { slot = document.createComment('rail:' + id); _railSlot.set(id, slot); }
+  if (card.parentNode) card.parentNode.replaceChild(slot, card);
+  document.getElementById('rmbody').appendChild(card);
+
+  document.getElementById('rmico').textContent = r.ico;
+  document.getElementById('rmtitle').textContent = r.title;
+  const modal = document.getElementById('railmodal');
+  modal.classList.toggle('wide', !!r.wide);
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  _railOpen = id;
+  const btn = _railBtn.get(id); if (btn) btn.classList.add('open');
+  if (id === 'logcard') _logSeen = (game.log && game.log.length) | 0;
+  if (id === 'needscard') { railSaidRender._last = null; railSaidRender(); }
+  railBadge(railState(r));
+  document.getElementById('rmbody').scrollTop = 0;
+  try { document.getElementById('rmx').focus({ preventScroll: true }); } catch (e) {}
+  return true;
+}
+
+function railClose() {
+  if (!_railOpen) return false;
+  const id = _railOpen; _railOpen = null;
+  const card = document.getElementById(id), slot = _railSlot.get(id);
+  // Put it back where the placeholder is still standing. Guarded: if some
+  // other code removed the rail out from under us the card simply stays in
+  // #rmbody's detached state rather than throwing on the way out.
+  try { if (card && slot && slot.parentNode) slot.parentNode.replaceChild(card, slot); } catch (e) {}
+  const modal = document.getElementById('railmodal');
+  modal.classList.remove('open', 'wide');
+  modal.setAttribute('aria-hidden', 'true');
+  const btn = _railBtn.get(id);
+  if (btn) { btn.classList.remove('open'); try { btn.focus({ preventScroll: true }); } catch (e) {} }
+  if (id === 'logcard') _logSeen = (game.log && game.log.length) | 0;
+  return true;
+}
+
+/* ════ 🗣 STREET VOICES — the second half of the People panel ════
+   Two sources, and the panel says which is which:
+     1. `rows` — lines a citizen ACTUALLY said over their own head, recorded by
+        bubbleTick as it spawned them. This is a scrollback, not a generator.
+     2. the live roster, through citBubbleForCit — the same function the
+        bubbles use, so a citizen says the same thing in here as they would in
+        the street. Only used to TOP UP, because a player who opens the panel
+        thirty seconds after loading has heard nothing yet and an empty panel
+        reads as a broken feature rather than a quiet city. */
+const railSaid = {
+  MAX: 40,
+  rows: [],
+  push(text, who, tone) {
+    if (!text) return;
+    this.rows.unshift({ text: text, who: who || null, tone: tone || '', at: Date.now() });
+    if (this.rows.length > this.MAX) this.rows.length = this.MAX;
+  },
+};
+function railAgo(ms) {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  return s < 60 ? s + 's ago' : Math.round(s / 60) + 'm ago';
+}
+function railSaidRender() {
+  const host = document.getElementById('saidlist'); if (!host) return;
+  const rows = railSaid.rows.slice(0, 10);
+  const heard = rows.length;
+  if (rows.length < 8) {
+    const seen = new Set(rows.map((x) => x.who));
+    /* …and dedupe on the LINE as well as the speaker. A band has only two to
+       four variants and citSeqOf picks by sequence number, so a city where
+       everyone works at the same wrecked Farm hands back the same sentence
+       five times in a row — which reads as a broken panel rather than as a
+       shared complaint. One voice per distinct thing being said. */
+    const said = new Set(rows.map((x) => x.text));
+    for (const c of citizens) {
+      if (rows.length >= 8) break;
+      if (seen.has(c.name)) continue;
+      let l = null; try { l = citBubbleForCit(c); } catch (e) { l = null; }
+      if (!l || said.has(l.text)) continue;
+      seen.add(c.name); said.add(l.text);
+      rows.push({ text: l.text, who: l.who, tone: l.tone, at: 0 });
+    }
+  }
+  const html = rows.length
+    ? rows.map((x) => '<div class="saidrow ' + (x.tone || '') + '">' +
+        (x.who ? '<span class="swho">' + logEsc(x.who) + (x.at ? ' · ' + railAgo(x.at) : '') + '</span>' : '') +
+        '<span class="stxt">“' + logEsc(x.text) + '”</span></div>').join('')
+    : '<div class="saidnone">No one is out on the street yet. Citizens arrive as the city grows, ' +
+      'and what they say here is what they say over their own heads on the map.</div>';
+  // Diff-guarded like renderLog: this runs on the 0.5 s beat while the panel
+  // is open, and the relative timestamps alone would rewrite it every time.
+  if (html !== railSaidRender._last) { railSaidRender._last = html; host.innerHTML = html; }
+  const foot = document.getElementById('saidfoot');
+  if (foot) {
+    foot.textContent = heard
+      ? heard + ' overheard on the street' + (rows.length > heard ? ', plus what the rest of the roster would tell you.' : '.')
+      : 'Nobody has spoken up on the map yet — this is what the roster would tell you if you stopped them.';
+  }
+}
+
+/* ── build the row, wire the modal ────────────────────────────────────── */
+{
+  const bar = document.getElementById('railbar');
+  for (const r of RAILS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'rl';
+    b.dataset.rail = r.id;
+    b.title = r.title;
+    b.setAttribute('aria-label', r.title);
+    b.innerHTML = '<span class="rlico">' + r.ico + '</span>' +
+                  '<span class="rlname">' + r.name + '</span>' +
+                  '<span class="rlclock"></span><span class="rlbadge"></span>';
+    b.style.display = 'none';            // railSync reveals it on the first beat
+    b._hid = true;
+    b.addEventListener('click', () => railOpen(r.id));
+    bar.appendChild(b);
+    _railBtn.set(r.id, b);
+  }
+
+  const modal = document.getElementById('railmodal');
+  // Only the backdrop itself closes — a click that lands on #rmbox or anything
+  // inside it (a repair button, a log filter, a build cancel) is the panel's.
+  modal.addEventListener('click', (ev) => { if (ev.target === modal) railClose(); });
+  document.getElementById('rmx').addEventListener('click', railClose);
+
+  /* ⌨ CAPTURE PHASE, and it stops propagation. Two other Escape handlers are
+     already registered on window in this file (the dossier's, and the one that
+     drops build mode back to inspect) — without capture the keypress would
+     close this modal AND cancel whatever the player was placing. */
+  addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || !_railOpen || _railBlocked()) return;
+    ev.stopPropagation(); ev.preventDefault();
+    railClose();
+  }, true);
+
+  /* 🏛 The dossier and this modal are mutually exclusive, and the dossier can
+     be opened from INSIDE this one — the Site Board and the Repairs list both
+     say "click a row to inspect it". Wrapping is the only way to catch every
+     one of those call sites at once. */
+  const _railOpenInspect = openInspect;
+  openInspect = function () { railClose(); return _railOpenInspect.apply(this, arguments); };
+
+  /* 🖌 THE BEAT. updateHUD is the 0.5 s repaint every countdown in this file
+     already rides; hanging the launcher row off its tail means the badges can
+     never be a beat behind the panels they are summarising, because the
+     panels were repainted three lines earlier in the same call.
+     try/catch for the same reason updateHUD wraps its own two calls: a throw
+     in the decoration must never take down the HUD. */
+  const _railUpdateHUD = updateHUD;
+  updateHUD = function () {
+    const out = _railUpdateHUD.apply(this, arguments);
+    try { railSync(); } catch (e) { console.warn('[rail] sync', e); }
+    return out;
+  };
+
+  /* 🔬 Diagnostics seam, same contract as __nc: rAF never fires in the capture
+     pane, so a driver has to be able to open, close and re-beat the dock by
+     hand. These are the SHIPPED functions, not test twins. */
+  const RAIL_API = {
+    list: () => RAILS.map((r) => r.id),
+    state: (id) => railState(RAILS.find((x) => x.id === id) || { id: id }),
+    open: railOpen, close: railClose, sync: railSync,
+    current: () => _railOpen,
+    said: railSaid,
+    saidRender: railSaidRender,
+    visible: () => RAILS.filter((r) => { const b = _railBtn.get(r.id); return b && b.style.display !== 'none'; })
+                        .map((r) => r.id),
+  };
+  let tries = 0;
+  const attach = () => {
+    try { if (window.__nc) { window.__nc.rail = RAIL_API; return; } } catch (e) {}
+    if (++tries < 40) setTimeout(attach, 250);
+  };
+  setTimeout(attach, 60);
+  try { window.__ncRail = RAIL_API; } catch (e) {}
+}
 </script>
 </body>
 </html>

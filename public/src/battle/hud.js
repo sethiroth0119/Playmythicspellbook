@@ -646,12 +646,61 @@ function restoreFrozen(scr, left) {
    already there, so on any render that did not destroy it this costs one
    `querySelector`.
    Everything is typeof-guarded: if either function ever stops being global the
-   catcher is simply left to the rAF ticker, which is today's behaviour. */
+   catcher is simply left to the rAF ticker, which is today's behaviour.
+
+   ⚠ THIS FUNCTION USED TO CALL `_bbStageTrack` TOO, AND THAT WAS THE
+   BATTLEFIELD FLICKER. See trackStage() below — the two are NOT the same
+   errand and must not share a call site. */
 function rearmCatcher() {
   try {
     const area = document.querySelector('.board-area');
     if (!area) return;
     if (typeof window._bbStageCatcher === 'function') window._bbStageCatcher(area);
+  } catch (e) { /* the ticker will get there a few frames later */ }
+}
+
+/* ── 🎬 "THE BATTLEFIELD FLICKERS AFTER A COMBAT ANIMATION" ─────────────────
+   index.html's `_bbStageTrack(area)` MEASURES `.board-area` and moves the 3D
+   stage iframe onto it. It is the ONLY writer of that iframe's geometry — grep
+   `bb-stage-host`: every other hit reads getBoundingClientRect() or is CSS, and
+   the only `host.style.top =` is at the bottom of that one function. So
+   wherever `_bbStageTrack` is called from IS the stage's position.
+
+   It used to be called from rearmCatcher(), i.e. from relayout() line 1, which
+   is ~135 lines BEFORE this file hoists `#phase-bar` out of `.battle-center`
+   into its own HUD band. So every renderBattle() sampled the board while the
+   phase bar was still sitting on top of it, pushing it down the column — and
+   then this file moved the bar away and the board sprang back.
+
+   MEASURED, HEAD, 1280x800, 12 consecutive renderBattle() calls:
+     `.board-area` settled top = 8 on all 12 · stage committed top = 48 on all
+     12 · 24 geometry writes total (one bad one per render from here, one
+     correcting one per render from the rAF ticker's _bbStageMount).
+   40px of battlefield, for a whole frame, on every combat resolution. Same
+   viewport, one real attack (queueBattleAnim → 6 renderBattle passes → the
+   overlay's own timeout clears it): 6 wrong writes before, 0 after, with every
+   post-fix sample reading the settled 8.
+
+   REJECTED — a settle gate inside _bbStageTrack (hold a changed rect back one
+   sample, apply it only if it is still there). It cannot work: the transient is
+   sampled from ONE fixed call site exactly once per render, so two renders in
+   one animation frame present the same bad rect twice and the gate reads that
+   as "settled". It also halves tracking rate during a real window drag. The bad
+   sample is not something to detect afterwards — it is something not to take.
+
+   So: the sample moves to the END of relayout, on BOTH exit paths. That is the
+   invariant, and it is provable by grep — `_bbStageTrack` appears in this file
+   only inside this function, and this function is the last statement on every
+   path out of relayout(). THIS MODULE NEVER MEASURES `.board-area` WHILE IT
+   STILL HAS NODES TO MOVE. It closes the phase-bar hoist, and equally §2's
+   left-cluster moves, §4's END TURN dock and any re-parent added later, none of
+   which needed their own patch. (The catcher stays where it was: it must be
+   re-created before the early-out because a render that destroyed it leaves the
+   board unclickable, and creating it does not move anything.) */
+function trackStage() {
+  try {
+    const area = document.querySelector('.board-area');
+    if (!area) return;
     if (typeof window._bbStageTrack === 'function') window._bbStageTrack(area);
   } catch (e) { /* the ticker will get there a few frames later */ }
 }
@@ -664,7 +713,9 @@ function relayout() {
   // one that lays the screen out. The vanish list is a snapshot of `void`, and
   // `void` changes on exactly the renders the early-out skips.
   if (voidOpen) refreshVoidView();
-  if (scr.__hudx) return;            // already laid out — the cheap early-out
+  // already laid out — the cheap early-out. Nothing below ran, so nothing moved
+  // and the board's rect is already final: sample it and leave.
+  if (scr.__hudx) { trackStage(); return; }
   scr.__hudx = 1;
 
   const left = scr.querySelector('.battle-left');
@@ -923,6 +974,12 @@ function relayout() {
         own, so a missing header can never cost the band, the rail or END TURN
         their relayout. ──────────────────────────────────────────────────── */
   wireLogHead(scr);
+
+  /* ── 6. LAST, ALWAYS: tell the 3D stage where the board ended up. Every
+        section above re-parents something out of the battle column, so a rect
+        read before this line is a rect this function is about to invalidate —
+        that is the whole flicker. See trackStage(). ───────────────────────── */
+  trackStage();
 }
 
 function schedule() {

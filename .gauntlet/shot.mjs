@@ -28,6 +28,10 @@ const out   = process.argv[2] || '.gauntlet/shots/out.png';
 const WAIT  = +arg('--wait', 20000);
 const W     = +arg('--w', 1600), H = +arg('--h', 900);
 const EVAL  = arg('--eval', '');
+/* --scene builds the standard district first, so a FUNCTIONAL feature can be
+   driven against a real city (open the road modal, refuse a trade, zone a
+   block) instead of against an empty map. --eval then runs after it. */
+const SCENE = process.argv.includes('--scene');
 const PORT  = 8700 + (process.pid % 90);
 
 const server = http.createServer((req, res) => {
@@ -71,6 +75,11 @@ page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`.slice(0, 400)));
 
 await page.goto(`http://127.0.0.1:${PORT}/node-city/index.html`, { waitUntil: 'load', timeout: 120000 });
 await page.waitForTimeout(WAIT);
+if (SCENE) {
+  const built = await page.evaluate(fs.readFileSync(path.resolve(process.cwd(), '.gauntlet/scene.js'), 'utf8'));
+  logs.push(`[scene] ${JSON.stringify(built)}`.slice(0, 400));
+  await page.waitForTimeout(5000);
+}
 if (EVAL) { try { await page.evaluate(EVAL); } catch (e) { logs.push(`[evalerr] ${e.message}`); }
             await page.waitForTimeout(4000); }
 

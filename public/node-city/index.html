@@ -1683,22 +1683,99 @@
     var rr = rail.getBoundingClientRect();
     return rr.width > 0 ? { el: rail, r: rr } : null;
   }
-  // 📦 THE PANELS THAT OWN THE MIDDLE OF THE SCREEN, as one union rect, or null
-  // when none is open. #insbox (the building dossier) and #rmbox (the rail
-  // modal) are both display:none until their scrim opens, so offsetWidth is the
-  // whole test. The UNION rather than the nearer of the two because they can be
-  // open together (a rail modal over an open dossier) and #rmbox's 560px column
-  // sits inside #insbox's 1000px one — dock beside the union and both are clear.
+  /* 📦 THE PANELS THAT OWN THE MIDDLE OF THE SCREEN, as one union rect, or null
+     when none is open. The UNION rather than the nearest, because two can be
+     open together (a rail modal over an open dossier) and #rmbox's column sits
+     inside #insbox's — dock beside the union and both are clear.
+
+     🔴 THIS USED TO BE THE LITERAL LIST `['insbox','rmbox']`, AND THE LIST WAS
+        THE BUG. Measured on this tree at 1280×800, with the list in place:
+        · THE "WHILE YOU WERE AWAY" REPORT IS NOT ON IT. #awaybox is a 430px
+          box at [425,206 → 855,593]; hovering the topbar chips over it put the
+          card at [490,174 → 726,280] and covered its own title "⏳ While you
+          were away" by 236×19, the "Gone · simulated" line by 236×17, both
+          "1h 18m" figures and the "Produced" header — 32 covered readouts
+          across 12 of the chips. The report exists to be read ONCE, on return,
+          and the tips sat on it.
+        · #insbox WAS on the list and was still covered, because the list was
+          only ever consulted inside the `#topbar` branch. A host INSIDE the
+          dossier never reached it: the Overview tab's own cost chips put the
+          card at [176,693 → 412,782] and ate 236×19 of "Everything below is
+          the same building at level 2…", 236×10 of the terms line above it and
+          68×12 of "Level 1 → 2" — 6 covered elements.
+        Two doors, two DIFFERENT reasons, and #citback (the citizen panel) and
+        #cardpicker (the vault Rebalance dialog) would have been the third and
+        fourth. A list cannot be right about a panel nobody has written yet, so
+        patching the list is the fix that fails again next time.
+
+     ⭐ SO IT DISCOVERS THE PANELS INSTEAD OF NAMING THEM. Every modal in this
+        file is built the same way and always has been: a full-viewport overlay
+        that is a direct child of <body>, painting a DIMMING background, holding
+        its content in boxes smaller than itself — #shopveil>#shopwrap,
+        #inspect>#insbox, #railmodal>#rmbox, #awayback>#awaybox,
+        #adminpanel>#adminbox, #citback>…, #cardpicker>.cpbox. That shape is the
+        test, so the next panel is covered on the day it is written.
+
+     ⚠ THE DIMMING BACKGROUND IS THE DISCRIMINATOR, AND IT IS NOT COSMETIC.
+       #scene, #bubbles (speech bubbles over the citizens) and #toasts are also
+       full-viewport children of <body>, and #bubbles has visible children at
+       arbitrary positions that would be read as panels and would drag the card
+       into the middle of the screen. All three measure backgroundColor
+       rgba(0,0,0,0); every real panel measures alpha .55–.75. Excluding them by
+       a property they genuinely lack beats excluding them by name — a name list
+       here would just be the old bug wearing a different hat. It is also the
+       RIGHT property: an overlay that dims the HUD is precisely one that has
+       made everything behind it unreadable, which is what makes its box the
+       only thing worth not covering.
+     ⚠ A CHILD THAT FILLS ITS OVERLAY IS NOT A BOX. A scrim's own backdrop layer
+       would union out to the whole viewport, leave no gutter, and make
+       dockBeside give up on every hover. Hence the strictly-smaller test.
+     ⚠ opacity is checked because #boot is a full-viewport dimming overlay with
+       centred children that stays in the DOM at opacity 0 after boot. */
   function openBoxRect() {
-    var u = null;
-    ['insbox', 'rmbox'].forEach(function (id) {
-      var b = document.getElementById(id); if (!b || !b.offsetWidth) return;
-      var q = b.getBoundingClientRect(); if (q.width < 1 || q.height < 1) return;
-      u = u ? { left: Math.min(u.left, q.left), right: Math.max(u.right, q.right),
-                top: Math.min(u.top, q.top), bottom: Math.max(u.bottom, q.bottom) }
-            : { left: q.left, right: q.right, top: q.top, bottom: q.bottom };
-    });
+    var u = null, kids = document.body.children;
+    for (var i = 0; i < kids.length; i++) {
+      var ov = kids[i];
+      if (ov === tip || !ov.offsetWidth) continue;
+      var ocs = getComputedStyle(ov);
+      if (ocs.display === 'none' || ocs.visibility === 'hidden' || parseFloat(ocs.opacity) === 0) continue;
+      // A dimming overlay: opaque enough to have hidden what is behind it.
+      var m = /^rgba?\(([^)]+)\)/.exec(ocs.backgroundColor);
+      if (!m) continue;
+      var parts = m[1].split(','), alpha = parts.length > 3 ? parseFloat(parts[3]) : 1;
+      if (!(alpha > 0.05)) continue;
+      var orr = ov.getBoundingClientRect();
+      if (orr.width < innerWidth - 4 || orr.height < innerHeight - 4) continue;
+      for (var j = 0; j < ov.children.length; j++) {
+        var b = ov.children[j];
+        if (!b.offsetWidth) continue;
+        var bcs = getComputedStyle(b);
+        if (bcs.display === 'none' || bcs.visibility === 'hidden' || parseFloat(bcs.opacity) === 0) continue;
+        var q = b.getBoundingClientRect();
+        if (q.width < 1 || q.height < 1) continue;
+        if (q.width >= orr.width - 4 && q.height >= orr.height - 4) continue;  // the scrim's own layer
+        u = u ? { left: Math.min(u.left, q.left), right: Math.max(u.right, q.right),
+                  top: Math.min(u.top, q.top), bottom: Math.max(u.bottom, q.bottom) }
+              : { left: q.left, right: q.right, top: q.top, bottom: q.bottom };
+      }
+    }
     return u;
+  }
+  /* 📏 The bottom of the stacked top band — #topbar (which WRAPS to two rows at
+     1280), #daypill and #railbar. Pulled out of the topbar branch below because
+     it is now the vertical FLOOR for every docked card, not just a topbar one:
+     the gutter beside a centred panel starts where the band ends, whoever the
+     host is. Measured, not assumed — see the --topbarh comment. */
+  function bandBottom() {
+    var band = 0;
+    ['topbar', 'daypill', 'railbar'].forEach(function (id) {
+      var e = document.getElementById(id); if (!e) return;
+      var cs = getComputedStyle(e);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return;
+      var br = e.getBoundingClientRect();
+      if (br.height > 0) band = Math.max(band, br.bottom);
+    });
+    return band;
   }
   /* 🚪 DOCK THE CARD IN THE SIDE GUTTER BESIDE AN OPEN PANEL.
      Shared by the #rmbox branch and the topbar branch below — one placement
@@ -1770,63 +1847,59 @@
       tip.style.top = Math.round(top) + 'px';
       return;
     }
-    // ── Rail-modal hosts go in the SCRIM GUTTER beside #rmbox. Same argument
-    // as the shop rail, different geometry: #rmbox is a 560px column centred in
-    // the viewport, so the free space is outside it rather than inside. Anchored
-    // to the host, the tip had nowhere to go but back over the panel — measured
-    // at 1280×720, the Vital Signs card is 611px tall, taller than the room
-    // below it, so the tip flipped up to y=69 and covered the panel's own
-    // "Vital Signs" title (236×19) plus three rail buttons; and in the Army
-    // panel the "−" button's tip covered the "+ Hire" button beside it (44×15)
-    // and the "0 × Militia" row it belongs to (166×17). The gutter is scrim over
-    // an already-dimmed HUD, so nothing readable lives there.
-    // ⚠ This branch used to own its side-picking arithmetic; it now shares
-    // dockBeside() with the topbar branch below, which also NARROWS the card
-    // when the gutter is short. That is a strict gain here too: #railmodal.wide
-    // is 880px, so at 1280 its gutter is 200px and the old code gave up and fell
-    // back to anchored placement. Measured with the Econ panel open at 1280×720,
-    // the fifteen topbar cards now dock at 184px wide, 15/15 clear.
-    var box = h.closest && h.closest('#rmbox');
-    if (box && dockBeside(box.getBoundingClientRect(), r, M)) return;
-    // ── Topbar hosts clear the WHOLE top band, not just their own chip.
-    // The top of the screen is three stacked strips of live readouts — #topbar
-    // (which WRAPS to two rows at 1280 wide, see the --topbarh comment),
-    // #daypill and #railbar. Anchored to the chip alone, a row-1 tip opened at
-    // y=44 and ran to y=154: measured at 1280×720 that buried Stone, Cloth,
-    // Population and City Time on row 2, the whole day/weather pill, and eight
-    // rail buttons — 104 covered readouts across the twelve chips. Everything
-    // in the band is a number the player may be reading BECAUSE they are
-    // hovering a related one, so the tip goes under the band, over the scene.
-    if (h.closest && h.closest('#topbar')) {
-      var band = 0;
-      ['topbar', 'daypill', 'railbar'].forEach(function (id) {
-        var e = document.getElementById(id); if (!e) return;
-        var cs = getComputedStyle(e);
-        if (cs.display === 'none' || cs.visibility === 'hidden') return;
-        var br = e.getBoundingClientRect();
-        if (br.height > 0) band = Math.max(band, br.bottom);
-      });
-      /* 🔴 CLEARING THE BAND IS NOT ENOUGH WHEN A PANEL IS OPEN. The band ends
-         at y=165 at 1280×720 and #inspect's top inset puts #insbox at y=177, so
-         "just under the band" and "the top of the dossier" are TWELVE PIXELS
-         apart — the card landed square on the dossier header. And because
-         #inspect is pointer-events:none by design (see its block), the chips
-         stay hoverable with a building open, so this is ordinary play: open a
-         building, glance at your Cinder. Measured before this branch existed,
-         1280×720, dossier open on the Construction Co. at tile 8,8 — the Cinder
-         chip put the card at [131,175 → 367,298.8] against #insbox
-         [140,177 → 1140,622]: a 227×121.8 bite that covered the building name
-         (151×22.1 of "Construction Co."), "🏭 Operations", "tile 8,8",
-         "lot value 20 ₵", the Staff row and its value — 7 readable elements,
-         and ALL 15 of 15 chips hit, 12 of 15 at 1920×1080.
-         So the same gutter dock the #rmbox branch uses, with the band as the
-         vertical floor instead of the viewport margin: the gutter's TOP is the
-         topbar itself, and floorY is what keeps the card out of it. */
-      var floorY = Math.max(M, band + GAP);
-      var obx = openBoxRect();
-      if (obx && dockBeside(obx, r, floorY)) return;
-      if (band > top) top = band + GAP;
-    }
+    /* ── 🚪 ANY OPEN PANEL SENDS THE CARD TO THE GUTTER, WHOEVER THE HOST IS.
+       ⭐ THE ONE RULE THIS BRANCH ENFORCES, AND THE ONLY ONE:
+            WHILE A PANEL IS OPEN, THE CARD IS PLACED OUTSIDE IT — in the scrim
+            gutter beside the union of every open panel — OR NOT MOVED AT ALL.
+          It is stated about the PLACEMENT, not about the host, because a rule
+          about the host is a list of hosts and that is exactly what kept
+          failing. The three predecessors of this branch each asked "is the host
+          in #rmbox / in #topbar / in the shop?" and each answered correctly for
+          its own door while leaving the next one open: hosts inside #insbox
+          walked straight past all three into anchored placement, and the topbar
+          door only knew about panels somebody had remembered to list. Asking
+          instead "is ANY panel open, and is there a column outside it?" has no
+          per-host arm to forget, and openBoxRect() above finds the panels by
+          their shape rather than by their names — so a card can only ever land
+          on a panel if that panel is not on screen or the viewport has no
+          gutter at all, and in the second case dockBeside refuses and leaves
+          today's anchored placement untouched.
+       🔴 WHAT IT COSTS TO GET THIS WRONG, measured at 1280×800 on this tree:
+          the dossier's own cost chips covered 6 elements of its Overview
+          (236×19 of the level-2 explanation, 68×12 of "Level 1 → 2"), and the
+          twelve topbar chips covered 32 readouts of the "While you were away"
+          report including its title. Full numbers in openBoxRect's header.
+       ⚠ THE RAIL-MODAL AND TOPBAR CASES ARE SUBSUMED, NOT DELETED — they were
+         this same dock with a narrower question in front of it, and their
+         measurements still hold: at 1280 the Vital Signs card is 611px tall so
+         an anchored tip flipped up over the panel's own title (236×19) and
+         three rail buttons; the Army panel's "−" tip covered "+ Hire" (44×15)
+         and the "0 × Militia" row (166×17); and with the dossier open the
+         Cinder chip put the card at [131,175 → 367,298.8] against #insbox
+         [140,177 → 1140,622], a 227×121.8 bite over the building name,
+         "🏭 Operations", "tile 8,8", "lot value 20 ₵" and the Staff row —
+         15 of 15 chips hit. Union geometry means a rail modal over an open
+         dossier still docks beside both.
+       ⚠ THE BAND IS NOW THE FLOOR FOR EVERY DOCK, not just the topbar's. It can
+         only push a card DOWN, and the gutter beside a centred panel starts
+         where the band ends no matter which panel it is; the old #rmbox arm
+         passed M instead and was saved only by its hosts happening to sit below
+         the band, which stops being true on a short viewport. */
+    var band = bandBottom();
+    var floorY = Math.max(M, band + GAP);
+    var obx = openBoxRect();
+    if (obx && dockBeside(obx, r, floorY)) return;
+    // ── With NO panel open, topbar hosts still clear the WHOLE top band rather
+    // than just their own chip. The top of the screen is three stacked strips of
+    // live readouts — #topbar (which WRAPS to two rows at 1280, see the
+    // --topbarh comment), #daypill and #railbar. Anchored to the chip alone, a
+    // row-1 tip opened at y=44 and ran to y=154: measured at 1280×720 that
+    // buried Stone, Cloth, Population and City Time on row 2, the whole
+    // day/weather pill and eight rail buttons — 104 covered readouts across the
+    // twelve chips. Everything in the band is a number the player may be reading
+    // BECAUSE they are hovering a related one, so the tip goes under the band,
+    // over the scene.
+    if (h.closest && h.closest('#topbar') && band > top) top = band + GAP;
     // Flip above when there is no room below but there is room above.
     if (top + ht > innerHeight - M && r.top - GAP - ht >= M) top = r.top - GAP - ht;
     // Clamp both axes. Clamping LAST means a flip can never push it back out.
@@ -17982,6 +18055,63 @@ game.power = { gen: 0, demand: 0, ratio: 1, factor: 1 };
      out    units actually granted, per resource;  sum(out) <= free  always
      factor sum(out)/want — the aggregate share that got through, for the HUD
      fair   true when the holdings rule actually had to arbitrate */
+/* 🎯 ══ ONE FORMULA FOR "THIS RESOURCE'S SHARE OF THE SPACE" ══════════════════
+   `pool` is the room these resources will occupy once this tick's headroom is
+   spent (what they already hold, plus what is free). `target[r]` is the slice
+   of that pool this resource's own production entitles it to.
+
+   ⚠ WHY THIS IS A FUNCTION AND NOT THREE LINES INSIDE _stashSplit. It is read
+     by TWO callers now — stage 1 of the throttle, and _stashRebalancePlan(),
+     which tells the player how far out of line their vault has drifted. If the
+     dialog computed the target with its own copy of `pool * w / total`, the
+     button could offer to move a number the throttle does not agree with, and
+     the player would rebalance and still be choked. One formula, two readers,
+     so they cannot disagree — the same reasoning _stashRate's header gives for
+     pulling the advertised rate out of economyTick's closure.
+   ⚠ SHARES ARE OVER THE CITY-PRODUCED SET ONLY — see _stashSplit's header. A
+     resource that is not in `want` has no target here and is never touched. */
+function _stashShareTargets(want, free, held) {
+  let total = 0;
+  for (const r in want) total += Math.max(0, want[r] || 0);
+  let pool = Number.isFinite(free) ? Math.max(0, free) : 0;
+  for (const r in want) pool += Math.max(0, (held && held[r]) || 0);
+  const target = {};
+  for (const r in want) target[r] = (total > 0) ? pool * (Math.max(0, want[r] || 0) / total) : 0;
+  return { pool, total, target };
+}
+/* 🏰 ══ THE WAY OUT OF A VAULT THAT ALREADY RATCHETED ═════════════════════════
+   🔴 THE STATE THIS EXISTS FOR, MEASURED ON THIS TREE. _stashSplit stops a
+      ratchet FORMING; it cannot unwind one, because it never takes anything
+      away (its own header promises exactly that, and jettisoning a player's
+      property to fix a ratio is not a fix). So the player who reported the bug
+      is still stuck. A 2,000-unit vault holding metal 1,960 / food 20 / water
+      20, left 6 h with this city's rates (food 130.35 · water 70.84 · metal
+      25.58 a minute) comes back to metal 1,960 / food 37 / water 0: metal is
+      frozen — correctly, nothing is taken away — while food and water bank only
+      what the citizens ate that slice, 5,223 units in six hours against 81,637
+      produced. 6.4% of output, forever, until the player spends metal by hand.
+
+   ⭐ WHAT THIS RETURNS: for every city-produced resource, how far ABOVE its
+      production share it is holding. That surplus is what has to leave the
+      capped stash for the throttle to open up again, and it is computed from
+      _stashShareTargets — the same targets stage 1 of the throttle refuses on,
+      so clearing the surplus provably clears the refusal.
+
+   ⚠ FLOORED, NEVER ROUNDED. A rounded-up figure would ask the player to move
+     a fraction of a unit more than they are actually over, and the ledger deals
+     in whole units — over-asking on someone else's property is the wrong
+     direction to be wrong in.
+   ⚠ THIS FUNCTION MOVES NOTHING AND IS PURE. It is arithmetic the dialog
+     prints; every unit is moved by openStashRebalance(), behind a button. */
+function _stashRebalancePlan(mix, held, free) {
+  const { target, pool, total } = _stashShareTargets(mix, free, held);
+  const move = {}; let units = 0;
+  for (const r in mix) {
+    const over = Math.floor(Math.max(0, ((held && held[r]) || 0) - target[r]));
+    if (over > 0) { move[r] = over; units += over; }
+  }
+  return { move, units, target, pool, total };
+}
 function _stashSplit(want, free, held) {
   const out = {};
   let total = 0;
@@ -17991,16 +18121,12 @@ function _stashSplit(want, free, held) {
   if (!(free > 0) || !(total > 0)) return { out, factor: 0, want: total, fair: false };
   const heldOf = (r) => Math.max(0, (held && held[r]) || 0);
 
-  // The space THESE resources will share once this tick's headroom is spent.
-  let pool = free;
-  for (const r in want) pool += heldOf(r);
-
   // ── stage 1 — the deficit against each resource's production share.
+  const { target } = _stashShareTargets(want, free, held);
   const room = {}; let roomTotal = 0;
   for (const r in want) {
     const w = Math.max(0, want[r] || 0);
-    const target = pool * (w / total);
-    room[r] = Math.min(w, Math.max(0, target - heldOf(r)));
+    room[r] = Math.min(w, Math.max(0, target[r] - heldOf(r)));
     roomTotal += room[r];
   }
   let given = 0;
@@ -18434,8 +18560,18 @@ async function economyTick(dtMin) {
        never overflowed, so the "STASH FULL" toast never fired and the only
        symptom was resources quietly not arriving. Read by the advisor list and
        by the offline report. */
+    /* 🏰 `mix` IS CARRIED, NOT RE-DERIVED. The Rebalance dialog has to know what
+       this city produces to say what a fair vault would look like, and
+       prodPerMin is the wrong place to read it from: by the time the panel
+       paints, prodPerMin has already been scaled DOWN by _stashRate, so a
+       starved resource reads 0/min and the dialog would compute its share as
+       zero — i.e. it would tell a choked player their starved resource deserves
+       none of the vault, which is the exact inversion this whole area exists to
+       stop. `_ledgerRate` is the UNTHROTTLED rate, which is what a share is
+       owed against. Copied because it is a fresh object each tick anyway. */
     _stashChoke = (_split.factor < 1 && _split.want > 0)
-      ? { factor: _split.factor, perMin: _split.want / Math.max(1e-9, dtMin), free: _ledgerFree }
+      ? { factor: _split.factor, perMin: _split.want / Math.max(1e-9, dtMin), free: _ledgerFree,
+          mix: Object.assign({}, _ledgerRate) }
       : null;
   }
   // Non-building supply that no tile owns.
@@ -23287,10 +23423,29 @@ function evaluateNeeds() {
      simply not arrive. This row is the only place the game explains it. */
   if (_stashChoke) {
     const pct = Math.round(_stashChoke.factor * 100);
+    /* 🏰 …AND, IF THE VAULT HAS ALREADY RATCHETED, A WAY OUT OF IT.
+       The row alone was the whole remedy for a player in that state, and it
+       amounts to "go and spend metal by hand" — the split fix stops the ratchet
+       forming but cannot unwind one, so a save that was already lopsided when
+       it shipped stays lopsided forever. The button is offered ONLY when some
+       resource is genuinely above its production share: a vault that is full in
+       the right proportions has nothing to rebalance, and a button that opens a
+       dialog saying "nothing here would help" trains people to ignore it.
+       ⚠ The plan is recomputed here rather than cached off the tick because
+         `game.res` moves between sweeps (the player spends, a raid skims) and a
+         stale surplus would name a number the vault can no longer supply. It is
+         pure arithmetic over three small objects — see _stashRebalancePlan. */
+    const _plan = _stashRebalancePlan(_stashChoke.mix || {}, game.res,
+                                      Number.isFinite(_stashChoke.free) ? _stashChoke.free : 0);
     add('stashfull', '🏰', 'STASH FULL — your vault has no room left, so the city is running at ' +
       pct + '% of the ' + Math.round(_stashChoke.perMin) + '/min it could produce. The room that does ' +
       'free up goes to whichever resource is furthest below its share of your output. Spend some ' +
-      'stash, or buy Vault Containers in the Vendor Market.', pct < 50);
+      'stash, or buy Vault Containers in the Vendor Market.' +
+      (_plan.units > 0
+        ? '<br><b>' + _plan.units.toLocaleString() + ' units are above their share of your output</b> — ' +
+          'that surplus is what is choking the rest.' +
+          '<br><button class="pbtn" data-need-act="rebalance" style="margin-top:6px">🏰 Rebalance the vault…</button>'
+        : ''), pct < 50);
   }
   // Workers
   if (staffingRatio() < 1) add('workers', '👷', 'Not enough workers — hire ' + Math.max(1, crewNeeded() - game.army.workers) + ' more to fully crew the buildings.', false);
@@ -23640,6 +23795,181 @@ async function openVaultPanel(resId) {
     paint();
   });
 }
+/* ════════════════════════════════════════════════════════════════════════
+   🏰 REBALANCE THE VAULT — the way out of a stash that already ratcheted.
+   ------------------------------------------------------------------------
+   🔴 WHY THERE HAS TO BE A BUTTON AT ALL. _stashSplit stops the ratchet
+      FORMING and deliberately never takes anything back, so the player who
+      reported the bug stays stuck: metal 1,960 / food 20 / water 20 in a 2,000
+      vault runs six hours and comes back metal 1,960 / food 37 / water 0 —
+      5,223 units banked against 81,637 produced, 6.4% of output, and it does
+      not recover on its own. Everything shipped for that player so far is a
+      text row telling them to go and spend metal by hand.
+
+   ⭐ WHAT IT ACTUALLY DOES, AND THE INVARIANT THAT MAKES IT SAFE:
+        THE VAULT CEILING MAY REFUSE A MOVE. IT MAY NEVER SWALLOW ONE.
+      This feature DESTROYS NOTHING. It relocates the surplus into the Bank of
+      Ethos resource vault — a store the player already owns, already reachable
+      from every resource chip in the top bar (openVaultPanel, right above),
+      and NOT counted by index.html's getResourceUnits(), which is why moving
+      units there is what frees the ceiling. Every unit is withdrawable.
+      The invariant is provable by reading the two legs:
+        · deposit  — boeDepositRes spends from salvage, writes the bank row,
+                     and on a failed write unwinds through _refundRes (the
+                     UNCAPPED undo), never addRes. addRes clamps, and a clamped
+                     "refund" into the full vault this button exists for would
+                     eat the very units it was unwinding.
+        · withdraw — boeWithdrawRes refuses UP FRONT, as a whole, when the
+                     headroom will not take the units, and then delivers them
+                     through the same UNCAPPED _refundRes. The refusal is
+                     courtesy; the uncapped credit is the guarantee. The check
+                     alone was not enough and was measured not being enough:
+                     two awaits (the row fetch, then the network write) sit
+                     between check and credit, so a credit landing in that
+                     window took the room the check had reserved and the old
+                     clamping addRes destroyed 998 of a 1,000-unit withdrawal
+                     while still logging "Withdrew 1,000 Metal".
+      Both edits are in public/index.html at boeDepositRes / boeWithdrawRes.
+      ⭐ THE ONE INVARIANT, stated about the credit rather than about any check
+         in front of it — a check cannot be the guarantee, because nothing holds
+         the stash still across an await:
+           a credit into the capped stash is either a FRESH GAIN (loot, sale,
+           production payout — addRes, allowed to clamp) or the UNDO of a debit
+           this call stack just made (_refundRes, never clamps), and moving
+           units between two stores the player already owns is an UNDO.
+         Both legs of this button's round trip are undos, so neither can be
+         swallowed. A new banking path reaching for addRes is the bug, whether
+         or not anyone has found its window yet.
+
+   ⚠ REJECTED — A BOUNDED PER-TICK BLEED that quietly trims the over-share
+     resource back to its target. It is impossible without destroying property
+     the player earned, and doing that behind their back over hours is strictly
+     worse than doing it once in front of them. The critic's note on the
+     shipped fix says the same thing.
+   ⚠ REJECTED — JETTISONING THE SURPLUS, even behind a confirm. There is a
+     store that keeps every unit, so offering to burn them instead would be
+     choosing the destructive option for no reason. `_stashEnforceCap` in
+     index.html already jettisons, and that is a LAST RESORT the game applies
+     when a save is somehow over its own ceiling — not a tool to hand a player.
+   ⚠ REJECTED — SELLING THE SURPLUS FOR CINDER. Cinder is the player's real
+     balance; anything that credits it is a faucet, and a faucet whose size is
+     "however much you over-produced" is unbounded by construction.
+   ⚠ NO BANK, NO BUTTON-THAT-DOES-SOMETHING-ELSE. When the Bank of Ethos is not
+     connected the dialog says so and offers nothing: the two honest answers
+     there are spend it or buy Vault Containers, and both are already on the
+     advisor row. Inventing a destructive fallback for the offline case is how
+     the rejected options get in through the back door.
+   ⚠ IT IS NOT FREE AND THE DIALOG SAYS SO. Banked stock cannot be spent on
+     buildings until it is withdrawn, and withdrawing needs vault room. Those
+     two sentences are in the panel, not in this comment only. */
+let stashRebalanceBusy = false;
+async function openStashRebalance() {
+  if (stashRebalanceBusy) return;
+  /* Read BOTH sides from source before painting a single number. The mirror is
+     a 2-second copy and the ceiling lives in the parent; a dialog that offers to
+     move 1,734 units off a stale reading would ask for units that are not
+     there, and boeDepositRes would refuse mid-way through the list. */
+  await refreshLedgerMirror();
+  let free = 0, cap = 0;
+  try {
+    const h = await MythicCityBridge.resourceHeadroom();
+    if (h && Number.isFinite(h.free)) { free = Math.max(0, h.free); cap = h.cap | 0; }
+  } catch (e) {}
+  const st = await MythicCityBridge.vaultState();
+  const mix = (_stashChoke && _stashChoke.mix) || {};
+  const held = Object.assign({}, game.res);
+  const plan = _stashRebalancePlan(mix, held, free);
+  const ids = Object.keys(plan.move);
+
+  const box = document.createElement('div');
+  box.id = 'cardpicker';                   // reuse the picker's overlay chrome
+  const row = (lab, val) => '<div class="vrow"><span>' + lab + '</span><b>' + val + '</b></div>';
+  const nm = (r) => (RES_META[r] ? RES_META[r].ico + ' ' + RES_META[r].name : r);
+  const moveLabel = ids.map(r => plan.move[r].toLocaleString() + ' ' + nm(r)).join(', ');
+
+  let body;
+  if (!ids.length) {
+    body = '<div class="cpempty">Your vault is full, but it is full in the right proportions — every ' +
+      'resource is at or below its share of what this city produces. Nothing here would help. ' +
+      'Spend some stash, or buy Vault Containers in the Vendor Market for more space.</div>';
+  } else if (!st.canBank) {
+    /* The honest dead end. Naming the number they are over by is still worth
+       doing — it tells them how much to spend — but there is no button. */
+    body = '<div class="cpempty">You are holding <b>' + plan.units.toLocaleString() + '</b> units (' +
+      moveLabel + ') more than this city\'s output entitles them to, and that surplus is what is ' +
+      'choking the rest.<br><br>The Ops Vault could hold it for you, but ' +
+      (st.ready ? 'this bank account cannot hold resources yet — open the Bank of Ethos once to finish setting it up.'
+                : 'the Bank of Ethos is not connected. Sign in on the main game, then reopen the city.') +
+      '<br><br>Until then the only ways out are spending that surplus or buying Vault Containers in the ' +
+      'Vendor Market.</div>';
+  } else {
+    // Before → after, per resource, so the mix itself is the argument.
+    const rows = Object.keys(mix).sort((a, b) => (mix[b] || 0) - (mix[a] || 0)).map((r) => {
+      const now = held[r] | 0, mv = plan.move[r] || 0;
+      return '<div class="vrow"><span>' + nm(r) + ' <span style="opacity:.6">' +
+        (mix[r] || 0).toFixed(1) + '/min</span></span><b>' + now.toLocaleString() +
+        (mv ? ' → ' + (now - mv).toLocaleString() : '') + '</b></div>';
+    }).join('');
+    body =
+      '<div class="vnote">Your vault is full, and it is full of the wrong thing. These are your ' +
+        'holdings against what the city actually produces — a resource nothing consumes climbs until ' +
+        'it owns the vault, and then everything else banks only what your citizens eat.</div>' +
+      rows +
+      row('🏰 Vault', (cap - free).toLocaleString() + ' / ' + cap.toLocaleString() + ' used') +
+      row('📦 Would move out', plan.units.toLocaleString() + ' units') +
+      '<div class="vnote"><b>Move ' + moveLabel + ' into the Ops Vault.</b><br><br>' +
+        '✅ <b>Nothing is destroyed.</b> Every unit stays yours in the Bank of Ethos. Withdraw it any ' +
+        'time by clicking that resource in the top bar.<br>' +
+        '⚠ <b>Banked stock cannot be spent</b> on buildings, repairs or crafting until you withdraw it.<br>' +
+        '⚠ <b>Withdrawing needs vault room</b> — if the vault has filled up again you will have to make ' +
+        'space before you can bring it back.<br>' +
+        '⚠ Your city keeps producing, so the vault will fill again and this may need doing more than once.' +
+      '</div>' +
+      '<div class="vbtns">' +
+        '<button class="pbtn ember" data-sr="go">🏦 Move ' + plan.units.toLocaleString() + ' units out</button>' +
+        '<button class="pbtn" data-sr="no">Cancel</button>' +
+      '</div>';
+  }
+  box.innerHTML = '<div class="cpbox"><h3 class="display">🏰 Rebalance the Vault</h3>' + body +
+    '<button class="pbtn" id="cp-close">Close</button></div>';
+  document.body.appendChild(box);
+
+  box.addEventListener('click', async (ev) => {
+    if (ev.target === box || ev.target.id === 'cp-close') { box.remove(); return; }
+    const b = ev.target.closest('[data-sr]'); if (!b || stashRebalanceBusy) return;
+    if (b.dataset.sr === 'no') { box.remove(); return; }
+    stashRebalanceBusy = true;
+    box.querySelectorAll('[data-sr]').forEach(x => { x.disabled = true; x.style.opacity = '0.5'; });
+    /* One bridge call per resource, and the tally is what ACTUALLY landed —
+       vaultMove returns false on a refused or failed write and moves nothing,
+       so a partial run reports the partial truth rather than the plan. */
+    const moved = {}; let units = 0, failed = 0;
+    for (const r of ids) {
+      const ok = await MythicCityBridge.vaultMove(r, plan.move[r], 'deposit');
+      if (ok) { moved[r] = plan.move[r]; units += plan.move[r]; } else failed++;
+    }
+    stashRebalanceBusy = false;
+    box.remove();
+    await refreshLedgerMirror();
+    updateHUD();
+    if (units > 0) {
+      const lbl = Object.keys(moved).map(r => moved[r].toLocaleString() + ' ' + nm(r)).join(', ');
+      toast('🏦 Moved ' + lbl + ' into the Ops Vault — still yours, withdraw any time.', 'good');
+      logEvent('city good', '🏰 Rebalanced the vault: banked ' + lbl + ' (' + units.toLocaleString() +
+        ' units) into the Ops Vault. Nothing was destroyed — withdraw it from the top bar.');
+    }
+    if (failed) toast('🏦 Part of that transfer did not go through — nothing was moved for ' + failed +
+      ' resource' + (failed === 1 ? '' : 's') + '.', 'bad');
+    evaluateNeeds();
+  });
+}
+/* The advisor row's button. Delegated because evaluateNeeds rewrites
+   #needslist's innerHTML on every 4-second sweep, so anything bound to the
+   button element itself would be destroyed by the next repaint. */
+$('needslist').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-need-act="rebalance"]'); if (!b) return;
+  openStashRebalance();
+});
 // Chips are the camp ledger; clicking one opens the vault for that resource.
 // Cinder, population and the clock are not bankable resources — skipped.
 $('topbar').addEventListener('click', (ev) => {
@@ -29489,6 +29819,17 @@ function animate() {
        compares the code to itself and can never fail. */
     offline: (ms) => offlineCatchUp(ms),
     stashChoke: () => (_stashChoke ? { ..._stashChoke } : null),
+    /* 🏰 The unwind, drivable without a click — the pane never paints, so the
+       only way to prove the route out works is to call the plan and the panel
+       directly. `rebalancePlan()` with no argument answers for the LIVE city
+       (the tick's own mix, the mirror, the tick's own headroom), which is
+       exactly what the advisor row and the dialog both read. */
+    rebalancePlan: (mix, held, free) => _stashRebalancePlan(
+      mix || (_stashChoke && _stashChoke.mix) || {},
+      held || game.res,
+      (free != null) ? free : ((_stashChoke && Number.isFinite(_stashChoke.free)) ? _stashChoke.free : 0)),
+    shareTargets: _stashShareTargets,
+    rebalance: () => openStashRebalance(),
     // The advisor list is the ONLY live place the vault throttle is explained,
     // so it needs to be drivable without a click — the pane never paints.
     evaluateNeeds,

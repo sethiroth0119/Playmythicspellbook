@@ -377,7 +377,24 @@ export function step(days, ctx) {
     const burden = income > 0 ? rent / income : 99;
     let leaveRate = 0;
     if (burden > dm.rent.burdenLeave) { leaveRate += dm.departure.ratePerDay; rentSqueezed += S.co[k]; }
-    if ((S.stress[c.edu] || 0) > dm.departure.joblessGraceDays) { leaveRate += dm.departure.ratePerDay; jobless += S.co[k]; }
+    /* 🔴 JOBLESSNESS IS ONLY A REASON TO LEAVE IF YOU HAVE SOMEBODY IN THE
+       LABOUR FORCE. This test used to run against EVERY cohort, so a retired
+       household — zero workers, unjobbable by definition — was driven out of
+       town by a labour market it does not participate in. That is half of the
+       all-retired attractor, and it is the half that hides: it looks like the
+       model being even-handed.
+       ⚠ AND FIXING ONLY THIS MAKES THE BUG WORSE. Pensioners were already the
+         only archetype that could still ARRIVE once job fit hit the floor
+         (their exemption from `arrival.jobFloor` below, which is correct — they
+         do not need a vacancy). Take away their last reason to leave and they
+         become immortal as well as unlimited, and the city converges on 100%
+         retired FASTER. This line is only safe because ECON.demographics
+         .lifecycle now gives that state a door out (retiredLeavePerDay) and
+         ECON.demographics.arrival.workerlessDrawPerWorkerHH meters the way in.
+         Read that table's header before touching any of the three. */
+    if (A.workersPer(c.arch) > 0 && (S.stress[c.edu] || 0) > dm.departure.joblessGraceDays) {
+      leaveRate += dm.departure.ratePerDay; jobless += S.co[k];
+    }
     if (leaveRate <= 0) continue;
     const gone = take(k, S.co[k] * Math.min(1, leaveRate * days));
     S.flow.out += gone * A.avgSize(c.arch);      // people, see the eviction note
@@ -403,6 +420,110 @@ export function step(days, ctx) {
     if (moved <= 0) continue;
     add(c.zone, 'single', next, moved);
     S.flow.grad += moved * A.avgSize(c.arch);    // people, see the eviction note
+  }
+
+  /* 3b. 🧬 THE LIFE COURSE — working households age out of the labour force, and
+        retired ones eventually end. THIS IS WHERE A CITY'S PENSIONERS COME FROM,
+        and it is the structural retirement of the all-retired attractor.
+
+        🔴 WHAT THE ATTRACTOR WAS. `retired` was an ABSORBING STATE: it had two
+        inflows (the zone bags, and the arrival job-gate exemption that made it
+        the only archetype able to move into a job-poor city) and NO outflow at
+        all. Every other archetype churns — students graduate, workers leave when
+        the work does — but nothing ever removed a pensioner. Any inflow into a
+        state with no outflow converges on 100% of the system, so a job-poor city
+        went 20 family / 81 couple / 100 single / 27 retired on day 2 to
+        0 / 0 / 0 / 578 on day 5 and stayed there forever, labour ladder 0/0/0/0.
+        Zoning dense housing is what MAKES a city job-poor, so the player's
+        reward for building a big city was a dead one.
+
+        The fix is a door, not a lid. `retiredLeavePerDay` gives the state an
+        outflow, so retired households have a stationary share like every other
+        cohort instead of an ever-growing one; `agePerDay` makes their inflow
+        DEPEND ON THERE BEING WORKERS, so a city whose labour force has gone
+        stops producing pensioners as well as stops attracting them, and the
+        attractor cannot form rather than being caught after it forms.
+        ⚠ See ECON.demographics.lifecycle for the two fixes that were rejected
+          (exempting pensioners from departures too; capping their share) and
+          why each of them hides the ratchet instead of removing it. */
+  const life = dm.lifecycle || {};
+  for (const k of Object.keys(S.co)) {
+    const c = parseKey(k);
+    const to = (life.ages && life.ages[c.arch]) || null;
+    if (!to || !A.archetype(to)) continue;
+    const moved = take(k, S.co[k] * Math.min(1, (life.agePerDay || 0) * days));
+    if (moved <= 0) continue;
+    /* 🔴 NEVER MORE HOUSEHOLDS THAN THE DWELLINGS THEY ALREADY OCCUPY, AND
+       NEVER MORE PEOPLE THAN WALKED IN. The archetypes have different mean
+       sizes, so a naive 1:1 household swap INVENTS residents in one direction
+       (single 1.1 heads → retired 1.5) and a naive head-conserving swap invents
+       DWELLINGS in the other (couple 2.2 → retired 1.5 is 1.47 households in one
+       flat). This module's contract is that it never adds a resident the host
+       did not authorise (index.js `population()`), and the eviction sweep at the
+       top of the step is not a place to be discovering overflow you caused
+       yourself. The min() holds both invariants in both directions; whichever
+       one binds, the people it does not carry across are counted as leaving. */
+    const hh = Math.min(moved, moved * A.avgSize(c.arch) / Math.max(0.1, A.avgSize(to)));
+    add(c.zone, to, c.edu, hh);
+    const lost = moved * A.avgSize(c.arch) - hh * A.avgSize(to);
+    if (lost > 0) S.flow.out += lost;            // people, see the eviction note
+  }
+  /* …and the terminal stage ends. Without this line every other line in this
+     block is just a faster road into the same absorbing state. */
+  const retLeave = Math.min(1, (life.retiredLeavePerDay || 0) * days);
+  if (retLeave > 0) {
+    for (const k of Object.keys(S.co)) {
+      const c = parseKey(k);
+      if (A.workersPer(c.arch) > 0) continue;    // the retired ARE the workerless
+      const gone = take(k, S.co[k] * retLeave);
+      S.flow.out += gone * A.avgSize(c.arch);
+    }
+  }
+
+  /* 3c. 🔁 TENANCY TURNOVER — the lease ends, and the flat is re-let.
+        🔴 THE SECOND RATCHET, AND IT IS WHY A STUDENT DISTRICT STOPPED BEING
+        ONE. Once a zone filled, the ONLY composition change left in it was
+        graduation converting student → single IN PLACE. Nothing ever moved out
+        of a full dwelling, and new students can only arrive into a vacancy — so
+        a low-rent block peaked at 80 student households on day 3 and decayed
+        80 → 56 → 39 → 27 → 19 → 13 → 9 while singles climbed to 282. The bag
+        says a low-rent block is 47% students; what it produced was 1%. A real
+        student district turns over: people graduate and LEAVE, and the room they
+        free is taken by another student.
+
+        With turnover, out_i = τ·n_i and in_i = τ·N·bag_i for every archetype, so
+        a zone CONVERGES ON ITS OWN BAG instead of ratcheting away from it, and
+        students settle at τ/(τ + graduatePerDay) of their bag share. The rates
+        are per zone (ECON.demographics.turnover) because churn is a property of
+        the housing — a cheap flat turns over most of a year, a detached house
+        once a generation.
+
+        ⚠ WORKERLESS HOUSEHOLDS ARE DELIBERATELY EXEMPT. Retirees are the least
+          mobile households there are, and — the part that actually bites — their
+          way back IN is metered against the working city (see the arrival meter
+          below), so churning them out at a zone's rate while letting them back
+          in at a demographic one would make turnover a one-way drain on exactly
+          the cohort this round is trying to stop mismodelling. Their churn is
+          `retiredLeavePerDay` above, which is the honest rate for it.
+        ⚠ The freed dwellings are re-let in the SAME step (see `relet` below), so
+          this refreshes a district rather than hollowing it out. It still leaves
+          a real standing vacancy, which is correct: turnover is where a city's
+          vacancy rate comes from. */
+  const relets = {};
+  for (const zid of Z.zoneIds()) {
+    const rate = Math.min(1, Z.turnoverOf(zid) * days);
+    if (!(rate > 0)) continue;
+    const occ = occupiedHomes(zid);
+    if (!(occ > 1e-9)) continue;
+    let freed = 0;
+    for (const k of Object.keys(S.co)) {
+      const c = parseKey(k);
+      if (c.zone !== zid || A.workersPer(c.arch) <= 0) continue;
+      const gone = take(k, S.co[k] * rate);
+      freed += gone;
+      S.flow.out += gone * A.avgSize(c.arch);    // people, see the eviction note
+    }
+    if (freed > 0) relets[zid] = freed;
   }
 
   /* 4. 🚚 ARRIVALS. Per zone, per archetype that zone draws, per education —

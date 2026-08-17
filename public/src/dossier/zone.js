@@ -81,6 +81,26 @@ export function zoneOf(C, k, t, x, z) {
 }
 
 /* ── HOUSEHOLD WEALTH ─────────────────────────────────────────────────────── */
+/* 👥 THE HOUSING LAYER IS ASKED FIRST, because it is the only source that
+   answers about THIS HOUSEHOLD rather than about this plot of land:
+   /src/demographics holds the cohort mix let at each address, and the books
+   card two rows below now prints what those households earn. A rank by lot
+   value beside a wage figure would be one panel holding two opinions.
+   ⚠ ONLY WHEN A DWELLING HERE IS ACTUALLY LET. `residents()` reports tier
+     "low" for an address with nobody in it (the mode of an empty tally), and
+     printing "Struggling" over an empty house is a claim about people who do
+     not exist. No tenant ⇒ fall through to the rank, which is a fact about the
+     land and true either way. */
+function demogWealth(k) {
+  try {
+    const D = (typeof window !== 'undefined') ? window.MythicDemographics : null;
+    if (!D || typeof D.ready !== 'function' || !D.ready() || typeof D.residents !== 'function') return null;
+    const r = D.residents(String(k));
+    if (!r || !r.ok || !(r.occupied > 0) || !r.wealth || !r.wealth.label) return null;
+    return r;
+  } catch (e) { return null; }
+}
+
 function economyLayer() {
   try {
     if (typeof window === 'undefined') return null;
@@ -103,6 +123,14 @@ function scoreOf(C, k, t) {
 }
 
 export function wealthOf(C, k, t, x, z) {
+  const dw = demogWealth(k);
+  if (dw) {
+    return { label: dw.wealth.label, source: 'demographics',
+      note: 'the band of the ' + dw.households.length + ' household' + (dw.households.length === 1 ? '' : 's') +
+        ' actually let here (' + dw.households.map(h => h.label).slice(0, 2).join(', ') + ')' +
+        (dw.income > 0 ? ', who earn ' + safeRate(C, dw.income) + ' 🔥 an economic day between them' : '') +
+        (dw.rentBurden != null ? ' — rent takes ' + Math.round(dw.rentBurden * 100) + '% of it' : '') + '.' };
+  }
   const fromModule = probe(economyLayer(),
     ['wealthOf', 'householdWealth', 'wealthAt', 'tierOf', 'bandOf'],
     [[k], [x, z]]);
@@ -133,8 +161,16 @@ export function wealthOf(C, k, t, x, z) {
   return {
     label: BANDS[q], source: 'derived',
     rank: rank + 1, of: all.length, quartile: q,
+    /* ⚠ THIS USED TO SAY "this city keeps no household income", and that stopped
+       being true the day /src/demographics shipped — it prices a household's
+       earnings off ECON.labor every tick. The sentence is now about what THIS
+       PANEL could reach, which is the only thing it can honestly speak for. */
     note: 'ranked ' + (rank + 1) + ' of ' + all.length + ' homes by lot value (' +
-          me.lv + ' ₵ at level ' + me.lvl + '). This city keeps no household income, ' +
-          'so wealth is a rank against the other homes in it, not a wage.',
+          me.lv + ' ₵ at level ' + me.lvl + '). No housing layer answered for this ' +
+          'address, so wealth is a rank against the other homes in this city rather than a wage.',
   };
 }
+
+/* C.rate is the panel's own formatter (insRate). Guarded because wealthOf is
+   also called from the headless check, where a ctx may be a stub. */
+function safeRate(C, v) { try { return C.rate(v); } catch (e) { return String(Math.round(v)); } }

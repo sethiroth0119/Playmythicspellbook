@@ -167,6 +167,29 @@ function firmOnTile(E, k) {
   if (!E || typeof E.firms !== 'function') return null;
   return safe(() => E.firms().find(f => f && f.tileKey != null && String(f.tileKey) === String(k)) || null);
 }
+/* What to CALL that business. `f.name` is whatever founded it — node-city passes
+   the building's own blueprint name, so a landlord firm on a Housing tile is
+   called "Housing", which reads as nonsense in a sentence about a business. The
+   industry's own label is the one that means something ("Property Company"). */
+function firmLabel(E, f) {
+  if (!f) return 'the business here';
+  const meta = safe(() => E.industries[f.ind]);
+  return (meta && meta.name) || String(f.name || f.ind || 'the business here');
+}
+/* 🏠 THE RENT THAT ACTUALLY LANDS ON THIS ADDRESS, and it is a restriction of
+   the tick's own line rather than an allocation invented here: sim.js
+   runShopping credits `net / landlords.length` to EVERY landlord firm in the
+   city, so a tile whose firm is one of them received exactly that. Returns null
+   unless this tile really is one of them — a housing tile with no firm behind it
+   banks nothing and must not be shown a share of somebody else's rent. */
+function landlordShare(E, snap, firm) {
+  if (!E || !snap || !snap.flow || !firm || firm.ind !== 'landlord') return null;
+  const n = safe(() => E.firms().filter(f => f && f.ind === 'landlord').length, 0);
+  if (!(n > 0)) return null;
+  const tax = (E.ECON && E.ECON.tax) ? +E.ECON.tax.property : 0;
+  const net = Math.max(0, +snap.flow.rent || 0) * (1 - (Number.isFinite(tax) ? tax : 0));
+  return { each: net / n, n, net };
+}
 
 export function booksOf(C, k) {
   const t = C.game.tiles[k];
@@ -216,6 +239,7 @@ export function booksOf(C, k) {
   const let_ = (R && R.ok) ? (R.occupied | 0) : 0;
   const heads = (R && R.ok) ? Math.max(0, +R.residents || 0) : 0;
   const rentCycle = (R && R.ok && let_ > 0) ? (+R.rent || 0) * let_ * days : 0;
+  const share = landlordShare(E, snap, firm);
   const incomeCycle = (R && R.ok) ? Math.max(0, +R.income || 0) * days : 0;
 
   /* ── INCOME ─────────────────────────────────────────────────────────────
@@ -296,7 +320,9 @@ export function booksOf(C, k) {
              '’s multiplier' + (rep && rep.rentIndex ? ' and the city’s housing tightness ×' + (+rep.rentIndex).toFixed(2) : '') +
              (b != null ? ', which is ' + pct(b) + ' of what the lead household here earns' : '') +
              '. ⚠ This is what the housing model charges for the address; the Cinder that MOVES is charged city-wide out of household savings' +
-             (snap && snap.flow ? ' — ' + C.rate(+snap.flow.rent || 0) + ' 🔥 of it in the last economic day' : '') + '.' });
+             (snap && snap.flow ? ' — ' + C.rate(+snap.flow.rent || 0) + ' 🔥 of it in the last economic day' : '') +
+             (share ? ', and the net of that was split across the city’s ' + share.n + ' property companies, so the one on this address banked ' +
+                      C.rate(share.each * days) + ' 🔥 per cycle' : '') + '.' });
     }
   } else {
     unmodelled.push('Rent');
@@ -313,7 +339,7 @@ export function booksOf(C, k) {
       sub: 'wages and investments for this operation are settled in Just Business, not on this tile' });
   } else if (firm) {
     rows.push({ label: 'Building Upkeep', value: 'on the business', cls: 'fl', un: true,
-      sub: 'not levied on the tile: ' + esc0(firm.name || firm.ind) + ' buys maintenance goods out of its own cash surplus each day, and the bill is on its books rather than on this address' });
+      sub: 'not levied on the tile: the ' + esc0(firmLabel(E, firm)) + ' the economy runs at this address buys maintenance goods out of its own cash surplus each day, and the bill sits on its books rather than on the building' });
   } else if (isHome) {
     rows.push({ label: 'Building Upkeep', value: 'none', cls: 'fl', un: true,
       sub: 'no recurring charge is levied on a dwelling — the economy charges upkeep to businesses, never to a home. What a house does cost over time is repair after wear' });
@@ -346,16 +372,30 @@ export function booksOf(C, k) {
       if (Number.isFinite(price) && price > 0) { subCost += units * price; subPriced = true; }
     }
   }
-  if (draws.length) {
+  if (subPriced) {
+    /* 💰 THE ONE RESOURCE ROW THAT CAN BE A MONEY ROW, and the reference panel
+       wants it to be. The basket is chain resources, and chain resources have a
+       DERIVED price (prices.js, off the recipe graph) — so this column can be
+       stated in Cinder without anybody writing a price down, which is the
+       distinction CLAUDE.md draws and the reason the producer branch below
+       still refuses to. The units are in the caption; six of them side by side
+       overran the value column, and two of the six share an icon (🍞 Bread and
+       🍞 Prepared Meals), so an icon list was unreadable as well as too wide. */
+    const chain = draws.filter(d => d.chain);
+    const other = draws.filter(d => !d.chain);
+    rows.push({ label: 'Resource Cost', value: fmtCin(C, -subCost), cls: 'dn',
+      sub: 'what ' + Math.round(heads) + ' resident' + (heads === 1 ? '' : 's') + ' eat, drink and burn per cycle: ' +
+        chain.map(d => C.rate(d.v) + ' ' + d.name).join(' · ') +
+        (other.length ? ' — plus the building’s own draw of ' + other.map(d => C.rate(d.v) + ' ' + safeRes(C, d.r)).join(' · ') : '') +
+        '. Priced at the market rates the economy derives (the tick adds a local freight premium on top), paid out of household savings; ' +
+        'what a household cannot cover the treasury does, and what neither covers the seller eats.' });
+  } else if (draws.length) {
     rows.push({ label: 'Resource Cost',
       value: draws.map(d => '<span class="dn">−' + C.rate(d.v) + '</span> ' +
         (d.chain ? (d.ico || '') : safeIco(C, d.r))).join(' · '),
       raw: true, cls: 'dn',
-      sub: (isHome && subPriced
-        ? 'what ' + Math.round(heads) + ' resident' + (heads === 1 ? '' : 's') + ' eat, drink and burn per cycle — ' +
-          draws.filter(d => d.chain).map(d => d.name).join(', ') + '. About ' + C.rate(subCost) +
-          ' 🔥 at current market prices (the tick adds a local freight premium on top), paid out of household savings; ' +
-          'what a household cannot cover the treasury does, and what neither covers the seller eats.'
+      sub: (isHome
+        ? 'what the residents here draw per cycle — the economy layer is not mounted, so it cannot be priced in Cinder from this panel'
         : 'drawn from the city stock every cycle — in goods, not Cinder: index.html writes down no price for these') });
   } else if (isHome) {
     rows.push({ label: 'Resource Cost', value: '—', cls: 'fl',
@@ -405,7 +445,8 @@ export function booksOf(C, k) {
   if (unmodelled.length) {
     notes.push(unmodelled.join(', ') + ' ' + (unmodelled.length === 1 ? 'is' : 'are') +
       ' blank because nothing in this city computes ' + (unmodelled.length === 1 ? 'it' : 'them') +
-      ' for a building — not because the figure was withheld. Every other row is a number the tick itself produces.');
+      ' PER BUILDING — not because the figure was withheld, and not because the city has no such concept. ' +
+      'Every other row is a number the tick itself produces.');
   }
   if (unreadable.length) {
     notes.push(unreadable.join(', ') + ' could not be READ: the module that owns ' +
@@ -450,8 +491,8 @@ function residentIncomeRow(DG, R, rep, incomeCycle, let_, cyc, C, snap, days) {
   const fits = R.households.map(h => h.jobFit).filter(v => Number.isFinite(v));
   const fit = fits.length ? fits.reduce((a, b) => a + b, 0) / fits.length : null;
   return { label: 'Income', value: fmtCin(C, incomeCycle), cls: 'up',
-    sub: 'what the ' + R.households.length + ' household' + (R.households.length === 1 ? '' : 's') +
-      ' here earn per cycle — band wages for the work their education qualifies them for' +
+    sub: 'what the ' + R.households.length + ' household' + (R.households.length === 1 ? ' here earns' : 's here earn') +
+      ' per cycle — band wages for the work their education qualifies them for' +
       (fit != null ? ', at the ' + pct(fit) + ' job fit this city’s vacancies give them' : '') +
       ', plus pensions and student support. ⚠ Earned, not paid by this building: wages reach residents as the city’s payroll' +
       (snap && snap.flow ? ', ' + C.rate(+snap.flow.wages || 0) + ' 🔥 of it in the last economic day' : '') + '.' };

@@ -41,18 +41,28 @@
   B.notes.forEach((n, i) => chunk('note' + i, n));
 
   // …and a producer, so the non-residence wording is seen too.
-  const SHOP = Object.keys(nc.game.tiles).find(k => (nc.game.tiles[k].type || '') === 'shop') || '13,9';
+  const SHOP = Object.keys(nc.game.tiles).find(k => {
+    const d = nc.game.tiles[k]; return d && (d.type === 'farm' || d.type === 'depot');
+  }) || Object.keys(nc.game.tiles)[0];
   const S2 = D.booksOf(SHOP);
   if (S2) {
+    say('producer tile', SHOP + ' ' + nc.game.tiles[SHOP].type);
     say('shop rows', S2.rows.map(x => x.label + ' = ' + strip(x.value)).join(' | '));
     chunk('shop rent', S2.rows[1].sub);
     chunk('shop fees', S2.rows[4].sub);
   }
+
+  // 🔴 the economy must be exactly where it was: this card only READS.
+  say('audit', (() => { const a = window.MythicEconomy.audit(); return a ? { ok: a.ok, err: Math.round((a.err || 0) * 1e6) / 1e6 } : null; })());
+  say('payoutAllowed', window.MythicEconomy.snapshot().payoutAllowed);
 
   // the REAL render, through the shipped panel
   nc.inspect(HOME);
   const panes = document.getElementById('inspanes');
   const card = Array.from(panes.querySelectorAll('.ins-card')).find(c => (c.textContent || '').indexOf('The books') >= 0);
   say('card in DOM', !!card);
-  if (card) chunk('CARD', card.textContent);
+  if (card) { chunk('CARD', card.textContent); try { card.scrollIntoView({ block: 'start' }); } catch (e) {} }
+  const w = D.wealthOf(HOME);
+  say('wealth', w && { label: w.label, src: w.source });
+  if (w) chunk('wealth note', w.note);
 })()

@@ -54966,7 +54966,38 @@ function removeFromDeck(cardKeys, key) {
    `keyOf` maps an entry to the identity the cap counts on. Card OBJECTS count by
    `id` (two key spellings of the same card must not each get 3), key STRINGS count
    by themselves — resolving every key here would mean a `resolveDeckCard` call per
-   card per deck build, and the key-string callers already speak one canonical form. */
+   card per deck build, and the key-string callers already speak one canonical form.
+
+   🔴 SCOPE — THIS IS A DECK-CONSTRUCTION CAP ONLY. THERE IS NO IN-BATTLE CAP.
+   ------------------------------------------------------------------------------
+   Every caller of this function is a deck builder: `buildDeckFromKeys`,
+   `buildAIDeck` (both tiers), `getAdminAIDeckKeys` and `_legalizeDeck`. Nothing
+   counts copies once a match has started, so "at most 3" is a guarantee about the
+   40 cards you SHUFFLE, not about how many instances of one card id can exist
+   across hand / field / graveyard / void at any moment mid-match.
+
+   That is deliberate, and it is the answer to the obvious follow-up: the Phoenix
+   Rebirth Aura's return-to-hand branch used to MINT a 4th instance (a fresh hand
+   card while the corpse's own card stayed in the graveyard — see the comment in
+   `processTombstoneDrops`), so it looks like a cap belongs here too. It does not.
+   An in-battle cap was considered and REJECTED:
+
+     · Copy-adding is a legitimate, authored mechanic. Token spawners, `reviveGrave`,
+       `graveToHand`, `shuffleToDeck` + draw and several onPlay effects all put
+       another instance of a card id into play on purpose. A blanket in-battle cap
+       would silently eat those, and the failure would be invisible — an effect that
+       "just doesn't do anything sometimes".
+     · The real defect was never a missing count. It was a unit recorded in two
+       places at once. A cap would have hidden that symptom (the 4th copy) while
+       leaving the actual bug — one unit, two cards, two zones — completely intact,
+       which is exactly the "patch per door" failure this file has lost to before.
+     · The invariant that DOES cover it already exists and is enforced continuously:
+       `_reconcileUnitCards` — a unit's card is in exactly one place. Fix the zone
+       accounting and the spurious 4th copy cannot be minted in the first place.
+
+   So: cap the deck, not the battle. If an in-battle limit is ever genuinely wanted
+   it belongs on the individual EFFECT that adds the copy (an authored per-card
+   "max instances" field), never as a global sweep. */
 function _capCopies(list, keyOf) {
   const cap = (typeof MAX_COPIES_PER_CARD === 'number') ? MAX_COPIES_PER_CARD : 3;
   const seen = Object.create(null), out = [];
@@ -76125,6 +76156,7 @@ function processTombstoneDrops(state) {
   if (!state || !Array.isArray(state.units)) return state;
   if (!Array.isArray(state.tombstones)) state.tombstones = [];
   const _onGravePending = []; // ⚰️ on-grave triggers queued during this sweep
+  const _leftTheBoard = []; // ↩ ids the Phoenix aura returned to hand / the Realm Deck
   for (const u of state.units) {
     if (!u || u.alive) continue;
     if (u._tombstoned) continue;          // already dropped
@@ -76227,6 +76259,40 @@ function processTombstoneDrops(state) {
             } catch (e) {}
             state.log = [...(state.log || []), { msg: pcfg.popupText || `🔥 ${phx.name}'s Phoenix Rebirth Aura returns ${u.name} (${u.currentHp || 0} HP)!`, color: u.owner === 'player' ? 'green' : 'red' }];
             if (onBoard) continue;   // back on the board — no tombstone/rebirth
+            /* ↩ LEFT THE BOARD, NOT A DEATH — the `allowHand` branch above.
+               This branch was the ONLY `_unitReturnToHandCard` caller that left the
+               dead body in `state.units`. Every sibling removes it outright —
+               banishUnit, vanishTribe, bounceUnit (whose comment states the rule),
+               shuffleToDeck's field + grave sweeps, and the trap `bounce` — and this
+               one has to as well, because a lingering `alive:false` body still
+               carrying `_card` gets FILED by `_reconcileUnitCards` on the very next
+               `App.state = …`. Measured before this fix, one unit produced TWO cards
+               in TWO zones: player.graveyard 1 (`goblin`) AND player.hand 1
+               (`goblin`), plus a lootable tombstone for a unit that never stayed
+               dead. That is rule 3 — a unit that leaves the graveyard takes its card
+               with it — and it is also a copy-count leak: the hand card is minted
+               fresh, so with 3 copies already accounted for the player ends up
+               holding a 4th instance of one card id (see `_capCopies`, which caps
+               DECK CONSTRUCTION only).
+               `_bounced` is belt (a stray second sweep skips this body at the top of
+               the loop); dropping the id after the loop is braces (the reconciler
+               reads `alive`, not `_bounced`, so only removal actually stops the
+               filing). We collect instead of splicing because we are iterating
+               `state.units` right now. Falling through would ALSO have stamped a
+               tombstone / rebirth / raiseFromDead marker holding `reviveUnitId: u.id`
+               for a unit that is no longer on the board. */
+            // 🪦 Take the card out of the graveyard WITH it — the same call the
+            // on-board branch makes. Required, not decorative: `_reconcileUnitCards`
+            // files a corpse's card on the alive→dead EDGE, which has already
+            // happened by the time this sweep runs (measured: grave 0 → 1 on the
+            // kill assignment, before `processTombstoneDrops` was even called). So
+            // removing the body alone would strand that entry in the pile with no
+            // unit left to strip it, and hand + graveyard would still both hold the
+            // card. Unpark first, then drop the body.
+            state = _unparkGraveCardFor(state, u);
+            u._bounced = true;
+            _leftTheBoard.push(u.id);
+            continue;
           }
         }
       }
@@ -76288,6 +76354,12 @@ function processTombstoneDrops(state) {
       salvage: (typeof _rollUnitSalvage === 'function') ? _rollUnitSalvage(u) : {},
       risk: (typeof _rollTombstoneRisk === 'function') ? _rollTombstoneRisk(u) : null,
     });
+  }
+  // ↩ Drop the bodies the Phoenix aura sent to hand / the Realm Deck. Done here,
+  // after the sweep, because the loop above iterates `state.units` directly.
+  if (_leftTheBoard.length) {
+    const gone = new Set(_leftTheBoard);
+    state = { ...state, units: (state.units || []).filter(u => u && !gone.has(u.id)) };
   }
   // ⚰️ Fire queued on-grave triggers now that the death sweep is complete.
   // Skips anything a Phoenix / revive brought back to life mid-sweep.
@@ -90129,6 +90201,71 @@ try {
       ok(3, 'reviving does not duplicate the card',
          (App.state.player.graveyard || []).length === 0, 'pile = ' + gLen('player'));
     } catch (e) { ok(3, 'revive', false, 'threw: ' + (e && e.message)); }
+
+    /* ---- RULE 3 / THE PHOENIX RETURN-TO-HAND BRANCH.
+       The one `_unitReturnToHandCard` caller that used to leave the dead body in
+       `state.units`. Driven through the REAL `processTombstoneDrops` — the sweep
+       that owns the Phoenix Rebirth Aura — with a real `placeUnit` play and a real
+       kill, so nothing here re-implements what it checks. The board is filled with
+       glowing tombstones so `_nearestEmptyTile` genuinely returns null and the aura
+       is forced down the `allowHand` path; only the Phoenix's card def is synthetic.
+
+       MEASURED BEFORE THE FIX: grave 1 (`goblin`) AND hand 1 (`goblin`) — one unit,
+       the same card id in two zones — with the corpse still sitting in `state.units`
+       (alive:false, _cardFiled:'grave', _tombstoned:true) and a bonus lootable
+       tombstone for a unit that never stayed dead. AFTER: grave 0, hand 1, body gone,
+       tombstones added 0.
+
+       TO SEE IT GO RED: delete the `state = _unparkGraveCardFor(state, u);` line in
+       that branch (grave goes back to 1 while the card is in hand — the two-zone
+       failure), or delete the `_leftTheBoard.push(u.id)` line (the corpse survives
+       the sweep and the next `App.state = …` re-files it). */
+    try {
+      const savedC = Catalog.cards;
+      try {
+        Catalog.cards = (savedC || []).concat([{ id: '__lc_phx', name: 'LC Phoenix', type: 'unit',
+          level: 1, cost: 1, atk: 1, def: 1, hp: 10, stats: { atk: 1, def: 1, hp: 10 },
+          phoenixAura: { chance: 100, healPct: 50, range: 'board', maxPerTurn: 0, maxPerMatch: 0,
+                         allowHand: true, allowChain: true } }]);
+        const u = playOne('R3phx');
+        App.state = { ...App.state, units: [...App.state.units, { id: 'LCPHX', name: 'LC Phoenix',
+          owner: 'player', alive: true, isHero: false, pos: { x: 2, y: 4 }, hp: 10, maxHp: 10,
+          currentHp: 10, statusEffects: [], knownMoves: [], atk: 1, def: 1, level: 1,
+          cardId: '__lc_phx', passives: ['phoenixRebirth'] }] };
+        // No empty tile anywhere → the aura must use the hand branch.
+        const W = (typeof BOARD_W !== 'undefined') ? BOARD_W : 8;
+        const H = (typeof BOARD_H !== 'undefined') ? BOARD_H : 7;
+        const tombs = [];
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) tombs.push({ x, y, owner: 'player', name: 'lc', glowing: true, turnsLeft: 99 });
+        App.state = { ...App.state, tombstones: tombs };
+        const handWas = (App.state.player.hand || []).length;
+        setAlive(u.id, false);
+        const filedAtDeath = gLen('player');          // the reconciler files on the EDGE
+        App.state = processTombstoneDrops(App.state);
+        App.state = { ...App.state };                 // the re-commit that used to re-file
+        const P = App.state.player;
+        const gIds = (P.graveyard || []).map(c => c && c.id);
+        const hIds = (P.hand || []).map(c => c && c.id);
+        const both = gIds.filter(g => hIds.indexOf(g) >= 0);
+        // Both halves of the fix get their own assertion, because they fail
+        // differently: without the removal the piles look right but the corpse
+        // lingers and the graveyard VIEW folds it in (0 pile, 1 shown); without
+        // the unpark the pile itself keeps the card while a copy sits in hand.
+        const gView = (typeof _graveViewCards === 'function') ? _graveViewCards(App.state, 'player').length : 0;
+        ok(3, 'Phoenix return-to-hand leaves no corpse in state.units or the grave view',
+           !App.state.units.some(x => x && x.id === u.id) && gView === 0,
+           'corpse present = ' + App.state.units.some(x => x && x.id === u.id)
+             + ' (was true), grave view = ' + gView + ' (was 1)');
+        ok(3, 'Phoenix return-to-hand puts the card in hand ONLY, not both zones',
+           filedAtDeath === 1 && gLen('player') === 0 && (P.hand || []).length === handWas + 1 && both.length === 0,
+           'grave ' + filedAtDeath + ' → ' + gLen('player') + ' (was 1 → 1), hand '
+             + handWas + ' → ' + (P.hand || []).length + ' ' + JSON.stringify(hIds)
+             + ', ids in BOTH zones = ' + both.length + ' (was 1 — "goblin" in each)');
+        ok(3, 'Phoenix return-to-hand drops no tombstone for a unit that left the board',
+           App.state.tombstones.length === W * H,
+           'tombstones = ' + App.state.tombstones.length + ' of ' + (W * H) + ' (was ' + (W * H + 1) + ')');
+      } finally { Catalog.cards = savedC; }
+    } catch (e) { ok(3, 'Phoenix return-to-hand', false, 'threw: ' + (e && e.message)); }
 
     // ---- RULE 4 — a unit vanished from ANY zone lands in the VANISH zone.
     //               Before: the FIELD case filed nothing anywhere — the `_voided`

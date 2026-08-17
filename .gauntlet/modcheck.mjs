@@ -4,10 +4,10 @@
 
    🔴 WHY THIS EXISTS. `_synckcheck.mjs` checks the <script> blocks inside
    public/node-city/index.html and public/index.html. It does NOT look at
-   public/src/**/*.js. Nothing did.
+   the .js modules under public/src. Nothing did.
 
    That gap shipped a dark feature. public/src/power/panel.js carried a
-   backtick-quoted `pwwhy` inside a `const CSS = \`…\`` template literal; the
+   backtick-quoted identifier inside a CSS template literal; the
    backtick closed the string and the file stopped parsing. The module then
    failed at import, node-city logged "[Power] not mounted (non-fatal)" exactly
    as its guard promises, and the whole electricity panel, overlay and grid

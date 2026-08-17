@@ -1540,6 +1540,17 @@
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.92));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* 🔍 Only a tile that ACTUALLY opens the card detail gets the affordance.
+   `.hudx-vopen` is added by voidTile only when `window.openCardInspect` exists,
+   so a page whose index.html predates the seam shows a plain, honest tile
+   instead of a pointer that leads nowhere — the same rule the pile slot itself
+   follows (see `filled` in hud.js: clickable and openable are ONE fact). */
+.hudx-vtile.hudx-vopen { cursor: pointer; }
+.hudx-vtile.hudx-vopen:hover { border-color: var(--hudx-gold); }
+.hudx-vtile.hudx-vopen:focus-visible {
+  outline: none; border-color: var(--hudx-gold);
+  box-shadow: 0 0 0 2px rgba(255, 209, 102, 0.55);
+}
 
 /* ── energy readout, foot of both frames ────────────────────────────────── */
 .bsx .energy {

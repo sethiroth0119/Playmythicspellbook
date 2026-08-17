@@ -299,7 +299,23 @@ function voidCards() {
   } catch (e) { return null; }
 }
 
-function voidTile(c) {
+/* 🔍 A VANISH TILE IS NOW A CONTROL. The viewer could tell you WHICH cards had
+   gone but not WHAT they were — a name and a 74px thumbnail is not a card. The
+   detail surface it opens is index.html's own `renderCardDetailModal`, the same
+   one the hand uses; nothing is rebuilt here.
+
+   ⚠ IT GOES THROUGH `window.openCardInspect`, NOT THROUGH `App`. `App` is a
+   top-level `const` in index.html and invisible to this module (the globals
+   trap), so the ref is handed over the bridge and index.html decides whether it
+   resolves. This module cannot widen what is inspectable — a zone this file
+   invented would simply return false and open nothing.
+
+   ⚠ AND THE REF IS THE ARRAY INDEX. `__hudxVoidCards('player')` maps
+   `App.state.player.void` 1:1 in order, so tile i is element i. Void entries
+   have no reliable id (a banished corpse pushes a bare `{id,name,type}`), which
+   is why there is nothing better to key on — see CARD_INSPECT_ZONES in
+   index.html, where the same reasoning is written down next to the reader. */
+function voidTile(c, i) {
   const tile = mk('div', 'hudx-vtile');
   const face = mk('div', 'hudx-vface');
   let art = null;
@@ -320,9 +336,25 @@ function voidTile(c) {
   }
   const nm = mk('div', 'hudx-vname');
   nm.textContent = c.name || '?';
-  tile.title = (c.name || '?') + (c.type ? ' — ' + c.type : '');
   tile.appendChild(face);
   tile.appendChild(nm);
+  /* Clickable only when index.html is new enough to have the seam. An older
+     cached index.html would leave a `cursor:pointer` tile that opens nothing,
+     which is the exact failure 44c7558 fixed on the pile slot itself — so the
+     affordance and the ability to open are gated on the SAME fact. */
+  if (typeof window.openCardInspect === 'function' && typeof i === 'number') {
+    const open = () => { try { window.openCardInspect('void:player:v' + i); } catch (_) {} };
+    tile.classList.add('hudx-vopen');
+    tile.setAttribute('role', 'button');
+    tile.setAttribute('tabindex', '0');
+    tile.title = (c.name || '?') + (c.type ? ' — ' + c.type : '') + ' — click for details';
+    tile.addEventListener('click', open);
+    tile.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    });
+  } else {
+    tile.title = (c.name || '?') + (c.type ? ' — ' + c.type : '');
+  }
   return tile;
 }
 
@@ -353,7 +385,7 @@ function refreshVoidView() {
     const grid = bd.querySelector('.hudx-vgrid');
     if (!grid) return;
     grid.textContent = '';
-    cards.forEach((c) => grid.appendChild(voidTile(c)));
+    cards.forEach((c, i) => grid.appendChild(voidTile(c, i)));
   } catch (e) { /* a stale list is still better than taking the relayout down */ }
 }
 

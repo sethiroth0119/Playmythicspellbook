@@ -8536,6 +8536,20 @@
     z-index: 5;
   }
   .hand-card:disabled { opacity: 0.55; cursor: not-allowed; filter: grayscale(0.5); }
+  /* 🔍 "You cannot PLAY this" is not "you cannot LOOK at this".
+     Unaffordable hand cards used to carry the `disabled` ATTRIBUTE, which makes
+     a <button> inert: no click event fires at all, so the card detail could not
+     be opened. Measured at 1 energy on a fresh hand: 3 of 5 cards unreadable —
+     and they are exactly the cards a player most wants to read, because they
+     are the ones being planned around. They now carry this CLASS instead, which
+     is only the LOOK; the play gate that matters is still enforced twice, on the
+     detail modal's Play button and again in its click handler.
+     ⚠ The `:disabled` rules above are NOT dead — `renderReplayViewer` (~169028)
+     still sets the real attribute on every battle button to freeze the board
+     while a replay plays, and that must keep swallowing clicks. Two states, two
+     mechanisms, on purpose: "can't afford" is a look, "locked" is inert. */
+  .hand-card.unplayable { opacity: 0.55; filter: grayscale(0.5); }
+  .hand-card.unplayable:hover { filter: grayscale(0.5) drop-shadow(0 12px 24px rgba(0,0,0,0.85)); }
 
   /* ✨ HOLOGRAPHIC CARD EFFECT ✨
      Subtle "wet foil" sheen on each hand card. Tuned so the underlying
@@ -8618,9 +8632,13 @@
   .hand-card.selected::after {
     opacity: calc(var(--holo-strength) * 4);
   }
-  /* Disabled cards drop the holo so they read as inert. */
+  /* Disabled cards drop the holo so they read as inert. An UNPLAYABLE card
+     drops it for the same reason — the greyed look is unchanged from when this
+     was the `disabled` attribute; only the clickability changed. */
   .hand-card:disabled::before,
-  .hand-card:disabled::after { opacity: 0; }
+  .hand-card:disabled::after,
+  .hand-card.unplayable::before,
+  .hand-card.unplayable::after { opacity: 0; }
 
   /* Sweep — the diagonal gradient travels across the card's background
      area. 300% size means the band can fully exit and re-enter. */
@@ -39832,9 +39850,20 @@ function spendResources(cost) {
    file) exports it, and a driven test took a stash from 1,980/2,000 to 7,000
    with it where addRes correctly clamped at 2,000. So the true guard is a
    CONVENTION, not a wall. The rule, for anyone adding a caller:
-     ✅ legitimate — unwinding a deduction THIS call stack just made
-        (the refund closures in _campSpendCost and /src/city/cost.js: exactly
-        two callers today, `grep refundRes` to re-check)
+     ✅ legitimate — unwinding a deduction THIS call stack just made: the refund
+        closures in _campSpendCost and /src/city/cost.js, the market unescrow /
+        settle rollbacks, and BOTH legs of the Bank of Ethos resource vault.
+        (An earlier version of this note tried to keep a COUNT of the callers
+        here — "exactly two", then "exactly three" — and it was already stale
+        both times it was written. `grep -n '_refundRes('` is the census; what
+        this list is for is the RULE, so read the rule and check your caller
+        against it.)
+        ⚠ boeWithdrawRes is the one caller that unwinds a DEBIT rather than a
+          spend: it hands back units taken out of the bank row two lines above.
+          It is here because the awaited write sits between the room check and
+          the credit, and a clamping addRes there destroyed 998 of a measured
+          1,000-unit withdrawal while still logging "Withdrew 1,000 Metal".
+          Moving units between two stores the player already owns is an undo.
      🚫 never — loot, rewards, sales, production payouts, or anything else that
         creates units. Those go through addRes and respect the cap. */
 function _refundRes(id, n) {
@@ -54216,7 +54245,10 @@ function _applyGlobalReset(epoch) {
     // 🏦 Bank Aza balance → 0 in memory + push 0 to bank_of_ethos cloud row
     // so the next boeFetch doesn't re-hydrate the old value over our reset.
     // Fire-and-forget; the in-memory zero is what the UI shows immediately.
-    try { if (typeof BankEthos === 'object' && BankEthos) { BankEthos.aza = 0; BankEthos.balance = 0; BankEthos.resources = {}; } } catch (e) {}
+    // _boeResReset, not `BankEthos.resources = {}`: it bumps the epoch so a
+    // transfer already in flight cannot commit afterwards and resurrect the
+    // bank we are wiping here. See _boeResTx.
+    try { if (typeof BankEthos === 'object' && BankEthos) { BankEthos.aza = 0; BankEthos.balance = 0; _boeResReset(); } } catch (e) {}
     try {
       if (typeof _boeRow === 'function' && Profile.cloud && Profile.cloud.userId) {
         const t = _boeRow();
@@ -54738,10 +54770,55 @@ function removeFromDeck(cardKeys, key) {
   if (idx < 0) return cardKeys;
   return cardKeys.slice(0, idx).concat(cardKeys.slice(idx + 1));
 }
+/* 🃏 THE COPY LIMIT — ONE implementation, applied where decks are BUILT.
+   ================================================================================
+   Rule: nobody — player OR AI — may hold more than MAX_COPIES_PER_CARD (3) of any
+   one card. The deck EDITOR has always enforced it (`addToDeck`), but the editor is
+   not the only way a deck comes into being, and the rule kept coming back broken
+   because each new deck source re-derived its own idea of the cap (or skipped it):
+
+     · buildDeckFromKeys   — a SAVED deck's key list, replayed verbatim. Measured
+                             before this fix: a 40-key list naming one card gave a
+                             40-copy deck. The editor cap never ran, because the
+                             editor was not involved.
+     · buildAIDeck tier 1  — an admin AI deck listing a card 12× gave 12 copies.
+     · buildAIDeck tier 2  — sampling 14 slots from a 3-card custom pool gave 5, 5, 4.
+     · getAdminAIDeckKeys  — padded a 5-card admin deck to DECK_SIZE by CYCLING it,
+                             giving 8 copies of every card.
+     · _legalizeDeck       — carried its own private `_MAX_COPIES = 3` constant, a
+                             second source of truth that could drift from the first.
+
+   So the cap lives HERE, once, and every one of those calls it. It is deliberately
+   dumb — walk in order, keep the first 3 of each key, drop the rest — because deck
+   sources hand us their cards in PRIORITY order and the first N are the ones the
+   author meant. Callers decide what to do about the resulting shortfall (see
+   `_legalizeDeck`, which backfills); this function only ever REMOVES.
+
+   `keyOf` maps an entry to the identity the cap counts on. Card OBJECTS count by
+   `id` (two key spellings of the same card must not each get 3), key STRINGS count
+   by themselves — resolving every key here would mean a `resolveDeckCard` call per
+   card per deck build, and the key-string callers already speak one canonical form. */
+function _capCopies(list, keyOf) {
+  const cap = (typeof MAX_COPIES_PER_CARD === 'number') ? MAX_COPIES_PER_CARD : 3;
+  const seen = Object.create(null), out = [];
+  for (const item of (Array.isArray(list) ? list : [])) {
+    if (item == null) continue;
+    let k;
+    try { k = keyOf ? keyOf(item) : item; } catch (e) { k = null; }
+    k = String(k == null ? '?' : k);
+    if ((seen[k] | 0) >= cap) continue;
+    seen[k] = (seen[k] | 0) + 1;
+    out.push(item);
+  }
+  return out;
+}
 // Build a battle-ready, shuffled deck array from a list of card keys
 function buildDeckFromKeys(cardKeys) {
   const deck = [];
-  for (const key of cardKeys || []) {
+  // 🃏 Cap BEFORE resolving, so a saved deck that names one card 40 times costs 3
+  // resolveDeckCard calls instead of 40. Counting is by resolved card id (not by
+  // key spelling) so `unit:x` + `custom:x` can't smuggle in a 4th copy of x.
+  for (const key of _capCopies(cardKeys || [], k => _deckKeyCardId(k) || k)) {
     const card = resolveDeckCard(key);
     // 🜂 Summon / Archon cards are NEVER drawable — they're spawned or summoned
     // (Archons via a Catalyst ritual from the separate Archon Deck), not drawn
@@ -58249,6 +58326,112 @@ function _boeTbl(name) {
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
   return Cloud.client.from(name);
 }
+/* 🔒 ══ THE ONE SEAM FOR BankEthos.resources ═══════════════════════════════════
+   ⭐ THE INVARIANT, AND IT IS THE WHOLE OF IT:
+        `BankEthos.resources` IS NEVER READ AND WRITTEN BACK ACROSS AN AWAIT.
+        The read, the decision and the write-back happen in ONE critical section
+        that no other bank-resource operation can enter, and a section only
+        commits if the account it read is still the account it is writing to.
+      Stated as a thing you can CHECK BY READING rather than a rule to remember:
+      `grep -n 'BankEthos\.resources\s*=' public/index.html` returns exactly TWO
+      assignments — the commit at the bottom of _boeResTx, and the epoch-bumping
+      wipe in _boeResReset. Everything else that hit is a comment or a read.
+      Anything that wants to change the bank's resource map has to come through
+      here and gets the serialization whether or not its author knew it needed it;
+      a third assignment appearing in that grep IS the bug, whether or not anyone
+      has found its window yet.
+
+   🔴 THE BUG THIS CLOSES, MEASURED ON THIS TREE BEFORE THE FIX.
+      boeDepositRes and boeWithdrawRes both did:
+          const nextRes = Object.assign({}, BankEthos.resources);   // READ
+          … await _boeRow(); await …update({resources: nextRes})…   // 2 awaits
+          BankEthos.resources = nextRes;                            // WRITE
+      Classic lost update. Two concurrent boeWithdrawRes('metal', 1000) against a
+      5,000 bank both read 5,000, both wrote 4,000, and both credited the stash:
+      BANK DEBITED 1,000, STASH CREDITED 2,000 — 1,000 metal MINTED FROM NOTHING,
+      both legs returning true, both writing "Withdrew 1,000 Metal" to the bank
+      ledger. It scaled linearly and repeatably (200 → 200 minted, 2,000 → 2,000).
+      The lost update is older than the Rebalance work, but the withdraw leg's
+      damage is new: the credit used to be `addRes`, whose stash cap swallowed the
+      duplicated units, and the (correct, cap-exempt) `_refundRes` credit lets
+      them all survive. The same race in the other direction DESTROYS: a Rebalance
+      deposit of 1,734 racing a 500 withdrawal ended 500 stash / 0 bank out of
+      2,234 units — 1,734 destroyed, both legs true, under a dialog that promises
+      "Nothing is destroyed. Every unit stays yours in the Bank of Ethos."
+
+   ⚠ WHY THE FOUR GUARDS THAT ALREADY EXISTED DO NOT COUNT, AND STAY ANYWAY.
+     `_txBusy` (the bank panel's form), `vaultBusy` and `stashRebalanceBusy` (the
+     city), and `cityVaultMove` (no guard at all) each debounce ONE SURFACE. They
+     sit above the shared read-modify-write, so they stop a player double-clicking
+     one button and do nothing at all about the city's Rebalance racing the bank
+     panel's form, or either racing a background refresh. A per-caller guard is a
+     patch per door; this is the door. They stay because they are still the right
+     thing for their own surface — greying a button out is better UX than silently
+     queueing behind a lock — but NOTHING relies on them for correctness now.
+   ⚠ THE LOCK LIVES AT THE INNERMOST LAYER ON PURPOSE. Only this function takes
+     it. boeDepositRes / boeWithdrawRes call it once each; cityVaultMove and the
+     Rebalance button call THOSE. If an outer wrapper ever took the same lock and
+     then called a function that takes it again, the chain would deadlock — so the
+     rule is: take it here, never above here.
+
+   ⚠ THE MUTATOR RUNS INSIDE THE SECTION AND THAT IS THE POINT. It is handed a
+     COPY of the live map and returns the map it wants committed. Every check that
+     depends on what the bank currently holds — "do you have that much?", "will it
+     fit?" — belongs IN the mutator, because a check made before the section is a
+     check against a map that may have moved. Refusals come back through
+     `tx.refuse(msg, ms)` so a decision made on fresh state can still produce the
+     honest toast the player needs.
+   ⚠ EPOCH, NOT JUST A LOCK. The lock orders transfers against each other; it
+     cannot help against a sign-out, which zeroes the account SYNCHRONOUSLY in the
+     middle of our awaits. Without the epoch a transfer in flight when the player
+     signs out (or wipes the account) would commit afterwards and RESURRECT a bank
+     that is supposed to be gone. `_boeResReset()` bumps the epoch; a section that
+     started in an older epoch refuses to commit. This is the compare-and-set half
+     of the guarantee: a write only lands against the account it read.
+   ⚠ `localOnly` IS FOR ADOPTING WHAT THE SERVER JUST SAID. boeLoad has already
+     read the row; writing it straight back would be a pointless round trip. It
+     still goes through here so it cannot interleave with a transfer — a plain
+     assignment there would let a load land between a transfer's read and write
+     and be silently overwritten by it. */
+let _boeResChain = Promise.resolve();
+let _boeResEpoch = 0;
+// The account is gone (sign-out / wipe). Zeroing is not a read-modify-write, so
+// it does not queue — but it must invalidate anything already in flight.
+function _boeResReset() { _boeResEpoch++; BankEthos.resources = {}; }
+async function _boeResTx(mutate, opts) {
+  const prev = _boeResChain;
+  let release;
+  _boeResChain = new Promise((r) => { release = r; });
+  // Never let a thrown section wedge the queue for every later transfer.
+  try { await prev; } catch (e) {}
+  const out = { ok: false, refused: null, refusedMs: 4200, error: null };
+  try {
+    const epoch = _boeResEpoch;
+    const live = (BankEthos.resources && typeof BankEthos.resources === 'object') ? BankEthos.resources : {};
+    const ctx = { refuse: (msg, ms) => { out.refused = String(msg == null ? '' : msg); if (ms) out.refusedMs = ms; } };
+    const next = mutate(Object.assign({}, live), ctx);
+    if (out.refused != null) return out;
+    if (!next || typeof next !== 'object') { out.refused = ''; return out; }
+    if (!(opts && opts.localOnly)) {
+      const t = await _boeRow();
+      const up = await t.update({ resources: next, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+      if (up && up.error) throw up.error;
+    }
+    /* The compare-and-set. The row is already written at this point, which is
+       correct: the server row belongs to whoever the account is now, and if that
+       changed under us the right answer is to not re-publish a stale map into
+       memory. The next boeLoad hydrates the truth either way. */
+    if (epoch !== _boeResEpoch) { out.error = new Error('account reset mid-write'); return out; }
+    BankEthos.resources = next;
+    out.ok = true; out.next = next;
+    return out;
+  } catch (e) {
+    out.error = e || new Error('bank write failed');
+    return out;
+  } finally {
+    release();
+  }
+}
 // 📒 Append a signed ledger entry (memory + cloud, best-effort). Memory copy
 // is what the embedded app's Ledger view + PDF statement render.
 /* 🔴 KINDS THE SERVER ALREADY WRITES. Do not insert these from the client.
@@ -59115,7 +59298,11 @@ async function boeFetch() {
          resources alike — bailed on its first line. The column defaults to 0. */
       const ins = await t.insert({ user_id: me });
       if (ins && ins.error) { BankEthos._err = 'setup'; return false; }
-      BankEthos.balance = 0; BankEthos.aza = 0; BankEthos.resources = {};
+      BankEthos.balance = 0; BankEthos.aza = 0;
+      // Brand-new row: nothing can be in flight against it, but it goes through
+      // the one seam anyway so `BankEthos.resources =` stays greppable to exactly
+      // two places — _boeResTx and _boeResReset. See _boeResTx's header.
+      await _boeResTx(() => ({}), { localOnly: true });
       BankEthos.lastFeeAt = Date.now(); BankEthos.openedAt = Date.now();
       BankEthos._appSubmitted = false;
     } else {
@@ -59125,7 +59312,13 @@ async function boeFetch() {
       // aza/resources columns exist only after the api.sql upgrade is run.
       BankEthos._extCols = ('aza' in r.data) && ('resources' in r.data);
       BankEthos.aza = Math.max(0, Math.round(Number(r.data.aza) || 0));
-      BankEthos.resources = (r.data.resources && typeof r.data.resources === 'object') ? r.data.resources : {};
+      /* 🔒 Adopting the server's map is a WRITE to BankEthos.resources and has to
+         queue with the transfers. A bare assignment here could land between a
+         deposit's read and its write-back, and the deposit would then overwrite
+         the freshly-loaded server state with a map derived from the stale one.
+         localOnly: the row was just read, writing it back would be a no-op trip. */
+      { const _rowRes = (r.data.resources && typeof r.data.resources === 'object') ? r.data.resources : {};
+        await _boeResTx(() => _rowRes, { localOnly: true }); }
       // Account-creation flow: if application_submitted is false (or the
       // column doesn't yet exist) the embedded AuthScreen will be shown
       // and the player must complete handle + password + sign before
@@ -59552,14 +59745,50 @@ async function boeDepositRes(id, qty) {
   if (have < qty) { showToast('Need ' + qty.toLocaleString() + ' ' + _boeResName(id) + ' — you have ' + have.toLocaleString() + '.', 4200); return false; }
   if (typeof spendResources === 'function' && !spendResources({ [id]: qty })) { showToast('Not enough ' + _boeResName(id) + '.'); return false; }
   try { if (typeof _persistResourcesSoon === 'function') _persistResourcesSoon(); } catch (e) {}
-  const nextRes = Object.assign({}, BankEthos.resources);
-  nextRes[id] = (nextRes[id] | 0) + qty;
-  try {
-    const t = await _boeRow();
-    const up = await t.update({ resources: nextRes, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
-    BankEthos.resources = nextRes;
-  } catch (e) { if (typeof addRes === 'function') addRes(id, qty); try { _persistResourcesSoon(); } catch (_) {} showToast('⚠ Deposit failed — refunded.', 4200); return false; }
+  /* 🔒 ONE SECTION: read the bank map, add to it, write it. See _boeResTx.
+     This used to be a bare `Object.assign({}, BankEthos.resources)` here and a
+     `BankEthos.resources = nextRes` two awaits later, which is a lost update —
+     a deposit racing a withdrawal destroyed 1,734 units with both legs reporting
+     success. The spend above stays OUTSIDE the section deliberately: it is
+     synchronous (canAffordResources + subtract in one turn, nothing can
+     interleave it), and holding the bank lock across it would buy nothing while
+     making the stash freeze behind unrelated bank traffic. */
+  const _tx = await _boeResTx((next) => { next[id] = (next[id] | 0) + qty; return next; });
+  if (!_tx.ok) {
+  /* ↩️ THE ROLLBACK GOES THROUGH _refundRes, NOT addRes.
+     🔴 IT USED TO BE addRes(id, qty) AND THAT DESTROYS THE UNWIND IN EXACTLY
+        THE STATE THIS FUNCTION IS NOW MOST USED FROM. addRes clamps to the
+        stash ceiling; the city's "Rebalance the vault" button (node-city
+        openStashRebalance) calls this with a FULL vault by definition — that is
+        the whole reason it is banking anything — and the spend two lines above
+        is the only thing that made room for the refund. Anything that lands in
+        the vault between the spend and this catch (the city banks production on
+        every tick, and the parent game keeps running while the city iframe
+        awaits this write) takes that room, and the clamped refund silently eats
+        the difference: the player is charged for a deposit that never happened.
+     This is the sanctioned case in _refundRes' own header — "unwinding a
+     deduction THIS call stack just made" — and it is why that function exists.
+     ⭐ ONE INVARIANT FOR EVERY CREDIT INTO THE CAPPED STASH — the vault ceiling
+        may REFUSE a move, it may never SWALLOW one:
+          A CREDIT IS EITHER A FRESH GAIN — loot, sale, production payout — which
+          goes through addRes and is allowed to clamp, OR THE UNDO OF A DEBIT
+          THIS CALL STACK JUST MADE, which goes through _refundRes and must not.
+          MOVING UNITS BETWEEN TWO STORES THE PLAYER ALREADY OWNS IS AN UNDO,
+          NEVER A GAIN.
+        It is stated this way — about the CREDIT, not about the check in front of
+        it — because a pre-flight room check cannot be the guarantee: a check and
+        the credit it protects are separated by awaits, and the stash cannot be
+        held still across one. A room check is worth keeping as an honest, early
+        REFUSAL (see boeWithdrawRes) and is worth nothing as a safety net.
+        Provable by reading: `grep -n 'addRes(' ` inside boeDepositRes /
+        boeWithdrawRes / cityVaultMove returns only the typeof-guarded fallbacks
+        beside a _refundRes call. A new banking path that reaches for addRes on
+        an unwind is the bug, whether or not anyone has found its window yet. */
+    if (typeof _refundRes === 'function') _refundRes(id, qty); else if (typeof addRes === 'function') addRes(id, qty);
+    try { _persistResourcesSoon(); } catch (_) {}
+    showToast(_tx.refused || '⚠ Deposit failed — refunded.', _tx.refused ? _tx.refusedMs : 4200);
+    return false;
+  }
   try { boeLog('resource', 0, 0, 'Banked ' + qty.toLocaleString() + ' ' + _boeResName(id)); } catch (e) {}
   // 📈 Crash/Exchange — depositing resources is a "sell" event (supply
   //    floods the market), so the price drifts down. Mirror of the buy /
@@ -59573,18 +59802,80 @@ async function boeWithdrawRes(id, qty) {
   if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
   if (_boeNeedCols()) return false;
   if (!id || !(qty > 0)) { showToast('Enter an amount.'); return false; }
-  const inBank = BankEthos.resources[id] | 0;
-  if (inBank < qty) { showToast('Bank holds ' + inBank.toLocaleString() + ' ' + _boeResName(id) + '.', 4000); return false; }
-  const nextRes = Object.assign({}, BankEthos.resources);
-  nextRes[id] = inBank - qty;
-  if (nextRes[id] <= 0) delete nextRes[id];
-  try {
-    const t = await _boeRow();
-    const up = await t.update({ resources: nextRes, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
-    BankEthos.resources = nextRes;
-  } catch (e) { showToast('⚠ Withdrawal failed — try again.', 3600); return false; }
-  if (typeof addRes === 'function') addRes(id, qty); try { _persistResourcesSoon(); } catch (e) {}
+  /* 🔒 EVERY CHECK THAT READS THE BANK IS INSIDE THE SECTION. It is worth being
+     explicit about why, because the obvious shape — check up here, write down
+     there — is exactly the bug.
+     🔴 MEASURED BEFORE THE FIX: `const inBank = BankEthos.resources[id]|0` sat
+        out here, and two concurrent boeWithdrawRes('metal', 1000) against a 5,000
+        bank both read 5,000, both passed this check, both wrote 4,000 and both
+        credited the stash — bank down 1,000, stash up 2,000, 1,000 metal MINTED,
+        both returning true and both logging "Withdrew 1,000 Metal". Scaled
+        linearly: 200 → 200 minted, 2,000 → 2,000. A sufficiency check read before
+        an await is not a sufficiency check, it is a guess about the past.
+     ⭐ Now the read, the check and the write are one section (see _boeResTx), so
+        the second withdrawal reads the map the first one actually committed.
+     🏰 THE ROOM CHECK IS STILL ONLY AN ADVISORY REFUSAL, and belongs in here with
+        the rest: it reads the STASH, which the lock does not govern, so it can
+        still be stale by the time the credit lands. It exists to tell the player
+        "that will not fit" before anything moves, and refusing as a WHOLE — rather
+        than withdrawing the part that fits — keeps the promise the ledger line
+        makes: what it says it moved is what moved. A partial withdrawal that
+        printed the full number is the same lie in a smaller font. What makes the
+        withdrawal SAFE is the cap-exempt credit below, not this.
+     ⚠ AN UNREADABLE CEILING MEANS CARRY ON, not "refuse everything". If
+       getResourceCap throws or reports nothing, this check stands aside — the
+       same rule B.resourceHeadroom and bldRefundFit already set, for the same
+       reason: idling a real action because a number could not be READ is worse
+       than the thing being guarded against. */
+  const _tx = await _boeResTx((next, tx) => {
+    const inBank = next[id] | 0;
+    if (inBank < qty) return tx.refuse('Bank holds ' + inBank.toLocaleString() + ' ' + _boeResName(id) + '.', 4000);
+    try {
+      const cap = (typeof getResourceCap === 'function') ? getResourceCap() : 0;
+      const used = (typeof getResourceUnits === 'function') ? getResourceUnits() : 0;
+      if (cap > 0) {
+        const free = Math.max(0, cap - used);
+        if (free < qty) {
+          return tx.refuse('🏰 No room — your vault has ' + free.toLocaleString() + ' of ' + cap.toLocaleString() +
+            ' units free and this would bring back ' + qty.toLocaleString() + ' ' + _boeResName(id) +
+            '. Nothing was moved; spend some stash or buy Vault Containers first.', 7000);
+        }
+      }
+    } catch (e) {}
+    next[id] = inBank - qty;
+    if (next[id] <= 0) delete next[id];
+    return next;
+  });
+  if (_tx.refused != null) { if (_tx.refused) showToast(_tx.refused, _tx.refusedMs); return false; }
+  if (!_tx.ok) { showToast('⚠ Withdrawal failed — try again.', 3600); return false; }
+  /* 🔴 THE CREDIT IS CAP-EXEMPT, AND THE ROOM CHECK ABOVE IS ONLY ADVISORY.
+     The room check is a time-of-CHECK; this line is the time-of-USE, and the
+     section's network write sits between them. The lock serializes BANK traffic;
+     nothing serializes the STASH — the city banks production every tick and the
+     parent game keeps running while the city iframe awaits — so a credit landing
+     in that window still takes the room the check just saw, and a clamping addRes
+     here would eat the difference. MEASURED on this tree, withdrawing 1,000 metal
+     into a vault with 1,002 free: a 5-unit credit mid-write destroyed 3 units, a
+     1,000-unit credit destroyed 998 — the bank row already debited, this function
+     still returning true, boeLog still writing "Withdrew 1,000 Metal" and the
+     toast still saying it. Narrowing the window is not closing it; there is no way
+     to hold the stash still across an await.
+     So the fix is the one the deposit leg already uses, which makes the pair
+     symmetric: _refundRes, the UNCAPPED credit. Its own header sanctions exactly
+     this — these units were the player's moments ago and are only moving between
+     two stores they own, so no cap is being cheated. The overshoot this can
+     leave is bounded by what actually landed mid-write (the check already
+     refused anything that did not fit at check time), and _stashEnforceCap()
+     trims it — loudly, spread across the biggest piles — the next time the
+     vault's Resources tab paints. That is the fair way to be over: the whole
+     stash shares it, rather than this one transfer silently absorbing all of it.
+     ⭐ THE PAIR'S INVARIANT, NOW TRUE BY READING: every credit into the capped
+        stash is either an undo through _refundRes (both legs here) or a fresh
+        gain through addRes. A post-await credit handed to addRes was the "third
+        kind" the invariant says does not exist — this line was it. */
+  if (typeof _refundRes === 'function') _refundRes(id, qty);
+  else if (typeof addRes === 'function') addRes(id, qty);
+  try { _persistResourcesSoon(); } catch (e) {}
   try { boeLog('resource', 0, 0, 'Withdrew ' + qty.toLocaleString() + ' ' + _boeResName(id)); } catch (e) {}
   showToast('🏦 Withdrew ' + qty.toLocaleString() + ' ' + _boeResName(id) + '.', 4200);
   return true;
@@ -74693,18 +74984,24 @@ function _pickThemedKeys(cards, kind, hero, count) {
 // card. Used to force AI-built decks to obey the same rules the player does.
 // Takes cards in priority order and keeps the first legal DECK_SIZE of them; if
 // the copy limit leaves it short, it backfills from whatever is left over.
-const _MAX_COPIES = 3;
+// ⚠ This used to carry its own `_MAX_COPIES = 3`. A second copy of the number is a
+// second place for it to drift, so the cap now comes from `_capCopies` (which reads
+// MAX_COPIES_PER_CARD) and this function only adds the SIZE rule on top.
+const _MAX_COPIES = (typeof MAX_COPIES_PER_CARD === 'number') ? MAX_COPIES_PER_CARD : 3;
 function _legalizeDeck(cards) {
   const cap = (typeof DECK_SIZE === 'number') ? DECK_SIZE : 40;
-  const out = [], counts = Object.create(null), spare = [];
-  for (const c of (Array.isArray(cards) ? cards : [])) {
-    if (!c) continue;
-    const id = c.id || c.cardId || c.name || '?';
-    if (out.length < cap && (counts[id] | 0) < _MAX_COPIES) {
-      counts[id] = (counts[id] | 0) + 1;
-      out.push(c);
-    } else spare.push(c);
-  }
+  const src = (Array.isArray(cards) ? cards : []).filter(Boolean);
+  const legal = _capCopies(src, c => c.id || c.cardId || c.name || '?');
+  const out = legal.slice(0, cap);
+  // ⚠ `spare` is what the SIZE rule trimmed, never what the COPY rule rejected.
+  //    Deck sources hand us the same card OBJECT repeatedly (see `sample` in
+  //    buildAIDeck), so an identity Set cannot tell a cap-rejected duplicate from
+  //    a legal one — and the last-resort padding at the bottom would then quietly
+  //    put a 4th copy back. Slicing the already-capped list keeps that impossible
+  //    by construction: nothing that failed the cap can reach `spare` at all.
+  const spare = legal.slice(cap);
+  const counts = Object.create(null);
+  for (const c of out) { const id = c.id || c.cardId || c.name || '?'; counts[id] = (counts[id] | 0) + 1; }
   // Short of `cap` because the source pool had too few DISTINCT cards to fill it
   // within the copy limit. Top up from the wider catalogue FIRST — duplicating
   // past 3 copies would satisfy the size rule by breaking the copy rule, which
@@ -74724,8 +75021,11 @@ function _legalizeDeck(cards) {
       }
     }
   } catch (e) {}
-  // Absolute last resort — the whole catalogue could not fill it either. An
-  // undersized deck would deck the AI out almost immediately, so size wins here.
+  // Absolute last resort — the whole catalogue could not fill it either. This used
+  // to say "size wins", padding with cap-rejected duplicates; it no longer can (see
+  // `spare` above). The copy limit is the rule a player SEES broken, so an
+  // undersized deck — which only means the AI hits fatigue sooner — is the better
+  // of the two failures.
   for (let i = 0; out.length < cap && i < spare.length; i++) out.push(spare[i]);
   return out.slice(0, cap);
 }
@@ -74847,7 +75147,10 @@ const buildAIDeck = () => {
       return _lookupPool.find(c => c && c.id === id);
     };
     for (const cid of picked.cards) add(lookup(cid));
-    if (deck.length > 0) return shuffle(deck);
+    // 🃏 THE AI PLAYS BY THE SAME RULES. An admin AI deck is a hand-typed id list
+    // with nothing stopping it naming one card 12 times — measured, it produced a
+    // 12-copy deck. Cap it like every other deck source.
+    if (deck.length > 0) return shuffle(_capCopies(deck, c => c.id || c.cardId || c.name || '?'));
   }
 
   // 🛑 NO MOCKUP DECKS. Per design: the AI plays ONLY the admin-authored AI
@@ -74870,7 +75173,12 @@ const buildAIDeck = () => {
     // the admin knows to create + Publish an AI deck — but don't hard-crash.
     try { console.warn('[AI] No admin AI decks and no custom cards — AI will start with an empty deck. Create AI decks in Pricing Admin → AI Decks and Publish the catalog.'); } catch (e) {}
   }
-  return shuffle(deck);
+  // 🃏 `sample` fills its quota by CYCLING the pool (`arr[i % arr.length]`), so a
+  // thin custom catalogue silently multiplied copies — measured, a 3-unit pool
+  // asked for 14 slots produced 5 / 5 / 4. The deck comes out shorter than the
+  // quota now, which is correct: the AI cannot legally field cards that don't
+  // exist, and a short deck is a fatigue clock, not a rules break.
+  return shuffle(_capCopies(deck, c => c.id || c.cardId || c.name || '?'));
 };
 
 // 🤖 Admin AI decks → battle-ready card KEYS (kind:id).
@@ -74902,11 +75210,32 @@ function getAdminAIDeckKeys() {
   const picked = decks[Math.floor(Math.random() * decks.length)];
   let keys = (picked.cards || []).map(_aiCardIdToKey).filter(Boolean);
   if (!keys.length) return [];
+  // 🃏 Cap the admin's own list first — it is hand-typed and may already repeat.
+  keys = _capCopies(keys, k => _deckKeyCardId(k) || k);
   if (keys.length > DECK_SIZE) keys = keys.slice(0, DECK_SIZE);
   if (keys.length < DECK_SIZE) {
+    // 🃏 The pad used to CYCLE the deck's own keys until it hit DECK_SIZE, which
+    // is a copy multiplier wearing a size rule's clothes — measured, a 5-card
+    // admin deck came out as 40 keys, 8 copies of each. Pad from the wider
+    // catalogue instead, and stop when the catalogue is exhausted: an undersized
+    // deck is legal, a 4th copy is not. (Same trade `_legalizeDeck` already makes.)
     const base = keys.slice(0);
-    let i = 0;
-    while (keys.length < DECK_SIZE) { keys.push(base[i % base.length]); i++; }
+    const counts = Object.create(null);
+    base.forEach(k => { const id = _deckKeyCardId(k) || k; counts[id] = (counts[id] | 0) + 1; });
+    const cap = (typeof MAX_COPIES_PER_CARD === 'number') ? MAX_COPIES_PER_CARD : 3;
+    try {
+      const pool = [].concat(
+        Array.isArray(UNIT_CARDS) ? UNIT_CARDS : [],
+        (typeof getAllCustomCards === 'function') ? getAllCustomCards() : []
+      ).filter(c => c && c.id && c.type !== 'summon' && !c.isSummon && !(c.archonSummon && c.archonSummon.enabled));
+      for (const c of pool) {
+        const key = _aiCardIdToKey(c.id);
+        if (!key) continue;
+        const id = _deckKeyCardId(key) || key;
+        while (keys.length < DECK_SIZE && (counts[id] | 0) < cap) { counts[id] = (counts[id] | 0) + 1; keys.push(key); }
+        if (keys.length >= DECK_SIZE) break;
+      }
+    } catch (e) {}
   }
   return keys;
 }
@@ -77002,7 +77331,9 @@ async function _applySeasonReset(sr) {
       // itself is cleared by the RPC, else the next boeFetch restores it.
       try {
         if (typeof BankEthos === 'object' && BankEthos) {
-          BankEthos.aza = 0; BankEthos.balance = 0; BankEthos.resources = {};
+          // _boeResReset bumps the epoch — see _boeResTx. A plain assignment here
+          // would let a transfer still in flight commit after the wipe.
+          BankEthos.aza = 0; BankEthos.balance = 0; _boeResReset();
         }
       } catch (e) {}
       // 🏭 The money PRINTERS. Leaving funded operations and their treasuries
@@ -87136,6 +87467,89 @@ function _realGraveCards(state, side) {
   const g = (state && state[side] && Array.isArray(state[side].graveyard)) ? state[side].graveyard : [];
   return g.filter(c => !_isLiveSummonGraveCard(c, state));
 }
+/* ⚰️ THE GRAVEYARD **AS THE PLAYER SEES IT** — one list, and now two readers.
+   The viewer paints these tiles; `_cardInspectResolve` turns a click on one back
+   into the card behind it, matching on `_graveRef`. This lived as a closure
+   inside `renderBattlePiles` and had to move: a resolver that re-derived the
+   list from `state[side].graveyard` would disagree with the painted tiles the
+   moment a corpse got folded in (the fold below adds entries that are in NO
+   array), and the inspector would then open the wrong card or nothing at all.
+   Deriving both from this function makes "what you clicked" and "what opens"
+   the same fact instead of two.
+   ⚠ `_graveRef` is what makes a click resolvable, and it must stay unique
+   within one pile: instanceId when there is one, else the pile index, else the
+   corpse's unit id. Duplicate refs would silently open the first match. */
+function _graveViewCards(s, owner) {
+  if (!s || !s[owner]) return [];
+  // Killed units only — dead, non-hero units still sitting in s.units. (The
+  // `graveyard` array is spent CARDS, not kills — that's why live units used
+  // to show up there.) A revived unit flips back to alive and drops off.
+  // ⚰️🔗 `_voided` / `_banished` units went to the VOID, not the graveyard — their
+  // card is in `side.void` (filed by `_reconcileUnitCards`). Their body lingers in
+  // `s.units` with alive:false like any corpse, so without this they would be
+  // folded in below and appear in BOTH zones at once.
+  const deadOf = (who) => (Array.isArray(s.units) ? s.units : [])
+    .filter(u => u && !u.isHero && u.owner === who && !_unitWentToVoid(u)
+      && (!u.alive || (typeof u.currentHp === 'number' && u.currentHp <= 0)));
+  // The graveyard PILE = spent cards (discards, mills, tributes, sacrificed/dead
+  // unit cards). Killed board units (deadOf) that aren't already stamped into the
+  // pile are folded in too, so the graveyard view shows EVERY fallen/discarded card.
+  const rawPile = Array.isArray(s[owner].graveyard) ? s[owner].graveyard : [];
+  // 🪦 A card whose summoned unit is STILL ALIVE is not in the graveyard — the
+  // unit is on the field. Grave effects (salvage / raise / banish) have always
+  // honoured this via _isLiveSummonGraveCard; the VIEW did not, so a unit you
+  // had just played showed up among your dead.
+  const pile = rawPile.filter(c => !(typeof _isLiveSummonGraveCard === 'function' && _isLiveSummonGraveCard(c, s)));
+  const out = pile.map((c, i) => Object.assign({}, c, { _gKind: (c && c.type === 'unit') ? 'fallen' : 'discarded', _graveRef: (c && c.instanceId) ? ('iid_' + c.instanceId) : ('pile_' + i) }));
+  // 🪦 Fold in corpses that the pile does not already represent.
+  //
+  // ⚠ This used to match ONLY on `_summonedUnitId === u.id`. That link breaks
+  // the moment a unit's id changes after it was played (revive / transform /
+  // flip / vanish-return rebuild the unit object), and a broken link shows the
+  // SAME dead card TWICE — once as its pile card, once as its corpse. That is
+  // the "units dying create duplicates" report.
+  //
+  // So match by unit id FIRST (exact, and what a healthy play produces), then
+  // fall back to claiming an unclaimed pile card of the same cardId that was
+  // itself a played unit card. One corpse claims at most one pile card, so
+  // three copies played and killed still show exactly three — and a card
+  // DISCARDED from hand (no `_summonedUnitId`) can never absorb a corpse.
+  const byUnitId = new Map();
+  const unclaimedByCardId = new Map();
+  pile.forEach((c) => {
+    if (!c || !c._summonedUnitId) return;                 // discards are not corpse-backed
+    byUnitId.set(c._summonedUnitId, c);
+    const key = String(c.id || c.cardId || '');
+    if (!key) return;
+    if (!unclaimedByCardId.has(key)) unclaimedByCardId.set(key, []);
+    unclaimedByCardId.get(key).push(c);
+  });
+  const claimed = new Set();
+  deadOf(owner).forEach(u => {
+    const exact = byUnitId.get(u.id);
+    if (exact && !claimed.has(exact)) { claimed.add(exact); return; }   // pile already shows it
+    const key = String(u.cardId || u.originalCardId || '');
+    const bucket = key ? (unclaimedByCardId.get(key) || []) : [];
+    const spare = bucket.find(c => !claimed.has(c));
+    if (spare) { claimed.add(spare); return; }             // stale stamp — pile card stands in
+    out.push({ id: u.cardId || u.originalCardId || u.id, name: u.name, icon: u.icon, type: 'unit', level: u.level, _gKind: 'fallen', _graveRef: 'dead_' + u.id });
+  });
+  // 🪦 Attach the grave-activated ability from the card def when the view card
+  // doesn't already carry it (killed units are minimal; some pile cards lost it).
+  out.forEach(c => { if (!c.graveActive && c.id && typeof _cardDefById === 'function') { const def = _cardDefById(c.id); if (def && def.graveActive) c.graveActive = def.graveActive; } });
+  return out;
+}
+/* ⚰️🔗 THE ONE DEFINITION OF "this corpse went to the Void, not the graveyard".
+   ROUND 3: `_reconcileUnitCards` asked `u._voided` and the graveyard viewer asked
+   `u._voided || u._banished`. Two readers of one fact, disagreeing — and the
+   fusion summon-condition banish (`_resolvePolycreationFusion`) only ever wrote
+   `_banished`, so the reconciler filed that unit's REAL card into the GRAVEYARD
+   while the producer pushed a second card into the Void. Measured on that tree:
+   one banished unit → grave 2 / void 1 / `_banishableGrave` 2, i.e. one unit
+   recorded as two cards in two zones, and the ghost was payable as a banish cost.
+   Every reader now asks THIS function, so a producer that sets either flag is
+   filed to the Void by the reconciler with no cooperation from the death site. */
+function _unitWentToVoid(u) { return !!u && (!!u._voided || !!u._banished); }
 function _banishableGrave(state, side) {
   const grave = (state && state[side] && Array.isArray(state[side].graveyard)) ? state[side].graveyard : [];
   const aliveIds = new Set(((state && state.units) || []).filter(u => u && u.alive).map(u => u.id));
@@ -87145,6 +87559,210 @@ function _banishableGrave(state, side) {
     out.push({ card: c, idx });
   });
   return out;
+}
+
+/* ⚰️🔗 ============ THE CARD/UNIT LIFECYCLE — ONE INVARIANT ============
+   ================================================================================
+   THE INVARIANT, in full, and it is the whole fix:
+
+       A unit's card lives ON ITS UNIT (`unit._card`). It appears in a PILE only
+       once the unit has left the board, in exactly one pile, exactly once:
+
+           card ∈ side.void       ⟺   !unit.alive &&  _unitWentToVoid(unit)
+           card ∈ side.graveyard  ⟺   !unit.alive && !_unitWentToVoid(unit)
+           card ∈ neither pile    ⟺    unit.alive
+
+   `_reconcileUnitCards` re-establishes that on EVERY assignment to `App.state`
+   (see the accessor installed on `App`), which is why it closes doors that have
+   not been found yet. It does not care WHICH of the ~35 places that flip a unit to
+   `alive:false` ran, or which of the ~150 places that assign `App.state` ran, or
+   in what order. It reads the unit's own flags and makes the piles match. A new
+   death site added next year is covered the moment it assigns state.
+
+   WHY THIS SHAPE, AND WHAT IT REPLACES
+   ------------------------------------
+   The old model filed the card at PLAY time and filtered it at READ time:
+   `placeUnit` pushed the card into the owner's graveyard immediately, stamped with
+   `_summonedUnitId`, and a growing set of readers (`_isLiveSummonGraveCard`,
+   `_banishableGrave`, the graveyard viewer) each remembered to skip it while the
+   unit was alive. Measured on that model:
+
+       play a unit          → player.graveyard 0 → 1   (should stay 0)
+       kill it              → stays 1                  (should become exactly 1 AT DEATH)
+       revive it in place   → stays 1                  (should drop to 0)
+       banish it to the Void→ player.void  stays 0     (should become 1)
+
+   Every reader that FORGOT the filter was a bug: `consumeGrave`'s affordability
+   gate counted `graveyard.length` raw, so a unit you had just played paid the cost
+   of the next card — and `_applyConsumeGrave` then spliced that living unit's card
+   out of the pile, permanently unlinking it. That is the "patch per door" failure
+   mode: the filter had to be repeated at every read, forever.
+
+   Filing at DEATH instead means there is nothing to filter. The old filters are
+   left in place — they are now no-ops for the paths below, but they still guard
+   any pile card carrying `_summonedUnitId` that this function did not put there.
+
+   WHY `instanceId` IS THE LINK
+   ----------------------------
+   `_summonedUnitId` matched card→unit by UNIT id, and unit ids CHANGE: revive,
+   transform, flip and vanish-return all rebuild the unit object. A broken link
+   showed the same dead card twice — once as its stale pile card, once as its
+   corpse — which is the "units dying create duplicates" report. `instanceId` is
+   minted per card instance and never changes, so it survives every rebuild. The
+   card rides ON the unit, so a rebuilt unit carries its own card with it and the
+   link cannot break at all.
+
+   REJECTED: normalising inside `render()`. The graveyard is not just a view — it
+   is spent by `consumeGrave`, counted by play requirements and paid as a banish
+   cost. A fix that only made the PICTURE right would leave every one of those
+   reading the wrong pile, which is exactly the state this replaces.
+
+   REJECTED: hooking the ~35 death sites. That is one patch per door, and this
+   codebase has already lost that argument several times.
+
+   ⚠ In-place mutation (`App.state.units = …`) bypasses the accessor and so skips
+   this pass. That is safe: the function is idempotent and convergent, so the next
+   assignment repairs it, and every action path ends in an assignment.
+
+   🔴 ROUND 2 — WHY "⟺" WAS THE WRONG SHAPE FOR THE DEAD HALF
+   ----------------------------------------------------------
+   The first cut read the biconditional literally and re-asserted pile MEMBERSHIP
+   on every single assignment: dead & !voided ⟹ the card is in the graveyard, so
+   put it back. That is not an invariant of the game — it is only true at the
+   MOMENT OF DEATH. A corpse's card is supposed to leave the pile afterwards:
+   salvage returns it to hand, `reviveGrave` splices it out to build the unit,
+   `_applyConsumeGrave` spends it, the `banish` activation cost pays it, and
+   `banishGrave` moves it to the Void. Every one of those was silently UNDONE by
+   the very next `App.state = …`, measured on the tree before this change:
+
+       salvage a corpse to hand   → grave 1 → 1  AND a copy in hand   (duplicated)
+       pay a `banish` cost with it→ grave 1 → 1                       (cost refunded)
+       spend it to `consumeGrave` → grave 1 → 1                       (cost refunded)
+       reviveGrave it to the board→ grave 1 → 1  AND the unit on field (duplicated)
+       banishGrave it to the Void → grave 1 → 1, void 0               (vanish eaten)
+
+   So the pile half of the invariant is split by DIRECTION, and this is the whole
+   round-2 fix:
+
+       ALIVE  — continuously asserted. A living unit's card is NEVER in a pile,
+                and re-stripping it on every assignment is always correct because
+                there is no legitimate way for it to be there.
+       DEAD   — asserted ONCE, on the alive→dead EDGE. The card is filed exactly
+                once and then the reconciler is DONE with it; where it goes next
+                is the business of whatever effect moves it.
+
+   The state that makes "once" expressible is one bit on the unit, `_cardFiled`
+   (the pile the corpse was filed into, or null). It is written by this function
+   and by nothing else — which is the point. The alternative the brief allowed,
+   marking `_cardGone` at each removal site, is one patch per door again: it needs
+   every current AND future path that touches a pile to remember to mark. Owning
+   the bit here means a removal path added next year needs no cooperation at all.
+
+   Note `_cardFiled` rides the unit, so it survives the `{...u, alive:false}`
+   copies the ~35 death sites make, and is cleared when the unit comes back — a
+   second death files a second time, correctly.
+
+   ⚰️ THE SYNTHETIC `tomb_<id>` CARD IS THE SAME CORPSE.
+   `_applyCostPayment` (tribute) and `_applySelfSacrifice` mint their own pile
+   card, `instanceId: 'tomb_' + unit.id`, because they predate the card riding the
+   unit and still have to work for units that carry no `_card` (board-seeded and
+   older AI units). For a unit that DOES carry one, that tomb card and `u._card`
+   are two records of one death, and filing both is the double-file this package
+   was sent to kill — measured 2 entries for one tribute and 2 for one
+   self-sacrifice. `mine()` below therefore matches EITHER instanceId, so the edge
+   sees the corpse is already in the pile and files nothing more. The two cost
+   paths were given the matching `_voided` flag so the pile this pass wants is the
+   pile they actually used under Ashen Decree. */
+function _reconcileUnitCards(state) {
+  if (!state || !Array.isArray(state.units)) return state;
+  // Fast path — the overwhelming majority of assignments have nothing to do.
+  // Without this, a 150-call-site accessor would walk the piles on every UI tick.
+  let anyCard = false;
+  for (const u of state.units) if (u && u._card) { anyCard = true; break; }
+  if (!anyCard) return state;
+
+  let next = state, touched = false;
+  // unit OBJECT → the bookkeeping to write back. Keyed by identity because unit
+  // IDS change (revive/transform/flip rebuild them) but the object in THIS array
+  // does not, and `next.units` is never replaced inside the loop below.
+  const mark = new Map();
+  for (const side of ['player', 'ai']) {
+    const so = next[side];
+    if (!so) continue;
+    let grave = Array.isArray(so.graveyard) ? so.graveyard : [];
+    let vd = Array.isArray(so.void) ? so.void : [];
+    let changed = false;
+
+    for (const u of next.units) {
+      if (!u || !u._card || u.owner !== side) continue;
+      const iid = u._card.instanceId;
+      if (!iid) continue;                       // no stable identity — leave it alone
+      // Every way this one corpse can be spelled in a pile: its own card, the
+      // synthetic tomb card a cost path minted for it, or whichever of those we
+      // filed last (`_cardPileIid`, kept so a rebuilt unit id can't strand it).
+      const tomb = 'tomb_' + u.id;
+      const mine = (c) => !!c && (c.instanceId === iid || c.instanceId === tomb
+        || (!!u._cardPileIid && c.instanceId === u._cardPileIid));
+      const strip = (arr) => arr.filter(c => !mine(c));
+      const count = (arr) => arr.reduce((n, c) => n + (mine(c) ? 1 : 0), 0);
+      // Collapse N matching entries to the FIRST one — never used to add.
+      const dedupe = (arr) => { let seen = 0; return arr.filter(c => !mine(c) || (seen++ === 0)); };
+
+      const want = u.alive ? null : (_unitWentToVoid(u) ? 'void' : 'grave');
+      const filed = u._cardFiled || null;
+
+      // ── ALIVE: continuously asserted. Its card belongs on the unit, nowhere else.
+      if (want === null) {
+        if (count(grave)) { grave = strip(grave); changed = true; }
+        if (count(vd))    { vd    = strip(vd);    changed = true; }
+        // Forget the filing so a LATER death files again (die → revive → die).
+        if (filed || u._cardPileIid) mark.set(u, { filed: null, iid: null });
+        continue;
+      }
+
+      // ── DEAD AND ALREADY FILED: do nothing. This is the round-2 fix. The card
+      //    may have been salvaged, revived, consumed, banished or paid since —
+      //    all legitimate, none of it ours to undo. We only collapse a duplicate,
+      //    which can never resurrect a card that legitimately left.
+      if (filed === want) {
+        if (want === 'grave' && count(grave) > 1) { grave = dedupe(grave); changed = true; }
+        if (want === 'void'  && count(vd)    > 1) { vd    = dedupe(vd);    changed = true; }
+        continue;
+      }
+
+      // ── THE EDGE (alive→dead, or a corpse re-routed grave↔void). File once.
+      if (want === 'grave' && count(vd))    { vd    = strip(vd);    changed = true; }
+      if (want === 'void'  && count(grave)) { grave = strip(grave); changed = true; }
+      let tgt = want === 'grave' ? grave : vd;
+      let pileIid = iid;
+      if (count(tgt) > 0) {
+        // A cost path already put this corpse here (the tomb card). Adopt it.
+        pileIid = tgt.find(mine).instanceId;
+        if (count(tgt) > 1) { tgt = dedupe(tgt); changed = true; }
+      } else {
+        // `_summonedUnitId` is stamped with the unit's CURRENT id so the graveyard
+        // viewer's corpse-folding matches the pile card to this corpse instead of
+        // pushing a second, synthetic entry beside it.
+        tgt = tgt.concat([{ ...u._card, _summonedUnitId: u.id }]);
+        changed = true;
+      }
+      if (want === 'grave') grave = tgt; else vd = tgt;
+      mark.set(u, { filed: want, iid: pileIid });
+    }
+
+    if (changed) {
+      next = { ...next, [side]: { ...so, graveyard: grave, void: vd } };
+      touched = true;
+    }
+  }
+  if (mark.size) {
+    next = { ...next, units: next.units.map(u => {
+      const m = mark.get(u);
+      return m ? { ...u, _cardFiled: m.filed, _cardPileIid: m.iid } : u;
+    }) };
+    touched = true;
+  }
+  return touched ? next : state;
 }
 function _costPayable(state, side, sourceUnit, cost, excludeCardId) {
   if (_costIsEmpty(cost)) return true;
@@ -87215,7 +87833,16 @@ function _applyCostPayment(state, side, sourceUnit, cost, picks) {
       if (dead.length) {
         const graveCards = dead.map(u => ({ id: u.cardId || u.originalCardId, name: u.name, icon: u.icon, type: 'unit', instanceId: 'tomb_' + u.id })).filter(c => c.id);
         // 🗿 ASHEN DECREE — tributed units may be exiled rather than buried.
-        s = (_graveDestFor(s, side) === 'void')
+        const _dest = _graveDestFor(s, side);
+        // ⚰️🔗 Tell `_reconcileUnitCards` which pile this line chose. A tributed
+        // unit that carries its own `_card` would otherwise be filed by the
+        // reconciler's default (graveyard) while the tomb card above went to the
+        // Void — one death, two entries, two piles. See that function's header.
+        if (_dest === 'void') {
+          const _vd = new Set(dead.map(u => u.id));
+          s = { ...s, units: (s.units || []).map(u => (u && _vd.has(u.id)) ? { ...u, _voided: true } : u) };
+        }
+        s = (_dest === 'void')
           ? { ...s, [side]: { ...s[side], void: [...((s[side] && s[side].void) || []), ...graveCards] } }
           : { ...s, [side]: { ...s[side], graveyard: [...((s[side] && s[side].graveyard) || []), ...graveCards] } };
         if (side === 'player') dead.forEach(u => { try { _lqSacrificeHit(u); } catch (e) {} });   // 💔 §3 deliberate sacrifice (tribute)
@@ -87241,7 +87868,12 @@ function _applySelfSacrifice(state, side, sourceUnit) {
   if (side === 'player') { try { _lqSacrificeHit(sourceUnit); } catch (e) {} }   // 💔 §3 deliberate sacrifice
   const card = { id: sourceUnit.cardId || sourceUnit.originalCardId, name: sourceUnit.name, icon: sourceUnit.icon, type: 'unit', instanceId: 'tomb_' + sourceUnit.id };
   let s = { ...state, units: (state.units || []).map(u => u.id === sourceUnit.id ? { ...u, currentHp: 0, alive: false } : u) };
-  if (card.id) s = (_graveDestFor(s, side) === 'void')
+  const dest = _graveDestFor(s, side);
+  // ⚰️🔗 Same reason as the tribute path: mark the corpse so the reconciler files
+  // its `_card` in the pile this line actually used, instead of defaulting to the
+  // graveyard and producing a second entry for one death.
+  if (dest === 'void') s = { ...s, units: (s.units || []).map(u => u.id === sourceUnit.id ? { ...u, _voided: true } : u) };
+  if (card.id) s = (dest === 'void')
     ? { ...s, [side]: { ...s[side], void: [...((s[side] && s[side].void) || []), card] } }
     : { ...s, [side]: { ...s[side], graveyard: [...((s[side] && s[side].graveyard) || []), card] } };
   try {
@@ -89201,6 +89833,296 @@ try {
       console.table(rows);
     } catch (e) {}
     return { total: rows.length, silent: quiet.map(q => q.id), rows: rows };
+  };
+
+  /* ⚰️🔗🧪 __mg.testLifecycle() — pins the four card/unit lifecycle rules.
+     ============================================================================
+     Every case is driven through the REAL code: `placeUnit` for the play, the raw
+     `alive` flip for the death (there is no single kill function — ~35 sites do
+     it, which is precisely why the invariant is enforced on state assignment
+     rather than at the kill sites), `applyOnPlayEffect` for the vanish paths and
+     the shipped deck builders for the copy limit. Nothing here re-implements the
+     rules it is checking, so it fails when the engine regresses.
+
+     Each rule was RED before the `_reconcileUnitCards` / `_capCopies` work landed;
+     the numbers in the comments are what this test measured on that tree. To
+     confirm it can still fail, break one thing and re-run — e.g. delete the
+     `unit._card = …` line in `placeUnit` (rules 2/3/5 go red), or make
+     `_capCopies` return its input unchanged (rule 1 goes red).
+
+     Run in the console: __mg.testLifecycle() */
+  window.__mg.testLifecycle = function () {
+    const results = [];
+    const ok = (rule, name, pass, detail) => results.push({ rule, name, pass: !!pass, detail });
+
+    const mkCard = (id, name) => ({ id, name, type: 'unit', level: 1, cost: 1, atk: 3, def: 1, hp: 10,
+      stats: { atk: 3, def: 1, hp: 10 }, instanceId: (typeof uid === 'function' ? uid() : id + '_' + Math.random()) });
+    const mkState = () => ({
+      turn: 'player', turnNumber: 3, gameOver: null, log: [], selection: null,
+      player: { hand: [], deck: [], graveyard: [], void: [], energy: 20, maxEnergy: 20, fatigue: 0, drawCounter: 0 },
+      ai:     { hand: [], deck: [], graveyard: [], void: [], energy: 20, maxEnergy: 20, fatigue: 0, drawCounter: 0 },
+      board: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => ({}))),
+      units: [
+        { id: 'PH', name: 'P Hero', owner: 'player', alive: true, isHero: true, pos: { x: 3, y: 3 },
+          hp: 250, maxHp: 250, currentHp: 250, statusEffects: [], knownMoves: [], atk: 10, def: 5, level: 1 },
+        { id: 'AH', name: 'A Hero', owner: 'ai', alive: true, isHero: true, pos: { x: 3, y: 0 },
+          hp: 250, maxHp: 250, currentHp: 250, statusEffects: [], knownMoves: [], atk: 10, def: 5, level: 1 },
+      ],
+      weather: null, timeOfDay: 'day', tombstones: [], heroUltimates: {}, heroEmotions: {}, mods: {},
+    });
+    const gLen = (side) => ((App.state[side] || {}).graveyard || []).length;
+    const vLen = (side) => ((App.state[side] || {}).void || []).length;
+    const setAlive = (id, alive, extra) => {
+      App.state = { ...App.state, units: App.state.units.map(u => u.id === id
+        ? Object.assign({}, u, { alive: alive, currentHp: alive ? 10 : 0 }, extra || {}) : u) };
+    };
+    // Play one unit through the real player path. Returns the placed unit.
+    const playOne = (name) => {
+      const s = mkState(), card = mkCard('goblin', name || 'Goblin');
+      s.player.hand = [card];
+      App.state = s;
+      placeUnit(card, { x: 3, y: 4 });
+      return App.state.units.find(u => u.owner === 'player' && !u.isHero);
+    };
+
+    // ---- RULE 1 — at most 3 copies, in DECK CONSTRUCTION, for BOTH sides ----
+    // Enforced in `_capCopies`, called by every deck builder in the game.
+    // Before: a 40-key saved deck naming one card built 40 copies; an admin AI
+    // deck naming one card 12× built 12; `getAdminAIDeckKeys` padded a 5-card
+    // deck to 8 copies of each; a 3-card custom pool gave the AI 5/5/4.
+    const maxCopies = (list, keyOf) => {
+      const c = Object.create(null);
+      (list || []).forEach(x => { const k = String((keyOf ? keyOf(x) : x) || '?'); c[k] = (c[k] | 0) + 1; });
+      const vals = Object.values(c);
+      return vals.length ? Math.max.apply(null, vals) : 0;
+    };
+    const CAP = (typeof MAX_COPIES_PER_CARD === 'number') ? MAX_COPIES_PER_CARD : 3;
+    try {
+      const anyCard = (typeof getAllCustomCards === 'function' ? getAllCustomCards() : [])
+        .concat(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : []).filter(c => c && c.id && c.type === 'unit')[0];
+      if (!anyCard) { ok(1, 'copy limit — no card catalogue to test against', false, 'skipped'); }
+      else {
+        const key = (typeof _aiCardIdToKey === 'function' && _aiCardIdToKey(anyCard.id)) || ('unit:' + anyCard.id);
+        // PLAYER: a saved (or tampered) deck listing one card DECK_SIZE times.
+        const pDeck = buildDeckFromKeys(new Array(40).fill(key));
+        ok(1, 'player deck refuses a 4th copy', maxCopies(pDeck, c => c.id) <= CAP,
+           'max copies = ' + maxCopies(pDeck, c => c.id) + ' (was 40)');
+        // AI: an admin AI deck listing one card 12 times.
+        const savedCat = Catalog.aiDecks;
+        try {
+          Catalog.aiDecks = [{ id: '__lc', name: 'lc', cards: new Array(12).fill(anyCard.id) }];
+          const aDeck = buildAIDeck();
+          ok(1, 'AI deck refuses a 4th copy', maxCopies(aDeck, c => c && (c.id || c.name)) <= CAP,
+             'max copies = ' + maxCopies(aDeck, c => c && (c.id || c.name)) + ' (was 12)');
+          // AI: the DECK_SIZE padding, which used to cycle the deck's own keys.
+          Catalog.aiDecks = [{ id: '__lc2', name: 'lc2', cards: [anyCard.id] }];
+          const keys = getAdminAIDeckKeys();
+          ok(1, 'AI deck padding refuses a 4th copy', maxCopies(keys) <= CAP,
+             'max copies = ' + maxCopies(keys) + ' of ' + keys.length + ' keys (was 40 of one card)');
+        } finally { Catalog.aiDecks = savedCat; }
+      }
+    } catch (e) { ok(1, 'copy limit', false, 'threw: ' + (e && e.message)); }
+
+    // ---- RULE 2 — a played unit's card is NOT in the graveyard while it lives,
+    //               and lands there exactly once when it dies. Before: 0 → 1 on
+    //               PLAY, then unchanged on death.
+    try {
+      const u = playOne('R2');
+      ok(2, 'playing a unit leaves the graveyard unchanged', gLen('player') === 0, 'grave = ' + gLen('player') + ' (was 1)');
+      setAlive(u.id, false);
+      ok(2, 'killing it increments the graveyard by exactly 1', gLen('player') === 1, 'grave = ' + gLen('player'));
+    } catch (e) { ok(2, 'play/kill', false, 'threw: ' + (e && e.message)); }
+
+    // ---- RULE 3 — a unit that leaves the graveyard takes its card with it.
+    //               Before: revive left the card in the pile (stayed 1).
+    try {
+      const u = playOne('R3');
+      setAlive(u.id, false);
+      const dead = gLen('player');
+      // Revive AND rebuild with a new unit id — transform / phoenix / vanish-return
+      // all do this, and it is what used to break the card→unit link.
+      App.state = { ...App.state, units: App.state.units.map(x => x.id === u.id
+        ? { ...x, id: 'REBORN_R3', alive: true, currentHp: 10 } : x) };
+      ok(3, 'reviving decrements the graveyard by exactly 1',
+         dead === 1 && gLen('player') === 0, 'grave ' + dead + ' → ' + gLen('player') + ' (was 1 → 1)');
+      ok(3, 'reviving does not duplicate the card',
+         (App.state.player.graveyard || []).length === 0, 'pile = ' + gLen('player'));
+    } catch (e) { ok(3, 'revive', false, 'threw: ' + (e && e.message)); }
+
+    // ---- RULE 4 — a unit vanished from ANY zone lands in the VANISH zone.
+    //               Before: the FIELD case filed nothing anywhere — the `_voided`
+    //               flag was written by 5 effects and read by none.
+    const vanishCase = (label, setup, eff, side) => {
+      try {
+        const s = mkState(); setup(s); App.state = s;
+        App.state = applyOnPlayEffect(App.state, App.state.units[0], { id: '_lc', name: 'lc', onPlay: eff });
+        ok(4, 'vanish from ' + label + ' reaches the vanish zone', vLen(side) === 1, 'void = ' + vLen(side));
+      } catch (e) { ok(4, 'vanish from ' + label, false, 'threw: ' + (e && e.message)); }
+    };
+    const foeUnit = (s) => s.units.push({ id: 'V1', name: 'V1', owner: 'ai', alive: true, isHero: false,
+      pos: { x: 3, y: 2 }, hp: 10, maxHp: 10, currentHp: 10, statusEffects: [], knownMoves: [],
+      atk: 3, def: 1, cardId: 'goblin', type: 'unit', cost: 1 });
+    vanishCase('FIELD',     foeUnit, { type: 'banishUnit', radius: 3, amount: 1 }, 'ai');
+    vanishCase('HAND',      s => { s.ai.hand = [{ id: 'h1', name: 'H1', type: 'unit', instanceId: 'lc_h1' }]; },
+               { type: 'banishHand', amount: 1 }, 'ai');
+    vanishCase('DECK',      s => { s.ai.deck = [{ id: 'd1', name: 'D1', type: 'unit', instanceId: 'lc_d1' }]; },
+               { type: 'banishDeck', amount: 1 }, 'ai');
+    vanishCase('GRAVEYARD', s => { s.ai.graveyard = [{ id: 'g1', name: 'G1', type: 'unit', instanceId: 'lc_g1' }]; },
+               { type: 'vanishGraveRandom', amount: 1, graveSide: 'enemy' }, 'ai');
+    // The FIELD case that had no reader at all: a played unit banished to the Void.
+    try {
+      const u = playOne('R4');
+      App.state = applyOnPlayEffect(App.state, u, { id: '_lc', name: 'lc', onPlay: { type: 'sacrificeSelf', sendZone: 'void' } });
+      ok(4, 'a played unit banished to the Void reaches the vanish zone',
+         vLen('player') === 1 && gLen('player') === 0,
+         'void = ' + vLen('player') + ' (was 0), grave = ' + gLen('player'));
+    } catch (e) { ok(4, 'field → Void via _voided', false, 'threw: ' + (e && e.message)); }
+
+    /* ---- RULE 4 / ROUND 3 — THE OTHER "went to the Void" FLAG.
+       `_resolvePolycreationFusion`'s summon-condition banish writes `_banished`
+       and pushes its own card def into `player.void`. It was the one producer the
+       reconciler could not see (it asked `_voided` only), so it filed the unit's
+       REAL card into the GRAVEYARD beside the def already in the Void: one unit,
+       two cards, two zones. Before: grave 2 / void 1 / banishable 2 — and the
+       ghost grave entry was spendable as a `banish` activation cost.
+       This runs the REAL fusion resolver; only the Kalon card is synthetic.
+       Break it two ways and it goes red: narrow `_unitWentToVoid` back to
+       `!!u._voided` (the card lands in the graveyard again — grave 2, banishable 2),
+       or drop the `tomb_` stamp at the producer (the reconciler cannot match the
+       def it pushed and ADDS the unit's own card beside it — void 2). Both were
+       measured red; the flag on the producer is now belt-and-braces, because the
+       predicate reads `_banished` too. */
+    try {
+      const s = mkState(); s.spellTurn = true;
+      const cMat = mkCard('goblin', 'R4mat'), cCost = mkCard('goblin', 'R4cost');
+      s.player.hand = [cMat, cCost];
+      App.state = s;
+      placeUnit(cMat, { x: 3, y: 4 });
+      placeUnit(cCost, { x: 2, y: 4 });
+      const mine2 = App.state.units.filter(u => u.owner === 'player' && !u.isHero);
+      const KAL = { id: '__lc_kalon', name: 'LC Kalon', type: 'Kalon', summonMethod: 'fusion',
+        fusionRequirements: [{ type: 'Unit', cardId: '__ANY__' }],
+        fusionCondition: { banish: { count: 1 } }, materialDestination: 'graveyard',
+        stats: { atk: 5, def: 5, hp: 20 }, atk: 5, def: 5, hp: 20, level: 1 };
+      const savedCards = Catalog.cards;
+      try {
+        Catalog.cards = (savedCards || []).concat([KAL]);
+        App.ui = App.ui || {};
+        App.ui.fusionMode = { noCard: true, kalonId: '__lc_kalon', materialUnitIds: [mine2[0].id] };
+        _resolvePolycreationFusion();
+        App.state = { ...App.state };            // the re-commit that used to re-file
+      } finally { Catalog.cards = savedCards; App.ui.fusionMode = null; }
+      // The MATERIAL is the only legitimate graveyard entry (destination 'graveyard').
+      ok(4, 'a unit banished to pay a summon condition reaches the vanish zone',
+         vLen('player') === 1, 'void = ' + vLen('player') + ' (was 1 def + 1 stray grave card)');
+      ok(4, 'the summon-condition banish files ONE card, not one per zone',
+         gLen('player') === 1 && _banishableGrave(App.state, 'player').length === 1,
+         'grave = ' + gLen('player') + ' (was 2), banishable = '
+           + _banishableGrave(App.state, 'player').length + ' (was 2)');
+    } catch (e) { ok(4, 'field → Void via _banished', false, 'threw: ' + (e && e.message)); }
+
+    // ---- RULE 5 — NO DOUBLE FILING. One death, one entry, however many times
+    //               the state is re-committed or the unit is re-killed.
+    try {
+      const u = playOne('R5');
+      setAlive(u.id, false);
+      setAlive(u.id, false);                                  // killed again
+      App.state = { ...App.state };                           // re-committed
+      const once = gLen('player');
+      // Die → revive (new id) → die again: still exactly one entry, and the pile
+      // card's stamp tracks the CURRENT unit id so the graveyard view matches it
+      // to this corpse instead of folding in a second, synthetic one.
+      setAlive(u.id, true);
+      App.state = { ...App.state, units: App.state.units.map(x => x.id === u.id ? { ...x, id: 'REBORN_R5' } : x) };
+      setAlive('REBORN_R5', false);
+      const pile = App.state.player.graveyard || [];
+      ok(5, 'one death produces exactly one graveyard entry', once === 1, 'entries = ' + once);
+      ok(5, 'death → revive → death still produces exactly one entry',
+         pile.length === 1 && pile[0] && pile[0]._summonedUnitId === 'REBORN_R5',
+         'entries = ' + pile.length + ', stamp = ' + (pile[0] || {})._summonedUnitId);
+    } catch (e) { ok(5, 'double filing', false, 'threw: ' + (e && e.message)); }
+
+    /* ---- RULE 5b — THE TOMB CARD IS THE SAME CORPSE. `_applySelfSacrifice` and
+       the `tribute` half of `_applyCostPayment` mint their own pile card
+       (`instanceId: 'tomb_' + unit.id`) for units that carry no `_card`. For a
+       unit that HAS one, filing both is one death, two entries. Before: 2 and 2. */
+    const playMore = (nm, at) => {
+      const c = mkCard('goblin', nm);
+      App.state = { ...App.state, player: { ...App.state.player, hand: [...App.state.player.hand, c] } };
+      placeUnit(c, at);
+      return App.state.units.filter(u => u.owner === 'player' && !u.isHero).slice(-1)[0];
+    };
+    try {
+      const u = playOne('R5b');
+      App.state = _applySelfSacrifice(App.state, 'player', u).state;
+      App.state = { ...App.state };
+      ok(5, 'self-sacrifice files one entry, not a tomb card AND the unit card',
+         gLen('player') === 1, 'entries = ' + gLen('player') + ' (was 2)');
+    } catch (e) { ok(5, 'self-sacrifice double filing', false, 'threw: ' + (e && e.message)); }
+    try {
+      const a = playOne('R5c', { x: 3, y: 4 });
+      const b = playMore('R5d', { x: 2, y: 4 });
+      App.state = _applyCostPayment(App.state, 'player', a, { tribute: 1 }, { tributeIds: [b.id] }).state;
+      App.state = { ...App.state };
+      ok(5, 'tribute files one entry per tributed unit', gLen('player') === 1,
+         'entries = ' + gLen('player') + ' (was 2)');
+    } catch (e) { ok(5, 'tribute double filing', false, 'threw: ' + (e && e.message)); }
+
+    /* ---- RULE 6 — A CORPSE'S CARD THAT LEGITIMATELY LEAVES THE PILE STAYS GONE.
+       The round-1 reconciler asserted pile MEMBERSHIP continuously, so every one
+       of these was undone by the very next `App.state = …` — the card came back
+       and, where the effect had also produced a copy, DUPLICATED. Each case here
+       ends with a bare re-commit of the state, because that is the assignment
+       that used to do the damage. Before, all five measured "grave 1 → 1".
+       Break the fix by deleting the `if (filed === want)` early-return in
+       `_reconcileUnitCards` and all five go red again. */
+    const leavesPile = (label, act) => {
+      try {
+        const u = playOne('R6' + label);
+        setAlive(u.id, false);
+        const before = gLen('player');
+        act(u);
+        App.state = { ...App.state };                     // the assignment that used to re-file
+        ok(6, 'corpse card removed by ' + label + ' stays out of the graveyard',
+           before === 1 && gLen('player') === 0, 'grave ' + before + ' → ' + gLen('player') + ' (was 1 → 1)');
+      } catch (e) { ok(6, label, false, 'threw: ' + (e && e.message)); }
+    };
+    leavesPile('salvage-to-hand', () => {
+      App.state = applyOnPlayEffect(App.state, App.state.units[0], { id: '_lc', name: 'lc', onPlay: { type: 'graveToHand', amount: 1 } });
+    });
+    leavesPile('the banish cost', () => {
+      App.state = _applyCostPayment(App.state, 'player', null, { banish: 1 }, { banishIdxs: [0] }).state;
+    });
+    leavesPile('consumeGrave', () => {
+      const cg = _applyConsumeGrave(App.state.player, { consumeGrave: 1 });
+      App.state = { ...App.state, player: { ...App.state.player, graveyard: cg.graveyard } };
+    });
+    leavesPile('reviveGrave', () => {
+      App.state = applyOnPlayEffect(App.state, App.state.units[0], { id: '_lc', name: 'lc', onPlay: { type: 'reviveGrave' } });
+    });
+    leavesPile('banishGrave', () => {
+      App.state = applyOnPlayEffect(App.state, App.state.units[0], { id: '_lc', name: 'lc', onPlay: { type: 'banishGrave', graveSide: 'self' } });
+    });
+    // …and the card that was banished out of the graveyard is IN the vanish zone
+    // (rule 4 for the graveyard→void hop of a real corpse, which the old pass ate).
+    try {
+      const u = playOne('R6v');
+      setAlive(u.id, false);
+      App.state = applyOnPlayEffect(App.state, App.state.units[0], { id: '_lc', name: 'lc', onPlay: { type: 'banishGrave', graveSide: 'self' } });
+      App.state = { ...App.state };
+      ok(6, 'a corpse banished out of the graveyard lands in the vanish zone',
+         vLen('player') === 1 && gLen('player') === 0,
+         'void = ' + vLen('player') + ' (was 0), grave = ' + gLen('player') + ' (was 1)');
+    } catch (e) { ok(6, 'corpse → vanish zone', false, 'threw: ' + (e && e.message)); }
+
+    const failed = results.filter(r => !r.pass);
+    try {
+      console.log('%c[testLifecycle] ' + (results.length - failed.length) + '/' + results.length + ' green',
+                  'color:' + (failed.length ? '#ff6b6b' : '#7CFC9E') + ';font-weight:700');
+      console.table(results.map(r => ({ rule: r.rule, check: r.name, result: r.pass ? '✅' : '❌ FAIL', detail: r.detail })));
+    } catch (e) {}
+    return { passed: results.length - failed.length, failed: failed.length, results: results,
+             verdict: failed.length ? ('❌ ' + failed.length + ' FAILED: ' + failed.map(f => f.name).join('; ')) : '✅ all lifecycle rules hold' };
   };
 } catch (e) {}
 
@@ -96842,8 +97764,20 @@ function _resolvePolycreationFusion() {
     if (_ban.length) {
       const _set = new Set(_ban);
       const _gone = ns.units.filter(u => _set.has(u.id));
-      ns.units = ns.units.map(u => _set.has(u.id) ? { ...u, alive: false, _banished: true } : u);
-      const _defs = _gone.map(u => (typeof _cardDefById === 'function' ? _cardDefById(u.cardId) : null) || { id: u.cardId, name: u.name });
+      // ⚰️🔗 `_voided` says the same thing `_banished` does, but it is the flag the
+      // pile-filing invariant is written in (see `_unitWentToVoid`). Setting only
+      // `_banished` sent this corpse's real `_card` to the GRAVEYARD.
+      ns.units = ns.units.map(u => _set.has(u.id) ? { ...u, alive: false, _voided: true, _banished: true } : u);
+      // ⚰️🔗 Stamp `tomb_<unit id>` exactly like the tribute / self-sacrifice cost
+      // paths do. That is the instanceId `_reconcileUnitCards` recognises as "this
+      // corpse is ALREADY in the pile", so it ADOPTS this card instead of adding
+      // the unit's own on top — the two-cards-for-one-unit double file. Without
+      // the stamp the flag fix alone measured void = 2. Spread the def: it comes
+      // from the shared catalog and must never be pushed in by reference.
+      const _defs = _gone.map(u => ({
+        ...((typeof _cardDefById === 'function' ? _cardDefById(u.cardId) : null) || { id: u.cardId, name: u.name }),
+        instanceId: 'tomb_' + u.id,
+      }));
       ns.player = { ...ns.player, void: (ns.player.void || []).concat(_defs) };
       log.push({ msg: '🜂 ' + _gone.map(u => u.name).join(', ') + ' banished to pay the summon condition.', color: 'green' });
     }
@@ -112068,6 +113002,31 @@ const App = {
   // forceDisablePixi is set to false here.
   flags: { pixiBoard: false, forceDisablePixi: true },
 };
+
+/* ⚰️🔗 THE ONE DOOR INTO BATTLE STATE.
+   `App.state` is assigned from ~150 places across the reducer, the AI, the effect
+   engine and the UI. Making it an accessor means the card/unit lifecycle invariant
+   (see `_reconcileUnitCards`) is re-established on every single one of them, and on
+   any assignment added later, without a hook at each site. That is the difference
+   between "we fixed the four paths we found" — which this bug has survived twice —
+   and "the state cannot be stored in a broken shape".
+
+   ⚠ The setter must NEVER throw. A throw here breaks every action in the game, so
+   the reconciler is wrapped and falls back to storing the value untouched. A stale
+   pile is a bug; an unplayable game is worse.
+   ⚠ The getter must stay trivial — render paths read `App.state` many times a frame. */
+(function _installBattleStateGuard() {
+  let _state = App.state;
+  Object.defineProperty(App, 'state', {
+    configurable: true,
+    enumerable: true,
+    get() { return _state; },
+    set(v) {
+      try { _state = (v && typeof _reconcileUnitCards === 'function') ? _reconcileUnitCards(v) : v; }
+      catch (e) { try { console.warn('[lifecycle]', e); } catch (_) {} _state = v; }
+    },
+  });
+})();
 
 // ============ TUTORIAL ============
 // 5-step first-run walkthrough. Each step has a title + body of text and an optional
@@ -135987,60 +136946,13 @@ function renderBattlePiles(s) {
   const CARDBACK = (typeof getCardBackImage === 'function') ? getCardBackImage('player') : 'assets/artwork/cardback.png?v=5';
   const CARDBACK_FOE = (typeof CARDBACK_DEFAULT_IMG === 'string') ? CARDBACK_DEFAULT_IMG : 'assets/artwork/cardback.png?v=5';
   const len = (a) => Array.isArray(a) ? a.length : 0;
-  // Killed units only — dead, non-hero units still sitting in s.units. (The
-  // `graveyard` array is spent CARDS, not kills — that's why live units used
-  // to show up there.) A revived unit flips back to alive and drops off.
-  const deadOf = (owner) => (Array.isArray(s.units) ? s.units : [])
-    .filter(u => u && !u.isHero && u.owner === owner && (!u.alive || (typeof u.currentHp === 'number' && u.currentHp <= 0)));
-  // The graveyard PILE = spent cards (discards, mills, tributes, sacrificed/dead
-  // unit cards). Killed board units (deadOf) that aren't already stamped into the
-  // pile are folded in too, so the graveyard view shows EVERY fallen/discarded card.
-  const graveCards = (owner) => {
-    const rawPile = (s[owner] && Array.isArray(s[owner].graveyard)) ? s[owner].graveyard : [];
-    // 🪦 A card whose summoned unit is STILL ALIVE is not in the graveyard — the
-    // unit is on the field. Grave effects (salvage / raise / banish) have always
-    // honoured this via _isLiveSummonGraveCard; the VIEW did not, so a unit you
-    // had just played showed up among your dead.
-    const pile = rawPile.filter(c => !(typeof _isLiveSummonGraveCard === 'function' && _isLiveSummonGraveCard(c, s)));
-    const out = pile.map((c, i) => Object.assign({}, c, { _gKind: (c && c.type === 'unit') ? 'fallen' : 'discarded', _graveRef: (c && c.instanceId) ? ('iid_' + c.instanceId) : ('pile_' + i) }));
-    // 🪦 Fold in corpses that the pile does not already represent.
-    //
-    // ⚠ This used to match ONLY on `_summonedUnitId === u.id`. That link breaks
-    // the moment a unit's id changes after it was played (revive / transform /
-    // flip / vanish-return rebuild the unit object), and a broken link shows the
-    // SAME dead card TWICE — once as its pile card, once as its corpse. That is
-    // the "units dying create duplicates" report.
-    //
-    // So match by unit id FIRST (exact, and what a healthy play produces), then
-    // fall back to claiming an unclaimed pile card of the same cardId that was
-    // itself a played unit card. One corpse claims at most one pile card, so
-    // three copies played and killed still show exactly three — and a card
-    // DISCARDED from hand (no `_summonedUnitId`) can never absorb a corpse.
-    const byUnitId = new Map();
-    const unclaimedByCardId = new Map();
-    pile.forEach((c) => {
-      if (!c || !c._summonedUnitId) return;                 // discards are not corpse-backed
-      byUnitId.set(c._summonedUnitId, c);
-      const key = String(c.id || c.cardId || '');
-      if (!key) return;
-      if (!unclaimedByCardId.has(key)) unclaimedByCardId.set(key, []);
-      unclaimedByCardId.get(key).push(c);
-    });
-    const claimed = new Set();
-    deadOf(owner).forEach(u => {
-      const exact = byUnitId.get(u.id);
-      if (exact && !claimed.has(exact)) { claimed.add(exact); return; }   // pile already shows it
-      const key = String(u.cardId || u.originalCardId || '');
-      const bucket = key ? (unclaimedByCardId.get(key) || []) : [];
-      const spare = bucket.find(c => !claimed.has(c));
-      if (spare) { claimed.add(spare); return; }             // stale stamp — pile card stands in
-      out.push({ id: u.cardId || u.originalCardId || u.id, name: u.name, icon: u.icon, type: 'unit', level: u.level, _gKind: 'fallen', _graveRef: 'dead_' + u.id });
-    });
-    // 🪦 Attach the grave-activated ability from the card def when the view card
-    // doesn't already carry it (killed units are minimal; some pile cards lost it).
-    out.forEach(c => { if (!c.graveActive && c.id && typeof _cardDefById === 'function') { const def = _cardDefById(c.id); if (def && def.graveActive) c.graveActive = def.graveActive; } });
-    return out;
-  };
+  /* ⚰️ The list is built by `_graveViewCards` (hoisted, see below `_realGraveCards`).
+     It used to be a closure right here. It moved because a SECOND reader now needs
+     the exact same list: the card inspector resolves a graveyard click back to a
+     card by `_graveRef`, and a re-derived list would drift from the one the tiles
+     were painted from — a click would then open the wrong card, or nothing.
+     One list, two readers. The local alias keeps every call site below unchanged. */
+  const graveCards = (owner) => _graveViewCards(s, owner);
   // A small card-FRAME tile for the graveyard view (art + name bar + a tiny
   // fallen/discarded tag). Falls back to the sprite/emoji when there's no art.
   const graveTile = (c, i, pileOwner) => {
@@ -136063,7 +136975,15 @@ function renderBattlePiles(s) {
     const tag = disc
       ? `<span style="position:absolute;top:3px;right:3px;font-size:8px;font-weight:800;color:#0b0b0f;background:#d4af37;border-radius:4px;padding:0 4px;z-index:2">🗑</span>`
       : `<span style="position:absolute;top:3px;right:3px;font-size:8px;font-weight:800;color:#fff;background:rgba(0,0,0,0.55);border-radius:4px;padding:0 4px;z-index:2">💀</span>`;
-    return `<div style="position:relative;border:1px solid ${_gaLive && !_gaUsed ? 'rgba(255,214,102,0.8)' : disc ? 'rgba(212,175,55,0.5)' : 'rgba(184,136,255,0.5)'};border-radius:7px;overflow:hidden;background:#0c0a14">
+    /* 🔍 CLICK → CARD DETAIL. The ref is `grave:<owner>:<_graveRef>`; the owner
+       is baked in from the pile being painted, so a tile can never resolve into
+       the other side's pile. Both graveyards get this: this viewer already
+       prints the foe's fallen cards by name and art, so the detail adds no
+       information the tile was not showing.
+       ⚠ The ⚡ activate button sits INSIDE this tile and already calls
+       stopPropagation, so activating does not also open the detail. */
+    const _cdRef = 'grave:' + pileOwner + ':' + (c._graveRef || ('pile_' + i));
+    return `<div data-cd-open="${escapeHtml(_cdRef)}" role="button" tabindex="0" title="${escapeHtml(c.name || 'Card')} — click for details" style="position:relative;border:1px solid ${_gaLive && !_gaUsed ? 'rgba(255,214,102,0.8)' : disc ? 'rgba(212,175,55,0.5)' : 'rgba(184,136,255,0.5)'};border-radius:7px;overflow:hidden;background:#0c0a14;cursor:pointer">
       ${tag}
       <div style="aspect-ratio:0.72">${face}</div>
       <div style="position:absolute;left:0;right:0;bottom:${_gaLive ? '16px' : '0'};font-size:9px;line-height:1.25;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,0.92));padding:10px 3px 2px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(c.name || 'Card')}${lvl}</div>
@@ -136414,6 +137334,16 @@ function bindBattlePiles() {
     const open = () => { App._pileView = el.getAttribute('data-bp-grave'); render(); };
     el.onclick = open;
     el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+  });
+  /* 🔍 Any tile carrying a `data-cd-open` ref opens the card detail. ONE binding
+     for every zone that ever gets wired this way — the attribute is the whole
+     contract, and what a ref may point at is decided by CARD_INSPECT_ZONES, not
+     here. `openCardInspect` refuses a ref that resolves to nothing, so a tile
+     can never be a control that opens an empty modal. */
+  document.querySelectorAll('[data-cd-open]').forEach(el => {
+    const go = (e) => { if (e) e.stopPropagation(); window.openCardInspect(el.getAttribute('data-cd-open')); };
+    el.onclick = go;
+    el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); } };
   });
   // 🪦 Grave-activated ability buttons (v116l) — inside the graveyard viewer.
   document.querySelectorAll('.grave-activate').forEach(btn => {
@@ -143609,6 +144539,24 @@ function renderHandCard(c, opts) {
   }
   const elemIcons = cardElems.map(e => ELEMENT_DATA[e] ? getElemIcon(e, '1.6em') : '').join('');
   const sizeClass = (opts && opts.large) ? 'hand-card-large' : '';
+  /* 🔗 `data-card` IS A CARD-INSPECT REF, NOT AN instanceId.
+     `bindBattleEvents` binds `.hand-card[data-card]` document-wide and hands
+     the attribute straight to `openCardInspect`, whose vocabulary is
+     `zone:side:key` — with a bare id meaning `hand:player`. That default is
+     right for the hand strip and WRONG for the copy this same function paints
+     inside the detail modal, because a pile card's instanceId is not in the
+     hand. Measured before the fix, clicking the modal's own 230px preview:
+     `grave:player:iid_ig_p1` → `ig_p1` → resolve miss → modal gone;
+     `grave:ai:iid_ig_a1` → `ig_a1` → gone; `void:player:v0` → the literal
+     string `"undefined"` (a banished-corpse stub has no instanceId) → gone.
+     Only the hand survived, because there the two vocabularies coincide.
+     So a caller rendering a card from anywhere but the hand passes the ref it
+     was opened with, and a click on the preview is a no-op re-open of the same
+     card. (Rejected: dropping `data-card` in the modal. It would have fixed
+     the disappearance but left the largest element in the dialog inert and
+     still relied on the click handler being harmless — see the handler's own
+     note for the half that actually closes the door.) */
+  const cardRef = (opts && opts.ref != null) ? String(opts.ref) : String(c.instanceId);
   // (The bottom ATK/DEF/cost bar was removed — the card face now shows only the
   // cost orb, top-left. Full stats remain in the card-detail panel, labelled.)
   // Description text — short flavor for the parchment area. Defaults to type label if blank.
@@ -143652,9 +144600,12 @@ function renderHandCard(c, opts) {
   }
   if (cardArtUrl) {
     // Full-bleed card — image fills the whole button; data overlays sit on top.
-    const fullCardClass = `hand-card has-full-art type-${c.type} ${isSel ? 'selected' : ''} ${sizeClass}`;
+    // 🔍 `unplayable`, not the `disabled` attribute — see the CSS note by
+    // `.hand-card.unplayable`. A card you cannot afford must still open its
+    // detail; a disabled <button> fires no click at all.
+    const fullCardClass = `hand-card has-full-art type-${c.type} ${isSel ? 'selected' : ''} ${sizeClass} ${enabled ? '' : 'unplayable'}`;
     return `
-      <button class="${fullCardClass}" data-card="${c.instanceId}" ${enabled ? '' : 'disabled'}>
+      <button class="${fullCardClass}" data-card="${escapeHtml(cardRef)}">
         <img class="hand-card-full-img" src="${escapeHtml(_imgSrc(cardArtUrl))}" alt="${escapeHtml(c.name)}" loading="lazy" decoding="async">
         ${levelBadge}
         <div class="hcfa-name"><span class="hcfa-name-inner">${escapeHtml(c.name)}</span></div>
@@ -143670,7 +144621,7 @@ function renderHandCard(c, opts) {
     ? renderIcon('u_' + c.id, c.icon, 'fill')
     : `<span class="hand-card-glyph">${c.icon}</span>`;
   return `
-    <button class="hand-card ${isSel ? 'selected' : ''} type-${c.type} ${sizeClass}" data-card="${c.instanceId}" data-rarity="${escapeHtml(String(c.rarity || 'common').toLowerCase())}" ${enabled ? '' : 'disabled'}>
+    <button class="hand-card ${isSel ? 'selected' : ''} type-${c.type} ${sizeClass} ${enabled ? '' : 'unplayable'}" data-card="${escapeHtml(cardRef)}" data-rarity="${escapeHtml(String(c.rarity || 'common').toLowerCase())}">
       ${levelBadge}
       <div class="hand-card-icon">${iconInner}</div>
       <div class="hand-card-name">${escapeHtml(c.name)}</div>
@@ -143838,21 +144789,169 @@ function renderHandColumn(opts) {
   `;
 }
 
+/* ══ THE CARD INSPECTOR — ONE TABLE IS THE WHOLE INFORMATION BOUNDARY ═══════
+   The owner asked for "click a card in any zone and see its details". The
+   detail surface already existed (this modal) but it only ever searched
+   `state.player.hand`, so a graveyard / vanish tile was a picture you could not
+   question.
+
+   🔴 THE INVARIANT, and why it is a TABLE and not a patch per zone.
+   `App.ui.cardDetailId` is now a REF, and `_cardInspectResolve` is the ONLY
+   function that turns a ref into a card. It reads state through
+   `CARD_INSPECT_ZONES[zone]` and nowhere else — there is no `default:` branch,
+   no fallback that touches `App.state`, and an unknown zone key returns null
+   before any array is read. So the complete answer to "what can a player
+   inspect?" is the key list of that table, checkable by reading six lines. A
+   zone that is not in it is unreachable from the modal AND from every action
+   button, because `bindCardDetailModal` re-resolves through the same function
+   and refuses anything with `actionable !== true`.
+
+   ⚠ WHAT IS DELIBERATELY ABSENT, and why (hidden information is not a HUD
+   decision):
+     · `hand:ai`   — the opponent's hand is the core hidden zone of the game.
+                     It is not even rendered into the DOM, and it is not here.
+     · `deck:*`    — a face-down library. Reading your OWN deck mid-match is a
+                     rules change (search effects exist and are gated); reading
+                     the foe's is worse. Both piles keep showing only a count.
+     · `void:ai`   — the foe's vanish cell shows a COUNT and an empty face
+                     today; there is no list behind it. Turning that into a
+                     browsable pile is a gameplay-information change the owner
+                     has not asked for (see hud.js `vanishCell`, 44c7558).
+     · `realm:*`   — the player's Realm Deck ALREADY has a detail panel of its
+                     own (`data-realm-card` → `App._realmDetail`) and building a
+                     second inspector for it is exactly what this work is meant
+                     to avoid. The foe's realm slot is inert and stays inert.
+   Field units are not a card zone: they already open `renderUnitModal`, which
+   carries its own scan / face-down gate for enemy units. Untouched.
+
+   ⚠ BACKWARD COMPATIBILITY. Roughly a dozen sites write a bare hand
+   `instanceId` into `App.ui.cardDetailId` (the hand click, the tutorial, the
+   AI-turn clears). A ref with no `zone:side:` prefix therefore MEANS
+   `hand:player`, so none of them had to change and none of them can reach a
+   new zone by accident. */
+const CARD_INSPECT_ZONES = {
+  // `act: true` is the permission to PLAY / activate, not merely to look. Only
+  // your own hand has it — a graveyard card is read-only here, its own
+  // activation lives on the grave tile's own ⚡ button.
+  'hand:player': {
+    label: 'Your Hand', act: true,
+    list: (s) => (s.player && Array.isArray(s.player.hand)) ? s.player.hand : [],
+    key: (c, i) => (c && c.instanceId != null) ? String(c.instanceId) : ('h' + i),
+  },
+  'grave:player': {
+    label: 'Your Graveyard', act: false,
+    list: (s) => _graveViewCards(s, 'player'),
+    key: (c, i) => (c && c._graveRef) ? String(c._graveRef) : ('g' + i),
+  },
+  // The foe's graveyard is ALREADY public in this game — `data-bp-grave="ai"`
+  // opens a viewer that prints their fallen cards' art and names. Making those
+  // same tiles clickable reveals nothing the tile was not already showing.
+  'grave:ai': {
+    label: "Opponent's Graveyard", act: false,
+    list: (s) => _graveViewCards(s, 'ai'),
+    key: (c, i) => (c && c._graveRef) ? String(c._graveRef) : ('g' + i),
+  },
+  // ⚠ INDEX-KEYED, and that is safe only because the vanish viewer paints
+  // `state.player.void` in array order (hud.js `__hudxVoidCards` maps it 1:1).
+  // Void entries are not uniform — some are whole hand cards, some are the bare
+  // `{id,name,type}` a banished corpse pushes — so there is no id to key on.
+  'void:player': {
+    label: 'Your Vanish Pile', act: false,
+    list: (s) => (s.player && Array.isArray(s.player.void)) ? s.player.void : [],
+    key: (c, i) => 'v' + i,
+  },
+};
+/* A pile card can be a STUB. A banished corpse is pushed as `{id,name,type}`
+   and a folded-in graveyard corpse carries no stats at all, so rendering one
+   straight into the modal gives a card with a name and nothing else. The card
+   DEFINITION is the missing half — the same `_cardDefById` lookup the grave
+   tile already uses for `graveActive`. The pile entry still wins on every field
+   it actually has, so a levelled-up or transformed copy is not overwritten by
+   its printed original.
+   ⚠ This is also where a pile card gets its `noteId`: a banished corpse pushed
+   as the bare `{id,name,type}` carries none in state, and measured live the
+   hydrated copy reports `noteId:"n_test1"` where the stub reported nothing.
+   That is intended, not a leak — lore is a property of the PRINTED card, and
+   the read-note button is only emitted for notes already in `Forge.notes`
+   (the local player's own collection), so hydration can never surface lore the
+   player has not collected. Round 1 shipped this half with the button wired to
+   the move gate, so it rendered and did nothing; see `bindCardDetailModal`. */
+function _cardInspectHydrate(c) {
+  if (!c) return c;
+  if (c.stats && c.desc !== undefined) return c;          // already a full card
+  let def = null;
+  try { if (c.id && typeof _cardDefById === 'function') def = _cardDefById(c.id); } catch (e) {}
+  if (!def) return c;
+  const merged = Object.assign({}, def, c);
+  if (!c.stats && def.stats) merged.stats = def.stats;
+  return merged;
+}
+function _cardInspectResolve(ref) {
+  if (ref == null || ref === '' || !App.state) return null;
+  const str = String(ref);
+  const m = /^([a-z]+):(player|ai):([\s\S]+)$/.exec(str);
+  const zoneKey = m ? (m[1] + ':' + m[2]) : 'hand:player';
+  const wanted  = m ? m[3] : str;
+  if (!Object.prototype.hasOwnProperty.call(CARD_INSPECT_ZONES, zoneKey)) return null;
+  const z = CARD_INSPECT_ZONES[zoneKey];
+  let list = [];
+  try { list = z.list(App.state) || []; } catch (e) { return null; }
+  for (let i = 0; i < list.length; i++) {
+    if (String(z.key(list[i], i)) === wanted) {
+      /* ⚠ HYDRATION IS FOR PILES ONLY. A hand card is the live, authoritative
+         object the engine plays; merging a definition under it could surface a
+         field the played copy does not actually carry, and the hand modal has
+         rendered correctly for a long time without help. Stubs only exist in
+         the piles (banished corpses, folded-in dead units), so that is the only
+         place the definition is consulted. */
+      const raw = list[i];
+      return {
+        card: (z.act === true) ? raw : _cardInspectHydrate(raw),
+        zone: zoneKey, label: z.label, actionable: z.act === true,
+      };
+    }
+  }
+  return null;
+}
+/* The seam for /src/battle/hud.js. `App` is a top-level `const` and invisible to
+   ES modules (see the globals trap in CLAUDE.md), so the vanish viewer cannot set
+   `App.ui.cardDetailId` itself. It calls this instead — and because this goes
+   through the same resolver, a module handing in `hand:ai:…` gets nothing. */
+window.openCardInspect = function (ref) {
+  try {
+    if (!App || !App.ui) return false;
+    if (!_cardInspectResolve(ref)) return false;     // never open an empty modal
+    App.ui.cardDetailId = String(ref);
+    App.ui.selectedUnitId = null;
+    App.ui.modalUnitId = null;
+    renderBattle();
+    return true;
+  } catch (e) { return false; }
+};
 function renderCardDetailModal() {
   const s = App.state;
   const id = App.ui.cardDetailId;
   if (!id) return '';
-  const card = s.player.hand.find(c => c.instanceId === id);
-  if (!card) return '';
+  const hit = _cardInspectResolve(id);
+  if (!hit) return '';
+  const card = hit.card;
+  // 🔒 Every action below hangs off this one boolean, which comes from the
+  // table — not from a type check on the card and not from where the click came
+  // from. A card you are merely LOOKING at can never be played from here.
+  const inHand = hit.actionable;
   // 🆘 Route through getEffectiveCardCost so the Underdog passive (cost → 0
   // while outnumbered) drives BOTH the play-gate and the displayed cost —
   // otherwise the modal disagrees with the hand strip / click handler.
   const effCost = (typeof getEffectiveCardCost === 'function') ? getEffectiveCardCost(card, s, 'player') : (card.cost | 0);
   const underdogActive = effCost < (card.cost | 0);
   // 🌊 Tunnel units stay playable when unaffordable (burrow instead of summon).
-  const _tunnelDig = (typeof cardCanTunnelNow === 'function') && cardCanTunnelNow(card, s, 'player');
-  const enabled = s.turn === 'player' && !App.ui.aiBusy && (effCost <= s.player.energy || _tunnelDig);
-  const targetingHelp = card.type === 'unit'    ? `Place adjacent to your hero (within ${getCardRange(card)} tile${getCardRange(card) === 1 ? '' : 's'}).`
+  // Both of these describe an ACTION, so both are false outright for a card you
+  // are only inspecting — otherwise a graveyard card would advertise "Tunnel it!"
+  // and a Play button that the click handler would then refuse.
+  const _tunnelDig = inHand && (typeof cardCanTunnelNow === 'function') && cardCanTunnelNow(card, s, 'player');
+  const enabled = inHand && s.turn === 'player' && !App.ui.aiBusy && (effCost <= s.player.energy || _tunnelDig);
+  const targetingHelp = !inHand ? ''
+                      : card.type === 'unit'    ? `Place adjacent to your hero (within ${getCardRange(card)} tile${getCardRange(card) === 1 ? '' : 's'}).`
                       : card.type === 'trap'    ? `Set on a tile within ${getCardRange(card)} of your hero.`
                       : card.type === 'location' ? (card.coversBoard ? `Reshapes the entire battlefield.` : `Place on any empty tile.`)
                       : card.type === 'spell'    ? `Auto-targets — within ${getCardRange(card)} of your hero.`
@@ -144153,12 +145252,23 @@ function renderCardDetailModal() {
     </div>` : '';
 
   return `
-    <div class="modal-backdrop" id="card-detail-backdrop" style="z-index:1180">
+    <!-- ⚠ z-INDEX IS A FUNCTION OF WHERE THE CLICK CAME FROM. 1180 is the
+         hand's own layer and must not move. But the graveyard viewer
+         (renderBattlePiles, 1400) and the vanish viewer (hud.js, 1400) are the
+         things you click a card IN, so a detail opened from a pile at 1180
+         renders BEHIND the list that launched it — measured as a modal that
+         appears not to open at all. It stays under the surveil modal
+         (2147483000) and the result card either way. -->
+    <div class="modal-backdrop" id="card-detail-backdrop" style="z-index:${inHand ? 1180 : 1450}">
       <div class="card-detail cd-aaa">
         <span class="cd-corner tl"></span><span class="cd-corner tr"></span><span class="cd-corner bl"></span><span class="cd-corner br"></span>
         <button class="modal-close" id="card-detail-close">×</button>
         <div class="card-detail-frame type-${card.type}">
-          <div class="cd-cardwrap">${renderHandCard(card, { large: true })}</div>
+          <!-- ⚠ The preview must advertise the REF it was opened with, not the
+               card's instanceId — see renderHandCard's note on data-card.
+               NOTE: no backticks in this comment; it sits inside a template
+               literal, where one would terminate the string. -->
+          <div class="cd-cardwrap">${renderHandCard(card, { large: true, ref: id })}</div>
           ${card.type === 'unit' && card.stats ? (() => {
             const S = card.stats;
             const row = [['HP', 'hp', S.hp], ['ATK', 'atk', S.atk], ['DEF', 'def', S.def], ['MAG', 'mag', S.mag], ['RES', 'res', S.res], ['SPD', 'spd', S.spd]]
@@ -144210,8 +145320,13 @@ function renderCardDetailModal() {
 
           <!-- STATS moved to the LEFT column, under the card art (v118c8). -->
 
-          <!-- Situational notes: placement help, tunnel offer, why it's unplayable. -->
-          ${(targetingHelp || _tunnelDig || !enabled) ? `<div class="card-detail-meta ink-dim small-text">
+          <!-- Situational notes: placement help, tunnel offer, why it's unplayable.
+               🔍 For a card being INSPECTED from a pile there is no play to
+               explain, so the row says WHERE the card is instead — a graveyard
+               card told "Cannot play right now" reads as a bug, not as a zone. -->
+          ${!inHand ? `<div class="card-detail-meta ink-dim small-text">
+            <div>🔍 Viewing from <strong style="color:#e8dcc0">${escapeHtml(hit.label)}</strong> — read-only.</div>
+          </div>` : (targetingHelp || _tunnelDig || !enabled) ? `<div class="card-detail-meta ink-dim small-text">
             ${targetingHelp ? `<div>${targetingHelp}</div>` : ''}
             ${_tunnelDig ? `<div style="color:#90c8ff"><strong>🌊 Can't afford — Tunnel it!</strong> Spend ${TUNNEL_DIG_COST} ⚡ to bury it; emerges in ${card.tunnel | 0} turn${(card.tunnel | 0) === 1 ? '' : 's'}.</div>` : ''}
             ${!enabled ? (function () {
@@ -144229,7 +145344,7 @@ function renderCardDetailModal() {
           })() : ''}
           <div class="card-detail-actions">
             <button class="btn-secondary" id="card-detail-cancel">Close</button>
-            ${(() => {
+            ${!inHand ? '' : (() => {
               // ✋ Hand-activated ability — fire the card's effect straight from
               // hand for a cost, on your turn, without playing the card.
               const _ha = (typeof _handAbilityOf === 'function') ? _handAbilityOf(card) : null;
@@ -144240,7 +145355,7 @@ function renderCardDetailModal() {
               const _desc = (typeof describeOnPlayEffect === 'function') ? (describeOnPlayEffect(_ha.effect) || '') : '';
               return `<button class="btn-primary ${_g.ok ? '' : 'btn-disabled'}" id="card-detail-hand-ability" ${_g.ok ? '' : 'disabled'} title="${escapeHtml(_g.ok ? _desc : (_g.why || ''))}" style="background:linear-gradient(180deg,#7a5cc8,#4a3288);border-color:#b48cff">✋ Activate${_c ? ` (−${_c} ⚡)` : ''}${_m === 'banish' ? ' · banish' : _m === 'discard' ? ' · discard' : ''}</button>`;
             })()}
-            <button class="btn-primary ${enabled ? '' : 'btn-disabled'}" id="card-detail-play" ${enabled ? '' : 'disabled'}>${_tunnelDig ? `🌊 Tunnel (−${TUNNEL_DIG_COST} ⚡)` : (card.type === 'spell' || card.type === 'weather' ? `${getTypeIcon('spell','1.7em')} Cast` : '↗ Play this card')}</button>
+            ${!inHand ? '' : `<button class="btn-primary ${enabled ? '' : 'btn-disabled'}" id="card-detail-play" ${enabled ? '' : 'disabled'}>${_tunnelDig ? `🌊 Tunnel (−${TUNNEL_DIG_COST} ⚡)` : (card.type === 'spell' || card.type === 'weather' ? `${getTypeIcon('spell','1.7em')} Cast` : '↗ Play this card')}</button>`}
           </div>
         </div>
       </div>
@@ -144256,29 +145371,69 @@ function bindCardDetailModal() {
   if (closeBtn) closeBtn.onclick = closeCardDetail;
   const cancelBtn = document.getElementById('card-detail-cancel');
   if (cancelBtn) cancelBtn.onclick = closeCardDetail;
-  // 📜 Read-Note button — opens the RE-style reader for the card's lore.
+  /* 🔒 THE SECOND HALF OF THE INVARIANT, restated so it is provable by reading.
+     Two resolvers, and the choice between them is decided by ONE question:
+     **does this handler write App.state?**
+       · WRITES state  → `_actCard()`. Re-resolves the ref and refuses anything
+         the zone table did not mark `actionable`. Hiding the button in the
+         markup is presentation; this is the gate. A ref pointing at a graveyard
+         or vanish card cannot play or activate even if the button were somehow
+         present in the DOM.
+       · READS ONLY    → `_viewCard()`. Same resolver, no `actionable` test,
+         because a read that cannot reach App.state has nothing to gate. Any
+         handler using this one MUST NOT touch App.state — that restriction is
+         what makes the missing gate safe, so keep new handlers on the correct
+         side rather than adding a third rule.
+     WHY the split exists: round 1 put read-note on `_actCard()`, and the ONLY
+     zone the table marks actionable is the hand. Measured live with one seeded
+     Forge note: grave:player, grave:ai and void:player each rendered the
+     "📜 Read: The Lost Codex" button enabled at opacity 1, 316px wide, and
+     clicking it fired openNoteReader = null. Hand fired "n_test1". A dead
+     button on every pile card with lore. Reading a note is not a move — it
+     mutates nothing but `Profile.readNotes`, a bookmark — so it belongs on the
+     read-only side, not behind the move gate.
+     REJECTED: suppressing the button for piles with a `!inHand ? '' :` wrapper.
+     That "fixes" it by deleting the feature — the lore is the most interesting
+     thing about a card you can no longer play, and the pile inspector exists
+     precisely so the player can study it. */
+  const _actCard  = () => {
+    const hit = _cardInspectResolve(App.ui.cardDetailId);
+    return (hit && hit.actionable) ? hit : null;
+  };
+  const _viewCard = () => _cardInspectResolve(App.ui.cardDetailId);
+  /* 📜 Read-Note button — opens the RE-style reader for the card's lore.
+     Read-only, so it resolves through `_viewCard`: a grave / vanish card opens
+     its own note. No information boundary is crossed doing so — the button is
+     only ever emitted when the note is already in `Forge.notes`, i.e. the local
+     player collected it, and `openNoteReader` re-checks that same list. An
+     opponent's card cannot show lore the player does not already own. */
   const readNoteBtn = document.getElementById('card-detail-read-note');
   if (readNoteBtn) readNoteBtn.onclick = (e) => {
     e.stopPropagation();
-    const id = App.ui.cardDetailId;
-    const card = id ? App.state.player.hand.find(c => c.instanceId === id) : null;
-    const noteId = card && card.noteId;
+    const hit = _viewCard();
+    const noteId = hit && hit.card && hit.card.noteId;
     if (noteId && typeof openNoteReader === 'function') openNoteReader(noteId);
   };
   // ✋ Hand-activated ability button.
   const handAbilityBtn = document.getElementById('card-detail-hand-ability');
   if (handAbilityBtn) handAbilityBtn.onclick = (e) => {
     e.stopPropagation();
-    const hid = App.ui.cardDetailId;
-    if (hid && typeof _activateHandAbility === 'function') _activateHandAbility(hid);
+    // ⚠ `_activateHandAbility` takes the HAND instanceId, which for the one
+    // actionable zone is exactly what the ref is — but read it off the resolved
+    // card, not off the ref string, so a prefixed ref can never be passed
+    // through as an instanceId.
+    const hit = _actCard();
+    const iid = hit && hit.card && hit.card.instanceId;
+    if (iid && typeof _activateHandAbility === 'function') _activateHandAbility(iid);
   };
   const playBtn = document.getElementById('card-detail-play');
   if (playBtn) playBtn.onclick = (e) => {
     e.stopPropagation();
-    const id = App.ui.cardDetailId;
+    const hit = _actCard();
+    if (!hit) return;
+    const card = hit.card;
+    const id = card.instanceId;
     if (!id) return;
-    const card = App.state.player.hand.find(c => c.instanceId === id);
-    if (!card) return;
     App.ui.cardDetailId = null;
     if (card.type === 'spell') {
       playSpell(card);
@@ -144687,15 +145842,35 @@ function bindBattleEvents() {
   document.querySelectorAll('.hand-card[data-card]').forEach(el => {
     el.onclick = (e) => {
       e.stopPropagation();
+      /* ⚠ KEEP THIS. It no longer fires for unaffordable cards (those wear
+         `.unplayable` now, not the attribute) — but `renderReplayViewer` still
+         sets the real `disabled` on every battle button to freeze the screen
+         during playback, and this is what honours that. */
       if (el.disabled) return;
       // 🔒 Don't open the play flow mid-cinematic — wait for the animation.
       if (typeof _battleInputBlocked === 'function' && _battleInputBlocked()) return;
-      const cardId = el.dataset.card;
-      // Open the card detail modal — player chooses Play / Cancel from there.
-      App.ui.cardDetailId = cardId;
-      App.ui.selectedUnitId = null;
-      App.ui.modalUnitId = null;
-      renderBattle();
+      /* 🔒 THE INVARIANT: `App.ui.cardDetailId` is written in exactly ONE
+         place — `openCardInspect`, which assigns only after
+         `_cardInspectResolve` returns a hit. Grep `cardDetailId =` and every
+         other site is `= null`. That is what makes "the inspector can never be
+         left open on a ref it cannot render" checkable by reading instead of
+         by testing each surface one at a time.
+
+         This site used to be the second writer, and it wrote a BARE id — which
+         `_cardInspectResolve` defines as `hand:player`. Because this selector
+         is document-wide, every `.hand-card[data-card]` on the page inherited
+         that meaning: the modal's own preview of a graveyard card (measured:
+         `grave:player:iid_ig_p1` → `ig_p1` → renderCardDetailModal returned ''
+         → the dialog silently disappeared under the user's cursor), and the
+         spectator overlay's copy of the OPPONENT'S hand (`_specOppHandHtml`),
+         which is not a public zone and must never resolve.
+         Routing through the resolver fixes both classes at once and, more to
+         the point, fixes the ones nobody has found yet — a ref this function
+         cannot open now leaves the screen exactly as it was.
+         (Rejected: null-guarding renderCardDetailModal so a miss keeps the old
+         card. That hides the bad write instead of preventing it, and the next
+         surface to emit a stray `data-card` reintroduces it.) */
+      if (typeof window.openCardInspect === 'function') window.openCardInspect(el.dataset.card);
     };
     // ✨ Holographic mouse tracking — update --mx/--my CSS vars so the
     // wet-sheen radial gradient (see .hand-card::after) follows the
@@ -149594,13 +150769,18 @@ function placeUnit(card, pos, opts) {
       }
     }
   } catch (_ge) { /* gem effects never crash placement */ }
+  // ⚰️🔗 THE CARD RIDES THE UNIT. It used to be pushed into the graveyard right
+  // here, stamped `_summonedUnitId`, with every reader expected to remember it was
+  // not really a corpse — measured, that made `player.graveyard` go 0 → 1 the
+  // instant you played a unit that was standing alive on the board. Now the card
+  // is carried on the unit and `_reconcileUnitCards` files it the moment the unit
+  // dies (graveyard) or is banished (void), and un-files it if the unit comes back.
+  // See that function for the full invariant.
+  unit._card = { ...card, _summonedUnitId: unit.id };
   let next = {
     ...s,
     units: [...s.units, unit],
-    // 🪦 Stamp the card with its live unit id. While the unit is alive on the
-    // board this card is NOT counted as a banishable graveyard card (it only
-    // becomes a real grave card once the unit dies / is looted).
-    player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.player.graveyard, { ...card, _summonedUnitId: unit.id }], energy: s.player.energy - getEffectiveCardCost(card, s, 'player') },
+    player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), energy: s.player.energy - getEffectiveCardCost(card, s, 'player') },
     log: [...s.log, { msg: card.isSubterfuge ? `🃏 You set a unit face-down.` : `You play ${card.name} (Lv ${prof.level})`, color: 'green' }],
   };
   // 🔮 Clear consumed prophecy buff so it only applies to the NEXT single deployment.
@@ -152085,18 +153265,17 @@ function doAIStep() {
                 _apUnits = _ap.units; _apLog = _ap.log; _apHand = _ap.hand;
               }
             } catch (e) {}
+            // ⚰️🔗 Same lifecycle as the player's placeUnit: the card rides the
+            // unit and is filed by `_reconcileUnitCards` when the unit leaves the
+            // board. The AI used to push it straight to its graveyard, so the AI's
+            // grave count was inflated by every unit it had standing on the field.
+            newUnit._card = Object.assign({}, best, { _summonedUnitId: newUnit.id });
             let next = {
               ...s,
               units: [...(_apUnits || s.units), newUnit],
               ai: {
                 ...s.ai,
                 hand: (_apHand || s.ai.hand).filter(c => c.instanceId !== best.instanceId),
-                // ⚠ STAMP THE SUMMONED UNIT (the player's placeUnit always did).
-                // Without it the engine cannot tell that this card's unit is
-                // standing on the board, so the card counted as being in the
-                // graveyard while the unit was alive — and when the unit died
-                // the view folded in its corpse on top, showing the card twice.
-                graveyard: [...s.ai.graveyard, Object.assign({}, best, { _summonedUnitId: newUnit.id })],
                 energy: s.ai.energy - getEffectiveCardCost(best, s, 'ai'),
               },
               log: [...(_apLog || s.log), { msg: best.isSubterfuge ? `🃏 Enemy sets a unit face-down.` : `Enemy plays ${best.name}`, color: 'red' }],

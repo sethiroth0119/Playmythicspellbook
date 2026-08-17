@@ -19811,12 +19811,22 @@ function pwAvail(k) {
   const f = _pwAv && _pwAv[k];
   return Number.isFinite(f) && f >= 0 ? f : 1;
 }
+/* What the ladder priced THIS tile at, or null if it priced nothing here.
+   ⚠ NULL AND 0 ARE DIFFERENT ANSWERS and the caller must be able to tell them
+     apart: 0 means "the grid gave this building nothing", null means "the grid
+     has no opinion about this building". Returning a fallback from inside here
+     would collapse the two and there would be no way to ask the second
+     question — which is the question the metering line below is asking. */
+function pwFactorOf(x, z) {
+  const f = _pwFac && _pwFac[key(x, z)];
+  return Number.isFinite(f) && f >= 0 ? f : null;
+}
 /* `powered` is the city-average fallback, passed in rather than read off
    game.power, because tileMult is also called from paths that quote a factor of
    their own (the inspector's preview, the ops efficiency read). */
 function pwFactorAt(x, z, powered) {
-  const f = _pwFac && _pwFac[key(x, z)];
-  return Number.isFinite(f) && f >= 0 ? f : powered;
+  const f = pwFactorOf(x, z);
+  return f === null ? powered : f;
 }
 
 /* 💧 WATER — the per-tile extraction multiplier from /src/water, refreshed by
@@ -19936,6 +19946,16 @@ function tileMult(x, z, t, staff, powered) {
      — or on any tile the ladder did not price — it returns `powered` unchanged,
      which is byte-for-byte the old line. */
   if (def.powerNeed) m *= pwFactorAt(x, z, powered);
+  /* 🔌 …AND THE METERED 33. A building with no `powerNeed` of its own can still
+     have been priced by /src/power's demand ladder once the city opts in (see
+     POWER.demand's "the 33"), and a metered Scrap Mine that PAYS for electricity
+     without ever MISSING it would be a bill with no mechanic behind it — the
+     player would see their margin fall and nothing else change.
+     ⚠ `pwFactorOf`, not `pwFactorAt`: only a tile the ladder actually priced is
+       touched. Every other building takes the identical path it took before this
+       feature existed, and an un-metered city has no priced tiles here at all,
+       so this line is inert in every save that predates the ladder. */
+  else { const pf = pwFactorOf(x, z); if (pf !== null) m *= pf; }
   /* 🧯 THE CEILING. Everything above is MULTIPLICATIVE and, until this line,
      unbounded: adjacency × 2^(lvl-1) × staffing × weather × mayor × Kalon ×
      (1 + sockets) × morale × power, and then tileOutputFactor() multiplies the

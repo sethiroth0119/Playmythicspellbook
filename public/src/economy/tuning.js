@@ -203,6 +203,120 @@ export const ECON = {
       graduatePerDay: 0.012,
     },
 
+    /* ── 🔁 TENANCY TURNOVER — WHY A STUDENT DISTRICT STAYS A STUDENT DISTRICT
+       Share of a zone's OCCUPIED dwellings whose tenancy ends per economic day,
+       for reasons that are not economic distress: the lease ran out, the flat
+       was always temporary, the job was in another city. The dwelling is re-let
+       the same step from the zone's own bag, so this does not empty a district —
+       it REFRESHES it.
+
+       🔴 THIS IS THE FIX FOR A MEASURED, SEVERE BUG, AND IT IS STRUCTURAL.
+       Before it existed the only ways out of a dwelling were eviction, economic
+       distress, and — for students alone — graduation, which converted the
+       household to `single` IN PLACE. So every zone was a RATCHET: once it
+       filled, the only composition change left was students turning into
+       singles, one way, forever. Measured on the 172-tile gauntlet district, a
+       low-rent block peaked at 80 student households on day 3 and then decayed
+       80 → 56 → 39 → 27 → 19 → 13 → 9 while singles climbed to 282. The student
+       share ratcheted toward ~1% of residents and could never recover, because
+       new students can only arrive into a VACANCY and there were none.
+       ECON.demographics.zones[*].bag says a low-rent block is 47% students; the
+       district it actually produced was 1%, so the bag was a decoration.
+
+       With turnover, out_i = τ·n_i and in_i = τ·N·bag_i for every archetype, so
+       a zone's composition CONVERGES ON ITS OWN BAG instead of ratcheting away
+       from it. Students settle at τ/(τ+graduatePerDay) of their bag share —
+       ~35% of a low-rent block's households — because the room a graduate frees
+       is taken by the next student. That is what a student district is.
+
+       ⚠ REJECTED: making graduates leave the city instead (`graduateMovesOut`).
+         It frees the room, but the refill is bag-weighted, so ~53% of the freed
+         rooms go to non-students who then sit there forever and the ratchet just
+         runs slower: dS/dt = −S·g·(1−f_stu) still decays to zero. The defect was
+         never about students specifically — it was that NOTHING ever moved out
+         of a full district. Turnover is the general answer and the student case
+         falls out of it.
+       ⚠ REJECTED: a uniform city-wide churn rate. Turnover is a property of the
+         HOUSING, not of the city: a cheap flat turns over most of a year, a
+         detached house people bought turns over once a generation. A single rate
+         would have made a suburb as transient as a student block, which is the
+         opposite of what the zones are for.
+
+       🔢 Read them as annual turnover — an economic year is ~24 economic days
+       (graduatePerDay's 83 days ≈ a 3.5-year degree), so 0.035/day ≈ 84%/yr for
+       cheap flats and 0.004/day ≈ 10%/yr for detached houses. Both are close to
+       the real figures for those tenures, which is why they were chosen there
+       and not by feel. Turnover creates real vacancy — steady-state occupancy is
+       0.30·att/(τ + 0.30·att), so these are also the numbers that decide a
+       district's standing vacancy rate. Above ~0.05 a district cannot re-let
+       fast enough and starts to hollow out. */
+    turnover: {
+      resLow: 0.004, resRow: 0.010, resApt: 0.020,
+      resHigh: 0.028, resMixed: 0.024, resLowRent: 0.035,
+      /* A zone with no entry above churns at this rate. Never 0: a zone that
+         never turns over is a zone whose bag stops meaning anything the moment
+         it fills, which is the bug this whole block exists to retire. */
+      dflt: 0.015,
+    },
+
+    /* ── 🧬 THE LIFE COURSE — where a city's pensioners actually come from ────
+       🔴 THIS RETIRES THE ALL-RETIRED ATTRACTOR, AND IT IS THE ROOT CAUSE, NOT
+       A CAP. Measured before it existed: a job-poor tower district went
+       20 family / 81 couple / 100 single / 27 retired on day 2, then
+       2 / 7 / 8 / 393 on day 3, then 0 / 0 / 0 / 578 from day 5 ONWARD, with a
+       labour ladder of 0/0/0/0 and 868 people in it. Reproduced against the real
+       pipeline in Node: 158 retired of 259 households on day 0, 558 of 561 by
+       day 39. A player's reward for zoning a big city was a dead one, because
+       zoning dense housing is exactly what makes a city job-poor.
+
+       The mechanism was an ABSORBING STATE, and it needed only two ordinary-
+       looking lines to exist:
+         · arrivals exempted pensioners from the job gate — correct in itself, a
+           retired household genuinely does not need a vacancy — so once job fit
+           approached zero they were the ONLY archetype that could still move in;
+         · departures charged jobless stress to EVERY cohort, including the one
+           with no workers in it, which cannot be jobless by definition.
+       Workers left, pensioners never did, and only pensioners could arrive. Any
+       inflow into a state with no outflow converges on 100% of the system. That
+       is the whole bug in one sentence, and it is why the fix has to be an
+       OUTFLOW rather than a limit on the inflow.
+
+       ⚠ REJECTED: exempting pensioners from departures too. It is the obvious
+         reading of "a pensioner is not jobless", and on its own it makes the
+         ratchet STRICTLY WORSE — they would then be immortal as well as
+         unlimited. The jobless-stress exemption below is only safe BECAUSE
+         `retiredLeavePerDay` gives the state a door.
+       ⚠ REJECTED: capping retired households at some share of the city. It hides
+         the attractor without removing it — the pressure is still there, pinned
+         against a clamp, and the next person to touch the arrival scorer
+         reintroduces it with the clamp still in the file looking deliberate.
+       ⚠ REJECTED: gating pensioners on vacancies like everybody else. That is
+         simply false. A retired household is limited by rent it can pay out of a
+         fixed pension, by services, and by there being a FINITE SUPPLY OF
+         PENSIONERS — never by whether the city posted a job.
+
+       So: pensioners are MADE, not moved. `agePerDay` is the domestic source —
+       working households ageing out of the labour force — and it is the finite
+       supply the arrival meter below is measured against. A city with no working
+       households produces no new pensioners and attracts none, so the attractor
+       cannot form at all rather than being caught after it forms.
+
+       🔢 At ~24 economic days to the year, agePerDay 0.0008 ≈ a 52-year working
+       life and retiredLeavePerDay 0.004 ≈ 10 years of retirement. Their RATIO is
+       the number that matters: retired households settle at agePerDay /
+       retiredLeavePerDay ≈ 20% of working households, and since a retired
+       household is small (1.5 heads against ~2.5), that is ~14% of residents —
+       a real city's senior share, arrived at from two rates rather than picked.
+       ⚠ `family` is deliberately NOT in `ages`. A family becoming a couple when
+         its children move out is a real life event, but it is the SAME event the
+         `student` and `single` arrival draws already represent from the other
+         end; modelling both would count one household leaving home twice. */
+    lifecycle: {
+      agePerDay: 0.0008,
+      ages: { couple: 'retired', single: 'retired' },
+      retiredLeavePerDay: 0.004,
+    },
+
     /* 🏘 THE ZONES. `homes` is DWELLINGS on one tile at level 1, `perLevel` what
        each further level adds. `rentMul` multiplies the rent index below.
        `bag` is the weighted draw of household archetypes that WANT that zone —
@@ -338,6 +452,29 @@ export const ECON = {
          lived city must not empty itself and refill over twenty simulated days
          the first time this module loads. */
       seedFill: 0.85,
+
+      /* 🧓 …AND THE OTHER HALF OF THE ALL-RETIRED FIX (see `lifecycle` above).
+         Households with NO WORKERS skip the job gate, because they genuinely do
+         not need a vacancy. What was missing is that nothing else limited them,
+         so in a job-poor city they took every dwelling that came free.
+
+         The honest limit is that there are only so many pensioners looking to
+         move, and the ones who do move follow the working city — you retire to
+         where your family lives and works, not to an empty district. So the
+         workerless arrival stream is metered against the city's WORKING
+         households: this many workerless households per working household per
+         economic day, across the whole city, however many dwellings stand empty.
+
+         🔴 THIS IS A RATE, NOT A CAP. It gives retired households a stationary
+         share (inflow / `retiredLeavePerDay`) exactly like every other cohort
+         has, and it collapses to zero on its own in a city whose workers have
+         gone — which is the case that used to lock. A cap would have left the
+         pressure intact behind a clamp.
+         🔢 0.0002/day adds ~5% of working households to the retired stock at
+         equilibrium, on top of the ~20% `lifecycle` makes domestically. Most of
+         a city's pensioners lived there already; this is the minority who move,
+         and it is sized to read as one. */
+      workerlessDrawPerWorkerHH: 0.0002,
     },
 
     /* 🧳 DEPARTURES. A pipeline that only ever adds is a population counter.
@@ -349,7 +486,14 @@ export const ECON = {
       ratePerDay: 0.09,
       joblessGraceDays: 5,
       /* Below this share of a band's seekers finding work, a household with no
-         other qualification starts counting grace days. */
+         other qualification starts counting grace days.
+         ⚠ AND IT IS CHARGED ONLY TO HOUSEHOLDS THAT HAVE WORKERS IN THEM. It
+           used to be charged to every cohort, which meant a retired household —
+           zero workers, by definition unjobbable — was pushed out of town by a
+           labour market it does not participate in. That was one of the two
+           lines that built the all-retired attractor; see ECON.demographics
+           .lifecycle for the whole story, including why fixing ONLY this makes
+           the attractor worse rather than better. */
       jobPanic: 0.35,
     },
 
@@ -358,8 +502,25 @@ export const ECON = {
        on a wage, and inventing a number for them elsewhere would be the same
        duplication the wage table exists to prevent. */
     income: {
-      studentPct: 0.38,       // of the unskilled wage: part-time work and support
+      studentPct: 0.38,       // of the unskilled wage, PER STUDENT IN THE SHARE
       studentWorkerPct: 0.50, // …and only half of a student household seeks work at all
+      /* 🎓 …AND HOW MUCH OF `studentPct` IS *SUPPORT* RATHER THAN WORK — grants,
+         loans, parents. The rest is the part-time shift, and only that part
+         moves with the local labour market.
+         🔴 THIS SPLIT IS WHY STUDENTS CAN LIVE IN A CITY THAT HAS NO WORK, and
+         its absence was half of why student districts stopped being student
+         districts. The whole student income used to be multiplied by job fit,
+         so in the slack labour market a student district actually has (fit 0.48)
+         a student household offered 15.4/day against a low-rent dwelling at
+         9.77 — a burden of 0.63, over `rent.burdenMax`, so students were blocked
+         from THE CHEAPEST ZONE IN THE CITY and the resLowRent bag's student
+         weight of 7 delivered literally 0% of arrivals. Measured.
+         ⚠ The file already knew this idea and had only applied it to the other
+           end of life: `incomeOf` adds the pension with no `fit` on it at all,
+           because "retired heads draw a pension whatever the labour market is
+           doing". Student maintenance is the same kind of money. Real student
+           towns are counter-cyclical for exactly this reason. */
+      studentSupportShare: 0.55,
       pensionPct: 0.42,       // of the unskilled wage, per retired head
       /* An arriving household is assumed to hold at least this fraction of a
          full wage even in a slack labour market — nobody moves to a city on the
@@ -387,10 +548,29 @@ export const ECON = {
          while it filled up. Share of the households that actually looked. */
       materialShare: 0.15,
       /* …and "people are leaving" needs a margin and a smoothed rate, or a
-         steady city flickers in and out of it every 4 s repaint. */
+         steady city flickers in and out of it every 4 s repaint. `leavingFloor`
+         is the absolute half of that guard: in a city moving one resident a day
+         the multiplicative margin is worth 0.15 of a person, which is noise. */
       leavingMargin: 1.15,
+      leavingFloor: 0.05,
       /* Vacancy below this share of the city's dwellings reads as full. */
       fullShare: 0.01,
+
+      /* 🗣 THE THRESHOLDS THE CAUSAL LIST SPEAKS AT. These decide what the panel
+         SAYS, which is the only thing most players ever read, so they are
+         behavioural numbers and they live here with the rest of them.
+         ⚠ THEY WERE LITERALS IN pipeline.js FOR TWO ROUNDS. Commit 02ccda2 said
+           it had moved "the three numbers that had escaped ECON" and left five
+           of them behind — `meanFit > 0.8`, `meanFit < 0.3`, `services > 0.75`,
+           `services < 0.4` and `tight > 1.4`, plus a bare `+ 0.05` in the limit
+           test. A number that only LOOKS like presentation is still a number
+           somebody has to retune, and finding it means grepping a file the
+           tuning table exists so nobody has to read. */
+      jobsPlentyFit: 0.80,   // above this mean job fit: "+ Work for most people"
+      jobsScarceFit: 0.30,   // below it: "− Not enough jobs"
+      servicesGood:  0.75,   // above this service satisfaction: "+ keeping up"
+      servicesPoor:  0.40,   // below it: "− falling short"
+      tightNotice:   1.40,   // rent index above this is worth telling the player about
     },
   },
 

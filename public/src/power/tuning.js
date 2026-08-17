@@ -328,6 +328,12 @@ export const POWER = {
        ③ METERED — 15 rows, listed below. These genuinely run on electricity and
          their absence was an artefact of the save-compatibility rule rather than
          a design statement. They are charged ONLY in a city that has opted in.
+         ⚠ AND THEY ARE SHED AS WELL AS BILLED. A metered Scrap Mine both pays
+           for electricity and misses it — node-city's tileMult applies the
+           ladder's per-tile factor to any tile this module priced, not only to
+           tiles carrying a `powerNeed`. Billing without the mechanic would be a
+           cost the player can see and a consequence they cannot, which is the
+           worse half of the feature on its own.
 
        🔴 HOW THE OPT-IN WORKS, AND WHY IT IS NOT A SILENT RETRO-FIT.
           A city founded AFTER this landed is metered from its first tick — there

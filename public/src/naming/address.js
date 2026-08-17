@@ -12,47 +12,37 @@
    as a correctness one: 172 addresses is another ~5 KB of localStorage for
    data that is a pure function of state already saved.
 
-   🔴 THE GUARDED SIBLING READ. /src/streets registers a window global whose
-   exact API is not fixed yet. This file probes a handful of plausible shapes,
-   accepts a string or a {name} object, and falls back to its own deterministic
-   naming if none of them answer. A 404 on the streets module costs the player
-   nicer street names and nothing else — see how node-city imports the economy
-   and degrades when it is missing.
+   🔴 THIS FILE NO LONGER ASKS /src/streets ANYTHING. IT USED TO, AND IT WAS
+   WRONG THE WHOLE TIME.
+   The original wrote its street read as a duck-typed probe — three candidate
+   window globals × five candidate method names, called as `S[m](x, z)` with
+   two numbers — because /src/streets had not landed yet and its API was a
+   guess. /src/streets then shipped `nameAt(key)` taking ONE "x,z" key string
+   (public/src/streets/index.js:362). `nameAt(10, 12)` returns null for every
+   tile in the city, so the probe never matched once, the silent fallback below
+   fired for all 172 buildings, and the player read invented street names off
+   every dossier in the game while the real named-streets feature sat mounted
+   and working. Nothing logged. Nothing looked broken. That is the precise
+   failure mode a permanently-firing guarded fallback has: it is byte-identical
+   to a working integration.
+
+   SO THE PROBE IS GONE, AND SO IS THE INVENTED NAME. /src/dossier/address.js
+   is the ONE module that asks "what is this road called" — it made the same
+   guess and happened to make it correctly, it already carries the numbered-
+   grid fallback and the `source` provenance marker the panels print, and it is
+   the address openInspect actually renders (see the note on dossierAddr in
+   ./index.js: when two modules disagree about one building, the dossier's
+   answer is the one that wins). This file consumes `streetLabel` from there
+   and derives only what is genuinely its own: frontage and house number.
+
+   Consequence, and it is the point: when the streets module is absent this
+   file now prints "4th Street" marked `source:'grid'` instead of a plausible
+   "Kestrel Lane" marked nothing. A fabricated name is unfalsifiable — the day
+   streets ships, nobody can tell which of the two names was real. A numbered
+   one is visibly a fallback, and moduleStreetName() warns once in the console
+   naming the global it wanted.
    ══════════════════════════════════════════════════════════════════════════ */
-import { hash32 } from './generate.js';
-import { PLACE, STREET_SUFFIX } from './words.js';
-
-/* Probed in order. First one that returns a non-empty string or {name} wins.
-   Keep this list SHORT and keep it here — a guessed API scattered through the
-   module is a guessed API you cannot correct in one edit when /src/streets
-   lands and its real method name is known. */
-const STREET_GLOBALS = ['MythicStreets', 'MythicCityStreets', 'NodeCityStreets'];
-const STREET_METHODS = ['nameAt', 'streetNameAt', 'streetAt', 'addressStreet', 'nameForTile'];
-
-function siblingStreetName(x, z) {
-  if (typeof window === 'undefined') return null;
-  for (const g of STREET_GLOBALS) {
-    const S = window[g];
-    if (!S) continue;
-    for (const m of STREET_METHODS) {
-      if (typeof S[m] !== 'function') continue;
-      try {
-        const v = S[m](x, z);
-        if (typeof v === 'string' && v.trim()) return v.trim();
-        if (v && typeof v.name === 'string' && v.name.trim()) return v.name.trim();
-      } catch (e) { /* a sibling that throws is a sibling that is absent */ }
-    }
-  }
-  return null;
-}
-
-/* The fallback. Deterministic on the road's own row/column index plus the city
-   salt, so every tile on the same road agrees, and two different cities do not
-   have the same street list. */
-function fallbackStreetName(salt, axis, index) {
-  const h = hash32(salt + '|street|' + axis + '|' + index);
-  return PLACE[h % PLACE.length] + ' ' + STREET_SUFFIX[(h >>> 8) % STREET_SUFFIX.length];
-}
+import { streetLabel } from '../dossier/address.js';
 
 /* Which way the road at (rx,rz) runs. A road with more east-west road
    neighbours than north-south ones is an east-west street; ties go to
@@ -69,7 +59,11 @@ function roadAxis(tiles, rx, rz) {
    between two streets keeps one address rather than flickering. */
 const FRONTAGE = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
-export function addressFor(tiles, salt, key) {
+/* ⚠ `salt` IS GONE FROM THE SIGNATURE. It existed only to seed the invented
+   street names that this file no longer produces; keeping an ignored parameter
+   would leave the next reader thinking an address still varies per city. The
+   one call site is registry.js's `address()`. */
+export function addressFor(tiles, key) {
   const t = tiles[key];
   if (!t) return null;
   const p = key.split(',');
@@ -80,15 +74,22 @@ export function addressFor(tiles, salt, key) {
     const r = tiles[rx + ',' + rz];
     if (!r || r.type !== 'road') continue;
     const axis = roadAxis(tiles, rx, rz);
-    const street = siblingStreetName(rx, rz)
-      || fallbackStreetName(salt, axis, axis === 'ew' ? rz : rx);
+    /* THE STREET, from the module that owns street names. streetLabel speaks
+       the dossier's axis vocabulary — 'x' for a road running east–west, 'z'
+       for one running north–south — which is this file's 'ew'/'ns' under a
+       different name, so translate rather than keeping two conventions.
+       `source` rides out on the returned object: 'streets' means a real named
+       street, 'grid' means the numbered fallback and the console said so. */
+    const lbl = streetLabel(rx, rz, axis === 'ew' ? 'x' : 'z');
+    const street = lbl.name;
     /* Odds one side, evens the other — the same convention every real street
        uses, and it is what makes two facing buildings read as facing. The side
        is decided by which way the building sits FROM the road. */
     const along = (axis === 'ew') ? x : z;
     const side = (axis === 'ew') ? (z < rz ? 1 : 0) : (x < rx ? 1 : 0);
     const num = Math.max(1, along * 2 + (side ? 1 : 2));
-    return { num, street, full: num + ' ' + street, road: rx + ',' + rz, axis };
+    return { num, street, source: lbl.source, full: num + ' ' + street,
+             road: rx + ',' + rz, axis };
   }
   return null;   // no frontage: the dossier says so rather than inventing one
 }

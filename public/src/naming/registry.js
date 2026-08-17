@@ -194,7 +194,9 @@ export class NameRegister {
   _save() { try { this.ctx.saveSoon && this.ctx.saveSoon(); } catch (e) {} }
 
   address(key) {
-    try { return addressFor(this.ctx.game.tiles, this.salt, key); } catch (e) { return null; }
+    /* No salt: an address is not seeded per-city any more. The street name is
+       the streets module's (via /src/dossier), the number is the grid's. */
+    try { return addressFor(this.ctx.game.tiles, key); } catch (e) { return null; }
   }
 
   /* ── persistence ──────────────────────────────────────────────────────

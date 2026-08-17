@@ -29,8 +29,8 @@
 
    🛣 THE STREET NAME comes from the streets layer if that module is mounted —
       it is a SIBLING FEATURE THAT MAY NOT EXIST (see CLAUDE.md on optional
-      modules), so it is read through a duck-typed probe that tolerates every
-      plausible shape and refuses anything that is not a plain short string.
+      modules), so the ONE call to it is guarded, and when the guard fires it
+      SAYS SO in the console instead of quietly substituting something.
       With no streets layer the fallback is the grid line the building fronts
       ("Row 8", "Column 12") — deliberately NOT a made-up street name, because
       a fabricated "Robin Street" would be indistinguishable from a real one
@@ -47,42 +47,70 @@ const NEI4 = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 const HOUSE_BASE = 100;    // first block on every street, as most cities number
 
-/* ── the streets layer, read defensively ────────────────────────────────────
-   Every call is wrapped: another builder's module may throw, may return an
-   object, may return a number. Only a short plain string survives. */
-function pluckName(v, depth) {
-  if (v == null) return null;
+/* ── the streets layer: THE ONE PLACE THE CITY ASKS "what is this road called"
+   ──────────────────────────────────────────────────────────────────────────
+   🔴 THIS FILE OWNS THE LOOKUP. /src/naming used to carry a second, private
+      copy of it and that is the whole reason this note exists. Two modules
+      each guessed at the streets API; this one guessed right and naming's
+      guessed wrong — it called `nameAt(x, z)` with two numbers when the
+      shipped signature is `nameAt("x,z")`, one key string. Its probe therefore
+      NEVER matched, its silent fallback fired on every building, and the
+      player saw invented street names across the whole city while the real
+      named-streets feature sat one module away working perfectly. Nothing
+      logged; nothing looked broken. A guessed contract that is wrong is
+      indistinguishable from a sibling that is absent — which is why the guess
+      is gone. /src/naming now imports `streetLabel` from this file, and there
+      is exactly ONE call to the streets module in the codebase: the one below.
+
+   THE CONTRACT, read off public/src/streets/index.js:362 rather than guessed:
+      window.MythicStreets.nameAt(key)   key = "x,z"   ->  string | '' | null
+   `''` is a real answer — a road that is not part of a named street yet. It
+   and `null` both fall through to the numbered-grid label, marked
+   `source: 'grid'`, which every caller prints. */
+const STREET_GLOBAL = 'MythicStreets';
+
+/* The name is player-authored (streets/index.js `rename`), so it is still
+   sanitised and length-capped here even though the source is now trusted —
+   this string is interpolated into panel HTML by three different callers.
+   It no longer walks {name}/{label}/{street}/… shapes hunting for a string:
+   `nameAt` returns a string, that IS the contract, and accepting six other
+   shapes was part of the same guessing that hid the bug. */
+function cleanName(v) {
   if (typeof v === 'string') {
     const s = v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
     return s ? s.slice(0, 48) : null;
   }
-  if (typeof v !== 'object' || (depth | 0) > 1) return null;
-  for (const p of ['name', 'label', 'street', 'streetName', 'title', 'text']) {
-    const s = pluckName(v[p], (depth | 0) + 1);
-    if (s) return s;
-  }
   return null;
 }
-const STREET_FNS = ['nameAt', 'streetAt', 'nameFor', 'nameForTile', 'streetFor',
-  'streetOf', 'streetNameAt', 'at', 'forTile', 'get', 'lookup'];
-function streetsLayer() {
-  try {
-    if (typeof window === 'undefined') return null;
-    return window.MythicStreets || window.MythicStreet || window.NCStreets || null;
-  } catch (e) { return null; }
-}
+/* 🔊 THE FALLBACK IS LOUD — but once per page, not once per tile. This runs
+   for every building the dossier draws and for every address /src/naming
+   prints, so a per-call warning would bury the console it exists to make
+   readable. One line is enough to tell "streets is not mounted" apart from
+   "streets is mounted and answering", which is the distinction that was
+   invisible before. */
+let warnedNoStreets = false;
+let warnedThrew = false;
 export function moduleStreetName(rx, rz) {
-  const S = streetsLayer();
-  if (!S) return null;
-  const k = rx + ',' + rz;
-  for (const fn of STREET_FNS) {
-    if (typeof S[fn] !== 'function') continue;
-    let s = null;
-    try { s = pluckName(S[fn](rx, rz), 0); } catch (e) { s = null; }
-    if (!s) { try { s = pluckName(S[fn](k), 0); } catch (e) { s = null; } }
-    if (s) return s;
+  const S = (typeof window !== 'undefined') ? window[STREET_GLOBAL] : null;
+  if (!S || typeof S.nameAt !== 'function') {
+    if (!warnedNoStreets) {
+      warnedNoStreets = true;
+      console.warn('[address] window.' + STREET_GLOBAL + '.nameAt("x,z") is not available — ' +
+        'EVERY street name in this city is the numbered-grid fallback (source:"grid"). ' +
+        'Expected /src/streets/index.js to have mounted and assigned window.' + STREET_GLOBAL + '.');
+    }
+    return null;
   }
-  return null;
+  try {
+    return cleanName(S.nameAt(rx + ',' + rz));
+  } catch (e) {
+    if (!warnedThrew) {
+      warnedThrew = true;
+      console.warn('[address] window.' + STREET_GLOBAL + '.nameAt("' + rx + ',' + rz +
+        '") threw — falling back to the numbered grid (source:"grid"):', e);
+    }
+    return null;
+  }
 }
 
 /* Which way does the road at (rx,rz) run, as seen from a building standing

@@ -55,6 +55,14 @@ function ensureStyle() {
     border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04)}
   .tr-lic div.on{border-color:rgba(126,214,160,.6);background:rgba(60,140,95,.14)}
   .tr-lic b{color:#f0d78a}
+  /* The build-time line under a licence. Its own rule because the .mist class
+     is scoped to the pick bar, and a card that quietly inherits body colour is
+     how a warning stops reading as one.
+     WARNING: this comment lives INSIDE a template literal. A backtick here
+     ends the string and the rest of ensureStyle() becomes a tagged template —
+     still valid syntax, so BOTH gates stay green while the panel throws
+     "... is not a function" at runtime. That happened while writing this. */
+  .tr-lic .note{color:var(--mist,#8f87a3)} .tr-lic .note b{color:#e8dfc9}
   .tr-line{border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:.5rem .6rem;margin-bottom:.5rem;
     background:rgba(255,255,255,.035)}
   .tr-line .hd{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
@@ -177,17 +185,41 @@ export function onTileClick(k) {
 }
 
 /* ── render ──────────────────────────────────────────────────────────────── */
+/* 🚦 WHAT THE LICENCE ACTUALLY GETS YOU, ON THE LICENCE — AND BEFORE IT IS
+   BOUGHT. A licence is worth exactly what it lets you build, and a Rail
+   Operator that lets you build a Train Station your crews will not take on is
+   worth 10,000,000 🔥 of nothing. That shipped: the station was 1:32:57 against
+   a 40:00 free-crew ceiling, the order gate refused it on the click, and NOTHING
+   on this panel or at City Hall said a word about it beforehand.
+   THE NUMBER IS THE ORDER GATE'S OWN (`C.crewNote` → node-city's bldCrewNote →
+   bldDuration → ECON), so this can never advertise a build the gate would
+   refuse, and the refusal sentence it prints is byte-identical to the one the
+   click produces — one string, one source (bldCeilingMsg).
+   ⚠ Prints nothing at all when the host hands back null (no economy module ⇒
+     everything places instantly). A hand-written "about half an hour" here
+     would be a second source of truth for a derived number — Rule 4. */
+function crewLine(stopType) {
+  let n = null;
+  try { n = C.crewNote ? C.crewNote(stopType) : null; } catch (e) { n = null; }
+  if (!n || n.exempt || !n.sec) return '';
+  if (n.needsCo) return '<br><span class="dn">' + esc(n.sentence) + '</span>';
+  return '<br><span class="note">⏱ Each one takes <b>' + esc(n.label) + '</b> to raise' +
+    (n.over ? ' — your 🏗 Construction Co. takes the job; the free crew will not.' : '.') + '</span>';
+}
 function licenceCard(modeId) {
   const m = ECON.modes[modeId];
   const own = R.hasLicence(modeId);
   const price = C.opsPrice(m.licence);
   const label = modeId === 'rail' ? 'Rail Operator' : 'Bus Company';
+  const thing = modeId === 'rail' ? 'Train Station' : 'Bus Stop';
   return '<div class="' + (own ? 'on' : '') + '">' + m.ico + ' <b>' + label + '</b><br>' +
     (own
       ? '<span class="up">Licence held.</span> You may lay ' +
         (modeId === 'rail' ? 'track, build stations and run trains.' : 'stops and run buses.')
       : '🔒 Not owned — buy it at City Hall (Just Business → Found a Business)' +
-        (price ? ' for <b>' + price.toLocaleString('en-US') + ' 🔥</b>' : '') + '.') +
+        (price ? ' for <b>' + price.toLocaleString('en-US') + ' 🔥</b>' : '') +
+        '. It buys the right to build ' + esc(thing) + 's, nothing else.') +
+    crewLine(m.stopType) +
     '</div>';
 }
 

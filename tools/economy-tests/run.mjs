@@ -551,6 +551,8 @@ const SABOTAGES = [
   'refund-blind', 'refund-raw', 'save-gone', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
   'sell-pump', 'settle-requested', 'stale-deliver', 'stale-refund', 'stale-workplaces',
   'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind', 'ich-cost',
+  // 🚆 round0 §f — the same defect's second instance, in the transit set.
+  'ts-cost', 'track-timed',
   // ── COVER2, the four fixes a revert could delete under a green gate ──
   'save-noborder', 'load-nolvl', 'gate-ungated', 'cap-race', 'place-nobld',
   'beat-dead', 'offline-nosweep', 'licence-paywalled',
@@ -1142,6 +1144,93 @@ const stripComments = (src) => {
           secs + 's <= ' + C.municipal.maxSec + 's) — no outside trade at all without one',
           secs <= C.municipal.maxSec, secs + 's, over by ' + (secs - C.municipal.maxSec) + 's');
     }
+  }
+
+  /* (f) 🚆 THE SAME DEFECT, SECOND INSTANCE — THE WHOLE TRANSIT SET.
+     ------------------------------------------------------------------------
+     §e above pinned the Highway Interchange after it shipped 551s over the
+     free-crew ceiling. The identical bug was sitting in /src/transit at the
+     same time and nobody looked: a Train Station cost 240🔥/90⛓/30📦 ⇒
+     flattened 480 ⇒ 5577s (1:32:57) against 2400s (40:00) — 3177s over. The
+     order gate refused it, so the 10,000,000 🔥 Rail Operator licence bought
+     the right to build a thing the city could not build; `minStops` is 2, so
+     without stations there is no rail line at all and the licence bought
+     literally nothing. Fixing ONE building is how the second instance got
+     here, so this asserts the WHOLE SET, off the shipped entries.
+     TWO DIFFERENT ASSERTIONS, because there are two different kinds of thing:
+       · 🚏 STOPS AND 🚆 STATIONS are BUILDINGS — they must land under the free
+         crew's ceiling, exactly as §e asserts for the interchange, and for the
+         same reason: none of the three earns a Cinder (transit is
+         `net = min(0, fares − upkeep)` by construction), so "Cinder earners
+         live above the ceiling" cannot justify any of them being up there.
+       · 🛤️ TRACK IS LINEAR INFRASTRUCTURE and must be EXEMPT, not merely
+         short. At 223s (3:43) it was comfortably under the ceiling and still
+         unusable: a rail line is a continuous RUN of track between stations,
+         each tile took a crew slot, and on a fresh city eight tiles attempted
+         laid ONE and refused seven. Being under the ceiling is not the test —
+         being drawn rather than built is.
+     ⚠ ONLY LEVEL 1 IS ASSERTED. A station's L2/L3 upgrades sit above the
+       ceiling (1:11:59 / 3:26:11) and that is correct: an upgrade needs a
+       building that already stands, so a Construction Co. requirement there
+       takes nothing away from a purchase already made. It is the FIRST one
+       that is a trap.
+     Prove both can fail: ECON_TEST_SABOTAGE=ts-cost puts the shipped-broken
+     240/90/30 back on the way in; =track-timed drops railtrack back out of
+     exemptTypes. */
+  {
+    let HTML = null;
+    try { HTML = readFileSync(join(here, '../../public/node-city/index.html'), 'utf8'); }
+    catch (e) { HTML = null; }
+    /* ⚠ NOT `loose('const BUILDINGS')` — §e's scrape cannot see these. The
+       transit hook block registers its three entries as separate
+       `BUILDINGS.busstop = { … }` assignments thousands of lines below the
+       literal, which is the whole point of that block being additive. Each is
+       read on its own; every field touched here is a numeric literal. */
+    const entry = (name) => {
+      const txt = srcBlockAfter(HTML, 'BUILDINGS.' + name + ' =');
+      if (!txt) return null;
+      try {
+        const scope = new Proxy({}, { has: () => true,
+          get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+        return new Function('__s', 'with (__s) { return (' + txt + '); }')(scope);
+      } catch (e) { return null; }
+    };
+    const SHOP = [['busstop', 'Bus Stop'], ['trainstation', 'Train Station']];
+    console.log('\n  🚆 TRANSIT SET — free crew ceiling ' + C.municipal.maxSec +
+                's (' + hms(C.municipal.maxSec) + ')\n');
+    for (const [id, label] of SHOP) {
+      const raw = entry(id);
+      const cost = (SABOTAGE === 'ts-cost' && id === 'trainstation')
+        ? { cinder: 240, metal: 90, supplies: 30 } : (raw && raw.cost);
+      /* A scrape that matched nothing must fail HARD — round0b's rule, and §e's.
+         A renamed entry would otherwise pass vacuously and hide this defect. */
+      chk('read BUILDINGS.' + id + '.cost out of node-city/index.html',
+          !!cost && Object.keys(cost).length > 0, JSON.stringify(raw && raw.cost));
+      if (!cost) continue;
+      /* Same flatten bldProfile() uses: cinder 1:1, everything else ×costResWeight. */
+      const flat = Object.keys(cost).reduce((v, k) =>
+        v + (k === 'cinder' ? +cost[k] : (+cost[k] || 0) * C.costResWeight), 0);
+      /* Asserted, never assumed: a `gen` or `svc` appearing on one of these
+         would make a cost-only profile a fiction — and would also mean transit
+         had started paying, which sim.js forbids. */
+      chk('…and a ' + label + ' still earns nothing (cost is the whole profile)',
+          !raw.gen && !raw.svc, JSON.stringify({ gen: raw.gen, svc: raw.svc }));
+      const secs = seconds({ cost: flat });
+      console.log('    ' + label.padEnd(15) + JSON.stringify(cost).padEnd(40) +
+                  ' flat ' + String(flat).padStart(4) + ' ⇒ ' + String(secs).padStart(5) + 's  ' +
+                  hms(secs) + (secs <= C.municipal.maxSec ? '' : '   OVER'));
+      chk('🚆 a ' + label + ' is buildable by the FREE Municipal Works crew (' +
+          secs + 's <= ' + C.municipal.maxSec + 's) — it is what the licence BUYS',
+          secs <= C.municipal.maxSec, secs + 's, over by ' + (secs - C.municipal.maxSec) + 's');
+    }
+    const exempt = SABOTAGE === 'track-timed'
+      ? C.exemptTypes.filter(t => t !== 'railtrack') : C.exemptTypes;
+    chk('🛤️ railtrack is EXEMPT like road — a rail line is a RUN of it, and a ' +
+        'crew slot per sleeper (223s each, cap 200) laid 1 of 8 on a fresh city',
+        exempt.indexOf('railtrack') >= 0, JSON.stringify(exempt));
+    /* The exemption is the reason nothing above asserts a railtrack duration:
+       an exempt type never reaches the curve at all (bldProfile returns null),
+       so a number for it would be a number the game never computes. */
   }
 
   /* The feature's own off switch. ECON.construction.on = 0 turns every timer
@@ -5158,6 +5247,12 @@ const stripComments = (src) => {
     bldNextFreeSec: fnText(NC, 'bldNextFreeSec'),
     bldCrewBusyMsg: fnText(NC, 'bldCrewBusyMsg'),
     bldCoHint:      fnText(NC, 'bldCoHint'),
+    /* 🔒 The ceiling refusal's one shared sentence. tryPlace CALLS it, so a
+       sandbox without it throws the moment §8 exercises REFUSAL 2 — which is
+       exactly what happened the minute it was extracted out of the three
+       hand-written copies. Lifted, never stubbed: a stub would let the round
+       pass while the shipped string said anything at all. */
+    bldCeilingMsg:  fnText(NC, 'bldCeilingMsg'),
     tryPlace:       fnText(NC, 'tryPlace'),
   };
   /* Each entry below re-commits the pre-fix source for one defect, on the way

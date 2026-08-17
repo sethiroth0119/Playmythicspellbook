@@ -21286,6 +21286,48 @@ function bldCoHint() {
   } catch (e) {}
   return 'Buy a 🏗 Construction Co. at City Hall and site it first.';
 }
+/* 🔒 THE WHOLE CEILING SENTENCE, IN ONE PLACE. Only the LEAD differs between
+   callers ("A Train Station takes 1:32:57 to raise", "That upgrade takes
+   1:11:59") — everything after it is one string, so the ceiling and the hint
+   can never disagree between the shop card, the placement gate and the upgrade
+   gate. There were three hand-written copies of this tail before a fourth
+   caller (the transit licence card) needed it, which is one more than the
+   file's own "two copies of a player-facing message drift" rule allows. */
+function bldCeilingMsg(lead) {
+  const C = bldCfg(); if (!C) return '';
+  return '🔒 ' + lead + ' — more than the free Municipal Works crew will take on (' +
+         fmtCountdown(C.municipal.maxSec) + '). ' + bldCoHint();
+}
+/* 🚦 THE SAME ANSWER, ASKED *BEFORE* THE PLAYER SPENDS — for any surface that
+   promises a building it might not be able to deliver. A licence card, a
+   catalogue row, a tutorial chip: they all sell something whose real price
+   includes "and a crew that will take the job", and a refusal that only ever
+   arrives on the click is how a 10,000,000 🔥 Rail Operator became a licence
+   for a Train Station the city could not raise.
+
+   🔴 IT IS THE GATE'S OWN READING, NOT A SECOND ONE. Same bldDuration(), same
+      bldSpeed(), same bldOpType() exemption, same bldCoTiles() test and the
+      same bldCeilingMsg() sentence the refusal itself uses — so a surface that
+      prints this can never promise something the gate would refuse, and a
+      retune of cost, curve or ceiling moves both together.
+   ⚠ `over` vs `needsCo`: over the ceiling is a fact about the BUILDING; needing
+     a Co. is a fact about THIS CITY RIGHT NOW. A card that says "needs a
+     Construction Co." to a player who already has one standing is noise.
+   null ⇒ no config / no economy module, i.e. the place-instantly degrade path.
+   A caller must render nothing rather than invent a duration (Rule 4). */
+function bldCrewNote(type, lvl, kind) {
+  const C = bldCfg(); if (!C) return null;
+  const sec = bldDuration(type, lvl | 0 || 1, kind | 0, bldSpeed());
+  if (sec <= 0) return { sec: 0, label: '', exempt: true, over: false, needsCo: false, sentence: '' };
+  const over = bldOpType(type) === null && sec > C.municipal.maxSec;
+  const needsCo = over && !bldCoTiles().length;
+  const def = BUILDINGS[type];
+  return { sec, label: fmtCountdown(sec), exempt: false, over, needsCo,
+           ceilingSec: C.municipal.maxSec, ceilingLabel: fmtCountdown(C.municipal.maxSec),
+           sentence: needsCo
+             ? bldCeilingMsg('A ' + ((def && def.name) || type) + ' takes ' + fmtCountdown(sec) + ' to raise')
+             : '' };
+}
 
 /* What payCost() ACTUALLY charged, in the shape the refund path has to give
    back. THE HONEST-REFUND BASIS: cancelling reads this record and never
@@ -23836,8 +23878,7 @@ $('btn-upgrade').onclick = guardedAction(async () => {
        new build, and an upgrade is where the long durations actually live. */
     if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
     if (bldOpType(t.type) === null && durSec > bldCfg().municipal.maxSec && !bldCoTiles().length) {
-      toast('🔒 That upgrade takes ' + fmtCountdown(durSec) + ' — more than the free Municipal Works crew will take on (' +
-            fmtCountdown(bldCfg().municipal.maxSec) + '). ' + bldCoHint(), 'bad');
+      toast(bldCeilingMsg('That upgrade takes ' + fmtCountdown(durSec)), 'bad');
       return;
     }
     /* ⏳ ASKED BEFORE payCost AND BEFORE THE RESERVATION. Upgrades are where the
@@ -28594,8 +28635,7 @@ function opsDecorateShop() {
       return;
     }
     if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldCoTiles().length) {
-      toast('🔒 A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise — more than the free Municipal Works crew will take on (' +
-            fmtCountdown(C.municipal.maxSec) + '). ' + bldCoHint(), 'bad');
+      toast(bldCeilingMsg('A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise'), 'bad');
       return;
     }
     /* THE RESERVATION IS TAKEN HERE — synchronously, in the same turn as the
@@ -28688,8 +28728,7 @@ function bldDecorateShop() {
        shop, enter place mode) has to be REPLACED, not run alongside this. */
     card.onclick = () => {
       closeBuildShop();
-      toast('🔒 A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise — more than the free Municipal Works crew will take on (' +
-            fmtCountdown(C.municipal.maxSec) + '). ' + bldCoHint(), 'bad');
+      toast(bldCeilingMsg('A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise'), 'bad');
       /* No argument: the Co. is one licence among many at City Hall and the
          player may not have decided which one they want. opsCityHall(type)
          deep-links a purchase; this is a signpost. */
@@ -29486,17 +29525,54 @@ try { window.__ncOps = OPS_API; } catch (e) {}
    the 2,000,000 🔥 / 10,000,000 🔥 licences are a different currency at a
    different scale and are charged once, at City Hall. A stop is deliberately
    cheap and a station deliberately is not: the interesting decision is WHERE,
-   and a shelter you have to save up for is a decision about money instead. */
+   and a shelter you have to save up for is a decision about money instead.
+
+   🔴 THESE COSTS ARE ALSO THE BUILD TIMES, AND THAT SHIPPED WRONG ONCE.
+   Not one of the three earns a Cinder — transit is a SUBSIDY by construction
+   (`net = min(0, fares − upkeep)`, /src/transit/tuning.js), and none of them
+   carries `gen` or `svc`. So for all three the COST CHANNEL IS THE ENTIRE
+   INPUT to ECON's duration curve: flatten the dict at costResWeight 2 and
+   that number alone decides how long the crew is on site. Retuning a price
+   here silently retunes a build time, and a build time over
+   ECON.construction.municipal.maxSec is a REFUSAL, not a longer wait.
+   ⚠ Do NOT answer a future overshoot with a branch in bldDuration() or with an
+     exemption for a building that is not linear infrastructure. The duration
+     is derived; the cost is the only honest dial. tools/economy-tests/run.mjs
+     round0 §f scrapes these three entries and fails if any of them climbs back
+     over the free-crew ceiling — the same guard §e put on the interchange. */
 BUILDINGS.busstop = {
   name: 'Bus Stop', ico: '🚏', cost: { cinder: 22, metal: 6 },
   pop: 0, crew: 0, maxLvl: 3, noEnter: true, transitLicence: 'bus',
   desc: 'A shelter, a bench and a route blade. Put them where people already are — a stop only earns its keep if homes AND jobs sit within a couple of tiles of it. Add it to a route in the Transit Authority.',
 };
+/* 🚆 240🔥/90⛓/30📦 WAS UNBUILDABLE, AND NOTHING SAID SO UNTIL THE CLICK.
+   Flattened that was 240 + 2*(90+30) = 480 ⇒ 5577s = 1:32:57 against the free
+   Municipal Works ceiling of 2400s (40:00) — 3177s over, measured, not
+   estimated. The order gate refused it, so a player who had just paid
+   10,000,000 🔥 for the Rail Operator licence owned a licence for a building
+   they could not raise: `minStops` is 2, so no station means no rail line at
+   all, ever, and the licence bought precisely nothing.
+   It was priced like a Cinder EARNER (arena 3h23, gasstation 1h53) while it
+   earns nothing and can only ever cost you money — which is backwards, and is
+   the same mistake the Highway Interchange shipped with (see its entry).
+   100 + 2*(30+10) = 180 ⇒ 2022s (33:42), which lands in the starter shelf
+   beside barracks 33m36 with 6 minutes of headroom, and still leaves a station
+   ~5x a bus stop and by far the most expensive thing in the transit set — the
+   "a station is deliberately not cheap" intent above survives intact.
+   ⚠ L2/L3 stay ABOVE the ceiling (1:11:59 / 3:26:11) and that is CORRECT, not
+     an oversight: an upgrade needs a building that already stands and already
+     runs, so a Construction Co. requirement there costs the player nothing
+     they have already bought. It is only the FIRST one that is a trap. */
 BUILDINGS.trainstation = {
-  name: 'Train Station', ico: '🚆', cost: { cinder: 240, metal: 90, supplies: 30 },
+  name: 'Train Station', ico: '🚆', cost: { cinder: 100, metal: 30, supplies: 10 },
   pop: 2, crew: 2, powerNeed: 0.35, maxLvl: 3, cap: 8, transitLicence: 'rail',
   desc: 'Platform, canopy, ticket hall and a departure board. Lay track up to it and it becomes a stop on a rail line — one station moves a crowd no number of buses can.',
 };
+/* 🛤️ TRACK IS THE RAIL NETWORK'S ROAD, and it is exempt from the construction
+   timer for exactly the reason `road` is — see ECON.construction.exemptTypes,
+   which is where that decision lives (never a branch here). Measured before
+   the exemption: 223s (3:43) each, on one of only two free crew slots, and a
+   run of 8 tiles laid ONE and refused seven. cap is 200. */
 BUILDINGS.railtrack = {
   name: 'Rail Track', ico: '🛤️', cost: { cinder: 9, metal: 4 },
   pop: 0, maxLvl: 1, cap: 200, noEnter: true, noRoadNeed: true, transitLicence: 'rail',
@@ -31835,6 +31911,15 @@ function animate() {
          keep in step with the licence a player actually bought. */
       opsOwned: (t) => transitOwns(t),
       opsPrice: (t) => transitPrice(t),
+      /* 🚦 WHAT IT TAKES TO RAISE ONE, asked by the licence card BEFORE the
+         player spends 2,000,000 / 10,000,000 🔥 on a licence for it. The order
+         gate's own reading (bldDuration → the ECON curve, bldCoTiles, and the
+         one shared refusal sentence), never a second one — a module cannot see
+         `BUILDINGS` or `bldCfg` anyway (the globals trap), and a licence that
+         promises a building the gate would refuse is the defect this closes.
+         null ⇒ no economy module; the card then prints no timing at all rather
+         than inventing one. */
+      crewNote: (t) => { try { return bldCrewNote(t, 1, 0); } catch (e) { return null; } },
     });
   } catch (e) { console.warn('[Transit] not mounted (non-fatal):', e); }
   try {
@@ -32612,6 +32697,13 @@ function animate() {
                  ? bldProfile(type, lvl | 0 || 1, kind | 0, speedMul || 1) : null),
       timeFor: (type, lvl, kind, speedMul) => (typeof bldDuration === 'function'
                  ? bldDuration(type, lvl | 0 || 1, kind | 0, speedMul || 1) : null),
+      /* 🚦 WHAT A PRE-PURCHASE SURFACE IS TOLD — and the seam that makes "the
+         licence says the same thing the refusal says" a testable claim rather
+         than a promise. `.sentence` here and the toast tryPlace throws are the
+         SAME STRING from the same bldCeilingMsg(); a driver asserts equality
+         instead of eyeballing two screenshots. */
+      crewNote: (type, lvl, kind) => (typeof bldCrewNote === 'function'
+                 ? bldCrewNote(type, lvl | 0 || 1, kind | 0) : null),
       /* ⚠ NOT a local "just drop the record". Cancelling REFUNDS what was paid,
          and that arithmetic belongs to the order package next to the code that
          charged it — a second copy here would be a second refund policy. */

@@ -734,7 +734,22 @@ export const ECON = {
                fuel:1, planks:1, supplies:1, rations:1, goods:1, ingots:1, ammo:1,
                reagents:2, medicine:2, remedies:2, components:2,
                memoryShards:3, corruptedEssence:3 },
-    exemptTypes: ['road', 'wall', 'streetlight', 'lot'],  // + anything def.decor
+    /* 🚧 LINEAR INFRASTRUCTURE — laid by the RUN, not raised one at a time.
+       Exempt ⇒ instant, no timer, no crew slot (+ anything def.decor).
+       ⚠ THE TEST FOR THIS LIST IS "IS IT DRAWN, OR IS IT BUILT?", and it is not
+         "is it cheap". A cheap BUILDING belongs on the shelf with the rest of
+         them; what belongs here is the stuff a player paints across the map in
+         one gesture — the curve puts a road at about a minute, and paving a
+         grid then becomes twenty countdowns against two free crew slots.
+       🛤️ `railtrack` was MISSING and it was the same defect the Train Station
+         had, one tile further down: 9🔥/4⛓ ⇒ 223s (3:43) each, cap 200, and a
+         rail line is a CONTINUOUS RUN of it between stations. Measured on a
+         fresh city: eight tiles attempted, ONE laid, seven refused with
+         "Every crew is working — 2 / 2 on site". Track is the rail network's
+         road and it is auto-tiled off its neighbours exactly like road, so it
+         is drawn, not built. It also means the 10,000,000 🔥 Rail Operator
+         licence was blocked twice over. */
+    exemptTypes: ['road', 'wall', 'streetlight', 'lot', 'railtrack'],
     opSec:     900,        // every op_* is a flat 15 min. Ops carry cost:{}
                            // (index.html:21491) so no cost curve applies, and
                            // reading OPS_MOCK_PRICE would be a Rule-4 breach.

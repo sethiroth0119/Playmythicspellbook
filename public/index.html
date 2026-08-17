@@ -76293,6 +76293,16 @@ function processTombstoneDrops(state) {
             // is round 2 of this bug: the helper matched one spelling in one pile, so
             // a tributed corpse still ended up as hand 1 + grave 1. `_unparkGraveCardFor`
             // now carries the reconciler's full `mine()` predicate — see its header.
+            // ⚠ ROUND 4 — BOTH HALVES OF THIS FIX MUST BE MUTATIONS. This branch's
+            // only real driver is `_renderBattleImmediateImpl`, which calls
+            // `processTombstoneDrops(s)` and DISCARDS the return; the renderer never
+            // writes `App.state` back. So for three rounds the unpark (a spread) and
+            // the body removal (a filter) were both thrown away in the shipped game
+            // while `side.hand.push(ret.card)` above — a mutation — landed, which is
+            // the one-unit/two-cards/two-zones shape verbatim. `_unparkGraveCardFor`
+            // now splices the piles in place and the `_leftTheBoard` drop below
+            // splices `state.units` in place. The `state =` here is kept only so the
+            // return-value callers still read naturally; it is NOT what does the work.
             state = _unparkGraveCardFor(state, u);
             u._bounced = true;
             _leftTheBoard.push(u.id);
@@ -76361,9 +76371,21 @@ function processTombstoneDrops(state) {
   }
   // ↩ Drop the bodies the Phoenix aura sent to hand / the Realm Deck. Done here,
   // after the sweep, because the loop above iterates `state.units` directly.
-  if (_leftTheBoard.length) {
+  // 🔴 ROUND 4 — SPLICE, DON'T REBUILD. This was
+  //   `state = { ...state, units: (state.units||[]).filter(…) }`
+  // which is invisible to the ONLY production caller: `_renderBattleImmediateImpl`
+  // runs `processTombstoneDrops(s)` and throws the return away, so the corpse stayed
+  // in the live `state.units` while `side.hand.push(ret.card)` — a mutation — landed.
+  // `_reconcileUnitCards` cannot rescue it either: it ignores `_bounced` entirely and
+  // the corpse's `_cardFiled === 'grave'` takes the "dead and already filed: do
+  // nothing" path, so the pile card is never re-stripped. Mutating the array the
+  // renderer is holding is the only removal that reaches production.
+  if (_leftTheBoard.length && Array.isArray(state.units)) {
     const gone = new Set(_leftTheBoard);
-    state = { ...state, units: (state.units || []).filter(u => u && !gone.has(u.id)) };
+    for (let i = state.units.length - 1; i >= 0; i--) {
+      const b = state.units[i];
+      if (b && gone.has(b.id)) state.units.splice(i, 1);
+    }
   }
   // ⚰️ Fire queued on-grave triggers now that the death sweep is complete.
   // Skips anything a Phoenix / revive brought back to life mid-sweep.
@@ -87724,7 +87746,26 @@ function _costIsEmpty(cost) {
    reconciler's alive-branch `strip()`: the post-condition is "this unit's card is
    in no pile", not "one fewer entry".
 
-   Returns a NEW state when it removes something, the same state otherwise. */
+   🔴 ROUND 4 — IT REMOVES **IN PLACE**, AND THAT IS THE WHOLE POINT.
+   This used to return `{ ...state, [owner]: { ...side, graveyard: g2, void: v2 } }`
+   and leave the input untouched. That only works for a caller that KEEPS the return
+   value, and the caller that matters does not exist in that world: the production
+   death sweep is driven by `_renderBattleImmediateImpl`, which calls
+   `processTombstoneDrops(s)` and DISCARDS the result (and that renderer never
+   re-commits `App.state` — it reads `const s = App.state` and only ever mutates).
+   So every rebuilt pile this helper produced was thrown on the floor in the real
+   game, while the mutations around it survived: the Phoenix branch's
+   `side.hand.push(ret.card)` landed, the unpark did not, and the shipped build still
+   showed hand 1 + graveyard 1 for one unit. MEASURED at that tree through the real
+   renderer: grave 1 ["goblin"] AND hand 1 ["goblin"], ids in BOTH zones = 1.
+   Splicing the live arrays makes the removal survive BOTH call styles. We still
+   return `state` (the same object) so the three `state = _unparkGraveCardFor(state, u)`
+   callers keep reading correctly. This is the house convention in this sweep, not a
+   new one — `state.tombstones.push(…)`, `state.log = …`, `state._phoenixTurnRevives++`
+   and `u.alive = …` are all already mutations for exactly the same reason.
+   ⚠ Do NOT "clean this up" back into a spread. A pure version of this function is
+   silently inert in production and the test that guards it must therefore be driven
+   the way the renderer drives it — see `__mg.testLifecycle`. */
 function _unparkGraveCardFor(state, unit) {
   try {
     if (!state || !unit || !unit.id || !unit.owner) return state;
@@ -87735,12 +87776,15 @@ function _unparkGraveCardFor(state, unit) {
     const mine = (c) => !!c && ((!!iid && c.instanceId === iid) || c.instanceId === tomb
       || (!!unit._cardPileIid && c.instanceId === unit._cardPileIid)
       || c._summonedUnitId === unit.id);
-    const grave = Array.isArray(side.graveyard) ? side.graveyard : [];
-    const vd    = Array.isArray(side.void)      ? side.void      : [];
-    const g2 = grave.filter(c => !mine(c));
-    const v2 = vd.filter(c => !mine(c));
-    if (g2.length === grave.length && v2.length === vd.length) return state;
-    return { ...state, [unit.owner]: { ...side, graveyard: g2, void: v2 } };
+    // Walk backwards so the splice cannot skip the entry after a match, and strip
+    // EVERY match rather than the first — same post-condition as the reconciler's
+    // `strip()`: "this unit's card is in no pile", not "one fewer entry".
+    for (const key of ['graveyard', 'void']) {
+      const arr = side[key];
+      if (!Array.isArray(arr)) continue;
+      for (let i = arr.length - 1; i >= 0; i--) if (mine(arr[i])) arr.splice(i, 1);
+    }
+    return state;
   } catch (e) { return state; }
 }
 
@@ -90266,12 +90310,26 @@ try {
        reconciler could never strip the stranded entry either. AFTER: pile 0, hand 1,
        nothing in both zones, in all four.
 
+       🔴 ROUND 3 — THIS CASE WAS GREEN ON A DEFECT THAT SHIPPED.
+       It used to drive the sweep as `App.state = processTombstoneDrops(App.state)`.
+       No production code calls it that way: `_renderBattleImmediateImpl` runs
+       `processTombstoneDrops(s)` and throws the return away, and never re-commits
+       `App.state`. Both halves of the fix were written as state-RETURNING steps (a
+       `{ ...state }` spread in `_unparkGraveCardFor`, a `.filter()` on `state.units`),
+       so in the real game both were discarded while `side.hand.push(ret.card)` — a
+       mutation — landed. MEASURED at that tree through the REAL renderer: grave 1
+       ["goblin"] AND hand 1 ["goblin"], ids in BOTH zones = 1, corpse present = true,
+       grave view 1. The sweep now removes by SPLICE and the call below discards the
+       return like the renderer does, so a pure-but-inert fix cannot pass here again.
+
        TO SEE IT GO RED: delete the `state = _unparkGraveCardFor(state, u);` line in
        that branch (the pile keeps the card while a copy sits in hand), delete the
        `_leftTheBoard.push(u.id)` line (the corpse survives the sweep and the next
-       `App.state = …` re-files it), or narrow `_unparkGraveCardFor`'s `mine()` back
+       `App.state = …` re-files it), narrow `_unparkGraveCardFor`'s `mine()` back
        to `c._summonedUnitId === unit.id` / drop its `void` sweep — plain stays green
-       and the tribute, selfsac and void cases go red. */
+       and the tribute, selfsac and void cases go red — or revert either half to the
+       pure form (`return { ...state, … }` / `state = { ...state, units: filter }`),
+       which goes red in ALL FOUR because this case no longer keeps the return. */
     const phxHandCase = (label, kill, opts) => {
       opts = opts || {};
       try {
@@ -90305,7 +90363,14 @@ try {
           const pileNow = (App.state.player[opts.void ? 'void' : 'graveyard'] || []);
           const spelling = pileNow.map(c => (c && c.instanceId && /^tomb_/.test(c.instanceId)) ? 'tomb'
             : (c && c._summonedUnitId) ? 'summonTag' : 'iid').join(',') || '(none)';
-          App.state = processTombstoneDrops(App.state);
+          // 🔴 THE PRODUCTION CALL CONVENTION — return value DISCARDED, exactly as
+          // `_renderBattleImmediateImpl` does it (`processTombstoneDrops(s)`), and no
+          // `App.state = <the return>`. Writing `App.state = processTombstoneDrops(…)`
+          // here is what made round 3 green on a defect that shipped: the fix worked
+          // only for a caller that keeps the return, and no production caller does.
+          // Keep it this way. If someone "tidies" it back, this case stops testing
+          // the game.
+          processTombstoneDrops(App.state);
           App.state = { ...App.state };               // the re-commit that used to re-file
           const P = App.state.player;
           const gIds = (P.graveyard || []).map(c => c && c.id);

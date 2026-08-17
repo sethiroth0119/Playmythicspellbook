@@ -202479,22 +202479,39 @@ function _osimMergeExtraction(a, b) { if (!a || typeof a !== 'object') return (b
      `OSIM_CORE_PHASES` is the one requirement table with no price attached to it,
      so that is where "resources ×10" lands cleanly.
 
-   ⚠ REPAIR INVERTS AT THIS SCALE AND THAT IS A REPORTED FINDING, NOT AN OVERSIGHT.
-     `_osimRepairCost` derives its cash leg from `craft`, so a pumpjack repair goes
-     32₵ → 315₵ against 170₵ of output — repairing becomes irrational and players
-     will stop. `_osimCondFactor` floors at 0.25, so an unrepaired machine never
-     stops; it just runs 4× slower forever at zero recurring cost. That is
-     DIRECTIONALLY what the ask wanted (less Cinder printed) but it makes the
-     repair button a trap. Fixing it properly means dropping the 0.6 coefficient
-     in `_osimRepairCost` to 0.06, which is a retune and not this round's ×10.
+   ⚠ REPAIR INVERTED AT THIS SCALE. THAT IS FIXED NOW — READ THIS BEFORE RETUNING.
+     `_osimRepairCost` derived its cash leg from `craft`, an INPUT cost, so it
+     went ×10 against output that did not: 32₵ → 315₵ on a pumpjack against 170₵
+     of wear cycle. Repairing became irrational and players would simply stop,
+     which made a shipped button a trap.
+     ⚠ The retune this block originally proposed — 0.6 → 0.06 — would NOT have
+       closed it, and that is worth knowing before anyone tries it again. 180₵ of
+       that 315₵ is the STEEL PIPE. Part amounts were correctly not multiplied but
+       part PRICES were, so the pipe leg went ×10 too, and one pipe costs more
+       than a pumpjack's whole wear cycle is worth (180₵ vs 170₵). With the cash
+       coefficient at literally zero the old shape still inverts.
+     What actually closed it is at `_osimRepairCost` below: the price is now a
+     fixed share (`OSIM_REPAIR_SHARE`) of the OUTPUT VALUE the repair restores,
+     and maintenance no longer takes a part. Being denominated in output, it
+     cannot invert again whatever any cost table is multiplied by. Measured
+     out/in: 2.83–2.88× on all four machines at 25 / 50 / 75% condition.
+     Pinned by `node tools/economy-tests/repairtrap.mjs`, whose sabotage switch
+     rebuilds this exact trap on demand.
 
-   🔴 THE INVARIANT THIS DOES NOT REACH, STATED SO NOBODY RE-DERIVES IT AS A WIN.
-   Every Cinder COST in this field is optional and every Cinder INCOME is not —
-   provable by reading two functions: `_osimCondFactor` floors at 0.25 so
-   production never requires a repair, and every `_osimEarn` call site is fed by a
-   machine buffer that fills from nothing. No multiplier on any cost table can
-   bound that; only the OUTPUT side can. ×10 raises the entry fee tenfold and
-   leaves the steady state exactly where it was. */
+   🔴 THE INVARIANT THIS BLOCK DID NOT REACH — AND WHAT NOW REACHES IT.
+   As written, ×10 could not bound the steady state: every Cinder COST in this
+   field was optional and every Cinder INCOME was not, because `_osimCondFactor`
+   floored at 0.25 and so production never required a repair. A neglected machine
+   ran 4× slower FOREVER, free, and still delivered every unit.
+   That floor is gone. 0% condition is now 0 output — `_osimEffRate` returns
+   Infinity and both the live loop and the offline catch-up treat it as stopped —
+   and wear is per-unit, so every machine walks itself down to a stall. Repair is
+   therefore NOT optional any more, and because it is priced as a share of output
+   it is a recurring sink proportional to income rather than a one-time entry fee:
+   the steady-state faucet now runs at (1 − OSIM_REPAIR_SHARE) of gross.
+   ⚠ That is the only lever in here that touches the STEADY STATE. ×10 raises the
+     entry fee tenfold and, on its own, still leaves the steady state where it
+     was. Do not re-derive a cost-table multiplier as a fix for the faucet. */
 const OSIM_PARTS = { pipe: { name: 'Steel Pipe', cost: 180, ic: '🔧' }, motor: { name: 'Motor', cost: 380, ic: '⚙️' }, valve: { name: 'Valve', cost: 260, ic: '🎚️' }, drillbit: { name: 'Drill Bit', cost: 480, ic: '🔩' } };
 const OSIM_MACHINES = {
   pumpjack: { name: 'Pumpjack', ic: '🛢️', parts: { pipe: 2, motor: 1 }, craft: 300, kind: 'producer', produces: 'oil', rate: 2.4, cap: 25, shape: 'pump', desc: 'Pumps crude oil from underground reserves.' },
@@ -202695,7 +202712,23 @@ function _osimDecayPerUnit() { return _osimRawDecayPerUnit() * [1, 0.75, 0.55, 0
 function _osimResonanceMul() { return 1 + 0.15 * _osimState.prestige + 0.05 * _osimState.research.tuning + _osimResearchSum('speed'); }
 function _osimMarketMult() { return 1 + 0.1 * _osimState.research.market + _osimResearchSum('prices'); }
 function _osimAutoCollect() { if (_osimState.research.automation >= 1) return true; for (const k in OSIM_RESEARCH) { const r = OSIM_RESEARCH[k]; if (r && r.custom && r.type === 'autocollect' && (_osimState.research[k] | 0) >= 1) return true; } return false; }
-function _osimCondFactor(m) { return Math.max(0.25, m.condition / 100); }
+/* 🔧 CONDITION → SPEED, and the reason there is no floor under it any more.
+   This used to be `Math.max(0.25, m.condition / 100)`. A floor of 0.25 meant a
+   machine you never repaired NEVER STOPPED: it ran 4× slower forever, at zero
+   recurring cost, and still delivered every unit it would otherwise have
+   delivered — just later. That made neglect a strictly dominant strategy no
+   matter what a repair cost, because the do-nothing player paid nothing and
+   collected anyway. It is also the specific reason the ×10 pass could report
+   that "every Cinder COST in this field is optional and every Cinder INCOME is
+   not": with a floor, production never requires a repair.
+   0 condition now means 0 output. Wear is per-UNIT (see OSIM_DECAY_PER_UNIT), so
+   every machine reliably walks itself down to a stall — a machine at 1% is
+   already 100× slow and the next unit it manages takes it to 0. Maintenance is
+   therefore no longer optional, which is what makes `_osimRepairCost` below a
+   real, recurring, output-proportional Cinder sink instead of a button nobody
+   presses. `_osimEffRate` turns a 0 here into Infinity, and both the live loop
+   and the offline catch-up treat a non-finite rate as "this unit is stopped". */
+function _osimCondFactor(m) { const c = Math.max(0, Math.min(100, +m.condition || 0)); return c <= 0 ? 0 : c / 100; }
 // ⏱ Real-time production: the per-machine `rate` (seconds) is scaled up to HOURS
 // by prodSecondsMul (admin-tunable, default 7500 ≈ 1 unit / 5h at Tier I). Higher
 // tier (upgrades), blueprints (Deep Core), R&D tuning + prestige, and a powered
@@ -202703,11 +202736,77 @@ function _osimCondFactor(m) { return Math.max(0.25, m.condition / 100); }
 function _osimProdMul() { try { const a = Forge.blackRiver && Forge.blackRiver.extraction; if (a && typeof a.prodSecondsMul === 'number' && a.prodSecondsMul > 0) return a.prodSecondsMul; } catch (e) {} return 7500; }
 // 🛰️ Connected-node bonus — +2% base + 1% per node power LEVEL (faster production).
 function _osimNodeBonus() { if (!_osimState || !_osimState.nodeId) return 0; try { const node = _osimNodeById(_osimState.nodeId); if (!node) return 0; if (typeof ensureNodeProgress === 'function') ensureNodeProgress(node); const lvl = Math.max(0, node.nodeLevel | 0); return 0.02 + lvl * 0.01; } catch (e) { return 0; } }
-function _osimEffRate(m) { return OSIM_MACHINES[m.type].rate * _osimProdMul() * OSIM_TIER[m.tier].rateMul / (_osimResonanceMul() * (1 + _osimNodeBonus()) * _osimCondFactor(m)); }
+// Seconds per unit. A stalled unit (0% condition) returns Infinity rather than
+// dividing by zero, so every caller can test it with a plain isFinite().
+function _osimEffRate(m) { const cf = _osimCondFactor(m); if (!(cf > 0)) return Infinity; return OSIM_MACHINES[m.type].rate * _osimProdMul() * OSIM_TIER[m.tier].rateMul / (_osimResonanceMul() * (1 + _osimNodeBonus()) * cf); }
 function _osimEffCap(m) { return Math.round(OSIM_MACHINES[m.type].cap * OSIM_TIER[m.tier].capMul * (_osimState.research.automation >= 2 ? 1.1 : 1)); }
 function _osimUpgradeCost(m) { const b = OSIM_MACHINES[m.type].craft; return m.tier === 1 ? Math.round(b * 1.6) : Math.round(b * 3.4); }
 function _osimUpgradeBP(m) { return m.tier === 1 ? 'tier2' : 'tier3'; }
-function _osimRepairCost(m) { return { pipe: 1, cash: Math.max(5, Math.round((100 - m.condition) / 100 * OSIM_MACHINES[m.type].craft * 0.6)) }; }
+/* 💰 What one unit out of this machine is actually WORTH once it is sold: the
+   Foundation Reserve price less the Foundation levy, and for a converter less
+   the input it burns, valued at the same Reserve it could have been sold into
+   instead. Deliberately reads OSIM_RESERVE_PRICE and not `_osimSellPrice`: the
+   latter multiplies in Market Insight and a live price spike, and pricing
+   maintenance off those would claw back the two things that are supposed to be
+   upside. Reading the flat Reserve means research and spikes only ever improve
+   the payback, never worsen it. */
+function _osimMachineNetUnitValue(def) {
+  if (!def) return 0.5;
+  if (def.kind === 'generator') return Math.max(0.5, def.amount || 1); // already Cinder; no levy is taken on it
+  const keep = 1 - _osimSellSkim();
+  let v = (OSIM_RESERVE_PRICE[def.produces] || 0) * keep;
+  if (def.consumes) v -= (OSIM_RESERVE_PRICE[def.consumes] || 0) * (def.ratio || 1) * keep;
+  return Math.max(0.5, v);
+}
+/* Gross Cinder that the condition a repair restores is worth: damage repaired →
+   units, through the wear rate, at that unit's net value.
+   ⚠ `_osimRawDecayPerUnit`, NOT `_osimDecayPerUnit`. Read through the RESEARCHED
+     rate, Hardened Components would buy proportionally more units per repair AND
+     be charged proportionally more for it, netting the perk to exactly zero.
+     Against the raw rate the perk pays: same price, more units. */
+function _osimRepairValue(m) {
+  const def = OSIM_MACHINES[m.type]; if (!def) return 0;
+  const pts = Math.max(0, 100 - (+m.condition || 0));
+  return (pts / Math.max(0.01, _osimRawDecayPerUnit())) * _osimMachineNetUnitValue(def);
+}
+/* 🔧 REPAIR PRICE — denominated in OUTPUT, which is the half of this economy the
+   ×10 pass deliberately did not touch.
+   🔴 WHY THE OLD FORMULA HAD TO GO. It was
+        { pipe: 1, cash: max(5, round((100 - condition)/100 * craft * 0.6)) }
+      and `craft` is an INPUT cost, so it went ×10 with the rest of the entry
+      prices while OSIM_RESERVE_PRICE stayed exactly where it was. Repairing
+      25% → 100% and selling the wear cycle that buys (75 condition ÷ 1.5 decay
+      = 50 units) at the Reserve after the levy came out at:
+        pumpjack ₵315 in / ₵170 out 0.54×   drill    ₵369 / ₵298  0.81×
+        refinery ₵473 / ₵213        0.45×   deepcore ₵720 / ₵170  0.24×
+      i.e. a shipped button that no rational player should ever press.
+   ⚠ AND WHY DROPPING THE 0.6 COEFFICIENT WOULD NOT HAVE BEEN ENOUGH — the
+     retune the ×10 block suggested. ₵180 of that ₵315 is the STEEL PIPE. Part
+     AMOUNTS were correctly left alone by the ×10, but part PRICES were not, so
+     the pipe leg went ×10 too, and one pipe alone costs more than a pumpjack's
+     entire wear cycle is worth (₵180 vs ₵170). With the cash leg at literally
+     zero the old shape still inverts. The pipe is gone from maintenance for
+     that reason; it remains a BUILD requirement, where a ×10 price sits against
+     a ×10 entry fee and the relationship is intact.
+   The price is now a fixed share of the output the repair restores, so it can
+   never invert again no matter what any cost table is multiplied by, and it is
+   the same share for every machine because you are buying the same thing.
+   ⚠ `pipe: 0` is kept, not removed: `_OSIM.repairMachine` and
+     `_osimRenderInspector` both read `rc.pipe`, and an undefined there would
+     turn `parts.pipe -= rc.pipe` into NaN and silently destroy the player's
+     parts. Zero is the safe way to say "no parts". */
+const OSIM_REPAIR_SHARE = 0.35;
+function _osimRepairCost(m) {
+  const def = OSIM_MACHINES[m.type];
+  const pts = Math.max(0, 100 - (+m.condition || 0));
+  if (!def || pts <= 0) return { pipe: 0, cash: 0 };
+  /* Ceiling: the retired craft-derived price for the same damage. It can only
+     bind if an admin tunes registry.decayPerUnit down toward zero (which would
+     make a repair restore an unbounded number of units), and it guarantees this
+     formula is never more expensive than the one it replaces. */
+  const ceil = pts / 100 * def.craft * 0.6;
+  return { pipe: 0, cash: Math.max(5, Math.round(Math.min(_osimRepairValue(m) * OSIM_REPAIR_SHARE, ceil))) };
+}
 function _osimMachineUnlocked(k) { const d = OSIM_MACHINES[k]; if (d.bpKey) return !!_osimState.blueprints[d.bpKey]; return true; }
 function _osimEarn(amt) { _osimState.cash += amt; _osimState.stats.earned += amt; _osimGainLog.push({ t: Date.now(), amt }); if (_osimGainLog.length > 500) _osimGainLog.shift(); }
 function _osimIncomePerMin() { const cut = Date.now() - 60000; let s = 0; for (const g of _osimGainLog) if (g.t >= cut) s += g.amt; return s; }
@@ -202823,13 +202922,18 @@ function _osimRebuildPlacedOfType(type) { const list = _osimState.placed.filter(
 
 // ── Loop + labels ───────────────────────────────────────────────────────────
 function _osimPlace3DLabel(el, wx, wy, wz) { const T = window.THREE, v = new T.Vector3(wx, wy, wz); v.project(_osimCamera); if (v.z > 1) { el.style.display = 'none'; return; } el.style.display = 'block'; el.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px'; el.style.top = ((-v.y * 0.5 + 0.5) * innerHeight) + 'px'; }
-function _osimUpdateMLabel(m, def, cap) { _osimPlace3DLabel(m.label, m.group.position.x, 5.6, m.group.position.z); const full = Math.floor(m.buffer) >= cap, worn = m.condition < 40, pr = def.produces === 'cinder' ? '₵' : def.produces; m.label.classList.toggle('full', full); m.label.classList.toggle('worn', worn); m.label.innerHTML = def.name + ' <span style="opacity:.6">' + OSIM_TIER[m.tier].label + '</span><br><span class="b">' + Math.floor(m.buffer) + '/' + cap + ' ' + pr + '</span>' + (worn ? ' <span style="color:#ff8a8a">⚠' + Math.round(m.condition) + '%</span>' : ''); }
+function _osimUpdateMLabel(m, def, cap) { _osimPlace3DLabel(m.label, m.group.position.x, 5.6, m.group.position.z); const full = Math.floor(m.buffer) >= cap, stalled = m.condition <= 0, worn = m.condition < 40, pr = def.produces === 'cinder' ? '₵' : def.produces; m.label.classList.toggle('full', full); m.label.classList.toggle('worn', worn); m.label.innerHTML = def.name + ' <span style="opacity:.6">' + OSIM_TIER[m.tier].label + '</span><br><span class="b">' + Math.floor(m.buffer) + '/' + cap + ' ' + pr + '</span>' + (stalled ? ' <span style="color:#ff8a8a">⏹ STALLED</span>' : worn ? ' <span style="color:#ff8a8a">⚠' + Math.round(m.condition) + '%</span>' : ''); }
 // Advance one machine by `secs` seconds of production (shared by live loop + offline catch-up).
-function _osimStepMachine(m, secs) { const def = OSIM_MACHINES[m.type]; if (!def) return; const cap = _osimEffCap(m), rate = _osimEffRate(m); let produced = 0, active = false; let guard = 0; m.timer += secs; while (m.timer >= rate && m.buffer < cap && guard++ < 100000) { if (def.consumes) { if (_osimState.inv[def.consumes] >= def.ratio) { _osimState.inv[def.consumes] -= def.ratio; m.buffer += 1; produced++; active = true; } else { m.timer = rate; break; } } else { m.buffer += 1; produced++; active = true; } m.timer -= rate; } if (m.buffer >= cap) m.timer = 0; if (produced && _osimState.stats.produced[def.produces] != null) _osimState.stats.produced[def.produces] += produced; if (produced) m.condition = Math.max(0, m.condition - _osimDecayPerUnit() * produced); if (_osimAutoCollect() && m.buffer >= cap) _osimCollectOne(m); return produced; }
+/* ⚠ The stalled early-out zeroes `m.timer` rather than just returning. Without
+   it, a 0%-condition machine would keep BANKING offline seconds it cannot spend,
+   and the moment the player repaired it the while-loop below would cash the
+   whole backlog out in one frame — a stalled unit would pay better than a
+   maintained one. Stalled time is simply lost, which is the point of stalling. */
+function _osimStepMachine(m, secs) { const def = OSIM_MACHINES[m.type]; if (!def) return; const cap = _osimEffCap(m), rate = _osimEffRate(m); if (!isFinite(rate)) { m.timer = 0; return 0; } let produced = 0, active = false; let guard = 0; m.timer += secs; while (m.timer >= rate && m.buffer < cap && guard++ < 100000) { if (def.consumes) { if (_osimState.inv[def.consumes] >= def.ratio) { _osimState.inv[def.consumes] -= def.ratio; m.buffer += 1; produced++; active = true; } else { m.timer = rate; break; } } else { m.buffer += 1; produced++; active = true; } m.timer -= rate; } if (m.buffer >= cap) m.timer = 0; if (produced && _osimState.stats.produced[def.produces] != null) _osimState.stats.produced[def.produces] += produced; if (produced) m.condition = Math.max(0, m.condition - _osimDecayPerUnit() * produced); if (_osimAutoCollect() && m.buffer >= cap) _osimCollectOne(m); return produced; }
 function _osimAnimate() { _osimRaf = requestAnimationFrame(_osimAnimate); let dt; try { dt = Math.min(_osimClock.getDelta(), 0.1); } catch (e) { dt = 0.016; } const t = _osimClock.elapsedTime;
-  try { for (const m of _osimState.placed) { const def = OSIM_MACHINES[m.type]; if (!def) continue; const cap = _osimEffCap(m), rate = _osimEffRate(m); let active = false;
-    if (def.consumes) { if (m.buffer < cap) { m.timer += dt; active = true; if (m.timer >= rate) { m.timer = 0; if (_osimState.inv[def.consumes] >= def.ratio) { _osimState.inv[def.consumes] -= def.ratio; m.buffer += 1; if (_osimState.stats.produced[def.produces] != null) _osimState.stats.produced[def.produces]++; _osimRefreshTop(); } } } }
-    else { if (m.buffer < cap) { m.timer += dt; active = true; if (m.timer >= rate) { m.timer = 0; m.buffer += 1; if (_osimState.stats.produced[def.produces] != null) _osimState.stats.produced[def.produces]++; } } }
+  try { for (const m of _osimState.placed) { const def = OSIM_MACHINES[m.type]; if (!def) continue; const cap = _osimEffCap(m), rate = _osimEffRate(m), stalled = !isFinite(rate); let active = false; if (stalled) m.timer = 0; // same no-banking rule as _osimStepMachine
+    if (def.consumes) { if (!stalled && m.buffer < cap) { m.timer += dt; active = true; if (m.timer >= rate) { m.timer = 0; if (_osimState.inv[def.consumes] >= def.ratio) { _osimState.inv[def.consumes] -= def.ratio; m.buffer += 1; if (_osimState.stats.produced[def.produces] != null) _osimState.stats.produced[def.produces]++; _osimRefreshTop(); } } } }
+    else { if (!stalled && m.buffer < cap) { m.timer += dt; active = true; if (m.timer >= rate) { m.timer = 0; m.buffer += 1; if (_osimState.stats.produced[def.produces] != null) _osimState.stats.produced[def.produces]++; } } }
     if (active) m.condition = Math.max(0, m.condition - _osimDecayPerUnit() * (dt / Math.max(1, _osimEffRate(m))));
     if (_osimAutoCollect() && m.buffer >= cap) { if (_osimCollectOne(m)) _osimRefreshTop(); }
     const worn = m.condition < 60;
@@ -203064,10 +203168,10 @@ function _osimRenderNetwork() { _O('ptitle').textContent = 'Planetary Reconstruc
   else { if (_osimState.core.done) { h += '<div class="osim-winbox"><h1>◆ THE CORE IS LIT</h1><p>The Cinder Core resonates across the network. Reconstruction Cycle ' + _osimState.prestige + ' is complete. Reignite to begin a new cycle — blueprints, research and your custom content carry over.</p><div class="statline" style="justify-content:center">Current resonance: <b>+' + Math.round((_osimResonanceMul() - 1) * 100) + '%</b> · After reignite: <b style="color:#ff9d6a">+' + Math.round(((1 + 0.15 * (_osimState.prestige + 1) + 0.05 * _osimState.research.tuning) - 1) * 100) + '%</b></div><button class="osim-buy ember" onclick="_OSIM.prestige()" style="padding:11px 24px;font-size:14px">🔥 Reignite — Begin New Cycle</button></div>'; } else { const ph = OSIM_CORE_PHASES[_osimState.core.phase]; h += '<div class="statline">Channel resources through ' + OSIM_CORE_PHASES.length + ' phases to reignite the Cinder Core.</div><div class="osim-card ember"><div class="row"><h3>◆ ' + ph.name + '</h3><span class="have">Phase ' + (_osimState.core.phase + 1) + ' / ' + OSIM_CORE_PHASES.length + '</span></div><div class="desc">' + ph.lore + '</div>'; for (const [res, need] of Object.entries(ph.req)) { const got = _osimState.core.contributed[res] || 0, have = res === 'aza' ? _osimState.aza : _osimState.inv[res], pct = Math.min(100, Math.round(got / need * 100)), label = res === 'aza' ? 'Aza Coin ◈' : res; h += '<div class="osim-sellrow" style="margin-top:8px"><div class="info">Requires <b>' + need + ' ' + label + '</b><div class="qty">Contributed ' + got + '/' + need + ' · hold ' + have + '</div><div class="pbar"><div style="width:' + pct + '%"></div></div></div><button class="osim-buy ember" ' + ((have < 1 || got >= need) ? 'disabled' : '') + ' onclick="_OSIM.contributeCore(\'' + res + '\')">Contribute</button></div>'; } h += '</div>'; } }
   _O('pbody').innerHTML = h; }
 function _osimOpenInspector(ref) { _osimInspectRef = ref; _osimCurrentPanel = 'inspect'; _O('modal').classList.add('on'); _osimRenderInspector(); }
-function _osimRenderInspector() { const m = _osimInspectRef; if (!m) return; const def = OSIM_MACHINES[m.type], cap = _osimEffCap(m), buf = Math.floor(m.buffer), cond = Math.round(m.condition); _O('ptitle').textContent = def.name; _O('psub').textContent = 'FIELD UNIT · TIER ' + OSIM_TIER[m.tier].label; const rc = _osimRepairCost(m), canRepair = cond < 99 && (_osimState.parts.pipe || 0) >= rc.pipe && _osimState.cash >= rc.cash, refund = Math.round(def.craft * 0.5), pr = def.produces === 'cinder' ? 'Cinder' : def.produces; let up = '';
+function _osimRenderInspector() { const m = _osimInspectRef; if (!m) return; const def = OSIM_MACHINES[m.type], cap = _osimEffCap(m), buf = Math.floor(m.buffer), cond = Math.round(m.condition); _O('ptitle').textContent = def.name; _O('psub').textContent = 'FIELD UNIT · TIER ' + OSIM_TIER[m.tier].label; const rc = _osimRepairCost(m), canRepair = cond < 99 && _osimState.cash >= rc.cash, refund = Math.round(def.craft * 0.5), pr = def.produces === 'cinder' ? 'Cinder' : def.produces; const rVal = Math.round(_osimRepairValue(m)), rUnits = Math.round(Math.max(0, 100 - m.condition) / Math.max(0.01, _osimRawDecayPerUnit())), stalled = !isFinite(_osimEffRate(m)); let up = '';
   if (m.tier < 3) { const bp = _osimUpgradeBP(m), cost = _osimUpgradeCost(m), hasBP = _osimState.blueprints[bp], nt = m.tier + 1; up = '<div class="osim-card" style="margin-top:14px"><div class="row"><h3>Upgrade → Tier ' + OSIM_TIER[nt].label + '</h3><span class="price">₵' + cost + '</span></div><div class="reqs">Tier ' + OSIM_TIER[nt].label + ': capacity ×' + OSIM_TIER[nt].capMul + ', speed ~' + (1 / OSIM_TIER[nt].rateMul).toFixed(2) + '×<br>License: ' + (hasBP ? '<span class="osim-badge owned">' + OSIM_BLUEPRINTS[bp].name + '</span>' : '<span class="osim-badge lock">' + OSIM_BLUEPRINTS[bp].name + ' (locked)</span>') + '</div><div class="row"><span class="have">' + (!hasBP ? 'Unlock the license in Shop' : _osimState.cash >= cost ? 'Ready' : 'Not enough Cinder') + '</span><button class="osim-buy ' + (m.tier === 1 ? 'green' : 'aza') + '" ' + ((hasBP && _osimState.cash >= cost) ? '' : 'disabled') + ' onclick="_OSIM.upgradeMachine()">Upgrade</button></div></div>'; } else up = '<div class="empty" style="margin-top:14px">★ Maximum tier reached.</div>';
   _O('pbody').innerHTML = '<div class="statline"><div>Tier: <b>' + OSIM_TIER[m.tier].label + '</b></div><div>Output: <b>' + _osimMachineOutTxt(def, m) + '</b></div><div>Buffer: <b>' + buf + '/' + cap + '</b></div></div>' +
-    '<div class="osim-card"><div class="row"><h3>🔧 Condition</h3><span class="have" style="color:' + (cond < 40 ? '#ff8a8a' : cond < 70 ? '#f0c75e' : '#9fffc4') + '">' + cond + '%</span></div><div class="pbar condbar" style="width:100%"><div style="width:' + cond + '%"></div></div><div class="reqs" style="margin-top:10px">Worn units run slower. Repair: <b>1 Steel Pipe + ₵' + rc.cash + '</b> (you have ' + (_osimState.parts.pipe || 0) + ')</div><div class="row"><span class="have">' + (cond >= 99 ? 'In top condition' : canRepair ? 'Ready to repair' : 'Need a pipe + Cinder') + '</span><button class="osim-buy" ' + (canRepair ? '' : 'disabled') + ' onclick="_OSIM.repairMachine()">Repair</button></div></div>' +
+    '<div class="osim-card"><div class="row"><h3>🔧 Condition</h3><span class="have" style="color:' + (cond < 40 ? '#ff8a8a' : cond < 70 ? '#f0c75e' : '#9fffc4') + '">' + cond + '%</span></div><div class="pbar condbar" style="width:100%"><div style="width:' + cond + '%"></div></div><div class="reqs" style="margin-top:10px">' + (stalled ? '<b style="color:#ff8a8a">⏹ STALLED — this unit has worn out and stopped producing entirely.</b><br>' : 'Worn units run slower, and a unit that reaches 0% stops completely.<br>') + 'Repair: <b>₵' + rc.cash + '</b>' + (cond < 99 ? ' — restores <b>' + rUnits + ' ' + pr + '</b> of output, worth about <b>₵' + rVal + '</b> at the Reserve.' : '') + '</div><div class="row"><span class="have">' + (cond >= 99 ? 'In top condition' : canRepair ? 'Ready to repair' : 'Not enough Cinder') + '</span><button class="osim-buy" ' + (canRepair ? '' : 'disabled') + ' onclick="_OSIM.repairMachine()">Repair</button></div></div>' +
     '<div class="osim-sellrow" style="margin-top:14px"><div class="info">Stored in this unit<div class="qty">' + buf + ' ' + pr + ' ready</div></div><button class="osim-buy green" ' + (buf < 1 ? 'disabled' : '') + ' onclick="_OSIM.collectFromInspector()">Collect ' + buf + '</button></div>' +
     '<div class="osim-sellrow"><div class="info">Reposition / Decommission<div class="qty">Sell-back refund: ₵' + refund + '</div></div><div style="display:flex;gap:6px"><button class="osim-buy" onclick="_OSIM.moveMachine()">Move</button><button class="osim-buy danger" onclick="_OSIM.sellBackMachine()">Sell ₵' + refund + '</button></div></div>' + up; }
 function _osimRenderSystem() { _O('ptitle').textContent = 'System'; _O('psub').textContent = 'STATS · MODELS · ADMIN · SAVE'; const isAdminU = (typeof isAdmin === 'function') && isAdmin(); let h = '<div class="tabs"><div class="osim-tab ' + (_osimSysTab === 'stats' ? 'act' : '') + '" onclick="_OSIM.setSysTab(\'stats\')">📊 Stats</div>' + (isAdminU ? '<div class="osim-tab ' + (_osimSysTab === 'models' ? 'act' : '') + '" onclick="_OSIM.setSysTab(\'models\')">🧊 Models</div><div class="osim-tab ' + (_osimSysTab === 'admin' ? 'act' : '') + '" onclick="_OSIM.setSysTab(\'admin\')">🛠️ Admin</div>' : '') + '<div class="osim-tab ' + (_osimSysTab === 'save' ? 'act' : '') + '" onclick="_OSIM.setSysTab(\'save\')">💾 Save</div></div>';
@@ -203211,7 +203315,9 @@ window._OSIM = {
   setSysTab: t => { _osimSysTab = t; _osimRenderSystem(); },
   collectFromInspector: () => { const def = OSIM_MACHINES[_osimInspectRef.type]; const a = _osimCollectOne(_osimInspectRef); if (a) { _osimSfx('collect'); _osimToast('+' + a + ' ' + (def.produces === 'cinder' ? 'Cinder' : def.produces), 'good'); _osimRefreshTop(); _osimRenderInspector(); } },
   upgradeMachine: () => { const m = _osimInspectRef; if (m.tier >= 3) return; const bp = _osimUpgradeBP(m), cost = _osimUpgradeCost(m); if (!_osimState.blueprints[bp] || _osimState.cash < cost) return; if (typeof spendCinders === 'function') spendCinders(cost); else _osimState.cash -= cost; m.tier++; _osimApplyTierVisual(m); _osimSfx('upgrade'); _osimRefreshTop(); _osimRenderInspector(); _osimToast(OSIM_MACHINES[m.type].name + ' → Tier ' + OSIM_TIER[m.tier].label, 'good'); },
-  repairMachine: () => { const m = _osimInspectRef, rc = _osimRepairCost(m); if (m.condition >= 99 || (_osimState.parts.pipe || 0) < rc.pipe || _osimState.cash < rc.cash) return; _osimState.parts.pipe -= rc.pipe; if (typeof spendCinders === 'function') spendCinders(rc.cash); else _osimState.cash -= rc.cash; m.condition = 100; _osimSfx('repair'); _osimRefreshTop(); _osimRenderInspector(); _osimToast(OSIM_MACHINES[m.type].name + ' repaired → 100%', 'good'); },
+  // rc.pipe is 0 today (see _osimRepairCost) but the two lines are kept honest so
+  // a future parts leg cannot be reintroduced without its own affordability gate.
+  repairMachine: () => { const m = _osimInspectRef, rc = _osimRepairCost(m); if (m.condition >= 99 || (_osimState.parts.pipe || 0) < (rc.pipe || 0) || _osimState.cash < rc.cash) return; _osimState.parts.pipe -= (rc.pipe || 0); if (typeof spendCinders === 'function') spendCinders(rc.cash); else _osimState.cash -= rc.cash; m.condition = 100; _osimSfx('repair'); _osimRefreshTop(); _osimRenderInspector(); _osimToast(OSIM_MACHINES[m.type].name + ' repaired → 100%', 'good'); },
   moveMachine: () => { _osimState.moveRef = _osimInspectRef; _osimState.buildType = null; _O('modal').classList.remove('on'); _O('buildtext').textContent = '↔️ Moving ' + OSIM_MACHINES[_osimInspectRef.type].name + ' — click an empty tile'; _O('buildbanner').classList.add('on'); },
   sellBackMachine: () => { const m = _osimInspectRef; if (_osimCollectOne(m)) _osimRefreshTop(); const refund = Math.round(OSIM_MACHINES[m.type].craft * 0.5); _osimState.cash += refund; m.tile.userData.occupied = false; _osimScene.remove(m.group); m.label.remove(); _osimState.placed = _osimState.placed.filter(p => p !== m); _osimSfx('sell'); _osimRefreshTop(); _O('modal').classList.remove('on'); _osimToast('Decommissioned ' + OSIM_MACHINES[m.type].name + ' → +₵' + refund, 'good'); },
   pickModel: slot => { _O('file' + (slot === 'core' ? 'Core' : 'Node')).click(); },

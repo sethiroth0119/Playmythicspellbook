@@ -127,7 +127,23 @@ html,body{ width:100%; height:100%; overflow:hidden; background:#05040a; }
 body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 /* NOTE: <canvas> is a REPLACED element — `inset:0` alone does NOT stretch it
    (it falls back to the intrinsic 300x150). Always size it explicitly. */
-#stage{ position:fixed; top:0; left:0; width:100vw; height:100vh; display:block; }
+#stage{ position:fixed; top:0; left:0; width:100vw; height:100vh; display:block;
+        /* THE OPENING (see THE REVEAL) scales this element. transform-origin is
+           the camera's optical centre, NOT 50% 50% — CONFIG.viewShiftY lifts the
+           projection, so pulling back about the box centre slides the horizon.
+           `will-change` is what promotes the canvas to its own compositor layer,
+           which is the entire reason the opening survives a blocked main thread. */
+        transform-origin:50% 46%; will-change:transform; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE VEIL — the darkness the board is revealed out of.
+   Opacity only, on its own layer, so it animates on the COMPOSITOR. It must
+   never take a pointer event: input is live from the first frame and the
+   opening is not allowed to stand in front of it. */
+#veil{ position:fixed; inset:0; z-index:9; pointer-events:none; opacity:0;
+       will-change:opacity; contain:strict;
+       background:radial-gradient(118% 88% at 50% 46%,
+         rgba(3,2,7,.72) 0%, rgba(2,1,5,.94) 44%, #010104 76%); }
 
 /* summon card — DOM overlay in the prototype; becomes a textured plane in Three.js */
 .flycard{
@@ -194,13 +210,15 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 </head>
 <body>
 <canvas id="stage"></canvas>
+<!-- the darkness the opening pulls out of — see THE REVEAL -->
+<div id="veil" aria-hidden="true"></div>
 <!-- The demo hand + hint are STANDALONE ONLY. Embedded, the real hand is
      the game's own HUD mounted as transparent DOM over this canvas. -->
 <div class="hand" id="hand"></div>
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v120x0';
+<script>window.BB_BUILD='v120x1';
 "use strict";
 /* 🔌 BBX — THE STAGE HOOK SEAM.
    The board page is a classic (non-module) script, so it cannot `import`.
@@ -858,7 +876,13 @@ function resize(){
   /* the baked terrain and the cached pick polygons are in SCREEN space, so a
      viewport change invalidates both. Cleared here rather than re-baked, so a
      drag-resize costs one bake at the end instead of one per resize event. */
-  if (typeof TERRAIN !== 'undefined' && TERRAIN){ TERRAIN.key = ''; TERRAIN.poly = null; }
+  if (typeof TERRAIN !== 'undefined' && TERRAIN){
+    TERRAIN.key = ''; TERRAIN.poly = null;
+    /* the polys are pure projection, so they can be rebuilt here for the cost
+       of 56 tilePoly() calls (~0.1 ms) instead of waiting on the next bake —
+       which matters now that the bake can be a scheduled frame or two away. */
+    seedPickPolys();
+  }
 }
 addEventListener('resize', resize);
 
@@ -1109,6 +1133,11 @@ function buildStage(){
   TERRAIN.key = ''; TERRAIN.poly = null;
   _dressKey = '';                       /* re-scatter the set dressing too */
   units = units.filter(u => u.persist);
+  /* …and re-seed the pick polys immediately. The bake used to be the only
+     thing that filled TERRAIN.poly, and it is now scheduled two frames out;
+     without this the board would be clickable but mis-picking for those two
+     frames. See seedPickPolys. */
+  seedPickPolys();
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2051,6 +2080,12 @@ function tileMaterial(x, z, lv){
 }
 
 function bakeTerrain(){
+  /* ⏱ THE LOAD SCHEDULE owns which frame each bake runs on — see LOADQ. This
+     is the FIRST line so a declined frame mutates nothing at all: TERRAIN.cv
+     keeps the last good bake (null on the first two frames, which drawBoard
+     already guards), TONE.pending stays set, and the bake happens intact on
+     the frame the schedule opened for it. */
+  if (!loadAllow('terrain')) return;
   sampleGroundTint();
   toneReset();                       /* new map / new heightfield → new loop */
   const key = terrainKey();
@@ -5481,10 +5516,221 @@ function drawSurfaceFx(T){
     ctx.restore();
   }
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   ⏱ THE LOAD SCHEDULE — why the board used to freeze when a battle opened.
+   ══════════════════════════════════════════════════════════════════════════
+   MEASURED, standalone at 1280x800 DPR 1, an 8x7 map with 10 units and the
+   dark-forest location, driving frame() by hand (three cold runs):
+
+     board:init handler (buildStage + heightfield + defs + units)   0.6-0.8 ms
+     frame 0                                              269 / 305 / 390 ms
+       ├─ vista world bake (sky+land+art+post+world)         94 / 106 / 118
+       ├─ bakeTerrain #1                                    107 / 130 / 145
+       ├─ vista grade, first call                            56 /  56 /  59
+       └─ everything else (sprites, pylons, dressing, fx)         ~10
+     frame 1  (bakeTerrain #2 — tone lock iteration 2)      59 / 59 / 65
+     frame 2  (bakeTerrain #3 — tone lock iteration 3)      69 / 71 / 68
+     ─────────────────────────────────────────────────────────────────
+     435-523 ms of blocking, of which ONE UNBROKEN BLOCK of 269-390 ms.
+
+   Ruled OUT by the same instrumentation, so nobody re-audits them:
+     backdrop plate decode + buildPlate   0.2 ms  (and already in an onload)
+     sprite decode / applyDefs+applyUnits 1.2 ms  with ten 1 MB stills
+     isPixelArt probe                     0.0 ms  (already budgeted 4/frame)
+     layout / buildHeightfield / braziers  <0.1 ms
+
+   So there is no single item to delete: three bakes that all have to happen.
+   What was wrong is that they all happened in the SAME frame, and the two
+   refinement bakes in the two frames straight after it — 435 ms in which the
+   browser never got a turn, so no input was dispatched and rAF was starved,
+   which is why an opening animation would have frozen along with everything
+   else.
+
+   THIS METERS THEM: at most one heavy item per frame, in the order the board
+   needs them, with the pure-refinement work pushed off the first-interactive
+   path entirely.
+
+     step 0  nothing heavy   ~2 ms   ← input is live HERE, and the opening starts
+     step 1  vista bake      ~106 ms
+     step 2  bakeTerrain #1  ~130 ms ← the board is now correct
+     step 3  vista grade     ~59 ms  ← …and correctly graded
+     step 12 bakeTerrain #2  ~59 ms  ┐ the tone lock's closed-loop refinement.
+     step 20 bakeTerrain #3  ~68 ms  ┘ It converges worstErr to ~2.4 luma and
+             nothing else depends on it, so it is DEFERRED rather than paid
+             before the player can act — 127 ms off the critical path.
+
+   ⚠ THE SCHEDULE IS BY FRAME ORDINAL, NOT BY CLOCK. A wall-clock schedule
+   cannot be verified in a pane where rAF does not fire, and it degrades badly
+   on a slow device: at 20 fps a 400 ms hold would still be metering work the
+   board wanted at frame 3. Ordinals stretch with the device, which is the
+   behaviour that is actually wanted for a refinement.
+   ⚠ Nothing here changes WHAT is drawn. Every gate below only decides WHICH
+   FRAME a pass first runs on; the pass itself is untouched, and once the
+   schedule retires (`LOADQ.on = false`) every call site is exactly what it
+   was. A gate that is never opened would be a permanently broken board, so
+   step 21 retires the whole thing unconditionally. */
+const LOADQ = { on:false, step:-1, terrainAt:[2,12,20], marks:[] };
+function loadBegin(){
+  /* -1 because frame() increments BEFORE it reads: the first frame is step 0. */
+  LOADQ.on = true; LOADQ.step = -1; LOADQ.marks.length = 0;
+}
+/* one call per item per frame; `what` is 'vista' | 'terrain' | 'grade'. */
+function loadAllow(what){
+  if (!LOADQ.on) return true;
+  const s = LOADQ.step;
+  if (what === 'vista')   return s >= 1;
+  if (what === 'grade')   return s >= 3;
+  if (what === 'terrain') return LOADQ.terrainAt.indexOf(s) >= 0;
+  return true;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   🎬 THE REVEAL — the board pulled back out of darkness.
+   ══════════════════════════════════════════════════════════════════════════
+   The owner's brief: "a zooming out from darkness like Yu-Gi-Oh Master Duel".
+
+   ⚠ IT IS NOT DRIVEN BY frame(). That is the whole design decision. rAF is
+   starved by exactly the work this is covering — an opening animated inside
+   the render loop would stutter on the same 130 ms bakes it is there to hide,
+   and an animation that hides a freeze is still a freeze. So it is TWO
+   compositor-thread animations (transform on #stage, opacity on #veil, and
+   nothing else: no filter, no box-shadow, no width) started BEFORE the first
+   bake. Chrome runs those off the main thread, so the pull-back keeps moving
+   through a 130 ms block. The schedule above is the other half — the blocks
+   are now short enough that the two agree about what the frame looks like.
+
+   ⚠ IT DOES NOT GATE INPUT. #veil is pointer-events:none, and no handler
+   consults REVEAL before dispatching. Controls are live from the first frame
+   after board:init — measured at ~2 ms, against 435 ms before.
+
+   ⚠ AND IT MOVES THE PIXELS UNDER THE CURSOR. While the canvas is scaled, the
+   point the player aimed at is not the point the projection expects, and a
+   pick that is off by most of a tile is SILENT — the click still routes
+   through board:tileClick into the game (see the note on pickTile). unzoom()
+   below undoes the transform for every pick, reading the live matrix off the
+   element so there is one source of truth for the curve rather than a JS
+   copy of the easing that could drift from the CSS. */
+const REVEAL = {
+  DUR: 900, SCALE: 1.16, ORIGIN_Y: 0.46,
+  run:false, reduced:false, anims:[], startedAt:0, gen:0
+};
+function revealReduced(){
+  try { return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch (e) { return false; }
+}
+function revealStart(){
+  const veil = document.getElementById('veil');
+  if (!veil || !cv || typeof cv.animate !== 'function') return;
+  /* ⚠ DO NOT RESTART AN OPENING THAT HAS BARELY BEGUN. Boot starts one and
+     board:init starts the real one — and embedded those are milliseconds
+     apart, because the host sends init on `board:ready`, which is posted in
+     the same block as the boot call below. Restarting there is invisible. The
+     guard is for the case where it would NOT be: an init that lands after the
+     veil has started to lift would slam the screen back to black, which reads
+     as a flicker rather than as an opening. Under 200 ms the darkness is still
+     at full hold (see the veil keyframes), so continuing is indistinguishable
+     from restarting and cannot flicker by construction. */
+  if (REVEAL.run && REVEAL.startedAt &&
+      ((window.performance && performance.now) ? performance.now() : 0) - REVEAL.startedAt < 200) return;
+  /* ⚠ GENERATION, NOT A BARE FLAG. Boot starts an opening and board:init
+     starts the real one a moment later, which CANCELS the first — and a
+     cancelled animation REJECTS its `finished` promise. The obvious
+     `.then(done, done)` therefore fired the boot opening's completion handler
+     during the match opening and cleared REVEAL.run while the canvas was still
+     scaled 1.16 — which switches unzoom() off mid-move and hands every pick a
+     coordinate up to most of a tile out, silently. Measured: run=false with
+     the live transform reading matrix(1.16,…). Only the current generation is
+     allowed to end the current opening. */
+  try { REVEAL.anims.forEach(a => a.cancel()); } catch (e) {}
+  REVEAL.anims.length = 0;
+  const gen = ++REVEAL.gen;
+  REVEAL.reduced = revealReduced();
+  REVEAL.startedAt = (window.performance && performance.now) ? performance.now() : 0;
+  /* ♿ REDUCED MOTION: no camera move at all — the transform animation is not
+     merely shortened, it is never created, so unzoom() stays a no-op and the
+     pick can never be wrong for a player who asked for no motion. What is
+     kept is a short opacity settle, because the alternative is a hard cut
+     from black to a fully-lit battlefield, and opacity is not motion. */
+  if (REVEAL.reduced){
+    REVEAL.run = false;
+    REVEAL.anims.push(veil.animate(
+      [{ opacity:1 }, { opacity:0 }],
+      { duration:220, easing:'linear', fill:'backwards' }));
+    return;
+  }
+  REVEAL.run = true;
+  /* THE CAMERA. One settle, no overshoot: a bounce reads as a UI spring, not
+     as a camera coming to rest.
+     ⚠ THE EASING IS THE WHOLE READ, AND THE FIRST ONE WAS WRONG.
+     cubic-bezier(.16,.78,.28,1) spent 92% of the pull-back in the first 270 ms
+     — measured, scale 1.16 -> 1.0315 by t=270 — which is exactly the stretch
+     the veil is still opaque for. The camera had therefore finished moving
+     before there was anything to see, and what the player got was a black
+     screen followed by a board that was simply THERE. This is an ease-out
+     QUAD, whose progress at the veil's three landmarks is 0.51 / 0.81 / 0.95:
+     the board is still visibly 8% oversized when the darkness starts to lift
+     and settles as it clears, so the pull-back and the reveal are the same
+     gesture rather than two things that happened to be scheduled together. */
+  REVEAL.anims.push(cv.animate(
+    [{ transform:'scale(' + REVEAL.SCALE + ')' }, { transform:'scale(1)' }],
+    { duration:REVEAL.DUR, easing:'cubic-bezier(.25,.46,.45,.94)', fill:'backwards' }));
+  /* THE DARKNESS. A real hold at full black for the first 16% — that hold is
+     what makes it read as a deliberate opening rather than as a page still
+     loading, and it is also the window the two heavy bakes land in (steps 1
+     and 2 of THE LOAD SCHEDULE, ~106 ms and ~111 ms). Then it lifts, and is
+     gone by 86% so the camera's last beat happens on a clear board. */
+  REVEAL.anims.push(veil.animate(
+    [{ opacity:1, offset:0 }, { opacity:1, offset:0.16 },
+     { opacity:0.86, offset:0.34 }, { opacity:0.30, offset:0.62 },
+     { opacity:0, offset:0.86 }, { opacity:0, offset:1 }],
+    { duration:REVEAL.DUR, easing:'linear', fill:'backwards' }));
+  const done = () => { if (REVEAL.gen === gen) REVEAL.run = false; };
+  try { REVEAL.anims[0].finished.then(done, done); }
+  catch (e) { if (REVEAL.gen === gen) REVEAL.run = false; }
+}
+/* live scale off the element — see the warning above. 1 when nothing is running. */
+function revealScale(){
+  if (!REVEAL.run) return 1;
+  try {
+    const t = getComputedStyle(cv).transform;
+    if (!t || t === 'none') return 1;
+    const m = (typeof DOMMatrixReadOnly === 'function') ? new DOMMatrixReadOnly(t)
+            : (typeof DOMMatrix === 'function' ? new DOMMatrix(t) : null);
+    const s = m ? m.a : 1;
+    return (s > 0.01 && s < 8) ? s : 1;
+  } catch (e) { return 1; }
+}
+/* undo the opening's scale for a pick. Pure identity once it has finished. */
+function unzoom(mx, my){
+  const s = revealScale();
+  if (Math.abs(s - 1) < 1e-4) return { x:mx, y:my };
+  const ox = W * 0.5, oy = H * REVEAL.ORIGIN_Y;
+  return { x: ox + (mx - ox) / s, y: oy + (my - oy) / s };
+}
+/* 🖱 THE PICK POLYS, AVAILABLE BEFORE THE BAKE THAT USED TO CARRY THEM.
+   pickTile prefers TERRAIN.poly and falls back to a y=0 plane intersect,
+   which returns the wrong tile on a plateau — silently. bakeTerrain is what
+   filled it, and the schedule above now runs that bake two frames after the
+   board goes live, so those two frames would mis-pick. This is `tilePoly(x,z,0)`
+   verbatim — the SAME expression the bake uses, not a second source of truth —
+   and the bake overwrites it with an identical object a moment later. */
+function seedPickPolys(){
+  try {
+    if (!CAM || !HF.lv) return;
+    const p = {};
+    for (let z=0; z<MAP.rows; z++) for (let x=0; x<MAP.cols; x++){
+      const P = tilePoly(x,z,0); if (P) p[x+','+z] = P;
+    }
+    TERRAIN.poly = p;
+  } catch (e) {}
+}
+
 function frame(now){
   if (frameErr) return;
   try {
   const dt = Math.min((now - last)/1000, 0.05) || 0.016; last = now; T += dt;
+  /* the load schedule advances once per frame and retires itself — see above */
+  if (LOADQ.on){ if (LOADQ.step > 21) LOADQ.on = false; else LOADQ.step++; }
   /* how many NEW textures may be classified this frame — see isPixelArt. The
      probe is 0.1-0.5ms and is only ever paid once per texture, but a board
      that reveals twenty small sprites at once would pay all of them in one
@@ -5504,7 +5750,11 @@ function frame(now){
      does nothing. It must run BEFORE the vista hook, which reads BACKDROP. */
   try { syncBackdropPlates(); } catch (e) {}
   const api = buildApi(dt);
-  if (window.BBX.vista && window.BBX.vista.draw){
+  /* ⏱ `&& loadAllow('vista')` — step 0 declines the vista hook so its ~106 ms
+     bake lands on its own frame (THE LOAD SCHEDULE). Declining takes the
+     module-absent branch, which is the fallback sky that already ships on
+     every cold load while the deferred modules are still arriving. */
+  if (window.BBX.vista && window.BBX.vista.draw && loadAllow('vista')){
     try { window.BBX.vista.draw(api); } catch (e) { drawSky(); drawShards(); }
   } else {
     drawSky();
@@ -5598,7 +5848,7 @@ function frame(now){
      so the outermost plateaus stopped separating from the basin. Now a softer
      cool blue-grey falloff starting further out: still a vignette, no longer
      a value gradient competing with the terrain. */
-  if (window.BBX.vista && window.BBX.vista.grade){
+  if (window.BBX.vista && window.BBX.vista.grade && loadAllow('grade')){
     try { window.BBX.vista.grade(api); } catch (e) {}
   } else {
     const vg = ctx.createRadialGradient(VIEW.cx, VIEW.cy, Math.min(W,H)*.42, VIEW.cx, VIEW.cy, Math.max(W,H)*.82);
@@ -5671,10 +5921,15 @@ function pickTile(mx, my){
   if (gx<0 || gz<0 || gx>=MAP.cols || gz>=MAP.rows) return null;
   return { x:gx, z:gz };
 }
-cv.addEventListener('mousemove', e => { hoverTile = pickTile(e.clientX, e.clientY); });
+/* ⚠ EVERY PICK GOES THROUGH unzoom(). The opening scales the canvas on the
+   compositor, so clientX/clientY land on a different projected tile than the
+   one the renderer computed — and a wrong pick here is silent. Identity once
+   the opening has finished, and under prefers-reduced-motion always. */
+cv.addEventListener('mousemove', e => { const p = unzoom(e.clientX, e.clientY); hoverTile = pickTile(p.x, p.y); });
 cv.addEventListener('mouseleave', () => hoverTile = null);
 cv.addEventListener('click', e => {
-  const t = pickTile(e.clientX, e.clientY); if (!t) { selected = null; return; }
+  const p0 = unzoom(e.clientX, e.clientY);
+  const t = pickTile(p0.x, p0.y); if (!t) { selected = null; return; }
   dispatch('tileClick', { x:t.x, z:t.z });
   if (armedCard){ summonUnit(armedCard, t.x, t.z); armedCard = null; renderHand(); return; }
   const u = unitAt(t.x, t.z);
@@ -5758,6 +6013,40 @@ window.__bbDebug = {
                    w: GROUND.img ? (GROUND.img.naturalWidth||0) : 0,
                    src: String((GROUND.img && GROUND.img.src) || '').slice(-24),
                    gen:bdGen, location:MAP.location }),
+  /* ⏱ THE LOAD SCHEDULE, READ-ONLY — which frame each heavy pass is allowed
+     on. `step` is the frame ordinal since board:init; `on` false means the
+     schedule has retired and every gate is open. */
+  load: () => ({ on:LOADQ.on, step:LOADQ.step, terrainAt:LOADQ.terrainAt.slice(),
+                 allow:{ vista:loadAllow('vista'), terrain:loadAllow('terrain'),
+                         grade:loadAllow('grade') } }),
+  /* 🎬 THE OPENING, READ-ONLY AND SCRUBBABLE. rAF does not fire in a headless
+     pane, so the only honest way to check the timeline is to drive it: set
+     `at` to a millisecond on the animation and read back the scale the pick
+     would use and the veil's opacity at that instant. It restores the live
+     currentTime before returning, so scrubbing does not disturb the run. */
+  reveal: (at) => {
+    const veil = document.getElementById('veil');
+    const A = REVEAL.anims;
+    const readAt = (ms) => {
+      const keep = A.map(a => a.currentTime);
+      try { A.forEach(a => { a.currentTime = ms; }); } catch (e) {}
+      const out = { t:ms,
+        scale:+revealScale().toFixed(5),
+        transform:(cv ? getComputedStyle(cv).transform : ''),
+        veil:+(veil ? parseFloat(getComputedStyle(veil).opacity) : 0).toFixed(4) };
+      try { A.forEach((a,i) => { a.currentTime = keep[i]; }); } catch (e) {}
+      return out;
+    };
+    if (typeof at === 'number') return readAt(at);
+    return { run:REVEAL.run, reduced:REVEAL.reduced, dur:REVEAL.DUR,
+             scale0:REVEAL.SCALE, originY:REVEAL.ORIGIN_Y,
+             anims:A.length, playState:A.map(a => a.playState),
+             composited:A.map(a => { try { return a.effect.getComputedTiming().duration; }
+                                     catch (e) { return null; } }) };
+  },
+  /* the same un-zoom every pick takes, exposed so the round-trip smoke test at
+     the top of this object still works while the opening is running. */
+  unzoom: (mx,my) => unzoom(mx,my),
   pick: (mx,my) => pickTile(mx,my),
   tileScreen: (x,z) => project(gw(x, z, tileElev(x,z))),
   tileElev: (x,z) => tileElev(x,z),
@@ -5976,6 +6265,14 @@ function handleHostMessage(msg){
       // 🗿 Real match events — after buildStage so tile elevations exist.
       if (msg.events) setEvents(msg.events);
       resize();
+      /* 🎬 THE BATTLE HAS ARRIVED. This — not document load — is the moment the
+         board becomes this match's board, so it is where the opening starts and
+         where the load schedule is armed. Both are cheap and neither blocks:
+         revealStart() hands two animations to the compositor and returns, and
+         loadBegin() only sets a counter. Measured at 0.6-0.8 ms for the whole
+         init handler, unchanged by either. */
+      loadBegin();
+      revealStart();
     }
     else if (t === 'map'){ if (msg.map) Object.assign(MAP, msg.map); buildStage(); if (msg.events) setEvents(msg.events); resize(); }
     else if (t === 'events'){ setEvents(msg.events); }
@@ -6024,7 +6321,11 @@ function handleHostMessage(msg){
        captures them over the board area and forwards normalised coords here;
        we run the same perspective pick the canvas would have. */
     else if (t === 'pointer'){
-      const mx = msg.nx * W, my = msg.ny * H;
+      /* the host normalises against the stage host's rect, which does not move
+         when the opening scales the canvas — so this pick needs the same
+         un-zoom the direct listeners take. */
+      const p0 = unzoom(msg.nx * W, msg.ny * H);
+      const mx = p0.x, my = p0.y;
       const tile = pickTile(mx, my);
       const hit = tile ? unitAt(tile.x, tile.z) : null;
       if (msg.kind === 'click'){
@@ -6081,6 +6382,11 @@ try {
   }
   loadLocation(DEFAULT_LOCATION, true);
   setPylonArt(PYLON_ART.src);
+  /* the standalone / pre-init boot gets the same treatment: embedded, board:init
+     re-arms both a moment later, which is correct — the opening belongs to the
+     match, and re-starting it cancels the boot one rather than stacking. */
+  loadBegin();
+  revealStart();
   requestAnimationFrame(t => { last = t; frame(t); });
   post('ready', { cols:MAP.cols, rows:MAP.rows });
 } catch (err) {

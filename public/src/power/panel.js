@@ -389,6 +389,34 @@ const CSS = `
 #ncpwr .pwnote{margin-top:6px;font-size:11px;color:var(--mist);background:rgba(255,122,47,.06);
   border-left:2px solid var(--ember-dim);padding:4px 7px;border-radius:0 4px 4px 0}
 #ncpwr .pwnote.warn{color:#ffbf9a;border-left-color:var(--ember)}
+#ncpwr .pwnote code{color:var(--sky);font-size:10px}
+#ncpwr .pwbtn{background:rgba(255,122,47,.14);border:1px solid var(--ember-dim);color:var(--bone);
+  border-radius:4px;padding:1px 7px;font:inherit;font-size:10.5px;cursor:pointer;margin-left:2px}
+#ncpwr .pwbtn:hover{background:rgba(255,122,47,.28)}
+/* 🪜 The shed ladder. One row per demand class, ordered exactly as the grid
+   serves them, so the LIST ORDER is itself the information — the thing at the
+   bottom is the thing that goes dark first. */
+#ncpwr .pwlad{margin-top:6px;border-top:1px solid var(--edge);padding-top:5px}
+#ncpwr .pwlrow{display:flex;align-items:center;gap:6px;padding:2px 0}
+#ncpwr .pwlbar{flex:1.2;height:6px;border-radius:3px;background:#0d0b12;border:1px solid var(--edge);
+  overflow:hidden;min-width:38px}
+#ncpwr .pwlbar i{display:block;height:100%;background:var(--mist)}
+#ncpwr .pwlrow.ok .pwlbar i{background:#4caf7a}
+#ncpwr .pwlrow.mid .pwlbar i{background:#d99a2b}
+#ncpwr .pwlrow.bad .pwlbar i{background:#c0473f}
+#ncpwr .pwlrow.bad .pwcl{color:#ffbf9a}
+/* 🏭 The fleet table. `pwwhy` is the reason column and it is the whole point of
+   the section — a capacity figure cannot say "the wind dropped". */
+#ncpwr .pwfleet{margin-top:6px;border-top:1px solid var(--edge);padding-top:5px}
+#ncpwr .pwfrow{display:flex;align-items:baseline;gap:6px;padding:2px 0}
+#ncpwr .pwfrow .pwcl{display:flex;flex-direction:column;line-height:1.25}
+#ncpwr .pwwhy{font-style:normal;font-size:10px;color:var(--mist);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+#ncpwr .pwfrow.bad .pwwhy{color:#ffbf9a}
+#ncpwr .pwav{width:36px;text-align:right;color:var(--mist);font-size:11px;font-variant-numeric:tabular-nums}
+#ncpwr .pwfrow.ok .pwav{color:var(--valid)}
+#ncpwr .pwfrow.mid .pwav{color:#d99a2b}
+#ncpwr .pwfrow.bad .pwav{color:var(--invalid)}
 #ncpwr .pwgrp{margin:9px 0 3px;font-size:10px;color:var(--mist);opacity:.75;letter-spacing:.05em}
 #ncpwr .pwrow{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer}
 #ncpwr .pwrow.off{opacity:.42;cursor:default}

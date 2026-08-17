@@ -85,6 +85,30 @@ export function mount(ctx) {
     try { return (ctx.blueprintName && ctx.blueprintName(key)) || null; } catch (e) { return null; }
   }
 
+  /* ── the address, borrowed from /src/dossier ────────────────────────────
+     🔴 TWO MODULES LANDED AN ADDRESS IN THE SAME ROUND AND THE HEADER IS ONE
+        LINE. openInspect now builds its title as
+        `MythicDossier.headerHtml(k, MythicNaming.nameFor(k))` — the name from
+        here, the ", 126 9th Street" from there. This function repaints that
+        same element afterwards to hang the ✏️ Rename button off it, so it has
+        to put the address BACK or the title visibly loses its street the
+        instant the panel finishes drawing.
+     Read through the module's public seam and not by re-deriving it here:
+     /src/dossier and /src/naming each carry their own address derivation, and
+     two of them printing different numbers for one building is worse than
+     either. The dossier's is the one openInspect used, so it is the one that
+     wins. Absent module (a 404 on /src/dossier) ⇒ null ⇒ the header is the
+     name alone and paintMeta below prints the address chip instead, which is
+     exactly what this module did before the dossier existed. */
+  function dossierAddr(key) {
+    try {
+      const D = (typeof window !== 'undefined') && window.MythicDossier;
+      if (!D || typeof D.addressOf !== 'function') return null;
+      const a = D.addressOf(key);
+      return (a && a.ok && a.text) ? String(a.text) : null;
+    } catch (e) { return null; }
+  }
+
   function paintHeader(key) {
     const host = $('insname');
     if (!host) return;

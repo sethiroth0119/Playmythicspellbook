@@ -2254,6 +2254,49 @@ const MythicCityBridge = (() => {
     return OPEN;   // mock/standalone: no vault to fill
   };
 
+  /* 📦 THE WHOLE LEDGER IN ONE READ — every resource the player actually holds.
+     🔴 WHY THIS EXISTS AND WHY getRes() COULD NOT DO IT. `game.res` is the HUD
+        MIRROR: refreshLedgerMirror() walks HUD_DISPLAY_RES, twelve ids, one
+        getRes each. The vault ceiling those twelve are measured against is
+        getResourceUnits() over EVERY key of Profile.salvage — 70 ids after the
+        chain promotion, plus raid-only loot like `dna` that no city produces.
+        The rebalance plan was handed the twelve and therefore offered whatever
+        was over-share inside them: MEASURED, a 2,000/2,000 vault holding
+        food 20 / water 20 / metal 60 / cars 1,900 was told to bank 45 METAL and
+        the 1,900 cars were never named. Widening the mirror was the wrong fix —
+        see the header on HUD_DISPLAY_RES, which lists three separate reasons the
+        56 promoted ids must NOT go in it (raiders, unguarded chips, and 68 RPCs
+        every two seconds). This is one read, on demand, for arithmetic only.
+     ⚠ Returns null — not {} — when there is nothing to read. `{}` is a real
+       answer meaning "the player holds nothing"; a caller that cannot tell the
+       two apart would silently plan against an empty vault on an older parent.
+       Callers fall back to the mirror on null, which is exactly today's
+       behaviour and never worse than it.
+     ⚠ SNAPSHOT, not an accessor — the one place this file takes one. It is
+       consumed immediately by pure arithmetic (_stashRebalancePlan) that moves
+       nothing; every mover still goes through getRes/spendRes above. */
+  B.resourceLedger = async () => {
+    if (B.mode === 'parent') {
+      try {
+        if (typeof P.cityResourceLedger === 'function') {
+          const m = P.cityResourceLedger();
+          if (m && typeof m === 'object') return m;
+        }
+      } catch (e) {}
+      return null;
+    }
+    if (B.mode === 'message') {
+      try { const m = await rpc('resourceLedger', {}); return (m && typeof m === 'object') ? m : null; }
+      catch (e) { return null; }
+    }
+    // Standalone: the mock ledger IS the whole ledger.
+    try {
+      const L = mockLedger().res, out = {};
+      for (const k in L) { const n = Math.max(0, L[k] | 0); if (n > 0 && k !== 'cinder') out[k] = n; }
+      return out;
+    } catch (e) { return null; }
+  };
+
   /* 🌐 THE NODE MARKET — OTHER PLAYERS' nodes, for the financial district to
      invest in. Distinct from fetchNodes(), which is the player's OWN anchors.
      economy_nodes is SELECT `using (true)`, so this reads data the game already
@@ -18289,6 +18332,49 @@ function _stashRate(rate, want, out) {
    whole point is that the throttle is VISIBLE — see the advisor row in
    renderNeeds() and the "vault was full" line in the away report. */
 let _stashChoke = null;
+/* 🏰 ══ THE HOLDINGS THE PLAN IS ALLOWED TO REASON ABOUT ══════════════════════
+   🔴 THE THIRD ROUND OF THIS BUG WAS ENTIRELY HERE, IN ONE ARGUMENT. Round two
+      widened what _stashRebalancePlan ITERATES (`for (const r in target)`), and
+      that was right — but both call sites still handed it `game.res`, and
+      game.res is the HUD MIRROR: refreshLedgerMirror() walks HUD_DISPLAY_RES,
+      TWELVE ids. The choke being relieved is counted over Profile.salvage, ~70
+      ids. So the plan saw a twelfth of the vault and the original bug reproduced
+      verbatim one resource id over. MEASURED on this tree, one economyTick, a
+      2,000/2,000 vault at 0% output, hoard held in the LEDGER and not injected
+      into the mirror:
+        held food 20 / water 20 / metal 60 / cars 1,900
+          mirror (shipped) → move {metal:45}   45 units, rises:true, projected 1
+          whole ledger     → move {cars:1900}  1,900 units
+        held food 20 / water 20 / metal 60 / dna 1,900   (pure raid loot)
+          mirror (shipped) → move {metal:45}   ← banks a construction raw
+          whole ledger     → move {dna:1900}   ← and correctly spares the metal
+      Both mirror readings also claimed causation, because the projection inside
+      _stashRebalanceGain re-runs the throttle against the SAME blind `held`: it
+      concluded that banking 45 units cures a 2,000-unit choke.
+
+   ⭐ SO THERE IS ONE ANSWER TO "WHAT DOES THE PLAYER HOLD", AND EVERY READER OF
+      IT GOES THROUGH HERE. `_stashHeld` is refreshed once per tick beside the
+      headroom fetch — the same hop, the same beat, and deliberately the same
+      place, so the holdings and the ceiling they are measured against can never
+      come from two different moments.
+   ⚠ NULL MEANS "COULD NOT READ", AND FALLS BACK TO THE MIRROR — not to `{}`. An
+     empty map is a real answer ("holds nothing") and would make the plan offer
+     nothing at all on an older parent. Falling back to game.res is exactly
+     today's shipped behaviour, so this is never worse than what it replaces.
+   ⚠ THE LEDGER WINS ON A CONFLICT. It is the store the cap actually counts, and
+     it is fetched every tick against the mirror's two seconds. game.res is
+     merged UNDER it purely so an id sitting at 0 in the mirror still reads 0
+     rather than vanishing.
+   ⚠ THIS FEEDS THE PLAN AND THE PROJECTION ONLY — never _stashSplit inside the
+     tick. The throttle measures shares over the CITY-PRODUCED set on purpose
+     (see _stashSplit's header: counting looted wood there makes every target
+     unreachable and stage 1 degrades to plain proportional). Widening the
+     throttle is a different change and is not this one. */
+let _stashHeld = null;
+function _stashHeldNow() {
+  if (!_stashHeld) return game.res;
+  return Object.assign({}, game.res, _stashHeld);
+}
 
 /* ════════════════════════════════════════════════════════════════════════════
    🏟 THE VENUE FAMILY — tiles whose trade IS the crowd, so morale moves them.
@@ -18518,6 +18604,18 @@ async function economyTick(dtMin) {
     const _hr = await MythicCityBridge.resourceHeadroom();
     if (_hr && Number.isFinite(_hr.free)) _ledgerFree = Math.max(0, _hr.free);
   } catch (e) { _ledgerFree = Infinity; }
+  /* 🏰 …AND THE HOLDINGS BEHIND THAT SAME CEILING, IN THE SAME BREATH. `_hr.free`
+     is `cap - getResourceUnits()`, a sum over the WHOLE of Profile.salvage; the
+     rebalance plan then has to say WHICH of those units are over their share.
+     Reading the two a beat apart is how the plan ended up reasoning about a
+     twelve-id mirror against a seventy-id ceiling — see _stashHeldNow. Failure
+     leaves the previous snapshot rather than blanking it: a stale reading of the
+     real ledger is a better basis for "you are holding too much cars" than a
+     fresh reading of a set that does not contain cars. */
+  try {
+    const _led = await MythicCityBridge.resourceLedger();
+    if (_led && typeof _led === 'object') _stashHeld = _led;
+  } catch (e) {}
   /* 📦 …AND THE HEADROOM IS STAGED, NOT SPENT IN TILE ORDER. See _stashSplit()
      and the note at the deposit below: the tile loop only records what each
      LEDGER resource wants this tick; who actually gets the room is decided once,
@@ -23554,7 +23652,11 @@ function evaluateNeeds() {
        claiming a cause it cannot fix. When it does not rise the row still
        prints: the throttle is real and the two honest remedies (spend it, buy
        Vault Containers) are already in the sentence above. */
-    const _gain = _stashRebalanceGain(_stashChoke.mix || {}, game.res,
+    /* ⚠ `_stashHeldNow()`, NOT `game.res`. The mirror is twelve ids and the
+         ceiling this row is explaining is counted over seventy — handing the
+         mirror here is what made the button offer 45 metal against a 1,900-unit
+         cars hoard AND assert it was the cause. See _stashHeldNow's header. */
+    const _gain = _stashRebalanceGain(_stashChoke.mix || {}, _stashHeldNow(),
                                       Number.isFinite(_stashChoke.free) ? _stashChoke.free : 0,
                                       _stashChoke.want);
     add('stashfull', '🏰', 'STASH FULL — your vault has no room left, so the city is running at ' +
@@ -23982,6 +24084,36 @@ async function openVaultPanel(resId) {
    ⚠ IT IS NOT FREE AND THE DIALOG SAYS SO. Banked stock cannot be spent on
      buildings until it is withdrawn, and withdrawing needs vault room. Those
      two sentences are in the panel, not in this comment only. */
+/* 🔫 ══ WHICH ROUTE BACK OUT ACTUALLY EXISTS FOR A GIVEN ID ═══════════════════
+   🔴 THE PROMISE THAT WAS FALSE. This dialog's bold line said "Withdraw it any
+      time by clicking that resource in the top bar" — and the round that let
+      the plan see the whole camp ledger made that sentence reachable for ids
+      with NO CHIP. `openVaultPanel` has exactly one caller, the #topbar chip
+      handler below, and #topbar is HUD_DISPLAY_RES: twelve ids (fifteen chips,
+      counting cinder/pop/clock). The plan now routinely names promoted chain
+      ids — `cars` is row 10 of PROMOTED_CHAIN_IDS — which are deliberately NOT
+      on that list (see HUD_DISPLAY_RES' header for the three reasons) and are
+      therefore unreachable from this page. Measured: the dialog offered
+      `cars: 1900`, printed that promise, and the top bar rendered no cars chip.
+   ⭐ SO THE SENTENCE NAMES THE ROUTE THAT IS ALWAYS THERE — Bank of Ethos →
+      Ops Vault, whose catalogue now carries a card for every id with a bank
+      balance (index.html `_boeResCatalog`, the other half of this fix) — and
+      mentions the chip shortcut only when one of the ids being moved has one.
+   ⚠ READ OFF THE DOM, NOT OFF A SECOND COPY OF HUD_DISPLAY_RES. The chip
+     handler keys on the rendered `#r-<id>` element, so reading the same thing
+     it does is the only way this claim cannot drift from the control. */
+function _hasTopbarChip(id) {
+  try { return !!(id && document.getElementById('r-' + id)); } catch (e) { return false; }
+}
+/* The sentence itself, pulled out as a pure function of the id list purely so
+   the self-test can falsify it — the pane never paints, so a claim built inline
+   inside openStashRebalance is a claim no check can read. */
+function _stashWithdrawNote(ids) {
+  const chips = (ids || []).filter(_hasTopbarChip);
+  return '✅ <b>Nothing is destroyed.</b> Every unit stays yours in the Bank of Ethos. Withdraw it any ' +
+    'time from <b>Bank of Ethos → Ops Vault</b>, which lists a card for everything you have banked' +
+    (chips.length ? ' — and for the ones this city shows in its top bar, by clicking that chip too' : '') + '.';
+}
 let stashRebalanceBusy = false;
 async function openStashRebalance() {
   if (stashRebalanceBusy) return;
@@ -23997,7 +24129,18 @@ async function openStashRebalance() {
   } catch (e) {}
   const st = await MythicCityBridge.vaultState();
   const mix = (_stashChoke && _stashChoke.mix) || {};
-  const held = Object.assign({}, game.res);
+  /* 🏰 THE WHOLE LEDGER, READ FRESH, ALONGSIDE THE FRESH HEADROOM ABOVE — and
+     NOT `game.res`. This dialog names numbers off `held` and then asks the
+     player to approve moving them, so `held` has to be the store the vault
+     ceiling actually counts. game.res is the twelve-id HUD mirror; a dialog
+     built on it printed "Move 45 units out" to a player whose vault was 95%
+     cars and never showed them a cars row. Falls back to the mirror only when
+     the bridge cannot answer (older parent), which is exactly what shipped. */
+  let held = Object.assign({}, game.res);
+  try {
+    const _led = await MythicCityBridge.resourceLedger();
+    if (_led && typeof _led === 'object') { _stashHeld = _led; held = Object.assign(held, _led); }
+  } catch (e) {}
   /* The SAME predicate the advisor button is drawn on, recomputed here against
      the freshly-read headroom — `free` above came from the bridge just now, and
      the row's copy is up to four seconds old. `rises` gates the one sentence in
@@ -24006,12 +24149,24 @@ async function openStashRebalance() {
      thing to do even on a reading where it would not move the throttle. */
   const gain = _stashRebalanceGain(mix, held, free, _stashChoke && _stashChoke.want);
   const plan = gain.plan;
-  const ids = Object.keys(plan.move);
+  /* 🔴 BIGGEST PILE FIRST. `plan.move` comes out in target order — the produced
+     set, then everything else — so an untouched 1,900-unit hoard sorted BELOW
+     three trivial over-share rows the city does produce. Now that the plan sees
+     the whole ledger this list can run to a dozen ids, and the one that owns the
+     vault is the one the player is actually deciding about. */
+  const ids = Object.keys(plan.move).sort((a, b) => plan.move[b] - plan.move[a]);
 
   const box = document.createElement('div');
   box.id = 'cardpicker';                   // reuse the picker's overlay chrome
   const row = (lab, val) => '<div class="vrow"><span>' + lab + '</span><b>' + val + '</b></div>';
-  const nm = (r) => (RES_META[r] ? RES_META[r].ico + ' ' + RES_META[r].name : r);
+  /* ⚠ resIco/resName, not a bare RES_META lookup: RES_META covers the 258 chain
+     ids but NOT pure raid loot like `dna`, and those are exactly what a plan
+     over the whole ledger now surfaces. The helpers fall back to the id rather
+     than throwing, so an unknown key is still named, never dropped. */
+  /* ⚠ Both helpers fall back to the RAW ID when the id is in neither table, so a
+       pure raid-loot key printed as "dna dna". Collapse the duplicate rather
+       than dropping the row — an unnamed pile still has to be named. */
+  const nm = (r) => { const i = resIco(r), n = resName(r); return (i === n) ? n : (i + ' ' + n); };
   /* 🔫 EVERY PROPOSED RESOURCE IS NAMED, and this is the sentence that does it.
      `ids` now comes from a plan that can see the whole vault, so it routinely
      contains things this city does not produce — raid ammo, market stock, the
@@ -24044,7 +24199,11 @@ async function openStashRebalance() {
          being banked gets a line whether or not this city makes it, and the one
          that is not produced says so instead of printing a bogus "0.0/min". */
     const rowIds = Object.keys(mix).concat(ids.filter(r => !(r in mix)));
-    const rows = rowIds.sort((a, b) => (mix[b] || 0) - (mix[a] || 0)).map((r) => {
+    /* ⚠ TIE-BREAK ON UNITS MOVED. Every not-produced id has rate 0, so the whole
+       tail of this table used to tie and fall back to insertion order — which
+       buried a 1,900-unit hoard under a row of 3 spare medicine. */
+    const rows = rowIds.sort((a, b) => ((mix[b] || 0) - (mix[a] || 0)) ||
+                                       ((plan.move[b] || 0) - (plan.move[a] || 0))).map((r) => {
       const now = held[r] | 0, mv = plan.move[r] || 0;
       const rate = (mix[r] || 0) > 0 ? (mix[r]).toFixed(1) + '/min' : 'not produced here';
       return '<div class="vrow"><span>' + nm(r) + ' <span style="opacity:.6">' +
@@ -24071,8 +24230,7 @@ async function openStashRebalance() {
       row('🏰 Vault', (cap - free).toLocaleString() + ' / ' + cap.toLocaleString() + ' used') +
       row('📦 Would move out', plan.units.toLocaleString() + ' units') +
       '<div class="vnote"><b>Move ' + moveLabel + ' into the Ops Vault.</b><br><br>' +
-        '✅ <b>Nothing is destroyed.</b> Every unit stays yours in the Bank of Ethos. Withdraw it any ' +
-        'time by clicking that resource in the top bar.<br>' +
+        _stashWithdrawNote(ids) + '<br>' +
         '⚠ <b>Banked stock cannot be spent</b> on buildings, repairs or crafting until you withdraw it.<br>' +
         '⚠ <b>Withdrawing needs vault room</b> — if the vault has filled up again you will have to make ' +
         'space before you can bring it back.<br>' +
@@ -24108,8 +24266,11 @@ async function openStashRebalance() {
     if (units > 0) {
       const lbl = Object.keys(moved).map(r => moved[r].toLocaleString() + ' ' + nm(r)).join(', ');
       toast('🏦 Moved ' + lbl + ' into the Ops Vault — still yours, withdraw any time.', 'good');
+      /* ⚠ Same correction as the dialog's bold line: "withdraw it from the top
+         bar" is only true for the twelve ids that HAVE a chip, and this list
+         routinely contains ids that do not. Name the route that always works. */
       logEvent('city good', '🏰 Rebalanced the vault: banked ' + lbl + ' (' + units.toLocaleString() +
-        ' units) into the Ops Vault. Nothing was destroyed — withdraw it from the top bar.');
+        ' units) into the Ops Vault. Nothing was destroyed — withdraw it from Bank of Ethos → Ops Vault.');
     }
     if (failed) toast('🏦 Part of that transfer did not go through — nothing was moved for ' + failed +
       ' resource' + (failed === 1 ? '' : 's') + '.', 'bad');
@@ -29972,14 +30133,22 @@ function animate() {
        compares the code to itself and can never fail. */
     offline: (ms) => offlineCatchUp(ms),
     stashChoke: () => (_stashChoke ? { ..._stashChoke } : null),
+    /* 🏰 What the plan is allowed to see. Exposed because the three-round bug
+       was never in the arithmetic — it was in this one argument, and the only
+       way to falsify "the plan can see the whole vault" is to read the set. */
+    stashHeld: () => Object.assign({}, _stashHeldNow()),
     /* 🏰 The unwind, drivable without a click — the pane never paints, so the
        only way to prove the route out works is to call the plan and the panel
        directly. `rebalancePlan()` with no argument answers for the LIVE city
        (the tick's own mix, the mirror, the tick's own headroom), which is
        exactly what the advisor row and the dialog both read. */
+    /* ⚠ THE DEFAULT `held` IS `_stashHeldNow()`, THE SAME ONE THE UI READS. It
+         was `game.res`, and that made this seam agree with the shipped bug: a
+         test could only ever measure the plan over the twelve-id mirror, which
+         is precisely the set that could not see the choking pile. */
     rebalancePlan: (mix, held, free) => _stashRebalancePlan(
       mix || (_stashChoke && _stashChoke.mix) || {},
-      held || game.res,
+      held || _stashHeldNow(),
       (free != null) ? free : ((_stashChoke && Number.isFinite(_stashChoke.free)) ? _stashChoke.free : 0)),
     shareTargets: _stashShareTargets,
     /* 🏰 The causation gate, drivable. The advisor button is drawn on `rises`
@@ -29988,7 +30157,7 @@ function animate() {
        make. Same defaults as rebalancePlan above. */
     rebalanceGain: (mix, held, free, want) => _stashRebalanceGain(
       mix || (_stashChoke && _stashChoke.mix) || {},
-      held || game.res,
+      held || _stashHeldNow(),
       (free != null) ? free : ((_stashChoke && Number.isFinite(_stashChoke.free)) ? _stashChoke.free : 0),
       want || (mix ? null : (_stashChoke && _stashChoke.want))),
     rebalance: () => openStashRebalance(),
@@ -30150,6 +30319,68 @@ function animate() {
       cases.push({ name: 'throttle unmoved by the hoard', throttle,
                    out: Object.fromEntries(Object.keys(a.out).map(k => [k, +a.out[k].toFixed(6)])),
                    pass: throttle });
+      /* 🔴 SOURCE — WHAT THE PLAN IS HANDED, WHICH IS WHERE THIS BUG ACTUALLY
+         LIVED FOR A WHOLE ROUND. Every case above passes `held` in by hand, so
+         all six stayed GREEN while the shipped call sites handed the plan
+         `game.res` — the HUD mirror, twelve ids — against a ceiling counted over
+         ~70. The arithmetic was right and the argument was wrong, and no
+         pure-function case over an explicit `held` can ever see that.
+         So this one asserts the SEAM instead: `_stashHeldNow()` is the one
+         answer to "what does the player hold", and it must carry ids the mirror
+         structurally cannot. `cars` is row 10 of PROMOTED_CHAIN_IDS — a real
+         CITY_PRODUCTION output that lands in the camp ledger and is deliberately
+         NOT in HUD_DISPLAY_RES (see that list's header for the three reasons).
+         ⚠ FALSIFIED IN PRACTICE: make _stashHeldNow return `game.res`, or hand
+           `game.res` back to either call site, and `mirrorBlind` goes false —
+           the plan reverts to offering 45 metal against a 1,900-unit hoard.
+         ⚠ RESTORES `_stashHeld`. A diagnostics read that leaves the live city
+           reasoning about a fabricated vault would be worse than no check.
+
+         🔴 …AND `wide` ON ITS OWN CERTIFIED THE NEXT DEFECT RATHER THAN CATCHING
+            IT, which is why `route` is now half of this case's pass. Asserting
+            `move.cars === 1900` says the plan can SEE the pile; it says nothing
+            about whether the player can get it back, and for one round the
+            answer was no: `cars` had no #topbar chip here (so openVaultPanel,
+            whose only caller is that chip handler, was unreachable) and no row
+            in the Bank of Ethos catalogue (SALVAGE_RES, 149 ids, intersection
+            with the 56 PROMOTED_CHAIN_IDS measured EMPTY), so the Ops Vault
+            rendered no card and no Withdraw button. One click on this dialog
+            was a one-way door on 1,900 units of real property.
+            The retrieval half is fixed in index.html (`_boeResCatalog` — every
+            HELD or BANKED id gets a card) and pinned by
+            `window.__mg.boeCatalogCheck()` over there, because that is where
+            the catalogue lives and a standalone city has no bank to ask.
+            What THIS page can assert without a parent is the sentence it prints:
+            it must always name the Ops Vault (the route that exists for every
+            banked id), and it must name the top-bar chip ONLY for a list that
+            actually has one. `route` checks both directions off the same DOM the
+            chip handler keys on, so deleting the guard in _stashWithdrawNote —
+            or restoring the old "by clicking that resource in the top bar" —
+            makes it false. */
+      {
+        const keep = _stashHeld;
+        const hoard = 'cars';
+        const mirrorBlind = !Object.prototype.hasOwnProperty.call(game.res, hoard);
+        const noteHoard = _stashWithdrawNote([hoard]);          // no chip for cars
+        const noteChip  = _stashWithdrawNote(['metal']);        // metal has one
+        const route = !_hasTopbarChip(hoard) && _hasTopbarChip('metal') &&
+                      noteHoard.indexOf('Ops Vault') >= 0 && noteChip.indexOf('Ops Vault') >= 0 &&
+                      noteHoard.indexOf('top bar') < 0 && noteChip.indexOf('top bar') >= 0;
+        let seen = {}, gs = null;
+        try {
+          _stashHeld = { food: 20, water: 20, metal: 60, [hoard]: 1900 };
+          seen = _stashHeldNow();
+          gs = _stashRebalanceGain(rate, seen, 0, tickOf(rate));
+        } finally { _stashHeld = keep; }
+        const wide = !!gs && gs.plan.move[hoard] === 1900 && !gs.plan.move.metal;
+        const narrow = _stashRebalancePlan(rate, game.res, 0);   // the shipped-bug shape
+        cases.push({ name: 'the plan is handed the LEDGER, not the HUD mirror',
+                     mirrorBlind, wide, route, mirrorIds: Object.keys(game.res).length,
+                     planIds: Object.keys(seen).length, move: gs && gs.plan.move,
+                     mirrorWouldOffer: narrow.move,
+                     withdrawNote: noteHoard.replace(/<[^>]+>/g, ''),
+                     pass: mirrorBlind && wide && route });
+      }
       return { pass: cases.every(c => c.pass), cases };
     },
     /* 📉 THE PANEL'S PROMISE, PINNED TO THE TICK'S PAYMENT.

@@ -60080,6 +60080,111 @@ async function boeWithdrawRes(id, qty) {
   showToast('🏦 Withdrew ' + qty.toLocaleString() + ' ' + _boeResName(id) + '.', 4200);
   return true;
 }
+/* 🏦 ══ THE OPS VAULT CATALOGUE — AND WHY IT IS NOT JUST SALVAGE_RES ══════════
+   🔴 THE ONE-WAY DOOR THIS CLOSES, MEASURED ON THIS TREE. The Ops Vault page
+      renders exactly one card per `resCatalog` row, and that card carries the
+      ONLY Withdraw button in the app (ethos/app.jsx OpsResCard). The catalogue
+      was `SALVAGE_RES` — 149 loot ids — and the city's "Rebalance the Vault"
+      dialog had just been widened to plan over the WHOLE camp ledger, which is
+      `Profile.salvage`: 70 RESOURCES ids, 56 of them promoted chain ids that
+      are in RESOURCES and in NEITHER SALVAGE_RES nor node-city's #topbar.
+      Diffed live: |SALVAGE_RES| = 149, |PROMOTED_CHAIN_IDS| = 56, and the
+      intersection is EMPTY; all 56 are in RESOURCES with name/icon/color.
+      So one click on the rebalance dialog fired vaultMove('cars', 1900) →
+      boeDepositRes → BankEthos.resources.cars = 1900, and BOTH ways back were
+      shut: no #topbar chip for `cars` (openVaultPanel's only caller is that
+      chip handler) and no catalogue row, therefore no card and no button. The
+      player was even shown the contradiction — `bankedTotal` sums every key of
+      bankRes while `bankedTypes` counts catalogue rows, so the page read
+      "1,900 units in bank · 0 of 149 types" with nothing to click.
+
+   ⭐ THE RULE, STATED ABOUT RETRIEVAL RATHER THAN ABOUT ANY ONE ID LIST:
+        EVERY ID THAT CAN HOLD A POSITIVE BANK BALANCE HAS A CARD.
+      That is an invariant a future deposit path cannot break by widening what
+      it banks, which is exactly how this one broke. Banked ids are read from
+      BankEthos.resources itself, so it also SELF-HEALS a save that already
+      banked a chain id through the shipped bug — the card appears next paint.
+   ⚠ HELD ids join too (wallet > 0), so the deposit control for a chain id
+     exists BEFORE it is banked as well as after, and the "In wallet" figure on
+     the card is honest about stock that really is counted by getResourceUnits.
+   ⚠ NOT the whole of RESOURCES ∪ SALVAGE_RES. PageOpsVault paints a card for
+     every row whether or not it holds anything, so a blanket union adds 56
+     permanent zero cards to a grid that is already 149 long. Held-or-banked
+     keeps the grid the size of the player's actual position and still satisfies
+     the invariant above, because a plan can only ever propose an id it HOLDS.
+   ⚠ Cinder is skipped, here as everywhere: it is the player's real balance, it
+     has its own bank rail, and it is not a resource unit.
+   ⚠ `_meta` falls back to { name: id, icon: '📦' }, so even an id in NO table
+     gets a named card rather than being silently unwithdrawable. */
+function _boeResCatalog() {
+  const out = [], seen = Object.create(null);
+  const push = (r) => {
+    if (!r || !r.id || r.id === 'cinder' || seen[r.id]) return;
+    seen[r.id] = 1;
+    out.push({ id: r.id, name: r.name || r.id, icon: r.icon || '📦', color: r.color || '' });
+  };
+  try {
+    const base = (typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) ? SALVAGE_RES
+               : ((typeof RESOURCES !== 'undefined') ? RESOURCES : []);
+    for (const r of base) push(r);
+  } catch (e) {}
+  const add = (src) => {
+    if (!src || typeof src !== 'object') return;
+    for (const k in src) {
+      if (!k || seen[k] || !((src[k] | 0) > 0)) continue;
+      const m = (typeof _meta === 'function') ? _meta(k) : null;
+      push({ id: k, name: (m && m.name) || k, icon: (m && m.icon) || '📦', color: (m && m.color) || '' });
+    }
+  };
+  try { add((typeof _ensureResources === 'function') ? _ensureResources() : (Profile && Profile.salvage)); } catch (e) {}
+  /* ⚠ AND THE SAME LEDGER THE CITY'S PLAN READS. cityResourceLedger() answers
+     for CityMgr.salvage when a managed city session is active, which is the
+     store the rebalance dialog names numbers off. Reading only Profile.salvage
+     here would let the plan propose an id this catalogue had never heard of —
+     the same class of mismatch (two answers to "what does the player hold")
+     that cost this feature a whole round. Additive, so neither source loses. */
+  try { if (typeof window.cityResourceLedger === 'function') add(window.cityResourceLedger()); } catch (e) {}
+  try { add(BankEthos && BankEthos.resources); } catch (e) {}
+  return out;
+}
+/* 🏦 THE INVARIANT ABOVE, DRIVABLE. The bug this closes was not arithmetic —
+   it was two id lists that nobody had ever diffed, so the only useful check is
+   the diff itself, run against the live deposit surface.
+     · `pass` — every id the player HOLDS (so every id the city's rebalance plan
+       could propose) and every id already BANKED has a catalogue row, therefore
+       an OpsResCard, therefore a Withdraw button.
+     · `salvageOnlyWouldMiss` — the same question asked of the OLD catalogue
+       (SALVAGE_RES alone). This is the falsification, permanently wired in:
+       hand `_boeResCatalog` back to plain SALVAGE_RES and those ids move from
+       this field into `missing`, and `pass` goes false.
+   `extraBanked` injects a hypothetical bank balance, so the one-way door can be
+   measured without depositing a real player's property to prove it. */
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.boeCatalogCheck = function (extraBanked) {
+    const cat = _boeResCatalog();
+    const have = {}; for (const r of cat) have[r.id] = 1;
+    let led = {};
+    try { led = (typeof window.cityResourceLedger === 'function') ? window.cityResourceLedger() : {}; } catch (e) {}
+    let held = {};
+    try { held = (typeof _ensureResources === 'function') ? _ensureResources() : {}; } catch (e) {}
+    const banked = Object.assign({}, (BankEthos && BankEthos.resources) || {}, extraBanked || {});
+    const narrow = {};
+    try { for (const r of ((typeof SALVAGE_RES !== 'undefined') ? SALVAGE_RES : [])) narrow[r.id] = 1; } catch (e) {}
+    const missing = [], wouldMiss = [];
+    const scan = (src) => {
+      for (const k in src) {
+        if (!k || k === 'cinder' || !((src[k] | 0) > 0)) continue;
+        if (!have[k] && missing.indexOf(k) < 0) missing.push(k);
+        if (!narrow[k] && wouldMiss.indexOf(k) < 0) wouldMiss.push(k);
+      }
+    };
+    scan(led); scan(held); scan(banked);
+    return { pass: missing.length === 0, catalog: cat.length, missing: missing,
+             salvageOnlyWouldMiss: wouldMiss,
+             banked: Object.keys(banked).filter((k) => (banked[k] | 0) > 0) };
+  };
+} catch (e) {}
 // 🦊 On-chain wallet linking — same link_game_wallet RPC the website's
 // Cinder Backing → Stake MT page uses, so linking from EITHER surface lands
 // in the one ownership_accounts row (one wallet per player, wallet_taken
@@ -61076,9 +61181,10 @@ function openBankOfEthos() {
         try { if (typeof _fcSyncLoanToBankEthos === 'function') _fcSyncLoanToBankEthos(); } catch (e) {}
         const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Operator') + '';
         // FULL 149-item salvage catalog (not just the 10 camp resources) so
-        // the Ops Vault lists every resource the player can find/bank.
-        const _boeCat = (typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) ? SALVAGE_RES : (typeof RESOURCES !== 'undefined' ? RESOURCES : []);
-        const resCatalog = _boeCat.map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color }));
+        // the Ops Vault lists every resource the player can find/bank — PLUS
+        // every id the player actually holds or has banked, which is what keeps
+        // "every banked id has a Withdraw button" true. See _boeResCatalog.
+        const resCatalog = _boeResCatalog();
         const walletRes = {};
         try { const S = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {}); resCatalog.forEach((r) => { walletRes[r.id] = S[r.id] | 0; }); } catch (e) {}
         f.contentWindow && f.contentWindow.postMessage({
@@ -61261,7 +61367,10 @@ function openBankOfEthos() {
         aza: BankEthos.ready ? (BankEthos.aza | 0) : 0,
         walletCinder: (Profile && Profile.gems) | 0,
         walletAza: (Profile && Profile.sovereigns) | 0,
-        vault: { resCatalog: ((typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) ? SALVAGE_RES : (typeof RESOURCES !== 'undefined' ? RESOURCES : [])).map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color })), walletRes: {}, bankRes: {}, bankReady: !!BankEthos.ready, extCols: !!BankEthos._extCols },
+        // Same catalogue as postSeed below — a first paint that dropped the
+        // held/banked ids would show a banked chain resource with no card for
+        // the ~1 s before the real seed lands. One helper, both sites.
+        vault: { resCatalog: _boeResCatalog(), walletRes: {}, bankRes: {}, bankReady: !!BankEthos.ready, extCols: !!BankEthos._extCols },
         // First-paint default: if we haven't fetched the bank row yet,
         // treat as pending so the AuthScreen renders. postSeed updates
         // this with the real flag once boeFetch resolves.
@@ -211473,6 +211582,49 @@ window.cityResourceHeadroom = () => {
     if (!(cap > 0)) return { cap: 0, units: units, free: Infinity };
     return { cap: cap, units: units, free: Math.max(0, cap - units) };
   } catch (e) { return { cap: 0, units: 0, free: Infinity }; }
+};
+/* 📦 …AND WHAT THE UNITS IN THAT `units` FIGURE ACTUALLY ARE.
+   🔴 THE GAP THIS CLOSES, AND IT IS A PLUMBING GAP, NOT A DESIGN ONE. The city's
+      "Rebalance the vault" plan is arithmetic over what the player HOLDS against
+      what the city PRODUCES, and it was being handed `game.res` — node-city's HUD
+      mirror, which refreshLedgerMirror() fills from HUD_DISPLAY_RES: TWELVE ids.
+      The ceiling it is relieving is getResourceHeadroom's `units`, i.e.
+      getResourceUnits(), which sums EVERY key of Profile.salvage — 70 ids after
+      the v120t9 chain promotion, plus `dna` and the rest of SALVAGE_RES. So the
+      plan could see a twelfth of the vault and offered whatever was over-share
+      inside that twelfth. MEASURED on a 2,000/2,000 vault at 0% output holding
+      food 20 / water 20 / metal 60 / cars 1,900: it offered 45 METAL — a
+      construction raw — and never mentioned the 1,900 cars that own the vault,
+      while the causation gate (whose projection reads the same blind `held`)
+      endorsed the claim that banking 45 units would cure a 2,000-unit choke.
+   ⭐ SO THE CITY GETS THE WHOLE LEDGER, from the same place the ceiling counts.
+      Same source, same tick, one denominator.
+   ⚠ A SNAPSHOT, deliberately, unlike every accessor above it. The plan needs the
+     WHOLE map in one read — asking id-by-id would mean 70+ hops and, in message
+     mode, 70+ round trips — and it is consumed immediately by pure arithmetic
+     that moves nothing. Callers re-read it; nobody caches it across a click.
+   ⚠ Zero-valued keys are dropped: they occupy no room, so they are not surplus,
+     and a plan that listed them would offer to bank nothing by name.
+   ⚠ CINDER IS NOT A RESOURCE UNIT and is skipped here as everywhere else. It has
+     no stash cap, it is the player's real balance, and it must never be offered
+     up as "surplus". Profile.salvage should never carry it; this is belt and
+     braces so a stray key cannot put the wallet in a banking dialog.
+   ⚠ Stalled ledger manager → {} , matching cityResourceHeadroom's free:0 above.
+     While stalled we cannot read the OWNER's stash, and inventing the viewer's
+     own holdings there would name someone else's property in the dialog. */
+window.cityResourceLedger = () => {
+  try {
+    if (_cityMgrStalled()) return {};
+    const R = CityMgr.active ? CityMgr.salvage
+                             : ((typeof _ensureResources === 'function') ? _ensureResources() : {});
+    const out = {};
+    for (const k in R) {
+      if (!k || k === 'cinder') continue;
+      const n = Math.max(0, Math.round(Number(R[k]) || 0));
+      if (n > 0) out[k] = n;
+    }
+    return out;
+  } catch (e) { return {}; }
 };
 window.cityAddRes = (id, n) => {
   try {

@@ -84,3 +84,4 @@ public/assets/Units/unit frames/New units/*.gif
 .gauntlet/package/
 .gauntlet/*.tgz
 .gauntlet/shots/**/*.png
+.gauntlet/progress.html

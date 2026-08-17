@@ -1,0 +1,62 @@
+[
+  {
+    "round": 0,
+    "headline": "The untouched renderer, photographed for the first time.",
+    "status": "done",
+    "meanScore": null,
+    "strangerTest": "instantly",
+    "tris": 1992596,
+    "note": "Not a build round. This is the harness proving it can boot the real page, place a 172-tile district through the shipped tryPlace() path and photograph it \u2014 the thing that lets every later round be judged on output instead of on a diff. What it shows: five residential archetypes on a seeded street grid, procedural canvas textures, a lamp-lit road network \u2014 and a global violet cast that no reference frame has. The scores in the matrix for this row are the lead's own read of the baseline frames, recorded so later rounds have something to move against; every round from 1 on is scored by critics who did not write the code.",
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 2
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 3
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 4
+      },
+      {
+        "dimension": "Building surface",
+        "score": 3
+      },
+      {
+        "dimension": "The plot",
+        "score": 3
+      },
+      {
+        "dimension": "Roads",
+        "score": 4
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 3
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 3
+      },
+      {
+        "dimension": "Citizens",
+        "score": 2
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 2
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 2
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 4
+      }
+    ],
+    "pieces": []
+  }
+]

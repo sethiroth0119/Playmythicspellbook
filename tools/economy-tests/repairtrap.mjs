@@ -56,6 +56,9 @@ let SRC = readFileSync(join(here, '..', '..', 'public', 'index.html'), 'utf8');
 
      craft-price   price the repair off `craft × 0.6` + one Steel Pipe again
      cond-floor    put the 0.25 condition floor back, so neglect is free forever
+     repair-share  put OSIM_REPAIR_SHARE back to the 0.35 the floor removal
+                   shipped with — the FAUCET regression, which §7 exists to catch
+                   and which every other section here scores as a clean pass
 
    `craft-price` + `cond-floor` together ARE the shipped trap. */
 const SAB = process.env.REPAIRTRAP_SABOTAGE || '';
@@ -73,21 +76,36 @@ function splice(name, find, repl) {
 }
 /* → expected red, measured ALONE: 20 rows — §1 (4), §2 (12), §3 (4). §3's cells
      are the indictment worth reading: with a bankroll to press the button with,
-     the maintaining player finishes 1,000 h at ₵-239 on a pumpjack, ₵-129 on a
-     refinery and ₵-1,534 on a deepcore, against ₵262 / ₵255 / ₵364 for doing
+     the maintaining player finishes 5,000 h at ₵-1,283 on a pumpjack, ₵-1,721 on
+     a refinery and ₵-9,224 on a deepcore, against ₵228 / ₵285 / ₵228 for doing
      nothing at all. §5 stays GREEN here — the floor is a separate defect and
-     `cond-floor` is what covers it. */
+     `cond-floor` is what covers it. §7 stays GREEN too, and that is honest
+     rather than a miss: a repair priced above what it restores mints no Cinder
+     because nobody presses it. A trap and a faucet are different defects. */
 splice('craft-price',
   'function _osimRepairCost(m) {',
   'function _osimRepairCost(m) { return { pipe: 1, cash: Math.max(5, Math.round((100 - m.condition) / 100 * OSIM_MACHINES[m.type].craft * 0.6)) }; } function _osimRepairCostFixed(m) {');
-/* → expected red, measured ALONE: 8 rows — §3 (4) and §5 (4). §1/§2 stay green,
-     and that is the whole reason §3 and §5 exist: they are static price-vs-value
-     ratios and cannot see the condition floor at all. A fix that only re-priced
-     the button would pass §1/§2 with full marks and still leave neglect free.
-     Both switches together = 28 rows, which is the shipped trap exactly. */
+/* → expected red, measured ALONE: 12 rows — §3 (4), §5 (4) and §6's STALLED
+     label (4). (This note used to say 8; it predated §6 and was never recounted.
+     Row counts here are re-measured, not inherited.) §1/§2 stay green, and that
+     is the whole reason §3 and §5 exist: they are static price-vs-value ratios
+     and cannot see the condition floor at all. A fix that only re-priced the
+     button would pass §1/§2 with full marks and still leave neglect free.
+     §7 also stays green: putting the throttle back TIGHTENS the faucet, which is
+     the direction §7 does not police.
+     `craft-price` + `cond-floor` together = 28 rows, the shipped trap exactly. */
 splice('cond-floor',
   'function _osimCondFactor(m) {',
   'function _osimCondFactor(m) { return Math.max(0.25, m.condition / 100); } function _osimCondFactorFixed(m) {');
+/* → expected red, measured ALONE: 4 rows, ALL of them in §7. §1–§6 all pass with
+     full marks at 0.35 — repair still returns 2.86× what it costs, neglect still
+     stalls, the ×10 is still there, the panel still renders. That is precisely
+     the hole this switch documents: every section written to prove "Repair is
+     worth pressing" is blind to how much Cinder the resulting best play MINTS,
+     and the 0.35 tree quietly paid players 2.4× what the field paid before it. */
+splice('repair-share',
+  'const OSIM_REPAIR_SHARE = 0.73;',
+  'const OSIM_REPAIR_SHARE = 0.35;');
 
 let bad = 0;
 const fail = (m) => { bad++; console.log('   ❌ ' + m); };
@@ -260,8 +278,26 @@ console.log('    ' + pad('machine', 11) + pad('@25%', 12) + pad('@50%', 12) + pa
      NEGLECT : never repair.
    Both sell everything they produce at the Reserve after the levy; the refinery
    is charged for the oil it burns at the same Reserve it could have sold it
-   into. The winner is simply whoever ends with more Cinder. */
-console.log('\n§3  1,000 h of production — repair vs neglect, driven through _osimStepMachine');
+   into. The winner is simply whoever ends with more Cinder.
+
+   ⚠ WHY THE HORIZON IS 5,000 h AND NOT THE 1,000 h THIS ORIGINALLY USED, AND WHY
+     THAT IS NOT MOVING THE GOALPOSTS. A freshly built machine is handed 100
+     condition points for free with the build fee, and the neglecting player's
+     entire income is the ONE-TIME liquidation of that endowment — after it, they
+     earn nothing ever again, because the floor is gone. So the shorter the race,
+     the more of it is endowment rather than strategy. At 1,000 h a pumpjack has
+     not finished spending the free 100 points (it ends near 5%, not stalled), so
+     the "race" is really "one free tank vs one free tank plus paid refills", and
+     at a 0.73 maintenance share the refills have not yet overtaken. That is
+     arithmetic about the starting gift, not evidence that neglect is a strategy:
+     the neglect column is FLAT after ~1,200 h and the repair column is a line
+     through the origin, so the crossing exists at any share below 1 and the only
+     question is where. 5,000 h is past it on all four with room, and it is the
+     same horizon §7 uses, so the two sections cannot be tuned against each other.
+     If a future change raises the share again, this crossing moves later — that
+     is a real cost of a heavier sink and it should be re-measured, not papered
+     over by lengthening the horizon a second time. */
+console.log('\n§3  5,000 h of production — repair vs neglect, driven through _osimStepMachine');
 console.log('    ' + pad('machine', 11) + pad('REPAIR ₵', 12) + pad('NEGLECT ₵', 12) + pad('units R/N', 14) + 'verdict');
 {
   /* ⚠ BANKROLL. Both policies start with the same float and it is subtracted
@@ -270,7 +306,7 @@ console.log('    ' + pad('machine', 11) + pad('REPAIR ₵', 12) + pad('NEGLECT �
      was fine, but because a machine whose wear cycle earns ₵170 can never
      accumulate the ₵315 its own repair costs, so the policy never got to press
      the button at all. "You cannot afford the trap" is not a defence of it. */
-  const HOURS = 1000, STEP = 600, FLOAT = 1000000; // 10-minute steps, 6,000 of them
+  const HOURS = 5000, STEP = 600, FLOAT = 1000000; // 10-minute steps, 30,000 of them
   for (const type of TYPES) {
     const run = (policy) => {
       const st = freshState(); const A = make(st);
@@ -397,6 +433,89 @@ console.log('\n§6  the Repair panel renders and quotes the new price');
       if (cond < 99 && disabled) { fail(type + ' @' + cond + '% — Repair is disabled with ₵' + st.cash + ' in hand and a ₵' + rc.cash + ' price'); continue; }
       ok(type + ' @' + cond + '% panel: ' + (cond >= 99 ? 'in top condition, button correctly disabled' : 'quotes ₵' + rc.cash + ', button live' + (cond <= 0 ? ', STALLED shown' : '')));
     }
+  }
+}
+
+/* ── §7  THE FAUCET — how much Cinder BEST PLAY actually mints ──────────────
+   🔴 WHY THIS SECTION EXISTS, AND WHY §1–§6 WERE NOT ENOUGH.
+   Every section above asks "is Repair worth pressing?" and the answer is a
+   ratio: value restored over price paid. A ratio is scale-free, and the owner's
+   ask was not about a ratio — it was "less Cinder sloshing around". So all six
+   sections scored a clean pass on a tree that had just MULTIPLIED the faucet.
+
+   The 0.25 condition floor was two things at once, and only one of them was
+   reported. It was a free ride (neglect cost nothing), and it was a 4× THROTTLE
+   (a neglected machine ran at 25% speed). Removing it ended the free ride and
+   deleted the throttle in the same line. Pre-fix, best play was to never repair
+   and coast at 25% speed forever; post-fix, best play is to repair constantly
+   and run near full speed for a cut. At a 0.35 cut that is 2.4× MORE Cinder per
+   machine-hour reaching players, forever — the opposite of the ask, shipped
+   under a comment that called it a tightening.
+
+   So this section does not measure a ratio. It measures ₵ PER MACHINE-HOUR under
+   BEST PLAY, on the shipped `_osimStepMachine`, searching the repair threshold
+   rather than assuming one — a fixed policy would have missed it, because the
+   pre-fix optimum (never repair) and the post-fix optimum (repair in the 90s)
+   are not the same policy. It is compared against a RECORDED pre-fix baseline.
+
+   ⚠ THE BASELINE IS HORIZON-MATCHED ON PURPOSE. These are 5,000 h numbers, taken
+     on commit 92bd66fca8 (the tree before the repair fix) with this exact policy
+     grid. They are NOT the steady state — a fresh machine spends its first
+     stretch at full speed before it settles onto the 0.25 floor, so 5,000 h
+     flatters the pre-fix side by ~9%. At 50,000 h the same measurement reads
+     0.172 / 0.241 / 0.144 / 0.274 pre-fix against 0.179 / 0.241 / 0.142 / 0.286
+     now. 5,000 h is used here only because it is fast and the POST-fix side has
+     already converged by then (within 1% of its 50,000 h value); comparing a
+     5,000 h run against a 50,000 h baseline would silently hand the fix a 9%
+     budget it has not earned. Re-measure BOTH sides if you change the horizon. */
+console.log('\n§7  best-play Cinder per machine-hour vs the pre-fix field');
+{
+  /* Measured on 92bd66fca8, 5,000 h, same grid: the income a rational player
+     took out of this field BEFORE the condition floor was removed. */
+  const PRE_FAUCET = { pumpjack: 0.188, drill: 0.270, refinery: 0.164, deepcore: 0.290 };
+  const TOL = 1.10; // 10% — the fix lands at 0.89–0.99×; 0.35 lands at 2.1–2.3×
+  const HOURS = 5000, STEP = 600;
+  /* -1 = never repair. The rest are "repair to 100% the moment condition drops
+     to or below this", which is the whole family of sane maintenance policies.
+     The optimum sits in the 80s–90s post-fix and at -1 pre-fix, so both ends
+     have to be in the grid or the comparison measures the wrong player. */
+  const GRID = [-1, 84, 88, 90, 93, 96, 97];
+  console.log('    ' + pad('machine', 11) + pad('pre-fix ₵/h', 14) + pad('now ₵/h', 11) + pad('best policy', 16) + 'vs pre-fix');
+  for (const type of TYPES) {
+    let best = null;
+    for (const thr of GRID) {
+      const st = freshState(); const A = make(st);
+      st.inv.oil = 10 ** 12;
+      const m = { type, tier: 1, condition: 100, buffer: 0, timer: 0 };
+      st.placed.push(m);
+      const def = A.OSIM_MACHINES[type], keep = 1 - A._osimSellSkim();
+      let cash = 0;
+      for (let t = 0; t < HOURS * 3600; t += STEP) {
+        /* Unlimited bankroll: "the player cannot afford the button" is a
+           different finding and would mask this one. See §3's note. */
+        if (thr >= 0 && m.condition <= thr) {
+          const rc = A._osimRepairCost(m);
+          cash -= rc.cash + (rc.pipe || 0) * A._osimPartCost('pipe');
+          m.condition = 100;
+        }
+        const before = m.buffer;
+        A._osimStepMachine(m, STEP);
+        const made = m.buffer - before;
+        if (made > 0) {
+          cash += made * (A.OSIM_RESERVE_PRICE[def.produces] || 0) * keep;
+          if (def.consumes) cash -= made * (def.ratio || 1) * (A.OSIM_RESERVE_PRICE[def.consumes] || 0) * keep;
+          m.buffer = 0;
+        }
+      }
+      const perHour = cash / HOURS;
+      if (!best || perHour > best.perHour) best = { perHour, thr };
+    }
+    const ratio = best.perHour / PRE_FAUCET[type];
+    console.log('    ' + pad(type, 11) + pad(PRE_FAUCET[type].toFixed(3), 14)
+      + pad((Math.round(best.perHour * 1000) / 1000).toFixed(3), 11)
+      + pad(best.thr < 0 ? 'never repair' : 'repair @' + best.thr + '%', 16) + f2(ratio) + '×');
+    if (ratio <= TOL) ok(type + ' best play mints ' + f2(ratio) + '× the pre-fix field (₵' + (Math.round(best.perHour * 1000) / 1000).toFixed(3) + '/h vs ₵' + PRE_FAUCET[type] + '/h)');
+    else fail(type + ' FAUCET GREW: best play now mints ₵' + (Math.round(best.perHour * 1000) / 1000).toFixed(3) + '/machine-hour against ₵' + PRE_FAUCET[type] + ' before the fix (' + f2(ratio) + '×) — the ask was LESS Cinder');
   }
 }
 

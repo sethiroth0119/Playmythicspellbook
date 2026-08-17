@@ -202494,7 +202494,7 @@ function _osimMergeExtraction(a, b) { if (!a || typeof a !== 'object') return (b
      fixed share (`OSIM_REPAIR_SHARE`) of the OUTPUT VALUE the repair restores,
      and maintenance no longer takes a part. Being denominated in output, it
      cannot invert again whatever any cost table is multiplied by. Measured
-     out/in: 2.83–2.88× on all four machines at 25 / 50 / 75% condition.
+     out/in: 1.35–1.37× on all four machines at 25 / 50 / 75% condition.
      Pinned by `node tools/economy-tests/repairtrap.mjs`, whose sabotage switch
      rebuilds this exact trap on demand.
 
@@ -202507,11 +202507,37 @@ function _osimMergeExtraction(a, b) { if (!a || typeof a !== 'object') return (b
    Infinity and both the live loop and the offline catch-up treat it as stopped —
    and wear is per-unit, so every machine walks itself down to a stall. Repair is
    therefore NOT optional any more, and because it is priced as a share of output
-   it is a recurring sink proportional to income rather than a one-time entry fee:
-   the steady-state faucet now runs at (1 − OSIM_REPAIR_SHARE) of gross.
-   ⚠ That is the only lever in here that touches the STEADY STATE. ×10 raises the
-     entry fee tenfold and, on its own, still leaves the steady state where it
-     was. Do not re-derive a cost-table multiplier as a fix for the faucet. */
+   it is a recurring sink proportional to income rather than a one-time entry fee.
+
+   🔴 READ THIS BEFORE YOU BELIEVE THE FLOOR REMOVAL TIGHTENED ANYTHING. An
+   earlier revision of this comment said "the steady-state faucet now runs at
+   (1 − OSIM_REPAIR_SHARE) of gross", with the share at 0.35, and called that a
+   tightening. It is true only against gross-at-full-speed, which is not a state
+   the pre-fix field was ever in. The floor was ALSO the only throttle: a
+   neglected machine ran at 25% speed forever, so the pre-fix EQUILIBRIUM was
+   0.25 × gross, not gross. Deleting the floor removed a 4× throttle and charged
+   35% for the privilege, which is a faucet INCREASE, not a decrease.
+   Measured — best play on each tree, 50,000 h driven through the shipped
+   `_osimStepMachine`, every repair threshold from 60% to 98% searched, sold at
+   the Reserve after the levy, net Cinder per machine-hour:
+
+     machine    pre-fix (never repair)   floor gone @0.35   floor gone @0.73
+     pumpjack        0.172                    0.431              0.179
+     drill           0.241                    0.618              0.241
+     refinery        0.144                    0.359              0.142
+     deepcore        0.274                    0.689              0.286
+                                         ↑ 2.5× MORE Cinder   ↑ flat, ±5%
+
+   🔒 SO OSIM_REPAIR_SHARE IS NOT A FEEL KNOB. It is the number that holds the
+      steady-state faucet at the level the owner already had. 0.73 is where best
+      play lands back on the pre-fix income; every 0.01 taken off it is worth
+      roughly +4% Cinder per machine-hour to every player, forever. If it is ever
+      lowered to make maintenance feel gentler, that is a faucet decision and has
+      to be reported as one.
+   ⚠ That pair — the floor and the share — is the only lever in here that touches
+     the STEADY STATE. ×10 raises the entry fee tenfold and, on its own, still
+     leaves the steady state exactly where it was. Do not re-derive a cost-table
+     multiplier as a fix for the faucet. */
 const OSIM_PARTS = { pipe: { name: 'Steel Pipe', cost: 180, ic: '🔧' }, motor: { name: 'Motor', cost: 380, ic: '⚙️' }, valve: { name: 'Valve', cost: 260, ic: '🎚️' }, drillbit: { name: 'Drill Bit', cost: 480, ic: '🔩' } };
 const OSIM_MACHINES = {
   pumpjack: { name: 'Pumpjack', ic: '🛢️', parts: { pipe: 2, motor: 1 }, craft: 300, kind: 'producer', produces: 'oil', rate: 2.4, cap: 25, shape: 'pump', desc: 'Pumps crude oil from underground reserves.' },
@@ -202727,7 +202753,16 @@ function _osimAutoCollect() { if (_osimState.research.automation >= 1) return tr
    therefore no longer optional, which is what makes `_osimRepairCost` below a
    real, recurring, output-proportional Cinder sink instead of a button nobody
    presses. `_osimEffRate` turns a 0 here into Infinity, and both the live loop
-   and the offline catch-up treat a non-finite rate as "this unit is stopped". */
+   and the offline catch-up treat a non-finite rate as "this unit is stopped".
+   🔴 AND THE HALF OF THAT SENTENCE THAT COST A ROUND. The 0.25 was not only a
+   free ride, it was a 4× THROTTLE, and it was the only thing capping the pre-fix
+   steady state. Removing it lets a maintained machine run near full speed, so on
+   its own it MULTIPLIES the Cinder faucet by ~4 and hands back only whatever
+   `OSIM_REPAIR_SHARE` takes. At the 0.35 this shipped with, that was 2.5× MORE
+   Cinder per machine-hour than the field paid before — measured, and the exact
+   opposite of the ask. The share is now 0.73 and holds it flat. These two
+   numbers are one lever: never change either without re-measuring the other
+   (`node tools/economy-tests/repairtrap.mjs`, §7). */
 function _osimCondFactor(m) { const c = Math.max(0, Math.min(100, +m.condition || 0)); return c <= 0 ? 0 : c / 100; }
 // ⏱ Real-time production: the per-machine `rate` (seconds) is scaled up to HOURS
 // by prodSecondsMul (admin-tunable, default 7500 ≈ 1 unit / 5h at Tier I). Higher
@@ -202791,21 +202826,54 @@ function _osimRepairValue(m) {
    The price is now a fixed share of the output the repair restores, so it can
    never invert again no matter what any cost table is multiplied by, and it is
    the same share for every machine because you are buying the same thing.
+   🔒 WHY THE SHARE IS 0.73 AND NOT SOMETHING COMFORTABLE. It is not tuned for
+     feel. Removing the 0.25 condition floor (see `_osimCondFactor`) deleted the
+     4× throttle that was capping the pre-fix steady state, so the share is the
+     only thing left holding the faucet down. 0.73 is the value at which BEST
+     PLAY on this tree earns the same Cinder per machine-hour as best play on the
+     pre-fix tree — 0.179 / 0.241 / 0.142 / 0.286 against 0.172 / 0.241 / 0.144 /
+     0.274, +4% worst case, measured over 50,000 h through `_osimStepMachine`
+     with every repair threshold searched. At 0.35 the same measurement read
+     0.431 / 0.618 / 0.359 / 0.689 — 2.5× the Cinder, in a change whose whole
+     purpose was to spend Cinder. Repair still pays back 1.35–1.37× what it
+     costs, which is what makes it worth pressing; the payback ratio is 1/SHARE
+     and nothing else, so read that off the share directly.
    ⚠ `pipe: 0` is kept, not removed: `_OSIM.repairMachine` and
      `_osimRenderInspector` both read `rc.pipe`, and an undefined there would
      turn `parts.pipe -= rc.pipe` into NaN and silently destroy the player's
      parts. Zero is the safe way to say "no parts". */
-const OSIM_REPAIR_SHARE = 0.35;
+const OSIM_REPAIR_SHARE = 0.73;
 function _osimRepairCost(m) {
   const def = OSIM_MACHINES[m.type];
   const pts = Math.max(0, 100 - (+m.condition || 0));
   if (!def || pts <= 0) return { pipe: 0, cash: 0 };
-  /* Ceiling: the retired craft-derived price for the same damage. It can only
-     bind if an admin tunes registry.decayPerUnit down toward zero (which would
-     make a repair restore an unbounded number of units), and it guarantees this
-     formula is never more expensive than the one it replaces. */
-  const ceil = pts / 100 * def.craft * 0.6;
-  return { pipe: 0, cash: Math.max(5, Math.round(Math.min(_osimRepairValue(m) * OSIM_REPAIR_SHARE, ceil))) };
+  /* 🔴 THERE IS DELIBERATELY NO CEILING HERE ANY MORE, AND THAT IS LOAD-BEARING.
+     A `Math.min(…, pts/100 × craft × 0.6)` used to sit on this line — the retired
+     craft-derived price, kept as a "can only bind if an admin tunes decay toward
+     zero" guard. It was harmless at SHARE 0.35 and stopped being harmless the
+     moment the share was raised to hold the faucet flat: craft is an INPUT cost
+     and the share is denominated in OUTPUT, so the two cross at a different
+     share for every machine. The Mining Drill crosses first (₵2.52/point of
+     ceiling against ₵3.97/point of value), so at SHARE 0.74 the drill — and only
+     the drill — would have been silently charged a discount, re-introducing a
+     per-machine cost table through the back door of a guard clause.
+     Nothing is lost by removing it: the share is < 1, so the price can never
+     exceed the value it restores, whatever any cost table or the admin's
+     `registry.decayPerUnit` is set to. A lower decay means one repair genuinely
+     buys more units, and charging proportionally for them is the point — it is
+     what keeps the sink at exactly SHARE of gross under any tuning. */
+  /* ⚠ `Math.ceil`, not `Math.round`, and the ₵5 minimum is not decoration. Best
+     play under this formula is to repair CONSTANTLY — the optimum threshold sits
+     in the 90s, so the typical repair is 2–3 condition points and costs single
+     digits, exactly the size where a rounding rule is a material fraction of the
+     price. Rounding to nearest handed that fraction to the player half the time:
+     at SHARE 0.75 a refinery topping up from 97% priced at ₵6.375 → ₵6, an
+     effective share of 0.706, and micro-repair being the optimum meant the
+     economy ran on the rounded-down price, not the tuned one. Measured, that one
+     rule alone put the refinery 12% above its pre-fix income while pumpjack and
+     deepcore sat at 2–3%. Rounding up is the only direction that cannot be
+     farmed by choosing the repair size. */
+  return { pipe: 0, cash: Math.max(5, Math.ceil(_osimRepairValue(m) * OSIM_REPAIR_SHARE)) };
 }
 function _osimMachineUnlocked(k) { const d = OSIM_MACHINES[k]; if (d.bpKey) return !!_osimState.blueprints[d.bpKey]; return true; }
 function _osimEarn(amt) { _osimState.cash += amt; _osimState.stats.earned += amt; _osimGainLog.push({ t: Date.now(), amt }); if (_osimGainLog.length > 500) _osimGainLog.shift(); }

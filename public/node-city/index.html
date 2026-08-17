@@ -18068,15 +18068,55 @@ game.power = { gen: 0, demand: 0, ratio: 1, factor: 1 };
      the player would rebalance and still be choked. One formula, two readers,
      so they cannot disagree — the same reasoning _stashRate's header gives for
      pulling the advertised rate out of economyTick's closure.
-   ⚠ SHARES ARE OVER THE CITY-PRODUCED SET ONLY — see _stashSplit's header. A
-     resource that is not in `want` has no target here and is never touched. */
-function _stashShareTargets(want, free, held) {
+   ⚠ SHARES ARE OVER THE CITY-PRODUCED SET ONLY FOR THE THROTTLE — see
+     _stashSplit's header. Counting a player's looted wood there would make every
+     target unreachable and stage 1 would degrade back to plain proportional.
+
+   🔴 …BUT THE PLAN HAD TO SEE THE WHOLE VAULT, AND FOR THREE ROUNDS IT COULD
+      NOT. `includeHeld` is the opt-in that separates the two readers, and it
+      exists because the default (produced-set-only) made _stashRebalancePlan
+      blind to the pile actually filling the vault. MEASURED ON THIS TREE, both
+      reachable, both with a 2,000-unit vault at 0% output:
+        (a) THE PRODUCER STOPPED. Three scrapmines raid-damaged. The tile loop
+            skips a damaged building outright (the central output gate below),
+            so `metal` never enters `_ledgerRate` and therefore never enters
+            `mix`. Holding food 20 / water 20 / metal 1,960, the plan offered to
+            bank 6 WATER — six units of the starved resource — and did not
+            mention the 1,960 metal that owns the vault. An input-starved
+            consumer (`if (haveOf(u) <= 0) … continue`) drops out identically.
+        (b) THE HOARD WAS NEVER PRODUCED HERE. Raid loot, market stock, crafting
+            inputs. Holding food 20 / water 20 / metal 60 / ammo 1,900, the plan
+            offered 45 METAL and never named the ammo.
+      In both cases the surplus the dialog printed was real arithmetic over the
+      wrong set, so the player could accept it in full and stay choked.
+
+   ⭐ THE RULE WHEN `includeHeld` IS ON: a resource this city does not produce
+      has production weight 0, so its fair share of the vault is 0 and its WHOLE
+      pile reads as surplus. It still occupies the pool — it is really in there,
+      taking up room — so the produced set's targets are recomputed against the
+      larger pool afterwards, not against a pool that pretends the hoard is not
+      there. Nothing here moves anything; see _stashRebalancePlan.
+   ⚠ CINDER IS EXEMPT, here as everywhere else in this file. It is currency, has
+     no resource cap, and must never be offered up as "surplus". */
+function _stashShareTargets(want, free, held, includeHeld) {
   let total = 0;
   for (const r in want) total += Math.max(0, want[r] || 0);
   let pool = Number.isFinite(free) ? Math.max(0, free) : 0;
   for (const r in want) pool += Math.max(0, (held && held[r]) || 0);
   const target = {};
   for (const r in want) target[r] = (total > 0) ? pool * (Math.max(0, want[r] || 0) / total) : 0;
+  if (includeHeld && held) {
+    let added = 0;
+    for (const r in held) {
+      if (r === 'cinder' || Object.prototype.hasOwnProperty.call(target, r)) continue;
+      const n = Math.max(0, held[r] || 0);
+      if (!(n > 0)) continue;
+      pool += n; added += n;
+      target[r] = 0;                 // weight 0 — this city produces none of it
+    }
+    // The pool really did grow, so the produced set is re-scaled against it.
+    if (added > 0) for (const r in want) target[r] = (total > 0) ? pool * (Math.max(0, want[r] || 0) / total) : 0;
+  }
   return { pool, total, target };
 }
 /* 🏰 ══ THE WAY OUT OF A VAULT THAT ALREADY RATCHETED ═════════════════════════
@@ -18102,15 +18142,75 @@ function _stashShareTargets(want, free, held) {
      in whole units — over-asking on someone else's property is the wrong
      direction to be wrong in.
    ⚠ THIS FUNCTION MOVES NOTHING AND IS PURE. It is arithmetic the dialog
-     prints; every unit is moved by openStashRebalance(), behind a button. */
+     prints; every unit is moved by openStashRebalance(), behind a button.
+   ⚠ IT WALKS `target`, NOT `mix`. That is the whole of the three-round fix: with
+     `includeHeld` on, `target` covers the produced set AND every other pile the
+     player is holding, so a resource the city stopped producing — or never
+     produced — can finally be offered. Walking `mix` is what made it blind.
+   ⚠ EVERY id in `move` MUST BE PRINTED BY NAME by the caller. Banking a
+     player's ammo is not the same decision as banking spare metal, and a
+     one-line "1,900 units" total would hide which decision they are making.
+     openStashRebalance names all of them twice — a before→after row each, and
+     again in the sentence on the button. */
 function _stashRebalancePlan(mix, held, free) {
-  const { target, pool, total } = _stashShareTargets(mix, free, held);
+  const { target, pool, total } = _stashShareTargets(mix, free, held, true);
   const move = {}; let units = 0;
-  for (const r in mix) {
+  /* 🔴 NO PRODUCTION, NO PLAN — and this guard is NEW WITH `includeHeld`, which
+     is what makes it necessary. With every weight at 0 every target is 0, so an
+     empty `mix` would read the player's ENTIRE vault as surplus and offer to
+     bank all of it. That is reachable: the advisor button is painted on a
+     4-second sweep while the tick runs every second, so `_stashChoke` can go
+     null between the paint and the click and openStashRebalance then reads
+     `mix = {}`. A city producing nothing is also a city whose vault is choking
+     nothing, so the honest plan there is the empty one. */
+  if (!(total > 0)) return { move, units, target, pool, total };
+  for (const r in target) {
     const over = Math.floor(Math.max(0, ((held && held[r]) || 0) - target[r]));
     if (over > 0) { move[r] = over; units += over; }
   }
   return { move, units, target, pool, total };
+}
+/* 🏰 ══ …AND WHETHER BANKING IT WOULD ACTUALLY HELP ════════════════════════════
+   🔴 THE CLAIM THIS GATES. The advisor row used to print "that surplus is what
+      is choking the rest" and a button, on nothing but `plan.units > 0` — i.e. it
+      asserted CAUSATION from the mere existence of an over-share pile. Now that
+      the plan can see the whole vault it finds a surplus far more often, so the
+      unguarded sentence would start claiming a cause on readings where moving
+      every named unit changes the throttle by nothing at all.
+
+   ⭐ SO THE CAUSE IS MEASURED, NOT ASSUMED: re-run the throttle against the
+      vault the plan would leave behind — the same headroom plus the units that
+      left, minus those units from the holdings — and only claim causation when
+      the aggregate share ACTUALLY RISES. `_stashSplit` is the same function the
+      tick allocates with, so the projection cannot disagree with the throttle.
+
+   🔴 `want` IS A SEPARATE ARGUMENT FROM `mix`, AND CONFLATING THEM IS A BUG THE
+      FIRST DRAFT OF THIS FUNCTION HAD. The share targets only ever use the
+      RATIOS in `mix`, so its scale cancels — but this projection compares a
+      request against `free`, where scale is everything. `mix` is a per-MINUTE
+      rate and `free` is the per-TICK headroom, so passing `mix` as the request
+      calls anything below a full minute of output "choked": at the shipped beat
+      that is every reading, `before` is pinned near 0, and the gate degenerates
+      to the `plan.units > 0` test it exists to replace. `_stashChoke.want` is
+      `_ledgerWant`, the request the throttle was actually handed. MEASURED: a
+      player who has just spent 1,500 metal by hand has ample room, and with
+      `mix` as the request the row still told them their hoard was choking the
+      city; with `want` the claim correctly disappears.
+      Defaults to `mix` only so an older caller (or a save whose last tick
+      predates the field) degrades to the pessimistic reading rather than throw.
+   ⚠ `free === Infinity` (unknown ceiling) reports NO RISE: both legs return
+     factor 1, so a city that could not read its cap never gets told a hoard is
+     choking it. Same direction as everywhere else — never idle, never accuse.
+   ⚠ ALSO PURE. It moves nothing; it is the predicate the button is drawn on. */
+function _stashRebalanceGain(mix, held, free, want) {
+  const plan = _stashRebalancePlan(mix, held, free);
+  const ask = want || mix;
+  const after = {};
+  for (const r in held) after[r] = Math.max(0, (held[r] || 0) - (plan.move[r] || 0));
+  const before = _stashSplit(ask, free, held).factor;
+  const freed = Number.isFinite(free) ? Math.max(0, free) + plan.units : free;
+  const projected = _stashSplit(ask, freed, after).factor;
+  return { plan, before, projected, rises: (plan.units > 0) && (projected > before + 1e-9) };
 }
 function _stashSplit(want, free, held) {
   const out = {};
@@ -18569,9 +18669,20 @@ async function economyTick(dtMin) {
        none of the vault, which is the exact inversion this whole area exists to
        stop. `_ledgerRate` is the UNTHROTTLED rate, which is what a share is
        owed against. Copied because it is a fresh object each tick anyway. */
+    /* 🏰 `want` IS CARRIED TOO, AND IT IS A DIFFERENT NUMBER FROM `mix` ON
+       PURPOSE. `mix` is a per-MINUTE rate and only its RATIOS are ever used
+       (share targets normalise by the total, so scale cancels). The rebalance
+       gate does not normalise: it re-runs _stashSplit to ask whether banking the
+       surplus would actually raise the share, and that answer depends on want
+       measured against `free` in the SAME units. `_ledgerWant` is the per-TICK
+       request the throttle was actually handed, so the projection reproduces the
+       tick instead of comparing a minute of production to a tick of headroom —
+       which reads as choked at any headroom below a full minute's output and
+       would keep the advisor accusing a hoard after the player had already made
+       room by hand. */
     _stashChoke = (_split.factor < 1 && _split.want > 0)
       ? { factor: _split.factor, perMin: _split.want / Math.max(1e-9, dtMin), free: _ledgerFree,
-          mix: Object.assign({}, _ledgerRate) }
+          mix: Object.assign({}, _ledgerRate), want: Object.assign({}, _ledgerWant) }
       : null;
   }
   // Non-building supply that no tile owns.
@@ -23435,14 +23546,23 @@ function evaluateNeeds() {
          `game.res` moves between sweeps (the player spends, a raid skims) and a
          stale surplus would name a number the vault can no longer supply. It is
          pure arithmetic over three small objects — see _stashRebalancePlan. */
-    const _plan = _stashRebalancePlan(_stashChoke.mix || {}, game.res,
-                                      Number.isFinite(_stashChoke.free) ? _stashChoke.free : 0);
+    /* 🏰 …AND THE SENTENCE THAT NAMES A CAUSE IS GATED ON A MEASURED ONE.
+       `plan.units > 0` was the whole test, which asserted causation from the
+       mere existence of an over-share pile. _stashRebalanceGain re-runs the
+       throttle against the vault the plan would leave behind and only reports
+       `rises` when the share actually goes up — so the button can never appear
+       claiming a cause it cannot fix. When it does not rise the row still
+       prints: the throttle is real and the two honest remedies (spend it, buy
+       Vault Containers) are already in the sentence above. */
+    const _gain = _stashRebalanceGain(_stashChoke.mix || {}, game.res,
+                                      Number.isFinite(_stashChoke.free) ? _stashChoke.free : 0,
+                                      _stashChoke.want);
     add('stashfull', '🏰', 'STASH FULL — your vault has no room left, so the city is running at ' +
       pct + '% of the ' + Math.round(_stashChoke.perMin) + '/min it could produce. The room that does ' +
       'free up goes to whichever resource is furthest below its share of your output. Spend some ' +
       'stash, or buy Vault Containers in the Vendor Market.' +
-      (_plan.units > 0
-        ? '<br><b>' + _plan.units.toLocaleString() + ' units are above their share of your output</b> — ' +
+      (_gain.rises
+        ? '<br><b>' + _gain.plan.units.toLocaleString() + ' units are above their share of your output</b> — ' +
           'that surplus is what is choking the rest.' +
           '<br><button class="pbtn" data-need-act="rebalance" style="margin-top:6px">🏰 Rebalance the vault…</button>'
         : ''), pct < 50);
@@ -23878,13 +23998,26 @@ async function openStashRebalance() {
   const st = await MythicCityBridge.vaultState();
   const mix = (_stashChoke && _stashChoke.mix) || {};
   const held = Object.assign({}, game.res);
-  const plan = _stashRebalancePlan(mix, held, free);
+  /* The SAME predicate the advisor button is drawn on, recomputed here against
+     the freshly-read headroom — `free` above came from the bridge just now, and
+     the row's copy is up to four seconds old. `rises` gates the one sentence in
+     this dialog that names a CAUSE; the offer itself does not depend on it,
+     because banking a hoard the player wants out of the way is a reasonable
+     thing to do even on a reading where it would not move the throttle. */
+  const gain = _stashRebalanceGain(mix, held, free, _stashChoke && _stashChoke.want);
+  const plan = gain.plan;
   const ids = Object.keys(plan.move);
 
   const box = document.createElement('div');
   box.id = 'cardpicker';                   // reuse the picker's overlay chrome
   const row = (lab, val) => '<div class="vrow"><span>' + lab + '</span><b>' + val + '</b></div>';
   const nm = (r) => (RES_META[r] ? RES_META[r].ico + ' ' + RES_META[r].name : r);
+  /* 🔫 EVERY PROPOSED RESOURCE IS NAMED, and this is the sentence that does it.
+     `ids` now comes from a plan that can see the whole vault, so it routinely
+     contains things this city does not produce — raid ammo, market stock, the
+     metal of a mine a raid knocked out. "Move 1,900 units out" would be asking
+     the player to approve a decision they cannot see; banking someone's ammo is
+     not the same decision as banking spare metal. */
   const moveLabel = ids.map(r => plan.move[r].toLocaleString() + ' ' + nm(r)).join(', ');
 
   let body;
@@ -23896,24 +24029,44 @@ async function openStashRebalance() {
     /* The honest dead end. Naming the number they are over by is still worth
        doing — it tells them how much to spend — but there is no button. */
     body = '<div class="cpempty">You are holding <b>' + plan.units.toLocaleString() + '</b> units (' +
-      moveLabel + ') more than this city\'s output entitles them to, and that surplus is what is ' +
-      'choking the rest.<br><br>The Ops Vault could hold it for you, but ' +
+      moveLabel + ') more than this city\'s output entitles them to' +
+      (gain.rises ? ', and that surplus is what is choking the rest' : '') +
+      '.<br><br>The Ops Vault could hold it for you, but ' +
       (st.ready ? 'this bank account cannot hold resources yet — open the Bank of Ethos once to finish setting it up.'
                 : 'the Bank of Ethos is not connected. Sign in on the main game, then reopen the city.') +
       '<br><br>Until then the only ways out are spending that surplus or buying Vault Containers in the ' +
       'Vendor Market.</div>';
   } else {
-    // Before → after, per resource, so the mix itself is the argument.
-    const rows = Object.keys(mix).sort((a, b) => (mix[b] || 0) - (mix[a] || 0)).map((r) => {
+    /* Before → after, per resource, so the mix itself is the argument.
+       ⚠ THE ROW SET IS `mix` ∪ `ids`, NOT `mix`. It used to be the produced set
+         alone, which is exactly how a 1,900-unit ammo hoard could be the whole
+         of what the button moved and appear in no row of the table. Anything
+         being banked gets a line whether or not this city makes it, and the one
+         that is not produced says so instead of printing a bogus "0.0/min". */
+    const rowIds = Object.keys(mix).concat(ids.filter(r => !(r in mix)));
+    const rows = rowIds.sort((a, b) => (mix[b] || 0) - (mix[a] || 0)).map((r) => {
       const now = held[r] | 0, mv = plan.move[r] || 0;
+      const rate = (mix[r] || 0) > 0 ? (mix[r]).toFixed(1) + '/min' : 'not produced here';
       return '<div class="vrow"><span>' + nm(r) + ' <span style="opacity:.6">' +
-        (mix[r] || 0).toFixed(1) + '/min</span></span><b>' + now.toLocaleString() +
+        rate + '</span></span><b>' + now.toLocaleString() +
         (mv ? ' → ' + (now - mv).toLocaleString() : '') + '</b></div>';
     }).join('');
+    /* ⚠ THE CAUSAL SENTENCE IS GATED, THE OFFER IS NOT. "…so everything else
+       banks only what your citizens eat" is a claim about why the city is
+       throttled, and _stashRebalanceGain is the only thing entitled to make it.
+       On a reading where banking would not raise the share the dialog still
+       shows the table and still offers the move — the player may simply want
+       the hoard out of the way — it just does not tell them a story. */
     body =
-      '<div class="vnote">Your vault is full, and it is full of the wrong thing. These are your ' +
-        'holdings against what the city actually produces — a resource nothing consumes climbs until ' +
-        'it owns the vault, and then everything else banks only what your citizens eat.</div>' +
+      '<div class="vnote">' + (gain.rises
+        ? 'Your vault is full, and it is full of the wrong thing. These are your holdings against ' +
+          'what the city actually produces — a resource nothing consumes climbs until it owns the ' +
+          'vault, and anything this city does not produce at all has no share of the vault to hold, ' +
+          'so everything else banks only what your citizens eat.'
+        : 'These are your holdings against what the city actually produces. Anything this city does ' +
+          'not produce has no share of the vault to hold, so it all reads as surplus here. Banking ' +
+          'it would not change what your city is currently banking, but the room is yours to free.') +
+      '</div>' +
       rows +
       row('🏰 Vault', (cap - free).toLocaleString() + ' / ' + cap.toLocaleString() + ' used') +
       row('📦 Would move out', plan.units.toLocaleString() + ' units') +
@@ -29829,6 +29982,15 @@ function animate() {
       held || game.res,
       (free != null) ? free : ((_stashChoke && Number.isFinite(_stashChoke.free)) ? _stashChoke.free : 0)),
     shareTargets: _stashShareTargets,
+    /* 🏰 The causation gate, drivable. The advisor button is drawn on `rises`
+       and nothing else, so this is the only way to falsify the claim "that
+       surplus is what is choking the rest" without a click the pane cannot
+       make. Same defaults as rebalancePlan above. */
+    rebalanceGain: (mix, held, free, want) => _stashRebalanceGain(
+      mix || (_stashChoke && _stashChoke.mix) || {},
+      held || game.res,
+      (free != null) ? free : ((_stashChoke && Number.isFinite(_stashChoke.free)) ? _stashChoke.free : 0),
+      want || (mix ? null : (_stashChoke && _stashChoke.want))),
     rebalance: () => openStashRebalance(),
     // The advisor list is the ONLY live place the vault throttle is explained,
     // so it needs to be drivable without a click — the pane never paints.
@@ -29891,6 +30053,103 @@ function animate() {
       // Unknown ceiling must never idle the city.
       run('unknown ceiling', tick, Infinity, EMPTY, (s) => s.factor === 1);
       run('exactly fits', { food: 10, metal: 5 }, 15, EMPTY, (s) => s.factor === 1);
+      return { pass: cases.every(c => c.pass), cases };
+    },
+    /* 🏰 THE PLAN'S FIELD OF VIEW, AND THE CAUSE IT IS ALLOWED TO CLAIM.
+       stashSplitCheck proves the THROTTLE is fair; stashRateCheck proves the HUD
+       pays what it promises. Neither says anything about what the way OUT can
+       SEE, and that is where this failed three rounds: the plan measured surplus
+       against `mix` (= `_ledgerRate`, what a tile generated THIS tick) while the
+       choke it relieves is the whole shared vault. So the pile actually filling
+       the vault was invisible whenever it was not in this tick's mix.
+
+       Six properties, each falsifiable, none with a tolerance to tune:
+         STOPPED   a producer that dropped out of `mix` (raid-damaged, or
+                   input-starved) still has its pile offered.
+         LOOT      a resource this city NEVER produced is offered in full — its
+                   production weight is 0, so its fair share of the vault is 0.
+         NAMED     every id in `move` resolves through RES_META, so the dialog
+                   can print it by name. A plan that offers units the panel
+                   cannot name is a plan the player cannot consent to.
+         SPARED    a resource at or below its share is never asked for.
+         GATED     `rises` is false whenever the projected factor does not go up,
+                   so the advisor button can never assert a cause it cannot fix.
+         THROTTLE  the ALLOCATION is untouched by the hoard. `includeHeld` is
+                   opt-in precisely so _stashSplit still measures shares over the
+                   city-produced set; if a looted pile changed one granted unit,
+                   stage 1 would have silently degraded to plain proportional.
+       ⚠ FALSIFIED IN PRACTICE: putting `for (const r in mix)` back in
+         _stashRebalancePlan (the shipped shape) drops STOPPED and LOOT with
+         `pass:false` — it reports `move:{water:6}` against a 1,960 metal vault.
+         Dropping `includeHeld` from _stashShareTargets' signature (i.e. always
+         counting the hoard) turns THROTTLE red instead. */
+    stashPlanCheck: () => {
+      const cases = [];
+      const rate = { food: 130.35, water: 70.84, metal: 25.58 };
+      // The request the throttle is actually handed: one 10 s slice of `mix`.
+      const tickOf = (m) => { const o = {}; for (const r in m) o[r] = m[r] / 6; return o; };
+      const run = (name, mix, held, free, expect) => {
+        const g = _stashRebalanceGain(mix, held, free, tickOf(mix));
+        const move = g.plan.move;
+        let named = true, spared = true;
+        for (const r in move) {
+          if (!RES_META[r] || !RES_META[r].name) named = false;
+          if ((held[r] || 0) - (g.plan.target[r] || 0) < 1) spared = false;
+        }
+        const ok = expect ? expect(g, move) : true;
+        cases.push({ name, move, units: g.plan.units,
+                     before: +g.before.toFixed(6), projected: +g.projected.toFixed(6),
+                     rises: g.rises, named, spared, expect: ok,
+                     pass: named && spared && ok });
+      };
+      // (a) THE PRODUCER STOPPED — three scrapmines raid-damaged, so `metal` is
+      //     absent from the tick mix while 1,960 of it owns a 2,000 vault.
+      run('stopped producer', { food: rate.food, water: rate.water },
+          { food: 20, water: 20, metal: 1960 }, 0,
+          (g, m) => m.metal === 1960 && !m.water && !m.food && g.rises);
+      // (b) NEVER PRODUCED HERE — raid loot in a vault the city fills correctly.
+      run('never-produced loot', rate, { food: 20, water: 20, metal: 60, ammo: 1900 }, 0,
+          (g, m) => m.ammo === 1900 && g.rises);
+      /* Full in the right proportions: nothing to offer, so no claim either.
+         The holdings are the FLOORED targets for a 2,000-unit pool at these
+         rates (1,149.6 / 624.8 / 225.6), which is what "in proportion" means
+         here — every resource at or just under its share, 2 units still free. */
+      run('proportional vault', rate,
+          { food: 1149, water: 624, metal: 225 }, 2,
+          (g, m) => g.plan.units === 0 && !g.rises);
+      /* GATED — THE PLAYER ALREADY MADE ROOM BY HAND. `_stashChoke` is the last
+         tick's reading and the advisor row recomputes against a FRESH `game.res`
+         every four seconds, so this is the state a player is in for the seconds
+         after they spend a big pile: the hoard is still over its share, but the
+         vault now has room for everything the tick asks for, and banking it
+         would raise nothing. The old test (`plan.units > 0`) printed "that
+         surplus is what is choking the rest" right through it.
+         ⚠ THIS IS THE CASE THAT NEEDS THE PER-TICK `want`. MEASURED: handed
+           `mix` (the per-MINUTE rate) instead, the same 40 units of headroom
+           read as factor 0.1988 — an 80 % choke — `rises` comes back true and
+           the claim survives. With the per-tick want it reads 1 and is gated. */
+      run('room already freed by hand', { food: rate.food, water: rate.water },
+          { food: 20, water: 20, metal: 1960 }, 40,
+          (g) => g.plan.units > 0 && g.before >= 1 && !g.rises);
+      // An unknown ceiling never accuses a hoard of choking anything.
+      run('unknown ceiling', rate, { food: 20, water: 20, metal: 60, ammo: 1900 }, Infinity,
+          (g) => !g.rises);
+      /* NO PRODUCTION, NO PLAN. `_stashChoke` can go null between the advisor's
+         4-second paint and the click, and openStashRebalance then reads an empty
+         mix. Every weight 0 means every target 0, so without the guard in
+         _stashRebalancePlan this offers to bank the player's WHOLE vault. */
+      run('nothing produced', {}, { food: 900, water: 600, metal: 400, ammo: 100 }, 0,
+          (g) => g.plan.units === 0 && !g.rises);
+      // THROTTLE — the same allocation, with and without a 1,900 ammo hoard.
+      const tick = { food: rate.food / 6, water: rate.water / 6, metal: rate.metal / 6 };
+      const base = { food: 20, water: 20, metal: 1960 };
+      const a = _stashSplit(tick, 6, base);
+      const b = _stashSplit(tick, 6, Object.assign({ ammo: 1900 }, base));
+      let throttle = Math.abs(a.factor - b.factor) < 1e-12;
+      for (const r in tick) if (Math.abs((a.out[r] || 0) - (b.out[r] || 0)) > 1e-12) throttle = false;
+      cases.push({ name: 'throttle unmoved by the hoard', throttle,
+                   out: Object.fromEntries(Object.keys(a.out).map(k => [k, +a.out[k].toFixed(6)])),
+                   pass: throttle });
       return { pass: cases.every(c => c.pass), cases };
     },
     /* 📉 THE PANEL'S PROMISE, PINNED TO THE TICK'S PAYMENT.

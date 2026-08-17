@@ -271,6 +271,16 @@ export function buildHighway(T, M) {
   const nLamp = Math.floor(HW.len / HW.lampEvery);
   const masts = new T.InstancedMesh(vcg(T, new T.CylinderGeometry(.035, .05, 1.5, 6), COL.lamp), M.vc, nLamp);
   const heads = new T.InstancedMesh(vcg(T, new T.BoxGeometry(.34, .05, .13), COL.lampOn), M.vc, nLamp);
+  /* ⚠ DECLARE THE SCRATCH MATRIX. This read `mtx` with nothing declaring it,
+     which is a ReferenceError at runtime and NOT a syntax error — so it passed
+     every static check and index.js's try/catch swallowed it as
+     "[outside] highway ReferenceError: mtx is not defined". The cost was the
+     WHOLE highway: buildHighway threw here, before it returned its group, so
+     the embankment, both carriageways, the barrier and every gantry were lost
+     too and the feature's headline object simply never appeared. buildRailLine
+     below declares its own `m` the same way; one scratch Matrix4 reused across
+     the loop is the InstancedMesh idiom. */
+  const mtx = new T.Matrix4();
   for (let i = 0; i < nLamp; i++) {
     const x = -HW.len / 2 + (i + .5) * HW.lampEvery;
     mtx.makeTranslation(x, HW.y + .75, HW.z); masts.setMatrixAt(i, mtx);

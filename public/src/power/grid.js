@@ -32,9 +32,131 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 import { POWER } from './tuning.js';
+import * as Plants from './plants.js';
 
 const NEI = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 const K = (x, z) => x + ',' + z;
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🔌 THE METERED 33 — the demand side of "powers homes and buildings different"
+   ----------------------------------------------------------------------------
+   node-city declares `powerNeed` on 21 of its 54 building rows, and its own
+   comment says why the other 33 were left alone: retro-fitting them "would brown
+   out every save made before this layer existed". That comment is CORRECT and is
+   still load-bearing — it is a statement about SAVES, not about whether a Scrap
+   Mine runs on electricity. POWER.demand's header splits the 33 three ways; this
+   function is the only place the third group is charged, and it is charged ONLY
+   in a city that has opted in.
+
+   ⚠ AND ONLY IN A CITY THAT ALREADY HAS A GRID. `host.hasGrid` is node-city's
+     own "no grid, no brownout" rule — the per-capita household term is not
+     charged until the city has a generator or something that draws. Metering a
+     farm in a city with no power station at all would invent demand with no
+     supply and pin a settlement of tents at the brownout floor, which is the
+     exact failure that rule exists to prevent. So metering RIDES that flag
+     rather than second-guessing it.
+   ════════════════════════════════════════════════════════════════════════════ */
+function mergeLoads(host) {
+  const base = [];
+  for (const l of host.loads) base.push({ k: l.k, x: l.x, z: l.z, type: l.type, name: l.name,
+                                          ico: l.ico, draw: l.draw, metered: false });
+  if (!host.metered || !host.hasGrid) return { loads: base, extra: [] };
+  const have = new Set(base.map(l => l.k));
+  const extra = [];
+  for (const t of (host.tiles || [])) {
+    if (!t.type || have.has(t.k)) continue;
+    const rate = POWER.demand.extra[t.type];
+    if (!rate) continue;
+    /* × level, exactly as node-city charges its own `def.powerNeed * t.lvl`. A
+       metered building that scaled differently from a declared one would be two
+       rules for one question. */
+    const l = { k: t.k, x: t.x, z: t.z, type: t.type, name: t.name || t.type,
+                ico: t.ico || '⚡', draw: rate * Math.max(1, t.lvl | 0), metered: true };
+    base.push(l); extra.push(l);
+  }
+  return { loads: base, extra };
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🪜 THE SHED LADDER — a brownout that does not hit everything equally.
+   ----------------------------------------------------------------------------
+   "a hospital or a water pump cannot fail the way a nightclub does."
+
+   🔴 THE INVARIANT THAT MAKES THIS SAFE FOR EVERY EXISTING SAVE, AND THE AUDIT
+      THAT ENFORCES IT.
+      The energy handed out here is EXACTLY the energy the flat model hands out:
+      `served`, no more and no less. Shedding REDISTRIBUTES; it never creates or
+      destroys. The consequence is that the draw-weighted mean of the per-tile
+      factors equals node-city's own flat factor to the last bit, so no city is
+      globally worse off than it was before this ladder existed — the lights
+      simply go out in the right order.
+
+      That identity is asserted every tick. If it ever fails, `ok` comes back
+      false and solve() falls back to the flat factor for every tile — the same
+      reasoning /src/economy's sim.js uses when its closed loop breaks. A
+      redistribution bug that quietly LOSES energy would look exactly like a
+      slightly worse grid, and would be believed.
+
+   TWO PHASES, in POWER.demand.order:
+     1. RESERVE. Each class takes its `floorAt` share first, in priority order.
+        This is what stops a clinic going fully dark while a stadium is lit — a
+        dark hospital is not a difficulty setting.
+     2. PRIORITY. Whatever is left tops each class up toward full, again in
+        order. Leisure is last and is therefore the first thing to go.
+   ════════════════════════════════════════════════════════════════════════════ */
+function shedLadder(loads, popLoad, lossLoad, served, floor) {
+  const D = Object.create(null);          // draw per class
+  const order = POWER.demand.order.slice();
+  for (const c of order) D[c] = 0;
+  /* Line loss is not sheddable — you cannot decide to stop heating a cable — so
+     it sits at the head of the queue as its own class with a floor of 1. It is
+     ZERO today (POWER.transmission.enforce is false), but writing it as a class
+     rather than subtracting it off the top is what keeps the audit below an
+     energy identity instead of an approximation. */
+  if (lossLoad > 0) { order.unshift('network'); D.network = lossLoad; }
+  for (const l of loads) { const c = Plants.classOf(l.type); if (D[c] == null) D[c] = 0; D[c] += l.draw; }
+  if (popLoad > 0) D.households = (D.households || 0) + popLoad;
+
+  let total = 0; for (const c of order) total += D[c] || 0;
+  const budget = Math.max(0, Math.min(served, total));
+  const a = Object.create(null); for (const c of order) a[c] = 0;
+
+  // ── phase 1: the reserved floors ──
+  let left = budget;
+  for (const c of order) {
+    const d = D[c] || 0; if (d <= 0) continue;
+    const fl = c === 'network' ? 1 : ((POWER.demand.meta[c] && POWER.demand.meta[c].floorAt) || 0);
+    const take = Math.min(d * fl, left);
+    a[c] += take; left -= take;
+    if (left <= 0) break;
+  }
+  // ── phase 2: top up in priority order ──
+  for (const c of order) {
+    if (left <= 0) break;
+    const d = D[c] || 0; if (d <= 0) continue;
+    const take = Math.min(d - a[c], left);
+    a[c] += take; left -= take;
+  }
+
+  const share = Object.create(null);
+  let handed = 0;
+  for (const c of order) { const d = D[c] || 0; share[c] = d > 0 ? a[c] / d : 1; handed += a[c]; }
+
+  /* 🔍 THE AUDIT. Energy in, energy out, to within floating-point noise. */
+  const ok = Math.abs(handed - budget) < 1e-6;
+
+  const tileFactor = Object.create(null);
+  for (const l of loads) tileFactor[l.k] = floor + (1 - floor) * share[Plants.classOf(l.type)];
+
+  const rows = [];
+  for (const c of order) {
+    if (c === 'network' || !(D[c] > 0)) continue;
+    const m = POWER.demand.meta[c] || { label: c, ico: '·' };
+    rows.push({ cls: c, label: m.label, ico: m.ico, draw: D[c], served: a[c],
+                share: share[c], factor: floor + (1 - floor) * share[c], desc: m.desc || '' });
+  }
+  return { ok, tileFactor, rows, share, handed, budget };
+}
 
 /* ── TOPOLOGY CACHE ─────────────────────────────────────────────────────────
    solve() runs every economy tick (1 Hz). Supply and demand change every tick;
@@ -59,15 +181,25 @@ const K = (x, z) => x + ',' + z;
       ignores them makes the model unfalsifiable. */
 let _topo = null, _topoSig = '';
 
-function topoSignature(host) {
+function topoSignature(host, loads) {
   const T = POWER.transmission;
   let s = host.grid + '|' + T.lvRating + ',' + T.hvRating + ',' + T.hvThreshold + ',' +
           T.trunkHops + ',' + T.lossPerHop + ',' + T.lossMax + '|';
+  /* ⚠ THE DRAW MAP IS BUILT FROM THE MERGED LOAD LIST, not from `t.need`.
+     Metering the 33 changes what a tile draws without changing anything the
+     host reports on the tile itself, so a signature that read `t.need` would
+     miss the entire opt-in: the player would press "meter them", every feeder
+     in the city would gain load, and the overlay would keep painting the old
+     flow. That is the same stale-topology failure the header records twice
+     already, arriving through a third door. */
+  const need = Object.create(null);
+  for (const l of loads) need[l.k] = (need[l.k] || 0) + l.draw;
   for (const t of host.tiles) {
-    s += t.k + ':' + (t.road ? 'r' : t.plant ? 'p' : t.need ? 'l' : 'x');
+    const d = need[t.k] || 0;
+    s += t.k + ':' + (t.road ? 'r' : t.plant ? 'p' : d ? 'l' : 'x');
     // Quantised, not raw: draw is a float that jitters in the last places every
     // tick, and a signature that changes every tick is a cache that never hits.
-    if (t.need) s += (Math.round(t.need * 100) / 100);
+    if (d) s += (Math.round(d * 100) / 100);
     s += ';';
   }
   return s;
@@ -85,7 +217,7 @@ function topoSignature(host) {
    reaches, is UNSERVED. That is a real diagnostic the host has never had: today
    a building on an islanded road is powered exactly as well as one wired to the
    turbine hall. */
-function buildTopology(host) {
+function buildTopology(host, allLoads) {
   const road = new Map();      // k -> { x, z, hop, prev, src, flow }
   const isRoad = new Set();
   for (const t of host.tiles) if (t.road) isRoad.add(t.k);
@@ -119,7 +251,7 @@ function buildTopology(host) {
      (a second seeding pass, a diagonal neighbour) could close a cycle, and an
      un-guarded while(prev) there hangs the tab rather than drawing badly. */
   const loads = [], unserved = [];
-  for (const l of host.loads) {
+  for (const l of allLoads) {
     let at = null;
     for (const [dx, dz] of NEI) {
       const nk = K(l.x + dx, l.z + dz);
@@ -187,22 +319,37 @@ export function solve(host, store) {
     return { ok: false, why: 'host did not supply floor/perPop' };
   }
 
-  const topoNow = topoSignature(host);
-  if (!_topo || topoNow !== _topoSig) { _topo = buildTopology(host); _topoSig = topoNow; }
+  const merged = mergeLoads(host);
+  const allLoads = merged.loads;
+
+  const topoNow = topoSignature(host, allLoads);
+  if (!_topo || topoNow !== _topoSig) { _topo = buildTopology(host, allLoads); _topoSig = topoNow; }
   const topo = _topo;
 
-  // ── SUPPLY. Already multiplied by the host; we only sum. ──
+  /* ── SUPPLY. Already multiplied by the host — including by the availability
+     multiplier /src/power/plants.js handed it in the same pre-pass — so we only
+     sum. Every field of every plant row is copied by NAME rather than spread,
+     for the reason plants.js's header gives at length. */
   let capacity = 0, idlePlants = 0;
-  for (const p of host.plants) if (!(p.out > 0)) idlePlants++;
   const byPlant = [];
-  for (const p of host.plants) { capacity += p.out; byPlant.push({ ...p }); }
+  for (const p of host.plants) {
+    if (!(p.out > 0)) idlePlants++;
+    capacity += p.out;
+    byPlant.push({ k: p.k, x: p.x, z: p.z, type: p.type, name: p.name, ico: p.ico,
+                   out: p.out, avail: (typeof p.avail === 'number' ? p.avail : 1),
+                   why: p.why || '' });
+  }
+  /* ☁ …and the fleet is told what it actually produced, so the emissions this
+     tick are proportional to power MADE rather than to power rated. That is the
+     only input the pollution call takes from outside plants.js. */
+  const fleet = Plants.bindOutputs(byPlant);
 
   // ── DEMAND. Buildings, then the per-capita household draw on the host's own
   //    "no grid, no brownout" rule: the per-capita term is only charged once
   //    the city has something electrical in it. Re-deriving that rule would be
   //    a second truth, so `host.hasGrid` is handed in already decided.
-  let bldLoad = 0;
-  for (const l of host.loads) bldLoad += l.draw;
+  let bldLoad = 0, meterLoad = 0;
+  for (const l of allLoads) { bldLoad += l.draw; if (l.metered) meterLoad += l.draw; }
   const popLoad = host.hasGrid ? host.perPop * host.pop : 0;
   /* Line loss is a DEMAND term and is only CHARGED when transmission is
      enforced — see POWER.transmission's header. Computed either way, because
@@ -251,23 +398,43 @@ export function solve(host, store) {
        minShare is folded into one "…and N smaller" row carrying its real sum —
        the same rule node-city states for its away-report leaver list. A list
        that does not add up to the meter is worse than no list. */
-  const causes = buildCauses({ byPlant, host, popLoad, lossLoad, fromStore, dt,
+  const causes = buildCauses({ byPlant, host, loads: allLoads, popLoad, lossLoad, fromStore, dt,
                                meanHop: topo.meanHop, loss: topo.loss });
+
+  /* ── 🪜 THE LADDER. Same energy, distributed by priority. See shedLadder's
+     header for the identity it maintains and the audit that enforces it. */
+  const ladder = shedLadder(allLoads, popLoad, lossLoad, served, host.floor);
+  /* 🔴 THE FALLBACK IS FLAT, AND IT IS OBSERVABLE. If the audit fails, every
+     tile gets the same factor node-city would have computed on its own — no
+     redistribution, nothing lost — and `shedOk` goes false so the panel can say
+     so. A silent revert here would be indistinguishable from a working ladder
+     that happens to be shedding nothing. */
+  let tileFactor = ladder.tileFactor;
+  if (!ladder.ok) { tileFactor = Object.create(null); for (const l of allLoads) tileFactor[l.k] = factor; }
+
+  /* ☁ THE POLLUTION TICK. One call, immediately after the tick's real outputs
+     are known and before anything else can change them. See plants.js →
+     POLLUTION EMIT CALL SITE. */
+  const emissions = Plants.emitAll(fleet, dt);
 
   return {
     ok: true,
     // The four keys the agreed cross-workflow API promises.
     capacity, load, factor, byPlant,
     // …and everything the panel and overlay need on top of it.
-    served, ratio, rawRatio, bldLoad, popLoad, lossLoad, lossWouldBe,
+    served, ratio, rawRatio, bldLoad, popLoad, lossLoad, lossWouldBe, meterLoad,
     store: { charge, cap, in: toStore, out: fromStore },
     net: capacity - load,
     reserve: capacity > 0 ? (capacity - load) / capacity : 0,
     topo: { seg: topo.seg, transformers: topo.transformers, chokes: topo.chokes,
             unserved: topo.unserved, meanHop: topo.meanHop, loss: topo.loss },
     causes, idlePlants,
+    // 🪜 The demand ladder: the per-tile answer, the per-class rows, and the audit.
+    tileFactor, classes: ladder.rows, shedOk: ladder.ok,
+    metered: !!(host.metered && host.hasGrid), meteredCount: merged.extra.length,
+    emissions,
     plantCount: host.plants.length,
-    loadCount: host.loads.length,
+    loadCount: allLoads.length,
     enforce: POWER.transmission.enforce,
   };
 }
@@ -275,22 +442,34 @@ export function solve(host, store) {
 function buildCauses(a) {
   const sup = [], dem = [];
 
-  // Supply, grouped by plant type.
+  /* Supply, grouped by plant type — and the group carries the mean AVAILABILITY
+     as well as the output, because "Wind Turbine ×4  1.2 MW" and "Wind Turbine
+     ×4  1.2 MW (31% — calm)" are the same number and completely different
+     sentences. The second one tells the player what to do about it. */
   const byType = new Map();
   for (const p of a.byPlant) {
-    const g = byType.get(p.type) || { label: p.name, ico: p.ico, n: 0, v: 0 };
-    g.n++; g.v += p.out; byType.set(p.type, g);
+    const g = byType.get(p.type) || { label: p.name, ico: p.ico, n: 0, v: 0, av: 0, why: '' };
+    g.n++; g.v += p.out; g.av += (typeof p.avail === 'number' ? p.avail : 1);
+    if (p.why && !g.why) g.why = p.why;
+    byType.set(p.type, g);
   }
-  for (const g of byType.values()) sup.push({ sign: '+', ico: g.ico, label: g.label + (g.n > 1 ? ' ×' + g.n : ''), v: g.v });
+  for (const g of byType.values()) {
+    const mean = g.n ? g.av / g.n : 1;
+    const note = (mean < 0.985 || g.why)
+      ? '  ' + Math.round(mean * 100) + '%' + (g.why ? ' · ' + g.why : '') : '';
+    sup.push({ sign: '+', ico: g.ico, label: g.label + (g.n > 1 ? ' ×' + g.n : '') + note, v: g.v });
+  }
   if (a.dt > 0 && a.fromStore > 0) sup.push({ sign: '+', ico: '🔋', label: 'Battery discharge', v: a.fromStore / a.dt });
 
-  // Demand, grouped by building type.
+  // Demand, grouped by building type. A METERED row is marked, so the opt-in
+  // is visible in the same list that shows what it cost.
   const dByType = new Map();
-  for (const l of a.host.loads) {
-    const g = dByType.get(l.type) || { label: l.name, ico: l.ico, n: 0, v: 0 };
-    g.n++; g.v += l.draw; dByType.set(l.type, g);
+  for (const l of a.loads) {
+    const g = dByType.get(l.type) || { label: l.name, ico: l.ico, n: 0, v: 0, m: false };
+    g.n++; g.v += l.draw; if (l.metered) g.m = true; dByType.set(l.type, g);
   }
-  for (const g of dByType.values()) dem.push({ sign: '−', ico: g.ico, label: g.label + (g.n > 1 ? ' ×' + g.n : ''), v: g.v });
+  for (const g of dByType.values())
+    dem.push({ sign: '−', ico: g.ico, label: g.label + (g.n > 1 ? ' ×' + g.n : '') + (g.m ? '  ⊕' : ''), v: g.v });
   if (a.popLoad > 0) dem.push({ sign: '−', ico: '🏠', label: 'Households (' + Math.round(a.host.pop) + ')', v: a.popLoad });
   if (a.lossLoad > 0) dem.push({ sign: '−', ico: '〰', label: 'Line loss (' + a.meanHop.toFixed(1) + ' hop avg)', v: a.lossLoad });
 

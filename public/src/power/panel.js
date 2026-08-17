@@ -61,8 +61,18 @@ export const LAYERS = [
     sub: [['lvFlow', 'Electricity Flow'], ['lvChoke', 'Bottleneck']] },
   { id: 'hv',           group: 'network',  sw: 'hv',          label: 'High Voltage Power Lines',
     sub: [['hvFlow', 'Electricity Flow'], ['hvChoke', 'Bottleneck']] },
+  /* ☁ OURS, and named for what it actually is. A row called "Air Pollution"
+     would promise a dispersion model this module does not have and must not
+     invent; "Emission Sources" promises exactly what it draws — how dirty each
+     plant standing in the city is. When /src/pollution lands it can add the
+     plume layer beside this one and the two will not contradict each other. */
+  { id: 'emit',         group: 'building', ramp: 'emitRamp',  label: 'Emission Sources',
+    lo: 'Clean', hi: 'Dirty' },
   { id: 'wind',         group: 'terrain',  ramp: 'windRamp',  label: 'Wind Speed & Direction',
     lo: 'Low', hi: 'High', need: 'wind', from: 'window.MythicPollution.wind()' },
+  /* ♨ The only terrain row with no external dependency: geology.js is ours. */
+  { id: 'heat',         group: 'terrain',  ramp: 'heatRamp',  label: 'Geothermal Heat',
+    lo: 'Cold', hi: 'Hot' },
   { id: 'ground',       group: 'terrain',  ramp: 'groundRamp', label: 'Groundwater Deposits',
     lo: 'Low', hi: 'High', need: 'ground', from: 'window.MythicWater.endowment()' },
   { id: 'surface',      group: 'terrain',  ramp: 'surfaceRamp', label: 'Surface Water Flow',
@@ -75,7 +85,8 @@ const GROUP_LABEL = { building: 'Building color', network: 'Network color', terr
    layer at once is a colour soup, and the first read must be the one the panel
    is named after. */
 export const layers = { plants: true, transformers: false, batteries: false, demand: true,
-                        lv: true, hv: true, wind: false, ground: false, surface: false };
+                        emit: false, lv: true, hv: true, wind: false, heat: false,
+                        ground: false, surface: false };
 
 /* ── UNITS ──────────────────────────────────────────────────────────────────
    The reference's honesty about magnitude is load-bearing: "Consumption 75.3 kW"
@@ -180,8 +191,85 @@ function html(s, caps) {
   h += '<div class="pwends"><span>Consumption: <b>' + fmtW(s.load) + '</b></span>' +
        '<span>Production: <b>' + fmtW(s.capacity) + '</b></span></div>';
   h += causeList((s.causes.supply || []).concat(s.causes.demand || []));
-  if (s.factor < 1) h += '<div class="pwnote warn">⚡ BROWNOUT — every powered building is running at ' +
-                          Math.round(s.factor * 100) + '%.</div>';
+  if (s.factor < 1) h += '<div class="pwnote warn">⚡ BROWNOUT — the city is running at ' +
+                          Math.round(s.factor * 100) + '% on average. See LOAD SHEDDING for who is paying it.</div>';
+
+  /* ══ 🔌 THE METERING OPT-IN ═══════════════════════════════════════════════
+     node-city declares powerNeed on 21 of its 54 building rows and its own
+     comment says the other 33 were left alone because retro-fitting them "would
+     brown out every save made before this layer existed". That is a statement
+     about SAVES, so this is a statement to the player about their save: a city
+     founded after the ladder landed is metered from its first tick, an older one
+     is not, and turning it on is a decision they make with the bill in front of
+     them rather than one that happens to them on load.
+     ⚠ THE BUTTON QUOTES THE PRICE BEFORE IT IS PAID. "15 building types" and,
+       once on, the exact figure it added. A switch whose cost is only visible
+       after you press it is a switch nobody presses twice. */
+  h += s.metered
+    ? '<div class="pwnote">🔌 <b>Metered</b> — extraction, workshops and venues that never declared a draw are billed for it (' +
+        (s.meteredCount || 0) + ' building' + (s.meteredCount === 1 ? '' : 's') + ', ' + fmtW(s.meterLoad || 0) +
+        '). <button class="pwbtn" data-pwmeter="0">Unmeter</button></div>'
+    : '<div class="pwnote">🔌 <b>Legacy demand</b> — this city was built before the grid metered its mines, farms, depots and workshops, so those 15 building types still draw nothing. ' +
+        '<button class="pwbtn" data-pwmeter="1">Meter them</button></div>';
+
+  /* ══ 🪜 THE SHED LADDER ═══════════════════════════════════════════════════
+     The answer to "powers homes and buildings different", and the one section
+     that turns a single availability percentage into something a player can act
+     on. Only printed while the city is actually short: a ladder that says
+     "everything 100%" every tick is a section players learn to stop reading,
+     which is the same argument index.html makes for its ⚡ chip and this file
+     already makes for GRID DIAGNOSTICS. */
+  if (s.classes && s.classes.length && s.factor < 0.999) {
+    h += '<div class="pwsec">LOAD SHEDDING<span class="pwsecv">' + Math.round(s.factor * 100) + '% city average</span></div>';
+    h += '<div class="pwlad">';
+    for (const c of s.classes) {
+      const pct = Math.round(c.factor * 100);
+      const tone = c.share > 0.999 ? 'ok' : c.share > 0.5 ? 'mid' : 'bad';
+      h += '<div class="pwlrow ' + tone + '" title="' + esc(c.desc) + '">' +
+             '<span class="pwci">' + esc(c.ico) + '</span>' +
+             '<span class="pwcl">' + esc(c.label) + '</span>' +
+             '<span class="pwlbar"><i style="width:' + Math.round(c.share * 100) + '%"></i></span>' +
+             '<span class="pwcv">' + pct + '%</span>' +
+           '</div>';
+    }
+    h += '</div>';
+    h += '<div class="pwnote">The grid sheds from the bottom up. Lifeline and utility load is served first and is never cut to nothing; leisure goes dark before a clinic dims.</div>';
+    if (!s.shedOk) h += '<div class="pwnote warn">⚠ The shed audit did not balance this tick, so every building is running at the flat city average instead. Nothing was lost — the ladder simply refused to guess.</div>';
+  }
+
+  /* ══ 🏭 THE FLEET ═════════════════════════════════════════════════════════
+     Every generator standing, what it is making, and WHY it is not making more.
+     A capacity number cannot say "the wind dropped" or "the core is at 74%", and
+     those are the only two facts that let a player fix it. */
+  if (s.byPlant && s.byPlant.length) {
+    h += '<div class="pwsec">GENERATING FLEET<span class="pwsecv">' + s.byPlant.length + '</span></div><div class="pwfleet">';
+    for (const p of s.byPlant.slice().sort((a, b) => b.out - a.out)) {
+      const av = typeof p.avail === 'number' ? p.avail : 1;
+      const tone = p.out <= 0 ? 'bad' : av < 0.7 ? 'mid' : 'ok';
+      h += '<div class="pwfrow ' + tone + '">' +
+             '<span class="pwci">' + esc(p.ico || '⚡') + '</span>' +
+             '<span class="pwcl">' + esc(p.name || p.type) +
+               '<i class="pwwhy">' + esc(p.why || (p.out <= 0 ? 'no output' : '')) + '</i></span>' +
+             '<span class="pwav">' + Math.round(av * 100) + '%</span>' +
+             '<span class="pwcv">' + fmtW(p.out) + '</span>' +
+           '</div>';
+    }
+    h += '</div>';
+  }
+
+  /* ☁ EMISSIONS. Reported honestly, including the case nobody is listening —
+     the same honest-empty-state rule the terrain legend rows follow, applied to
+     a number instead of a layer. */
+  if (s.emissions && (s.emissions.air > 0 || s.emissions.ground > 0 || s.emissions.water > 0)) {
+    const e = s.emissions;
+    h += '<div class="pwsec">EMISSIONS THIS TICK</div>';
+    h += '<div class="pwends"><span>☁ air <b>' + e.air.toFixed(3) + '</b></span>' +
+         '<span>🪨 ground <b>' + e.ground.toFixed(3) + '</b></span>' +
+         '<span>💧 water <b>' + e.water.toFixed(3) + '</b></span></div>';
+    h += e.live
+      ? '<div class="pwnote">Delivered to <code>window.MythicPollution.emit()</code> — ' + e.calls + ' call' + (e.calls === 1 ? '' : 's') + ' this tick.</div>'
+      : '<div class="pwnote warn">Nothing is consuming these yet: <code>window.MythicPollution</code> has not loaded, so the smoke is measured and not yet modelled. Siting a dirty plant away from the water is still the right instinct.</div>';
+  }
 
   h += '<div class="pwsec">RESERVE MARGIN</div>' + meter(resT, M.reserve, 'Reserve margin');
   h += '<div class="pwends"><span>' + (s.net < 0 ? 'Shortfall: <b class="dn">' + fmtW(-s.net) + '</b>'
@@ -331,7 +419,11 @@ export function mount(h, a) {
     layers[cb.dataset.layer] = cb.checked;
     api.onLayers();
   });
-  root.addEventListener('click', (ev) => { if (ev.target.closest('[data-pwclose]')) api.close(); });
+  root.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-pwclose]')) { api.close(); return; }
+    const m = ev.target.closest('[data-pwmeter]');
+    if (m && api.meter) api.meter(m.dataset.pwmeter === '1');
+  });
   (document.body || document.documentElement).appendChild(root);
 }
 

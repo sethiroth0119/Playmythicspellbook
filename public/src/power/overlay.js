@@ -143,6 +143,27 @@ export function sync(state, layers, host) {
   if (layers.wind && host.wind) paintField(host.wind.field, C.windRamp);
   if (layers.ground && host.ground) paintField(host.ground, C.groundRamp);
   if (layers.surface && host.surface) paintField(host.surface, C.surfaceRamp);
+  /* ♨ GROUND HEAT, plus a CONTOUR at the licensing threshold. The contour is
+     what turns a pretty gradient into a usable map: the player does not want to
+     know the rock is 44% hot, they want to know whether a well may be sunk here,
+     and that is a line rather than a colour. Same argument the reference makes
+     for separating "Electricity Flow" from "Bottleneck" on one network layer —
+     one ramp cannot carry a threshold. */
+  if (layers.heat && host.heat) {
+    paintField(host.heat, C.heatRamp);
+    const min = Number(host.heatMin);
+    if (isFinite(min)) for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
+      if (host.heat(x, z) < min) continue;
+      const cold = (dx, dz) => host.heat(x + dx, z + dz) < min ||
+                               x + dx < 0 || z + dz < 0 || x + dx >= GRID || z + dz >= GRID;
+      ctx.fillStyle = C.heatEdge || '#ffe8b0';
+      const t = Math.max(1, PX * 0.10);
+      if (cold(0, -1)) ctx.fillRect(cx(x), cz(z), PX, t);
+      if (cold(0, 1))  ctx.fillRect(cx(x), cz(z) + PX - t, PX, t);
+      if (cold(-1, 0)) ctx.fillRect(cx(x), cz(z), t, PX);
+      if (cold(1, 0))  ctx.fillRect(cx(x) + PX - t, cz(z), t, PX);
+    }
+  }
 
   // ── NETWORK COLOUR ──
   if (state) {
@@ -167,6 +188,28 @@ export function sync(state, layers, host) {
       if (max > 0) for (const l of host.loads) cell(l.x, l.z, ramp(C.demandRamp, l.draw / max), PX * 0.20);
       // Anything the walk could not reach reads grey, whatever it draws.
       for (const u of state.topo.unserved) cell(u.x, u.z, C.unserved, PX * 0.20);
+    }
+    /* ☁ THE EMISSION SOURCE MAP. Every plant's AIR emission rate, normalised
+       against the dirtiest one standing — so a city of wind turbines paints
+       nothing at all and one coal plant among nine clean ones paints alone,
+       which is precisely the read the player needs before they site the next
+       one. Drawn as a filled cell so it sits under the plant marker rather than
+       replacing it.
+       🔴 NOT A POLLUTION MAP, and the legend says so. This is what our plants
+          PUT OUT. Where it goes is dispersion, /src/pollution owns it, and
+          painting a plume nobody computed would be a confidently wrong picture
+          of the exact mechanic this batch exists to build. */
+    if (layers.emit) {
+      let max = 0;
+      const rate = (p) => {
+        const sp = POWER.plants[p.type];
+        return sp ? sp.emit.air * Math.max(0, p.out || 0) : 0;
+      };
+      for (const p of state.byPlant) { const v = rate(p); if (v > max) max = v; }
+      if (max > 0) for (const p of state.byPlant) {
+        const v = rate(p); if (v <= 0) continue;
+        cell(p.x, p.z, ramp(C.emitRamp, v / max), PX * 0.10);
+      }
     }
     if (layers.transformers) for (const t of state.topo.transformers) marker(t.x, t.z, C.transformer);
     if (layers.batteries && state.store.cap > 0) for (const p of state.byPlant) marker(p.x, p.z, C.battery);

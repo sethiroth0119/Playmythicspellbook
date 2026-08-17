@@ -80070,6 +80070,36 @@ const OPS_ECON = {
   // yields {} on purpose — a bank earns Cinder interest, not resources, so it
   // must never be swept up by the production-pressure hook (cxProduce).
   bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
+  /* 🚌🚆 PUBLIC TRANSPORT — the two licences that unlock the city builder's
+     transit layer (stops, stations, track, player-drawn routes; the system
+     lives in public/src/transit/).
+
+     💱 THE SCALE, stated once because it is the decision a reader will
+        question. node-city's own building costs run on roughly a ÷2,000
+        divisor against this table — the design pack's 2,400,000 🔥 Stadium is
+        ~1,200 ₵ of city Cinder. So 2,000,000 and 10,000,000 cannot be city
+        building costs; at that divisor a bus company would cost 1,000 ₵, less
+        than a Cinder Trust. They are CORPORATE-scale figures, and this is the
+        corporate table — where a Stadium really is 2.4M and a Bank is 1M. A
+        Bus Company at 2M and a Rail Operator at 10M is a coherent rung on
+        exactly the ladder a player already climbs to buy a Construction Co.
+        What city Cinder buys is the infrastructure, priced in BUILDINGS.
+
+     ⚠ THESE TWO NUMBERS ARE THE ONLY COPY. Everything downstream — the City
+       Hall price, the padlock on the city build menu, the transit panel's
+       "buy it for N 🔥" line — reads them through _opEcon(), so an admin
+       retune in the Operations Economy editor reaches all three.
+
+     `yields: {}` on purpose, exactly as the Bank does: a transport operator
+     earns fares, not goods, so it must never be swept up by the production
+     pressure hook. `inputs` is real — a fleet burns fuel, and rail eats metal
+     for track and wheels, which is what ties these to the rest of the chain.
+     Payback sits beside the premium ops: fully staffed, bus nets ~14k 🔥/hr
+     (≈142h) and rail ~54k 🔥/hr (≈185h), against the Bank's ≈114h. The more
+     expensive licence takes longer, which is the shape the rest of the table
+     already has. */
+  bus:          { startup: 2000000,  ratePerWorkerHr: 1400, salaryPerWorkerHr: 520, maxWorkers: 16, yields: {}, inputs: { fuel: 0.9 } },
+  rail:         { startup: 10000000, ratePerWorkerHr: 3600, salaryPerWorkerHr: 900, maxWorkers: 20, yields: {}, inputs: { fuel: 1.2, metal: 0.4 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -80311,6 +80341,10 @@ const OP_LABELS = {
      so a new operation without a label here is buyable but shows up in the shop
      as "genelab". */
   genelab: 'Genetics Lab',
+  // 🚌🚆 The transit licences. Same rule as genelab above — an operation with
+  // no label here is buyable but shows up in the shop as "bus".
+  bus: 'Bus Company',
+  rail: 'Rail Operator',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the

@@ -23046,6 +23046,11 @@ function insWorkPane(t, x, z, mult, om) {
 function insBuildOverview(k, t, x, z, mult, om) {
   const def = BUILDINGS[t.type];
   let left = '<div class="ins-desc">' + logEsc(def.desc) + '</div>';
+  /* 🏠 THE ADDRESS, THE HOUSEHOLD AND THE BOOKS — /src/dossier, first in the
+     column because "where is it and who is in it" is what a player opens a
+     building to find out. Absent module ⇒ '' ⇒ this pane is exactly what it
+     was. The module never throws out of here; this guard is the second belt. */
+  try { if (window.MythicDossier) left += window.MythicDossier.cardsHtml(k) || ''; } catch (e) {}
   left += insChain(t, x, z, mult, om);
   if (def.gen || def.svc || LEGACY_SERVICE[t.type]) {
     const F = insFactors(x, z, t);
@@ -23059,7 +23064,12 @@ function insBuildOverview(k, t, x, z, mult, om) {
   }
   left += insLevelCard(t, x, z, mult, om);
   if (t.type === 'road') left += insCardHtml('Road network', '', roadMeterHtml());
-  const right = insContribution(t, x, z, mult) + insSystems(t, x, z) + insRisk(t, x, z) + insLogMentions(t);
+  /* 👥 …and the household goes at the TOP of the other column, so the dossier
+     reads as the reference does: the building on one side, the people who live
+     in it on the other. Empty string for anything that is not a home. */
+  let dossierSide = '';
+  try { if (window.MythicDossier) dossierSide = window.MythicDossier.sideHtml(k) || ''; } catch (e) {}
+  const right = dossierSide + insContribution(t, x, z, mult) + insSystems(t, x, z) + insRisk(t, x, z) + insLogMentions(t);
   /* A Tree has one line of description and nothing else on the left; a Wall has
      nothing on the right. Either way a two-column grid with one empty side reads
      as a rendering fault, so collapse to one column when a side is bare. */
@@ -23222,7 +23232,28 @@ function openInspect(k) {
      dossier read as a generic husk of the class the player cares most about. */
   const opRow = (typeof opsRowForKey === 'function') ? opsRowForKey(k) : null;
   $('inscrest').textContent = def.ico;
-  $('insname').innerHTML = logEsc((opRow && opRow.label) || def.name) +
+  /* 🏷🏠 …AND IT HAS AN ADDRESS. Two modules meet on this one line and the
+     order between them is the whole integration:
+       · /src/naming owns the NAME. A player-typed sign beats the City Hall
+         licence label, which beats the blueprint — one naming concept, three
+         fallbacks, resolved here so everything downstream agrees.
+       · /src/dossier owns the ADDRESS and turns that name into
+         "Deepcut Mining Co., 126 9th Street" (or, for a home, the address
+         alone — "Housing" said twice tells the reader nothing).
+     ⚠ /src/naming ALSO repaints this element after the panel has drawn, to
+       hang its ✏️ Rename affordance off it; that repaint asks the dossier for
+       the same address suffix, so the header does not flicker between two
+       different titles. Both modules absent ⇒ exactly the line that was here
+       before: the licence label or the blueprint name. */
+  const insNameBase = (function () {
+    try { const n = window.MythicNaming && window.MythicNaming.nameFor(k); if (n) return n; } catch (e) {}
+    return (opRow && opRow.label) || def.name;
+  })();
+  const insNameHtml = (function () {
+    try { return window.MythicDossier ? window.MythicDossier.headerHtml(k, insNameBase) : null; }
+    catch (e) { return null; }
+  })();
+  $('insname').innerHTML = (insNameHtml || logEsc(insNameBase)) +
     (opRow ? ' <span class="lvl">LVL ' + (opRow.level | 0 || 1) + '</span>'
      : (def.maxLvl || MAX_LVL) > 1 ? ' <span class="lvl">LVL ' + t.lvl + ' / ' + (def.maxLvl || MAX_LVL) + '</span>' : '');
   $('insmeta').innerHTML = (sec ? '<span>' + sec.ico + ' ' + sec.name + '</span><i class="sep"></i>' : '') +
@@ -23271,6 +23302,12 @@ function openInspect(k) {
   // 💹 Only a financial building has a book to show.
   const finPane = def.fin ? insFinPane(t, def) : '';
   if (finPane) tabs.push({ id: 'fi', name: 'Portfolio' });
+  /* 🎨 The visual-customization tab. Offered only when the model actually HAS
+     a repaintable surface — a Tree or a Road has none, and a tab that opens on
+     three greyed swatches is worse than no tab. Whole feature lives in
+     /src/palette; absent module ⇒ no tab and nothing else changes. */
+  const canPaint = (function () { try { return !!(window.MythicPalette && window.MythicPalette.canPaint(k)); } catch (e) { return false; } })();
+  if (canPaint) tabs.push({ id: 'pa', name: '🎨 Colour' });
   if (!tabs.some(tb => tb.id === insTab)) insTab = 'ov';
   insBuildTabs(tabs);
 
@@ -23279,7 +23316,11 @@ function openInspect(k) {
   if (work) panes += '<div class="pane one" role="tabpanel" id="inspane-wf" data-tab="wf" aria-labelledby="instab-wf" tabindex="0">' + work + '</div>';
   if (hasLedger) panes += '<div class="pane" role="tabpanel" id="inspane-lg" data-tab="lg" aria-labelledby="instab-lg" tabindex="0">' + insLedgerPane(t, x, z, mult, om) + '</div>';
   if (finPane) panes += '<div class="pane one" role="tabpanel" id="inspane-fi" data-tab="fi" aria-labelledby="instab-fi" tabindex="0">' + finPane + '</div>';
+  if (canPaint) panes += '<div class="pane one" role="tabpanel" id="inspane-pa" data-tab="pa" aria-labelledby="instab-pa" tabindex="0">' + (function () { try { return window.MythicPalette.paneHtml(k) || ''; } catch (e) { return ''; } })() + '</div>';
   $('inspanes').innerHTML = panes;
+  // 🎨 The colour pane is live DOM (a canvas picker and its handlers), so it is
+  //    built AFTER the innerHTML that would otherwise throw its listeners away.
+  if (canPaint) { try { window.MythicPalette.bindPane(k); } catch (e) { console.warn('[palette] pane', e); } }
   insSelect(insTab, false);
   $('inspanes').scrollTop = 0;
   if (!wasOpen) { try { $('insx').focus(); } catch (e) {} }
@@ -23696,6 +23737,12 @@ $('btn-demolish').onclick = guardedAction(async () => {
   const [x, z] = kk.split(',').map(Number);
   delete game.tiles[kk];
   refreshRoadArea(x, z);
+  /* 🚌 Rail track auto-tiles off its neighbours, so pulling one piece leaves the
+     four around it with rails pointing into bare ground; and a demolished stop
+     has to come off every route that called at it. Both are the module's job —
+     it is told WHAT went and WHERE, and re-derives the rest. Guarded: an absent
+     module leaves the demolish exactly as it was. */
+  try { if (window.MythicTransit) window.MythicTransit.onPlaced(t.type, x, z); } catch (e) {}
   if (selectedKey === kk) { $('inspect').classList.remove('open'); selectedKey = null; }
   const fit = await bldPayRefund({ ...refund });
   toast('🧨 ' + nm + ' demolished' + bldRefundLabel({ refund: refund, fit: fit }),
@@ -23777,7 +23824,13 @@ function roadsAdjacentToAnchors() {
   for (const a of game.anchors) for (const [dx, dz] of NEI) if (isRoad(a.x + dx, a.z + dz)) out.add(key(a.x + dx, a.z + dz));
   return [...out];
 }
-function bfsPath(startK, goalK) {
+/* 🚌 `passable` IS OPTIONAL AND DEFAULTS TO isRoad — omit it and this is the
+   walk every civilian, truck and patrol car has always used, unchanged. It
+   exists so a TRAIN can walk the rail-track graph the player lays without
+   anyone writing a second breadth-first search: /src/transit passes its own
+   predicate, and there is exactly one traversal in this file to keep correct. */
+function bfsPath(startK, goalK, passable) {
+  const walk = (typeof passable === 'function') ? passable : isRoad;
   if (startK === goalK) return [startK];
   const prev = { [startK]: null }; const q = [startK];
   while (q.length) {
@@ -23785,7 +23838,7 @@ function bfsPath(startK, goalK) {
     const [cx, cz] = cur.split(',').map(Number);
     for (const [dx, dz] of NEI) {
       const nk = key(cx + dx, cz + dz);
-      if (prev[nk] !== undefined || !isRoad(cx + dx, cz + dz)) continue;
+      if (prev[nk] !== undefined || !walk(cx + dx, cz + dz)) continue;
       prev[nk] = cur;
       if (nk === goalK) {
         const path = [nk]; let p = cur;
@@ -24029,6 +24082,16 @@ function agentTick(dt) {
     if (a.dwell > 0) { a.dwell -= dt; continue; }
     const cur = a.path[a.i], nxt = a.path[a.i + 1];
     if (!nxt) {
+      /* 🚌 A TRANSIT VEHICLE IS NOT WANDERING — IT IS RUNNING A LINE.
+         Everything above this point (interpolation, rotation, lane offset) is
+         shared with every other agent; only the choice of where to go next is
+         different, and /src/transit owns it — including the dwell at the stop
+         it has just reached and the decision to take the vehicle off the road.
+         `a.line` is set only by the transit module. If the module is absent
+         this is skipped and there are no transit agents to skip it for. */
+      if (a.line && window.MythicTransit) {
+        try { if (window.MythicTransit.advance(a)) continue; } catch (e) {}
+      }
       // arrived at a road tile — step inside an adjacent building?
       if (cur !== a.roadK) a.lastBldg = null;   // moved on: old stop forgotten
       let doors = doorsAt(cur, a.kind).filter(k => k !== a.lastBldg); // don't bounce straight back in
@@ -24066,7 +24129,12 @@ function agentTick(dt) {
       continue;
     }
     const [nx, nz] = nxt.split(',').map(Number);
-    if (!isRoad(nx, nz)) { despawnAgent(a); continue; }   // road was demolished
+    /* 🛤 A TRAIN'S ROAD IS THE TRACK. Everything else despawns the moment the
+       tile ahead stops being a road (that is the demolish guard, and it must
+       stay); a rail vehicle's path is made of railtrack tiles, which are not
+       roads and never will be — without this clause every train vanished on
+       its first step. Guarded on `a.line`, so nothing but transit can use it. */
+    if (!isRoad(nx, nz) && !(a.line && _transitRunnable(nxt))) { despawnAgent(a); continue; }   // road was demolished
     a.t += dt * a.speed;
     // 🛣 The tile transition. This is the only line in the file where an agent
     //    changes tile, so it is the only honest place to count one.
@@ -26214,7 +26282,7 @@ function serialize() {
   /* ⏱ raid.ri stamps the interval the countdown was saved under, so a retune of
      RAID_INTERVAL can rescale old countdowns instead of firing them instantly. */
   const raid = Object.assign({}, game.raid, { ri: RAID_INTERVAL });
-  return JSON.stringify({ v: 5, tiles, raid, army: game.army,
+  const payload = { v: 5, tiles, raid, army: game.army,
     deck: game.defenseDeck, nodeXp: game.nodeXp,
     log: game.log.slice(-LOG_SAVE),
     morale: Math.round(wellbeing.morale), hunger: Math.round(wellbeing.hunger),
@@ -26297,6 +26365,30 @@ function serialize() {
     streets: (function () {
       try { return window.MythicStreets ? window.MythicStreets.save() : (game._streets || null); }
       catch (e) { return game._streets || null; }
+    })(),
+    /* 🚌 THE TRANSIT NETWORK — the player's lines, their names, colours, stop
+       order and loop flag (/src/transit). MUST ride the save: the stops are
+       buildings and survive on their own, but the ROUTES exist nowhere else,
+       and an evening spent drawing a six-stop line is exactly the kind of work
+       this file has silently thrown away before (see `house` and `stad`).
+       ⚠ `game._transitRaw` IS THE FALLBACK AND IT IS LOAD-BEARING — the same
+         erase guard `streets`, `power` and `economy` above carry. If the module
+         404s on this boot, MythicTransit is undefined; writing `null` here
+         would destroy the player's whole network on the next autosave BECAUSE
+         a static asset failed to fetch. loadState stashes whatever it read and
+         it is written straight back out untouched. */
+    transit: (function () {
+      try { return window.MythicTransit ? window.MythicTransit.save() : (game._transitRaw || null); }
+      catch (e) { return game._transitRaw || null; }
+    })(),
+    /* 🎨 PLAYER-SET BUILDING COLOURS (/src/palette). Player data: the three
+       material slots per plot plus the Historical pin. `null` when nothing has
+       ever been recoloured, so no existing save grows by a byte — and `null`
+       again when the module did not load, which is why this reads through the
+       same `_paintDisk` erase guard as every module field around it. */
+    paint: (function () {
+      try { return window.MythicPalette ? window.MythicPalette.save() : (_paintDisk || null); }
+      catch (e) { return _paintDisk || null; }
     })(),
     /* 💹 THE INVESTMENT BOOK. MUST ride the save. `book` is Cinder the city has
        already EARNED and that the funds are holding — it exists nowhere else,
@@ -26391,8 +26483,34 @@ function serialize() {
          must come back exactly as the player left it. Only the FOUNDING
          question is suspended. */
     ecoDefer: (_cityVerdict === 'unknown') ? 1 : undefined,
-    syncPct: citySync(), savedAt: Date.now() });
+    syncPct: citySync(), savedAt: Date.now() };
+  /* 🧩 THE MODULE SAVE SHELF, and the self-describing header — both owned by
+     /src/naming (see /src/naming/HANDOVER.md).
+
+     `ext` is ONE field standing in for every module that persists something.
+     Four features landed on this object in a single round and each of them
+     wanted its own top-level key; the register in /src/naming is the first
+     tenant of the shelf instead, so the NEXT module's persistence is a call to
+     `MythicCitySave.register()` and no edit to this literal at all. That is the
+     difference between adding a feature and a three-way merge conflict in an
+     object several workflows are editing at once.
+
+     `meta` is generated by WALKING this payload, so every field above —
+     including ones added after this line was written — is described
+     automatically rather than quietly missing from the manifest.
+
+     ⚠ Both are OPTIONAL and both are guarded. A 404 on the module writes a save
+       with neither key and loses nothing else, and loadState reads both with a
+       default, so a save written before any of this shipped opens unchanged. */
+  try { if (window.MythicCitySave) payload.ext = window.MythicCitySave.collect(); } catch (e) { console.warn('[save-ext] collect', e); }
+  try { if (window.MythicCitySave) payload.meta = window.MythicCitySave.describe(payload); } catch (e) {}
+  return JSON.stringify(payload);
 }
+/* 🎨 What the last load found under `paint`. Held so a session in which the
+   palette module failed to fetch cannot silently ERASE a player's colours the
+   next time anything autosaves — the same erase guard `_pendingPower`,
+   `_lastEconomyBlob` and `game._streets` exist for, one field along. */
+let _paintDisk = null;
 let saveTimer = null;
 function saveSoon() {
   if (saveTimer) return;
@@ -27213,6 +27331,15 @@ async function loadState() {
        not validated here: an id this build does not know (a save from a newer
        one) is kept and simply not drawn — see /src/zoning afterLoad(). */
     game.zones = (s.zones && typeof s.zones === 'object' && !Array.isArray(s.zones)) ? s.zones : {};
+    /* 🎨 PLAYER-SET BUILDING COLOURS (/src/palette), read BEFORE the tile loop
+       for exactly the reason the zone map above is: that loop calls buildMesh,
+       and buildMesh is where the override is applied. Hand it over late and the
+       whole city loads in its generated colours and only repaints when
+       something happens to touch it.
+       Absent on every save written before this feature existed, which correctly
+       means "nothing was ever recoloured": no migration, no default. */
+    _paintDisk = (s.paint && typeof s.paint === 'object') ? s.paint : null;
+    try { if (window.MythicPalette) window.MythicPalette.load(_paintDisk); } catch (e) { console.warn('[palette] load', e); }
     /* Meshes built so far this load — the counter for the chunked yield below.
        Counts BUILDINGS only (roads have no mesh here), which is the work that
        actually costs anything. */
@@ -27336,8 +27463,24 @@ async function loadState() {
        citizen whose building did not survive the load is left IDLE and
        re-homed into a free seat on the spot — the record is not deleted and
        no tile is touched. */
+    /* 🧩 THE MODULE SAVE SHELF — every module-owned slice of the save, restored
+       in one call (/src/naming/save.js). HERE, after the tile loop, because the
+       first tenant (the business-name register) resolves names against the
+       tiles that actually came back off disk, and a name for a building that
+       failed to load is a name nothing can ever show.
+       Absent on every save written before this shipped: `restore(undefined)` is
+       a no-op that still tells late-mounting modules "there was nothing for
+       you", so none of them sit waiting for a payload that is never coming. */
+    try { if (window.MythicCitySave) window.MythicCitySave.restore(s.ext); } catch (e) { console.warn('[save-ext] restore', e); }
     try { citLoad(s.cits); citRefresh(true); } catch (e) { console.warn('[citizens] load', e); }
     try { lifeLoad(s.life); } catch (e) { console.warn('[life] load', e); }
+    /* 🚌 Transit lines, AFTER the tile loop so the stops they name are on the
+       map before the routes are pathed. Absent ⇒ an empty network and nothing
+       else changes. The raw object is stashed FIRST and unconditionally so
+       serialize() can write it straight back if the module never mounted — see
+       the `transit:` field's note there. Sanitising is the module's job. */
+    game._transitRaw = (s.transit && typeof s.transit === 'object') ? s.transit : null;
+    try { if (window.MythicTransit) window.MythicTransit.load(game._transitRaw); } catch (e) { console.warn('[transit] load', e); }
     /* 🛣 Street names + traffic rings, parked raw for the module to pick up when
        it mounts (which is after loadState, like the House and the Stadium).
        Absent on every save that predates this feature ⇒ null ⇒ the module names
@@ -27437,6 +27580,24 @@ const OP_BP = {
                   desc: 'The storage business, sited. Its real product is capacity.' },
   smuggling:    { label: 'Smuggling Network', ico: '🟣',  mesh: 'siphon',     pop: 2, crew: 2, powerNeed: 1.20, use: { fuel: 0.80 },
                   desc: 'An unmarked building with a very good extractor fan. Refines Anomaly X out of corrupted essence and reagents — see THE NETWORK.' },
+  /* 🚌🚆 PUBLIC TRANSPORT — two operations, bought the way every other company
+     here is bought. Their PRICES (2,000,000 🔥 and 10,000,000 🔥) live in
+     OPS_ECON in the game's public/index.html and arrive over the ops bridge;
+     the two entries below are blueprints, NOT a price list — see _opEcon().
+     `mesh` points at recipes that live in /src/transit; the buildMesh wrapper
+     further down resolves them and falls through to this file's switch for
+     everything else, so a build without that module still renders these as the
+     generic op they alias.
+     The city-side layer (stops, stations, track, routes, ridership, subsidy)
+     is /src/transit; these two rows are only the licence made placeable.
+     ⚠ MUST stay ABOVE `const OPS_TYPES = Object.keys(OP_BP)` — that snapshot is
+       what turns a row here into a building, and a row added after it is
+       invisible to the whole ops layer (the load-order bug class this file has
+       already been bitten by, see WORKPLACES). */
+  bus:          { label: 'Bus Company',       ico: '🚌',  mesh: 'busdepot',   pop: 3, crew: 3, powerNeed: 0.45, use: { fuel: 0.60 },
+                  desc: 'A depot, a wash bay and a fleet. Owning it lets you put up bus stops and draw routes across the city — the buses run the roads you have already built.' },
+  rail:         { label: 'Rail Operator',     ico: '🚆',  mesh: 'railops',    pop: 3, crew: 4, powerNeed: 1.40, use: { fuel: 0.50, ingots: 0.30 },
+                  desc: 'Signalling, a control tower and rolling stock. Owning it lets you lay track, raise stations and run trains along lines of your own design.' },
 };
 const OPS_TYPES = Object.keys(OP_BP);
 /* ════════════════════════════════════════════════════════════════════════════
@@ -27618,7 +27779,10 @@ function _opsParent() {
       goes through opsPriceOf(), which asks the manifest first. */
 const OPS_MOCK_PRICE = { mining: 400000, oil: 500000, gas: 350000, construction: 0, salvage: 250000,
   cars: 450000, agri: 300000, fishing: 300000, medical: 450000, research: 700000, cardshop: 200000,
-  dojo: 150000, bank: 1000000, warehouse: 280000, smuggling: 600000 };
+  dojo: 150000, bank: 1000000, warehouse: 280000, smuggling: 600000,
+  // 🚌🚆 Mirrors of OPS_ECON's transit rows. TEST FALLBACK ONLY — the number a
+  // player is ever charged comes from the parent's _opEcon, like every row above.
+  bus: 2000000, rail: 10000000 };
 const OPS_MOCK_KEY = 'mythic_city_mockops_v1';
 function opsMock() {
   if (!opsMock._m) {
@@ -29005,6 +29169,213 @@ try { window.__ncOps = OPS_API; } catch (e) {}
     if (++tries < 40) setTimeout(attach, 250);
   };
   setTimeout(attach, 60);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   12c. 🚌 TRANSIT — THE HOOK BLOCK.  Bus companies, train stations and
+        player-drawn routes.  The system itself is /src/transit/.
+   ─────────────────────────────────────────────────────────────────────────
+   EVERYTHING HERE IS ADDITIVE AND GUARDED. It registers three BUILDINGS
+   entries, adds them to a section, and WRAPS six existing functions rather
+   than editing them — the same discipline the operations block above adopted,
+   and for the same reason: other builders are inside this file the same round
+   and a wrapper survives a rewrite of the function it wraps.
+
+   THE WHOLE SURFACE, so a reader can find it all:
+     · OP_BP        — two new operations (`bus`, `rail`), above.
+     · BUILDINGS    — busstop / trainstation / railtrack, below.
+     · bfsPath      — gained an OPTIONAL `passable` predicate (rail ≠ road).
+     · agentTick    — two clauses: hand a transit vehicle its next leg, and let
+                      a rail vehicle's path be made of track.
+     · serialize    — one `transit` field; loadState — one line back.
+     · wrappers     — buildMesh, tryPlace, openInspect, manageAgents,
+                      desiredAgentCounts, agentEndpoints, economyTick.
+     · boot()       — the mount, with the ctx hand-over.
+
+   🔴 IF /src/transit 404s THE PLAYER LOSES TRANSIT AND NOTHING ELSE. Every
+      call below is `window.MythicTransit && …` inside a try. The one thing
+      that is NOT allowed to degrade quietly is the save: serialize() writes
+      back the raw object loadState stashed, so a failed fetch cannot erase a
+      network the player spent an evening drawing.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* 🚏 THE INFRASTRUCTURE. Bought with CITY Cinder like every other building —
+   the 2,000,000 🔥 / 10,000,000 🔥 licences are a different currency at a
+   different scale and are charged once, at City Hall. A stop is deliberately
+   cheap and a station deliberately is not: the interesting decision is WHERE,
+   and a shelter you have to save up for is a decision about money instead. */
+BUILDINGS.busstop = {
+  name: 'Bus Stop', ico: '🚏', cost: { cinder: 22, metal: 6 },
+  pop: 0, crew: 0, maxLvl: 3, noEnter: true, transitLicence: 'bus',
+  desc: 'A shelter, a bench and a route blade. Put them where people already are — a stop only earns its keep if homes AND jobs sit within a couple of tiles of it. Add it to a route in the Transit Authority.',
+};
+BUILDINGS.trainstation = {
+  name: 'Train Station', ico: '🚆', cost: { cinder: 240, metal: 90, supplies: 30 },
+  pop: 2, crew: 2, powerNeed: 0.35, maxLvl: 3, cap: 8, transitLicence: 'rail',
+  desc: 'Platform, canopy, ticket hall and a departure board. Lay track up to it and it becomes a stop on a rail line — one station moves a crowd no number of buses can.',
+};
+BUILDINGS.railtrack = {
+  name: 'Rail Track', ico: '🛤️', cost: { cinder: 9, metal: 4 },
+  pop: 0, maxLvl: 1, cap: 200, noEnter: true, noRoadNeed: true, transitLicence: 'rail',
+  desc: 'Ballast, sleepers and rail. Lays itself into corners and junctions from its neighbours. Trains run on this and only on this — never on your roads.',
+};
+BUILD_ORDER.push('busstop', 'trainstation', 'railtrack');
+/* Into the existing Infrastructure section rather than a new one: a bus stop
+   belongs beside a road and a depot, and a section per feature is how a build
+   menu becomes unnavigable. Guarded — if that section is ever renamed these
+   fall into "Other" automatically and stay reachable. */
+{
+  const _infra = BUILD_SECTIONS.find((s) => s && s.id === 'infra');
+  if (_infra && Array.isArray(_infra.items)) _infra.items.push('busstop', 'trainstation', 'railtrack');
+}
+
+/* Does the player hold this licence? One answer, shared by the placement gate,
+   the panel and the line runner — three consumers disagreeing about ownership
+   is how a player ends up with a stop they cannot put on a route. */
+function transitOwns(opType) {
+  try {
+    if (!OPS.st) { opsRefresh(true).catch(() => {}); return false; }   // ask, answer next call
+    const r = opsRowsOf(opType);
+    return !!(r && r.all && r.all.length);
+  } catch (e) { return false; }
+}
+function transitPrice(opType) {
+  try {
+    const c = opsCatalogOf(opType);
+    return (c && c.startup) || (OPS_MOCK_PRICE[opType] | 0) || 0;
+  } catch (e) { return 0; }
+}
+/* Hoisted for agentTick, which runs long before this block in source order.
+   A rail vehicle's next tile is track, not road — see the clause there. */
+function _transitRunnable(k) {
+  try { return !!(window.MythicTransit && window.MythicTransit.isTrack(k)); } catch (e) { return false; }
+}
+
+/* ── MESHES. Wrapped, not edited: the make*() switch is another builder's file
+   this round, and /src/transit owns its own recipes anyway. Ours runs FIRST and
+   falls through for everything it does not recognise, so nothing existing
+   changes and an absent module simply gets the operations block's alias. ── */
+{
+  const _buildMeshTransitBase = buildMesh;
+  buildMesh = function (type, lvl, tx, tz) {
+    try {
+      if (window.MythicTransit) {
+        const m = window.MythicTransit.mesh(type, lvl, tx, tz);
+        if (m) return m;
+      }
+    } catch (e) { console.warn('[transit] mesh', e); }
+    return _buildMeshTransitBase(type, lvl, tx, tz);
+  };
+}
+
+/* ── PLACEMENT. The licence gate runs BEFORE the base call so an unlicensed
+   stop never charges and never writes a tile; the module is told AFTER, and
+   only if the tile really is standing (rail track auto-tiles off its
+   neighbours, so laying one piece restyles the four around it). ── */
+{
+  const _tryPlaceTransitBase = tryPlace;
+  tryPlace = async function (x, z) {
+    const def = BUILDINGS[placeType];
+    const need = def && def.transitLicence;
+    if (need) {
+      const T = window.MythicTransit;
+      if (!T) { toast('🚌 The transit module did not load — reload the city.', 'bad'); return; }
+      if (!transitOwns(need)) {
+        const price = transitPrice(need);
+        toast('🔒 ' + def.name + ' needs the ' + (need === 'rail' ? 'Rail Operator' : 'Bus Company') +
+          ' licence — buy it at City Hall' + (price ? ' for ' + price.toLocaleString() + ' 🔥' : '') + '.', 'bad');
+        return;
+      }
+    }
+    await _tryPlaceTransitBase(x, z);
+    try {
+      const t = game.tiles[key(x, z)];
+      if (t && BUILDINGS[t.type] && BUILDINGS[t.type].transitLicence && window.MythicTransit) {
+        window.MythicTransit.onPlaced(t.type, x, z);
+      }
+    } catch (e) { console.warn('[transit] placed', e); }
+  };
+}
+
+/* ── THE INSPECTOR. Two jobs, and the FIRST one is why this wraps rather than
+   appends: while the player is picking stops, a click on the map is a route
+   edit and must NOT open a dossier over the city they are drawing on. ── */
+{
+  const _openInspectTransitBase = openInspect;
+  openInspect = function (k) {
+    try { if (window.MythicTransit && window.MythicTransit.onTileClick(k)) return; } catch (e) {}
+    _openInspectTransitBase(k);
+    try { transitAugmentInspect(k); } catch (e) { console.warn('[transit] inspect', e); }
+  };
+}
+function transitAugmentInspect(k) {
+  const panel = document.getElementById('inspect'); if (!panel) return;
+  let host = document.getElementById('transit-inspect');
+  let a = null;
+  try { a = window.MythicTransit ? window.MythicTransit.inspectAction(k) : null; } catch (e) {}
+  if (!a) { if (host) host.remove(); return; }
+  if (!host) {
+    host = document.createElement('div'); host.id = 'transit-inspect';
+    host.style.cssText = 'margin-top:.5rem;padding-top:.5rem;border-top:1px solid rgba(255,255,255,.09)';
+    const anchor = document.getElementById('ops-inspect') || document.getElementById('insbonus');
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(host, anchor.nextSibling);
+    else panel.appendChild(host);
+  }
+  host.innerHTML = '<div style="font-size:11px;color:var(--mist,#8f87a3);line-height:1.45">' + shopEsc(a.note) + '</div>' +
+    '<button id="transit-open" style="display:block;width:100%;margin-top:.4rem;padding:.45rem;border-radius:8px;' +
+    'cursor:pointer;font-weight:900;letter-spacing:.08em;font-size:11.5px;color:#241a05;' +
+    'border:1px solid rgba(212,175,55,.7);background:linear-gradient(180deg,#f0d98d,#c19a34)">' + shopEsc(a.label) + '</button>';
+  const btn = document.getElementById('transit-open');
+  if (btn && a.run) btn.onclick = a.run;
+}
+
+/* ── THE FLEET. manageAgents owns the census of civilians, trucks, cars and
+   patrols; transit vehicles are not in that census (they are dispatched by
+   line, not by demand) so the module runs its own pass on the same beat. ── */
+{
+  const _manageAgentsTransitBase = manageAgents;
+  manageAgents = function () {
+    _manageAgentsTransitBase();
+    try { if (window.MythicTransit) window.MythicTransit.manage(); } catch (e) { console.warn('[transit] fleet', e); }
+  };
+}
+/* 🚗 …AND THE CARS THEY REPLACE. This is the measurable half of "the NPCs use
+   it": a commute served by a line is not made by car, so the private-car count
+   comes down as mode share goes up. The module clamps its own share, so no
+   quantity of stops can empty the streets. */
+{
+  const _desiredAgentCountsTransitBase = desiredAgentCounts;
+  desiredAgentCounts = function () {
+    const want = _desiredAgentCountsTransitBase();
+    try { if (window.MythicTransit) window.MythicTransit.adjustAgentCounts(want); } catch (e) {}
+    return want;
+  };
+}
+/* 🧍 …AND THE PEDESTRIANS. A share of served commuters walk to a STOP rather
+   than to an arbitrary road, which is what makes transit visible at street
+   level. Returning null (or throwing) leaves the base endpoints untouched. */
+{
+  const _agentEndpointsTransitBase = agentEndpoints;
+  agentEndpoints = function (kind, agent) {
+    const ep = _agentEndpointsTransitBase(kind, agent);
+    try {
+      if (window.MythicTransit) {
+        const alt = window.MythicTransit.endpoints(kind, agent, ep);
+        if (alt && alt.from && alt.to && alt.from.length && alt.to.length) return alt;
+      }
+    } catch (e) {}
+    return ep;
+  };
+}
+/* ── UPKEEP, on the economy's own clock. Stops, stations, track and every
+   running vehicle cost Cinder; fares reduce that bill and can never reverse
+   it. See /src/transit/routes.js moneyTick. ── */
+{
+  const _economyTickTransitBase = economyTick;
+  economyTick = async function (dtMin) {
+    await _economyTickTransitBase(dtMin);
+    try { if (window.MythicTransit) await window.MythicTransit.tick(dtMin); } catch (e) { console.warn('[transit] tick', e); }
+  };
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -31077,6 +31448,112 @@ function animate() {
       place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
     });
   } catch (e) { console.warn('[Zoning] not mounted (non-fatal):', e); }
+  /* ══ 🏷 THE BUSINESS REGISTER + THE MODULE SAVE SHELF ═════════════════════
+     Mounted BEFORE loadState, and FIRST of the three modules below, because
+     this one owns `window.MythicCitySave` — the shelf loadState calls to hand
+     every module-owned slice of the save back to its owner. Mount it after and
+     the very first load of the session restores nothing.
+     (It is still safe to mount late — SaveShelf stashes the payload and replays
+     it to whoever registers next — but the first load would name the city from
+     scratch and the player would watch their shops rename themselves once.)
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md). `game`, `BUILDINGS`, `openInspect`,
+     `saveSoon` and `toast` are top-level bindings in THIS module script and are
+     invisible to an ES module. The ctx below IS the hand-over.
+     Everything is read-only except saveSoon, and the one write it makes is a
+     name. Nothing here can move money or a tile. */
+  try {
+    const nmod = await import('../src/naming/index.js?v=' + (window.NC_BUILD || 'r13'));
+    nmod.mount({
+      game,
+      saveSoon, toast, logEvent,
+      /* The blueprint, so the dossier can keep saying WHAT a building is once
+         its own name has taken over the header. */
+      blueprintName: (k) => { try { const t = game.tiles[k]; const d = t && BUILDINGS[t.type]; return d ? d.name : null; } catch (e) { return null; } },
+      /* 🏭 The operations special case, handed over rather than re-derived: an
+         operation's name is its City Hall licence label and always has been
+         (see openInspect's header comment). The register treats that as the
+         first fallback under a player-typed name, which is what makes this one
+         naming concept instead of two. */
+      opsLabel: (k) => { try { const r = (typeof opsRowForKey === 'function') ? opsRowForKey(k) : null; return (r && r.label) || null; } catch (e) { return null; } },
+      /* The dossier seam. Wrapped, not edited: three other systems are inside
+         openInspect this round and the ops layer already wraps this same
+         function — a wrapper survives a rewrite of what it wraps.
+         ⚠ THE `selectedKey === k` GUARD IS LOAD-BEARING, and it is the one
+           thing this hook does that the module could not do for itself.
+           /src/transit's own wrapper SWALLOWS a click while the player is
+           picking stops for a route: the base panel is never drawn. Repainting
+           a header unconditionally would then relabel whatever dossier happened
+           to still be on screen with the name of the tile the player just added
+           to a bus line. Only decorate a panel that actually opened on THIS
+           tile. */
+      wrapInspect: (fn) => {
+        const base = openInspect;
+        openInspect = function (k) {
+          try { base(k); } catch (e) { console.error('[inspect] base panel threw:', e); }
+          try {
+            if (selectedKey === k && $('inspect').classList.contains('open')) fn(k);
+          } catch (e) { console.warn('[naming] inspect', e); }
+        };
+      },
+    });
+  } catch (e) { console.warn('[Naming] not mounted (non-fatal):', e); }
+  /* ══ 🎨 VISUAL CUSTOMIZATION ═══════════════════════════════════════════════
+     Mounted BEFORE loadState for the same reason Zoning above is: loadState
+     builds every tile's mesh, buildMesh is where a player's colour override is
+     reapplied, and a module that arrives after that loop would leave the whole
+     city in its generated colours until something happened to rebuild it.
+     🔴 THE GLOBALS TRAP. `THREE`, `game`, `saveSoon` and `toast` are top-level
+        `const` in THIS module script and are invisible to an ES module.
+     Note what is NOT handed over: nothing that spends and nothing that builds.
+     A recolour is cosmetic, so the module gets the tile store, the renderer's
+     THREE and two UI primitives — and no way to reach the ledger. */
+  try {
+    const pmod = await import('../src/palette/index.js?v=' + (window.NC_BUILD || 'r13'));
+    pmod.mount({ THREE, tiles: () => game.tiles, saveSoon, toast });
+  } catch (e) { console.warn('[Palette] not mounted (non-fatal):', e); }
+  /* ══ 🚌 TRANSIT ══════════════════════════════════════════════════════════
+     Mounted BEFORE loadState, third of the trio: loadState rebuilds every
+     tile's mesh and the bus stop / station / track recipes live in this module,
+     so mounting it afterwards brings a saved city back with three types of
+     building rendered as an empty group until the player touches them. The
+     ROUTES themselves are handed over from inside loadState (one line, after
+     the tile loop) for the opposite reason — a route cannot be pathed before
+     the stops it names are on the map.
+
+     🔴 THE GLOBALS TRAP. `game`, `BUILDINGS`, `agents`, `bfsPath`, `box`,
+     `cyl`, `MAT`, `cityPop` and `MythicCityBridge` are top-level `const` in
+     THIS module script and are invisible to an ES module.
+
+     ⚠ `WORKPLACES` IS A CALLABLE, NOT A LIST, and that is a re-derivation
+       rather than a style choice: the top-level `const WORKPLACES` snapshot
+       this module was written against was itself the file's eighth load-order
+       bug (it froze BUILDINGS before the `op_*` rows registered, so no
+       operation could ever be a commute destination) and is a
+       `workplaceTypes()` getter now. Handing over the getter is what keeps a
+       line's ridership counting operations as jobs.
+
+     Note what is NOT handed over: no writer that could mint currency. The
+     module gets `spendCinders` and no `addCinders`, which is not an oversight
+     — it is the structural half of "transit can never net positive". */
+  try {
+    const tmod = await import('../src/transit/index.js?v=' + (window.NC_BUILD || 'r13'));
+    tmod.mount({
+      THREE, scene, game, BUILDINGS, GRID, HALF, NEI,
+      isRoad, bfsPath, cityPop, WORKPLACES: () => workplaceTypes(),
+      agents, agentGroup, despawnAgent, disposeOwnedGeo, limitShadowCasters,
+      box, cyl, MAT, winMat, lampMat, placeMeshAt, dropTileMesh,
+      toast, logEvent, saveSoon, setMode,
+      now: () => performance.now(),
+      confirm: (msg) => (typeof gcConfirm === 'function' ? gcConfirm(msg) : Promise.resolve(confirm(msg))),
+      spendCinders: (n) => MythicCityBridge.spendCinders(n),
+      /* The ownership question, answered by the layer that already knows it —
+         a second reading of the operations manifest would be a second thing to
+         keep in step with the licence a player actually bought. */
+      opsOwned: (t) => transitOwns(t),
+      opsPrice: (t) => transitPrice(t),
+    });
+  } catch (e) { console.warn('[Transit] not mounted (non-fatal):', e); }
   try {
     await spawnAnchors();
     await loadState();
@@ -31503,6 +31980,46 @@ function animate() {
     // 🛣 Arm the two agentTick hooks only once the module is really there.
     _stMeter = window.MythicStreets;
   } catch (e) { console.warn('[Streets] not mounted (non-fatal):', e); }
+  /* ══ 🏠 THE DOSSIER LAYER ════════════════════════════════════════════════
+     Addresses, zone, level pips, residents, household wealth and the money
+     rows — /src/dossier. READ-ONLY: nothing in that module writes to a tile,
+     to a citizen or to the save, and it adds NO save field, because every fact
+     it prints is derived from state that is already persisted. So an old save
+     opens with addresses in it and a save written today opens in a build
+     without the module. A 404 here costs the player three cards in the
+     building dossier and nothing else — all three call sites in openInspect /
+     insBuildOverview are guarded and fall back to exactly what they printed
+     before.
+
+     ⚠ MOUNTED AFTER /src/streets, DELIBERATELY, and this is the one ordering
+       fact worth writing down: an address is "<number> <street>", and the
+       street name comes from the streets layer when it is there. Mount the
+       dossier first and the very first building a returning player opens is
+       addressed "126 Row 8" — the honest grid-line fallback — and then silently
+       becomes "126 Ninth Street" the next time the panel is drawn. Both are
+       correct; watching one turn into the other is what teaches a player not to
+       trust either.
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md). Everything below is a top-level `const`
+     in THIS module script and is invisible to an ES module. This ctx IS the
+     hand-over; there is no `window.game`.
+     ⚠ Note what is NOT handed over: nothing that writes. No addRes, no
+       spendCinders, no saveSoon. The dossier is a reader by construction. */
+  try {
+    const dmod = await import('../src/dossier/index.js?v=' + (window.NC_BUILD || 'r13'));
+    dmod.mount({
+      game, BUILDINGS, MAX_LVL, RATE_MULT, CITY_DAY_MIN, LOT_RENT_PER_MIN,
+      isRoad, lotValue, haveOf,
+      // the rate readouts, so a money row is the number the tick will pay
+      genOf, cinderRate, tileMult, staffingRatio, tileOutputFactor, cityOutputMultipliers,
+      resIco, resName,
+      // the panel's own vocabulary — the cards must be built out of it, not beside it
+      esc: logEsc, rate: insRate, pctCol: insPctCol,
+      card: insCardHtml, fac: insFac, alert: insAlert,
+      sectionOf: insSectionOf,
+      opsRowForKey: (k) => (typeof opsRowForKey === 'function' ? opsRowForKey(k) : null),
+    });
+  } catch (e) { console.warn('[Dossier] not mounted (non-fatal):', e); }
   /* ⏳ OFFLINE CATCH-UP — must run HERE, and the order is load-bearing:
        • after loadState(), or there is no savedAt and no city to run;
        • after refreshLedgerMirror(), because economyTick's input gate reads
@@ -31679,6 +32196,37 @@ function animate() {
        the two things a driver cannot reach from outside: the tile store and
        the rest-quality inputs the module read. */
     house: () => (typeof window !== 'undefined' ? window.MythicHouse : null) || null,
+    /* 🏷 The business register and the module save shelf. Exposed for the same
+       reason everything else here is: a name is only correct if a driver can
+       prove it survived serialize → loadState, and the only way to prove that
+       without a seam is to reload the page by hand and squint at a panel. */
+    naming: () => (typeof window !== 'undefined' ? window.MythicNaming : null) || null,
+    saveExt: () => (typeof window !== 'undefined' ? window.MythicCitySave : null) || null,
+    /* 🏠 The dossier. Read-only, so what a driver wants is the DERIVATIONS —
+       addressOf / householdOf / booksOf — rather than the HTML they render as. */
+    dossier: () => (typeof window !== 'undefined' ? window.MythicDossier : null) || null,
+    /* 🎨 The palette. `window.MythicPalette` is the same object; what a driver
+       cannot reach from outside is the tile store the module reads, so the
+       useful half of this seam is `repaint(k)` — rebuild ONE tile's mesh
+       through the shipped path, which is how an "override survives an upgrade"
+       claim is actually falsifiable rather than asserted. */
+    palette: () => (typeof window !== 'undefined' ? window.MythicPalette : null) || null,
+    repaint: (k) => {
+      const t = game.tiles[k]; if (!t) return false;
+      const [x, z] = k.split(',').map(Number);
+      dropTileMesh(t);
+      t.mesh = buildMesh(t.type === 'lot' && t.tenant ? 'tenantbiz' : t.type, t.lvl, x, z);
+      placeMeshAt(t.mesh, x, z, t.rot);
+      return true;
+    },
+    /* 🚌 TRANSIT. Ridership moves on the economy beat and vehicles move on RAF,
+       and RAF is dead in the capture pane — so without a seam neither half is
+       observable and the feature would ship unverified. `transit` is the module
+       (window.MythicTransit is the same object); `transitReport` is the live
+       ridership/mode-share reading the panel prints, exposed so a driver can
+       assert on the number rather than on a screenshot of it. */
+    transit: () => (typeof window !== 'undefined' ? window.MythicTransit : null) || null,
+    transitReport: () => { try { return window.MythicTransit.report(true); } catch (e) { return null; } },
     /* 🏗 BUILD ORDERS — MANDATORY, NOT OPTIONAL. rAF never fires in the capture
        pane, so animate() and therefore every tick is dead there; without this
        seam a wall-clock feature is literally unverifiable and would ship on a

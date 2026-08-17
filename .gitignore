@@ -85,3 +85,7 @@ public/assets/Units/unit frames/New units/*.gif
 .gauntlet/*.tgz
 .gauntlet/shots/**/*.png
 .gauntlet/progress.html
+
+# Transient git worktrees created by in-flight Workflow builders — each is a
+# full checkout and is removed when the run ends. Never commit these.
+.claude/worktrees/

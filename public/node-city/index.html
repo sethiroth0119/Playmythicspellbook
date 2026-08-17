@@ -2657,6 +2657,23 @@ const BUILDINGS = {
               desc: 'The way out into the wasteland. Launch expeditions here; refugees arrive here. One per city.' },
   caravanpost:{name:'Caravan Post',  ico: '🐪', cost: { cinder: 80, metal: 20, supplies: 12 }, pop: 2, crew: 1, cap: 2,
               desc: 'Sends trade caravans to other players\' cities. Pays out on return — Convoy PRN link boosts profits.' },
+  /* ══ 🛣 OUTSIDE CONNECTIONS — the joint between this city and the highway.
+     The substance is an ES module (/src/outside); this entry is the ONE thing
+     that has to live in the definition table, because BUILDINGS is what the
+     shop, the placement gate and the save all read.
+     • `edgeOnly` is a flag tryPlace hands to the module — the module owns the
+       actual rule and the refusal text, so "which tiles are legal" is written
+       down exactly once.
+     • `mesh: 'depot'` is the DEGRADE PATH, not the intended look. The real
+       recipe is Mesh.buildTileMesh() and buildMesh's wrapper asks the module
+       for it first; the alias only matters if /src/outside/ 404s, and then a
+       saved interchange still renders as a building instead of as an empty
+       group.
+     • cap 1 / maxLvl 1: one joint per city, and there is nothing to upgrade —
+       a wider ramp does not carry more trade in this game.  */
+  interchange:{name:'Highway Interchange', ico: '🛣', cost: { cinder: 140, metal: 45, supplies: 15 },
+              pop: 1, crew: 1, cap: 1, maxLvl: 1, edgeOnly: true, mesh: 'depot',
+              desc: 'The ramp that joins your streets to the highway running past the map. Build it on the NORTH edge and run road to it — with no outside connection nothing leaves the city: no caravans, no shipments, no deals with other players.' },
   lot:      { name: 'Lease Plot',    ico: '🪧', cost: { cinder: 10 }, pop: 0, noEnter: true, maxLvl: 1,
               desc: 'Zoned land. As owner you can lease it to another player — their business pays you rent in Cinder.' },
   obelisk:  { name: 'Obelisk of Ethos', ico: '🗿', cost: { cinder: 120, metal: 30 }, pop: 0, requiresCard: 'Structure', cap: 1, maxLvl: 1,
@@ -2884,7 +2901,7 @@ const BUILD_SECTIONS = [
   { id: 'chain', name: 'Refining',        ico: '🏭', desc: 'Raw into refined. Rations, ingots, components, planks and power.',
     items: ['cannery', 'smelter', 'machineshop', 'sawmill', 'weavery', 'papermill', 'printworks', 'powerstation', 'warehouse'] },
   { id: 'infra', name: 'Infrastructure', ico: '🛤️', desc: 'Links and stores. Producers beside a road work faster.',
-    items: ['road', 'streetlight', 'depot', 'caravanpost', 'railyard', 'lot'] },
+    items: ['road', 'streetlight', 'depot', 'interchange', 'caravanpost', 'railyard', 'lot'] },
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
     items: ['housing', 'medlab', 'arena', 'shop', 'stadium'] },
   { id: 'def',   name: 'Defense',        ico: '🛡️', desc: 'Raiders are coming. These are what stop them.',
@@ -2912,7 +2929,9 @@ const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmi
   'papermill', 'printworks',
   // ── the financial district: the Forge remodelled. 'forge' is BACK in this
   //    list, which is what makes it placeable again; the other two are new.
-  'forge', 'indexfund', 'holdco'];
+  'forge', 'indexfund', 'holdco',
+  // ── outside connections (/src/outside) ──
+  'interchange'];
 
 /* ── TCG layer ─────────────────────────────────────────────────────────
    The player's card collection powers the city:
@@ -19327,7 +19346,15 @@ function refreshRoad(x, z) {
     if (L) registerLamp(t.mesh.position.x + L.x, L.y, t.mesh.position.z + L.z);
   } catch (e) {}
 }
-function refreshRoadArea(x, z) { refreshRoad(x, z); for (const [dx, dz] of NEI) refreshRoad(x + dx, z + dz); }
+function refreshRoadArea(x, z) {
+  refreshRoad(x, z); for (const [dx, dz] of NEI) refreshRoad(x + dx, z + dz);
+  /* 🛣 THE ROAD NETWORK JUST CHANGED — drop the cached outside-connection
+     answer. This is the choke point on purpose: every placement, demolition and
+     repair already funnels through here, so the module never has to poll and
+     never has to re-run its BFS on a frame. Dropping the cache is one
+     assignment; the recompute happens lazily on the next read. */
+  try { if (window.MythicOutside) window.MythicOutside.invalidate(); } catch (e) {}
+}
 
 // ── Anchor placement: owned nodes ring the map center deterministically ──
 function anchorSlots(n) {
@@ -22097,6 +22124,18 @@ async function tryPlace(x, z) {
       return;
     }
   }
+  /* 🛣 OUTSIDE CONNECTIONS. The interchange is the only building on the shelf
+     that has to meet something OFF the map, so it is the only one with an edge
+     rule. The rule and its refusal live in /src/outside (one place, one
+     wording); this is the call site. Guarded — with the module absent the
+     interchange simply places anywhere, which is a cosmetic wrong, not a
+     broken build menu. */
+  if (def.edgeOnly) {
+    try {
+      const v = window.MythicOutside && window.MythicOutside.placeCheck(x, z);
+      if (v && !v.ok) { toast(v.msg, 'bad'); return; }
+    } catch (e) {}
+  }
   if (def.pop && popUsed() + def.pop > popCap()) { toast('Not enough population — build Housing.', 'bad'); return; }
   const cost = costOf(placeType);
   /* 🏗 THE DURATION IS FIXED HERE, BEFORE THE AWAIT — and it is the last read
@@ -22680,6 +22719,17 @@ function insSystems(t, x, z) {
   if (def.stockCap) rows.push(insFac('🏬 Storage added', '+' + def.stockCap * t.lvl + ' each good'));
   if (t.type === 'lot') rows.push(insFac('🪧 Lease', t.tenant ? 'to <span class="hl">' + logEsc(t.tenant) + '</span>' : 'vacant'));
   if (t.type === 'caravanpost') rows.push(insFac('🐪 Caravans on the road', game.caravan.trips.length || 'none — loading'));
+  /* 🛣 The dossier has to answer "why is nothing leaving?" on the two buildings
+     a player looks at when it stops — the post that sends and the ramp that
+     lets it out. Read straight off the module's cached state; no recompute. */
+  if (t.type === 'caravanpost' || t.type === 'interchange') {
+    try {
+      const st = window.MythicOutside && window.MythicOutside.state();
+      if (st) rows.push(insFac('🛣 Outside connection',
+        st.connected ? '<span class="hl">' + (st.viaLabel || 'linked') + '</span>' : 'CUT OFF — ' + logEsc(st.reason),
+        st.connected ? '' : 'bad'));
+    } catch (e) {}
+  }
   if (t.type === 'gate') {
     const e = game.expedition;
     rows.push(insFac('🚪 Expedition', e ? 'out — back in ' + Math.max(0, Math.ceil(e.until - performance.now() / 1000)) + 's' : 'ready'));
@@ -25150,7 +25200,19 @@ let NEIGHBORS = [];
 function caravanTick(nowSec) {
   // 🏗 No caravan leaves from a site — there is nothing to load it from.
   const posts = Object.entries(game.tiles).filter(([k, t]) => t.type === 'caravanpost' && !t.damaged && !bldSite(t));
-  if (posts.length && NEIGHBORS.length && nowSec > game.caravan.next) {
+  /* 🛣 THE GATE. A caravan is a truck that drives OUT of the city, so it needs
+     a way out. nag() is the throttled refusal — this tick runs every frame and
+     a toast on each one would be a drum-beat, so the module writes the city log
+     and toasts once per episode and stays quiet after that. The HUD chip is
+     what carries the state continuously.
+     ⚠ The dispatch is SKIPPED, not delayed: game.caravan.next is left alone, so
+       the very first tick after the road is joined sends a caravan rather than
+       making the player wait out a fresh cycle for a problem they just fixed.
+     ⚠ Trips ALREADY ON THE ROAD still come home below. Cutting the link must
+       not strand — or delete — money a player has already sent out. */
+  let _ocOut = true;
+  try { if (window.MythicOutside && posts.length) _ocOut = window.MythicOutside.nag('caravan').ok; } catch (e) {}
+  if (_ocOut && posts.length && NEIGHBORS.length && nowSec > game.caravan.next) {
     game.caravan.next = nowSec + CARAVAN_EVERY * (0.8 + Math.random() * 0.5);
     const dest = NEIGHBORS[Math.floor(Math.random() * NEIGHBORS.length)];
     const trip = CARAVAN_TRIP[0] + Math.random() * (CARAVAN_TRIP[1] - CARAVAN_TRIP[0]);
@@ -25978,6 +26040,11 @@ function updateHUD() {
   // row exists can flip on a balance change alone. One rect read, and the sync
   // returns immediately unless the height actually moved.
   if (window.__syncTopbarH) window.__syncTopbarH();
+  /* 🛣 OUTSIDE CONNECTIONS chip. A silent gate is indistinguishable from a
+     broken feature, so the state is always on screen. The module owns the DOM
+     (it creates its own element) and repaints only when the string changes, so
+     this is a couple of compares on the common path. */
+  try { if (window.MythicOutside) window.MythicOutside.hud(); } catch (e) {}
   renderArmy();
 
   // Sync + node list
@@ -26125,6 +26192,18 @@ function serialize() {
     /* ⏳ The simulated city clock the per-tile `born` stamps are measured
        against. Meaningless apart — save both or neither. */
     age: Math.round(game.cityAge || 0),
+    /* 🛣 OUTSIDE CONNECTIONS' one save field, and it is OPTIONAL EVERYWHERE.
+       `null` for every city that never needed a grandfather migration — which
+       is every new city and every city the migration could connect — so no
+       existing save grows by a byte. It carries a single timestamp: when the
+       migration ran, and whether it had to WAIVE the gate because it could not
+       reach the road network. The waiver expires (see GATE.graceMs); this field
+       is what makes the expiry survive a reload rather than restarting the
+       clock every session, which would be a permanent exemption by accident.
+       The INTERCHANGE ITSELF needs no field — it is an ordinary tile and rides
+       `tiles` like every other building, which is also what makes the migration
+       idempotent: once it is on disk, it is never run again. */
+    oc: (function () { try { return window.MythicOutside ? window.MythicOutside.save() : (game.oc || null); } catch (e) { return game.oc || null; } })(),
     /* 👤 THE NAMED ROSTER. Absent-tolerant on load (see loadState): a save
        without this key opens with an EMPTY roster that refills itself from the
        city as it stands, which is the correct reading of "this save predates
@@ -27029,6 +27108,11 @@ async function loadState() {
          off for an hour. A save with tiles but no `age` is therefore treated as
          OLDER than any grace period, which is the truth: those buildings have
          been standing since before the clock started. */
+    /* 🛣 OUTSIDE CONNECTIONS' grandfather stamp. Stashed, not interpreted —
+       /src/outside mounts LATER in boot() and it owns the meaning. Absent on
+       every save written before the feature, which correctly reads as "no
+       waiver"; a non-object is discarded rather than trusted. */
+    game.oc = (s.oc && typeof s.oc === 'object') ? s.oc : null;
     if (Number.isFinite(+s.age) && +s.age > 0) game.cityAge = +s.age;
     else if (s.tiles && Object.keys(s.tiles).length)
       game.cityAge = (GRACE_CYCLES + GRACE_TAPER_CYCLES + 1) * CITY_DAY_MIN * 60;
@@ -27392,6 +27476,13 @@ try {
      this line changed. Taking (type, lvl, tx, tz) explicitly rather than
      ...args keeps the wrapper's shape obvious to the next reader. */
   buildMesh = function (type, lvl, tx, tz) {
+    /* 🛣 OUTSIDE CONNECTIONS owns the Highway Interchange recipe (/src/outside).
+       Hooked HERE rather than inside buildMesh's switch so the mesh block stays
+       untouched. Guarded both ways: no module, or a module that throws, falls
+       straight through to the `mesh: 'depot'` alias below. */
+    if (type === 'interchange') {
+      try { const m = window.MythicOutside && window.MythicOutside.buildMesh(lvl); if (m) return m; } catch (e) {}
+    }
     const t = opsTypeOf(type);
     /* 🎨 MESH ALIAS, two sources. Operations map through OP_BP.mesh; ordinary
        BUILDINGS entries may now declare 'mesh:' too (r12's Sawmill, Quarry,
@@ -28621,6 +28712,15 @@ async function opsSellShipment() {
   const { row } = f, lab = f.lab;
   const units = Math.floor(lab.x);
   if (units < 1) { toast('Nothing in the hold yet.', 'bad'); return; }
+  /* 🛣 THE GATE. A shipment leaves the city by road, so it needs a road out.
+     This one is a PLAYER ACTION, so it refuses loudly (gate, not nag) and the
+     message names the exact fix — the same shape as the road-cap refusal in
+     tryPlace(). Checked BEFORE the hold is emptied, or a refused sale would
+     still cost the player their stock. */
+  try {
+    const g = window.MythicOutside && window.MythicOutside.gate('shipment');
+    if (g && !g.ok) { toast(g.msg, 'bad'); return; }
+  } catch (e) {}
   const price = opsSalePrice(lab.containment);
   const pay = Math.floor(units * price);
   lab.x -= units; lab.sold += pay;
@@ -31192,6 +31292,46 @@ function animate() {
       window.MythicPower.load(_pendingPower);
     }
   } catch (e) { console.warn('[Power] not mounted (non-fatal):', e); }
+  /* ══ 🛣 OUTSIDE CONNECTIONS ═══════════════════════════════════════════════
+     "Your city must be connected to the highway that runs through the map."
+     The highway is scenery that exists whether or not you joined it; the
+     Highway Interchange is the joint you build; the gate is what stops trade
+     when there is no joint.
+
+     Mounted AFTER loadState so the GRANDFATHER MIGRATION can see the tiles that
+     came off disk — a city that was trading yesterday gets an interchange (and
+     the road to it) placed for it, and a log line saying so. Mounted BEFORE the
+     offline catch-up so the caravan gate exists before any slice can run.
+
+     🔴 THE GLOBALS TRAP again, and this is the seventh module to hit it. `game`,
+     `BUILDINGS`, `scene`, `THREE`, `bfsPath`, `isRoad`, `key`, `NEI`, `toast`
+     and `logEvent` are top-level `const` in THIS module script and are
+     invisible to an ES module. The ctx below IS the hand-over.
+
+     ⚠ NOTE WHAT `place` IS. It is tryPlace's *effect* without tryPlace's
+       gates — deliberately. The migration is not a player action: it must not
+       be refused for road capacity, for population, or for the very edge rule
+       this feature adds, or a city that is already at its cap could never be
+       reconnected. It is the ONLY write handed over, and only the migration
+       calls it. */
+  try {
+    const omod = await import('../src/outside/index.js?v=' + (window.NC_BUILD || 'oc1'));
+    omod.mount({
+      THREE, scene, game, BUILDINGS, GRID, HALF, NEI,
+      key, isRoad, inGrid, bfsPath, allRoadKeys,
+      roadUsed, roadCap, toast, logEvent, saveSoon,
+      place: (type, x, z) => {
+        const k = key(x, z);
+        if (!inGrid(x, z) || game.tiles[k]) return null;
+        const t = { type, lvl: 1, rot: 0, born: game.cityAge || 0, spent: 0, earn: 0 };
+        game.tiles[k] = t;
+        if (type !== 'road') { t.mesh = buildMesh(type, 1, x, z); placeMeshAt(t.mesh, x, z, 0); }
+        refreshRoadArea(x, z);
+        return k;
+      },
+    });
+    computeLinks();
+  } catch (e) { console.warn('[Outside] not mounted (non-fatal):', e); }
   /* ⏳ OFFLINE CATCH-UP — must run HERE, and the order is load-bearing:
        • after loadState(), or there is no savedAt and no city to run;
        • after refreshLedgerMirror(), because economyTick's input gate reads
@@ -31543,6 +31683,10 @@ function animate() {
       delta:   () => { try { return window.MythicDemographics.capacityDelta(); } catch (e) { return null; } },
       blob:    () => { try { return window.MythicDemographics.serialize(); } catch (e) { return null; } },
     },
+    /* 🛣 OUTSIDE CONNECTIONS. The gate is invisible from outside the module —
+       a test cannot otherwise tell "the caravan did not go because the city is
+       cut off" from "the caravan did not go because caravans are broken". */
+    outside: () => (typeof window !== 'undefined' ? window.MythicOutside : null) || null,
     costOf,
   };
   MythicCityBridge.ready = true;

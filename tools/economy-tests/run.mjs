@@ -550,7 +550,7 @@ const SABOTAGES = [
   'payout-blind', 'pop-zero', 'price-drift', 'promo-drift', 'reap-burn', 'rearm-caller',
   'refund-blind', 'refund-raw', 'save-gone', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
   'sell-pump', 'settle-requested', 'stale-deliver', 'stale-refund', 'stale-workplaces',
-  'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind',
+  'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind', 'ich-cost',
   // ── COVER2, the four fixes a revert could delete under a green gate ──
   'save-noborder', 'load-nolvl', 'gate-ungated', 'cap-race', 'place-nobld',
   'beat-dead', 'offline-nosweep', 'licence-paywalled',
@@ -1075,6 +1075,74 @@ const stripComments = (src) => {
       Array.isArray(C.resSkip) && C.resSkip.indexOf('power') >= 0, JSON.stringify(C.resSkip));
   chk("resSkip contains 'cinder' (counted by the cinderPerHr channel, not twice)",
       C.resSkip.indexOf('cinder') >= 0, JSON.stringify(C.resSkip));
+
+  /* (e) 🛣 THE BOOTSTRAP MUST BE BUILDABLE — READ OFF THE SHIPPED TABLE.
+     ------------------------------------------------------------------------
+     THE DEFECT THIS EXISTS FOR SHIPPED, AND IT WAS INVISIBLE FROM BOTH SIDES.
+     The Highway Interchange is the ONLY joint between a city and the outside
+     world: with none standing, /src/outside refuses every caravan, every
+     shipment and every lot deal. It cost 140🔥/45⛓/15📦 ⇒ flattened 260 ⇒
+     2951s against the free Municipal Works ceiling of 2400s. So a brand-new
+     city — which by definition has no Construction Co., because a Co. is
+     bought with the income trade brings — could not build the one thing that
+     unlocks trade, while the HUD chip instructed it to. Nothing in either file
+     is wrong on its own: the curve is fine, the entry looks fine, and the two
+     only disagree once you multiply them out. Neither round0's SHELF table
+     (hand-written profiles) nor any test in this gate read the SHIPPED cost,
+     so both stayed green.
+     THE ASSERTION IS THEREFORE MADE AGAINST node-city's OWN BUILDINGS ENTRY,
+     flattened by the SAME rule bldProfile() uses (cinder 1:1, every other
+     resource × costResWeight). A future retune of the cost, of costResWeight,
+     of gamma, of costExp or of municipal.maxSec turns this red — which is the
+     whole point, because each of those five can re-brick the bootstrap from a
+     file that never mentions the interchange.
+     ⚠ NOT a general "everything must be cheap" rule. The shelf's design is that
+       Cinder EARNERS sit ABOVE the ceiling and the bootstrap sits below it;
+       what is asserted is only that a building which earns NOTHING and gates
+       EVERYTHING is on the bootstrap side.
+     Prove it can fail: ECON_TEST_SABOTAGE=ich-cost, which puts the shipped-
+     broken 140/45/15 back on the way in. */
+  {
+    let HTML = null;
+    try { HTML = readFileSync(join(here, '../../public/node-city/index.html'), 'utf8'); }
+    catch (e) { HTML = null; }
+    /* Same `with`-over-a-Proxy evaluator round0h uses: BUILDINGS cites
+       constants declared elsewhere in the file, so a bare eval throws. Only
+       `cost` is read here and every cost is a numeric literal. */
+    const loose = (decl) => {
+      const txt = srcBlockAfter(HTML, decl);
+      if (!txt) return null;
+      try {
+        const scope = new Proxy({}, { has: () => true,
+          get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+        return new Function('__s', 'with (__s) { return (' + txt + '); }')(scope);
+      } catch (e) { return null; }
+    };
+    const B = loose('const BUILDINGS');
+    const raw = B && B.interchange ? B.interchange.cost : null;
+    const cost = SABOTAGE === 'ich-cost' ? { cinder: 140, metal: 45, supplies: 15 } : raw;
+    /* A scrape that matched nothing must fail HARD — round0b's rule. A missing
+       entry here would otherwise pass vacuously and hide exactly this defect. */
+    chk('read BUILDINGS.interchange.cost out of node-city/index.html',
+        !!cost && Object.keys(cost).length > 0, JSON.stringify(raw));
+    if (cost) {
+      const flat = Object.keys(cost).reduce((v, k) =>
+        v + (k === 'cinder' ? +cost[k] : (+cost[k] || 0) * C.costResWeight), 0);
+      /* No gen, no svc: BUILDINGS.interchange has neither, so the cost channel
+         is the entire profile. Asserted rather than assumed — a `gen` appearing
+         on the entry would make this profile a fiction. */
+      chk('…and the interchange still earns nothing (cost is the whole profile)',
+          !B.interchange.gen && !B.interchange.svc,
+          JSON.stringify({ gen: B.interchange.gen, svc: B.interchange.svc }));
+      const secs = seconds({ cost: flat });
+      console.log('\n  🛣 BOOTSTRAP CHECK — ' + JSON.stringify(cost) + ' ⇒ flat ' + flat +
+                  ' ⇒ ' + secs + 's (' + hms(secs) + ')  vs the free crew ceiling ' +
+                  C.municipal.maxSec + 's (' + hms(C.municipal.maxSec) + ')\n');
+      chk('🛣 a Highway Interchange is buildable by the FREE Municipal Works crew (' +
+          secs + 's <= ' + C.municipal.maxSec + 's) — no outside trade at all without one',
+          secs <= C.municipal.maxSec, secs + 's, over by ' + (secs - C.municipal.maxSec) + 's');
+    }
+  }
 
   /* The feature's own off switch. ECON.construction.on = 0 turns every timer
      off without touching a line of index.html (a 0 duration is the host's

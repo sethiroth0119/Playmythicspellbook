@@ -2670,8 +2670,30 @@ const BUILDINGS = {
        saved interchange still renders as a building instead of as an empty
        group.
      • cap 1 / maxLvl 1: one joint per city, and there is nothing to upgrade —
-       a wider ramp does not carry more trade in this game.  */
-  interchange:{name:'Highway Interchange', ico: '🛣', cost: { cinder: 140, metal: 45, supplies: 15 },
+       a wider ramp does not carry more trade in this game.
+     🔴 THE COST IS WHAT MAKES THIS BUILDABLE AT ALL, AND IT SHIPPED WRONG ONCE.
+       It was 140🔥/45⛓/15📦. Nothing else about the entry was wrong — but this
+       building EARNS NOTHING and has no `svc`, so the cost channel is the ONLY
+       input to the duration curve, and at costResWeight 2 that flattened to
+       140 + 2*(45+15) = 260, which ECON.construction turns into 2951s. The free
+       Municipal Works ceiling is 2400s — 551s (9m11) OVER, measured, not
+       estimated. So the one
+       building that unlocks caravans, shipments and lot deals could not be
+       built by a city that has no Construction Co. — and a Construction Co. is
+       itself something you build with the income trade brings. A fresh city was
+       gated out of the entire outside economy by a rounding-sized overshoot,
+       while the HUD chip told it to "build a Highway Interchange on the north
+       edge". 90 + 2*(30+10) = 170 ⇒ 1907s (31m47), which sits in the starter
+       shelf next to sawmill 30m43 and barracks 33m36 with 8 minutes of headroom.
+       That is also the RIGHT band on its own merits: the shelf's rule is that
+       Cinder EARNERS live above the ceiling (gasstation 1h53, arena 3h23) and
+       the bootstrap lives below it, and this earns nothing — it is the joint the
+       Caravan Post (144) needs, so costing twice what it enables was backwards.
+       ⚠ Do NOT fix a future overshoot with a branch in bldDuration(); the
+         duration is derived and the cost is the only honest dial. The
+         constraint is pinned by tools/economy-tests/run.mjs round0 §e, which
+         scrapes THIS line and fails if it climbs back over the ceiling.  */
+  interchange:{name:'Highway Interchange', ico: '🛣', cost: { cinder: 90, metal: 30, supplies: 10 },
               pop: 1, crew: 1, cap: 1, maxLvl: 1, edgeOnly: true, mesh: 'depot',
               desc: 'The ramp that joins your streets to the highway running past the map. Build it on the NORTH edge and run road to it — with no outside connection nothing leaves the city: no caravans, no shipments, no deals with other players.' },
   lot:      { name: 'Lease Plot',    ico: '🪧', cost: { cinder: 10 }, pop: 0, noEnter: true, maxLvl: 1,

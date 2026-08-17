@@ -202534,6 +202534,18 @@ function _osimMergeExtraction(a, b) { if (!a || typeof a !== 'object') return (b
       roughly +4% Cinder per machine-hour to every player, forever. If it is ever
       lowered to make maintenance feel gentler, that is a faucet decision and has
       to be reported as one.
+   🔴 AND IT ONLY HOLDS BECAUSE `_osimRepairValue` PRICES AT THE RESEARCHED WEAR
+      RATE. The share is a fraction of the output a repair restores, so the
+      denominator is "how many units these condition points buy" — and that is
+      `_osimDecayPerUnit()`, the rate the machine actually wears at, not the raw
+      admin knob. The table above shipped for one commit denominated against the
+      RAW rate, which quietly charged `0.73 × decayMul` and handed a player with
+      Hardened Components L3 a 0.292 share — 2.0–2.4× the faucet, invisible in
+      every measurement, because every measurement was taken at zero R&D. The
+      table above is the NO-RESEARCH row of a table that has four rows;
+      `repairtrap.mjs` §2 and §7 now sweep all four. Never quote this block as an
+      unconditional invariant again without checking which player it was measured
+      on.
    ⚠ That pair — the floor and the share — is the only lever in here that touches
      the STEADY STATE. ×10 raises the entry fee tenfold and, on its own, still
      leaves the steady state exactly where it was. Do not re-derive a cost-table
@@ -202762,7 +202774,9 @@ function _osimAutoCollect() { if (_osimState.research.automation >= 1) return tr
    Cinder per machine-hour than the field paid before — measured, and the exact
    opposite of the ask. The share is now 0.73 and holds it flat. These two
    numbers are one lever: never change either without re-measuring the other
-   (`node tools/economy-tests/repairtrap.mjs`, §7). */
+   (`node tools/economy-tests/repairtrap.mjs`, §7 — which now sweeps Hardened
+   Components L0–L3, because the share is only a share if it is denominated
+   against the RESEARCHED wear rate; see `_osimRepairValue`). */
 function _osimCondFactor(m) { const c = Math.max(0, Math.min(100, +m.condition || 0)); return c <= 0 ? 0 : c / 100; }
 // ⏱ Real-time production: the per-machine `rate` (seconds) is scaled up to HOURS
 // by prodSecondsMul (admin-tunable, default 7500 ≈ 1 unit / 5h at Tier I). Higher
@@ -202795,14 +202809,51 @@ function _osimMachineNetUnitValue(def) {
 }
 /* Gross Cinder that the condition a repair restores is worth: damage repaired →
    units, through the wear rate, at that unit's net value.
-   ⚠ `_osimRawDecayPerUnit`, NOT `_osimDecayPerUnit`. Read through the RESEARCHED
-     rate, Hardened Components would buy proportionally more units per repair AND
-     be charged proportionally more for it, netting the perk to exactly zero.
-     Against the raw rate the perk pays: same price, more units. */
+   🔴 `_osimDecayPerUnit`, THE RESEARCHED RATE — AND THE ROUND THAT COST. This read
+     `_osimRawDecayPerUnit` on the argument that charging the researched rate would
+     "net the Hardened Components perk to exactly zero", so against the raw rate
+     "the perk pays: same price, more units".
+     It does — and "more units at the same price" IS A DISCOUNT ON THE SINK, which
+     is the one number in this field that is not allowed to move. Condition is
+     CONSUMED at `_osimDecayPerUnit()` = raw × [1, 0.75, 0.55, 0.4][hardened] ×
+     (1 − research 'decay'). Pricing the same points at the RAW rate charges for
+     fewer units than the player actually gets, so the share they really pay is
+     `OSIM_REPAIR_SHARE × decayMul`, not the share:
+
+       hardened   decayMul   effective share   of gross KEPT   vs the tuned cut
+         L0         1.00          0.730             0.270            1.00×
+         L1         0.75          0.547             0.453            0.75×
+         L2         0.55          0.402             0.599            0.55×
+         L3         0.40          0.292             0.708            0.40×
+
+     Hardened Components is a shipped, purchasable ◈80/160/260 node, so this was
+     not hypothetical: it silently divided the sink by up to 2.5 and reopened the
+     exact faucet regression the 0.73 share exists to close. Measured, best play,
+     5,000 h, against the pre-fix tree at the SAME research level:
+
+       hardened   pumpjack   drill   refinery   deepcore
+         L1         1.48×    1.47×    1.48×      1.56×
+         L2         1.94×    1.89×    1.80×      2.07×
+         L3         2.19×    2.05×    1.96×      2.38×
+     (Conservative: the numerator was searched on the OLD §7 policy grid, which
+     was resolved around the L0 optimum. The broken tree's optimum moves as decay
+     slows, so a wider search scores it higher, not lower.)
+
+     Reading the researched rate makes the share invariant: cost and value are now
+     divided by the same number, so every player pays OSIM_REPAIR_SHARE of gross
+     whatever their R&D is, and 0.73 means what §7 says it means.
+   ⚠ AND WHAT HARDENED COMPONENTS STILL BUYS, because "netted to zero" is wrong.
+     It does not cut ₵ per unit — it never claimed to; it claims slower WEAR and
+     that is exactly what it delivers. At L3 a machine covers 2.5× as many units
+     per repair, so it survives 2.5× longer unattended before `_osimCondFactor`
+     walks it to a stall, and the offline catch-up that used to end in a dead rig
+     now ends in a live one. That is a real perk that raises a LAPSED player's
+     yield toward the attentive player's ceiling without raising the ceiling —
+     which is the only shape of perk this economy can afford. */
 function _osimRepairValue(m) {
   const def = OSIM_MACHINES[m.type]; if (!def) return 0;
   const pts = Math.max(0, 100 - (+m.condition || 0));
-  return (pts / Math.max(0.01, _osimRawDecayPerUnit())) * _osimMachineNetUnitValue(def);
+  return (pts / Math.max(0.01, _osimDecayPerUnit())) * _osimMachineNetUnitValue(def);
 }
 /* 🔧 REPAIR PRICE — denominated in OUTPUT, which is the half of this economy the
    ×10 pass deliberately did not touch.
@@ -203236,7 +203287,12 @@ function _osimRenderNetwork() { _O('ptitle').textContent = 'Planetary Reconstruc
   else { if (_osimState.core.done) { h += '<div class="osim-winbox"><h1>◆ THE CORE IS LIT</h1><p>The Cinder Core resonates across the network. Reconstruction Cycle ' + _osimState.prestige + ' is complete. Reignite to begin a new cycle — blueprints, research and your custom content carry over.</p><div class="statline" style="justify-content:center">Current resonance: <b>+' + Math.round((_osimResonanceMul() - 1) * 100) + '%</b> · After reignite: <b style="color:#ff9d6a">+' + Math.round(((1 + 0.15 * (_osimState.prestige + 1) + 0.05 * _osimState.research.tuning) - 1) * 100) + '%</b></div><button class="osim-buy ember" onclick="_OSIM.prestige()" style="padding:11px 24px;font-size:14px">🔥 Reignite — Begin New Cycle</button></div>'; } else { const ph = OSIM_CORE_PHASES[_osimState.core.phase]; h += '<div class="statline">Channel resources through ' + OSIM_CORE_PHASES.length + ' phases to reignite the Cinder Core.</div><div class="osim-card ember"><div class="row"><h3>◆ ' + ph.name + '</h3><span class="have">Phase ' + (_osimState.core.phase + 1) + ' / ' + OSIM_CORE_PHASES.length + '</span></div><div class="desc">' + ph.lore + '</div>'; for (const [res, need] of Object.entries(ph.req)) { const got = _osimState.core.contributed[res] || 0, have = res === 'aza' ? _osimState.aza : _osimState.inv[res], pct = Math.min(100, Math.round(got / need * 100)), label = res === 'aza' ? 'Aza Coin ◈' : res; h += '<div class="osim-sellrow" style="margin-top:8px"><div class="info">Requires <b>' + need + ' ' + label + '</b><div class="qty">Contributed ' + got + '/' + need + ' · hold ' + have + '</div><div class="pbar"><div style="width:' + pct + '%"></div></div></div><button class="osim-buy ember" ' + ((have < 1 || got >= need) ? 'disabled' : '') + ' onclick="_OSIM.contributeCore(\'' + res + '\')">Contribute</button></div>'; } h += '</div>'; } }
   _O('pbody').innerHTML = h; }
 function _osimOpenInspector(ref) { _osimInspectRef = ref; _osimCurrentPanel = 'inspect'; _O('modal').classList.add('on'); _osimRenderInspector(); }
-function _osimRenderInspector() { const m = _osimInspectRef; if (!m) return; const def = OSIM_MACHINES[m.type], cap = _osimEffCap(m), buf = Math.floor(m.buffer), cond = Math.round(m.condition); _O('ptitle').textContent = def.name; _O('psub').textContent = 'FIELD UNIT · TIER ' + OSIM_TIER[m.tier].label; const rc = _osimRepairCost(m), canRepair = cond < 99 && _osimState.cash >= rc.cash, refund = Math.round(def.craft * 0.5), pr = def.produces === 'cinder' ? 'Cinder' : def.produces; const rVal = Math.round(_osimRepairValue(m)), rUnits = Math.round(Math.max(0, 100 - m.condition) / Math.max(0.01, _osimRawDecayPerUnit())), stalled = !isFinite(_osimEffRate(m)); let up = '';
+function _osimRenderInspector() { const m = _osimInspectRef; if (!m) return; const def = OSIM_MACHINES[m.type], cap = _osimEffCap(m), buf = Math.floor(m.buffer), cond = Math.round(m.condition); _O('ptitle').textContent = def.name; _O('psub').textContent = 'FIELD UNIT · TIER ' + OSIM_TIER[m.tier].label; const rc = _osimRepairCost(m), canRepair = cond < 99 && _osimState.cash >= rc.cash, refund = Math.round(def.craft * 0.5), pr = def.produces === 'cinder' ? 'Cinder' : def.produces; /* ⚠ `_osimDecayPerUnit`, matching `_osimRepairValue`. This read the RAW rate while
+     the machine wore at the researched one, so a player with Hardened Components
+     was quoted fewer units than the repair actually buys — the panel understated
+     its own payback by up to 2.5×. The admin decay field further down deliberately
+     still reads `_osimRawDecayPerUnit`: that box edits the raw knob. */
+  const rVal = Math.round(_osimRepairValue(m)), rUnits = Math.round(Math.max(0, 100 - m.condition) / Math.max(0.01, _osimDecayPerUnit())), stalled = !isFinite(_osimEffRate(m)); let up = '';
   if (m.tier < 3) { const bp = _osimUpgradeBP(m), cost = _osimUpgradeCost(m), hasBP = _osimState.blueprints[bp], nt = m.tier + 1; up = '<div class="osim-card" style="margin-top:14px"><div class="row"><h3>Upgrade → Tier ' + OSIM_TIER[nt].label + '</h3><span class="price">₵' + cost + '</span></div><div class="reqs">Tier ' + OSIM_TIER[nt].label + ': capacity ×' + OSIM_TIER[nt].capMul + ', speed ~' + (1 / OSIM_TIER[nt].rateMul).toFixed(2) + '×<br>License: ' + (hasBP ? '<span class="osim-badge owned">' + OSIM_BLUEPRINTS[bp].name + '</span>' : '<span class="osim-badge lock">' + OSIM_BLUEPRINTS[bp].name + ' (locked)</span>') + '</div><div class="row"><span class="have">' + (!hasBP ? 'Unlock the license in Shop' : _osimState.cash >= cost ? 'Ready' : 'Not enough Cinder') + '</span><button class="osim-buy ' + (m.tier === 1 ? 'green' : 'aza') + '" ' + ((hasBP && _osimState.cash >= cost) ? '' : 'disabled') + ' onclick="_OSIM.upgradeMachine()">Upgrade</button></div></div>'; } else up = '<div class="empty" style="margin-top:14px">★ Maximum tier reached.</div>';
   _O('pbody').innerHTML = '<div class="statline"><div>Tier: <b>' + OSIM_TIER[m.tier].label + '</b></div><div>Output: <b>' + _osimMachineOutTxt(def, m) + '</b></div><div>Buffer: <b>' + buf + '/' + cap + '</b></div></div>' +
     '<div class="osim-card"><div class="row"><h3>🔧 Condition</h3><span class="have" style="color:' + (cond < 40 ? '#ff8a8a' : cond < 70 ? '#f0c75e' : '#9fffc4') + '">' + cond + '%</span></div><div class="pbar condbar" style="width:100%"><div style="width:' + cond + '%"></div></div><div class="reqs" style="margin-top:10px">' + (stalled ? '<b style="color:#ff8a8a">⏹ STALLED — this unit has worn out and stopped producing entirely.</b><br>' : 'Worn units run slower, and a unit that reaches 0% stops completely.<br>') + 'Repair: <b>₵' + rc.cash + '</b>' + (cond < 99 ? ' — restores <b>' + rUnits + ' ' + pr + '</b> of output, worth about <b>₵' + rVal + '</b> at the Reserve.' : '') + '</div><div class="row"><span class="have">' + (cond >= 99 ? 'In top condition' : canRepair ? 'Ready to repair' : 'Not enough Cinder') + '</span><button class="osim-buy" ' + (canRepair ? '' : 'disabled') + ' onclick="_OSIM.repairMachine()">Repair</button></div></div>' +

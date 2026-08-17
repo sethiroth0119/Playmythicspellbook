@@ -137,10 +137,11 @@ export function wealthWeights(archId, edu) {
   const base = (a && a.wealth) || { low: 1, mid: 0, high: 0 };
   const i = eduOrder().indexOf(edu);
   const lift = i < 0 ? 0 : i;                 // 0..3, one per education rung
+  const L = D().wealthLift;
   return {
-    low:  Math.max(0, base.low  * (1 - 0.16 * lift)),
-    mid:  Math.max(0, base.mid  * (1 + 0.08 * lift)),
-    high: Math.max(0, base.high * (1 + 0.30 * lift)),
+    low:  Math.max(0, base.low  * (1 + L.low  * lift)),
+    mid:  Math.max(0, base.mid  * (1 + L.mid  * lift)),
+    high: Math.max(0, base.high * (1 + L.high * lift)),
   };
 }
 /* The single tier a household reads as, for a dossier line. The weights above

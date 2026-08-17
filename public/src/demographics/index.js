@@ -41,6 +41,17 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 import { ECON } from '../economy/tuning.js';
+/* 🔴 ONE CONSTANT, AND IT IS IMPORTED RATHER THAN COPIED. households.js already
+   owns "what fraction of a citizenry is of working age", and a second copy here
+   would be a number that means the same thing in two files — the exact
+   duplication ECON.price's header describes ("the first wage retune makes them
+   disagree, silently"). It is only ever read as a FALLBACK, for the case where
+   the economy has not mounted and cannot report its own labour force.
+   ⚠ NO ?v= ON THIS IMPORT. index.html's roster seam documents why: a module is
+     identified by its resolved URL, and /src/economy/index.js imports
+     './households.js' with no query — a cache-buster here would instantiate a
+     SECOND households.js with its own population and savings. */
+import { WORKING_AGE_PCT } from '../economy/households.js';
 import * as A from './archetypes.js';
 import * as Z from './zones.js';
 import * as P from './pipeline.js';
@@ -164,7 +175,7 @@ function tick(dtMin, host) {
         }
       } catch (e) { posts = null; }
     }
-    if (!(seekers > 0)) seekers = Math.max(1, Math.round(P.population() * 0.62));
+    if (!(seekers > 0)) seekers = Math.max(1, Math.round(P.population() * WORKING_AGE_PCT));
     LAST.posts = posts; LAST.seekers = seekers; LAST.services = services;
 
     /* 🌱 First run on a city with no saved cohorts: place the people who are

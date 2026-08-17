@@ -367,7 +367,31 @@ export const ECON = {
       floorPct: 0.25,
     },
 
-    ui: { maxCauses: 5 },
+    /* 💰 HOW FAR EDUCATION MOVES A HOUSEHOLD UP THE WEALTH TIERS, per rung of
+       ECON.demographics.education.order. Multiplies the archetype's own weights
+       — schooling is how a household climbs, which is what makes the graduation
+       rate above worth having at all.
+       ⚠ THESE LIVE HERE AND NOT IN archetypes.js. They were three literals in
+         that file for one round, which is exactly the rule this whole table
+         exists to enforce: a wealth coefficient is an economy number, it feeds
+         households.js's arrival tier mix, and a copy outside ECON is a copy
+         that survives the next retune. */
+    wealthLift: { low: -0.16, mid: 0.08, high: 0.30 },
+
+    ui: {
+      maxCauses: 5,
+      /* A cause has to be MATERIAL or it is noise: some household type is
+         turned away from some zone in every city that has ever existed
+         (students cannot afford detached houses anywhere), and reporting that
+         made a thriving town print "rents are above what arrivals can pay"
+         while it filled up. Share of the households that actually looked. */
+      materialShare: 0.15,
+      /* …and "people are leaving" needs a margin and a smoothed rate, or a
+         steady city flickers in and out of it every 4 s repaint. */
+      leavingMargin: 1.15,
+      /* Vacancy below this share of the city's dwellings reads as full. */
+      fullShare: 0.01,
+    },
   },
 
   /* ── 🏭 FIRMS ─────────────────────────────────────────────────────────────

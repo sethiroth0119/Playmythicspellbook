@@ -498,9 +498,10 @@ export function step(days, ctx) {
      thriving town print "rents are above what arrivals can pay" while it filled
      up. A share of the households that actually looked, not a raw count. */
   const blockShare = considered > 0 ? 1 / considered : 0;
-  const rentBlocked = blockedRent * blockShare > 0.15;
-  const jobsBlocked = blockedJobs * blockShare > 0.15;
-  const full = sv.totalHomes > 0 && vacantTotal <= Math.max(0.5, sv.totalHomes * 0.01);
+  const material = dm.ui.materialShare;
+  const rentBlocked = blockedRent * blockShare > material;
+  const jobsBlocked = blockedJobs * blockShare > material;
+  const full = sv.totalHomes > 0 && vacantTotal <= Math.max(0.5, sv.totalHomes * dm.ui.fullShare);
   if (sv.totalHomes <= 0) {
     causes.push({ sign: '−', label: 'No housing zoned', why: 'Nothing in this city is zoned residential, so nobody can move in.' });
   } else if (full) {
@@ -542,7 +543,7 @@ export function step(days, ctx) {
              A tick is a quarter of a day and the two sides arrive at different
              moments in it, so a steady city flickered between "leaving" and
              nothing every few seconds on a panel that repaints every 4 s. */
-          : S.rate.out > S.rate.in * 1.15 + 0.05 ? 'leaving'
+          : S.rate.out > S.rate.in * dm.ui.leavingMargin + 0.05 ? 'leaving'
           : rentBlocked && blockedRent >= blockedJobs ? 'rent'
           : jobsBlocked ? 'jobs'
           : null;

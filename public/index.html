@@ -76281,14 +76281,18 @@ function processTombstoneDrops(state) {
                `state.units` right now. Falling through would ALSO have stamped a
                tombstone / rebirth / raiseFromDead marker holding `reviveUnitId: u.id`
                for a unit that is no longer on the board. */
-            // 🪦 Take the card out of the graveyard WITH it — the same call the
-            // on-board branch makes. Required, not decorative: `_reconcileUnitCards`
-            // files a corpse's card on the alive→dead EDGE, which has already
-            // happened by the time this sweep runs (measured: grave 0 → 1 on the
-            // kill assignment, before `processTombstoneDrops` was even called). So
-            // removing the body alone would strand that entry in the pile with no
-            // unit left to strip it, and hand + graveyard would still both hold the
-            // card. Unpark first, then drop the body.
+            // 🪦 Take the card out of the PILE with it — the same call the on-board
+            // branch makes. Required, not decorative: `_reconcileUnitCards` files a
+            // corpse's card on the alive→dead EDGE, which has already happened by the
+            // time this sweep runs (measured: grave 0 → 1 on the kill assignment,
+            // before `processTombstoneDrops` was even called). So removing the body
+            // alone would strand that entry in the pile with no unit left to strip it,
+            // and hand + graveyard would still both hold the card. Unpark, then drop.
+            // ⚠ "The pile" is graveyard OR void, and the entry may be the synthetic
+            // `tomb_<id>` card a tribute / self-sacrifice / summon-banish minted. That
+            // is round 2 of this bug: the helper matched one spelling in one pile, so
+            // a tributed corpse still ended up as hand 1 + grave 1. `_unparkGraveCardFor`
+            // now carries the reconciler's full `mine()` predicate — see its header.
             state = _unparkGraveCardFor(state, u);
             u._bounced = true;
             _leftTheBoard.push(u.id);
@@ -87698,17 +87702,45 @@ function _costIsEmpty(cost) {
      there is nothing to match — hence the `if (gi < 0) return state` no-op rather
      than an assumption that a card is always there.
 
+   🔴 ROUND 2 — THIS HELPER MUST MIRROR `_reconcileUnitCards`, NOT A SUBSET OF IT.
+   It used to match ONLY `c._summonedUnitId === unit.id` and scan ONLY
+   `side.graveyard`. That is narrower than the invariant it exists to uphold, and
+   the gap was live: three real paths file a corpse's card as a SYNTHETIC tomb card
+   stamped with `instanceId: 'tomb_' + u.id` and NO `_summonedUnitId` at all —
+   tribute (`_applyCostPayment`), self-sacrifice (`_applySelfSacrifice`) and the
+   summon-condition banish. `_reconcileUnitCards` ADOPTS those entries rather than
+   adding its own, so the pile card the Phoenix branch has to remove was invisible
+   here and the unpark silently no-opped. Same for a corpse routed to the VOID
+   (Ashen Decree / `_voided`): its card is in `side.void`, which this never read.
+   MEASURED on the round-1 tree, driven through the real `_applyCostPayment` and the
+   real `processTombstoneDrops`: graveyard 1 ["goblin2"] AND hand 1 ["goblin2"] —
+   one unit, two cards, two zones — and because the Phoenix branch removes the body,
+   the reconciler could never strip the stranded entry either.
+   So the predicate below is the reconciler's own `mine()` (`:_reconcileUnitCards`)
+   — instanceId / `tomb_<id>` / `_cardPileIid`, plus the legacy `_summonedUnitId`
+   spelling — and it sweeps BOTH piles. All four spellings key off THIS unit alone
+   (uid-unique instanceIds, unit-id-unique tomb ids), so a wider match can never
+   claim another card. It strips every match rather than one, exactly like the
+   reconciler's alive-branch `strip()`: the post-condition is "this unit's card is
+   in no pile", not "one fewer entry".
+
    Returns a NEW state when it removes something, the same state otherwise. */
 function _unparkGraveCardFor(state, unit) {
   try {
     if (!state || !unit || !unit.id || !unit.owner) return state;
     const side = state[unit.owner];
-    if (!side || !Array.isArray(side.graveyard) || !side.graveyard.length) return state;
-    const gi = side.graveyard.findIndex(c => c && c._summonedUnitId === unit.id);
-    if (gi < 0) return state;
-    const grave = side.graveyard.slice();
-    grave.splice(gi, 1);
-    return { ...state, [unit.owner]: { ...side, graveyard: grave } };
+    if (!side) return state;
+    const iid = (unit._card && unit._card.instanceId) || null;
+    const tomb = 'tomb_' + unit.id;
+    const mine = (c) => !!c && ((!!iid && c.instanceId === iid) || c.instanceId === tomb
+      || (!!unit._cardPileIid && c.instanceId === unit._cardPileIid)
+      || c._summonedUnitId === unit.id);
+    const grave = Array.isArray(side.graveyard) ? side.graveyard : [];
+    const vd    = Array.isArray(side.void)      ? side.void      : [];
+    const g2 = grave.filter(c => !mine(c));
+    const v2 = vd.filter(c => !mine(c));
+    if (g2.length === grave.length && v2.length === vd.length) return state;
+    return { ...state, [unit.owner]: { ...side, graveyard: g2, void: v2 } };
   } catch (e) { return state; }
 }
 
@@ -90216,56 +90248,101 @@ try {
        tombstone for a unit that never stayed dead. AFTER: grave 0, hand 1, body gone,
        tombstones added 0.
 
+       🔴 ROUND 2 — WHY THIS RUNS FOUR TIMES, NOT ONCE.
+       The first version of this case only killed the unit outright, so the pile card
+       it checked always carried `_summonedUnitId`. That is one of FOUR spellings a
+       corpse's card can wear, and `_unparkGraveCardFor` only knew that one, in one
+       pile — so the fix looked green while three real paths still produced two zones.
+       Each case below drives a DIFFERENT real code path to a different spelling:
+         · plain    — direct kill. Card = the unit's own `_card`, `_summonedUnitId` set.
+         · tribute  — real `_applyCostPayment`, which mints `instanceId: 'tomb_<id>'`
+                      with NO `_summonedUnitId`; the reconciler ADOPTS that entry.
+         · selfsac  — real `_applySelfSacrifice`, same tomb spelling.
+         · void     — tribute again, but with an `ashenDecree` unit on the board so the
+                      REAL `_graveDestFor` routes the tomb card to `side.void` instead.
+       MEASURED on the round-1 tree, before the helper was widened: plain was green,
+       and the other three were graveyard/void 1 ["goblin"] AND hand 1 ["goblin"] —
+       one unit, two cards, two zones — with the corpse already removed, so the
+       reconciler could never strip the stranded entry either. AFTER: pile 0, hand 1,
+       nothing in both zones, in all four.
+
        TO SEE IT GO RED: delete the `state = _unparkGraveCardFor(state, u);` line in
-       that branch (grave goes back to 1 while the card is in hand — the two-zone
-       failure), or delete the `_leftTheBoard.push(u.id)` line (the corpse survives
-       the sweep and the next `App.state = …` re-files it). */
-    try {
-      const savedC = Catalog.cards;
+       that branch (the pile keeps the card while a copy sits in hand), delete the
+       `_leftTheBoard.push(u.id)` line (the corpse survives the sweep and the next
+       `App.state = …` re-files it), or narrow `_unparkGraveCardFor`'s `mine()` back
+       to `c._summonedUnitId === unit.id` / drop its `void` sweep — plain stays green
+       and the tribute, selfsac and void cases go red. */
+    const phxHandCase = (label, kill, opts) => {
+      opts = opts || {};
       try {
-        Catalog.cards = (savedC || []).concat([{ id: '__lc_phx', name: 'LC Phoenix', type: 'unit',
-          level: 1, cost: 1, atk: 1, def: 1, hp: 10, stats: { atk: 1, def: 1, hp: 10 },
-          phoenixAura: { chance: 100, healPct: 50, range: 'board', maxPerTurn: 0, maxPerMatch: 0,
-                         allowHand: true, allowChain: true } }]);
-        const u = playOne('R3phx');
-        App.state = { ...App.state, units: [...App.state.units, { id: 'LCPHX', name: 'LC Phoenix',
-          owner: 'player', alive: true, isHero: false, pos: { x: 2, y: 4 }, hp: 10, maxHp: 10,
-          currentHp: 10, statusEffects: [], knownMoves: [], atk: 1, def: 1, level: 1,
-          cardId: '__lc_phx', passives: ['phoenixRebirth'] }] };
-        // No empty tile anywhere → the aura must use the hand branch.
-        const W = (typeof BOARD_W !== 'undefined') ? BOARD_W : 8;
-        const H = (typeof BOARD_H !== 'undefined') ? BOARD_H : 7;
-        const tombs = [];
-        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) tombs.push({ x, y, owner: 'player', name: 'lc', glowing: true, turnsLeft: 99 });
-        App.state = { ...App.state, tombstones: tombs };
-        const handWas = (App.state.player.hand || []).length;
-        setAlive(u.id, false);
-        const filedAtDeath = gLen('player');          // the reconciler files on the EDGE
-        App.state = processTombstoneDrops(App.state);
-        App.state = { ...App.state };                 // the re-commit that used to re-file
-        const P = App.state.player;
-        const gIds = (P.graveyard || []).map(c => c && c.id);
-        const hIds = (P.hand || []).map(c => c && c.id);
-        const both = gIds.filter(g => hIds.indexOf(g) >= 0);
-        // Both halves of the fix get their own assertion, because they fail
-        // differently: without the removal the piles look right but the corpse
-        // lingers and the graveyard VIEW folds it in (0 pile, 1 shown); without
-        // the unpark the pile itself keeps the card while a copy sits in hand.
-        const gView = (typeof _graveViewCards === 'function') ? _graveViewCards(App.state, 'player').length : 0;
-        ok(3, 'Phoenix return-to-hand leaves no corpse in state.units or the grave view',
-           !App.state.units.some(x => x && x.id === u.id) && gView === 0,
-           'corpse present = ' + App.state.units.some(x => x && x.id === u.id)
-             + ' (was true), grave view = ' + gView + ' (was 1)');
-        ok(3, 'Phoenix return-to-hand puts the card in hand ONLY, not both zones',
-           filedAtDeath === 1 && gLen('player') === 0 && (P.hand || []).length === handWas + 1 && both.length === 0,
-           'grave ' + filedAtDeath + ' → ' + gLen('player') + ' (was 1 → 1), hand '
-             + handWas + ' → ' + (P.hand || []).length + ' ' + JSON.stringify(hIds)
-             + ', ids in BOTH zones = ' + both.length + ' (was 1 — "goblin" in each)');
-        ok(3, 'Phoenix return-to-hand drops no tombstone for a unit that left the board',
-           App.state.tombstones.length === W * H,
-           'tombstones = ' + App.state.tombstones.length + ' of ' + (W * H) + ' (was ' + (W * H + 1) + ')');
-      } finally { Catalog.cards = savedC; }
-    } catch (e) { ok(3, 'Phoenix return-to-hand', false, 'threw: ' + (e && e.message)); }
+        const savedC = Catalog.cards;
+        try {
+          Catalog.cards = (savedC || []).concat([{ id: '__lc_phx', name: 'LC Phoenix', type: 'unit',
+            level: 1, cost: 1, atk: 1, def: 1, hp: 10, stats: { atk: 1, def: 1, hp: 10 },
+            phoenixAura: { chance: 100, healPct: 50, range: 'board', maxPerTurn: 0, maxPerMatch: 0,
+                           allowHand: true, allowChain: true } }]);
+          const u = playOne('R3phx');
+          // 🗿 `ashenDecree` makes the REAL `_graveDestFor` send the cost path's tomb
+          // card to the VOID — that is the whole point of the fourth case.
+          const phxPassives = ['phoenixRebirth'].concat(opts.ashen ? ['ashenDecree'] : []);
+          App.state = { ...App.state, units: [...App.state.units, { id: 'LCPHX', name: 'LC Phoenix',
+            owner: 'player', alive: true, isHero: false, pos: { x: 2, y: 4 }, hp: 10, maxHp: 10,
+            currentHp: 10, statusEffects: [], knownMoves: [], atk: 1, def: 1, level: 1,
+            cardId: '__lc_phx', passives: phxPassives }] };
+          // No empty tile anywhere → the aura must use the hand branch.
+          const W = (typeof BOARD_W !== 'undefined') ? BOARD_W : 8;
+          const H = (typeof BOARD_H !== 'undefined') ? BOARD_H : 7;
+          const tombs = [];
+          for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) tombs.push({ x, y, owner: 'player', name: 'lc', glowing: true, turnsLeft: 99 });
+          App.state = { ...App.state, tombstones: tombs };
+          const handWas = (App.state.player.hand || []).length;
+          kill(u);                                    // the real death path for this case
+          const zone = opts.void ? 'void' : 'grave';
+          const zLen = () => opts.void ? vLen('player') : gLen('player');
+          const filedAtDeath = zLen();                // the reconciler files on the EDGE
+          // The spelling this path actually produced — printed so a regression names
+          // which of the four broke instead of just "one of them".
+          const pileNow = (App.state.player[opts.void ? 'void' : 'graveyard'] || []);
+          const spelling = pileNow.map(c => (c && c.instanceId && /^tomb_/.test(c.instanceId)) ? 'tomb'
+            : (c && c._summonedUnitId) ? 'summonTag' : 'iid').join(',') || '(none)';
+          App.state = processTombstoneDrops(App.state);
+          App.state = { ...App.state };               // the re-commit that used to re-file
+          const P = App.state.player;
+          const gIds = (P.graveyard || []).map(c => c && c.id);
+          const vIds = (P.void || []).map(c => c && c.id);
+          const hIds = (P.hand || []).map(c => c && c.id);
+          const both = gIds.concat(vIds).filter(x => hIds.indexOf(x) >= 0);
+          // Both halves of the fix get their own assertion, because they fail
+          // differently: without the removal the piles look right but the corpse
+          // lingers and the graveyard VIEW folds it in (0 pile, 1 shown); without
+          // the unpark the pile itself keeps the card while a copy sits in hand.
+          const gView = (typeof _graveViewCards === 'function') ? _graveViewCards(App.state, 'player').length : 0;
+          ok(3, 'Phoenix→hand (' + label + ') leaves no corpse in state.units or the grave view',
+             !App.state.units.some(x => x && x.id === u.id) && gView === 0,
+             'corpse present = ' + App.state.units.some(x => x && x.id === u.id)
+               + ' (was true), grave view = ' + gView + ' (was 1)');
+          ok(3, 'Phoenix→hand (' + label + ') puts the card in hand ONLY, not both zones',
+             filedAtDeath === 1 && zLen() === 0 && (P.hand || []).length === handWas + 1 && both.length === 0,
+             zone + ' ' + filedAtDeath + ' → ' + zLen() + ' (was 1 → 1), pile spelling = ' + spelling
+               + ', hand ' + handWas + ' → ' + (P.hand || []).length + ' ' + JSON.stringify(hIds)
+               + ', ids in BOTH zones = ' + both.length + ' (was 1 — "goblin" in each)');
+          ok(3, 'Phoenix→hand (' + label + ') drops no tombstone for a unit that left the board',
+             App.state.tombstones.length === W * H,
+             'tombstones = ' + App.state.tombstones.length + ' of ' + (W * H) + ' (was ' + (W * H + 1) + ')');
+        } finally { Catalog.cards = savedC; }
+      } catch (e) { ok(3, 'Phoenix→hand (' + label + ')', false, 'threw: ' + (e && e.message)); }
+    };
+    const _pHero = () => App.state.units.find(x => x && x.isHero && x.owner === 'player');
+    phxHandCase('plain kill', (u) => setAlive(u.id, false));
+    phxHandCase('tribute — synthetic tomb_<id> card', (u) => {
+      App.state = _applyCostPayment(App.state, 'player', _pHero(), { tribute: 1 }, { tributeIds: [u.id] }).state;
+    });
+    phxHandCase('self-sacrifice — synthetic tomb_<id> card', (u) => {
+      App.state = _applySelfSacrifice(App.state, 'player', u).state;
+    });
+    phxHandCase('tribute under Ashen Decree — tomb card in the VOID', (u) => {
+      App.state = _applyCostPayment(App.state, 'player', _pHero(), { tribute: 1 }, { tributeIds: [u.id] }).state;
+    }, { ashen: true, void: true });
 
     // ---- RULE 4 — a unit vanished from ANY zone lands in the VANISH zone.
     //               Before: the FIELD case filed nothing anywhere — the `_voided`

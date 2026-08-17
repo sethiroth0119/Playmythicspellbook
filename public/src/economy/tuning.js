@@ -502,8 +502,25 @@ export const ECON = {
        on a wage, and inventing a number for them elsewhere would be the same
        duplication the wage table exists to prevent. */
     income: {
-      studentPct: 0.38,       // of the unskilled wage: part-time work and support
+      studentPct: 0.38,       // of the unskilled wage, PER STUDENT IN THE SHARE
       studentWorkerPct: 0.50, // …and only half of a student household seeks work at all
+      /* 🎓 …AND HOW MUCH OF `studentPct` IS *SUPPORT* RATHER THAN WORK — grants,
+         loans, parents. The rest is the part-time shift, and only that part
+         moves with the local labour market.
+         🔴 THIS SPLIT IS WHY STUDENTS CAN LIVE IN A CITY THAT HAS NO WORK, and
+         its absence was half of why student districts stopped being student
+         districts. The whole student income used to be multiplied by job fit,
+         so in the slack labour market a student district actually has (fit 0.48)
+         a student household offered 15.4/day against a low-rent dwelling at
+         9.77 — a burden of 0.63, over `rent.burdenMax`, so students were blocked
+         from THE CHEAPEST ZONE IN THE CITY and the resLowRent bag's student
+         weight of 7 delivered literally 0% of arrivals. Measured.
+         ⚠ The file already knew this idea and had only applied it to the other
+           end of life: `incomeOf` adds the pension with no `fit` on it at all,
+           because "retired heads draw a pension whatever the labour market is
+           doing". Student maintenance is the same kind of money. Real student
+           towns are counter-cyclical for exactly this reason. */
+      studentSupportShare: 0.55,
       pensionPct: 0.42,       // of the unskilled wage, per retired head
       /* An arriving household is assumed to hold at least this fraction of a
          full wage even in a slack labour market — nobody moves to a city on the

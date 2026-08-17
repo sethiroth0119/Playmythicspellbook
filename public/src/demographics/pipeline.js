@@ -563,12 +563,30 @@ export function step(days, ctx) {
            terms, weighted in ECON — the same shape the reference demand panel
            expresses ("+ Local Demand, − Low-skill Labor Availability"), and the
            panel prints these back rather than inventing its own story. */
-        const jobs = A.workersPer(a) > 0 ? fit[e] : 1;   // pensioners do not need work
         const afford = clamp01(1 - burden / dm.rent.burdenMax);
-        const att = Math.max(dm.arrival.minAttract, clamp01(
-          dm.arrival.weight.jobs * jobs +
-          dm.arrival.weight.rent * afford +
-          dm.arrival.weight.services * services));
+        const W = dm.arrival.weight;
+        /* 🔴 A HOUSEHOLD WITH NO WORKERS DOES NOT SCORE THE LABOUR MARKET — AND
+           IT DOES NOT GET A FREE PASS ON IT EITHER. This read
+           `const jobs = workersPer(a) > 0 ? fit[e] : 1`, handing pensioners a
+           perfect 1 on the LARGEST of the three weights (0.50). So a retired
+           household read every city as at least half-attractive and outscored
+           every working household in any city with a soft labour market — the
+           weighting half of the all-retired attractor, working alongside the
+           job-gate exemption below. It also inflated the panel's own meter: a
+           city with no work read as ATTRACTIVE, because the only households
+           that would still come were the ones who did not want any.
+           The weight is redistributed over what a pensioner actually chooses a
+           town for — the rent against a fixed pension, and the services — so
+           the three weights still sum to 1 and a retune of any of them stays
+           meaningful for both kinds of household. */
+        let att;
+        if (A.workersPer(a) > 0) {
+          att = W.jobs * fit[e] + W.rent * afford + W.services * services;
+        } else {
+          const rest = W.rent + W.services;
+          att = rest > 0 ? (W.rent * afford + W.services * services) / rest : 0;
+        }
+        att = Math.max(dm.arrival.minAttract, clamp01(att));
         const w = bagW * ew * att;
         cands.push({ a, e, w, att });
         wsum += w; wraw += bagW * ew;
@@ -581,9 +599,50 @@ export function step(days, ctx) {
        `cands` at all, which is why a zone nobody can afford fills slowly
        rather than filling with people who cannot pay. */
     const zoneAttract = wsum / Math.max(1e-9, wraw);
-    const moving = Math.min(vacant, vacant * dm.arrival.ratePerDay * days * clamp01(zoneAttract));
+    /* 🔁 A FLAT WHOSE LEASE JUST ENDED IS RE-LET, NOT ABANDONED. The dwellings
+       phase 3c freed are offered again in the same step; only the vacancy that
+       was ALREADY standing fills at the slow arrival rate. Without this split,
+       turnover would drain a district faster than the 30%/day arrival rate could
+       refill it and the fix for the student ratchet would read as a bug that
+       empties cities. Both halves are still scaled by how attractive the zone
+       is, so an unattractive city genuinely fails to re-let. */
+    const relet = Math.min(vacant, relets[zid] || 0);
+    const standing = Math.max(0, vacant - relet);
+    const moving = Math.min(vacant,
+      (relet + standing * dm.arrival.ratePerDay * days) * clamp01(zoneAttract));
     if (!(moving > 0)) continue;
     for (const c of cands) plan.push({ zone: zid, a: c.a, e: c.e, hh: moving * (c.w / wsum) });
+  }
+
+  /* 🧓 …AND THE FINITE SUPPLY OF PENSIONERS. Households with no workers skip the
+     job gate above, and that exemption is CORRECT — a retired household does not
+     need a vacancy. What was missing is that nothing else limited them, so in a
+     job-poor city they were the only candidates left and they took every
+     dwelling that came free, forever. The honest limit is that only so many
+     pensioners are looking to move at all, and the ones who do follow the
+     working city: you retire to where your family lives and works, not to an
+     empty district. So the whole workerless arrival stream is metered against
+     the city's WORKING households, however many dwellings stand empty.
+
+     🔴 A RATE, NOT A CAP, AND THE DIFFERENCE IS THE WHOLE POINT. A clamp at
+     "retired may be at most N% of the city" would have made the measurements
+     look fixed while leaving the pressure intact behind it — and the next person
+     to touch this scorer would reintroduce the attractor with the clamp still
+     sitting there looking deliberate. This instead collapses to zero on its own
+     in the city that used to lock, because that city has no working households
+     left to draw pensioners toward it.
+     ⚠ Scaled, not truncated — same reason the budget ceiling below is: list
+       order is a UI decision and must never be an economic one. */
+  {
+    let workingHH = 0;
+    for (const k in S.co) if (A.workersPer(parseKey(k).arch) > 0) workingHH += S.co[k];
+    const supply = workingHH * (dm.arrival.workerlessDrawPerWorkerHH || 0) * days;
+    let want = 0;
+    for (const p of plan) if (A.workersPer(p.a) <= 0) want += p.hh;
+    if (want > supply) {
+      const s = supply / Math.max(1e-9, want);
+      for (const p of plan) if (A.workersPer(p.a) <= 0) p.hh *= s;
+    }
   }
 
   /* 🏙 …AND THE CEILING. The host owns how many people this city supports; this
@@ -637,8 +696,12 @@ export function step(days, ctx) {
   let fitSum = 0, fitN = 0;
   for (const e of A.eduOrder()) { fitSum += fit[e]; fitN++; }
   const meanFit = fitN ? fitSum / fitN : 1;
-  if (posts && meanFit > 0.8) causes.push({ sign: '+', label: 'Work for most people', why: 'The city posts more jobs than it has residents to fill them.' });
-  else if (posts && meanFit < 0.3) causes.push({ sign: '−', label: 'Not enough jobs', why: 'Most residents cannot find work here, and word gets around.' });
+  /* 🔴 EVERY THRESHOLD BELOW IS AN ECON READ. They were literals here for two
+     rounds, and commit 02ccda2 claimed to have moved them while leaving five
+     behind — a number that only LOOKS like presentation is still a number
+     somebody has to retune, and finding it meant grepping this file. */
+  if (posts && meanFit > dm.ui.jobsPlentyFit) causes.push({ sign: '+', label: 'Work for most people', why: 'The city posts more jobs than it has residents to fill them.' });
+  else if (posts && meanFit < dm.ui.jobsScarceFit) causes.push({ sign: '−', label: 'Not enough jobs', why: 'Most residents cannot find work here, and word gets around.' });
   if (capped) causes.push({ sign: '−', label: 'City population cap', why: 'The city itself supports no more residents yet — build Housing, or zone more land. Nobody can move into a city with nowhere to put them.' });
   if (rentBlocked && blockedRent >= blockedJobs) {
     causes.push({ sign: '−', label: 'Rents above local incomes', why: 'Households who would have taken those homes cannot pay for them on what this city pays. Cheaper zoning — low rent, or high density — is what they can afford.' });
@@ -651,9 +714,9 @@ export function step(days, ctx) {
       causes.push({ sign: '−', label: (def ? def.short : e) + ' residents leaving', why: 'There has been no work for them for ' + Math.round(S.stress[e]) + ' days and their savings have run out.' });
     }
   }
-  if (services > 0.75) causes.push({ sign: '+', label: 'Services are keeping up', why: 'The shops and utilities are meeting what residents ask of them.' });
-  else if (services < 0.4) causes.push({ sign: '−', label: 'Services falling short', why: 'Residents cannot buy what they need here, and word gets around.' });
-  if (tight > 1.4) causes.push({ sign: '−', label: 'Housing market is tight', why: 'Rents are ' + Math.round((tight - 1) * 100) + '% above baseline because almost nothing is free.' });
+  if (services > dm.ui.servicesGood) causes.push({ sign: '+', label: 'Services are keeping up', why: 'The shops and utilities are meeting what residents ask of them.' });
+  else if (services < dm.ui.servicesPoor) causes.push({ sign: '−', label: 'Services falling short', why: 'Residents cannot buy what they need here, and word gets around.' });
+  if (tight > dm.ui.tightNotice) causes.push({ sign: '−', label: 'Housing market is tight', why: 'Rents are ' + Math.round((tight - 1) * 100) + '% above baseline because almost nothing is free.' });
   S.causes = causes.slice(0, Math.max(3, dm.ui.maxCauses));
 
   /* The binding constraint, as one sentence, for the meter's caption. */
@@ -663,8 +726,13 @@ export function step(days, ctx) {
           /* ⚠ THE SMOOTHED DAILY RATE, WITH A MARGIN — not this tick's flow.
              A tick is a quarter of a day and the two sides arrive at different
              moments in it, so a steady city flickered between "leaving" and
-             nothing every few seconds on a panel that repaints every 4 s. */
-          : S.rate.out > S.rate.in * dm.ui.leavingMargin + 0.05 ? 'leaving'
+             nothing every few seconds on a panel that repaints every 4 s.
+             ⚠ BOTH HALVES OF THE GUARD ARE ECON READS NOW. `leavingFloor` was a
+               bare `+ 0.05` sitting in this expression — in a city moving one
+               resident a day the multiplicative margin is worth 0.15 of a
+               person, so the absolute floor is the half that actually does the
+               work at small sizes, and it was the one nobody could find. */
+          : S.rate.out > S.rate.in * dm.ui.leavingMargin + dm.ui.leavingFloor ? 'leaving'
           : rentBlocked && blockedRent >= blockedJobs ? 'rent'
           : jobsBlocked ? 'jobs'
           : null;

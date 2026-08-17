@@ -20550,6 +20550,18 @@ async function economyTick(dtMin) {
       ecoDailyClose(snap);
     }
   } catch (e) {}
+
+  /* 📣 THE BROADCAST FEED observes LAST, and that order is the whole
+     reason this line sits at the tail: it reads game.cov, game.power, the
+     citizen roster, /src/demographics' flows and /src/economy's snapshot, and
+     every one of those was just recomputed above. Ticked one beat earlier it
+     would report last tick's city every single tick — invisible while a city
+     is steady and wrong exactly when it is not, which is the argument the
+     demographics hook above makes for its own placement.
+     Guarded like every other module hook here: a 404 costs the feed and
+     nothing else. It is an OBSERVER — no other system calls into it, so there
+     is nothing here for a future feature to forget to do. */
+  try { if (window.MythicBroadcast && window.MythicBroadcast.ready()) window.MythicBroadcast.tick(dtMin); } catch (e) {}
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -32785,6 +32797,55 @@ function animate() {
       opsRowForKey: (k) => (typeof opsRowForKey === 'function' ? opsRowForKey(k) : null),
     });
   } catch (e) { console.warn('[Dossier] not mounted (non-fatal):', e); }
+  /* ══ 📣 EMERGENCY BROADCAST ═══════════════════════════════════════════════
+     The city's social feed — named citizens, businesses under their own names
+     and city departments posting about things that are actually happening,
+     each with a like count that MEASURES how many people the post is true for.
+     /src/broadcast owns all of it; see that module's index.js header.
+
+     Mounted AFTER loadState and AFTER /src/naming, and both are load-bearing:
+       · after loadState so the module can mark everything already in game.log
+         as seen. Without that, a returning player's first pass would publish a
+         post for each of the LOG_SAVE lines that came off disk and the feed
+         would open full of news they read yesterday.
+       · after /src/naming because a business that finishes construction on the
+         first tick posts UNDER ITS OWN NAME. Mount it first and the city's
+         first opening is announced by "Farm".
+     …and BEFORE the offline catch-up, so an absence produces a feed of what
+     happened while the player was away rather than nothing. The module caps
+     that itself (BCAST.observe.catchUpMaxPasses) — the catch-up drives
+     economyTick in a tight loop and would otherwise run hundreds of passes.
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md), and this module is the next one to hit it.
+        `game`, `BUILDINGS`, `NEED_META`, `WEATHER`, `wx`, `cityPop`, `hourOf`
+        and `saveSoon` are top-level `const` in THIS module script and are
+        invisible to an ES module. The ctx below IS the hand-over.
+     ⚠ NOTE WHAT DOES NOT CROSS. No addRes, no spendCinders, no place, no tile
+       writer, no citizen writer. The feed reads the city and writes one array
+       of its own; the single mutating call it gets is saveSoon. Everything
+       else it needs — citizens, power, water, pollution, demographics, the
+       economy, naming and streets — it reads off `window.Mythic*` itself,
+       guarded, because those ARE on window. */
+  try {
+    await import('../src/broadcast/index.js?v=' + (window.NC_BUILD || 'bc1'));
+    if (window.MythicBroadcast) {
+      window.MythicBroadcast.mount({
+        game, BUILDINGS, NEED_META,
+        cityPop: () => cityPop(),
+        /* The weather as the module needs to speak about it: the name a
+           citizen would use and whether it is one of the dangerous ones.
+           Handed over rather than read, because `wx` and `WEATHER` are both
+           top-level consts here. */
+        weather: () => {
+          const W = WEATHER[wx.type] || null;
+          return W ? { type: wx.type, name: W.name, ico: W.ico, severe: !!W.severe } : null;
+        },
+        hour: () => hourOf(),
+        cycleMin: CITY_DAY_MIN,
+        saveSoon,
+      });
+    }
+  } catch (e) { console.warn('[Broadcast] not mounted (non-fatal):', e); }
   /* ⏳ OFFLINE CATCH-UP — must run HERE, and the order is load-bearing:
        • after loadState(), or there is no savedAt and no city to run;
        • after refreshLedgerMirror(), because economyTick's input gate reads

@@ -20,7 +20,14 @@ export const BCAST = {
      MEASURED on the standard 172-tile district: see stats().saveBytes. */
   feed: {
     max: 120,          // posts held in memory
-    save: 40,          // posts written into the save
+    /* 🔴 MEASURED, NOT PICKED. On the standard 172-tile gauntlet district the
+       whole city save is ~83 KB; at 40 rows this feed was 12.9 KB of it — 16%
+       of a player's city spent on a scrollback nobody scrolls that far. At 24
+       rows it is ~7.5 KB (~9%), which still holds well over an hour of play at
+       the shipped cadence and several screens of feed. `stats().saveBytes`
+       reports the live figure, so the next person to change this number can
+       measure instead of guessing. */
+    save: 24,          // posts written into the save
     bodyMax: 240,      // hard cap on a composed body, characters
     tagsMax: 2,        // hashtags per post — see the HASHTAGS note in phrases.js
   },
@@ -36,6 +43,13 @@ export const BCAST = {
     everySec: 40,          // simulated seconds between observation passes
     maxPerPass: 3,         // posts emitted by one pass, hard cap
     catchUpMaxPasses: 12,  // an offline catch-up can only run this many passes
+    /* 🔴 THE MIX, and it is the difference between a feed and a bulletin
+       board. Measured on the standard district before this existed: 42
+       department posts to 17 citizen posts, because a failing city produces a
+       department candidate for every failing subject and they all outrank the
+       small talk. The reference is a column of RESIDENTS with one institution
+       in among them, so one department per pass is the whole rule. */
+    kindCap: { citizen: 2, dept: 1, company: 1, world: 1 },
   },
 
   /* ── COOLDOWNS, in simulated seconds ────────────────────────────────────
@@ -47,6 +61,11 @@ export const BCAST = {
   cooldown: {
     perSubjectSec: 300,
     perPosterSec: 420,       // one citizen cannot dominate the feed
+    /* …and cannot become a broken record about ONE thing. A stable voice is
+       what makes a regular recognisable (voices.js); the same regular saying
+       the same thing about the same subject four times is what makes the
+       stability read as a bug instead. */
+    perPosterSubjectSec: 2400,
     escalateBy: 0.22,        // severity delta that overrides perSubjectSec
     /* 🔴 WHAT THE MAYOR'S LIKE ACTUALLY DOES. Liking a post follows its
        SUBJECT, and a followed subject reports at half the interval — you
@@ -87,13 +106,26 @@ export const BCAST = {
         what keeps a two-digit and a three-digit reading distinguishable at a
         glance without making everything below the crisis invisible.
 
-     🔴 JITTER IS SEEDED, AND IT IS DELIBERATELY SMALL. ±12% so consecutive
-        posts about the same shortfall do not read as a formula, and small
-        enough that it can never reorder two posts whose scales genuinely
-        differ (the smallest gap the curve produces between adjacent integer
-        headcounts is wider than 24% only below ~6 affected, where both
-        readings mean "barely anyone"). Seeded on the post id, so a reload
-        does not re-roll a number the player already read. */
+     🔴 JITTER IS SEEDED, AND HERE IS EXACTLY WHAT IT COSTS. ±12%, so
+        consecutive posts about the same shortfall do not read as a formula.
+        It DOES mean two headcounts that are within a whisker of each other can
+        swap places — 7 affected can out-score 8. Stating the guarantee
+        precisely rather than hand-waving it:
+
+          any headcount ≥ 1.4× another ALWAYS scores at least as high.
+
+        Derived — (1+j)/(1-j) = 1.273, and 1.273^(1/exp) = 1.40 — and then
+        MEASURED over every pair (a, round(1.4a)) for a = 1..3000 across five
+        seed families: zero inversions at 1.4, first inversion at 1.3 (a=17 vs
+        b=22). `MythicBroadcast.likeSelfCheck(r)` runs that sweep live, because
+        a claim about an instrument that nobody can re-run is not a claim.
+
+        1.4× is the right place to spend it: the readings a player actually
+        compares — "is this the whole city or one block" — are an order of
+        magnitude apart, and inside 1.4× the honest answer is "these two are
+        the same size", which is what a jittered pair communicates.
+        Seeded on the post id, so a reload never re-rolls a number the player
+        already read. */
   likes: {
     exp: 0.72,
     scale: 1.6,

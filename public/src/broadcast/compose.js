@@ -28,17 +28,30 @@ import { rngFrom, pick, pickSome } from './rng.js';
 import { clauses, FRAMES, INTENSITY } from './phrases.js';
 import { subjectOf } from './subjects.js';
 
+/* Some tails are FRAGMENTS ("send snacks", "as expected") and some are whole
+   SENTENCES ("Crews are aware.", "Residents do not need to take any action.").
+   Joining a sentence with an em-dash or a comma produced, verbatim on the
+   standard district:
+     "…Additional capacity is required immediately, Residents do not need to
+      take any action."
+   Both halves were correct; the join was not. A tail that starts with a
+   capital is a sentence and gets a full stop before it, whatever frame was
+   drawn. Detected rather than declared, so adding a tail to a voice cannot
+   forget to flag it. */
+const SENTENCE_FRAMES = ['{o} {S}. {t}', '{S}. {t}'];
+
 const BAND_DOWN = { severe: 'notable', notable: 'mild', mild: null, great: 'good', good: null };
 
 /* Which slots a clause needs. Cheap, and it runs per candidate rather than per
    post, so it is deliberately a regex test and not a parse. */
 function needs(tpl) {
-  return { n: /\{n\}/.test(tpl), p: /\{p\}/.test(tpl), w: /\{w\}/.test(tpl), i: /\{i\}/.test(tpl) };
+  return { n: /\{n\}/.test(tpl), v: /\{v\}/.test(tpl), p: /\{p\}/.test(tpl), w: /\{w\}/.test(tpl) };
 }
 
 function fillable(tpl, facts) {
   const q = needs(tpl);
   if (q.n && !facts.n) return false;
+  if (q.v && !facts.v) return false;
   if (q.p && !facts.p) return false;
   if (q.w && !facts.w) return false;
   return true;
@@ -78,9 +91,9 @@ function attempt(ev, poster, voice, band, seed) {
 
   const rnd = rngFrom(seed);
   const clause = pick(rnd, pool);
-  const frame = pick(rnd, FRAMES);
   const opener = pick(rnd, voice.openers) || '';
   const tail = pick(rnd, voice.tails) || '';
+  const frame = (tail && /^[A-Z]/.test(tail)) ? pick(rnd, SENTENCE_FRAMES) : pick(rnd, FRAMES);
 
   /* Intensity comes from the BAND, never across bands — see phrases.js. The
      'good'/'great' bands have no intensity pool because a contented post has
@@ -97,6 +110,7 @@ function attempt(ev, poster, voice, band, seed) {
     .replace(/\{tag\}/g, '#' + subj.tag)
     .replace(/\{i\}/g, inten)
     .replace(/\{n\}/g, ev.facts.n || '')
+    .replace(/\{v\}/g, ev.facts.v || '')
     .replace(/\{p\}/g, ev.facts.p || '')
     .replace(/\{w\}/g, ev.facts.w || '');
 
@@ -115,8 +129,9 @@ function attempt(ev, poster, voice, band, seed) {
      subject's own extras — never invented, never more than tagsMax total. */
   const tags = [subj.tag];
   const budget = Math.max(0, (BCAST.feed.tagsMax | 0) - 1);
-  if (budget > 0 && rnd() < voice.tagLove && subj.extraTags && subj.extraTags.length) {
-    const extra = pickSome(rnd, subj.extraTags.filter((t) => t !== subj.tag), budget);
+  const extras = (ev.pole === 'good' ? subj.tagsGood : subj.tagsBad) || [];
+  if (budget > 0 && rnd() < voice.tagLove && extras.length) {
+    const extra = pickSome(rnd, extras.filter((t) => t !== subj.tag), budget);
     for (const t of extra) { tags.push(t); body += ' #' + t; }
   }
 
@@ -157,7 +172,13 @@ export function composePost(ev, poster, voice, seen, tries = 10) {
 export function variantCount(subjectId, kind, pole, band, voice, facts) {
   const pool = clauses(subjectId, kind, pole, band).filter((t) => fillable(t, facts || {}));
   if (!pool.length) return 0;
-  return pool.length * FRAMES.length * voice.openers.length * voice.tails.length;
+  /* Per tail, because a sentence tail is only reachable through
+     SENTENCE_FRAMES and a fragment only through FRAMES — multiplying by the
+     wrong table would overstate the variety by ~3x, which is exactly the kind
+     of unfalsifiable claim this function exists to avoid making. */
+  let frames = 0;
+  for (const t of voice.tails) frames += (t && /^[A-Z]/.test(t)) ? SENTENCE_FRAMES.length : FRAMES.length;
+  return pool.length * voice.openers.length * frames;
 }
 
 export default { composePost, variantCount };

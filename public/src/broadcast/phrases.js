@@ -17,11 +17,20 @@
      {tag}   the subject's canonical hashtag, INLINE — this is the reference's
              "Our #electricity production is not meeting demand", where the tag
              is part of the sentence rather than bolted on the end.
-     {n}     a REAL number out of the event's facts. 🔴 A clause containing
-             {n} is DROPPED when the event has no number for it. It is never
-             filled with a plausible one — a fabricated figure in a feed the
-             player makes decisions on is the exact failure this module exists
-             to avoid, and a silently-substituted "some" would hide it.
+     {n}     A HEADCOUNT OF RESIDENTS, always, as a plain integer. The clause
+             supplies the noun ("{n} residents", "{n} of us"). Keeping one slot
+             to one unit is not tidiness: the first cut let each observer
+             format {n} however it liked, and the Health Department published
+             "4 residents residents cannot be treated" while the Food office
+             published "we are 4 short on #food per cycle" about a headcount.
+             Both composed correctly. Both were nonsense.
+     {v}     THE EVENT'S OWN HEADLINE VALUE, already carrying its unit — "62%",
+             "wave 7", "3". Whatever is not a count of people goes here.
+     🔴 A clause containing {n} or {v} is DROPPED when the event has no number
+        for it. It is never filled with a plausible one — a fabricated figure
+        in a feed the player makes decisions on is the exact failure this
+        module exists to avoid, and a silently-substituted "some" would hide
+        it.
      {p}     a real place: a business name, a street name, a building. Same
              rule — no place, no clause.
      {w}     the weather's own name, from node-city's WEATHER table.
@@ -87,10 +96,10 @@ export const PHRASES = {
         ['{tag} production is running {i} under demand, so some load is being smoothed across the grid'],
         ['our {tag} production is not meeting demand, so we are forced to import some from our neighbours',
          'demand for {tag} has outrun what the city generates and we are shedding non-critical load',
-         'we are {n} short on {tag} at peak and are managing it by rotation'],
+         '{n} residents are short of {tag} at peak and we are managing it by rotation'],
         ['{tag} supply has {i} failed to meet demand and rolling outages are in effect',
          'the grid cannot carry the city as built — {tag} is being rationed block by block',
-         'we are {n} short on {tag}. Until generation is added, outages will continue']
+         '{n} residents are short of {tag}. Until generation is added, outages will continue']
       ),
       good: G(
         ['{tag} supply is comfortably ahead of demand across the city'],
@@ -116,9 +125,9 @@ export const PHRASES = {
     dept: {
       bad: B(
         ['{tag} draw is running slightly ahead of what the works can deliver'],
-        ['we cannot meet the city’s {tag} demand — {n} short — and are prioritising homes over industry',
+        ['we cannot meet the city’s {tag} demand — {n} residents short — and are prioritising homes over industry',
          '{tag} demand exceeds our pumping capacity and pressure is being reduced at peak'],
-        ['the city is {i} short of {tag}. {n} of demand is going unserved and rationing is in force',
+        ['the city is {i} short of {tag}. {n} residents are going unserved and rationing is in force',
          '{tag} reserves are exhausted at current draw. Additional capacity is required immediately']
       ),
       good: G(
@@ -164,7 +173,7 @@ export const PHRASES = {
       bad: B(
         ['{tag} supply is a little behind demand; stocks are covering the gap for now'],
         ['{tag} production is not keeping pace with the population and reserves are drawing down',
-         'we are {n} short on {tag} per cycle and are drawing on stored stock'],
+         '{n} residents are not fed by what the city produces, and we are drawing on stored stock'],
         ['{tag} supply has {i} failed to meet demand. Reserves are gone and rationing is in effect']
       ),
       good: G(
@@ -219,7 +228,11 @@ export const PHRASES = {
         ['our {tag} coverage does not reach every district — {n} residents are outside a patrol route'],
         ['{tag} coverage has {i} broken down. Most of the city is unpatrolled']
       ),
-      good: G(['every district is inside a {tag} patrol route'], ['{tag} coverage is complete and response times are at target']),
+      good: G(
+        ['every district is inside a {tag} patrol route', '{tag} coverage reaches the outer blocks again'],
+        ['{tag} coverage is complete and response times are at target',
+         'no district in the city is unpatrolled']
+      ),
     },
   },
 
@@ -241,7 +254,10 @@ export const PHRASES = {
         ['{tag} capacity covers only part of the city — {n} residents have nothing within reach'],
         ['there is {i} no {tag} provision for the population as it now stands']
       ),
-      good: G(['{tag} provision meets demand citywide'], ['every district has {tag} within walking distance']),
+      good: G(
+        ['{tag} provision meets demand citywide', '{tag} capacity is ahead of what residents are asking for'],
+        ['every district has {tag} within walking distance', 'no resident is outside {tag} provision']
+      ),
     },
   },
 
@@ -252,15 +268,23 @@ export const PHRASES = {
         ['half this district has no working {tag}', 'the {tag} here are {i} out and it is pitch dark'],
         ['there are no {tag} at all on this side of the city']
       ),
-      good: G(['the {tag} are all on and it makes a difference'], ['the {tag} here make the place feel looked after']),
+      good: G(
+        ['the {tag} are all on and it makes a difference', 'walked home lit the whole way',
+         'every lamp on my road works'],
+        ['the {tag} here make the place feel looked after', 'not one dark corner on the whole walk home']
+      ),
     },
     dept: {
       bad: B(
         ['{tag} coverage is short in the newer blocks'],
-        ['{n} of the built city sits outside {tag} coverage'],
+        ['{n} residents live outside {tag} coverage'],
         ['{tag} coverage has {i} fallen behind construction. Most new blocks are unlit']
       ),
-      good: G(['{tag} coverage reaches every built block'], ['the whole city is lit; no block is outside a lamp radius']),
+      good: G(
+        ['{tag} coverage reaches every built block', 'the newer blocks are inside {tag} coverage now'],
+        ['the whole city is lit; no block is outside a lamp radius',
+         '{tag} coverage is complete across the built area']
+      ),
     },
   },
 
@@ -279,10 +303,14 @@ export const PHRASES = {
     dept: {
       bad: B(
         ['{tag} quality has slipped downwind of the industrial blocks'],
-        ['{tag} quality is below standard across {n} of the city and health demand is rising with it'],
+        ['{tag} quality is below standard across {v} of the city and health demand is rising with it'],
         ['{tag} quality has {i} failed in the residential districts. Exposure is at a level we would advise against']
       ),
-      good: G(['{tag} quality is within standard across every district'], ['{tag} quality is excellent citywide']),
+      good: G(
+        ['{tag} quality is within standard across every district',
+         '{tag} readings are inside limits everywhere people live'],
+        ['{tag} quality is excellent citywide', '{tag} readings have not been this clean since the city was founded']
+      ),
     },
   },
 
@@ -313,8 +341,10 @@ export const PHRASES = {
         ['there is {i} no {tag} here. {n} of us are looking and there is nothing']
       ),
       good: G(
-        ['there is work about if you want it'],
-        ['plenty of {tag} going in this city right now']
+        ['there is work about if you want it', 'saw three places hiring on the way in',
+         'no shortage of {tag} at the moment', 'anyone looking for {tag} — there is plenty going'],
+        ['plenty of {tag} going in this city right now', 'you can walk into work here',
+         'this city cannot fill its {tag} fast enough']
       ),
     },
     dept: {
@@ -325,7 +355,7 @@ export const PHRASES = {
       ),
       good: G(
         ['vacancies exceed the number of residents seeking work'],
-        ['every band of the labour market is short of people; employers are {tag}']
+        ['{v} vacancies stand open against a labour force that is already fully employed']
       ),
     },
   },
@@ -338,7 +368,11 @@ export const PHRASES = {
          'the {tag} in this city eats an hour of my day'],
         ['the roads have {i} seized up. Nothing moves']
       ),
-      good: G(['{tag} was clear this morning for once'], ['got across the whole city in minutes. Whoever planned these roads, well done']),
+      good: G(
+        ['{tag} was clear this morning for once', '{p} moved properly today', 'no queue on {p} at all'],
+        ['got across the whole city in minutes. Whoever planned these roads, well done',
+         '{p} at rush hour and I did not stop once']
+      ),
     },
     dept: {
       bad: B(
@@ -346,7 +380,10 @@ export const PHRASES = {
         ['{p} is carrying more {tag} than it was built for and journey times are lengthening'],
         ['{tag} on {p} has {i} exceeded capacity. The corridor is at a standstill at peak']
       ),
-      good: G(['{tag} is flowing freely on every corridor'], ['no corridor in the city is near its {tag} capacity']),
+      good: G(
+        ['{tag} is flowing freely on every corridor', '{p} is running well under capacity at peak'],
+        ['no corridor in the city is near its {tag} capacity', '{p} is clear even at rush hour']
+      ),
     },
   },
 
@@ -372,15 +409,20 @@ export const PHRASES = {
         ['a {tag} came through and I did not sleep after it'],
         ['they broke the line. The {tag} got into the district and I am {i} shaken']
       ),
-      good: G(['the {tag} was held. Sleeping fine'], ['the wall held and nobody was hurt. Good work out there']),
+      good: G(
+        ['the {tag} was held. Sleeping fine', 'they turned back at the line. Quiet night after that',
+         'heard it end before it started'],
+        ['the wall held and nobody was hurt. Good work out there',
+         'they did not get past the perimeter and I slept through it']
+      ),
     },
     dept: {
       bad: B(
         ['a raider probe was turned back at the perimeter'],
-        ['wave {n} breached the defensive line and crews are assessing damage'],
-        ['the defensive line has {i} failed. Wave {n} is inside the city and residents should shelter']
+        ['wave {v} breached the defensive line and crews are assessing damage'],
+        ['the defensive line has {i} failed. Wave {v} is inside the city and residents should shelter']
       ),
-      good: G(['wave {n} was held at the line with no losses'], ['the siege was broken at wave {n}. The city is secure']),
+      good: G(['wave {v} was held at the line with no losses'], ['the siege was broken at wave {v}. The city is secure']),
     },
   },
 
@@ -451,13 +493,13 @@ export const PHRASES = {
     },
     dept: {
       bad: B(
-        ['{p} is trading {n} above its base price'],
-        ['{p} has moved {n} on the {tag} this cycle — supply is not meeting demand'],
-        ['{p} has {i} spiked, {n} above base. Anything that consumes it is exposed']
+        ['{p} is trading {v} above its base price'],
+        ['{p} has moved {v} on the {tag} this cycle — supply is not meeting demand'],
+        ['{p} has {i} spiked, {v} above base. Anything that consumes it is exposed']
       ),
       good: G(
-        ['{p} has settled {n} below base on the {tag}'],
-        ['{p} has fallen {n} — supply is comfortably ahead of demand']
+        ['{p} has settled {v} below base on the {tag}'],
+        ['{p} has fallen {v} — supply is comfortably ahead of demand']
       ),
     },
   },
@@ -466,9 +508,9 @@ export const PHRASES = {
     dept: {
       bad: B(
         ['one firm has entered distress this cycle'],
-        ['{n} firms are in default and are cutting output',
-         '{n} firms have failed. Their seats and their supply are gone with them'],
-        ['{n} firms have {i} collapsed in a single cycle. This is a market-wide failure, not a bad quarter']
+        ['{v} firms are in default and are cutting output',
+         '{v} firms have failed. Their seats and their supply are gone with them'],
+        ['{v} firms have {i} collapsed in a single cycle. This is a market-wide failure, not a bad quarter']
       ),
       good: G([], []),
     },
@@ -483,7 +525,7 @@ export const PHRASES = {
       ),
       good: G(
         ['imports are covering the city’s gaps and the route is clear'],
-        ['{n} trade partners are active and every route is running']
+        ['{v} trade partners are active and every route is running']
       ),
     },
   },

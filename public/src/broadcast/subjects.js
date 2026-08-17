@@ -47,7 +47,12 @@ export const DEPTS = {
      id        the key an observer emits
      label     what a panel calls it
      tag       the INLINE hashtag ({tag} in a phrase)
-     extraTags optional appended tags, drawn from — never invented
+     tagsBad   appended tags legal on a COMPLAINT — drawn from, never invented
+     tagsGood  appended tags legal on a CONTENTED post. Split by polarity
+               because one shared list put "#smog" on "the air is clear today"
+               and "#happylife" on "there is no leisure provision" — both
+               composed correctly, both flatly wrong, and both invisible in a
+               diff of the template that produced them.
      dept      institutional poster, or null when there honestly isn't one
      scope     'city'   the reading is a citywide headcount
                'local'  the reading is the people at one place
@@ -55,34 +60,34 @@ export const DEPTS = {
      citizen   may a citizen speak about this at all
      poles     which polarities exist: complaints, contentment, or both */
 export const SUBJECTS = {
-  power:    { id: 'power',    label: 'Electricity', tag: 'electricity', extraTags: ['grid', 'blackout'], dept: 'power',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  water:    { id: 'water',    label: 'Water',       tag: 'water',       extraTags: ['taps'],             dept: 'water',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  food:     { id: 'food',     label: 'Food',        tag: 'food',        extraTags: ['groceries'],        dept: 'food',    scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  health:   { id: 'health',   label: 'Healthcare',  tag: 'healthcare',  extraTags: ['clinics'],          dept: 'health',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  safety:   { id: 'safety',   label: 'Safety',      tag: 'safety',      extraTags: ['patrols'],          dept: 'safety',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  leisure:  { id: 'leisure',  label: 'Free time',   tag: 'leisure',     extraTags: ['happylife'],        dept: 'leisure', scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  light:    { id: 'light',    label: 'Streetlights',tag: 'streetlights',extraTags: ['darkstreets'],      dept: 'light',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  air:      { id: 'air',      label: 'Air quality', tag: 'air',         extraTags: ['cleaner', 'smog'],  dept: 'env',     scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  water_q:  { id: 'water_q',  label: 'Water purity',tag: 'water',       extraTags: ['pollution'],        dept: 'env',     scope: 'city',   citizen: true,  poles: ['bad'] },
-  rent:     { id: 'rent',     label: 'Rent',        tag: 'rent',        extraTags: ['housing'],          dept: 'housing', scope: 'city',   citizen: true,  poles: ['bad'] },
-  jobs:     { id: 'jobs',     label: 'Work',        tag: 'jobs',        extraTags: ['hiring'],           dept: 'labour',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  traffic:  { id: 'traffic',  label: 'Traffic',     tag: 'traffic',     extraTags: ['commute'],          dept: 'roads',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  weather:  { id: 'weather',  label: 'Weather',     tag: 'weather',     extraTags: ['perfect'],          dept: null,      scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  raid:     { id: 'raid',     label: 'Raiders',     tag: 'raid',        extraTags: ['defence'],          dept: 'civil',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  damage:   { id: 'damage',   label: 'Damage',      tag: 'damage',      extraTags: ['repairs'],          dept: 'works',   scope: 'local',  citizen: true,  poles: ['bad'] },
-  opening:  { id: 'opening',  label: 'New business',tag: 'openingday',  extraTags: ['nowopen'],          dept: 'works',   scope: 'local',  citizen: false, poles: ['good'] },
-  stock:    { id: 'stock',    label: 'Supply',      tag: 'supply',      extraTags: ['shortage'],         dept: 'market',  scope: 'local',  citizen: false, poles: ['bad'] },
-  hiring:   { id: 'hiring',   label: 'Hiring',      tag: 'hiring',      extraTags: ['jobs'],             dept: 'labour',  scope: 'local',  citizen: false, poles: ['good'] },
-  market:   { id: 'market',   label: 'Prices',      tag: 'market',      extraTags: ['prices'],           dept: 'market',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
-  crash:    { id: 'crash',    label: 'Insolvency',  tag: 'crash',       extraTags: ['market'],           dept: 'market',  scope: 'city',   citizen: false, poles: ['bad'] },
-  trade:    { id: 'trade',    label: 'Trade',       tag: 'trade',       extraTags: ['imports'],          dept: 'trade',   scope: 'city',   citizen: false, poles: ['bad', 'good'] },
+  power:    { id: 'power',    label: 'Electricity', tag: 'electricity', tagsBad: ['grid', 'blackout'], tagsGood: ['grid'], dept: 'power',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  water:    { id: 'water',    label: 'Water',       tag: 'water',       tagsBad: ['taps'], tagsGood: ['taps'],             dept: 'water',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  food:     { id: 'food',     label: 'Food',        tag: 'food',        tagsBad: ['groceries'], tagsGood: ['groceries'],        dept: 'food',    scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  health:   { id: 'health',   label: 'Healthcare',  tag: 'healthcare',  tagsBad: ['clinics'], tagsGood: ['clinics'],          dept: 'health',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  safety:   { id: 'safety',   label: 'Safety',      tag: 'safety',      tagsBad: ['patrols'], tagsGood: ['patrols'],          dept: 'safety',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  leisure:  { id: 'leisure',  label: 'Free time',   tag: 'leisure',     tagsBad: ['nothingtodo'], tagsGood: ['happylife'],        dept: 'leisure', scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  light:    { id: 'light',    label: 'Streetlights',tag: 'streetlights',tagsBad: ['darkstreets'], tagsGood: ['welllit'],      dept: 'light',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  air:      { id: 'air',      label: 'Air quality', tag: 'air',         tagsBad: ['smog'], tagsGood: ['cleaner', 'perfect'],  dept: 'env',     scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  water_q:  { id: 'water_q',  label: 'Water purity',tag: 'water',       tagsBad: ['pollution'], tagsGood: [],        dept: 'env',     scope: 'city',   citizen: true,  poles: ['bad'] },
+  rent:     { id: 'rent',     label: 'Rent',        tag: 'rent',        tagsBad: ['housing'], tagsGood: [],          dept: 'housing', scope: 'city',   citizen: true,  poles: ['bad'] },
+  jobs:     { id: 'jobs',     label: 'Work',        tag: 'jobs',        tagsBad: ['nowork'], tagsGood: ['hiring'],           dept: 'labour',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  traffic:  { id: 'traffic',  label: 'Traffic',     tag: 'traffic',     tagsBad: ['commute'], tagsGood: ['commute'],          dept: 'roads',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  weather:  { id: 'weather',  label: 'Weather',     tag: 'weather',     tagsBad: ['storm'], tagsGood: ['perfect'],          dept: null,      scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  raid:     { id: 'raid',     label: 'Raiders',     tag: 'raid',        tagsBad: ['defence'], tagsGood: ['defence'],          dept: 'civil',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  damage:   { id: 'damage',   label: 'Damage',      tag: 'damage',      tagsBad: ['repairs'], tagsGood: [],          dept: 'works',   scope: 'local',  citizen: true,  poles: ['bad'] },
+  opening:  { id: 'opening',  label: 'New business',tag: 'openingday',  tagsBad: [], tagsGood: ['nowopen'],          dept: 'works',   scope: 'local',  citizen: false, poles: ['good'] },
+  stock:    { id: 'stock',    label: 'Supply',      tag: 'supply',      tagsBad: ['shortage'], tagsGood: [],         dept: 'market',  scope: 'local',  citizen: false, poles: ['bad'] },
+  hiring:   { id: 'hiring',   label: 'Hiring',      tag: 'hiring',      tagsBad: [], tagsGood: ['jobs'],             dept: 'labour',  scope: 'local',  citizen: false, poles: ['good'] },
+  market:   { id: 'market',   label: 'Prices',      tag: 'market',      tagsBad: ['prices'], tagsGood: ['prices'],           dept: 'market',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
+  crash:    { id: 'crash',    label: 'Insolvency',  tag: 'crash',       tagsBad: ['market'], tagsGood: [],           dept: 'market',  scope: 'city',   citizen: false, poles: ['bad'] },
+  trade:    { id: 'trade',    label: 'Trade',       tag: 'trade',       tagsBad: ['imports'], tagsGood: ['imports'],          dept: 'trade',   scope: 'city',   citizen: false, poles: ['bad', 'good'] },
   /* ── life path. scope 'person': the reading is ONE life. See likes.js. ── */
-  grad:     { id: 'grad',     label: 'Graduation',  tag: 'graduation',  extraTags: ['newstart'],         dept: null,      scope: 'person', citizen: true,  poles: ['good'] },
-  hired:    { id: 'hired',    label: 'New job',     tag: 'newjob',      extraTags: ['work'],             dept: null,      scope: 'person', citizen: true,  poles: ['good'] },
-  laid:     { id: 'laid',     label: 'Lost work',   tag: 'laidoff',     extraTags: ['jobs'],             dept: null,      scope: 'person', citizen: true,  poles: ['bad'] },
-  movedin:  { id: 'movedin',  label: 'Moved in',    tag: 'newhome',     extraTags: ['hello'],            dept: null,      scope: 'person', citizen: true,  poles: ['good'] },
-  leaving:  { id: 'leaving',  label: 'Leaving',     tag: 'movingout',   extraTags: ['goodbye'],          dept: null,      scope: 'person', citizen: true,  poles: ['bad'] },
-  mood:     { id: 'mood',     label: 'How it goes', tag: 'cityliving',  extraTags: ['happylife'],        dept: null,      scope: 'person', citizen: true,  poles: ['bad', 'good'] },
+  grad:     { id: 'grad',     label: 'Graduation',  tag: 'graduation',  tagsBad: [], tagsGood: ['newstart'],         dept: null,      scope: 'person', citizen: true,  poles: ['good'] },
+  hired:    { id: 'hired',    label: 'New job',     tag: 'newjob',      tagsBad: [], tagsGood: ['work'],             dept: null,      scope: 'person', citizen: true,  poles: ['good'] },
+  laid:     { id: 'laid',     label: 'Lost work',   tag: 'laidoff',     tagsBad: ['jobs'], tagsGood: [],             dept: null,      scope: 'person', citizen: true,  poles: ['bad'] },
+  movedin:  { id: 'movedin',  label: 'Moved in',    tag: 'newhome',     tagsBad: [], tagsGood: ['hello'],            dept: null,      scope: 'person', citizen: true,  poles: ['good'] },
+  leaving:  { id: 'leaving',  label: 'Leaving',     tag: 'movingout',   tagsBad: ['goodbye'], tagsGood: [],          dept: null,      scope: 'person', citizen: true,  poles: ['bad'] },
+  mood:     { id: 'mood',     label: 'How it goes', tag: 'cityliving',  tagsBad: ['worndown'], tagsGood: ['happylife'],        dept: null,      scope: 'person', citizen: true,  poles: ['bad', 'good'] },
 };
 
 export function subjectOf(id) { return SUBJECTS[String(id)] || null; }

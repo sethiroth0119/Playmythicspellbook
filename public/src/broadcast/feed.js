@@ -30,10 +30,11 @@ let SEEN = new Set();        // lower-cased bodies, for the never-repeat rule
 let lastSubjAt = {};
 let lastSubjSev = {};
 let lastPosterAt = {};
+let lastPosterSubjAt = {};
 
 export function reset() {
   POSTS = []; SEQ = 0; LIKED = new Set(); FOLLOW = new Set(); READ = 0; SEEN = new Set();
-  lastSubjAt = {}; lastSubjSev = {}; lastPosterAt = {};
+  lastSubjAt = {}; lastSubjSev = {}; lastPosterAt = {}; lastPosterSubjAt = {};
 }
 
 /* ── AVATARS ───────────────────────────────────────────────────────────────
@@ -74,15 +75,20 @@ export function subjectReady(subjectId, nowSec, severity) {
   return false;
 }
 
-export function posterReady(posterKey, nowSec) {
+export function posterReady(posterKey, nowSec, subjectId) {
   const last = lastPosterAt[posterKey];
-  return last == null || (nowSec - last) >= BCAST.cooldown.perPosterSec;
+  if (last != null && (nowSec - last) < BCAST.cooldown.perPosterSec) return false;
+  const ls = lastPosterSubjAt[posterKey + '|' + subjectId];
+  return ls == null || (nowSec - ls) >= BCAST.cooldown.perPosterSubjectSec;
 }
 
 export function noteSpoke(subjectId, posterKey, nowSec, severity) {
   lastSubjAt[subjectId] = nowSec;
   if (Number.isFinite(severity)) lastSubjSev[subjectId] = severity;
-  if (posterKey) lastPosterAt[posterKey] = nowSec;
+  if (posterKey) {
+    lastPosterAt[posterKey] = nowSec;
+    lastPosterSubjAt[posterKey + '|' + subjectId] = nowSec;
+  }
 }
 
 /* ── ADD ───────────────────────────────────────────────────────────────────
@@ -215,7 +221,7 @@ export function serialize() {
     b: p.body, a: p.tags,
     l: p.likes, f: p.affected, u: p.subject,
     v: p.severity, o: p.pole,
-    w: p.source ? String(p.source.why || '').slice(0, 72) : null,
+    w: p.source ? String(p.source.why || '').slice(0, 56) : null,
     r: p.source ? p.source.src : null,
     m: LIKED.has(p.id) ? 1 : 0,
   }));
@@ -249,7 +255,7 @@ export function load(blob) {
       subject: typeof r.u === 'string' ? r.u : 'mood',
       severity: Number.isFinite(+r.v) ? +r.v : null,
       pole: r.o === 'good' ? 'good' : 'bad',
-      source: r.r ? { src: String(r.r).slice(0, 24), why: String(r.w || '').slice(0, 72) } : null,
+      source: r.r ? { src: String(r.r).slice(0, 24), why: String(r.w || '').slice(0, 56) } : null,
     };
     POSTS.push(p);
     SEEN.add(body.toLowerCase());

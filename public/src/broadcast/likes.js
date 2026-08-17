@@ -123,7 +123,26 @@ export function fromMarket(pop, inBasket, consumerHeads) {
   return Number.isFinite(+consumerHeads) ? Math.max(0, Math.round(+consumerHeads)) : null;
 }
 
+/* 🔍 THE SELF-CHECK BEHIND THE GUARANTEE IN tuning.js. Sweeps every pair
+   (a, round(a·ratio)) across several seed families and reports any inversion.
+   Reported on demand rather than at boot — a check that logs on success is one
+   everybody learns to scroll past, which is the rule /src/water and
+   /src/pollution both state for theirs. */
+export function selfCheck(ratio, maxN) {
+  const r = +ratio || 1.4;
+  const top = Math.max(10, maxN | 0 || 3000);
+  for (let a = 1; a <= top; a++) {
+    const b = Math.max(a + 1, Math.round(a * r));
+    for (const s of ['s1', 's2', 's3', 's4', 's5']) {
+      if (likesFor(b, s + b) < likesFor(a, s + a)) {
+        return { ok: false, ratio: r, a, b, likesA: likesFor(a, s + a), likesB: likesFor(b, s + b) };
+      }
+    }
+  }
+  return { ok: true, ratio: r, tested: top };
+}
+
 export default {
-  likesFor, affectedFor, fromCoverage, fromCoverageGood, fromPowerFactor,
+  likesFor, selfCheck, affectedFor, fromCoverage, fromCoverageGood, fromPowerFactor,
   fromWaterShortfall, fromPeople, fromPerson, fromMarket,
 };

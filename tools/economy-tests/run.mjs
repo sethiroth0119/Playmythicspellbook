@@ -10735,7 +10735,14 @@ const stripComments = (src) => {
 /* ⚠ fuelarb.mjs was written in round 2 of FUELARB and never wired in here, so
    the gate ran green for the whole of round 3 while the exploit was live in a
    file the gate did not open. A tripwire nobody runs is a comment. */
-for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs', 'fuelarb.mjs', 'boemint.mjs']) {
+/* ⚠ AND IT HAPPENED AGAIN, TWO PACKAGES LATER, IN THIS SAME ARRAY.
+   repairtrap.mjs — 41 KB, written and then EXTENDED across two rounds — was
+   never added here either, so both builders truthfully reported "gate green"
+   while the suite guarding their own work was never opened. The warning above
+   was already on the screen when it happened.
+   If you add a suite, add it to this list in the same commit. The list is the
+   only thing that makes a file a test; everything else is a file. */
+for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs', 'fuelarb.mjs', 'boemint.mjs', 'repairtrap.mjs']) {
   console.log('\n########## ' + f + ' ##########');
   const r = spawnSync(process.execPath, [join(here, f)], { stdio: 'inherit' });
   if (r.status !== 0) bad++;

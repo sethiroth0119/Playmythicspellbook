@@ -5566,6 +5566,25 @@ const stripComments = (src) => {
          Their VALUES come from the shipped ECON.construction — Rule 4: the
          municipal ceiling is the number the design turns on and this file does
          not get to pick its own. */
+      /* 🗺 THE ZONED-DEVELOPMENT SEAM, stubbed. tryPlace() is LIFTED WHOLE from
+         index.html (that is round0d's design: lift the shipped statement, resolve
+         its dependencies from an explicit list, so the test can never drift from
+         the code it claims to test). The zoning "Develop" work added four names
+         to tryPlace's scope, and a lifted statement with an unresolved name is a
+         ReferenceError at call time, not a scrape failure — the suite crashed at
+         §8 with a _zonedOrder-is-not-defined ReferenceError rather than a miss.
+         Stubbed to the NO-ZONING answer on purpose: zoned growth is a separate,
+         un-crewed path, so with no zoning module every one of these must
+         collapse to nothing-is-developing, which is exactly the pre-zoning
+         behaviour these rounds assert. bldCrewLoad() then reduces to
+         bldCommitted(), which is what the crew-limit assertions were written
+         against. A zoned-growth test belongs in its own round with these set
+         live — do not make these read a real module here, or §8 stops testing
+         hand placement. */
+      let _zonedOrder = 0;
+      const bldIsDev = () => false;
+      const bldDevSites = () => 0;
+      function bldCrewLoad() { return Math.max(0, bldCommitted() - bldDevSites() - _zonedOrder); }
       const bldCfg = () => ECON_ON ? { on: true, maxSec: 86400, formulaV: 1, exemptTypes: [],
                                        municipal: ${JSON.stringify(ECON_C.municipal)},
                                        slots: ${JSON.stringify(ECON_C.slots)},

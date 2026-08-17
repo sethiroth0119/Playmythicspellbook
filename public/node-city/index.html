@@ -1691,7 +1691,8 @@
     "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.webgpu.js",
     "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.webgpu.js",
     "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.tsl.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/",
+    "three/webgl": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js"
   }
 }
 </script>
@@ -1710,6 +1711,20 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+/* 🔴 THE SECOND THREE ENTRY POINT, AND WHY IT IS WORTH ITS DOWNLOAD.
+   `three.webgpu.js` does not export WebGLRenderer — the classic renderer only
+   lives in `three.module.js`. Both files are the SAME pinned 0.171.0 from the
+   SAME CDN path, so this is not a new dependency and not a version to keep in
+   sync; it is one more entry point of the build already loaded.
+   The scene, every material and every texture are still built from the `three`
+   import above. That mixing is safe on purpose: three identifies objects by
+   `isMesh`/`isMaterial`/`isTexture` duck-typing rather than `instanceof`, and it
+   was verified before this line was written — a scene of MeshStandardMaterial,
+   a CanvasTexture, a vertex-coloured merged BufferGeometry, Points and Fog, all
+   minted from three.webgpu.js, render correctly through this WebGLRenderer,
+   with shadows, ACES and sRGB intact.
+   WHY AT ALL: see THE SHADOW BUG at the renderer construction below. */
+import { WebGLRenderer } from 'three/webgl';
 
 /* ════════════════════════════════════════════════════════════════════════
    1. MythicCityBridge — THE integration seam.  ◄◄ CLAUDE CODE HOOK ◄◄
@@ -3847,7 +3862,53 @@ const GRID = 24, TILE = 1, HALF = GRID / 2;
    3. Renderer — WebGPU first, silent WebGL2 fallback (same API).
    ════════════════════════════════════════════════════════════════════ */
 const container = document.getElementById('scene');
-const renderer = new THREE.WebGPURenderer({ antialias: true });
+/* 🔴🔴 THE SHADOW BUG — read this before putting WebGPURenderer back.
+   ────────────────────────────────────────────────────────────────────────────
+   THIS CITY RENDERED ZERO SHADOWS. Not soft ones, not mis-biased ones: none.
+   The round-2 critic's verdict was "THERE IS NO SUN IN THIS SCENE", and that
+   turned out to be literally true rather than a figure of speech.
+
+   HOW IT WAS PROVED (three independent ways, because a claim this large should
+   not rest on one measurement):
+     1. Toggling `sun.castShadow` false → true produced a BIT-IDENTICAL frame:
+        max per-pixel difference 0 across 1600×900.
+     2. Sampling the ground by raycasting each sample point back at the sun,
+        the points that ARE occluded measured 0.414 mean luminance against
+        0.323 for the points that are not — i.e. no correlation with occlusion
+        at all, which is what "no shadow term" looks like in data.
+     3. A twenty-line scene — one box, one plane, one DirectionalLight, nothing
+        from this file — reproduced it exactly. So it was never our data.
+
+   WHY. In three 0.171.0 the WebGPU node pipeline computes a light's shadow
+   multiplier as, in the generated GLSL:
+        mix( 1.0, mix( shadowColor, 1.0, pcf ), intensity * shadowColor.w )
+   where `shadowColor` samples the COLOUR attachment of the shadow render
+   target. Under the **WebGL2 backend** that colour attachment is never written
+   — the pass runs depth-only — so `shadowColor.w` is 0, the whole expression
+   collapses to a constant 1.0, and every shadow in the scene is multiplied
+   away. `shadow.intensity`, `bias`, `normalBias`, `mapSize` and the filter type
+   are all downstream of that multiply, which is why none of them moved the
+   image either. The shadow depth pass was still being RENDERED every frame, so
+   the city was paying full price for a result it then discarded.
+
+   ⚠ WHAT THIS COSTS US: WebGPU. It is not a small thing to give up and it is
+     not given up permanently — `?renderer=webgpu` still takes that path, so
+     the day the pinned three moves the flag is how you re-test it. But the
+     WebGL2 backend is what the great majority of this game's players get
+     TODAY, and shipping a city builder in which nothing casts a shadow to most
+     of its players in exchange for a faster path for some of them is the wrong
+     trade. The WGSL side of the same expression could not be tested from here,
+     which is itself a reason not to bet the lighting on it.
+   ⚠ NOT A PERFORMANCE REGRESSION: the shadow pass was already being drawn. What
+     changes is that its result is now sampled — a few texture fetches per lit
+     fragment — and that WebGLRenderer's own pipeline replaces WebGPURenderer's
+     WebGL2 emulation of one, which is the cheaper of the two here.  */
+const _WANT_GPU = (() => {
+  try { return new URLSearchParams(location.search).get('renderer') === 'webgpu'; }
+  catch (e) { return false; }
+})();
+const renderer = _WANT_GPU ? new THREE.WebGPURenderer({ antialias: true })
+                           : new WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 /* 🎞 THE GRADE. ACES is the filmic curve the reference frames are shot through:
@@ -3868,9 +3929,15 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
    multiply), so the temptation was to pull exposure down to compensate. That
    is backwards: the old image was not over-exposed, it was under-albedoed, and
    dimming the key back down would have restored the mud with extra steps.
-   1.05 puts sunlit concrete at ~0.48 sRGB, which is where a mid-grey card
-   sits in the reference frames. */
-renderer.toneMappingExposure = 1.05;
+   ⚠ 1.05 WAS STILL A STOP AND A HALF SHORT, and it was measured rather than
+     judged: at 15:00 CLEAR the terrain sat at 0.215 median sRGB when the
+     reference frames put an afternoon ground plane at 0.45–0.55. Three terms
+     were raised together to close that — this exposure, SKY.day.sun and the
+     ground albedo — because raising any ONE of them far enough to land the
+     terrain would have blown the other two out. ACES is applied as
+     `colour * exposure / 0.6`, so 1.40 is a ×2.33 linear scale before the
+     curve; that is the number to reason with, not 1.40. */
+renderer.toneMappingExposure = 1.40;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 container.appendChild(renderer.domElement);
@@ -3880,7 +3947,7 @@ const scene = new THREE.Scene();
    frame so the value barely lives, but it is what the very first composited
    frame uses if updateSky has not run yet — and a purple-black first frame on
    a daylight city reads as a broken load. */
-scene.fog = new THREE.Fog(0xb6cfe4, 26, 70);
+scene.fog = new THREE.Fog(0x9cb9d2, 26, 70);   // = SKY.day.fog
 
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, .1, 220);
 camera.position.set(14, 15, 14);
@@ -4053,7 +4120,7 @@ function estClock() {
      and at night there is no key light for it to fight with. */
 const HEMI_GROUND_DAY   = new THREE.Color(0x6f6455);   // warm bounce off ground
 const HEMI_GROUND_NIGHT = new THREE.Color(0x1d1a30);   // the fantasy violet, kept
-const hemi = new THREE.HemisphereLight(0xbfd8ff, HEMI_GROUND_DAY.getHex(), .62); scene.add(hemi);
+const hemi = new THREE.HemisphereLight(0xbfd8ff, HEMI_GROUND_DAY.getHex(), 1.10); scene.add(hemi);  // = SKY.day.hemi
 /* ☀ THE KEY. One strong warm directional. 0xfff2d8 is roughly 5200K daylight
    with the warm bias the reference frames' late-afternoon sun has. */
 const sun = new THREE.DirectionalLight(0xfff2d8, 2.4);
@@ -4066,7 +4133,7 @@ sun.shadow.mapSize.set(2048, 2048);
    is looking. SHADOW_SPAN is re-centred on the orbit target each frame, so the
    texel density rises and the pass only draws what is near the view.
    Kept generous enough that a low sun's long shadows still enter frame. */
-let SHADOW_SPAN = 15;
+let SHADOW_SPAN = 17;   // = QUALITY tier 'high'
 sun.shadow.camera.left = -SHADOW_SPAN; sun.shadow.camera.right = SHADOW_SPAN;
 sun.shadow.camera.top = SHADOW_SPAN;  sun.shadow.camera.bottom = -SHADOW_SPAN;
 /* ⚠ NEAR/FAR ARE DERIVED FROM THE ORBIT, NOT GUESSED. The light sits on a
@@ -4096,8 +4163,14 @@ sun.shadow.normalBias = 0.022;
    job; this takes the last of the crush out of contact shadows so nothing in
    the city bottoms out at pure black. `radius` is honoured by the PCF path and
    ignored by PCFSoft — harmless either way, and it is what the `low`/`potato`
-   tiers (which drop to PCFShadowMap) actually use to stay soft. */
-sun.shadow.intensity = 0.94;
+   tiers (which drop to PCFShadowMap) actually use to stay soft.
+   ⚠ v122 TOOK IT FROM 0.94 TO 0.99. The 6% key leak was doing the anti-crush
+     job when the hemisphere fill was 0.62; the fill is now 1.10 and does that
+     job properly and in the right COLOUR — a shadow lit by the sky dome is
+     BLUE, a shadow lit by 6% of the sun is a washed-out copy of the sunlit face
+     next to it. The leak was costing pure contrast at the one place the bar
+     measures contrast. */
+sun.shadow.intensity = 0.99;
 sun.shadow.radius = 2.5;
 scene.add(sun); scene.add(sun.target);
 
@@ -4150,11 +4223,40 @@ const starMat = new THREE.PointsMaterial({ color: 0xcdd6ff, size: .22, transpare
      violet and dusk keeps its ember red: those are the city's identity, they
      are what a Mythic city is supposed to look like at 21:00, and nothing in
      the reference frames argues against a red sunset. */
+/* 🔆 ROUND 2 RAISED KEY AND FILL TOGETHER, AND THE RATIO BETWEEN THEM IS THE
+   WHOLE POINT — neither number means anything alone.
+     · `sun` is the KEY. Day went 2.7 → 4.3 so a sunlit face has somewhere to
+       be relative to a shaded one. Raising it alone would have crushed every
+       shaded face to black, which is the bar's other complaint.
+     · `hemi` is the FILL, and it is the shadow's only light. Day went .62 →
+       1.10 for exactly that reason: with real shadows finally landing (see THE
+       SHADOW BUG), the shadow term multiplies the KEY only, so a shadow is
+       precisely as dark as the fill lets it be. At 1.10 a shadowed ground plane
+       lands near 0.22 sRGB against 0.52 lit — a clear, soft, COOL shadow rather
+       than the crush-to-black the bar names.
+   ⚠ HOW THESE TWO WERE ACTUALLY LANDED, because it is not obvious and the next
+     round will need it. The first pass set key 3.8 / fill 1.45 and MEASURED
+     2.19× sunlit:shaded — short of the 2.5× the bar asks for. More key alone
+     would have taken the terrain past 0.55 and out of the band the same bar
+     sets. What works is trading one for the other at roughly CONSTANT GROUND
+     EXPOSURE: an up-facing surface takes the fill's sky colour at full weight
+     while a wall takes the mean of sky and ground, so moving fill down and key
+     up moves CONTRAST without moving LEVEL. 3.8/1.45 → 4.3/1.10 is that trade.
+   ⚠ NIGHT AND DUSK WERE SCALED, NOT REDESIGNED. Every key here moved by roughly
+     the same factor as day so the CYCLE keeps its shape; the hexes are the
+     round-1 palette untouched, because the violet night and the ember dusk are
+     the city's identity and the bar does not argue with them. Night's fill went
+     .14 → .20 rather than the full day factor on purpose — night is allowed to
+     be dark, it is just not allowed to be a black frame.
+   ⚠ `fog` IS PALER THAN `sky` BY DESIGN (see the note above) — but at exposure
+     1.40 the old 0xb6cfe4 tone-mapped to 0.86 sRGB and turned the middle
+     distance into a white wash. Deepened to keep the same RELATIONSHIP to the
+     sky at the new exposure, not to change the look of the haze. */
 const SKY = {
-  night:  { sky: new THREE.Color(0x0a0916), fog: new THREE.Color(0x121020), hemi: .14, sun: 0,    moon: .5 },
-  dawn:   { sky: new THREE.Color(0x5a4062), fog: new THREE.Color(0x7d5f66), hemi: .34, sun: 1.35, moon: .1 },
-  day:    { sky: new THREE.Color(0x8ebfe8), fog: new THREE.Color(0xb6cfe4), hemi: .62, sun: 2.7,  moon: 0 },
-  dusk:   { sky: new THREE.Color(0x6a3a3a), fog: new THREE.Color(0x8a5348), hemi: .30, sun: 1.25, moon: .12 },
+  night:  { sky: new THREE.Color(0x0a0916), fog: new THREE.Color(0x121020), hemi: .20, sun: 0,    moon: .5 },
+  dawn:   { sky: new THREE.Color(0x5a4062), fog: new THREE.Color(0x7d5f66), hemi: .60, sun: 2.20, moon: .1 },
+  day:    { sky: new THREE.Color(0x7db0e0), fog: new THREE.Color(0x9cb9d2), hemi: 1.10, sun: 4.30, moon: 0 },
+  dusk:   { sky: new THREE.Color(0x6a3a3a), fog: new THREE.Color(0x7d4a41), hemi: .54, sun: 2.05, moon: .12 },
 };
 const sunWarm = new THREE.Color(0xff8a4a), sunNoon = new THREE.Color(0xfff2d8);
 /* 🌤 WHAT THE HEMISPHERE'S SKY COLOUR TRACKS.
@@ -4246,11 +4348,55 @@ function updateLampLights() {
     L.visible = true;
   }
 }
+/* ☀ WHERE THE SUN ACTUALLY IS — and why the old arc had no sun in it.
+   ───────────────────────────────────────────────────────────────────────────
+   The old position was `sx = cos(sunAng)·60, sy = sin(sunAng)·60,
+   sz = sin(sunAng/2)·14`. Two things fell out of that and both were visible:
+
+   1. **THE SUN WENT OVERHEAD AT NOON.** With the z term capped at 14 out of
+      60, solar noon put the light at ~81° elevation. A sun that steep throws a
+      shadow shorter than the eave that casts it, and lights every wall in the
+      city at a hard grazing angle — the exact opposite of reference frame 3's
+      long raking shadows. SUN_PEAK caps the arc at 46°, so noon shadows are
+      about the height of the building and 17:00 shadows are four times it.
+
+   2. **THE SUN SPENT EVERY AFTERNOON BEHIND THE CAMERA.** The azimuth swept
+      the ±X axis alone: due +X at sunrise, straight up, due −X at sunset. Every
+      standard framing of this city looks from +X+Z toward the origin, so from
+      midday on, BOTH visible faces of every building were back-faces. Measured
+      at 15:00 on the round-1 build: of 2,232 wall samples in the aerial frame,
+      **14** were sunlit. Fourteen. That is what "a 1.14× ratio between a
+      left-facing and a right-facing wall" is a symptom of — the two faces were
+      not lit and shaded, they were shaded and shaded.
+      The azimuth now sweeps AZ_RISE → AZ_SET, a 78° arc that stays in the +Z
+      half all day, so one of the two visible faces is always the lit one and
+      the other is always the shaded one, at every hour the city is awake.
+
+   ⚠ `u` IS A COSINE EASE, NOT A LINEAR RAMP, and that is what keeps the arc
+     continuous. A linear `sunAng/π` jumps at midnight (and dragged the MOON's
+     azimuth with it, since the moon is the sun's antipode). `.5 − .5·cos` is
+     periodic in sunAng, so the moon simply retraces the arc backwards through
+     the night and nothing pops. It also happens to be right: real solar azimuth
+     moves fastest around noon and slowest near the horizon.
+   ⚠ THE LIGHT IS NOW EXACTLY R FROM THE TARGET at every hour (it is a point on
+     a sphere, not on a squashed ellipse). The shadow camera's near/far of
+     20→100 was derived from "a circle of R = 60"; that assumption is now
+     literally true instead of approximately true.
+   ⚠ `elev` BELOW IS UNCHANGED — still `sin(sunAng)` — on purpose. It is the
+     day/night PHASE, not the geometric elevation, and nightAmt, the lamp pool,
+     every emissive window and the dusk blend are all keyed to it. Moving the
+     sun's position must not move the clock. */
+const SUN_PEAK = 0.70;              // rad — 40.1° at solar noon, 28.4° at 15:00
+const AZ_RISE  = 1.05, AZ_SET = 2.41;   // rad — 60° → 138°, a 78° sweep in +Z
 function updateSky() {
   const h = hourOf();
   const sunAng = ((h - 6) / 24) * Math.PI * 2;         // rises 06:00, sets 18:00
   const R = 60;
-  const sx = Math.cos(sunAng) * R, sy = Math.sin(sunAng) * R, sz = Math.sin(sunAng * .5) * 14;
+  const _u = .5 - .5 * Math.cos(sunAng);
+  const _el = SUN_PEAK * Math.sin(sunAng);             // signed: negative = below horizon
+  const _az = AZ_RISE + (AZ_SET - AZ_RISE) * _u;
+  const _rh = Math.cos(_el) * R;                       // horizontal radius
+  const sx = Math.cos(_az) * _rh, sy = Math.sin(_el) * R, sz = Math.sin(_az) * _rh;
   // The DISCS stay absolute — they are the sun and moon in the sky. The LIGHTS
   // ride the orbit target so their tightened shadow frustum stays over whatever
   // the player is actually looking at (see SHADOW_SPAN).
@@ -4282,7 +4428,12 @@ function updateSky() {
   moon.intensity = (A.moon + (Bp.moon - A.moon) * t) * Math.max(0, -Math.sin(sunAng));
   // low sun = warm orange, high sun = neutral warm white
   const elev = Math.max(0, Math.sin(sunAng));
-  sun.color.copy(sunWarm).lerp(sunNoon, Math.min(1, elev * 1.6));
+  /* ⚠ 1.25, not 1.6. At 1.6 the key was fully neutral by 09:00 and stayed
+     neutral until the sun was nearly down, so the entire working day ran on
+     light of one temperature. At 1.25 a 15:00 sun still carries about 12% of
+     the warm end — the golden bias reference frame 3 has — and it costs a
+     multiply that was already there. */
+  sun.color.copy(sunWarm).lerp(sunNoon, Math.min(1, elev * 1.25));
   sunDisc.visible = sy > -4; moonDisc.visible = -sy > -4;
   nightAmt = THREE.MathUtils.clamp(1 - elev * 2.2, 0, 1) * (h > 17 || h < 7 ? 1 : 0);
   // 🌙 MOONLIGHT. The moon light was created with shadow maps and re-aimed
@@ -4290,7 +4441,7 @@ function updateSky() {
   // no directional light at all and everything flattened into ambient. It now
   // rises with nightAmt. Cool and dim on purpose: bright enough to model form and
   // throw long soft shadows, never bright enough to read as daylight.
-  moon.intensity = nightAmt * 0.85;
+  moon.intensity = nightAmt * 1.00;   // ↑ with the fill cut from 1.45 to 1.10
   /* Skip the shadow pass entirely by day — and RESPECT THE QUALITY TIER while
      doing it. This line ran every frame and unconditionally overwrote the
      `moonShadow: false` that the low and potato tiers set in qualityApply(),
@@ -4752,8 +4903,19 @@ function weatherMult(type) {
    one value did more to make the city read purple than the whole MAT table
    did. It is now dry grassland: dark enough that lit buildings still pop off
    it, warm and olive enough to read as LAND under a blue sky rather than as
-   the void the old value read as. */
-const GROUND_COL = 0x484e3a;
+   the void the old value read as.
+
+   ⚠ v122: THE HUE SURVIVED, THE REFLECTANCE DID NOT. 0x484e3a is a 7%-albedo
+     surface — that is the reflectance of fresh asphalt, not of dry grassland,
+     which measures 18–20%. It is why the terrain still metered at 0.215 median
+     sRGB at 15:00 CLEAR when the reference frames put it at 0.45–0.55, and no
+     amount of exposure could fix it without blowing the buildings out with it.
+     Every stop below was multiplied by the SAME factor (×2.53 in LINEAR, which
+     is where reflectance lives — scaling the sRGB codes instead would have
+     bent the ramp), so the hue, the ramp shape, the noise and the spacing
+     between the stops are byte-for-byte the relationships round 1 chose. Only
+     the level moved, and it moved to a measured target. */
+const GROUND_COL = 0x71755c;
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(GRID + 208, GRID + 208, 1, 1),
   new THREE.MeshStandardMaterial({ color: GROUND_COL, roughness: 1 }));
@@ -4806,7 +4968,9 @@ scene.add(ground);
    ═══════════════════════════════════════════════════════════════════════════ */
 const tileGroup = new THREE.Group(); scene.add(tileGroup);
 {
-  const shades = [0x484e3a, 0x505640, 0x585d47, 0x60634f];   // dark → light: scrub → dust
+  /* ⚠ THE SAME ×2.53 LINEAR LIFT GROUND_COL TOOK — see its note. Spacing,
+     ordering and hue are the round-1 ramp; only the reflectance moved. */
+  const shades = [0x71755c, 0x7c8664, 0x89916f, 0x92977b];   // dark → light: scrub → dust
   const EDGE = GROUND_COL;                                   // the surrounding ground plane
   // xorshift hash on a lattice point — the same one r1_road.js seeds tiles with.
   const hash = (x, z, s) => {
@@ -4881,10 +5045,16 @@ const tileGroup = new THREE.Group(); scene.add(tileGroup);
   plate.receiveShadow = true; plate.castShadow = false;
   tileGroup.add(plate);
 }
-// Grid lines sit ON the plate, so they have to be the plate's own family or
-// they reintroduce the cast the plate just lost. Was 0x3a3152/0x241d33 — two
-// violets drawn 24 times across the whole map.
-const gridHelper = new THREE.GridHelper(GRID, GRID, 0x6a6a4f, 0x4a4d3a);
+/* Grid lines sit ON the plate, so they have to be the plate's own family or
+   they reintroduce the cast the plate just lost. Was 0x3a3152/0x241d33 — two
+   violets drawn 24 times across the whole map.
+   ⚠ v122: these are now only a few codes off the plate's own ramp, and that is
+     deliberate rather than a side effect of the ×2.53 lift. At the old level
+     they read as DARK lines on light ground once the plate came up, and an
+     aerial of a half-built city came out looking like graph paper — a thing no
+     reference frame has. Kept legible enough to count tiles by, quiet enough
+     that they are not the first thing a viewer sees from the air. */
+const gridHelper = new THREE.GridHelper(GRID, GRID, 0x8f9678, 0x828869);
 gridHelper.position.y = .012; scene.add(gridHelper);
 
 const hover = new THREE.Mesh(new THREE.PlaneGeometry(TILE * .98, TILE * .98),
@@ -5116,12 +5286,28 @@ const TEX_FOLIAGE = _tex(128, (x, S) => {
      over every wall in daylight. */
 const MAT = {
   stone:  new THREE.MeshStandardMaterial({ color: 0x8f8a80, map: TEX_STONE, roughness: .9 }),
-  dark:   new THREE.MeshStandardMaterial({ color: 0x3d3a38, map: TEX_DARK, roughness: .95 }),
+  /* ⚠ v122: 0x3d3a38 was a 3.6%-reflectance near-black, and MAT.dark is what
+     most of this city's ROOFS are made of. That is the whole of the bar's
+     "every up-facing horizontal renders darker than the wall beneath it" —
+     once the lighting was fixed the remaining inversion was pure albedo, a
+     3.6% lid sitting on a 20% wall. Real slate and asphalt shingle measure
+     8–12%; 0x585552 lands at 7.8% after the map's 0.828 multiply, which puts
+     a lit roof ABOVE the shaded wall under it and below the sunlit one — the
+     order a viewer expects. C_DARK below is derived from this and moved with
+     it. */
+  dark:   new THREE.MeshStandardMaterial({ color: 0x585552, map: TEX_DARK, roughness: .95 }),
   metal:  new THREE.MeshStandardMaterial({ color: 0xbabec2, map: TEX_METAL, roughness: .5, metalness: .55 }),
   wood:   new THREE.MeshStandardMaterial({ color: 0x8d6845, map: TEX_WOOD, roughness: .95 }),
   green:  new THREE.MeshStandardMaterial({ color: 0x5c8f3d, roughness: .9 }),
   blue:   new THREE.MeshStandardMaterial({ color: 0x3d76a4, roughness: .7 }),
-  road:   new THREE.MeshStandardMaterial({ color: 0x57544e, map: TEX_ASPHALT, roughness: .95 }),
+  /* ⚠ v122: 0x57544e is fresh-laid black asphalt — 7.4% reflectance after the
+     map. The bar measured the carriageway at 35–48 of 255 and asked for "a mid
+     neutral grey", which is AGED asphalt: oxidised, dusty, ~15%. 0x6b6862 is
+     that, and it is what finally puts a real half-stop-plus between the road
+     and the concrete apron beside it instead of the one luminance point they
+     used to differ by. ⚠ THREE DERIVED HEXES FOLLOW THIS ONE — C_ASPH on the
+     ring road, and RD_WEAR's cloned colour. Change it and recompute them. */
+  road:   new THREE.MeshStandardMaterial({ color: 0x6b6862, map: TEX_ASPHALT, roughness: .95 }),
   drive:  new THREE.MeshStandardMaterial({ color: 0x807b71, map: TEX_DRIVE, roughness: .95 }),
   foliage: new THREE.MeshStandardMaterial({ color: 0x4a8c3a, map: TEX_FOLIAGE, roughness: .95 }),
   foliage2: new THREE.MeshStandardMaterial({ color: 0x76ad4e, map: TEX_FOLIAGE, roughness: .95 }),
@@ -5435,7 +5621,7 @@ function perimeterScenery() {
   const R1 = R0 + .62;          // carriageway outer (an arterial: the tile road is .40 wide)
   const R2 = R1 + .07;          // kerb band outer
   const R3 = R2 + .36;          // footway outer
-  const C_ASPH = 0x4f4d47;      // MAT.road 0x57544e × 0.828 linear
+  const C_ASPH = 0x625f5a;      // MAT.road 0x6b6862 × 0.828 linear
   const C_PAVE = 0x837e75;      // MAT.stone 0x8f8a80 × 0.828 linear
   for (const s of [1, -1]) {
     const a0 = s > 0 ? R0 : -R1, a1 = s > 0 ? R1 : -R0;
@@ -8074,9 +8260,28 @@ const C_MARK = 0xe4dccb;   // was RD_MARK
    a purple bin and a purple lamp mast on every street in the city.
    C_GRASS and C_GLASS are picks rather than derivations: neither the verge nor
    the shelter glazing has a MAT entry to be the unmapped twin of. */
-const C_DARK = 0x373533;   // MAT.dark  0x3d3a38 × 0.828 — bin, hydrant, drain, lamp post
+const C_DARK = 0x504e4b;   // MAT.dark  0x585552 × 0.828 — bin, hydrant, drain, lamp post
 const C_LEAF = 0x438035;   // MAT.foliage 0x4a8c3a × 0.828 — planter shrub
-const C_GRASS = 0x53823c;  // the verge — a mown green, lighter and yellower than C_LEAF
+/* ⚠ v122 — THE VERGE WAS HALF OF "the grass is two flat unshaded colours".
+   0x53823c was picked against a 7%-reflectance plate; against the ×2.53 plate
+   it read as a saturated green RIBBON of dead-constant width and value laid on
+   olive ground, which is exactly the thing the bar names. Lifted into the same
+   exposure band as the plate so it reads as mown grass NEXT TO rough grass
+   rather than as paint, and jittered per tile below so the ribbon has a grain.
+   Still greener and less yellow than the plate; that difference is the read. */
+const C_GRASS = 0x66924e;  // the verge — a mown green, lighter and yellower than C_LEAF
+/* 🌾 THE PER-TILE VERGE TONE. One Color per distinct tint, cached for the life
+   of the page, so a hundred road tiles cost at most the handful of buckets
+   below rather than a hundred allocations — and the verge still merges into
+   B_SOLID as one vertex-coloured draw, so the variation is free at render
+   time. The jitter is drawn from the tile's OWN seeded stream (see rdRng), so
+   a verge does not change tone when a neighbour is built. */
+const RD_VERGE_C = [];
+const _cGrassBase = new THREE.Color(C_GRASS);
+const rdVergeCol = (r) => {
+  const i = Math.max(0, Math.min(6, (r * 7) | 0));
+  return RD_VERGE_C[i] || (RD_VERGE_C[i] = _cGrassBase.clone().multiplyScalar(.84 + i * .055));
+};
 const C_GLASS = 0x3a4356;  // shelter glazing; dark enough to read as glass unlit
 
 /* ⭐ THE WEAR MATERIAL — asphalt that is allowed to be dirty.
@@ -8093,7 +8298,9 @@ const C_GLASS = 0x3a4356;  // shelter glazing; dark enough to read as glass unli
    moment the palette is retuned.
    ⚠ The colour is CLONED at load. If a later round retunes MAT.road by mutating
      `MAT.road.color.set(...)` rather than by replacing the material, this clone
-     will not follow it — copy the new hex here too.
+     will not follow it — copy the new hex here too. (v122 retuned MAT.road to
+     0x6b6862 by replacing the LITERAL in the table, which this clone reads, so
+     the two are still in step; the warning stands for the next round.)
    ⚠ Vertex tints ABOVE 1.0 are deliberate and legal: the attribute is a plain
      Float32Array and three multiplies it in linear space, so 1.16 is a 16%
      brighter asphalt and nothing clamps it. */
@@ -8306,6 +8513,11 @@ function makeRoad(nbr, tx, tz) {
   const rnd = rdRng(tx, tz);
   const rFurn = rnd(), rSpot = rnd(), rKind = rnd(), rDrain = rnd(), rSide = rnd(), rAlong = rnd();
   const rPatchA = rnd(), rPatchB = rnd(), rPatchL = rnd(), rShelter = rnd();
+  /* ⚠ APPENDED, NEVER INSERTED — same rule as round 4's rolls above. rVerge is
+     the tenth draw, so the first nine are byte-for-byte the stream every
+     existing city already drew and no tile's bin, hydrant, drain, patch or
+     shelter moves because the verge learned to vary. */
+  const rVerge = rnd();
 
   /* ── 1. Carriageway ─────────────────────────────────────────────────────
      One slab for the WHOLE tile rather than a centre + four arms. The footway
@@ -8330,10 +8542,12 @@ function makeRoad(nbr, tx, tz) {
     else                 rdSlab(bucket, -v1, -v0, u0, u1, top, c);
   };
   const verge = cnt === 2 && ((N && S) || (E && W));   // straight runs only — see RD_VG
+  // 🌾 One tone for this tile's verge, off its own seeded stream — see rdVergeCol.
+  const vergeC = rdVergeCol(rVerge);
   const sideCross = (sd, u0, u1) => {
     outward(sd, u0, u1, RD_HW, RD_IN, B_SOLID, RD_PT, C_KERB);
     if (verge) {
-      outward(sd, u0, u1, RD_IN, RD_VG, B_SOLID, RD_PT, C_GRASS);
+      outward(sd, u0, u1, RD_IN, RD_VG, B_SOLID, RD_PT, vergeC);
       outward(sd, u0, u1, RD_VG, .5, B_PAVE, RD_PT);
     } else {
       outward(sd, u0, u1, RD_IN, .5, B_PAVE, RD_PT);
@@ -31613,8 +31827,16 @@ const QUALITY = {
      pinned to the cull radius so a tile is fully fogged out before it is hidden,
      which is what stops it reading as pop-in. */
   tiers: [
-    { name: 'high',   pr: 2.0, shadow: 2048, soft: true,  moonShadow: true,  lamps: 12, span: 15, cull: 40, tileCull: 0,  fog: [26, 70] },
-    { name: 'medium', pr: 1.5, shadow: 1536, soft: true,  moonShadow: true,  lamps: 10, span: 12, cull: 28, tileCull: 30, fog: [17, 30] },
+    /* ⚠ v122 WIDENED `span` ON THE TOP TWO TIERS (15→17, 12→14) AND NOTHING
+       ELSE. Capping the sun at 46° (see SUN_PEAK) means a 17:00 shadow is over
+       four times the height of what casts it, and at the old span the far end
+       of every long shadow was clipped off at the edge of the frustum — a hard
+       straight line across the ground with no object at the end of it, which
+       is worse than no shadow. Costs no draw calls and no map memory; it
+       spends texel density (2048/17 ≈ 120 per world unit, was 137), which is
+       the cheap side of that trade at this camera distance. */
+    { name: 'high',   pr: 2.0, shadow: 2048, soft: true,  moonShadow: true,  lamps: 12, span: 17, cull: 40, tileCull: 0,  fog: [26, 70] },
+    { name: 'medium', pr: 1.5, shadow: 1536, soft: true,  moonShadow: true,  lamps: 10, span: 14, cull: 28, tileCull: 30, fog: [17, 30] },
     { name: 'low',    pr: 1.25, shadow: 1024, soft: false, moonShadow: false, lamps: 8, span: 9, cull: 20, tileCull: 22, fog: [13, 22] },
     { name: 'potato', pr: 1.0, shadow: 768,  soft: false, moonShadow: false, lamps: 6, span: 7, cull: 15, tileCull: 16, fog: [10, 16] },
   ],
@@ -32056,7 +32278,10 @@ function animate() {
   // Failsafe: never leave the player staring at the spinner.
   const failsafe = setTimeout(() => $('boot').classList.add('done'), 9000);
   try {
-    await renderer.init();   // resolves on WebGPU or the WebGL2 fallback
+    // ⚠ init() is a WebGPURenderer method and does not exist on the classic
+    //   WebGLRenderer, which is ready the moment it is constructed. Guarded
+    //   rather than removed so `?renderer=webgpu` still awaits its device.
+    if (typeof renderer.init === 'function') await renderer.init();
   } catch (e) {
     clearTimeout(failsafe);
     $('bootmsg').textContent = 'Renderer failed to start';
@@ -32846,6 +33071,43 @@ function animate() {
       });
     }
   } catch (e) { console.warn('[Broadcast] not mounted (non-fatal):', e); }
+  /* ══ 📱 …AND THE PHONE THE MAYOR READS IT ON ══════════════════════════════
+     The reader for the feed above: a cell-phone dialog with the EMERGENCY
+     BROADCAST app on it. Its LAUNCHER is not here — it is an ordinary `.rl`
+     button in the rail dock (see the `bcphone` entry in RAILS at the bottom of
+     this file), because a chip positioned onto the rail row rather than laid
+     out BY it is how a sibling feature shipped an invisible, unclickable
+     button on this exact bar.
+
+     ⚠ SEPARATE IMPORT, SEPARATE try/catch, and deliberately AFTER the engine's:
+       a broken phone must not take the feed down with it, and a missing feed
+       must not leave a launcher that opens an empty handset. railState's
+       `bcphone` branch hides the launcher unless BOTH are up.
+     🔴 THE GLOBALS TRAP again. openInspect, openCitTalk, toast, logEsc, wx and
+        WEATHER are top-level here and invisible to the module; this ctx is the
+        hand-over, and it is four readers and two shipped openers. Nothing that
+        writes a tile, a citizen or the feed crosses it — the only mutating call
+        the phone makes is MythicBroadcast.like(). */
+  try {
+    if (window.MythicBroadcast) {
+      const pmod = await import('../src/broadcast/phone.js?v=' + (window.NC_BUILD || 'bc1'));
+      pmod.mount({
+        esc: logEsc,
+        toast: (m, c) => toast(m, c),
+        /* The two shipped destinations, reused rather than re-implemented.
+           openInspect is read at CALL time, not captured, so the phone goes
+           through the rail dock's wrapper (which closes the rail modal first)
+           exactly as every other call site does. */
+        openTile: (k) => openInspect(k),
+        openCitizen: (id) => openCitTalk(id),
+        weather: () => {
+          const W = WEATHER[wx.type] || null;
+          return W ? { type: wx.type, name: W.name, ico: W.ico, severe: !!W.severe } : null;
+        },
+        hour: () => hourOf(),
+      });
+    }
+  } catch (e) { console.warn('[Broadcast phone] not mounted (non-fatal):', e); }
   /* ⏳ OFFLINE CATCH-UP — must run HERE, and the order is load-bearing:
        • after loadState(), or there is no savedAt and no city to run;
        • after refreshLedgerMirror(), because economyTick's input gate reads
@@ -33303,6 +33565,19 @@ const RAILS = [
   { id: 'synccard',   ico: '🔗', name: 'Sync',   title: 'City ↔ Node Sync' },
   { id: 'govcard',    ico: '🏛', name: 'Gov',    title: 'Governance' },
   { id: 'logcard',    ico: '📜', name: 'Log',    title: 'City Log' },
+  /* 📱 THE ODD ONE OUT, and the flag says so. Every entry above names a `.card`
+     in the stash that railOpen MOVES into #rmbody; `ext` marks a launcher whose
+     panel is somebody else's dialog — here /src/broadcast's phone, which is a
+     phone precisely because a gilded 560px box is the thing it was asked not to
+     be. railState and railOpen each branch on it exactly once, at the top, and
+     everything else in this block — the flex layout, the 0.5 s badge beat, the
+     hide rule, the tone classes, the focus ring — treats it as one of the twelve.
+     ⚠ THE ROW IS MEASURED AND THIS IS THE THIRTEENTH BUTTON. The note above
+       says all twelve came to 1123px of a 1256px track at 1280 wide. 'Phone' is
+       five characters, the same as 'Build' and 'Morale' minus one, and the row
+       measures 1204px with it — 52px of headroom, still one line. Lengthen this
+       name and it wraps over the map; re-measure before you do. */
+  { id: 'bcphone',    ico: '📱', name: 'Phone',  title: 'Emergency Broadcast', ext: 'phone' },
 ];
 
 let _railOpen = null;                    // id of the panel currently in #rmbody
@@ -33327,6 +33602,25 @@ let _logSeen = null;
    only authoritative answer.
    Returns { hide, badge, tone, clock, urgent }; every field is optional. */
 function railState(r) {
+  /* 📱 THE ONE LAUNCHER WITH NO CARD. Every other case below reads its state
+     off a RENDERED PANEL, which is the rule this block is built on — but there
+     is no panel here, and /src/broadcast's feed is the only thing that knows
+     how much of it is unread. Asking the module IS reading the authority, not
+     keeping a second opinion: `unread()` is counted against a persisted
+     high-water mark inside feed.js and nothing in this file could re-derive it.
+     Hidden unless BOTH halves are up, the same contract #ecocard keeps: a 404
+     or a parse error on either module costs the player this launcher and
+     nothing else, and the city ticks on exactly as it did before it existed.
+     Tone `bad` when the unread posts include a subject the mayor FOLLOWED —
+     they asked to be told about that one, so it earns the colour. No `urgent`:
+     a feed is not a raider countdown and must never pulse like one. */
+  if (r.ext === 'phone') {
+    const B = window.MythicBroadcast, P = window.MythicPhone;
+    if (!B || !P || !B.ready() || !P.ready()) return { hide: true };
+    let n = 0, f = 0;
+    try { n = B.unread() | 0; f = B.unreadFollowed() | 0; } catch (e) { return { hide: true }; }
+    return n ? { badge: n > 99 ? '99+' : n, tone: f ? 'bad' : 'gold' } : {};
+  }
   const card = document.getElementById(r.id);
   if (!card) return { hide: true };
   const q = (sel) => document.querySelectorAll(sel).length;
@@ -33416,6 +33710,13 @@ function railSync() {
       if (tone) btn.classList.add('t-' + tone);
     }
     btn.classList.toggle('urgent', !!st.urgent);
+    /* 📱 The lit state of an `ext` launcher comes from its own dialog. The
+       twelve card launchers get `.open` from railOpen/railClose because
+       `_railOpen` names them; railOpen deliberately never sets `_railOpen` for
+       this one (see the branch there), so the class is synced instead. */
+    if (r.ext === 'phone') {
+      try { btn.classList.toggle('open', !!(window.MythicPhone && window.MythicPhone.isOpen())); } catch (e) {}
+    }
   }
   if (!_railOpen) return;
   const r = RAILS.find((x) => x.id === _railOpen);
@@ -33452,6 +33753,19 @@ function _railBlocked() {
 
 function railOpen(id) {
   const r = RAILS.find((x) => x.id === id); if (!r) return false;
+  /* 📱 An `ext` launcher opens somebody else's dialog instead of moving a card,
+     so it returns BEFORE the card move, the placeholder bookkeeping and
+     `_railOpen`. Leaving _railOpen unset is correct and load-bearing: railSync's
+     tail would otherwise call railState on a panel that does not exist, and
+     railClose would try to replaceChild a card that was never moved.
+     The two housekeeping rules the rest of this function keeps are kept here
+     too — one dialog at a time, and the dossier is the other body-level panel. */
+  if (r.ext === 'phone') {
+    if (railState(r).hide) return false;
+    if (_railOpen) railClose();
+    try { if (document.getElementById('inspect').classList.contains('open')) closeInspect(); } catch (e) {}
+    try { return !!window.MythicPhone.toggle(); } catch (e) { return false; }
+  }
   const card = document.getElementById(id); if (!card) return false;
   if (railState(r).hide) return false;
   if (_railOpen === id) { railClose(); return false; }

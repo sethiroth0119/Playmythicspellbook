@@ -79,3 +79,8 @@ public/assets/Units/unit frames/New units/*.gif
 # checkpoint commits during a wave use `git add -A`, so without this rule one
 # stray bake lands in the repo permanently.
 /shots/
+
+# Gauntlet harness: vendored three.js + regenerable screenshots
+.gauntlet/package/
+.gauntlet/*.tgz
+.gauntlet/shots/

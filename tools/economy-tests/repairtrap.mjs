@@ -37,10 +37,31 @@
    `OSIM_REPAIR_SHARE × decayMul` and a maxed player paid 0.292 against a tuned
    0.73. Every row in this file was green over a 2.4× faucet. §2 and §7 now carry
    a `hardened` axis and `raw-decay` in the sabotage switch rebuilds it on demand.
+
+   🔴 AND THEN THE SAME DEFECT CAME BACK THROUGH THE OTHER DOOR, AND THIS FILE WAS
+   BLIND TO IT BY CONSTRUCTION — read this before adding a section.
+   A repair price is a fraction of `units restored × ₵ per unit`. The `hardened`
+   sweep above closed the UNITS factor. Nothing here ever touched the ₵ factor:
+   every section priced the output at the flat `OSIM_RESERVE_PRICE` while the
+   player is actually paid `_osimSellPrice`, and Market Insight — a shipped,
+   purchasable ◈100/200 node, max L2 — multiplies that by up to 1.2×. So handing
+   `freshState()` a `market: 2` and changing NOTHING else still printed "✅ all
+   checks green" over a faucet running at 1.47× / 1.20× / 1.28× / 1.53× of the
+   pre-fix field (pumpjack / drill / refinery / deepcore, best play, 5,000 h,
+   measured through `_osimStepMachine` and sold at `_osimSellPrice`). The
+   effective share paid at the optimum fell from 0.735 / 0.730 / 0.728 / 0.735 at
+   market L0 to 0.588 / 0.647 / 0.610 / 0.588 at L2.
+   Two rules came out of that, and they are the ones to obey:
+     · EVERY sale in this file goes through `_osimSellPrice`, never through
+       `OSIM_RESERVE_PRICE`. A guard that sells at a price the game does not pay
+       cannot see a discount that lives in the difference.
+     · ANY section that touches a PRICE sweeps BOTH axes: hardened L0–L3 ×
+       market L0–L2. That is 12 configurations, not 4, and not 1.
+   `flat-reserve` in the sabotage switch rebuilds this exact trap on demand.
    ⚠ If you add a section that calls `freshState()` with no argument, you have
      written another blind one. That is fine for structural checks (§3/§5/§6 are
      research-independent: a floor is a floor and a string is a string), but any
-     section that touches a PRICE has to sweep HARDENED.
+     section that touches a PRICE has to sweep BOTH.
 
    It does not re-implement the arithmetic. Every constant and every function
    below is EXTRACTED from public/index.html by anchor + brace matching, exactly
@@ -78,6 +99,12 @@ let SRC = readFileSync(join(here, '..', '..', 'public', 'index.html'), 'utf8');
                    RESEARCHED rate. Invisible at zero R&D and worth up to 2.5× the
                    faucet with Hardened Components — the reason §2 and §7 now
                    carry a research axis
+     flat-reserve  denominate the repair at the flat `OSIM_RESERVE_PRICE` again
+                   while the player is paid `_osimSellPrice`, i.e. bill for
+                   Reserve-priced Cinder and hand over Market-Insight-priced
+                   Cinder. The SAME defect as `raw-decay` on the other factor of
+                   `units × ₵/unit`, and invisible at market L0 — the reason §2
+                   and §7 now carry a market axis as well
 
    `craft-price` + `cond-floor` together ARE the shipped trap. */
 const SAB = process.env.REPAIRTRAP_SABOTAGE || '';
@@ -93,7 +120,7 @@ function splice(name, find, repl) {
   SRC = SRC.replace(re, () => repl);
   console.log('🧨 SABOTAGE ACTIVE: ' + name);
 }
-/* → expected red, measured ALONE: 56 rows — §1 (4), §2 (48), §3 (4). §3's cells
+/* → expected red, measured ALONE: 152 rows — §1 (4), §2 (144), §3 (4). §3's cells
      are the indictment worth reading: with a bankroll to press the button with,
      the maintaining player finishes 5,000 h at ₵-1,283 on a pumpjack, ₵-1,721 on
      a refinery and ₵-9,224 on a deepcore, against ₵228 / ₵285 / ₵228 for doing
@@ -112,12 +139,21 @@ splice('craft-price',
      button would pass §1/§2 with full marks and still leave neglect free.
      §7 also stays green: putting the throttle back TIGHTENS the faucet, which is
      the direction §7 does not police.
-     `craft-price` + `cond-floor` together = 64 rows, the shipped trap exactly. */
+     `craft-price` + `cond-floor` together = 160 rows, the shipped trap exactly.
+     ⚠ Every count in this switch was RE-MEASURED after §2 gained a market axis
+       (48 → 144 checks) and §7 gained one (16 → 48). The old numbers were 56 / 12
+       / 16 / 48 / 64; only `cond-floor`'s 12 survived unchanged, because it is
+       the one defect that is purely structural and does not scale with the
+       research grid. Inheriting these rather than re-running them is how a
+       sabotage note becomes decoration. */
 splice('cond-floor',
   'function _osimCondFactor(m) {',
   'function _osimCondFactor(m) { return Math.max(0.25, m.condition / 100); } function _osimCondFactorFixed(m) {');
-/* → expected red, measured ALONE: 16 rows, ALL of them in §7 (4 machines × 4
-     research levels). §1–§6 all pass with full marks at 0.35 — repair still
+/* → expected red, measured ALONE: 48 rows, ALL of them in §7 and ALL 48 cells of
+     it (4 machines × 4 hardened × 3 market) — a uniformly wrong share is wrong
+     for every player, which is exactly what distinguishes it from the two
+     denomination defects that red only the cells where a perk applies.
+     §1–§6 all pass with full marks at 0.35 — repair still
      returns 2.86× what it costs at EVERY research level, neglect still stalls,
      the ×10 is still there, the panel still renders. That is precisely the hole
      this switch documents: every section written to prove "Repair is worth
@@ -129,8 +165,10 @@ splice('cond-floor',
 splice('repair-share',
   'const OSIM_REPAIR_SHARE = 0.73;',
   'const OSIM_REPAIR_SHARE = 0.35;');
-/* → expected red, measured ALONE: 48 rows — §2 (36) and §7 (12), ALL of them at
-     hardened ≥ 1. Every hardened-0 row in the whole file stays green, which is
+/* → expected red, measured ALONE: 144 rows — §2 (108) and §7 (36), ALL of them at
+     hardened ≥ 1 (9 of the 12 research cells: §2 4 machines × 9 × 3 conditions =
+     108, §7 4 machines × 9 = 36).
+     Every hardened-0 row in the whole file stays green, which is
      exactly how this shipped: the tree that carried it passed §1–§7 with full
      marks because every section measured a player with no R&D. Hardened
      Components is ◈80/160/260 in the shipped Supply Depot, so "the configuration
@@ -138,6 +176,26 @@ splice('repair-share',
 splice('raw-decay',
   'return (pts / Math.max(0.01, _osimDecayPerUnit())) * _osimMachineNetUnitValue(def);',
   'return (pts / Math.max(0.01, _osimRawDecayPerUnit())) * _osimMachineNetUnitValue(def);');
+/* → expected red, measured ALONE: 92 rows — §2 (72) and §7 (20), ALL of them at
+     market ≥ 1, and only where the ROUNDED price actually moves. `_osimSellPrice`
+     rounds, so oil goes 4 → 4 at market L1 (4 × 1.1 = 4.4) and only reaches 5 at
+     L2, while ore 7 → 8 and fuel 13 → 14 move at L1 already. That is exactly the
+     shape of the reds:
+       §2  8 of the 12 cells are market ≥ 1 → 4 machines × 8 × 3 conditions = 96,
+           less the 24 where the price does not move (pumpjack and deepcore at
+           M1, 2 machines × 4 hardened × 3) = 72.
+       §7  24 cells sit at a moved price; 4 of them (drill and refinery at H3)
+           still land inside the 1.10 tolerance because the pre-fix field was
+           itself research-sensitive and H3 has the most headroom = 20.
+     Every market-0 row in the file stays green, which is exactly how this
+     shipped: §1–§7 all passed with full marks because every section priced output
+     at the flat Reserve and every state carried market 0.
+     ⚠ §1/§3/§4/§5/§6 stay green and that is correct, not a miss. §1 and §3 run at
+       market 0 by design (they are the reported finding and a structural policy
+       race); §4/§5/§6 are a cost table, a floor and a string. */
+splice('flat-reserve',
+  'let v = _osimBasePrice(def.produces) * keep;\n  if (def.consumes) v -= _osimBasePrice(def.consumes) * (def.ratio || 1) * keep;',
+  'let v = (OSIM_RESERVE_PRICE[def.produces] || 0) * keep;\n  if (def.consumes) v -= (OSIM_RESERVE_PRICE[def.consumes] || 0) * (def.ratio || 1) * keep;');
 
 let bad = 0;
 const fail = (m) => { bad++; console.log('   ❌ ' + m); };
@@ -197,8 +255,12 @@ const FNS = [
 ];
 /* `_osimRepairValue` only exists after the fix. Extract it when present so the
    post-fix tree is measured through its own helper, and fall back when the
-   sabotage switch has replaced the whole pricing path. */
-const OPTIONAL = ['_osimRepairValue', '_osimMachineNetUnitValue'];
+   sabotage switch has replaced the whole pricing path.
+   ⚠ `_osimBasePrice` is OPTIONAL for the same reason and is NOT optional to
+     extract when it exists: `_osimMachineNetUnitValue` calls it, so leaving it
+     out turns every repair price into a ReferenceError rather than a wrong
+     number — the loudest possible failure, but not the one this file measures. */
+const OPTIONAL = ['_osimRepairValue', '_osimMachineNetUnitValue', '_osimBasePrice'];
 
 function boot() {
   const parts = [];
@@ -214,6 +276,12 @@ function boot() {
   return new Function('_osimState', parts.join('\n'));
 }
 const make = boot();
+/* The tuned share, read out of the page rather than retyped, purely so a failure
+   message can say what the sink was SUPPOSED to take. Never used as an
+   assertion: §7 asserts against the recorded pre-fix faucet, not against this. */
+const OSIM_REPAIR_SHARE_TXT = (() => {
+  try { return (grabConst('OSIM_REPAIR_SHARE').match(/=\s*([\d.]+)/) || [, '?'])[1]; } catch (e) { return '?'; }
+})();
 
 /* A minimal, honest field state: no prestige, no node, no price event. Every
    multiplier that could flatter either policy sits at 1.
@@ -227,15 +295,50 @@ const make = boot();
    `OSIM_REPAIR_SHARE × decayMul`. Changing this one field from 0 to 3 on the
    tree that shipped reds all four of §7's rows at 2.4–2.6×. A guard with a
    constant where the shipped game has a variable is not measuring the game.
-   `hardened` is the only research level that moves either side of the repair
-   arithmetic; the other four are speed/price/parts/convenience and are covered
-   by their own invariants elsewhere. */
-function freshState(hardened) {
+   🔴 AND `market` IS NOW AN ARGUMENT TOO, FOR THE SAME REASON ONE DOOR OVER.
+   The sentence that used to close this comment — "`hardened` is the only research
+   level that moves either side of the repair arithmetic; the other four are
+   speed/price/parts/convenience" — was FALSE, and it is the sentence that kept
+   this file blind for a whole round. Market Insight is not "price" in some
+   decorative sense: `_osimSellPrice` = Reserve × `_osimMarketMult()`, so it is
+   literally the ₵-per-unit factor of the repair value. Setting this one field to
+   2 on the tree that shipped reds §7 at 1.47× / 1.20× / 1.28× / 1.53×.
+   Where the other three genuinely stand, having been checked rather than assumed:
+     · tuning (Resonance Tuning) — SPEED. Wear is per-UNIT, so faster production
+       spends condition proportionally faster and buys proportionally more units.
+       Units-per-condition-point, which is what the price is denominated in, does
+       not move. Neutral on the share, and it lifts pre-fix and post-fix income
+       by the same factor. (Same argument covers prestige and the node bonus.)
+     · automation — L1 is auto-collect, L2 adds 10% CAP. Cap is buffer headroom;
+       it changes nothing per unit, and every section here drains the buffer.
+     · supply (Efficient Supply) — cheaper PARTS, via `_osimPartCost`.
+       Maintenance takes no parts at all (`pipe: 0`), so it cannot touch the
+       repair price. It is an entry cost and §4 is its guard.
+   And the four things outside OSIM_RESEARCH that could have moved either factor,
+   all read out of the source rather than assumed:
+     · the ADMIN-AUTHORED research types, `_osimResearchSum(…)`. There are exactly
+       four in the file: 'parts' (→ `_osimPartCost`, entry cost only), 'decay'
+       (→ `_osimDecayPerUnit`, so it is on BOTH sides), 'prices'
+       (→ `_osimMarketMult`, so as of this round it is on both sides too) and
+       'speed' (→ `_osimResonanceMul`, neutral). A custom node cannot open a fifth
+       door without a new type, and a new type needs an axis here.
+     · TIER upgrades and prestige and the connected-node bonus — `rateMul`/
+       `capMul`/`_osimResonanceMul`/`_osimNodeBonus`: speed and capacity, neutral
+       for the same reason tuning is.
+     · the FOUNDATION LEVY, `_osimSellSkim()` — an admin knob, not a perk, and it
+       already appears as `keep` on both sides of the ratio.
+     · GAS STATIONS, `_osimStationBid` = round(`_osimSellPrice('fuel')` × mul)
+       with mul ≤ 1 by the station ceiling. Selling there pays at or BELOW the
+       standing price, so it can only push the effective share paid up, never
+       down. It cannot discount the sink and needs no axis.
+   If a new node is added, ask which factor of `units × ₵ per unit` it moves. If
+   the answer is either, it needs an axis here. */
+function freshState(hardened, market) {
   return {
     cash: 0, aza: 0,
     inv: { oil: 0, ore: 0, fuel: 0 },
     parts: { pipe: 0, motor: 0, valve: 0, drillbit: 0 },
-    research: { supply: 0, hardened: hardened | 0, automation: 0, market: 0, tuning: 0 },
+    research: { supply: 0, hardened: hardened | 0, automation: 0, market: market | 0, tuning: 0 },
     /* Mirrors the shipped `_osimFreshState`. Omitting it is not a harmless stub
        gap: `_osimRenderInspector` reads blueprints[bp] for the upgrade card and
        throws without it, which reds §6 for reasons that have nothing to do with
@@ -250,16 +353,28 @@ const TYPES = ['pumpjack', 'drill', 'refinery', 'deepcore'];
 /* The four states of the shipped Hardened Components node. L0 is the free player;
    L3 is ◈540 of R&D and the cheapest way to break the sink if it is priced wrong. */
 const HARDENED = [0, 1, 2, 3];
+/* The three states of the shipped Market Insight node (◈100/200, max L2), which
+   multiplies every sell price by 1 + 0.1 × level. Cheaper than Hardened and it
+   was worth up to 1.53× the faucet when the repair price could not see it. */
+const MARKET = [0, 1, 2];
 
 /* The value a machine's unit is actually worth to the player once the Foundation
    levy is taken and, for a converter, once the input it burns is paid for at the
-   same Reserve it would otherwise have been sold into. This is the OUTPUT side —
-   the side the ×10 deliberately did not touch — and it is what a maintenance
-   action has to be measured against. */
+   same price it would otherwise have been sold into.
+   🔴 `_osimSellPrice`, NOT `OSIM_RESERVE_PRICE`, AND THAT IS THE WHOLE POINT OF
+     THIS ROUND. This helper used to read the flat Reserve. Every section that
+     calls it was therefore measuring a player who is paid the Reserve — a player
+     who does not exist above Market Insight L0 — so the gap between what the
+     repair was priced at and what the sale really returned was invisible in the
+     only place it could have been seen. Read the price the game pays. Absent a
+     live spike (`priceEvent` is null in `freshState`, as it is for a player who
+     is not staring at the field UI) this is exactly the standing price the
+     shipped `_osimBasePrice` denominates the repair in, which is what makes the
+     share come out invariant instead of merely large. */
 function netUnitValue(A, type) {
   const def = A.OSIM_MACHINES[type], skim = 1 - A._osimSellSkim();
-  let v = (A.OSIM_RESERVE_PRICE[def.produces] || 0) * skim;
-  if (def.consumes) v -= (A.OSIM_RESERVE_PRICE[def.consumes] || 0) * (def.ratio || 1) * skim;
+  let v = A._osimSellPrice(def.produces) * skim;
+  if (def.consumes) v -= A._osimSellPrice(def.consumes) * (def.ratio || 1) * skim;
   return v;
 }
 
@@ -296,7 +411,7 @@ console.log('    ' + pad('machine', 11) + pad('in ₵', 9) + pad('out ₵', 9) +
   }
 }
 
-/* ── §2  THE SAME RATIO AT EVERY CONDITION LEVEL, AT EVERY RESEARCH LEVEL ────
+/* ── §2  THE SAME RATIO AT EVERY CONDITION × EVERY RESEARCH CONFIGURATION ────
    A repair priced off a machine's BUILD cost and a repair priced off the OUTPUT
    it restores behave differently as damage shrinks, so 25% alone is not enough:
    a formula could be positive deep in the red and negative for a light touch-up.
@@ -315,39 +430,53 @@ console.log('    ' + pad('machine', 11) + pad('in ₵', 9) + pad('out ₵', 9) +
    is not just > 1 but INVARIANT across research, which is the property that
    actually protects the sink. The tolerance is 2%: the price is Math.ceil'd with
    a ₵5 floor, so a bigger, rarer repair amortises the rounding slightly better,
-   and that residual is the only research-sensitivity the pricing may have. */
-console.log('\n§2  out/in at every condition level × every Hardened Components level');
-console.log('    ' + pad('machine', 11) + pad('hardened', 10) + pad('@25%', 12) + pad('@50%', 12) + pad('@75%', 12));
+   and that residual is the only research-sensitivity the pricing may have.
+
+   🔴 AND AT EVERY MARKET INSIGHT LEVEL, WHICH IS THE AXIS IT WAS *STILL* MISSING.
+   The hardened sweep above closed the UNITS factor of `units × ₵ per unit` and
+   left the ₵ factor exactly as blind: `netUnitValue` priced output at the flat
+   Reserve, and so did `_osimMachineNetUnitValue`, so the two agreed with each
+   other and disagreed with the game. At Market Insight L2 the player was paid
+   1.2× and charged 1.0×, an effective share of 0.60 against a tuned 0.73, and
+   every cell in this section stayed green because both sides of its ratio were
+   computed from the same wrong price. The baseline cell is now the L0/L0 player
+   and all twelve configurations are measured against it. */
+console.log('\n§2  out/in at every condition level × Hardened L0–L3 × Market Insight L0–L2');
+console.log('    ' + pad('machine', 11) + pad('research', 12) + pad('@25%', 12) + pad('@50%', 12) + pad('@75%', 12));
 {
   const INVAR_TOL = 0.02;
   for (const type of TYPES) {
     const base = {};
     for (const hard of HARDENED) {
-      const st = freshState(hard); const A = make(st);
-      const row = [];
-      for (const cond of [25, 50, 75]) {
-        const m = { type, tier: 1, condition: cond, buffer: 0, timer: 0 };
-        const rc = A._osimRepairCost(m);
-        const cashIn = rc.cash + (rc.pipe || 0) * A._osimPartCost('pipe');
-        /* The units this repair really buys: the machine burns condition at the
-           RESEARCHED rate whatever the price was denominated in. */
-        const out = ((100 - cond) / A._osimDecayPerUnit()) * netUnitValue(A, type);
-        const ratio = out / cashIn;
-        row.push(pad('₵' + Math.round(cashIn) + '→' + f2(ratio) + '×', 12));
-        /* Record the L0 ratio BEFORE the trap check, not after. Under the
-           `craft-price` sabotage L0 is itself a trap (0.54×), and skipping the
-           record on a failure left `base[cond]` undefined — so the L3 row, which
-           squeaks over 1× purely because the raw-rate bug hands it a 2.5×
-           discount, then reported "against NaN× at L0". A guard whose combined
-           failure mode is NaN is not a guard. */
-        if (hard === 0) base[cond] = ratio;
-        if (!(ratio > 1)) { fail(type + ' L' + hard + ' @' + cond + '% is a TRAP: ₵' + Math.round(cashIn) + ' in, ₵' + Math.round(out) + ' out (' + f2(ratio) + '×)'); continue; }
-        if (hard === 0) { ok(type + ' L0 @' + cond + '% → ' + f2(ratio) + '×'); continue; }
-        const drift = ratio / base[cond] - 1;
-        if (Math.abs(drift) <= INVAR_TOL) ok(type + ' L' + hard + ' @' + cond + '% → ' + f2(ratio) + '× (' + (drift >= 0 ? '+' : '') + (drift * 100).toFixed(1) + '% vs L0 — share invariant)');
-        else fail(type + ' L' + hard + ' @' + cond + '% pays back ' + f2(ratio) + '× against ' + f2(base[cond]) + '× at L0 (' + (drift * 100).toFixed(0) + '%) — Hardened Components is moving the REPAIR SHARE, i.e. the sink, not just the wear rate');
+      for (const mkt of MARKET) {
+        const st = freshState(hard, mkt); const A = make(st);
+        const cfg = 'H' + hard + '/M' + mkt, isBase = hard === 0 && mkt === 0;
+        const row = [];
+        for (const cond of [25, 50, 75]) {
+          const m = { type, tier: 1, condition: cond, buffer: 0, timer: 0 };
+          const rc = A._osimRepairCost(m);
+          const cashIn = rc.cash + (rc.pipe || 0) * A._osimPartCost('pipe');
+          /* The units this repair really buys, at the ₵ the player really gets:
+             the machine burns condition at the RESEARCHED rate and the output
+             sells at `_osimSellPrice`, whatever the price was denominated in. */
+          const out = ((100 - cond) / A._osimDecayPerUnit()) * netUnitValue(A, type);
+          const ratio = out / cashIn;
+          row.push(pad('₵' + Math.round(cashIn) + '→' + f2(ratio) + '×', 12));
+          /* Record the baseline ratio BEFORE the trap check, not after. Under the
+             `craft-price` sabotage the baseline cell is itself a trap (0.54×), and
+             skipping the record on a failure left `base[cond]` undefined — so the
+             L3 row, which squeaks over 1× purely because the raw-rate bug hands it
+             a 2.5× discount, then reported "against NaN× at L0". A guard whose
+             combined failure mode is NaN is not a guard. */
+          if (isBase) base[cond] = ratio;
+          if (!(ratio > 1)) { fail(type + ' ' + cfg + ' @' + cond + '% is a TRAP: ₵' + Math.round(cashIn) + ' in, ₵' + Math.round(out) + ' out (' + f2(ratio) + '×)'); continue; }
+          if (isBase) { ok(type + ' ' + cfg + ' @' + cond + '% → ' + f2(ratio) + '× (baseline)'); continue; }
+          const drift = ratio / base[cond] - 1;
+          if (Math.abs(drift) <= INVAR_TOL) ok(type + ' ' + cfg + ' @' + cond + '% → ' + f2(ratio) + '× (' + (drift >= 0 ? '+' : '') + (drift * 100).toFixed(1) + '% vs H0/M0 — share invariant)');
+          else fail(type + ' ' + cfg + ' @' + cond + '% pays back ' + f2(ratio) + '× against ' + f2(base[cond]) + '× at H0/M0 (' + (drift * 100).toFixed(0) + '%) — a purchasable research node is moving the REPAIR SHARE, i.e. the sink, not just the wear rate or the sell price');
+        }
+        console.log('    ' + pad(isBase ? type : '', 11) + pad(cfg, 12) + row.join(''));
       }
-      console.log('    ' + pad(hard === 0 ? type : '', 11) + pad('L' + hard, 10) + row.join(''));
     }
   }
 }
@@ -400,6 +529,12 @@ console.log('    ' + pad('machine', 11) + pad('REPAIR ₵', 12) + pad('NEGLECT �
       const m = { type, tier: 1, condition: 100, buffer: 0, timer: 0 };
       st.placed.push(m);
       const def = A.OSIM_MACHINES[type], skim = 1 - A._osimSellSkim();
+      /* `_osimSellPrice`, not `OSIM_RESERVE_PRICE` — the price the game pays.
+         Identical here (this section runs the market-L0 player on purpose: it is
+         a structural race between two POLICIES, and §7 is where research levels
+         are swept), but the flat Reserve is the exact reading that hid a 1.5×
+         faucet for a round, so it does not get written down anywhere any more. */
+      const pOut = A._osimSellPrice(def.produces), pIn = def.consumes ? A._osimSellPrice(def.consumes) : 0;
       let cash = FLOAT, units = 0, repairs = 0;
       for (let t = 0; t < HOURS * 3600; t += STEP) {
         if (policy === 'repair' && m.condition <= 25) {
@@ -412,8 +547,8 @@ console.log('    ' + pad('machine', 11) + pad('REPAIR ₵', 12) + pad('NEGLECT �
         const made = m.buffer - before;
         if (made > 0) {
           units += made;
-          cash += made * (A.OSIM_RESERVE_PRICE[def.produces] || 0) * skim;
-          if (def.consumes) cash -= made * (def.ratio || 1) * (A.OSIM_RESERVE_PRICE[def.consumes] || 0) * skim;
+          cash += made * pOut * skim;
+          if (def.consumes) cash -= made * (def.ratio || 1) * pIn * skim;
           m.buffer = 0; // the player collects and sells; nothing is lost to a full cap
         }
       }
@@ -487,7 +622,13 @@ console.log('\n§6  the Repair panel renders and quotes the new price');
   const parts = [];
   parts.push('"use strict";');
   for (const c of ['OSIM_PARTS', 'OSIM_MACHINES', 'OSIM_TIER', 'OSIM_RESEARCH', 'OSIM_RESERVE_PRICE', 'OSIM_DECAY_PER_UNIT', 'OSIM_REPAIR_SHARE', 'OSIM_PART_CX', 'OSIM_BLUEPRINTS']) parts.push(grabConst(c));
-  for (const f of FNS.concat(['_osimRepairValue', '_osimMachineNetUnitValue', '_osimRateTxt', '_osimMachineEffSecs', '_osimMachineOutTxt', '_osimUpgradeBP', '_osimUpgradeCost', '_osimRenderInspector'])) {
+  /* ⚠ `_osimBasePrice` is in this list because §6 caught its absence the first
+     time the price oracle was split: `_osimMachineNetUnitValue` calls it, so the
+     inspector threw a ReferenceError on all 20 cells and the Repair button would
+     not have rendered at all. That is §6 earning its place — an arithmetic fix
+     that silently breaks the panel is the same defect as a wrong price. Keep this
+     list in step with the pricing path. */
+  for (const f of FNS.concat(['_osimRepairValue', '_osimMachineNetUnitValue', '_osimBasePrice', '_osimRateTxt', '_osimMachineEffSecs', '_osimMachineOutTxt', '_osimUpgradeBP', '_osimUpgradeCost', '_osimRenderInspector'])) {
     try { parts.push(grabFn(f)); } catch (e) { throw new Error('§6 ' + e.message); }
   }
   parts.push('function _osimAutoCollect() { return false; }');
@@ -568,21 +709,45 @@ console.log('\n§6  the Repair panel renders and quotes the new price');
      now against an unresearched player then is not a measurement, and the pre-fix
      field was itself slightly research-sensitive (+3% to +18% from L0 to L3,
      because a slower-wearing machine takes longer to settle onto the 0.25 floor
-     that capped it). Both columns are the same player. */
-console.log('\n§7  best-play Cinder per machine-hour vs the pre-fix field, at every research level');
+     that capped it). Both columns are the same player.
+
+   🔴 AND THE SECOND AXIS, WHICH IS WHY THIS SECTION WENT GREEN OVER A 1.5× FAUCET
+     A ROUND AFTER IT WAS WRITTEN TO CATCH EXACTLY THAT. It sold every unit at
+     `A.OSIM_RESERVE_PRICE[...]` — the flat Reserve — while the shipped game pays
+     `_osimSellPrice`, and it ran every cell at Market Insight L0. Both halves had
+     to be wrong together for the hole to exist, and they were: pricing the sale
+     at the Reserve makes the market level irrelevant, and pinning the market
+     level at 0 makes the price identical to the Reserve. Handing `freshState()`
+     `market: 2` and changing nothing else STILL printed all-green.
+     It now sells at `_osimSellPrice` and sweeps market L0–L2 as well, 48 cells.
+     On the tree that shipped, the market-L2 column read
+     1.475× / 1.205× / 1.284× / 1.532× (pumpjack / drill / refinery / deepcore at
+     hardened L0) — and drill and refinery already broke at market L1, because the
+     price oracle rounds and ore 7→8 and fuel 13→14 move at L1 while oil 4→4 does
+     not move until L2. */
+console.log('\n§7  best-play Cinder per machine-hour vs the pre-fix field, at every research configuration');
 {
-  /* Measured on 92bd66fca8, 5,000 h, the GRID below: the income a rational player
-     took out of this field BEFORE the condition floor was removed, at each level
-     of Hardened Components. Pre-fix best play is "never repair" in every cell —
-     the floor made neglect dominant — so these are grid-insensitive; the post-fix
-     side is not, which is why the grid is resolved around its optima. */
+  /* Measured on 92bd66fca8, 5,000 h, the GRID below, sold at that tree's own
+     `_osimSellPrice`: the income a rational player took out of this field BEFORE
+     the condition floor was removed, at each (Hardened, Market Insight) pair.
+     Pre-fix best play is "never repair" in every one of the 48 cells — the floor
+     made neglect dominant — so these are grid-insensitive; the post-fix side is
+     not, which is why the grid is resolved around its optima.
+     Rows are hardened L0–L3; each row is market L0, L1, L2.
+     ⚠ The market-L0 column reproduces the four-number table this section carried
+       before, to 3 dp (0.188 / 0.270 / 0.164 / 0.290 …), which is the check that
+       the added axis did not quietly re-baseline the axis that was already here.
+     ⚠ Repeated values are not copy-paste: `_osimSellPrice` rounds, so oil is ₵4
+       at both market L0 and L1 (4 × 1.1 = 4.4 → 4) and only moves at L2, while
+       ore and fuel move at L1 and then round to the same integer at L2. The
+       equalities are the shipped oracle's, not this table's. */
   const PRE_FAUCET = {
-    pumpjack: [0.188, 0.194, 0.203, 0.216],
-    drill:    [0.270, 0.281, 0.296, 0.318],
-    refinery: [0.164, 0.172, 0.183, 0.199],
-    deepcore: [0.290, 0.296, 0.305, 0.318],
+    pumpjack: [[0.1884, 0.1884, 0.2354], [0.1945, 0.1945, 0.2431], [0.2033, 0.2033, 0.2541], [0.2156, 0.2156, 0.2695]],
+    drill:    [[0.2701, 0.3087, 0.3087], [0.2808, 0.3210, 0.3210], [0.2963, 0.3386, 0.3386], [0.3177, 0.3631, 0.3631]],
+    refinery: [[0.1641, 0.1969, 0.1969], [0.1717, 0.2060, 0.2060], [0.1827, 0.2193, 0.2193], [0.1989, 0.2387, 0.2387]],
+    deepcore: [[0.2904, 0.2904, 0.3629], [0.2965, 0.2965, 0.3706], [0.3053, 0.3053, 0.3816], [0.3176, 0.3176, 0.3970]],
   };
-  const TOL = 1.10; // 10% — the fix lands at 0.79–0.99× across all 16 cells
+  const TOL = 1.10; // 10% — the fix lands at 0.79–0.99× across all 48 cells
   const HOURS = 5000, STEP = 600;
   /* -1 = never repair. The rest are "repair to 100% the moment condition drops
      to or below this", which is the whole family of sane maintenance policies.
@@ -592,45 +757,61 @@ console.log('\n§7  best-play Cinder per machine-hour vs the pre-fix field, at e
      rational player would run. Verified against a 1-point-resolution sweep of
      50–99: this grid recovers the true optimum to within 1.6% in every cell. */
   const GRID = [-1, 60, 70, 78, 84, 86, 88, 90, 91, 93, 95, 96, 97, 98, 99];
-  console.log('    ' + pad('machine', 11) + pad('hardened', 10) + pad('pre-fix ₵/h', 14) + pad('now ₵/h', 11) + pad('best policy', 16) + 'vs pre-fix');
+  console.log('    ' + pad('machine', 11) + pad('research', 12) + pad('pre-fix ₵/h', 14) + pad('now ₵/h', 11) + pad('best policy', 16) + pad('vs pre-fix', 12) + 'share paid');
   for (const type of TYPES) {
     for (const hard of HARDENED) {
-      let best = null;
-      for (const thr of GRID) {
-        const st = freshState(hard); const A = make(st);
-        st.inv.oil = 10 ** 12;
-        const m = { type, tier: 1, condition: 100, buffer: 0, timer: 0 };
-        st.placed.push(m);
-        const def = A.OSIM_MACHINES[type], keep = 1 - A._osimSellSkim();
-        let cash = 0;
-        for (let t = 0; t < HOURS * 3600; t += STEP) {
-          /* Unlimited bankroll: "the player cannot afford the button" is a
-             different finding and would mask this one. See §3's note. */
-          if (thr >= 0 && m.condition <= thr) {
-            const rc = A._osimRepairCost(m);
-            cash -= rc.cash + (rc.pipe || 0) * A._osimPartCost('pipe');
-            m.condition = 100;
+      for (const mkt of MARKET) {
+        let best = null;
+        for (const thr of GRID) {
+          const st = freshState(hard, mkt); const A = make(st);
+          st.inv.oil = 10 ** 12;
+          const m = { type, tier: 1, condition: 100, buffer: 0, timer: 0 };
+          st.placed.push(m);
+          const def = A.OSIM_MACHINES[type], keep = 1 - A._osimSellSkim();
+          /* 🔴 SOLD AT `_osimSellPrice` — THE PRICE THE PLAYER IS REALLY PAID.
+             This read `A.OSIM_RESERVE_PRICE[...]` and that single substitution is
+             what made the whole section blind to Market Insight. Hoisted out of
+             the loop only because it is constant for the run: no spike is live,
+             so it is this player's standing price for all 5,000 h. */
+          const pOut = A._osimSellPrice(def.produces), pIn = def.consumes ? A._osimSellPrice(def.consumes) : 0;
+          let cash = 0, spend = 0, gross = 0;
+          for (let t = 0; t < HOURS * 3600; t += STEP) {
+            /* Unlimited bankroll: "the player cannot afford the button" is a
+               different finding and would mask this one. See §3's note. */
+            if (thr >= 0 && m.condition <= thr) {
+              const rc = A._osimRepairCost(m);
+              const c = rc.cash + (rc.pipe || 0) * A._osimPartCost('pipe');
+              cash -= c; spend += c;
+              m.condition = 100;
+            }
+            const before = m.buffer;
+            A._osimStepMachine(m, STEP);
+            const made = m.buffer - before;
+            if (made > 0) {
+              let g = made * pOut * keep;
+              if (def.consumes) g -= made * (def.ratio || 1) * pIn * keep;
+              cash += g; gross += g;
+              m.buffer = 0;
+            }
           }
-          const before = m.buffer;
-          A._osimStepMachine(m, STEP);
-          const made = m.buffer - before;
-          if (made > 0) {
-            cash += made * (A.OSIM_RESERVE_PRICE[def.produces] || 0) * keep;
-            if (def.consumes) cash -= made * (def.ratio || 1) * (A.OSIM_RESERVE_PRICE[def.consumes] || 0) * keep;
-            m.buffer = 0;
-          }
+          const perHour = cash / HOURS;
+          /* `share` is the DIAGNOSTIC, not the assertion: Cinder actually handed
+             back to the sink over gross Cinder realised, under this policy. It is
+             printed because it names the defect in one number when a cell reds —
+             0.73 means the tuning holds, 0.60 means a purchasable node is paying
+             the player's repair bill. The assertion stays the faucet ratio. */
+          if (!best || perHour > best.perHour) best = { perHour, thr, share: gross > 0 ? spend / gross : 0 };
         }
-        const perHour = cash / HOURS;
-        if (!best || perHour > best.perHour) best = { perHour, thr };
+        const pre = PRE_FAUCET[type][hard][mkt];
+        const now = Math.round(best.perHour * 10000) / 10000;
+        const ratio = best.perHour / pre;
+        const cfg = 'H' + hard + '/M' + mkt;
+        console.log('    ' + pad(hard === 0 && mkt === 0 ? type : '', 11) + pad(cfg, 12) + pad(pre.toFixed(4), 14)
+          + pad(now.toFixed(4), 11)
+          + pad(best.thr < 0 ? 'never repair' : 'repair @' + best.thr + '%', 16) + pad(f2(ratio) + '×', 12) + best.share.toFixed(3));
+        if (ratio <= TOL) ok(type + ' ' + cfg + ' best play mints ' + f2(ratio) + '× the pre-fix field (₵' + now.toFixed(4) + '/h vs ₵' + pre + '/h, share paid ' + best.share.toFixed(3) + ')');
+        else fail(type + ' ' + cfg + ' FAUCET GREW: best play now mints ₵' + now.toFixed(4) + '/machine-hour against ₵' + pre + ' before the fix (' + f2(ratio) + '×) — the ask was LESS Cinder, and it is paying only ' + best.share.toFixed(3) + ' of gross back to the sink against a tuned ' + OSIM_REPAIR_SHARE_TXT);
       }
-      const pre = PRE_FAUCET[type][hard];
-      const now = Math.round(best.perHour * 1000) / 1000;
-      const ratio = best.perHour / pre;
-      console.log('    ' + pad(hard === 0 ? type : '', 11) + pad('L' + hard, 10) + pad(pre.toFixed(3), 14)
-        + pad(now.toFixed(3), 11)
-        + pad(best.thr < 0 ? 'never repair' : 'repair @' + best.thr + '%', 16) + f2(ratio) + '×');
-      if (ratio <= TOL) ok(type + ' L' + hard + ' best play mints ' + f2(ratio) + '× the pre-fix field (₵' + now.toFixed(3) + '/h vs ₵' + pre + '/h)');
-      else fail(type + ' L' + hard + ' FAUCET GREW: best play now mints ₵' + now.toFixed(3) + '/machine-hour against ₵' + pre + ' before the fix (' + f2(ratio) + '×) — the ask was LESS Cinder');
     }
   }
 }

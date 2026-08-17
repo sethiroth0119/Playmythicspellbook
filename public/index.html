@@ -202598,23 +202598,33 @@ function _osimMergeExtraction(a, b) { if (!a || typeof a !== 'object') return (b
                                          ↑ 2.5× MORE Cinder   ↑ flat, ±5%
 
    🔒 SO OSIM_REPAIR_SHARE IS NOT A FEEL KNOB. It is the number that holds the
-      steady-state faucet at the level the owner already had. 0.73 is where best
-      play lands back on the pre-fix income; every 0.01 taken off it is worth
-      roughly +4% Cinder per machine-hour to every player, forever. If it is ever
-      lowered to make maintenance feel gentler, that is a faucet decision and has
-      to be reported as one.
-   🔴 AND IT ONLY HOLDS BECAUSE `_osimRepairValue` PRICES AT THE RESEARCHED WEAR
-      RATE. The share is a fraction of the output a repair restores, so the
-      denominator is "how many units these condition points buy" — and that is
-      `_osimDecayPerUnit()`, the rate the machine actually wears at, not the raw
-      admin knob. The table above shipped for one commit denominated against the
-      RAW rate, which quietly charged `0.73 × decayMul` and handed a player with
-      Hardened Components L3 a 0.292 share — 2.0–2.4× the faucet, invisible in
-      every measurement, because every measurement was taken at zero R&D. The
-      table above is the NO-RESEARCH row of a table that has four rows;
-      `repairtrap.mjs` §2 and §7 now sweep all four. Never quote this block as an
-      unconditional invariant again without checking which player it was measured
-      on.
+      steady-state faucet at the level the owner already had — but ONLY for a
+      player whose repair price is denominated in the same units and the same
+      Cinder-per-unit that player actually gets, which the two functions named
+      below now are and twice were not. 0.73 is where best play lands back on the
+      pre-fix income; every 0.01 taken off it is worth roughly +4% Cinder per
+      machine-hour to every player, forever. If it is ever lowered to make
+      maintenance feel gentler, that is a faucet decision and has to be reported
+      as one. The share is a ceiling on the faucet only while nothing a player can
+      BUY divides it — read the next paragraph before quoting this one.
+   🔴 AND IT ONLY HOLDS BECAUSE THE REPAIR IS DENOMINATED IN BOTH THE RESEARCHED
+      WEAR RATE AND THE RESEARCHED PRICE. The share is a fraction of the output a
+      repair restores, which is `units × ₵ per unit`, and a research node that
+      moves EITHER factor without moving the price divides the sink:
+        · units — `_osimRepairValue` must divide by `_osimDecayPerUnit()`, the
+          rate the machine really wears at, not the raw admin knob. It shipped for
+          one commit on the raw rate, charging `0.73 × decayMul`: Hardened
+          Components L3 paid a 0.292 share, 2.0–2.4× the faucet.
+        · ₵ per unit — `_osimMachineNetUnitValue` must read `_osimBasePrice()`,
+          the Reserve times Market Insight, not the flat Reserve. It shipped that
+          way too: ◈100/200 of Market Insight paid a 0.60 share against a tuned
+          0.73, and best play at L2 minted 1.47× / 1.20× / 1.28× / 1.53× the
+          pre-fix field on pumpjack / drill / refinery / deepcore.
+      BOTH were invisible in every measurement, because every measurement was
+      taken at zero R&D. The table above is the NO-RESEARCH cell of a grid that has
+      twelve; `repairtrap.mjs` §2 and §7 now sweep hardened L0–L3 × market L0–L2.
+      Never quote this block as an unconditional invariant again without checking
+      which player it was measured on.
    ⚠ That pair — the floor and the share — is the only lever in here that touches
      the STEADY STATE. ×10 raises the entry fee tenfold and, on its own, still
      leaves the steady state exactly where it was. Do not re-derive a cost-table
@@ -202844,8 +202854,9 @@ function _osimAutoCollect() { if (_osimState.research.automation >= 1) return tr
    opposite of the ask. The share is now 0.73 and holds it flat. These two
    numbers are one lever: never change either without re-measuring the other
    (`node tools/economy-tests/repairtrap.mjs`, §7 — which now sweeps Hardened
-   Components L0–L3, because the share is only a share if it is denominated
-   against the RESEARCHED wear rate; see `_osimRepairValue`). */
+   Components L0–L3 × Market Insight L0–L2, because the share is only a share if
+   it is denominated against BOTH the researched wear rate and the researched
+   price; see `_osimRepairValue` and `_osimMachineNetUnitValue`). */
 function _osimCondFactor(m) { const c = Math.max(0, Math.min(100, +m.condition || 0)); return c <= 0 ? 0 : c / 100; }
 // ⏱ Real-time production: the per-machine `rate` (seconds) is scaled up to HOURS
 // by prodSecondsMul (admin-tunable, default 7500 ≈ 1 unit / 5h at Tier I). Higher
@@ -202860,20 +202871,32 @@ function _osimEffRate(m) { const cf = _osimCondFactor(m); if (!(cf > 0)) return 
 function _osimEffCap(m) { return Math.round(OSIM_MACHINES[m.type].cap * OSIM_TIER[m.tier].capMul * (_osimState.research.automation >= 2 ? 1.1 : 1)); }
 function _osimUpgradeCost(m) { const b = OSIM_MACHINES[m.type].craft; return m.tier === 1 ? Math.round(b * 1.6) : Math.round(b * 3.4); }
 function _osimUpgradeBP(m) { return m.tier === 1 ? 'tier2' : 'tier3'; }
-/* 💰 What one unit out of this machine is actually WORTH once it is sold: the
-   Foundation Reserve price less the Foundation levy, and for a converter less
-   the input it burns, valued at the same Reserve it could have been sold into
-   instead. Deliberately reads OSIM_RESERVE_PRICE and not `_osimSellPrice`: the
-   latter multiplies in Market Insight and a live price spike, and pricing
-   maintenance off those would claw back the two things that are supposed to be
-   upside. Reading the flat Reserve means research and spikes only ever improve
-   the payback, never worsen it. */
+/* 💰 What one unit out of this machine is actually WORTH once it is sold: THIS
+   PLAYER's standing sell price less the Foundation levy, and for a converter less
+   the input it burns, valued at the same standing price it could have been sold
+   into instead. Reads `_osimBasePrice`, i.e. the Reserve times Market Insight —
+   the number the player is really paid — and not the spike-inclusive
+   `_osimSellPrice`; the split and the reason for it are documented above
+   `_osimSellPrice`.
+   ❌ THE ARGUMENT THAT USED TO SIT HERE AND WAS WRONG, LEFT IN BECAUSE IT IS THE
+     SECOND TIME THIS EXACT REASONING SHIPPED A DISCOUNT. It said: read the flat
+     `OSIM_RESERVE_PRICE`, because `_osimSellPrice` "multiplies in Market Insight
+     and a live price spike, and pricing maintenance off those would claw back the
+     two things that are supposed to be upside… research and spikes only ever
+     improve the payback, never worsen it."
+     "Only ever improves the payback" is precisely what a DISCOUNT ON THE SINK
+     looks like from the player's side, and the sink is the one number in this
+     field that is not allowed to move. It is word-for-word the rationale the
+     commit below (`_osimRepairValue`, on the raw-vs-researched wear rate) had
+     already deleted — "the perk pays: same price, more units" — reappearing one
+     function up on the price axis instead of the wear axis. A perk may buy speed,
+     durability, capacity or convenience. It may never buy a cheaper repair. */
 function _osimMachineNetUnitValue(def) {
   if (!def) return 0.5;
   if (def.kind === 'generator') return Math.max(0.5, def.amount || 1); // already Cinder; no levy is taken on it
   const keep = 1 - _osimSellSkim();
-  let v = (OSIM_RESERVE_PRICE[def.produces] || 0) * keep;
-  if (def.consumes) v -= (OSIM_RESERVE_PRICE[def.consumes] || 0) * (def.ratio || 1) * keep;
+  let v = _osimBasePrice(def.produces) * keep;
+  if (def.consumes) v -= _osimBasePrice(def.consumes) * (def.ratio || 1) * keep;
   return Math.max(0.5, v);
 }
 /* Gross Cinder that the condition a repair restores is worth: damage repaired →
@@ -202908,9 +202931,26 @@ function _osimMachineNetUnitValue(def) {
      was resolved around the L0 optimum. The broken tree's optimum moves as decay
      slows, so a wider search scores it higher, not lower.)
 
-     Reading the researched rate makes the share invariant: cost and value are now
-     divided by the same number, so every player pays OSIM_REPAIR_SHARE of gross
-     whatever their R&D is, and 0.73 means what §7 says it means.
+     Reading the researched rate makes the share invariant ON THE WEAR AXIS: cost
+     and value are divided by the same number.
+   🔴 AND THAT SENTENCE USED TO END "so every player pays OSIM_REPAIR_SHARE of
+     gross whatever their R&D is, and 0.73 means what §7 says it means" — WHICH
+     WAS FALSE THE DAY IT WAS WRITTEN, at market ≥ 1. It fixed the DENOMINATOR of
+     this expression (units) and left the MULTIPLICAND (₵ per unit) reading a flat
+     Reserve while the player was paid `_osimSellPrice`. Market Insight, ◈100/200,
+     max L2, multiplied realised revenue by up to 1.2× and the repair price did
+     not move: effective share paid 0.755 / 0.744 / 0.733 / 0.756 at market L0
+     falling to 0.604 / 0.651 / 0.610 / 0.605 at L2, and best play minting
+     1.47× / 1.20× / 1.28× / 1.53× the pre-fix field.
+     Both halves are closed now — `_osimDecayPerUnit` for the units and
+     `_osimMachineNetUnitValue` → `_osimBasePrice` for the ₵ — so the claim finally
+     holds, but state it as what it is: THE SHARE IS INVARIANT TO EVERY RESEARCH
+     NODE THE SHIPPED SUPPLY DEPOT SELLS, because both sides of the ratio are
+     computed from the same wear rate and the same price the player is paid.
+     ⚠ The general rule, since this shape has now shipped twice: a repair price is
+       a fraction of `units × ₵ per unit`. ANY multiplier a player can buy that
+       touches either factor must appear on BOTH sides or it is a discount on the
+       sink. Check both when adding a node, and add its axis to `repairtrap.mjs`.
    ⚠ AND WHAT HARDENED COMPONENTS STILL BUYS, because "netted to zero" is wrong.
      It does not cut ₵ per unit — it never claimed to; it claims slower WEAR and
      that is exactly what it delivers. At L3 a machine covers 2.5× as many units
@@ -202956,8 +202996,18 @@ function _osimRepairValue(m) {
      with every repair threshold searched. At 0.35 the same measurement read
      0.431 / 0.618 / 0.359 / 0.689 — 2.5× the Cinder, in a change whose whole
      purpose was to spend Cinder. Repair still pays back 1.35–1.37× what it
-     costs, which is what makes it worth pressing; the payback ratio is 1/SHARE
-     and nothing else, so read that off the share directly.
+     costs, which is what makes it worth pressing.
+   🔒 "THE PAYBACK RATIO IS 1/SHARE AND NOTHING ELSE, SO READ THAT OFF THE SHARE
+     DIRECTLY" USED TO END THAT SENTENCE. It was not a description, it was a
+     PROMISE, and the file broke it twice before anyone re-measured: once on the
+     wear axis (`_osimRepairValue` denominated at the raw rate, so Hardened
+     Components paid 1/(SHARE × decayMul) — up to 3.4×) and once on the price axis
+     (`_osimMachineNetUnitValue` denominated at the flat Reserve, so Market Insight
+     paid up to 1/0.60 = 1.65×). Both doors are shut, so 1/SHARE is true again —
+     but it is true BECAUSE of what those two functions read, not by construction.
+     It is a property that has to be re-measured, not a fact you may read off the
+     constant. `repairtrap.mjs` §2 measures it across hardened L0–L3 × market
+     L0–L2; that sweep is the only thing entitling anyone to quote 1.37×.
    ⚠ `pipe: 0` is kept, not removed: `_OSIM.repairMachine` and
      `_osimRenderInspector` both read `rc.pipe`, and an undefined there would
      turn `parts.pipe -= rc.pipe` into NaN and silently destroy the player's
@@ -203332,6 +203382,36 @@ function _osimRenderShop() { const pt = _O('ptitle'); pt.textContent = 'Supply D
   _O('pbody').innerHTML = h; }
 function _osimRenderCraft() { _O('ptitle').textContent = 'Fabrication'; _O('psub').textContent = 'ASSEMBLE PARTS INTO MACHINERY'; let h = '<div class="grid2">'; for (const k in OSIM_MACHINES) { const m = OSIM_MACHINES[k]; if (!_osimMachineUnlocked(k)) continue; const reqList = Object.entries(m.parts || {}).map(([pk, n]) => { if (!OSIM_PARTS[pk]) return ''; const ok = (_osimState.parts[pk] || 0) >= n; return '<span style="color:' + (ok ? '#9fffc4' : '#e08b8b') + '">' + _osimEsc(OSIM_PARTS[pk].name) + ' ' + (_osimState.parts[pk] || 0) + '/' + n + '</span>'; }).filter(Boolean).join(' · ') || '<span style="color:#9fffc4">no parts</span>'; const can = Object.entries(m.parts || {}).every(([pk, n]) => (_osimState.parts[pk] || 0) >= n) && _osimState.cash >= m.craft; const cu = _osimCustomMachines[k]; h += '<div class="osim-card ' + (m.premium ? 'prem' : '') + '"><div class="row"><h3><span class="ic">' + (m.ic || '🔧') + '</span>' + _osimEsc(m.name) + (m.premium ? '<span class="osim-badge t3">AZA</span>' : '') + (cu ? '<span class="osim-badge custom">CUSTOM</span>' : '') + '</h3><span class="have">Built: ' + (_osimState.builtMachines[k] || 0) + '</span></div><div class="desc">' + _osimEsc(m.desc || '') + '</div><div class="reqs">Output: <b>' + _osimMachineOutTxt(m) + '</b> · cap ' + m.cap + '<br>Needs: ' + reqList + ' + <span class="price">₵' + m.craft + '</span></div><div class="row"><span class="have">' + (can ? 'Ready' : 'Missing materials') + '</span><button class="osim-buy green" ' + (can ? '' : 'disabled') + ' onclick="_OSIM.craftMachine(\'' + k + '\')">Craft</button></div></div>'; } h += '</div>'; if (!_osimState.blueprints.deepcore) h += '<div class="empty">🌋 Unlock the <b>Deep Core Blueprint</b> in the Shop (Aza) to fabricate the highest-output rig. Author your own machines in System → Admin.</div>'; _O('pbody').innerHTML = h; }
 function _osimRenderBuild() { _O('ptitle').textContent = 'Deploy Machinery'; _O('psub').textContent = 'PLACE FABRICATED MACHINES ON THE FIELD'; if (!Object.values(_osimState.builtMachines).some(v => v > 0)) { _O('pbody').innerHTML = '<div class="empty">No machines fabricated yet.<br>Buy parts in the Shop, then Craft a machine first.</div>'; return; } let h = '<div class="grid2">'; for (const k in OSIM_MACHINES) { const m = OSIM_MACHINES[k], n = _osimState.builtMachines[k] || 0; if (n <= 0) continue; h += '<div class="osim-card ' + (m.premium ? 'prem' : '') + '"><div class="row"><h3><span class="ic">' + (m.ic || '🔧') + '</span>' + _osimEsc(m.name) + '</h3><span class="have">Available: <b style="color:#f0c75e">' + n + '</b></span></div><div class="desc">' + _osimEsc(m.desc || '') + '</div><div class="row"><span class="have">Click to enter build mode</span><button class="osim-buy" onclick="_OSIM.startBuild(\'' + k + '\')">Build</button></div></div>'; } h += '</div>'; _O('pbody').innerHTML = h; }
+/* 💱 THE TWO HALVES OF THE PRICE ORACLE, AND WHY THERE ARE TWO.
+   `_osimSellPrice` is what a unit fetches RIGHT NOW: the Reserve, times any live
+   35-second spike, times the player's permanent Market Insight multiplier.
+   `_osimBasePrice` is the same number with the spike taken out — the STANDING
+   price this player is paid for this resource, all day, every day.
+   🔴 THE SPLIT EXISTS BECAUSE MAINTENANCE HAS TO BE DENOMINATED IN THE PRICE THE
+     PLAYER IS REALLY PAID, AND THAT IS NOT THE FLAT RESERVE. `_osimRepairValue`
+     used to read `OSIM_RESERVE_PRICE` raw, so Market Insight — a shipped,
+     purchasable ◈100/200 node — multiplied realised revenue by up to 1.2× while
+     the repair price did not move, and the share actually paid fell from 0.73 to
+     as low as 0.60. Measured, best play, 5,000 h through `_osimStepMachine`, sold
+     at THIS function: market L2 minted 1.47× / 1.20× / 1.28× / 1.53× the pre-fix
+     field on pumpjack / drill / refinery / deepcore. It is the same defect as the
+     raw-vs-researched decay rate one function below, through the second door.
+   ⚠ WHY THE SPIKE IS DELIBERATELY *NOT* IN THE REPAIR DENOMINATION, and why that
+     is not the same exemption argued for and lost above. Market Insight is
+     permanent, purchasable and applies to 100% of a player's sales forever, so
+     leaving it out of the sink is a standing discount. A spike is
+     `_osimTriggerEvent`: 1.8–2.3× for 35 SECONDS, on one of three resources,
+     only while the field UI is open, cleared at the next EST rollover. A repair
+     is charged once and pays out over the HOURS it takes to produce the units it
+     restored (a Tier-I pumpjack is ~5 h per unit), so a 35 s window can only ever
+     touch stock already in the silo — it is metered by the clock exactly like the
+     PRN contracts the station ceiling exempts. Pricing the sink off an
+     instantaneous spike would also invert the arbitrage: repair while it is off,
+     sell while it is on. The standing price is the honest denominator.
+   ⚠ `Math.round` sits on both, and on the SAME expression, so they agree exactly
+     whenever no spike is live. That equality is what makes the share invariant —
+     do not "simplify" one of them to an unrounded product. */
+function _osimBasePrice(r) { return Math.round((OSIM_RESERVE_PRICE[r] || 0) * _osimMarketMult()); }
 function _osimSellPrice(r) { let p = OSIM_RESERVE_PRICE[r]; if (_osimState.priceEvent && _osimState.priceEvent.resource === r && Date.now() < _osimState.priceEvent.until) p *= _osimState.priceEvent.mult; return Math.round(p * _osimMarketMult()); }
 /* ⛽ A station's live bid, in Cinder per fuel. THE ONLY function that turns a
    station into money — the UI, the sale and the net-worth line all call it, so
@@ -203349,7 +203429,7 @@ function _osimStationBid(s) { return Math.max(1, Math.round(_osimSellPrice('fuel
 // (walked as high as 26₵) and a `base` in Cinder, both meaningless now. Anything
 // that is not a valid mul is re-seeded from the shipped table by position.
 function _osimNormStations(list) { const src = Array.isArray(list) ? list : []; return OSIM_STATIONS.map((def, i) => { const old = src[i] || {}; const b = +old.base; const base = (b >= OSIM_STATION_MUL_MIN && b <= OSIM_STATION_MUL_MAX) ? b : def.base; const m = +old.mul; return { name: typeof old.name === 'string' && old.name ? old.name : def.name, base: base, mul: (m >= OSIM_STATION_MUL_MIN && m <= OSIM_STATION_MUL_MAX) ? m : base }; }); }
-function _osimRenderSell() { _O('ptitle').textContent = 'Market'; _O('psub').textContent = 'SELL OUTPUT FOR CINDER'; const skimPct = Math.round(_osimSellSkim() * 100); let h = '<div class="tabs"><div class="osim-tab ' + (_osimSellTab === 'reserve' ? 'act' : '') + '" onclick="_OSIM.setSellTab(\'reserve\')">🏛️ Foundation Reserve</div><div class="osim-tab ' + (_osimSellTab === 'stations' ? 'act' : '') + '" onclick="_OSIM.setSellTab(\'stations\')">⛽ Gas Stations</div></div>'; if (_osimSellTab === 'reserve') { h += '<div class="statline">Guaranteed buyer at a stable floor. A <b>' + skimPct + '% Foundation levy</b> applies to all sales.' + (_osimState.priceEvent && Date.now() < _osimState.priceEvent.until ? ' <b style="color:#f0c75e">📈 ' + _osimState.priceEvent.resource + ' spike active!</b>' : '') + '</div>'; for (const r of ['oil', 'ore', 'fuel']) { const pr = _osimSellPrice(r), up = pr > Math.round(OSIM_RESERVE_PRICE[r] * _osimMarketMult()); h += '<div class="osim-sellrow"><div class="info"><b>' + r.toUpperCase() + '</b> · ₵' + pr + ' each' + (up ? ' 📈' : '') + '<div class="qty">In storage: ' + _osimState.inv[r] + '</div></div><div style="display:flex;gap:6px"><button class="osim-buy" ' + (_osimState.inv[r] < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellRes(\'' + r + '\',1)">Sell 1</button><button class="osim-buy green" ' + (_osimState.inv[r] < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellRes(\'' + r + '\',\'all\')">Sell All</button></div></div>'; } } else { h += '<div class="statline">Player stations bid on <b>fuel</b> at fluctuating rates, <b>never above</b> the Foundation Reserve (₵' + _osimSellPrice('fuel') + ') — shop for the best bid, or just take the Reserve (' + skimPct + '% levy applies).</div><div class="osim-sellrow" style="background:rgba(212,175,55,.07)"><div class="info">Your Fuel storage<div class="qty">Available: ' + _osimState.inv.fuel + '</div></div></div>'; _osimState.stations.forEach((s, i) => { const pr = _osimStationBid(s); /* 🔒 the SAME function the sale uses, so the shown price is the paid price */ h += '<div class="osim-sellrow"><div class="info"><b>' + _osimEsc(s.name) + '</b> · ₵' + pr + '/fuel<div class="station">' + Math.round(_osimStationMul(s) * 100) + '% of Reserve · recovers over time</div></div><div style="display:flex;gap:6px"><button class="osim-buy" ' + (_osimState.inv.fuel < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellStation(' + i + ',1)">Sell 1</button><button class="osim-buy green" ' + (_osimState.inv.fuel < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellStation(' + i + ',\'all\')">Sell All</button></div></div>'; }); } _O('pbody').innerHTML = h; }
+function _osimRenderSell() { _O('ptitle').textContent = 'Market'; _O('psub').textContent = 'SELL OUTPUT FOR CINDER'; const skimPct = Math.round(_osimSellSkim() * 100); let h = '<div class="tabs"><div class="osim-tab ' + (_osimSellTab === 'reserve' ? 'act' : '') + '" onclick="_OSIM.setSellTab(\'reserve\')">🏛️ Foundation Reserve</div><div class="osim-tab ' + (_osimSellTab === 'stations' ? 'act' : '') + '" onclick="_OSIM.setSellTab(\'stations\')">⛽ Gas Stations</div></div>'; if (_osimSellTab === 'reserve') { h += '<div class="statline">Guaranteed buyer at a stable floor. A <b>' + skimPct + '% Foundation levy</b> applies to all sales.' + (_osimState.priceEvent && Date.now() < _osimState.priceEvent.until ? ' <b style="color:#f0c75e">📈 ' + _osimState.priceEvent.resource + ' spike active!</b>' : '') + '</div>'; for (const r of ['oil', 'ore', 'fuel']) { const pr = _osimSellPrice(r), up = pr > _osimBasePrice(r); /* 📈 = "above this player's STANDING price", which is exactly what _osimBasePrice is */ h += '<div class="osim-sellrow"><div class="info"><b>' + r.toUpperCase() + '</b> · ₵' + pr + ' each' + (up ? ' 📈' : '') + '<div class="qty">In storage: ' + _osimState.inv[r] + '</div></div><div style="display:flex;gap:6px"><button class="osim-buy" ' + (_osimState.inv[r] < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellRes(\'' + r + '\',1)">Sell 1</button><button class="osim-buy green" ' + (_osimState.inv[r] < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellRes(\'' + r + '\',\'all\')">Sell All</button></div></div>'; } } else { h += '<div class="statline">Player stations bid on <b>fuel</b> at fluctuating rates, <b>never above</b> the Foundation Reserve (₵' + _osimSellPrice('fuel') + ') — shop for the best bid, or just take the Reserve (' + skimPct + '% levy applies).</div><div class="osim-sellrow" style="background:rgba(212,175,55,.07)"><div class="info">Your Fuel storage<div class="qty">Available: ' + _osimState.inv.fuel + '</div></div></div>'; _osimState.stations.forEach((s, i) => { const pr = _osimStationBid(s); /* 🔒 the SAME function the sale uses, so the shown price is the paid price */ h += '<div class="osim-sellrow"><div class="info"><b>' + _osimEsc(s.name) + '</b> · ₵' + pr + '/fuel<div class="station">' + Math.round(_osimStationMul(s) * 100) + '% of Reserve · recovers over time</div></div><div style="display:flex;gap:6px"><button class="osim-buy" ' + (_osimState.inv.fuel < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellStation(' + i + ',1)">Sell 1</button><button class="osim-buy green" ' + (_osimState.inv.fuel < 1 ? 'disabled' : '') + ' onclick="_OSIM.sellStation(' + i + ',\'all\')">Sell All</button></div></div>'; }); } _O('pbody').innerHTML = h; }
 function _osimRenderResearch() { _O('ptitle').textContent = 'Research & Development'; _O('psub').textContent = 'SPEND AZA COIN ON PERMANENT PERKS'; let h = '<div class="statline">R&amp;D perks are permanent and carry across reconstruction cycles.</div><div class="grid2">'; for (const k in OSIM_RESEARCH) { const r = OSIM_RESEARCH[k], lvl = _osimState.research[k], maxed = lvl >= r.max, cost = maxed ? 0 : r.costs[lvl]; h += '<div class="osim-card prem"><div class="row"><h3><span class="ic">' + r.ic + '</span>' + r.name + '</h3><span class="have">Lv ' + lvl + '/' + r.max + '</span></div><div class="desc">' + r.desc + '</div><div class="reqs">Current: <b>' + r.eff(lvl) + '</b>' + (maxed ? '' : '<br>Next: <b>' + r.eff(lvl + 1) + '</b>') + '</div><div class="row"><span class="' + (maxed ? 'have' : 'priceA') + '">' + (maxed ? 'Maxed' : '◈' + cost) + '</span><button class="osim-buy aza" ' + (maxed || _osimState.aza < cost ? 'disabled' : '') + ' onclick="_OSIM.buyResearch(\'' + k + '\')">' + (maxed ? 'Complete' : 'Research') + '</button></div></div>'; } h += '</div>'; _O('pbody').innerHTML = h; }
 function _osimRenderNetwork() { _O('ptitle').textContent = 'Planetary Reconstruction Network'; _O('psub').textContent = 'NODE CONTRACTS · CINDER CORE'; let h = '<div class="tabs"><div class="osim-tab ' + (_osimNetTab === 'nodes' ? 'act' : '') + '" onclick="_OSIM.setNetTab(\'nodes\')">🛰️ Node Contracts</div><div class="osim-tab ' + (_osimNetTab === 'core' ? 'act' : '') + '" onclick="_OSIM.setNetTab(\'core\')">◆ Cinder Core</div></div>';
   if (_osimNetTab === 'nodes') { if (_osimState.emergency && Date.now() < _osimState.emergency.until) { const em = _osimState.emergency, have = _osimState.inv[em.resource], pct = Math.min(100, Math.round(em.progress / em.need * 100)), cd = Math.max(0, Math.ceil((em.until - Date.now()) / 1000)); h += '<div class="osim-sellrow emerg"><div class="info"><b style="color:#4fd6d6">🛰️ EMERGENCY CONTRACT</b> · ' + cd + 's left<br>Deliver <b>' + em.need + ' ' + em.resource + '</b> · <span class="price">₵' + em.rewardCinder + '</span> + <span class="priceA">◈' + em.rewardAza + '</span><div class="qty">Delivered ' + em.progress + '/' + em.need + ' · hold ' + have + '</div><div class="pbar"><div style="width:' + pct + '%"></div></div></div><button class="osim-buy aza" ' + (have < 1 ? 'disabled' : '') + ' onclick="_OSIM.deliverEmergency()">Deliver</button></div>'; } h += _osimRenderNodeLink(); }

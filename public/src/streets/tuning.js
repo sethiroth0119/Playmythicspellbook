@@ -46,8 +46,42 @@ export const STREET = {
      ⚠ IT NEVER FAILS A TILE. Capped at WEAR_CAP, never written back to t.wear,
        never sets t.damaged. A UI feature must not invent a failure mode, a
        repair bill or a production penalty; if road decay is ever wanted as a
-       MECHANIC it belongs in decayTick with the rest of them. */
-  WEAR_PER_1K_PASSES: 1.6,
+       MECHANIC it belongs in decayTick with the rest of them.
+
+     ⚠ THE FIRST NUMBER HERE WAS 1.6 AND CONDITION WAS A CONSTANT. At 1.6% per
+       thousand passes a single tile needs 625 passes to lose its FIRST point,
+       so every street in every city read "100% average" and the range never
+       moved off 100–100. A readout that cannot vary is exactly what the comment
+       above says this file exists to avoid, and it shipped anyway.
+
+     THE RATE IS MEASURED, NOT PICKED. Driven on the standard 172-tile district
+     (100 road tiles, 29 agents — 8 cars, 6 trucks, 1 police, the rest on foot),
+     counting only real agent tile transitions, over a whole drive rather than a
+     lull in one (traffic here swings between ~1 and ~4.4 passes a second on a
+     19-tile street, so a short window can be wrong by 4x in either direction):
+
+       one street, 19 tiles ........ ~3.6 counted vehicle passes per city second
+       one tile, average ........... ~0.19/s  →  ~225 per CYCLE
+       one tile, the busiest ....... ~0.48/s  →  ~575 per CYCLE
+
+     ⚠ THE FLEET IS CAPPED (AGENTS.carMax + truckMax + policeMax = 15-18), so a
+       bigger city spreads the SAME vehicles over more road and these are close
+       to the busiest per-tile rates the game can produce. Tuning to them cannot
+       overshoot somewhere else.
+
+     At 5% per thousand passes, one 20-minute cycle of that traffic costs a busy
+     tile ~2.9 points and an average one ~1.1 — which is the reference's shape, a
+     RANGE with an average that has moved, "97%–100% (98.9% average)" — reached
+     within one session instead of one week. (The panel prints that average to a
+     decimal for the same reason: a whole-number average would sit on "100" for
+     the first half hour and repeat the old defect in a new place.)
+     ⚠ IT SATURATES, AND THAT IS DELIBERATE. WEAR_CAP is reached on the busiest
+       tile after 9,000 passes — about fifteen unbroken cycles, five hours of
+       play — and nothing repairs a road, so a very old city's arterials sit at
+       the cap. A number that stops at 55% is the honest end of "this panel
+       reports, it never damages"; letting it run to 0% would be the UI inventing
+       a failed road. */
+  WEAR_PER_1K_PASSES: 5.0,
   WEAR_CAP: 45,
 
   /* 🚦 CAPACITY, for the flow percentage. THE SMALLER OF TWO REAL LIMITS, and
@@ -74,21 +108,65 @@ export const STREET = {
        of the city's fleet, which is exactly the thing worth knowing.
 
      Both terms come from the host: the speed and the fleet caps out of AGENTS,
-     the road count off the live network. Only HEADWAY_TILES is a judgement. */
+     the road count off the live network. Only HEADWAY_TILES is a judgement.
+
+     ⚠ BOTH TERMS ARE STATED PER REAL HOUR — vehicles per 3,600 seconds — and
+       the meter converts the result into the unit the CHART is drawn in, which
+       is per CITY hour (see BUCKETS below). Doing it in that order keeps the
+       two constants here physical: HEADWAY_TILES is a lane fact and
+       MIN_CAPACITY_VPH is a divide-by-zero floor, and neither has to be
+       re-derived if CITY_DAY_MIN ever changes. The flow PERCENTAGE is
+       unaffected either way — volume and capacity carry the same unit, so the
+       ratio is the same number in both clocks. */
   HEADWAY_TILES: 2,
   /* Floor so a broken/absent AGENTS table cannot divide flow by zero. */
   MIN_CAPACITY_VPH: 60,
 
-  /* 📊 24 buckets, one per hour of the city clock (hourOf(), which is real
-     EST wall time — the same clock that drives the sky). A bucket is a rolling
-     window: when the wall clock enters an hour whose bucket was last written in
-     a DIFFERENT hour, that bucket is zeroed before anything is added, so the
-     chart is always the last 24 hours and never a lifetime average. */
+  /* 📊 24 buckets, one per hour of ONE CITY CYCLE — the clock node-city itself
+     advances (game.cityAge), NOT the EST wall clock the sky runs on.
+
+     ⚠ THIS IS THE FIX FOR A CHART THAT COULD NEVER FILL. The buckets used to be
+       keyed on hourOf() — real EST wall time, 1:1, no compression — so the 24
+       slots spanned 24 REAL HOURS and one sitting produced one dot. Measured on
+       the standard district: after a full scene build plus forty seconds,
+       "0 of 24 hours observed", both charts blank, and 19 vehicle passes sitting
+       correctly counted in the rings underneath. The meter was right; the axis
+       was 1,440x too wide.
+
+     A CYCLE is what the rest of the game already means by a day: production,
+     rent, upkeep and the vitals trend are all quoted per CITY_DAY_MIN (20)
+     minutes, and renderVitals prints "/ CYCLE" rather than "/ DAY" precisely
+     because the sky's clock and this one disagree. The traffic profile is a
+     thing a player's own session draws, so it keys on the clock the session
+     advances: 24 buckets x 50 seconds = one cycle = one full ring.
+
+     The cycle length is handed over by the host (ctx.cycleMin) rather than
+     copied — CITY_DAY_MIN is a top-level `const` and invisible to a module.
+     This is the fallback for an index.html that mounts without that field, and
+     it is the same 20. A bucket stays a rolling window: entering a city hour
+     whose bucket was last written in a DIFFERENT city hour zeroes it first, so
+     the chart is always the last cycle and never a lifetime average. */
   BUCKETS: 24,
-  /* A bucket with less than this much observed time is not plotted. Without it,
-     the first two seconds of an hour turn one lucky pass into "1,800 veh/h" and
-     the chart opens on a spike that is pure sampling noise. */
-  MIN_OBSERVED_SEC: 20,
+  CYCLE_MIN_FALLBACK: 20,
+  /* A bucket with less than this FRACTION of its own length observed is not
+     plotted. Without it, the first two seconds of a bucket turn one lucky pass
+     into a 25x spike and the chart opens on pure sampling noise.
+     ⚠ A FRACTION, NOT THE 20 SECONDS IT USED TO BE. Once the bucket length is
+       derived from the cycle, an absolute threshold is a different fraction of
+       it for every cycle length — and 20 seconds of the 50-second bucket this
+       resolves to today is a 40% floor nobody chose. */
+  MIN_OBSERVED_FRAC: 0.25,
+  /* The most city time one frame may credit as OBSERVED. Two jumps have to be
+     refused: offlineCatchUp advances cityAge by up to 36 hours for a city
+     nobody was watching, and loadState pushes an old save's cityAge past the
+     grace period outright. Neither counted a single vehicle pass, so crediting
+     them as observation would divide a session's real traffic by a day of
+     imaginary watching.
+     ⚠ IT CANNOT GO BELOW THE VITALS BEAT. cityAge moves in 2-second lumps
+       (vitalsTick's own cadence), so a clamp under 2 would silently discard most
+       of the clock and inflate every volume on the panel. 4 is that beat plus
+       headroom for a slow frame. */
+  MAX_TICK_CREDIT_SEC: 4,
 
   /* 🏷 World labels. A one-tile stub gets no label (there is nowhere to put it),
      and the plane sits between the carriageway top (RD_Y = 0.016) and the

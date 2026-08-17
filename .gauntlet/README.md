@@ -26,6 +26,25 @@ coords pointed at empty ground.
 fixed tile list, and `makeHousing` seeds its archetype off the tile coords, so
 an A/B between rounds compares **renders, not layouts**.
 
+**`drive-streets.mjs`** — a LONG run with sampling, for anything that has to
+accumulate. `shot.mjs` throws the eval's return value away and truncates
+console lines at 400 chars; this prints whole JSON objects on a timer.
+`--run/--every/--ff/--vp/--png`.
+⚠ **The sim runs at about a fifth of wall time in this box.** `animate()`
+clamps `dt` to 0.25 s and SwiftShader renders the built district at ~0.6 fps,
+so `game.cityAge` — and therefore anything measured per city second — advances
+five times slower than it does for a player at 60 fps. `--ff n` adds `n`
+seconds to `cityAge` per frame to compensate. It injects **clock only, never
+traffic**: compressing the clock n-fold means the city genuinely carries n
+times fewer vehicles per city hour, so volumes read low and a `--ff` capture is
+not a reference for how busy a street is.
+
+**`check-streets-clock.mjs`** — `traffic.js` in node, no browser. It takes a
+ctx and a clock and touches no DOM, so the bucket boundaries, a full lap of the
+24-bucket ring, the save format and the migration cases run in a second instead
+of in a twenty-minute capture. Run it before any browser round when the traffic
+meter changed.
+
 ## 🔴 Four things that cost a debugging round each
 
 1. **The CDN is blocked.** The page's import map points at

@@ -32365,6 +32365,23 @@ function animate() {
       // re-derived — duplicating it is how a decal drifts off its road.
       worldOf: (x, z) => ({ x: x - HALF + .5, z: z - HALF + .5 }),
       hour: () => hourOf(),
+      /* 🕰 THE OTHER CLOCK, AND THE ONE THE TRAFFIC CHARTS KEY ON.
+         hourOf() above is the SKY's clock: real EST wall time, 1:1, no
+         compression (see estClock — "the sun rises when YOUR sun rises"). The
+         traffic ring is 24 buckets, and bucketing 24 wall hours means a player
+         gets one bucket per sitting and the charts can never fill — measured,
+         at "0 of 24 hours observed" with the passes underneath counted
+         correctly. So the ring keys on the CYCLE instead: game.cityAge (which
+         the module reads off the `game` it is already handed) divided into
+         CITY_DAY_MIN-minute days, the same cycle production, rent, upkeep and
+         the vitals trend are all quoted per, and the same reason renderVitals
+         prints "/ CYCLE" rather than "/ DAY". One 20-minute session fills the
+         ring exactly once.
+         hourOf() stays handed over and NOTHING in the module keys on it any
+         more: it is the right answer to "what is the sky doing", which a street
+         panel may well want one day, and it is the wrong answer to "how far
+         through its day is this city". */
+      cycleMin: () => CITY_DAY_MIN,
       carSpeed: () => AGENTS.carSpeed,
       /* The city's vehicle population is CAPPED (desiredAgentCounts clamps each
          kind to these), so this is the real ceiling on how busy any street can

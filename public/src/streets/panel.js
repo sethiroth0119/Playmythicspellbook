@@ -10,11 +10,20 @@
    each one is derived (see tuning.js for where every constant lives):
      UPKEEP · LENGTH · CONDITION (range + average) · TRAFFIC FLOW
    followed by the two charts: an AREA chart of flow against capacity and a LINE
-   chart of volume in vehicles/hour, both on the 24-hour city clock.
+   chart of volume in vehicles per city hour, both across ONE CITY CYCLE.
+
+   ── 🕰 WHICH CLOCK, AND WHY THE CAPTIONS SAY SO ───────────────────────────
+   The 24 slots are 24 hours of a CITY CYCLE — CITY_DAY_MIN (20) real minutes,
+   the clock game.cityAge advances and the one every rate in the game is already
+   priced per. They are NOT the EST wall hours of the sky and the top bar's
+   clock chip. Both clocks exist in this game and they disagree, which is why
+   renderVitals prints "/ CYCLE" rather than "/ DAY"; a chart that does not name
+   its own clock is how a player learns to trust neither. Every caption here
+   names it, and the axis ticks are cycle hours.
 
    ── THE ONE RULE THE CHARTS FOLLOW ────────────────────────────────────────
    An hour that was not observed is a GAP, never a zero and never interpolated
-   across. A city that has been open for nine minutes has one bucket of data and
+   across. A city that has been open for one minute has one bucket of data and
    the chart says so, in the caption and in the shape of the line. The moment a
    chart draws a plausible curve through hours nobody watched, every number on
    the panel becomes unfalsifiable.                                            */
@@ -37,6 +46,15 @@ const esc = (ctx, s) => {
   }
 };
 const fmtInt = n => Math.round(n).toLocaleString();
+/* A rate on the CITY hour is a small number — a bucket is fifty seconds, not
+   3,600 — so rounding it to an integer throws away most of what moved. One
+   decimal below 10, plain integers above, and never a spurious ".0". */
+const fmtRate = n => (n < 10 ? String(Math.round(n * 10) / 10) : fmtInt(n));
+/* The average condition is the number the reference prints and the number that
+   used to be frozen: a street a session's traffic has taken to 99.4% rounds to
+   "99", but one at 99.6% rounded to "100" and looked untouched. One decimal
+   whenever there is one to show. */
+const fmtAvg = n => (Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1));
 /* A road costs 4 Cinder, so a short lane's honest upkeep is a fraction of one.
    Rounding that up to "1" would be the panel inventing a bill; show the decimal
    until the number is big enough not to need it. */
@@ -175,10 +193,12 @@ export function render(ctx, st, stats, uiTab) {
       d: st.len + ' &times; ' + STREET.METRES_PER_TILE + ' m per tile' },
     { e: 'Condition', v: (cond.min === cond.max ? cond.max + '<small>%</small>'
         : cond.min + '<small>%</small>–' + cond.max + '<small>%</small>'),
-      d: cond.avg + '% average across ' + st.len + ' tile' + (st.len === 1 ? '' : 's') },
+      d: fmtAvg(cond.avgExact != null ? cond.avgExact : cond.avg) + '% average across ' +
+         st.len + ' tile' + (st.len === 1 ? '' : 's') +
+         (stats.wearRate > 0.05 ? ' · wearing ' + fmtRate(stats.wearRate) + '%/cycle' : '') },
     { e: 'Traffic flow', v: (s.observedBuckets ? Math.round(peakFlow) + '<small>%</small>' : '—'),
-      d: s.observedBuckets ? 'peak of the observed window · capacity ' + fmtInt(s.capacity) + ' veh/h'
-                           : 'no hour observed yet' },
+      d: s.observedBuckets ? 'peak of the observed window · capacity ' + fmtRate(s.capacity) + ' veh / city hour'
+                           : 'no city hour observed yet' },
   ];
   $('instop').style.gridTemplateColumns = 'repeat(4,1fr)';
   $('instop').innerHTML = tl.map(o => '<div class="tl"><div class="eyeb">' + o.e + '</div><div class="tl-v">' +
@@ -189,19 +209,27 @@ export function render(ctx, st, stats, uiTab) {
   ctx.insBuildTabs(tabs);
 
   const volMax = Math.max(5, niceMax(s.volume, s.seen));
-  const observedTxt = s.observedBuckets + ' of 24 hours observed' +
-    (s.obsSec < 3600 ? ' · ' + Math.round(s.obsSec / 60) + ' min of city time watched' : '');
+  /* 🕰 SAY WHICH CLOCK, EVERY TIME. The axis is 24 hours of one CITY CYCLE —
+     CITY_DAY_MIN minutes, the clock production, rent and the vitals trend are
+     already priced per — and NOT the EST wall clock in the top bar's chip. Both
+     exist, they disagree, and a chart that does not name its own clock is how a
+     player ends up trusting neither. */
+  const cycleMin = Math.round(stats.cycleMin || 20);
+  const observedTxt = s.observedBuckets + ' of 24 city hours observed · ' +
+    Math.round(s.obsSec / 60) + ' min of city time watched' +
+    '<br>one city cycle = ' + cycleMin + ' min, so an hour here is ' +
+    Math.round((stats.cycleMin || 20) * 60 / B) + ' s — the city’s own clock, not the wall clock';
 
   const flowChart = ctx_card(ctx, 'Traffic flow', '% of capacity',
     chart({ values: s.flow, seen: s.seen, max: 100, color: C_FLOW, fill: true, hour: stats.hour,
             fmt: v => Math.round(v) + '%',
-            aria: 'Traffic flow over 24 hours, peak ' + Math.round(peakFlow) + ' percent of capacity' }) +
+            aria: 'Traffic flow over one city cycle, peak ' + Math.round(peakFlow) + ' percent of capacity' }) +
     '<div class="st-cap">' + observedTxt + '</div>');
 
-  const volChart = ctx_card(ctx, 'Traffic volume', 'vehicles / hour',
+  const volChart = ctx_card(ctx, 'Traffic volume', 'vehicles / city hour',
     chart({ values: s.volume, seen: s.seen, max: volMax, color: C_VOL, fill: false, hour: stats.hour,
             fmt: v => (volMax < 20 ? (+v).toFixed(1) : fmtInt(v)),
-            aria: 'Traffic volume over 24 hours in vehicles per hour, peak ' + fmtInt(stats.peakVolume) }) +
+            aria: 'Traffic volume over one city cycle in vehicles per city hour, peak ' + fmtRate(stats.peakVolume) }) +
     '<div class="st-cap">measured past a point on the street — the mean of its ' + st.len +
     ' tile' + (st.len === 1 ? '' : 's') + ', not their sum</div>');
 
@@ -209,11 +237,18 @@ export function render(ctx, st, stats, uiTab) {
     ctx.insFac('🚗 Vehicle passes counted', fmtInt(s.vehTotal)) +
     ctx.insFac('🚶 Footfall counted', fmtInt(s.pedTotal)) +
     ctx.insFac('🛞 Lifetime passes (drives wear)', fmtInt(stats.lifePasses)) +
-    ctx.insFac('🚦 Capacity used as 100%', fmtInt(s.capacity) + ' veh/h') +
+    ctx.insFac('🚦 Capacity used as 100%', fmtRate(s.capacity) + ' veh / city hour') +
     ctx.insFac('&nbsp;&nbsp;↳ limited by', stats.capParts && stats.capParts.bound === 'fleet'
       ? (stats.capParts.fleet | 0) + ' vehicles / ' + (stats.capParts.netTiles | 0) + ' tiles'
       : 'lane saturation') +
     ctx.insFac('🏚️ Average wear', stats.wearAvg.toFixed(1) + '%', stats.wearAvg > 20 ? 'dn' : '') +
+    /* The rate, next to the total. See the derivation in index.js: it is the
+       MEAN observed volume put through the same WEAR_PER_1K_PASSES the lifetime
+       total uses, so the two can never tell different stories. Condition says
+       how worn this street is; this says how fast it is wearing, which is the
+       half a player can act on and the half that moves inside a session. */
+    ctx.insFac('&nbsp;&nbsp;↳ wearing, at this traffic',
+      s.observedBuckets ? fmtRate(stats.wearRate) + '% / cycle' : 'not observed yet') +
     ctx.insFac('🔗 Junctions on this street', String(st.junctions)) +
     (st.junctions ? '<div class="ins-desc st-note">A junction tile belongs to both streets that meet there, so its traffic is counted for both — the same way an intersection belongs to both roads in the world.</div>' : ''));
 
@@ -243,7 +278,9 @@ export function render(ctx, st, stats, uiTab) {
     '</div></div>' +
     '<div class="pane one" role="tabpanel" id="inspane-sg" data-tab="sg" aria-labelledby="instab-sg" tabindex="0"><div>' +
       ctx_card(ctx, 'Tile by tile', st.len + ' tiles',
-        rows + '<div class="ins-desc st-note">Condition is 100% minus wear, and wear here comes from counted vehicle passes only. Road wear is this panel\'s own reading — it never damages a tile, never bills a repair and never touches production.</div>') +
+        rows + '<div class="ins-desc st-note">Condition is 100% minus wear, and wear here comes from counted vehicle passes only — ' +
+        STREET.WEAR_PER_1K_PASSES + '% per thousand, capped at ' + STREET.WEAR_CAP +
+        '%. Road wear is this panel\'s own reading — it never damages a tile, never bills a repair and never touches production.</div>') +
     '</div></div>';
 
   $('inspanes').innerHTML = panes;

@@ -211,13 +211,38 @@ export function mount(ctx) {
       if (traffic.flow[i] > peakFlow) peakFlow = traffic.flow[i];
       if (traffic.volume[i] > peakVolume) peakVolume = traffic.volume[i];
     }
-    let hour = 0;
-    try { hour = +ctx.hour() || 0; } catch (e) { hour = 0; }
+    /* The chart's "now" marker. THE CITY CYCLE'S HOUR, not ctx.hour() — the EST
+       wall hour used to be read here and it put the marker at a position on an
+       axis that no longer means wall time. Two clocks on one chart is how a
+       player learns to trust neither. */
+    const hour = meter.cycleHour();
+
+    /* 🏚 WEAR PER CYCLE — the RATE, beside the accumulated total.
+       Condition is a lifetime accumulation, so on a young street it is a small
+       number that moves slowly, and a player watching it for a minute cannot
+       tell a busy road from a quiet one. This is the same wear arithmetic
+       applied to the traffic the meter has actually OBSERVED, projected over one
+       cycle: it separates "this road is worn" from "this road is wearing", and
+       it moves the moment the traffic does. Derived from counted passes and
+       STREET.WEAR_PER_1K_PASSES exactly like the total — no second constant. */
+    let wearRate = 0, meanVolume = 0;
+    if (traffic.observedBuckets) {
+      /* The MEAN of the observed hours, not the peak. "At this traffic" has to
+         mean the traffic, and projecting the busiest hour across a whole cycle
+         would quote a wear rate the street has never actually sustained. */
+      let sum = 0;
+      for (let i = 0; i < STREET.BUCKETS; i++) if (traffic.seen[i]) sum += traffic.volume[i];
+      meanVolume = sum / traffic.observedBuckets;
+      // volume is per city hour past a point; a cycle is BUCKETS of them.
+      wearRate = (meanVolume * STREET.BUCKETS / 1000) * STREET.WEAR_PER_1K_PASSES;
+    }
 
     return { name: nameOf(st) || 'Unnamed Road', tileKey, traffic, tiles,
              capParts: meter.capacityParts(),
-             condition: { min: Math.round(min), max: Math.round(max), avg: Math.round(avg) },
-             wearAvg, upkeep, lifePasses: life, peakFlow, peakVolume, hour, buildCost: build };
+             condition: { min: Math.round(min), max: Math.round(max), avg: Math.round(avg),
+                          avgExact: avg },
+             wearAvg, upkeep, lifePasses: life, peakFlow, peakVolume, meanVolume, hour,
+             buildCost: build, wearRate, cycleMin: meter.cycleSec() / 60 };
   }
 
   /* ── rename ─────────────────────────────────────────────────────────────
@@ -369,6 +394,20 @@ export function mount(ctx) {
     labelCount: () => labels.count(),
     rescan: () => scan(true),
     isDirty: () => dirty,
+    /* 🕰 WHICH CLOCK THE RING IS ON, in one call. The last build bucketed on EST
+       wall time and the charts could never fill; nothing on the panel said which
+       clock it was, so the only way to find out was to read the source. A seam
+       that answers it directly is what makes "the ring keys on the city cycle"
+       something a test can assert rather than something a reviewer has to
+       believe. Read-only. */
+    clock: () => ({
+      cityAge: +(game.cityAge || 0),
+      cycleMin: meter.cycleSec() / 60,
+      hourSec: meter.hourSec(),
+      cycleHour: meter.cycleHour(),
+      bucket: Math.min(STREET.BUCKETS - 1, Math.floor(meter.cycleHour())),
+      minObservedSec: meter.hourSec() * STREET.MIN_OBSERVED_FRAC,
+    }),
     /* 🔬 Debug seams — see the header on traffic.js's _debugProfile. These
        WRITE traffic that nobody drove, so they exist to prove the renderer and
        for nothing else. No shipped path calls them. */

@@ -37,23 +37,32 @@ export function createLabels(ctx) {
   let enabled = true;
   let sig = '';
 
-  function makeTexture(text, tiles) {
-    const w = Math.min(1024, Math.max(256, Math.round(tiles * STREET.LABEL_PX_PER_TILE)));
+  /* ⚠ THE CANVAS IS SIZED TO THE TEXT, AND THE PLANE IS SIZED TO THE CANVAS.
+     The first cut did the opposite — a fixed 1024x64 texture stretched across
+     the WHOLE street — and it shipped a bug you could see from orbit: a
+     19-tile street gives a plane of aspect 54:1 carrying a texture of aspect
+     16:1, so every letter was smeared 3.4x wider than it was tall. Measure the
+     text, cut the canvas to it, and hand the aspect ratio back so the caller
+     can build a plane that matches. Nothing may assume either dimension. */
+  const PAD = 18;
+  function makeTexture(text) {
     const h = STREET.LABEL_TEX_H;
+    const size = Math.round(h * 0.62);
+    const font = '600 ' + size + 'px Georgia, "Times New Roman", serif';
     const cvs = document.createElement('canvas');
-    cvs.width = w; cvs.height = h;
-    const g = cvs.getContext('2d');
+    let g = cvs.getContext('2d');
     if (!g) return null;
+    // Measure on a throwaway size first: setting canvas.width RESETS the 2d
+    // context, so the font has to be applied again afterwards.
+    cvs.width = 8; cvs.height = h;
+    g.font = font;
+    const textW = Math.ceil(g.measureText(text).width);
+    const w = Math.max(64, Math.min(2048, textW + PAD * 2));
+    cvs.width = w; cvs.height = h;
+    g = cvs.getContext('2d');
     g.clearRect(0, 0, w, h);
-    /* Fit the name to the plane. A long name on a two-tile street would either
-       overflow or be clipped by the texture edge, and a clipped street name is
-       worse than a small one. */
-    let size = Math.round(h * 0.62);
+    g.font = font;
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    for (; size > 10; size--) {
-      g.font = '600 ' + size + 'px Georgia, "Times New Roman", serif';
-      if (g.measureText(text).width <= w * 0.92) break;
-    }
     /* Painted road markings are worn white with a dark halo so the text holds
        up against both fresh asphalt and the wet-look night grade. */
     g.lineWidth = Math.max(2, size * 0.16);
@@ -66,7 +75,30 @@ export function createLabels(ctx) {
     tex.anisotropy = 4;
     if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
     tex.needsUpdate = true;
-    return tex;
+    return { tex, aspect: w / h };
+  }
+
+  /* WHERE THE NAME SITS. Not the street's midpoint — that is exactly where a
+     crossroads tends to be, and two street names drawn across the same junction
+     overlap into unreadable soup. Real road markings do the same thing for the
+     same reason: they go on a clear stretch of carriageway, not through the
+     intersection. So: the centre of the LONGEST run of tiles this street does
+     not share with a crossing road, falling back to the true midpoint when the
+     whole street is junctions (a two-tile link between two roads). */
+  function seatOf(st) {
+    const cells = st.cells;
+    let bestA = -1, bestB = -1, curA = -1;
+    for (let i = 0; i <= cells.length; i++) {
+      const free = i < cells.length && !cells[i].perp;
+      if (free) { if (curA < 0) curA = i; }
+      else if (curA >= 0) {
+        if ((i - curA) > (bestB - bestA + 1)) { bestA = curA; bestB = i - 1; }
+        curA = -1;
+      }
+    }
+    if (bestA < 0) { bestA = 0; bestB = cells.length - 1; }
+    const a = cells[bestA], b = cells[bestB];
+    return { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, span: (bestB - bestA + 1) };
   }
 
   function clear() {
@@ -91,12 +123,19 @@ export function createLabels(ctx) {
       if (st.len < STREET.LABEL_MIN_TILES) continue;
       const text = nameOf(st);
       if (!text) continue;
-      const tex = makeTexture(text, st.len);
-      if (!tex) continue;
-      /* The plane spans the street's tiles, inset half a tile at each end so the
-         text never runs out over a junction it does not own. */
-      const spanTiles = st.len - 0.5;
-      const geo = new THREE.PlaneGeometry(spanTiles, STREET.LABEL_HALF_W * 2);
+      const made2 = makeTexture(text);
+      if (!made2) continue;
+      const tex = made2.tex;
+      /* Size the plane from the TEXTURE's aspect so letters keep their shape,
+         then shrink it to fit inside the street if the name is long. The street
+         span is inset half a tile at each end so the text never runs out over a
+         junction it does not own. */
+      const seat = seatOf(st);
+      const spanTiles = Math.max(0.6, seat.span - 0.5);
+      let ph = STREET.LABEL_HALF_W * 2;          // across the lane
+      let pw = ph * made2.aspect;                // along the street
+      if (pw > spanTiles) { const f = spanTiles / pw; pw = spanTiles; ph *= f; }
+      const geo = new THREE.PlaneGeometry(pw, ph);
       const mat = new THREE.MeshBasicMaterial({
         map: tex, transparent: true, depthWrite: false, toneMapped: false,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
@@ -108,8 +147,7 @@ export function createLabels(ctx) {
       // Tile centres -> world, using the SAME mapping placeMeshAt owns
       // (x - HALF + .5). Re-deriving it here is how a decal drifts off its road
       // the first time that mapping changes, so it is read from ctx.
-      const first = st.cells[0], last = st.cells[st.cells.length - 1];
-      const mid = ctx.worldOf((first.x + last.x) / 2, (first.z + last.z) / 2);
+      const mid = ctx.worldOf(seat.x, seat.z);
       mesh.position.set(mid.x, STREET.LABEL_Y, mid.z);
       /* rotation.x = -90 lays the plane flat with its +X along world +X (an
          east-west street). rotation.z = -90 on top of that maps local +X to

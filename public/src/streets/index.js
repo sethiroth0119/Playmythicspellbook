@@ -68,7 +68,6 @@ export function mount(ctx) {
   let nameEpoch = 0;                // bumped on any rename, forces a label rebuild
   let autoSalt = 0;
   let uiTab = 'ov';
-  let openStreet = null;
   let dirty = false;                // something worth saving changed
 
   const isRoad = (x, z) => {
@@ -92,6 +91,9 @@ export function mount(ctx) {
       sum += (+k.slice(0, c) + 1) * 977 + (+k.slice(c + 1) + 1) * 31;
     }
     const sig = n + ':' + sum;
+    // The meter's capacity model needs the size of the road network; this loop
+    // has just counted it, so hand it over rather than counting twice.
+    meter.setNetwork(n);
     if (!force && graph && sig === lastSig) return graph;
     lastSig = sig;
     graph = segment(roadKeys, isRoad);
@@ -213,6 +215,7 @@ export function mount(ctx) {
     try { hour = +ctx.hour() || 0; } catch (e) { hour = 0; }
 
     return { name: nameOf(st) || 'Unnamed Road', tileKey, traffic, tiles,
+             capParts: meter.capacityParts(),
              condition: { min: Math.round(min), max: Math.round(max), avg: Math.round(avg) },
              wearAvg, upkeep, lifePasses: life, peakFlow, peakVolume, hour, buildCost: build };
   }
@@ -266,7 +269,6 @@ export function mount(ctx) {
     const g = scan(true);
     const st = g.primary.get(k);
     if (!st) return false;
-    openStreet = st;
     panel.ensureStyle();
     const stats = statsFor(st, k);
     const r = panel.render(ctx, st, stats, uiTab);

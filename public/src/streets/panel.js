@@ -170,7 +170,7 @@ export function render(ctx, st, stats, uiTab) {
   const cond = stats.condition;
   const tl = [
     { e: 'Upkeep', v: '🔥 ' + fmtMoney(stats.upkeep) + '<small> /cycle</small>',
-      d: Math.round(STREET.UPKEEP_PCT_PER_CYCLE * 100) + '% of build cost per cycle, scaled by wear — quoted, not billed' },
+      d: Math.round(STREET.UPKEEP_PCT_PER_CYCLE * 100) + '% of build cost, scaled by wear &middot; quoted, not billed' },
     { e: 'Length', v: len.txt,
       d: st.len + ' &times; ' + STREET.METRES_PER_TILE + ' m per tile' },
     { e: 'Condition', v: (cond.min === cond.max ? cond.max + '<small>%</small>'
@@ -209,7 +209,10 @@ export function render(ctx, st, stats, uiTab) {
     ctx.insFac('🚗 Vehicle passes counted', fmtInt(s.vehTotal)) +
     ctx.insFac('🚶 Footfall counted', fmtInt(s.pedTotal)) +
     ctx.insFac('🛞 Lifetime passes (drives wear)', fmtInt(stats.lifePasses)) +
-    ctx.insFac('🚦 Lane capacity', fmtInt(s.capacity) + ' veh/h') +
+    ctx.insFac('🚦 Capacity used as 100%', fmtInt(s.capacity) + ' veh/h') +
+    ctx.insFac('&nbsp;&nbsp;↳ limited by', stats.capParts && stats.capParts.bound === 'fleet'
+      ? (stats.capParts.fleet | 0) + ' vehicles / ' + (stats.capParts.netTiles | 0) + ' tiles'
+      : 'lane saturation') +
     ctx.insFac('🏚️ Average wear', stats.wearAvg.toFixed(1) + '%', stats.wearAvg > 20 ? 'dn' : '') +
     ctx.insFac('🔗 Junctions on this street', String(st.junctions)) +
     (st.junctions ? '<div class="ins-desc st-note">A junction tile belongs to both streets that meet there, so its traffic is counted for both — the same way an intersection belongs to both roads in the world.</div>' : ''));
@@ -229,7 +232,13 @@ export function render(ctx, st, stats, uiTab) {
 
   let panes =
     '<div class="pane one" role="tabpanel" id="inspane-ov" data-tab="ov" aria-labelledby="instab-ov" tabindex="0"><div>' +
-      flowChart + volChart +
+      /* Charts side by side rather than stacked. The reference stacks them, but
+         #insbox is 1000px wide and 152-unit-tall SVGs at full width came out
+         ~300px each — the volume chart fell below the fold and a player had to
+         scroll to discover a second chart existed. Two columns puts both on
+         screen at once; the media query stacks them again when there is no
+         width to spend. */
+      '<div class="st-two">' + flowChart + volChart + '</div>' +
       '<div class="st-two">' + facts + rename + '</div>' +
     '</div></div>' +
     '<div class="pane one" role="tabpanel" id="inspane-sg" data-tab="sg" aria-labelledby="instab-sg" tabindex="0"><div>' +
@@ -282,9 +291,13 @@ export function ensureStyle() {
       '#inspect .st-chart{width:100%;height:auto;display:block;overflow:visible;}',
       '#inspect .st-cap{font-size:10px;color:var(--mist);margin-top:7px;line-height:1.45;}',
       '#inspect .st-note{margin:10px 0 0;font-size:11px;}',
-      '#inspect .st-two{display:grid;grid-template-columns:1.12fr 1fr;gap:13px;align-items:start;margin-top:12px;}',
-      '@media (max-width:760px){#inspect .st-two{grid-template-columns:1fr;}}',
+      '#inspect .st-two{display:grid;grid-template-columns:1fr 1fr;gap:13px;align-items:start;}',
+      '#inspect .st-two + .st-two{margin-top:12px;}',
+      // Beats the dossier's own `.ins-card + .ins-card{margin-top:12px}`, which
+      // would otherwise push the right-hand card of every row down by 12px.
       '#inspect .st-two > .ins-card{margin-top:0;}',
+      '@media (max-width:760px){#inspect .st-two{grid-template-columns:1fr;}',
+      '  #inspect .st-two > .ins-card + .ins-card{margin-top:12px;}}',
       '#inspect .st-rename{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}',
       '#inspect .st-rename .pbtn{width:auto;margin-top:0;flex:none;}',
       '#inspect .st-input{flex:1;min-width:150px;background:#0f0c18;border:1px solid var(--edge);',

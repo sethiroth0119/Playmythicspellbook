@@ -50,12 +50,31 @@ export const STREET = {
   WEAR_PER_1K_PASSES: 1.6,
   WEAR_CAP: 45,
 
-  /* 🚦 CAPACITY, for the flow percentage. Derived from the simulation's own
-     numbers rather than picked: a car covers AGENTS.carSpeed tiles per second,
-     and one vehicle per HEADWAY_TILES of lane is the saturation point, so a lane
-     passes carSpeed * 3600 / HEADWAY_TILES vehicles an hour. At the shipped
-     carSpeed of 1.9 that is ~3,420/h. The host hands the speed over; only the
-     headway is a judgement, and it is stated here. */
+  /* 🚦 CAPACITY, for the flow percentage. THE SMALLER OF TWO REAL LIMITS, and
+     the second one is the whole reason this is not just lane physics:
+
+       LANE SATURATION   carSpeed * 3600 / HEADWAY_TILES. One vehicle per
+                         HEADWAY_TILES of lane, moving at the sim's own car
+                         speed. At the shipped carSpeed of 1.9 that is ~3,420/h.
+
+       FLEET SHARE       fleetMax * carSpeed * 3600 / roadTiles. node-city caps
+                         its vehicle population outright (AGENTS.carMax +
+                         truckMax + policeMax = 18 on the shipped table) and
+                         those vehicles are spread over the whole road network,
+                         so the busiest a street can be is every vehicle in the
+                         city taking an even share of it.
+
+     ⚠ THE FIRST CUT USED LANE SATURATION ALONE AND THE CHART WAS A FLAT LINE
+       ALONG THE X AXIS. It was not wrong — an 18-vehicle city genuinely never
+       approaches the physical saturation of a lane, so every street really did
+       read 5-8% — but a chart whose only shape is "nearly zero" tells a player
+       nothing, and the fix is not to rescale the axis (that would misreport
+       saturation) but to compare against the limit that actually binds in this
+       simulation. Above 100% means this street is carrying more than its share
+       of the city's fleet, which is exactly the thing worth knowing.
+
+     Both terms come from the host: the speed and the fleet caps out of AGENTS,
+     the road count off the live network. Only HEADWAY_TILES is a judgement. */
   HEADWAY_TILES: 2,
   /* Floor so a broken/absent AGENTS table cannot divide flow by zero. */
   MIN_CAPACITY_VPH: 60,
@@ -78,8 +97,11 @@ export const STREET = {
   LABEL_MIN_TILES: 2,
   LABEL_Y: 0.028,
   LABEL_HALF_W: 0.17,          // inside RD_HW (0.20), the kerb face
+  /* Texture HEIGHT only. There is deliberately no width constant: the canvas is
+     cut to the measured text and the plane is then built from the canvas's
+     aspect ratio, because a fixed-width texture stretched across a street of
+     any length smears the letters (see the note in labels.js). */
   LABEL_TEX_H: 64,
-  LABEL_PX_PER_TILE: 96,
   LABEL_MAX: 80,               // hard cap on label planes; see labels.js
   /* Re-derive the street graph at most this often. Segmentation is O(roads) and
      roads are capped by ROAD_CAP_BASE + depots, so this is cheap — but it does

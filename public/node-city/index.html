@@ -24244,7 +24244,15 @@ function animate() {
       worldOf: (x, z) => ({ x: x - HALF + .5, z: z - HALF + .5 }),
       hour: () => hourOf(),
       carSpeed: () => AGENTS.carSpeed,
-      // The road's REAL price, so the upkeep quote can never drift from it.
+      /* The city's vehicle population is CAPPED (desiredAgentCounts clamps each
+         kind to these), so this is the real ceiling on how busy any street can
+         get — the flow chart's capacity is the smaller of it and lane
+         saturation. Civilians are pedestrians and are deliberately not in it. */
+      fleetMax: () => AGENTS.carMax + AGENTS.truckMax + AGENTS.policeMax,
+      /* The road's REAL price, so the upkeep quote can never drift from it.
+         ⚠ costOf(), not BUILDINGS.road.cost — the table says 4 and scaleCost()
+           turns that into the 400 a player is actually charged. Reading the raw
+           table would have quoted upkeep 100x too low and looked correct. */
       roadCost: () => (costOf('road').cinder || 0),
       roadDemolishCost: ROAD_DEMOLISH_COST,
       // The dossier's own chrome, so a street looks like every other dossier.

@@ -114,10 +114,12 @@ function makeStreet(axis, cells, isRoad) {
      from a real through-route in the name generator. */
   let junctions = 0;
   for (const c of cells) {
-    const perp = axis === 'x'
+    // Stamped on the cell, not just counted: the world label uses it to sit on
+    // a clear run of carriageway instead of straddling an intersection.
+    c.perp = axis === 'x'
       ? (isRoad(c.x, c.z - 1) || isRoad(c.x, c.z + 1))
       : (isRoad(c.x - 1, c.z) || isRoad(c.x + 1, c.z));
-    if (perp) junctions++;
+    if (c.perp) junctions++;
   }
   const first = cells[0], last = cells[cells.length - 1];
   /* Ends that continue into another road are THROUGH ends; ends that stop are

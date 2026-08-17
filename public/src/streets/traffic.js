@@ -47,6 +47,7 @@ export function createMeter(ctx) {
   const obs = new Float64Array(B);      // observed seconds per bucket, city-wide
   const stamp = new Int32Array(B);      // absolute hour each bucket was written
   let lastBucket = -1;
+  let netTiles = 1;                     // live road tile count; see setNetwork
 
   const hourNow = () => {
     let h = 0;
@@ -141,13 +142,31 @@ export function createMeter(ctx) {
       return { volume, flow, seen, veh, ped, vehTotal, pedTotal, obsSec: obsTotal, capacity: cap,
                observedBuckets: seen.reduce((a, s) => a + (s ? 1 : 0), 0) };
     },
-    /* Lane capacity in vehicles/hour, derived from the sim's own car speed.
-       See STREET.HEADWAY_TILES for the one judgement in it. */
+    /* How many road tiles the city currently has. Set by the street graph's
+       rescan (it already walks the tiles) so this file never touches game. */
+    setNetwork(n) { netTiles = Math.max(1, n | 0); },
+    /* Capacity in vehicles/hour past a point: the smaller of lane saturation
+       and the city's whole vehicle fleet spread evenly over its road network.
+       See the long note on STREET.HEADWAY_TILES for why both terms are here. */
     capacity() {
-      let sp = 0;
+      let sp = 0, fleet = 0;
       try { sp = +ctx.carSpeed(); } catch (e) { sp = 0; }
+      try { fleet = +ctx.fleetMax(); } catch (e) { fleet = 0; }
       if (!Number.isFinite(sp) || sp <= 0) return STREET.MIN_CAPACITY_VPH;
-      return Math.max(STREET.MIN_CAPACITY_VPH, (sp * 3600) / STREET.HEADWAY_TILES);
+      const lane = (sp * 3600) / STREET.HEADWAY_TILES;
+      const share = (Number.isFinite(fleet) && fleet > 0)
+        ? (fleet * sp * 3600) / netTiles : Infinity;
+      return Math.max(STREET.MIN_CAPACITY_VPH, Math.min(lane, share));
+    },
+    /* Both halves, so the panel can say which limit is binding rather than
+       printing one number the player has to take on trust. */
+    capacityParts() {
+      let sp = 0, fleet = 0;
+      try { sp = +ctx.carSpeed(); } catch (e) { sp = 0; }
+      try { fleet = +ctx.fleetMax(); } catch (e) { fleet = 0; }
+      const lane = (sp > 0) ? (sp * 3600) / STREET.HEADWAY_TILES : 0;
+      const share = (sp > 0 && fleet > 0) ? (fleet * sp * 3600) / netTiles : 0;
+      return { lane, share, netTiles, fleet, bound: (share && share < lane) ? 'fleet' : 'lane' };
     },
     /* Lifetime counted vehicle passes on a tile — the input to road wear. */
     lifeOf(k) { const r = rings.get(k); return r ? r.life : 0; },

@@ -144,16 +144,69 @@ export function unemployment() {
    NOT invent people — it distributes the ones the city says exist into wealth
    tiers. Two systems growing population independently would diverge within
    minutes and the player would see two different numbers for the same city. */
+/* ── 🏘 WHO THE NEW ARRIVALS ARE — OPTIONAL, AND ABSENT BY DEFAULT ──────────
+   The second wire to /src/demographics, and the smaller one. It answers "of the
+   people who just moved in, what share are well-off", as weights over the three
+   wealth tiers, so a city that zoned detached family housing grows a middle
+   class and one that zoned nothing but low-rent housing does not.
+
+   🔴 IT MOVES HEADCOUNT AND NOTHING ELSE. `S.savings` is untouched on this
+   path, so `totalSavings()` — a term of sim.js's `totalCinder()` — is invariant
+   across it, exactly as it must be for a function the audit window does not
+   cover (see the redistributeEmptiedTiers header for what happens when
+   something on this path does move money). New residents arrive with nothing;
+   what they then EARN is the only way they get any, which is households.js's
+   whole invariant. */
+let TIER_MIX = null;
+export function setArrivalTierMix(fn) {
+  TIER_MIX = (typeof fn === 'function') ? fn : null;
+  return !!TIER_MIX;
+}
+function arrivalMix() {
+  if (!TIER_MIX) return null;
+  let m;
+  try { m = TIER_MIX(); } catch (e) { return null; }
+  if (!m || typeof m !== 'object') return null;
+  let sum = 0; const w = {};
+  for (const t of TIERS) { w[t] = Math.max(0, num(m[t], 0, false)); sum += w[t]; }
+  if (!(sum > 0)) return null;
+  for (const t of TIERS) w[t] /= sum;
+  return w;
+}
+/* Place `n` new residents across the tiers by `w`. The LAST tier takes the
+   remainder rather than its own rounded share — three floors of a float do not
+   sum back to the original, and a headcount that is one person short every tick
+   is a population that silently stops tracking the host's. */
+function placeArrivals(n, w) {
+  let handed = 0;
+  for (let i = 0; i < TIERS.length - 1; i++) {
+    const k = Math.floor(n * w[TIERS[i]]);
+    S.pop[TIERS[i]] += k; handed += k;
+  }
+  S.pop[TIERS[TIERS.length - 1]] += Math.max(0, n - handed);
+}
+
 export function setPopulation(total) {
   /* The host's population figure crosses the seam here every tick, so it gets
      the same treatment as a loaded save — see num(). */
   total = num(total, 0, true);
   const cur = population();
   if (cur === 0) {
-    // Fresh seed: everyone starts poor. A city does not begin with a middle class.
-    S.pop = { low: total, mid: 0, high: 0 };
+    // Fresh seed: everyone starts poor. A city does not begin with a middle
+    // class — unless demographics can say who actually moved in, in which case
+    // it is the better answer and the tiers start where the zoning put them.
+    const w = arrivalMix();
+    S.pop = { low: 0, mid: 0, high: 0 };
+    if (w) placeArrivals(total, w); else S.pop.low = total;
     return;
   }
+  /* 📈 GROWTH IS PLACED, NOT SCALED. Scaling the existing distribution says the
+     newcomers are demographically identical to the residents — which is exactly
+     the claim this feature exists to falsify, because the newcomers are whoever
+     the newest district was zoned for. Shrinkage still scales: people leaving
+     do not choose a wealth tier to leave from. */
+  const w = (total > cur) ? arrivalMix() : null;
+  if (w) { placeArrivals(total - cur, w); return; }
   // Grow or shrink proportionally, so an existing wealth distribution survives
   // a population change instead of being flattened by it.
   const scale = total / cur;
@@ -239,6 +292,40 @@ export function postJobs(band, n) {
   S.vacancies[band] += Math.max(0, n || 0);
 }
 
+/* ── 🎓 THE QUALIFICATION SOURCE — OPTIONAL, AND ABSENT BY DEFAULT ───────────
+   /src/demographics knows what the city's residents were EDUCATED to do; this
+   module knows what its firms are asking for. This is the one wire between
+   them, and it is a wire rather than an import for the reason CLAUDE.md gives
+   for every other seam in this codebase: a 404 on the other module must cost
+   the player that feature and nothing else.
+
+   The provider returns a LADDER:
+
+       { bands: { unskilled: n, skilled: n, technical: n, advanced: n } }
+
+   where each entry is how many working-age residents are qualified to hold
+   THAT band's jobs — so it is monotonically decreasing (everyone qualified for
+   advanced work is also qualified to sweep a floor, and takes that job when
+   there is nothing better). With no provider registered, `hire()` behaves
+   EXACTLY as it did before this existed: the whole labour force is qualified
+   for everything. That is not a fallback, it is the previous contract, and the
+   economy gauntlet still measures it. */
+let SUPPLY = null;
+export function setLabourSupply(fn) {
+  SUPPLY = (typeof fn === 'function') ? fn : null;
+  return !!SUPPLY;
+}
+export function labourSupply() {
+  if (!SUPPLY) return null;
+  try {
+    const r = SUPPLY();
+    if (!r || typeof r !== 'object' || !r.bands) return null;
+    const out = {};
+    for (const b in S.employed) out[b] = num(r.bands[b], 0, true);
+    return out;
+  } catch (e) { return null; }   // a throwing provider is a missing provider
+}
+
 /* ── HIRING ─────────────────────────────────────────────────────────────────
    Fill vacancies from the labour force, best-paid band first (ECON.labor
    .fillOrder). Returns fill ratio per band so a firm can throttle output to
@@ -251,12 +338,26 @@ export function postJobs(band, n) {
    no decision in it. */
 export function hire() {
   let pool = laborForce();
+  const qual = labourSupply();
   const fill = {};
-  for (const band of ECON.labor.fillOrder) {
+  const order = ECON.labor.fillOrder;
+  for (let i = 0; i < order.length; i++) {
+    const band = order[i];
     const want = S.vacancies[band] || 0;
-    const got = Math.min(want, pool);
+    /* 🎓 …AND NOW THE SECOND CONSTRAINT. A vacancy the city has nobody
+       QUALIFIED for goes unfilled even with idle residents standing next to it,
+       which is what makes an advanced industry genuinely starved in a city that
+       zoned nothing but low-rent housing. Without a provider `cap` is the whole
+       pool and this line is the identity. */
+    const cap = qual ? Math.min(pool, qual[band] || 0) : pool;
+    const got = Math.min(want, cap);
     S.employed[band] = got;
     pool -= got;
+    /* Everyone hired here was ALSO qualified for every band below this one —
+       fillOrder runs high to low, so deducting downward is exact and deducting
+       upward would be wrong (a college graduate hired as a technician was never
+       in the advanced pool). */
+    if (qual) for (let j = i; j < order.length; j++) qual[order[j]] = Math.max(0, (qual[order[j]] || 0) - got);
     fill[band] = want > 0 ? got / want : 1;
   }
   return fill;

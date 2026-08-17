@@ -795,6 +795,12 @@
     <h2>Economy</h2>
     <div class="lfilters">
       <button class="hbtn on" data-ecotab="city">🏙 City</button>
+      <!-- 👥 DEMOGRAPHICS. A tab and not a thirteenth rail launcher: the rail
+           row is measured at ~1180px against a 1256px track at 1280 wide (see
+           RAILS) and a thirteenth button wraps it over the map. Rendered
+           entirely by /src/demographics — if that module 404s the tab still
+           draws and says so, and nothing else in the card changes. -->
+      <button class="hbtn" data-ecotab="people">👥 People</button>
       <button class="hbtn" data-ecotab="chain">📊 Supply</button>
       <button class="hbtn" data-ecotab="market">📈 Market</button>
       <button class="hbtn" data-ecotab="trade">🤝 Trade</button>
@@ -19043,7 +19049,19 @@ function renderEco() {
       logEsc(ecoSaid.text) + ' ' + ecoBtn('clear', '', '×') + '</div>');
   }
   if (ecoTrace) h.push(ecoSection(() => ecoTraceHtml(E)));
-  if (ecoTab === 'survey') h.push(ecoSection(() => E.renderSurvey(E.survey())));
+  /* 👥 The People tab is the ONLY one drawn by a different module, so it is the
+     only one that has to answer for that module being absent. ecoSection()
+     already turns a throw into one dead section instead of a blank card; this
+     turns a MISSING module into a sentence, because "the tab does nothing" is
+     the worst of the three possible outcomes. */
+  if (ecoTab === 'people') {
+    h.push(ecoSection(() => {
+      const D = window.MythicDemographics;
+      if (!D || !D.ready()) return '<div class="eco-empty">The demographics module has not loaded, so the city cannot say who lives in it. Everything else works normally.</div>';
+      return D.render();
+    }));
+  }
+  else if (ecoTab === 'survey') h.push(ecoSection(() => E.renderSurvey(E.survey())));
   else if (ecoTab === 'chain') h.push(ecoSection(() => ecoChainHtml(E)));
   else if (ecoTab === 'market') h.push(ecoSection(() => ecoMarketHtml(E)));
   else if (ecoTab === 'trade') h.push(ecoSection(() => ecoTradeHtml(E)));
@@ -19477,6 +19495,20 @@ function popCap() {
   let c = 4;
   for (const t of Object.values(game.tiles)) { const d = BUILDINGS[t.type]; if (d && d.popCap && !bldSite(t)) c += d.popCap * t.lvl; }
   for (const a of game.anchors) c += ARMY.nodePopPerLvl * ((a.node.level | 0) || 1);
+  /* 👥 ZONED LAND HOUSES PEOPLE TOO. A district zoned for towers holds far more
+     residents than the same squares zoned for detached houses, and that has to
+     reach the cap or the densest zoning in the game would change nothing.
+     🔴 EXPLICITLY ZONED PARCELS ONLY, AND IT IS A DELTA. /src/demographics
+        subtracts whatever popCap those same tiles already granted above, and
+        counts nothing at all for a zone it merely GUESSED from the building
+        standing there — so an existing city with no zoning tool loaded gets
+        exactly the cap it got before this line existed. A read of a cached
+        field, never a re-survey: this function runs inside loops over every
+        tile in the city. */
+  try {
+    const D = window.MythicDemographics;
+    if (D && D.ready()) { const n = D.capacityDelta(); if (isFinite(n) && n > 0) c += n; }
+  } catch (e) {}
   return c;
 }
 function popUsed() {
@@ -20026,6 +20058,17 @@ async function economyTick(dtMin) {
      day is. Guarded exactly like MythicHouse above: the module is loaded
      asynchronously and the city must tick normally on any build where it never
      arrives. See ecoHost() for what it is handed and why. */
+  /* 👥 WHO LIVES HERE, and it runs BEFORE the economy on purpose: ecoHost()
+     reads demogPopulation(), so ticking it afterwards would hand the economy
+     last tick's citizenry every single tick — a one-beat lag that is invisible
+     while a city is steady and wrong exactly when it is not. Guarded like every
+     other module hook here; a 404 costs the People tab and nothing else. */
+  try {
+    if (window.MythicDemographics && window.MythicDemographics.ready()) {
+      window.MythicDemographics.tick(dtMin, { parcels: demogParcels(), population: cityPop() });
+    }
+  } catch (e) {}
+
   try {
     if (window.MythicEconomy && window.MythicEconomy.ready()) {
       const snap = window.MythicEconomy.tick(dtMin, ecoHost());
@@ -20457,10 +20500,68 @@ function ecoBindRoster() {
    ════════════════════════════════════════════════════════════════════════════ */
 
 
+/* ════════════════════════════════════════════════════════════════════════
+   👥 THE DEMOGRAPHICS HANDOVER — three small functions, and this is all of it.
+
+   /src/demographics decides WHO lives in the city: what each zone's dwellings
+   are, which households want them, and who can afford to move in. It cannot
+   see `game`, `BUILDINGS` or `cityPop` (all top-level `const` in this module
+   script — the globals trap), so this is the hand-over, exactly as ecoHost()
+   is for the economy.
+
+   🔴 IT MOVES NO MONEY AND HAS NO WAY TO. Everything below is headcount.
+   ════════════════════════════════════════════════════════════════════════ */
+/* Every tile that could hold homes, with the one field only this side can
+   know: what that tile ALREADY contributes to popCap(). Without it, zoned
+   capacity would be counted twice and every existing city would silently gain
+   population from a module that is supposed to describe it. A SITE is a hole
+   in the ground and houses nobody — the same bldSite test the economy handoff,
+   popCap and coverage all use. */
+function demogParcels() {
+  const out = [];
+  for (const k in game.tiles) {
+    const t = game.tiles[k]; if (!t) continue;
+    const d = BUILDINGS[t.type]; if (!d || d.decor) continue;
+    if (bldSite(t)) continue;
+    const lvl = Math.max(1, t.lvl | 0 || 1);
+    /* ⚠ A TILE DOES NOT CARRY ITS COORDINATES. `key(x, z)` is `x + ',' + z`
+       and the key IS the position (:19181) — reading `t.x` here would have
+       handed the zoning lookup a pair of undefineds and quietly failed over to
+       the derived zone for every tile in the city. */
+    const c = String(k).split(',');
+    out.push({ key: k, x: +c[0], z: +c[1], type: t.type, lvl,
+               popCap: (d.popCap || 0) * lvl, site: false,
+               /* A zoning module that writes the zone onto the tile is the
+                  cheapest possible integration, so it is relayed if present.
+                  /src/demographics also reads window.MythicZoning itself. */
+               zone: t.zone || null });
+  }
+  return out;
+}
+/* How many of the city's residents the zoning actually houses. Never more than
+   cityPop() — this module does not invent people — and a missing module, an
+   unmounted one, or any non-finite answer falls straight back to the city's
+   own figure, which is what every caller read before this existed. */
+function demogPopulation() {
+  try {
+    const D = window.MythicDemographics;
+    if (D && D.ready()) {
+      const n = D.population();
+      if (typeof n === 'number' && isFinite(n) && n >= 0) return n;
+    }
+  } catch (e) {}
+  return cityPop();
+}
+
 function ecoHost() {
   const cov = (game.cov && game.cov.pct) || {};
   return {
-    population: cityPop(),
+    /* 👥 The residents the zoning HOUSES, not the residents the city could
+       hold. A city zoned as detached suburbs has fewer of them than the same
+       tiles zoned as towers, and the economy hires and sells to the ones who
+       are actually there. Falls back to cityPop() whenever demographics has
+       nothing to say — see demogPopulation(). */
+    population: demogPopulation(),
     /* Utility coverage comes from the city's OWN vitals, so the economy and the
        power/water panels can never tell the player two different stories about
        the same brownout. */
@@ -25959,6 +26060,23 @@ function serialize() {
         return _lastEconomyBlob;
       } catch (e) { return _lastEconomyBlob; }
     })(),
+    /* 👥 THE DEMOGRAPHIC BLOB — who lives in the city, by zone, archetype and
+       education. Exactly the `economy:` contract above, including the erase
+       guard: when the module cannot answer, the last blob we KNOW is real is
+       written back rather than `null`. It is worth the same six lines here for
+       the same measured reason — a 404 mid-session must not delete the state,
+       and this state is not recoverable from anywhere else (the cohorts ARE the
+       history of who moved in).
+       ⚠ Optional-with-default on the way back in: a save with no `demog` key
+         seeds itself from the city's current population on the first tick. */
+    demog: (function () {
+      try {
+        const D = window.MythicDemographics;
+        const blob = (D && typeof D.ready === 'function' && D.ready()) ? D.serialize() : null;
+        if (blob && typeof blob === 'object') { _lastDemogBlob = blob; return blob; }
+        return _lastDemogBlob;
+      } catch (e) { return _lastDemogBlob; }
+    })(),
     /* ⏳ …AND THE HANDWRITING THAT SAYS "I WROTE THIS WHILE UNDECIDED".
        🔴 WITHOUT IT, LETTING A DEFERRED CITY SAVE LOCALLY WOULD TALK A
           BRAND-NEW PLAYER OUT OF THEIR 300,000 🔥 BY WAY OF THEIR OWN AUTOSAVE.
@@ -26497,6 +26615,12 @@ let _pendingEconomy = null;
    buffer, which is the correct reading of a save written before the grid
    existed, and is why every pre-v6 save opens unchanged. */
 let _pendingPower = null;
+/* 👥 …and the same pair for demographics. Absent ⇒ null ⇒ the module seeds its
+   households from the population the city already has, which is the correct
+   reading of a save written before this feature existed: those people were
+   already living there. */
+let _pendingDemog = null;
+let _lastDemogBlob = null;
 /* 💾 …AND THE LAST BLOB WE KNOW IS REAL, which is a DIFFERENT job and needs its
    own variable. `_pendingEconomy` is deliberately nulled the moment mount()
    consumes it (a remount arriving with a stale blob is its own bug). This one is
@@ -26651,6 +26775,9 @@ async function loadState() {
     _pendingEconomy = (s.economy && typeof s.economy === 'object') ? s.economy : null;
     // ⚡ Same stash, same reason: /src/power is imported later in boot().
     _pendingPower = (s.power && typeof s.power === 'object') ? s.power : null;
+    // 👥 Same contract, one line: stashed for boot(), and kept as the erase guard.
+    _pendingDemog = (s.demog && typeof s.demog === 'object') ? s.demog : null;
+    _lastDemogBlob = _pendingDemog;
     /* 💾 …AND THE LAST BLOB WE KNOW IS REAL. Same contract as the `house` and
        `stad` tile fields: state that exists nowhere else must survive a session
        in which its module never loaded. serialize() falls back to this rather
@@ -30705,6 +30832,31 @@ function animate() {
       setInterval(() => { ecoSync(); ecoBindRoster(); renderEco(); }, 4000);
     }
   } catch (e) { console.warn('[city] economy module unavailable', e); }
+
+  /* ══ 👥 DEMOGRAPHICS ═════════════════════════════════════════════════════
+     🔴 ITS OWN try, AND AFTER THE ECONOMY'S. Two reasons, and both are the
+     same reason this file guards everything else separately:
+       · /src/demographics registers its two providers on window.MythicEconomy
+         at mount, so the economy has to already be there (it re-tries on every
+         tick if it was not — see wireEconomy()).
+       · a throw in here must not reach the economy's catch and take the
+         economy card down with it. One module, one failure.
+     A 404 here costs the People tab. The city ticks, the economy runs on
+     cityPop() through demogPopulation()'s fallback, and nothing else notices. */
+  try {
+    await import('../src/demographics/index.js?v=' + (window.NC_BUILD || 'eco1'));
+    const DG = window.MythicDemographics;
+    if (DG) {
+      DG.mount({ state: _pendingDemog });
+      /* Consumed once, exactly like _pendingEconomy. `_lastDemogBlob` keeps its
+         own copy for the save's erase guard — see the `demog:` field. */
+      _pendingDemog = null;
+      /* First survey now rather than on the first economic tick, so the panel
+         and the dossier have something true to say the moment the city opens
+         instead of on the next beat. */
+      DG.tick(0, { parcels: demogParcels(), population: cityPop() });
+    }
+  } catch (e) { console.warn('[city] demographics module unavailable', e); }
   /* ⏳ A DEFERRED CITY IS NOT A FAILED ONE, AND THE PLAYER MUST BE TOLD WHICH.
      Nothing about deferral is fatal: the city ticks, builds, raids and renders
      exactly as it does without the economy feature, and it SAVES — to this
@@ -31187,6 +31339,23 @@ function animate() {
       said:   () => (ecoSaid ? { ...ecoSaid } : null),
       traced: () => ecoTrace,
       body:   () => { const el = $('ecobody'); return el ? el.innerHTML : null; },
+    },
+    /* 👥 DEMOGRAPHICS, MADE DRIVABLE. `parcels()` is the SHIPPED handover, not
+       a twin, so a driver reads exactly what crosses the seam; `tick(mins)` is
+       the shipped hook with the clock injected, because waiting 20 real minutes
+       for one economic day is not a test. `zone(x,z)` answers what the module
+       thinks one square is, which is the single most useful question when a
+       zoning module is or is not present. */
+    demog: {
+      parcels: () => demogParcels(),
+      pop:     () => demogPopulation(),
+      tick:    (mins) => { try { return window.MythicDemographics.tick(mins == null ? 1 : mins, { parcels: demogParcels(), population: cityPop() }); } catch (e) { return { threw: String(e) }; } },
+      report:  () => { try { return window.MythicDemographics.report(); } catch (e) { return null; } },
+      at:      (x, z) => { try { return window.MythicDemographics.residents(key(x, z)); } catch (e) { return null; } },
+      zone:    (x, z) => { try { return window.MythicDemographics.zoneOf(demogParcels().find(p => p.key === key(x, z))); } catch (e) { return null; } },
+      ladder:  () => { try { return window.MythicDemographics.ladder(); } catch (e) { return null; } },
+      delta:   () => { try { return window.MythicDemographics.capacityDelta(); } catch (e) { return null; } },
+      blob:    () => { try { return window.MythicDemographics.serialize(); } catch (e) { return null; } },
     },
     costOf,
   };

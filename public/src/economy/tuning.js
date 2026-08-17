@@ -149,6 +149,227 @@ export const ECON = {
     },
   },
 
+  /* ── 👥 DEMOGRAPHICS ──────────────────────────────────────────────────────
+     WHO lives in the city, and WHY they chose to. Read by /src/demographics.
+
+     🔴 THE FEATURE IN ONE SENTENCE: the same tile count zoned differently gives
+     a different population AND a different city, because a zone decides how
+     many DWELLINGS stand on a tile and which HOUSEHOLDS want one. Low-density
+     detached housing is one big family per tile; a tower is fourteen small
+     households on the same square. That is the whole of `zones` below.
+
+     🔴 NOTHING IN THIS GROUP MOVES A SINGLE CINDER, AND THAT IS STRUCTURAL.
+     `rent` here is an AFFORDABILITY INDEX — the question "could this household
+     pay to live in that zone", asked before they move in. The only rent that
+     ever debits anybody is `HH.chargeRent()`, which is inside sim.js's audited
+     day. A second rent that actually charged would be a fifth leak of exactly
+     the shape ECONOMY.md documents four of, and every one of those looked
+     correct in review. Demographics decides WHO; the economy decides WHOSE
+     MONEY MOVES, and they meet only at headcount. */
+  demographics: {
+    on: 1,
+
+    /* 🎓 EDUCATION → WHICH JOBS A CITIZEN MAY HOLD.
+       The ladder is the labour bands' ladder, one rung each, so a resident is
+       qualified for their own band AND every band below it — an overqualified
+       person takes a lesser job when there is nothing better, which is what
+       makes "graduates stacking shelves" a readable state rather than an
+       unemployment number. The reverse is refused: no amount of demand lets a
+       school-leaver run a reality-stabilisation line, which is the feedback
+       that makes zoning a decision (zone only low-rent housing and the advanced
+       industries stay unstaffed however many people arrive). */
+    education: {
+      order: ['none', 'school', 'college', 'university'],
+      levels: {
+        none:       { label: 'No schooling', short: 'None',    ico: '📕', band: 'unskilled' },
+        school:     { label: 'Schooled',     short: 'School',  ico: '📗', band: 'skilled' },
+        college:    { label: 'College',      short: 'College', ico: '📘', band: 'technical' },
+        university: { label: 'University',   short: 'Uni',     ico: '🎓', band: 'advanced' },
+      },
+      /* The minimum education a band's jobs demand. Mirrors `levels[*].band`
+         from the other side; both are read, neither is derived, because a
+         future band with no education of its own must still be answerable. */
+      requires: { unskilled: 'none', skilled: 'school', technical: 'college', advanced: 'university' },
+      /* 🎒 …AND EDUCATION IS NOT FIXED AT BIRTH. A student household graduates
+         at this rate per economic day and its members move UP one rung, which
+         is why low-rent housing is not a dead end: it is where a city's future
+         skilled labour lives while it is still cheap.
+         ⚠ 0.012 ≈ 83 economic days ≈ 28 real hours of play for a cohort to turn
+           over. It was 0.020 and that was measurably too fast: a low-rent
+           district emptied of students in 60 simulated days and read as a
+           district of singles, which is the wrong CITY, not just the wrong
+           number — the whole point of low-rent zoning is that students are
+           what it holds. */
+      graduatePerDay: 0.012,
+    },
+
+    /* 🏘 THE ZONES. `homes` is DWELLINGS on one tile at level 1, `perLevel` what
+       each further level adds. `rentMul` multiplies the rent index below.
+       `bag` is the weighted draw of household archetypes that WANT that zone —
+       not a filter: a family can live in a tower, it is simply not what towers
+       mostly fill up with.
+       ⚠ ids are this module's vocabulary. /src/zoning may name its zones
+         anything it likes; zones.js aliases them onto these six. */
+    /* 🔴 `eduTilt` IS THE HALF THAT MAKES ZONING A DECISION RATHER THAN A LOOK.
+       Without it every zone drew the same education mix — its BAG changed which
+       archetypes arrived, but a `single` was equally likely to be a graduate in
+       a low-rent block and in a penthouse, so a city of nothing but low-rent
+       housing still staffed its research labs and the whole education→jobs
+       feedback did nothing. Measured on the tree before this existed: a 10-tile
+       all-low-rent city produced 18 university-educated residents and filled
+       every advanced vacancy it was offered.
+       It multiplies the ARCHETYPE's own education weights, so it tilts a draw
+       rather than replacing it: a low-rent district still turns out the
+       occasional graduate, it just does not turn out a workforce of them. */
+    zones: {
+      resLow:     { name: 'Low Density Housing', short: 'Low Density', ico: '🏡',
+                    homes: 1,  perLevel: 0.5, rentMul: 2.20,
+                    bag: { family: 7, couple: 3, retired: 2, single: 1, student: 0 },
+                    eduTilt: { none: 0.45, school: 0.9, college: 1.35, university: 1.7 },
+                    desc: 'Detached houses on their own plots. Few, large, wealthy households.' },
+      resRow:     { name: 'Row Housing', short: 'Row Housing', ico: '🏘️',
+                    homes: 3,  perLevel: 1.2, rentMul: 1.35,
+                    bag: { family: 4, couple: 4, single: 2, retired: 2, student: 1 },
+                    eduTilt: { none: 0.8, school: 1.05, college: 1.1, university: 1.0 },
+                    desc: 'Wall-to-wall terraces. Mid-size households at mid rents.' },
+      resApt:     { name: 'Apartments', short: 'Apartments', ico: '🏢',
+                    homes: 6,  perLevel: 2.5, rentMul: 0.95,
+                    bag: { couple: 4, single: 4, family: 2, student: 2, retired: 2 },
+                    eduTilt: { none: 1, school: 1, college: 1, university: 1 },
+                    desc: 'Medium-density blocks. The city\'s ordinary middle.' },
+      resHigh:    { name: 'High Density Towers', short: 'Towers', ico: '🏙️',
+                    homes: 14, perLevel: 6, rentMul: 0.72,
+                    bag: { single: 6, couple: 4, student: 3, family: 1, retired: 1 },
+                    eduTilt: { none: 0.85, school: 1, college: 1.2, university: 1.25 },
+                    desc: 'Many small households on one square. Upkeep is split so many ways that the rent is low.' },
+      resMixed:   { name: 'Mixed Use', short: 'Mixed', ico: '🏬',
+                    homes: 5,  perLevel: 2, rentMul: 1.10,
+                    bag: { single: 4, couple: 4, student: 3, retired: 2, family: 1 },
+                    eduTilt: { none: 0.8, school: 1, college: 1.25, university: 1.3 },
+                    desc: 'Retail below, homes above. The city-centre demographic.' },
+      resLowRent: { name: 'Low Rent Housing', short: 'Low Rent', ico: '🏚️',
+                    homes: 8,  perLevel: 3, rentMul: 0.50,
+                    bag: { student: 7, single: 4, retired: 2, couple: 1, family: 1 },
+                    eduTilt: { none: 1.8, school: 1.25, college: 0.5, university: 0.18 },
+                    desc: 'Cheap first apartments. Students and young adults who have just left home.' },
+    },
+
+    /* 👨‍👩‍👧 THE ARCHETYPES. `size` is a DISTRIBUTION — [people, weight] — not an
+       average, because a street of identical households is the thing this
+       feature exists to stop being. `workers` is adults in the labour force per
+       household; `edu` and `wealth` are weighted draws; `ages` splits the
+       household's heads across the four age bands and must sum to 1. */
+    archetypes: {
+      family:  { name: 'Families', ico: '👨‍👩‍👧', workers: 2,
+                 size: [[3, 4], [4, 5], [5, 2], [6, 1]],
+                 edu: { none: 1, school: 4, college: 4, university: 2 },
+                 /* ⚠ THE WEALTH WEIGHTS ARE DELIBERATELY POOR AT THE TOP. They
+                    decide which of households.js's three tiers an ARRIVAL joins,
+                    and the high tier weights its consumption basket 2.4× and its
+                    luxury 3.2× — so a generous draw here does not read as a
+                    nicer city, it reads as an economy with demand nobody earned.
+                    The first cut gave a 63-resident starter town 24 well-off
+                    residents (38%). This is the retune. */
+                 wealth: { low: 3, mid: 5, high: 1.6 },
+                 ages: { child: 0.44, young: 0.03, adult: 0.51, senior: 0.02 },
+                 desc: 'Two earners and children. Fewer households per tile, and the cost of living is split across fewer of them — so a low-density street reads wealthy.' },
+      couple:  { name: 'Couples', ico: '👫', workers: 2,
+                 size: [[2, 8], [3, 2]],
+                 edu: { none: 1, school: 4, college: 4, university: 3 },
+                 wealth: { low: 4, mid: 6, high: 1.2 },
+                 ages: { child: 0.05, young: 0.28, adult: 0.63, senior: 0.04 },
+                 desc: 'Two earners, no dependants. The most mobile households in the city.' },
+      single:  { name: 'Singles', ico: '🧍', workers: 1,
+                 size: [[1, 9], [2, 1]],
+                 edu: { none: 2, school: 5, college: 3, university: 2 },
+                 wealth: { low: 6, mid: 4, high: 0.6 },
+                 ages: { child: 0, young: 0.42, adult: 0.52, senior: 0.06 },
+                 desc: 'One earner carrying one rent. Densest per square metre and the first to leave when work dries up.' },
+      student: { name: 'Students & Young Adults', ico: '🎒', workers: 1,
+                 size: [[1, 4], [2, 3], [3, 2], [4, 1]],
+                 edu: { none: 0, school: 7, college: 3, university: 0 },
+                 wealth: { low: 9, mid: 1, high: 0 },
+                 ages: { child: 0, young: 1, adult: 0, senior: 0 },
+                 inSchool: 1,
+                 desc: 'Moved out of their parents\' home into a first apartment. Small households, low wealth, and an education still in progress.' },
+      retired: { name: 'Retired', ico: '🧓', workers: 0,
+                 size: [[1, 5], [2, 5]],
+                 edu: { none: 3, school: 4, college: 2, university: 1 },
+                 wealth: { low: 5, mid: 4, high: 0.7 },
+                 ages: { child: 0, young: 0, adult: 0, senior: 1 },
+                 desc: 'Out of the labour force. They consume, they pay rent, and they never fill a vacancy.' },
+    },
+    ages: {
+      child:  { label: 'Children', ico: '🧒' },
+      young:  { label: 'Young adults', ico: '🧑' },
+      adult:  { label: 'Adults', ico: '🧔' },
+      senior: { label: 'Seniors', ico: '🧓' },
+    },
+
+    /* 💸 THE RENT INDEX — an affordability signal, never a transfer (see the
+       header). `baseDaysOfWage` prices a rentMul-1.0 dwelling as a share of one
+       unskilled day's wage, deliberately equal to `household.rentPctOfIncome`
+       so the two halves of "rent" cannot drift apart in meaning even though
+       only one of them moves money. `tightnessK` is the market: a city with no
+       vacancies is an expensive city, which is what stops a player solving
+       housing once and never thinking about it again. */
+    rent: {
+      baseDaysOfWage: 0.28,
+      tightnessK: 0.90, maxTightness: 2.2,
+      burdenMax: 0.55,        // a would-be arrival refuses a home above this share of income
+      burdenLeave: 0.78,      // …and a sitting household starts looking elsewhere above this
+    },
+
+    /* 🚚 ARRIVALS. A fraction of the VACANT dwellings of a zone fill per
+       economic day, scaled by how attractive the city is to the households that
+       zone draws. Not a flat immigration number: people arrive because
+       something attracted them, and the three weights are what.
+       `minAttract` keeps a dying city from freezing solid — somebody always
+       moves in — while being small enough that it cannot repopulate one. */
+    arrival: {
+      ratePerDay: 0.30,
+      minAttract: 0.03,
+      weight: { jobs: 0.50, rent: 0.32, services: 0.18 },
+      /* Jobs, as seen by a household: what share of this band's seekers find
+         work. Below this the band is read as "no work here" outright. */
+      jobFloor: 0.05,
+      /* An existing save (or any first mount) is SEEDED at this share of what
+         its zoning can hold, because the people were already living there — a
+         lived city must not empty itself and refill over twenty simulated days
+         the first time this module loads. */
+      seedFill: 0.85,
+    },
+
+    /* 🧳 DEPARTURES. A pipeline that only ever adds is a population counter.
+       `joblessGraceDays` is how long a household rides out unemployment on
+       savings before it goes; `ratePerDay` is how fast the ones who have given
+       up actually leave. Eviction (the dwelling itself is gone — demolished or
+       re-zoned) is immediate and is not a rate. */
+    departure: {
+      ratePerDay: 0.09,
+      joblessGraceDays: 5,
+      /* Below this share of a band's seekers finding work, a household with no
+         other qualification starts counting grace days. */
+      jobPanic: 0.35,
+    },
+
+    /* Income a household is assumed to be able to offer for rent, per economic
+       day. Wages come from ECON.labor — these are the two groups that are NOT
+       on a wage, and inventing a number for them elsewhere would be the same
+       duplication the wage table exists to prevent. */
+    income: {
+      studentPct: 0.38,       // of the unskilled wage: part-time work and support
+      studentWorkerPct: 0.50, // …and only half of a student household seeks work at all
+      pensionPct: 0.42,       // of the unskilled wage, per retired head
+      /* An arriving household is assumed to hold at least this fraction of a
+         full wage even in a slack labour market — nobody moves to a city on the
+         promise of literally zero income, but they do move on a part-time one. */
+      floorPct: 0.25,
+    },
+
+    ui: { maxCauses: 5 },
+  },
+
   /* ── 🏭 FIRMS ─────────────────────────────────────────────────────────────
      A business is not a tile that prints goods. It is a balance sheet.
      `startCash` is seeded at founding and is the buffer between a bad week and

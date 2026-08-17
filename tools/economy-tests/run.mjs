@@ -1768,12 +1768,17 @@ const stripComments = (src) => {
          was removed) and a stub for a function nobody calls is exactly the dead
          scaffolding that makes the next reader hunt for a caller. */
     const runHost = (tiles, keyFn) => {
-      const names = ['game', 'cityPop', 'ecoLogisticsCounts', 'bldSite', 'opsKeyOf',
+      /* 👥 `demogPopulation` is the demographics handover — ecoHost() now asks
+         it how many of the city's residents the zoning actually houses and
+         falls back to cityPop() when the module is absent. Stubbed at the same
+         figure cityPop() answers, because this round is about the BANK clause
+         and a different population would only make its cities disagree. */
+      const names = ['game', 'cityPop', 'demogPopulation', 'ecoLogisticsCounts', 'bldSite', 'opsKeyOf',
                      'roadUsed', 'roadCap'];
       const fn = new Function(...names, 'return (function ecoHost() ' + BODY + ')();');
       return fn(
         { tiles, cov: { avg: 0.75, pct: { water: 1 } }, power: { factor: 1 } },
-        () => 60, () => ({ warehouse: 3, depot: 2 }), bldSite, keyFn,
+        () => 60, () => 60, () => ({ warehouse: 3, depot: 2 }), bldSite, keyFn,
         () => 0, () => 1);
     };
     const realKey = ty => PREFIX + ty;

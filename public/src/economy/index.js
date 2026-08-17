@@ -617,6 +617,40 @@ const api = {
   syncBuildings, canBuild, pickAvailable, cardOutput,
   setPopulation: (n) => HH.setPopulation(n),
 
+  /* ── 👥 THE DEMOGRAPHICS SEAM ──────────────────────────────────────────────
+     /src/demographics knows WHO the residents are; this module knows what its
+     firms are asking for and what they pay. Three functions join them and every
+     one of them is OPTIONAL on both sides:
+
+       setLabourSupply(fn)   fn() -> { bands: { unskilled, skilled, technical,
+                             advanced } } — how many residents are QUALIFIED for
+                             each band. Unregistered, hiring is education-blind
+                             exactly as it was before (households.js `hire`).
+       setArrivalTierMix(fn) fn() -> { low, mid, high } weights for where NEW
+                             residents land in the wealth tiers. Headcount only:
+                             no savings move, so `totalCinder()` is invariant
+                             across it and the audit is untouched.
+       labourMarket()        the read back — what the city's firms posted and
+                             what they filled, so the arrival pipeline can ask
+                             "is there work here for someone like me".
+
+     🔴 NOTHING HERE MOVES CINDER IN EITHER DIRECTION. That is not a promise
+     about care, it is the shape of the interface: three functions that carry
+     headcounts and weights, and no balance. ECONOMY.md documents four money
+     leaks found during development and every one of them looked correct in
+     review — the way a new seam avoids being the fifth is by having nothing to
+     leak. */
+  setLabourSupply: (fn) => HH.setLabourSupply(fn),
+  setArrivalTierMix: (fn) => HH.setArrivalTierMix(fn),
+  labourMarket: () => ({
+    /* Fresh copies, never a reference into HH's own state — the live bug this
+       codebase already paid for on the card seam was a host object stored BY
+       REFERENCE that leaked NaN into a panel. */
+    vacancies: { ...HH.state().vacancies },
+    employed: { ...HH.state().employed },
+    qualified: HH.labourSupply(),
+  }),
+
   /* 🌐 THE TRADE NETWORK SEAM. `tradeSync()` is the whole of it for the host —
      one call per economic day. The rest is exposed so a driver can exercise
      each step alone, because the live path cannot be tested at all until

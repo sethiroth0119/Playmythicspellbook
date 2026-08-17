@@ -223,10 +223,30 @@ export function sync(state, layers, host) {
    cross-workflow water/pollution API promises (`airAt`, `groundAt`, `sourceAt`).
    Nothing here knows or cares which module supplied it. */
 function paintField(fn, stops) {
+  const A = POWER.overlay.fieldAlpha;
   for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
     const v = Number(fn(x, z));
-    if (!isFinite(v) || v <= 0) continue;
-    ctx.globalAlpha = 0.55 + 0.45 * Math.min(1, v);
+    if (!isFinite(v) || v <= A.floor) continue;
+    /* 🔴 THE ALPHA RAMPS FROM NEARLY NOTHING, BECAUSE A DENSE FIELD IS NOT A
+       SPARSE ONE. This was a flat `0.55 + 0.45 × v`, which is right for the
+       layers that existed when it was written — cables, markers and consumption
+       all cover a handful of tiles. Geothermal heat is defined on ALL 576 tiles
+       and sits around 0.15 almost everywhere, so a floor of 0.55 tints the whole
+       district a flat grey that says nothing and hides the city underneath it.
+       It is worse than it sounds because the plane is `toneMapped: false` while
+       everything beneath it is tone-mapped, so the overlay keeps full brightness
+       as the city dims into evening — the wash-out is at its worst exactly when
+       a player is most likely to open an info view.
+       Ramping from 0.10 means a field is invisible where it has nothing to say,
+       which is right for every layer that uses this: groundwater and wind are
+       dense fields too.
+       ⚠ A RED HERRING, RECORDED SO THE NEXT READER DOES NOT CHASE IT. The
+         aerial capture that started this looked like an opaque white sheet over
+         the district — and it was NOT this. It was scene.fog (26→70) with the
+         camera 28 units out; a shot taken from inside the near plane shows the
+         same overlay reading correctly. Frame an overlay shot under ~20 units
+         or the fog will be blamed on the paint. */
+    ctx.globalAlpha = A.lo + (A.hi - A.lo) * Math.min(1, v);
     cell(x, z, ramp(stops, v));
   }
   ctx.globalAlpha = 1;

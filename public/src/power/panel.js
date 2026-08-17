@@ -205,7 +205,7 @@ function html(s, caps) {
      ⚠ THE BUTTON QUOTES THE PRICE BEFORE IT IS PAID. "15 building types" and,
        once on, the exact figure it added. A switch whose cost is only visible
        after you press it is a switch nobody presses twice. */
-  h += s.metered
+  h += s.meteredOn
     ? '<div class="pwnote">🔌 <b>Metered</b> — extraction, workshops and venues that never declared a draw are billed for it (' +
         (s.meteredCount || 0) + ' building' + (s.meteredCount === 1 ? '' : 's') + ', ' + fmtW(s.meterLoad || 0) +
         '). <button class="pwbtn" data-pwmeter="0">Unmeter</button></div>'

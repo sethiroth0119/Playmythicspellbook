@@ -65,8 +65,18 @@ export function mount(host) {
     hazard:   new T.MeshStandardMaterial({ color: 0xb8542f, roughness: 0.8 }),
     glass:    new T.MeshStandardMaterial({ color: 0x1b2430, emissive: 0xffc978,
                                            emissiveIntensity: 0.35, roughness: 0.55 }),
-    panel:    new T.MeshStandardMaterial({ color: 0x1d2c44, roughness: 0.35, metalness: 0.25 }),
-    water:    new T.MeshStandardMaterial({ color: 0x35617f, roughness: 0.28, metalness: 0.1 }),
+    /* ⚠ THE SOLAR PANEL AND THE WATER ARE BOTH LIFTED FROM THE COLOUR THEY
+       "SHOULD" BE, and it was a photograph that decided it. At 0x1d2c44 and
+       0x35617f the solar field and the reservoir were the two things in the
+       whole set that did not read at dusk — a dark blue plate on dark ground is
+       invisible under a low sun, which is half of every day in this game. Both
+       carry a low emissive so they hold a colour when the key light leaves,
+       which is also what real glass and real water do: they go on reflecting the
+       sky after the ground has gone dark. */
+    panel:    new T.MeshStandardMaterial({ color: 0x2f4c78, emissive: 0x101c2e,
+                                           emissiveIntensity: 0.85, roughness: 0.30, metalness: 0.30 }),
+    water:    new T.MeshStandardMaterial({ color: 0x4a86ab, emissive: 0x12293a,
+                                           emissiveIntensity: 0.75, roughness: 0.22, metalness: 0.1 }),
     /* The plume. One material for smoke and steam alike — the COLOUR difference
        between a coal stack and a cooling tower is carried by the mesh's own
        `material.color` clone? No: cloning would leak. Both read as pale vapour,

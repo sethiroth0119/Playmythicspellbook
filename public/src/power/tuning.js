@@ -485,6 +485,12 @@ export const POWER = {
     // terrain, high enough to beat z-fighting with the road slabs.
     y: 0.06,
     opacity: 0.78,
+    /* How opaque a TERRAIN FIELD gets, as a function of its own 0..1 value.
+       A dense field (heat, groundwater, wind) is defined on all 576 tiles, so a
+       high floor here paints an opaque sheet over the whole city — see the note
+       in overlay.js's paintField, which is written against the photograph that
+       found it. Below `floor` a tile is not painted at all. */
+    fieldAlpha: { floor: 0.03, lo: 0.10, hi: 0.72 },
   },
 
   /* ── COLOURS ──────────────────────────────────────────────────────────────

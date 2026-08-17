@@ -431,7 +431,13 @@ export function solve(host, store) {
     causes, idlePlants,
     // 🪜 The demand ladder: the per-tile answer, the per-class rows, and the audit.
     tileFactor, classes: ladder.rows, shedOk: ladder.ok,
-    metered: !!(host.metered && host.hasGrid), meteredCount: merged.extra.length,
+    /* `meteredOn` is the SETTING — what the player chose, and what the panel's
+       switch reflects. `metered` is whether it is IN EFFECT this tick, which
+       additionally requires the city to have a grid at all (see mergeLoads).
+       They are reported separately because a settlement with no generator would
+       otherwise show "Legacy demand" and offer a switch it had already thrown. */
+    meteredOn: !!host.metered, metered: !!(host.metered && host.hasGrid),
+    meteredCount: merged.extra.length,
     emissions,
     plantCount: host.plants.length,
     loadCount: allLoads.length,

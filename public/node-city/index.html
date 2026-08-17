@@ -2887,6 +2887,93 @@ const BUILDINGS = {
               pop: 2, crew: 2, powerNeed: 0.53, cap: 1,
               svc: { need: 'safety', supply: 0.25 },
               desc: 'Platforms, a signal box and a freight shed. The only thing in the city that can move a crowd of thousands in one cycle — worth +2,500 to a stadium’s arrival capacity, twenty Motor Pools’ worth.' },
+
+  /* ══ ⚡ THE GENERATING FLEET (/src/power) ══════════════════════════════════
+     ---------------------------------------------------------------------------
+     Nine plants, each genuinely different to OWN and to PLACE. The Power Station
+     above is untouched and stays exactly what it was — the generic turbine hall
+     every existing city already has — and nothing here changes it.
+
+     🔴 WHAT LIVES HERE AND WHAT LIVES IN /src/power/tuning.js.
+        THIS ROW owns the price, the population, the crew, the RATED output
+        (`gen.power`) and the fuel draw. Those are the numbers the build panel
+        prints and the tick charges, and they belong to this file for the same
+        reason every other building's do.
+        /src/power owns AVAILABILITY (how much of that rating the weather, the
+        ground, the reactor or the rubbish is letting through today), SITING and
+        EMISSIONS. It returns ONE MULTIPLIER PER TILE and the power pre-pass
+        applies it in one place — the same one-multiplier-one-direction contract
+        /src/water landed for the Purifier, and the reason the two sides cannot
+        drift: only one of them has ever seen the rate.
+        ⚠ With /src/power absent every plant below runs at its rated output,
+          everywhere, for ever. That is the deliberate degrade: a 404 costs the
+          player the variation, never the building they paid for.
+
+     ⚠ NONE OF THEM DECLARES `powerNeed`. A generator that consumes grid power is
+       the feedback loop the power pre-pass exists to avoid — see its header.
+
+     💱 Priced on the same shelf as everything else (divisor 2,000, then ×100 at
+        scaleCost). The Power Station's 200 is the reference point: coal is the
+        cheapest capex per unit of output in the game and pays for it in fuel,
+        crew, population and filth; nuclear is four and a half times the
+        Station's price and needs its own water supply to stay alive. */
+
+  /* 🌬 Cheap, small, and honest about being unreliable. One crew, no fuel, and
+     an output that rides the weather the city already has. Wants OPEN SPACE:
+     /src/power charges a wake penalty for every built tile within two, so a line
+     of them along the edge of the map beats a block of them downtown. */
+  wind:     { name: 'Wind Turbine',  ico: '🌬️', cost: { cinder: 55, metal: 22, supplies: 4 }, pop: 1, crew: 1,
+              gen: { power: 2.4 },
+              desc: 'A tapered mast, a nacelle and three blades. The cheapest power in the city and the least dependable — a storm gets three times what a still night does. Give it open ground: turbines shelter each other, and a crowded one loses a third of its output.' },
+  /* ☀ Follows the day/night cycle the game already runs. Enormous at noon,
+     nothing at all at midnight — which is what makes the transformer yard's
+     buffer, or a second kind of plant, a real decision rather than a nicety. */
+  solar:    { name: 'Solar Farm',    ico: '☀️', cost: { cinder: 95, metal: 34, supplies: 8 }, pop: 1, crew: 1, outdoor: true,
+              gen: { power: 7.0 },
+              desc: 'Rows of tilted panels on a gravel field. At noon it out-produces a Power Station; at night it produces nothing whatsoever, and cloud takes two thirds of it. Build it for the peak, and build something else for the dark.' },
+  /* 🪨 THE TRAP, AND IT IS SUPPOSED TO BE TEMPTING. Cheapest capex per unit in
+     the game, no siting rule, no weather. It is paid for in fuel, in four
+     population and four crew, and in being the dirtiest thing anyone can build. */
+  coal:     { name: 'Coal Plant',    ico: '🏭', cost: { cinder: 150, metal: 50, supplies: 14 }, pop: 4, crew: 4,
+              gen: { power: 9.0 }, use: { fuel: 0.90 },
+              desc: 'A boiler house, a black heap and one fat banded stack. The most power for the fewest Cinder in the game — and the dirtiest thing you can put on the map. Its smoke goes wherever the wind goes and its ash goes into the ground under it. Do not build it upwind of your homes, or on top of your water.' },
+  /* 🔥 The clean fossil option: cheaper to RUN than coal (half the fuel) and far
+     cleaner, at a higher price and lower output. Two crew instead of four. */
+  gas:      { name: 'Gas Plant',     ico: '🔥', cost: { cinder: 185, metal: 58, supplies: 20 }, pop: 2, crew: 2,
+              gen: { power: 7.5 }, use: { fuel: 0.45 },
+              desc: 'Two pressure vessels and a compact turbine hall. Half the fuel of a Coal Plant for most of the power, a quarter of the smoke, and two crew instead of four — the sensible plant, and priced like it.' },
+  /* 🛢 Between the two on every axis, deliberately. */
+  oil:      { name: 'Oil Plant',     ico: '🛢️', cost: { cinder: 165, metal: 52, supplies: 16 }, pop: 3, crew: 3,
+              gen: { power: 8.0 }, use: { fuel: 0.95 },
+              desc: 'Two tanks, a pipe rack and a turbine house. Thirstier than coal and cleaner than it; cheaper than gas and dirtier than it. The plant you build when the yard already has the tanks.' },
+  /* ♨ THE PLACE-DEPENDENT PRIZE. Gated on the city's thermal endowment — a pure
+     deterministic function of the city's id, exactly as /src/economy's ore
+     endowment is. Most cities can site one somewhere; some cannot site one at
+     all, and that is the point. */
+  geothermal:{name: 'Geothermal Plant', ico: '♨️', cost: { cinder: 330, metal: 95, supplies: 30 }, pop: 3, crew: 3, cap: 3,
+              gen: { power: 9.5 },
+              desc: 'A wellhead, a binary-cycle house and a condenser deck. Clean, constant, and no fuel for ever — but it can only be drilled where the rock is hot, and how hot the rock is was decided by where your city is, not by what you spend. Open the ⚡ panel’s Geothermal Heat layer before you buy one.' },
+  /* 💧 Needs surface water, and output scales with the flow /src/water reports
+     at the tile — so a dam on a marginal channel really does fade when the city
+     over-pumps upstream. */
+  hydro:    { name: 'Hydro Plant',   ico: '🌊', cost: { cinder: 280, metal: 88, supplies: 26 }, pop: 2, crew: 2, cap: 3,
+              gen: { power: 8.0 },
+              desc: 'A dam across the channel, two penstocks and a machine hall at the toe. Clean, cheap to run and utterly dependent on the water: it can only be built where there is real flow, and it makes less of it when the river drops.' },
+  /* ☢ Enormous output, enormous price, and a downside the player has to manage
+     rather than merely accept: the core needs COOLING WATER, and a city that
+     lets its water coverage slip does not lose 5% of its power, it loses all of
+     it, at the exact moment its pumps needed power most. Core stress rises
+     slowly and falls fast, so the warning is long and the recovery is real. */
+  nuclear:  { name: 'Nuclear Plant', ico: '☢️', cost: { cinder: 950, metal: 280, supplies: 120 }, pop: 6, crew: 6, cap: 2,
+              gen: { power: 28.0 }, use: { water: 1.10, reagents: 0.05 },
+              desc: 'A hyperboloid cooling tower, a containment dome and a turbine hall. Three Coal Plants’ output from one tile, with no smoke at all — and it drinks. Let the city’s water coverage fall and the core heats; let it keep falling and the reactor SCRAMs and gives you nothing until it has cooled. The most power in the game, and the only building that can take all of it away at once.' },
+  /* ♻ A waste problem turned into an energy answer. Output is capped by the
+     garbage the city actually makes — population plus its shops, venues and
+     workshops — and every incinerator draws on the SAME flow, so the second one
+     halves the first rather than doubling the city. */
+  incinerator:{name:'Incinerator',   ico: '♻️', cost: { cinder: 210, metal: 64, supplies: 22 }, pop: 3, crew: 3,
+              gen: { power: 6.5 },
+              desc: 'A tipping hall, a bunker crane and a tall thin stack. Burns the city’s rubbish for power, so it costs nothing to run and grows with the town — but there is only so much rubbish, and a second one shares the first one’s. Cleaner than coal in the ground and nearly as bad in the air.' },
 };
 /* 🏗 BUILD SECTIONS — what each placeable is FOR. Anything in BUILD_ORDER
    that is missing from a section falls into "Other" automatically, so adding a
@@ -2899,7 +2986,14 @@ const BUILD_SECTIONS = [
   { id: 'svc',   name: 'Food & Service',  ico: '🍽️', desc: 'Feeds the city. Coverage, not stockpiles — this is what stops the population falling.',
     items: ['foodtruck', 'restaurant', 'grocery', 'clinic', 'club'] },
   { id: 'chain', name: 'Refining',        ico: '🏭', desc: 'Raw into refined. Rations, ingots, components, planks and power.',
-    items: ['cannery', 'smelter', 'machineshop', 'sawmill', 'weavery', 'papermill', 'printworks', 'powerstation', 'warehouse'] },
+    items: ['cannery', 'smelter', 'machineshop', 'sawmill', 'weavery', 'papermill', 'printworks', 'warehouse'] },
+  /* ⚡ THE GENERATING FLEET GETS ITS OWN SECTION, and the Power Station moved
+     here out of Refining. Ten generators is a shop of its own — leaving them
+     scattered through "Raw into refined" would bury the single most consequential
+     choice in the game (which plant, and where) under the flour mill. Ordered
+     cheap → expensive, which is also roughly the order a city can afford them. */
+  { id: 'pwr',   name: 'Power',          ico: '⚡', desc: 'Nine ways to light a city, and none of them is strictly best. Watch the fuel, the weather, the ground and the smoke.',
+    items: ['wind', 'solar', 'powerstation', 'coal', 'oil', 'gas', 'incinerator', 'hydro', 'geothermal', 'nuclear'] },
   { id: 'infra', name: 'Infrastructure', ico: '🛤️', desc: 'Links and stores. Producers beside a road work faster.',
     items: ['road', 'streetlight', 'depot', 'interchange', 'caravanpost', 'railyard', 'lot'] },
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
@@ -2931,7 +3025,9 @@ const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmi
   //    list, which is what makes it placeable again; the other two are new.
   'forge', 'indexfund', 'holdco',
   // ── outside connections (/src/outside) ──
-  'interchange'];
+  'interchange',
+  // ── ⚡ the generating fleet (/src/power) ──
+  'wind', 'solar', 'coal', 'gas', 'oil', 'geothermal', 'hydro', 'nuclear', 'incinerator'];
 
 /* ── TCG layer ─────────────────────────────────────────────────────────
    The player's card collection powers the city:
@@ -5717,6 +5813,23 @@ function buildMesh(type, lvl, tx, tz) {
     case 'resthouse': { _adopt(g, makeResthouse(lvl), true); break; }
     case 'stadium': { _adopt(g, makeStadium(lvl), true); break; }
     case 'railyard': { _adopt(g, makeRailyard(lvl), true); break; }
+    /* ⚡ THE NINE GENERATORS (/src/power/meshes.js). ONE dispatch line rather
+       than nine make*() recipes in this file, for two reasons: CLAUDE.md says a
+       new system goes in public/src/<feature>/ and does not go here, and the
+       make*() block belongs to another workflow this round.
+       ⚠ THE FALLBACK IS A REAL BUILDING, NOT AN EMPTY GROUP. If /src/power 404s
+         — or if this runs while loadState is restoring a city and before boot()
+         has imported the module — mesh() returns null and the tile gets the
+         Power Station recipe. A generator that looks like the wrong generator is
+         a cosmetic bug; an invisible one the player already paid for is not. The
+         sweep in boot() rebuilds these once the module is actually up. */
+    case 'wind': case 'solar': case 'coal': case 'gas': case 'oil':
+    case 'geothermal': case 'hydro': case 'nuclear': case 'incinerator': {
+      let m = null;
+      try { m = window.MythicPower && window.MythicPower.mesh ? window.MythicPower.mesh(type, lvl) : null; }
+      catch (e) { m = null; }
+      _adopt(g, m || makePowerstation(lvl), true);
+      break; }
   }
   // ! Rebuilt recipes hold a constant tile-relative footprint — see _adopt.
   if (!g.userData.fixedScale) g.scale.setScalar(s);
@@ -19675,6 +19788,37 @@ const prodPerMin = {};   // display: net per-minute rates
    `factor` is what an under-powered building actually runs at. */
 game.power = { gen: 0, demand: 0, ratio: 1, factor: 1 };
 
+/* ⚡ THE TWO PER-TILE MAPS FROM /src/power. Same contract as `_wtFac` below and
+   for the same reason: this file owns the RATE, the module owns the modifier,
+   and null means "no module, or it refused" — at which point both helpers return
+   1 and every number in the tick is what it was before the module existed.
+
+   _pwAv   AVAILABILITY, on the SUPPLY side. What share of its rating a generator
+           is actually making — the wind, the sun, the ground heat, the river's
+           flow, the reactor's cooling, the city's rubbish. Read in exactly two
+           places, both of which read `def.gen.power`, so the pre-pass total and
+           the per-building rate can never disagree.
+   _pwFac  THE DEMAND LADDER, on the CONSUMPTION side. What a building on this
+           tile actually runs at during a brownout, which is no longer one number
+           for the whole city: a clinic and a nightclub are shed differently.
+           Read in exactly one place — tileMult's `powered` line.
+   ⚠ NEITHER IS A SECOND FIGURE. `game.power.gen` still totals what the plants
+     make and `game.power.factor` is still the city average; these are the
+     resolution underneath those two, and /src/power asserts every tick that the
+     draw-weighted mean of _pwFac IS game.power.factor. */
+let _pwAv = null, _pwFac = null;
+function pwAvail(k) {
+  const f = _pwAv && _pwAv[k];
+  return Number.isFinite(f) && f >= 0 ? f : 1;
+}
+/* `powered` is the city-average fallback, passed in rather than read off
+   game.power, because tileMult is also called from paths that quote a factor of
+   their own (the inspector's preview, the ops efficiency read). */
+function pwFactorAt(x, z, powered) {
+  const f = _pwFac && _pwFac[key(x, z)];
+  return Number.isFinite(f) && f >= 0 ? f : powered;
+}
+
 /* 💧 WATER — the per-tile extraction multiplier from /src/water, refreshed by
    the water pre-pass in economyTick and read exactly once, where `gen.water` is
    banked. Null means "no module, or it refused", and wtFactor() then returns 1,
@@ -19785,7 +19929,13 @@ function tileMult(x, z, t, staff, powered) {
        FIN_BOOST_EACH: this is the one line that keeps the remodelled Forge from
        becoming the old Forge. It must never be moved after the cap. */
   if (def.gen && def.gen.cinder) m *= finBoost();
-  if (def.powerNeed) m *= powered;
+  /* ⚡ THE BROWNOUT, AND IT IS NO LONGER ONE NUMBER FOR THE WHOLE CITY.
+     `powered` is the city average and is still exactly what it was; pwFactorAt
+     refines it to what THIS tile is actually running at, because /src/power's
+     demand ladder sheds leisure before it dims a clinic. With the module absent
+     — or on any tile the ladder did not price — it returns `powered` unchanged,
+     which is byte-for-byte the old line. */
+  if (def.powerNeed) m *= pwFactorAt(x, z, powered);
   /* 🧯 THE CEILING. Everything above is MULTIPLICATIVE and, until this line,
      unbounded: adjacency × 2^(lvl-1) × staffing × weather × mayor × Kalon ×
      (1 + sockets) × morale × power, and then tileOutputFactor() multiplies the
@@ -19854,8 +20004,63 @@ async function economyTick(dtMin) {
       const isPlant = !!(def.gen && def.gen.power);
       if (isPlant) pwPlants.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, out: plant });
       if (need)    pwLoads.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, draw: need });
-      if (isR || isPlant || need) pwTiles.push({ k, road: isR, plant: isPlant ? 1 : 0, need });
+      /* ⚡ EVERY BUILDING TILE GOES IN THE TILE LIST NOW, not just roads, plants
+         and declared draws. /src/power's demand ladder can meter buildings that
+         never declared a powerNeed (see POWER.demand's "the 33"), and a tile
+         list that only carried the ones that already drew would make that opt-in
+         invisible to the module that owns it. `type` and `lvl` are what it needs
+         to price them; nothing else about the tile crosses. */
+      pwTiles.push({ k, x, z, road: isR, plant: isPlant ? 1 : 0, need,
+                     type: t.type, lvl: t.lvl | 0, name: def.name, ico: def.ico });
     }
+    /* ⚡ AVAILABILITY — /src/power/plants.js. THE SECOND HALF OF THE SINGLE-TRUTH
+       RULE, and the only place a generator's output is scaled by anything this
+       file does not own.
+       ────────────────────────────────────────────────────────────────────────
+       THIS FILE OWNS THE RATE (`def.gen.power * tileMult(...)`, computed above).
+       /src/power owns AVAILABILITY: what share of that rate the weather, the
+       clock, the ground, the reactor's cooling or the city's rubbish is letting
+       through right now. It returns ONE MULTIPLIER PER TILE and it is applied
+       HERE and in exactly one other place — where `gen.power` is read in the
+       main loop — so the pre-pass total and the per-building rate can never
+       disagree. Same contract /src/water landed for the Purifier.
+
+       ⚠ `gen` IS RE-SUMMED RATHER THAN PATCHED. Multiplying the running total by
+         an average would be wrong the moment two plants differ, which is the
+         entire point of having nine of them.
+       ⚠ IF THE MODULE 404s OR REFUSES, `_pwAv` stays null, pwAvail() returns 1
+         and every plant produces its rated output exactly as it did before this
+         feature existed. */
+    _pwAv = null; _pwFac = null;
+    try {
+      const P = window.MythicPower;
+      if (P && P.ready() && P.availability) {
+        /* The cheap city facts a SITING PREVIEW needs between ticks — a
+           build-menu hover happens 60× a second and must not run an economy
+           pass to find out what the weather is. */
+        if (P.setSiteCtx) P.setSiteCtx({ hour: hourOf(), weather: wx.type, pop: cityPop(),
+                                         waterCov: (game.cov && game.cov.pct && game.cov.pct.water) });
+        const av = P.availability({
+          cityId: cityGroundId(), grid: GRID, hour: hourOf(), weather: wx.type,
+          pop: cityPop(), dtMin, plants: pwPlants, loads: pwLoads,
+          // The water coverage the reactor is cooled by, and the tile predicate
+          // a wind turbine's wake needs. Handed over as VALUES and a FUNCTION —
+          // `game` is a top-level const and invisible to an ES module.
+          waterCov: (game.cov && game.cov.pct && game.cov.pct.water),
+          occupied: (xx, zz) => !!tileAt(xx, zz),
+        });
+        if (av && av.factor) {
+          _pwAv = av.factor;
+          gen = 0;
+          for (const p of pwPlants) {
+            const f = _pwAv[p.k];
+            p.avail = (Number.isFinite(f) && f >= 0) ? f : 1;
+            p.out *= p.avail;
+            gen += p.out;
+          }
+        }
+      }
+    } catch (e) { _pwAv = null; /* rated output stands, exactly as before */ }
     /* ⚡ NO GRID, NO BROWNOUT. The per-capita draw is only charged once the city
        has something electrical in it — a generator or a building that draws.
        ⚠ Charging it unconditionally meant every city that had never seen a Power
@@ -19891,15 +20096,29 @@ async function economyTick(dtMin) {
     try {
       const P = window.MythicPower;
       if (P && P.ready()) {
-        const s = P.solve({ grid: GRID, tiles: pwTiles, plants: pwPlants, loads: pwLoads,
+        const s = P.solve({ cityId: cityGroundId(),
+                            grid: GRID, tiles: pwTiles, plants: pwPlants, loads: pwLoads,
                             pop: cityPop(), hasGrid: grid,
                             /* This file's constants, handed over rather than
                                copied into the module's tuning table — see
                                /src/power/tuning.js on why these two in
                                particular may never be duplicated. */
                             perPop: DEMAND_PER_POP.power, floor: POWER_FLOOR, dtMin });
-        if (s && s.ok) game.power = { gen: s.capacity, demand: s.load, ratio: s.ratio,
-                                      factor: s.factor, model: 'grid' };
+        if (s && s.ok) {
+          game.power = { gen: s.capacity, demand: s.load, ratio: s.ratio,
+                         factor: s.factor, model: 'grid' };
+          /* 🪜 THE DEMAND LADDER'S ANSWER. `factor` above stays the CITY average
+             — every existing reader (the dossier, the coverage card, the away
+             report, the ⚡ chip) keeps reading the one field it always read, and
+             it still means what it always meant. `_pwFac` is the per-tile
+             refinement underneath it: a clinic and a nightclub in the same
+             brownout no longer run at the same number.
+             ⚠ THE TWO CANNOT DISAGREE. /src/power asserts every tick that the
+               draw-weighted mean of the per-tile factors IS this scalar, and
+               falls back to a flat map if it ever fails — so the ladder can only
+               ever redistribute the same energy, never invent or lose any. */
+          _pwFac = s.tileFactor || null;
+        }
       }
     } catch (e) { /* the inline result above is already correct */ }
   }
@@ -20059,7 +20278,13 @@ async function economyTick(dtMin) {
       // ⚡ Power is never banked. It was already summed in the pre-pass; letting
       // it fall through here would accumulate a 'power' key in game.frac and
       // then try to addRes it into the camp ledger, which has no such resource.
-      if (r === 'power') { prodPerMin.power = (prodPerMin.power || 0) + def.gen[r] * mult; continue; }
+      /* ⚡ …and the SECOND of the two places `gen.power` is read. The
+         availability multiplier from /src/power is applied here as well as in
+         the pre-pass, so the rate the HUD prints is the rate the grid was
+         actually given — a wind turbine that reported its rating here while the
+         pre-pass counted 40% of it would have the panel and the tooltip telling
+         the player two different stories about the same building. */
+      if (r === 'power') { prodPerMin.power = (prodPerMin.power || 0) + def.gen[r] * mult * pwAvail(k); continue; }
       const om = (r === 'cinder') ? omCin : omRes;
       if (CITY_STOCK[r]) {
         // Refined goods top out at the Warehouse capacity — "without storage,
@@ -22163,6 +22388,22 @@ async function tryPlace(x, z) {
       if (v && !v.ok) { toast(v.msg, 'bad'); return; }
     } catch (e) {}
   }
+  /* ⚡ THE SITING GATE (/src/power). A Geothermal Plant needs hot rock and a
+     Hydro Plant needs real flow, and neither of those is a property of the
+     building — they are properties of the PLACE, decided deterministically by
+     the city's id (see /src/power/geology.js, which is /src/economy's endowment
+     template run again for heat). The module returns the refusal STRING, so the
+     reason is written where the rule is rather than here.
+     ⚠ GUARDED, AND ABSENCE MEANS YES. If /src/power 404s, every plant may be
+       built anywhere and runs at its rated output — which is exactly what this
+       file did before the module existed. Losing a restriction is a far smaller
+       harm than a building the player paid for and cannot place because a script
+       failed to load. */
+  try {
+    const P = window.MythicPower;
+    const why = (P && P.siteRefusal) ? P.siteRefusal(placeType, x, z) : null;
+    if (why) { toast(why, 'bad'); return; }
+  } catch (e) { /* no gate, exactly as before */ }
   if (def.pop && popUsed() + def.pop > popCap()) { toast('Not enough population — build Housing.', 'bad'); return; }
   const cost = costOf(placeType);
   /* 🏗 THE DURATION IS FIXED HERE, BEFORE THE AWAIT — and it is the last read
@@ -31895,8 +32136,44 @@ function animate() {
   try {
     await import('../src/power/index.js?v=' + (window.NC_BUILD || 'r1'));
     if (window.MythicPower) {
-      window.MythicPower.mount({ THREE, scene, grid: GRID });
+      window.MythicPower.mount({ THREE, scene, grid: GRID, cityId: cityGroundId() });
       window.MythicPower.load(_pendingPower);
+      /* 🚧 The one predicate the siting gate cannot get from a per-tick snapshot:
+         it has to answer for the tile the player is hovering RIGHT NOW. `game`
+         is a top-level const and invisible to an ES module, so this closure IS
+         the hand-over — the same seam ecoHost() is for /src/economy. */
+      if (window.MythicPower.setOccupied) window.MythicPower.setOccupied((xx, zz) => !!tileAt(xx, zz));
+      /* 🏭 REBUILD THE GENERATORS' MESHES. loadState() runs BEFORE this import,
+         so a saved city's Wind Turbines were built while MythicPower.mesh() did
+         not exist yet and fell back to the Power Station recipe. One sweep here
+         is what makes them look like themselves, and it costs nothing in a city
+         that has none. Same drop-then-rebuild the upgrade path uses, so the
+         buffers are freed rather than leaked. */
+      try {
+        const PT = window.MythicPower.meshTypes ? window.MythicPower.meshTypes() : [];
+        if (PT.length) for (const [k, t] of Object.entries(game.tiles)) {
+          if (PT.indexOf(t.type) < 0 || !t.mesh) continue;
+          const [x, z] = k.split(',').map(Number);
+          dropTileMesh(t);
+          t.mesh = buildMesh(t.type, t.lvl, x, z);
+          placeMeshAt(t.mesh, x, z, t.rot);
+          if (t.bld) applyBuildLook(t); else if (t.damaged) applyDamagedLook(t);
+        }
+      } catch (e) { console.warn('[Power] plant mesh refresh', e); }
+      /* 🔍 Two self-checks, reported ONLY when they fail. A check that logs on
+         success is one everybody learns to scroll past.
+           · the geothermal endowment, so a tuning change cannot silently make
+             the plant impossible or universal;
+           · the JOIN between this file's generator rows and the module's plant
+             table — a generator here with no spec there is a plant with no
+             weather, no siting and no emissions, and it looks perfect. */
+      try {
+        const v = window.MythicPower.verify();
+        if (v && !v.ok) console.warn('[Power] geothermal self-check FAILED', v.violations.slice(0, 6));
+        const gens = Object.keys(BUILDINGS).filter(t => BUILDINGS[t].gen && BUILDINGS[t].gen.power);
+        const j = window.MythicPower.selfCheck(gens);
+        if (j && !j.ok) console.warn('[Power] plant/BUILDINGS join FAILED', j);
+      } catch (e) {}
     }
   } catch (e) { console.warn('[Power] not mounted (non-fatal):', e); }
   /* ══ 🛣 OUTSIDE CONNECTIONS ═══════════════════════════════════════════════

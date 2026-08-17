@@ -151,7 +151,12 @@ console.log('\n── the reconciled save ──');
 t('ext has exactly the tenants that registered', Array.isArray(save.extTenants) && save.extTenants.length > 0, save.extTenants);
 t('meta describes the payload it was handed', !!(save.meta && save.meta.app === 'node-city' && save.meta.keys.length), save.meta);
 
-const errs = logs.filter((l) => /pageerror|\[error\]/i.test(l));
+/* ⚠ `net::ERR_FAILED` is THIS HARNESS talking, not the page: the catch-all
+   route aborts every non-local request (the CDN is blocked — see
+   .gauntlet/README.md), and an aborted fetch is reported as a console error.
+   Counting it would make a green run impossible and teach the next reader to
+   ignore the console section entirely. */
+const errs = logs.filter((l) => /pageerror|\[error\]/i.test(l) && !/ERR_FAILED|ERR_ABORTED/.test(l));
 console.log('\n── console ──');
 console.log(errs.length ? errs.slice(0, 12).join('\n') : '  no page errors');
 if (errs.length) bad += errs.length;

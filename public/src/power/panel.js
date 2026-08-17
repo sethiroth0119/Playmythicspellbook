@@ -405,8 +405,11 @@ const CSS = `
 #ncpwr .pwlrow.mid .pwlbar i{background:#d99a2b}
 #ncpwr .pwlrow.bad .pwlbar i{background:#c0473f}
 #ncpwr .pwlrow.bad .pwcl{color:#ffbf9a}
-/* 🏭 The fleet table. `pwwhy` is the reason column and it is the whole point of
-   the section — a capacity figure cannot say "the wind dropped". */
+/* 🏭 The fleet table. .pwwhy is the reason column and it is the whole point of
+   the section — a capacity figure cannot say "the wind dropped".
+   ⚠ NO BACKTICKS ANYWHERE IN THIS BLOCK. It is inside a template literal, so a
+     backtick in a comment closes the string and the file stops parsing three
+     hundred lines later with an error that names a CSS class. */
 #ncpwr .pwfleet{margin-top:6px;border-top:1px solid var(--edge);padding-top:5px}
 #ncpwr .pwfrow{display:flex;align-items:baseline;gap:6px;padding:2px 0}
 #ncpwr .pwfrow .pwcl{display:flex;flex-direction:column;line-height:1.25}

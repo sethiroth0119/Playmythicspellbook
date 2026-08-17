@@ -81,8 +81,9 @@ function hash01(id, salt) {
    exceptional" tells them what city they are living in.
 
    ⚠ The `below` bounds are read off a TRIANGULAR roll (see fieldFor), so the
-     share of cities in each class is not the width of its band. Measured over
-     4,000 ids by verify(): roughly 46% Cold, 34% Warm, 16% Hot, 4% Volcanic.
+     share of cities in each class is NOT the width of its band. Measured over
+     600 ids by verify(): 44.5% Cold, ~40% Warm, ~8% Hot, 7.8% Volcanic, and
+     39% of all cities have somewhere a well may actually be sunk.
      That is the intended shape — geothermal is a PRIZE, and a prize that most
      cities have is a button. */
 export const PROVINCES = [
@@ -166,8 +167,20 @@ export function fieldFor(cityId, grid) {
               (0.55 + 0.45 * gradient);
     // Peak temperature. Scaled by the province, so a Cold Crust city's one vent
     // is a warm patch and a Volcanic city's is a steam field.
+    /* ⚠ THE PROVINCE SCALE IS WHAT KEEPS GEOTHERMAL A PRIZE, AND IT WAS MEASURED
+       RATHER THAN GUESSED. Every value below is verify() over 600 city ids:
+           (0.55 + 0.75 × gradient)   69% of cities buildable — the gate had
+                                      stopped gating; any city with a vent at all
+                                      cleared the threshold
+           (0.30 + 0.85 × gradient)   56%   still over the stated ceiling
+           (0.26 + 0.82 × gradient)   51%
+           (0.20 + 0.76 × gradient)   39%   ← here
+       At this slope a warm city needs a GOOD vent as well as a warm province —
+       a compound condition, which is what makes a hot site feel found rather
+       than granted. POWER.geo.buildableShare states the intent as a pair of
+       bounds and verify() fails the build if a retune leaves them. */
     const peak = Math.min(1, (GE.ventPeakMin + hash01(id, 'vp' + i) * (GE.ventPeakMax - GE.ventPeakMin)) *
-                             (0.55 + 0.75 * gradient));
+                             (0.20 + 0.76 * gradient));
     vents.push({ i, cx, cz, r, peak, name: ventName(id, i) });
   }
 

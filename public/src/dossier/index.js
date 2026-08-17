@@ -192,10 +192,18 @@ export function headerHtml(k, base) {
     }
     if (!addr.ok) return null;
 
-    // A home is titled with its address alone; its blueprint name is "Housing"
-    // and saying so twice tells the reader nothing.
+    /* A home is titled with its address ALONE — but only when the name it was
+       handed is the blueprint's. The original rule here was "a home has no
+       name", which was true of a building whose title could only ever be the
+       word "Housing": saying that above an address tells the reader nothing.
+       /src/naming lands in the same round and gives a residential block a name
+       of its own ("Ashgrove Court"), which is NOT the blueprint and IS worth
+       the line — so the test is "is this still just the blueprint?", not "is
+       this a home?". With no naming module the two questions have the same
+       answer and this behaves exactly as it did. */
     const isHome = def.popCap > 0 && !def.gen && !def.svc;
-    if (isHome) return '<span class="dsr-addr">' + esc(addr.text) + '</span>';
+    const named = base && def.name && String(base).trim() !== String(def.name).trim();
+    if (isHome && !named) return '<span class="dsr-addr">' + esc(addr.text) + '</span>';
     return esc(base) + '<span class="dsr-addr">, ' + esc(addr.text) + '</span>';
   } catch (e) { return null; }
 }

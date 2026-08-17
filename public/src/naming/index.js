@@ -74,6 +74,9 @@ export function mount(ctx) {
      typing because a tick fired underneath them is the kind of thing that
      makes a rename box feel broken. */
   let editing = null;
+  /* Did the header just print an address? Set by paintHeader, read by paintMeta
+     — see dossierAddr. One dossier is open at a time, so one flag is enough. */
+  let headerHasAddr = false;
   /* The level chip is openInspect's markup, and beginEdit blows the whole
      header away to put an input there. Without this cache a rename committed
      from the inline editor repainted a header with no LVL chip until the panel
@@ -123,8 +126,14 @@ export function mount(ctx) {
     lvlKey = key; lvlCached = lvlHtml;
     const bp = blueprint(key);
     const custom = reg.isCustom(key);
+    /* The street, put back exactly where openInspect had it — see dossierAddr.
+       `headerHasAddr` is then read by paintMeta, so the address is printed once
+       in the panel and not twice in two different places. */
+    const addr = dossierAddr(key);
+    headerHasAddr = !!addr;
     host.innerHTML =
-      '<span class="nm-name" id="nm-name">' + esc(name) + '</span>' + lvlHtml +
+      '<span class="nm-name" id="nm-name">' + esc(name) + '</span>' +
+      (addr ? '<span class="dsr-addr">, ' + esc(addr) + '</span>' : '') + lvlHtml +
       (bp && bp !== name ? '<span class="nm-bp">' + esc(bp) + '</span>' : '') +
       '<button type="button" class="nm-btn" id="nm-edit" title="Rename this business">✏️ Rename</button>' +
       (custom ? '<button type="button" class="nm-btn" id="nm-reset" title="Go back to the generated name">↺</button>' : '');
@@ -186,6 +195,13 @@ export function mount(ctx) {
   function paintMeta(key) {
     const meta = $('insmeta');
     if (!meta) return;
+    /* Skipped when the header already carries the street. This chip existed
+       because nothing else in the panel said where the building was; with
+       /src/dossier mounted the title says it AND the Address card says it, and
+       a third copy on the meta line is the kind of triplication that makes a
+       dossier read as generated rather than designed. Without that module it is
+       still the only address on screen, so it still prints. */
+    if (headerHasAddr) return;
     const a = reg.address(key);
     const txt = a ? '📍 ' + a.full : '📍 no street frontage';
     meta.insertAdjacentHTML('beforeend',

@@ -605,7 +605,9 @@
       /* gainR — the PER-PIXEL weight on the tone gain. ⚠ ROUND 2 OF WAVE 5,
          and the reason the whole frame got its detail back: see GAIN_SPAN. */
       gainR: { cv: null, g: null },
-      mn: null, mx: null, reads: 0, calls: 0, ms: []
+      /* ms = the whole recompute; rd/lp/pt = its read / loop / upload thirds.
+         See THE THREE-WAY SPLIT in postMap. */
+      mn: null, mx: null, reads: 0, calls: 0, ms: [], rd: [], lp: [], pt: []
     },
     /* ⚠ REMOVED IN ROUND 3 — `full` was the frame at FULL device resolution,
        composited 'lighter' at a UNIFORM alpha as the tone gain. It is gone and
@@ -4020,8 +4022,21 @@
      to about (159,159,142) — R−B +17, sat 11 → 11+, i.e. out of the |R−B| ≤ 6
      window the scan counts, without yellowing the haze. */
   const NEUTRAL_W = 34, NEUTRAL_R = 0.55;
-  /* the map is rebuilt on one frame in four — see the cadence note below. */
-  const POST_CADENCE = 4;
+  /* the map is rebuilt on one frame in `cadence()` — see the cadence note below. */
+  const POST_CADENCE = 12;
+  /* ⚠ AND IT IS OVERRIDABLE AT RUNTIME, BECAUSE THE COST OF A STALE MAP IS A
+     PICTURE QUESTION. Wave 3 set this to 4 and defended it on timing alone;
+     nobody had A/B'd what the grade LOOKS like at two cadences on one build,
+     which is the only measurement that can say how far it may go. It can now:
+     `window.__vistaOff.cadence = 4` (or 40) and re-probe. Same contract as
+     every other __vistaOff switch — read at call time, never cached.
+     ⚠ WAVE 7 RAISED IT 4 → 12, and the evidence is in THE CADENCE IS THE ONLY
+     LEVER ON THE SYNC COUNT, below. Do not lower it back without re-running
+     that probe. */
+  function cadence() {
+    const o = window.__vistaOff, v = o && o.cadence;
+    return (typeof v === 'number' && v >= 1) ? v : POST_CADENCE;
+  }
 
   function scratch(rec, w, h, ro) {
     if (!rec.cv) rec.cv = document.createElement('canvas');
@@ -4056,6 +4071,102 @@
      move — is stale by nothing that matters. `__vistaOff.coolcache = 1` still
      forces every frame so the counterfactual is measurable on this build.
 
+     ⚠ …AND "NOTHING END TO END" WAS WRONG, WHICH IS WHAT WAVE 7 IS. The claim
+     above rests on a cadence-4-vs-1 ablation run under a per-frame flush, a
+     regime where every frame already rasterises so the readback has nothing
+     left to force. Run WITHOUT the flush — i.e. the way the board actually
+     runs — the same ablation, on framePeriod (the wall clock, not a bracket):
+
+         cadence 1 ....  mean 23.1 ms/frame,  60/60 frames over 16.7 ms
+         cadence 4 ....  mean 13.2 ms/frame,  15/60 over  (exactly the reads)
+         cadence 12 ...  mean  6.5 ms/frame,   5/60 over  (exactly the reads)
+
+     The frames over budget are not "roughly" the readback frames, they ARE the
+     readback frames, one for one. So the cadence is not a nicety, it is the
+     only lever on how often the board drops a frame, and wave 3 left it three
+     times tighter than the picture needs.
+
+     ⚠ AND THE 47 ms IS NOT ALL SYNC — DO NOT GO ASYNC TO FIX IT. A critic read
+     msP50 ≈ 40 ms, correctly recalled that a bracket around a readback is not
+     an attribution, and concluded the fix was to stop synchronising (read last
+     frame's copy, one frame of latency, no sync). The three-way split added
+     below says otherwise, and it is honest because everything it times happens
+     AFTER the readback has already flushed the pipeline.
+
+     ⚠ THE SPLIT'S FIGURES WERE RE-TAKEN IN WAVE 8 AND THE OLD ONES WERE WRONG.
+     Wave 7 recorded "readP50 25-30 ms, loopP50 8.7, dead stable in every arm"
+     — measured through a `reset()` that cleared `ms` but not rd/lp/pt, so the
+     three medians were a rolling window over BOTH arms of the A/B and were
+     stable BY CONSTRUCTION. The tell was on the face of it: an arm reporting
+     msP50 88.4 with loopP50 9.0 and putP50 0.1 has ~79 ms to account for, not
+     30. reset() clears all four arrays now; the figures below are single-arm,
+     clean page load, 200 driven frames, and each one sums to its own msP50 to
+     within a few tenths. State the regime with the number or it means nothing:
+
+                        UNFLUSHED (how the board actually runs)   FLUSHED
+         cadence 12   msP50 91.6  read 80.3  loop 11.4  put 0.1   msP50 11.7  read 1.4  loop 8.6  put 0.1
+         cadence  4   msP50 38.5  read 29.5  loop  8.6  put 0.1   msP50 10.6  read 1.7  loop 8.9  put 0.1
+
+     Read the table by columns, not rows. `read` is ENTIRELY a regime artifact:
+     the per-frame flush pre-pays the rasterisation, so the same readback costs
+     80 ms unflushed and 1.4 ms flushed. It also scales with the cadence (80 vs
+     29) for the same reason — twelve frames of display list to rasterise
+     instead of four. Neither figure is a cost of the READ; both are the cost of
+     the frames it was WAITING for, which is the warning at the top of this file
+     restated in numbers.
+     `loop` is the only column that is nearly invariant — 8.6-8.9 ms in three of
+     the four cells — and that is what makes it the honest one. (The unflushed
+     cadence-12 cell reads 11.4 because at one recompute in twelve the loop runs
+     too rarely to stay warm; treat ~8.7 as the true figure and that cell as its
+     cold-code upper bound.)
+
+     ⚠ AND THE FLUSHED COLUMN IS WHY GOING ASYNC STILL LOSES. It is the regime
+     where the sync has been removed by construction — exactly what an async
+     read would buy — and the recompute STILL costs 10.6-11.7 ms, of which 8.6
+     is the per-pixel JS. Async deletes the column that was never real work on a
+     compositing device and leaves the column that is. Reduce the NUMBER of
+     recomputes instead; that is the cadence, and it cuts both columns at once.
+
+     Reading a one-frame-old copy does not remove the sync either: in a pane that
+     never composites, last frame's raster has not happened either, so the
+     stall is identical and merely arrives one frame later. Confirmed directly
+     — a readback of a scratch copy of the main canvas costs the same ~4.8 ms
+     whether 1 or 8 frames were driven since it was written (flat in K), i.e.
+     the sync is one frame's rasterisation, not an accumulating queue. There is
+     nothing to amortise away. Reduce the NUMBER of syncs instead.
+
+     ⚠ THE CADENCE IS THE ONLY LEVER ON THE SYNC COUNT — WAVE 7, 4 → 12. What
+     nobody had measured is the thing that actually bounds it: what a staler
+     map does to the PICTURE. Probed on one build via `__vistaOff.cadence`,
+     48 boxes on a 8x6 grid, each a 20x20 mean averaged over 24 frames, against
+     a noise floor taken by re-running the IDENTICAL build twice (med 0, p90
+     2.17, max 22.47, mean 1.20 — the max is one box with board animation in
+     it):
+
+         cadence 4 vs 12 ....  med 0, p90 0.24, max 4.62, mean 0.24
+         cadence 4 vs 60 ....  med 0, p90 2.72, max 9.27, mean 0.70
+
+     Both are INSIDE the noise floor. The map is very nearly a constant on a
+     board whose camera does not move, exactly as the paragraph above always
+     claimed — so 12 is not the aggressive setting, it is the conservative one
+     with 5x of proven headroom left. Anything that regrades the whole frame at
+     once still bypasses the cadence entirely through `key` (below), so time of
+     day, location swaps and resizes are unaffected by any of this.
+
+     ⚠ AND THE LOOP WAS DELIBERATELY NOT SLICED. loopP50's 8.7 ms is the one
+     cost here that is real CPU work on every device rather than an artifact of
+     this pane, and spreading it across the frames of the cadence is the
+     obvious next move. It was left alone on purpose: this pane cannot show the
+     benefit (unflushed, the recompute frame is dominated by the sync either way
+     — 80 ms of it at the shipped cadence 12; see the table above),
+     it is a large refactor of the densest loop in the file, and shipping an
+     unverifiable perf change into THIS module is the exact mistake its header
+     is a monument to. If a future round has a compositing board to measure on,
+     slice it there — read once, process bh/N rows per frame, and putImageData
+     only when the last slice lands so the canvases keep the previous complete
+     map throughout. The constants must be captured once at read time or the
+     rows will not agree.
+
      ⚠ AND IT IS WHY THE SHADOWS HAVE MATERIAL AGAIN. Wave 3's warm restore was
      a BAKED vertical ramp: it could only know how far down the screen a pixel
      was, so lit sand and the tile in its shadow at the same depth got exactly
@@ -4082,7 +4193,7 @@
        swaps and resizes without having to enumerate them. */
     const key = S.sky.key + '|' + S.land.key + '|' + S.lastBake + '|' + bw + 'x' + bh;
     S.post.calls++;
-    if (S.post.ready && S.post.key === key && S.post.age < POST_CADENCE && !off('coolcache')) {
+    if (S.post.ready && S.post.key === key && S.post.age < cadence() && !off('coolcache')) {
       S.post.age++;
       return S.post;
     }
@@ -4138,6 +4249,16 @@
         }
       }
     } catch (e) { LT = null; }
+    /* ── ⚠ THE THREE-WAY SPLIT, AND IT IS THE WHOLE OF WAVE 7 ────────────────
+       msP50 above brackets read + loop + upload together, and a reader who
+       knows getImageData is a pipeline sync will assume the sync is the whole
+       of it. IT IS NOT, AND THE ASSUMPTION SENT ONE ROUND AT THE WRONG TARGET.
+       Split here so nobody has to assume again: `readMs` is the two
+       getImageData calls (the sync), `loopMs` is the per-pixel JS, `putMs` the
+       three putImageData uploads. Unlike grade()'s bracket these do not need a
+       flush to be honest — the readback above has ALREADY forced the pipeline,
+       so everything timed after `_t1` is unqueued CPU work. */
+    const _t1 = _t0 ? performance.now() : 0;
     const H = api.H, hz = horizonY(api), span = chromaSpan(api);
     /* …and the shade boost's own origin — see terrainTopY(). Its span is
        measured from ITS OWN horizon so a tall board does not also get a longer
@@ -4566,10 +4687,16 @@
         A[o + 3] = 255;
       }
     }
+    const _t2 = _t0 ? performance.now() : 0;
     gm.putImageData(md, 0, 0); ga.putImageData(ad, 0, 0); gv.putImageData(vd, 0, 0);
     S.post.mn = [mnR, mnG, mnB]; S.post.mx = [mxR, mxG, mxB];
     S.post.ready = true;
-    if (_t0) { S.post.ms.push(performance.now() - _t0); if (S.post.ms.length > 120) S.post.ms.shift(); }
+    if (_t0) {
+      const _t3 = performance.now();
+      S.post.ms.push(_t3 - _t0);
+      S.post.rd.push(_t1 - _t0); S.post.lp.push(_t2 - _t1); S.post.pt.push(_t3 - _t2);
+      if (S.post.ms.length > 120) { S.post.ms.shift(); S.post.rd.shift(); S.post.lp.shift(); S.post.pt.shift(); }
+    }
     return S.post;
   }
   /* the 'overlay' blend as a MULTIPLIER on the channel it is applied to, at
@@ -4830,6 +4957,11 @@
   /* read-only smoke-test surface, same spirit as the board page's __bbDebug.
      A stale bake is completely silent — the frame still paints, it just paints
      the PREVIOUS time of day — so there has to be a way to ask. */
+  function med(a) {
+    if (!a || !a.length) return null;
+    const s = a.slice().sort((x, y) => x - y);
+    return +s[s.length >> 1].toFixed(2);
+  }
   window.__vistaDebug = function () {
     return {
       skyKey: S.sky.key, landKey: S.land.key,
@@ -4861,6 +4993,50 @@
         const a = S.gradeDt.slice().sort((x, y) => x - y);
         return a.length ? +a[a.length >> 1].toFixed(2) : null;
       })(),
+      /* ⚠ AND A p50 CANNOT SEE JANK — WAVE 7. framePeriodP50 above is the
+         honest wall clock, but it is a MEDIAN: a board that ships three 3 ms
+         frames and one 60 ms frame reports 3.4 ms and drops a frame four times
+         a second, which is exactly the shape a readback on a cadence produces.
+         So the same S.gradeDt array is also reported as a DISTRIBUTION, and
+         `over167` — periods past one 60 Hz budget — is the number a jank claim
+         has to move. Same wall clock, same caveats, no bracket, no flush. */
+      framePeriod: (function () {
+        const a = S.gradeDt.slice().sort((x, y) => x - y);
+        if (!a.length) return null;
+        const q = function (p) {
+          return +a[Math.min(a.length - 1, Math.round(p * (a.length - 1)))].toFixed(2);
+        };
+        let over = 0, sum = 0;
+        for (let i = 0; i < a.length; i++) { if (a[i] > 16.7) over++; sum += a[i]; }
+        return {
+          n: a.length, p50: q(0.5), p95: q(0.95), max: +a[a.length - 1].toFixed(2),
+          mean: +(sum / a.length).toFixed(2), over167: over,
+          pctOver: +(100 * over / a.length).toFixed(1)
+        };
+      })(),
+      /* clear the rolling windows so one arm of an A/B cannot inherit the
+         other's samples. The windows are 240 long and an arm is 60 frames, so
+         without this every "after" number is three quarters "before".
+         ⚠ AND IT MUST CLEAR ALL FOUR post ARRAYS, NOT JUST `ms` — WAVE 8. The
+         commit that added rd/lp/pt forgot them here, and the omission is not
+         cosmetic in either direction:
+           · the three medians it feeds (readP50/loopP50/putP50) became a
+             ROLLING WINDOW OVER EVERY ARM EVER RUN in the session, so they came
+             out stable by construction and the split — the one measurement
+             that says msP50 is not all sync — could not tell two cadences
+             apart. It reported readP50 30.1 for an arm whose own msP50 was
+             88.4 with loopP50 9.0 and putP50 0.1, i.e. 79.3 ms unaccounted
+             for. Arithmetically self-refuting, and it shipped as a comment.
+           · the 120-sample trim below is driven by `ms.length` and shifts all
+             four together. Empty `ms` alone and rd/lp/pt never get trimmed
+             again and never re-align with ms for the rest of the session.
+         Any array added to S.post's sample set has to be added here too. */
+      reset: function () {
+        S.gradeMs.length = 0; S.gradeDt.length = 0; S.gradeAt = 0;
+        S.post.ms.length = 0; S.post.reads = 0; S.post.calls = 0;
+        S.post.rd.length = 0; S.post.lp.length = 0; S.post.pt.length = 0;
+        return true;
+      },
       gradeN: S.gradeMs.length,
       /* THE MAP'S READBACK CADENCE. `reads` counts frames that actually ran the
          getImageData + loop, `calls` counts frames that wanted the map; the
@@ -4872,16 +5048,32 @@
          every frame and re-measure the counterfactual on this same build; on
          this box, and under a per-frame flush, that counterfactual is inside
          run-to-run noise, which is not what msP50's 70 ms suggests.
+         ⚠ AND UNDER NO FLUSH IT IS NOT INSIDE NOISE AT ALL — it is 23.1 vs
+         13.2 ms/frame. The flushed regime hides the whole effect because it
+         pre-pays the sync on every frame. Use `framePeriod` below, not this,
+         to judge the cadence; and use readP50/loopP50 to see what msP50 is
+         made of before concluding anything about going async.
          `pos` says whether
          the positional bake exists — without it the map declines and the frame
          ships with the board's own light, which is the tainted-canvas path. */
       post: {
-        cadence: POST_CADENCE, reads: S.post.reads, calls: S.post.calls,
+        cadence: cadence(), reads: S.post.reads, calls: S.post.calls,
         pos: !!S.post.pos, ready: S.post.ready, failed: S.post.fail,
         msP50: (function () {
           const a = S.post.ms.slice().sort((x, y) => x - y);
           return a.length ? +a[a.length >> 1].toFixed(2) : null;
-        })()
+        })(),
+        /* ⚠ AND THESE ARE WHY msP50 IS NOT AN ARGUMENT FOR GOING ASYNC. See
+           THE THREE-WAY SPLIT: readP50 is the sync, loopP50 the per-pixel JS,
+           putP50 the three uploads.
+           ⚠ QUOTE THEM WITH THEIR REGIME AND THEIR CADENCE OR THEY MEAN
+           NOTHING. readP50 moves 1.4 → 80 ms across flushed/unflushed and 29 →
+           80 across cadence 4/12 without the readback changing at all; only
+           loopP50 is close to invariant. And call reset() between arms: these
+           are rolling medians, and the wave-7 round that forgot to clear them
+           published an arm-blended readP50 that its own msP50 contradicted by
+           49 ms. The sanity check is msP50 − read − loop − put ≈ 0. */
+        readP50: med(S.post.rd), loopP50: med(S.post.lp), putP50: med(S.post.pt)
       },
       /* wave 5: the grade is three composites and neither clamp is a fill any
          more — the shoulder is MAP_CEIL inside the multiply. Reported rather

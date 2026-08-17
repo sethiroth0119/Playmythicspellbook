@@ -4597,7 +4597,24 @@ function buildMesh(type, lvl, tx, tz) {
       _adopt(g, makeSiphon(lvl), true);
       break; }
     case 'housing': {
-      g.add(makeHousing(lvl, tx, tz));
+      /* 🗺 ZONING HOOK (public/src/zoning). makeHousing picks its archetype from
+         a district roll seeded on the tile; a ZONED plot should build what the
+         player zoned instead. The module never edits that choice — it returns
+         SURROGATE seed coords whose district roll lands on the archetype the
+         zone asks for, and makeHousing is handed those instead of the real
+         tile. tx,tz are used for nothing but seeding (verified: they appear on
+         four lines, all inside rdRng calls), and placeMeshAt still puts the
+         house on the real tile.
+         ⚠ It must stay a pure function of the plot — a reload, an upgrade and a
+           repair all come back through here, and a seed that varied per call is
+           exactly the bug makeHousing's own comment records. Unzoned land, or a
+           missing module, returns null and the roll decides as it always did. */
+      let hsx = tx, hsz = tz;
+      try {
+        const zs = window.MythicZoning && window.MythicZoning.housingSeed(tx, tz);
+        if (zs) { hsx = zs[0]; hsz = zs[1]; }
+      } catch (e) {}
+      g.add(makeHousing(lvl, hsx, hsz));
       break; }
     case 'tower': {
       _adopt(g, makeTower(lvl));
@@ -20440,6 +20457,14 @@ function _toastArm(t) {
   }, 4200);
 }
 function toast(msg, cls) {
+  /* 🗺 BULK SINK (public/src/zoning). A zoning "develop" runs tryPlace once per
+     zoned plot and every refusal is a toast; the rail holds THREE, so a 40-tile
+     run would show three arbitrary refusals, drop the rest, and tell the player
+     nothing about the other 37. The zoning module installs this sink around a
+     bulk run, keeps the refusal text tryPlace already wrote — which says both
+     what is wrong and how to fix it — counts identical reasons and prints ONE
+     summary line afterwards. Unset for everything else, so this is inert. */
+  if (window.__ncToastSink) { try { window.__ncToastSink(msg, cls); } catch (e) {} return; }
   const box = $('toasts');
   const last = box.lastElementChild;
   if (last && last.dataset.msg === msg) {
@@ -20585,6 +20610,12 @@ function serialize() {
     /* ⏳ The simulated city clock the per-tile `born` stamps are measured
        against. Meaningless apart — save both or neither. */
     age: Math.round(game.cityAge || 0),
+    /* 🗺 LAND USE — "x,z" → zone id (public/src/zoning). Written straight off
+       game.zones rather than through the module ON PURPOSE: if /src/zoning ever
+       404s, a player's zoning still round-trips instead of being erased by the
+       first autosave of a build that could not read it. Absent on load ⇒ {},
+       and afterLoad() adopts whatever is already standing. */
+    zones: game.zones && Object.keys(game.zones).length ? game.zones : null,
     /* 👤 THE NAMED ROSTER. Absent-tolerant on load (see loadState): a save
        without this key opens with an EMPTY roster that refills itself from the
        city as it stands, which is the correct reading of "this save predates
@@ -21106,6 +21137,13 @@ async function loadState() {
         if (Number.isFinite(n)) vitals[k] = THREE.MathUtils.clamp(n, 0, 100);
       }
     }
+    /* 🗺 LAND USE, RESTORED BEFORE THE MESHES ARE BUILT — the order is
+       load-bearing. buildMesh asks the zoning module which archetype a housing
+       plot is zoned for, so a zone map restored AFTER the loop below would give
+       every zoned house the wrong shape until something rebuilt it. Values are
+       not validated here: an id this build does not know (a save from a newer
+       one) is kept and simply not drawn — see /src/zoning afterLoad(). */
+    game.zones = (s.zones && typeof s.zones === 'object' && !Array.isArray(s.zones)) ? s.zones : {};
     /* Meshes built so far this load — the counter for the chunked yield below.
        Counts BUILDINGS only (roads have no mesh here), which is the work that
        actually costs anything. */
@@ -24034,11 +24072,43 @@ function animate() {
   $('bootgpu').textContent = (isGPU ? '⚡ WebGPU' : '🖥️ WebGL2 fallback') + ' · checking bridge…';
   await MythicCityBridge.init();   // may downgrade message → standalone
   $('bootgpu').textContent = (isGPU ? '⚡ WebGPU' : '🖥️ WebGL2 fallback') + ' · bridge: ' + MythicCityBridge.mode;
+  /* ══ 🗺 ZONING ═══════════════════════════════════════════════════════════
+     Mounted BEFORE loadState, and that order is the whole reason this block
+     sits here rather than beside the House and the Stadium: buildMesh asks
+     window.MythicZoning which archetype a housing plot is zoned for, and
+     loadState builds every mesh in the save. Mount it afterwards and a returning
+     player's zoned streets come back in the wrong shape until something happens
+     to rebuild them. afterLoad() — the grandfather sweep — runs the other side
+     of loadState, because it can only adopt tiles that exist.
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md), and this is the fifth module to hit it.
+     `game`, `BUILDINGS`, `rdRng`, `buildMesh`, `tryPlace`, `toast` and the rest
+     are top-level `const` in THIS module script and are invisible to an ES
+     module. The ctx object below IS the hand-over; there is no window.game.
+
+     Note what crosses and what does not: the module gets the placement gate
+     (`place` = the same one-line wrapper __nc.place uses, so a zoned build runs
+     the SHIPPED cost/cap/population/concourse checks) and the mesh trio, and it
+     gets no ledger call of its own — every coin it spends goes through payCost. */
+  try {
+    const zmod = await import('../src/zoning/index.js?v=' + (window.NC_BUILD || 'z1'));
+    zmod.mount({
+      THREE, scene, camera, controls, canvas: renderer.domElement,
+      game, GRID, HALF, BUILDINGS, MAX_LVL,
+      key, inGrid, tileAt, isRoad, rdRng,
+      buildMesh, placeMeshAt, dropTileMesh, applyDamagedLook,
+      tileFromEvent, setMode,
+      costOf, payCost, computeLinks, updateHUD, toast, logEvent, saveSoon,
+      place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
+    });
+  } catch (e) { console.warn('[Zoning] not mounted (non-fatal):', e); }
   try {
     await spawnAnchors();
     await loadState();
     for (const k in game.tiles) if (game.tiles[k].type === 'road') { const [x, z] = k.split(',').map(Number); refreshRoad(x, z); }
     computeLinks();
+    // 🗺 Adopt what was already standing into land-use zones — see afterLoad().
+    try { if (window.MythicZoning) window.MythicZoning.afterLoad(); } catch (e) {}
     await refreshLedgerMirror();
   } catch (e) { console.warn('city boot (non-fatal):', e); }
   updateHUD();

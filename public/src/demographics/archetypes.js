@@ -22,16 +22,6 @@ import { ECON } from '../economy/tuning.js';
 
 const D = () => ECON.demographics;
 
-/* A 0..1 share read out of ECON. A mis-tuned or absent entry must degrade to a
-   number, never to NaN — one NaN in `incomeOf` makes every burden comparison
-   false, which reads as "everybody can afford everything" rather than as an
-   error. households.js paid for the same shape with a population that silently
-   became NaN from one bad byte in a save. */
-function clampShare(v, dflt) {
-  const n = Number(v);
-  return isFinite(n) ? Math.max(0, Math.min(1, n)) : (dflt || 0);
-}
-
 export function archetypeIds() { return Object.keys(D().archetypes); }
 export function archetype(id) { return D().archetypes[id] || null; }
 export function eduOrder() { return D().education.order; }
@@ -180,32 +170,7 @@ export function incomeOf(archId, edu, jobFit) {
   const base = ECON.labor.bands.unskilled.wage;
   const fit = Math.max(dm.income.floorPct, Math.min(1, jobFit == null ? 1 : jobFit));
   if (a.inSchool) {
-    /* 🎓 A SHARE POOLS ITS RENT — THAT IS WHY IT IS A SHARE, AND IT IS THE
-       OTHER HALF OF WHY STUDENT DISTRICTS STOPPED BEING STUDENT DISTRICTS.
-       This read `Math.max(1, workersPer(archId))`, and `workersPer` is 0.5 for
-       a student household by design (see its header — a share of three is not
-       three job-seekers, and pretending otherwise gave a student district the
-       labour force of a factory town). So the max() pinned EVERY student
-       household, from a bedsit to a four-person flat, at exactly ONE part-time
-       income — while the rent it was tested against was the whole dwelling's.
-       Measured: a student household offered 15.96/day against a low-rent
-       dwelling at 9.19, a burden of 0.58 — over `rent.burdenMax` (0.55), so
-       students were BLOCKED FROM THE CHEAPEST ZONE IN THE CITY at 78%
-       occupancy, and blocked harder the fuller it got. A lone `single` on 43.16
-       outbid four students sharing.
-       ⚠ `studentPct` is "part-time work AND SUPPORT" per student — grants,
-         parents, a bar shift — and every head in the share brings their own. So
-         it scales with the SIZE of the share, which is the whole economic point
-         of sharing. Deliberately NOT `workersPer`: how many of them are chasing
-         a job and how many of them are paying the rent are different questions,
-         and conflating them is what produced the bug. The labour ladder still
-         counts them at the part-time weight and is untouched by this. */
-    /* …and only the WORK half of it moves with the labour market. The support
-       half — grants, loans, parents — arrives whatever the city's firms are
-       doing, exactly as the pension below does. See ECON's studentSupportShare
-       for the measurement that made this necessary. */
-    const sup = clampShare(dm.income.studentSupportShare);
-    return base * dm.income.studentPct * avgSize(archId) * (sup + (1 - sup) * fit);
+    return base * dm.income.studentPct * fit * Math.max(1, workersPer(archId));
   }
   let n = 0;
   const workers = workersPer(archId);

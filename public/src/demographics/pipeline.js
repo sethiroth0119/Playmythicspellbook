@@ -377,24 +377,7 @@ export function step(days, ctx) {
     const burden = income > 0 ? rent / income : 99;
     let leaveRate = 0;
     if (burden > dm.rent.burdenLeave) { leaveRate += dm.departure.ratePerDay; rentSqueezed += S.co[k]; }
-    /* 🔴 JOBLESSNESS IS ONLY A REASON TO LEAVE IF YOU HAVE SOMEBODY IN THE
-       LABOUR FORCE. This test used to run against EVERY cohort, so a retired
-       household — zero workers, unjobbable by definition — was driven out of
-       town by a labour market it does not participate in. That is half of the
-       all-retired attractor, and it is the half that hides: it looks like the
-       model being even-handed.
-       ⚠ AND FIXING ONLY THIS MAKES THE BUG WORSE. Pensioners were already the
-         only archetype that could still ARRIVE once job fit hit the floor
-         (their exemption from `arrival.jobFloor` below, which is correct — they
-         do not need a vacancy). Take away their last reason to leave and they
-         become immortal as well as unlimited, and the city converges on 100%
-         retired FASTER. This line is only safe because ECON.demographics
-         .lifecycle now gives that state a door out (retiredLeavePerDay) and
-         ECON.demographics.arrival.workerlessDrawPerWorkerHH meters the way in.
-         Read that table's header before touching any of the three. */
-    if (A.workersPer(c.arch) > 0 && (S.stress[c.edu] || 0) > dm.departure.joblessGraceDays) {
-      leaveRate += dm.departure.ratePerDay; jobless += S.co[k];
-    }
+    if ((S.stress[c.edu] || 0) > dm.departure.joblessGraceDays) { leaveRate += dm.departure.ratePerDay; jobless += S.co[k]; }
     if (leaveRate <= 0) continue;
     const gone = take(k, S.co[k] * Math.min(1, leaveRate * days));
     S.flow.out += gone * A.avgSize(c.arch);      // people, see the eviction note
@@ -420,110 +403,6 @@ export function step(days, ctx) {
     if (moved <= 0) continue;
     add(c.zone, 'single', next, moved);
     S.flow.grad += moved * A.avgSize(c.arch);    // people, see the eviction note
-  }
-
-  /* 3b. 🧬 THE LIFE COURSE — working households age out of the labour force, and
-        retired ones eventually end. THIS IS WHERE A CITY'S PENSIONERS COME FROM,
-        and it is the structural retirement of the all-retired attractor.
-
-        🔴 WHAT THE ATTRACTOR WAS. `retired` was an ABSORBING STATE: it had two
-        inflows (the zone bags, and the arrival job-gate exemption that made it
-        the only archetype able to move into a job-poor city) and NO outflow at
-        all. Every other archetype churns — students graduate, workers leave when
-        the work does — but nothing ever removed a pensioner. Any inflow into a
-        state with no outflow converges on 100% of the system, so a job-poor city
-        went 20 family / 81 couple / 100 single / 27 retired on day 2 to
-        0 / 0 / 0 / 578 on day 5 and stayed there forever, labour ladder 0/0/0/0.
-        Zoning dense housing is what MAKES a city job-poor, so the player's
-        reward for building a big city was a dead one.
-
-        The fix is a door, not a lid. `retiredLeavePerDay` gives the state an
-        outflow, so retired households have a stationary share like every other
-        cohort instead of an ever-growing one; `agePerDay` makes their inflow
-        DEPEND ON THERE BEING WORKERS, so a city whose labour force has gone
-        stops producing pensioners as well as stops attracting them, and the
-        attractor cannot form rather than being caught after it forms.
-        ⚠ See ECON.demographics.lifecycle for the two fixes that were rejected
-          (exempting pensioners from departures too; capping their share) and
-          why each of them hides the ratchet instead of removing it. */
-  const life = dm.lifecycle || {};
-  for (const k of Object.keys(S.co)) {
-    const c = parseKey(k);
-    const to = (life.ages && life.ages[c.arch]) || null;
-    if (!to || !A.archetype(to)) continue;
-    const moved = take(k, S.co[k] * Math.min(1, (life.agePerDay || 0) * days));
-    if (moved <= 0) continue;
-    /* 🔴 NEVER MORE HOUSEHOLDS THAN THE DWELLINGS THEY ALREADY OCCUPY, AND
-       NEVER MORE PEOPLE THAN WALKED IN. The archetypes have different mean
-       sizes, so a naive 1:1 household swap INVENTS residents in one direction
-       (single 1.1 heads → retired 1.5) and a naive head-conserving swap invents
-       DWELLINGS in the other (couple 2.2 → retired 1.5 is 1.47 households in one
-       flat). This module's contract is that it never adds a resident the host
-       did not authorise (index.js `population()`), and the eviction sweep at the
-       top of the step is not a place to be discovering overflow you caused
-       yourself. The min() holds both invariants in both directions; whichever
-       one binds, the people it does not carry across are counted as leaving. */
-    const hh = Math.min(moved, moved * A.avgSize(c.arch) / Math.max(0.1, A.avgSize(to)));
-    add(c.zone, to, c.edu, hh);
-    const lost = moved * A.avgSize(c.arch) - hh * A.avgSize(to);
-    if (lost > 0) S.flow.out += lost;            // people, see the eviction note
-  }
-  /* …and the terminal stage ends. Without this line every other line in this
-     block is just a faster road into the same absorbing state. */
-  const retLeave = Math.min(1, (life.retiredLeavePerDay || 0) * days);
-  if (retLeave > 0) {
-    for (const k of Object.keys(S.co)) {
-      const c = parseKey(k);
-      if (A.workersPer(c.arch) > 0) continue;    // the retired ARE the workerless
-      const gone = take(k, S.co[k] * retLeave);
-      S.flow.out += gone * A.avgSize(c.arch);
-    }
-  }
-
-  /* 3c. 🔁 TENANCY TURNOVER — the lease ends, and the flat is re-let.
-        🔴 THE SECOND RATCHET, AND IT IS WHY A STUDENT DISTRICT STOPPED BEING
-        ONE. Once a zone filled, the ONLY composition change left in it was
-        graduation converting student → single IN PLACE. Nothing ever moved out
-        of a full dwelling, and new students can only arrive into a vacancy — so
-        a low-rent block peaked at 80 student households on day 3 and decayed
-        80 → 56 → 39 → 27 → 19 → 13 → 9 while singles climbed to 282. The bag
-        says a low-rent block is 47% students; what it produced was 1%. A real
-        student district turns over: people graduate and LEAVE, and the room they
-        free is taken by another student.
-
-        With turnover, out_i = τ·n_i and in_i = τ·N·bag_i for every archetype, so
-        a zone CONVERGES ON ITS OWN BAG instead of ratcheting away from it, and
-        students settle at τ/(τ + graduatePerDay) of their bag share. The rates
-        are per zone (ECON.demographics.turnover) because churn is a property of
-        the housing — a cheap flat turns over most of a year, a detached house
-        once a generation.
-
-        ⚠ WORKERLESS HOUSEHOLDS ARE DELIBERATELY EXEMPT. Retirees are the least
-          mobile households there are, and — the part that actually bites — their
-          way back IN is metered against the working city (see the arrival meter
-          below), so churning them out at a zone's rate while letting them back
-          in at a demographic one would make turnover a one-way drain on exactly
-          the cohort this round is trying to stop mismodelling. Their churn is
-          `retiredLeavePerDay` above, which is the honest rate for it.
-        ⚠ The freed dwellings are re-let in the SAME step (see `relet` below), so
-          this refreshes a district rather than hollowing it out. It still leaves
-          a real standing vacancy, which is correct: turnover is where a city's
-          vacancy rate comes from. */
-  const relets = {};
-  for (const zid of Z.zoneIds()) {
-    const rate = Math.min(1, Z.turnoverOf(zid) * days);
-    if (!(rate > 0)) continue;
-    const occ = occupiedHomes(zid);
-    if (!(occ > 1e-9)) continue;
-    let freed = 0;
-    for (const k of Object.keys(S.co)) {
-      const c = parseKey(k);
-      if (c.zone !== zid || A.workersPer(c.arch) <= 0) continue;
-      const gone = take(k, S.co[k] * rate);
-      freed += gone;
-      S.flow.out += gone * A.avgSize(c.arch);    // people, see the eviction note
-    }
-    if (freed > 0) relets[zid] = freed;
   }
 
   /* 4. 🚚 ARRIVALS. Per zone, per archetype that zone draws, per education —
@@ -563,30 +442,12 @@ export function step(days, ctx) {
            terms, weighted in ECON — the same shape the reference demand panel
            expresses ("+ Local Demand, − Low-skill Labor Availability"), and the
            panel prints these back rather than inventing its own story. */
+        const jobs = A.workersPer(a) > 0 ? fit[e] : 1;   // pensioners do not need work
         const afford = clamp01(1 - burden / dm.rent.burdenMax);
-        const W = dm.arrival.weight;
-        /* 🔴 A HOUSEHOLD WITH NO WORKERS DOES NOT SCORE THE LABOUR MARKET — AND
-           IT DOES NOT GET A FREE PASS ON IT EITHER. This read
-           `const jobs = workersPer(a) > 0 ? fit[e] : 1`, handing pensioners a
-           perfect 1 on the LARGEST of the three weights (0.50). So a retired
-           household read every city as at least half-attractive and outscored
-           every working household in any city with a soft labour market — the
-           weighting half of the all-retired attractor, working alongside the
-           job-gate exemption below. It also inflated the panel's own meter: a
-           city with no work read as ATTRACTIVE, because the only households
-           that would still come were the ones who did not want any.
-           The weight is redistributed over what a pensioner actually chooses a
-           town for — the rent against a fixed pension, and the services — so
-           the three weights still sum to 1 and a retune of any of them stays
-           meaningful for both kinds of household. */
-        let att;
-        if (A.workersPer(a) > 0) {
-          att = W.jobs * fit[e] + W.rent * afford + W.services * services;
-        } else {
-          const rest = W.rent + W.services;
-          att = rest > 0 ? (W.rent * afford + W.services * services) / rest : 0;
-        }
-        att = Math.max(dm.arrival.minAttract, clamp01(att));
+        const att = Math.max(dm.arrival.minAttract, clamp01(
+          dm.arrival.weight.jobs * jobs +
+          dm.arrival.weight.rent * afford +
+          dm.arrival.weight.services * services));
         const w = bagW * ew * att;
         cands.push({ a, e, w, att });
         wsum += w; wraw += bagW * ew;
@@ -599,50 +460,9 @@ export function step(days, ctx) {
        `cands` at all, which is why a zone nobody can afford fills slowly
        rather than filling with people who cannot pay. */
     const zoneAttract = wsum / Math.max(1e-9, wraw);
-    /* 🔁 A FLAT WHOSE LEASE JUST ENDED IS RE-LET, NOT ABANDONED. The dwellings
-       phase 3c freed are offered again in the same step; only the vacancy that
-       was ALREADY standing fills at the slow arrival rate. Without this split,
-       turnover would drain a district faster than the 30%/day arrival rate could
-       refill it and the fix for the student ratchet would read as a bug that
-       empties cities. Both halves are still scaled by how attractive the zone
-       is, so an unattractive city genuinely fails to re-let. */
-    const relet = Math.min(vacant, relets[zid] || 0);
-    const standing = Math.max(0, vacant - relet);
-    const moving = Math.min(vacant,
-      (relet + standing * dm.arrival.ratePerDay * days) * clamp01(zoneAttract));
+    const moving = Math.min(vacant, vacant * dm.arrival.ratePerDay * days * clamp01(zoneAttract));
     if (!(moving > 0)) continue;
     for (const c of cands) plan.push({ zone: zid, a: c.a, e: c.e, hh: moving * (c.w / wsum) });
-  }
-
-  /* 🧓 …AND THE FINITE SUPPLY OF PENSIONERS. Households with no workers skip the
-     job gate above, and that exemption is CORRECT — a retired household does not
-     need a vacancy. What was missing is that nothing else limited them, so in a
-     job-poor city they were the only candidates left and they took every
-     dwelling that came free, forever. The honest limit is that only so many
-     pensioners are looking to move at all, and the ones who do follow the
-     working city: you retire to where your family lives and works, not to an
-     empty district. So the whole workerless arrival stream is metered against
-     the city's WORKING households, however many dwellings stand empty.
-
-     🔴 A RATE, NOT A CAP, AND THE DIFFERENCE IS THE WHOLE POINT. A clamp at
-     "retired may be at most N% of the city" would have made the measurements
-     look fixed while leaving the pressure intact behind it — and the next person
-     to touch this scorer would reintroduce the attractor with the clamp still
-     sitting there looking deliberate. This instead collapses to zero on its own
-     in the city that used to lock, because that city has no working households
-     left to draw pensioners toward it.
-     ⚠ Scaled, not truncated — same reason the budget ceiling below is: list
-       order is a UI decision and must never be an economic one. */
-  {
-    let workingHH = 0;
-    for (const k in S.co) if (A.workersPer(parseKey(k).arch) > 0) workingHH += S.co[k];
-    const supply = workingHH * (dm.arrival.workerlessDrawPerWorkerHH || 0) * days;
-    let want = 0;
-    for (const p of plan) if (A.workersPer(p.a) <= 0) want += p.hh;
-    if (want > supply) {
-      const s = supply / Math.max(1e-9, want);
-      for (const p of plan) if (A.workersPer(p.a) <= 0) p.hh *= s;
-    }
   }
 
   /* 🏙 …AND THE CEILING. The host owns how many people this city supports; this
@@ -696,12 +516,8 @@ export function step(days, ctx) {
   let fitSum = 0, fitN = 0;
   for (const e of A.eduOrder()) { fitSum += fit[e]; fitN++; }
   const meanFit = fitN ? fitSum / fitN : 1;
-  /* 🔴 EVERY THRESHOLD BELOW IS AN ECON READ. They were literals here for two
-     rounds, and commit 02ccda2 claimed to have moved them while leaving five
-     behind — a number that only LOOKS like presentation is still a number
-     somebody has to retune, and finding it meant grepping this file. */
-  if (posts && meanFit > dm.ui.jobsPlentyFit) causes.push({ sign: '+', label: 'Work for most people', why: 'The city posts more jobs than it has residents to fill them.' });
-  else if (posts && meanFit < dm.ui.jobsScarceFit) causes.push({ sign: '−', label: 'Not enough jobs', why: 'Most residents cannot find work here, and word gets around.' });
+  if (posts && meanFit > 0.8) causes.push({ sign: '+', label: 'Work for most people', why: 'The city posts more jobs than it has residents to fill them.' });
+  else if (posts && meanFit < 0.3) causes.push({ sign: '−', label: 'Not enough jobs', why: 'Most residents cannot find work here, and word gets around.' });
   if (capped) causes.push({ sign: '−', label: 'City population cap', why: 'The city itself supports no more residents yet — build Housing, or zone more land. Nobody can move into a city with nowhere to put them.' });
   if (rentBlocked && blockedRent >= blockedJobs) {
     causes.push({ sign: '−', label: 'Rents above local incomes', why: 'Households who would have taken those homes cannot pay for them on what this city pays. Cheaper zoning — low rent, or high density — is what they can afford.' });
@@ -714,9 +530,9 @@ export function step(days, ctx) {
       causes.push({ sign: '−', label: (def ? def.short : e) + ' residents leaving', why: 'There has been no work for them for ' + Math.round(S.stress[e]) + ' days and their savings have run out.' });
     }
   }
-  if (services > dm.ui.servicesGood) causes.push({ sign: '+', label: 'Services are keeping up', why: 'The shops and utilities are meeting what residents ask of them.' });
-  else if (services < dm.ui.servicesPoor) causes.push({ sign: '−', label: 'Services falling short', why: 'Residents cannot buy what they need here, and word gets around.' });
-  if (tight > dm.ui.tightNotice) causes.push({ sign: '−', label: 'Housing market is tight', why: 'Rents are ' + Math.round((tight - 1) * 100) + '% above baseline because almost nothing is free.' });
+  if (services > 0.75) causes.push({ sign: '+', label: 'Services are keeping up', why: 'The shops and utilities are meeting what residents ask of them.' });
+  else if (services < 0.4) causes.push({ sign: '−', label: 'Services falling short', why: 'Residents cannot buy what they need here, and word gets around.' });
+  if (tight > 1.4) causes.push({ sign: '−', label: 'Housing market is tight', why: 'Rents are ' + Math.round((tight - 1) * 100) + '% above baseline because almost nothing is free.' });
   S.causes = causes.slice(0, Math.max(3, dm.ui.maxCauses));
 
   /* The binding constraint, as one sentence, for the meter's caption. */
@@ -726,13 +542,8 @@ export function step(days, ctx) {
           /* ⚠ THE SMOOTHED DAILY RATE, WITH A MARGIN — not this tick's flow.
              A tick is a quarter of a day and the two sides arrive at different
              moments in it, so a steady city flickered between "leaving" and
-             nothing every few seconds on a panel that repaints every 4 s.
-             ⚠ BOTH HALVES OF THE GUARD ARE ECON READS NOW. `leavingFloor` was a
-               bare `+ 0.05` sitting in this expression — in a city moving one
-               resident a day the multiplicative margin is worth 0.15 of a
-               person, so the absolute floor is the half that actually does the
-               work at small sizes, and it was the one nobody could find. */
-          : S.rate.out > S.rate.in * dm.ui.leavingMargin + dm.ui.leavingFloor ? 'leaving'
+             nothing every few seconds on a panel that repaints every 4 s. */
+          : S.rate.out > S.rate.in * dm.ui.leavingMargin + 0.05 ? 'leaving'
           : rentBlocked && blockedRent >= blockedJobs ? 'rent'
           : jobsBlocked ? 'jobs'
           : null;

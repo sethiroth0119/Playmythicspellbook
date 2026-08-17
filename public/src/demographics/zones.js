@@ -35,23 +35,6 @@ export function zoneIds() { return Object.keys(D().zones); }
 export function zoneDef(id) { return D().zones[id] || null; }
 export function isResidential(id) { return !!zoneDef(id); }
 
-/* 🔁 HOW FAST THIS ZONE'S TENANCIES END — the share of its occupied dwellings
-   that change hands per economic day. A cheap flat turns over most of a year; a
-   detached house people bought turns over once a generation. It is a property of
-   the HOUSING, which is why it is per zone and not one city-wide number.
-   ⚠ It reads ECON.demographics.turnover rather than the zone def so that a zone
-     added by a retune cannot silently arrive with NO turnover — a zone that
-     never turns over is a zone whose `bag` stops meaning anything the moment it
-     fills, which is exactly the ratchet this table was added to retire (see the
-     table's own header for the 80 → 9 student measurement). Missing means the
-     default, never zero. */
-export function turnoverOf(zoneId) {
-  const t = D().turnover || {};
-  const raw = t[zoneId] != null ? t[zoneId] : t.dflt;
-  const v = Number(raw);
-  return isFinite(v) && v > 0 ? v : 0;
-}
-
 /* ── THE NORMALISER ─────────────────────────────────────────────────────────
    /src/zoning is free to call its zones anything: 'res_low', 'residential-low',
    'lowDensity', 'RES_LOW_DETACHED'. This maps whatever arrives onto the six ids

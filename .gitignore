@@ -89,3 +89,4 @@ public/assets/Units/unit frames/New units/*.gif
 # Transient git worktrees created by in-flight Workflow builders — each is a
 # full checkout and is removed when the run ends. Never commit these.
 .claude/worktrees/
+.gauntlet/patch-preview.html

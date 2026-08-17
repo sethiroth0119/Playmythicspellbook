@@ -58613,14 +58613,80 @@ async function _boeResTx(mutate, opts) {
     if (out.refused != null) return out;
     if (!next || typeof next !== 'object') { out.refused = ''; return out; }
     if (!(opts && opts.localOnly)) {
+      /*BOEMINT:PRECAS*/
+      /* ⛔ CAS BEFORE THE WRITE AS WELL AS AFTER. Costs nothing and means the
+         easy half — the wipe landed while we were queued behind another
+         transfer on _boeResChain — never touches the server at all.
+         ⚠ IT IS NOT THE GUARANTEE, and a fix that stops here is not a fix. The
+           reset we actually lose to fires DURING the await two lines below,
+           which is what the repair after the write is for. Sabotage
+           BOEMINT_SABOTAGE=no-repair keeps this check, drops that one, and the
+           mint comes straight back. */
+      if (epoch !== _boeResEpoch) { out.error = new Error('account reset before write'); return out; }
+      /*BOEMINT:PRECASEND*/
+      /* 🔴 PIN THE USER ID BEFORE THE WRITE. The repair below has to correct the
+         row WE damaged, and by then Profile.cloud.userId may name a different
+         account — a sign-out is one of the things this epoch guards against.
+         Reading it a second time would send the correction to the wrong row. */
+      const uid = Profile.cloud.userId;
       const t = await _boeRow();
-      const up = await t.update({ resources: next, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+      const up = await t.update({ resources: next, updated_at: new Date().toISOString() }).eq('user_id', uid);
       if (up && up.error) throw up.error;
+      /*BOEMINT:REPAIR*/
+      /* 🔧 WE LOST THE CAS AND OUR BYTES ARE ALREADY ON THE SERVER — TAKE THEM BACK.
+         🔴 THE BUG THIS CLOSES, MEASURED ON THIS TREE BEFORE THE FIX
+            (tools/economy-tests/boemint.mjs §1, and §3 for both callers):
+            `boeDepositRes('metal', 1000)` suspended right here while
+            `_boeResReset()` fired. The deposit returned false and refunded
+            1,000 to the stash — correctly — but the row still held
+            {"metal":1000}. The next boeFetch hydrates that row, so the player
+            finished with 1,000 in the stash AND 1,000 in the bank:
+                stash 1,000 + bank 1,000 = 2,000 out of 1,000.
+            1,000 metal MINTED FROM NOTHING, reachable from BOTH
+            _applyGlobalReset (:54406) and _applySeasonReset (:77636).
+         🔴 THE COMMENT THAT USED TO SIT HERE WAS THE BUG, so it is worth naming
+            rather than deleting. It argued the write was fine to leave standing
+            because "the next boeLoad hydrates the truth either way". The next
+            boeLoad hydrates OUR WRITE. It is the delivery mechanism for the
+            mint, not the cure for it. A refusal that refunds the player MUST
+            leave the server agreeing the transfer never happened — the refund
+            and the row are ONE decision, and only one of them was being made.
+         ⚠ WHY `{}` AND NOT THE PRE-IMAGE WE READ. `_boeResReset` is the only
+           thing that bumps `_boeResEpoch`, and it always wipes the map. So a
+           lost CAS means exactly one thing: this account's resources were
+           zeroed. Re-pushing the map we read would resurrect the bank the reset
+           just deleted — precisely what the epoch exists to prevent. If an
+           epoch bump ever comes to mean something other than "wiped", this
+           correction has to change in the same commit.
+         ⚠ IDEMPOTENT WITH THE RESETS' OWN ZERO PUSHES ON PURPOSE, because we
+           cannot order against them: whether their zero lands before ours,
+           after ours, or never at all, the row converges on {}. "Never at all"
+           is not hypothetical — see boemint §4: _applyGlobalReset's own row
+           wipe does `const t = _boeRow()` on an ASYNC function, so `t` is a
+           Promise, `t.update` is undefined, and the TypeError is swallowed by
+           its enclosing catch. That push has never run. This repair is the only
+           thing that clears the column. */
+      if (epoch !== _boeResEpoch) {
+        try {
+          const t2 = await _boeRow();
+          if (t2) {
+            const up2 = await t2.update({ resources: {}, updated_at: new Date().toISOString() }).eq('user_id', uid);
+            if (up2 && up2.error) throw up2.error;
+          }
+        } catch (e2) {
+          /* Offline in the middle of a reset. Nothing downstream can correct the
+             row from here, and the refund has already been handed back, so say
+             so loudly instead of returning a quiet false. */
+          try { console.warn('[boe] reset repair failed — row may still hold a refunded transfer', e2); } catch (_) {}
+        }
+        out.error = new Error('account reset mid-write');
+        return out;
+      }
+      /*BOEMINT:REPAIREND*/
     }
-    /* The compare-and-set. The row is already written at this point, which is
-       correct: the server row belongs to whoever the account is now, and if that
-       changed under us the right answer is to not re-publish a stale map into
-       memory. The next boeLoad hydrates the truth either way. */
+    /* The in-memory compare-and-set. A localOnly section reaches this without
+       having touched the server; a section that did write has already returned
+       above if it lost. Either way a stale map is never re-published. */
     if (epoch !== _boeResEpoch) { out.error = new Error('account reset mid-write'); return out; }
     BankEthos.resources = next;
     out.ok = true; out.next = next;

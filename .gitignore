@@ -83,4 +83,4 @@ public/assets/Units/unit frames/New units/*.gif
 # Gauntlet harness: vendored three.js + regenerable screenshots
 .gauntlet/package/
 .gauntlet/*.tgz
-.gauntlet/shots/
+.gauntlet/shots/**/*.png

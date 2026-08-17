@@ -4,7 +4,10 @@
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
 
-const ROOT='/home/user/Playmythicspellbook/public', THREE_='/home/user/Playmythicspellbook/.gauntlet/package';
+/* cwd-relative so a builder can run this inside its own git worktree.
+   THREE_ stays absolute: the vendored tarball is gitignored and therefore
+   absent from every worktree. */
+const ROOT=path.resolve(process.cwd(),'public'), THREE_='/home/user/Playmythicspellbook/.gauntlet/package';
 const MIME={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css',
  '.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml',
  '.glb':'model/gltf-binary','.txt':'text/plain','.webp':'image/webp'};
@@ -35,7 +38,7 @@ page.on('pageerror',e=>logs.push(`[pageerror] ${e.message}`.slice(0,300)));
 
 await page.goto(`http://127.0.0.1:${PORT}/node-city/index.html`,{waitUntil:'load',timeout:120000});
 await page.waitForTimeout(24000);
-const built=await page.evaluate(fs.readFileSync('/home/user/Playmythicspellbook/.gauntlet/scene.js','utf8'));
+const built=await page.evaluate(fs.readFileSync(path.resolve(process.cwd(),'.gauntlet/scene.js'),'utf8'));
 await page.waitForTimeout(6000);
 
 /* ── FRAMINGS, DERIVED FROM THE ACTUAL MESHES ──────────────────────────────
@@ -68,6 +71,10 @@ for(const s of SHOTS){
   await page.waitForTimeout(1500);
   const f=path.join(outDir,`${TAG}-${s.n}.png`);
   await page.screenshot({path:f}); made.push(f);
+  /* A committable twin. Full PNGs are ~1.5 MB each and the loop makes three a
+     round, so the RECORD that goes in git (and into the progress page) is the
+     jpeg; the png stays local for pixel-level critique. */
+  await page.screenshot({path:path.join(outDir,`${TAG}-${s.n}.jpg`),type:'jpeg',quality:72});
 }
 const diag=await page.evaluate(()=>{const{renderer,scene}=window.__nc.three();
   let m=0;scene.traverse(o=>{if(o.isMesh)m++});

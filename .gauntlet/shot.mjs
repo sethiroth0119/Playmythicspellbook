@@ -16,7 +16,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ROOT   = '/home/user/Playmythicspellbook/public';
+/* cwd-relative so a builder can run this inside its own git worktree. */
+const ROOT   = path.resolve(process.cwd(), 'public');
 const THREE_ = '/home/user/Playmythicspellbook/.gauntlet/package';
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.mjs':'text/javascript',
   '.css':'text/css', '.json':'application/json', '.png':'image/png', '.jpg':'image/jpeg',

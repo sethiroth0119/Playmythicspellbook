@@ -19621,6 +19621,31 @@ const prodPerMin = {};   // display: net per-minute rates
    `factor` is what an under-powered building actually runs at. */
 game.power = { gen: 0, demand: 0, ratio: 1, factor: 1 };
 
+/* 💧 WATER — the per-tile extraction multiplier from /src/water, refreshed by
+   the water pre-pass in economyTick and read exactly once, where `gen.water` is
+   banked. Null means "no module, or it refused", and wtFactor() then returns 1,
+   which is this file's behaviour before /src/water existed.
+   ⚠ NOT a second water figure. It is a MULTIPLIER on the rate this file already
+     computes — see the pre-pass header for why the split is that way round. */
+let _wtFac = null;
+function wtFactor(k) {
+  const f = _wtFac && _wtFac[k];
+  return Number.isFinite(f) && f > 0 ? f : 1;
+}
+/* 🗺 The id the ground under this city is derived from. Deliberately the SAME
+   expression boot() hands /src/economy for the ore endowment, so the two
+   systems are describing one place rather than two.
+   ⚠ /src/water LATCHES the first non-empty answer and writes it into the save,
+     because both terms below can move under a live city — an anchor list can be
+     reordered, and the save-key fallback differs between a signed-in and a guest
+     session. A city whose aquifers move when the player links a second node is
+     not a deterministic endowment. See setCityId() in /src/water/index.js. */
+function cityGroundId() {
+  return (game.anchors && game.anchors[0] && game.anchors[0].node && game.anchors[0].node.id)
+      || (MythicCityBridge.cityKey && MythicCityBridge.cityKey())
+      || 'local-city';
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    🏟 THE VENUE FAMILY — tiles whose trade IS the crowd, so morale moves them.
    ----------------------------------------------------------------------------
@@ -19826,6 +19851,50 @@ async function economyTick(dtMin) {
   }
   const powered = game.power.factor;
 
+  /* 💧 THE WATER PRE-PASS — /src/water. Same shape as the power pre-pass above
+     and for the same reason: the main loop needs a per-tile multiplier and the
+     multiplier needs the whole city's waterworks gathered first.
+     ────────────────────────────────────────────────────────────────────────
+     WHAT THE MODULE OWNS AND WHAT THIS FILE OWNS. This file owns the RATE — a
+     Purifier's `gen.water` times tileMult() — and always has. /src/water owns
+     the GROUND, which this file has never modelled: whether there is an aquifer
+     under the tile, how much is left in it and how clean it is. So the module
+     is handed the rates and returns a MULTIPLIER PER TILE; it never returns a
+     rate, and there is no second water figure anywhere in the file.
+
+     ⚠ `mult`, NOT `mult * omRes`, and that is deliberate. `tileOutputFactor`
+       carries the vitals→output leg, which includes WATER COVERAGE — feeding it
+       into the number that decides how much water the city makes would close
+       the loop the `waterNetRaw` comment below already refuses to close:
+           water vital ↓ → labour ↓ → purifier output ↓ → water coverage ↓ → …
+       The module is measuring the city's CAPACITY to draw from the ground, which
+       is exactly the un-throttled quantity coverage is fed.
+
+     ⚠ IF THE MODULE 404s OR REFUSES, `_wtFac` stays null and wtFactor() returns
+       1 — water is produced exactly as it was before this feature existed. */
+  _wtFac = null;
+  try {
+    const W = window.MythicWater;
+    if (W && W.ready()) {
+      const wells = [], users = [];
+      for (const [k, t] of Object.entries(game.tiles)) {
+        // 🏗 Same half-built guard as the power pre-pass, on one line for both
+        //    legs: a Purifier that is still a hole draws nothing and supplies
+        //    nothing.
+        const def = BUILDINGS[t.type]; if (!def || t.damaged || bldSite(t)) continue;
+        const gw = def.gen && def.gen.water, uw = def.use && def.use.water;
+        if (!gw && !uw) continue;
+        const [x, z] = k.split(',').map(Number);
+        const m = tileMult(x, z, t, staff, powered);
+        if (gw) wells.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, want: gw * m });
+        if (uw) users.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, draw: uw * m });
+      }
+      const s = W.solve({ cityId: cityGroundId(), grid: GRID, wells, users,
+                          pop: cityPop(), drinkPerMin: MORALE.drinkPerPopPerMin, dtMin });
+      if (s && s.ok) _wtFac = s.factor;
+    }
+  } catch (e) { /* the host's own water rate stands unchanged */ }
+
   // leased plots pay rent to the owner
   for (const t of Object.values(game.tiles)) {
     // 🏗 An unfinished lot has no tenant to collect from. (`lot` is on
@@ -19952,7 +20021,16 @@ async function economyTick(dtMin) {
       //    minute, unchanged. Both the banked amount and the rate the HUD prints
       //    go through the same divisor, so the panel can never promise a number
       //    the tick does not pay.
-      const genR = (r === 'cinder') ? cinderRate(def.gen[r]) : def.gen[r];
+      /* 💧 …and the ground under the tile, for water only. A Purifier over an
+         aquifer is a well, one beside a river is an intake, and one on dry
+         ground is what its own description says — a condenser, at the 0.80×
+         floor /src/water/tuning.js argues for. 1× when the module is absent, so
+         a 404 leaves every existing city producing exactly what it produced
+         before. This is the ONE place the multiplier is applied: `genR` feeds
+         the banked amount, the rate the HUD prints and `waterNetRaw` below, so
+         the panel can never advertise water the tick does not deliver. */
+      const genR = ((r === 'cinder') ? cinderRate(def.gen[r]) : def.gen[r]) *
+                   (r === 'water' ? wtFactor(k) : 1);
       let madeR = genR * mult * om * dtMin;
       /* 📦 A LEDGER RESOURCE THE VAULT CANNOT TAKE IS NOT PRODUCED.
          Same shape as the city-stock clamp above: production is limited to the
@@ -19975,7 +20053,10 @@ async function economyTick(dtMin) {
          with `t` in scope — this is the whole cost of a real Ledger tab. Only
          Cinder is banked: goods are city stock, not this building's money. */
       if (r === 'cinder') t.earn = (t.earn || 0) + madeR;
-      if (r === 'water') waterNetRaw += def.gen[r] * mult;   // see waterNetRaw
+      // 💧 `genR`, not `def.gen[r]` — the ground's multiplier is already in it,
+      //    so coverage is fed the water the city can actually draw. Reading the
+      //    raw rate here would tell the vitals card a dry city was fine.
+      if (r === 'water') waterNetRaw += genR * mult;   // see waterNetRaw
     }
     // 🍽 SERVICES: convert refined stock into COVERAGE.
     if (def.svc) {
@@ -24664,6 +24745,25 @@ function renderVitals() {
            of false HUD claim this file has had to close before. */
       '<span class="schip pw" id="pwchip" title="Supply / demand per minute. Click for the electricity info view.">⚡ ' +
       game.power.gen.toFixed(1) + '/' + game.power.demand.toFixed(1) + '</span>' +
+      /* 💧 THE WATER CHIP — the same glanceable-value-plus-explanation pairing
+         as the ⚡ chip beside it, and the launcher for the hydrology info view.
+         ⚠ RENDERED ONLY WHEN THE MODULE IS ACTUALLY ANSWERING. A chip that
+           prints 0.0/0.0 whenever /src/water 404s would be a permanent red
+           readout for a feature that is simply absent — and this file has had
+           to close exactly that class of false HUD claim before (see the ⚡
+           chip's own comment above). No module, no chip, no claim. */
+      (function () {
+        try {
+          const W = window.MythicWater;
+          if (!W || !W.ready()) return '';
+          const s = W.supply();
+          if (!s || s.model !== 'hydro') return '';
+          return '<span class="schip pw" id="wtchip" title="Water the city can draw / water it wants, per minute. ' +
+                 'Click for the hydrology info view — groundwater, purity and reserves.  (G)">💧 ' +
+                 s.capacity.toFixed(1) + '/' + s.draw.toFixed(1) +
+                 (s.shortfall > 0.005 ? ' ⚠' : '') + '</span>';
+        } catch (e) { return ''; }
+      })() +
       '<span class="scap">cap ' + stockCap() + '</span></div>';
   if (html !== renderVitals._last) { renderVitals._last = html; el.innerHTML = html; }
 }
@@ -24683,6 +24783,24 @@ addEventListener('keydown', (ev) => {
   if (ev.key !== 'e' && ev.key !== 'E') return;
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   try { if (window.MythicPower) window.MythicPower.togglePanel(); } catch (e) {}
+});
+/* 💧 THE HYDROLOGY INFO VIEW'S TWO WAYS IN — the chip, delegated for the same
+   reason (renderVitals replaces #vitalscard's innerHTML whenever the numbers
+   move), and G for Groundwater.
+   ⚠ G, NOT W. W/A/S/D are the camera pan keys (KEYPAN), and stealing W to open
+     a panel would break the single most-used control in the game. E was already
+     taken by the electricity view. Degrades to nothing if /src/water never
+     loaded: no module, no panel, and no chip to click either. */
+addEventListener('click', (ev) => {
+  if (!ev.target.closest || !ev.target.closest('#wtchip')) return;
+  try { if (window.MythicWater) window.MythicWater.togglePanel(); } catch (e) {}
+});
+addEventListener('keydown', (ev) => {
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+  if (ev.key !== 'g' && ev.key !== 'G') return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  try { if (window.MythicWater) window.MythicWater.togglePanel(); } catch (e) {}
 });
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -25991,6 +26109,19 @@ function serialize() {
       try { return window.MythicPower ? window.MythicPower.save() : _pendingPower; }
       catch (e) { return _pendingPower; }
     })(),
+    /* 💧 THE AQUIFERS: how much is left in each one, how poisoned each one is,
+       and the id the city's ground was derived from. Same contract as `power`
+       above, including the erase guard — it falls back to WHAT WAS LOADED, never
+       to null, because writing `water: null` over a lived hydrology to record
+       that a module failed to load is the identical mistake the `economy:` field
+       documents. Absent on load ⇒ full, clean basins, which is the correct
+       reading of a save written before anything could pump or poison them.
+       ⚠ The id matters as much as the levels: it is what stops a city's
+         aquifers moving if the host ever derives its ground id differently. */
+    water: (function () {
+      try { return window.MythicWater ? (window.MythicWater.save() || _pendingWater) : _pendingWater; }
+      catch (e) { return _pendingWater; }
+    })(),
     /* ⏳ The simulated city clock the per-tile `born` stamps are measured
        against. Meaningless apart — save both or neither. */
     age: Math.round(game.cityAge || 0),
@@ -26621,6 +26752,12 @@ let _pendingPower = null;
    already living there. */
 let _pendingDemog = null;
 let _lastDemogBlob = null;
+/* 💧 …and the hydrology blob, same contract: read by loadState, handed to
+   /src/water once in boot(). Holds the per-basin reserve and taint plus the id
+   the ground was derived from. Absent ⇒ undefined ⇒ the module starts every
+   basin full and clean, which is the correct reading of a save written before
+   the aquifers existed, and is why every earlier save opens unchanged. */
+let _pendingWater = null;
 /* 💾 …AND THE LAST BLOB WE KNOW IS REAL, which is a DIFFERENT job and needs its
    own variable. `_pendingEconomy` is deliberately nulled the moment mount()
    consumes it (a remount arriving with a stale blob is its own bug). This one is
@@ -26778,6 +26915,8 @@ async function loadState() {
     // 👥 Same contract, one line: stashed for boot(), and kept as the erase guard.
     _pendingDemog = (s.demog && typeof s.demog === 'object') ? s.demog : null;
     _lastDemogBlob = _pendingDemog;
+    // 💧 …and the hydrology. Same stash, same reason.
+    _pendingWater = (s.water && typeof s.water === 'object') ? s.water : null;
     /* 💾 …AND THE LAST BLOB WE KNOW IS REAL. Same contract as the `house` and
        `stad` tile fields: state that exists nowhere else must survive a session
        in which its module never loaded. serialize() falls back to this rather
@@ -30998,6 +31137,38 @@ function animate() {
       spendCinders: (n) => MythicCityBridge.spendCinders(n),
     });
   } catch (e) { console.warn('[Stadium] not mounted (non-fatal):', e); }
+  /* ══ 💧 THE HYDROLOGY AND ITS INFO VIEW ═══════════════════════════════════
+     Mounted AFTER loadState so the saved aquifer levels exist before the first
+     economyTick can pump them, and BEFORE the offline catch-up for the same
+     reason — the catch-up runs real economy ticks, and basins that mounted
+     afterwards would start every session full however hard they were being
+     pumped when the player left.
+
+     …and BEFORE /src/power, because the electricity panel's Groundwater and
+     Surface Water legend rows are wired to `window.MythicWater` and grey
+     themselves out when it is absent. It re-asks on every refresh, so the order
+     is politeness rather than correctness — but a legend that is grey for the
+     first frame of every session is a legend players learn to distrust.
+
+     🔴 THE GLOBALS TRAP, sixth module to hit it. `THREE`, `scene` and `GRID`
+        are top-level `const` in THIS module script and invisible to an ES
+        module, so the object below IS the hand-over. Note how little goes over:
+        the renderer handles for the overlay and the city's id. Everything about
+        the CITY arrives per tick through MythicWater.solve(), from the water
+        pre-pass in economyTick — one caller, one direction, no writes. */
+  try {
+    await import('../src/water/index.js?v=' + (window.NC_BUILD || 'r1'));
+    if (window.MythicWater) {
+      window.MythicWater.mount({ THREE, scene, grid: GRID, cityId: cityGroundId() });
+      window.MythicWater.load(_pendingWater);
+      /* 🔍 Reported ONLY when it fails. A self-check that logs on success is a
+         self-check everyone learns to scroll past. */
+      try {
+        const v = window.MythicWater.verify();
+        if (v && !v.ok) console.warn('[Water] endowment self-check FAILED', v.violations.slice(0, 6));
+      } catch (e) {}
+    }
+  } catch (e) { console.warn('[Water] not mounted (non-fatal):', e); }
   /* ══ ⚡ THE GRID AND ITS INFO VIEW ════════════════════════════════════════
      Mounted AFTER loadState so the saved battery charge exists before the first
      economyTick can discharge it, and BEFORE the offline catch-up for the same
@@ -31107,6 +31278,21 @@ function animate() {
          exists to make impossible — assert on it rather than on the numbers. */
     powerGrid: () => { try { return window.MythicPower ? window.MythicPower.state() : null; } catch (e) { return null; } },
     powerPanel: (on) => { try { return window.MythicPower ? (on === false ? window.MythicPower.closePanel() : window.MythicPower.openPanel()) : false; } catch (e) { return false; } },
+    /* 💧 THE HYDROLOGY.
+       `water()` is the last solve — capacity, draw, shortfall, every basin's
+       reserve and purity, and the per-tile extraction factor the tick charged.
+       `waterGround()` is the ENDOWMENT: the ground as it was made, which is a
+       pure function of `cityGroundId()` and never moves.
+       ⚠ `water().model` is the load-bearing one for a test, exactly like
+         `power().model`: 'hydro' means /src/water solved this tick, and a
+         missing object means the module 404'd and every Purifier is running at
+         the flat rate this file has always used. A fallback nothing can observe
+         is a fallback that ships silently. */
+    water: () => { try { return window.MythicWater ? window.MythicWater.state() : null; } catch (e) { return null; } },
+    waterGround: (id) => { try { return window.MythicWater ? window.MythicWater.endowment(id) : null; } catch (e) { return null; } },
+    waterAt: (x, z) => { try { return window.MythicWater ? window.MythicWater.sourceAt(x, z) : null; } catch (e) { return null; } },
+    waterPanel: (on) => { try { return window.MythicWater ? (on === false ? window.MythicWater.closePanel() : window.MythicWater.openPanel()) : false; } catch (e) { return false; } },
+    waterId: () => cityGroundId(),
     place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
     /* Fast-forward: n economy minutes in `steps` slices.
        ⚠ Calls the SAME three functions in the SAME order as animate()'s

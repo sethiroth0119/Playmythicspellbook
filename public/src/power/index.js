@@ -102,10 +102,42 @@ function terrain() {
     } };
     out.terrainSig += 'w' + speed.toFixed(2) + ':' + (w.dir || '');
   }
-  if (c.ground) { try { const e = W.endowment(); out.ground = (x, z) => { const v = e && e.groundAt ? e.groundAt(x, z) : 0; return isFinite(v) ? v : 0; }; out.terrainSig += 'g1'; } catch (e) {} }
-  if (c.surface) { out.surface = (x, z) => { try { const v = W.sourceAt(x, z); return isFinite(v) ? v : (v && v.flow) || 0; } catch (e) { return 0; } }; out.terrainSig += 's1'; }
+  /* 💧 GROUNDWATER — the ENDOWMENT field, not the live reserve, and the two are
+     different questions: /src/water's own header says `groundAt` is "the 0..1
+     DEPOSIT field … it must stay stable while a player watches it", whereas
+     what is left after pumping is `sourceAt().level`. A legend row labelled
+     "Groundwater Deposits" is asking the first question, so it reads the first
+     field. Cached because the endowment is deterministic and never drawn down —
+     rebuilding it every refresh would re-derive the whole hydrology at 1 Hz for
+     a picture that cannot change. */
+  if (c.ground) {
+    try {
+      if (_endow.src !== W) { _endow.src = W; _endow.val = W.endowment(); }
+      const e = _endow.val;
+      if (e && typeof e.groundAt === 'function') {
+        out.ground = (x, z) => { const v = e.groundAt(x, z); return isFinite(v) ? v : 0; };
+        out.terrainSig += 'g' + (e.cityId || '1');
+      }
+    } catch (e) { _endow.src = null; }
+  }
+  /* 💧 SURFACE WATER — `sourceAt(x, z).flow`. Deliberately NOT `.yield` or
+     `.level`: /src/water documents flow as "SURFACE presence at this tile
+     whichever source won — this is the field /src/power/overlay.js reads for
+     its Surface Water row, and it must never be handed an aquifer number under
+     that name". An aquifer's strength painted under a "Surface Water Flow"
+     legend would be a confidently wrong map. */
+  if (c.surface) {
+    out.surface = (x, z) => {
+      try { const s = W.sourceAt(x, z); const v = s && s.flow; return isFinite(v) ? v : 0; }
+      catch (e) { return 0; }
+    };
+    out.terrainSig += 's1';
+  }
   return out;
 }
+/* One-slot memo. Keyed on the module OBJECT so a remount — or /src/water
+   arriving after this panel first opened — invalidates it without a listener. */
+const _endow = { src: null, val: null };
 
 /* ── THE PUBLIC API ─────────────────────────────────────────────────────── */
 const API = {

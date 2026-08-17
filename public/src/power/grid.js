@@ -41,14 +41,35 @@ const K = (x, z) => x + ',' + z;
    the ROAD LAYOUT changes only when the player builds. Re-running the BFS and
    the flow accumulation 60 times a minute over an unchanged map is pure waste,
    so topology is keyed on a signature of what can affect it and reused.
-   ⚠ The signature must include every input the walk reads. It was briefly just
-     the tile COUNT, which meant demolishing one road and laying another in the
-     same tick left a stale network on screen. */
+
+   🔴 THE SIGNATURE MUST INCLUDE EVERY INPUT THE WALK READS, and getting that
+      wrong is silent — a stale network looks exactly like a correct one.
+      Two versions of this were wrong before the third:
+        1. the tile COUNT alone, so demolishing one road and laying another in
+           the same tick left the old network on screen;
+        2. the tile ROLES only (`road / plant / load / empty`), which looks
+           complete and is not: flow is driven by DRAW MAGNITUDE, and a Machine
+           Shop upgraded from level 1 to 2 doubles its draw without changing its
+           role. Its feeder could go from comfortable to choking with the
+           overlay still painting it healthy, which is precisely the diagnostic
+           this module exists to provide.
+      Draw is therefore quantised into the key, and so are the tuning numbers
+      that decide the HV/LV split and the ratings — those are live-editable from
+      the console and from any future in-game tuning UI, and a cache that
+      ignores them makes the model unfalsifiable. */
 let _topo = null, _topoSig = '';
 
 function topoSignature(host) {
-  let s = host.grid + '|';
-  for (const t of host.tiles) s += t.k + ':' + (t.road ? 'r' : t.plant ? 'p' : t.need ? 'l' : 'x') + ';';
+  const T = POWER.transmission;
+  let s = host.grid + '|' + T.lvRating + ',' + T.hvRating + ',' + T.hvThreshold + ',' +
+          T.trunkHops + ',' + T.lossPerHop + ',' + T.lossMax + '|';
+  for (const t of host.tiles) {
+    s += t.k + ':' + (t.road ? 'r' : t.plant ? 'p' : t.need ? 'l' : 'x');
+    // Quantised, not raw: draw is a float that jitters in the last places every
+    // tick, and a signature that changes every tick is a cache that never hits.
+    if (t.need) s += (Math.round(t.need * 100) / 100);
+    s += ';';
+  }
   return s;
 }
 

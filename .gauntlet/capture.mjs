@@ -47,19 +47,49 @@ await page.waitForTimeout(6000);
    frame the district is to read the bounding box of what got placed. Three
    shots that mirror the CS2 reference set: a low aerial over the whole
    district, an eye-level street view, and a mid aerial over one block. */
-const box = await page.evaluate(() => {
+/* ── FRAMINGS, DERIVED FROM THE ACTUAL MESHES ──────────────────────────────
+   placeMeshAt owns the tile→world mapping and it is not the identity, so the
+   only honest way to frame is to read where things actually ended up.
+   ⚠ THE STREET SHOT IS PLACED ON A ROAD, not guessed from the bounding box.
+   Two earlier attempts put the eye above the mid-rise blocks and looked down
+   at rooftops — and the round-1 critic scored vehicles 1/10 and citizens 2/10
+   against a frame that could not contain either. Sit on the carriageway and
+   look ALONG it, which is what the CS2 street reference is. */
+const frame = await page.evaluate(() => {
   const nc = window.__nc; const P = [];
-  for (const t of Object.values(nc.game.tiles)) if (t.mesh) P.push([t.mesh.position.x, t.mesh.position.z]);
+  const roads = [];
+  for (const t of Object.values(nc.game.tiles)) {
+    if (!t.mesh) continue;
+    P.push([t.mesh.position.x, t.mesh.position.z]);
+    if (t.type === 'road') roads.push({ x: t.mesh.position.x, z: t.mesh.position.z });
+  }
   if (!P.length) return null;
-  const xs = P.map(p=>p[0]), zs = P.map(p=>p[1]);
-  return { x0:Math.min(...xs), x1:Math.max(...xs), z0:Math.min(...zs), z1:Math.max(...zs), n:P.length };
+  const xs = P.map(p => p[0]), zs = P.map(p => p[1]);
+  const box = { x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs), n: P.length };
+  const cx = (box.x0 + box.x1) / 2, cz = (box.z0 + box.z1) / 2;
+  /* the longest east-west run of road nearest the centre */
+  const rows = {};
+  for (const r of roads) (rows[r.z.toFixed(2)] ||= []).push(r.x);
+  let best = null;
+  for (const z in rows) {
+    const xsr = rows[z].sort((a, b) => a - b);
+    const score = xsr.length - Math.abs(+z - cz);
+    if (!best || score > best.score) best = { z: +z, xs: xsr, score };
+  }
+  return { box, cx, cz, road: best };
 });
-const cx = box ? (box.x0+box.x1)/2 : 0, cz = box ? (box.z0+box.z1)/2 : 0;
-const span = box ? Math.max(box.x1-box.x0, box.z1-box.z0) : 20;
-const SHOTS=[
- {n:'aerial',   cam:[cx+span*.62, span*.55, cz+span*.62], tgt:[cx,0,cz]},
- {n:'street',   cam:[cx-span*.20, 1.9, cz-span*.02],      tgt:[cx-span*.02, 1.0, cz-span*.22]},
- {n:'district', cam:[cx+span*.26, span*.22, cz+span*.34], tgt:[cx-span*.06,0,cz-span*.06]},
+const box = frame && frame.box;
+const cx = frame ? frame.cx : 0, cz = frame ? frame.cz : 0;
+const span = box ? Math.max(box.x1 - box.x0, box.z1 - box.z0) : 20;
+/* eye height ~1.2 world units above the carriageway; a house is ~2.5 tall here */
+const R = frame && frame.road;
+const street = R && R.xs.length > 3
+  ? { cam: [R.xs[1], 1.15, R.z], tgt: [R.xs[R.xs.length - 2], 1.05, R.z] }
+  : { cam: [cx - span * .34, 1.4, cz], tgt: [cx + span * .3, 1.2, cz] };
+const SHOTS = [
+ { n: 'aerial',   cam: [cx + span * .62, span * .55, cz + span * .62], tgt: [cx, 0, cz] },
+ { n: 'street',   cam: street.cam, tgt: street.tgt },
+ { n: 'district', cam: [cx + span * .26, span * .22, cz + span * .34], tgt: [cx - span * .06, 0, cz - span * .06] },
 ];
 fs.mkdirSync(outDir,{recursive:true});
 const made=[];

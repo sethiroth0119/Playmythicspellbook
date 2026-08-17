@@ -270,7 +270,7 @@ export function mount(ctx) {
      price and both are counted into the button's estimate, because a button
      that spends money it did not name is the worst kind of bulk action. */
   function plan(only) {
-    const out = [], grow = [], skip = { occupied: 0, noroad: 0, nomix: 0 };
+    const out = [], grow = [], skip = { occupied: 0, noroad: 0, nomix: 0, building: 0 };
     const keys = Object.keys(G.zones).sort();
     for (const k of keys) {
       const d = ZONE_BY_ID[G.zones[k]];
@@ -280,6 +280,14 @@ export function mount(ctx) {
       if (!isFinite(x) || !isFinite(z) || !inGrid(x, z)) continue;
       const t = tileAt(x, z);
       if (t) {
+        /* 🏗 A TILE WITH A BUILD ORDER ON IT IS A HOLE IN THE GROUND, and it is
+           counted apart from `occupied` because it is the one skip that clears
+           itself: the development run keeps ticking while sites are open and
+           picks these up the moment they land. Growing one would also be a real
+           bug rather than a wasted click — the upgrade button's own first line
+           is `if (bldBusy(t)) return`, because a second paid order on a tile
+           overwrites the first one's refund basis. */
+        if (t.bld) { skip.building++; continue; }
         // ⚠ A damaged building is never grown: an upgrade on a wreck is money
         //    spent on something the player has to repair anyway.
         if (!t.damaged && belongs(d, t) && (t.lvl | 0) < targetLvl(d, t)) grow.push({ x, z, t, zone: d });
@@ -329,61 +337,212 @@ export function mount(ctx) {
     return grew;
   }
 
-  let _developing = false;
-  async function develop(opt) {
-    if (_developing) return null;
-    opt = opt || {};
-    const { out: list, grow, skip } = plan(opt.zone || null);
-    if (!list.length && !grow.length) {
-      const why = skip.noroad ? skip.noroad + ' zoned ' + (skip.noroad === 1 ? 'tile is' : 'tiles are') + ' waiting on road frontage — draw a road beside them.'
-        : skip.occupied ? 'Every zoned tile is already built to the density its zone asks for.'
-        : 'Nothing is zoned yet — pick a zone and paint some land.';
-      toast('🗺 Nothing to raise. ' + why, 'bad');
-      return { built: 0, grown: 0, planned: 0, skip, reasons: {} };
-    }
-    _developing = true;
-    const reasons = {};
-    let built = 0, grown = 0, raised = 0, last = null;   // `raised` = the grow list only
-    const prevSink = window.__ncToastSink;
-    window.__ncToastSink = (msg) => { last = msg; };
+  /* ══ DEVELOPMENT: HOW A ZONED DISTRICT ACTUALLY GETS BUILT ════════════════
+     🔴 THE COLLISION THIS RESOLVES, WRITTEN DOWN SO IT IS NOT "FIXED" AGAIN.
+     This used to be one loop: press Develop, and every zoned plot was ordered
+     back to back. Measured, that produced a 476-tile rectangle that planned 107
+     buildings, RAISED TWO, and refused the other 105 with "🏗 Every crew is
+     working — 2 / 2 on site". Both halves of that are working as designed.
+     node-city's Municipal Works crews are deliberately scarce (ECON
+     construction.municipal.slots = 2) — the crew limit is the cost the player
+     plays hand placement against. Zoning is the tool that develops a DISTRICT.
+     A district is a hundred buildings. Two crews and a hundred buildings cannot
+     both be right in the same gesture.
+
+     ✗ REJECTED — raise the crew count. It re-tunes hand placement and the
+       entire construction feature for the whole game to fix one button.
+     ✗ REJECTED — a paid queue the crews work through. The order gate rejected
+       exactly this in its own header ("paying now for something that starts in
+       twenty hours is the worst possible shape for a 24-hour timer, and a queue
+       adds a paid-but-unstarted persisted state with its own cancel, load and
+       reconciliation paths"), and nothing about zoning makes that objection any
+       less true — it multiplies it by a hundred.
+     ✗ REJECTED — raise zoned buildings instantly. A house that pops the moment
+       it is permitted, next to a hand-placed farm serving a nine-minute timer,
+       reads as two different games; and it would delete the only thing that
+       makes density feel like it costs something other than money.
+
+     ✅ THE ANSWER IS CS2's, AND IT IS A DIFFERENT PATH RATHER THAN A BIGGER ONE.
+     The mayor's crews build what the MAYOR places. Zoned land is built out by
+     PRIVATE developers: the player permits the land use, and buildings go up
+     over time on their own — one permit every ECON.construction.zoned.permitSec,
+     at most `sites` under construction at once, each still paying the shipped
+     price through payCost and each still serving its full build timer. Those
+     sites are counted OUT of the crew load by node-city (bldCrewLoad), so a
+     district building itself can never starve the player's own two crews, and
+     bldSlots() is untouched.
+
+     WHAT MAKES IT HONEST RATHER THAN A CHEAT CODE:
+       • it can only raise what a zone MIX lists, never anything else on the
+         shelf, and every other refusal still applies — the municipal ceiling
+         included, so a pre-Co. city still cannot grow a zone full of Cinder
+         earners;
+       • NOTHING IS EVER PAID IN ADVANCE. The plan is re-derived from the zone
+         map on every single permit, so there is no queue on disk: nothing to
+         cancel, nothing to refund, nothing to reconcile on load. De-zone the
+         rest of the district mid-run and the run simply has less to do;
+       • the run stops itself after `stopAfterRefusals` refusals in a row and
+         says why. Money is the refusal that repeats, and a drip that kept
+         asking would empty a treasury one plot at a time in silence;
+       • it only runs while the city is open, and the panel says so. Permits
+         are never issued for time the player was away — that would be an
+         unattended spend, which is the one thing a bulk tool must not do. (The
+         SITES themselves finish offline; a build deadline is wall-clock.)
+
+     🍞 STILL ONE SUMMARY, NEVER FORTY TOASTS. tryPlace reports every refusal as
+     a toast and the rail holds three, so a run redirects toast into a sink
+     (window.__ncToastSink, a three-line hook in node-city's toast()), keeps the
+     SHIPPED refusal text, counts identical reasons, and prints one line when
+     the run ends. The panel carries the live count in between. ═══════════ */
+
+  /* The pacing, or null when there is no economy module. That case is not a
+     missing feature, it is a DIFFERENT CITY: with /src/economy absent
+     bldDuration() returns 0, nothing writes a timer, there is no crew gate at
+     all, and one press correctly builds the whole district exactly as it did
+     before this feature existed. Hence the "everything, now" shape below rather
+     than a fallback literal (Rule 4). */
+  const DEV_BURST = { sites: Infinity, permitSec: 0, perPermit: Infinity, stopAfterRefusals: 3 };
+  function devCfg() {
     try {
-      for (const p of list) {
-        last = null;
-        try { await ctx.place(p.type, p.x, p.z); } catch (e) { last = last || String(e && e.message || e); }
-        const t = tileAt(p.x, p.z);
-        if (t) {
-          built++;
-          if (await growTo(t, p.x, p.z, p.zone.lvl || 1)) grown++;
-        } else {
-          const r = last || 'Refused with no reason given.';
-          reasons[r] = (reasons[r] || 0) + 1;
-        }
-      }
-      // Then bring what is already standing up to the density of its zone.
-      // Same paid path, same rebuild, and it is what makes re-zoning a built
-      // block to "high density towers" do anything at all.
-      for (const p of grow) {
-        if (tileAt(p.x, p.z) !== p.t) continue;    // it moved under us
-        if (await growTo(p.t, p.x, p.z, targetLvl(p.zone, p.t))) { grown++; raised++; }
-        else {
-          const r = 'Could not afford to grow ' + ((BUILDINGS[p.t.type] || {}).name || p.t.type) + ' any taller.';
-          reasons[r] = (reasons[r] || 0) + 1;
-        }
+      const C = window.MythicEconomy && window.MythicEconomy.ECON && window.MythicEconomy.ECON.construction;
+      if (C && C.on && C.zoned && C.zoned.on) return C.zoned;
+    } catch (e) {}
+    return null;
+  }
+
+  /* ── DEVELOPMENT SITES ────────────────────────────────────────────────────
+     The plots THIS layer permitted that are still under construction. node-city
+     asks for this count (bldDevSites / bldIsDev) to keep them out of the crew
+     load, so it has to be right in both directions: a site missed here charges
+     a private build to the player's crews, and a stale key here hands the
+     player a crew slot that is not free.
+     ⚠ MEMBERSHIP IS REMEMBERED, THE COUNT IS DERIVED. The set is a list of keys
+       this layer ordered; every read re-verifies each one against live `t.bld`
+       and drops it the moment the build lands, is cancelled or is demolished.
+       It cannot be stored on the record instead — node-city's bldLoad() rebuilds
+       `bld` field by field, so a flag written there would not survive a reload.
+     ⚠ `k === 0` (a SITE): an upgrade order is never one of ours. growTo() pays
+       for its levels directly and writes no build record at all. */
+  const _sites = new Set();
+  function siteLive(k) { const t = (G.tiles || {})[k]; return !!(t && t.bld && (t.bld.k | 0) === 0); }
+  function devSite(k) {
+    if (!_sites.has(k)) return false;
+    if (siteLive(k)) return true;
+    _sites.delete(k);
+    return false;
+  }
+  function devSites() { let n = 0; for (const k of Array.from(_sites)) if (devSite(k)) n++; return n; }
+
+  /* ── THE RUN ──────────────────────────────────────────────────────────────
+     `_run` IS the whole persisted state of development, and it is one intent
+     plus counters — no queue, by design (see above). */
+  let _run = null, _developing = false, _lastRefusal = null;
+  const runCfg = () => devCfg() || DEV_BURST;
+
+  /* The next thing to build: a vacant plot first, a too-short building second.
+     A district wants BUILDINGS before it wants storeys — a run that spent its
+     first ten permits adding floors to one street while the rest of the
+     rectangle stayed bare would read as broken. Re-derived every permit, never
+     cached: that is what makes de-zoning mid-run work. */
+  function nextJob(run) {
+    const p = plan(run.zone);
+    for (const j of p.out) if (!run.skip.has(key(j.x, j.z))) return { kind: 'raise', job: j, plan: p };
+    for (const j of p.grow) if (!run.skip.has(key(j.x, j.z))) return { kind: 'grow', job: j, plan: p };
+    return { kind: null, job: null, plan: p };
+  }
+
+  function noteRefusal(run, k, why) {
+    run.refused++;
+    run.streak++;
+    run.skip.add(k);                       // never ask the same plot twice in one run
+    const r = why || 'Refused with no reason given.';
+    run.reasons[r] = (run.reasons[r] || 0) + 1;
+  }
+
+  /* ONE PERMIT. Everything a single plot costs the run, including the decision
+     not to issue it. Returns true if something was ordered. */
+  async function permitOne(run, cfg) {
+    const { kind, job } = nextJob(run);
+    if (!job) return false;
+    const k = key(job.x, job.z);
+    if (kind === 'raise') {
+      if (devSites() >= cfg.sites) return false;         // no room on site — wait for the next tick
+      _lastRefusal = null;
+      const place = ctx.placeZoned || ctx.place;
+      try { await place(job.type, job.x, job.z); } catch (e) { _lastRefusal = _lastRefusal || String(e && e.message || e); }
+      const t = tileAt(job.x, job.z);
+      if (!t) { noteRefusal(run, k, _lastRefusal); return true; }
+      run.built++; run.streak = 0;
+      if (t.bld) _sites.add(k);
+      /* No timer ⇒ the building is finished the instant it is placed, so the
+         zone's density can be applied here. With a timer it CANNOT be: an
+         upgrade on a site would overwrite that order's refund basis (see
+         plan()). The tile comes back through the grow half of the plan on a
+         later permit, once its scaffolding is down. */
+      else if (await growTo(t, job.x, job.z, job.zone.lvl || 1)) run.grown++;
+      return true;
+    }
+    if (tileAt(job.x, job.z) !== job.t) return true;      // it moved under us; re-plan next permit
+    if (await growTo(job.t, job.x, job.z, targetLvl(job.zone, job.t))) { run.grown++; run.raised++; run.streak = 0; }
+    else noteRefusal(run, k, 'Could not afford to grow ' + ((BUILDINGS[job.t.type] || {}).name || job.t.type) + ' any taller.');
+    return true;
+  }
+
+  async function tickDev() {
+    if (!_run || _developing) return;
+    const run = _run, cfg = runCfg();
+    _developing = true;
+    const prevSink = window.__ncToastSink;
+    window.__ncToastSink = (msg) => { _lastRefusal = msg; };
+    let issued = 0;
+    try {
+      while (_run === run && issued < cfg.perPermit) {
+        if (run.streak >= (cfg.stopAfterRefusals | 0 || 3)) break;
+        if (!(await permitOne(run, cfg))) break;
+        issued++;
       }
     } finally {
       window.__ncToastSink = prevSink || null;
       _developing = false;
     }
-    const top = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
-    const bits = [];
-    if (skip.occupied) bits.push(skip.occupied + ' already built on');
-    if (skip.noroad) bits.push(skip.noroad + ' with no road frontage');
-    const head = '🏗 Zoned build: ' + built + ' of ' + list.length + ' plot' + (list.length === 1 ? '' : 's') + ' raised' +
-                 (grow.length ? ' · ' + raised + ' of ' + grow.length + ' grown taller' : '') +
-                 (bits.length ? ' · skipped ' + bits.join(', ') : '');
-    const tail = top.length ? ' — ' + top.slice(0, 2).map(([m, n]) => '“' + m + '”' + (n > 1 ? ' ×' + n : '')).join(' ') : '';
-    toast(head + tail, built ? 'good' : 'bad');
-    logEvent('city', head + (top.length ? ' · refusals: ' + top.map(([m, n]) => m + ' ×' + n).join(' | ') : ''));
+    if (_run !== run) return;                            // stopped from under us
+    if (run.streak >= (cfg.stopAfterRefusals | 0 || 3)) { stopDev('stalled'); return; }
+    /* NOTHING LEFT TO ORDER is not the same as FINISHED: the last few permits
+       may still be standing as scaffolding, and the storeys their zones ask for
+       can only be added once they land. So the run idles until its own sites are
+       clear, and only then declares the district done. */
+    if (!nextJob(run).job && !devSites()) { stopDev('done'); return; }
+    if (issued) { if (ctx.updateHUD) { try { ctx.updateHUD(); } catch (e) {} } sync(); saveSoon(); }
+  }
+
+  function runSummary(run) {
+    const top = Object.entries(run.reasons).sort((a, b) => b[1] - a[1]);
+    return { built: run.built, grown: run.grown, raised: run.raised, refused: run.refused,
+             reasons: run.reasons, top };
+  }
+
+  /* Stop, and say what happened ONCE. `why` is why we are stopping, not a
+     failure: 'done' (nothing left), 'stalled' (refused too many times in a
+     row), 'paused' (the player pressed the button). */
+  function stopDev(why) {
+    const run = _run;
+    if (!run) return null;
+    _run = null;
+    if (run.timer) { try { clearInterval(run.timer); } catch (e) {} }
+    const s = runSummary(run);
+    const open = devSites();
+    const head = '🏗 Zoned development ' +
+      (why === 'done' ? 'complete' : why === 'stalled' ? 'paused' : 'paused') + ' — ' +
+      s.built + ' plot' + (s.built === 1 ? '' : 's') + ' raised' +
+      (s.grown ? ', ' + s.grown + ' grown taller' : '') +
+      (open ? ' · ' + open + ' still under construction' : '');
+    const tail = s.top.length
+      ? ' — ' + (why === 'stalled' ? 'stopped after ' + s.top[0][1] + ' refusals in a row: ' : '') +
+        s.top.slice(0, 2).map(([m, n]) => '“' + m + '”' + (n > 1 ? ' ×' + n : '')).join(' ') +
+        (why === 'stalled' ? ' Fix that and press Develop again.' : '')
+      : '';
+    toast(head + tail, s.built || why === 'done' ? 'good' : 'bad');
+    logEvent('city', head + (s.top.length ? ' · refusals: ' + s.top.map(([m, n]) => m + ' ×' + n).join(' | ') : ''));
     if (ctx.computeLinks) { try { ctx.computeLinks(); } catch (e) {} }
     if (ctx.updateHUD) { try { ctx.updateHUD(); } catch (e) {} }
     // The zone map did not change, but what is STANDING on it did — the panel
@@ -391,7 +550,81 @@ export function mount(ctx) {
     // it was before the run.
     sync();
     saveSoon();
-    return { built, grown, raised, planned: list.length, growPlanned: grow.length, skip, reasons };
+    return { ...s, why, running: false };
+  }
+
+  function startRun(zone, quiet) {
+    const cfg = runCfg();
+    _run = { zone: zone || null, built: 0, grown: 0, raised: 0, refused: 0,
+             reasons: {}, streak: 0, skip: new Set(), timer: 0, started: Date.now() };
+    /* setInterval, not a chain of timeouts: a permit that takes longer than the
+       interval is covered by the `_developing` latch in tickDev, so ticks can
+       never overlap or compound. permitSec 0 ⇒ no economy module ⇒ no timers to
+       pace against, and the single call below does the lot. */
+    if (cfg.permitSec > 0) _run.timer = setInterval(() => { tickDev(); }, cfg.permitSec * 1000);
+    if (!quiet) sync();
+    return _run;
+  }
+
+  /* THE BUTTON. Starts development (and issues the first permit immediately —
+     a button that does nothing for ten seconds reads as broken), or, with
+     `toggle`, pauses a run that is already going. */
+  async function develop(opt) {
+    opt = opt || {};
+    if (_run) {
+      if (opt.toggle) return stopDev('paused');
+      return { running: true, ...runSummary(_run) };
+    }
+    const cfg = runCfg();
+    const p = plan(opt.zone || null);
+    if (!p.out.length && !p.grow.length) {
+      const why = p.skip.building ? p.skip.building + ' zoned ' + (p.skip.building === 1 ? 'plot is' : 'plots are') + ' already under construction — they finish on their own.'
+        : p.skip.noroad ? p.skip.noroad + ' zoned ' + (p.skip.noroad === 1 ? 'tile is' : 'tiles are') + ' waiting on road frontage — draw a road beside them.'
+        : p.skip.occupied ? 'Every zoned tile is already built to the density its zone asks for.'
+        : 'Nothing is zoned yet — pick a zone and paint some land.';
+      toast('🗺 Nothing to raise. ' + why, 'bad');
+      return { built: 0, grown: 0, planned: 0, skip: p.skip, reasons: {}, running: false };
+    }
+    const run = startRun(opt.zone || null, true);
+    if (cfg.permitSec > 0) {
+      const work = p.out.length + p.grow.length;
+      toast('🏗 Development approved — ' + work + ' plot' + (work === 1 ? '' : 's') +
+            ' zoned and waiting. Buildings go up on their own from here, up to ' + cfg.sites +
+            ' at a time, while the city is open. Press ⏸ to pause.', 'good');
+      logEvent('city', '🗺 Development approved on ' + work + ' zoned plot' + (work === 1 ? '' : 's') + '.');
+    }
+    await tickDev();
+    return { started: true, running: !!_run, planned: p.out.length, growPlanned: p.grow.length,
+             skip: p.skip, ...runSummary(run) };
+  }
+
+  /* ── THE ONE FIELD DEVELOPMENT PUTS ON DISK ───────────────────────────────
+     The intent ("this city is open for development") and the site list, through
+     the module save shelf — never a queue of orders (see the header). A run
+     therefore survives a reload without a single paid-but-unstarted plot on
+     disk: the plan is re-derived from the zone map on the next permit.
+     ⚠ REGISTERED FROM afterLoad(), NOT FROM mount(). /src/naming owns the shelf
+       and is imported AFTER this module in node-city's boot, so
+       window.MythicCitySave does not exist yet at mount. By afterLoad() it does,
+       and register() replays the restored payload to a late arrival — which is
+       exactly the case the shelf was built for. */
+  let _shelved = false, _resume = null;
+  function shelfRegister() {
+    if (_shelved) return false;
+    try {
+      const shelf = window.MythicCitySave;
+      if (!shelf || typeof shelf.register !== 'function') return false;
+      _shelved = shelf.register('zoning', {
+        save: () => ({ v: 1, on: _run ? 1 : 0, zone: _run ? _run.zone : null, sites: Array.from(_sites) }),
+        load: (p) => {
+          _sites.clear();
+          if (!p || typeof p !== 'object') { _resume = null; return; }
+          for (const k of (Array.isArray(p.sites) ? p.sites : [])) if (typeof k === 'string') _sites.add(k);
+          _resume = p.on ? { zone: typeof p.zone === 'string' ? p.zone : null } : null;
+        },
+      });
+    } catch (e) { console.warn('[Zoning] save shelf unavailable (non-fatal):', e); }
+    return _shelved;
   }
 
   /* ══ GRANDFATHERING ═══════════════════════════════════════════════════════
@@ -442,8 +675,29 @@ export function mount(ctx) {
           (res ? ', ' + res + ' of them as “Residential · as built”: those houses keep exactly the look they were built with until you re-zone them' : '') + '.');
       }
     }
+    /* 🏗 Development picks up where it left off — the intent only. Nothing is
+       ordered here: the first permit is issued one interval later, from the
+       zone map as it stands NOW. A city reopened after a week therefore starts
+       one plot at a time exactly as it did before, and never spends a penny for
+       the week nobody was watching. */
+    shelfRegister();
+    /* ⚠ NOT RESUMED WITHOUT PACING. With no economy module a run has no
+       interval to sit on and would fire the whole remaining district in one
+       burst — on the load path, before the player has touched anything. An
+       unattended spend is the one thing a bulk tool must never do, so the
+       intent is dropped and the button is left to the player. */
+    if (_resume && runCfg().permitSec <= 0) _resume = null;
+    if (_resume && !_run) {
+      const zone = _resume.zone; _resume = null;
+      const p = plan(zone);
+      if (p.out.length || p.grow.length) {
+        startRun(zone, true);
+        logEvent('city', '🗺 Development is still approved here — ' + (p.out.length + p.grow.length) +
+          ' zoned plot' + (p.out.length + p.grow.length === 1 ? '' : 's') + ' left to build out.');
+      }
+    }
     sync();
-    return { zoned: Object.keys(G.zones).length };
+    return { zoned: Object.keys(G.zones).length, developing: !!_run, sites: devSites() };
   }
 
   function stats() {
@@ -454,8 +708,14 @@ export function mount(ctx) {
       per[id] = (per[id] || 0) + 1;
       if ((G.tiles || {})[k]) developed++; else empty++;
     }
+    const cfg = devCfg();
     return { zoned: Object.keys(G.zones).length, per, developed, empty,
-             overlay: !!(ov && ov.visible()) };
+             overlay: !!(ov && ov.visible()),
+             /* The panel's whole read of the run — one call, so the button, the
+                status line and a diagnostic all quote the same numbers. */
+             developing: !!_run, sites: devSites(),
+             siteCap: cfg ? (cfg.sites | 0) : 0, permitSec: cfg ? (cfg.permitSec | 0) : 0,
+             built: _run ? _run.built : 0, grownRun: _run ? _run.grown : 0 };
   }
 
   const api = {
@@ -463,6 +723,14 @@ export function mount(ctx) {
     zoneAt, zoneDef, setZone,
     applyPaint, applyRect, applyFill,
     housingSeed, afterLoad, develop, plan: (only) => plan(only || null), planCost,
+    /* 🏗 DEVELOPMENT. `devSite` / `devSites` are read by node-city's order gate
+       (bldIsDev / bldDevSites) to keep private building sites out of the crew
+       load — they are part of this module's contract with the host, not a
+       diagnostic. `step()` issues the next permit NOW, which is what a driver
+       needs in order to watch a run without waiting out the interval. */
+    developing: () => !!_run,
+    stopDevelop: () => stopDev('paused'),
+    devSite, devSites, step: () => tickDev(),
     stats, sync,
     overlay: (v) => { _overlayOn = v == null ? !_overlayOn : !!v; if (ov) { ov.rebuild(G.zones, colOf); ov.setVisible(_overlayOn); } return _overlayOn; },
     preview: (rect, hex) => { if (ov) ov.preview(rect, hex); },

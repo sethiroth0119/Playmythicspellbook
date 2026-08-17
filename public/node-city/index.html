@@ -21892,7 +21892,7 @@ function renderBuildBoard() {
      crews are full while a build button was still going to say yes. */
   const _devN = bldDevSites();
   $('bldcrews').innerHTML = '<b>' + Math.max(0, bldActive() - _devN) + ' / ' + bldSlots() + '</b> crews working' +
-    (_devN ? ' · <b>' + _devN + '</b> zoned site' + (_devN === 1 ? '' : 's') + ' building itself.' : '.');
+    (_devN ? ' · <b>' + _devN + '</b> zoned site' + (_devN === 1 ? '' : 's') + ' going up without one.' : '.');
   if (!jobs.length) { renderBuildBoard._sig = null; $('bldlist').innerHTML = ''; return; }
   const sig = jobs.map(([k, t]) => k + ':' + t.bld.k + ':' + t.bld.l).join('|');
   if (sig !== renderBuildBoard._sig) {
@@ -33061,6 +33061,13 @@ function animate() {
          where the bug lived. */
       pending:   () => (typeof _pendingOrders === 'number' ? _pendingOrders : null),
       committed: () => (typeof bldCommitted === 'function' ? bldCommitted() : null),
+      /* 🗺 The crew/development split. `committed` counts every job in flight;
+         `crewLoad` is the half the crew gate actually tests, and `devSites` is
+         the half /src/zoning is building privately. A driver cannot otherwise
+         tell "the district is building itself" from "the crews are jammed",
+         which is the entire claim of the zoned development path. */
+      crewLoad: () => (typeof bldCrewLoad === 'function' ? bldCrewLoad() : null),
+      devSites: () => (typeof bldDevSites === 'function' ? bldDevSites() : null),
       nextFree: () => (typeof bldNextFreeSec === 'function' ? bldNextFreeSec() : null),
       profile: (type, lvl, kind, speedMul) => (typeof bldProfile === 'function'
                  ? bldProfile(type, lvl | 0 || 1, kind | 0, speedMul || 1) : null),

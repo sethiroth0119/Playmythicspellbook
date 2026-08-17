@@ -104,7 +104,7 @@ export function mountUI(api, ctx) {
 
   panel.innerHTML =
     '<div class="nzhd"><b>🗺 ZONING</b>'
-    + '<span class="nzhint">Right mouse button de-zones with whichever tool is active · scroll and WASD still move the camera</span>'
+    + '<span class="nzhint">Right mouse button de-zones with whichever tool is active · scroll and WASD still move the camera · picking a building from the build bar puts the zone tool away</span>'
     + '<button class="nzx" type="button" data-act="close" aria-label="Close">✖</button></div>'
     + '<div class="nzrow">'
     + '<button class="nzt" type="button" data-tool="paint">🖌 Paint</button>'
@@ -145,26 +145,49 @@ export function mountUI(api, ctx) {
     const d = zdef(zone);
     const sel = panel.querySelector('#nz-sel');
     if (sel) {
-      sel.innerHTML = d
+      sel.innerHTML = (d
         ? '<b>' + esc(d.ico + ' ' + d.name) + '</b> — ' + esc(d.desc)
           + '<br>' + st.zoned + ' tile' + (st.zoned === 1 ? '' : 's') + ' zoned · ' + st.developed + ' built · ' + st.empty + ' vacant'
-        : '';
+        : '')
+        /* The run's own line. It says "while the city is open" because that is
+           true and because a player who closes the tab expecting a finished
+           district would rightly call the silence a bug. */
+        + (st.developing
+            ? '<br><b style="color:#ffd08a">🏗 Developing</b> — ' + st.built + ' raised, ' + st.sites +
+              ' of ' + st.siteCap + ' sites working. New permits keep coming while the city is open.'
+            : st.sites
+              ? '<br>🏗 ' + st.sites + ' zoned site' + (st.sites === 1 ? '' : 's') + ' still under construction.'
+              : '');
     }
     const go = panel.querySelector('#nz-go');
     if (go) {
       const p = api.plan(null);
       const cost = api.planCost(p.out, p.grow);
       const work = p.out.length + p.grow.length;
-      go.disabled = !work;
-      // The button names the price BEFORE it is spent — a bulk action that
-      // quietly empties the treasury is the one thing a player cannot undo.
-      go.textContent = work
-        ? '🏗 Develop ' + (p.out.length ? p.out.length + ' plot' + (p.out.length === 1 ? '' : 's') : '')
-          + (p.out.length && p.grow.length ? ' + ' : '') + (p.grow.length ? p.grow.length + ' taller' : '')
-          + ' · ' + cost.toLocaleString() + ' 🔥'
-        : '🏗 Develop — nothing ready';
-      go.title = work ? 'Raises a building on every zoned, road-fronted, empty plot, and grows what is already there to the density its zone asks for. One summary, not one toast per tile.'
-        : 'Zoned plots need to be empty and to touch a road before anything can be raised on them.';
+      /* 🏗 THE BUTTON HAS TWO STATES BECAUSE DEVELOPMENT NOW HAS TWO STATES.
+         It is no longer "build all of this, now" — it approves the district and
+         private developers build it out over time, one permit at a time (see
+         index.js). So while a run is going the button is the way to STOP it,
+         and the label carries the live count rather than an estimate that is
+         already out of date. */
+      if (st.developing) {
+        go.disabled = false;
+        go.textContent = '⏸ Pause · ' + st.built + ' raised, ' + st.sites + ' on site';
+        go.title = 'Development is running: a zoned plot is permitted every ' + (st.permitSec || '?') +
+          's, up to ' + (st.siteCap || '?') + ' under construction at once, each paid for as it starts. Pausing stops new permits — the sites already up finish on their own.';
+      } else {
+        go.disabled = !work;
+        // The button names the price BEFORE it is spent — a bulk action that
+        // quietly empties the treasury is the one thing a player cannot undo.
+        go.textContent = work
+          ? '🏗 Develop ' + (p.out.length ? p.out.length + ' plot' + (p.out.length === 1 ? '' : 's') : '')
+            + (p.out.length && p.grow.length ? ' + ' : '') + (p.grow.length ? p.grow.length + ' taller' : '')
+            + ' · ' + cost.toLocaleString() + ' 🔥'
+          : '🏗 Develop — nothing ready';
+        go.title = work ? 'Approves the district. Buildings go up on their own from here — one zoned plot permitted at a time, up to ' +
+            (st.siteCap || 'a few') + ' under construction at once, each paying the shipped price as it starts. One summary at the end, not one toast per tile.'
+          : 'Zoned plots need to be empty and to touch a road before anything can be raised on them.';
+      }
     }
     if (barBtn) barBtn.classList.toggle('active', armed);
   }
@@ -177,9 +200,51 @@ export function mountUI(api, ctx) {
     else setArmed(false);
     refresh();
   }
+
+  /* ══ 🖱 TWO TOOLS, ONE POINTER — THE EXCLUSION, IN BOTH DIRECTIONS ══════════
+     🔴 THE DEFECT THIS CLOSES, MEASURED: with the Zones panel open (which arms
+     the paint tool) the player picked Housing off the build bar and clicked the
+     map. They got a green zone square. No house, no toast, no cue — because the
+     capture-phase listener at the bottom of this file owns the gesture the
+     moment the tool is armed, and NOTHING disarmed it. A silent mode conflict
+     is the worst class of UI bug: the player blames themselves.
+
+     Arming already left build mode (setMode('inspect') below) — that half was
+     there. The missing half is the other direction, and it cannot be done from
+     here alone: `mode` is a `let` inside node-city's module script and is
+     invisible to an ES module (CLAUDE.md, the globals trap). So node-city hands
+     over `onMode` — a one-way notification fired from setMode — and this is the
+     listener. Both directions now END IN A VISIBLE CHANGE, which is the part
+     that actually fixes it: the panel closes or opens, the build-bar button
+     lights or clears, and a toast names the tool the player is now holding.
+     ⚠ NEVER CALL ctx.setMode FROM INSIDE THIS LISTENER. It is fired from within
+       setMode itself; calling back would put the two tools in a loop handing
+       the pointer to each other. Standing our own tool down is enough. */
+  if (typeof ctx.onMode === 'function') {
+    ctx.onMode((m, type) => {
+      if (m !== 'place' || !(armed || open)) return;
+      const name = (ctx.BUILDINGS && ctx.BUILDINGS[type] && ctx.BUILDINGS[type].name) || null;
+      setOpen(false);
+      /* The overlay is deliberately LEFT ON. Land use is exactly what a player
+         wants to see while they place a building into it, and it swallows no
+         clicks — only the armed tool did that. */
+      if (ctx.toast) ctx.toast('🗺 Zoning put away — you picked ' + (name || 'a building') +
+        ', and the map is building again. Click 🗺 Zones to paint land use.', 'good');
+    });
+  }
+
   function setArmed(v) {
+    const was = armed;
     armed = !!v;
-    if (armed && ctx.setMode) { try { ctx.setMode('inspect'); } catch (e) {} }
+    if (armed && ctx.setMode) {
+      /* Leaving build mode is not enough on its own — a player who had a
+         building in hand has just had it taken away, and being told is the
+         difference between a tool swap and a lost click. */
+      let held = false;
+      try { held = typeof ctx.mode === 'function' && ctx.mode() === 'place'; } catch (e) { held = false; }
+      try { ctx.setMode('inspect'); } catch (e) {}
+      if (held && !was && ctx.toast) ctx.toast('🗺 Zone tool armed — the building you were holding was put back. Press 🚫 Stop zoning, or pick a building again, to build.', 'good');
+    }
     if (!armed) { api.preview(null, null); releaseControls(); }
     refresh();
   }
@@ -202,8 +267,14 @@ export function mountUI(api, ctx) {
     else if (a.dataset.act === 'off') setArmed(false);
     else if (a.dataset.act === 'overlay') { api.overlay(); refresh(); }
     else if (a.dataset.act === 'develop') {
-      a.disabled = true;
-      try { await api.develop(); } finally { refresh(); }
+      /* `toggle` — the same button starts development and pauses it, because
+         they are the same decision. It is only disabled across the FIRST
+         permit: a run that is already going must always be stoppable, and
+         disabling the one control that stops it is how a player ends up
+         watching their treasury drain with nothing to press. */
+      const running = api.developing();
+      if (!running) a.disabled = true;
+      try { await api.develop({ toggle: true }); } finally { a.disabled = false; refresh(); }
     }
   });
 
@@ -211,7 +282,14 @@ export function mountUI(api, ctx) {
      `hot` is the whole guard: armed, over the canvas, and the page able to
      turn a pointer into a tile. Anything else and the event is left alone. */
   function hot(ev) {
-    return armed && canvas && ev.target === canvas && typeof ctx.tileFromEvent === 'function';
+    if (!armed || !canvas || ev.target !== canvas || typeof ctx.tileFromEvent !== 'function') return false;
+    /* 🛟 THE BELT TO THE onMode BRACES. If this module is ever loaded against a
+       page with no mode hook (an older node-city), the exclusion above cannot
+       fire — and a build click silently painting a zone is precisely the bug
+       that is being closed. Then the build click wins, which is the right way
+       round: the player who just picked a building is holding it. */
+    try { if (typeof ctx.mode === 'function' && ctx.mode() === 'place') return false; } catch (e) {}
+    return true;
   }
   function rectOf() {
     return drag ? { x0: drag.x0, z0: drag.z0, x1: drag.x1, z1: drag.z1 } : null;

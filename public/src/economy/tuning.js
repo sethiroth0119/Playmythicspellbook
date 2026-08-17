@@ -758,6 +758,53 @@ export const ECON = {
     slots:     { perCo: 1, perWorkerStep: 6, max: 6 },
     speed:     { perCo: 0.20, perWorker: 0.025, maxMul: 2.0 },
     confirmOverSec: 3600,  // gcConfirm anything over an hour
+    /* 🗺 ZONED DEVELOPMENT — the second, slower way a building goes up, and the
+       ONLY thing in this file that is not about the city's own crews.
+
+       🔴 WHY IT EXISTS. `municipal.slots` is 2, deliberately: the crew limit is
+          what gates hand placement and it is a real cost the player plays
+          against. Zoning is the tool that develops a DISTRICT — measured, a
+          476-tile rectangle planned 107 buildings, built 2, and refused the
+          other 105 with "Every crew is working — 2 / 2 on site". Those two
+          facts collide, and raising `slots` to reconcile them would silently
+          re-tune hand placement and the whole construction feature for the
+          entire game. So they are reconciled the way CS2 reconciles them
+          instead: the mayor's crews build what the MAYOR places, and zoned land
+          is built out by PRIVATE developers on their own schedule — the mayor
+          permits land use, and buildings appear over time without a crew.
+
+       WHAT KEEPS IT FROM BEING A LOOPHOLE, since it walks past the crew slot:
+         • it can only raise what a zone MIX lists (housing, shops, works,
+           sheds) — never an op, a plant, a service or anything else on the
+           shelf, all of which still queue behind the two crews;
+         • every OTHER refusal still applies, the municipal ceiling included, so
+           a city with no Construction Co. still cannot grow a zone full of
+           Cinder earners past 40 minutes of build time;
+         • it is a DRIP, not a burst: one permit per `permitSec`, at most
+           `sites` under construction at once, each still paying the shipped
+           price and each still serving its full build timer;
+         • nothing is ever paid in advance. The plan is re-derived from the zone
+           map on every permit, so there is no queue on disk to cancel, refund
+           or reconcile — which is the same objection that killed the paid crew
+           queue (see the order gate in node-city).
+       Development sites are counted OUT of the crew load (node-city
+       bldCrewLoad), so a district building itself can never starve the player's
+       own two crews — and with /src/zoning absent that count is 0 and every
+       number here is unreachable, i.e. exactly the behaviour before it shipped.
+       ⚠ `sites` is a CONCURRENCY, not a speed: six 3-minute houses is a house
+         every 30 seconds, and six 3-hour factories is still a slow street. That
+         is the intended read — density costs time, not just Cinder. */
+    zoned: {
+      on:        1,
+      sites:     6,    // zoned plots under construction at once (crews: 2)
+      permitSec: 10,   // seconds between permits while development is running
+      perPermit: 1,    // plots permitted per tick — a drip, never a burst
+      /* Consecutive refusals that pause the run. Money is the refusal that
+         repeats, and a run that keeps asking would empty a treasury one plot at
+         a time with no summary until it finished. Three is enough to be sure it
+         was not one odd plot. */
+      stopAfterRefusals: 3,
+    },
   },
 
   /* ── 📈 PRICES ────────────────────────────────────────────────────────────

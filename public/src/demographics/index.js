@@ -227,10 +227,20 @@ function capacity() { return LAST.survey ? Math.round(LAST.survey.totalCapacity)
          key, zone: { id, name, ico, src },         // src 'zoned' | 'derived'
          homes, occupied, residents,                // integers
          wealth: { tier, label, ico },              // the building's household wealth
-         rent, rentBurden,                          // affordability index, NOT Cinder
+         rent, rentBurden,                          // per dwelling per economic day
+         income, jobFit,                            // what the households here earn
          households: [ { archetype, name, ico, label, size, education, eduLabel,
-                         wealth, ages: {child,young,adult,senior} } ]
+                         wealth, income, jobFit,
+                         ages: {child,young,adult,senior} } ]
        }
+
+   💸 `rent` and `income` ARE DENOMINATED IN CINDER PER ECONOMIC DAY — both are
+   priced off `ECON.labor.bands.*.wage` and nothing else — but NEITHER IS A
+   TRANSFER. They are the two sides of the affordability test this pipeline runs
+   every tick to decide who moves in and who leaves (pipeline.js step 2 and 4).
+   The Cinder that actually moves is `HH.chargeRent()` and `HH.payWages()`,
+   city-wide, inside sim.js's audited day. A consumer printing these MUST say
+   which it is showing; /src/dossier's books card does.
    Guarded on both sides: call it inside a try, and treat `ok:false` as "this
    building has no residents" rather than as an error. Markup for the two rows
    is available as `renderResidents(d)` if the dossier wants it, but the numbers
@@ -262,8 +272,17 @@ function residents(tileKey) {
       if (c.zone !== info.zone) continue;
       bag[c.arch + '|' + c.edu] = (bag[c.arch + '|' + c.edu] || 0) + P.state().co[k];
     }
+    /* 👷 THE LABOUR MARKET AS THIS ADDRESS SEES IT, recomputed from the fields
+       the last tick left behind rather than stored: `jobFitByEducation` is a
+       pure function of (posts, seekers) and pipeline.js calls it with exactly
+       these two every step. A cached copy would be a second opinion about the
+       same city — the failure terroir.js's rule names, and one this codebase
+       has already paid for. Null posts is "no economy mounted", which the
+       pipeline reads as no information rather than as no work. */
+    const fit = P.jobFitByEducation(LAST.posts, LAST.seekers);
+
     const out = [];
-    let heads = 0;
+    let heads = 0, incomeTotal = 0;
     const tierScore = { low: 0, mid: 0, high: 0 };
     for (let i = 0; i < occupied; i++) {
       const seed = A.seedOf(String(tileKey) + '#' + i);
@@ -275,21 +294,37 @@ function residents(tileKey) {
       const tier = A.wealthTier(arch, edu);
       tierScore[tier] += size;
       heads += size;
+      /* 💸 …AND WHAT THEY EARN, at the job fit their education actually reads —
+         the SAME call, with the SAME argument, that step 2 uses to decide
+         whether this household can still afford to live here. Passing 1 here
+         instead (see `rentBurden` below, which used to) prints the income they
+         would have in a city with work for everybody, which is not the income
+         the model is about to evict them over. */
+      const inc = A.incomeOf(arch, edu, fit[edu]);
+      incomeTotal += inc;
       out.push({
         archetype: arch, name: def ? def.name : arch, ico: def ? def.ico : '🏠',
         label: A.describe(arch, edu), size,
         education: edu, eduLabel: ed ? ed.label : edu,
         wealth: tier, wealthLabel: A.TIER_LABEL[tier],
+        income: Math.round(inc * 100) / 100,
+        jobFit: Math.round((fit[edu] || 0) * 1000) / 1000,
         ages: A.agesOf(arch, size),
       });
     }
     let tier = 'low', best = -1;
     for (const t in tierScore) if (tierScore[t] > best) { best = tierScore[t]; tier = t; }
     const rent = P.rentOf(info.zone);
-    // One representative burden, from the largest household here — the panel
-    // wants "can these people afford this", not a city average.
+    /* One representative burden, from the FIRST household here — the panel
+       wants "can these people afford this", not a city average.
+       ⚠ AT THE LIVE JOB FIT, NOT AT 1. This passed a hardcoded `1`, i.e. full
+         employment, so the dossier printed a burden the city's own departure
+         test (pipeline.js step 2, `rent / incomeOf(..., fit[edu])`) disagreed
+         with — and it disagreed in the direction that matters, reading a
+         household as comfortable in the same tick the model was deciding they
+         could no longer pay. One question, one answer. */
     const lead = out[0];
-    const income = lead ? A.incomeOf(lead.archetype, lead.education, 1) : 0;
+    const income = lead ? lead.income : 0;
     return {
       ok: true, key: String(tileKey),
       zone: { id: info.zone, name: zdef ? zdef.name : info.zone, ico: zdef ? zdef.ico : '🏠', src: info.src },
@@ -297,6 +332,10 @@ function residents(tileKey) {
       wealth: { tier, label: A.TIER_LABEL[tier], ico: A.TIER_ICO[tier] },
       rent: Math.round(rent * 10) / 10,
       rentBurden: income > 0 ? Math.round((rent / income) * 100) / 100 : null,
+      /* Cinder per economic day, summed over the households actually let here.
+         See the header: an affordability figure, not a payment. */
+      income: Math.round(incomeTotal * 100) / 100,
+      jobFit: (() => { const o = {}; for (const e in fit) o[e] = Math.round(fit[e] * 1000) / 1000; return o; })(),
       households: out,
     };
   } catch (e) {

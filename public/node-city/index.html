@@ -21316,6 +21316,37 @@ const bldReleaseCrew  = () => { _pendingOrders = Math.max(0, _pendingOrders - 1)
    tile yet. THIS, never bare bldActive(), is what the order gates test. */
 function bldCommitted() { return bldActive() + _pendingOrders; }
 
+/* ═══ 🗺 DEVELOPMENT SITES ARE NOT CREW JOBS ════════════════════════════════
+   A building the ZONING layer permitted is raised by private developers, not by
+   the city's Municipal Works crews (see ECON.construction.zoned for why those
+   two are separate at all). It still carries a `bld` record, still serves its
+   full timer and still shows on the build board — it simply does not stand in
+   a crew's way, or a district building itself out would lock the player out of
+   placing anything by hand for the half hour it takes.
+
+   🔴 THE COUNT IS THE MODULE'S, AND IT IS DERIVED, NOT REMEMBERED. bldLoad()
+      rebuilds a `bld` record field by field on every load, so a flag written
+      onto the record here would not survive one reload — the site list lives in
+      /src/zoning, rides that module's own save slice, and is re-verified
+      against live `t.bld` every time it is read.
+   ⚠ GUARDED, AND ABSENT MEANS ZERO. With /src/zoning missing or older than this
+     seam every one of these answers 0/false, bldCrewLoad() collapses into
+     bldCommitted(), and the gates behave exactly as they did before zoning
+     existed. That is the whole degrade path. */
+const bldIsDev = (k) => { try { return !!(window.MythicZoning && window.MythicZoning.devSite(k)); } catch (e) { return false; } };
+function bldDevSites() { try { return Math.max(0, (window.MythicZoning && window.MythicZoning.devSites()) | 0); } catch (e) { return 0; } }
+/* Zoned orders INSIDE their own payCost — raised by the `placeZoned` closure in
+   the /src/zoning hand-over and read by the order gate. It is the dev-site
+   twin of _pendingOrders: an order that has reserved a crew slot but has no
+   tile yet would otherwise be counted against the crews for the length of a
+   bridge round-trip, and a hand placement fired in that window would be refused
+   by a job that is not a crew's. */
+let _zonedOrder = 0;
+/* What the CREWS are carrying — committed jobs less the ones the zoning layer
+   permitted. THIS is what every crew-slot gate tests; bldCommitted() itself is
+   left alone because the build board legitimately counts every job in flight. */
+function bldCrewLoad() { return Math.max(0, bldCommitted() - bldDevSites() - _zonedOrder); }
+
 /* Seconds until the soonest crew frees, for the refusal message.
    ⚠ Infinity IS REACHABLE, and only since the reservation above existed: a
      burst of clicks can fill every slot with orders that are still inside their
@@ -21326,14 +21357,17 @@ function bldCommitted() { return bldActive() + _pendingOrders; }
 function bldNextFreeSec(now) {
   const t0 = Number.isFinite(+now) ? +now : Date.now();
   let best = Infinity;
-  for (const t of Object.values(game.tiles)) if (t && t.bld) best = Math.min(best, bldRemain(t, t0));
+  /* ⚠ Zoned sites are skipped: they hold no crew, so the moment one of them
+     lands frees nobody and naming it would send the player back to a build
+     button that refuses again. */
+  for (const [k, t] of Object.entries(game.tiles)) if (t && t.bld && !bldIsDev(k)) best = Math.min(best, bldRemain(t, t0));
   return best;
 }
 /* ONE refusal sentence, written once and shared by the placement gate and the
    upgrade gate — two copies of a player-facing message drift, and this one has
    two branches to keep in step. */
 function bldCrewBusyMsg() {
-  const busy = bldCommitted(), slots = bldSlots(), next = bldNextFreeSec();
+  const busy = bldCrewLoad(), slots = bldSlots(), next = bldNextFreeSec();
   return '🏗 Every crew is working — ' + busy + ' / ' + slots + ' on site. ' +
     (Number.isFinite(next)
       ? 'The next one frees in ' + fmtCountdown(next) + '.'
@@ -21853,7 +21887,12 @@ function renderBuildBoard() {
   $('bldcount').textContent = '(' + bldActive() + ')';
   /* The crew line belongs on the card and not only in a refusal toast: "why can
      I not start another one" should be answerable without first being refused. */
-  $('bldcrews').innerHTML = '<b>' + bldActive() + ' / ' + bldSlots() + '</b> crews working.';
+  /* 🗺 Zoned sites are named SEPARATELY, never folded into the crew figure: they
+     hold no crew (bldCrewLoad), so counting them here would tell a player their
+     crews are full while a build button was still going to say yes. */
+  const _devN = bldDevSites();
+  $('bldcrews').innerHTML = '<b>' + Math.max(0, bldActive() - _devN) + ' / ' + bldSlots() + '</b> crews working' +
+    (_devN ? ' · <b>' + _devN + '</b> zoned site' + (_devN === 1 ? '' : 's') + ' building itself.' : '.');
   if (!jobs.length) { renderBuildBoard._sig = null; $('bldlist').innerHTML = ''; return; }
   const sig = jobs.map(([k, t]) => k + ':' + t.bld.k + ':' + t.bld.l).join('|');
   if (sig !== renderBuildBoard._sig) {
@@ -23975,7 +24014,7 @@ $('btn-upgrade').onclick = guardedAction(async () => {
     /* The same two refusals the placement gate applies, in the same order and
        for the same reasons — an upgrade occupies a crew slot exactly like a
        new build, and an upgrade is where the long durations actually live. */
-    if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
+    if (bldCrewLoad() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
     if (bldOpType(t.type) === null && durSec > bldCfg().municipal.maxSec && !bldCoTiles().length) {
       toast(bldCeilingMsg('That upgrade takes ' + fmtCountdown(durSec)), 'bad');
       return;
@@ -23991,7 +24030,7 @@ $('btn-upgrade').onclick = guardedAction(async () => {
        confirm() in this frame, so that re-test is defensive — it is here so this
        stays correct the day gcConfirm() (a non-blocking modal) is reachable. */
     if (!(await bldConfirmLong('The upgrade to L' + target, durSec))) return;
-    if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
+    if (bldCrewLoad() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
     bldReserveCrew(); reserved = true;
   }
   /* ⚠ The finally spans EVERY await from here down, and in particular it
@@ -26430,6 +26469,19 @@ function rotateSelected() {
   saveSoon();
 }
 
+/* 🖱 WHO ELSE OWNS THE MAP POINTER. A module that arms a map tool of its own
+   (/src/zoning paints land use over the same canvas) has to be told when the
+   player picks up a building, or the two tools are both live at once and the
+   one that listens first silently eats the other's clicks. That was a real
+   defect: with the Zones panel open, choosing Housing and clicking the map
+   painted a zone square and raised nothing — no building, no toast, no cue.
+   ⚠ ONE-WAY AND SYNCHRONOUS. Listeners are told what the mode BECAME; they may
+     stand their own tool down but must not call setMode() back from here, or
+     two tools sit in a loop handing the pointer to each other. The zoning side
+     leaves build mode from its own arm path instead, which is the other half of
+     the same exclusion. */
+const _modeHooks = [];
+function onModeChange(fn) { if (typeof fn === 'function') _modeHooks.push(fn); }
 function setMode(m, type) {
   // A rotation carried over from a different building is a surprise, not a
   // convenience — but re-picking the SAME building keeps it.
@@ -26439,6 +26491,7 @@ function setMode(m, type) {
   hover.visible = false;
   hideTileTip();
   document.querySelectorAll('.bbtn').forEach(b => b.classList.toggle('active', b.dataset.type === placeType));
+  for (const fn of _modeHooks) { try { fn(mode, placeType); } catch (e) { console.warn('[mode hook]', e); } }
 }
 
 // Build bar
@@ -28827,15 +28880,38 @@ function opsDecorateShop() {
     const durSec = bldDuration(placeType, 1, 0, bldSpeed());
     if (durSec <= 0) return _tryPlaceOrderBase(x, z);
 
-    /* 🔒 bldCommitted(), NEVER bare bldActive(). The base writes `t.bld` only
+    /* 🗺 A ZONED ORDER TAKES A DEVELOPMENT SITE, NEVER A CREW — the one and only
+       way past the slot gate, and it is narrow by construction: `_zonedOrder`
+       is raised ONLY by the `placeZoned` closure handed to /src/zoning below,
+       for the duration of one awaited order. The land use was already permitted
+       by the player, the builder is private, and the pace is the zoning layer's
+       drip (ECON.construction.zoned.permitSec). Everything after this line —
+       the municipal ceiling, the per-type cap, population, concourse, siting,
+       payCost, the timer — applies to it exactly as to a hand placement.
+       ⚠ The cap here is the CEILING, not the pacing: /src/zoning permits one
+         plot at a time and counts its own sites. This is what stops any other
+         caller of the seam from turning it into a burst. */
+    const zc = (_zonedOrder > 0 && C.zoned && C.zoned.on) ? C.zoned : null;
+    if (zc && bldDevSites() >= (zc.sites | 0)) {
+      toast('🏗 Every development site is working — ' + bldDevSites() + ' / ' + (zc.sites | 0) +
+            ' zoned plots are already under construction. They finish on their own.', 'bad');
+      return;
+    }
+    /* 🔒 bldCrewLoad(), NEVER bare bldActive(). The base writes `t.bld` only
        after its own `await payCost`, so a second click arriving during that
        round-trip would otherwise read the same free slot the first one did.
        Four clicks 15 ms apart against a 40 ms bridge = four jobs on two slots,
        silently, with no refusal shown. See _pendingOrders. */
-    if (bldCommitted() >= bldSlots()) {
+    if (!zc && bldCrewLoad() >= bldSlots()) {
       toast(bldCrewBusyMsg() + (bldCoTiles().length ? '' : ' A 🏗 Construction Co. adds crews.'), 'bad');
       return;
     }
+    /* 🔒 THE MUNICIPAL CEILING BINDS A ZONED ORDER TOO, and that is deliberate:
+       drop it here and zoning becomes a way to raise every Cinder earner in the
+       game without ever siting the Construction Co. the whole feature gates
+       them behind. A pre-Co. city therefore grows its housing zones and reports
+       the ceiling on the rest — which is the same sentence, and the same fix,
+       the build shop already gives it. */
     if (bldOpType(placeType) === null && durSec > C.municipal.maxSec && !bldCoTiles().length) {
       toast(bldCeilingMsg('A ' + def.name + ' takes ' + fmtCountdown(durSec) + ' to raise'), 'bad');
       return;
@@ -28853,8 +28929,13 @@ function opsDecorateShop() {
        itself before payCost. The reservation is deliberately not held across the
        dialog: a modal left open would strand one of only two crew slots.
        Re-tested afterwards for the reason spelled out at the upgrade button. */
-    if (!(await bldConfirmLong('A ' + def.name, durSec))) return;
-    if (bldCommitted() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
+    /* ⚠ NOT ASKED OF A ZONED ORDER. The player approved a DISTRICT, minutes
+       ago, at a price the panel named; a modal appearing on its own two permits
+       later — while they are somewhere else in the city — is not a confirmation
+       of anything, and it would park the whole run behind a dialog nobody is
+       looking at. The zoning panel is where a zoned build is agreed to. */
+    if (!zc && !(await bldConfirmLong('A ' + def.name, durSec))) return;
+    if (!zc && bldCrewLoad() >= bldSlots()) { toast(bldCrewBusyMsg(), 'bad'); return; }
     bldReserveCrew();
     try { return await _tryPlaceOrderBase(x, z); }
     finally { bldReleaseCrew(); }
@@ -32007,6 +32088,26 @@ function animate() {
       tileFromEvent, setMode,
       costOf, payCost, computeLinks, updateHUD, toast, logEvent, saveSoon,
       place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
+      /* 🖱 THE OTHER HALF OF THE TOOL EXCLUSION. `mode` is a plain `let` in this
+         module script (the globals trap again), so the module cannot read it and
+         cannot be told about it without these two. Arming the zone tool leaves
+         build mode through setMode above; picking a building stands the zone
+         tool down through this hook. */
+      mode: () => mode,
+      onMode: onModeChange,
+      /* 🗺 THE ZONED ORDER SEAM. Identical to `place` except that it is marked,
+         for the length of ONE awaited order, as a development permit rather
+         than a hand placement — which is what lets the order gate charge it to
+         a development site instead of a Municipal Works crew. See the gate, and
+         ECON.construction.zoned for why the two are separate at all.
+         ⚠ `return await`, not `return`: a bare `return promise` inside
+           try/finally runs the finally at the return statement, dropping the
+           mark before payCost had even been called — the same trap the crew
+           reservation two screens up documents, and with the same consequence.*/
+      placeZoned: async (type, x, z) => {
+        placeType = type; _zonedOrder++;
+        try { return await tryPlace(x, z); } finally { _zonedOrder = Math.max(0, _zonedOrder - 1); }
+      },
     });
   } catch (e) { console.warn('[Zoning] not mounted (non-fatal):', e); }
   /* ══ 🏷 THE BUSINESS REGISTER + THE MODULE SAVE SHELF ═════════════════════

@@ -41996,10 +41996,16 @@ function getUnopenedPackCount() {
 // remembered across sessions). Players can purchase 1–99 at a time.
 const VENDOR_PACK_STOCK_MAX = 100000;
 const VENDOR_PACK_BUY_MAX   = 99;
-// 📦 Baseline already-sold per set — every set starts displayed at MAX-100 to
-// reflect packs bought before the GLOBAL counter existed (requested: "take away
-// 100 packs from each set").
-const VENDOR_PACK_STOCK_BASELINE_SOLD = 100;
+// 🔒 One pack purchase at a time — see the buy handler in _bindPackShopHandlers
+// for the full reasoning. Declared out here (not on the tile, not on the button)
+// precisely because it must span every tile and both currency buttons.
+let _packBuyInFlight = false;
+// ⚠ There used to be a VENDOR_PACK_STOCK_BASELINE_SOLD = 100 subtracted here, so
+// a set nobody had ever bought advertised "99,900 in stock". It was a cosmetic
+// head-start invented before the global counter existed. It is GONE: an untouched
+// shelf must read the full 100,000, and every unit missing from that number must
+// correspond to a real recorded sale. Do not re-add a fudge factor — if the shelf
+// should start lower, seed `pack_stock.sold`, which is auditable.
 // 🌍 GLOBAL shelf stock. The number of packs SOLD per set is shared across ALL
 // players via the Supabase `pack_stock` table (fetched into Cloud.packSold,
 // incremented atomically on buy by the pack_buy RPC). Remaining = MAX - 100
@@ -42019,7 +42025,7 @@ function _vendorPackSold(packId) {
 }
 function getVendorPackStock(packId) {
   if (!packId) return 0;
-  const remaining = VENDOR_PACK_STOCK_MAX - VENDOR_PACK_STOCK_BASELINE_SOLD - _vendorPackSold(packId);
+  const remaining = VENDOR_PACK_STOCK_MAX - _vendorPackSold(packId);
   return Math.max(0, remaining);
 }
 // Remove up to `n` units from a pack's shelf; returns how many were actually
@@ -42043,20 +42049,49 @@ function takeVendorPackStock(packId, n) {
 async function fetchGlobalPackStock() {
   try {
     if (typeof Cloud === 'undefined' || !Cloud || !Cloud.client) return;
+    if (Cloud.packStockMissing) return;   // schema isn't there — don't re-ask every visit
     const { data, error } = await Cloud.client.rpc('pack_stock_all');
-    if (error || !Array.isArray(data)) return;
+    if (error) { _notePackStockSchemaMissing(error, 'pack_stock_all'); return; }
+    if (!Array.isArray(data)) return;
     const map = {};
     data.forEach(r => { if (r && r.pack_id) map[r.pack_id] = (r.sold | 0); });
     Cloud.packSold = map;
     if (App.screen === 'vendorMarket' && typeof render === 'function') render();
   } catch (e) { /* offline / table missing → local fallback stays in effect */ }
 }
+// ⚠ THE BUG BEHIND "purchases are not being tracked". `pack_buy` / `pack_stock_all`
+// are defined in supabase/migrations/20260607000000_pack_stock.sql, and that file was
+// NEVER APPLIED — measured against the live project, both calls come back
+// PGRST202 "Could not find the function public.pack_buy(...) in the schema cache".
+// Both call sites then did a bare `return` inside a try/catch, so the failure was
+// invisible: no toast, no console line, nothing written server-side, ever. Silence
+// is what made this look like it worked. Now we record the miss once, keep the
+// LOCAL ledger (which is real and durable), and stop pretending the cloud answered.
+// Migrations here are applied BY HAND by the owner — this code must not assume it ran.
+function _notePackStockSchemaMissing(error, what) {
+  try {
+    const code = (error && error.code) || '';
+    const msg  = (error && error.message) || '';
+    // PGRST202 = function not in the schema cache; 42P01 = relation does not exist.
+    if (code === 'PGRST202' || code === '42P01' || /schema cache|does not exist/i.test(msg)) {
+      if (typeof Cloud !== 'undefined' && Cloud) Cloud.packStockMissing = true;
+      if (!_notePackStockSchemaMissing._warned) {
+        _notePackStockSchemaMissing._warned = true;
+        console.warn('📦 Pack purchase tracking is running LOCAL-ONLY: ' + what + ' is missing from the '
+          + 'database. Apply supabase/migrations/20260607000000_pack_stock.sql to turn the shared '
+          + 'shelf counter back on. Per-player purchases are still recorded in Profile.packPurchases.');
+      }
+    }
+  } catch (e) {}
+}
 // 🌍 Atomically record a global pack purchase (shared across players).
 async function recordGlobalPackBuy(packId, qty) {
   try {
     if (typeof Cloud === 'undefined' || !Cloud || !Cloud.client || !packId || (qty | 0) < 1) return;
+    if (Cloud.packStockMissing) return;
     const { data, error } = await Cloud.client.rpc('pack_buy', { p_pack_id: packId, p_qty: (qty | 0) });
-    if (!error && data != null) {
+    if (error) { _notePackStockSchemaMissing(error, 'pack_buy'); return; }
+    if (data != null) {
       const sold = (typeof data === 'number') ? data : (data && typeof data.sold === 'number' ? data.sold : null);
       if (sold != null) {
         Cloud.packSold = Cloud.packSold || {};
@@ -42065,6 +42100,87 @@ async function recordGlobalPackBuy(packId, qty) {
     }
   } catch (e) { /* keep optimistic local bump */ }
 }
+
+// 🧾 PACK PURCHASE LEDGER — the record of "every time a pack is purchased".
+// ----------------------------------------------------------------------------
+// Before this, the ONLY trace of a purchase was:
+//   • Cloud.packSold  — an aggregate that never got written (RPC missing, above),
+//   • Profile.vendorSold — an aggregate count with no price, time or currency,
+//   • Profile.unopenedPacks — which carries purchasedAt but is DESTROYED the
+//     moment the player opens the pack (removeUnopenedPack splices the entry).
+// So a player could buy 500 packs, open them, and leave behind no evidence that
+// any purchase happened. This ledger is append-only and survives opening.
+//
+// Append-only, exactly like corp_treasury: entries are pushed, never edited, and
+// the lifetime totals are derived counters that are only ever added to. The
+// entry list is capped (localStorage quota is ~5MB and saveProfile stringifies
+// the WHOLE Profile) — but the TOTALS are never trimmed, so the lifetime numbers
+// stay true even after the oldest entries roll off.
+const PACK_PURCHASE_LOG_MAX = 500;
+function _packPurchaseStore() {
+  if (!Array.isArray(Profile.packPurchases)) Profile.packPurchases = [];
+  if (!Profile.packPurchaseTotals || typeof Profile.packPurchaseTotals !== 'object') Profile.packPurchaseTotals = {};
+  return Profile;
+}
+// Record ONE completed purchase. Called only after payment has been taken and
+// the goods granted, so the ledger can never claim a sale that did not happen.
+function recordPackPurchase(rec) {
+  try {
+    if (!rec || !rec.packId || (rec.qty | 0) < 1) return null;
+    _packPurchaseStore();
+    const entry = {
+      id: 'pb_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e6).toString(36),
+      packId:   rec.packId,
+      name:     rec.name || rec.packId,
+      qty:      rec.qty | 0,                       // units bought off the shelf (boxes)
+      packs:    Math.max(rec.qty | 0, rec.packs | 0), // actual packs granted (boxes × packsPerBox)
+      currency: rec.currency === 'sovereigns' ? 'sovereigns' : 'cinders',
+      unit:     Math.max(0, Number(rec.unit) || 0),
+      total:    Math.max(0, Number(rec.total) || 0),
+      at:       Date.now(),
+      source:   rec.source || 'vendorMarket',
+    };
+    Profile.packPurchases.push(entry);
+    if (Profile.packPurchases.length > PACK_PURCHASE_LOG_MAX) {
+      Profile.packPurchases.splice(0, Profile.packPurchases.length - PACK_PURCHASE_LOG_MAX);
+    }
+    const t = Profile.packPurchaseTotals[entry.packId] || { qty: 0, packs: 0, cinders: 0, sovereigns: 0, first: entry.at, last: entry.at };
+    t.qty   = (t.qty   | 0) + entry.qty;
+    t.packs = (t.packs | 0) + entry.packs;
+    t[entry.currency === 'sovereigns' ? 'sovereigns' : 'cinders'] =
+      ((t[entry.currency === 'sovereigns' ? 'sovereigns' : 'cinders']) | 0) + entry.total;
+    t.first = t.first || entry.at;
+    t.last  = entry.at;
+    Profile.packPurchaseTotals[entry.packId] = t;
+    // saveProfile stringifies the whole Profile, so both the log and the totals
+    // persist. The buy path also fires a cloud write-through right after this.
+    try { saveProfile(); } catch (e) {}
+    return entry;
+  } catch (e) { return null; }
+}
+// How many units of this pack THIS player has bought, lifetime (survives opening).
+function getPackPurchasedCount(packId) {
+  try {
+    const t = (Profile.packPurchaseTotals || {})[packId];
+    return t ? (t.qty | 0) : 0;
+  } catch (e) { return 0; }
+}
+// Read the ledger back. Newest first. Exposed on window because the legacy app's
+// top-level `const Profile` is a lexical binding invisible to modules and to the
+// console-driven checks we verify this with.
+function getPackPurchaseLog(packId) {
+  _packPurchaseStore();
+  const rows = Profile.packPurchases.filter(e => !packId || e.packId === packId);
+  return {
+    entries: rows.slice().reverse(),
+    totals: JSON.parse(JSON.stringify(Profile.packPurchaseTotals || {})),
+    // TRUE when the shared/global counter is unavailable (migration not applied).
+    // Local entries are still complete; only the cross-player total is missing.
+    cloudTracking: !(typeof Cloud !== 'undefined' && Cloud && Cloud.packStockMissing),
+  };
+}
+try { window.getPackPurchaseLog = getPackPurchaseLog; } catch (e) {}
+
 // How many of this pack the player currently wants to buy (1–99, clamped to
 // the remaining shelf stock). Transient — lives on App, not persisted.
 function getPackBuyQty(packId, stock) {
@@ -44845,6 +44961,15 @@ const Profile = {
   // Feeds the Pack Opening rail's RECENT OPENS + the full history modal.
   // Capped at PACK_HISTORY_MAX so a bulk open can never bloat the profile.
   packHistory: [],
+  // 🧾 Pack PURCHASE ledger — append-only, one row per completed purchase:
+  //   { id, packId, name, qty, packs, currency, unit, total, at, source }
+  // Distinct from packHistory (what came OUT of a pack) and from unopenedPacks
+  // (which is destroyed on open). This is the only record that a sale happened.
+  // vendorSold is the per-set shelf draw-down; packPurchaseTotals is the lifetime
+  // rollup that outlives the capped entry list.
+  packPurchases: [],
+  packPurchaseTotals: {},
+  vendorSold: {},
   // ===== Wager Hall (sports-betting) =====
   // - schedule: house-generated ghost matches the player can bet on. Reseeds every
   //   ~6 hours so there's always fresh action. Each entry has 2 fake "champions"
@@ -46812,6 +46937,16 @@ async function cloudSyncProfile() {
       // 📜 Pack-open history. Tiny (name + rarity id + timestamp per row, no
       // art), already capped, so it rides the forge JSONB like the inventory.
       __packHistory__: Array.isArray(Profile.packHistory) ? Profile.packHistory.slice(0, 120) : [],
+      // 🧾 Pack PURCHASE ledger (who bought what, when, for how much). Rides the
+      // same forge JSONB as the inventory above because it is the same size class
+      // — no art, ~8 short fields per row — and because there is NO pack_purchases
+      // table: supabase/migrations/20260607000000_pack_stock.sql (aggregate shelf
+      // counter) has never been applied, and inventing a per-purchase table is the
+      // owner's call, not this code's. Capped on upload so a heavy buyer can never
+      // push the row toward the JSONB limit; the lifetime TOTALS ride alongside and
+      // stay true after the oldest rows roll off.
+      __packPurchases__: Array.isArray(Profile.packPurchases) ? Profile.packPurchases.slice(-200) : [],
+      __packPurchaseTotals__: (Profile.packPurchaseTotals && typeof Profile.packPurchaseTotals === 'object') ? Profile.packPurchaseTotals : {},
       aiDecks:        Array.isArray(Forge.aiDecks) ? Forge.aiDecks : [],
       starterDecks:   Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [],
       // 🎁 Coupons — admin-authored redeem codes. Tiny JSON. Bridged in the
@@ -48047,6 +48182,40 @@ async function cloudFetchProfile() {
         }
         mergedH.sort((a, b) => (b && b.at || 0) - (a && a.at || 0));
         Profile.packHistory = mergedH.slice(0, (typeof PACK_HISTORY_MAX === 'number' ? PACK_HISTORY_MAX : 120));
+      }
+      // 🧾 Purchase ledger — union by entry id, exactly like the inventory above.
+      // Ids are unique per purchase, so this is idempotent: fetching twice cannot
+      // duplicate a sale, and a cloud copy can never delete a purchase made
+      // offline on this device.
+      if (Array.isArray(f.__packPurchases__)) {
+        const localP = Array.isArray(Profile.packPurchases) ? Profile.packPurchases : [];
+        const seenP = new Set(localP.map(e => e && e.id).filter(Boolean));
+        const mergedP = [...localP];
+        for (const e of f.__packPurchases__) {
+          if (e && e.id && !seenP.has(e.id)) { seenP.add(e.id); mergedP.push(e); }
+        }
+        mergedP.sort((a, b) => ((a && a.at) || 0) - ((b && b.at) || 0));   // oldest first, newest kept on trim
+        Profile.packPurchases = mergedP.slice(-(typeof PACK_PURCHASE_LOG_MAX === 'number' ? PACK_PURCHASE_LOG_MAX : 500));
+      }
+      // ⚠ Totals merge by MAX per field, NOT by sum. cloudFetchProfile runs on
+      // every sign-in / refresh, so summing would re-add the cloud's numbers to
+      // the local ones each time and inflate without bound. MAX is idempotent and
+      // can never over-report — on a second device it reads as a floor until that
+      // device's own purchases overtake it.
+      if (f.__packPurchaseTotals__ && typeof f.__packPurchaseTotals__ === 'object') {
+        if (!Profile.packPurchaseTotals || typeof Profile.packPurchaseTotals !== 'object') Profile.packPurchaseTotals = {};
+        for (const k of Object.keys(f.__packPurchaseTotals__)) {
+          const c = f.__packPurchaseTotals__[k] || {};
+          const l = Profile.packPurchaseTotals[k] || {};
+          Profile.packPurchaseTotals[k] = {
+            qty:        Math.max(l.qty        | 0, c.qty        | 0),
+            packs:      Math.max(l.packs      | 0, c.packs      | 0),
+            cinders:    Math.max(l.cinders    | 0, c.cinders    | 0),
+            sovereigns: Math.max(l.sovereigns | 0, c.sovereigns | 0),
+            first:      Math.min(l.first || c.first || 0, c.first || l.first || 0) || 0,
+            last:       Math.max(l.last | 0, c.last | 0),
+          };
+        }
       }
       if (Array.isArray(f.aiDecks))   Forge.aiDecks = _mergeForgeArr(Forge.aiDecks, f.aiDecks);
       // 🖼 IMAGE-BEARING arrays — campaigns / pageGuides / starterDecks carry
@@ -69828,6 +69997,18 @@ function loadForge() {
       // bought share positions even though they were in the localStorage blob.
       if (p.cxHoldings     && typeof p.cxHoldings     === 'object') Profile.cxHoldings      = p.cxHoldings;       // 📈 CX share positions
       if (Array.isArray(p.unopenedPacks))                              Profile.unopenedPacks   = p.unopenedPacks;    // 📦 pack inventory
+      /* 🧾 THE OTHER HALF OF "pack purchases are not being tracked", and the same
+         whitelist bug as bagsOwned / cxHoldings above. saveProfile() stringifies
+         the WHOLE Profile, so `vendorSold` was written to hg_profile on every
+         buy — but this loader never read it back, so the "local fallback that
+         survives refresh" the stock comment promises did nothing: it reset to
+         zero on every page load. With the pack_stock RPC also missing (see
+         recordGlobalPackBuy), that left EVERY shelf back at full stock on every
+         reload and no surviving evidence of a single sale. Measured: buy 6, hit
+         F5, Profile.vendorSold === {}. Restore all three. */
+      if (p.vendorSold          && typeof p.vendorSold          === 'object') Profile.vendorSold          = p.vendorSold;          // 📦 local shelf draw-down
+      if (Array.isArray(p.packPurchases))                                    Profile.packPurchases       = p.packPurchases;       // 🧾 purchase ledger
+      if (p.packPurchaseTotals  && typeof p.packPurchaseTotals  === 'object') Profile.packPurchaseTotals  = p.packPurchaseTotals;  // 🧾 lifetime totals
       if (p.fieldBag        && typeof p.fieldBag        === 'object') Profile.fieldBag        = p.fieldBag;         // 🎒 field bag
       /* 🎒 BAG OWNERSHIP — the same whitelist bug as sideDeck / archonDeck /
          salvage / cxHoldings above, and the reason "bag looting doesn't work".
@@ -113818,6 +113999,9 @@ function openInfoModal(title, entries, opts) {
   document.addEventListener('keydown', onKey);
 }
 
+// Cleanup for the confirm dialog currently on screen, so opening a new one can
+// cancel the old one instead of orphaning it. Only ever one at a time.
+let _gcActiveCleanup = null;
 // 🪟 In-game confirm modal — returns a Promise<boolean>. Replaces the native
 //    browser confirm() so we can match the game's dark + gold aesthetic and
 //    show rich HTML (icons, cost rows, sub-lines). Uses the existing
@@ -113830,7 +114014,16 @@ function showGameConfirm(opts) {
   const noLabel     = opts.noLabel     || 'No';
   const yesAccent   = opts.yesAccent   || 'gold';   // 'gold' | 'emerald' | 'crimson'
   return new Promise((resolve) => {
-    // Tear down any previous one.
+    // ⚠ Tear down any previous one — PROPERLY. This used to be a bare
+    // `old.remove()`, which dropped the node but left that dialog's document
+    // keydown listener attached AND its promise pending forever. Two effects,
+    // both measured on the Vendor Market: (1) the player saw ONE dialog but a
+    // single Enter resolved EVERY stacked confirm, so one keypress bought two
+    // packs and charged for both; (2) the abandoned caller never resumed, so
+    // anything holding a lock across the await would hold it for good.
+    // Cancelling the old one (resolve false) fixes both: exactly one live
+    // dialog, and every caller always gets an answer.
+    if (typeof _gcActiveCleanup === 'function') { try { _gcActiveCleanup(false); } catch (e) {} }
     const old = document.getElementById('gc-confirm-backdrop');
     if (old) old.remove();
     const accentCol = yesAccent === 'emerald' ? '#4ade80' : yesAccent === 'crimson' ? '#ff7755' : '#d4a843';
@@ -113848,7 +114041,13 @@ function showGameConfirm(opts) {
     const wrap = document.createElement('div');
     wrap.innerHTML = html;
     document.body.appendChild(wrap.firstChild);
+    let done = false;   // resolve() is a no-op after the first call, but the
+                        // listener removal and the node removal are not — and a
+                        // torn-down dialog must never touch the NEW dialog's node.
     const cleanup = (ans) => {
+      if (done) return;
+      done = true;
+      if (_gcActiveCleanup === cleanup) _gcActiveCleanup = null;
       const node = document.getElementById('gc-confirm-backdrop');
       if (node) node.remove();
       document.removeEventListener('keydown', onKey);
@@ -113858,6 +114057,7 @@ function showGameConfirm(opts) {
       if (e.key === 'Escape') { e.preventDefault(); cleanup(false); }
       if (e.key === 'Enter')  { e.preventDefault(); cleanup(true); }
     };
+    _gcActiveCleanup = cleanup;
     document.getElementById('gc-yes').onclick = () => cleanup(true);
     document.getElementById('gc-no').onclick  = () => cleanup(false);
     document.getElementById('gc-confirm-backdrop').addEventListener('click', (e) => {
@@ -165056,6 +165256,10 @@ function _buildPackShopBody(gems, sovBal) {
     const canAffordSovQty = sovBal >= totalSov;
     const canAffordCinQty = gems >= totalCin;
     const soldOut = stock < 1;
+    // 🧾 Lifetime units this player has bought — read straight off the purchase
+    // ledger, so "it's being tracked" is something the player can SEE rather
+    // than something we assert. Survives opening the packs.
+    const bought = (typeof getPackPurchasedCount === 'function') ? getPackPurchasedCount(p.id) : 0;
     const qtyMax = Math.max(1, Math.min(VENDOR_PACK_BUY_MAX, stock));
     const tier = (p.tier === 'gilded' || p.tier === 'mythic') ? p.tier : 'standard';
     // ✨ Aura stage: uploaded cover art floats in the tier aura; packs without
@@ -165087,7 +165291,7 @@ function _buildPackShopBody(gems, sovBal) {
           ${p.desc ? `<div class="shop-pack-desc" style="text-align:center">${escapeHtml(p.desc)}</div>` : ''}
           <div class="shop-pack-rarities" style="text-align:center">${rarityPreview}</div>
           ${bonusHtml}
-          <div class="shop-pack-stock ${soldOut ? 'sold-out' : ''}" data-stock-for="${p.id}" style="text-align:center">${soldOut ? '⛔ Sold out' : `📦 <b>${stock.toLocaleString()}</b> in stock`}</div>
+          <div class="shop-pack-stock ${soldOut ? 'sold-out' : ''}" data-stock-for="${p.id}" style="text-align:center">${soldOut ? '⛔ Sold out' : `📦 <b>${stock.toLocaleString()}</b> in stock`}${bought ? ` <span class="small-text ink-dim" data-bought-for="${p.id}">· you've bought ${bought.toLocaleString()}</span>` : ''}</div>
           <div class="shop-qty-row" role="group" aria-label="Quantity to buy">
             <button class="shop-qty-btn" data-qty-dec="${p.id}" ${soldOut ? 'disabled' : ''} aria-label="Decrease quantity">−</button>
             <input class="shop-qty-input" data-qty-input="${p.id}" type="number" min="1" max="${qtyMax}" value="${qty}" inputmode="numeric" ${soldOut ? 'disabled' : ''} aria-label="Quantity">
@@ -165304,7 +165508,11 @@ function _syncPackTileUi(packId) {
   const stk = tile.querySelector('[data-stock-for]');
   if (stk) {
     stk.classList.toggle('sold-out', soldOut);
-    stk.innerHTML = soldOut ? '⛔ Sold out' : ('📦 <b>' + stock.toLocaleString() + '</b> in stock');
+    // ⚠ Must rebuild the "you've bought N" suffix too — this writes innerHTML, so
+    // omitting it silently wiped the ledger readout every time someone tapped +/−.
+    const bought = (typeof getPackPurchasedCount === 'function') ? getPackPurchasedCount(packId) : 0;
+    const boughtHtml = bought ? ' <span class="small-text ink-dim" data-bought-for="' + packId + '">· you\'ve bought ' + bought.toLocaleString() + '</span>' : '';
+    stk.innerHTML = (soldOut ? '⛔ Sold out' : ('📦 <b>' + stock.toLocaleString() + '</b> in stock')) + boughtHtml;
   }
   // Two price buttons now (Cinder + Aza) — update each with its own total.
   const cinCost = (typeof getEffectivePrice === 'function') ? getEffectivePrice('pack', def.id, def.cost, 'cinders') : def.cost;
@@ -165428,6 +165636,25 @@ function _bindPackShopHandlers() {
   document.querySelectorAll('[data-buy-pack]').forEach(el => {
     el.onclick = async () => {
       if (el.disabled) return;
+      // 🔒 THE INVARIANT: AT MOST ONE PACK PURCHASE IS IN FLIGHT, EVER.
+      // ---------------------------------------------------------------------
+      // Measured before this guard existed: two clicks on BUY in the same tick
+      // opened two handlers, showGameConfirm tore the first dialog down and put
+      // its own up, the player saw ONE dialog, pressed Enter ONCE — and was
+      // charged 20 Cinders for 2 packs with 2 units taken off the shelf.
+      // (showGameConfirm's Escape/Enter keydown listener outlives the dialog it
+      // belongs to, so a single Enter resolves every stacked confirm. That leak
+      // is fixed at its source too, but this guard is what makes the property
+      // provable by READING: the test-and-set below is synchronous — there is no
+      // `await` between reading the flag and setting it, so no second handler
+      // can ever observe it false — and `finally` is the only way out. That
+      // closes double-click, Cinder+Aza on the same tile, two different tiles,
+      // and any future door of the same shape, without a patch per door.
+      // A per-button `disabled` flip would NOT do this: the Aza button is a
+      // different element, and render() rebuilds the tiles from scratch.
+      if (_packBuyInFlight) return;
+      _packBuyInFlight = true;
+      try {
       // Match against BOTH built-in packs and custom packs (converted to engine shape).
       const def = _lookupPackDef(el.dataset.buyPack);
       if (!def) return;
@@ -165491,10 +165718,19 @@ function _bindPackShopHandlers() {
           bonusLine = ' ✦ Guaranteed: ' + granted.join(', ') + '.';
         }
       } catch (e) {}
+      // 🧾 Record the sale. LAST, after payment was taken and the goods were
+      // granted — a ledger that can log a purchase the player never received is
+      // worse than no ledger. Local + append-only; the global counter rides on
+      // takeVendorPackStock above and no-ops while its RPC is missing.
+      recordPackPurchase({
+        packId: def.id, name: def.name, qty: buyN, packs: buyN * _perBox,
+        currency: payMode, unit, total: total2, source: 'vendorMarket',
+      });
       const owned = getUnopenedPackCount();
       showToast(`📦 Bought ${buyN} × ${def.name} — added to your Pack Inventory (${owned} unopened).${bonusLine} Open from the Pack Opening page!`, 5200);
       try { if (typeof playSfx === 'function') playSfx('uiOpen'); } catch (e) {}
       try { render(); } catch (e) {}
+      } finally { _packBuyInFlight = false; }
     };
   });
   // 🏛 Foundation Reserve Stock — buying draws the recipe out of the global

@@ -58,5 +58,96 @@
       }
     ],
     "pieces": []
+  },
+  {
+    "round": 1,
+    "headline": "Five builders, one file. The violet cast is gone \u2014 but there is still no sun.",
+    "status": "done",
+    "meanScore": 3.63,
+    "strangerTest": "instantly",
+    "tris": 2798100,
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 4
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 2
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 7
+      },
+      {
+        "dimension": "Building surface detail",
+        "score": 6
+      },
+      {
+        "dimension": "The plot",
+        "score": 4
+      },
+      {
+        "dimension": "Roads",
+        "score": 6
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 5
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 1
+      },
+      {
+        "dimension": "Citizens",
+        "score": 2
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 4
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 2
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 2
+      }
+    ],
+    "pieces": [
+      {
+        "title": "Palette, lighting and colour grade (dimensions 1 and 2)",
+        "verdict": "BEHIND",
+        "gap": "Every up-facing horizontal surface in the city renders darker than the vertical walls beneath it, which is physically backwards and is the first thing a viewer notices. On the same water tank in the street framing, r0 gave the top cap rgb(214,210,200) val 0.84 against a cylinder side of val 0.18; r1 gives that cap rgb(15,12,17) val 0.07 against a side of val 0.35 \u2014 the cap is now five times darker",
+        "summary": "AERIAL. r0's ground plane is a violet void \u2014 I sampled seven points across the lower two-thirds and every one came back hue 273-285, sat 0.35-0.39, val 0.11-0.14 (e.g. bottom-left rgb(27,20,31)). r1's same points are hue 69-73, val 0.19-0.23 (rgb(48,52,32)). That is the purple ca"
+      },
+      {
+        "title": "Residential building quality \u2014 dimensions 3 (Building silhouette) and ",
+        "verdict": "BEHIND",
+        "gap": "The ring-15 district housing generator (public/node-city/index.html, ~lines 5357\u20135382) still emits every mid-ground and background house as `rdPart(B, rdGeo(bw,h,bd))` + a `G_GABX`/`G_GABZ` gable prism + flat `winAt` window quads \u2014 no eaves overhang, no fascia, no chimney, no dormer, and no frame or sill on any opening. That set is the MAJORITY of the residential the camera actually sees: the enti",
+        "summary": "WHAT I OPENED: r1-aerial/street/district and r0-aerial/street/district at full res, then crops magnified 3\u20138x with nearest-neighbour so I was judging geometry and not resampling.\n\nTHE STRONGEST NEW WORK (r1-district, crop x1130\u20131470 / y230\u2013420 at 6x): roofs now carry horizontal s"
+      },
+      {
+        "title": "The plot, and vegetation (dimensions 5 and 10)",
+        "verdict": "BEHIND",
+        "gap": "The grass is two flat unshaded colours with nothing between them, and it fills ~40% of every frame. `C_GRASS = 0x53823c` (the road verge, index.html:7879) sits directly against `GROUND_COL = 0x484e3a` (index.html:4600) \u2014 a bright yellow-green ribbon of dead-constant width and dead-constant value abutting a dark olive plane roughly 40% its luminance. Crop r1-district at (900,600)-(1500,830) and the",
+        "summary": "VEGETATION, r0 vs r1, same framing. r0-street mid-ground tree row (crop 380,300-1100,420): seven trees, all identical bright-green isoceles cones, single colour, no trunk visible, textbook of the failure the rubric names. r1-street same crop: orange autumn broadleaf at x\u2248165 and "
+      },
+      {
+        "title": "Roads and street furniture (dimensions 6 and 7)",
+        "verdict": "BEHIND",
+        "gap": "The road cross-section is five flat, unlit colour fills at incompatible values, so from the game camera it reads as painted ribbons rather than three materials at three heights. Fix it as one job: (a) lift the carriageway to a mid neutral grey \u2014 it currently renders at 35-48 of 255, and the wheel-track/gutter-pan wear you already emit is a 13/255 spread inside that near-black, so none of it is vis",
+        "summary": "r1-district, bottom-left road magnified 4x (crop 40-340 x 780-900): the cross-section reads, from the carriageway outward, as white edge line / pure emerald band / lilac band / flat tan plate \u2014 four painted stripes. The emerald verge shares no hue with the olive terrain grass imm"
+      },
+      {
+        "title": "Vehicles and citizens",
+        "verdict": "BEHIND",
+        "gap": "Not one vehicle and not one pedestrian reaches the film \u2014 the ten body classes and the rigged civilian exist in `public/node-city/index.html` (makeVehicle at ~9396, agentMesh at ~23380, spawn caps carMax 8 / civMax 14 / truckMax 6 / policeMax 4) and none of it is on screen. Before adding another body type, make the harness prove an agent renders: have `.gauntlet/capture.mjs` assert, at screenshot ",
+        "summary": "I picked r1 by a hair over r0, and only on grade, not on my dimensions \u2014 on vehicles and citizens the two rounds are pixel-for-pixel indistinguishable because both are empty. r0-district shows the identical framing to r1-district with the identical result: every road bare. The on"
+      }
+    ],
+    "note": "Every piece came back BEHIND. The wins are real and local: building silhouette 7 and roads 6, both up from 4. The losses are structural \u2014 the whole-frame critic measured a sunlit wall at 21% luminance against a shaded one at 24%, a ratio of 1.14x where the reference frames run 2-3x, and called it: there is no sun in this scene. Two of the low scores were the harness's fault, not the builders'. Vehicles scored 1 and citizens 2 because manageAgents() is only ever called from animate(), rAF never fires in headless capture, and the city was photographed empty \u2014 the ten vehicle bodies and the rigged civilian existed the whole time. Fixed: the standard district now carries 29 agents, and the street camera sits on a carriageway at eye height instead of above the rooftops."
   }
 ]

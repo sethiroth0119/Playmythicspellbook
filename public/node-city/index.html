@@ -20210,8 +20210,63 @@ async function economyTick(dtMin) {
     }
   } catch (e) { /* the host's own water rate stands unchanged */ }
 
+  /* ☁ THE POLLUTION PRE-PASS — /src/pollution. Third of three, and it runs
+     LAST of the three deliberately.
+     ────────────────────────────────────────────────────────────────────────
+     ⚠ THE ORDER IS LOAD-BEARING, NOT TIDINESS. /src/power's grid solve (above)
+       is what calls `window.MythicPollution.emit()` for every running generator
+       — one call per plant per tick, from the loop its plants.js marks
+       POLLUTION EMIT CALL SITE. Those calls have to be BANKED before the
+       diffusion runs, or every plant in the city would be diffused one tick
+       late for ever: invisible in a screenshot, and a permanent lag between the
+       plume and the plant that made it.
+
+     WHAT CROSSES, AND WHY IT IS SO LITTLE. The module owns the three fields,
+     the wind and every consequence; this file owns what is standing where and
+     how hard it is working. So two lists go over:
+       · `works`  — the emitting buildings, with `tileMult` as their activity.
+                    THE SAME multiplier their output is computed from, so an
+                    unstaffed smelter has a cold chimney and a level-5 one
+                    smokes five times as hard. The module holds the emission
+                    table (it asks `emits()` which types to send) so no
+                    BUILDINGS row is touched — three other workflows are editing
+                    that table this round.
+       · `places` — where the citizens are, so exposure is weighted by where
+                    people LIVE rather than averaged over 576 tiles. A coal
+                    plant in an empty corner is a local mess; the same plant
+                    beside the housing is a public health crisis; an averaged
+                    field cannot tell those apart.
+
+     ⚠ IF THE MODULE 404s OR REFUSES, nothing happens at all. The three
+       consequences (health demand, Hope, lot rent) are each a guarded read that
+       falls back to the number this file computed before the module existed. */
+  try {
+    const PL = window.MythicPollution;
+    if (PL && PL.ready()) {
+      const works = [], places = [];
+      for (const [k, t] of Object.entries(game.tiles)) {
+        // 🏗 Same half-built guard as the two pre-passes above: a works that is
+        //    still a hole in the ground has nothing to burn, and nobody lives in
+        //    a house that has not been finished.
+        const def = BUILDINGS[t.type]; if (!def || t.damaged || bldSite(t)) continue;
+        const [x, z] = k.split(',').map(Number);
+        if (PL.emits(t.type)) {
+          works.push({ k, x, z, type: t.type, name: def.name, ico: def.ico,
+                       mult: tileMult(x, z, t, staff, powered) });
+        }
+        // Decor and roads are not places anyone spends time; everything else is.
+        if (!def.decor && t.type !== 'road' && t.type !== 'wall' && t.type !== 'lot') {
+          places.push({ k, x, z, home: !!def.popCap, name: def.name, ico: def.ico });
+        }
+      }
+      PL.tick(dtMin, { cityId: cityGroundId(), grid: GRID, hour: hourOf(),
+                       day: Math.floor((game.cityAge || 0) / (CITY_DAY_MIN * 60)),
+                       weather: wx.type, pop: cityPop(), works, places });
+    }
+  } catch (e) { /* a clean city is the fallback, and every consumer is guarded */ }
+
   // leased plots pay rent to the owner
-  for (const t of Object.values(game.tiles)) {
+  for (const [lotK, t] of Object.entries(game.tiles)) {
     // 🏗 An unfinished lot has no tenant to collect from. (`lot` is on
     //    ECON.construction.exemptTypes so this is belt-and-braces today; it
     //    stops being moot the moment that list is retuned.)
@@ -20223,7 +20278,25 @@ async function economyTick(dtMin) {
          hour would not have been a compromise — it would have handed the entire
          exploit to lots, at 60x the rate of everything else, and the next report
          would have been "a player is farming rent". */
-      const rent = cinderRate(LOT_RENT_PER_MIN) * tileOutputFactor(t, true, OM);
+      /* ☁ LAND VALUE — /src/pollution, and the ONE place node-city already
+         prices a tile per minute, which is why it is the one place a land-value
+         effect can land without inventing a system to hold it.
+         Poisoned land is cheap land: `landValueAt` is 1 on clean ground and
+         falls to POLLUTE.effects.minLandValue under a plume, so this multiplier
+         is the IDENTITY when the module is absent, when it has never ticked, or
+         when the air over this plot is clean. It can only ever REDUCE rent — it
+         has no path above 1 — so it cannot become a Cinder faucet, which is the
+         thing ECONOMY.md's audit exists to catch. */
+      const polLV = (function () {
+        try {
+          const PL = window.MythicPollution;
+          if (!PL || !PL.ready()) return 1;
+          const [lx, lz] = lotK.split(',').map(Number);
+          const v = PL.landValueAt(lx, lz);
+          return (Number.isFinite(v) && v > 0 && v <= 1) ? v : 1;
+        } catch (e) { return 1; }
+      })();
+      const rent = cinderRate(LOT_RENT_PER_MIN) * tileOutputFactor(t, true, OM) * polLV;
       game.frac.cinder = (game.frac.cinder || 0) + rent * dtMin;
       prodPerMin.cinder = (prodPerMin.cinder || 0) + rent;
       t.earn = (t.earn || 0) + rent * dtMin;         // lifetime, for the Ledger tab
@@ -23057,6 +23130,32 @@ function insContribution(t, x, z, mult) {
       : counted === false ? 'NOT counted — this tile is not reachable from the anchor over the road network. Lay road to connect it.'
       : 'Counts road-linked ' + (nt.feeds || []).filter(f => f.indexOf('__') !== 0 && f !== '*').map(f => logEsc(resName(f))).join(', ') + '.'));
   }
+  /* ☁ "WHY IS THIS BLOCK UNHAPPY?" — /src/pollution, one row, guarded.
+     ────────────────────────────────────────────────────────────────────────
+     BAR.md rubric 12 asks for state as "a meter with a SIGNED CAUSAL LIST, not
+     a raw number", and the brief names the exact sentence this has to be able
+     to produce: "the air here is 62% polluted, from the coal plant two tiles
+     upwind". `explainAt()` returns both halves — the reading and the blame —
+     and this prints them on the building the player actually clicked, which is
+     where the question gets asked.
+     ⚠ SILENT ON A CLEAN TILE. The row appears only above the module's own dead
+       band, so a normal city's inspector is unchanged; a permanent "Pollution
+       0%" row on every building in the game would be noise that teaches players
+       to skip the panel. */
+  try {
+    const PL = window.MythicPollution;
+    if (PL && PL.ready()) {
+      const e = PL.explainAt(x, z);
+      if (e && e.response > 0) {
+        const from = (e.blame || []).slice(0, 2)
+          .map(b => (b.ico || '🏭') + ' ' + logEsc(b.name) + ' ' + b.where).join(' · ');
+        rows.push(insVitRow('☁ Pollution', Math.round(e.exposure * 100) + '%', 1 - e.exposure,
+          'Air ' + Math.round(e.air * 100) + '% · ground ' + Math.round(e.ground * 100) +
+          '% · land value ×' + e.landValue.toFixed(2) +
+          (from ? '. From ' + from + '.' : '. No source could be attributed — this is drift.')));
+      }
+    }
+  } catch (e) {}
   if (!rows.length) return '';
   return insCardHtml('City contribution', 'live coverage', rows.join(''));
 }
@@ -24651,6 +24750,34 @@ function computeCoverage() {
   for (const t of Object.values(game.tiles)) if (bldSite(t)) siteTiles++;
   dem.light = Math.max(1, Object.keys(game.tiles).length - siteTiles);
 
+  /* 🤒 POLLUTION RAISES HEALTH DEMAND — /src/pollution, one line, guarded.
+     ────────────────────────────────────────────────────────────────────────
+     ⚠ THE DIRECTION MATTERS AND IS THE WHOLE DESIGN. This raises DEMAND; it
+       does NOT lower the Clinic's supply. The Clinic is not working worse in a
+       polluted city — there is simply more illness for it to treat, so the same
+       Clinic covers fewer people. Written as a supply penalty it would have
+       been indistinguishable in the numbers and wrong in every explanation:
+       the inspector would have told a player their hospital was broken.
+
+     WHAT IT REACHES, WITHOUT ANY FURTHER CODE: `cov.health` falls out of this
+     line, `cov.health` is the third leg of the population gate in vitalsTick
+     (`min(cov.food, cov.water, cov.health)`), and the Health vital gets a row
+     in the vitals card. So "people move out of a poisoned block" is delivered
+     through the exact mechanism the player has already learned to read, rather
+     than through a second, parallel one they would have to be taught.
+
+     ⚠ MULTIPLICATIVE AND CAPPED. `healthLoad()` is 0 when the module is absent,
+       when it has never ticked, and whenever exposure is under its dead band —
+       so this is the identity for every clean city and every build where
+       /src/pollution 404s. Its ceiling is POLLUTE.effects.maxHealthLoad. */
+  try {
+    const PL = window.MythicPollution;
+    if (PL && PL.ready()) {
+      const load = Number(PL.healthLoad());
+      if (Number.isFinite(load) && load > 0) dem.health *= 1 + load;
+    }
+  } catch (e) { /* demand stands exactly as it did before this module existed */ }
+
   /* 🥫 STOCK RELIEF. A vital that reads pure flow would slam to zero the moment
      a farm is damaged, even with a full silo. Reserves are drawable over
      STOCK_RELIEF_MIN minutes and count toward supply up to (but never past) the
@@ -24776,9 +24903,23 @@ function vitalsTick(dtSec) {
      it, or Hope stops describing the city and starts describing the last minute
      of arithmetic. ±15 is roughly the weight of the popDir term next to it. */
   const civMomentum = THREE.MathUtils.clamp(vitalTrend.civilization * 1.5, -15, 15);
+  /* 😷 POLLUTION TAKES POINTS OFF HOPE — /src/pollution, one line, guarded.
+     Hope is where node-city keeps happiness, and nobody is happy living in
+     smoke. A straight subtraction rather than a multiplier because every other
+     term on this line is a point value on the same 0–100 scale, and a factor
+     among summands would scale the ones that had already been added and not the
+     ones that had not.
+     ⚠ 0 when the module is absent, when it has never ticked, and whenever
+       exposure is under its dead band. Bounded by POLLUTE.effects.maxMoraleHit,
+       and the clamp below is the same one that already caught `civMomentum`. */
+  let polHope = 0;
+  try {
+    const PL = window.MythicPollution;
+    if (PL && PL.ready()) { const h = Number(PL.moraleHit()); if (Number.isFinite(h) && h > 0) polHope = h; }
+  } catch (e) { polHope = 0; }
   const tHope = THREE.MathUtils.clamp(
     32 + Math.min(1, cov_avgClamped()) * 38 + popDir + civMomentum
-    + serviceMorale() * 0.6, 0, 100);
+    + serviceMorale() * 0.6 - polHope, 0, 100);
 
   toward('food', tFood);
   toward('water', tWater);
@@ -25263,6 +25404,26 @@ function renderVitals() {
                  (s.shortfall > 0.005 ? ' ⚠' : '') + '</span>';
         } catch (e) { return ''; }
       })() +
+      /* ☁ THE POLLUTION CHIP — same glanceable-value-plus-explanation pairing as
+         the ⚡ and 💧 chips beside it, and the launcher for the pollution info
+         view.
+         ⚠ RENDERED ONLY WHEN THERE IS SOMETHING TO SAY. Not merely "when the
+           module answered": a chip reading ☁ 0% on every clean city in the game
+           would be a permanent green readout for a mechanic that is not running,
+           and this file has had to close that exact class of false HUD claim
+           twice already (see the ⚡ chip's comment above). Below the module's own
+           dead band nothing is being charged, so nothing is claimed. */
+      (function () {
+        try {
+          const PL = window.MythicPollution;
+          if (!PL || !PL.ready()) return '';
+          const e = PL.exposure();
+          if (!(e > PL.tuning.effects.deadband)) return '';
+          return '<span class="schip pw" id="plchip" title="How exposed this city\'s citizens are to its own ' +
+                 'pollution. Click for the pollution info view — wind, plumes and what it is costing.  (P)">☁ ' +
+                 Math.round(e * 100) + '%' + (e > 0.45 ? ' ⚠' : '') + '</span>';
+        } catch (e) { return ''; }
+      })() +
       '<span class="scap">cap ' + stockCap() + '</span></div>';
   if (html !== renderVitals._last) { renderVitals._last = html; el.innerHTML = html; }
 }
@@ -25300,6 +25461,23 @@ addEventListener('keydown', (ev) => {
   if (ev.key !== 'g' && ev.key !== 'G') return;
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   try { if (window.MythicWater) window.MythicWater.togglePanel(); } catch (e) {}
+});
+/* ☁ THE POLLUTION INFO VIEW'S TWO WAYS IN — the chip, delegated for the same
+   reason as the two above it, and P for Pollution.
+   ⚠ P, and it was checked rather than assumed: W/A/S/D are KEYPAN, E is the
+     electricity view, G is the hydrology view, R rotates a building and Escape
+     closes panels. P was free. Degrades to nothing if /src/pollution never
+     loaded: no module, no panel, and no chip to click either. */
+addEventListener('click', (ev) => {
+  if (!ev.target.closest || !ev.target.closest('#plchip')) return;
+  try { if (window.MythicPollution) window.MythicPollution.togglePanel(); } catch (e) {}
+});
+addEventListener('keydown', (ev) => {
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+  if (ev.key !== 'p' && ev.key !== 'P') return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  try { if (window.MythicPollution) window.MythicPollution.togglePanel(); } catch (e) {}
 });
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -26646,6 +26824,21 @@ function serialize() {
       try { return window.MythicWater ? (window.MythicWater.save() || _pendingWater) : _pendingWater; }
       catch (e) { return _pendingWater; }
     })(),
+    /* ☁ THE THREE POLLUTION FIELDS — air, ground and water, sparse and
+       quantised to a byte, plus the id the prevailing wind was derived from.
+       Same contract as `power` and `water` above INCLUDING the erase guard: it
+       falls back to WHAT WAS LOADED, never to null, because writing
+       `pollution: null` over a lived city's plume to record that a module failed
+       to load is the identical mistake the `economy:` field documents.
+       Absent on load ⇒ a clean city, which is the correct reading of a save
+       written before anything could measure the air — and is also the deliberate
+       answer to the retro-fit question: an old save opens clean and gets dirty
+       at the same rate a new one does, in front of the player, instead of being
+       handed a penalty it never watched arrive. */
+    pollution: (function () {
+      try { return window.MythicPollution ? (window.MythicPollution.save() || _pendingPollution) : _pendingPollution; }
+      catch (e) { return _pendingPollution; }
+    })(),
     /* ⏳ The simulated city clock the per-tile `born` stamps are measured
        against. Meaningless apart — save both or neither. */
     age: Math.round(game.cityAge || 0),
@@ -27363,6 +27556,13 @@ let _lastDemogBlob = null;
    basin full and clean, which is the correct reading of a save written before
    the aquifers existed, and is why every earlier save opens unchanged. */
 let _pendingWater = null;
+/* ☁ …and the pollution blob, same contract: read by loadState, handed to
+   /src/pollution once in boot(). Holds the three sparse fields plus the id the
+   prevailing wind was derived from. Absent ⇒ undefined ⇒ the module starts
+   every field at zero, which is the correct reading of a save written before
+   anything could measure the air, and is why every earlier save opens
+   unchanged. */
+let _pendingPollution = null;
 /* 💾 …AND THE LAST BLOB WE KNOW IS REAL, which is a DIFFERENT job and needs its
    own variable. `_pendingEconomy` is deliberately nulled the moment mount()
    consumes it (a remount arriving with a stale blob is its own bug). This one is
@@ -27522,6 +27722,8 @@ async function loadState() {
     _lastDemogBlob = _pendingDemog;
     // 💧 …and the hydrology. Same stash, same reason.
     _pendingWater = (s.water && typeof s.water === 'object') ? s.water : null;
+    // ☁ …and the three pollution fields. Same stash, same reason.
+    _pendingPollution = (s.pollution && typeof s.pollution === 'object') ? s.pollution : null;
     /* 💾 …AND THE LAST BLOB WE KNOW IS REAL. Same contract as the `house` and
        `stad` tile fields: state that exists nowhere else must survive a session
        in which its module never loaded. serialize() falls back to this rather
@@ -32303,6 +32505,47 @@ function animate() {
       } catch (e) {}
     }
   } catch (e) { console.warn('[Power] not mounted (non-fatal):', e); }
+  /* ══ ☁ POLLUTION, THE WIND, AND THE OVERLAYS ══════════════════════════════
+     Mounted AFTER /src/water and /src/power, and that order is real:
+       · /src/water's endowment supplies the surface-water map the run-off leg
+         needs, and its live purity is what the citizens are judged to be
+         drinking. Without it the module still runs — air and ground are wholly
+         its own — and the panel names the global it is waiting for.
+       · /src/power is what CALLS `MythicPollution.emit()`, from the one loop its
+         plants.js marks POLLUTION EMIT CALL SITE. Its `tuning` is also what the
+         wind self-check below compares against.
+     …and AFTER loadState so the saved fields exist before the first economyTick
+     can diffuse them, and BEFORE the offline catch-up for the same reason — the
+     catch-up runs real economy ticks, and fields that mounted afterwards would
+     start every session clean however filthy the city was when the player left.
+
+     🔴 THE GLOBALS TRAP, eighth module to hit it. `THREE`, `scene` and `GRID`
+        are top-level `const` in THIS module script and invisible to an ES
+        module, so the object below IS the hand-over. Note how little goes over:
+        the renderer handles for the overlay and the city's id. Everything about
+        the CITY arrives per tick through MythicPollution.tick(), from the
+        pollution pre-pass in economyTick — one caller, one direction, no
+        writes back. */
+  try {
+    await import('../src/pollution/index.js?v=' + (window.NC_BUILD || 'r1'));
+    if (window.MythicPollution) {
+      window.MythicPollution.mount({ THREE, scene, grid: GRID, cityId: cityGroundId() });
+      window.MythicPollution.load(_pendingPollution);
+      /* 🔍 Reported ONLY when it fails, like its two neighbours' checks. Three
+         joins, and every one of them is invisible in a diff:
+           · a building type that BOTH this module and /src/power emit for would
+             be counted twice a tick by two modules that are each individually
+             correct — the symptom is "pollution feels a bit strong";
+           · the two wind tables drifting apart would silently change every wind
+             turbine's output in every city, because /src/power/plants.js takes
+             this module's speed in preference to its own;
+           · a source type with no BUILDINGS row is a chimney nobody can build. */
+      try {
+        const j = window.MythicPollution.selfCheck(Object.keys(BUILDINGS));
+        if (j && !j.ok) console.warn('[Pollution] self-check FAILED', j);
+      } catch (e) {}
+    }
+  } catch (e) { console.warn('[Pollution] not mounted (non-fatal):', e); }
   /* ══ 🛣 OUTSIDE CONNECTIONS ═══════════════════════════════════════════════
      "Your city must be connected to the highway that runs through the map."
      The highway is scenery that exists whether or not you joined it; the
@@ -32542,6 +32785,14 @@ function animate() {
     waterAt: (x, z) => { try { return window.MythicWater ? window.MythicWater.sourceAt(x, z) : null; } catch (e) { return null; } },
     waterPanel: (on) => { try { return window.MythicWater ? (on === false ? window.MythicWater.closePanel() : window.MythicWater.openPanel()) : false; } catch (e) { return false; } },
     waterId: () => cityGroundId(),
+    /* ☁ /src/pollution's diagnostics seam. `pollutionAt` is the per-tile answer
+       WITH its blame list — the same object the inspector row prints — so a
+       driver can assert "the tile two downwind of the coal plant is dirtier than
+       the tile two upwind" without reading a screenshot. */
+    pollution: () => { try { return window.MythicPollution ? window.MythicPollution.state() : null; } catch (e) { return null; } },
+    pollutionAt: (x, z) => { try { return window.MythicPollution ? window.MythicPollution.explainAt(x, z) : null; } catch (e) { return null; } },
+    pollutionWind: () => { try { return window.MythicPollution ? window.MythicPollution.wind() : null; } catch (e) { return null; } },
+    pollutionPanel: (on) => { try { return window.MythicPollution ? (on === false ? window.MythicPollution.closePanel() : window.MythicPollution.openPanel()) : false; } catch (e) { return false; } },
     place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
     /* Fast-forward: n economy minutes in `steps` slices.
        ⚠ Calls the SAME three functions in the SAME order as animate()'s

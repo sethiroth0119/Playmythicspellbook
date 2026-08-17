@@ -105456,18 +105456,51 @@ function _bbActiveLocationId() {
 // to mistype. Keep new drops in this folder to the same convention.
 const _BB_BATTLEFIELD_BG = 'assets/board/Battlefield/battlefield-background.png';
 const _BB_DARK_FOREST_BG = 'assets/board/Battlefield/dark-forest.png';
+// 🏞 PER-LOCATION BACKDROPS — the world a specific location card paints behind
+// the board. ONLY the ids listed here have their own art; every other location
+// card keeps the shared battlefield backdrop, which is exactly what the board
+// showed before this table existed, so a location with no art of its own
+// degrades to today's look rather than to an empty frame.
+// ⚠ THE LIST IS SHORT BECAUSE THE ART IS. Matched by exact card name against
+// what is actually on disk in assets/Locations — nothing here is a guess, and
+// a near-miss ("Wasteland" for Sandstorm Dunes) was deliberately NOT taken.
+// The other 14 built-in location cards have no backdrop of their own; drop a
+// file in and add one line each.
+// ⚠ Filenames carry spaces. That is fine ONLY because every value goes through
+// _bbAbs(), whose `new URL()` percent-encodes them — a bare relative string
+// with a space in it 404s silently inside the iframe.
+const _BB_LOCATION_BG = {
+  lava:          'assets/Locations/Lava Pit.png',        // Lava Pit
+  forest:        'assets/Locations/Sacred Grove.png',    // Sacred Grove
+  altar:         'assets/Locations/Power Altar.png',     // Power Altar
+  medicalCenter: 'assets/Locations/Medical Center.png'   // Medical Center
+};
+// The backdrop for a location card, in priority order: art the card itself
+// carries, then this table, then the shared battlefield.
+// ⚠ NEVER RETURNS null. `null` is what made playing a location card leave the
+// previous world on screen: the board's loadLocation() has `if (loc.backdrop)`
+// around the whole backdrop swap, so a null entry changes the GROUND and
+// leaves BACKDROP.img exactly as it was — the old location's sky, behind the
+// new location's floor.
+function _bbLocationBackdrop(card) {
+  const id = (card && card.id != null) ? String(card.id) : '';
+  return _bbAbs(card && card.backdrop) || _bbAbs(_BB_LOCATION_BG[id]) || _bbAbs(_BB_BATTLEFIELD_BG);
+}
+// The floor a location with no art of its own stands on — the same texture the
+// neutral 'battlefield' entry uses, i.e. exactly what the board already showed.
+const _BB_DEFAULT_GROUND = 'assets/board/locations/dark-forest-ground.jpg';
 function _bbLocations() {
   const out = {
     // The neutral default — what a battle with no location card in play shows.
     'battlefield': {
       name: 'Battlefield',
-      image: _bbAbs('assets/board/locations/dark-forest-ground.jpg'),
+      image: _bbAbs(_BB_DEFAULT_GROUND),
       backdrop: _bbAbs(_BB_BATTLEFIELD_BG),
       timeOfDay: null, tint: null
     },
     'dark-forest': {
       name: 'The Dark Forest',
-      image: _bbAbs('assets/board/locations/dark-forest-ground.jpg'),
+      image: _bbAbs(_BB_DEFAULT_GROUND),
       backdrop: _bbAbs(_BB_DARK_FOREST_BG),
       timeOfDay: null, tint: null
     }
@@ -105479,15 +105512,35 @@ function _bbLocations() {
       seen.add(card.id);
       let img = null;
       try { img = (typeof _locationBoardArt === 'function') ? _locationBoardArt(card) : (card.image || null); } catch (e) {}
-      if (!img || String(img).slice(0, 5) === 'blob:') return;   // blob: dies in the iframe
+      if (!img || String(img).slice(0, 5) === 'blob:') img = null;   // blob: dies in the iframe
+      // ⚠ AN ART-LESS LOCATION IS STILL REGISTERED. This used to `return`, and
+      // the board's setLocation() hard-bails with "unknown location" on an id
+      // it has never been given — so playing one of the fourteen built-in
+      // location cards that ship with no art did literally nothing, not even
+      // clear the previous location's world. It now lands on the neutral
+      // battlefield backdrop over the default floor: today's look, and the
+      // field-spell rule ("one location at a time") stays true on screen.
       // Every location gets a world behind it: its own backdrop when the card
-      // carries one, otherwise the shared battlefield backdrop. `null` here is
-      // what dropped the stage into its procedural-ruins fallback.
-      out[String(card.id)] = { name: card.name || 'Location', image: _bbAbs(img),
-                               backdrop: _bbAbs(card.backdrop || _BB_BATTLEFIELD_BG),
+      // carries one, then the per-id table, otherwise the shared battlefield
+      // backdrop. `null` here is what dropped the stage into its
+      // procedural-ruins fallback.
+      out[String(card.id)] = { name: card.name || 'Location',
+                               image: _bbAbs(img || _BB_DEFAULT_GROUND),
+                               backdrop: _bbLocationBackdrop(card),
                                timeOfDay: card.timeOfDay || null };
     };
-    const all = (typeof getAllCards === 'function') ? getAllCards() : [];
+    // ⚠ THIS LOOP WAS DEAD. It called `getAllCards()`, and there is no such
+    // function anywhere in this file — `typeof … === 'function'` is false, the
+    // ternary handed back `[]`, and the loop registered nothing, silently, for
+    // as long as it has existed. Measured on a cold load: _bbLocations() had
+    // exactly 2 entries (the two built-ins) out of 17 location cards, which is
+    // the real reason the board only ever knew 'dark-forest'.
+    // The pool is spelled out the same way every other card-wide sweep in this
+    // file spells it (see the Forge browser's `pool`), so a missing name is a
+    // syntax error at load instead of a silent empty list.
+    const all = [];
+    try { if (typeof LOCATION_CARDS !== 'undefined') all.push(...LOCATION_CARDS); } catch (e) {}
+    try { if (Forge && Forge.customCards) all.push(...Forge.customCards); } catch (e) {}
     for (const c of all) if (c && (c.type === 'location' || c.isLocation)) push(c);
     try { const al = App.state && App.state.activeLocation; if (al) push(al); } catch (e) {}
   } catch (e) {}
@@ -106125,11 +106178,20 @@ async function _bbStagePushLocation(id) {
       if (typeof img === 'string' && img.slice(0, 5) === 'blob:' && typeof _artValueToDataUrl === 'function') {
         try { img = await _artValueToDataUrl(img); } catch (e) { img = null; }
       }
-      if (typeof img === 'string' && img && img.slice(0, 5) !== 'blob:') {
-        entry = { name: card.name || 'Location', image: _bbAbs(img),
-                  backdrop: _bbAbs(card.backdrop) || null,
-                  timeOfDay: card.timeOfDay || null };
-      }
+      if (!(typeof img === 'string' && img && img.slice(0, 5) !== 'blob:')) img = null;
+      // ⚠ `backdrop: null` HERE IS WHY PLAYING A LOCATION CARD LEFT THE SKY
+      // ALONE. This is the LIVE path — it overwrites the entry `_bbLocations()`
+      // registered at init — and it sent null for every built-in card, because
+      // no built-in card carries a `backdrop` field. The board's loadLocation()
+      // wraps its whole backdrop swap in `if (loc.backdrop)`, so the ground
+      // cross-faded and the world behind it never moved. Same resolver as the
+      // init path now, so the two cannot drift again.
+      // The ground falls back the same way, for the same reason as there: an
+      // art-less location must still be a registered id or setLocation() bails.
+      entry = { name: card.name || 'Location',
+                image: _bbAbs(img || _BB_DEFAULT_GROUND),
+                backdrop: _bbLocationBackdrop(card),
+                timeOfDay: card.timeOfDay || null };
     }
     // Register first (merge), then switch. Sending the entry even when we
     // already had one is free and keeps a re-uploaded image current.

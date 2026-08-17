@@ -18008,6 +18008,16 @@ function openInspect(k) {
   insFitBox();
   const [x, z] = k.split(',').map(Number);
   if (insTabKey !== k) { insTab = 'ov'; insTabKey = k; }
+  /* 🛣 A ROAD IS A STREET, NOT A TILE. /src/streets owns the road dossier: the
+     street this tile belongs to, its name, its upkeep, its length, its condition
+     and the two 24-hour traffic charts. Delegated rather than inlined because
+     CLAUDE.md puts new systems in /src, and guarded twice — a 404 on the module
+     or a throw inside it falls straight through to the ordinary tile dossier
+     below, which is exactly what a player saw before this feature existed. */
+  if (t.type === 'road') {
+    try { if (window.MythicStreets && window.MythicStreets.renderInspect(k)) return; }
+    catch (e) { console.warn('[streets] panel', e); }
+  }
   if (t.type === 'anchor') {
     const a = t.anchor, nt = NODE_TYPES[a.node.node_type] || {};
     $('inscrest').textContent = nt.ico || '🔮';
@@ -18521,8 +18531,26 @@ function manageAgents() {
     }
   }
 }
+/* 🛣 THE TRAFFIC METER — /src/streets. Two calls, both here, because this is
+   where traffic actually happens:
+     stMeterTick(dt)   once a frame: the observed-time clock the charts divide
+                       by, and the street graph's rescan timer.
+     stMeterPass(k, k) on the ONE line where an agent changes tile.
+   LATCHED, not just try/caught: if the module ever throws it is detached, so a
+   bad module costs the charts their data and cannot cost the city its frame
+   rate by throwing dozens of times per frame forever. */
+let _stMeter = null;
+function stMeterTick(dt) {
+  if (!_stMeter) return;
+  try { _stMeter.tick(dt); } catch (e) { _stMeter = null; console.warn('[streets] meter detached', e); }
+}
+function stMeterPass(k, kind) {
+  if (!_stMeter) return;
+  try { _stMeter.countPass(k, kind); } catch (e) { _stMeter = null; console.warn('[streets] meter detached', e); }
+}
 function agentTick(dt) {
   const tnow = performance.now() * .001;
+  stMeterTick(dt);
   for (let i = agents.length - 1; i >= 0; i--) {
     const a = agents[i];
 
@@ -18607,7 +18635,9 @@ function agentTick(dt) {
     const [nx, nz] = nxt.split(',').map(Number);
     if (!isRoad(nx, nz)) { despawnAgent(a); continue; }   // road was demolished
     a.t += dt * a.speed;
-    while (a.t >= 1 && a.path[a.i + 1]) { a.t -= 1; a.i++; }
+    // 🛣 The tile transition. This is the only line in the file where an agent
+    //    changes tile, so it is the only honest place to count one.
+    while (a.t >= 1 && a.path[a.i + 1]) { a.t -= 1; a.i++; stMeterPass(a.path[a.i], a.kind); }
     const c = a.path[a.i], n = a.path[a.i + 1] || c;
     const [cx, cz] = c.split(',').map(Number), [nx2, nz2] = n.split(',').map(Number);
     const px = THREE.MathUtils.lerp(cx, nx2, Math.min(a.t, 1)) - HALF + .5;
@@ -20595,6 +20625,19 @@ function serialize() {
        found work, so the city REMEMBERS its people between sessions. Absent
        on load ⇒ an empty log and nothing else changes (see lifeLoad). */
     life: lifeSave(),
+    /* 🛣 STREET NAMES + the 24-hour traffic rings. /src/streets.
+       ⚠ THE FALLBACK IS THE POINT, not defensive noise. Names are player data —
+         a renamed street is authored content — and if the module 404s or fails
+         to mount, `window.MythicStreets` is absent and a naive `null` here would
+         QUIETLY ERASE every street name in the city on the very next autosave.
+         So loadState parks the raw blob on `game._streets` and this hands it
+         straight back untouched. Absent on every save written before this
+         feature; loadState treats absent as "no streets yet" and the module
+         names the whole city on its first scan. */
+    streets: (function () {
+      try { return window.MythicStreets ? window.MythicStreets.save() : (game._streets || null); }
+      catch (e) { return game._streets || null; }
+    })(),
     /* 💹 THE INVESTMENT BOOK. MUST ride the save. `book` is Cinder the city has
        already EARNED and that the funds are holding — it exists nowhere else,
        so dropping it here is a straight loss of up to a full cycle of the
@@ -21198,6 +21241,13 @@ async function loadState() {
        no tile is touched. */
     try { citLoad(s.cits); citRefresh(true); } catch (e) { console.warn('[citizens] load', e); }
     try { lifeLoad(s.life); } catch (e) { console.warn('[life] load', e); }
+    /* 🛣 Street names + traffic rings, parked raw for the module to pick up when
+       it mounts (which is after loadState, like the House and the Stadium).
+       Absent on every save that predates this feature ⇒ null ⇒ the module names
+       the city from scratch on its first scan, which is the correct reading of
+       "this save has no streets in it". Grandfathering is that simple here
+       because streets add no gate: nothing about an old city is refused. */
+    game._streets = (s.streets && typeof s.streets === 'object') ? s.streets : null;
     // A clean, complete load. This is the ONLY place that licenses an empty save.
     _loadDone = true; _loadFailed = false;
   } catch (e) {
@@ -24171,6 +24221,39 @@ function animate() {
       spendCinders: (n) => MythicCityBridge.spendCinders(n),
     });
   } catch (e) { console.warn('[Stadium] not mounted (non-fatal):', e); }
+  /* ══ 🛣 NAMED STREETS ═════════════════════════════════════════════════════
+     Mounted AFTER loadState so its first scan sees the road network that came
+     off disk, and after `game._streets` has been parked there by loadState.
+
+     🔴 THE GLOBALS TRAP, for the fifth module. `game`, `scene`, `THREE`, `HALF`,
+     `AGENTS`, `costOf`, `hourOf`, `logEsc`, `$` and the whole ins* helper family
+     are top-level `const` in THIS module script and are invisible to an ES
+     module. The ctx object below IS the hand-over; there is no `window.game`.
+
+     Note what is NOT handed over: nothing that writes to a tile, the ledger or a
+     mesh the module did not make. Streets read the city and draw a panel — the
+     only state they own is the name store and their own traffic rings, both of
+     which ride the save through serialize()'s `streets` field. */
+  try {
+    const stmod = await import('../src/streets/index.js?v=' + (window.NC_BUILD || 'r1'));
+    window.MythicStreets = stmod.mount({
+      game, THREE, scene,
+      saved: game._streets,
+      // The tile->world mapping is placeMeshAt's, handed over rather than
+      // re-derived — duplicating it is how a decal drifts off its road.
+      worldOf: (x, z) => ({ x: x - HALF + .5, z: z - HALF + .5 }),
+      hour: () => hourOf(),
+      carSpeed: () => AGENTS.carSpeed,
+      // The road's REAL price, so the upkeep quote can never drift from it.
+      roadCost: () => (costOf('road').cinder || 0),
+      roadDemolishCost: ROAD_DEMOLISH_COST,
+      // The dossier's own chrome, so a street looks like every other dossier.
+      $, logEsc, insCardHtml, insFac, insBuildTabs, insSelect,
+      toast, saveSoon,
+    });
+    // 🛣 Arm the two agentTick hooks only once the module is really there.
+    _stMeter = window.MythicStreets;
+  } catch (e) { console.warn('[Streets] not mounted (non-fatal):', e); }
   /* ⏳ OFFLINE CATCH-UP — must run HERE, and the order is load-bearing:
        • after loadState(), or there is no savedAt and no city to run;
        • after refreshLedgerMirror(), because economyTick's input gate reads
@@ -24291,6 +24374,11 @@ function animate() {
        the two things a driver cannot reach from outside: the tile store and
        the rest-quality inputs the module read. */
     house: () => (typeof window !== 'undefined' ? window.MythicHouse : null) || null,
+    /* 🛣 STREETS. The traffic charts are fed by agentTick, which only runs under
+       RAF — dead in the capture pane — so without a seam the whole feature is
+       untestable. `_inject` drives counted passes directly; everything else is
+       the same read side the panel draws from. */
+    streets: () => (typeof window !== 'undefined' ? window.MythicStreets : null) || null,
     costOf,
   };
   MythicCityBridge.ready = true;

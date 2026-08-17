@@ -457,7 +457,11 @@
     border-top:1px solid var(--edge);}
   #vitalscard .schip{font-size:9.5px;color:var(--mist);border:1px solid var(--edge);
     border-radius:3px;padding:1px 4px;cursor:help;}
-  #vitalscard .schip.pw{color:var(--arcane);border-color:#4a2f7a;}
+  /* ⚡ The power chip is the only stock chip that OPENS something, so it is the
+     only one that stops being cursor:help. Hover lifts it toward --ember to say
+     "this is a control", which no other chip in the strip claims. */
+  #vitalscard .schip.pw{color:var(--arcane);border-color:#4a2f7a;cursor:pointer;}
+  #vitalscard .schip.pw:hover{color:var(--ember);border-color:var(--ember-dim);}
   #vitalscard .scap{font-size:9px;color:var(--mist);opacity:.7;align-self:center;}
 
   /* ── ⭐ CITY OUTPUT — the visible half of the vitals→output system.
@@ -2746,7 +2750,16 @@ const BUILDINGS = {
               desc: 'Racking, dock and yard. +' + STOCK_CAP_PER_WAREHOUSE + ' storage for every refined good, per level. Without storage, refining simply stops when the shelves fill.' },
   powerstation:{name:'Power Station',ico: '⚡', cost: { cinder: 200, metal: 60, supplies: 20 }, pop: 3, crew: 3,
               gen: { power: 6.0 }, use: { fuel: 0.55 },
-              desc: 'Turbine hall, cooling stack, transformer yard. Power is never banked — it is made and spent in the same breath, so overbuilding is waste and underbuilding browns out the city.' },
+              /* ⚡ The description used to end "Power is never banked — it is
+                 made and spent in the same breath". The transformer yard now
+                 carries a real buffer (POWER.storage in /src/power/tuning.js),
+                 which only ever absorbs a surplus that was previously discarded
+                 — so it can never leave a city worse off than before it existed,
+                 which is why it was safe to turn on for saves that predate it.
+                 Power is still not a CITY_STOCK resource and still cannot be
+                 stockpiled or traded; the buffer is grid-local and measured in
+                 minutes, not in a ledger. */
+              desc: 'Turbine hall, cooling stack, transformer yard. The yard buffers a few minutes of surplus, but power is not a resource you can stockpile — overbuilding is waste and underbuilding browns out the city.' },
   /* 🔧 The Machine Shop takes BOTH of the Smelter's outputs — ingots for the parts,
      reagents for tempering and plating.
      ⚠ Round 2: the reagent draw moved here FROM the Clinic. economyTick's input
@@ -19700,6 +19713,12 @@ async function economyTick(dtMin) {
      this resolves in one pass with no feedback loop. */
   {
     let gen = 0, dem = 0, grid = false;
+    /* ⚡ …and the same sweep now also collects the GRID SNAPSHOT for
+       /src/power. Gathered here rather than in a second loop because this loop
+       already has every fact the grid needs and already applies the half-built
+       guard below — a second sweep with its own copy of that guard is how the
+       supply and demand legs drift apart. */
+    const pwPlants = [], pwLoads = [], pwTiles = [];
     for (const [k, t] of Object.entries(game.tiles)) {
       /* 🏗 BOTH LEGS AT ONCE, which is why the guard is on this line and not on
          the two below it. A half-built Power Station must supply no power, and
@@ -19708,8 +19727,23 @@ async function economyTick(dtMin) {
          yet, and guarding only the demand leg would power it from one. */
       const def = BUILDINGS[t.type]; if (!def || t.damaged || bldSite(t)) continue;
       const [x, z] = k.split(',').map(Number);
-      if (def.gen && def.gen.power) { gen += def.gen.power * tileMult(x, z, t, staff, 1); grid = true; }
-      if (def.powerNeed) { dem += def.powerNeed * t.lvl; grid = true; }
+      const isR = t.type === 'road';
+      let plant = 0, need = 0;
+      if (def.gen && def.gen.power) { plant = def.gen.power * tileMult(x, z, t, staff, 1); gen += plant; grid = true; }
+      if (def.powerNeed) { need = def.powerNeed * t.lvl; dem += need; grid = true; }
+      /* ⚠ THE PLANT LIST IS KEYED ON "IS A GENERATOR", NOT ON "IS GENERATING".
+         `plant` is 0 for a Power Station whose crew is unhired, because
+         tileMult multiplies by staffingRatio() — and an earlier version of this
+         line pushed only when `plant` was truthy, which meant an unstaffed
+         plant vanished from the grid completely: no cable network was seeded
+         from it, the overlay drew nothing, and the info view showed a city with
+         a Power Station in it and no explanation whatsoever for why production
+         read zero. A generator with no output is exactly the case the panel
+         exists to explain, so it is listed with `out: 0` and says so. */
+      const isPlant = !!(def.gen && def.gen.power);
+      if (isPlant) pwPlants.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, out: plant });
+      if (need)    pwLoads.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, draw: need });
+      if (isR || isPlant || need) pwTiles.push({ k, road: isR, plant: isPlant ? 1 : 0, need });
     }
     /* ⚡ NO GRID, NO BROWNOUT. The per-capita draw is only charged once the city
        has something electrical in it — a generator or a building that draws.
@@ -19722,7 +19756,41 @@ async function economyTick(dtMin) {
     if (grid) dem += DEMAND_PER_POP.power * cityPop();
     const ratio = dem > 0 ? gen / dem : 1;
     game.power = { gen, demand: dem, ratio,
-                   factor: ratio >= 1 ? 1 : POWER_FLOOR + (1 - POWER_FLOOR) * ratio };
+                   factor: ratio >= 1 ? 1 : POWER_FLOOR + (1 - POWER_FLOOR) * ratio,
+                   model: 'inline' };
+    /* ⚡ THE GRID MODULE, AND THE SINGLE-TRUTH RULE.
+       ────────────────────────────────────────────────────────────────────────
+       Everything above is GENERATION and per-capita DEMAND, which this file
+       owns: `def.gen.power * tileMult(...)` is the central production
+       multiplier and re-deriving it inside a module would be a second economy.
+       /src/power owns what this file has never modelled — TRANSMISSION (which
+       roads carry cable, where the flow chokes, what is wired to nothing) and
+       STORAGE (the plants' buffer, which can cover a deficit and therefore
+       changes `factor`).
+
+       So the module is handed the numbers, and its answer REPLACES the four
+       fields above rather than living beside them. `game.power` stays the one
+       object the dossier, the coverage panel, the away report and the vitals
+       chip read; there is no `game.grid`, and no second production figure
+       anywhere in the file.
+
+       ⚠ IF THE MODULE 404s OR REFUSES, the inline result above stands unchanged
+         and `model` stays 'inline' — which the info view prints as a badge, so a
+         degraded grid is visible instead of silent. */
+    try {
+      const P = window.MythicPower;
+      if (P && P.ready()) {
+        const s = P.solve({ grid: GRID, tiles: pwTiles, plants: pwPlants, loads: pwLoads,
+                            pop: cityPop(), hasGrid: grid,
+                            /* This file's constants, handed over rather than
+                               copied into the module's tuning table — see
+                               /src/power/tuning.js on why these two in
+                               particular may never be duplicated. */
+                            perPop: DEMAND_PER_POP.power, floor: POWER_FLOOR, dtMin });
+        if (s && s.ok) game.power = { gen: s.capacity, demand: s.load, ratio: s.ratio,
+                                      factor: s.factor, model: 'grid' };
+      }
+    } catch (e) { /* the inline result above is already correct */ }
   }
   const powered = game.power.factor;
 
@@ -24481,11 +24549,40 @@ function renderVitals() {
     '<div class="vstock">' + STOCK_KEYS.map((r) =>
       '<span class="schip" title="' + CITY_STOCK[r].desc + '">' + CITY_STOCK[r].ico + ' ' +
       Math.floor(stockOf(r)) + '</span>').join('') +
-      '<span class="schip pw" title="Power is never stored — generated and spent in the same tick.">⚡ ' +
+      /* ⚡ THE CHIP IS THE LAUNCHER. BAR.md rubric 12 asks for state "expressed
+         as a meter with a signed causal list, not a raw number", and this chip
+         is that raw number — so it now opens the thing that replaces it rather
+         than being replaced itself. Keeping the chip is deliberate: it is the
+         glanceable value, and the panel is the explanation behind it.
+         ⚠ The old tooltip read "Power is never stored — generated and spent in
+           the same tick", which stopped being true when /src/power gave the
+           plants a transformer-yard buffer. Power is still not a CITY_STOCK
+           resource and still is not tradeable (see the CITY_STOCK header); what
+           changed is that a surplus which used to be discarded now charges a
+           grid-local buffer instead. Left uncorrected this is exactly the class
+           of false HUD claim this file has had to close before. */
+      '<span class="schip pw" id="pwchip" title="Supply / demand per minute. Click for the electricity info view.">⚡ ' +
       game.power.gen.toFixed(1) + '/' + game.power.demand.toFixed(1) + '</span>' +
       '<span class="scap">cap ' + stockCap() + '</span></div>';
   if (html !== renderVitals._last) { renderVitals._last = html; el.innerHTML = html; }
 }
+/* ⚡ THE INFO VIEW'S TWO WAYS IN. Delegated on document, because renderVitals
+   replaces #vitalscard's innerHTML whenever the numbers change and a listener
+   bound to #pwchip itself would be thrown away with it — the same reason the
+   ledger row handler above is delegated. Degrades to nothing if /src/power
+   never loaded: no module, no panel, and the chip stays a plain readout. */
+addEventListener('click', (ev) => {
+  if (!ev.target.closest || !ev.target.closest('#pwchip')) return;
+  try { if (window.MythicPower) window.MythicPower.togglePanel(); } catch (e) {}
+});
+addEventListener('keydown', (ev) => {
+  // Ignore the shortcut while the player is typing into any field.
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+  if (ev.key !== 'e' && ev.key !== 'E') return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  try { if (window.MythicPower) window.MythicPower.togglePanel(); } catch (e) {}
+});
 
 /* ════════════════════════════════════════════════════════════════════════
    9c. MORALE & HUNGER → Reconstruction.
@@ -25780,6 +25877,19 @@ function serialize() {
          eventually learns the exploit. Capped on write so the field can never
          grow without bound. */
     ramp: Math.min(DEMAND_RAMP_SEC, Math.round(game.cov.ramp)),
+    /* ⚡ THE GRID'S BATTERY CHARGE. Must ride the save for the same reason the
+       Resting House's uncollected Resonance does: it is energy the city has
+       already paid a surplus to bank and it exists nowhere else, so dropping it
+       is a silent loss the player can only notice as an unexplained brownout.
+       ⚠ FALLS BACK TO WHAT WAS LOADED, never to null. If /src/power 404s this
+         session, `_pendingPower` is still the blob that came off disk, and
+         writing `power: null` over it would erase a charged buffer to record
+         that a module failed to load — the identical mistake the `economy:`
+         field above documents. */
+    power: (function () {
+      try { return window.MythicPower ? window.MythicPower.save() : _pendingPower; }
+      catch (e) { return _pendingPower; }
+    })(),
     /* ⏳ The simulated city clock the per-tile `born` stamps are measured
        against. Meaningless apart — save both or neither. */
     age: Math.round(game.cityAge || 0),
@@ -26380,6 +26490,13 @@ addEventListener('visibilitychange', () => {
 });
 /* 🏙 The economy blob read by loadState and consumed once by boot(). */
 let _pendingEconomy = null;
+/* ⚡ The grid blob, same contract: read by loadState, handed to /src/power once
+   in boot(). Today it holds one number — the battery charge in unit-minutes —
+   but it is an OBJECT so the module can grow a second field without another
+   save-format change. Absent ⇒ undefined ⇒ the module defaults to an empty
+   buffer, which is the correct reading of a save written before the grid
+   existed, and is why every pre-v6 save opens unchanged. */
+let _pendingPower = null;
 /* 💾 …AND THE LAST BLOB WE KNOW IS REAL, which is a DIFFERENT job and needs its
    own variable. `_pendingEconomy` is deliberately nulled the moment mount()
    consumes it (a remount arriving with a stale blob is its own bug). This one is
@@ -26532,6 +26649,8 @@ async function loadState() {
        there is nothing to hand it yet. Absent ⇒ null ⇒ a fresh economy, which
        is the correct reading of a save written before this feature existed. */
     _pendingEconomy = (s.economy && typeof s.economy === 'object') ? s.economy : null;
+    // ⚡ Same stash, same reason: /src/power is imported later in boot().
+    _pendingPower = (s.power && typeof s.power === 'object') ? s.power : null;
     /* 💾 …AND THE LAST BLOB WE KNOW IS REAL. Same contract as the `house` and
        `stad` tile fields: state that exists nowhere else must survive a session
        in which its module never loaded. serialize() falls back to this rather
@@ -30727,6 +30846,29 @@ function animate() {
       spendCinders: (n) => MythicCityBridge.spendCinders(n),
     });
   } catch (e) { console.warn('[Stadium] not mounted (non-fatal):', e); }
+  /* ══ ⚡ THE GRID AND ITS INFO VIEW ════════════════════════════════════════
+     Mounted AFTER loadState so the saved battery charge exists before the first
+     economyTick can discharge it, and BEFORE the offline catch-up for the same
+     reason — the catch-up runs real economy ticks, and a buffer that mounts
+     afterwards would start every session empty however full it was saved.
+
+     🔴 THE GLOBALS TRAP, fifth module to hit it. `THREE`, `scene` and `GRID`
+        are top-level `const` in THIS module script and invisible to an ES
+        module, so the ctx object below IS the hand-over — the overlay cannot
+        import three itself without becoming a second module identity if the
+        document's import map ever changes.
+
+     Note how little goes over: the renderer handles for the overlay, and
+     nothing else. Everything about the CITY arrives per-tick through
+     MythicPower.solve(), from the power pre-pass in economyTick — one caller,
+     one direction, no writes. */
+  try {
+    await import('../src/power/index.js?v=' + (window.NC_BUILD || 'r1'));
+    if (window.MythicPower) {
+      window.MythicPower.mount({ THREE, scene, grid: GRID });
+      window.MythicPower.load(_pendingPower);
+    }
+  } catch (e) { console.warn('[Power] not mounted (non-fatal):', e); }
   /* ⏳ OFFLINE CATCH-UP — must run HERE, and the order is load-bearing:
        • after loadState(), or there is no savedAt and no city to run;
        • after refreshLedgerMirror(), because economyTick's input gate reads
@@ -30802,6 +30944,17 @@ function animate() {
     prod: () => ({ ...prodPerMin }),
     stock: () => ({ ...game.stock }),
     power: () => ({ ...game.power }),
+    /* ⚡ THE GRID, AND WHICH MODEL ANSWERED.
+       `power()` is the city's supply/demand as everything else reads it;
+       `powerGrid()` is the transmission and storage layer underneath it —
+       segments, flow, bottlenecks, unserved buildings, the buffer.
+       ⚠ `power().model` is the load-bearing one for a test: 'grid' means
+         /src/power solved this tick, 'inline' means the module 404'd or refused
+         and this file's own maths stood in. A fallback nothing can observe is a
+         fallback that ships silently, which is the exact failure this seam
+         exists to make impossible — assert on it rather than on the numbers. */
+    powerGrid: () => { try { return window.MythicPower ? window.MythicPower.state() : null; } catch (e) { return null; } },
+    powerPanel: (on) => { try { return window.MythicPower ? (on === false ? window.MythicPower.closePanel() : window.MythicPower.openPanel()) : false; } catch (e) { return false; } },
     place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
     /* Fast-forward: n economy minutes in `steps` slices.
        ⚠ Calls the SAME three functions in the SAME order as animate()'s

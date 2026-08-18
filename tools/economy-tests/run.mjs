@@ -10742,7 +10742,7 @@ const stripComments = (src) => {
    was already on the screen when it happened.
    If you add a suite, add it to this list in the same commit. The list is the
    only thing that makes a file a test; everything else is a file. */
-for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs', 'fuelarb.mjs', 'boemint.mjs', 'repairtrap.mjs']) {
+for (const f of ['gauntlet1.mjs', 'gauntlet2.mjs', 'gauntlet3.mjs', 'fuelarb.mjs', 'boemint.mjs', 'repairtrap.mjs', 'azapeg.mjs']) {
   console.log('\n########## ' + f + ' ##########');
   const r = spawnSync(process.execPath, [join(here, f)], { stdio: 'inherit' });
   if (r.status !== 0) bad++;

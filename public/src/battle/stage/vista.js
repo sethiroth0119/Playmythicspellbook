@@ -2173,7 +2173,22 @@
      wrong is expensive. 0.60 sits on the flat part with a visible margin.
      It is deliberately BELOW 1 for the same reason: even a landmark is ten
      kilometres away, so it gets some of the air. It just does not get all of it. */
-  const ART_PROTECT = 0.60;
+  /* ⚠ 0.60 → 0.88 ON THE OWNER'S THIRD REPORT ABOUT THIS IMAGE. The sweep
+     recorded above is the argument for it, not against: the curve is flat past
+     ~0.6 and costs no saturation anywhere (sat 27.2 at both 0.60 and 0.95), so
+     the only thing 0.60 was buying over 0.95 was insurance against the
+     "photograph pasted on a graded sky" read. That insurance is now the wrong
+     trade — the owner has asked three times for the background to actually be
+     visible, and a location nobody can make out is a worse failure than one
+     that sits slightly proud of the sky. Held just below 0.95 so a landmark
+     still takes SOME of the air and the horizon does not hard-edge.
+     This is the third and last lever on the backdrop's visibility; the other
+     two are ART_BLUR_BASE/DIS (spatial frequency) and ART_YIELD (layer alpha).
+     If the picture is still wrong after this, the fault is not in how much of
+     it survives the grade — look at the GEOMETRY instead: `sc` in bakeArt is a
+     cover-fit (max of the two ratios), so on a very wide viewport it crops the
+     art hard vertically, which reads as "stretched" rather than as "faded". */
+  const ART_PROTECT = 0.88;
   /* the backdrop's distance blur, as a fraction of H (× dpr). See the long note
      at the call site in bakeArt for why there are two terms and what each of
      them has already cost. */

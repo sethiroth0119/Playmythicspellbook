@@ -36492,7 +36492,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x5';
+  window.BUILD_VERSION = 'v120x6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -105992,7 +105992,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120x5';
+const BB_VER = 'v120x6';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -202675,18 +202675,24 @@ const OSIM_MACHINES = {
 };
 const OSIM_TIER = { 1: { rateMul: 1, capMul: 1, label: 'I' }, 2: { rateMul: 0.66, capMul: 1.5, label: 'II' }, 3: { rateMul: 0.45, capMul: 2.2, label: 'III' } };
 /* ◈ SUPPLY DEPOT BLUEPRINTS + R&D — Aza cost ×10 (INPUT COST).
-   ⚠ `_OSIM.exchangeAza` (₵220 → ◈1) was deliberately LEFT ALONE. It is the only
-     Cinder→Aza mint in this file, so it is the exchange rate every Aza price here
-     is really denominated in: ×10 on the Aza numbers alone moves a Deep Core
-     Blueprint from 5,500₵ to 55,000₵ — exactly ×10 on BOTH routes. Multiplying
-     the exchange too would have compounded it to ×100.
-   🔴 BUT READ THIS BEFORE CALLING THE AZA SIDE FIXED. index.html's canonical peg
-     is 1 ◈ = $1 USD = 5,000 ₵; this field mints ◈ at 220 ₵ (and `nodeDeliver`
-     hands out 1 ◈ per 20 fuel ≈ 221 ₵, the same rate). Aza in here is therefore
-     ~22.7× cheaper than Aza anywhere else in the game, and ×10 does not change
-     that ratio by one point — it rescales both sides of it. If the exploit being
-     reported is players buying real-money goods with field-farmed Aza, the number
-     to change is the 220 in `exchangeAza`, not these. */
+   ✅ THE AZA MINTS IN THIS FILE ARE CLOSED — and the note that used to sit here
+     called it correctly, so this is the follow-through rather than a new finding.
+     It read: "index.html's canonical peg is 1 ◈ = $1 USD = 5,000 ₵; this field
+     mints ◈ at 220 ₵ (and `nodeDeliver` hands out 1 ◈ per 20 fuel ≈ 221 ₵, the
+     same rate) … the number to change is the 220 in `exchangeAza`, not these."
+     Both doors are now shut, because BOTH were the same exploit:
+       · `exchangeAza` (₵220 → ◈1) — deleted outright, see the note at its site.
+       · `nodeDeliver`'s ◈ payout — deleted; fuel still pays Cinder and still
+         builds roads, it just no longer mints a real currency as a side effect.
+     ⚠ WHY DELETED RATHER THAN REPRICED TO 5,000. Aza is not a soft currency:
+     `spendSovereigns` charges a SERVER rpc (`sov_charge`) and `AZA_TO_CINDER`
+     is the same rate the cashout vault settles at, so ◈ is withdrawable value.
+     A Cinder→Aza mint inside a client-authoritative field sim is a mint of real
+     money no matter what rate it carries; the rate only sets how fast. The
+     panel's own copy already states the intended source — "Aza Coin comes from
+     PRN contracts & events" — and that is now the whole truth of it.
+     The Aza PRICES below are unaffected: they are what a blueprint COSTS, paid
+     from the real wallet through `spendSovereigns`, and a cost is not a mint. */
 const OSIM_BLUEPRINTS = { tier2: { name: 'Tier II Upgrade License', aza: 80, desc: 'Unlocks Tier II upgrades on any machine.' }, tier3: { name: 'Tier III Upgrade License', aza: 180, desc: 'Unlocks Tier III upgrades. Requires Tier II.' }, deepcore: { name: 'Deep Core Blueprint', aza: 250, desc: 'Unlocks the Deep Core Extractor.' } };
 const OSIM_RESEARCH = { supply: { name: 'Efficient Supply', ic: '📦', max: 3, costs: [60, 120, 200], desc: 'Reduces all parts costs.', eff: l => (l * 10) + '% cheaper parts' }, hardened: { name: 'Hardened Components', ic: '🛡️', max: 3, costs: [80, 160, 260], desc: 'Slows machine wear.', eff: l => [0, 25, 45, 60][l] + '% slower decay' }, automation: { name: 'Automation Relay', ic: '🤖', max: 2, costs: [180, 300], desc: 'Auto-collects full machines; L2 adds capacity.', eff: l => l >= 2 ? 'Auto-collect + 10% cap' : l >= 1 ? 'Auto-collect' : '—' }, market: { name: 'Market Insight', ic: '📈', max: 2, costs: [100, 200], desc: 'Higher sell prices everywhere.', eff: l => (l * 10) + '% better prices' }, tuning: { name: 'Resonance Tuning', ic: '🎚️', max: 3, costs: [140, 240, 400], desc: 'Permanent global production speed.', eff: l => '+' + (l * 5) + '% speed' } };
 const OSIM_RESERVE_PRICE = { oil: 4, ore: 7, fuel: 13 };
@@ -203388,7 +203394,7 @@ function _osimRateTxt(secs) { secs = Math.max(1, secs); if (secs >= 3600) return
 function _osimMachineEffSecs(def, m) { try { if (m) return OSIM_MACHINES[m.type].rate * _osimProdMul() * OSIM_TIER[m.tier].rateMul / Math.max(0.01, _osimResonanceMul() * (1 + _osimNodeBonus())); return def.rate * _osimProdMul() * OSIM_TIER[1].rateMul / Math.max(0.01, _osimResonanceMul()); } catch (e) { return (def.rate || 1) * 7500; } }
 function _osimMachineOutTxt(def, m) { const t = _osimRateTxt(_osimMachineEffSecs(def, m)); if (def.kind === 'generator') return '+₵' + (def.amount || 1) + ' / ' + t; if (def.consumes) return def.ratio + ' ' + def.consumes + ' → 1 ' + def.produces + ' / ' + t; return '+1 ' + def.produces + ' / ' + t; }
 // 🏙️ Real District Node link — register the field to ONE node + feed it fuel.
-const OSIM_FUEL_PER_ROAD = 4, OSIM_FUEL_PER_AZA = 20;
+const OSIM_FUEL_PER_ROAD = 4;   /* OSIM_FUEL_PER_AZA removed with the fuel→◈ mint */
 function _osimNodes() { try { return (typeof _twForge === 'function') ? (_twForge().nodes || []) : []; } catch (e) { return []; } }
 function _osimNodeById(id) { return _osimNodes().find(n => n && n.id === id) || null; }
 function _osimNodeName(n) { return (n && (n.name || n.label || n.id)) || 'District Node'; }
@@ -203411,11 +203417,11 @@ function _osimRenderNodeLink() {
   return '<div class="statline">Linked to <b style="color:#9fe6e6">' + _osimEsc(_osimNodeName(node)) + '</b> · sent <b>' + (_osimState.fuelToNode | 0) + '</b> fuel total. <button class="osim-buy" onclick="_OSIM.nodeLeave()">Switch / Leave</button></div>' +
     '<div class="osim-card"><div class="row"><h3>🏙️ ' + _osimEsc(_osimNodeName(node)) + '</h3><span class="have">' + pct + '% rebuilt</span></div>' +
     '<div class="reqs">Roads <b>' + r.roadsRepaired + '/' + r.roadsTotal + '</b> · Buildings ' + r.buildingsRestored + '/' + r.buildingsTotal + ' · Sheltered ' + (r.civiliansSaved || 0).toLocaleString() + '/' + (r.civiliansTotal || 0).toLocaleString() + ' · Corruption ' + Math.round(r.corruption) + '%' + (r.shared ? ' · <b style="color:#7fb0ff">☁ SHARED</b>' : '') + '</div>' +
-    '<div class="osim-sellrow" style="margin-top:8px"><div class="info">Deliver fuel → repairs roads + Aza<div class="qty">Hold ' + fuel + ' fuel · ' + OSIM_FUEL_PER_ROAD + ' fuel = 1 road · ' + OSIM_FUEL_PER_AZA + ' fuel = 1 ◈</div></div><div style="display:flex;gap:6px"><button class="osim-buy aza" ' + (fuel < OSIM_FUEL_PER_ROAD ? 'disabled' : '') + ' onclick="_OSIM.nodeDeliver(' + (OSIM_FUEL_PER_ROAD * 5) + ')">Send ' + (OSIM_FUEL_PER_ROAD * 5) + '</button><button class="osim-buy green" ' + (fuel < OSIM_FUEL_PER_ROAD ? 'disabled' : '') + ' onclick="_OSIM.nodeDeliver(\'all\')">Send All</button></div></div></div>';
+    '<div class="osim-sellrow" style="margin-top:8px"><div class="info">Deliver fuel → repairs roads + Cinder<div class="qty">Hold ' + fuel + ' fuel · ' + OSIM_FUEL_PER_ROAD + ' fuel = 1 road</div></div><div style="display:flex;gap:6px"><button class="osim-buy aza" ' + (fuel < OSIM_FUEL_PER_ROAD ? 'disabled' : '') + ' onclick="_OSIM.nodeDeliver(' + (OSIM_FUEL_PER_ROAD * 5) + ')">Send ' + (OSIM_FUEL_PER_ROAD * 5) + '</button><button class="osim-buy green" ' + (fuel < OSIM_FUEL_PER_ROAD ? 'disabled' : '') + ' onclick="_OSIM.nodeDeliver(\'all\')">Send All</button></div></div></div>';
 }
 function _osimRenderShop() { const pt = _O('ptitle'); pt.textContent = 'Supply Depot'; _O('psub').textContent = 'COMPONENTS · BLUEPRINTS'; let h = '<div class="tabs"><div class="osim-tab ' + (_osimShopTab === 'parts' ? 'act' : '') + '" onclick="_OSIM.setShopTab(\'parts\')">🔧 Parts (Cinder)</div><div class="osim-tab ' + (_osimShopTab === 'bp' ? 'act' : '') + '" onclick="_OSIM.setShopTab(\'bp\')">◈ Blueprints (Aza)</div></div>';
   if (_osimShopTab === 'parts') { h += '<div class="reqs" style="margin-bottom:8px;color:#9fb6d6">📈 Standard prices track the <b>Crash Exchange</b> — demand across the game world moves them up &amp; down.</div><div class="grid2">'; for (const k in OSIM_PARTS) { const c = _osimPartCost(k), mul = _osimPartMarketMul(k), dpct = Math.round((mul - 1) * 100), cu = _osimCustomParts[k]; const arr = dpct > 0 ? ' <span style="color:#ff8a8a;font-size:0.78em">▲' + dpct + '%</span>' : dpct < 0 ? ' <span style="color:#8affc4;font-size:0.78em">▼' + dpct + '%</span>' : ''; h += '<div class="osim-card"><div class="row"><h3><span class="ic">' + OSIM_PARTS[k].ic + '</span>' + _osimEsc(OSIM_PARTS[k].name) + (cu ? '<span class="osim-badge custom">CUSTOM</span>' : '') + '</h3><span class="price">₵' + c + arr + '</span></div><div class="reqs">Owned: <b>' + (_osimState.parts[k] || 0) + '</b></div><div class="row"><span class="have">Used for crafting &amp; repairs</span><button class="osim-buy" ' + (_osimState.cash < c ? 'disabled' : '') + ' onclick="_OSIM.buyPart(\'' + k + '\')">Buy</button></div></div>'; } h += '</div>'; }
-  else { h += '<div class="statline">Aza Coin comes from PRN contracts &amp; events. <button class="osim-buy aza" onclick="_OSIM.exchangeAza()" ' + (_osimState.cash < 220 ? 'disabled' : '') + '>Exchange ₵220 → ◈1</button></div><div class="grid2">'; for (const k in OSIM_BLUEPRINTS) { const b = OSIM_BLUEPRINTS[k], owned = _osimState.blueprints[k], locked = k === 'tier3' && !_osimState.blueprints.tier2, cu = _osimCustomBlueprints[k]; h += '<div class="osim-card prem"><div class="row"><h3>◈ ' + _osimEsc(b.name) + (cu ? '<span class="osim-badge custom">CUSTOM</span>' : '') + '</h3>' + (owned ? '<span class="osim-badge owned">OWNED</span>' : '<span class="priceA">◈' + b.aza + '</span>') + '</div><div class="desc">' + _osimEsc(b.desc || '') + '</div><div class="row"><span class="have">' + (locked ? 'Requires Tier II first' : '') + '</span><button class="osim-buy aza" ' + (owned || locked || _osimState.aza < b.aza ? 'disabled' : '') + ' onclick="_OSIM.buyBP(\'' + k + '\')">' + (owned ? 'Unlocked' : 'Unlock') + '</button></div></div>'; } h += '</div>'; }
+  else { h += '<div class="statline">Aza Coin comes from PRN contracts &amp; events.</div><div class="grid2">'; for (const k in OSIM_BLUEPRINTS) { const b = OSIM_BLUEPRINTS[k], owned = _osimState.blueprints[k], locked = k === 'tier3' && !_osimState.blueprints.tier2, cu = _osimCustomBlueprints[k]; h += '<div class="osim-card prem"><div class="row"><h3>◈ ' + _osimEsc(b.name) + (cu ? '<span class="osim-badge custom">CUSTOM</span>' : '') + '</h3>' + (owned ? '<span class="osim-badge owned">OWNED</span>' : '<span class="priceA">◈' + b.aza + '</span>') + '</div><div class="desc">' + _osimEsc(b.desc || '') + '</div><div class="row"><span class="have">' + (locked ? 'Requires Tier II first' : '') + '</span><button class="osim-buy aza" ' + (owned || locked || _osimState.aza < b.aza ? 'disabled' : '') + ' onclick="_OSIM.buyBP(\'' + k + '\')">' + (owned ? 'Unlocked' : 'Unlock') + '</button></div></div>'; } h += '</div>'; }
   _O('pbody').innerHTML = h; }
 function _osimRenderCraft() { _O('ptitle').textContent = 'Fabrication'; _O('psub').textContent = 'ASSEMBLE PARTS INTO MACHINERY'; let h = '<div class="grid2">'; for (const k in OSIM_MACHINES) { const m = OSIM_MACHINES[k]; if (!_osimMachineUnlocked(k)) continue; const reqList = Object.entries(m.parts || {}).map(([pk, n]) => { if (!OSIM_PARTS[pk]) return ''; const ok = (_osimState.parts[pk] || 0) >= n; return '<span style="color:' + (ok ? '#9fffc4' : '#e08b8b') + '">' + _osimEsc(OSIM_PARTS[pk].name) + ' ' + (_osimState.parts[pk] || 0) + '/' + n + '</span>'; }).filter(Boolean).join(' · ') || '<span style="color:#9fffc4">no parts</span>'; const can = Object.entries(m.parts || {}).every(([pk, n]) => (_osimState.parts[pk] || 0) >= n) && _osimState.cash >= m.craft; const cu = _osimCustomMachines[k]; h += '<div class="osim-card ' + (m.premium ? 'prem' : '') + '"><div class="row"><h3><span class="ic">' + (m.ic || '🔧') + '</span>' + _osimEsc(m.name) + (m.premium ? '<span class="osim-badge t3">AZA</span>' : '') + (cu ? '<span class="osim-badge custom">CUSTOM</span>' : '') + '</h3><span class="have">Built: ' + (_osimState.builtMachines[k] || 0) + '</span></div><div class="desc">' + _osimEsc(m.desc || '') + '</div><div class="reqs">Output: <b>' + _osimMachineOutTxt(m) + '</b> · cap ' + m.cap + '<br>Needs: ' + reqList + ' + <span class="price">₵' + m.craft + '</span></div><div class="row"><span class="have">' + (can ? 'Ready' : 'Missing materials') + '</span><button class="osim-buy green" ' + (can ? '' : 'disabled') + ' onclick="_OSIM.craftMachine(\'' + k + '\')">Craft</button></div></div>'; } h += '</div>'; if (!_osimState.blueprints.deepcore) h += '<div class="empty">🌋 Unlock the <b>Deep Core Blueprint</b> in the Shop (Aza) to fabricate the highest-output rig. Author your own machines in System → Admin.</div>'; _O('pbody').innerHTML = h; }
 function _osimRenderBuild() { _O('ptitle').textContent = 'Deploy Machinery'; _O('psub').textContent = 'PLACE FABRICATED MACHINES ON THE FIELD'; if (!Object.values(_osimState.builtMachines).some(v => v > 0)) { _O('pbody').innerHTML = '<div class="empty">No machines fabricated yet.<br>Buy parts in the Shop, then Craft a machine first.</div>'; return; } let h = '<div class="grid2">'; for (const k in OSIM_MACHINES) { const m = OSIM_MACHINES[k], n = _osimState.builtMachines[k] || 0; if (n <= 0) continue; h += '<div class="osim-card ' + (m.premium ? 'prem' : '') + '"><div class="row"><h3><span class="ic">' + (m.ic || '🔧') + '</span>' + _osimEsc(m.name) + '</h3><span class="have">Available: <b style="color:#f0c75e">' + n + '</b></span></div><div class="desc">' + _osimEsc(m.desc || '') + '</div><div class="row"><span class="have">Click to enter build mode</span><button class="osim-buy" onclick="_OSIM.startBuild(\'' + k + '\')">Build</button></div></div>'; } h += '</div>'; _O('pbody').innerHTML = h; }
@@ -203602,7 +203608,19 @@ function _osimSlug(s) { return (s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '
 window._OSIM = {
   setShopTab: t => { _osimShopTab = t; _osimRenderShop(); },
   buyPart: k => { const c = _osimPartCost(k); if (_osimState.cash < c) return; if (typeof spendCinders === 'function') { if (!spendCinders(c)) return; } else _osimState.cash -= c; _osimState.parts[k] = (_osimState.parts[k] || 0) + 1; try { const _cx = _osimPartCxId(k); if (_cx && typeof bumpMarketPriceUp === 'function') bumpMarketPriceUp(_cx, 1, 'buy'); } catch (e) {} _osimSfx('build'); _osimRefreshTop(); _osimRenderShop(); },
-  exchangeAza: () => { if (_osimState.cash < 220) return; if (typeof spendCinders === 'function') { if (!spendCinders(220)) return; } else _osimState.cash -= 220; _osimState.aza += 1; _osimSfx('aza'); _osimRefreshTop(); _osimRenderShop(); _osimToast('Exchanged → +◈1', 'aza'); },
+  /* 🔴 REMOVED — THE CINDER→AZA EXCHANGE WAS AN EXPLOIT, NOT A PRICE BUG.
+     It minted ◈1 for ₵220. The canonical peg is `AZA_TO_CINDER` — 1 ◈ = $1 USD
+     = 5,000 ₵ — and it is the SAME rate the cashout vault settles at
+     (CASHOUT_RATE_PER_DOLLAR), so Aza is real, withdrawable value and this
+     field was selling it at 4.4% of face. Repricing to 5,000 would have been
+     the wrong fix twice over: it leaves a Cinder→Aza mint in a client-
+     authoritative sim, and the owner's own design already states the intended
+     source in the panel directly above this — "Aza Coin comes from PRN
+     contracts & events." So the door is closed rather than made expensive.
+     ⚠ DO NOT REINTRODUCE A CINDER→AZA CONVERSION HERE. If one is ever wanted
+     it belongs server-side, denominated in AZA_TO_CINDER, next to the vault
+     that has to honour it — not in a panel the player's own client renders.
+     See tools/economy-tests/azapeg.mjs, which fails if this comes back. */
   buyBP: k => { const b = OSIM_BLUEPRINTS[k]; if (_osimState.blueprints[k] || _osimState.aza < b.aza || (k === 'tier3' && !_osimState.blueprints.tier2)) return; if (typeof spendSovereigns === 'function') { if (!spendSovereigns(b.aza)) return; } else _osimState.aza -= b.aza; _osimState.blueprints[k] = true; _osimSfx('aza'); _osimRefreshTop(); _osimRenderShop(); _osimToast(b.name + ' unlocked', 'aza'); },
   craftMachine: k => { const m = OSIM_MACHINES[k]; if (!Object.entries(m.parts || {}).every(([pk, n]) => (_osimState.parts[pk] || 0) >= n) || _osimState.cash < m.craft) return; for (const [pk, n] of Object.entries(m.parts || {})) { _osimState.parts[pk] -= n; try { const _cx = _osimPartCxId(pk); if (_cx && typeof bumpMarketPriceUp === 'function') bumpMarketPriceUp(_cx, n, 'craft'); } catch (e) {} } if (typeof spendCinders === 'function') spendCinders(m.craft); else _osimState.cash -= m.craft; _osimState.builtMachines[k] = (_osimState.builtMachines[k] || 0) + 1; _osimSfx('build'); _osimRefreshTop(); _osimRenderCraft(); _osimToast(m.name + ' fabricated', 'good'); },
   startBuild: k => { _osimState.buildType = k; _osimState.moveRef = null; _O('modal').classList.remove('on'); _O('buildtext').textContent = '🏗️ Placing ' + OSIM_MACHINES[k].name + ' — click an empty tile'; _O('buildbanner').classList.add('on'); },
@@ -203616,7 +203634,7 @@ window._OSIM = {
   setNetTab: t => { _osimNetTab = t; _osimRenderNetwork(); },
   nodeRegister: id => { const n = _osimNodeById(id); if (!n) return; _osimState.nodeId = id; _osimSave(); _osimSfx('aza'); _osimToast('🏙️ Linked to ' + _osimNodeName(n) + ' — fuel you deliver now rebuilds it.', 'aza'); _osimRenderNetwork(); },
   nodeLeave: () => { _osimState.nodeId = null; _osimState.fuelToNode = 0; _osimSave(); _osimToast('🚪 Unlinked from the district.', 'good'); _osimRenderNetwork(); },
-  nodeDeliver: qty => { const node = _osimNodeById(_osimState.nodeId); if (!node) { _osimToast('Register a node first.', 'bad'); return; } const have = _osimState.inv.fuel; if (have < OSIM_FUEL_PER_ROAD) { _osimToast('Need at least ' + OSIM_FUEL_PER_ROAD + ' fuel.', 'bad'); return; } const n = qty === 'all' ? have : Math.min(qty, have); const roads = Math.floor(n / OSIM_FUEL_PER_ROAD); if (roads < 1) return; const used = roads * OSIM_FUEL_PER_ROAD; const aza = Math.floor(used / OSIM_FUEL_PER_AZA); const cinder = Math.round(used * 2 * (1 - _osimSellSkim())); _osimState.inv.fuel -= used; _osimState.fuelToNode = (_osimState.fuelToNode | 0) + used; try { if (typeof _twAddNodeContribution === 'function') _twAddNodeContribution(_osimState.nodeId, 0, roads, 0); } catch (e) {} if (aza > 0) _osimState.aza += aza; if (cinder > 0) _osimEarn(cinder); _osimSfx('aza'); _osimRefreshTop(); _osimRenderNetwork(); _osimToast('⛽→🏙️ Delivered ' + used + ' fuel: +' + roads + ' roads' + (aza ? ' · +◈' + aza : '') + (cinder ? ' · +₵' + cinder : ''), 'aza'); _osimSave(); },
+  nodeDeliver: qty => { const node = _osimNodeById(_osimState.nodeId); if (!node) { _osimToast('Register a node first.', 'bad'); return; } const have = _osimState.inv.fuel; if (have < OSIM_FUEL_PER_ROAD) { _osimToast('Need at least ' + OSIM_FUEL_PER_ROAD + ' fuel.', 'bad'); return; } const n = qty === 'all' ? have : Math.min(qty, have); const roads = Math.floor(n / OSIM_FUEL_PER_ROAD); if (roads < 1) return; const used = roads * OSIM_FUEL_PER_ROAD; /* ◈ mint removed — see the Aza note above OSIM_BLUEPRINTS */ const cinder = Math.round(used * 2 * (1 - _osimSellSkim())); _osimState.inv.fuel -= used; _osimState.fuelToNode = (_osimState.fuelToNode | 0) + used; try { if (typeof _twAddNodeContribution === 'function') _twAddNodeContribution(_osimState.nodeId, 0, roads, 0); } catch (e) {}  if (cinder > 0) _osimEarn(cinder); _osimSfx('aza'); _osimRefreshTop(); _osimRenderNetwork(); _osimToast('⛽→🏙️ Delivered ' + used + ' fuel: +' + roads + ' roads' + (cinder ? ' · +₵' + cinder : ''), 'aza'); _osimSave(); },
   deliverPRN: i => { const c = _osimState.prn[i], have = _osimState.inv[c.resource]; if (have < 1) return; const give = Math.min(have, c.need - c.progress); _osimState.inv[c.resource] -= give; c.progress += give; if (c.progress >= c.need) { _osimEarn(c.rewardCinder); _osimState.aza += c.rewardAza; _osimSfx('aza'); _osimToast(c.name + ' complete → +₵' + c.rewardCinder + ' +◈' + c.rewardAza, 'aza'); _osimState.prn[i] = { name: c.name, ..._osimNewContract() }; } else { _osimSfx('sell'); _osimToast('Delivered ' + give + ' ' + c.resource, 'good'); } _osimRefreshTop(); _osimRenderNetwork(); },
   deliverEmergency: () => { const em = _osimState.emergency; if (!em || Date.now() >= em.until) return; const have = _osimState.inv[em.resource]; if (have < 1) return; const give = Math.min(have, em.need - em.progress); _osimState.inv[em.resource] -= give; em.progress += give; if (em.progress >= em.need) { _osimEarn(em.rewardCinder); _osimState.aza += em.rewardAza; _osimSfx('aza'); _osimToast('🛰️ Emergency fulfilled → +₵' + em.rewardCinder + ' +◈' + em.rewardAza, 'aza'); _osimState.emergency = null; _osimRenderEventBar(); } else { _osimSfx('sell'); _osimToast('Delivered ' + give + ' ' + em.resource, 'good'); } _osimRefreshTop(); _osimRenderNetwork(); },
   contributeCore: res => { const ph = OSIM_CORE_PHASES[_osimState.core.phase], need = ph.req[res], got = _osimState.core.contributed[res] || 0, have = res === 'aza' ? _osimState.aza : _osimState.inv[res]; if (have < 1 || got >= need) return; const give = Math.min(have, need - got); if (res === 'aza') _osimState.aza -= give; else _osimState.inv[res] -= give; _osimState.core.contributed[res] = got + give; _osimRefreshTop(); const complete = Object.entries(ph.req).every(([r, n]) => (_osimState.core.contributed[r] || 0) >= n); if (complete) { _osimState.core.phase++; _osimState.core.contributed = {}; _osimSetCoreVisual(); if (_osimState.core.phase >= OSIM_CORE_PHASES.length) { _osimState.core.done = true; _osimSetCoreVisual(); _osimSfx('ignite'); _osimToast('◆ The Cinder Core ignites!', 'ember'); _osimSave(); } else { _osimSfx('ignite'); _osimToast(ph.name + ' complete — Core advanced', 'ember'); } } else { _osimSfx('sell'); _osimToast('Contributed ' + give + ' ' + (res === 'aza' ? 'Aza' : res) + ' to the Core', 'ember'); } _osimRenderNetwork(); },
@@ -211278,7 +211296,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120x5';
+  f.src = 'node-city/index.html?v=v120x6';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228455,8 +228473,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120x5">
-<script type="module" src="src/battle/hud.js?v=v120x5"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120x6">
+<script type="module" src="src/battle/hud.js?v=v120x6"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

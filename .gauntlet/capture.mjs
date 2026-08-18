@@ -33,6 +33,36 @@ await page.route('**/cdn.jsdelivr.net/npm/three@0.171.0/**',r=>{
  const f=path.join(THREE_,rel);
  fs.existsSync(f)?r.fulfill({status:200,contentType:'text/javascript',body:fs.readFileSync(f)})
                  :r.fulfill({status:404,body:'nf'})});
+/* ── 🕒 PIN THE CLOCK ──────────────────────────────────────────────────────
+   estClock() (index.html:4096) reads the REAL wall clock — "the sun rises when
+   YOUR sun rises", no compression. So every round was photographed at whatever
+   time of day the harness happened to run: r0 and r1 landed mid-afternoon, r2
+   landed at 20:17. The round-2 lighting work was MEASURED at 15:00 and
+   PHOTOGRAPHED at night, and manageAgents() culls the crowd at nightfall — which
+   is why a round that moved the sunlit:shaded ratio to 2.67x scored 4/10 for
+   lighting and 0/10 for vehicles.
+   A blind A/B between rounds is worthless if the two frames are different times
+   of day, so the hour is now a harness constant. Date is SHIFTED, not frozen:
+   time still advances, so anything deriving a dt still works. */
+const PIN_HOUR = +(process.argv.includes('--hour') ? process.argv[process.argv.indexOf('--hour')+1] : 15);
+await page.addInitScript(({ hour }) => {
+  const _D = Date;
+  const now = new _D();
+  /* Where the page's own clock reads now, in America/New_York. */
+  const parts = {};
+  for (const p of new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(now))
+    parts[p.type] = p.value;
+  const curH = (+parts.hour % 24) + (+parts.minute) / 60 + (+parts.second) / 3600;
+  const shiftMs = (hour - curH) * 3600 * 1000;
+  class ShiftedDate extends _D {
+    constructor(...a) { if (a.length === 0) super(_D.now() + shiftMs); else super(...a); }
+    static now() { return _D.now() + shiftMs; }
+  }
+  ShiftedDate.parse = _D.parse; ShiftedDate.UTC = _D.UTC;
+  window.Date = ShiftedDate;
+}, { hour: PIN_HOUR });
+
 const logs=[]; page.on('console',m=>logs.push(`[${m.type()}] ${m.text()}`.slice(0,300)));
 page.on('pageerror',e=>logs.push(`[pageerror] ${e.message}`.slice(0,300)));
 

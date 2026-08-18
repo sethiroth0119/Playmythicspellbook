@@ -149,5 +149,72 @@
       }
     ],
     "note": "Every piece came back BEHIND. The wins are real and local: building silhouette 7 and roads 6, both up from 4. The losses are structural \u2014 the whole-frame critic measured a sunlit wall at 21% luminance against a shaded one at 24%, a ratio of 1.14x where the reference frames run 2-3x, and called it: there is no sun in this scene. Two of the low scores were the harness's fault, not the builders'. Vehicles scored 1 and citizens 2 because manageAgents() is only ever called from animate(), rAF never fires in headless capture, and the city was photographed empty \u2014 the ten vehicle bodies and the rigged civilian existed the whole time. Fixed: the standard district now carries 29 agents, and the street camera sits on a carriageway at eye height instead of above the rooftops."
+  },
+  {
+    "round": 2,
+    "headline": "The lighting round. Shadows were never being drawn at all.",
+    "status": "done",
+    "meanScore": 3.64,
+    "strangerTest": "instantly",
+    "tris": 2798100,
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 3
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 4
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 6
+      },
+      {
+        "dimension": "Building surface",
+        "score": 5
+      },
+      {
+        "dimension": "The plot",
+        "score": 2
+      },
+      {
+        "dimension": "Roads",
+        "score": 6
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 6
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 0
+      },
+      {
+        "dimension": "Citizens",
+        "score": 0
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 4
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 3
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 2
+      }
+    ],
+    "pieces": [
+      {
+        "title": "Palette, lighting and colour grade",
+        "verdict": "BEHIND",
+        "summary": "Two independent causes, both real. Shadows were never drawn: three r171's WebGPU node pipeline computes a shadow from the shadow target's COLOUR attachment, the WebGL2 backend runs that pass depth-only, so the term collapsed to a constant 1.0 - the depth pass was drawn every frame and thrown away. And the sun spent every afternoon behind the camera: of 2,232 wall samples at 15:00, fourteen were sunlit.",
+        "gap": "Get traffic and pedestrians into the captured PIXELS, not just the simulation. Round 2 carried 29 agents and produced zero visible vehicles and zero visible citizens across three frames."
+      }
+    ],
+    "note": "\ud83d\udd34 THESE SCORES ARE AGAINST THE WRONG FRAME, and the fault is the harness's. estClock() reads the real wall clock - \"the sun rises when YOUR sun rises\" - so every round was photographed at whatever time of day the capture happened to run. r0 and r1 landed mid-afternoon; r2 landed at 20:17. The lighting work was MEASURED at 15:00 and PHOTOGRAPHED at night, and manageAgents() culls the crowd at nightfall - which is why a round that moved the sunlit:shaded ratio from 1.11x to 2.67x and terrain luminance from 0.215 to 0.527 scored 4/10 for lighting and 0/10 for vehicles. The hour is now pinned as a harness constant and the frames above have been re-captured at 15:00; the scores are left as the critics gave them, because re-scoring my own work against a better frame is not a critic's verdict. Round 3 re-judges."
   }
 ]

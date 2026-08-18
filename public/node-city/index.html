@@ -5095,6 +5095,29 @@ scene.add(ground);
    different tones is what gave the map its graph-paper look. gridHelper still
    draws the real one at y=.012, so nothing is lost for tile legibility.
    ═══════════════════════════════════════════════════════════════════════════ */
+/* ⭐ ROUND 7 — THE GROUND FIELD IS SAMPLEABLE FROM OUTSIDE THIS BLOCK.
+   Round 5 built a per-vertex colour field for the plate and then left every
+   PATCH a recipe lays on top of it — a lawn, a verge, a tree base — authored
+   against a fixed hex. The round-5 critic read exactly that back: "the new
+   tree-base patches are a single flat, unmottled, over-saturated lime colour
+   with a hard straight edge, sitting ON TOP of the newly mottled ground and not
+   receiving the mottle." A patch cannot receive a field it cannot read, so the
+   field is published here — as a FUNCTION, not as a copy, because a second
+   evaluation of hfield/mfield/DRY/GRN somewhere else is how the plate and the
+   patches drift apart (the same argument the plain's rebuild makes above).
+   ⚠ NC_GROUND_AT returns the AUTHORED tone, i.e. before the _TEX_LIN divide.
+     A caller that puts its patch on a MAPPED material has to divide; a caller
+     that does not, must not. See _vgGnd / _VG_TEXDIV.
+   ⚠ NC_GRAIN_PER is declared out here so the plate and the patches cannot be
+     given two different periods — the patch's grain has to line up with the
+     plate's or the seam it is trying to hide becomes a phase discontinuity,
+     which reads WORSE than a colour step. */
+let NC_GROUND_AT = null;      // (wx, wz, out?) -> THREE.Color, the plate's tone there
+let NC_GROUND_MAP = null;     // the plate's grain canvas, so a patch can carry it
+/* ⚠ 3.71 TILES, AND IT IS NOT A DIVISOR OF 1 — the argument is at the map's own
+   note inside the block; the declaration is out here so patches share it. */
+const NC_GRAIN_PER = 3.71;
+
 const tileGroup = new THREE.Group(); scene.add(tileGroup);
 {
   /* ══ ⭐ ROUND 5 — THE TERRAIN IS A SURFACE, NOT A SHEET ═══════════════════
@@ -5259,7 +5282,7 @@ const tileGroup = new THREE.Group(); scene.add(tileGroup);
      the mid blotches now span 0.32-0.90 of a TILE rather than 0.23-0.64, which
      is the size a patch of different ground has to be before a DISTRICT camera
      (about 60 px a tile) reads it as a patch rather than as noise. */
-  const GRAIN_PER = 3.71;
+  const GRAIN_PER = NC_GRAIN_PER;
   const TEX_GROUND = _tex(256, (x, S) => {
     x.fillStyle = 'rgb(' + _TEX_B + ',' + _TEX_B + ',' + _TEX_B + ')';
     x.fillRect(0, 0, S, S);
@@ -5423,6 +5446,34 @@ const tileGroup = new THREE.Group(); scene.add(tileGroup);
   // pass is the reason draw calls are the cost driver in this scene at all.
   plate.receiveShadow = true; plate.castShadow = false;
   tileGroup.add(plate);
+
+  /* ⭐ PUBLISH THE FIELD (see NC_GROUND_AT's note above the block). Written
+     HERE, at the bottom of the lattice build, because every term it needs —
+     hfield, mfield, the two ramps, the contrast curve, the .38 mix centre and
+     the edge fade — is a local of this block, and the whole point is that a
+     patch is tinted by the SAME expression the vertex under it was, not by a
+     transcription of it that a later retune will forget to update.
+     ⚠ Its own scratch colours. The build loop's cA/cB/cT are still live for the
+       plain's rebuild below, and a sampler that borrows them would be a
+       re-entrancy bug the day anything calls it during a build. */
+  {
+    const sA = new THREE.Color(), sB = new THREE.Color(), sT = new THREE.Color();
+    NC_GROUND_AT = (wx, wz, out) => {
+      const o = out || sA;
+      const u = wx + HALF, w = wz + HALF;
+      const H = hfield(u, w), M = mfield(u, w);
+      const t = clamp01(.5 + (H - .5) * 1.75) * (DRY.length - 1);
+      rampAt(DRY, t, o, sT);
+      rampAt(GRN, t, sB, sT);
+      o.lerp(sB, clamp01(.38 + (M - .5) * 2.2 - (H - .5) * .9));
+      // …including the edge fade, so a patch laid on the outer ring matches the
+      // shore the plate fades into rather than the ramp it started from.
+      const d = Math.max(Math.abs(wx), Math.abs(wz)) / HALF;
+      if (d > .86) o.lerp(cE, Math.min(1, (d - .86) / .14));
+      return o;
+    };
+    NC_GROUND_MAP = TEX_GROUND;
+  }
 
   /* ⭐ AND THE PLAIN GETS THE SAME FIELD. `ground` (declared above, two
      triangles) was ONE flat GROUND_COL running to the horizon, and in a
@@ -6158,7 +6209,22 @@ function perimeterScenery() {
     const R = rdRng(ix * 37 + 11, iz * 23 - 7);
 
     if (R() < .13) {                               // a park: the district breathes
-      rdSlab(B, bx - 1.9, bx + 1.9, bz - 1.9, bz + 1.9, RD_Y, mix(0x2f4a2b, .10 + t * .3));
+      /* ⭐ ROUND 7 — AND IT TAKES THE GROUND IT STANDS ON, then feathers.
+         A 3.8-unit slab of one flat green with four straight edges is the same
+         artefact the round-5 critic found on the tree tiles, three hundred lines
+         and one mesh away: it sits ON the colour field rather than in it. It is
+         out on the PLAIN, which carries the same field as the plate (see the
+         plain's rebuild), so NC_GROUND_AT answers for it too — 44% of the ground
+         under it, and a 0.34-wide border ring at 76% that puts a second, much
+         quieter edge outside the first. Two slabs instead of one, no mesh, no
+         material; rdSlab merges into the bucket this block already emits.
+         ⚠ THE RING IS DRAWN FIRST AND THE CORE OVERLAPS IT — a butt joint at one
+           height between two merged slabs is a z-fight, and out here the camera
+           is always looking along the ground. */
+      const pg = _rdGndMix(0x2f4a2b, bx, bz, .44);
+      const pr = _rdGndMix(0x2f4a2b, bx, bz, .76);
+      rdSlab(B, bx - 1.9, bx + 1.9, bz - 1.9, bz + 1.9, RD_Y, mix(pr, .10 + t * .3));
+      rdSlab(B, bx - 1.56, bx + 1.56, bz - 1.56, bz + 1.56, RD_Y + .002, mix(pg, .10 + t * .3));
       for (let i = 0; i < 5; i++)
         tree(bx - 1.5 + R() * 3, bz - 1.5 + R() * 3, (R() * 3) | 0);
       continue;
@@ -6361,25 +6427,29 @@ function makeRailyard(lvl) {
   g.userData.railRoads = roads;
   return g;
 }
-/* tx,tz are the tile's grid coords. They are OPTIONAL and only `housing` reads
-   them today — it seeds its archetype, its proportions and its palette off the
-   plot, so a house is the same house after a reload, an upgrade or a repair, and
-   so neighbours can agree on being a terrace. Every other recipe ignores them,
-   and a call with the coords omitted still works exactly as it did (makeHousing
-   falls back to Math.random) — which is what the model-preview and the test
-   harnesses do. */
+/* tx,tz are the tile's grid coords. They are OPTIONAL, and a call with them
+   omitted still works exactly as it did (every reader falls back to Math.random)
+   — which is what the model-preview and the test harnesses do.
+   ⚠ FOUR RECIPES READ THEM NOW, NOT ONE. `housing` seeds its archetype, its
+     proportions and its palette off the plot, so a house is the same house after
+     a reload, an upgrade or a repair, and so neighbours can agree on being a
+     terrace. As of round 7 `tree`, `bush` and `garden` do the same — and a tree
+     tile ALSO reads its neighbours through them, because a tree with a road
+     beside it is a street tree and stands in a kerbed pit while one in open
+     ground stands in grass. See makeTree2's header for the two rounds of the
+     visual loop that the Math.random version cost. */
 function buildMesh(type, lvl, tx, tz) {
   const g = new THREE.Group();
   const s = 1 + (lvl - 1) * .16;
   switch (type) {
     case 'tree': {
-      _adopt(g, makeTree2(lvl));
+      _adopt(g, makeTree2(lvl, tx, tz));
       break; }
     case 'bush': {
-      _adopt(g, makeBush(lvl));
+      _adopt(g, makeBush(lvl, tx, tz));
       break; }
     case 'garden': {
-      _adopt(g, makeGarden(lvl));
+      _adopt(g, makeGarden(lvl, tx, tz));
       break; }
     case 'fountain': {
       _adopt(g, makeFountain(lvl));
@@ -7245,7 +7315,15 @@ function _hWallPanel(w, h, t, holes, gable) {
 /* lvl is 1..N (levels add storeys). tx,tz are the tile's grid coords; both may
    be omitted, in which case the house is rolled fresh from Math.random.
    Sits on a 1x1 tile centred at origin, base at y=0. Returns a THREE.Group. */
+/* ⭐ ROUND 7 — THE GROUND CONTEXT IS OPENED FOR THE WHOLE CALL. It is what lets
+   this plot's lawn take its green from the terrain THIS plot stands on and carry
+   the plate's own grain (see _vgCtxOpen / NAT_GROUND). The stream is untouched:
+   makeHousing has had its own tile-seeded `R` since round 3 and every helper it
+   calls is handed that R explicitly. */
 function makeHousing(lvl, tx, tz) {
+  return _nOnTile(tx, tz, () => _hHouseBody(lvl, tx, tz));
+}
+function _hHouseBody(lvl, tx, tz) {
   const g = new THREE.Group();
 
   /* ── WHO THIS HOUSE IS ───────────────────────────────────────────────────
@@ -8675,7 +8753,14 @@ function makeHousing(lvl, tx, tz) {
     _hBucket(B.core,  MAT.dark,    null),
     _hBucket(B.apron, apronMat,    null, false),
     _hBucket(B.path,  pathMat,     null, false),
-    _nBucket(B.lawn,  NAT_PAINT,   true, false),
+    /* ⚠ THE LAWN LEFT NAT_PAINT FOR NAT_GROUND IN ROUND 7, AND THE MESH COUNT
+       IS UNCHANGED — it was already its own bucket. It moved because a lawn is
+       GROUND: it now carries the plate's grain, phased off world coordinates, so
+       the blotch that runs off the terrain runs straight on across the garden
+       instead of stopping dead at the property line. The tint is divided by
+       _TEX_LIN inside _vegLawn to pay for the map; do not tint this bucket from
+       anywhere else without going through _vgGnd. */
+    _nBucket(B.lawn,  NAT_GROUND,  true, false),
     _nBucket(B.leaf,  NAT_PAINT,   true, true),
   ]) if (m) inner.add(m);
 
@@ -9038,6 +9123,26 @@ const rdSlab = (bucket, x0, x1, z0, z1, top, c) => {
   if (w <= 1e-4 || d <= 1e-4) return;
   rdPart(bucket, rdGeo(w, top - RD_BASE, d), (x0 + x1) / 2, (top + RD_BASE) / 2, (z0 + z1) / 2, c);
 };
+/* ⭐ ROUND 7 — BLEND A HEX TOWARD THE TERRAIN AT A WORLD POSITION, and hand back
+   a HEX, because everything in this kit is authored and merged as one.
+   It is the hex-in/hex-out twin of the nature kit's _vgGnd: the road kit's
+   surfaces are founded in the terrain and a patch of green out on the plain that
+   ignores the colour field is the artefact the round-5 critic named on the tree
+   tiles. Degrades to the input colour if the plate block has not published a
+   sampler, which is the harness/preview path.
+   ⚠ NO _TEX_LIN DIVIDE HERE. rdSlab's parts land on the road kit's own
+     materials, and only NAT_GROUND carries the plate's map — see _VG_TEXDIV for
+     which colours have to pay for a map and which must not. */
+const _rdGndC = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+function _rdGndMix(hex, wx, wz, amt) {
+  if (!_rdGndC || typeof NC_GROUND_AT !== 'function' || !NC_GROUND_AT) return hex;
+  try {
+    const g = NC_GROUND_AT(wx, wz);
+    _rdGndC.setHex(hex).lerp(g, Math.max(0, Math.min(1, amt)));
+    return _rdGndC.getHex();
+  } catch (e) { return hex; }
+}
+
 /* An overlay: a 6mm slab lying ON the surface rather than founded in the
    ground. `top` picks the layer — see THE SURFACE STACK above. */
 const rdFlat = (bucket, w, d, x, z, top, c) => {
@@ -15328,6 +15433,35 @@ function makeGasstation(lvl) {
    existing mapped MAT.* palette instead, which is why those four materials cost
    nothing new. */
 const NAT_PAINT = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .93, vertexColors: true });
+
+/* ⭐ ROUND 7 — THE GROUND MATERIAL. One more shared material for the whole city,
+   and the only one that carries the PLATE'S OWN GRAIN.
+   The round-5 critic's second finding was that a tree-base patch "sits ON TOP of
+   the newly mottled ground and not receiving the mottle". Tinting the patch from
+   the field (below) fixes its HUE and its LEVEL, but not that read on its own:
+   the plate is blotched at a 3.71-tile period, which is ~30px in the district
+   frame, so a patch that is internally smooth still resolves as a smooth shape
+   laid on rough ground however well its mean is matched. The fix is that the
+   patch carries the SAME canvas at the SAME period, phased off WORLD coordinates
+   — so the blotch that runs off the plate runs straight on across the patch and
+   there is no boundary to see.
+   ⚠ roughness 1, not NAT_PAINT's .93 — it is ground, and it is the number the
+     plate itself uses.
+   ⚠ IT DEGRADES. If the plate block did not publish a map (it always does; this
+     is the harness/preview path where the whole block may not have run), the
+     material is a plain vertex-colour one and _VG_TEXDIV is 1, so a patch is
+     merely tinted rather than grained. Never black, never double-lit. */
+const NAT_GROUND = new THREE.MeshStandardMaterial({
+  color: 0xffffff, roughness: 1, vertexColors: true,
+  map: (typeof NC_GROUND_MAP !== 'undefined' && NC_GROUND_MAP) || null });
+/* ⚠ AND THE DIVIDE. This is the 0.78-vs-0.578 bug the v122 pass spent a round
+   on, in its second incarnation: a map is decoded to LINEAR before it multiplies
+   and this one's mean is _TEX_LIN, so a colour authored for an unmapped material
+   renders at 83% of its stated level the moment the map goes on. Every tint that
+   lands on NAT_GROUND is divided by this; every tint that lands on NAT_PAINT is
+   not. Getting the two the wrong way round is invisible in review and obvious in
+   a capture, which is why it is one named constant and not an inline literal. */
+const _VG_TEXDIV = NAT_GROUND.map ? _TEX_LIN : 1;
 /* One water material for pool surfaces, falls, jets and the orb. Slightly
    emissive so a fountain still reads at night, when the sun key is off and a
    pure-diffuse blue disc goes black. */
@@ -15357,14 +15491,39 @@ const _N_MARK  = 0x3a352e;   // birch bark scars
 /* ── helpers. Everything is `_n`-prefixed: this file and r1_housing.js are
    spliced into the SAME es module, where two top-level `function f` of the same
    name is a hard SyntaxError, not a silent shadow. ────────────────────────── */
-const _nR = Math.random;
+/* ⭐ ROUND 7 — `_nR` IS AN INDIRECTION, NOT `Math.random` ITSELF, AND THAT IS A
+   BUG FIX RATHER THAN A TIDY-UP.
+   A decoration tile was rebuilt from Math.random on every call, and buildMesh
+   runs again on load, on upgrade, on repair and on an admin re-skin — so a tree
+   tile re-rolled which SHAPE OF GROUND it stands on every single time the page
+   opened. That is the exact class of bug makeHousing's header calls out ("SEEDED
+   ON THE TILE, NOT ON THE MOMENT"), and it cost this project two rounds:
+   round 5's critic reported that "the kerbed street-tree pit was DELETED and
+   replaced with a flat lime rectangle", and it was not — makeTree2's paved
+   branch is byte-for-byte what round 4 shipped. The tile simply lost a coin
+   flip in the round-5 capture that it had won in the round-4 one, and a whole
+   round of A/B was spent comparing two different cities.
+   So a recipe may now BIND the kit's stream to its own tile hash for the
+   duration of its call. `_nStream` is null everywhere else and every helper
+   behaves exactly as it did.
+   ⚠ IT MUST BE CLEARED IN A `finally`. A recipe that throws half-way would
+     otherwise leave the whole city drawing off one exhausted tile stream. */
+let _nStream = null;
+const _nR = () => (_nStream || Math.random)();
 const _nPick = a => a[(_nR() * a.length) | 0];
 const _nJit = (a, b) => a + _nR() * (b - a);
 
 // One THREE.Color per hex for the life of the page. THREE.Color does the
 // sRGB→linear conversion, so these hexes land exactly where material.color would.
+/* ⚠ A CALLER MAY NOW HAND A THREE.Color INSTEAD OF A HEX, and it is not
+   interchangeable sugar: a tone that has been blended toward the terrain field
+   (see _vgGnd) is a continuous colour with no hex to name it, and round-tripping
+   it through getHex() would quantise it back to 8 bits per channel AND pay a
+   linear→sRGB→linear conversion for nothing. Hexes are still cached; a Color is
+   passed through untouched and is NEVER cached — the caller usually owns one
+   scratch instance and reuses it. */
 const _N_COL = {};
-const _nCol = hex => _N_COL[hex] || (_N_COL[hex] = new THREE.Color(hex));
+const _nCol = c => (c && c.isColor) ? c : (_N_COL[c] || (_N_COL[c] = new THREE.Color(c)));
 
 // Uniform vertex colour over a whole geometry.
 function _nTint(geo, hex) {
@@ -15561,6 +15720,91 @@ const _N_ROUGH = [0x4b7a3a, 0x436e34, 0x547f3e, 0x3d6a30];
 const _vgPick = (R, a) => a[(R() * a.length) | 0];
 const _vgJit  = (R, a, b) => a + R() * (b - a);
 
+/* ═══ ⭐ ROUND 7 — THE GROUND CONTEXT ═══════════════════════════════════════
+   A recipe is authored in TILE-LOCAL space and knows nothing about where on the
+   map it stands, which is exactly why every patch it lays was a fixed hex. The
+   context is the seam: a recipe that knows its tile opens one for the length of
+   its call, and every ground helper below then tints and phases itself against
+   the terrain the tile actually sits on.
+
+   THE TWO THINGS IT CARRIES, AND WHY BOTH ARE NEEDED:
+   · `_VG_GND` — the plate's authored tone under this tile, from NC_GROUND_AT.
+     A patch is BLENDED toward it rather than replaced by it: a mown lawn is a
+     watered surface cut into dry grassland and has to stay the greener, brighter
+     thing (round 5 measured that and it still holds), but it has to be the
+     greener thing THAN THIS GROUND, here, not than an average of all ground. A
+     patch on the map's dry ridge now comes out pale and yellow and one in a
+     green hollow comes out deep, and both of them move WITH the field instead of
+     cutting a same-coloured hole in it.
+   · `_VG_OX/_VG_OZ` — the tile's world origin, so a patch's UV can be phased off
+     WORLD coordinates and its grain lines up with the plate's, seamlessly.
+
+   ⚠ IT IS A GLOBAL WITH A `finally`, NOT A PARAMETER, AND THAT IS DELIBERATE.
+     The alternative is threading two more arguments through _vegLawn, _vegRoot,
+     _vegPatch, _nSlab and _nPut — five helpers and about forty call sites — to
+     carry a value that is constant for a whole recipe. The scope is one
+     synchronous call with no await and no recursion in it.
+   ⚠ A KEYLESS / COORDLESS CALLER GETS NO CONTEXT AND THE OLD BEHAVIOUR. The
+     model preview and the test harnesses call buildMesh without coords; they
+     must keep working, and they do — every helper falls back to its authored
+     hex when `_VG_GND` is null.                                              */
+let _VG_GND = null;                  // THREE.Color | null — terrain tone at this tile
+let _VG_OX = 0, _VG_OZ = 0;          // world offset of the tile's local origin
+const _VG_GNDC = new THREE.Color();  // the one scratch the context owns
+function _vgCtxOpen(tx, tz) {
+  const known = typeof tx === 'number' && typeof tz === 'number' && isFinite(tx) && isFinite(tz);
+  if (!known || typeof NC_GROUND_AT !== 'function' || !NC_GROUND_AT) { _vgCtxClose(); return false; }
+  // placeMeshAt's own expression — the tile's CENTRE in world units. A second
+  // transcription of it is how the grain would end up half a tile out of phase.
+  _VG_OX = tx - HALF + .5; _VG_OZ = tz - HALF + .5;
+  _VG_GND = NC_GROUND_AT(_VG_OX, _VG_OZ, _VG_GNDC);
+  return true;
+}
+function _vgCtxClose() { _VG_GND = null; _VG_OX = 0; _VG_OZ = 0; }
+
+/* Blend an authored hex toward the terrain under this tile and hand back a
+   Color ready for a NAT_GROUND bucket (i.e. already divided — see _VG_TEXDIV).
+   `amt` is how much of the ground shows through: 0 keeps the authored tone and
+   1 IS the ground. A scratch is passed in by callers that emit several tones in
+   one recipe, because this runs a few dozen times a tile.                    */
+const _VG_MIX = new THREE.Color();
+// Two more for _vegLawn (body + mower stripe) and three for _vegPatch's rings,
+// all module-scope: a recipe emits a few dozen of these a tile and allocating a
+// Color per slab is how a merge-based kit starts churning the heap.
+const _VG_L1 = new THREE.Color(), _VG_L2 = new THREE.Color();
+const _VG_P1 = new THREE.Color(), _VG_P2 = new THREE.Color();
+function _vgGnd(hex, amt, out) {
+  const c = (out || _VG_MIX);
+  if (hex && hex.isColor) c.copy(hex); else c.setHex(hex);
+  if (_VG_GND && amt > 0) c.lerp(_VG_GND, amt > 1 ? 1 : amt);
+  if (_VG_TEXDIV !== 1) {
+    c.r = Math.min(1, c.r / _VG_TEXDIV);
+    c.g = Math.min(1, c.g / _VG_TEXDIV);
+    c.b = Math.min(1, c.b / _VG_TEXDIV);
+  }
+  return c;
+}
+
+/* Re-phase a geometry's UV off WORLD x/z at the plate's grain period, so the
+   blotch that runs off the plate runs straight on across this patch.
+   ⚠ EVERY vertex, not just the top face. A slab's sides are 30mm tall and are
+     never read, and rewriting the whole attribute is one pass instead of a
+     face-index lookup that would have to know which primitive built it.
+   ⚠ CALLED AFTER _nPut HAS TRANSFORMED THE GEOMETRY, never before — the
+     position array has to already be in the recipe's own space or the phase is
+     taken from wherever BoxGeometry happened to author it. */
+function _vgMapUV(geo) {
+  if (!geo || !geo.attributes || !geo.attributes.uv) return geo;
+  const p = geo.attributes.position.array, uv = geo.attributes.uv.array;
+  const n = geo.attributes.position.count, per = NC_GRAIN_PER;
+  for (let i = 0; i < n; i++) {
+    uv[i * 2]     = (p[i * 3] + _VG_OX) / per;
+    uv[i * 2 + 1] = (p[i * 3 + 2] + _VG_OZ) / per;
+  }
+  geo.attributes.uv.needsUpdate = true;
+  return geo;
+}
+
 /* ⭐ ROUND 5 — A LAWN IS NOT ONE OF FOUR GREENS.
    Round 4 gave every plot ONE lawn tone instead of three, which was right and
    was not enough: the four tones above span 0.082 of value and about 8° of hue,
@@ -15608,13 +15852,23 @@ function _vegClump(list, R, x, z, y0, r, squash, tones) {
   }
 }
 
-// A few blades of grass / weeds, for the seams a slab can't sell on its own.
-function _vegTufts(list, R, n, x0, x1, z0, z1, y, tones) {
-  for (let i = 0; i < n; i++)
-    _nPut(list, new THREE.ConeGeometry(_vgJit(R, .010, .020), _vgJit(R, .030, .060), 4),
-          _vgPick(R, tones || _N_GRASS),
+/* A few blades of grass / weeds, for the seams a slab can't sell on its own.
+   ⚠ `mapped` IS NOT COSMETIC — it says which MATERIAL the caller's bucket uses.
+     A tuft in a NAT_PAINT bucket is tinted with its raw hex; a tuft that lands in
+     a NAT_GROUND bucket (which _vegLawn's do, since every one of its callers now
+     routes grass there) has to be divided by _TEX_LIN or it renders at 83% of
+     its stated level — the same trap _VG_TEXDIV exists to name. It also takes a
+     little of the terrain's tone, so a weed on the dry ridge is the dry ridge's
+     weed. */
+function _vegTufts(list, R, n, x0, x1, z0, z1, y, tones, mapped) {
+  for (let i = 0; i < n; i++) {
+    const hex = _vgPick(R, tones || _N_GRASS);
+    const g = _nPut(list, new THREE.ConeGeometry(_vgJit(R, .010, .020), _vgJit(R, .030, .060), 4),
+          mapped ? _vgGnd(hex, .26, _VG_L2) : hex,
           _vgJit(R, x0, x1), y + .018, _vgJit(R, z0, z1),
           [_vgJit(R, -.3, .3), R() * 3, _vgJit(R, -.3, .3)]);
+    if (mapped) _vgMapUV(g);
+  }
 }
 
 /* ⭐ ROUND 5 — WHAT A TREE STANDS IN.
@@ -15636,6 +15890,74 @@ function _vegRoot(list, R, x, z, y, r) {
   const soil = _vgPick(R, _N_SOIL);
   _nPut(list, new THREE.CylinderGeometry(r * .82, r * 1.06, .020, 8), soil, x, y + .002, z);
   _vegTufts(list, R, 2, x - r * .9, x + r * .9, z - r * .9, z + r * .9, y + .006, _N_ROUGH);
+}
+
+/* ⭐ ROUND 7 — THE PATCH. What a tree standing in the OPEN GROUND stands in,
+   as opposed to _vegRoot (the 6mm soil mound a tree in a mown GARDEN stands in)
+   and as opposed to the kerbed pit (what a tree in the PAVEMENT stands in).
+   Three different things in three different places, and conflating the first two
+   is what cost street furniture a point: round 5 gave every open-ground tree a
+   full-tile _vegLawn quad and the critic read it back exactly — "a single flat,
+   unmottled, over-saturated lime colour with a HARD STRAIGHT EDGE".
+
+   THE EDGE IS THE FINDING, AND IT IS ANSWERED THREE WAYS AT ONCE:
+   1. IT IS NOT A RECTANGLE. Concentric 14-sided discs, so there is no straight
+      run anywhere on the outline. A rectangle on open ground is read as a card
+      laid down; nothing in a landscape is axis-aligned except things people
+      built, and a patch of grass under a tree is not one of them.
+   2. IT FEATHERS. The rim ring takes 78% of the terrain's own tone, the middle
+      52%, the core 30% — so the outermost edge is nearly the ground it sits on
+      and the transition happens over three steps instead of one. An edge whose
+      far side matches its near side is not an edge.
+   3. IT CARRIES THE GRAIN. Every ring goes out world-phased on NAT_GROUND, so
+      the plate's blotches run straight across it (see NAT_GROUND's note). This
+      is the part that a colour match alone cannot buy at the district camera.
+   Plus 3–5 lobes pushed out past the rim at random bearings, because three
+   concentric circles is still a bullseye and grass does not grow in one.
+
+   ⚠ THE RINGS DESCEND OUTWARD, 1.5 THOU A STEP, so nothing z-fights and the
+     core still catches the shadow line round 5 built the mound for.
+   ⚠ ~230 TRIANGLES, in the caller's own bucket. No mesh, no material. */
+/* ⭐ ROUND 7 — THE SKIRT. What a full-tile grass surface uses instead of ending.
+   A tile that has to be covered edge to edge (a bush bed's surround, say) cannot
+   be a disc, so it keeps its rectangle — and then lays a narrow ring around its
+   own perimeter that is nearly the terrain. One straight edge at full contrast
+   becomes two at roughly half each, the outer one against ground it almost
+   matches, which is the whole of what "lose the hard edge" costs when the shape
+   itself has to stay square. Four slabs, 48 triangles, same bucket.
+   ⚠ IT SITS +1 THOU AND OVERLAPS, it does not tile against the lawn — a butt
+     joint between two slabs at the same height is a z-fight waiting for the
+     first camera that looks along it. */
+function _vegSkirt(list, R, y, w, tones) {
+  const e = .5, i = .5 - (w || .085);
+  const t = tones || _N_ROUGH;
+  const put = (x0, x1, z0, z1) =>
+    _vgMapUV(_nSlab(list, _vgGnd(_vgPick(R, t), .80, _VG_P1), x0, x1, z0, z1, y + .001, _N_GB));
+  put(-e, e, -e, -i); put(-e, e, i, e); put(-e, -i, -i, i); put(i, e, -i, i);
+}
+
+function _vegPatch(list, R, x, z, y, r, tones) {
+  const T = tones || _N_ROUGH;
+  const base = _N_GB;
+  const ring = (rr, amt, dy, out) => {
+    const yy = y + dy;
+    _vgMapUV(_nPut(list, new THREE.CylinderGeometry(rr, rr * 1.02, yy - base, 14),
+                   _vgGnd(_vgPick(R, T), amt, out), x, (yy + base) / 2, z));
+  };
+  ring(r,        .78, -.003, _VG_P1);
+  ring(r * .70,  .52, -.0015, _VG_P2);
+  ring(r * .42,  .30,  0,     _VG_MIX);
+  /* The lobes take the RIM's blend, not the core's — they are the ragged outside
+     of the patch, so a lobe that came out core-green would put the brightest
+     tone in the frame at the furthest point from the trunk, which is backwards
+     and reads as splatter. */
+  for (let i = 0, n = 3 + (R() * 3 | 0); i < n; i++) {
+    const a = R() * 6.2832, d = r * _vgJit(R, .72, 1.00), rr = r * _vgJit(R, .26, .46);
+    const yy = y - .004;
+    _vgMapUV(_nPut(list, new THREE.CylinderGeometry(rr, rr, yy - base, 9),
+                   _vgGnd(_vgPick(R, T), .74, _VG_P1),
+                   x + Math.cos(a) * d, (yy + base) / 2, z + Math.sin(a) * d));
+  }
 }
 
 /* A grassed area. `mown` picks the palette; `tufts` is ignored on a mown lawn
@@ -15687,7 +16009,32 @@ function _vegLawn(list, R, x0, x1, z0, z1, top, base, mown, tufts, key) {
      cut into while still spanning 0.28 plot to plot. */
   const col = key == null ? tones[k]
             : _vgShade(tones[k], ((((kk / tones.length) | 0) % 7) - 1.4) / 4.0);
-  _nSlab(list, col, x0, x1, z0, z1, top, base);
+  /* ⭐ ROUND 7 — AND THEN IT RECEIVES THE GROUND. See the ground context above.
+     ⚠ THE TWO BLENDS ARE NOT THE SAME NUMBER, AND THE GAP IS THE WHOLE POINT.
+       A VERGE is the terrain, merely unmown, so it takes 52% of it and all but
+       disappears into the field — which is what kills the round-5 critic's
+       "hard straight edge", because an edge you cannot see the far side of is
+       not an edge. A MOWN LAWN is a watered surface cut INTO that terrain and
+       has to stay the brighter, greener thing (round 5 measured a lawn at ~0.72
+       value against ~0.48 rough and against the plate's 0.537 mean, and the
+       parcel read depends on it), so it takes only 30% — enough to pull the
+       lime back toward the ground's own hue family and to make a lawn on the
+       map's dry ridge come out paler than one in a green hollow, and not enough
+       to stop it being a lawn.
+     ⚠ Tinting with a Color, not a hex, so the blend is not quantised — and the
+       two scratches are separate because the stripe below is still live when the
+       body is emitted. */
+  /* ⚠ AND A KEYLESS LAWN TAKES NEARLY HALF AGAIN AS MUCH GROUND AS A PLOT'S
+       DOES. `key` is what says "this grass belongs to a property" (see its note
+       above); a lawn with no key is a VERGE, a decoration tile's own ground, a
+       municipal strip — grass that is out in the landscape rather than cut into
+       it, and it has no owner to make it the exception. Photographed at .30 the
+       bush tile's keyless verge metered value 0.72 against terrain at 0.49 and
+       read as exactly the "over-saturated lime" card the round-5 critic named,
+       while the housing plots at the same .30 read correctly, because those DO
+       have an owner. Same helper, two populations, two numbers. */
+  const _lc = _vgGnd(col, mown ? (key == null ? .46 : .30) : .58, _VG_L1);
+  _vgMapUV(_nSlab(list, _lc, x0, x1, z0, z1, top, base));
   if (mown && x1 - x0 >= .25 && z1 - z0 >= .25) {
     /* ⚠ THE STRIPE IS DERIVED FROM THE TONE, NOT INDEXED OFF THE ARRAY. It was
        `tones[(k + 2) % n]`, which worked only while every entry was within 8%
@@ -15695,11 +16042,11 @@ function _vegLawn(list, R, x0, x1, z0, z1, top, base, mown, tufts, key) {
        palette and the "mown in passes" read becomes two unrelated greens in one
        garden. A pass of a mower lightens the grass it lays down — so lighten
        the tone this plot actually has. */
-    const alt = _vgShade(col, .30), w = (z1 - z0) / 5;
+    const alt = _vgGnd(_vgShade(col, .30), .30, _VG_L2), w = (z1 - z0) / 5;
     for (let i = 1; i < 5; i += 2)
-      _nSlab(list, alt, x0, x1, z0 + i * w, z0 + (i + 1) * w, top + .001, top - .002);
+      _vgMapUV(_nSlab(list, alt, x0, x1, z0 + i * w, z0 + (i + 1) * w, top + .001, top - .002));
   }
-  if (!mown && tufts) _vegTufts(list, R, tufts, x0 + .02, x1 - .02, z0 + .02, z1 - .02, top, _N_ROUGH);
+  if (!mown && tufts) _vegTufts(list, R, tufts, x0 + .02, x1 - .02, z0 + .02, z1 - .02, top, _N_ROUGH, true);
 }
 
 /* A CLIPPED HEDGE, which is a distinct FORM and not a green wall: a flat-sided
@@ -15837,20 +16184,76 @@ function _pcKerb(push, slab, e, top, base, t, rise) {
    TREE — three species, everything else jittered per instance.
    MESHES: 2 (grass variant) or 3 (paved variant).
    ══════════════════════════════════════════════════════════════════════════ */
-function makeTree2(lvl) {
+/* ⭐ ROUND 7 — A TREE TILE IS A PROPERTY OF ITS PLOT, NOT OF THE MOMENT IT WAS
+   DRAWN, and that is a bug fix that cost this project two rounds rather than a
+   nicety. See the header on `_nStream`: this recipe rolled its GROUND TREATMENT
+   off Math.random at call time, and buildMesh runs again on load, on upgrade, on
+   repair and on a re-skin — so the same tile came up a kerbed pavement pit in
+   one capture and open grass in the next. The round-5 critic, reading the pixels
+   correctly, reported the pit as DELETED and street furniture lost a point. The
+   paved branch below is byte-for-byte what round 4 shipped; it had never been
+   touched. Nothing else in the loop is worth measuring while the subject can
+   change shape between two photographs of it.
+
+   ⚠ THE WRAPPER EXISTS SO THE BODY DOES NOT HAVE TO BE RE-INDENTED INSIDE A
+     `try`. The stream and the ground context are process-wide for the length of
+     the call and BOTH have to be released even if the body throws, which is what
+     the `finally` is for — a recipe that threw half-way would otherwise leave
+     the rest of the city drawing off one exhausted tile stream.
+   ⚠ THE PREVIOUS STREAM IS SAVED AND RESTORED rather than nulled. Nothing nests
+     today; a helper that ever calls a recipe would be an invisible corruption of
+     the caller's stream if this assumed it was the top of the tree. */
+function _nOnTile(tx, tz, fn) {
+  const bound = _vgCtxOpen(tx, tz);
+  const prev = _nStream;
+  if (bound && typeof rdRng !== 'undefined') _nStream = rdRng(tx, tz);
+  try { return fn(bound); } finally { _nStream = prev; _vgCtxClose(); }
+}
+/* Is this tile on a street? A tree with a road on any of its four sides is a
+   STREET tree; one with none is standing in open ground. isRoad() is declared
+   ~4,000 lines below and hoists, and game.tiles is populated long before any
+   mesh is built — but it is wrapped anyway, because the harness and the model
+   preview build meshes with no `game` at all. */
+function _nOnStreet(tx, tz) {
+  try {
+    return typeof isRoad === 'function' &&
+      (isRoad(tx - 1, tz) || isRoad(tx + 1, tz) || isRoad(tx, tz - 1) || isRoad(tx, tz + 1));
+  } catch (e) { return false; }
+}
+function makeTree2(lvl, tx, tz) {
+  return _nOnTile(tx, tz, bound => _nTreeBody(lvl, bound && _nOnStreet(tx, tz), bound));
+}
+function _nTreeBody(lvl, street, bound) {
   const sh = _nShell(lvl), inner = sh.inner;
   const GY = _nGY();
 
-  const B = { apron: [], flat: [], solid: [] };
+  const B = { apron: [], gnd: [], flat: [], solid: [] };
   const T = [];                       // the tree itself — leaned as one at the end
 
   /* ── ground ──────────────────────────────────────────────────────────────
      Two treatments, because a city has both. PAVED: the tile is paved to the
      edge with a square planting pit cut OUT of it (four apron slabs, not one
      with a bed dropped on top — a recessed pit reads as a real opening in the
-     paving, a raised one reads as a box). GRASS: the tile is lawn with a bare
-     soil ring scuffed around the trunk. */
-  const paved = _nR() < .58;
+     paving, a raised one reads as a box). GRASS: open ground with a feathered
+     patch scuffed around the trunk.
+
+     ⭐ ROUND 7 — WHICH ONE IS A QUESTION ABOUT THE TILE, NOT A COIN FLIP.
+     `paved = _nR() < .58` was the whole decision for five rounds, so a tree on
+     the pavement outside a terrace had a 42% chance of standing in a lawn and a
+     tree in the middle of a park had a 58% chance of standing in paving. The
+     BAR's suburban reference has both and they are not interchangeable: a
+     STREET tree stands in a kerbed pit cut into the footway, and a tree in open
+     ground stands in grass. So the road decides — see makeTree2's `street`.
+     ⚠ THE ROLL IS STILL DRAWN when the answer is known, and that is the same
+       argument _vegLawn's `key` makes: every draw after this point (the pit
+       size, the species, the lean) comes off one seeded stream, and a branch
+       that consumed one fewer number would shift the whole tile.
+     ⚠ AND A TILE THAT IS NOT ON A STREET CAN STILL BE PAVED, at 1-in-6 — a
+       courtyard, a plaza corner, the middle of a precinct. Dropping it to zero
+       would make "paved" mean "adjacent to a road" exactly, which is a rule a
+       viewer can learn and then see everywhere. */
+  const roll = _nR();
+  const paved = bound ? (street || roll < .17) : roll < .58;
   const soil = _nPick(_N_SOIL);
   if (paved) {
     const p = _nJit(.195, .235);                       // pit half-size
@@ -15886,9 +16289,25 @@ function makeTree2(lvl) {
        both in the city is what stops every green tile reading as one municipal
        sward — the two palettes are ~.17 apart in luminance, which survives being
        forty pixels tall. Only the rough one carries tufts and stones: a lawn
-       that is mown does not have weeds in it, which is what mowing IS. */
+       that is mown does not have weeds in it, which is what mowing IS.
+
+       ⭐ ROUND 7 — NEITHER OF THEM IS A FULL-TILE QUAD ANY MORE.
+       Round 5 laid both as one _vegLawn slab covering the whole tile, and the
+       critic read it straight back: "a single flat, unmottled, over-saturated
+       lime colour with a HARD STRAIGHT EDGE, sitting ON TOP of the newly mottled
+       ground and not receiving the mottle." A rectangle is right for a lawn
+       somebody laid out and mows to its edge — a garden, a park quadrant — and
+       it is wrong for the ground a tree happens to stand in, which is what this
+       tile is. Both variants therefore go through _vegPatch: concentric discs
+       feathering into the terrain's own tone and carrying the plate's own grain,
+       so there is no straight edge anywhere on the outline and no colour step to
+       find at it. `kept` still picks the PALETTE, which is the part of the
+       distinction that was always real — a mown patch under a tree is a real
+       thing and it is brighter than the rough one — and it still gates the
+       stones and the weeds below, because that is what mowing IS.
+       ⚠ B.gnd, not B.flat: it is the one bucket on the mapped material. */
     const kept = _nR() < .5;
-    _vegLawn(B.flat, _nR, -.5, .5, -.5, .5, GY, _N_GB, kept, 0);
+    _vegPatch(B.gnd, _nR, 0, 0, GY, _nJit(.40, .47), kept ? _N_MOWN : _N_ROUGH);
     _nPut(B.flat, new THREE.CylinderGeometry(_nJit(.15, .20), _nJit(.20, .26), .012, 14), soil, 0, GY + .006, 0);
     if (!kept) {
       for (let i = 0; i < 5; i++) {                                 // scattered field stones
@@ -16001,6 +16420,12 @@ function makeTree2(lvl) {
 
   for (const m of [
     _nBucket(B.apron, _nApronMat(), false, false),   // paving — flat, out of the shadow pass
+    /* ⭐ THE GROUND BUCKET, and it costs nothing a paved tile did not already
+       pay: a paved tile leaves it EMPTY (_nBucket returns null on an empty list)
+       and a grass tile no longer puts its lawn in B.flat, so the mesh count for
+       this recipe is unchanged at 2–3 either way. It is a bucket of its own only
+       because it is the one surface that carries the plate's grain. */
+    _nBucket(B.gnd,   NAT_GROUND,   true,  false),   // lawn / patch — grained, world-phased
     _nBucket(B.flat,  NAT_PAINT,    true,  false),   // soil, kerb, mulch, tufts, stones
     _nBucket(B.solid, NAT_PAINT,    true,  true),    // bark + canopy + fruit
   ]) if (m) inner.add(m);
@@ -16011,10 +16436,17 @@ function makeTree2(lvl) {
 /* ════════════════════════════════════════════════════════════════════════════
    BUSH — a planting BED, not three spheres. MESHES: 3.
    ══════════════════════════════════════════════════════════════════════════ */
-function makeBush(lvl) {
+/* ⚠ SEEDED ON THE TILE like makeTree2 — same argument, same wrapper. A bed that
+   re-rolls its shape on every reload is the bug the tree tile's header spells
+   out. The ground context is what lets the verge variant take its green from the
+   terrain it is cut into rather than from a fixed hex. */
+function makeBush(lvl, tx, tz) {
+  return _nOnTile(tx, tz, () => _nBushBody(lvl));
+}
+function _nBushBody(lvl) {
   const sh = _nShell(lvl), inner = sh.inner;
   const GY = _nGY();
-  const B = { apron: [], flat: [], solid: [] };
+  const B = { apron: [], gnd: [], flat: [], solid: [] };
 
   /* Three bed shapes so a run of bushes along a street doesn't repeat: a full
      square bed, a bed pushed to one edge with paving in front of it, and a
@@ -16043,12 +16475,17 @@ function makeBush(lvl) {
   // ⚠ vKept is rolled ONCE, outside the closure. Rolling it per call gives one
   //   tile four independently-mown quarters, which reads as damage.
   const fill = verge
-    ? (a, b, c, d) => _vegLawn(B.flat, _nR, a, b, c, d, GY, _N_GB, vKept, 3)
+    ? (a, b, c, d) => _vegLawn(B.gnd, _nR, a, b, c, d, GY, _N_GB, vKept, 3)
     : (a, b, c, d) => _nSlab(B.apron, null, a, b, c, d, GY, _N_GB);
   fill(-.5, .5, -.5, z0);
   fill(-.5, .5, z1, .5);
   fill(-.5, x0, z0, z1);
   fill(x1, .5, z0, z1);
+  /* ⭐ ROUND 7 — and on the GRASS variant the tile then feathers into the map
+     rather than stopping dead at its own edge. See _vegSkirt. The paved variant
+     needs none: a pavement is SUPPOSED to end in a straight line, and it ends
+     against a kerb or another slab rather than against open ground. */
+  if (verge) _vegSkirt(B.gnd, _nR, GY, .085, vKept ? _N_MOWN : _N_ROUGH);
 
   if (round) {
     const r = (x1 - x0) / 2;
@@ -16109,6 +16546,7 @@ function makeBush(lvl) {
 
   for (const m of [
     _nBucket(B.apron, _nApronMat(), false, false),
+    _nBucket(B.gnd,   NAT_GROUND,   true,  false),   // grass — grained, world-phased
     _nBucket(B.flat,  NAT_PAINT,    true,  false),
     _nBucket(B.solid, NAT_PAINT,    true,  true),
   ]) if (m) inner.add(m);
@@ -16120,10 +16558,14 @@ function makeBush(lvl) {
    GARDEN — four raised beds, gravel cross-paths, a hedge, a picket fence,
    a trellis arch and a birdbath. MESHES: 6.
    ══════════════════════════════════════════════════════════════════════════ */
-function makeGarden(lvl) {
+/* ⚠ SEEDED ON THE TILE like makeTree2 — see that header. */
+function makeGarden(lvl, tx, tz) {
+  return _nOnTile(tx, tz, () => _nGardenBody(lvl));
+}
+function _nGardenBody(lvl) {
   const sh = _nShell(lvl), inner = sh.inner;
   const GY = _nGY();
-  const B = { apron: [], flat: [], solid: [], wood: [], stone: [], water: [] };
+  const B = { apron: [], gnd: [], flat: [], solid: [], wood: [], stone: [], water: [] };
 
   const PW = .075;                                   // path half-width
   // (`grass` used to be picked here from _N_GRASS; the quadrant lawns now go
@@ -16140,7 +16582,7 @@ function makeGarden(lvl) {
      quadrants are .425 x .425, comfortably over _vegLawn's .25 stripe
      threshold, so each one gets two passes for 24 triangles. */
   for (const qx of [-1, 1]) for (const qz of [-1, 1])
-    _vegLawn(B.flat, _nR, qx < 0 ? -.5 : PW, qx < 0 ? -PW : .5,
+    _vegLawn(B.gnd, _nR, qx < 0 ? -.5 : PW, qx < 0 ? -PW : .5,
              qz < 0 ? -.5 : PW, qz < 0 ? -PW : .5, GY + .006, _N_GB, true);
   for (let i = 0; i < 16; i++)                                      // gravel chippings
     _nPut(B.flat, new THREE.IcosahedronGeometry(_nJit(.008, .015), 0), _nPick(_N_GRAVEL),
@@ -16236,6 +16678,7 @@ function makeGarden(lvl) {
 
   for (const m of [
     _nBucket(B.apron, _nApronMat(), false, false),
+    _nBucket(B.gnd,   NAT_GROUND,   true,  false),   // grass — grained, world-phased
     _nBucket(B.flat,  NAT_PAINT,    true,  false),
     _nBucket(B.solid, NAT_PAINT,    true,  true),
     _nBucket(B.wood,  MAT.wood,     false, true),

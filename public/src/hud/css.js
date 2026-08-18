@@ -194,6 +194,11 @@ export const HUD_CSS = `
 #ncsb-demand.on{border-color:#ff7a2f;box-shadow:0 0 14px rgba(255,122,47,.35);}
 #ncsb-demand .sbd-lab{font-family:'Cinzel',Georgia,'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;
   font-size:var(--hf-micro);letter-spacing:.12em;text-transform:uppercase;color:var(--hud-dim);padding-right:.12em;}
+/* The initial + its arrow, as one unit, so the gap between the pairs is bigger
+   than the gap inside a pair and the eye groups them correctly. */
+.dmw{display:inline-flex;align-items:center;gap:3px;}
+.dmk{font-family:'Cinzel',Georgia,serif;font-size:9px;letter-spacing:.04em;
+  color:var(--hud-dim);width:7px;text-align:center;}
 .dmini{width:26px;height:13px;position:relative;background:rgba(255,255,255,.10);
   clip-path:polygon(0 22%,68% 22%,68% 0,100% 50%,68% 100%,68% 78%,0 78%);}
 .dmini i{position:absolute;left:0;top:0;bottom:0;display:block;background:currentColor;}
@@ -361,6 +366,87 @@ body.nchud #ctrlhint{bottom:56px;}
 .ncdm-foot{padding:calc(var(--hu)*2.5) calc(var(--hu)*4);border-top:1px solid rgba(212,175,55,.22);
   font-size:var(--hf-small);color:var(--hud-dim);line-height:1.55;background:rgba(0,0,0,.25);}
 
+/* ══ THE DEMAND DOCK ══════════════════════════════════════════════════════
+   The four arrows with their NAMES, their FIGURES and their SIGNED CAUSAL
+   LISTS, on screen at the default camera. See dock.js for why this exists and
+   what round 8 actually did to the score.
+
+   🔴 BOTTOM RIGHT, AND EVERY OTHER CORNER WAS CHECKED FIRST.
+     · TOP RIGHT is the Stores popover's (#topbar, z-index 44, up to 600px
+       wide) and would have put a permanent panel under a transient one.
+     · TOP LEFT and the whole top edge belong to #nctop, which is a full-bleed
+       dock — anything there is either inside it or floating on the city again,
+       which is the thing round 6 spent itself undoing.
+     · BOTTOM CENTRE is #buildbar, #ctrlhint and the toast stack, three things
+       already stacked in 104px.
+     Bottom right is the only clear corner, it is where the reference game puts
+     its demand meters, and on all three capture framings it is sky, water or
+     empty verge rather than city.
+
+   z-index 41: UNDER #railmodal and the demand modal (42), so opening either
+   covers this rather than fighting it, and under #inspect (44). Over nothing
+   at all — the canvas has no z-index. */
+#ncdd{position:absolute;right:12px;bottom:56px;z-index:41;
+  width:322px;max-width:calc(100vw - 24px);
+  max-height:calc(100vh - var(--topbarh) - 84px);
+  display:flex;flex-direction:column;overflow:hidden;
+  border:1px solid rgba(212,175,55,.55);border-radius:12px;
+  background:var(--hud-panel);
+  box-shadow:0 22px 64px rgba(0,0,0,.68),inset 0 0 60px rgba(212,175,55,.04);}
+/* The same gilded double frame the modal and the dossier wear, so this reads as
+   part of the game rather than as a widget bolted onto it. */
+#ncdd::before{content:"";position:absolute;inset:4px;border:1px solid rgba(212,175,55,.15);
+  border-radius:8px;pointer-events:none;z-index:1;}
+#ncdd .ncdd-hd{display:flex;align-items:center;gap:calc(var(--hu)*2);
+  padding:calc(var(--hu)*2) calc(var(--hu)*3);
+  border-bottom:1px solid rgba(212,175,55,.28);
+  background:linear-gradient(180deg,rgba(212,175,55,.075),transparent);}
+#ncdd .ncdd-hd .hico{font-size:14px;line-height:1;}
+#ncdd .ncdd-hd h2{flex:1;min-width:0;font-family:'Cinzel',Georgia,'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;
+  font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:#f0d68f;font-weight:700;
+  text-shadow:0 1px 8px rgba(212,175,55,.3);padding-right:.13em;}
+.ncdd-min{border:1px solid rgba(212,175,55,.32);background:rgba(0,0,0,.3);color:var(--hud-ink);
+  border-radius:6px;width:22px;height:20px;line-height:1;cursor:pointer;font-size:11px;padding:0;}
+.ncdd-min:hover{border-color:var(--hud-gold);}
+.ncdd-min:focus-visible{outline:2px solid var(--hud-gold);outline-offset:2px;}
+#ncdd .ncdd-rows{display:flex;flex-direction:column;gap:1px;overflow-y:auto;min-height:0;
+  background:rgba(212,175,55,.12);}
+#ncdd .ncdd-ft{padding:calc(var(--hu)*1.75) calc(var(--hu)*3);border-top:1px solid rgba(212,175,55,.22);
+  font-size:var(--hf-micro);line-height:1.5;color:var(--hud-dim);background:rgba(0,0,0,.28);}
+/* Collapsed: the header stays, so the dock never disappears without leaving the
+   affordance that brings it back. */
+#ncdd.shut .ncdd-rows,#ncdd.shut .ncdd-ft{display:none;}
+
+/* ── one row: NAME + FIGURE over ARROW + SIGNED LIST ──────────────────────
+   The list sits BESIDE the meter, which is what BAR.md frame 4 shows and what
+   the strip on the status bar could never do at 26px wide. */
+.ddrow{display:block;width:100%;text-align:left;cursor:pointer;color:var(--hud-ink);
+  border:0;border-left:2px solid transparent;
+  padding:calc(var(--hu)*1.75) calc(var(--hu)*3) calc(var(--hu)*2);
+  background:linear-gradient(180deg,rgba(24,20,44,.92),rgba(10,8,20,.94));
+  transition:background .15s,border-color .15s;}
+.ddrow:hover{background:linear-gradient(180deg,rgba(40,33,68,.95),rgba(14,11,26,.95));
+  border-left-color:rgba(212,175,55,.8);}
+.ddrow:focus-visible{outline:2px solid var(--hud-gold);outline-offset:-2px;}
+.ddrow .ddhd{display:flex;align-items:baseline;gap:calc(var(--hu)*2);margin-bottom:calc(var(--hu)*1.25);}
+.ddrow .ddname{flex:1;min-width:0;font-family:'Cinzel',Georgia,'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;
+  font-size:10px;letter-spacing:.13em;text-transform:uppercase;padding-right:.13em;white-space:nowrap;}
+.ddrow .ddval{font-family:'Cinzel',Georgia,serif;font-size:15px;font-weight:700;
+  font-variant-numeric:tabular-nums;letter-spacing:.02em;}
+.ddrow .ddbody{display:flex;align-items:flex-start;gap:calc(var(--hu)*2);}
+/* The arrow is the shared .dmeter clip-path, sized for this dock: fixed width,
+   so four meters read as one column of comparable lengths rather than four bars
+   that each happen to end where their row's text did. */
+#ncdd .dmeter{flex:0 0 76px;width:76px;height:17px;margin-top:2px;}
+.ddrow .ddcauses{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
+#ncdd .dcause{font-size:var(--hf-small);line-height:1.45;padding:0;}
+#ncdd .dcause .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ddrow .ddmore,.ddrow .ddnone{font-size:var(--hf-micro);line-height:1.45;color:var(--hud-dim);}
+.ddrow .ddnone{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.ddrow .ddlimit{margin-top:calc(var(--hu)*1.25);font-size:var(--hf-micro);line-height:1.45;
+  color:#f0d68f;white-space:normal;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
 /* ══ NARROW ═══════════════════════════════════════════════════════════════ */
 /* ── NARROW. Measured at 1280x720, the width node-city's own rail note calls
    the tight case: without these the status row wrapped to two lines and the
@@ -387,10 +473,29 @@ body.nchud #ctrlhint{bottom:56px;}
 }
 @media (max-width:1080px){
   #ncsb{gap:calc(var(--hu)*2);}
+  /* The dock gives up width before it gives up a cause: the NAMES are the
+     thing this round exists to put on screen, so the ellipsis on a long label
+     is a better loss than a row with two reasons instead of three. */
+  #ncdd{width:268px;right:8px;}
+  #ncdd .dmeter{flex:0 0 58px;width:58px;}
   #ncsb-demand .sbd-lab{display:none;}
   #nctop #cityname{font-size:15px;}
   #ncdm .ncdm-body{grid-template-columns:minmax(0,1fr);}
   #ncdm .ncdm-detail{border-left:0;border-top:1px solid rgba(212,175,55,.2);}
+}
+/* ⚠ SHORT VIEWPORTS, NOT NARROW ONES, are what actually squeeze this dock: it
+   is 322px tall at three causes a row and it lives in the gap between two docks
+   that do not shrink. Under 700px of viewport the third cause of each row goes
+   — the meter, the name and the figure never do, because they are the reading.
+   Under 560 the dock starts collapsed and the status bar's Demand button is
+   how it comes back, which is the same contract the Stores popover keeps. */
+@media (max-height:700px){
+  #ncdd .ddcauses .dcause:nth-of-type(3){display:none;}
+  #ncdd .ddrow .ddlimit{-webkit-line-clamp:1;}
+}
+@media (max-height:560px){
+  #ncdd .ddcauses .dcause:nth-of-type(2){display:none;}
+  #ncdd .ncdd-ft{display:none;}
 }
 @media (prefers-reduced-motion:reduce){ .dmeter i{transition:none;} }
 `;

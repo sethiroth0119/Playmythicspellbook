@@ -100,7 +100,8 @@ export function mount(_ctx) {
     + '<span class="sbsep"></span>'
     + '<div id="ncsb-metrics"></div>'
     + '<span class="sbgrow"></span>'
-    + '<button type="button" id="ncsb-demand" title="Zone demand — residential, commercial, office, industrial">'
+    + '<button type="button" id="ncsb-demand" aria-expanded="true" '
+    + 'title="Show or hide the Zone Demand dock">'
     + '<span class="sbd-lab">Demand</span></button>'
     + '<button type="button" class="sbbtn" id="ncsb-stores" aria-expanded="false" '
     + 'title="Every other store the city holds">📦 Stores</button>'
@@ -343,13 +344,24 @@ export function render(strip) {
   const dEl = document.getElementById('ncsb-dots');
   if (dEl && dEl.__h !== dh) { dEl.__h = dh; dEl.innerHTML = dh; }
 
-  /* The four demand arrows, from the same read() the panel prints. */
+  /* The four demand arrows, from the same read() the panel and the dock print.
+     🔤 AND EACH ONE NOW CARRIES ITS INITIAL. Four identically shaped arrows in
+        four colours is a legend nobody was given: the round-8 critic could see
+        the meters and could not name them, which is the whole of the score this
+        round is answering. The full names live on the dock (dock.js) — this
+        strip is 198px of a status row that is already 1514 of 1600, so it gets
+        the one character that disambiguates R / C / O / I and the title
+        attribute keeps the full name and the figure for a hover.
+     ⚠ THE INITIAL COMES FROM d.name, not from a table here. A second list of
+       category names in this file is how the strip and the dock start
+       disagreeing about what the yellow one is called. */
   if (Array.isArray(strip)) {
     const sh = '<span class="sbd-lab">Demand</span>' + strip.map((d) => {
       const has = d.value != null;
-      return '<span class="dmini' + (has ? '' : ' none') + '" style="color:' + esc(d.col) + '"'
+      return '<span class="dmw"><span class="dmk">' + esc(String(d.name || '?').charAt(0)) + '</span>'
+        + '<span class="dmini' + (has ? '' : ' none') + '" style="color:' + esc(d.col) + '"'
         + ' title="' + esc(d.name) + ' demand ' + (has ? Math.round(d.value * 100) + '%' : 'not modelled yet') + '">'
-        + '<i style="width:' + (has ? Math.round(d.value * 100) : 0) + '%"></i></span>';
+        + '<i style="width:' + (has ? Math.round(d.value * 100) : 0) + '%"></i></span></span>';
     }).join('');
     const sEl = document.getElementById('ncsb-demand');
     if (sEl && sEl.__h !== sh) { sEl.__h = sh; sEl.innerHTML = sh; }
@@ -362,7 +374,9 @@ export function onDemandClick(fn) {
 }
 export function setDemandOpen(on) {
   const b = document.getElementById('ncsb-demand');
-  if (b) b.classList.toggle('on', !!on);
+  if (!b) return;
+  b.classList.toggle('on', !!on);
+  b.setAttribute('aria-expanded', on ? 'true' : 'false');
 }
 
 export default { mount, render, fmt, onDemandClick, setDemandOpen };

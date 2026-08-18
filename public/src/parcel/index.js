@@ -87,7 +87,7 @@ const CLASS = {
              'resthouse', 'barracks', 'obelisk', 'caravanpost'],
   farm:     ['farm', 'hydrofarm'],
   commerce: ['shop', 'lot', 'tenantbiz', 'gasstation', 'restaurant', 'grocery',
-             'club', 'foodtruck', 'kalonstable'],
+             'club', 'foodtruck', 'kalonstable', 'retail'],
 };
 const CLASS_OF = {};
 for (const k in CLASS) for (const t of CLASS[k]) CLASS_OF[t] = k;
@@ -111,7 +111,23 @@ const SKIP = new Set(['road', 'anchor', 'housing', 'tree', 'bush', 'garden', 'fo
 const HAS_OWN_GROUND = new Set(['farm', 'hydrofarm', 'purifier', 'forge', 'reslab',
                                 'siphon', 'obelisk', 'kalonstable', 'restaurant',
                                 'foodtruck', 'grocery', 'barracks', 'tower', 'munitions',
-                                'club', 'motorpool', 'firestation', 'police']);
+                                'club', 'motorpool', 'firestation', 'police',
+                                /* ── round 11 ──────────────────────────────────
+                                   `retail` pours a forecourt over its whole tile
+                                   and `depot` a yard over its whole tile, both at
+                                   RD_Y, and BOTH DRAW THEIR OWN LOT LINE through
+                                   _pcKerb. Without these two entries this layer
+                                   would lay a second surface 1.5 mm above each of
+                                   them and a second kerb ring beside their own —
+                                   which is the wasted-surface case the note above
+                                   describes, and on `depot` it would also bury
+                                   the dock apron the recipe exists to show.
+                                   ⚠ `depot` was ALREADY paving its whole tile
+                                     before this round (the old gabled recipe
+                                     called _cvApron) and was already missing from
+                                     this list. That was a real miss, not a
+                                     round-11 regression. */
+                                'retail', 'depot']);
 
 /* ── THE PALETTE ───────────────────────────────────────────────────────────
    Values first, hues second. At the game's aerial distance a parcel is forty

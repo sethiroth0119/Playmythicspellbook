@@ -194,32 +194,19 @@ export const STREET = {
        headroom for a slow frame. */
   MAX_TICK_CREDIT_SEC: 4,
 
-  /* 🏷 World labels. A one-tile stub gets no label (there is nowhere to put it),
-     and the plane sits between the carriageway top (RD_Y = 0.016) and the
-     footway top (RD_PT = 0.046) so it cannot z-fight the asphalt or climb the
-     kerb. */
-  LABEL_MIN_TILES: 2,
-  LABEL_Y: 0.028,
-  /* 🔴 HALF THE PLANE'S WIDTH ACROSS THE LANE — and the round-2 critic found
-     every frame carrying "giant" street text because this was 0.17.
-     RD_HW is 0.20, so the carriageway is 0.40 wide: at 0.17 the label band
-     covered 85% of the road and the CAP HEIGHT alone (the canvas puts caps at
-     ~45% of its height, see labels.js) came to ~0.15, i.e. 38% of the
-     carriageway. A real road legend is about a third of ONE lane. 0.11 puts the
-     band at 55% of the carriageway and caps at ~0.10 — a quarter of it — which
-     is paint. Raise this and it becomes a billboard again. */
-  LABEL_HALF_W: 0.11,          // well inside RD_HW (0.20), the kerb face
-  /* How often the labels are re-faced at the camera (labels.js orient()). Not
-     per frame: the work is one dot product per label and the visible cost of
-     lagging a fast orbit by a fifth of a second is nil, while the cost of doing
-     it in the render loop is paid on every frame the camera never moved. */
-  LABEL_ORIENT_MS: 200,
-  /* Texture HEIGHT only. There is deliberately no width constant: the canvas is
-     cut to the measured text and the plane is then built from the canvas's
-     aspect ratio, because a fixed-width texture stretched across a street of
-     any length smears the letters (see the note in labels.js). */
-  LABEL_TEX_H: 64,
-  LABEL_MAX: 80,               // hard cap on label planes; see labels.js
+  /* 🏷 THE ROAD PAINT IS GONE, AND SO ARE ITS SEVEN CONSTANTS.
+     LABEL_MIN_TILES / LABEL_Y / LABEL_HALF_W / LABEL_ORIENT_MS / LABEL_TEX_H /
+     LABEL_MAX used to size a canvas-textured plane that lay the street's name
+     along the carriageway. Three separate critics objected to it and no city
+     game paints street names on the tarmac; the whole decal layer
+     (streets/labels.js) was deleted this round. The name still exists, is still
+     renamable, still drives the road panel and still supplies every address
+     /src/dossier and /src/naming derive — it simply is not written on the road.
+     The world's street-name marker is the JUNCTION SIGN the road recipe already
+     stands on the SW corner of every tile with three or more neighbours
+     (index.html, "JUNCTION SIGN"): base plate, post, name plate, regulatory
+     disc. That is the convention, and it was already built. */
+
   /* Re-derive the street graph at most this often. Segmentation is O(roads) and
      roads are capped by ROAD_CAP_BASE + depots, so this is cheap — but it does
      not need to run per frame either. */

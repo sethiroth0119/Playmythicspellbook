@@ -222,14 +222,13 @@ for(const s of SHOTS){
        resolution and fog, and a round-over-round A/B is worthless if the two
        frames were lit differently. Same rule as the pinned clock. */
     try { nc.cullAgents(90); } catch (e) {}
-    /* 🏷 RE-FACE THE ROAD PAINT AT THE CAMERA WE ARE ABOUT TO SHOOT FROM.
-       A street name reads left-to-right only when its own heading agrees with
-       the camera's right vector, and /src/streets refreshes that from its
-       agentTick hook — which runs under rAF, i.e. about once a second here.
-       Same problem, and the same fix, as the cull above: without it the shot is
-       taken at whatever orientation the last rebuild happened to choose, which
-       is how a whole round shipped with half its street names 180° out. */
-    try { nc.streets().orientLabels(); } catch (e) {}
+    /* 🏷 THE ROAD-PAINT RE-FACE THAT USED TO LIVE HERE IS GONE WITH THE PAINT.
+       /src/streets no longer lays street names on the carriageway (round 11),
+       so there is nothing left to turn towards the camera and `orientLabels`
+       no longer exists on the module. The comment survives because the shape of
+       the bug it fixed — state last computed against the BOOT camera riding into
+       a hand-framed screenshot — is exactly the cull problem directly above,
+       and the next thing that caches anything per-camera will hit it too. */
     const {renderer,scene,camera}=nc.three(); renderer.render(scene,camera);
   },[s.cam,s.tgt]);
   await page.waitForTimeout(1500);

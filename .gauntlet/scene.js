@@ -46,8 +46,19 @@
   await fill(C - 3, C - 1, C - 3, C - 1, 'housing');
   await fill(C - 7, C - 5, C + 1, C + 3, 'housing');
 
-  /* ── 2. depots, to buy road capacity ──────────────────────────────────── */
-  for (const [x, z] of [[C+7,C+7],[C+8,C+7],[C+7,C+8],[C+8,C+8],[C+9,C+7],[C+9,C+8]]) {
+  /* ── 2. depots, to buy road capacity ──────────────────────────────────────
+     🔴 AND THE THREE IN THE ZONING BLOCK ARE BOUGHT HERE, NOT WITH THE REST OF
+     THAT BLOCK, because ROAD_CAP_BASE is 40 and each FINISHED depot adds 10 —
+     so how many depots stand before step 3 decides how much of the street grid
+     exists at all. With six, the cap is 100 and the grid runs out mid-way
+     through the third row: rows z = 16 and z = 20 and columns x = 16 and x = 20
+     were NEVER BUILT in any capture this harness has taken, which is why the
+     standard city is a cross rather than a grid, and why block 5's retail row
+     fronted open grass the first time it was placed. Nine depots buy 130.
+     ⚠ THE THREE ARE AT THEIR FINAL ZONING-BLOCK TILES, not somewhere temporary.
+       Placing them here and moving them later would be two different cities. */
+  for (const [x, z] of [[C+7,C+7],[C+8,C+7],[C+7,C+8],[C+8,C+8],[C+9,C+7],[C+9,C+8],
+                        [C+1,C+1],[C+2,C+1],[C+3,C+1]]) {
     await P('depot', x, z); done();
   }
 
@@ -62,11 +73,70 @@
   for (const [t, x, z] of [
     ['shop', C+1, C-3], ['shop', C+2, C-3], ['tenantbiz', C+3, C-2],
     ['lot', C+1, C-1],  ['garden', C+2, C-1], ['tree', C+3, C-3],
-    ['gasstation', C+1, C+1], ['forge', C+3, C+3],
+    /* ⚠ ['gasstation', C+1, C+1] and ['forge', C+3, C+3] USED TO BE HERE and
+       are removed, not moved. Both are far above the municipal build ceiling
+       (see block 5) and have been refused on every capture this harness has
+       ever taken, so they occupied two tiles of the standard city on paper and
+       none of it in the render — while colliding with two of the tiles block 5
+       now uses. If a future scene grows a Construction Co., put them back
+       somewhere block 5 is not. */
     ['farm', C-3, C+2], ['tree', C-1, C+1], ['bush', C-2, C+3],
     ['arena', C+6, C-6], ['medlab', C+5, C-2], ['shop', C+6, C-2],
     ['tree', C-5, C+5], ['bush', C-6, C+5], ['garden', C-7, C+5],
     ['fountain', C-2, C-2],
+  ]) { await P(t, x, z); done(); }
+  done();
+
+  /* ── 5. THE ZONING BLOCK (round 11) ────────────────────────────────────────
+     Rubric dimension 11 asks whether a viewer can tell residential from
+     commercial from industrial FROM THE AIR. Until this round the standard city
+     could not answer the question, and not because the buildings were poor:
+
+       · 54 of the 172 tiles are housing and the six Supply Depots are the only
+         non-residential BUILDINGS that actually go up. Everything in list 4
+         above — three shops, the tenant business, the gas station, the Trust,
+         the arena, the med lab — is REFUSED, every time. They are all above the
+         40-minute municipal build ceiling (C.municipal.maxSec = 2400 s: shop
+         7,321 s, arena 12,196 s) and this city has no Construction Co., so the
+         order gate turns them away before a tile is ever written. Read the
+         `fails` map in the capture JSON; it has said so for ten rounds.
+       · AND THE SIX DEPOTS ARE OFF CAMERA. They sit at (C+7…C+9, C+7…C+8),
+         which is world (7.5…9.5, 7.5…8.5) — between the aerial camera and its
+         target, BELOW the view ray, and behind the district camera entirely.
+         Worked out from the framing maths in capture.mjs, then checked in the
+         render: neither frame contains a single one of them.
+
+     So the district that has been photographed for ten rounds is housing, a
+     vacant lot, two gardens and some trees. This block is the mixed use the
+     frames were always supposed to contain, put where the camera is actually
+     looking: (C+1…C+3, C+1…C+3) is world (1.5…3.5, 1.5…3.5), which lands at
+     roughly frame centre in the aerial and in the near half of the district
+     shot.
+
+     THE LAYOUT IS THE POINT, not the buildings. Three rows, back to front:
+       z = C+1   three Supply Depots — flat sheds, dock aprons, hazard chevrons
+                 (placed up in block 2: see the road-cap note there)
+       z = C+2   two Motor Pools — surface car parks, nothing standing on them
+       z = C+3   three Retail Parades — wall-to-wall, fascia band, forecourt,
+                 fronting the z = C+4 street — which only exists because block 2
+                 now buys enough road cap to reach it
+     A viewer reading down that block crosses industrial, then open ground use,
+     then a high street, then (across the road) the housing — which is exactly
+     the comparison the rubric asks for, in one frame, at the default camera.
+
+     ⚠ EVERY TYPE HERE IS UNDER THE MUNICIPAL CEILING and that is why they place
+       at all: depot 1,388 s, motorpool 756 s, retail ~1,4xx s. If a later round
+       makes any of them dearer, or gives one a `gen.cinder`, it will silently
+       stop appearing in every capture — check the `fails` map, not the diff. */
+  for (const [t, x, z] of [
+    /* Three car parks, not two with a tree between them. A single tile of bays
+       is a grey square at the aerial camera; three contiguous tiles are 24 bays,
+       an aisle and three planted islands, which is the only version of this that
+       reads as GROUND USE rather than as an empty plot. (The Decoration tree
+       that used to sit in the middle also put a 0.6-wide blossom crown across
+       the block's centre line, i.e. across the thing being demonstrated.) */
+    ['motorpool', C+1, C+2], ['motorpool', C+2, C+2], ['motorpool', C+3, C+2],
+    ['retail', C+1, C+3], ['retail', C+2, C+3], ['retail', C+3, C+3],
   ]) { await P(t, x, z); done(); }
   done();
 

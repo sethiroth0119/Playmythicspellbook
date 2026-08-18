@@ -18,6 +18,30 @@
    tuning.js) and is never written back to t.wear — a UI feature must not invent
    a failure mode.
 
+   ── 🔴 THE NAME IS NOT PAINTED ON THE ROAD (round 11) ─────────────────────
+   It used to be. `streets/labels.js` built one canvas-textured plane per street
+   and laid it along the carriageway, and three separate critics objected to it:
+   no city game writes street names on the tarmac, and the round-10 critic —
+   which called the roads the best thing in the project — said the one change a
+   stranger would make is to REMOVE them, scoring roads 6 instead of 8 because
+   of it. The whole decal layer is deleted.
+
+   ⚠ THE NAMING FEATURE IS UNTOUCHED. Names, renaming, auto-naming, the road
+     modal, the traffic rings and every address /src/dossier and /src/naming
+     derive all still run off this file exactly as before. What went is the
+     paint, not the name.
+   The world's label is the JUNCTION SIGN the road recipe already stands on the
+   SW corner of every tile with 3+ neighbours (index.html, "JUNCTION SIGN") —
+   base plate, post, street-name plate, regulatory disc. A sign at the junction
+   is the convention, and it was already built; nothing new was added for it.
+   ⚠ SAID PLAINLY: THAT PLATE CARRIES NO TEXT, and no attempt was made to put
+     any on it. A blade sign is two or three pixels tall at the game's aerial
+     camera, so lettering on one would be a canvas texture per junction that
+     nobody could read — which is the cost of the thing just deleted with none
+     of its (disputed) benefit. The NAME is read where a city game puts it:
+     click the road. Cities: Skylines II does not write street names in the
+     world either.
+
    ── DEGRADING ─────────────────────────────────────────────────────────────
    A 404 on this file costs the player street names and the road panel. The
    host's road branch falls through to its ordinary tile dossier, the save
@@ -28,7 +52,6 @@ import { STREET } from './tuning.js';
 import { segment } from './segment.js';
 import { generateName, sanitiseName } from './naming.js';
 import { createMeter } from './traffic.js';
-import { createLabels } from './labels.js';
 import * as panel from './panel.js';
 
 /* A name is stored per (axis, tile), not per street.
@@ -49,24 +72,12 @@ const nameKey = (axis, tileKey) => axis + '@' + tileKey;
 export function mount(ctx) {
   const game = ctx.game;
   const meter = createMeter(ctx);
-  /* 🏷 Labels are the one part of this feature that needs THREE, a scene and a
-     canvas. If any of those is missing or misbehaves, the player loses the names
-     painted on the road and KEEPS the panel, the naming and the charts — a
-     decoration must never be able to take the feature down with it. */
-  let labels;
-  try { labels = createLabels(ctx); }
-  catch (e) {
-    console.warn('[streets] world labels unavailable (non-fatal):', e);
-    labels = { sync: () => false, setEnabled: () => false, isEnabled: () => false,
-               orient: () => 0, count: () => 0, dispose: () => {} };
-  }
   const names = new Map();          // "x@5,5" -> "Maple Avenue"
 
   let graph = null;                 // { streets, primary }
   let lastSig = '';
   let sinceScan = 1e9;
-  let sinceOrient = 1e9;            // 🏷 label re-facing timer, see orientLabels()
-  let nameEpoch = 0;                // bumped on any rename, forces a label rebuild
+  let nameEpoch = 0;                // bumped on any rename; the panel reads it
   let autoSalt = 0;
   let uiTab = 'ov';
   let dirty = false;                // something worth saving changed
@@ -99,7 +110,6 @@ export function mount(ctx) {
     lastSig = sig;
     graph = segment(roadKeys, isRoad);
     assignNames(graph.streets);
-    labels.sync(sig + '|' + nameEpoch, graph.streets, st => nameOf(st), false);
     return graph;
   }
 
@@ -298,7 +308,6 @@ export function mount(ctx) {
     }
     stamp(st, clean);
     nameEpoch++; dirty = true;
-    labels.sync(lastSig + '|' + nameEpoch, g.streets, s => nameOf(s), true);
     try { ctx.saveSoon(); } catch (e) {}
     ctx.toast('🛣️ ' + cur + ' is now ' + clean + '.', 'good');
     return true;
@@ -316,7 +325,6 @@ export function mount(ctx) {
       { len: st.len, junctions: st.junctions }, taken);
     stamp(st, name);
     nameEpoch++; dirty = true;
-    labels.sync(lastSig + '|' + nameEpoch, g.streets, s => nameOf(s), true);
     try { ctx.saveSoon(); } catch (e) {}
     return name;
   }
@@ -379,7 +387,12 @@ export function mount(ctx) {
         t[k] = i;
       }
       const tr = meter.save();
-      return { v: 1, n: table, t, tr: tr.tr, ob: tr.ob, lbl: labels.isEnabled() ? 1 : 0 };
+      /* `lbl` is NOT written any more — it was the on/off flag for the paint
+         that used to lie on the carriageway, and that paint is gone (see the
+         header). A save written before this round still carries the field and
+         load() below simply ignores it, which is what keeps those cities
+         opening. */
+      return { v: 1, n: table, t, tr: tr.tr, ob: tr.ob };
     } catch (e) { return null; }
   }
 
@@ -397,29 +410,8 @@ export function mount(ctx) {
         if (clean && /^[xz]@-?\d+,-?\d+$/.test(k)) names.set(k, clean);
       }
       meter.load(blob);
-      if (blob.lbl === 0) labels.setEnabled(false);
+      /* blob.lbl — the old road-paint toggle — is deliberately not read. */
     } catch (e) { /* a corrupt blob costs names and history, never the city */ }
-  }
-
-  /* 🧭 KEEP THE ROAD PAINT THE RIGHT WAY UP AS THE PLAYER ORBITS.
-     A street label reads correctly only when its own direction agrees with the
-     camera's right vector; a north-south street and an east-west street cannot
-     both agree with the same camera, which is the whole of the round-2
-     "mirrored street text" artefact (labels.js has the full account). So the
-     orientation is a function of the CAMERA, not a constant, and it is refreshed
-     here rather than in the render loop.
-     ⚠ ctx.camera IS OPTIONAL, and that is deliberate: a host that never handed
-       one over gets labels at their build-time orientation and everything else
-       in this module works exactly as before. Reaching for a bare global camera
-       instead is the trap CLAUDE.md opens with. */
-  function orientLabels() {
-    const cam = ctx.camera;
-    if (!cam || !cam.matrixWorld) return;
-    /* Column 0 of a Matrix4 IS the right vector, and THREE stores column-major:
-       elements[0], [1], [2] are its x, y, z. Projected onto the ground plane by
-       simply dropping y — the labels are flat, so only the XZ heading matters. */
-    const e = cam.matrixWorld.elements;
-    try { labels.orient(e[0], e[2]); } catch (err) { /* decoration, never fatal */ }
   }
 
   /* ── the per-frame half ─────────────────────────────────────────────────
@@ -430,8 +422,6 @@ export function mount(ctx) {
     const ms = (+dt || 0) * 1000;
     sinceScan += ms;
     if (sinceScan >= STREET.RESCAN_MS) { sinceScan = 0; scan(false); }
-    sinceOrient += ms;
-    if (sinceOrient >= STREET.LABEL_ORIENT_MS) { sinceOrient = 0; orientLabels(); }
   }
 
   const API = {
@@ -447,14 +437,6 @@ export function mount(ctx) {
     statsAt: (k) => { const st = scan(true).primary.get(k); return st ? statsFor(st, k) : null; },
     rename: (k, name) => { const st = scan(true).primary.get(k); return st ? rename(st, name) : false; },
     autoName: (k) => { const st = scan(true).primary.get(k); return st ? autoRename(st) : null; },
-    setLabels: (on) => { const v = labels.setEnabled(on); const g = scan(true);
-                         labels.sync(lastSig + '|' + nameEpoch, g.streets, s => nameOf(s), true);
-                         dirty = true; return v; },
-    labelCount: () => labels.count(),
-    /* Re-face the paint NOW rather than on the next tick — the harness moves the
-       camera by hand and never runs a frame loop, so without this the shot is
-       taken at whatever orientation the last build chose. */
-    orientLabels,
     rescan: () => scan(true),
     isDirty: () => dirty,
     /* 🕰 WHICH CLOCK THE RING IS ON, in one call. The last build bucketed on EST

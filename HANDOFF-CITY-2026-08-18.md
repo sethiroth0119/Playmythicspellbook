@@ -126,9 +126,16 @@ Each of these was a real fork where the request did not settle it.
   `bank` — but the test and the code have to be made to agree deliberately.
 - **Road condition does not move within a session**, despite a measured wear
   retune. The number is probably not the problem.
-- **Street names are painted on the tarmac.** No city game does this. Fixed
-  orientation and scale, but the critic's position is that it should not be
-  there at all.
+- ~~**Street names are painted on the tarmac.**~~ **FIXED, round 11 — deleted.**
+  `public/src/streets/labels.js` is gone and every reference to it with it
+  (the sync/orient hooks, the `lbl` save field, six `STREET.LABEL_*` constants,
+  the harness's `orientLabels()` re-face). The naming FEATURE is untouched:
+  names, renaming, auto-naming, the road panel and every address /src/dossier
+  and /src/naming derive still work — verified in the browser after the
+  deletion (11 streets, a rename round-trip, the panel, the dossier's
+  `source: "streets"`). Nothing replaced the paint in the world: the road
+  recipe's existing junction sign is the convention and its plate carries no
+  text, which is also what Cities: Skylines II does.
 - **The geology→water link is unverified.** `power/geology.js` turns `springfed`
   basins into hot-spring vents; both basins in the test city are
   `springfed:false`, so its output is byte-identical with and without the water

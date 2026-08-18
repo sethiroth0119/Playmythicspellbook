@@ -216,5 +216,82 @@
       }
     ],
     "note": "\ud83d\udd34 THESE SCORES ARE AGAINST THE WRONG FRAME, and the fault is the harness's. estClock() reads the real wall clock - \"the sun rises when YOUR sun rises\" - so every round was photographed at whatever time of day the capture happened to run. r0 and r1 landed mid-afternoon; r2 landed at 20:17. The lighting work was MEASURED at 15:00 and PHOTOGRAPHED at night, and manageAgents() culls the crowd at nightfall - which is why a round that moved the sunlit:shaded ratio from 1.11x to 2.67x and terrain luminance from 0.215 to 0.527 scored 4/10 for lighting and 0/10 for vehicles. The hour is now pinned as a harness constant and the frames above have been re-captured at 15:00; the scores are left as the critics gave them, because re-scoring my own work against a better frame is not a critic's verdict. Round 3 re-judges."
+  },
+  {
+    "round": 3,
+    "headline": "Four camera bugs, not one art bug. The crowd finally reaches the film.",
+    "status": "done",
+    "meanScore": 4.57,
+    "strangerTest": "instantly",
+    "tris": 2798100,
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 5
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 6
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 6
+      },
+      {
+        "dimension": "Building surface detail",
+        "score": 5
+      },
+      {
+        "dimension": "The plot",
+        "score": 2
+      },
+      {
+        "dimension": "Roads",
+        "score": 7
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 6
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 4
+      },
+      {
+        "dimension": "Citizens",
+        "score": 3
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 4
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 3
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 2
+      }
+    ],
+    "pieces": [
+      {
+        "title": "The crowd",
+        "verdict": "CLOSE",
+        "summary": "Four independent bugs, none in the art. The crowd was spawned into a city that did not exist yet (finishAll() calls manageAgents(), so the census was satisfied when the road network was two tiles long \u2014 all 29 agents on 3 unique positions in one corner). Nothing ever stepped them: agentTick runs only from animate(), and 2 rAF callbacks fired in 2 wall seconds. Every one of them was invisible: cullAgents() had last run against the BOOT camera and the stale visible=false rode into all three shots. And the street frame could not have contained them anyway \u2014 OrbitControls clamps maxPolarAngle to 82.8 degrees, so any eye-level request came out at y 2.3, above every roof.",
+        "gap": "No vehicle is ever on a carriageway. In the street frame all four cars are parked on the FOOTWAY \u2014 past the kerb and past the grass verge, wheels on the same grey sidewalk slab the pedestrian walks on (s_place.png makes the section unambiguous: asphalt, white edge line, lavender kerb, green verge, s"
+      },
+      {
+        "title": "The two artefacts",
+        "verdict": "CLOSE",
+        "summary": "Neither was the bug its symptom named. The street text was never mirrored \u2014 rotating the r2 aerial 180 degrees makes it read perfectly. The reading direction was a CONSTANT while the aerial camera sees east-west and north-south as opposite screen directions, so half the city read backwards. And the plum sky was no hex: no hue in the SKY table is magenta, the mauve was manufactured by lerping a warm-red dusk into a violet-black night. The hard seam is not a material boundary at all \u2014 the plate and the plain are the same hex in the same material; it is the fog ramp compressed by a grazing view angle."
+      },
+      {
+        "title": "The Outside chip",
+        "verdict": "WINS",
+        "summary": "The one defect nobody had fixed, because the agent assigned to it died mid-response. It sat exactly on the railbar pill row, invisible and unclickable. Now proven with elementsFromPoint returning the chip and a real unscripted click \u2014 and it is legible in the round-3 street frame: CITY IS CUT OFF, build a Highway Interchange on the north edge."
+      }
+    ],
+    "note": "Mean 3.64 to 4.57, the largest jump of the loop, and vehicles went 0 to 4-6 and citizens 0 to 3-5. The pattern of this round is worth naming: every single defect was diagnosed to a DIFFERENT cause than its symptom suggested. A pixel diff of the rendered buffer \u2014 with-crowd against without-crowd, exactly 0 of 1,440,000 pixels different \u2014 found in one run what two rounds of art work could not. Stranger test is still 'instantly', and the next priority is the one dimension that has never moved: the plot, at 2/10. Buildings sit on a continuous flat pad with no parcel, and the whole-frame critic says that single fact is why the city reads as models on a board."
   }
 ]

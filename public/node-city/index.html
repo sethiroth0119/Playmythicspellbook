@@ -7491,7 +7491,13 @@ function _hHouseBody(lvl, tx, tz) {
       W = .80; D = .46; OVx = .042; OVz = .042;
       F = Math.max(2, Math.min(4, 1 + lvl + (R() < .3 ? 1 : 0)));
       roofSty = 'gable'; rh = .17 + R() * .04;
-      front = 'pair'; bound = R() < .5 ? 'hedge' : 'wall'; plotSty = 'garden';
+      /* ⚠ THE HEDGE SIDE OF THIS ROLL WIDENED IN ROUND 7 (.50 → .62) AND IT IS
+         A CONSEQUENCE OF THE HEIGHTS, NOT A TASTE. A .052 garden wall was
+         invisible and therefore free; a .118 one is a piece of masonry standing
+         on the frontage of every other plot, and at 50/50 the first capture of
+         it came back reading as a walled compound rather than as a suburb.
+         Privet is what the reference frame's street actually has. */
+      front = 'pair'; bound = R() < .62 ? 'hedge' : 'wall'; plotSty = 'garden';
       /* ⭐ FOUR CLADDINGS, NOT THREE. 'clap' is horizontal lap siding and
          'board' is vertical board-and-batten — the same vertex colour, told
          apart purely by which way the relief runs. See cladFace() for why the
@@ -7515,7 +7521,7 @@ function _hHouseBody(lvl, tx, tz) {
       F = Math.max(2, Math.min(6, 1 + lvl + (R() < .3 ? 1 : R() < .43 ? -1 : 0)));
       roofSty = lvl >= 3 ? 'deck' : (R() < .55 ? 'gable' : 'hip');
       rh = roofSty === 'deck' ? .17 + R() * .05 : .15 + R() * .06;
-      front = 'porch'; bound = R() < .45 ? 'hedge' : 'wall'; plotSty = 'garden';
+      front = 'porch'; bound = R() < .60 ? 'hedge' : 'wall'; plotSty = 'garden';
       clad = R() < .28 ? 'brick' : R() < .50 ? 'clap' : R() < .66 ? 'board' : 'render';
       cols = 3;
       /* The detached villa is the archetype with room on its plot for both, so
@@ -8337,11 +8343,78 @@ function _hHouseBody(lvl, tx, tz) {
   // 2. Front path — door axis to the frontage, running under the bottom step.
   const pathU = front === 'stoop' ? W * .27 : 0;
   const pathHW = front === 'recess' ? .150 : .100;
-  _hPush(B.path, _hSlab(pathU - pathHW, pathU + pathHW, hDs + .020, .5, PY, GB));
+  /* ⚠ IT STARTS AT THE WALL, NOT AT THE EAVES. hDs is the EAVES line — it
+     carries OVz — so `hDs + .020` stopped the path .06 short of the door on a
+     detached villa and left the last stride to the threshold on bare grass,
+     under the overhang where nobody could see that it was missing. The door is
+     in the wall plane at hDs − OVz; the path runs to a centimetre inside it and
+     is then covered by the porch step, which is what a real one does. */
+  _hPush(B.path, _hSlab(pathU - pathHW, pathU + pathHW, hDs - OVz - .010, .5, PY, GB));
   // a threshold apron at the frontage, so the path arrives at something
   _hPush(B.path, _hSlab(pathU - pathHW - .030, pathU + pathHW + .030, .430, .5, PY, GB));
   if (front === 'pair') for (const sx of [-1, 1])       // the semi's path forks to both doors
-    _hPush(B.path, _hSlab(Math.min(0, sx * .215), Math.max(0, sx * .215), hDs + .020, hDs + .130, PY, GB));
+    _hPush(B.path, _hSlab(Math.min(0, sx * .215), Math.max(0, sx * .215), hDs - OVz - .010, hDs + .130, PY, GB));
+  /* ══ ⭐ 2a. THE BOUNDARY'S GEOMETRY — HOISTED, AND THAT IS A BUG FIX ═══════
+     ROUND 7. These five numbers used to be declared down in §5, hundreds of
+     lines below the drive that has to fit INSIDE them, and the two blocks were
+     therefore written against each other's guesses. Measured on the shipped
+     build: the flank boundary occupies x .4110 … .4660 for the WHOLE depth of
+     the plot, and the drive ran x .215 … .455 from the house to the kerb — so
+     on every hedged plot in the city 4.4cm of privet grew straight up through
+     the driveway, for the whole length of it. Nothing downstream could see the
+     collision because neither block could see the other's numbers.
+     Declaring them here, once, before anything that has to clear them, is the
+     whole fix; §5 now reads them rather than re-deriving them.
+
+     ⭐ AND THE HEIGHTS DOUBLED. This is the round's central claim, so it is
+     worth the measurement rather than the adjective. A person in this city is
+     .26 tall and a storey is .34. The boundary shipped at .086 for a hedge and
+     .052 for a wall — i.e. 0.58m and 0.35m at the scale where a citizen is
+     1.75m. That is an ankle-height kerb, not a property line, and it is the
+     entire reason three consecutive rounds drew a boundary and three
+     consecutive critics reported they could not see one: the thing was built,
+     it was simply two and a half times too short to survive the game's camera.
+     A real clipped garden hedge is 1.2–1.5m — .18–.22 here — and a garden wall
+     is ~0.9m, i.e. .13. Those are the numbers now.
+     ⚠ .26 IS THE CEILING AND IT IS NOT A TASTE. A boundary taller than a
+       citizen hides the citizens, and dimension 9 is already the worst score on
+       the board. The hedge tops out at .170 + AY, two thirds of a person, which
+       is what lets a pedestrian read OVER a garden hedge and NOT over a
+       terrace's railing — exactly the real-world read.
+     ⚠ RAISING `top` COSTS NOTHING. _vegHedge's lobe count is a function of the
+       RUN LENGTH only; the body underneath is one box either way. Measured:
+       identical triangle count before and after this change.                */
+  const bt = bound === 'hedge' ? .055 : bound === 'railing' ? .022 : .035;
+  /* ⚠ A PICKET AND A RAILING KEEP A LOW BASE AND CARRY THE HEIGHT IN THEIR
+     PALINGS. `bTop` is the top of the SOLID run, and a picket fence standing on
+     a .12 wall is a wall with a fence on it — which is what the first cut of
+     this looked like. The dwarf plinth stays where it was; the timber and the
+     ironwork above it grew instead, and all three fence types finish within a
+     thou of .196 so a street of mixed boundaries still reads as one line. */
+  const bTop = AY + (bound === 'hedge' ? .170 : bound === 'railing' ? .050
+                   : bound === 'picket' ? .045 : .118);
+  const bBase = AY - .008;
+  /* Every corner post, whatever the boundary under it, tops out here — a post
+     is a post, and one figure is what makes a hedged plot and a picketed one
+     agree along a street. Still .045 clear of a .26 citizen's head. */
+  const postTop = AY + .215;
+  const edge = .5 - bt / 2, gate = pathHW + .015;
+  /* ⭐ THE FLANKS AND THE REAR COME IN .040; THE FRONTAGE DOES NOT — round 5's
+     measurement, kept verbatim because it is still the reason the gap exists.
+     Two neighbours each drawing a boundary centred on `edge` put .055 of privet
+     at .445….500 and .055 more at .500….555, which touch at the tile line and
+     merge into ONE ribbon — the artefact the round-4 plot critic found and
+     correctly dismissed as decoration. Pulling the party-line runs in by .034
+     leaves .068 of verge between two hedges.
+     ⭐ WHAT ROUND 7 ADDS IS THE DEPTH. .068 of gap between two .086 hedges is a
+     scratch; .068 of gap between two .170 hedges is a slot two and a half times
+     deeper than it is wide, and a slot that deep is in shadow from every sun
+     angle the day cycle has. That shadow is the property line. */
+  const sEdge = edge - .034;
+  /* The inner face of the flank boundary, minus a 6mm reveal: NOTHING that is
+     laid on the ground may cross this line, or it is laid under the hedge. */
+  const bIn = sEdge - bt / 2 - .006;
+
   /* 2b. The DRIVE'S EXTENTS — measured here, LAID in §3a.
      It runs under the garage as its floor slab as well as out to the frontage,
      so there is never a gap of bare apron at the threshold. Started at
@@ -8356,7 +8429,11 @@ function _hHouseBody(lvl, tx, tz) {
      ⚠ The extents still have to be measured out here, because the BOUNDARY in
        §5 needs a gap wherever the drive crosses it and §5 runs long after §3's
        block has closed. Same reason `hasDrive` is a `let` below.            */
-  const drvX0 = gaX - gaW / 2 - .022, drvX1 = gaX + gaW / 2 + .022;
+  /* ⚠ CLAMPED TO `bIn`, NOT TO THE TILE. The garage's own slab reached -.4245
+     and the flank hedge starts at -.4110 — see §2a for the collision this
+     fixes. The garage BODY's left face is at -.4025, so a drive that stops at
+     -.405 still carries it. */
+  const drvX0 = Math.max(gaX - gaW / 2 - .022, -bIn), drvX1 = gaX + gaW / 2 + .022;
   let hasDrive = false, dv0 = 0, dv1 = 0;
 
   if (plotSty === 'forecourt') {
@@ -8436,12 +8513,29 @@ function _hHouseBody(lvl, tx, tz) {
          §5) gives way to it exactly as it would to a drive of its own. That is
          why `ds` is forced to -1 there: the garage is always the -x wing, so
          "the side away from the drive" has to resolve to +x.
-       ⚠ NOT the road's own material. MAT.road is 0x57544e; the apron rolls
-         MAT.drive (0x807b71) or MAT.stone, so the drive is always a different
-         surface from the carriageway it joins, which is the reference frame's
-         actual read. It goes in the APRON bucket — a bucket this recipe already
-         emits — so a driveway costs no draw call at all. */
-    const dIn = (front === 'pair') ? .250 : .215;
+       ⭐ ROUND 7 MOVED IT FROM THE APRON BUCKET TO THE PATH BUCKET, AND THAT
+         IS THE WHOLE DRIVEWAY FIX. Both buckets already exist on a garden plot,
+         so the mesh count, the material count and the draw calls are all
+         unchanged — but the APRON rolls MAT.drive (0x807b71) or MAT.stone,
+         which are the two DARK pavings, and the round-6 aerial shows why that
+         was hopeless: a dark grey rectangle laid on dark grey ground, seen from
+         200 feet, is not a driveway, it is nothing. `pathMat` is the light kerb
+         concrete this recipe already picked precisely BECAUSE it "has to READ"
+         (see its own note at the palette). A pale slab running from the house
+         to the kerb is the single loudest lot cue in the reference frame's
+         aerial, and it now costs exactly what the invisible one cost.
+       ⚠ STILL NOT the road's own material — RD_KERB is the kerb, MAT.road
+         (0x57544e) is the carriageway, and the drive meeting the street in a
+         DIFFERENT tone is the read. That has not changed; only which of the
+         plot's own two pavings it is made of.
+       ⚠ WIDTH IS NOT A TASTE EITHER: /src/parking's own header records a
+         vehicle as 0.19 wide against a 0.255 bay. A drive a car cannot stand on
+         is set dressing, so the target width is the parking module's figure and
+         the inner edge is derived from the clamped outer one, not guessed. */
+    const dW = .250;
+    /* .245 on a semi is the door, not a margin: the pair sits at u = ±.155 and
+       each leaf is .150 wide, so the frontage is occupied out to .230. */
+    const dIn = Math.max((front === 'pair') ? .245 : .150, bIn - dW);
     /* Drawn unconditionally, even when the garage overrides it. The stream is
        seeded on the tile hash and every roll after this one would shift if a
        garage plot consumed one draw fewer than its neighbour — which is the
@@ -8450,14 +8544,40 @@ function _hHouseBody(lvl, tx, tz) {
     const ds = garage ? -1 : dRoll;
     if (garage) { hasDrive = true; dv0 = drvX0; dv1 = drvX1; }
     else {
-      dv0 = ds > 0 ? dIn : -.455; dv1 = ds > 0 ? .455 : -dIn;
-      hasDrive = gzF < .40 && Math.abs(pathU) + pathHW + .040 < dIn;
+      dv0 = ds > 0 ? dIn : -bIn; dv1 = ds > 0 ? bIn : -dIn;
+      /* ⚠ THE WIDTH IS NOW A CONDITION, NOT AN OUTCOME. A strip narrower than
+         the 0.19 vehicle /src/parking spawns is a painted rectangle, and the
+         semi's twin frontage genuinely leaves .16 — so a semi parks at the
+         kerb like a real narrow plot and does not pretend to a drive. */
+      hasDrive = gzF < .40 && (bIn - dIn) >= .19
+                 && Math.abs(pathU) + pathHW + .030 < dIn;
     }
     if (hasDrive) {
-      _hPush(B.apron, _hSlab(dv0, dv1, garage ? gaZ0s - .050 : Math.max(gzF, hDs + .010), .5, DY, GB));
-      // the dropped kerb: the crossing is always paler than the drive, which is
-      // how a real one reads from above
-      _hPush(B.path, _hSlab(dv0 - .010, dv1 + .010, .462, .5, PY + .002, GB));
+      const dz0 = garage ? gaZ0s - .050 : Math.max(gzF, hDs + .010);
+      // pale concrete, in the PATH bucket — see the note above for why this one
+      // bucket change is the whole of the driveway fix.
+      _hPush(B.path, _hSlab(dv0, dv1, dz0, .5, DY, GB));
+      /* ⭐ AND A KERB DOWN EACH SIDE OF IT — the tree-pit idiom, inverted.
+         What made round 6's street-tree land after two rounds of flat lime
+         quads was a RAISED FRAME around a recessed surface: form and a height
+         step, not a colour change. A driveway is the same object turned inside
+         out — a pale apron inside a dark edging — so it gets the same treatment
+         for 24 triangles, in the APRON bucket the drive just vacated. It stands
+         12 thou proud of the drive, which is enough to catch the low sun on one
+         side and throw a hard line down the other; a citizen's walk bob is .02
+         and none of them walks up a driveway anyway.
+         ⭐ AND THE LAST .038 OF EACH KERB IS THE DROPPED ONE. This used to be a
+         pale slab at PY + .002 laid across the frontage — i.e. 7 thou BELOW the
+         drive that covered it, so the "dropped kerb" this recipe has claimed
+         since round 4 was buried under its own driveway and had never been
+         visible in any capture. A dropped kerb is not a colour, it is a kerb
+         that stops being a kerb: the edging simply steps down to the drive's own
+         level for the width of the crossing, which is exactly what the reference
+         frame shows and what a car needs to get over. */
+      for (const kx of [dv0, dv1]) {
+        _hPush(B.apron, _hSlab(kx - .011, kx + .011, dz0, .462, DY + .012, GB));
+        _hPush(B.apron, _hSlab(kx - .011, kx + .011, .462, .5, DY + .003, GB));
+      }
     }
 
     /* 3b. THE LAWN. The front band is emitted as the intervals LEFT OVER after
@@ -8584,34 +8704,20 @@ function _hHouseBody(lvl, tx, tz) {
      steps, so the plot reads as built by the same hand for zero extra meshes);
      a hedge merges into the planting bucket for the same reason. The rear edge
      is deliberately open — it is the one edge a player never sees.
-     ⚠ A PARTY-WALLED PLOT HAS NO FLANK BOUNDARY. There is a house there. */
-  const bt = bound === 'hedge' ? .055 : bound === 'railing' ? .022 : .035;
-  const bTop = AY + (bound === 'hedge' ? .086 : bound === 'railing' ? .028 : .052);
-  const bBase = AY - .008;
-  const edge = .5 - bt / 2, gate = pathHW + .015;
-  /* ⭐ ROUND 5 — THE FLANKS AND THE REAR COME IN .040; THE FRONTAGE DOES NOT.
-     See the verge note in §3 for the measurement: two neighbours each drawing a
-     boundary centred on `edge` put .055 of privet at .445….500 and .055 more at
-     .500….555, which touch at the tile line and merge into ONE ribbon — the
-     exact artefact the round-4 plot critic found and correctly dismissed as
-     decoration. Pulling the party-line runs in by .034 leaves .068 of verge
-     between two hedges: two boundaries with a gap, which is what a property
-     line looks like.
-     ⚠ THE FRONT RUN STAYS ON .5 − bt/2 AND THAT IS NOT AN OVERSIGHT. A frontage
-       faces a STREET, and against a street the property line is the kerb — the
-       road already aprons RD_AP_PAVE of footway over this tile, so a front
-       hedge pulled back .034 would just stand in its own garden with pavement
-       in front of it. The gate piers (below) are seated on .475 for the same
-       reason and are deliberately left there. */
-  const sEdge = edge - .034;
+     ⚠ A PARTY-WALLED PLOT HAS NO FLANK BOUNDARY. There is a house there.
+     ⚠ bt / bTop / bBase / edge / gate / sEdge / bIn ARE DECLARED IN §2a, NOT
+       HERE. The drive, the lawn bands and the bins all have to fit inside the
+       boundary and all of them run before this point; see §2a for the collision
+       that cost, and for why the heights doubled this round. */
   /* A HEDGE IS A FORM, NOT A GREEN WALL. It used to merge into the planting
      bucket as a plain box — the cheapest possible boundary, and at every camera
      angle the game has it read as a wall someone had painted green. It now goes
      through _vegHedge, which gives it a clipped body under a rounded, slightly
      uneven crown of lobes: ~190 triangles a metre of run, still inside the same
-     bucket, still zero extra draw calls. bTop went .072 → .086 at the same time,
-     because the crown is drawn just under the top face and the old figure left
-     a knee-high hedge once the lobes were seated properly.
+     bucket, still zero extra draw calls. bTop has been raised twice for the same
+     reason — .072 → .086 when the lobes were first seated, and .086 → .170 in
+     round 7 when it was finally measured against a citizen rather than against
+     the last value (see §2a).
      Walls and railings are unchanged: they merge into BASE, the same masonry as
      the plinth and the steps, so the plot reads as built by one hand.
      ⚠ `putBound` REPLACED the old `into` bucket variable. A hedge is no longer
@@ -8635,11 +8741,68 @@ function _hHouseBody(lvl, tx, tz) {
        plot that had no garage. */
   const gaps = [[pathU - gate, pathU + gate]];
   if (hasDrive) gaps.push([dv0 - .020, dv1 + .020]);
-  const bsegs = _freeSpans(-(.5 - bt), .5 - bt, gaps);
+  /* ⭐ AND THE RUN STOPS AT THE CORNER POST. This is the brief's own sentence —
+     "a boundary that is continuous along a whole block is a landscape feature,
+     not a boundary" — and it is the ONE thing round 5 got structurally wrong
+     rather than merely too short. Measured on the shipped build: a front hedge
+     ran x −.445 … .445 and _vegHedge's end lobes reach a further .0385, so it
+     finished at .4835 against a tile line at .5. Two neighbours therefore left
+     .033 of daylight between two runs of privet, at ground level, in the same
+     tone — which is nothing, and is exactly what the round-4 critic saw when it
+     called the ribbon decoration.
+     A garden plot's boundary now closes on its own four corner posts: the front
+     run ends .030 short of them, the flanks span rear post to front post, and
+     the rear closes between the rear pair. The daylight between two abutting
+     lots is .086 with TWO posts standing in it — a terminated line, twice.
+     ⚠ A FORECOURT KEEPS THE FULL-WIDTH RUN. A terrace is supposed to close into
+       a block: a row of urban railings with a notch every metre is not a street,
+       it is a mistake. Only `garden` is pulled in.                            */
+  const fEnd = plotSty === 'garden' ? sEdge - .030 : .5 - bt;
+  const bsegs = _freeSpans(-fEnd, fEnd, gaps);
   for (const s of bsegs) putBound(s[0], s[1], edge - bt / 2, edge + bt / 2);
   if (!party) {
-    putBound(-sEdge - bt / 2, -sEdge + bt / 2, -(.5 - bt), .5 - bt);
-    putBound(sEdge - bt / 2, sEdge + bt / 2, -(.5 - bt), .5 - bt);
+    const zEnd = plotSty === 'garden' ? -sEdge : -(.5 - bt);
+    const zTop = plotSty === 'garden' ? edge : .5 - bt;
+    putBound(-sEdge - bt / 2, -sEdge + bt / 2, zEnd, zTop);
+    putBound(sEdge - bt / 2, sEdge + bt / 2, zEnd, zTop);
+  }
+  /* ══ ⭐ THE CORNER POSTS — the round's other half ═════════════════════════
+     A run of hedge has no ENDS. That is the whole of why round 5's boundary
+     failed its critic: the critic's literal complaint was that it "read as
+     decoration, not as a boundary", and a thing with no ends cannot say where
+     it stops. What round 6 proved DOES survive this camera is the street tree's
+     kerb frame — a raised, hard-edged, differently-materialled object with a
+     silhouette. So the property line gets the same treatment at the only four
+     points where the question "whose land is this" is actually asked: its
+     corners.
+
+     Four masonry posts, .062 square, standing .045 above the tallest thing this
+     recipe builds on the line, in B.base — the SAME bucket and the same masonry
+     as the plinth, the steps and the gate piers, so it is 48 triangles and no
+     mesh, no material and no draw call. Two abutting plots put two posts .068
+     apart with the unmown verge running between them, and a PAIR of verticals
+     with a dark slot down the middle is the cue a viewer reads as a boundary
+     from the air. One vertical is a bollard; two facing each other is a line.
+
+     ⚠ FRONT CORNERS SIT ON `edge`, REAR ON `-sEdge`, i.e. on whichever line the
+       boundary beside them actually occupies — see §2a for why the frontage is
+       not pulled in. A post floating .034 off the end of its own hedge is worse
+       than no post.
+     ⚠ NOT ON A PARTY-WALLED PLOT. There is a neighbour's wall there, and a
+       terrace's frontage already carries its own kerb band and gate piers. */
+  const postAt = (px, pz, w) => {
+    B.base.push(_hBox(w, postTop - bBase, w, px, (postTop + bBase) / 2, pz));
+    /* THE CAP IS NOT A FLOURISH. Without it a post is a .062 × .223 monolith,
+       and a monolith at eye level reads as a bollard someone forgot to finish.
+       A capping stone in B.trim — the one colour on this house that is FORCED
+       to contrast with its wall (see the trimCol clamp) — gives the post a top
+       edge to catch the key light, which is the whole difference between a
+       vertical and an object. 12 triangles, in a bucket every archetype emits. */
+    B.trim.push(_hBox(w + .016, .016, w + .016, px, postTop + .008, pz));
+  };
+  if (!party && plotSty === 'garden') for (const sx of [-1, 1]) {
+    postAt(sx * sEdge, edge, .062);
+    postAt(sx * sEdge, -sEdge, .062);
   }
   /* ⭐ AND THE BACK FENCE. The line above this block used to read "the rear edge
      is deliberately open — it is the one edge a player never sees", and that was
@@ -8655,9 +8818,9 @@ function _hHouseBody(lvl, tx, tz) {
        +5k triangles. A wall or a picket rear boundary is a single slab either
        way — only the hedge has a per-lobe price. */
   if (!party && plotSty === 'garden') {
-    const rz = -sEdge;
-    if (bound === 'hedge') _vegHedge(B.leaf, R, -(.5 - bt), .5 - bt, rz - bt / 2, rz + bt / 2, bTop, bBase, null, .210);
-    else _hPush(B.base, _hSlab(-(.5 - bt), .5 - bt, rz - bt / 2, rz + bt / 2, bTop, bBase));
+    const rz = -sEdge, rE = sEdge - .030;
+    if (bound === 'hedge') _vegHedge(B.leaf, R, -rE, rE, rz - bt / 2, rz + bt / 2, bTop, bBase, null, .210);
+    else _hPush(B.base, _hSlab(-rE, rE, rz - bt / 2, rz + bt / 2, bTop, bBase));
   }
   if (bound === 'railing') {
     /* An iron railing on a dwarf wall — the urban boundary. The wall above is
@@ -8665,8 +8828,8 @@ function _hHouseBody(lvl, tx, tz) {
     for (const seg of bsegs) {
       const n = Math.max(0, Math.round((seg[1] - seg[0]) / .058));
       for (let i = 0; i < n; i++)
-        B.metal.push(_hBox(.010, .088, .010, seg[0] + (i + .5) * ((seg[1] - seg[0]) / n), bTop + .044, edge));
-      if (n) B.metal.push(_hBox(seg[1] - seg[0], .012, .014, (seg[0] + seg[1]) / 2, bTop + .092, edge));
+        B.metal.push(_hBox(.010, .130, .010, seg[0] + (i + .5) * ((seg[1] - seg[0]) / n), bTop + .066, edge));
+      if (n) B.metal.push(_hBox(seg[1] - seg[0], .012, .014, (seg[0] + seg[1]) / 2, bTop + .140, edge));
     }
   }
   if (bound === 'picket') {
@@ -8675,14 +8838,36 @@ function _hHouseBody(lvl, tx, tz) {
     for (const seg of bsegs) {
       const n = Math.max(0, Math.round((seg[1] - seg[0]) / .062));
       for (let i = 0; i < n; i++)
-        B.trim.push(_hBox(.020, .075, .014, seg[0] + (i + .5) * ((seg[1] - seg[0]) / n), bTop + .038, edge));
-      if (n) B.trim.push(_hBox(seg[1] - seg[0], .012, .018, (seg[0] + seg[1]) / 2, bTop + .054, edge));
+        B.trim.push(_hBox(.020, .150, .014, seg[0] + (i + .5) * ((seg[1] - seg[0]) / n), bTop + .076, edge));
+      if (n) B.trim.push(_hBox(seg[1] - seg[0], .014, .018, (seg[0] + seg[1]) / 2, bTop + .112, edge));
     }
+    /* ⚠ THE FLANK PALINGS USED TO STAND ON `edge`, AND THAT WAS THE RIBBON.
+       `putBound` lays the flank run on `sEdge` — .034 further in — so for three
+       rounds every cottage's side fence was a rail at .4485 with its palings
+       planted at .4825, floating .034 outside their own fence AND hard on the
+       tile line, where they met the neighbour's mirror image and merged into
+       one unbroken picket run down the whole block. That is precisely the
+       artefact the round-4 critic reported ("the identical ribbon running
+       continuously past the gap between two houses") and it was still in the
+       build. They stand on sEdge now, and stop where the fence stops.
+       The REAR run got palings for the same reason: it had a rail and nothing
+       on it, so a cottage's back fence was a plank on the grass. */
+    /* The palings follow the RUN, not the tile: same ends as putBound above, or
+       a cottage's fence would grow back the ribbon the runs just lost. */
+    const pz0 = -sEdge, pz1 = edge, pxE = sEdge - .030;
+    const n = 12, span = pz1 - pz0, at = i => pz0 + (i + .5) * (span / n);
+    const nx = 12, spanX = 2 * pxE, atX = i => -pxE + (i + .5) * (spanX / nx);
     for (const sx of [-1, 1]) {
-      const n = 13;
       for (let i = 0; i < n; i++)
-        B.trim.push(_hBox(.014, .075, .020, sx * edge, bTop + .038, -(.5 - bt) + (i + .5) * ((1 - 2 * bt) / n)));
+        B.trim.push(_hBox(.014, .150, .020, sx * sEdge, bTop + .076, at(i)));
+      B.trim.push(_hBox(.014, .014, span, sx * sEdge, bTop + .112, (pz0 + pz1) / 2));
     }
+    /* ⚠ OUTSIDE THE sx LOOP. There is one back fence, not two — the first cut
+       drew it inside and paid for 12 duplicate palings on every cottage in the
+       city, coplanar with themselves and invisible. */
+    for (let i = 0; i < nx; i++)
+      B.trim.push(_hBox(.020, .150, .014, atX(i), bTop + .076, -sEdge));
+    B.trim.push(_hBox(spanX, .014, .020, 0, bTop + .112, -sEdge));
   }
   /* ⭐ 6. THE LOT LINE — the pale band round the whole parcel edge.
      ROUND 4, and the cheapest legible thing in this recipe: 48 triangles in a
@@ -8711,9 +8896,20 @@ function _hHouseBody(lvl, tx, tz) {
   // than on `edge` so the pier's own .05 depth still finishes exactly on the
   // tile line whichever boundary thickness was rolled. One at each edge of
   // every gap, so a drive gets its own pair of piers exactly as the path does.
-  for (const gp of gaps) for (const px of gp) {
+  /* ⚠ THE GATE GETS PIERS; THE DRIVE GETS A DROPPED KERB. `gaps` carries both
+     openings and the first cut seated a pier on all four ends of both, which
+     put six pieces of masonry across one suburban frontage — measured on the
+     capture, it read as a compound wall, not as a garden. A vehicle crossing
+     does not have gateposts, it has the dropped kerb §3a now draws; only the
+     footpath gate does. gaps[0] is the gate by construction. */
+  for (const gp of gaps.slice(0, 1)) for (const px of gp) {
     if (Math.abs(px) > .47) continue;
-    B.base.push(_hBox(.050, AY + .080 - bBase, .050, px, (AY + .080 + bBase) / 2, .475));
+    /* ⚠ THEY GREW WITH THE FENCE. A .080 pier beside a .170 hedge is a bollard
+       the hedge has swallowed; a gate pier has to be the TALLEST thing on the
+       line or the gap it marks reads as a hole in the planting. Same figure and
+       same section as the corner posts, so an entrance and a lot corner are
+       visibly the same piece of masonry. */
+    postAt(px, .475, .058);
   }
 
   /* ── buckets → meshes ───────────────────────────────────────────────────

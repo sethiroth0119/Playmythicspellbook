@@ -187,7 +187,7 @@ fs.mkdirSync(outDir,{recursive:true});
    This moves the CAMERA and nothing else: no light, no material, no clock. */
 await page.evaluate(()=>{const c=window.__nc.controls;
   c.maxPolarAngle=Math.PI*.4995; c.minDistance=.05; c.enableDamping=false;});
-const made=[];
+const made=[]; const onFilm={};
 for(const s of SHOTS){
   await page.evaluate(([c,t])=>{const nc=window.__nc;
     nc.camera.position.set(c[0],c[1],c[2]); nc.controls.target.set(t[0],t[1],t[2]);
@@ -243,6 +243,7 @@ for(const s of SHOTS){
     try { nc.cullAgents(90); } catch (e) {}
     const {renderer,scene,camera}=nc.three(); renderer.render(scene,camera);
   },[s.cam,s.tgt]);
+  onFilm[s.n]=await onFilmAt();
   const f=path.join(outDir,`${TAG}-${s.n}.png`);
   await page.screenshot({path:f}); made.push(f);
   /* A committable twin. Full PNGs are ~1.5 MB each and the loop makes three a
@@ -252,10 +253,15 @@ for(const s of SHOTS){
 }
 /* 📷 WHAT ACTUALLY REACHED THE FILM. `built.crowd` is a CENSUS and rounds 1 and
    2 both proved a census says nothing about a photograph — 29 agents, 0 pixels.
-   This projects every agent and every parked vehicle into the LAST framing and
-   counts the ones inside the frustum that are also visible, which is the number
-   a critic is being asked to count. */
-const onFilm=await page.evaluate(()=>{const nc=window.__nc,{camera,THREE}=nc.three();
+   This projects every agent, every parked vehicle and every standing citizen
+   into a framing and counts the ones inside the frustum that are also visible,
+   which is the number a critic is being asked to count.
+   ⚠ PER FRAMING, NOT ONCE AT THE END. It used to run after the loop, with the
+     camera wherever the last shot had left it, and printed ONE number labelled
+     as if it described the round. Three rounds of "the citizens are missing"
+     were argued over that number while the two framings it did not describe
+     went unmeasured. */
+async function onFilmAt() { return page.evaluate(()=>{const nc=window.__nc,{camera,THREE}=nc.three();
   camera.updateMatrixWorld();camera.updateProjectionMatrix();
   const v=new THREE.Vector3();
   const seen=o=>{o.getWorldPosition(v);v.project(camera);
@@ -263,9 +269,19 @@ const onFilm=await page.evaluate(()=>{const nc=window.__nc,{camera,THREE}=nc.thr
   const A=nc.agents().filter(a=>a.mesh.visible&&seen(a.mesh));
   let P=[];try{P=(window.MythicParking?window.MythicParking.group().children:[])
     .filter(o=>o.isGroup&&seen(o))}catch(e){}
+  /* 🚶 THE STANDING CROWD IS NOT AN AGENT and it is not one object per person
+     either — /src/crowd bakes the whole crowd into merged buckets, so a
+     traverse would count buckets, not people. Its spots() list is the census,
+     projected the same way everything else here is. */
+  let S=0,ST=-1;try{const v2=new THREE.Vector3();
+    const sp=(window.MythicCrowd?window.MythicCrowd.spots():[]);
+    ST=sp.length;
+    for(const q of sp){v2.set(q.x,0.17,q.z).project(camera);
+      if(v2.x>=-1&&v2.x<=1&&v2.y>=-1&&v2.y<=1&&v2.z<=1)S++}}catch(e){}
   return{agentsInFrame:A.length,byKind:A.reduce((a,g)=>(a[g.kind]=(a[g.kind]||0)+1,a),{}),
-         parkedInFrame:P.length,
-         vehiclesInFrame:A.filter(a=>a.kind!=='civilian').length+P.length}});
+         parkedInFrame:P.length, standingInFrame:S, standingTotal:ST,
+         peopleInFrame:A.filter(a=>a.kind==='civilian').length+S,
+         vehiclesInFrame:A.filter(a=>a.kind!=='civilian').length+P.length}})}
 /* ── 🔬 PER-FRAMING DIFF AGAINST THE PREVIOUS ROUND ────────────────────────
    The round-5 critic's first recommendation, and it is free: "this round's
    ground work never reached the street frame (74.8% pixel-identical to r4) and

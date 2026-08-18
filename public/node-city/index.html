@@ -26086,6 +26086,20 @@ function manageAgents() {
      sysTimer beat, and refresh() early-outs on an unchanged tile signature, so
      the calls that change nothing cost one hash pass over game.tiles. */
   try { if (window.MythicParking) window.MythicParking.refresh(); } catch (e) {}
+  /* 🚶 The STANDING CROWD rides the same lifecycle, and it must run AFTER
+     parking: a figure on the plot side is placed against the bays parking has
+     actually cut, so refreshing it first would test against last layout's
+     cars. Early-outs on an unchanged signature exactly as parking does. */
+  try {
+    if (window.MythicCrowd) {
+      window.MythicCrowd.refresh();
+      /* 🌙 The same two gates desiredAgentCounts() applies to the moving crowd
+         four lines below, applied to the standing one — otherwise the pavement
+         is full at 3 a.m. in a blizzard while the road is empty. */
+      window.MythicCrowd.setNight(nightAmt > .5,
+        !!(WEATHER[wx.type] && WEATHER[wx.type].severe));
+    }
+  } catch (e) {}
   /* 🧱 The parcel layer rides the SAME lifecycle for the same reason, and
      early-outs on an unchanged tile signature exactly as parking does. */
   try { if (window.MythicParcel) window.MythicParcel.refresh(); } catch (e) {}
@@ -33441,7 +33455,25 @@ function cullAgents(rOverride) {
 const BUBBLE_MAX = 4;          // on screen at once — more reads as noise
 const BUBBLE_LIFE = 5.2;       // seconds a bubble stays up
 const BUBBLE_GAP = 2.4;        // seconds between spawns
-const BUBBLE_NEAR = 26;        // world units; do not bubble a citizen off-screen
+/* 🔇 BUBBLE_NEAR WAS 26 WORLD UNITS AND IT IS GONE — replaced, not renamed.
+   It was a PLANAR test (x/z only) against the camera, so it passed a citizen 26
+   units away and ten units BELOW an aerial camera. That is the loosest possible
+   reading of "near".
+   🔇 AND NOT AT MAP DISTANCE EITHER. The round-8 critic: "the aerial capture
+   parks a speech bubble squarely over the west residential block — it occludes
+   precisely the frontage geometry that round was built to show", and the same
+   line appeared twice in the district frame with no body under either.
+   THE RULE CHOSEN, of the three the brief offered (clamp / hide at distance /
+   both), IS BOTH, and the distance one is not a camera mode — it is the
+   speaker's apparent SIZE. At 900 px and a 45° vertical fov a .26-tall citizen
+   subtends 282/d pixels, so at d = 14 they are 20 px: the smallest a person can
+   be and still be the thing the bubble is obviously attached to. Past that the
+   bubble's own 11 px text is TALLER than its speaker and the overlay stops
+   labelling a person and starts covering a building.
+   Measured on the gauntlet framings: aerial speakers sit at d 16–26 (silent),
+   district at 9–14, street at 3–6. */
+const BUBBLE_SHOW = 14;        // world units; past this the speaker is too small
+                               // to be worth labelling — see above
 
 /* Opinion lines per need, worst-first. `bad` fires when coverage is short,
    `good` when it is comfortably met. Kept short — a bubble that needs two
@@ -33558,7 +33590,13 @@ function bubbleTick(dt) {
     for (const a of agents) {
       if (a.kind !== 'civilian' || taken.has(a) || !a.mesh.visible) continue;
       const dx = a.mesh.position.x - camera.position.x, dz = a.mesh.position.z - camera.position.z;
-      if (dx * dx + dz * dz > BUBBLE_NEAR * BUBBLE_NEAR) continue;
+      const dy = a.mesh.position.y - camera.position.y;
+      /* BUBBLE_SHOW, not BUBBLE_NEAR, and in THREE dimensions. The old planar
+         test passed a citizen 26 units away and 10 units below an aerial
+         camera; that citizen is 11 px tall and the bubble over them is 150 px
+         wide. Distance to the SPEAKER is the honest measure of how big they
+         are on screen. */
+      if (dx * dx + dy * dy + dz * dz > BUBBLE_SHOW * BUBBLE_SHOW) continue;
       /* 👁 NEAR THE CAMERA IS NOT THE SAME AS ON SCREEN, and the distance test
          alone was picking citizens the player cannot see. The camera sits OUTSIDE
          the board looking back across it, so a 26-unit sphere around
@@ -33572,6 +33610,7 @@ function bubbleTick(dt) {
          citizen, so a citizen exactly at the edge gives a clipped bubble. */
       _bubVec.copy(a.mesh.position); _bubVec.y += 0.30; _bubVec.project(camera);
       if (!(_bubVec.z <= 1) || !(Math.abs(_bubVec.x) <= .92) || !(Math.abs(_bubVec.y) <= .92)) continue;
+      if (_bubBlocked(a)) continue;              // standing behind a building
       cands.push(a);
     }
     if (cands.length) {
@@ -33580,27 +33619,49 @@ function bubbleTick(dt) {
          workplace and THEIR mood, and the .who label puts their name on it.
          Only an agent with no roster seat (more civilians on the street than
          named people) falls back to the city-wide random table. */
+      /* 🗣 TWO PEOPLE MUST NOT SAY THE SAME SENTENCE AT THE SAME MOMENT.
+         Both tables are small and both are drawn with pick(), so a four-bubble
+         city collides often — the round-8 critic caught "the same speech line
+         duplicated in two overlapping bubbles" in one district frame. Re-roll
+         against what is CURRENTLY ON SCREEN (not a history: repeating a line
+         ten seconds later is a city with opinions, repeating it beside itself
+         is a bug), and if six rolls cannot find a fresh one, say nothing this
+         cycle. Silence for 2.4 s is invisible; the duplicate was not. */
+      const live = new Set(_bubbles.map(b => b.line));
       let line = null, who = null;
-      try { const cl = citBubbleFor(a); if (cl) { line = cl; who = cl.who; } } catch (e) {}
-      if (!line) line = bubbleLine();
-      const el = document.createElement('div');
-      el.className = 'cbub' + (line.tone ? ' ' + line.tone : '');
-      if (who) {
-        const wn = document.createElement('span');
-        wn.className = 'who'; wn.textContent = who;   // textContent: never HTML
-        el.appendChild(wn);
+      /* The NAMED citizen's own line first — citBubbleFor reads THEIR workplace
+         and THEIR mood, so it is the better sentence when it is available. It
+         is deterministic for a given citizen, though, so re-rolling it would
+         return the same words six times; on a collision the re-rolls come from
+         the city-wide table instead, which is random and therefore can vary. */
+      try { const cl = citBubbleFor(a); if (cl && !live.has(cl.text)) { line = cl; who = cl.who; } } catch (e) {}
+      for (let tr = 0; tr < 6 && !line; tr++) {
+        const cand = bubbleLine();
+        if (cand && !live.has(cand.text)) line = cand;
       }
-      el.appendChild(document.createTextNode(line.text));
-      layer.appendChild(el);
-      // next frame, so the opacity transition has a starting value to run from
-      requestAnimationFrame(() => el.classList.add('on'));
-      _bubbles.push({ el, agent: a, t: BUBBLE_LIFE });
-      /* 📝 …and into the scrollback the People modal reads. A world bubble is
-         gone in BUBBLE_LIFE seconds and a player who looked away has no way
-         back to it, so the SPOKEN line is recorded here — at the one place
-         that knows a citizen actually said it — rather than the modal
-         re-rolling its own lines and inventing speech that never happened. */
-      railSaid.push(line.text, who, line.tone);
+      /* Nothing fresh to say this cycle: skip the SPAWN only. An early
+         return here would also skip step 3 below, and the live bubbles
+         would stop following their speakers for a frame. */
+      if (line) {
+        const el = document.createElement('div');
+        el.className = 'cbub' + (line.tone ? ' ' + line.tone : '');
+        if (who) {
+          const wn = document.createElement('span');
+          wn.className = 'who'; wn.textContent = who;   // textContent: never HTML
+          el.appendChild(wn);
+        }
+        el.appendChild(document.createTextNode(line.text));
+        layer.appendChild(el);
+        // next frame, so the opacity transition has a starting value to run from
+        requestAnimationFrame(() => el.classList.add('on'));
+        _bubbles.push({ el, agent: a, t: BUBBLE_LIFE, line: line.text, ray: BUB_RAY_SEC, hid: false });
+        /* 📝 …and into the scrollback the People modal reads. A world bubble is
+           gone in BUBBLE_LIFE seconds and a player who looked away has no way
+           back to it, so the SPOKEN line is recorded here — at the one place
+           that knows a citizen actually said it — rather than the modal
+           re-rolling its own lines and inventing speech that never happened. */
+        railSaid.push(line.text, who, line.tone);
+      }
     }
   }
 
@@ -33616,6 +33677,24 @@ function bubbleTick(dt) {
      a display:none parent, the frame before the first resize. Hide instead. */
   if (!rect.width || !rect.height) { for (const b of _bubbles) b.el.style.opacity = '0'; return; }
   for (const b of _bubbles) {
+    /* 👤 NO BODY, NO BUBBLE — and this is the fix for the round-8 critic's
+       "speech bubbles now float with NO BODY BENEATH THEM". The spawn test
+       above ran ONCE, at spawn; for the next 5.2 seconds the speaker was free
+       to walk through a door (state 'inside' sets mesh.visible = false), be
+       hidden by cullAgents, or leave the frame entirely — and the bubble
+       stayed exactly where it was, captioning empty pavement. Every condition
+       spawn checks is therefore re-checked HERE, every frame:
+         · the speaker is still drawn at all
+         · they are still close enough to read as a person (BUBBLE_SHOW)
+         · they are still inside the frame
+       Hidden, not destroyed: a citizen who steps into a shop for two seconds
+       and comes out should finish their sentence, and killing the bubble would
+       also free the BUBBLE_MAX slot to a second speaker mid-word. */
+    if (!b.agent.mesh.visible || !b.agent.mesh.parent) { b.el.style.opacity = '0'; continue; }
+    const bdx = b.agent.mesh.position.x - camera.position.x,
+          bdy = b.agent.mesh.position.y - camera.position.y,
+          bdz = b.agent.mesh.position.z - camera.position.z;
+    if (bdx * bdx + bdy * bdy + bdz * bdz > BUBBLE_SHOW * BUBBLE_SHOW) { b.el.style.opacity = '0'; continue; }
     _bubVec.copy(b.agent.mesh.position);
     _bubVec.y += 0.30;                       // just above a .26-tall citizen
     _bubVec.project(camera);
@@ -33623,6 +33702,13 @@ function bubbleTick(dt) {
     // rather than draw a bubble at a nonsense position. A non-finite projection
     // is the same class of problem and takes the same exit.
     if (!(_bubVec.z <= 1) || !Number.isFinite(_bubVec.x) || !Number.isFinite(_bubVec.y)) { b.el.style.opacity = '0'; continue; }
+    // …and off the edge of the frame is the same answer. 0.92 rather than 1.0
+    // for the reason the spawn test uses it: the bubble is drawn ABOVE and
+    // centred on the citizen, so one exactly at the edge gives a clipped bubble.
+    if (Math.abs(_bubVec.x) > .92 || Math.abs(_bubVec.y) > .92) { b.el.style.opacity = '0'; continue; }
+    b.ray -= dt;
+    if (b.ray <= 0) { b.ray = BUB_RAY_SEC; b.hid = _bubBlocked(b.agent); }
+    if (b.hid) { b.el.style.opacity = '0'; continue; }
     const x = rect.left + (_bubVec.x * .5 + .5) * rect.width;
     const y = rect.top + (-_bubVec.y * .5 + .5) * rect.height;
     b.el.style.transform = 'translate(-50%,-100%) translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px)';
@@ -33630,6 +33716,52 @@ function bubbleTick(dt) {
   }
 }
 const _bubVec = new THREE.Vector3();
+/* 🧱 …AND A WALL IN FRONT OF THE SPEAKER IS THE SAME PROBLEM AS NO SPEAKER.
+   The projection tests above answer "is this citizen in the frustum", which is
+   not the same question as "can the player see them". Measured on the district
+   framing after the on-screen test was added: a bubble reading "They built this
+   properly." sat squarely on a five-storey facade with the speaker standing
+   BEHIND it — in frame, visible, 11 units away, and completely hidden. That is
+   still a caption with no body under it, which is the exact complaint.
+   ⚠ RATE-LIMITED, NOT PER FRAME. At most BUBBLE_MAX bubbles and one cast each
+     every BUB_RAY_SEC, so this is ~12 casts a second in the worst case against
+     a scene three's raycaster rejects with one bounding-sphere test per object.
+     Per-frame casting was the first cut and it is real work in the frame budget
+     for a question whose answer changes at walking pace.
+   The cast stops .3 short of the citizen so their OWN mesh can never be the
+   occluder, and starts at the head rather than the feet — a kerb, a bay slab or
+   the citizen's own shadow catcher would otherwise read as a wall. */
+const BUB_RAY_SEC = 0.30;
+const _bubRay = new THREE.Raycaster();
+const _bubDir = new THREE.Vector3();
+function _bubBlocked(a) {
+  _bubDir.copy(a.mesh.position); _bubDir.y += .20;
+  const d = _bubDir.distanceTo(camera.position);
+  if (!(d > .6)) return false;                  // close enough that nothing fits between
+  _bubDir.sub(camera.position).normalize();
+  _bubRay.set(camera.position, _bubDir);
+  _bubRay.near = .05; _bubRay.far = d - .30;
+  let hit = false;
+  try {
+    for (const h of _bubRay.intersectObject(scene, true)) {
+      /* ⚠ isMesh, AND IT IS NOT A TIDINESS FILTER. Raycaster hits Lines and
+         Points too, and this scene has a GridHelper — a LineSegments lying flat
+         over the whole map at y≈0. Measured with it in: 0 of 9 candidates on
+         the street framing and 0 of 7 on the district framing survived the
+         test, i.e. the grid "occluded" every citizen in the city and the
+         feature went silent everywhere. A line you can see through is not a
+         wall. */
+      if (!h.object || !h.object.visible || !h.object.isMesh) continue;
+      // the crowd itself is not an occluder: a second citizen standing in front
+      // of the speaker is street life, not a wall.
+      let p = h.object, own = false;
+      while (p) { if (p === agentGroup || p.name === 'crowd') { own = true; break; } p = p.parent; }
+      if (own) continue;
+      hit = true; break;
+    }
+  } catch (e) { return false; }                  // never let the view cost the frame
+  return hit;
+}
 
 function animate() {
   const dt = Math.min(clock.getDelta(), .25);
@@ -34485,6 +34617,30 @@ function animate() {
                                                roughness: .95, vertexColors: true }),
     });
   } catch (e) { console.warn('[Parking] not mounted (non-fatal):', e); }
+  /* ══ 🚶 THE STANDING CROWD ═══════════════════════════════════════════════
+     The pedestrian twin of the fleet above, and it exists for the measured
+     reason in /src/crowd's header: AGENTS.civMax is 14, this district has a
+     hundred road tiles, and whether any given crop contains a pedestrian was
+     therefore a coin flip that three separate critics have now called a
+     regression. The moving crowd is untouched — its cap is a frame-rate
+     decision — and this adds the people who are STANDING on the footway.
+
+     🔴 THE GLOBALS TRAP, for the eleventh module. `game`, `scene`, `THREE`,
+     `HALF`, `RD_PT`, `isRoad`, `makeCivilian`, `animCivilian` and `CIV_COLORS`
+     are ALL top-level `const` in this module script and invisible to an ES
+     module. This ctx is the hand-over, exactly as Parking above is.
+
+     What is NOT handed over: anything that writes a tile, the ledger, or a
+     mesh the module did not make. The crowd reads the road graph, reads
+     MythicParking.spots() so it cannot stand a figure inside a parked car,
+     and adds one group. */
+  try {
+    const cwmod = await import('../src/crowd/index.js?v=' + (window.NC_BUILD || 'r1'));
+    window.MythicCrowd = cwmod.mount({
+      THREE, scene, game, HALF, RD_PT, isRoad,
+      makeCivilian, animCivilian, CIV_COLORS, disposeOwnedGeo,
+    });
+  } catch (e) { console.warn('[Crowd] not mounted (non-fatal):', e); }
   /* ══ 🧱 THE PARCEL LAYER ═════════════════════════════════════════════════
      Rubric dimension 5. makeHousing has owned a real plot since round 2 and
      round 4 gave it the setback that made it visible — but every OTHER

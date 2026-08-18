@@ -92,3 +92,4 @@ public/assets/Units/unit frames/New units/*.gif
 .gauntlet/patch-preview.html
 .gauntlet/probe-*.mjs
 .gauntlet/shots/wip-*/
+.gauntlet/shots/*.json

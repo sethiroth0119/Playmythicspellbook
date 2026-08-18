@@ -293,5 +293,77 @@
       }
     ],
     "note": "Mean 3.64 to 4.57, the largest jump of the loop, and vehicles went 0 to 4-6 and citizens 0 to 3-5. The pattern of this round is worth naming: every single defect was diagnosed to a DIFFERENT cause than its symptom suggested. A pixel diff of the rendered buffer \u2014 with-crowd against without-crowd, exactly 0 of 1,440,000 pixels different \u2014 found in one run what two rounds of art work could not. Stranger test is still 'instantly', and the next priority is the one dimension that has never moved: the plot, at 2/10. Buildings sit on a continuous flat pad with no parcel, and the whole-frame critic says that single fact is why the city reads as models on a board."
+  },
+  {
+    "round": 4,
+    "headline": "Parcels landed. A critic still could not see a single property line.",
+    "status": "done",
+    "meanScore": 4.83,
+    "strangerTest": "instantly",
+    "tris": 404108,
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 5
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 6
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 6
+      },
+      {
+        "dimension": "Building surface detail",
+        "score": 5
+      },
+      {
+        "dimension": "The plot",
+        "score": 3
+      },
+      {
+        "dimension": "Roads",
+        "score": 7
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 7
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 5
+      },
+      {
+        "dimension": "Citizens",
+        "score": 2
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 4
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 3
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 2
+      }
+    ],
+    "pieces": [
+      {
+        "title": "Parcels and the setback",
+        "verdict": "BEHIND",
+        "summary": "Rounds 2-3 had already built the whole plot kit \u2014 apron, path, drive, lawn, hedge, bins, garden tree \u2014 and almost none of it was visible: a detached villa's eaves stood at z .275 against a boundary at .465, and the road aprons .110 of footway over the front, leaving ~.115 of garden a camera could see in front of a house up to 1.36 tall. The mass now slides back inside its own tile before the plot is drawn. Visible front garden goes .115 to .197, +71%. A new /src/parcel layer gives every NON-housing building a surface, a drive to the kerb on the side its door is on, a lot line and a class-appropriate boundary. Cost: +1.7% triangles, two new draw calls for the entire city.",
+        "gap": "There is no parcel between the building and the kerb: the sidewalk slab abuts the front steps directly, so there is no lawn, no path from the door, and no driveway anywhere in the city \u2014 and no lot line separates neighbours. Build it as: a 4\u20136 m front setback per residential building; fill it with a"
+      },
+      {
+        "title": "The failing economy round",
+        "verdict": "WINS",
+        "summary": "Decided on evidence, not taste: transit is a LICENCE like bank and founds no business. BUILDINGS.busstop/trainstation/railtrack each carry transitLicence and transitOwns() gates placement on holding the row, so the operation IS the permission and the network is the product; and revenue is already modelled by routes.js ledger(), clamped to net = min(0, fares - upkeep). A firm on op_bus would be a second, unclamped income for carrying the same passengers - the exact double-count that disqualified forge, indexfund and holdco. The clamp and a business cannot both be true. The suite is green."
+      }
+    ],
+    "note": "Mean 4.57 to 4.83 and the economy suite went green, but the whole-frame critic called the project PLATEAUING and showed its working: gain per round has fallen from +1.0 to +0.2, and the score column splits cleanly in two. Everything about OBJECTS has climbed and is nearly done - silhouette 4-7-6-6-6, roads 4-6-6-7-7, street furniture 3-5-6-6-7. Everything about the WORLD BETWEEN objects has never left the floor - the plot 3-4-2-2-3, citizens 2-2-0-3-2, zoning read 2-2-3-3-3, UI 4-2-2-2-2. Its stranger-test sentence is the whole diagnosis: THE GROUND IS ONE FLAT COLOUR AND NOTHING IS ROOTED IN IT - over half the frame at every camera, and the only surface that is wrong at all three zoom levels. Round 4 built setbacks, lawns, drives, hedges and lot lines, and the plot critic still answered 'no, I cannot see where one property ends and the next begins, anywhere, in any frame'. Parcels drawn on a single uniform plane do not read as parcels. The plane is the problem, and round 5 attacks only that."
   }
 ]

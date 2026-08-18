@@ -331,8 +331,17 @@
      greys the sky back toward the photo's overcast, 0.82 all but removes the
      location, 0.60 keeps the deep sky and the layered ranges while a location
      card still plainly changes the vista, which is the user's own ask.
+     ⚠ CUT 0.60 → 0.25 ON THE OWNER'S DIRECT ASK: "show the background image
+     over the sky". At 0.60 a disagreeing photograph sat at just under half
+     strength, which reads as a milky wash rather than as the location — the
+     screenshot that prompted this shows a ruined skyline barely present over
+     the gradient. The cost is exactly the one the 0.45 trial named: a
+     disagreeing photo pulls the deep sky toward its own overcast. That is now
+     the accepted trade, because the location being legible is the requirement
+     and the sky is the decoration. If a future location looks washed, turn
+     THIS number up — do not reach for the haze.
      Art that measures warm (dis→0) is not touched at all. */
-  const ART_YIELD = 0.60;
+  const ART_YIELD = 0.25;
 
   /* ── hex ↔ rgb, and LUMA SHIFTS ───────────────────────────────────────────
      The ridge palette is built by shifting ONE base colour up and down in luma
@@ -3834,7 +3843,21 @@
       try { discLive(api); } catch (e) { }
     } else if (S.world.cv) {
       blit(ctx, S.world.cv, W, H);
-      if (!S.world.art) drawArt(api, ctx, 1);
+      /* ⚠ THE BACKDROP WAS COVERING THE SUN AND THE MOON, and only down this
+         path. S.world.cv is the FLATTENED bake — sky, art, body, shafts, land
+         — so when the art is not in it (S.world.art false) drawArt paints the
+         photograph on top of the already-baked disc and buries it. The blend
+         path above never had this bug because it deliberately stops at `far`,
+         paints the body live, then resumes at `near`; this branch had no
+         equivalent step. Owner's ask, exactly: the image sits over the sky,
+         the sun and moon sit over the image. So re-assert the body once the
+         art is down. Both calls are per-frame paints with no baked state, so
+         running them here instead of inside the bake costs one disc. */
+      if (!S.world.art) {
+        drawArt(api, ctx, 1);
+        try { drawBody(api, ctx); } catch (e) { }
+        try { discLive(api); } catch (e) { }
+      }
     } else {
       drawFallback(api);
     }

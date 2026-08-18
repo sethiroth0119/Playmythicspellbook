@@ -218,7 +218,7 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v120x3';
+<script>window.BB_BUILD='v120x4';
 "use strict";
 /* 🔌 BBX — THE STAGE HOOK SEAM.
    The board page is a classic (non-module) script, so it cannot `import`.
@@ -4477,7 +4477,23 @@ function drawHoloBeam(br){
   o = { x: o.x + (ddx/dl)*S.s*HOLO.frontOff, y: o.y + (ddy/dl)*S.s*HOLO.frontOff, s: S.s };
   const dx = g.x-o.x, dy = g.y-o.y, L = Math.hypot(dx,dy) || 1;
   const nx = -dy/L, ny = dx/L;
-  const r0 = HOLO.r0 * S.s, r1 = HOLO.r1 * g.s;
+  /* ⚠ A NEGATIVE RADIUS HERE FROZE THE ENTIRE BOARD, PERMANENTLY, AND THIS IS
+     THE "it is freezing" REPORT. `g.s` is the projected scale at the beam's
+     landing point, and project() hands back a NEGATIVE scale for a point that
+     falls behind the camera plane — it only returns null for the points it
+     rejects outright, so the `if (!g) return` above does not cover this. r1
+     then goes negative and the floor pool's `arc(0,0,r1*1.3,…)` throws
+     IndexSizeError. frame() does catch it, but it also latches `frameErr`,
+     and a latched frameErr NEVER reschedules: one bad pylon on one frame and
+     the battlefield is a still image for the rest of the match.
+     Caught at r1 = -28.08, thrown the moment a defs swap re-ran the pylon
+     pass — and the host re-posts defs on a 2Hz tick (_bbStagePushDefs), so
+     this was reachable in an ordinary match, not just under a probe.
+     A beam whose landing point is behind the camera has nothing to draw, so
+     bail. The clamp stays as well, because "a radius cannot be negative" must
+     not depend on one caller's arithmetic continuing to be right. */
+  if (!(S.s > 0) || !(g.s > 0)) return;
+  const r0 = Math.max(0, HOLO.r0 * S.s), r1 = Math.max(0, HOLO.r1 * g.s);
 
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
@@ -4543,7 +4559,9 @@ function drawHoloBeam(br){
     const rt = ((T*0.16) + i/3) % 1;
     ctx.strokeStyle = rgba(HOLO.colA, A*0.8*(1-rt));
     ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.arc(0,0, r1*(0.25 + rt*1.05), 0, 7); ctx.stroke();
+    /* belt and braces with the dt clamp in frame(): a radius must not be able
+       to go negative even if some future caller feeds this a strange phase. */
+    ctx.beginPath(); ctx.arc(0,0, Math.max(0, r1*(0.25 + rt*1.05)), 0, 7); ctx.stroke();
   }
   ctx.restore();
   ctx.restore();
@@ -4984,6 +5002,30 @@ function drawUnit(u){
   ctx.shadowColor = rgba(LIGHT.rim, .8); ctx.shadowBlur = k*.16;
   paintSprite(ctx, u.key, k, u.def.color, T + u.bob);
   ctx.restore();
+  /* 🔆 THE CHARACTERS READ AS DARK STICKERS — and it is an asymmetry, not a
+     tint. grade() (vista.js, step 3) ends on a full-viewport 'multiply' that
+     lands on EVERYTHING painted before it, units included, because the actors
+     are drawn into the same ctx well before the grade runs. But drawUnit
+     applies no key light of its own: the sprite is blitted at the art's own
+     values. So a unit pays the scene's whole attenuation and receives none of
+     its illumination, which is precisely the "dark" report — worst at night,
+     where the multiply is deepest and keyI is 0.48.
+     The lift is the sprite added to ITSELF through 'lighter'. That is the
+     right primitive here for two reasons: the sprite's own alpha is the mask,
+     so the ground behind it cannot be touched (a fill or a filter would spill
+     past the silhouette), and it scales each pixel by (1+lift) rather than
+     adding a flat pedestal, so black stays black and the art's own contrast
+     survives. Same primitive as the flash below — this file already relies on
+     it. Keyed to the light so a dim preset gets more back than a bright one.
+     ⚠ Skip the dead: a corpse is mid-fade and lifting it makes it flare as it
+     goes out. */
+  if (!u.dead){
+    const lift = clamp(0.34 - LIGHT.keyI*0.10, 0.12, 0.30);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = lift;
+    paintSprite(ctx, u.key, k, u.def.color, T + u.bob);
+    ctx.restore();
+  }
   if (u.flash > 0){
     ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = u.flash;
     paintSprite(ctx, u.key, k, '#ffffff', T + u.bob);
@@ -5284,6 +5326,17 @@ function mixHexRaw(a,b,t){
 }
 
 let frameErr = false;
+/* 🩹 HOW MANY TRANSIENT RENDER THROWS THE BOARD SURVIVES BEFORE IT GIVES UP.
+   frameErr was all-or-nothing: the first throw from anywhere in the frame
+   latched it and the board never rescheduled again — a still image for the
+   rest of the match. That turned every one-frame arithmetic slip into a total
+   loss (see drawHoloBeam's negative radius, which is exactly how it was
+   found). A transient throw is now absorbed: the frame is abandoned, the next
+   one is scheduled, and only a PERSISTENT fault — FRAME_ERR_MAX throws — puts
+   the red card up. The counter decays on clean frames so a single bad pylon
+   an hour never accumulates into a latch. */
+const FRAME_ERR_MAX = 8;
+let frameErrN = 0;
 /* ══════════════════════════════════════════════════════════════════════════
    🎨 TILE SURFACES — canvas-2D, painted INSIDE the stage's own pass.
    ⚠ Deliberately NOT WebGL. The shader version compiled, issued draw calls and
@@ -5771,7 +5824,19 @@ function seedPickPolys(){
 function frame(now){
   if (frameErr) return;
   try {
-  const dt = Math.min((now - last)/1000, 0.05) || 0.016; last = now; T += dt;
+  /* ⚠ THE LOWER CLAMP IS LOAD-BEARING — it is not symmetry for its own sake.
+     This was `Math.min(…, 0.05)`, which caps a long frame but says nothing
+     about a SHORT one, so a timestamp that goes backwards produced a negative
+     dt and T ran BACKWARDS. That matters because a dozen animations in this
+     file take their phase as `(T*k + i/n) % 1`, and JS `%` keeps the sign of
+     the dividend: once T is negative those phases are negative too, and any
+     radius built from one goes negative with it. drawHoloBeam's ring is the
+     one that bit — `arc(0,0, r1*(0.25 + rt*1.05))` at r = -9.39 — and a
+     negative radius throws IndexSizeError, which used to latch frameErr and
+     freeze the board for the rest of the match.
+     Clamping dt at zero fixes the whole family at the source rather than
+     patching each phase expression, and it costs one comparison. */
+  const dt = clamp((now - last)/1000, 0, 0.05) || 0.016; last = now; T += dt;
   /* the load schedule advances once per frame and retires itself — see above */
   if (LOADQ.on){ if (LOADQ.step > 21) LOADQ.on = false; else LOADQ.step++; }
   /* how many NEW textures may be classified this frame — see isPixelArt. The
@@ -5901,6 +5966,13 @@ function frame(now){
   drawEffects('screen');
   drawGuides();
   } catch (err) {
+    /* absorb a transient throw — abandon THIS frame, keep the loop alive.
+       Only a persistent fault earns the red card. */
+    if (++frameErrN < FRAME_ERR_MAX){
+      if (frameErrN === 1) console.error('[board] transient render error (recovering):', err);
+      requestAnimationFrame(frame);
+      return;
+    }
     frameErr = true;
     ctx.setTransform(1,0,0,1,0,0);
     ctx.fillStyle = '#180a0a'; ctx.fillRect(0,0,cv.width,cv.height);
@@ -5910,6 +5982,9 @@ function frame(now){
       ctx.fillText(s.trim(), 26, 74 + i*22));
     console.error(err); return;
   }
+  /* a clean frame pays down the transient-error budget, so isolated faults
+     spread over a long match never accumulate into a latch */
+  if (frameErrN > 0) frameErrN--;
   requestAnimationFrame(frame);
 }
 

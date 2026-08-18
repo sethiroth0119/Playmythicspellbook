@@ -54,6 +54,32 @@ export const STREET = {
        moved off 100–100. A readout that cannot vary is exactly what the comment
        above says this file exists to avoid, and it shipped anyway.
 
+     🔴 AND RAISING IT TO 5.0 DID NOT FIX THAT. READ THIS BEFORE TOUCHING THE
+        NUMBER AGAIN — the next hand's instinct will be to raise it a third
+        time, and that instinct is wrong twice over.
+        The retune was derived from the measurement below and the measurement is
+        correct: re-driven on the standard district after the change
+        (.gauntlet/drive-streets.mjs, 480x270 so the clock runs at ~1:1), the
+        busiest tile took 66 counted passes in 141 city seconds = 0.47/s, within
+        2% of the 0.48 quoted here. The rate was never in doubt.
+        The panel still read a flat "100%". The defect was one Math.round in
+        index.js statsFor(): per-tile condition was rounded to a whole percent
+        BEFORE min/max/avg were taken over it, so a street under half a point of
+        wear aggregated to the integer 100 and the panel's decimal formatter was
+        handed a number with no decimal left. Raising 1.6 → 5.0 only moved the
+        invisibility threshold from 625 passes to 200 — and 200 passes is still a
+        THIRD OF A CYCLE, more than any verifier's drive produces, so a correct
+        retune bought a correct rate that nothing could see.
+        Fixed where it broke (index.js aggregates exact and rounds last;
+        panel.js formats both ends of the range the way it already formatted the
+        average). check-streets-clock.mjs §11 now drives mount → countPass →
+        statsAt → the panel's own formatter and asserts on the STRING, which is
+        the check §10 could not be: §10 does its arithmetic in its own file and
+        stayed green through the whole outage.
+        ⚠ So: if CONDITION LOOKS DEAD AGAIN, run §11 before reaching for this
+          constant. A dead readout at a correct rate is a display bug, and this
+          number is not where display bugs live.
+
      THE RATE IS MEASURED, NOT PICKED. Driven on the standard 172-tile district
      (100 road tiles, 29 agents — 8 cars, 6 trucks, 1 police, the rest on foot),
      counting only real agent tile transitions, over a whole drive rather than a

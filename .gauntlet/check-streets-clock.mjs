@@ -173,5 +173,85 @@ console.log('10. wear reaches a scale a session can see');
   ok(capCycles >= 12, 'the cap is hours of play away, not one session', capCycles);
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   11. 🏚 …AND THE READOUT ACTUALLY MOVES. §10 IS NOT ENOUGH AND HERE IS WHY.
+   ----------------------------------------------------------------------------
+   §10 above asserts the CONSTANT: at WEAR_PER_1K_PASSES against the measured
+   per-tile pass rates, one cycle costs a busy tile ~2.8 points. Every line of it
+   passed while the panel on screen read a flat "100%" with "100% average" under
+   it, in a city whose busiest tile had genuinely lost a quarter of a point —
+   because §10 does its arithmetic in this file and never touches the code that
+   computes what a player sees.
+
+   That gap cost two rounds. The first response was to raise the constant (1.6 →
+   5.0), which §10 duly re-blessed and which changed nothing on screen, because
+   the real defect was one Math.round in index.js's statsFor: per-tile condition
+   was rounded BEFORE min/max/avg were taken, so any street under half a point of
+   wear aggregated to the integer 100 and the panel's own decimal formatter was
+   handed a number with no decimal left in it.
+
+   So this section drives the SHIPPED path end to end — mount() → countPass() →
+   statsAt() → the panel's own exported formatter — and asserts on the STRING a
+   player would read. index.js, panel.js, segment.js, naming.js and labels.js all
+   touch DOM and THREE only behind guards, so the whole feature mounts in node
+   with a stub ctx; labels degrade to the no-op stub on their own.
+   ⚠ The numbers below are per-tile PASS COUNTS, not wear percentages, and they
+     are deliberately far under half a point. A test that used a big obvious load
+     would pass on the rounded code too and prove nothing.
+   ════════════════════════════════════════════════════════════════════════════ */
+console.log('11. the readout moves, not just the constant');
+{
+  const { mount } = await import('../public/src/streets/index.js');
+  const { fmtAvg } = await import('../public/src/streets/panel.js');
+
+  const game = { cityAge: 0, tiles: {} };
+  for (let x = 0; x < 10; x++) game.tiles[x + ',5'] = { type: 'road', lvl: 1 };
+  const S = mount({ game, cycleMin: () => 20, carSpeed: () => 1.9, fleetMax: () => 18,
+                    roadCost: () => 4, toast: () => {}, saveSoon: () => {}, saved: null });
+  ok(S.streets().length === 1, 'a 10-tile road is one street', S.streets().length);
+
+  const fresh = S.statsAt('5,5');
+  ok(fresh.condition.minExact === 100 && fresh.condition.avgExact === 100,
+     'an undriven street is exactly 100 everywhere', fresh.condition);
+
+  /* SUB-POINT WEAR: 60 passes on one tile is 0.30 points at 5%/1k, and 40 on
+     another is 0.20. Both round to 100. The whole question is whether the panel
+     can still tell them apart and from their eight untouched neighbours. */
+  for (let i = 0; i < 60; i++) S.countPass('3,5', 'car');
+  for (let i = 0; i < 40; i++) S.countPass('4,5', 'car');
+  const W = STREET.WEAR_PER_1K_PASSES;
+  const worst = 100 - (60 / 1000) * W;
+  const c = S.statsAt('5,5').condition;
+
+  ok(Math.round(c.minExact) === 100 && Math.round(c.maxExact) === 100,
+     'the load really is sub-point — rounded, every tile is still 100', [c.minExact, c.maxExact]);
+  ok(Math.abs(c.minExact - worst) < 1e-9,
+     'min is the WORST tile, exact: ' + worst.toFixed(2) + '%', c.minExact);
+  ok(c.maxExact === 100, 'max is an untouched tile — the range has a top', c.maxExact);
+  ok(c.avgExact < 100 && c.avgExact > 99.9,
+     'the average left 100 without being rounded back onto it', c.avgExact);
+  /* The bug in its own words: aggregating the ROUNDED per-tile figure. If a
+     future edit puts Math.round back on that line every one of these collapses
+     to exactly 100 and this line is the one that says so. */
+  ok(c.minExact !== 100, 'THE REGRESSION GUARD — statsFor must aggregate EXACT, round last', c.minExact);
+
+  // …and the last inch: what the panel actually prints.
+  const lo = fmtAvg(c.minExact), hi = fmtAvg(c.maxExact), av = fmtAvg(c.avgExact);
+  console.log('  panel would print: Condition ' + lo + '%–' + hi + '% (' + av + '% average)');
+  ok(lo !== hi, 'the panel prints a RANGE, not one collapsed number', [lo, hi]);
+  ok(/\./.test(lo) || lo !== '100', 'the worst end is not the string "100"', lo);
+
+  /* One measured cycle on the busiest tile (tuning.js: ~0.47 counted passes per
+     city second x 1,200) — the shape the reference frame shows. */
+  for (let i = 0; i < 504; i++) S.countPass('3,5', 'car');
+  const c2 = S.statsAt('5,5').condition;
+  const lo2 = fmtAvg(c2.minExact), av2 = fmtAvg(c2.avgExact);
+  console.log('  after one cycle of measured busy traffic: ' + lo2 + '%–' +
+              fmtAvg(c2.maxExact) + '% (' + av2 + '% average)');
+  ok(c2.minExact <= 97.5, 'a cycle of the measured busy rate costs ~2.8 points', c2.minExact);
+  ok(Math.round(c2.minExact) < 100, 'and by then even the ROUNDED figure has moved', c2.minExact);
+  ok(c2.maxExact === 100, 'while the tiles nobody drove on are still new', c2.maxExact);
+}
+
 console.log(fails ? '\n' + fails + ' FAILED' : '\nALL CLEAR');
 process.exit(fails ? 1 : 0);

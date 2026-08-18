@@ -54,7 +54,12 @@ const fmtRate = n => (n < 10 ? String(Math.round(n * 10) / 10) : fmtInt(n));
    used to be frozen: a street a session's traffic has taken to 99.4% rounds to
    "99", but one at 99.6% rounded to "100" and looked untouched. One decimal
    whenever there is one to show. */
-const fmtAvg = n => (Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1));
+/* EXPORTED so .gauntlet/check-streets-clock.mjs §11 can assert what the panel
+   would actually PRINT. That round shipped a dead readout twice, and both times
+   the failure was in the last inch — a correct number rounded away on its way to
+   the screen — so a test that stops at the data and re-implements the format in
+   its own file could not have caught it. Nothing else imports this. */
+export const fmtAvg = n => (Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1));
 /* A road costs 4 Cinder, so a short lane's honest upkeep is a fraction of one.
    Rounding that up to "1" would be the panel inventing a bill; show the decimal
    until the number is big enough not to need it. */
@@ -186,13 +191,29 @@ export function render(ctx, st, stats, uiTab) {
   else { status.className = ''; status.innerHTML = 'QUIET'; }
 
   const cond = stats.condition;
+  /* `?? ` on the exact fields, not `||`: 0 is a real condition (a tile at the
+     wear cap with the host also calling it damaged) and `||` would swap it for
+     the rounded one. The fallback exists for an older index.js that predates
+     the exact fields, which is the same degrade contract the rest of this file
+     keeps with its host. */
+  const condLo = fmtAvg(cond.minExact != null ? cond.minExact : cond.min);
+  const condHi = fmtAvg(cond.maxExact != null ? cond.maxExact : cond.max);
   const tl = [
     { e: 'Upkeep', v: '🔥 ' + fmtMoney(stats.upkeep) + '<small> /cycle</small>',
       d: Math.round(STREET.UPKEEP_PCT_PER_CYCLE * 100) + '% of build cost, scaled by wear &middot; quoted, not billed' },
     { e: 'Length', v: len.txt,
       d: st.len + ' &times; ' + STREET.METRES_PER_TILE + ' m per tile' },
-    { e: 'Condition', v: (cond.min === cond.max ? cond.max + '<small>%</small>'
-        : cond.min + '<small>%</small>–' + cond.max + '<small>%</small>'),
+    /* THE RANGE GETS THE SAME DECIMAL RULE AS THE AVERAGE, and it is the same
+       argument fmtAvg was written for one line at a time. The first cut applied
+       it to the average only and printed the range from the integer fields — so
+       a street whose worst tile was at 99.7% and whose best was untouched read
+       a flat "100%" with no range at all, which is the "readout that cannot
+       vary" tuning.js exists to prevent. index.js now aggregates the exact
+       values (see its 🔴 header); this formats them, and collapses to ONE
+       number only when the two ends print the same, not when they round the
+       same. */
+    { e: 'Condition', v: (condLo === condHi ? condHi + '<small>%</small>'
+        : condLo + '<small>%</small>–' + condHi + '<small>%</small>'),
       d: fmtAvg(cond.avgExact != null ? cond.avgExact : cond.avg) + '% average across ' +
          st.len + ' tile' + (st.len === 1 ? '' : 's') +
          (stats.wearRate > 0.05 ? ' · wearing ' + fmtRate(stats.wearRate) + '%/cycle' : '') },
@@ -261,9 +282,17 @@ export function render(ctx, st, stats, uiTab) {
     '</div>' +
     '<div class="ins-desc st-note">Named automatically when the street was laid. The name follows the tiles, so extending this street keeps it and every road you build gets one of its own.</div>');
 
-  const rows = stats.tiles.map(t =>
-    '<div class="fac"><span class="fac-l">tile ' + esc(ctx, t.k) + '</span><span class="fac-v num' +
-    (t.condition < 80 ? ' dn' : '') + '">' + t.condition + '% · ' + fmtInt(t.life) + ' passes</span></div>').join('');
+  /* The Tiles tab is where a player compares one tile against its neighbours,
+     so it is the LAST place a whole-percent readout is acceptable: nineteen
+     rows of "100% · 53 passes" beside "100% · 4 passes" says the passes matter
+     and the condition does not. Same formatter as the headline — the two must
+     never round differently, or the tab and the tile disagree about the same
+     road. The `dn` threshold stays on the exact value for the same reason. */
+  const rows = stats.tiles.map(t => {
+    const c = t.condExact != null ? t.condExact : t.condition;
+    return '<div class="fac"><span class="fac-l">tile ' + esc(ctx, t.k) + '</span><span class="fac-v num' +
+      (c < 80 ? ' dn' : '') + '">' + fmtAvg(c) + '% · ' + fmtInt(t.life) + ' passes</span></div>';
+  }).join('');
 
   let panes =
     '<div class="pane one" role="tabpanel" id="inspane-ov" data-tab="ov" aria-labelledby="instab-ov" tabindex="0"><div>' +

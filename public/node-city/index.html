@@ -28628,13 +28628,46 @@ const OPS_TYPES = Object.keys(OP_BP);
       totalCinder() and the audit never sees it. A firm's revenue here is
       internal to the closed loop. Two piles, not one pile twice.
 
-   🚫 NO `bank` ROW, deliberately — see the ECO_BUILDING_MAP footer at :17101.
-      The bank's real defect was ecoHost().hasBank testing `t.type === 'bank'`
-      against a tile that is `op_bank`, and a firm here would neither have fixed
-      that nor been noticed by it. That test now derives its key through
-      opsKeyOf() and the DEBT rung is live; this row stays absent. round0b
-      asserts that `bank` is the ONE operation with no entry, so a future hand
-      adding it has to argue with a red gate.
+   🚫 THREE OPERATIONS HAVE NO ROW HERE, AND ALL THREE ARE LICENCES — rows
+      whose product is the RIGHT TO BUILD SOMETHING ELSE, and whose economics
+      are already modelled by a dedicated module rather than by a firm. Search
+      `DELIBERATELY NOT HERE` in the ECO_BUILDING_MAP footer for the sibling
+      list on the city-tile side; the arguments are the same shape.
+
+      · `bank` — the bank's real defect was ecoHost().hasBank testing
+        `t.type === 'bank'` against a tile that is `op_bank`, and a firm here
+        would neither have fixed that nor been noticed by it. That test now
+        derives its key through opsKeyOf() and the DEBT rung is live; the
+        lending itself lives in economy/bank.js. This row stays absent.
+
+      · `bus` / `rail` — the two transit operations, added by the transit
+        package. They are licences in the most literal sense in this file:
+        BUILDINGS.busstop / trainstation / railtrack each carry
+        `transitLicence: 'bus' | 'rail'` and transitOwns() gates placement on
+        holding the row, so the operation IS the permission and the network is
+        the product.
+        🔴 AND A FIRM HERE WOULD BREAK THE ONE GUARD TRANSIT HAS. Their revenue
+           is already modelled — /src/transit/routes.js ledger() — and it is
+           clamped `net = Math.min(0, fares - upkeep)`: public transport can
+           never pay you, by construction, because a network that pays is a
+           Cinder faucet with a paint job (transit/tuning.js's own header,
+           citing the retired Cinder Forge). Founding a firm on op_bus would
+           hand the depot a SECOND, unclamped income for carrying the same
+           passengers, which is precisely the double-count that disqualified
+           forge / indexfund / holdco from ECO_BUILDING_MAP. The clamp and a
+           business are mutually exclusive; the clamp wins.
+        ⚠ So the honest reading of "a Bus Company employs nobody in the
+          economy" is not an omission — a transit operator that turned a profit
+          from a payroll would be a different game. If public transport is ever
+          allowed to net positive, THAT is the change that reopens this
+          question, and it must be argued there first.
+
+      round0b of tools/economy-tests/run.mjs asserts that these three and only
+      these three have no entry, and — because widening an expected set to match
+      the code is exactly the failure mode this gate exists to catch — it also
+      re-derives the licence claim from this file (`transitLicence`) and the
+      clamp from routes.js. A future hand adding one of these rows, or quietly
+      deleting the licence gating, has to argue with a red gate.
 
    ⚠ REGISTERED BY MUTATING ECO_BUILDING_MAP IN THE LOOP BELOW, not by editing
      that literal. `OP_BP` and `opsKeyOf` are declared ~5,700 lines after it and

@@ -181,16 +181,50 @@ export function mount(ctx) {
     return { wear, life, damaged: false };
   }
 
+  /* 🔴🔴 CONDITION IS AGGREGATED EXACT AND ROUNDED LAST. READ BEFORE "TIDYING"
+     Math.round BACK ONTO THE PER-TILE LINE — that one call is what made this
+     readout dead for two rounds, and it did NOT look like a bug.
+
+     The wear model was never wrong. Measured on the standard district (the
+     numbers in tuning.js, re-measured with .gauntlet/drive-streets.mjs and they
+     hold): the busiest tile takes ~0.47 counted passes per CITY second, so one
+     1,200-second cycle costs it ~2.8 points and an average tile ~1.1. That is a
+     readout that moves inside a session, and it is exactly what
+     check-streets-clock.mjs §10 asserts.
+
+     It never reached the panel. `condition` was `Math.round(100 - wear)` PER
+     TILE, and min/max/avg were then computed over those ROUNDED values — so
+     every tile under half a point of wear collapsed to exactly 100, min and max
+     were both exactly 100, and `avg` was the mean of a list of 100s, i.e. the
+     integer 100. `avgExact` was handed to the panel's fmtAvg — a formatter
+     written specifically to print "99.4" instead of "99" — with an input that
+     had already been rounded to 100. The decimal could never appear. The panel
+     printed a bare "100%" with "100% average" under it in a city whose busiest
+     tile had genuinely lost a quarter of a point, and every attempt to fix it
+     by RAISING WEAR_PER_1K_PASSES (1.6 → 5.0) only moved the threshold from 625
+     passes to 200 — both of them more than a verifier's drive produces, which is
+     why the retune measured correctly and still changed nothing on screen.
+
+     So: aggregate the exact values, hand the exact values out, and let the
+     PANEL decide how many digits to show (it already knows — fmtAvg). The
+     rounded fields stay for any caller that wants an integer, and the tile rows
+     carry both.
+     ⚠ The invariant a future edit must keep: nothing in this function may round
+       before the min/max/sum, and nothing outside it may be handed only the
+       rounded form. check-streets-clock.mjs §11 drives this exact path with a
+       counted pass load and fails if a sub-point change is invisible. */
   function statsFor(st, tileKey) {
     const traffic = meter.series(st.tiles);
     const tiles = st.tiles.map(k => {
       const w = wearOfTile(k);
-      return { k, life: w.life, wear: w.wear, damaged: w.damaged, condition: Math.round(100 - w.wear) };
+      const cond = 100 - w.wear;
+      return { k, life: w.life, wear: w.wear, damaged: w.damaged,
+               condition: Math.round(cond), condExact: cond };
     });
     let min = 100, max = 0, sum = 0, life = 0;
     for (const t of tiles) {
-      min = Math.min(min, t.condition); max = Math.max(max, t.condition);
-      sum += t.condition; life += t.life;
+      min = Math.min(min, t.condExact); max = Math.max(max, t.condExact);
+      sum += t.condExact; life += t.life;
     }
     const avg = tiles.length ? sum / tiles.length : 100;
     const wearAvg = 100 - avg;
@@ -241,7 +275,7 @@ export function mount(ctx) {
     return { name: nameOf(st) || 'Unnamed Road', tileKey, traffic, tiles,
              capParts: meter.capacityParts(),
              condition: { min: Math.round(min), max: Math.round(max), avg: Math.round(avg),
-                          avgExact: avg },
+                          minExact: min, maxExact: max, avgExact: avg },
              wearAvg, upkeep, lifePasses: life, peakFlow, peakVolume, meanVolume, hour,
              buildCost: build, wearRate, cycleMin: meter.cycleSec() / 60 };
   }

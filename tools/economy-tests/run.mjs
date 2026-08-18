@@ -1350,20 +1350,72 @@ const stripComments = (src) => {
       console.log('   🧨 injected op_saboteur → out unobtainium / ind notAnIndustry');
     }
 
-    /* Every operation must be accounted for: it has a business, or it is the
-       one row that was argued out. A silent omission is the same class of bug
+    /* Every operation must be accounted for: it has a business, or it is a
+       LICENCE that was argued out. A silent omission is the same class of bug
        as a silent unproducible id — the operation simply never employs anyone
-       and nothing says so. */
+       and nothing says so.
+
+       🔴 THIS SET WAS `['bank']` AND IS NOW THREE. READ BEFORE WIDENING IT
+          AGAIN. The transit package added `bus` and `rail` to OP_BP with no
+          OP_ECO_MAP row, and this round went red. Widening an expected set
+          until the code passes is the exact failure this file exists to catch,
+          so the widening was ARGUED, and then made CHECKABLE — the two `chk`s
+          under `— the licence claim, re-derived —` below re-prove the argument
+          from the shipped source on every run, so this is a gate and not a
+          comment.
+
+          A licence is a row whose product is the RIGHT TO BUILD SOMETHING ELSE
+          and whose economics live in a dedicated module rather than in a firm:
+            · bank — the DEBT rung was dead because ecoHost().hasBank tested
+              `t.type === 'bank'` against an `op_bank` tile. A firm would not
+              have fixed that and would have hidden it; the lending is
+              economy/bank.js. (ECO_BUILDING_MAP's footer states this.)
+            · bus / rail — BUILDINGS.busstop / trainstation / railtrack carry
+              `transitLicence: 'bus' | 'rail'` and transitOwns() gates placement
+              on holding the row, so the operation IS the permission. Their
+              revenue is ALREADY modelled by src/transit/routes.js ledger(),
+              clamped `net = Math.min(0, fares - upkeep)` — public transport can
+              never pay you, deliberately, because a network that pays is a
+              Cinder faucet with a paint job. A firm on op_bus would be a
+              SECOND, unclamped income for carrying the same passengers: the
+              double-count that disqualified forge / indexfund / holdco. The
+              clamp and a business cannot both be true, and the clamp wins.
+
+          ⚠ WHAT WOULD REOPEN IT: transit being allowed to net positive. If
+            that clamp ever goes, bus/rail become ordinary earners and the case
+            for a payroll comes back — and the second check below will already
+            be red, pointing here. Do not add a fourth name to this list
+            without an argument of the same shape. */
+    const LICENCE_OPS = ['bank', 'bus', 'rail'];
     const noEco = Object.keys(OPBP).filter(t => !OPMAP[t]);
-    chk('exactly one operation has no business, and it is `bank` (index.html:17101)',
-        noEco.length === 1 && noEco[0] === 'bank', 'without a business: [' + noEco.join(', ') + ']');
-    chk('op_bank is NOT in the map', !MAP[PREFIX + 'bank'], JSON.stringify(MAP[PREFIX + 'bank']));
+    chk('exactly the ' + LICENCE_OPS.length + ' licence operations have no business [' + LICENCE_OPS.join(', ') + ']',
+        noEco.length === LICENCE_OPS.length && LICENCE_OPS.every(t => noEco.indexOf(t) >= 0),
+        'without a business: [' + noEco.join(', ') + ']');
+    for (const t of LICENCE_OPS)
+      chk('op_' + t + ' is NOT in the map', !MAP[PREFIX + t], JSON.stringify(MAP[PREFIX + t]));
+
+    /* — the licence claim, re-derived — ------------------------------------
+       Two facts hold the transit half of the argument up. Both are scraped
+       from the shipped source, so deleting either turns this round red instead
+       of turning the decision above into a lie somebody believes. */
+    chk('bus/rail really ARE licences — BUILDINGS rows still carry transitLicence',
+        /transitLicence:\s*'bus'/.test(HTML) && /transitLicence:\s*'rail'/.test(HTML),
+        'no transitLicence gating in node-city/index.html — if transit stopped being ' +
+        'a licence, the case for `bus`/`rail` having no business is gone: re-argue it');
+    let ROUTES = null;
+    try { ROUTES = readFileSync(join(here, '../../public/src/transit/routes.js'), 'utf8'); } catch (e) {}
+    chk('transit still cannot net positive — the clamp a transit FIRM would defeat',
+        !!ROUTES && /Math\.min\(\s*0\s*,\s*fares\s*-\s*upkeep\s*\)/.test(ROUTES),
+        ROUTES ? 'net = min(0, fares - upkeep) is GONE from routes.js — transit may now earn, ' +
+                 'so `bus`/`rail` owing no business needs re-arguing'
+               : 'src/transit/routes.js UNREADABLE — the clamp could not be checked');
+
     chk('every OP_ECO_MAP key names a real OP_BP blueprint',
         Object.keys(OPMAP).every(t => OPBP[t]),
         'unknown: ' + Object.keys(OPMAP).filter(t => !OPBP[t]).join(','));
-    chk('all ' + (Object.keys(OPBP).length - 1) + ' non-bank operations are wired',
-        Object.keys(OPMAP).length === Object.keys(OPBP).length - 1,
-        Object.keys(OPMAP).length + ' of ' + (Object.keys(OPBP).length - 1));
+    chk('all ' + (Object.keys(OPBP).length - LICENCE_OPS.length) + ' non-licence operations are wired',
+        Object.keys(OPMAP).length === Object.keys(OPBP).length - LICENCE_OPS.length,
+        Object.keys(OPMAP).length + ' of ' + (Object.keys(OPBP).length - LICENCE_OPS.length));
 
     /* A floor, not an equality: adding a building must not require editing this
        file, but a scrape that suddenly returns a handful of entries must. The

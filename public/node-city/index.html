@@ -7783,20 +7783,21 @@ function makeHousing(lvl, tx, tz) {
      stripes that were written last round switch themselves on here for free.
 
      ⚠ THE FIGURE IS A CEILING, NOT A TASTE. The rear of a detached body lands
-       at -(hz + SB) = -.380 against a tile edge of -.5, leaving .12 of back
+       at -(hz + SB) = -.375 against a tile edge of -.5, leaving .125 of back
        garden and .045 of that under the boundary. Any more and the house is
-       through its own back fence. A terrace takes only .045 — a terrace is
-       SUPPOSED to meet the street, and its forecourt is the shallow thing it
-       is on purpose (see plotSty 'forecourt' below) — but even .045 is the
-       difference between a stoop that lands on the footway and one that lands
-       on its own threshold.
+       through its own back fence. A terrace and a walkup take .075 rather than
+       .100 — a terrace is SUPPOSED to meet the street and its forecourt is
+       shallow on purpose (see plotSty 'forecourt' below) — but .075 still takes
+       a row house's area from .22 deep to .295, which is the difference between
+       a stoop that lands on the public footway and one that lands on its own
+       threshold behind its own railing.
      ⚠ Z ONLY. Every archetype faces +z, party walls land on x = ±.485, and the
        terrace's whole read depends on those staying coplanar with the
        neighbour's. Shifting x would open a gap down every terrace in the city.
      ⚠ RUN IT BEFORE THE PLOT, NEVER AFTER. B.lawn and B.leaf carry _nMerge
        PARTS, not bare geometries, so a translate over the buckets once the
        parcel kit has run would throw on the first shrub.                      */
-  const SB = plotSty === 'garden' ? .100 : .045;
+  const SB = plotSty === 'garden' ? .100 : .075;
   for (const k of ['wall', 'base', 'roof', 'trim', 'door', 'glass', 'metal', 'core', 'apron', 'path'])
     for (const geo of B[k]) geo.translate(0, 0, -SB);
   /* The plot is authored around the house, so it needs the house's REAL front
@@ -8122,6 +8123,28 @@ function makeHousing(lvl, tx, tz) {
         B.trim.push(_hBox(.014, .075, .020, sx * edge, bTop + .038, -(.5 - bt) + (i + .5) * ((1 - 2 * bt) / n)));
     }
   }
+  /* ⭐ 6. THE LOT LINE — the pale band round the whole parcel edge.
+     ROUND 4, and the cheapest legible thing in this recipe: 48 triangles in a
+     bucket that already exists, so it costs no draw call and no material.
+     Twelve other recipes in this file already draw one through `_pcKerb` (the
+     farm, the forge, the restaurant, the grocery…), housing never did, and the
+     inconsistency was visible from the air: a shop sat on a lot and a house sat
+     on grass that carried on into the next garden.
+
+     ⚠ IT DISAPPEARS ON A ROAD-FACING EDGE AND THAT IS CORRECT, NOT A BUG.
+       A road tile aprons RD_AP_PAVE = .110 of footway at RD_PT (.046) into its
+       neighbour's tile — see the apron contract at the road constants — so the
+       outer .11 of a frontage is pavement, drawn .020 above this band. A
+       property line against a NEIGHBOUR is a line on the ground; a property
+       line against a STREET is the kerb, and the road already owns that. The
+       band therefore reads on exactly the three edges where two gardens abut,
+       which is where "one property ends and the next begins" is a question.
+     ⚠ AY + .010, matching _pcKerb's own default rise. Citizens walk at y = 0
+       with a ≤.02 bob and the 'enter' state walks them .3 of a tile INSIDE the
+       plot, so a lot line tall enough to read as a wall is one they wade
+       through — the same measurement that pinned the carriageway to RD_Y. */
+  _pcKerb(g => _hPush(B.path, g), _hSlab, .5, AY, GB, .026, .010);
+
   // Gate piers always read as masonry, even on a hedged plot — they are what
   // makes the gap look like an entrance instead of a hole. Seated on .475 rather
   // than on `edge` so the pier's own .05 depth still finishes exactly on the
@@ -24868,6 +24891,9 @@ function manageAgents() {
      sysTimer beat, and refresh() early-outs on an unchanged tile signature, so
      the calls that change nothing cost one hash pass over game.tiles. */
   try { if (window.MythicParking) window.MythicParking.refresh(); } catch (e) {}
+  /* 🧱 The parcel layer rides the SAME lifecycle for the same reason, and
+     early-outs on an unchanged tile signature exactly as parking does. */
+  try { if (window.MythicParcel) window.MythicParcel.refresh(); } catch (e) {}
   const want = desiredAgentCounts();
   const have = { civilian: 0, truck: 0, police: 0, car: 0 };
   for (const a of agents) have[a.kind]++;
@@ -33226,6 +33252,51 @@ function animate() {
                                                roughness: .95, vertexColors: true }),
     });
   } catch (e) { console.warn('[Parking] not mounted (non-fatal):', e); }
+  /* ══ 🧱 THE PARCEL LAYER ═════════════════════════════════════════════════
+     Rubric dimension 5. makeHousing has owned a real plot since round 2 and
+     round 4 gave it the setback that made it visible — but every OTHER
+     building in the city stood on raw terrain with no forecourt, no yard, no
+     property line and nothing standing on the ground beside it. /src/parcel is
+     their plot: a surface, a drive to the kerb, a lot line and a boundary,
+     chosen by what the building IS. See its header for the class table.
+
+     🔴 THE GLOBALS TRAP, for the tenth module. `game`, `scene`, `THREE`, `MAT`,
+     `HALF`, `RD_Y` and `isRoad` are top-level `const` here and invisible to an
+     ES module. This ctx is the hand-over, exactly as Parking above is.
+
+     What is NOT handed over: anything that writes a tile, the ledger, or a mesh
+     the module did not make. The parcel layer reads game.tiles and adds one
+     group — and it skips `housing` by name, because makeHousing already draws
+     that ground and a second pass would z-fight the whole suburb. */
+  try {
+    const pcmod = await import('../src/parcel/index.js?v=' + (window.NC_BUILD || 'r1'));
+    window.MythicParcel = pcmod.mount({
+      THREE, scene, game, HALF, RD_Y, isRoad,
+      /* Built from MAT.road's map for the same reason a parking bay is: a yard
+         and the street it opens onto are the same asphalt family, and the grain
+         has to run continuously across the kerb or the parcel reads as a decal.
+         vertexColors is what lets hardstanding, paving, drives, lawn quadrants
+         and every painted line in the city share ONE buffer and ONE draw call. */
+      surfMat: new THREE.MeshStandardMaterial({ color: 0xffffff, map: MAT.road.map,
+                                                roughness: .96, vertexColors: true,
+        /* Insurance, not the mechanism: the module clears every recipe's own
+           paving by 1.5mm and does not rely on this. It is here so that a
+           recipe given a full-tile apron LATER — and therefore missed off the
+           module's exclusion list — loses the tie deterministically instead of
+           speckling across a whole tile as the camera moves.
+           🐞 FACTOR MUST STAY 0. A first cut used factor 1, which scales the
+              bias by the polygon's DEPTH SLOPE, and a ground quad seen from a
+              0.3-high street camera is nearly edge-on — the slope term pushed
+              the whole layer clean through the buildable plate at .012.
+              Measured: every parcel surface in the city rendered as bare
+              terrain while its own lot line 10mm above it drew fine. */
+        polygonOffset: true, polygonOffsetFactor: 0, polygonOffsetUnits: -3 }),
+      /* No map on the standing parts. A fence post is 2cm wide; a tiled asphalt
+         canvas on it is noise, and the shared canvases multiply DOWN, which is
+         what made walls read muddy before _TEX_MID. */
+      propMat: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .82, vertexColors: true }),
+    });
+  } catch (e) { console.warn('[Parcel] not mounted (non-fatal):', e); }
   /* ══ 🏠 THE DOSSIER LAYER ════════════════════════════════════════════════
      Addresses, zone, level pips, residents, household wealth and the money
      rows — /src/dossier. READ-ONLY: nothing in that module writes to a tile,

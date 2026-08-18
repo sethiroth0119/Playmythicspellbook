@@ -2520,27 +2520,62 @@
        sees. The +64 is head-room for artDetField's pad rows — it samples past
        the bottom of the band on purpose (see the border note there) and would
        otherwise find the canvas edge instead. */
+    /* ── ⚠ MAPRES — THE OVER-DRAW IS PART OF THE ART'S GEOMETRY, SO IT HAS TO
+       BE DECIDED BEFORE THE SHARP COPY IS DRAWN, NOT AFTER ──────────────────
+       This block used to run AFTER the sharp copy below, and that ordering was
+       the whole defect. The blurred base was drawn at (dx−ov, dy−ov, dw+2ov,
+       dh+2ov) while the sharp copy — and therefore `DET`, and therefore both
+       grade stencils — was drawn at (dx, dy, dw, dh). Two copies of the same
+       photograph at two different scales, and the inlay whose entire job is to
+       hand a landmark its edges back was stamping those edges somewhere the
+       landmark is not.
+       MEASURED on the standalone board at 1280x720@2x, dark-forest, with the
+       geometry the bake actually used: blurPx 12.4, so ov 31 and the base drawn
+       1367.6 CSS wide against the sharp copy's 1305.6 — a 4.75% scale mismatch
+       and a 31 CSS px (62 DEVICE px) offset at the frame edge. The header three
+       screens up prices the clock-tower spire at ~40 device px wide, so the
+       sharp spire was being inlaid more than a spire-width away from the
+       blurred one: a doubled edge, not a recovered one. The same offset applied
+       to ART_PROTECT's stencil, i.e. the aerial grade was protecting the sky
+       BESIDE the landmark and grading the landmark.
+       ⚠ AND `ov` WAS IN THE WRONG UNITS ON TOP OF THAT. `blurPx` is DEVICE px —
+       it is multiplied by dpr where it is computed, and ctx.filter's blur
+       radius really is in backing-store pixels regardless of the transform
+       (probed on this build: 'blur(8px)' gives the same 20-device-px 10→90 edge
+       ramp at setTransform(1) and setTransform(2)). But `g` carries the DPR
+       transform, so spending it as a drawImage length made the over-draw 2x the
+       intended 2.5 radii at dpr 2 — and doubled the mismatch above with it.
+       Both copies now share ONE rect, and the over-draw is converted into the
+       context's own units. Bake-time only: same number of drawImage calls, so
+       the frame does not pay for this. */
+    let blurred = false;
+    try {
+      g.filter = 'blur(' + blurPx.toFixed(2) + 'px)';
+      blurred = (g.filter !== 'none');
+    } catch (e) { blurred = false; }
+    try { g.filter = 'none'; } catch (e) { }
+    /* the blur samples transparent black outside the image, so a blurred edge
+       fades to nothing and the sky shows through as a seam. Over-draw by 2.5
+       blur radii on every side — in CSS px, because that is what this context's
+       transform is in. */
+    const ov = blurred ? (blurPx / dpr) * 2.5 : 0;
+    const ax = dx - ov, ay = dy - ov, aw = dw + ov * 2, ah = dh + ov * 2;
     let sh = null, DET = null;
     if (!off('artmask')) {
       sh = mkCanvas(W, Math.min(H, detBand + 64), dpr);
       if (sh.g) {
-        sh.g.drawImage(img, dx, dy, dw, dh);
+        /* ⚠ THE SAME RECT AS THE BASE, TO THE PIXEL. `DET` is a canvas-space
+           field and the inlay blits it 1:1 in device px, so registration is
+           not approximate — it is exact or it is a ghost. */
+        sh.g.drawImage(img, ax, ay, aw, ah);
         DET = artDetField(sh.cv, dpr, W, detBand, blurPx);
       }
       if (!DET) sh = null;
     }
     S.artMask = DET ? DET.stat : null;
     if (S.artMask) { S.artMask.dis = +dis.toFixed(3); S.artMask.blurPx = +blurPx.toFixed(1); }
-    let blurred = false;
-    try {
-      g.filter = 'blur(' + blurPx.toFixed(2) + 'px)';
-      blurred = (g.filter !== 'none');
-    } catch (e) { blurred = false; }
-    /* the blur samples transparent black outside the image, so a blurred edge
-       fades to nothing and the sky shows through as a seam. Over-draw by the
-       blur radius on every side. */
-    const ov = blurred ? blurPx * 2.5 : 0;
-    g.drawImage(img, dx - ov, dy - ov, dw + ov * 2, dh + ov * 2);
+    try { g.filter = 'blur(' + blurPx.toFixed(2) + 'px)'; } catch (e) { }
+    g.drawImage(img, ax, ay, aw, ah);
     try { g.filter = 'none'; } catch (e) { }
     /* the inlay. `sh` is masked down to the structure in place (destination-in
        also drops everything below the band, which is what we want — the art

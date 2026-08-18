@@ -91,3 +91,4 @@ public/assets/Units/unit frames/New units/*.gif
 .claude/worktrees/
 .gauntlet/patch-preview.html
 .gauntlet/probe-*.mjs
+.gauntlet/shots/wip-*/

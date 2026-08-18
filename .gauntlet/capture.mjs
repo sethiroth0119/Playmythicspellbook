@@ -12,7 +12,32 @@ const MIME={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript'
  '.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml',
  '.glb':'model/gltf-binary','.txt':'text/plain','.webp':'image/webp'};
 const arg=(f,d)=>{const i=process.argv.indexOf(f);return i>0?process.argv[i+1]:d};
-const outDir=process.argv[2]||'.gauntlet/shots'; const TAG=arg('--tag','shot');
+/* ⚠ ARGV GUARD. An agent ran `capture.mjs --help`, the script took "--help" as
+   the output directory and cheerfully wrote six files into ./--help/. Neither a
+   usage message nor any validation existed. Both do now — a flag can never be
+   mistaken for a path. */
+const USAGE = `
+  node .gauntlet/capture.mjs <outDir> [options]
+
+    <outDir>            where the three framings are written (required)
+    --tag <name>        filename prefix; default "shot"
+    --hour <0-23>       pin the in-game clock; default 15 (do not un-pin: the
+                        game reads the real wall clock, so an unpinned capture
+                        is shot at whatever hour it happens to run)
+    --against <dir>     diff each framing against the same framing in <dir> and
+                        warn when one barely moved
+
+  Writes <tag>-aerial, <tag>-street, <tag>-district as .png and .jpg, and prints
+  JSON with the scene bounding box, mesh/triangle counts and console output.
+`;
+if (process.argv.includes('--help') || process.argv.includes('-h') || !process.argv[2]) {
+  console.log(USAGE); process.exit(process.argv[2] ? 0 : 1);
+}
+if (process.argv[2].startsWith('-')) {
+  console.error(`\n  The first argument is the output directory, not a flag (got "${process.argv[2]}").\n${USAGE}`);
+  process.exit(1);
+}
+const outDir=process.argv[2]; const TAG=arg('--tag','shot');
 const PORT=8600+(process.pid%90);
 const server=http.createServer((req,res)=>{let p=decodeURIComponent(req.url.split('?')[0]);
  if(p.endsWith('/'))p+='index.html'; const f=path.join(ROOT,p);

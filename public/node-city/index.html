@@ -7761,6 +7761,51 @@ function makeHousing(lvl, tx, tz) {
     B.wall.push(gtri);
   }
 
+  /* ══ ⭐ THE SETBACK ═══════════════════════════════════════════════════════
+     ROUND 4. The one thing three rounds of plot work could not buy, because it
+     is not something you paint on the ground: a building that starts at the
+     frontage has no parcel no matter what is drawn around it.
+
+     MEASURED BEFORE THIS. A detached villa is D .47-.52 with OVz .040, so its
+     eaves line stood at z = .275 and the boundary run starts at .465 — a front
+     garden .19 deep, in front of a house .68-1.36 TALL. At the game's street
+     camera that is a hairline: the lawn, the path, the drive, the bins and the
+     planting were all real, all modelled, and all invisible behind the mass.
+     The critic's words were "the buildings meet the pavement directly, with no
+     setback, no front garden, no threshold", and they were right.
+
+     THE FIX IS TO MOVE THE HOUSE, NOT THE GROUND. Everything above this line is
+     the BUILDING and every bucket holds nothing else yet (the four green
+     helpers are called only below), so one translate on the whole set slides
+     the mass toward the rear of its own tile and hands the difference to the
+     front garden. Detached: .19 → .29 of garden, +53%, which is also over the
+     .25 threshold _vegLawn needs before it stripes a lawn — so the mower
+     stripes that were written last round switch themselves on here for free.
+
+     ⚠ THE FIGURE IS A CEILING, NOT A TASTE. The rear of a detached body lands
+       at -(hz + SB) = -.380 against a tile edge of -.5, leaving .12 of back
+       garden and .045 of that under the boundary. Any more and the house is
+       through its own back fence. A terrace takes only .045 — a terrace is
+       SUPPOSED to meet the street, and its forecourt is the shallow thing it
+       is on purpose (see plotSty 'forecourt' below) — but even .045 is the
+       difference between a stoop that lands on the footway and one that lands
+       on its own threshold.
+     ⚠ Z ONLY. Every archetype faces +z, party walls land on x = ±.485, and the
+       terrace's whole read depends on those staying coplanar with the
+       neighbour's. Shifting x would open a gap down every terrace in the city.
+     ⚠ RUN IT BEFORE THE PLOT, NEVER AFTER. B.lawn and B.leaf carry _nMerge
+       PARTS, not bare geometries, so a translate over the buckets once the
+       parcel kit has run would throw on the first shrub.                      */
+  const SB = plotSty === 'garden' ? .100 : .045;
+  for (const k of ['wall', 'base', 'roof', 'trim', 'door', 'glass', 'metal', 'core', 'apron', 'path'])
+    for (const geo of B[k]) geo.translate(0, 0, -SB);
+  /* The plot is authored around the house, so it needs the house's REAL front
+     and rear now that the two are no longer symmetric about z = 0. hDs/hzs are
+     the front (wall / eaves); hzB is the rear eaves. Every plot measurement
+     below reads one of these three and none of them reads hD/hz any more. */
+  const hDs = hD - SB, hzs = hz - SB, hzB = -(hz + SB);
+  const gaZ0s = gaZ0 - SB;
+
   /* ══ THE PLOT ═══════════════════════════════════════════════════════════
      Everything from here out is the ground, in true tile units: the tile runs
      -.5 … +.5 on both axes.
@@ -7801,11 +7846,11 @@ function makeHousing(lvl, tx, tz) {
   // 2. Front path — door axis to the frontage, running under the bottom step.
   const pathU = front === 'stoop' ? W * .27 : 0;
   const pathHW = front === 'recess' ? .150 : .100;
-  _hPush(B.path, _hSlab(pathU - pathHW, pathU + pathHW, hD + .020, .5, PY, GB));
+  _hPush(B.path, _hSlab(pathU - pathHW, pathU + pathHW, hDs + .020, .5, PY, GB));
   // a threshold apron at the frontage, so the path arrives at something
   _hPush(B.path, _hSlab(pathU - pathHW - .030, pathU + pathHW + .030, .430, .5, PY, GB));
   if (front === 'pair') for (const sx of [-1, 1])       // the semi's path forks to both doors
-    _hPush(B.path, _hSlab(Math.min(0, sx * .215), Math.max(0, sx * .215), hD + .020, hD + .130, PY, GB));
+    _hPush(B.path, _hSlab(Math.min(0, sx * .215), Math.max(0, sx * .215), hDs + .020, hDs + .130, PY, GB));
   /* 2b. The DRIVE'S EXTENTS — measured here, LAID in §3a.
      It runs under the garage as its floor slab as well as out to the frontage,
      so there is never a gap of bare apron at the threshold. Started at
@@ -7828,7 +7873,7 @@ function makeHousing(lvl, tx, tz) {
        standing, and that is most of the difference between an urban street and
        a suburban one — the ground is what the eye reads first at this camera.
        The strip that would be lawn is paving, with planters instead of beds. */
-    _hPush(B.path, _hSlab(-.5, .5, hD + .020, .470, PY, GB));
+    _hPush(B.path, _hSlab(-.5, .5, hDs + .020, .470, PY, GB));
     if (front === 'recess') {                                    // bin store beside the entrance
       B.base.push(_hBox(.130, .090 - GB, .105, -.330, (.090 + GB) / 2, .350));
       B.trim.push(_hBox(.138, .012, .113, -.330, .096, .350));
@@ -7856,7 +7901,13 @@ function makeHousing(lvl, tx, tz) {
        through its own walls — and `ge` is the outer edge, which stops .045
        short of the tile line so the boundary has something to stand in.      */
     const ge = .455;
-    const gx = Math.min(ge, hx + .018), gz = Math.min(ge, hz + .018);
+    /* gzF is the FRONT inner edge and gzB the REAR one. They used to be one
+       number mirrored about z = 0, which was correct only while the house was
+       centred on its tile; with the setback in they are .200 apart on a
+       detached plot and mirroring gzF would lay lawn straight through the back
+       wall. gzB is negative by construction. */
+    const gx  = Math.min(ge, hx + .018);
+    const gzF = Math.min(ge, hzs + .018), gzB = Math.max(-ge, hzB - .018);
 
     /* 3a. THE DRIVE — a hard standing beside the path, running out to the tile
        line so it MEETS the road rather than stopping in the grass.
@@ -7883,10 +7934,10 @@ function makeHousing(lvl, tx, tz) {
     if (garage) { hasDrive = true; dv0 = drvX0; dv1 = drvX1; }
     else {
       dv0 = ds > 0 ? dIn : -.455; dv1 = ds > 0 ? .455 : -dIn;
-      hasDrive = gz < .40 && Math.abs(pathU) + pathHW + .040 < dIn;
+      hasDrive = gzF < .40 && Math.abs(pathU) + pathHW + .040 < dIn;
     }
     if (hasDrive) {
-      _hPush(B.apron, _hSlab(dv0, dv1, garage ? gaZ0 - .050 : Math.max(gz, hD + .010), .5, DY, GB));
+      _hPush(B.apron, _hSlab(dv0, dv1, garage ? gaZ0s - .050 : Math.max(gzF, hDs + .010), .5, DY, GB));
       // the dropped kerb: the crossing is always paler than the drive, which is
       // how a real one reads from above
       _hPush(B.path, _hSlab(dv0 - .010, dv1 + .010, .462, .5, PY + .002, GB));
@@ -7905,14 +7956,17 @@ function makeHousing(lvl, tx, tz) {
     if (hasDrive) blk.push([dv0 - .010, dv1 + .010]);
     blk.sort((p, q) => p[0] - q[0]);
     let cur = -ge;
+    /* ONE LAWN PER PLOT. See _vegLawn's `key`: rolled once here, handed to every
+       band, so this garden is one green and the garden next door is another. */
+    const lawnKey = (R() * 4) | 0;
     for (const s of blk) {
-      if (s[0] > cur) _vegLawn(B.lawn, R, cur, Math.min(s[0], ge), gz, ge, BY, GB, true);
+      if (s[0] > cur) _vegLawn(B.lawn, R, cur, Math.min(s[0], ge), gzF, ge, BY, GB, true, 0, lawnKey);
       cur = Math.max(cur, s[1]);
     }
-    if (cur < ge) _vegLawn(B.lawn, R, cur, ge, gz, ge, BY, GB, true);
-    _vegLawn(B.lawn, R, -ge, -gx, -ge, gz, BY, GB, true);                  // left flank
-    _vegLawn(B.lawn, R, gx, ge, -ge, gz, BY, GB, true);                    // right flank
-    _vegLawn(B.lawn, R, -gx, gx, -ge, -gz, BY, GB, false, 5);              // rear, rough
+    if (cur < ge) _vegLawn(B.lawn, R, cur, ge, gzF, ge, BY, GB, true, 0, lawnKey);
+    _vegLawn(B.lawn, R, -ge, -gx, -ge, gzF, BY, GB, true, 0, lawnKey);     // left flank
+    _vegLawn(B.lawn, R, gx, ge, -ge, gzF, BY, GB, true, 0, lawnKey);       // right flank
+    _vegLawn(B.lawn, R, -gx, gx, -ge, gzB, BY, GB, false, 4, lawnKey);     // rear, rough
 
     /* 3c. FOUNDATION PLANTING — a row of clipped shrubs against the front
        elevation, not a scatter. That is what the reference actually shows, and
@@ -7925,7 +7979,7 @@ function makeHousing(lvl, tx, tz) {
         const px = -span / 2 + (i + .5) * (span / n);
         if (Math.abs(px - pathU) < pathHW + .075) continue;
         if (hasDrive && px > dv0 - .020 && px < dv1 + .020) continue;
-        _vegClump(B.leaf, R, px, hz + .046, BY - .004, .032 + R() * .020,
+        _vegClump(B.leaf, R, px, hzs + .046, BY - .004, .032 + R() * .020,
                   .70 + R() * .28, R() < .35 ? _N_HEDGE : _N_LEAF);
       }
     }
@@ -7951,7 +8005,7 @@ function makeHousing(lvl, tx, tz) {
       const th = .50 + R() * .26;
       const tside = hasDrive ? -ds : (R() < .5 ? -1 : 1);
       const tX = tside * (.250 + R() * .035);
-      const tZ = (gz < .34) ? Math.min(.345, gz + .045 + R() * .05) : -(Math.min(.345, gz + .045));
+      const tZ = (gzF < .34) ? Math.min(.345, gzF + .045 + R() * .05) : Math.max(-.345, gzB - .045);
       _vegTree(B.leaf, R, tX, tZ, BY - .006, th);
     }
 
@@ -8024,6 +8078,24 @@ function makeHousing(lvl, tx, tz) {
   if (!party) {
     putBound(-edge - bt / 2, -edge + bt / 2, -(.5 - bt), .5 - bt);
     putBound(edge - bt / 2, edge + bt / 2, -(.5 - bt), .5 - bt);
+  }
+  /* ⭐ AND THE BACK FENCE. The line above this block used to read "the rear edge
+     is deliberately open — it is the one edge a player never sees", and that was
+     measured on a single house. It is false for a BLOCK: housing is placed in
+     runs several tiles deep, so the rear of one row abuts the rear of the next
+     and the seam between them was the widest continuous stretch of undivided
+     ground in the whole district — exactly the "one flat pad" read this round
+     exists to kill. Every garden plot now closes.
+     ⚠ COARSER THAN THE FRONT, ON PURPOSE, AND THAT IS THE BUDGET. _vegHedge
+       costs ~190 tris a metre at its .120 lobe step; at .210 it is ~110, and a
+       back fence is never the thing a camera is reading detail off. Over the
+       54 plots of the standard district that is the difference between +9k and
+       +5k triangles. A wall or a picket rear boundary is a single slab either
+       way — only the hedge has a per-lobe price. */
+  if (!party && plotSty === 'garden') {
+    const rz = -edge;
+    if (bound === 'hedge') _vegHedge(B.leaf, R, -(.5 - bt), .5 - bt, rz - bt / 2, rz + bt / 2, bTop, bBase, null, .210);
+    else _hPush(B.base, _hSlab(-(.5 - bt), .5 - bt, rz - bt / 2, rz + bt / 2, bTop, bBase));
   }
   if (bound === 'railing') {
     /* An iron railing on a dwarf wall — the urban boundary. The wall above is
@@ -15026,10 +15098,22 @@ function _vegTufts(list, R, n, x0, x1, z0, z1, y, tones) {
    bands are narrower than the blur at game-camera distance and all they do is
    make the lawn look noisy. A house's .16-deep front strip therefore gets none,
    which is correct; a park quadrant gets them, which is also correct. */
-function _vegLawn(list, R, x0, x1, z0, z1, top, base, mown, tufts) {
+function _vegLawn(list, R, x0, x1, z0, z1, top, base, mown, tufts, key) {
   if (x1 - x0 <= 1e-4 || z1 - z0 <= 1e-4) return;
   const tones = mown ? _N_MOWN : _N_ROUGH;
-  const k = (R() * tones.length) | 0;
+  /* ⭐ `key` MAKES A LAWN BELONG TO A PLOT. Without it every call rolls its own
+     tone, so ONE garden came out in three greens — its front band, its flanks
+     and its back all different — which reads as noise on the ground rather
+     than as a kept lawn, and gives a viewer nothing to tell one property from
+     the next by. A caller that owns a whole parcel passes one key for all of
+     its grass; the plot is then uniform inside and differs from its neighbour,
+     which is the entire read the reference frame's suburb has.
+     ⚠ THE ROLL IS STILL DRAWN even when the key overrides it. Every archetype
+       in makeHousing is seeded off the tile hash and a saved city has to rebuild
+       identically, so a branch that consumed one fewer number here would shift
+       every colour, every shrub and every tree AFTER the first lawn. */
+  const roll = (R() * tones.length) | 0;
+  const k = key == null ? roll : ((((key | 0) % tones.length) + tones.length) % tones.length);
   _nSlab(list, tones[k], x0, x1, z0, z1, top, base);
   if (mown && x1 - x0 >= .25 && z1 - z0 >= .25) {
     const alt = tones[(k + 2) % tones.length], w = (z1 - z0) / 5;

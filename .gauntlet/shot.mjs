@@ -68,6 +68,31 @@ await page.route('**/cdn.jsdelivr.net/npm/three@0.171.0/**', route => {
   if (!fs.existsSync(f)) return route.fulfill({ status: 404, body: 'nf' });
   route.fulfill({ status: 200, contentType: 'text/javascript', body: fs.readFileSync(f) });
 });
+/* 🕒 OPT-IN CLOCK PIN — `--hour 15`, off by default.
+   capture.mjs has pinned the hour since round 3 (estClock() reads the real wall
+   clock, and every round before that was photographed at a different time of
+   day). shot.mjs never got it, which is fine for driving a PANEL and useless
+   for looking at GROUND: the round-5 lot shot came back at 02:51, a night
+   frame, and a lawn at midnight is a black rectangle. Same shift as
+   capture.mjs — the DATE moves, the clock still runs, so anything deriving a dt
+   still works. Default OFF, so every existing driver script behaves as before. */
+const HOUR = process.argv.includes('--hour') ? +process.argv[process.argv.indexOf('--hour') + 1] : null;
+if (HOUR != null) await page.addInitScript(({ hour }) => {
+  const _D = Date;
+  const parts = {};
+  for (const p of new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(new _D()))
+    parts[p.type] = p.value;
+  const curH = (+parts.hour % 24) + (+parts.minute) / 60 + (+parts.second) / 3600;
+  const shiftMs = (hour - curH) * 3600 * 1000;
+  class ShiftedDate extends _D {
+    constructor(...a) { if (a.length === 0) super(_D.now() + shiftMs); else super(...a); }
+    static now() { return _D.now() + shiftMs; }
+  }
+  ShiftedDate.parse = _D.parse; ShiftedDate.UTC = _D.UTC;
+  window.Date = ShiftedDate;
+}, { hour: HOUR });
+
 const logs = [];
 page.on('requestfailed', r => logs.push(`[reqfail] ${r.url().slice(0,140)} :: ${r.failure()?.errorText}`));
 page.on('console',   m => logs.push(`[${m.type()}] ${m.text()}`.slice(0, 400)));

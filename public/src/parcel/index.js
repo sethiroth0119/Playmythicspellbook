@@ -133,6 +133,35 @@ const C_TIMBER = 0x7a6549;      // farm post and rail
 const C_LEAF   = [0x3f7a35, 0x4f9642, 0x2f6b34, 0x568f3c];
 const C_LAWN   = 0x6fa94e;
 
+/* ⭐ ROUND 5 — A PLOT'S SURFACE IS ITS OWN, NOT ITS CLASS'S.
+   Every industrial yard in the city was byte-identically 0x484540 and every
+   forecourt 0x8b857b, so a run of three shops read as ONE forecourt with three
+   buildings standing on it — which is the "models placed on a board" reading
+   the whole round is against, arriving through the back door. This shades the
+   class colour per TILE: value by up to ±13% and, with it, a warm/cool tilt,
+   because two poured slabs of the same concrete a year apart differ in exactly
+   those two ways.
+   ⚠ SEEDED ON THE TILE COORDS DIRECTLY, NOT DRAWN FROM `R`. rngOf's stream is
+     consumed by the props, and taking one number out of it here would reshuffle
+     every fence, bollard and shrub on every parcel in the city — the same
+     lesson makeHousing's lawn key note records. A separate hash costs nothing
+     and cannot interfere.
+   ⚠ THE LOT LINE AND THE KERB ARE DELIBERATELY NOT SHADED. They are the
+     property boundary; a boundary that varies in tone with the ground it
+     surrounds is a boundary that stops reading as one. Pale, constant, and the
+     same on every plot in the city is the entire point of them. */
+function tileShade(gx, gz) {
+  const h = (Math.imul(gx | 0, 0x9e3779b1) ^ Math.imul(gz | 0, 0x85ebca77)) >>> 0;
+  return (((h >>> 21) & 255) / 255 - .5) * 2;                  // −1 … +1
+}
+function shadeCol(hex, f) {
+  const s = 1 + f * .13;
+  const cl = v => Math.max(0, Math.min(255, Math.round(v)));
+  return (cl((hex >> 16 & 255) * s * (1 + f * .05)) << 16)
+       | (cl((hex >> 8  & 255) * s) << 8)
+       |  cl((hex       & 255) * s * (1 - f * .06));
+}
+
 /* Tile-seeded xorshift32 — the same shape r1_road.js and /src/parking use. A
    parcel's props must be a property of the TILE, not of the moment the layer
    happened to rebuild, or laying one road anywhere in the city would reshuffle
@@ -325,10 +354,13 @@ function build() {
        nothing at all — no extra quad, no carve, no overlap. */
     const dw = cls === 'industry' ? .215 : .135;
     if (!own) {
-      rq(-.5, -dw, -.5, .5, PAD, col.pad);
-      rq(dw, .5, -.5, .5, PAD, cls === 'civic' ? C_LAWN : col.pad);
-      rq(-dw, dw, -.5, .06, PAD, col.pad);
-      rq(-dw, dw, .06, .5, PAD, col.drive);
+      // …each in THIS tile's own shade of its class's material — see tileShade
+      const sf = tileShade(gx, gz);
+      const pad = shadeCol(col.pad, sf), drv = shadeCol(col.drive, sf);
+      rq(-.5, -dw, -.5, .5, PAD, pad);
+      rq(dw, .5, -.5, .5, PAD, cls === 'civic' ? shadeCol(C_LAWN, sf) : pad);
+      rq(-dw, dw, -.5, .06, PAD, pad);
+      rq(-dw, dw, .06, .5, PAD, drv);
     }
 
     /* 3. THE PROPERTY LINE — a pale kerb band round the whole boundary. Eight

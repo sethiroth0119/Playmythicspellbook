@@ -4312,6 +4312,24 @@ const _c1 = new THREE.Color(), _c2 = new THREE.Color();
    it. Moved, not duplicated: a second copy of this number is how the plain and
    the plate drift apart. */
 const GROUND_COL = 0x71755c;
+/* 🎨 …AND THE ONE FRACTION THE MAP PLATE AND EVERY OTHER MAPPED SURFACE AGREE
+   ON. `_TEX_MID` used to be declared beside the shared canvases ~970 lines
+   below, which was the right place while the plate was the only large surface
+   in the city with NO map on it. Round 5 gave it one — the plate is over half
+   of every frame and a flat sheet is a flat sheet however well its vertex
+   colours drift — and a map MULTIPLIES the material colour, so the plate has to
+   divide its ramp by this exact number or the terrain renders 17% dark. Moved,
+   not duplicated: a second copy of 0.92 is how the plate and the walls drift
+   apart. The full argument for the VALUE is still at its old site (search
+   `_TEX_MID` there); only the declaration came up here, for the same TDZ reason
+   GROUND_COL itself did.
+   ⚠ _TEX_LIN is the same number in LINEAR, which is the space a map multiplies
+     in and therefore the only space a compensating divide may happen in. This
+     is the exact bug the v122 pass found (`0.78 sRGB is 0.578 linear`) written
+     down as a constant so it cannot be made a third time. */
+const _TEX_MID = .92;                        // sRGB base for every shared canvas
+const _TEX_B   = Math.round(255 * _TEX_MID); // 235
+const _TEX_LIN = Math.pow((_TEX_MID + .055) / 1.055, 2.4);   // 0.8276
 /* ══ 🌫 THE HAZE IS OVER LAND, NOT OVER SKY ═══════════════════════════════════
    The round-2 critic named "the aerial's outer terrain turned dusty salmon,
    meeting the inner olive at a HARD VISIBLE SEAM". Photographed and measured, the
@@ -4997,6 +5015,13 @@ function weatherMult(type) {
      to: the fog is mixed toward this colour every frame (see LAND_HAZE for why),
      that code runs ~640 lines above here, and a `const` cannot be read before it
      is declared. The value and its whole argument are unchanged. */
+/* ⚠ ROUND 5: THE GEOMETRY DECLARED HERE IS A PLACEHOLDER. The map-plate block
+   below replaces it with a 26x26 vertex-coloured lattice carrying the same
+   noise field the plate does, because the noise, the two ramps and the
+   _TEX_LIN divide all live down there and a second copy of any of them is how
+   the plate and the plain drift apart. Two triangles are allocated and thrown
+   away at boot; the SPAN and the y offset are still authored here, where the
+   argument for them is. */
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(GRID + 208, GRID + 208, 1, 1),
   new THREE.MeshStandardMaterial({ color: GROUND_COL, roughness: 1 }));
@@ -5049,10 +5074,75 @@ scene.add(ground);
    ═══════════════════════════════════════════════════════════════════════════ */
 const tileGroup = new THREE.Group(); scene.add(tileGroup);
 {
-  /* ⚠ THE SAME ×2.53 LINEAR LIFT GROUND_COL TOOK — see its note. Spacing,
-     ordering and hue are the round-1 ramp; only the reflectance moved. */
-  const shades = [0x71755c, 0x7c8664, 0x89916f, 0x92977b];   // dark → light: scrub → dust
-  const EDGE = GROUND_COL;                                   // the surrounding ground plane
+  /* ══ ⭐ ROUND 5 — THE TERRAIN IS A SURFACE, NOT A SHEET ═══════════════════
+     The round-4 whole-frame critic's stranger test, verbatim: "the whole city
+     is sitting on ONE FLAT, UNIFORM SHEET OF OLIVE-GREEN … no texture, no
+     parcel edges, no terrain relief and no variation in hue". MEASURED on
+     `.gauntlet/shots/r4/r4-district.png` with `.gauntlet/gsample.mjs`, which
+     classifies terrain pixels by hue and bins them by distance:
+         hue spread near→far  10.9°      value spread  0.051
+         LOCAL contrast (each pixel against the mean of its 15x15 box)  0.004
+     0.004 is the number that says "sheet". A surface with any grain at all
+     scores an order of magnitude above it. The critic was reading pixels
+     correctly and the ramp below was the reason.
+
+     WHAT CHANGED, AND WHAT DELIBERATELY DID NOT.
+     · The four-stop ramp became TWO four-stop ramps — a DRY family and a GRASS
+       family — blended by an independent moisture field. Value spread went
+       0.133 → 0.259 and hue spread 8° → 40°, and the MEAN IS UNMOVED (0.536 →
+       0.531 measured off the stops), because round 2 fixed the level against a
+       reference target and this round is not allowed to spend that.
+     · The tone is per-VERTEX on a shared lattice instead of per-TILE on 576
+       loose quads, so it interpolates. A per-tile constant is a square, and 576
+       squares in a grid is the graph-paper read the aerial had.
+     · The plate finally carries a MAP. Every other large surface in the city
+       has had grain since round 1; the ground — over half of every frame — was
+       the one flat unmapped sheet. It costs zero triangles, which is the whole
+       reason it is the first tool reached for here.
+
+     ⭐ ONE MESH AND ONE MATERIAL, STILL. This block used to allocate
+     `GRID * GRID` = 576 PlaneGeometry meshes each with its OWN
+     MeshStandardMaterial, purely to vary the tone of the dirt. Measured on the
+     pre-round page (`.cityloop/_r9/index.BEFORE.html`, driven by
+     `.cityloop/_r9/empty.js`): an EMPTY city scene held 689 meshes and 588
+     materials, 637 draw calls — 576 of each were this plate, 26% of the whole
+     2,183-mesh budget, spent on flat ground that never moves. It is 1 mesh, 1
+     material, 1 draw call and it stays that way.
+     ⚠ Rejected: an InstancedMesh. It would still need a per-instance colour
+       attribute, costs the same one draw call, and cannot vary the plate's
+       silhouette at the edge — a merge can, and does, below.
+
+     🔴 THE HEIGHT ENVELOPE IS ±.009 AND IT IS NOT A TASTE. The brief asked for
+     "low-frequency noise on the terrain" and this is as much as the plate can
+     legally take. Every recipe in the file lays a full-tile apron slab running
+     GB = −.014 … RD_Y = .016, so terrain above +.016 pokes THROUGH a building's
+     own ground and terrain below −.014 opens a hole under its edge where it
+     meets an unbuilt neighbour. Displacement is clamped inside that envelope
+     with margin, and the visible landform is therefore carried by the COLOUR
+     field, not by the geometry — the height field is what the colour is derived
+     FROM (ridges bake dry and pale, hollows hold water and stay green), which
+     is what makes the drift read as land rather than as blobs.
+     ⚠ Tile PICKING is unaffected: `tileFromEvent` intersects a mathematical
+       THREE.Plane at y = 0 (see §10), never this mesh, so displacing it cannot
+       move a single click.
+     ⚠ REJECTED — real relief on the surrounding plain, which has no apron to
+       clear and could have carried metres of it. The quality tier steps down to
+       `medium` at boot for every non-WebGPU client and that pins fog to
+       [17, 30] (see qualityApply); the plain is only visible past r ≈ 13 and is
+       100% fog colour past 30, so hills out there would be triangles spent on
+       painting the haze its own colour. The plain gets the colour field instead
+       — same noise, same ramps — so the world is continuous across the seam.
+
+     🎨 GROUND_COL IS STILL THE ONE HEX FIVE PLACES AGREE ON: the surrounding
+     plain, this plate's EDGE-fade target, the outskirts' HAZE, the fog's land
+     term and (as the mean the two ramps are balanced around) the plate itself.
+     It is dry grassland: dark enough that lit buildings still pop off it, warm
+     and olive enough to read as LAND under a blue sky. It was 0x241d30 — a
+     near-black violet — and because the plain and the unbuilt plate are the
+     LARGEST AREA IN ALMOST EVERY FRAME, that one value did more to make the
+     city read purple than the whole MAT table did.
+     ══════════════════════════════════════════════════════════════════════ */
+
   // xorshift hash on a lattice point — the same one r1_road.js seeds tiles with.
   const hash = (x, z, s) => {
     let h = (Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(z | 0, 0x165667b1) ^ s) >>> 0;
@@ -5071,66 +5161,320 @@ const tileGroup = new THREE.Group(); scene.add(tileGroup);
     const t = a + (b - a) * sx, u = c + (d - c) * sx;
     return t + (u - t) * sz;
   };
-  const N = GRID * GRID;
-  const pos = new Float32Array(N * 12), nor = new Float32Array(N * 12);
-  const uv  = new Float32Array(N * 8),  col = new Float32Array(N * 12);
-  // 24*24*4 = 2304 vertices, comfortably inside a 16-bit index buffer.
-  const idx = new Uint16Array(N * 6);
-  const cA = new THREE.Color(), cB = new THREE.Color(), cE = new THREE.Color(EDGE);
-  let v = 0, i = 0;
-  for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
-    const wx = x - HALF, wz = z - HALF, h = TILE;
-    /* Three octaves: regions, patches, grain. ⚠ THE CONTRAST CURVE IS NOT
-       COSMETIC. Summed value noise piles up around .5, so a raw `n` used the
-       middle two stops of the ramp almost exclusively and the first cut of this
-       plate came out FLATTER than the checkerboard it replaced — measured by
-       eye against BEFORE_air_day.png, which is the whole reason it is here.
-       Pushing away from .5 by 1.75x restores the tonal spread the old per-tile
-       hash had, while keeping the drift smooth. */
-    let n = vnoise(x, z, .085, 0xc2b2ae35) * .34
-          + vnoise(x, z, .21,  0x9e3779b9) * .44
-          + vnoise(x, z, .78,  0x85ebca6b) * .22;
-    n = .5 + (n - .5) * 1.75;
-    const t = Math.max(0, Math.min(.9999, n)) * (shades.length - 1);
-    const k = t | 0;
-    cA.setHex(shades[k]); cB.setHex(shades[Math.min(shades.length - 1, k + 1)]);
-    cA.lerp(cB, t - k);
+  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+
+  /* ⭐ THE HEIGHT FIELD, exported to the plain below so the two share one
+     landform. Three octaves: regions (≈18 tiles), patches (≈7), grain (≈2.4).
+     Frequencies are in TILE units, so the structure is a property of the map's
+     scale and not of the mesh resolution — raising SUB refines it, never
+     changes it. Returns ~[0,1] piled around .5, which is what the contrast
+     curve below exists to undo. */
+  const hfield = (u, w) =>
+      vnoise(u, w, .055, 0xc2b2ae35) * .38
+    + vnoise(u, w, .150, 0x9e3779b9) * .35
+    + vnoise(u, w, .420, 0x85ebca6b) * .27;
+  /* ⚠ THE OCTAVE WEIGHTS ARE SET BY THE DISTRICT CAMERA, NOT BY TASTE. The
+     first cut ran .52/.31/.17 — a landform whose energy sits in the 18-tile
+     octave — and it scored beautifully from the air (patch spread 0.091 →
+     0.175) and did almost nothing in the DISTRICT frame (0.089 → 0.075),
+     because a district camera sees about ten tiles of ground and half a cycle
+     of an 18-tile feature is a gradient, not a patch. Weight moved to the 6.7-
+     and 2.4-tile octaves, which are the ones that fall inside a district
+     frame. The 2.4-tile octave is still 4.8 lattice samples per period at
+     SUB = 2, so it is sampled, not aliased. */
+  /* …and an INDEPENDENT moisture field. Deriving greenness from the height
+     alone collapses hue and value onto one axis, which is a wider ramp and
+     still only a ramp: everything light is dry and everything dark is green, so
+     the ground has one degree of freedom and a viewer reads it as shading. Two
+     fields give a dry ridge, a dry hollow, a green ridge and a green hollow —
+     four ground types in the same frame, which is what BAR.md's suburban
+     reference means by "mown lawn against rough grass against verge against
+     gravel". The height term is kept as a BIAS (high ground drains, so it
+     bakes) rather than dropped: correlated, not identical. */
+  const mfield = (u, w) =>
+      vnoise(u + 37.7, w - 11.3, .085, 0x51ab4c9d) * .66
+    + vnoise(u - 5.1,  w + 21.9, .230, 0x2f6ec371) * .34;
+
+  /* THE TWO RAMPS, dark → light. Authored in sRGB at the level the round-2
+     measurement fixed, and DIVIDED BY _TEX_LIN at build time (never here) so
+     the mapped plate renders at the level these hexes state. */
+  const DRY = [0x706c58, 0x888361, 0xa09b73, 0xb8b287];   // dust, scrub, bleached verge
+  const GRN = [0x577042, 0x69844e, 0x7d9b5d, 0x91b26b];   // pasture, damp hollow
+  /* ⚠ THESE TWO ARE BALANCED AGAINST EACH OTHER AND AGAINST ROUND 2'S LEVEL,
+     and the balance was MEASURED, not eyeballed. The first cut of them came
+     back off the harness at 0.488 mean value against round 4's 0.540 — the
+     ramp had been widened around the wrong centre, so the terrain simply went
+     dark, which is the one thing round 2 spent a whole round fixing and this
+     round is not allowed to spend. Both families were lifted 9% and the green
+     one desaturated 16% (the dry one 5%), and the mix at the field's own mean
+     (t = 0.42, moisture = 0.5) now evaluates to 0x7e8a5c — value 0.541, hue 76
+     degrees — against round 4's 0.540 / 70. Same level, same family; 2.1x the
+     value spread (0.133 -> 0.283) and 5x the hue spread (8 -> 40 degrees). If
+     either ramp is ever retuned, re-evaluate that mix before shipping it. */
+  const rampAt = (arr, t, out, tmp) => {
+    const k = Math.min(arr.length - 2, Math.max(0, t | 0));
+    out.setHex(arr[k]); tmp.setHex(arr[k + 1]); out.lerp(tmp, clamp01(t - k));
+  };
+
+  /* ⭐ GROUND GRAIN — the map, and the only part of this round that answers
+     "no texture" rather than "no variation in hue". It is generated, seamless
+     and shared, so it costs one 256px canvas and ZERO triangles.
+     ⚠ WRAPPED BLOTCHES. _grey() draws its blotches with a plain arc, which
+       clips at the canvas edge; on a wall repeated four times that is invisible
+       and on ground repeated SIX TIMES ACROSS THE PLATE it is a visible lattice
+       of seams — a second grid laid over the one this round is trying to kill.
+       Every blotch here is drawn nine times, offset by ±S, so the canvas tiles
+       without a seam.
+     ⚠ THE PERIOD IS NOT A DIVISOR OF THE TILE — see GRAIN_PER just below.
+     ⚠ Centred on _TEX_B like every other shared canvas, with its blotches
+       symmetric in CODE VALUE (see _tone's note) so the mean cannot drift. */
+  /* ⚠ 3.71 TILES, AND IT IS NOT A DIVISOR OF 1. Any period that divides the
+     tile puts the same grain in the same place on every tile and reinforces
+     exactly the graph-paper read the per-vertex colour is here to remove; an
+     irrational-ish period is what breaks the repeat up. It was 2.63 in the
+     first cut. Widening it scales every blotch with it, and that is the point:
+     the mid blotches now span 0.32-0.90 of a TILE rather than 0.23-0.64, which
+     is the size a patch of different ground has to be before a DISTRICT camera
+     (about 60 px a tile) reads it as a patch rather than as noise. */
+  const GRAIN_PER = 3.71;
+  const TEX_GROUND = _tex(256, (x, S) => {
+    x.fillStyle = 'rgb(' + _TEX_B + ',' + _TEX_B + ',' + _TEX_B + ')';
+    x.fillRect(0, 0, S, S);
+    /* ⚠ THIS ONE MAP IS NOT PURE GREY, AND THAT IS A DELIBERATE DEPARTURE.
+       The file's rule — stated at _TEX_MID and enforced on every other canvas —
+       is that a map must be greyscale, because a map MULTIPLIES the material
+       colour and a tinted map therefore shifts a palette entry away from the
+       hex the palette table says it is. That rule protects a value a human
+       reads off a table. The plate has no such value: its "colour" is a
+       per-vertex FIELD, there is no palette entry to protect, and a strictly
+       grey map can only ever make the ground lighter or darker — which is the
+       one axis it already varies on. A 5% warm/cool bias in the blotches is
+       what turns "the same ground, brighter" into "a drier patch", and it is
+       the cheapest hue variation in the round. The bias is symmetric, so the
+       mean hue cannot drift. */
+    const blot = (n, r0, r1, amp, alpha) => {
+      for (let i = 0; i < n; i++) {
+        const cx = Math.random() * S, cy = Math.random() * S;
+        const r = r0 + Math.random() * (r1 - r0);
+        const up = i % 2 === 0;
+        const d = (up ? 1 : -1) * (amp * .5 + Math.random() * amp * .5);
+        const w = (up ? 1 : -1) * 5;                      // warm up, cool down
+        const cr = Math.max(0, Math.min(255, _TEX_B + d + w));
+        const cg = Math.max(0, Math.min(255, _TEX_B + d));
+        const cb = Math.max(0, Math.min(255, _TEX_B + d - w));
+        const gr = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+        gr.addColorStop(0,  'rgba(' + cr + ',' + cg + ',' + cb + ',' + alpha + ')');
+        gr.addColorStop(.62,'rgba(' + cr + ',' + cg + ',' + cb + ',' + alpha * .55 + ')');
+        gr.addColorStop(1,  'rgba(' + cr + ',' + cg + ',' + cb + ',0)');
+        x.fillStyle = gr;
+        // ⚠ NINE TIMES — the 3x3 of the wrap, not the number of repeats. See
+        //   the header: a clipped arc is a seam, and this canvas repeats about
+        //   six times across the plate.
+        for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++)
+          x.fillRect(cx - r + ox * S, cy - r + oy * S, r * 2, r * 2);
+      }
+    };
+    // Two octaves of patch. r is in texels; at a 3.71-tile period 62 texels is
+    // 0.90 of a TILE, i.e. ~30 pixels in the district frame — which is the
+    // scale at which a viewer reads "a patch of different ground" rather than
+    // "noise". The small set is wear: paths worn through, bare scuffs.
+    /* ⚠ THE AMPLITUDES WERE RAISED ONCE, AGAINST A MEASUREMENT. At 30/.58 the
+       district frame's block-to-block value spread came back at 0.076 against
+       round 4's 0.089 — the plate had lost round 4's per-TILE steps (which is
+       the graph-paper fix and is wanted) and had not replaced them with
+       anything at that scale. The vertex field cannot: its finest octave is
+       2.4 tiles, and a district camera sees ten. The map can, for no triangles,
+       which is why the answer is here and not in the lattice. */
+    blot(34, 22, 62, 42, .66);
+    blot(52, 4, 16, 28, .52);
+    /* Fine grain: below Nyquist from the air (one texel is ~0.5px there, so it
+       mips to flat and costs nothing) and the whole surface at the street
+       camera, where one texel is ~4px. Was 30 in the first cut and it read as
+       television static in the aerial crop rather than as ground; 18 breaks the
+       flatness without becoming the subject. */
+    const img = x.getImageData(0, 0, S, S), d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (Math.random() - .5) * 18;
+      d[i]     = Math.max(0, Math.min(255, d[i] + n));
+      d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n));
+      d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n));
+    }
+    x.putImageData(img, 0, 0);
+  }, 1);
+
+  /* ── the lattice ────────────────────────────────────────────────────────
+     SUB = 2 sub-cells a tile: 49x49 = 2401 vertices (comfortably inside a
+     16-bit index buffer) and 4,608 triangles against the old 1,152. That is
+     +3,456 on a 402k district, i.e. +0.86%, and it buys the colour field a
+     half-tile resolution — one step is all it takes for a tone to INTERPOLATE
+     instead of stepping, which is the difference between land and a checker.
+     Rejected SUB = 3 (+2.3%): measured against SUB = 2 the extra octave is
+     below the grain the map already supplies, so it is triangles buying
+     something a texture gives for free. */
+  const SUB = 2, NC = GRID * SUB, NV = NC + 1;
+  const AMP = .009;                              // ⚠ the envelope — see header
+  const pos = new Float32Array(NV * NV * 3);
+  const uv  = new Float32Array(NV * NV * 2);
+  const col = new Float32Array(NV * NV * 3);
+  const idx = new Uint16Array(NC * NC * 6);
+  const cA = new THREE.Color(), cB = new THREE.Color(), cT = new THREE.Color();
+  const cE = new THREE.Color(GROUND_COL);
+  for (let j = 0; j < NV; j++) for (let i = 0; i < NV; i++) {
+    const v = j * NV + i;
+    const u = i / SUB, w = j / SUB;              // tile units, 0 … GRID
+    const wx = u - HALF, wz = w - HALF;
+    const H = hfield(u, w), M = mfield(u, w);
+
+    /* THE CONTRAST CURVE IS NOT COSMETIC. Summed value noise piles up around
+       .5, so a raw `n` uses the middle two stops almost exclusively and the
+       first cut of the vertex-coloured plate came out FLATTER than the
+       checkerboard it replaced. Pushing away from .5 by 1.75x restores the
+       tonal spread the old per-tile hash had while keeping the drift smooth.
+       Untouched since round 1; only what it feeds has changed. */
+    const t = clamp01(.5 + (H - .5) * 1.75) * (DRY.length - 1);
+    rampAt(DRY, t, cA, cT);
+    rampAt(GRN, t, cB, cT);
+    /* Green where it is wet, dry where it is high — see mfield's note.
+       ⚠ THE MIX CENTRES ON .38, NOT ON .5, AND THE .12 IS MEASURED. At .5 the
+       plate came back off the harness at hue 76 and saturation 0.33 — a
+       PASTURE — and the housing lawns, which are the thing a parcel is read by,
+       lost most of their contrast against it: the district's patch spread went
+       DOWN, 0.089 to 0.075, in a round whose entire subject is patch spread.
+       The city stands on dry grassland (that is round 1's argument for
+       GROUND_COL and it still holds); a mown, watered lawn is the exception cut
+       into it, and the exception has to be the greener thing. At .38 the mix
+       evaluates to 0x82895e — value 0.537, hue 70° — against round 4's 0.540 /
+       70°, i.e. the same ground, now with 0.28 of spread around it instead of
+       0.13, and the lawns read again. */
+    cA.lerp(cB, clamp01(.38 + (M - .5) * 2.2 - (H - .5) * .9));
+
     /* Edge fade over the outer 3 tiles. Chebyshev distance, not Euclidean, so
        the fade follows the square plate instead of cutting its corners off.
-       ⚠ v123: THE FADE NOW COMPLETES. It stopped at .70, which left the plate's
-         last row up to 30% of the ramp's spread away from the plain it is
-         supposed to dissolve into — a step of ~10/255 running dead straight
+       ⚠ THE FADE COMPLETES. It stopped at .70 before v123, which left the
+         plate's last row up to 30% of the ramp's spread away from the plain it
+         is supposed to dissolve into — a step of ~10/255 running dead straight
          along all four edges of a square, which is exactly the shape an eye
-         picks out of a photograph. The three-tile ramp still does all the work;
-         it just arrives now instead of stopping short. */
-    const d = Math.max(Math.abs(x - (GRID - 1) / 2), Math.abs(z - (GRID - 1) / 2)) / ((GRID - 1) / 2);
-    if (d > .86) cA.lerp(cE, Math.min(1, (d - .86) / .14));
-    for (let q = 0; q < 4; q++) {
-      const ox = (q === 1 || q === 3) ? h : 0, oz = (q >= 2) ? h : 0;
-      pos[v * 3] = wx + ox; pos[v * 3 + 1] = 0; pos[v * 3 + 2] = wz + oz;
-      nor[v * 3] = 0; nor[v * 3 + 1] = 1; nor[v * 3 + 2] = 0;
-      uv[v * 2] = ox; uv[v * 2 + 1] = oz;
-      col[v * 3] = cA.r; col[v * 3 + 1] = cA.g; col[v * 3 + 2] = cA.b;
-      v++;
-    }
-    const b0 = v - 4;
-    idx[i++] = b0; idx[i++] = b0 + 2; idx[i++] = b0 + 1;
-    idx[i++] = b0 + 1; idx[i++] = b0 + 2; idx[i++] = b0 + 3;
+         picks out of a photograph. */
+    const d = Math.max(Math.abs(u - HALF), Math.abs(w - HALF)) / HALF;
+    const fade = d > .86 ? Math.min(1, (d - .86) / .14) : 0;
+    if (fade > 0) cA.lerp(cE, fade);
+
+    /* ⚠ AND THE DIVIDE. Vertex colours are consumed in LINEAR (THREE.Color's
+       components are linear once ColorManagement has decoded a hex), the map is
+       decoded to linear before it multiplies, and its mean is _TEX_LIN — so
+       dividing here is what makes the mapped plate render at the level the
+       ramp hexes state. Doing it in sRGB instead is the 0.78-vs-0.578 bug the
+       v122 pass spent a round on. */
+    col[v * 3]     = Math.min(1, cA.r / _TEX_LIN);
+    col[v * 3 + 1] = Math.min(1, cA.g / _TEX_LIN);
+    col[v * 3 + 2] = Math.min(1, cA.b / _TEX_LIN);
+
+    // …and the relief itself, flattened to nothing over the same outer ring so
+    // the plate meets the plain edge-on rather than with a scalloped lip.
+    pos[v * 3]     = wx;
+    pos[v * 3 + 1] = (H - .5) * 2 * AMP * (1 - fade);
+    pos[v * 3 + 2] = wz;
+    uv[v * 2]      = wx / GRAIN_PER;
+    uv[v * 2 + 1]  = wz / GRAIN_PER;
+  }
+  let n = 0;
+  for (let j = 0; j < NC; j++) for (let i = 0; i < NC; i++) {
+    const a = j * NV + i, b = a + 1, c = a + NV, e = c + 1;
+    idx[n++] = a; idx[n++] = c; idx[n++] = b;
+    idx[n++] = b; idx[n++] = c; idx[n++] = e;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  // ⚠ COMPUTED, not the constant (0,1,0) the flat quads carried. A displaced
+  //   lattice with straight-up normals is lit exactly like a plane, which is
+  //   the whole thing this round is trying to stop being.
+  geo.computeVertexNormals();
   geo.computeBoundingSphere();
   const plate = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-    color: 0xffffff, roughness: 1, vertexColors: true }));
-  // It RECEIVES (every building's shadow lands here) and never CASTS — a flat
-  // plate at y=0 has nothing to cast onto, and the shadow pass is the reason
-  // draw calls are the cost driver in this scene at all.
+    color: 0xffffff, roughness: 1, vertexColors: true, map: TEX_GROUND }));
+  // It RECEIVES (every building's shadow lands here) and never CASTS — a plate
+  // whose whole height range is 18mm has nothing to cast onto, and the shadow
+  // pass is the reason draw calls are the cost driver in this scene at all.
   plate.receiveShadow = true; plate.castShadow = false;
   tileGroup.add(plate);
+
+  /* ⭐ AND THE PLAIN GETS THE SAME FIELD. `ground` (declared above, two
+     triangles) was ONE flat GROUND_COL running to the horizon, and in a
+     district frame the strip between the plate's edge and the outskirts is
+     plain — so half the critic's "one unbroken colour from the foreground to
+     the horizon" was literally this mesh. It is rebuilt here rather than at its
+     own declaration because the noise, the ramps and the divide all live in
+     this block and a second copy of any of them is how the two drift apart.
+     ⚠ COARSE ON PURPOSE: 26x26 cells over 232 units is one vertex every 8.9
+       units, which is 1,352 triangles for the entire rest of the world. The
+       fog reaches its far stop at 30 on the tier every WebGL2 client boots at,
+       so anything finer than this is detail painted onto the haze.
+     ⚠ The mean is pinned to GROUND_COL by construction: the field is evaluated
+       in the same tile units the plate uses and the amplitude is halved out
+       here, so the plain reads as the same country seen further off. */
+  {
+    const SPAN = GRID + 208, PC = 26, PV = PC + 1, HS = SPAN / 2;
+    const gp = new Float32Array(PV * PV * 3);
+    const guv = new Float32Array(PV * PV * 2);
+    const gc = new Float32Array(PV * PV * 3);
+    const gi = new Uint16Array(PC * PC * 6);
+    for (let j = 0; j < PV; j++) for (let i = 0; i < PV; i++) {
+      const v = j * PV + i;
+      const wx = -HS + (i / PC) * SPAN, wz = -HS + (j / PC) * SPAN;
+      const u = wx + HALF, w = wz + HALF;        // back into the plate's tile frame
+      const H = hfield(u, w), M = mfield(u, w);
+      const t = clamp01(.5 + (H - .5) * 1.75) * (DRY.length - 1);
+      rampAt(DRY, t, cA, cT); rampAt(GRN, t, cB, cT);
+      cA.lerp(cB, clamp01(.38 + (M - .5) * 2.2 - (H - .5) * .9));   // same centre as the plate
+      /* 🐞 AND IT HAS TO ARRIVE AT GROUND_COL EXACTLY WHERE THE PLATE DOES.
+         The first cut mixed a flat 48% toward GROUND_COL everywhere, which put
+         a plain of one tone against a plate that had faded to another, and the
+         capture came back with a hard line running down the whole left side of
+         the aerial — the round-2 "hard visible seam" reborn, this time as a
+         real material boundary rather than as the fog. The plate's edge ramp
+         completes at its own boundary, so the plain STARTS there at the same
+         hex and only drifts once it is out of the plate's reach. Chebyshev,
+         like the plate's, so the fade follows the square. */
+      const cheb = Math.max(Math.abs(wx), Math.abs(wz));
+      cA.lerp(cE, 1 - clamp01((cheb - HALF) / 26) * .52);
+      gc[v * 3] = cA.r; gc[v * 3 + 1] = cA.g; gc[v * 3 + 2] = cA.b;
+      gp[v * 3] = wx; gp[v * 3 + 1] = 0; gp[v * 3 + 2] = wz;
+      guv[v * 2] = wx / GRAIN_PER; guv[v * 2 + 1] = wz / GRAIN_PER;
+    }
+    let m = 0;
+    for (let j = 0; j < PC; j++) for (let i = 0; i < PC; i++) {
+      const a = j * PV + i, b = a + 1, c = a + PV, e = c + 1;
+      gi[m++] = a; gi[m++] = c; gi[m++] = b;
+      gi[m++] = b; gi[m++] = c; gi[m++] = e;
+    }
+    const gg = new THREE.BufferGeometry();
+    gg.setAttribute('position', new THREE.BufferAttribute(gp, 3));
+    gg.setAttribute('uv', new THREE.BufferAttribute(guv, 2));
+    gg.setAttribute('color', new THREE.BufferAttribute(gc, 3));
+    gg.setIndex(new THREE.BufferAttribute(gi, 1));
+    gg.computeVertexNormals();
+    gg.computeBoundingSphere();
+    // ⚠ NO map out here. The plain is never nearer than 13 units and mostly
+    //   much further, so its texels are sub-pixel and all a map would do is
+    //   cost the divide; the vertex field is doing the visible work. The
+    //   material therefore keeps the ramp's own level with no lift.
+    ground.geometry.dispose();
+    ground.geometry = gg;
+    /* 🐞 AND THE ROTATION HAS TO GO. `ground` was a PlaneGeometry, which is
+       authored in XY and laid flat by rotation.x = −π/2. This lattice is
+       authored in XZ already — it has to be, because the noise is sampled in
+       world x/z — so leaving the rotation on stands the whole plain up on its
+       edge behind the city. Found in the first capture after this block; it is
+       the reason the geometry swap and the rotation reset are adjacent lines
+       rather than one at each end of the file. */
+    ground.rotation.x = 0;
+    ground.material.color.setHex(0xffffff);
+    ground.material.vertexColors = true;
+    ground.material.needsUpdate = true;
+  }
 }
 /* Grid lines sit ON the plate, so they have to be the plate's own family or
    they reintroduce the cast the plate just lost. Was 0x3a3152/0x241d33 — two
@@ -5141,8 +5485,21 @@ const tileGroup = new THREE.Group(); scene.add(tileGroup);
      aerial of a half-built city came out looking like graph paper — a thing no
      reference frame has. Kept legible enough to count tiles by, quiet enough
      that they are not the first thing a viewer sees from the air. */
+/* ⚠ ROUND 5: DIMMER, AND LIFTED 2.5mm. Two changes, both forced by the plate.
+   · The plate now reaches +.009, so lines at .012 were 3mm off a surface they
+     used to sit 12mm above — inside the depth buffer's resolution at city zoom,
+     which is z-fighting along the ridges. .0145 keeps them clear of the plate
+     and still under every recipe's apron at RD_Y = .016.
+   · Fixed-hex lines over a ramp that now spans 0.26 of value instead of 0.13
+     read as HIGH contrast wherever the ground went dark, and 24 of them each
+     way is the graph-paper read the aerial has had since round 0. Transparency
+     at .16 keeps them countable up close — which is the affordance they exist
+     for — and drops them out of the aerial read entirely. Cheaper than picking
+     a new hex, and it cannot go wrong again when the ramp next moves. */
 const gridHelper = new THREE.GridHelper(GRID, GRID, 0x8f9678, 0x828869);
-gridHelper.position.y = .012; scene.add(gridHelper);
+gridHelper.position.y = .0145;
+gridHelper.material.transparent = true; gridHelper.material.opacity = .16;
+scene.add(gridHelper);
 
 const hover = new THREE.Mesh(new THREE.PlaneGeometry(TILE * .98, TILE * .98),
   new THREE.MeshBasicMaterial({ color: 0x4caf7a, transparent: true, opacity: .35, depthWrite: false }));
@@ -5281,8 +5638,10 @@ function _tex(size, draw, repeat) {
      _TEX_MID = 0.92 sRGB = 0.828 linear leaves ~20 codes of headroom above the
      base for specks and scuffs while costing only 17% of the albedo, and that
      17% is absorbed by the palette below rather than left for the eye. */
-const _TEX_MID = .92;                        // sRGB base for every shared canvas
-const _TEX_B   = Math.round(255 * _TEX_MID); // 235
+/* ⚠ _TEX_MID / _TEX_B / _TEX_LIN ARE DECLARED BESIDE GROUND_COL, ~970 lines
+   above. They had to move: the map plate is built before this point and round 5
+   put a map on it, and a `const` cannot be read before it is declared. The
+   argument for the value is the block above; the declaration is up there. */
 /* ⚠ BLOTCHES MUST BE SYMMETRIC IN CODE VALUE, NOT IN ALPHA. The old code
    alternated 'rgba(255,255,255,a)' and 'rgba(0,0,0,a)' at the same alpha and
    called it balanced. At a base of 199 that was already lopsided; at 235 it is
@@ -6925,8 +7284,41 @@ function makeHousing(lvl, tx, tz) {
      this file.                                                              */
   const AY = (typeof RD_Y !== 'undefined') ? RD_Y : .016;   // apron top   = .016
   const GB = -.014;                                         // buried underside
-  const PY = AY + .003;                                     // path top, 3 thou proud
+  /* ⭐ ROUND 5 RESTACKED THIS, AND THE ORDER IS THE WHOLE POINT.
+     The round-4 plot critic, asked whether a viewer can see where one property
+     ends and the next begins, answered "NO. I cannot see where one property
+     ends and the next begins anywhere in any of the three frames" — against a
+     round that HAD built setbacks, lawns, drives, hedges and lot lines. They
+     all landed; they all landed AT ONE HEIGHT IN ONE TONE ON ONE PLANE, and a
+     parcel drawn on a uniform plane is not a parcel, it is a decal.
+     So the lot is now PROUD of the margin around it, and the margin is a
+     different KIND of ground rather than a different shade of the same one:
+       AY  .016  apron / substrate   (RD_Y — the one free slot; see above)
+       VY  AY+.004  verge            ROUGH grass, the unkempt strip outside the
+                                     boundary. Two abutting plots put two of
+                                     these back to back, so the dark band
+                                     between two bright lawns is .08 of a tile.
+       PY  AY+.008  path             light concrete, must clear the verge
+       BY  AY+.006  planting bed     (unchanged; beds sit in the verge, not the lawn)
+       LY  AY+.013  LAWN             the lot's own mown ground, 9 thou proud of
+                                     the verge — an edge that catches a shadow,
+                                     which is the thing a colour change at the
+                                     same height cannot do
+       DY  AY+.017  drive            must clear the LAWN, or a lawn slab
+                                     z-fights across the whole driveway
+     ⚠ 13 THOU IS THE CEILING, NOT A TASTE. Citizens are placed at y = 0 with a
+       ≤.02 walk bob and the 'enter' state walks them .3 of a tile INSIDE the
+       plot, so ground tall enough to read as a step is ground they wade
+       through. Round 4 already shipped a drive at AY+.008 and nobody sank; the
+       lawn at AY+.013 is 5 thou past a figure that was measured to be safe, and
+       the drive keeps its 4-thou clearance above it.
+     ⚠ THE HOVER HIGHLIGHT AT .020 IS NOW UNDER THE LAWN. That is not a
+       regression: hover only ever matters on an EMPTY tile, and an empty tile
+       has no lawn. It was already under the round-4 drive at .024.            */
+  const VY = AY + .004;                                     // verge  — rough margin
+  const PY = AY + .008;                                     // path top
   const BY = AY + .006;                                     // planting bed top
+  const LY = AY + .013;                                     // the lot's mown ground
 
   /* ══ THE FIVE ARCHETYPES ═════════════════════════════════════════════════
      The whole point of this round. Every one of these is a different SHAPE,
@@ -7828,21 +8220,18 @@ function makeHousing(lvl, tx, tz) {
      and a run of these reads as a street of properties rather than as houses
      parked on a plane.
 
-     THE FOUR HEIGHTS, and why they cannot be reordered:
-        AY  .016  apron / substrate  (RD_Y — the one free slot; see above)
-        PY  AY+.003  path            (light concrete, must clear the apron)
-        BY  AY+.006  lawn            (must clear the path it is cut around)
-        DY  AY+.008  drive           (must clear the LAWN, or a .006 lawn slab
-                                      z-fights across the whole driveway)
-     Nothing here is a free choice: the stack from the tile shade plane (0) to
-     the hover highlight (.02) is four millimetres deep in total.             */
+     THE HEIGHTS ARE DECLARED AT THE GROUND DATUM at the top of this function
+     and the reasoning is there, not here — round 5 restacked them and one copy
+     of a stack is all a file gets. The short form: verge below path below lawn
+     below drive, and the LAWN IS PROUD OF THE VERGE, which is the whole reason
+     a plot now reads as a plot.                                              */
 
   // 1. Apron — the whole tile, paved, top pinned to the road's carriageway.
   //    It is the SUBSTRATE now rather than the finish: on a garden plot almost
   //    all of it is covered. It stays because it is 12 triangles and it is what
   //    guarantees a tile seam can never open onto bare ground.
   _hPush(B.apron, _hSlab(-.5, .5, -.5, .5, AY, GB));
-  const DY = AY + .008;                                     // driveway top
+  const DY = AY + .017;                                     // driveway top — clears LY
 
   // 2. Front path — door axis to the frontage, running under the bottom step.
   const pathU = front === 'stoop' ? W * .27 : 0;
@@ -7899,9 +8288,35 @@ function makeHousing(lvl, tx, tz) {
        Grass first, over everything that is not the house, then the drive and
        the path cut back through it. `gx`/`gz` are the inner edges — derived
        from hx/hz, so a wide house gets a narrow garden instead of a lawn laid
-       through its own walls — and `ge` is the outer edge, which stops .045
-       short of the tile line so the boundary has something to stand in.      */
-    const ge = .455;
+       through its own walls — and `ge` is the outer edge.
+
+       ⭐ ROUND 5 — THE VERGE, and why `ge` came in from .455 to .400.
+       The round-4 plot critic found ONE candidate boundary cue in the whole
+       district — a hedge ribbon with timber edging — and then found the
+       IDENTICAL RIBBON RUNNING CONTINUOUSLY PAST THE GAP BETWEEN TWO HOUSES,
+       so it read as decoration rather than as a boundary. That is not a taste
+       problem, it is a geometry bug, and it is visible in the numbers: a hedge
+       is bt = .055 thick centred on `edge` = .5 − bt/2 = .4725, so it occupies
+       .445 … .500 of its own tile. The plot next door draws the mirror of that,
+       .500 … .555 in the same coordinates. THE TWO HEDGES TOUCH EXACTLY AT THE
+       TILE LINE and merge into one continuous .110-wide slab of privet with no
+       line down the middle of it — every flank in the city, every time. The
+       critic was reading the render correctly; there was nothing there to see.
+
+       So the outer ring of a garden plot is now a VERGE: rough, darker grass at
+       VY, standing between the lawn and the tile line, with the boundary set
+       back INTO it (see §5's `sEdge`). Two abutting plots put two verges back
+       to back, so what runs between two properties is a dark unmown band ~.080
+       of a tile wide with a hedge on each side of it, instead of one hedge. The
+       tone step is the part that reads from the air: _N_ROUGH is ~0.48 value
+       against a mown lawn's ~0.69, which is 0.21 — four times the difference
+       between any two round-4 lawns.
+       ⚠ THE FRONT RUN IS DRAWN AND MOSTLY HIDDEN, ON PURPOSE. A road tile
+         aprons RD_AP_PAVE = .110 of footway at RD_PT over its neighbour, so the
+         outer .11 of a frontage is pavement. Emitting the verge there anyway is
+         12 triangles inside a bucket that already exists, and it is what covers
+         the case where the plot faces a NEIGHBOUR rather than a street. */
+    const ge = .420;
     /* gzF is the FRONT inner edge and gzB the REAR one. They used to be one
        number mirrored about z = 0, which was correct only while the house was
        centred on its tile; with the setback in they are .200 apart on a
@@ -7958,16 +8373,40 @@ function makeHousing(lvl, tx, tz) {
     blk.sort((p, q) => p[0] - q[0]);
     let cur = -ge;
     /* ONE LAWN PER PLOT. See _vegLawn's `key`: rolled once here, handed to every
-       band, so this garden is one green and the garden next door is another. */
-    const lawnKey = (R() * 4) | 0;
+       band, so this garden is one green and the garden next door is another.
+       ⚠ ROUND 5 WIDENED THE KEY FROM 0..3 TO 0..4095 AND CONSUMED THE SAME ONE
+         NUMBER doing it. That is not tidiness: every archetype in this recipe
+         is seeded off the tile hash and a saved city has to rebuild identically,
+         so a change that drew one extra random — or one fewer — would reshuffle
+         every archetype, every shrub and every tree in the district after the
+         first lawn, and the round-over-round A/B would be comparing two
+         different cities instead of two renders of one. */
+    const lawnKey = (R() * 4096) | 0;
+
+    /* ⭐ THE VERGE — the ring of unmown ground between this lot and the next.
+       Emitted here rather than before the drive because it wants the same key
+       the lawn has (one plot, one family of greens) and the key is rolled here.
+       It goes UNDER the drive and the path, which stand 13 and 4 thou above it,
+       so the ring can stay four whole rectangles and never needs carving.
+       Four slabs, 48 triangles, in a bucket makeHousing already emits — so the
+       property line this round exists to draw costs no draw call and no mesh.
+       ⚠ It is not the APRON. The apron is grey paving substrate, and grey
+         paving between two suburban gardens is the "car park with a house on
+         it" read that §THE PARCEL was rebuilt to kill. This is grass that
+         nobody mows, which is what is actually there. */
+    _vegLawn(B.lawn, R, -.5,  .5, ge,  .5,  VY, GB, false, 3, lawnKey);   // front
+    _vegLawn(B.lawn, R, -.5,  .5, -.5, -ge, VY, GB, false, 3, lawnKey);   // rear
+    _vegLawn(B.lawn, R, -.5, -ge, -ge,  ge, VY, GB, false, 2, lawnKey);   // left
+    _vegLawn(B.lawn, R,  ge,  .5, -ge,  ge, VY, GB, false, 2, lawnKey);   // right
+
     for (const s of blk) {
-      if (s[0] > cur) _vegLawn(B.lawn, R, cur, Math.min(s[0], ge), gzF, ge, BY, GB, true, 0, lawnKey);
+      if (s[0] > cur) _vegLawn(B.lawn, R, cur, Math.min(s[0], ge), gzF, ge, LY, GB, true, 0, lawnKey);
       cur = Math.max(cur, s[1]);
     }
-    if (cur < ge) _vegLawn(B.lawn, R, cur, ge, gzF, ge, BY, GB, true, 0, lawnKey);
-    _vegLawn(B.lawn, R, -ge, -gx, -ge, gzF, BY, GB, true, 0, lawnKey);     // left flank
-    _vegLawn(B.lawn, R, gx, ge, -ge, gzF, BY, GB, true, 0, lawnKey);       // right flank
-    _vegLawn(B.lawn, R, -gx, gx, -ge, gzB, BY, GB, false, 4, lawnKey);     // rear, rough
+    if (cur < ge) _vegLawn(B.lawn, R, cur, ge, gzF, ge, LY, GB, true, 0, lawnKey);
+    _vegLawn(B.lawn, R, -ge, -gx, -ge, gzF, LY, GB, true, 0, lawnKey);     // left flank
+    _vegLawn(B.lawn, R, gx, ge, -ge, gzF, LY, GB, true, 0, lawnKey);       // right flank
+    _vegLawn(B.lawn, R, -gx, gx, -ge, gzB, LY, GB, false, 4, lawnKey);     // rear, rough
 
     /* 3c. FOUNDATION PLANTING — a row of clipped shrubs against the front
        elevation, not a scatter. That is what the reference actually shows, and
@@ -7980,7 +8419,7 @@ function makeHousing(lvl, tx, tz) {
         const px = -span / 2 + (i + .5) * (span / n);
         if (Math.abs(px - pathU) < pathHW + .075) continue;
         if (hasDrive && px > dv0 - .020 && px < dv1 + .020) continue;
-        _vegClump(B.leaf, R, px, hzs + .046, BY - .004, .032 + R() * .020,
+        _vegClump(B.leaf, R, px, hzs + .046, LY - .004, .032 + R() * .020,
                   .70 + R() * .28, R() < .35 ? _N_HEDGE : _N_LEAF);
       }
     }
@@ -7988,7 +8427,7 @@ function makeHousing(lvl, tx, tz) {
     // one straight line against one wall.
     for (let i = 0, ns = 2 + (R() * 2 | 0); i < ns; i++) {
       const sx2 = (R() < .5 ? -1 : 1) * (gx + .022 + R() * Math.max(.004, ge - gx - .055));
-      _vegClump(B.leaf, R, sx2, -.40 + R() * .70, BY - .004,
+      _vegClump(B.leaf, R, sx2, -.40 + R() * .70, LY - .004,
                 .028 + R() * .018, .65 + R() * .30, _N_LEAF);
     }
 
@@ -8007,7 +8446,13 @@ function makeHousing(lvl, tx, tz) {
       const tside = hasDrive ? -ds : (R() < .5 ? -1 : 1);
       const tX = tside * (.250 + R() * .035);
       const tZ = (gzF < .34) ? Math.min(.345, gzF + .045 + R() * .05) : Math.max(-.345, gzB - .045);
-      _vegTree(B.leaf, R, tX, tZ, BY - .006, th);
+      /* ⭐ ROOTED, not intersecting — see _vegRoot. The ring is sized off the
+         TREE, not off a constant: h*.155 is the crown radius, so .085 of a .60
+         tree is a disc about a third of the crown across, which is where the
+         shade actually kills the grass. Drawn BEFORE the tree so the trunk's
+         own root flare lands on top of it. */
+      _vegRoot(B.leaf, R, tX, tZ, LY - .006, .062 + th * .085);
+      _vegTree(B.leaf, R, tX, tZ, LY - .006, th);
     }
 
     /* 3e. BINS. Two of them, beside the drive where the collection lorry can
@@ -8043,6 +8488,21 @@ function makeHousing(lvl, tx, tz) {
   const bTop = AY + (bound === 'hedge' ? .086 : bound === 'railing' ? .028 : .052);
   const bBase = AY - .008;
   const edge = .5 - bt / 2, gate = pathHW + .015;
+  /* ⭐ ROUND 5 — THE FLANKS AND THE REAR COME IN .040; THE FRONTAGE DOES NOT.
+     See the verge note in §3 for the measurement: two neighbours each drawing a
+     boundary centred on `edge` put .055 of privet at .445….500 and .055 more at
+     .500….555, which touch at the tile line and merge into ONE ribbon — the
+     exact artefact the round-4 plot critic found and correctly dismissed as
+     decoration. Pulling the party-line runs in by .034 leaves .068 of verge
+     between two hedges: two boundaries with a gap, which is what a property
+     line looks like.
+     ⚠ THE FRONT RUN STAYS ON .5 − bt/2 AND THAT IS NOT AN OVERSIGHT. A frontage
+       faces a STREET, and against a street the property line is the kerb — the
+       road already aprons RD_AP_PAVE of footway over this tile, so a front
+       hedge pulled back .034 would just stand in its own garden with pavement
+       in front of it. The gate piers (below) are seated on .475 for the same
+       reason and are deliberately left there. */
+  const sEdge = edge - .034;
   /* A HEDGE IS A FORM, NOT A GREEN WALL. It used to merge into the planting
      bucket as a plain box — the cheapest possible boundary, and at every camera
      angle the game has it read as a wall someone had painted green. It now goes
@@ -8077,8 +8537,8 @@ function makeHousing(lvl, tx, tz) {
   const bsegs = _freeSpans(-(.5 - bt), .5 - bt, gaps);
   for (const s of bsegs) putBound(s[0], s[1], edge - bt / 2, edge + bt / 2);
   if (!party) {
-    putBound(-edge - bt / 2, -edge + bt / 2, -(.5 - bt), .5 - bt);
-    putBound(edge - bt / 2, edge + bt / 2, -(.5 - bt), .5 - bt);
+    putBound(-sEdge - bt / 2, -sEdge + bt / 2, -(.5 - bt), .5 - bt);
+    putBound(sEdge - bt / 2, sEdge + bt / 2, -(.5 - bt), .5 - bt);
   }
   /* ⭐ AND THE BACK FENCE. The line above this block used to read "the rear edge
      is deliberately open — it is the one edge a player never sees", and that was
@@ -8094,7 +8554,7 @@ function makeHousing(lvl, tx, tz) {
        +5k triangles. A wall or a picket rear boundary is a single slab either
        way — only the hedge has a per-lobe price. */
   if (!party && plotSty === 'garden') {
-    const rz = -edge;
+    const rz = -sEdge;
     if (bound === 'hedge') _vegHedge(B.leaf, R, -(.5 - bt), .5 - bt, rz - bt / 2, rz + bt / 2, bTop, bBase, null, .210);
     else _hPush(B.base, _hSlab(-(.5 - bt), .5 - bt, rz - bt / 2, rz + bt / 2, bTop, bBase));
   }
@@ -15078,6 +15538,31 @@ const _N_ROUGH = [0x4b7a3a, 0x436e34, 0x547f3e, 0x3d6a30];
 const _vgPick = (R, a) => a[(R() * a.length) | 0];
 const _vgJit  = (R, a, b) => a + R() * (b - a);
 
+/* ⭐ ROUND 5 — A LAWN IS NOT ONE OF FOUR GREENS.
+   Round 4 gave every plot ONE lawn tone instead of three, which was right and
+   was not enough: the four tones above span 0.082 of value and about 8° of hue,
+   so two neighbours differ by less than the sun does across the same garden —
+   and one plot in four rolls its neighbour's tone outright. The round-4 plot
+   critic's verdict was "NO. I cannot see where one property ends and the next
+   begins anywhere in any of the three frames."
+   This shades a base tone continuously instead of adding more entries: value by
+   ±16% and, with it, a warm/cool tilt (a bleached lawn is yellower, a lush one
+   is bluer-green), which is what real lawns actually differ in. Four bases ×
+   seven shades is 28 distinct lawns, so the odds of a boundary being invisible
+   go from 1 in 4 to 1 in 28, and a visible one differs by ~0.24 of value rather
+   than by 0.08.
+   ⚠ IT MUST STAY A PURE FUNCTION OF THE KEY. Every archetype in makeHousing is
+     seeded off the tile hash and a saved city has to rebuild identically —
+     rolling here instead of shading would put a different lawn on a plot after
+     every reload, which is the bug the parcel kit's header exists to prevent. */
+function _vgShade(hex, f) {
+  const s = 1 + f * .16;
+  const r = Math.max(0, Math.min(255, Math.round((hex >> 16 & 255) * s * (1 + f * .07))));
+  const g = Math.max(0, Math.min(255, Math.round((hex >> 8  & 255) * s)));
+  const b = Math.max(0, Math.min(255, Math.round((hex       & 255) * s * (1 - f * .10))));
+  return (r << 16) | (g << 8) | b;
+}
+
 /* One main mass plus 2–4 smaller lobes at random bearings, heights and squash,
    each independently spun and tinted off one tone family. The lobes are what
    make the silhouette ragged instead of bubbly.
@@ -15109,6 +15594,27 @@ function _vegTufts(list, R, n, x0, x1, z0, z1, y, tones) {
           [_vgJit(R, -.3, .3), R() * 3, _vgJit(R, -.3, .3)]);
 }
 
+/* ⭐ ROUND 5 — WHAT A TREE STANDS IN.
+   The round-4 whole-frame critic's sentence was two clauses and only the first
+   one is about colour: "THE GROUND IS ONE FLAT COLOUR AND NOTHING IS ROOTED IN
+   IT." A trunk that simply intersects a lawn is a cylinder pushed through a
+   plane, and the eye reads it as placed rather than as grown — the same reading
+   that makes the whole city look like models on a board. What roots it is a
+   TRANSITION: bare soil where the canopy kills the grass, a slight mound where
+   the roots lift it, and a couple of weeds at the rim the mower cannot reach.
+   48 triangles, in the caller's own bucket, so it costs no mesh and no material.
+   ⚠ THE DISC IS PROUD, NOT FLUSH. Flush is a colour change at one height, which
+     is precisely the thing round 4 proved does not read. 6mm over the lawn is
+     an edge with a shadow under it, and an edge with a shadow reads at every
+     camera the game has.
+   ⚠ IT FLARES OUTWARD (r*.82 at the top, r*1.06 at the bottom). A straight
+     cylinder reads as a plant pot sunk in the grass; a cone reads as earth. */
+function _vegRoot(list, R, x, z, y, r) {
+  const soil = _vgPick(R, _N_SOIL);
+  _nPut(list, new THREE.CylinderGeometry(r * .82, r * 1.06, .020, 8), soil, x, y + .002, z);
+  _vegTufts(list, R, 2, x - r * .9, x + r * .9, z - r * .9, z + r * .9, y + .006, _N_ROUGH);
+}
+
 /* A grassed area. `mown` picks the palette; `tufts` is ignored on a mown lawn
    for the reason above. Returns nothing — a degenerate rectangle is silently
    dropped, so callers may subtract a driveway from a lawn band without having
@@ -15136,10 +15642,37 @@ function _vegLawn(list, R, x0, x1, z0, z1, top, base, mown, tufts, key) {
        identically, so a branch that consumed one fewer number here would shift
        every colour, every shrub and every tree AFTER the first lawn. */
   const roll = (R() * tones.length) | 0;
-  const k = key == null ? roll : ((((key | 0) % tones.length) + tones.length) % tones.length);
-  _nSlab(list, tones[k], x0, x1, z0, z1, top, base);
+  /* THE KEY CARRIES TWO FIELDS NOW: the low digits pick the base tone and the
+     high ones pick the shade (see _vgShade).
+     ⚠ A KEYLESS CALLER GETS THE NEUTRAL SHADE, AND THAT IS NOT A DEFAULT, IT IS
+       A FIX. The first cut ran the roll through the same expression, and
+       because a roll is 0..3 its shade index is always 0 — so every park,
+       verge and decoration tile in the city that does NOT pass a key came out
+       at the bottom of the range, 11% darker than it had been for four rounds.
+       Three call sites, all of them grass a player looks at. A shade is a
+       property of a PLOT; a tile that does not own a plot does not get one. */
+  const kk = key == null ? roll : ((((key | 0) % 4096) + 4096) % 4096);
+  const k = kk % tones.length;
+  /* ⚠ THE SHADE RANGE IS SKEWED BRIGHT (−0.35 … +1.40), NOT CENTRED, AND THE
+     FLOOR WAS RAISED TWICE. A lawn is a WATERED surface standing on dry
+     grassland: it is the exception cut into the ground, so it has to be the
+     brighter thing or the plot stops reading. Centred (−1 … +1) put a quarter
+     of the city's lawns at 0.57 value against a plate whose mean is 0.537 —
+     photographed on a cottage plot and the garden was DARKER than the terrain
+     around it, which is the opposite of the read. At −0.35 the darkest lawn is
+     0.607, the brightest 0.888, and the mean sits ~0.17 above the ground it is
+     cut into while still spanning 0.28 plot to plot. */
+  const col = key == null ? tones[k]
+            : _vgShade(tones[k], ((((kk / tones.length) | 0) % 7) - 1.4) / 4.0);
+  _nSlab(list, col, x0, x1, z0, z1, top, base);
   if (mown && x1 - x0 >= .25 && z1 - z0 >= .25) {
-    const alt = tones[(k + 2) % tones.length], w = (z1 - z0) / 5;
+    /* ⚠ THE STRIPE IS DERIVED FROM THE TONE, NOT INDEXED OFF THE ARRAY. It was
+       `tones[(k + 2) % n]`, which worked only while every entry was within 8%
+       of every other; against a shaded tone that lands two plots away in the
+       palette and the "mown in passes" read becomes two unrelated greens in one
+       garden. A pass of a mower lightens the grass it lays down — so lighten
+       the tone this plot actually has. */
+    const alt = _vgShade(col, .30), w = (z1 - z0) / 5;
     for (let i = 1; i < 5; i += 2)
       _nSlab(list, alt, x0, x1, z0 + i * w, z0 + (i + 1) * w, top + .001, top - .002);
   }

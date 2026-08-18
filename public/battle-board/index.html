@@ -218,7 +218,7 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v120x7';
+<script>window.BB_BUILD='v120x8';
 "use strict";
 /* 🔌 BBX — THE STAGE HOOK SEAM.
    The board page is a classic (non-module) script, so it cannot `import`.
@@ -5031,6 +5031,50 @@ function drawUnit(u){
     ctx.restore();
   }
 
+  /* 🎯 WHO CAN I ACTUALLY PICK. Reported: "when selecting a target to attack or
+     for a card effect … right now you can't tell who can be attacked."
+     The legal-target paint was TILE-only, and a tile ring is drawn on the floor
+     — so the moment a unit is standing on it, the unit's own body and its ground
+     shadow cover most of the ring. For the one case the player is actually
+     asking about (which CREATURE can I hit) the answer was hidden underneath the
+     creature. The always-on red pool above does not help either: it marks every
+     enemy, not the reachable ones, so during targeting it is noise.
+     So a unit whose tile is a legal target gets a marker of its own, keyed to
+     the SIDE rather than to the action — blue for friendly, red for foe, which
+     is the owner's rule verbatim. Drawn as a ring at the feet plus a rising
+     column, so it reads whether the sprite is short or tall, and pulsed so it
+     separates from the static pool. This runs BEFORE the sprite is painted, so
+     the marker sits behind the body and never washes the art out. */
+  if (u.y > -0.9 && !u.dead){
+    const tk = u.gx + ',' + u.gz;
+    const targetable = !!(PAINT && ((PAINT.attack && PAINT.attack.has(tk))
+      || (PAINT.move && PAINT.move.has(tk)) || (PAINT.place && PAINT.place.has(tk))
+      || (PAINT.swap && PAINT.swap.has(tk))));
+    if (targetable){
+      const foe = (u.side === 'foe');
+      const col = foe ? [255, 86, 70] : [79, 208, 255];
+      const rgbaC = (a) => 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + a + ')';
+      const pulse = 0.55 + Math.sin(T * 3.4 + (u.gx + u.gz) * 0.7) * 0.30;
+      const rr2 = k * 0.46;
+      ctx.save();
+      ctx.translate(foot.x, foot.y);
+      /* the ring, on the ground plane */
+      ctx.save(); ctx.scale(1, 0.34);
+      const rg = ctx.createRadialGradient(0, 0, rr2 * 0.35, 0, 0, rr2);
+      rg.addColorStop(0, rgbaC(0)); rg.addColorStop(0.75, rgbaC(0.30 * pulse)); rg.addColorStop(1, rgbaC(0));
+      ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(0, 0, rr2, 0, 6.2832); ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = rgbaC(0.95 * pulse);
+      ctx.beginPath(); ctx.arc(0, 0, rr2 * 0.86, 0, 6.2832); ctx.stroke();
+      ctx.restore();
+      /* a short column up the unit's height, so a tall sprite still reads */
+      const cg = ctx.createLinearGradient(0, 0, 0, -k * 0.95);
+      cg.addColorStop(0, rgbaC(0.30 * pulse)); cg.addColorStop(1, rgbaC(0));
+      ctx.fillStyle = cg;
+      ctx.fillRect(-rr2 * 0.80, -k * 0.95, rr2 * 1.60, k * 0.95);
+      ctx.restore();
+    }
+  }
+
   ctx.save();
   const sh = u.shake ? Math.sin(T*60)*u.shake*8 : 0;
   ctx.translate(foot.x + sh, foot.y);
@@ -5388,6 +5432,17 @@ let frameErrN = 0;
    Each tile is clipped to its own projected quad; looks are seeded per tile so
    patterns don't march in lockstep, and animate off the shared clock T. */
 let SURFACES = {};                 /* "x,z" -> effect key */
+/* 🂠 FACE-DOWN CARDS ON THE FIELD — set traps, and any unit played face down.
+   Reported: "Make it where the card backs show up on the field when they are
+   placed." Nothing here knew face-down existed: grep `faceDown` in this file
+   before this change and there are zero hits, while the host has carried
+   `tile.trap = { card, owner }` and `u.isFaceDown` the whole time. A set trap
+   was therefore completely invisible on the stage — the player had no way to
+   see their own armed trap, let alone remember which tile it was on.
+   Painted flat ON the tile (it is lying on the ground, not standing up), inset
+   from the tile edge so the floor still reads around it, and rimmed in the
+   owner's colour so yours and theirs are distinguishable at a glance. */
+let FACEDOWN = [];                 /* [{x,z,side}] */
 function _sHash(x, z, n){ let h = (x * 73856093) ^ (z * 19349663) ^ ((n || 0) * 83492791); h = (h ^ (h >> 13)) * 1274126177; h = (h ^ (h >> 16)) >>> 0; return (h % 10000) / 10000; }
 function _sQuad(gx, gz){
   const e = tileElev(gx, gz) + 0.012;
@@ -5629,6 +5684,44 @@ function drawPaintOverSurfaces(T){
     const pulse = 0.22 + Math.sin(T * 3 + (gx + gz) * 0.6) * 0.07;
     pathPoly(P); ctx.fillStyle = rgba(col, pulse); ctx.fill();
     pathPoly(P); ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2.5; ctx.stroke();
+  }
+}
+/* 🂠 the card back itself — a flat quad on the tile, not a billboard. Drawn in
+   the ground pass so a unit standing in front still occludes it correctly. */
+function drawFacedownCards(T){
+  if (!FACEDOWN.length) return;
+  for (const f of FACEDOWN){
+    if (!f) continue;
+    const P = tilePoly(f.x, f.z, 0.028); if (!P) continue;
+    const cx = (P[0].x+P[1].x+P[2].x+P[3].x)/4, cy = (P[0].y+P[1].y+P[2].y+P[3].y)/4;
+    /* inset toward the tile centre — a card is smaller than the square it sits on */
+    const IN = 0.28;
+    const q = P.map(p => ({ x: cx + (p.x-cx)*(1-IN), y: cy + (p.y-cy)*(1-IN) }));
+    const foe = (f.side === 'foe');
+    ctx.save();
+    /* body */
+    pathPoly(q);
+    const g = ctx.createLinearGradient(q[0].x, q[0].y, q[2].x, q[2].y);
+    g.addColorStop(0,   '#241d46');
+    g.addColorStop(0.5, '#3a2f6e');
+    g.addColorStop(1,   '#181334');
+    ctx.fillStyle = g; ctx.fill();
+    /* owner rim — the whole point of colouring it: whose trap is that? */
+    pathPoly(q);
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = foe ? 'rgba(255,108,94,0.95)' : 'rgba(96,196,255,0.95)';
+    ctx.stroke();
+    /* inner frame + a slow sheen so it reads as a CARD and not as a painted tile */
+    const q2 = q.map(p => ({ x: cx + (p.x-cx)*0.74, y: cy + (p.y-cy)*0.74 }));
+    pathPoly(q2);
+    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = foe ? 'rgba(255,150,140,0.55)' : 'rgba(150,215,255,0.55)';
+    ctx.stroke();
+    const sheen = 0.10 + Math.sin(T*1.6 + (f.x + f.z)*0.9)*0.06;
+    pathPoly(q2);
+    ctx.fillStyle = 'rgba(210,225,255,' + sheen.toFixed(3) + ')';
+    ctx.fill();
+    ctx.restore();
   }
 }
 function drawSurfaceFx(T){
@@ -5932,6 +6025,10 @@ function frame(now){
   } else {
     try { drawPaintOverSurfaces(T); } catch (e) {}
   }
+  /* 🂠 face-down cards lie on the floor — above the hazards so a trap set on an
+     oil slick is still visible, and below the depth-sorted actors so a unit
+     standing in front of one correctly covers it. */
+  try { drawFacedownCards(T); } catch (e) {}
   drawEffects('ground');
   /* painter's algorithm: far rows first */
   const drawables = [];
@@ -6466,6 +6563,7 @@ function handleHostMessage(msg){
        lifting veil back to black, and here the veil has never been on screen
        at all. */
     else if (t === 'reveal'){ try { REVEAL.startedAt = 0; revealStart(); } catch (e) {} }
+    else if (t === 'facedown') FACEDOWN = Array.isArray(msg.list) ? msg.list : [];
     else if (t === 'surfaces') SURFACES = (msg.tiles && typeof msg.tiles === 'object') ? msg.tiles : {};
     else if (t === 'locations') setLocations(msg.locations || {}, true);
     else if (t === 'location')  setLocation(msg.id, !!msg.instant);

@@ -24819,6 +24819,33 @@ async function tryPlace(x, z) {
       if (v && !v.ok) { toast(v.msg, 'bad'); return; }
     } catch (e) {}
   }
+  /* 🌳 THE PROGRESSION GATE (/src/progression). A node in the research tree can
+     unlock a ZONE, a BUILDING or an OPERATION, and the panel lists all three the
+     same way. Only the zone half was ever enforced — /src/zoning's applyRect
+     refuses a locked zone, but nothing checked a locked BUILDING, so the detail
+     pane printed "UNLOCKS ▸ Research Spire · building" beside "LOCKED" and the
+     player could go and build it anyway. A panel that advertises a rule nobody
+     enforces is the same failure this project has now corrected three times: it
+     is indistinguishable, from the outside, from a rule that is simply broken.
+     The module already exposed buildingUnlocked() and buildingBlockedBy() and
+     its own header said "NOT enforced: the build bar lives inside index.html".
+     This is that call site.
+     ⚠ GUARDED, AND ABSENCE MEANS YES — same contract as the two gates above and
+       as the module's own promise that a 404 costs the player progression and
+       never their city. A save that predates progression is protected upstream,
+       by the module's own afterLoad() adoption pass, not here. */
+  {
+    let _pgBlock = null;
+    try {
+      if (window.MythicProgress) _pgBlock = window.MythicProgress.buildingBlockedBy(placeType);
+    } catch (e) { _pgBlock = null; }
+    if (_pgBlock) {
+      toast('🌳 ' + def.name + ' is not researched yet — unlock “' + _pgBlock.name +
+            '” in the Progression tree (' + _pgBlock.cost + ' development point' +
+            (_pgBlock.cost === 1 ? '' : 's') + ').', 'bad');
+      return;
+    }
+  }
   /* ⚡ THE SITING GATE (/src/power). A Geothermal Plant needs hot rock and a
      Hydro Plant needs real flow, and neither of those is a property of the
      building — they are properties of the PLACE, decided deterministically by

@@ -243,10 +243,20 @@ function card(p, nav) {
       '" aria-hidden="true">' + (av.ico ? esc(av.ico) : esc(av.initials || '?')) + '</span>' +
     '<div class="bcp-main">' +
       '<div class="bcp-hd">' + name +
-        (p.followed ? '<span class="bcp-foll" title="You liked a post on this subject — the city reports on it more often">FOLLOWING</span>' : '') +
         '<time class="bcp-when">' + esc(p.clock) + '</time>' +
       '</div>' +
-      (sub ? '<div class="bcp-subline">' + sub + '</div>' : '') +
+      /* ⚠ THE FOLLOWING CHIP SITS UNDER THE NAME, NOT BESIDE IT. It was beside
+         it first, and measured at 1280x720 — where the shell is 324px wide and
+         the header has about 230px for a name, a chip and a timestamp — it
+         truncated "Environment Department" to "Environment D…". The poster's
+         identity is the one thing on the card that must never be clipped, so
+         the chip moved down to the affiliation line, which has the whole width
+         and is empty for a department anyway. */
+      (p.followed || sub
+        ? '<div class="bcp-subline">' +
+          (p.followed ? '<span class="bcp-foll" title="You liked a post on this subject — the city reports on it twice as often">FOLLOWING</span>' : '') +
+          sub + '</div>'
+        : '') +
       '<p class="bcp-txt">' + hashify(p.body) + '</p>' +
       '<div class="bcp-act">' +
         '<button type="button" class="bcp-like' + (p.mine ? ' on' : '') + '" data-act="like" ' +
@@ -341,19 +351,23 @@ function render(force) {
   const atTop = feed.scrollTop <= 4;
   const beforeH = feed.scrollHeight, beforeTop = feed.scrollTop;
   const act = document.activeElement;
-  const keep = act && feed.contains(act)
-    ? { id: act.closest('.bcp-post') ? act.closest('.bcp-post').dataset.id : null,
-        act: act.getAttribute('data-act') || null }
+  /* Which control had focus, named by the two attributes that survive a
+     rebuild — the post id and the control's own data-act / data-go. Anything
+     else in the tree is unfocusable, so there is no third case. */
+  const keep = act && feed.contains(act) && act.closest('.bcp-post')
+    ? { id: act.closest('.bcp-post').dataset.id,
+        sel: act.getAttribute('data-act') ? '[data-act="' + act.getAttribute('data-act') + '"]'
+           : act.getAttribute('data-go') ? '[data-go="' + act.getAttribute('data-go') + '"]'
+           : null }
     : null;
 
   feed.innerHTML = html;
 
   if (atTop) feed.scrollTop = 0;
   else feed.scrollTop = Math.max(0, beforeTop + (feed.scrollHeight - beforeH));
-  if (keep && keep.id) {
+  if (keep && keep.sel) {
     try {
-      const sel = '.bcp-post[data-id="' + keep.id + '"] ' + (keep.act ? '[data-act="' + keep.act + '"]' : '.bcp-who');
-      const el = feed.querySelector(sel);
+      const el = feed.querySelector('.bcp-post[data-id="' + keep.id + '"] ' + keep.sel);
       if (el) el.focus({ preventScroll: true });
     } catch (e) {}
   }
@@ -430,8 +444,20 @@ function wire() {
     const act = el.getAttribute('data-act');
     if (act === 'close') return void close();
     if (act === 'top') {
+      /* 🔴 INSTANT, NOT SMOOTH, AND FOR THE SAME REASON THE ENTRANCE KEYFRAME
+         DOES NOT TOUCH OPACITY. The first version used
+         scrollTo({top:0, behavior:'smooth'}); measured in the gauntlet pane,
+         which does not composite, the feed stayed at scrollTop 1663 and the
+         button did nothing at all — a control that silently no-ops wherever
+         animation is throttled. `scrollTop = 0` cannot fail, it is what "jump
+         to the newest" actually means, and it needs no reduced-motion branch
+         because there is no motion. */
       const f = $('bcp-feed');
-      if (f) f.scrollTo({ top: 0, behavior: reduced() ? 'auto' : 'smooth' });
+      if (f) f.scrollTop = 0;
+      newAbove = 0;
+      el.classList.remove('on');
+      const B = API();
+      if (B) { const r = B.posts({ limit: 1, ...(TABS.find((x) => x.id === tab) || TABS[0]).q }); topSeen = r.length ? r[0].id : null; }
       return;
     }
     if (act === 'like') {
@@ -482,10 +508,12 @@ function wire() {
   }, true);
 }
 
-function reduced() {
-  try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
-  catch (e) { return false; }
-}
+/* ⚠ There is deliberately no `prefers-reduced-motion` check in this file. Both
+   places the phone could animate — the shell's entrance and the NEW pill's
+   fade — are CSS, and both are turned off by the media queries in CSS below.
+   A JS mirror of a media query is a second copy of the same decision, and the
+   one thing that WOULD have needed it (a smooth scroll to top) was replaced by
+   an instant one, which has no motion to reduce. */
 
 /* ── DOM ───────────────────────────────────────────────────────────────────
    Built once, kept in the document, hidden between openings. Not rebuilt per
@@ -540,8 +568,16 @@ const CSS = `
    not buried, and it is a MODE — it covers the rail dock (43) deliberately.
    Every destination the phone offers (dossier 44, citizen dialogue 9865) is
    reached by closing the phone first, so nothing ever opens behind it. */
+/* ⚠ NO backdrop-filter, and #citback (the citizen dialogue) IS the precedent
+   for having one — this deliberately does not follow it. A blur is a full-screen
+   filter pass over a live WebGL canvas on every composited frame, and the
+   canvas underneath is a software-rasterised scene the rail dock was collapsed
+   to stop repainting over (see the #railbar note in index.html). A talk dialog
+   is on screen for seconds; a feed is on screen while the player reads it, so
+   the cost is paid for a hundred times longer. A darker flat scrim reads the
+   same and costs a fill. */
 #bcphone{display:none;position:fixed;inset:0;z-index:46;
-  background:rgba(4,3,10,.66);backdrop-filter:blur(3px);
+  background:rgba(4,3,10,.76);
   align-items:center;justify-content:center;
   padding:calc(var(--topbarh,60px) + 8px) 14px 24px;}
 #bcphone.open{display:flex;}
@@ -693,12 +729,13 @@ const CSS = `
 .bcp-post[data-kind="dept"] .bcp-who{color:#cfe0ff;}
 .bcp-post[data-kind="company"] .bcp-who{color:#f2d79a;}
 .bcp-when{flex:none;font-size:10.5px;color:#7d7593;font-variant-numeric:tabular-nums;}
-.bcp-foll{flex:none;font-size:7.5px;letter-spacing:.12em;padding:2px 5px;border-radius:20px;
+.bcp-foll{font-size:7.5px;letter-spacing:.12em;padding:1px 5px;border-radius:20px;
   background:rgba(212,175,55,.15);color:#e6c86f;border:1px solid rgba(212,175,55,.4);
-  font-family:'Cinzel',Georgia,serif;}
-.bcp-subline{margin-top:1px;}
-.bcp-sub{padding:0;background:none;border:0;text-align:left;
-  font-size:10px;color:var(--mist,#8f87a3);letter-spacing:.03em;}
+  font-family:'Cinzel',Georgia,serif;margin-right:6px;white-space:nowrap;}
+.bcp-subline{margin-top:2px;display:flex;align-items:center;min-width:0;}
+.bcp-sub{padding:0;background:none;border:0;text-align:left;min-width:0;
+  font-size:10px;color:var(--mist,#8f87a3);letter-spacing:.03em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .bcp-sub.go{cursor:pointer;text-decoration:underline;text-decoration-color:rgba(143,135,163,.4);
   text-underline-offset:2px;}
 .bcp-sub.go:hover{color:#cbbfe0;}
@@ -729,8 +766,13 @@ const CSS = `
 /* ── home bar ── */
 #bcp-home{flex:none;padding:7px 14px 9px;border-top:1px solid rgba(255,255,255,.06);
   display:flex;flex-direction:column;align-items:center;gap:7px;background:rgba(0,0,0,.25);}
+/* Wraps rather than ellipsises. Measured at 1280x720, where the shell is 324px
+   wide: "26 posts · 1 subject followed · ♡ = citizens it is true for" was
+   clipped to "…" and the legend — the one line that teaches what the number
+   beside the heart MEANS — was the half that got cut. Two short lines cost
+   11px of a bar that had the room. */
 #bcp-foot{font-size:9.5px;color:#6f6786;letter-spacing:.03em;text-align:center;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+  line-height:1.4;max-width:100%;}
 #bcp-home .bar{width:96px;height:4px;border-radius:3px;background:rgba(255,255,255,.22);}
 
 /* Short windows: node-city supports 1280x720, where the shell is 596px tall.

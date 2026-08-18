@@ -116,6 +116,32 @@
   btn.click();
   try { window.__nc.rail.sync(); } catch (e) {}
   S('reopened', P.isOpen());
+  /* ── IT MUST BEHAVE AS A FEED ──────────────────────────────────────────
+     Posts arriving while the phone is OPEN, with the player scrolled down:
+     the card under their eye must not move, and the pill must appear. */
+  {
+    const f = document.getElementById('bcp-feed');
+    f.scrollTop = 900;
+    const anchorId = [...f.querySelectorAll('.bcp-post')]
+      .find(a => a.getBoundingClientRect().top > f.getBoundingClientRect().top).dataset.id;
+    const anchorTop = f.querySelector('.bcp-post[data-id="' + anchorId + '"]').getBoundingClientRect().top;
+    const before = B.count();
+    for (let i = 0; i < 4; i++) { try { B.tick(9); } catch (e) {} await sleep(260); }
+    P.render(false);
+    await sleep(60);
+    const stillThere = f.querySelector('.bcp-post[data-id="' + anchorId + '"]');
+    S('liveArrival', {
+      added: B.count() - before,
+      anchorId,
+      driftPx: stillThere ? Math.round(stillThere.getBoundingClientRect().top - anchorTop) : 'GONE',
+      pillOn: document.getElementById('bcp-new').classList.contains('on'),
+      pillText: document.getElementById('bcp-new').textContent,
+    });
+    document.getElementById('bcp-new').click();
+    await sleep(500);
+    S('afterPillClick', { scrollTop: Math.round(f.scrollTop),
+                          pillOn: document.getElementById('bcp-new').classList.contains('on') });
+  }
   await sleep(600);
   const sh = document.getElementById('bcp-shell');
   const cs = getComputedStyle(sh);

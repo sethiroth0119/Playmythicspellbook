@@ -33510,6 +33510,22 @@ function ctHtml(c0) {
         ' · no crewed tile of their own'
       : '<b>No work right now.</b> They are one of the city’s named citizens with no crewed seat.') + '</div>';
 
+  /* 🗂 THE CITIZEN DOSSIER — /src/citizen. Who they live with, where that
+     is, who pays them and where they are walking, each row naming the live
+     call it was read from, and every 🔍 a door into that building's dossier.
+     Placed HERE, above the four sentences, because the reference panel leads
+     with identity and this dialogue leads with voice; both are wanted and the
+     identity is the part you scan for.
+     ⚠ It deliberately does NOT restate the mood NUMBER or the four terms — those
+       are below, in this file, and a second copy of them 200px apart is how two
+       readouts of one figure start disagreeing. The module prints the BAND WORD
+       only, and it gets that word from ctBand (handed over in its ctx) rather
+       than from a table of its own.
+     A 404 or a parse error on the module costs the reader this block and
+     nothing else: everything below this line is untouched. */
+  try { if (window.MythicCitizen) h += window.MythicCitizen.dossierHtml(c.id) || ''; }
+  catch (e) { console.warn('[citizen-ui] dossier block', e); }
+
   h += said.map(s => '<div class="ctsay ' + s.tone + '">' + esc(s.text) + '</div>').join('');
 
   h += '<div class="cthead">Mood</div>' +
@@ -33624,7 +33640,13 @@ function openCitTalk(id) {
   _ctOpen = c.id;
   ctRender();
   wrap.classList.add('open');
-  try { const b = $('ctok'); if (b) b.focus(); } catch (e) {}
+  /* ⚠ preventScroll IS LOAD-BEARING, and it was not needed until /src/citizen
+     landed. #ctok is the LAST element in the dialogue; focusing it scrolls the
+     .ctbox to the bottom, and the dossier block made this panel four times
+     taller than the four sentences it used to be — so every citizen opened
+     already scrolled past their own name. Focus still moves (Escape and the
+     buttons stay reachable from the keyboard); only the scroll is suppressed. */
+  try { const b = $('ctok'); if (b) b.focus({ preventScroll: true }); } catch (e) {}
   return true;
 }
 function closeCitTalk() {
@@ -35262,6 +35284,90 @@ function animate() {
       opsRowForKey: (k) => (typeof opsRowForKey === 'function' ? opsRowForKey(k) : null),
     });
   } catch (e) { console.warn('[Dossier] not mounted (non-fatal):', e); }
+  /* ══ 👤 THE CITIZEN DOSSIER ═══════════════════════════════════════════════
+     The other end of the dossier's household rows. openCitTalk() already gave
+     a citizen a voice; /src/citizen gives them an identity — household,
+     residence, wealth, occupation, employer, destination — and makes every one
+     of those a door. See that module's index.js header.
+
+     ⚠ MOUNTED AFTER /src/dossier, and the ordering is the same one the dossier
+       itself documents: an address is "<number> <street>", so a panel that
+       opens before the address layer would print a tile key and then silently
+       become a street name. It reads MythicDossier at CALL time (a panel is
+       drawn long after boot), so this is belt and braces rather than the only
+       guard — but the module also imports the dossier's household deal, and
+       sharing that ONE cached deal is what keeps this panel and the building
+       panel from disagreeing about who lives where.
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md). `game`, `BUILDINGS`, `agents`, `ctBand`,
+        `openInspect`, `openCitTalk`, `insPctCol` and `logEsc` are all
+        top-level in THIS module script and invisible to an ES module; this ctx
+        IS the hand-over.
+     ⚠ WHAT DOES NOT CROSS IT. Nothing that writes — no tile writer, no citizen
+       writer, no saveSoon. And no AGENT: `agentOf` returns a snapshot of one
+       agent's state, so no mesh and nothing the render loop owns is reachable
+       from the module. */
+  try {
+    const czmod = await import('../src/citizen/index.js?v=' + (window.NC_BUILD || 'cz1'));
+    await czmod.mount({
+      game, BUILDINGS,
+      esc: logEsc, pctCol: insPctCol,
+      /* 🔴 THE MOOD BAND IS THIS FILE'S OWN WORD, HANDED OVER RATHER THAN
+         RESTATED. ctBand is what the dialogue's own Mood row prints and what
+         the hover tip prints; a copy of 25/40/60/78 inside the module is how
+         one person reads "content" in their bubble and something else in their
+         dossier. Same call, same word, every time. */
+      band: (v) => ctBand(v),
+      /* The building's title, in the SAME order openInspect resolves it:
+         the player's name for it, then the licence label, then the blueprint.
+         Handed over because all three sources are lexical here. */
+      buildingTitle: (k) => {
+        const t = game.tiles[k]; if (!t) return null;
+        const def = BUILDINGS[t.type] || {};
+        try { const n = window.MythicNaming && window.MythicNaming.nameFor(k); if (n) return n; } catch (e) {}
+        const opRow = (typeof opsRowForKey === 'function') ? opsRowForKey(k) : null;
+        return (opRow && opRow.label) || def.name || t.type;
+      },
+      /* 🚶 THE ONLY READ ON THE WALKING CROWD, AND IT IS A SNAPSHOT.
+         This is what makes "Going home" a modelled fact rather than a caption:
+         agentTick keeps `phase` ('work' | 'home') and `state`
+         ('travel'|'enter'|'inside'|'exit') on every civilian, and the path's
+         last tile is where it is actually headed. A citizen with no agent is
+         NOT walking anywhere — the crowd is capped (AGENTS.civMax) and culled
+         at night, so most of the roster is a record rather than a body at any
+         instant, and the module says exactly that instead of inventing a trip.
+         ⚠ Returns a plain object on purpose. Handing over the agent itself
+           would put a THREE.Object3D the render loop owns inside a panel. */
+      agentOf: (id) => {
+        for (const a of agents) {
+          if (a.cit !== id) continue;
+          return { kind: a.kind, state: a.state, phase: a.phase,
+                   at: (a.path && a.path[a.i]) || null,
+                   dest: (a.path && a.path[a.path.length - 1]) || null,
+                   inside: a.bldgK || null,
+                   i: a.i | 0, steps: a.path ? a.path.length : 0,
+                   dwell: a.dwell > 0 };
+        }
+        return null;
+      },
+      /* …and the denominator for it, so "not on the street" can be told from
+         "the crowd is not running". */
+      crowd: () => {
+        let civ = 0;
+        for (const a of agents) if (a.kind === 'civilian') civ++;
+        let roster = 0;
+        try { roster = window.MythicCitizens ? window.MythicCitizens.count() : 0; } catch (e) { roster = 0; }
+        return { civilians: civ, roster };
+      },
+      /* The three shipped doors, reused rather than re-implemented.
+         openInspect is read at CALL time, not captured, so this goes through
+         the rail dock's wrapper exactly as every other call site does. */
+      openTile: (k) => openInspect(k),
+      openCitizen: (id) => openCitTalk(id),
+      closeCitizen: () => closeCitTalk(),
+      toast: (m, cls) => toast(m, cls),
+    });
+  } catch (e) { console.warn('[Citizen] not mounted (non-fatal):', e); }
   /* ══ 📣 EMERGENCY BROADCAST ═══════════════════════════════════════════════
      The city's social feed — named citizens, businesses under their own names
      and city departments posting about things that are actually happening,
@@ -35608,6 +35714,13 @@ function animate() {
     /* 🏠 The dossier. Read-only, so what a driver wants is the DERIVATIONS —
        addressOf / householdOf / booksOf — rather than the HTML they render as. */
     dossier: () => (typeof window !== 'undefined' ? window.MythicDossier : null) || null,
+    /* 👤 The citizen dossier, for the same reason: what a driver wants is
+       `facts(id)` — every row with the source it was read from — not the
+       markup. And `activity(id)` is the one reading that CANNOT be taken any
+       other way headlessly: it depends on the walking crowd, and rAF never
+       fires in the capture pane, so a driver has to step agentTick by hand
+       (also on this seam) and then ask. */
+    citizen: () => (typeof window !== 'undefined' ? window.MythicCitizen : null) || null,
     /* 🎨 The palette. `window.MythicPalette` is the same object; what a driver
        cannot reach from outside is the tile store the module reads, so the
        useful half of this seam is `repaint(k)` — rebuild ONE tile's mesh

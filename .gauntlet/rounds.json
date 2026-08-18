@@ -514,5 +514,77 @@
       }
     ],
     "note": "Mean 4.67 to 5.08 and UI 2 to 6, so the round-5 critic's prediction was half-right - it called 2 to 7. The finding is what did NOT change. Stranger test is still 'instantly' for the sixth round, but WHAT lands first has moved: in round 5 the eye hit a wall of sixteen identical 410065408s and read 'someone's debug build' before it read 'city'; now the chrome is dismissed in one saccade and the first thing that registers is the junction and the row houses. In the critic's words, the read was never chrome-limited - fixing the UI did not change the answer, it only removed the excuse. Its verdict: dimension 12 was the last thing on the board fixable by writing code around the existing kit. One cheap round remains (the plot, at 3), and after that every dimension still under the bar is blocked on modelled geometry rather than on cleverness - 'you do not get from a 3-pixel stick to a citizen with a backpack and a cast shadow by writing more procedural code against primitives'. It puts the pipeline's realistic ceiling at a mean around 5.5 and a hard cap near 6 on any dimension whose 10 is modelled detail."
+  },
+  {
+    "round": 7,
+    "headline": "The boundaries were built and 2.5x too short. And the ceiling estimate was wrong.",
+    "status": "done",
+    "meanScore": 5.17,
+    "strangerTest": "instantly",
+    "tris": 424000,
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 6
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 6
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 7
+      },
+      {
+        "dimension": "Building surface detail",
+        "score": 5
+      },
+      {
+        "dimension": "The plot",
+        "score": 4
+      },
+      {
+        "dimension": "Roads",
+        "score": 6
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 6
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 5
+      },
+      {
+        "dimension": "Citizens",
+        "score": 2
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 5
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 4
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 6
+      }
+    ],
+    "pieces": [
+      {
+        "title": "The plot, measured instead of rebuilt",
+        "verdict": "CLOSE",
+        "summary": "Rounds 4 and 5 built the boundary correctly and nobody measured it. A citizen here is .26 tall and a storey .34; the hedge topped out at .086 - 0.58m at that scale, ankle height - which is why three critics could not see a property line that was genuinely there. Heights roughly doubled and every run now ENDS at a capped masonry corner post. Measuring it turned up three real bugs: bt/edge/sEdge were declared hundreds of lines BELOW the drive that has to fit inside them, so privet grew up through the driveway of every hedged plot in the city; the cottage's flank palings stood on `edge` while their rail was laid on `sEdge`, so every side fence merged with the neighbour's mirror image into one unbroken run down the block - literally the 'identical ribbon running past the gap' the round-4 critic reported, still in the code three rounds later; and the 'dropped kerb' claimed since round 4 was laid UNDER the driveway, 7 thou below the thing covering it, so it had never once been visible.",
+        "gap": "Still invisible at 1:1, and for a LIGHTING reason rather than a modelling one: the side yard sits permanently in its own house's shadow at luminance 20-50, so a dark hedge inside a near-black band has no contrast left to spend."
+      },
+      {
+        "title": "The four on-screen corrections",
+        "verdict": "WINS",
+        "summary": "The unweighted term that pinned Commercial at 100% and cascaded into Industrial, the two water models giving opposite verdicts 400px apart on one screen, the clock that had left the status bar, and a plus sign on a label every player reads as negative. All four fixed in the 2D layer, none costing a triangle."
+      }
+    ],
+    "note": "\ud83d\udd34 THE CLOSING CRITIC OVERTURNED THE STOP RECOMMENDATION, and showed its working. Round 6's critic had said the pipeline was capped near a mean of 5.5 with 'a hard cap around 6 on any dimension whose 10 is modelled detail', and that the next decision was to fund an asset kit. Round 7 scored 5.17 against a predicted 5.3, so on the surface that looked vindicated. The closing critic called it a trap: dimension 3, building silhouette, IS nothing but modelled detail and is at 7 today, procedurally, with no asset kit - the pipeline has already cleared the cap it was said to be under. Its own diagnosis of what is actually holding the mean down: citizens at 2 is a REGRESSION, not a limit (six readable pedestrians in round 6, zero in round 7) and recovering it is a bug fix worth +0.25 mean for zero triangles; density read is blocked on content variety, not geometry; and the plot is blocked on LOT PITCH plus a material choice, not on boundary props - widen the pitch and draw the side boundary in the light kerb concrete the driveway already uses instead of dark hedge. Its number: the realistic ceiling is a mean of 6.3-6.6, not 5.5, and the path from 5.17 to about 6.0 costs NO NEW ART. Its decision, quoted: do not fund the asset kit this round; there is roughly a full point of mean sitting in layout and content variety, which is cheaper than art and which the team has demonstrably been good at. The real wall is narrow and specific - window reveals and sills, car glazing and rims, tree crowns needing cards - and those three will pin the mean near 6.5 and keep 8+ permanently out of reach."
   }
 ]

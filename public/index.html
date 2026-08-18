@@ -36492,7 +36492,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x8';
+  window.BUILD_VERSION = 'v120x9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -92828,7 +92828,7 @@ function _vfxEnsureThree(cb) {
     if (window.__vfxThreeLoading) { const iv = setInterval(() => { if (window.THREE) { clearInterval(iv); cb(true); } }, 120); setTimeout(() => { clearInterval(iv); if (!window.THREE) cb(false); }, 9000); return; }
     window.__vfxThreeLoading = true;
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+    s.src = '/assets/vfx/three.min.js';
     s.onload = () => cb(!!window.THREE); s.onerror = () => cb(false);
     document.head.appendChild(s);
   } catch (e) { cb(false); }
@@ -106083,7 +106083,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120x8';
+const BB_VER = 'v120x9';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -163977,7 +163977,7 @@ function _csLoadThree(cb) {
   };
   if (window.THREE) { loadGltf(); return; }
   const s = document.createElement('script');
-  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+  s.src = '/assets/vfx/three.min.js';
   s.onload = loadGltf; s.onerror = () => done(false);
   document.head.appendChild(s);
 }
@@ -211423,7 +211423,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120x8';
+  f.src = 'node-city/index.html?v=v120x9';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228600,8 +228600,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120x8">
-<script type="module" src="src/battle/hud.js?v=v120x8"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120x9">
+<script type="module" src="src/battle/hud.js?v=v120x9"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

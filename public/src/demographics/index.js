@@ -52,6 +52,7 @@ import { ECON } from '../economy/tuning.js';
      './households.js' with no query — a cache-buster here would instantiate a
      SECOND households.js with its own population and savings. */
 import { WORKING_AGE_PCT } from '../economy/households.js';
+import * as G from './gate.js';
 import * as A from './archetypes.js';
 import * as Z from './zones.js';
 import * as P from './pipeline.js';
@@ -66,7 +67,11 @@ let wired = false;
    dossier can be opened between ticks) and by `capacityDelta()`, which
    node-city calls from popCap() — a function that runs inside loops over every
    tile in the city, so it must be a field read and never a re-survey. */
-const LAST = { survey: null, delta: 0, budget: 0, posts: null, seekers: 0, services: 1, at: 0 };
+const LAST = { survey: null, delta: 0, budget: 0, posts: null, seekers: 0, services: 1, at: 0,
+  /* 🚦 The host's own growth gate, as of the last tick — see gate.js. `ok:false`
+     until a host that publishes it has ticked, and every consumer treats that
+     as "nothing to say" rather than as "growth is blocked". */
+  growth: { ok: false, open: true } };
 
 function eco() {
   try { return (typeof window !== 'undefined' && window.MythicEconomy) || null; } catch (e) { return null; }
@@ -193,6 +198,13 @@ function tick(dtMin, host) {
     LAST.delta = Z.capacityDelta(sv);
     const budget = Math.max(0, Number(h.population) || 0);
     LAST.budget = budget;
+    /* 🚦 WHY THE BUDGET IS WHAT IT IS. `budget` is `cityPop()`, and the reason a
+       zoned district can sit empty is that the HOST is not letting cityPop()
+       rise — Food/Water/Health coverage below its growth threshold. This module
+       reported that as "the city itself supports no more residents", which
+       names the block and not the fix. The host now publishes the gate and
+       gate.js turns it into the one sentence every surface prints. */
+    LAST.growth = G.verdict(h.growth);
 
     /* 👷 WHAT THE LABOUR MARKET LOOKS LIKE FROM A DOORSTEP. Read fresh every
        tick and never stored on the economy's side. `posts` null means "no
@@ -384,9 +396,6 @@ function residents(tileKey) {
   }
 }
 
-/* 📊 FOR THE CITY PANEL — population by wealth, by education, by age, and what
-   is limiting growth. Every figure is a sum the pipeline already holds; nothing
-   here computes a second opinion. */
 const LIMIT_TEXT = {
   nohousing: 'nothing is zoned residential',
   homes: 'every dwelling is occupied',
@@ -395,6 +404,57 @@ const LIMIT_TEXT = {
   jobs: 'there is no work they qualify for',
   leaving: 'more people are leaving than arriving',
 };
+/* 🚦 …AND WHEN THE HOST'S OWN GROWTH GATE IS SHUT, THAT IS THE ANSWER.
+   ----------------------------------------------------------------------------
+   The bug this closes reads as a defect and is not one. node-city grows its
+   citizenry only while Food, Water and Health coverage are all at or above its
+   threshold; below it, `budget` (= cityPop()) never rises, arrivals are scaled
+   to nothing, and this module reported `citycap` — "the city itself supports no
+   more residents". True, unactionable, and identical to what a broken zoning
+   tool would print. So a player zones a district of towers, watches the number
+   stay at 4, and files the tool as broken.
+
+   🔴 THE RULE IS NOT WEAKENED. Build the services, then the density, is a good
+      rule and it is the host's to set — DEMAND_PER_POP and the 90%/60% lines are
+      untouched by this module and other systems are priced against them. What
+      changes is that the rule now SAYS SO, with the number and the fix.
+   ⚠ ONE EXCEPTION, AND IT IS THE ONE THE PLAYER SHOULD ACT ON FIRST: with
+     nothing zoned residential at all, "zone something" beats "your food is
+     short", because there is no dwelling for the gate to be holding empty. */
+function limitText(limit) {
+  const g = LAST.growth;
+  if (g && g.ok && !g.open && limit !== 'nohousing' && g.text) return g.text;
+  return limit ? LIMIT_TEXT[limit] : '';
+}
+/* 🚦 …AND IN THE SIGNED CAUSAL LIST, WHICH IS WHERE A PLAYER LOOKS FIRST.
+   ----------------------------------------------------------------------------
+   The demand meter prints this module's cause list verbatim (/src/hud
+   demand.js `residential()`), and the cause that fires when the host will not
+   let the city grow read "The city itself supports no more residents yet —
+   build Housing, or zone more land." Both halves of that advice are wrong when
+   the real block is coverage: more housing raises `popCap()` and changes
+   nothing, because `game.pop.npc` is not allowed to climb toward it.
+
+   🔴 THE CAUSE IS REWRITTEN, NOT ADDED. A second line saying the same thing in
+      different words is the two-opinions failure with extra steps; the list
+      still has exactly one entry for "the city will not take more people", and
+      it now carries the gate's sentence. The `+`/`−` sign is untouched — this
+      changes what the panel SAYS, never what the model DID.
+   ⚠ AND ONLY WHEN THE GATE IS ACTUALLY SHUT. With the gate open, the cap cause
+     means what it always meant: the beds are full. */
+function withGateCause(causes) {
+  const out = (causes || []).slice();
+  const g = LAST.growth;
+  if (!g || !g.ok || g.open || !g.text) return out;
+  const i = out.findIndex((c) => c && c.label === 'City population cap');
+  const entry = { sign: '−', label: g.reason === 'beds' ? 'City population cap' : 'City growth gate', why: g.text };
+  if (i >= 0) out[i] = entry; else out.unshift(entry);
+  return out;
+}
+
+/* 📊 FOR THE CITY PANEL — population by wealth, by education, by age, and what
+   is limiting growth. Every figure is a sum the pipeline already holds; nothing
+   here computes a second opinion. */
 function report() {
   if (!mounted) return { ok: false, why: 'The people of this city have not been counted yet.' };
   try {
@@ -445,8 +505,14 @@ function report() {
       capacity: sv ? Math.round(sv.totalCapacity) : 0,
       occupancy: sv && sv.totalHomes > 0 ? P.households() / sv.totalHomes : 0,
       netPerDay: st.rate.in - st.rate.out,
-      attract: st.attract, causes: st.causes.slice(),
-      limit: st.limit, limitText: st.limit ? LIMIT_TEXT[st.limit] : '',
+      attract: st.attract, causes: withGateCause(st.causes),
+      limit: st.limit, limitText: limitText(st.limit),
+      /* 🚦 THE HOST'S GROWTH GATE, PUBLISHED. The whole verdict — which of
+         Food/Water/Health is short, by how much, and the cheapest tile that
+         raises it — so a consumer can draw it rather than re-derive it. See
+         gate.js, and note that `limitText` above is already this object's own
+         sentence whenever the gate is the binding thing. */
+      growth: LAST.growth,
       rentIndex: st.rentIndex,
       /* The LAST WHOLE DAY, not the last tick — a tick is a quarter of a day and
          printing one as a daily figure is how the panel reported −1,167
@@ -490,6 +556,12 @@ const api = {
   render: () => R.renderPanel(report()),
   renderResidents: (key) => R.renderResidents(residents(key)),
   css: R.DEMOG_CSS,
+
+  /* 🚦 The growth gate on its own, for a surface that wants the verdict without
+     the whole report — /src/zoning's panel and its map film both do. Same
+     object report().growth carries; there is one verdict per tick and this is
+     a read of it, never a second computation. */
+  growth: () => LAST.growth,
 
   // seams a driver and a sibling module can use
   zoneOf: (parcel) => Z.zoneOf(parcel),

@@ -74,7 +74,14 @@ export function mountUI(api, ctx) {
 #nz-panel .nzgo{border:1px solid rgba(212,175,55,.6);border-radius:9px;padding:7px 12px;cursor:pointer;
   background:linear-gradient(180deg,rgba(212,175,55,.24),rgba(120,90,20,.2));color:#ffd98a;font-size:12px;white-space:nowrap}
 #nz-panel .nzgo:disabled{opacity:.45;cursor:not-allowed}
-#nz-badge{margin-left:4px;font-size:10px;color:var(--mist,#8f87a3)}`;
+#nz-badge{margin-left:4px;font-size:10px;color:var(--mist,#8f87a3)}
+#nz-panel .nzgate{margin-top:7px;border-top:1px solid rgba(255,255,255,.08);padding-top:7px;
+  font-size:11px;line-height:1.4;color:var(--mist,#8f87a3)}
+#nz-panel .nzgate.shut{color:#ffcf9a}
+#nz-panel .nzgate b{color:#ffb066}
+#nz-panel .nzgate .nzcov{display:flex;gap:8px;flex-wrap:wrap;margin-top:3px;font-variant-numeric:tabular-nums}
+#nz-panel .nzgate .nzcov span{color:var(--bone,#e9e0cc)}
+#nz-panel .nzgate .nzcov span.bad{color:#ff8a6a;font-weight:700}`;
     doc.head.appendChild(st);
   }
 
@@ -115,6 +122,7 @@ export function mountUI(api, ctx) {
     + '<button class="nzt" type="button" data-act="off">🚫 Stop zoning</button>'
     + '</div>'
     + '<div id="nz-pal">' + paletteHtml() + '</div>'
+    + '<div id="nz-gate"></div>'
     + '<div class="nzft"><div class="nzsel" id="nz-sel"></div>'
     + '<button class="nzgo" type="button" data-act="develop" id="nz-go">🏗 Develop</button></div>';
 
@@ -135,6 +143,37 @@ export function mountUI(api, ctx) {
   }
 
   function zdef(id) { return api.ZONE_BY_ID[id] || null; }
+
+  /* ══ 🚦 "ZONED, BUT NOTHING WILL MOVE IN" ═════════════════════════════════
+     THE DEFECT THIS CLOSES IS A SILENCE. node-city grows its citizenry only
+     while Food, Water and Health coverage are all at or above its threshold. A
+     player zoning a district in a city under that line sees the tool do
+     everything it promises — the film paints, the plots develop, buildings go
+     up — and the resident count does not move by one. Nothing anywhere said the
+     rule existed, and a silent gate is indistinguishable from a broken tool.
+
+     🔴 THE SENTENCE IS NOT WRITTEN HERE. /src/demographics/gate.js derives it
+        once per tick and every surface prints THAT one — the People tab, the
+        demand meter's causal list, this panel and the map film. Two panels
+        explaining one city in two different ways is the failure this codebase
+        has already had to rip a panel out over.
+     ⚠ ABSENT ⇒ NOTHING DRAWN. No /src/demographics, or a build with no
+       growth(), and this block is simply missing — the panel is exactly what it
+       was before this existed. */
+  function gateHtml() {
+    const g = api.gate ? api.gate() : null;
+    if (!g || !g.ok || !g.text) return '';
+    const cov = (g.needs || []).map((n) =>
+      '<span class="' + (n.short ? 'bad' : '') + '">' + esc(n.ico + ' ' + n.name) + ' ' +
+      (n.cov == null ? '—' : Math.round(n.cov * 100) + '%') + '</span>').join('');
+    return '<div class="nzgate' + (g.open ? '' : ' shut') + '">' +
+      (g.open ? '🚦 ' : '<b>⏸ ') + esc(g.text) + (g.open ? '' : '</b>') +
+      (cov ? '<div class="nzcov">' + cov + '<span style="opacity:.7">gate ' +
+        Math.round(g.grow * 100) + '%</span></div>' : '') +
+      (g.open ? '' : '<div style="opacity:.75;margin-top:2px">Zoned residential land is marked ' +
+        '⏸ on the map until this clears.</div>') +
+      '</div>';
+  }
 
   function refresh() {
     panel.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', armed && b.dataset.tool === tool));
@@ -189,9 +228,16 @@ export function mountUI(api, ctx) {
           : 'Zoned plots need to be empty and to touch a road before anything can be raised on them.';
       }
     }
+    const gate = panel.querySelector('#nz-gate');
+    if (gate) gate.innerHTML = gateHtml();
     if (barBtn) barBtn.classList.toggle('active', armed);
   }
   api.onChange(refresh);
+  /* The gate's numbers move on the city's clock, not on the player's edits, and
+     refresh() otherwise only runs when the zone map changes. A stale "food is
+     62%" on an open panel while the player watches their new Grocery come up is
+     the same class of lie the silence was. Only while the panel is OPEN. */
+  try { setInterval(() => { if (open) refresh(); }, 3000); } catch (e) {}
 
   function setOpen(v) {
     open = !!v;

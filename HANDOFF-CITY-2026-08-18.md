@@ -114,8 +114,22 @@ Each of these was a real fork where the request did not settle it.
    re-deals who lives where. A `home` field would make people stay put.
 7. **Zoning does not read through until services do.** Population only grows at
    ≥90% food/water/health coverage, so zoning towers in a struggling city
-   changes nothing visible. That may be exactly right; it is stated because it
-   makes the zoning tools feel inert early.
+   changes nothing visible. **The rule stands and is now VISIBLE rather than
+   weakened** — `DEMAND_PER_POP` and the 90%/60% thresholds are untouched.
+   node-city publishes its gate (`demogGrowth()`), `/src/demographics/gate.js`
+   turns it into one sentence, and four surfaces print that one sentence: the
+   People tab, the demand meter's causal list and its limit line, the zoning
+   panel, and the map — zoned residential land is drained and marked ⏸ while
+   the gate is shut. Driven, and the film measured against a control diff
+   (`node .gauntlet/verify-zoning-film.mjs`).
+   **The alternative nobody has taken:** let zoned land grow SLOWLY below the
+   gate instead of not at all — e.g. scale `POP_GROW_PER_MIN` by coverage
+   between the decline and grow lines rather than clamping to zero. Zoning would
+   then always do something, the 90% line would become a rate rather than a
+   switch, and every system priced against "a city under 90% does not grow"
+   (the subsistence cap at 0.45, the anti-spiral ramps, the economy's labour
+   forecasts) would need re-checking. That is the project owner's call, not a
+   builder's.
 
 ## 6. Known-broken and unverified — do not ship without reading this
 

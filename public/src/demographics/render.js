@@ -52,6 +52,14 @@ export const DEMOG_CSS = `
 .dg-zrow .bar i{display:block;height:100%;background:#6f8fd0}
 .dg-zrow .tag{font-size:9px;padding:1px 5px;border-radius:99px;background:#242833;color:#8fa0b8}
 .dg-note{font-size:10px;color:#5b6376;margin-top:6px;line-height:1.5}
+.dg-gate{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:4px 0 8px;
+  padding:5px 8px;border-radius:6px;background:#14161d;border:1px solid #242833;font-size:10px}
+.dg-gate.shut{border-color:#5d3a20;background:#1a1410}
+.dg-gate .gl{font-weight:700;color:#8fa0b8;letter-spacing:.04em}
+.dg-gate.shut .gl{color:#e0a060}
+.dg-gate .gn{color:#cfd6e4;font-variant-numeric:tabular-nums}
+.dg-gate .gn.bad{color:#e0556a;font-weight:700}
+.dg-gate .gt{margin-left:auto;color:#5b6376}
 `;
 
 const TIER_COLOR = { low: '#7a6a4a', mid: '#6f8fd0', high: '#9ad17a' };
@@ -120,6 +128,22 @@ export function renderPanel(r) {
     r.attract, pct(r.attract), r.causes,
     r.attract < 0.25 ? 'b' : r.attract < 0.5 ? 'w' : ''));
   if (r.limitText) h.push('<div class="eco-tag">Limiting growth right now: <b>' + esc(r.limitText) + '</b></div>');
+  /* 🚦 THE HOST'S GROWTH GATE, AS THREE NUMBERS AGAINST ONE LINE.
+     The sentence above already says which one is short and what raises it; this
+     row is the reading it was made from, so a player can watch the gap close
+     while they build rather than waiting for the sentence to change.
+     ⚠ NOT A SECOND OPINION. Every figure here is report().growth, which is
+       node-city's own `game.cov.pct` handed over once per tick — the same
+       object the Vital Signs card and the status dots draw from. There is no
+       coverage arithmetic anywhere in /src/demographics. */
+  if (r.growth && r.growth.ok && r.growth.needs && r.growth.needs.length) {
+    const g = r.growth;
+    h.push('<div class="dg-gate' + (g.open ? '' : ' shut') + '">' +
+      '<span class="gl">' + (g.open ? '🚦 Growth gate — open' : '🚦 Growth gate — shut') + '</span>' +
+      g.needs.map((n) => '<span class="gn' + (n.short ? ' bad' : '') + '">' +
+        esc(n.ico + ' ' + n.name) + ' ' + (n.cov == null ? '—' : Math.round(n.cov * 100) + '%') + '</span>').join('') +
+      '<span class="gt">needs ' + Math.round(g.grow * 100) + '% on every one</span></div>');
+  }
 
   h.push('<div class="eco-h">🏘 Districts</div>');
   if (!r.zones.length) {

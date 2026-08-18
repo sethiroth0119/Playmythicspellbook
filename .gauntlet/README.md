@@ -58,7 +58,7 @@ ctx and a clock and touches no DOM, so the bucket boundaries, a full lap of the
 of in a twenty-minute capture. Run it before any browser round when the traffic
 meter changed.
 
-## 🔴 Four things that cost a debugging round each
+## 🔴 Five things that cost a debugging round each
 
 1. **The CDN is blocked.** The page's import map points at
    `cdn.jsdelivr.net/npm/three@0.171.0`, and the agent proxy 403s CONNECT to
@@ -79,6 +79,51 @@ meter changed.
 4. **Road capacity is bought with Supply Depots.** `ROAD_CAP_BASE` 40, `+10`
    per *finished* depot; depots cost population and population comes from
    housing. So the placement order is forced: housing → depots → roads.
+
+5. **A whole-frame pixel statistic cannot resolve a change confined to a few
+   tiles — and you cannot photograph a ground film on built land at all.**
+   Four attempts, while verifying the zoning overlay's dormant marking
+   (`verify-zoning-film.mjs`), and none of them separated the treatment from a
+   do-nothing control. On a 1240x700 crop (868,000 px):
+
+   | Comparison | px >12/765 | px >150/765 | mean-colour Δ |
+   |---|---|---|---|
+   | Two frames, **nothing changed**, 4.2 s apart | 136,171 | 88,149 | 0.658 |
+   | The film's whole appearance changed | 151,031 | 105,066 | 0.325 |
+
+   The treatment came in **below the control**. What each attempt taught:
+
+   · **Pin the hour.** The first pass ran unpinned and landed at dusk, sky
+     mid-transition and the street lamps coming on, so every frame differed
+     from the last across a tenth of the image. `shot.mjs --hour` and
+     `capture.mjs` have pinned it since round 3; anything that diffs frames
+     must too.
+   · **Raise the threshold — it does not help.** 88,149 px still moved by more
+     than a fifth of full range with nothing changed. A scene this busy has no
+     quiet pixels.
+   · **Crop to the thing under test, and DERIVE the crop.** Project the tiles'
+     centres through `__nc.camera` — the same camera the frame was rendered
+     with — so the box cannot drift out of the picture the first time somebody
+     moves the default framing. This shrank the crop 6× and the signal stayed
+     under the floor.
+   · **A level-5 tower covers its whole plot.** Zoning the built housing band
+     and cropping to it measures ROOFTOPS: a y=.05 ground film has no ground
+     left to be drawn on. Test a ground feature on ground the player can see —
+     land they have just zoned and not yet built.
+
+   🔴 SO THE VERDICT IS NOT A PIXEL COUNT. It is the overlay mesh's own vertex
+   count and vertex colours, read out of the scene through
+   `MythicZoning._ctx.scene`: the dormant state adds a known number of quads and
+   a known number of amber vertices, and both have to appear, disappear and come
+   back with the verdict. A photograph is evidence; the buffer that produced it
+   is proof. The crops are still saved — `film-dormant.png`, `film-open.png`,
+   `film-off.png`, the same land three ways — because a human reading them side
+   by side sees in a second what the statistic could not find at all.
+
+   ⚠ One more, and it cost a round on its own: **a vertex colour is LINEAR.**
+   `Color.setHex()` converts sRGB→linear for you; a literal `{r,g,b}` written in
+   the source does not get that conversion. The sRGB amber (1.00, 0.64, 0.22)
+   renders as (1.00, 0.83, 0.51) — a pale beige that reads as nothing.
 
 ## The seam this rides on
 

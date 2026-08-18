@@ -86,10 +86,56 @@ export function mount(ctx) {
     if (ctx.THREE && ctx.scene) ov = makeOverlay(ctx.THREE, ctx.scene, HALF);
   } catch (e) { console.warn('[Zoning] overlay unavailable (non-fatal):', e); }
   const colOf = (id) => (ZONE_BY_ID[id] ? ZONE_BY_ID[id].col : null);
+
+  /* ⏸ ZONED, BUT NOTHING WILL MOVE IN — the map's half of the answer.
+     ─────────────────────────────────────────────────────────────────────────
+     node-city grows its citizenry only while Food, Water and Health coverage
+     are all at or above its threshold. Below that line a player can zone a
+     district of towers and watch the resident count sit exactly where it was,
+     with nothing on screen or in this panel to say why — which is
+     indistinguishable from the zoning tool being broken.
+
+     🔴 THE RULE IS THE HOST'S AND IT IS NOT TOUCHED HERE. This module reads a
+        verdict and draws it; it computes no coverage, owns no threshold and
+        changes no growth model. /src/demographics/gate.js is the ONE place the
+        verdict is derived, and every surface — the People tab, the demand
+        meter's causal list, this panel and this film — prints that one.
+     ⚠ ABSENT ⇒ NOT DORMANT. No /src/demographics, an older build with no
+       `growth()`, or a report that has not been made yet all mean "nothing to
+       say", and the film is exactly what it was before this existed. A missing
+       sibling module must never be read as a hostile fact about the city.
+     ⚠ RESIDENTIAL ONLY. The gate governs the citizenry and nothing else; a
+       dormant mark on a warehouse would be a claim this module cannot support. */
+  function gateVerdict() {
+    try {
+      const D = window.MythicDemographics;
+      if (!D || typeof D.growth !== 'function') return null;
+      const g = D.growth();
+      return (g && g.ok) ? g : null;
+    } catch (e) { return null; }
+  }
+  let _gateShut = false;
+  const dormantOf = (k, id) => _gateShut && !!(ZONE_BY_ID[id] && ZONE_BY_ID[id].cat === 'res');
   function sync() {
-    if (ov) { ov.rebuild(G.zones, colOf); ov.setVisible(_overlayOn); }
+    if (ov) { ov.rebuild(G.zones, colOf, dormantOf); ov.setVisible(_overlayOn); }
     if (_onChange) { try { _onChange(); } catch (e) {} }
   }
+  /* The verdict moves on the city's clock, not on the player's edits, so the
+     film has to be able to change without one. Polled rather than pushed
+     because /src/demographics has no notion of who is listening — and the
+     rebuild only runs when the ANSWER changed, so a steady city pays one
+     boolean comparison every few seconds and nothing else. */
+  const GATE_POLL_MS = 3000;
+  try {
+    setInterval(() => {
+      const g = gateVerdict();
+      const shut = !!(g && !g.open);
+      if (shut === _gateShut) return;
+      _gateShut = shut;
+      if (ov) { ov.rebuild(G.zones, colOf, dormantOf); ov.setVisible(_overlayOn); }
+      if (_onChange) { try { _onChange(); } catch (e) {} }
+    }, GATE_POLL_MS);
+  } catch (e) {}
 
   /* ══ RESTYLE ═══════════════════════════════════════════════════════════════
      Re-zoning a block that is ALREADY BUILT restyles its houses on the spot.
@@ -732,7 +778,12 @@ export function mount(ctx) {
     stopDevelop: () => stopDev('paused'),
     devSite, devSites, step: () => tickDev(),
     stats, sync,
-    overlay: (v) => { _overlayOn = v == null ? !_overlayOn : !!v; if (ov) { ov.rebuild(G.zones, colOf); ov.setVisible(_overlayOn); } return _overlayOn; },
+    overlay: (v) => { _overlayOn = v == null ? !_overlayOn : !!v; if (ov) { ov.rebuild(G.zones, colOf, dormantOf); ov.setVisible(_overlayOn); } return _overlayOn; },
+    /* 🚦 The growth-gate verdict this module is drawing, and how many tiles the
+       film marked dormant. Read by the panel, and the seam a driver asserts on
+       — a colour is not a measurement. */
+    gate: () => gateVerdict(),
+    dormantTiles: () => (ov ? ov.dormant() : 0),
     preview: (rect, hex) => { if (ov) ov.preview(rect, hex); },
     /* Diagnostics: predict() answers "what would the district roll build here",
        selfTest() checks this module's copy of makeHousing's weights against

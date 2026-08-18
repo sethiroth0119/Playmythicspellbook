@@ -60,11 +60,61 @@ export function makeOverlay(THREE, scene, HALF) {
   scene.add(prev);
 
   const _c = new THREE.Color();
-  let _built = 0;
+  let _built = 0, _dorm = 0;
 
-  /* zones: { "x,z": zoneId }   colOf: id => 0xRRGGBB | null */
-  function rebuild(zones, colOf) {
+  /* ⏸ THE DORMANT LOOK — zoned land that will NOT be built out or moved into.
+     ─────────────────────────────────────────────────────────────────────────
+     A construction site already looks different from a finished building, and
+     that is the whole reason a player trusts the build bar: the map shows the
+     state. Zoned-but-dormant land had no such tell. It looked exactly like
+     zoned-and-filling, which made the zoning tool read as broken whenever the
+     host's growth gate was shut — the same silence /src/demographics/gate.js
+     exists to end, in the one place the player is actually looking.
+
+     The zone's own hue is KEPT and only drained toward its own luminance, so a
+     dormant residential block is still recognisably residential. The rim goes
+     amber and a two-bar pause mark sits in the plot's near corner: colour alone
+     is not a tell for a colour-blind player, and one extra pair of quads on the
+     tiles that are dormant is cheaper than a second mesh. */
+  /* ⚠ THESE ARE LINEAR, NOT sRGB, AND THAT IS THE WHOLE REASON FOR THE ODD
+     NUMBERS. A vertex colour handed to three is linear; `_c.setHex()` converts
+     the zone swatches for us, but a literal written here does not get that
+     conversion. The first cut used (1.00, 0.64, 0.22) — the sRGB amber anyone
+     would type — which three renders as sRGB (1.00, 0.83, 0.51): a pale beige
+     that read as "slightly lighter kerb", not as a warning. This is the linear
+     value whose OUTPUT is that amber. */
+  const DORM_RIM = { r: 1.0, g: 0.30, b: 0.03 };
+  const DORM_DRAIN = 0.62;      // how far the field is pulled toward its own grey
+  const DORM_DIM = 0.55;        // …and then darkened, so "asleep" reads as darker
+  /* ⚠ THE MARK SITS IN THE PLOT'S CORNER, NOT ITS CENTRE, AND THAT IS THE WHOLE
+     REASON IT IS VISIBLE. The first cut centred it — photographed at
+     .gauntlet/shots/film-dormant.png, where every dormant tile carried a
+     building standing exactly on top of it, so the mark was drawn under the
+     massing on all 54 of them. The film is at y=.05 and a building is not, so
+     anything the mark needs to clear is the FOOTPRINT, not the Y stack. The
+     corner inside the rim is the part of a plot that is garden, path or apron
+     on every housing recipe in the game. */
+  const PIP_W = 0.06, PIP_H = 0.24, PIP_GAP = 0.05;
+  const PIP_CX = 0.26, PIP_CZ = 0.26;   // tile-local centre of the ⏸ mark
+  /* 🔴 AND THE HONEST LIMIT OF ALL OF THIS, MEASURED RATHER THAN ASSUMED: on a
+     FULLY BUILT high-density plot none of it is visible, because a level-5
+     tower covers its whole tile and this film is a GROUND film. Photographed
+     over 54 built tiles, and a mean-colour diff of that band came in under a
+     do-nothing control — see .gauntlet/verify-zoning-film.mjs. That is the
+     overlay behaving as its own header has always described ("correctly
+     occluded BY the buildings standing in it"), not a bug introduced here, and
+     it is why the map is the LAST of the four surfaces this verdict is printed
+     on rather than the only one: on built land the zoning panel, the People tab
+     and the demand meter carry the sentence, and on land the player has just
+     zoned — the moment they are actually asking "why is nothing happening?" —
+     the film answers first. */
+
+  /* zones: { "x,z": zoneId }   colOf: id => 0xRRGGBB | null
+     dormantOf: (key, id) => bool | null — optional; absent means nothing is
+     dormant and the film is byte-for-byte what it was before this existed. */
+  function rebuild(zones, colOf, dormantOf) {
     const pos = [], col = [];
+    _dorm = 0;
     const push = (x0, z0, x1, z1, y, r, g, b) => {
       // two triangles, CCW seen from above
       pos.push(x0, y, z0,  x1, y, z0,  x1, y, z1,
@@ -81,14 +131,35 @@ export function makeOverlay(THREE, scene, HALF) {
       if (!isFinite(x) || !isFinite(z)) continue;
       const wx = x - HALF, wz = z - HALF;          // tile's -x/-z corner in world
       _c.setHex(hex);
-      const fr = _c.r * 0.90, fg = _c.g * 0.90, fb = _c.b * 0.90;
-      const br = Math.min(1, _c.r * 1.7 + 0.03), bg = Math.min(1, _c.g * 1.7 + 0.03), bb = Math.min(1, _c.b * 1.7 + 0.03);
+      let dorm = false;
+      if (dormantOf) { try { dorm = !!dormantOf(k, id); } catch (e) { dorm = false; } }
+      let fr, fg, fb, br, bg, bb;
+      if (dorm) {
+        const lum = _c.r * 0.299 + _c.g * 0.587 + _c.b * 0.114;
+        fr = (_c.r + (lum - _c.r) * DORM_DRAIN) * DORM_DIM;
+        fg = (_c.g + (lum - _c.g) * DORM_DRAIN) * DORM_DIM;
+        fb = (_c.b + (lum - _c.b) * DORM_DRAIN) * DORM_DIM;
+        br = DORM_RIM.r; bg = DORM_RIM.g; bb = DORM_RIM.b;
+      } else {
+        fr = _c.r * 0.90; fg = _c.g * 0.90; fb = _c.b * 0.90;
+        br = Math.min(1, _c.r * 1.7 + 0.03); bg = Math.min(1, _c.g * 1.7 + 0.03); bb = Math.min(1, _c.b * 1.7 + 0.03);
+      }
       const a = wx + INSET, b2 = wx + 1 - INSET, c2 = wz + INSET, d = wz + 1 - INSET;
       push(a, c2, b2, d, FILL_Y, fr, fg, fb);                       // the field
       push(a, c2, b2, c2 + BORDER, FILL_Y, br, bg, bb);             // rim, -z
       push(a, d - BORDER, b2, d, FILL_Y, br, bg, bb);               // rim, +z
       push(a, c2, a + BORDER, d, FILL_Y, br, bg, bb);               // rim, -x
       push(b2 - BORDER, c2, b2, d, FILL_Y, br, bg, bb);             // rim, +x
+      if (dorm) {
+        // ⏸ the pause mark, drawn a hair above the field so the two coplanar
+        //   quads cannot z-fight the way the fill and rim would.
+        const cx = wx + PIP_CX, cz = wz + PIP_CZ;
+        push(cx - PIP_GAP - PIP_W, cz - PIP_H / 2, cx - PIP_GAP, cz + PIP_H / 2,
+             FILL_Y + 0.002, DORM_RIM.r, DORM_RIM.g, DORM_RIM.b);
+        push(cx + PIP_GAP, cz - PIP_H / 2, cx + PIP_GAP + PIP_W, cz + PIP_H / 2,
+             FILL_Y + 0.002, DORM_RIM.r, DORM_RIM.g, DORM_RIM.b);
+        _dorm++;
+      }
       n++;
     }
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -126,5 +197,9 @@ export function makeOverlay(THREE, scene, HALF) {
     try { scene.remove(prev); pgeo.dispose(); pmat.dispose(); } catch (e) {}
   }
 
-  return { rebuild, setVisible, visible, preview, dispose, count: () => _built };
+  /* `dormant()` is how a driver asserts the film actually changed rather than
+     photographing it — the harness truncates console lines and a screenshot of
+     a colour is not a measurement. */
+  return { rebuild, setVisible, visible, preview, dispose,
+           count: () => _built, dormant: () => _dorm };
 }

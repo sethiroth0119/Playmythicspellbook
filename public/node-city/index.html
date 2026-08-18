@@ -22695,7 +22695,11 @@ async function economyTick(dtMin) {
      other module hook here; a 404 costs the People tab and nothing else. */
   try {
     if (window.MythicDemographics && window.MythicDemographics.ready()) {
-      window.MythicDemographics.tick(dtMin, { parcels: demogParcels(), population: cityPop() });
+      /* 🚦 `growth` is the host's own population gate, published so the module
+         can say WHICH coverage is short and by how much rather than reporting
+         a bare "the city supports no more residents". See demogGrowth(). */
+      window.MythicDemographics.tick(dtMin, { parcels: demogParcels(), population: cityPop(),
+                                              growth: demogGrowth() });
     }
   } catch (e) {}
 
@@ -23179,6 +23183,70 @@ function demogParcels() {
                zone: t.zone || null });
   }
   return out;
+}
+/* 🚦 THE GROWTH GATE, HANDED OVER RATHER THAN INFERRED.
+   ────────────────────────────────────────────────────────────────────────────
+   THE BUG THIS CLOSES IS A SILENT ONE, AND IT IS NOT A BUG IN THE MODEL.
+   `game.pop.npc` grows only while Food, Water and Health coverage are ALL at or
+   above POP_GROW_AT (vitalsTick §5). That is a deliberate rule — build the
+   services, then the density — and it is close to what CS2 itself does. But a
+   player who zones a district of towers in a city sitting at 62% food watches
+   NOTHING happen: /src/demographics is handed `population: cityPop()` as its
+   ceiling, cannot fill past it, and reports the binding limit as "the city
+   itself supports no more residents", which names the block and not the fix.
+   A silent gate is indistinguishable from a broken tool — a lesson this project
+   has now learned three separate times — so the gate is published.
+
+   🔴 THE THRESHOLDS CROSS AS DATA, exactly like the HUD's `gates`. A copy of
+      0.90 / 0.60 inside /src/demographics is how two panels start disagreeing
+      about whether a city can grow, and this file has shipped that class of bug
+      before. Same object the Vital Signs card and the status dots read.
+   ⚠ `cov` IS `game.cov.pct`, THE ONE COVERAGE. Not a second computeCoverage()
+     call — that would be a second opinion measured at a different instant in
+     the tick, and the two would print different percentages for the same need.
+   ⚠ `fix` IS DERIVED FROM BUILDINGS, NEVER TYPED. The cheapest three tiles that
+     actually declare `svc.need === k` are the answer to "what raises this", so
+     retiring a building or adding one keeps the sentence true with no edit
+     here. A hardcoded list of names is a caption that goes stale in silence.
+   🔴 …AND OPERATIONS ARE EXCLUDED, WHICH IS NOT A NICETY. An op blueprint is
+      registered with `cost: {}` because placement is free — the 400,000 🔥 was
+      already paid at City Hall — so a naive "cheapest" sort put **Medical Corp.
+      at 0 🔥 ahead of the Clinic**, and the panel told a new player the cheapest
+      way to fix their Health coverage was a corporate hospital wing they do not
+      own and cannot buy. Measured, in the first driven run of this feature. A
+      plausible number with the wrong price behind it is the exact failure mode
+      the handover calls "make the fallback loud". */
+function demogGrowth() {
+  const cov = (game.cov && game.cov.pct) || {};
+  const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+  /* Memoised: BUILDINGS is fixed once the ops blueprints are registered at
+     boot, and this runs inside economyTick — a sort over the whole table three
+     times every two seconds for an answer that cannot change is the kind of
+     cost nobody notices until a profile says so. */
+  const fixFor = (k) => {
+    const M = demogGrowth._fix || (demogGrowth._fix = {});
+    if (M[k]) return M[k];
+    const cinderOf = (d) => ((d.cost && d.cost.cinder) || 0);
+    return (M[k] = Object.keys(BUILDINGS)
+      .filter((t) => { const d = BUILDINGS[t]; return d && d.svc && d.svc.need === k && !d.decor && !d.opType; })
+      .sort((a, b) => cinderOf(BUILDINGS[a]) - cinderOf(BUILDINGS[b]))
+      .slice(0, 3)
+      .map((t) => ({ type: t, name: BUILDINGS[t].name, ico: BUILDINGS[t].ico || '' })));
+  };
+  return {
+    pop: cityPop(), cap: popCap(),
+    grow: POP_GROW_AT, fall: POP_DECLINE_AT,
+    perMin: (game.pop && typeof game.pop.perMin === 'number') ? game.pop.perMin : null,
+    /* Grandfathering: while demand is phasing in, coverage is REPORTED as
+       neutral and the gate is not really being enforced. Saying "food is at
+       100%" during the ramp and then "food is at 12%" three minutes later
+       without ever mentioning the ramp is the same silence with better numbers. */
+    ramping: !!(game.cov && game.cov.ramp < DEMAND_RAMP_SEC),
+    rampLeftSec: Math.max(0, DEMAND_RAMP_SEC - ((game.cov && game.cov.ramp) || 0)),
+    needs: ['food', 'water', 'health'].map((k) => ({
+      k, name: NEED_META[k].name, ico: NEED_META[k].ico, cov: num(cov[k]), fix: fixFor(k),
+    })),
+  };
 }
 /* How many of the city's residents the zoning actually houses. Never more than
    cityPop() — this module does not invent people — and a missing module, an
@@ -34630,6 +34698,74 @@ function animate() {
       crewNote: (t) => { try { return bldCrewNote(t, 1, 0); } catch (e) { return null; } },
     });
   } catch (e) { console.warn('[Transit] not mounted (non-fatal):', e); }
+  /* ══ 🌳 PROGRESSION — the research tree ═══════════════════════════════════
+     Mounted BEFORE loadState and AFTER /src/naming, because it needs two
+     things that are only true at this point in the boot: `window.MythicZoning`
+     exists (it wraps the four zone writers — see the module header for why a
+     wrapper rather than an edit), and `window.MythicCitySave` exists (it takes
+     a shelf slot, so serialize() needs no edit at all).
+
+     🔴 THE GLOBALS TRAP. `game`, `BUILDINGS`, `cityPop`, `builtCount`,
+     `prodPerMin`, `OPS`, `opsRowsOf`, `opsPriceOf`, `opsCatalogOf`,
+     `opsCityHall`, `toast`, `logEvent` and `saveSoon` are top-level bindings
+     in THIS module script and are invisible to an ES module. The ctx below IS
+     the hand-over.
+
+     Note what is NOT handed over: nothing that spends, nothing that builds and
+     nothing that mints. Development points are not a currency — there is no
+     addCinders, no spendCinders and no addRes here, and there must never be. */
+  try {
+    const gmod = await import('../src/progression/index.js?v=' + (window.NC_BUILD || 'r13'));
+    gmod.mount({
+      toast, logEvent, saveSoon,
+      /* ── the three metrics milestones are paid from. Each is the SHIPPED
+            function, never a second derivation of it. ── */
+      pop:   () => cityPop(),
+      built: () => builtCount(),
+      /* ⚠ null, NOT 0, before the first economy tick. `prodPerMin` is empty
+           until economyTick has run once, and answering 0 there would be a
+           figure about a city nobody has measured — the module prints
+           "unavailable" with that reason instead. Once the table is populated,
+           an absent `cinder` key really does mean a net rate of zero. */
+      cinderRate: () => (Object.keys(prodPerMin).length ? (prodPerMin.cinder || 0) : null),
+      /* ── the LICENCE seam. The City Hall operations manifest, asked through
+            the same three functions every other consumer uses, so a node that
+            requires the Research Facility and the shop that sells it can never
+            disagree about whether you hold it.
+         ⚠ THREE-VALUED. `null` means the manifest has not been read yet, and
+           the panel prints that rather than "you do not hold it" — which would
+           be a false claim about a player's own business every time the city
+           booted faster than the ops fetch. ── */
+      hasLicence: (t) => {
+        try {
+          if (!OPS.st) { opsRefresh(true).catch(() => {}); return null; }
+          return opsRowsOf(t).all.length > 0;
+        } catch (e) { return null; }
+      },
+      licences: () => {
+        try {
+          if (!OPS.st) { opsRefresh(true).catch(() => {}); return null; }
+          const seen = [];
+          for (const o of (OPS.st.ops || [])) if (o && o.type && seen.indexOf(o.type) < 0) seen.push(o.type);
+          return seen;
+        } catch (e) { return null; }
+      },
+      /* 🔴 THE PRICE IS NEVER DECIDED HERE. opsPriceOf() asks the manifest,
+         which the parent builds from _opEcon — the one place operation pricing
+         is allowed to live (CLAUDE.md). The tree names licences; it never
+         prices them. */
+      licenceLabel: (t) => { try { const c = opsCatalogOf(t); return (c && c.label) || (OP_BP[t] && OP_BP[t].label) || t; } catch (e) { return t; } },
+      licencePrice: (t) => { try { return opsPriceOf(t); } catch (e) { return null; } },
+      cityHall:     (t) => { try { return opsCityHall(t); } catch (e) { return null; } },
+      /* ── what the city ALREADY IS, which is what stops a live save being
+            retro-locked. Read-only views of the two stores; the module adopts
+            from these and can write to neither. ── */
+      zones:     () => game.zones,
+      tileTypes: () => { const s = []; for (const k in game.tiles) { const t = game.tiles[k]; if (t && t.type) s.push(t.type); } return s; },
+      buildingName: (t) => { try { return (BUILDINGS[t] || {}).name || null; } catch (e) { return null; } },
+      confirm: (msg) => (typeof gcConfirm === 'function' ? gcConfirm(msg) : Promise.resolve(confirm(msg))),
+    });
+  } catch (e) { console.warn('[Progress] not mounted (non-fatal):', e); }
   try {
     await spawnAnchors();
     await loadState();
@@ -34637,6 +34773,12 @@ function animate() {
     computeLinks();
     // 🗺 Adopt what was already standing into land-use zones — see afterLoad().
     try { if (window.MythicZoning) window.MythicZoning.afterLoad(); } catch (e) {}
+    /* 🌳 …and then progression adopts what the CITY already has. Second, and
+       the order is load-bearing: /src/zoning's afterLoad is what puts
+       `r_asbuilt` (and the rest) on the map for a city that predates zoning,
+       so adopting before it would grant a legacy city nothing and lock it out
+       of land it is already standing on. See state.js, defence (2). */
+    try { if (window.MythicProgress) window.MythicProgress.afterLoad(); } catch (e) {}
     await refreshLedgerMirror();
   } catch (e) { console.warn('city boot (non-fatal):', e); }
   updateHUD();

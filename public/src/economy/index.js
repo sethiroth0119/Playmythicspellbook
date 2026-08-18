@@ -659,6 +659,28 @@ const api = {
        re-implemented the credit rule would be testing itself, and the rule it
        enforces (credit `filled`, never the request) is the one that stops a
        seller shipping the same 40 units twice. */
+  /* ── 🔌 THE UTILITY LINK SEAM (/src/power) ────────────────────────────────
+     /src/power measures the electricity crossing the outside connection and
+     prices it against node-city's own per-minute Cinder scale; THIS module
+     settles it, inside runDay's audit window, through the two channels that are
+     already audited — the treasury for the import leg, the one capped export
+     faucet for the export leg. See sim.js's header above `settleUtility` for
+     the full argument, including why the settlement cannot happen where the
+     energy is measured.
+
+     🔴 `utilityTrade()` MOVES NOTHING. It accumulates a bill. The whole reason
+        the seam is shaped this way is that a module ticking at the host's
+        cadence cannot move money without moving it between two audit windows,
+        which is the structural blind spot ECONOMY.md's founding-mint entry
+        lives in. `utilityReport()` is the read back — what actually CLEARED,
+        never what was asked for. */
+  utilityTrade: (t) => (mounted ? Sim.noteUtilityTrade(t) : false),
+  utilityReport: () => (mounted ? Sim.utilityReport()
+                                : { arrears: 0, pendingImport: 0, pendingExport: 0,
+                                    pendingImportUnitMin: 0, pendingExportUnitMin: 0,
+                                    last: { day: -1, billed: 0, paid: 0, arrears: 0, earned: 0,
+                                            importUnitMin: 0, exportUnitMin: 0 } }),
+
   tradeSync,
   tradePayload: tradePublishPayload,
   tradePartners: (rows) => Trade.setPartners(rows),

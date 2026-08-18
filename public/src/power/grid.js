@@ -383,8 +383,51 @@ export function solve(host, store) {
     charge += toStore;
   }
 
-  // Effective supply for the tick includes anything the buffer covered.
-  const served = capacity + (dt > 0 ? fromStore / dt : 0);
+  /* ── 🔌 THE INTERCONNECTOR ────────────────────────────────────────────────
+     Import and export over the outside connection, gated on the SAME rule the
+     caravan is gated on. `host.link` is what /src/power/link.js answered this
+     tick; a refused link arrives with both caps at 0 and carries the reason,
+     which the panel prints instead of drawing a zero.
+
+     🔴 THE ORDER OF MERIT IS THE WHOLE DESIGN, and it is what keeps the battery
+        worth having after this feature exists:
+          deficit -> BATTERY FIRST, then import.   Stored energy is already paid
+                     for; imported energy is billed at tariff*(1+spread).
+          surplus -> CHARGE FIRST, then export.    Banking costs nothing;
+                     exporting sells at tariff*(1-spread).
+        So a round trip — import, store, export — loses the spread twice and
+        can never be a business. That is the same job ECON.trade.spreadPct does
+        for goods, and it is why there is a spread at all.
+
+     ⚠ IMPORTED POWER BEHAVES EXACTLY LIKE BATTERY DISCHARGE, not like a plant.
+       It raises `served` (and therefore `ratio` and `factor`) and it does NOT
+       raise `capacity`. That is deliberate and it is the ESTABLISHED shape here:
+       `fromStore` has always worked this way, the causal list has always summed
+       to `served` rather than to `capacity`, and RESERVE MARGIN must keep asking
+       about the city's OWN generation or it stops meaning anything — a city on
+       imported power has no reserve, and the meter has to be able to say so.
+       It is also what lets node-city read `game.power` unchanged: it already
+       assigns `ratio` and `factor` from this solve, so the brownout lifts with
+       no edit to the host at all. */
+  const link = (host && host.link) || null;
+  const dead = POWER.trade.deadbandUnitMin;
+  let importUnits = 0, exportUnits = 0;
+  const balance = capacity + (dt > 0 ? fromStore / dt : 0) - load;
+  if (link && link.ok) {
+    if (balance < -dead) {
+      importUnits = Math.min(-balance, Math.max(0, link.importCap));
+    } else if (balance > dead) {
+      /* What is left AFTER the buffer has taken its share this tick. `toStore`
+         is a per-tick quantity, so it is divided back out to the per-minute
+         rate everything else in this function is in. */
+      const spare = balance - (dt > 0 ? toStore / dt : 0);
+      if (spare > dead) exportUnits = Math.min(spare, Math.max(0, link.exportCap));
+    }
+  }
+
+  // Effective supply for the tick includes anything the buffer covered — and
+  // anything that came in over the link.
+  const served = capacity + (dt > 0 ? fromStore / dt : 0) + importUnits;
   const ratio = load > 0 ? served / load : 1;
   const factor = ratio >= 1 ? 1 : host.floor + (1 - host.floor) * ratio;
 
@@ -399,6 +442,7 @@ export function solve(host, store) {
        the same rule node-city states for its away-report leaver list. A list
        that does not add up to the meter is worse than no list. */
   const causes = buildCauses({ byPlant, host, loads: allLoads, popLoad, lossLoad, fromStore, dt,
+                               importUnits, exportUnits,
                                meanHop: topo.meanHop, loss: topo.loss });
 
   /* ── 🪜 THE LADDER. Same energy, distributed by priority. See shedLadder's
@@ -429,6 +473,21 @@ export function solve(host, store) {
     topo: { seg: topo.seg, transformers: topo.transformers, chokes: topo.chokes,
             unserved: topo.unserved, meanHop: topo.meanHop, loss: topo.loss },
     causes, idlePlants,
+    /* 🔌 THE LINK, REPORTED WHETHER OR NOT IT MOVED ANYTHING. `ok` false always
+       carries a `why`, so the panel can print a refusal where a lesser meter
+       would print "0 kW / 0 kW" and claim a working connection. */
+    trade: { ok: !!(link && link.ok),
+             importUnits, exportUnits,
+             importCap: link ? link.importCap : 0,
+             exportCap: link ? link.exportCap : 0,
+             rating: link ? link.rating : 0,
+             arrears: link ? link.arrears : 0,
+             curtailed: !!(link && link.curtailed),
+             present: !!(link && link.present), priced: !!(link && link.priced),
+             connected: !!(link && link.connected),
+             viaLabel: link ? link.viaLabel : '',
+             why: link ? link.why : 'The interconnector was not consulted this tick.',
+             fix: link ? link.fix : '' },
     // 🪜 The demand ladder: the per-tile answer, the per-class rows, and the audit.
     tileFactor, classes: ladder.rows, shedOk: ladder.ok,
     /* `meteredOn` is the SETTING — what the player chose, and what the panel's
@@ -466,6 +525,14 @@ function buildCauses(a) {
     sup.push({ sign: '+', ico: g.ico, label: g.label + (g.n > 1 ? ' ×' + g.n : '') + note, v: g.v });
   }
   if (a.dt > 0 && a.fromStore > 0) sup.push({ sign: '+', ico: '🔋', label: 'Battery discharge', v: a.fromStore / a.dt });
+  /* 🔌 …and the import, which is a supply term for the same reason the battery
+     is: it is energy the city is running on that no plant of its own made. The
+     list has always summed to `served` rather than to `capacity` (see the
+     battery row above it), so adding it here keeps the total exact — "a list
+     that does not add up to the meter is worse than no list". The EXPORT does
+     not appear: it is surplus leaving, not demand, and printing it as a minus
+     against consumption would make the causal list stop summing to the load. */
+  if (a.importUnits > 0) sup.push({ sign: '+', ico: '🔌', label: 'Imported over the outside connection', v: a.importUnits });
 
   // Demand, grouped by building type. A METERED row is marked, so the opt-in
   // is visible in the same list that shows what it cost.

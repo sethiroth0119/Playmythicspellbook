@@ -60,6 +60,7 @@ than money appearing, because the number only ever goes down.
 
 ```
 node tools/economy-tests/run.mjs      # the regression gate; exits non-zero on failure
+node .gauntlet/verify-power-trade.mjs # the electricity-link gate (see below)
 node _synckcheck.mjs public/node-city/index.html
 ```
 
@@ -151,6 +152,47 @@ surfaces rather than finished numbers, all reachable from `ECON`:
 3. **Firms hold large cash relative to households.** `dividendRate` (0.45) and
    `UPKEEP_SPEND_RATE` are the levers. Under-consumption without dividends was severe enough
    to pin household savings at zero; it is fixed, not necessarily optimal.
+
+---
+
+## 🔌 The one thing outside this module that moves Cinder through it
+
+`/src/power` trades electricity over the outside connection (`/src/outside` — the
+Highway Interchange). It **does not move money**. It measures the energy that crossed
+the link, prices it with the one tariff in `POWER.trade`, and calls
+`MythicEconomy.utilityTrade({ importValue, exportValue })`, which accumulates a bill.
+
+`sim.js` `settleUtility()` settles that bill **inside `runDay`**, through the two
+channels that were already audited and no others:
+
+| Leg | Channel | Why that one |
+|---|---|---|
+| Import | `S.treasury -= paid` → `addImports(paid)` | The Cinder left the city with the energy. It lands in `flow.imports`, which is an `outgoings` term of the payout basis. |
+| Export | folded into the day's `earned` → the **same** faucet | Exported electricity is real exported volume, so it enters under the *one* `ECON.faucet.maxPerMin` ceiling rather than beside it. Two separately-capped faucets are two faucets. |
+
+Three things about it are load-bearing and are the reasons it is shaped this way:
+
+1. **It settles inside the audit window, not where the energy is measured.** The power
+   tick runs at the host's cadence. Money that moves *between* two `runDay` windows is
+   invisible to `audit()` — the blind spot the founding mint lived in for its whole life.
+2. **An unpayable bill becomes `arrears`, never a write-off.** The energy was already
+   delivered and the city ran on it; forgiving the shortfall is the "credited whether or
+   not the shop could pay" leak with the sign flipped. The debt curtails the *import* and
+   leaves the *export* open, so selling the surplus is the way out.
+3. **`flow.utilityImport` / `flow.utilityExport` are readouts, not bookings.** Delete
+   them and the books balance exactly as they do now. `audit()` does not mention them.
+
+`.gauntlet/verify-power-trade.mjs` is the gate: conservation over 240 days in each
+direction, the export arriving as `flow.faucet` and nothing else, arrears surviving a
+reload, a round trip losing money, and — the one nobody would think to check — that a
+city which *buys* power does not pay its owner **more** than one that does not. `sim.js`
+warns that any new claim on the treasury "buys itself back out of the payout basis"
+(measured once at +61.3%); that round is what proves this charge does not.
+
+Both halves of the gate have been seen to fail, by injuring `settleUtility()` once each:
+crediting the export straight to the treasury reported 240 audit failures out of 240
+days; zeroing the arrears went red on the debt rounds **while the audit stayed perfectly
+clean**, which is why that round does not settle for asking the audit.
 
 ---
 

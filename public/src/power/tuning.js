@@ -390,6 +390,112 @@ export const POWER = {
     dischargePerMinPerPlant: 3.0,
   },
 
+  /* ══ 🔌 ELECTRICITY TRADE — IMPORT AND EXPORT OVER THE OUTSIDE CONNECTION ══
+     ──────────────────────────────────────────────────────────────────────────
+     🔴 READ THIS BEFORE TOUCHING ANY NUMBER BELOW. THE METER THIS FEEDS WAS
+        DELETED ONCE, ON PURPOSE, AND RESTORING IT ONLY BECAME HONEST LATER.
+     The CS2 reference panel carries an ELECTRICITY TRADE row ("Import: 0 kW /
+     Export: 0 kW"). When panel.js was first written it dropped that row and
+     said why: node-city had no neighbour grid, so the row could only ever read
+     0 kW / 0 kW forever — the decorative fallback this whole integration
+     refuses. That was correct THEN. `/src/outside` shipped afterwards: a
+     highway that runs past the map, a Highway Interchange the player builds, a
+     cached connection test over the road graph, and a gate that already stops
+     caravans and cross-city deals when the city is cut off. That is the
+     neighbour link the meter needed, so the row is back — BESIDE reserve
+     margin, not instead of it. Reserve margin answers a different question
+     about the same grid and earned its place.
+
+     🔴 AND IT IS STILL NOT ALLOWED TO READ ZERO WHEN IT DOES NOT KNOW.
+        Three separate absences are three separate readings, never one:
+          · no `window.MythicOutside`  -> "cannot be priced / cannot be tested",
+                                         the meter says so and trades nothing
+          · no `window.MythicEconomy`  -> ditto: there is nowhere for the money
+                                         to go, and inventing somewhere is the
+                                         Cinder Forge
+          · connected but idle         -> a REAL 0 kW, and the only one of the
+                                         three that may be drawn as 0 kW
+        link.js returns a `why` string for the first two and the panel prints
+        it. A guarded read that silently falls back to zero forever is the exact
+        failure mode this project has hit repeatedly.
+
+     ── THE TARIFF, AND WHERE IT COMES FROM ──────────────────────────────────
+     🔴 CINDER IS NEVER MINTED (CLAUDE.md, ECONOMY.md). This module does NOT
+        move money. It measures the energy that crossed the link and hands the
+        VALUE to /src/economy, which settles it inside runDay's audit window —
+        imports out of the treasury as an ordinary `flow.imports`, exports into
+        the SAME capped export faucet goods revenue already uses. Exported
+        electricity that credited the player directly would be the retired
+        Cinder Forge with a new label on it.
+
+     The tariff is expressed in node-city's OWN per-minute Cinder scale, the one
+     every `gen: { cinder: n }` row in BUILDINGS is written in, so it can be
+     read against the buildings it competes with:
+
+        Power Station         6.0 power/min          (BUILDINGS.powerstation)
+        export tariff         0.030 🔥 per unit/min  = tariff * (1 - spread)
+        -> a Power Station's whole output, sold      = 0.18 🔥/min
+
+     …which is exactly a Player Shop's `gen: { cinder: 0.18 }` (BUILDINGS.shop),
+     and it cost 200 🔥 against the shop's 70. THAT is the anchor: selling a
+     whole power station to the neighbours earns what a storefront selling goods
+     to them earns, off a building that cost nearly three times as much — the
+     export leg is a way to stop wasting a surplus, never a business plan. The import
+     leg is the same tariff the other way with the spread against you (0.050
+     🔥 per unit/min), so buying back what you just sold LOSES money — the same
+     job ECON.trade.spreadPct does for goods, and the reason two cities cannot
+     launder electricity between them.
+
+     ⚠ THE TARIFF IS NOT A CHAIN PRICE. /src/economy derives `electricity` from
+       the recipe graph (0.25 🔥 per chain unit today) and that number is not
+       used here, deliberately: a node-city power unit/min and an economy chain
+       unit of electricity are different quantities, and the conversion between
+       them is a number nobody can derive. Multiplying one by the other would
+       look rigorous and be arbitrary. This is a TARIFF on the host's own
+       quantity, in the host's own money, anchored to a building the player can
+       already see the price of. */
+  trade: {
+    /* The interchange's substation rating: the most that can cross the link in
+       either direction, in the model's unit/min. Two Power Stations' worth —
+       enough to carry a small city through a plant outage, nowhere near enough
+       to BE the city's grid. BUILDINGS.interchange is `cap: 1, maxLvl: 1`, so
+       there is exactly one of these per city and it does not level up; the
+       rating is therefore flat by construction rather than by choice. */
+    linkUnitMin: 12.0,
+    /* 🔥 per unit/min, mid-market. See the derivation above — do not change
+       this without re-checking it against BUILDINGS.shop. */
+    tariff: 0.040,
+    /* The neighbour's cut, applied AGAINST you in both directions. This is the
+       whole anti-laundering guard: import at tariff*(1+spread), export at
+       tariff*(1-spread), so a round trip through the battery is a loss. */
+    spread: 0.25,
+    /* Below this the link is treated as idle. A grid sitting a hair either side
+       of parity would otherwise flicker between importing and exporting every
+       tick and bill the player for the noise. */
+    deadbandUnitMin: 0.15,
+    /* 🔴 UNPAID BILLS CURTAIL THE IMPORT, AND THIS IS NOT DECORATION.
+       /src/economy settles the day's bill out of the treasury and reports back
+       whatever it could not pay. Until that arrears clears, the link imports
+       NOTHING — because a city that keeps drawing power it cannot pay for is a
+       city being handed free electricity, which is the "credit without a debit"
+       shape of the third leak ECONOMY.md documents. The neighbour cuts you off;
+       the panel says so. */
+    curtailOnArrears: true,
+  },
+  /* ── ⚖ AN HONEST BALANCE NOTE ON THE ABOVE, measured in the real page.
+     A 172-tile district with no generator at all draws 3.77 unit/min. Once its
+     Highway Interchange stands, the link covers the WHOLE of that from outside
+     — the brownout lifts from 50% to 100% and the bill is 4.24 🔥 for the
+     economic day. So a small city genuinely can run on imported power and never
+     build a Power Station, and that is a deliberate consequence rather than an
+     oversight: it is capped at `linkUnitMin` (two Power Stations), it is metered
+     every day, and an unpaid day cuts it off. A city that outgrows 12 unit/min
+     has to generate, and the interchange cannot be levelled to change that.
+     Whether the crossover point is in the right place is a TUNING question with
+     exactly one lever — `tariff` — and it has not been swept. Do not sweep it
+     against a test city whose population grows freely: ECONOMY.md records a
+     sweep that confidently pointed the wrong way for precisely that reason. */
+
   /* ── TRANSMISSION ─────────────────────────────────────────────────────────
      Cables run with the roads. That is not a metaphor: node-city already models
      a road as the thing that connects a building to the city, `isRoad`/`NEI`
@@ -475,6 +581,14 @@ export const POWER = {
     // reference avoids.
     reserve: { red: 0.05, amber: 0.15, wasteAbove: 0.60 },
     battery: { red: 0.15, amber: 0.40 },
+    /* 🔌 ELECTRICITY TRADE is the one CENTRE-ZERO bar on the panel: the marker
+       sits at 0.5 when nothing is crossing the link, walks LEFT as the city
+       imports and RIGHT as it exports, scaled against the interconnector's own
+       rating so full-tilt in either direction is an end of the bar.
+       Red on the left is not a scolding for importing — it is the same reading
+       the rest of the panel gives, that the city is short of its own generation
+       and is paying somebody else for the difference. */
+    trade: { red: 0.30, amber: 0.50 },
   },
 
   /* ── OVERLAY ──────────────────────────────────────────────────────────────

@@ -32,6 +32,7 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 import { POWER } from './tuning.js';
+import * as Link from './link.js';
 
 let root = null, open = false, host = null, api = null;
 
@@ -163,6 +164,73 @@ function legend(caps) {
   return h;
 }
 
+/* ══ 🔌 ELECTRICITY TRADE ═══════════════════════════════════════════════════
+   The reference panel's Import / Export meter, restored — see the note beside
+   RESERVE MARGIN for why it was dropped in the first place and what changed.
+
+   🔴 THE REFUSING STATE IS THE POINT OF THE SECTION, NOT AN EDGE CASE.
+      A trade meter reading "0 kW / 0 kW" is a CLAIM: that the link is live and
+      the city happens to be balanced. This branch's most expensive lesson is
+      that "a guarded read that silently substitutes a plausible value is
+      indistinguishable from a working integration" — every address in the game
+      was fictional for a while because a probe called an API the wrong way and
+      nothing anywhere said so. So a link that cannot trade prints WHY and WHAT
+      TO BUILD, in the same voice tryPlace()'s road-cap refusal uses, and draws
+      no bar at all. Only a genuinely connected, genuinely idle link is allowed
+      to read zero.
+
+   ⚠ THE BAR IS CENTRE-ZERO and it is the only one on the panel that is. Left is
+     importing, right is exporting, and the scale is the interconnector's own
+     rating — see POWER.meters.trade. */
+function tradeSection(s) {
+  const t = s && s.trade;
+  let h = '<div class="pwsec">ELECTRICITY TRADE' +
+          (t && t.ok && t.viaLabel ? '<span class="pwsecv">via ' + esc(t.viaLabel) + '</span>' : '') +
+          '</div>';
+  if (!t || !t.ok) {
+    const why = (t && t.why) || 'The interconnector was not consulted this tick.';
+    const fix = (t && t.fix) || '';
+    h += '<div class="pwnote warn">' + esc(why) + '</div>';
+    if (fix) h += '<div class="pwnote">' + esc(fix) + '</div>';
+    return h;
+  }
+
+  /* Centre-zero. Nothing crossing sits the marker exactly on the amber/green
+     boundary, which is the same "exactly met, no headroom" reading the
+     availability bar gives at ratio 1. */
+  const rating = t.rating > 0 ? t.rating : 1;
+  const net = t.exportUnits - t.importUnits;
+  const tT = Math.max(0, Math.min(1, 0.5 + net / (2 * rating)));
+  h += meter(tT, POWER.meters.trade, 'Electricity trade');
+  h += '<div class="pwends"><span>Import: <b' + (t.importUnits > 0 ? ' class="dn"' : '') + '>' +
+         fmtW(t.importUnits) + '</b></span>' +
+       '<span>Export: <b' + (t.exportUnits > 0 ? ' class="up"' : '') + '>' +
+         fmtW(t.exportUnits) + '</b></span></div>';
+
+  /* 💸 THE PRICE, ON THE PANEL, IN THE SAME PER-MINUTE CINDER THE BUILD MENU
+     QUOTES `gen: { cinder: n }` IN. A tariff the player cannot see is a tariff
+     they will report as a bug the first time the treasury moves. */
+  const tar = Link.tariffs();
+  if (t.importUnits > 0) {
+    h += '<div class="pwnote">− Buying <b>' + fmtW(t.importUnits) + '</b> at ' +
+         (t.importUnits * tar.imp).toFixed(3) + ' 🔥/min. It is billed out of the city treasury at the close of the economic day, and it is the reason the brownout above has lifted.</div>';
+  } else if (t.exportUnits > 0) {
+    h += '<div class="pwnote">+ Selling <b>' + fmtW(t.exportUnits) + '</b> at ' +
+         (t.exportUnits * tar.exp).toFixed(3) + ' 🔥/min — surplus that was previously discarded once the buffer was full.</div>';
+  } else {
+    h += '<div class="pwnote">Linked and idle. The city is making what it uses, so nothing is crossing the interconnector in either direction.</div>';
+  }
+  h += '<div class="pwnote">Interconnector rated <b>' + fmtW(t.rating) +
+       '</b> each way. Power is bought at ' + tar.imp.toFixed(3) + ' and sold at ' + tar.exp.toFixed(3) +
+       ' 🔥 per unit/min, so buying back what you sold is a loss — the link is a relief valve, not a trade.</div>';
+  if (t.curtailed) {
+    h += '<div class="pwnote warn">⛔ ' + esc(t.why) + '</div>';
+  } else if (t.arrears > 0) {
+    h += '<div class="pwnote warn">💸 ' + t.arrears.toFixed(2) + ' 🔥 of the electricity bill is unpaid. Clear it or the neighbouring grid cuts the import.</div>';
+  }
+  return h;
+}
+
 function html(s, caps) {
   if (!s || !s.ok) {
     return header(s) + '<div class="pwempty">The grid model is not answering.' +
@@ -175,13 +243,19 @@ function html(s, caps) {
   // reference's "comfortable margin" read.
   const availT = Math.max(0, Math.min(1, s.ratio / M.availability.ratioFull));
 
-  // RESERVE MARGIN replaces the reference's ELECTRICITY TRADE row. node-city has
-  // no neighbour connection to import from or export to, and a trade meter
-  // pinned at "0 kW / 0 kW" forever would be the decorative fallback this whole
-  // integration is meant to refuse. Reserve margin plays the same role the trade
-  // bar plays — a second, differently-shaped question about the same grid — and
-  // it is a question this city can actually answer. The Power Station's own
-  // blueprint text already argues for it: "overbuilding is waste".
+  /* RESERVE MARGIN once stood in for the reference's ELECTRICITY TRADE row.
+     The original note here read: "node-city has no neighbour connection to
+     import from or export to, and a trade meter pinned at 0 kW / 0 kW forever
+     would be the decorative fallback this whole integration is meant to
+     refuse." That was true when it was written and it is not true any more —
+     /src/outside shipped a highway, a Highway Interchange, a connection test
+     and a gate, so there is now a real link with real kW crossing it, and the
+     TRADE row is back below.
+     🔴 BOTH ROWS, NOT ONE INSTEAD OF THE OTHER. Reserve margin turned out to be
+        a good idea on its own merits and asks a question trade cannot: a city
+        running comfortably on IMPORTED power has no reserve at all, and after
+        this feature landed that is a state a player can actually get into. The
+        two meters disagreeing is the most useful thing the panel can say. */
   const resT = Math.max(0, Math.min(1, (s.reserve + 0.05) / 0.5));
   const battT = s.store.cap > 0 ? s.store.charge / s.store.cap : 0;
 
@@ -278,6 +352,8 @@ function html(s, caps) {
   if (s.reserve > M.reserve.wasteAbove && s.plantCount > 1)
     h += '<div class="pwnote">− Overbuilt: ' + Math.round(s.reserve * 100) +
          '% of capacity is idle, and power is never banked beyond the buffer.</div>';
+
+  h += tradeSection(s);
 
   h += '<div class="pwsec">BATTERY CHARGE<span class="pwsecv">' + fmtWh(s.store.charge) + ' / ' + fmtWh(s.store.cap) + '</span></div>';
   h += meter(battT, M.battery, 'Battery charge');

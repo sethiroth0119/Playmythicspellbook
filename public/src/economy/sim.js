@@ -104,6 +104,17 @@ const S = {
           imports: 0, exports: 0, faucet: 0, payout: 0, freight: 0, interest: 0,
           civic: 0, infrastructure: 0, upkeep: 0, welfare: 0, unmetSubsistence: 0,
           founding: 0, estate: 0,
+          /* 🔌 UTILITY TRADE — READOUTS ONLY, AND THAT DISTINCTION IS THE WHOLE
+             SAFETY ARGUMENT. Electricity crossing the outside connection is
+             settled by `settleUtility()` through the SAME two channels goods
+             already use: the import leg is debited from the treasury and booked
+             to `flow.imports`, the export leg is folded into the day's export
+             revenue and enters through the SAME capped faucet. These two keys
+             are a breakdown of that, never a second booking — nothing reads
+             them, `audit()` does not mention them, and if they were deleted the
+             books would balance exactly as they do now. See the header above
+             `settleUtility`. */
+          utilityImport: 0, utilityExport: 0,
           /* 💰 Declared, not created on first payout. `zeroFlow()` iterates the
              keys that EXIST, so a key born mid-run made the flow object a
              different shape in a warm process than in a cold one. Harmless here
@@ -165,6 +176,19 @@ const S = {
   serviceValue: {},     // industry → Cinder of service revenue today
   observed: {},         // resId → {supply, demand}
   demandEMA: {},        // resId → smoothed daily offtake (see productionTargets)
+  /* 🔌 THE UTILITY LINK — energy another module measured, waiting to be paid
+     for. See `noteUtilityTrade` and `settleUtility` for why the money moves
+     here and not where the energy was measured. NOT a term of `totalCinder()`:
+     `owedImport` and `earnedExport` are obligations that have not moved yet,
+     and `arrears` is a debt, not a balance. All three ride the save. */
+  utility: { owedImport: 0, earnedExport: 0, arrears: 0,
+             importUnitMin: 0, exportUnitMin: 0,
+             /* Last settlement, for the panel that measured the energy: what it
+                asked for, what actually cleared. A meter that reports what it
+                REQUESTED rather than what it was PAID is the shape of every
+                leak ECONOMY.md lists. */
+             last: { day: -1, billed: 0, paid: 0, arrears: 0, earned: 0,
+                     importUnitMin: 0, exportUnitMin: 0 } },
 };
 
 export function state() { return S; }
@@ -193,6 +217,14 @@ export function reset(nodeId) {
   S.payoutAllowed = true; S.payoutOwed = 0; S.payoutInFlight = 0;
   S.log = []; S.booted = false;
   S.outputValue = {}; S.serviceValue = {}; S.observed = {}; S.demandEMA = {};
+  /* 🔌 …including the utility link, and including its ARREARS. A debt that
+     survived reset() would follow one city's unpaid electricity bill into the
+     next city loaded in the same page, and would curtail a grid that had never
+     imported a watt. */
+  S.utility = { owedImport: 0, earnedExport: 0, arrears: 0,
+                importUnitMin: 0, exportUnitMin: 0,
+                last: { day: -1, billed: 0, paid: 0, arrears: 0, earned: 0,
+                        importUnitMin: 0, exportUnitMin: 0 } };
   /* Cleared for the same reason as everything above it: after reset() this module
      must hold ONE known state, so that "is a repeat run identical" is a question
      answered by reading the code rather than by running it twice and hoping. This
@@ -227,6 +259,99 @@ function addImports(amount) {
   if (!(amount > 0)) return;
   S.flow.imports += amount;
   S.importsLifetime += amount;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🔌 THE UTILITY LINK — electricity crossing the outside connection.
+   ----------------------------------------------------------------------------
+   /src/power measures how much energy went out over the Highway Interchange and
+   how much came in, and it prices that energy against node-city's own per-minute
+   Cinder scale (POWER.trade — see its header for the derivation). It does NOT
+   move any money. It calls `noteUtilityTrade()` and stops.
+
+   🔴 WHY THE MONEY MOVES HERE AND NOWHERE ELSE, and this is Rule 1 itself.
+      Cinder is never minted. There are exactly two channels through which value
+      may cross this city's boundary and both are already audited:
+        · OUT — `addImports()`, debited from the treasury, an `outgoings` term.
+        · IN  — the export FAUCET, and only against real exported volume, hard
+                clamped by `ECON.faucet.maxPerMin`.
+      Exported electricity is real exported volume, so it goes through the
+      faucet, under the SAME per-day ceiling goods revenue is under — one
+      faucet, one cap, and no combination of the two can turn into the Forge.
+      Crediting the player for exported power anywhere else would be the retired
+      Cinder Forge with a new label on it, and it would look completely correct
+      in review, exactly as all four leaks in ECONOMY.md did.
+
+   🔴 AND WHY IT MOVES INSIDE runDay AND NOT WHEN IT IS MEASURED.
+      `audit()` compares `totalCinder()` at the top of runDay with the same at
+      the bottom. Money that moves BETWEEN two windows is invisible to it — that
+      is not a theory, it is the blind spot the founding mint lived in for its
+      whole life ("the books balanced because the minting happened between two
+      audit windows"). The power tick runs at the host's cadence, which is
+      nowhere near an economic day, so what it reports is ACCUMULATED here and
+      SETTLED from inside runDay, where the audit can see every Cinder of it.
+
+   🔴 AND WHY AN UNPAID BILL CURTAILS THE IMPORT INSTEAD OF BEING FORGIVEN.
+      `settleUtility` pays `min(treasury, billed)` like every other municipal
+      charge in this file. The difference is that the ENERGY WAS ALREADY
+      DELIVERED — the city ran on it. Writing the shortfall off would hand the
+      player free electricity, which is precisely the "credited whether or not
+      the shop could pay" shape of the third leak. So the shortfall becomes
+      `arrears`, it is reported back, and /src/power stops importing until it
+      clears. The neighbour cuts you off; the panel says so.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/** Called by /src/power once per host tick. Values are in Cinder; the unit-min
+    figures ride along purely so the panel can report what actually cleared
+    rather than what it asked for. Accumulates only — moves nothing. */
+export function noteUtilityTrade(t) {
+  if (!t || typeof t !== 'object') return false;
+  const U = S.utility;
+  /* ⚠ EVERY FIELD IS SANITISED, because this one is called from ANOTHER MODULE
+     and gauntlet round 1 exists because a NaN from the host poisoned the
+     treasury and the audit with it. A non-finite or negative figure is dropped,
+     not clamped to something plausible. */
+  const num = (v) => (typeof v === 'number' && isFinite(v) && v > 0 ? v : 0);
+  U.owedImport   += num(t.importValue);
+  U.earnedExport += num(t.exportValue);
+  U.importUnitMin += num(t.importUnitMin);
+  U.exportUnitMin += num(t.exportUnitMin);
+  return true;
+}
+
+/** What /src/power needs to know to draw an honest meter and to curtail. */
+export function utilityReport() {
+  const U = S.utility;
+  return { arrears: U.arrears,
+           pendingImport: U.owedImport, pendingExport: U.earnedExport,
+           pendingImportUnitMin: U.importUnitMin, pendingExportUnitMin: U.exportUnitMin,
+           last: { day: U.last.day, billed: U.last.billed, paid: U.last.paid,
+                   arrears: U.last.arrears, earned: U.last.earned,
+                   importUnitMin: U.last.importUnitMin, exportUnitMin: U.last.exportUnitMin } };
+}
+
+/* Settles the day's link. Returns the EXPORT revenue, which the caller folds
+   into the day's export earnings so it passes under the one faucet ceiling.
+   ⚠ RUNS INSIDE runDay's audit window. Called from exactly one place. */
+function settleUtility() {
+  const U = S.utility;
+  const billed = U.owedImport + U.arrears;
+  const paid = Math.min(Math.max(0, S.treasury), billed);
+  if (paid > 0) {
+    S.treasury -= paid;
+    addImports(paid);                 // the Cinder left the city with the energy
+    S.flow.utilityImport += paid;     // …and the same Cinder, broken out. Readout.
+  }
+  U.arrears = Math.max(0, billed - paid);
+  if (U.arrears > 0 && U.owedImport > 0) {
+    logEvent('bad', 'The city could not pay its electricity bill (' +
+      U.arrears.toFixed(2) + ' 🔥 outstanding). The neighbouring grid has cut the import.');
+  }
+  const earned = U.earnedExport;
+  U.last = { day: S.day, billed, paid, arrears: U.arrears, earned,
+             importUnitMin: U.importUnitMin, exportUnitMin: U.exportUnitMin };
+  U.owedImport = 0; U.earnedExport = 0; U.importUnitMin = 0; U.exportUnitMin = 0;
+  return earned;
 }
 
 /* ── Inventory helpers. All resource movement goes through these two so a
@@ -1254,7 +1379,16 @@ function runDay(days, host) {
      exported volume. Clamped hard by ECON.faucet.maxPerMin so no combination of
      trades can turn this into the Forge. */
   const capPerDay = ECON.faucet.maxPerMin * ECON.clock.dayMin * days;
-  const earned = traded.revenue;
+  /* 🔌 THE UTILITY LINK SETTLES HERE, and it settles into the SAME `earned`.
+     Electricity that left the city over the outside connection is exported
+     volume like any other, so its revenue passes under the ONE faucet ceiling
+     rather than beside it — a second, separately-capped faucet is two faucets
+     however carefully each one is clamped. The import leg has already left the
+     treasury inside settleUtility(), booked to `flow.imports` where the payout
+     basis at step 10 nets it off. See settleUtility's header. */
+  const utilityEarned = settleUtility();
+  S.flow.utilityExport += utilityEarned;
+  const earned = traded.revenue + utilityEarned;
   const faucet = Math.min(earned * ECON.faucet.perExportUnit, capPerDay);
   S.treasury += faucet;
   S.flow.exports += faucet;
@@ -1749,6 +1883,10 @@ export function snapshot() {
     logistics: Logistics.report(),
     bank: Bank.report(),
     trade: Trade.report(S.nodeId),
+    /* 🔌 The utility link, as a fresh copy — see the header on `labourMarket()`
+       in index.js: the live bug this codebase already paid for on the card seam
+       was a host object published BY REFERENCE. */
+    utility: utilityReport(),
     audit: S.lastAudit,
     totalCinder: totalCinder(),
   };
@@ -1802,6 +1940,21 @@ export function serialize() {
        `S.payoutInFlight`. */
     payoutInFlight: Math.round(S.payoutInFlight * 100) / 100,
     payoutAllowed: S.payoutAllowed, booted: S.booted,
+    /* 🔌 THE UTILITY LINK. Three real numbers and they all have to ride the
+       save. `owedImport` is energy the city HAS ALREADY BURNED and not paid
+       for; `earnedExport` is energy it has already shipped; `arrears` is the
+       debt that curtails the import. Dropping any of them lets a player clear
+       an electricity bill with the reload button — which is precisely the bug
+       gauntlet2's save/load round already caught twice (`loanId` and
+       `blacklistUntil`: "a firm could take a second loan against the first by
+       reloading the page"). An older save carries none of this and `load()`
+       reads every field as 0, which is the correct reading of a city that has
+       never traded power. */
+    utility: { owedImport: Math.round(S.utility.owedImport * 100) / 100,
+               earnedExport: Math.round(S.utility.earnedExport * 100) / 100,
+               arrears: Math.round(S.utility.arrears * 100) / 100,
+               importUnitMin: Math.round(S.utility.importUnitMin * 100) / 100,
+               exportUnitMin: Math.round(S.utility.exportUnitMin * 100) / 100 },
     inv,
     households: HH.serialize(), firms: Firms.serialize(),
     bank: Bank.serialize(), trade: Trade.serialize(), prices: Prices.serialize(),
@@ -1893,6 +2046,24 @@ export function load(raw) {
      line alone does not reopen the door — see the round in run.mjs that breaks
      each of the two in turn. */
   S.booted = true;
+  /* 🔌 THE UTILITY LINK. Absent on every save written before power trade
+     existed, and 0 is the right reading of every one of them: a city that never
+     imported a watt owes nothing. Sanitised the same way `noteUtilityTrade` is
+     — a non-finite or negative figure from the disk is DROPPED, never clamped
+     to something plausible, because a plausible-looking arrears would curtail a
+     grid the player cannot see a reason for.
+     ⚠ NOT bounded from above. `arrears` is a DEBT: a doctored save can only use
+       it to make its own city worse off, so there is nothing here for the
+       load-time-clamp argument above `totalCinder()` to defend against. */
+  if (raw.utility && typeof raw.utility === 'object') {
+    const u = raw.utility;
+    const num = (v) => { const n = Number(v); return isFinite(n) && n > 0 ? n : 0; };
+    S.utility.owedImport = num(u.owedImport);
+    S.utility.earnedExport = num(u.earnedExport);
+    S.utility.arrears = num(u.arrears);
+    S.utility.importUnitMin = num(u.importUnitMin);
+    S.utility.exportUnitMin = num(u.exportUnitMin);
+  }
   if (raw.demandEMA && typeof raw.demandEMA === 'object') {
     for (const id in raw.demandEMA) {
       const v = Number(raw.demandEMA[id]);
@@ -1912,4 +2083,4 @@ export function load(raw) {
 }
 
 export default { advance, snapshot, bootstrap, reset, serialize, load, claimPayout, refundPayout,
-                 notePayoutDelivered, audit };
+                 notePayoutDelivered, audit, noteUtilityTrade, utilityReport };

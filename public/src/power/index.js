@@ -53,6 +53,7 @@ import * as Overlay from './overlay.js';
 import * as Plants from './plants.js';
 import * as Geo from './geology.js';
 import * as Meshes from './meshes.js';
+import * as Link from './link.js';
 
 let host = null;          // the last host snapshot handed over
 let state = null;         // the last solve
@@ -193,6 +194,56 @@ function terrain() {
    arriving after this panel first opened — invalidates it without a listener. */
 const _endow = { src: null, val: null };
 
+/* ── 💸 THE BILL ─────────────────────────────────────────────────────────────
+   The one place this module talks about money, and it does not move any.
+
+   🔴 CINDER IS NEVER MINTED (CLAUDE.md, ECONOMY.md). Exported electricity that
+      credited the player here would be the retired Cinder Forge with a new
+      label on it — "~16,000,000 🔥/day for one player" — and it would look
+      entirely correct in review, as all four leaks ECONOMY.md documents did.
+      So this measures the energy that crossed the link, prices it with the ONE
+      tariff in POWER.trade, and hands the value to /src/economy, which settles
+      it INSIDE runDay's audit window: the import leg out of the treasury as an
+      ordinary `flow.imports`, the export leg into the SAME capped export faucet
+      goods revenue already uses. One faucet, one ceiling.
+
+   ⚠ AND IT CANNOT SETTLE HERE EVEN IF IT WANTED TO. This runs at the host's
+     tick cadence, which is nowhere near an economic day; money moved between
+     two audit windows is invisible to `audit()`, which is the structural blind
+     spot the founding mint lived in for its whole life. Accumulating a bill and
+     letting the economy settle it is not politeness, it is the only shape that
+     is auditable at all.
+
+   ⚠ VALUE, NOT UNITS, IS WHAT CROSSES. /src/economy has no concept of a power
+     unit/min and must not grow one; POWER.trade owns the tariff and this is its
+     only call site. The unit-minute figures ride along purely as a readout so
+     the panel can print what CLEARED rather than what was asked for. */
+function bill(s, dtMin) {
+  try {
+    const t = s && s.trade; if (!t) return;
+    /* ⚠ `isFinite`, NOT just `> 0`. `Number(Infinity) || 0` is Infinity and it
+       survives a `> 0` test — that exact hole let a bad clock read run three
+       economic days off garbage in /src/economy (gauntlet round 1). The
+       economy's own `noteUtilityTrade` drops non-finite figures as well, so
+       this is the second of two independent refusals rather than the only one:
+       a bill is money, and money gets two. */
+    const dt = Number(dtMin);
+    if (!isFinite(dt) || !(dt > 0)) return;
+    const impUM = t.importUnits * dt, expUM = t.exportUnits * dt;
+    if (!(impUM > 0) && !(expUM > 0)) return;
+    const E = (typeof window !== 'undefined' && window.MythicEconomy) || null;
+    /* link.read() already refused when the economy was absent, so reaching here
+       with no economy means it landed and left between two lines. Dropping the
+       tick is the only honest move: the energy is not billed, so it must not
+       have flowed either — and it did not, because `trade.ok` was false when
+       grid.js decided. */
+    if (!E || typeof E.utilityTrade !== 'function') return;
+    const v = Link.value(impUM, expUM);
+    E.utilityTrade({ importValue: v.importValue, exportValue: v.exportValue,
+                     importUnitMin: impUM, exportUnitMin: expUM });
+  } catch (e) { warnOnce('bill threw: ' + (e && e.message)); }
+}
+
 /* ── THE PUBLIC API ─────────────────────────────────────────────────────── */
 const API = {
   ready: () => mounted,
@@ -269,13 +320,23 @@ const API = {
          about an opt-in it does not own, and a field it forgot to send would
          silently un-meter a city that had opted in. */
       host = snapshot;
+      /* 🔌 THE INTERCONNECTOR, ASKED BEFORE THE SOLVE. Same shape as the
+         terrain capabilities above: `window.MythicOutside` and
+         `window.MythicEconomy` are real window properties (module
+         registrations), so unlike node-city's `game`/`BUILDINGS` they ARE
+         visible from here — link.js reads them and nothing else. Asked every
+         tick rather than cached, because either module can land or fail after
+         this one has already mounted, and because /src/outside's own answer is
+         already cached behind refreshRoadArea. */
+      const link = Link.read();
       const s = Grid.solve({ grid: snapshot.grid, tiles: snapshot.tiles, plants: snapshot.plants,
                              loads: snapshot.loads, pop: snapshot.pop, hasGrid: snapshot.hasGrid,
                              perPop: snapshot.perPop, floor: snapshot.floor, dtMin: snapshot.dtMin,
-                             metered }, store);
+                             metered, link }, store);
       if (!s.ok) { warnOnce(s.why || 'solve refused'); state = s; return null; }
       store = s.store.charge;
       state = s;
+      bill(s, snapshot.dtMin);
       if (Panel.isOpen()) refresh();
       return s;
     } catch (e) { warnOnce('solve threw: ' + (e && e.message)); return null; }
@@ -354,6 +415,29 @@ const API = {
     if (!state || !state.ok) return { factor: 1, cls: 'none', shed: false };
     const f = state.tileFactor[k];
     return { factor: isFinite(f) ? f : state.factor, cls: 'none', shed: isFinite(f) && f < 0.999 };
+  },
+
+  /* 🔌 The interconnector, for the panel, the driver and anything that wants to
+     know why the meter is refusing. Field by field — the same rule supply()
+     spells out at length: returning the internal object verbatim satisfies
+     every guarded read while feeding `undefined` to every consumer forever. */
+  trade() {
+    const t = state && state.ok && state.trade;
+    const L = Link.read();
+    if (!t) {
+      return { ok: false, importUnits: 0, exportUnits: 0,
+               importCap: L.importCap, exportCap: L.exportCap, rating: L.rating,
+               arrears: L.arrears, curtailed: L.curtailed,
+               present: L.present, priced: L.priced, connected: L.connected,
+               viaLabel: L.viaLabel,
+               why: L.why || 'The grid model is not answering, so nothing is crossing the link.',
+               fix: L.fix, tariff: Link.tariffs() };
+    }
+    return { ok: t.ok, importUnits: t.importUnits, exportUnits: t.exportUnits,
+             importCap: t.importCap, exportCap: t.exportCap, rating: t.rating,
+             arrears: t.arrears, curtailed: t.curtailed,
+             present: t.present, priced: t.priced, connected: t.connected,
+             viaLabel: t.viaLabel, why: t.why, fix: t.fix, tariff: Link.tariffs() };
   },
 
   metered: () => metered,

@@ -301,13 +301,40 @@ function fromWater(ctx, pop) {
   const T = BCAST.thresholds;
   const frac = Math.max(0, Math.min(1, (s.shortfall || 0) / s.draw));
   const out = [];
-  if (frac > T.waterShortFrac) {
-    out.push({ src: 'water', key: 'wat|' + Math.round(frac * 20),
+  /* 🔴 TWO DIFFERENT SHORTAGES, AND CONFLATING THEM SHIPPED THE LOUDEST WRONG
+     POST IN THE FEED. /src/water's `shortfall` is draw MINUS CAPACITY in the
+     module's per-minute ledger units — a PRODUCTION fact about the hydrology
+     ("we are asking the ground for more than it yields"). node-city's
+     `game.cov.pct.water` is the SERVICE fact the vitals card already prints to
+     the player ("are the taps running"), and it is fed from stock, so a city
+     can out-pump its aquifers for a long time with coverage still at 100%.
+     The verifier found five posts a session screaming "the city is completely
+     short of water, 8 residents unserved and rationing is in force" while
+     `game.cov.pct.water === 1`. Nobody was unserved and nothing was rationed.
+     So: the RATIONING claim is gated on the host's own coverage number, and the
+     hydrology figure gets its own subject that says what it actually means.
+     ⚠ `demandKnown` false means drinkPerMin never arrived from the host, so
+     `draw` is missing the entire population term — a shortfall fraction built
+     on it is meaningless and must not be published at all. */
+  const cov = (ctx.game && ctx.game.cov && ctx.game.cov.pct) || {};
+  const served = Number.isFinite(cov.water) ? cov.water : 1;
+  const unserved = Math.max(0, 1 - served);
+  if (s.demandKnown && unserved > T.waterShortFrac) {
+    out.push({ src: 'water', key: 'wat|' + Math.round(unserved * 20),
                subject: 'water', pole: 'bad',
+               severity: Math.max(0, Math.min(1, unserved / 0.5)),
+               affected: Math.round(pop * unserved),
+               facts: { n: num(Math.round(pop * unserved)), v: pct(unserved) },
+               why: 'water coverage ' + pct(served) + ' of demand (game.cov.pct.water)' });
+  }
+  /* The hydrology one, worded as what it is: over-extraction, not thirst. */
+  if (s.demandKnown && frac > T.waterShortFrac) {
+    out.push({ src: 'water', key: 'watdraw|' + Math.round(frac * 20),
+               subject: 'water_draw', pole: 'bad',
                severity: Math.max(0, Math.min(1, frac / 0.5)),
                affected: LK.fromWaterShortfall(pop, s),
                facts: { n: num(LK.fromWaterShortfall(pop, s) || 0), v: pct(frac) },
-               why: 'water shortfall ' + pct(frac) + ' of draw' });
+               why: 'extraction shortfall ' + pct(frac) + ' of draw (aquifer yield, not taps)' });
   }
   /* Purity is a DIFFERENT subject from supply, and conflating them was the
      first cut: "the taps are dry" and "the water is filthy" are two problems

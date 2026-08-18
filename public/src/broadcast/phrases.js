@@ -137,6 +137,22 @@ export const PHRASES = {
     },
   },
 
+  /* 🚱 Extraction, spoken only by the department — a citizen cannot see an
+     aquifer level, so `cit` is deliberately empty and subjects.js sets
+     citizen:false to match. Every clause here talks about the GROUND, never
+     about taps or rationing: that was the conflation that made this feed
+     contradict the vitals card. */
+  water_draw: {
+    cit: { bad: B([], [], []), good: G([], []) },
+    dept: {
+      bad: B(
+        ['we are drawing on the aquifer a little faster than it refills'],
+        ['{n} units of demand are outrunning what the ground yields — reserves are falling'],
+        ['extraction is {i} beyond the aquifer\'s recharge and the water table is dropping']
+      ),
+      good: G([], []),
+    },
+  },
   water_q: {
     cit: {
       bad: B(
@@ -296,7 +312,14 @@ export const PHRASES = {
         ['I cannot open a window. The {tag} is {i} unbreathable']
       ),
       good: G(
-        ['I love the rain. Makes the {tag} feel cleaner', 'the {tag} is clear today and it is lovely'],
+        /* 🔴 'I love the rain' WAS HERE AND IT WAS INVENTED. The verifier caught
+           it firing three times in one run while `game.wx` and `window.WEATHER`
+           were both null — this city has no weather state at all, and the post's
+           own source was `pollution | citizen air exposure 0.004`, which says
+           nothing about rain. A clause may only claim what its SOURCE observed;
+           clean air is clean air, whatever the sky is doing. Restore the rain
+           variant only when a real weather signal feeds this subject. */
+        ['the {tag} is clear today and it is lovely', 'I can actually breathe out here — the {tag} is clean'],
         ['cleanest {tag} this city has had. Whatever changed, keep doing it']
       ),
     },

@@ -69,6 +69,13 @@ export const SUBJECTS = {
   light:    { id: 'light',    label: 'Streetlights',tag: 'streetlights',tagsBad: ['darkstreets'], tagsGood: ['welllit'],      dept: 'light',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
   air:      { id: 'air',      label: 'Air quality', tag: 'air',         tagsBad: ['smog'], tagsGood: ['cleaner', 'perfect'],  dept: 'env',     scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
   water_q:  { id: 'water_q',  label: 'Water purity',tag: 'water',       tagsBad: ['pollution'], tagsGood: [],        dept: 'env',     scope: 'city',   citizen: true,  poles: ['bad'] },
+  /* 🚱 OVER-EXTRACTION, not thirst. Kept separate from `water` because they are
+     two problems with two fixes: `water` is "the taps are dry" (node-city's own
+     coverage), this is "we are pumping the aquifer faster than it recharges"
+     (the hydrology module's draw-vs-capacity). One post claiming both is what
+     made the feed's loudest recurring line contradict the vitals card. A
+     department speaks it; a citizen cannot see an aquifer level. */
+  water_draw:{ id: 'water_draw', label: 'Water extraction', tag: 'water', tagsBad: ['aquifer'], tagsGood: [], dept: 'water', scope: 'city', citizen: false, poles: ['bad'] },
   rent:     { id: 'rent',     label: 'Rent',        tag: 'rent',        tagsBad: ['housing'], tagsGood: [],          dept: 'housing', scope: 'city',   citizen: true,  poles: ['bad'] },
   jobs:     { id: 'jobs',     label: 'Work',        tag: 'jobs',        tagsBad: ['nowork'], tagsGood: ['hiring'],           dept: 'labour',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
   traffic:  { id: 'traffic',  label: 'Traffic',     tag: 'traffic',     tagsBad: ['commute'], tagsGood: ['commute'],          dept: 'roads',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },

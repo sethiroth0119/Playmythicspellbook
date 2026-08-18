@@ -36492,7 +36492,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x6';
+  window.BUILD_VERSION = 'v120x7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -87944,7 +87944,8 @@ function _costIsEmpty(cost) {
 function _unparkGraveCardFor(state, unit) {
   try {
     if (!state || !unit || !unit.id || !unit.owner) return state;
-    const side = state[unit.owner];
+    // 👑 the OWNER holds the card, even while someone else holds the unit.
+    const side = state[_cardOwnerOf(unit)];
     if (!side) return state;
     const iid = (unit._card && unit._card.instanceId) || null;
     const tomb = 'tomb_' + unit.id;
@@ -88177,8 +88178,63 @@ function _banishableGrave(state, side) {
    sees the corpse is already in the pile and files nothing more. The two cost
    paths were given the matching `_voided` flag so the pile this pass wants is the
    pile they actually used under Ashen Decree. */
+/* 🪦👑 WHOSE GRAVEYARD A CORPSE BELONGS IN — THE OWNER'S, NEVER THE CONTROLLER'S.
+
+   Reported: "When units your opponent owns are under a player control is sent to
+   the graveyard send them to the owners which is the opponent graveyard instead."
+
+   `_seizeUnitControl` implements a seizure by OVERWRITING `u.owner` with the new
+   controller and stashing the real one in `_originalOwner`. Everything that files
+   a corpse then reads `u.owner` — so a unit you Mind Controlled died into YOUR
+   graveyard, and its owner permanently lost the card. Grep `_originalOwner`
+   before this change: five hits, all of them in the seize/revert pair. Nothing
+   in the whole file consulted it when filing a card, which is why this was
+   invisible rather than merely wrong.
+
+   ⚠ `_originalOwner` is set on the FIRST seizure and never overwritten (see
+   `_seizeUnitControl`), so it survives a unit being passed back and forth and
+   always names the player who put the card in their deck. That is the definition
+   of owner this needs. Anything else — including "whoever held it last" — makes
+   a second seizure launder the card. */
+function _cardOwnerOf(u) {
+  if (!u) return null;
+  return (u._originalOwner === 'player' || u._originalOwner === 'ai') ? u._originalOwner : u.owner;
+}
+/* Strip this unit's card out of ONE side's piles. Used to sweep the controller's
+   piles when ownership and control disagree — without it, changing which side we
+   file to would ADD the card to the owner's pile while leaving the older entry in
+   the controller's, i.e. it would manufacture exactly the duplicate this whole
+   sweep exists to prevent. Mutates in place for the reason spelled out over
+   `_unparkGraveCardFor`: the production death sweep discards the return value. */
+function _stripUnitCardFromSide(state, unit, side) {
+  try {
+    const so = state && state[side];
+    if (!so || !unit) return;
+    const iid = unit._card && unit._card.instanceId;
+    const tomb = 'tomb_' + unit.id;
+    const mine = (c) => !!c && ((!!iid && c.instanceId === iid) || c.instanceId === tomb
+      || (!!unit._cardPileIid && c.instanceId === unit._cardPileIid)
+      || c._summonedUnitId === unit.id);
+    for (const key of ['graveyard', 'void']) {
+      const arr = so[key];
+      if (!Array.isArray(arr)) continue;
+      for (let i = arr.length - 1; i >= 0; i--) if (mine(arr[i])) arr.splice(i, 1);
+    }
+  } catch (e) {}
+}
 function _reconcileUnitCards(state) {
   if (!state || !Array.isArray(state.units)) return state;
+  /* 👑 SEIZED UNITS FIRST. For anything whose controller is not its owner, sweep
+     the CONTROLLER's piles before the filing loop runs, so the loop below can
+     only ever land one copy and it lands it on the owner's side. */
+  try {
+    for (const u of state.units) {
+      if (!u || !u._card) continue;
+      const own = _cardOwnerOf(u);
+      if (!own || own === u.owner) continue;          // not seized — nothing to sweep
+      _stripUnitCardFromSide(state, u, u.owner);      // u.owner is the CONTROLLER here
+    }
+  } catch (e) {}
   // Fast path — the overwhelming majority of assignments have nothing to do.
   // Without this, a 150-call-site accessor would walk the piles on every UI tick.
   let anyCard = false;
@@ -88198,7 +88254,9 @@ function _reconcileUnitCards(state) {
     let changed = false;
 
     for (const u of next.units) {
-      if (!u || !u._card || u.owner !== side) continue;
+      // 👑 OWNER, not controller — see _cardOwnerOf. A seized unit files its
+      // card to the player who owns it, which is not the player holding it.
+      if (!u || !u._card || _cardOwnerOf(u) !== side) continue;
       const iid = u._card.instanceId;
       if (!iid) continue;                       // no stable identity — leave it alone
       // Every way this one corpse can be spelled in a pile: its own card, the
@@ -90749,6 +90807,39 @@ try {
          vLen('player') === 1 && gLen('player') === 0,
          'void = ' + vLen('player') + ' (was 0), grave = ' + gLen('player') + ' (was 1)');
     } catch (e) { ok(6, 'corpse → vanish zone', false, 'threw: ' + (e && e.message)); }
+
+
+    /* ── RULE 7 — 👑 A SEIZED CORPSE GOES TO ITS OWNER'S GRAVEYARD ────────────
+       Reported: "When units your opponent owns are under a player control is
+       sent to the graveyard send them to the owners which is the opponent
+       graveyard instead."
+       `_seizeUnitControl` implements a seizure by OVERWRITING `u.owner` with the
+       controller and stashing the real one in `_originalOwner`. Before the
+       `_cardOwnerOf` fix, NOTHING that filed a corpse consulted `_originalOwner`
+       — five hits in the whole file, all of them inside the seize/revert pair —
+       so a Mind Controlled unit died into the THIEF's graveyard and its owner
+       lost the card permanently.
+       Driven through the REAL `_seizeUnitControl`, not a hand-set flag, and the
+       third assertion is the one that catches the obvious wrong fix: filing to
+       the owner while leaving the old entry in the controller's pile turns one
+       bug into a duplicate. */
+    try {
+      const u7 = playOne('R7s');
+      App.state = { ...App.state, units: App.state.units.map(x =>
+        x.id === u7.id ? _seizeUnitControl(x, 'ai', 3) : x) };
+      const seized = App.state.units.find(x => x.id === u7.id);
+      ok(7, 'seizure flips control and records the true owner',
+         !!seized && seized.owner === 'ai' && seized._originalOwner === 'player',
+         'owner=' + (seized && seized.owner) + ' _originalOwner=' + (seized && seized._originalOwner));
+      setAlive(u7.id, false);
+      App.state = { ...App.state };
+      ok(7, 'a seized corpse files to the OWNER, not the controller',
+         gLen('player') === 1 && gLen('ai') === 0,
+         'owner grave = ' + gLen('player') + ' (want 1), controller grave = ' + gLen('ai') + ' (want 0)');
+      const tot7 = gLen('player') + gLen('ai') + vLen('player') + vLen('ai');
+      ok(7, 'exactly one copy of the seized card exists across all four piles', tot7 === 1,
+         'total = ' + tot7 + ' (want 1) — >1 means the controller pile was not swept');
+    } catch (e) { ok(7, 'seized corpse -> owner grave', false, 'threw: ' + (e && e.message)); }
 
     const failed = results.filter(r => !r.pass);
     try {
@@ -105992,7 +106083,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120x6';
+const BB_VER = 'v120x7';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -211296,7 +211387,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120x6';
+  f.src = 'node-city/index.html?v=v120x7';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228473,8 +228564,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120x6">
-<script type="module" src="src/battle/hud.js?v=v120x6"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120x7">
+<script type="module" src="src/battle/hud.js?v=v120x7"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

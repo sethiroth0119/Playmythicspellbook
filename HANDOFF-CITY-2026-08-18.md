@@ -135,7 +135,7 @@ Each of these was a real fork where the request did not settle it.
   module. It does not crash; that is all anyone has established.
 - **The visual bar is not met.** See §7.
 
-## 7. The visual loop, honestly
+## 7. The visual loop — it ran five rounds and then stopped, on advice
 
 `.gauntlet/BAR.md` transcribes five Cities: Skylines II reference screenshots
 into a 12-dimension rubric. Fresh-context critics score the real render each
@@ -145,35 +145,92 @@ round and A/B it blind against the previous one.
 |---|---|---|
 | 0 baseline | — | instantly |
 | 1 | 3.63 | instantly |
-| 2 | 3.64 (against a night frame — see below) | instantly |
-| 3 | **4.57** | instantly |
+| 2 | 3.64 (scored against a night frame — see below) | instantly |
+| 3 | 4.57 | instantly |
+| 4 | 4.83 | instantly |
+| 5 | 4.67 | instantly |
 
-"Stranger test" is: shown our frame beside a real CS2 screenshot, does a stranger
-pick the real game instantly, after a moment, or not at all. **It has been
-"instantly" every round.** We are not at the bar.
+"Stranger test": shown our frame beside a real CS2 screenshot, does a stranger
+pick the real game instantly, after a moment, or not at all. **It was "instantly"
+every round.** The bar was not met.
 
-Three findings from that loop are worth keeping even if the loop stops:
+**The round-5 critic recommended STOP AND CHANGE APPROACH**, and its evidence is
+worth more than its conclusion:
 
-- **Shadows were never drawn.** three r171's WebGPU node pipeline reads a
-  light's shadow from the shadow target's *colour* attachment; the WebGL2
-  backend runs that pass depth-only, so the term collapsed to a constant and
-  every shadow was multiplied away — while the depth pass was drawn and thrown
-  out every frame.
-- **Every mapped surface rendered at 58% of its stated albedo.** `_grey()`
-  centred each shared texture canvas on 0.78 sRGB while documenting it as
-  "centred on 1.0"; a map decodes to linear before it multiplies the colour, and
-  0.78 sRGB is 0.578 linear.
-- **The harness lied four different ways at once.** Two rounds scored vehicles
-  and citizens at zero against a city whose crowd existed the whole time: agents
-  were censused before the roads were built, never stepped, culled invisible
-  against a stale camera, and framed by a camera OrbitControls clamped above the
-  rooftops. A pixel diff of the rendered buffer — with-crowd vs without-crowd,
-  exactly 0 of 1,440,000 pixels — found in one run what two rounds of art work
-  could not.
+> Rubric sums on my own consistent scale: r3=53, r4=55, r5=56. Five rounds of
+> hand-authored geometry and shader tweaks bought +0.08 on the last iteration.
+> Two consecutive rounds shipped commits titled "give every building a parcel"
+> and "give every lot an edge", and I cannot see a lot edge in either round at
+> the camera the game renders at. **The loop is now producing work that
+> satisfies the commit message and not the image.**
 
-**The dimension that has never moved is the plot** (3, 4, 2, 2). Buildings meet
-the pavement with no setback, garden or boundary, and the critic named that
-single fact as the reason the city reads as models on a board.
+The score column splits cleanly and that split is the real finding. Everything
+about **objects** climbed and is nearly done — silhouette 4·7·6·6·6, roads
+4·6·6·7·7, street furniture 3·5·6·6·7. Everything about the **world between
+objects** never left the floor — the plot 3·4·2·2·3, citizens 2·2·0·3·2, zoning
+read 2·2·3·3·3, UI legibility 4·2·2·2·2.
+
+Round 5 also proved the ceiling from the other side: it **worked** and the
+stranger test still did not move. The round-4 sentence — "the ground is one flat
+colour and nothing is rooted in it" — is dead, settled on pixels: one sightline
+down the aerial ground read 133/146/124 luminance in r4 (a 22-unit random wobble
+with no depth direction) and 143/131/93 in r5 (a monotonic 50-unit falloff);
+across 30k grass samples far/mid/near spread went 2.7 → 28.9 and distinct
+colours 261 → 3472.
+
+### The four findings worth keeping even though the loop stopped
+
+- **Shadows were never drawn.** three r171's WebGPU node pipeline reads a light's
+  shadow from the shadow target's *colour* attachment; the WebGL2 backend runs
+  that pass depth-only, so the term collapsed to a constant and every shadow was
+  multiplied away — while the depth pass was drawn and discarded every frame.
+- **Every mapped surface rendered at 58% of its albedo.** `_grey()` centred each
+  shared texture canvas on 0.78 sRGB while documenting it as "centred on 1.0";
+  a map decodes to linear first, and 0.78 sRGB is 0.578 linear.
+- **The harness lied four ways at once.** Two rounds scored vehicles and citizens
+  at zero against a city whose crowd existed the whole time: censused before the
+  roads were built, never stepped, culled invisible against a stale camera, and
+  framed by a camera OrbitControls clamped above the rooftops.
+- **The harness read the wall clock.** Every round was photographed at whatever
+  hour it happened to run, so round 2's lighting was tuned at 15:00 and shot at
+  20:17. Cross-round A/B was worthless until the clock was pinned.
+
+### What the critic said to do instead, in its order
+
+1. **Change the shot protocol.** Every claimed feature must be legible in a 1:1
+   crop at the default camera, with the crop attached — "we built it but it is
+   one pixel tall" must fail. And diff the framings between rounds.
+   ✅ **DONE.** `capture.mjs --against <prevDir>` now reports per-framing pixel
+   change and warns when one framing moved less than a quarter as much as the
+   best. Run against r4 it independently reproduced the critic's own finding:
+   aerial 48.9% changed, district 35%, **street 4%** — round 5's ground work
+   never reached the street frame.
+2. **Take the free five points in UI legibility.** It has scored 2 for four
+   straight rounds while every round went after 3D. It is the first thing a
+   stranger sees, it is pure 2D layout with zero engine risk, and it is the
+   furthest below the bar: collapse the fourteen identical counters into a
+   compact status bar, get the button clusters off the city, and build the BAR's
+   actual ask — arrow-shaped demand meters with a signed causal list. One round
+   from 2 to 7, and the only dimension where that is true.
+3. **Stand up an asset pipeline.** glTF kits for buildings, props, vehicles and
+   trees, loaded and GPU-instanced, replacing code-assembled primitives. The only
+   change that moves silhouette, surface detail, vehicles, vegetation, street
+   furniture and zoning read *together*, and the only one that can reach 8. It is
+   a week of infrastructure with nothing visible at the end, "which is exactly
+   why five rounds of screenshot-graded iteration have kept choosing not to do
+   it."
+
+And its alternative, which is a real option: **move the bar honestly.** Say the
+target is a stylised low-poly city that reads well at the aerial camera — which
+this genuinely almost is, and the buildings are good — and stop scoring it
+against Cities: Skylines II frames it will never match.
+
+### Known regressions from round 5, not fixed
+
+- The kerbed street-tree pit (raised kerb frame, paved apron, recessed soil bed)
+  was replaced with a flat lime quad. Street furniture 7 → 6.
+- The new tree-base patches are a single flat over-saturated lime with a hard
+  edge, sitting on the newly mottled ground without receiving the mottle.
 
 ## 8. If you pick this up
 

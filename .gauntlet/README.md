@@ -78,3 +78,23 @@ functions a player's click drives.
 
 `.gauntlet/package/` (vendored three) and `.gauntlet/shots/` are gitignored —
 one is 10 MB of third-party code, the other is regenerable.
+
+## The per-framing diff gate
+
+```bash
+node .gauntlet/capture.mjs .gauntlet/shots/rN --tag rN --against .gauntlet/shots/rN-1
+```
+
+Reports what fraction of pixels each framing changed against the previous round,
+and warns when one framing moved less than a quarter as much as the best one.
+
+It exists because round 5's ground work **never reached the street frame** — 4%
+changed there against 48.9% in the aerial — and nobody noticed until a critic
+diffed it by hand two rounds later. The round-5 critic's first recommendation
+was this gate, and it costs nothing: the two PNGs are decoded through the page
+that is already open.
+
+⚠ The images are served over the harness's own loopback HTTP, not as `data:`
+URIs. The first cut used data URIs, the catch-all route aborted them, and a bare
+`catch { null }` reported that as "no diff" — a silent fallback inside the tool
+built to stop silent fallbacks. A failed diff now reports its reason.

@@ -365,5 +365,77 @@
       }
     ],
     "note": "Mean 4.57 to 4.83 and the economy suite went green, but the whole-frame critic called the project PLATEAUING and showed its working: gain per round has fallen from +1.0 to +0.2, and the score column splits cleanly in two. Everything about OBJECTS has climbed and is nearly done - silhouette 4-7-6-6-6, roads 4-6-6-7-7, street furniture 3-5-6-6-7. Everything about the WORLD BETWEEN objects has never left the floor - the plot 3-4-2-2-3, citizens 2-2-0-3-2, zoning read 2-2-3-3-3, UI 4-2-2-2-2. Its stranger-test sentence is the whole diagnosis: THE GROUND IS ONE FLAT COLOUR AND NOTHING IS ROOTED IN IT - over half the frame at every camera, and the only surface that is wrong at all three zoom levels. Round 4 built setbacks, lawns, drives, hedges and lot lines, and the plot critic still answered 'no, I cannot see where one property ends and the next begins, anywhere, in any frame'. Parcels drawn on a single uniform plane do not read as parcels. The plane is the problem, and round 5 attacks only that."
+  },
+  {
+    "round": 5,
+    "headline": "The ground stopped being one flat colour. The loop stopped here.",
+    "status": "done",
+    "meanScore": 4.67,
+    "strangerTest": "instantly",
+    "tris": 413701,
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 6
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 6
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 6
+      },
+      {
+        "dimension": "Building surface detail",
+        "score": 5
+      },
+      {
+        "dimension": "The plot",
+        "score": 3
+      },
+      {
+        "dimension": "Roads",
+        "score": 7
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 6
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 5
+      },
+      {
+        "dimension": "Citizens",
+        "score": 2
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 5
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 3
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 2
+      }
+    ],
+    "pieces": [
+      {
+        "title": "The ground",
+        "verdict": "CLOSE",
+        "summary": "The map plate stopped being 576 flat constant-coloured quads and became one shared vertex lattice carrying two colour ramps blended by an independent moisture field, with real relief and a generated seamless grain map. Measured on the real captures: aerial patch-to-patch value spread +85%, hue spread +195%, near-to-far spread +429%, local contrast +117%. The MEAN was deliberately held at round 4's value \u2014 only the spread moved. No new draw calls: the rebuild is inside the plate's existing single mesh.",
+        "gap": "Boundaries. The critic still could not find one place where property A's ground stops and property B's starts, at the cameras the game renders at."
+      },
+      {
+        "title": "The verdict",
+        "verdict": "BEHIND",
+        "summary": "STOP AND CHANGE APPROACH. The critic's evidence: rubric sums r3=53, r4=55, r5=56 on its own consistent scale \u2014 five rounds of hand-authored geometry bought +0.08 on the last iteration. And two consecutive rounds shipped commits titled 'give every building a parcel' and 'give every lot an edge' while it could not see a lot edge in either at the game's own camera. Its words: the loop is now producing work that satisfies the commit message and not the image."
+      }
+    ],
+    "note": "\ud83d\udd34 THE LOOP STOPS HERE, on the critic's recommendation and its evidence, not on a budget. The named sentence from round 4 \u2014 'the ground is one flat colour and nothing is rooted in it' \u2014 is DEAD, and the pixels settle it: a single sightline down the aerial ground plane read 133/146/124 luminance in r4, a 22-unit random wobble with no depth direction; in r5 the same three pixels read 143/131/93, a monotonic 50-unit falloff. Across 30k grass samples the far/mid/near spread went 2.7 to 28.9, and distinct colours 261 to 3472. The fix worked and the stranger test did not move, which is the ceiling of the technique showing from the other side. The critic's three recommendations, in its order: (1) change the shot protocol \u2014 every claimed feature must be legible in a 1:1 crop at the default camera, and diff the framings, because this round's ground work never reached the street frame at all and nobody noticed; (2) take the free five points in UI legibility, which has scored 2 for four straight rounds while every round went after 3D, is the first thing a stranger sees, and is pure 2D layout with zero engine risk; (3) the real answer \u2014 an asset pipeline, glTF kits GPU-instanced in place of code-assembled primitives, the only change that moves silhouette, surface, vehicles, vegetation, furniture and zoning read together and the only one that can reach 8. Recommendation (1) is DONE \u2014 .gauntlet/capture.mjs now diffs every framing against the previous round and warns when one barely moved; run against r4 it independently reproduced the finding: aerial 48.9% changed, district 35%, street 4%."
   }
 ]

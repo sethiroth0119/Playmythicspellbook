@@ -27,7 +27,11 @@ const browser=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1
  env:Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^(HTTPS?_PROXY|https?_proxy|ALL_PROXY|all_proxy)$/.test(k)))});
 const page=await browser.newPage({viewport:{width:1600,height:900},deviceScaleFactor:1,ignoreHTTPSErrors:true});
 await page.route('**/*',r=>{const u=r.request().url();
- (u.includes('127.0.0.1')||u.includes('localhost')||u.includes('jsdelivr'))?r.continue():r.abort()});
+ /* ⚠ data: MUST be allowed. The per-framing diff hands the page two PNGs as
+    data URIs, and without this the catch-all aborted them — the diff returned
+    null and the gate silently did nothing, which is the same class of failure
+    the gate exists to catch. */
+ (u.startsWith('data:')||u.includes('127.0.0.1')||u.includes('localhost')||u.includes('jsdelivr'))?r.continue():r.abort()});
 await page.route('**/cdn.jsdelivr.net/npm/three@0.171.0/**',r=>{
  const rel=new URL(r.request().url()).pathname.replace('/npm/three@0.171.0/','');
  const f=path.join(THREE_,rel);
@@ -237,8 +241,80 @@ const onFilm=await page.evaluate(()=>{const nc=window.__nc,{camera,THREE}=nc.thr
   return{agentsInFrame:A.length,byKind:A.reduce((a,g)=>(a[g.kind]=(a[g.kind]||0)+1,a),{}),
          parkedInFrame:P.length,
          vehiclesInFrame:A.filter(a=>a.kind!=='civilian').length+P.length}});
+/* ── 🔬 PER-FRAMING DIFF AGAINST THE PREVIOUS ROUND ────────────────────────
+   The round-5 critic's first recommendation, and it is free: "this round's
+   ground work never reached the street frame (74.8% pixel-identical to r4) and
+   NOBODY NOTICED, BECAUSE NOBODY DIFFED IT."
+
+   A round can now ship work that satisfies its commit message and never touches
+   a frame the critics score. So every capture reports, per framing, what
+   fraction of pixels differ from the same framing in --against. A framing that
+   comes back ~0% changed is not proof of nothing done — but it IS proof that
+   this framing cannot evidence it, and the round has to say so rather than let
+   a critic discover it.
+
+   Pure JPEG byte-sampling would be meaningless (recompression), so this decodes
+   both PNGs through the page that is already open — no new dependency. */
+async function diffAgainst(prevDir, tag, names) {
+  if (!prevDir || !fs.existsSync(prevDir)) return null;
+  const out = {};
+  for (const n of names) {
+    const a = path.join(outDir, `${tag}-${n}.png`);
+    const bCand = fs.readdirSync(prevDir).filter(f => f.endsWith(`-${n}.png`));
+    if (!fs.existsSync(a) || !bCand.length) { out[n] = null; continue; }
+    const b = path.join(prevDir, bCand[0]);
+    /* Served over the local HTTP the page already trusts, NOT as data: URIs.
+       The first cut passed two ~1.1 MB data URIs into page.evaluate, the load
+       failed, and a bare `catch { out[n] = null }` reported that as "no diff" —
+       a silent fallback in the very tool built to stop silent fallbacks. The
+       catch now records the reason. */
+    const ta = path.join(ROOT, '__diff_a.png'), tb = path.join(ROOT, '__diff_b.png');
+    try {
+      fs.copyFileSync(a, ta); fs.copyFileSync(b, tb);
+      out[n] = await page.evaluate(async ([ua, ub]) => {
+        const load = src => new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; });
+        const [ia, ib] = await Promise.all([load(ua), load(ub)]);
+        if (!ia || !ib) return 'ERR: image load failed';
+        if (ia.width !== ib.width || ia.height !== ib.height) return 'ERR: size mismatch';
+        const cv = document.createElement('canvas'); cv.width = ia.width; cv.height = ia.height;
+        const cx = cv.getContext('2d', { willReadFrequently: true });
+        cx.drawImage(ia, 0, 0); const A = cx.getImageData(0, 0, cv.width, cv.height).data;
+        cx.clearRect(0, 0, cv.width, cv.height);
+        cx.drawImage(ib, 0, 0); const B = cx.getImageData(0, 0, cv.width, cv.height).data;
+        let d = 0; const N = A.length / 4;
+        /* 6/255 per channel: below that is dither, not work. */
+        for (let i = 0; i < A.length; i += 4)
+          if (Math.abs(A[i]-B[i]) > 6 || Math.abs(A[i+1]-B[i+1]) > 6 || Math.abs(A[i+2]-B[i+2]) > 6) d++;
+        return +(100 * d / N).toFixed(1);
+      }, [`http://127.0.0.1:${PORT}/__diff_a.png`, `http://127.0.0.1:${PORT}/__diff_b.png`]);
+    } catch (e) { out[n] = 'ERR: ' + String(e.message || e).slice(0, 120); }
+    finally { try { fs.unlinkSync(ta); fs.unlinkSync(tb); } catch (e) {} }
+  }
+  return out;
+}
+const AGAINST = process.argv.includes('--against') ? process.argv[process.argv.indexOf('--against')+1] : null;
+const changed = await diffAgainst(AGAINST, TAG, SHOTS.map(s => s.n));
+if (changed) {
+  /* Relative, not absolute. On the round-5 build against r4 this reported
+     aerial 48.9 / district 35.0 / street 4.0 — and 4% is not "nothing changed",
+     it is "this framing did not get the round". An absolute floor would have
+     missed it; a framing that moved less than a quarter as much as the round's
+     best framing is the signal. Independently reproduces what the round-5
+     critic found by hand: the ground work never reached the street frame. */
+  const nums = Object.entries(changed).filter(([, v]) => typeof v === 'number');
+  const errs = Object.entries(changed).filter(([, v]) => typeof v === 'string');
+  const max = nums.length ? Math.max(...nums.map(([, v]) => v)) : 0;
+  const weak = nums.filter(([, v]) => max > 5 && v < max * 0.25);
+  if (errs.length) console.error(`\n⚠ DIFF FAILED for ${errs.map(([k, v]) => k + ': ' + v).join('; ')}\n`);
+  if (weak.length) console.error(
+    `\n⚠ THIS ROUND DID NOT REACH ${weak.length === 1 ? 'A FRAMING' : 'SOME FRAMINGS'}, vs ${AGAINST}:\n` +
+    nums.map(([k, v]) => `    ${k.padEnd(9)} ${String(v).padStart(5)}% changed${v < max * 0.25 ? '   <-- barely moved' : ''}`).join('\n') +
+    `\n  Say so in the round's report. A critic scoring that framing will find it,\n` +
+    `  and a round that only shows up in one camera is not the round it claims.\n`);
+}
+
 const diag=await page.evaluate(()=>{const{renderer,scene}=window.__nc.three();
   let m=0;scene.traverse(o=>{if(o.isMesh)m++});
   return{meshes:m,geoms:renderer.info.memory.geometries,tris:renderer.info.render.triangles}});
-console.log(JSON.stringify({built,box,made,diag,onFilm,logs:logs.slice(-10)},null,2));
+console.log(JSON.stringify({built,box,made,diag,changedVsPrev:changed,onFilm,logs:logs.slice(-10)},null,2));
 await browser.close(); server.close();

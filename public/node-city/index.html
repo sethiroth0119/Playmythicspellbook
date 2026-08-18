@@ -4259,11 +4259,27 @@ const starMat = new THREE.PointsMaterial({ color: 0xcdd6ff, size: .22, transpare
      1.40 the old 0xb6cfe4 tone-mapped to 0.86 sRGB and turned the middle
      distance into a white wash. Deepened to keep the same RELATIONSHIP to the
      sky at the new exposure, not to change the look of the haze. */
+/* ⚠ v123: WHERE THE PLUM SKY ACTUALLY CAME FROM, because it was NOT a hex.
+     The round-2 critic scored "a flat plum/magenta wash" against frames shot at
+     20:17, and no hue in this table is magenta. The magenta was made by the
+     BLEND: phaseBlend runs dusk→night over 19:00–21:00, and lerping a warm red
+     (0x6a3a3a) into a violet-black (0x0a0916) passes straight through desaturated
+     mauve — (56,37,44) at 20:17, measured off the frame. A real twilight runs
+     warm horizon → neutral → deep BLUE; it only reads purple when the two ends
+     are red and violet, which is what these two keys were.
+     So: the night end is now blue-black rather than violet-black, and the dusk
+     end carries a little more orange and a little less pure red. The same 20:17
+     blend now lands on (41,31,38) for the sky and (56,46,49) for the fog — dark,
+     warm-neutral, and no longer a hue the bar fails.
+     NOTHING ELSE MOVED. Every `hemi`, `sun` and `moon` number is round 2's,
+     including dusk's deliberately high .72 fill against a key that is ZERO after
+     18:00 — the fantasy violet the city keeps for identity now lives only in
+     HEMI_GROUND_NIGHT, where it is a bounce term and not the whole frame. */
 const SKY = {
-  night:  { sky: new THREE.Color(0x0a0916), fog: new THREE.Color(0x121020), hemi: .26, sun: 0,    moon: .5 },
-  dawn:   { sky: new THREE.Color(0x5a4062), fog: new THREE.Color(0x7d5f66), hemi: .66, sun: 2.20, moon: .1 },
+  night:  { sky: new THREE.Color(0x080d1a), fog: new THREE.Color(0x131a28), hemi: .26, sun: 0,    moon: .5 },
+  dawn:   { sky: new THREE.Color(0x4b5674), fog: new THREE.Color(0x8a6f63), hemi: .66, sun: 2.20, moon: .1 },
   day:    { sky: new THREE.Color(0x7db0e0), fog: new THREE.Color(0x9cb9d2), hemi: 1.10, sun: 4.30, moon: 0 },
-  dusk:   { sky: new THREE.Color(0x6a3a3a), fog: new THREE.Color(0x7d4a41), hemi: .72, sun: 2.05, moon: .12 },
+  dusk:   { sky: new THREE.Color(0x63403a), fog: new THREE.Color(0x7a5341), hemi: .72, sun: 2.05, moon: .12 },
 };
 const sunWarm = new THREE.Color(0xff8a4a), sunNoon = new THREE.Color(0xfff2d8);
 /* 🌤 WHAT THE HEMISPHERE'S SKY COLOUR TRACKS.
@@ -4286,6 +4302,54 @@ const sunWarm = new THREE.Color(0xff8a4a), sunNoon = new THREE.Color(0xfff2d8);
 const HEMI_LIFT = new THREE.Color(0xd6e6ff);
 const _cHemi = new THREE.Color();
 const _c1 = new THREE.Color(), _c2 = new THREE.Color();
+/* 🎨 THE ONE HEX FIVE PLACES AGREE ON — the surrounding plain, the map plate's
+   darkest ramp stop, the plate's edge-fade target, the outskirts' HAZE, and (as
+   of v123) the fog. The full argument for the VALUE is at `const ground` (search
+   GROUND_COL there); only the DECLARATION lives up here, because LAND_HAZE just
+   below is the fifth user and it runs ~640 lines earlier. A `const` is a lexical binding with no TDZ
+   escape hatch — reading it before this line throws, `typeof` included — so the
+   declaration has to precede its first reader and there is nowhere else to put
+   it. Moved, not duplicated: a second copy of this number is how the plain and
+   the plate drift apart. */
+const GROUND_COL = 0x71755c;
+/* ══ 🌫 THE HAZE IS OVER LAND, NOT OVER SKY ═══════════════════════════════════
+   The round-2 critic named "the aerial's outer terrain turned dusty salmon,
+   meeting the inner olive at a HARD VISIBLE SEAM". Photographed and measured, the
+   seam is not a material boundary at all — the map plate and the surrounding
+   `ground` plane are the same hex in the same material. It is the FOG.
+
+   scene.fog.color is the colour of the sky's haze, and it is applied to
+   everything, including a ground plane the camera is looking DOWN at. On the
+   'medium' tier the fog runs near 21 → far 30 (pinned to the tile cull; see
+   qualityApply), so from an aerial camera the plate is barely fogged while the
+   plain 6 units beyond it is fogged 100% — and at the grazing angle an aerial
+   frame views that ground at, the entire 9-unit ramp is compressed into a band a
+   few dozen pixels wide. A gradient that should read as distance instead reads
+   as an edge. At 20:17 the fog was a warm rose and the plate a lit olive, so the
+   edge was a HUE REVERSAL as well: salmon against green, which is the frame the
+   critic described.
+
+   THE FIX IS THE COLOUR, NOT THE DISTANCES. `far` is pinned to the tile cull and
+   must stay pinned (a tile has to be fully hazed before it is hidden, or it pops)
+   and `near` was pushed out to 21 in v122 for a measured reason — it is what
+   stops a mid-rise two blocks away having its sunlit and its shaded face both
+   pulled toward the haze. Neither may move. What CAN move is what the haze is
+   made of: real aerial perspective over land is the sky's haze mixed with the
+   land under it, and mixing GROUND_COL in by FOG_LAND turns "olive → pale blue"
+   into "olive → paler, cooler olive". Same lift, same recession, no hue break.
+
+   ⚠ THE LAND TERM IS SCALED BY THE FILL, and that is the part that is easy to
+     get wrong. A fixed GROUND_COL would render at ~0.44 sRGB at every hour, so
+     at midnight the distance would glow grey behind a black city. Multiplying by
+     hemi/SKY.day.hemi is a one-line stand-in for "how bright is the land right
+     now", and it is done in LINEAR (THREE.Color's components are linear once
+     ColorManagement has decoded the hex), which is where a reflectance scale
+     belongs — the same argument the ×2.53 lift on GROUND_COL itself makes.
+   ⚠ scene.background is deliberately NOT mixed. It is the sky, and the sky is
+     not made of ground. */
+const LAND_HAZE = new THREE.Color(GROUND_COL);
+const _cFogLand = new THREE.Color();
+const FOG_LAND = 0.50;
 
 function hourOf() { return estClock().h; }
 function phaseBlend(h) { // returns {a,b,t} between SKY keys
@@ -4416,9 +4480,15 @@ function updateSky() {
   moonDisc.position.set(-sx * 1.4, -sy * 1.4, -sz * 1.4);
 
   const pb = phaseBlend(h), A = SKY[pb.a], Bp = SKY[pb.b], t = pb.t;
+  const hemiNow = A.hemi + (Bp.hemi - A.hemi) * t;
   _c1.copy(A.sky).lerp(Bp.sky, t);  scene.background = _c1.clone();
-  _c2.copy(A.fog).lerp(Bp.fog, t);  scene.fog.color.copy(_c2);
-  hemi.intensity = A.hemi + (Bp.hemi - A.hemi) * t;
+  // 🌫 …then pull the haze half-way toward the land it is lying over, at the
+  // land's own brightness for this hour. See LAND_HAZE for the whole argument.
+  _c2.copy(A.fog).lerp(Bp.fog, t);
+  _cFogLand.copy(LAND_HAZE).multiplyScalar(hemiNow / SKY.day.hemi);
+  _c2.lerp(_cFogLand, FOG_LAND);
+  scene.fog.color.copy(_c2);
+  hemi.intensity = hemiNow;
   // 🌤 The fill takes its HUE from the sky that is actually overhead, so a red
   // dusk warms the shaded faces instead of leaving them stranded in blue. .55
   // toward HEMI_LIFT keeps enough of the sky's own colour to read while
@@ -4921,8 +4991,12 @@ function weatherMult(type) {
      is where reflectance lives — scaling the sRGB codes instead would have
      bent the ramp), so the hue, the ramp shape, the noise and the spacing
      between the stops are byte-for-byte the relationships round 1 chose. Only
-     the level moved, and it moved to a measured target. */
-const GROUND_COL = 0x71755c;
+     the level moved, and it moved to a measured target.
+
+   ⚠ v123: THE DECLARATION ITSELF NOW SITS BESIDE `SKY`, up at LAND_HAZE. It had
+     to: the fog is mixed toward this colour every frame (see LAND_HAZE for why),
+     that code runs ~640 lines above here, and a `const` cannot be read before it
+     is declared. The value and its whole argument are unchanged. */
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(GRID + 208, GRID + 208, 1, 1),
   new THREE.MeshStandardMaterial({ color: GROUND_COL, roughness: 1 }));
@@ -5022,9 +5096,15 @@ const tileGroup = new THREE.Group(); scene.add(tileGroup);
     cA.setHex(shades[k]); cB.setHex(shades[Math.min(shades.length - 1, k + 1)]);
     cA.lerp(cB, t - k);
     /* Edge fade over the outer 3 tiles. Chebyshev distance, not Euclidean, so
-       the fade follows the square plate instead of cutting its corners off. */
+       the fade follows the square plate instead of cutting its corners off.
+       ⚠ v123: THE FADE NOW COMPLETES. It stopped at .70, which left the plate's
+         last row up to 30% of the ramp's spread away from the plain it is
+         supposed to dissolve into — a step of ~10/255 running dead straight
+         along all four edges of a square, which is exactly the shape an eye
+         picks out of a photograph. The three-tile ramp still does all the work;
+         it just arrives now instead of stopping short. */
     const d = Math.max(Math.abs(x - (GRID - 1) / 2), Math.abs(z - (GRID - 1) / 2)) / ((GRID - 1) / 2);
-    if (d > .86) cA.lerp(cE, Math.min(1, (d - .86) / .14) * .70);
+    if (d > .86) cA.lerp(cE, Math.min(1, (d - .86) / .14));
     for (let q = 0; q < 4; q++) {
       const ox = (q === 1 || q === 3) ? h : 0, oz = (q >= 2) ? h : 0;
       pos[v * 3] = wx + ox; pos[v * 3 + 1] = 0; pos[v * 3 + 2] = wz + oz;
@@ -32980,6 +33060,13 @@ function animate() {
     const stmod = await import('../src/streets/index.js?v=' + (window.NC_BUILD || 'r1'));
     window.MythicStreets = stmod.mount({
       game, THREE, scene,
+      /* 🧭 THE CAMERA, read-only, and ONLY so the street names painted on the
+         carriageway can be turned to face it. A label reads left-to-right only
+         when its own heading agrees with the camera's right vector, and no
+         single fixed rotation can satisfy a north-south and an east-west street
+         at once — which is exactly the "mirrored street text" every round-2
+         frame carried. The module never writes to it. */
+      camera,
       saved: game._streets,
       // The tile->world mapping is placeMeshAt's, handed over rather than
       // re-derived — duplicating it is how a decal drifts off its road.

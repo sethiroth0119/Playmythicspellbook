@@ -23,7 +23,43 @@
 
    ⚠ THIS FILE OWNS NO GEOMETRY IT DOES NOT FREE. index.html's whole memory
      story (dropTileMesh / disposeOwnedGeo) is that whoever mints a buffer frees
-     it. clear() below disposes geometry, material AND the canvas texture.      */
+     it. clear() below disposes geometry, material AND the canvas texture.
+
+   ── 🔴 WHAT THE ROUND-2 CRITIC SAW, AND WHY ────────────────────────────────
+   Every frame of round 2 carried "giant MIRRORED street-name text" lying across
+   the roads, and it was named as the second thing that gave the game away.
+   Photographed, measured and fixed here; both halves are worth writing down
+   because both were wrong for a reason that looks right on paper.
+
+   1. IT WAS NEVER MIRRORED — IT WAS 180° OUT, on north-south streets only.
+      Rotating the round-2 aerial by 180° makes "East Temperance Parkway" read
+      perfectly, and mirroring it does not. The plane's normal was always up and
+      the transform always right-handed, so a flip was impossible; the label
+      simply pointed its reading direction AWAY from the camera's right. An
+      east-west street at rotation.z = 0 runs its text along world +X, which the
+      default aerial (looking from +X+Z toward the origin) sees left-to-right; a
+      north-south street at rotation.z = -90° runs it along world +Z, which that
+      same camera sees right-to-LEFT. One convention, two opposite results.
+      So the reading direction is no longer a constant at all: `orient()` is
+      handed the camera's right vector and flips any label whose direction
+      disagrees with it, which also means the paint stays readable when the
+      player orbits. A flip is `rotation.z += PI` — the normal stays up, so the
+      plane never turns away and vanishes.
+
+   2. IT WAS TWICE THE SIZE OF ROAD PAINT. LABEL_HALF_W was 0.17 against a
+      carriageway half-width of RD_HW = 0.20, i.e. the glyph band covered 85% of
+      the road and cap heights ran to ~38% of it. A MUTCD road legend is about a
+      third of a two-lane carriageway. The constant moved to 0.11 (see
+      tuning.js) and the type went from a Georgia serif with a heavy black halo
+      — which is signwriting, not paint — to a bold condensed sans with a thin
+      low-alpha edge, at worn-white rather than full white.
+
+   3. IT GLOWED. MeshBasicMaterial + toneMapped:false means paint that is the
+      same brightness at midnight as at noon, which is why the dusk frame had
+      four white billboards on an otherwise dark map. It is a MeshLambert now:
+      two triangles per street, lit by the sun and the fill like everything else
+      it sits next to, so the name dims at night and warms at dusk. That is one
+      extra shader program for the whole feature and no extra draw calls.       */
 
 import { STREET } from './tuning.js';
 
@@ -36,6 +72,10 @@ export function createLabels(ctx) {
 
   let enabled = true;
   let sig = '';
+  /* The camera's right vector in world XZ, as last handed to orient(). Kept so a
+     REBUILD lands already facing the right way — otherwise every new plane would
+     be born at its base rotation and snap round on the next orient tick. */
+  let rightX = 1, rightZ = 0;
 
   /* ⚠ THE CANVAS IS SIZED TO THE TEXT, AND THE PLANE IS SIZED TO THE CANVAS.
      The first cut did the opposite — a fixed 1024x64 texture stretched across
@@ -48,7 +88,10 @@ export function createLabels(ctx) {
   function makeTexture(text) {
     const h = STREET.LABEL_TEX_H;
     const size = Math.round(h * 0.62);
-    const font = '600 ' + size + 'px Georgia, "Times New Roman", serif';
+    /* Road paint is a bold condensed sans, never a book serif. Georgia's
+       brackets and thin strokes are what made this read as a lettered sign
+       lying on the tarmac rather than as something rolled on with a stencil. */
+    const font = '700 ' + size + 'px "Arial Narrow", "Helvetica Neue", Helvetica, Arial, sans-serif';
     const cvs = document.createElement('canvas');
     let g = cvs.getContext('2d');
     if (!g) return null;
@@ -63,13 +106,17 @@ export function createLabels(ctx) {
     g.clearRect(0, 0, w, h);
     g.font = font;
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    /* Painted road markings are worn white with a dark halo so the text holds
-       up against both fresh asphalt and the wet-look night grade. */
-    g.lineWidth = Math.max(2, size * 0.16);
-    g.strokeStyle = 'rgba(8,7,14,.85)';
+    /* WORN WHITE, AND ONLY AS MUCH DARK EDGE AS ANTI-ALIASING NEEDS. The old
+       0.16-em black halo at 85% alpha is a drop shadow: it detached the letters
+       from the surface and gave every name the outline of a logo. Real markings
+       have no halo at all — they are paint that has been driven over. The thin
+       0.05-em edge that is left exists so the glyphs do not dissolve where the
+       label crosses the pale concrete of a crossing. */
+    g.lineWidth = Math.max(1, size * 0.05);
+    g.strokeStyle = 'rgba(14,13,18,.38)';
     g.lineJoin = 'round';
     g.strokeText(text, w / 2, h / 2 + 1);
-    g.fillStyle = 'rgba(238,233,222,.94)';
+    g.fillStyle = 'rgba(228,224,210,.80)';
     g.fillText(text, w / 2, h / 2 + 1);
     const tex = new THREE.CanvasTexture(cvs);
     tex.anisotropy = 4;
@@ -136,8 +183,14 @@ export function createLabels(ctx) {
       let pw = ph * made2.aspect;                // along the street
       if (pw > spanTiles) { const f = spanTiles / pw; pw = spanTiles; ph *= f; }
       const geo = new THREE.PlaneGeometry(pw, ph);
-      const mat = new THREE.MeshBasicMaterial({
-        map: tex, transparent: true, depthWrite: false, toneMapped: false,
+      /* ⚠ LAMBERT, NOT BASIC. See point 3 in the header: an unlit material with
+         toneMapped:false is paint that does not know what time it is, and the
+         dusk frame proved it. Lambert costs one program for the whole feature,
+         no extra draw call, and no shadow-map work (both flags below stay off:
+         a decal that casts is wrong, and a decal that receives would add a
+         second program variant for a surface 3 cm above lit tarmac). */
+      const mat = new THREE.MeshLambertMaterial({
+        map: tex, transparent: true, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
       });
       const mesh = new THREE.Mesh(geo, mat);
@@ -149,15 +202,55 @@ export function createLabels(ctx) {
       // the first time that mapping changes, so it is read from ctx.
       const mid = ctx.worldOf(seat.x, seat.z);
       mesh.position.set(mid.x, STREET.LABEL_Y, mid.z);
-      /* rotation.x = -90 lays the plane flat with its +X along world +X (an
-         east-west street). rotation.z = -90 on top of that maps local +X to
-         world +Z for a north-south street — worked out from THREE's XYZ Euler
-         order, not guessed: R = Rx * Ry * Rz, so the Z turn happens first. */
-      mesh.rotation.set(-Math.PI / 2, 0, st.axis === 'x' ? 0 : -Math.PI / 2);
+      /* rotation.x = -90 lays the plane flat. `rz` then turns it in that plane:
+         0 runs the text along world +X (an east-west street), -90 along world
+         +Z (a north-south one). Worked out from THREE's XYZ Euler order, not
+         guessed: R = Rx * Ry * Rz, so the Z turn happens first, and under
+         Rx(-90)*Rz(rz) the plane's normal lands on world +Y for EVERY rz — which
+         is what makes the +PI flip in orient() safe. */
+      const rz = st.axis === 'x' ? 0 : -Math.PI / 2;
+      mesh.rotation.set(-Math.PI / 2, 0, rz);
+      /* The reading direction this label would have at `rz`, in world XZ. Cached
+         rather than re-derived because orient() runs on a timer and must not do
+         trigonometry per label per tick. */
+      mesh.userData.rz = rz;
+      mesh.userData.dx = st.axis === 'x' ? 1 : 0;
+      mesh.userData.dz = st.axis === 'x' ? 0 : 1;
+      mesh.userData.flip = false;
       group.add(mesh);
       made++;
     }
+    /* Face the camera we already know about, so a rebuild never shows one frame
+       of back-to-front paint. */
+    orient(rightX, rightZ);
     return made;
+  }
+
+  /* ── 🧭 WHICH WAY THE PAINT READS ──────────────────────────────────────────
+     Handed the CAMERA's right vector projected onto world XZ. A label reads
+     left-to-right exactly when its own direction agrees with that vector, so the
+     test is one dot product and the fix is half a turn about the plane's normal.
+     Both directions of a street are equally "correct" road paint — a real legend
+     reads for the traffic it faces — so this is not correcting a bug every tick,
+     it is choosing the one of two legal orientations the viewer can read.
+     ⚠ It writes NOTHING when nothing changed. The common case (camera still, or
+       orbiting within a quadrant) is `made` dot products and zero matrix
+       updates; only a label that actually has to turn touches rotation. */
+  function orient(rx, rz) {
+    const m = Math.hypot(rx || 0, rz || 0);
+    if (!(m > 1e-6)) return 0;            // a straight-down camera has no XZ right
+    rightX = rx / m; rightZ = rz / m;
+    let turned = 0;
+    for (const mesh of group.children) {
+      const u = mesh.userData;
+      if (u.rz === undefined) continue;
+      const want = (u.dx * rightX + u.dz * rightZ) < 0;
+      if (want === u.flip) continue;
+      u.flip = want;
+      mesh.rotation.z = u.rz + (want ? Math.PI : 0);
+      turned++;
+    }
+    return turned;
   }
 
   return {
@@ -171,6 +264,7 @@ export function createLabels(ctx) {
       build(streets, nameOf);
       return true;
     },
+    orient,
     setEnabled(on) {
       enabled = !!on;
       if (!enabled) { clear(); sig = '__off__'; }

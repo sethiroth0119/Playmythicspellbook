@@ -58,13 +58,14 @@ export function mount(ctx) {
   catch (e) {
     console.warn('[streets] world labels unavailable (non-fatal):', e);
     labels = { sync: () => false, setEnabled: () => false, isEnabled: () => false,
-               count: () => 0, dispose: () => {} };
+               orient: () => 0, count: () => 0, dispose: () => {} };
   }
   const names = new Map();          // "x@5,5" -> "Maple Avenue"
 
   let graph = null;                 // { streets, primary }
   let lastSig = '';
   let sinceScan = 1e9;
+  let sinceOrient = 1e9;            // 🏷 label re-facing timer, see orientLabels()
   let nameEpoch = 0;                // bumped on any rename, forces a label rebuild
   let autoSalt = 0;
   let uiTab = 'ov';
@@ -366,13 +367,37 @@ export function mount(ctx) {
     } catch (e) { /* a corrupt blob costs names and history, never the city */ }
   }
 
+  /* 🧭 KEEP THE ROAD PAINT THE RIGHT WAY UP AS THE PLAYER ORBITS.
+     A street label reads correctly only when its own direction agrees with the
+     camera's right vector; a north-south street and an east-west street cannot
+     both agree with the same camera, which is the whole of the round-2
+     "mirrored street text" artefact (labels.js has the full account). So the
+     orientation is a function of the CAMERA, not a constant, and it is refreshed
+     here rather than in the render loop.
+     ⚠ ctx.camera IS OPTIONAL, and that is deliberate: a host that never handed
+       one over gets labels at their build-time orientation and everything else
+       in this module works exactly as before. Reaching for a bare global camera
+       instead is the trap CLAUDE.md opens with. */
+  function orientLabels() {
+    const cam = ctx.camera;
+    if (!cam || !cam.matrixWorld) return;
+    /* Column 0 of a Matrix4 IS the right vector, and THREE stores column-major:
+       elements[0], [1], [2] are its x, y, z. Projected onto the ground plane by
+       simply dropping y — the labels are flat, so only the XZ heading matters. */
+    const e = cam.matrixWorld.elements;
+    try { labels.orient(e[0], e[2]); } catch (err) { /* decoration, never fatal */ }
+  }
+
   /* ── the per-frame half ─────────────────────────────────────────────────
      Two calls from agentTick and nothing else. `tick` is the observed-time
      clock and the rescan timer; `countPass` is the meter's hot path. */
   function tick(dt) {
     meter.tick(dt);
-    sinceScan += (+dt || 0) * 1000;
+    const ms = (+dt || 0) * 1000;
+    sinceScan += ms;
     if (sinceScan >= STREET.RESCAN_MS) { sinceScan = 0; scan(false); }
+    sinceOrient += ms;
+    if (sinceOrient >= STREET.LABEL_ORIENT_MS) { sinceOrient = 0; orientLabels(); }
   }
 
   const API = {
@@ -392,6 +417,10 @@ export function mount(ctx) {
                          labels.sync(lastSig + '|' + nameEpoch, g.streets, s => nameOf(s), true);
                          dirty = true; return v; },
     labelCount: () => labels.count(),
+    /* Re-face the paint NOW rather than on the next tick — the harness moves the
+       camera by hand and never runs a frame loop, so without this the shot is
+       taken at whatever orientation the last build chose. */
+    orientLabels,
     rescan: () => scan(true),
     isDirty: () => dirty,
     /* 🕰 WHICH CLOCK THE RING IS ON, in one call. The last build bucketed on EST

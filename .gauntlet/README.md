@@ -39,6 +39,19 @@ traffic**: compressing the clock n-fold means the city genuinely carries n
 times fewer vehicles per city hour, so volumes read low and a `--ff` capture is
 not a reference for how busy a street is.
 
+**`lotcheck.mjs`** — the LOT GATE, added round 10. Asserts three things about
+the residential parcel against the real scene graph: that no plot's geometry
+crosses its own tile line in X, that every garden plot actually got a driveway,
+and what housing costs in triangles and meshes. It exists because round 9
+shipped a semi whose eaves overhung the neighbour by 5mm and whose driveway the
+code was correctly refusing to build — neither visible in any capture, both a
+one-line number here. Run it after anything that touches `makeHousing`.
+
+**`lumscan.mjs`** — prints one row of a capture as RGB + luminance. The round-9
+critic's own instrument: they answered "I can see the boundary at 4x" with "it
+is 1-2 px wide and ~15 units of separation from what it is meant to separate",
+and that is the form an answer has to take. A 4x crop is not evidence.
+
 **`check-streets-clock.mjs`** — `traffic.js` in node, no browser. It takes a
 ctx and a clock and touches no DOM, so the bucket boundaries, a full lap of the
 24-bucket ring, the save format and the migration cases run in a second instead

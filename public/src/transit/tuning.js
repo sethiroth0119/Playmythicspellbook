@@ -113,6 +113,50 @@ export const TRANSIT_ECON = {
      that already draws ~1,700. */
   overlay: { y: 0.055, width: 0.085, maxSegments: 260 },
 
+  /* 🚶 JOB ACCESS — THE ONE PLACE TRANSIT REACHES THE CITIZEN SIMULATION.
+     ────────────────────────────────────────────────────────────────────────
+     🔴 READ THIS BEFORE CHANGING EITHER NUMBER. Until this block existed the
+     whole feature was DECORATION at citizen level, and that was MEASURED, not
+     suspected: the same city run 400 city-minutes with a six-stop bus line and
+     then again with the line deleted (.gauntlet/drive-transit-effect.js,
+     Math.random re-seeded identically for both arms) came back with employment,
+     vacancies, unemployment, labour force, firm count, satisfaction, coverage,
+     vitals, demographic attractiveness and net migration IDENTICAL TO THE
+     DIGIT. The only things that moved were the car mesh count (8 → 5), the
+     ridership readout and the Cinder bill. A network you pay for that changes
+     nothing about the people is a paint job.
+
+     So: A JOB NOBODY CAN GET TO GOES UNFILLED. `routes.jobAccess()` scores the
+     city's jobs, crew-weighted, into three buckets and /src/demographics scales
+     the labour ladder it hands `households.hire()` by the result:
+
+       WALKABLE   a job within `walkRadius` of housing. Always staffable, and
+                  it is the SAME radius a stop's catchment uses — one distance
+                  for "a citizen will cross this much city on foot", stated
+                  once, so a compact city is unaffected by any of this forever.
+       DRIVEABLE  of what is left, `carAccess` is reachable by private car. The
+                  cars are already in the sim (`desiredAgentCounts().car`), so
+                  this is not an invention — it is the mode the city already has.
+       STRANDED   the rest. A transit line that reaches BOTH ends of the commute
+                  recovers them, in proportion to the mode share it actually
+                  carries — which means seats and running vehicles, not stops.
+
+     ⚠ THE WORST CASE IS BOUNDED AND THAT IS DELIBERATE. With every job out of
+       walking range and no transit, hiring is capped at `carAccess` — a 15%
+       haircut, not a dead city. An employment gate that can reach zero would
+       let one badly-placed industrial estate starve a working city, and this
+       feature is not allowed to be that important.
+     ⚠ AND THE FLOOR IS NEVER LOWERED BY BUILDING A BUS. `access` is monotonic
+       in mode share: running a line can only ever raise it. Deleting one puts
+       the city back exactly where it was, never below.
+     ⚠ 0.85 IS A STATED ASSUMPTION, NOT A MEASUREMENT. It says "roughly one
+       commuter in seven cannot drive to a job on the far side of town" — the
+       carless, the ones the road network does not actually join up. It is the
+       one number in this block a retune should touch. */
+  commute: {
+    carAccess: 0.85,
+  },
+
   /* 🧍 COMMUTE BIASING. When a line is running, this fraction of the mode share
      is expressed as pedestrians actually walking to and from stops rather than
      to and from arbitrary roads — which is the visible half of "the NPCs use

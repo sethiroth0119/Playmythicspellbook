@@ -52,6 +52,13 @@ export function init(ctx) {
 
 /* ── small helpers ───────────────────────────────────────────────────────── */
 const K = (x, z) => x + ',' + z;
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+/* 🚶 The job-access cache. Declared UP HERE with the rest of the module state
+   rather than beside jobAccess(), because `removeLine` and `toggleStop` — both
+   several hundred lines above it — clear it, and a `let` read from above its
+   own declaration is a temporal-dead-zone throw waiting for the first hand to
+   reorder this file. */
+let _access = null, _accessAt = 0;
 const XZ = (k) => { const p = String(k).split(','); return [p[0] | 0, p[1] | 0]; };
 export const modeOf = (line) => ECON.modes[(line && line.mode) || 'bus'] || ECON.modes.bus;
 export const byId = (id) => state.lines.find(l => l && l.id === id) || null;
@@ -85,7 +92,7 @@ export function removeLine(id) {
   if (i < 0) return false;
   const [gone] = state.lines.splice(i, 1);
   despawnFor(gone.id);
-  state._dirty = true;
+  state._dirty = true; _accessAt = 0;
   return true;
 }
 
@@ -109,6 +116,7 @@ export function toggleStop(lineId, k) {
   const L = byId(lineId); if (!L) return 'no-line';
   if (!isStopFor(k, L.mode)) return 'wrong-type';
   const i = L.stops.indexOf(k);
+  _accessAt = 0;
   if (i >= 0) { L.stops.splice(i, 1); state._dirty = true; return 'removed'; }
   L.stops.push(k); state._dirty = true; return 'added';
 }
@@ -268,6 +276,65 @@ export function recompute(force) {
   }
   state.report = { lines, riders, modeShare: pop > 0 ? Math.min(ECON.maxModeShare, riders / (pop * ECON.tripsPerCitizen)) : 0, at: now };
   return state.report;
+}
+
+/* ── 🚶 JOB ACCESS — THE ONE THING THIS MODULE DOES TO THE CITIZEN SIM ────
+   Read TRANSIT_ECON.commute in tuning.js first; the WHY, and the measurement
+   that forced it, are written out there.
+
+   Scores every job in the city, crew-weighted, into walkable / driveable /
+   stranded, and answers ONE number: `access`, the share of the city's jobs its
+   residents can actually turn up to. /src/demographics multiplies the labour
+   ladder it hands `households.hire()` by it, so a stranded job goes unfilled
+   even with idle residents standing about — which is the whole point.
+
+   🔴 MONOTONIC IN MODE SHARE, BY CONSTRUCTION. `access` rises with `served` and
+      nothing else in it moves, so building a line can only ever raise it and
+      deleting one puts the city back exactly where it started. An employment
+      gate that could be made WORSE by transit would be a trap rather than a
+      feature, and this is the line that stops it being one.
+   ⚠ IT IS A CITY AGGREGATE, NOT A PER-JOB ANSWER. `served` is the network's
+     mode share, applied to the stranded pool as a whole — the model does not
+     ask whether THIS line reaches THAT particular estate. Said plainly here
+     rather than implied by the code, because the ridership model above makes
+     the same admission and for the same reason.
+   ⚠ AND IT COSTS A FULL TILE SWEEP, so it rides the same throttle the
+     ridership report does. `hire()` runs on the economy beat — once a second
+     in the live loop — and an unthrottled sweep of a 576-tile city there would
+     be the most expensive thing in the tick. */
+export function jobAccess(force) {
+  const now = C.now();
+  if (!force && _access && now - _accessAt < 1500) return _access;
+  const W = cityWeights();
+  const car = clamp01(+ECON.commute.carAccess);
+  if (!(W.workTotal > 0)) {
+    /* No jobs is not "no access" — it is no question. Answering 1 keeps a city
+       with nothing built behaving exactly as it did before this existed. */
+    _access = { walk: 1, car, served: 0, access: 1, jobs: 0, walkable: 0, stranded: 0 };
+    _accessAt = now; return _access;
+  }
+  /* Dilate the HOUSING map by walkRadius and ask which jobs fall inside it.
+     Dilating the homes rather than testing each job against every home is what
+     keeps this O(homes·R²+jobs) instead of O(homes·jobs). */
+  const R = ECON.walkRadius, covered = new Set();
+  for (const k in W.home) {
+    const [x, z] = XZ(k);
+    for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) covered.add(K(x + dx, z + dz));
+  }
+  let walkJobs = 0;
+  for (const k in W.work) if (covered.has(k)) walkJobs += W.work[k];
+  const walk = clamp01(walkJobs / W.workTotal);
+  /* ⚠ FORCE PROPAGATES. `recompute()` has its own 1.5 s throttle, and a forced
+     jobAccess() that read a stale report answered with the mode share of a line
+     the player had ALREADY DELETED — caught by the "deleting the line puts the
+     city back exactly where it was" probe in verify-transit-access.js, which is
+     the only thing in this feature that could have caught it. */
+  const served = clamp01(recompute(force).modeShare);
+  const access = clamp01(walk + (1 - walk) * (car + (1 - car) * served));
+  _access = { walk, car, served, access, jobs: W.workTotal, walkable: walkJobs,
+              stranded: W.workTotal - walkJobs };
+  _accessAt = now;
+  return _access;
 }
 
 /* What the network is standing on, for upkeep. Counted from the CITY, not from
@@ -454,7 +521,10 @@ export function rebuildOverlay() {
   }
 }
 export function setShow(on) { state.show = !!on; state._dirty = true; rebuildOverlay(); }
-export const markDirty = () => { state._dirty = true; };
+/* 🚶 …and it drops the JOB-ACCESS cache too. The network changing is exactly
+   when the commute answer stops being true, and a 1.5 s stale reading of it is
+   a stale reading of somebody's employment. */
+export const markDirty = () => { state._dirty = true; _accessAt = 0; };
 
 /* ── the effect on the simulation ────────────────────────────────────────
    Two wires, and they are the honest half of "the NPCs use it":
@@ -518,7 +588,7 @@ export function save() {
   };
 }
 export function load(raw) {
-  state.lines = []; state.seq = 0; state.show = true; state.owed = 0;
+  state.lines = []; state.seq = 0; state.show = true; state.owed = 0; _accessAt = 0;
   if (!raw || typeof raw !== 'object') { state._dirty = true; return; }
   if (typeof raw.show === 'boolean') state.show = raw.show;
   const seen = new Set();

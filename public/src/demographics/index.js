@@ -72,6 +72,36 @@ function eco() {
   try { return (typeof window !== 'undefined' && window.MythicEconomy) || null; } catch (e) { return null; }
 }
 
+/* ── 🚶 CAN THEY ACTUALLY GET THERE? ────────────────────────────────────────
+   A resident who is QUALIFIED for a job and cannot reach it does not hold that
+   job, and until this existed nothing anywhere in the city modelled the second
+   half of that sentence — /src/transit was measured end to end and moved
+   employment, vacancies, unemployment, satisfaction and migration by exactly
+   ZERO (see TRANSIT_ECON.commute in /src/transit/tuning.js for the run).
+
+   /src/transit owns the geometry — it already knows every home tile, every
+   workplace tile and how much of the commute its lines carry — so it answers
+   the question and this module consumes the answer. One number, `access`: the
+   share of the city's jobs its residents can turn up to.
+
+   🔴 ABSENT ⇒ 1, AND THAT IS THE OLD CONTRACT, NOT A FALLBACK. No /src/transit
+      (404, or an older build with no `jobAccess`) means full access, which is
+      exactly how hiring behaved before this wire existed. Same shape as
+      `jobFitByEducation`'s "no posts is no information": a missing sibling
+      module must never be read as a hostile fact about the city.
+   ⚠ AND IT IS CLAMPED TO (0,1]. A provider answering 0, NaN or 1.4 would
+     respectively empty the city's payrolls, poison the ladder with NaN, or
+     invent workers — so an answer outside the range is treated as no answer. */
+function commuteAccess() {
+  try {
+    const T = (typeof window !== 'undefined' && window.MythicTransit) || null;
+    if (!T || typeof T.jobAccess !== 'function') return 1;
+    const a = T.jobAccess();
+    const v = a ? Number(a.access) : NaN;
+    return (Number.isFinite(v) && v > 0 && v <= 1) ? v : 1;
+  } catch (e) { return 1; }
+}
+
 /* ── 🔌 THE TWO PROVIDERS ───────────────────────────────────────────────────
    Registered on the economy the first time it is ready, and only then. Both are
    PULL: the economy calls them when it wants an answer, so there is no cached
@@ -89,7 +119,18 @@ function wireEconomy() {
   let any = false;
   try {
     if (typeof E.setLabourSupply === 'function') {
-      E.setLabourSupply(() => ({ bands: P.labourLadder() }));
+      /* 🎓 QUALIFIED, AND 🚶 ABLE TO GET THERE. `labourLadder()` stays PURE —
+         it is the education answer and the People panel prints it as such —
+         and the commute is applied HERE, on the way out, because `hire()`'s
+         cap means "how many residents are available to this band" and reach is
+         the other half of available. Floored, like the ladder itself, so the
+         cap stays a whole headcount. */
+      E.setLabourSupply(() => {
+        const bands = P.labourLadder();
+        const reach = commuteAccess();
+        if (reach < 1) for (const b in bands) bands[b] = Math.floor((bands[b] || 0) * reach);
+        return { bands };
+      });
       any = true;
     }
   } catch (e) {}
@@ -387,8 +428,16 @@ function report() {
     }
     const ladder = P.labourLadder();
     const bandNames = Object.keys(ECON.labor.bands);
+    /* 🚶 The commute, read fresh rather than off LAST.access: the panel can be
+       opened between hires, and a stale number in a readout that exists to
+       explain an unfilled vacancy is worse than no readout. */
+    const access = commuteAccess();
     const labourNote = bandNames.map(b => ECON.labor.bands[b].label + ' ' + Math.round(ladder[b] || 0)).join(' · ') +
-      ' — that is how many residents are QUALIFIED for each band of work, not how many hold it.';
+      ' — that is how many residents are QUALIFIED for each band of work, not how many hold it.' +
+      (access < 0.999
+        ? ' Only ' + Math.round(access * 100) + '% of the city\'s jobs are within reach of anybody, ' +
+          'so the rest go unfilled however many people are standing about — put a transit line through them.'
+        : '');
     return {
       ok: true,
       population: Math.round(pop), households: Math.round(P.households()),
@@ -412,6 +461,9 @@ function report() {
         households: archHH[a] || 0, avgSize: A.avgSize(a),
       })),
       zones, ladder, labourNote,
+      /* The commute gate, published so a driver (and the panel) can read the
+         number rather than infer it from an employment figure that moved. */
+      jobAccess: access,
       zoning: Z.zoningPresent(),
       sourceNote: Z.zoningPresent()
         ? 'Zones come from the zoning tool. Rent here is an affordability index used to decide who moves in — it never moves Cinder; the rent that does is charged inside the economy.'

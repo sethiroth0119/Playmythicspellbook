@@ -277,6 +277,23 @@ export function render() {
       '<div class="row"><span>Mode share — of ' + n1(pop) + ' citizens</span><b>' + pct(rep.modeShare) + '</b></div>' +
       '<div class="tr-meter"><i style="width:' + Math.round(Math.min(1, rep.modeShare / ECON.maxModeShare) * 100) + '%"></i></div>' +
       '<div class="row"><span>Carried</span><b>' + n1(rep.riders) + ' citizens / hr</b></div>' +
+      /* 🚶 THE CITIZEN EFFECT, stated as a number the player can watch move.
+         Everything above this line is a readout of the network; this is the one
+         row that says what the network DOES to the city. Hidden entirely when
+         every job is already walkable, because "100% → 100%" reads as a broken
+         meter rather than as a compact city. */
+      (function () {
+        const a = R.jobAccess(true);
+        if (!a || a.jobs <= 0 || a.stranded <= 0) return '';
+        const without = a.walk + (1 - a.walk) * a.car;
+        return '<div class="row"><span>👷 Jobs your citizens can get to</span><b>' + pct(a.access) + '</b></div>' +
+          '<div class="tr-meter"><i style="width:' + Math.round(a.access * 100) + '%"></i></div>' +
+          '<div class="sub" style="margin:.3rem 0 .5rem">' + Math.round(a.stranded) +
+          ' of this city\'s ' + Math.round(a.jobs) + ' jobs are further than ' + ECON.walkRadius +
+          ' tiles from any housing. Without your network ' + pct(without) + ' of the city\'s work is ' +
+          'reachable' + (a.served > 0 ? ' — the lines carry the difference' : ', and the rest goes unfilled however many residents are idle') +
+          '.</div>';
+      })() +
       '<div class="row"><span>🚏 Stops · 🚆 Stations · 🛤 Track</span><b>' +
         L.inf.busstop + ' · ' + L.inf.trainstation + ' · ' + L.inf.railtrack + '</b></div>' +
       '<div class="row"><span>Vehicles running</span><b>' + L.buses + ' buses · ' + L.trains + ' trains</b></div>' +

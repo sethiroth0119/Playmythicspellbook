@@ -25,8 +25,12 @@
       Both use node-city's own bfsPath.
    5. VEHICLES are entries in node-city's own `agents[]`, moved by its own
       `agentTick`. This module supplies only the next leg and the dwell.
-   6. IT CHANGES THE SIMULATION: a served commute is made by transit, so the
-      private cars come off the streets and the pedestrians walk to stops.
+   6. IT CHANGES THE SIMULATION, and the citizen half of that is the point:
+      a job nobody can reach goes UNFILLED, and a line that reaches both ends
+      of the commute is what makes it fillable (routes.jobAccess() →
+      /src/demographics → households.hire()). On top of that a served commute
+      is made by transit, so the private cars come off the streets and the
+      pedestrians walk to stops.
    7. UPKEEP: stops, stations, track and every running vehicle cost city Cinder
       every tick, and fares can only ever reduce that bill, never reverse it.
 
@@ -159,6 +163,12 @@ export function mount(ctx) {
     close: () => PANEL.close(),
     picking: () => PANEL.picking(),
     report: (force) => R.recompute(!!force),
+    /* 🚶 THE CITIZEN WIRE. /src/demographics reads this every time the economy
+       hires, and it is guarded on BOTH sides: a 404 on transit leaves
+       `window.MythicTransit` undefined and demographics reads full access, so
+       hiring behaves exactly as it did before this existed. See
+       TRANSIT_ECON.commute and routes.jobAccess(). */
+    jobAccess: (force) => { try { return R.jobAccess(!!force); } catch (e) { return null; } },
     ledger: () => { R.recompute(true); return R.ledger(); },
     lines: () => R.state.lines,
     newLine: (mode) => { const L = R.newLine(mode); R.markDirty(); R.rebuildOverlay(); R.manage(); return L; },

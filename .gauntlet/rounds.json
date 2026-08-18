@@ -437,5 +437,82 @@
       }
     ],
     "note": "\ud83d\udd34 THE LOOP STOPS HERE, on the critic's recommendation and its evidence, not on a budget. The named sentence from round 4 \u2014 'the ground is one flat colour and nothing is rooted in it' \u2014 is DEAD, and the pixels settle it: a single sightline down the aerial ground plane read 133/146/124 luminance in r4, a 22-unit random wobble with no depth direction; in r5 the same three pixels read 143/131/93, a monotonic 50-unit falloff. Across 30k grass samples the far/mid/near spread went 2.7 to 28.9, and distinct colours 261 to 3472. The fix worked and the stranger test did not move, which is the ceiling of the technique showing from the other side. The critic's three recommendations, in its order: (1) change the shot protocol \u2014 every claimed feature must be legible in a 1:1 crop at the default camera, and diff the framings, because this round's ground work never reached the street frame at all and nobody noticed; (2) take the free five points in UI legibility, which has scored 2 for four straight rounds while every round went after 3D, is the first thing a stranger sees, and is pure 2D layout with zero engine risk; (3) the real answer \u2014 an asset pipeline, glTF kits GPU-instanced in place of code-assembled primitives, the only change that moves silhouette, surface, vehicles, vegetation, furniture and zoning read together and the only one that can reach 8. Recommendation (1) is DONE \u2014 .gauntlet/capture.mjs now diffs every framing against the previous round and warns when one barely moved; run against r4 it independently reproduced the finding: aerial 48.9% changed, district 35%, street 4%."
+  },
+  {
+    "round": 6,
+    "headline": "The free five points were real. Fixing the UI removed the excuse, not the gap.",
+    "status": "done",
+    "meanScore": 5.08,
+    "strangerTest": "instantly",
+    "tris": 416900,
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 6
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 6
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 6
+      },
+      {
+        "dimension": "Building surface detail",
+        "score": 5
+      },
+      {
+        "dimension": "The plot",
+        "score": 3
+      },
+      {
+        "dimension": "Roads",
+        "score": 7
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 7
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 5
+      },
+      {
+        "dimension": "Citizens",
+        "score": 2
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 5
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 3
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 6
+      }
+    ],
+    "pieces": [
+      {
+        "title": "UI legibility \u2014 2 to 6",
+        "verdict": "CLOSE",
+        "summary": "Fourteen identical counters became one 44px strip: city, clock, four figures each with a per-hour RATE, seven service dots. Which four was read off the game's own model rather than taste - vitalsTick grows population only at >=90% coverage of food, water and health and sheds below 60%, so those are the stores on the bar and health is a dot. The old topbar was RE-HOMED as a popover rather than rebuilt, so updateHUD's writes and the vault delegation keep working untouched. 32 of 32 controls verified returning themselves from elementsFromPoint at two viewport sizes.",
+        "gap": "The clock was moved off the status bar into the popover, and there is still no pause/speed control - reference frame 4 has both. The 1:59:47 left visible in the rail is a battle countdown a stranger will read as the city clock."
+      },
+      {
+        "title": "The demand panel",
+        "verdict": "WINS",
+        "summary": "The critic's words: the strongest single thing built in six rounds, and on causal honesty it EXCEEDS the CS2 reference. Four arrow meters with signed causal lists, and every expanded cause prints the call it was read from - 'read from /src/economy snapshot().satisfaction'. Nothing fabricated. Taxes, Gas Station Availability and Land Value are argued ABSENT in writing, because node-city has no tax rate, no fuel retail and nothing computing land value, so a plausible bar would have been a lie."
+      },
+      {
+        "title": "Round 5's regressions",
+        "verdict": "WINS",
+        "summary": "The tree pit was never deleted - makeTree2's paved branch is byte-for-byte round 4's, and the tile lost a Math.random coin flip between two captures. Tree tiles are now seeded on the tile like makeHousing, and the ground treatment is decided by ADJACENCY: a road on any side gets the kerbed pit, open ground gets a feathered patch. Street furniture back to 7."
+      }
+    ],
+    "note": "Mean 4.67 to 5.08 and UI 2 to 6, so the round-5 critic's prediction was half-right - it called 2 to 7. The finding is what did NOT change. Stranger test is still 'instantly' for the sixth round, but WHAT lands first has moved: in round 5 the eye hit a wall of sixteen identical 410065408s and read 'someone's debug build' before it read 'city'; now the chrome is dismissed in one saccade and the first thing that registers is the junction and the row houses. In the critic's words, the read was never chrome-limited - fixing the UI did not change the answer, it only removed the excuse. Its verdict: dimension 12 was the last thing on the board fixable by writing code around the existing kit. One cheap round remains (the plot, at 3), and after that every dimension still under the bar is blocked on modelled geometry rather than on cleverness - 'you do not get from a 3-pixel stick to a citizen with a backpack and a cast shadow by writing more procedural code against primitives'. It puts the pipeline's realistic ceiling at a mean around 5.5 and a hard cap near 6 on any dimension whose 10 is modelled detail."
   }
 ]

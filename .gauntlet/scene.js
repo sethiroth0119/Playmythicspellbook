@@ -125,7 +125,7 @@
      the comparison the rubric asks for, in one frame, at the default camera.
 
      ⚠ EVERY TYPE HERE IS UNDER THE MUNICIPAL CEILING and that is why they place
-       at all: depot 1,388 s, motorpool 756 s, retail ~1,4xx s. If a later round
+       at all: depot 1,388 s, motorpool 756 s, retail 1,875 s. If a later round
        makes any of them dearer, or gives one a `gen.cinder`, it will silently
        stop appearing in every capture — check the `fails` map, not the diff. */
   for (const [t, x, z] of [

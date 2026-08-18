@@ -2799,9 +2799,11 @@ const BUILDINGS = {
      ⚠ ITS PRICE AND ITS SERVICE ARE DELIBERATELY SMALL. `svc.supply` and the
        cost together are what bldProfile() turns into a build duration, and a
        building that cannot go up under the 40-minute municipal ceiling is a
-       building a Construction-Co-less city can never place. Measured at 1,4xx s
-       against C.municipal.maxSec of 2400 — check it again if either number
-       moves. It sells goods for leisure coverage exactly as the Club does, at a
+       building a Construction-Co-less city can never place. MEASURED, through
+       __nc.build.timeFor(): 1,875 s against C.municipal.maxSec of 2400, with
+       the depot at 1,388 and the motor pool at 756. Raise the cost or the
+       supply and this building silently stops being placeable in a young city
+       — and it will stop appearing in every gauntlet capture with it. It sells goods for leisure coverage exactly as the Club does, at a
        third of the Club's supply and none of its Morale, because a parade of
        shops is convenience, not a night out. */
   retail:   { name: 'Retail Parade', ico: '🏬', cost: { cinder: 52, metal: 14, supplies: 8 }, pop: 2, crew: 1, powerNeed: 0.30,

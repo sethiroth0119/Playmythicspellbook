@@ -801,6 +801,12 @@
            entirely by /src/demographics — if that module 404s the tab still
            draws and says so, and nothing else in the card changes. -->
       <button class="hbtn" data-ecotab="people">👥 People</button>
+      <!-- 💰 THE BUDGET AND THE RATES. Rendered entirely by /src/budget, which
+           is a READER — it holds a selected row and a running reconciliation
+           and nothing else. If that module 404s both tabs still draw and say
+           so, exactly as the People tab does. -->
+      <button class="hbtn" data-ecotab="budget">💰 Budget</button>
+      <button class="hbtn" data-ecotab="taxation">🧾 Taxation</button>
       <button class="hbtn" data-ecotab="chain">📊 Supply</button>
       <button class="hbtn" data-ecotab="market">📈 Market</button>
       <button class="hbtn" data-ecotab="trade">🤝 Trade</button>
@@ -21381,6 +21387,16 @@ function renderEco() {
       return D.render();
     }));
   }
+  /* 💰 The Budget and Taxation tabs are drawn by /src/budget, so — like the
+     People tab above — they have to answer for that module being absent rather
+     than drawing an empty card. */
+  else if (ecoTab === 'budget' || ecoTab === 'taxation') {
+    h.push(ecoSection(() => {
+      const B = window.MythicBudget;
+      if (!B) return '<div class="eco-empty">The budget module has not loaded, so the city cannot open its books. Everything else works normally.</div>';
+      return ecoTab === 'budget' ? B.renderBudget() : B.renderTax();
+    }));
+  }
   else if (ecoTab === 'survey') h.push(ecoSection(() => E.renderSurvey(E.survey())));
   else if (ecoTab === 'chain') h.push(ecoSection(() => ecoChainHtml(E)));
   else if (ecoTab === 'market') h.push(ecoSection(() => ecoMarketHtml(E)));
@@ -34711,6 +34727,19 @@ function animate() {
              survives a repaint. See ecoAction() for the five it dispatches. */
           const a = ev.target.closest('[data-ecoact]');
           if (a) { ecoAction(a.dataset.ecoact, a.dataset.ecoarg); return; }
+          /* 💰 A budget row selects itself. The selection lives in the module,
+             not here, because #ecobody's innerHTML is replaced every 4 s and a
+             flag kept on this side would have to be re-applied to markup this
+             file does not build. */
+          const r = ev.target.closest('[data-budrow]');
+          if (r) {
+            try {
+              const B = window.MythicBudget;
+              if (B) { B.select(ecoTab === 'taxation' ? 'tax' : 'budget', r.dataset.budrow);
+                       renderEco._last = null; renderEco(); }
+            } catch (e) { console.warn('[budget] row select failed', e); }
+            return;
+          }
           const b = ev.target.closest('[data-ecotab]'); if (!b) return;
           ecoTab = b.dataset.ecotab;
           card.querySelectorAll('[data-ecotab]').forEach(x => x.classList.toggle('on', x === b));
@@ -34738,6 +34767,30 @@ function animate() {
       setInterval(() => { ecoSync(); ecoBindRoster(); renderEco(); }, 4000);
     }
   } catch (e) { console.warn('[city] economy module unavailable', e); }
+
+  /* ══ 💰 THE BUDGET ═══════════════════════════════════════════════════════
+     Two tabs on the economy card — where the treasury's money came from and
+     went, and what the city charges for. Rendered entirely by /src/budget.
+
+     🔴 ITS OWN try, AND AFTER THE ECONOMY'S, for the same two reasons the
+     demographics block above states: it reads window.MythicEconomy (at CALL
+     time, so a deferred or remounted economy is fine), and a throw in here must
+     not reach the economy's catch and take the whole economy card down with it.
+
+     ⚠ NOTHING IS HANDED OVER. There is no ctx object on this mount because the
+       module needs nothing from this file: it reads the economy's own public
+       snapshot and its tuning table, both of which are real `window`
+       properties. That is not an oversight — a panel that cannot reach `game`,
+       `addRes` or `saveSoon` cannot move a Cinder however wrong it is, which is
+       the only guarantee worth having about a readout of a ledger.
+     A 404 here costs the player two tabs; the tabs still draw and say so. */
+  try {
+    await import('../src/budget/index.js?v=' + (window.NC_BUILD || 'bd1'));
+    const B = window.MythicBudget;
+    if (B && B.css) {
+      const st = document.createElement('style'); st.textContent = B.css; document.head.appendChild(st);
+    }
+  } catch (e) { console.warn('[Budget] not mounted (non-fatal):', e); }
 
   /* ══ 👥 DEMOGRAPHICS ═════════════════════════════════════════════════════
      🔴 ITS OWN try, AND AFTER THE ECONOMY'S. Two reasons, and both are the

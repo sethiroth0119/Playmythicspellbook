@@ -2177,8 +2177,21 @@
   /* the backdrop's distance blur, as a fraction of H (× dpr). See the long note
      at the call site in bakeArt for why there are two terms and what each of
      them has already cost. */
-  const ART_BLUR_BASE = 0.006;
-  const ART_BLUR_DIS = 0.009;
+  /* ⚠ CUT ~2.4x ON THE OWNER'S REPEATED ASK — "the image in the background is
+     still not fix", after ART_YIELD alone visibly did nothing. THE BLUR IS THE
+     DOMINANT LEVER HERE AND THE ALPHA IS THE MINOR ONE, which is exactly what
+     the ablation table at the bakeArt call site already said: alpha and blur
+     only multiply, and no amount of alpha shows a landmark the blur has
+     dissolved. At 0.006/0.009 a 720px board at dpr 2 bakes TWENTY-ONE device
+     pixels of Gaussian onto the location — the wash in the screenshots. At
+     0.0025/0.0035 the same board gets ~8.6px: still aerial distance, still
+     enough to keep the helicopters as smudges (they are 25-30 device px, so
+     they remain inside the kernel), but the skyline now reads as a place
+     instead of as fog.
+     If countable detail ever comes back, raise these — NOT ART_YIELD, which
+     only fades the whole layer toward the sky and takes the landmarks with it. */
+  const ART_BLUR_BASE = 0.0025;
+  const ART_BLUR_DIS = 0.0035;
   /* how much of the SHARP copy is inlaid back at det 1 (see bakeArt). 1.0 —
      a landmark that the mask has positively identified gets its own edges
      back in full; everything the mask did not identify still gets the whole

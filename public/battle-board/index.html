@@ -218,7 +218,7 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v120x4';
+<script>window.BB_BUILD='v120x5';
 "use strict";
 /* 🔌 BBX — THE STAGE HOOK SEAM.
    The board page is a classic (non-module) script, so it cannot `import`.
@@ -4957,6 +4957,31 @@ function drawTomb(tb){
     ctx.restore();
   }
 }
+/* 🔆 THE SPRITE'S SHARE OF THE SCENE LIGHT — see the long note in drawUnit.
+   Feature-tested once and cached: ctx.filter silently reports 'none' where it
+   is unsupported, and a board that quietly stopped lighting its units would be
+   indistinguishable from the bug this exists to fix. */
+let _spriteFilterOk = null;
+function spriteFilterOk(){
+  if (_spriteFilterOk !== null) return _spriteFilterOk;
+  try {
+    const t = document.createElement('canvas').getContext('2d');
+    t.filter = 'brightness(1.2)';
+    _spriteFilterOk = (t.filter !== 'none' && t.filter !== '');
+  } catch (e){ _spriteFilterOk = false; }
+  return _spriteFilterOk;
+}
+function spriteFilter(){
+  /* `dark` is how little key light this preset carries: 0 in full day, ~0.94
+     at night (keyI 1.15 → 0.48). Everything below scales with it, so the lift
+     is strongest exactly where the multiply is deepest and nearly absent at
+     noon, where the art already reads. */
+  const dark = clamp(1.15 - LIGHT.keyI*0.60, 0, 1);
+  const b = 1.18 + dark*0.26;   /* 1.18 … 1.44 — the overall lift            */
+  const c = 0.92 - dark*0.07;   /* 0.92 … 0.85 — raises the BLACK point      */
+  const s = 1.08 + dark*0.10;   /* saturation, because lifting blacks greys   */
+  return 'brightness(' + b.toFixed(3) + ') contrast(' + c.toFixed(3) + ') saturate(' + s.toFixed(3) + ')';
+}
 function drawUnit(u){
   const base = gw(u.x, u.z, tileElev(u.gx,u.gz));
   const wy = base.y + u.y;
@@ -4997,35 +5022,31 @@ function drawUnit(u){
     ctx.beginPath(); ctx.rect(-k, -k*2.4, k*2, k*2.4 - Math.max(0, -u.y*k*0.92));
     ctx.clip();
   }
-  /* rim light from the sun/moon */
+  /* rim light from the sun/moon, and the sprite's own illumination */
   ctx.save();
   ctx.shadowColor = rgba(LIGHT.rim, .8); ctx.shadowBlur = k*.16;
+  /* 🔆 THE CHARACTERS READ AS DARK STICKERS. grade() (vista.js) ends on a
+     full-viewport 'multiply' that lands on everything painted before it, units
+     included, while drawUnit applied no key light of its own — so a sprite paid
+     the scene's whole attenuation and received none of its illumination.
+     ⚠ THE FIRST FIX FOR THIS WAS A PROPORTIONAL ONE — the sprite added to
+     itself through 'lighter' — AND IT WAS THE WRONG SHAPE. A multiply cannot
+     rescue a silhouette: at a 0.225 lift a luma-20 pixel arrives at luma-24,
+     which is invisible, while the already-bright pixels take the entire benefit
+     and clip. The units that needed help were exactly the ones it could not
+     move. Owner's verdict after that shipped: "the look have not changed."
+     `contrast()` BELOW 1 is what a near-silhouette actually needs — it raises
+     the black point, so the dark clothing that was reading as a cut-out gets
+     its interior values back — and `brightness()` carries the overall lift.
+     Applying them through ctx.filter keeps the sprite at FULL resolution (no
+     offscreen buffer to halve it on a retina board, which would have made the
+     "not clean" half of the report worse) and cannot spill past the
+     silhouette, because the filter applies to the source being drawn rather
+     than to the destination. Feature-tested once — a browser without canvas
+     filters simply gets the old unlit sprite instead of a broken one. */
+  if (spriteFilterOk()){ try { ctx.filter = spriteFilter(); } catch (e) {} }
   paintSprite(ctx, u.key, k, u.def.color, T + u.bob);
   ctx.restore();
-  /* 🔆 THE CHARACTERS READ AS DARK STICKERS — and it is an asymmetry, not a
-     tint. grade() (vista.js, step 3) ends on a full-viewport 'multiply' that
-     lands on EVERYTHING painted before it, units included, because the actors
-     are drawn into the same ctx well before the grade runs. But drawUnit
-     applies no key light of its own: the sprite is blitted at the art's own
-     values. So a unit pays the scene's whole attenuation and receives none of
-     its illumination, which is precisely the "dark" report — worst at night,
-     where the multiply is deepest and keyI is 0.48.
-     The lift is the sprite added to ITSELF through 'lighter'. That is the
-     right primitive here for two reasons: the sprite's own alpha is the mask,
-     so the ground behind it cannot be touched (a fill or a filter would spill
-     past the silhouette), and it scales each pixel by (1+lift) rather than
-     adding a flat pedestal, so black stays black and the art's own contrast
-     survives. Same primitive as the flash below — this file already relies on
-     it. Keyed to the light so a dim preset gets more back than a bright one.
-     ⚠ Skip the dead: a corpse is mid-fade and lifting it makes it flare as it
-     goes out. */
-  if (!u.dead){
-    const lift = clamp(0.34 - LIGHT.keyI*0.10, 0.12, 0.30);
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = lift;
-    paintSprite(ctx, u.key, k, u.def.color, T + u.bob);
-    ctx.restore();
-  }
   if (u.flash > 0){
     ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = u.flash;
     paintSprite(ctx, u.key, k, '#ffffff', T + u.bob);
@@ -6409,6 +6430,14 @@ function handleHostMessage(msg){
        than wiping the table. */
     /* 🎨 Painted tile surfaces: { "x,z": effectKey }. Whole-map replace,
        because the host already diffs and only sends on change. */
+    /* 🎬 THE HOST HAS JUST MADE US VISIBLE — see the note at the `.ready` class
+       in index.html. The opening that ran at init played to an opacity:0
+       iframe; this is the one the player actually sees. startedAt is cleared
+       so revealStart's "do not restart an opening that has barely begun" guard
+       cannot swallow it — that guard exists to stop a LATE init slamming a
+       lifting veil back to black, and here the veil has never been on screen
+       at all. */
+    else if (t === 'reveal'){ try { REVEAL.startedAt = 0; revealStart(); } catch (e) {} }
     else if (t === 'surfaces') SURFACES = (msg.tiles && typeof msg.tiles === 'object') ? msg.tiles : {};
     else if (t === 'locations') setLocations(msg.locations || {}, true);
     else if (t === 'location')  setLocation(msg.id, !!msg.instant);

@@ -586,5 +586,82 @@
       }
     ],
     "note": "\ud83d\udd34 THE CLOSING CRITIC OVERTURNED THE STOP RECOMMENDATION, and showed its working. Round 6's critic had said the pipeline was capped near a mean of 5.5 with 'a hard cap around 6 on any dimension whose 10 is modelled detail', and that the next decision was to fund an asset kit. Round 7 scored 5.17 against a predicted 5.3, so on the surface that looked vindicated. The closing critic called it a trap: dimension 3, building silhouette, IS nothing but modelled detail and is at 7 today, procedurally, with no asset kit - the pipeline has already cleared the cap it was said to be under. Its own diagnosis of what is actually holding the mean down: citizens at 2 is a REGRESSION, not a limit (six readable pedestrians in round 6, zero in round 7) and recovering it is a bug fix worth +0.25 mean for zero triangles; density read is blocked on content variety, not geometry; and the plot is blocked on LOT PITCH plus a material choice, not on boundary props - widen the pitch and draw the side boundary in the light kerb concrete the driveway already uses instead of dark hedge. Its number: the realistic ceiling is a mean of 6.3-6.6, not 5.5, and the path from 5.17 to about 6.0 costs NO NEW ART. Its decision, quoted: do not fund the asset kit this round; there is roughly a full point of mean sitting in layout and content variety, which is cheaper than art and which the team has demonstrably been good at. The real wall is narrow and specific - window reveals and sills, car glazing and rims, tree crowns needing cards - and those three will pin the mean near 6.5 and keep 8+ permanently out of reach."
+  },
+  {
+    "round": 8,
+    "headline": "The crowd 'regression' was a coin flip. The ceiling estimate held.",
+    "status": "done",
+    "meanScore": 5.67,
+    "strangerTest": "instantly",
+    "tris": 448000,
+    "scores": [
+      {
+        "dimension": "Palette & grade",
+        "score": 6.5
+      },
+      {
+        "dimension": "Lighting & shadow",
+        "score": 6.5
+      },
+      {
+        "dimension": "Building silhouette",
+        "score": 7
+      },
+      {
+        "dimension": "Building surface detail",
+        "score": 6
+      },
+      {
+        "dimension": "The plot",
+        "score": 5
+      },
+      {
+        "dimension": "Roads",
+        "score": 6.5
+      },
+      {
+        "dimension": "Street furniture",
+        "score": 5.5
+      },
+      {
+        "dimension": "Vehicles",
+        "score": 4.5
+      },
+      {
+        "dimension": "Citizens",
+        "score": 5.5
+      },
+      {
+        "dimension": "Vegetation",
+        "score": 5
+      },
+      {
+        "dimension": "Density & zoning read",
+        "score": 6
+      },
+      {
+        "dimension": "UI legibility",
+        "score": 4
+      }
+    ],
+    "pieces": [
+      {
+        "title": "The crowd \u2014 diagnosed before it was built",
+        "verdict": "WINS",
+        "summary": "There was no regression. A with-crowd/without-crowd pixel diff read 2,934px, and forcing every agent visible read 2,934px \u2014 identical, so nothing was hidden by culling, by 'inside', or by round 7's taller boundaries. The decisive test: git archive of the r6-era tree into a scratch root, same diagnostic \u2014 statistically identical to HEAD, 29 agents, exactly 14 civilians, same scatter. Fourteen pedestrians over 100 road tiles is one per seven, and whether a 220x100 crop contains one is a coin flip that r6 won and r7 lost. Two critics scored variance. The fix is a STANDING crowd \u2014 the argument /src/parking already won for vehicles: 78 tile-seeded figures on footway and kerb, placed against MythicParking.spots() so nobody stands inside a parked car. Cost +24 meshes for 78 people, because a standing figure needs no rig and bakes into merged buckets; as agents the same 78 would have been +1,326.",
+        "gap": "They are all the same figure, in one frozen stance, at 1.5-2x oversize \u2014 a pedestrian reaches 60% of a lamp mast and stands taller than the sidewalk is wide."
+      },
+      {
+        "title": "The speech bubbles",
+        "verdict": "WINS",
+        "summary": "Four faults, all found by driving it. The spawn test ran ONCE and then for 5.2s the speaker was free to walk indoors, be culled or leave frame while the bubble kept captioning empty pavement. 'In frame' also is not 'visible' \u2014 a line still sat on a five-storey facade with its speaker behind it, so a rate-limited raycast now answers whether the player can actually see them. The filter that makes that work is isMesh: Raycaster hits Lines, and this scene has a GridHelper lying flat over the whole map, so with it in, 0 of 9 street candidates survived and the feature went silent citywide. Found by running it, not by reading it."
+      },
+      {
+        "title": "Massing, and the paint comes off the road",
+        "verdict": "CLOSE",
+        "summary": "Three zone-legible recipes \u2014 retail fascia with a glazing strip, a flat industrial shed with a dock apron and yard, a surface car park with bay lines \u2014 and the street names finally lifted off the carriageway. Density read 4 to 6."
+      }
+    ],
+    "note": "Mean 5.17 to 5.67, the biggest jump since round 3, and the 6.3-6.6 ceiling estimate is NOT falsified. The critic's test for telling 'the estimate was wrong' from 'the work did not land' is the best piece of reasoning in the loop: if the ceiling were wrong, the targeted dimensions would have REFUSED TO MOVE \u2014 you would fix the crowd and citizens would crawl 3 to 4 because the mesh itself caps it. Instead all four moved, fast and cheap: citizens 2 to 5.5, density read 4 to 6, the plot 4 to 5, surface detail 5 to 6. Its verdict: do not fund an asset kit yet, six of twelve dimensions still have a named fix costing no new geometry, and the largest is pure DOM. \u26a0 UI legibility REGRESSED 6 to 4 \u2014 the demand strip lost its labels and causal lists in the massing round's layout changes, and it is now called the cheapest point on the board for the second time. Two other regressions: front-garden greenery fell from 13.9% to 8.3% of the residential band, and the standing crowd is unweighted, so people stand alone on verges beside roads running through empty fields."
   }
 ]

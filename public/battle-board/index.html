@@ -1118,8 +1118,15 @@ function tileBlocked(x,z){
 }
 
 /* light direction from the preset (used for shadows + rim) */
-function lightVector(){
-  const az = LIGHT.az, el = LIGHT.elev;
+/* ⚠ THE ARGUMENT IS OPTIONAL AND EVERY EXISTING CALLER PASSES NOTHING. It was
+   added for the vista's time-of-day cross-fade, which bakes plates for lights
+   that are NOT the current one (see lightAtK below) and would otherwise get
+   the live sun's vector back for a plate baked at the moon's. Defaulting to
+   LIGHT keeps terrain.js / tilefx.js / dressing.js — all of which call it bare
+   — reading exactly what they read before. */
+function lightVector(L){
+  L = L || LIGHT;
+  const az = L.az, el = L.elev;
   return { x:Math.sin(az)*Math.cos(el), y:Math.sin(el), z:-Math.cos(az)*Math.cos(el) };
 }
 
@@ -3950,7 +3957,14 @@ function buildApi(dt, g){
     hover: hoverTile || focus,
     surfaces: SURFACES,
     ground: GROUND, backdrop: BACKDROP, locations: LOCATIONS,
-    time: BATTLE.timeOfDay
+    time: BATTLE.timeOfDay,
+    /* 🌅 THE LIGHT LERP, PUBLISHED. See lightAtK. `id` is what tells the vista
+       that a SECOND setTimeOfDay landed mid-transition and its plate ladder is
+       now baked for a journey nobody is taking any more; without it a rapid
+       dawn→day→night would cross-fade toward the wrong sky. null whenever the
+       rig is steady, which is the only state the module had before. */
+    lightLerp: lightLerp ? { k: clamp(lightLerp.t, 0, 1), dur: lightLerp.dur, id: lightLerp.id } : null,
+    lightAt: lightAtK
   };
 }
 
@@ -5151,16 +5165,8 @@ function update(dt){
   /* light lerp */
   if (lightLerp){
     lightLerp.t += dt/lightLerp.dur;
-    const k = clamp(lightLerp.t, 0, 1), A = lightLerp.from, B = lightLerp.to;
-    LIGHT = {
-      az:lerp(A.az,B.az,k), elev:lerp(A.elev,B.elev,k),
-      key:mixHexRaw(A.key,B.key,k), keyI:lerp(A.keyI,B.keyI,k),
-      ambient:mixHexRaw(A.ambient,B.ambient,k), ambI:lerp(A.ambI,B.ambI,k),
-      sky:[mixHexRaw(A.sky[0],B.sky[0],k), mixHexRaw(A.sky[1],B.sky[1],k), mixHexRaw(A.sky[2],B.sky[2],k)],
-      fog:mixHexRaw(A.fog,B.fog,k), rim:mixHexRaw(A.rim,B.rim,k),
-      body: k>.5 ? B.body : A.body, disc:mixHexRaw(A.disc,B.disc,k), haze:lerp(A.haze,B.haze,k)
-    };
-    if (k>=1) lightLerp = null;
+    LIGHT = lightAtK(lightLerp.t);
+    if (lightLerp.t>=1) lightLerp = null;
   }
   for (const u of units){
     u.bob += dt;
@@ -5233,6 +5239,43 @@ function update(dt){
     if (f.k === 'ember2d'){ f.x += f.vx*dt; f.y += f.vy*dt; f.vy += 40*dt; }
   }
   effects = effects.filter(f => f.t < f.dur);
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   THE TIME-OF-DAY LERP, AS A FUNCTION OF k — AND IT HAS EXACTLY ONE DEFINITION
+   ⚠ WHY IT IS A FUNCTION AND NOT FOUR LINES INSIDE update(). The vista bakes
+   four offscreen canvases keyed on LIGHT, and LIGHT used to change on EVERY
+   frame for the whole 2.5s of a setTimeOfDay(). Even throttled to one bake per
+   150ms that is 17 full-viewport bakes in the window, ~226ms apiece on the
+   reference box, and it is the "the game frame lags when the sun and moon
+   changes" report. The module now bakes a handful of plates at FIXED k and
+   cross-fades between them — which means it has to be able to ask what the
+   light IS at a k that is not the current one. That question has one correct
+   answer and this is it. Computing it a second time inside the module would be
+   a copy of the rig that silently drifts the first time a preset field is
+   added here and not there.
+
+   ⚠ body IS A STEP AND THAT IS DELIBERATE — AND IT IS ALSO A VISIBLE POP.
+   `k>.5 ? B.body : A.body` flips sun→moon in one frame. The vista's dayness()
+   reads LIGHT.body and returns 0 outright for a moon, so the whole DAY_* sky
+   regrade drops out on that same frame: measured on the world plate, the sky
+   steps 103/255 between k=0.487 and k=0.547 while every other 0.06 step of the
+   transition moves it by at most 5.3. That step is NOT introduced by the
+   cross-fade — it is here, today, in every day↔night change — and the plate
+   ladder is built with a stop on each side of it so it stays exactly as it is
+   rather than being smeared into a 0.6s dissolve. Softening it is a LOOK
+   change and belongs in its own round. */
+function lightAtK(k){
+  if (!lightLerp) return LIGHT;
+  const A = lightLerp.from, B = lightLerp.to;
+  k = clamp(k, 0, 1);
+  return {
+    az:lerp(A.az,B.az,k), elev:lerp(A.elev,B.elev,k),
+    key:mixHexRaw(A.key,B.key,k), keyI:lerp(A.keyI,B.keyI,k),
+    ambient:mixHexRaw(A.ambient,B.ambient,k), ambI:lerp(A.ambI,B.ambI,k),
+    sky:[mixHexRaw(A.sky[0],B.sky[0],k), mixHexRaw(A.sky[1],B.sky[1],k), mixHexRaw(A.sky[2],B.sky[2],k)],
+    fog:mixHexRaw(A.fog,B.fog,k), rim:mixHexRaw(A.rim,B.rim,k),
+    body: k>.5 ? B.body : A.body, disc:mixHexRaw(A.disc,B.disc,k), haze:lerp(A.haze,B.haze,k)
+  };
 }
 function mixHexRaw(a,b,t){
   const A=hexRgb(a), B=hexRgb(b);
@@ -5953,10 +5996,14 @@ addEventListener('keydown', e => {
    PUBLIC API — keep these signatures when porting
    ══════════════════════════════════════════════════════════════════ */
 function dispatch(type, detail){ document.dispatchEvent(new CustomEvent('board:'+type, { detail })); }
+let _lerpSeq = 0;
 function setTimeOfDay(key){
   if (!TIME_PRESETS[key]) return;
   BATTLE.timeOfDay = key;
-  lightLerp = { from:{...LIGHT}, to:{...TIME_PRESETS[key]}, t:0, dur:2.5 };
+  /* `id` is monotonic and is handed to the stage through buildApi — it is how
+     the vista knows one transition from the next. Re-using an id would let a
+     second setTimeOfDay inherit the first one's plates. */
+  lightLerp = { from:{...LIGHT}, to:{...TIME_PRESETS[key]}, t:0, dur:2.5, id:++_lerpSeq };
   dispatch('timeOfDay', { key });
 }
 /* ══════════════════════════════════════════════════════════════════

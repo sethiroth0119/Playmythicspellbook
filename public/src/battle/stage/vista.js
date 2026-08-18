@@ -627,8 +627,20 @@
     gradeDt: [], gradeAt: 0,
     lastBake: -1e9,
     artMs: [],
+    /* the four stages of one ensureBakes, sampled separately — see the note
+       there. `plate` is one rung of the cross-fade ladder. Rolling, capped. */
+    bakeMs: { sky: [], land: [], post: [], world: [], all: [], plate: [] },
+    /* THE CROSS-FADE. `far`/`near` are the rungs (see THE PLATE LADDER); `id`
+       is the host's lerp id, `sig` everything a rung depends on except the
+       light. `blend` is what draw() actually composites, or null for the
+       ordinary single-plate path. postAt is bakePost's own 150ms cadence,
+       which deliberately does NOT ride the ladder. */
+    ladder: { id: -1, sig: '', far: [], near: [] },
+    blend: null,
+    postAt: -1e9,
     drift: null
   };
+  function pushMs(a, v) { a.push(v); if (a.length > 40) a.shift(); }
 
   /* ⚠ FEATURE-DETECT EVERY BLEND MODE BEFORE YOU RELY ON IT. Setting an
      unsupported globalCompositeOperation is a silent no-op that leaves the
@@ -795,7 +807,13 @@
      own — the day sun lands ~850px off the right edge and 4200px above the
      top, because it really is that high. */
   function bodyPos(api) {
-    const L = api.lightVector();
+    /* ⚠ PASS api.LIGHT EXPLICITLY. A plate bake runs this against a light that
+       is NOT the board's current one (see THE PLATE LADDER), and the bare
+       lightVector() reads the board's live LIGHT — so the moon plate would
+       have been baked with the sun's vector and the body would sit in the
+       wrong place. The board's lightVector defaults to LIGHT when handed
+       nothing, so this is the same value it always was outside a bake. */
+    const L = api.lightVector(api.LIGHT);
     const cx = api.VIEW.cx, cy = api.VIEW.cy;
     const hz = horizonY(api);
     let px, py;
@@ -1252,7 +1270,7 @@
      when the key swings to the other side of the field and every cliff shadow
      the terrain bakes flips with it. */
   function shadowDir(api) {
-    const lv = api.lightVector();
+    const lv = api.lightVector(api.LIGHT);   /* see bodyPos — plate bakes */
     const z0 = api.MAP.rows / 2 + 1.0;
     const a = api.project({ x: 0, y: 0, z: z0 });
     const b = api.project({ x: -lv.x * 3, y: 0, z: z0 - lv.z * 3 });
@@ -2852,6 +2870,236 @@
       Math.round(L.keyI * 12), Math.round(L.az * 14), Math.round(L.elev * 14),
       Math.round((L.haze || 0) * 12), L.body].join(',');
   }
+  /* ══════════════════════════════════════════════════════════════════════
+     THE PLATE LADDER — A TIME-OF-DAY CHANGE USED TO REBAKE THE WORLD 17 TIMES
+
+     THE REPORT was "the game frame lags when the sun and moon changes", and
+     the mechanism is one line in battle-board: setTimeOfDay() does not set the
+     light, it starts a 2.5 s lerp, so LIGHT — which every bake in this file is
+     keyed on — changes on all 150 frames of it. The 150 ms throttle above cuts
+     that to 17 bakes, and 17 is still 17 FULL-VIEWPORT SYNCHRONOUS BAKES on
+     the main thread inside two and a half seconds. Measured on the reference
+     box at 1280x800, one transition, wall clock per frame::(harness bracket
+     with a getImageData flush after every frame, day→night, 150 frames):
+
+         ordinary frame ....  30.8 ms p50   (133 of them)
+         BAKE frame ....... 257.2 ms p50   ( 17 of them)
+
+     i.e. the transition costs 5.2 s of CPU to animate 2.5 s, and 17 times in
+     that window the board stops for a quarter of a second. That is the lag.
+
+     ⚠ THE OBVIOUS FIX DOES NOT WORK AND THE MEASUREMENT IS WHY. Both ends of
+     the lerp are known up front, so the tempting move is to bake the two
+     ENDPOINTS once and cross-fade them by t — two bakes, and the transition
+     becomes a blend. That is only correct if a bake is affine in the light.
+     It is not. Bake at the endpoints, bake at the middle, compare the middle
+     against a 50/50 blend of the endpoints, per box, 10x8 boxes:
+
+         k=0.247   box err p50 2.0   p95 24.3   max 30.5
+         k=0.487   box err p50 2.6   p95 48.0   max 55.8
+         k=0.727   box err p50 1.7   p95 34.1   max 38.3
+
+     The p50 says the plate IS affine almost everywhere; the p95 says the sky
+     is not. Two independent reasons, and only the second is fixable here:
+
+       1. A STEP AT k=0.5. battle-board's lerp does `body: k>.5 ? B.body :
+          A.body` and dayness() returns 0 outright for a moon, so the entire
+          DAY_* sky regrade drops out on one frame. Measured between adjacent
+          plates: every 0.06 step of the transition moves the sky by at most
+          5.3/255 — except 0.487→0.547, which moves it by 103.5. Nothing
+          interpolates across that, so the ladder puts a rung on EACH SIDE of
+          it and the pop stays exactly the pop it is today. It is a real
+          visible artifact and it is not this round's to fix.
+       2. THE BODY MOVES. bodyPos() rides az/elev, and the disc, its halo, the
+          shafts, the sky's horizon glow and the land's lightX all follow it.
+          Cross-fading two plates whose sun is 27 px apart does not move a sun,
+          it shows two of them at half brightness. At pixel level that is the
+          entire residual: over a 0.25-wide rung the worst pixel misses by
+          115.9/255 and every one of the worst pixels lands in a disc-sized
+          cluster around (626,82).
+
+     SO THE PLATE IS SPLIT AND THE MOVING HALF STOPS BEING BAKED. Each rung
+     holds TWO canvases — `far` (sky + art) and `near` (the land, which has to
+     stay ON TOP of the body or the ridge stops occluding it) — and draw()
+     composites far, far', BODY, SHAFTS, near, near' with the body drawn LIVE
+     at the true interpolated light. That costs three extra full-viewport
+     blits, measured at 0.34 ms each here, i.e. ~1 ms on a 31 ms frame, and it
+     only runs while a transition is actually running.
+
+     WHAT IS LEFT IS SMOOTH, so six rungs carry it: 0, 0.25, 0.5 and then
+     0.5⁺, 0.75, 1 — three per side of the step. Sized by measurement, not by
+     taste: with the body excluded, four rungs leave 3.5% of pixels more than
+     8/255 off the true plate and six leaves 0.001% at the same k.
+
+     ⚠ ONE BAKE PER FRAME, NEVER TWO. Two rungs are live at any moment and the
+     naive "make sure both exist" bakes both on the frame a rung is crossed —
+     which is a 500 ms frame, i.e. worse than what it replaces. So the loop
+     below breaks after ONE bake and prefetches the NEXT rungs from a third of
+     the way into the current one, which at 0.25 of k per rung is ~37 frames of
+     runway for a bake that needs one.
+     ══════════════════════════════════════════════════════════════════════ */
+  /* the rungs, in the host's own lerp parameter. Index 2 and 3 straddle the
+     body switch — the span between them is deliberately degenerate so k
+     crosses it in under a frame and the plate hard-cuts there, as it does
+     today. Do not "tidy" the duplicate away. */
+  const PLATE_K = [0, 0.25, 0.5, 0.5 + 1e-6, 0.75, 1];
+  /* how often the veil is re-baked WHILE a ladder runs. The steady path's own
+     cadence is 150 ms; this is looser because a transition is the one moment
+     the frame budget is already committed, and the veil is the smoothest thing
+     in the frame. __vistaOff.ladderpost = 1 freezes it entirely, which is the
+     counterfactual to measure this against. */
+  const LADDER_POST_S = 0.30;
+
+  /* the far half of a rung: sky + the backdrop art, flattened. Everything that
+     lives BEHIND the celestial body. Art only joins it when the host is not
+     mid-cross-fade, exactly as bakeWorld decides it. */
+  function bakeFar(api, dpr, withArt) {
+    const o = mkCanvas(api.W, api.H, dpr); const g = o.g;
+    if (!g) return null;
+    if (S.sky.cv) blit(g, S.sky.cv, api.W, api.H);
+    if (withArt) drawArt(api, g, 1);
+    /* ⚠ THE SHAFTS STAY BAKED, THE BODY DOES NOT, AND THE REASON IS ALPHA.
+       bakeWorld's order is sky, art, body, shafts, land — but body and shafts
+       are BOTH 'lighter', and additive composites commute, so moving the
+       shafts under the body changes nothing about the result. What it changes
+       is the bill: six full-height gradient triangles per frame measured ~4 ms
+       here and the shafts are the one moving thing that can afford to be
+       cross-faded — they are drawn at 0.010–0.020 alpha, so a ghost of one is
+       under 5/255. The DISC cannot: it is the smallest, hardest, brightest
+       object in the frame and a cross-fade of it is two suns (measured: worst
+       pixel 115.9/255, and every worst pixel in a disc-sized cluster). */
+    try { drawShafts(api, g); } catch (e) { }
+    return o.cv;
+  }
+  /* one rung, baked against a light that is NOT the board's current one.
+     ⚠ THE PROXY IS THE WHOLE TRICK AND IT IS ALSO THE WHOLE RISK. Every pass
+     under here reads api.LIGHT, so shadowing that one property is enough —
+     except for api.lightVector(), which reads battle-board's own LIGHT and
+     would have handed a moon plate the sun's direction. That is why bodyPos()
+     and shadowDir() now pass api.LIGHT in explicitly and why the board's
+     lightVector() grew an optional argument. */
+  function bakePlate(api, dpr, L, artWins, settled) {
+    const p = Object.create(api); p.LIGHT = L;
+    const t0 = performance.now();
+    const sky = bakeSky(p, dpr);
+    if (!sky) return null;
+    S.sky.cv = sky;
+    const near = bakeLand(p, dpr, artWins);
+    if (!near) return null;
+    S.land.cv = near;
+    const far = bakeFar(p, dpr, settled);
+    /* ⚠ AND THE KEYS ARE CLEARED, NOT SET. A rung is baked for a light nobody
+       is standing at; leaving skyKey/landKey behind would let the steady path
+       return early on the frame the lerp ENDS and ship the wrong sky. The
+       empty string can never equal a real key, so the first steady frame after
+       the ladder always bakes. */
+    S.sky.key = ''; S.land.key = ''; S.world.key = '';
+    S.art.clear();       /* the art grade is keyed on this rung's light too */
+    pushMs(S.bakeMs.plate, performance.now() - t0);
+    return far ? { far: far, near: near } : null;
+  }
+  /* ⚠ THE POSITIONAL VEIL DOES NOT RIDE THE LADDER. bakePost is 4% of a bake
+     (bakeSplit.post 5.2 ms against 117 ms) and it carries the fog band's
+     colour, which is light-dependent and sits over the PLAY FIELD. Pinning it
+     to a rung would leave the ground's fog up to 0.6 s behind the sky's. It
+     keeps the 150 ms cadence it has always had, at the live light. */
+  function ensurePost(api) {
+    if (off('ladderpost')) return;
+    if (S.post.pos && (api.T - S.postAt) < LADDER_POST_S) return;
+    S.postAt = api.T;
+    try {
+      const pos = bakePost(api, mapW(api), mapH(api));
+      /* ⚠ AND IT DOES NOT FORCE THE RE-MAP. The steady path clears
+         S.post.key/age here, which makes postMap redo its getImageData and its
+         per-pixel loop on the very next frame — measured at ~50 ms on this box
+         and it fired 17 times inside one transition, which is most of what a
+         "bake frame" actually was. Swapping `pos` alone lets postMap pick the
+         new veil up on its OWN cadence (12 frames) or on the next rung, whose
+         S.lastBake is already in postMap's key. The cost of that is the fog
+         band trailing the sky by at most a fifth of a second. */
+      if (pos) S.post.pos = pos;
+    } catch (e) { }
+  }
+  /* ⚠ NOTHING PROBES THE LAND FOR OCCLUSION WHILE A LADDER RUNS, AND NOTHING
+     MAY. discProbe's getImageData is a pipeline sync that only bakeWorld can
+     afford (see its note). The POSITION is free — it is a projection — and it
+     has to be live, because discRestore paints the core after the grade and a
+     core left at a rung's position would be a bright dot sitting beside its
+     own halo. `vis` carries over: it asks whether the ridge is in front of the
+     body, the ridge does not move, and bodyPos clamps the body to hz−14. */
+  function discLive(api) {
+    const b = bodyPos(api);
+    const R = (b.sun ? 26 : 22) * api.clamp(api.VIEW.box ? api.VIEW.box.h / 900 : 1, 0.7, 1.15);
+    S.disc = { x: b.x, y: b.y, R: R, sun: b.sun, vis: S.disc ? S.disc.vis : true };
+  }
+  function ladderRetire() {
+    const L = S.ladder;
+    if (L.id === -1) return;
+    L.id = -1; L.sig = ''; L.far.length = 0; L.near.length = 0;
+    S.blend = null;
+    /* ⚠ AND THE THROTTLE IS STOOD DOWN WITH IT. The steady path bails for
+       150 ms after any bake and the ladder's last rung WAS a bake, so without
+       this the frame the lerp ends on blits S.world.cv — which is still the
+       plate for the light we LEFT — for up to nine frames. A night that snaps
+       back to noon for a tenth of a second at the end of every transition is a
+       worse bug than the one the ladder fixes. */
+    S.lastBake = -1e9;
+  }
+  function ladderStep(api, dpr, lp, sig, artWins, settled) {
+    const L = S.ladder;
+    if (L.id !== lp.id || L.sig !== sig) {
+      /* a new transition, or the viewport / map / backdrop moved under the old
+         one. Either way every rung is baked for a journey nobody is taking. */
+      L.id = lp.id; L.sig = sig;
+      L.far = new Array(PLATE_K.length).fill(null);
+      L.near = new Array(PLATE_K.length).fill(null);
+    }
+    const k = api.clamp(lp.k, 0, 1);
+    let i = 0;
+    while (i < PLATE_K.length - 2 && k >= PLATE_K[i + 1]) i++;
+    const span = PLATE_K[i + 1] - PLATE_K[i];
+    const f = span > 1e-9 ? api.clamp((k - PLATE_K[i]) / span, 0, 1) : 0;
+
+    /* ONE bake, then stop — see the note above. The two prefetch slots are
+       what stop a rung boundary from ever needing two at once. */
+    /* ⚠ AND THE UPPER RUNG WAITS, WHICH IS THE OPENING OF THE TRANSITION.
+       Requesting i and i+1 together made frames 0 and 1 of every time-of-day
+       change two BACK-TO-BACK bakes (162 ms then 174 ms measured) — the worst
+       moment in the whole window, and right where the player just pressed
+       something. 0.22 of a 0.25-wide rung is ~8 frames of runway; until then
+       the frame shows rung i flat, which is precisely the staleness the 150 ms
+       throttle used to hand out anyway. It only ever bites at the START of a
+       transition: every later rung is already prefetched by the two slots
+       below, which is what they are for. */
+    let baked = false;
+    const want = [i, f > 0.22 ? i + 1 : -1, f > 0.45 ? i + 2 : -1, f > 0.70 ? i + 3 : -1];
+    for (let n = 0; n < want.length; n++) {
+      const j = want[n];
+      if (j < 0 || j >= PLATE_K.length || L.far[j]) continue;
+      const pl = bakePlate(api, dpr, api.lightAt(PLATE_K[j]), artWins, settled);
+      if (pl) { L.far[j] = pl.far; L.near[j] = pl.near; S.lastBake = api.T; baked = true; }
+      break;
+    }
+
+    /* ⚠ A RUNG THAT IS NOT BAKED YET IS NOT A BLACK FRAME. On the first frame
+       of a transition nothing is baked at all, and S.blend stays null so
+       draw() keeps blitting the previous steady plate — one frame of staleness
+       against the nine the throttle used to hand out. Below the current rung
+       we walk down to the nearest plate that exists and show it flat. */
+    let lo = i;
+    while (lo > 0 && !L.far[lo]) lo--;
+    const pair = L.far[lo] && lo === i && L.far[i + 1];
+    S.blend = L.far[lo] ? {
+      farA: L.far[lo], nearA: L.near[lo],
+      farB: pair ? L.far[i + 1] : null, nearB: pair ? L.near[i + 1] : null,
+      f: pair ? f : 0
+    } : null;
+    S.world.art = settled;
+    /* the veil keeps its own cadence, but never on a frame that already baked
+       a rung — that is the one frame in ~37 that cannot afford anything. */
+    if (!baked) ensurePost(api);
+  }
+
   function ensureBakes(api) {
     const dpr = dprOf(api);
     const bd = api.backdrop || {};
@@ -2861,8 +3109,11 @@
        bakeLand draws its own skyline back over it. 0.45 is the middle of
        artDisagreement's ramp, i.e. "measurably colder than sand". */
     const artWins = hasArt && artDisagreement(api, img) < 0.45;
-    const base = [Math.round(api.W), Math.round(api.H), dpr, api.MAP.id,
-      api.MAP.cols, api.MAP.rows, lightKey(api)].join('|');
+    /* everything a bake depends on EXCEPT the light. Split out because the
+       ladder's plates are keyed on their OWN light and share this half. */
+    const shape = [Math.round(api.W), Math.round(api.H), dpr, api.MAP.id,
+      api.MAP.cols, api.MAP.rows].join('|');
+    const base = shape + '|' + lightKey(api);
     const skyKey = base;
     const landKey = base + '|' + (artWins ? 1 : 0);
     /* ⚠ THE WORLD BAKE HAS ITS OWN KEY, because the art can change without the
@@ -2873,6 +3124,19 @@
     const fade = bd.fade === undefined ? 1 : bd.fade;
     const settled = !(hasArt && bd.prev && bd.prev.complete && fade < 1);
     const worldKey = landKey + '|' + (settled ? (hasArt ? img.src : '-') : 'fade');
+    /* 🌅 A TIME-OF-DAY CHANGE TAKES THE LADDER, NOT THE THROTTLE. See THE PLATE
+       LADDER below for what that is and what it measured. `lightAt` is the
+       board handing us the lerp as a function; a board without it (or with the
+       ladder ablated) falls through to the throttle exactly as before. */
+    const lp = api.lightLerp;
+    if (lp && typeof api.lightAt === 'function' && !off('ladder')) {
+      const sig = [shape, artWins ? 1 : 0, settled ? 1 : 0,
+        settled ? (hasArt ? img.src : '-') : 'fade'].join('|');
+      try { ladderStep(api, dpr, lp, sig, artWins, settled); return; }
+      catch (e) { ladderRetire(); }
+    } else {
+      ladderRetire();
+    }
     if (S.sky.key === skyKey && S.land.key === landKey && S.world.key === worldKey) return;
     /* THROTTLE. LIGHT lerps every frame for 2.5s on a time-of-day change, so
        the key changes 150 times in a row. Re-baking each time would cost more
@@ -2880,21 +3144,38 @@
        indistinguishable for 150ms. The very first bake is never throttled. */
     if (S.sky.cv && (api.T - S.lastBake) < 0.15) return;
     S.lastBake = api.T;
+    /* ⚠ TIME THE FOUR STAGES SEPARATELY OR THE FIX GOES IN THE WRONG ONE.
+       "A bake frame costs 195 ms and an ordinary frame 14" says nothing about
+       WHICH bake, and ablating the art layer moved it by 8 ms (inside the
+       noise on this box), so the art was not it. These are brackets around
+       synchronous canvas construction on the SAME thread that then blits it,
+       and unlike the grade's bracket there is no readback inside any of them
+       to pull the rest of the frame in — but they are still display-list
+       construction on a deferred rasteriser, so read them as a SPLIT of the
+       bake, not as absolute milliseconds. bakeSplit in __vistaDebug(). */
+    const _b0 = performance.now();
     try {
       const sky = bakeSky(api, dpr);
       if (sky) { S.sky.cv = sky; S.sky.key = skyKey; }
+      const _b1 = performance.now();
       const land = bakeLand(api, dpr, artWins);
       if (land) { S.land.cv = land; S.land.key = landKey; }
+      const _b2 = performance.now();
+      pushMs(S.bakeMs.sky, _b1 - _b0); pushMs(S.bakeMs.land, _b2 - _b1);
       /* the positional half of the grade, at thumbnail scale (see bakePost).
          `pos` staying null is not fatal — postMap() simply declines and the
          frame ships with the board's own light, which is what happens on a
          browser that refuses getImageData anyway. */
       const pos = bakePost(api, mapW(api), mapH(api));
       if (pos) { S.post.pos = pos; S.post.key = ''; S.post.age = 1e9; }
+      S.postAt = api.T;      /* the steady bake IS the veil's cadence tick */
+      const _b3 = performance.now(); pushMs(S.bakeMs.post, _b3 - _b2);
       /* …and flatten sky + art + body + shafts + land into ONE canvas, which
          is all draw() blits. Art only joins the bake when it is not mid-fade. */
       const world = bakeWorld(api, dpr, settled);
       if (world) { S.world.cv = world; S.world.key = worldKey; S.world.art = settled; }
+      pushMs(S.bakeMs.world, performance.now() - _b3);
+      pushMs(S.bakeMs.all, performance.now() - _b0);
       /* the art bakes are keyed on the same light, so drop them together */
       S.art.clear();
     } catch (e) { /* never let a bake failure take the frame down */ }
@@ -3104,6 +3385,14 @@
      the world bake instead of every frame. See bakeWorld(). */
   function drawBody(api, ctx) {
     ctx = ctx || api.ctx;
+    /* ⚠ AN ABLATION FLAG, ADDED BY THE DAY/NIGHT ROUND. The disc, its halo and
+       the shafts are the ONLY parts of the world plate that are not affine in
+       LIGHT — they MOVE (bodyPos rides az/elev) and the body identity hard-
+       switches sun→moon at k>0.5. Proving that was the whole premise check for
+       the cross-fade, and it cannot be done from a finished plate: every layer
+       in it is a low-alpha additive fill and they all look alike once summed.
+       See THE CROSS-FADE at ensureBakes. */
+    if (off('body')) return;
     const LIGHT = api.LIGHT;
     const b = bodyPos(api);
     const R = (b.sun ? 26 : 22) * api.clamp(api.VIEW.box ? api.VIEW.box.h / 900 : 1, 0.7, 1.15);
@@ -3216,6 +3505,7 @@
      they are meant to be felt, not counted. */
   function drawShafts(api, ctx) {
     ctx = ctx || api.ctx;
+    if (off('shafts')) return;          /* see drawBody's note */
     const LIGHT = api.LIGHT;
     const b = bodyPos(api);
     const len = api.H * 1.25;
@@ -3489,7 +3779,25 @@
   function draw(api) {
     const ctx = api.ctx, W = api.W, H = api.H;
     try { ensureBakes(api); } catch (e) { }
-    if (S.world.cv) {
+    const bl = S.blend;
+    if (bl) {
+      /* 🌅 THE CROSS-FADE, and the LAYER ORDER IS THE POINT. bakeWorld's stack
+         is sky, art, body, shafts, land — the land last so the ridge occludes
+         the sun. Cross-fading a flattened plate would cross-fade the body with
+         it, which is what put two suns in the frame (see THE PLATE LADDER), so
+         the rungs stop at `far` (sky+art) and resume at `near` (land) and the
+         body is painted live in between at the light of THIS frame.
+         globalAlpha survives blit() — it save/restores around the identity
+         transform, which is the same thing drawArt has always relied on. */
+      blit(ctx, bl.farA, W, H);
+      if (bl.farB && bl.f > 0.002) { ctx.globalAlpha = bl.f; blit(ctx, bl.farB, W, H); ctx.globalAlpha = 1; }
+      if (!S.world.art) drawArt(api, ctx, 1);
+      try { drawBody(api, ctx); } catch (e) { }   /* shafts are in `far` — see bakeFar */
+      blit(ctx, bl.nearA, W, H);
+      if (bl.nearB && bl.f > 0.002) { ctx.globalAlpha = bl.f; blit(ctx, bl.nearB, W, H); ctx.globalAlpha = 1; }
+      ctx.globalAlpha = 1;
+      try { discLive(api); } catch (e) { }
+    } else if (S.world.cv) {
       blit(ctx, S.world.cv, W, H);
       if (!S.world.art) drawArt(api, ctx, 1);
     } else {
@@ -5035,6 +5343,9 @@
         S.gradeMs.length = 0; S.gradeDt.length = 0; S.gradeAt = 0;
         S.post.ms.length = 0; S.post.reads = 0; S.post.calls = 0;
         S.post.rd.length = 0; S.post.lp.length = 0; S.post.pt.length = 0;
+        /* …and the bake stages, for the same reason: `rungs` is a COUNT, and a
+           count that carries over from the previous arm is not a count. */
+        for (const kk in S.bakeMs) S.bakeMs[kk].length = 0;
         return true;
       },
       gradeN: S.gradeMs.length,
@@ -5107,6 +5418,24 @@
         return a.length ? +a[a.length >> 1].toFixed(2) : null;
       })(),
       artBakeN: S.artMs.length,
+      /* WHERE ONE BAKE FRAME'S TIME GOES — p50 of each stage, see ensureBakes.
+         `all` is the whole of ensureBakes and is what a bake frame pays over an
+         ordinary one; the four before it should roughly sum to it. */
+      bakeSplit: {
+        sky: med(S.bakeMs.sky), land: med(S.bakeMs.land), post: med(S.bakeMs.post),
+        world: med(S.bakeMs.world), all: med(S.bakeMs.all), n: S.bakeMs.all.length,
+        /* one RUNG of the cross-fade ladder — sky + land + far, no world
+           composite and no veil. `rungs` is how many a transition took; the
+           throttle it replaced took 17. __vistaOff.ladder = 1 puts the
+           throttle back so the A/B runs on one build. */
+        plate: med(S.bakeMs.plate), rungs: S.bakeMs.plate.length
+      },
+      ladder: {
+        on: S.ladder.id !== -1, id: S.ladder.id,
+        baked: S.ladder.far.filter(function (x) { return !!x; }).length,
+        stops: PLATE_K.length, f: S.blend ? +S.blend.f.toFixed(3) : null,
+        blending: !!(S.blend && S.blend.farB)
+      },
       frameMin: S.post.mn, frameMax: S.post.mx,
       /* dump one bake on its own — __vistaDebug().png('land'). The board draws
          over the bottom two thirds of the land bake, so "is the skyline flat?"

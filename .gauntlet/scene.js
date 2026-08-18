@@ -70,27 +70,70 @@
   ]) { await P(t, x, z); done(); }
   done();
 
-  /* 🚗 SPAWN THE CROWD. Round 1's critic scored vehicles 1/10 and citizens 2/10
-     on the evidence that "not one vehicle and not one pedestrian reaches the
-     film" — and that was THE HARNESS's fault, not the builder's. Agents are
-     spawned by manageAgents(), which the shipped code only calls from animate()
-     and from a handful of state changes; rAF never fires in headless capture,
-     so the city was photographed empty every time and a whole round was spent
-     judging assets that exist and were never on screen.
-     Call it directly, twice: the first pass needs computeLinks() to have run so
-     endpoints resolve, and desiredAgentCounts() ramps with population. */
+  /* 🚗 SPAWN THE CROWD — AND THEN ACTUALLY STEP IT.
+     Round 1 found that manageAgents() is only called from animate() and a few
+     state changes, and rAF never fires here, so the city was photographed
+     empty. Calling it directly fixed the CENSUS and nothing else: round 2
+     reported 29 agents and still produced zero visible vehicles and zero
+     visible citizens across three frames. Measured this round, the reason is
+     three separate things, none of them the art:
+
+       1. THE CROWD WAS SPAWNED INTO A CITY THAT DID NOT EXIST YET.
+          bld.finishAll() itself calls manageAgents(), and scene.js calls
+          finishAll() after EVERY placement (see the crew-slot gate above), so
+          the census was already satisfied when the road network was two tiles
+          long. Measured: all 29 agents sat on the first three road keys ever
+          laid — 3 unique positions out of 100 road tiles, all in one corner.
+       2. NOTHING EVER STEPPED THEM. agentTick(dt) runs from animate() only.
+          Measured: 2 rAF callbacks in 2 wall seconds, 6 of 29 agents moving.
+          So every one of them was parked at path index 0 forever.
+       3. EVERY ONE OF THEM WAS INVISIBLE. cullAgents() hides agents past
+          QUALITY.cull, the governor drops to the 'potato' tier under
+          SwiftShader (cull 15, against an 18-unit district), and it last ran
+          with the BOOT camera. capture.mjs then moves the camera by hand and
+          calls renderer.render() directly, so the stale visible=false rode
+          straight into all three screenshots. Measured: 29/29 invisible, and a
+          with-agents / without-agents pixel diff of ZERO on the aerial frame.
+
+     So: bin the crowd that construction spawned, re-census it against the
+     FINISHED network, and then run the tick the way animate() would. */
+  for (const a of nc.agents().slice()) { try { nc.despawnAgent(a); } catch (e) {} }
   try { nc.manageAgents(); } catch (e) {}
-  await new Promise(r => setTimeout(r, 400));
+  await new Promise(r => setTimeout(r, 200));
   try { nc.manageAgents(); } catch (e) {}
 
+  /* Step at a fixed 1/30 s — animate() clamps dt to .25 and this box renders at
+     ~0.6 fps, so borrowing the real clock would teleport agents a quarter of a
+     tile a frame and skip the tile-transition bookkeeping.
+     STOP AT A GOOD MOMENT rather than after a fixed count: enterChance is .9
+     for a civilian, so a long enough run puts most of the crowd indoors
+     (state 'inside' → visible = false) and photographs an empty street for a
+     third round. The exit test is the honest one — spread out, mostly outdoors
+     — and it picks a real moment of the simulation, it does not stage one. */
+  let stepped = 0, spread = 0, out = 0;
+  try {
+    for (let blk = 0; blk < 60; blk++) {
+      for (let i = 0; i < 15; i++) { nc.agentTick(1 / 30); stepped++; }
+      const A = nc.agents();
+      out = A.filter(a => a.state !== 'inside').length;
+      spread = new Set(A.map(a => a.mesh.position.x.toFixed(1) + ',' + a.mesh.position.z.toFixed(1))).size;
+      if (blk >= 8 && spread >= 14 && out >= A.length * 0.8) break;
+    }
+  } catch (e) {}
   const tiles = Object.values(nc.game.tiles);
   let crowd = { total: 0 };
   try {
-    crowd = { total: nc.agents().length, want: nc.counts(),
+    crowd = { total: nc.agents().length, want: nc.counts(), stepped, spread, outdoors: out,
               byKind: nc.agents().reduce((a, g) => (a[g.kind] = (a[g.kind]||0)+1, a), {}) };
   } catch (e) { crowd = { err: String(e) }; }
+  /* 🅿 The standing fleet. It is NOT an agent — no tick, no path — so it is
+     reported separately and it is the half of the vehicle count that survives
+     any framing, including one pointed at a street the traffic happens not to
+     be on this second. */
+  let parkedN = -1;
+  try { parkedN = window.MythicParking ? window.MythicParking.count() : -1; } catch (e) {}
 
-  return { placed: tiles.length, fails, crowd,
+  return { placed: tiles.length, fails, crowd, parked: parkedN,
            sites: tiles.filter(t => t.bld).length,
            types: Object.entries(tiles.reduce((a, t) => (a[t.type] = (a[t.type]||0)+1, a), {})) };
 })()

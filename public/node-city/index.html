@@ -24697,6 +24697,13 @@ function desiredAgentCounts() {
   };
 }
 function manageAgents() {
+  /* 🅿 The standing fleet rides the SAME lifecycle as the moving one: every
+     path that changes the city (place, demolish, upgrade, finishAll, load,
+     boot) already ends in manageAgents(), so hooking here is one line instead
+     of six. NOT a per-frame cost: animate() reaches manageAgents() on the 4 s
+     sysTimer beat, and refresh() early-outs on an unchanged tile signature, so
+     the calls that change nothing cost one hash pass over game.tiles. */
+  try { if (window.MythicParking) window.MythicParking.refresh(); } catch (e) {}
   const want = desiredAgentCounts();
   const have = { civilian: 0, truck: 0, police: 0, car: 0 };
   for (const a of agents) have[a.kind]++;
@@ -31963,8 +31970,15 @@ try {
    ⚠ Never touches an agent in the 'inside' state — that flag means "in a
    building", and is owned by the door-transit logic. Overriding it would pop
    citizens out through walls. */
-function cullAgents() {
-  const cull = QUALITY.cull || 44, r2 = cull * cull;
+/* `rOverride` is for a CAMERA THAT IS NOT THE PLAYER'S. The capture harness
+   moves the camera by hand and calls renderer.render() directly — animate()
+   never runs there — so the last cull the governor performed is stale, and on
+   SwiftShader the governor has already fallen to the 'potato' tier whose radius
+   (15) is smaller than the district. Round 2 photographed 29 agents with
+   visible=false for exactly that reason and scored 0/10 for both vehicles and
+   citizens. Omitted, this is byte-for-byte the shipped behaviour. */
+function cullAgents(rOverride) {
+  const cull = rOverride || QUALITY.cull || 44, r2 = cull * cull;
   const cx = camera.position.x, cz = camera.position.z;
   for (const a of agents) {
     if (!a.mesh || a.state === 'inside') continue;
@@ -33007,6 +33021,40 @@ function animate() {
     // 🛣 Arm the two agentTick hooks only once the module is really there.
     _stMeter = window.MythicStreets;
   } catch (e) { console.warn('[Streets] not mounted (non-fatal):', e); }
+  /* ══ 🅿 KERBSIDE PARKING ═════════════════════════════════════════════════
+     The half of a street's vehicle population that does not move. The moving
+     fleet is capped by AGENTS.*Max — a measured frame-rate decision this does
+     not touch — so a city that is only agents can never look like the bar's
+     reference frame, which counts the cars at the kerb as well as the ones in
+     the queue. See /src/parking for the cross-section arithmetic that says a
+     bay may only be cut on the +lateral side of a straight run.
+
+     🔴 THE GLOBALS TRAP, for the ninth module. `game`, `scene`, `THREE`, `MAT`,
+     `HALF`, `RD_PT`, `makeVehicle`, `limitShadowCasters`, `disposeOwnedGeo` and
+     `isRoad` are ALL top-level `const` in this module script and are invisible
+     to an ES module — there is no `window.game` and no `window.makeVehicle`.
+     This ctx is the hand-over, exactly as the Streets mount above is.
+
+     What is NOT handed over: anything that writes a tile, the ledger, or a mesh
+     the module did not make. Parking reads the road graph and adds one group. */
+  try {
+    const pkmod = await import('../src/parking/index.js?v=' + (window.NC_BUILD || 'r1'));
+    window.MythicParking = pkmod.mount({
+      THREE, scene, game, HALF, RD_PT, MAT,
+      makeVehicle, limitShadowCasters, disposeOwnedGeo, isRoad,
+      /* A bay serves a FRONTAGE. Decor (trees, bushes, fountains) and the map's
+         own anchors are not frontages, and a road opposite a road is a junction
+         approach rather than a plot — so the predicate is the same one
+         doorsAt() uses to decide a building has a door. */
+      isPlot: (t) => !!t && t.type !== 'road' && t.type !== 'anchor'
+                     && !!BUILDINGS[t.type] && !BUILDINGS[t.type].decor,
+      /* Its own material, but built from MAT.road's map so a bay is the same
+         asphalt as the carriageway it opens off. vertexColors is what lets the
+         slab and its white bay lines share one buffer AND one draw call. */
+      bayMat: new THREE.MeshStandardMaterial({ color: 0xffffff, map: MAT.road.map,
+                                               roughness: .95, vertexColors: true }),
+    });
+  } catch (e) { console.warn('[Parking] not mounted (non-fatal):', e); }
   /* ══ 🏠 THE DOSSIER LAYER ════════════════════════════════════════════════
      Addresses, zone, level pips, residents, household wealth and the money
      rows — /src/dossier. READ-ONLY: nothing in that module writes to a tile,
@@ -33297,6 +33345,15 @@ function animate() {
        `bubbles` is the live list so a test can assert nodes are reclaimed. */
     bubbleTick: (dt) => bubbleTick(dt), bubbles: () => _bubbles,
     agents: () => agents, despawnAgent, manageAgents,
+    /* 🚗 THE TWO PER-FRAME AGENT CALLS, for the same reason bubbleTick and
+       keyPanTick are here: they run ONLY from animate(), and rAF does not fire
+       in the capture pane. Without them a harness can spawn a crowd and then
+       photograph it frozen on whichever two or three road tiles existed when
+       manageAgents() first ran, every one of them hidden by a stale cull. That
+       is not a hypothesis — it is what rounds 1 and 2 shipped, measured at 29
+       agents / 0 visible pixels. These are the shipped functions, not copies. */
+    agentTick: (dt) => agentTick(dt),
+    cullAgents: (r) => cullAgents(r),
     /* 🚚 THE AGENT GUARDS. TRUCK_STOPS / the workplace set / the twin resolver
        are module-scope consts, so before this seam existed the ONLY way to check
        whether an operation generated freight or received commuters was to watch

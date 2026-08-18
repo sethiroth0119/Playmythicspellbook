@@ -50,7 +50,7 @@ export const HUD_CSS = `
    244 + demand 198 + stores 91 + models 60 + gaps 96 = 1514, and the bar is one
    48px row. It wraps below ~1520 and --topbarh follows it, which is the
    documented behaviour of everything pinned underneath. */
-#ncsb{display:flex;align-items:center;gap:calc(var(--hu)*2.5);
+#ncsb{display:flex;align-items:center;gap:calc(var(--hu)*2);
   padding:calc(var(--hu)*1.5) calc(var(--hu)*3);min-height:44px;flex-wrap:wrap;}
 #ncsb .sbgrow{flex:1 1 12px;min-width:0;}
 #ncsb .sbsep{width:1px;align-self:stretch;margin:calc(var(--hu)) 0;
@@ -69,13 +69,54 @@ export const HUD_CSS = `
 /* The EST tag is a timezone note, not city state, and it costs 35px of the one
    row the bar gets. It stays in the DOM (updateSky writes it) and out of sight. */
 #nctop #daypill #esttag,#nctop #daypill .sep:last-of-type{display:none;}
+/* 🔴 AND THE PHASE WORD GOES THE SAME WAY, TO PAY FOR THE CLOCK. "Afternoon"
+   costs ~78px of a row measured at 1514 of 1600, and it is the one thing on the
+   bar the clock chip beside it makes redundant — 15:04 says everything Afternoon
+   says and three things more. The node stays in the DOM because updateSky writes
+   it, and the day ICON stays visible, so the at-a-glance read is unchanged. */
+#nctop #daypill #dayphase,#nctop #daypill .sep:first-of-type{display:none;}
 #nctop #adminbtn{font-size:var(--hf-micro);padding:calc(var(--hu)) calc(var(--hu)*2);}
 #nctop #adminbtn{position:static;top:auto;right:auto;bottom:auto;z-index:auto;}
 
+/* ── 🕒 the clock, and the speed control this game has not got ──────────────
+   Round 6 put #clockres inside the Stores popover along with the other thirteen
+   #topbar chips, so the city clock left the bar entirely and the only time on
+   screen was the rail's battle countdown. The chip below wears the same shape
+   as a metric chip so the row reads as one system, but it is NARROWER: it has
+   no per-hour delta, because a clock's rate of change is one hour per hour.
+   ⚠ #clockres is what #clockico and #r-clock were adopted OUT of. It is left in
+     the popover with only its tooltip inside it, so it is hidden here rather
+     than deleted — removing a node index.html declared is not this module's
+     business, and the tooltip text is still true where it sits. */
+#topbar #clockres{display:none;}
+#ncsb-time{display:flex;align-items:center;gap:calc(var(--hu)*1.5);position:relative;}
+.sbm.sbclock{min-width:0;padding-right:calc(var(--hu)*1.5);}
+.sbm.sbclock .sbm-num{font-variant-numeric:tabular-nums;letter-spacing:.02em;}
+/* 🔴 THE SLOT THE REFERENCE PUTS PAUSE/SPEED IN, TELLING THE TRUTH. Styled as a
+   control that is deliberately unavailable rather than as a control that works:
+   dashed border, dimmed ink, and it opens an explanation instead of doing
+   nothing. See the block comment in statusbar.js for the four checks behind it. */
+.sbnopause{display:inline-flex;align-items:center;gap:calc(var(--hu));
+  padding:calc(var(--hu)*.75) calc(var(--hu)*1.75);border-radius:9px;cursor:help;
+  border:1px dashed rgba(212,175,55,.42);background:rgba(10,8,20,.62);
+  color:var(--hud-dim);font-family:'Cinzel',Georgia,'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;
+  font-size:9px;letter-spacing:.10em;text-transform:uppercase;white-space:nowrap;}
+.sbnopause .np-ico{font-size:11px;opacity:.75;}
+.sbnopause:hover,.sbnopause.on{border-color:var(--hud-gold);color:var(--hud-ink);}
+.sbnote{position:absolute;top:calc(100% + 8px);left:0;z-index:60;width:min(430px,72vw);
+  padding:calc(var(--hu)*3);border:1px solid rgba(212,175,55,.34);border-radius:11px;
+  background:linear-gradient(180deg,rgba(16,13,28,.985),rgba(9,7,17,.985));
+  box-shadow:0 16px 40px rgba(0,0,0,.6);color:var(--hud-ink);
+  font-size:12px;line-height:1.55;text-transform:none;letter-spacing:0;}
+.sbnote b{display:block;margin-bottom:calc(var(--hu)*1.5);color:var(--hud-gold);
+  font-family:'Cinzel',Georgia,'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;
+  font-size:12px;letter-spacing:.08em;text-transform:uppercase;}
+.sbnote[hidden]{display:none;}
+
 /* ── the metrics. One shape, four instances, one min-width. ── */
 #ncsb-metrics{display:flex;align-items:stretch;gap:calc(var(--hu)*2);flex-wrap:wrap;}
-.sbm{display:flex;align-items:center;gap:calc(var(--hu)*1.5);
-  min-width:124px;padding:calc(var(--hu)*.75) calc(var(--hu)*2) calc(var(--hu)*.75) calc(var(--hu)*1.5);
+.sbm{display:flex;align-items:center;gap:calc(var(--hu));
+  min-width:124px;padding:calc(var(--hu)*.75) calc(var(--hu)*1.5) calc(var(--hu)*.75) calc(var(--hu)*1.5);
   border:1px solid rgba(212,175,55,.30);border-radius:9px;
   background:linear-gradient(180deg,rgba(24,20,44,.85),rgba(10,8,20,.9));}
 .sbm.watch-bad{border-color:rgba(224,122,106,.75);box-shadow:0 0 12px rgba(224,122,106,.20);}
@@ -92,8 +133,14 @@ export const HUD_CSS = `
 /* 🔴 THE DELTA IS THE POINT OF THE WHOLE BAR. BAR.md frame 4: population WITH
    ITS +/hr, treasury WITH ITS +/hr. A number with a rate beside it says
    something a bare number never can, and fourteen bare numbers said nothing. */
+/* ⚠ min-width 30, NOT 48, AND THAT IS THE CLOCK'S RENT. Measured in the real
+   page at 1600 with a 410M treasury: the four chips came to 662px, the bar's
+   children to 1605, and adding the clock cluster pushed #adminbtn onto a second
+   row — a legibility round that made the dock 150px tall. The reserved slot
+   still stops a chip resizing when its rate appears, which is all it was ever
+   for; 48 was sized for "+410M/hr" and every real rate is shorter. */
 .sbm .sbm-d{font-size:10.5px;font-variant-numeric:tabular-nums;
-  white-space:nowrap;min-width:48px;text-align:right;color:var(--hud-dim);}
+  white-space:nowrap;min-width:30px;text-align:right;color:var(--hud-dim);}
 .sbm .sbm-d.up{color:var(--hud-ok);} .sbm .sbm-d.dn{color:var(--hud-bad);}
 
 /* ── the service dots. The seven NEEDS, in the coverage model's own order.
@@ -325,7 +372,13 @@ body.nchud #ctrlhint{bottom:56px;}
 @media (max-width:1440px){
   .sbm{min-width:0;gap:calc(var(--hu));padding:calc(var(--hu)*.5) calc(var(--hu)*1.5);}
   .sbm .sbm-d{min-width:0;}
-  #nctop #daypill #dayphase{display:none;}
+  /* ⚠ THE "NO PAUSE" WORDS NEVER GO. A lone ⏸ glyph is a PAUSE BUTTON to every
+     player who has ever seen one, which would turn an honest statement into the
+     exact fake control it exists to avoid. The chip's own caption can go — a
+     clock still reads as a clock without the words CITY TIME over it — and the
+     pill gives up padding instead. */
+  .sbnopause{padding:calc(var(--hu)*.5) calc(var(--hu));}
+  .sbm.sbclock .sbm-lab{display:none;}
   #nctop #cityname{font-size:14px;letter-spacing:.10em;padding-right:.10em;}
   .sb-indlab{display:none;}
   .sbdot .sbd-ico{display:none;}

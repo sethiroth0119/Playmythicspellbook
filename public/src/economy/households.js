@@ -110,6 +110,17 @@ const S = {
   lastIncome: 0, lastSpend: 0, lastRent: 0, lastTax: 0, lastBenefit: 0,
   lastDividend: 0,
   unmetDemand: {},          // category → Cinder that wanted to be spent and could not
+  /* 📊 category → the Cinder households WANTED to spend, before the shops were
+     asked whether they could serve it. Declared for the same reason every other
+     readout here is declared (see the note above `lastIncome`), and it exists
+     because `satisfaction` alone cannot be read safely: satisfaction is
+     take ÷ want, so it collapses to 0 at ANY size of want, and a consumer that
+     averages it unweighted gives a category that wanted 0.04 Cinder the same
+     vote as one that wanted five hundred. /src/hud's demand panel shipped
+     exactly that bug — a 0.04-Cinder want pinned Commercial demand at 100% —
+     and the fix needs the DENOMINATOR, which was the one number that never left
+     this module. Pure readout: nothing in the simulation reads it. */
+  wantDemand: {},           // category → Cinder that wanted to be spent, served or not
   satisfaction: {},         // category → 0..1 how well it was served
 };
 
@@ -119,7 +130,7 @@ export function reset() {
   S.savings = { low: 0, mid: 0, high: 0 };
   S.employed = { unskilled: 0, skilled: 0, technical: 0, advanced: 0 };
   S.vacancies = { unskilled: 0, skilled: 0, technical: 0, advanced: 0 };
-  S.unmetDemand = {}; S.satisfaction = {};
+  S.unmetDemand = {}; S.satisfaction = {}; S.wantDemand = {};
   S.lastIncome = 0; S.lastSpend = 0; S.lastRent = 0; S.lastTax = 0;
   S.lastBenefit = 0; S.lastDividend = 0;
 }
@@ -491,6 +502,7 @@ export function buy(spentByCat, wantedByCat) {
       const w = wantedByCat ? (wantedByCat[key] || 0) : 0;
       S.satisfaction[key] = w > 0 ? 0 : 1;
       S.unmetDemand[key] = w;
+      S.wantDemand[key] = w;
       continue;
     }
     // Take it out of savings, proportionally to each tier's holding — a
@@ -506,6 +518,7 @@ export function buy(spentByCat, wantedByCat) {
     const w = wantedByCat ? (wantedByCat[key] || 0) : take;
     S.satisfaction[key] = w > 0 ? Math.min(1, take / w) : 1;
     S.unmetDemand[key] = Math.max(0, w - take);
+    S.wantDemand[key] = w;
   }
   S.lastSpend += moved;
   return moved;

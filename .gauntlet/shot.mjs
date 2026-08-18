@@ -105,7 +105,15 @@ if (SCENE) {
   logs.push(`[scene] ${JSON.stringify(built)}`.slice(0, 400));
   await page.waitForTimeout(5000);
 }
-if (EVAL) { try { await page.evaluate(EVAL); } catch (e) { logs.push(`[evalerr] ${e.message}`); }
+/* ⚠ THE EVAL'S RETURN VALUE IS WRITTEN OUT, and it did not used to be. `--eval`
+   was the seam for driving a feature AND for asserting on it, but the result was
+   dropped on the floor — so anything a driver measured had to be smuggled back
+   through console.log, where this harness truncates every line to 300 chars.
+   Two rounds' worth of drivers worked around that. It lands beside the PNG as
+   <out>.json, so a driver can screenshot and assert in one run. */
+if (EVAL) { try { const r = await page.evaluate(EVAL);
+                  if (r !== undefined) fs.writeFileSync(out + '.json', typeof r === 'string' ? r : JSON.stringify(r, null, 2));
+            } catch (e) { logs.push(`[evalerr] ${e.message}`); }
             await page.waitForTimeout(4000); }
 
 const diag = await page.evaluate(() => {

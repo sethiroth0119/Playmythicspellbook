@@ -1741,6 +1741,11 @@ export function snapshot() {
     flow: { ...S.flow },
     satisfaction: { ...hh.satisfaction },
     unmet: { ...hh.unmetDemand },
+    /* 📊 The denominator `satisfaction` and `unmet` are two thirds of. Published
+       because a reader that only has the ratio cannot tell a city short of five
+       hundred Cinder of goods from one short of four hundredths — see the note
+       on `wantDemand` in households.js. */
+    want: { ...hh.wantDemand },
     logistics: Logistics.report(),
     bank: Bank.report(),
     trade: Trade.report(S.nodeId),

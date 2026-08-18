@@ -52,10 +52,40 @@ const clamp01 = (v) => (isFinite(v) ? Math.max(0, Math.min(1, v)) : 0);
 const n0 = (v) => Math.round(Number(v) || 0);
 const n1 = (v) => (Math.round((Number(v) || 0) * 10) / 10);
 const pc = (v) => Math.round(clamp01(v) * 100) + '%';
+/* 🔴 A FORMATTER THAT CANNOT PRINT "0" FOR SOMETHING THAT IS NOT ZERO. n1()
+   rounds to one decimal, which is how the panel came to say "Residents wanted 0
+   of goods … satisfaction is 0%" in the same sentence — a self-contradiction
+   that was really a rounding artefact sitting on top of a missing weight. Any
+   quantity small enough that n1() would flatten it gets two significant figures
+   instead, so a 0.04 reads as 0.04 and the reader can see for themselves that
+   it is not a shortage. */
+function qty(v) {
+  const n = Number(v) || 0;
+  const a = Math.abs(n);
+  if (a === 0) return '0';
+  if (a >= 100) return String(Math.round(n));
+  if (a >= 1) return String(Math.round(n * 10) / 10);
+  return String(Number(a.toPrecision(2)) * (n < 0 ? -1 : 1));
+}
 
 function win() { try { return typeof window === 'undefined' ? null : window; } catch (e) { return null; } }
 function mod(name) { const w = win(); if (!w) return null; try { return w[name] || null; } catch (e) { return null; } }
 function call(o, fn, dflt) { try { return o && typeof o[fn] === 'function' ? o[fn]() : dflt; } catch (e) { return dflt; } }
+
+/* 🚰 THE HOST'S OWN SERVICE COVERAGE — `game.cov.pct`, through node-city's
+   `window.__nc` diagnostics seam, which is the only handle an ES module has on
+   it (`game` is a top-level const in a module script and is not on window).
+   This is the SAME object the status-bar dots and the Vital Signs card are
+   drawn from, which is the whole reason it is read here rather than re-derived:
+   see the water note in utilityTerms. */
+function hostCoverage() {
+  const w = win();
+  try {
+    const g = w && w.__nc && w.__nc.game;
+    const p = g && g.cov && g.cov.pct;
+    return p && typeof p === 'object' ? p : null;
+  } catch (e) { return null; }
+}
 
 /* /src/zoning's swatch for a category — the first zone declared with that cat,
    which is the one the palette shows first. */
@@ -95,17 +125,53 @@ function utilityTerms(out) {
   const P = mod('MythicPower');
   const st = call(P, 'state', null);
   if (st && st.ok && isFinite(st.factor) && st.factor < 0.999) {
-    out.push({ sign: '−', w: -0.18 * (1 - st.factor), label: 'Power Shortfall',
-      why: 'The grid is serving only ' + pc(st.factor) + ' of what the city asks for, so nothing new runs at full output.',
+    out.push({ sign: '−', w: -0.18 * (1 - st.factor), label: 'Grid Delivery Shortfall',
+      why: 'The transmission grid is delivering only ' + pc(st.factor) + ' of what the city asks for, so nothing new runs at full output. This is the WIRES, not generation — the power dot on the status bar is supply against demand, and the two can differ when a line is the bottleneck.',
       src: '/src/power state().factor' });
+  }
+  /* 💧 TWO WATER MODELS, ONE SCREEN — and this panel used to carry the second
+     verdict. The round-6 critic caught it at a glance: the meter said "Water
+     Shortfall 100%" while the status bar 400px above it read WATER 410M with a
+     green water dot, and both were reading a live model.
+     They are not the same model, and /src/broadcast/sources.js `fromWater()`
+     already had to settle exactly this — the comment there is the authority and
+     this follows it rather than restating a second opinion:
+       · /src/water's `shortfall` is draw MINUS CAPACITY — a PRODUCTION fact
+         about the hydrology ("we are asking the ground for more than it
+         yields"). A city can out-pump its aquifers for a long time with every
+         tap still running, because the taps are fed from STOCK.
+       · node-city's `game.cov.pct.water` is the SERVICE fact — the one the
+         status bar, the Vital Signs card and the population gate are all drawn
+         from ("are the taps running").
+     So the SERVICE number is what suppresses development, because that is the
+     number the rest of the screen is showing the player; and the hydrology gets
+     its own separate line under its own name, saying what it actually means. A
+     reader can now see both facts and neither contradicts the other.
+     ⚠ `demandKnown` false means node-city never handed the module its
+       per-citizen drink rate, so `draw` is missing the whole population term and
+       a shortfall fraction built on it is meaningless. Same gate broadcast
+       uses: not published at all. */
+  const cov = hostCoverage();
+  const served = cov && isFinite(cov.water) ? cov.water : null;
+  if (served != null && served < 0.999) {
+    out.push({ sign: '−', w: -0.18 * clamp01(1 - served), label: 'Water Service Shortfall',
+      why: 'The taps are meeting ' + pc(served) + ' of what the city asks for. This is the same coverage figure the status bar’s water dot and the Vital Signs card are drawn from.',
+      src: 'node-city game.cov.pct.water' });
   }
   const W = mod('MythicWater');
   const ws = call(W, 'state', null);
-  if (ws && ws.ok && (ws.shortfall || 0) > 0) {
-    const share = ws.draw > 0 ? ws.shortfall / ws.draw : 0;
-    out.push({ sign: '−', w: -0.18 * clamp01(share), label: 'Water Shortfall',
-      why: 'The wells are ' + n1(ws.shortfall) + ' short of the ' + n1(ws.draw) + ' the city draws.',
-      src: '/src/water state().shortfall' });
+  if (ws && ws.ok && ws.demandKnown && ws.draw > 0 && (ws.shortfall || 0) > 0) {
+    const share = clamp01(ws.shortfall / ws.draw);
+    /* ⚠ WORDED FOR capacity === 0 AS WELL. A city with no waterworks at all has
+       capacity 0 and therefore a 100% "shortfall", and calling that
+       over-extraction would be a third wrong story: nothing is being extracted.
+       "Production" covers both — no wells, and wells that cannot keep up. */
+    out.push({ sign: '−', w: -0.08 * share, label: 'Water Production Shortfall',
+      why: 'The city’s own waterworks can raise ' + qty(ws.capacity) + ' a minute against the ' + qty(ws.draw) +
+           ' it draws, so ' + pc(share) + ' of the draw has no local production behind it.' +
+           (served != null ? ' The taps are still at ' + pc(served) + ' — that is the status bar’s figure, fed from the city’s water store. This line is about the ground, not the tap.'
+                           : ' This is the hydrology, not the tap: service coverage is its own figure.'),
+      src: '/src/water state().capacity vs .draw' });
   }
 }
 
@@ -169,30 +235,120 @@ function residential() {
    excluded because no commercial zone answers them. */
 const RETAIL_KEYS = ['food', 'clothing', 'electronics', 'restaurants', 'entertainment', 'cards', 'luxury', 'healthcare'];
 
+/* 🏷 WHAT ONE UNIT OF THIS CATEGORY COSTS, at today's price, taken as the
+   CHEAPEST thing in the category's own resource list. This is the yardstick the
+   magnitude gate below is measured against, and it is a live price rather than
+   a threshold: `MythicEconomy.basket` is /src/economy/households.js BASKET and
+   `price(id)` is Prices.priceOf. Returns null when the economy cannot price the
+   category, and a category that cannot be priced is left out of the gate rather
+   than guessed at. */
+function unitPrice(key) {
+  const E = mod('MythicEconomy');
+  try {
+    const b = (E && E.basket || []).find((x) => x && x.key === key);
+    if (!b || !Array.isArray(b.res) || !b.res.length) return null;
+    let min = Infinity;
+    for (const id of b.res) {
+      const pz = Number(E.price(id));
+      if (isFinite(pz) && pz > 0 && pz < min) min = pz;
+    }
+    return isFinite(min) ? min : null;
+  } catch (e) { return null; }
+}
+
+/* 🔴 THE TERM THAT PINNED COMMERCIAL AT 100%, AND WHAT IT NOW MEASURES.
+   ─────────────────────────────────────────────────────────────────────────
+   BEFORE: `sat` was the UNWEIGHTED mean of per-category satisfaction, and
+   satisfaction is take ÷ want — so it collapses to 0 at ANY size of want. One
+   category that wanted 0.04 Cinder and got none dragged the mean to the floor
+   as hard as food wanting five hundred would, produced the panel's single
+   largest weight (+0.45), and printed a sentence that contradicted itself in
+   nine words: "Residents wanted 0 … satisfaction is 0%". Commercial sat pinned
+   at 100%, and because "+ Commercial Demand (Industrial)" cites this very
+   meter, the error propagated into a second arrow with no independent check.
+
+   AFTER, two changes and they fix two different halves of it:
+     1. WEIGHTED. The share is Σ unmet ÷ Σ want across the basket — a
+        want-weighted satisfaction, so a category is heard in proportion to how
+        much of the city's shopping it actually is. `want` is the denominator
+        /src/economy now publishes (households.js `wantDemand`); it was always
+        computed and never left the module, which is why the ratio was being
+        read without it.
+     2. GATED ON MAGNITUDE, NOT ON THE RATIO BEING ZERO. The unmet Cinder is
+        converted to UNITS OF GOODS at the cheapest live price in each category,
+        and a shortage smaller than ONE unit is not a shortage — it is a rounding
+        remainder on the last transaction of the day. One unit is not a tuning
+        constant: it is the smallest quantity of anything this economy can trade.
+   The returned object is deliberately explicit rather than a formatted string,
+   so the caller cannot print a sentence the numbers do not support. */
+function retailShortfall(snap) {
+  if (!snap || !snap.satisfaction) return null;
+  const sat = snap.satisfaction, um = snap.unmet || {}, wt = snap.want || null;
+  let want = 0, unmet = 0, units = 0, wantUnits = 0, n = 0, priced = 0;
+  for (const k of RETAIL_KEYS) {
+    const s = sat[k];
+    if (s == null || !isFinite(s)) continue;
+    n++;
+    const u = Math.max(0, Number(um[k]) || 0);
+    unmet += u;
+    /* The want, preferring the published figure. The fallback is exact for any
+       category that fell short (want = unmet ÷ (1 − satisfaction)) and simply
+       unavailable for one that did not — an older /src/economy therefore makes
+       the share read high rather than making up a number, and the unit gate
+       below still holds the line. */
+    const wPub = wt ? Number(wt[k]) : NaN;
+    const w = isFinite(wPub) && wPub >= 0 ? wPub : (s < 1 ? u / (1 - s) : NaN);
+    if (isFinite(w)) want += w;
+    const up = unitPrice(k);
+    if (up != null) { priced++; units += u / up; if (isFinite(w)) wantUnits += w / up; }
+  }
+  if (!n) return null;
+  return { n, want, unmet, units, wantUnits, priced, wantKnown: !!wt,
+           share: want > 0 ? clamp01(unmet / want) : 0 };
+}
+
 function commercial() {
   const out = [];
   const E = mod('MythicEconomy');
   const snap = call(E, 'snapshot', null);
 
-  if (snap && snap.satisfaction) {
-    let sum = 0, n = 0, unmet = 0;
-    for (const k of RETAIL_KEYS) {
-      const s = snap.satisfaction[k];
-      if (s == null || !isFinite(s)) continue;
-      sum += s; n++;
-      unmet += Number((snap.unmet || {})[k]) || 0;
-    }
-    if (n > 0) {
-      const sat = sum / n;
-      if (sat < 0.98) {
-        out.push({ sign: '+', w: 0.45 * (1 - sat), label: 'Local Demand',
-          why: 'Residents wanted ' + n1(unmet) + ' 🔥 of goods the city’s shops could not sell them. Retail satisfaction across ' + n + ' basket categories is ' + pc(sat) + '.',
-          src: '/src/economy snapshot().satisfaction' });
-      } else {
-        out.push({ sign: '−', w: -0.12, label: 'Shops Are Keeping Up',
-          why: 'Every consumer category is served at ' + pc(sat) + '. Nothing on the high street is short.',
-          src: '/src/economy snapshot().satisfaction' });
-      }
+  const rs = retailShortfall(snap);
+  if (rs) {
+    const served = Math.max(0, rs.want - rs.unmet);
+    /* ⚠ BOTH CONDITIONS, and each covers a case the other cannot. A city short
+       of a real share of a tiny basket still fails the unit test; a city short
+       of many units out of an enormous basket still fails the share test and is
+       correctly reported as coping. */
+    if (rs.units >= 1 && rs.share > 0.02) {
+      out.push({ sign: '+', w: 0.45 * rs.share, label: 'Local Demand',
+        why: 'Residents wanted ' + qty(rs.want) + ' 🔥 of goods across ' + rs.n +
+             ' basket categories and the shops could only serve ' + qty(served) + ' 🔥 of it — ' +
+             pc(rs.share) + ' went unserved, about ' + qty(rs.units) + ' units of goods nobody could buy.',
+        src: '/src/economy snapshot().want / .unmet' });
+    } else if (rs.wantUnits < 1) {
+      /* ⚠ AND THIS IS THE BRANCH THE OLD CODE GOT WRONG, SO IT SAYS SO OUT LOUD.
+         A basket that adds up to less than one unit of goods is not a city whose
+         shops are coping — it is a city with no consumer economy yet. Calling it
+         "shops are keeping up" would be the mirror image of the bug: satisfaction
+         really is 0%, and the reason it is 0% is that there is nothing there. */
+      out.push({ sign: '−', w: -0.12, label: 'Almost Nobody Is Shopping Yet',
+        why: 'The whole retail basket came to ' + qty(rs.want) + ' 🔥 this shopping round — less than the price of one unit of anything in it. ' +
+             'Satisfaction reads ' + pc(1 - rs.share) + ', but there is nothing there to satisfy: a want that small is a rounding remainder, not a shortage, and it is not a reason to zone shops.',
+        src: '/src/economy snapshot().want / .unmet' });
+    } else if (rs.units < 1) {
+      out.push({ sign: '−', w: -0.12, label: 'Shops Are Keeping Up',
+        why: rs.unmet <= 0
+          ? 'Every category in the basket was served in full — residents wanted ' + qty(rs.want) +
+            ' 🔥 of goods this shopping round and got all of it.'
+          : 'Nothing on the high street is short by even a single unit of goods: residents wanted ' +
+            qty(rs.want) + ' 🔥 and ' + qty(served) + ' 🔥 of that was served. Unmet want of ' +
+            qty(rs.unmet) + ' 🔥 is under the price of one unit of anything in the basket.',
+        src: '/src/economy snapshot().want / .unmet' });
+    } else {
+      out.push({ sign: '−', w: -0.12, label: 'Shops Are Keeping Up',
+        why: 'The shops served ' + qty(served) + ' 🔥 of the ' + qty(rs.want) +
+             ' 🔥 residents wanted — ' + pc(1 - rs.share) + ' of the basket. Nothing on the high street is meaningfully short.',
+        src: '/src/economy snapshot().want / .unmet' });
     }
   }
 
@@ -235,11 +391,17 @@ function industrial(comValue) {
   const out = [];
   const E = mod('MythicEconomy');
 
+  /* ⚠ THE ONE TERM IN THIS FILE THAT IS NOT AN INDEPENDENT READING. It cites
+     the commercial meter, so any error there arrives here doubled and with no
+     second opinion to catch it — which is exactly what happened when the
+     unweighted Local Demand term pinned commercial at 100%. `src` says so in as
+     many words, deliberately, so a reader auditing this arrow is sent to the
+     meter above it rather than to a module. */
   if (comValue != null) {
     const d = comValue - 0.5;
     out.push({ sign: d >= 0 ? '+' : '−', w: 0.3 * d * 2, label: 'Commercial Demand',
       why: 'Commercial demand stands at ' + pc(comValue) + '. Shops that want stock are what industry sells to.',
-      src: 'this panel’s commercial meter' });
+      src: 'this panel’s commercial meter (not an independent reading)' });
   }
 
   /* What the city's own firms cannot get. cityReport() is /src/economy's
@@ -253,10 +415,26 @@ function industrial(comValue) {
     for (const r of bn) {
       if (!r || !r.bottleneck) continue;
       if ((r.cause && r.cause.key) === 'NO_DEMAND' || r.bottleneck.key === '__demand__') continue;
+      /* ⚠ AND NOT `workers`. It is a real bottleneck and it is on the same list,
+         but it is not something a works can be built to MAKE — printing it under
+         a label that says "worth making here" is the same sign-reads-backwards
+         mistake in a different coat. The labour shortage already has three
+         honest homes on this panel: the two Labor Availability terms and the
+         residential meter. */
+      if (r.bottleneck.key === 'workers') continue;
       if (held.indexOf(r.bottleneck.label) < 0) held.push(r.bottleneck.label);
     }
     if (held.length) {
-      out.push({ sign: '+', w: 0.1 * Math.min(3, held.length), label: 'Input Shortages',
+      /* 🔴 A SIGN THAT READ BACKWARDS. This line used to be "+ Input Shortages",
+         which is defensible in the maths — a shortage of inputs really does push
+         industrial demand UP — and misleading on screen, because every player
+         reads the word SHORTAGE as a minus. The convention this list keeps is
+         that the LABEL describes what the player sees and the SIGN describes
+         which way the meter moves, so a "+" must name a REASON TO ZONE. Renamed
+         rather than re-signed: flipping the sign would have made the meter
+         wrong, and the underlying fact — firms cannot get these — is unchanged
+         and still spelled out in the sentence underneath. */
+      out.push({ sign: '+', w: 0.1 * Math.min(3, held.length), label: 'Inputs Worth Making Here',
         why: 'Firms are running short of ' + held.slice(0, 3).join(', ') + '. Every one of those is something a works in this city could make instead of buying in.',
         src: '/src/economy bottlenecks()' });
     }
@@ -265,7 +443,9 @@ function industrial(comValue) {
   if (Array.isArray(gaps) && gaps.length) {
     const wanted = gaps.filter((g) => (g.consumers | 0) > 0);
     if (wanted.length) {
-      out.push({ sign: '+', w: 0.08 * Math.min(3, wanted.length), label: 'Supply Chain Gaps',
+      /* Same convention as the line above: a "+" names the reason to zone, not
+         the deficiency behind it. */
+      out.push({ sign: '+', w: 0.08 * Math.min(3, wanted.length), label: 'Imports Worth Replacing',
         why: wanted.length + ' resource' + (wanted.length === 1 ? '' : 's') + ' that firms here consume has no producer anywhere in this city — ' +
              wanted.slice(0, 3).map((g) => g.res).join(', ') + '. Until something makes them they have to be bought in.',
         src: '/src/economy structuralGaps()' });

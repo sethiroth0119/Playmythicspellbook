@@ -96,6 +96,7 @@ export function mount(_ctx) {
   bar.setAttribute('role', 'status');
   bar.setAttribute('aria-label', 'City status');
   bar.innerHTML = '<span class="sb-id"></span>'
+    + '<div id="ncsb-time"></div>'
     + '<span class="sbsep"></span>'
     + '<div id="ncsb-metrics"></div>'
     + '<span class="sbgrow"></span>'
@@ -120,6 +121,7 @@ export function mount(_ctx) {
   adopt('cityname', idc);
   adopt('daypill', idc);
   adopt('adminbtn', bar.querySelector('.sb-admin'));
+  timeCluster(bar);
 
   /* ⚠ THE RAIL DOCK JOINS THE BLOCK, IT IS NOT REBUILT. #railbar keeps its id,
      its thirteen buttons, its 0.5 s badge beat and #oc-dock (the Outside chip,
@@ -190,6 +192,90 @@ export function mount(_ctx) {
   host = bar;
   try { if (window.__syncTopbarH) window.__syncTopbarH(); } catch (e) {}
   return top;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🕒 THE CITY CLOCK, AND THE SPEED CONTROL THIS GAME DOES NOT HAVE.
+   ════════════════════════════════════════════════════════════════════════════
+   🔴 WHAT WENT WRONG. Round 6 moved #topbar wholesale into the Stores popover
+      to get fourteen counters off the frame — and #clockres was one of the
+      fourteen, so THE CITY CLOCK WENT WITH IT. BAR.md reference frame 4 has the
+      clock and a pause/speed control on the status bar, and the round-6 critic
+      found ours behind a click, with the only visible time on screen being the
+      rail's BATTLE COUNTDOWN, which a stranger reads as the city clock.
+
+   THE CLOCK IS ADOPTED, NOT REBUILT. #clockico and #r-clock are written by
+   updateSky() every frame, by id. Moving the two nodes into a chip here keeps
+   that writer working with no edit to index.html; re-creating them is how a
+   readout goes dark. Their old parent #clockres is left in the Stores popover
+   with nothing in it, so it is hidden by CSS rather than removed — removing a
+   node index.html declared is not this module's business.
+
+   🔴 THERE IS NO SPEED CONTROL TO BIND, AND THIS SAYS SO RATHER THAN FAKING ONE.
+      Checked before deciding, because "add the control the reference has" is
+      only the right answer if there is a model under it:
+        · estClock() (index.html) formats the REAL wall clock in
+          America/New_York, with a comment that says "the sun rises when YOUR
+          sun rises. No fast-forward." The sky, the lamps and the day phase all
+          follow it. Nothing anywhere multiplies it.
+        · animate() drives every tick off THREE.Clock's real delta. There is no
+          time-scale term to set — not on the economy, not on vitals, not on
+          decay.
+        · Build completion (bldSweep), the finance cycle (finTick) and the raid
+          countdown are Date.now() comparisons, so they would keep running
+          through any "pause" the render loop honoured.
+        · offlineCatchUp() pays the player for wall-clock absence up to
+          OFFLINE_CAP_H. Time the player "paused" would be credited back on the
+          next load.
+      A pause button would therefore stop four meters on screen, change nothing
+      about the sun, the buildings, the raids or the payout, and be undone by a
+      refresh. That is a lie with a keyboard shortcut. So the slot the reference
+      puts a speed control in carries an explicit NO PAUSE affordance instead,
+      and clicking it explains why — the same call this project already made
+      about not inventing a tax rate for the demand panel.
+   ════════════════════════════════════════════════════════════════════════════ */
+function timeNote() {
+  const t = (ctx && ctx.time) || {};
+  const zone = t.zone || 'the real world';
+  const cap = isFinite(t.offlineCapH) ? t.offlineCapH : null;
+  return 'This city runs in real time. The day/night cycle follows ' + esc(zone)
+    + ', so the sun here rises when it rises there, and there is no fast-forward: '
+    + 'production, build timers and raid countdowns are all measured against the wall clock. '
+    + 'There is nothing to pause either — close the tab and the city keeps running'
+    + (cap != null ? ', and the away report pays you for up to ' + cap + ' hours of it' : '')
+    + '. A pause button here would stop the numbers on screen and change none of that, '
+    + 'so this says what the game does instead of pretending to a speed it has not got.';
+}
+
+function timeCluster(bar) {
+  const host = bar.querySelector('#ncsb-time');
+  if (!host) return;
+  host.innerHTML = '<div class="sbm sbclock" id="ncsb-clock" title="City time. The clock is the real one — see NO PAUSE.">'
+    + '<span class="sbm-ico" id="ncsb-clockico"></span>'
+    + '<span class="sbm-col"><span class="sbm-lab">City Time</span>'
+    + '<span class="sbm-num" id="ncsb-clocknum"></span></span></div>'
+    + '<button type="button" class="sbnopause" id="ncsb-nopause" aria-expanded="false">'
+    + '<span class="np-ico">⏸</span><span class="np-lab">No Pause</span></button>'
+    + '<div class="sbnote" id="ncsb-timenote" hidden></div>';
+  /* THE ADOPTION. Both nodes are index.html's, written by updateSky by id. */
+  adopt('clockico', host.querySelector('#ncsb-clockico'));
+  adopt('r-clock', host.querySelector('#ncsb-clocknum'));
+  const note = host.querySelector('#ncsb-timenote');
+  const btn = host.querySelector('#ncsb-nopause');
+  note.innerHTML = '<b>Why there is no pause or fast-forward</b>' + timeNote();
+  btn.title = 'This game has no speed control. Click for why.';
+  btn.addEventListener('click', () => {
+    const on = note.hasAttribute('hidden');
+    if (on) note.removeAttribute('hidden'); else note.setAttribute('hidden', '');
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    btn.classList.toggle('on', on);
+  });
+  document.addEventListener('mousedown', (ev) => {
+    if (note.hasAttribute('hidden')) return;
+    try { if (ev.target.closest('#ncsb-time')) return; } catch (e) {}
+    note.setAttribute('hidden', ''); btn.classList.remove('on');
+    btn.setAttribute('aria-expanded', 'false');
+  }, false);
 }
 
 /* ⚠ EVERY LOOKUP BELOW IS document-SCOPED, NOT host-SCOPED, and that is not

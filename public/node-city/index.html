@@ -34699,6 +34699,18 @@ function animate() {
            is in trouble — and this file has shipped exactly that class of bug
            before (see the #bldcount note at renderBuildBoard). */
         gates: { grow: POP_GROW_AT, fall: POP_DECLINE_AT },
+        /* 🕒 THE TIME MODEL, HANDED OVER AS FACTS RATHER THAN INFERRED.
+           BAR.md reference frame 4 has a pause/speed control on its status bar
+           and this game has nothing to bind one to: estClock() formats the REAL
+           America/New_York wall clock ("the sun rises when YOUR sun rises. No
+           fast-forward"), animate() ticks on THREE.Clock's real delta with no
+           time-scale term anywhere, bldSweep/finTick/the raid countdown are
+           Date.now() comparisons that would run straight through any pause, and
+           offlineCatchUp() credits wall-clock absence back on the next load.
+           So the HUD states that instead of faking a control — and it states it
+           with THESE numbers, from here, rather than with a copy of 36 that
+           would drift the day OFFLINE_CAP_H is retuned. */
+        time: { realtime: true, zone: 'America/New_York', offlineCapH: OFFLINE_CAP_H },
       });
     }
   } catch (e) { console.warn('[HUD] not mounted (non-fatal):', e); }

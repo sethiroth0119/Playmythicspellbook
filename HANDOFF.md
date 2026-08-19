@@ -45,8 +45,52 @@ disrupted or needs a feature flag.
 | Server combat engine | ⚠ **Correct but never driven.** 100/100 pairs byte-identical at 200 clients — but those units were played by the *load test*. `sendColyseusAction()` has **0 callers**, so in production `state.units` is empty and this engine does not run. |
 | Join latency | p50 5ms · p95 8ms · max 32ms · 400/400 snapshots, zero loss |
 | Horizontal scaling | ⚠ Wired but **OFF**. **Do not `fly scale count 2` without `REDIS_URL`** — two processes without a shared registry silently fail to pair players holding the same matchId. |
-| Board-state relay | ❌ **200/200 relayed snapshots contradicted the server** — this is the desync |
+| Board-state relay | ⚠ Relays snapshots **unvalidated** — true, and by design at this stage. The "200/200 contradicted the server" figure is a tautology, not a desync measurement (see below). |
+| Adopt-path desync | ✅ **Two classes found and fixed**, gated by `node tools/mp-tests/run.mjs` — see below |
 
+
+### The desync, found and fixed — 2026-08-19
+
+The relay was never measured as a desync source. The load test's headline
+"200/200 relayed snapshots contradicted the server" is a **tautology**: it builds
+each snapshot as `currentHp - 1` and then asserts the relayed hp differs from the
+server's. It proves the server relays snapshots unvalidated — true, and by
+design — and says nothing about players diverging.
+
+The real desync was in the **adopt path**, and it is two independent classes.
+Both are now fixed and gated by `node tools/mp-tests/run.mjs`.
+
+**Class 1 — `swapBattlePerspective` forgot fields.** The receiver adopts the
+sender's whole board through one transform; anything it misses is a permanent
+divergence. Its comments already record five past misses (`graveLock`,
+`_lastMove`, `_atkFx`, `_counterChain`, `enchantments`), each fixed alone and
+never guarded. Four more were live:
+
+| Field | Was |
+|---|---|
+| `sealedTiles` | never mirrored — blocked the wrong squares for card placement |
+| `smokedTiles` | never mirrored — gated accuracy/AI vision on the wrong squares |
+| `delayedBlasts` | never mirrored **and** owner never swapped — a planted charge crossed to the wrong tile and detonated against the player who planted it |
+| `_lastPlayerCounterCard` / `_lastAiCounterCard` | a matched side pair that never exchanged, so the receiver read the opponent's counter card as its own |
+
+**Class 2 — the opponent could not durably touch my private zones.** The adopt
+keeps `_myPrev.player` (correct: their model of my hand is stale and slimmed),
+which also reverted the **nine** effects that legitimately remove cards from the
+opponent's zones — hand-disrupt discard/banish, forced discard, hand theft,
+`graveSteal`, `millEnemy`, `banishDeck`, `banishHand`, `discardEnemy`. The
+thief saw the card gone; the victim still held it and could spend it again.
+**Silent card duplication.** Fixed with a removals-only op list riding the
+snapshot: the actor names each card by `instanceId`, the victim removes that one
+card if still present. Removals-only and idempotent on purpose — a bug here can
+only fail to remove, never wipe a hand, which is the worse bug the blanket keep
+existed to prevent.
+
+⚠ Five of the nine were found by reading the code; the other four were found by
+the gate's source scan. Do not trust a manual enumeration of this class.
+
+**The gate proves itself.** `run.mjs` re-runs the suite against temp copies of
+`index.html` with each fix individually reverted and fails if any check stays
+green. This project has twice shipped a test that was never comparing anything.
 Guard for all of it: `cd colyseus-server && npm run loadtest`.
 **Check `no-units` first** — if non-zero the run compared nothing and the green
 means "I never looked".
@@ -73,28 +117,35 @@ Next steps and the gating question are in `colyseus-server/RELAY_CLOSURE_PLAN.md
 
 ## 4. Open work, in priority order
 
-1. **Board-state relay — first concrete step is now known and needs no decision:**
+1. **Verify the desync fixes in a real two-player match.** Nine effects and four
+   perspective fields changed behaviour; all are gated offline by
+   `node tools/mp-tests/run.mjs`, but no gate here can exercise two real clients.
+   **Needs the two test accounts from §1** — this is the one blocker.
+   Sanity checks once they exist: play a hand-disrupt card and confirm the card
+   actually leaves the victim's hand on the victim's screen; plant a delayed
+   blast and confirm it lands on the same tile for both players.
+2. **Board-state relay / authority — the step that needs no decision:**
    wire `sendColyseusAction()` (0 callers today) into the playUnit / attack /
    move sites so the server's board is populated by real play. Verify by
    checking `state.units` is non-empty after a real two-player match. Both
    authority options depend on it. See §1 and `colyseus-server/RELAY_CLOSURE_PLAN.md`.
-2. **`fly scale memory 1024`** — one command, Seth's (changes the bill).
-3. **The sync allowlist → denylist.** Camp roster, lab cores, city shop layouts
+3. **`fly scale memory 1024`** — one command, Seth's (changes the bill).
+4. **The sync allowlist → denylist.** Camp roster, lab cores, city shop layouts
    and three currency ledgers (`hg_wallet_recon`, `hg_purge_owed`,
    `hg_economy_owed`) live **only in browsers**. The file calls the current
    design *"the FIFTH silent-save bug this project has shipped."* Needs a
    migration-on-login **before** local reads are removed — never destructive-first.
    Details: `remediation/identity-audit.md` Finding 2.
-4. **`__mg.gradeAB()`** — never run. Two arms, 24s, from the top-level console.
+5. **`__mg.gradeAB()`** — never run. Two arms, 24s, from the top-level console.
    ~253 ms (dev pane) vs 8.7 ms (file's own note) are different decisions and
    only a compositing browser can tell them apart.
-5. **Persistent simulation** — `simulation/tick-audit.md`. Worst: `_osimAnimate`
+6. **Persistent simulation** — `simulation/tick-audit.md`. Worst: `_osimAnimate`
    runs production inside a RAF and has **two disagreeing rates** for the same
    field. Expeditions/caravans are **deleted on every F5** (session clock,
    unserialized) — live player loss, small fix.
-6. **Decisions awaiting Seth** — `BRIEFS_DECISIONS.md`. C1 (offline raiding) is
+7. **Decisions awaiting Seth** — `BRIEFS_DECISIONS.md`. C1 (offline raiding) is
    decided; its four constants are proposed, not confirmed.
-7. **R2 migration** — `migration/audit-report.md`. Supabase Storage bucket sizes
+8. **R2 migration** — `migration/audit-report.md`. Supabase Storage bucket sizes
    still unmeasured (needs S3 keys).
 
 ---
@@ -120,6 +171,18 @@ Next steps and the gating question are in `colyseus-server/RELAY_CLOSURE_PLAN.md
 - **A load test that cannot fail is worse than none.** Its first version played
   no units, so the board was empty and both checks passed having compared
   nothing.
+- **A test can construct the very divergence it then reports.** The load test's
+  "200/200 relayed snapshots contradicted the server" was built by sending
+  `currentHp - 1` and then asserting the relayed hp differed from the server's.
+  Always true. It was read as "the relay is the desync" and set the direction of
+  a whole plan. Before believing a failure count, find the line that produces the
+  value being compared.
+- **Reading the code missed nearly half of a bug class.** A manual pass found 5
+  cross-side private-zone writes; a crude source scan found 4 more
+  (`millEnemy`, `banishDeck`, `banishHand`, `discardEnemy`). When a bug class is
+  "someone forgot to add X at site Y", enumerate sites mechanically — and keep
+  the scan as the gate, because the next site will be added by someone who has
+  not read this file.
 - **Ask who drove the test, not just whether it passed.** The load test's
   "100/100 byte-identical" measured the server engine — driven by units the
   *test itself* sent via `room.send('action')`. The shipping client sends no
@@ -152,4 +215,5 @@ Poll — PoP propagation takes a couple of minutes, and the first read is often
 the previous build. Never trust the deploy log.
 
 Gates: `node _synckcheck.mjs` · `node tools/economy-tests/run.mjs` ·
+`node tools/mp-tests/run.mjs` ·
 `node _jsxcheck.js public/corp/app.jsx` · `cd colyseus-server && npx tsc --noEmit`

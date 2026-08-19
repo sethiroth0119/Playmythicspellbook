@@ -45963,6 +45963,15 @@ function sendColyseusSnapshot() {
     // 📜 Ship our NEW log lines so the opponent sees the full play-by-play.
     const _newLog = (typeof _mpNewLogForBroadcast === 'function') ? _mpNewLogForBroadcast() : [];
     ColyseusMP.room.send('snapshot', { kind: 'full', payload: { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap, newLog: _newLog } });
+    // 🔒 The private-zone removals are now in flight, so drop them from local
+    // state — otherwise they ride EVERY later snapshot and the list grows for
+    // the whole match. Correctness does not depend on this (the receiver
+    // applies each op id at most once); size does.
+    try {
+      if (App.state && Array.isArray(App.state._mpPrivateRemovals) && App.state._mpPrivateRemovals.length) {
+        App.state = { ...App.state, _mpPrivateRemovals: [] };
+      }
+    } catch (e) {}
     // 📡 Also mirror the snapshot onto the Supabase match channel so SPECTATORS
     // can watch this Colyseus match live (additive — players are unaffected).
     try { ensureSpectatorMirror(); _specMirrorSend('state', { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap, newLog: _newLog }); } catch (e) {}
@@ -89852,10 +89861,12 @@ function _applyHandDisrupt(state, unit, mode, log) {
     const nm = (card && card.name) || 'a card';
     if (mode === 'discard') {
       state[foe] = { ...target, hand: newHand, graveyard: (target.graveyard || []).concat([card]) };
+      _mpNotePrivateRemoval(state, card, 'hand', 'graveyard');   // 🔒 tell the victim; they keep their own block
       log.push({ msg: `🗑 ${unit.name} saw your hand and discarded ${nm}.`, color: 'red' });
       try { if (typeof showToast === 'function') showToast(`🗑 ${unit.name} discarded ${nm} from your hand!`, 4000); } catch (e) {}
     } else {
       state[foe] = { ...target, hand: newHand, void: (target.void || []).concat([card]) };
+      _mpNotePrivateRemoval(state, card, 'hand', 'void');        // 🔒 tell the victim; they keep their own block
       log.push({ msg: `🌌 ${unit.name} saw your hand and banished ${nm} to the Void.`, color: 'red' });
       try { if (typeof showToast === 'function') showToast(`🌌 ${unit.name} banished ${nm} from your hand!`, 4000); } catch (e) {}
     }
@@ -95415,6 +95426,10 @@ function _applyOnPlayOneRaw(state, unit, card) {
       if (res.count > 0) {
         gy.splice(idx, 1);
         state = { ...state, units: res.units, [gSide]: { ...state[gSide], graveyard: gy } };
+        // 🔒 Raising from the ENEMY graveyard removes a card from THEIR pile.
+        // The raised unit itself rides `units` (shared, already synced); only
+        // the pile removal needs telling, and only when the pile isn't ours.
+        if (gSide !== owner) _mpNotePrivateRemoval(state, card2, 'graveyard', null);
         log = [...(state.log || []), { msg: `🪦 ${unit.name} raises ${card2.name || 'a fallen unit'} from the ${gSide === owner ? 'graveyard' : 'enemy graveyard'} to your side!`, color: owner === 'player' ? 'green' : 'red' }];
         try { state = _fireAnywhereForSummons(state, res); log = [...(state.log || [])]; } catch (e) {}
       } else {
@@ -95940,6 +95955,10 @@ function _applyOnPlayOneRaw(state, unit, card) {
     }
     if (!taken.length) { log.push({ msg: `🧤 ${unit.name} finds nothing to steal.`, color: 'amber' }); return { ...state, log }; }
     state[foeSide] = { ...foe, hand: hand.filter(Boolean) };
+    // 🔒 Stolen cards leave the victim's hand. The copies that arrive in MY hand
+    // are in my own block, which syncs already — only the victim's side needs
+    // the op, or they keep (and can replay) a card I am holding.
+    for (const _tk of taken) _mpNotePrivateRemoval(state, _tk, 'hand', null);
     const mine = state[owner] || {};
     state[owner] = { ...mine, hand: [...(mine.hand || []), ...taken].slice(0, 8) };
     log.push({ msg: `🧤 ${unit.name} steals ${taken.length} card${taken.length === 1 ? '' : 's'} from the enemy hand.`, color: owner === 'player' ? 'green' : 'red' });
@@ -96125,6 +96144,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
     if (target && Array.isArray(target.hand) && target.hand.length) {
       let dropped = 0;
       const droppedNames = [];
+      const droppedCards = [];   // 🔒 the card OBJECTS, for the cross-side removal ops
       let hand = target.hand.slice();
       let graveyard = (target.graveyard || []).slice();
       for (let i = 0; i < tries && hand.length > 0; i++) {
@@ -96134,10 +96154,15 @@ function _applyOnPlayOneRaw(state, unit, card) {
         hand = hand.filter((_, j) => j !== ix);
         graveyard.push(card);
         droppedNames.push((card && card.name) || 'a card');
+        droppedCards.push(card);
         dropped++;
       }
       if (dropped > 0) {
         state[targetSide] = { ...target, hand, graveyard };
+        // 🔒 targetSide is ALWAYS the foe here (see its definition above), so
+        // every one of these is a removal from the opponent's own hand and has
+        // to be relayed — otherwise they never actually discard.
+        for (const _dc of droppedCards) _mpNotePrivateRemoval(state, _dc, 'hand', 'graveyard');
         const dropList = droppedNames.join(', ');
         log.push({ msg: `🗑 ${unit.name} forces ${targetSide === 'player' ? 'you' : 'the enemy'} to discard ${dropped} card${dropped === 1 ? '' : 's'} — ${dropList}.`, color: targetSide === 'player' ? 'red' : 'green' });
         // 🔔 Loud toast when WE'RE the ones being made to discard — silent
@@ -96709,6 +96734,9 @@ function _applyOnPlayOneRaw(state, unit, card) {
       const deck = side.deck.slice(); const grave = (side.graveyard || []).slice(); const milled = [];
       for (let i = 0; i < n && deck.length; i++) { const c = deck.shift(); grave.push(c); milled.push(c); }
       state[_opp] = { ...side, deck, graveyard: grave };
+      // 🔒 Milling moves cards out of the ENEMY deck. Their client keeps its own
+      // block, so without this the mill only happened on the miller's screen.
+      for (const _mc of milled) _mpNotePrivateRemoval(state, _mc, 'deck', 'graveyard');
       log.push({ msg: `🗜 ${unit.name} mills ${milled.length} from the enemy deck to their graveyard.`, color: owner === 'player' ? 'green' : 'red' });
       state = { ...state, log };
       try { state = _processMilledCards(state, _opp, milled, 'top'); } catch (e) {}
@@ -96759,8 +96787,10 @@ function _applyOnPlayOneRaw(state, unit, card) {
     const side = state[_opp];
     if (side && Array.isArray(side.deck) && side.deck.length) {
       const deck = side.deck.slice(); const vd = (side.void || []).slice(); let b = 0;
-      for (let i = 0; i < n && deck.length; i++) { vd.push(deck.shift()); b++; }
+      const _banished = [];   // 🔒 kept so the victim can be told which cards left
+      for (let i = 0; i < n && deck.length; i++) { const _bc = deck.shift(); vd.push(_bc); _banished.push(_bc); b++; }
       state[_opp] = { ...side, deck, void: vd };
+      for (const _bc of _banished) _mpNotePrivateRemoval(state, _bc, 'deck', 'void');
       log.push({ msg: `🌑 ${unit.name} banishes ${b} card${b === 1 ? '' : 's'} off the top of the enemy deck.`, color: owner === 'player' ? 'green' : 'red' });
     } else log.push({ msg: `🌑 ${unit.name}'s deck-banish finds an empty deck.`, color: 'amber' });
     return { ...state, log };
@@ -96771,8 +96801,10 @@ function _applyOnPlayOneRaw(state, unit, card) {
     const side = state[_opp];
     if (side && Array.isArray(side.hand) && side.hand.length) {
       const hand = side.hand.slice(); const vd = (side.void || []).slice(); let b = 0;
-      for (let i = 0; i < n && hand.length; i++) { vd.push(hand.splice(Math.floor(Math.random() * hand.length), 1)[0]); b++; }
+      const _banished = [];   // 🔒 kept so the victim can be told which cards left
+      for (let i = 0; i < n && hand.length; i++) { const _bc = hand.splice(Math.floor(Math.random() * hand.length), 1)[0]; vd.push(_bc); _banished.push(_bc); b++; }
       state[_opp] = { ...side, hand, void: vd };
+      for (const _bc of _banished) _mpNotePrivateRemoval(state, _bc, 'hand', 'void');
       log.push({ msg: `✋ ${unit.name} banishes ${b} card${b === 1 ? '' : 's'} from the enemy hand to the Void.`, color: owner === 'player' ? 'green' : 'red' });
     } else log.push({ msg: `✋ ${unit.name}'s hand-banish finds nothing.`, color: 'amber' });
     return { ...state, log };
@@ -100201,8 +100233,10 @@ function _applyTriggerEffect(state, unit, trg, ctx) {
       if (s[foe] && Array.isArray(s[foe].hand) && s[foe].hand.length) {
         const hand = [...s[foe].hand];
         let d = 0;
-        for (let i = 0; i < n && hand.length; i++) { const idx = Math.floor(Math.random() * hand.length); hand.splice(idx, 1); d++; }
+        const _dropped = [];   // 🔒 kept so the victim can be told which cards left
+        for (let i = 0; i < n && hand.length; i++) { const idx = Math.floor(Math.random() * hand.length); _dropped.push(hand.splice(idx, 1)[0]); d++; }
         s = { ...s, [foe]: { ...s[foe], hand } };
+        for (const _dc of _dropped) _mpNotePrivateRemoval(s, _dc, 'hand', null);
         log.push({ msg: `${tag} — ${foe === 'player' ? 'you discard' : 'enemy discards'} ${d}.`, color: col });
       }
       break;
@@ -183528,6 +183562,18 @@ function _mirrorAllPositions(state) {
   if (Array.isArray(out.smokeClouds)) {
     out.smokeClouds = out.smokeClouds.map(c => c ? { ...c, x: (BOARD_W - 1) - (c.x | 0), y: (BOARD_H - 1) - (c.y | 0) } : c);
   }
+  // ⛔💨💣 Tile-effect overlays with root x/y. Every one is matched by EXACT
+  // square — sealedTiles filters legal placement cells, smokedTiles gates
+  // accuracy/AI vision, delayedBlasts detonates on its tile — so left
+  // unmirrored they take effect on the WRONG squares on the receiver's board,
+  // permanently, for the rest of the match. This header used to claim it
+  // covered "anywhere x/y lives"; these three were never in it.
+  // Found by tools/mp-tests/perspective.mjs, which exists to stop the next one.
+  for (const _k of ['sealedTiles', 'smokedTiles', 'delayedBlasts']) {
+    if (Array.isArray(out[_k])) {
+      out[_k] = out[_k].map(t => t ? { ...t, x: (BOARD_W - 1) - (t.x | 0), y: (BOARD_H - 1) - (t.y | 0) } : t);
+    }
+  }
   // Game-mode objective markers — convoy exit, oil towers, mainframe nodes,
   // VIP rescue point, extraction zone, etc. All live under state.mods.
   if (out.mods && typeof out.mods === 'object') {
@@ -183571,6 +183617,75 @@ function toViewCoords(serverX, serverY /* , viewerPlayerId */) {
 // handler perspective-agnostic for the future server-authoritative cutover.
 function toServerCoords(viewX, viewY /* , viewerPlayerId */) {
   return { x: viewX | 0, y: viewY | 0 };
+}
+
+/* 🔒 CROSS-SIDE PRIVATE-ZONE REMOVALS — the second PvP desync class.
+   ---------------------------------------------------------------------------
+   _onRemoteStateArrived adopts the sender's whole board but KEEPS its own
+   `player` block, because the opponent holds only a stale, slimmed model of my
+   hand/deck and adopting theirs would wipe my real cards. That is right for the
+   common case and wrong for one real one: a handful of effects legitimately
+   reach INTO the opponent's private zones —
+
+     · hand disruption      discard the best card / banish it to the Void
+     · forced discard       `targetSide` is always the foe
+     · hand theft           takes cards out of the enemy hand
+     · graveSteal           splices a unit card out of the ENEMY graveyard
+
+   Every one is a REMOVAL from the victim's own zone, performed inside the
+   ACTOR's engine. The victim then reverted it wholesale, so the two clients
+   permanently disagreed: the thief believed the card was gone while the victim
+   still held it and could spend it again. Card duplication, silent, on any
+   match where one of those cards is played.
+
+   The fix is a tiny explicit op list riding the snapshot, and it is deliberately
+   REMOVALS ONLY. The victim never adopts the opponent's view of its zone
+   membership — that view can be stale (a turn-start draw the sender has not
+   seen yet), and adopting it is exactly how a hand gets wiped. Instead the
+   sender names each card it took, by instanceId, and the victim removes that
+   one card if it is still there. The worst a bug in here can do is fail to
+   remove a card, which is the behaviour we already had. It cannot destroy a hand.
+
+   Ops are id-stamped and applied at most once, because the resync path replays
+   a CACHED snapshot from the server and would otherwise remove a second card. */
+function _mpNotePrivateRemoval(state, card, from, to) {
+  if (!state || !card) return;
+  if (!(App.battlePrep && App.battlePrep.multiplayer)) return;   // solo play needs none of this
+  const seq = (MatchBroadcast._privateOpSeq = (MatchBroadcast._privateOpSeq | 0) + 1);
+  const ops = Array.isArray(state._mpPrivateRemovals) ? state._mpPrivateRemovals.slice() : [];
+  ops.push({
+    id: 'pr_' + String(MatchBroadcast.myUserId || 'anon').slice(0, 8) + '_' + seq,
+    from: from, to: to || null,
+    instanceId: (card.instanceId || ''),
+    cardId: (card.id || card.cardId || ''),
+    name: card.name || '',
+  });
+  state._mpPrivateRemovals = ops;
+}
+
+/* Apply the sender's removals to MY private block. Returns a new block; never
+   mutates. An op whose card is already absent is marked applied and skipped —
+   that is the normal outcome of a resync replay, not an error. */
+function _mpApplyPrivateRemovals(myBlock, ops) {
+  if (!myBlock || !Array.isArray(ops) || !ops.length) return myBlock;
+  const seen = MatchBroadcast._appliedPrivateRemovals || (MatchBroadcast._appliedPrivateRemovals = {});
+  let out = myBlock;
+  for (const op of ops) {
+    if (!op || !op.id || seen[op.id]) continue;
+    seen[op.id] = 1;
+    const zone = Array.isArray(out[op.from]) ? out[op.from].slice() : null;
+    if (!zone) continue;
+    // Match on instanceId first — it identifies the ONE physical card. cardId is
+    // the fallback for cards minted without one, and removes a single copy.
+    let ix = op.instanceId ? zone.findIndex(c => c && c.instanceId === op.instanceId) : -1;
+    if (ix < 0 && op.cardId) ix = zone.findIndex(c => c && (c.id === op.cardId || c.cardId === op.cardId));
+    if (ix < 0) continue;   // already gone (resync replay, or we never had it)
+    const card = zone[ix];
+    zone.splice(ix, 1);
+    out = { ...out, [op.from]: zone };
+    if (op.to) out = { ...out, [op.to]: [...(Array.isArray(out[op.to]) ? out[op.to] : []), card] };
+  }
+  return out;
 }
 
 // Swap every 'player' ↔ 'ai' owner reference in the state AND mirror every
@@ -183642,6 +183757,25 @@ function swapBattlePerspective(state) {
     enchantments: Array.isArray(state.enchantments)
       ? state.enchantments.map(e => (e ? { ...e, owner: swapOwner(e.owner || 'player') } : e))
       : state.enchantments,
+    // 💣 A planted charge names a SIDE as well as a square — it damages the
+    // planter's enemies. Unswapped, an adopted charge detonated against the
+    // player who planted it. (The square is mirrored in _mirrorAllPositions;
+    // this field was missing from BOTH halves.)
+    delayedBlasts: Array.isArray(state.delayedBlasts)
+      ? state.delayedBlasts.map(b => (b && b.owner) ? { ...b, owner: swapOwner(b.owner) } : b)
+      : state.delayedBlasts,
+    // 🃏 The counter stashes name their side in the KEY, not the value, so the
+    // owner-swap above cannot see them — they have to EXCHANGE. Unexchanged,
+    // the receiver reads the opponent's counter card as its own: the counter
+    // prompt names the wrong card (`_lastPlayerCounterCard.name`) and the
+    // resolver hands it back with a hardcoded `owner: 'player'`.
+    // Same class as graveLock — side-keyed rather than side-valued.
+    _lastPlayerCounterCard: state._lastAiCounterCard
+      ? { ...state._lastAiCounterCard, owner: swapOwner(state._lastAiCounterCard.owner || 'ai') }
+      : state._lastAiCounterCard,
+    _lastAiCounterCard: state._lastPlayerCounterCard
+      ? { ...state._lastPlayerCounterCard, owner: swapOwner(state._lastPlayerCounterCard.owner || 'player') }
+      : state._lastPlayerCounterCard,
     // Whose turn it is — flip BOTH the multiplayer marker AND the engine's
     // own `turn` field. The battle engine gates every action, the end-turn
     // guard and the turn timer on `state.turn` — not `currentTurn` — so
@@ -183741,6 +183875,12 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
     MatchBroadcast._matchEndSubmitted  = false;
     MatchBroadcast._matchEndRetried    = false;
     MatchBroadcast._mpEndTurnInflight  = false;
+    // 🔒 Private-zone op ledger + sequence. These MUST reset together: the
+    // ledger skips an op id it has already applied, and ids are 'pr_<user>_<n>'.
+    // Resetting the counter alone would restart n at 1 on the second match of a
+    // session, collide with a spent id, and silently drop a real removal.
+    MatchBroadcast._privateOpSeq           = 0;
+    MatchBroadcast._appliedPrivateRemovals = {};
     if (App.ui) {
       App.ui._mpGameOverFallbackArmed = false;
       App.ui._mpGameOverPolling       = false;
@@ -185339,6 +185479,17 @@ function _onRemoteStateArrived(payload) {
   const _isMp = !!(App.battlePrep && App.battlePrep.multiplayer);
   if (_isMp && _myPrev && _myPrev.player) {
     swapped.player = _myPrev.player;   // my hand/deck/energy are mine, not their guess
+    // 🔒 …EXCEPT the removals the opponent legitimately made to my zones this
+    // turn (discard / banish / hand theft / graveSteal). Keeping my block
+    // wholesale reverted those, so the thief and I disagreed about my own hand
+    // and graveyard for the rest of the match — the card was gone on their
+    // screen and still spendable on mine. Removals only, matched by
+    // instanceId, applied at most once. See _mpApplyPrivateRemovals.
+    try {
+      swapped.player = _mpApplyPrivateRemovals(swapped.player, swapped._mpPrivateRemovals);
+    } catch (e) { try { console.warn('[mp] private removals', e); } catch (_) {} }
+    // Don't let the sender's ops ride along in MY next snapshot back to them.
+    try { swapped._mpPrivateRemovals = []; } catch (e) {}
     // 📜 Keep my OWN battle log. The adopted log is written from the OPPONENT's
     // perspective ("You play X" = THEM), so showing it verbatim mislabels their
     // actions as mine. We keep our correctly-worded log and append the opponent's

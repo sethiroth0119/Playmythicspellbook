@@ -27,9 +27,15 @@ to zero** while **A (schema agreement) stays clean**.
    ```ts
    this.broadcast('snapshot', { from: me, kind, payload: body }, { except: client });
    ```
-   Load test: **200/200 relayed snapshots contradicted the server's own numbers**
-   and nothing rejected them. In production this relay is not *a* channel for
-   board state — it is the **only** one.
+   In production this relay is not *a* channel for board state — it is the
+   **only** one.
+   ⚠ **Corrected:** the "200/200 relayed snapshots contradicted the server"
+   figure is a **tautology**, not a measurement. The load test builds each
+   snapshot as `currentHp - 1` and then asserts the relayed hp differs from the
+   server's. It shows the server relays snapshots unvalidated — true, and
+   deliberate at this stage — and nothing about players diverging. The real
+   desync was in the client adopt path (two classes, both now fixed and gated
+   by `node tools/mp-tests/run.mjs`); see HANDOFF.md §2.
 
 3. **The code intends HOST authority and does not enforce it.**
    `_onColyseusMatchStart` sets

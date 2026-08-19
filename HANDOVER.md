@@ -1,6 +1,11 @@
 # Node City — handover
 
-**Branch:** `claude/city-builder-visual-upgrade-g9deb4` · 217 commits · everything pushed.
+**Branch:** `claude/city-builder-visual-upgrade-g9deb4` — pushed and level with origin.
+
+⚠ **This clone is shallow** (`.git/shallow`; the root is an artificial graft), so no commit
+count here is trustworthy and neither is any `origin/main...HEAD` diff. 232 commits are
+visible, 194 on first-parent. Fetch the full history before you judge what this branch
+contains.
 Supersedes `HANDOFF-CITY-2026-08-18.md`, which predates most of what is here and
 should be read only for its round 0–9 visual history.
 
@@ -12,17 +17,29 @@ should be read only for its round 0–9 visual history.
 |---|---|
 | `CLAUDE.md` | The non-negotiables. The globals trap is the one that has cost real time repeatedly. |
 | `ECONOMY.md` | Cinder is never minted. Four historical leaks are documented; one **destroyed** Cinder rather than minting it. |
+| `ECONOMY_HANDOFF.md` | **The deploy procedure**, the `NC_BUILD` rule, the `sql/038` apply step with its expected verify output, and the warning that `deploy.mjs` minifies `public/index.html` **in place** — commit before deploying or `git checkout --` is your only recovery from a 9 MB tree. |
 | `.gauntlet/README.md` | Six things that each cost an agent a full debugging round. Item 6 is a measurement contract — read it before you A/B anything on screen. |
-| The `FIX-RECORD.md` files | `demographics`, `districts`, `wild`, `parcel`, `lifepath`. Each says where work **actually** landed when a commit subject misfiled it. |
+| The six `FIX-RECORD.md` files | `demographics`, `districts`, `wild`, `parcel`, `lifepath`, `landvalue`. Each says where work **actually** landed when a commit subject misfiled it. ⚠ `.gauntlet/README.md` records that the **parcel** one is wrong about the landvalue one. |
 
 ## 2. Three gates, and you need all three
 
 ```bash
-node _synckcheck.mjs            # <script> blocks in the two index.html files
-node .gauntlet/modcheck.mjs     # every ES module under public/src  (172 today)
+node _synckcheck.mjs public/index.html public/node-city/index.html
+node .gauntlet/modcheck.mjs         # 172 .js/.mjs FILES under public/src today
 node .gauntlet/precommit-scan.mjs   # refuses a line marked deliberately broken
 node tools/economy-tests/run.mjs    # 663 assertions; the audit is the point
 ```
+
+🔴 **`_synckcheck.mjs` must be given its files.** With no arguments it checks
+`public/index.html` **and nothing else** — and essentially all of this branch's work is in
+`public/node-city/index.html`, which a bare invocation never opens. Its own header warns
+about this. There are 13 `index.html` files under `public/`.
+
+⚠ **172 is a FILE count, not a module count** (33 feature directories — see §3). The two
+numbers count different things.
+
+⚠ **`precommit-scan.mjs` passes vacuously on a clean tree.** It scans `git diff HEAD`, so on
+committed code it examines nothing and exits 0. It is a pre-commit hook, not a state check.
 
 The first two answer *"does this parse"*. The third answers *"did anyone mean this"* —
 it exists because a checkpoint once shipped a build where a fix was **disabled while
@@ -34,24 +51,30 @@ returns a red round. A suite that cannot be made to fail is not a gate.
 
 ## 3. What is on the branch
 
-32 feature modules under `public/src/`, each on a `window.Mythic*` global, each guarded
-so a 404 costs that feature and nothing else. `node .gauntlet/modcheck.mjs` prints the
-live count — trust that, not this table.
+**33** feature directories under `public/src/`. Most register a `window.Mythic*` global and
+every one is guarded so a 404 costs that feature and nothing else — but **`battle` and
+`sprites` have no `Mythic*` global at all** (`battle` sets `window.DrawFX`), and five others
+(`crowd parcel parking sprites streets wild`) are assigned by the host from `mount()`'s
+return rather than self-assigning.
 
 **Zoning stack**, four layers meeting at one function (`/src/zoning`'s `typeFor()`, the
 single point where "what goes on this plot" is decided):
 
 | Layer | Module | What it decides |
 |---|---|---|
-| 1 | `zoning` | Land use — 11 zone ids, fill/marquee/paint, right-click de-zone |
+| 1 | `zoning` | Land use — **13** zone ids (6 residential incl. `r_asbuilt`, 2 commercial, 2 office, 2 industrial), fill/marquee/paint, right-click de-zone |
 | 2 | `districts` | Specialisation — 13 district types incl. the 🃏 Mythic card districts |
 | — | `landvalue` | Which of that set *this ground* will take — five bands |
 | 3 | `tenants` | **Which company** wins the lot, by auction rather than by hash |
 
 **City systems:** `demographics` `power` `water` `pollution` `outside` `transit` `streets`
 `progression` `budget` `naming` `palette` `dossier` `citizen` `lifepath` `broadcast`
-`economy` `city` `trading` `nodes` `resources` `community` `resonance` `battle` `sprites`
-`hud`
+`economy` `city` `trading` `nodes` `resources` `community` `resonance` `hud`
+
+⚠ **`battle` and `sprites` are NOT city systems** and are not imported by
+`public/node-city/index.html` at all — they belong to `public/index.html` and
+`public/battle-board/`. CLAUDE.md tells you not to touch battle code; do not let their
+presence under `public/src` suggest otherwise.
 
 **Rendering:** `wild` (ground scatter) `parcel` (the plot under non-housing) `crowd`
 (standing figures) `parking`
@@ -66,51 +89,90 @@ shelf, and `serialize()` collects them into `payload.ext` with a manifest in
 window.MythicCitySave.register('<key>', { save: () => ({…}), load: (p) => {…} })
 ```
 
-Registered today: `progress` `zoning` `names` `districts` `tenants` `lifepath`
-`broadcast` `streets`.
+Registered today — **seven** keys: `progress` `zoning` `names` `districts` `tenants`
+`lifepath` `broadcast`.
 
 **Registering late is safe and is the documented behaviour** — the shelf stashes the
-payload and replays it to whoever registers next.
+payload and replays it to whoever registers next (`naming/save.js`).
 
-Everything else that persists rides existing state deliberately:
-- **`palette`** (player building colours) — one-letter keys on the tile record, in the
-  same single row the city already writes.
-- **`transit`** (player-built routes) — one `transit` field in `serialize()`, with
-  `game._transitRaw` as a **load-bearing fallback**: a save written with the module
-  present must not be emptied by a boot where it 404s.
-- **`landvalue`, `wild`, `parcel`, `crowd`, `citizen`, `budget`** — **no save field at
-  all, by design.** Every fact they show is derived from state already persisted.
+### 🔴 SIX modules bypass the shelf and own a TOP-LEVEL field in `serialize()`
 
-⚠ **Two rules the modules follow and a new one must too:** an **unknown key from a newer
-build is kept, never stripped** (an older build must not silently empty a save it does not
-understand), and hostile input is dropped rather than carried (a key that is not `"x,z"`
-becomes a lookup that never matches and a district you can see in the count and never on
-the map).
+This is the half a cloud-sync integration gets wrong, because these are not in
+`payload.ext` and a manifest walk will not find them. **Every one has a load-bearing
+fallback whose job is to stop a boot where the module 404s from erasing the player's data:**
 
-## 5. 🚀 Nothing here has been deployed
+| field | module | erase guard | index.html |
+|---|---|---|---|
+| `power` | MythicPower | `_pendingPower` | :30348 |
+| `streets` | MythicStreets | `game._streets` | :30420 |
+| `transit` | MythicTransit | `game._transitRaw` | :30435 |
+| `paint` | MythicPalette | `_paintDisk` | :30444 |
+| `economy` | MythicEconomy | `_lastEconomyBlob` | :30496 |
+| `demog` | MythicDemographics | `_lastDemogBlob` | :30513 |
 
-The branch has never shipped. Three knobs move **together** or the update check breaks:
+⚠ **`streets` is NOT on the shelf** despite what its module header may suggest, and
+**`palette` does not ride the tile record.** Palette's one-letter keys (`w r m h hp ty`)
+are fields inside *its own* per-tile record within the `paint` blob, not keys on
+node-city's tile.
+
+### No save field at all, by design
+
+`landvalue` `wild` `parcel` `crowd` `citizen` `budget` — every fact they show is derived
+from state already persisted.
+
+### Two rules a new slice must follow
+
+An **unknown key from a newer build is kept, never stripped** (an older build must not
+silently empty a save it does not understand — implemented at `districts/store.js` and
+`tenants/store.js`), and **hostile input is dropped** rather than carried: a key that is not
+`"x,z"` becomes a lookup that never matches, and a district you can see in the count and
+never on the map.
+
+## 5. 🚀 Nothing here has been deployed — and there are FOUR knobs, not three
 
 ```
-public/version.txt            v120w9   ← unchanged by all of this
-window.BUILD_VERSION          v120w9
-public/sw.js  CACHE_VERSION   mythic-v120w9-battlefield-and-city
+public/version.txt                    v120w9
+window.BUILD_VERSION                  v120w9
+public/sw.js       CACHE_VERSION      mythic-v120w9-battlefield-and-city
+public/node-city/index.html NC_BUILD  v120w9-districts     ← ALSO STALE
 ```
 
-Verify the **edge** with `curl`, never the deploy log, and poll — propagation across PoPs
-takes a couple of minutes.
+🔴 **`NC_BUILD` is the one that will bite you.** It is the cache-buster on **31 dynamic
+module imports** (`import('../src/zoning/index.js?v=' + window.NC_BUILD)` and thirty more).
+**Deploy this branch without bumping it and every returning player fetches the cached OLD
+modules — all 33 of them ship dark**, logging "not mounted (non-fatal)", which is
+indistinguishable from the modules being absent. Its current value still says `districts`,
+which was many modules ago. `ECONOMY_HANDOFF.md` states the rule: *"a missed bump ships
+invisibly."*
 
-**SQL:** `sql/038_city_economy_trade.sql` is the only migration this work added. Migrations
-are applied **by hand** in the Supabase SQL editor for project `ktsiasyjusesawtrwrjc`. Each
-file is idempotent, ends with a verify query, and ships its RLS in the same file. **RLS is
-the entire security boundary — review every policy line by line.** A missing
-`using (auth.uid() = …)` is a data breach and looks fine in review.
+Verify the **edge** with `curl` (grep `NC_BUILD` on the served page — it is a deploy probe,
+not decoration), never the deploy log, and poll: propagation takes a couple of minutes.
+
+⚠ **`deploy.mjs` minifies `public/index.html` IN PLACE.** Commit before deploying, or
+`git checkout -- public/index.html` is your only recovery from a 9 MB minified tree.
+
+### SQL — `sql/038_city_economy_trade.sql` has NOT been applied
+
+`ECONOMY.md` and `ECONOMY_HANDOFF.md` both record it as written, idempotent, RLS-complete
+and **not applied**. Until it is, `/src/economy/trade.js` runs against simulated partners.
+
+Migrations are applied **by hand** in the Supabase SQL editor for project
+`ktsiasyjusesawtrwrjc`. Each file is idempotent, ends with a verify query, and ships its RLS
+in the same file. **RLS is the entire security boundary — review every policy line by
+line.** A missing `using (auth.uid() = …)` is a data breach and looks fine in review.
+
+⚠ `git log -- sql/` shows three recent files (`036`, `037`, `038`). Only `038` belongs to
+this work; `036` and `037` are unrelated and predate it.
 
 ## 6. Known open, honestly
 
 **Named and unfixed:**
-- `/src/parcel` is effectively dead on 16 of 24 non-housing buildings — `HAS_OWN_GROUND`
-  grew until it swallows them. Diagnosed, worked around, not fixed.
+- `/src/parcel` lays very little flat parcel, because `HAS_OWN_GROUND` (20 members) has
+  grown until it swallows most non-housing buildings. Diagnosed, worked around, not fixed.
+  ⚠ **Do not quote a coverage ratio for this without re-running it.** The measurement in
+  the module's own comment ("13 of the 14") was taken on the OLD 14-building district;
+  there are 31 non-housing buildings now. `.gauntlet/README.md` retires that figure
+  explicitly.
 - Demolish-and-rebuild demotes a whole workforce: `firms.js` writes no founding time, so
   tenure is capped by the building's age. Every cure is a write into another layer.
 - The Job level row's *"of 3"* still reads as a reading when it is an analogy.
@@ -121,9 +183,16 @@ the entire security boundary — review every policy line by line.** A missing
 - Rent → failure → land value falls is **open, not closed**: no land-value term reads firm
   health, and a bankrupt firm leaves its building standing.
 - No office building exists in the game, though the panel shows office demand.
-- Road condition does not move within a session. The geology→water link is unverified.
+- The geology→water link is unverified.
+- ⚠ *Not* a defect, though it has been filed as one: road condition **does** accumulate,
+  from counted vehicle passes — it is just imperceptible on a young street.
+  `/src/streets` documents this and ships `wearRate` specifically to separate "is worn"
+  from "is wearing".
 
-**Visual, standing at mean 6.46 across 12 dimensions:** the glass reflects the sky and now
+**Visual — mean 6.46 across 12 dimensions at round 13.** ⚠ That score PREDATES the
+environment map, the interior glass content and the arena (rounds 14–16), which are
+unscored: `rounds.json` carries `meanScore: null` for round 14. The next round's first job
+is to re-score. the glass reflects the sky and now
 has interior content, but nothing casts *into* it, so a street canyon reads as if it had no
 other side. Fog dissolves the far third of the aerial. No lamp, sign or bollard casts a
 visible shadow — a mast is ~3 shadow-map texels. Road paint stands proud. The arena reads
@@ -147,11 +216,19 @@ scene line naming a *mesh* rather than a building, and headless Chromium auto-di
 with no commercial building in it, so **every "can you tell commercial from industrial from
 the air" judgement before round 13 is void.**
 
-🔴 **Cross-boot per-framing percentages are retired.** A null control on the fixed district
-reads a **6.6× spread between framings with nothing changed**. Quote no percentage from it,
-and no ratio below about 7×. `.gauntlet/layer-ab.mjs` is the instrument: one boot, layer
-toggled, `render()` then `drawImage` **in the same task** — its do-nothing control is
-exactly **0.000%**.
+🔴 **Cross-boot per-framing PERCENTAGES are retired.** Two boots with nothing changed read
+**14.7–15.9 pp** on the aerial against a real signal of **2.45 pp** — the null control is
+six times the signal.
+
+✅ **The RATIO between framings survives, and the gate was kept for it.** The drift is
+common-mode, so it cannot manufacture a *spread*: `.gauntlet/README.md`'s conclusion is that
+any round whose framings differed by less than about **2×** proved nothing, and
+`capture.mjs` flags a framing at **max × 0.25 (4×)**. Do not raise that threshold — you
+would throw away the signal the gate exists to catch.
+
+`.gauntlet/layer-ab.mjs` is the instrument for "how much did my change do": one boot, layer
+toggled, `render()` then `drawImage` **in the same task** — it asserts its own do-nothing
+control is exactly **0.000%** and fails the run otherwise.
 
 ## 8. The rule that governs everything here
 
@@ -159,10 +236,34 @@ exactly **0.000%**.
 
 Two panels have had content torn out for the first; four gates have been closed for the
 second. The pattern that keeps recurring is one seam that knows the rules and another that
-writes the store — it has now been found three times (`districts` via `store.load()`,
-`tenants` via `award()`, `landvalue`'s vitals chip) and will be found again.
+writes the store — it has now been found twice — `districts` via `store.load()` and `tenants` via `award()`,
+both of them a write path the gate did not stand in front of — and will be found again.
+⚠ A near neighbour worth knowing separately: `landvalue`'s vitals chip had the same
+predicate written out in **two** places and they disagreed. That is a duplicated read-side
+rule, not an unguarded write, and it is caught by different reading.
 
 When a panel cannot honestly show something, it says so. The citizen dossier marks a row
-`UNAVAIL` with the reason; the budget names two lines the ledger cannot separate; the
+`UNAVAIL` with the reason; the budget names two lines the ledger does not record **at all** (a separate case from
+the five tax figures it genuinely cannot separate, which are collapsed into one counter); the
 card-value seam returns `null` **and not zero**, because zero is a number and this is an
 absence.
+
+---
+
+## 9. What this document does NOT know
+
+This was written from one session's memory and then fact-checked against the tree; that
+check found **eleven wrong claims**, including a deploy step whose omission would have
+shipped all 33 modules dark. The following are still unverified, and are marked rather than
+asserted:
+
+- **`layer-ab.mjs`'s zero control** is asserted by construction (the script fails any run
+  whose control is non-zero) and recorded in the README. It was not re-measured for this
+  document.
+- **The 10.65-day figure** for the richest firm on the churn board is a board-specific
+  measurement that was not reproduced independently.
+- **Which migrations belong to this branch** cannot be proven from a shallow clone.
+- **Round 14–16's visual work is unscored.** The 6.46 mean is round 13's.
+
+If a number in this document matters to a decision you are about to make, **re-derive it.**
+That is the rule the whole project runs on, and it applies to its own handover.

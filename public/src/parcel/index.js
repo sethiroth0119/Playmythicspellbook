@@ -95,7 +95,13 @@ const CLASS = {
              'resthouse', 'barracks', 'obelisk', 'caravanpost'],
   farm:     ['farm', 'hydrofarm'],
   commerce: ['shop', 'lot', 'tenantbiz', 'gasstation', 'restaurant', 'grocery',
-             'club', 'foodtruck', 'kalonstable', 'retail'],
+             'club', 'foodtruck', 'kalonstable', 'retail',
+             /* 🏢 The office (round 17) is listed EXPLICITLY rather than left to
+                the `commerce` fallback, because a fallback is indistinguishable
+                from a type nobody thought about. Commerce is also the right
+                answer on its merits: an office plot is paving, a kerb, bollards
+                and planters, and it is emphatically not a palisade fence. */
+             'office'],
 };
 const CLASS_OF = {};
 for (const k in CLASS) for (const t of CLASS[k]) CLASS_OF[t] = k;
@@ -162,7 +168,15 @@ const HAS_OWN_GROUND = new Set(['farm', 'hydrofarm', 'purifier', 'forge', 'resla
                                      called _cvApron) and was already missing from
                                      this list. That was a real miss, not a
                                      round-11 regression. */
-                                'retail', 'depot']);
+                                'retail', 'depot',
+                                /* ── round 17 ─────────────────────────────────
+                                   `office` (node-city makeOffice) lays a
+                                   full-tile MAT.road pad and its own _pcKerb lot
+                                   line, exactly as `retail` does. It is on the
+                                   list because the recipe was written this round
+                                   and the fact is known — the raster agrees, and
+                                   the two agreeing is what the floor is for. */
+                                'office']);
 
 /* ── THE PALETTE ───────────────────────────────────────────────────────────
    Values first, hues second. At the game's aerial distance a parcel is forty

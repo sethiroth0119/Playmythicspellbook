@@ -125,6 +125,13 @@
       ['civ_landmark',  3, 'the Duel Arena'],
       ['sci_lab',       1, 'the req of Applied Genetics'],
       ['sci_genetics',  4, 'the Med Lab'],
+      /* 🏢 ROUND 17. `office` is gated on off_low, which is the node that
+         already opened the `o_low` Office park zone — the building and its
+         zone unlock together because they are the same decision. Without this
+         grant the three Office Blocks in block 6 are refused by
+         MythicProgress.buildingBlockedBy and the district goes back to having
+         no office in it, which is the hole round 17 exists to close. */
+      ['off_low',       2, 'the Office Block and the o_low Office park zone'],
     ];
     if (!Pg) gates.push('progression: MODULE ABSENT — nothing gated, nothing granted');
     else {
@@ -330,6 +337,29 @@
        the block's centre line, i.e. across the thing being demonstrated.) */
     ['motorpool', C+1, C+2], ['motorpool', C+2, C+2], ['motorpool', C+3, C+2],
     ['retail', C+1, C+3], ['retail', C+2, C+3], ['retail', C+3, C+3],
+  ]) { await P(t, x, z); done(); }
+  done();
+
+  /* ── 6. THE OFFICE ROW (round 17) ────────────────────────────────────────
+     🔴 THERE WAS NO OFFICE BUILDING IN THIS GAME UNTIL THIS ROUND, so there has
+     never been one in a gauntlet frame either — and rubric dimension 11 asks
+     whether a viewer can tell the land uses apart from the air. The block above
+     lets a viewer cross industrial → open ground use → high street → housing.
+     This row adds the fourth land use to the SAME street: three Office Blocks
+     at z = C+3, x = C+5..C+7, fronting the z = C+4 carriageway from the far
+     side of the x = C+4 junction, i.e. directly in line with the three Retail
+     Parades at x = C+1..C+3. Reading east along that one frontage a viewer now
+     crosses a parade of single-storey shopfronts and then three freestanding
+     glazed blocks four times their height with car parks in front of them,
+     which is the comparison the rubric actually asks for and the frontage
+     camera is pointed at.
+     ⚠ THE TILES ARE INSIDE THE EXISTING BOUNDING BOX (block 5's depots reach
+       x = C+9), so the aerial / street / district framings — which capture.mjs
+       derives from that box and which the README requires to be unchanged since
+       round 0 — do not move.
+     ⚠ EACH HAS ROAD FRONTAGE: (C+5..C+7, C+4) are all carriageway from step 3. */
+  for (const [t, x, z] of [
+    ['office', C+5, C+3], ['office', C+6, C+3], ['office', C+7, C+3],
   ]) { await P(t, x, z); done(); }
   done();
 

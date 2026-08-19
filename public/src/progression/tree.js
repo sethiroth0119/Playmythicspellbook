@@ -149,10 +149,16 @@ export const NODES = [
     name: 'High-Density Commercial',
     desc: 'Nightlife and the big retail sheds. Loud, profitable, and a bad neighbour for a quiet street.',
     zones: ['c_high'], buildings: ['club', 'retail'] },
+  /* 🏢 ROUND 17: this node now unlocks a BUILDING as well as a zone, and until
+     it did it was the clearest example in the tree of a node whose promise the
+     catalogue could not keep — "jobs for the educated" opening land that
+     developed a Research Spire. `office` and `o_low` unlock together because
+     they are the same decision: the zone is the land use and the block is what
+     stands on it, and a player who has one and not the other has neither. */
   { id: 'off_low', cat: 'com', row: 2, col: 1, cost: 2, req: ['civ_basic'],
     name: 'Office Park',
     desc: 'Clean work on cheap land — no freight, no smoke, and jobs for the educated.',
-    zones: ['o_low'] },
+    zones: ['o_low'], buildings: ['office'] },
   /* 🏙 LAYER 2 ENTERS THE TREE HERE. `com_district` is the node that turns
      "Commercial" from one generic paint into a district a player composes, and
      it deliberately requires com_high: specialising land use is a decision that

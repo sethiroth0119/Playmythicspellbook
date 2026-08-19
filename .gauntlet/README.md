@@ -129,6 +129,39 @@ critic's own instrument: they answered "I can see the boundary at 4x" with "it
 is 1-2 px wide and ~15 units of separation from what it is meant to separate",
 and that is the form an answer has to take. A 4x crop is not evidence.
 
+**`r18-probe.mjs`** — added round 18, and it is `layer-ab.mjs`'s shape applied to
+two things a layer toggle cannot reach: **fog distances** and **whether a given
+object casts a shadow at all**. One boot, one camera, render and read in the
+same task, control 0.000%.
+· *fog*: samples the ground at road-tile and empty-tile centres — the CLASS
+  comes out of `game.tiles`, never guessed — projects each through the live
+  camera, **raycasts it and drops it unless the first thing the camera sees
+  there is that point**, then reports the median road-vs-grass ΔL and Δhue per
+  depth band under the shipped fog and under a candidate. The raycast is the
+  part that matters: the standard district's far corner projects to (800, 200)
+  in the aerial, which is *behind* the mid-rise cluster, so a bare projection
+  reads a roof and calls it grass.
+· *shadow*: flips `sun.castShadow` and, for each caster, **scans a ray along
+  the light direction from its foot** keeping the darkest L(off)/L(on) on it —
+  because a shadow lands over a kerb or a 3cm-lower carriageway and predicting
+  one point misses it. Control = the same scan rotated 90°.
+  🔴 ITS FIRST CUT WAS A DEAD INSTRUMENT AND SAID 1.000 FOR ALL 74 LAMPS. It
+  read `mesh.userData.lampLocal`, which is the LANTERN — the arm carries it
+  0.15 over the carriageway — so it probed thin air. The mast is at tile-local
+  (0.36, 0.36). A control that also sits in the open agrees that nothing is
+  there, so the control did not catch it; the ray scan is what did.
+· also sweeps map size / span / normalBias / filter in the same boot and prints
+  texels-per-unit beside each, which is how round 18 concluded that a
+  0.031-unit lamp mast cannot be shadowed by one cascade at any affordable
+  resolution.
+
+⚠ **THE WEATHER IS NOT PINNED AND IT SHOULD BE.** `capture.mjs` pins the hour
+(§5) but `wx` rolls on its own timer, so a five-framing capture can start CLEAR
+and finish in a STORM — measured in round 18: `r18b-aerial` reads CLEAR and
+`r18b-frontage`, 30 s later in the same run, reads STORM, with the carriageway
+going from warm brown to blue-grey. Any before/after taken across two runs must
+check the weather badge in the frame (top-left) before it quotes a colour.
+
 **`check-streets-clock.mjs`** — `traffic.js` in node, no browser. It takes a
 ctx and a clock and touches no DOM, so the bucket boundaries, a full lap of the
 24-bucket ring, the save format and the migration cases run in a second instead

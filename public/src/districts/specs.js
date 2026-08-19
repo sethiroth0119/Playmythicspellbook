@@ -53,6 +53,14 @@
        `reslab` (Research Spire), and /src/landvalue's tenant table lists it
        under OFFICE, not industry. So Technology ships ONCE, in the Office
        family (`o_tech`), rather than twice with one of them empty.
+     ⚠ 🏢 AND `o_corp` IS DELIBERATELY NOT GIVEN THE NEW `office` BUILDING.
+       Round 17 added one (node-city BUILDINGS.office) and every office ZONE now
+       develops it — but Corporate is the headquarters district, its mix is the
+       three buildings that ARE headquarters, and its own `lvl: 3` and the band
+       table's `prime: off = [indexfund, holdco]` are what make it refuse cheap
+       land. Adding the ordinary let-space block to it would let a Corporate
+       chip develop the same thing the unspecialised zone already develops,
+       which is the placebo shape `inertOn()` exists to catch.
      ✗ Office → MEDIA. There is no studio, no press office and no broadcast
        building in BUILDINGS. /src/broadcast is a phone feed, not a structure.
        Shipping an empty chip called Media is an advertisement nothing checks.
@@ -167,23 +175,24 @@ export const SPECS = [
     desc: 'Tournament halls and duel arenas, with the nightlife that fills up around a card event.' },
 
   /* ══ 🧠 OFFICE ══════════════════════════════════════════════════════════ */
-  /* 🔬 TECHNOLOGY, AND THE ONE HONEST THING TO SAY ABOUT IT: on 🧠 Office park
-     it changes NOTHING. `o_low.mix` is [['reslab',1]] and this mix is
-     [['reslab',1]] — the same single id — so at every band the filtered bags
-     are identical and the plot develops the Research Spire it was always going
-     to develop. That is not a reason to delete the spec: on 📈 Office towers
-     (mix forge + indexfund) it is a real district, and it is the only way to
-     say "research here, not finance". It IS a reason the panel must not offer
-     it beside two chips that do change something without saying so, and that
-     is enforced rather than described: `inertOn()` in index.js computes the
-     pairing from the live zone table and the live band ladder, the chip row
-     marks it, and verify() fails if a chip is offered unqualified on a zone it
-     cannot change. The old desc here — "the only office district a young city
-     can afford" — pointed at exactly the zone where it does nothing, which is
-     how a placebo gets shipped with a recommendation attached. */
+  /* 🔬 TECHNOLOGY. It USED TO CHANGE NOTHING on 🧠 Office park: `o_low.mix` was
+     [['reslab',1]] and this mix is [['reslab',1]] — the same single id — so at
+     every band the filtered bags were identical and the plot developed the
+     Research Spire it was always going to develop. The spec was kept anyway,
+     because on 📈 Office towers it was a real district, and `inertOn()` in
+     index.js marked the dead pairing from the LIVE tables rather than from a
+     note in this file.
+     🏢 ROUND 17 RETIRED THE PLACEBO WITHOUT TOUCHING THIS LINE. node-city gained
+     an `office` building — there was none, which is why every office zone in
+     the game resolved to a laboratory or a fund — and `o_low.mix` is now
+     [['office',3],['reslab',1]]. This spec is still reslab-only, so on an Office
+     park it now genuinely means "laboratories, not general offices", and
+     `inertOn()` reports it as live without a line of code changing. That is the
+     argument for deriving the pairing instead of writing it down, made by the
+     tables rather than by an assertion. */
   { id: 'o_tech', cat: 'off', ico: '🔬', short: 'Technology', name: 'Technology',
     mix: [['reslab', 1]],
-    desc: 'Research spires and only research spires — it keeps finance off the block. On an Office park, which already builds nothing else, it changes nothing.' },
+    desc: 'Research spires and only research spires — it keeps the general office blocks and the finance houses off the block.' },
   { id: 'o_fin', cat: 'off', ico: '📈', short: 'Financial', name: 'Financial',
     mix: [['forge', 3], ['indexfund', 2]],
     desc: 'Trusts and funds. They mint nothing — they lift every Cinder earner in the city and invest a slice of the takings.' },

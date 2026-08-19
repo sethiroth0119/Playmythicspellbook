@@ -162,7 +162,8 @@ export const TRADE = {
   firestation:  ['civic', ['Fire Station', 'Fire House', 'Brigade', 'Engine House']],
   munitions:    ['industry', ['Munitions', 'Ordnance', 'Armoury', 'Arms Works', 'Powder Works']],
   motorpool:    ['industry', ['Motor Pool', 'Garage', 'Motor Works', 'Transport Yard']],
-  /* financial */
+  /* office & financial */
+  office:       ['arcane', ['Chambers', 'Offices', 'House', 'Business Centre', 'Bureau', 'Works']],
   forge:        ['arcane', ['Trust', 'Assay Office', 'Mint', 'Exchange']],
   indexfund:    ['arcane', ['Index Fund', 'Investments', 'Capital', 'Asset Management']],
   holdco:       ['arcane', ['Holdings', 'Group', 'Holding Co.', 'Consolidated']],

@@ -85,12 +85,19 @@ export const ZONES = [
     desc: 'Nightlife and large-format retail — the block that is still lit at 2am.' },
 
   // ── office ×2 ────────────────────────────────────────────────────────────
+  /* 🏢 ROUND 17 — THESE TWO NOW DEVELOP AN OFFICE. Until this round `o_low`
+     built a Research Spire and `o_high` built a Cinder Trust, because node-city
+     had no office building at all: a player who zoned Office park got a
+     laboratory. `office` is that building (node-city BUILDINGS.office, and see
+     makeOffice for why it reads as one), and it is now the MAJORITY of both
+     bags — the specialists are what a district becomes when the player says so
+     through /src/districts, not what generic office land defaults to. */
   { id: 'o_low',  cat: 'off', ico: '🧠', name: 'Office park', short: 'Office low',
-    col: 0x3ec6b4, lvl: 1, mix: [['reslab', 1]],
-    desc: 'Low-rise research. Quiet, clean, no freight on the street.' },
+    col: 0x3ec6b4, lvl: 1, mix: [['office', 3], ['reslab', 1]],
+    desc: 'Low-rise offices with their own car parks, and the odd research spire among them. Quiet, clean, no freight on the street.' },
   { id: 'o_high', cat: 'off', ico: '📈', name: 'Office towers', short: 'Office high',
-    col: 0x1c8f96, lvl: 2, mix: [['forge', 2], ['indexfund', 1]],
-    desc: 'The financial district. Expensive to raise, and it lifts every Cinder earner in the city.' },
+    col: 0x1c8f96, lvl: 2, mix: [['office', 3], ['forge', 2], ['indexfund', 1]],
+    desc: 'The skyline. Office blocks built to their full height, with the trusts and funds that can afford the best of them.' },
 
   // ── industrial ×2 ────────────────────────────────────────────────────────
   { id: 'i_mfg',  cat: 'ind', ico: '🏭', name: 'Manufacturing', short: 'Mfg',
@@ -112,7 +119,7 @@ export const ADOPT_BY_TYPE = {
   housing: 'r_asbuilt',
   grocery: 'c_low', foodtruck: 'c_low', shop: 'c_low', gasstation: 'c_low',
   restaurant: 'c_high', club: 'c_high', arena: 'c_high',
-  reslab: 'o_low', forge: 'o_high', indexfund: 'o_high', holdco: 'o_high',
+  office: 'o_low', reslab: 'o_low', forge: 'o_high', indexfund: 'o_high', holdco: 'o_high',
   machineshop: 'i_mfg', smelter: 'i_mfg', cannery: 'i_mfg', munitions: 'i_mfg',
   sawmill: 'i_mfg', weavery: 'i_mfg', fibercroft: 'i_mfg', lumbercamp: 'i_mfg',
   warehouse: 'i_ware', depot: 'i_ware', motorpool: 'i_ware', railyard: 'i_ware',

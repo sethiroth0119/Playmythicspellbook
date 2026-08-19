@@ -106,6 +106,15 @@ export const BAND_BY_ID = Object.fromEntries(BANDS.map(b => [b.id, b]));
      district cannot intensify for ever and a city cannot become all one thing.
    ⚠ `off` is empty at `marginal` for the same reason in the other direction.
      An empty set is a real answer — the plot stays vacant and is reported.
+  ⚠ 🏢 AND `office` CLIMBS FROM `modest` TO `premium` AND THEN STOPS, WHICH IS
+     A STATEMENT AND NOT AN OVERSIGHT. It is the ordinary let-space block
+     (node-city BUILDINGS.office, round 17) and it is what the `off` column was
+     missing entirely — before this round every rung of it resolved to a
+     laboratory, a trust or a fund. It is absent from `prime` because `prime`'s
+     own blurb is "headquarters", and a speculative office building does not
+     outbid a Holding Company for the best corner in the city. That absence is
+     what gives the office column a real gradient instead of one id repeated up
+     the ladder: cheap land takes a plain block, the best land takes an HQ.
 
    Everything here is a live BUILDINGS id or it is dropped at compile time. */
 export const TENANTS = {
@@ -117,19 +126,19 @@ export const TENANTS = {
   },
   modest: {
     com: ['foodtruck', 'gasstation', 'grocery', 'retail'],
-    off: ['reslab'],
+    off: ['office', 'reslab'],
     ind: ['warehouse', 'depot', 'motorpool', 'sawmill', 'weavery', 'cannery', 'farm', 'railyard'],
     res: ['housing'],
   },
   established: {
     com: ['grocery', 'retail', 'shop', 'restaurant'],
-    off: ['reslab', 'forge'],
+    off: ['office', 'reslab', 'forge'],
     ind: ['smelter', 'cannery', 'machineshop', 'papermill', 'printworks', 'weavery', 'motorpool'],
     res: ['housing'],
   },
   premium: {
     com: ['restaurant', 'shop', 'retail', 'club'],
-    off: ['forge', 'indexfund'],
+    off: ['office', 'forge', 'indexfund'],
     ind: ['machineshop', 'printworks', 'munitions'],
     res: ['housing'],
   },

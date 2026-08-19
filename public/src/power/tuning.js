@@ -287,7 +287,7 @@ export const POWER = {
       smelter: 'industry', machineshop: 'industry', cannery: 'industry',
       sawmill: 'industry', weavery: 'industry', papermill: 'industry', printworks: 'industry',
       grocery: 'commerce', restaurant: 'commerce', motorpool: 'commerce', shop: 'commerce',
-      forge: 'commerce', indexfund: 'commerce', holdco: 'commerce',
+      forge: 'commerce', indexfund: 'commerce', holdco: 'commerce', office: 'commerce',
       club: 'leisure', arena: 'leisure', stadium: 'leisure', resthouse: 'leisure',
     },
 

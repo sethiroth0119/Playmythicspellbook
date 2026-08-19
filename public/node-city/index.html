@@ -2823,6 +2823,40 @@ const BUILDINGS = {
   retail:   { name: 'Retail Parade', ico: '🏬', cost: { cinder: 52, metal: 14, supplies: 8 }, pop: 2, crew: 1, powerNeed: 0.30,
               svc: { need: 'leisure', supply: 0.60, input: 'goods', rate: 0.18 },
               desc: 'Four units under one roof: a glazing strip the width of the plot, a lit fascia band over it and a forecourt of marked bays. Low, wide and built to the property line — three in a row make a high street.' },
+  /* 🏢 THE OFFICE BLOCK — round 17, and it exists because FOUR SYSTEMS WERE
+     ADVERTISING A LAND USE THIS TABLE COULD NOT ANSWER. The Zone Demand panel
+     prints office demand, /src/zoning ships `o_low` and `o_high`,
+     /src/districts ships three office specialisations and /src/landvalue's
+     tenant table has an `off` column — and every one of them resolved to
+     `reslab`, `forge`, `indexfund` or `holdco`. Zoning office got you a
+     Research Spire or a holding company. See makeOffice for why the read is
+     carried by MASSING (tall, freestanding, set back behind its own car park)
+     rather than by a fascia band.
+     ⚠ EVERY NUMBER ON THIS ROW IS LIFTED FROM A NAMED NEIGHBOUR. Nothing here
+       was invented, because an invented economy number is the thing this file
+       has been burned by:
+         · cost / pop / crew — `reslab` exactly (90 / 20 / 14, pop 3, crew 2).
+           It is the city's other clean-work office tile, it sits on the same
+           rungs of /src/landvalue's `off` column, and matching it means the
+           two are interchangeable to bldProfile() and therefore have the same
+           build duration and the same municipal-ceiling behaviour.
+         · powerNeed 0.5 — between the Cinder Trust's 0.4 and the Index Fund's
+           0.6, which are the two office-family rows that carry one. A lit,
+           lifted, fully glazed block belongs between them and nowhere else.
+         · gen / use — `shop`'s row byte for byte (0.18 Cinder against 0.08
+           supplies). The Player Shop is this table's other "a business
+           operating out of a building, banking Cinder and consuming stock"
+           entry at this scale, and copying it is the only way to be sure the
+           office is not quietly the best earner in the game.
+       ⚠ AND IT HAS NO `svc`, DELIBERATELY. The seven NEEDS are food, water,
+         power, safety, light, health and leisure; an office answers none of
+         them. It is not a service building, it is a WORKPLACE — which is
+         exactly what hud/demand.js office() already says the meter measures
+         ("read entirely off the LABOUR side"). Giving it a svc.supply to make
+         it feel useful would be inventing a mechanic to justify a mesh. */
+  office:   { name: 'Office Block',  ico: '🏢', cost: { cinder: 90, metal: 20, supplies: 14 }, pop: 3, crew: 2, powerNeed: 0.5,
+              gen: { cinder: 0.18 }, use: { supplies: 0.08 },
+              desc: 'Five floors of let space behind a glass curtain wall, with a lobby, a plant deck and its own car park. Clean work: no freight, no smoke, and the only building in the city that is taller than its plot is wide. Each level adds a floor.' },
   firestation:{name:'Fire Station',  ico: '🚒', cost: { cinder: 130, metal: 34, supplies: 14 }, pop: 2, crew: 3, powerNeed: 0.3,
               svc: { need: 'safety', supply: 1.2 }, use: { water: 0.10 },
               desc: 'Two roller doors and a hose tower. Its crews stand in the Safety coverage alongside the garrison, and a district with one burns far less readily.' },
@@ -3090,7 +3124,7 @@ const BUILD_SECTIONS = [
   { id: 'infra', name: 'Infrastructure', ico: '🛤️', desc: 'Links and stores. Producers beside a road work faster.',
     items: ['road', 'streetlight', 'depot', 'interchange', 'caravanpost', 'railyard', 'lot'] },
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
-    items: ['housing', 'medlab', 'arena', 'shop', 'retail', 'stadium'] },
+    items: ['housing', 'medlab', 'arena', 'shop', 'retail', 'office', 'stadium'] },
   { id: 'def',   name: 'Defense',        ico: '🛡️', desc: 'Raiders are coming. These are what stop them.',
     items: ['barracks', 'tower', 'police', 'wall', 'gate', 'munitions', 'motorpool', 'firestation'] },
   { id: 'fin',   name: 'Financial',      ico: '💹', desc: 'Lifts every Cinder earner in the city, and invests a slice of the takings.',
@@ -3117,6 +3151,9 @@ const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmi
   // ── the financial district: the Forge remodelled. 'forge' is BACK in this
   //    list, which is what makes it placeable again; the other two are new.
   'forge', 'indexfund', 'holdco',
+  // ── the office (r17): the building the office zones and the office
+  //    specialisations have been resolving to somebody else's tile ──
+  'office',
   // ── outside connections (/src/outside) ──
   'interchange',
   // ── ⚡ the generating fleet (/src/power) ──
@@ -7058,6 +7095,15 @@ function buildMesh(type, lvl, tx, tz) {
       _adopt(g, makeDepot(lvl), true);
       break; }
     case 'retail': { _adopt(g, makeRetail(lvl), true); break; }
+    /* 🏢 tx,tz ARE PASSED, and this arm is one of only six that does it.
+       makeOffice seeds its curtain-wall palette and its accent spandrel on the
+       tile, so the block is a property of its PLOT rather than of the moment it
+       was built — the harness's meshHash note names `farm`, `lot`, `shop` and
+       `machineshop` as the recipes that still redraw themselves on every boot
+       and this one was never going to join them. `true` because the recipe is
+       authored at FINAL size through _ntRoot: levels add FLOORS, not girth, and
+       the multiply would swallow the car park that is half its read. */
+    case 'office': { _adopt(g, makeOffice(lvl, tx, tz), true); break; }
     case 'medlab': {
       _adopt(g, makeMedlab(lvl));
       break; }
@@ -10004,51 +10050,78 @@ const RD_BASE = -0.014;             // every slab's underside, buried in the gro
    four, so they need an agreed order. Each is a 6mm box whose TOP is the height
    below; the ORDER is what the stack buys and the STEP is what it costs.
 
-       RD_QY  RD_Y+.0012   patch repairs — a repair goes UNDER the wear on it
-       RD_WY  RD_Y+.0024   wheel tracks, gutter pan, kerb grime
-       RD_PY  RD_Y+.0036   ALL paint: centre, edge, zebra, stop bar, arrows
-       RD_DY  RD_Y+.0048   the gully grate, which stands proud of its gutter
+       RD_QY  RD_Y+.0018   patch repairs — a repair goes UNDER the wear on it
+       RD_WY  RD_Y+.0036   wheel tracks, gutter pan, kerb grime
+       RD_PY  RD_Y+.0054   ALL paint: centre, edge, zebra, stop bar, arrows
+       RD_DY  RD_Y+.0072   the gully grate, which stands proud of its gutter
 
-   🔴 v125 HALVED THE STEP, 2.25mm -> 1.2mm, BECAUSE THE TOP OF THIS STACK IS
-   VISIBLE GEOMETRY AND NOBODY HAD MEASURED IT. Round 4 chose 2.2mm as "about
-   RD_EPS", which is an argument about DEPTH PRECISION and says nothing about
-   how tall the result is. It is 7.2mm tall — a quarter of the 30mm kerb face —
-   and paint is not a kerb: at the frontage framing's ~19 degrees of depression
-   every zebra bar was a slab standing proud of the carriageway with its own
-   unlit side face along the far edge. Measured on r18base-frontage.png, y=700,
-   crossing the second zebra bar: asphalt L 92, then a 3-px trough at L 73.3
-   hard against the bar's L 206.6 edge. 3 px is what 7.2mm subtends there
-   (0.0072 x cos19 x 1146 px/rad / 2.2 units = 3.5 px), so the trough IS the
-   side face and not a shadow — the paint casts nothing, because 7.2mm is 0.4
-   of a shadow-map texel at this tier (see the shadow-map note at `sun`).
+   🔴 v125 CUT THE STEP 2.25mm -> 1.8mm AND MADE PAINT A FILM RATHER THAN A
+   SLAB, BECAUSE THE TOP OF THIS STACK IS VISIBLE GEOMETRY AND NOBODY HAD
+   MEASURED IT. Round 4 chose 2.2mm as "about RD_EPS", which is an argument
+   about DEPTH PRECISION and says nothing about how tall the result is. It came
+   out 7.2mm — a quarter of the 30mm kerb face — and paint is not a kerb: at the
+   frontage framing's raking angle every zebra bar was a block standing on the
+   carriageway, with its unlit side wall reading as a dark line along its far
+   edge and the 18mm gap between two bars reading as a shaded slot.
 
-   WHY 1.2mm AND NOT LESS. The chain that has to stay ordered is
-   carriageway -> patch -> wear -> paint: a zebra bar crosses both wheel tracks
-   and the edge line overlaps the outer track, so paint genuinely has to win
-   over wear, and wear over a repair under it. Three steps, so the paint's
-   height IS three times the step and nothing else. Round 3 ran paint at
-   RD_Y+.001 against the carriageway with no z-fight for a whole round, which
-   is the only empirical floor anyone has: 1.2mm keeps a 20% margin over it and
-   is still ~5x the depth-buffer resolution at 20 units (camera near .1 far 220,
-   24-bit: 0.24mm at z=20, 0.54mm at z=30 — and a tile at 30 is fully hazed).
+   MEASURED, on the crossing crop of the frontage framing (x 540-1150,
+   y 600-820), by walking every row and counting the run of pixels below the
+   asphalt floor immediately after each paint edge — that run IS the side wall:
+
+       heights          paint-edge dark runs     total dark px   speckle/1000
+       .0022/.0045/.0072/.0095  med 13, p90 15         614           2.07
+       .0012/.0024/.0036/.0048  med  9, p90 15         499           4.34
+
+   The second row is what a 1.2mm step alone bought and why it is NOT what
+   shipped: it halves the wall but DOUBLES the speckle inside the paint, which
+   is the wheel-track boundary showing through a bar it now clears by only
+   1.2mm. (RD_TRK's outer track spans .108-.148 and the outer zebra bar spans
+   .096-.136, so a track edge runs down the inside of a bar — that is where the
+   stipple appears.) The depth buffer is 24-bit here (checked, not assumed:
+   gl.DEPTH_BITS = 24), which resolves 1.2mm five hundred times over at the
+   frontage's ~2 units — but only 2.2 times at the aerial's far edge, and this
+   file is judged from both.
+
+   SO THE HEIGHT IS NOT THE WHOLE FIX AND WAS NEVER GOING TO BE. A paint slab
+   is a BOX, and a box has walls. Real road paint has no thickness at all, so
+   rdFlat now emits paint as a single horizontal QUAD at RD_PY (see rdQuad
+   below) and keeps the 6mm box for wear, patches and the gully grate, whose
+   walls are asphalt-against-asphalt at 2% contrast and invisible. No wall, no
+   dark line, no shaded slot between bars — and four vertices instead of
+   twenty-four for every marking in the city.
+
+   WHY THE HEIGHT STILL DROPPED TO 1.8mm. A film 7.2mm above the road is not
+   free either: at ~31 degrees of depression it PARALLAXES 7.2/tan(31) = 12mm
+   against the carriageway under it, which fattens every zebra bar and thins
+   every gap between them by about a third. 1.8mm steps take that to 9mm while
+   keeping 80% of the step round 4 chose and 3.3 depth units at z=30, where the
+   fog (now [25,34], see QUALITY) is 56% of the way to its stop.
+
+   THE CHAIN, because it is what fixes the step at three times itself:
+   carriageway -> patch -> wear -> paint. A zebra bar crosses both wheel tracks
+   and the edge line overlaps the outer track, so paint has to win over wear and
+   wear over a repair under it. Three steps, so the paint's height is three
+   times the step and nothing else.
 
    ⚠ REJECTED: polygonOffset. It is the right tool for COPLANAR surfaces and
-     these are not coplanar — they are 7.2mm apart, which is the whole problem.
-     To let paint sit at the asphalt's own height it would have to out-bias a
-     3.5mm world separation from the wear bands, which is hundreds of depth
-     units and would then pull paint in front of a tyre. And the paint has no
+     these are not coplanar — they are millimetres apart, which is the whole
+     problem. To let paint sit at the asphalt's own height it would have to
+     out-bias a 3.6mm world separation from the wear bands, hundreds of depth
+     units, and would then pull paint in front of a tyre. And the paint has no
      material of its own to put it on: it merges into B_SOLID with the kerbs,
      the verge, the bin, the sign and the lamp column (see makeRoad's bucket
      list), so a material-level offset would bias every prop in the city too.
-   ⚠ REJECTED: giving paint its own non-casting bucket. It would also stop the
-     paint entering the shadow pass — except that it never contributed to it:
-     0.4 texel. One more merged mesh on ~130 road tiles for nothing.
+   ⚠ REJECTED: giving paint its own non-casting bucket. That would also take it
+     out of the shadow pass — except that it never contributed to it: 7.2mm is
+     0.4 of a shadow-map texel at the live tier, so the "shadow line" the critic
+     saw could not have been a shadow, and is not. One more merged mesh on ~130
+     road tiles for nothing.
 
-   The whole stack is 4.8mm now, a sixth of the 30mm kerb. */
-const RD_QY = RD_Y + .0012;
-const RD_WY = RD_Y + .0024;
-const RD_PY = RD_Y + .0036;
-const RD_DY = RD_Y + .0048;
+   The whole stack is 7.2mm now, under a quarter of the 30mm kerb. */
+const RD_QY = RD_Y + .0018;
+const RD_WY = RD_Y + .0036;
+const RD_PY = RD_Y + .0054;
+const RD_DY = RD_Y + .0072;
 
 /* The lateral geometry of the cross-section, in one place because every one of
    these numbers is chosen against its neighbour: change one alone and two slabs
@@ -10247,12 +10320,39 @@ const RD_BUSH_G = new THREE.SphereGeometry(.06, 7, 6).scale(1, .7, 1);
    A part is {g: shared geometry, x,y,z: its translation, c: its vertex colour}.
    Nothing is a Mesh until rdMerge runs. */
 const rdPart = (bucket, geo, x, y, z, c) => { bucket.push({ g: geo, x: x, y: y, z: z, c: c }); };
+/* 🎞 THE PAINT QUAD. Real road paint is a FILM — a couple of tenths of a
+   millimetre of thermoplastic — and every marking in this city was a 6mm box.
+   A box has four walls, and at the frontage framing's raking angle those walls
+   are what made a zebra bar read as a slab lying on the road with a dark line
+   along its far edge and a shaded slot between it and the next bar. Measured
+   before and after in THE SURFACE STACK above.
+   Cached exactly like rdGeo, keyed and rounded the same way, so a hundred road
+   tiles share one geometry per extent. PlaneGeometry is authored in XY, so the
+   rotation is baked ONCE into the cached buffer rather than paid per part —
+   rdMerge carries a translation and nothing else, and a rotation applied at
+   merge time would be silently dropped.
+   ⚠ Four vertices, not twenty-four. Every marking on every road tile got 6x
+     cheaper in the merge as a side effect; that is a side effect and not the
+     reason. */
+const RD_QUAD = {};
+const rdQuad = (w, d) => {
+  w = Math.round(w * 1e4) / 1e4; d = Math.round(d * 1e4) / 1e4;
+  const k = w + '/' + d;
+  return RD_QUAD[k] || (RD_QUAD[k] = new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2));
+};
 /* A ground cell given as EXTENTS, not centre+size — the 3×3 decomposition is
    naturally expressed as ranges and this keeps every seam exact, so no two
    pieces overlap and nothing z-fights. */
 const rdSlab = (bucket, x0, x1, z0, z1, top, c) => {
   const w = x1 - x0, d = z1 - z0;
   if (w <= 1e-4 || d <= 1e-4) return;
+  /* 🎞 PAINT IS A FILM HERE TOO, AND THIS IS THE CALL THAT DRAWS THE EDGE LINE.
+     kerbBand -> outward -> rdSlab, so the solid edge line was a slab FOUNDED at
+     RD_BASE with 5.4mm of it standing above the carriageway — the same wall
+     rdFlat's paint had, on the one marking that runs the whole length of every
+     straight tile. One dispatch in each of the two builders, and no call site
+     changes; see rdQuad and THE SURFACE STACK. */
+  if (top === RD_PY) { rdPart(bucket, rdQuad(w, d), (x0 + x1) / 2, top, (z0 + z1) / 2, c); return; }
   rdPart(bucket, rdGeo(w, top - RD_BASE, d), (x0 + x1) / 2, (top + RD_BASE) / 2, (z0 + z1) / 2, c);
 };
 /* ⭐ ROUND 7 — BLEND A HEX TOWARD THE TERRAIN AT A WORLD POSITION, and hand back
@@ -10275,10 +10375,20 @@ function _rdGndMix(hex, wx, wz, amt) {
   } catch (e) { return hex; }
 }
 
-/* An overlay: a 6mm slab lying ON the surface rather than founded in the
-   ground. `top` picks the layer — see THE SURFACE STACK above. */
+/* An overlay lying ON the surface rather than founded in the ground. `top`
+   picks the layer — see THE SURFACE STACK above.
+   ⚠ PAINT IS THE ONE LAYER THAT IS A FILM. Wear, patches and the gully grate
+     keep the 6mm box: their walls are asphalt against asphalt (T_TRACK 0.76
+     against T_ROAD 1.00 is the widest pair) and read as nothing, while the
+     grate is meant to stand proud. Dispatching on `top === RD_PY` rather than
+     on a new argument is deliberate — every paint call site in this file and in
+     perimeterScenery already names that constant, and a flag would be one more
+     thing for a new marking to forget. The SAME dispatch is in rdSlab, because
+     the solid edge line reaches paint through kerbBand -> outward -> rdSlab and
+     not through here; those two are the only builders paint can arrive by. */
 const rdFlat = (bucket, w, d, x, z, top, c) => {
   if (w <= 1e-4 || d <= 1e-4) return;
+  if (top === RD_PY) { rdPart(bucket, rdQuad(w, d), x, top, z, c); return; }
   rdPart(bucket, rdGeo(w, .006, d), x, top - .003, z, c);
 };
 // Paint. Signature unchanged from round 3 — perimeterScenery calls this too.
@@ -20261,6 +20371,277 @@ function makeRetail(lvl) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   🏢 OFFICE BLOCK — round 17, and the reason it exists is a hole rather than
+   a wish.
+
+   🔴 THERE WAS NO OFFICE IN THIS GAME. The Zone Demand panel prints office
+   demand (hud/demand.js office(), read off the high-skill labour market), the
+   zone catalogue ships `o_low` "Office park" and `o_high` "Office towers",
+   /src/districts ships three office specialisations, /src/landvalue's tenant
+   table has an `off` column on four of its five rungs — and every one of those
+   resolved to `reslab`, `forge`, `indexfund` or `holdco`. A player who zoned
+   office got a Research Spire or a holding company. Four systems advertising a
+   land use the building catalogue could not answer is the "advertised but
+   unenforced" defect this project polices hardest, and this is the building
+   that closes it.
+
+   ── WHY THE MASSING IS THE FEATURE, AND NOT A FASCIA STRIPE ───────────────
+   The round-13 critic's finding on rubric dimension 11 was that the commercial
+   read is carried by an eight-pixel fascia stripe rather than by form. So this
+   recipe is authored the way makeRetail / makeDepot / makeMotorpool were — from
+   the PLAN and the HEIGHT and the GROUND outward — and every one of its four
+   numbers is deliberately unlike the commercial tile beside it:
+
+     recipe          plan            height (L1)      ground
+     ─────────────── ─────────────── ──────────────── ───────────────────────
+     makeRetail      .94 x .40       .36 + parapet    forecourt, 5 bays,
+                     WALL-TO-WALL                     footway, 2 islands
+     makeOffice      .54 x .42       1.18 to the      SET BACK: a car park in
+                     FREESTANDING,   parapet, i.e.    front of it, a kerbed
+                     set back into   TALLER THAN THE  planted island, an
+                     its own plot    TILE IS WIDE     entrance forecourt
+     makeDepot       .72 x .50       .30, FLAT        dock apron + chevrons
+     housing         ~.60 x .50      ~.90 to ridge    lawn, drive, hedge
+
+   From the air an office is therefore the only thing in the district that is
+   TALLER THAN IT IS WIDE with an empty half-tile of marked bays in front of
+   it — a silhouette and a ground use, not a colour. At street level it is the
+   only elevation in the game built as a CURTAIN WALL: continuous horizontal
+   floor bands standing proud of a recessed core, glass ribbons between them,
+   full-height mullion fins across all four faces, and one saturated spandrel
+   band (BAR.md reference frame 5, "coloured spandrel panels (magenta,
+   orange)"). Nothing on it is a punched domestic window and nothing on it is a
+   shopfront, which are the only two elevations this city had before.
+
+   ── THE SHARED winMat DOES THE WORK, AND NO NEW MATERIAL IS ALLOCATED ─────
+   winMat now carries an environment map and interior content, so a glazed
+   elevation reads as glass by day (sky in it) and as a lit floorplate at night
+   — which is exactly what an office needs and is why this building could not
+   have been built before that landed. It is used DIRECTLY and never cloned:
+   the day/night cycle writes emissiveIntensity on that one instance and a clone
+   sits dark all night.
+
+   ── LEVELS ADD FLOORS, NOT GIRTH ──────────────────────────────────────────
+   `_ntRoot` (see its note): the recipe is authored at FINAL size and re-applies
+   the level scale itself, so the buildMesh arm passes `_adopt(..., true)` and
+   `g.scale.setScalar(1 + (lvl-1)*.16)` never lands on it. That matters more
+   here than anywhere else in the file — at level 3 the multiply would put a
+   .54-wide block at .74 and swallow the car park that is half the read. What
+   levels do instead is add STOREYS: 3 / 4 / 5 floors over the lobby, so an
+   Office park and an Office tower are the same building at two heights, which
+   is what the two zones actually mean.
+
+   ── ⚠ SEEDED ON THE TILE (rdRng), NOT ON THE MOMENT ───────────────────────
+   buildMesh runs again on load, on upgrade, on repair and on an admin re-skin.
+   The harness's meshHash note names `farm`, `lot`, `shop` and `machineshop` as
+   the recipes that still redraw themselves every boot; this one is not joining
+   them. rdRng is the road recipe's tile hash and already falls back to
+   Math.random when the coords are absent, which is the GLB-preview case.
+   The seed deliberately ignores `lvl`, exactly as makeHousing's and makeArena's
+   do: upgrading has to add floors to the block that is standing there, not swap
+   it for a differently-coloured one.
+   9 meshes.
+   ══════════════════════════════════════════════════════════════════════════ */
+/* Palettes. Local, like _Z_FASCIA and _Z_RWALL and for the same reason: these
+   are a curtain-wall family, not the wall palettes the _CV_ / _IN_ lists are,
+   and folding them in would restyle thirty other recipes. */
+const _O_SPAN = [0xe6e2d8, 0xdcdfe2, 0xd8d2c6, 0xe0dcd2, 0xcfd6da, 0xe4dcd0];  // floor bands, piers, coping
+const _O_CORE = [0x8f9aa2, 0x9aa0a6, 0x8a939b, 0x99958c, 0x93989e];            // the recessed core behind the glass
+/* ⚠ THE ACCENT IS ONE BAND, NOT A STRIPE ON THE PARAPET. BAR frame 5 shows the
+   colour as a SPANDREL — a structural band in the elevation — and putting it on
+   one floor line rather than along the roof is the difference between a
+   building with a coloured floor and a building with a coloured hat. */
+const _O_ACC  = [0xd8452f, 0xe0902a, 0x2f7fbf, 0xc93a86, 0x2f9e63, 0x8e4bbf];
+
+function makeOffice(lvl, tx, tz) {
+  const g = new THREE.Group(), inner = _ntRoot(g, lvl);
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const AY = _iAY(), GB = _IN_GB, MY = AY + .003;
+
+  const PAD = _ntB(), MK = _ntB(), WALL = _ntB(), TRIM = _ntB(),
+        SIGN = _ntB(), GL = _ntB(), MT = _ntB(), DK = _ntB(), VEG = _ntB();
+
+  const spanCol = _O_SPAN[(R() * _O_SPAN.length) | 0];
+  const coreCol = _O_CORE[(R() * _O_CORE.length) | 0];
+  const accCol  = _O_ACC[(R() * _O_ACC.length) | 0];
+  const baseCol = 0x6f6a63, roofCol = 0x6e6b66;
+
+  /* ── THE BLOCK. Set back and to the left, so the whole front-right of the
+        tile is plot: that is the half of the read the aerial camera gets. ── */
+  const W = .54, D = .42, hW = W / 2, hD = D / 2;
+  const OX = -.13, OZ = -.215;                 // x -.40..+.14, z -.425..-.005
+  const GH = .34;                              // the lobby — taller than an office floor
+  const SH = .28;                              // office floor-to-floor. NOT housing's .34:
+                                               // a shallower floor is what makes a stack of
+                                               // bands read as commercial rather than domestic
+  const UF = 2 + Math.max(1, Math.min(3, lvl));// 3 / 4 / 5 floors over the lobby
+  const H  = GH + UF * SH;                     // 1.18 / 1.46 / 1.74
+  const BT = .026;                             // half the depth of a floor band
+  const IN = .020;                             // how far the core is recessed behind them
+  const accF = 1 + ((R() * Math.max(1, UF - 1)) | 0);   // which floor carries the accent
+
+  /* 1. THE BASE. A plinth under the whole block. It is the only part of this
+        building that touches the pad, and it is what stops the elevation
+        growing straight out of the asphalt — the same argument /src/parcel's
+        foundation edge makes from the other side of the wall. */
+  WALL.add(_hBox(W + .040, .040, D + .040, OX, .014, OZ), baseCol);
+
+  /* 2. THE CORE — one recessed box, and everything else stands proud of it.
+        Authoring the shell this way rather than as four panels with holes is
+        deliberate: a curtain wall has no punched openings to cut, and a solid
+        core behind continuous glazing is 12 triangles instead of four
+        ExtrudeGeometry panels with a hole list. */
+  WALL.add(_hBox(W - 2 * IN, H, D - 2 * IN, OX, H / 2, OZ), coreCol);
+
+  /* 3. THE CORNER PIERS. Full height, and 8mm PROUD of the floor bands so no
+        face of a pier is ever coplanar with a face of a band — they intersect
+        as solids, which is safe, instead of agreeing on a plane, which is the
+        /src/wild defect. They are also what stops the stack of bands reading as
+        a pile of trays. */
+  for (const sx of [-1, 1]) for (const sz of [-1, 1])
+    TRIM.add(_hBox(.044, H, .044, OX + sx * (hW - .014), H / 2, OZ + sz * (hD - .014)), spanCol);
+
+  /* 4. THE FLOOR BANDS. One ring per floor line, standing IN + 0 proud of the
+        core, i.e. flush with the outer envelope. Front and back run the full
+        width and swallow the corners; the flanks are inset by the band depth at
+        each end, so the four boxes ABUT and never overlap — the same partition
+        _iCtx's FACE table uses, for the same reason. */
+  const band = (y, col) => {
+    WALL.add(_hBox(W, 2 * BT, .030, OX, y, OZ + hD - .015), col);
+    WALL.add(_hBox(W, 2 * BT, .030, OX, y, OZ - hD + .015), col);
+    WALL.add(_hBox(.030, 2 * BT, D - .060, OX + hW - .015, y, OZ), col);
+    WALL.add(_hBox(.030, 2 * BT, D - .060, OX - hW + .015, y, OZ), col);
+  };
+  for (let f = 0; f <= UF - 1; f++) band(GH + f * SH, f === accF ? accCol : spanCol);
+
+  /* 5. THE GLASS RIBBONS. One continuous sheet per face per floor, recessed
+        11mm behind the band face so the bands cast a real shadow line down the
+        elevation. The SHARED winMat instance — see the header. */
+  const gh = SH - 2 * BT;                                        // .228
+  for (let f = 0; f < UF; f++) {
+    const cy = GH + (f + .5) * SH;
+    GL.add(_hBox(W - .090, gh, .018, OX, cy, OZ + hD - .020));
+    GL.add(_hBox(W - .090, gh, .018, OX, cy, OZ - hD + .020));
+    GL.add(_hBox(.018, gh, D - .090, OX + hW - .020, cy, OZ));
+    GL.add(_hBox(.018, gh, D - .090, OX - hW + .020, cy, OZ));
+  }
+
+  /* 6. THE MULLION FINS. Full height above the lobby, on all four faces. This
+        is the vertical half of the curtain wall and the cheapest thing on the
+        building: 14 boxes, one bucket that is already being drawn. Without them
+        a stack of horizontal bands reads as a car park deck. */
+  const fh = H - GH, fy = GH + fh / 2;
+  for (const u of [-.17, -.058, .058, .17]) {
+    TRIM.add(_hBox(.014, fh, .022, OX + u, fy, OZ + hD - .014), spanCol);
+    TRIM.add(_hBox(.014, fh, .022, OX + u, fy, OZ - hD + .014), spanCol);
+  }
+  for (const v of [-.115, 0, .115]) {
+    TRIM.add(_hBox(.022, fh, .014, OX + hW - .014, fy, OZ + v), spanCol);
+    TRIM.add(_hBox(.022, fh, .014, OX - hW + .014, fy, OZ + v), spanCol);
+  }
+
+  /* 7. THE LOBBY. A double-height glazed ground floor, a dark interior behind
+        it so the glass has something to be in front of, two entrance leaves
+        and a canopy on slim columns. A lobby is what says OFFICE at street
+        level in a way a shopfront cannot: no goods, no awning, no fascia. */
+  const zF = OZ + hD;
+  DK.add(_hBox(W - .086, .272, .020, OX, .178, zF - .024));
+  GL.add(_hBox(W - .096, .264, .014, OX, .178, zF - .018));
+  GL.add(_hBox(.014, .200, D - .140, OX + hW - .018, .150, OZ));
+  GL.add(_hBox(.014, .200, D - .140, OX - hW + .018, .150, OZ));
+  for (const du of [-.042, .042]) {                             // two leaves
+    DK.add(_hBox(.076, .230, .012, OX + du, .118, zF - .006));
+    MT.add(_hBox(.008, .050, .010, OX + du + (du < 0 ? .026 : -.026), .130, zF + .002));
+  }
+  MT.add(_hBox(.008, .234, .012, OX, .116, zF - .004));         // the meeting stile
+  TRIM.add(_hBox(.300, .020, .150, OX, GH - .060, zF + .062), spanCol);   // canopy
+  for (const du of [-.12, .12])
+    MT.add(_hCyl(.010, GH - .076, OX + du, (GH - .076) / 2 + .006, zF + .120, 8));
+  /* The name board, on the first floor band, with a small lit panel on it.
+     ⚠ THE LIT PANEL IS SMALL ON PURPOSE. winMat is near-black until the day /
+       night cycle raises its emissive, so a panel sized like a window reads as
+       a hole punched in the board at noon — makeRetail's own note measures that
+       and puts the ceiling at about a third of the board height. */
+  SIGN.add(_hBox(.230, .040, .020, OX, GH, zF + .002), accCol);
+  GL.add(_hBox(.150, .016, .010, OX, GH, zF + .013));
+
+  /* 8. THE ROOF. Flat, with a parapet, plant and a solar array — BAR.md
+        reference frame 5, "flat roofs covered in solar arrays and plant rooms".
+        This is the aerial half of the office read and it is the one thing on
+        the tile a top-down camera sees at all.
+        ⚠ THE PARAPET REPLACES THE TOP FLOOR BAND rather than standing on it. A
+          parapet at the same face plane as a band, overlapping it in Y, would
+          put two coplanar faces in one merged buffer, which is the one defect
+          no polygonOffset can break. */
+  WALL.add(_hSlab(OX - hW + .020, OX + hW - .020, OZ - hD + .020, OZ + hD - .020, H + .006, H - .020), roofCol);
+  for (const sz of [-1, 1])
+    WALL.add(_hBox(W, .078, .026, OX, H + .013, OZ + sz * (hD - .013)), spanCol);
+  for (const sx of [-1, 1])
+    WALL.add(_hBox(.026, .078, D - .052, OX + sx * (hW - .013), H + .013, OZ), spanCol);
+  for (const sz of [-1, 1])
+    TRIM.add(_hBox(W + .014, .012, .038, OX, H + .058, OZ + sz * (hD - .013)), spanCol);
+  for (const sx of [-1, 1])
+    TRIM.add(_hBox(.038, .012, D - .040, OX + sx * (hW - .013), H + .058, OZ), spanCol);
+  WALL.add(_hBox(.200, .080, .150, OX - .09, H + .040, OZ - .060), spanCol);   // plant room
+  TRIM.add(_hBox(.214, .014, .164, OX - .09, H + .084, OZ - .060), spanCol);
+  WALL.add(_hBox(.130, .110, .120, OX + .115, H + .055, OZ + .040), coreCol);  // lift overrun
+  TRIM.add(_hBox(.144, .012, .134, OX + .115, H + .114, OZ + .040), spanCol);
+  for (const [ax, az] of [[-.20, .095], [.02, .120], [.16, -.095]]) {          // AC plant
+    TRIM.add(_hBox(.072, .038, .060, OX + ax, H + .025, OZ + az), spanCol);
+    MT.add(_hCyl(.019, .008, OX + ax, H + .048, OZ + az, 8));
+  }
+  for (const ax of [-.19, .00, .19])                                           // solar array
+    TRIM.add(_iTilt(.170, .010, .086, .36, OX + ax, H + .030, OZ + .155), 0x27334a);
+  if (lvl >= 2) for (const ax of [-.10, .10])
+    TRIM.add(_iTilt(.170, .010, .086, .36, OX + ax, H + .030, OZ - .150), 0x27334a);
+  MT.add(_hCyl(.008, .150, OX - .215, H + .081, OZ + .150, 6));                // mast
+
+  /* ── 9. THE PLOT: A CAR PARK IN FRONT, WHICH IS HALF THE ZONING READ ──────
+     BAR.md frame 5 — "every block sits on a plot with its own surface car
+     park, marked with white bay lines, kerbed islands and planted trees in the
+     islands". makeRetail measured why the pad is MAT.road and not MAT.drive
+     (a 40% value step under the bay paint against a 12% one) and that argument
+     is reused here rather than re-derived. */
+  PAD.add(_hSlab(-.5, .5, -.5, .5, AY, GB));
+  _pcKerb((geo) => MK.add(geo, 0xb8b2a4), _hSlab, .5, AY, GB);                 // lot line
+  MK.add(_hSlab(OX - .200, OX + .200, zF, zF + .150, MY, GB), 0xa9a396);       // entrance forecourt
+  _zBayRank(MK, -.14, 4, .155, .155, .420, MY, 1);                             // four marked bays
+  /* The kerbed island, down the free flank rather than at the ends of the
+     rank: an office park's planting is the strip between the bays and the
+     boundary, and putting it there is also what keeps the tile from reading as
+     one continuous sheet of asphalt with a tower on it. */
+  MK.add(_hSlab(.220, .470, .100, .440, MY, GB), 0xb8b2a4);
+  VEG.add(_hSlab(.238, .452, .118, .422, MY + .004, GB));
+  for (const [sx, sz, r] of [[.345, .170, .052], [.345, .285, .044], [.345, .395, .048]])
+    VEG.add(_cvSph(r, sx, MY + .004 + r * .60, sz, .70));
+  for (const bx of [-.13, 0, .13])                                             // bollards at the doors
+    MT.add(_hCyl(.014, .070, OX + bx, AY + .035, zF + .130, 7));
+  /* A lamp column over the bays, so the car park is lit at night — the same
+     figure makeRetail stands on its forecourt. */
+  MT.add(_hCyl(.011, .380, -.400, AY + .190, .300, 6));
+  MT.add(_hBox(.070, .020, .052, -.400, AY + .390, .300));
+  GL.add(_hBox(.058, .014, .044, -.400, AY + .372, .300));
+  /* The monolith at the plot entrance. Small, and it carries the accent again
+     so a viewer reads the sign and the spandrel as one tenancy. */
+  SIGN.add(_hBox(.130, .080, .024, .300, AY + .040, .462), accCol);
+  MT.add(_hBox(.146, .012, .036, .300, AY + .086, .462));
+
+  for (const m of [
+    _ntMesh(PAD,  MAT.road,    false, false),
+    _ntMesh(MK,   HOUSE_PAINT, false),
+    _ntMesh(WALL, HOUSE_PAINT, true),
+    _ntMesh(TRIM, NT_CLAD,     true),
+    _ntMesh(SIGN, HOUSE_TRIM,  true),
+    _ntMesh(GL,   winMat,      false, false),   // ⚠ the SHARED winMat instance
+    _ntMesh(MT,   MAT.metal,   true,  false),
+    _ntMesh(DK,   MAT.dark,    false, false),
+    _ntMesh(VEG,  MAT.foliage, true,  false),
+  ]) if (m) inner.add(m);
+
+  return g;                                                     // 9 meshes
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    SUPPLY DEPOT, REBUILT — the industrial massing.
 
    What it was: a .80 x .60 shell under a gable, H .46 to eaves and .60 to the
@@ -24146,6 +24527,32 @@ const ECO_BUILDING_MAP = {
   resthouse:   { out: ['householdGoods'],                          ind: 'hotel' },
   /* 🚫 DELIBERATELY NOT HERE — "add the buildings" does NOT mean "add all the
      buildings", and each of these was argued and rejected:
+       🔴 • office (r17) — AND THIS ONE IS A MEASURED GAP, NOT A DESIGN CHOICE,
+         so it is written up rather than quietly omitted. An Office Block is
+         plainly a business and plainly belongs in this map. What it cannot have
+         yet is an OUTPUT. The whole 258-id catalogue has one office-shaped
+         product, `officeSupplies` (recipes.js :622), and its inputs are
+         `paper` 0.6 + `plastic` 0.2 + `printingInk` 0.05 — NONE of which any
+         tile in this city produces. Walked, not guessed: every RECIPES entry
+         whose input set is a subset of this map's own outputs was enumerated,
+         and the twenty that come back are flour, cooking oil, frozen food,
+         lumber, four fuels, electricity, asphalt, pig iron, aluminium,
+         petrochemicals, industrial gas, clothing, card stock, packaging
+         material, printed cards, booster packs and card boxes. Not one of them
+         is office work.
+         So an `office` row here would found a firm with a payroll reporting
+         `lastBottleneck: paper` and producing zero, for ever — which is
+         EXACTLY the state the Player Shop was in until `papermill` and
+         `printworks` were added, and which the note on `shop` above exists to
+         stop anyone recreating. It is the same treatment /src/districts gives
+         printingInk and holographicFoil: the gap is named at the site so the
+         next hand ADDS THE MISSING TILE (a paper mill making `paper`, or an
+         `office`-kind industry in recipes.js) and then adds the row — instead
+         of re-deriving the omission and putting a dead firm in.
+         ⚠ Note what this does NOT cost: absent from this map means the tile is
+           exactly what it was before the feature existed, which is the header's
+           own contract, and it is the state `forge`, `indexfund` and `holdco` —
+           the rest of the office family — are already in.
        • stadium — its own header (:2287-2291) states that if a `gen` ever
          appears on it the stadium has become an idle earner and the entire
          design is dead. A firm is a gen with extra steps.
@@ -28606,6 +29013,13 @@ const OUTPUT_SENSITIVITY = {
   caravanpost:{ labour: 0.7, efficiency: 1.0, commerce: 1.4 },
   // Few workers, but confidence is everything — the doc's "bank" row.
   lot:        { labour: 0.5, efficiency: 1.2, commerce: 1.3 },
+  /* 🏢 THE OFFICE TAKES THE SAME ROW AS THE LOT, and the row's own comment is
+     the justification: an office block's product is let space and professional
+     fees, so it lives or dies on Trade and Civilization and barely notices
+     whether its staff had breakfast. Copied rather than tuned — a fourth
+     distinct sensitivity profile invented for one building is a number nobody
+     can defend later. */
+  office:     { labour: 0.5, efficiency: 1.2, commerce: 1.3 },
   // Civic value does not depend on trade.
   reslab:     { labour: 0.9, efficiency: 1.0, commerce: 0.5 },
   medlab:     { labour: 0.9, efficiency: 1.0, commerce: 0.5 },

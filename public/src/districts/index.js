@@ -161,12 +161,21 @@ function floorOf(specId) {
 
 /* ══ DOES THIS SPECIALISATION CHANGE ANYTHING ON THIS ZONE? ════════════════
    🔴 THE PLACEBO CHIP, AND THE RULE THAT RETIRES THE WHOLE CLASS OF THEM.
-      `o_low.mix` is [['reslab',1]] and 🔬 Technology's mix is [['reslab',1]].
-      There is no band at which those two filter to different bags, so on an
-      Office park the chip is a placebo: the panel offered it beside two chips
+      `o_low.mix` WAS [['reslab',1]] and 🔬 Technology's mix is [['reslab',1]].
+      There was no band at which those two filter to different bags, so on an
+      Office park the chip was a placebo: the panel offered it beside two chips
       that do change something, its own description recommended it for exactly
       that zone, and two adjacent plots — one specialised, one not — developed
-      the identical building at the identical level. 🏭 Manufacturing on
+      the identical building at the identical level.
+      ⚠ ROUND 17 FIXED THAT PAIRING FROM THE OTHER END and the fix is worth
+        recording because it is not what anyone expected: node-city gained an
+        `office` BUILDING, `o_low.mix` became [['office',3],['reslab',1]], and
+        🔬 Technology — which is still reslab-only — stopped being a placebo on
+        it, because it now genuinely means "laboratories, not general offices".
+        NOTHING IN THIS FUNCTION CHANGED, and that is the point of it computing
+        the pairing from the LIVE tables at draw time instead of from a note: a
+        catalogue edit two modules away flipped a chip from placebo to real and
+        the panel followed without anyone remembering this file existed. 🏭 Manufacturing on
       Manufacturing and 📦 Logistics on Warehousing are the same shape, milder:
       they differ on ONE band of five and are identical on the other four.
 

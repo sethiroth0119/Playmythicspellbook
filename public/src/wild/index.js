@@ -144,8 +144,20 @@ const TARGET_TILES = 430;
    pasted on rather than as something that grew where it is. */
 const C_TUFT_WET = [0x5c7a36, 0x678437, 0x4f6b30, 0x738c42];
 const C_TUFT_DRY = [0x8a8752, 0x94905c, 0x7c7a48, 0x9d9764];
-const C_SCRUB    = [0x47632f, 0x3f5a2c, 0x546f36, 0x3a5430];
-const C_SCRUB_DRY= [0x77784a, 0x6b6c42, 0x848256, 0x5f6339];
+/* ⚠ THE SCRUB FAMILY WAS LIFTED ~10% AGAINST A MEASUREMENT, and the
+   measurement is the one round 2 spent a whole round fixing and this round is
+   not allowed to spend. gsample on the district framing, baseline vs the first
+   cut of this layer: the mid bin's mean terrain value went 0.546 -> 0.503,
+   because the layer's biggest single contribution by area is dark green bushes
+   and their shadows. 0.503 is still inside the 0.45-0.55 band the reference
+   frames set, so it was not a bug — but a fifth of round 2's headroom for a
+   layer whose job is CONTRAST rather than LEVEL is a bad trade. Both families
+   were lifted and a sixth, paler, yellower entry added to each: the extra
+   spread between bushes is what stops a thicket reading as one solid dark
+   shape, which is the same argument /src/parcel's tileShade note makes about
+   three shops sharing one forecourt. */
+const C_SCRUB    = [0x51702f, 0x486632, 0x5e7c3a, 0x435f30, 0x6b8742, 0x577336];
+const C_SCRUB_DRY= [0x86875a, 0x787a4c, 0x939160, 0x6d7043, 0x9d9a68, 0x7f8050];
 const C_ROCK     = [0x8b8577, 0x9a9486, 0x7a7468, 0xa39c8c];
 const C_BARK     = [0x6b5940, 0x5a4a35, 0x746145];
 const C_CROWN    = [0x3f6a34, 0x497a3a, 0x38602f];
@@ -335,12 +347,14 @@ function build() {
   const PR = protos(THREE);
   const F = newFlat(), S = newStand();
 
-  /* ── THE THREE HEIGHTS ON THIS TILE, AND WHY THERE IS ONLY ONE FREE SLOT
-     node-city stacks a shade plane at y = 0, the buildable plate and the road
-     apron feather at .012, the gridHelper's lines at .0145, every recipe's own
-     paving at RD_Y (.016) and the hover highlight at .020. An UNBUILT tile has
-     none of the recipe layers on it, so the only two things a flat patch has to
-     stay between are the terrain it lies on and the grid line above it.
+  /* ── THE HEIGHTS ON AN UNBUILT TILE, AND WHY THERE IS ONLY ONE FREE SLOT
+     node-city stacks a shade plane at y = 0, the road apron's feather at .012,
+     the gridHelper's lines at .0145, every recipe's own paving at RD_Y (.016)
+     and the hover highlight at .020. An UNBUILT tile carries none of the recipe
+     layers, and the two road-apron layers (paving at .046 out to 110mm, feather
+     at .012 out to 150mm) are handled by starting everything 150mm in — see
+     CLR_ROAD. So the only things left for a flat patch to sit between are the
+     terrain it lies on and the grid line above it.
      🐞 AND IT HAS TO FOLLOW THE TERRAIN, WHICH IS THE PART THAT IS EASY TO GET
         WRONG. The plate is a DISPLACED lattice, ±AMP = ±9mm. A patch pinned to
         a constant y is 9mm in the air on a ridge and 9mm underground in a
@@ -394,9 +408,10 @@ function build() {
 
   /* Is this world point far enough from anything anybody built? Only the eight
      neighbouring tiles are ever consulted, so this is at most nine Set lookups
-     and a point-to-square distance. A road is allowed much closer than a
-     building, because a road tile's own footway ends AT its tile line whereas a
-     plot's fence stands 22mm inside its — see the clearances at the top. */
+     and a point-to-square distance. The two clearances are different because
+     what reaches into this tile is different: a plot's fence stands 22mm INSIDE
+     its own line, while a road slab reaches 150mm OUT of its — see CLR_BUILT
+     and CLR_ROAD, both of which are measured rather than chosen. */
   const clearOf = (wx, wz, rad) => {
     const u = wx + HALF, w = wz + HALF;
     const gx = Math.floor(u), gz = Math.floor(w);
@@ -485,8 +500,13 @@ function build() {
            centre, so a stain is always this ground somewhat drier or somewhat
            damper and never a colour from outside the map's palette. */
         const bald = cover < .34;
-        const hex = bald ? (R() < .40 ? C_SOIL : C_DUST)
-                         : (T.h > .5 ? C_DUST : C_DAMP);
+        /* ⚠ BIASED TOWARD THE PALE SIDE ON PURPOSE — .32 and .42, not .5 and
+           .5. The scatter above spends terrain value (see the C_SCRUB note);
+           the stain is the only element here that can hand some back, and dry
+           bleached ground is also the commoner of the two on the grassland
+           this city is authored to stand on (GROUND_COL's own argument). */
+        const hex = bald ? (R() < .32 ? C_SOIL : C_DUST)
+                         : (T.h > .42 ? C_DUST : C_DAMP);
         const mid = tintHex(hex, px, pz, bald ? .34 + R() * .18 : .70 + R() * .12, texDiv).clone();
         const SEG = 9, rr = [], aa = [];
         for (let i = 0; i < SEG; i++) { rr.push(rad * (.55 + R() * .65)); aa.push((i / SEG) * Math.PI * 2 + R() * .30); }
@@ -652,7 +672,7 @@ function build() {
     const nS = R() < cover * .95 ? (R() < cover * .55 ? 2 : 1) : 0;
     for (let i = 0; i < nS; i++) place(.15, .58, (px, pz) => {
       const r = .080 + R() * .062;
-      const c = tint(dry ? C_SCRUB_DRY : C_SCRUB, R, px, pz, .40, 1).clone();
+      const c = tint(dry ? C_SCRUB_DRY : C_SCRUB, R, px, pz, .28 + R() * .26, 1).clone();
       const y = surf(px, pz);
       stamp(S, PR.blob, c, px, y - r * .34, pz,
             r * 2, r * 1.5, r * 2 * (.8 + R() * .4), R() * 6.283, (R() - .5) * .5);

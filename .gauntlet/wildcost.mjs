@@ -81,12 +81,18 @@ const out = await page.evaluate(() => {
   camera.position.set(cx + span * .62, span * .55, cz + span * .62);
   camera.lookAt(cx, 0, cz); camera.updateMatrixWorld(); camera.updateProjectionMatrix();
   const g = scene.getObjectByName('wild');
-  const read = () => { renderer.info.reset(); renderer.render(scene, camera);
-    let m = 0; scene.traverse(o => { if (o.isMesh && o.visible) m++; });
+  /* ⚠ COUNT THE MESHES THE GROUP HOLDS, NOT THE VISIBLE ONES IN THE SCENE.
+     The first cut counted `o.isMesh && o.visible` over the whole graph, and
+     hiding a GROUP does not clear `visible` on its children — so the mesh
+     delta came back 0 for a layer that plainly adds two. Draw calls and
+     triangles are read from the renderer and are unaffected. */
+  const read = (withLayer) => { renderer.info.reset(); renderer.render(scene, camera);
+    let m = 0; scene.traverse(o => { if (o.isMesh) m++; });
+    if (!withLayer && g) m -= g.children.length;
     return { meshes: m, calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; };
-  const on = read();
+  const on = read(true);
   if (g) g.visible = false;
-  const off = read();
+  const off = read(false);
   if (g) g.visible = true;
   let st = null; try { st = window.MythicWild ? window.MythicWild.stats() : null; } catch (e) {}
   return { on, off, delta: { meshes: on.meshes - off.meshes, calls: on.calls - off.calls, tris: on.tris - off.tris },

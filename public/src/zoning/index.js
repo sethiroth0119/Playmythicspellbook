@@ -128,6 +128,11 @@ export function mount(ctx) {
        has not mounted, a spec id from a newer build, and a spec whose family no
        longer matches the zone under it all take the same path. */
   const DIS = () => { try { return window.MythicDistricts || null; } catch (e) { return null; } };
+  /* 🏢 LAYER 3 — /src/tenants, the market that decides WHICH COMPANY takes a
+     lot. Asked the same way and failing the same way as DIS: no module, or a
+     module with nothing to say, and every call site below is byte-for-byte the
+     code that shipped before it existed. */
+  const TEN = () => { try { return window.MythicTenants || null; } catch (e) { return null; } };
   /* The overlay's per-tile mark. Returns null (draw nothing) unless the tile
      really carries a live specialisation — see /src/districts markAt(). */
   const specOf = (k, id) => { try { const D = DIS(); return (D && D.markAt) ? D.markAt(k, id) : null; } catch (e) { return null; } };
@@ -412,6 +417,30 @@ export function mount(ctx) {
          actually guaranteed is narrower and still worth having: FOR A FIXED
          BAND the answer is fixed, so retrying a refused permit, reloading a
          save, or planning twice in the same second all agree. */
+    /* 🏢 LAYER 3 LAST: WHICH COMPANY, out of the ones that want this pitch.
+       ────────────────────────────────────────────────────────────────────────
+       The order is layer 2 (which SET of businesses want this district), then
+       land value (which of that set this GROUND takes), then the market (which
+       COMPANY, of the ones bidding, actually gets it). Running the auction any
+       earlier would let a company bid for a building the band would refuse.
+
+       🔴 IT REPLACES THE HASH, IT DOES NOT REPLACE THE FALLBACK. `wants()` is
+          PURE — it is asked for every vacant plot on every permit and must not
+          record anything — and it returns null for "no company will take this
+          pitch at any price", at which point the hash below answers exactly as
+          it always has. So a 404 on /src/tenants, an empty pool and a bid under
+          the reserve all land in the same place: today's game.
+       ⚠ THE TENANCY IS NOT OPENED HERE. It is opened by `award()` once a
+         building has actually LANDED (see permitOne) — this function is re-run
+         dozens of times per district, and a side effect in it would let one
+         company sign forty leases it never took up. */
+    try {
+      const T = TEN();
+      if (T && T.ready && T.ready()) {
+        const won = T.wants(x, z, bag);
+        if (won && bag.indexOf(won) >= 0) return won;
+      }
+    } catch (e) {}
     const h = (Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(z | 0, 0x165667b1) ^ 0x7f4a7c15) >>> 0;
     return bag[h % bag.length];
   }
@@ -455,6 +484,17 @@ export function mount(ctx) {
     try {
       const D = DIS();
       if (D && D.levelFor && x != null) { const l = D.levelFor(x, z, zdef.id) | 0; if (l > want) want = l; }
+    } catch (e) {}
+    /* 🏢 …AND THE BUSINESS'S OWN LEVEL RAISES IT AGAIN. "The building upgrades
+       because THE BUSINESS ITSELF SUCCEEDED": /src/tenants returns the level the
+       tile's FIRM reached through /src/economy/firms.js `levelCheck()` — seven
+       measured gates on a real balance sheet — clamped by the tenant's ambition
+       and then by the building's own maxLvl on the line below. `Math.max` for
+       the same reason layer 2 uses it: a zone or a district that already asked
+       for more must never silently lose height to a small tenant. */
+    try {
+      const T = TEN();
+      if (T && T.ready && T.ready() && x != null) { const l = T.levelFor(x, z) | 0; if (l > want) want = l; }
     } catch (e) {}
     return Math.min(want, def.maxLvl || MAX_LVL);
   }
@@ -671,6 +711,14 @@ export function mount(ctx) {
       const t = tileAt(job.x, job.z);
       if (!t) { noteRefusal(run, k, _lastRefusal); return true; }
       run.built++; run.streak = 0;
+      /* 🏢 THE LEASE IS SIGNED HERE, AND ONLY HERE. `typeFor` ran the auction to
+         decide WHAT this plot develops as; this is the moment a building really
+         exists on it, so this is the moment the winning company stops being a
+         candidate and takes premises. Doing it inside typeFor would have let one
+         company "win" every plot in a district it never actually occupied.
+         ⚠ Guarded and non-fatal: a throw in the tenant market must never break
+           a build the player has already paid for. */
+      try { const T = TEN(); if (T && T.award) T.award(job.x, job.z, t.type); } catch (e) {}
       if (t.bld) _sites.add(k);
       /* No timer ⇒ the building is finished the instant it is placed, so the
          zone's density can be applied here. With a timer it CANNOT be: an
@@ -909,6 +957,10 @@ export function mount(ctx) {
        known to be stale once the grandfather sweep above has run. Guarded: no
        module, no reconcile, and the save slice simply rides untouched. */
     try { const D = DIS(); if (D && D.afterLoad) D.afterLoad(); } catch (e) {}
+    /* 🏢 …and layer 3 after layer 2, for the same reason and in the same shape:
+       a tenancy whose premises are no longer the building it leased is dropped,
+       and that can only be known once the zone map and the tile map are final. */
+    try { const T = TEN(); if (T && T.afterLoad) T.afterLoad(); } catch (e) {}
     sync();
     return { zoned: Object.keys(G.zones).length, developing: !!_run, sites: devSites() };
   }
@@ -961,6 +1013,10 @@ export function mount(ctx) {
        have to know /src/districts exists. Every one of these is null/0/no-op
        when the module is absent. */
     specAt: (x, z) => { try { const D = DIS(); return D && D.specAt ? D.specAt(x, z) : null; } catch (e) { return null; } },
+    /* 🏢 Layer 3, re-exported for the same reason layer 2 is: a caller holding
+       MythicZoning should not have to know /src/tenants exists. Null when it
+       is not there. */
+    tenantAt: (x, z) => { try { const T = TEN(); return T && T.tenantAt ? T.tenantAt(x, z) : null; } catch (e) { return null; } },
     specMarks: () => (ov ? ov.marks() : 0),
     preview: (rect, hex) => { if (ov) ov.preview(rect, hex); },
     /* Diagnostics: predict() answers "what would the district roll build here",

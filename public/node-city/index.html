@@ -23178,7 +23178,20 @@ function ecoBuildings() {
     if (t.damaged || bldSite(t)) continue;
     const res = E.pickAvailable(m.out);
     if (!res) continue;                 // this ground supports none of them
-    out.push({ key: k, out: res, ind: m.ind, name: (BUILDINGS[t.type] || {}).name,
+    /* 🏢 THE FIRM'S NAME IS THE COMPANY THAT TOOK THE LOT, when one did.
+       /src/tenants runs a market of NPC companies bidding for zoned plots; the
+       winner's name is already the name on the sign (it is pinned into
+       /src/naming's register at award time). Handing the same string to
+       firms.js is what makes the economy panel, the dossier header and the
+       tenant ledger all say "Ashvale & Co." instead of three copies of
+       "Player Shop".
+       ⚠ Cosmetic ONLY, and deliberately so: `syncBuildings` identifies a firm
+         by key + out + ind and never by name, so a module that is absent, a
+         plot with no tenancy, or a name that changes costs nothing and can
+         never re-found a business. */
+    let bname = (BUILDINGS[t.type] || {}).name;
+    try { const T = window.MythicTenants; const n = T && T.ready() && T.nameFor(k); if (n) bname = n; } catch (e) {}
+    out.push({ key: k, out: res, ind: m.ind, name: bname,
                capacity: undefined, lvl: t.lvl | 0 });
   }
   return out;
@@ -23194,6 +23207,16 @@ function ecoSync() {
     const r = E.syncBuildings(ecoBuildings());
     if (r && (r.added || r.removed)) saveSoon();
   } catch (e) {}
+  /* 🏢 THE TENANT MARKET IS OBSERVED IN THE SAME BEAT AS THE RECONCILE, and
+     that placement is the whole reason a failure is visible at all. A firm that
+     goes bankrupt is reaped by `syncBuildings` above and RE-FOUNDED on the very
+     next call (ECON's charter-fund header: "a pump, not a one-off"), so a
+     business quietly became a different business with the same blueprint name.
+     /src/tenants binds a tenancy to the firm's `id`; asking it here — right
+     after the set of firms changed, and everywhere ecoSync is called from,
+     including the offline sweep — is what catches the swap. It records the
+     failure; it never founds, closes or funds anything. */
+  try { const T = window.MythicTenants; if (T && T.ready()) T.observe(); } catch (e) {}
 }
 
 /* 🔗 bindRoster — households.js has EXPORTED IT SINCE THE ECONOMY LANDED AND
@@ -35593,6 +35616,64 @@ function animate() {
       } catch (e) {}
     }
   } catch (e) { console.warn('[LandValue] not mounted (non-fatal):', e); }
+  /* ══ 🏢 LAYER 3 — THE TENANT MARKET (/src/tenants) ════════════════════════
+     "Don't let players directly place every business. Zoning = private economy.
+      The player paints Commercial — Mythic Retail. Then NPC COMPANIES COMPETE
+      for those lots."
+
+     Layer 1 is land use, layer 2 is the specialisation, /src/landvalue says
+     which of that set this ground will take — and this decides WHICH COMPANY,
+     out of the ones bidding, actually gets the lot. It hooks the same single
+     function all three of the others do (/src/zoning's `typeFor`), replacing a
+     hash with an auction and falling back to that hash whenever it has nothing
+     to say.
+
+     ⚠ MOUNTED AFTER /src/landvalue AND AFTER loadState, and both halves matter:
+       the bid reads the band ladder and the demographics survey, and the
+       tenancy map has to reconcile against tiles that came off disk. Its save
+       slice rides window.MythicCitySave, so serialize() needs no edit.
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md). `game`, `BUILDINGS`, `key`, `GRID`,
+        `THREE`, `scene`, `saveSoon`, `logEvent`, `toast` and — the one only
+        this file can answer — `ECO_BUILDING_MAP` are top-level `const` in THIS
+        module script and invisible to an ES module. The ctx below IS the
+        hand-over.
+     ⚠ WHAT DOES NOT CROSS IT: nothing that builds, nothing that spends and no
+       ledger call of any kind. This layer decides WHOSE NAME goes on a building
+       /src/zoning was already going to raise, and READS the distress ladder
+       /src/economy already runs. It is outside ECONOMY.md's closed loop and
+       sim.js's audit has nothing new to see. */
+  try {
+    await import('../src/tenants/index.js?v=' + (window.NC_BUILD || 'tn1'));
+    if (window.MythicTenants) {
+      window.MythicTenants.mount({
+        game, BUILDINGS, GRID, THREE, scene, key, saveSoon, logEvent, toast,
+        /* 📦 THE ONE THING ONLY THIS FILE KNOWS: which resource a firm on this
+           building type would actually SELL. `ECO_BUILDING_MAP` is a top-level
+           const here and `pickAvailable()` picks the candidate THIS node's
+           ground supports — so a Farm is wheat on one node and rice on another.
+           The bid's saturation term is measured against that resource's sellers,
+           and without this seam it would have had to guess. Absent ⇒ the term
+           scores 0 and SAYS it could not be asked. */
+        outFor: (type) => {
+          try {
+            const E = window.MythicEconomy; if (!E || !E.ready()) return null;
+            const m = ECO_BUILDING_MAP[type]; if (!m) return null;
+            return E.pickAvailable(m.out) || null;
+          } catch (e) { return null; }
+        },
+      });
+      try { window.MythicTenants.afterLoad(); } catch (e) {}
+      /* 🔍 Reported ONLY when it fails — the same discipline /src/landvalue's
+         self-check ships under. The one thing that can silently invalidate this
+         whole feature is a bid whose signed rows do not sum to the total it was
+         ranked on, because then the panel and the board are two models. */
+      try {
+        const tv = window.MythicTenants.verify();
+        if (tv && !tv.ok) console.warn('[Tenants] self-check FAILED', tv.problems);
+      } catch (e) {}
+    }
+  } catch (e) { console.warn('[Tenants] not mounted (non-fatal):', e); }
   /* ══ 🛣 OUTSIDE CONNECTIONS ═══════════════════════════════════════════════
      "Your city must be connected to the highway that runs through the map."
      The highway is scenery that exists whether or not you joined it; the
@@ -36311,6 +36392,24 @@ function animate() {
     districtSet: (x, z, id) => { try { return window.MythicDistricts ? window.MythicDistricts._set(x, z, id || null) : false; } catch (e) { return false; } },
     districtVerify: () => { try { return window.MythicDistricts ? window.MythicDistricts.verify() : null; } catch (e) { return null; } },
     districtCardSeam: () => { try { return window.MythicDistricts ? window.MythicDistricts.cardSeam() : null; } catch (e) { return null; } },
+    /* 🏢 /src/tenants' diagnostics seam — layer 3, the market.
+       `tenantAt` is the tenancy joined to its LIVE firm, so a driver can assert
+       "this lot's business is in DEBT and stands at level 1" without reading a
+       screenshot. `tenantBids` is the whole auction for one plot — every
+       bidder, every signed row and the sum — which is the only way the claim
+       "a good lot attracts a better tenant than a bad one" is falsifiable
+       rather than asserted.
+       ⚠ `tenantBids` calls the module's OWN bid function on the module's OWN
+         pool, and derives the bag through the SHIPPED /src/districts and
+         /src/landvalue filters, so it cannot agree with the model by accident. */
+    tenants: () => { try { return window.MythicTenants ? window.MythicTenants.stats() : null; } catch (e) { return null; } },
+    tenantAt: (x, z) => { try { return window.MythicTenants ? window.MythicTenants.tenantAt(x, z) : null; } catch (e) { return null; } },
+    tenantBids: (x, z, bag) => { try { return window.MythicTenants ? window.MythicTenants.explain(x, z, bag) : null; } catch (e) { return null; } },
+    tenantObserve: (f) => { try { return window.MythicTenants ? window.MythicTenants.observe(f !== false) : null; } catch (e) { return null; } },
+    tenantFailures: () => { try { return window.MythicTenants ? window.MythicTenants.failures() : null; } catch (e) { return null; } },
+    tenantVerify: () => { try { return window.MythicTenants ? window.MythicTenants.verify() : null; } catch (e) { return null; } },
+    tenantPanel: (on) => { try { return window.MythicTenants ? (on === false ? window.MythicTenants.closePanel() : window.MythicTenants.openPanel()) : false; } catch (e) { return false; } },
+    tenantOverlay: (on) => { try { return window.MythicTenants ? window.MythicTenants.overlay(on) : false; } catch (e) { return false; } },
     landValuePanel: (on) => { try { return window.MythicLandValue ? (on === false ? window.MythicLandValue.closePanel() : window.MythicLandValue.openPanel()) : false; } catch (e) { return false; } },
     place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
     /* Fast-forward: n economy minutes in `steps` slices.

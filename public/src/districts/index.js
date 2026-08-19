@@ -26,6 +26,32 @@
          player the research screen and never a district. Every read here is
          wrapped and every one of them fails OPEN, which is the same direction
          /src/progression's own header states and is not negotiable.
+      🔴 THE GATE HAS FIVE DOORS AND THE FIFTH IS THE SAVE. `arm()`, `onZone()`
+         and `_set()` all refuse a locked id — and for one round that was read
+         as "a locked specialisation can never be on the map". It was wrong:
+         `store.load()` writes the map straight off disk, so three strings in a
+         hand-edited save file installed three locked districts, `mixFor()`
+         honoured them in full (a real tenant swap on a real tile), and
+         /src/progression's `adopt()` then read them out of `stats().per` as
+         PROOF the player owned the nodes — 15 nodes and 40 ⬡ of a 74 ⬡ tree
+         for free. The gate is therefore asked at every READ as well as at
+         every write: `unlocked(id)` is the last thing `mixFor`, `levelFor`,
+         `markAt` and `refusal` check, and `stats().per` reports only what
+         those seams will act on.
+      ⚠ A LOCKED ID IS HELD, NOT DROPPED, AND THE DIFFERENCE IS DELIBERATE.
+         The obvious fix was to strip it in `afterLoad()`'s reconcile. Rejected:
+         a locked id is not the same case as an unknown one (store.js's header
+         argues that one), and the player it hurts is the honest one. A spec can
+         become locked under a district that was legitimately painted — a node
+         re-costed, renamed or moved between rounds — and /src/progression's own
+         header is absolute that "nothing here ever removes a zone from the map,
+         downgrades a building, or refuses a tile that is already standing". So
+         the tile KEEPS its district, it is INERT until the node opens, it comes
+         back the moment it does (nothing is cached, so no migration and no
+         reload), and the plot meanwhile develops exactly as the plain zone
+         would. What it can never do is act, be drawn, or count as evidence.
+         `refusal()` says which node is holding it and `verify()` counts them,
+         because a rule nobody can see is a rule nobody enforces.
    3. IT IS TIED TO LAND VALUE — WITH NO NEW THRESHOLD ANYWHERE. The spec's bag
       goes through /src/landvalue's `filterMix()` exactly as a zone's bag does,
       so Luxury Retail on marginal land is refused because the band admits a
@@ -133,6 +159,123 @@ function floorOf(specId) {
   return (r && r.length) ? r[0] : null;
 }
 
+/* ══ DOES THIS SPECIALISATION CHANGE ANYTHING ON THIS ZONE? ════════════════
+   🔴 THE PLACEBO CHIP, AND THE RULE THAT RETIRES THE WHOLE CLASS OF THEM.
+      `o_low.mix` is [['reslab',1]] and 🔬 Technology's mix is [['reslab',1]].
+      There is no band at which those two filter to different bags, so on an
+      Office park the chip is a placebo: the panel offered it beside two chips
+      that do change something, its own description recommended it for exactly
+      that zone, and two adjacent plots — one specialised, one not — developed
+      the identical building at the identical level. 🏭 Manufacturing on
+      Manufacturing and 📦 Logistics on Warehousing are the same shape, milder:
+      they differ on ONE band of five and are identical on the other four.
+
+      The rule is therefore not "delete o_tech" — it is real on Office towers,
+      and a spec deleted for one bad pairing takes its good ones with it. The
+      rule is that A CHIP MAY NOT BE OFFERED AS CHANGING SOMETHING ON A ZONE
+      AND BAND WHERE ITS FILTERED BAG EQUALS THE ZONE'S. That covers o_tech,
+      both industrial cases, and whatever is added next week, because it is
+      computed from the live zone table and the live band ladder rather than
+      listed.
+
+   ── WHAT COUNTS AS A DIFFERENCE, AND WHAT DOES NOT ──────────────────────
+     · A DIFFERENT MULTISET of admitted tenants counts. So does an empty one
+       against a non-empty one: 💎 Luxury refusing marginal land while the zone
+       would have built a food truck is a real, visible difference.
+     · A PERMUTATION DOES NOT. `i_manu` on `i_mfg` at modest land is the same
+       three ids in a different order; the tenant hash then labels 288 of 576
+       tiles differently for a district of identical composition. A different
+       name over the same street is not a difference and must not be sold as
+       one — counting it would have let this whole class through.
+     · A HIGHER LEVEL TARGET DOES. `targetLvl()` in /src/zoning takes
+       Math.max(zone, spec), so only a spec target ABOVE the zone's changes the
+       street; equal or lower is invisible and is not counted here.
+
+   ⚠ MEASURED AGAINST THE `known` TENANT SET (admitted + research-locked), NOT
+     against what the tree has opened today. Using the live set would mark half
+     the catalogue inert on a fresh city — where almost every tenant is locked
+     and every filtered bag is empty — and un-mark it later, so the panel's mark
+     would flap with research and mean nothing. Inertness is a property of the
+     CATALOGUE (this mix against that mix), so it is measured against the
+     catalogue. Whether the land will take any of it TODAY is a different
+     question and `reach`/`floor` above already answer it.
+
+   ABSENT ⇒ NO CLAIM. No /src/zoning, no /src/landvalue, or a zone id this
+   build has never heard of ⇒ null, and null is rendered as an ordinary chip.
+   A mark that cannot be computed is never guessed at. */
+function zoneList() {
+  try { const Z = ZON(); return (Z && Array.isArray(Z.ZONES)) ? Z.ZONES : null; } catch (e) { return null; }
+}
+function zoneDefOf(id) {
+  try { const Z = ZON(); return (Z && Z.ZONE_BY_ID && Z.ZONE_BY_ID[id]) || null; } catch (e) { return null; }
+}
+/* The zone's own bag, compiled exactly as /src/zoning compiles it: weights
+   expanded, ids missing from the live BUILDINGS table dropped. Re-derived here
+   rather than asked for because /src/zoning keeps MIX private — and it is the
+   same four lines, against the same table, so the two cannot disagree. */
+function zoneBag(zd) {
+  const bag = [];
+  for (const [t, w] of ((zd && zd.mix) || [])) {
+    if (!BUILDINGS[t]) continue;
+    for (let i = 0; i < (w | 0); i++) bag.push(t);
+  }
+  return bag;
+}
+const msOf = (a) => {
+  const m = Object.create(null);
+  for (const t of a) m[t] = (m[t] || 0) + 1;
+  return Object.keys(m).sort().map((k) => k + '×' + m[k]).join(' ');
+};
+/* Each rung with everything it would EVER admit — see the ⚠ above. */
+function knownLadder() {
+  const rows = ladder();
+  if (!rows) return null;
+  return rows.map((b) => {
+    const t = b.tenants || {};
+    const all = (t.all || []).concat(t.locked || []);
+    return { id: b.id, ico: b.ico, name: b.name, set: all };
+  });
+}
+/* The bands on which this spec would develop something OTHER than what the
+   plain zone develops. null ⇒ unanswerable (see ABSENT ⇒ NO CLAIM). */
+function differsOn(specId, zoneId) {
+  const s = SPEC_BY_ID[specId];
+  const zd = zoneDefOf(zoneId);
+  const rows = knownLadder();
+  if (!s || !zd || !rows) return null;
+  if (s.cat !== zd.cat) return null;                     // not a pairing at all
+  const bag = BAGS[specId] || [];
+  if (!bag.length) return null;                          // already offered as unavailable
+  if ((s.lvl | 0) > (zd.lvl | 0)) return rows.slice();   // taller everywhere it builds
+  const base = zoneBag(zd);
+  const out = [];
+  for (const b of rows) {
+    const zb = base.filter((t) => b.set.indexOf(t) >= 0);
+    const sb = bag.filter((t) => b.set.indexOf(t) >= 0);
+    if (!zb.length && !sb.length) continue;              // neither develops here — nothing to tell apart
+    if (msOf(zb) !== msOf(sb)) out.push({ id: b.id, ico: b.ico, name: b.name });
+  }
+  return out;
+}
+/* true ⇒ a placebo on this zone: same tenants, same height, every band. */
+function inertOn(specId, zoneId) {
+  const d = differsOn(specId, zoneId);
+  return d ? d.length === 0 : false;
+}
+/* The zones in the spec's own family where it IS a real district — the other
+   half of the sentence a marked chip has to be able to say. */
+function realZonesFor(specId) {
+  const s = SPEC_BY_ID[specId], zs = zoneList();
+  if (!s || !zs) return null;
+  const out = [];
+  for (const zd of zs) {
+    if (zd.cat !== s.cat) continue;
+    const d = differsOn(specId, zd.id);
+    if (d && d.length) out.push({ id: zd.id, ico: zd.ico, name: zd.name, short: zd.short });
+  }
+  return out;
+}
+
 /* ══ THE ZONING SEAMS ══════════════════════════════════════════════════════ */
 
 /* THE ONE THAT MATTERS. Returns the bag /src/zoning picks a tenant out of.
@@ -146,6 +289,13 @@ function mixFor(x, z, zoneId, base) {
   const s = SPEC_BY_ID[id];
   if (!s) return base;                                   // id from a newer build
   if (s.cat !== catOfZone(zoneId)) return base;          // stale pairing
+  /* 🔒 THE FIFTH DOOR (see the header). The write seams refuse a locked id, so
+     one in the store arrived through `store.load()` — a hand-edited save, a
+     sync from a build whose tree differed, or a node that has been re-costed
+     under a district the player painted honestly. Held, never acted on: this
+     hands back the zone's own mix, which is exactly what an unspecialised tile
+     gets, so the plot behaves as it would if the district were not there. */
+  if (!unlocked(id)) return base;
   const bag = BAGS[id];
   /* ⚠ AN EMPTY BAG IS RETURNED AS EMPTY, NOT PAPERED OVER WITH `base`.
      A specialisation whose whole mix was dropped at compile time can only reach
@@ -162,6 +312,7 @@ function levelFor(x, z, zoneId) {
   const id = store.get(keyOf(x, z));
   const s = id && SPEC_BY_ID[id];
   if (!s || s.cat !== catOfZone(zoneId)) return 0;
+  if (!unlocked(id)) return 0;      // 🔒 held — the zone's own target, see mixFor
   return s.lvl | 0;
 }
 
@@ -202,9 +353,30 @@ function onZone(x, z, zoneId, spec) {
    real answer is "a card shop needs Established land and this is Modest". */
 function refusal(x, z) {
   if (!mounted) return null;
-  const id = store.get(keyOf(x, z));
+  const k = keyOf(x, z);
+  const id = store.get(k);
   const s = id && SPEC_BY_ID[id];
   if (!s) return null;
+  /* ⚠ THE SAME FAMILY TEST THE OTHER FOUR SEAMS MAKE, AND IT WAS MISSING HERE.
+     For one round this was the only seam that did not ask whether the tile's
+     zone still matches the spec's family, so a spec carried in on a save onto a
+     tile with no zone at all — or one re-zoned into another family — produced a
+     plot where `markAt` drew nothing, `mixFor` returned the base bag, and this
+     function nevertheless announced a district. A refusal that names a district
+     the rest of the module does not believe in is a second opinion about the
+     same tile, which is the failure /src/landvalue's header names. The zone is
+     read live off the map rather than passed in, because /src/zoning calls this
+     with coordinates only. No zone ⇒ catOfZone(null) ⇒ null ⇒ no claim. */
+  if (s.cat !== catOfZone(zoneAtKey(k))) return null;
+  /* 🔒 HELD BY THE TREE. Said in full, because the alternative is a district
+     that silently develops as a plain zone and a player with no way to find out
+     why. This is the sentence that makes the hold visible. */
+  if (!unlocked(s.id)) {
+    const b = blockedBy(s.id);
+    return '🔒 ' + s.ico + ' ' + s.name.toUpperCase() + ' — this block carries the district, but it is ' +
+      'not researched' + (b ? ': ' + b.name + ' opens it, for ' + (b.cost | 0) + ' ⬡ in Progression (K)' : '') +
+      '. Until then the land develops exactly as its zone would, and nothing has been erased.';
+  }
   const L = LV();
   let band = null;
   try { if (L && L.ready()) band = L.bandAt(x, z); } catch (e) {}
@@ -239,6 +411,11 @@ function markAt(k, zoneId) {
   const id = store.get(k);
   const s = id && SPEC_BY_ID[id];
   if (!s || s.cat !== catOfZone(zoneId)) return null;
+  /* 🔒 A HELD DISTRICT IS NOT DRAWN. The pip's whole claim is "this block is
+     specialised and behaves differently"; a held one behaves exactly like its
+     zone, so drawing it would be the map making a promise the develop pass does
+     not keep. It reappears the moment the node opens — the store still has it. */
+  if (!unlocked(id)) return null;
   return s.mythic ? MARK_MYTHIC : MARK_PLAIN;
 }
 
@@ -272,12 +449,20 @@ function toast(msg, kind) { try { _ctx.toast && _ctx.toast(msg, kind); } catch (
 /* ══ THE PANEL'S PAYLOAD ═══════════════════════════════════════════════════
    Everything the row prints is built HERE, live, and every claim carries the
    thing it was derived from. ui.js computes nothing. */
-function available(cat) {
+function available(cat, zoneId) {
   const rows = [];
   for (const s of specsFor(cat)) {
     const bag = BAGS[s.id] || [];
     const uniq = bag.filter((v, i, a) => a.indexOf(v) === i);
     const reach = reachOf(s.id);
+    /* 🔬 THE PLACEBO MARK. `zoneId` is what the brush actually has on it, so
+       this is answered for the pairing the player is about to paint and not
+       for the family in general — the same spec is a placebo on one zone of a
+       family and a real district on the next. null everywhere the question
+       cannot be answered (no zone on the brush, no /src/zoning, no ladder), and
+       ui.js renders null as an ordinary chip: no claim, no mark. */
+    const diff = zoneId ? differsOn(s.id, zoneId) : null;
+    const held = store.count((v, k) => v === s.id && !unlocked(v));
     rows.push({
       id: s.id, ico: s.ico, short: s.short, name: s.name, desc: s.desc,
       mythic: !!s.mythic, lvl: s.lvl | 0,
@@ -285,6 +470,17 @@ function available(cat) {
       locked: !unlocked(s.id),
       node: blockedBy(s.id),
       tenants: uniq.map(nameOf),
+      /* null ⇒ unanswerable. [] ⇒ answerable and the answer is "it changes
+         nothing on this zone, at any land value". Otherwise: the bands on
+         which it does change what develops. `realOn` is the other half of the
+         sentence — the zones in this family where it IS a district. */
+      differs: diff ? diff.slice() : null,
+      inert: diff ? diff.length === 0 : false,
+      realOn: (diff && !diff.length) ? realZonesFor(s.id) : null,
+      /* Tiles carrying this spec that the tree is HOLDING (see the header).
+         Printed rather than hidden: a player whose save arrived with a locked
+         district has to be able to see that the tiles are still theirs. */
+      heldTiles: held,
       /* null ⇒ /src/landvalue is not loaded and NO floor is claimed. An empty
          array ⇒ it IS loaded and says no band in this city takes any of it. */
       reach: reach ? reach.map((b) => ({ id: b.id, ico: b.ico, name: b.name })) : null,
@@ -330,7 +526,12 @@ function cardSeam() {
   const out = { ok: true, districts: {}, chain: {}, note: 'read-only measurement; nothing here crosses the bridge or pays anybody' };
   for (const s of SPECS) {
     if (!s.mythic) continue;
-    const keys = store.keysOf(s.id);
+    /* 🔒 HELD TILES ARE NOT A DISTRICT AND ARE NOT COUNTED HERE. This report is
+       the hand-over to whatever the host decides to do with a card district,
+       and a tile whose specialisation the tree has not opened develops as its
+       plain zone — counting it would let a save file inflate a figure the next
+       round is going to pay against. Same rule as `stats().per`, one reason. */
+    const keys = store.keysOf(s.id).filter((k) => unlocked(store.get(k)));
     let built = 0, level = 0;
     for (const k of keys) { const t = tiles[k]; if (t && t.type) { built++; level += (t.lvl | 0) || 1; } }
     out.districts[s.id] = { name: s.name, tiles: keys.length, built, levels: level };
@@ -349,27 +550,60 @@ function cardSeam() {
     const row = out.chain[STAGE[t.type]];
     row.total++;
     const sid = store.get(k);
-    if (sid && SPEC_BY_ID[sid] && SPEC_BY_ID[sid].mythic) row.inDistrict++;
+    if (sid && SPEC_BY_ID[sid] && SPEC_BY_ID[sid].mythic && unlocked(sid)) row.inDistrict++;
   }
   return out;
 }
 
 /* ══ DIAGNOSTICS ═══════════════════════════════════════════════════════════ */
 function stats() {
-  const per = store.per();
+  /* 🔴 `per` IS THE CENSUS OF DISTRICTS THIS MODULE WILL ACT ON, AND THAT IS A
+     LOAD-BEARING DEFINITION RATHER THAN A DETAIL OF PRESENTATION.
+     /src/progression's `adopt()` reads this key and grants the node behind any
+     specialisation it finds — its comment says a spec on the map "can only have
+     come from an unlocked node", which was false for one round because the SAVE
+     path writes the store without asking the tree (see the header). Three
+     strings in a hand-edited save bought 15 nodes and 40 ⬡ of a 74 ⬡ tree.
+     Filtering here is what makes that sentence true, in the one place both
+     readers already look. A held district is reported separately as `heldPer`,
+     which nothing outside diagnostics reads and which no consumer may treat as
+     evidence of anything except that a save carried it in. */
+  const per = {}, heldPer = {};
+  const M = store.all();
+  for (const k in M) {
+    const id = M[k];
+    const into = unlocked(id) ? per : heldPer;
+    into[id] = (into[id] || 0) + 1;
+  }
+  let held = 0;
+  for (const id in heldPer) held += heldPer[id];
   const g = _ctx.game || {}, tiles = g.tiles || {};
   let built = 0;
-  for (const k in store.all()) if (tiles[k]) built++;
-  return { specialised: store.size(), built, per, armed: _armed,
+  for (const k in M) if (tiles[k]) built++;
+  return { specialised: store.size(), built, per, heldPer, held, armed: _armed,
            shelved: store.shelved(), lockedWrites: _lockedWrites };
 }
 
 /* The self-check, reported ONLY when it fails — a check that logs on success is
-   one everyone learns to scroll past. It asks the two questions that can make a
-   specialisation silently decorative:
+   one everyone learns to scroll past. RUN AT BOOT, one line after
+   `MythicLandValue.verify()` in node-city, in the same idiom: it prints nothing
+   on a healthy city and names the defect on a broken one.
+   It asks the four questions that can make a specialisation silently decorative:
+     · has a spec lost its whole bag?
      · is any id in a shipped mix admitted by NO band at all? (then it can never
        develop anywhere, at any land value, and the chip is a lie)
-     · has a spec lost its whole bag?
+     · 🔬 CAN A CHIP THIS PANEL OFFERS BUILD ANYTHING *DIFFERENT* FROM THE ZONE
+       IT SITS ON? For one round this file asked only "can it build anything",
+       which 🔬 Technology on 🧠 Office park passes and is a placebo at: same
+       single id, same height, every band. The check below asks `available()` —
+       the function the panel actually draws from, not a re-derivation of it —
+       for every (spec, zone) pairing in the catalogue, and fails if a row comes
+       back claiming to change something it cannot. It is the check that would
+       have caught that defect on the day it shipped.
+     · are any specialisations on the map HELD by the tree? A locked id cannot
+       be written by arm(), onZone() or _set(), so one in the store arrived
+       through a save. It is not erased (see the header) and it is inert, but it
+       is never silent: it is counted here.
    ⚠ The band answer is progression-filtered, so a build where the player has
      researched nothing reports the locked ids as unreachable. That is why this
      runs on demand and its finding is worded as "no band admits it TODAY". */
@@ -402,8 +636,38 @@ function verify() {
     else if (!uniq.some((t) => admitted.has(t)))
       held.push(s.id + ': develops nothing until the tree opens one of ' + uniq.join(', '));
   }
+  /* 🔬 THE PLACEBO CHECK, ASKED OF THE PANEL'S OWN PAYLOAD. `available(cat, id)`
+     is what ui.js renders; `differsOn()` is what decides the mark. Cross-checked
+     rather than re-derived, so this fails if the offer path ever stops carrying
+     the mark — which is the only way the placebo can come back. */
+  const placebo = [];
+  const zs = zoneList();
+  if (zs) for (const zd of zs) {
+    if (!FAMILIES[zd.cat]) continue;
+    for (const r of available(zd.cat, zd.id)) {
+      if (r.empty) continue;                      // already reported above, as an empty mix
+      const d = differsOn(r.id, zd.id);
+      if (!d) continue;                           // unanswerable — no claim either way
+      if (d.length) continue;                     // it changes something somewhere
+      const marked = r.inert === true;
+      placebo.push(r.id + ' on ' + zd.id + ': same tenants and same height as the zone at every band' +
+        (marked ? ' — offered, and marked as changing nothing' : ' — OFFERED AS AN ORDINARY CHIP'));
+      if (!marked) problems.push(r.id + ' on ' + zd.id + ': offered as a chip that changes what develops, and it does not — ' +
+        'the zone builds the same tenants at the same height at every band');
+    }
+  }
+  /* 🔒 Districts on the map the tree has not opened. Counted live off the store
+     rather than accumulated in a counter, so researching the node makes the
+     finding disappear by itself — the same reason every other answer in this
+     module is asked rather than mirrored. */
+  const st = stats();
+  const heldIds = Object.keys(st.heldPer || {});
+  if (heldIds.length) problems.push(st.held + ' specialisation(s) on the map are LOCKED and are being held inert (' +
+    heldIds.map((k) => k + '×' + st.heldPer[k]).join(', ') + ') — the write seams refuse a locked id, so these arrived in a save ' +
+    'or their node has been re-costed. Nothing is erased and nothing is being acted on.');
   if (_lockedWrites) problems.push(_lockedWrites + ' locked specialisation write(s) were refused at the store — a caller is bypassing arm()');
-  return { ok: !problems.length, problems, researchHeld: held, ladder: !!rows, stats: stats() };
+  return { ok: !problems.length, problems, researchHeld: held, placebo,
+           heldOnMap: heldIds.map((k) => k + '×' + st.heldPer[k]), ladder: !!rows, stats: st };
 }
 
 /* ══ MOUNT ═════════════════════════════════════════════════════════════════ */
@@ -433,13 +697,27 @@ export function mount(ctx) {
   return true;
 }
 
-/* ── after loadState: drop specialisations whose land changed use ─────────── */
+/* ── after loadState: drop specialisations whose land changed use ───────────
+   ⚠ AND *NOT* THE ONES THE TREE HAS NOT OPENED. Dropping a locked id here was
+     the obvious fix for the save door and it was rejected on purpose — the
+     header carries the argument. What happens instead is that they are counted
+     and said out loud, once, in the city log: the player whose save arrived with
+     a held district can see that the tiles are still theirs, and the player who
+     hand-edited one in can see that it is doing nothing. */
 function afterLoad() {
   if (!mounted) return { dropped: 0 };
   store.shelfRegister(_ctx.saveSoon);
   const dropped = store.reconcile(
     (id) => (SPEC_BY_ID[id] ? SPEC_BY_ID[id].cat : undefined),
     (k) => catOfZone(zoneAtKey(k)));
+  const held = store.count((id) => !!SPEC_BY_ID[id] && !unlocked(id));
+  if (held) {
+    try {
+      _ctx.logEvent && _ctx.logEvent('city', '🔒 ' + held + ' district specialisation' + (held === 1 ? '' : 's') +
+        ' in this save ' + (held === 1 ? 'is' : 'are') + ' not researched yet — ' + (held === 1 ? 'it is' : 'they are') +
+        ' held: the land develops as its plain zone until the node opens, and nothing has been erased.');
+    } catch (e) {}
+  }
   if (dropped) {
     try {
       _ctx.logEvent && _ctx.logEvent('city', '🏙 ' + dropped + ' district specialisation' + (dropped === 1 ? '' : 's') +
@@ -447,7 +725,7 @@ function afterLoad() {
     } catch (e) {}
   }
   try { const Z = ZON(); if (Z && Z.sync) Z.sync(); } catch (e) {}
-  return { dropped, specialised: store.size() };
+  return { dropped, held, specialised: store.size() };
 }
 
 /* ══ THE PUBLIC API ════════════════════════════════════════════════════════
@@ -476,6 +754,10 @@ const API = {
   specAt: (x, z) => (mounted ? store.get(keyOf(x, z)) : null),
   specDef: (id) => SPEC_BY_ID[id] || null,
   available, floorOf, reachOf,
+  /* 🔬 The placebo question, exposed so a driver can ask it the way the panel
+     asks it. `differsOn(spec, zone)` → the bands on which the pairing changes
+     what develops (null ⇒ unanswerable); `inertOn` is the yes/no. */
+  differsOn, inertOn, realZonesFor,
   unlocked, blockedBy,
   families: () => FAMILIES,
 

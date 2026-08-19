@@ -218,7 +218,7 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v120y2';
+<script>window.BB_BUILD='v120y3';
 "use strict";
 /* 🔌 BBX — THE STAGE HOOK SEAM.
    The board page is a classic (non-module) script, so it cannot `import`.
@@ -5437,6 +5437,32 @@ function mixHexRaw(a,b,t){
   return '#'+to(Math.round(lerp(A[0],B[0],t)))+to(Math.round(lerp(A[1],B[1],t)))+to(Math.round(lerp(A[2],B[2],t)));
 }
 
+/* 📏 THE A/B HARNESS. `grade()`'s lighting map is rebuilt on one frame in
+   POST_CADENCE (12), and on the non-compositing dev pane that rebuild measures
+   ~253 ms — but vista.js's own note puts the honest per-device cost of that
+   loop at 8.7 ms and says the pane's figure is dominated by a GPU sync it
+   cannot avoid. Those two numbers imply completely different decisions, and
+   only a real compositing browser can tell them apart.
+   So rather than guess, this measures. `PERF.on` is false in normal play and
+   costs one boolean per frame; an A/B turns it on, samples N frames, and hands
+   back a distribution. Driven from the PARENT page via `board:perf` because the
+   board lives in an iframe — `window.__vistaOff` typed into the top-level
+   console reaches the wrong window, which is why an earlier attempt to A/B this
+   returned "not defined". See __mg.gradeAB() in index.html. */
+const PERF = { on: false, t: [], cap: 4000 };
+function perfReport(){
+  const t = PERF.t.slice().sort((a, b) => a - b), n = t.length;
+  if (!n) return { frames: 0 };
+  const q = (p) => +t[Math.min(n - 1, Math.floor(n * p))].toFixed(2);
+  const over = PERF.t.filter(v => v > 16.7).length;
+  return {
+    frames: n, p50: q(0.5), p90: q(0.9), p99: q(0.99), max: +t[n - 1].toFixed(2),
+    overBudget: over, overPct: +(over * 100 / n).toFixed(1),
+    /* the spike this whole question is about: frames costing 4x the median */
+    spikes: PERF.t.filter(v => v > Math.max(33, q(0.5) * 4)).length,
+    mean: +(PERF.t.reduce((a, b) => a + b, 0) / n).toFixed(2),
+  };
+}
 let frameErr = false;
 /* 🩹 HOW MANY TRANSIENT RENDER THROWS THE BOARD SURVIVES BEFORE IT GIVES UP.
    frameErr was all-or-nothing: the first throw from anywhere in the frame
@@ -5984,6 +6010,12 @@ function seedPickPolys(){
 
 function frame(now){
   if (frameErr) return;
+  /* ⚠ DECLARED OUTSIDE THE try, ON PURPOSE. The sample is taken after the
+     catch so an abandoned frame still records its cost; a `const` inside the
+     try is out of scope there and throws ReferenceError on EVERY frame, which
+     the transient-error budget then eats eight of before latching the board
+     dead. Caught in the probe before this shipped. */
+  const _perfT0 = PERF.on ? ((window.performance && performance.now) ? performance.now() : 0) : 0;
   try {
   /* ⚠ THE LOWER CLAMP IS LOAD-BEARING — it is not symmetry for its own sake.
      This was `Math.min(…, 0.05)`, which caps a long frame but says nothing
@@ -6150,6 +6182,17 @@ function frame(now){
   /* a clean frame pays down the transient-error budget, so isolated faults
      spread over a long match never accumulate into a latch */
   if (frameErrN > 0) frameErrN--;
+  /* 📏 FRAME-PACING SAMPLE — off unless an A/B is running, so a normal match
+     pays one boolean test per frame. Records the frame's OWN work, not the
+     interval between frames: the interval also contains whatever else the tab
+     did, and the question this exists to answer is "what does the board cost".
+     ⚠ This is a wall-clock bracket around the whole frame, which IS a valid
+     attribution — unlike a bracket around ONE pass that also flushes the GPU
+     (see the long note in vista.js). It measures everything or nothing. */
+  if (PERF.on && _perfT0){
+    const _d = ((window.performance && performance.now) ? performance.now() : 0) - _perfT0;
+    PERF.t.push(_d); if (PERF.t.length > PERF.cap) PERF.t.shift();
+  }
   requestAnimationFrame(frame);
 }
 
@@ -6590,6 +6633,22 @@ function handleHostMessage(msg){
        cannot swallow it — that guard exists to stop a LATE init slamming a
        lifting veil back to black, and here the veil has never been on screen
        at all. */
+    /* 📏 A/B CONTROL — see the PERF block. Everything here is measurement or a
+       documented `__vistaOff` switch; nothing changes what ships by default. */
+    else if (t === 'perf'){
+      try {
+        if (msg.action === 'start'){ PERF.t.length = 0; PERF.on = true; }
+        else if (msg.action === 'stop'){ PERF.on = false; }
+        else if (msg.action === 'set'){
+          window.__vistaOff = window.__vistaOff || {};
+          if (msg.value === null || msg.value === undefined) delete window.__vistaOff[msg.key];
+          else window.__vistaOff[msg.key] = msg.value;
+        }
+        else if (msg.action === 'report'){
+          post('perfReport', { report: perfReport(), off: Object.assign({}, window.__vistaOff || {}) });
+        }
+      } catch (e) {}
+    }
     else if (t === 'reveal'){ try { REVEAL.startedAt = 0; revealStart(); } catch (e) {} }
     else if (t === 'facedown') FACEDOWN = Array.isArray(msg.list) ? msg.list : [];
     else if (t === 'surfaces') SURFACES = (msg.tiles && typeof msg.tiles === 'object') ? msg.tiles : {};

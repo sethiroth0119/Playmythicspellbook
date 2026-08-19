@@ -36492,7 +36492,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y2';
+  window.BUILD_VERSION = 'v120y3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -90569,6 +90569,74 @@ try {
      `_capCopies` return its input unchanged (rule 1 goes red).
 
      Run in the console: __mg.testLifecycle() */
+  /* 📏🎛 __mg.gradeAB() — DOES THE BATTLE BOARD'S GRADE COST YOU ANYTHING?
+     ==========================================================================
+     Run it from THIS console, with a battle open, and leave the tab focused:
+
+         await __mg.gradeAB()            // ~24s, two 12s arms
+         await __mg.gradeAB(20000)       // longer arms, quieter result
+
+     WHY THIS EXISTS. vista.js rebuilds its lighting map on one frame in twelve.
+     On the non-compositing dev pane that rebuild measures ~253 ms and shows up
+     as 10 over-budget frames per 120. But vista.js's OWN note puts the honest
+     per-device cost of that loop at 8.7 ms and states the pane's figure is
+     dominated by a GPU sync it cannot avoid. 253 ms means "fix this now"; 8.7 ms
+     means "leave it alone". Only a real compositing browser can tell them apart,
+     and this machine is the one that has one.
+
+     ⚠ AN EARLIER ATTEMPT AT THIS FAILED FOR A DUMB REASON, recorded so nobody
+     repeats it: `__vistaOff.cadence = 4` typed into this console throws
+     "not defined", because the board is an IFRAME and that global lives in the
+     iframe's window, not this one. Everything here goes over postMessage.
+
+     WHAT IT DOES. Arm A samples the board as it ships. Arm B samples it with
+     the map disabled entirely (`__vistaOff.post`), which is the upper bound on
+     what any amount of optimising that map could ever buy back. Then it puts
+     the switch back.
+
+     HOW TO READ IT. If `delta.p50` and `delta.spikes` are both near zero, the
+     map costs you nothing on this hardware and the slice refactor vista.js
+     describes should NOT be attempted — it is a large change to the densest
+     loop in the file for no gain. If arm B is materially smoother, the refactor
+     is justified and this output is the evidence for it. */
+  window.__mg.gradeAB = async function (ms) {
+    const DUR = Math.max(4000, Math.min(60000, ms || 12000));
+    const f = _BBS && _BBS.frame;
+    if (!f || !f.contentWindow) return { error: 'battle board not open — start a battle first' };
+    const send = (o) => { try { f.contentWindow.postMessage(Object.assign({ type: 'board:perf' }, o), location.origin); } catch (e) {} };
+    const wait = (t) => new Promise(r => setTimeout(r, t));
+    const collect = () => new Promise((res) => {
+      const to = setTimeout(() => { window.removeEventListener('message', on); res({ error: 'no reply from board' }); }, 4000);
+      function on(e){
+        const d = e && e.data;
+        if (!d || d.type !== 'board:perfReport') return;
+        clearTimeout(to); window.removeEventListener('message', on); res(d.report || d);
+      }
+      window.addEventListener('message', on);
+      send({ action: 'report' });
+    });
+    const arm = async (label, setup) => {
+      setup(); await wait(600);                 // let the change settle
+      send({ action: 'start' }); await wait(DUR); send({ action: 'stop' });
+      const r = await collect();
+      console.log('[gradeAB] ' + label, r);
+      return r;
+    };
+    console.log('[gradeAB] running two ' + (DUR / 1000) + 's arms — keep this tab focused and the battle visible…');
+    const a = await arm('A: shipped (map on) ', () => send({ action: 'set', key: 'post', value: null }));
+    const b = await arm('B: map DISABLED     ', () => send({ action: 'set', key: 'post', value: true }));
+    send({ action: 'set', key: 'post', value: null });          // always restore
+    const d = (k) => (typeof a[k] === 'number' && typeof b[k] === 'number') ? +(a[k] - b[k]).toFixed(2) : null;
+    const out = {
+      shipped: a, mapDisabled: b,
+      delta: { p50: d('p50'), p90: d('p90'), max: d('max'), spikes: d('spikes'), overBudget: d('overBudget') },
+      verdict: (d('p50') !== null && Math.abs(d('p50')) < 1 && Math.abs(d('spikes') || 0) <= 1)
+        ? 'MAP IS NOT COSTING YOU ANYTHING HERE — do not do the slice refactor.'
+        : 'Map has a measurable cost — the slice refactor in vista.js is justified. Send Claude this whole object.',
+    };
+    console.log('[gradeAB] VERDICT: ' + out.verdict);
+    return out;
+  };
   window.__mg.testLifecycle = function () {
     const results = [];
     const ok = (rule, name, pass, detail) => results.push({ rule, name, pass: !!pass, detail });
@@ -106283,7 +106351,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120y2';
+const BB_VER = 'v120y3';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -211661,7 +211729,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120y2';
+  f.src = 'node-city/index.html?v=v120y3';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228838,8 +228906,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120y2">
-<script type="module" src="src/battle/hud.js?v=v120y2"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120y3">
+<script type="module" src="src/battle/hud.js?v=v120y3"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

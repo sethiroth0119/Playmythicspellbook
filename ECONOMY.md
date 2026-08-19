@@ -45,7 +45,7 @@ than money appearing, because the number only ever goes down.
 | `endowment.js` | What is in the ground under a node. **The one gate** on whether an extractor may exist. |
 | `prices.js` | Prices **derived** from the graph, then moved by supply/demand/scarcity/freight/competition. |
 | `households.js` | Jobs, wages, the consumption basket, wealth tiers, subsistence. |
-| `firms.js` | Balance sheets: cash, payroll, the distress ladder, levels 1–5. |
+| `firms.js` | Balance sheets: cash, payroll, ground rent, the distress ladder, levels 1–5. |
 | `logistics.js` | Freight capacity, congestion, delivered cost. |
 | `bank.js` | Simulated firm credit. **Not `player_banks`** — see below. |
 | `trade.js` | Specializations (earned, never chosen) and city-to-city trade. |
@@ -149,9 +149,84 @@ surfaces rather than finished numbers, all reachable from `ECON`:
 2. **`unmetSubsistence` is a real signal, not a bug.** It means the city genuinely cannot feed
    its population — two bakeries cannot supply 278 people. That is a bottleneck to solve by
    building, and the panel says so.
-3. **Firms hold large cash relative to households.** `dividendRate` (0.45) and
-   `UPKEEP_SPEND_RATE` are the levers. Under-consumption without dividends was severe enough
-   to pin household savings at zero; it is fixed, not necessarily optimal.
+3. **Firms hold large cash relative to households.** `dividendRate` (0.45),
+   `UPKEEP_SPEND_RATE` and now `firm.privateCapital` are the levers. Under-consumption
+   without dividends was severe enough to pin household savings at zero; it is fixed, not
+   necessarily optimal. **The residual is still real and it is measurable**: a 705-day
+   node-city board driven through `/src/tenants` finished with 690,768 🔥 of firm cash,
+   **14 🔥** of household savings and 2 🔥 in the treasury.
+
+---
+
+## 🏦 The two arrows added after the churn audit
+
+A critic drove a 34-lot commercial district for 600 economic days and found every business
+dying about every 60 days for ever — 345 closures, all with the same sentence. The
+diagnosis and both fixes are in the source; this is the map.
+
+### 💼 `firm.privateCapital` — savings → new business
+
+**The finding.** Past day 480 `charterIssued` sat pinned at its 700,000 🔥 lifetime ceiling
+and `charter` had drained to 0, so `fundFounding` had nothing to draw on and every
+re-founded shopfront opened with an empty till. **And the city was not poor**: 692,528 🔥 of
+its 696,048 🔥 was firm cash, 74% of it in one landlord and one power plant, against
+2,275 🔥 of household savings.
+
+**So it is a missing arrow, not a shortage.** Every other arc of the circular flow exists —
+wages, dividends, b2b, rent, tax, benefits, upkeep, municipal spending — and the one that
+did not is SAVINGS → NEW BUSINESS. `drawPrivateCapital()` subscribes a new firm's seed
+capital out of incumbent firms' surplus, **before** the charter fund, because the charter
+allowance is finite and irreplaceable while private surplus regenerates. A firm may be a
+source only if it is HEALTHY, in lifetime profit, and holding more than
+`privateCapital.floorDays` (30) of its own operating cost — so a freshly-seeded firm (12
+days) can never fund the next one and a bootstrap cannot cannibalise itself.
+
+Measured on the same 600-day board, same seed, one variable:
+
+| | before | after |
+|---|---|---|
+| `charterIssued` at day 600 | **700,000 — the ceiling, exhausted** | **380,000**, frozen since day ~60 |
+| charter fund at day 600 | 0 | 80,000 (full) |
+| seed capital that could not be funded | 74,099 🔥 and climbing | 28,189 🔥, **all of it at bootstrap** |
+| private capital subscribed | — | 417,384 🔥 over 82 re-foundings |
+| audit | ok | ok, `err 0`, `delta 0` |
+
+⚠ **It is not a universal fix and the limit is measured.** On the `/src/tenants` crit board
+the arrow contributes only ~21,000 🔥, because **not one of that city's 220 firms is a
+saver**: the richest holds **10.65 days** of its own operating cost against a 12-day
+founding buffer. That city is not hoarding, it is thin — its whole 690,768 🔥 is committed
+working capital. Raising `lifetimeCap` is the tuned-number move and is **not** the answer;
+what that board shows is a city running 220 businesses on a 700,000 🔥 allowance.
+
+### 🏷 `firm.groundRent` — a business pays for where it is
+
+"Eventually one FAILS because rent gets too expensive." Before this it could not: firm
+operating cost is wages + inputs, `tax.property` was charged on *household* rent only, and
+no file in `/src/economy` mentioned `MythicLandValue`.
+
+- **Priced off the LOCATION PREMIUM, not `valueAt()`.** The printed value carries an
+  unbounded city-wide term (`decorPoints()`); renting off it would charge every business in
+  the city for a garden planted across town, for ever.
+- **The money goes where household rent already goes** — property tax **out of** the rent to
+  the treasury, the net to the `landlord` firms, and to the treasury when the city has none.
+  Landlords are exempt from paying it: their plots are already priced by household rent.
+- **Flat per plot.** It does not scale with the tenant's size, revenue or level — a rent
+  that shrank as a firm failed could never push one under, and not scaling with level is
+  what makes *building up* a tenant's answer to expensive ground.
+- **No `/src/landvalue` ⇒ no rent at all**, never a default premium.
+
+The ledger row it makes possible, on a board where the land value ramps from 15 to 275
+under a district that was already trading:
+
+```
+d353 🏚 Card Shop (boosterPacks) went bankrupt. 🏷 Ground rent took 1,893 🔥 —
+     it was 1,012 🔥 in profit before the rent.
+```
+
+Same board, same ramp, rent the only difference: 117 → 207 closures in 600 days, 0 → 2 of
+them stated by the books as rent-caused, 690,274 🔥 collected, and the audit clean on every
+one of the 600 days (`err −7e-12`). Rate sweep, to show the number is not fitted to a
+symptom: `perPremiumDay` 0.10 → 165 deaths / 1 rent-caused, 0.22 → 207 / 2, 0.40 → 268 / 17.
 
 ---
 

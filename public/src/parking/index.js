@@ -215,7 +215,14 @@ export function mount(ctx) {
     count: () => parked.length,
     // for a driver: the world positions, so a test can assert they are on road
     // tiles without reading the scene graph.
+    /* ⚠ `rot` IS ADDITIVE AND WAS ADDED FOR /src/contact. A parked car's
+       contact patch is an ELLIPSE lying along the car, and the yaw that puts it
+       there is set six lines above from the tile's own axis and its seeded
+       flip. Re-deriving it in the reader would be a second copy of that roll —
+       the thing this file's header warns about — and the failure mode is a
+       shadow lying across a car instead of under it. */
     spots: () => parked.map(g => ({ x: +g.position.x.toFixed(3), z: +g.position.z.toFixed(3),
+                                    rot: +g.rotation.y.toFixed(4),
                                     cls: g.userData.vclass || null })),
     group: () => group,
   };

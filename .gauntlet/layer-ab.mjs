@@ -43,9 +43,16 @@ const USAGE = `
 
     --layer <name>      name of the THREE.Object3D to toggle (o.name), e.g.
                         parcel, parking, crowd, outskirts, zoning-overlay
-    --framings <list>   comma-separated: aerial,street,district,frontage
+    --framings <list>   comma-separated: aerial,street,district,frontage,venue
                         (default aerial,district,frontage)
     --hour <0-23>       pin the in-game clock; default 15
+    --clear             WAIT FOR CLEAR WEATHER before shooting. capture.mjs pins
+                        the hour but NOT the weather (README), and a run that
+                        starts CLEAR and finishes in a STORM cannot have its
+                        absolute luminances quoted against another run's. The
+                        A/B itself does not need this — both frames come out of
+                        one task, so they share whatever the sky is doing — but
+                        a lumscan trace read off the saved PNGs does.
     --out <dir>         also write on/off PNG pairs there
 
   Prints, per framing: pixels changed by the layer, and the do-nothing control
@@ -56,6 +63,7 @@ if (!LAYER || process.argv.includes('--help')) { console.log(USAGE); process.exi
 const FRAMINGS = arg('--framings', 'aerial,district,frontage').split(',').map(s => s.trim()).filter(Boolean);
 const OUT = arg('--out', null);
 const PIN_HOUR = +arg('--hour', 15);
+const WAIT_CLEAR = process.argv.includes('--clear');
 
 const ROOT = path.resolve(process.cwd(), 'public');
 const THREE_ = '/home/user/Playmythicspellbook/.gauntlet/package';
@@ -134,7 +142,19 @@ const frame = await page.evaluate(() => {
     const d = t.mesh.position.z - best.z;
     if (Math.abs(Math.abs(d) - 1) < .35) { if (d < 0) sn++; else sp++; }
   }
-  return { box, cx, cz, road: best, side: sp >= sn ? 1 : -1 };
+  /* 🏟 THE VENUE FRAMING'S ANCHOR, derived exactly as capture.mjs derives it:
+     the arena's placed mesh and its rotation, because that framing is a hero of
+     the ENTRANCE and one that photographed the back would be no better than one
+     that photographed nothing. rot is quarter-turns about +y and the recipe's
+     entrance is on +z. */
+  let venue = null;
+  for (const t of Object.values(nc.game.tiles)) {
+    if (!t.mesh || t.type !== 'arena') continue;
+    const a = ((t.rot | 0) & 3) * Math.PI / 2;
+    venue = { x: t.mesh.position.x, z: t.mesh.position.z, fx: Math.sin(a), fz: Math.cos(a) };
+    break;
+  }
+  return { box, cx, cz, road: best, side: sp >= sn ? 1 : -1, venue };
 });
 const box = frame.box, cx = frame.cx, cz = frame.cz;
 const span = Math.max(box.x1 - box.x0, box.z1 - box.z0), R = frame.road, SIDE = frame.side;
@@ -146,8 +166,33 @@ const CAMS = {
   frontage: R && R.xs.length > 4 ? { cam: [R.xs[Math.min(R.xs.length - 2, 6)] - 2.0, .80, R.z - SIDE * .34],
                                      tgt: [R.xs[Math.min(R.xs.length - 2, 6)] + .10, .02, R.z + SIDE * .50] }
                                  : { cam: [cx - 2.0, .80, cz - .34], tgt: [cx + .10, .02, cz + .50] },
+  /* 🏟 ADDED FOR ROUND 20. The round-19 critic's own measurement — "the ground
+     band immediately down-sun of the isolated yellow pickup" — is taken in the
+     venue framing, and this instrument could not reach it. Same expression as
+     capture.mjs's, same fallback to the district camera when no arena stands. */
+  venue:    frame.venue ? { cam: [frame.venue.x + frame.venue.fx * 2.35 + frame.venue.fz * 1.45, 1.30,
+                                  frame.venue.z + frame.venue.fz * 2.35 - frame.venue.fx * 1.45],
+                            tgt: [frame.venue.x, .26, frame.venue.z] }
+                        : { cam: [cx + span * .26, span * .22, cz + span * .34], tgt: [cx - span * .06, 0, cz - span * .06] },
 };
 await page.evaluate(() => { const c = window.__nc.controls; c.maxPolarAngle = Math.PI * .4995; c.minDistance = .05; c.enableDamping = false; });
+
+/* ⛅ THE WEATHER IS NOT PINNABLE FROM OUT HERE — `wx` is a top-level const in
+   node-city's module script and is not on window (the globals trap, applied to
+   the harness). So this WAITS for the shipped weatherTick to end whatever front
+   rolled in, reading the badge the player reads. Measured cost: a storm's own
+   duration, up to ~2 min. Without it, absolute luminances from two runs are not
+   comparable — r19-venue reads CLEAR and r20-venue read STORM 30 s later in the
+   same script, with the plaza going from L~130 to L~75 on the identical row. */
+let weather = 'unknown';
+if (WAIT_CLEAR) {
+  for (let i = 0; i < 90; i++) {
+    weather = await page.evaluate(() => (document.getElementById('wxname') || {}).textContent || '?');
+    if (/clear/i.test(weather)) break;
+    await page.waitForTimeout(4000);
+  }
+}
+weather = await page.evaluate(() => (document.getElementById('wxname') || {}).textContent || '?');
 
 /* 🐞 ALL THREE renderer.info READS TOGETHER, BEFORE ANY CAPTURE. */
 const cost = await page.evaluate((name) => {
@@ -219,5 +264,6 @@ if (bad.length) console.error(
   `  Something stepped between two synchronous renders — an interval in a module,\n` +
   `  a lazy load, a panel timer. The changed% beside it is NOT a measurement until\n` +
   `  that is found. See README §6.\n`);
-console.log(JSON.stringify({ layer: LAYER, cost, framings: out, built: built && built.gates, logs: logs.slice(-4) }, null, 2));
+console.log(JSON.stringify({ layer: LAYER, weather, hour: PIN_HOUR, cost, framings: out,
+                             built: built && built.gates, logs: logs.slice(-4) }, null, 2));
 await browser.close(); server.close();

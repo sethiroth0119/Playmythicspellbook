@@ -4322,7 +4322,21 @@ sun.shadow.radius = 2.5;
    AT ANY RESOLUTION THIS APP CAN AFFORD. If a later round wants it, the shape
    of the fix is a contact/AO patch merged into B_SOLID at each prop's foot —
    free (same bucket, same material, no draw call), directionless and therefore
-   correct at every hour — not a bigger map. */
+   correct at every hour — not a bigger map.
+   ✅ ROUND 20 BUILT THAT PATCH, and nothing in this block moved: /src/contact.
+      Two corrections to the paragraph above, both argued in that file's header.
+      (1) NOT B_SOLID. That bucket is unmapped and opaque, so a patch in it is a
+          flat blob on a mapped footway — the sticker RD_WEAR's own header
+          forbids — and it cannot reach a parked car or a moving agent at all.
+          The patches are ONE multiply-blended mesh for the whole city plus ONE
+          InstancedMesh for the fleet: +2 draw calls, +11.6k triangles, measured
+          through layer-ab.mjs with the control at exactly 0.000%.
+      (2) NOT WHOLLY DIRECTIONLESS. "Directionless" was the right call for a
+          patch that would have to be REBUILT as the sun moved; that module
+          rewrites ~8k positions instead, gated on the azimuth actually having
+          moved, so the patch is anchored at the foot and stretched down-sun —
+          capped at 2.6x its own width, which is what keeps a 0.031-unit mast
+          from drawing the tile-long smear this paragraph is right to refuse. */
 scene.add(sun); scene.add(sun.target);
 
 const moon = new THREE.DirectionalLight(0x8fa3d8, 0);
@@ -10515,6 +10529,32 @@ function makeRoad(nbr, tx, tz) {
        draw call — the round-3 header explains why that is the binding limit. */
   const B_ROAD = [], B_PAVE = [], B_DRIVE = [], B_SOLID = [], B_GOLD = [], B_LAMP = [];
 
+  /* 🌑 …AND A SEVENTH LIST THAT IS NOT A BUCKET. `contacts` is where this tile
+     DECLARES THE FOOTPRINT OF EVERY UPRIGHT PROP IT PLACED, in tile-local
+     coords, for /src/contact to lay a contact/AO patch on. It emits no geometry
+     here and costs no draw call here: the whole city's patches merge into ONE
+     mesh in that module, which is the only way a per-object decal can be
+     afforded (see its header for the four designs that were rejected, including
+     the obvious "make it a seventh bucket", which would cost one draw call per
+     road tile — 130 on the standard district — against r1_road.js's own binding
+     limit, "round 4 adds detail, never a draw call").
+     ⚠ IT IS DECLARED HERE RATHER THAN RE-DERIVED THERE, and that is the whole
+       point. Which prop a tile gets, and which of the three corners it stands
+       on, comes out of the seeded rolls below; a module that re-rolled them
+       would put shadows under furniture that is not there the first time a roll
+       moved. /src/parking's header: "a second copy of that roll is exactly how
+       two layers drift apart."
+     ⚠ FLAT THINGS DO NOT GET ONE. The gully grate, every marking, the kerb and
+       the verge are already lying on the ground; a patch under them would be a
+       smudge with nothing standing in it. Only what stands upright is listed.
+     rx/rz are SEMI-AXES in the prop's own frame and rot spins them, so a bench
+     declares an ellipse along the street and a bollard a circle. `h` is the
+     prop's HEIGHT above the footway, and it is the only reason the patch can be
+     stretched down-sun at all: a shadow's length is h/tan(elevation). Every h
+     below is read off the geometry two lines above it, never estimated. */
+  const CT = [];
+  const rdFoot = (x, z, rx, rz, h, rot) => { CT.push({ x: x, z: z, rx: rx, rz: rz, h: h, rot: rot || 0 }); };
+
   /* ⚠ Every roll is drawn UP FRONT, in a fixed order that does not depend on
      nbr. If the draws were interleaved with the nbr branches, building a road
      next door would shift the stream and the props would still move — the
@@ -10803,6 +10843,7 @@ function makeRoad(nbr, tx, tz) {
     rdPart(B_SOLID, RD_SIGN_G, gx, RD_PT + .150, gz, C_DARK);
     rdPart(B_SOLID, alongZ ? rdGeo(.014, .075, .105) : rdGeo(.105, .075, .014), gx, RD_PT + .278, gz, C_MARK);
     rdPart(B_SOLID, alongZ ? rdGeo(.020, .050, .050) : rdGeo(.050, .050, .020), gx, RD_PT + .195, gz, C_MARK);
+    rdFoot(gx, gz, .072, .072, .330);   // post .300 + the name plate above it
   }
   /* The bus shelter. Only on a straight run, because that is the only place the
      footway is a clear 17.5cm behind a verge, and always on the side AWAY from
@@ -10821,6 +10862,8 @@ function makeRoad(nbr, tx, tz) {
       for (const bx of [-.150, .150]) rdPart(B_SOLID, rdGeo(.014, .152, .014), bx, ry + .075, o + .055, C_KERB);
       rdPart(B_SOLID, rdGeo(.240, .016, .070), 0, ry + .058, o - .020, C_DARK);
     }
+    // the canopy's own plan, which is what actually occludes the sky here
+    rdFoot(alongZ ? o : 0, alongZ ? 0 : o, alongZ ? .105 : .195, alongZ ? .195 : .105, .170);
   }
   if (rFurn < .20) {
     const spot = [[.40, -.40], [-.40, -.40], [-.40, .40]][Math.floor(rSpot * 3) % 3];
@@ -10831,16 +10874,20 @@ function makeRoad(nbr, tx, tz) {
     } else if (rKind < .22) {                            // litter bin
       rdPart(B_SOLID, rdGeo(.075, .10, .075), px, RD_PT + .05, pz, C_DARK);
       rdPart(B_SOLID, rdGeo(.09, .016, .09), px, RD_PT + .108, pz, C_KERB);
+      rdFoot(px, pz, .068, .068, .120);
     } else if (rKind < .42) {                            // hydrant — the one colour accent
       rdPart(B_SOLID, RD_HYD_G, px, RD_PT + .035, pz, C_DARK);
       rdPart(B_GOLD,  RD_CAP_G, px, RD_PT + .081, pz);
       goldCast = true;                                   // the bonnet is upright, so it casts
+      rdFoot(px, pz, .048, .048, .100);
     } else if (rKind < .58) {                            // bollard pair along the kerb
       rdPart(B_SOLID, RD_BOLL_G, px, RD_PT + .042, pz - .07, C_KERB);
       rdPart(B_SOLID, RD_BOLL_G, px, RD_PT + .042, pz + .07, C_KERB);
+      rdFoot(px, pz - .07, .040, .040, .085); rdFoot(px, pz + .07, .040, .040, .085);
     } else if (rKind < .74) {                            // planter
       rdPart(B_SOLID, rdGeo(.15, .06, .15), px, RD_PT + .03, pz, C_KERB);
       rdPart(B_SOLID, RD_BUSH_G, px, RD_PT + .085, pz, C_LEAF);
+      rdFoot(px, pz, .098, .098, .130);
     } else if (rKind < .88) {                            // bench, back to the plot
       rdPart(B_SOLID, alongZ ? rdGeo(.075, .016, .230) : rdGeo(.230, .016, .075), px, RD_PT + .053, pz, C_DARK);
       rdPart(B_SOLID, alongZ ? rdGeo(.018, .058, .230) : rdGeo(.230, .058, .018),
@@ -10848,10 +10895,12 @@ function makeRoad(nbr, tx, tz) {
       for (const t of [-.085, .085])
         rdPart(B_SOLID, alongZ ? rdGeo(.050, .045, .018) : rdGeo(.018, .045, .050),
                px + (alongZ ? 0 : t), RD_PT + .023, pz + (alongZ ? t : 0), C_KERB);
+      rdFoot(px, pz, alongZ ? .058 : .140, alongZ ? .140 : .058, .120);
     } else {                                             // utility cabinet, door to the road
       rdPart(B_SOLID, alongZ ? rdGeo(.090, .175, .150) : rdGeo(.150, .175, .090), px, RD_PT + .088, pz, C_KERB);
       rdPart(B_SOLID, alongZ ? rdGeo(.014, .130, .112) : rdGeo(.112, .130, .014),
              px - (alongZ ? bx * 1.4 : 0), RD_PT + .086, pz - (alongZ ? 0 : bz * 1.4), C_DARK);
+      rdFoot(px, pz, alongZ ? .062 : .092, alongZ ? .092 : .062, .180);
     }
   }
 
@@ -10915,6 +10964,9 @@ function makeRoad(nbr, tx, tz) {
        under it is a black stick with a white hairline from the game's camera. */
   const LX = .36, LZ = .36, LH = RD_PT + .500;      // lantern centre height
   rdPart(B_SOLID, rdGeo(.095, .012, .095), LX, RD_PT + .006, LZ, C_KERB);  // base plate
+  rdFoot(LX, LZ, .080, .080, .520);   // 🌑 see CT. h is the MAST, and the stretch
+                                      //    cap is what stops it drawing a tile-long
+                                      //    smear — see MAX_STRETCH in /src/contact.
   rdPart(B_SOLID, RD_COLL_G, LX, RD_PT + .025, LZ, C_DARK);                // base collar
   rdPart(B_SOLID, RD_COL2_G, LX, RD_PT + .062, LZ, C_DARK);                // shoulder
   rdPart(B_SOLID, RD_MAST_G, LX, RD_PT + .238, LZ, C_DARK);                // column, RD_PT…+.476
@@ -10946,6 +10998,12 @@ function makeRoad(nbr, tx, tz) {
        on the pavement behind the lamp it belongs to. The HEIGHT is unchanged at
        0.546, so no city's night lighting shifts vertically. */
   g.userData.lampLocal = { x: hx, y: LH, z: hz };
+  /* 🌑 …and the contact-patch declaration, read back off the PLACED mesh by
+     /src/contact exactly as refreshRoad reads lampLocal — for the same reason:
+     makeRoad does not know where the tile will go, and placeMeshAt owns the
+     tile->world mapping. A second copy of that mapping drifts the first time it
+     changes. */
+  g.userData.contacts = CT;
 
   /* ── 10. Emit: one mesh per non-empty bucket ────────────────────────────
      castShadow is per bucket. The three flat ground buckets stay out of the
@@ -28300,6 +28358,21 @@ function manageAgents() {
         !!(WEATHER[wx.type] && WEATHER[wx.type].severe));
     }
   } catch (e) {}
+  /* 🌑 CONTACT SHADOWS, and this one must run AFTER BOTH of the two above it —
+     it reads MythicParking.spots() and MythicCrowd.spots() to put a patch under
+     every parked car and standing figure, so refreshing it first would shadow
+     the previous layout. Its signature carries both layers' counts for the same
+     reason /src/crowd's carries parking's. Same early-out, same beat.
+     🌙 setNight here is NOT what makes the layer behave after dark — the
+     multiply blend does that structurally — it is only what stops a patch being
+     left on the pavement under a figure that has gone home. */
+  try {
+    if (window.MythicContact) {
+      window.MythicContact.refresh();
+      window.MythicContact.setNight(nightAmt > .5,
+        !!(WEATHER[wx.type] && WEATHER[wx.type].severe));
+    }
+  } catch (e) {}
   /* 🧱 The parcel layer rides the SAME lifecycle for the same reason, and
      early-outs on an unchanged tile signature exactly as parking does. */
   try { if (window.MythicParcel) window.MythicParcel.refresh(); } catch (e) {}
@@ -28466,6 +28539,16 @@ function agentTick(dt) {
       a.mesh.userData.lights[1].material.emissiveIntensity = on ? 0 : 2.4;
     }
   }
+  /* 🌑 THE MOVING HALF OF THE CONTACT-SHADOW LAYER, and this is the only place
+     it can be: the loop above is where every agent's position for this frame is
+     decided, and a decal read one frame late is a decal sliding along behind a
+     car. ONE call for the whole fleet, ONE InstancedMesh, ~29 matrices — see
+     /src/contact for why the moving bucket is instanced and the static one
+     merged, and why only this one is offset along the sun.
+     ⚠ `sun` is passed in rather than reached for. It is a top-level const in
+       this script and invisible to an ES module — the globals trap, on the one
+       thing in this feature that has to be read every frame. */
+  try { if (window.MythicContact) window.MythicContact.tickAgents(agents, sun); } catch (e) {}
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -37349,6 +37432,57 @@ function animate() {
       civScale: CIV_SCALE,
     });
   } catch (e) { console.warn('[Crowd] not mounted (non-fatal):', e); }
+  /* ══ 🌑 CONTACT SHADOWS ══════════════════════════════════════════════════
+     Rubric dimensions 2, 7, 8 and 9 at once, and the round-19 critic's single
+     biggest gap: "nothing below building scale casts a shadow", measured on the
+     ground down-sun of a parked pickup as a 7-unit spread — the surface
+     texture's own noise — with no notch anywhere.
+
+     🔴 IT DOES NOT TOUCH THE SHADOW MAP, and that is the design. Round 18 swept
+     the map and refused to change it: a 0.031-unit lamp mast cannot be resolved
+     by one cascade at any affordable resolution, and the 58 px penumbra / 2.0x
+     key-fill / blue shadow colour that came out of that work are worth more
+     than the mast. Round 18's own closing note names the alternative — "a
+     contact/AO patch at each prop's foot, free, directionless and correct at
+     every hour" — and this is it. See /src/contact for the one correction to
+     that note (the bucket) and for the four designs that were rejected.
+
+     🔴 THE GLOBALS TRAP, for the fourteenth module. `game`, `scene`, `THREE`,
+     `RD_PT` and `RD_Y` are top-level `const` here and invisible to an ES
+     module. This ctx is the hand-over, exactly as Parking and Crowd are.
+
+     What is NOT handed over: anything that writes a tile, the ledger, or a mesh
+     the module did not make. It reads the contact declarations makeRoad already
+     publishes on each placed road tile, MythicParking.spots(), and
+     MythicCrowd.spots(); it adds one group with two meshes in it. */
+  try {
+    const ctmod = await import('../src/contact/index.js?v=' + (window.NC_BUILD || 'r1'));
+    window.MythicContact = ctmod.mount({
+      THREE, scene, game, RD_PT, RD_Y,
+      /* ⭐ THE MATERIAL IS THE WHOLE FEATURE, so it is built here beside the
+         other layers' materials rather than inside the module — same as bayMat
+         and surfMat above.
+         · MultiplyBlending: dst = src x dst. A shadow is a FRACTION of the
+           light that was already there, not a colour laid over it. That is what
+           makes this correct at midnight for free (a fraction of a dark
+           pavement is a dark pavement), what keeps the asphalt grain readable
+           under it — RD_WEAR's header: "a flat tint laid over a grained road
+           reads as a sticker rather than as wear" — and what lets ONE mesh sit
+           on paving, asphalt, a parking bay and a mown verge alike.
+         · toneMapped:false is REQUIRED. The renderer is ACESFilmic; a MASK is
+           not a radiance and must not have a film curve applied to it.
+         · fog:false. Fog lerps a fragment toward the fog colour, which by day
+           would fade distant contact shadows (fine) and by night would drag the
+           mask toward a DARK colour and make them stronger with distance (not
+           fine). One rule at every hour beats two.
+         · depthWrite:false with depthTest on: the patch is occluded by whatever
+           stands in front of it and occludes nothing itself. */
+      decalMat: new THREE.MeshBasicMaterial({
+        color: 0xffffff, vertexColors: true, blending: THREE.MultiplyBlending,
+        transparent: true, depthWrite: false, depthTest: true,
+        toneMapped: false, fog: false, side: THREE.FrontSide }),
+    });
+  } catch (e) { console.warn('[Contact] not mounted (non-fatal):', e); }
   /* ══ 🧱 THE PARCEL LAYER ═════════════════════════════════════════════════
      Rubric dimension 5. makeHousing has owned a real plot since round 2 and
      round 4 gave it the setback that made it visible — but every OTHER

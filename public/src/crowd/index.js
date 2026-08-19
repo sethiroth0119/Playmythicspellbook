@@ -291,7 +291,12 @@ function build() {
   for (let f = 0; f < cand.length && n < MAX_STANDING; f += stride) {
     const c = cand[Math.floor(f)];
     bake(c.px, c.pz, c.yaw, n, c.col, parts, (n & 1) === 1);
-    spots.push({ x: +c.px.toFixed(3), z: +c.pz.toFixed(3), side: c.side, lat: c.lat, tile: c.tile });
+    /* ⚠ `day` IS ADDITIVE AND WAS ADDED FOR /src/contact, and it is the SAME
+       expression the bake() call above it uses — not a copy of the rule, the
+       rule itself, read once. A figure's contact patch has to disappear when
+       the figure does, and which half goes home at dusk is decided here. */
+    spots.push({ x: +c.px.toFixed(3), z: +c.pz.toFixed(3), side: c.side, lat: c.lat,
+                 tile: c.tile, day: (n & 1) === 1 });
     n++;
   }
   /* Bucket by material AND by shift, and merge. The material half is obvious —

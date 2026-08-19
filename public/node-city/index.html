@@ -27749,6 +27749,26 @@ function renderVitals() {
                  Math.round(e * 100) + '%' + (e > 0.45 ? ' ⚠' : '') + '</span>';
         } catch (e) { return ''; }
       })() +
+      /* 🏷 THE LAND VALUE CHIP — same glanceable-value-plus-explanation pairing
+         as the three chips beside it, and the launcher for the land value info
+         view.
+         ⚠ RENDERED ONLY WHEN THE MAP HAS A SPREAD TO SHOW. Not merely "when the
+           module answered": a brand-new city is one flat band everywhere, and a
+           chip claiming a land value story on a board that has none is the same
+           false HUD claim the ⚡ chip's comment above has had to close twice.
+           Two bands is the smallest thing worth opening the panel for. */
+      (function () {
+        try {
+          const LVm = window.MythicLandValue;
+          if (!LVm || !LVm.ready()) return '';
+          const st = LVm.stats();
+          if (!st || !st.hist) return '';
+          if (st.hist.filter(v => v > 0).length < 2) return '';
+          return '<span class="schip pw" id="lvchip" title="The spread of land value across the city. ' +
+                 'Click for the land value info view — the bands, and what each grade of land will take.  (V)">🏷 ' +
+                 Math.round(st.min) + '–' + Math.round(st.max) + '</span>';
+        } catch (e) { return ''; }
+      })() +
       '<span class="scap">cap ' + stockCap() + '</span></div>';
   if (html !== renderVitals._last) { renderVitals._last = html; el.innerHTML = html; }
 }
@@ -27803,6 +27823,26 @@ addEventListener('keydown', (ev) => {
   if (ev.key !== 'p' && ev.key !== 'P') return;
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   try { if (window.MythicPollution) window.MythicPollution.togglePanel(); } catch (e) {}
+});
+/* 🏷 THE LAND VALUE INFO VIEW'S TWO WAYS IN — the chip, delegated for the same
+   reason as the three above it (renderVitals replaces #vitalscard's innerHTML
+   whenever the numbers move), and V for Value.
+   ⚠ V, and it was checked rather than assumed: W/A/S/D are KEYPAN, E is the
+     electricity view, G is the hydrology view, P is pollution, K opens the
+     progression tree, R rotates a building, 1/2/3 are the zoning tools while
+     that panel is armed, and Escape closes panels. V was free. Degrades to
+     nothing if /src/landvalue never loaded: no module, no panel, and no chip to
+     click either. */
+addEventListener('click', (ev) => {
+  if (!ev.target.closest || !ev.target.closest('#lvchip')) return;
+  try { if (window.MythicLandValue) window.MythicLandValue.togglePanel(); } catch (e) {}
+});
+addEventListener('keydown', (ev) => {
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+  if (ev.key !== 'v' && ev.key !== 'V') return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  try { if (window.MythicLandValue) window.MythicLandValue.togglePanel(); } catch (e) {}
 });
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -28084,9 +28124,38 @@ function obeliskBonus() {
   for (const t of Object.values(game.tiles)) if (t.type === 'obelisk' && !t.damaged && !bldSite(t)) return OBELISK_LINK;
   return 0;
 }
-// Land value — location, location, location.
-function lotValue(x, z) {
-  let v = 20;
+/* 🏷 LAND VALUE — location, location, location.
+   ────────────────────────────────────────────────────────────────────────────
+   SPLIT IN TWO, AND THE SPLIT IS THE WHOLE POINT. What used to be one function
+   was two different kinds of term added together:
+
+     · lotValueStencil()  the FOUR ADJACENT tiles. The only part that differs
+                          from one plot to the next.
+     · lotValueCity()     20 + citySync + decorPoints. IDENTICAL ON EVERY TILE
+                          in the city — it sets the level of the whole map and
+                          separates nothing, and it grows without bound as the
+                          player plants gardens.
+
+   /src/landvalue needs them apart, because a band ladder taken on the total
+   would move every tile in the city up a rung the moment a fountain went up
+   somewhere else entirely. It takes the band on the LOCAL premium and extends
+   the stencil with terms this game already models (amenity in a window,
+   /src/demographics' households, /src/transit's served stops, /src/water's
+   surface field, /src/pollution's discount). See that module's field.js header
+   for the measurement of what this stencil could and could not separate.
+
+   ⚠ ONE NUMBER, NOT TWO. When the module is mounted `lotValue()` DELEGATES to
+     it, so the dossier's "Lot value" row and the inspector's meta chip print
+     the model's own answer rather than a second opinion about the same tile.
+     When it is absent — a 404, an older save, a broken deploy — the fallback
+     below is byte-for-byte what this function computed before the module
+     existed, including the placement of the Math.round.
+   ⚠ NOTHING HERE PRICES ANYTHING. `lotValue` is read by the dossier row and
+     the meta chip and by nothing that pays anybody; the Lease Plot's rent
+     (economyTick) is priced off /src/pollution and is untouched. So this stays
+     outside ECONOMY.md's closed loop and sim.js's audit has nothing to see. */
+function lotValueStencil(x, z) {
+  let v = 0;
   for (const [dx, dz] of NEI) {
     const t = tileAt(x + dx, z + dz);
     // 🏗 A building site is not an amenity. Land value arrives with the arena,
@@ -28098,8 +28167,18 @@ function lotValue(x, z) {
     if (t.type === 'fountain') v += 12;
     if (BUILDINGS[t.type] && BUILDINGS[t.type].decorPts) v += 5;
   }
-  v += Math.round(citySync() * .3) + decorPoints();
   return v;
+}
+function lotValueCity() { return 20 + Math.round(citySync() * .3) + decorPoints(); }
+function lotValue(x, z) {
+  try {
+    const LVm = window.MythicLandValue;
+    if (LVm && LVm.ready()) {
+      const v = LVm.valueAt(x, z);
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+  } catch (e) { /* the shipped stencil is the fallback, and it is exact */ }
+  return lotValueCity() + lotValueStencil(x, z);
 }
 // Wear & tear — neglected cities crumble. Depots halve decay.
 /* `unattended` is set only by the offline catch-up.
@@ -35258,6 +35337,57 @@ function animate() {
       } catch (e) {}
     }
   } catch (e) { console.warn('[Pollution] not mounted (non-fatal):', e); }
+  /* ══ 🏷 LAND VALUE — WHAT THE GROUND IS WORTH, AND WHAT IT WILL TAKE ══════
+     "Land value should determine what develops. A downtown commercial lot
+      shouldn't produce the same businesses as cheap suburban land."
+
+     `lotValue()` above already existed and already ran per tile — it DESCRIBED
+     a plot. /src/landvalue makes it DECIDE: it extends the four-tile stencil
+     with terms this game already models, sorts the result into five bands, and
+     each band admits a different set of tenants. /src/zoning's typeFor() is
+     where that lands.
+
+     MOUNTED LAST OF THE FIELD MODULES, AND THE ORDER IS THE POINT. It reads
+     /src/zoning (the zone catalogue, to validate its residential advice),
+     /src/demographics (who lives nearby), /src/transit (served stops),
+     /src/water (the surface field) and /src/pollution (the discount) — all five
+     are mounted above. Every one of those reads happens at CALL time and a
+     missing module contributes 0 rather than a penalty, so the order is
+     correctness for the FIRST paint rather than for the model.
+
+     🔴 THE GLOBALS TRAP, and this is the eighth module to hit it. `game`,
+        `BUILDINGS`, `GRID`, `THREE`, `scene`, `bldSite` and the two halves of
+        `lotValue` are top-level `const` in THIS module script and invisible to
+        an ES module; the object below IS the hand-over.
+     ⚠ WHAT DOES NOT CROSS IT: nothing that writes. No tile writer, no addRes,
+       no spendCinders, no saveSoon. This layer is a reader by construction, it
+       adds NO SAVE FIELD (every fact it prints is derived from state that is
+       already persisted, the same contract /src/dossier ships under), and a
+       404 costs the player the info view and the tenant filter and nothing
+       else — `lotValue()` above falls back to exactly what it computed before. */
+  try {
+    await import('../src/landvalue/index.js?v=' + (window.NC_BUILD || 'lv1'));
+    if (window.MythicLandValue) {
+      window.MythicLandValue.mount({
+        game, BUILDINGS, GRID, THREE, scene,
+        key, bldSite,
+        /* The two halves of the host's own figure, handed over rather than
+           re-derived. Duplicating them here is how the dossier's row and the
+           overlay come to disagree about the same tile. */
+        stencilAt: lotValueStencil,
+        cityBase: lotValueCity,
+      });
+      /* 🔍 Reported ONLY when it fails. The one thing that can silently
+         invalidate the whole ladder is `LV.stencilRef` going stale: the bands
+         are fractions of a span that includes it, so a host stencil that grew
+         past it would push every well-sited plot into the top band and flatten
+         the map. verify() measures the LIVE board against it. */
+      try {
+        const lvv = window.MythicLandValue.verify();
+        if (lvv && !lvv.ok) console.warn('[LandValue] self-check FAILED', lvv.problems);
+      } catch (e) {}
+    }
+  } catch (e) { console.warn('[LandValue] not mounted (non-fatal):', e); }
   /* ══ 🛣 OUTSIDE CONNECTIONS ═══════════════════════════════════════════════
      "Your city must be connected to the highway that runs through the map."
      The highway is scenery that exists whether or not you joined it; the
@@ -35843,6 +35973,26 @@ function animate() {
     pollutionAt: (x, z) => { try { return window.MythicPollution ? window.MythicPollution.explainAt(x, z) : null; } catch (e) { return null; } },
     pollutionWind: () => { try { return window.MythicPollution ? window.MythicPollution.wind() : null; } catch (e) { return null; } },
     pollutionPanel: (on) => { try { return window.MythicPollution ? (on === false ? window.MythicPollution.closePanel() : window.MythicPollution.openPanel()) : false; } catch (e) { return false; } },
+    /* 🏷 /src/landvalue's diagnostics seam. `landValueAt` is the per-tile answer
+       WITH its band, its tenant set and the signed term list that sums to the
+       premium — so a driver can assert "the downtown plot is in a higher band
+       than the field plot AND admits a Club the field plot does not" without
+       reading a screenshot, which is the whole claim this feature makes.
+       ⚠ `lotValue(x, z)` is deliberately NOT a second entry point here: it is
+         the SAME number (the host delegates to the module), and a seam that
+         offered both would invite a driver to compare them and find they always
+         agree, which proves nothing. */
+    landValue: () => { try { return window.MythicLandValue ? window.MythicLandValue.report() : null; } catch (e) { return null; } },
+    landValueAt: (x, z) => {
+      try {
+        const L = window.MythicLandValue; if (!L || !L.ready()) return null;
+        return { value: L.valueAt(x, z), premium: Math.round(L.premiumAt(x, z)),
+                 lotValue: lotValue(x, z), band: L.bandAt(x, z),
+                 tenants: L.tenantsAt(x, z), terms: L.terms(x, z) };
+      } catch (e) { return null; }
+    },
+    landValueVerify: () => { try { return window.MythicLandValue ? window.MythicLandValue.verify() : null; } catch (e) { return null; } },
+    landValuePanel: (on) => { try { return window.MythicLandValue ? (on === false ? window.MythicLandValue.closePanel() : window.MythicLandValue.openPanel()) : false; } catch (e) { return false; } },
     place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
     /* Fast-forward: n economy minutes in `steps` slices.
        ⚠ Calls the SAME three functions in the SAME order as animate()'s

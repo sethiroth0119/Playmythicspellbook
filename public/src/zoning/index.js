@@ -288,8 +288,45 @@ export function mount(ctx) {
   function roadFront(x, z) {
     return isRoad(x + 1, z) || isRoad(x - 1, z) || isRoad(x, z + 1) || isRoad(x, z - 1);
   }
+  /* The land-value refusal in ONE place. Falls back to a sentence that makes no
+     claim about bands when the module is not there to make one — a zone whose
+     whole mix is unbuildable for some other reason (every id retired) reaches
+     this too, and must not be told it is a land value problem. */
+  function landRefusal(at) {
+    try {
+      const LVm = window.MythicLandValue;
+      if (LVm && LVm.ready() && at) return LVm.refusal(at.x, at.z);
+    } catch (e) {}
+    return 'Nothing this zone builds can go up there.';
+  }
+  /* 🏷 LAND VALUE DECIDES WHICH TENANT A ZONED LOT ATTRACTS — /src/landvalue.
+     ────────────────────────────────────────────────────────────────────────
+     This function is the SINGLE point in the game where "what goes on this
+     plot" is decided, which is why the filter lands here and nowhere else.
+     The band of the tile admits a set of buildings; the zone's mix is filtered
+     through it, so a Commercial strip on prime land develops as clubs and
+     restaurants and the same zone on cheap land develops as a food truck and a
+     grocery. That is the whole feature, and this is the one line that enforces
+     it rather than describing it.
+
+     🔴 AN EMPTY RESULT IS A REAL ANSWER AND IS NOT PAPERED OVER. Returning the
+        unfiltered bag "so something gets built" would make land value advice
+        that nothing checks — the exact failure this project has already paid
+        for. Instead the plot is skipped as `nomix` and develop() reports it in
+        the module's own words (MythicLandValue.refusal). "You zoned 200 card
+        stores into a city that needs 30" has to be VISIBLE as vacancy.
+     ⚠ ORDER IS PRESERVED THROUGH THE FILTER, because the pick below is a
+       deterministic hash into the bag: re-ordering it would make the same plot
+       develop as a different business after a reload.
+     ⚠ ABSENT ⇒ OPEN. No /src/landvalue, or a module that has not mounted yet,
+       means no filter at all and this behaves exactly as it did before. */
   function typeFor(zdef, x, z) {
-    const bag = MIX[zdef.id] || [];
+    let bag = MIX[zdef.id] || [];
+    if (!bag.length) return null;
+    try {
+      const LVm = window.MythicLandValue;
+      if (LVm && LVm.ready()) bag = LVm.filterMix(x, z, bag) || [];
+    } catch (e) { bag = MIX[zdef.id] || []; }
     if (!bag.length) return null;
     // Deterministic per plot: the same tile always develops as the same thing,
     // so a develop that was refused for money and retried later does not
@@ -342,7 +379,10 @@ export function mount(ctx) {
       }
       if (!roadFront(x, z)) { skip.noroad++; continue; }
       const type = typeFor(d, x, z);
-      if (!type) { skip.nomix++; continue; }
+      /* 🏷 No tenant this land will take. Counted, and the FIRST such plot is
+         remembered so the refusal can name a real tile's real band instead of
+         a generality — /src/landvalue owns the sentence. */
+      if (!type) { skip.nomix++; if (!skip.nomixAt) skip.nomixAt = { x, z }; continue; }
       out.push({ x, z, type, zone: d });
     }
     return { out, grow, skip };
@@ -626,6 +666,10 @@ export function mount(ctx) {
     if (!p.out.length && !p.grow.length) {
       const why = p.skip.building ? p.skip.building + ' zoned ' + (p.skip.building === 1 ? 'plot is' : 'plots are') + ' already under construction — they finish on their own.'
         : p.skip.noroad ? p.skip.noroad + ' zoned ' + (p.skip.noroad === 1 ? 'tile is' : 'tiles are') + ' waiting on road frontage — draw a road beside them.'
+        /* 🏷 The land-value refusal, and the sentence comes from the model that
+           made the decision. A copy of it here would be a second explanation of
+           one rule, free to drift from the rule. */
+        : p.skip.nomix ? p.skip.nomix + ' zoned ' + (p.skip.nomix === 1 ? 'plot has' : 'plots have') + ' no tenant the land will take. ' + landRefusal(p.skip.nomixAt)
         : p.skip.occupied ? 'Every zoned tile is already built to the density its zone asks for.'
         : 'Nothing is zoned yet — pick a zone and paint some land.';
       toast('🗺 Nothing to raise. ' + why, 'bad');

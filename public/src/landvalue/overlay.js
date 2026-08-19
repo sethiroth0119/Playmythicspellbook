@@ -164,14 +164,30 @@ export function sync(layers, host) {
            assigned that tile, and three bands matched their hex exactly
            (#5fbf5a, #2f9fb8, #2f4f96) at alphas 143/125/107. The MESH is
            verified to draw — with every other mesh hidden it paints ~660 of
-           3600 sampled pixels. What could NOT be established in this
-           environment is how it reads OVER a populated frame: an A/B of the
-           rendered buffer with the plane shown and hidden reports zero
-           differing pixels, and /src/water's shipped overlay — the pattern this
-           one copies — measures identically in the same harness, so the
-           instrument is the suspect rather than either layer. Said here rather
-           than left implied, because HANDOFF §7 records two rounds lost to a
-           critic scoring a "regression" that the harness had invented. */
+           3600 sampled pixels. What could NOT be established AT THE TIME was
+           how it reads OVER a populated frame: an A/B of the rendered buffer
+           with the plane shown and hidden reported zero differing pixels — for
+           this layer AND for /src/water's, the pattern this one copies.
+
+         ✅ SETTLED SINCE, AND THE INSTRUMENT WAS INDEED THE FAULT. The A/B
+           toggled `.visible` and read the framebuffer WITHOUT calling
+           renderer.render(). rAF here fires at about 0.56 Hz — not never, which
+           is worse than never because it makes the failure intermittent — so
+           the read returned the frame from before the flip, for any layer at
+           all. That is why /src/water "measured identically": a do-nothing read
+           measures everything identically.
+           Driven properly, this plane moves 78% of the district crop and 79% of
+           a crop of bare ground, mean delta 44-55, AGAINST A CONTROL OF EXACTLY
+           ZERO. See .gauntlet/README.md item 6 for the measurement to copy, and
+           for the second trap: this module's own 2.5s refresh() interval sets
+           mesh.visible = true whenever the panel is open, so an A/B that opens
+           the panel and then hand-flips visibility races it and reports ~1%
+           instead of ~61%.
+           The original note is kept above rather than deleted, because a
+           disclosure that was honest and turned out to be wrong is worth more
+           in the record than a clean line — HANDOFF §7 records two rounds lost
+           to a critic scoring a "regression" the harness had invented, and this
+           was very nearly a third. */
       cx2.globalAlpha = 0.42 + 0.07 * b;
       cell(x, z, C.band[b] || C.band[0]);
     }

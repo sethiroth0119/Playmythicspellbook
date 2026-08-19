@@ -26,13 +26,36 @@
 
   const C = 12;
   const fails = {};
+  /* 🔴 WHY, NOT JUST HOW MANY. For ten rounds this scene reported `fails` as a
+     bare count — {retail: 3, shop: 3, arena: 1, …} — and every reader of that
+     JSON, human and agent, assumed one cause (the municipal ceiling) for all of
+     them. Measured, there were four different causes and two of them were
+     nothing to do with duration. tryPlace() already writes a refusal sentence
+     that says both what is wrong AND how to fix it; `toast` routes it through
+     window.__ncToastSink when one is installed (index.html ~29345, put there
+     for /src/zoning's bulk runs). So the reason is CAPTURED, never re-derived:
+     a second copy of the gate logic in the harness is how a harness starts
+     disagreeing with the game it is photographing. */
+  const why = {};
+  /* Which gates this scene had to satisfy to build the district, in the scene's
+     own words. A scene that quietly opens a lock is indistinguishable from a
+     scene that never met one. */
+  const gates = [];
+  let _sink = null;
+  window.__ncToastSink = (msg, cls) => { if (cls === 'bad' && _sink) _sink.push(msg); };
   const done = () => { try { nc.build.finishAll('gauntlet capture'); } catch (e) {} };
   /* ⚠ done() runs after EVERY placement, not per batch: bldSlots() is the
      municipal 2 free crew, so the THIRD order in a row is refused outright. */
   const P = async (t, x, z) => {
-    try { await nc.place(t, x, z); } catch (e) {}
+    _sink = [];
+    try { await nc.place(t, x, z); } catch (e) { _sink.push('threw: ' + e); }
+    const msgs = _sink; _sink = null;
     done();
-    if (!nc.game.tiles[x + ',' + z]) fails[t] = (fails[t] || 0) + 1;
+    if (!nc.game.tiles[x + ',' + z]) {
+      fails[t] = (fails[t] || 0) + 1;
+      const r = (msgs[0] || 'refused silently — no toast (tryPlace returned before any gate spoke)').slice(0, 150);
+      (why[t] ||= {})[r] = (why[t][r] || 0) + 1;
+    }
   };
   const fill = async (x0, x1, z0, z1, ty) => {
     for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) { await P(ty, x, z); }
@@ -203,7 +226,7 @@
   let parkedN = -1;
   try { parkedN = window.MythicParking ? window.MythicParking.count() : -1; } catch (e) {}
 
-  return { placed: tiles.length, fails, crowd, parked: parkedN,
+  return { placed: tiles.length, fails, why, gates, crowd, parked: parkedN,
            sites: tiles.filter(t => t.bld).length,
            types: Object.entries(tiles.reduce((a, t) => (a[t.type] = (a[t.type]||0)+1, a), {})) };
 })()

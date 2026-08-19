@@ -77,7 +77,7 @@ ctx and a clock and touches no DOM, so the bucket boundaries, a full lap of the
 of in a twenty-minute capture. Run it before any browser round when the traffic
 meter changed.
 
-## 🔴 Five things that cost a debugging round each
+## 🔴 Six things that cost a debugging round each
 
 1. **The CDN is blocked.** The page's import map points at
    `cdn.jsdelivr.net/npm/three@0.171.0`, and the agent proxy 403s CONNECT to
@@ -143,6 +143,61 @@ meter changed.
    `Color.setHex()` converts sRGB→linear for you; a literal `{r,g,b}` written in
    the source does not get that conversion. The sRGB amber (1.00, 0.64, 0.22)
    renders as (1.00, 0.83, 0.51) — a pale beige that reads as nothing.
+
+6. **A `.visible` A/B that never calls `renderer.render()` reports ZERO for
+   everything.** `animate()` is the only thing that renders, and rAF fires
+   **about 0.56 Hz here** (measured: 3 callbacks in 5,343 ms) — so flipping a
+   mesh and reading the buffer in the same task reads *the frame before the
+   flip*, for any layer, always. Measured on the landvalue and water ground
+   overlays, both of which had been recorded as unphotographable:
+
+   | Instrument (same plane, same frame, same 1378x712 derived crop) | px changed |
+   |---|---|
+   | flip `.visible`, read buffer, **no render** | **0 / 981,136 — 0.00%** |
+   | flip `.visible`, `renderer.render()` between reads | **766,317 — 78.11%** |
+   | two renders, nothing changed (control) | 0 — 0.00% |
+
+   Zero is not a small signal, it is a **dead instrument**, and it is why
+   `/src/water` "measured identically": a do-nothing read measures every layer
+   identically. `/src/landvalue`'s overlay is in fact one of the loudest things
+   in the frame — 78% of the district crop and 79% of a 2x2 patch of bare
+   ground move when it comes on. See `ovl-probe2.mjs` / `ovl-driver2.js`.
+
+   ⚠ AND THE SECOND TRAP, which reports ~1% instead of 0% and is therefore
+     worse: **the module puts the plane back.** `/src/landvalue` runs
+     `setInterval(… , LV.field.ttlMs)` = 2.5 s that calls `refresh()` →
+     `Overlay.sync()` → `mesh.visible = true` **whenever its panel is open**.
+     Any A/B that opens the panel and then hand-flips `.visible` is racing that
+     timer: measured 1.12% with the panel open against 61.04% for the identical
+     procedure with it closed. Either drive the shipped toggle
+     (`__nc.landValuePanel(false)`, which stops the timer refreshing) or flip
+     by hand **with the panel shut** — the canvas keeps its paint after a
+     close, so one open/close is enough to have something to photograph.
+
+   🔵 THE MEASUREMENT THAT WORKS, to copy:
+
+   ```js
+   const { renderer, scene, camera } = __nc.three();
+   const gl = renderer.domElement, CW = gl.width, CH = gl.height;
+   const s = document.createElement('canvas'); s.width = CW; s.height = CH;
+   const c = s.getContext('2d', { willReadFrequently: true });
+   // ⚠ drawImage in the SAME TASK as render(): preserveDrawingBuffer is off,
+   //    so the buffer is gone by the next task and readPixels returns zeros.
+   const shoot = () => { renderer.render(scene, camera);
+     c.clearRect(0,0,CW,CH); c.drawImage(gl,0,0,CW,CH);
+     return c.getImageData(0,0,CW,CH); };
+   plane.visible = true;  const A = shoot();
+   plane.visible = false; const B = shoot();
+   const C = shoot();                    // control: B vs C must be 0
+   ```
+
+   With the renderer driven this way the do-nothing control is **exactly 0**,
+   not the 136,171 px of §5 — because nothing steps the sim between two
+   synchronous renders. That removes the noise floor that defeated four
+   attempts, so a pixel count IS a verdict again, **provided the control is
+   reported beside it**. `page.screenshot()` is also honest (61.04% on the same
+   toggle) as long as rAF gets ~1.5 s to composite, or a render is driven and
+   then given a beat — it is only ever the *unrendered* read that lies.
 
 ## The seam this rides on
 

@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120w9-battlefield-and-city";</script>
+<script>window.NC_BUILD = "v120w9-districts";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -27769,6 +27769,32 @@ function renderVitals() {
                  Math.round(st.min) + '–' + Math.round(st.max) + '</span>';
         } catch (e) { return ''; }
       })() +
+      /* 🏙 THE DISTRICTS CHIP — the launcher for layer 2, and the same
+         glanceable-value-plus-explanation pairing as the four chips beside it.
+         ⚠ IT OPENS THE ZONES PANEL, NOT A PANEL OF ITS OWN, and that is the
+           design rather than a shortcut: a specialisation is a property of the
+           ZONE BRUSH (see /src/districts/ui.js), so its chips live in the
+           zoning panel under the land-use palette. A second panel would have
+           been a second place to paint the same tile.
+         ⚠ RENDERED ONLY ONCE THE CITY ACTUALLY HAS A DISTRICT. Same rule as
+           the four chips above, for the reason the ⚡ chip's comment states: a
+           chip reading 🏙 0 on every city that has never specialised anything
+           is a permanent readout for a feature nobody is using, and both halves
+           of what it prints are counted from the live store —
+           `built` is tiles with something STANDING on them, `specialised` is
+           tiles painted. The gap between the two is the thing worth glancing
+           at: it is how much of a district has actually gone up. */
+      (function () {
+        try {
+          const D = window.MythicDistricts;
+          if (!D || !D.ready()) return '';
+          const s = D.stats();
+          if (!s || !s.specialised) return '';
+          return '<span class="schip pw" id="dschip" title="Specialised district plots that are BUILT / painted. ' +
+                 'Click for the zoning panel, where a district is picked on the same brush as the land use.  (Z)">🏙 ' +
+                 s.built + '/' + s.specialised + '</span>';
+        } catch (e) { return ''; }
+      })() +
       '<span class="scap">cap ' + stockCap() + '</span></div>';
   if (html !== renderVitals._last) { renderVitals._last = html; el.innerHTML = html; }
 }
@@ -27843,6 +27869,36 @@ addEventListener('keydown', (ev) => {
   if (ev.key !== 'v' && ev.key !== 'V') return;
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   try { if (window.MythicLandValue) window.MythicLandValue.togglePanel(); } catch (e) {}
+});
+/* 🏙 THE DISTRICTS CHIP'S TWO WAYS IN — the chip, delegated for the same reason
+   as the four above it (renderVitals replaces #vitalscard's innerHTML whenever
+   the numbers move), and Z for Zones.
+   ⚠ BOTH OPEN THE ZONING PANEL, because that is where a district is picked:
+     /src/districts renders its chip row into the #nz-spec container that panel
+     owns, so the specialisation rides the same brush as the land use. There is
+     deliberately no second panel — see the chip's own comment in renderVitals.
+   ⚠ Z, and it was checked rather than assumed: W/A/S/D are KEYPAN, E is the
+     electricity view, G is the hydrology view, P is pollution, V is land value,
+     K opens the progression tree, R rotates a building, 1/2/3 are the zoning
+     tools while that panel is armed, and Escape closes panels. Z was free, and
+     it is the initial of the panel it opens rather than of the layer that lives
+     inside it — D is not available (KEYPAN) and would have been the wrong
+     letter anyway, since this is the way in to BOTH layers.
+   ⚠ It toggles through /src/zoning's own `panelOpen()`, never a local flag:
+     the panel also closes itself when the player picks a building (see
+     ui.js onMode), and a flag kept here would immediately disagree with it.
+   Degrades to nothing if /src/zoning never loaded: no module, no panel, and no
+   chip to click either. */
+addEventListener('click', (ev) => {
+  if (!ev.target.closest || !ev.target.closest('#dschip')) return;
+  try { if (window.MythicZoning) window.MythicZoning.panel(!window.MythicZoning.panelOpen()); } catch (e) {}
+});
+addEventListener('keydown', (ev) => {
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+  if (ev.key !== 'z' && ev.key !== 'Z') return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  try { if (window.MythicZoning) window.MythicZoning.panel(!window.MythicZoning.panelOpen()); } catch (e) {}
 });
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -34689,6 +34745,42 @@ function animate() {
       },
     });
   } catch (e) { console.warn('[Zoning] not mounted (non-fatal):', e); }
+  /* ══ 🏙 DISTRICT SPECIALISATION — LAYER 2 OF ZONING ═══════════════════════
+     "Instead of painting a generic Commercial zone forever, players eventually
+      SPECIALIZE districts."
+
+     Layer 1 is land use and /src/zoning already shipped it. This is the second
+     tag on the same tile: Commercial · 🃏 Mythic Retail, Industrial · 🃏 Card
+     Works, Office · 📈 Financial. It replaces the bag /src/zoning's `typeFor()`
+     picks a tenant out of, and nothing else — a tile with no specialisation is
+     byte-for-byte the tile it was before this module existed.
+
+     MOUNTED IMMEDIATELY AFTER /src/zoning AND BEFORE loadState, AND BOTH HALVES
+     OF THAT ORDER ARE LOAD-BEARING:
+       · after zoning, because it renders its chip row into the container that
+         module's panel creates (#nz-spec) and reads its live zone catalogue;
+       · before loadState, because /src/zoning's afterLoad() — the grandfather
+         sweep — is what calls this module's afterLoad() to drop specialisations
+         whose land has changed use, and that call happens one line after
+         loadState. Mount it later and the reconcile is simply never run.
+     It does NOT need /src/landvalue at mount: the band ladder is asked live, on
+     every draw, so a city that boots before that module lands shows no floor
+     rather than a wrong one.
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md). `game`, `BUILDINGS`, `key`, `toast`,
+        `logEvent` and `saveSoon` are top-level `const` in THIS module script
+        and invisible to an ES module. The ctx below IS the hand-over.
+     ⚠ WHAT DOES NOT CROSS IT: nothing that builds, nothing that spends and no
+       ledger call of any kind. This layer changes WHICH building /src/zoning
+       asks the host to place; the host's own placeZoned → tryPlace → payCost
+       path is untouched and still charges the shipped price. It is outside
+       ECONOMY.md's closed loop and sim.js's audit has nothing new to see.
+     ⚠ NO SAVE EDIT. The specialisation map rides window.MythicCitySave under
+       the key `districts`, so serialize() needs no change at all. */
+  try {
+    const dmod = await import('../src/districts/index.js?v=' + (window.NC_BUILD || 'ds1'));
+    dmod.mount({ game, BUILDINGS, key, toast, logEvent, saveSoon });
+  } catch (e) { console.warn('[Districts] not mounted (non-fatal):', e); }
   /* ══ 🏷 THE BUSINESS REGISTER + THE MODULE SAVE SHELF ═════════════════════
      Mounted BEFORE loadState, and FIRST of the three modules below, because
      this one owns `window.MythicCitySave` — the shelf loadState calls to hand
@@ -35992,6 +36084,46 @@ function animate() {
       } catch (e) { return null; }
     },
     landValueVerify: () => { try { return window.MythicLandValue ? window.MythicLandValue.verify() : null; } catch (e) { return null; } },
+    /* 🏙 /src/districts' diagnostics seam — layer 2 of zoning.
+       `districtAt` is the per-tile answer a driver actually needs to prove the
+       feature: the zone under the tile, the specialisation on it, the bag
+       /src/zoning would pick from AFTER the specialisation and the land value
+       filter have both run, and what it would therefore build. Without the
+       `wouldBuild` line a driver can only assert that a chip was clicked.
+       ⚠ It calls the module's OWN mixFor with the host's own MIX, rather than
+         re-deriving either, so it cannot agree with the model by accident. */
+    districts: () => { try { return window.MythicDistricts ? window.MythicDistricts.stats() : null; } catch (e) { return null; } },
+    districtAt: (x, z) => {
+      try {
+        const D = window.MythicDistricts, Z = window.MythicZoning;
+        if (!D || !D.ready()) return null;
+        const zone = Z ? Z.zoneAt(x, z) : null;
+        const zd = (Z && Z.ZONE_BY_ID) ? Z.ZONE_BY_ID[zone] : null;
+        const spec = D.specAt(x, z);
+        const sd = spec ? D.specDef(spec) : null;
+        let base = [];
+        for (const [t, w] of ((zd && zd.mix) || [])) { if (BUILDINGS[t]) for (let i = 0; i < w; i++) base.push(t); }
+        const afterSpec = D.mixFor(x, z, zone, base);
+        let afterLand = afterSpec;
+        try { const L = window.MythicLandValue; if (L && L.ready()) afterLand = L.filterMix(x, z, afterSpec); } catch (e) {}
+        const h = (Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(z | 0, 0x165667b1) ^ 0x7f4a7c15) >>> 0;
+        return {
+          zone, spec, specName: sd ? sd.name : null,
+          band: (() => { try { const L = window.MythicLandValue; return (L && L.ready()) ? L.bandAt(x, z).id : null; } catch (e) { return null; } })(),
+          lvl: D.levelFor(x, z, zone),
+          base: base.filter((v, i, a) => a.indexOf(v) === i),
+          afterSpec: afterSpec.filter((v, i, a) => a.indexOf(v) === i),
+          afterLand: afterLand.filter((v, i, a) => a.indexOf(v) === i),
+          wouldBuild: afterLand.length ? afterLand[h % afterLand.length] : null,
+          refusal: afterLand.length ? null : (D.refusal(x, z) || null),
+        };
+      } catch (e) { return { error: String(e && e.message || e) }; }
+    },
+    districtSpecs: (cat) => { try { return window.MythicDistricts ? window.MythicDistricts.available(cat) : null; } catch (e) { return null; } },
+    districtArm: (id) => { try { return window.MythicDistricts ? window.MythicDistricts.arm(id || null) : false; } catch (e) { return false; } },
+    districtSet: (x, z, id) => { try { return window.MythicDistricts ? window.MythicDistricts._set(x, z, id || null) : false; } catch (e) { return false; } },
+    districtVerify: () => { try { return window.MythicDistricts ? window.MythicDistricts.verify() : null; } catch (e) { return null; } },
+    districtCardSeam: () => { try { return window.MythicDistricts ? window.MythicDistricts.cardSeam() : null; } catch (e) { return null; } },
     landValuePanel: (on) => { try { return window.MythicLandValue ? (on === false ? window.MythicLandValue.closePanel() : window.MythicLandValue.openPanel()) : false; } catch (e) { return false; } },
     place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
     /* Fast-forward: n economy minutes in `steps` slices.

@@ -31,6 +31,14 @@
      licence  an OPS_ECON key the player must HOLD before this node can be
               unlocked. The panel names the licence and offers City Hall.
      zones    /src/zoning zone ids this node opens.
+     specs    /src/districts DISTRICT SPECIALISATION ids this node opens. Layer
+              2 of zoning — a specialisation sits ON TOP of a land-use zone and
+              narrows what develops on it, so it is exactly the kind of thing a
+              research node should open and it is gated the same way `zones` is.
+              ⚠ ABSENT ⇒ OPEN, like everything else here: a spec id this tree
+                has never heard of is NOT gated (GOVERNED_SPECS below), so
+                adding a fourteenth specialisation next week is playable the day
+                it lands rather than silently locked behind a node nobody wrote.
      buildings node-city BUILDINGS ids this node opens.
      ops      OPS_ECON keys this node opens (as opposed to `licence`, which is
               a key it REQUIRES).
@@ -71,6 +79,16 @@ export const CATS = [
   { id: 'ind', ico: '🏭', name: 'Industry',       blurb: 'Extraction, heavy work and the freight it generates.' },
   { id: 'tra', ico: '🚌', name: 'Transportation', blurb: 'Roads, buses and rail. Every rung above the first is a licence.' },
   { id: 'sci', ico: '🔬', name: 'Research',       blurb: 'The Research Facility licence, and everything it makes possible.' },
+  /* 🃏 THE MYTHIC BRANCH — the three card districts, in their own category.
+     It is a category rather than three nodes scattered through Commerce and
+     Industry for two reasons, and the second one is the load-bearing one:
+       1. it is the headline of the whole feature and the thing that separates
+          this city builder from every other one, so it should read as a
+          destination and not as a footnote on an office node;
+       2. the panel's tree pane is ~774px and a node past col 3 renders under
+          the detail pane (see res_mixed's note). Hanging three more nodes off
+          com_high would have needed col 4 and col 5. */
+  { id: 'myth', ico: '🃏', name: 'Mythic',         blurb: 'Card districts. The presses that print them, the streets that sell them and the halls they are played in.' },
 ];
 
 export const NODES = [
@@ -135,10 +153,33 @@ export const NODES = [
     name: 'Office Park',
     desc: 'Clean work on cheap land — no freight, no smoke, and jobs for the educated.',
     zones: ['o_low'] },
+  /* 🏙 LAYER 2 ENTERS THE TREE HERE. `com_district` is the node that turns
+     "Commercial" from one generic paint into a district a player composes, and
+     it deliberately requires com_high: specialising land use is a decision that
+     only means anything once there is more than one grade of it. */
+  { id: 'com_district', cat: 'com', row: 1, col: 2, cost: 2, req: ['com_high'],
+    name: 'District Specialisation',
+    desc: 'Zoning stops being generic. A commercial block can be told what kind of commerce it is for — shops, or kitchens.',
+    specs: ['c_retail', 'c_food'] },
+  { id: 'com_night', cat: 'com', row: 0, col: 3, cost: 3, req: ['com_district', 'civ_landmark'],
+    name: 'Entertainment District',
+    desc: 'A block zoned for the night. Clubs and late kitchens, and the noise that comes with them.',
+    specs: ['c_ent'] },
+  /* 🔗 A CROSS-CATEGORY LINK, and the reason it is here: a luxury street is the
+     same buildings BUILT TALLER (specs.js `lvl: 3`), and this city may not
+     build tall anywhere until High-Rise Engineering is done. */
+  { id: 'com_luxury', cat: 'com', row: 1, col: 3, cost: 4, req: ['com_district', 'sci_urban'],
+    name: 'Luxury Retail',
+    desc: 'The expensive end of the high street, built to its full height. It will simply refuse cheap land.',
+    specs: ['c_lux'] },
+  { id: 'off_district', cat: 'com', row: 3, col: 2, cost: 2, req: ['off_low'],
+    name: 'Office Specialisation',
+    desc: 'An office park can be told what it is for — laboratories, or the money that funds them.',
+    specs: ['o_tech', 'o_fin'] },
   { id: 'off_high', cat: 'com', row: 2, col: 3, cost: 4, req: ['off_low', 'sci_urban'],
     name: 'Office Towers',
     desc: 'The skyline. Same clean work, stacked, on land that has become too valuable for anything else.',
-    zones: ['o_high'] },
+    zones: ['o_high'], specs: ['o_corp'] },
 
   /* ══ 🏭 INDUSTRY & LOGISTICS ════════════════════════════════════════════ */
   { id: 'ind_extract', cat: 'ind', row: 1, col: 1, cost: 1, req: ['civ_basic'],
@@ -152,11 +193,19 @@ export const NODES = [
   /* 🔗 A LICENCE LINK. Warehousing is a real business the player buys at City
      Hall; the ZONE is the land you are allowed to put it on. Holding one
      without the other is meaningless, so the node requires the licence. */
+  { id: 'ind_district', cat: 'ind', row: 0, col: 2, cost: 2, req: ['ind_heavy'],
+    name: 'Industrial Specialisation',
+    desc: 'Industry stops being one paint. A works district and a furnace district are not the same street and should not build the same way.',
+    specs: ['i_manu', 'i_heavy'] },
+  /* 🔗 The Logistics SPECIALISATION rides the node that already opens the
+     warehousing ZONE and its City Hall licence, rather than taking a node of
+     its own: holding the zone without the district, or the district without the
+     licence, would be two half-features. */
   { id: 'ind_ware', cat: 'ind', row: 1, col: 3, cost: 3, req: ['ind_heavy', 'sci_materials'],
     licence: 'warehouse',
     name: 'Warehousing & Logistics',
     desc: 'Land zoned for storage and distribution rather than for making anything.',
-    zones: ['i_ware'], buildings: ['warehouse'] },
+    zones: ['i_ware'], buildings: ['warehouse'], specs: ['i_log'] },
 
   /* ══ 🚌 TRANSPORTATION ══════════════════════════════════════════════════
      The branch the user's own screenshot shows, mirrored: a free trunk, then
@@ -200,6 +249,40 @@ export const NODES = [
     name: 'Applied Genetics',
     desc: 'The clinical end of the laboratory, and the only industrial source of DNA in the game.',
     buildings: ['medlab'] },
+
+  /* ══ 🃏 MYTHIC ══════════════════════════════════════════════════════════
+     THE THREE CARD DISTRICTS, and the order is the Ouroboros chain's own:
+
+        timber → lumber → cardStock → printedCards → boosterPacks
+        lumbercamp  sawmill  PAPERMILL   PRINTWORKS    SHOP
+
+     You must be able to PRINT a card before you may zone a street that sells
+     one, and you must have a street that sells them before a hall that plays
+     them is worth building. That is `myth_press → myth_street → myth_arena`,
+     and it is a real dependency in ECO_BUILDING_MAP rather than a themed
+     ordering: a Mythic Retail district with no presses anywhere founds card
+     shops whose recipe bottlenecks on `printedCards`, which is the exact state
+     the Card Shop sat in for the whole first year of this game.
+
+     ⚠ THESE NODES OPEN SPECIALISATIONS ONLY — NO `buildings:` KEY, DELIBERATELY.
+       `papermill`, `printworks`, `shop`, `arena` and `stadium` are all
+       placeable today and are not governed by this tree. Listing them here
+       would GATE them, retro-locking a live city out of buildings it can place
+       right now, and adoption only counts standing buildings for saves that
+       predate progression (state.js, the one asymmetry). The new thing is the
+       district; the buildings stay exactly as free as they were. */
+  { id: 'myth_press', cat: 'myth', row: 1, col: 0, cost: 4, req: ['ind_district', 'sci_materials'],
+    name: 'Ouroboros Manufacturing',
+    desc: 'Pulp, plates and a packing shed. Land zoned for the presses that print this world\'s cards.',
+    specs: ['i_cards'] },
+  { id: 'myth_street', cat: 'myth', row: 1, col: 1, cost: 5, req: ['myth_press', 'com_district'],
+    name: 'Mythic Retail District',
+    desc: 'A street of card shops, graders and collectors — selling the packs your own presses printed.',
+    specs: ['c_mythic'] },
+  { id: 'myth_arena', cat: 'myth', row: 1, col: 2, cost: 6, req: ['myth_street', 'civ_landmark'],
+    name: 'Mythic Entertainment District',
+    desc: 'Tournament halls and duel arenas. The best land in the city, and the reason people come in from the other cities.',
+    specs: ['c_mythent'] },
 ];
 
 export const NODE_BY_ID = Object.create(null);
@@ -224,11 +307,20 @@ export const GOVERNED_BUILDINGS = (() => {
   return s;
 })();
 
+/* Every district specialisation this tree can open. Same contract as
+   GOVERNED_ZONES: a spec id the tree does not mention is NOT gated. */
+export const GOVERNED_SPECS = (() => {
+  const s = new Set();
+  for (const n of NODES) for (const p of (n.specs || [])) s.add(p);
+  return s;
+})();
+
 /* What a node opens, as one list, for the detail pane. */
 export function unlocksOf(node) {
-  if (!node) return { zones: [], buildings: [], ops: [] };
+  if (!node) return { zones: [], specs: [], buildings: [], ops: [] };
   return {
     zones: (node.zones || []).slice(),
+    specs: (node.specs || []).slice(),
     buildings: (node.buildings || []).slice(),
     ops: (node.ops || []).slice(),
   };

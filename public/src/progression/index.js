@@ -9,6 +9,9 @@
        window.MythicProgress.has(nodeId)          -> bool
        window.MythicProgress.unlockedZones()      -> [zoneId]
        window.MythicProgress.zoneUnlocked(id)     -> bool
+       window.MythicProgress.unlockedSpecs()      -> [specId]     (🏙 layer 2)
+       window.MythicProgress.specUnlocked(id)     -> bool         (🏙 layer 2)
+       window.MythicProgress.specBlockedBy(id)    -> { node, name, cost } | null
        window.MythicProgress.buildingUnlocked(t)  -> bool
        window.MythicProgress.zoneBlockedBy(id)    -> { node, name, cost } | null
        window.MythicProgress.points()             -> { earned, spent, available }
@@ -31,6 +34,14 @@
        file this round — and because a wrapper survives a rewrite of what it
        wraps, which node-city's own transit and naming hooks say in exactly
        those words.
+     ✔ DISTRICT SPECIALISATIONS (🏙 layer 2, /src/districts). Enforced, and
+       enforced THERE rather than by another wrapper here: `arm()` in that
+       module is the single point where a player picks one, it refuses a locked
+       id and names the node, and its store refuses a locked write again behind
+       that. Two wrappers around the same gate is how two modules come to
+       disagree about whether a thing is open — so this module owns the ANSWER
+       and /src/districts owns the REFUSAL, which is the same split /src/zoning
+       and /src/landvalue already use for the tenant filter.
      ✔ LICENCES. Enforced as a prerequisite on unlocking a node.
      ✖ BUILDINGS. Declared in the tree and answerable through
        buildingUnlocked(), but NOT enforced: the build bar lives inside
@@ -177,6 +188,15 @@ function zoneName(id) {
   } catch (e) {}
   return id;
 }
+/* 🏙 A specialisation's name, from /src/districts' live catalogue. */
+function specName(id) {
+  try {
+    const D = window.MythicDistricts;
+    const d = D && D.specDef && D.specDef(id);
+    if (d) return d.ico + ' ' + d.name;
+  } catch (e) {}
+  return id + ' (not in the live district catalogue)';
+}
 function zoneKnown(id) {
   try {
     const Z = window.MythicZoning;
@@ -235,6 +255,10 @@ function report() {
              — an id with no entry — rather than as a friendly name this file
              made up. Same rule as every figure on the screen. */
         zones: u.zones.map((z) => ({ id: z, name: zoneKnown(z) ? zoneName(z) : (z + ' (not in the live zone catalogue)') })),
+        /* 🏙 Same rule as the zones above: named from the LIVE catalogue, and a
+           spec id /src/districts does not carry is shown as what it is rather
+           than under a friendly name this file invented. */
+        specs: u.specs.map((p) => ({ id: p, name: specName(p) })),
         buildings: u.buildings.map((b) => ({ id: b, name: buildingName(b) })),
         ops: u.ops.map((o) => ({ id: o, name: (ctx.licenceLabel && ctx.licenceLabel(o)) || o })),
       },
@@ -265,6 +289,7 @@ function report() {
   const sources = Object.keys(METRICS).map((k) => ({ label: METRICS[k].label, source: METRICS[k].source }));
   sources.push({ label: 'Licences', source: 'the City Hall operations manifest — node-city opsRowsOf() / opsPriceOf(), handed over as ctx.hasLicence() and ctx.licencePrice()' });
   sources.push({ label: 'Zone names', source: 'window.MythicZoning.ZONE_BY_ID, read live at draw time' });
+  sources.push({ label: 'District names', source: 'window.MythicDistricts.specDef(), read live at draw time' });
 
   return {
     points: pts,
@@ -292,6 +317,18 @@ const api = {
   has: (id) => { try { return st ? st.has(id) : true; } catch (e) { return true; } },
   unlockedZones: () => { try { return st ? st.unlockedZones() : []; } catch (e) { return []; } },
   zoneUnlocked: (id) => { try { return st ? st.zoneUnlocked(id) : true; } catch (e) { return true; } },
+  /* 🏙 LAYER 2. Both fail OPEN for the same reason every other reader here
+     does: a 404 or a throw must cost the player the research screen and never
+     a district they have already painted. */
+  unlockedSpecs: () => { try { return st ? st.unlockedSpecs() : []; } catch (e) { return []; } },
+  specUnlocked: (id) => { try { return st ? st.specUnlocked(id) : true; } catch (e) { return true; } },
+  specBlockedBy: (id) => {
+    try {
+      if (!st || st.specUnlocked(id)) return null;
+      const n = st.nodeForSpec(id);
+      return n ? { node: n.id, name: n.name, cost: n.cost | 0 } : null;
+    } catch (e) { return null; }
+  },
   buildingUnlocked: (t) => { try { return st ? st.buildingUnlocked(t) : true; } catch (e) { return true; } },
   zoneBlockedBy: (id) => {
     try {
@@ -355,7 +392,8 @@ const api = {
     unlocked: Array.from(st.S.unlocked), granted: Array.from(st.S.granted),
     reached: Array.from(st.S.reached), earned: Array.from(st.S.earned),
     spent: st.S.spent, legacy: st.S.legacy, points: st.points(),
-    zones: st.unlockedZones(), wrappedZoning: _wrapped, shelved: _shelved,
+    zones: st.unlockedZones(), specs: st.unlockedSpecs(),
+    wrappedZoning: _wrapped, shelved: _shelved,
   }),
   tree: { NODES, CATS, METRICS, MILESTONES, ACHIEVEMENTS, validate },
   /* ⚠ TEST SEAM ONLY, and it is deliberately not on the surface a player can

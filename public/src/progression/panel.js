@@ -252,11 +252,15 @@ export function makePanel(api, host) {
     }
     const u = n.unlocks;
     h += '<div class="pgsec"><div class="pgsh">Unlocks</div>';
-    if (!u.zones.length && !u.buildings.length && !u.ops.length) {
+    if (!u.zones.length && !(u.specs || []).length && !u.buildings.length && !u.ops.length) {
       h += '<div class="pgsdesc" style="font-size:12px;margin:0">Nothing directly. It is the prerequisite ' +
            (n.gatesFor.length ? 'for ' + esc(n.gatesFor.join(', ')) + '.' : 'for the nodes that connect to it.') + '</div>';
     } else {
       for (const z of u.zones) h += '<div class="pgul">' + esc(z.name) + ' <small>· zone</small></div>';
+      /* 🏙 Layer 2. Labelled "district" rather than "zone" because it is not a
+         zone — it sits on top of one, and a player who read this as a twelfth
+         land use would go looking for it in the wrong half of the panel. */
+      for (const p of (u.specs || [])) h += '<div class="pgul">' + esc(p.name) + ' <small>· district specialisation</small></div>';
       for (const b of u.buildings) h += '<div class="pgul">' + esc(b.name) + ' <small>· building</small></div>';
       for (const o of u.ops) h += '<div class="pgul">' + esc(o.name) + ' <small>· operation</small></div>';
     }

@@ -43,7 +43,7 @@
      never be one.
    ══════════════════════════════════════════════════════════════════════════ */
 
-import { NODES, NODE_BY_ID, CATS, AUTO_NODES, GOVERNED_ZONES, GOVERNED_BUILDINGS } from './tree.js';
+import { NODES, NODE_BY_ID, CATS, AUTO_NODES, GOVERNED_ZONES, GOVERNED_BUILDINGS, GOVERNED_SPECS } from './tree.js';
 import { METRICS, MILESTONES, ACHIEVEMENTS } from './milestones.js';
 
 const SAVE_V = 1;
@@ -71,6 +71,23 @@ export function makeState(ctx) {
     for (const n of NODES) if (has(n.id)) for (const z of (n.zones || [])) out.add(z);
     return Array.from(out);
   }
+  /* 🏙 LAYER 2 — district specialisations (/src/districts). Same three rules as
+     zones, deliberately: unlocked by node, defaulting OPEN for anything this
+     tree has never heard of, and never removed from a tile that already carries
+     one (this module cannot write the district store at all — it only answers
+     questions, and /src/districts asks before it paints). */
+  function unlockedSpecs() {
+    const out = new Set();
+    for (const n of NODES) if (has(n.id)) for (const p of (n.specs || [])) out.add(p);
+    return Array.from(out);
+  }
+  function specUnlocked(id) {
+    if (!id) return true;
+    if (!GOVERNED_SPECS.has(id)) return true;
+    return unlockedSpecs().indexOf(id) >= 0;
+  }
+  function nodeForSpec(id) { return NODES.find((n) => (n.specs || []).indexOf(id) >= 0) || null; }
+
   function unlockedBuildings() {
     const out = new Set();
     for (const n of NODES) if (has(n.id)) for (const b of (n.buildings || [])) out.add(b);
@@ -93,6 +110,7 @@ export function makeState(ctx) {
   /* Which node opens a thing — the sentence a refusal has to be able to say. */
   function nodeForZone(id) { return NODES.find((n) => (n.zones || []).indexOf(id) >= 0) || null; }
   function nodeForBuilding(t) { return NODES.find((n) => (n.buildings || []).indexOf(t) >= 0) || null; }
+
 
   /* ── points ──────────────────────────────────────────────────────────── */
   function earnedPoints() {
@@ -255,12 +273,27 @@ export function makeState(ctx) {
       } catch (e) {}
     }
 
+    /* c) district specialisations already painted on the map. Read from
+          /src/districts rather than handed over, because node-city does not own
+          that store either — it rides the save shelf. Exactly the same
+          belt-and-braces argument as zones: /src/districts refuses to write a
+          locked specialisation, so one on the map can only have come from an
+          unlocked node; adopting it back is what stops a re-costed or renamed
+          node from retro-locking a district a player is already standing in. */
+    const seenSpecs = new Set();
+    try {
+      const D = (typeof window !== 'undefined') ? window.MythicDistricts : null;
+      const per = (D && typeof D.stats === 'function') ? D.stats().per : null;
+      if (per && typeof per === 'object') for (const k in per) if (per[k]) seenSpecs.add(k);
+    } catch (e) {}
+
     for (const n of NODES) {
       if (has(n.id)) continue;
       let owed = false;
       for (const z of (n.zones || [])) if (seenZones.has(z)) owed = true;
+      for (const p of (n.specs || [])) if (seenSpecs.has(p)) owed = true;
       for (const b of (n.buildings || [])) if (seenTypes.has(b)) owed = true;
-      /* c) a licence the player already holds. Only for LEGACY cities: on a
+      /* d) a licence the player already holds. Only for LEGACY cities: on a
             city that started with this feature, holding the licence is a
             PREREQUISITE, not an entitlement — you still spend the points. */
       if (!owed && S.legacy && n.licence) {
@@ -332,6 +365,7 @@ export function makeState(ctx) {
   return {
     S, has, unlock, status, points, earnedPoints,
     unlockedZones, unlockedBuildings, zoneUnlocked, buildingUnlocked,
+    unlockedSpecs, specUnlocked, nodeForSpec,
     nodeForZone, nodeForBuilding, licenceState,
     readMetrics, catRollup, tick, adopt, on, fire,
     save, load,

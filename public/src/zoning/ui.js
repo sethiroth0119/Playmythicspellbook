@@ -122,6 +122,12 @@ export function mountUI(api, ctx) {
     + '<button class="nzt" type="button" data-act="off">🚫 Stop zoning</button>'
     + '</div>'
     + '<div id="nz-pal">' + paletteHtml() + '</div>'
+    /* 🏙 LAYER 2 lives here and is OWNED BY /src/districts — this file creates
+       the container and nothing else. Absent module ⇒ an empty div, and the
+       panel is byte-for-byte the one that shipped. It sits directly under the
+       land-use palette because the specialisation is a property of the brush
+       that palette arms, not a separate tool. */
+    + '<div id="nz-spec"></div>'
     + '<div id="nz-gate"></div>'
     + '<div class="nzft"><div class="nzsel" id="nz-sel"></div>'
     + '<button class="nzgo" type="button" data-act="develop" id="nz-go">🏗 Develop</button></div>';
@@ -143,6 +149,26 @@ export function mountUI(api, ctx) {
   }
 
   function zdef(id) { return api.ZONE_BY_ID[id] || null; }
+
+  /* 🏙 THE SPECIALISATION ON THE BRUSH, read LIVE at every write rather than
+     mirrored into a local. /src/districts owns which spec is armed (it is the
+     module that can refuse a locked one and name the node), and a copy kept
+     here would go stale the moment the research tree unlocked something.
+     ⚠ `undefined` — NOT null — when the module is absent or the armed spec is
+       not in this zone's family. setZone reads undefined as "the caller said
+       nothing about layer 2", which is exactly what a build with no
+       /src/districts is saying. Passing null would mean "explicitly General"
+       and would erase a specialisation the player painted with a newer build. */
+  function brushSpec() {
+    try {
+      const D = window.MythicDistricts;
+      if (!D || !D.armedFor) return undefined;
+      const d = zdef(zone);
+      if (!d) return undefined;
+      const s = D.armedFor(d.cat);
+      return s || null;
+    } catch (e) { return undefined; }
+  }
 
   /* ══ 🚦 "ZONED, BUT NOTHING WILL MOVE IN" ═════════════════════════════════
      THE DEFECT THIS CLOSES IS A SILENCE. node-city grows its citizenry only
@@ -227,6 +253,16 @@ export function mountUI(api, ctx) {
             (st.siteCap || 'a few') + ' under construction at once, each paying the shipped price as it starts. One summary at the end, not one toast per tile.'
           : 'Zoned plots need to be empty and to touch a road before anything can be raised on them.';
       }
+    }
+    /* 🏙 The specialisation row, redrawn every time the panel is. It has to be
+       redrawn rather than toggled because everything on it is live: the floor
+       band moves with the city's land value, and the lock state moves with the
+       research tree. */
+    const sp = panel.querySelector('#nz-spec');
+    if (sp) {
+      let drew = false;
+      try { const D = window.MythicDistricts; if (D && D.renderSpecRow) drew = D.renderSpecRow(sp, zone); } catch (e) { drew = false; }
+      if (!drew) sp.innerHTML = '';
     }
     const gate = panel.querySelector('#nz-gate');
     if (gate) gate.innerHTML = gateHtml();
@@ -355,9 +391,9 @@ export function mountUI(api, ctx) {
     erase = ev.button === 2;
     drag = { x0: t.x, z0: t.z, x1: t.x, z1: t.z };
     const target = erase ? null : zone;
-    if (tool === 'paint') api.applyPaint(t.x, t.z, target);
+    if (tool === 'paint') api.applyPaint(t.x, t.z, target, erase ? undefined : brushSpec());
     else if (tool === 'fill') {
-      const r = api.applyFill(t.x, t.z, target);
+      const r = api.applyFill(t.x, t.z, target, erase ? undefined : brushSpec());
       if (r.capped && ctx.toast) ctx.toast('🪣 Fill stopped at ' + r.total + ' tiles — that run of land is not closed off by roads. Draw a road, or use the marquee.', 'bad');
       drag = null;
     } else holdControls();
@@ -372,7 +408,7 @@ export function mountUI(api, ctx) {
       if (t) { drag.x1 = t.x; drag.z1 = t.z; }
       // Paint keeps painting as the pointer is dragged — a one-cell tool that
       // needs one click per cell is unusable on a 24x24 board.
-      if (tool === 'paint' && t) api.applyPaint(t.x, t.z, erase ? null : zone);
+      if (tool === 'paint' && t) api.applyPaint(t.x, t.z, erase ? null : zone, erase ? undefined : brushSpec());
     }
     showPreview(t);
   }
@@ -384,7 +420,7 @@ export function mountUI(api, ctx) {
     releaseControls();
     if (hot(ev)) { ev.preventDefault(); ev.stopPropagation(); }
     if (wasMarquee && r) {
-      const res = api.applyRect(r.x0, r.z0, r.x1, r.z1, erase ? null : zone);
+      const res = api.applyRect(r.x0, r.z0, r.x1, r.z1, erase ? null : zone, erase ? undefined : brushSpec());
       /* 🍞 ONE LINE FOR THE WHOLE DRAG. A marquee across 40 tiles that changed
          34 of them must say so once — see develop()'s note on why per-tile
          reporting is not an option. Roads inside the rectangle are the usual
@@ -392,8 +428,10 @@ export function mountUI(api, ctx) {
          reason and lets the overlay show the shape. */
       if (ctx.toast && res.total > 1) {
         const d = zdef(zone);
+        const sp = erase ? null : brushSpec();
+        const sd = sp && window.MythicDistricts && window.MythicDistricts.specDef(sp);
         ctx.toast((erase ? '🧽 De-zoned ' : (d ? d.ico + ' Zoned ' : 'Zoned ')) + res.changed + ' of ' + res.total + ' tiles'
-          + (erase ? '' : ' as ' + (d ? d.name : zone))
+          + (erase ? '' : ' as ' + (d ? d.name : zone) + (sd ? ' · ' + sd.ico + ' ' + sd.name : ''))
           + (res.changed < res.total ? ' — the rest were roads or already that zone.' : '.'),
           res.changed ? 'good' : 'bad');
       }

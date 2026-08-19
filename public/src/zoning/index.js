@@ -116,8 +116,23 @@ export function mount(ctx) {
   }
   let _gateShut = false;
   const dormantOf = (k, id) => _gateShut && !!(ZONE_BY_ID[id] && ZONE_BY_ID[id].cat === 'res');
+
+  /* 🏙 LAYER 2 — DISTRICT SPECIALISATION (/src/districts), asked through ONE
+     accessor so every call site fails the same way.
+     ─────────────────────────────────────────────────────────────────────────
+     A specialisation is a SECOND tag on a tile that already carries a zone. It
+     never replaces the zone and it never changes how an unspecialised tile
+     behaves: every seam below hands back exactly what this module computed on
+     its own when the answer is "no specialisation here".
+     ⚠ ABSENT ⇒ TODAY'S GAME, in all four directions — no module, a module that
+       has not mounted, a spec id from a newer build, and a spec whose family no
+       longer matches the zone under it all take the same path. */
+  const DIS = () => { try { return window.MythicDistricts || null; } catch (e) { return null; } };
+  /* The overlay's per-tile mark. Returns null (draw nothing) unless the tile
+     really carries a live specialisation — see /src/districts markAt(). */
+  const specOf = (k, id) => { try { const D = DIS(); return (D && D.markAt) ? D.markAt(k, id) : null; } catch (e) { return null; } };
   function sync() {
-    if (ov) { ov.rebuild(G.zones, colOf, dormantOf); ov.setVisible(_overlayOn); }
+    if (ov) { ov.rebuild(G.zones, colOf, dormantOf, specOf); ov.setVisible(_overlayOn); }
     if (_onChange) { try { _onChange(); } catch (e) {} }
   }
   /* The verdict moves on the city's clock, not on the player's edits, so the
@@ -132,7 +147,7 @@ export function mount(ctx) {
       const shut = !!(g && !g.open);
       if (shut === _gateShut) return;
       _gateShut = shut;
-      if (ov) { ov.rebuild(G.zones, colOf, dormantOf); ov.setVisible(_overlayOn); }
+      if (ov) { ov.rebuild(G.zones, colOf, dormantOf, specOf); ov.setVisible(_overlayOn); }
       if (_onChange) { try { _onChange(); } catch (e) {} }
     }, GATE_POLL_MS);
   } catch (e) {}
@@ -192,6 +207,22 @@ export function mount(ctx) {
   }
 
   /* ══ WRITING ZONES ════════════════════════════════════════════════════════ */
+  /* 🏙 THE SPECIALISATION ARGUMENT IS THREE-VALUED AND ALL THREE ARE USED.
+       undefined  the caller said nothing about layer 2 — keep whatever is on
+                  the tile if the new zone is still in its family, drop it if
+                  not. This is what every pre-existing caller does, so nothing
+                  that called setZone before this feature changed behaviour.
+       null       explicitly "General" — clear it.
+       '<id>'     paint it, if /src/districts says it is real, in the right
+                  family and unlocked.
+     ⚠ ORDER: the ZONE is written FIRST, because /src/districts decides what
+       happens to the specialisation by asking which family the tile is zoned
+       for NOW. Writing them the other way round drops every specialisation
+       that is painted at the same time as its zone. */
+  function specWrite(x, z, k, id, spec) {
+    try { const D = DIS(); return !!(D && D.onZone && D.onZone(x, z, id, spec)); }
+    catch (e) { return false; }
+  }
   function setZone(x, z, id, opt) {
     if (!inGrid(x, z)) return false;
     // 🛤 Roads are not zoned. A carriageway is not land use, and letting the
@@ -199,29 +230,39 @@ export function mount(ctx) {
     if (isRoad(x, z)) return false;
     if (id != null && !ZONE_BY_ID[id]) return false;
     const k = key(x, z), was = G.zones[k] || null;
-    if ((was || null) === (id || null)) return false;
-    if (id) G.zones[k] = id; else delete G.zones[k];
+    const spec = (opt && ('spec' in opt)) ? opt.spec : undefined;
+    const zoneSame = (was || null) === (id || null);
+    /* 🔴 A PAINT THAT CHANGES ONLY THE SPECIALISATION IS STILL A CHANGE.
+       This used to `return false` the moment the zone id matched, which is
+       correct for layer 1 and silently wrong for layer 2: painting
+       "Commercial · high density + 🃏 Mythic Retail" over a block that is
+       ALREADY high-density commercial is the single most likely gesture in the
+       whole feature, and it would have done nothing at all. */
+    if (zoneSame && spec === undefined) return false;
+    if (!zoneSame) { if (id) G.zones[k] = id; else delete G.zones[k]; }
+    const specChanged = specWrite(x, z, k, id, spec);
+    if (zoneSame && !specChanged) return false;
     const t = (G.tiles || {})[k];
-    if (t && t.type === 'housing' && archOn(x, z, was) !== archOn(x, z, id)) queueRestyle(x, z);
+    if (!zoneSame && t && t.type === 'housing' && archOn(x, z, was) !== archOn(x, z, id)) queueRestyle(x, z);
     if (!opt || !opt.bulk) { sync(); saveSoon(); }
     return true;
   }
 
   /* PAINT — one cell. */
-  function applyPaint(x, z, id) {
-    const n = setZone(x, z, id) ? 1 : 0;
+  function applyPaint(x, z, id, spec) {
+    const n = setZone(x, z, id, { spec }) ? 1 : 0;
     return { changed: n, total: 1 };
   }
 
   /* MARQUEE — a rectangle of any size, inclusive of both corners. */
-  function applyRect(x0, z0, x1, z1, id) {
+  function applyRect(x0, z0, x1, z1, id, spec) {
     const ax = Math.min(x0, x1), bx = Math.max(x0, x1);
     const az = Math.min(z0, z1), bz = Math.max(z0, z1);
     let changed = 0, total = 0;
     for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) {
       if (!inGrid(x, z)) continue;
       total++;
-      if (setZone(x, z, id, { bulk: true })) changed++;
+      if (setZone(x, z, id, { bulk: true, spec })) changed++;
     }
     if (changed) { sync(); saveSoon(); }
     return { changed, total };
@@ -230,10 +271,14 @@ export function mount(ctx) {
   /* FILL — flood the contiguous run of land that currently shares the clicked
      cell's zone (unzoned counts as a zone of its own), bounded by roads and by
      the board edge. That is what makes one click mean "this block". */
-  function applyFill(x, z, id) {
+  function applyFill(x, z, id, spec) {
     if (!inGrid(x, z) || isRoad(x, z)) return { changed: 0, total: 0, capped: false };
     const from = zoneAt(x, z);
-    if ((from || null) === (id || null)) return { changed: 0, total: 0, capped: false };
+    /* ⚠ `spec === undefined` is the only case where "same zone" means "nothing
+       to do". With a specialisation on the brush the flood is exactly how a
+       player specialises a block they already zoned last week, so the early
+       return has to let that through. */
+    if ((from || null) === (id || null) && spec === undefined) return { changed: 0, total: 0, capped: false };
     const seen = {}, stack = [[x, z]], hit = [];
     let capped = false;
     while (stack.length) {
@@ -248,7 +293,7 @@ export function mount(ctx) {
       stack.push([cx + 1, cz], [cx - 1, cz], [cx, cz + 1], [cx, cz - 1]);
     }
     let changed = 0;
-    for (const [hx, hz] of hit) if (setZone(hx, hz, id, { bulk: true })) changed++;
+    for (const [hx, hz] of hit) if (setZone(hx, hz, id, { bulk: true, spec })) changed++;
     if (changed) { sync(); saveSoon(); }
     return { changed, total: hit.length, capped };
   }
@@ -293,6 +338,16 @@ export function mount(ctx) {
      whole mix is unbuildable for some other reason (every id retired) reaches
      this too, and must not be told it is a land value problem. */
   function landRefusal(at) {
+    /* 🏙 THE SPECIALISED PLOT IS ASKED FIRST, and the reason is that the generic
+       sentence is true and useless on one: "nothing this zone builds wants a
+       plot here" is a puzzling thing to read on land that is plainly zoned
+       commercial in a busy district. /src/districts owns the sentence for a
+       specialised tile because it owns the mix that was refused — the same
+       "the model owns its own explanation" rule /src/landvalue states. */
+    try {
+      const D = DIS();
+      if (D && D.refusal && at) { const r = D.refusal(at.x, at.z); if (r) return r; }
+    } catch (e) {}
     try {
       const LVm = window.MythicLandValue;
       if (LVm && LVm.ready() && at) return LVm.refusal(at.x, at.z);
@@ -322,6 +377,16 @@ export function mount(ctx) {
        means no filter at all and this behaves exactly as it did before. */
   function typeFor(zdef, x, z) {
     let bag = MIX[zdef.id] || [];
+    /* 🏙 LAYER 2 FIRST, LAND VALUE SECOND, AND THAT ORDER IS THE DESIGN.
+       A specialisation decides WHICH SET of businesses want this district; land
+       value decides which of them this particular plot can hold. Running them
+       the other way round would let a Marginal plot inside a Mythic Retail
+       district develop a food truck, because the band's own tenant list would
+       have been consulted before anyone asked what the district is for.
+       ⚠ Unspecialised ⇒ `bag` comes back byte-identical and the two lines below
+         are the only difference between this function and the one that shipped. */
+    try { const D = DIS(); if (D && D.mixFor) bag = D.mixFor(x, z, zdef.id, bag) || []; }
+    catch (e) { bag = MIX[zdef.id] || []; }
     if (!bag.length) return null;
     try {
       const LVm = window.MythicLandValue;
@@ -342,9 +407,20 @@ export function mount(ctx) {
     if (zdef.arch && t.type === 'housing') return true;               // residential
     return (MIX[zdef.id] || []).indexOf(t.type) >= 0;
   }
-  function targetLvl(zdef, t) {
+  function targetLvl(zdef, t, x, z) {
     const def = BUILDINGS[t.type] || {};
-    return Math.min(zdef.lvl | 0, def.maxLvl || MAX_LVL);
+    /* 🏙 A specialisation may raise the level target — a Luxury street is the
+       same buildings BUILT TALLER, and that is one of the two honest ways two
+       specs whose mixes overlap differ on the map. It can only ever RAISE it
+       (Math.max), never lower one: a player who zoned high density and then
+       specialised the block must not silently lose height, and the building's
+       own `maxLvl` still clamps the answer immediately below. */
+    let want = zdef.lvl | 0;
+    try {
+      const D = DIS();
+      if (D && D.levelFor && x != null) { const l = D.levelFor(x, z, zdef.id) | 0; if (l > want) want = l; }
+    } catch (e) {}
+    return Math.min(want, def.maxLvl || MAX_LVL);
   }
   /* THE PLAN IS TWO LISTS, and the second one is the reason "high density"
      means anything on land that is already built: `out` is vacant plots to
@@ -373,7 +449,7 @@ export function mount(ctx) {
         if (t.bld) { skip.building++; continue; }
         // ⚠ A damaged building is never grown: an upgrade on a wreck is money
         //    spent on something the player has to repair anyway.
-        if (!t.damaged && belongs(d, t) && (t.lvl | 0) < targetLvl(d, t)) grow.push({ x, z, t, zone: d });
+        if (!t.damaged && belongs(d, t) && (t.lvl | 0) < targetLvl(d, t, x, z)) grow.push({ x, z, t, zone: d });
         else skip.occupied++;
         continue;
       }
@@ -393,7 +469,7 @@ export function mount(ctx) {
     for (const p of (list || [])) { try { const c = ctx.costOf(p.type, 1); cin += (c && c.cinder) | 0; } catch (e) {} }
     for (const p of (grow || [])) {
       try {
-        for (let l = (p.t.lvl | 0) + 1; l <= targetLvl(p.zone, p.t); l++) {
+        for (let l = (p.t.lvl | 0) + 1; l <= targetLvl(p.zone, p.t, p.x, p.z); l++) {
           const c = ctx.costOf(p.t.type, l); cin += (c && c.cinder) | 0;
         }
       } catch (e) {}
@@ -569,7 +645,7 @@ export function mount(ctx) {
       return true;
     }
     if (tileAt(job.x, job.z) !== job.t) return true;      // it moved under us; re-plan next permit
-    if (await growTo(job.t, job.x, job.z, targetLvl(job.zone, job.t))) { run.grown++; run.raised++; run.streak = 0; }
+    if (await growTo(job.t, job.x, job.z, targetLvl(job.zone, job.t, job.x, job.z))) { run.grown++; run.raised++; run.streak = 0; }
     else noteRefusal(run, k, 'Could not afford to grow ' + ((BUILDINGS[job.t.type] || {}).name || job.t.type) + ' any taller.');
     return true;
   }
@@ -786,6 +862,11 @@ export function mount(ctx) {
           ' zoned plot' + (p.out.length + p.grow.length === 1 ? '' : 's') + ' left to build out.');
       }
     }
+    /* 🏙 Layer 2 reconciles AFTER the zone map is final — a specialisation whose
+       tile is no longer zoned for its family is dropped, and it can only be
+       known to be stale once the grandfather sweep above has run. Guarded: no
+       module, no reconcile, and the save slice simply rides untouched. */
+    try { const D = DIS(); if (D && D.afterLoad) D.afterLoad(); } catch (e) {}
     sync();
     return { zoned: Object.keys(G.zones).length, developing: !!_run, sites: devSites() };
   }
@@ -799,7 +880,13 @@ export function mount(ctx) {
       if ((G.tiles || {})[k]) developed++; else empty++;
     }
     const cfg = devCfg();
+    /* 🏙 The layer-2 read, asked rather than mirrored. Absent module ⇒ zero and
+       no `specPer` key at all, which is what the panel already treats as "no
+       specialisations in this city". */
+    let spec = null;
+    try { const D = DIS(); if (D && D.stats) spec = D.stats(); } catch (e) {}
     return { zoned: Object.keys(G.zones).length, per, developed, empty,
+             specialised: spec ? (spec.specialised | 0) : 0, specPer: spec ? spec.per : null,
              overlay: !!(ov && ov.visible()),
              /* The panel's whole read of the run — one call, so the button, the
                 status line and a diagnostic all quote the same numbers. */
@@ -822,12 +909,17 @@ export function mount(ctx) {
     stopDevelop: () => stopDev('paused'),
     devSite, devSites, step: () => tickDev(),
     stats, sync,
-    overlay: (v) => { _overlayOn = v == null ? !_overlayOn : !!v; if (ov) { ov.rebuild(G.zones, colOf, dormantOf); ov.setVisible(_overlayOn); } return _overlayOn; },
+    overlay: (v) => { _overlayOn = v == null ? !_overlayOn : !!v; if (ov) { ov.rebuild(G.zones, colOf, dormantOf, specOf); ov.setVisible(_overlayOn); } return _overlayOn; },
     /* 🚦 The growth-gate verdict this module is drawing, and how many tiles the
        film marked dormant. Read by the panel, and the seam a driver asserts on
        — a colour is not a measurement. */
     gate: () => gateVerdict(),
     dormantTiles: () => (ov ? ov.dormant() : 0),
+    /* 🏙 The layer-2 seam, re-exported so a caller holding MythicZoning does not
+       have to know /src/districts exists. Every one of these is null/0/no-op
+       when the module is absent. */
+    specAt: (x, z) => { try { const D = DIS(); return D && D.specAt ? D.specAt(x, z) : null; } catch (e) { return null; } },
+    specMarks: () => (ov ? ov.marks() : 0),
     preview: (rect, hex) => { if (ov) ov.preview(rect, hex); },
     /* Diagnostics: predict() answers "what would the district roll build here",
        selfTest() checks this module's copy of makeHousing's weights against
@@ -845,6 +937,12 @@ export function mount(ctx) {
      one of these is a no-op if the DOM half failed to mount, and applyPaint /
      applyRect / applyFill / develop all work without it. */
   api.panel = (v) => (ui ? ui.open(v == null ? true : v) : null);
+  /* The panel's REAL open state, so a launcher can toggle it without keeping a
+     flag of its own. It has to be asked rather than mirrored: the panel also
+     closes itself when the player picks a building out of the build bar (see
+     ui.js `onMode`), and a caller's own flag would be wrong from that moment
+     on — the next press of its key would "close" an already-closed panel. */
+  api.panelOpen = () => (ui ? ui.isOpen() : false);
   api.tool = (t) => (ui ? ui.tool(t) : null);
   api.select = (z) => (ui ? ui.zone(z) : null);
   api.armed = (v) => (ui ? ui.armed(v) : false);

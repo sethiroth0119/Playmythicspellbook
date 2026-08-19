@@ -58,6 +58,42 @@ export const METRICS = {
       return { ok: true, value: Math.floor(v) };
     },
   },
+  /* 🏙 THE ONE METRIC THAT IS NOT A HOST READER, AND WHY IT IS ALLOWED TO BE.
+     ─────────────────────────────────────────────────────────────────────────
+     The rule at the top of this file is that a number enters through `read(ctx)`
+     and that `ctx` is the hand-over, because `game`, `cityPop` and the rest are
+     top-level `const` in node-city and invisible here (CLAUDE.md, the globals
+     trap). `window.MythicDistricts` is a DIFFERENT KIND OF THING: it is a
+     sibling ES module that publishes itself on `window` exactly so other
+     modules can ask it, the same way /src/zoning asks /src/landvalue and
+     /src/districts asks /src/progression. There is nothing for node-city to
+     hand over — it does not own this number either.
+
+     🔴 IT COUNTS BUILT DISTRICT TILES, NOT PAINTED ONES, AND THAT IS THE WHOLE
+        DESIGN OF THE MILESTONE. Painting is free: a player could drag a marquee
+        across 200 tiles and collect every district milestone in one gesture
+        without building anything, which is a milestone that measures a mouse
+        rather than a city. A tile counts here only once something is STANDING
+        on it, which costs the shipped price, takes construction time and needs
+        land the band ladder will actually take.
+     ⚠ ABSENT ⇒ UNMEASURABLE, NOT ZERO. A build with no /src/districts reports
+       the real reason and its milestones show as unmeasurable, exactly like a
+       host reader that was never handed over. Zero would be a claim that this
+       city has no districts, which is a different statement from "nothing here
+       can see whether it does". */
+  district: {
+    id: 'district', label: 'District tiles built', unit: '',
+    source: 'window.MythicDistricts.stats().built — specialised tiles with a building standing on them, not tiles merely painted',
+    read: () => {
+      let D = null;
+      try { D = (typeof window !== 'undefined') ? window.MythicDistricts : null; } catch (e) { D = null; }
+      if (!D || typeof D.stats !== 'function') return { ok: false, why: '/src/districts is not loaded, so nothing here can count district tiles' };
+      let v;
+      try { v = D.stats().built; } catch (e) { return { ok: false, why: 'MythicDistricts.stats() threw: ' + (e && e.message || e) }; }
+      if (!Number.isFinite(v)) return { ok: false, why: 'MythicDistricts.stats().built answered ' + String(v) };
+      return { ok: true, value: Math.floor(v) };
+    },
+  },
   cinderRate: {
     id: 'cinderRate', label: 'Net Cinder per minute', unit: ' 🔥/min',
     source: 'node-city prodPerMin.cinder, handed over as ctx.cinderRate() — the same figure the ledger card prints',
@@ -79,11 +115,31 @@ export const METRICS = {
    `at` is the threshold on `metric`; `pts` is what passing it pays.
    Names are CS2's register — a rung a player can repeat back.
 
-   The arithmetic is deliberate and is checked by `pointsAvailable()` in
-   tree.js's sibling: 48 points on offer against a 46-point tree, so a city
-   that reaches every milestone clears the tree with two to spare. It is NOT
-   possible to clear the tree early — the last four nodes cost 15 between them
-   and the last two milestones pay 11. */
+   🔴 THE ARITHMETIC IS DELIBERATE AND IT IS AN INVARIANT, NOT A COINCIDENCE:
+   a city that reaches every milestone clears the tree with a little to spare,
+   and it can never clear it early. Anyone adding a node MUST re-check it,
+   because a tree that cannot be finished is a design regression that looks
+   completely fine in review — the panel footer prints both halves
+   (`N nodes · X ⬡ to clear · Y ⬡ on offer`) and would go on printing them
+   while the last branch quietly became unreachable.
+
+   ⚠ IT HAS BEEN RE-CHECKED ONCE ALREADY, AND THE FIGURES BELOW ARE COUNTED
+     FROM THE TABLES RATHER THAN REMEMBERED — the first draft of this note said
+     "7 nodes, +26 ⬡" and the tree says otherwise. The district-specialisation
+     branch is EIGHT new nodes costing 28 ⬡ between them (com_district 2,
+     com_night 3, com_luxury 4, off_district 2, ind_district 2, myth_press 4,
+     myth_street 5, myth_arena 6; off_high and ind_ware also gained a `specs`
+     key but existed and were paid for already). The five milestones marked 🏙
+     below are what pay for it — four of them off the district metric the branch
+     itself creates, which is the CS2 shape: the thing you build is what pays
+     for the next thing you build. Today: 76 ⬡ on offer against a 74 ⬡ tree,
+     which is `totalPointsOnOffer()` against the sum of every node cost and is
+     the pair to re-run, not to re-read.
+   ⚠ AND THE DEGRADED CASE IS REAL. With /src/districts absent, 22 of those
+     ⬡ are unmeasurable and the five specialisation nodes unlock nothing —
+     which the panel already renders correctly (`sci_urban` has always unlocked
+     nothing directly and says so). The city is not harmed; the branch is
+     simply not worth buying, and nothing on screen claims otherwise. */
 export const MILESTONES = [
   { id: 'ms_pop_10',    metric: 'pop', at: 10,   pts: 2, name: 'Hamlet',        desc: 'Ten people who chose to live here.' },
   { id: 'ms_built_10',  metric: 'built', at: 10, pts: 2, name: 'Ground Broken', desc: 'Ten finished buildings — a settlement rather than a site.' },
@@ -99,6 +155,17 @@ export const MILESTONES = [
   { id: 'ms_pop_400',   metric: 'pop', at: 400,  pts: 5, name: 'City',          desc: 'Four hundred. It is a city now by any definition the game uses.' },
   { id: 'ms_built_100', metric: 'built', at: 100, pts: 5, name: 'Sprawl',       desc: 'A hundred buildings standing.' },
   { id: 'ms_pop_800',   metric: 'pop', at: 800,  pts: 6, name: 'Metropolis',    desc: 'Eight hundred residents in one city.' },
+  /* 🏙 THE FIVE THAT PAY FOR THE SPECIALISATION BRANCH — see the note above. */
+  { id: 'ms_dist_1',    metric: 'district', at: 1,  pts: 3, name: 'First District',
+    desc: 'One block that is not just "commercial" any more — something opened on land you told what it was for.' },
+  { id: 'ms_dist_10',   metric: 'district', at: 10, pts: 5, name: 'Neighbourhoods',
+    desc: 'Ten built district plots. Streets that are recognisably for something.' },
+  { id: 'ms_dist_30',   metric: 'district', at: 30, pts: 7, name: 'A City of Districts',
+    desc: 'Thirty. Enough that a stranger could tell your quarters apart from the air.' },
+  { id: 'ms_dist_60',   metric: 'district', at: 60, pts: 7, name: 'Every Street Has a Job',
+    desc: 'Sixty built district plots — most of the working city is somewhere on purpose.' },
+  { id: 'ms_built_150', metric: 'built', at: 150, pts: 6, name: 'Metropolitan',
+    desc: 'A hundred and fifty buildings standing at once.' },
 ];
 
 export function totalPointsOnOffer() {

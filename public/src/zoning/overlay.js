@@ -60,7 +60,7 @@ export function makeOverlay(THREE, scene, HALF) {
   scene.add(prev);
 
   const _c = new THREE.Color();
-  let _built = 0, _dorm = 0;
+  let _built = 0, _dorm = 0, _spec = 0;
 
   /* ⏸ THE DORMANT LOOK — zoned land that will NOT be built out or moved into.
      ─────────────────────────────────────────────────────────────────────────
@@ -96,6 +96,18 @@ export function makeOverlay(THREE, scene, HALF) {
      on every housing recipe in the game. */
   const PIP_W = 0.06, PIP_H = 0.24, PIP_GAP = 0.05;
   const PIP_CX = 0.26, PIP_CZ = 0.26;   // tile-local centre of the ⏸ mark
+  /* 🏙 THE SPECIALISATION MARK (/src/districts, layer 2). A small filled square
+     in the OPPOSITE corner from the ⏸ pause mark, which is the whole reason it
+     is at .74 and not somewhere prettier: a dormant, specialised tile carries
+     both, and two marks in one corner read as one smudge.
+     ⚠ THE ZONE'S OWN HUE IS UNTOUCHED. Density-as-value inside a family hue is
+       the convention this overlay's header is emphatic about, and tinting the
+       field by specialisation would spend it. The mark is additive and says
+       exactly one thing: this block is specialised, and (gold vs bone) whether
+       it is a 🃏 card district. It does not claim you can read one of thirteen
+       specialisations off a corner square, because you cannot. */
+  const SPEC_S = 0.17;                  // side of the mark
+  const SPEC_CX = 0.74, SPEC_CZ = 0.74; // tile-local centre
   /* 🔴 AND THE HONEST LIMIT OF ALL OF THIS, MEASURED RATHER THAN ASSUMED: on a
      FULLY BUILT high-density plot none of it is visible, because a level-5
      tower covers its whole tile and this film is a GROUND film. Photographed
@@ -112,9 +124,12 @@ export function makeOverlay(THREE, scene, HALF) {
   /* zones: { "x,z": zoneId }   colOf: id => 0xRRGGBB | null
      dormantOf: (key, id) => bool | null — optional; absent means nothing is
      dormant and the film is byte-for-byte what it was before this existed. */
-  function rebuild(zones, colOf, dormantOf) {
+  /* specOf: (key, id) => {r,g,b} | null — optional, LINEAR colour. Absent means
+     nothing is marked and the film is byte-for-byte what it was before layer 2
+     existed. */
+  function rebuild(zones, colOf, dormantOf, specOf) {
     const pos = [], col = [];
-    _dorm = 0;
+    _dorm = 0; _spec = 0;
     const push = (x0, z0, x1, z1, y, r, g, b) => {
       // two triangles, CCW seen from above
       pos.push(x0, y, z0,  x1, y, z0,  x1, y, z1,
@@ -160,6 +175,15 @@ export function makeOverlay(THREE, scene, HALF) {
              FILL_Y + 0.002, DORM_RIM.r, DORM_RIM.g, DORM_RIM.b);
         _dorm++;
       }
+      if (specOf) {
+        let m = null;
+        try { m = specOf(k, id); } catch (e) { m = null; }
+        if (m) {
+          const sx = wx + SPEC_CX, sz = wz + SPEC_CZ, h = SPEC_S / 2;
+          push(sx - h, sz - h, sx + h, sz + h, FILL_Y + 0.002, m.r, m.g, m.b);
+          _spec++;
+        }
+      }
       n++;
     }
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -201,5 +225,5 @@ export function makeOverlay(THREE, scene, HALF) {
      photographing it — the harness truncates console lines and a screenshot of
      a colour is not a measurement. */
   return { rebuild, setVisible, visible, preview, dispose,
-           count: () => _built, dormant: () => _dorm };
+           count: () => _built, dormant: () => _dorm, marks: () => _spec };
 }

@@ -49,8 +49,10 @@ commit or not at all.
 
 ## 3. What is on the branch
 
-18 feature modules under `public/src/`, each registered on a `window.Mythic*`
+Feature modules under `public/src/`, each registered on a `window.Mythic*`
 global, each guarded so a 404 costs the player that feature and nothing else.
+`node .gauntlet/modcheck.mjs` prints the live count — do not trust a number
+written in this table, trust that command.
 
 | Module | Global | What it owns |
 |---|---|---|
@@ -67,9 +69,19 @@ global, each guarded so a 404 costs the player that feature and nothing else.
 | `transit` | `MythicTransit` | Bus Company and Rail Operator, stops, stations, player-built routes |
 | `broadcast` | `MythicBroadcast` | Emergency Broadcast — the phone feed |
 | `parking` | — | kerbside bays and parked vehicles |
+| `crowd` | — | the standing crowd: tile-seeded figures on footway and kerb, placed against `MythicParking.spots()` |
+| `parcel` | — | the plot under everything that is not housing — paving, hardstanding, plaza, boundary, props |
+| `citizen` | `MythicCitizen` | the citizen dossier. It refuses to print Age and Job level because nothing models them |
+| `budget` | `MythicBudget` | the city budget, every line named — and the two the ledger cannot name, said so |
+| `progression` | `MythicProgress` | the research tree: licences, zone unlocks, building unlocks (both enforced) |
+| `landvalue` | `MythicLandValue` | what the ground is worth, five bands, and the tenant filter `/src/zoning` develops through |
+| `districts` | `MythicDistricts` | Layer 2 — district specialisations, including the 🃏 Mythic card districts |
 
 Plus `city`, `economy`, `trading`, `community`, `resonance`, `nodes`,
-`resources`, `sprites` from before this work.
+`resources`, `sprites`, `battle` from before this work.
+
+⚠ `landvalue` and `districts` landed after the section-7 loop table below was
+written. Their evidence is in the commits, not in that table.
 
 ## 4. The save layer — read this before wiring the cloud
 

@@ -85,7 +85,14 @@
   /* ── 10. INDUSTRIAL + OFFICE, on their own families ───────────────────── */
   const ind = cand.filter(c => !G.zones[c.x + ',' + c.z]).slice(0, 3);
   if (ind[0]) { Z.applyPaint(ind[0].x, ind[0].z, 'i_mfg', 'i_cards'); R.cardWorks = nc.districtAt(ind[0].x, ind[0].z); }
-  if (ind[1]) { Z.applyPaint(ind[1].x, ind[1].z, 'o_low', 'o_tech'); R.officeTech = nc.districtAt(ind[1].x, ind[1].z); }
+  /* 🔒 A DELIBERATE LOCKED WRITE. `o_tech` is opened by `sci_lab` (the Research
+     Division), which is NOT in the grant list above — so this asks the store
+     directly for a specialisation the tree has not opened. It must be refused
+     and counted, and `verify()` must then report that a caller bypassed arm().
+     That path is otherwise unreachable, and it is the belt behind the braces. */
+  if (ind[1]) { Z.applyPaint(ind[1].x, ind[1].z, 'o_low', 'o_tech');
+                R.lockedWriteProbe = { asked: 'o_tech (sci_lab not granted)', got: D.specAt(ind[1].x, ind[1].z),
+                                       counted: D.stats().lockedWrites }; }
   /* a commercial spec on an industrial zone must be IGNORED, not applied */
   if (ind[2]) {
     Z.applyPaint(ind[2].x, ind[2].z, 'i_mfg', 'c_mythic');

@@ -17,6 +17,11 @@
       facts decide WHO WINS. Nothing in this file is read by bid.js except
       `size.rentBearing`, which is disclosed in the panel as a company attribute
       and not as a fact about the city.
+      ✅ AND "IN THE PANEL" IS NOW TRUE. It was not when this paragraph was
+         written: `grep -n "rentBearing\\|fiction" ../tenants/ui.js` found
+         nothing. The list is `FICTION` in tuning.js, published as
+         `MythicTenants.fiction()` and printed under WHAT IS INVENTED HERE —
+         one list, in the file that holds the numbers, rendered by the panel.
 
    🔴 DETERMINISTIC, ALWAYS. Candidate #7 for `shop` is the same company with
       the same name and the same size in every session, on every device, before

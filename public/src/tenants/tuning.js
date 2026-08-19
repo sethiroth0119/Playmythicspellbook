@@ -84,8 +84,24 @@ export const TEN = {
      Both numbers are FICTION about a company, disclosed here and in the panel,
      and neither of them is a fact about the city. Every fact in the bid is
      measured; these two decide which company those facts suit.
+     ✅ "AND IN THE PANEL" IS NOW TRUE. It was not: `grep -n "rentBearing\\|fiction"
+        ui.js` found nothing, so this file and pool.js both claimed a disclosure
+        that no player could ever read. `FICTION` at the foot of this file is
+        published as `MythicTenants.fiction()` and printed by ui.js under WHAT
+        IS INVENTED HERE. A claim about a disclosure is itself a claim. */
 
-  /* ── ⚖ THE BID ────────────────────────────────────────────────────────────
+  /* 🔴 THIS COMMENT USED TO BE INSIDE THE ONE ABOVE. The `needs` block never
+     closed, so the whole ⚖ THE BID header — the six signed terms and the sum
+     contract — was swallowed by it. It parsed, the table below was correct, and
+     no gate can catch it: an unterminated block comment is only visible to a
+     reader. Two rules come out of it and both are worth keeping: never open a
+     block comment inside another one, and never let a single close-comment
+     token be the only thing standing between a header and the code it heads.
+     ⚠ AND WRITING THAT SENTENCE BROKE THE FILE ONCE: spelling the close-comment
+       token out inside a block comment ENDS the comment. It is the same trap,
+       one line further on, and node caught it as "Unexpected template string".
+
+     ── ⚖ THE BID ────────────────────────────────────────────────────────────
      Six signed terms. Each is normalised to roughly −1..+1 from a LIVE
      measurement, then multiplied by its weight, and `bid.js` asserts that the
      rows sum to the total exactly — the same contract /src/landvalue's
@@ -146,6 +162,45 @@ export const TEN = {
          that never develops, and a failed lot that finds no successor.
      ────────────────────────────────────────────────────────────────────── */
 
+  /* ── 📜 HOW LOUD A CLOSURE IS IN THE CITY LOG ───────────────────────
+     Driven, this module wrote **345 city-log entries in 600 days** — one per
+     failure, all the same shape. The failures are real and the ledger keeps
+     every one of them; what was wrong is that a feed which is also carrying
+     raids, research and trade was being used as a ledger.
+
+     🔴 AND THE SHAPE OF THE NOISE IS THE POINT. Those 345 closures fell on a few
+        dozen pitches, over and over: a bankrupt tile-owned firm is RE-FOUNDED
+        by `syncBuildings` at the next 4-second sync, so the same lot fails
+        again, and again. The first death at a pitch is NEWS. The fifth is a
+        symptom of the charter-fund treadmill, which is /src/economy's to fix
+        and not this module's to narrate five times.
+     TWO CONDITIONS, AND THE FIRST ONE ON ITS OWN WAS NOT ENOUGH — measured.
+     "One line per pitch per `quietDays`" is the right rule for the treadmill
+     and it did almost nothing on a 225-day run: 150 closures on 26 pitches came
+     out as 140 individual lines, because the repeats at a pitch were spaced
+     further apart than the quiet window. The feed was still 140 lines out of
+     140. So there is also a FLOOR ON THE INTERVAL: at most one closure line
+     every `everyDays` economic days, whatever pitch it is on. That bounds the
+     share of the feed by construction instead of hoping the failures cluster.
+
+     Everything held back is counted and released as ONE rollup line every
+     `rollupEvery` suppressed closures. NOTHING IS DROPPED — `failures()`, the
+     panel ledger and `stats().lifetime.failed` still carry every one, and the
+     rollup names the running total so the feed can never claim fewer closures
+     than the ledger holds. */
+  log: { quietDays: 60, everyDays: 10, rollupEvery: 12 },
+
+  /* ── 🌙 THE WAKE-UP QUEUE ────────────────────────────────────────────────
+     A lot that developed while the market was DORMANT was never auctioned —
+     `award()` had no opinion to record, so it recorded none (see index.js).
+     Those lots are remembered and re-offered once a catchment exists, which is
+     the "the hash answers and a company still takes the lot" half of the
+     brief: the building went up by hash, and a company takes it when there is
+     finally a market to take it in. `perPass` bounds the work on the host's
+     4-second beat — 81 lots is 81 auctions and they do not all have to happen
+     in one tick. */
+  wake: { perPass: 24 },
+
   /* Which distress rungs the world marks. firms.js owns the ladder; this only
      says which rungs are worth drawing a mark for. */
   mark: {
@@ -177,6 +232,35 @@ export const OMITTED = [
     why: 'Nothing models crime. There is a police station tile with a coverage need and no offence anywhere behind it, so a "crime" term would be a re-skin of police coverage wearing a name it has not earned.' },
   { id: 'taxes', name: 'Taxes',
     why: 'MODELLED but city-uniform. `ECON.tax.corporate` / `.payroll` / `.property` are real and firms.js really pays them — and they are identical on every lot in the city, so they shift every bid by the same amount and cannot separate two lots. Scoring them would add a row that always reads the same and never changes a ranking.' },
+];
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🎭 WHAT IS INVENTED HERE, AND WHAT IS MEASURED
+   ----------------------------------------------------------------------------
+   pool.js:20 and the `needs` note above BOTH said these numbers are "labelled
+   as fiction HERE and in the panel". They were not in the panel — a disclosure
+   that only appears in a source comment is a disclosure the player never gets,
+   and it is the same species of unenforced claim as a progression tree
+   advertising unlocks nothing checks.
+
+   So the list is DATA, published as `MythicTenants.fiction()` and printed by
+   ui.js beside WHAT A BID SCORES and NOT SCORED, AND WHY. Three lists, one
+   panel: what was measured, what was invented, what was left out.
+
+   ⚠ The test for this list is mechanical: if a number in this file is not read
+     off a live sibling module, it belongs here.
+   ══════════════════════════════════════════════════════════════════════════ */
+export const FICTION = [
+  { id: 'size', name: 'Company size (Independent / Regional / National)',
+    why: 'Drawn deterministically per candidate from the city salt. Nothing in a save measures how big a company that has never opened is. It decides WHICH company a lot suits, never what the lot is worth.' },
+  { id: 'rentBearing', name: 'rentBearing — 1.00 / 0.55 / 0.30',
+    why: 'The share of a lot’s rent a company of that scale is deterred by. An invented attribute of an invented company; it re-weights the measured rent term and adds nothing to it.' },
+  { id: 'needs', name: 'needs — 0.20 / 0.45 / 0.70',
+    why: 'The share of the city’s best catchment a company of that scale wants before it will open. Invented for the same reason and the counter-force to rentBearing: without it the National Chain won every lot in the city.' },
+  { id: 'pool', name: 'How many companies are looking (3 per lot, floor 6, cap 64)',
+    why: 'How many companies exist in the world that are not in this city yet is not measurable from a save. It decides how many bidders there are, never which one wins.' },
+  { id: 'name', name: 'Company names',
+    why: 'Generated by /src/naming from the city salt, exactly as every other business name in this city already is.' },
 ];
 
 export default TEN;

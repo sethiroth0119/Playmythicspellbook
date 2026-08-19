@@ -805,6 +805,22 @@ export function mount(ctx) {
     if (run.timer) { try { clearInterval(run.timer); } catch (e) {} }
     const s = runSummary(run);
     const open = devSites();
+    /* 🚫 THE PLOTS NOBODY WOULD TAKE, AND WHY — THE HALF OF THE RUN THAT WAS
+       INVISIBLE. `run.reasons` counts refusals that came back from `tryPlace`,
+       and a plot skipped as `nomix` never reaches tryPlace: `typeFor` returned
+       null, `plan()` filed it under skip.nomix, and nothing was ever ordered.
+       So a run could raise 31 plots, refuse 52 more because no company would
+       take them, and report "🏗 Zoned development complete — 31 plots raised"
+       with not one word about the other 52. Measured exactly that.
+       The sentence comes from `landRefusal()`, which asks the model that made
+       the decision — /src/tenants, then /src/districts, then /src/landvalue —
+       so this line cannot drift from the rule, and it is the same sentence the
+       "Nothing to raise" path below already prints. That path was the ONLY way
+       to see it, and it only fires when the plan is completely empty: the best
+       sentence in the package was unreachable in the normal case.
+       ⚠ ONE EXTRA `plan()` at the end of a run, not per permit. */
+    let nomix = 0, nomixAt = null;
+    try { const pp = plan(run.zone); nomix = pp.skip.nomix | 0; nomixAt = pp.skip.nomixAt || null; } catch (e) {}
     const head = '🏗 Zoned development ' +
       (why === 'done' ? 'complete' : why === 'stalled' ? 'paused' : 'paused') + ' — ' +
       s.built + ' plot' + (s.built === 1 ? '' : 's') + ' raised' +
@@ -815,8 +831,11 @@ export function mount(ctx) {
         s.top.slice(0, 2).map(([m, n]) => '“' + m + '”' + (n > 1 ? ' ×' + n : '')).join(' ') +
         (why === 'stalled' ? ' Fix that and press Develop again.' : '')
       : '';
-    toast(head + tail, s.built || why === 'done' ? 'good' : 'bad');
-    logEvent('city', head + (s.top.length ? ' · refusals: ' + s.top.map(([m, n]) => m + ' ×' + n).join(' | ') : ''));
+    const refusedTail = nomix
+      ? ' · ' + nomix + ' zoned plot' + (nomix === 1 ? ' has' : 's have') + ' no tenant the land will take. ' + landRefusal(nomixAt)
+      : '';
+    toast(head + tail + refusedTail, s.built || why === 'done' ? 'good' : 'bad');
+    logEvent('city', head + refusedTail + (s.top.length ? ' · refusals: ' + s.top.map(([m, n]) => m + ' ×' + n).join(' | ') : ''));
     if (ctx.computeLinks) { try { ctx.computeLinks(); } catch (e) {} }
     if (ctx.updateHUD) { try { ctx.updateHUD(); } catch (e) {} }
     // The zone map did not change, but what is STANDING on it did — the panel
@@ -824,7 +843,7 @@ export function mount(ctx) {
     // it was before the run.
     sync();
     saveSoon();
-    return { ...s, why, running: false };
+    return { ...s, nomix, nomixAt, why, running: false };
   }
 
   function startRun(zone, quiet) {

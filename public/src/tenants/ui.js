@@ -9,11 +9,16 @@
    2. THE TENANTS — every let lot, its company, its size, its firm's rung and
       the level its business has actually reached.
    3. THE LEDGER — every business that has failed here, with how long it lasted
-      and why. And under it, the two lists this project has learned to print:
-      WHAT IS SCORED with the live call behind each factor, and WHAT IS NOT,
-      with the reason. An omission the player cannot see is indistinguishable
-      from an oversight; a factor with no source printed is indistinguishable
-      from an invention.
+      and why. And under it, the THREE lists this project has learned to print:
+      WHAT IS SCORED with the live call behind each factor, WHAT IS NOT, with
+      the reason, and WHAT IS INVENTED. An omission the player cannot see is
+      indistinguishable from an oversight; a factor with no source printed is
+      indistinguishable from an invention.
+      🔴 THE THIRD LIST IS NEW AND IT CLOSES A CLAIM THIS PACKAGE HAD ALREADY
+         MADE TWICE. pool.js:20 and tuning.js both said `rentBearing` / `needs`
+         are "labelled as fiction HERE and in the panel" — and
+         `grep -n "rentBearing\\|fiction" ui.js` found nothing at all. A
+         disclosure that exists only in a source comment discloses nothing.
 
    🔴 THIS FILE COMPUTES NOTHING. Every number is read off the API. That is the
       same rule /src/economy's render.js ships under ("Markup only. No number is
@@ -59,7 +64,11 @@ function style() {
 #ntn-panel .ntok{color:#9ad17a}
 #ntn-panel .ntwarn{color:#e0a060}
 #ntn-panel .ntsrc{color:var(--mist,#8f87a3);font-size:10.5px;margin:1px 0 5px 12px}
-#ntn-panel .ntno{color:#c9a0a0;font-size:10.5px;margin:1px 0 5px 12px}`;
+#ntn-panel .ntno{color:#c9a0a0;font-size:10.5px;margin:1px 0 5px 12px}
+#ntn-panel .ntfic{color:#b9a8d0;font-size:10.5px;margin:1px 0 5px 12px}
+#ntn-panel .ntdorm{border-top:0;background:rgba(120,110,170,.14);border:1px solid rgba(160,150,220,.3);
+  border-radius:8px;padding:7px 9px;margin-top:8px}
+#ntn-panel .ntdorm>b{color:#bcb0e8}`;
   doc.head.appendChild(st);
 }
 
@@ -86,6 +95,7 @@ export function render() {
   const fails = API.failures();
   const src = API.sources();
   const omit = API.omitted();
+  const fict = (typeof API.fiction === 'function') ? API.fiction() : [];
   const RUNG = { HEALTHY: 'ntok', REDUCED: 'ntwarn', LAYOFFS: 'ntwarn', DEBT: 'ntwarn',
                  DEFAULT: 'ntfail', BANKRUPT: 'ntfail' };
 
@@ -104,16 +114,48 @@ export function render() {
     '<td class="ntmute">' + f.days + 'd</td><td class="ntfail">' + esc(f.rung) + '</td></tr>').join('');
 
   const pool = s.pool || { candidates: 0, unhoused: 0 };
+  /* 🌙 THE DORMANT BANNER. A market with no catchment anywhere says so, in the
+     first line of its own panel, instead of showing an empty tenant list that
+     reads exactly like a market nobody has bid in yet. */
+  const dorm = s.dormant
+    ? '<div class="ntsec ntdorm"><b>🌙 THE MARKET IS DORMANT</b><div>' + esc(s.dormantWhy || '') + '</div>' +
+      (s.awardsWhileDormant ? '<div class="ntmute" style="margin-top:4px">' + s.awardsWhileDormant +
+        ' building' + (s.awardsWhileDormant === 1 ? '' : 's') + ' have gone up while it slept — the zoning hash chose every one of them' +
+        (s.waking ? ', and ' + s.waking + ' are queued for the moment a catchment exists' : '') + '.</div>' : '') +
+      '</div>'
+    : '';
+  /* 🚫 THREE KINDS OF EMPTY LOT, and the row used to count one of them. See
+     index.js `refusedLots`: `stats().vacant` is only what `close()` wrote, so a
+     board with 52 refused lots printed 0 on the row that exists to describe
+     exactly that. */
+  const rp = s.refusedParts || { closed: 0, standing: 0, unbuilt: 0 };
+  const refused = s.emptyLots | 0;
+  const refusedNote = refused
+    ? '<div class="ntsrc">' + rp.unbuilt + ' zoned and never built · ' + rp.standing +
+      ' built and never let · ' + rp.closed + ' let once and empty since</div>' : '';
+  /* 🔁 FAILED vs A TREADMILL. "Businesses failed here: 345" is true and, on its
+     own, misleading: a bankrupt tile-owned firm is re-founded by syncBuildings,
+     so the same handful of pitches fail over and over. The count is the count;
+     the second line says how many PITCHES the retained ledger's closures fell
+     on, which is the difference between churn and a massacre. The economy's
+     charter-fund treadmill is /src/economy's to fix — this panel's job is to
+     stop the number being read as 345 distinct dead companies. */
+  const churn = (s.ledgerRows > 1 && s.failedLots > 0 && s.ledgerRows > s.failedLots)
+    ? '<div class="ntsrc">the last ' + s.ledgerRows + ' closures fell on ' + s.failedLots +
+      ' pitch' + (s.failedLots === 1 ? '' : 'es') + ' — the same lots failing again</div>' : '';
+  const repairs = (s.counterRepairs && s.counterRepairs.length)
+    ? '<div class="ntsec"><b>⚠ THE SAVE DID NOT ADD UP</b>' +
+      s.counterRepairs.map((r) => '<div class="ntno">' + esc(r) + '</div>').join('') + '</div>' : '';
   el.innerHTML =
-    '<h3>🏢 Tenant market <button id="ntn-x">✕</button></h3>' +
+    '<h3>🏢 Tenant market <button id="ntn-x">✕</button></h3>' + dorm +
     '<div class="ntsec"><b>THE MARKET</b>' +
       row('Companies looking', pool.unhoused + ' of ' + pool.candidates) +
       row('Lots let', s.tenancies) +
-      row('Lots nobody will take', s.vacant + (s.vacant ? ' ✕' : '')) +
+      row('Lots nobody will take', refused + (refused ? ' ✕' : '')) + refusedNote +
       row('Businesses opened here', s.lifetime.let) +
-      row('Businesses failed here', '<span class="' + (s.lifetime.failed ? 'ntfail' : 'ntmute') + '">' + s.lifetime.failed + '</span>') +
+      row('Businesses failed here', '<span class="' + (s.lifetime.failed ? 'ntfail' : 'ntmute') + '">' + s.lifetime.failed + '</span>') + churn +
       row('Catchment radius', API.radius() + ' tiles') +
-    '</div>' +
+    '</div>' + repairs +
     '<div class="ntsec"><b>TENANTS</b>' +
       (rows ? '<table class="nttab">' + rows + '</table>'
             : '<div class="ntmute">Nobody has taken a zoned lot yet.</div>') +
@@ -128,6 +170,10 @@ export function render() {
     '</div>' +
     '<div class="ntsec"><b>NOT SCORED, AND WHY</b>' +
       omit.map((o) => '<div><b class="ntmute">' + esc(o.name) + '</b></div><div class="ntno">' + esc(o.why) + '</div>').join('') +
+    '</div>' +
+    '<div class="ntsec"><b>WHAT IS INVENTED HERE</b>' +
+      '<div class="ntsrc">Fiction may decide WHO is in the room. Only measured facts decide WHO WINS — every number above this section is read off a live sibling module at the moment of the bid.</div>' +
+      fict.map((o) => '<div><b class="ntmute">' + esc(o.name) + '</b></div><div class="ntfic">' + esc(o.why) + '</div>').join('') +
     '</div>';
 
   const x = document.getElementById('ntn-x');

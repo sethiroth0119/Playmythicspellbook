@@ -51,7 +51,7 @@
       which resource a building type's firm would sell.
    ════════════════════════════════════════════════════════════════════════════ */
 
-import { TEN, OMITTED } from './tuning.js';
+import { TEN, OMITTED, FICTION } from './tuning.js';
 import { makePool, SIZE_BY_ID } from './pool.js';
 import { makeStore } from './store.js';
 import { makeField, bidFor, radiusOf } from './bid.js';
@@ -69,9 +69,29 @@ let _ctx = {};
 let store = null, pool = null, F = null;
 let BUILDINGS = {};
 let GRID = 24;
-let _firmAt = null, _firmAtDay = -1, _firmAtStamp = 0;
+/* `_firmAtDay` used to sit here, written by nothing and read by nothing.
+   Removed: a field that is declared and never used reads, to the next person,
+   like a cache key somebody forgot to compare. */
+let _firmAt = null, _firmAtStamp = 0;
 let _lastObserve = null;
 let _events = [];                 // the session's opening/closing lines, newest last
+/* 📜 The city-log throttle (TEN.log). `_logAt` is the economic day each PITCH
+   last had a closure printed to the city feed; `_held` is how many have been
+   held back since the last rollup line. Neither rides the save — they are about
+   a session's feed, not about the record, and the record is FAIL + COUNT. */
+let _logAt = Object.create(null), _held = 0, _lastLogDay = -1e9;
+/* Two derived board reads, cached because `plan()` in /src/zoning re-derives
+   itself on every permit and asks for a bid on every vacant plot. `_openSig` is
+   a SIGNATURE of the board (see openLots — a timestamp was wrong by 100×);
+   `_refusedAt` is a timestamp, which is safe there because that scan is only
+   ever read by a panel and a diagnostic. `_scanning` is the reentrancy guard:
+   the refusal scan runs the auction, the auction asks `openLots()`, and an
+   open-lot count that ran the auction would have recursed. */
+let _openLots = 0, _openSig = null, _refused = null, _refusedAt = 0, _refusedSig = null, _scanning = false;
+/* How many times `award()` was asked while the market was dormant. The evidence
+   for "this city's buildings were placed by the hash, not by a market" — see
+   `dormant()`. */
+let _dormantAwards = 0;
 
 const keyOf = (x, z) => (_ctx.key ? _ctx.key(x, z) : x + ',' + z);
 const nameOfType = (t) => (BUILDINGS[t] && BUILDINGS[t].name) || t;
@@ -147,13 +167,118 @@ function openLots() {
      SHRINK as a district built out — six candidates for a trade with twenty
      shops in it — and the pool would then have been smaller than the market it
      is supposed to be bigger than. What the ratio is about is how many pitches
-     of this kind exist in the city, built or not. */
+     of this kind exist in the city, built or not.
+
+     🔴 …AND ONLY LOTS A COMPANY COULD ACTUALLY BID FOR. This read `Z.stats().empty`,
+        which is EVERY undeveloped zoned tile in the city regardless of category —
+        so painting a housing estate grew the field of bidders for a card shop on
+        the other side of town. The pool is per TRADE and a household does not
+        bid (see `wants`), so residential land is not a pitch and must not be
+        counted as one. Measured: 24 r_low tiles moved the commercial pool by 3
+        candidates per lot, which is the whole `perLot` ratio's worth of
+        candidates arriving because somebody zoned houses. */
+  /* ⚠ CACHED ON A SIGNATURE OF THE BOARD, NOT ON A CLOCK — and the clock was
+     tried first and was WRONG BY A FACTOR OF A HUNDRED. A 1-second TTL looks
+     harmless until something changes the board a hundred times inside one tick:
+     painting 114 commercial tiles calls /src/zoning's `sync()` 114 times, the
+     first of those re-derived a plan while ONE tile was zoned, and every read
+     for the next second — including the very first permits of the Develop
+     button pressed straight afterwards — sized the whole city's candidate pool
+     off `lots: 1`. Measured exactly that: 114 zoned lots, `stats().pool` saying
+     1, on the same board my own scan counted correctly.
+     The signature is what /src/zoning already publishes (`stats()` — the same
+     call this function made before, so the per-call cost is unchanged) plus the
+     tenancy count, and it moves on every paint, every build and every let. No
+     timing, so two runs of the same board also give the same pool. */
+  let sig = '', st = null;
+  try { const Z = ZON(); if (Z && Z.stats) st = Z.stats(); } catch (e) { st = null; }
+  const held = store ? store.size() : 0;
+  if (st) {
+    sig = (st.zoned | 0) + ':' + (st.empty | 0) + ':' + held;
+    const per = st.per || {};
+    for (const zid of Object.keys(per).sort()) sig += '|' + zid + per[zid];
+  } else sig = 'nozoning:' + held;
+  if (sig === _openSig) return _openLots;
   let empty = 0;
   try {
     const Z = ZON();
-    if (Z && Z.stats) empty = Math.max(0, Z.stats().empty | 0);
-  } catch (e) {}
-  return empty + (store ? store.size() : 0);
+    if (Z && Z.zoneAt) {
+      const g = tiles();
+      for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
+        const k = keyOf(x, z);
+        if (g[k]) continue;
+        if (!marketCat(catAt(x, z))) continue;
+        empty++;
+      }
+    }
+  } catch (e) { empty = 0; }
+  _openLots = empty + held;
+  _openSig = sig;
+  return _openLots;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🚧 THE GATE — asked by BOTH seams, because that is the whole defect
+   ----------------------------------------------------------------------------
+   🔴 THIS IS THE /src/districts BUG, EXACTLY, AND IT COST THIS MODULE THE SAME
+      WAY. `wants()` refused residential — "a household is not a company and does
+      not bid" — and `award()`, a different seam into the same store, had no such
+      check. `permitOne` calls it for every zoned build. Measured: 24 r_low lots,
+      all built as housing, `wants()` returned null on every one, and TWELVE got
+      a tenancy, each joined to a live landlord firm through
+      `ECO_BUILDING_MAP.housing`. `levelFor` was live on them, so the first
+      landlord to reach level 2 would have had this module raising the height of
+      a house through a seam that says it never touches residential.
+
+   HOW IT IS CLOSED, and why not the other way. /src/districts was fixed by
+   asking the gate at every READ. That shape is right when the store is a cache
+   of something derivable; it is wrong here, because this store is the DURABLE
+   RECORD — a lease on a house would still be written, still ride the save,
+   still make its company `housed()` and unavailable to bid elsewhere, and every
+   read would have to remember to filter. So the gate goes at both WRITE seams,
+   as ONE predicate they share, and it is re-asserted at read time by `verify()`
+   rather than re-implemented there. One rule, two callers, one checker.
+
+   TWO INDEPENDENT TESTS, deliberately:
+     · the ZONE's category — what the player declared this land is for. This is
+       the test `wants()` already had.
+     · the BUILDING's own `popCap` — the HOST's definition of a dwelling, not a
+       list of type ids invented here. It catches a home that arrives through a
+       caller that does not know the zone, and it is why `r_mixed`'s housing is
+       refused while its grocery would not be on the type test alone.
+   ⚠ A category we cannot read is OPEN, not closed — /src/landvalue's rule, and
+     this module is held to it. An unzoned tile, or a build with no /src/zoning
+     at all, is judged on the dwelling test only.
+
+   ⚠ REJECTED: gating on the building type alone. It would let `r_mixed` — a
+     RESIDENTIAL zone whose mix is 5 housing : 1 grocery : 1 restaurant : 1 shop
+     — hand its retail to the market while `wants()` refused to bid on the same
+     tiles, which is the two-seams-two-rules defect again wearing the opposite
+     coat. If mixed-use retail should be marketable, the change belongs in the
+     predicate below and both seams get it at once. That is the point of it. */
+const MARKET_CATS = ['com', 'off', 'ind'];
+const marketCat = (c) => (c ? MARKET_CATS.indexOf(c) >= 0 : false);
+
+function catAt(x, z) {
+  try {
+    const Z = ZON(); if (!Z || !Z.zoneAt) return null;
+    const id = Z.zoneAt(x, z);
+    const zd = (id && Z.ZONE_BY_ID) ? Z.ZONE_BY_ID[id] : null;
+    return zd ? (zd.cat || null) : null;
+  } catch (e) { return null; }
+}
+/* A DWELLING, by the host's own table. `popCap` is what node-city itself uses
+   to mean "people live here" (`places.push({ home: !!def.popCap })`), so a new
+   residential building type is covered the day it is added and no id list here
+   can go stale. */
+function isDwelling(type) {
+  try { const d = BUILDINGS[type]; return !!(d && (d.popCap | 0) > 0); } catch (e) { return false; }
+}
+function marketable(x, z, type, cat) {
+  const c = (cat != null && cat !== '') ? cat : catAt(x, z);
+  if (c && !marketCat(c)) return false;
+  if (type && isDwelling(type)) return false;
+  return true;
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -212,12 +337,49 @@ function silent() {
   try { return !(F.field().maxNear > 0); } catch (e) { return true; }
 }
 
+/* ── 🌙 …AND THE MODULE HAS TO BE ABLE TO SAY SO ────────────────────────────
+   🔴 A DORMANT MARKET AND A WORKING ONE WERE INDISTINGUISHABLE FROM OUTSIDE,
+      AND THAT IS WORSE THAN EITHER. Driven on this box: four boots of the SAME
+      commit, same scene, returned `maxNear` 155, 155, 0 and 0, and one stayed
+      at 0 through 225 economic days with 89 residents in the city — every
+      housing tile reporting `occupied: 0` at /src/demographics' own
+      `residents()` seam. On such a boot 100% of `typeFor` answers come from the
+      hash, `wants()` correctly says nothing, and — before this — the panel said
+      "Nobody has taken a zoned lot yet", which is the same sentence it shows
+      when the market is running and nobody has bid yet.
+
+   The upstream cause is demographics occupancy and is NOT this module's to fix.
+   What IS this module's is never letting "I have no information" look like "I
+   looked and there is nothing". So: one seam, published, printed in the panel,
+   and counted — `_dormantAwards` is how many buildings landed while this was
+   true, i.e. how many of the city's lots the hash placed with no market behind
+   them. A number a driver can assert on beats a sentence a reader can miss. */
+function dormant() {
+  if (!mounted) return { mounted: false, dormant: false, why: 'The tenant market is not mounted.' };
+  let f = null;
+  try { f = F.field(); } catch (e) { f = null; }
+  const near = f ? (f.maxNear | 0) : 0;
+  const on = !(near > 0);
+  return {
+    mounted: true, dormant: on, maxNear: near,
+    homes: f ? f.homes.length : 0, residents: f ? (f.cityPop | 0) : 0,
+    has: f ? { ...f.has } : null,
+    awardsWhileDormant: _dormantAwards,
+    why: on
+      ? 'Nobody lives within reach of any lot yet, so every pitch in the city has the same (empty) catchment and every bid is negative everywhere. This module has no way to tell one lot from another, so it says nothing at all and /src/zoning\u2019s hash decides what develops — exactly as it did before the market existed. It wakes on its own as housing fills.'
+      : null,
+  };
+}
+
 /* THE WINNER over a whole bag. `bag` is what /src/zoning has left after the
    specialisation and the band filter — this never widens it. */
 function winnerFor(x, z, bag) {
   if (!mounted || !Array.isArray(bag) || !bag.length) return null;
   const uniq = [];
-  for (const t of bag) if (uniq.indexOf(t) < 0) uniq.push(t);
+  /* ⚠ A DWELLING IN THE BAG IS SKIPPED, NOT BID FOR. `r_mixed` is a residential
+     zone with retail in its mix, so the two halves of the gate are not the same
+     test; this is the type half, applied where the bag is read. */
+  for (const t of bag) if (uniq.indexOf(t) < 0 && !isDwelling(t)) uniq.push(t);
   const housed = store.housed(), lots = openLots();
   let best = null;
   for (const t of uniq) {
@@ -246,8 +408,11 @@ function wants(x, z, bag, cat) {
        node-city already gates that on service coverage. Running an auction over
        `housing` would have put a second, competing gate in front of the city's
        oldest one. Same call /src/districts made — its FAMILIES table has no
-       residential row either, for the same reason. */
-    if (cat && cat !== 'com' && cat !== 'off' && cat !== 'ind') return null;
+       residential row either, for the same reason.
+       ⚠ THROUGH `marketable()`, which `award()` also calls. This line used to be
+         an inline category test that existed HERE and nowhere else, and the
+         other seam into the store had no equivalent — see the gate's header. */
+    if (!marketable(x, z, null, cat)) return null;
     const w = winnerFor(x, z, bag);
     if (w) return w.type;
     /* `false` is the REFUSAL — a real verdict that the lot stays vacant.
@@ -264,10 +429,23 @@ function wants(x, z, bag, cat) {
    has nothing to say at all. */
 function refusal(x, z) {
   if (!mounted || silent()) return null;
+  /* A lot that was ALREADY refused carries the sentence it was refused with —
+     one refusal, one wording, whether the caller is /src/zoning's develop
+     report or the panel's vacancy list. */
+  const v = store.vacancy(keyOf(x, z));
+  if (v && v.never && v.why) return v.why;
+  if (!marketable(x, z, null, null)) return null;  // not a market: not our sentence
   const bag = bagFromZoning(x, z);
   if (!bag.length) return null;                    // not our refusal
   const w = winnerFor(x, z, bag);
   if (w) return null;                              // not refused
+  return sinkLine(x, z, bag);
+}
+
+/* THE SENTENCE ITSELF, given the bag that was refused. Split out of `refusal()`
+   because `award()` needs the identical wording for a lot that was BUILT and
+   found no tenant — two paths to one refusal must not be two sentences. */
+function sinkLine(x, z, bag) {
   const e = explain(x, z, bag);
   const top = (e.ok && e.rows.length) ? e.rows[0] : null;
   if (!top) return '🏢 No company is looking for premises of this kind — the pool has nobody left to bid.';
@@ -285,8 +463,38 @@ function award(x, z, type) {
   if (!mounted || !type) return null;
   const k = keyOf(x, z);
   if (store.tenancy(k)) return store.tenancy(k);
+  /* ── GUARD 1: THE GATE `wants()` ALREADY HAD (see `marketable`) ───────────
+     Without it this seam signed leases on houses — twelve of them on a driven
+     board, every one joined to a live landlord firm. It is the same predicate
+     `wants()` asks, not a copy of it. */
+  if (!marketable(x, z, type, null)) return null;
+  /* ── GUARD 2: A DORMANT MARKET REFUSES NOTHING ───────────────────────────
+     "ABSENT ⇒ OPEN, NEVER CLOSED" is stated for `wants()` twenty lines above
+     and was not applied here. On a boot where demographics never fills the
+     housing, every bid is negative everywhere; `wants()` correctly says nothing
+     and the hash builds the district — and this seam then found no bid either
+     and recorded NOTHING. Measured: 81 commercial buildings developed, 0
+     tenancies, 0 vacancies, `verify(): ok:true`, panel reading "Nobody has
+     taken a zoned lot yet". A module that is asleep looked exactly like a
+     module that is working.
+     So a dormant market records no tenancy AND no refusal — it has no opinion
+     to record — and counts the lot instead, which is what `dormant()` publishes
+     and the panel prints. */
+  if (silent()) { _dormantAwards++; store.pendAdd(k); return null; }
   const w = bestBidFor(x, z, type, store.housed(), openLots());
-  if (!w) return null;
+  /* ── THE REFUSAL IS A RESULT, AND IT IS WRITTEN DOWN ─────────────────────
+     The market ran on a real board and every bid came in under the reserve.
+     That is the user's "vacancies increase, buildings become abandoned", and
+     before this it was a `return null` — no tenancy, no vacancy, nothing for
+     the panel to count and nothing for `vacancies()` to explain. */
+  if (!w) {
+    if (store.refuse(k, sinkLine(x, z, [type]))) {
+      note('refuse', k, '🏢 Nobody took the ' + nameOfType(type) + ' at ' + k + ' — every bid was under the reserve.');
+      try { _ctx.saveSoon && _ctx.saveSoon(); } catch (e) {}
+      syncOverlay();
+    }
+    return null;
+  }
   const day = econDay();
   const rec = store.open(k, w.cand, type, day);
   if (!rec) return null;
@@ -362,10 +570,23 @@ function levelFor(x, z) {
 function observe(force) {
   if (!mounted) return null;
   const g = tiles();
-  const m = firmAt(force);
+  /* 🔴 ALWAYS `true`, AND THE ARGUMENT IS DELIBERATELY IGNORED HERE. node-city
+     calls `observe(true)`, then `syncBuildings`, then `observe()` — and the
+     comment on that second call says it exists to catch the re-founded firm
+     "right after the set of firms changed". It could not: all three happen in
+     one synchronous tick and `firmAt()` caches for 1000 ms, so the call whose
+     whole purpose is to see the NEW set of firms was reading the map built
+     before `syncBuildings` ran. The cost was a delay rather than a loss — the
+     next 4-second beat caught it — but a documented mechanism that does not
+     work is worse than an undocumented one, because the next reader trusts it.
+     Fixed HERE rather than at the call site so that ANY caller gets it right:
+     an observer whose job is to notice a change must never be served a
+     snapshot. The TTL still serves `levelFor()` / `tenantAt()`, which are asked
+     per plot on every permit and do not care about a 1-second-old level. */
+  const m = firmAt(true);
   const day = econDay();
   const out = { day, checked: 0, evicted: 0, failed: [], grown: [], struggling: 0,
-                relet: [], noBidder: 0, waiting: 0, damaged: 0, econ: !!m };
+                relet: [], noBidder: 0, waiting: 0, damaged: 0, woke: 0, econ: !!m };
   const S = TEN.mark.struggling;
 
   for (const k of Object.keys(store.lets())) {
@@ -459,6 +680,14 @@ function observe(force) {
     const t = g[k];
     if (!t) { store.clearVacancy(k); continue; }
     const p = k.split(',');
+    /* The same gate both write seams ask. A vacancy can outlive the zone it was
+       recorded under — a player re-paints a strip residential and the lots
+       under it stop being a market — and re-letting one would put a company
+       back into a category the market does not serve. */
+    if (!marketable(+p[0], +p[1], t.type, null)) { store.clearVacancy(k); continue; }
+    /* A dormant market re-lets nothing, for the same reason `award()` refuses
+       nothing while it is asleep. */
+    if (silent()) { out.noBidder++; continue; }
     const w = bestBidFor(+p[0], +p[1], t.type, store.housed(), openLots());
     if (!w) { out.noBidder++; continue; }
     const rec = store.open(k, w.cand, t.type, day);
@@ -470,8 +699,51 @@ function observe(force) {
     note('open', k, rec.n + ' took over the ' + nameOfType(t.type) + ' at ' + k + '.');
   }
 
+  /* ── 🌙 THE WAKE-UP QUEUE ─────────────────────────────────────────────────
+     Lots that developed while the market was dormant. `award()` is called ONCE,
+     when the building lands, so without this a city that built itself out
+     before anybody moved in would have no company in it EVER — which is the
+     second half of what made a dormant market indistinguishable from a working
+     one. Measured on such a board: 81 commercial buildings, 0 tenancies, and
+     nothing that would ever change either number.
+     ⚠ ONLY LOTS THIS MODULE WAS ASKED ABOUT. The queue is written by `award()`
+       and by nothing else, so a hand-placed farm standing on zoned land is not
+       in it and is never adopted — the overlay's rule ("a building with no
+       tenancy is not part of the private market") still holds. A general sweep
+       over standing buildings would have broken it. */
+  if (!silent()) {
+    let budget = TEN.wake.perPass | 0 || 24;
+    for (const k of Object.keys(store.pends())) {
+      if (budget-- <= 0) break;
+      const t = g[k];
+      const p = k.split(','), x = +p[0], z = +p[1];
+      if (!isFinite(x) || !isFinite(z)) { store.pendDrop(k); continue; }
+      /* The premises went while the market slept ⇒ there is nothing to let.
+         A DAMAGED building stays queued: the repair is coming and the tenancy
+         belongs to the pitch, not to the wreck (see the observer's own note). */
+      if (!t) { store.pendDrop(k); continue; }
+      if (t.damaged) continue;
+      if (store.tenancy(k) || store.vacancy(k) || !marketable(x, z, t.type, null)) { store.pendDrop(k); continue; }
+      const w = bestBidFor(x, z, t.type, store.housed(), openLots());
+      if (!w) {
+        store.refuse(k, sinkLine(x, z, [t.type]));
+        store.pendDrop(k);                          // belt: refuse() drops it too
+        out.noBidder++;
+        continue;
+      }
+      const rec = store.open(k, w.cand, t.type, day);
+      if (!rec) { store.pendDrop(k); continue; }
+      rec.bid = Math.round(w.bid.total * 10) / 10;
+      rec.f = (m && m.get(k)) ? m.get(k).id : null;
+      try { const N = NAM(); if (N && N.pinName) { const n = N.pinName(k, w.cand.name); if (n) rec.n = n; } } catch (e) {}
+      out.woke = (out.woke | 0) + 1;
+      note('open', k, rec.n + ' took the ' + nameOfType(t.type) + ' at ' + k +
+           ' — the market woke up and this pitch was still empty.');
+    }
+  }
+
   _lastObserve = out;
-  if (out.failed.length || out.relet.length || out.grown.length) {
+  if (out.failed.length || out.relet.length || out.grown.length || (out.woke | 0)) {
     try { _ctx.saveSoon && _ctx.saveSoon(); } catch (e) {}
   }
   syncOverlay();
@@ -494,10 +766,43 @@ function closingLine(row) {
   return '🏚 ' + row.n + (sz ? ' (' + sz.name + ')' : '') + ' has closed at ' + row.k +
          ' after ' + row.days + ' day' + (row.days === 1 ? '' : 's') + ' — ' + row.why + '.';
 }
+/* 📜 THE PANEL FEED TAKES EVERYTHING; THE CITY LOG TAKES THE NEWS.
+   🔴 MEASURED: 345 `logEvent('city', …)` calls in 600 days on the driven board,
+      one per closure, every one the same shape. The closures are real and every
+      one of them is still in `failures()`, in `COUNT.failed` and in `_events`.
+      What was wrong is the CHANNEL: the city feed also carries raids, research
+      and trade, and a module that writes to it twice a day owns it.
+   TWO CONDITIONS, and the first one alone was measured and was not enough.
+   PER PITCH, because of what the noise actually is — a bankrupt tile-owned firm
+   is re-founded by `syncBuildings` and the same lot fails again; the first death
+   at a pitch is news, the fifth is the charter-fund treadmill, which
+   /src/economy owns. AND PER INTERVAL, because on a 225-day run the repeats at a
+   pitch were spaced further apart than the quiet window and 144 closures still
+   came out as 140 individual lines — the whole 140-line feed. With both:
+   **9 individual lines + 11 rollups = 14.3% of the feed**, same board, same 144
+   closures, ledger unchanged. Suppressed lines are counted and released as ONE
+   rollup naming the running total, so the feed can never claim fewer closures
+   than the ledger holds. See TEN.log. */
 function note(kind, k, msg) {
   _events.push({ kind, k, msg, t: Date.now() });
   while (_events.length > 80) _events.shift();
-  if (kind === 'fail') log(msg);
+  if (kind !== 'fail') return;
+  const day = econDay();
+  const last = _logAt[k];
+  const freshPitch = (last == null || day < last || day - last >= (TEN.log.quietDays | 0));
+  /* THE INTERVAL FLOOR. Without it a city that fails one business every day and
+     a half fills a 140-line feed with nothing else — measured, and the per-pitch
+     rule alone did not touch it. */
+  const dueAgain = (day < _lastLogDay || day - _lastLogDay >= (TEN.log.everyDays | 0));
+  if (freshPitch && dueAgain) {
+    _logAt[k] = day; _lastLogDay = day; log(msg); return;
+  }
+  _held++;
+  if (_held >= (TEN.log.rollupEvery | 0 || 12)) {
+    const n = _held; _held = 0;
+    log('🏚 ' + n + ' more businesses have closed on pitches that have failed before — ' +
+        store.counts().failed + ' closures in this city so far. The tenant market panel has the ledger.');
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -574,6 +879,61 @@ function bagFromZoning(x, z) {
   } catch (e) { return []; }
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   🚫 THE LOTS NOBODY WILL TAKE — all of them, not just the ones that were let
+   once and lost their tenant.
+   ----------------------------------------------------------------------------
+   🔴 THE PANEL ROW "Lots nobody will take" READ `store.vacantCount()`, WHICH IS
+      POPULATED ONLY BY `close()`. A lot the market refused BEFORE anything was
+      built on it never entered VAC at all, so on exactly the board that row
+      exists to describe — 83 lots zoned, 31 built, 52 refused — it printed 0.
+      `vacancies()`, the "WHY EVERY EMPTY LOT IS EMPTY" seam, had the same blind
+      spot and returned an empty array.
+
+   There are THREE kinds of empty lot and only the first two are records:
+     1. CLOSED   — a business traded here and died.        VAC, `never:false`
+     2. REFUSED  — a building stands, nobody will run it.  VAC, `never:true`
+     3. UNBUILT  — the lot is zoned, the market refused it, so /src/zoning never
+                   raised anything. There is no tile and there is no record,
+                   because there is nothing to record: it is a live property of
+                   the zone map and the land, and it changes the moment either
+                   moves. So it is DERIVED, here, on demand — the same "ask the
+                   gate at every read" shape /src/districts was fixed into.
+   ⚠ ONLY THIS MODULE'S REFUSALS. A lot whose bag is empty was refused by
+     /src/landvalue or /src/districts and belongs in their count, not this one —
+     the same rule `refusal()` states.
+   ⚠ Cached for a beat and guarded against reentrancy: the scan runs the auction
+     and the auction asks `openLots()`. */
+function refusedLots() {
+  if (!mounted || _scanning) return _refused || [];
+  /* Invalidated by the board signature AND by a short clock — the signature
+     catches a paint or a build (the openLots lesson), the clock catches a land
+     value that moved under a board nobody touched. */
+  const now = Date.now();
+  const sigNow = (openLots() + ':' + _openSig);
+  if (_refused && sigNow === _refusedSig && now - _refusedAt < 1500) return _refused;
+  const out = [];
+  if (silent()) { _refused = out; _refusedAt = now; _refusedSig = sigNow; return out; }   // dormant refuses nothing
+  _scanning = true;
+  try {
+    const Z = ZON(), g = tiles();
+    if (Z && Z.zoneAt) {
+      for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
+        const k = keyOf(x, z);
+        if (g[k]) continue;                       // built: kinds 1 and 2 cover it
+        if (!marketCat(catAt(x, z))) continue;
+        const bag = bagFromZoning(x, z);
+        if (!bag.length) continue;                // not our refusal
+        if (winnerFor(x, z, bag)) continue;
+        out.push({ k, x, z, bag });
+      }
+    }
+  } catch (e) { /* a partial scan is reported as what it found */ }
+  _scanning = false;
+  _refused = out; _refusedAt = now; _refusedSig = sigNow;
+  return out;
+}
+
 function stats() {
   if (!mounted) return { mounted: false };
   const lets = store.lets(), c = store.counts();
@@ -586,11 +946,32 @@ function stats() {
   }
   const wants = Object.keys(per);
   const housed = store.housed();
+  const unbuilt = refusedLots().length;
+  const d = dormant();
   return {
     mounted: true, salt: store.salt(),
-    tenancies: store.size(), vacant: store.vacantCount(),
+    tenancies: store.size(),
+    /* `vacant` keeps its old meaning — lots IN THE STORE with no tenant — so
+       nothing that already reads it changes under it. `refused` is the whole
+       answer to "lots nobody will take", and its three parts are printed
+       separately because they are three different facts. */
+    vacant: store.vacantCount(),
+    refused: store.neverCount() + unbuilt,
+    /* The panel's row, computed ONCE and here rather than in the markup: every
+       lot in the city that has no tenant and would not get one — a business
+       that closed and found no successor, a building nobody would take, and a
+       zoned plot the market refused before anything was built. */
+    emptyLots: store.vacantCount() + unbuilt,
+    refusedParts: { closed: store.closedCount(), standing: store.neverCount(), unbuilt },
     per, bySize, byRung,
     lifetime: c,
+    /* 345 failures on 34 pitches is a treadmill; the panel must be able to say
+       which it is. Derived from the retained ledger, so it is exact for the
+       newest rows and says so. */
+    failedLots: store.failedLots(), ledgerRows: store.failures().length,
+    dormant: d.dormant, dormantWhy: d.why, awardsWhileDormant: d.awardsWhileDormant,
+    waking: store.pendCount(),
+    counterRepairs: store.repairs(),
     pool: pool.stats(wants.length ? wants : ['shop'], housed, () => openLots()),
     lastObserve: _lastObserve,
     overlay: Overlay.visible(),
@@ -634,8 +1015,25 @@ function verify() {
     if (seen.has(c)) problems.push('company ' + c + ' holds both ' + seen.get(c) + ' and ' + k);
     seen.set(c, k);
   }
+  /* 🚧 THE GATE, RE-ASKED AT READ TIME. Both write seams call `marketable()`,
+     and this is what makes that a rule rather than a habit: a tenancy on a
+     dwelling or on land that is not a market is reported here whatever wrote
+     it — a third seam somebody adds later, or a save from a build that had the
+     defect. It found 12 leases on houses the first time it was run. */
+  for (const k in store.lets()) {
+    const p = k.split(','), rec = store.lets()[k];
+    if (!marketable(+p[0], +p[1], rec.want, null)) {
+      problems.push('tenancy at ' + k + ' is on a ' + (isDwelling(rec.want) ? 'dwelling' : 'lot outside any market category') +
+                    ' — ' + rec.n + ' holds a ' + rec.want + ' the market must never have signed');
+    }
+  }
+  /* 🔢 THE BOOK CLOSES. `let === failed + evicted + standing`, re-added by the
+     store. A save whose counters were taken verbatim reported
+     `failures: 999999` on a city with an empty ledger and still said ok:true. */
+  for (const m of store.check()) problems.push(m);
   return { ok: !problems.length, problems, checkedBids: checked, worstRowError: worst,
-           tenancies: store.size(), failures: store.counts().failed };
+           tenancies: store.size(), failures: store.counts().failed,
+           refused: store.neverCount(), counterRepairs: store.repairs() };
 }
 
 function syncOverlay() {
@@ -674,9 +1072,19 @@ function afterLoad() {
   pool.setSalt(store.ensureSalt());
   const g = tiles();
   const dropped = store.reconcile((k) => (g[k] ? g[k].type : null));
+  /* 🚧 …AND THE GATE IS ASKED ON THE LOAD PATH TOO. A save written by a build
+     that had the `award()` defect carries leases on houses, and dropping them
+     is not optional: `levelFor` is live on a tenancy, so one of them would go on
+     raising the height of a house. Counted apart from `dropped` because it is a
+     different fact — the premises are fine, the LEASE was never legal. */
+  let ungated = 0;
+  for (const k of Object.keys(store.lets())) {
+    const p = k.split(','), rec = store.lets()[k];
+    if (!marketable(+p[0], +p[1], rec.want, null)) { store.evict(k); ungated++; }
+  }
   F.invalidate();
   observe(true);
-  return { dropped, tenancies: store.size() };
+  return { dropped, ungated, tenancies: store.size(), counterRepairs: store.repairs() };
 }
 
 const API = {
@@ -705,21 +1113,46 @@ const API = {
       const w = t ? bestBidFor(x, z, t.type, store.housed(), openLots()) : null;
       const e = t ? explain(x, z, [t.type]) : { ok: false };
       const top = (e.ok && e.rows.length) ? e.rows[0] : null;
-      out.push({ k, was: v.n, rung: v.rung, why: v.why,
+      out.push({ k, kind: v.never ? 'refused' : 'closed', was: v.n || null,
+                 rung: v.rung, why: v.why,
                  type: t ? t.type : null, typeName: t ? nameOfType(t.type) : null,
                  relet: !!w, bestBid: top ? top.total : null,
+                 sinks: top ? top.terms.slice().sort((a, b) => a.v - b.v)[0] : null });
+    }
+    /* …AND THE ZONED LOTS THAT NEVER GOT A BUILDING, which is where most of a
+       badly-zoned district's empty land actually is. Derived (see
+       `refusedLots`), never stored: there is no tile to hang a record on. */
+    for (const r of refusedLots()) {
+      const e = explain(r.x, r.z, r.bag);
+      const top = (e.ok && e.rows.length) ? e.rows[0] : null;
+      out.push({ k: r.k, kind: 'unbuilt', was: null, rung: null,
+                 why: sinkLine(r.x, r.z, r.bag),
+                 type: null, typeName: null, relet: false,
+                 bestBid: top ? top.total : null,
                  sinks: top ? top.terms.slice().sort((a, b) => a.v - b.v)[0] : null });
     }
     return out;
   },
 
+  /* 🌙 IS THE MARKET AWAKE? Published because a module that cannot say it is
+     asleep is a module that looks broken and a module that looks working,
+     depending on nothing the reader can see. */
+  dormant,
+  /* Every lot nobody will take, by kind. The count the panel prints. */
+  refused: () => (mounted ? { standing: store.neverCount(), unbuilt: refusedLots().length,
+                              closed: store.closedCount() } : null),
+
   /* the record */
   failures: () => (store ? store.failures() : []),
   events: () => _events.slice(),
   stats, verify,
-  /* what is scored, and what is deliberately not */
+  /* what is scored, what is deliberately not, and what is invented. pool.js and
+     tuning.js both claimed the third list was "labelled as fiction HERE and in
+     the panel"; it was in neither place the player can see until this seam and
+     ui.js's section for it existed. */
   sources: () => ({ ...TEN.bid.sources }),
   omitted: () => OMITTED.map(o => ({ ...o })),
+  fiction: () => FICTION.map(o => ({ ...o })),
   radius: radiusOf,
 
   overlay: (v) => Overlay.toggle(v, { lets: store ? store.lets() : {}, vacs: store ? store.vacs() : {}, tiles: tiles() }),

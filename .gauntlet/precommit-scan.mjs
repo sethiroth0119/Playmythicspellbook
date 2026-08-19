@@ -61,10 +61,33 @@ try {
   process.exit(0);          // never block on a tooling failure — fail OPEN
 }
 
+/* 🔴 ONLY CODE THAT RUNS, AND NOT THIS FILE.
+   The first run of this scan blocked a commit to .gauntlet/rounds.json — the
+   round record, whose whole job that turn was to DESCRIBE the incident. A scan
+   that fires on the write-up of the thing it prevents is a scan that gets
+   disabled within the hour, and it would have been right to disable it.
+
+   So: executable sources only. A marker in a .md or a .json cannot disable a
+   fix, because nothing executes them — the entire harm this exists to stop is
+   "shipped code that is broken on purpose and parses clean". Documentation is
+   where that harm gets EXPLAINED, which is the opposite thing.
+
+   ⚠ THE COST IS REAL AND IS ACCEPTED: a genuinely broken .json fixture — a save
+     file, a tuning table — is now invisible here. That is the right trade only
+     because the alternative was a gate nobody runs. If fixtures ever start
+     carrying deliberate regressions, this list is where to add them back. */
+const CODE = /\.(m?js|cjs|ts|html)$/i;
+const SELF = 'precommit-scan.mjs';
+
 const hits = [];
-let file = null, line = 0;
+let file = null, line = 0, skip = false;
 for (const raw of diff.split('\n')) {
-  if (raw.startsWith('+++ b/')) { file = raw.slice(6); continue; }
+  if (raw.startsWith('+++ b/')) {
+    file = raw.slice(6);
+    skip = !CODE.test(file) || file.endsWith(SELF);
+    continue;
+  }
+  if (skip) continue;
   const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(raw);
   if (hunk) { line = +hunk[1]; continue; }
   if (!raw.startsWith('+') || raw.startsWith('+++')) continue;

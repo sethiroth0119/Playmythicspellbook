@@ -23203,6 +23203,16 @@ function ecoBuildings() {
    ⚠ Guarded: a throw in here must never break the render tick that calls it. */
 function ecoSync() {
   const E = window.MythicEconomy; if (!E || !E.ready()) return;
+  /* 🏢 …AND ONCE *BEFORE* IT, WHICH IS THE HALF THAT WAS MISSING AND WAS FOUND
+     BY DRIVING IT. `syncBuildings` calls `Firms.reap()` on its first line, and
+     reap DELETES every firm that closeDay marked BANKRUPT + reported. So a
+     business that died in the night was already gone by the time the observer
+     below looked, and /src/tenants could only record "the pitch changed hands"
+     with the last rung it happened to have seen — measured: eight closures on
+     the driven board, every one of them filed as HEALTHY, because HEALTHY is
+     what they were at the previous observation. Looking first is what lets the
+     ledger say BANKRUPT and mean it. */
+  try { const T = window.MythicTenants; if (T && T.ready()) T.observe(true); } catch (e) {}
   try {
     const r = E.syncBuildings(ecoBuildings());
     if (r && (r.added || r.removed)) saveSoon();

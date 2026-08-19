@@ -115,10 +115,32 @@ export function makeField(ctx) {
     const acc = {};
     for (const f of list) {
       if (!f || !f.out) continue;
-      const a = acc[f.out] || (acc[f.out] = { n: 0, idle: 0 });
-      a.n++; a.idle += clamp(num(f.idleForDemand), 0, 1);
+      const a = acc[f.out] || (acc[f.out] = { n: 0, idle: 0, hurt: 0 });
+      a.n++;
+      a.idle += clamp(num(f.idleForDemand), 0, 1);
+      /* 🔴 THE SECOND READING, AND IT IS HERE BECAUSE THE FIRST ONE WAS SILENT
+         ON A REAL BOARD. `idleForDemand` is set by sim.js only when a firm
+         PRODUCED more than the market wanted — so it measures over-supply
+         precisely, and it reads 0 for a firm that produced nothing at all
+         because it could not get its inputs. Driven: twenty-six restaurants
+         with fifteen of them on the DEFAULT rung reported a mean idle of
+         EXACTLY ZERO, and the term that is supposed to say "this trade is
+         already full" said nothing.
+         The distress share is the economy's other verdict on the same
+         question, from the same books: how many of the firms already selling
+         this are on firms.js's ladder rather than HEALTHY. It does not care
+         WHY they are failing, and from a company deciding whether to open the
+         twenty-seventh shop, neither should it. */
+      if (f.rung && f.rung !== 'HEALTHY') a.hurt++;
     }
-    for (const id in acc) out[id] = { sellers: acc[id].n, idle: acc[id].idle / acc[id].n };
+    for (const id in acc) {
+      const a = acc[id];
+      const idle = a.idle / a.n, distress = a.hurt / a.n;
+      /* THE WORSE OF THE TWO, never the sum: they are two readings of one fact
+         and adding them would double-count a trade that is both over-supplied
+         and failing — which is the normal case, not an edge one. */
+      out[id] = { sellers: a.n, idle, distress, hurt: a.hurt, v: Math.max(idle, distress) };
+    }
     return out;
   }
 
@@ -301,10 +323,12 @@ export function bidFor(F, cand, x, z, outOf) {
       raw: -clamp(comp / TEN.bid.compFull, 0, 1), v: -w.competition * clamp(comp / TEN.bid.compFull, 0, 1), src: 'live',
       note: comp + ' of the same trade standing within ' + F.field().r + ' tiles' },
     { key: 'saturation', ico: '📉', label: 'Trade already over-supplied',
-      raw: sat ? -sat.idle : 0, v: sat ? -w.saturation * sat.idle : 0, src: L.has.eco ? 'live' : 'n/a',
+      raw: sat ? -sat.v : 0, v: sat ? -w.saturation * sat.v : 0, src: L.has.eco ? 'live' : 'n/a',
       note: !L.has.eco ? '/src/economy is not mounted'
             : !sat ? 'nobody sells this yet — the trade is open'
-            : sat.sellers + ' firm' + (sat.sellers === 1 ? '' : 's') + ' already selling it, idle for want of orders ' + Math.round(sat.idle * 100) + '% of the time' },
+            : sat.sellers + ' firm' + (sat.sellers === 1 ? '' : 's') + ' already selling ' + out + ' — ' +
+              sat.hurt + ' of them on the distress ladder, and idle for want of orders ' +
+              Math.round(sat.idle * 100) + '% of the time' },
   ];
 
   let total = 0;

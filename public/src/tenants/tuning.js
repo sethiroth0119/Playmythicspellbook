@@ -110,7 +110,7 @@ export const TEN = {
       transit:     'MythicTransit.jobAccess().served × a served stop inside the catchment',
       rent:        'MythicLandValue.valueAt(x,z) ÷ the city’s dearest lot, × the share of the rent this company bears at this volume',
       competition: 'standing tiles of the same building type inside the catchment ÷ compFull',
-      saturation:  'mean firm.idleForDemand over MythicEconomy.firms() already selling this output',
+      saturation:  'over MythicEconomy.firms() already selling this output: the worse of mean firm.idleForDemand and the share of them off the HEALTHY rung',
     },
     /* The catchment count at which competition is scored 1.0 — i.e. "this
        street is already full of them". Four of the same shop within six tiles

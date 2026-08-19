@@ -356,22 +356,29 @@ function observe(force) {
          So: a tenancy that has NEVER seen a firm is simply waiting. Only a
          tenancy that once had one and now has none has actually lost it. */
       if (rec.f == null) { out.waiting = (out.waiting | 0) + 1; continue; }
-      const row = store.close(k, day, rec.rung, 'wound up — the building stands, the business does not');
+      const row = store.close(k, day, rec.rung, 'wound up — the building stands, the business does not; last seen with ' + (rec.bad | 0) + ' bad days on the books');
       if (row) { out.failed.push(row); note('fail', k, closingLine(row)); }
       continue;
     }
     if (rec.f == null) { rec.f = f.id; }
     else if (rec.f !== f.id) {
-      const row = store.close(k, day, rec.rung, 'closed — the pitch changed hands');
+      const row = store.close(k, day, rec.rung, 'closed and re-founded inside the economy — last seen ' + rec.rung + ' with ' + (rec.bad | 0) + ' bad days on the books');
       if (row) { out.failed.push(row); note('fail', k, closingLine(row)); }
       continue;
     }
     if (f.rung === 'BANKRUPT') {
-      const row = store.close(k, day, 'BANKRUPT', 'bankrupt');
+      const row = store.close(k, day, 'BANKRUPT', 'bankrupt after ' + (f.badDays | 0) + ' days with no cash');
       if (row) { out.failed.push(row); note('fail', k, closingLine(row)); }
       continue;
     }
     const wasLvl = rec.lvl | 0;
+    /* The distress COUNTER, not just the rung. `badDays` is what firms.js
+       actually walks the ladder on, and a ledger row that can say "14 bad days"
+       is a different quality of evidence from one that can only name a rung it
+       may have observed a day late. Kept off the save deliberately: it is a
+       live reading, and firms.js already serialises the authoritative copy. */
+    rec.bad = f.badDays | 0;
+    rec.cash = Math.round(f.cash);
     store.observe(k, f.level, f.rung);
     if ((f.level | 0) > wasLvl) {
       out.grown.push({ k, n: rec.n, from: wasLvl, to: f.level | 0 });
@@ -622,6 +629,11 @@ const API = {
   radius: radiusOf,
 
   overlay: (v) => Overlay.toggle(v, { lets: store ? store.lets() : {}, vacs: store ? store.vacs() : {}, tiles: tiles() }),
+  /* What the overlay actually PAINTED. A layer is only demonstrated by a count;
+     a screenshot of a map cannot distinguish "drew nothing" from "drew nothing
+     visible at this camera" — the lesson round 8's crowd diff paid for. */
+  overlayPainted: () => Overlay.count(),
+  overlayOn: () => Overlay.visible(),
   openPanel: () => { if (!mounted) return false; Panel.show(); return true; },
   closePanel: () => { Panel.hide(); return true; },
   togglePanel: () => (Panel.isOpen() ? API.closePanel() : API.openPanel()),

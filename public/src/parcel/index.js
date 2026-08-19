@@ -63,15 +63,20 @@
                                   3 boxes, a palisade 9 posts and 2 rails)
        props          ~60-200
 
-   MEASURED on the standard gauntlet district, which serves 8 non-housing
-   parcels: 430,854 triangles with the layer against 428,818 without it — about
-   250 a parcel, and 2 draw calls for all of them.
+   MEASURED on the standard gauntlet district at round 12, which served 8
+   non-housing parcels: 430,854 triangles with the layer against 428,818
+   without it — about 250 a parcel, and 2 draw calls for all of them.
+   ⚠ ROUND 17: the district serves 24 and the flat buffer is EMPTY (see the
+     HAS_OWN_GROUND note), so the layer is ONE mesh and every triangle in it
+     stands up. The per-round figures are in the round report; do not re-quote
+     the round-12 line above as if it were current.
    ══════════════════════════════════════════════════════════════════════════ */
 
 let CTX = null, group = null, sig = '', flatMesh = null, propMesh = null, served = 0;
 /* What the last build() actually emitted, kept for verify() — see its note on
    why an assertion about geometry has to read the geometry. */
-let audit = { rects: [], found: 0, foundTiles: 0, tiles: 0, own: 0 };
+let audit = { rects: [], found: 0, foundTiles: 0, tiles: 0, own: 0,
+              plinths: 0, plinthTiles: 0, ownByList: 0, ownByRaster: 0, paved: [] };
 
 /* ── WHO GETS WHAT ─────────────────────────────────────────────────────────
    Keyed on the tile type, because that is the only thing this module can see;
@@ -101,16 +106,43 @@ const SKIP = new Set(['road', 'anchor', 'housing', 'tree', 'bush', 'garden', 'fo
 
 /* ── ALREADY OWN THEIR GROUND ──────────────────────────────────────────────
    These recipes pave the WHOLE tile themselves, at exactly RD_Y, and most of
-   them draw their own lot line through `_pcKerb` on top of it. The list is not
-   a guess: it is every `Slab(-.5, .5, -.5, .5, AY, GB)` in node-city's recipe
-   block, read off the file. Laying a second surface at the same height over
-   any of them is a guaranteed z-fight across a whole tile — the loudest
-   artefact this layer could possibly produce — so they get the BOUNDARY and
-   the props (three-dimensional, nothing to fight with) and nothing flat.
-   ⚠ ADD TO THIS LIST if you give a recipe a full-tile apron. The surfMat's
-     polygonOffset (see build()) makes a coplanar overlap lose deterministically
-     rather than shimmer, so a miss here is a wasted surface and not a flicker —
-     but it is still a wasted surface. */
+   them draw their own lot line through `_pcKerb` on top of it. Laying a second
+   surface at the same height over any of them is a guaranteed z-fight across a
+   whole tile — the loudest artefact this layer could possibly produce — so they
+   get the BOUNDARY and the props (three-dimensional, nothing to fight with)
+   and nothing flat.
+
+   🔴 ROUND 17 — THIS LIST IS NO LONGER THE DECISION. IT IS A FLOOR UNDER ONE.
+   The list said it was "every `Slab(-.5, .5, -.5, .5, AY, GB)` in node-city's
+   recipe block, read off the file". It was not, and it had not been for some
+   time. MEASURED on the standard gauntlet district by rasterising each tile's
+   OWN mesh — every upward triangle sitting within 20mm of the paving datum,
+   32 cells across the tile — the coverage of the twelve non-housing types that
+   actually place is:
+
+       depot 100%   shop 100%   motorpool 100%   retail 100%   lot 100%
+       farm 100%    arena 100%  medlab 100%      op_construction 87.9%
+
+   i.e. EVERY ONE OF THEM PAVES ITS WHOLE TILE, and five of them —
+   `shop`, `lot`, `arena`, `medlab` and the Construction Co.'s `machineshop`
+   mesh — were NOT on this list. All five call `_cvApron(ctx, G)` (index.html
+   14052 / 14783 / 14492 / 14625 / 14895), which lays `_cvSlab(-.5,.5,-.5,.5)`
+   at AY and then draws its own `_pcKerb` lot line on top of it. So on 8 of the
+   24 served tiles this layer was laying a second full-tile surface 1.5mm above
+   the recipe's own paving AND a second kerb ring 10mm above the recipe's own —
+   the exact wasted-surface case the old note below describes, doubled kerb
+   included, for as long as those recipes have had aprons.
+
+   A LIST CANNOT BE THE ANSWER, because the list is a copy of a fact that lives
+   in another file 8,000 lines away and nothing checks that the copy is current
+   — which is how it drifted in the first place. So `own` is now MEASURED off
+   the tile's own geometry (`tileRaster` below, `PAVED_OWN` threshold), in the
+   same traversal the foundation edge already makes, and this set is kept only
+   as a FLOOR: a type on it is treated as owning its ground even if the raster
+   disagrees. That direction is the safe one — it can only ever suppress a
+   surface, never add one on top of a recipe's paving.
+   ⚠ SO DO NOT DELETE THIS SET, and do not "clean it up" against the raster.
+     Its whole job now is to be wrong in the harmless direction. */
 const HAS_OWN_GROUND = new Set(['farm', 'hydrofarm', 'purifier', 'forge', 'reslab',
                                 'siphon', 'obelisk', 'kalonstable', 'restaurant',
                                 'foodtruck', 'grocery', 'barracks', 'tower', 'munitions',
@@ -309,16 +341,22 @@ function boundary(S, R, kind, cx, cz, ax, az, half, y) {
    say nothing about where the BUILDING lands.
 
    ⚠ WHY THIS IS THE ONE TREATMENT THAT REACHES A PAVED TILE.
-   The audit that opened this round found that HAS_OWN_GROUND has quietly grown
-   until it swallows the layer: of the 14 non-housing buildings on the standard
-   gauntlet district, 13 are on that list, so this module laid exactly 20
-   triangles of flat surface across the whole city — one vacant lot's worth.
-   Every element that lives at PAD height is therefore unavailable on almost
-   every building that actually places. The foundation edge does NOT live at
-   PAD height. It is a solid box with a shrub in it: it stands ON whatever the
-   recipe already paved, cannot be coplanar with it, and so is drawn on the
-   HAS_OWN_GROUND tiles as well as the others. That is the whole reason it is
-   the piece this round builds.
+   The audit that opened round 12 found that HAS_OWN_GROUND had quietly grown
+   until it swallowed the layer. 🔴 ROUND 17 RE-MEASURED IT ON THE FIXED
+   HARNESS AND THE FINDING IS WORSE AND IT IS NOT ABOUT THE LIST. The district
+   now places 24 tiles this layer serves, of twelve types, and EVERY ONE OF
+   THEM paves 87.9%-100% of its own tile — five of them (`shop`, `lot`, `arena`,
+   `medlab` and the Construction Co.) while not being on the list at all, so
+   they were getting a second pad and a second kerb ring on top of their own.
+   There is no bare ground under any building in this city, and the flat half
+   of this file therefore has nowhere legitimate to draw.
+   The foundation edge does NOT live at PAD height. It is a solid box with a
+   shrub in it: it stands ON whatever the recipe already paved, cannot be
+   coplanar with it, and so is drawn on the tiles that own their ground as well
+   as the ones that do not. That is the whole reason it is the piece round 12
+   built, and it is why round 17's answer to "the parcel layer is doing
+   nothing" is a SECOND element in the same idiom — the plinth, below — rather
+   than a way to force the pad back on.
 
    ── HOW THE FOOTPRINT IS FOUND, AND WHY NOT FROM THE BOUNDING BOX ─────────
    A bed has to hug the actual wall, and this module cannot see the recipes.
@@ -363,11 +401,62 @@ const FCELL = 1 / FN;
    the lowest thing that is a WALL. */
 const BODY_UP = .085;
 
-/* The occupancy raster of one tile, in tile-local cells. Returns a Uint8Array
-   of FN*FN, 1 where the building stands. */
-function footprint(mesh, cx, cz, RD_Y) {
+/* How close to the paving datum a triangle has to sit before it counts as the
+   recipe's OWN GROUND. 20mm either side of RD_Y takes in every apron, kerb,
+   dropped kerb, painted marking and doormat any recipe draws (the tallest of
+   them is a _pcKerb at RD_Y + .012) and nothing that is a wall — the lowest
+   thing that is a wall is BODY_UP, four times further up. */
+const PAVE_BAND = .020;
+/* What fraction of a tile the recipe has to have paved before this layer stops
+   laying its own. Measured (see the HAS_OWN_GROUND note): every non-housing
+   type on the standard district reads 87.9%-100%, so anything at all like a
+   full-tile apron is far above this and a recipe with a doormat at the door is
+   far below it. Two thirds is the middle of that gap and nothing sits near it.
+   ⚠ It is a fraction of the WHOLE tile, not of the tile minus the building:
+     "has this recipe already covered the ground I would be covering" is the
+     question, and the building's own footprint is ground this layer would have
+     paved under anyway. */
+const PAVED_OWN = .62;
+/* How far up a triangle may start and still count as WALL for the plinth's
+   seating. 120mm over the pad is a shin: a wall, a plinth course, a stallriser,
+   a dock face and a shutter all begin below it, and a canopy, a fascia, a sign
+   band and a roof overhang all begin above it. See tileRaster. */
+const WALL_BASE = .12;
+
+/* ── THE ONE TRAVERSAL ─────────────────────────────────────────────────────
+   Everything this layer needs to know about a tile's geometry comes out of a
+   single walk of its mesh, because a second walk of a merged 3,000-triangle
+   recipe per tile per rebuild is a cost with nothing to show for it.
+
+   Returns:
+     occ   Uint8Array(FN*FN) — 1 where the BUILDING stands (top >= BODY_UP)
+     pav   the fraction of the tile the recipe has already paved (see PAVED_OWN)
+     wx0/wx1/wz0/wz1  Float32Array(FN*FN) — per occupied cell, the outermost
+           coordinate inside that cell of anything that COMES DOWN TO THE GROUND.
+           THIS IS WHY THE PLINTH LANDS ON THE WALL. The occupancy raster alone
+           puts the free/occupied boundary at a CELL EDGE, which for a 16-cell
+           raster is 0-62mm outside the actual wall — and a base course floating
+           6cm off the wall reads as a detached kerb, which is worse than no base
+           course. These four carry the real plane, clamped into the cell that
+           recorded it. For an axis-aligned box — which is what almost every wall
+           in this game is — the triangle bounding box IS the wall, so the figure
+           is exact.
+           🐞 AND THEY ARE FILTERED BY `WALL_BASE`, WHICH THE FIRST CUT WAS NOT.
+              Taking the outermost body element in the cell whatever its height
+              means an entrance canopy, a fascia, a gantry or a roof overhang
+              hands the plinth a plane the wall underneath does not have.
+              MEASURED before the filter: 300 of 1,176 plinth triangles sat more
+              than 25mm from any building geometry and the worst was 93mm — a
+              detached kerb, exactly the defect this attribute exists to avoid.
+              Only geometry whose LOWEST vertex is within WALL_BASE of the pad
+              counts, i.e. only things that actually stand on the ground; a cell
+              that has nothing but overhead in it reports no plane and gets no
+              plinth, which is the right answer for a bed under a canopy. */
+function tileRaster(mesh, cx, cz, RD_Y) {
   const { THREE } = CTX;
-  const occ = new Uint8Array(FN * FN);
+  const occ = new Uint8Array(FN * FN), pav = new Uint8Array(FN * FN);
+  const wx0 = new Float32Array(FN * FN).fill(9), wx1 = new Float32Array(FN * FN).fill(-9);
+  const wz0 = new Float32Array(FN * FN).fill(9), wz1 = new Float32Array(FN * FN).fill(-9);
   const yMin = RD_Y + BODY_UP;
   mesh.updateMatrixWorld(true);
   const P = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
@@ -376,23 +465,40 @@ function footprint(mesh, cx, cz, RD_Y) {
     const pos = m.geometry.attributes.position, idx = m.geometry.index, M = m.matrixWorld;
     const n = idx ? idx.count : pos.count;
     for (let i = 0; i + 2 < n; i += 3) {
-      let hi = -9, x0 = 9, x1 = -9, z0 = 9, z1 = -9;
+      let hi = -9, lo = 9, x0 = 9, x1 = -9, z0 = 9, z1 = -9;
       for (let c = 0; c < 3; c++) {
         const v = P[c];
         v.fromBufferAttribute(pos, idx ? idx.getX(i + c) : i + c).applyMatrix4(M);
-        if (v.y > hi) hi = v.y;
+        if (v.y > hi) hi = v.y; if (v.y < lo) lo = v.y;
         if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x;
         if (v.z < z0) z0 = v.z; if (v.z > z1) z1 = v.z;
       }
-      if (hi < yMin) continue;
+      /* GROUND: the whole triangle inside the paving band. A wall's side face
+         spans from the pad to the eaves and is excluded by `hi`; a paving quad
+         has all three vertices on the datum and is not excluded by anything. */
+      const ground = (hi - RD_Y) <= PAVE_BAND && (RD_Y - lo) <= PAVE_BAND;
+      if (!ground && hi < yMin) continue;
       const i0 = Math.max(0, Math.floor((x0 - cx + .5) * FN));
       const i1 = Math.min(FN - 1, Math.floor((x1 - cx + .5) * FN));
       const j0 = Math.max(0, Math.floor((z0 - cz + .5) * FN));
       const j1 = Math.min(FN - 1, Math.floor((z1 - cz + .5) * FN));
-      for (let j = j0; j <= j1; j++) for (let ii = i0; ii <= i1; ii++) occ[j * FN + ii] = 1;
+      for (let j = j0; j <= j1; j++) for (let ii = i0; ii <= i1; ii++) {
+        const k = j * FN + ii;
+        if (ground) { pav[k] = 1; continue; }
+        occ[k] = 1;
+        if (lo > RD_Y + WALL_BASE) continue;      // overhead only — see WALL_BASE
+        /* Clamped into the cell, so a triangle that spans eight cells does not
+           report its far end as the wall plane of the near one. */
+        const cx0 = cx - .5 + ii * FCELL, cz0 = cz - .5 + j * FCELL;
+        const a = Math.max(x0, cx0), b = Math.min(x1, cx0 + FCELL);
+        const c2 = Math.max(z0, cz0), d = Math.min(z1, cz0 + FCELL);
+        if (a < wx0[k]) wx0[k] = a; if (b > wx1[k]) wx1[k] = b;
+        if (c2 < wz0[k]) wz0[k] = c2; if (d > wz1[k]) wz1[k] = d;
+      }
     }
   });
-  return occ;
+  let np = 0; for (let i = 0; i < pav.length; i++) np += pav[i];
+  return { occ, pav: np / (FN * FN), wx0, wx1, wz0, wz1 };
 }
 
 /* Free cells the tile edge can walk to. Everything else is interior and is not
@@ -428,12 +534,43 @@ const FOUND = {
   farm:     { col: C_GRIT,  rate: .34, r0: .030, r1: .022, h: .028 },
 };
 
+/* ══ 🧱 THE PLINTH ═════════════════════════════════════════════════════════
+   ROUND 17, and it is the SECOND HALF of the same idea as the foundation edge:
+   the thing that is missing where a building meets its ground is not a surface,
+   it is ARTICULATION — and articulation is geometry that stands up. The bed put
+   something growing beside the wall. This puts the BASE COURSE on the wall
+   itself: a dark plinth 46mm tall running along the wall line wherever the bed
+   runs, so the elevation stops rising straight out of the pad.
+
+   ⚠ WHY IT IS SEATED OFF `wx0/wx1/wz0/wz1` AND NOT OFF THE CELL EDGE.
+     The occupancy raster's free/occupied boundary is a cell edge, i.e. anywhere
+     from 0 to 62mm outside the real wall. A base course 6cm off its own wall is
+     not a base course, it is a loose kerb, and it would have been the whole
+     defect of this element. tileRaster records the real body plane inside each
+     occupied cell, so a run is seated on the wall it belongs to.
+   ⚠ IT OVERLAPS THE WALL BY 10mm ON PURPOSE. Its buried face can then never be
+     coplanar with the elevation it stands against — the /src/wild defect — and
+     the visible face is a clean 28mm proud. Two solids that INTERSECT are fine;
+     it is two faces in one plane that cannot be resolved.
+   ⚠ AND ITS UNDERSIDE IS BURIED, exactly as the bed's is: 8mm below the prop
+     datum, under the buildable plate, so it does not read as a tray.
+   Rejected: drawing it as a painted band in the flat buffer. That is 4 tris
+   instead of 12 and would have been almost free — and it would be a flat
+   rectangle at pad height on a tile whose recipe has already paved every
+   millimetre of that height, which is the one thing this round exists to stop
+   doing.                                                                     */
+const C_PLINTH = 0x57534c;   // dark warm grey — a VALUE, chosen to read as the
+                             // shadow in the join against pale paving and paler
+                             // wall alike, the same argument as C_MULCH's note
+const PLINTH_H = .054;       // 46mm proud once the 8mm burial is taken off
+const PLINTH_T = .038;       // 28mm proud of the wall + 10mm buried in it
+
 /* Draw it. `skip(lx,lz)` is the caller's veto — the drive corridor and the
    props this parcel has already stood on the ground. Returns the cell count so
    verify() can refuse a build where the whole city came back empty, which is
    the failure /src/wild shipped and a critic had to find by hand. */
-function foundationEdge(S, R, cls, mesh, cx, cz, RD_Y, y, skip) {
-  const occ = footprint(mesh, cx, cz, RD_Y);
+function foundationEdge(S, R, cls, RS, cx, cz, RD_Y, y, skip) {
+  const occ = RS.occ;
   const free = reachable(occ);
   const F = FOUND[cls] || FOUND.commerce;
   const at = (i, j) => (i < 0 || j < 0 || i >= FN || j >= FN) ? 0 : occ[j * FN + i];
@@ -493,7 +630,60 @@ function foundationEdge(S, R, cls, mesh, cx, cz, RD_Y, y, skip) {
     const lx = (i + .5) * FCELL - .5, lz = (j + .5) * FCELL - .5;
     shrub(S, R, cx + lx, cz + lz, y + F.h - .008, F.r0 + R() * F.r1);
   }
-  return cells;
+  /* Pass 4 — THE PLINTH. One run per straight stretch of wall the ring touches.
+     A ring cell knows which of its four neighbours is building; the neighbour
+     knows where its own wall plane is. Consecutive ring cells whose neighbour
+     reports the SAME plane (to 1mm) are one course of masonry and are emitted
+     as one box, which is the same saving pass 2 takes and for the same reason.
+     ⚠ A cell can contribute to TWO runs — an inside corner has building on two
+       sides — and that is correct: a corner has two faces. The two boxes meet
+       at the corner and overlap there by at most PLINTH_T, which is two solids
+       intersecting and not two faces in a plane. */
+  let plinths = 0;
+  const wallAt = (i, j, dir) => {
+    /* The body plane of the occupied cell in direction `dir` from (i,j), as
+       seen from (i,j): the near face of that neighbour. */
+    if (i < 0 || j < 0 || i >= FN || j >= FN) return null;
+    const k = j * FN + i;
+    if (!occ[k] || !mass(i, j)) return null;
+    if (dir === 0) return RS.wx0[k] < 8 ? RS.wx0[k] : null;      // neighbour is +x of the bed
+    if (dir === 1) return RS.wx1[k] > -8 ? RS.wx1[k] : null;     // neighbour is -x
+    if (dir === 2) return RS.wz0[k] < 8 ? RS.wz0[k] : null;      // neighbour is +z
+    return RS.wz1[k] > -8 ? RS.wz1[k] : null;                    // neighbour is -z
+  };
+  /* dir 0/1 are walls that face along X, so their runs accumulate along Z (and
+     vice versa). `sgn` is which way the visible face points. */
+  const DIRS = [[1, 0, 0, -1], [-1, 0, 1, +1], [0, 1, 2, -1], [0, -1, 3, +1]];
+  for (const [dx, dz, dir, sgn] of DIRS) {
+    const alongZ = dx !== 0;
+    for (let a = 0; a < FN; a++) {            // a = the fixed axis index
+      let b = 0;
+      while (b < FN) {
+        const i = alongZ ? a : b, j = alongZ ? b : a;
+        if (!ring[j * FN + i]) { b++; continue; }
+        const w = wallAt(i + dx, j + dz, dir);
+        if (w == null) { b++; continue; }
+        let e = b;
+        while (e + 1 < FN) {
+          const i2 = alongZ ? a : e + 1, j2 = alongZ ? e + 1 : a;
+          if (!ring[j2 * FN + i2]) break;
+          const w2 = wallAt(i2 + dx, j2 + dz, dir);
+          if (w2 == null || Math.abs(w2 - w) > .001) break;
+          e++;
+        }
+        const len = (e - b + 1) * FCELL;
+        const mid = (alongZ ? cz : cx) + ((b + e + 2) / 2) * FCELL - .5;
+        /* Centre it so PLINTH_T-.010 stands proud on the bed side and 10mm is
+           buried in the wall. `sgn` points from the wall toward the bed. */
+        const c = w + sgn * (PLINTH_T / 2 - .010);
+        if (alongZ) box(S, C_PLINTH, PLINTH_T, PLINTH_H, len, c, y + PLINTH_H / 2 - .008, mid);
+        else        box(S, C_PLINTH, len, PLINTH_H, PLINTH_T, mid, y + PLINTH_H / 2 - .008, c);
+        plinths++;
+        b = e + 1;
+      }
+    }
+  }
+  return { cells, plinths };
 }
 
 /* Which way the building faces, as a unit vector. buildMesh authors every
@@ -514,7 +704,8 @@ function facing(rot) {
 function clear() {
   for (const m of [flatMesh, propMesh]) if (m) { group.remove(m); m.geometry.dispose(); }
   flatMesh = null; propMesh = null; served = 0;
-  audit = { rects: [], found: 0, foundTiles: 0, tiles: 0, own: 0 };
+  audit = { rects: [], found: 0, foundTiles: 0, tiles: 0, own: 0,
+            plinths: 0, plinthTiles: 0, ownByList: 0, ownByRaster: 0, paved: [] };
 }
 
 function build() {
@@ -560,7 +751,21 @@ function build() {
     if (!isFinite(gx) || !isFinite(gz)) continue;
     const cx = gx - HALF + .5, cz = gz - HALF + .5;
     const R = rngOf(gx, gz);
-    const own = HAS_OWN_GROUND.has(t.type);
+    /* ── DOES THIS RECIPE ALREADY OWN ITS GROUND? MEASURED. ──────────────
+       One traversal, up front, because the answer decides whether the flat
+       half of this parcel is drawn at all AND the foundation edge needs the
+       same raster anyway. See the HAS_OWN_GROUND note for what was wrong with
+       reading it off a list: five recipes that pave their whole tile were not
+       on the list, and this layer had been laying a second surface and a second
+       kerb ring over all of them.
+       The list survives as a floor — `||`, never `&&` — so a recipe the raster
+       somehow reads low still cannot get a pad laid over its apron. */
+    const RS = tileRaster(t.mesh, cx, cz, RD_Y);
+    const ownList = HAS_OWN_GROUND.has(t.type), ownRaster = RS.pav >= PAVED_OWN;
+    const own = ownList || ownRaster;
+    if (ownList) audit.ownByList++;
+    if (ownRaster) audit.ownByRaster++;
+    audit.paved.push([t.type, +RS.pav.toFixed(3)]);
     const [fx, fz] = facing(t.rot);
     const lx = -fz, lz = fx;                                   // lateral unit
 
@@ -697,19 +902,23 @@ function build() {
       }
     }
 
-    /* ── 6. THE FOUNDATION EDGE — where the building meets its own ground.
-       Drawn LAST, because it has to know where §5 put the props, and drawn on
-       EVERY served tile including the HAS_OWN_GROUND ones — see the header for
-       why this is the only element of a parcel that can reach a tile a recipe
-       has already paved edge to edge, and why that matters when 13 of the 14
-       non-housing buildings on the standard district are on that list.
+    /* ── 6. THE FOUNDATION EDGE AND THE PLINTH — where the building meets
+       its own ground. Drawn LAST, because they have to know where §5 put the
+       props, and drawn on EVERY served tile including the ones that own their
+       ground — see the header for why these are the only elements of a parcel
+       that can reach a tile a recipe has already paved edge to edge.
+       🔴 AND AS OF ROUND 17 THAT IS *EVERY* TILE. Measured, the twelve
+       non-housing types that place on the standard district pave 87.9%-100% of
+       their own tiles, so the flat half of this file now correctly draws
+       nothing anywhere and these two are the whole of what a non-housing plot
+       gets from this layer that stands up off the pad.
        ⚠ ITS OWN RANDOM STREAM, NOT `R`. Taking even one number out of R here
          would reshuffle every fence, bollard, pallet and shrub on every parcel
          in the city — the same lesson tileShade records, and the same reason
          makeHousing rolls its lawn key exactly once. A separate hash costs
          nothing and cannot interfere. */
     const FR = rngOf(gx + 7919, gz - 104729);
-    const foundCells = foundationEdge(S, FR, cls, t.mesh, cx, cz, RD_Y, PROP, (fl, fz2) => {
+    const found = foundationEdge(S, FR, cls, RS, cx, cz, RD_Y, PROP, (fl, fz2) => {
       /* THE DRIVE / DOCK MOUTH stays clear. A shed's roller shutters, a shop's
          entrance and a yard's gate are all on the frontage, on the drive's
          centreline, and a bed across them is a bed a lorry drives through. */
@@ -729,7 +938,8 @@ function build() {
         if (Math.abs(cx + fl - propXZ[i]) < .085 && Math.abs(cz + fz2 - propXZ[i + 1]) < .085) return true;
       return false;
     });
-    audit.found += foundCells; if (foundCells) audit.foundTiles++;
+    audit.found += found.cells; if (found.cells) audit.foundTiles++;
+    audit.plinths += found.plinths; if (found.plinths) audit.plinthTiles++;
     audit.tiles++; if (own) audit.own++;
     served++;
   }
@@ -834,9 +1044,17 @@ export function mount(ctx) {
             farms — every one of them fences and crops its whole tile — so the
             check fires only when tiles were served and NONE of them found
             ground, which is the shape a broken raster has.
-         3. IS THE LAYER STILL TWO DRAW CALLS? The header's whole cost argument
-            is that it is 2 meshes for the city however many parcels it serves.
-            A regression there is invisible in a render and fatal in a budget. */
+         3. IS THE LAYER STILL AT MOST TWO DRAW CALLS? The header's whole cost
+            argument is that it is 2 meshes for the city however many parcels it
+            serves. A regression there is invisible in a render and fatal in a
+            budget. ⚠ ONE is now the normal answer, not two: every recipe that
+            places pays its own ground, so the flat buffer is empty and only the
+            standing mesh is built. That is a saving, not a fault, and the check
+            is on the ceiling only.
+         4. ROUND 17 — DID THE PLINTH FIND A WALL? Same shape of check as (2)
+            and the same reason: it is seated off `tileRaster`'s per-cell body
+            planes, and a raster change that stopped recording them would leave
+            every plinth silently unemitted while the bed carried on working. */
     verify() {
       if (!CTX) return { ok: false, why: 'not mounted' };
       sig = ''; build();
@@ -854,12 +1072,27 @@ export function mount(ctx) {
       if (audit.tiles && !audit.foundTiles)
         problems.push('the foundation edge found no ground on any of ' + audit.tiles
                       + ' served tiles — the footprint raster is skipping every building');
+      if (audit.foundTiles && !audit.plinthTiles)
+        problems.push('the foundation edge found ground on ' + audit.foundTiles + ' tile(s) and the '
+                      + 'plinth found a wall on none of them — tileRaster is no longer recording '
+                      + 'the per-cell body planes the plinth is seated off');
       const meshes = group ? group.children.length : 0;
       if (meshes > 2) problems.push('the layer is ' + meshes + ' meshes, not 2 — the cost argument in the header no longer holds');
+      /* The drift the round-17 audit found, kept live rather than written down:
+         a type the raster says pays its own ground but the list does not know
+         about is the state that had this layer laying a pad over five recipes'
+         aprons. It is not a FAILURE — the measurement is the authority now and
+         it is already handling it — so it is reported, not thrown. */
+      const drift = [];
+      for (const [ty, pv] of audit.paved)
+        if (pv >= PAVED_OWN && !HAS_OWN_GROUND.has(ty) && drift.indexOf(ty) < 0) drift.push(ty);
       return { ok: !problems.length, problems,
                stats: { served, tiles: audit.tiles, ownGround: audit.own,
+                        ownByList: audit.ownByList, ownByRaster: audit.ownByRaster,
+                        listMissing: drift,
                         flatRects: R.length, foundationCells: audit.found,
-                        foundationTiles: audit.foundTiles, meshes } };
+                        foundationTiles: audit.foundTiles,
+                        plinthRuns: audit.plinths, plinthTiles: audit.plinthTiles, meshes } };
     },
     // for a driver: what each parcel was classified as, so a test can assert a
     // depot got hardstanding without reading the scene graph.

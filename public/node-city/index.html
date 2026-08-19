@@ -4228,6 +4228,64 @@ sun.shadow.normalBias = 0.022;
      measures contrast. */
 sun.shadow.intensity = 0.99;
 sun.shadow.radius = 2.5;
+/* 🔬 WHY NOTHING SMALL CASTS A SHADOW, MEASURED, AND WHY v125 CHANGED NOTHING
+   HERE. The round-13 critic: "no lamp, sign post, bollard or bin casts a
+   visible shadow in any of the four frames". Reproduced and quantified with
+   `.gauntlet/r18-probe.mjs` — one boot, sun.castShadow off/on, render and read
+   in the same task, and for each caster a RAY SCANNED along the light
+   direction from its foot with the darkest L(off)/L(on) on that ray kept, so
+   the probe finds the shadow wherever the sun put it. The control is the same
+   scan rotated 90 degrees, where the caster's shadow cannot be.
+
+   At the live tier (`medium`: 1536 map over SHADOW_SPAN 14 = 54.9 texels per
+   world unit, PCFSoft, hour 15, sun elevation 28.2 deg), over 130 lamps:
+
+     caster        median darkening   control      texels across the caster
+     lamp mast          1.484          1.233        1.70   (0.031 dia)
+     tree               5.151          1.377        ~25
+     building          (3.12)          2.583        ~55    (control contaminated:
+                                                     a building's shadow is wider
+                                                     than the control offset)
+
+   So the mast is not absent, it is 0.25 above a 1.23 noise floor — which is
+   what "reads as a decal standing on the pavement" measures as. THE CAUSE IS
+   TEXEL DENSITY AND NOTHING ELSE, and the sweep (same boot, same 130 lamps)
+   says no affordable setting fixes it:
+
+     setting                        texels/unit  mast tx  lamp med / control
+     1536 / span 14  (shipped)          54.9      1.70      1.484 / 1.233
+     normalBias .022 -> .010            54.9      1.70      1.564 / 1.280
+     PCFSoft -> PCF (hard)              54.9      1.70      1.367 / 1.252
+     2048 / span 14                     73.1      2.27      1.546 / 1.281
+     2048 / span 10                    102.4      3.17      1.679 / 1.284
+     2048 / span 6                     170.7      5.29      1.717 / 1.176
+     4096 / span 6                     341.3     10.58      1.873 / 1.180
+
+   Signal minus control: 0.25 -> 0.27 -> 0.40 -> 0.54 -> 0.69. It is monotone in
+   texel density and it takes a 6-unit frustum to double. A 6-unit frustum is a
+   SECOND CASCADE, not a tier setting: SHADOW_SPAN 14 exists because v122
+   measured long shadows being clipped at the frustum edge (a hard straight line
+   with no object at the end of it) and shrinking it back to 6 would reinstate
+   that across the whole city.
+
+   ⚠ REJECTED — the two-light hack. three r171 has no CSM, so "a second cascade"
+     here means a second DirectionalLight on the sun's axis with a tight
+     frustum, both at half intensity. Outside the tight light's frustum three
+     returns UNSHADOWED for it, so every shadow beyond ~6 units is lit by half
+     the rig and is half as dark: a visible ring where shadow density steps.
+     That trades the thing this city is measurably good at — a 58px penumbra, a
+     2.0x key/fill ratio and blue shadow colour — for a mast 0.03 units wide.
+   ⚠ REJECTED — normalBias 0.022 -> 0.010. It is free and it is real (+13% of
+     the mast's margin), and it is still inside the noise floor. 0.022 is 1.21
+     texels at this tier and 1.2-1.3 at every other one (the tiers move `shadow`
+     and `span` almost in step, so the texel is 0.017-0.018 everywhere), which
+     is exactly where a normal bias belongs. Buying 13% of an invisible signal
+     with acne on every roof pitch is not a trade.
+   THE HONEST ANSWER IS THAT A 0.031-UNIT MAST CANNOT BE SHADOWED BY ONE CASCADE
+   AT ANY RESOLUTION THIS APP CAN AFFORD. If a later round wants it, the shape
+   of the fix is a contact/AO patch merged into B_SOLID at each prop's foot —
+   free (same bucket, same material, no draw call), directionless and therefore
+   correct at every hour — not a bigger map. */
 scene.add(sun); scene.add(sun.target);
 
 const moon = new THREE.DirectionalLight(0x8fa3d8, 0);
@@ -4394,21 +4452,23 @@ const _TEX_LIN = Math.pow((_TEX_MID + .055) / 1.055, 2.4);   // 0.8276
 
    scene.fog.color is the colour of the sky's haze, and it is applied to
    everything, including a ground plane the camera is looking DOWN at. On the
-   'medium' tier the fog runs near 21 → far 30 (pinned to the tile cull; see
-   qualityApply), so from an aerial camera the plate is barely fogged while the
-   plain 6 units beyond it is fogged 100% — and at the grazing angle an aerial
-   frame views that ground at, the entire 9-unit ramp is compressed into a band a
-   few dozen pixels wide. A gradient that should read as distance instead reads
+   'medium' tier the fog runs near 25 → far 34 (pinned to the tile cull; see
+   qualityApply — it read 21 → 30 when this note was written, and v125 slid the
+   same 9-unit ramp outward because its far stop was landing on the district's
+   own far corner at 30.18; the ARGUMENT below is unchanged by that, only the
+   distances at which it happens), so from an aerial camera the plate is barely
+   fogged while the plain beyond it is fogged 100% — and at the grazing angle an
+   aerial frame views that ground at, the entire 9-unit ramp is compressed into a
+   band a few dozen pixels wide. A gradient that should read as distance instead reads
    as an edge. At 20:17 the fog was a warm rose and the plate a lit olive, so the
    edge was a HUE REVERSAL as well: salmon against green, which is the frame the
    critic described.
 
-   THE FIX IS THE COLOUR, NOT THE DISTANCES. `far` is pinned to the tile cull and
-   must stay pinned (a tile has to be fully hazed before it is hidden, or it pops)
-   and `near` was pushed out to 21 in v122 for a measured reason — it is what
-   stops a mid-rise two blocks away having its sunlit and its shaded face both
-   pulled toward the haze. Neither may move. What CAN move is what the haze is
-   made of: real aerial perspective over land is the sky's haze mixed with the
+   THE FIX IS THE COLOUR, NOT THE RAMP'S WIDTH. `far` is pinned to the tile cull
+   (a tile has to be fully hazed before it is hidden, or it pops) and `near` was
+   pushed out to 21 in v122 for a measured reason — it is what stops a mid-rise
+   two blocks away having its sunlit and its shaded face both pulled toward the
+   haze. What CAN move is what the haze is made of: real aerial perspective over land is the sky's haze mixed with the
    land under it, and mixing GROUND_COL in by FOG_LAND turns "olive → pale blue"
    into "olive → paler, cooler olive". Same lift, same recession, no hue break.
 
@@ -5497,9 +5557,11 @@ const tileGroup = new THREE.Group(); scene.add(tileGroup);
      ⚠ REJECTED — real relief on the surrounding plain, which has no apron to
        clear and could have carried metres of it. The quality tier steps down to
        `medium` at boot for every non-WebGPU client and that pins fog to
-       [17, 30] (see qualityApply); the plain is only visible past r ≈ 13 and is
-       100% fog colour past 30, so hills out there would be triangles spent on
-       painting the haze its own colour. The plain gets the colour field instead
+       [25, 34] (see qualityApply; the figure here read [17, 30] across two
+       retunes of the tier and was stale both times — read the table, not this
+       line); the plain is only visible past r ≈ 13 and is 100% fog colour past
+       the far stop, so hills out there would be triangles spent on painting the
+       haze its own colour. The plain gets the colour field instead
        — same noise, same ramps — so the world is continuous across the seam.
 
      🎨 GROUND_COL IS STILL THE ONE HEX FIVE PLACES AGREE ON: the surrounding
@@ -6774,9 +6836,12 @@ function perimeterScenery() {
   const glaz = rdMerge(W, winMat, false, false);
   /* 🔴 THE DISTRICT MUST IGNORE FOG, OR ALMOST NOBODY EVER SEES IT.
      `:21585` steps the quality tier down at boot for ANY non-WebGPU renderer —
-     not just weak hardware, every WebGL2 client — and `medium` pulls fog to
-     [17,30]. This district spans 15→30 units, so it sits inside the haze from
-     the very first frame and the whole map half of the round renders as grey.
+     not just weak hardware, every WebGL2 client — and `medium` pulls fog in to
+     meet its tile cull ([17,30] when this was measured, [25,34] as of v125).
+     This district spans 15→30 units, so it sits inside the haze from the very
+     first frame and the whole map half of the round renders as grey. The v125
+     move helps it and does not rescue it: at [25,34] the ring road's far side
+     is still ~70% haze, so the exemption below stands.
      Measured on the shipped page with no fog pin: backend webgl2, tier medium,
      fog [17,30] at boot, dropping to low after 6s; only two ring-road corners
      survived. Recovery to `high` needs a 90-frame median under 12 ms, which a
@@ -9893,12 +9958,35 @@ function _hHouseBody(lvl, tx, tz) {
 // ── Module-scope. Nothing in this block is allocated per tile. ──────────────
 const RD_Y    = 0.016;              // carriageway top. Just clears gridHelper (y=.012).
 const RD_HW   = 0.20;               // carriageway half-width == the kerb face
-const RD_KH   = 0.030;              // kerb height (~0.15m at this scale)
+/* 📏 THE SCALE THIS FILE IS DRAWN AT IS ~10 m/unit, AND THE THREE COMMENTS IN
+   THIS MODULE THAT SAID 5 m/unit WERE WRONG. Only the comments — no geometry
+   moves for this, and none should without a round of its own. Where the number
+   comes from, four independent anchors that all agree:
+     · a citizen is 0.250-0.278 in CIV_TYPE and the caller scales by
+       CIV_SCALE = 0.70, so 0.175-0.195 tall on the street  →  ~9.5 m/unit
+     · storey height SH = 0.34 in makeHousing, the mid-rise and NT_SH   →  ~10
+     · the cruiser's roof is 0.135 and it is 0.383 long                 →  ~10
+     · the round-13 critic's own measurement of the fleet               →  10.1
+   "a citizen is 0.34 tall" appears twice below and it is the UNSCALED body
+   height out of CIV_TYPE — 1.9x the figure the city actually draws — which is
+   where 5 m/unit came from. (`.gauntlet/capture.mjs` inherited it too, in the
+   note that argues the frontage framing's eye height.)
+   ⚠ SO THE CROSS-SECTION IS NOT WRONG, IT IS NARROW, and that is a different
+     finding: at 10 m/unit the carriageway is 4.0 m, the kerb 0.30 m, the kerb
+     band 0.45 m, the verge 0.80 m and the footway 1.75 m. Everything but the
+     carriageway is a real number. 4.0 m is two 2.0 m lanes against a UK
+     residential 5.0-5.5 m, and it reads as adequate ONLY because the fleet is
+     drawn narrow: the cruiser's half-width is 0.067, so a car is 1.34 m against
+     a real 1.8 m and keeps 0.66 m of a lane it would otherwise fill. Widening
+     the carriageway moves every kerb, verge, footway, apron and parking bay in
+     the city and re-cuts every junction — its own round, not this one. */
+const RD_KH   = 0.030;              // kerb height — 0.30m at ~10 m/unit (see above)
 const RD_LIP  = 0.045;              // width of the contrasting kerb band
 const RD_IN   = RD_HW + RD_LIP;     // 0.245 — where the kerb band ends
-/* The verge. 8cm — about 40cm at the scale a citizen is 0.34 tall — which is a
-   mowing strip, not a park: wide enough to read as green from the game's 20-30°
-   camera and narrow enough to leave the footway walkable at 17.5cm.
+/* The verge. 0.080 units — 0.80m at ~10 m/unit (this said "about 40cm at the
+   scale a citizen is 0.34 tall", off by 2x; see the scale note at RD_KH) —
+   which is a mowing strip, not a park: wide enough to read as green from the
+   game's 20-30° camera and narrow enough to leave the footway at 1.75m.
    ⚠ IT IS ONLY EMITTED ON A STRAIGHT RUN. A verge carried through a junction
      would bury the corner islands and the crossings, and real verges stop at
      the junction anyway. That is also what keeps it clear of the prop corners:
@@ -9914,21 +10002,53 @@ const RD_BASE = -0.014;             // every slab's underside, buried in the gro
 /* ── THE SURFACE STACK ──────────────────────────────────────────────────────
    Round 3 put ONE thing on the asphalt (paint, at RD_Y+.004). Round 4 puts
    four, so they need an agreed order. Each is a 6mm box whose TOP is the height
-   below, and consecutive layers are ≥2.2mm apart — about the margin RD_EPS buys
-   the apron, which round 2 measured as several times the depth-buffer
-   resolution at city zoom and invisible as a step.
+   below; the ORDER is what the stack buys and the STEP is what it costs.
 
-       RD_QY  RD_Y+.0022   patch repairs — a repair goes UNDER the wear on it
-       RD_WY  RD_Y+.0045   wheel tracks, gutter pan, kerb grime
-       RD_PY  RD_Y+.0072   ALL paint: centre, edge, zebra, stop bar, arrows
-       RD_DY  RD_Y+.0095   the gully grate, which stands proud of its gutter
+       RD_QY  RD_Y+.0012   patch repairs — a repair goes UNDER the wear on it
+       RD_WY  RD_Y+.0024   wheel tracks, gutter pan, kerb grime
+       RD_PY  RD_Y+.0036   ALL paint: centre, edge, zebra, stop bar, arrows
+       RD_DY  RD_Y+.0048   the gully grate, which stands proud of its gutter
 
-   The whole stack is 9.5mm, under a third of the 30mm kerb, so the surface
-   still reads as one plane from anywhere the player can put the camera. */
-const RD_QY = RD_Y + .0022;
-const RD_WY = RD_Y + .0045;
-const RD_PY = RD_Y + .0072;
-const RD_DY = RD_Y + .0095;
+   🔴 v125 HALVED THE STEP, 2.25mm -> 1.2mm, BECAUSE THE TOP OF THIS STACK IS
+   VISIBLE GEOMETRY AND NOBODY HAD MEASURED IT. Round 4 chose 2.2mm as "about
+   RD_EPS", which is an argument about DEPTH PRECISION and says nothing about
+   how tall the result is. It is 7.2mm tall — a quarter of the 30mm kerb face —
+   and paint is not a kerb: at the frontage framing's ~19 degrees of depression
+   every zebra bar was a slab standing proud of the carriageway with its own
+   unlit side face along the far edge. Measured on r18base-frontage.png, y=700,
+   crossing the second zebra bar: asphalt L 92, then a 3-px trough at L 73.3
+   hard against the bar's L 206.6 edge. 3 px is what 7.2mm subtends there
+   (0.0072 x cos19 x 1146 px/rad / 2.2 units = 3.5 px), so the trough IS the
+   side face and not a shadow — the paint casts nothing, because 7.2mm is 0.4
+   of a shadow-map texel at this tier (see the shadow-map note at `sun`).
+
+   WHY 1.2mm AND NOT LESS. The chain that has to stay ordered is
+   carriageway -> patch -> wear -> paint: a zebra bar crosses both wheel tracks
+   and the edge line overlaps the outer track, so paint genuinely has to win
+   over wear, and wear over a repair under it. Three steps, so the paint's
+   height IS three times the step and nothing else. Round 3 ran paint at
+   RD_Y+.001 against the carriageway with no z-fight for a whole round, which
+   is the only empirical floor anyone has: 1.2mm keeps a 20% margin over it and
+   is still ~5x the depth-buffer resolution at 20 units (camera near .1 far 220,
+   24-bit: 0.24mm at z=20, 0.54mm at z=30 — and a tile at 30 is fully hazed).
+
+   ⚠ REJECTED: polygonOffset. It is the right tool for COPLANAR surfaces and
+     these are not coplanar — they are 7.2mm apart, which is the whole problem.
+     To let paint sit at the asphalt's own height it would have to out-bias a
+     3.5mm world separation from the wear bands, which is hundreds of depth
+     units and would then pull paint in front of a tyre. And the paint has no
+     material of its own to put it on: it merges into B_SOLID with the kerbs,
+     the verge, the bin, the sign and the lamp column (see makeRoad's bucket
+     list), so a material-level offset would bias every prop in the city too.
+   ⚠ REJECTED: giving paint its own non-casting bucket. It would also stop the
+     paint entering the shadow pass — except that it never contributed to it:
+     0.4 texel. One more merged mesh on ~130 road tiles for nothing.
+
+   The whole stack is 4.8mm now, a sixth of the 30mm kerb. */
+const RD_QY = RD_Y + .0012;
+const RD_WY = RD_Y + .0024;
+const RD_PY = RD_Y + .0036;
+const RD_DY = RD_Y + .0048;
 
 /* The lateral geometry of the cross-section, in one place because every one of
    these numbers is chosen against its neighbour: change one alone and two slabs
@@ -9968,7 +10088,8 @@ const RD_AP_FY   = 0.012;
    are coplanar, in which case it z-fights. Dropping every tile's E/W apron by
    2mm makes the N/S apron win that corner deterministically, everywhere, for
    free. It is several times the depth-buffer resolution at city zoom and about
-   1cm at the scale where a citizen is 0.34 tall, so it never reads as a step. */
+   2cm at ~10 m/unit (this said 1cm off the 0.34 citizen; see RD_KH), so it
+   never reads as a step. */
 const RD_EPS = 0.002;
 
 /* ── Materials. Two, and the second one is free. ────────────────────────────
@@ -35156,8 +35277,39 @@ const QUALITY = {
        its shaded face BOTH pulled toward the fog colour, which measured as a
        collapse of the very contrast this round exists to create: 2.66× in the
        district frame against 2.08× in the aerial, on the same buildings. */
+    /* 🔴 v125 MOVED `medium`'s FOG RAMP OUT BY 4 AND ITS TILE CULL WITH IT,
+       21->25 / 30->34, BECAUSE THE FAR STOP WAS LANDING INSIDE THE CITY.
+       Arithmetic first, because it is the whole argument. The gauntlet's aerial
+       framing sits 1.035 x span from the district centre; on the standard
+       18-unit district that is 18.6 units out, and the district's own far
+       corner is 30.18 units from the lens. fog.far was 30. So the ramp did not
+       fade the DISTANCE, it dissolved the last of the CITY: two materials at
+       the far edge arrived at the same pixel because 100% fog is 100% fog
+       whatever is under it. Measured on the standard scene (r18-probe.mjs, one
+       boot, render and read in the same task, do-nothing control 0.000%),
+       carriageway against empty ground, median over every unoccluded sample in
+       the band:
+           depth 26-32   [21,30]  dL 33.6  dHue  78
+                         [25,34]  dL 94.3  dHue 141     (2.8x / 1.8x)
+           depth 23-26   [21,30]  dL 39.0  dHue  43
+                         [25,34]  dL 44.2  dHue  28
+       12.5% of the aerial frame moves. THE RAMP IS STILL 9 UNITS WIDE — it has
+       not been softened or switched off, it has been slid outward so that its
+       far stop is beyond the district instead of on its corner. Fog still hides
+       the grid edge, which was the job it was doing.
+       ⚠ `far` IS STILL PINNED TO `tileCull`, and that pairing is why tileCull
+         had to move too — a tile must be fully hazed before it is hidden or it
+         pops. What it costs is the tiles between r=30 and r=34: on a fully
+         built 24x24 grid seen from the DEFAULT play camera at (14,15,14) that
+         is 41 tiles of 576 (527 visible before, 568 after, +7.8%), and from any
+         closer camera it is zero — at (10,15,10) the old radius was already
+         hiding 1 tile of 576. The cull was buying 8.5% of the tile draws at
+         exactly one camera position and pinning the haze to 30 everywhere.
+       ⚠ `cull` (28, the agent/vehicle radius) is deliberately NOT moved with
+         it. It is a frame-rate decision about moving objects, it was already 2
+         units inside the tile cull, and nothing here measured it. */
     { name: 'high',   pr: 2.0, shadow: 2048, soft: true,  moonShadow: true,  lamps: 12, span: 17, cull: 40, tileCull: 0,  fog: [32, 70] },
-    { name: 'medium', pr: 1.5, shadow: 1536, soft: true,  moonShadow: true,  lamps: 10, span: 14, cull: 28, tileCull: 30, fog: [21, 30] },
+    { name: 'medium', pr: 1.5, shadow: 1536, soft: true,  moonShadow: true,  lamps: 10, span: 14, cull: 28, tileCull: 34, fog: [25, 34] },
     { name: 'low',    pr: 1.25, shadow: 1024, soft: false, moonShadow: false, lamps: 8, span: 9, cull: 20, tileCull: 22, fog: [13, 22] },
     { name: 'potato', pr: 1.0, shadow: 768,  soft: false, moonShadow: false, lamps: 6, span: 7, cull: 15, tileCull: 16, fog: [10, 16] },
   ],

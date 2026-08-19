@@ -14007,12 +14007,24 @@
      zero rules risk.
      `backwards` fill is what keeps them invisible during the delay — without it
      each card paints at full opacity first and then jumps. */
+  /* ⚠ BOTH CONTAINERS. The battle screen renders renderHandStrip() ->
+     .hand-strip-cards; renderHandColumn() -> .hand-column-cards is the other
+     layout. The first version of this styled ONLY the column and therefore
+     matched nothing in an actual battle — the cards still appeared before the
+     board did. If a third hand layout is ever added, it needs a selector here. */
+  body.bt-dealing .hand-strip-cards > *,
   body.bt-dealing .hand-column-cards > * { animation: bt-deal-in 380ms cubic-bezier(.2,.75,.3,1) backwards; }
+  body.bt-dealing .hand-strip-cards > *:nth-child(1),
   body.bt-dealing .hand-column-cards > *:nth-child(1) { animation-delay: 640ms; }
+  body.bt-dealing .hand-strip-cards > *:nth-child(2),
   body.bt-dealing .hand-column-cards > *:nth-child(2) { animation-delay: 740ms; }
+  body.bt-dealing .hand-strip-cards > *:nth-child(3),
   body.bt-dealing .hand-column-cards > *:nth-child(3) { animation-delay: 840ms; }
+  body.bt-dealing .hand-strip-cards > *:nth-child(4),
   body.bt-dealing .hand-column-cards > *:nth-child(4) { animation-delay: 940ms; }
+  body.bt-dealing .hand-strip-cards > *:nth-child(5),
   body.bt-dealing .hand-column-cards > *:nth-child(5) { animation-delay: 1040ms; }
+  body.bt-dealing .hand-strip-cards > *:nth-child(n+6),
   body.bt-dealing .hand-column-cards > *:nth-child(n+6) { animation-delay: 1140ms; }
   @keyframes bt-deal-in {
     0%   { opacity: 0; transform: translateY(38px) scale(.86) rotate(-4deg); }
@@ -14039,6 +14051,7 @@
     100% { opacity: 0; transform: scale(1.02) translateY(-4px); }
   }
   @media (prefers-reduced-motion: reduce) {
+    body.bt-dealing .hand-strip-cards > *,
     body.bt-dealing .hand-column-cards > * { animation: none; }
     .phase-banner-chip { animation: none; }
   }
@@ -36541,7 +36554,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y5';
+  window.BUILD_VERSION = 'v120y6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -106445,7 +106458,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120y5';
+const BB_VER = 'v120y6';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -211871,7 +211884,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120y5';
+  f.src = 'node-city/index.html?v=v120y6';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -229048,8 +229061,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120y5">
-<script type="module" src="src/battle/hud.js?v=v120y5"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120y6">
+<script type="module" src="src/battle/hud.js?v=v120y6"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

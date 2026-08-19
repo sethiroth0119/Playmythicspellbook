@@ -365,7 +365,30 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
 
 ## 8 · Known limitations — read before shipping
 
-1. **The salvage ledger is not server-side.** Cinder and Aza are authoritative;
+1. **The resource ledger is server-side FOR THE WAREHOUSE PATH — and the
+   divergence that creates is NOT solved.** `public.user_resources` now holds a
+   real balance; `wh_send_shipment` debits it inside its own transaction, and
+   withdraw / cancel / reclaim credit it back. `{"dna":1000000}` from an empty
+   ledger is refused. But the rest of the game still reads and writes
+   `Profile.salvage` in the client profile blob, and those systems do not know
+   this table exists. Two concrete failures, both reachable today:
+   - **Earn outside, ship inside** — loot 500 metal (blob +500, ledger
+     unchanged), try to ship it, get `insufficient_resources` while the
+     inventory screen shows 500. Reads to the player as "the game lost my
+     metal". The UI says so in as many words rather than saying "not enough".
+   - **Spend outside, ship inside** — craft away 500 metal (blob −500, ledger
+     unchanged) and you can still ship 500 from the warehouse.
+   The ledger is seeded ONCE from the blob by `wh_seed_resources`, which is a
+   real trust concession: it believes the client's claim exactly one time,
+   capped at 100,000 per resource, writes a row for every known resource so
+   there is no "not seeded yet" state left to exploit, and records a
+   `wallet_ledger` entry marking the amount SELF-DECLARED. Full migration path
+   is written out in §DIVERGENCE at the end of the resource-ledger section of
+   the migration. **A cheaper partial — mirroring the blob into the ledger on
+   every profile save — was considered and rejected, because the blob is
+   client-owned and that would re-open the mint.**
+
+   *(original item, kept because it is what the hole was)* **The salvage ledger is not server-side.** Cinder and Aza are authoritative;
    `Profile.salvage` is not, anywhere in this game. The server validates a
    payload's *shape* and derives its weight and ETA, but **cannot prove the
    sender owned the goods**. Fix by adding a `user_resources` table + debit RPC

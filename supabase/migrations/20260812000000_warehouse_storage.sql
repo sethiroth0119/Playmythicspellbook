@@ -170,7 +170,12 @@ create policy whu_upd on public.wh_units for update to authenticated using (fals
 --
 -- ⚠ KNOWN LIMITATIONS — the complete list, not a flattering subset.
 --
---  1. THE SALVAGE LEDGER IS NOT SERVER-SIDE. Cinder and Aza are authoritative
+--  1. THE LEDGER IS SERVER-SIDE FOR THE WAREHOUSE PATH, AND THE DIVERGENCE THAT
+--     CREATES IS NOT SOLVED — see §DIVERGENCE in the resource-ledger section
+--     above. What follows is the original text of this item, kept because it is
+--     exactly what the hole was before public.user_resources existed:
+--
+--     [FIXED — was] THE SALVAGE LEDGER IS NOT SERVER-SIDE. Cinder and Aza are authoritative
 --     (public.user_progress), but the salvage ledger (Profile.salvage —
 --     food/metal/fuel/…) has no server-side balance anywhere in this game; it
 --     rides inside the profile blob. The server validates the SHAPE of a
@@ -476,6 +481,231 @@ returns jsonb language sql stable as $$
   ) t;
 $$;
 grant execute on function public._wh_sane_payload(jsonb) to authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 📒 THE RESOURCE LEDGER — closing the minting hole
+--
+-- Until this section existed, `wh_send_shipment` validated the SHAPE of a
+-- payload, derived its weight and ETA server-side, and then wrote the shipment
+-- WITHOUT EVER CHECKING THE SENDER OWNED THE GOODS. The migration header said
+-- so in as many words: `{"dna":1000000}` from an empty ledger returned ok:true.
+-- In a feature whose whole premise is moving real players' resources into other
+-- players' warehouses, that is not a rough edge — it is a mint.
+--
+-- The table below is that missing balance. Same posture as public.user_progress
+-- and the _wh_charge/_wh_credit pair: the client may READ its own rows and may
+-- never write any of them. Every movement goes through a SECURITY DEFINER
+-- internal that is revoked from anon and authenticated alike.
+--
+-- ⚠ SCOPE, STATED PLAINLY — see §"DIVERGENCE" at the end of this section.
+-- This ledger is authoritative FOR THE WAREHOUSE PATH. It is not yet the
+-- game's resource store; Profile.salvage still is, for everything else.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Immutable so it can be used in a CHECK. The id set is exactly the one
+-- _wh_sane_payload already validates against — one source of truth for "is this
+-- a real resource", not two lists that drift.
+create or replace function public._wh_known_resource(p_id text)
+returns boolean language sql immutable as $$
+  select (public.wh_config() -> 'weights') ? p_id;
+$$;
+
+create table if not exists public.user_resources (
+  user_id     uuid   not null references auth.users(id) on delete cascade,
+  resource_id text   not null,
+  qty         bigint not null default 0 check (qty >= 0),
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, resource_id),
+  constraint user_resources_known_id check (public._wh_known_resource(resource_id))
+);
+create index if not exists user_resources_user_idx on public.user_resources (user_id);
+
+alter table public.user_resources enable row level security;
+-- READ: your own balances, nobody else's. Another player's stock is not public
+-- information — it is exactly the "what is worth stealing" list the bay-contents
+-- masking exists to withhold.
+drop policy if exists ur_sel on public.user_resources;
+create policy ur_sel on public.user_resources for select to authenticated
+  using (user_id = auth.uid());
+-- WRITE: NOTHING. Not insert, not update, not delete, not even on your own row.
+-- A client that can write this table can mint, which is the bug being fixed.
+drop policy if exists ur_ins on public.user_resources;
+create policy ur_ins on public.user_resources for insert to authenticated with check (false);
+drop policy if exists ur_upd on public.user_resources;
+create policy ur_upd on public.user_resources for update to authenticated using (false) with check (false);
+drop policy if exists ur_del on public.user_resources;
+create policy ur_del on public.user_resources for delete to authenticated using (false);
+
+-- ─── ➖ _wh_debit_resources — take goods off a player, or refuse entirely ────
+-- ALL-OR-NOTHING. Every line is checked before ANY line is applied, because a
+-- plpgsql function that returns a refusal does NOT roll its caller back: if this
+-- debited three resources and then discovered the fourth was short, those three
+-- would stay debited and the caller would still return "insufficient". A payload
+-- that passes on every line but the last must leave the ledger untouched.
+--
+-- Rows are locked FOR UPDATE in resource_id order before anything is read, for
+-- two reasons: the balance read must happen after the lock (or two concurrent
+-- sends both read the pre-spend value and double-spend), and a fixed lock order
+-- is what stops two senders holding half of each other's rows.
+create or replace function public._wh_debit_resources(p_uid uuid, p_payload jsonb)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare k text; v numeric; v_have bigint;
+begin
+  if p_uid is null or coalesce(p_payload, '{}'::jsonb) = '{}'::jsonb then return false; end if;
+  -- 1) lock, in a deterministic order
+  for k in select key from jsonb_each_text(p_payload) order by key loop
+    perform 1 from public.user_resources
+      where user_id = p_uid and resource_id = k for update;
+  end loop;
+  -- 2) verify EVERY line, applying nothing
+  for k, v in select key, (value)::numeric from jsonb_each_text(p_payload) order by key loop
+    if not public._wh_known_resource(k) then return false; end if;
+    if v is null or v <= 0 or v <> floor(v) then return false; end if;
+    select qty into v_have from public.user_resources
+      where user_id = p_uid and resource_id = k;
+    if coalesce(v_have, 0) < v then return false; end if;
+  end loop;
+  -- 3) only now, apply
+  for k, v in select key, (value)::numeric from jsonb_each_text(p_payload) order by key loop
+    update public.user_resources set qty = qty - v::bigint, updated_at = now()
+      where user_id = p_uid and resource_id = k;
+  end loop;
+  return true;
+end; $$;
+revoke all on function public._wh_debit_resources(uuid, jsonb) from public, anon, authenticated;
+
+-- ─── ➕ _wh_credit_resources — put goods back ────────────────────────────────
+-- Used by withdraw, cancel and reclaim. Closing the mint without this would
+-- just have opened a burn: goods would leave the ledger on send and never come
+-- back, so a cancelled shipment would destroy what it was carrying.
+create or replace function public._wh_credit_resources(p_uid uuid, p_payload jsonb)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare k text; v numeric;
+begin
+  if p_uid is null or coalesce(p_payload, '{}'::jsonb) = '{}'::jsonb then return false; end if;
+  for k, v in select key, (value)::numeric from jsonb_each_text(p_payload) order by key loop
+    if not public._wh_known_resource(k) then continue; end if;
+    if v is null or v <= 0 then continue; end if;
+    insert into public.user_resources (user_id, resource_id, qty)
+      values (p_uid, k, floor(v)::bigint)
+      on conflict (user_id, resource_id)
+      do update set qty = public.user_resources.qty + floor(v)::bigint, updated_at = now();
+  end loop;
+  return true;
+end; $$;
+revoke all on function public._wh_credit_resources(uuid, jsonb) from public, anon, authenticated;
+
+-- ─── 📖 wh_my_resources — the caller's own balances ─────────────────────────
+create or replace function public.wh_my_resources()
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce((select jsonb_object_agg(resource_id, qty)
+    from public.user_resources where user_id = auth.uid()), '{}'::jsonb);
+$$;
+grant execute on function public.wh_my_resources() to authenticated;
+
+-- ─── 🌱 wh_seed_resources — the one-time bootstrap from the profile blob ────
+-- ⚠ THIS IS THE NEW ATTACK SURFACE AND IT IS TRUSTED EXACTLY ONCE.
+-- Every player's resources currently live in Profile.salvage inside the profile
+-- blob, which the client owns. There is no server-side history to reconstruct a
+-- balance from, so the ledger has to start SOMEWHERE, and the only available
+-- source is the client's own claim. That is a real trust concession and it is
+-- written down rather than buried.
+--
+-- What contains it:
+--   • ONCE. If the caller has any row at all — including a zero-quantity row —
+--     this refuses. It can never top up an existing ledger.
+--   • A row is written for EVERY known resource, not just the ones claimed, so
+--     the "no rows yet" test cannot be defeated by seeding one resource now and
+--     another later. After one call the ledger is fully populated forever.
+--   • Quantities are shape-validated by _wh_sane_payload and then hard-capped
+--     per line, so a fresh account cannot declare an absurd opening balance.
+--   • Every seed writes a wallet_ledger row recording that the amount was
+--     SELF-DECLARED, so an auditor can find them later.
+create or replace function public.wh_seed_resources(p_payload jsonb default '{}'::jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid(); v_pay jsonb; k text; v numeric;
+  -- The most a self-declared opening balance may contain of any one resource.
+  -- Deliberately a literal, not a wh_config key: this is a trust boundary, not
+  -- a game-balance dial, and it should not move when prices are tuned.
+  v_cap constant bigint := 100000;
+  v_rows int;
+begin
+  if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
+  select count(*) into v_rows from public.user_resources where user_id = v_uid;
+  if v_rows > 0 then
+    return jsonb_build_object('ok', false, 'reason', 'already_seeded', 'rows', v_rows);
+  end if;
+  v_pay := public._wh_sane_payload(p_payload);
+  -- Populate EVERY known id, zero where unclaimed. This is what makes the
+  -- once-only guard airtight: after this call there is no "not seeded yet"
+  -- state left to exploit for any resource.
+  for k in select jsonb_object_keys(public.wh_config() -> 'weights') loop
+    v := least(v_cap, coalesce((v_pay ->> k)::numeric, 0));
+    insert into public.user_resources (user_id, resource_id, qty)
+      values (v_uid, k, floor(v)::bigint)
+      on conflict (user_id, resource_id) do nothing;
+  end loop;
+  begin
+    insert into public.wallet_ledger (user_id, op, resource, delta, balance_after, reason, meta)
+      values (v_uid, 'seed', 'user_resources', 0, null,
+              'Warehouse ledger seeded from the client profile (SELF-DECLARED)',
+              jsonb_build_object('claimed', v_pay, 'cap_per_resource', v_cap));
+  exception when others then null;    -- wallet_ledger not installed → not fatal
+  end;
+  return jsonb_build_object('ok', true, 'seeded', public.wh_my_resources());
+end; $$;
+grant execute on function public.wh_seed_resources(jsonb) to authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §DIVERGENCE — WHAT THIS LEDGER DOES NOT FIX. READ BEFORE SHIPPING.
+--
+-- public.user_resources is authoritative FOR THE WAREHOUSE PATH ONLY. The rest
+-- of this 215,000-line game still reads and writes Profile.salvage inside the
+-- client profile blob — loot drops, crafting, the refinery, the resource market,
+-- camp consumption, expeditions. Those systems do not know this table exists.
+--
+-- SO THE TWO STORES CAN DRIFT. Concretely:
+--
+--   a) EARN OUTSIDE, SHIP INSIDE. A player loots 500 metal (blob +500, ledger
+--      unchanged) and then tries to ship 500 metal. The send is refused with
+--      `insufficient_resources` even though their inventory screen shows 500.
+--      From the player's side this reads as "the game lost my metal" — it did
+--      not; the two stores disagree and the server is right about its own.
+--
+--   b) SPEND OUTSIDE, SHIP INSIDE. A player crafts away 500 metal (blob −500,
+--      ledger unchanged) and can still ship 500 metal from the warehouse. That
+--      is the mint again, one level up: not from nothing, but from goods that
+--      were already spent elsewhere.
+--
+--   c) SEED TIMING. The seed is taken once, from whatever the blob held at that
+--      moment. Everything earned before the seed counts; a player who seeds from
+--      a device with a stale profile locks in the stale number permanently.
+--
+-- WHAT IS ACTUALLY GUARANTEED TODAY:
+--   • no shipment can exceed the LEDGER balance;
+--   • every warehouse mutation (send / withdraw / cancel / reclaim) moves the
+--     ledger, so the warehouse path alone conserves goods exactly;
+--   • the client mirrors those same movements into the blob, so a player who
+--     only ever uses the warehouse sees the two stores agree.
+--
+-- WHAT A FULL MIGRATION NEEDS (not done, deliberately not faked):
+--   1. every writer of Profile.salvage routed through server RPCs that move
+--      user_resources — the ~40 call sites of addRes/getRes/_ensureResources;
+--   2. Profile.salvage demoted to a read-through CACHE of user_resources,
+--      refreshed on load and after every mutation, never authoritative;
+--   3. a reconciliation pass for accounts seeded before (1) landed, with a
+--      documented tie-break — server-wins is the only safe one, and it will
+--      take resources away from some players, which is a product decision and
+--      not a technical one;
+--   4. wh_seed_resources dropped entirely once (1) and (2) hold, because the
+--      bootstrap it exists for no longer has anything to bootstrap from.
+--
+-- A CHEAPER PARTIAL that was considered and NOT taken: mirroring the blob into
+-- the ledger on every profile save. Rejected because it re-opens the mint — the
+-- blob is client-owned, so any client that can write its own profile could
+-- write its own balance, and the table would be authoritative in name only.
+-- ═══════════════════════════════════════════════════════════════════════════
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PUBLIC RPCs
@@ -949,6 +1179,21 @@ begin
   v_hours := case when v_free then (v_cfg ->> 'free_city_hours')::integer else public.wh_eta_hours(v_lvl) end;
   v_hours := least((v_cfg ->> 'max_hours')::integer, greatest(1, v_hours));
 
+  -- 💰 PAY FOR THE LOAD. This is the fix for the mint: until now the sender's
+  -- balance was never consulted, and `{"dna":1000000}` from an empty ledger
+  -- returned ok:true.
+  --
+  -- ⚠ IT IS THE LAST THING BEFORE THE INSERT, on purpose. Every `return
+  -- jsonb_build_object('ok', false, …)` above is a plain return, not an
+  -- exception, so it does NOT roll this transaction back. Debit earlier and any
+  -- later refusal — no_room_at_destination, a bad node, anything — would keep
+  -- the goods AND refuse the shipment. Debit here and the only statement that
+  -- can follow it is the one that creates the shipment the goods paid for.
+  if not public._wh_debit_resources(v_uid, v_pay) then
+    return jsonb_build_object('ok', false, 'reason', 'insufficient_resources',
+      'payload', v_pay, 'have', public.wh_my_resources());
+  end if;
+
   insert into public.wh_shipments (
     sender_id, sender_name, warehouse_id, unit_id, origin_kind, origin_node, origin_label,
     node_level, free_city, payload, weight_kg, eta_hours, eta_at, status)
@@ -1124,7 +1369,13 @@ begin
       used_kg = greatest(0, used_kg - v_kg), updated_at = now()
     where id = v_u.id;
   end if;
-  return jsonb_build_object('ok', true, 'payload', v_out, 'weight_kg', v_kg, 'unit_id', v_u.id);
+  -- ⚠ CREDIT THE LEDGER. Handing the payload back to the client and trusting it
+  -- to add the goods somewhere would have closed the mint and opened a BURN:
+  -- sending debits the ledger, so withdrawing has to credit it, or every
+  -- round-trip through a warehouse quietly destroys what it carried.
+  perform public._wh_credit_resources(v_uid, v_out);
+  return jsonb_build_object('ok', true, 'payload', v_out, 'weight_kg', v_kg,
+    'unit_id', v_u.id, 'have', public.wh_my_resources());
 end; $$;
 grant execute on function public.wh_withdraw(uuid, text, numeric) to authenticated;
 
@@ -1201,7 +1452,10 @@ begin
   -- id used to return ok:true with an empty payload, which the client toasts as
   -- a win.
   if v_n = 0 then return jsonb_build_object('ok', false, 'reason', 'nothing_there'); end if;
-  return jsonb_build_object('ok', true, 'payload', v_out, 'claimed', v_n);
+  -- Impounded goods come back onto the balance too — same reason as cancel.
+  perform public._wh_credit_resources(v_uid, v_out);
+  return jsonb_build_object('ok', true, 'payload', v_out, 'claimed', v_n,
+    'have', public.wh_my_resources());
 end; $$;
 grant execute on function public.wh_reclaim(uuid) to authenticated;
 
@@ -1227,7 +1481,12 @@ begin
     from public.wh_crates c, jsonb_each_text(c.payload)
     where c.shipment_id = v_s.id and c.stored = false group by key) t;
   update public.wh_shipments set status = 'cancelled' where id = v_s.id;
-  return jsonb_build_object('ok', true, 'payload', v_back);
+  -- The un-stored remainder goes straight back onto the sender's balance.
+  -- Without this, cancelling a load DESTROYED it: the goods were debited at send
+  -- and nothing ever put them back. Closing a mint and opening a burn is not a
+  -- fix, it is the same bug with the sign flipped.
+  perform public._wh_credit_resources(v_uid, v_back);
+  return jsonb_build_object('ok', true, 'payload', v_back, 'have', public.wh_my_resources());
 end; $$;
 grant execute on function public.wh_cancel_shipment(uuid) to authenticated;
 

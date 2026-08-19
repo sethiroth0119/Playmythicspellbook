@@ -78172,6 +78172,7 @@ const WH_RPC_ALLOW = {
   wh_config: 1, wh_my_warehouse: 1, wh_warehouse_json: 1, wh_directory: 1,
   wh_buy_unit: 1, wh_expand_unit: 1, wh_upgrade_tier: 1, wh_buy_lifter: 1, wh_rent_unit: 1,
   wh_my_rentals: 1, wh_my_shipments: 1, wh_send_shipment: 1, wh_store_crate: 1, wh_withdraw: 1,
+  wh_my_resources: 1, wh_seed_resources: 1,
   wh_cancel_shipment: 1,
 };
 // 📦 One shared truth about how long a delivery takes, said in the words the
@@ -78338,6 +78339,12 @@ function _whReason(r) {
   const cur = (r && r.currency === 'aza') ? 'Aza' : 'Cinder';
   const m = {
     insufficient:  'Not enough ' + cur + '.',
+    // ⚠ This one means the SERVER ledger disagrees with what the inventory
+    // screen shows — see §DIVERGENCE in the migration. Say that, rather than
+    // "not enough", or the player reads it as the game losing their goods.
+    insufficient_resources: 'The storage network does not have those goods on your account. '
+                   + 'Resources earned outside the warehouse are not on its ledger yet — '
+                   + 'send what it lists, or withdraw and re-send to resync.',
     no_free_unit:  'That warehouse has no free bay left.',
     own_warehouse: 'That is your own warehouse — you cannot rent from yourself.',
     closed:        'That warehouse is not taking renters.',
@@ -78405,7 +78412,27 @@ async function _whLoadConfig() {
   }
   return c;
 }
+// 🌱 One-time bootstrap of the SERVER resource ledger from the profile blob.
+// public.user_resources is authoritative for everything the warehouse does, and
+// it starts empty — so without this, a player's first send is refused with
+// `insufficient_resources` no matter what their inventory says. The RPC itself
+// refuses to run twice, so this is safe to call as often as we like.
+let _whSeeded = false;
+async function _whSeedLedger() {
+  if (_whSeeded) return;
+  _whSeeded = true;
+  try {
+    const have = await _whRpc('wh_my_resources', {});
+    if (have && Object.keys(have).length) return;      // already seeded
+    const L = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {});
+    const pay = {};
+    Object.keys(L || {}).forEach(id => { const q = Math.max(0, Math.floor(+L[id] || 0)); if (q > 0) pay[id] = q; });
+    await _whRpc('wh_seed_resources', { p_payload: pay });
+  } catch (e) {}
+}
+
 async function _whOpenSendModal(kind, nodeId, label) {
+  await _whSeedLedger();
   // The limit shown must net off what is already on the road, exactly as the
   // server does — so fetch it before the modal renders, not after it lies.
   await _whRefreshInflight();

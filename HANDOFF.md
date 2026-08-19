@@ -11,10 +11,18 @@
 
 | | |
 |---|---|
-| **A — enforce the host role** | Small. The client already computes `amIHost = String(myId) < String(oppId)` and calls it *"the single engine of record"*, but **never enforces it** (5 refs in 215k lines, none gating snapshots). Enforcing it server-side in the `snapshot` handler turns two racing engines into one engine + a follower. |
-| **B — the server owns the board** | The engine already exists and is proven clean at 200 clients. Move the remaining board reads off the relay onto the `@type` schema, field by field. Weeks, not hours. |
+| **A — enforce the host role** | ~~Small.~~ **Not viable as written — verified 2026-08-19.** The client computes `amIHost` and never enforces it, true. But a guest's play reaches the host **only inside its snapshot** (`sendColyseusAction()` has 0 callers; the `action` channel is dead), so host-only relay would silently break every guest turn. A now costs "wire the action channel first" — it is step 3, not step 1. See the plan file. |
+| **B — the server owns the board** | The engine exists and is deterministic under load, but **has never seen a real match** (see the correction in §2). Wire the `action` channel, reconcile the two engines against real play, then move board reads onto the `@type` schema field by field. Weeks, not hours — and steps 1–2 are now shared with A. |
 
 **A is a strict subset of B**, so A-then-B wastes nothing.
+
+> **2026-08-19 — this decision is no longer the gate.** Both A and B now begin
+> with the *same* first step: give `sendColyseusAction()` its callers, so the
+> server's board is populated by real play at all. Until that lands there is
+> nothing to enforce (A) and nothing to migrate onto (B). Seth's A-vs-B call is
+> still needed, but it can be made *after* step 1 rather than before it — and
+> step 1 needs no decision, because neither path can skip it.
+> Detail and verification: `colyseus-server/RELAY_CLOSURE_PLAN.md`.
 
 ⚠ **Why this is not a free choice:** Aza is real withdrawable money (1 ◈ = $1 =
 5,000 ₵, the same rate the cashout vault settles at). Under A, the host is a
@@ -34,7 +42,7 @@ disrupted or needs a feature flag.
 |---|---|
 | Auth | ✅ Production **rejects a tokenless join** — *"No auth token provided."* JWTs verified via `jose` + `createRemoteJWKSet`. |
 | Matchmaking (1 process) | ✅ Exact, via `.filterBy(['matchId'])`. Supabase pairs; Colyseus hosts. |
-| Authoritative combat sync | ✅ **100/100 pairs byte-identical at 200 clients**, 0 disagreements |
+| Server combat engine | ⚠ **Correct but never driven.** 100/100 pairs byte-identical at 200 clients — but those units were played by the *load test*. `sendColyseusAction()` has **0 callers**, so in production `state.units` is empty and this engine does not run. |
 | Join latency | p50 5ms · p95 8ms · max 32ms · 400/400 snapshots, zero loss |
 | Horizontal scaling | ⚠ Wired but **OFF**. **Do not `fly scale count 2` without `REDIS_URL`** — two processes without a shared registry silently fail to pair players holding the same matchId. |
 | Board-state relay | ❌ **200/200 relayed snapshots contradicted the server** — this is the desync |
@@ -42,6 +50,8 @@ disrupted or needs a feature flag.
 Guard for all of it: `cd colyseus-server && npm run loadtest`.
 **Check `no-units` first** — if non-zero the run compared nothing and the green
 means "I never looked".
+⚠ Necessary but **not sufficient** — `no-units` is clean precisely because the
+test plays its own units. It says nothing about whether the real client does.
 
 Next steps and the gating question are in `colyseus-server/RELAY_CLOSURE_PLAN.md`.
 
@@ -63,7 +73,11 @@ Next steps and the gating question are in `colyseus-server/RELAY_CLOSURE_PLAN.md
 
 ## 4. Open work, in priority order
 
-1. **Board-state relay** — see §1 and the plan file.
+1. **Board-state relay — first concrete step is now known and needs no decision:**
+   wire `sendColyseusAction()` (0 callers today) into the playUnit / attack /
+   move sites so the server's board is populated by real play. Verify by
+   checking `state.units` is non-empty after a real two-player match. Both
+   authority options depend on it. See §1 and `colyseus-server/RELAY_CLOSURE_PLAN.md`.
 2. **`fly scale memory 1024`** — one command, Seth's (changes the bill).
 3. **The sync allowlist → denylist.** Camp roster, lab cores, city shop layouts
    and three currency ledgers (`hg_wallet_recon`, `hg_purge_owed`,
@@ -106,6 +120,17 @@ Next steps and the gating question are in `colyseus-server/RELAY_CLOSURE_PLAN.md
 - **A load test that cannot fail is worse than none.** Its first version played
   no units, so the board was empty and both checks passed having compared
   nothing.
+- **Ask who drove the test, not just whether it passed.** The load test's
+  "100/100 byte-identical" measured the server engine — driven by units the
+  *test itself* sent via `room.send('action')`. The shipping client sends no
+  actions at all, so the green described a code path production never enters.
+  `no-units` cannot catch this: the test populates the board itself. A guard
+  only guards the caller it actually has.
+- **Intent comments in the MP block are not descriptions of working code.**
+  `index.html` asserted *"Actions were already forwarded to the server before
+  being applied"* — false, and it is what the relay-closure plan was built on.
+  `amIHost` calls itself *"the single engine of record"* and gates nothing.
+  Enumerate call sites before believing a comment.
 - **Perf intuition was wrong twice.** Raising `POST_CADENCE` 12→36 to make a
   rebuild rarer made it **3× worse** (20 → 76 spikes): a longer gap means more
   work queued when the readback forces a flush. Reverted.

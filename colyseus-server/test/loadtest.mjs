@@ -209,6 +209,11 @@ async function onePair(i) {
   console.log(`  first state         : p50 ${pct(M.firstStateMs, .5)}ms  p95 ${pct(M.firstStateMs, .95)}ms`);
   console.log(`  snapshots sent/seen : ${M.snapshotsSent} / ${M.snapshotsSeen}`);
   console.log(`\n  A. SCHEMA AGREEMENT  (authoritative sync — MUST be clean)`);
+  console.log(`     ⚠ These units were played by THIS TEST via room.send('action').`);
+  console.log(`       The shipping client NEVER sends 'action' (0 call sites), so in`);
+  console.log(`       production state.units is EMPTY and this check measures a path`);
+  console.log(`       real matches do not use. Green here = "the server engine is`);
+  console.log(`       correct when driven", NOT "the game drives it".`);
   console.log(`     agree ${M.schemaAgree}   disagree ${M.schemaDisagree}   no-units ${M.schemaUnknown}`);
   console.log(`\n  B. RELAY DIVERGENCE  (client opinion vs server truth)`);
   console.log(`     checked ${M.relayChecked}   diverged ${M.relayDiverged}`);

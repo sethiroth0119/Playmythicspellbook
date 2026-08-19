@@ -45551,6 +45551,13 @@ function leaveColyseusMatch() {
  * Forward a typed action to the Colyseus server.
  * Replaces the old MatchBroadcast.broadcast / sendStateDelta calls for
  * attack, playUnit, move, emote, forfeit, endTurn actions.
+ * ⚠ 2026-08-19 — THIS FUNCTION HAS NO CALLERS. Verified by enumerating every
+ * `send('action'` / `sendColyseusAction` hit in public/: all four are this
+ * function itself. Consequence: the server's handleAction → calculateDamage →
+ * schema path never runs in a real match, `state.units` is empty in production,
+ * and the whole board travels via the unvalidated 'snapshot' relay instead.
+ * Wiring this up at the playUnit / attack / move sites is step 1 of
+ * colyseus-server/RELAY_CLOSURE_PLAN.md — not a cleanup, the prerequisite.
  */
 function sendColyseusAction(type, data) {
   if (!ColyseusMP.room) {
@@ -153143,8 +153150,14 @@ function checkPostAction() {
   // 📡 Multiplayer broadcast — push our state to the opponent after every
   // significant action (place / move / attack / cast). Debounced inside
   // broadcastMyState() so a burst of consecutive actions sends one packet.
-  // 🪐 Colyseus path: the server owns the state — don't broadcast locally.
-  //    Actions were already forwarded to the server before being applied.
+  // 🪐 Colyseus path: the board travels ONLY in this snapshot.
+  //    ⚠ 2026-08-19: this comment used to read "Actions were already forwarded
+  //    to the server before being applied." That was FALSE — sendColyseusAction()
+  //    has zero callers, so the server's authoritative engine never runs in a
+  //    real match and state.units stays empty. The snapshot below is not a
+  //    redundant mirror of an authoritative channel; it IS the channel.
+  //    Do not gate it on amIHost until actions are actually wired — doing so
+  //    silently breaks every guest turn. See colyseus-server/RELAY_CLOSURE_PLAN.md.
   if (App.battlePrep && App.battlePrep.multiplayer) {
     // 🪐 Colyseus path: push our board snapshot to the server, which relays it
     //    to the opponent. Supabase path: broadcast directly.

@@ -475,7 +475,7 @@ function available(cat, zoneId) {
          which it does change what develops. `realOn` is the other half of the
          sentence — the zones in this family where it IS a district. */
       differs: diff ? diff.slice() : null,
-      inert: diff ? diff.length === 0 : false,
+      inert: false, /* TEMPORARY REGRESSION — pre-fix behaviour, reverted below */
       /* How many rungs there are to differ ON, so the panel can say "only on
          Established land" rather than making the player count. */
       bandsTotal: (() => { const r = knownLadder(); return r ? r.length : null; })(),

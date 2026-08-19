@@ -147,6 +147,33 @@ function bestBidFor(x, z, type, housed, lots) {
   return best;
 }
 
+/* ── 🔇 WHEN THE MARKET HAS NO OPINION AT ALL ───────────────────────────────
+   🔴 "ABSENT ⇒ OPEN, NEVER CLOSED" — /src/landvalue's rule, and this module is
+      held to it too. There are two completely different situations that both
+      look like "no bid", and treating them the same would have been the worst
+      bug this feature could ship:
+
+        · NOBODY WILL TAKE THIS PITCH. A real verdict. The trade is saturated,
+          or the ground costs more than the catchment is worth. The lot should
+          stay VACANT and the player should be told why. This is the user's
+          "vacancies increase, buildings become abandoned".
+        · THE MARKET CANNOT TELL ONE LOT FROM ANOTHER. A city with nobody living
+          in it has no catchment anywhere, so `customers` and `income` are zero
+          on every square and the only term left is rent, which is negative on
+          every square. Every bid fails, everywhere, forever — and a fresh city
+          would develop NOTHING, which is not a consequence, it is a dead game.
+
+   `silent()` is the second case, and it is checked before any refusal is
+   returned. The test is the one that actually matters: is there a best
+   catchment on this board at all? If not, this module says nothing and
+   /src/zoning's own hash answers exactly as it did before the market existed.
+   ⚠ It deliberately does NOT test "is /src/demographics mounted". A mounted
+     module reporting an empty city is the same fact as an absent one, and the
+     failure mode this guards is about the DATA, not the wiring. */
+function silent() {
+  try { return !(F.field().maxNear > 0); } catch (e) { return true; }
+}
+
 /* THE WINNER over a whole bag. `bag` is what /src/zoning has left after the
    specialisation and the band filter — this never widens it. */
 function winnerFor(x, z, bag) {
@@ -174,11 +201,43 @@ function winnerFor(x, z, bag) {
      reported by `explain()` and by the panel; making the develop pass refuse it
      would be a second refusal path beside /src/landvalue's, which owns that
      sentence. */
-function wants(x, z, bag) {
+function wants(x, z, bag, cat) {
   try {
+    /* 🏠 RESIDENTIAL IS NOT A MARKET. A household is not a company and does not
+       bid; /src/demographics already decides who moves into a zoned home and
+       node-city already gates that on service coverage. Running an auction over
+       `housing` would have put a second, competing gate in front of the city's
+       oldest one. Same call /src/districts made — its FAMILIES table has no
+       residential row either, for the same reason. */
+    if (cat && cat !== 'com' && cat !== 'off' && cat !== 'ind') return null;
     const w = winnerFor(x, z, bag);
-    return w ? w.type : null;
+    if (w) return w.type;
+    /* `false` is the REFUSAL — a real verdict that the lot stays vacant.
+       `null` is "no opinion", and /src/zoning falls back to its hash. */
+    return silent() ? null : false;
   } catch (e) { return null; }
+}
+
+/* THE SENTENCE A MARKET REFUSAL HAS TO SAY. Owned here rather than written into
+   /src/zoning, so the model and its explanation cannot drift — the same rule
+   /src/landvalue and /src/districts both state about their own refusals.
+   Returns null when the refusal is NOT this module's to explain: an empty bag
+   is /src/landvalue's or /src/districts' sentence, and a market with no opinion
+   has nothing to say at all. */
+function refusal(x, z) {
+  if (!mounted || silent()) return null;
+  const bag = bagFromZoning(x, z);
+  if (!bag.length) return null;                    // not our refusal
+  const w = winnerFor(x, z, bag);
+  if (w) return null;                              // not refused
+  const e = explain(x, z, bag);
+  const top = (e.ok && e.rows.length) ? e.rows[0] : null;
+  if (!top) return '🏢 No company is looking for premises of this kind — the pool has nobody left to bid.';
+  const worst = top.terms.slice().sort((a, b) => a.v - b.v)[0];
+  return '🏢 NO COMPANY WILL TAKE THIS PITCH. The best bid on it is ' +
+    (top.cand.sizeName || 'a company') + ' ' + top.cand.name + ' at ' + top.total +
+    ', under the reserve of ' + TEN.bid.reserve + '. What sinks it: ' +
+    worst.label.toLowerCase() + ' — ' + worst.note + '.';
 }
 
 /* ── SEAM 2: the building landed ────────────────────────────────────────────
@@ -527,7 +586,7 @@ const API = {
   mount, afterLoad,
 
   /* the /src/zoning seams */
-  wants, award, levelFor,
+  wants, award, levelFor, refusal,
 
   /* the market */
   observe, explain, tenantAt,

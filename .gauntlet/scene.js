@@ -132,6 +132,13 @@
          MythicProgress.buildingBlockedBy and the district goes back to having
          no office in it, which is the hole round 17 exists to close. */
       ['off_low',       2, 'the Office Block and the o_low Office park zone'],
+      /* ⛏ THE EXTRACTION ROUND. `deepmine` and `alloyworks` joined the node
+         that already opens `scrapmine` and `quarry`; without this grant block 7
+         is refused by MythicProgress.buildingBlockedBy and the two new mines
+         never reach a frame — which is precisely how three trees, two bushes,
+         two gardens, a fountain and three Retail Parades disappeared out of
+         this scene for ten rounds without anyone noticing. */
+      ['ind_extract',   1, 'the Deep Mine and the Strategic Minerals Works'],
     ];
     if (!Pg) gates.push('progression: MODULE ABSENT — nothing gated, nothing granted');
     else {
@@ -362,6 +369,52 @@
     ['office', C+5, C+3], ['office', C+6, C+3], ['office', C+7, C+3],
   ]) { await P(t, x, z); done(); }
   done();
+
+  /* ── 7. THE EXTRACTION ROW ───────────────────────────────────────────────
+     🔴 THE SURVEY GRADED 52 DEPOSITS AND 19 OF THEM HAD NO BUILDING. These are
+     the five tiles that close 18 of the 19, and they are here for the same
+     reason the office row is: a land use nothing in this harness has ever
+     photographed cannot be judged on dimension 11 ("can a viewer tell the land
+     uses apart from the air"). Read west→east along z = C+5, fronting the same
+     z = C+4 carriageway the office row backs onto, a viewer now crosses open
+     water basins, a shaft tower and silo, leach ponds and tanks, a cut cane
+     field and — where the ground allows it — a rift collar.
+     ⚠ THE TILES ARE INSIDE THE EXISTING BOUNDING BOX (block 2's depots reach
+       x = C+9, z = C+8), so the aerial / street / district framings, which
+       capture.mjs derives from that box and which the README requires to be
+       unchanged since round 0, do not move.
+     ⚠ EACH HAS ROAD FRONTAGE: (C+5..C+9, C+4) are all carriageway from step 3.
+
+     🔴 AND THIS BLOCK IS THE FIRST IN THIS FILE WHOSE REFUSALS ARE A RESULT
+        RATHER THAN A FAULT. All five are gated by the GROUND now
+        (ecoGroundRefusal → MythicEconomy.pickAvailable → endowment.js), so on a
+        node whose survey says NONE for every seam a building works, that
+        building is refused and the game's own sentence lands in `why`. A `fails`
+        entry here is not necessarily a bug in the scene — read `why`, and read
+        `groundSurvey` below, which prints what this node actually carries. */
+  for (const [t, x, z] of [
+    ['waterintake', C+5, C+5], ['deepmine', C+6, C+5], ['alloyworks', C+7, C+5],
+    ['canecroft', C+8, C+5], ['riftbore', C+9, C+5],
+  ]) { await P(t, x, z); done(); }
+  done();
+  /* What the ground under this scene actually carries, straight out of the
+     shipped gate rather than re-derived — so a reader can tell a refusal that
+     is the RULE WORKING from a refusal that is the scene being wrong. */
+  try {
+    const E = window.MythicEconomy;
+    if (E && E.ready()) {
+      const rows = {
+        waterintake: ['rawWater'],
+        deepmine: ['goldOre', 'silverOre', 'platinumOre', 'rareMinerals', 'quartz'],
+        alloyworks: ['lithium', 'cobalt', 'titanium', 'tungsten', 'rareEarthMinerals'],
+        canecroft: ['sugarCrops', 'seeds'],
+        riftbore: ['anomalousMatter', 'realityMatter', 'soulEnergy', 'dimensionalMaterial', 'realityFragments'],
+      };
+      const survey = {};
+      for (const k in rows) survey[k] = E.pickAvailable(rows[k]) || 'NONE — the ground refuses this building';
+      gates.push('ground gate: ' + JSON.stringify(survey));
+    } else gates.push('ground gate: economy not mounted — the gate fails OPEN, all five placeable');
+  } catch (e) { gates.push('ground gate: threw ' + e); }
 
   /* 🚗 SPAWN THE CROWD — AND THEN ACTUALLY STEP IT.
      Round 1 found that manageAgents() is only called from animate() and a few

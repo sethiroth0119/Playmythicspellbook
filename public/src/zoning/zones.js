@@ -123,4 +123,17 @@ export const ADOPT_BY_TYPE = {
   machineshop: 'i_mfg', smelter: 'i_mfg', cannery: 'i_mfg', munitions: 'i_mfg',
   sawmill: 'i_mfg', weavery: 'i_mfg', fibercroft: 'i_mfg', lumbercamp: 'i_mfg',
   warehouse: 'i_ware', depot: 'i_ware', motorpool: 'i_ware', railyard: 'i_ware',
+  /* ⛏ THE EXTRACTION ROUND (waterintake · deepmine · alloyworks · canecroft ·
+     riftbore) IS DELIBERATELY ABSENT FROM THIS FILE — from every zone `mix`
+     and from this table — and the absence is written down rather than left to
+     be re-derived. Two reasons, and the second is the load-bearing one:
+       · It matches the shipped extraction tiles. `scrapmine`, `quarry`,
+         `fuelrig`, `farm`, `hydrofarm`, `purifier` and `siphon` are in no mix
+         and in no ADOPT row either. /src/landvalue's own header names that set:
+         "all of them extraction tiles a player sites by hand on the resource it
+         wants". A zone mix develops land by DEMAND; a seam is not demand.
+       · This table exists ONLY to grandfather cities built before zoning
+         arrived. No such city can contain one of these tiles — they did not
+         exist — so an entry here could never fire, and a rule that can never
+         fire is indistinguishable from one that is broken. */
 };

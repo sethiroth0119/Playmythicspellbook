@@ -2685,6 +2685,60 @@ const BUILDINGS = {
               desc: 'Pulps and presses mill lumber into card stock. The first half of the Ouroboros chain — nothing prints without it.' },
   printworks:{name: 'Print Works', ico: '🖨️', cost: { cinder: 96, metal: 26, wood: 10 }, pop: 2, crew: 2, powerNeed: 0.60, mesh: 'machineshop',
               desc: 'Ouroboros Printing. Turns card stock into printed cards for the Card Shop to pack and sell.' },
+  /* ══ ⛏ THE FIVE SEAMS THE SURVEY GRADED AND NOTHING COULD TOUCH ═══════════
+     The Survey panel ("WHAT THIS NODE HAS") grades all 52 deposits in
+     /src/economy/recipes.js. Measured against ECO_BUILDING_MAP (:24506) plus
+     the operations half (OP_ECO_MAP, :32348): 33 were reachable and **19 were
+     not** — a player reading "Platinum Ore — Rich" had nothing to build.
+     These five rows close 18 of the 19. `wood` is the nineteenth and is
+     DELIBERATELY still absent — see the 🪵 note on `lumbercamp` in
+     ECO_BUILDING_MAP, whose measurement (88 of 200 nodes lost their card chain
+     to it) is not being re-litigated here.
+
+     🔴 EVERY NUMBER ON THESE FIVE ROWS IS LIFTED FROM A NAMED NEIGHBOUR, the
+        way the Office Block's row is, because an invented economy number is
+        what this file has been burned by:
+          waterintake ← `purifier`   (20🔥/10⛓, pop 2, crew 2, outdoor)
+          deepmine    ← `scrapmine`  (26🔥/10🍖, pop 2, crew 2)
+          alloyworks  ← `quarry`     (28🔥/12⛓, pop 2, crew 2)
+          canecroft   ← `fibercroft` (24🔥/6⛓/8💧, pop 2, crew 2, outdoor)
+          riftbore    ← `siphon`     (110🔥/26⛓/16⛽, pop 3, crew 2)
+        `powerNeed` comes from /src/power's own POWER.grid.extra table, which
+        already prices each of those five neighbours: purifier .45, scrapmine
+        .40, quarry .35, fibercroft .15, and `siphon` is on that module's
+        "genuinely off-grid — arcane, runs on essence not amps" list, so the
+        Rift Bore declares none either.
+        ⚠ DECLARED HERE rather than added to POWER.grid.extra, and that is the
+          `papermill` / `printworks` precedent: `extra` exists ONLY to avoid
+          retro-fitting a draw onto buildings that stand in old saves. No save
+          can contain one of these, so the honest home is the row itself.
+
+     ⚠ NO `gen:` AND NO `use:`, DELIBERATELY — the `papermill` / `printworks`
+       rule, verbatim. What these produce are CHAIN resources (rawWater,
+       platinumOre, lithium…) which are not in index.html's `RESOURCES`; the
+       economy holds its own inventory and writing one through the bridge is
+       the CITY_STOCK §2b trap. Their whole economic output is the FIRM.
+       A `gen` here would also make them idle earners in the city-resource
+       layer, which is the objection that keeps the Stadium out of
+       ECO_BUILDING_MAP.
+
+     ⚠ AND THEY ARE THE FIRST BUILDINGS IN THIS FILE THAT THE GROUND CAN REFUSE.
+       See `ecoGroundRefusal()` at tryPlace: a tile whose ECO_BUILDING_MAP row
+       is ALL deposits is offered only where the node's endowment carries at
+       least one of them. That gate asks /src/economy/endowment.js through
+       `MythicEconomy.pickAvailable` and holds no list of its own — endowment.js
+       is explicit that a second opinion is how a player ends up able to build a
+       mine that produces nothing. */
+  waterintake:{name:'Water Intake', ico: '🚰', cost: { cinder: 20, metal: 10 }, pop: 2, crew: 2, outdoor: true, powerNeed: 0.45,
+              desc: 'A screened intake, two settling basins and a lift pump. Raw water is the input the Purifier has always needed and nothing in the city produced — every chemical, every food step and half the household bill runs off it.' },
+  deepmine: { name: 'Deep Mine',     ico: '💎', cost: { cinder: 26, food: 10 }, pop: 2, crew: 2, powerNeed: 0.40,
+              desc: 'A sunk shaft with a hoist over it, a sorting house and a fenced compound. Works the seams a surface Mine cannot reach — gold, silver, platinum, rare minerals and vein quartz.' },
+  alloyworks:{name:'Strategic Minerals Works', ico: '🔩', cost: { cinder: 28, metal: 12 }, pop: 2, crew: 2, powerNeed: 0.35,
+              desc: 'Crusher house, leach pads and thickener tanks. The five minerals every other city is short of — lithium, cobalt, titanium, tungsten and rare earths — and the only extraction building whose product has standing buyers on the trade network today.' },
+  canecroft:{ name: 'Cane & Seed Croft', ico: '🌾', cost: { cinder: 24, metal: 6, water: 8 }, pop: 2, crew: 2, outdoor: true, powerNeed: 0.15,
+              desc: 'Cane rows, a cutting yard and drying racks. Cuts sugar cane and saves seed — the two field deposits neither the Farm nor the Fiber Croft will take.' },
+  riftbore: { name: 'Deep Rift Bore', ico: '🌌', cost: { cinder: 110, metal: 26, fuel: 16 }, pop: 3, crew: 2,
+              desc: 'A cased bore into the tear itself under a containment collar. Where the Rift Siphon skims what has already leaked out, this reaches the seams beneath — anomalous matter, reality matter, soul energy, dimensional material and reality fragments.' },
   housing:  { name: 'Housing',       ico: '🏠', cost: { cinder: 26, metal: 10, supplies: 6 }, pop: 0, popCap: 6,
               desc: 'Shelters citizens. +6 population cap per level.' },
   barracks: { name: 'Barracks',      ico: '⚔️', cost: { cinder: 50, metal: 20, supplies: 8 }, pop: 0, garrison: 4, defense: 6,
@@ -3107,7 +3161,11 @@ const BUILDINGS = {
    building to BUILDINGS can never make it unreachable in the shop. */
 const BUILD_SECTIONS = [
   { id: 'prod',  name: 'Production',     ico: '⚙️', desc: 'Generates resources every tick.',
-    items: ['farm', 'hydrofarm', 'purifier', 'scrapmine', 'fuelrig', 'gasstation', 'lumbercamp', 'quarry', 'fibercroft'] },
+    items: ['farm', 'hydrofarm', 'purifier', 'scrapmine', 'fuelrig', 'gasstation', 'lumbercamp', 'quarry', 'fibercroft',
+            /* ⛏ The five seams round. Four sit here beside the extraction tiles they
+               were derived from; the Rift Bore is in Arcane beside the Rift Siphon,
+               because that is where a player already looks for anomalous work. */
+            'waterintake', 'deepmine', 'alloyworks', 'canecroft'] },
   // 🍽 The service layer sits ABOVE production: these buildings consume refined
   // stock and pay it back as COVERAGE, which is what the vitals actually read.
   { id: 'svc',   name: 'Food & Service',  ico: '🍽️', desc: 'Feeds the city. Coverage, not stockpiles — this is what stops the population falling.',
@@ -3132,7 +3190,7 @@ const BUILD_SECTIONS = [
   { id: 'arc',   name: 'Arcane',         ico: '✨', desc: 'Card-powered structures and rare tech.',
     // 'forge' MOVED, not removed — it is the Cinder Trust now (see the Financial
     // district above). Listing it there is what makes it placeable again.
-    items: ['reslab', 'siphon', 'obelisk', 'kalonstable', 'resthouse'] },
+    items: ['reslab', 'siphon', 'riftbore', 'obelisk', 'kalonstable', 'resthouse'] },
   { id: 'dec',   name: 'Decoration',     ico: '🌿', desc: 'Cosmetic, with small morale gains.',
     items: ['tree', 'bush', 'garden', 'fountain'] },
 ];
@@ -3151,6 +3209,8 @@ const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmi
   // ── the financial district: the Forge remodelled. 'forge' is BACK in this
   //    list, which is what makes it placeable again; the other two are new.
   'forge', 'indexfund', 'holdco',
+  // ── ⛏ the five seams the survey graded and nothing could touch ──
+  'waterintake', 'deepmine', 'alloyworks', 'canecroft', 'riftbore',
   // ── the office (r17): the building the office zones and the office
   //    specialisations have been resolving to somebody else's tile ──
   'office',
@@ -7097,6 +7157,17 @@ function buildMesh(type, lvl, tx, tz) {
     case 'scrapmine': {
       _adopt(g, makeScrapmine(lvl));
       break; }
+    /* ⛏ THE FIVE SEAMS (see the mesh block by makeWaterintake). All five pass
+       tx,tz — they seed off the tile, not off the moment — and all five pass
+       `true`, because `_ntRoot` authors them at FINAL size and re-applies the
+       level scale itself. Passing `false` here would compound the two
+       cancellations and the works would SHRINK as it levelled up, which is the
+       exact failure _adopt's own note warns about. */
+    case 'waterintake': { _adopt(g, makeWaterintake(lvl, tx, tz), true); break; }
+    case 'deepmine':    { _adopt(g, makeDeepmine(lvl, tx, tz), true); break; }
+    case 'alloyworks':  { _adopt(g, makeAlloyworks(lvl, tx, tz), true); break; }
+    case 'canecroft':   { _adopt(g, makeCanecroft(lvl, tx, tz), true); break; }
+    case 'riftbore':    { _adopt(g, makeRiftbore(lvl, tx, tz), true); break; }
     case 'fuelrig': {
       _adopt(g, makeFuelrig(lvl));
       break; }
@@ -22389,6 +22460,492 @@ function buildRoadMesh(conn, drv = {}, tx, tz) { // conn = road links, drv = str
   return g;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   ⛏ THE FIVE SEAMS — the mesh recipes for the extraction round.
+   ----------------------------------------------------------------------------
+   Water Intake · Deep Mine · Strategic Minerals Works · Cane & Seed Croft ·
+   Deep Rift Bore. They exist because the Survey graded 19 deposits no building
+   in the game could work; see the block on those five rows in BUILDINGS.
+
+   FOUR RULES, all of them learned the hard way in this file and none of them
+   re-derived here:
+
+   1. SEEDED ON THE TILE, NEVER ON THE MOMENT. `buildMesh` already passes
+      (tx, tz) and `rdRng` is r1_road.js's tile hash. `makeScrapmine`,
+      `makeFuelrig`, `farm`, `lot`, `shop` and `machineshop` all still roll from
+      `Math.random` and the harness's own meshHash note names them as the
+      recipes that redraw themselves on every boot — these five are NOT joining
+      that list. The seed deliberately ignores `lvl`, exactly as makeHousing's,
+      makeArena's and makeOffice's do: upgrading has to add plant to the works
+      that is standing there, not swap it for a differently-coloured one.
+      `rdRng` already falls back to Math.random when the coords are absent,
+      which is the GLB-preview case.
+
+   2. MERGED BUCKETS, NOT LOOSE MESHES — the r1_housing / r4_extract technique,
+      through the `_ntB` / `_ntMesh` kit. Bare pre-transformed BufferGeometry
+      goes into a per-material bucket and each bucket is drawn once, so a works
+      with 120 modelled parts is 6–8 draw calls. NO NEW MATERIAL IS ALLOCATED
+      by any of the five: EX_PAINT and EX_TRIM (r4_extract) carry every painted
+      and every metal surface through `vertexColors`, MAT.stone / dark / metal /
+      wood / drive / blue / green / arcane carry the rest, and every pane of
+      glass is the SHARED `winMat` instance — never a clone, because the
+      day/night cycle writes `winMat.emissiveIntensity` on that one object and a
+      clone would sit dark all night.
+
+   3. THE LEVEL LADDER IS REAL PLANT, NOT A MULTIPLY. `_ntRoot` authors the
+      recipe at FINAL size and re-applies the caller's `g.scale.setScalar(1 +
+      (lvl-1)*.16)` itself, so the buildMesh arms below pass `_adopt(…, true)`
+      and the footprint never overruns the tile. What levels DO is add a basin,
+      a thickener, a drying rack, a hoist deck, a mast. 🔴 THE OLD ARENA RECIPE
+      WAS SILENTLY LEVEL-INVARIANT — a level-3 building was a byte-identical
+      mesh — so every one of these five is asserted non-invariant by the
+      round-drive (three levels, three different vertex checksums).
+
+   4. A VERTEX COLOUR IS LINEAR. Every hex below goes through `_ntB().add(geo,
+      hex)`, which builds a `THREE.Color` and therefore does the sRGB→linear
+      conversion; a literal {r,g,b} written into the attribute does not, and
+      that cost /src/zoning a whole round (README §5).
+
+   AND THE READ, which is rubric dimension 11 — can a viewer tell the land uses
+   apart from the air, without the UI. Each of the five is built around ONE
+   plan-view silhouette nothing else in this city has:
+      water intake   TWO OPEN CIRCLES OF WATER, side by side
+      deep mine      A SOLID WINDER TOWER AND A TALL SILO, joined by a gantry
+      minerals works TWO RECTANGULAR LINED PONDS + open tanks with rake bridges
+      cane croft     TALL ROWS (.30, against the farm's .07 crops) half cut
+      rift bore      A HEX COLLAR WITH A GLOWING THROAT under a guyed gantry
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Local palettes. Kept here rather than folded into _X_* / _CV_* for the reason
+   makeOffice's are: these are an extraction family, and widening a shared list
+   restyles thirty other recipes. */
+const _SM_CONC = [0xbdb8ac, 0xc6c0b2, 0xb4b0a6, 0xc9c2b0];   // concrete plant
+const _SM_STEEL= [0x9aa3a8, 0x8d979d, 0xa4aab0, 0x93999e];   // painted steelwork
+const _SM_LIQ  = [0x3f7f74, 0x4a8a6d, 0x37756f];             // leach liquor
+const _SM_ORE  = [0x8d94a4, 0x9c8f6e, 0x7f8798, 0x8a7a63];   // graded ore
+const _SM_CANE = [0x7fa93f, 0x8ab84a, 0x74a13a, 0x93bd52];   // standing cane
+
+/* 💧 WATER INTAKE. Screened intake channel → two settling basins → lift pump.
+   The read is the two OPEN CIRCLES OF WATER: MAT.blue discs recessed inside
+   concrete rings, which is a plan-view shape no other tile in this city makes.
+   Level 2 adds a third basin, level 3 a surge tower over the pump house.
+   7 meshes. */
+function makeWaterintake(lvl, tx, tz) {
+  const g = new THREE.Group(), inner = _ntRoot(g, lvl);
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const AY = _iAY(), GB = _IN_GB;
+  const PAD = _ntB(), CONC = _ntB(), STEEL = _ntB(), WATER = _ntB(),
+        MT = _ntB(), GL = _ntB(), DK = _ntB();
+  const conc = _SM_CONC[(R() * _SM_CONC.length) | 0];
+  const steel = _SM_STEEL[(R() * _SM_STEEL.length) | 0];
+
+  // the yard — the same ±.45 apron scrapmine and fuelrig lay, so /src/parcel's
+  // raster reads it as a served plot rather than as owning its whole tile.
+  _hPush(PAD.g, _hSlab(-.45, .45, -.45, .45, AY, GB)); PAD.c.push(0xffffff);
+
+  /* THE BASINS. Two at level 1, three from level 2 — the ladder, and the
+     cheapest honest one: a waterworks gets bigger by getting another basin. */
+  const bas = [[-.22, -.14], [.18, -.14], [-.02, .22]];
+  const nb = lvl >= 2 ? 3 : 2;
+  for (let i = 0; i < nb; i++) {
+    const [bx, bz] = bas[i];
+    const rr = .155 + R() * .012;
+    CONC.add(_hCyl(rr, .085, bx, AY + .042, bz, 14), conc);            // the ring wall
+    DK.add(_hCyl(rr - .026, .088, bx, AY + .044, bz, 14), 0x3b4a52);   // the dark inside
+    WATER.add(_hCyl(rr - .030, .010, bx, AY + .062, bz, 14));          // the surface
+    // the rake bridge across it — a line across a circle is what makes it a
+    // TANK at aerial distance instead of a silo cap
+    STEEL.add(_hBox(rr * 2 + .020, .012, .022, bx, AY + .096, bz, R() * 1.2), steel);
+    MT.add(_hCyl(.012, .048, bx, AY + .110, bz, 6));                   // its centre column
+  }
+
+  /* THE INTAKE. A screened channel entering from the back edge and running to
+     the first basin, with the trash screen standing across it. */
+  _hPush(CONC.g, _hSlab(-.30, -.14, -.45, -.28, AY + .020, GB)); CONC.c.push(conc);
+  DK.add(_hBox(.120, .022, .150, -.22, AY + .012, -.365), 0x2f3a40);
+  for (let i = 0; i < 5; i++) MT.add(_hBox(.008, .070, .008, -.27 + i * .025, AY + .045, -.300, 0));
+  STEEL.add(_hBox(.150, .014, .014, -.22, AY + .082, -.300), steel);
+
+  /* THE PUMP HOUSE, on the road side (+Z) with a lit window — the one part of
+     the tile that changes at night. */
+  const ph = [.28, .30];
+  CONC.add(_hBox(.230, .150, .190, ph[0], AY + .075, ph[1]), conc);
+  STEEL.add(_hBox(.250, .018, .210, ph[0], AY + .159, ph[1]), steel);
+  GL.add(_hBox(.110, .058, .010, ph[0], AY + .088, ph[1] + .096));
+  MT.add(_hCyl(.018, .090, ph[0] + .082, AY + .205, ph[1] - .062, 6));       // vent
+  // the delivery main: a pipe run on stools from the last basin to the pump house
+  for (let i = 0; i < 4; i++) MT.add(_hCyl(.008, .034, -.02 + i * .09, AY + .017, .30, 5));
+  MT.add(_hCyl(.026, .380, .105, AY + .048, .30, 8, 0, Math.PI / 2));
+  /* Level 3 raises a SURGE TOWER over the pump house — the only vertical thing
+     on the tile, so a level-3 intake reads apart from a level-1 one at the
+     aerial camera and not only from the street. */
+  if (lvl >= 3) {
+    CONC.add(_hCyl(.062, .420, ph[0], AY + .365, ph[1], 10), conc);
+    STEEL.add(_hCyl(.082, .028, ph[0], AY + .589, ph[1], 10), steel);
+    MT.add(_hBox(.014, .400, .014, ph[0] + .070, AY + .355, ph[1]));         // its ladder
+  }
+  for (const [m, mat, cast, tint] of [
+    [PAD, MAT.drive, false, false], [CONC, EX_PAINT, true, true],
+    [STEEL, EX_TRIM, true, true], [WATER, MAT.blue, false, false],
+    [MT, MAT.metal, true, false], [GL, winMat, false, false],
+    [DK, EX_PAINT, false, true],
+  ]) { const x = _ntMesh(m, mat, cast, tint); if (x) inner.add(x); }
+  return g;
+}
+
+/* 💎 DEEP MINE. A SUNK SHAFT, deliberately nothing like `makeScrapmine`'s open
+   cut: the read is a SOLID CONCRETE WINDER TOWER and a TALL ORE SILO joined by
+   an inclined gantry, over a fenced compound of graded ore bays. A player
+   looking down sees a tower and a cylinder, not a terraced hole.
+   Level adds tower height, a second hoist deck (lvl 2) and two more ore bays.
+   8 meshes. */
+function makeDeepmine(lvl, tx, tz) {
+  const g = new THREE.Group(), inner = _ntRoot(g, lvl);
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const AY = _iAY(), GB = _IN_GB;
+  const PAD = _ntB(), CONC = _ntB(), STEEL = _ntB(), ORE = _ntB(),
+        MT = _ntB(), GL = _ntB(), DK = _ntB(), WD = _ntB();
+  const conc = _SM_CONC[(R() * _SM_CONC.length) | 0];
+  const steel = _SM_STEEL[(R() * _SM_STEEL.length) | 0];
+
+  _hPush(PAD.g, _hSlab(-.45, .45, -.45, .45, AY, GB)); PAD.c.push(0xffffff);
+  _hPush(DK.g, _hSlab(-.42, .04, -.42, .06, AY + .004, GB)); DK.c.push(0x4a463f);  // the hardstanding
+
+  /* THE WINDER TOWER. A solid shaft over the collar, not a lattice — the whole
+     silhouette argument. Height is what level buys. */
+  const tx0 = -.20, tz0 = -.18, TH = .52 + lvl * .075;
+  CONC.add(_hBox(.230, .046, .230, tx0, AY + .023, tz0), conc);              // collar
+  CONC.add(_hBox(.175, TH, .175, tx0, AY + TH / 2 + .040, tz0), conc);       // the shaft tower
+  CONC.add(_hBox(.215, .038, .215, tx0, AY + TH + .060, tz0), conc);         // the head
+  STEEL.add(_hBox(.235, .016, .235, tx0, AY + TH + .086, tz0), steel);
+  // the sheave wheels — in the plane the rope runs in, and level 2 adds a second
+  const wheels = lvl >= 2 ? [.052, -.052] : [0];
+  for (const wo of wheels) {
+    const w = new THREE.TorusGeometry(.062, .010, 5, 12);
+    w.translate(tx0 + wo, AY + TH + .118, tz0);
+    MT.g.push(w); MT.c.push(0xffffff);
+    MT.add(_hCyl(.011, .140, tx0 + wo, AY + TH + .118, tz0, 6, 0, Math.PI / 2));
+  }
+  MT.add(_hBox(.014, .012, .120, tx0, AY + TH + .150, tz0));
+  for (let f = 0; f < 3; f++) GL.add(_hBox(.058, .046, .010, tx0, AY + .120 + f * .150, tz0 + .092));
+
+  /* THE SILO, and the inclined gantry that feeds it. The second half of the
+     silhouette, and the reason the two do not read as one lump: a box and a
+     cylinder at different heights with a diagonal between them. */
+  const sx = .27, sz = -.24, SH = .40;
+  CONC.add(_hCyl(.115, SH, sx, AY + SH / 2 + .030, sz, 12), conc);
+  CONC.add(_hCyl(.125, .030, sx, AY + SH + .050, sz, 12), conc);
+  STEEL.add(_hCyl(.132, .014, sx, AY + .028, sz, 12), steel);                 // the discharge skirt
+  {
+    const ax = tx0 + .09, ay = AY + TH * .78, bx = sx - .10, by = AY + SH + .020;
+    const ang = Math.atan2(by - ay, bx - ax), len = Math.hypot(bx - ax, by - ay);
+    const belt = _hBox(len, .020, .105, 0, 0, 0); belt.rotateZ(ang);
+    belt.translate((ax + bx) / 2, (ay + by) / 2, sz + .02);
+    STEEL.g.push(belt); STEEL.c.push(steel);
+    for (const s of [-1, 1]) {
+      const r2 = _hBox(len, .030, .010, 0, 0, 0); r2.rotateZ(ang);
+      r2.translate((ax + bx) / 2, (ay + by) / 2 + .022, sz + .02 + s * .055);
+      MT.g.push(r2); MT.c.push(0xffffff);
+    }
+    MT.add(_hCyl(.009, ay - AY, ax + (bx - ax) * .5, AY + (ay - AY) / 2, sz + .02, 5));
+  }
+
+  /* THE SORTING HOUSE, on the frontage, with a stepped roof and a lit window. */
+  CONC.add(_hBox(.300, .135, .175, .16, AY + .068, .295), conc);
+  STEEL.add(_hBox(.320, .016, .195, .16, AY + .143, .295), steel);
+  STEEL.add(_hBox(.200, .060, .130, .16, AY + .181, .295), steel);
+  GL.add(_hBox(.150, .052, .010, .16, AY + .082, .385));
+
+  /* GRADED ORE BAYS — the thing a deep mine has that a scrap pit does not: the
+     ore comes up SORTED. Three bays at level 1, five at level 3, each a low
+     concrete pen with a different grade heaped in it. */
+  const bays = lvl >= 3 ? 5 : lvl >= 2 ? 4 : 3;
+  for (let i = 0; i < bays; i++) {
+    const bx = -.40 + i * .155, bz = .30;
+    CONC.add(_hBox(.140, .050, .012, bx, AY + .025, bz - .062), conc);
+    CONC.add(_hBox(.012, .050, .125, bx - .064, AY + .025, bz), conc);
+    const oc = _SM_ORE[(i + ((R() * 4) | 0)) % _SM_ORE.length];
+    ORE.add(_hCyl(.0001, .058, bx, AY + .030, bz, 7), oc);                 // the heap (a cone)
+    const cone = new THREE.ConeGeometry(.056, .062, 7); cone.translate(bx, AY + .031, bz);
+    ORE.g.push(cone); ORE.c.push(oc);
+  }
+  /* THE COMPOUND FENCE. A deep mine is a secured site and this is what says so
+     at street level; it also draws the plot line the aerial reads. */
+  for (let i = 0; i < 9; i++) {
+    WD.add(_hBox(.014, .150, .014, -.44 + i * .11, AY + .075, -.44), 0x6f6a5e);
+    WD.add(_hBox(.110, .010, .008, -.44 + i * .11, AY + .130, -.44), 0x6f6a5e);
+  }
+  for (const p of [[-.415, .415], [.415, -.405]]) {          // work lamps
+    MT.add(_hCyl(.010, .34, p[0], AY + .17, p[1], 5));
+    MT.add(_hBox(.058, .020, .048, p[0], AY + .348, p[1]));
+    GL.add(_hBox(.048, .013, .040, p[0], AY + .334, p[1]));
+  }
+  for (const [m, mat, cast, tint] of [
+    [PAD, MAT.drive, false, false], [DK, EX_PAINT, false, true],
+    [CONC, EX_PAINT, true, true], [STEEL, EX_TRIM, true, true],
+    [ORE, EX_PAINT, true, true], [MT, MAT.metal, true, false],
+    [WD, EX_PAINT, true, true], [GL, winMat, false, false],
+  ]) { const x = _ntMesh(m, mat, cast, tint); if (x) inner.add(x); }
+  return g;
+}
+
+/* 🔩 STRATEGIC MINERALS WORKS. Hydrometallurgy, and it looks like it: TWO
+   RECTANGULAR LINED LEACH PADS with liquor standing on them, a bank of open
+   THICKENER TANKS with rake bridges, and a stepped crusher house feeding them
+   off a rock bin. Flat, wet and geometric — the opposite read from the Deep
+   Mine's tower, which is the point of having both.
+   Level adds a thickener (lvl 2), a second pad (lvl 2) and a taller crusher.
+   7 meshes. */
+function makeAlloyworks(lvl, tx, tz) {
+  const g = new THREE.Group(), inner = _ntRoot(g, lvl);
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const AY = _iAY(), GB = _IN_GB;
+  const PAD = _ntB(), CONC = _ntB(), STEEL = _ntB(), LIQ = _ntB(),
+        MT = _ntB(), GL = _ntB(), DK = _ntB();
+  const conc = _SM_CONC[(R() * _SM_CONC.length) | 0];
+  const steel = _SM_STEEL[(R() * _SM_STEEL.length) | 0];
+  const liq = _SM_LIQ[(R() * _SM_LIQ.length) | 0];
+
+  _hPush(PAD.g, _hSlab(-.45, .45, -.45, .45, AY, GB)); PAD.c.push(0xffffff);
+
+  /* THE LEACH PADS. Bunded rectangles with a liner and standing liquor. The
+     liquor is the loudest colour on the tile and it is deliberately NOT water
+     blue — a teal-green pregnant solution is what separates this from the
+     Water Intake next to it in the build menu. */
+  const pads = [[-.20, .215, .420, .230], [.235, .215, .330, .230]];
+  const np = lvl >= 2 ? 2 : 1;
+  for (let i = 0; i < np; i++) {
+    const [px, pz, pw, pd] = pads[i];
+    CONC.add(_hBox(pw + .030, .046, pd + .030, px, AY + .023, pz), conc);
+    DK.add(_hBox(pw, .034, pd, px, AY + .034, pz), 0x33352f);
+    LIQ.add(_hBox(pw - .018, .008, pd - .018, px, AY + .050, pz), liq);
+    // the drip header down the middle — a line on a rectangle
+    MT.add(_hCyl(.007, pw - .04, px, AY + .066, pz, 5, 0, Math.PI / 2));
+    for (let k = 0; k < 5; k++) MT.add(_hCyl(.005, .020, px - (pw - .08) / 2 + k * (pw - .08) / 4, AY + .058, pz, 4));
+  }
+
+  /* THE THICKENERS. Open tanks with a radial rake — two at level 1, three from
+     level 2. Shallower and wider than the intake's basins, and steel, not
+     concrete, so the two never read as the same object. */
+  const th = [[-.30, -.22], [.02, -.26], [.31, -.20]];
+  const nt = lvl >= 2 ? 3 : 2;
+  for (let i = 0; i < nt; i++) {
+    const [cx, cz] = th[i], rr = .118 + R() * .010;
+    STEEL.add(_hCyl(rr, .105, cx, AY + .052, cz, 12), steel);
+    DK.add(_hCyl(rr - .020, .108, cx, AY + .054, cz, 12), 0x3a3f42);
+    LIQ.add(_hCyl(rr - .024, .008, cx, AY + .076, cz, 12), liq);
+    MT.add(_hBox(rr * 2 + .014, .010, .018, cx, AY + .112, cz, .7 + R() * 1.4));
+    MT.add(_hCyl(.014, .070, cx, AY + .140, cz, 6));
+    STEEL.add(_hCyl(.020, .030, cx, AY + .180, cz, 6), steel);
+  }
+
+  /* THE CRUSHER HOUSE. A stepped box — tall bin, short screen house — with the
+     rock bin beside it and a short belt to the pads. Level raises the bin. */
+  const cxh = -.33, czh = .30, CH = .175 + lvl * .045;
+  STEEL.add(_hBox(.190, CH, .175, cxh, AY + CH / 2, czh), steel);
+  CONC.add(_hBox(.210, .020, .195, cxh, AY + CH + .010, czh), conc);
+  STEEL.add(_hBox(.120, .085, .120, cxh + .015, AY + CH + .062, czh), steel);
+  GL.add(_hBox(.084, .046, .010, cxh, AY + .062, czh + .090));
+  MT.add(_hCyl(.014, .120, cxh + .078, AY + CH + .080, czh - .060, 6));
+  {   // the belt from the crusher out to the first pad
+    const ax = cxh + .10, ay = AY + CH * .82, bx = -.26, by = AY + .090;
+    const ang = Math.atan2(by - ay, bx - ax), len = Math.hypot(bx - ax, by - ay);
+    const belt = _hBox(len, .016, .085, 0, 0, 0); belt.rotateZ(ang);
+    belt.translate((ax + bx) / 2, (ay + by) / 2, czh - .01);
+    STEEL.g.push(belt); STEEL.c.push(steel);
+    MT.add(_hCyl(.008, ay - AY, (ax + bx) / 2, AY + (ay - AY) / 2, czh - .01, 5));
+  }
+  /* Reagent tanks against the fence — the acid the leach actually runs on, and
+     the reason /src/pollution gives this tile the Munitions row. */
+  for (let i = 0; i < 3; i++) {
+    STEEL.add(_hCyl(.038, .120, .12 + i * .095, AY + .060, .385, 9), 0xd6c25a);
+    MT.add(_hCyl(.042, .012, .12 + i * .095, AY + .126, .385, 9));
+  }
+  MT.add(_hBox(.310, .012, .012, .215, AY + .140, .385));
+  for (const [m, mat, cast, tint] of [
+    [PAD, MAT.drive, false, false], [DK, EX_PAINT, false, true],
+    [CONC, EX_PAINT, true, true], [STEEL, EX_TRIM, true, true],
+    [LIQ, EX_PAINT, false, true], [MT, MAT.metal, true, false],
+    [GL, winMat, false, false],
+  ]) { const x = _ntMesh(m, mat, cast, tint); if (x) inner.add(x); }
+  return g;
+}
+
+/* 🌾 CANE & SEED CROFT. The read is HEIGHT: standing cane at .30 against the
+   Farm's .07 crop rows, half of it cut back to stubble, with a cutting yard,
+   stacked bundles and open drying racks on the frontage. From the air it is a
+   field that casts shadows — which no other agricultural tile here does.
+   Level cuts more of the crop back (a working croft, not a picture of one) and
+   adds a second rack at 2 and a seed store loft at 3.
+   6 meshes. */
+function makeCanecroft(lvl, tx, tz) {
+  const g = new THREE.Group(), inner = _ntRoot(g, lvl);
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const AY = _iAY(), GB = _IN_GB;
+  const SOIL = _ntB(), CANE = _ntB(), WD = _ntB(), MT = _ntB(),
+        GL = _ntB(), DK = _ntB();
+
+  _hPush(SOIL.g, _hSlab(-.45, .45, -.45, .45, AY, GB)); SOIL.c.push(0x6b5a3f);
+  _hPush(DK.g, _hSlab(-.45, .45, .14, .45, AY + .004, GB)); DK.c.push(0x7d7266);  // the cutting yard
+
+  /* THE ROWS. Seven beds across the back two thirds. `cut` walks forward with
+     the level, so a level-3 croft is visibly HALF HARVESTED and a level-1 one
+     is standing — the ladder, expressed as work done rather than as scale. */
+  const cut = 1 + lvl;                       // 2 / 3 / 4 of 7 rows cut back
+  for (let r = 0; r < 7; r++) {
+    const rz = -.40 + r * .085;
+    const standing = r >= cut;
+    const col = _SM_CANE[(r + ((R() * 4) | 0)) % _SM_CANE.length];
+    if (standing) {
+      // a row is drawn as five tall slabs with a little jitter, not one long
+      // box: the gaps are what make it read as a CROP at grazing incidence
+      for (let k = 0; k < 5; k++) {
+        const h = .265 + R() * .075;
+        CANE.add(_hBox(.150, h, .046, -.34 + k * .17 + (R() - .5) * .012, AY + h / 2, rz), col);
+      }
+      CANE.add(_hBox(.860, .028, .052, 0, AY + .014, rz), col);          // the base line
+    } else {
+      SOIL.add(_hBox(.860, .020, .050, 0, AY + .010, rz), 0x5f4f36);     // ploughed back
+      for (let k = 0; k < 7; k++)                                        // stubble
+        CANE.add(_hBox(.020, .035, .020, -.36 + k * .12, AY + .018, rz), 0x8a8a52);
+    }
+  }
+
+  /* THE CUTTING YARD: bundles of cut cane stacked on their sides, which is the
+     one thing on the tile that says the crop is being WORKED. */
+  for (let b = 0; b < 3 + (lvl >= 2 ? 2 : 0); b++) {
+    const bx = -.36 + b * .135, by = AY + .034;
+    for (let k = 0; k < 3; k++)
+      CANE.add(_hCyl(.030, .175, bx, by + k * .052, .215, 7, 0, Math.PI / 2), _SM_CANE[k % 4]);
+    WD.add(_hBox(.006, .140, .006, bx - .085, AY + .070, .215), 0x6b5433);
+    WD.add(_hBox(.006, .140, .006, bx + .085, AY + .070, .215), 0x6b5433);
+  }
+
+  /* DRYING RACKS on the frontage — open timber frames with trays of seed.
+     One at level 1, two from level 2. */
+  const racks = lvl >= 2 ? 2 : 1;
+  for (let i = 0; i < racks; i++) {
+    const rx = -.24 + i * .30;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1])
+      WD.add(_hBox(.014, .150, .014, rx + sx * .105, AY + .075, .375 + sz * .055), 0x7d5f38);
+    for (let t = 0; t < 3; t++)
+      WD.add(_hBox(.230, .010, .130, rx, AY + .050 + t * .042, .375), 0x9c7c4a);
+    WD.add(_hBox(.250, .014, .150, rx, AY + .158, .375), 0x6b5433);
+  }
+
+  /* THE SEED STORE. A timber shed with a lit window; level 3 puts a loft and a
+     hoist beam on it, because that is what a croft that keeps seed builds. */
+  WD.add(_hBox(.230, .175, .180, .33, AY + .088, .335), 0x8d6845);
+  DK.add(_hBox(.255, .022, .205, .33, AY + .186, .335), 0x585552);
+  GL.add(_hBox(.100, .054, .010, .33, AY + .100, .335 + .092));
+  if (lvl >= 3) {
+    WD.add(_hBox(.190, .110, .150, .33, AY + .252, .335), 0x8d6845);
+    DK.add(_hBox(.215, .020, .175, .33, AY + .317, .335), 0x585552);
+    WD.add(_hBox(.030, .022, .140, .33, AY + .300, .420), 0x6b5433);     // the hoist beam
+    MT.add(_hCyl(.006, .090, .33, AY + .250, .478, 5));
+  }
+  MT.add(_hCyl(.009, .300, -.415, AY + .150, .415, 5));                  // yard lamp
+  MT.add(_hBox(.052, .018, .044, -.415, AY + .308, .415));
+  GL.add(_hBox(.044, .012, .036, -.415, AY + .296, .415));
+  for (const [m, mat, cast, tint] of [
+    [SOIL, EX_PAINT, false, true], [DK, EX_PAINT, false, true],
+    [CANE, EX_PAINT, true, true], [WD, MAT.wood, true, false],
+    [MT, MAT.metal, true, false], [GL, winMat, false, false],
+  ]) { const x = _ntMesh(m, mat, cast, tint); if (x) inner.add(x); }
+  return g;
+}
+
+/* 🌌 DEEP RIFT BORE. Where `makeSiphon` skims what has leaked to the surface,
+   this is CASED INTO the tear: a hexagonal containment collar with a glowing
+   throat, a cased riser standing out of it, three guyed masts and a gantry
+   over the top. The read from the air is the HEX and the light in the middle of
+   it — nothing else in this city is a hexagon.
+   Level raises the riser, adds a mast (lvl 2) and a containment halo (lvl 3).
+   7 meshes. */
+function makeRiftbore(lvl, tx, tz) {
+  const g = new THREE.Group(), inner = _ntRoot(g, lvl);
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const AY = _iAY(), GB = _IN_GB;
+  const PAD = _ntB(), CONC = _ntB(), STEEL = _ntB(), ARC = _ntB(),
+        MT = _ntB(), GL = _ntB(), DK = _ntB();
+  const conc = _SM_CONC[(R() * _SM_CONC.length) | 0];
+  const steel = _SM_STEEL[(R() * _SM_STEEL.length) | 0];
+
+  _hPush(PAD.g, _hSlab(-.45, .45, -.45, .45, AY, GB)); PAD.c.push(0xffffff);
+
+  /* THE COLLAR. A six-sided concrete ring — a CylinderGeometry with 6 segments
+     is a hexagonal prism, which costs 12 triangles and is the whole read. */
+  const cxc = -.06, czc = -.05;
+  CONC.add(_hCyl(.245, .058, cxc, AY + .029, czc, 6), conc);
+  DK.add(_hCyl(.190, .062, cxc, AY + .031, czc, 6), 0x241b33);
+  ARC.add(_hCyl(.150, .012, cxc, AY + .058, czc, 6));               // the throat, lit
+  for (let i = 0; i < 6; i++) {                                     // the collar bolts
+    const a = i / 6 * Math.PI * 2;
+    MT.add(_hCyl(.018, .046, cxc + Math.cos(a) * .215, AY + .052, czc + Math.sin(a) * .215, 6));
+  }
+
+  /* THE CASED RISER — the vertical. Level is the only thing that moves it. */
+  const RH = .34 + lvl * .105;
+  STEEL.add(_hCyl(.052, RH, cxc, AY + RH / 2 + .050, czc, 10), steel);
+  for (let k = 0; k < 3; k++)                                       // casing collars
+    STEEL.add(_hCyl(.066, .020, cxc, AY + .120 + k * (RH / 3), czc, 10), 0x5f4a7a);
+  ARC.add(_hCyl(.040, .028, cxc, AY + RH + .066, czc, 10));         // the wellhead glow
+  STEEL.add(_hCyl(.072, .034, cxc, AY + RH + .098, czc, 10), steel);
+
+  /* THE GUYED MASTS. Three at level 1, four from level 2 — cables to the collar
+     are what makes the riser read as UNDER TENSION rather than as a chimney. */
+  const masts = lvl >= 2 ? 4 : 3;
+  for (let i = 0; i < masts; i++) {
+    const a = i / masts * Math.PI * 2 + .4;
+    const mx = cxc + Math.cos(a) * .345, mz = czc + Math.sin(a) * .345;
+    const MH = .30 + (i % 2) * .06;
+    MT.add(_hCyl(.011, MH, mx, AY + MH / 2, mz, 5));
+    STEEL.add(_hBox(.048, .016, .048, mx, AY + MH + .008, mz), steel);
+    // the cable: a segment from the mast head to the top of the riser
+    const dx = cxc - mx, dy = (AY + RH + .050) - (AY + MH), dz = czc - mz;
+    const len = Math.hypot(dx, dy, dz);
+    const cab = new THREE.CylinderGeometry(.004, .004, len, 4, 1);
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len));
+    cab.applyMatrix4(new THREE.Matrix4().compose(
+      new THREE.Vector3((mx + cxc) / 2, (AY + MH + AY + RH + .050) / 2, (mz + czc) / 2),
+      q, new THREE.Vector3(1, 1, 1)));
+    MT.g.push(cab); MT.c.push(0xffffff);
+  }
+
+  /* THE CONTROL CABIN + containment drums on the frontage. The cabin is the
+     only lit glass on the tile, and the drums are what a bore that brings up
+     reality fragments has to put them in. */
+  CONC.add(_hBox(.250, .140, .165, .27, AY + .070, .330), conc);
+  STEEL.add(_hBox(.272, .018, .185, .27, AY + .149, .330), steel);
+  GL.add(_hBox(.128, .052, .010, .27, AY + .084, .330 + .085));
+  MT.add(_hCyl(.014, .100, .37, AY + .208, .272, 6));
+  for (let i = 0; i < 4; i++) {
+    const dx2 = -.40 + (i % 2) * .085, dz2 = .30 + ((i / 2) | 0) * .105;
+    STEEL.add(_hCyl(.036, .095, dx2, AY + .048, dz2, 8), 0x4a3f6b);
+    ARC.add(_hCyl(.030, .010, dx2, AY + .100, dz2, 8));
+  }
+  /* Level 3 hangs a CONTAINMENT HALO over the collar — a torus on three arms.
+     It is the only silhouette change a viewer gets from the air at the top of
+     the ladder, which is the same job the intake's surge tower does. */
+  if (lvl >= 3) {
+    const halo = new THREE.TorusGeometry(.185, .014, 6, 16);
+    halo.rotateX(Math.PI / 2); halo.translate(cxc, AY + RH * .74, czc);
+    ARC.g.push(halo); ARC.c.push(0xffffff);
+    for (let i = 0; i < 3; i++) {
+      const a = i / 3 * Math.PI * 2;
+      MT.add(_hCyl(.008, .140, cxc + Math.cos(a) * .185, AY + RH * .74 - .070, czc + Math.sin(a) * .185, 5));
+    }
+  }
+  for (const [m, mat, cast, tint] of [
+    [PAD, MAT.drive, false, false], [DK, EX_PAINT, false, true],
+    [CONC, EX_PAINT, true, true], [STEEL, EX_TRIM, true, true],
+    [ARC, MAT.arcane, false, false], [MT, MAT.metal, true, false],
+    [GL, winMat, false, false],
+  ]) { const x = _ntMesh(m, mat, cast, tint); if (x) inner.add(x); }
+  return g;
+}
+
 // Node Anchor — the physical presence of an economy_nodes row in the city.
 function buildAnchorMesh(nodeType, linkPct) {
   const t = NODE_TYPES[nodeType] || NODE_TYPES.supply;
@@ -24525,6 +25082,87 @@ const ECO_BUILDING_MAP = {
   fuelrig:     { out: ['crudeOil', 'naturalGas'],                                      ind: 'oilfield' },
   siphon:      { out: ['mythicResidue', 'anomalousEnergy', 'mythicEssence', 'arcaneCrystal'], ind: 'anomalySite' },
   purifier:    { out: ['freshWater'],                                                  ind: 'waterworks' },
+  /* ══ ⛏ THE 19 SEAMS THE SURVEY GRADED AND NOTHING COULD WORK ══════════════
+     Measured across this map PLUS the operations half below (OP_ECO_MAP): of
+     recipes.js's 52 DEPOSITS, 33 had an extractor and 19 did not. The Survey
+     panel grades all 52, so a player reading "Platinum Ore — Rich" was being
+     shown a seam with no building in the game that touches it. These five rows
+     close 18 of the 19; `wood` is the nineteenth and stays out, for the reason
+     already measured on the 🪵 note above.
+
+     ── HOW THE FIVE ARE GROUPED, AND WHY IT IS NOT TASTE ────────────────────
+     By `DEPOSITS[id].ind` first — that is the field recipes.js already uses to
+     say which company works a seam, and `pickAvailable` + `Firms.found` route
+     off it — and then by CUSTOMER, which was measured rather than assumed:
+
+       waterintake  rawWater is the ONLY id in the 19 with a live LOCAL
+                    consumer: `freshWater` is `purifier`'s output, one row up,
+                    and its primary leg is `rawWater: 1.15`. Nothing in this map
+                    produced it. See the ⚠ below — this was a real bug.
+       alloyworks   lithium · cobalt · titanium · tungsten · rareEarthMinerals
+                    are EXACTLY the five ids in the 19 that appear on
+                    endowment.js's own STRATEGIC list, and STRATEGIC is what
+                    trade.js `refreshPartner` turns into `p.buys`. Measured over
+                    500 nodes × 4 simulated partners: 448–497 of the 2,000
+                    partners stand ready to buy each of the five. Every other id
+                    in the 19 scored ZERO. This grouping is the trade layer's,
+                    not mine.
+       deepmine     the four remaining `mine` seams (gold, silver, platinum,
+                    rare minerals) plus `quartz`. They are the low-yield half of
+                    the mineral list — DEPOSITS yields 5–34 against the Mine's
+                    30–88 — which is what a deep shaft is for.
+                    ⚠ quartz's DEPOSITS.ind is `quarry`, not `mine`, and it is
+                      here anyway. That is deliberate and it costs nothing:
+                      firms.js takes its WAGE BAND from `bandOf(f.out)`, i.e.
+                      from the deposit, not from the firm's `ind`, and both
+                      industries are `kind: 'extraction'`, so a quartz firm
+                      founded here is byte-for-byte the firm the Quarry would
+                      have founded. The alternative — appending quartz to the
+                      `quarry` row above — was MEASURED and rejected: over 500
+                      nodes `pickAvailable` handed the Quarry quartz on 48 of
+                      them, and on 5 of those it displaced `limestone`, which is
+                      an input to `pigIron` and therefore to the Smelting Works
+                      that IS in this map. That is the 🪵 `wood` trap exactly.
+                      Inside the Deep Mine it steals from gold/silver/platinum/
+                      rareMinerals, none of which any tile in this city consumes,
+                      so the same 74-node displacement costs nothing measurable.
+       canecroft    sugarCrops · seeds, the two `farm` seams neither `farm` nor
+                    `fibercroft` nor `hydrofarm` lists. They get their own tile
+                    for the 🪵 reason: appending them to any of those three
+                    would let them out-rank `wheat` (bootstrap's staple chain),
+                    `cotton` (the Weavery's only input) or `vegetables`.
+       riftbore     the five anomalous seams `siphon` does not work. The Siphon
+                    takes the four that have leaked to the surface; these five
+                    are the deep ones, and all five feed the containment chain.
+
+     🔴 THE HONEST PART, STATED HERE RATHER THAN DISCOVERED LATER. Of the 18,
+        only `rawWater` has a consumer that any tile in this city runs today,
+        and only the five strategic minerals have a buyer on the trade network.
+        The other twelve produce for a chain the city cannot yet build — which
+        is the state `scrapmine` is ALREADY in for `zincOre` (its only consumer
+        is `metalAlloys`, which no tile makes and no partner buys) and `siphon`
+        is ALREADY in for all four of its outputs. So this is not a new
+        condition being introduced; it is the existing one being made
+        REACHABLE, and the 🪵 note's actual finding — that `wood` STOLE the
+        forestry slot from `timber` — does not apply to a building with its own
+        slot. Where it could have applied (quartz into `quarry`, cane into
+        `farm`) it was measured and the id was moved instead.
+
+     ⚠ AND THE `rawWater` HOLE WAS A LIVE BUG, not just missing content.
+       sim.js `bootstrap()` calls `seedChain('freshWater')`, which walks to
+       `rawWater`, sees the ground carries it, and founds an extractor — a
+       BOOTSTRAP firm, with no `tileKey`. So every city's water has always come
+       from one business the player did not build, cannot see in the build menu,
+       and CANNOT REPLACE: `syncBuildings` only ever re-founds tile-owned firms,
+       so once that firm reached BANKRUPT and was reaped, the city's entire
+       water supply was gone for the life of the save and the bottleneck tracer
+       could only say "Nothing in the city produces rawWater". `waterintake` is
+       the tile that makes that recoverable. */
+  waterintake: { out: ['rawWater'],                                                   ind: 'waterworks' },
+  deepmine:    { out: ['goldOre', 'silverOre', 'platinumOre', 'rareMinerals', 'quartz'], ind: 'mine' },
+  alloyworks:  { out: ['lithium', 'cobalt', 'titanium', 'tungsten', 'rareEarthMinerals'], ind: 'mine' },
+  canecroft:   { out: ['sugarCrops', 'seeds'],                                        ind: 'farm' },
+  riftbore:    { out: ['anomalousMatter', 'realityMatter', 'soulEnergy', 'dimensionalMaterial', 'realityFragments'], ind: 'anomalySite' },
   // ── processing & manufacturing
   sawmill:     { out: ['lumber'],             ind: 'sawmill' },
   smelter:     { out: ['pigIron'],            ind: 'smelter' },
@@ -24678,6 +25316,77 @@ function ecoBuildings() {
                capacity: undefined, lvl: t.lvl | 0 });
   }
   return out;
+}
+
+/* ⛏ THE GROUND GATE — the ONE place a building is refused for what is (not)
+   under it, and it holds no list of its own.
+   ----------------------------------------------------------------------------
+   /src/economy/endowment.js has said since it landed that "`canExtract(nodeId,
+   resId)` is the single gate; THE BUILD MENU, the firm founder and the
+   bottleneck tracer all ask it." Two of those three did. The build menu never
+   has: `E.canBuild` had no caller anywhere in this repo (grepped), so a player
+   could pay for a Mine on a node with no ore, watch `ecoBuildings()` silently
+   skip it at `if (!res) continue`, and own a building that produces nothing —
+   which is the exact outcome that file calls "the worst of both".
+
+   So this asks the economy, through the same `pickAvailable` that decides what
+   the tile would produce if it were built. It cannot disagree with the founder
+   because it IS the founder's question, asked one step earlier.
+
+   🔴 THREE THINGS IT DELIBERATELY DOES NOT DO:
+
+   1. IT NEVER GATES A PURCHASE PATH. endowment.js: "the hard gate is only
+      acceptable because of the trade layer: a resource you cannot dig, you can
+      BUY … `canExtract` returning false must NEVER be allowed to gate a
+      *purchase* path. Grep before you add a caller." This is a placement path,
+      and the refusal text points AT the purchase path rather than closing it.
+      The `op_*` twins are exempt for the same reason from the other side: an
+      operation's licence was already bought at City Hall for up to 400,000 🔥,
+      and refusing to site it would be charging a player for a permission and
+      then withholding it. An op on ground that supports nothing founds no firm,
+      exactly as it does today.
+   2. IT ONLY SPEAKS FOR TILES WHOSE WHOLE `out` LIST IS DEPOSITS. endowment.js
+      again: "a Steel Mill is not gated by the ground, it is gated by having
+      iron, which is a supply question and belongs to the bottleneck tracer. A
+      caller that uses this to gate a factory has misread it." So a row with any
+      non-deposit output (`purifier` → freshWater, `sawmill` → lumber, every
+      shop) is waved straight through.
+   3. IT FAILS OPEN. No module, not mounted, deferred, or a throw ⇒ null ⇒
+      placed, which is precisely what this file did before the gate existed.
+      Same contract as the progression gate and the /src/power siting gate above
+      it, and for the same reason: losing a restriction is a far smaller harm
+      than a building the player cannot place because a script failed to load.
+
+   ⚠ IT IS NOT NEW BEHAVIOUR FOR NEW BUILDINGS ONLY. `farm`, `hydrofarm`,
+     `fibercroft`, `lumbercamp`, `quarry`, `scrapmine`, `fuelrig` and `siphon`
+     are all-deposit rows too and are now refused on ground that carries none of
+     their seams. That is the announcement's own sentence ("If your Node doesn't
+     contain Iron: You cannot simply build an Iron Mine") finally being enforced
+     where a player can see it, instead of at `if (!res) continue` where they
+     cannot. The Farm can never be refused — endowment.js pins at least one of
+     the five FOOD_STAPLES present on every node and the Farm lists all five. */
+function _ecoResLabel(id) {
+  return String(id).replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim();
+}
+function ecoGroundRefusal(type) {
+  try {
+    const E = window.MythicEconomy;
+    if (!E || typeof E.ready !== 'function' || !E.ready()) return null;
+    if (typeof E.pickAvailable !== 'function' || !E.recipes ||
+        typeof E.recipes.isDeposit !== 'function') return null;
+    const m = ECO_BUILDING_MAP[type];
+    if (!m || !Array.isArray(m.out) || !m.out.length) return null;
+    /* An operation is a licence that has already been paid for — see §1 above.
+       Resolved through opsTypeOf() rather than by testing for an 'op_' prefix,
+       because a hand-written prefix is the bug class OP_ECO_MAP's header names. */
+    if (opsTypeOf(type)) return null;
+    for (const id of m.out) if (!E.recipes.isDeposit(id)) return null;   // §2
+    if (E.pickAvailable(m.out)) return null;                             // the ground says yes
+    const def = BUILDINGS[type] || { name: type, ico: '⛏️' };
+    return (def.ico || '⛏️') + ' ' + def.name + ' — this node has none of the seams it works ('
+      + m.out.map(_ecoResLabel).join(', ') + '). Open 🌍 Survey in the Economy panel to see what '
+      + 'the ground here does carry; a seam you cannot dig you can still BUY through Trade.';
+  } catch (e) { return null; }
 }
 
 /* Reconcile the economy's businesses against the city's buildings. Cheap (a
@@ -26471,6 +27180,12 @@ async function tryPlace(x, z) {
     const why = (P && P.siteRefusal) ? P.siteRefusal(placeType, x, z) : null;
     if (why) { toast(why, 'bad'); return; }
   } catch (e) { /* no gate, exactly as before */ }
+  /* ⛏ THE GROUND GATE (/src/economy). The rule and the refusal are written at
+     ecoGroundRefusal(); this is the call site, and it is the ONLY one. */
+  {
+    const whyGround = ecoGroundRefusal(placeType);
+    if (whyGround) { toast(whyGround, 'bad'); return; }
+  }
   if (def.pop && popUsed() + def.pop > popCap()) { toast('Not enough population — build Housing.', 'bad'); return; }
   const cost = costOf(placeType);
   /* 🏗 THE DURATION IS FIXED HERE, BEFORE THE AWAIT — and it is the last read
@@ -29078,6 +29793,13 @@ const OUTPUT_SENSITIVITY = {
   // Heavy manual extraction. Hungry crews dig less; industry buys ore regardless.
   scrapmine:  { labour: 1.2, efficiency: 1.0, commerce: 0.6 },
   fuelrig:    { labour: 1.2, efficiency: 1.0, commerce: 0.6 },
+  /* ⛏ The two new mines take `scrapmine`'s row unchanged. They are the same
+     work — hungry crews dig less, and industry buys ore whatever the state of
+     the city's trade — and inventing a fourth extraction profile for a building
+     that digs the same way with a different label is a number nobody could
+     defend later. Same argument the Office Block's row makes above. */
+  deepmine:   { labour: 1.2, efficiency: 1.0, commerce: 0.6 },
+  alloyworks: { labour: 1.2, efficiency: 1.0, commerce: 0.6 },
   smelter:    { labour: 1.2, efficiency: 1.0, commerce: 0.6 },
   machineshop:{ labour: 1.2, efficiency: 1.0, commerce: 0.6 },
   munitions:  { labour: 1.2, efficiency: 1.0, commerce: 0.6 },
@@ -29086,6 +29808,10 @@ const OUTPUT_SENSITIVITY = {
   farm:       { labour: 1.0, efficiency: 0.8, commerce: 0.4 },
   hydrofarm:  { labour: 1.0, efficiency: 0.8, commerce: 0.4 },
   purifier:   { labour: 1.0, efficiency: 0.8, commerce: 0.4 },
+  /* 💧🌾 The intake takes the Purifier's row (it is the other half of the same
+     waterworks) and the croft takes the Farm's (it is a field). */
+  waterintake:{ labour: 1.0, efficiency: 0.8, commerce: 0.4 },
+  canecroft:  { labour: 1.0, efficiency: 0.8, commerce: 0.4 },
   cannery:    { labour: 1.0, efficiency: 0.8, commerce: 0.4 },
   depot:      { labour: 1.0, efficiency: 0.8, commerce: 0.4 },
   // Storefronts live or die on customers walking through the door.
@@ -29108,6 +29834,8 @@ const OUTPUT_SENSITIVITY = {
   medlab:     { labour: 0.9, efficiency: 1.0, commerce: 0.5 },
   clinic:     { labour: 0.9, efficiency: 1.0, commerce: 0.5 },
   siphon:     { labour: 0.9, efficiency: 1.0, commerce: 0.5 },
+  // 🌌 The bore is the Siphon's deep twin and takes its row.
+  riftbore:   { labour: 0.9, efficiency: 1.0, commerce: 0.5 },
 };
 
 /* The seven inputs, in the order they are reported. `morale` is the only one

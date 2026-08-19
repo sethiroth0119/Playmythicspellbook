@@ -200,8 +200,18 @@ export const NODES = [
   /* ══ 🏭 INDUSTRY & LOGISTICS ════════════════════════════════════════════ */
   { id: 'ind_extract', cat: 'ind', row: 1, col: 1, cost: 1, req: ['civ_basic'],
     name: 'Resource Extraction',
-    desc: 'Taking the raw world out of the ground — scrap, stone and timber.',
-    buildings: ['scrapmine', 'quarry', 'lumbercamp'] },
+    desc: 'Taking the raw world out of the ground — scrap, stone and timber, and the shafts and leach works that reach the seams a surface pit cannot.',
+    /* ⛏ `deepmine` and `alloyworks` join the node that already opens the two
+       buildings they were costed from (`scrapmine`, `quarry`). They are the
+       same act one level deeper, and a node of their own would be a rung with
+       one building on it.
+       ⚠ THE OTHER THREE OF THAT ROUND ARE DELIBERATELY UNGATED, each matching
+         the tile it was derived from: `farm`, `hydrofarm`, `fibercroft`,
+         `purifier` and `siphon` appear on no node in this tree, so
+         `canecroft`, `waterintake` and `riftbore` do not either. Gating the
+         Water Intake in particular would put the city's whole water supply
+         behind a development point. */
+    buildings: ['scrapmine', 'quarry', 'lumbercamp', 'deepmine', 'alloyworks'] },
   { id: 'ind_heavy', cat: 'ind', row: 1, col: 2, cost: 2, req: ['ind_extract'],
     name: 'Heavy Industry',
     desc: 'Smelting, machining and canning. The dirty middle of every supply chain the city runs.',

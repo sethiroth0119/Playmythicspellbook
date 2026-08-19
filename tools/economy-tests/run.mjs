@@ -5305,6 +5305,18 @@ const stripComments = (src) => {
        hand-written copies. Lifted, never stubbed: a stub would let the round
        pass while the shipped string said anything at all. */
     bldCeilingMsg:  fnText(NC, 'bldCeilingMsg'),
+    /* ⛏ THE GROUND GATE, lifted for exactly the reason bldCeilingMsg above it
+       is: tryPlace CALLS it, so a sandbox without it throws the moment §8 places
+       anything at all — which is what happened the minute the gate landed. It is
+       written to fail OPEN (its whole body is inside one try/catch, and a bare
+       `ECO_BUILDING_MAP[…]` on an identifier this sandbox does not declare is a
+       ReferenceError that lands in that catch), so in here it answers null and
+       every placement behaves exactly as it did before the gate existed. That is
+       the correct sandbox behaviour: §8 is the ORDER gate's round, and the ground
+       gate has its own driver. Lifted, never stubbed — a stub would let this
+       round pass while the shipped function said anything at all. */
+    _ecoResLabel:      fnText(NC, '_ecoResLabel'),
+    ecoGroundRefusal:  fnText(NC, 'ecoGroundRefusal'),
     tryPlace:       fnText(NC, 'tryPlace'),
   };
   /* Each entry below re-commits the pre-fix source for one defect, on the way

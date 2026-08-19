@@ -129,6 +129,14 @@ export const TRADE = {
   lumbercamp:   ['agri', ['Logging', 'Timber Camp', 'Woodcutters', 'Forestry']],
   quarry:       ['industry', ['Quarry', 'Stoneworks', 'Aggregates', 'Pit']],
   fibercroft:   ['agri', ['Croft', 'Fibre Farm', 'Cotton Works', 'Fields']],
+  /* ⛏ the extraction round. Register follows the neighbour each was derived
+     from: the intake and the croft are `agri` like the Purifier and the Fiber
+     Croft, the two mines are `industry` like the Mine and the Quarry, and the
+     bore is `arcane` like the Siphon. */
+  waterintake:  ['agri', ['Intake', 'Water Board', 'Headworks', 'Abstraction', 'Wells']],
+  deepmine:     ['industry', ['Deep Mine', 'Shaft', 'Colliery', 'Workings', 'Lode']],
+  alloyworks:   ['industry', ['Minerals', 'Leach Works', 'Concentrator', 'Strategic Metals', 'Refining']],
+  canecroft:    ['agri', ['Cane Croft', 'Cane Fields', 'Seed Farm', 'Plantation', 'Sugar Lands']],
   /* food & service */
   foodtruck:    ['retail', ['Wagon', 'Cart', 'Street Kitchen', 'Rolling Kitchen', 'Van']],
   restaurant:   ['retail', ['Kitchen', 'Table', 'Bistro', 'Dining Rooms', 'Grill', 'Chophouse']],
@@ -170,6 +178,7 @@ export const TRADE = {
   /* arcane */
   reslab:       ['arcane', ['Research', 'Laboratories', 'Institute', 'Field Lab']],
   siphon:       ['arcane', ['Siphon', 'Extraction Works', 'Draw Station', 'Conduit']],
+  riftbore:     ['arcane', ['Deep Bore', 'Rift Bore', 'Sounding', 'Deep Works', 'Tap']],
   obelisk:      ['arcane', ['Obelisk', 'Monument', 'Standing Stone', 'Pillar']],
   kalonstable:  ['civic', ['Stables', 'Paddock', 'Kalon Yard', 'Stalls']],
   /* decoration */

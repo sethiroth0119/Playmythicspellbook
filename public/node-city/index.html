@@ -1753,7 +1753,15 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
    minted from three.webgpu.js, render correctly through this WebGLRenderer,
    with shadows, ACES and sRGB intact.
    WHY AT ALL: see THE SHADOW BUG at the renderer construction below. */
-import { WebGLRenderer } from 'three/webgl';
+/* 🪞 …AND PMREMGenerator FROM THE SAME CLASSIC ENTRY POINT, FOR THE SAME
+   REASON. three.webgpu.js DOES export a PMREMGenerator, and it is the WRONG
+   ONE: that class drives the node backend (it calls builder.createPMREMGenerator
+   and renders node materials) and cannot be handed a WebGLRenderer. The classic
+   generator lives only in three.module.js, beside the classic renderer that has
+   to run it. Same pinned 0.171.0, same build already loaded, no new download.
+   ⚠ Which is also why the sky env map below is skipped entirely under
+     ?renderer=webgpu — see skyEnvTick(). */
+import { WebGLRenderer, PMREMGenerator } from 'three/webgl';
 
 /* ════════════════════════════════════════════════════════════════════════
    1. MythicCityBridge — THE integration seam.  ◄◄ CLAUDE CODE HOOK ◄◄
@@ -4620,6 +4628,11 @@ function updateSky() {
     sun.intensity *= .5; hemi.intensity *= .8;
   }
 
+  /* 🪞 …and the glass follows the sky it has just been given. LAST, after the
+     weather block, so the reflection carries the storm too — and a no-op on all
+     but ~70 frames of a 24 h cycle. See THE SKY ENVIRONMENT MAP below. */
+  skyEnvTick();
+
   const ph = h < 5 ? 'Deep Night' : h < 7 ? 'Dawn' : h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : h < 19 ? 'Dusk' : h < 21 ? 'Evening' : 'Night';
   const ico = h >= 6 && h < 18 ? (h < 8 || h > 16 ? '🌅' : '☀️') : '🌙';
   $('dayphase').textContent = ph; $('dayico').textContent = ico; $('clockico').textContent = ico;
@@ -4629,6 +4642,263 @@ function updateSky() {
 const _wxDark = new THREE.Color(0x14121e), _wxGrey = new THREE.Color(0x3a4050),
       _wxSnow = new THREE.Color(0x9aa4b8), _wxEmber = new THREE.Color(0x40180a),
       _wxFlash = new THREE.Color(0xdfe8ff);
+
+/* ══ 🪞 THE SKY ENVIRONMENT MAP — WHAT THE GLASS REFLECTS ═══════════════════
+   This reverses ONE line of the ⛔ REJECTED note at HEMI_LIFT above, and it is
+   worth reading that note first: it rejected "a real PMREM environment map off
+   a generated sky gradient" on COST, on the grounds that IBL adds an env sample
+   to EVERY fragment of EVERY MeshStandardMaterial. That objection was correct
+   about `scene.environment`, and `scene.environment` is still not set here.
+   What is set is `material.envMap` on FOUR materials, so the env sample is paid
+   only on window glass, vehicle glazing and sheet metal — a low-single-digit
+   percentage of the city's fragments instead of all of them. The hemisphere
+   light stays exactly as it was and is still the ambient; nothing below is a
+   second opinion about how bright the scene is.
+
+   🔴 WHY IT HAD TO STOP BEING REJECTED. Measured on the round-13 capture: on a
+   sunlit facade at luminance 212.8, four separate window panes read rgb(35,36,38),
+   rgb(36,36,39), rgb(34,35,37) — achromatic, effectively identical, zero
+   variance inside a pane, and carrying not one trace of the rgb(125,176,224)
+   sky they were facing. That is not a window, it is a hole. The same defect is
+   written up twice already in this file, at VH_GLASS ("metalness .80 with NO
+   environment map has nothing to reflect") and at winMat, and both were patched
+   with an emissive floor instead of a reflection. An emissive floor is a
+   constant: it cannot vary with which way the pane faces, which is the whole of
+   what makes glass read as glass.
+
+   🌤 WHERE THE MAP COMES FROM, AND WHY IT IS NOT A HAND-AUTHORED GRADIENT.
+   Every value painted below is READ, this frame, off the objects updateSky()
+   has just written — never off the SKY table, never off a hex chosen here:
+     · the upper dome   = scene.background   (the sky the player is looking at)
+     · the horizon band = scene.fog.color    (the haze, already half LAND_HAZE
+                                              and already carrying the weather)
+     · the lower dome   = LAND_HAZE x (hemi.intensity / SKY.day.hemi) — the exact
+                          expression updateSky uses for _cFogLand, re-evaluated
+                          AFTER the weather block so a storm dims the ground the
+                          glass reflects too
+     · the circumsolar glow = sun.color x (sun.intensity / SKY.day.sun)
+                              about the live sun direction
+   So there is no number here that can drift out of agreement with the sky: move
+   SKY.day.sky, retune the fog, add a weather type, and the reflection follows on
+   the next rebuild without anyone editing this block. That property is the whole
+   reason it is built from the live objects rather than from a gradient that
+   "agrees with it today".
+
+   ☀ THE SUN DISC IS DELIBERATELY ABSENT. Only the broad circumsolar SCATTER is
+   painted (a wide cosine lobe, exponent 4). The disc is already in the scene as
+   an analytic DirectionalLight, and three's GGX specular from that light IS the
+   reflected disc; painting one into the env as well would double-count the one
+   highlight the frame most needs to be honest about. The lobe is the part a
+   directional light cannot model, and it is what makes an east-facing pane and a
+   west-facing pane differ at the same hour.
+
+   📐 64x32 IS THE FLOOR PMREMGenerator SUPPORTS, AND IT IS THE RIGHT SIZE.
+   _fromTexture() sets the cube size to width/4, so 64 wide gives a 16x16 cube
+   face and a 336x64 half-float cubeUV target with five LODs. Nothing painted
+   here has any high-frequency content — a vertical gradient and one wide lobe —
+   so a bigger source would cost a bigger blur for texels that are already
+   identical to their neighbours.
+
+   ⛔ REJECTED: a half-float (or float) equirect. It would let the circumsolar
+      lobe exceed 1.0 and give a genuinely HDR glint. Rejected because nothing
+      in this sky is HDR in the first place — scene.background is an LDR Color —
+      and because an 8-bit sRGB DataTexture is decoded to linear by the GPU
+      itself (WebGL2 uploads it as SRGB8_ALPHA8), which is free, filterable
+      everywhere, and needs no extension that SwiftShader might not have.
+   ⛔ REJECTED: PMREMGenerator.fromScene(scene). It photographs the CITY, not
+      the sky, so it would need its own scene to be honest — and a second scene
+      holding a copy of the sky is exactly the "second opinion" this block is
+      built to avoid.
+   ⛔ REJECTED: letting the renderer PMREM it for us by assigning the equirect
+      straight to material.envMap. WebGLCubeUVMaps caches the conversion in a
+      WeakMap keyed on the source texture and only re-runs it for RENDER TARGET
+      textures (texture.pmremVersion). A mutated DataTexture would be converted
+      once, at dawn, and reflected at midnight. The generator is driven by hand
+      here for that reason. */
+const SKYENV_W = 64, SKYENV_H = 32;   // the smallest equirect the generator accepts
+const SKYENV_GLOW = .55;              // peak circumsolar scatter, relative to a noon sun
+const SKYENV_GLOW_P = 4;              // lobe exponent — wide on purpose, see above
+/* 🕰 THE DAY/NIGHT DECISION, WHICH IS THE ONLY REASON THIS IS NOT A ONE-OFF.
+   A noon sky reflected on a midnight street is worse than no reflection, so the
+   map has to follow the cycle — but a rebuild is a texture upload plus a cubemap
+   blit plus four blur passes, and hourOf() is real wall time at 1:1, so
+   rebuilding every frame would spend that ~60x a second to track a sky that
+   moves through one hue in two hours.
+   So it rebuilds ON CHANGE, not on a timer, and the change is measured on the
+   five things the paint actually reads. The thresholds are chosen against the
+   steepest ramp in the cycle: dawn moves the sky key ~0.07 linear over two
+   wall-clock hours, so 0.006 buys ~12 rebuilds across it; the sun sweeps 78 deg
+   of azimuth over twelve hours, so a 0.05 dot threshold (~3 deg) buys ~26 across
+   the daylight arc. Total over a full 24 h is ~70 rebuilds — call it three a
+   wall-clock hour — and between them the compare is six subtractions and a dot
+   product, which is cheaper than one of the Color.lerp calls updateSky already
+   does unconditionally.
+   ⚠ 17:00-19:00 IS THE CASE THAT MATTERS and it is why the threshold is on the
+     COLOUR rather than on the hour: dusk is where the sky moves fastest and
+     where a stale reflection would be most visible (blue glass under a red sky).
+     A fixed cadence fine enough for dusk would be wasted for the nine hours
+     either side of it where phaseBlend returns t=0 and nothing moves at all. */
+const SKYENV_EPS_COL = .006;          // linear, per channel, on sky / haze / ground
+const SKYENV_EPS_DIR = .05;           // 1 - dot on the sun direction, ~3 degrees
+const SKYENV_EPS_SUN = .03;           // normalised key intensity
+const _skyEnvPx  = new Uint8Array(SKYENV_W * SKYENV_H * 4);
+const _skyEnvDir = new Float32Array(SKYENV_W * SKYENV_H * 3);
+/* The equirect UV convention is three's own (see equirectUv in the shader
+   chunks): u = atan2(z, x) / 2pi + .5, v = asin(y) / pi + .5, and a DataTexture
+   is flipY:false, so row 0 is v=0 is straight DOWN. Precomputed once because the
+   direction of a texel never changes — only its colour does. */
+for (let _j = 0; _j < SKYENV_H; _j++) {
+  const _th = (((_j + .5) / SKYENV_H) - .5) * Math.PI;
+  const _cy = Math.sin(_th), _cr = Math.cos(_th);
+  for (let _i = 0; _i < SKYENV_W; _i++) {
+    const _ph = (((_i + .5) / SKYENV_W) - .5) * Math.PI * 2, _k = (_j * SKYENV_W + _i) * 3;
+    _skyEnvDir[_k] = Math.cos(_ph) * _cr; _skyEnvDir[_k + 1] = _cy; _skyEnvDir[_k + 2] = Math.sin(_ph) * _cr;
+  }
+}
+const _skyEnvTex = new THREE.DataTexture(_skyEnvPx, SKYENV_W, SKYENV_H, THREE.RGBAFormat);
+_skyEnvTex.mapping = THREE.EquirectangularReflectionMapping;
+/* ⚠ SRGBColorSpace, and it is load-bearing rather than decorative — the same
+   two-ended conversion the renderer's outputColorSpace note describes. THREE.Color
+   components are LINEAR; the bytes written into this array are sRGB-ENCODED by
+   _skyEnvByte below, and this tag is what makes WebGL2 upload them as
+   SRGB8_ALPHA8 so the GPU decodes them back to linear on sample. Drop the tag
+   and every reflection in the city renders about a stop and a half too bright. */
+_skyEnvTex.colorSpace = THREE.SRGBColorSpace;
+_skyEnvTex.minFilter = THREE.LinearFilter; _skyEnvTex.magFilter = THREE.LinearFilter;
+_skyEnvTex.generateMipmaps = false;
+// linear -> sRGB byte. The IEC 61966-2-1 transfer function, written out because
+// Color.setHex() does this for you on the way IN and nothing does it on the way
+// OUT — the same asymmetry that put a pale beige vertex colour in the zoning
+// overlay (see .gauntlet/README.md item 5).
+function _skyEnvByte(l) {
+  if (!(l > 0)) return 0;
+  if (l >= 1) return 255;
+  return Math.round(255 * (l <= .0031308 ? l * 12.92 : 1.055 * Math.pow(l, 1 / 2.4) - .055));
+}
+const _skyEnvGnd = new THREE.Color(), _skyEnvSun = new THREE.Vector3();
+const _skyEnvWas = { sky: new THREE.Color(), haze: new THREE.Color(), gnd: new THREE.Color(),
+                     sun: new THREE.Vector3(1, 0, 0), k: -1 };
+const _skyEnvMats = [];               // {mat, intensity} — filled by skyEnvRegister
+const _skyEnvStat = { builds: 0, lastMs: 0, totalMs: 0, on: false, mats: 0, w: SKYENV_W, h: SKYENV_H };
+let _skyPMREM = null, _skyEnvRT = null;
+/* 🪞 THE REGISTRY. A material asks for the sky here, beside its own declaration,
+   so the argument for WHY that surface reflects lives with the surface rather
+   than in a list at the top of the file. envMapIntensity is per material and is
+   never a taste knob — see each call site. */
+function skyEnvRegister(mat, intensity) {
+  if (!mat) return mat;
+  mat.envMapIntensity = (intensity === undefined) ? 1 : intensity;
+  _skyEnvMats.push(mat);
+  _skyEnvStat.mats = _skyEnvMats.length;
+  if (_skyEnvRT) { mat.envMap = _skyEnvRT.texture; mat.needsUpdate = true; }
+  return mat;
+}
+function _skyEnvPaint() {
+  const sky = scene.background, haze = scene.fog.color;
+  // The ground half of the dome: LAND_HAZE at this hour's fill, which is the
+  // expression _cFogLand is built from — re-evaluated here because hemi.intensity
+  // has since been scaled by the weather.
+  _skyEnvGnd.copy(LAND_HAZE).multiplyScalar(Math.max(0, hemi.intensity) / SKY.day.hemi);
+  _skyEnvSun.copy(sun.position).sub(sun.target.position);
+  if (_skyEnvSun.lengthSq() > 0) _skyEnvSun.normalize(); else _skyEnvSun.set(0, 1, 0);
+  const kSun = Math.min(1, Math.max(0, sun.intensity / SKY.day.sun));
+  const gR = sun.color.r * kSun * SKYENV_GLOW, gG = sun.color.g * kSun * SKYENV_GLOW,
+        gB = sun.color.b * kSun * SKYENV_GLOW;
+  const sx = _skyEnvSun.x, sy = _skyEnvSun.y, sz = _skyEnvSun.z;
+  for (let n = 0, p = 0, d = 0; n < SKYENV_W * SKYENV_H; n++, p += 4, d += 3) {
+    const dx = _skyEnvDir[d], dy = _skyEnvDir[d + 1], dz = _skyEnvDir[d + 2];
+    let r, g, b;
+    if (dy >= 0) {
+      // pow .45 rather than a straight lerp: real haze hugs the horizon and the
+      // dome is the sky's own colour well before the zenith. A linear ramp put
+      // the fog halfway up the sky, which is the aerial-perspective mistake the
+      // LAND_HAZE note already argues against, made in the other direction.
+      const t = Math.pow(dy, .45);
+      r = haze.r + (sky.r - haze.r) * t; g = haze.g + (sky.g - haze.g) * t; b = haze.b + (sky.b - haze.b) * t;
+    } else {
+      const t = Math.pow(-dy, .5);
+      r = haze.r + (_skyEnvGnd.r - haze.r) * t; g = haze.g + (_skyEnvGnd.g - haze.g) * t;
+      b = haze.b + (_skyEnvGnd.b - haze.b) * t;
+    }
+    const dot = dx * sx + dy * sy + dz * sz;
+    if (dot > 0 && kSun > 0) {
+      // Faded across the horizon rather than clipped at it: a lobe that stopped
+      // dead at dy=0 drew a hard bright band along the skyline on the sun side,
+      // which a smooth 16x16 cube face turns into a visible step in the blur.
+      const d2 = dot * dot, lobe = d2 * d2 * Math.min(1, Math.max(0, (dy + .15) / .30));
+      r += gR * lobe; g += gG * lobe; b += gB * lobe;
+    }
+    _skyEnvPx[p] = _skyEnvByte(r); _skyEnvPx[p + 1] = _skyEnvByte(g);
+    _skyEnvPx[p + 2] = _skyEnvByte(b); _skyEnvPx[p + 3] = 255;
+  }
+  _skyEnvTex.needsUpdate = true;
+}
+function _skyEnvMoved() {
+  if (_skyEnvStat.builds === 0) return true;
+  const sky = scene.background, haze = scene.fog.color;
+  if (!sky || !sky.isColor) return false;
+  if (Math.abs(sky.r - _skyEnvWas.sky.r) > SKYENV_EPS_COL ||
+      Math.abs(sky.g - _skyEnvWas.sky.g) > SKYENV_EPS_COL ||
+      Math.abs(sky.b - _skyEnvWas.sky.b) > SKYENV_EPS_COL) return true;
+  if (Math.abs(haze.r - _skyEnvWas.haze.r) > SKYENV_EPS_COL ||
+      Math.abs(haze.g - _skyEnvWas.haze.g) > SKYENV_EPS_COL ||
+      Math.abs(haze.b - _skyEnvWas.haze.b) > SKYENV_EPS_COL) return true;
+  _skyEnvGnd.copy(LAND_HAZE).multiplyScalar(Math.max(0, hemi.intensity) / SKY.day.hemi);
+  if (Math.abs(_skyEnvGnd.r - _skyEnvWas.gnd.r) > SKYENV_EPS_COL ||
+      Math.abs(_skyEnvGnd.g - _skyEnvWas.gnd.g) > SKYENV_EPS_COL ||
+      Math.abs(_skyEnvGnd.b - _skyEnvWas.gnd.b) > SKYENV_EPS_COL) return true;
+  const k = Math.min(1, Math.max(0, sun.intensity / SKY.day.sun));
+  if (Math.abs(k - _skyEnvWas.k) > SKYENV_EPS_SUN) return true;
+  // Only ask where the sun is while it is contributing anything — below the
+  // horizon its direction still sweeps, and rebuilding for a light at intensity
+  // 0 is the same waste the sun.castShadow guard above exists to stop.
+  if (k > SKYENV_EPS_SUN) {
+    _skyEnvSun.copy(sun.position).sub(sun.target.position);
+    if (_skyEnvSun.lengthSq() > 0) {
+      _skyEnvSun.normalize();
+      if (1 - _skyEnvSun.dot(_skyEnvWas.sun) > SKYENV_EPS_DIR) return true;
+    }
+  }
+  return false;
+}
+/* Called from the end of updateSky(), i.e. AFTER the weather block, so a storm
+   or a snowfall is in the reflection as well as in the frame. */
+let _skyEnvDead = false;
+function skyEnvTick() {
+  if (_WANT_GPU || _skyEnvDead) return;   // classic PMREMGenerator needs the classic renderer
+  if (!scene.background || !scene.background.isColor) return;
+  if (!_skyEnvMoved()) return;
+  try {
+    const t0 = performance.now();
+    if (!_skyPMREM) { _skyPMREM = new PMREMGenerator(renderer); _skyPMREM.compileEquirectangularShader(); }
+    _skyEnvPaint();
+    // The second argument REUSES the target. Without it every rebuild allocates
+    // a fresh 336x64 half-float RT and orphans the old one, which over a day is
+    // ~70 leaked targets — and every material would need its envMap repointed.
+    _skyEnvRT = _skyPMREM.fromEquirectangular(_skyEnvTex, _skyEnvRT);
+    for (let i = 0; i < _skyEnvMats.length; i++) {
+      const m = _skyEnvMats[i];
+      if (m.envMap !== _skyEnvRT.texture) { m.envMap = _skyEnvRT.texture; m.needsUpdate = true; }
+    }
+    _skyEnvWas.sky.copy(scene.background); _skyEnvWas.haze.copy(scene.fog.color);
+    _skyEnvWas.gnd.copy(_skyEnvGnd); _skyEnvWas.sun.copy(_skyEnvSun);
+    _skyEnvWas.k = Math.min(1, Math.max(0, sun.intensity / SKY.day.sun));
+    _skyEnvStat.builds++;
+    _skyEnvStat.lastMs = performance.now() - t0;
+    _skyEnvStat.totalMs += _skyEnvStat.lastMs;
+    _skyEnvStat.on = true;
+    if (_skyEnvStat.builds === 1) {
+      try { console.info('[city] sky env map built in ' + _skyEnvStat.lastMs.toFixed(1) + 'ms, ' +
+        _skyEnvRT.width + 'x' + _skyEnvRT.height + ' cubeUV, ' + _skyEnvMats.length + ' materials'); } catch (e) {}
+    }
+  } catch (e) {
+    // A city with matte glass is a worse city; a city that does not render is no
+    // city. Fail once, loudly, and never try again.
+    _skyEnvStat.on = false;
+    _skyEnvDead = true;
+    try { console.warn('[city] sky env map disabled:', e); } catch (e2) {}
+  }
+}
 
 /* ════════════════════════════════════════════════════════════════════════
    4b. WEATHER ENGINE — rare, random, real-time.
@@ -5903,6 +6173,28 @@ const MAT = {
   ember:  new THREE.MeshStandardMaterial({ color: 0xff7a2f, emissive: 0xff5a10, emissiveIntensity: .9, roughness: .4 }),
   arcane: new THREE.MeshStandardMaterial({ color: 0x9b4dff, emissive: 0x7a2fe0, emissiveIntensity: .8, roughness: .4 }),
 };
+/* 🪞 THE ONLY OPAQUE MATERIAL IN MAT THAT GETS THE SKY, AND THE LIST STOPS HERE.
+   MAT.metal was already declared metalness .55, which is a claim that it is a
+   METAL — and a metal with no environment is the same defect as glass with no
+   environment: three sets its F0 to the base colour and then has nothing to
+   multiply it by, so it renders as a flat grey that happens to ignore half its
+   own BRDF. The ⛔ REJECTED note at HEMI_LIFT names MAT.metal beside VH_GLASS
+   for exactly this reason.
+   ⚠ .45, NOT 1. This is roof sheet, silo cladding and plant housing: oxidised,
+     dusty, painted-and-weathered metal, not chrome. At 1 the roofs of the
+     industrial band became the brightest thing in the aerial and the city read
+     as wet. .45 with roughness .5 puts a sky tone across a metal roof — the
+     thing that says "this is not a painted box" — and stops well short of a
+     mirror.
+   ⛔ NOT REGISTERED, deliberately, and this is the "do not make everything
+      shiny" line: MAT.stone, MAT.dark, MAT.road, MAT.drive, MAT.wood,
+      MAT.green/foliage and the whole RD_SOLID vertex-colour bucket. Roads,
+      renders, slate, timber and planting are rough dielectrics whose specular
+      lobe at roughness .9 is a uniform smear — an env sample on them buys a
+      fraction of a luminance point on every fragment in the frame, which is the
+      cost the original rejection was right about. A wet-road pass is a
+      different feature with a different trigger and does not belong here. */
+skyEnvRegister(MAT.metal, .45);
 /* Window material — emissiveIntensity animated with nightAmt (shared).
    ⚠ THE BASE COLOUR IS THE DAYTIME COLOUR. At night the emissive swamps it, so
    0x1a1420 was only ever chosen for the glow it sits under — but by day, with
@@ -5910,7 +6202,25 @@ const MAT = {
    with nothing behind it reads COOL, not purple: it is showing you a dim
    reflection of the sky. 0x1b2430 is that, and it costs nothing. (Same
    diagnosis VH_GLASS wrote up for the vehicles, arrived at from the buildings.) */
-const winMat = new THREE.MeshStandardMaterial({ color: 0x1b2430, emissive: 0xffc978, emissiveIntensity: 0, roughness: .6 });
+/* 🪞 v124: roughness .6 -> .16, AND THE ENV MAP. .6 was never argued for — it
+   is the file's default-ish roughness and it made every pane in the city a matte
+   sheet, which is why a critic could measure four panes on one sunlit wall at
+   rgb(35,36,38) / rgb(36,36,39) / rgb(34,35,37): no reflection, no Fresnel, no
+   variance. Float glass is one of the smoothest surfaces a city has. .16 rather
+   than .02 because these panes are SMALL (a bedroom window is ~6 cm of geometry
+   here) and a mirror-smooth pane at 16x16 cube resolution shows the env's own
+   texel grid; .16 blurs across two LODs and reads as glass at every framing.
+   ⚠ metalness STAYS AT 0, and that is the whole reason this works. Glass is a
+     dielectric: three gives it F0 = 0.04 and a Schlick Fresnel, so a pane seen
+     head-on returns ~4% of the sky and the same pane seen along the facade —
+     which is exactly what the raking frontage framing shows — returns most of
+     it. That angular ramp is the thing an emissive floor can never be. Raising
+     metalness would set F0 to the base COLOUR instead, and 0x1b2430 is a 3%
+     near-black, so a "shinier" metalness would have reflected LESS. That trap
+     is why VH_GLASS below came down from .80 rather than up.
+   envMapIntensity 1: this is a physical reflectance and there is no argument for
+   scaling it. If windows read too dark the fix is the sky, not a fudge here. */
+const winMat = skyEnvRegister(new THREE.MeshStandardMaterial({ color: 0x1b2430, emissive: 0xffc978, emissiveIntensity: 0, roughness: .16 }), 1);
 // Street-lamp glow material (roads at night). Base was 0x2a2438, a violet — an
 // unlit lamp head by day is a neutral dark grey lens, not a purple one.
 const lampMat = new THREE.MeshStandardMaterial({ color: 0x2f3138, emissive: 0xffd9a0, emissiveIntensity: 0, roughness: .5 });
@@ -9565,13 +9875,36 @@ const RD_EPS = 0.002;
      multiply from 0.578 to 0.828 linear — so a mapped kerb would now land only
      17% under MAT.stone rather than 42%. Unmapped still wins, but on the
      vertexColours draw-call argument above, not on the mud.
-   ⚠ The two ex-material colours below are the EXACT hexes RD_KERB and RD_MARK
-     carried in round 2. C_DARK and C_LEAF are the mean rendered colour of
+   ⚠ The two ex-material colours below were the EXACT hexes RD_KERB and RD_MARK
+     carried in round 2. C_MARK still is; C_KERB is not, as of v124 — see its
+     own note. C_DARK and C_LEAF are the mean rendered colour of
      MAT.dark and MAT.foliage (their canvases' base fills), so the props that
      moved into this bucket keep their tone; what they give up is grain, on
      parts no larger than 8cm — a trade the frame budget makes worth taking. */
 const RD_SOLID = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .90, vertexColors: true });
-const C_KERB = 0x8d8698;   // was RD_KERB
+/* 🚧 v124: 0x8d8698 -> 0x8f8a80, AND IT IS THE SAME BUG THE PARAGRAPH BELOW
+   RECORDS, WALKED PAST. That note says C_DARK was 0x2e2838, a violet, "which is
+   what put a purple bin and a purple lamp mast on every street in the city" —
+   and the pass that fixed C_DARK left the kerb alone. 0x8d8698 is hue 263 deg
+   with blue > red > green; rendered flat across a 39 px run it measures hue
+   279 deg, sitting against a footway at hue 34 deg. Two surfaces that are the
+   same precast concrete in every reference frame, 245 deg apart, on the kerb
+   line of all 130 road tiles, every tree pit, every plot edge and the bench
+   legs. It is the largest single hue error left in the city and it is 45 cm
+   wide and everywhere.
+   ⚠ THE NEW VALUE IS DERIVED, NOT PICKED, and the derivation is the one the
+     paragraph below already uses in the other direction. C_PAVE — the footway
+     this kerb borders — is MAT.stone x 0.828 linear, i.e. what a MAPPED stone
+     RENDERS as. The kerb is the UNMAPPED twin of that same footway, so it is
+     MAT.stone's own hex, undivided: one _TEX_LIN step (+21% linear) ABOVE the
+     slab beside it, which is exactly the "flat light concrete that reads at
+     camera distance" the note below asks for, now in the footway's own hue
+     instead of against it.
+   ⚠ THE VALUE BARELY MOVES — relative luminance 0.2498 -> 0.2558, +2.4%. This
+     is a hue rotation and nothing else, so nothing downstream that was tuned
+     against the kerb's BRIGHTNESS (the RD_LIP band width, the C_MARK contrast,
+     the crossing stripes) needs re-tuning. */
+const C_KERB = 0x8f8a80;   // MAT.stone unmapped — the footway's own concrete, one step lighter
 const C_MARK = 0xe4dccb;   // was RD_MARK
 /* ⚠ THE FIRST TWO ARE DERIVED FROM MAT, NOT PICKED — they are what a MAPPED
    MAT.dark / MAT.foliage actually RENDERS as (colour × _TEX_MID's 0.828
@@ -10445,7 +10778,14 @@ function makeRoad(nbr, tx, tz) {
      door, so unmapped remains right for its own sake.
    ⚠ Do not reference MAT / lampMat / winMat at module scope — this block is
      concatenated ahead of some of them.  Everything below is a raw hex. */
-const VH_PAINT = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .46, metalness: .18, vertexColors: true });
+/* 🪞 v124: bodywork gets the sky at .55. Car paint is clearcoated — the one
+   thing every reference queue-at-the-crossing frame has is a band of sky lying
+   along the tops of the doors and the bonnet. metalness .18 and roughness .46
+   are unchanged, so this is a Fresnel sheen at grazing angles and almost nothing
+   head-on, which is what a lacquer does. .55 rather than 1 because these bodies
+   are 1.5 m of screen space at most and a full-strength reflection on a curved
+   panel that small reads as a highlight blowing out, not as paint. */
+const VH_PAINT = skyEnvRegister(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .46, metalness: .18, vertexColors: true }), .55);
 const VH_TRIM  = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .88, metalness: .05, vertexColors: true });
 // Same hex, roughness and metalness the round-4 shared glass had — glazing does
 // not change this round, it only stops being copied.
@@ -10460,10 +10800,26 @@ const VH_TRIM  = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .8
    key light is doing, at ZERO extra mesh, material or draw call. Measured to
    lift the same sample from 12.1 to 67.6. An env map would be more correct and
    costs a cubemap and a load; this buys most of the read for nothing. */
-const VH_GLASS = new THREE.MeshStandardMaterial({
-  color: 0x0d1622, roughness: .12, metalness: .80,
-  emissive: 0x4a6076, emissiveIntensity: .55,
-});
+/* 🪞 v124: THE ENV MAP ARRIVED, SO THE STAND-IN COMES DOWN — and metalness with
+   it. The note above ends "An env map would be more correct and costs a cubemap
+   and a load"; it costs neither now (the map is painted from the sky this file
+   already renders, 8 KB, no download) so the honest version is affordable.
+   Three changes, and the middle one is the counter-intuitive one:
+     · metalness .80 -> .06. A METAL's F0 is its base colour, and 0x0d1622 is a
+       ~1% near-black — so at .80 this material reflected almost nothing no
+       matter what you gave it to reflect. Glass is a dielectric; at .06 it takes
+       three's F0 = 0.04 plus a Schlick Fresnel and finally reflects the sky,
+       hard at grazing angles, which is where a car's glasshouse is usually seen.
+     · emissiveIntensity .55 -> .16. The emissive was explicitly a substitute for
+       a reflection ("A faint emissive is the cheapest honest fix"). Keeping both
+       would light the glazing twice and put a glow on parked cars at noon. .16
+       is retained as a floor for the interior, not as a fake sky.
+     · roughness .12 -> .09. Automotive glass is smoother than architectural.
+   envMapIntensity 1.0: a physical reflectance, same argument as winMat. */
+const VH_GLASS = skyEnvRegister(new THREE.MeshStandardMaterial({
+  color: 0x0d1622, roughness: .09, metalness: .06,
+  emissive: 0x4a6076, emissiveIntensity: .16,
+}), 1);
 /* ONE lamp material for head AND tail lamps.  three multiplies vertex colour
    into the DIFFUSE term only, never into emissive, so the two ends share a warm
    amber glow and differ in body colour: pale lens at the front, red at the
@@ -36687,6 +37043,13 @@ function animate() {
     //    read on the tile/agent buffer leak, and the bubble overlay cannot be
     //    checked at all without the camera it projects through.
     three: () => ({ renderer, scene, camera, THREE }),
+    /* 🪞 THE SKY ENV MAP'S OWN BOOKKEEPING. `builds` is the only number that
+       answers the day/night question — a map that rebuilt once and then tracked
+       nothing looks identical to a working one in a single screenshot — and
+       `lastMs`/`totalMs` are what a cost claim has to be made of. `paint()`
+       forces one rebuild so a driver can time it without waiting for the sky. */
+    skyEnv: () => ({ ..._skyEnvStat, rt: _skyEnvRT ? (_skyEnvRT.width + 'x' + _skyEnvRT.height) : null }),
+    skyEnvRebuild: () => { _skyEnvStat.builds = 0; skyEnvTick(); return { ..._skyEnvStat }; },
     /* 🛏 THE HOUSE. The accrual is time-based and the collect gate is six
        hours, so without a seam the only way to test any of it is to wait. This
        exposes the module itself (window.MythicHouse is the same object) plus

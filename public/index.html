@@ -13994,6 +13994,55 @@
   @keyframes turn-banner-sweep { 0% { transform: translateX(-100%); opacity: 0; } 16% { transform: translateX(0); opacity: 1; } 68% { transform: translateX(0); opacity: 1; } 100% { transform: translateX(105%); opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .ko-desat { animation: none; } }
 
+  /* 🃏 THE OPENING DEAL — the board arrives first, THEN the hand is dealt.
+     Reported: "it is freezing when the cards are being drawn … it should show
+     the game and then draw the cards just like Yu-Gi-Oh Master Duel."
+     The hand is dealt into state at battle construction, so five cards used to
+     paint in the SAME frame the board opened — every card's art decode and DOM
+     landing on top of the stage's first bake and the pull-back animation.
+     ⚠ This is PRESENTATIONAL ONLY, deliberately. Restaging the actual draw
+     would move a rules event, and the AI, mulligan and multiplayer snapshot all
+     read `hand` at construction. The cards exist the whole time; they are
+     simply not painted until the camera has settled. Same outcome on screen,
+     zero rules risk.
+     `backwards` fill is what keeps them invisible during the delay — without it
+     each card paints at full opacity first and then jumps. */
+  body.bt-dealing .hand-column-cards > * { animation: bt-deal-in 380ms cubic-bezier(.2,.75,.3,1) backwards; }
+  body.bt-dealing .hand-column-cards > *:nth-child(1) { animation-delay: 640ms; }
+  body.bt-dealing .hand-column-cards > *:nth-child(2) { animation-delay: 740ms; }
+  body.bt-dealing .hand-column-cards > *:nth-child(3) { animation-delay: 840ms; }
+  body.bt-dealing .hand-column-cards > *:nth-child(4) { animation-delay: 940ms; }
+  body.bt-dealing .hand-column-cards > *:nth-child(5) { animation-delay: 1040ms; }
+  body.bt-dealing .hand-column-cards > *:nth-child(n+6) { animation-delay: 1140ms; }
+  @keyframes bt-deal-in {
+    0%   { opacity: 0; transform: translateY(38px) scale(.86) rotate(-4deg); }
+    100% { opacity: 1; transform: none; }
+  }
+
+  /* 🎬 PHASE BANNER — Master-Duel style announcement when the phase advances.
+     The phase BAR already showed which phase you are in; nothing announced the
+     change, so a phase advancing mid-turn was silent. Deliberately lighter than
+     the turn banner (smaller, faster, centred, no full-width sweep) so a phase
+     change never reads as loudly as a turn handover. */
+  .phase-banner { position: fixed; inset: 0; z-index: 2147481099; pointer-events: none; display: flex; align-items: center; justify-content: center; }
+  .phase-banner-chip { display: flex; align-items: center; gap: 12px; padding: 10px 28px;
+    border: 1px solid rgba(212,175,55,0.55); border-radius: 3px;
+    background: linear-gradient(90deg, rgba(8,6,16,0) 0%, rgba(10,8,20,0.92) 22%, rgba(10,8,20,0.92) 78%, rgba(8,6,16,0) 100%);
+    box-shadow: 0 0 40px rgba(0,0,0,0.6); animation: phase-banner-in 1100ms ease-out both; will-change: transform, opacity; }
+  .phase-banner-ic { font-size: clamp(1.1rem, 3vw, 1.7rem); }
+  .phase-banner-text { font-family: 'Cinzel', serif; font-weight: 900; letter-spacing: 0.26em; text-transform: uppercase;
+    font-size: clamp(0.85rem, 2.6vw, 1.4rem); color: #f3e4bd; text-shadow: 0 0 18px rgba(212,175,55,0.5); }
+  @keyframes phase-banner-in {
+    0%   { opacity: 0; transform: scale(.92) translateY(6px); }
+    14%  { opacity: 1; transform: scale(1) translateY(0); }
+    72%  { opacity: 1; transform: scale(1) translateY(0); }
+    100% { opacity: 0; transform: scale(1.02) translateY(-4px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    body.bt-dealing .hand-column-cards > * { animation: none; }
+    .phase-banner-chip { animation: none; }
+  }
+
   /* 🗺️🌦️ FIELD FX — location/weather field-spell flourish (light-wipe + name). */
   .field-fx-overlay { position: fixed; inset: 0; z-index: 2147481050; pointer-events: none; overflow: hidden; display: flex; align-items: center; justify-content: center; }
   .field-fx-tint { position: absolute; inset: 0; animation: field-fx-tint-anim 2s ease-out forwards; }
@@ -36492,7 +36541,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y4';
+  window.BUILD_VERSION = 'v120y5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -100716,6 +100765,16 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
     App._heroBackpackLost = null;
     App._heroConsumablesLost = null;
     App._fieldBagLoss = null;
+    /* 🎬 …AND THE CINEMATIC BASELINES, for exactly the reason above: they are
+       per-battle state that used to live for the whole page session.
+       `_lastTurnKey` is what the turn banner and the opening deal both hang
+       off, and it was NEVER cleared — so only the FIRST battle after a page
+       load dealt its hand in, and every rematch opened with the cards already
+       sitting there. It also meant battle two's first render saw last battle's
+       turn key and announced a turn handover that had not happened.
+       Nulling both here makes each battle open the same way as the first. */
+    App._lastTurnKey = null;
+    App._lastPhaseId = null;
   } catch (e) {}
   const playerProf = getHeroProfile(heroData.id);
   // Center the heroes on the wider 10-column board so the opening doesn't feel lopsided.
@@ -106386,7 +106445,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120y4';
+const BB_VER = 'v120y5';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -136899,6 +136958,41 @@ function _playTurnBanner(side) {
   } catch (e) {}
 }
 
+/* 🎬 PHASE BANNER — announce the phase, Master-Duel style.
+   TURN_PHASES and the phase BAR already existed; nothing announced a change, so
+   a phase advancing mid-turn was silent. Fires off a render diff on
+   `App.state.phase`, exactly like the turn banner fires off `turn`. */
+function _playPhaseBanner(phaseId) {
+  try {
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const ph = (typeof TURN_PHASES !== 'undefined' ? TURN_PHASES : []).find(p => p && p.id === phaseId);
+    if (!ph) return;                       // unknown/legacy phase label — say nothing
+    const old = document.getElementById('phase-banner'); if (old) old.remove();
+    const host = document.createElement('div');
+    host.id = 'phase-banner';
+    host.className = 'phase-banner';
+    host.innerHTML = '<div class="phase-banner-chip"><span class="phase-banner-ic">' + ph.icon
+      + '</span><span class="phase-banner-text">' + escapeHtml(ph.label) + ' Phase</span></div>';
+    document.body.appendChild(host);
+    setTimeout(() => { try { host.remove(); } catch (e) {} }, 1200);
+  } catch (e) {}
+}
+
+/* 🃏 THE OPENING DEAL. Adds the class the CSS keys off, then takes it away once
+   the animation has run, so a later re-render never re-deals a settled hand.
+   ⚠ Timed to LAND AFTER THE BOARD'S PULL-BACK, which is REVEAL.DUR = 900ms in
+   battle-board/index.html. The first card starts at 640ms — while the veil is
+   still lifting — so the deal reads as part of the same gesture rather than as
+   a second animation once everything has gone still. If that opening duration
+   ever changes, the delays on `bt-deal-in` must move with it. */
+function _playOpeningDeal() {
+  try {
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    document.body.classList.add('bt-dealing');
+    setTimeout(() => { try { document.body.classList.remove('bt-dealing'); } catch (e) {} }, 1800);
+  } catch (e) {}
+}
+
 // 🗺️🌦️ FIELD FX — a Master-Duel "field spell" flourish: a horizontal light-wipe
 // sweeps across while the new Location vista / Weather establishes, with the
 // field's icon + name. Driven by render-diffs (location id / weather type
@@ -137404,8 +137498,21 @@ function _renderBattleImmediateImpl() {
     // multiplayer). Baselines on first sight so it only fires on real flips.
     if (App.state && !App.state.gameOver) {
       const _tk = (App.state.turn || '') + ':' + (App.state.turnNumber || 0);
-      if (App._lastTurnKey == null) { App._lastTurnKey = _tk; }
+      if (App._lastTurnKey == null) {
+        App._lastTurnKey = _tk;
+        /* 🃏 FIRST SIGHT OF THIS BATTLE — deal the hand in behind the opening.
+           Baselining the turn key is the one moment that happens exactly once
+           per match, which is why the deal hangs off it rather than off a
+           separate flag that would have to be cleared on rematch. */
+        try { _playOpeningDeal(); } catch (e) {}
+      }
       else if (App._lastTurnKey !== _tk) { App._lastTurnKey = _tk; try { _playTurnBanner(App.state.turn); } catch (e) {} }
+      /* 🎬 Phase banner — same render-diff shape as the turn banner above.
+         Baselines on first sight so opening a battle does not announce the
+         phase it started in; only real advances speak. */
+      const _ph = (App.state.phase || '');
+      if (App._lastPhaseId == null) { App._lastPhaseId = _ph; }
+      else if (App._lastPhaseId !== _ph) { App._lastPhaseId = _ph; try { _playPhaseBanner(_ph); } catch (e) {} }
       // 🗺️ Location field-spell transform — when the active board location changes.
       const _locId = (App.state.activeLocation && App.state.activeLocation.id) || '';
       if (App._lastLocId == null) { App._lastLocId = _locId; }
@@ -211764,7 +211871,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120y4';
+  f.src = 'node-city/index.html?v=v120y5';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228941,8 +229048,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120y4">
-<script type="module" src="src/battle/hud.js?v=v120y4"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120y5">
+<script type="module" src="src/battle/hud.js?v=v120y5"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

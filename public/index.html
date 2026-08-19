@@ -213530,6 +213530,224 @@ window.MythicHouseBridge = {
    player (a payout, a delivery, a sale collection) goes through addRes and
    respects the stash cap; /src/trading verifies the landing and treats a clamp
    as a failed leg rather than a smaller delivery. */
+/* 🤝 CITY TRADE — the Supabase half. Every one of these degrades to a refusal
+   or an empty list, so the dialog opens, the sweep no-ops and nothing throws
+   before sql/039 is applied. CLAUDE.md: the app MUST work before tables exist. */
+function _ctReady() { try { return !!(initCloud() && Profile.cloud && Profile.cloud.signedIn); } catch (e) { return false; } }
+
+/* Turn the selected TW node into what the dialog needs: who owns it and which
+   city_profiles row is theirs. Both can be null — the dialog opens anyway and
+   refuses on submit with a reason, because a modal that will not open is
+   indistinguishable from a broken button. */
+function _ctTargetFor(nodeId) {
+  const out = { nodeId: nodeId || null, nodeName: null, cityName: null, ownerId: null, cityId: null };
+  try {
+    const n = ((_twForge() || {}).nodes || []).find(x => x && x.id === nodeId) || null;
+    if (n) { out.nodeName = n.name || n.id; out.cityName = n.cityName || n.name || n.id; }
+    const o = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(nodeId) : null;
+    if (o) out.ownerId = o.user_id || o.id || null;
+    out.cityId = (App._ctCityIdByNode && App._ctCityIdByNode[nodeId]) || null;
+  } catch (e) {}
+  return out;
+}
+
+/* Resolve the partner's city_profiles row for the nodes on screen, once, and
+   cache it. Guarded: before sql/038 this returns nothing and the dialog says
+   so on submit rather than throwing. */
+async function _ctPrimeCityIds(nodeIds) {
+  if (!_ctReady() || !nodeIds || !nodeIds.length) return;
+  try {
+    const { data } = await Cloud.from('city_profiles').select('id,node_id').in('node_id', nodeIds);
+    App._ctCityIdByNode = App._ctCityIdByNode || {};
+    for (const r of (data || [])) App._ctCityIdByNode[r.node_id] = r.id;
+  } catch (e) {}
+}
+
+/* Deduct from bank_of_ethos.resources. sql/028 re-granted this column to
+   clients (holding back `balance` and `aza`, which stay RPC-only) under an RLS
+   policy scoped to user_id = auth.uid() — so this can only ever spend the
+   caller's own bank.
+   ⚠ READ-MODIFY-WRITE from a browser, which is the lost-update shape sql/022
+     closes for MONEY. Tolerable here because a player races only themselves,
+     and the write is verified by re-reading before it is called a success. */
+async function _ctBoeTake(id, units) {
+  if (!_ctReady()) return false;
+  try {
+    const uid = Profile.cloud.userId;
+    const { data, error } = await Cloud.from('bank_of_ethos').select('resources').eq('user_id', uid).maybeSingle();
+    if (error || !data) return false;
+    const res = Object.assign({}, data.resources || {});
+    const have = Number(res[id]) || 0;
+    if (have < units) return false;
+    res[id] = have - units;
+    const { error: e2 } = await Cloud.from('bank_of_ethos').update({ resources: res }).eq('user_id', uid);
+    if (e2) return false;
+    const { data: back } = await Cloud.from('bank_of_ethos').select('resources').eq('user_id', uid).maybeSingle();
+    const now = Number((back && back.resources && back.resources[id])) || 0;
+    return now <= have - units;      // verified, not assumed
+  } catch (e) { return false; }
+}
+
+async function _ctMyCityId() {
+  try {
+    const { data } = await Cloud.from('city_profiles').select('id').eq('owner_id', Profile.cloud.userId).limit(1);
+    return (data && data[0] && data[0].id) || null;
+  } catch (e) { return null; }
+}
+
+async function _ctPropose(t) {
+  if (!_ctReady()) { showToast('☁ Sign in to agree trades between cities.', 3600); return false; }
+  try {
+    const myCity = await _ctMyCityId();
+    const target = t && t.target || {};
+    const partnerId = target.ownerId || null;
+    const partnerCity = target.cityId || null;
+    if (!myCity || !partnerId || !partnerCity) {
+      showToast('🤝 That city has no trade profile yet — it must be visited by its owner first.', 5200);
+      return false;
+    }
+    const { error } = await Cloud.from('city_trade_agreements').insert({
+      proposer_id: Profile.cloud.userId, partner_id: partnerId,
+      proposer_city: myCity, partner_city: partnerCity,
+      gives_resource: t.givesResource, gives_units: t.givesUnits,
+      wants_resource: t.wantsResource, wants_units: t.wantsUnits,
+      cycle_hours: t.cycleHours, days: t.days, status: 'pending',
+    });
+    if (error) { showToast('🤝 Could not send the proposal — ' + (error.message || 'try again.'), 5200); return false; }
+    return true;
+  } catch (e) { return false; }
+}
+
+async function _ctListAgreements() {
+  if (!_ctReady()) return [];
+  try {
+    const uid = Profile.cloud.userId;
+    const { data } = await Cloud.from('city_trade_agreements').select('*')
+      .or('proposer_id.eq.' + uid + ',partner_id.eq.' + uid);
+    return data || [];
+  } catch (e) { return []; }
+}
+
+async function _ctSettledCycles(agreementId) {
+  if (!_ctReady()) return [];
+  try {
+    const { data } = await Cloud.from('city_trade_shipments').select('cycle_index').eq('agreement_id', agreementId);
+    return (data || []).map(r => r.cycle_index | 0);
+  } catch (e) { return []; }
+}
+
+/* The insert IS the lock — a duplicate cycle is rejected by
+   `unique (agreement_id, cycle_index)` and that is a SUCCESS for us, not an
+   error: it means the partner recorded the cycle first. */
+async function _ctRecordShipment(agreementId, cycle, dueAt, info) {
+  if (!_ctReady()) return false;
+  try {
+    const row = {
+      agreement_id: agreementId, cycle_index: cycle,
+      due_at: new Date(dueAt).toISOString(), outcome: info.outcome || 'settled',
+    };
+    if (info.iAmProposer) { row.proposer_sent = info.sent || 0; row.proposer_from = info.from || {}; }
+    else                  { row.partner_sent  = info.sent || 0; row.partner_from  = info.from || {}; }
+    const { error } = await Cloud.from('city_trade_shipments').insert(row);
+    if (error && !/duplicate|unique/i.test(error.message || '')) return false;
+    return true;
+  } catch (e) { return false; }
+}
+
+/* Tell the other player, through the notification path that already exists.
+   A shortfall the partner never hears about is the same as no agreement. */
+async function _ctNotifyPartner(agreement, message) {
+  if (!_ctReady() || !agreement) return false;
+  try {
+    const uid = Profile.cloud.userId;
+    const to = agreement.proposer_id === uid ? agreement.partner_id : agreement.proposer_id;
+    if (!to) return false;
+    await Cloud.rpc('_push_notify', { p_user: to, p_title: '🤝 Trade agreement', p_body: message });
+    return true;
+  } catch (e) { return false; }
+}
+
+/* 🚚 The truck. Deliberately a toast rather than a vehicle on the map: the
+   convoy mesh belongs to node-city's renderer, this fires from index.html, and
+   a fake truck drawn in the wrong document would be worse than an honest line
+   of text. Wiring the real convoy is a node-city change. */
+function _ctTruck(agreement, resId, units) {
+  const nm = (_meta(resId) || {}).name || resId;
+  showToast('🚚 Shipment away — ' + units + '× ' + nm + ' left for your trade partner.', 4200);
+}
+
+/* 🤝 CITY TRADE BRIDGE — what /src/citytrade may touch.
+   Same reason as MythicTradeBridge below: Cloud, Profile, RESOURCES, getRes and
+   the economy are top-level `const` and invisible to a module (the globals
+   trap). Every Supabase call is guarded and every read degrades to empty, so
+   the dialog still opens and the sweep still no-ops before sql/039 is applied.
+
+   🔴 WHY `city` IS ALWAYS 0 TODAY, AND WHY THAT IS THE HONEST ANSWER.
+      The draw order is city → vault → Bank of Ethos, and the first store is
+      not wired. The city economy's inventory is keyed by the 258 CHAIN ids in
+      /src/resources/chain.js, which are NOT index.html's RESOURCES — node-city
+      documents that trap at CITY_STOCK §2b, and /src/economy's own header
+      forbids writing one through this bridge because it invents a ledger key
+      the camp UI cannot show and the cloud whitelist never syncs.
+      MythicEconomy.inventory() hands back the LIVE S.INV object, so deducting
+      from it is possible and would be wrong: sim.js asserts a closed loop every
+      tick and suspends the payout when it breaks, which is the structural guard
+      against the retired Cinder Forge bug. Spending city stock needs an
+      economy-side API that participates in that audit. Until then this reports
+      0 rather than quietly draining a ledger nobody is auditing — planDraw
+      handles a 0 store natively, so the shape is already correct. */
+window.MythicCityTradeBridge = {
+  now: () => Date.now(),
+  myUserId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+  resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES : []; } catch (e) { return []; } },
+  meta: (id) => { try { return _meta(id); } catch (e) { return { id: id, name: id, icon: '📦' }; } },
+  toast: (m, ms) => { try { showToast(m, ms || 4200); } catch (e) {} },
+
+  /* What this player can put on a truck, per store. */
+  available: (id) => {
+    const out = { city: 0, vault: 0, boe: 0 };
+    try { out.vault = Math.max(0, getRes(id) | 0); } catch (e) {}
+    try {
+      const bank = (typeof BankEthos !== 'undefined' && BankEthos && BankEthos.resources) || null;
+      if (bank && Number.isFinite(Number(bank[id]))) out.boe = Math.max(0, Number(bank[id]));
+    } catch (e) {}
+    return out;
+  },
+
+  /* Move the planned cargo OUT. Unwinding: if the bank leg fails after the
+     vault leg took, the vault is refunded through _refundRes — the UNCAPPED
+     put-back, never addRes, which silently swallows a gain at the stash cap and
+     once destroyed 215 units exactly that way. Same contract as
+     /src/trading/settle.js. */
+  take: async (id, plan) => {
+    const v = Math.max(0, Number(plan && plan.vault) || 0);
+    const bo = Math.max(0, Number(plan && plan.boe) || 0);
+    let tookVault = 0;
+    try {
+      if (v > 0) {
+        if (!spendResources({ [id]: v })) return false;
+        tookVault = v;
+      }
+      if (bo > 0) {
+        const ok = await _ctBoeTake(id, bo);
+        if (!ok) { if (tookVault > 0) { try { _refundRes(id, tookVault); } catch (e) {} } return false; }
+      }
+      try { saveProfile(); } catch (e) {}
+      return true;
+    } catch (e) {
+      if (tookVault > 0) { try { _refundRes(id, tookVault); } catch (e2) {} }
+      return false;
+    }
+  },
+
+  propose: async (terms) => _ctPropose(terms),
+  listAgreements: async () => _ctListAgreements(),
+  settledCycles: async (agreementId) => _ctSettledCycles(agreementId),
+  recordShipment: async (agreementId, cycle, dueAt, info) => _ctRecordShipment(agreementId, cycle, dueAt, info),
+  notifyPartner: async (agreement, message) => _ctNotifyPartner(agreement, message),
+  truck: (agreement, resId, units) => { try { _ctTruck(agreement, resId, units); } catch (e) {} },
+};
+
 window.MythicTradeBridge = {
   // ── Readers
   resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES : []; } catch (e) { return []; } },
@@ -226583,7 +226801,7 @@ function renderTerritoryWars() {
         ${modsHtml}
         ${objHtml}
         <div class="tw-action-buttons">
-          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">⚔ Attack PRN</button>` : ''}
+          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">🤝 Do business with this city</button>` : ''}
           ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect Resources</button>` : ''}
           ${iOwn ? `<button class="btn-secondary" id="tw-act-hire">🛡 Hire Guard</button>` : ''}
           ${iOwn ? `<button class="btn-secondary" id="tw-act-shop">🏗 PRN Shop</button>` : ''}
@@ -227156,7 +227374,7 @@ function renderTerritoryWars() {
       <div class="tw-nd-section-hdr">— ACTIONS</div>
       <div class="tw-nd-actions">
         <div class="tw-nd-action-row">
-          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">⚔ Attack PRN</button>` : ''}
+          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">🤝 Do business with this city</button>` : ''}
           ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect Resources</button>` : ''}
         </div>
         <div class="tw-nd-action-row">
@@ -227669,8 +227887,46 @@ function renderTerritoryWars() {
     App._twSelectedNode = nid;
     render();
   });
+  /* 🤝 Two fire-and-forget passes whenever this drawer renders.
+     PRIME resolves the on-screen nodes to their city_profiles rows so the
+     dialog knows who it is proposing to; SWEEP settles any standing deal whose
+     12-hour cycles came due while the player was away. Neither is awaited: a
+     slow or absent network must not hold up the drawer, and both no-op cleanly
+     before sql/038-039 exist.
+     ⚠ Throttled to once a minute. The drawer re-renders on every selection and
+       an unthrottled sweep would re-read every agreement on each click. */
+  try {
+    const _nid = ((_twForge() || {}).nodes || []).map(n => n && n.id).filter(Boolean);
+    _ctPrimeCityIds(_nid);
+    const _now = Date.now();
+    if (_now - (App._ctLastSweep || 0) > 60000) {
+      App._ctLastSweep = _now;
+      const CT = (typeof window !== 'undefined') ? window.MythicCityTrade : null;
+      if (CT && typeof CT.sweep === 'function') {
+        CT.sweep().then(r => {
+          if (r && (r.settled || r.short)) {
+            try { console.info('[citytrade] sweep settled ' + r.settled + ', short ' + r.short); } catch (e) {}
+          }
+        }).catch(() => {});
+      }
+    }
+  } catch (e) {}
   const act = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
-  act('tw-act-attack', () => _twAttackFlow(App._twSelectedNode));
+  /* 🤝 This id still says "attack" because it is also a CSS hook (.tw-aaa
+     #tw-act-attack sizes the big gold button, and a media query shrinks it on
+     mobile). Renaming the id would silently drop that styling, which is the
+     kind of change that looks fine in a diff and ships a differently-sized
+     button. The LABEL and the ACTION are what moved. */
+  act('tw-act-attack', () => {
+    const CT = (typeof window !== 'undefined') ? window.MythicCityTrade : null;
+    if (!CT || typeof CT.open !== 'function') {
+      // Module absent (404 or an old cached bundle). Say so rather than doing
+      // nothing — a dead button is the bug report; a named refusal is not.
+      showToast('🤝 The trade module did not load — reload to do business with this city.', 5200);
+      return;
+    }
+    CT.open(_ctTargetFor(App._twSelectedNode));
+  });
   act('tw-act-collect', () => {
     const r = tw_collectNode(App._twSelectedNode);
     if (!r) return;
@@ -229311,6 +229567,18 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/trading/index.js?v=r12trade1"></script>
+<!-- 🤝 CITY TRADE — "Do business with this city": standing 12-hourly deals
+     between two players' cities. Registers window.MythicCityTrade and is INERT
+     until the Territory Wars drawer opens it. index.html keeps the Supabase
+     calls and every read of player property (Cloud/Profile/RESOURCES/getRes are
+     top-level `const` and invisible to a module — the globals trap) and hands
+     this everything through window.MythicCityTradeBridge.
+     ⚠ If this 404s the button says so out loud rather than doing nothing.
+     ⚠ Needs sql/039. Before it is applied the dialog opens and refuses on
+       submit with a reason; nothing throws.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/citytrade/index.js?v=v120y9ct1"></script>
 <!-- 🔌 PRN NODE TIERS — the generation-rate table (Free 0.5% … Eternal 20%).
      Registers window.MythicNodeTiers: pure math, no I/O, no globals. Two
      consumers in this file, both `typeof`-guarded so an absent module falls

@@ -60,10 +60,30 @@ export const TEN = {
           tag would be a way of faking it. `ambition` below is a CEILING on how
           far this tenant will push its plot, never a floor. */
   sizes: [
-    { i: 1, id: 'indep',    ico: '🌱', name: 'Independent',    rentBearing: 1.00, ambition: 2, w: 5 },
-    { i: 2, id: 'chain',    ico: '🏬', name: 'Regional Chain', rentBearing: 0.55, ambition: 4, w: 3 },
-    { i: 3, id: 'national', ico: '🏙', name: 'National Chain', rentBearing: 0.30, ambition: 5, w: 2 },
+    { i: 1, id: 'indep',    ico: '🌱', name: 'Independent',    rentBearing: 1.00, needs: 0.20, ambition: 2, w: 5 },
+    { i: 2, id: 'chain',    ico: '🏬', name: 'Regional Chain', rentBearing: 0.55, needs: 0.45, ambition: 4, w: 3 },
+    { i: 3, id: 'national', ico: '🏙', name: 'National Chain', rentBearing: 0.30, needs: 0.70, ambition: 5, w: 2 },
   ],
+  /* 🔴 `needs` EXISTS BECAUSE THE FIRST VERSION WAS BROKEN AND DRIVING IT SAID SO.
+     With `rentBearing` as the only size term, every other term of the bid is
+     identical across the three sizes — so the National Chain, which is deterred
+     LEAST by rent, won every lot in the city. Measured: four lots let, four
+     National Chains, on a board with a 5:3:2 draw. Size was a decoration.
+
+     `needs` is the counter-force, and it is the half of the brief that was
+     missing: "$90/m² might attract warehouses, discount retailers, factories,
+     SMALL BUSINESSES". A chain is not looking for cheap ground, it is looking
+     for VOLUME — it will not open where the catchment is too thin to fill it.
+     So the customers term is scored as `min(1, catchment ÷ needs)`: a corner
+     shop is satisfied by a fifth of the city's best catchment and a national
+     chain is not satisfied until it has seven tenths of it.
+
+     The two terms then pull opposite ways and the lot decides which wins:
+       · thin catchment, cheap ground  → the independent outbids everyone
+       · rich catchment, dear ground   → only scale can carry the rent
+     Both numbers are FICTION about a company, disclosed here and in the panel,
+     and neither of them is a fact about the city. Every fact in the bid is
+     measured; these two decide which company those facts suit.
 
   /* ── ⚖ THE BID ────────────────────────────────────────────────────────────
      Six signed terms. Each is normalised to roughly −1..+1 from a LIVE
@@ -88,7 +108,7 @@ export const TEN = {
       customers:   'MythicDemographics.residents(tileKey).residents, summed over housing in the catchment ÷ city population',
       income:      'MythicDemographics.residents(tileKey).income, catchment mean ÷ city mean, centred on 1',
       transit:     'MythicTransit.jobAccess().served × a served stop inside the catchment',
-      rent:        'MythicLandValue.valueAt(x,z) ÷ the city’s dearest lot, × the size’s rentBearing',
+      rent:        'MythicLandValue.valueAt(x,z) ÷ the city’s dearest lot, × the share of the rent this company bears at this volume',
       competition: 'standing tiles of the same building type inside the catchment ÷ compFull',
       saturation:  'mean firm.idleForDemand over MythicEconomy.firms() already selling this output',
     },

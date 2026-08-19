@@ -349,6 +349,16 @@ export function mount(ctx) {
        commercial in a busy district. /src/districts owns the sentence for a
        specialised tile because it owns the mix that was refused — the same
        "the model owns its own explanation" rule /src/landvalue states. */
+    /* 🏢 …AND THE MARKET IS ASKED BEFORE EITHER OF THEM, because it is the most
+       specific reason a plot is empty. "Nothing this zone builds wants a plot
+       here" is FALSE on a lot whose zone builds four things and whose problem is
+       that every company in the trade is already idle. /src/tenants answers null
+       unless the refusal is genuinely its own, so the two sentences below are
+       reached exactly when they were before. */
+    try {
+      const T = TEN();
+      if (T && T.refusal && at) { const r = T.refusal(at.x, at.z); if (r) return r; }
+    } catch (e) {}
     try {
       const D = DIS();
       if (D && D.refusal && at) { const r = D.refusal(at.x, at.z); if (r) return r; }
@@ -437,7 +447,19 @@ export function mount(ctx) {
     try {
       const T = TEN();
       if (T && T.ready && T.ready()) {
-        const won = T.wants(x, z, bag);
+        const won = T.wants(x, z, bag, zdef.cat);
+        /* THREE ANSWERS, AND THE MIDDLE ONE IS THE FEATURE.
+             a string  the winning bidder's building type.
+             false     THE MARKET RAN AND REFUSED — no company will take this
+                       pitch at any price. Returned as `null` below, which
+                       plan() already counts as `nomix` and reports through
+                       landRefusal(); /src/tenants owns that sentence. This is
+                       "you zoned 200 card stores into a city that needs 30"
+                       arriving as a VACANT LOT rather than as a 201st shop.
+             null      no opinion — an empty pool, a residential zone, or a city
+                       with nobody living in it anywhere. The hash answers, and
+                       the plot develops exactly as it did before this existed. */
+        if (won === false) return null;
         if (won && bag.indexOf(won) >= 0) return won;
       }
     } catch (e) {}

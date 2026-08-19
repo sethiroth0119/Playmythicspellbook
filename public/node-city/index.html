@@ -36011,6 +36011,56 @@ function animate() {
       opsRowForKey: (k) => (typeof opsRowForKey === 'function' ? opsRowForKey(k) : null),
     });
   } catch (e) { console.warn('[Dossier] not mounted (non-fatal):', e); }
+  /* ══ 🧬 LIFEPATH — AN AGE AND A CAREER FOR A NAMED PERSON ════════════════
+     /src/citizen's dossier has printed two rows as UNAVAILABLE since it
+     shipped — Age ("the roster has no age and never had one") and Job level
+     ("this city keeps no rank for a person") — and it was RIGHT to. This module
+     is the model that earns them; without it those rows print exactly what they
+     printed before, word for word.
+
+     What it adds, and nothing else:
+       · an age that is a STRATIFIED SAMPLE of the city's own age pyramid
+         (MythicDemographics.report().ages), so the named roster reproduces that
+         distribution rather than merely resembling it, and that ADVANCES on
+         game.cityAge — see /src/lifepath/tuning.js, which derives how long a
+         year is out of ECON.demographics.lifecycle.agePerDay rather than
+         picking one. (It works out at about eight hours of play per citizen
+         year. That file says so out loud instead of quietly choosing a nicer
+         number.)
+       · a career grade on ECON.firm.levels — the only rank ladder this game
+         has — bounded by how long the building their employer occupies has
+         stood and by how long they have been of working age.
+
+     🔴 IT IS A READER. No addCinders, no addRes, no payCost, no tile write, no
+        citizen write. It sets nobody's job: employment is MythicCitizens
+        .employer(id) and the firm behind it, and this only asks where on that
+        firm's own ladder somebody stands.
+     🔴 ONE SAVE FIELD, VIA THE SHELF. It registers 'lifepath' on
+        window.MythicCitySave and stores ONE integer per named citizen (their
+        birth stamp, on this same game.cityAge clock, the same unit tile.born
+        uses). serialize() needs no edit. Registering late is safe — SaveShelf
+        replays the payload to a provider that arrives after loadState.
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md). `game` and `CITY_DAY_MIN` are top-level
+        `const` in THIS module script and invisible to an ES module; this ctx IS
+        the hand-over, and it is three read-only closures with no writer among
+        them. `tileBorn` returns a NUMBER or null — never the tile — so nothing
+        the render loop owns is reachable from the module. */
+  try {
+    const lpmod = await import('../src/lifepath/index.js?v=' + (window.NC_BUILD || 'lp1'));
+    await lpmod.mount({
+      now: () => +game.cityAge || 0,
+      /* When this tile was raised, on the same clock. Used ONLY as the ceiling
+         on how long somebody can have worked in it. Null for a tile the city no
+         longer has, which the module reads as "no ceiling from a building". */
+      tileBorn: (k) => { const t = game.tiles[k]; return t && Number.isFinite(+t.born) ? +t.born : null; },
+      /* The host's own cycle length, as the fallback denominator if
+         ECON.clock.dayMin is ever unreadable. The two are declared separately
+         and both happen to be 20; the module prefers the ECONOMY's day because
+         agePerDay is denominated per economic day. */
+      cycleMin: () => CITY_DAY_MIN,
+    });
+  } catch (e) { console.warn('[Lifepath] not mounted (non-fatal):', e); }
   /* ══ 👤 THE CITIZEN DOSSIER ═══════════════════════════════════════════════
      The other end of the dossier's household rows. openCitTalk() already gave
      a citizen a voice; /src/citizen gives them an identity — household,

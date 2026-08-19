@@ -475,7 +475,7 @@ function available(cat, zoneId) {
          which it does change what develops. `realOn` is the other half of the
          sentence — the zones in this family where it IS a district. */
       differs: diff ? diff.slice() : null,
-      inert: false, /* TEMPORARY REGRESSION — pre-fix behaviour, reverted below */
+      inert: diff ? diff.length === 0 : false,
       /* How many rungs there are to differ ON, so the panel can say "only on
          Established land" rather than making the player count. */
       bandsTotal: (() => { const r = knownLadder(); return r ? r.length : null; })(),
@@ -571,11 +571,15 @@ function stats() {
      readers already look. A held district is reported separately as `heldPer`,
      which nothing outside diagnostics reads and which no consumer may treat as
      evidence of anything except that a save carried it in. */
-  const per = {}, heldPer = {};
+  const per = {}, heldPer = {}, unknownPer = {};
   const M = store.all();
   for (const k in M) {
     const id = M[k];
-    const into = unlocked(id) ? per : heldPer;
+    /* Three buckets, because "will this module act on it" has three answers.
+       An id this build has never heard of is KEPT on the tile (store.js's
+       header says why) and is acted on by nothing — so it belongs in neither of
+       the other two, and least of all in the census a grant is read out of. */
+    const into = !SPEC_BY_ID[id] ? unknownPer : (unlocked(id) ? per : heldPer);
     into[id] = (into[id] || 0) + 1;
   }
   let held = 0;
@@ -583,7 +587,11 @@ function stats() {
   const g = _ctx.game || {}, tiles = g.tiles || {};
   let built = 0;
   for (const k in M) if (tiles[k]) built++;
-  return { specialised: store.size(), built, per, heldPer, held, armed: _armed,
+  /* ⚠ `specialised` and `built` stay counts of the WHOLE store — every tile
+     that carries a specialisation, held or unknown included, because that is
+     what the vitals chip's "built / painted" pair means and those tiles really
+     are painted. `held` is the qualifier beside them. */
+  return { specialised: store.size(), built, per, heldPer, unknownPer, held, armed: _armed,
            shelved: store.shelved(), lockedWrites: _lockedWrites };
 }
 

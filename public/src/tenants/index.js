@@ -111,11 +111,17 @@ function outFor(type) {
    a player who paints a bigger district faces a bigger field of bidders. Asked
    of /src/zoning rather than recounted — one zone map, one count. */
 function openLots() {
+  /* ⚠ LOTS ALREADY LET COUNT. Sizing the pool off vacant land alone made it
+     SHRINK as a district built out — six candidates for a trade with twenty
+     shops in it — and the pool would then have been smaller than the market it
+     is supposed to be bigger than. What the ratio is about is how many pitches
+     of this kind exist in the city, built or not. */
+  let empty = 0;
   try {
     const Z = ZON();
-    if (Z && Z.stats) { const s = Z.stats(); return Math.max(0, s.empty | 0); }
+    if (Z && Z.stats) empty = Math.max(0, Z.stats().empty | 0);
   } catch (e) {}
-  return 0;
+  return empty + (store ? store.size() : 0);
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -327,7 +333,7 @@ function observe(force) {
   const m = firmAt(force);
   const day = econDay();
   const out = { day, checked: 0, evicted: 0, failed: [], grown: [], struggling: 0,
-                relet: [], noBidder: 0, econ: !!m };
+                relet: [], noBidder: 0, waiting: 0, econ: !!m };
   const S = TEN.mark.struggling;
 
   for (const k of Object.keys(store.lets())) {
@@ -338,6 +344,18 @@ function observe(force) {
     if (!m) continue;                       // no economy ⇒ nothing to say, ever
     const f = m.get(k);
     if (!f) {
+      /* 🔴 ABSENT IS NOT DEAD, AND THIS WAS A REAL MEASURED BUG. A lease is
+         signed the instant the building lands; the FIRM is founded by
+         `syncBuildings`, which runs on the host's 4-second beat. So there is a
+         window — always, on every single let — in which the tenancy exists and
+         its firm does not. Without the `rec.f == null` guard the observer read
+         that window as "wound up", closed the tenancy, re-let it, and closed it
+         again. Driven, that reported FOUR failures and EIGHT lets on four
+         freshly-built shops that were all perfectly healthy, on day 40, before
+         a single economic day had passed under any of them.
+         So: a tenancy that has NEVER seen a firm is simply waiting. Only a
+         tenancy that once had one and now has none has actually lost it. */
+      if (rec.f == null) { out.waiting = (out.waiting | 0) + 1; continue; }
       const row = store.close(k, day, rec.rung, 'wound up — the building stands, the business does not');
       if (row) { out.failed.push(row); note('fail', k, closingLine(row)); }
       continue;

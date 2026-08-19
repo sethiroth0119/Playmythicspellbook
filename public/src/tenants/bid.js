@@ -251,12 +251,37 @@ export function bidFor(F, cand, x, z, outOf) {
   const sat = out ? (F.field().sat[out] || null) : null;
   const comp = F.competitors(x, z, cand.want);
 
+  /* 🎯 THE CATCHMENT AS THIS COMPANY SEES IT. `min(1, catchment ÷ needs)` — see
+     TEN.sizes: an independent is satisfied by a fifth of the best catchment on
+     the board, a national chain is not satisfied until it has seven tenths. It
+     is what stops the largest bidder taking every lot in the city (measured:
+     it did, four for four, before this existed). */
+  const fit = sz.needs > 0 ? clamp(L.customers / sz.needs, 0, 1) : L.customers;
+  /* 💷 …AND THE RENT ADVANTAGE IS ONLY REAL WHERE THE VOLUME IS.
+     🔴 THE SECOND THING DRIVING THIS FOUND. With a flat `rentBearing`, a
+        National Chain's bid stayed POSITIVE on a lot with almost no customers
+        at all — measured at 11,18: customers 2.56, income 4.33, rent only −4.67
+        because the discount is ×0.3, total +2.22 — so the biggest company in
+        the pool won the emptiest pitch on the board, while the independent and
+        the regional chain both correctly refused it. That is backwards, and it
+        is backwards for a reason worth writing down: a large firm's rent
+        advantage is SCALE — it spreads a fixed rent over more turnover — and it
+        has no scale on a site that delivers none. A flat discount modelled the
+        advantage as a property of the COMPANY when it is a property of the
+        COMPANY ON THIS SITE.
+     So the discount is earned in proportion to how much of its needed volume
+     the pitch actually delivers: at `fit = 1` a national bears 30% of the rent,
+     at `fit = 0` it bears all of it, exactly like the corner shop. An
+     independent (rentBearing 1) is unaffected at every fit, which is the right
+     identity — it has no scale to lose. Re-driven, 11,18 goes to nobody. */
+  const bearing = 1 - (1 - sz.rentBearing) * fit;
   const rows = [
     { key: 'customers', ico: '👥', label: 'Customers in reach',
-      raw: L.customers, v: w.customers * L.customers, src: L.has.demog ? 'live' : 'n/a',
+      raw: fit, v: w.customers * fit, src: L.has.demog ? 'live' : 'n/a',
       note: L.has.demog ? Math.round(L.near) + ' residents within ' + F.field().r + ' tiles — ' +
                           Math.round(L.customers * 100) + '% of the best catchment in the city (' +
-                          Math.round(F.field().maxNear) + '), out of ' + Math.round(L.cityPop) + ' living here'
+                          Math.round(F.field().maxNear) + ' of ' + Math.round(L.cityPop) + ' living here), and ' +
+                          Math.round(fit * 100) + '% of what a ' + sz.name + ' is looking for'
                         : '/src/demographics is not mounted' },
     { key: 'income', ico: '💷', label: 'Customer income',
       raw: L.income, v: w.income * L.income, src: L.has.demog ? 'live' : 'n/a',
@@ -267,8 +292,10 @@ export function bidFor(F, cand, x, z, outOf) {
       note: L.has.transit ? (L.transit > 0 ? 'a served stop is inside the catchment (mode share ' + Math.round(F.field().stops.served * 100) + '%)'
                                            : 'no served stop in reach') : '/src/transit is not mounted' },
     { key: 'rent', ico: '🏷', label: 'Rent',
-      raw: -L.rentShare * sz.rentBearing, v: -w.rent * L.rentShare * sz.rentBearing, src: L.has.land ? 'live' : 'n/a',
-      note: L.has.land ? L.value + ' ₵ ground — ' + Math.round(L.rentShare * 100) + '% of the dearest lot in the city, borne at ' + sz.name + ' scale (×' + sz.rentBearing + ')'
+      raw: -L.rentShare * bearing, v: -w.rent * L.rentShare * bearing, src: L.has.land ? 'live' : 'n/a',
+      note: L.has.land ? L.value + ' ₵ ground — ' + Math.round(L.rentShare * 100) + '% of the dearest lot in the city, borne at ' +
+                         Math.round(bearing * 100) + '% (a ' + sz.name + ' bears ' + Math.round(sz.rentBearing * 100) +
+                         '% of a rent at full volume, and this pitch is ' + Math.round(fit * 100) + '% of its volume)'
                        : '/src/landvalue is not mounted' },
     { key: 'competition', ico: '⚔', label: 'Nearby competitors',
       raw: -clamp(comp / TEN.bid.compFull, 0, 1), v: -w.competition * clamp(comp / TEN.bid.compFull, 0, 1), src: 'live',

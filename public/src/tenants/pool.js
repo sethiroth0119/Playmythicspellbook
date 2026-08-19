@@ -95,7 +95,15 @@ export function makePool() {
      `housed` is the set of candidate ids currently holding a tenancy — owned by
      store.js, passed in, never mirrored here. */
   function bidders(want, housed, lots) {
-    const all = series(want, sizeOf(lots));
+    /* 🔴 `.slice(0, n)` AND IT IS NOT COSMETIC. `series()` returns the CACHE,
+       which only ever grows — so a pool that was sized for 60 lots earlier in
+       the session kept handing back 60 bidders after the district was built out
+       and the open-lot count fell to nothing. Driven, it reported "pool 6,
+       bidding 61" in the same object, which is the kind of number a reader
+       trusts and a model does not. The cache is an optimisation; the POOL is
+       `sizeOf(lots)`. */
+    const n = sizeOf(lots);
+    const all = series(want, n).slice(0, n);
     const out = [];
     for (const c of all) if (!housed.has(c.id)) out.push(c);
     return out;
@@ -114,9 +122,10 @@ export function makePool() {
     const per = {};
     let cands = 0, free = 0;
     for (const w of wants) {
-      const n = sizeOf(lotsOf ? lotsOf(w) : 0);
-      const b = bidders(w, housed, lotsOf ? lotsOf(w) : 0);
-      per[w] = { pool: n, bidding: b.length, lots: lotsOf ? lotsOf(w) : 0 };
+      const lots = lotsOf ? lotsOf(w) : 0;
+      const n = sizeOf(lots);
+      const b = bidders(w, housed, lots);
+      per[w] = { pool: n, bidding: b.length, lots };
       cands += n; free += b.length;
     }
     return { candidates: cands, unhoused: free, per };

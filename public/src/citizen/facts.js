@@ -9,7 +9,11 @@
    🔴 EVERY ROW CARRIES ITS OWN SOURCE. A row is
        { label, value, un, src, link }
    where `src` is the live call the value came from, in words, and `un` marks
-   a row the game does not model. This is not decoration: this project has
+   a row the game does not model. A row is LIVE (read off another layer), DERIVED
+   (arithmetic over live readings with no free parameters), SAMPLED (a
+   deterministic draw — there is exactly one, the age, and it is printed with a
+   "≈" so the panel cannot pass a draw off as a reading) or UNAVAILABLE.
+   This is not decoration: this project has
    already had to rip content out of two panels for inventing numbers (a demand
    cause with no model behind it, and a water alarm that contradicted the panel
    above it). A row with no model behind it is UNAVAILABLE with the real
@@ -27,7 +31,13 @@
                             dialogue's own ctBand (handed over in ctx).
      Activity     LIVE      the walking agent bound to them: a.state / a.phase.
                             UNAVAILABLE when they are not on the street.
-     Age          UNAVAIL   the roster has no age and never had one.
+     Age          SAMPLED   the roster STILL has no age. /src/lifepath deals each
+                            named citizen into the city's own age pyramid
+                            (MythicDemographics.report().ages) and draws a year
+                            inside their band off a hash of their id. It is a
+                            SAMPLE, it is printed with a "≈", and it says so.
+                            UNAVAILABLE, word for word as before, with no
+                            /src/lifepath.
      Education    DERIVED   a FLOOR, not a value: the wage band of their
                             employer's industry, through
                             ECON.demographics.education.requires.
@@ -41,8 +51,12 @@
                             derives residence rather than storing it; this
                             reads that deal, it does not re-deal it.
      Occupation   LIVE      their crewed tile, else the economy's firm.
-     Job level    UNAVAIL   this city keeps no rank for a person. The citizen
-                            dialogue's own footer has said so since it shipped.
+     Job level    DERIVED   their employer's level on ECON.firm.levels is how
+                            many grades it has; tenure — bounded by the age of
+                            the building it stands in and by the years since
+                            they turned 18 — is how far up they are. Both
+                            stamps are the game's own. UNAVAILABLE with no
+                            /src/lifepath, and with no firm to stand in.
      Work band    DERIVED   the firm's industry band (ECON.labor.bands).
      Employer     LIVE      MythicCitizens.employer(id).
      Destination  LIVE      the last tile of the agent's path.
@@ -72,6 +86,21 @@ function DOSSIER() {
 }
 function ECONOMY() {
   try { return (typeof window !== 'undefined' && window.MythicEconomy) || null; } catch (e) { return null; }
+}
+/* 🧬 /src/lifepath — the model behind the Age and Job level rows. Probed for
+   `ready()` and not merely for existence, because the module needs a clock
+   handed to it by the host (game.cityAge is a top-level const and invisible to
+   a module) and an unmounted one would answer with a technical reason where the
+   panel wants the original sentence. Absent ⇒ both rows print exactly what they
+   printed before this existed. */
+function LIFEPATH() {
+  try {
+    if (typeof window === 'undefined') return null;
+    const L = window.MythicLifepath;
+    if (!L || typeof L.age !== 'function' || typeof L.career !== 'function') return null;
+    if (typeof L.ready === 'function' && !L.ready()) return null;
+    return L;
+  } catch (e) { return null; }
 }
 
 /* /src/dossier/household.js, handed in by index.js after a GUARDED dynamic
@@ -237,10 +266,43 @@ export function factsOf(C, id) {
   const bi = bandInfo(emp);
 
   const citizenRows = [];
-  citizenRows.push(unav('Age',
-    'the roster carries id, name, job, mood and employer — no age. /src/demographics models an ' +
-    'age split per household ARCHETYPE, city-wide; hanging one of those on a named person would ' +
-    'be a second, different truth about them'));
+
+  /* ── 🎂 AGE — THE ONE SAMPLED ROW ON THE PANEL, AND IT IS MARKED ─────────
+     The original reason this said UNAVAILABLE is still exactly right and is
+     still printed below when /src/lifepath is absent: the roster has no age,
+     and hanging a city-wide ARCHETYPE age split on a named person would be a
+     second, different truth about them.
+     What changed is that /src/lifepath makes it the SAME truth rather than a
+     second one — it deals every named citizen into the city's live pyramid
+     (MythicDemographics.report().ages) so the roster REPRODUCES that
+     distribution, then draws the year inside the band off a hash of the id.
+     🔴 So it is a sample, and the panel must never let it read as a reading:
+        the value carries a "≈", the source line leads with the word SAMPLED,
+        and the module reports `sampled: true` on every answer. */
+  const LP = LIFEPATH();
+  const la = LP ? (() => { try { return LP.age(c.id); } catch (e) { return null; } })() : null;
+  const clk = LP ? (() => { try { return LP.clock(); } catch (e) { return null; } })() : null;
+  if (la && la.ok && clk && clk.ok) {
+    citizenRows.push(row('Age', '≈ ' + la.whole + ' years · ' + la.bandIco + ' ' + la.bandLabel,
+      'SAMPLED, not recorded — the roster still carries no age. /src/lifepath deals every named ' +
+      'citizen into the city’s OWN age pyramid (MythicDemographics.report().ages, children ' +
+      'left out of the frame because the roster is sized by job slots), taking whichever band the ' +
+      'roster is most short of, and then draws the year inside that band off a hash of their id — ' +
+      'so it is the same age in every session and on every machine. It ADVANCES on game.cityAge at ' +
+      clk.daysPerYear.toFixed(1) + ' economic days to the year, which is ECON’s own figure read ' +
+      'back out of demographics.lifecycle.agePerDay (' + clk.src.agePerDay + '/day over a ' +
+      clk.workingLifeYears + '-year working life) — about ' + clk.hoursPerYear.toFixed(1) +
+      ' hours of play per year of their life. Born at cityAge ' + la.born + ' s' +
+      (la.pastExpectancy ? '; they are past the ' + clk.lifeExpectancy.toFixed(0) +
+        '-year life expectancy the same table derives, which is a real state and not a fault' : '')));
+  } else {
+    citizenRows.push(unav('Age',
+      'the roster carries id, name, job, mood and employer — no age. /src/demographics models an ' +
+      'age split per household ARCHETYPE, city-wide; hanging one of those on a named person would ' +
+      'be a second, different truth about them' +
+      (la && la.why ? '. /src/lifepath is loaded but cannot answer: ' + la.why : '') +
+      (LP && clk && !clk.ok ? '. /src/lifepath cannot work out how long a year is: ' + clk.why : '')));
+  }
   if (bi && bi.rung) {
     citizenRows.push(row('Education', bi.rung.ico + ' ' + bi.rung.label + ' or better',
       'DERIVED as a floor, not a value: nothing records what this person studied. They hold ' +
@@ -322,9 +384,52 @@ export function factsOf(C, id) {
       'the city has raised nothing they can hold a seat in'));
   }
 
-  occRows.push(unav('Job level',
-    'this city keeps no wage, no skill and no rank for a PERSON — the citizen dialogue’s own ' +
-    'footer has said so since it shipped. What is modelled is the band of the WORK, below'));
+  /* ── 🪜 JOB LEVEL ────────────────────────────────────────────────────────
+     The footer's old claim — "this city keeps no rank for a person" — was true
+     of the ROSTER and is still true of it. What /src/lifepath adds is not a
+     rank field on a person; it is the observation that the game already has
+     exactly one rank ladder, ECON.firm.levels, and that a person's place on
+     their employer's own ladder is computable from two stamps the game already
+     saves: when the building their firm occupies was raised, and how long they
+     have been of working age.
+     🔴 IT IS NOT A SECOND OPINION ABOUT EMPLOYMENT. Who they work for is
+        MythicCitizens.employer(id) and the firm behind it, read here and never
+        written; if that changes, this changes with it, because nothing about
+        the career is stored.
+     ⚠ AND THE TENURE IS A CEILING, NOT A HIRE DATE. The roster keeps no hire
+       date; stamping one the first time a panel opened would make the number
+       depend on when the player looked. The row says the word. */
+  const lc = LP ? (() => { try { return LP.career(c.id); } catch (e) { return null; } })() : null;
+  if (lc && lc.ok && clk && clk.ok) {
+    occRows.push(row('Job level',
+      'Grade ' + lc.grade + ' of ' + lc.cap + ' · ' + lc.firm.levelIco + ' ' + lc.firm.levelName,
+      'DERIVED from two live readings and one bound. Their employer stands at level ' + lc.cap +
+      ' of ' + lc.ladder + ' on ECON.firm.levels (MythicEconomy.firm(' + lc.firm.id + ').level), and a ' +
+      'firm has as many grades as it has levels — so a ' + lc.firm.levelName + ' has ' + lc.cap +
+      '. They can have worked there at most ' + lc.tenureYears.toFixed(1) + ' years: ' +
+      (lc.siteFrom === 'tile'
+        ? 'the building it occupies (' + lc.siteKey + ') has stood ' + lc.siteYears.toFixed(1) + ' years'
+        : 'the firm holds no tile of its own, so the ceiling is the age of the city itself, ' +
+          lc.siteYears.toFixed(1) + ' years') +
+      ', capped by the ' + lc.workedYears.toFixed(1) + ' years since they turned ' + clk.workAge +
+      '. One grade per ' + clk.gradeYears.toFixed(1) + ' years — that is ' +
+      'ECON.demographics.education.graduatePerDay, the only rate this game has for a person moving ' +
+      'up a rung, reused rather than copied. ⚠ A CEILING ON TENURE, NOT A HIRE DATE: the roster ' +
+      'keeps none, and inventing one would make this number depend on when you opened the panel' +
+      (lc.capped ? '. Their tenure alone would carry them to grade ' + lc.rungs + '; their ' +
+        'employer’s level is what holds them at ' + lc.grade + ' — nobody is a regional ' +
+        'director of a corner shop' : '') +
+      (lc.pastRetirement ? '. They are past the model’s own retirement age of ' + clk.retireAge +
+        ' and still on a firm’s books' : '')));
+  } else {
+    occRows.push(unav('Job level',
+      'this city keeps no wage, no skill and no rank for a PERSON — the citizen dialogue’s own ' +
+      'footer has said so since it shipped. What is modelled is the band of the WORK, below' +
+      (lc && lc.why === 'nofirm'
+        ? '. The one ladder the game does have is ECON.firm.levels, and it belongs to a BUSINESS — ' +
+          'this person stands in none, so there is no ladder to be part-way up'
+        : lc && lc.why ? '. /src/lifepath is loaded but cannot answer: ' + lc.why : '')));
+  }
 
   if (bi) {
     occRows.push(row('Work band', bi.ico + ' ' + bi.label,

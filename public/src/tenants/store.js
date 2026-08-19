@@ -73,14 +73,15 @@ export function makeStore() {
     return rec;
   }
 
-  /* A tenancy ENDS. The lot goes vacant until `until` (an economic day), and the
-     business goes in the ledger. Returns the ledger row so the caller can log
-     it — the module that noticed the failure owns the sentence. */
-  function close(k, day, until, rung, why) {
+  /* A tenancy ENDS. The lot goes on the market again (there is no cooldown —
+     tuning.js says why) and the business goes in the ledger. Returns the ledger
+     row so the caller can log it: the module that noticed the failure owns the
+     sentence. */
+  function close(k, day, rung, why) {
     const t = LET[k];
     if (!t) return null;
     delete LET[k];
-    VAC[k] = { until: until | 0, n: t.n, rung: rung || t.rung || 'BANKRUPT', why: why || '' };
+    VAC[k] = { n: t.n, rung: rung || t.rung || 'BANKRUPT', why: why || '' };
     const row = { k, n: t.n, want: t.want, size: t.size, opened: t.day | 0,
                   closed: day | 0, days: Math.max(0, (day | 0) - (t.day | 0)),
                   rung: rung || t.rung || 'BANKRUPT', why: why || '', lvl: t.lvl | 0 };
@@ -158,7 +159,7 @@ export function makeStore() {
           for (const k in vv) {
             const v = vv[k];
             if (typeof k !== 'string' || !KEY_RE.test(k) || !v || typeof v !== 'object') continue;
-            VAC[k] = { until: v.until | 0, n: typeof v.n === 'string' ? v.n : '',
+            VAC[k] = { n: typeof v.n === 'string' ? v.n : '',
                        rung: typeof v.rung === 'string' ? v.rung : 'BANKRUPT',
                        why: typeof v.why === 'string' ? v.why : '' };
           }

@@ -103,5 +103,14 @@
   R.granted.oTechChipHTML=btn?btn.outerHTML.slice(0,260):null;
   h2.remove();
   Z.applyPaint(of_[0].x,of_[0].z,null,null); Z.applyPaint(of_[1].x,of_[1].z,null,null);
+
+  /* ══ 7. THE MILDER PAIRS — real on ONE band of five, and the row says which */
+  const h3=document.createElement('div'); document.body.appendChild(h3);
+  D.arm('i_manu'); D.renderSpecRow(h3,'i_mfg');
+  R.industrialRow_i_manu=h3.textContent.replace(/\s+/g,' ').slice(0,600);
+  D.arm('i_log'); D.renderSpecRow(h3,'i_ware');
+  R.industrialRow_i_log=h3.textContent.replace(/\s+/g,' ').slice(0,600);
+  R.industrialChips=[...h3.querySelectorAll('[data-spec]')].map(b=>b.dataset.spec+':'+b.className);
+  h3.remove(); D.arm(null);
   return R;
 })()

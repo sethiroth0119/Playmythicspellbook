@@ -333,7 +333,7 @@ function observe(force) {
   const m = firmAt(force);
   const day = econDay();
   const out = { day, checked: 0, evicted: 0, failed: [], grown: [], struggling: 0,
-                relet: [], noBidder: 0, waiting: 0, econ: !!m };
+                relet: [], noBidder: 0, waiting: 0, damaged: 0, econ: !!m };
   const S = TEN.mark.struggling;
 
   for (const k of Object.keys(store.lets())) {
@@ -341,6 +341,15 @@ function observe(force) {
     out.checked++;
     const t = g[k];
     if (!t || t.type !== rec.want) { store.evict(k); out.evicted++; continue; }
+    /* 🔧 A DAMAGED BUILDING IS NOT A FAILED BUSINESS, and this one was mislabelled
+       on a driven board before it was caught. node-city's `ecoBuildings()` skips
+       `t.damaged` — "a burnt-out factory keeps hiring" is the bug that line
+       prevents — so a damaged shop's firm is reaped by the very next
+       `syncBuildings`, the tenancy loses the firm it was bound to, and the
+       observer below would file a perfectly solvent business as wound up. The
+       premises are offline; the tenancy is not over. It resumes on the same
+       firm when the repair lands, or fails honestly later on its own books. */
+    if (t.damaged) { out.damaged = (out.damaged | 0) + 1; continue; }
     if (!m) continue;                       // no economy ⇒ nothing to say, ever
     const f = m.get(k);
     if (!f) {

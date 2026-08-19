@@ -61702,7 +61702,7 @@ function openCityHall() {
            with total confidence. When the read failed, say so. */
         if (Corp.licensesUnknown && !has) right = '<span class="small-text" style="color:#e0c070;white-space:nowrap">⚠ could not load</span>';
         else if (has) right = viaNodes
-          ? '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap" title="Granted because your corporation operates a Reserve node">✓ HELD <span class="small-text" style="color:#9fc48a;font-weight:600">· via nodes</span></span>'
+          ? '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap" title="Granted because you operate ' + esc(cityLicenseNodeReason()) + ' — no fee, no materials, no compliance floor">✓ HELD <span class="small-text" style="color:#9fc48a;font-weight:600">· via nodes</span></span>'
           : '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap">✓ HELD</span>';
         else if (!owner) right = '<span class="small-text" style="color:#8a7a4a;white-space:nowrap">founder files</span>';
         else if (!meets) right = '<span class="small-text" style="color:#ff9a6b;white-space:nowrap">🔒 need ' + L.minCompliance + '</span>';
@@ -61714,7 +61714,7 @@ function openCityHall() {
             // "Fee 0 🔥" reads like a bug, not a decision. Say what is true.
             '<div class="small-text" style="color:#8a7a4a">' + (L.cinder > 0 ? 'Fee ' + L.cinder.toLocaleString() + ' 🔥' : 'No fee') + ' · ' + resStr +
               (L.illicit ? '' : ' · min compliance ' + L.minCompliance) +
-              (viaNodes ? ' · <span style="color:#9fc48a">waived — you operate a Reserve node</span>' : '') + '</div></div>' +
+              (viaNodes ? ' · <span style="color:#9fc48a">waived — you operate ' + esc(cityLicenseNodeReason()) + '</span>' : '') + '</div></div>' +
           right +
         '</div>';
       }).join('');
@@ -82933,21 +82933,59 @@ function _cityLicense(id) { return CITY_LICENSES.find(l => l.id === id) || null;
 
    ⚠ CONSTRUCTION ONLY. The other eight licences are unaffected; owning a node
      grants no entitlement to Mining, Oil, Research or anything else. */
+/* 🏙 DOES THIS PLAYER OWN A CITY NODE? Territory-Wars nodes are a SEPARATE id
+   space from FoundationReserve.nodes — the tier pill has to look in both, and so
+   does this. A player can hold a claimed city node and no PRN at all, which is
+   exactly the case that was seeing "🔒 need 55" on a licence the design already
+   says node operators do not pay for.
+   ⚠ TIER IS NOT REQUIRED HERE, and that is the difference from _myTierNode(),
+     which skips a node with no `tier` because an untiered node says nothing
+     about a RATE. Ownership is not a rate: a claimed node is claimed whether or
+     not an admin has stamped a tier on it, and gating the licence on that stamp
+     would make the entitlement depend on admin housekeeping. */
+function _ownsAnyCityNode(userId) {
+  try {
+    const me = userId || (Profile.cloud && Profile.cloud.userId) || null;
+    if (!me) return false;
+    if (typeof _twForge !== 'function' || typeof _twNodeOwnerUser !== 'function') return false;
+    for (const n of ((_twForge() || {}).nodes || [])) {
+      if (!n || !n.id) continue;
+      const o = _twNodeOwnerUser(n.id);
+      if (o && (o.user_id === me || o.id === me)) return true;
+    }
+    return false;
+  } catch (e) { return false; }
+}
 function cityHoldsLicense(id) {
   try {
     if ((Corp.licenses || []).indexOf(id) >= 0) return true;
     if (id !== 'construction') return false;
-    return ((FoundationReserve && FoundationReserve.nodes) || []).length > 0;
+    if (((FoundationReserve && FoundationReserve.nodes) || []).length > 0) return true;
+    // 🏙 …and a claimed CITY node earns it on the same reasoning: a player who
+    //    already operates a node has cleared the bar the permit exists to test.
+    return _ownsAnyCityNode();
   } catch (e) { return false; }
 }
 // True only when the hold comes from node ownership rather than a filed permit —
 // used to label the row honestly instead of claiming the corp filed for it.
 function cityLicenseByNodes(id) {
   try {
-    return id === 'construction'
-      && (Corp.licenses || []).indexOf(id) < 0
-      && ((FoundationReserve && FoundationReserve.nodes) || []).length > 0;
+    if (id !== 'construction') return false;
+    if ((Corp.licenses || []).indexOf(id) >= 0) return false;   // filed for it — say so honestly
+    return ((FoundationReserve && FoundationReserve.nodes) || []).length > 0 || _ownsAnyCityNode();
   } catch (e) { return false; }
+}
+/* WHICH node earned it — the row said "you operate a Reserve node" flat out,
+   which is now only half the reasons and would be a plain untruth for a player
+   whose only node is a city node. Reserve wins the label when both are true
+   because it is corporation-wide, so it is the one that keeps the licence if
+   this player's own claim lapses. */
+function cityLicenseNodeReason() {
+  try {
+    if (((FoundationReserve && FoundationReserve.nodes) || []).length > 0) return 'a Reserve node';
+    if (_ownsAnyCityNode()) return 'a claimed city node';
+  } catch (e) {}
+  return 'a node';
 }
 // Reserve-node type → required corporation licence.
 const NODE_REQUIRED_LICENSE = { mining: 'mining', fuel: 'oil', mfg: 'construction', storage: 'construction', supply: 'medical', convoy: 'logistics', security: 'security', research: 'research' };

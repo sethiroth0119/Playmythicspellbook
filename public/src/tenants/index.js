@@ -95,6 +95,38 @@ function firmAt(force) {
   _firmAt = m; _firmAtStamp = now;
   return m;
 }
+/* ⚰ HOW A BUSINESS DIED, FROM THE ECONOMY'S OWN CLOSURE RECORD.
+   🔴 THIS IS THE THIRD THING DRIVING THIS FEATURE FOUND, and the first two
+      attempts at it were both wrong for reasons worth keeping:
+        1. `MythicEconomy.firms()` is `Firms.alive()`, which FILTERS OUT the
+           BANKRUPT rung — the one rung this whole feature exists to show. So
+           every real bankruptcy read as "the firm is simply not there".
+        2. Asking `firm(id)` instead does search all firms, but `Firms.reap()`
+           is called INSIDE `sim.js runDay` (line ~1511), so the record is
+           deleted in the same economic day it dies. There is no moment, from
+           any host tick, at which an observer can read it.
+      Measured before the fix: five businesses that the economy's own log
+      recorded as "🏚 … went bankrupt" were all filed by this ledger as "wound
+      up — last seen HEALTHY, 0 bad days". Every one of those words was true and
+      the whole sentence was wrong.
+   The fix is a read-only closure ring in sim.js — `reap()` has always RETURNED
+   its dead and every caller has always discarded them — exposed as
+   `MythicEconomy.closures()`. Absent (an older /src/economy) ⇒ null, and the
+   ledger says "wound up" without naming a rung it cannot know. */
+function closureFor(k, fid) {
+  const E = ECO();
+  if (!E || typeof E.closures !== 'function') return null;
+  let list = [];
+  try { list = E.closures(80) || []; } catch (e) { return null; }
+  for (let i = list.length - 1; i >= 0; i--) {
+    const c = list[i];
+    if (String(c.tileKey) !== k) continue;
+    if (fid != null && c.id !== fid) continue;
+    return c;
+  }
+  return null;
+}
+
 function econDay() {
   const E = ECO(); if (!E) return 0;
   try { const s = E.snapshot(); return s ? (s.day | 0) : 0; } catch (e) { return 0; }
@@ -351,7 +383,22 @@ function observe(force) {
        firm when the repair lands, or fails honestly later on its own books. */
     if (t.damaged) { out.damaged = (out.damaged | 0) + 1; continue; }
     if (!m) continue;                       // no economy ⇒ nothing to say, ever
-    const f = m.get(k);
+    let f = m.get(k);
+    /* 🔴 `MythicEconomy.firms()` IS `Firms.alive()`, AND alive() FILTERS OUT THE
+       BANKRUPT — which is the whole rung this feature exists to show. Driven,
+       every real bankruptcy in the city was therefore filed by the ledger as
+       "wound up ... last seen HEALTHY, 0 bad days" while the economy's own log
+       said "🏚 Food Truck (preparedMeals) went bankrupt" on the same tick. The
+       tenancy is bound to a firm ID, so ask for THAT firm by id: `firm(id)`
+       goes through `Firms.byId`, which searches ALL firms, and the record
+       survives until `reap()` — which runs on the first line of syncBuildings,
+       i.e. immediately after this observer (node-city calls us first for
+       exactly this reason). So the dead firm is still readable here, with its
+       real rung and its real badDays, for exactly one call. */
+    if (!f && rec.f != null) {
+      try { const E = ECO(); const d = E && E.firm ? E.firm(rec.f) : null; if (d && String(d.tileKey) === k) f = d; }
+      catch (e) {}
+    }
     if (!f) {
       /* 🔴 ABSENT IS NOT DEAD, AND THIS WAS A REAL MEASURED BUG. A lease is
          signed the instant the building lands; the FIRM is founded by
@@ -365,13 +412,19 @@ function observe(force) {
          So: a tenancy that has NEVER seen a firm is simply waiting. Only a
          tenancy that once had one and now has none has actually lost it. */
       if (rec.f == null) { out.waiting = (out.waiting | 0) + 1; continue; }
-      const row = store.close(k, day, rec.rung, 'wound up — the building stands, the business does not; last seen with ' + (rec.bad | 0) + ' bad days on the books');
+      const c = closureFor(k, rec.f);
+      const row = c
+        ? store.close(k, day, c.rung, rungWhy(c))
+        : store.close(k, day, rec.rung, 'wound up — the building stands, the business does not (the economy kept no closure record)');
       if (row) { out.failed.push(row); note('fail', k, closingLine(row)); }
       continue;
     }
     if (rec.f == null) { rec.f = f.id; }
     else if (rec.f !== f.id) {
-      const row = store.close(k, day, rec.rung, 'closed and re-founded inside the economy — last seen ' + rec.rung + ' with ' + (rec.bad | 0) + ' bad days on the books');
+      const c = closureFor(k, rec.f);
+      const row = c
+        ? store.close(k, day, c.rung, rungWhy(c))
+        : store.close(k, day, rec.rung, 'closed and the pitch changed hands (the economy kept no closure record)');
       if (row) { out.failed.push(row); note('fail', k, closingLine(row)); }
       continue;
     }
@@ -423,6 +476,17 @@ function observe(force) {
   }
   syncOverlay();
   return out;
+}
+
+/* The economy's own verdict, turned into one sentence. Nothing here is
+   computed — `rung`, `badDays` and `lifetimeProfit` are all firms.js's. */
+function rungWhy(c) {
+  if (c.rung === 'BANKRUPT') {
+    return 'bankrupt — ' + (c.badDays | 0) + ' day' + ((c.badDays | 0) === 1 ? '' : 's') +
+           ' with no cash, lifetime profit ' + (c.lifetimeProfit | 0) + ' 🔥';
+  }
+  return 'wound up on the ' + String(c.rung || '?').toLowerCase() + ' rung after ' +
+         (c.badDays | 0) + ' bad day' + ((c.badDays | 0) === 1 ? '' : 's');
 }
 
 function closingLine(row) {
@@ -627,6 +691,27 @@ const API = {
   nameFor: (k) => { const r = store && store.tenancy(k); return r ? r.n : null; },
   bidders: (x, z, bag) => explain(x, z, bag),
   winner: (x, z, bag) => { const w = winnerFor(x, z, bag); return w ? { type: w.type, cand: w.cand, total: w.bid.total } : null; },
+
+  /* WHY EVERY EMPTY LOT IS EMPTY. A building standing with no company willing
+     to run it is the user's "buildings become abandoned", and it is only a
+     claim if the reason can be read off it. One sentence per vacant lot, from
+     the same model that refused it. */
+  vacancies: () => {
+    if (!mounted) return [];
+    const out = [], g = tiles();
+    for (const k of Object.keys(store.vacs())) {
+      const v = store.vacs()[k], t = g[k], c = k.split(',');
+      const x = +c[0], z = +c[1];
+      const w = t ? bestBidFor(x, z, t.type, store.housed(), openLots()) : null;
+      const e = t ? explain(x, z, [t.type]) : { ok: false };
+      const top = (e.ok && e.rows.length) ? e.rows[0] : null;
+      out.push({ k, was: v.n, rung: v.rung, why: v.why,
+                 type: t ? t.type : null, typeName: t ? nameOfType(t.type) : null,
+                 relet: !!w, bestBid: top ? top.total : null,
+                 sinks: top ? top.terms.slice().sort((a, b) => a.v - b.v)[0] : null });
+    }
+    return out;
+  },
 
   /* the record */
   failures: () => (store ? store.failures() : []),

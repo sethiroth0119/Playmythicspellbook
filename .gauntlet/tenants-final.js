@@ -72,11 +72,31 @@
   R.devControl = await dev();
   R.controlLet = CONTROL.map(p=>{const t=G.tiles[K(p.x,p.z)];const te=nc.tenantAt(p.x,p.z);
     return {at:K(p.x,p.z),type:t?t.type:null,tenant:te&&!te.vacant?{name:te.name,size:te.size.id,bid:te.bid,out:te.firm?te.firm.out:null}:null};});
+  R.liveControl = { tenants:tstat(), overlay:{on:T.overlay(true),painted:T.overlayPainted()},
+    levelSeam:(()=>{const l=T._store().lets(); const k=Object.keys(l)[0]; if(!k)return null;
+      const c=k.split(','); const fm=new Map(); for(const f of E.firms()) if(f.tileKey) fm.set(String(f.tileKey),f);
+      const f=fm.get(k); return {at:k,name:l[k].n,size:l[k].size,firmLevel:f?f.level:null,
+        levelFor:T.levelFor(+c[0],+c[1]),tileLvl:(G.tiles[k]||{}).lvl,
+        gatesShort:f?(E.levelCheck(f.id).missing||[]).map(m=>m.label+' '+(Math.round(m.have*10)/10)+'/'+m.need):null};})(),
+    verify:T.verify(), seed:(()=>{const l=T._store().lets(); const out=[];
+      const fm=new Map(); for(const f of E.firms()) if(f.tileKey) fm.set(String(f.tileKey),f);
+      for(const k in l){const f=fm.get(k); if(f) out.push({k,cash:Math.round(f.cash),want:Math.round(f.seedWant||0),short:Math.round(f.seedShort||0)});}
+      return out;})(),
+    econ:(()=>{const sn=E.snapshot();return {treasury:Math.round(sn.treasury),charter:Math.round(sn.charter),budget:Math.round(sn.foundingDrawBudget||0)};})() };
   const TR = R.controlLet.find(b=>b.tenant&&b.tenant.out);
   const OUT = TR?TR.tenant.out:'preparedMeals', TYPE = TR?TR.type:'foodtruck';
   R.trade = { out:OUT, type:TYPE };
   await nc.step(20*15,150); settle();
-  R.afterControl = { trade:shot(OUT), tenants:tstat(), audit:audit() };
+  R.afterControl = { trade:shot(OUT), tenants:tstat(), audit:audit(),
+    vacancies: nc.tenantVacancies(),
+    ledgerNow: T.failures().map(f=>({n:f.n,k:f.k,days:f.days,rung:f.rung,why:f.why})) };
+  R.levelsControl = (()=>{ const l=T._store().lets(), out={}; let best=null,seam=null;
+    const fm=new Map(); for(const f of E.firms()) if(f.tileKey) fm.set(String(f.tileKey),f);
+    for (const k in l){ const f=fm.get(k); if(!f) continue; out['L'+f.level]=(out['L'+f.level]||0)+1;
+      const c=E.levelCheck(f.id);
+      if(!best||(c.missing||[]).length<best.missing.length) best={k,name:l[k].n,ok:c.ok,missing:(c.missing||[]).map(m=>m.label+' '+(Math.round(m.have*10)/10)+'/'+m.need)};
+      const cc=k.split(','); if(!seam) seam={at:k,levelFor:T.levelFor(+cc[0],+cc[1]),firmLevel:f.level,ambition:l[k].size,tileLvl:(G.tiles[k]||{}).lvl}; }
+    return {firmLevels:out,closest:best,seam}; })();
   const PROBE = free.find(p=>!G.tiles[K(p.x,p.z)] && !CONTROL.includes(p));
   Z.applyPaint(PROBE.x,PROBE.z,'c_low','c_food'); settle();
   R.probeBefore = tbl(PROBE.x,PROBE.z);
@@ -91,10 +111,23 @@
   R.rightAfterBuild = { trade:shot(OUT), tenants:tstat() };
   await nc.step(20*15,150); settle();
   R.afterOver = { trade:shot(OUT), tenants:tstat(), audit:audit(),
-                  lastObserve:T.stats().lastObserve };
+                  lastObserve:T.stats().lastObserve,
+                  vacancies: nc.tenantVacancies().slice(0,6) };
   Z.applyPaint(PROBE.x,PROBE.z,'c_low','c_food'); settle();
   R.probeAfter = tbl(PROBE.x,PROBE.z);
   R.probeRefusal = T.refusal(PROBE.x,PROBE.z);
+  /* THE SAME BOARD-WIDE QUESTION AS §1, ASKED AGAIN with the trade over-supplied */
+  const free2 = free.filter(p=>!G.tiles[K(p.x,p.z)]);
+  for (const p of free2) Z.applyPaint(p.x,p.z,'c_low','c_food');
+  settle();
+  const ranked2 = free2.map(p=>{const w=T.winner(p.x,p.z,bagOf(p));
+    return {...p,win:w?{t:w.type,size:w.cand.size.id,total:+w.total.toFixed(2)}:null};});
+  const bid2 = ranked2.filter(p=>p.win);
+  R.marketAfter = { plots:free2.length, bidOn:bid2.length, refusedOutright:free2.length-bid2.length,
+    bySize:bid2.reduce((a,p)=>(a[p.win.size]=(a[p.win.size]||0)+1,a),{}),
+    sameLotsBefore:(()=>{const set=new Set(free2.map(p=>K(p.x,p.z)));
+      return {bidOnBefore:bid.filter(p=>set.has(K(p.x,p.z))).length, of:free2.length};})() };
+  for (const p of free2) Z.setZone(p.x,p.z,null);
 
   /* ══ 4. THE LEDGER, with a diagnosis per row ═══════════════════════════ */
   const fmap = new Map(); for (const f of E.firms()) if (f.tileKey) fmap.set(String(f.tileKey), f);

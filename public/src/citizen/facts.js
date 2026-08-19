@@ -434,7 +434,14 @@ export function factsOf(C, id) {
   if (bi) {
     occRows.push(row('Work band', bi.ico + ' ' + bi.label,
       'DERIVED: MythicEconomy.industries.' + emp.ind + '.band = "' + bi.band + '" — the band this ' +
-      'firm draws its workforce from' + (bi.wage != null ? ', paid ' + bi.wage + ' 🔥 an economic day at level 1' : '')));
+      'firm draws its workforce from' + (bi.wage != null ? ', paid ' + bi.wage + ' 🔥 an economic day at FIRM LEVEL 1' : '')));
+    /* ⚠ "at firm level 1" is ECON.labor.bands[band].wage, the base of the wage
+       ladder — NOT a claim that this firm stands at level 1, which the Job
+       level row above may well say is 3. firms.js pays
+       band.wage × ECON.firm.levels[level].wageMul and does not expose the
+       product, and computing it here would be a second opinion about pay. The
+       words were "at level 1" until the Job level row landed beside them and
+       made that read like a contradiction. */
   } else if (jobTile) {
     occRows.push(unav('Work band',
       'no firm stands on tile ' + jobTile + ', so this is a civic seat and the economy prices no ' +

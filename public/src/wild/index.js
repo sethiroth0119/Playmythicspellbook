@@ -154,20 +154,34 @@ const TARGET_TILES = 430;
    pasted on rather than as something that grew where it is. */
 const C_TUFT_WET = [0x5c7a36, 0x678437, 0x4f6b30, 0x738c42];
 const C_TUFT_DRY = [0x8a8752, 0x94905c, 0x7c7a48, 0x9d9764];
-/* ⚠ THE SCRUB FAMILY WAS LIFTED ~10% AGAINST A MEASUREMENT, and the
-   measurement is the one round 2 spent a whole round fixing and this round is
-   not allowed to spend. gsample on the district framing, baseline vs the first
-   cut of this layer: the mid bin's mean terrain value went 0.546 -> 0.503,
-   because the layer's biggest single contribution by area is dark green bushes
-   and their shadows. 0.503 is still inside the 0.45-0.55 band the reference
-   frames set, so it was not a bug — but a fifth of round 2's headroom for a
-   layer whose job is CONTRAST rather than LEVEL is a bad trade. Both families
-   were lifted and a sixth, paler, yellower entry added to each: the extra
-   spread between bushes is what stops a thicket reading as one solid dark
-   shape, which is the same argument /src/parcel's tileShade note makes about
-   three shops sharing one forecourt. */
-const C_SCRUB    = [0x51702f, 0x486632, 0x5e7c3a, 0x435f30, 0x6b8742, 0x577336];
-const C_SCRUB_DRY= [0x86875a, 0x787a4c, 0x939160, 0x6d7043, 0x9d9a68, 0x7f8050];
+/* 🔴 THE ~10% LIFT ON THIS FAMILY IS REVERSED, AND THE REASON IT WAS APPLIED
+   IS WORTH WRITING DOWN BECAUSE IT WILL OTHERWISE BE RE-DERIVED WRONGLY.
+
+   The lift was spent to recover a mid-bin terrain mean of 0.546 -> 0.528,
+   "against round 5's defended target of 0.531". THE TWO NUMBERS ARE NOT THE
+   SAME KIND OF NUMBER. index.html's round-5 block (search "measured off the
+   stops") defends 0.531 as the AUTHORED RAMP MEAN — the arithmetic mean of the
+   ramp's own colour stops, an albedo constant. 0.546 and 0.528 are RENDERED
+   PIXEL statistics off a gsample crop: albedo through a key light, a shadow
+   pass, a grain map, fog and a tone curve. They cannot be compared, and if one
+   insists on comparing them anyway then the baseline was already +0.015 off
+   the target and 0.528 is the CLOSER of the two. Either way the lift bought
+   nothing and was paid for in the exact currency this module exists to mint.
+
+   ⚠ THE VALID COMPARISON, for whoever asks next: an albedo target is checked
+     against the palette, and a rendered level is checked against ANOTHER
+     RENDER AT THE SAME HOUR THROUGH THE SAME CAMERA. Round 2's band (0.45-0.55
+     rendered, from the reference frames) is the live constraint and 0.528 sits
+     inside it with 0.078 of room. Nothing was owed.
+
+   WHAT IS KEPT from that edit: the SIXTH entry. Widening the spread between
+   bushes is what stops a thicket reading as one solid dark shape (the same
+   argument /src/parcel's tileShade note makes about three shops sharing one
+   forecourt) and it is independent of level — so both families keep six
+   entries, added one DARKER and one PALER about the pre-lift mean rather than
+   one paler above it. Channel means land within 2% of the pre-lift four. */
+const C_SCRUB    = [0x47632f, 0x3f5a2c, 0x546f36, 0x3a5430, 0x35502a, 0x5d7539];
+const C_SCRUB_DRY= [0x77784a, 0x6b6c42, 0x848256, 0x5f6339, 0x565a34, 0x8f8d60];
 const C_ROCK     = [0x8b8577, 0x9a9486, 0x7a7468, 0xa39c8c];
 const C_BARK     = [0x6b5940, 0x5a4a35, 0x746145];
 const C_CROWN    = [0x3f6a34, 0x497a3a, 0x38602f];

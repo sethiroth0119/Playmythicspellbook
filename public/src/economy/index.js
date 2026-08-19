@@ -694,6 +694,14 @@ const api = {
   log: () => Sim.log(),
   firms: () => Firms.alive(),
   firm: (id) => Firms.byId(id),
+  /* ⚰ THE BUSINESSES THAT ARE GONE. `firms()` is `Firms.alive()`, which filters
+     the BANKRUPT rung out — and `Firms.reap()` deletes the record inside
+     `runDay`, before any host tick can look at it. So without this there is no
+     way at all, from outside this package, to tell "that shop went bankrupt"
+     from "that shop was replaced": /src/tenants measured exactly that
+     ambiguity and could only file every closure as "wound up, last seen
+     HEALTHY". Bounded, read-only, and it moves nothing. */
+  closures: (n) => (mounted ? Sim.closures(n) : []),
   inventory: () => Sim.inventory(),
   price: (id) => Prices.priceOf(id),
   movers: (n) => Prices.movers(n),

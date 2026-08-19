@@ -99,6 +99,11 @@ const S = {
   foundingDrawBudget: 0,
   foundingDrawArmed: false,
   INV: {},              // resource id → units held by the city
+  /* ⚰ The last ~120 businesses that were wound up and deleted, so something
+     outside this module can say WHICH one died and how. Read-only, bounded,
+     never serialised, and no term of `totalCinder()` — see the note at the
+     `reap()` call in runDay. */
+  closures: [],
   /* Per-day flow readouts, for the panel and the audit. */
   flow: { wages: 0, shopping: 0, b2b: 0, rent: 0, tax: 0, benefits: 0,
           imports: 0, exports: 0, faucet: 0, payout: 0, freight: 0, interest: 0,
@@ -215,7 +220,7 @@ export function reset(nodeId) {
      previous city landing afterwards must not decrement a term that now belongs
      to a different city. */
   S.payoutAllowed = true; S.payoutOwed = 0; S.payoutInFlight = 0;
-  S.log = []; S.booted = false;
+  S.log = []; S.booted = false; S.closures = [];
   S.outputValue = {}; S.serviceValue = {}; S.observed = {}; S.demandEMA = {};
   /* 🔌 …including the utility link, and including its ARREARS. A debt that
      survived reset() would follow one city's unpaid electricity bill into the
@@ -1508,7 +1513,24 @@ function runDay(days, host) {
       }
     }
   }
-  Firms.reap();
+  /* ⚰ THE CLOSURE RECORD — read-only, and it exists because firms.js's own
+     `reap()` header states the problem and nothing had ever solved it: "a
+     business that vanishes between frames never gets explained to the player".
+     `reap()` has always RETURNED its dead and every caller has always thrown
+     them away, so by the time any observer outside this module looks, the firm
+     — its name, its rung, its bad days — is simply gone. /src/tenants binds a
+     shopfront to a company and cannot otherwise say whether the business there
+     went bankrupt or was merely replaced.
+     🔴 IT MOVES NOTHING AND IT IS NOT SERIALISED. A bounded ring of plain
+        strings and numbers, read by `closures()`, invisible to `totalCinder()`
+        and to `audit()`. Deleting these three lines changes no balance. */
+  for (const d of Firms.reap()) {
+    S.closures.push({ day: S.day, id: d.id, name: d.name, out: d.out, ind: d.ind,
+                      tileKey: d.tileKey || null, rung: d.rung,
+                      badDays: d.badDays | 0, level: d.level | 0,
+                      lifetimeProfit: Math.round(d.lifetimeProfit || 0) });
+    if (S.closures.length > 120) S.closures.shift();
+  }
 
   // 8. WEALTH MOBILITY and SPECIALIZATION.
   HH.settle(days);
@@ -1835,6 +1857,11 @@ export function notePayoutDelivered(amount) {
 /* ════════════════════════════════════════════════════════════════════════════
    📊 SNAPSHOT — everything the UI and the bottleneck tracer read.
    ════════════════════════════════════════════════════════════════════════════ */
+export function closures(n) {
+  const a = S.closures || [];
+  return n ? a.slice(-Math.max(1, n | 0)) : a.slice();
+}
+
 export function snapshot() {
   const hh = HH.state();
   return {

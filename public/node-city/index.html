@@ -36482,6 +36482,7 @@ function animate() {
     tenantBids: (x, z, bag) => { try { return window.MythicTenants ? window.MythicTenants.explain(x, z, bag) : null; } catch (e) { return null; } },
     tenantObserve: (f) => { try { return window.MythicTenants ? window.MythicTenants.observe(f !== false) : null; } catch (e) { return null; } },
     tenantFailures: () => { try { return window.MythicTenants ? window.MythicTenants.failures() : null; } catch (e) { return null; } },
+    tenantVacancies: () => { try { return window.MythicTenants ? window.MythicTenants.vacancies() : null; } catch (e) { return null; } },
     tenantVerify: () => { try { return window.MythicTenants ? window.MythicTenants.verify() : null; } catch (e) { return null; } },
     tenantPanel: (on) => { try { return window.MythicTenants ? (on === false ? window.MythicTenants.closePanel() : window.MythicTenants.openPanel()) : false; } catch (e) { return false; } },
     tenantOverlay: (on) => { try { return window.MythicTenants ? window.MythicTenants.overlay(on) : false; } catch (e) { return false; } },

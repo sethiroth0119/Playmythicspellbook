@@ -69,6 +69,9 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 let CTX = null, group = null, sig = '', flatMesh = null, propMesh = null, served = 0;
+/* What the last build() actually emitted, kept for verify() — see its note on
+   why an assertion about geometry has to read the geometry. */
+let audit = { rects: [], found: 0, foundTiles: 0, tiles: 0, own: 0 };
 
 /* ── WHO GETS WHAT ─────────────────────────────────────────────────────────
    Keyed on the tile type, because that is the only thing this module can see;
@@ -148,6 +151,17 @@ const C_STEEL  = 0x50555a;      // palisade / bollard / rail
 const C_TIMBER = 0x7a6549;      // farm post and rail
 const C_LEAF   = [0x3f7a35, 0x4f9642, 0x2f6b34, 0x568f3c];
 const C_LAWN   = 0x6fa94e;
+/* ── THE FOUNDATION EDGE'S TWO BEDS ────────────────────────────────────────
+   Both are chosen for VALUE against the surface they sit on, not for hue, and
+   both are DARK because every surface a building in this city meets is pale:
+   a depot's own concrete yard, a shop's forecourt, a civic plaza. The whole
+   job of this strip is to put a dark line in the join, so the wall stops
+   growing straight out of the ground. Mulch ~0.14 luminance and grit ~0.24
+   against paving at ~0.55 is a step of .3-.4, which is an order of magnitude
+   more than the 6-unit separation the round-9 critic measured on a side hedge
+   and correctly refused to call a boundary. */
+const C_MULCH  = 0x40331f;      // planted bed — commerce / civic
+const C_GRIT   = 0x4b473f;      // gritted margin — industry / farm
 
 /* ⭐ ROUND 5 — A PLOT'S SURFACE IS ITS OWN, NOT ITS CLASS'S.
    Every industrial yard in the city was byte-identically 0x484540 and every
@@ -201,6 +215,13 @@ function rngOf(x, z) {
      instead of restarting the texture at every property line. */
 function quad(F, x0, x1, z0, z1, y, col) {
   if (x1 - x0 <= 1e-5 || z1 - z0 <= 1e-5) return;
+  /* Every flat rectangle this layer emits is remembered so verify() can PROVE
+     none of them overlaps another at the same height, rather than asserting it
+     the way the module header used to. /src/wild shipped 325 coplanar triangles
+     agreeing to within 0.2mm in one buffer this round; one shared material and
+     one buffer means no polygonOffset can separate them, and the only reason
+     nobody saw it was that both were tinted toward the same tone. */
+  audit.rects.push([x0, x1, z0, z1, y]);
   const r = ((col >> 16) & 255) / 255, g = ((col >> 8) & 255) / 255, b = (col & 255) / 255;
   const p = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
   for (const i of [0, 2, 1, 0, 3, 2]) {
@@ -278,6 +299,200 @@ function boundary(S, R, kind, cx, cz, ax, az, half, y) {
   }
 }
 
+/* ══ 🌿 THE FOUNDATION EDGE ════════════════════════════════════════════════
+   ROUND 12. The one rubric element that was missing from EVERY non-housing
+   building in the city, measured rather than assumed: a 4x crop of the depot
+   block at the district camera shows a shed wall meeting its own yard at a
+   hard corner, two flat greys with nothing in the join. That is the textbook
+   "model on a board" read, and it survives every other thing this layer draws,
+   because a lot line and a fence are both out at the property boundary and
+   say nothing about where the BUILDING lands.
+
+   ⚠ WHY THIS IS THE ONE TREATMENT THAT REACHES A PAVED TILE.
+   The audit that opened this round found that HAS_OWN_GROUND has quietly grown
+   until it swallows the layer: of the 14 non-housing buildings on the standard
+   gauntlet district, 13 are on that list, so this module laid exactly 20
+   triangles of flat surface across the whole city — one vacant lot's worth.
+   Every element that lives at PAD height is therefore unavailable on almost
+   every building that actually places. The foundation edge does NOT live at
+   PAD height. It is a solid box with a shrub in it: it stands ON whatever the
+   recipe already paved, cannot be coplanar with it, and so is drawn on the
+   HAS_OWN_GROUND tiles as well as the others. That is the whole reason it is
+   the piece this round builds.
+
+   ── HOW THE FOOTPRINT IS FOUND, AND WHY NOT FROM THE BOUNDING BOX ─────────
+   A bed has to hug the actual wall, and this module cannot see the recipes.
+   The first cut took the tile mesh's bounding box: measured, a depot's box is
+   0.494 of half-width and a motor pool's 0.615 — the recipes merge into a
+   handful of buckets and one bucket's box is the union of a shed, a canopy, a
+   fence and a gantry. There is no wall in that number.
+   So the footprint is RASTERISED off the geometry itself, 16 cells across the
+   tile, marking every cell a triangle whose top reaches BODY_Y passes over.
+   🐞 IT RASTERISES TRIANGLES, NOT VERTICES. The first version marked the cell
+      each VERTEX fell in, which leaves the interior of every wall slab empty —
+      a box has vertices only at its corners — and the "edge" then landed in
+      the middle of the shed. Measured: a depot came back 106 cells occupied
+      and 59 of them ring, most of them inside the building.
+   🐞 AND THE RING IS FLOOD-FILLED FROM OUTSIDE. Even with triangles, marking
+      every free cell next to an occupied one puts beds in the gaps BETWEEN a
+      depot's roof plant and inside a farm's crop rows. Only free cells the
+      tile edge can reach are ground; everything else is interior. Measured on
+      the same depot: 59 ring cells before, 27 after, and the 27 are one clean
+      line along the front of the shed.
+   ⚠ AN ISOLATED POLE IS NOT A BUILDING. The anchor cell has to have at least
+     three occupied neighbours of its own, or a lamp mast in the middle of a
+     yard grows a flower bed round itself.
+   ⚠ OVER-FILLING IS THE SAFE DIRECTION. A triangle's XZ bounding box is used
+     rather than the triangle, so a diagonal marks more than it covers. That can
+     only push a bed further OUT of the building, never into it.
+
+   COST: nothing flat, no new material, no new mesh — every box and every shrub
+   goes into the propMesh this layer already merges. Rejected: laying the bed as
+   a flat quad in the surface buffer, which is 4 triangles instead of 12 and
+   would have been free — but it puts a second flat rectangle at PAD height on a
+   tile whose recipe already paved it, which is exactly the coplanar-overlap
+   defect /src/wild shipped this round (325 triangles agreeing to within 0.2mm
+   in one buffer, invisible only because both were tinted the same). A box has
+   a top face 26mm clear of everything and side faces that catch the key light,
+   and it is the side faces that actually read.                              */
+const FN = 16;                                     // raster cells across a tile
+const FCELL = 1 / FN;
+/* How tall something has to be before it counts as the building. 85mm over the
+   carriageway datum: above every apron, kerb, lot line and painted marking any
+   recipe draws (the tallest of those is a _pcKerb at RD_Y + .012), and below
+   the lowest thing that is a WALL. */
+const BODY_UP = .085;
+
+/* The occupancy raster of one tile, in tile-local cells. Returns a Uint8Array
+   of FN*FN, 1 where the building stands. */
+function footprint(mesh, cx, cz, RD_Y) {
+  const { THREE } = CTX;
+  const occ = new Uint8Array(FN * FN);
+  const yMin = RD_Y + BODY_UP;
+  mesh.updateMatrixWorld(true);
+  const P = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  mesh.traverse(m => {
+    if (!m.isMesh || !m.geometry || !m.geometry.attributes.position) return;
+    const pos = m.geometry.attributes.position, idx = m.geometry.index, M = m.matrixWorld;
+    const n = idx ? idx.count : pos.count;
+    for (let i = 0; i + 2 < n; i += 3) {
+      let hi = -9, x0 = 9, x1 = -9, z0 = 9, z1 = -9;
+      for (let c = 0; c < 3; c++) {
+        const v = P[c];
+        v.fromBufferAttribute(pos, idx ? idx.getX(i + c) : i + c).applyMatrix4(M);
+        if (v.y > hi) hi = v.y;
+        if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x;
+        if (v.z < z0) z0 = v.z; if (v.z > z1) z1 = v.z;
+      }
+      if (hi < yMin) continue;
+      const i0 = Math.max(0, Math.floor((x0 - cx + .5) * FN));
+      const i1 = Math.min(FN - 1, Math.floor((x1 - cx + .5) * FN));
+      const j0 = Math.max(0, Math.floor((z0 - cz + .5) * FN));
+      const j1 = Math.min(FN - 1, Math.floor((z1 - cz + .5) * FN));
+      for (let j = j0; j <= j1; j++) for (let ii = i0; ii <= i1; ii++) occ[j * FN + ii] = 1;
+    }
+  });
+  return occ;
+}
+
+/* Free cells the tile edge can walk to. Everything else is interior and is not
+   ground — see the flood-fill note in the header. */
+function reachable(occ) {
+  const out = new Uint8Array(FN * FN), st = [];
+  const push = (i, j) => { const k = j * FN + i;
+    if (occ[k] || out[k]) return; out[k] = 1; st.push(i, j); };
+  for (let i = 0; i < FN; i++) { push(i, 0); push(i, FN - 1); push(0, i); push(FN - 1, i); }
+  while (st.length) {
+    const j = st.pop(), i = st.pop();
+    if (i > 0) push(i - 1, j); if (i < FN - 1) push(i + 1, j);
+    if (j > 0) push(i, j - 1); if (j < FN - 1) push(i, j + 1);
+  }
+  return out;
+}
+
+/* ── HOW EACH CLASS MEETS ITS GROUND ───────────────────────────────────────
+   Same principle as the boundary: a factory and a civic hall do not plant the
+   same thing, and the difference is half of what a viewer reads as zoning.
+     industry  a gritted margin, kept clear — a yard that has to take a lorry
+               does not have a shrubbery against the loading dock
+     commerce  a mulched bed, densely planted, which is what frame 5's kerbed
+               islands actually are
+     civic     the same, denser still
+     farm      grit, barely planted — and in practice a farm's own recipe
+               fences and crops its whole tile, so this finds no ground at all
+               on the standard district and correctly draws nothing.          */
+const FOUND = {
+  industry: { col: C_GRIT,  rate: .16, r0: .026, r1: .018 },
+  commerce: { col: C_MULCH, rate: .58, r0: .032, r1: .026 },
+  civic:    { col: C_MULCH, rate: .64, r0: .034, r1: .026 },
+  farm:     { col: C_GRIT,  rate: .34, r0: .030, r1: .022 },
+};
+
+/* Draw it. `skip(lx,lz)` is the caller's veto — the drive corridor and the
+   props this parcel has already stood on the ground. Returns the cell count so
+   verify() can refuse a build where the whole city came back empty, which is
+   the failure /src/wild shipped and a critic had to find by hand. */
+function foundationEdge(S, R, cls, mesh, cx, cz, RD_Y, y, skip) {
+  const occ = footprint(mesh, cx, cz, RD_Y);
+  const free = reachable(occ);
+  const F = FOUND[cls] || FOUND.commerce;
+  const at = (i, j) => (i < 0 || j < 0 || i >= FN || j >= FN) ? 0 : occ[j * FN + i];
+  const mass = (i, j) => {                     // is that cell part of a MASS?
+    let n = 0;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++)
+      if (a || b) n += at(i + a, j + b);
+    return n >= 3;
+  };
+  /* Pass 1 — the mask. */
+  const ring = new Uint8Array(FN * FN);
+  let cells = 0;
+  for (let j = 0; j < FN; j++) for (let i = 0; i < FN; i++) {
+    const k = j * FN + i;
+    if (occ[k] || !free[k]) continue;
+    const lx = (i + .5) * FCELL - .5, lz = (j + .5) * FCELL - .5;
+    /* Inside the property line. .43 keeps the bed clear of a boundary run at
+       .478 and of its own .062 piers, and clear of the tile line by more than
+       the road apron's 150mm reach into the plot next door. */
+    if (Math.abs(lx) > .43 || Math.abs(lz) > .43) continue;
+    let anchored = false;
+    for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
+      if (at(i + a, j + b) && mass(i + a, j + b)) { anchored = true; break; }
+    if (!anchored) continue;
+    if (skip(lx, lz)) continue;
+    ring[k] = 1; cells++;
+  }
+  /* Pass 2 — merge each raster ROW's consecutive cells into one box. Twelve
+     triangles per box either way, so this is a straight saving: a wall twelve
+     cells long is one box rather than twelve. Two boxes that ABUT are safe and
+     that is not a z-fight — the shared plane carries A's +x face and B's -x
+     face, which are wound opposite, so back-face culling draws exactly one of
+     them from any camera. Two boxes that OVERLAP would not be safe, and cannot
+     happen: a cell belongs to exactly one run. */
+  for (let j = 0; j < FN; j++) {
+    let i = 0;
+    while (i < FN) {
+      if (!ring[j * FN + i]) { i++; continue; }
+      let e = i; while (e + 1 < FN && ring[j * FN + e + 1]) e++;
+      const w = (e - i + 1) * FCELL;
+      const mx = cx + ((i + e + 2) / 2) * FCELL - .5, mz = cz + (j + .5) * FCELL - .5;
+      /* .034 tall, seated so its underside is 8mm BELOW the layer's prop datum
+         and therefore under the buildable plate — a bed that floats reads as a
+         tray, and the plate is what hides the join. */
+      box(S, F.col, w, .034, FCELL, mx, y + .009, mz);
+      i = e + 1;
+    }
+  }
+  /* Pass 3 — what grows in it. Rolled per CELL off the run's own stream, so a
+     long bed is not a hedge and a short one is not bare. */
+  for (let j = 0; j < FN; j++) for (let i = 0; i < FN; i++) {
+    if (!ring[j * FN + i]) continue;
+    if (R() > F.rate) continue;
+    const lx = (i + .5) * FCELL - .5, lz = (j + .5) * FCELL - .5;
+    shrub(S, R, cx + lx, cz + lz, y + .026, F.r0 + R() * F.r1);
+  }
+  return cells;
+}
+
 /* Which way the building faces, as a unit vector. buildMesh authors every
    recipe pointing at +z and placeMeshAt spins it by t.rot quarter-turns, and
    the inspector prints those four as south / west / north / east — so the door,
@@ -296,6 +511,7 @@ function facing(rot) {
 function clear() {
   for (const m of [flatMesh, propMesh]) if (m) { group.remove(m); m.geometry.dispose(); }
   flatMesh = null; propMesh = null; served = 0;
+  audit = { rects: [], found: 0, foundTiles: 0, tiles: 0, own: 0 };
 }
 
 function build() {
@@ -428,7 +644,17 @@ function build() {
 
     /* 5. WHAT STANDS ON IT. A surface and a line say the ground is owned; the
        props say it is USED, and that is the half a viewer reads as life. */
-    const at = (l, a, y) => [cx + fx * a + lx * l, y, cz + fz * a + lz * l];
+    /* ⚠ `at` RECORDS AS WELL AS RESOLVES. The foundation edge below has to keep
+       out of the props this section stands on the ground — a bollard growing
+       out of a flower bed is the artefact — and the only honest way to know
+       where they went is to note it as they are placed. Rejected: re-deriving
+       the prop offsets in the edge code, which is two lists of magic numbers
+       that agree today and disagree after the next edit. */
+    const propXZ = [];
+    const at = (l, a, y) => {
+      const p = [cx + fx * a + lx * l, y, cz + fz * a + lz * l];
+      propXZ.push(p[0], p[2]); return p;
+    };
     if (cls === 'industry') {
       for (const sgn of [-1, 1]) {                             // gate posts at the yard mouth
         const q = at(sgn * (dw + .050), .455, PROP + .105);
@@ -467,6 +693,31 @@ function build() {
         shrub(S, R, q[0], q[2], PROP, .055 + R() * .025);
       }
     }
+
+    /* ── 6. THE FOUNDATION EDGE — where the building meets its own ground.
+       Drawn LAST, because it has to know where §5 put the props, and drawn on
+       EVERY served tile including the HAS_OWN_GROUND ones — see the header for
+       why this is the only element of a parcel that can reach a tile a recipe
+       has already paved edge to edge, and why that matters when 13 of the 14
+       non-housing buildings on the standard district are on that list.
+       ⚠ ITS OWN RANDOM STREAM, NOT `R`. Taking even one number out of R here
+         would reshuffle every fence, bollard, pallet and shrub on every parcel
+         in the city — the same lesson tileShade records, and the same reason
+         makeHousing rolls its lawn key exactly once. A separate hash costs
+         nothing and cannot interfere. */
+    const FR = rngOf(gx + 7919, gz - 104729);
+    const foundCells = foundationEdge(S, FR, cls, t.mesh, cx, cz, RD_Y, PROP, (fl, fz2) => {
+      /* THE DRIVE / DOCK MOUTH stays clear. A shed's roller shutters, a shop's
+         entrance and a yard's gate are all on the frontage, on the drive's
+         centreline, and a bed across them is a bed a lorry drives through. */
+      const a = fl * fx + fz2 * fz, l = fl * (-fz) + fz2 * fx;
+      if (a > 0 && Math.abs(l) < dw + .045) return true;
+      for (let i = 0; i < propXZ.length; i += 2)
+        if (Math.abs(cx + fl - propXZ[i]) < .085 && Math.abs(cz + fz2 - propXZ[i + 1]) < .085) return true;
+      return false;
+    });
+    audit.found += foundCells; if (foundCells) audit.foundTiles++;
+    audit.tiles++; if (own) audit.own++;
     served++;
   }
 
@@ -549,6 +800,54 @@ export function mount(ctx) {
       return build();
     },
     count: () => served,
+    /* ══ verify() ═════════════════════════════════════════════════════════
+       Reported only on failure, in the idiom of MythicLandValue.verify() and
+       MythicDistricts.verify(). /src/wild shipped without one this round and a
+       critic named it, so this one answers the three questions that module
+       could not:
+
+         1. IS ANY FLAT RECTANGLE DRAWN TWICE? Two quads at one height in one
+            buffer sharing a material is the defect /src/wild shipped — 325
+            triangles agreeing to within 0.2mm, quiet only because both were
+            tinted the same tone, and no polygonOffset can separate them. The
+            module header has always CLAIMED the pad is emitted as the three
+            rectangles left over once the drive is subtracted; this is the line
+            that checks it. O(n squared) over a few hundred rectangles, run on
+            demand and never in a frame.
+         2. DID THE FOUNDATION EDGE FIND ANY GROUND AT ALL? A layer that skips
+            every tile by construction is the exact failure round 9 shipped and
+            a critic had to measure by hand (0 of 39,390 standing vertices on
+            an occupied tile). Zero is a legal answer for a city of nothing but
+            farms — every one of them fences and crops its whole tile — so the
+            check fires only when tiles were served and NONE of them found
+            ground, which is the shape a broken raster has.
+         3. IS THE LAYER STILL TWO DRAW CALLS? The header's whole cost argument
+            is that it is 2 meshes for the city however many parcels it serves.
+            A regression there is invisible in a render and fatal in a budget. */
+    verify() {
+      if (!CTX) return { ok: false, why: 'not mounted' };
+      sig = ''; build();
+      const problems = [], R = audit.rects;
+      let dup = 0, first = null;
+      for (let i = 0; i < R.length; i++) for (let j = i + 1; j < R.length; j++) {
+        if (Math.abs(R[i][4] - R[j][4]) > 1e-4) continue;          // different heights: fine
+        const ox = Math.min(R[i][1], R[j][1]) - Math.max(R[i][0], R[j][0]);
+        const oz = Math.min(R[i][3], R[j][3]) - Math.max(R[i][2], R[j][2]);
+        if (ox > 1e-4 && oz > 1e-4) { dup++; if (!first) first = [R[i], R[j]]; }
+      }
+      if (dup) problems.push(dup + ' pair(s) of flat rectangles overlap at the same height in one '
+                             + 'buffer — that is a z-fight no polygonOffset can break. First: '
+                             + JSON.stringify(first));
+      if (audit.tiles && !audit.foundTiles)
+        problems.push('the foundation edge found no ground on any of ' + audit.tiles
+                      + ' served tiles — the footprint raster is skipping every building');
+      const meshes = group ? group.children.length : 0;
+      if (meshes > 2) problems.push('the layer is ' + meshes + ' meshes, not 2 — the cost argument in the header no longer holds');
+      return { ok: !problems.length, problems,
+               stats: { served, tiles: audit.tiles, ownGround: audit.own,
+                        flatRects: R.length, foundationCells: audit.found,
+                        foundationTiles: audit.foundTiles, meshes } };
+    },
     // for a driver: what each parcel was classified as, so a test can assert a
     // depot got hardstanding without reading the scene graph.
     classes: () => {

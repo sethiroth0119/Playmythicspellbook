@@ -35996,6 +35996,22 @@ function animate() {
          a hollow — the lattice is displaced by ±9mm). See NC_TERRAIN_AT. */
       terrainAt: NC_TERRAIN_AT,
     });
+    /* 🔍 AND ITS SELF-CHECK, REPORTED ONLY WHEN IT FAILS — the same idiom as
+       MythicLandValue.verify() and MythicDistricts.verify() above, and here
+       for a sharper reason than either. The catch below logs "not mounted
+       (non-fatal)" and nothing else, so for one round a layer that mounted and
+       drew the WRONG GEOMETRY was indistinguishable from a healthy one AND
+       from an absent one. verify() asserts, against the merged buffer that
+       actually shipped, the three properties the module's whole clearance and
+       height system exists to produce: nothing standing on somebody else's
+       tile, nothing standing inside the road apron, and no two of its flat
+       triangles overlapping at one height on one material. It also rebuilds
+       once and compares the hash, because two of this project's "regressions"
+       were random draws. Silent on a healthy city. */
+    try {
+      const wv = window.MythicWild && window.MythicWild.verify();
+      if (wv && !wv.ok) console.warn('[Wild] self-check FAILED', wv.problems);
+    } catch (e) {}
   } catch (e) { console.warn('[Wild] not mounted (non-fatal):', e); }
   /* ══ 🏠 THE DOSSIER LAYER ════════════════════════════════════════════════
      Addresses, zone, level pips, residents, household wealth and the money
@@ -36482,6 +36498,7 @@ function animate() {
     districtArm: (id) => { try { return window.MythicDistricts ? window.MythicDistricts.arm(id || null) : false; } catch (e) { return false; } },
     districtSet: (x, z, id) => { try { return window.MythicDistricts ? window.MythicDistricts._set(x, z, id || null) : false; } catch (e) { return false; } },
     districtVerify: () => { try { return window.MythicDistricts ? window.MythicDistricts.verify() : null; } catch (e) { return null; } },
+    wildVerify: () => { try { return window.MythicWild ? window.MythicWild.verify() : null; } catch (e) { return null; } },
     districtCardSeam: () => { try { return window.MythicDistricts ? window.MythicDistricts.cardSeam() : null; } catch (e) { return null; } },
     /* 🏢 /src/tenants' diagnostics seam — layer 3, the market.
        `tenantAt` is the tenancy joined to its LIVE firm, so a driver can assert

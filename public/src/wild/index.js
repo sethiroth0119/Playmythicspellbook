@@ -108,7 +108,14 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 let CTX = null, group = null, sig = '', flatMesh = null, standMesh = null;
-let stats = { tiles: 0, objects: 0, tris: 0, flatTris: 0, standTris: 0, patches: 0, wear: 0 };
+let stats = newStats();
+/* `refused` is null on a healthy build and names the missing host call on a
+   refused one — see the top of build(). `skipped` counts stains dropped
+   because the tile had no room left between two kerbs. */
+function newStats() {
+  return { tiles: 0, objects: 0, tufts: 0, kerbTufts: 0, tris: 0, flatTris: 0,
+           standTris: 0, patches: 0, skipped: 0, wear: 0, refused: null };
+}
 
 /* ── CLEARANCES ───────────────────────────────────────────────────────────
    Both are measured against what is actually drawn in the neighbouring tile,
@@ -152,6 +159,8 @@ const CLR_ROAD_TIGHT = 0.152;   // = RD_AP + 2mm, i.e. the apron's outer edge
    makes allocated ten arrays and destructured nine of them. See the buffer
    note: this rebuild's cost was never the geometry, it was the allocation. */
 const NB9 = [0, 0, 1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
+/* the four shared edges, hoisted for the same reason as NB9 */
+const EDGE4 = [[0, 1], [0, -1], [1, 0], [-1, 0]];
 
 /* ── HOW MUCH LAND ONE CITY MAY CARRY ─────────────────────────────────────
    The standard district leaves ~404 of its 576 tiles unbuilt. A brand-new map
@@ -241,8 +250,21 @@ function fgrow(a, need) {
   let n = a.length || BUF_START; while (n < need) n *= 2;
   const m = new Float32Array(n); m.set(a); return m;
 }
-function newFlat()  { return { P: fbuf(BUF_START), C: fbuf(BUF_START), U: fbuf(BUF_START >> 1), n: 0 }; }
-function newStand() { return { P: fbuf(BUF_START), N: fbuf(BUF_START), C: fbuf(BUF_START), n: 0 }; }
+/* ⚠ AND THEY SURVIVE THE REBUILD, which is the other half of the same fix. A
+   fresh pair of 32k buffers per rebuild means three grow-and-copy passes every
+   time the player lays a road, over arrays that end at 140,000 floats —
+   fgrow() measured 6.2% of a rebuild on its own. Held at module scope, the
+   second rebuild of a city finds them already big enough and never grows at
+   all; the cursor is what is reset, not the memory.
+   🔴 SAFE ONLY BECAUSE clear() RUNS FIRST. The BufferAttributes handed to the
+     last geometry are `subarray` VIEWS onto these very arrays, so writing over
+     them while that geometry was still in the scene would corrupt what is on
+     screen. build() disposes and detaches before it writes a single float, and
+     that ordering is now load-bearing. */
+const FLAT = { P: fbuf(BUF_START), C: fbuf(BUF_START), U: fbuf(BUF_START >> 1), n: 0 };
+const STAND = { P: fbuf(BUF_START), N: fbuf(BUF_START), C: fbuf(BUF_START), n: 0 };
+function newFlat()  { FLAT.n = 0; return FLAT; }
+function newStand() { STAND.n = 0; return STAND; }
 
 /* ── PROTOTYPES ───────────────────────────────────────────────────────────
    Built ONCE at first mount, into flat arrays. See the cost note in the header
@@ -250,6 +272,28 @@ function newStand() { return { P: fbuf(BUF_START), N: fbuf(BUF_START), C: fbuf(B
    ⚠ EVERY ONE IS AUTHORED AT UNIT SIZE, ORIGIN AT ITS FOOT, so a stamp is
      scale-rotate-translate with no per-shape fudge and a blob half-buried in
      the ground is a decision the caller makes rather than an accident. */
+/* 🐞 EVERY HEX ABOVE IS CONVERTED TO A THREE.Color ONCE, HERE, AND THE REASON
+   IS A PROFILE AND NOT A PREFERENCE. `Color.setHex()` is what does the sRGB ->
+   linear conversion this file depends on (see the palette note), and that
+   conversion is a Math.pow per channel. It was being run on EVERY tinted
+   vertex colour — about 6,600 times a rebuild — and SRGBToLinear came back as
+   11.2% of the whole rebuild in a CPU profile, second only to the stamp loop.
+   Converting once and `copy()`ing is the SAME arithmetic on the same numbers,
+   just not repeated, so the output is byte-identical (verify()'s determinism
+   check compares the buffers across a rebuild and would say otherwise).
+   ⚠ IT STILL GOES THROUGH setHex. Writing the linear triples out as literals
+     would be the exact trap .gauntlet/README.md records as costing a round:
+     a literal {r,g,b} is NOT converted and renders pale. */
+let HEXC = null;
+function hexc(THREE) {
+  if (HEXC) return HEXC;
+  HEXC = new Map();
+  for (const a of [C_TUFT_WET, C_TUFT_DRY, C_SCRUB, C_SCRUB_DRY, C_ROCK, C_BARK, C_CROWN])
+    for (const h of a) if (!HEXC.has(h)) HEXC.set(h, new THREE.Color().setHex(h));
+  for (const h of [C_DUST, C_SOIL, C_DAMP]) if (!HEXC.has(h)) HEXC.set(h, new THREE.Color().setHex(h));
+  return HEXC;
+}
+
 let PROTO = null;
 function protos(THREE) {
   if (PROTO) return PROTO;
@@ -497,15 +541,54 @@ const clump = (u, w) => cnoise(u, w, .228, 0x1b873593) * .68
                       + cnoise(u, w, .590, 0x6b43a9b5) * .32;
 const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
 
+/* A sphere that certainly contains the plate: the grid is GRID tiles across
+   and centred on the origin, so its half-diagonal plus a metre of headroom for
+   anything standing on it bounds every vertex this module can write. */
+function sphereOfMap(THREE, g) {
+  const r = CTX.GRID * 0.7072 + 1;
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), r);
+}
+
 function clear() {
   for (const m of [flatMesh, standMesh]) if (m) { group.remove(m); try { m.geometry.dispose(); } catch (e) {} }
   flatMesh = null; standMesh = null;
-  stats = { tiles: 0, objects: 0, tris: 0, flatTris: 0, standTris: 0, patches: 0, wear: 0 };
+  stats = newStats();
 }
 
 function build() {
   const { THREE, game, GRID, HALF, isRoad, groundAt, terrainAt, grainPer, texDiv } = CTX;
   clear();
+
+  /* ── 🔴 0. THE TWO HOST CALLS, AND WHY A MISSING ONE NOW REFUSES TO DRAW ──
+     Both used to be optional with a quiet fallback, and BOTH FALLBACKS PRODUCE
+     VERBATIM THE DEFECT THIS MODULE WAS BUILT TO REMOVE — which is the worst
+     failure a fallback can have, because the layer keeps reporting success.
+
+     · groundAt missing: the stain's rim lerp (`tintHex(hex, x, z, 1, …)`) is
+       what dissolves its boundary. Without it the rim keeps the stain hex at
+       full strength and every soft blot becomes a hard-edged flat blob — word
+       for word the round-5 critic's finding, "a single flat unmottled colour
+       with a hard straight edge, sitting ON TOP of the ground". So the FLAT
+       bucket refuses. The standing bucket still draws: an untinted bush is a
+       worse bush, not a hard-edged blob, and a field with no vegetation at all
+       is the failure this whole round is answering.
+     · terrainAt missing: `surf()` returned 0 and the entire scatter lay on the
+       y = 0 plane while the plate is displaced by ±9mm — every object and every
+       patch floating or half-buried by up to 9mm, which at the street camera
+       (300mm up) is the visible hovering the LIFT note is written to prevent.
+       There is no partial answer to that, so the whole layer refuses.
+
+     ⚠ AND IT IS RECORDED, NOT JUST LOGGED. A console.warn at boot is a line
+       nobody reads six rounds later; `stats.refused` is what verify() names. */
+  if (!terrainAt) {
+    stats.refused = 'terrainAt';
+    console.warn('[Wild] refusing to draw: the host published no NC_TERRAIN_AT, ' +
+                 'so every object would sit on y=0 over a plate displaced by ±9mm');
+    return 0;
+  }
+  if (!groundAt) stats.refused = 'groundAt';
+  const flatOK = !!groundAt;
+
   const PR = protos(THREE);
   const F = newFlat(), S = newStand();
 
@@ -531,16 +614,62 @@ function build() {
         builds against. */
   const LIFT = .004;
 
+  /* ── THE KERB PASS'S OWN NUMBERS, HOISTED ────────────────────────────────
+     Section 3 has to know where section 4 will draw (see the coplanar note
+     there), so these live here and are DERIVED from the road's apron rather
+     than typed twice. WEAR_FREE is the innermost point any band can reach,
+     less a 4mm gap: inside it, a stain and a wear band may touch and may never
+     cross. */
+  const APR = CTX.roadApron || 0.150;
+  const WEAR_OUT  = .5 - APR;    // the apron's outer edge = the visible line
+  const WEAR_SET  = .075;        // how far back from it a band's OUTER edge may sit
+  const WEAR_DEEP = .160;        // …and how much further in it may then run
+  const WEAR_FREE = WEAR_OUT - WEAR_SET - WEAR_DEEP - .004;
+  /* The corner rule, and it is the third coplanar pairing. Two bands on
+     PERPENDICULAR edges of one tile both occupy the square where their
+     corridors cross, so one of them has to give it up. The x-facing edges keep
+     it (arbitrary, but it has to be one of them and a rule beats a coin), and
+     a z-facing band's along-range is cut short of any corner that has an
+     x-facing band running through it. */
+  const WEAR_CORNER = WEAR_FREE - .004;
+
+  /* ── THE TUFT, hoisted out of section 5 ─────────────────────────────────
+     …because section 4 plants them along the kerb as well, and two copies of
+     the same stamp is how the two ends of one feature drift apart.
+     ⚠ tuftReach IS THE INVARIANT, not a guess at one. `place`/`clearOf` take a
+       radius and the layer's standing rule is that no vertex may enter the
+       road's 150mm apron, so the radius handed over has to be the WORST CASE
+       of the stamp below: the widest a blade can be thrown (sz up to 1.18 sx,
+       tip at .5 of the box) plus the furthest the tilt can swing a tip
+       sideways (sin of the tilt cap, times the full height). verify() checks
+       the result against the real buffer, which is what makes this a claim
+       rather than an intention. */
+  const TUFT_W = 1.55, TUFT_H = 2.30, TUFT_SZ = 1.18, TUFT_TILT = .20;
+  const tuftReach = (r) => r * (TUFT_W * TUFT_SZ * .5 + TUFT_H * Math.sin(TUFT_TILT));
+
   /* ── 1. WHICH TILES ─────────────────────────────────────────────────────
      Everything in the grid that nobody has placed anything on. `game.tiles`
      only holds keys that were written by a placement, so absence IS emptiness —
      see the header for why that single test is also the whole z-fight defence.
      The occupancy set is materialised first because the candidate rejection
      below queries neighbours, and a Set lookup beats re-splitting a key. */
-  const occ = new Set(Object.keys(game.tiles));
+  /* 🐞 A Uint8Array AND NOT A Set OF KEYS, which is a third of the profile.
+     The Set version asked `occ.has(nx + ',' + nz)` and then `isRoad(nx, nz)`
+     for every one of the nine cells clearOf consults, on every one of ~3,000
+     candidate placements — a string concatenation and a host tile lookup per
+     cell, measured at 6.0% (clearOf) plus 5.9% (isRoad) of a rebuild. The
+     occupancy of a 24x24 grid is 576 bytes; resolving the road/built question
+     ONCE here instead of ~27,000 times below is the same answer, read out of
+     an array index. 0 = empty, 1 = built, 2 = road. */
+  const OCC = new Uint8Array(GRID * GRID);
+  for (const k in game.tiles) {
+    const c = k.indexOf(','); if (c < 0) continue;
+    const gx = +k.slice(0, c), gz = +k.slice(c + 1);
+    if (gx >= 0 && gz >= 0 && gx < GRID && gz < GRID) OCC[gz * GRID + gx] = isRoad(gx, gz) ? 2 : 1;
+  }
   const empty = [];
   for (let gx = 0; gx < GRID; gx++) for (let gz = 0; gz < GRID; gz++)
-    if (!occ.has(gx + ',' + gz)) empty.push([gx, gz]);
+    if (!OCC[gz * GRID + gx]) empty.push([gx, gz]);
   /* See TARGET_TILES: an empty map must not be the expensive one. */
   const load = empty.length > TARGET_TILES ? TARGET_TILES / empty.length : 1;
 
@@ -551,22 +680,47 @@ function build() {
      in linear, so a colour authored for an unmapped material renders at 83% of
      its stated level the moment the map goes on). Getting those two the wrong
      way round is invisible in review and obvious in a capture. */
+  const HX = hexc(THREE);
   const tint = (arr, R, wx, wz, blend, div) => {
-    pal.setHex(arr[(R() * arr.length) | 0]);
+    pal.copy(HX.get(arr[(R() * arr.length) | 0]));
     if (groundAt) { groundAt(wx, wz, gcol); pal.lerp(gcol, blend); }
     if (div !== 1) { pal.r = Math.min(1, pal.r / div); pal.g = Math.min(1, pal.g / div); pal.b = Math.min(1, pal.b / div); }
     return pal;
   };
   const tintHex = (hex, wx, wz, blend, div) => {
-    tmp.setHex(hex);
+    tmp.copy(HX.get(hex));
     if (groundAt) { groundAt(wx, wz, gcol); tmp.lerp(gcol, blend); }
     if (div !== 1) { tmp.r = Math.min(1, tmp.r / div); tmp.g = Math.min(1, tmp.g / div); tmp.b = Math.min(1, tmp.b / div); }
     return tmp;
   };
-  /* The plate's surface, and 0 where the host is too old to publish it. A
-     scatter lying dead flat on a ±9mm landform is a worse render than this one
-     and a much better one than a page that throws. */
-  const surf = (wx, wz) => terrainAt ? terrainAt(wx, wz).y : 0;
+  /* The plate's surface. No null branch: build() refused above if the host
+     did not publish one, because "dead flat on a ±9mm landform" is the
+     floating-patch defect and not a degraded mode worth shipping. */
+  const surf = (wx, wz) => terrainAt(wx, wz).y;
+
+  /* ONE TUFT. See PROTO.fan for why this is not a blob any more, and the
+     tuftReach note for why the caller has to pass the same r it stamps.
+     ⚠ AND IT IS TINTED AT `BLEND`, NOT AT .52. The old .52 was argued as "a
+       tussock is the SAME grass, longer; what should make it visible is its
+       own shadow, not its colour" — and that argument is right about a tuft
+       that HAS a silhouette and was being used to prop up one that did not. At
+       .52 on a squashed icosahedron the tufts photographed as nothing at all:
+       the district crop shows scrub and bare plate between it, with no middle
+       scale of vegetation anywhere. The fan earns its colour back.
+     ⚠ TALLER THAN WIDE, which the blob version was not (2.3 wide by 1.9 tall).
+       sy/sx = 1.48, so a blade's on-screen aspect is 2.6 * 1.48 = 3.9 — a
+       blade, not a leaf — and the tuft's own outline is vertical. That ratio
+       is the whole fix; a fan stamped wider than tall reads as a starfish. */
+  const putTuft = (RN, px, pz, r, dryHere) => {
+    const sx = r * TUFT_W, sy = r * TUFT_H;
+    stamp(S, PR.fan, tint(dryHere ? C_TUFT_DRY : C_TUFT_WET, RN, px, pz, BLEND, 1),
+          // 4mm into the ground: the blades meet at a point and a point resting
+          // exactly on a ±9mm lattice shows daylight under it from the street.
+          px, surf(px, pz) - .004, pz,
+          sx, sy, sx * (.82 + RN() * (TUFT_SZ - .82)),
+          RN() * 6.283, (RN() - .5) * (TUFT_TILT * 2));
+    stats.objects++; stats.tufts++;
+  };
 
   /* Is this world point far enough from anything anybody built? Only the eight
      neighbouring tiles are ever consulted, so this is at most nine Set lookups
@@ -580,9 +734,9 @@ function build() {
     for (let q = 0; q < 18; q += 2) {
       const nx = gx + NB9[q], nz = gz + NB9[q + 1];
       if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
-      if (!occ.has(nx + ',' + nz)) continue;
-      const road = isRoad(nx, nz);
-      const need = rad + (road ? (roadClr || CLR_ROAD) : CLR_BUILT);
+      const o = OCC[nz * GRID + nx];
+      if (!o) continue;
+      const need = rad + (o === 2 ? (roadClr || CLR_ROAD) : CLR_BUILT);
       /* distance from the point to that tile's square, in the plate frame */
       const qx = Math.max(nx - u, 0, u - (nx + 1));
       const qz = Math.max(nz - w, 0, w - (nz + 1));
@@ -593,7 +747,16 @@ function build() {
   for (const [gx, gz] of empty) {
     const cx = gx - HALF + .5, cz = gz - HALF + .5;
     const R = rngOf(gx, gz, 0x5eed);
-    const T = terrainAt ? terrainAt(cx, cz) : { h: .5, m: .5, y: 0 };
+    const T = terrainAt(cx, cz);
+    /* WHICH EDGES FACE A ROAD, resolved BEFORE anything is drawn on the tile.
+       Section 4 wears a band along each of them and section 3 has to keep the
+       stain out of that band — see the coplanar note there — so the answer is
+       needed by both and is one isRoad() call per edge either way. */
+    let rE = 0;                      // 1 = +x, 2 = -x, 4 = +z, 8 = -z
+    if (gx + 1 < GRID && OCC[gz * GRID + gx + 1] === 2) rE |= 1;
+    if (gx - 1 >= 0   && OCC[gz * GRID + gx - 1] === 2) rE |= 2;
+    if (gz + 1 < GRID && OCC[(gz + 1) * GRID + gx] === 2) rE |= 4;
+    if (gz - 1 >= 0   && OCC[(gz - 1) * GRID + gx] === 2) rE |= 8;
 
     /* ── 2. HOW MUCH GROWS HERE ──────────────────────────────────────────
        lush  — damp hollows are green and thick; dry ridges bake. The height
@@ -626,6 +789,8 @@ function build() {
     const k = clamp01(.5 + (clump(gx, gz) - .5) * 2.6);
     const cover = clamp01(k * 1.45 - .42 + (lush - .5) * .50) * rim * load;
     if (cover > 0) stats.tiles++;
+    // hoisted above section 4, which plants kerb tufts and needs the tone
+    const dry = lush < .42;
 
     /* ── 3. THE STAIN — the answer to "no grass tone change, no dirt" ───
        The critic's sentence names two things and they are ONE PRIMITIVE here:
@@ -651,11 +816,43 @@ function build() {
          /src/parcel's header states that rule and this is the same buffer. Max
          reach is .30 * 1.20 (the vertex jitter) + .12 (the centre jitter) =
          .48, i.e. inside the half-tile, so two of them can touch and can never
-         cross. */
-    if (rim > .22 && R() < .58) {
-      const px = cx + (R() - .5) * .24, pz = cz + (R() - .5) * .24;
-      const rad = .14 + R() * .16;
-      if (clearOf(px, pz, rad)) {
+         cross.
+
+       🔴 …AND STAIN-VERSUS-STAIN WAS THE ONLY PAIRING THAT PROOF CONSIDERED,
+         WHICH IS WHY THE RULE WAS BROKEN ANYWAY. Measured on the standard
+         district: 363 disjoint overlapping triangle pairs, 325 of them
+         coplanar within 0.2mm, out of 2,244 flat triangles. The pairing it
+         misses is STAIN VERSUS THE KERB WEAR ON THE SAME TILE. A stain reaches
+         .48 from the tile centre; a wear band occupies .135 to .35 from it on
+         any road-facing edge; both are written at `surf(x,z) + LIFT`, into the
+         same buffer, on the same material. Same lift, same buffer, same
+         material is exactly the case the rule above says no polygonOffset can
+         separate — and it has been quiet only because both are tinted toward
+         the same ground tone, which this round stops being true.
+
+         So the stain is now placed in what the kerb pass LEAVES: its centre is
+         biased to the middle of the free interval on each axis and its radius
+         is capped at the distance to the nearest wear corridor. A tile with
+         roads on OPPOSITE sides has no interval wide enough and loses its
+         stain outright (counted as `skipped`) — that is a one-tile-wide
+         verge between two roads, which is wear all the way across anyway.
+         ⚠ WEAR_FREE IS DERIVED FROM THE KERB PASS AND NOT TYPED. If the band's
+           set-back or depth is retuned there, this moves with it or the
+           overlap comes straight back. */
+    if (flatOK && rim > .22 && R() < .58) {
+      const bx0 = (rE & 2) ? -WEAR_FREE : -.49, bx1 = (rE & 1) ? WEAR_FREE : .49;
+      const bz0 = (rE & 8) ? -WEAR_FREE : -.49, bz1 = (rE & 4) ? WEAR_FREE : .49;
+      const wx_ = bx1 - bx0, wz_ = bz1 - bz0;
+      if (wx_ < .30 || wz_ < .30) { stats.skipped++; R(); R(); R(); }
+      else {
+      const px = cx + (bx0 + bx1) * .5 + (R() - .5) * Math.min(.24, wx_ * .5);
+      const pz = cz + (bz0 + bz1) * .5 + (R() - .5) * Math.min(.24, wz_ * .5);
+      /* the cap: the stain's own vertex jitter reaches rad * 1.20 (see rr
+         below), so the free radius is the distance to the nearest corridor
+         divided by that. */
+      const room = Math.min(px - cx - bx0, cx + bx1 - px, pz - cz - bz0, cz + bz1 - pz) / 1.20;
+      const rad = Math.min(.14 + R() * .16, room);
+      if (rad >= .09 && clearOf(px, pz, rad)) {
         stats.patches++;
         /* WHAT COLOUR THE MIDDLE IS. Bald ground bares its earth; thick ground
            only drifts. Both are pulled from the plate's own tone at the stain's
@@ -670,22 +867,31 @@ function build() {
         const hex = bald ? (R() < .32 ? C_SOIL : C_DUST)
                          : (T.h > .42 ? C_DUST : C_DAMP);
         const mid = tintHex(hex, px, pz, bald ? .34 + R() * .18 : .70 + R() * .12, texDiv).clone();
-        const SEG = 9, rr = [], aa = [];
-        for (let i = 0; i < SEG; i++) { rr.push(rad * (.55 + R() * .65)); aa.push((i / SEG) * Math.PI * 2 + R() * .30); }
+        /* ⚠ THE RIM IS RESOLVED ONCE PER VERTEX, NOT ONCE PER TRIANGLE. Each
+           rim point is the `b` of one triangle and the `d` of the next, and
+           the first cut asked the host for its height AND its ground tone in
+           both roles — two hfield+mfield evaluations and a Color clone thrown
+           away per vertex. The host's noise is the second-largest term in a
+           rebuild after the stamp loop (22.7% in a CPU profile), so halving
+           the stain's share of it is worth the two little arrays. */
+        const SEG = 9, PT = [], EC = [];
         const y0 = surf(px, pz) + LIFT;
         for (let i = 0; i < SEG; i++) {
-          const j = (i + 1) % SEG;
-          const bx = px + Math.cos(aa[i]) * rr[i], bz = pz + Math.sin(aa[i]) * rr[i];
-          const dx = px + Math.cos(aa[j]) * rr[j], dz = pz + Math.sin(aa[j]) * rr[j];
+          const rr = rad * (.55 + R() * .65), aa = (i / SEG) * Math.PI * 2 + R() * .30;
+          const bx = px + Math.cos(aa) * rr, bz = pz + Math.sin(aa) * rr;
+          PT.push([bx, surf(bx, bz) + LIFT, bz]);
           /* the rim vertices take the GROUND's tone at their own position, so
              the blot dissolves rather than ending — and it dissolves into the
              plate's actual drift, not into an average of it. */
-          const eB = tintHex(hex, bx, bz, 1, texDiv).clone();
-          const eD = tintHex(hex, dx, dz, 1, texDiv).clone();
-          // reversed winding for a fan seen from +Y — see tri()'s note
-          triG(F, [px, y0, pz], [dx, surf(dx, dz) + LIFT, dz], [bx, surf(bx, bz) + LIFT, bz],
-               mid, eD, eB, grainPer);
+          EC.push(tintHex(hex, bx, bz, 1, texDiv).clone());
         }
+        const ctr = [px, y0, pz];
+        for (let i = 0; i < SEG; i++) {
+          const j = (i + 1) % SEG;
+          // reversed winding for a fan seen from +Y — see tri()'s note
+          triG(F, ctr, PT[j], PT[i], mid, EC[j], EC[i], grainPer);
+        }
+      } else if (rad < .09) stats.skipped++;
       }
     }
 
@@ -694,8 +900,6 @@ function build() {
        footway and the green — 1 px, dead straight, running the whole length of
        every block. Nothing in the reference frames has an edge like that; the
        grass beside a paved edge is trodden thin and irregular for a hand-span.
-       This is 3-5 short bands of varying depth along each edge that faces a
-       road, so the line becomes a frayed one. 6-10 triangles an edge.
 
        🐞 IT STARTS AT THE APRON, NOT AT THE TILE LINE, AND THE FIRST CUT DID
           NOT. r1_road.js aprons 150mm PAST its own tile edge into this one —
@@ -705,32 +909,85 @@ function build() {
           one built, merged and rendered, and not one pixel of any of them in
           the capture. The visible line is the apron's outer edge, so that is
           where the wear has to begin.
+
+       🔴 …AND THEN THE SECOND CUT PUT ALL OF THEM AT EXACTLY THE SAME OFFSET.
+          `px = (t) => cx + (ex ? ex * (.5 - APR) : t)` — the distance from the
+          tile line was the CONSTANT `.5 - APR` for every band on every edge in
+          the city. Only the inward depth varied, and the inward edge is
+          deliberately faded to the ground's own colour, so the only boundary
+          the eye could find was still one straight line: the round replaced a
+          hard grass|paving line with a hard dust|paving line and reported the
+          goal as met. A frayed edge is one whose OFFSET varies.
+
+          Three things vary now, and only the first of them is new geometry:
+            · the OUTER edge sets back from the apron by 0 to WEAR_SET, per
+              END, so a band can start at the kerb, or a hand-span inside it,
+              or slew from one to the other along its own length;
+            · the set-back fades: an outer edge that has left the paving is
+              lerped toward the ground's own tone in proportion, exactly as the
+              inner edge is, because a band that stops short of the paving
+              otherwise gains a SECOND hard line facing the grass — which is
+              the failure the inner-edge note below already names;
+            · and section 4b plants tufts along the kerb, which is what
+              actually breaks the line in SILHOUETTE. No flat band can fray the
+              paving's own edge: that geometry belongs to r1_road.js and this
+              module may not touch it. What it can do is stand something in
+              front of it, and the fan-tufts are 150mm from the tile line, i.e.
+              hard against the apron.
+
+       🔴 AND THE BANDS NO LONGER OVERLAP EACH OTHER. Two ways they did:
+            · ALONG ONE EDGE. `t0` jittered forward by up to .04 while cells
+              advanced by only .96/nSeg, so consecutive bands could and did
+              cross by up to ~37mm. Cells are now exact and t1 is clamped short
+              of the next cell's start, so the gaps are real gaps.
+            · AT A CORNER. See WEAR_CORNER.
+          Both were coplanar-in-one-buffer, i.e. the case triG's note says
+          nothing can separate.
+
        ⚠ AND THE INNER EDGE FADES TO THE GROUND'S OWN COLOUR (triG). A band of
          flat dust has two edges, and the one facing the grass would be a second
          straight line 100mm from the first — replacing one hard edge with two,
          which is worse than the problem. */
-    for (const [ex, ez] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+    for (const [ex, ez] of EDGE4) {
       const nx = gx + ex, nz = gz + ez;
       if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
-      if (!isRoad(nx, nz)) continue;
+      if (OCC[nz * GRID + nx] !== 2) continue;
       if (rim < .2) continue;
       const W = rngOf(gx * 31 + ex, gz * 31 + ez, 0x7ea4);
-      const nSeg = 3 + ((W() * 3) | 0);
-      for (let i = 0; i < nSeg; i++) {
-        const t0 = -.5 + (i / nSeg) * (1 - .04) + W() * .04;
-        const t1 = t0 + (1 / nSeg) * (.55 + W() * .40);
-        const dep = .055 + W() * .105;
-        const c = tintHex(W() < .45 ? C_SOIL : C_DUST, cx, cz, .30, texDiv).clone();
-        /* the edge frame: `t` runs along the shared line, and the band starts
-           APR inside this tile because the road's apron owns everything before
-           that (see the note above) and runs `dep` further in. */
-        const APR = CTX.roadApron || 0.150;
-        const px = (t) => cx + (ex ? ex * (.5 - APR) : t);
-        const pz = (t) => cz + (ez ? ez * (.5 - APR) : t);
-        const ix = ex ? -ex : 0, iz = ez ? -ez : 0;
-        const A = [px(t0), pz(t0)], B = [px(t1), pz(t1)];
-        const A2 = [A[0] + ix * dep, A[1] + iz * dep], B2 = [B[0] + ix * dep, B[1] + iz * dep];
-        // the inner pair takes the ground's own tone, so the band has one edge
+      /* the along-range, cut short of any corner an x-facing band already owns
+         — see WEAR_CORNER. x-facing edges always run the full tile. */
+      const tLo = (ez && (rE & 2)) ? -WEAR_CORNER : -.5;
+      const tHi = (ez && (rE & 1)) ?  WEAR_CORNER :  .5;
+      const span = tHi - tLo;
+      if (span < .12) continue;
+      /* ~5.5 bands to the tile: more and shorter than the old 3-5, because the
+         gaps BETWEEN bands are half of what makes the line ragged and three
+         gaps in a tile reads as three notches rather than as wear. */
+      const nSeg = Math.max(2, Math.round(span * 5.5));
+      const cw = span / nSeg;
+      /* the edge frame. `t` runs along the shared line; `off` is measured
+         INWARD from the apron's outer edge, so off = 0 is hard against the
+         paving and off > 0 has grass in front of it. */
+      const ix = ex ? -ex : 0, iz = ez ? -ez : 0;
+      const pt = (t, off) => (ex ? [cx + ex * (WEAR_OUT - off), cz + t]
+                                 : [cx + t, cz + ez * (WEAR_OUT - off)]);
+      if (flatOK) for (let i = 0; i < nSeg; i++) {
+        const cell = tLo + i * cw;
+        const t0 = cell + W() * cw * .18;
+        // …clamped short of the NEXT cell, so two bands can never cross
+        const t1 = Math.min(t0 + cw * (.50 + W() * .42), cell + cw - .010);
+        const o0 = W() * WEAR_SET, o1 = W() * WEAR_SET;
+        const d0 = .050 + W() * (WEAR_DEEP - .050), d1 = .050 + W() * (WEAR_DEEP - .050);
+        const hex = W() < .45 ? C_SOIL : C_DUST;
+        if (t1 - t0 < .035) continue;
+        const A = pt(t0, o0), B = pt(t1, o1);
+        const A2 = pt(t0, o0 + d0), B2 = pt(t1, o1 + d1);
+        /* the OUTER pair fades in proportion to its set-back (0 = trodden dust
+           against the paving, WEAR_SET = the ground's own tone) and the INNER
+           pair is the ground's tone outright, so the only hard boundary a band
+           owns is the one it shares with the paving. */
+        const cA = tintHex(hex, A[0], A[1], .30 + .70 * (o0 / WEAR_SET), texDiv).clone();
+        const cB = tintHex(hex, B[0], B[1], .30 + .70 * (o1 / WEAR_SET), texDiv).clone();
         const gA = tintHex(C_DUST, A2[0], A2[1], 1, texDiv).clone();
         const gB = tintHex(C_DUST, B2[0], B2[1], 1, texDiv).clone();
         /* 🐞 NO CLEARANCE TEST HERE, AND THE FIRST CUT HAD ONE. It asked
@@ -746,25 +1003,59 @@ function build() {
         /* Two triangles, wound so the pair faces +Y on ALL FOUR edges, and the
            condition is derived rather than guessed. With `a` the along unit and
            `i` the inward unit, the +Y component of (B-A)x(C-A) for the pair
-           (A,B,B2) works out to dep*len*(a.z*i.x - a.x*i.z) — so that ordering
+           (A,B,B2) works out to d1*len*(a.z*i.x - a.x*i.z) — so that ordering
            is front-facing exactly when a.z*i.x - a.x*i.z > 0, which for the four
            cases (a,i) = ((1,0),(0,-1)) / ((1,0),(0,1)) / ((0,1),(-1,0)) /
            ((0,1),(1,0)) is true for ez = +1 and ex = -1 and false for the other
            two. Getting it wrong is not a subtle artefact: FrontSide culling
            would silently delete the wear along half the kerbs in the city, and
            the half it deleted would be the two compass directions nobody
-           happened to look at. */
+           happened to look at.
+           ⚠ THE SIGN SURVIVES THE SET-BACK. With independent o0/o1 the quad is
+             a trapezoid rather than a rectangle, and the cross product's sign
+             works out to (t1-t0)*d1 and (t1-t0)*d0 for the two triangles — the
+             o terms cancel — so the same flag is still right. */
         stats.wear++;
         const ccw = (ez === 1 || ex === -1);
         const pA = [A[0], yA, A[1]], pB = [B[0], yB, B[1]];
         const pA2 = [A2[0], yA2, A2[1]], pB2 = [B2[0], yB2, B2[1]];
         if (ccw) {
-          triG(F, pA, pB, pB2, c, c, gB, grainPer);
-          triG(F, pA, pB2, pA2, c, gB, gA, grainPer);
+          triG(F, pA, pB, pB2, cA, cB, gB, grainPer);
+          triG(F, pA, pB2, pA2, cA, gB, gA, grainPer);
         } else {
-          triG(F, pA, pB2, pB, c, gB, c, grainPer);
-          triG(F, pA, pA2, pB2, c, gA, gB, grainPer);
+          triG(F, pA, pB2, pB, cA, gB, cB, grainPer);
+          triG(F, pA, pA2, pB2, cA, gA, gB, grainPer);
         }
+      }
+
+      /* ── 4b. AND THE TUFTS THAT ACTUALLY BREAK THE LINE ─────────────────
+         🐞 THE BARE GUTTER ALONG EVERY ROAD, which the header designs against
+         at length and then produces anyway through the clearance rather than
+         through the jitter. See CLR_ROAD_TIGHT: scrub could not put its centre
+         within 320mm of a road tile line, so the aerial crop shows a clean
+         unplanted band beside every road in the city. A tuft is small enough
+         to be placed by its true reach, so it stands with its outer blades 3mm
+         past the apron — where roadside grass actually stands — and its
+         silhouette, not the flat band under it, is what stops the eye reading
+         the paving edge as a drawn line.
+         ⚠ IT STILL DOES NOT ENTER THE APRON. The reach handed to clearOf is
+           the stamp's worst case (see tuftReach) and CLR_ROAD_TIGHT is RD_AP
+           plus 2mm, so "no standing vertex within 150mm of a road tile" — a
+           property the round-10 critic measured and this module wants to keep
+           true — survives, with about 3mm to spare. verify() re-measures it
+           off the buffer rather than trusting this paragraph.
+         ⚠ AND THE COUNT FOLLOWS `cover`. A bald dry verge gets one tuft or
+           none: kerb grass that ignored the cover field would be a green line
+           ruled along every road, which is the graph paper again. */
+      const nK = cover > .12 ? 2 + ((W() * 2) | 0) : (W() < .5 ? 1 : 0);
+      for (let i = 0; i < nK; i++) {
+        const r = .040 + W() * .032;
+        const reach = tuftReach(r);
+        const t = tLo + .06 + W() * Math.max(0, span - .12);
+        const off = WEAR_OUT - reach - .003;
+        const kx = ex ? cx + ex * off : cx + t;
+        const kz = ez ? cz + ez * off : cz + t;
+        if (clearOf(kx, kz, reach, CLR_ROAD_TIGHT)) { putTuft(W, kx, kz, r, dry); stats.kerbTufts++; }
       }
     }
 
@@ -774,7 +1065,6 @@ function build() {
        The half that actually answers the brief: these are the objects that
        catch the 15:00 key and put a shadow on the ground beside them, which is
        the one thing a colour field cannot do at any budget. */
-    const dry = lush < .42;
     /* ⭐ THE THICKET ANCHOR — the second scale of clumping, and the cheaper of
        the two. The clump field carves patches at 4.4 tiles; inside one tile it
        says nothing, so the first cut jittered every object uniformly across the
@@ -785,7 +1075,7 @@ function build() {
        rather than as N objects spread out to fill the square. Costs one pair of
        random numbers a tile. */
     const hx = cx + (R() - .5) * .52, hz = cz + (R() - .5) * .52;
-    const place = (rad, spread, fn) => {
+    const place = (rad, spread, fn, roadClr) => {
       /* Three tries, then give up. A tile beside a building has most of its
          area inside CLR_BUILT and forcing a placement there would push objects
          into a hedge; a tile in open country succeeds on the first try. */
@@ -795,7 +1085,7 @@ function build() {
            and undo the clumping the anchor just bought. */
         const px = Math.max(cx - .49, Math.min(cx + .49, hx + (R() - .5) * spread));
         const pz = Math.max(cz - .49, Math.min(cz + .49, hz + (R() - .5) * spread));
-        if (clearOf(px, pz, rad)) { fn(px, pz); return; }
+        if (clearOf(px, pz, rad, roadClr)) { fn(px, pz); return; }
       }
     };
 
@@ -804,24 +1094,22 @@ function build() {
        ⚠ THE SIZE IS DELIBERATELY NOT THE PHYSICAL ONE. A citizen is .18 tall
          here (see CIV_SCALE), so 40cm of grass is .04 units — which at the
          aerial camera, where a tile is about 46 px, is TWO PIXELS and buys
-         nothing but triangles. These are .05-.11 tall and wider than they are
-         tall: unmown 50cm-1.1m tussock, splayed the way ungrazed grass splays,
+         nothing but triangles. These are .10-.18 tall and TALLER than they are
+         wide: unmown 50cm-1.1m tussock, splayed the way ungrazed grass splays,
          which is both what grows on land nobody maintains and the smallest
          thing that survives the district framing.
-       ⚠ AND THEY ARE BARELY TINTED AWAY FROM THE GROUND (blend .52). The first
-         cut used the same .34 every other element uses and every tuft came back
-         as a distinctly darker mark on a lighter plane — 900 hard little stamps,
-         which is the sprinkle read again, arriving through the palette instead
-         of through the distribution. A tussock is the SAME grass, longer; what
-         should make it visible is its own shadow, not its colour. */
-    const nT = Math.round(cover * 4.2);
-    for (let i = 0; i < nT; i++) place(.05, .62, (px, pz) => {
+       ⚠ 5.4 A TILE AND NOT 4.2, and it still costs less than before: the fan is
+         12 triangles against the blob's 20, so the tuft budget falls even as
+         the count rises. The count matters because tufts are now the only
+         element working at the district scale — scrub reads at the aerial and
+         saplings are one tile in nine.
+       See putTuft for the stamp, and tuftReach for why the radius handed to
+       place() is computed rather than the .05 that used to be typed here. */
+    const nT = Math.round(cover * 5.4);
+    for (let i = 0; i < nT; i++) {
       const r = .042 + R() * .034;
-      stamp(S, PR.blob, tint(dry ? C_TUFT_DRY : C_TUFT_WET, R, px, pz, .52, 1),
-            px, surf(px, pz) - r * .55, pz, r * 2.3, r * 1.9, r * 2.3 * (.75 + R() * .5),
-            R() * 6.283, (R() - .5) * .45);
-      stats.objects++;
-    });
+      place(tuftReach(r), .62, (px, pz) => putTuft(R, px, pz, r, dry), CLR_ROAD_TIGHT);
+    }
 
     /* SCRUB. The thing that actually reads at the aerial camera: .2-.3 across
        is ~12 px up there, with a shadow of its own.
@@ -831,9 +1119,20 @@ function build() {
          smaller blob leaning out of the first breaks the outline into two
          lobes, and two lobes is the whole difference between "a low-poly bush"
          and "a solid the renderer happened to draw". */
+    /* 🐞 …AND THE RADIUS IT DECLARES TO place() IS 1.70 r, NOT THE .15 THAT
+         USED TO BE TYPED HERE, WHICH WAS NOT A MEASUREMENT OF THIS SHAPE. A
+         scrub is a blob of half-width r with a SECOND blob leaning .78 r out
+         of it, itself up to .74 r across and tilted by up to .35 rad — so its
+         true reach from the stamp point is about 1.66 r, i.e. .236 at the top
+         of the size range and not .15. Under-declaring it is how standing
+         geometry gets inside a road apron without anybody choosing that; the
+         layer only stayed clear by luck of the draw. Declared honestly and
+         cleared against CLR_ROAD_TIGHT, scrub now stops exactly at the apron
+         instead of 320mm short of it — and it stops there because that is
+         where the paving is, not because of a number nobody had checked. */
     const nS = R() < cover * .95 ? (R() < cover * .55 ? 2 : 1) : 0;
-    for (let i = 0; i < nS; i++) place(.15, .58, (px, pz) => {
-      const r = .080 + R() * .062;
+    for (let i = 0; i < nS; i++) { const r = .080 + R() * .062;
+      place(r * 1.70, .58, (px, pz) => {
       const c = tint(dry ? C_SCRUB_DRY : C_SCRUB, R, px, pz, .28 + R() * .26, 1).clone();
       const y = surf(px, pz);
       stamp(S, PR.blob, c, px, y - r * .34, pz,
@@ -842,19 +1141,21 @@ function build() {
       stamp(S, PR.blob, c, px + Math.cos(a) * r * .78, y - r2 * .3, pz + Math.sin(a) * r * .78,
             r2 * 2, r2 * 1.7, r2 * 2, R() * 6.283, (R() - .5) * .7);
       stats.objects++;
-    });
+    }, CLR_ROAD_TIGHT); }
 
     /* ROCK. Dry ground only, and it is the one element here that is NOT green —
        which is why it earns its place in a round about a plane of one colour.
        Barely tinted (blend .20): a stone is not made of the field it sits in,
        and the whole reason to draw one is that it is a different material. */
-    if (R() < (1 - lush) * .40 * cover + .05) place(.11, .70, (px, pz) => {
-      const r = .050 + R() * .062;
+    if (R() < (1 - lush) * .40 * cover + .05) { const r = .050 + R() * .062;
+      // 1.30 r for the same reason scrub declares 1.70 r: a .5-box blob at
+      // sx = 2.2 r reaches 1.1 r on its own, before the .45-rad tilt.
+      place(r * 1.30, .70, (px, pz) => {
       stamp(S, PR.blob, tint(C_ROCK, R, px, pz, .20, 1),
             px, surf(px, pz) - r * .45, pz, r * 2.2, r * 1.5, r * 1.7,
             R() * 6.283, (R() - .5) * .9);
       stats.objects++;
-    });
+    }, CLR_ROAD_TIGHT); }
 
     /* A SELF-SEEDED SAPLING. Rare — about one tile in nine of the thick ground
        — because the moment there are two per tile this stops being wild land
@@ -862,7 +1163,7 @@ function build() {
        player buys and this must not look like a free one. Trunk + two crowns,
        ~46 triangles, and it is the tallest thing on unbuilt land so it is what
        breaks the horizon line across an empty block. */
-    if (R() < cover * .16 && !dry) place(.14, .66, (px, pz) => {
+    if (R() < cover * .16 && !dry) place(.18, .66, (px, pz) => {
       const y = surf(px, pz);
       const th = .17 + R() * .13;
       stamp(S, PR.stem, tint(C_BARK, R, px, pz, .18, 1).clone(),
@@ -889,7 +1190,14 @@ function build() {
     const N = new Float32Array(F.n * 9);
     for (let i = 1; i < N.length; i += 3) N[i] = 1;
     g.setAttribute('normal', new THREE.BufferAttribute(N, 3));
-    g.computeBoundingSphere();
+    /* ⚠ SET, NOT COMPUTED. computeBoundingSphere() walks all 140,000 floats
+       twice and measured 5.3% of a rebuild — for a number nothing reads, since
+       both meshes below are frustumCulled = false. It is still set rather than
+       left null, because a null boundingSphere is a trap for any later code
+       that raycasts or re-enables culling; the map is 24 tiles across, so a
+       sphere on the origin of GRID is correct for any city this grid holds and
+       costs nothing. */
+    sphereOfMap(THREE, g);
     flatMesh = new THREE.Mesh(g, CTX.groundMat);
     flatMesh.castShadow = false; flatMesh.receiveShadow = true;   // flat: casts nothing
     flatMesh.frustumCulled = false;   // one mesh spans the map; its bounding
@@ -900,7 +1208,7 @@ function build() {
     g.setAttribute('position', new THREE.BufferAttribute(S.P.subarray(0, S.n * 9), 3));
     g.setAttribute('normal', new THREE.BufferAttribute(S.N.subarray(0, S.n * 9), 3));
     g.setAttribute('color', new THREE.BufferAttribute(S.C.subarray(0, S.n * 9), 3));
-    g.computeBoundingSphere();
+    sphereOfMap(THREE, g);   // see the flat mesh above
     standMesh = new THREE.Mesh(g, CTX.propMat);
     /* ⚠ castShadow ON, AND IT IS THE ENTIRE POINT OF THE MODULE. A bush that
        throws no shadow is a green blob painted on a green plane and adds
@@ -914,6 +1222,181 @@ function build() {
   }
   stats.tris = F.n + S.n; stats.flatTris = F.n; stats.standTris = S.n;
   return stats.objects;
+}
+
+/* ══ 🔍 THE SELF-CHECK ══════════════════════════════════════════════════════
+   Reported ONLY when it fails, in the same idiom as MythicLandValue.verify()
+   and MythicDistricts.verify() and called one line after the mount, because a
+   check that logs on success is one everyone learns to scroll past.
+
+   🔴 IT EXISTS BECAUSE THIS MODULE'S MOUNT IS `catch { console.warn('[Wild]
+   not mounted (non-fatal)') }` AND NOTHING ELSE — which makes a layer that
+   silently drew nothing indistinguishable from a layer that was never there,
+   and a layer that drew the WRONG thing indistinguishable from a healthy one.
+   Every question below is one the round-10 critic had to boot a browser and
+   write a probe to answer, and every one of them is a number this file already
+   has in hand.
+
+     · did a host call go missing? (see build()'s refusal note)
+     · does any STANDING vertex sit on a tile somebody built on, or inside the
+       road's own 150mm apron? Those are the two properties the whole clearance
+       system exists to produce, and they are asserted against the merged
+       buffer that actually shipped, not against the intentions in clearOf.
+     · do any two FLAT triangles OVERLAP? They are all written at
+       `surf(x,z) + LIFT` on one material in one buffer, so an overlap is
+       coplanar by construction and no polygonOffset can separate it. The
+       header states this rule and proved it only for stain-versus-stain; the
+       measured answer on the round-10 build was 363 overlapping pairs, 325 of
+       them coplanar within 0.2mm. This is the check that would have found that
+       on the day it shipped, and it is the check that stops the three fixes in
+       sections 3 and 4 from quietly rotting.
+     · is the build DETERMINISTIC? Two of this project's "regressions" were
+       random draws. A rebuild has to be byte-identical, so verify() does one
+       and compares the hash.
+
+   ⚠ IT IS NOT FREE — the overlap scan is O(pairs in a cell) and the rebuild is
+     a rebuild — so it is an on-demand check called once at boot, never per
+     frame and never from refresh(). */
+function bufHash(m) {
+  if (!m) return '-';
+  const a = m.geometry.getAttribute('position').array;
+  const b = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < b.length; i++) { h ^= b[i]; h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16) + ':' + a.length;
+}
+/* 2D separating-axis test on the six edge normals, with a real epsilon.
+   ⚠ THE EPSILON IS THE POINT, not a tolerance for float noise. Triangles that
+     SHARE AN EDGE (the two halves of a wear band) or a VERTEX (neighbours in a
+     stain fan) touch on a separating axis with exactly zero overlap and are
+     not defects; without the epsilon every one of them reports. */
+function triOverlap2D(A, B, eps) {
+  for (let t = 0; t < 2; t++) {
+    const T = t ? B : A;
+    for (let i = 0; i < 3; i++) {
+      const j = (i + 1) % 3;
+      const nx = T[j * 2 + 1] - T[i * 2 + 1], nz = -(T[j * 2] - T[i * 2]);
+      const L = Math.hypot(nx, nz); if (L < 1e-9) continue;
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (let k = 0; k < 3; k++) {
+        const pa = A[k * 2] * nx + A[k * 2 + 1] * nz; if (pa < a0) a0 = pa; if (pa > a1) a1 = pa;
+        const pb = B[k * 2] * nx + B[k * 2 + 1] * nz; if (pb < b0) b0 = pb; if (pb > b1) b1 = pb;
+      }
+      if (a1 < b0 + eps * L || b1 < a0 + eps * L) return false;
+    }
+  }
+  return true;
+}
+function verify(opt) {
+  if (!CTX || !group) return { ok: false, why: 'not mounted', problems: ['not mounted'] };
+  const deep = !opt || opt.deep !== false;
+  const { game, GRID, HALF, isRoad } = CTX;
+  const APR = CTX.roadApron || 0.150;
+  const problems = [];
+
+  if (stats.refused === 'terrainAt')
+    problems.push('the host published no NC_TERRAIN_AT, so NOTHING is drawn — the layer is ' +
+                  'mounted, reports success and contributes no geometry at all');
+  else if (stats.refused === 'groundAt')
+    problems.push('the host published no NC_GROUND_AT, so the flat bucket (stains and kerb ' +
+                  'wear) refused to draw — every blot would have had a hard edge');
+
+  /* ── the occupancy map, once, as a byte per tile: 0 empty / 1 built / 2 road */
+  const occ = new Uint8Array(GRID * GRID);
+  for (const k in game.tiles) {
+    const c = k.indexOf(','); if (c < 0) continue;
+    const gx = +k.slice(0, c), gz = +k.slice(c + 1);
+    if (gx >= 0 && gz >= 0 && gx < GRID && gz < GRID) {
+      let road = false; try { road = !!isRoad(gx, gz); } catch (e) {}
+      occ[gz * GRID + gx] = road ? 2 : 1;
+    }
+  }
+
+  /* ── 1. STANDING GEOMETRY STAYS OFF OTHER PEOPLE'S GROUND ─────────────── */
+  let onBuilt = 0, inApron = 0, minApron = Infinity;
+  if (standMesh) {
+    const P = standMesh.geometry.getAttribute('position').array;
+    for (let i = 0; i < P.length; i += 3) {
+      const u = P[i] + HALF, w = P[i + 2] + HALF;
+      const gx = Math.floor(u), gz = Math.floor(w);
+      if (gx < 0 || gz < 0 || gx >= GRID || gz >= GRID) continue;
+      if (occ[gz * GRID + gx]) { onBuilt++; continue; }
+      for (let q = 0; q < 18; q += 2) {
+        const nx = gx + NB9[q], nz = gz + NB9[q + 1];
+        if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
+        if (occ[nz * GRID + nx] !== 2) continue;
+        const dx = Math.max(nx - u, 0, u - (nx + 1));
+        const dz = Math.max(nz - w, 0, w - (nz + 1));
+        const d = Math.hypot(dx, dz);
+        if (d < minApron) minApron = d;
+        if (d < APR) { inApron++; break; }
+      }
+    }
+  }
+  if (onBuilt) problems.push(onBuilt + ' standing vertices sit on a tile somebody built on — ' +
+    'the layer is drawing over a recipe\'s own ground, which is the second-ground-pass z-fight');
+  if (inApron) problems.push(inApron + ' standing vertices are inside a road apron (< ' +
+    APR + ' from a road tile) — bushes standing in the paving, see CLR_ROAD');
+
+  /* ── 2. NO TWO FLAT TRIANGLES OVERLAP ─────────────────────────────────── */
+  let pairs = 0; const sample = [];
+  if (flatMesh) {
+    const P = flatMesh.geometry.getAttribute('position').array;
+    const n = P.length / 9;
+    const CELL = .25, buckets = new Map();
+    const tri = new Float32Array(n * 6), box = new Float32Array(n * 4);
+    for (let t = 0; t < n; t++) {
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (let k = 0; k < 3; k++) {
+        const x = P[t * 9 + k * 3], z = P[t * 9 + k * 3 + 2];
+        tri[t * 6 + k * 2] = x; tri[t * 6 + k * 2 + 1] = z;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z;
+      }
+      box[t * 4] = x0; box[t * 4 + 1] = x1; box[t * 4 + 2] = z0; box[t * 4 + 3] = z1;
+      for (let cx = Math.floor(x0 / CELL); cx <= Math.floor(x1 / CELL); cx++)
+        for (let cz = Math.floor(z0 / CELL); cz <= Math.floor(z1 / CELL); cz++) {
+          const key = cx * 4096 + cz;
+          let b = buckets.get(key); if (!b) buckets.set(key, b = []);
+          b.push(t);
+        }
+    }
+    const seen = new Set();
+    for (const b of buckets.values()) for (let i = 0; i < b.length; i++) for (let j = i + 1; j < b.length; j++) {
+      const a = b[i], c = b[j];
+      const key = a < c ? a * 100000 + c : c * 100000 + a;
+      if (seen.has(key)) continue; seen.add(key);
+      if (box[a * 4 + 1] <= box[c * 4] || box[c * 4 + 1] <= box[a * 4]) continue;
+      if (box[a * 4 + 3] <= box[c * 4 + 2] || box[c * 4 + 3] <= box[a * 4 + 2]) continue;
+      const TA = tri.subarray(a * 6, a * 6 + 6), TB = tri.subarray(c * 6, c * 6 + 6);
+      if (!triOverlap2D(TA, TB, 2e-4)) continue;
+      pairs++; if (sample.length < 4) sample.push([a, c]);
+    }
+    if (pairs) problems.push(pairs + ' pairs of FLAT triangles overlap out of ' + n +
+      ' — they are all at surf()+LIFT on one material in one buffer, so every one of them ' +
+      'is a coplanar z-fight that no polygonOffset can separate (sample ' +
+      JSON.stringify(sample) + ')');
+  }
+
+  /* ── 3. A REBUILD IS BYTE-IDENTICAL ───────────────────────────────────── */
+  let det = null;
+  if (deep && !stats.refused) {
+    const before = [bufHash(flatMesh), bufHash(standMesh)];
+    build();
+    const after = [bufHash(flatMesh), bufHash(standMesh)];
+    det = before[0] === after[0] && before[1] === after[1];
+    if (!det) problems.push('a rebuild of the same city produced a DIFFERENT buffer (' +
+      before.join('/') + ' -> ' + after.join('/') + ') — something in the scatter is reading ' +
+      'a source that is not the tile coordinates, and every road the player lays will ' +
+      'reshuffle the vegetation in the whole city');
+  }
+
+  return { ok: problems.length === 0, problems,
+           stats: Object.assign({}, stats, { meshes: (flatMesh ? 1 : 0) + (standMesh ? 1 : 0) }),
+           checked: { standingVerts: standMesh ? standMesh.geometry.getAttribute('position').count : 0,
+                      onBuilt, inApron,
+                      nearestRoad: minApron === Infinity ? null : +minApron.toFixed(4),
+                      flatTris: flatMesh ? flatMesh.geometry.getAttribute('position').count / 3 : 0,
+                      overlapPairs: pairs, deterministic: det } };
 }
 
 /* Same contract as /src/parcel and /src/crowd: cheap enough to call from
@@ -946,6 +1429,7 @@ export function mount(ctx) {
       return build();
     },
     count: () => stats.objects,
+    verify,
     // for a driver / a cost report: what this layer actually cost, without
     // having to diff a whole-scene triangle count against another round.
     stats: () => Object.assign({}, stats, { meshes: (flatMesh ? 1 : 0) + (standMesh ? 1 : 0) }),

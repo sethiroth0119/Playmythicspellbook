@@ -641,7 +641,13 @@ export function mount(ctx) {
          upgrade on a site would overwrite that order's refund basis (see
          plan()). The tile comes back through the grow half of the plan on a
          later permit, once its scaffolding is down. */
-      else if (await growTo(t, job.x, job.z, job.zone.lvl || 1)) run.grown++;
+      /* 🏙 `targetLvl(...)`, not `job.zone.lvl` — this line shipped reading the
+         zone's own target directly, which was correct until layer 2 existed and
+         then silently ignored a specialisation's level override on the ONE path
+         where a building is finished the instant it is placed (no economy
+         module ⇒ no timer). It also now clamps to the building's own maxLvl,
+         which the raw read never did. */
+      else if (await growTo(t, job.x, job.z, targetLvl(job.zone, t, job.x, job.z) || 1)) run.grown++;
       return true;
     }
     if (tileAt(job.x, job.z) !== job.t) return true;      // it moved under us; re-plan next permit

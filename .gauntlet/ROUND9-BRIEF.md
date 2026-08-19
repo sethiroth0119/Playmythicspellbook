@@ -54,3 +54,35 @@ The demand strip's labels are PRESENT in this capture (top bar: R/C/O/I, and the
 full Zone Demand panel with live causes on the right). Whatever the round-8
 critic saw as a 6→4 UI regression, it is not a missing label here, and the
 round-9 UI piece should establish what it actually was before changing anything.
+
+## The A/B that tested §1, and what it accidentally proved
+
+Two captures of the same 172-tile district, same pinned hour, same layout, one
+variable: every **agent** civilian rescaled 1.30 → 0.70 after the scene was
+built. Standing-crowd figures were deliberately left alone, because their
+geometry is baked into merged world-space buffers and cannot be rescaled at
+runtime.
+
+**Result on the walking figures — the fix holds.** At 1.30 the two civilians at
+the crossing stand well above the roofline of the parked cars beside them. At
+0.70 they sit correctly against those cars and are still plainly legible at the
+street framing. The readability argument in `agentMesh`'s own comment
+("readability at city zoom") does not survive the test: nothing became hard to
+see, and the giants stopped being giants.
+
+**And the thing the A/B was not looking for.** The single most conspicuous
+figure in the street frame — the one filling the near pavement, head at
+first-floor balcony height — is IDENTICAL in both captures. It did not move
+because it is not an agent: it is a `/src/crowd` standing figure. So the worst
+offender in the most-looked-at frame is the half that a runtime rescale cannot
+reach, and the half that a source-only reading of `CIV_SCALE` would have called
+"already covered by the same constant".
+
+That is the concrete reason the two constants must land in the same commit, and
+it is now measured rather than argued: fixing `agentMesh` alone would have left
+the largest person in the picture exactly as large as it is today, in a frame
+where the correction had visibly worked on everyone behind them.
+
+⚠ `/src/crowd` `BAY_CLEAR = 0.34` is documented as "a parked vehicle is .19 wide
+  + a figure's shoulders". Shoulders scale with the figure, so this clearance is
+  derived from the old size and must be re-derived, not left alone.

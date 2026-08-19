@@ -141,7 +141,14 @@ export const SPECS = [
      between the card shops, so a run of them reads as a street. */
   { id: 'c_mythic', cat: 'com', ico: '🃏', short: 'Mythic Retail', name: 'Mythic Retail', mythic: true, lvl: 2,
     mix: [['shop', 3], ['retail', 1]],
-    desc: 'Card shops, graders and collectors, unit after unit. Every storefront here sells the packs your own presses printed.' },
+    /* ⚠ THE DESC NAMES THE GRADIENT BECAUSE THE GRADIENT IS REAL AND WAS
+       MEASURED. `shop` is an Established-band tenant and `retail` is a Modest
+       one, so on modest land this district develops parade units and no card
+       shops at all. That is the feature working — land value decides which of a
+       district's businesses this plot can hold — but a description that
+       promised card shops on land that will not take one would be a claim
+       nothing checks, so it says both. */
+    desc: 'Card shops, graders and collectors, unit after unit — selling the packs your own presses printed. On land that will not yet carry a shopfront it develops parade units instead.' },
   /* 🏟 MYTHIC ENTERTAINMENT — tournament halls and arenas. The Duel Arena's own
      description is "tactical card battles draw crowds"; the Stadium is the
      event venue /src/city/stadium.* already runs. Both are PRIME-band tenants

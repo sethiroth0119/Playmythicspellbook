@@ -375,20 +375,35 @@ function stats() {
      runs on demand and its finding is worded as "no band admits it TODAY". */
 function verify() {
   if (!mounted) return { ok: false, why: 'not mounted' };
-  const problems = [];
+  const problems = [], held = [];
   const rows = ladder();
-  const admitted = new Set();
-  if (rows) for (const b of rows) for (const t of ((b.tenants && b.tenants.all) || [])) admitted.add(t);
+  /* 🔴 TWO SETS, NOT ONE, AND THE DIFFERENCE BETWEEN THEM IS THE WHOLE POINT.
+     `admitted` is what a band will take RIGHT NOW; `known` also counts what it
+     would take if the research tree opened it (/src/landvalue publishes that as
+     `tenants.locked` precisely so "nothing is developing" always has an answer).
+     A spec that no band would EVER take is a defect in this file — a chip that
+     can never build anything, which is the failure this project has already
+     paid for twice. A spec that is only held back by research is a normal
+     mid-game state and must not be reported as a defect, or the one real
+     finding would sit in a list of false ones and nobody would read it. It is
+     reported separately, as `researchHeld`. */
+  const admitted = new Set(), known = new Set();
+  if (rows) for (const b of rows) {
+    for (const t of ((b.tenants && b.tenants.all) || [])) { admitted.add(t); known.add(t); }
+    for (const t of ((b.tenants && b.tenants.locked) || [])) known.add(t);
+  }
   for (const s of SPECS) {
     const bag = BAGS[s.id] || [];
     if (!bag.length) { problems.push(s.id + ': empty mix — offered as unavailable'); continue; }
     if (!rows) continue;
     const uniq = bag.filter((v, i, a) => a.indexOf(v) === i);
-    const dead = uniq.filter((t) => !admitted.has(t));
-    if (dead.length === uniq.length) problems.push(s.id + ': no band admits any of ' + dead.join(', ') + ' today');
+    if (!uniq.some((t) => known.has(t)))
+      problems.push(s.id + ': no band admits any of ' + uniq.join(', ') + ' at any land value, researched or not');
+    else if (!uniq.some((t) => admitted.has(t)))
+      held.push(s.id + ': develops nothing until the tree opens one of ' + uniq.join(', '));
   }
   if (_lockedWrites) problems.push(_lockedWrites + ' locked specialisation write(s) were refused at the store — a caller is bypassing arm()');
-  return { ok: !problems.length, problems, ladder: !!rows, stats: stats() };
+  return { ok: !problems.length, problems, researchHeld: held, ladder: !!rows, stats: stats() };
 }
 
 /* ══ MOUNT ═════════════════════════════════════════════════════════════════ */

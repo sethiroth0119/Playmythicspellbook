@@ -75,16 +75,62 @@ const FOOT_LAT     = 0.410; // footway centre, lateral (band is .325 … .500)
    footway centre is 0.29 units to the side of the lens, so for the first few
    units of the shot it is outside a 45° frustum entirely, and further away it
    is behind whatever the plot has put on its boundary — round 7 raised hedges
-   to .170 and railings to .196, against a standing figure's .338. The verge
-   band (.245….325) is free of every prop on a straight run (the lamp and all
-   three small-prop corners are at lateral .36 or more), and somebody standing
-   at the kerb waiting to cross is both the more visible figure AND the one the
-   bar's own night frame is built around. A third of the crowd stands here. */
+   to .170 and railings to .196. The verge band (.245….325) is free of every
+   prop on a straight run (the lamp and all three small-prop corners are at
+   lateral .36 or more), and somebody standing at the kerb waiting to cross is
+   both the more visible figure AND the one the bar's own night frame is built
+   around. A third of the crowd stands here.
+
+   🔴 AND THE FIGURE SCALE CHANGED UNDER THIS ARGUMENT — READ BEFORE TUNING IT.
+      This paragraph was written when a standing figure was .338 tall, i.e.
+      comfortably over both boundaries. At the derived scale it is about .182,
+      which is BELOW a .196 railing and level with a .170 hedge. So the occlusion
+      this comment describes as partial is now total: from the street camera, a
+      figure on the footway behind any boundary the plot has raised is entirely
+      hidden, while the verge figure is untouched because nothing stands in the
+      verge.
+      That is an argument for a LARGER kerb share, and it is deliberately NOT
+      acted on here. The share is a composition decision and this file has no
+      way to measure the result; changing a second thing in the same commit as
+      the scale would also make the next A/B unreadable. It is written down so
+      the round-9 critic judges it from a real frame instead of rediscovering
+      it, and so nobody "fixes" the occlusion by putting the figures back to
+      twice human size. */
 const KERB_LAT     = 0.300; // verge, at the kerb — see above
 const ALONG        = 0.260; // along-tile offset; every prop is at ±.36 or more
-const CIV_SCALE    = 1.3;   // identical to agentMesh(), or a standing figure and
-                            // a walking one read as two different scales of city
-const BAY_CLEAR    = 0.34;  // a parked vehicle is .19 wide + a figure's shoulders
+/* 🧍 THE FIGURE SCALE IS NO LONGER A NUMBER IN THIS FILE.
+   ──────────────────────────────────────────────────────────────────────────
+   It used to be `const CIV_SCALE = 1.3`, with the comment below promising it
+   was "identical to agentMesh()". It WAS identical, and the promise was still
+   worthless: two copies of a constant in two files are only identical until
+   somebody edits one, and the first thing that happened to this pair is that
+   both turned out to be wrong together. node-city now owns the number (see
+   `CIV_SCALE` at its definition, ~line 6697 — it is derived from the car, the
+   one object in the city whose scale is corroborated by three independent
+   dimensions) and hands it over in the mount ctx.
+
+   ⚠ THE FALLBACK IS THE OLD VALUE AND IT WARNS. A host too old to hand
+     `civScale` over is not a host that should silently get a differently-sized
+     crowd from its agents — it gets the size it has always had, plus one line
+     in the console naming the drift. A silent default here would be the exact
+     failure this whole indirection exists to remove. */
+const CIV_SCALE_LEGACY = 1.3;
+let CIV_SCALE = CIV_SCALE_LEGACY;   // overwritten from ctx at mount — see above
+
+/* 🚗 CLEARANCE FROM A PARKED VEHICLE, AND IT IS NOT A CONSTANT ANY MORE.
+   It was 0.34, documented as "a parked vehicle is .19 wide + a figure's
+   shoulders". Half of that sum SCALES WITH THE FIGURE, so leaving it at 0.34
+   after halving the crowd would hold everybody a whole extra body-width off the
+   kerb — a spacing derived from a person who no longer exists. The vehicle half
+   is fixed and the shoulder half is not, so it is computed rather than typed:
+
+       BAY_HALF_W  .095   half a parked vehicle's width (.19 / 2)
+       SHOULDER    .150   half a figure's shoulder span at the old 1.3, i.e.
+                          the remainder of the original 0.34 — kept as the
+                          measurement it was, and scaled by CIV_SCALE / 1.3. */
+const BAY_HALF_W   = 0.095;
+const SHOULDER_13  = 0.150;
+function bayClear() { return BAY_HALF_W + SHOULDER_13 * (CIV_SCALE / CIV_SCALE_LEGACY); }
 
 let CTX = null, group = null, sig = '', meshes = [], count = 0, spots = [];
 
@@ -203,6 +249,7 @@ function build() {
   const { THREE, HALF, RD_PT } = CTX;
   clear();
   const B = bays();
+  const BC = bayClear();     // scales with the figure — see its definition
   const parts = [];          // [material, geometry]
   /* ── 1. EVERY PITCH THE CITY OFFERS, before any cap ──────────────────────
      ⚠ THE CAP IS APPLIED BY THINNING, NOT BY STOPPING. The first cut broke out
@@ -225,7 +272,7 @@ function build() {
         const lat = R() < .38 ? KERB_LAT : FOOT_LAT;
         const px = wx + (t.ax ? al : side * lat);
         const pz = wz + (t.ax ? side * lat : al);
-        if (side > 0 && B.some(b => Math.abs(b.x - px) < BAY_CLEAR && Math.abs(b.z - pz) < BAY_CLEAR)) continue;
+        if (side > 0 && B.some(b => Math.abs(b.x - px) < BC && Math.abs(b.z - pz) < BC)) continue;
         /* 60% stand facing along the street, 40% face the carriageway —
            somebody waiting to cross. Either way the shoulders are square to
            something in the scene, which is what stops a standing crowd from
@@ -306,6 +353,17 @@ function signature() {
 
 export function mount(ctx) {
   CTX = ctx;
+  /* 🧍 The figure scale comes from the host, so the standing crowd and the
+     walking agents cannot drift apart. A host that does not hand it over gets
+     the size it has always had AND a line saying so — see CIV_SCALE above. */
+  if (typeof ctx.civScale === 'number' && ctx.civScale > 0) {
+    CIV_SCALE = ctx.civScale;
+  } else {
+    console.warn('[Crowd] host handed over no civScale — standing figures fall back to ' +
+                 CIV_SCALE_LEGACY + ', which is the size agentMesh() used BEFORE the ' +
+                 'figure scale was derived from the car. If agents look smaller than the ' +
+                 'standing crowd, this line is why.');
+  }
   const { THREE, scene } = ctx;
   group = new THREE.Group(); group.name = 'crowd'; scene.add(group);
   const api = {

@@ -6694,9 +6694,62 @@ const civRng = (s) => {
   return step;
 };
 
-/* The nine bodies. h = height band (local, before the caller's 1.3), w = build
-   width, leg = leg length as a fraction of the standard hip height, tor = torso
-   span, head = head size. leg/tor are what actually separate a long-legged
+/* 🧍 THE ONE FIGURE SCALE, AND WHERE THE NUMBER COMES FROM.
+   ────────────────────────────────────────────────────────────────────────────
+   This was 1.3, commented "readability at city zoom", and it made every person
+   in the city roughly twice human size. The correction is DERIVED, because the
+   city already contains an object whose scale nobody disputes.
+
+   Measured off the live scene graph on the standard gauntlet district, world
+   units, after each agent's own scale:
+
+       car    length .445   width .206   height .154
+       truck  length .506   width .223   height .200
+       civilian height .309 … .357 (adults), median .333
+
+   The car agrees with itself: 4.5m/.445, 1.8m/.206 and 1.5m/.154 imply 10.1,
+   8.7 and 9.7 metres per world unit — three independent dimensions inside 15%.
+   The people agree with nothing: .333 for a 1.75m adult implies 5.3.
+
+   🔴 THE STATEMENT THAT NEEDS NO SCALE CONSTANT TO ARGUE ABOUT: a citizen stood
+      2.16x the height of a car's roof. A real person is 1.17x. Holding that one
+      ratio at its true value is the whole derivation —
+
+          .154 (car height) x 1.17 = .180 finished height
+          .180 / .333 (measured median) = 0.54
+          1.3 x 0.54 = 0.70
+
+   ✗ REJECTED — split the difference at ~1.0 "so they still read". The A/B was
+     captured before the change went in (.gauntlet/ROUND9-BRIEF.md): at 0.70 the
+     civilians at the crossing sit correctly against the parked cars beside them
+     and are still plainly legible in the street framing. Nothing became hard to
+     see, so there was nothing to buy back. Readability was never what the extra
+     85% was paying for.
+   ✗ REJECTED — scale the vehicles up to meet the people instead. The vehicles
+     are the half that is already right; they are the reference.
+
+   ⚠ VEHICLES ARE NOT TOUCHED. agentMesh's 1.2 is applied to the numbers
+     measured above — i.e. those ARE the scaled sizes, and they are correct.
+
+   🔴 IT MUST BE ONE NUMBER IN ONE PLACE. /src/crowd bakes STANDING figures from
+      this same makeCivilian and applied its own copy of 1.3, with its header
+      stating the two must stay identical "or a standing figure and a walking one
+      read as two different scales of city". A copy that agrees today is a copy
+      that disagrees after the next edit, so the constant is HANDED OVER in that
+      module's mount ctx (`civScale`) rather than repeated. The A/B proved why
+      this matters and not in the way it was meant to: rescaling only the agents
+      left the single largest person in the street frame — a standing crowd
+      figure on the near pavement, head at first-floor balcony height —
+      completely unchanged, in a picture where the fix had visibly worked on
+      everybody behind them.
+   ⚠ Anything else derived from a figure's size has to be re-derived with it.
+     /src/crowd's BAY_CLEAR is documented as "a parked vehicle is .19 wide + a
+     figure's shoulders"; shoulders scale, so that clearance does too. */
+const CIV_SCALE = 0.70;
+
+/* The nine bodies. h = height band (local, before the caller's CIV_SCALE), w =
+   build width, leg = leg length as a fraction of the standard hip height, tor =
+   torso span, head = head size. leg/tor are what actually separate a long-legged
    office worker from a stocky short-legged labourer at 40px on screen — colour
    cannot do that and neither can height alone. */
 const CIV_TYPE = {
@@ -26500,7 +26553,9 @@ function agentMesh(kind) {
       ? TRUCK_COLORS[Math.floor(Math.random() * TRUCK_COLORS.length)] : null));
     if (g.children[0].userData.lights) g.userData.lights = g.children[0].userData.lights;
   }
-  g.scale.setScalar(kind === 'civilian' ? 1.3 : 1.2);   // readability at city zoom
+  // 🧍 CIV_SCALE is derived from the car — see its definition above. The 1.2 on
+  //    vehicles is the reference the figures were measured against and stays.
+  g.scale.setScalar(kind === 'civilian' ? CIV_SCALE : 1.2);
   // ! Agents are the densest shadow casters in the city — dozens are alive and
   //   every limb, wheel and light lens was drawn into the shadow map. Cap it to
   //   the few masses that actually define the silhouette. Measured before this:
@@ -35641,6 +35696,14 @@ function animate() {
     window.MythicCrowd = cwmod.mount({
       THREE, scene, game, HALF, RD_PT, isRoad,
       makeCivilian, animCivilian, CIV_COLORS, disposeOwnedGeo,
+      /* 🧍 THE FIGURE SCALE, HANDED OVER RATHER THAN COPIED. See CIV_SCALE's
+         definition (~line 6697) for where 0.70 comes from — it is the ratio
+         that holds a citizen at 1.17x a car's roof height, which is what a
+         person actually is. This module bakes STANDING figures out of the same
+         makeCivilian; a second copy of the number here is a copy that agrees
+         today and disagrees after the next edit, and the failure mode is the
+         city rendering people at two different scales at once. */
+      civScale: CIV_SCALE,
     });
   } catch (e) { console.warn('[Crowd] not mounted (non-fatal):', e); }
   /* ══ 🧱 THE PARCEL LAYER ═════════════════════════════════════════════════

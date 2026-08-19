@@ -172,10 +172,20 @@ export const NODES = [
     name: 'Luxury Retail',
     desc: 'The expensive end of the high street, built to its full height. It will simply refuse cheap land.',
     specs: ['c_lux'] },
+  /* 🔴 THIS NODE OPENS THE FINANCIAL DISTRICT AND NOT THE TECHNOLOGY ONE, AND
+     THE REASON IS A MEASURED DEFECT RATHER THAN A PREFERENCE. It shipped with
+     both, and `MythicDistricts.verify()` on a driven city reported
+     "o_tech: no band admits any of reslab today" — because the ONLY building a
+     Technology district builds is the Research Spire, and `reslab` is opened by
+     `sci_lab` over in Research. A player could therefore research a district
+     that was guaranteed to develop nothing, which is precisely the failure this
+     project has already paid for ("a progression tree advertised building
+     unlocks that nothing checked"). The specialisation now hangs off the node
+     that opens its one building — see `sci_lab` below. */
   { id: 'off_district', cat: 'com', row: 3, col: 2, cost: 2, req: ['off_low'],
-    name: 'Office Specialisation',
-    desc: 'An office park can be told what it is for — laboratories, or the money that funds them.',
-    specs: ['o_tech', 'o_fin'] },
+    name: 'Financial District',
+    desc: 'An office park told what it is for: trusts and funds rather than laboratories.',
+    specs: ['o_fin'] },
   { id: 'off_high', cat: 'com', row: 2, col: 3, cost: 4, req: ['off_low', 'sci_urban'],
     name: 'Office Towers',
     desc: 'The skyline. Same clean work, stacked, on land that has become too valuable for anything else.',
@@ -232,8 +242,8 @@ export const NODES = [
      standing in front of the front door. */
   { id: 'sci_lab', cat: 'sci', row: 1, col: 0, cost: 1, req: ['civ_basic'], licence: 'research',
     name: 'Research Division',
-    desc: 'A working laboratory. The Research Facility licence is the door; this is what the city does once it is through.',
-    buildings: ['reslab'] },
+    desc: 'A working laboratory, and land zoned for a district of them. The Research Facility licence is the door; this is what the city does once it is through.',
+    buildings: ['reslab'], specs: ['o_tech'] },
   { id: 'sci_materials', cat: 'sci', row: 0, col: 1, cost: 2, req: ['sci_lab'],
     name: 'Materials Science',
     desc: 'Better metallurgy and better cloth — the inputs half of the chain rather than the outputs half.',

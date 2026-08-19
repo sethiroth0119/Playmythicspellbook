@@ -1,7 +1,7 @@
 # Handoff — 2026-08-19
 
-**Branch:** `city-construction-timers` · **HEAD** `e403bb7fb7` · tree clean, nothing unpushed
-**Live:** `v120y6` (Cloudflare) · MP server live on Fly, **not** redeployed this session
+**Branch:** `city-construction-timers` · **HEAD** `90020b127d` · tree clean
+**Live:** `v120y7` (Cloudflare, edge-verified 2026-08-19) · MP server live on Fly, **not** redeployed this session
 
 ---
 
@@ -152,6 +152,20 @@ Next steps and the gating question are in `colyseus-server/RELAY_CLOSURE_PLAN.md
 
 ## 5. Traps that cost real time — do not re-learn
 
+- **`version.txt` propagating is not the release propagating.** v120y7 read
+  `v120y7` at the edge on the first poll while `index.html` was still serving
+  v120y6 with none of the new code — the small files land instantly, the 13 MB
+  one lags. Poll **the file that carries the change**, and grep it for a symbol
+  you just added.
+- **The deployed `index.html` is MINIFIED; the local one is not.** Verifying it
+  with a source-shaped pattern reads zero and looks like a failed deploy.
+  `BB_VER = 'v120y7'` ships as `BB_VER="v120y7"` and comments are gone entirely.
+  Grep for minified shapes, and count with `grep -o | wc -l` — plain `grep -c`
+  counts LINES, and minified JS puts every call site on one.
+- **`deploy-all.mjs` is dead in this checkout.** It hardcodes
+  `H:\aiTcgbattler\game-deploy` and `H:\aiTcgbattler\market-deploy`; this repo is
+  `D:\game-deploy`, so `npm run deploy:all` reports both targets missing and
+  exits red. `npm run deploy` (game only) is the working path.
 - **Nine deploy knobs, not four.** `sw.js` is network-first only for navigations
   and `/src/`. Anything loaded as a **sub-resource** is cache-first and its `?v=`
   is the only buster. **Grep `?v=` and read the values** — grepping the version

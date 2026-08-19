@@ -36554,7 +36554,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y7';
+  window.BUILD_VERSION = 'v120y8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -81700,6 +81700,36 @@ const OPS_ECON = {
   // yields {} on purpose — a bank earns Cinder interest, not resources, so it
   // must never be swept up by the production-pressure hook (cxProduce).
   bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
+  /* 🚌🚆 PUBLIC TRANSPORT — the two licences that unlock the city builder's
+     transit layer (stops, stations, track, player-drawn routes; the system
+     lives in public/src/transit/).
+
+     💱 THE SCALE, stated once because it is the decision a reader will
+        question. node-city's own building costs run on roughly a ÷2,000
+        divisor against this table — the design pack's 2,400,000 🔥 Stadium is
+        ~1,200 ₵ of city Cinder. So 2,000,000 and 10,000,000 cannot be city
+        building costs; at that divisor a bus company would cost 1,000 ₵, less
+        than a Cinder Trust. They are CORPORATE-scale figures, and this is the
+        corporate table — where a Stadium really is 2.4M and a Bank is 1M. A
+        Bus Company at 2M and a Rail Operator at 10M is a coherent rung on
+        exactly the ladder a player already climbs to buy a Construction Co.
+        What city Cinder buys is the infrastructure, priced in BUILDINGS.
+
+     ⚠ THESE TWO NUMBERS ARE THE ONLY COPY. Everything downstream — the City
+       Hall price, the padlock on the city build menu, the transit panel's
+       "buy it for N 🔥" line — reads them through _opEcon(), so an admin
+       retune in the Operations Economy editor reaches all three.
+
+     `yields: {}` on purpose, exactly as the Bank does: a transport operator
+     earns fares, not goods, so it must never be swept up by the production
+     pressure hook. `inputs` is real — a fleet burns fuel, and rail eats metal
+     for track and wheels, which is what ties these to the rest of the chain.
+     Payback sits beside the premium ops: fully staffed, bus nets ~14k 🔥/hr
+     (≈142h) and rail ~54k 🔥/hr (≈185h), against the Bank's ≈114h. The more
+     expensive licence takes longer, which is the shape the rest of the table
+     already has. */
+  bus:          { startup: 2000000,  ratePerWorkerHr: 1400, salaryPerWorkerHr: 520, maxWorkers: 16, yields: {}, inputs: { fuel: 0.9 } },
+  rail:         { startup: 10000000, ratePerWorkerHr: 3600, salaryPerWorkerHr: 900, maxWorkers: 20, yields: {}, inputs: { fuel: 1.2, metal: 0.4 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -81941,6 +81971,10 @@ const OP_LABELS = {
      so a new operation without a label here is buyable but shows up in the shop
      as "genelab". */
   genelab: 'Genetics Lab',
+  // 🚌🚆 The transit licences. Same rule as genelab above — an operation with
+  // no label here is buyable but shows up in the shop as "bus".
+  bus: 'Bus Company',
+  rail: 'Rail Operator',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -106499,7 +106533,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120y7';
+const BB_VER = 'v120y8';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -212048,7 +212082,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120y7';
+  f.src = 'node-city/index.html?v=v120y8';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -229225,8 +229259,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120y7">
-<script type="module" src="src/battle/hud.js?v=v120y7"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120y8">
+<script type="module" src="src/battle/hud.js?v=v120y8"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

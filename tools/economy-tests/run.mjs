@@ -550,7 +550,9 @@ const SABOTAGES = [
   'payout-blind', 'pop-zero', 'price-drift', 'promo-drift', 'reap-burn', 'rearm-caller',
   'refund-blind', 'refund-raw', 'save-gone', 'seed-mint', 'sell-asym', 'sell-cap', 'sell-default', 'sell-promo',
   'sell-pump', 'settle-requested', 'stale-deliver', 'stale-refund', 'stale-workplaces',
-  'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind',
+  'twin-blind', 'venue-blind', 'warm-residue', 'withdraw', 'wx-twin-blind', 'ich-cost',
+  // 🚆 round0 §f — the same defect's second instance, in the transit set.
+  'ts-cost', 'track-timed',
   // ── COVER2, the four fixes a revert could delete under a green gate ──
   'save-noborder', 'load-nolvl', 'gate-ungated', 'cap-race', 'place-nobld',
   'beat-dead', 'offline-nosweep', 'licence-paywalled',
@@ -1078,6 +1080,161 @@ const stripComments = (src) => {
   chk("resSkip contains 'cinder' (counted by the cinderPerHr channel, not twice)",
       C.resSkip.indexOf('cinder') >= 0, JSON.stringify(C.resSkip));
 
+  /* (e) 🛣 THE BOOTSTRAP MUST BE BUILDABLE — READ OFF THE SHIPPED TABLE.
+     ------------------------------------------------------------------------
+     THE DEFECT THIS EXISTS FOR SHIPPED, AND IT WAS INVISIBLE FROM BOTH SIDES.
+     The Highway Interchange is the ONLY joint between a city and the outside
+     world: with none standing, /src/outside refuses every caravan, every
+     shipment and every lot deal. It cost 140🔥/45⛓/15📦 ⇒ flattened 260 ⇒
+     2951s against the free Municipal Works ceiling of 2400s. So a brand-new
+     city — which by definition has no Construction Co., because a Co. is
+     bought with the income trade brings — could not build the one thing that
+     unlocks trade, while the HUD chip instructed it to. Nothing in either file
+     is wrong on its own: the curve is fine, the entry looks fine, and the two
+     only disagree once you multiply them out. Neither round0's SHELF table
+     (hand-written profiles) nor any test in this gate read the SHIPPED cost,
+     so both stayed green.
+     THE ASSERTION IS THEREFORE MADE AGAINST node-city's OWN BUILDINGS ENTRY,
+     flattened by the SAME rule bldProfile() uses (cinder 1:1, every other
+     resource × costResWeight). A future retune of the cost, of costResWeight,
+     of gamma, of costExp or of municipal.maxSec turns this red — which is the
+     whole point, because each of those five can re-brick the bootstrap from a
+     file that never mentions the interchange.
+     ⚠ NOT a general "everything must be cheap" rule. The shelf's design is that
+       Cinder EARNERS sit ABOVE the ceiling and the bootstrap sits below it;
+       what is asserted is only that a building which earns NOTHING and gates
+       EVERYTHING is on the bootstrap side.
+     Prove it can fail: ECON_TEST_SABOTAGE=ich-cost, which puts the shipped-
+     broken 140/45/15 back on the way in. */
+  {
+    let HTML = null;
+    try { HTML = readFileSync(join(here, '../../public/node-city/index.html'), 'utf8'); }
+    catch (e) { HTML = null; }
+    /* Same `with`-over-a-Proxy evaluator round0h uses: BUILDINGS cites
+       constants declared elsewhere in the file, so a bare eval throws. Only
+       `cost` is read here and every cost is a numeric literal. */
+    const loose = (decl) => {
+      const txt = srcBlockAfter(HTML, decl);
+      if (!txt) return null;
+      try {
+        const scope = new Proxy({}, { has: () => true,
+          get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+        return new Function('__s', 'with (__s) { return (' + txt + '); }')(scope);
+      } catch (e) { return null; }
+    };
+    const B = loose('const BUILDINGS');
+    const raw = B && B.interchange ? B.interchange.cost : null;
+    const cost = SABOTAGE === 'ich-cost' ? { cinder: 140, metal: 45, supplies: 15 } : raw;
+    /* A scrape that matched nothing must fail HARD — round0b's rule. A missing
+       entry here would otherwise pass vacuously and hide exactly this defect. */
+    chk('read BUILDINGS.interchange.cost out of node-city/index.html',
+        !!cost && Object.keys(cost).length > 0, JSON.stringify(raw));
+    if (cost) {
+      const flat = Object.keys(cost).reduce((v, k) =>
+        v + (k === 'cinder' ? +cost[k] : (+cost[k] || 0) * C.costResWeight), 0);
+      /* No gen, no svc: BUILDINGS.interchange has neither, so the cost channel
+         is the entire profile. Asserted rather than assumed — a `gen` appearing
+         on the entry would make this profile a fiction. */
+      chk('…and the interchange still earns nothing (cost is the whole profile)',
+          !B.interchange.gen && !B.interchange.svc,
+          JSON.stringify({ gen: B.interchange.gen, svc: B.interchange.svc }));
+      const secs = seconds({ cost: flat });
+      console.log('\n  🛣 BOOTSTRAP CHECK — ' + JSON.stringify(cost) + ' ⇒ flat ' + flat +
+                  ' ⇒ ' + secs + 's (' + hms(secs) + ')  vs the free crew ceiling ' +
+                  C.municipal.maxSec + 's (' + hms(C.municipal.maxSec) + ')\n');
+      chk('🛣 a Highway Interchange is buildable by the FREE Municipal Works crew (' +
+          secs + 's <= ' + C.municipal.maxSec + 's) — no outside trade at all without one',
+          secs <= C.municipal.maxSec, secs + 's, over by ' + (secs - C.municipal.maxSec) + 's');
+    }
+  }
+
+  /* (f) 🚆 THE SAME DEFECT, SECOND INSTANCE — THE WHOLE TRANSIT SET.
+     ------------------------------------------------------------------------
+     §e above pinned the Highway Interchange after it shipped 551s over the
+     free-crew ceiling. The identical bug was sitting in /src/transit at the
+     same time and nobody looked: a Train Station cost 240🔥/90⛓/30📦 ⇒
+     flattened 480 ⇒ 5577s (1:32:57) against 2400s (40:00) — 3177s over. The
+     order gate refused it, so the 10,000,000 🔥 Rail Operator licence bought
+     the right to build a thing the city could not build; `minStops` is 2, so
+     without stations there is no rail line at all and the licence bought
+     literally nothing. Fixing ONE building is how the second instance got
+     here, so this asserts the WHOLE SET, off the shipped entries.
+     TWO DIFFERENT ASSERTIONS, because there are two different kinds of thing:
+       · 🚏 STOPS AND 🚆 STATIONS are BUILDINGS — they must land under the free
+         crew's ceiling, exactly as §e asserts for the interchange, and for the
+         same reason: none of the three earns a Cinder (transit is
+         `net = min(0, fares − upkeep)` by construction), so "Cinder earners
+         live above the ceiling" cannot justify any of them being up there.
+       · 🛤️ TRACK IS LINEAR INFRASTRUCTURE and must be EXEMPT, not merely
+         short. At 223s (3:43) it was comfortably under the ceiling and still
+         unusable: a rail line is a continuous RUN of track between stations,
+         each tile took a crew slot, and on a fresh city eight tiles attempted
+         laid ONE and refused seven. Being under the ceiling is not the test —
+         being drawn rather than built is.
+     ⚠ ONLY LEVEL 1 IS ASSERTED. A station's L2/L3 upgrades sit above the
+       ceiling (1:11:59 / 3:26:11) and that is correct: an upgrade needs a
+       building that already stands, so a Construction Co. requirement there
+       takes nothing away from a purchase already made. It is the FIRST one
+       that is a trap.
+     Prove both can fail: ECON_TEST_SABOTAGE=ts-cost puts the shipped-broken
+     240/90/30 back on the way in; =track-timed drops railtrack back out of
+     exemptTypes. */
+  {
+    let HTML = null;
+    try { HTML = readFileSync(join(here, '../../public/node-city/index.html'), 'utf8'); }
+    catch (e) { HTML = null; }
+    /* ⚠ NOT `loose('const BUILDINGS')` — §e's scrape cannot see these. The
+       transit hook block registers its three entries as separate
+       `BUILDINGS.busstop = { … }` assignments thousands of lines below the
+       literal, which is the whole point of that block being additive. Each is
+       read on its own; every field touched here is a numeric literal. */
+    const entry = (name) => {
+      const txt = srcBlockAfter(HTML, 'BUILDINGS.' + name + ' =');
+      if (!txt) return null;
+      try {
+        const scope = new Proxy({}, { has: () => true,
+          get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+        return new Function('__s', 'with (__s) { return (' + txt + '); }')(scope);
+      } catch (e) { return null; }
+    };
+    const SHOP = [['busstop', 'Bus Stop'], ['trainstation', 'Train Station']];
+    console.log('\n  🚆 TRANSIT SET — free crew ceiling ' + C.municipal.maxSec +
+                's (' + hms(C.municipal.maxSec) + ')\n');
+    for (const [id, label] of SHOP) {
+      const raw = entry(id);
+      const cost = (SABOTAGE === 'ts-cost' && id === 'trainstation')
+        ? { cinder: 240, metal: 90, supplies: 30 } : (raw && raw.cost);
+      /* A scrape that matched nothing must fail HARD — round0b's rule, and §e's.
+         A renamed entry would otherwise pass vacuously and hide this defect. */
+      chk('read BUILDINGS.' + id + '.cost out of node-city/index.html',
+          !!cost && Object.keys(cost).length > 0, JSON.stringify(raw && raw.cost));
+      if (!cost) continue;
+      /* Same flatten bldProfile() uses: cinder 1:1, everything else ×costResWeight. */
+      const flat = Object.keys(cost).reduce((v, k) =>
+        v + (k === 'cinder' ? +cost[k] : (+cost[k] || 0) * C.costResWeight), 0);
+      /* Asserted, never assumed: a `gen` or `svc` appearing on one of these
+         would make a cost-only profile a fiction — and would also mean transit
+         had started paying, which sim.js forbids. */
+      chk('…and a ' + label + ' still earns nothing (cost is the whole profile)',
+          !raw.gen && !raw.svc, JSON.stringify({ gen: raw.gen, svc: raw.svc }));
+      const secs = seconds({ cost: flat });
+      console.log('    ' + label.padEnd(15) + JSON.stringify(cost).padEnd(40) +
+                  ' flat ' + String(flat).padStart(4) + ' ⇒ ' + String(secs).padStart(5) + 's  ' +
+                  hms(secs) + (secs <= C.municipal.maxSec ? '' : '   OVER'));
+      chk('🚆 a ' + label + ' is buildable by the FREE Municipal Works crew (' +
+          secs + 's <= ' + C.municipal.maxSec + 's) — it is what the licence BUYS',
+          secs <= C.municipal.maxSec, secs + 's, over by ' + (secs - C.municipal.maxSec) + 's');
+    }
+    const exempt = SABOTAGE === 'track-timed'
+      ? C.exemptTypes.filter(t => t !== 'railtrack') : C.exemptTypes;
+    chk('🛤️ railtrack is EXEMPT like road — a rail line is a RUN of it, and a ' +
+        'crew slot per sleeper (223s each, cap 200) laid 1 of 8 on a fresh city',
+        exempt.indexOf('railtrack') >= 0, JSON.stringify(exempt));
+    /* The exemption is the reason nothing above asserts a railtrack duration:
+       an exempt type never reaches the curve at all (bldProfile returns null),
+       so a number for it would be a number the game never computes. */
+  }
+
   /* The feature's own off switch. ECON.construction.on = 0 turns every timer
      off without touching a line of index.html (a 0 duration is the host's
      "place instantly" path), which is the rollback plan. */
@@ -1195,20 +1352,72 @@ const stripComments = (src) => {
       console.log('   🧨 injected op_saboteur → out unobtainium / ind notAnIndustry');
     }
 
-    /* Every operation must be accounted for: it has a business, or it is the
-       one row that was argued out. A silent omission is the same class of bug
+    /* Every operation must be accounted for: it has a business, or it is a
+       LICENCE that was argued out. A silent omission is the same class of bug
        as a silent unproducible id — the operation simply never employs anyone
-       and nothing says so. */
+       and nothing says so.
+
+       🔴 THIS SET WAS `['bank']` AND IS NOW THREE. READ BEFORE WIDENING IT
+          AGAIN. The transit package added `bus` and `rail` to OP_BP with no
+          OP_ECO_MAP row, and this round went red. Widening an expected set
+          until the code passes is the exact failure this file exists to catch,
+          so the widening was ARGUED, and then made CHECKABLE — the two `chk`s
+          under `— the licence claim, re-derived —` below re-prove the argument
+          from the shipped source on every run, so this is a gate and not a
+          comment.
+
+          A licence is a row whose product is the RIGHT TO BUILD SOMETHING ELSE
+          and whose economics live in a dedicated module rather than in a firm:
+            · bank — the DEBT rung was dead because ecoHost().hasBank tested
+              `t.type === 'bank'` against an `op_bank` tile. A firm would not
+              have fixed that and would have hidden it; the lending is
+              economy/bank.js. (ECO_BUILDING_MAP's footer states this.)
+            · bus / rail — BUILDINGS.busstop / trainstation / railtrack carry
+              `transitLicence: 'bus' | 'rail'` and transitOwns() gates placement
+              on holding the row, so the operation IS the permission. Their
+              revenue is ALREADY modelled by src/transit/routes.js ledger(),
+              clamped `net = Math.min(0, fares - upkeep)` — public transport can
+              never pay you, deliberately, because a network that pays is a
+              Cinder faucet with a paint job. A firm on op_bus would be a
+              SECOND, unclamped income for carrying the same passengers: the
+              double-count that disqualified forge / indexfund / holdco. The
+              clamp and a business cannot both be true, and the clamp wins.
+
+          ⚠ WHAT WOULD REOPEN IT: transit being allowed to net positive. If
+            that clamp ever goes, bus/rail become ordinary earners and the case
+            for a payroll comes back — and the second check below will already
+            be red, pointing here. Do not add a fourth name to this list
+            without an argument of the same shape. */
+    const LICENCE_OPS = ['bank', 'bus', 'rail'];
     const noEco = Object.keys(OPBP).filter(t => !OPMAP[t]);
-    chk('exactly one operation has no business, and it is `bank` (index.html:17101)',
-        noEco.length === 1 && noEco[0] === 'bank', 'without a business: [' + noEco.join(', ') + ']');
-    chk('op_bank is NOT in the map', !MAP[PREFIX + 'bank'], JSON.stringify(MAP[PREFIX + 'bank']));
+    chk('exactly the ' + LICENCE_OPS.length + ' licence operations have no business [' + LICENCE_OPS.join(', ') + ']',
+        noEco.length === LICENCE_OPS.length && LICENCE_OPS.every(t => noEco.indexOf(t) >= 0),
+        'without a business: [' + noEco.join(', ') + ']');
+    for (const t of LICENCE_OPS)
+      chk('op_' + t + ' is NOT in the map', !MAP[PREFIX + t], JSON.stringify(MAP[PREFIX + t]));
+
+    /* — the licence claim, re-derived — ------------------------------------
+       Two facts hold the transit half of the argument up. Both are scraped
+       from the shipped source, so deleting either turns this round red instead
+       of turning the decision above into a lie somebody believes. */
+    chk('bus/rail really ARE licences — BUILDINGS rows still carry transitLicence',
+        /transitLicence:\s*'bus'/.test(HTML) && /transitLicence:\s*'rail'/.test(HTML),
+        'no transitLicence gating in node-city/index.html — if transit stopped being ' +
+        'a licence, the case for `bus`/`rail` having no business is gone: re-argue it');
+    let ROUTES = null;
+    try { ROUTES = readFileSync(join(here, '../../public/src/transit/routes.js'), 'utf8'); } catch (e) {}
+    chk('transit still cannot net positive — the clamp a transit FIRM would defeat',
+        !!ROUTES && /Math\.min\(\s*0\s*,\s*fares\s*-\s*upkeep\s*\)/.test(ROUTES),
+        ROUTES ? 'net = min(0, fares - upkeep) is GONE from routes.js — transit may now earn, ' +
+                 'so `bus`/`rail` owing no business needs re-arguing'
+               : 'src/transit/routes.js UNREADABLE — the clamp could not be checked');
+
     chk('every OP_ECO_MAP key names a real OP_BP blueprint',
         Object.keys(OPMAP).every(t => OPBP[t]),
         'unknown: ' + Object.keys(OPMAP).filter(t => !OPBP[t]).join(','));
-    chk('all ' + (Object.keys(OPBP).length - 1) + ' non-bank operations are wired',
-        Object.keys(OPMAP).length === Object.keys(OPBP).length - 1,
-        Object.keys(OPMAP).length + ' of ' + (Object.keys(OPBP).length - 1));
+    chk('all ' + (Object.keys(OPBP).length - LICENCE_OPS.length) + ' non-licence operations are wired',
+        Object.keys(OPMAP).length === Object.keys(OPBP).length - LICENCE_OPS.length,
+        Object.keys(OPMAP).length + ' of ' + (Object.keys(OPBP).length - LICENCE_OPS.length));
 
     /* A floor, not an equality: adding a building must not require editing this
        file, but a scrape that suddenly returns a handful of entries must. The
@@ -1770,12 +1979,17 @@ const stripComments = (src) => {
          was removed) and a stub for a function nobody calls is exactly the dead
          scaffolding that makes the next reader hunt for a caller. */
     const runHost = (tiles, keyFn) => {
-      const names = ['game', 'cityPop', 'ecoLogisticsCounts', 'bldSite', 'opsKeyOf',
+      /* 👥 `demogPopulation` is the demographics handover — ecoHost() now asks
+         it how many of the city's residents the zoning actually houses and
+         falls back to cityPop() when the module is absent. Stubbed at the same
+         figure cityPop() answers, because this round is about the BANK clause
+         and a different population would only make its cities disagree. */
+      const names = ['game', 'cityPop', 'demogPopulation', 'ecoLogisticsCounts', 'bldSite', 'opsKeyOf',
                      'roadUsed', 'roadCap'];
       const fn = new Function(...names, 'return (function ecoHost() ' + BODY + ')();');
       return fn(
         { tiles, cov: { avg: 0.75, pct: { water: 1 } }, power: { factor: 1 } },
-        () => 60, () => ({ warehouse: 3, depot: 2 }), bldSite, keyFn,
+        () => 60, () => 60, () => ({ warehouse: 3, depot: 2 }), bldSite, keyFn,
         () => 0, () => 1);
     };
     const realKey = ty => PREFIX + ty;
@@ -5097,6 +5311,12 @@ const stripComments = (src) => {
     bldNextFreeSec: fnText(NC, 'bldNextFreeSec'),
     bldCrewBusyMsg: fnText(NC, 'bldCrewBusyMsg'),
     bldCoHint:      fnText(NC, 'bldCoHint'),
+    /* 🔒 The ceiling refusal's one shared sentence. tryPlace CALLS it, so a
+       sandbox without it throws the moment §8 exercises REFUSAL 2 — which is
+       exactly what happened the minute it was extracted out of the three
+       hand-written copies. Lifted, never stubbed: a stub would let the round
+       pass while the shipped string said anything at all. */
+    bldCeilingMsg:  fnText(NC, 'bldCeilingMsg'),
     tryPlace:       fnText(NC, 'tryPlace'),
   };
   /* Each entry below re-commits the pre-fix source for one defect, on the way
@@ -5410,6 +5630,25 @@ const stripComments = (src) => {
          Their VALUES come from the shipped ECON.construction — Rule 4: the
          municipal ceiling is the number the design turns on and this file does
          not get to pick its own. */
+      /* 🗺 THE ZONED-DEVELOPMENT SEAM, stubbed. tryPlace() is LIFTED WHOLE from
+         index.html (that is round0d's design: lift the shipped statement, resolve
+         its dependencies from an explicit list, so the test can never drift from
+         the code it claims to test). The zoning "Develop" work added four names
+         to tryPlace's scope, and a lifted statement with an unresolved name is a
+         ReferenceError at call time, not a scrape failure — the suite crashed at
+         §8 with a _zonedOrder-is-not-defined ReferenceError rather than a miss.
+         Stubbed to the NO-ZONING answer on purpose: zoned growth is a separate,
+         un-crewed path, so with no zoning module every one of these must
+         collapse to nothing-is-developing, which is exactly the pre-zoning
+         behaviour these rounds assert. bldCrewLoad() then reduces to
+         bldCommitted(), which is what the crew-limit assertions were written
+         against. A zoned-growth test belongs in its own round with these set
+         live — do not make these read a real module here, or §8 stops testing
+         hand placement. */
+      let _zonedOrder = 0;
+      const bldIsDev = () => false;
+      const bldDevSites = () => 0;
+      function bldCrewLoad() { return Math.max(0, bldCommitted() - bldDevSites() - _zonedOrder); }
       const bldCfg = () => ECON_ON ? { on: true, maxSec: 86400, formulaV: 1, exemptTypes: [],
                                        municipal: ${JSON.stringify(ECON_C.municipal)},
                                        slots: ${JSON.stringify(ECON_C.slots)},

@@ -93,7 +93,11 @@ if (real.status !== 0) {
 
 // ── 2. Prove each check can fail ───────────────────────────────────────────
 console.log('── falsifiability: reverting each fix in a temp copy, expecting RED ──\n');
-const html = readFileSync(INDEX, 'utf8');
+/* Normalised to LF. A merge or a fresh checkout can hand this file CRLF — that
+   happened on the city-builder merge and silently broke the one multi-line
+   anchor below, reporting a real check as UNPROVEN. The anchors are written with
+   \n, so the input has to be. */
+const html = readFileSync(INDEX, 'utf8').replace(/\r\n/g, '\n');
 const tmp = mkdtempSync(join(tmpdir(), 'mp-gate-'));
 let broken = 0;
 try {

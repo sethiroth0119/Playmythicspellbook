@@ -52,7 +52,9 @@ const BOARD_W = 8, BOARD_H = 7;   // must match index.html's `const BOARD_W = 8,
    `}` at column 0. Nested braces are indented, so they never false-match.
    Testing the SHIPPED source (not a copy) is the point — a transcribed copy
    would drift and the gate would guard nothing. */
-const lines = readFileSync(SRC, 'utf8').split('\n');
+// Normalised to LF — a merge or fresh checkout can hand this file CRLF, and a
+// stray \r on every line leaks into the extracted function source.
+const lines = readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n').split('\n');
 function extractFn(name) {
   const start = lines.findIndex(l => l.startsWith('function ' + name + '('));
   if (start === -1) throw new Error('could not find top-level `function ' + name + '(` in index.html');

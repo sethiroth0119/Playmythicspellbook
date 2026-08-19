@@ -101,7 +101,17 @@ export function renderPanel(s, opts) {
   const f = s.flow || {};
   const lines = [
     ['Wages → residents', f.wages], ['Residents → shops', f.shopping],
-    ['Business → business', f.b2b], ['Rent', f.rent],
+    ['Business → business', f.b2b], ['Rent (households)', f.rent],
+    /* 🏷 Two different rents and they must not read as one. `rent` is what
+       RESIDENTS paid their landlords for housing; `groundRent` is what
+       BUSINESSES paid for the plots they stand on. Both land in the same
+       accounts (the property-tax slice to the city, the net to the landlord
+       firms) and they are separate lines because a player looking at a shop
+       that just failed has to be able to see which of the two moved.
+       ⚠ A build with no /src/landvalue charges no ground rent, the figure is 0,
+         and the loop below drops any row under 0.5 🔥 — so the row is simply
+         absent there rather than present and lying about a zero. */
+    ['Ground rent (business)', f.groundRent],
     ['Dividends → residents', f.dividends], ['Business upkeep', f.upkeep],
     ['Taxes → city', f.tax], ['City → infrastructure', f.infrastructure],
     ['City → civic wages', f.civic], ['Benefits', f.benefits], ['Welfare', f.welfare],

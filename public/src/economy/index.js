@@ -51,6 +51,40 @@ import * as Render from './render.js';
 
 const B = () => (typeof window !== 'undefined' ? window.MythicCityBridge : null) || null;
 
+/* ── 🏷 THE LAND VALUE READ ──────────────────────────────────────────────────
+   /src/landvalue registers `window.MythicLandValue` — a real property of
+   `window`, unlike the top-level `const`s of index.html (the globals trap at
+   the top of this file), so it can be read from here. Every `window` read in
+   this package lives in this file next to the bridge, so sim.js is handed a
+   function instead: `Sim.setLandValueSource`.
+
+   🔴 WHAT IS READ IS THE LOCATION PREMIUM, NOT `valueAt()`. The printed value
+   is CITY + LOCAL and the CITY half — `20 + citySync×0.3 + decorPoints()` — is
+   identical on every tile AND unbounded, because `decorPoints()` grows with
+   every garden the player ever plants. Renting off it would charge every
+   business in the city for landscaping across town, for ever. `premiumAt()` is
+   the part that describes THIS plot, it is what /src/landvalue takes its own
+   bands on, and it is capped by construction at the sum of that module's caps.
+
+   🔴 ABSENT ⇒ null ⇒ NO RENT, and that is asked EVERY CALL rather than latched
+   at mount. The module is imported asynchronously by node-city's boot and may
+   land after the economy does; a source captured once at mount time would read
+   "no land value in this city" for the whole session on exactly the builds
+   where it is present. It is a property lookup and two calls, on ~30 firms,
+   once an economic day.
+   ⚠ AND null IS NOT 0. sim.js charges nothing for a null and would charge
+     nothing for a 0 too — today. The distinction is kept because the day
+     somebody adds a base rate, "no module" and "worthless land" must not
+     silently mean the same thing. */
+function landPremiumAt(x, z) {
+  const LV = (typeof window !== 'undefined') ? window.MythicLandValue : null;
+  if (!LV || typeof LV.premiumAt !== 'function') return null;
+  if (typeof LV.ready === 'function' && !LV.ready()) return null;
+  const p = LV.premiumAt(x, z);
+  return (typeof p === 'number' && Number.isFinite(p)) ? p : null;
+}
+Sim.setLandValueSource(landPremiumAt);
+
 let warned = false;
 function warnOnce(msg) {
   if (warned) return; warned = true;
@@ -677,6 +711,40 @@ const api = {
   syncBuildings, canBuild, pickAvailable, cardOutput,
   setPopulation: (n) => HH.setPopulation(n),
 
+  /* ── 👥 THE DEMOGRAPHICS SEAM ──────────────────────────────────────────────
+     /src/demographics knows WHO the residents are; this module knows what its
+     firms are asking for and what they pay. Three functions join them and every
+     one of them is OPTIONAL on both sides:
+
+       setLabourSupply(fn)   fn() -> { bands: { unskilled, skilled, technical,
+                             advanced } } — how many residents are QUALIFIED for
+                             each band. Unregistered, hiring is education-blind
+                             exactly as it was before (households.js `hire`).
+       setArrivalTierMix(fn) fn() -> { low, mid, high } weights for where NEW
+                             residents land in the wealth tiers. Headcount only:
+                             no savings move, so `totalCinder()` is invariant
+                             across it and the audit is untouched.
+       labourMarket()        the read back — what the city's firms posted and
+                             what they filled, so the arrival pipeline can ask
+                             "is there work here for someone like me".
+
+     🔴 NOTHING HERE MOVES CINDER IN EITHER DIRECTION. That is not a promise
+     about care, it is the shape of the interface: three functions that carry
+     headcounts and weights, and no balance. ECONOMY.md documents four money
+     leaks found during development and every one of them looked correct in
+     review — the way a new seam avoids being the fifth is by having nothing to
+     leak. */
+  setLabourSupply: (fn) => HH.setLabourSupply(fn),
+  setArrivalTierMix: (fn) => HH.setArrivalTierMix(fn),
+  labourMarket: () => ({
+    /* Fresh copies, never a reference into HH's own state — the live bug this
+       codebase already paid for on the card seam was a host object stored BY
+       REFERENCE that leaked NaN into a panel. */
+    vacancies: { ...HH.state().vacancies },
+    employed: { ...HH.state().employed },
+    qualified: HH.labourSupply(),
+  }),
+
   /* 🌐 THE TRADE NETWORK SEAM. `tradeSync()` is the whole of it for the host —
      one call per economic day. The rest is exposed so a driver can exercise
      each step alone, because the live path cannot be tested at all until
@@ -685,6 +753,28 @@ const api = {
        re-implemented the credit rule would be testing itself, and the rule it
        enforces (credit `filled`, never the request) is the one that stops a
        seller shipping the same 40 units twice. */
+  /* ── 🔌 THE UTILITY LINK SEAM (/src/power) ────────────────────────────────
+     /src/power measures the electricity crossing the outside connection and
+     prices it against node-city's own per-minute Cinder scale; THIS module
+     settles it, inside runDay's audit window, through the two channels that are
+     already audited — the treasury for the import leg, the one capped export
+     faucet for the export leg. See sim.js's header above `settleUtility` for
+     the full argument, including why the settlement cannot happen where the
+     energy is measured.
+
+     🔴 `utilityTrade()` MOVES NOTHING. It accumulates a bill. The whole reason
+        the seam is shaped this way is that a module ticking at the host's
+        cadence cannot move money without moving it between two audit windows,
+        which is the structural blind spot ECONOMY.md's founding-mint entry
+        lives in. `utilityReport()` is the read back — what actually CLEARED,
+        never what was asked for. */
+  utilityTrade: (t) => (mounted ? Sim.noteUtilityTrade(t) : false),
+  utilityReport: () => (mounted ? Sim.utilityReport()
+                                : { arrears: 0, pendingImport: 0, pendingExport: 0,
+                                    pendingImportUnitMin: 0, pendingExportUnitMin: 0,
+                                    last: { day: -1, billed: 0, paid: 0, arrears: 0, earned: 0,
+                                            importUnitMin: 0, exportUnitMin: 0 } }),
+
   tradeSync,
   tradePayload: tradePublishPayload,
   tradePartners: (rows) => Trade.setPartners(rows),
@@ -698,6 +788,27 @@ const api = {
   log: () => Sim.log(),
   firms: () => Firms.alive(),
   firm: (id) => Firms.byId(id),
+  /* ⚰ THE BUSINESSES THAT ARE GONE. `firms()` is `Firms.alive()`, which filters
+     the BANKRUPT rung out — and `Firms.reap()` deletes the record inside
+     `runDay`, before any host tick can look at it. So without this there is no
+     way at all, from outside this package, to tell "that shop went bankrupt"
+     from "that shop was replaced": /src/tenants measured exactly that
+     ambiguity and could only file every closure as "wound up, last seen
+     HEALTHY". Bounded, read-only, and it moves nothing. */
+  closures: (n) => (mounted ? Sim.closures(n) : []),
+
+  /* 🏷 GROUND RENT, for a panel and for /src/tenants' overlay. `active` is the
+     honest answer to "is /src/landvalue in this build" — see landValueActive().
+     `today` is what was actually COLLECTED, never what was billed; the two
+     differ by exactly the shortfall of the firms that could not pay, which is
+     the number that says the mechanic is biting. */
+  groundRent: () => (mounted
+    ? { active: Sim.landValueActive(), today: Sim.state().flow.groundRent || 0 }
+    : { active: false, today: 0 }),
+  /* The distress ladder itself — its order, its labels and its colours. Read by
+     any surface that draws a rung, so the map, the economy panel and the tenant
+     ledger cannot show one business in three different colours. */
+  RUNGS: Firms.RUNGS, RUNG_META: Firms.RUNG_META,
   inventory: () => Sim.inventory(),
   price: (id) => Prices.priceOf(id),
   movers: (n) => Prices.movers(n),

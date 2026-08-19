@@ -95,6 +95,62 @@ let ESTATE_SINK = null;
 let estateWarned = false;
 export function setEstateSink(fn) { ESTATE_SINK = typeof fn === 'function' ? fn : null; }
 
+/* ── ⏱ WHEN A BUSINESS WAS FOUNDED — THE THIRD SEAM, AND IT MOVES NO MONEY ──
+   🔴 A FIRM USED TO CARRY NO TIME AT ALL. `found()` wrote a balance sheet, a
+   crew and a tile key and not one stamp, so nothing anywhere could answer "how
+   long has this business existed". That absence was not free: /src/lifepath had
+   to bound a worker's tenure by `tile.born` — the age of the MASONRY — because
+   it was the only time reference in reach. Demolishing and re-raising a
+   workplace then took every grade in it from 5 to 1 with nobody's job having
+   changed, and the module's own header recorded it as unfixable from that side.
+   It is fixed from THIS side, because this is the side that knows.
+
+   ⚠ THE STAMP IS AN ECONOMIC DAY, NOT A WALL CLOCK. `S.day` is the only clock
+     this package has and the only one its own state is denominated in. A reader
+     that wants years converts with the same days-per-year figure it already
+     derives from ECON — it must NOT compare this against `game.cityAge`, which
+     is a different clock that the catch-up cap can and does let drift.
+
+   ⚠ IT COSTS NOTHING AND IT MAY NOT. This is a monotone integer written once,
+     at founding, and never again. It touches no balance, so `totalCinder()` is
+     invariant across it by construction and the day audit cannot see it — which
+     is the correct relationship for a readout, and the same one `rentLife` has.
+
+   🔴 WHY A REGISTERED SOURCE AND NOT AN ARGUMENT. Exactly the reason
+   `setCapitalSource` gives one line up: sim.js owns `S.day`, sim.js already
+   imports firms.js, and importing it back to read a counter would close a
+   load-time cycle. Registering also means every founding path is stamped
+   without touching any of them — `syncBuildings`, `seedChain`, the bootstrap
+   and the re-founding path all go through `found()`.
+
+   ⚠ NO SOURCE ⇒ NO STAMP, and the fallback is `null` and never a number. The
+     tempting fallbacks are both worse than the absence:
+       · `0` would say "founded on the city's first day", i.e. every unstamped
+         firm in a mature city is as old as the city — a confident lie in the
+         direction that flatters.
+       · the CURRENT day would say "founded today", which is the failure mode a
+         reader of an old save would meet on every business at once.
+     `null` says the one true thing — this record predates the stamp — and a
+     reader falls back to whatever ceiling it had before this existed. */
+let CLOCK_SOURCE = null;
+export function setClockSource(fn) { CLOCK_SOURCE = typeof fn === 'function' ? fn : null; }
+function stampDay() {
+  if (!CLOCK_SOURCE) return null;
+  try {
+    const d = Number(CLOCK_SOURCE());
+    return (isFinite(d) && d >= 0) ? Math.floor(d) : null;
+  } catch (e) { return null; }
+}
+/* How long this business has traded, in economic days, against a day the caller
+   supplies. Returns null — never 0 — for a firm with no stamp, because "no
+   answer" and "founded this morning" are different statements. */
+export function ageDays(f, day) {
+  if (!f || f.foundedDay == null) return null;
+  const d = Number(day);
+  if (!isFinite(d)) return null;
+  return Math.max(0, d - f.foundedDay);
+}
+
 export function all() { return FIRMS.slice(); }
 export function alive() { return FIRMS.filter(f => f.rung !== 'BANKRUPT'); }
 export function byId(id) { return FIRMS.find(f => f.id === id) || null; }
@@ -129,10 +185,28 @@ export function found(out, opts) {
     // rolling books — the level gates read these
     revenueDay: 0, costDay: 0, profitDay: 0, customersDay: 0,
     profitStreak: 0, suppliers: {}, lifetimeRevenue: 0, lifetimeProfit: 0,
+    /* 🏷 GROUND RENT, paid and tallied. `rentDay` is this day's charge (the
+       panel and the bottleneck view read it); `rentLife` is every Cinder of
+       ground rent this business ever paid, and it is what lets the closure log
+       say whether a firm was in profit BEFORE its landlord. Both are readouts —
+       the money itself moved through `pay()` like every other cost. */
+    rentDay: 0, rentLife: 0,
     // last tick's diagnosis, for the bottleneck panel
     lastFill: 1, lastInputAvail: 1, lastProduced: 0, lastBottleneck: null, lastLeg: null,
     inventory: 0,
     tileKey: opts.tileKey || null,   // optional link back to a node-city tile
+    /* ⏱ THE FOUNDING STAMP. Written once, here, and never touched again — not
+       by `levelUp`, not by `closeDay`, not by `reap()`'s kept shell (a shell is
+       still the same business, so it keeps its birthday).
+       🔴 AND A RE-FOUNDED TILE IS A NEW BUSINESS, WHICH IS WHY THIS IS ON THE
+          RECORD AND NOT ON THE TILE. `syncBuildings` marks the old firm
+          BANKRUPT and calls `found()` again; that second call lands HERE, on a
+          brand-new record with a brand-new id, and takes TODAY. There is no
+          path by which a successor inherits its predecessor's age — the same
+          separation the closure log already exists to make readable ("that shop
+          went bankrupt" vs "that shop was replaced"). Stamping the tile instead
+          would have merged exactly the two things that log separates. */
+    foundedDay: stampDay(),
   };
   /* 💰 SEED CASH IS DRAWN, NOT PRINTED. `seedWant` is what the business would
      like to open with; `f.cash` is what an account actually paid for it, which
@@ -258,6 +332,51 @@ export function earn(f, amount) {
   f.revenueDay += amt;
   f.lifetimeRevenue += amt;
   return amt;
+}
+
+/* ── 💼 AN EQUITY SUBSCRIPTION IS NOT AN OPERATING COST ─────────────────────
+   Cash leaves a firm to capitalise a NEW business in the same city (sim.js
+   `drawPrivateCapital` — see ECON.firm.privateCapital for why that arc exists
+   at all). This deliberately does NOT go through `pay()`.
+
+   🔴 `pay()` ADDS TO `costDay`, AND `costDay` IS THE DAY'S PROFIT. Routing an
+   investment through it would book the subscription as an expense: the
+   investor's profit falls by what it invested, so its corporate tax falls, its
+   dividend to households falls, and — because `closeDay` walks the distress
+   ladder off exactly that number — a firm could be pushed a rung DOWN for the
+   act of backing a new business out of money it did not need. That is not a
+   different opinion about accounting, it is the ladder reacting to a
+   non-event.
+
+   ⚠ IT STILL CANNOT SPEND CASH IT DOES NOT HAVE. The rule `pay()` exists for is
+     kept here by clamping to the balance; the caller clamps again, to a surplus
+     ABOVE a floor, so this can never take a firm to zero. Both clamps are
+     deliberate: the caller's is the policy, this one is the invariant. */
+export function withdrawCapital(f, amount) {
+  const amt = Math.max(0, amount || 0);
+  if (amt <= 0) return 0;
+  const taken = Math.min(f.cash, amt);
+  f.cash -= taken;
+  return taken;
+}
+
+/* ── 🏷 GROUND RENT — the one cost a firm pays for WHERE it is ───────────────
+   The opposite call to `withdrawCapital` above, and for the opposite reason:
+   rent IS an operating cost, so it goes through `pay()` and lands in `costDay`,
+   in the day's profit and therefore in the distress ladder. That is the entire
+   mechanism by which "eventually one FAILS because rent gets too expensive"
+   can happen at all.
+
+   ⚠ AN UNPAID SHORTFALL IS NOT DEBT, exactly as it is not for households
+     (`HH.chargeRent`: "a missed payment that hits the landlord's revenue").
+     Modelling firm rent arrears as well would double-count the same shortfall —
+     the firm is already punished by having no cash, which is what `badDays`
+     counts. sim.js credits the landlord with what was ACTUALLY PAID; crediting
+     the bill would be ECONOMY.md's "retail → producer" leak in a new place. */
+export function payGroundRent(f, amount) {
+  const paid = pay(f, amount);
+  if (paid > 0) { f.rentDay += paid; f.rentLife = (f.rentLife || 0) + paid; }
+  return paid;
 }
 
 /* ── PAYROLL ────────────────────────────────────────────────────────────────
@@ -429,8 +548,9 @@ export function closeDay(f) {
     f.throttle = 0; f.inventory = 0;
   }
 
-  const closed = { revenue: f.revenueDay, cost: f.costDay, profit, tax, rung: f.rung, was: prev };
-  f.revenueDay = 0; f.costDay = 0; f.customersDay = 0;
+  const closed = { revenue: f.revenueDay, cost: f.costDay, profit, tax, rung: f.rung,
+                   was: prev, rent: f.rentDay || 0 };
+  f.revenueDay = 0; f.costDay = 0; f.customersDay = 0; f.rentDay = 0;
   return closed;
 }
 
@@ -553,6 +673,18 @@ export function serialize() {
       suppliers: Object.keys(f.suppliers || {}), tileKey: f.tileKey,
       revenueAvg: f.revenueAvg || 0, customersAvg: f.customersAvg || 0,
       lifetimeRevenue: f.lifetimeRevenue || 0, lifetimeProfit: f.lifetimeProfit || 0,
+      /* 🏷 A READOUT, AND IT STILL RIDES THE SAVE. `rentLife` moves no balance,
+         but it is what the closure log reads to say a business would have been
+         in profit but for its ground rent — and a sentence that is true before
+         a reload and false after it is worse than no sentence. The gauntlet's
+         save/load round has caught three fields already. */
+      rentLife: Math.round((f.rentLife || 0) * 100) / 100,
+      /* ⏱ AND THE FOUNDING STAMP RIDES THE SAVE, as `null` when there is none.
+         Writing it as a number would be a lie on reload; leaving the KEY out
+         would be indistinguishable from an old save, which is a different
+         state with a different fallback. So the key is always present and the
+         absence is explicit. */
+      foundedDay: (f.foundedDay == null ? null : (f.foundedDay | 0)),
     })),
   };
 }
@@ -591,6 +723,24 @@ export function load(raw) {
       revenueAvg: Number(r.revenueAvg) || 0, customersAvg: Number(r.customersAvg) || 0,
       lastFill: 1, lastInputAvail: 1, lastProduced: 0, lastBottleneck: null, lastLeg: null,
       inventory: Math.max(0, Number(r.inventory) || 0), tileKey: r.tileKey || null,
+      /* `rentDay` is a WITHIN-day accumulator like `costDay` beside it and is
+         deliberately not saved: a save taken mid-day reloads at the top of a
+         day, so restoring a part-day charge would double-count it. */
+      rentDay: 0, rentLife: Math.max(0, Number(r.rentLife) || 0),
+      /* ⏱ 🔴 AN OLD SAVE HAS NO STAMP AND MUST NOT ACQUIRE ONE HERE. `found()`
+         is not on this path precisely so that a firm restored from a save keeps
+         its own birthday rather than being re-founded on the spot; the same
+         argument says a firm that never HAD a birthday does not get today's.
+         Every firm in a mature city reading "founded today" is the single worst
+         outcome available here — it would show up as a whole workforce demoted
+         to grade 1 by the act of reloading. `null` means "this record predates
+         the stamp", every reader falls back to what it used before the stamp
+         existed, and the city heals one business at a time as tiles turn over.
+         ⚠ A NEGATIVE OR NON-FINITE VALUE IS ALSO AN ABSENCE, not a clamp to 0:
+           0 is a real, meaningful day (the bootstrap firms carry it), so
+           coercing a corrupt byte into it would manufacture a founder. */
+      foundedDay: (r.foundedDay == null || !isFinite(Number(r.foundedDay)) || Number(r.foundedDay) < 0)
+                  ? null : Math.floor(Number(r.foundedDay)),
     };
     if (r.workers) for (const b in f.workers) f.workers[b] = Math.max(0, (r.workers[b] | 0));
     if (Array.isArray(r.suppliers)) for (const s of r.suppliers) f.suppliers[s] = true;

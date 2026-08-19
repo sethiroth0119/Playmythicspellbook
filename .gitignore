@@ -88,3 +88,16 @@ assets-source/
 # Local run logs from the asset tooling.
 migration/*.log
 migration/*.err
+# Gauntlet harness: vendored three.js + regenerable screenshots
+.gauntlet/package/
+.gauntlet/*.tgz
+.gauntlet/shots/**/*.png
+.gauntlet/progress.html
+
+# Transient git worktrees created by in-flight Workflow builders — each is a
+# full checkout and is removed when the run ends. Never commit these.
+.claude/worktrees/
+.gauntlet/patch-preview.html
+.gauntlet/probe-*.mjs
+.gauntlet/shots/wip-*/
+.gauntlet/shots/*.json

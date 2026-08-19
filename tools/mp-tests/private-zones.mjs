@@ -35,7 +35,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SRC  = process.env.MP_SRC || join(ROOT, 'public', 'index.html');
 
-const lines = readFileSync(SRC, 'utf8').split('\n');
+// Normalised to LF — see perspective.mjs. The wiring scan below matches on line
+// content, and a trailing \r would sit inside every captured identifier.
+const lines = readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n').split('\n');
 function extractFn(name) {
   const start = lines.findIndex(l => l.startsWith('function ' + name + '('));
   if (start === -1) throw new Error('could not find top-level `function ' + name + '(` in index.html');

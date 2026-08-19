@@ -88,6 +88,22 @@ const S = {
      without it nothing can tell "no firm ever closed holding cash" apart from
      "the wind-up path is broken again". */
   estateReceived: 0,
+  /* 💼 LIFETIME TALLY OF PRIVATE CAPITAL SUBSCRIBED INTO NEW BUSINESSES, and it
+     is a lifetime tally for the same reason `estateReceived` above it is: a
+     founding happens BETWEEN two runDays (the host's 4 s `syncBuildings`), so a
+     per-day `flow` key is wiped by the `zeroFlow()` at the top of the very next
+     runDay and reads 0 to everything that ever looks at it. That is not a
+     hypothetical — it was written as `flow.equity` first, and every sample of a
+     600-day run read exactly 0.0 while the mechanism was funding every single
+     founding in the city.
+     🔴 A READOUT, NOT A BOOKING. Both ends of the transfer are firm cash, i.e.
+        the same term of `totalCinder()`; `audit()` does not mention this and
+        deleting it changes no balance. Not serialised, exactly like
+        `estateReceived` — a reloaded city reports what IT has subscribed. The
+        per-firm `rentLife` beside it in firms.js IS serialised, because a
+        closure sentence that is true before a reload and false after it is
+        worse than no sentence; this one is only ever a running total. */
+  equitySubscribed: 0,
   /* 🔴 THE TREASURY DRAW ALLOWANCE IS PER WINDOW, NOT PER FOUNDING.
      `treasuryDrawPct` used to be applied to the REMAINING balance on every call,
      and `syncBuildings` founds every new tile in ONE pass — so N foundings took
@@ -99,11 +115,35 @@ const S = {
   foundingDrawBudget: 0,
   foundingDrawArmed: false,
   INV: {},              // resource id → units held by the city
+  /* ⚰ The last ~120 businesses that were wound up and deleted, so something
+     outside this module can say WHICH one died and how. Read-only, bounded,
+     never serialised, and no term of `totalCinder()` — see the note at the
+     `reap()` call in runDay. */
+  closures: [],
   /* Per-day flow readouts, for the panel and the audit. */
   flow: { wages: 0, shopping: 0, b2b: 0, rent: 0, tax: 0, benefits: 0,
           imports: 0, exports: 0, faucet: 0, payout: 0, freight: 0, interest: 0,
           civic: 0, infrastructure: 0, upkeep: 0, welfare: 0, unmetSubsistence: 0,
           founding: 0, estate: 0,
+          /* 🏷 GROUND RENT collected from businesses today. A READOUT OF A
+             TRANSFER, never a booking — the money moved from firms to the
+             landlords and to the treasury inside `runGroundRent`, and both ends
+             are already terms of `totalCinder()`. `audit()` does not mention it
+             and deleting the key would leave the books balancing exactly as
+             they do. (The private-capital subscription that pairs with it is
+             NOT here, and could not be: see `equitySubscribed` below.) */
+          groundRent: 0,
+          /* 🔌 UTILITY TRADE — READOUTS ONLY, AND THAT DISTINCTION IS THE WHOLE
+             SAFETY ARGUMENT. Electricity crossing the outside connection is
+             settled by `settleUtility()` through the SAME two channels goods
+             already use: the import leg is debited from the treasury and booked
+             to `flow.imports`, the export leg is folded into the day's export
+             revenue and enters through the SAME capped faucet. These two keys
+             are a breakdown of that, never a second booking — nothing reads
+             them, `audit()` does not mention them, and if they were deleted the
+             books would balance exactly as they do now. See the header above
+             `settleUtility`. */
+          utilityImport: 0, utilityExport: 0,
           /* 💰 Declared, not created on first payout. `zeroFlow()` iterates the
              keys that EXIST, so a key born mid-run made the flow object a
              different shape in a warm process than in a cold one. Harmless here
@@ -165,6 +205,19 @@ const S = {
   serviceValue: {},     // industry → Cinder of service revenue today
   observed: {},         // resId → {supply, demand}
   demandEMA: {},        // resId → smoothed daily offtake (see productionTargets)
+  /* 🔌 THE UTILITY LINK — energy another module measured, waiting to be paid
+     for. See `noteUtilityTrade` and `settleUtility` for why the money moves
+     here and not where the energy was measured. NOT a term of `totalCinder()`:
+     `owedImport` and `earnedExport` are obligations that have not moved yet,
+     and `arrears` is a debt, not a balance. All three ride the save. */
+  utility: { owedImport: 0, earnedExport: 0, arrears: 0,
+             importUnitMin: 0, exportUnitMin: 0,
+             /* Last settlement, for the panel that measured the energy: what it
+                asked for, what actually cleared. A meter that reports what it
+                REQUESTED rather than what it was PAID is the shape of every
+                leak ECONOMY.md lists. */
+             last: { day: -1, billed: 0, paid: 0, arrears: 0, earned: 0,
+                     importUnitMin: 0, exportUnitMin: 0 } },
 };
 
 export function state() { return S; }
@@ -184,15 +237,23 @@ export function reset(nodeId) {
   S.nodeId = nodeId == null ? null : String(nodeId);
   S.day = 0; S.dayFrac = 0; S.treasury = 0; S.INV = {};
   S.charter = 0; S.charterIssued = 0; S.faucetLifetime = 0; S.estateReceived = 0;
-  S.importsLifetime = 0; S.payoutLifetime = 0;
+  S.importsLifetime = 0; S.payoutLifetime = 0; S.equitySubscribed = 0;
   S.foundingDrawBudget = 0; S.foundingDrawArmed = false;
   /* ⚠ `payoutInFlight` IS ZEROED HERE AND THAT IS WHY index.js GUARDS ITS
      SETTLEMENT WITH `mountGen`. reset() runs on every mount; a promise from the
      previous city landing afterwards must not decrement a term that now belongs
      to a different city. */
   S.payoutAllowed = true; S.payoutOwed = 0; S.payoutInFlight = 0;
-  S.log = []; S.booted = false;
+  S.log = []; S.booted = false; S.closures = [];
   S.outputValue = {}; S.serviceValue = {}; S.observed = {}; S.demandEMA = {};
+  /* 🔌 …including the utility link, and including its ARREARS. A debt that
+     survived reset() would follow one city's unpaid electricity bill into the
+     next city loaded in the same page, and would curtail a grid that had never
+     imported a watt. */
+  S.utility = { owedImport: 0, earnedExport: 0, arrears: 0,
+                importUnitMin: 0, exportUnitMin: 0,
+                last: { day: -1, billed: 0, paid: 0, arrears: 0, earned: 0,
+                        importUnitMin: 0, exportUnitMin: 0 } };
   /* Cleared for the same reason as everything above it: after reset() this module
      must hold ONE known state, so that "is a repeat run identical" is a question
      answered by reading the code rather than by running it twice and hoping. This
@@ -227,6 +288,99 @@ function addImports(amount) {
   if (!(amount > 0)) return;
   S.flow.imports += amount;
   S.importsLifetime += amount;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🔌 THE UTILITY LINK — electricity crossing the outside connection.
+   ----------------------------------------------------------------------------
+   /src/power measures how much energy went out over the Highway Interchange and
+   how much came in, and it prices that energy against node-city's own per-minute
+   Cinder scale (POWER.trade — see its header for the derivation). It does NOT
+   move any money. It calls `noteUtilityTrade()` and stops.
+
+   🔴 WHY THE MONEY MOVES HERE AND NOWHERE ELSE, and this is Rule 1 itself.
+      Cinder is never minted. There are exactly two channels through which value
+      may cross this city's boundary and both are already audited:
+        · OUT — `addImports()`, debited from the treasury, an `outgoings` term.
+        · IN  — the export FAUCET, and only against real exported volume, hard
+                clamped by `ECON.faucet.maxPerMin`.
+      Exported electricity is real exported volume, so it goes through the
+      faucet, under the SAME per-day ceiling goods revenue is under — one
+      faucet, one cap, and no combination of the two can turn into the Forge.
+      Crediting the player for exported power anywhere else would be the retired
+      Cinder Forge with a new label on it, and it would look completely correct
+      in review, exactly as all four leaks in ECONOMY.md did.
+
+   🔴 AND WHY IT MOVES INSIDE runDay AND NOT WHEN IT IS MEASURED.
+      `audit()` compares `totalCinder()` at the top of runDay with the same at
+      the bottom. Money that moves BETWEEN two windows is invisible to it — that
+      is not a theory, it is the blind spot the founding mint lived in for its
+      whole life ("the books balanced because the minting happened between two
+      audit windows"). The power tick runs at the host's cadence, which is
+      nowhere near an economic day, so what it reports is ACCUMULATED here and
+      SETTLED from inside runDay, where the audit can see every Cinder of it.
+
+   🔴 AND WHY AN UNPAID BILL CURTAILS THE IMPORT INSTEAD OF BEING FORGIVEN.
+      `settleUtility` pays `min(treasury, billed)` like every other municipal
+      charge in this file. The difference is that the ENERGY WAS ALREADY
+      DELIVERED — the city ran on it. Writing the shortfall off would hand the
+      player free electricity, which is precisely the "credited whether or not
+      the shop could pay" shape of the third leak. So the shortfall becomes
+      `arrears`, it is reported back, and /src/power stops importing until it
+      clears. The neighbour cuts you off; the panel says so.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/** Called by /src/power once per host tick. Values are in Cinder; the unit-min
+    figures ride along purely so the panel can report what actually cleared
+    rather than what it asked for. Accumulates only — moves nothing. */
+export function noteUtilityTrade(t) {
+  if (!t || typeof t !== 'object') return false;
+  const U = S.utility;
+  /* ⚠ EVERY FIELD IS SANITISED, because this one is called from ANOTHER MODULE
+     and gauntlet round 1 exists because a NaN from the host poisoned the
+     treasury and the audit with it. A non-finite or negative figure is dropped,
+     not clamped to something plausible. */
+  const num = (v) => (typeof v === 'number' && isFinite(v) && v > 0 ? v : 0);
+  U.owedImport   += num(t.importValue);
+  U.earnedExport += num(t.exportValue);
+  U.importUnitMin += num(t.importUnitMin);
+  U.exportUnitMin += num(t.exportUnitMin);
+  return true;
+}
+
+/** What /src/power needs to know to draw an honest meter and to curtail. */
+export function utilityReport() {
+  const U = S.utility;
+  return { arrears: U.arrears,
+           pendingImport: U.owedImport, pendingExport: U.earnedExport,
+           pendingImportUnitMin: U.importUnitMin, pendingExportUnitMin: U.exportUnitMin,
+           last: { day: U.last.day, billed: U.last.billed, paid: U.last.paid,
+                   arrears: U.last.arrears, earned: U.last.earned,
+                   importUnitMin: U.last.importUnitMin, exportUnitMin: U.last.exportUnitMin } };
+}
+
+/* Settles the day's link. Returns the EXPORT revenue, which the caller folds
+   into the day's export earnings so it passes under the one faucet ceiling.
+   ⚠ RUNS INSIDE runDay's audit window. Called from exactly one place. */
+function settleUtility() {
+  const U = S.utility;
+  const billed = U.owedImport + U.arrears;
+  const paid = Math.min(Math.max(0, S.treasury), billed);
+  if (paid > 0) {
+    S.treasury -= paid;
+    addImports(paid);                 // the Cinder left the city with the energy
+    S.flow.utilityImport += paid;     // …and the same Cinder, broken out. Readout.
+  }
+  U.arrears = Math.max(0, billed - paid);
+  if (U.arrears > 0 && U.owedImport > 0) {
+    logEvent('bad', 'The city could not pay its electricity bill (' +
+      U.arrears.toFixed(2) + ' 🔥 outstanding). The neighbouring grid has cut the import.');
+  }
+  const earned = U.earnedExport;
+  U.last = { day: S.day, billed, paid, arrears: U.arrears, earned,
+             importUnitMin: U.importUnitMin, exportUnitMin: U.exportUnitMin };
+  U.owedImport = 0; U.earnedExport = 0; U.importUnitMin = 0; U.exportUnitMin = 0;
+  return earned;
 }
 
 /* ── Inventory helpers. All resource movement goes through these two so a
@@ -326,14 +480,82 @@ function armFoundingWindow() {
   S.foundingDrawArmed = true;
 }
 
-/* The capital source firms.js calls at every founding. Charter fund first: it
-   exists for exactly this, and draining the treasury first would take the money
-   the city needs the same day for benefits, imports and freight. */
+/* ── 💼 PRIVATE CAPITAL — the city's own savers back the next business ───────
+   🔴 THE FINDING THIS EXISTS FOR, measured on a 34-lot commercial district
+   driven 600 economic days: past day 480 `charterIssued` was pinned at its
+   700,000 🔥 lifetime ceiling and `charter` had drained to 0, so every
+   re-founded shopfront opened with nothing and died from an empty till, for
+   ever — 90 re-foundings, all with the same ledger sentence, all of them
+   naming the wrong cause. AND THE CITY WAS NOT POOR: 692,528 🔥 of its
+   696,048 🔥 was firm cash, 74% of it in one landlord and one power plant,
+   against 2,275 🔥 in household savings and 72 🔥 in the treasury.
+
+   So the fault is not the size of the charter fund. It is that the circular
+   flow has no arrow from SAVINGS back to NEW BUSINESS: money that reaches an
+   incumbent's till can be spent on inputs, on wages, on upkeep and on
+   dividends, and can never be invested. This is that arrow. See
+   ECON.firm.privateCapital for the full argument, the four rejected designs,
+   and why the floor is a floor rather than a percentage.
+
+   🔴 IT MOVES THE AUDITED TOTAL BY EXACTLY ZERO. Both ends are firm cash, i.e.
+   the same term of `totalCinder()`, so a founding in the host's between-tick
+   gap is invisible to `audit()` in the only sense that is safe — because
+   nothing was created or destroyed, not because nobody was counting. That
+   distinction is the whole of ECONOMY.md's founding-mint story.
+
+   ⚠ THE NEWBORN IS EXCLUDED FROM ITS OWN SUBSCRIPTION, AND IT IS BELT AND
+     BRACES TODAY. `Firms.found()` calls the capital source BEFORE it pushes the
+     firm onto the roster, so `alive()` does not contain it yet — and it holds 0
+     cash, so it would fail the floor twice over. The guard is here because
+     "it would fail anyway" is exactly how a firm comes to fund itself the first
+     time somebody reorders `found()` or relaxes the floor, and a firm that
+     subscribes its own seed capital is a mint that costs nothing to write. */
+function drawPrivateCapital(need, newborn) {
+  const P = ECON.firm.privateCapital;
+  if (!P || !(P.floorDays > 0) || !(need > 0)) return 0;
+  const pool = [];
+  let surplus = 0;
+  for (const inv of Firms.alive()) {
+    if (inv === newborn) continue;
+    if (inv.rung !== 'HEALTHY') continue;
+    if (P.requireProfit && !(inv.lifetimeProfit > 0)) continue;
+    const floor = Math.max(0, Firms.dailyOperatingCost(inv)) * P.floorDays;
+    const s = inv.cash - floor;
+    if (s > 1e-6) { pool.push({ inv, s }); surplus += s; }
+  }
+  if (surplus <= 1e-6) return 0;
+  const take = Math.min(need, surplus * P.maxShareOfPool);
+  if (take <= 1e-6) return 0;
+  /* Pro rata on surplus, so the firm with the most spare money puts up the most
+     of it and no single investor is singled out by roster order. `withdrawCapital`
+     clamps to the balance, so float drift can only ever take LESS. */
+  let got = 0;
+  for (const p of pool) got += Firms.withdrawCapital(p.inv, take * (p.s / surplus));
+  S.equitySubscribed += got;
+  return got;
+}
+
+/* The capital source firms.js calls at every founding.
+   ORDER: private capital, then the charter fund, then the treasury.
+   🔴 PRIVATE FIRST, AND THAT IS THE FIX FOR THE TREADMILL. The charter
+   allowance is finite and irreplaceable — 700,000 🔥 for the whole life of a
+   city — while private surplus regenerates every day the city trades. Spending
+   the irreplaceable account while the city is sitting on 692,528 🔥 of
+   replaceable one is exactly how the fund came to be dry on day 480. At
+   bootstrap there is no private surplus at all (a firm has to be HEALTHY, in
+   lifetime profit, and holding 30 days of cover before it can be a source), so
+   the opening city is funded from the charter tranche exactly as before.
+   Treasury remains LAST: it is the money the city needs the same day for
+   benefits, imports and freight. */
 function fundFounding(f, want) {
   const need = Math.max(0, Number(want) || 0);
   if (need <= 0) return 0;
-  let paid = Math.max(0, Math.min(S.charter, need));   // never a negative "draw"
-  S.charter -= paid;
+  let paid = drawPrivateCapital(need, f);
+  if (paid < need - 1e-9) {
+    const fromCharter = Math.max(0, Math.min(S.charter, need - paid));  // never a negative "draw"
+    S.charter -= fromCharter;
+    paid += fromCharter;
+  }
   if (paid < need - 1e-9) {
     /* The fund is dry. The city may still back the business out of its own
        treasury — that is a genuine investment of money the city earned, and it
@@ -383,6 +605,26 @@ function receiveEstate(f, amount) {
   return amt;
 }
 Firms.setEstateSink(receiveEstate);
+
+/* ── ⏱ AND THE THIRD SEAM, WHICH MOVES NOTHING AT ALL ───────────────────────
+   The two above exist because firms.js may not touch an account it does not
+   own. This one exists because firms.js may not READ a clock it does not own,
+   for the identical structural reason: sim.js already imports firms.js, so
+   firms.js importing sim.js back to reach `S.day` would close a load-time
+   cycle. One function, one integer, no balance on either side of it.
+
+   ⚠ `S.day` AND NOT `S.day + S.dayFrac`. The stamp is compared against `S.day`
+     by every reader, and mixing a fractional stamp with an integer day would
+     make a firm founded at 09:59 on day 12 read as −0.99 days old for the rest
+     of that day. Whole days on both sides; the loss is under one economic day
+     on a quantity nothing prints to better than a tenth of a year (≈ 2.4 days).
+   ⚠ REJECTED: stamping the wall clock instead, so that /src/lifepath could
+     compare it directly against game.cityAge. The two clocks are NOT the same
+     clock — `ECON.clock.maxCatchUpDays` deliberately drops idle days, so a city
+     left running in a background tab advances cityAge and not S.day — and a
+     package whose whole state is denominated in economic days must not store
+     one field in a different unit for a consumer's convenience. */
+Firms.setClockSource(() => S.day);
 
 /* ════════════════════════════════════════════════════════════════════════════
    🏗 SEEDING — a city with no firms has no economy, so bootstrap one from what
@@ -1073,6 +1315,134 @@ function payUpstream(buyer, inp, units) {
   }
 }
 
+/* ═════════════════════════════════════════════════════════════════════════════
+   🏷 GROUND RENT — the cost of BEING SOMEWHERE, and the one a business can die of
+   ----------------------------------------------------------------------------
+   "Eventually one FAILS because rent gets too expensive."
+
+   🔴 BEFORE THIS IT COULD NOT HAPPEN, and that was measured rather than
+   assumed. `Firms.dailyOperatingCost()` is wages + inputs; `ECON.tax.property`
+   is charged on HOUSEHOLD rent in `runShopping` below and on nothing else; and
+   no file in /src/economy mentioned `MythicLandValue` at all. Land value
+   decided what DEVELOPED on a plot — /src/tenants prices it into a bid — and
+   then never appeared on a balance sheet again. Rent could deter a company from
+   opening and could never once pressure one that was already there.
+
+   ── WHERE THE MONEY GOES, WHICH IS THE ONLY QUESTION THAT CAN BREAK RULE 1 ──
+   The SAME channel household rent already uses, thirty lines below, and
+   deliberately not a new one:
+
+     · the property tax slice comes OUT OF the rent, never on top of it. That is
+       ECONOMY.md's second leak verbatim ("charged on top of rent instead of out
+       of it. Minted 2% of all rent"), which is why `ptax` is subtracted from
+       `net` here rather than added beside it.
+     · the net is landlord REVENUE, split across the city's `landlord` firms — a
+       landlord is a business with its own costs, not a sink.
+     · with no landlord firm in the city the net lands in the treasury as
+       municipal ground revenue, because it has to land SOMEWHERE inside the loop
+       or the audit correctly reports destroyed Cinder. Same fallback, same
+       reason, as the housing rent below.
+     · and it is credited with what was ACTUALLY PAID. A firm that cannot cover
+       its rent pays what it has and the landlord's revenue falls by the
+       shortfall. Crediting the BILL is ECONOMY.md's third leak ("producers
+       credited whether or not the shop could pay") with the arrow turned round.
+
+   🔴 ONLY `ptax` ENTERS `flow.tax`, and the municipal fallback deliberately does
+   not — identical to `runShopping`. `flow.tax` is an INCOME term of the payout
+   basis at step 9b, so booking the whole rent there would hand the player a
+   quarter of every Cinder the city's businesses pay in ground rent. sim.js's own
+   warning at 9b is about new CLAIMS on the treasury funding themselves back out
+   of `outgoings`; this is that hazard mirrored onto the income side, and the
+   conservative reading is also the one the code beside it already takes.
+
+   ── WHY IT IS CHARGED HERE, BETWEEN SHOPPING AND UPKEEP ─────────────────────
+   After `runShopping` so the day's takings are already in the till — a shop
+   charged before it has sold anything fails for the calendar rather than for the
+   rent. Before `runFirmUpkeep`, which spends a firm's EXCESS cash on goods: rent
+   is a prior claim on a business, not a discretionary purchase, and letting
+   upkeep go first would let a firm shop its way out of its own rent.
+   ⚠ AND IN runDay ONLY, NOT IN runPartial. Rent is a discrete daily bill and
+     belongs with the discrete half of the tick (payroll close, tax, the distress
+     ladder) for the same reason those are there. `runDay` is always called with
+     days === 1 by `tick()`; the argument is honoured anyway so that a future
+     caller catching up several days cannot silently charge one.
+
+   ⚠ NO /src/landvalue ⇒ NO RENT AT ALL. The source returns null and this charges
+     nothing. It does not fall back to a default premium: "a guarded read that
+     silently substitutes a plausible value is indistinguishable from a working
+     integration" is /src/landvalue's own most expensive lesson, and it applies
+     with more force here because the substitute would be moving money.
+   ⚠ AND THE PREMIUM, NOT `valueAt()`. See ECON.firm.groundRent — the printed
+     value carries an unbounded city-wide term (`decorPoints()`), so renting off
+     it would charge every business in the city for a garden planted across town,
+     and would keep doing it for ever.
+   ═════════════════════════════════════════════════════════════════════════════ */
+let LANDVALUE_SOURCE = null;
+
+/* index.js registers this, for the same reason it registers the capital source
+   and the estate sink: `window.MythicLandValue` is a bridge read, and every
+   `window` read in this package lives in index.js next to the rest of them. */
+export function setLandValueSource(fn) {
+  LANDVALUE_SOURCE = typeof fn === 'function' ? fn : null;
+}
+
+/* Is a land value source registered AND answering? index.js registers one
+   unconditionally, so "registered" says nothing — the honest question is
+   whether it returned a number for the last plot it was asked about, which is
+   what tells a panel apart from a build where /src/landvalue 404'd. */
+export function landValueActive() {
+  if (!LANDVALUE_SOURCE) return false;
+  for (const f of Firms.alive()) if (premiumFor(f) != null) return true;
+  return false;
+}
+
+/* The location premium of the plot a firm stands on, or null for "no answer".
+   `f.tileKey` is node-city's own 'x,z'. A firm with no tile — every bootstrap
+   firm — is not standing anywhere and pays no ground rent. */
+function premiumFor(f) {
+  if (!LANDVALUE_SOURCE || !f || !f.tileKey) return null;
+  const parts = String(f.tileKey).split(',');
+  if (parts.length !== 2) return null;
+  const x = Number(parts[0]), z = Number(parts[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+  let p = null;
+  try { p = LANDVALUE_SOURCE(x, z); } catch (e) { p = null; }
+  /* 🔴 A HOSTILE READ IS "NO ANSWER", NOT ZERO AND NOT NaN. The gauntlet's
+     round 1 exists because an Infinity that survived a guard once ran three
+     economic days off a bad clock read and moved real money. */
+  if (p == null || !Number.isFinite(p) || p < 0) return null;
+  return p;
+}
+
+function runGroundRent(days) {
+  if (!LANDVALUE_SOURCE) return;
+  const R = ECON.firm.groundRent;
+  const exempt = R.exemptIndustries || [];
+  let collected = 0;
+  for (const f of Firms.alive()) {
+    if (exempt.indexOf(f.ind) >= 0) continue;
+    const premium = premiumFor(f);
+    if (premium == null) continue;
+    const bill = premium * R.perPremiumDay * Math.max(0, days);
+    if (bill <= 0) continue;
+    collected += Firms.payGroundRent(f, bill);
+  }
+  if (collected <= 0) return;
+
+  const ptax = collected * ECON.tax.property;
+  const net = collected - ptax;
+  S.treasury += ptax;
+  S.flow.tax += ptax;
+  /* ⚠ The landlords that RECEIVE the rent are exactly the firms exempted from
+     PAYING it, which is not a coincidence — it is the reason they are exempt.
+     The alternative is a firm billing itself and the city counting the round
+     trip twice. */
+  const landlords = Firms.byIndustry('landlord');
+  if (landlords.length) for (const l of landlords) Firms.earn(l, net / landlords.length);
+  else S.treasury += net;
+  S.flow.groundRent += collected;
+}
+
 /* ── Shopping: households buy from retail/service firms. ──────────────────── */
 function runShopping(days) {
   const rent = HH.chargeRent(days);
@@ -1215,6 +1585,11 @@ function runDay(days, host) {
   runProduction(days, host);
   runShopping(days);
 
+  /* 2b. 🏷 GROUND RENT — after the day's takings are in the till and before a
+     firm may spend its excess on upkeep. Both halves of that placement are
+     argued in runGroundRent's header. */
+  runGroundRent(days);
+
 
   // 3. TRADE. Surplus out, gaps in.
   const surplus = {}, shortfall = {};
@@ -1254,7 +1629,16 @@ function runDay(days, host) {
      exported volume. Clamped hard by ECON.faucet.maxPerMin so no combination of
      trades can turn this into the Forge. */
   const capPerDay = ECON.faucet.maxPerMin * ECON.clock.dayMin * days;
-  const earned = traded.revenue;
+  /* 🔌 THE UTILITY LINK SETTLES HERE, and it settles into the SAME `earned`.
+     Electricity that left the city over the outside connection is exported
+     volume like any other, so its revenue passes under the ONE faucet ceiling
+     rather than beside it — a second, separately-capped faucet is two faucets
+     however carefully each one is clamped. The import leg has already left the
+     treasury inside settleUtility(), booked to `flow.imports` where the payout
+     basis at step 10 nets it off. See settleUtility's header. */
+  const utilityEarned = settleUtility();
+  S.flow.utilityExport += utilityEarned;
+  const earned = traded.revenue + utilityEarned;
   const faucet = Math.min(earned * ECON.faucet.perExportUnit, capPerDay);
   S.treasury += faucet;
   S.flow.exports += faucet;
@@ -1348,8 +1732,28 @@ function runDay(days, host) {
 
     if (closed.rung !== was) {
       if (closed.rung === 'BANKRUPT') {
+        /* 🏷 WHY IT DIED, WHEN THE BOOKS CAN ACTUALLY SAY SO. Every closure in
+           this city used to read the same sentence, which is exactly what made
+           the churn treadmill unreadable: 345 identical rows cannot tell a firm
+           that failed of its rent from one that opened with no capital.
+           The claim is made from the firm's own ledger and only when the ledger
+           supports it — `lifetimeProfit` is negative AND adding back every
+           Cinder of ground rent it ever paid turns it positive. That is
+           precisely "this business traded profitably and its landlord took the
+           difference", and it is not sayable about a firm that was losing money
+           on its trading anyway. */
+        const rentLife = f.rentLife || 0;
+        const beforeRent = (f.lifetimeProfit || 0) + rentLife;
+        const rentKilledIt = rentLife > 0 && (f.lifetimeProfit || 0) <= 0 && beforeRent > 0;
         logEvent('bad', '🏚 ' + f.name + ' (' + f.out + ') went bankrupt. ' +
-                        Firms.employeeCount(f) + ' jobs lost.');
+                        Firms.employeeCount(f) + ' jobs lost.' +
+                        (rentKilledIt
+                          ? ' 🏷 Ground rent took ' + Math.round(rentLife).toLocaleString() +
+                            ' 🔥 — it was ' + Math.round(beforeRent).toLocaleString() +
+                            ' 🔥 in profit before the rent.'
+                          : rentLife > 0
+                            ? ' Ground rent over its life: ' + Math.round(rentLife).toLocaleString() + ' 🔥.'
+                            : ''));
         f.reported = true;
       } else if (Firms.RUNGS.indexOf(closed.rung) > Firms.RUNGS.indexOf(was)) {
         logEvent('bad', '⚠ ' + f.name + ' → ' + Firms.RUNG_META[closed.rung].label + '.');
@@ -1374,7 +1778,24 @@ function runDay(days, host) {
       }
     }
   }
-  Firms.reap();
+  /* ⚰ THE CLOSURE RECORD — read-only, and it exists because firms.js's own
+     `reap()` header states the problem and nothing had ever solved it: "a
+     business that vanishes between frames never gets explained to the player".
+     `reap()` has always RETURNED its dead and every caller has always thrown
+     them away, so by the time any observer outside this module looks, the firm
+     — its name, its rung, its bad days — is simply gone. /src/tenants binds a
+     shopfront to a company and cannot otherwise say whether the business there
+     went bankrupt or was merely replaced.
+     🔴 IT MOVES NOTHING AND IT IS NOT SERIALISED. A bounded ring of plain
+        strings and numbers, read by `closures()`, invisible to `totalCinder()`
+        and to `audit()`. Deleting these three lines changes no balance. */
+  for (const d of Firms.reap()) {
+    S.closures.push({ day: S.day, id: d.id, name: d.name, out: d.out, ind: d.ind,
+                      tileKey: d.tileKey || null, rung: d.rung,
+                      badDays: d.badDays | 0, level: d.level | 0,
+                      lifetimeProfit: Math.round(d.lifetimeProfit || 0) });
+    if (S.closures.length > 120) S.closures.shift();
+  }
 
   // 8. WEALTH MOBILITY and SPECIALIZATION.
   HH.settle(days);
@@ -1701,6 +2122,11 @@ export function notePayoutDelivered(amount) {
 /* ════════════════════════════════════════════════════════════════════════════
    📊 SNAPSHOT — everything the UI and the bottleneck tracer read.
    ════════════════════════════════════════════════════════════════════════════ */
+export function closures(n) {
+  const a = S.closures || [];
+  return n ? a.slice(-Math.max(1, n | 0)) : a.slice();
+}
+
 export function snapshot() {
   const hh = HH.state();
   return {
@@ -1732,6 +2158,12 @@ export function snapshot() {
        already gone by the time anything reads it. This is the number that
        proves the wind-up path actually ran. */
     estateReceived: S.estateReceived,
+    /* 💼 …and the same argument, for the arrow that replaced the treadmill:
+       what the city's own savers have put into new businesses over its life.
+       Read beside `charterIssued` this is the whole diagnosis in two numbers —
+       a city whose foundings are funded privately stops spending its finite
+       charter allowance, and `charterIssued` stops climbing. */
+    equitySubscribed: S.equitySubscribed,
     population: HH.population(), laborForce: HH.laborForce(),
     employed: HH.employedTotal(), vacancies: HH.vacancyTotal(),
     unemployment: HH.unemployment(),
@@ -1741,9 +2173,18 @@ export function snapshot() {
     flow: { ...S.flow },
     satisfaction: { ...hh.satisfaction },
     unmet: { ...hh.unmetDemand },
+    /* 📊 The denominator `satisfaction` and `unmet` are two thirds of. Published
+       because a reader that only has the ratio cannot tell a city short of five
+       hundred Cinder of goods from one short of four hundredths — see the note
+       on `wantDemand` in households.js. */
+    want: { ...hh.wantDemand },
     logistics: Logistics.report(),
     bank: Bank.report(),
     trade: Trade.report(S.nodeId),
+    /* 🔌 The utility link, as a fresh copy — see the header on `labourMarket()`
+       in index.js: the live bug this codebase already paid for on the card seam
+       was a host object published BY REFERENCE. */
+    utility: utilityReport(),
     audit: S.lastAudit,
     totalCinder: totalCinder(),
   };
@@ -1797,6 +2238,21 @@ export function serialize() {
        `S.payoutInFlight`. */
     payoutInFlight: Math.round(S.payoutInFlight * 100) / 100,
     payoutAllowed: S.payoutAllowed, booted: S.booted,
+    /* 🔌 THE UTILITY LINK. Three real numbers and they all have to ride the
+       save. `owedImport` is energy the city HAS ALREADY BURNED and not paid
+       for; `earnedExport` is energy it has already shipped; `arrears` is the
+       debt that curtails the import. Dropping any of them lets a player clear
+       an electricity bill with the reload button — which is precisely the bug
+       gauntlet2's save/load round already caught twice (`loanId` and
+       `blacklistUntil`: "a firm could take a second loan against the first by
+       reloading the page"). An older save carries none of this and `load()`
+       reads every field as 0, which is the correct reading of a city that has
+       never traded power. */
+    utility: { owedImport: Math.round(S.utility.owedImport * 100) / 100,
+               earnedExport: Math.round(S.utility.earnedExport * 100) / 100,
+               arrears: Math.round(S.utility.arrears * 100) / 100,
+               importUnitMin: Math.round(S.utility.importUnitMin * 100) / 100,
+               exportUnitMin: Math.round(S.utility.exportUnitMin * 100) / 100 },
     inv,
     households: HH.serialize(), firms: Firms.serialize(),
     bank: Bank.serialize(), trade: Trade.serialize(), prices: Prices.serialize(),
@@ -1888,6 +2344,24 @@ export function load(raw) {
      line alone does not reopen the door — see the round in run.mjs that breaks
      each of the two in turn. */
   S.booted = true;
+  /* 🔌 THE UTILITY LINK. Absent on every save written before power trade
+     existed, and 0 is the right reading of every one of them: a city that never
+     imported a watt owes nothing. Sanitised the same way `noteUtilityTrade` is
+     — a non-finite or negative figure from the disk is DROPPED, never clamped
+     to something plausible, because a plausible-looking arrears would curtail a
+     grid the player cannot see a reason for.
+     ⚠ NOT bounded from above. `arrears` is a DEBT: a doctored save can only use
+       it to make its own city worse off, so there is nothing here for the
+       load-time-clamp argument above `totalCinder()` to defend against. */
+  if (raw.utility && typeof raw.utility === 'object') {
+    const u = raw.utility;
+    const num = (v) => { const n = Number(v); return isFinite(n) && n > 0 ? n : 0; };
+    S.utility.owedImport = num(u.owedImport);
+    S.utility.earnedExport = num(u.earnedExport);
+    S.utility.arrears = num(u.arrears);
+    S.utility.importUnitMin = num(u.importUnitMin);
+    S.utility.exportUnitMin = num(u.exportUnitMin);
+  }
   if (raw.demandEMA && typeof raw.demandEMA === 'object') {
     for (const id in raw.demandEMA) {
       const v = Number(raw.demandEMA[id]);
@@ -1907,4 +2381,4 @@ export function load(raw) {
 }
 
 export default { advance, snapshot, bootstrap, reset, serialize, load, claimPayout, refundPayout,
-                 notePayoutDelivered, audit };
+                 notePayoutDelivered, audit, noteUtilityTrade, utilityReport };

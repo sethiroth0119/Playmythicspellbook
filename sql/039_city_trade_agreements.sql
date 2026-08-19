@@ -20,6 +20,23 @@
 --    claim insert IS the lock). Copying a proven pattern beats inventing a
 --    second one that has to be debugged from scratch.
 --
+-- 🔴 A SHIPMENT DRAWS FROM THREE STORES, IN ORDER: city → vault → Bank of Ethos.
+--    The city's own economy inventory first, then the player's shared resource
+--    stash, then the BoE resource vault. Short only when all three are dry.
+--    ⚠ EACH CLIENT TOUCHES ONLY ITS OWN STORES, and that is what keeps this
+--      safe. `bank_of_ethos.resources` is client-writable (028 re-granted it
+--      column by column while holding back `balance` and `aza`, which stay
+--      RPC-only) under an RLS policy scoped to user_id = auth.uid() — so a
+--      player can spend their own bank and can reach nobody else's. The
+--      counterparty's delivery is the counterparty client's job, which is the
+--      same division 019 already relies on.
+--    ⚠ The BoE resource write is a read-modify-write from a browser, which is
+--      the lost-update shape sql/022 exists to close for MONEY. It is tolerable
+--      here only because a player races only themselves (two tabs), the amounts
+--      are their own, and the settler re-reads to confirm the deduction the way
+--      /src/trading/settle.js already verifies every give-leg. If resource
+--      dupes ever show up in the wild, this is the first place to look.
+--
 -- 🔴 THE CYCLE ROW IS THE LOCK. Settlement is client-driven: whichever party is
 --    online computes which cycles are due and inserts them. `unique (agreement_id,
 --    cycle_index)` means the second client to try is a no-op rather than a
@@ -102,6 +119,21 @@ create table if not exists public.city_trade_shipments (
   -- interesting case and is recorded rather than corrected.
   proposer_sent  numeric not null default 0 check (proposer_sent >= 0),
   partner_sent   numeric not null default 0 check (partner_sent  >= 0),
+
+  /* WHERE THE CARGO CAME FROM — {"city":120,"vault":80,"boe":0}.
+     A shipment draws from three stores in that order, because they are three
+     different kinds of thing to spend:
+       city   the city's own economy inventory (/src/economy, client-side)
+       vault  the player's shared resource stash (index.html addRes/getResourceUnits)
+       boe    the Bank of Ethos resource vault (bank_of_ethos.resources)
+     Recorded per shipment because "200 metal shipped" and "200 metal shipped,
+     and 160 of it came out of your bank" are different sentences to the player,
+     and only the second one explains why their BoE balance moved. Without this
+     the drain is invisible and reads as a bug.
+     ⚠ jsonb, not three columns: the store list will grow (corp treasury is the
+       obvious next one) and a new store must not need a migration to appear. */
+  proposer_from  jsonb not null default '{}'::jsonb,
+  partner_from   jsonb not null default '{}'::jsonb,
 
   -- 'settled'      both legs delivered in full
   -- 'short_*'      that side could not cover its leg

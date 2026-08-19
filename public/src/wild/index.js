@@ -132,6 +132,26 @@ const CLR_BUILT = 0.13;   // a hedge/fence/pier at .478 + its own thickness
    is handed over as ctx.roadApron rather than typed here so that it stays the
    same number as the road's. */
 const CLR_ROAD  = 0.17;   // = RD_AP (.150) + a little; see above
+/* 🐞 …AND 0.17 ON EVERYTHING IS HOW THE BARE GUTTER CAME BACK THROUGH THE
+   OTHER DOOR. clearOf() requires (object radius + clearance) from the road
+   tile's square, so scrub — declared at rad .15 — could not put its CENTRE
+   nearer than 320mm of a road tile line, and the aerial crop duly shows a
+   clean unplanted band beside every road: the artefact the header spends a
+   paragraph designing against, arriving as a side effect of the clearance
+   rather than of the jitter.
+   The real constraint is not 0.17. It is that no standing vertex may enter the
+   road's own 150mm apron — which is a statement about the object's OUTER EDGE,
+   and clearOf already takes the radius separately. So the small stuff carries
+   CLR_ROAD_TIGHT and its outer blades stop 2mm past the apron, where grass
+   beside a kerb actually stops. Scrub keeps the loose figure: it is 280mm
+   across with a second lobe leaning out of it, and its true reach is nearer
+   .22 than the .15 it declared. */
+const CLR_ROAD_TIGHT = 0.152;   // = RD_AP + 2mm, i.e. the apron's outer edge
+/* The nine cells clearOf consults, flattened. 🐞 It used to be an inline array
+   of arrays IN THE LOOP HEADER, so every one of the ~8,400 calls a rebuild
+   makes allocated ten arrays and destructured nine of them. See the buffer
+   note: this rebuild's cost was never the geometry, it was the allocation. */
+const NB9 = [0, 0, 1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
 
 /* ── HOW MUCH LAND ONE CITY MAY CARRY ─────────────────────────────────────
    The standard district leaves ~404 of its 576 tiles unbuilt. A brand-new map
@@ -194,11 +214,35 @@ const C_DAMP     = 0x5d7742;   // the other end of the stain: rank, watered gras
 const BLEND = 0.34;
 
 /* ── the two output buffers ───────────────────────────────────────────────
-   Plain arrays, pushed into and then handed to one BufferAttribute each. The
-   flat one carries uv because NAT_GROUND is MAPPED (it wears the plate's own
-   grain canvas); the standing one does not, because NAT_PAINT has no map. */
-function newFlat()  { return { P: [], C: [], U: [], n: 0 }; }
-function newStand() { return { P: [], N: [], C: [], n: 0 }; }
+   The flat one carries uv because NAT_GROUND is MAPPED (it wears the plate's
+   own grain canvas); the standing one does not, because NAT_PAINT has no map.
+
+   🐞 THESE WERE PLAIN ARRAYS AND THAT WAS THE WHOLE OF THE REBUILD STALL.
+   Measured on the standard district: forced rebuilds at 88.5 / 89.9 / 28.3 /
+   25.1 / 24.5 / 18.8 ms, and 55.4 ms on an EMPTY 576-tile map — and refresh()
+   runs from manageAgents(), so laying one road cost one to three dropped
+   frames. The header's own cost note was already right that a geometry per
+   prop would be unaffordable; what it missed is that ~470,000 `Array.push`
+   calls with three arguments each are not free either. They are boxed doubles
+   in a growing plain array, so the cost is the pushes, ~20 reallocate-and-copy
+   passes over arrays reaching 138,000 elements, AND a final `new
+   Float32Array(jsArray)` conversion per attribute — three times over.
+
+   So the buffers are Float32Arrays with a write cursor, doubled when full, and
+   handed to BufferAttribute as a `subarray` of exactly what was written. Same
+   output, byte for byte (verify() checks precisely that); no push, no boxing,
+   no conversion pass. ⚠ `subarray` and not `slice`: BufferAttribute uploads
+   the view's own range, so the spare capacity is never touched and never
+   copied. */
+const BUF_START = 1 << 15;      // 32k floats ≈ 1,200 triangles before the first grow
+function fbuf(n) { return new Float32Array(n); }
+function fgrow(a, need) {
+  if (need <= a.length) return a;
+  let n = a.length || BUF_START; while (n < need) n *= 2;
+  const m = new Float32Array(n); m.set(a); return m;
+}
+function newFlat()  { return { P: fbuf(BUF_START), C: fbuf(BUF_START), U: fbuf(BUF_START >> 1), n: 0 }; }
+function newStand() { return { P: fbuf(BUF_START), N: fbuf(BUF_START), C: fbuf(BUF_START), n: 0 }; }
 
 /* ── PROTOTYPES ───────────────────────────────────────────────────────────
    Built ONCE at first mount, into flat arrays. See the cost note in the header
@@ -242,8 +286,89 @@ function protos(THREE) {
        silhouette from every angle that matters and a third of the cost of a
        box, which has four faces of which two are always hidden. */
     stem:  grab(new THREE.CylinderGeometry(.5, .5, 1, 3, 1, true), .5),
+    /* 🌿 …AND THE TUFT IS NOT A BLOB, WHICH IS THIS ROUND'S ONE REAL FIX.
+       The paragraph above is right about the cone and then draws the wrong
+       conclusion from it. "At this distance every plant is a blob" was checked
+       at 4x on the district framing and it is false: a field of squashed
+       icosahedra photographs as SCATTERED GREEN STONES — convex, faceted, with
+       a hard straight silhouette and two flat lit faces. That is the same
+       category error the cone note diagnoses, re-committed with a different
+       solid, and no amount of scale, squash or tint can move it, because the
+       silhouette that separates rough grass from mown lawn in the reference
+       frames is VERTICAL, TAPERED AND NON-CONVEX and an icosahedron has no
+       such silhouette at any parameter.
+
+       So the tuft gets its own prototype: THREE THIN TAPERED BLADES splaying
+       from one foot. 12 triangles — 2 per blade, doubled because NAT_PAINT is
+       FrontSide and a one-sided blade vanishes from half the compass.
+       ⚠ NUMBERS, ALL OF THEM DERIVED RATHER THAN TYPED:
+         · tilt 21 / 27 / 33 deg off vertical, and the blade LENGTHS differ
+           (1.071 / 1.000 / 0.918) so that the widest blade's tip lands exactly
+           on r = .5 and the most upright one's exactly on y = 1. That is what
+           keeps this prototype in the same unit box as blob — foot at the
+           origin, y in [0,1], x/z in [-.5,.5] — so a caller's sx/sy mean the
+           same thing for both and no stamp needs a per-shape fudge.
+         · half-width = length / (2 * 2.6), tapering to 17% of that at the tip.
+           At sx = sy a blade is 2.6x taller than wide; the tuft is stamped at
+           sy/sx = 1.48 (see the tuft note below), so on screen it is 3.9x —
+           inside the 2.5-4 band that reads as a blade rather than a leaf.
+         · three yaws deliberately UNEVEN (0, 132, 247 deg). At 120 apart a
+           tuft seen from above is a perfect tripod, and 500 perfect tripods is
+           the stipple failure arriving through the geometry.
+       ⚠ AND THE NORMALS ARE PER-FACE, NOT AVERAGED. Each blade is a flat
+         sheet whose lit face points up-and-back over the foot; averaging the
+         three blades' normals at the shared foot would light the tuft as one
+         smooth dome, which is the icosahedron again. Three distinct normals is
+         what makes one tuft show a bright blade and a dark one under a single
+         key light. */
+    fan:   fanProto(),
   };
   return PROTO;
+}
+
+/* Authored by hand rather than out of a THREE primitive: no primitive produces
+   a splayed tapered fan, and stamping wants the same {P,N,tris} shape grab()
+   returns. Cross products for the normals, so a change to any angle above
+   cannot silently leave a normal pointing at where the blade used to be. */
+function fanProto() {
+  const TILT = [.36652, .47124, .57596];       // 21, 27, 33 deg
+  const LEN  = [1.0709, 1.0000, .91800];       // see the note above
+  const YAW  = [0, 2.3038, 4.3110];            // 0, 132, 247 deg
+  const RATIO = 2.6, TAPER = .17;
+  const P = new Float32Array(3 * 3 * 4 * 3), N = new Float32Array(P.length);
+  let o = 0;
+  const put = (px, py, pz, nx, ny, nz) => {
+    P[o] = px; P[o + 1] = py; P[o + 2] = pz;
+    N[o] = nx; N[o + 1] = ny; N[o + 2] = nz; o += 3;
+  };
+  for (let b = 0; b < 3; b++) {
+    const th = TILT[b], ph = YAW[b], L = LEN[b];
+    const st = Math.sin(th), ct = Math.cos(th), cp = Math.cos(ph), sp = Math.sin(ph);
+    // a = the blade's own axis; w = across the blade, horizontal and tangential
+    const ax = st * cp, ay = ct, az = st * sp;
+    const wx = -sp, wz = cp;
+    // n = w x a, i.e. the sheet's normal, which comes out pointing up and back
+    // over the foot — the face a 15:00 key actually lights.
+    let nx = 0 * az - wz * ay, ny = wz * ax - wx * az, nz = wx * ay - 0 * ax;
+    const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+    const wb = L / (2 * RATIO), wt = wb * TAPER;
+    const b0 = [-wb * wx, 0, -wb * wz], b1 = [wb * wx, 0, wb * wz];
+    const t0 = [ax * L - wt * wx, ay * L, az * L - wt * wz];
+    const t1 = [ax * L + wt * wx, ay * L, az * L + wt * wz];
+    /* (b0,b1,t1) and (b0,t1,t0) are front-facing for n — worked through the
+       same way the flat writer's winding note does it, since guessing this
+       wrong deletes half of every tuft and looks like a density bug. */
+    for (const [p, q, r] of [[b0, b1, t1], [b0, t1, t0]]) {
+      put(p[0], p[1], p[2], nx, ny, nz);
+      put(q[0], q[1], q[2], nx, ny, nz);
+      put(r[0], r[1], r[2], nx, ny, nz);
+      // …and the same triangle wound backwards, so the blade has two sides
+      put(p[0], p[1], p[2], -nx, -ny, -nz);
+      put(r[0], r[1], r[2], -nx, -ny, -nz);
+      put(q[0], q[1], q[2], -nx, -ny, -nz);
+    }
+  }
+  return { P, N, tris: P.length / 9 };
 }
 
 /* ── THE STAMP ────────────────────────────────────────────────────────────
@@ -264,18 +389,22 @@ function stamp(S, pr, col, x, y, z, sx, sy, sz, yaw, tilt) {
   const m20 = -sy_, m21 = cy * sp, m22 = cy * cp;
   const P = pr.P, N = pr.N, n = P.length;
   const ix = 1 / sx, iy = 1 / sy, iz = 1 / sz;
-  for (let i = 0; i < n; i += 3) {
+  let o = S.n * 9;
+  if (o + n > S.P.length) { S.P = fgrow(S.P, o + n); S.N = fgrow(S.N, o + n); S.C = fgrow(S.C, o + n); }
+  const OP = S.P, ON = S.N, OC = S.C;
+  const cr = col.r, cg = col.g, cb = col.b;
+  for (let i = 0; i < n; i += 3, o += 3) {
     const px = P[i] * sx, py = P[i + 1] * sy, pz = P[i + 2] * sz;
-    S.P.push(m00 * px + m01 * py + m02 * pz + x,
-             m10 * px + m11 * py + m12 * pz + y,
-             m20 * px + m21 * py + m22 * pz + z);
+    OP[o]     = m00 * px + m01 * py + m02 * pz + x;
+    OP[o + 1] = m10 * px + m11 * py + m12 * pz + y;
+    OP[o + 2] = m20 * px + m21 * py + m22 * pz + z;
     const nx = N[i] * ix, ny = N[i + 1] * iy, nz = N[i + 2] * iz;
-    let ax = m00 * nx + m01 * ny + m02 * nz;
-    let ay = m10 * nx + m11 * ny + m12 * nz;
-    let az = m20 * nx + m21 * ny + m22 * nz;
+    const ax = m00 * nx + m01 * ny + m02 * nz;
+    const ay = m10 * nx + m11 * ny + m12 * nz;
+    const az = m20 * nx + m21 * ny + m22 * nz;
     const L = Math.hypot(ax, ay, az) || 1;
-    S.N.push(ax / L, ay / L, az / L);
-    S.C.push(col.r, col.g, col.b);
+    ON[o] = ax / L; ON[o + 1] = ay / L; ON[o + 2] = az / L;
+    OC[o] = cr; OC[o + 1] = cg; OC[o + 2] = cb;
   }
   S.n += n / 9;
 }
@@ -311,9 +440,18 @@ function stamp(S, pr, col, x, y, z, sx, sy, sz, yaw, tilt) {
      must be in phase with the plate's — so the source is world x/z at the
      plate's own period, never a local 0..1. */
 function triG(F, A, B, C, cA, cB, cC, per) {
-  F.P.push(A[0], A[1], A[2], B[0], B[1], B[2], C[0], C[1], C[2]);
-  F.C.push(cA.r, cA.g, cA.b, cB.r, cB.g, cB.b, cC.r, cC.g, cC.b);
-  F.U.push(A[0] / per, A[2] / per, B[0] / per, B[2] / per, C[0] / per, C[2] / per);
+  const p = F.n * 9, u = F.n * 6;
+  if (p + 9 > F.P.length) { F.P = fgrow(F.P, p + 9); F.C = fgrow(F.C, p + 9); F.U = fgrow(F.U, u + 6); }
+  const P = F.P, K = F.C, U = F.U;
+  P[p] = A[0]; P[p + 1] = A[1]; P[p + 2] = A[2];
+  P[p + 3] = B[0]; P[p + 4] = B[1]; P[p + 5] = B[2];
+  P[p + 6] = C[0]; P[p + 7] = C[1]; P[p + 8] = C[2];
+  K[p] = cA.r; K[p + 1] = cA.g; K[p + 2] = cA.b;
+  K[p + 3] = cB.r; K[p + 4] = cB.g; K[p + 5] = cB.b;
+  K[p + 6] = cC.r; K[p + 7] = cC.g; K[p + 8] = cC.b;
+  U[u] = A[0] / per; U[u + 1] = A[2] / per;
+  U[u + 2] = B[0] / per; U[u + 3] = B[2] / per;
+  U[u + 4] = C[0] / per; U[u + 5] = C[2] / per;
   F.n += 1;
 }
 
@@ -436,15 +574,15 @@ function build() {
      what reaches into this tile is different: a plot's fence stands 22mm INSIDE
      its own line, while a road slab reaches 150mm OUT of its — see CLR_BUILT
      and CLR_ROAD, both of which are measured rather than chosen. */
-  const clearOf = (wx, wz, rad) => {
+  const clearOf = (wx, wz, rad, roadClr) => {
     const u = wx + HALF, w = wz + HALF;
     const gx = Math.floor(u), gz = Math.floor(w);
-    for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const nx = gx + dx, nz = gz + dz;
+    for (let q = 0; q < 18; q += 2) {
+      const nx = gx + NB9[q], nz = gz + NB9[q + 1];
       if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
       if (!occ.has(nx + ',' + nz)) continue;
       const road = isRoad(nx, nz);
-      const need = rad + (road ? CLR_ROAD : CLR_BUILT);
+      const need = rad + (road ? (roadClr || CLR_ROAD) : CLR_BUILT);
       /* distance from the point to that tile's square, in the plate frame */
       const qx = Math.max(nx - u, 0, u - (nx + 1));
       const qz = Math.max(nz - w, 0, w - (nz + 1));
@@ -741,12 +879,14 @@ function build() {
   /* ── 6. ONE MESH EACH ────────────────────────────────────────────────── */
   if (F.n) {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(F.P), 3));
-    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(F.C), 3));
-    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(F.U), 2));
+    // subarray, not slice — see the buffer note: the spare capacity is never
+    // uploaded and never copied.
+    g.setAttribute('position', new THREE.BufferAttribute(F.P.subarray(0, F.n * 9), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(F.C.subarray(0, F.n * 9), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(F.U.subarray(0, F.n * 6), 2));
     // see tri(): everything in this buffer is level ground and (0,1,0) is both
     // correct and free, where computeVertexNormals over 2mm of y is noise.
-    const N = new Float32Array(F.P.length);
+    const N = new Float32Array(F.n * 9);
     for (let i = 1; i < N.length; i += 3) N[i] = 1;
     g.setAttribute('normal', new THREE.BufferAttribute(N, 3));
     g.computeBoundingSphere();
@@ -757,9 +897,9 @@ function build() {
   }                                   // only ever be wrong in the costly direction
   if (S.n) {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(S.P), 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(S.N), 3));
-    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(S.C), 3));
+    g.setAttribute('position', new THREE.BufferAttribute(S.P.subarray(0, S.n * 9), 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(S.N.subarray(0, S.n * 9), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(S.C.subarray(0, S.n * 9), 3));
     g.computeBoundingSphere();
     standMesh = new THREE.Mesh(g, CTX.propMat);
     /* ⚠ castShadow ON, AND IT IS THE ENTIRE POINT OF THE MODULE. A bush that

@@ -28046,6 +28046,22 @@ addEventListener('keydown', (ev) => {
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   try { if (window.MythicZoning) window.MythicZoning.panel(!window.MythicZoning.panelOpen()); } catch (e) {}
 });
+/* 🏢 THE TENANT MARKET — B for Business.
+   ⚠ B, and it was checked rather than assumed against the keys already spoken
+     for in this file: W/A/S/D are KEYPAN, E is electricity, G is hydrology, P
+     is pollution, K opens the progression tree, R rotates a building, V is the
+     land value view, Z opens zoning (and with it the district row), 1/2/3 are
+     the zoning tools while that panel is armed, and Escape closes panels.
+   A panel nobody can open is a dead feature — and this one carries the two
+   things the market cannot say anywhere else: who is bidding, and who has
+   failed. Degrades to nothing if /src/tenants never loaded. */
+addEventListener('keydown', (ev) => {
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+  if (ev.key !== 'b' && ev.key !== 'B') return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  try { if (window.MythicTenants) window.MythicTenants.togglePanel(); } catch (e) {}
+});
 
 /* ════════════════════════════════════════════════════════════════════════
    9c. MORALE & HUNGER → Reconstruction.

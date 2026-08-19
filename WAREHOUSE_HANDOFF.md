@@ -12,7 +12,7 @@ cities always take 72 hours**. A step van pulls up at your warehouse; you walk
 out first-person, press **E** at the open kerb-side door, carry one crate at a
 time under a real **weight limit**, and drop it in the renter's bay. A full bay
 raises **"You need to open storage unit space"** — buy more for **10 Aza or
-50,000 Cinder**. Bigger **weight lifters** let owners or workers carry more.
+5,000,000 Cinder**. Bigger **weight lifters** let owners or workers carry more.
 
 ---
 
@@ -286,7 +286,7 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 | `wh_my_shipments()` | signed in | Everything you have on the road — powers the in-transit view and Recall. |
 | `wh_send_shipment(unit, kind, node, label, payload, name)` | renter | Weight + ETA computed server-side; splits into crates. |
 | `wh_store_crate(crate, unit)` | owner or renter | The unload gate. |
-| `wh_buy_unit(currency)` | owner | Adds a NEW empty bay. 10 Aza / 50,000 Cinder. |
+| `wh_buy_unit(currency)` | owner | Adds a NEW empty bay. 10 Aza / 5,000,000 Cinder. |
 | `wh_expand_unit(unit, currency)` | owner or that renter, rental must be CURRENT | **Grows an EXISTING bay** by another 500 kg, charged at the same `unit_price_*` as buying a new one (it reads the config key, so a price change follows automatically). This is what the "you need to open storage unit space" modal calls — buying a new bay cannot help a crate addressed to a full one. |
 | `wh_upgrade_tier(currency)` | owner | Raises the bay cap **and builds 2 bays**. |
 | `wh_buy_lifter(tier, currency)` | anyone | Carry capacity. |
@@ -386,7 +386,7 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
 | `_harness.js` | A parse error or top-level TDZ anywhere in the game. |
 | `_synckcheck.mjs` | An inline `<script>` block that will not minify. |
 | `_wh_paste_check.mjs` | `WAREHOUSE_PASTE_index-module.js` drifting behind the live module. It has silently drifted **twice**; both times the stale file still parsed and looked fine, and following the handoff would have pasted back a version where resources could never be withdrawn. |
-| `_wh_reach_check.mjs` | A warehouse bay you cannot walk to. Floods the yard on a 0.2 m grid from the truck door using the page's **own** `blocked()` predicate at 2/4/8/14/22/32 bays. The bay layout is derived from the unit count, so a spacing or row-wrap change can wall one off — and nothing shows it until a player has paid up to 1,500,000 Cinder for Tier 5 and finds Bay 27 behind a collider. **Re-run it if you touch `BW`, `BD`, the row pitch, the shed dimensions or the collider list.** Exits non-zero on any unreachable bay, so it belongs in CI. |
+| `_wh_reach_check.mjs` | A warehouse bay you cannot walk to. Floods the yard on a 0.2 m grid from the truck door using the page's **own** `blocked()` predicate at 2/4/8/14/22/32 bays. The bay layout is derived from the unit count, so a spacing or row-wrap change can wall one off — and nothing shows it until a player has paid up to 150,000,000 Cinder (or 300 Aza) for Tier 5 and finds Bay 27 behind a collider. **Re-run it if you touch `BW`, `BD`, the row pitch, the shed dimensions or the collider list.** Exits non-zero on any unreachable bay, so it belongs in CI. |
 
 **Regression**
 - [ ] Camp, Real Estate Office and the card-shop 3D walk all still work.
@@ -466,8 +466,8 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
    at every tier a warehouse can sell. It calls the page's own `blocked()` **and**
    its own `clampPos()` — never a copy of either. An earlier version modelled the
    clamp instead of calling it, and cheerfully certified 32/32 bays walkable
-   while 20 sat behind a hardcoded `-19.5`: tier 5 cost 1,500,000 Cinder and
-   delivered 12 walkable bays out of 32.
+   while 20 sat behind a hardcoded `-19.5`: tier 5 cost 1,500,000 Cinder at the
+   time and delivered 12 walkable bays out of 32.
 
 8. **The lofted shell carries TWO materials, and the second one matters.**
    `loft()` puts the section's underside run in material group 1

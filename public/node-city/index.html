@@ -14115,9 +14115,14 @@ function makeArena(lvl, tx, tz) {
   const SH = .170;                       // drum storey
   const DH = .155 + UF * SH;             // drum height  .325 / .495 / .665
   const TB = DA + DH;                    // drum head    .738 / .908 / 1.078
-  const CT = TB + .054;                  // canopy top
+  const CT = TB + .062;                  // canopy top — see the section in §6
   const AP = .398, AA = .360, AB = .245; // apothems: plinth, concourse, drum
-  const AC = .292, AL = .120, AH = .200; // apothems: canopy, lantern, halo
+  const AC = .292, AL = .124, AH = .306; // apothems: canopy, lantern, halo
+  /* ⚠ AH IS OUTSIDE AC ON PURPOSE. The first cut had the halo at .200 — inside
+     the canopy — and it read as a ring LYING ON the roof, which is a plant
+     enclosure, not a cantilever. At .306 it hangs just clear of the canopy rim
+     with sky under it from every framing, and the lantern sits inside it rather
+     than being hidden by it. That is the whole silhouette. */
   /* ⚠ AP = .398 IS THE PLAZA BUDGET AND IT IS THE WHOLE GROUND DESIGN. The tile
      is 1.0, so a face-on plaza band is .102 — a paving strip and nothing else.
      But an octagon set square to the tile puts its FACES on the diagonals too,
@@ -14144,9 +14149,9 @@ function makeArena(lvl, tx, tz) {
         and the old one's punched openings. ─────────────────────────────────── */
   for (let i = 0; i < N; i++) {
     const a = i * STEP, front = (i === 0), fw = FW(AA);
-    const ow = front ? .200 : fw - .052;            // entrance portal / glazed bay
-    const ov = front ? .010 : .034;                 // cill height
-    const oh = front ? HA - .072 : HA - .082;       // opening height
+    const ow = front ? .276 : fw - .052;            // entrance portal / glazed bay
+    const ov = front ? .008 : .034;                 // cill height
+    const oh = front ? HA - .062 : HA - .082;       // opening height
     const oc = PL + ov + oh / 2;
 
     const p = _cvPanel(fw - .003, HA, .030, [{ u: 0, v: ov, w: ow, h: oh }]);
@@ -14159,11 +14164,28 @@ function makeArena(lvl, tx, tz) {
     bay(B.trim, fw - .006, .014, .020, 0, PL + ov + oh + .007, AA + .002, a);   // head
 
     if (front) {
-      /* The entrance: a lobby void that stops the eye going clean through the
-         building, two door stiles, and a portal frame standing proud. */
-      bay(B.roof, ow - .014, oh - .010, .014, 0, oc, AA - .046, a);
-      for (const sx of [-1, 1]) bay(B.metal, .009, oh - .026, .012, sx * .046, oc, AA - .034, a);
-      bay(B.trim, ow + .056, .026, .040, 0, PL + ov + oh + .026, AA + .012, a);
+      /* THE ENTRANCE, AND THE FIRST CUT OF IT WAS WRONG. It was an opening with
+         a dark lobby box behind it and two stiles — which at the game camera is
+         a BLACK RECTANGLE the height of the concourse, the single largest and
+         least readable thing on the elevation. The reference's ground floor is
+         glazed straight through the entrance; the doors are read from their
+         frame and their transom, not from a hole. So the bay keeps the same
+         curtain-wall grid as the other seven, the doors are winMat leaves in a
+         proud surround, and the only dark left is the lobby seen THROUGH the
+         glass, which is what a lobby looks like. */
+      for (const u of [-.128, .128]) bay(B.trim, .011, oh, .014, u, oc, AA - .008, a);
+      bay(B.trim, ow, .009, .014, 0, PL + ov + oh * .74, AA - .008, a);            // transom
+      bay(B.glass, .200, .216, .010, 0, PL + .118, AA - .026, a);                  // door glazing
+      bay(B.roof, .176, .190, .016, 0, PL + .112, AA - .050, a);                   // lobby beyond
+      for (const sx of [-1, 1]) {
+        bay(B.metal, .009, .208, .012, sx * .096, PL + .116, AA - .020, a);        // door stile
+        bay(B.metal, .008, .034, .014, sx * .020, PL + .118, AA - .016, a);        // pull handle
+      }
+      bay(B.metal, .009, .208, .012, 0, PL + .116, AA - .020, a);                  // meeting stile
+      bay(B.metal, .208, .009, .012, 0, PL + .218, AA - .020, a);                  // door head rail
+      bay(B.trim, .238, .022, .034, 0, PL + .236, AA + .008, a);                   // door surround
+      for (const sx of [-1, 1]) bay(B.trim, .020, .246, .030, sx * .119, PL + .124, AA + .006, a);
+      bay(B.trim, ow + .056, .026, .040, 0, PL + ov + oh + .026, AA + .012, a);    // portal head
       for (const sx of [-1, 1])
         bay(B.trim, .022, oh + .042, .034, sx * (ow / 2 + .017), oc + .014, AA + .008, a);
     } else {
@@ -14274,18 +14296,31 @@ function makeArena(lvl, tx, tz) {
         downlights are winMat, so at dusk the canopy lights the terrace under it
         instead of going flat — the same argument the road recipe makes for
         B_LAMP, taken through the bucket the _cv family already has for it. */
-  oct(B.roof, AC, .024, TB + .012);                              // the canopy
-  oct(B.trim, AC - .020, .012, TB - .004);                       // its soffit lip
-  band(B.trim, AC + .008, TB + .028, .012, .028, .008);          // canopy edge
+  /* The SECTION here is written out because the first cut got it wrong twice:
+     a soffit lip authored below the clerestory it is supposed to cap, and a
+     canopy whose underside cut through the glazing band. Everything is stated
+     as an interval so the next edit can check it by reading.
+       TB-.053 .. TB-.003   fascia band (drum head, above)
+       TB-.010 .. TB+.002   its coping        (above)
+       TB+.003 .. TB+.025   CLERESTORY — the hall lit from over the seats
+       TB+.026 .. TB+.038   canopy soffit lip
+       TB+.038 .. TB+.062   THE CANOPY, cantilevered out to AC          = CT
+       CT     .. CT+.118    the glazed lantern
+     Nothing overlaps and nothing floats. */
+  band(B.glass, AB + .006, TB + .014, .022, .030, .008);          // clerestory
+  oct(B.trim, AC - .020, .012, TB + .032);                        // canopy soffit lip
+  oct(B.roof, AC, .024, TB + .050);                               // THE CANOPY
+  band(B.trim, AC + .008, TB + .068, .012, .028, .008);           // its edge coping
   for (let i = 0; i < N; i++) {
     const a = i * STEP + STEP / 2;
-    bay(B.metal, .020, .012, AC - AB + .060, 0, TB + .030, (AB + AC) / 2, a);   // radial rib
-    bay(B.glass, .066, .008, .028, 0, TB - .003, AC - .034, a);                 // eave downlight
+    bay(B.metal, .020, .012, AC - AB + .060, 0, TB + .070, (AB + AC) / 2, a);   // radial rib
+    bay(B.glass, .066, .008, .028, 0, TB + .030, AC - .034, a);                 // eave downlight
   }
-  oct(B.glass, AL, .088, CT + .044);                             // the lantern
+  oct(B.glass, AL, .118, CT + .059);                              // the lantern
   for (let i = 0; i < N; i++)
-    bay(B.trim, .012, .092, .014, 0, CT + .044, AL + .002, i * STEP + STEP / 2);
-  oct(B.roof, AL + .022, .016, CT + .096);                       // lantern cap
+    bay(B.trim, .012, .122, .014, 0, CT + .059, AL + .002, i * STEP + STEP / 2);
+  oct(B.roof, AL + .024, .016, CT + .126);                        // lantern cap
+  B.glass.push(_cvCyl(.016, .016, .028, 0, CT + .148, 0, 6));     // beacon lamp on the cap
 
   /* THE HALO. The one piece of pure science fiction on the building, and it is
      deliberately the piece that costs the least: eight boxes and four struts,
@@ -14293,17 +14328,17 @@ function makeArena(lvl, tx, tz) {
      anything cantilevered over its own roof, which is why it works — and its
      inner edge is winMat, so after dark the arena is a ring of light on the
      skyline rather than a dark shape with lit windows. */
-  const HY = CT + .070;
+  const HY = CT + .098;
   for (let i = 0; i < N; i++) {
     const a = i * STEP;
-    bay(B.accent, FW(AH) + .012, .026, .020, 0, HY, AH, a);
-    bay(B.glass, FW(AH) - .006, .012, .012, 0, HY, AH - .013, a);
+    bay(B.accent, FW(AH) + .014, .021, .019, 0, HY, AH, a);
+    bay(B.trim, FW(AH) + .016, .009, .010, 0, HY + .014, AH + .003, a);   // steel rail on top
+    bay(B.glass, FW(AH) - .006, .012, .012, 0, HY, AH - .013, a);         // lit inner edge
   }
   for (let i = 0; i < 4; i++)
-    bay(B.metal, .012, HY - TB - .030, .012, 0, (HY + TB + .030) / 2, AH, i * Math.PI / 2 + Math.PI / 4);
-  B.glass.push(_cvCyl(.015, .015, .030, 0, CT + .124, 0, 6));    // beacon lamp on the lantern
-  B.metal.push(_cvCyl(.005, .019, .190, 0, CT + .234, 0, 6));    // spire
-  B.accent.push(_cvCyl(.000, .012, .046, 0, CT + .352, 0, 6));   // its tip
+    bay(B.metal, .013, HY - CT + .010, .013, 0, (HY + CT - .010) / 2, AH, i * Math.PI / 2 + Math.PI / 4);
+  B.metal.push(_cvCyl(.005, .019, .200, 0, CT + .238, 0, 6));    // spire
+  B.accent.push(_cvCyl(.000, .012, .046, 0, CT + .361, 0, 6));   // its tip
 
   /* ── 7. SIGNAGE — three of them, all lit ────────────────────────────────
         Round 14: "No fascia carries text or a logo. The only readable sign in
@@ -14329,9 +14364,21 @@ function makeArena(lvl, tx, tz) {
      the reference puts its roof signage — and pinned to the canopy rather than
      floated over it, the same correction the old recipe's marquee comment
      records for the fascia. */
-  bay(B.trim, .224, .014, .028, 0, CT + .028, AC - .034, 0);
-  for (const sx of [-1, 1]) bay(B.metal, .012, .066, .014, sx * .082, CT + .062, AC - .034, 0);
-  _cvSign(B, .208, .112, 0, CT + .151, AC - .034, 0, true);
+  bay(B.base, .238, .026, .046, 0, CT + .026, AC - .038, 0);
+  for (const sx of [-1, 1]) bay(B.metal, .016, .042, .020, sx * .086, CT + .058, AC - .038, 0);
+  bay(B.metal, .026, .120, .014, 0, CT + .098, AC - .052, 0);      // back fin — it is braced
+  _cvSign(B, .212, .118, 0, CT + .140, AC - .034, 0, true);
+
+  /* A SECOND fascia, on the +x flank. The arena stands on a corner plot with a
+     street on two sides, and a landmark whose only sign faces one of them is
+     invisible from the other — which is the shape of the round-14 finding, one
+     scale down. Half the size of the entrance sign, because it is a side
+     elevation and not the front. */
+  {
+    const a2 = 2 * STEP;
+    bay(B.roof, .268, .022, .062, 0, TA - .050, AA + .030, a2);
+    _cvSign(B, .214, .050, Math.sin(a2) * (AA + .022), TA - .006, Math.cos(a2) * (AA + .022), a2, true);
+  }
 
   // Two banners on the flank fins, the one thing worth keeping from the old
   // recipe: a venue that has never hung a banner is a venue with no event on.

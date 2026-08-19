@@ -395,10 +395,46 @@ async function onFilmAt() { return page.evaluate(()=>{const nc=window.__nc,{came
     ST=sp.length;
     for(const q of sp){v2.set(q.x,0.17,q.z).project(camera);
       if(v2.x>=-1&&v2.x<=1&&v2.y>=-1&&v2.y<=1&&v2.z<=1)S++}}catch(e){}
+  /* 🏟 IS THE CIVIC LANDMARK ACTUALLY IN THIS PICTURE, AND IS THE UI ON TOP OF
+     IT. Round 14: "The Duel Arena is in no photograph. It projects through the
+     aerial camera to (1299, 435); the Zone Demand panel's opaque left edge is
+     at x = 1266-1267. It is 33 px behind the UI." That finding took a critic
+     projecting a camera by hand, and it stood for a whole round because nothing
+     reported it. It is four lines. `pxUnderPanel` is the part `inFrame` cannot
+     tell you: a building can be dead centre of the frustum and still be behind
+     an opaque panel, which is exactly what happened. Panel geometry is read
+     from the live DOM, never hardcoded — it moves when the layout does. */
+  let venue=null;
+  try{
+    const t=Object.values(nc.game.tiles).find(q=>q.type==='arena'&&q.mesh);
+    if(t){const v3=new THREE.Vector3();t.mesh.getWorldPosition(v3);v3.y+=0.5;v3.project(camera);
+      const W=innerWidth,H=innerHeight;
+      const px=Math.round((v3.x*.5+.5)*W), py=Math.round((-v3.y*.5+.5)*H);
+      const inF=v3.x>=-1&&v3.x<=1&&v3.y>=-1&&v3.y<=1&&v3.z<=1;
+      /* ⚠ "IS THERE A DIV OVER IT" IS NOT THE TEST, and two cuts of this got
+         it wrong before it agreed with the round-14 critic's own reading. The
+         first walked every div and answered `scene` for all five framings —
+         the canvas's host element covers the whole viewport and is a div. The
+         second demanded an opaque backgroundColor and answered NO for the
+         aerial, where the Zone Demand panel demonstrably covers the arena,
+         because that panel paints with a background-image. The honest test is
+         the browser's own hit list at the pixel: elementsFromPoint, minus the
+         canvas and anything containing it. */
+      let under=false,panel=null;
+      for(const el of document.elementsFromPoint(px,py)){
+        if(el.tagName==='CANVAS'||el.querySelector&&el.querySelector('canvas'))continue;
+        if(el===document.body||el===document.documentElement)continue;
+        const st=getComputedStyle(el);
+        if(st.pointerEvents==='none'&&parseFloat(st.opacity||'1')<.5)continue;
+        const r=el.getBoundingClientRect(); if(r.width<80||r.height<40)continue;
+        under=true; panel=el.id||(typeof el.className==='string'?el.className:'')||el.tagName; break;
+      }
+      venue={px,py,inFrame:inF,pxUnderPanel:under,panel};}
+  }catch(e){venue={err:String(e)}}
   return{agentsInFrame:A.length,byKind:A.reduce((a,g)=>(a[g.kind]=(a[g.kind]||0)+1,a),{}),
          parkedInFrame:P.length, standingInFrame:S, standingTotal:ST,
          peopleInFrame:A.filter(a=>a.kind==='civilian').length+S,
-         vehiclesInFrame:A.filter(a=>a.kind!=='civilian').length+P.length}})}
+         vehiclesInFrame:A.filter(a=>a.kind!=='civilian').length+P.length, arena:venue}})}
 /* ── 🔬 THE CROSS-BOOT TRIPWIRE ────────────────────────────────────────────
    🔴 THIS IS NOT A MEASUREMENT AND ITS PERCENTAGES MUST NOT BE QUOTED AS ONE.
    Read that first, because they were, for several rounds.

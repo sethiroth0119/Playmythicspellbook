@@ -476,6 +476,9 @@ function available(cat, zoneId) {
          sentence — the zones in this family where it IS a district. */
       differs: diff ? diff.slice() : null,
       inert: diff ? diff.length === 0 : false,
+      /* How many rungs there are to differ ON, so the panel can say "only on
+         Established land" rather than making the player count. */
+      bandsTotal: (() => { const r = knownLadder(); return r ? r.length : null; })(),
       realOn: (diff && !diff.length) ? realZonesFor(s.id) : null,
       /* Tiles carrying this spec that the tree is HOLDING (see the header).
          Printed rather than hidden: a player whose save arrived with a locked

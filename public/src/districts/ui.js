@@ -27,6 +27,19 @@
       single line under the chips: what it builds, the lowest band that will
       take it, and how many tiles already carry it. Everything on that line is
       derived live (index.js `available()`); nothing is written twice.
+   5. 🔬 A CHIP THAT CHANGES NOTHING ON *THIS* ZONE SAYS SO ON ITS FACE. Rows
+      arrive carrying `inert` and `differs`, computed in index.js from the live
+      zone table and the live band ladder, and a placebo pairing is drawn dashed
+      with "· no change here" on the chip itself — not only in the tooltip,
+      because a qualification you have to hover to find is not a qualification.
+      ⚠ IT IS STILL ARMABLE, AND THAT IS THE DECISION RATHER THAN AN OVERSIGHT.
+        Hiding it was the alternative and it loses twice: the chip would appear
+        and vanish as the player switched density within one family (🔬
+        Technology is a placebo on 🧠 Office park and a real district on 📈
+        Office towers), which reads as a bug; and a player who paints a block
+        low-density now and upgrades the zone later would silently lose the
+        district they painted. Marked and paintable keeps both the information
+        and the plan.
 
    ⚠ AND THE THING THAT IS DELIBERATELY *NOT* DRAWN: the chips do not carry
      per-specialisation colours. The overlay's hues are the LAND USE families
@@ -69,6 +82,11 @@ function style() {
 #nz-spec .ndc.myth.on{border-color:#ffd98a;background:rgba(212,175,55,.22)}
 #nz-spec .ndc.lock{opacity:.55}
 #nz-spec .ndc.dead{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+/* 🔬 A chip that changes nothing on the zone currently on the brush. Dashed
+   rather than dimmed, and NOT struck through: it is a real district on another
+   zone of the same family, so it must not read as broken. */
+#nz-spec .ndc.inert{border-style:dashed;border-color:rgba(255,255,255,.18)}
+#nz-spec .ndc.inert .ndno{opacity:.6;font-style:italic}
 #nz-spec .nddiv{width:1px;align-self:stretch;background:rgba(212,175,55,.35);margin:0 2px}
 #nz-spec .nddet{margin-top:4px;color:var(--mist,#8f87a3);font-size:11px;line-height:1.35}
 #nz-spec .nddet b{color:var(--bone,#e9e0cc)}
@@ -86,7 +104,10 @@ export function renderInto(el, zoneId, zoneDef) {
   const fam = cat && API.FAMILIES[cat];
   if (!fam) { el.innerHTML = ''; return false; }        // residential, or nothing selected
 
-  const rows = API.available(cat);
+  /* zoneId, not just the family: 🔬 Technology is a placebo on 🧠 Office park
+     and a real district on 📈 Office towers, so "does this chip change
+     anything" can only be answered for the zone actually on the brush. */
+  const rows = API.available(cat, zoneId);
   const armed = API.armedFor(cat);
   const plain = rows.filter((r) => !r.mythic);
   const myth = rows.filter((r) => r.mythic);
@@ -97,15 +118,22 @@ export function renderInto(el, zoneId, zoneDef) {
     if (r.id === armed) cls.push('on');
     if (r.empty) cls.push('dead');
     else if (r.locked) cls.push('lock');
+    if (r.inert) cls.push('inert');
     /* The tooltip is where the long form lives, so the chip itself can stay two
        words. It names the buildings and the floor because "why can I not use
        this" and "why is nothing developing" are the same question. */
     const tip = r.name + ' — ' + r.desc
       + '\nBuilds: ' + (r.tenants.length ? r.tenants.join(', ') : 'nothing in this build of the city')
       + (r.floor ? '\nLowest land value that takes it: ' + r.floor.ico + ' ' + r.floor.name : '')
+      + (r.inert ? '\n≡ On this zone it changes nothing — the zone already builds these, at this height, on every grade of land.'
+          + (r.realOn && r.realOn.length ? ' It is a real district on: ' + r.realOn.map((z) => z.name).join(', ') + '.' : '') : '')
       + (r.locked && r.node ? '\n🔒 ' + r.node.name + ' opens it (' + (r.node.cost | 0) + ' ⬡, Progression — K)' : '');
     return '<button class="' + cls.join(' ') + '" type="button" data-spec="' + esc(r.id) + '" title="' + esc(tip) + '">'
       + esc((r.locked ? '🔒 ' : '') + r.ico + ' ' + r.short)
+      /* ⚠ SAID ON THE CHIP, NOT ONLY IN THE TOOLTIP. The whole defect was that
+         a placebo sat unqualified beside two chips that do change something,
+         and a qualification you have to hover to find is not a qualification. */
+      + (r.inert ? '<span class="ndno">· no change here</span>' : '')
       + (r.tiles ? '<span style="opacity:.6">· ' + r.tiles + '</span>' : '')
       + '</button>';
   };
@@ -146,7 +174,25 @@ function detail(rows, armed) {
       + (r.reach.length > 1 ? ' <span style="opacity:.7">(' + esc(r.reach.map((b) => b.name).join(' · ')) + ')</span>' : '')
       + '. Cheaper plots stay vacant and say so.';
   }
+  /* 🔬 THE PLACEBO SENTENCE, AND THE PARTIAL ONE UNDER IT. Both come straight
+     off `differsOn()` in index.js — this file computes nothing, so what the row
+     says and what the develop pass will do cannot drift apart. */
+  if (r.inert) {
+    s += '<br><span class="ndwarn">On this zone it changes nothing.</span> The zone already develops these buildings, '
+      + 'at this height, on every grade of land — painting it here is the same street either way.'
+      + (r.realOn && r.realOn.length
+          ? ' It is a real district on <b>' + esc(r.realOn.map((z) => z.ico + ' ' + z.name).join('</b>, <b>')) + '</b>.'
+          : '');
+  } else if (r.differs && r.bandsTotal && r.differs.length < r.bandsTotal) {
+    s += '<br>Changes what develops only on <span class="ndfl">'
+      + esc(r.differs.map((b) => b.ico + ' ' + b.name).join(' · ')) + '</span> land'
+      + ' — on the other grades this block builds what the plain zone would.';
+  }
   if (r.tiles) s += '<br><b>' + r.tiles + '</b> tile' + (r.tiles === 1 ? '' : 's') + ' already carry this district.';
+  /* 🔒 Held tiles are named rather than hidden: they are still the player's, and
+     the number is the only place the panel can say so. */
+  if (r.heldTiles) s += ' <span class="ndwarn">' + r.heldTiles + ' of them '
+    + (r.heldTiles === 1 ? 'is' : 'are') + ' held until the node is researched — the land develops as its plain zone until then.</span>';
   return s + '</div>';
 }
 

@@ -22,6 +22,26 @@
      that knows more specialisations must not be quietly emptied by an older
      one — the same rule /src/zoning states for unknown zone ids. It is simply
      not drawn and not used until a build that knows it opens the city.
+
+   ⚠ A *LOCKED* ID IS ALSO KEPT — AND IT IS NOT THE SAME CASE, SO HERE IS THE
+     SECOND ARGUMENT RATHER THAN THE FIRST ONE STRETCHED.
+     🔴 THIS MAP IS THE ONE DOOR IN THE RESEARCH GATE THAT DOES NOT ASK. `arm()`,
+        `onZone()` and `_set()` all refuse a specialisation the tree has not
+        opened; `load()` below writes whatever the save says, because a loader
+        that consults live game state is a loader that behaves differently
+        depending on module boot order. That is deliberate and it is safe ONLY
+        because index.js asks `unlocked()` again at every READ — mixFor,
+        levelFor, markAt, refusal and the `per` census. Change one of those and
+        this file becomes a hole: three strings in a save file were once worth
+        15 progression nodes and 40 ⬡ of a 74 ⬡ tree.
+     WHY KEPT RATHER THAN DROPPED. An unknown id is a BUILD-VERSION mismatch; a
+     locked id is a WITHIN-BUILD state that the player can legitimately reach —
+     a node re-costed or renamed under a district they painted honestly.
+     /src/progression's header is absolute that nothing may remove what a live
+     city already has, so the tile keeps its district, does nothing with it, and
+     gets it back the moment the node opens. `reconcile()` below therefore drops
+     on FAMILY only and never on research; the honest player loses nothing and
+     the hand-edited save buys nothing.
    ════════════════════════════════════════════════════════════════════════════ */
 
 export function makeStore() {
@@ -45,6 +65,10 @@ export function makeStore() {
     for (const k in M) if (!pred || pred(M[k], k)) n++;
     return n;
   }
+  /* ⚠ THE RAW CENSUS, AND IT IS *NOT* THE ONE ANY CONSUMER SHOULD READ. It
+     counts held and unknown ids alongside live ones. `MythicDistricts.stats()`
+     builds the filtered `per` that /src/progression reads as evidence — see the
+     locked-id note in the header before wiring anything to this. */
   function per() {
     const out = {};
     for (const k in M) out[M[k]] = (out[M[k]] || 0) + 1;

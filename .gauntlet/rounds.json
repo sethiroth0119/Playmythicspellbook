@@ -1,667 +1,708 @@
 [
-  {
-    "round": 0,
-    "headline": "The untouched renderer, photographed for the first time.",
-    "status": "done",
-    "meanScore": null,
-    "strangerTest": "instantly",
-    "tris": 1992596,
-    "note": "Not a build round. This is the harness proving it can boot the real page, place a 172-tile district through the shipped tryPlace() path and photograph it \u2014 the thing that lets every later round be judged on output instead of on a diff. What it shows: five residential archetypes on a seeded street grid, procedural canvas textures, a lamp-lit road network \u2014 and a global violet cast that no reference frame has. The scores in the matrix for this row are the lead's own read of the baseline frames, recorded so later rounds have something to move against; every round from 1 on is scored by critics who did not write the code.",
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 2
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 3
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 4
-      },
-      {
-        "dimension": "Building surface",
-        "score": 3
-      },
-      {
-        "dimension": "The plot",
-        "score": 3
-      },
-      {
-        "dimension": "Roads",
-        "score": 4
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 3
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 3
-      },
-      {
-        "dimension": "Citizens",
-        "score": 2
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 2
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 2
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 4
-      }
-    ],
-    "pieces": []
-  },
-  {
-    "round": 1,
-    "headline": "Five builders, one file. The violet cast is gone \u2014 but there is still no sun.",
-    "status": "done",
-    "meanScore": 3.63,
-    "strangerTest": "instantly",
-    "tris": 2798100,
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 4
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 2
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 7
-      },
-      {
-        "dimension": "Building surface detail",
-        "score": 6
-      },
-      {
-        "dimension": "The plot",
-        "score": 4
-      },
-      {
-        "dimension": "Roads",
-        "score": 6
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 5
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 1
-      },
-      {
-        "dimension": "Citizens",
-        "score": 2
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 4
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 2
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 2
-      }
-    ],
-    "pieces": [
-      {
-        "title": "Palette, lighting and colour grade (dimensions 1 and 2)",
-        "verdict": "BEHIND",
-        "gap": "Every up-facing horizontal surface in the city renders darker than the vertical walls beneath it, which is physically backwards and is the first thing a viewer notices. On the same water tank in the street framing, r0 gave the top cap rgb(214,210,200) val 0.84 against a cylinder side of val 0.18; r1 gives that cap rgb(15,12,17) val 0.07 against a side of val 0.35 \u2014 the cap is now five times darker",
-        "summary": "AERIAL. r0's ground plane is a violet void \u2014 I sampled seven points across the lower two-thirds and every one came back hue 273-285, sat 0.35-0.39, val 0.11-0.14 (e.g. bottom-left rgb(27,20,31)). r1's same points are hue 69-73, val 0.19-0.23 (rgb(48,52,32)). That is the purple ca"
-      },
-      {
-        "title": "Residential building quality \u2014 dimensions 3 (Building silhouette) and ",
-        "verdict": "BEHIND",
-        "gap": "The ring-15 district housing generator (public/node-city/index.html, ~lines 5357\u20135382) still emits every mid-ground and background house as `rdPart(B, rdGeo(bw,h,bd))` + a `G_GABX`/`G_GABZ` gable prism + flat `winAt` window quads \u2014 no eaves overhang, no fascia, no chimney, no dormer, and no frame or sill on any opening. That set is the MAJORITY of the residential the camera actually sees: the enti",
-        "summary": "WHAT I OPENED: r1-aerial/street/district and r0-aerial/street/district at full res, then crops magnified 3\u20138x with nearest-neighbour so I was judging geometry and not resampling.\n\nTHE STRONGEST NEW WORK (r1-district, crop x1130\u20131470 / y230\u2013420 at 6x): roofs now carry horizontal s"
-      },
-      {
-        "title": "The plot, and vegetation (dimensions 5 and 10)",
-        "verdict": "BEHIND",
-        "gap": "The grass is two flat unshaded colours with nothing between them, and it fills ~40% of every frame. `C_GRASS = 0x53823c` (the road verge, index.html:7879) sits directly against `GROUND_COL = 0x484e3a` (index.html:4600) \u2014 a bright yellow-green ribbon of dead-constant width and dead-constant value abutting a dark olive plane roughly 40% its luminance. Crop r1-district at (900,600)-(1500,830) and the",
-        "summary": "VEGETATION, r0 vs r1, same framing. r0-street mid-ground tree row (crop 380,300-1100,420): seven trees, all identical bright-green isoceles cones, single colour, no trunk visible, textbook of the failure the rubric names. r1-street same crop: orange autumn broadleaf at x\u2248165 and "
-      },
-      {
-        "title": "Roads and street furniture (dimensions 6 and 7)",
-        "verdict": "BEHIND",
-        "gap": "The road cross-section is five flat, unlit colour fills at incompatible values, so from the game camera it reads as painted ribbons rather than three materials at three heights. Fix it as one job: (a) lift the carriageway to a mid neutral grey \u2014 it currently renders at 35-48 of 255, and the wheel-track/gutter-pan wear you already emit is a 13/255 spread inside that near-black, so none of it is vis",
-        "summary": "r1-district, bottom-left road magnified 4x (crop 40-340 x 780-900): the cross-section reads, from the carriageway outward, as white edge line / pure emerald band / lilac band / flat tan plate \u2014 four painted stripes. The emerald verge shares no hue with the olive terrain grass imm"
-      },
-      {
-        "title": "Vehicles and citizens",
-        "verdict": "BEHIND",
-        "gap": "Not one vehicle and not one pedestrian reaches the film \u2014 the ten body classes and the rigged civilian exist in `public/node-city/index.html` (makeVehicle at ~9396, agentMesh at ~23380, spawn caps carMax 8 / civMax 14 / truckMax 6 / policeMax 4) and none of it is on screen. Before adding another body type, make the harness prove an agent renders: have `.gauntlet/capture.mjs` assert, at screenshot ",
-        "summary": "I picked r1 by a hair over r0, and only on grade, not on my dimensions \u2014 on vehicles and citizens the two rounds are pixel-for-pixel indistinguishable because both are empty. r0-district shows the identical framing to r1-district with the identical result: every road bare. The on"
-      }
-    ],
-    "note": "Every piece came back BEHIND. The wins are real and local: building silhouette 7 and roads 6, both up from 4. The losses are structural \u2014 the whole-frame critic measured a sunlit wall at 21% luminance against a shaded one at 24%, a ratio of 1.14x where the reference frames run 2-3x, and called it: there is no sun in this scene. Two of the low scores were the harness's fault, not the builders'. Vehicles scored 1 and citizens 2 because manageAgents() is only ever called from animate(), rAF never fires in headless capture, and the city was photographed empty \u2014 the ten vehicle bodies and the rigged civilian existed the whole time. Fixed: the standard district now carries 29 agents, and the street camera sits on a carriageway at eye height instead of above the rooftops."
-  },
-  {
-    "round": 2,
-    "headline": "The lighting round. Shadows were never being drawn at all.",
-    "status": "done",
-    "meanScore": 3.64,
-    "strangerTest": "instantly",
-    "tris": 2798100,
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 3
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 4
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 6
-      },
-      {
-        "dimension": "Building surface",
-        "score": 5
-      },
-      {
-        "dimension": "The plot",
-        "score": 2
-      },
-      {
-        "dimension": "Roads",
-        "score": 6
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 6
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 0
-      },
-      {
-        "dimension": "Citizens",
-        "score": 0
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 4
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 3
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 2
-      }
-    ],
-    "pieces": [
-      {
-        "title": "Palette, lighting and colour grade",
-        "verdict": "BEHIND",
-        "summary": "Two independent causes, both real. Shadows were never drawn: three r171's WebGPU node pipeline computes a shadow from the shadow target's COLOUR attachment, the WebGL2 backend runs that pass depth-only, so the term collapsed to a constant 1.0 - the depth pass was drawn every frame and thrown away. And the sun spent every afternoon behind the camera: of 2,232 wall samples at 15:00, fourteen were sunlit.",
-        "gap": "Get traffic and pedestrians into the captured PIXELS, not just the simulation. Round 2 carried 29 agents and produced zero visible vehicles and zero visible citizens across three frames."
-      }
-    ],
-    "note": "\ud83d\udd34 THESE SCORES ARE AGAINST THE WRONG FRAME, and the fault is the harness's. estClock() reads the real wall clock - \"the sun rises when YOUR sun rises\" - so every round was photographed at whatever time of day the capture happened to run. r0 and r1 landed mid-afternoon; r2 landed at 20:17. The lighting work was MEASURED at 15:00 and PHOTOGRAPHED at night, and manageAgents() culls the crowd at nightfall - which is why a round that moved the sunlit:shaded ratio from 1.11x to 2.67x and terrain luminance from 0.215 to 0.527 scored 4/10 for lighting and 0/10 for vehicles. The hour is now pinned as a harness constant and the frames above have been re-captured at 15:00; the scores are left as the critics gave them, because re-scoring my own work against a better frame is not a critic's verdict. Round 3 re-judges."
-  },
-  {
-    "round": 3,
-    "headline": "Four camera bugs, not one art bug. The crowd finally reaches the film.",
-    "status": "done",
-    "meanScore": 4.57,
-    "strangerTest": "instantly",
-    "tris": 2798100,
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 5
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 6
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 6
-      },
-      {
-        "dimension": "Building surface detail",
-        "score": 5
-      },
-      {
-        "dimension": "The plot",
-        "score": 2
-      },
-      {
-        "dimension": "Roads",
-        "score": 7
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 6
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 4
-      },
-      {
-        "dimension": "Citizens",
-        "score": 3
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 4
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 3
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 2
-      }
-    ],
-    "pieces": [
-      {
-        "title": "The crowd",
-        "verdict": "CLOSE",
-        "summary": "Four independent bugs, none in the art. The crowd was spawned into a city that did not exist yet (finishAll() calls manageAgents(), so the census was satisfied when the road network was two tiles long \u2014 all 29 agents on 3 unique positions in one corner). Nothing ever stepped them: agentTick runs only from animate(), and 2 rAF callbacks fired in 2 wall seconds. Every one of them was invisible: cullAgents() had last run against the BOOT camera and the stale visible=false rode into all three shots. And the street frame could not have contained them anyway \u2014 OrbitControls clamps maxPolarAngle to 82.8 degrees, so any eye-level request came out at y 2.3, above every roof.",
-        "gap": "No vehicle is ever on a carriageway. In the street frame all four cars are parked on the FOOTWAY \u2014 past the kerb and past the grass verge, wheels on the same grey sidewalk slab the pedestrian walks on (s_place.png makes the section unambiguous: asphalt, white edge line, lavender kerb, green verge, s"
-      },
-      {
-        "title": "The two artefacts",
-        "verdict": "CLOSE",
-        "summary": "Neither was the bug its symptom named. The street text was never mirrored \u2014 rotating the r2 aerial 180 degrees makes it read perfectly. The reading direction was a CONSTANT while the aerial camera sees east-west and north-south as opposite screen directions, so half the city read backwards. And the plum sky was no hex: no hue in the SKY table is magenta, the mauve was manufactured by lerping a warm-red dusk into a violet-black night. The hard seam is not a material boundary at all \u2014 the plate and the plain are the same hex in the same material; it is the fog ramp compressed by a grazing view angle."
-      },
-      {
-        "title": "The Outside chip",
-        "verdict": "WINS",
-        "summary": "The one defect nobody had fixed, because the agent assigned to it died mid-response. It sat exactly on the railbar pill row, invisible and unclickable. Now proven with elementsFromPoint returning the chip and a real unscripted click \u2014 and it is legible in the round-3 street frame: CITY IS CUT OFF, build a Highway Interchange on the north edge."
-      }
-    ],
-    "note": "Mean 3.64 to 4.57, the largest jump of the loop, and vehicles went 0 to 4-6 and citizens 0 to 3-5. The pattern of this round is worth naming: every single defect was diagnosed to a DIFFERENT cause than its symptom suggested. A pixel diff of the rendered buffer \u2014 with-crowd against without-crowd, exactly 0 of 1,440,000 pixels different \u2014 found in one run what two rounds of art work could not. Stranger test is still 'instantly', and the next priority is the one dimension that has never moved: the plot, at 2/10. Buildings sit on a continuous flat pad with no parcel, and the whole-frame critic says that single fact is why the city reads as models on a board."
-  },
-  {
-    "round": 4,
-    "headline": "Parcels landed. A critic still could not see a single property line.",
-    "status": "done",
-    "meanScore": 4.83,
-    "strangerTest": "instantly",
-    "tris": 404108,
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 5
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 6
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 6
-      },
-      {
-        "dimension": "Building surface detail",
-        "score": 5
-      },
-      {
-        "dimension": "The plot",
-        "score": 3
-      },
-      {
-        "dimension": "Roads",
-        "score": 7
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 7
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 5
-      },
-      {
-        "dimension": "Citizens",
-        "score": 2
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 4
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 3
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 2
-      }
-    ],
-    "pieces": [
-      {
-        "title": "Parcels and the setback",
-        "verdict": "BEHIND",
-        "summary": "Rounds 2-3 had already built the whole plot kit \u2014 apron, path, drive, lawn, hedge, bins, garden tree \u2014 and almost none of it was visible: a detached villa's eaves stood at z .275 against a boundary at .465, and the road aprons .110 of footway over the front, leaving ~.115 of garden a camera could see in front of a house up to 1.36 tall. The mass now slides back inside its own tile before the plot is drawn. Visible front garden goes .115 to .197, +71%. A new /src/parcel layer gives every NON-housing building a surface, a drive to the kerb on the side its door is on, a lot line and a class-appropriate boundary. Cost: +1.7% triangles, two new draw calls for the entire city.",
-        "gap": "There is no parcel between the building and the kerb: the sidewalk slab abuts the front steps directly, so there is no lawn, no path from the door, and no driveway anywhere in the city \u2014 and no lot line separates neighbours. Build it as: a 4\u20136 m front setback per residential building; fill it with a"
-      },
-      {
-        "title": "The failing economy round",
-        "verdict": "WINS",
-        "summary": "Decided on evidence, not taste: transit is a LICENCE like bank and founds no business. BUILDINGS.busstop/trainstation/railtrack each carry transitLicence and transitOwns() gates placement on holding the row, so the operation IS the permission and the network is the product; and revenue is already modelled by routes.js ledger(), clamped to net = min(0, fares - upkeep). A firm on op_bus would be a second, unclamped income for carrying the same passengers - the exact double-count that disqualified forge, indexfund and holdco. The clamp and a business cannot both be true. The suite is green."
-      }
-    ],
-    "note": "Mean 4.57 to 4.83 and the economy suite went green, but the whole-frame critic called the project PLATEAUING and showed its working: gain per round has fallen from +1.0 to +0.2, and the score column splits cleanly in two. Everything about OBJECTS has climbed and is nearly done - silhouette 4-7-6-6-6, roads 4-6-6-7-7, street furniture 3-5-6-6-7. Everything about the WORLD BETWEEN objects has never left the floor - the plot 3-4-2-2-3, citizens 2-2-0-3-2, zoning read 2-2-3-3-3, UI 4-2-2-2-2. Its stranger-test sentence is the whole diagnosis: THE GROUND IS ONE FLAT COLOUR AND NOTHING IS ROOTED IN IT - over half the frame at every camera, and the only surface that is wrong at all three zoom levels. Round 4 built setbacks, lawns, drives, hedges and lot lines, and the plot critic still answered 'no, I cannot see where one property ends and the next begins, anywhere, in any frame'. Parcels drawn on a single uniform plane do not read as parcels. The plane is the problem, and round 5 attacks only that."
-  },
-  {
-    "round": 5,
-    "headline": "The ground stopped being one flat colour. The loop stopped here.",
-    "status": "done",
-    "meanScore": 4.67,
-    "strangerTest": "instantly",
-    "tris": 413701,
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 6
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 6
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 6
-      },
-      {
-        "dimension": "Building surface detail",
-        "score": 5
-      },
-      {
-        "dimension": "The plot",
-        "score": 3
-      },
-      {
-        "dimension": "Roads",
-        "score": 7
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 6
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 5
-      },
-      {
-        "dimension": "Citizens",
-        "score": 2
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 5
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 3
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 2
-      }
-    ],
-    "pieces": [
-      {
-        "title": "The ground",
-        "verdict": "CLOSE",
-        "summary": "The map plate stopped being 576 flat constant-coloured quads and became one shared vertex lattice carrying two colour ramps blended by an independent moisture field, with real relief and a generated seamless grain map. Measured on the real captures: aerial patch-to-patch value spread +85%, hue spread +195%, near-to-far spread +429%, local contrast +117%. The MEAN was deliberately held at round 4's value \u2014 only the spread moved. No new draw calls: the rebuild is inside the plate's existing single mesh.",
-        "gap": "Boundaries. The critic still could not find one place where property A's ground stops and property B's starts, at the cameras the game renders at."
-      },
-      {
-        "title": "The verdict",
-        "verdict": "BEHIND",
-        "summary": "STOP AND CHANGE APPROACH. The critic's evidence: rubric sums r3=53, r4=55, r5=56 on its own consistent scale \u2014 five rounds of hand-authored geometry bought +0.08 on the last iteration. And two consecutive rounds shipped commits titled 'give every building a parcel' and 'give every lot an edge' while it could not see a lot edge in either at the game's own camera. Its words: the loop is now producing work that satisfies the commit message and not the image."
-      }
-    ],
-    "note": "\ud83d\udd34 THE LOOP STOPS HERE, on the critic's recommendation and its evidence, not on a budget. The named sentence from round 4 \u2014 'the ground is one flat colour and nothing is rooted in it' \u2014 is DEAD, and the pixels settle it: a single sightline down the aerial ground plane read 133/146/124 luminance in r4, a 22-unit random wobble with no depth direction; in r5 the same three pixels read 143/131/93, a monotonic 50-unit falloff. Across 30k grass samples the far/mid/near spread went 2.7 to 28.9, and distinct colours 261 to 3472. The fix worked and the stranger test did not move, which is the ceiling of the technique showing from the other side. The critic's three recommendations, in its order: (1) change the shot protocol \u2014 every claimed feature must be legible in a 1:1 crop at the default camera, and diff the framings, because this round's ground work never reached the street frame at all and nobody noticed; (2) take the free five points in UI legibility, which has scored 2 for four straight rounds while every round went after 3D, is the first thing a stranger sees, and is pure 2D layout with zero engine risk; (3) the real answer \u2014 an asset pipeline, glTF kits GPU-instanced in place of code-assembled primitives, the only change that moves silhouette, surface, vehicles, vegetation, furniture and zoning read together and the only one that can reach 8. Recommendation (1) is DONE \u2014 .gauntlet/capture.mjs now diffs every framing against the previous round and warns when one barely moved; run against r4 it independently reproduced the finding: aerial 48.9% changed, district 35%, street 4%."
-  },
-  {
-    "round": 6,
-    "headline": "The free five points were real. Fixing the UI removed the excuse, not the gap.",
-    "status": "done",
-    "meanScore": 5.08,
-    "strangerTest": "instantly",
-    "tris": 416900,
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 6
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 6
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 6
-      },
-      {
-        "dimension": "Building surface detail",
-        "score": 5
-      },
-      {
-        "dimension": "The plot",
-        "score": 3
-      },
-      {
-        "dimension": "Roads",
-        "score": 7
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 7
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 5
-      },
-      {
-        "dimension": "Citizens",
-        "score": 2
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 5
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 3
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 6
-      }
-    ],
-    "pieces": [
-      {
-        "title": "UI legibility \u2014 2 to 6",
-        "verdict": "CLOSE",
-        "summary": "Fourteen identical counters became one 44px strip: city, clock, four figures each with a per-hour RATE, seven service dots. Which four was read off the game's own model rather than taste - vitalsTick grows population only at >=90% coverage of food, water and health and sheds below 60%, so those are the stores on the bar and health is a dot. The old topbar was RE-HOMED as a popover rather than rebuilt, so updateHUD's writes and the vault delegation keep working untouched. 32 of 32 controls verified returning themselves from elementsFromPoint at two viewport sizes.",
-        "gap": "The clock was moved off the status bar into the popover, and there is still no pause/speed control - reference frame 4 has both. The 1:59:47 left visible in the rail is a battle countdown a stranger will read as the city clock."
-      },
-      {
-        "title": "The demand panel",
-        "verdict": "WINS",
-        "summary": "The critic's words: the strongest single thing built in six rounds, and on causal honesty it EXCEEDS the CS2 reference. Four arrow meters with signed causal lists, and every expanded cause prints the call it was read from - 'read from /src/economy snapshot().satisfaction'. Nothing fabricated. Taxes, Gas Station Availability and Land Value are argued ABSENT in writing, because node-city has no tax rate, no fuel retail and nothing computing land value, so a plausible bar would have been a lie."
-      },
-      {
-        "title": "Round 5's regressions",
-        "verdict": "WINS",
-        "summary": "The tree pit was never deleted - makeTree2's paved branch is byte-for-byte round 4's, and the tile lost a Math.random coin flip between two captures. Tree tiles are now seeded on the tile like makeHousing, and the ground treatment is decided by ADJACENCY: a road on any side gets the kerbed pit, open ground gets a feathered patch. Street furniture back to 7."
-      }
-    ],
-    "note": "Mean 4.67 to 5.08 and UI 2 to 6, so the round-5 critic's prediction was half-right - it called 2 to 7. The finding is what did NOT change. Stranger test is still 'instantly' for the sixth round, but WHAT lands first has moved: in round 5 the eye hit a wall of sixteen identical 410065408s and read 'someone's debug build' before it read 'city'; now the chrome is dismissed in one saccade and the first thing that registers is the junction and the row houses. In the critic's words, the read was never chrome-limited - fixing the UI did not change the answer, it only removed the excuse. Its verdict: dimension 12 was the last thing on the board fixable by writing code around the existing kit. One cheap round remains (the plot, at 3), and after that every dimension still under the bar is blocked on modelled geometry rather than on cleverness - 'you do not get from a 3-pixel stick to a citizen with a backpack and a cast shadow by writing more procedural code against primitives'. It puts the pipeline's realistic ceiling at a mean around 5.5 and a hard cap near 6 on any dimension whose 10 is modelled detail."
-  },
-  {
-    "round": 7,
-    "headline": "The boundaries were built and 2.5x too short. And the ceiling estimate was wrong.",
-    "status": "done",
-    "meanScore": 5.17,
-    "strangerTest": "instantly",
-    "tris": 424000,
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 6
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 6
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 7
-      },
-      {
-        "dimension": "Building surface detail",
-        "score": 5
-      },
-      {
-        "dimension": "The plot",
-        "score": 4
-      },
-      {
-        "dimension": "Roads",
-        "score": 6
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 6
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 5
-      },
-      {
-        "dimension": "Citizens",
-        "score": 2
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 5
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 4
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 6
-      }
-    ],
-    "pieces": [
-      {
-        "title": "The plot, measured instead of rebuilt",
-        "verdict": "CLOSE",
-        "summary": "Rounds 4 and 5 built the boundary correctly and nobody measured it. A citizen here is .26 tall and a storey .34; the hedge topped out at .086 - 0.58m at that scale, ankle height - which is why three critics could not see a property line that was genuinely there. Heights roughly doubled and every run now ENDS at a capped masonry corner post. Measuring it turned up three real bugs: bt/edge/sEdge were declared hundreds of lines BELOW the drive that has to fit inside them, so privet grew up through the driveway of every hedged plot in the city; the cottage's flank palings stood on `edge` while their rail was laid on `sEdge`, so every side fence merged with the neighbour's mirror image into one unbroken run down the block - literally the 'identical ribbon running past the gap' the round-4 critic reported, still in the code three rounds later; and the 'dropped kerb' claimed since round 4 was laid UNDER the driveway, 7 thou below the thing covering it, so it had never once been visible.",
-        "gap": "Still invisible at 1:1, and for a LIGHTING reason rather than a modelling one: the side yard sits permanently in its own house's shadow at luminance 20-50, so a dark hedge inside a near-black band has no contrast left to spend."
-      },
-      {
-        "title": "The four on-screen corrections",
-        "verdict": "WINS",
-        "summary": "The unweighted term that pinned Commercial at 100% and cascaded into Industrial, the two water models giving opposite verdicts 400px apart on one screen, the clock that had left the status bar, and a plus sign on a label every player reads as negative. All four fixed in the 2D layer, none costing a triangle."
-      }
-    ],
-    "note": "\ud83d\udd34 THE CLOSING CRITIC OVERTURNED THE STOP RECOMMENDATION, and showed its working. Round 6's critic had said the pipeline was capped near a mean of 5.5 with 'a hard cap around 6 on any dimension whose 10 is modelled detail', and that the next decision was to fund an asset kit. Round 7 scored 5.17 against a predicted 5.3, so on the surface that looked vindicated. The closing critic called it a trap: dimension 3, building silhouette, IS nothing but modelled detail and is at 7 today, procedurally, with no asset kit - the pipeline has already cleared the cap it was said to be under. Its own diagnosis of what is actually holding the mean down: citizens at 2 is a REGRESSION, not a limit (six readable pedestrians in round 6, zero in round 7) and recovering it is a bug fix worth +0.25 mean for zero triangles; density read is blocked on content variety, not geometry; and the plot is blocked on LOT PITCH plus a material choice, not on boundary props - widen the pitch and draw the side boundary in the light kerb concrete the driveway already uses instead of dark hedge. Its number: the realistic ceiling is a mean of 6.3-6.6, not 5.5, and the path from 5.17 to about 6.0 costs NO NEW ART. Its decision, quoted: do not fund the asset kit this round; there is roughly a full point of mean sitting in layout and content variety, which is cheaper than art and which the team has demonstrably been good at. The real wall is narrow and specific - window reveals and sills, car glazing and rims, tree crowns needing cards - and those three will pin the mean near 6.5 and keep 8+ permanently out of reach."
-  },
-  {
-    "round": 8,
-    "headline": "The crowd 'regression' was a coin flip. The ceiling estimate held.",
-    "status": "done",
-    "meanScore": 5.67,
-    "strangerTest": "instantly",
-    "tris": 448000,
-    "scores": [
-      {
-        "dimension": "Palette & grade",
-        "score": 6.5
-      },
-      {
-        "dimension": "Lighting & shadow",
-        "score": 6.5
-      },
-      {
-        "dimension": "Building silhouette",
-        "score": 7
-      },
-      {
-        "dimension": "Building surface detail",
-        "score": 6
-      },
-      {
-        "dimension": "The plot",
-        "score": 5
-      },
-      {
-        "dimension": "Roads",
-        "score": 6.5
-      },
-      {
-        "dimension": "Street furniture",
-        "score": 5.5
-      },
-      {
-        "dimension": "Vehicles",
-        "score": 4.5
-      },
-      {
-        "dimension": "Citizens",
-        "score": 5.5
-      },
-      {
-        "dimension": "Vegetation",
-        "score": 5
-      },
-      {
-        "dimension": "Density & zoning read",
-        "score": 6
-      },
-      {
-        "dimension": "UI legibility",
-        "score": 4
-      }
-    ],
-    "pieces": [
-      {
-        "title": "The crowd \u2014 diagnosed before it was built",
-        "verdict": "WINS",
-        "summary": "There was no regression. A with-crowd/without-crowd pixel diff read 2,934px, and forcing every agent visible read 2,934px \u2014 identical, so nothing was hidden by culling, by 'inside', or by round 7's taller boundaries. The decisive test: git archive of the r6-era tree into a scratch root, same diagnostic \u2014 statistically identical to HEAD, 29 agents, exactly 14 civilians, same scatter. Fourteen pedestrians over 100 road tiles is one per seven, and whether a 220x100 crop contains one is a coin flip that r6 won and r7 lost. Two critics scored variance. The fix is a STANDING crowd \u2014 the argument /src/parking already won for vehicles: 78 tile-seeded figures on footway and kerb, placed against MythicParking.spots() so nobody stands inside a parked car. Cost +24 meshes for 78 people, because a standing figure needs no rig and bakes into merged buckets; as agents the same 78 would have been +1,326.",
-        "gap": "They are all the same figure, in one frozen stance, at 1.5-2x oversize \u2014 a pedestrian reaches 60% of a lamp mast and stands taller than the sidewalk is wide."
-      },
-      {
-        "title": "The speech bubbles",
-        "verdict": "WINS",
-        "summary": "Four faults, all found by driving it. The spawn test ran ONCE and then for 5.2s the speaker was free to walk indoors, be culled or leave frame while the bubble kept captioning empty pavement. 'In frame' also is not 'visible' \u2014 a line still sat on a five-storey facade with its speaker behind it, so a rate-limited raycast now answers whether the player can actually see them. The filter that makes that work is isMesh: Raycaster hits Lines, and this scene has a GridHelper lying flat over the whole map, so with it in, 0 of 9 street candidates survived and the feature went silent citywide. Found by running it, not by reading it."
-      },
-      {
-        "title": "Massing, and the paint comes off the road",
-        "verdict": "CLOSE",
-        "summary": "Three zone-legible recipes \u2014 retail fascia with a glazing strip, a flat industrial shed with a dock apron and yard, a surface car park with bay lines \u2014 and the street names finally lifted off the carriageway. Density read 4 to 6."
-      }
-    ],
-    "note": "Mean 5.17 to 5.67, the biggest jump since round 3, and the 6.3-6.6 ceiling estimate is NOT falsified. The critic's test for telling 'the estimate was wrong' from 'the work did not land' is the best piece of reasoning in the loop: if the ceiling were wrong, the targeted dimensions would have REFUSED TO MOVE \u2014 you would fix the crowd and citizens would crawl 3 to 4 because the mesh itself caps it. Instead all four moved, fast and cheap: citizens 2 to 5.5, density read 4 to 6, the plot 4 to 5, surface detail 5 to 6. Its verdict: do not fund an asset kit yet, six of twelve dimensions still have a named fix costing no new geometry, and the largest is pure DOM. \u26a0 UI legibility REGRESSED 6 to 4 \u2014 the demand strip lost its labels and causal lists in the massing round's layout changes, and it is now called the cheapest point on the board for the second time. Two other regressions: front-garden greenery fell from 13.9% to 8.3% of the residential band, and the standing crowd is unweighted, so people stand alone on verges beside roads running through empty fields."
-  }
+ {
+  "round": 0,
+  "headline": "The untouched renderer, photographed for the first time.",
+  "status": "done",
+  "meanScore": null,
+  "strangerTest": "instantly",
+  "tris": 1992596,
+  "note": "Not a build round. This is the harness proving it can boot the real page, place a 172-tile district through the shipped tryPlace() path and photograph it — the thing that lets every later round be judged on output instead of on a diff. What it shows: five residential archetypes on a seeded street grid, procedural canvas textures, a lamp-lit road network — and a global violet cast that no reference frame has. The scores in the matrix for this row are the lead's own read of the baseline frames, recorded so later rounds have something to move against; every round from 1 on is scored by critics who did not write the code.",
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 2
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 3
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 4
+   },
+   {
+    "dimension": "Building surface",
+    "score": 3
+   },
+   {
+    "dimension": "The plot",
+    "score": 3
+   },
+   {
+    "dimension": "Roads",
+    "score": 4
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 3
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 3
+   },
+   {
+    "dimension": "Citizens",
+    "score": 2
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 2
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 2
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 4
+   }
+  ],
+  "pieces": []
+ },
+ {
+  "round": 1,
+  "headline": "Five builders, one file. The violet cast is gone — but there is still no sun.",
+  "status": "done",
+  "meanScore": 3.63,
+  "strangerTest": "instantly",
+  "tris": 2798100,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 4
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 2
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 7
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 6
+   },
+   {
+    "dimension": "The plot",
+    "score": 4
+   },
+   {
+    "dimension": "Roads",
+    "score": 6
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 5
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 1
+   },
+   {
+    "dimension": "Citizens",
+    "score": 2
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 4
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 2
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 2
+   }
+  ],
+  "pieces": [
+   {
+    "title": "Palette, lighting and colour grade (dimensions 1 and 2)",
+    "verdict": "BEHIND",
+    "gap": "Every up-facing horizontal surface in the city renders darker than the vertical walls beneath it, which is physically backwards and is the first thing a viewer notices. On the same water tank in the street framing, r0 gave the top cap rgb(214,210,200) val 0.84 against a cylinder side of val 0.18; r1 gives that cap rgb(15,12,17) val 0.07 against a side of val 0.35 — the cap is now five times darker",
+    "summary": "AERIAL. r0's ground plane is a violet void — I sampled seven points across the lower two-thirds and every one came back hue 273-285, sat 0.35-0.39, val 0.11-0.14 (e.g. bottom-left rgb(27,20,31)). r1's same points are hue 69-73, val 0.19-0.23 (rgb(48,52,32)). That is the purple ca"
+   },
+   {
+    "title": "Residential building quality — dimensions 3 (Building silhouette) and ",
+    "verdict": "BEHIND",
+    "gap": "The ring-15 district housing generator (public/node-city/index.html, ~lines 5357–5382) still emits every mid-ground and background house as `rdPart(B, rdGeo(bw,h,bd))` + a `G_GABX`/`G_GABZ` gable prism + flat `winAt` window quads — no eaves overhang, no fascia, no chimney, no dormer, and no frame or sill on any opening. That set is the MAJORITY of the residential the camera actually sees: the enti",
+    "summary": "WHAT I OPENED: r1-aerial/street/district and r0-aerial/street/district at full res, then crops magnified 3–8x with nearest-neighbour so I was judging geometry and not resampling.\n\nTHE STRONGEST NEW WORK (r1-district, crop x1130–1470 / y230–420 at 6x): roofs now carry horizontal s"
+   },
+   {
+    "title": "The plot, and vegetation (dimensions 5 and 10)",
+    "verdict": "BEHIND",
+    "gap": "The grass is two flat unshaded colours with nothing between them, and it fills ~40% of every frame. `C_GRASS = 0x53823c` (the road verge, index.html:7879) sits directly against `GROUND_COL = 0x484e3a` (index.html:4600) — a bright yellow-green ribbon of dead-constant width and dead-constant value abutting a dark olive plane roughly 40% its luminance. Crop r1-district at (900,600)-(1500,830) and the",
+    "summary": "VEGETATION, r0 vs r1, same framing. r0-street mid-ground tree row (crop 380,300-1100,420): seven trees, all identical bright-green isoceles cones, single colour, no trunk visible, textbook of the failure the rubric names. r1-street same crop: orange autumn broadleaf at x≈165 and "
+   },
+   {
+    "title": "Roads and street furniture (dimensions 6 and 7)",
+    "verdict": "BEHIND",
+    "gap": "The road cross-section is five flat, unlit colour fills at incompatible values, so from the game camera it reads as painted ribbons rather than three materials at three heights. Fix it as one job: (a) lift the carriageway to a mid neutral grey — it currently renders at 35-48 of 255, and the wheel-track/gutter-pan wear you already emit is a 13/255 spread inside that near-black, so none of it is vis",
+    "summary": "r1-district, bottom-left road magnified 4x (crop 40-340 x 780-900): the cross-section reads, from the carriageway outward, as white edge line / pure emerald band / lilac band / flat tan plate — four painted stripes. The emerald verge shares no hue with the olive terrain grass imm"
+   },
+   {
+    "title": "Vehicles and citizens",
+    "verdict": "BEHIND",
+    "gap": "Not one vehicle and not one pedestrian reaches the film — the ten body classes and the rigged civilian exist in `public/node-city/index.html` (makeVehicle at ~9396, agentMesh at ~23380, spawn caps carMax 8 / civMax 14 / truckMax 6 / policeMax 4) and none of it is on screen. Before adding another body type, make the harness prove an agent renders: have `.gauntlet/capture.mjs` assert, at screenshot ",
+    "summary": "I picked r1 by a hair over r0, and only on grade, not on my dimensions — on vehicles and citizens the two rounds are pixel-for-pixel indistinguishable because both are empty. r0-district shows the identical framing to r1-district with the identical result: every road bare. The on"
+   }
+  ],
+  "note": "Every piece came back BEHIND. The wins are real and local: building silhouette 7 and roads 6, both up from 4. The losses are structural — the whole-frame critic measured a sunlit wall at 21% luminance against a shaded one at 24%, a ratio of 1.14x where the reference frames run 2-3x, and called it: there is no sun in this scene. Two of the low scores were the harness's fault, not the builders'. Vehicles scored 1 and citizens 2 because manageAgents() is only ever called from animate(), rAF never fires in headless capture, and the city was photographed empty — the ten vehicle bodies and the rigged civilian existed the whole time. Fixed: the standard district now carries 29 agents, and the street camera sits on a carriageway at eye height instead of above the rooftops."
+ },
+ {
+  "round": 2,
+  "headline": "The lighting round. Shadows were never being drawn at all.",
+  "status": "done",
+  "meanScore": 3.64,
+  "strangerTest": "instantly",
+  "tris": 2798100,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 3
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 4
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 6
+   },
+   {
+    "dimension": "Building surface",
+    "score": 5
+   },
+   {
+    "dimension": "The plot",
+    "score": 2
+   },
+   {
+    "dimension": "Roads",
+    "score": 6
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 6
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 0
+   },
+   {
+    "dimension": "Citizens",
+    "score": 0
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 4
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 3
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 2
+   }
+  ],
+  "pieces": [
+   {
+    "title": "Palette, lighting and colour grade",
+    "verdict": "BEHIND",
+    "summary": "Two independent causes, both real. Shadows were never drawn: three r171's WebGPU node pipeline computes a shadow from the shadow target's COLOUR attachment, the WebGL2 backend runs that pass depth-only, so the term collapsed to a constant 1.0 - the depth pass was drawn every frame and thrown away. And the sun spent every afternoon behind the camera: of 2,232 wall samples at 15:00, fourteen were sunlit.",
+    "gap": "Get traffic and pedestrians into the captured PIXELS, not just the simulation. Round 2 carried 29 agents and produced zero visible vehicles and zero visible citizens across three frames."
+   }
+  ],
+  "note": "🔴 THESE SCORES ARE AGAINST THE WRONG FRAME, and the fault is the harness's. estClock() reads the real wall clock - \"the sun rises when YOUR sun rises\" - so every round was photographed at whatever time of day the capture happened to run. r0 and r1 landed mid-afternoon; r2 landed at 20:17. The lighting work was MEASURED at 15:00 and PHOTOGRAPHED at night, and manageAgents() culls the crowd at nightfall - which is why a round that moved the sunlit:shaded ratio from 1.11x to 2.67x and terrain luminance from 0.215 to 0.527 scored 4/10 for lighting and 0/10 for vehicles. The hour is now pinned as a harness constant and the frames above have been re-captured at 15:00; the scores are left as the critics gave them, because re-scoring my own work against a better frame is not a critic's verdict. Round 3 re-judges."
+ },
+ {
+  "round": 3,
+  "headline": "Four camera bugs, not one art bug. The crowd finally reaches the film.",
+  "status": "done",
+  "meanScore": 4.57,
+  "strangerTest": "instantly",
+  "tris": 2798100,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 5
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 6
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 6
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 5
+   },
+   {
+    "dimension": "The plot",
+    "score": 2
+   },
+   {
+    "dimension": "Roads",
+    "score": 7
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 6
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 4
+   },
+   {
+    "dimension": "Citizens",
+    "score": 3
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 4
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 3
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 2
+   }
+  ],
+  "pieces": [
+   {
+    "title": "The crowd",
+    "verdict": "CLOSE",
+    "summary": "Four independent bugs, none in the art. The crowd was spawned into a city that did not exist yet (finishAll() calls manageAgents(), so the census was satisfied when the road network was two tiles long — all 29 agents on 3 unique positions in one corner). Nothing ever stepped them: agentTick runs only from animate(), and 2 rAF callbacks fired in 2 wall seconds. Every one of them was invisible: cullAgents() had last run against the BOOT camera and the stale visible=false rode into all three shots. And the street frame could not have contained them anyway — OrbitControls clamps maxPolarAngle to 82.8 degrees, so any eye-level request came out at y 2.3, above every roof.",
+    "gap": "No vehicle is ever on a carriageway. In the street frame all four cars are parked on the FOOTWAY — past the kerb and past the grass verge, wheels on the same grey sidewalk slab the pedestrian walks on (s_place.png makes the section unambiguous: asphalt, white edge line, lavender kerb, green verge, s"
+   },
+   {
+    "title": "The two artefacts",
+    "verdict": "CLOSE",
+    "summary": "Neither was the bug its symptom named. The street text was never mirrored — rotating the r2 aerial 180 degrees makes it read perfectly. The reading direction was a CONSTANT while the aerial camera sees east-west and north-south as opposite screen directions, so half the city read backwards. And the plum sky was no hex: no hue in the SKY table is magenta, the mauve was manufactured by lerping a warm-red dusk into a violet-black night. The hard seam is not a material boundary at all — the plate and the plain are the same hex in the same material; it is the fog ramp compressed by a grazing view angle."
+   },
+   {
+    "title": "The Outside chip",
+    "verdict": "WINS",
+    "summary": "The one defect nobody had fixed, because the agent assigned to it died mid-response. It sat exactly on the railbar pill row, invisible and unclickable. Now proven with elementsFromPoint returning the chip and a real unscripted click — and it is legible in the round-3 street frame: CITY IS CUT OFF, build a Highway Interchange on the north edge."
+   }
+  ],
+  "note": "Mean 3.64 to 4.57, the largest jump of the loop, and vehicles went 0 to 4-6 and citizens 0 to 3-5. The pattern of this round is worth naming: every single defect was diagnosed to a DIFFERENT cause than its symptom suggested. A pixel diff of the rendered buffer — with-crowd against without-crowd, exactly 0 of 1,440,000 pixels different — found in one run what two rounds of art work could not. Stranger test is still 'instantly', and the next priority is the one dimension that has never moved: the plot, at 2/10. Buildings sit on a continuous flat pad with no parcel, and the whole-frame critic says that single fact is why the city reads as models on a board."
+ },
+ {
+  "round": 4,
+  "headline": "Parcels landed. A critic still could not see a single property line.",
+  "status": "done",
+  "meanScore": 4.83,
+  "strangerTest": "instantly",
+  "tris": 404108,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 5
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 6
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 6
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 5
+   },
+   {
+    "dimension": "The plot",
+    "score": 3
+   },
+   {
+    "dimension": "Roads",
+    "score": 7
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 7
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 5
+   },
+   {
+    "dimension": "Citizens",
+    "score": 2
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 4
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 3
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 2
+   }
+  ],
+  "pieces": [
+   {
+    "title": "Parcels and the setback",
+    "verdict": "BEHIND",
+    "summary": "Rounds 2-3 had already built the whole plot kit — apron, path, drive, lawn, hedge, bins, garden tree — and almost none of it was visible: a detached villa's eaves stood at z .275 against a boundary at .465, and the road aprons .110 of footway over the front, leaving ~.115 of garden a camera could see in front of a house up to 1.36 tall. The mass now slides back inside its own tile before the plot is drawn. Visible front garden goes .115 to .197, +71%. A new /src/parcel layer gives every NON-housing building a surface, a drive to the kerb on the side its door is on, a lot line and a class-appropriate boundary. Cost: +1.7% triangles, two new draw calls for the entire city.",
+    "gap": "There is no parcel between the building and the kerb: the sidewalk slab abuts the front steps directly, so there is no lawn, no path from the door, and no driveway anywhere in the city — and no lot line separates neighbours. Build it as: a 4–6 m front setback per residential building; fill it with a"
+   },
+   {
+    "title": "The failing economy round",
+    "verdict": "WINS",
+    "summary": "Decided on evidence, not taste: transit is a LICENCE like bank and founds no business. BUILDINGS.busstop/trainstation/railtrack each carry transitLicence and transitOwns() gates placement on holding the row, so the operation IS the permission and the network is the product; and revenue is already modelled by routes.js ledger(), clamped to net = min(0, fares - upkeep). A firm on op_bus would be a second, unclamped income for carrying the same passengers - the exact double-count that disqualified forge, indexfund and holdco. The clamp and a business cannot both be true. The suite is green."
+   }
+  ],
+  "note": "Mean 4.57 to 4.83 and the economy suite went green, but the whole-frame critic called the project PLATEAUING and showed its working: gain per round has fallen from +1.0 to +0.2, and the score column splits cleanly in two. Everything about OBJECTS has climbed and is nearly done - silhouette 4-7-6-6-6, roads 4-6-6-7-7, street furniture 3-5-6-6-7. Everything about the WORLD BETWEEN objects has never left the floor - the plot 3-4-2-2-3, citizens 2-2-0-3-2, zoning read 2-2-3-3-3, UI 4-2-2-2-2. Its stranger-test sentence is the whole diagnosis: THE GROUND IS ONE FLAT COLOUR AND NOTHING IS ROOTED IN IT - over half the frame at every camera, and the only surface that is wrong at all three zoom levels. Round 4 built setbacks, lawns, drives, hedges and lot lines, and the plot critic still answered 'no, I cannot see where one property ends and the next begins, anywhere, in any frame'. Parcels drawn on a single uniform plane do not read as parcels. The plane is the problem, and round 5 attacks only that."
+ },
+ {
+  "round": 5,
+  "headline": "The ground stopped being one flat colour. The loop stopped here.",
+  "status": "done",
+  "meanScore": 4.67,
+  "strangerTest": "instantly",
+  "tris": 413701,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 6
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 6
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 6
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 5
+   },
+   {
+    "dimension": "The plot",
+    "score": 3
+   },
+   {
+    "dimension": "Roads",
+    "score": 7
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 6
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 5
+   },
+   {
+    "dimension": "Citizens",
+    "score": 2
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 5
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 3
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 2
+   }
+  ],
+  "pieces": [
+   {
+    "title": "The ground",
+    "verdict": "CLOSE",
+    "summary": "The map plate stopped being 576 flat constant-coloured quads and became one shared vertex lattice carrying two colour ramps blended by an independent moisture field, with real relief and a generated seamless grain map. Measured on the real captures: aerial patch-to-patch value spread +85%, hue spread +195%, near-to-far spread +429%, local contrast +117%. The MEAN was deliberately held at round 4's value — only the spread moved. No new draw calls: the rebuild is inside the plate's existing single mesh.",
+    "gap": "Boundaries. The critic still could not find one place where property A's ground stops and property B's starts, at the cameras the game renders at."
+   },
+   {
+    "title": "The verdict",
+    "verdict": "BEHIND",
+    "summary": "STOP AND CHANGE APPROACH. The critic's evidence: rubric sums r3=53, r4=55, r5=56 on its own consistent scale — five rounds of hand-authored geometry bought +0.08 on the last iteration. And two consecutive rounds shipped commits titled 'give every building a parcel' and 'give every lot an edge' while it could not see a lot edge in either at the game's own camera. Its words: the loop is now producing work that satisfies the commit message and not the image."
+   }
+  ],
+  "note": "🔴 THE LOOP STOPS HERE, on the critic's recommendation and its evidence, not on a budget. The named sentence from round 4 — 'the ground is one flat colour and nothing is rooted in it' — is DEAD, and the pixels settle it: a single sightline down the aerial ground plane read 133/146/124 luminance in r4, a 22-unit random wobble with no depth direction; in r5 the same three pixels read 143/131/93, a monotonic 50-unit falloff. Across 30k grass samples the far/mid/near spread went 2.7 to 28.9, and distinct colours 261 to 3472. The fix worked and the stranger test did not move, which is the ceiling of the technique showing from the other side. The critic's three recommendations, in its order: (1) change the shot protocol — every claimed feature must be legible in a 1:1 crop at the default camera, and diff the framings, because this round's ground work never reached the street frame at all and nobody noticed; (2) take the free five points in UI legibility, which has scored 2 for four straight rounds while every round went after 3D, is the first thing a stranger sees, and is pure 2D layout with zero engine risk; (3) the real answer — an asset pipeline, glTF kits GPU-instanced in place of code-assembled primitives, the only change that moves silhouette, surface, vehicles, vegetation, furniture and zoning read together and the only one that can reach 8. Recommendation (1) is DONE — .gauntlet/capture.mjs now diffs every framing against the previous round and warns when one barely moved; run against r4 it independently reproduced the finding: aerial 48.9% changed, district 35%, street 4%."
+ },
+ {
+  "round": 6,
+  "headline": "The free five points were real. Fixing the UI removed the excuse, not the gap.",
+  "status": "done",
+  "meanScore": 5.08,
+  "strangerTest": "instantly",
+  "tris": 416900,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 6
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 6
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 6
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 5
+   },
+   {
+    "dimension": "The plot",
+    "score": 3
+   },
+   {
+    "dimension": "Roads",
+    "score": 7
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 7
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 5
+   },
+   {
+    "dimension": "Citizens",
+    "score": 2
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 5
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 3
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 6
+   }
+  ],
+  "pieces": [
+   {
+    "title": "UI legibility — 2 to 6",
+    "verdict": "CLOSE",
+    "summary": "Fourteen identical counters became one 44px strip: city, clock, four figures each with a per-hour RATE, seven service dots. Which four was read off the game's own model rather than taste - vitalsTick grows population only at >=90% coverage of food, water and health and sheds below 60%, so those are the stores on the bar and health is a dot. The old topbar was RE-HOMED as a popover rather than rebuilt, so updateHUD's writes and the vault delegation keep working untouched. 32 of 32 controls verified returning themselves from elementsFromPoint at two viewport sizes.",
+    "gap": "The clock was moved off the status bar into the popover, and there is still no pause/speed control - reference frame 4 has both. The 1:59:47 left visible in the rail is a battle countdown a stranger will read as the city clock."
+   },
+   {
+    "title": "The demand panel",
+    "verdict": "WINS",
+    "summary": "The critic's words: the strongest single thing built in six rounds, and on causal honesty it EXCEEDS the CS2 reference. Four arrow meters with signed causal lists, and every expanded cause prints the call it was read from - 'read from /src/economy snapshot().satisfaction'. Nothing fabricated. Taxes, Gas Station Availability and Land Value are argued ABSENT in writing, because node-city has no tax rate, no fuel retail and nothing computing land value, so a plausible bar would have been a lie."
+   },
+   {
+    "title": "Round 5's regressions",
+    "verdict": "WINS",
+    "summary": "The tree pit was never deleted - makeTree2's paved branch is byte-for-byte round 4's, and the tile lost a Math.random coin flip between two captures. Tree tiles are now seeded on the tile like makeHousing, and the ground treatment is decided by ADJACENCY: a road on any side gets the kerbed pit, open ground gets a feathered patch. Street furniture back to 7."
+   }
+  ],
+  "note": "Mean 4.67 to 5.08 and UI 2 to 6, so the round-5 critic's prediction was half-right - it called 2 to 7. The finding is what did NOT change. Stranger test is still 'instantly' for the sixth round, but WHAT lands first has moved: in round 5 the eye hit a wall of sixteen identical 410065408s and read 'someone's debug build' before it read 'city'; now the chrome is dismissed in one saccade and the first thing that registers is the junction and the row houses. In the critic's words, the read was never chrome-limited - fixing the UI did not change the answer, it only removed the excuse. Its verdict: dimension 12 was the last thing on the board fixable by writing code around the existing kit. One cheap round remains (the plot, at 3), and after that every dimension still under the bar is blocked on modelled geometry rather than on cleverness - 'you do not get from a 3-pixel stick to a citizen with a backpack and a cast shadow by writing more procedural code against primitives'. It puts the pipeline's realistic ceiling at a mean around 5.5 and a hard cap near 6 on any dimension whose 10 is modelled detail."
+ },
+ {
+  "round": 7,
+  "headline": "The boundaries were built and 2.5x too short. And the ceiling estimate was wrong.",
+  "status": "done",
+  "meanScore": 5.17,
+  "strangerTest": "instantly",
+  "tris": 424000,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 6
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 6
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 7
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 5
+   },
+   {
+    "dimension": "The plot",
+    "score": 4
+   },
+   {
+    "dimension": "Roads",
+    "score": 6
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 6
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 5
+   },
+   {
+    "dimension": "Citizens",
+    "score": 2
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 5
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 4
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 6
+   }
+  ],
+  "pieces": [
+   {
+    "title": "The plot, measured instead of rebuilt",
+    "verdict": "CLOSE",
+    "summary": "Rounds 4 and 5 built the boundary correctly and nobody measured it. A citizen here is .26 tall and a storey .34; the hedge topped out at .086 - 0.58m at that scale, ankle height - which is why three critics could not see a property line that was genuinely there. Heights roughly doubled and every run now ENDS at a capped masonry corner post. Measuring it turned up three real bugs: bt/edge/sEdge were declared hundreds of lines BELOW the drive that has to fit inside them, so privet grew up through the driveway of every hedged plot in the city; the cottage's flank palings stood on `edge` while their rail was laid on `sEdge`, so every side fence merged with the neighbour's mirror image into one unbroken run down the block - literally the 'identical ribbon running past the gap' the round-4 critic reported, still in the code three rounds later; and the 'dropped kerb' claimed since round 4 was laid UNDER the driveway, 7 thou below the thing covering it, so it had never once been visible.",
+    "gap": "Still invisible at 1:1, and for a LIGHTING reason rather than a modelling one: the side yard sits permanently in its own house's shadow at luminance 20-50, so a dark hedge inside a near-black band has no contrast left to spend."
+   },
+   {
+    "title": "The four on-screen corrections",
+    "verdict": "WINS",
+    "summary": "The unweighted term that pinned Commercial at 100% and cascaded into Industrial, the two water models giving opposite verdicts 400px apart on one screen, the clock that had left the status bar, and a plus sign on a label every player reads as negative. All four fixed in the 2D layer, none costing a triangle."
+   }
+  ],
+  "note": "🔴 THE CLOSING CRITIC OVERTURNED THE STOP RECOMMENDATION, and showed its working. Round 6's critic had said the pipeline was capped near a mean of 5.5 with 'a hard cap around 6 on any dimension whose 10 is modelled detail', and that the next decision was to fund an asset kit. Round 7 scored 5.17 against a predicted 5.3, so on the surface that looked vindicated. The closing critic called it a trap: dimension 3, building silhouette, IS nothing but modelled detail and is at 7 today, procedurally, with no asset kit - the pipeline has already cleared the cap it was said to be under. Its own diagnosis of what is actually holding the mean down: citizens at 2 is a REGRESSION, not a limit (six readable pedestrians in round 6, zero in round 7) and recovering it is a bug fix worth +0.25 mean for zero triangles; density read is blocked on content variety, not geometry; and the plot is blocked on LOT PITCH plus a material choice, not on boundary props - widen the pitch and draw the side boundary in the light kerb concrete the driveway already uses instead of dark hedge. Its number: the realistic ceiling is a mean of 6.3-6.6, not 5.5, and the path from 5.17 to about 6.0 costs NO NEW ART. Its decision, quoted: do not fund the asset kit this round; there is roughly a full point of mean sitting in layout and content variety, which is cheaper than art and which the team has demonstrably been good at. The real wall is narrow and specific - window reveals and sills, car glazing and rims, tree crowns needing cards - and those three will pin the mean near 6.5 and keep 8+ permanently out of reach."
+ },
+ {
+  "round": 8,
+  "headline": "The crowd 'regression' was a coin flip. The ceiling estimate held.",
+  "status": "done",
+  "meanScore": 5.67,
+  "strangerTest": "instantly",
+  "tris": 448000,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 6.5
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 6.5
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 7
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 6
+   },
+   {
+    "dimension": "The plot",
+    "score": 5
+   },
+   {
+    "dimension": "Roads",
+    "score": 6.5
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 5.5
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 4.5
+   },
+   {
+    "dimension": "Citizens",
+    "score": 5.5
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 5
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 6
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 4
+   }
+  ],
+  "pieces": [
+   {
+    "title": "The crowd — diagnosed before it was built",
+    "verdict": "WINS",
+    "summary": "There was no regression. A with-crowd/without-crowd pixel diff read 2,934px, and forcing every agent visible read 2,934px — identical, so nothing was hidden by culling, by 'inside', or by round 7's taller boundaries. The decisive test: git archive of the r6-era tree into a scratch root, same diagnostic — statistically identical to HEAD, 29 agents, exactly 14 civilians, same scatter. Fourteen pedestrians over 100 road tiles is one per seven, and whether a 220x100 crop contains one is a coin flip that r6 won and r7 lost. Two critics scored variance. The fix is a STANDING crowd — the argument /src/parking already won for vehicles: 78 tile-seeded figures on footway and kerb, placed against MythicParking.spots() so nobody stands inside a parked car. Cost +24 meshes for 78 people, because a standing figure needs no rig and bakes into merged buckets; as agents the same 78 would have been +1,326.",
+    "gap": "They are all the same figure, in one frozen stance, at 1.5-2x oversize — a pedestrian reaches 60% of a lamp mast and stands taller than the sidewalk is wide."
+   },
+   {
+    "title": "The speech bubbles",
+    "verdict": "WINS",
+    "summary": "Four faults, all found by driving it. The spawn test ran ONCE and then for 5.2s the speaker was free to walk indoors, be culled or leave frame while the bubble kept captioning empty pavement. 'In frame' also is not 'visible' — a line still sat on a five-storey facade with its speaker behind it, so a rate-limited raycast now answers whether the player can actually see them. The filter that makes that work is isMesh: Raycaster hits Lines, and this scene has a GridHelper lying flat over the whole map, so with it in, 0 of 9 street candidates survived and the feature went silent citywide. Found by running it, not by reading it."
+   },
+   {
+    "title": "Massing, and the paint comes off the road",
+    "verdict": "CLOSE",
+    "summary": "Three zone-legible recipes — retail fascia with a glazing strip, a flat industrial shed with a dock apron and yard, a surface car park with bay lines — and the street names finally lifted off the carriageway. Density read 4 to 6."
+   }
+  ],
+  "note": "Mean 5.17 to 5.67, the biggest jump since round 3, and the 6.3-6.6 ceiling estimate is NOT falsified. The critic's test for telling 'the estimate was wrong' from 'the work did not land' is the best piece of reasoning in the loop: if the ceiling were wrong, the targeted dimensions would have REFUSED TO MOVE — you would fix the crowd and citizens would crawl 3 to 4 because the mesh itself caps it. Instead all four moved, fast and cheap: citizens 2 to 5.5, density read 4 to 6, the plot 4 to 5, surface detail 5 to 6. Its verdict: do not fund an asset kit yet, six of twelve dimensions still have a named fix costing no new geometry, and the largest is pure DOM. ⚠ UI legibility REGRESSED 6 to 4 — the demand strip lost its labels and causal lists in the massing round's layout changes, and it is now called the cheapest point on the board for the second time. Two other regressions: front-garden greenery fell from 13.9% to 8.3% of the residential band, and the standing crowd is unweighted, so people stand alone on verges beside roads running through empty fields."
+ },
+ {
+  "round": 9,
+  "headline": "The people were twice human size, and the proof was a parked car.",
+  "status": "running",
+  "meanScore": null,
+  "strangerTest": "pending",
+  "tris": null,
+  "scores": [],
+  "pieces": [
+   {
+    "title": "The figure scale — derived, not chosen",
+    "verdict": "LANDED",
+    "summary": "Measured off the live scene graph rather than read out of the source: a car is .445 long, .206 wide and .154 tall, implying 10.1, 8.7 and 9.7 metres per world unit — three independent dimensions inside 15%. A civilian median of .333 for a 1.75m adult implies 5.3. The statement that needs no scale constant to argue about is that a citizen stood 2.16x the height of a car roof where a real person is 1.17x, which gives 1.3 -> 0.70 with nothing chosen by eye. An A/B captured BEFORE the change killed the \"split the difference so they still read\" option: at 0.70 the civilians sit correctly against the parked cars and are still plainly legible in the street frame. The A/B also proved the second half by accident — rescaling only the agents left the single largest person in the picture completely unchanged, because it was a /src/crowd standing figure, in a frame where the fix had visibly worked on everyone behind them. The number now lives in one place and is handed over in the mount ctx; an older host gets the old size AND a console line naming the drift.",
+    "gap": "A figure is now .182 tall against railings at .196 and hedges at .170, so footway occlusion that used to be partial is total from a street camera. That argues for a larger kerb share — recorded in the header, deliberately not acted on in the same commit, so the next A/B stays readable."
+   },
+   {
+    "title": "The ground plane — the biggest tell left",
+    "verdict": "IN PROGRESS",
+    "summary": "The round-9 aerial shows buildings and roads reading well and sitting in an unbroken flat green plane with no tone variation, dirt, scrub, rock or wear anywhere. \"The plot\" and \"Vegetation\" have both sat at 5.0 for nine rounds while every other dimension moved, and this is why. It is also the cheapest large win left, because the ground is already one material rather than per-tile art.",
+    "gap": "Not yet measured."
+   },
+   {
+    "title": "District specialisations (Layer 2) — landed alongside",
+    "verdict": "WINS",
+    "summary": "Not a visual round piece, but it landed in the same window. 13 specialisations across Commercial/Office/Industrial including the three card districts, each replacing the bag typeFor() picks out of rather than adding a second develop path. The decisive test, driven through MythicZoning.plan().out: two empty road-fronted tiles on the same band, both zoned c_low — A develops foodtruck, gets a spec, develops gasstation, clears, develops foodtruck again; B never moves. Swapped, neighbour untouched, reverts exactly, and with the module short-circuited the planner output string is byte-identical. No land-value threshold is written down anywhere: Luxury refuses cheap land because the intersection of its mix with the band is empty.",
+    "gap": "A critic is auditing whether the swap is general across every zone x spec x band pair or whether it was one lucky pair."
+   },
+   {
+    "title": "Land value — audited, and it holds",
+    "verdict": "WINS",
+    "summary": "A critic with fresh context drove the shipped planner rather than reading the source. Same zone, two lots, different premium, different building: across 128 empty road-fronted plots a c_low paint develops foodtruck x102 on Marginal land and grocery x14 / foodtruck x12 on Modest; c_high, o_low and i_mfg develop NOTHING on Marginal and club / reslab / cannery-weavery-sawmill on better land. Head to head after raising one plot with real content (8 clubs and an arena took tile 11,13 from 44.5 to 142.5 cinder premium), the same c_low paint gives restaurant on the expensive plot and foodtruck on the cheap one, and c_high and o_high give club and forge against nothing at all. Deterministic: the 128-plot plan run twice is byte-identical and there is no Math.random anywhere in the module. Also clean: all 576 tiles agree between the module and the host lotValue with zero mismatches, the signed causal list sums to the premium within 1.9e-6, filterMix preserves order through a middle drop, and the locked-tenant list actually reaches the player as five rows in the live panel.",
+    "gap": "The ladder advertises 14 tenants that no zone mix can ever produce — 44% decoration, including all three of the Prime rung distinguishing tenants (Duel Arena, Stadium, Holding Company). compile() validates the tenant table against BUILDINGS but never against the union of the zone mixes, and typeFor() can only return an id that is in a mix. Four more defects found: the refusal sentence names three remedies of which two provably do nothing, verify() cannot see the stencil VANISH (only growing), raw zone ids are printed to the player, and the vitals chip guard does not do what its comment says. All five dispatched."
+   },
+   {
+    "title": "The reachability problem the audit surfaced",
+    "verdict": "OPEN",
+    "summary": "Not a code defect and deliberately not fixed with the others. In a fully driven, fully unlocked city the critic could not push any developable plot past 44.5 cinder premium — against a ladder whose Premium rung starts at 110 and Prime at 170.5. Every plot in a normally-played city is band 0 or 1. Premium is reachable but only by hand-building amenity first; Prime needs the wealth and transit terms, and the 45-cap wealth term could not be raised above zero in the test city at all, so it is UNVERIFIED end to end rather than proven dead.",
+    "gap": "Three of five bands may be decoration in practice. The next round has to establish whether that is a tuning problem in LV.bandCuts or a content problem in what the city can actually become — and it must not be answered by moving the cuts until the wealth term is shown to work."
+   }
+  ]
+ }
 ]

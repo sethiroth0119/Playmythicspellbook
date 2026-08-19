@@ -60,6 +60,22 @@
   }
   R.developed = { tilesBefore: before, tilesAfter: Object.keys(G.tiles).length, plots: built };
 
+  /* ── 4b. THE LEVEL OVERRIDE, ON A PAIR THAT CAN ACTUALLY SHOW IT.
+        `c_high` and `c_mythic` both target level 2, so the strip above cannot
+        separate "the spec raised it" from "the zone did". `c_low` targets 1 and
+        💎 Luxury Retail targets 3, so this pair can. ─────────────────────── */
+  const lv = plots.filter(p => !G.tiles[K(p.x, p.z)] && !G.zones[K(p.x, p.z)]).slice(0, 2);
+  if (lv[0] && lv[1]) {
+    Z.applyPaint(lv[0].x, lv[0].z, 'c_low', null);
+    Z.applyPaint(lv[1].x, lv[1].z, 'c_low', 'c_lux');
+    R.levelOverride = {
+      zoneOnly:  { at: lv[0], lvl: nc.districtAt(lv[0].x, lv[0].z).lvl, zoneTarget: Z.ZONE_BY_ID.c_low.lvl },
+      specialised: { at: lv[1], lvl: nc.districtAt(lv[1].x, lv[1].z).lvl,
+                     would: nc.districtAt(lv[1].x, lv[1].z).wouldBuild,
+                     afterLand: nc.districtAt(lv[1].x, lv[1].z).afterLand },
+    };
+  }
+
   /* ── 5. WHAT THE ECONOMY MADE OF IT — the card chain, unforced ─────────── */
   R.cardSeam = D.cardSeam();
   R.verify = D.verify();

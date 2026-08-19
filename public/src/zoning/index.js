@@ -402,10 +402,30 @@ export function mount(ctx) {
   /* Does what is STANDING on this plot belong to this zone? A tile the player
      built by hand inside a zone counts, which is what lets "high density" mean
      something on a block that is already there — see the grow half of plan(). */
-  function belongs(zdef, t) {
+  function belongs(zdef, t, x, z) {
     if (!t || !zdef) return false;
     if (zdef.arch && t.type === 'housing') return true;               // residential
-    return (MIX[zdef.id] || []).indexOf(t.type) >= 0;
+    if ((MIX[zdef.id] || []).indexOf(t.type) >= 0) return true;
+    /* 🏙 …AND WHAT THE SPECIALISATION ON THIS PLOT BUILDS BELONGS TO IT TOO.
+       🔴 THIS WAS A REAL, MEASURED BUG, and it is the kind that looks like
+          nothing in review. A 🃏 Mythic Retail district on `c_high` develops a
+          Retail Parade — an id that is NOT in c_high's own mix — so `belongs()`
+          answered false, the finished building was counted as `occupied`
+          foreign matter rather than as part of its district, and the grow half
+          of the plan never saw it. The consequence was silent and specific: the
+          specialisation's LEVEL TARGET could never be applied to anything the
+          specialisation itself had raised. Driven, in the browser: three
+          Mythic Retail plots stood at level 1 against a target of 2, with
+          `plan().grow` reporting 0 and `skip.occupied` reporting 3.
+       ⚠ `mixFor(x, z, id, [])` with an EMPTY base is deliberate: an
+         unspecialised tile hands the empty array straight back, so this line
+         can only ever ADD ids to what belongs and never take the zone's own
+         away. */
+    try {
+      const D = DIS();
+      if (D && D.mixFor && x != null) return (D.mixFor(x, z, zdef.id, []) || []).indexOf(t.type) >= 0;
+    } catch (e) {}
+    return false;
   }
   function targetLvl(zdef, t, x, z) {
     const def = BUILDINGS[t.type] || {};
@@ -449,7 +469,7 @@ export function mount(ctx) {
         if (t.bld) { skip.building++; continue; }
         // ⚠ A damaged building is never grown: an upgrade on a wreck is money
         //    spent on something the player has to repair anyway.
-        if (!t.damaged && belongs(d, t) && (t.lvl | 0) < targetLvl(d, t, x, z)) grow.push({ x, z, t, zone: d });
+        if (!t.damaged && belongs(d, t, x, z) && (t.lvl | 0) < targetLvl(d, t, x, z)) grow.push({ x, z, t, zone: d });
         else skip.occupied++;
         continue;
       }

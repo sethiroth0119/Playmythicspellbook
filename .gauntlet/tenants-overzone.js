@@ -96,6 +96,9 @@
   R.tenantsAfterBuild = { n:T.stats().tenancies, per:T.stats().per, bySize:T.stats().bySize };
   R.rightAfter = { bread: shot('bread'), meals: shot('preparedMeals') };
   await nc.step(20*30,300); settle();
+  R.afterOver30 = { bread: shot('bread'), meals: shot('preparedMeals'),
+    tenants:{n:T.stats().tenancies,vacant:T.stats().vacant,byRung:T.stats().byRung,lifetime:T.stats().lifetime} };
+  await nc.step(20*40,400); settle();
   R.afterOver = { bread: shot('bread'), meals: shot('preparedMeals'),
     tenants:{n:T.stats().tenancies,vacant:T.stats().vacant,byRung:T.stats().byRung,
              byLevel:(()=>{const o={};const l=T._store().lets();for(const k in l)o['L'+l[k].lvl]=(o['L'+l[k].lvl]||0)+1;return o;})(),
@@ -112,7 +115,16 @@
 
   /* ══ 4. THE INVARIANTS ══════════════════════════════════════════════════ */
   R.verify = T.verify();
-  R.overlay = { on: T.overlay(true), painted: (()=>{ try { return window.__ncTenOverlayCount || null; } catch(e){ return null; } })() };
+  R.overlay = { on: T.overlay(true), painted: T.overlayPainted(), visible: T.overlayOn() };
+  R.levels = (()=>{ const l=T._store().lets(), out={}; const E2=window.MythicEconomy;
+    const fm=new Map(); for(const f of E2.firms()) if(f.tileKey) fm.set(String(f.tileKey),f);
+    let best=null;
+    for(const k in l){ const f=fm.get(k); if(!f) continue; out['L'+f.level]=(out['L'+f.level]||0)+1;
+      const c=E2.levelCheck(f.id); if(!best||(c.missing||[]).length<best.missing.length) best={k,name:l[k].n,missing:c.missing,ok:c.ok}; }
+    return { firmLevels:out, closestToLevel2:best,
+             seamAt: (()=>{ const k=Object.keys(l)[0]; if(!k) return null; const c=k.split(',');
+                return { at:k, levelFor: T.levelFor(+c[0],+c[1]), ambition:l[k].size }; })() }; })();
+  R.log = (()=>{ try { return window.MythicEconomy.log().slice(-12).map(e=>e.msg||e.text||JSON.stringify(e)); } catch(e){ return String(e); } })();
   const coll = window.MythicCitySave.collect();
   R.saveSlice = { keys: coll.tenants ? Object.keys(coll.tenants) : null,
                   lets: coll.tenants ? Object.keys(coll.tenants.let||{}).length : null,

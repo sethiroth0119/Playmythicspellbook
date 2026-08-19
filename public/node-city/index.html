@@ -35614,6 +35614,21 @@ function animate() {
         const lvv = window.MythicLandValue.verify();
         if (lvv && !lvv.ok) console.warn('[LandValue] self-check FAILED', lvv.problems);
       } catch (e) {}
+      /* 🏙 AND LAYER 2's SELF-CHECK, IN THE SAME IDIOM AND FOR THE SAME REASON —
+         it prints nothing on a healthy city and names the defect on a broken
+         one. It runs HERE rather than at the districts mount because every
+         question it asks needs the band ladder, and /src/landvalue mounts one
+         block up: called any earlier it would have no ladder and could only
+         report that it could not tell.
+         ⚠ It was written and then NOT called for a round, on the argument that
+           it produced false positives on a fresh city. It no longer does: the
+           `admitted`/`known` split moved "held by research" out of `problems`
+           and into `researchHeld`, so a boot with nothing researched now prints
+           an empty problem list. A check nobody runs is a check nobody has. */
+      try {
+        const dv = window.MythicDistricts && window.MythicDistricts.ready() && window.MythicDistricts.verify();
+        if (dv && !dv.ok) console.warn('[Districts] self-check FAILED', dv.problems);
+      } catch (e) {}
     }
   } catch (e) { console.warn('[LandValue] not mounted (non-fatal):', e); }
   /* ══ 🏢 LAYER 3 — THE TENANT MARKET (/src/tenants) ════════════════════════

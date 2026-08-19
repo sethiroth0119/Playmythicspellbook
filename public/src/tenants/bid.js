@@ -131,22 +131,51 @@ export function makeField(ctx) {
     let cityPop = pop;
     try { const p = D && D.population(); if (p != null && p > 0) cityPop = p; } catch (e) {}
 
-    /* The dearest lot in the city, so `rent` is a RANK inside this city rather
-       than a comparison against an absolute nobody agreed. A one-band city
-       therefore scores every lot's rent identically, which is correct: there is
-       no dear ground to be deterred by. */
-    let maxVal = 0;
+    /* ── 📏 EVERY NORMALISER IS A RANK INSIDE THIS CITY ─────────────────────
+       🔴 THIS WAS MEASURED WRONG FIRST AND THE FIX IS THE INTERESTING PART.
+          `customers` began as `catchment ÷ CITY POPULATION` — "what share of the
+          city's customers are on this doorstep". It is a perfectly honest ratio
+          and it made the whole feature inert: driven on the real board, the
+          best-sited plot in a 54-house city saw a single-digit percentage of the
+          city, so the term paid ~2 points against a rent term of −6 to −22 and
+          NOT ONE COMPANY IN THE POOL BID ON ANY LOT ANYWHERE. The auction
+          silently handed every plot back to /src/zoning's hash and looked like
+          it was working.
+
+          The reason is that a bid is a CHOICE BETWEEN LOTS, not a verdict on a
+          lot. What a company compares is this pitch against the others it could
+          have — so the denominators are the best figures available IN THIS CITY,
+          which is what `rent` was already doing (`value ÷ the dearest lot`).
+          Making customers agree with it is what lets the terms trade off at all.
+       ⚠ CONSEQUENCE, SAID OUT LOUD: growing the whole city's population does not
+         raise anybody's bid, because every lot rises together. What moves a bid
+         is where the people are RELATIVE to the alternatives — which is the
+         question a location decision actually asks. The absolute figure is still
+         published in the row's note (`N residents within R tiles`), so a reader
+         can see both. */
+    let maxVal = 0, maxNear = 0;
+    const G = ctx.GRID | 0 || 24;
     if (L) {
-      const G = ctx.GRID | 0 || 24;
       for (let x = 0; x < G; x++) for (let z = 0; z < G; z++) {
         const v = num(L.valueAt(x, z)); if (v > maxVal) maxVal = v;
+      }
+    }
+    /* The best catchment on the board. Brute force over the grid × the housing
+       tiles — 576 × (houses), once per refresh and cached, which is cheaper than
+       any of the sibling calls it sits next to. */
+    {
+      const r = radiusOf();
+      for (let x = 0; x < G; x++) for (let z = 0; z < G; z++) {
+        let n = 0;
+        for (const h of H) if (Math.abs(h.x - x) <= r && Math.abs(h.z - z) <= r) n += h.n;
+        if (n > maxNear) maxNear = n;
       }
     }
     C = {
       r: radiusOf(),
       homes: H, cityPop: Math.max(0, cityPop),
       meanIncome: pop > 0 ? incW / pop : 0,
-      stops: stops(), maxVal, sat: saturation(),
+      stops: stops(), maxVal, maxNear, sat: saturation(),
       has: { land: !!L, demog: !!D, transit: !!TR(), eco: !!ECO() },
     };
     at = Date.now(); lots = new Map();
@@ -178,9 +207,9 @@ export function makeField(ctx) {
     const val = L ? num(L.valueAt(x, z)) : 0;
     const o = {
       near, cityPop: F.cityPop,
-      /* Share of the city's customers standing inside this lot's catchment. A
-         ratio of two measured head counts — no scale invented. */
-      customers: F.cityPop > 0 ? clamp(near / F.cityPop, 0, 1) : 0,
+      /* This lot's catchment against the BEST catchment on the board. Two
+         measured head counts, no scale invented — see the note on `maxNear`. */
+      customers: F.maxNear > 0 ? clamp(near / F.maxNear, 0, 1) : 0,
       /* Centred on the CITY mean, so the term is + in a well-off catchment and
          − in a poor one rather than always positive. */
       income: (F.meanIncome > 0 && near > 0) ? clamp((incW / near) / F.meanIncome - 1, -1, 1) : 0,
@@ -225,7 +254,9 @@ export function bidFor(F, cand, x, z, outOf) {
   const rows = [
     { key: 'customers', ico: '👥', label: 'Customers in reach',
       raw: L.customers, v: w.customers * L.customers, src: L.has.demog ? 'live' : 'n/a',
-      note: L.has.demog ? Math.round(L.near) + ' residents within ' + F.field().r + ' tiles of ' + Math.round(L.cityPop) + ' in the city'
+      note: L.has.demog ? Math.round(L.near) + ' residents within ' + F.field().r + ' tiles — ' +
+                          Math.round(L.customers * 100) + '% of the best catchment in the city (' +
+                          Math.round(F.field().maxNear) + '), out of ' + Math.round(L.cityPop) + ' living here'
                         : '/src/demographics is not mounted' },
     { key: 'income', ico: '💷', label: 'Customer income',
       raw: L.income, v: w.income * L.income, src: L.has.demog ? 'live' : 'n/a',

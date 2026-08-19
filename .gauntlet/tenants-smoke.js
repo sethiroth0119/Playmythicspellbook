@@ -24,6 +24,10 @@
     if (await place(t,x,z)) core++;
   }
   R.core = core;
+  /* the demographics survey only exists after a tick; without it every
+     customers/income read is ok:false and the whole bid is rent-only */
+  R.step0 = await nc.step(20*3, 24);
+  R.demog = (()=>{ const d=window.MythicDemographics; try{ const r=d.report(); return { pop:d.population(), cap:d.capacity(), gate: r&&r.growth?r.growth.ok:null }; }catch(e){ return {err:String(e)}; } })();
   try { nc.tenantObserve(true); } catch(e){}
 
   /* every free road-fronted plot, best and worst */

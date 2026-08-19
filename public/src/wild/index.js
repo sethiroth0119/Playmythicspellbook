@@ -81,11 +81,21 @@
    trick /src/parcel and /src/parking both use. Both ride materials index.html
    ALREADY has (NAT_GROUND, NAT_PAINT), so this adds no material and no
    texture either.
-   Measured on the standard gauntlet district, as an A/B inside ONE boot
-   (.gauntlet/wildcost.mjs toggles this group's `visible` and reads
-   renderer.info twice, because the whole-scene mesh count moves by ±15 between
-   boots and a cross-boot delta of "+2 meshes" is inside the instrument's own
-   noise): see the round report for the numbers.
+   MEASURED on the standard gauntlet district as an A/B inside ONE boot —
+   .gauntlet/wildcost.mjs toggles this group's `visible` and reads
+   renderer.info twice, because capture.mjs's own header records the whole-scene
+   mesh count moving by ±15 between boots and a cross-boot delta of "+2 meshes"
+   is therefore inside the instrument's own noise:
+
+       meshes      2111 -> 2113     (+2)
+       draw calls  1980 -> 1982     (+2)
+       triangles 477,476 -> 492,850 (+15,374, i.e. +3.2%)
+
+   …serving 224 tiles with 543 standing objects (13,130 tris), 104 ground
+   stains and 654 kerb-wear bands (2,244 tris between them).
+   ⚠ +2 CALLS AND NOT +3. The standing bucket casts, so it was expected to cost
+     a shadow-map draw as well; the shadow map is not re-rendered on every
+     frame, so the steady-state figure is two.
 
    ⚠ THE GEOMETRY IS STAMPED, NOT ALLOCATED. /src/parcel builds a THREE
      geometry per prop and merges at the end, which is fine for the 8 parcels

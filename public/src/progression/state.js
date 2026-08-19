@@ -275,11 +275,33 @@ export function makeState(ctx) {
 
     /* c) district specialisations already painted on the map. Read from
           /src/districts rather than handed over, because node-city does not own
-          that store either — it rides the save shelf. Exactly the same
-          belt-and-braces argument as zones: /src/districts refuses to write a
-          locked specialisation, so one on the map can only have come from an
-          unlocked node; adopting it back is what stops a re-costed or renamed
-          node from retro-locking a district a player is already standing in. */
+          that store either — it rides the save shelf. Same belt-and-braces
+          argument as zones: adopting a district back is what stops a re-costed
+          or renamed node from retro-locking one a player is already standing in.
+
+       🔴 AND THE SENTENCE THAT USED TO STAND HERE WAS FALSE, WHICH IS WHY THIS
+          NOTE IS LONGER THAN THE CODE. It read: "/src/districts refuses to write
+          a locked specialisation, so one on the map can only have come from an
+          unlocked node." Its three WRITE seams do refuse — but the SAVE does
+          not go through them. `store.load()` put whatever the file said into
+          the map, and this loop then granted the node behind it. Measured:
+          three strings in a hand-edited districts slice —
+          {"3,3":"c_mythent","4,4":"i_cards","5,5":"o_corp"} — adopted 3 nodes,
+          which dragged their prerequisites in and ended at 15 nodes, 40 ⬡ of a
+          74 ⬡ tree, spent: 0. On a legacy save AND on one carrying a real
+          progress slice, because unlike the buildings and licence branches
+          below this one is not behind `S.legacy`.
+
+       🔑 WHAT MAKES IT TRUE NOW, AND IT IS ONE LINE IN THE OTHER MODULE:
+          `MythicDistricts.stats().per` is the census of districts that module
+          will ACT ON. A specialisation whose node is not open is held inert —
+          kept on the tile, never drawn, never fed to the develop pass — and is
+          reported under `heldPer`, which nothing here reads and nothing may
+          treat as evidence. So a spec arriving in `per` really can only have
+          come from an unlocked node, and this branch is back to being the
+          belt-and-braces it always claimed to be.
+       ⚠ DO NOT "SIMPLIFY" THIS TO `store.all()` OR TO `heldPer`. Either one
+          re-opens the door, and it looks like a tidy-up in review. */
     const seenSpecs = new Set();
     try {
       const D = (typeof window !== 'undefined') ? window.MythicDistricts : null;

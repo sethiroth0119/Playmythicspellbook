@@ -215,12 +215,17 @@ pixel-aligned between rounds. Biggest moves: building surface detail 6.5 → **8
 window skin — the largest single visual return in the project), density and zoning read
 6.5 → **7.5** (the office block), silhouette and roads both to 8.0.
 
-🔴 **The biggest remaining gap: nothing below building scale casts a shadow.** Measured —
-the ground immediately down-sun of an isolated pickup runs a 7-unit spread, which is the
-surface texture's own noise, with no notch. Pedestrians, lamps, bollards, benches and bins
-are all likewise unshadowed. The fix is a contact **decal**, not a shadow-map entry, and it
-is *not* blocked by round 18's refusal — that finding was about resolving a 0.031-unit mast
-in a depth map, and a decal needs no cascade.
+~~The biggest remaining gap: nothing below building scale casts a shadow.~~ **FIXED** —
+`/src/contact`, the 34th module. A contact **decal** rather than a shadow-map entry, so
+round 18's refusal never applied. **`MultiplyBlending`, not a colour**: white changes
+nothing and 0.62 removes 38% of whatever was already there, which makes night correct for
+free, darkens the existing grain instead of covering it, and lets one mesh serve props on
+stone, cars on bay paint and agents on road wear. **Two meshes and +2 draw calls for the
+whole city** (against `/src/crowd`'s +24 for 78 figures), +2.1% triangles. Measured notch
+25–37 units at ratio 0.63 against a designed 0.62, with byte-identical control pixels in
+the same frame.
+⚠ Deliberately capped: a lamp mast gets occlusion at its foot, not a hairline shadow —
+round 18's trade, kept. On empty ground the change is nil by construction.
 
 **The stranger test is still "instantly", and the tell has moved off the materials.** It is
 now composition: **41.6% of the aerial viewport is undeveloped green**, and the built area is

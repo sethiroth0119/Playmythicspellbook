@@ -1,0 +1,274 @@
+{
+  "meshes": 78,
+  "tris": 19140,
+  "badCount": 0,
+  "bad": [],
+  "byChain": {
+    "Mesh": [
+      78,
+      19140
+    ]
+  },
+  "sample": [
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 228,
+      "verts": 456,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.752,
+        0.928,
+        0.439
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 696,
+      "verts": 1392,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.756,
+        1.521,
+        0.568
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 300,
+      "verts": 600,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.752,
+        1.268,
+        0.439
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 228,
+      "verts": 456,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.752,
+        0.928,
+        0.439
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 552,
+      "verts": 1104,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.756,
+        1.181,
+        0.568
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 552,
+      "verts": 1104,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.756,
+        1.181,
+        0.568
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 552,
+      "verts": 1104,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.756,
+        1.181,
+        0.568
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 228,
+      "verts": 456,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.752,
+        0.928,
+        0.439
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 552,
+      "verts": 1104,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.756,
+        1.181,
+        0.568
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 120,
+      "verts": 240,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.56,
+        0.472,
+        0.546
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 228,
+      "verts": 456,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.572,
+        0.511,
+        0.54
+      ]
+    },
+    {
+      "name": "",
+      "chain": "Mesh<Group<Group<Group",
+      "tri": 120,
+      "verts": 240,
+      "hasUV": true,
+      "u": [
+        0,
+        1
+      ],
+      "v": [
+        0,
+        1
+      ],
+      "uvOut": 0,
+      "size": [
+        0.56,
+        0.469,
+        0.546
+      ]
+    }
+  ],
+  "vRange": [
+    0,
+    1
+  ],
+  "uRange": [
+    0,
+    1
+  ]
+}

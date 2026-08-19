@@ -51,6 +51,40 @@ import * as Render from './render.js';
 
 const B = () => (typeof window !== 'undefined' ? window.MythicCityBridge : null) || null;
 
+/* ── 🏷 THE LAND VALUE READ ──────────────────────────────────────────────────
+   /src/landvalue registers `window.MythicLandValue` — a real property of
+   `window`, unlike the top-level `const`s of index.html (the globals trap at
+   the top of this file), so it can be read from here. Every `window` read in
+   this package lives in this file next to the bridge, so sim.js is handed a
+   function instead: `Sim.setLandValueSource`.
+
+   🔴 WHAT IS READ IS THE LOCATION PREMIUM, NOT `valueAt()`. The printed value
+   is CITY + LOCAL and the CITY half — `20 + citySync×0.3 + decorPoints()` — is
+   identical on every tile AND unbounded, because `decorPoints()` grows with
+   every garden the player ever plants. Renting off it would charge every
+   business in the city for landscaping across town, for ever. `premiumAt()` is
+   the part that describes THIS plot, it is what /src/landvalue takes its own
+   bands on, and it is capped by construction at the sum of that module's caps.
+
+   🔴 ABSENT ⇒ null ⇒ NO RENT, and that is asked EVERY CALL rather than latched
+   at mount. The module is imported asynchronously by node-city's boot and may
+   land after the economy does; a source captured once at mount time would read
+   "no land value in this city" for the whole session on exactly the builds
+   where it is present. It is a property lookup and two calls, on ~30 firms,
+   once an economic day.
+   ⚠ AND null IS NOT 0. sim.js charges nothing for a null and would charge
+     nothing for a 0 too — today. The distinction is kept because the day
+     somebody adds a base rate, "no module" and "worthless land" must not
+     silently mean the same thing. */
+function landPremiumAt(x, z) {
+  const LV = (typeof window !== 'undefined') ? window.MythicLandValue : null;
+  if (!LV || typeof LV.premiumAt !== 'function') return null;
+  if (typeof LV.ready === 'function' && !LV.ready()) return null;
+  const p = LV.premiumAt(x, z);
+  return (typeof p === 'number' && Number.isFinite(p)) ? p : null;
+}
+Sim.setLandValueSource(landPremiumAt);
+
 let warned = false;
 function warnOnce(msg) {
   if (warned) return; warned = true;
@@ -702,6 +736,15 @@ const api = {
      ambiguity and could only file every closure as "wound up, last seen
      HEALTHY". Bounded, read-only, and it moves nothing. */
   closures: (n) => (mounted ? Sim.closures(n) : []),
+
+  /* 🏷 GROUND RENT, for a panel and for /src/tenants' overlay. `active` is the
+     honest answer to "is /src/landvalue in this build" — see landValueActive().
+     `today` is what was actually COLLECTED, never what was billed; the two
+     differ by exactly the shortfall of the firms that could not pay, which is
+     the number that says the mechanic is biting. */
+  groundRent: () => (mounted
+    ? { active: Sim.landValueActive(), today: Sim.state().flow.groundRent || 0 }
+    : { active: false, today: 0 }),
   /* The distress ladder itself — its order, its labels and its colours. Read by
      any surface that draws a rung, so the map, the economy panel and the tenant
      ledger cannot show one business in three different colours. */

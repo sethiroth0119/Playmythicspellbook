@@ -129,6 +129,12 @@ export function found(out, opts) {
     // rolling books — the level gates read these
     revenueDay: 0, costDay: 0, profitDay: 0, customersDay: 0,
     profitStreak: 0, suppliers: {}, lifetimeRevenue: 0, lifetimeProfit: 0,
+    /* 🏷 GROUND RENT, paid and tallied. `rentDay` is this day's charge (the
+       panel and the bottleneck view read it); `rentLife` is every Cinder of
+       ground rent this business ever paid, and it is what lets the closure log
+       say whether a firm was in profit BEFORE its landlord. Both are readouts —
+       the money itself moved through `pay()` like every other cost. */
+    rentDay: 0, rentLife: 0,
     // last tick's diagnosis, for the bottleneck panel
     lastFill: 1, lastInputAvail: 1, lastProduced: 0, lastBottleneck: null, lastLeg: null,
     inventory: 0,
@@ -258,6 +264,51 @@ export function earn(f, amount) {
   f.revenueDay += amt;
   f.lifetimeRevenue += amt;
   return amt;
+}
+
+/* ── 💼 AN EQUITY SUBSCRIPTION IS NOT AN OPERATING COST ─────────────────────
+   Cash leaves a firm to capitalise a NEW business in the same city (sim.js
+   `drawPrivateCapital` — see ECON.firm.privateCapital for why that arc exists
+   at all). This deliberately does NOT go through `pay()`.
+
+   🔴 `pay()` ADDS TO `costDay`, AND `costDay` IS THE DAY'S PROFIT. Routing an
+   investment through it would book the subscription as an expense: the
+   investor's profit falls by what it invested, so its corporate tax falls, its
+   dividend to households falls, and — because `closeDay` walks the distress
+   ladder off exactly that number — a firm could be pushed a rung DOWN for the
+   act of backing a new business out of money it did not need. That is not a
+   different opinion about accounting, it is the ladder reacting to a
+   non-event.
+
+   ⚠ IT STILL CANNOT SPEND CASH IT DOES NOT HAVE. The rule `pay()` exists for is
+     kept here by clamping to the balance; the caller clamps again, to a surplus
+     ABOVE a floor, so this can never take a firm to zero. Both clamps are
+     deliberate: the caller's is the policy, this one is the invariant. */
+export function withdrawCapital(f, amount) {
+  const amt = Math.max(0, amount || 0);
+  if (amt <= 0) return 0;
+  const taken = Math.min(f.cash, amt);
+  f.cash -= taken;
+  return taken;
+}
+
+/* ── 🏷 GROUND RENT — the one cost a firm pays for WHERE it is ───────────────
+   The opposite call to `withdrawCapital` above, and for the opposite reason:
+   rent IS an operating cost, so it goes through `pay()` and lands in `costDay`,
+   in the day's profit and therefore in the distress ladder. That is the entire
+   mechanism by which "eventually one FAILS because rent gets too expensive"
+   can happen at all.
+
+   ⚠ AN UNPAID SHORTFALL IS NOT DEBT, exactly as it is not for households
+     (`HH.chargeRent`: "a missed payment that hits the landlord's revenue").
+     Modelling firm rent arrears as well would double-count the same shortfall —
+     the firm is already punished by having no cash, which is what `badDays`
+     counts. sim.js credits the landlord with what was ACTUALLY PAID; crediting
+     the bill would be ECONOMY.md's "retail → producer" leak in a new place. */
+export function payGroundRent(f, amount) {
+  const paid = pay(f, amount);
+  if (paid > 0) { f.rentDay += paid; f.rentLife = (f.rentLife || 0) + paid; }
+  return paid;
 }
 
 /* ── PAYROLL ────────────────────────────────────────────────────────────────
@@ -429,8 +480,9 @@ export function closeDay(f) {
     f.throttle = 0; f.inventory = 0;
   }
 
-  const closed = { revenue: f.revenueDay, cost: f.costDay, profit, tax, rung: f.rung, was: prev };
-  f.revenueDay = 0; f.costDay = 0; f.customersDay = 0;
+  const closed = { revenue: f.revenueDay, cost: f.costDay, profit, tax, rung: f.rung,
+                   was: prev, rent: f.rentDay || 0 };
+  f.revenueDay = 0; f.costDay = 0; f.customersDay = 0; f.rentDay = 0;
   return closed;
 }
 
@@ -553,6 +605,12 @@ export function serialize() {
       suppliers: Object.keys(f.suppliers || {}), tileKey: f.tileKey,
       revenueAvg: f.revenueAvg || 0, customersAvg: f.customersAvg || 0,
       lifetimeRevenue: f.lifetimeRevenue || 0, lifetimeProfit: f.lifetimeProfit || 0,
+      /* 🏷 A READOUT, AND IT STILL RIDES THE SAVE. `rentLife` moves no balance,
+         but it is what the closure log reads to say a business would have been
+         in profit but for its ground rent — and a sentence that is true before
+         a reload and false after it is worse than no sentence. The gauntlet's
+         save/load round has caught three fields already. */
+      rentLife: Math.round((f.rentLife || 0) * 100) / 100,
     })),
   };
 }
@@ -591,6 +649,10 @@ export function load(raw) {
       revenueAvg: Number(r.revenueAvg) || 0, customersAvg: Number(r.customersAvg) || 0,
       lastFill: 1, lastInputAvail: 1, lastProduced: 0, lastBottleneck: null, lastLeg: null,
       inventory: Math.max(0, Number(r.inventory) || 0), tileKey: r.tileKey || null,
+      /* `rentDay` is a WITHIN-day accumulator like `costDay` beside it and is
+         deliberately not saved: a save taken mid-day reloads at the top of a
+         day, so restoring a part-day charge would double-count it. */
+      rentDay: 0, rentLife: Math.max(0, Number(r.rentLife) || 0),
     };
     if (r.workers) for (const b in f.workers) f.workers[b] = Math.max(0, (r.workers[b] | 0));
     if (Array.isArray(r.suppliers)) for (const s of r.suppliers) f.suppliers[s] = true;

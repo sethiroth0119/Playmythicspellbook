@@ -643,6 +643,145 @@ export const ECON = {
          round0e asserts no single sync can beat it. */
       treasuryDrawPct: 0.35,
     },
+
+    /* ── 💼 PRIVATE CAPITAL — the arc that was missing from the circular flow ──
+       🔴 THE FINDING THIS ANSWERS. A 34-lot commercial district driven for 600
+       economic days re-founded its shopfronts 90 times and, past day 480, every
+       one of them opened with NOTHING: `charterIssued` sat pinned at its
+       700,000 🔥 lifetime ceiling and `charter` drained to 0, so `fundFounding`
+       had one dry account and a treasury holding 72 🔥. Every new business then
+       walked the distress ladder from an empty till and died, for ever. The
+       ledger row was always the same sentence and it named the wrong cause.
+
+       🔴 AND THE CITY WAS NOT POOR. Measured on that same board at day 600:
+       696,048 🔥 in the city, of which 692,528 🔥 was FIRM CASH — 295,636 🔥 in
+       one landlord and 218,585 🔥 in one power plant, i.e. 74% of the entire
+       money supply sitting in two incumbents' tills. Households held 2,275 🔥
+       and the treasury held 72 🔥. The city had 190× the capital a shopfront
+       needed and no way to reach it.
+
+       So this is not a shortage of money, it is a MISSING ARROW. Every other
+       arc of the circular flow exists — wages, dividends, b2b, rent, tax,
+       benefits, upkeep, municipal spending — and the one that does not is
+       SAVINGS → NEW BUSINESS. Retained earnings in this model are the residents'
+       money parked in a business (that is exactly what `dividendRate` says the
+       profit is), so a new business founded in this city is founded out of them.
+       It is a transfer between two terms of `totalCinder()` and moves the
+       audited total by zero, precisely like the charter draw beside it.
+
+       ⚠ WHY THIS IS DRAWN BEFORE THE CHARTER FUND AND NOT AFTER. The charter
+         allowance is finite and irreplaceable — 700,000 🔥 for the entire life
+         of a city. Private surplus regenerates every day the city trades.
+         Spending the irreplaceable account while the replaceable one is holding
+         692,528 🔥 is the whole of the finding above. At bootstrap there IS no
+         private surplus (see the floor), so the ordering costs the opening city
+         nothing.
+       ⚠ REJECTED: raising `lifetimeCap`. It is a number tuned until a symptom
+         goes away, it makes the founding mint bigger rather than finite, and it
+         would postpone the treadmill by however many days the new ceiling buys
+         instead of removing it. The cap is not the fault; the missing arrow is.
+       ⚠ REJECTED: giving the investing firm an equity stake with a dividend.
+         It is the more realistic instrument, and it needs a shareholder
+         register on every firm, in the save, in the audit's sights, for a
+         return that already reaches households through `payDividend`. The
+         residents own both sides of this transfer; the money never leaves their
+         hands, so nothing has to be paid back to make the books honest.
+       ⚠ REJECTED: drawing on household savings first. It is where the model
+         says the owners are — and on the measured board they held 2,275 🔥
+         against a 3,600 🔥 shopfront. Taking it would have funded nothing and
+         cut consumption, which is the demand that keeps the shop alive. */
+    privateCapital: {
+      /* 🔴 THE FLOOR IS THE WHOLE SAFETY ARGUMENT, AND IT IS A FLOOR RATHER
+         THAN A PERCENTAGE ON PURPOSE. `treasuryDrawPct` was written as a
+         per-call share of the balance REMAINING and `syncBuildings` founds
+         every new tile in ONE pass, so N foundings compounded to 1 − 0.65^N —
+         nine tiles took 91.15% of the treasury. A FLOOR does not have that
+         failure mode: draining N firms down to the same floor N times still
+         leaves every one of them standing on the floor.
+         30 days of a firm's own operating cost, i.e. 2.5× the 12 days a firm is
+         seeded with. A freshly-founded firm is therefore structurally incapable
+         of being a source — which is what stops a bootstrap from cannibalising
+         itself while it is still seeding its first businesses. */
+      floorDays: 30,
+      /* ...and it must have EARNED the surplus. `lifetimeProfit > 0` and the
+         HEALTHY rung: you may invest money you made and do not need. A firm
+         that is merely holding a large seed it has not yet lost is not a saver,
+         and a firm on the distress ladder is not lending anybody anything. */
+      requireProfit: true,
+      /* No single founding may take more than this share of the city's whole
+         investable surplus, so the second entrant in the same `syncBuildings`
+         pass can always be funded too. A Semiconductor Fab's seed is two orders
+         of magnitude above a grocer's; without this one of them arriving first
+         decides whether the other exists. */
+      maxShareOfPool: 0.5,
+    },
+
+    /* ── 🏷 GROUND RENT — what a business pays for the plot it stands on ──────
+       "Eventually one FAILS because rent gets too expensive."
+
+       🔴 BEFORE THIS, IT COULD NOT HAPPEN, AND THAT WAS CHECKED RATHER THAN
+       ASSUMED: `dailyOperatingCost()` is wages + inputs and nothing else,
+       `tax.property` is charged on HOUSEHOLD rent in `runShopping`, and no file
+       in /src/economy mentioned `MythicLandValue` at all. Land value decided
+       what DEVELOPED on a plot and then never appeared on a balance sheet
+       again, so rent could deter a company from opening and could never once
+       pressure one that was already there.
+
+       🔴 PRICED OFF THE *PREMIUM*, NOT OFF `valueAt()`, AND THE DIFFERENCE IS
+       NOT COSMETIC. /src/landvalue's own tuning header says it: the printed
+       value is CITY + LOCAL, the CITY half is `20 + citySync×0.3 +
+       decorPoints()` and it is IDENTICAL ON EVERY TILE — which also means it is
+       UNBOUNDED, because `decorPoints()` grows with every garden the player
+       ever plants anywhere. Renting off that would charge every business in the
+       city more because somebody landscaped a park across town, and it would
+       climb for ever. The LOCAL premium is the part that describes THIS plot,
+       it is the part /src/landvalue takes its own bands on for exactly this
+       reason, and it is capped by construction at the sum of that module's
+       caps (110 + 60 + 45 + 35 + 25 = 275 at the time of writing). A rent with
+       a ceiling is the first of the four brakes doing its job.
+
+       🔢 THE RATE, DERIVED RATHER THAN PICKED. At full premium (275) this is
+       60.5 🔥/day. The grocers and restaurants this district is made of run at
+       300–330 🔥/day of operating cost, so the very best land the model can
+       produce costs a small shop ~19% of its running costs, and an ordinary
+       corner at premium 60 costs it 13 🔥/day — about 4%. That is a charge a
+       healthy business absorbs and a marginal one cannot, which is the whole
+       point of the mechanic; below ~0.1 nothing ever fails of it and above
+       ~0.4 nothing survives on good land at all.
+
+       ⚠ FLAT PER PLOT — IT DOES NOT SCALE WITH THE TENANT, and that is the
+         mechanism rather than a simplification. A rent that scaled with a
+         firm's size or revenue would shrink as the firm failed, and no business
+         could ever be pushed under by it; a fixed cost against a variable
+         revenue is what operating leverage IS. It does not scale with LEVEL
+         either, which gives the answer a real tenant has: build up. The same
+         ground spread over more floors is the city's own intensification
+         pressure, and it is why `/src/tenants`' ambition seam finally has
+         something pushing on it.
+       ⚠ NOT FOLDED INTO `dailyOperatingCost()`. That function is the basis for
+         seed capital and for the `cashDays` level gate, and both are asked in
+         places that know nothing about land: folding a location-dependent
+         charge in would make a firm's charter draw depend on a module that may
+         be absent. The firm's BOOKS see the rent — it goes through `pay()`, so
+         it lands in `costDay`, in the day's profit and therefore in the
+         distress ladder, which is the only place it has to be seen for a
+         business to fail of it.
+       ⚠ LANDLORDS ARE EXEMPT. A `landlord` firm's business IS the ground:
+         charging it ground rent and then paying that same rent back to it as
+         landlord revenue is a round trip that moves nothing and inflates two
+         readouts. Their plots are already priced — households pay rent on them
+         in `runShopping`, and charging both would be the "property tax on top
+         of the rent instead of out of it" leak with a new name.
+       ⚠ NO MODULE ⇒ NO RENT. /src/landvalue may 404. The source then returns
+         null and NOT A NUMBER, and sim.js charges nothing at all — a default
+         premium would be a plausible substitute for a measurement, which is the
+         failure /src/landvalue's own header calls this branch's most expensive
+         lesson. */
+    groundRent: {
+      perPremiumDay: 0.22,     // 🔥 per point of LOCATION PREMIUM per economic day
+      /* Industries that own their ground rather than rent it. */
+      exemptIndustries: ['landlord'],
+    },
     /* 💰 DIVIDENDS — the share of after-tax profit that reaches RESIDENTS.
        ----------------------------------------------------------------------
        🔴 WITHOUT THIS THE ECONOMY UNDER-CONSUMES AND CANNOT BE FIXED BY TUNING.

@@ -6223,7 +6223,103 @@ skyEnvRegister(MAT.metal, .45);
      is why VH_GLASS below came down from .80 rather than up.
    envMapIntensity 1: this is a physical reflectance and there is no argument for
    scaling it. If windows read too dark the fix is the sky, not a fudge here. */
-const winMat = skyEnvRegister(new THREE.MeshStandardMaterial({ color: 0x1b2430, emissive: 0xffc978, emissiveIntensity: 0, roughness: .16 }), 1);
+/* ══ 🪟 THE INTERIOR SKIN — WHAT IS BEHIND THE GLASS ════════════════════════
+   The env map above gave every pane the sky. It could not give any pane a
+   ROOM, and the measurement said so: after it landed, four sunlit panes read
+   rgb(30,41,55) with an intra-pane standard deviation of 0.53-0.79. A flat pane
+   facing one direction reflects one part of a smooth sky, so it stays uniform —
+   correct, and still not a window. A window at this distance is a DARK INTERIOR
+   WITH A SKY HIGHLIGHT ACROSS THE TOP THIRD; ours was a tinted panel.
+
+   🔴 WHY A TEXTURE AND NOT A VERTEX COLOUR. Measured, not assumed: all 78
+   meshes in the built district that draw with winMat carry a uv attribute and
+   every one of them has u and v strictly inside [0,1] — zero vertices outside,
+   across every recipe. That is because every pane in the city is box- or
+   cylinder-derived, each box face is generated with its own 0..1 uv, and the
+   seven _*Merge helpers all copy `uv` through the concatenation. So ONE small
+   canvas lands once per pane FACE, at the right way up, on every window in the
+   city, with no geometry change and no recipe touched.
+   A vertex colour cannot do the same job here, for two separate reasons:
+     · a box face has FOUR vertices, so a vertex gradient has two stops and can
+       only ever be a linear ramp — no ceiling line, no floor slab, no head
+       reveal, nothing non-vertical;
+     · winMat.vertexColors would have to be turned ON, and the glass buckets are
+       passed `hex = null` precisely so that no colour attribute is written
+       (see _hBucket). A material with vertexColors true and a geometry with no
+       colour attribute reads the attribute's constant default — BLACK — so
+       flipping that switch blacks out every pane in the city until all seven
+       merge helpers are changed too. The texture needs none of that.
+   ⛔ REJECTED: a per-pane uv atlas (blinds on some panes and not others). It is
+      the right feature and it is not free: every winMat mesh is a MERGED
+      bucket, so a variant has to be chosen per source primitive before the
+      merge — a hook in all seven _*Merge helpers plus the ten sites that hand
+      winMat to a bare box(). Deferred rather than half-done; note that the
+      variant key must come from rdRng(tx,tz) or from the primitive's own
+      centroid, never Math.random, which is the mistake this file has made twice.
+   ⛔ REJECTED: an emissiveMap, i.e. giving the NIGHT glow the same structure.
+      winMat is not only glazing: it is the gas station sign strip, the arena's
+      sign strips and clerestory, the canopy downlights, the med lab cross and
+      the shop light boxes — every one of them a LAMP whose whole purpose is to
+      be evenly lit after dark. An emissiveMap would put a shadow across the
+      bottom two thirds of all of them. The interior is a DAYTIME read and it is
+      supposed to disappear under the night glow; `map` multiplies the diffuse
+      term only, so it does exactly that on its own.
+
+   📐 16x32, POWER OF TWO. A pane is about 14x20 px at the frontage framing, so
+   this is roughly 1:1 at the distance the camera sits and mips down to its own
+   mean — which is the right behaviour, not a compromise: from the aerial a pane
+   is 1-2 px and must read as one colour rather than shimmer.
+
+   ⚠ THE MAP IS sRGB AND MULTIPLIES THE BASE COLOUR, so it can only ever DARKEN.
+   That is why `color` moves 0x1b2430 -> 0x3a4860, about 4x in linear: the skin's
+   mean transmission is ~0.26, and 4 x 0.26 puts the pane's MEAN back where the
+   env-map round left it. Measured over 37 panes on the frontage framing:
+   luminance 37.6 -> 41.5 and chroma 25.0 -> 29.4 (the sky is still in there),
+   while intra-pane sd goes 0.58 -> 10.55. The point of the change is the
+   variance, not the brightness, and the brightness was held on purpose.
+   ⚠ There is a FLOOR under how dark the interior can go, and it is not a choice:
+     with the albedo forced to black the glass still renders rgb(26,32,35) —
+     that is the sun's specular lobe plus the env reflection, and `map` cannot
+     touch either. So the contrast in a pane has to be bought at the TOP end. */
+const WIN_SKIN = (() => {
+  const W = 16, H = 32;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  /* CanvasTexture.flipY is true and BoxGeometry puts v = 1 at the top of a face,
+     so canvas row 0 is the HEAD of the window and row H the SILL. Painting the
+     gradient head-first is therefore the same order a section drawing reads in. */
+  const grd = g.createLinearGradient(0, 0, 0, H);
+  const stop = (t, v) => { const b = Math.round(v * 255); grd.addColorStop(t, 'rgb(' + b + ',' + b + ',' + b + ')'); };
+  stop(.00, .28);   // head reveal: the lintel shades the top few mm of glass
+  stop(.04, 1.00);  // ─┐ the bright band: sky off the pane head + the lit ceiling
+  stop(.22, 1.00);  // ─┘ deliberately the top FIFTH, not the top third — a wider
+                    //    band raises the pane's mean instead of its variance
+  stop(.38, .18);   // falling away from the ceiling into the room
+  stop(.44, .13);   // ─┐ the room's depth, and the darkest thing in the pane
+  stop(.80, .13);   // ─┘
+  stop(.83, .50);   // ─┐ floor slab / sill return, catching light off the cill —
+  stop(.90, .50);   // ─┘ the line that says there is a FLOOR in there
+  stop(.93, .16);   // sill reveal shadow
+  stop(1.0, .16);
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  /* The one NON-VERTICAL feature, and the reason the skin is a canvas rather
+     than a 1xN strip: a blind or curtain hanging down the left quarter of the
+     opening. 'lighten' rather than a plain fill so it can only LIFT the dark
+     interior and can never dull the sky band — a curtain catches light, it does
+     not cast a shadow across the head. Box faces mirror u on opposite sides of
+     a solid, so it falls on the left of one elevation and the right of the one
+     behind it, which is as close to variety as one shared canvas can get. */
+  g.globalCompositeOperation = 'lighten';
+  g.fillStyle = 'rgb(107,107,107)';
+  g.fillRect(0, 0, Math.round(W * .26), H);
+  g.globalCompositeOperation = 'source-over';
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;   // ⚠ NOT the default. Without this the
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;   // skin is read as linear and
+  t.anisotropy = 4;                      // the interior comes out grey, not dark.
+  return t;
+})();
+const winMat = skyEnvRegister(new THREE.MeshStandardMaterial({ color: 0x3a4860, map: WIN_SKIN, emissive: 0xffc978, emissiveIntensity: 0, roughness: .16 }), 1);
 // Street-lamp glow material (roads at night). Base was 0x2a2438, a violet — an
 // unlit lamp head by day is a neutral dark grey lens, not a purple one.
 const lampMat = new THREE.MeshStandardMaterial({ color: 0x2f3138, emissive: 0xffd9a0, emissiveIntensity: 0, roughness: .5 });

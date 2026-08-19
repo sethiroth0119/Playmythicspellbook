@@ -88,6 +88,22 @@ const S = {
      without it nothing can tell "no firm ever closed holding cash" apart from
      "the wind-up path is broken again". */
   estateReceived: 0,
+  /* 💼 LIFETIME TALLY OF PRIVATE CAPITAL SUBSCRIBED INTO NEW BUSINESSES, and it
+     is a lifetime tally for the same reason `estateReceived` above it is: a
+     founding happens BETWEEN two runDays (the host's 4 s `syncBuildings`), so a
+     per-day `flow` key is wiped by the `zeroFlow()` at the top of the very next
+     runDay and reads 0 to everything that ever looks at it. That is not a
+     hypothetical — it was written as `flow.equity` first, and every sample of a
+     600-day run read exactly 0.0 while the mechanism was funding every single
+     founding in the city.
+     🔴 A READOUT, NOT A BOOKING. Both ends of the transfer are firm cash, i.e.
+        the same term of `totalCinder()`; `audit()` does not mention this and
+        deleting it changes no balance. Not serialised, exactly like
+        `estateReceived` — a reloaded city reports what IT has subscribed. The
+        per-firm `rentLife` beside it in firms.js IS serialised, because a
+        closure sentence that is true before a reload and false after it is
+        worse than no sentence; this one is only ever a running total. */
+  equitySubscribed: 0,
   /* 🔴 THE TREASURY DRAW ALLOWANCE IS PER WINDOW, NOT PER FOUNDING.
      `treasuryDrawPct` used to be applied to the REMAINING balance on every call,
      and `syncBuildings` founds every new tile in ONE pass — so N foundings took
@@ -109,6 +125,14 @@ const S = {
           imports: 0, exports: 0, faucet: 0, payout: 0, freight: 0, interest: 0,
           civic: 0, infrastructure: 0, upkeep: 0, welfare: 0, unmetSubsistence: 0,
           founding: 0, estate: 0,
+          /* 🏷 GROUND RENT collected from businesses today. A READOUT OF A
+             TRANSFER, never a booking — the money moved from firms to the
+             landlords and to the treasury inside `runGroundRent`, and both ends
+             are already terms of `totalCinder()`. `audit()` does not mention it
+             and deleting the key would leave the books balancing exactly as
+             they do. (The private-capital subscription that pairs with it is
+             NOT here, and could not be: see `equitySubscribed` below.) */
+          groundRent: 0,
           /* 🔌 UTILITY TRADE — READOUTS ONLY, AND THAT DISTINCTION IS THE WHOLE
              SAFETY ARGUMENT. Electricity crossing the outside connection is
              settled by `settleUtility()` through the SAME two channels goods
@@ -213,7 +237,7 @@ export function reset(nodeId) {
   S.nodeId = nodeId == null ? null : String(nodeId);
   S.day = 0; S.dayFrac = 0; S.treasury = 0; S.INV = {};
   S.charter = 0; S.charterIssued = 0; S.faucetLifetime = 0; S.estateReceived = 0;
-  S.importsLifetime = 0; S.payoutLifetime = 0;
+  S.importsLifetime = 0; S.payoutLifetime = 0; S.equitySubscribed = 0;
   S.foundingDrawBudget = 0; S.foundingDrawArmed = false;
   /* ⚠ `payoutInFlight` IS ZEROED HERE AND THAT IS WHY index.js GUARDS ITS
      SETTLEMENT WITH `mountGen`. reset() runs on every mount; a promise from the
@@ -456,14 +480,82 @@ function armFoundingWindow() {
   S.foundingDrawArmed = true;
 }
 
-/* The capital source firms.js calls at every founding. Charter fund first: it
-   exists for exactly this, and draining the treasury first would take the money
-   the city needs the same day for benefits, imports and freight. */
+/* ── 💼 PRIVATE CAPITAL — the city's own savers back the next business ───────
+   🔴 THE FINDING THIS EXISTS FOR, measured on a 34-lot commercial district
+   driven 600 economic days: past day 480 `charterIssued` was pinned at its
+   700,000 🔥 lifetime ceiling and `charter` had drained to 0, so every
+   re-founded shopfront opened with nothing and died from an empty till, for
+   ever — 90 re-foundings, all with the same ledger sentence, all of them
+   naming the wrong cause. AND THE CITY WAS NOT POOR: 692,528 🔥 of its
+   696,048 🔥 was firm cash, 74% of it in one landlord and one power plant,
+   against 2,275 🔥 in household savings and 72 🔥 in the treasury.
+
+   So the fault is not the size of the charter fund. It is that the circular
+   flow has no arrow from SAVINGS back to NEW BUSINESS: money that reaches an
+   incumbent's till can be spent on inputs, on wages, on upkeep and on
+   dividends, and can never be invested. This is that arrow. See
+   ECON.firm.privateCapital for the full argument, the four rejected designs,
+   and why the floor is a floor rather than a percentage.
+
+   🔴 IT MOVES THE AUDITED TOTAL BY EXACTLY ZERO. Both ends are firm cash, i.e.
+   the same term of `totalCinder()`, so a founding in the host's between-tick
+   gap is invisible to `audit()` in the only sense that is safe — because
+   nothing was created or destroyed, not because nobody was counting. That
+   distinction is the whole of ECONOMY.md's founding-mint story.
+
+   ⚠ THE NEWBORN IS EXCLUDED FROM ITS OWN SUBSCRIPTION, AND IT IS BELT AND
+     BRACES TODAY. `Firms.found()` calls the capital source BEFORE it pushes the
+     firm onto the roster, so `alive()` does not contain it yet — and it holds 0
+     cash, so it would fail the floor twice over. The guard is here because
+     "it would fail anyway" is exactly how a firm comes to fund itself the first
+     time somebody reorders `found()` or relaxes the floor, and a firm that
+     subscribes its own seed capital is a mint that costs nothing to write. */
+function drawPrivateCapital(need, newborn) {
+  const P = ECON.firm.privateCapital;
+  if (!P || !(P.floorDays > 0) || !(need > 0)) return 0;
+  const pool = [];
+  let surplus = 0;
+  for (const inv of Firms.alive()) {
+    if (inv === newborn) continue;
+    if (inv.rung !== 'HEALTHY') continue;
+    if (P.requireProfit && !(inv.lifetimeProfit > 0)) continue;
+    const floor = Math.max(0, Firms.dailyOperatingCost(inv)) * P.floorDays;
+    const s = inv.cash - floor;
+    if (s > 1e-6) { pool.push({ inv, s }); surplus += s; }
+  }
+  if (surplus <= 1e-6) return 0;
+  const take = Math.min(need, surplus * P.maxShareOfPool);
+  if (take <= 1e-6) return 0;
+  /* Pro rata on surplus, so the firm with the most spare money puts up the most
+     of it and no single investor is singled out by roster order. `withdrawCapital`
+     clamps to the balance, so float drift can only ever take LESS. */
+  let got = 0;
+  for (const p of pool) got += Firms.withdrawCapital(p.inv, take * (p.s / surplus));
+  S.equitySubscribed += got;
+  return got;
+}
+
+/* The capital source firms.js calls at every founding.
+   ORDER: private capital, then the charter fund, then the treasury.
+   🔴 PRIVATE FIRST, AND THAT IS THE FIX FOR THE TREADMILL. The charter
+   allowance is finite and irreplaceable — 700,000 🔥 for the whole life of a
+   city — while private surplus regenerates every day the city trades. Spending
+   the irreplaceable account while the city is sitting on 692,528 🔥 of
+   replaceable one is exactly how the fund came to be dry on day 480. At
+   bootstrap there is no private surplus at all (a firm has to be HEALTHY, in
+   lifetime profit, and holding 30 days of cover before it can be a source), so
+   the opening city is funded from the charter tranche exactly as before.
+   Treasury remains LAST: it is the money the city needs the same day for
+   benefits, imports and freight. */
 function fundFounding(f, want) {
   const need = Math.max(0, Number(want) || 0);
   if (need <= 0) return 0;
-  let paid = Math.max(0, Math.min(S.charter, need));   // never a negative "draw"
-  S.charter -= paid;
+  let paid = drawPrivateCapital(need, f);
+  if (paid < need - 1e-9) {
+    const fromCharter = Math.max(0, Math.min(S.charter, need - paid));  // never a negative "draw"
+    S.charter -= fromCharter;
+    paid += fromCharter;
+  }
   if (paid < need - 1e-9) {
     /* The fund is dry. The city may still back the business out of its own
        treasury — that is a genuine investment of money the city earned, and it
@@ -1203,6 +1295,134 @@ function payUpstream(buyer, inp, units) {
   }
 }
 
+/* ═════════════════════════════════════════════════════════════════════════════
+   🏷 GROUND RENT — the cost of BEING SOMEWHERE, and the one a business can die of
+   ----------------------------------------------------------------------------
+   "Eventually one FAILS because rent gets too expensive."
+
+   🔴 BEFORE THIS IT COULD NOT HAPPEN, and that was measured rather than
+   assumed. `Firms.dailyOperatingCost()` is wages + inputs; `ECON.tax.property`
+   is charged on HOUSEHOLD rent in `runShopping` below and on nothing else; and
+   no file in /src/economy mentioned `MythicLandValue` at all. Land value
+   decided what DEVELOPED on a plot — /src/tenants prices it into a bid — and
+   then never appeared on a balance sheet again. Rent could deter a company from
+   opening and could never once pressure one that was already there.
+
+   ── WHERE THE MONEY GOES, WHICH IS THE ONLY QUESTION THAT CAN BREAK RULE 1 ──
+   The SAME channel household rent already uses, thirty lines below, and
+   deliberately not a new one:
+
+     · the property tax slice comes OUT OF the rent, never on top of it. That is
+       ECONOMY.md's second leak verbatim ("charged on top of rent instead of out
+       of it. Minted 2% of all rent"), which is why `ptax` is subtracted from
+       `net` here rather than added beside it.
+     · the net is landlord REVENUE, split across the city's `landlord` firms — a
+       landlord is a business with its own costs, not a sink.
+     · with no landlord firm in the city the net lands in the treasury as
+       municipal ground revenue, because it has to land SOMEWHERE inside the loop
+       or the audit correctly reports destroyed Cinder. Same fallback, same
+       reason, as the housing rent below.
+     · and it is credited with what was ACTUALLY PAID. A firm that cannot cover
+       its rent pays what it has and the landlord's revenue falls by the
+       shortfall. Crediting the BILL is ECONOMY.md's third leak ("producers
+       credited whether or not the shop could pay") with the arrow turned round.
+
+   🔴 ONLY `ptax` ENTERS `flow.tax`, and the municipal fallback deliberately does
+   not — identical to `runShopping`. `flow.tax` is an INCOME term of the payout
+   basis at step 9b, so booking the whole rent there would hand the player a
+   quarter of every Cinder the city's businesses pay in ground rent. sim.js's own
+   warning at 9b is about new CLAIMS on the treasury funding themselves back out
+   of `outgoings`; this is that hazard mirrored onto the income side, and the
+   conservative reading is also the one the code beside it already takes.
+
+   ── WHY IT IS CHARGED HERE, BETWEEN SHOPPING AND UPKEEP ─────────────────────
+   After `runShopping` so the day's takings are already in the till — a shop
+   charged before it has sold anything fails for the calendar rather than for the
+   rent. Before `runFirmUpkeep`, which spends a firm's EXCESS cash on goods: rent
+   is a prior claim on a business, not a discretionary purchase, and letting
+   upkeep go first would let a firm shop its way out of its own rent.
+   ⚠ AND IN runDay ONLY, NOT IN runPartial. Rent is a discrete daily bill and
+     belongs with the discrete half of the tick (payroll close, tax, the distress
+     ladder) for the same reason those are there. `runDay` is always called with
+     days === 1 by `tick()`; the argument is honoured anyway so that a future
+     caller catching up several days cannot silently charge one.
+
+   ⚠ NO /src/landvalue ⇒ NO RENT AT ALL. The source returns null and this charges
+     nothing. It does not fall back to a default premium: "a guarded read that
+     silently substitutes a plausible value is indistinguishable from a working
+     integration" is /src/landvalue's own most expensive lesson, and it applies
+     with more force here because the substitute would be moving money.
+   ⚠ AND THE PREMIUM, NOT `valueAt()`. See ECON.firm.groundRent — the printed
+     value carries an unbounded city-wide term (`decorPoints()`), so renting off
+     it would charge every business in the city for a garden planted across town,
+     and would keep doing it for ever.
+   ═════════════════════════════════════════════════════════════════════════════ */
+let LANDVALUE_SOURCE = null;
+
+/* index.js registers this, for the same reason it registers the capital source
+   and the estate sink: `window.MythicLandValue` is a bridge read, and every
+   `window` read in this package lives in index.js next to the rest of them. */
+export function setLandValueSource(fn) {
+  LANDVALUE_SOURCE = typeof fn === 'function' ? fn : null;
+}
+
+/* Is a land value source registered AND answering? index.js registers one
+   unconditionally, so "registered" says nothing — the honest question is
+   whether it returned a number for the last plot it was asked about, which is
+   what tells a panel apart from a build where /src/landvalue 404'd. */
+export function landValueActive() {
+  if (!LANDVALUE_SOURCE) return false;
+  for (const f of Firms.alive()) if (premiumFor(f) != null) return true;
+  return false;
+}
+
+/* The location premium of the plot a firm stands on, or null for "no answer".
+   `f.tileKey` is node-city's own 'x,z'. A firm with no tile — every bootstrap
+   firm — is not standing anywhere and pays no ground rent. */
+function premiumFor(f) {
+  if (!LANDVALUE_SOURCE || !f || !f.tileKey) return null;
+  const parts = String(f.tileKey).split(',');
+  if (parts.length !== 2) return null;
+  const x = Number(parts[0]), z = Number(parts[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+  let p = null;
+  try { p = LANDVALUE_SOURCE(x, z); } catch (e) { p = null; }
+  /* 🔴 A HOSTILE READ IS "NO ANSWER", NOT ZERO AND NOT NaN. The gauntlet's
+     round 1 exists because an Infinity that survived a guard once ran three
+     economic days off a bad clock read and moved real money. */
+  if (p == null || !Number.isFinite(p) || p < 0) return null;
+  return p;
+}
+
+function runGroundRent(days) {
+  if (!LANDVALUE_SOURCE) return;
+  const R = ECON.firm.groundRent;
+  const exempt = R.exemptIndustries || [];
+  let collected = 0;
+  for (const f of Firms.alive()) {
+    if (exempt.indexOf(f.ind) >= 0) continue;
+    const premium = premiumFor(f);
+    if (premium == null) continue;
+    const bill = premium * R.perPremiumDay * Math.max(0, days);
+    if (bill <= 0) continue;
+    collected += Firms.payGroundRent(f, bill);
+  }
+  if (collected <= 0) return;
+
+  const ptax = collected * ECON.tax.property;
+  const net = collected - ptax;
+  S.treasury += ptax;
+  S.flow.tax += ptax;
+  /* ⚠ The landlords that RECEIVE the rent are exactly the firms exempted from
+     PAYING it, which is not a coincidence — it is the reason they are exempt.
+     The alternative is a firm billing itself and the city counting the round
+     trip twice. */
+  const landlords = Firms.byIndustry('landlord');
+  if (landlords.length) for (const l of landlords) Firms.earn(l, net / landlords.length);
+  else S.treasury += net;
+  S.flow.groundRent += collected;
+}
+
 /* ── Shopping: households buy from retail/service firms. ──────────────────── */
 function runShopping(days) {
   const rent = HH.chargeRent(days);
@@ -1344,6 +1564,11 @@ function runDay(days, host) {
   // 1–2. Production and consumer spending.
   runProduction(days, host);
   runShopping(days);
+
+  /* 2b. 🏷 GROUND RENT — after the day's takings are in the till and before a
+     firm may spend its excess on upkeep. Both halves of that placement are
+     argued in runGroundRent's header. */
+  runGroundRent(days);
 
 
   // 3. TRADE. Surplus out, gaps in.
@@ -1487,8 +1712,28 @@ function runDay(days, host) {
 
     if (closed.rung !== was) {
       if (closed.rung === 'BANKRUPT') {
+        /* 🏷 WHY IT DIED, WHEN THE BOOKS CAN ACTUALLY SAY SO. Every closure in
+           this city used to read the same sentence, which is exactly what made
+           the churn treadmill unreadable: 345 identical rows cannot tell a firm
+           that failed of its rent from one that opened with no capital.
+           The claim is made from the firm's own ledger and only when the ledger
+           supports it — `lifetimeProfit` is negative AND adding back every
+           Cinder of ground rent it ever paid turns it positive. That is
+           precisely "this business traded profitably and its landlord took the
+           difference", and it is not sayable about a firm that was losing money
+           on its trading anyway. */
+        const rentLife = f.rentLife || 0;
+        const beforeRent = (f.lifetimeProfit || 0) + rentLife;
+        const rentKilledIt = rentLife > 0 && (f.lifetimeProfit || 0) <= 0 && beforeRent > 0;
         logEvent('bad', '🏚 ' + f.name + ' (' + f.out + ') went bankrupt. ' +
-                        Firms.employeeCount(f) + ' jobs lost.');
+                        Firms.employeeCount(f) + ' jobs lost.' +
+                        (rentKilledIt
+                          ? ' 🏷 Ground rent took ' + Math.round(rentLife).toLocaleString() +
+                            ' 🔥 — it was ' + Math.round(beforeRent).toLocaleString() +
+                            ' 🔥 in profit before the rent.'
+                          : rentLife > 0
+                            ? ' Ground rent over its life: ' + Math.round(rentLife).toLocaleString() + ' 🔥.'
+                            : ''));
         f.reported = true;
       } else if (Firms.RUNGS.indexOf(closed.rung) > Firms.RUNGS.indexOf(was)) {
         logEvent('bad', '⚠ ' + f.name + ' → ' + Firms.RUNG_META[closed.rung].label + '.');
@@ -1893,6 +2138,12 @@ export function snapshot() {
        already gone by the time anything reads it. This is the number that
        proves the wind-up path actually ran. */
     estateReceived: S.estateReceived,
+    /* 💼 …and the same argument, for the arrow that replaced the treadmill:
+       what the city's own savers have put into new businesses over its life.
+       Read beside `charterIssued` this is the whole diagnosis in two numbers —
+       a city whose foundings are funded privately stops spending its finite
+       charter allowance, and `charterIssued` stops climbing. */
+    equitySubscribed: S.equitySubscribed,
     population: HH.population(), laborForce: HH.laborForce(),
     employed: HH.employedTotal(), vacancies: HH.vacancyTotal(),
     unemployment: HH.unemployment(),

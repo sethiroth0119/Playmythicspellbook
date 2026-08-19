@@ -79,3 +79,12 @@ public/assets/Units/unit frames/New units/*.gif
 # checkpoint commits during a wave use `git add -A`, so without this rule one
 # stray bake lands in the repo permanently.
 /shots/
+
+# 🗄 Uncompressed asset masters (audio WAV, GLB, GIF) kept locally for
+# re-encoding. 1.4 GB — never commit, never deploy. The shipped, compressed
+# versions live under public/assets/. See migration/audit-report.md.
+assets-source/
+
+# Local run logs from the asset tooling.
+migration/*.log
+migration/*.err

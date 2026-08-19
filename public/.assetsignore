@@ -65,3 +65,39 @@ assets/Audio/Main menu music.wav
 # they can ship. Small GIFs under the cap still deploy normally, so exclude only
 # this one by exact name. File stays on disk.
 assets/Units/unit frames/New units/Grey Dragon Animate rare.gif
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ✅ COMPRESSED RUNTIME MODELS — re-included 2026-08-19.
+# The blanket `**/*.glb` above STAYS. It is the guard that stopped an oversized
+# drop aborting the entire deploy (see the header), and removing it would just
+# wait for the next 70 MiB model to freeze production again. Instead each model
+# that has been through `gltf-transform optimize --compress draco` and VERIFIED
+# under the 25 MiB cap is re-included BY NAME below.
+#
+# Uncompressed masters live in `assets-source/glb-masters/` (outside the deploy
+# root, byte-verified before any write). To add a model here: compress it,
+# confirm `gltf-transform inspect` reports unchanged mesh/material counts,
+# confirm it is under 25 MiB, then add one `!` line. Do not relax the blanket.
+#
+# ⚠ These are DRACO-compressed. Any page that loads one MUST wire a DRACOLoader
+# into its GLTFLoader or the load throws. index.html already does; pack-opener
+# and ascent-map were wired in the same commit that added these lines.
+!assets/Boosterandpacks/Glb/Booster boxes.glb
+!assets/Boosterandpacks/Glb/BOU! pack.glb
+!assets/gib files/Prince The adam Changer.glb
+!assets/gib files/The Tour Guide.glb
+!assets/3d models/Man eacthing plant statue.glb
+!assets/3d models/packopening shelf.glb
+!assets/3d models/cardshelf.glb
+!assets/3d models/Bahamut statue.glb
+!assets/3d models/Mythci deck.glb
+!assets/3d models/Vendor market cash register.glb
+!assets/3d models/base chair.glb
+!assets/3d models/cindercore.glb
+!assets/3d models/abandontank.glb
+!assets/3d models/posters/Birth Of Universe 1.glb
+!assets/3d models/Base survivor bed.glb
+!assets/3d models/sircedric statue.glb
+!assets/3d models/prn nodes.glb
+!assets/3d models/Battletable.glb
+!assets/3d models/ruin house 1.glb

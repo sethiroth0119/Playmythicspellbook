@@ -175,13 +175,20 @@
 
 <div id="loader"><div class="rune"></div><span>Charting the ascent</span></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/loaders/GLTFLoader.js"></script>
+<script src="/assets/vfx/three.min.js"></script>
+<script src="/assets/vfx/loaders/GLTFLoader.js"></script>
+<!-- 🗜 DRACOLoader — REQUIRED as of 2026-08-19, same reason as pack-opener.
+     The 19 runtime .glb models were Draco-compressed to fit Cloudflare's 25 MiB
+     per-asset cap; GLTFLoader throws on a Draco payload with no decoder wired.
+     Loaded from the SAME CDN and the SAME three version (0.128) as the
+     GLTFLoader directly above — mixing loader versions across CDNs is how the
+     "Multiple instances of Three.js" warning starts. -->
+<script src="/assets/vfx/loaders/DRACOLoader.js"></script>
 <script>
-if(window.THREE && !THREE.GLTFLoader){ document.write('<scr'+'ipt src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"><\/scr'+'ipt>'); }
+if(window.THREE && !THREE.GLTFLoader){ document.write('<scr'+'ipt src="/assets/vfx/loaders/GLTFLoader.js"><\/scr'+'ipt>'); }
 </script>
 <script>
-if(!window.THREE){ document.write('<scr'+'ipt src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"><\/scr'+'ipt>'); }
+if(!window.THREE){ document.write('<scr'+'ipt src="/assets/vfx/three.min.js"><\/scr'+'ipt>'); }
 </script>
 <script>
 /* ---- fail loudly, never silently ---- */
@@ -1038,7 +1045,27 @@ const MODELS = {
 };
 
 const Assets = {
-  loader: window.THREE && THREE.GLTFLoader ? new THREE.GLTFLoader() : null,
+  /* 🗜 GLTFLoader + Draco decoder. The runtime models shipped in the bundle are
+     Draco-compressed (see public/.assetsignore) and throw without a decoder.
+     Built in an IIFE so a missing DRACOLoader degrades to a plain loader rather
+     than leaving `loader: null`, which would disable EVERY model on this page,
+     compressed or not.
+     ✅ Decoder SELF-HOSTED at /assets/vfx/draco/ (three 0.128.0's own glTF
+     Draco build). No third-party fetch remains in this page's 3D path — Edge
+     Tracking Prevention was measured blocking cdnjs for this project's owner
+     and blocks gstatic identically. */
+  loader: (function () {
+    if (!(window.THREE && THREE.GLTFLoader)) return null;
+    const l = new THREE.GLTFLoader();
+    try {
+      if (typeof THREE.DRACOLoader === 'function' && l.setDRACOLoader) {
+        const d = new THREE.DRACOLoader();
+        d.setDecoderPath('/assets/vfx/draco/');
+        l.setDRACOLoader(d);
+      }
+    } catch (e) {}
+    return l;
+  })(),
   cache: new Map(),          // url  -> raw gltf scene
   src: {},                   // slot -> raw gltf scene
   protoCache: new Map(),     // slot|fit -> measured, scaled, seated prototype

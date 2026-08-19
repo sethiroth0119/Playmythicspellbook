@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kalong Rite — Summoning of the Archon FX</title>
+<style>
+  :root{ --gold:#FFD86B; --cyan:#3DE0FF; }
+  html,body{margin:0;height:100%;overflow:hidden;background:transparent;}
+
+  /* Backdrop modes exist ONLY to verify transparency — the canvas is clear. */
+  body.bg-checker{
+    background:
+      linear-gradient(45deg, #1b1b22 25%, transparent 25%, transparent 75%, #1b1b22 75%) 0 0/32px 32px,
+      linear-gradient(45deg, #1b1b22 25%, transparent 25%, transparent 75%, #1b1b22 75%) 16px 16px/32px 32px,
+      #101016;
+  }
+  body.bg-dark{ background:radial-gradient(120% 90% at 50% 20%, #191029 0%, #07040d 70%); }
+  body.bg-light{ background:#e9e6f2; }
+
+  canvas#fx{position:fixed;inset:0;display:block;}
+
+  .hud{
+    position:fixed; left:20px; top:18px; z-index:5;
+    font:11px/1.5 "Courier New", monospace; letter-spacing:.22em;
+    color:#cfc4ee; text-transform:uppercase; user-select:none;
+  }
+  .hud b{color:var(--gold); font-weight:normal;}
+  .hud .phase{opacity:.75}
+
+  .controls{position:fixed; right:20px; top:16px; z-index:5; display:flex; gap:8px;}
+  .controls button{
+    font:11px "Courier New", monospace; letter-spacing:.18em; text-transform:uppercase;
+    color:#e8defc; background:rgba(20,12,38,.55); border:1px solid rgba(180,140,255,.35);
+    padding:8px 14px; cursor:pointer; backdrop-filter:blur(4px); border-radius:2px;
+    transition:border-color .2s, color .2s;
+  }
+  .controls button:hover{border-color:var(--gold); color:var(--gold);}
+  .controls button:focus-visible{outline:2px solid var(--cyan); outline-offset:2px;}
+</style>
+</head>
+<body class="bg-checker">
+
+<div class="hud">
+  <div><b>KALONG</b> // RITE OF THE ARCHON</div>
+  <div class="phase" id="phaseLabel">phase: idle</div>
+</div>
+
+<div class="controls">
+  <button id="btnReplay">Replay</button>
+  <button id="btnBg">Backdrop</button>
+</div>
+
+<canvas id="fx"></canvas>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ============================================================================
+   RITE OF THE ARCHON — transparent WebGL summoning sequence
+   ----------------------------------------------------------------------------
+   Timeline: IDLE     → the offerants hover in a ring around the great circle
+             RITE     → the circle ignites; a pillar of glyph-light rises
+                        beneath each offerant as they bow
+             OFFERING → the offerants dissolve into soul-streams: rivers of
+                        their own colored essence arc upward to a single
+                        apex point in the sky
+             GATE     → the gathered essence tears open a celestial gate —
+                        a rotating rune-ring around a void disc — which
+                        pulses, drinks the last of the light, and cracks
+             ARRIVAL  → flash. The Archon descends through the gate on a
+                        column of light: four wings, burning halo, crown
+                        of orbiting shards
+             REVEAL   → the gate collapses into a halo at the Archon's back;
+                        ash-embers of the offering drift down around it
+
+   INTEGRATION — using your own models:
+   1. OFFERANTS controls how many units make the offering (their colors and
+      ring positions are generated from it). Swap buildKalong() for your
+      GLTFs; keep each unit parented to `stage`.
+   2. Replace buildArchon() with your Archon model — keep it parented to
+      `archonRig` so the descent, hover, and halo still track it.
+   3. Call  playSummoning()  from your game code to trigger the sequence.
+   The canvas is alpha-transparent — composite it over anything.
+   ============================================================================ */
+
+(() => {
+"use strict";
+
+/* ------------------------------ configuration ---------------------------- */
+const OFFERANT_COLORS = [0x9B4DFF, 0x3DE0FF, 0xFF5FA8];   // add more to summon with more units
+const RING_R   = 2.9;      // offering ring radius
+const APEX     = new THREE.Vector3(0, 4.3, 0);            // where the essence gathers
+const ARCHON_HOVER_Y = 1.75;
+
+const canvas   = document.getElementById('fx');
+const renderer = new THREE.WebGLRenderer({ canvas, alpha:true, antialias:true, premultipliedAlpha:true });
+renderer.setClearColor(0x000000, 0);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 100);
+camera.position.set(0, 2.0, 9.4);
+const lookTarget = new THREE.Vector3(0, 1.3, 0);
+
+const stage = new THREE.Group();
+scene.add(stage);
+
+/* ------------------------------- lighting -------------------------------- */
+scene.add(new THREE.AmbientLight(0x8a7bd8, 0.35));
+const gateLight = new THREE.PointLight(0xFFE9B0, 0, 26, 2);
+gateLight.position.copy(APEX);
+scene.add(gateLight);
+const rimL = new THREE.DirectionalLight(0x4DE3FF, 0.4);
+rimL.position.set(-3, 4, -4); scene.add(rimL);
+
+/* ------------------------- shared glow sprite tex ------------------------- */
+function glowTexture(){
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(64,64,0, 64,64,64);
+  grad.addColorStop(0,'rgba(255,255,255,1)');
+  grad.addColorStop(0.35,'rgba(255,255,255,.55)');
+  grad.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0,0,128,128);
+  return new THREE.CanvasTexture(c);
+}
+const softDot = glowTexture();
+
+/* ------------------------------ rune texture ------------------------------ */
+function runeCircleTexture(dense){
+  const s = 512, c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d'); g.translate(s/2, s/2);
+  g.strokeStyle = 'rgba(255,255,255,0.95)';
+  g.lineWidth = 3; g.beginPath(); g.arc(0,0,236,0,Math.PI*2); g.stroke();
+  g.lineWidth = 1.5;
+  g.beginPath(); g.arc(0,0,204,0,Math.PI*2); g.stroke();
+  g.beginPath(); g.arc(0,0,118,0,Math.PI*2); g.stroke();
+  const ticks = dense ? 72 : 48;
+  for(let i=0;i<ticks;i++){
+    const a=i/ticks*Math.PI*2, r1=208, r2=232-(i%3)*10;
+    g.beginPath(); g.moveTo(Math.cos(a)*r1,Math.sin(a)*r1); g.lineTo(Math.cos(a)*r2,Math.sin(a)*r2); g.stroke();
+  }
+  g.lineWidth = 2;
+  const sides = dense ? 7 : 3;                     // the great circle bears a heptagram
+  for(let k=0;k<2;k++){
+    g.beginPath();
+    for(let i=0;i<=sides;i++){
+      const a=(i*(dense?3:1))/sides*Math.PI*2 + k*Math.PI/sides;
+      const x=Math.cos(a)*118, y=Math.sin(a)*118;
+      i?g.lineTo(x,y):g.moveTo(x,y);
+    }
+    g.stroke();
+  }
+  for(let i=0;i<36;i++){
+    const a=Math.random()*Math.PI*2, r=136+Math.random()*56;
+    g.save(); g.rotate(a); g.translate(r,0); g.rotate(Math.random()*Math.PI);
+    g.strokeRect(-6,-2,12,4); g.restore();
+  }
+  return new THREE.CanvasTexture(c);
+}
+const runeTex      = runeCircleTexture(false);
+const runeTexDense = runeCircleTexture(true);
+
+function makeCircle(color, size, tex){
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(size,size),
+    new THREE.MeshBasicMaterial({ map:tex, transparent:true, opacity:0, color,
+      blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide }));
+  m.rotation.x = -Math.PI/2; m.position.y = -0.62;
+  stage.add(m); return m;
+}
+const greatCircle = makeCircle(0xFFD86B, 8.2, runeTexDense);   // the ritual floor
+const innerCircle = makeCircle(0x9B4DFF, 4.6, runeTex);
+
+/* ----------------------------- energy shader ------------------------------ */
+const energyVert = `
+  varying vec3 vN; varying vec3 vV; varying vec3 vP;
+  void main(){
+    vN = normalize(normalMatrix * normal);
+    vec4 mv = modelViewMatrix * vec4(position,1.0);
+    vV = normalize(-mv.xyz); vP = position;
+    gl_Position = projectionMatrix * mv;
+  }`;
+const energyFrag = `
+  uniform float uTime; uniform float uPulse; uniform vec3 uA; uniform vec3 uB; uniform float uOpacity;
+  varying vec3 vN; varying vec3 vV; varying vec3 vP;
+  void main(){
+    float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.2);
+    float bands = 0.5 + 0.5*sin(vP.y*7.0 - uTime*3.0 + sin(vP.x*5.0+uTime)*0.8);
+    vec3 col = mix(uA, uB, bands);
+    col += vec3(1.0,0.95,0.82) * fres * (1.2 + uPulse*2.0);
+    float a = clamp(0.35 + fres*1.4 + uPulse*0.4, 0.0, 1.0) * uOpacity;
+    gl_FragColor = vec4(col*(1.0+uPulse*1.5), a);
+  }`;
+function energyMaterial(colA, colB){
+  return new THREE.ShaderMaterial({
+    uniforms:{ uTime:{value:0}, uPulse:{value:0}, uOpacity:{value:1},
+      uA:{value:new THREE.Color(colA)}, uB:{value:new THREE.Color(colB)} },
+    vertexShader:energyVert, fragmentShader:energyFrag,
+    transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, side:THREE.DoubleSide
+  });
+}
+
+/* -------------------------- placeholder kalongs --------------------------- */
+function wingGeometry(span=1.5, drop=1.05){
+  const sh = new THREE.Shape();
+  sh.moveTo(0, 0.15);
+  sh.quadraticCurveTo(span*0.45,  0.55, span, 0.30);
+  sh.quadraticCurveTo(span*0.92, -drop*0.25, span*0.78, -drop*0.42);
+  sh.quadraticCurveTo(span*0.62, -drop*0.18, span*0.55, -drop*0.55);
+  sh.quadraticCurveTo(span*0.40, -drop*0.24, span*0.30, -drop*0.62);
+  sh.quadraticCurveTo(span*0.14, -drop*0.30, 0, -drop*0.55);
+  sh.lineTo(0, 0.15);
+  return new THREE.ShapeGeometry(sh, 24);
+}
+function buildKalong(scale, bodyColor, emissive){
+  const g = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({
+    color:bodyColor, roughness:0.55, metalness:0.15, emissive, emissiveIntensity:0.3,
+    transparent:true, opacity:1 });
+  const membrane = new THREE.MeshStandardMaterial({
+    color:bodyColor, roughness:0.4, metalness:0.2, side:THREE.DoubleSide,
+    emissive, emissiveIntensity:0.45, transparent:true, opacity:0.92 });
+
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.5,24,20), skin);
+  body.scale.set(0.72,1.05,0.6); g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3,20,16), skin);
+  head.position.set(0,0.72,0.12); head.scale.set(0.9,0.95,1.05); g.add(head);
+  const snout = new THREE.Mesh(new THREE.ConeGeometry(0.13,0.3,12), skin);
+  snout.rotation.x = Math.PI/2; snout.position.set(0,0.66,0.4); g.add(snout);
+  for(const s of [-1,1]){
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.1,0.32,10), skin);
+    ear.position.set(0.16*s,1.0,0.08); ear.rotation.z = -0.25*s; g.add(ear);
+  }
+  const wingGeo = wingGeometry();
+  for(const s of [-1,1]){
+    const pivot = new THREE.Group();
+    pivot.position.set(0.28*s,0.42,0);
+    const wing = new THREE.Mesh(wingGeo, membrane);
+    wing.scale.x = s; pivot.add(wing);
+    pivot.userData.side = s; g.add(pivot);
+    (g.userData.wings ??= []).push(pivot);
+  }
+  const feet = new THREE.Mesh(new THREE.SphereGeometry(0.12,10,8), skin);
+  feet.position.set(0,-0.55,0); feet.scale.set(1.4,0.6,1); g.add(feet);
+  g.scale.setScalar(scale);
+  g.userData.materials = [skin, membrane];
+  g.userData.baseOpacity = [1, 0.92];
+  return g;
+}
+
+/* the offerants: one unit per configured color, evenly around the ring */
+const offerants = OFFERANT_COLORS.map((col, i) => {
+  const a = i / OFFERANT_COLORS.length * Math.PI*2 - Math.PI/2;
+  const u = buildKalong(0.8, 0x241736, col);
+  u.position.set(Math.cos(a)*RING_R, 0.85, Math.sin(a)*RING_R);
+  u.rotation.y = -a - Math.PI/2;          // face the center
+  u.userData.angle = a;
+  u.userData.color = col;
+  u.userData.floatOff = Math.random()*Math.PI*2;
+  stage.add(u);
+
+  // glyph pillar of light beneath each offerant
+  const pillarMat = energyMaterial(col, 0xFFFFFF);
+  pillarMat.uniforms.uOpacity.value = 0;
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 5.4, 20, 1, true), pillarMat);
+  pillar.position.set(u.position.x, 2.0, u.position.z);
+  stage.add(pillar);
+  u.userData.pillar = pillar; u.userData.pillarMat = pillarMat;
+
+  // personal rune circle
+  const pc = makeCircle(col, 1.7, runeTex);
+  pc.position.set(u.position.x, -0.6, u.position.z);
+  u.userData.circle = pc;
+  return u;
+});
+
+/* --------------------- soul-streams (offering essence) -------------------- */
+/* Each offerant feeds a bezier river of essence from its heart to the apex. */
+const STREAM_PER = 240;
+const _p0 = new THREE.Vector3(), _p1 = new THREE.Vector3(), _p2 = new THREE.Vector3(), _bz = new THREE.Vector3();
+function bez(t, p0, p1, p2, out){
+  const u = 1-t;
+  out.set(
+    u*u*p0.x + 2*u*t*p1.x + t*t*p2.x,
+    u*u*p0.y + 2*u*t*p1.y + t*t*p2.y,
+    u*u*p0.z + 2*u*t*p1.z + t*t*p2.z
+  );
+  return out;
+}
+const streams = offerants.map(u => {
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(STREAM_PER*3);
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const mat = new THREE.PointsMaterial({ size:0.13, map:softDot, transparent:true, opacity:0,
+    color:u.userData.color, blending:THREE.AdditiveBlending, depthWrite:false });
+  stage.add(new THREE.Points(geo, mat));
+  const seeds = [];
+  for(let i=0;i<STREAM_PER;i++)
+    seeds.push({ t:Math.random(), sp:0.28+Math.random()*0.5, wob:Math.random()*Math.PI*2, wr:0.1+Math.random()*0.28 });
+  return { geo, pos, mat, seeds, unit:u };
+});
+function updateStreams(dt, time, opacity, progress){
+  for(const st of streams){
+    const u = st.unit;
+    _p0.set(u.position.x, u.position.y + 0.3, u.position.z);
+    // control point: bulge outward and up, so the rivers arc like a crown
+    _p1.set(u.position.x*1.55, (u.position.y + APEX.y)*0.62, u.position.z*1.55);
+    _p2.copy(APEX);
+    for(let i=0;i<STREAM_PER;i++){
+      const s = st.seeds[i];
+      s.t += dt*s.sp; if(s.t > 1) s.t -= 1;
+      // early in the offering only the lower part of the river exists
+      const tt = Math.min(s.t, progress);
+      bez(tt, _p0, _p1, _p2, _bz);
+      const env = Math.sin(tt*Math.PI);
+      _bz.x += Math.cos(s.wob + tt*20 + time*2)*s.wr*env;
+      _bz.z += Math.sin(s.wob + tt*17 + time*2)*s.wr*env;
+      st.pos[i*3]=_bz.x; st.pos[i*3+1]=_bz.y; st.pos[i*3+2]=_bz.z;
+    }
+    st.geo.attributes.position.needsUpdate = true;
+    st.mat.opacity = opacity;
+  }
+}
+
+/* ------------------------------ the gate ---------------------------------- */
+const gate = new THREE.Group();
+gate.position.copy(APEX);
+stage.add(gate);
+
+// void disc — the torn-open dark behind the ring
+const voidMat = new THREE.MeshBasicMaterial({ color:0x07030F, transparent:true, opacity:0 });
+const voidDisc = new THREE.Mesh(new THREE.CircleGeometry(1.15, 48), voidMat);
+gate.add(voidDisc);
+
+// inner swirl — starlight churning inside the void
+const swirlMat = new THREE.ShaderMaterial({
+  uniforms:{ uTime:{value:0}, uOpacity:{value:0},
+    uA:{value:new THREE.Color(0xFFD86B)}, uB:{value:new THREE.Color(0x9B4DFF)} },
+  vertexShader:`varying vec2 vUv; void main(){ vUv = uv*2.0-1.0; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader:`
+    uniform float uTime; uniform float uOpacity; uniform vec3 uA; uniform vec3 uB;
+    varying vec2 vUv;
+    void main(){
+      float r = length(vUv);
+      if(r > 1.0) discard;
+      float ang = atan(vUv.y, vUv.x);
+      float spiral = 0.5 + 0.5*sin(ang*5.0 - uTime*4.0 + r*14.0);
+      float glow = smoothstep(1.0, 0.15, r);
+      vec3 col = mix(uB, uA, spiral) * (0.35 + spiral*0.9);
+      col += vec3(1.0,0.95,0.8) * smoothstep(0.35, 0.0, r) * 1.4;   // burning heart
+      gl_FragColor = vec4(col, glow * (0.3 + spiral*0.5) * uOpacity);
+    }`,
+  transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, side:THREE.DoubleSide
+});
+const swirl = new THREE.Mesh(new THREE.CircleGeometry(1.12, 48), swirlMat);
+swirl.position.z = 0.01;
+gate.add(swirl);
+
+// rotating rune ring framing the gate
+const gateRingMat = new THREE.MeshBasicMaterial({ map:runeTexDense, transparent:true, opacity:0,
+  color:0xFFD86B, blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide });
+const gateRing = new THREE.Mesh(new THREE.PlaneGeometry(3.3, 3.3), gateRingMat);
+gateRing.position.z = 0.02;
+gate.add(gateRing);
+const gateRing2 = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4),
+  new THREE.MeshBasicMaterial({ map:runeTex, transparent:true, opacity:0, color:0x3DE0FF,
+    blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide }));
+gateRing2.position.z = 0.03;
+gate.add(gateRing2);
+
+// molten edge of the tear
+const edgeMat = energyMaterial(0xFFD86B, 0xFF9DEB);
+edgeMat.uniforms.uOpacity.value = 0;
+const gateEdge = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.06, 12, 64), edgeMat);
+gate.add(gateEdge);
+
+gate.scale.setScalar(0.001);
+
+/* --------------------------- descent light column ------------------------- */
+const columnMat = energyMaterial(0xFFF2C8, 0xB784FF);
+columnMat.uniforms.uOpacity.value = 0;
+const column = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.95, APEX.y + 0.6, 24, 1, true), columnMat);
+column.position.y = APEX.y/2 - 0.3;
+stage.add(column);
+
+/* ------------------------------- the Archon ------------------------------- */
+const archonRig = new THREE.Group();      // handles descent + hover; parent your GLTF here
+archonRig.position.copy(APEX);
+archonRig.visible = false;
+stage.add(archonRig);
+
+const archonMat  = energyMaterial(0xFFD86B, 0xFFFFFF);
+const archonMat2 = energyMaterial(0x9B4DFF, 0xFF9DEB);
+
+function buildArchon(){
+  const g = new THREE.Group();
+  // torso + head
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.55,24,20), archonMat);
+  body.scale.set(0.8, 1.25, 0.65); g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3,20,16), archonMat);
+  head.position.set(0, 0.95, 0.1); g.add(head);
+  for(const s of [-1,1]){
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.55, 10), archonMat2);
+    horn.position.set(0.2*s, 1.28, 0.02); horn.rotation.z = -0.35*s; g.add(horn);
+  }
+  // flowing robe
+  const robe = new THREE.Mesh(new THREE.ConeGeometry(0.72, 2.1, 24, 1, true), archonMat2);
+  robe.position.y = -1.15; robe.rotation.x = Math.PI; g.add(robe);
+  // two tiers of wings — the greater and the lesser pair
+  const wingGeo = wingGeometry(2.1, 1.35);
+  const tiers = [ {y:0.62, z:-0.12, base:0.65, mat:archonMat},
+                  {y:0.15, z:-0.18, base:0.95, mat:archonMat2} ];
+  for(const tier of tiers){
+    for(const s of [-1,1]){
+      const pivot = new THREE.Group();
+      pivot.position.set(0.3*s, tier.y, tier.z);
+      const wing = new THREE.Mesh(wingGeo, tier.mat);
+      wing.scale.x = s; pivot.add(wing);
+      pivot.userData = { side:s, base:tier.base };
+      g.add(pivot);
+      (g.userData.wings ??= []).push(pivot);
+    }
+  }
+  // burning halo behind the head
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.045, 12, 64), archonMat);
+  halo.position.set(0, 1.0, -0.32); g.add(halo);
+  g.userData.halo = halo;
+  return g;
+}
+const archon = buildArchon();
+archon.scale.setScalar(1.9);
+archonRig.add(archon);
+
+// crown of orbiting shards, one for every offerant — their souls, kept
+const crown = new THREE.Group(); crown.visible = false;
+const crownShards = OFFERANT_COLORS.map((col, i) => {
+  const mat = energyMaterial(col, 0xFFFFFF);
+  const s = new THREE.Mesh(new THREE.TetrahedronGeometry(0.15), mat);
+  s.userData = { a:i/OFFERANT_COLORS.length*Math.PI*2, r:1.55, sp:0.8, mat };
+  crown.add(s); return s;
+});
+stage.add(crown);
+
+/* --------------------- flash / shockwaves / burst dust -------------------- */
+const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map:softDot, color:0xFFFFFF,
+  transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false }));
+flash.position.copy(APEX); flash.scale.setScalar(0.1);
+stage.add(flash);
+
+function makeRing(color, flat, y){
+  const m = new THREE.Mesh(
+    new THREE.RingGeometry(0.92, 1.0, 96),
+    new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0,
+      blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide }));
+  if(flat){ m.rotation.x = -Math.PI/2; m.position.y = -0.58; } else { m.position.y = y; }
+  m.userData.age = -1; stage.add(m); return m;
+}
+const ringGround = makeRing(0x3DE0FF, true);
+const ringGate   = makeRing(0xFFD86B, false, APEX.y);
+const ringGate2  = makeRing(0xFF9DEB, false, APEX.y);
+const ringLand   = makeRing(0xFFD86B, true);         // fires when the Archon halts
+
+const BURST_N = 1200;
+const burstGeo = new THREE.BufferGeometry();
+const burstPos = new Float32Array(BURST_N*3);
+const burstVel = [];
+for(let i=0;i<BURST_N;i++){
+  const th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
+  const s=2.0+Math.random()*6.0;
+  burstVel.push(new THREE.Vector3(Math.sin(ph)*Math.cos(th)*s, Math.cos(ph)*s*0.8, Math.sin(ph)*Math.sin(th)*s));
+}
+burstGeo.setAttribute('position', new THREE.BufferAttribute(burstPos,3));
+const burstMat = new THREE.PointsMaterial({ size:0.13, map:softDot, transparent:true, opacity:0,
+  color:0xFFD86B, blending:THREE.AdditiveBlending, depthWrite:false });
+stage.add(new THREE.Points(burstGeo, burstMat));
+let burstAge = -1;
+
+/* ---------------- dissolve motes + falling ash of the offering ------------ */
+const ASH_N = 380;
+const ashGeo = new THREE.BufferGeometry();
+const ashPos = new Float32Array(ASH_N*3);
+const ashSeed = [];
+for(let i=0;i<ASH_N;i++)
+  ashSeed.push({ x:(Math.random()-0.5)*7, z:(Math.random()-0.5)*7, y:Math.random()*5.5,
+                 fall:0.22+Math.random()*0.35, sway:Math.random()*Math.PI*2 });
+ashGeo.setAttribute('position', new THREE.BufferAttribute(ashPos,3));
+const ashMat = new THREE.PointsMaterial({ size:0.07, map:softDot, transparent:true, opacity:0,
+  color:0xFFE3B8, blending:THREE.AdditiveBlending, depthWrite:false });
+stage.add(new THREE.Points(ashGeo, ashMat));
+
+/* ============================ sequencing ================================== */
+const PH = { IDLE:'idle', RITE:'rite', OFFERING:'offering', GATE:'gate', ARRIVAL:'arrival', REVEAL:'reveal' };
+const DUR = { idle:1.0, rite:2.2, offering:3.0, gate:2.0, arrival:2.3 };
+let phase = PH.IDLE, phaseT = 0, shake = 0, landed = false;
+const phaseLabel = document.getElementById('phaseLabel');
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const easeInCubic  = t => t*t*t;
+const easeOutCubic = t => 1-Math.pow(1-t,3);
+const easeOutExpo  = t => t>=1 ? 1 : 1-Math.pow(2,-10*t);
+const easeOutBack  = t => { const c=1.70158; return 1 + (c+1)*Math.pow(t-1,3) + c*Math.pow(t-1,2); };
+const clamp01 = t => Math.min(1, Math.max(0, t));
+const lerp = THREE.MathUtils.lerp;
+
+function setPhase(p){
+  phase = p; phaseT = 0;
+  phaseLabel.textContent = 'phase: ' + p;
+  if(p === PH.ARRIVAL){
+    burstAge = 0;
+    for(let i=0;i<BURST_N;i++){ burstPos[i*3]=APEX.x; burstPos[i*3+1]=APEX.y; burstPos[i*3+2]=APEX.z; }
+    burstGeo.attributes.position.needsUpdate = true;
+    ringGate.userData.age = 0; ringGate2.userData.age = -0.08;
+    archonRig.visible = true; archonRig.position.copy(APEX);
+    crown.visible = true;
+    landed = false;
+  }
+}
+
+window.playSummoning = function(){
+  for(const u of offerants){
+    u.visible = true;
+    const a = u.userData.angle;
+    u.position.set(Math.cos(a)*RING_R, 0.85, Math.sin(a)*RING_R);
+    u.rotation.set(0, -a - Math.PI/2, 0);
+    u.scale.setScalar(0.8);
+    u.userData.materials.forEach((m,i)=>{ m.opacity = u.userData.baseOpacity[i]; m.emissiveIntensity = 0.3; });
+    u.userData.pillarMat.uniforms.uOpacity.value = 0;
+    u.userData.circle.material.opacity = 0;
+  }
+  for(const st of streams) st.mat.opacity = 0;
+  greatCircle.material.opacity = 0; innerCircle.material.opacity = 0;
+  gate.scale.setScalar(0.001);
+  voidMat.opacity = 0; swirlMat.uniforms.uOpacity.value = 0;
+  gateRingMat.opacity = 0; gateRing2.material.opacity = 0; edgeMat.uniforms.uOpacity.value = 0;
+  columnMat.uniforms.uOpacity.value = 0;
+  archonRig.visible = false; crown.visible = false;
+  flash.material.opacity = 0; burstMat.opacity = 0; ashMat.opacity = 0;
+  gateLight.intensity = 0;
+  for(const r of [ringGround, ringGate, ringGate2, ringLand]){ r.userData.age = -1; r.material.opacity = 0; }
+  burstAge = -1; landed = false;
+
+  if(reduceMotion){
+    for(const u of offerants) u.visible = false;
+    archonRig.visible = true; archonRig.position.set(0, ARCHON_HOVER_Y, 0);
+    crown.visible = true; ashMat.opacity = 0.6;
+    gate.scale.setScalar(0.5); gateRingMat.opacity = 0.5; edgeMat.uniforms.uOpacity.value = 0.5;
+    phase = PH.REVEAL; phaseT = 2;
+    phaseLabel.textContent = 'phase: reveal';
+  } else {
+    setPhase(PH.IDLE);
+  }
+};
+
+document.getElementById('btnReplay').addEventListener('click', () => playSummoning());
+const bgModes = ['bg-checker','bg-dark','bg-light'];
+let bgIdx = 0;
+document.getElementById('btnBg').addEventListener('click', () => {
+  document.body.classList.remove(bgModes[bgIdx]);
+  bgIdx = (bgIdx+1)%bgModes.length;
+  document.body.classList.add(bgModes[bgIdx]);
+});
+
+/* ============================ frame update ================================ */
+const clock = new THREE.Clock();
+
+function wingsOf(form, speed, amp, baseOverride, t){
+  for(const w of form.userData.wings || []){
+    const base = baseOverride ?? w.userData.base ?? 0.35;
+    w.rotation.z = w.userData.side * (base + Math.sin(t*speed)*amp);
+  }
+}
+
+function updateRings(dt){
+  for(const r of [ringGround, ringGate, ringGate2, ringLand]){
+    if(r.userData.age < 0){ if(r.userData.age > -1) r.userData.age += dt; continue; }
+    r.userData.age += dt;
+    const k = easeOutExpo(clamp01(r.userData.age/0.9));
+    r.scale.setScalar(0.2 + k*9.0);
+    r.material.opacity = (1-k)*0.9;
+    if(r === ringGate || r === ringGate2) r.quaternion.copy(camera.quaternion);
+    if(r.userData.age > 1){ r.userData.age = -1; r.material.opacity = 0; }
+  }
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t  = clock.elapsedTime;
+  phaseT += dt;
+  shake = Math.max(0, shake - dt*2.2);
+
+  const hover = (u) => 0.85 + Math.sin(t*1.6 + u.userData.floatOff)*0.06;
+
+  switch(phase){
+    case PH.IDLE: {
+      for(const u of offerants){ u.position.y = hover(u); wingsOf(u, 2.2, 0.18, 0.35, t + u.userData.floatOff); }
+      if(phaseT >= DUR.idle) setPhase(PH.RITE);
+      break;
+    }
+    case PH.RITE: {
+      const p = clamp01(phaseT / DUR.rite);
+      greatCircle.material.opacity = clamp01(p*2)*0.85;
+      innerCircle.material.opacity = clamp01(p*2)*0.8;
+      greatCircle.rotation.z += dt*0.35; innerCircle.rotation.z -= dt*0.55;
+      for(const u of offerants){
+        u.position.y = hover(u);
+        u.rotation.x = easeOutCubic(p)*0.35;                    // the bow
+        wingsOf(u, 2.2, 0.14, 0.35 + p*0.4, t + u.userData.floatOff);   // wings fold forward
+        u.userData.circle.material.opacity = clamp01(p*2.5)*0.85;
+        u.userData.circle.rotation.z += dt*1.4;
+        u.userData.pillarMat.uniforms.uOpacity.value = clamp01((p-0.3)*1.8)*0.45;
+        u.userData.pillar.rotation.y += dt*0.8;
+        for(const m of u.userData.materials) m.emissiveIntensity = 0.3 + p*1.4;
+      }
+      gateLight.intensity = p*0.8;
+      shake = p*0.25;
+      if(phaseT >= DUR.rite) setPhase(PH.OFFERING);
+      break;
+    }
+    case PH.OFFERING: {
+      const p = clamp01(phaseT / DUR.offering);
+      const e = easeInCubic(p);
+      greatCircle.rotation.z += dt*(0.35 + e*1.6);
+      innerCircle.rotation.z -= dt*(0.55 + e*2.2);
+      updateStreams(dt, t, clamp01(p*3)*0.95, clamp01(p*1.15));
+      for(const u of offerants){
+        u.position.y = hover(u) + e*0.5;                        // drawn upward as they go
+        u.rotation.x = 0.35;
+        wingsOf(u, 2.0, 0.1, 0.8, t);                           // wings wrapped, at peace
+        // the dissolve: body thins as its essence leaves
+        u.userData.materials.forEach((m, i) => {
+          m.opacity = u.userData.baseOpacity[i] * (1 - e*0.96);
+          m.emissiveIntensity = 1.7 + e*2.2;                    // brighter as it fades
+        });
+        u.scale.setScalar(0.8*(1 - e*0.5));
+        u.userData.pillarMat.uniforms.uOpacity.value = 0.45*(1-p);
+        u.userData.circle.material.opacity = 0.85*(1-p);
+      }
+      // essence pooling above: a growing pre-gate glow
+      flash.material.opacity = e*0.25 + Math.sin(t*9)*0.05*e;
+      flash.scale.setScalar(1 + e*4);
+      gateLight.intensity = 0.8 + e*3.2;
+      shake = 0.25 + e*0.5;
+      if(phaseT >= DUR.offering){
+        for(const u of offerants) u.visible = false;
+        for(const st of streams) st.mat.opacity = 0;
+        setPhase(PH.GATE);
+      }
+      break;
+    }
+    case PH.GATE: {
+      const p = clamp01(phaseT / DUR.gate);
+      flash.material.opacity = Math.max(0, 0.25 - p*0.4);
+      const tear = easeOutBack(clamp01(p*1.6));
+      gate.scale.setScalar(0.001 + tear);
+      voidMat.opacity = clamp01(p*2.5)*0.92;
+      swirlMat.uniforms.uOpacity.value = clamp01(p*2.5);
+      gateRingMat.opacity = clamp01(p*2)*0.95;
+      gateRing2.material.opacity = clamp01(p*2)*0.85;
+      edgeMat.uniforms.uOpacity.value = clamp01(p*2);
+      edgeMat.uniforms.uPulse.value = easeInCubic(p)*(0.5+0.5*Math.sin(t*(8+p*22)));
+      gateRing.rotation.z += dt*(0.5 + p*2.6);
+      gateRing2.rotation.z -= dt*(0.8 + p*3.4);
+      columnMat.uniforms.uOpacity.value = clamp01((p-0.5)*1.6)*0.35;
+      gateLight.intensity = 4 + easeInCubic(p)*6;
+      greatCircle.rotation.z += dt*2.2; innerCircle.rotation.z -= dt*3.0;
+      shake = 0.5 + easeInCubic(p)*1.1;
+      if(phaseT >= DUR.gate){
+        flash.material.opacity = 1; flash.scale.setScalar(0.1);
+        setPhase(PH.ARRIVAL);
+      }
+      break;
+    }
+    case PH.ARRIVAL: {
+      const p = clamp01(phaseT / DUR.arrival);
+      // opening flash decays fast
+      flash.material.opacity = Math.max(0, flash.material.opacity - dt*2.0);
+      flash.scale.setScalar(Math.min(34, flash.scale.x + dt*160*Math.max(0, 0.4-p)));
+      // the descent: stately, decelerating
+      const drop = easeOutCubic(clamp01(p*1.15));
+      archonRig.position.y = lerp(APEX.y, ARCHON_HOVER_Y, drop);
+      archon.rotation.y = Math.sin(t*0.3)*0.15;
+      wingsOf(archon, 1.1 + (1-p)*2.0, 0.28, null, t);
+      archon.userData.halo.rotation.z += dt*1.5;
+      archonMat.uniforms.uTime.value = t;  archonMat.uniforms.uPulse.value  = 0.3 + (1-p)*1.4 + 0.15*Math.sin(t*3);
+      archonMat2.uniforms.uTime.value = t; archonMat2.uniforms.uPulse.value = 0.25 + (1-p)*1.0;
+      columnMat.uniforms.uOpacity.value = 0.35 + (1-p)*0.3;
+      // gate stays open behind the descent, calming
+      gateRing.rotation.z += dt*1.6; gateRing2.rotation.z -= dt*2.0;
+      edgeMat.uniforms.uPulse.value = 0.4*(1-p);
+      gateLight.intensity = lerp(10, 4.5, p);
+      shake = 1.4*(1-p) + 0.15;
+      // touchdown shock the moment the descent completes
+      if(!landed && drop >= 0.999){
+        landed = true;
+        ringLand.userData.age = 0; ringGround.userData.age = 0;
+        shake = 1.5;
+      }
+      if(phaseT >= DUR.arrival) setPhase(PH.REVEAL);
+      break;
+    }
+    case PH.REVEAL: {
+      const p = clamp01(phaseT / 1.4);
+      flash.material.opacity = Math.max(0, flash.material.opacity - dt*2.4);
+      archonRig.position.y = ARCHON_HOVER_Y + Math.sin(t*0.9)*0.1;
+      archon.rotation.y = Math.sin(t*0.3)*0.15;
+      wingsOf(archon, 1.0, 0.24, null, t);
+      archon.userData.halo.rotation.z += dt*1.5;
+      archonMat.uniforms.uTime.value = t;  archonMat.uniforms.uPulse.value  = 0.3 + 0.2*Math.sin(t*2.1);
+      archonMat2.uniforms.uTime.value = t; archonMat2.uniforms.uPulse.value = 0.25 + 0.15*Math.sin(t*1.7);
+      // the gate folds down into a grand halo hovering at the Archon's back
+      const gy = lerp(APEX.y, ARCHON_HOVER_Y + 1.1, easeOutCubic(p));
+      gate.position.set(0, gy, -0.85);
+      gate.scale.setScalar(lerp(1, 0.62, easeOutCubic(p)));
+      voidMat.opacity = lerp(voidMat.opacity, 0.5, dt*2);
+      columnMat.uniforms.uOpacity.value = Math.max(0, columnMat.uniforms.uOpacity.value - dt*0.5);
+      gateRing.rotation.z += dt*0.9; gateRing2.rotation.z -= dt*1.2;
+      // crown of the offerants' souls
+      for(const s of crownShards){
+        const u = s.userData; u.a += dt*u.sp;
+        u.mat.uniforms.uTime.value = t; u.mat.uniforms.uPulse.value = 0.4 + 0.3*Math.sin(t*3.1 + u.a);
+        s.position.set(Math.cos(u.a)*u.r, archonRig.position.y + 1.9 + Math.sin(t*1.4+u.a)*0.12, Math.sin(u.a)*u.r);
+        s.rotation.x += dt*1.4; s.rotation.y += dt*1.1;
+      }
+      // ash of the offering drifting down
+      ashMat.opacity = clamp01(p*1.5)*0.7;
+      for(let i=0;i<ASH_N;i++){
+        const s = ashSeed[i];
+        s.y -= dt*s.fall; if(s.y < -0.6) s.y = 5.5;
+        ashPos[i*3]   = s.x + Math.sin(t*0.7 + s.sway)*0.25;
+        ashPos[i*3+1] = s.y;
+        ashPos[i*3+2] = s.z + Math.cos(t*0.6 + s.sway)*0.25;
+      }
+      ashGeo.attributes.position.needsUpdate = true;
+      greatCircle.material.opacity = Math.max(0.3, greatCircle.material.opacity - dt*0.3);
+      innerCircle.material.opacity = Math.max(0.22, innerCircle.material.opacity - dt*0.3);
+      greatCircle.rotation.z += dt*0.4; innerCircle.rotation.z -= dt*0.55;
+      gateLight.position.y = archonRig.position.y + 1.2;
+      gateLight.intensity = lerp(gateLight.intensity, 3.6, dt*2);
+      break;
+    }
+  }
+
+  // burst dust physics (fired at the gate flash)
+  if(burstAge >= 0){
+    burstAge += dt;
+    const life = 1.7;
+    for(let i=0;i<BURST_N;i++){
+      const v = burstVel[i];
+      burstPos[i*3]+=v.x*dt; burstPos[i*3+1]+=v.y*dt; burstPos[i*3+2]+=v.z*dt;
+      v.multiplyScalar(1 - dt*1.6); v.y -= dt*0.7;
+    }
+    burstGeo.attributes.position.needsUpdate = true;
+    burstMat.opacity = Math.max(0, 1 - burstAge/life);
+    if(burstAge > life){ burstAge = -1; burstMat.opacity = 0; }
+  }
+
+  updateRings(dt);
+  swirlMat.uniforms.uTime.value = t;
+  columnMat.uniforms.uTime.value = t;
+  column.rotation.y += dt*0.5;
+  edgeMat.uniforms.uTime.value = t;
+  gateEdge.rotation.z += dt*0.7;
+  for(const u of offerants) if(u.visible) u.userData.pillarMat.uniforms.uTime.value = t;
+
+  // cinematic camera: ground-level wide → tilt up to the gate → settle on the Archon
+  let dist = 9.4, height = 2.0, lookY = 1.3;
+  if(phase===PH.RITE)     { const p = clamp01(phaseT/DUR.rite);     dist = 9.4 - p*0.6; }
+  if(phase===PH.OFFERING) { const p = clamp01(phaseT/DUR.offering); dist = 8.8 - p*0.8; lookY = lerp(1.3, 3.2, easeInCubic(p)); height = lerp(2.0, 2.6, p); }
+  if(phase===PH.GATE)     { const p = clamp01(phaseT/DUR.gate);     dist = 8.0 - p*0.7; lookY = lerp(3.2, APEX.y, easeOutCubic(p)); height = lerp(2.6, 3.0, p); }
+  if(phase===PH.ARRIVAL)  { const p = clamp01(phaseT/DUR.arrival);  dist = 7.3 + easeOutExpo(clamp01(p*4))*1.6; lookY = lerp(APEX.y, 2.2, easeOutCubic(p)); height = lerp(3.0, 2.3, p); }
+  if(phase===PH.REVEAL)   { const p = clamp01(phaseT/2);            dist = lerp(8.9, 9.6, p); lookY = 2.2; height = lerp(2.3, 2.1, p); }
+  lookTarget.set(0, lookY, 0);
+  const sh = reduceMotion ? 0 : shake;
+  camera.position.set(
+    (Math.random()-0.5)*0.06*sh,
+    height + (Math.random()-0.5)*0.06*sh,
+    dist + (Math.random()-0.5)*0.04*sh
+  );
+  camera.lookAt(lookTarget);
+
+  renderer.render(scene, camera);
+}
+
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+playSummoning();
+animate();
+
+})();
+</script>
+</body>
+</html>

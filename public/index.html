@@ -36492,7 +36492,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x9';
+  window.BUILD_VERSION = 'v120y0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -106083,7 +106083,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120x9';
+const BB_VER = 'v120y0';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -163842,7 +163842,7 @@ function _cs3DLoadDecoders(cb){
   const T = window.THREE; if (!T) { cb(); return; }
   if (T._cs3DDecodersTried) { cb(); return; }
   T._cs3DDecodersTried = true;
-  const base = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/';
+  const base = '/assets/vfx/';   /* vendored — see /assets/vfx/loaders/ */
   let pending = 0, fired = false;
   const finish = () => { if (!fired && pending <= 0) { fired = true; cb(); } };
   // DRACOLoader (geometry compression) — by far the most common .glb compression.
@@ -163858,7 +163858,7 @@ function _cs3DInstallLoaders(){
   const T = window.THREE; if (!T || !T.GLTFLoader || T._cs3DPatched) return;
   try {
     let draco = null;
-    if (T.DRACOLoader) { try { draco = new T.DRACOLoader(); draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/'); } catch (e) { draco = null; } }
+    if (T.DRACOLoader) { try { draco = new T.DRACOLoader(); draco.setDecoderPath('/assets/vfx/draco/'); } catch (e) { draco = null; } }
     const meshopt = (typeof MeshoptDecoder !== 'undefined') ? MeshoptDecoder : (window.MeshoptDecoder || null);
     const Base = T.GLTFLoader;
     const Patched = function(manager){
@@ -163971,7 +163971,7 @@ function _csLoadThree(cb) {
     if (!window.THREE) { done(false); return; }
     if (window.THREE.GLTFLoader) { finishGltf(); return; }
     const g = document.createElement('script');
-    g.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+    g.src = '/assets/vfx/loaders/GLTFLoader.js';
     g.onload = finishGltf; g.onerror = () => done(true);
     document.head.appendChild(g);
   };
@@ -211423,7 +211423,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120x9';
+  f.src = 'node-city/index.html?v=v120y0';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228600,8 +228600,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120x9">
-<script type="module" src="src/battle/hud.js?v=v120x9"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120y0">
+<script type="module" src="src/battle/hud.js?v=v120y0"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

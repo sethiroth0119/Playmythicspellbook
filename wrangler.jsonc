@@ -8,7 +8,10 @@
   },
   "assets": {
     "directory": "./public",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // 🖼 image requests must reach the Worker so AVIF negotiation can run;
+    // everything else keeps the default asset-first fast path.
+    "run_worker_first": ["/assets/*"]
   },
   "vars": {
     "SB_URL": "https://ktsiasyjusesawtrwrjc.supabase.co",

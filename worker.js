@@ -1152,6 +1152,48 @@ export default {
       }
     }
 
+    /* 🖼 AVIF CONTENT NEGOTIATION — the whole asset saving, with zero call-site changes.
+       ─────────────────────────────────────────────────────────────────────────
+       MEASURED on this repo's own art: 1,920 PNGs over 200 KB totalling 2.85 GB.
+       Re-encoding them LOSSLESSLY makes them BIGGER (3.07 GB) — they are already
+       optimally deflated — and palette-quantising them to 256 colours saves 72%
+       but visibly bands painterly card art. The only real win is a format change:
+       AVIF q55 takes the same 2.85 GB to about 0.16 GB, a 94% cut.
+       A format change normally means renaming files, and there are ~650 asset
+       URL construction sites across index.html and twelve sub-apps. Rewriting
+       those is the migration brief's Phase 1 and it is the largest mechanical
+       task in the whole plan.
+       This skips it entirely. The sibling is stored as `<original>.avif` — so
+       `card.png` gains `card.png.avif` — and the ORIGINAL PATH KEEPS WORKING.
+       Every <img>, every CSS url(), every new Image().src stays exactly as it
+       is. Delete the .avif files and the site silently returns to serving PNG.
+       ⚠ `Vary: Accept` IS LOAD-BEARING. Without it Cloudflare's cache can hand
+       an AVIF body to a browser that never asked for one, which renders as a
+       broken image. It costs cache granularity; correctness wins.
+       ⚠ Only GET/HEAD, and only when the client positively advertises AVIF.
+       A HEAD must not get a body, so the method is passed through unchanged. */
+    if ((request.method === 'GET' || request.method === 'HEAD')
+        && /\.(png|jpe?g)$/i.test(u.pathname)
+        && (request.headers.get('Accept') || '').includes('image/avif')) {
+      try {
+        const alt = new URL(request.url);
+        alt.pathname = u.pathname + '.avif';
+        const hit = await env.ASSETS.fetch(new Request(alt.toString(), {
+          method: request.method,
+          headers: request.headers,
+        }));
+        /* env.ASSETS 404s to the SPA shell on a miss, so a 200 alone is not
+           proof the sibling exists — check the type it actually returned. */
+        if (hit && hit.ok && (hit.headers.get('Content-Type') || '').includes('image/avif')) {
+          const h = new Headers(hit.headers);
+          h.set('Content-Type', 'image/avif');
+          h.set('Vary', 'Accept');
+          if (!h.has('Cache-Control')) h.set('Cache-Control', 'public, max-age=31536000, immutable');
+          return new Response(hit.body, { status: 200, headers: h });
+        }
+      } catch (e) { /* fall through to the original asset — never fail the image */ }
+    }
+
     // Everything else = the game's static site, unchanged.
     return env.ASSETS.fetch(request);
   },

@@ -1650,7 +1650,7 @@
 <!-- 🎮 Controls hint. WASD is worth nothing if nobody knows it is there, which
      was the whole argument for adding it over right-drag-to-pan. Shown once per
      device and dismissed on the first key or drag, so it never becomes furniture. -->
-<div id="ctrlhint"><b>WASD</b> move · <b>drag</b> orbit · <b>scroll</b> zoom · <b>R</b> rotate</div>
+<div id="ctrlhint"><b>WASD</b> move · <b>Q/E</b> turn · <b>drag</b> orbit · <b>scroll</b> zoom · <b>R</b> rotate piece</div>
 <div id="tiletip"></div>
 <!-- 💬 The one floating tooltip. MUST stay a direct child of <body>: it is
      position:fixed, and any transformed ancestor would re-root it and it would
@@ -4430,7 +4430,7 @@ controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, R
    ⚠ FRAME-RATE INDEPENDENT. Multiplied by dt, so it moves the same distance on
      a 144 Hz monitor as on a 30 fps laptop.
    ═════════════════════════════════════════════════════════════════════════ */
-const KEYPAN = { w: 0, a: 0, s: 0, d: 0 };
+const KEYPAN = { w: 0, a: 0, s: 0, d: 0, q: 0, e: 0 };
 /* ⚠ TUNED AGAINST THE VISIBLE AREA, NOT PICKED. At the default radius of ~24
    with a 45 deg FOV the camera sees roughly 2*24*tan(22.5) = 20 world units of
    ground. 0.85 gave ~20 units/sec, which crossed the ENTIRE 24-tile map in 1.1
@@ -4461,7 +4461,7 @@ addEventListener('keyup', ev => {
 });
 /* ⚠ Held keys stick if the window loses focus mid-press — alt-tab away with W
    down and the map scrolls forever with no key to release. Clear on blur. */
-addEventListener('blur', () => { KEYPAN.w = KEYPAN.a = KEYPAN.s = KEYPAN.d = 0; });
+addEventListener('blur', () => { KEYPAN.w = KEYPAN.a = KEYPAN.s = KEYPAN.d = KEYPAN.q = KEYPAN.e = 0; });
 
 /* Shown once per device. Dismissed by the first pan key or the first drag —
    whichever comes first — because at that point the player has demonstrably
@@ -4487,6 +4487,42 @@ addEventListener('blur', () => { KEYPAN.w = KEYPAN.a = KEYPAN.s = KEYPAN.d = 0; 
     addEventListener('DOMContentLoaded', () => { const el = hintEl(); if (el) el.remove(); });
     const el = hintEl(); if (el) el.remove();
   }
+}
+
+/* 🔄 Q / E — SWING THE CAMERA AROUND THE CITY.
+   The only way to change the viewing angle was to drag, which costs you the
+   pointer: you cannot hold a placement preview and orbit at the same time, and
+   on a trackpad it is a two-hand job. Q and E orbit hands-free, so a player can
+   walk a building around the block and look at it from the other side without
+   letting go.
+
+   ⚠ AZIMUTH ONLY — the camera swings around the vertical axis and its HEIGHT
+     and DISTANCE do not change. Pitch is deliberately left to the drag: the
+     city has a ground plane, and a key that can tip the camera under it (or
+     onto the poles, where OrbitControls' spherical maths degenerates and the
+     view snaps) would be a worse control than none.
+   ⚠ It rotates the CAMERA around controls.target, not the world. `R` is
+     building rotation during placement and is a completely different verb;
+     they do not overlap and both stay available while the other is held.
+   ⚠ Written back through controls.update() rather than by poking the spherical
+     state OrbitControls keeps internally — that state is recomputed from
+     camera.position on every update, so setting the position IS the supported
+     way to move it and cannot desync from the controls' own idea of where the
+     camera is. */
+const KEYROT_SPEED = 1.15;                    // radians per second, held
+const _krOff = new THREE.Vector3(), _krUp = new THREE.Vector3(0, 1, 0);
+function keyRotTick(dt) {
+  // e swings right (clockwise from above), q swings left — matching the way
+  // WASD already reads as "move me", not "move the world".
+  const r = KEYPAN.q - KEYPAN.e;
+  if (!r) return;
+  const step = r * KEYROT_SPEED * Math.min(dt, 0.1);   // clamp: a stalled frame must not spin the city
+  _krOff.subVectors(camera.position, controls.target);
+  if (_krOff.lengthSq() < 1e-6) return;
+  _krOff.applyAxisAngle(_krUp, step);
+  camera.position.copy(controls.target).add(_krOff);
+  camera.lookAt(controls.target);
+  try { controls.update(); } catch (e) {}
 }
 
 function keyPanTick(dt) {
@@ -37502,6 +37538,7 @@ function animate() {
   // frame at rather than trailing it by one frame.
   try { bubbleTick(dt); } catch (e) {}
   keyPanTick(dt);
+  keyRotTick(dt);
   controls.update();
 
   // night-driven emissives: windows + street lamps + flames flicker

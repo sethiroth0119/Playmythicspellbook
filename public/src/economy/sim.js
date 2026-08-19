@@ -606,6 +606,26 @@ function receiveEstate(f, amount) {
 }
 Firms.setEstateSink(receiveEstate);
 
+/* ── ⏱ AND THE THIRD SEAM, WHICH MOVES NOTHING AT ALL ───────────────────────
+   The two above exist because firms.js may not touch an account it does not
+   own. This one exists because firms.js may not READ a clock it does not own,
+   for the identical structural reason: sim.js already imports firms.js, so
+   firms.js importing sim.js back to reach `S.day` would close a load-time
+   cycle. One function, one integer, no balance on either side of it.
+
+   ⚠ `S.day` AND NOT `S.day + S.dayFrac`. The stamp is compared against `S.day`
+     by every reader, and mixing a fractional stamp with an integer day would
+     make a firm founded at 09:59 on day 12 read as −0.99 days old for the rest
+     of that day. Whole days on both sides; the loss is under one economic day
+     on a quantity nothing prints to better than a tenth of a year (≈ 2.4 days).
+   ⚠ REJECTED: stamping the wall clock instead, so that /src/lifepath could
+     compare it directly against game.cityAge. The two clocks are NOT the same
+     clock — `ECON.clock.maxCatchUpDays` deliberately drops idle days, so a city
+     left running in a background tab advances cityAge and not S.day — and a
+     package whose whole state is denominated in economic days must not store
+     one field in a different unit for a consumer's convenience. */
+Firms.setClockSource(() => S.day);
+
 /* ════════════════════════════════════════════════════════════════════════════
    🏗 SEEDING — a city with no firms has no economy, so bootstrap one from what
    the ground actually supports. Only ever runs once; after that the player's

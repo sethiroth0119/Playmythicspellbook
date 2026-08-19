@@ -26,7 +26,11 @@
       one in the tree — three read-only closures and not one writer:
 
         now()        game.cityAge, in seconds. The clock everything ages on.
-        tileBorn(k)  that tile's `born` stamp, or null. The tenure ceiling.
+        tileBorn(k)  that tile's `born` stamp, or null. The FALLBACK tenure
+                     ceiling — used only for a firm that carries no founding
+                     stamp of its own (an old save). The real ceiling is the
+                     employer's age, read off MythicEconomy, because a rebuilt
+                     building does not end anybody's employment. See model.js.
         cycleMin()   CITY_DAY_MIN, used ONLY if ECON.clock.dayMin is unreadable.
 
       Nothing that writes crosses it. No saveSoon, no tile writer, no citizen

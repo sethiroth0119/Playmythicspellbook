@@ -64,13 +64,22 @@
      Job level    SAMPLED   …when the bound that binds is the years since they
                   ‑or‑      turned 18, which is the sampled age and is the
                   DERIVED   normal case in a settled city — then it prints
-                            "≈ Grade N of C" and leads on SAMPLED.
-                            DERIVED only when the workplace itself is the
-                            shorter ceiling (a young or rebuilt building), which
-                            is a real stamp. Which one bound it is in the source
-                            line, named. How many grades a firm has, and how
-                            long a grade takes, are ANALOGIES — labelled as such
-                            in the row, not passed off as readings.
+                            "≈ Grade N of an assumed C" and leads on SAMPLED.
+                            DERIVED only when the EMPLOYER is the shorter
+                            ceiling (a young business), which is a real stamp:
+                            firms.js writes `foundedDay` at founding and the
+                            ceiling reads that, not the age of the building —
+                            so re-raising a workplace no longer demotes its
+                            whole workforce. A firm restored from a save written
+                            before that stamp existed has none, and then the
+                            ceiling falls back to the building exactly as it
+                            used to, saying so. Which term bound it is in the
+                            source line, named.
+                            How many grades a firm has, and how long a grade
+                            takes, are ANALOGIES — the first is why the value
+                            says "an assumed C" rather than "of C", which
+                            asserted a fact about the employer that nothing in
+                            the game states.
                             UNAVAILABLE with no /src/lifepath, and with no firm
                             to stand in.
      Work band    DERIVED   the firm's industry band (ECON.labor.bands).
@@ -431,8 +440,16 @@ export function factsOf(C, id) {
      The footer's old claim — "this city keeps no rank for a person" — was true
      of the ROSTER and is still true of it. What /src/lifepath adds is not a
      rank field on a person; it is a CEILING on where they could stand on their
-     employer's own ladder, out of the age of the building that employer occupies
-     and the years since they turned 18.
+     employer's own ladder, out of the age of that EMPLOYER and the years since
+     they turned 18.
+     ⏱ THE FIRST HALF OF THAT CEILING USED TO BE THE AGE OF THE BUILDING, and
+        that was the defect this row could not fix from here: a firm record
+        carried no time at all, so `tile.born` was the only stamp in reach and
+        demolishing a workplace demoted everyone in it from grade 5 to grade 1
+        with nobody's job having changed. firms.js stamps `foundedDay` now, the
+        model reads it, and the building's age is printed BESIDE the ceiling
+        rather than being it — see the 'firm' branch of ceilWords below, which
+        is the one that says "the walls are younger than the business in them".
      🔴 AND THIS ROW IS SAMPLED FOR MOST PEOPLE, WHICH IT DID NOT USED TO ADMIT.
         Its old source line opened "DERIVED from two live readings and one
         bound", and the bound IS the sample: the second half of the ceiling is
@@ -452,9 +469,11 @@ export function factsOf(C, id) {
         MythicCitizens.employer(id) and the firm behind it, read here and never
         written; if that changes, this changes with it, because nothing about
         the career is stored.
-     ⚠ AND THE TENURE IS A CEILING, NOT A HIRE DATE. The roster keeps no hire
-       date; stamping one the first time a panel opened would make the number
-       depend on when the player looked. The row says the word. */
+     ⚠ AND THE TENURE IS STILL A CEILING, NOT A HIRE DATE. A founding stamp
+       dates the BUSINESS, not the hiring. The roster keeps no hire date — that
+       would be a stamp per (person, employer) pair, owned by whoever assigns
+       the seat — and stamping one the first time a panel opened would make the
+       number depend on when the player looked. The row says the word. */
   const lc = LP ? (() => { try { return LP.career(c.id); } catch (e) { return null; } })() : null;
   if (lc && lc.ok && clk && clk.ok) {
     /* 🏢 WHERE THE SITE CEILING CAME FROM, IN WORDS. Three provenances, not
@@ -475,36 +494,90 @@ export function factsOf(C, id) {
        smaller — so on the whole roster of a mature city it printed "3.5 years:
        the building has stood 3.5 years, capped by the 23.6 years since they
        turned 18", which is backwards. It branches now. */
+    /* ⏱ THE OTHER HALF OF THE CEILING, IN WORDS — and it is a different half
+       than it used to be. It was the age of the BUILDING, because a firm record
+       carried no time at all; firms.js now stamps `foundedDay` at founding, so
+       the ceiling is the age of the BUSINESS and a rebuild no longer resets it.
+       `firmWords` is what is actually capping; `siteWords` above is still
+       printed beside it, because "the walls are younger than the business in
+       them" is exactly what a player who has just rebuilt needs to read. */
+    const firmWords = lc.firmYears != null
+      ? 'the business itself has traded ' + lc.firmYears.toFixed(1) + ' years (founded on economic ' +
+        'day ' + lc.foundedDay + ' of ' + lc.econDay + ', MythicEconomy.firm(' + lc.firm.id +
+        ').foundedDay)'
+      : null;
     const ceilWords = lc.tenureFrom === 'worklife'
       ? 'and it is THEIR OWN AGE that caps it: the ' + lc.workedYears.toFixed(1) + ' years since ' +
-        'they turned ' + clk.workAge + ', which is shorter than the ' + lc.siteYears.toFixed(1) +
-        ' years ' + (lc.siteFrom === 'tile' ? 'their workplace has stood' : 'the city has stood') +
+        'they turned ' + clk.workAge + ', which is shorter than the ' +
+        (firmWords
+          ? lc.firmYears.toFixed(1) + ' years their employer has been in business'
+          : lc.siteYears.toFixed(1) + ' years ' +
+            (lc.siteFrom === 'tile' ? 'their workplace has stood' : 'the city has stood')) +
         '. 🔴 So this row is a restatement of the SAMPLED age above it — that is why it carries a ' +
         '"≈" and why this line says SAMPLED and not DERIVED'
-      : 'and it is the SITE that caps it: ' + siteWords + ', shorter than the ' +
-        lc.workedYears.toFixed(1) + ' years since they turned ' + clk.workAge +
-        (lc.siteFrom === 'tile'
-          ? '. ⚠ That is the age of the building standing there NOW: tile.born is stamped at ' +
-            'placement, so demolishing and re-raising the same workplace takes this ceiling — and ' +
-            'every grade under it — back to zero, with nobody’s job having changed. The roster ' +
-            'keeps no hire date to override it and a firm record carries no founding date either'
-          : '');
+      : lc.tenureFrom === 'firm'
+        ? 'and it is THE BUSINESS that caps it: ' + firmWords + ', shorter than the ' +
+          lc.workedYears.toFixed(1) + ' years since they turned ' + clk.workAge +
+          (lc.siteFrom === 'tile' && lc.siteYears < lc.firmYears - 0.05
+            ? '. ⚠ Note that ' + siteWords + ' — LESS than the business has traded. That is a ' +
+              'rebuild: tile.born is stamped at placement, so re-raising a workplace resets the ' +
+              'walls and not the firm. This ceiling deliberately does NOT read the building, ' +
+              'because demolishing and re-raising a shop does not end anybody’s employment — and ' +
+              'the economy agrees, since syncBuildings keeps the firm when the rebuilt tile is ' +
+              'the same business and founds a new one when it is not'
+            : '')
+        : 'and it is the SITE that caps it: ' + siteWords + ', shorter than the ' +
+          lc.workedYears.toFixed(1) + ' years since they turned ' + clk.workAge +
+          '. ⚠ THE SITE IS THE FALLBACK, not the intended ceiling: ' +
+          (lc.firmAgeWhy || 'this employer cannot be dated') + ', so there is no employer age to ' +
+          'use and this falls back to what the row printed before firms carried a founding stamp' +
+          (lc.siteFrom === 'tile'
+            ? '. tile.born is stamped at placement, so while this fallback is in force, ' +
+              'demolishing and re-raising the same workplace still takes this ceiling — and every ' +
+              'grade under it — back to zero'
+            : '');
     occRows.push(row('Job level',
-      (lc.sampled ? '≈ ' : '') + 'Grade ' + lc.grade + ' of ' + lc.cap,
       /* ⚠ THE VALUE IS THE GRADE AND NOTHING ELSE. It used to end
          "· 🏢 Major Business", which is ECON.firm.levels[2].name — the
          EMPLOYER'S SIZE CLASS. On the right-hand side of a row labelled "Job
          level" a player reads that as the person's title. The firm's class is
-         the Employer row's business and this row's source line's. */
+         the Employer row's business and this row's source line's.
+         🔴 AND THE TWO HALVES OF THIS VALUE ARE NOT THE SAME KIND OF CLAIM,
+            WHICH "Grade 2 of 3" HID. The left half is a sampled reading; the
+            right half is not a reading at all. Nothing in the game says an
+            employer has three employee grades — ECON.firm.levels is a
+            COMPANY-SIZE ladder gating on headcount, revenue and customers, and
+            reading its rung count as a count of job grades is this model's
+            ANALOGY. A bare "of 3" states it as a fact about the employer, and
+            the "≈" does not help: it marks the whole string, so a reader takes
+            it as approximating the grade, which is precisely the half that is
+            NOT the analogy.
+            So the right half now carries its own word. "of an assumed 3" is a
+            claim about the model; "≈ Grade 2" is a claim about the person; and
+            a player reading the pair can tell which is which without opening
+            the source line — while the cap, which is what the number is FOR
+            (nobody is a regional director of a corner shop), still reads.
+         ⚠ REJECTED: dropping the cap out of the value into the source line.
+           The cap is the one part of this row with no sample in it — it is
+           MythicEconomy.firm(n).level, live — and hiding an earned reading
+           because the count it is reinterpreted as is an analogy would trade
+           one dishonesty for another. It is printed, and it is labelled.
+         ⚠ REJECTED: a second "≈" on the count. Two of them in one value reads
+           as one hedge repeated, and this is not an approximation — an assumed
+           quantity is not an imprecise one. */
+      (lc.sampled ? '≈ ' : '') + 'Grade ' + lc.grade + ' of an assumed ' + lc.cap,
       (lc.sampled
         ? 'SAMPLED, because the number that caps this is the sampled age above. '
-        : 'DERIVED from two live readings and one bound. ') +
+        : 'DERIVED from live readings and one bound. ') +
       'Their employer stands at level ' + lc.cap + ' of ' + lc.ladder + ' on ECON.firm.levels ' +
       '(MythicEconomy.firm(' + lc.firm.id + ').level) — ' + lc.firm.levelIco + ' ' +
       lc.firm.levelName + ', which is a COMPANY-SIZE class and not a job title. ' +
-      '⚠ That a firm has as many employee grades as it has levels is an ANALOGY this model makes, ' +
-      'not something read out of that table: the levels gate on headcount, revenue and customers, ' +
-      'and none of them is about a person. What IS read off ECON is the direction — a bigger firm ' +
+      '⚠ THE WORD "assumed" IN THE VALUE IS THAT ONE: that a firm has as many employee grades as ' +
+      'it has levels is an ANALOGY this model makes, not something read out of that table. The ' +
+      'levels gate on headcount, revenue and customers and none of them is about a person, so ' +
+      '"of ' + lc.cap + '" is a modelling choice and not a reading — the level ' + lc.cap +
+      ' itself IS a reading, and only its reinterpretation as a rung count is not. What IS read ' +
+      'off ECON is the direction: a bigger firm ' +
       'has more rungs than a smaller one. They can have worked there at most ' +
       lc.tenureYears.toFixed(1) + ' years, ' + ceilWords +
       '. One grade per ' + clk.gradeYears.toFixed(1) + ' years, from ' +
@@ -512,8 +585,11 @@ export function factsOf(C, id) {
       'in-school household one EDUCATION rung, and this game models no promotion at all. It is ' +
       'used because it is the only live rate in the table whose subject is a person advancing a ' +
       'step, and a written-down "years per promotion" would be a number with nothing behind it. ' +
-      '⚠ A CEILING ON TENURE, NOT A HIRE DATE: the roster ' +
-      'keeps none, and inventing one would make this number depend on when you opened the panel' +
+      '⚠ A CEILING ON TENURE, NOT A HIRE DATE, AND THAT IS STILL TRUE WITH A FOUNDING STAMP IN ' +
+      'IT: the business can be dated, this person’s hiring cannot. Nothing in the game records ' +
+      'when a named citizen took a particular seat — that would be a stamp per (person, employer) ' +
+      'pair on the citizen roster, which /src/lifepath is deliberately read-only over — and ' +
+      'inventing one here would make this number depend on when you opened the panel' +
       (lc.capped ? '. Their tenure alone would carry them to grade ' + lc.rungs + '; their ' +
         'employer’s level is what holds them at ' + lc.grade + ' — nobody is a regional ' +
         'director of a corner shop' : '') +

@@ -11,8 +11,9 @@
    ── THE THREE KINDS OF THING IN HERE, AND THEY ARE NEVER MIXED ─────────────
 
      FACT       read live off another layer and not touched:
-                MythicCitizens.employer(id), MythicEconomy.firm(n).level,
-                the workplace tile's `born` stamp, game.cityAge.
+                MythicCitizens.employer(id), MythicEconomy.firm(n).level and
+                .foundedDay, MythicEconomy.snapshot().day, the workplace tile's
+                `born` stamp, game.cityAge.
 
      DERIVATION arithmetic over facts, with no free parameters:
                 tenure, career grade, the age BAND an age falls in, and the
@@ -129,17 +130,57 @@
      stamps:
 
          tenure = min( years since they turned workAge,
-                       age of the building their employer occupies (tile.born) )
+                       age of the BUSINESS that employs them (firm.foundedDay) )
 
-     Nobody can have worked at a factory for longer than the factory has stood,
-     and nobody can have worked anywhere for longer than they have been of
-     working age. For a firm with no tile of its own the ceiling is the age of
-     the city, which is the same argument one level out.
+     Nobody can have worked for a business for longer than the business has
+     existed, and nobody can have worked anywhere for longer than they have been
+     of working age.
+
+   🔴 THE SECOND TERM USED TO BE THE AGE OF THE BUILDING, AND THAT WAS THE ONE
+      DEFECT THIS FILE COULD NOT CLOSE. `tile.born` was the only time reference
+      in reach, because `firms.js found()` wrote no founding time at all. It has
+      one now — an economic-day stamp, written once at founding, riding the save
+      — and the ceiling reads it instead. The difference is not cosmetic:
+
+        · A DEMOLISH-AND-REBUILD NO LONGER DEMOTES A WORKFORCE. Measured, same
+          citizen, same firm at level 5: tenure 60.0 → 0.0 years and grade 5 → 1
+          before, and 60.6 → 60.6 with grade 5 held after. `syncBuildings` KEEPS
+          the firm when a rebuilt tile carries the same output and industry, so
+          the economy's own answer to "is this the same business" was already
+          "yes" while the printed ceiling said "it opened this instant".
+        · A RE-FOUNDED TILE IS STILL A NEW BUSINESS AND STILL STARTS AT ZERO.
+          The stamp is on the firm RECORD, and `syncBuildings` founds a new
+          record — new id, today's stamp — whenever the rebuilt tile is a
+          different business. Nothing inherits. That separation is the one the
+          closure log exists to make readable, and stamping the TILE instead
+          would have collapsed it.
+
+      ⚠ AND IT IS STILL A CEILING. A firm founded 40 years ago does not mean
+        this citizen has been there 40 years; what changed is that the ceiling
+        stops moving for reasons that have nothing to do with the person. The
+        row goes on saying "at most", because that is still all it knows.
+
+      ⚠ THE SITE TERM IS NOT KEPT ALONGSIDE IT AS A THIRD min(). It would
+        re-admit the whole defect: after a rebuild the site term is the smallest
+        of the three, min() picks it, and the workforce is demoted again with
+        the new stamp sitting unused. The building's age is still REPORTED, so
+        the panel can say "the walls are younger than the business in them".
+
+      ⚠ A FIRM WITH NO STAMP FALLS BACK TO THE OLD CEILING, DELIBERATELY. A save
+        written before the field existed loads `foundedDay: null` (never 0, and
+        never today — see firms.js load(), where both temptations are argued
+        down), and then the ceiling is the site term and the provenance says
+        'site', exactly as it did before this existed. A mature city reloaded
+        from an old save therefore reads exactly as it used to read, and heals
+        one business at a time as tiles turn over. For a firm with no tile of
+        its own the fallback ceiling is the age of the city, which is the same
+        argument one level out.
 
    🔴 AND HERE IS THE THING THAT MATTERS MOST ABOUT THAT min(), WHICH THIS FILE
       DID NOT USED TO SAY. THE TWO HALVES ARE NOT THE SAME KIND OF NUMBER.
 
-        the site half  — tile.born, or game.cityAge — is a REAL STAMP the game
+        the firm half  — firm.foundedDay, or tile.born / game.cityAge when a
+                         firm predates the stamp — is a REAL STAMP the game
                          already saves. Tenure bound by it is DERIVED.
         the worklife half — age − workAge — is THE SAMPLE. ageOf() is the one
                          draw in this module, and this term is that draw minus
@@ -147,12 +188,20 @@
                          grade above it is then a pure function of the draw.
 
       🔴 WHICH ONE BINDS IS NOT AN EDGE CASE, IT IS THE NORMAL CASE. As soon as
-         the building is older than the worker's career — a mature city, which
+         the business is older than the worker's career — a mature city, which
          is every city after a few hours — the worklife term is the one that
-         binds. Measured on a 40-citizen roster in a 60-year-old building:
-         39 of 40. So for practically the whole roster of a settled city,
-         `tenure` IS `age − 18` exactly and the grade is a restatement of the
-         sampled age.
+         binds. Measured on a 40-citizen roster whose employer was founded 60
+         years ago: 39 of 40. So for practically the whole roster of a settled
+         city, `tenure` IS `age − 18` exactly and the grade is a restatement of
+         the sampled age.
+      🔴 AND THE FOUNDING STAMP MADE THAT MORE TRUE, NOT LESS. It is worth being
+         explicit, because "we added real data" reads like "the sample is gone".
+         It is not: the stamp replaced a term that was WRONG after a rebuild
+         with one that is right, and a right ceiling that is larger means the
+         worklife binds MORE often, not less. The rebuild regime used to fall
+         out of `worklife` into a site-bound 0.0 years printed under DERIVED —
+         a false number wearing the stronger label. Those rows are worklife-bound
+         and marked SAMPLED now. Nothing that was honestly marked lost its mark.
       🔴 THEREFORE careerOf() RETURNS `sampled: true` WHENEVER tenureFrom is
          'worklife', and the panel prints "≈ Grade N of C" with a source line
          that leads on SAMPLED — the same treatment, and the same word, the Age
@@ -176,24 +225,38 @@
         Age row has to go too. They are enough — provided the marking is real,
         which is what changed.
 
-     ⚠ AND A REBUILD DEMOTES THE WHOLE WORKFORCE. `tile.born` is stamped at
-       PLACEMENT, so demolishing and re-raising a building takes its site
-       ceiling from 60.0 years to 0.0 and every grade in it from 5 to 1, with
-       nobody's job having changed. THIS IS NOT FIXED AND CANNOT BE FIXED HERE:
-       the only cures are a hire date on the roster (rejected below) or a
-       founding stamp on the firm record — and a firm carries none (firms.js
-       `found()` writes no time at all), so adding one is a write into the
-       economy's own state, which this module does not do and must not.
-       What IS fixed is the wording: the row says the ceiling is the age of the
-       building the firm occupies NOW, so a reader who has just rebuilt the
-       place can see why the number moved. A ceiling that is honest about being
-       a ceiling survives this; a "years of service" would not have.
+     ⚠ A REBUILD USED TO DEMOTE THE WHOLE WORKFORCE, AND NO LONGER DOES.
+       `tile.born` is stamped at PLACEMENT, so demolishing and re-raising a
+       building took the ceiling from 60.0 years to 0.0 and every grade in it
+       from 5 to 1 with nobody's job having changed. This file recorded that as
+       unfixable from here, and the reason it gave was exactly right: the cures
+       were a hire date on the roster or a founding stamp on the firm record,
+       and a firm carried no time at all. The stamp was added where it belongs —
+       `firms.js found()`, on the economy's own `S.day` clock, one integer,
+       written once, moving no money — and this module reads it. The read is
+       still read-only; nothing here writes it.
 
-     ⚠ REJECTED: a stored hire date, written the first time this layer observed
-       the pairing. It needs a tick hook, it makes the number depend on when the
-       module mounted, and on a loaded save every citizen's career would restart
-       at zero — a career that resets every time you reload is worse than a
-       bound that does not.
+     🔴 WHAT IS STILL NOT FIXED, STATED PLAINLY: THERE IS NO HIRE DATE. Firm age
+       is a real ceiling and a much better one than masonry, but it is a ceiling.
+       The honest answer to "how long has this person worked here" needs a stamp
+       PER (citizen, employer) PAIR, written when the pairing is made, and it
+       does not exist anywhere in the game. What it would take:
+         · a `hiredDay` on the citizen roster's employment record, written by
+           whatever assigns the seat (MythicCitizens / households.hire), and
+           re-written on every job change;
+         · that field in the roster's save slice, absence-tolerant;
+         · nothing in this module at all — /src/lifepath is deliberately
+           read-only over the roster, and that boundary is the reason its
+           numbers cannot drift from the layer that owns them. Writing a hire
+           date from HERE would mean the career depends on when a panel was
+           first opened, and on a loaded save every career would restart at
+           zero: a career that resets when you reload is worse than a bound
+           that does not.
+       Until that exists the row says "at most", and it means it.
+
+     ⚠ REJECTED: a stored hire date written by THIS module, the first time it
+       observed the pairing. Same objections, and it is the version that looks
+       like data while being a record of panel-opening.
      ⚠ REJECTED: dropping the firm-level cap so that grades move more. Then a
        corner shop has a regional director in it. The cap is the honest half:
        in a town of level-1 businesses everybody reads "grade 1 of 1", which is
@@ -238,8 +301,19 @@ let STAMPS = Object.create(null);     // citizen id -> birth stamp, game.cityAge
 let FOREIGN = null;                   // unknown keys from a newer build's save slice
 let CTX = null;                       // { now, tileBorn, cycleMin } — the host hand-over
 let CLK = null;                       // memoised clock; ECON does not change at runtime
+/* ⏱ THE ECONOMY'S DAY COUNT, memoised against the city clock reading that asked
+   for it. `MythicEconomy.snapshot()` is the only published read of `S.day`, and
+   it is not cheap — it sums every firm's cash, reports the bank, the freight
+   network and the trade book, and recomputes totalCinder(). cardSeam() walks the
+   whole roster in one synchronous pass, so without this an 80-person city would
+   build 80 of those objects to read one integer 80 times.
+   Keyed on `t` and not on a timer: `now()` is game.cityAge, so every read taken
+   inside one frame shares a key and every later frame misses. That makes the
+   cache exactly as stale as the frame it is serving, which is the only staleness
+   a panel can observe. */
+let DAY = { t: null, day: null };
 
-export function bind(ctx) { CTX = ctx || null; CLK = null; return !!CTX; }
+export function bind(ctx) { CTX = ctx || null; CLK = null; DAY = { t: null, day: null }; return !!CTX; }
 export function bound() { return !!CTX; }
 
 export function clock() {
@@ -253,6 +327,28 @@ export function clock() {
 function now() {
   try { const t = CTX && CTX.now ? +CTX.now() : NaN; return isFinite(t) ? t : NaN; }
   catch (e) { return NaN; }
+}
+
+/* ⏱ WHAT ECONOMIC DAY IT IS, or null. Two clocks run in this game and they are
+   NOT the same clock: `game.cityAge` counts real seconds and `S.day` counts
+   economic days that `ECON.clock.maxCatchUpDays` can and does drop. So a firm's
+   age is measured in the economy's own unit against the economy's own counter,
+   and only the RESULT — a duration in days — is converted to years, with the
+   same clk.daysPerYear every other figure in this module goes through.
+   Subtracting a founding stamp from cityAge would silently mix the two. */
+function econDay(t) {
+  if (DAY.t === t) return DAY.day;
+  let d = null;
+  try {
+    const E = ECONOMY();
+    if (E && typeof E.snapshot === 'function') {
+      const s = E.snapshot();
+      const n = s ? Number(s.day) : NaN;
+      if (isFinite(n) && n >= 0) d = n;
+    }
+  } catch (e) { d = null; }
+  DAY = { t, day: d };
+  return d;
 }
 
 /* The bands that are IN the sample frame — derived, never listed. A band whose
@@ -537,8 +633,65 @@ export function careerOf(id) {
   const siteFrom = born != null ? 'tile' : (siteKey ? 'gone' : 'city');
   const siteSec = born == null ? Math.max(0, t) : Math.max(0, t - born);
   const siteYears = siteSec / clk.secPerYear;
-  const tenure = Math.min(workedYears, siteYears);
-  const tenureFrom = (tenure === workedYears && workedYears <= siteYears) ? 'worklife' : 'site';
+
+  /* ── ⏱ HOW LONG THE BUSINESS ITSELF HAS TRADED ──────────────────────────
+     🔴 THIS IS THE TERM THAT REPLACES THE MASONRY, and it is the whole of the
+        rebuild fix. `firms.js found()` now stamps `foundedDay` on the economic
+        day the business opened, so the ceiling on somebody's service is the age
+        of THEIR EMPLOYER rather than the age of the walls around them.
+        The old number was an attribute of the BUILDING in one direction and of
+        the sampled age in the other, and never of anybody's work.
+
+     WHY IT IS STRICTLY BETTER AND NOT MERELY DIFFERENT. Both are ceilings, and
+     both are true — nobody has worked for a business longer than the business
+     has existed, and nobody has worked in a building longer than it has stood.
+     But only one of them survives the thing a player actually does: demolishing
+     a workplace and putting the same workplace back up does not end anybody's
+     employment, and `syncBuildings` agrees — it keeps the firm when the rebuilt
+     tile carries the same output and industry, and founds a NEW one when it does
+     not. The building's stamp contradicts the economy's own answer to "is this
+     the same business"; the firm's stamp IS that answer.
+
+     🔴 AND IT IS STILL A CEILING, WHICH THE ROW MUST GO ON SAYING. A firm
+        founded forty years ago does not mean THIS person has been there forty
+        years. What the stamp buys is a ceiling that stops moving for reasons
+        that have nothing to do with the person — it does not buy a hire date,
+        and nothing here may be read as one. See the header for what a real hire
+        date would cost and why it is not built.
+
+     ⚠ SO THE SITE TERM DROPS OUT OF THE min() WHEN A STAMP EXISTS, rather than
+       joining it as a third term. Keeping it would re-admit the whole defect
+       through the back door: after a rebuild the site term is the smallest of
+       the three, so min() would pick it and demote the workforce exactly as
+       before, with the new stamp sitting there unused. `siteYears` is still
+       REPORTED, because the panel wants to be able to say "the building is
+       younger than the business standing in it, and that is why this number did
+       not move when you rebuilt".
+
+     ⚠ AND AN UNSTAMPED FIRM FALLS BACK TO EXACTLY WHAT IT HAD BEFORE. A save
+       written before the stamp existed, or a host with no economy mounted at
+       all, gives `foundedDay == null` — and then the ceiling is the site term
+       and the provenance is 'site', word for word as it was. That is the
+       honest reading of "no answer": it does not claim the firm is as old as
+       the city and it does not claim it opened today. */
+  const day = econDay(t);
+  const foundedDay = (f && f.foundedDay != null && isFinite(Number(f.foundedDay)) && Number(f.foundedDay) >= 0)
+                   ? Math.floor(Number(f.foundedDay)) : null;
+  const firmDays = (foundedDay != null && day != null) ? Math.max(0, day - foundedDay) : null;
+  const firmYears = firmDays == null ? null : (firmDays / clk.daysPerYear);
+  /* Why there is no firm age, in the module's own words, so the row can say it
+     rather than quietly printing the older ceiling as though nothing happened. */
+  const firmAgeWhy = firmYears != null ? null
+    : (foundedDay == null
+        ? 'this business record carries no founding stamp — it was restored from a save written before firms had one'
+        : 'the economy reports no day count, so a founding stamp cannot be turned into an age');
+
+  /* The non-worklife half of the ceiling: the business if it can be dated, the
+     site if it cannot. One term, named, never two silently minned together. */
+  const ceilYears = firmYears != null ? firmYears : siteYears;
+  const ceilFrom = firmYears != null ? 'firm' : 'site';
+  const tenure = Math.min(workedYears, ceilYears);
+  const tenureFrom = workedYears <= ceilYears ? 'worklife' : ceilFrom;
 
   const rungs = 1 + Math.floor(Math.max(0, tenure) / clk.gradeYears);
   const grade = Math.max(1, Math.min(cap, rungs));
@@ -551,17 +704,35 @@ export function careerOf(id) {
        citizens once a city is mature. Then `tenure` is the sample minus a
        constant and the grade is a restatement of a draw, so the panel prints
        "≈" and leads its source line on SAMPLED.
-       When the SITE binds instead, the printed ceiling is tile.born or the
-       city's own clock and carries no draw, so the row is DERIVED. ⚠ The sample
-       still decides WHICH term binds — but conditional on the site binding, the
-       number printed is a real stamp either way, and the row is a ceiling, so
-       DERIVED is the honest word for that branch. */
+       When the BUSINESS or the SITE binds instead, the printed ceiling is a
+       real stamp — firms.js `foundedDay`, tile.born, or the city's own clock —
+       and carries no draw, so the row is DERIVED. ⚠ The sample still decides
+       WHICH term binds — but conditional on the other one binding, the number
+       printed is a real stamp either way, and the row is a ceiling, so DERIVED
+       is the honest word for that branch.
+
+       🔴 THE FOUNDING STAMP DID NOT MAKE THIS MARK GO AWAY AND MUST NOT BE
+          READ AS HAVING DONE SO. In a mature city the business is older than
+          any single worker's career, so `worklife` still binds for essentially
+          the whole roster and the grade is still a restatement of the draw.
+          What the stamp changed is the OTHER branch: a rebuild used to throw
+          every citizen into a site-bound ceiling of 0.0 years and print grade 1
+          under the word DERIVED — a wrong number wearing the stronger label.
+          Those rows now stay worklife-bound and stay marked SAMPLED. The mark
+          moved in the direction of MORE honesty, not less, and the only thing
+          that could retire it is a real per-citizen hire date. */
     sampled: tenureFrom === 'worklife',
     grade, cap, rungs, capped: rungs > cap,
     ladder: levels.length,
     tenureYears: tenure,
     tenureFrom,
     workedYears, siteYears, siteFrom, siteKey,
+    /* ⏱ The business's own age, and the two numbers it was derived from, so a
+       reader can check the subtraction instead of trusting it. `firmYears` is
+       null — never 0 — when the firm carries no stamp; `firmAgeWhy` says which
+       kind of absence it is. `ceilFrom` names the term that would have capped
+       tenure if the worklife had not. */
+    firmYears, firmDays, foundedDay, econDay: day, firmAgeWhy, ceilFrom,
     gradeYears: clk.gradeYears,
     firm: { id: f.id, name: f.name || emp.name, level: cap, levelName: capDef.name, levelIco: capDef.ico,
             rung: f.rung || null },

@@ -8,27 +8,73 @@ const M = await import('../public/src/lifepath/model.js');
 M.bind(W.ctx);
 const clk = M.clock(); const SPY = clk.secPerYear;
 
-const regime = (buildingYears, label) => {
+/* ⏱ THE SWEEP NOW HAS A SECOND AXIS, because the ceiling has a second
+   source. `firmYears` is the age of the BUSINESS (firms.js foundedDay); it is
+   null for a firm restored from a save written before that stamp existed, and
+   then the ceiling falls back to the building exactly as it used to. Both
+   columns of the sweep have to stay honest, and the claim under test is the
+   same in both: `sampled` is true EXACTLY when the worklife binds. */
+const DPY = clk.daysPerYear;
+W.day = Math.round(500 * DPY);
+M.bind(W.ctx);   // the day cache is keyed on now(), which is frozen here
+
+const regime = (ceilingYears, stamped, label) => {
   M.reset(); W.setRoster(40); M.seed();
   W.firms['f1'] = { id: 'f1', name: 'Old Mill', level: 5, rung: 'HEALTHY' };
-  W.tileBorn['3,3'] = W.now - buildingYears * SPY;
+  if (stamped) W.firms['f1'].foundedDay = Math.round(W.day - ceilingYears * DPY);
+  /* The building is given the SAME age as the business, so the two regimes
+     differ only in WHICH stamp the ceiling reads and never in its value —
+     otherwise the sweep would be comparing two different cities. */
+  W.tileBorn['3,3'] = W.now - ceilingYears * SPY;
   for (const c of W.roster) W.employers[c.id] = { id: 'f1', name: 'Old Mill', ind: 'mill', tile: '3,3' };
-  let n = 0, worklife = 0, sampled = 0, mismatch = 0;
+  let n = 0, worklife = 0, sampled = 0, mismatch = 0, from = {};
   for (const c of W.roster) {
     const q = M.careerOf(c.id); if (!q.ok) continue;
     n++;
+    from[q.tenureFrom] = (from[q.tenureFrom] || 0) + 1;
     if (q.tenureFrom === 'worklife') worklife++;
     if (q.sampled) sampled++;
     if (q.sampled !== (q.tenureFrom === 'worklife')) mismatch++;
   }
-  return { label, buildingYears, n, boundByWorklife: worklife, sampledTrue: sampled,
-           flagMismatches: mismatch, pctSampled: +(100 * sampled / n).toFixed(1) };
+  return { label, ceilingYears, stamp: stamped ? 'firm' : 'none (old save)', n,
+           boundByWorklife: worklife, sampledTrue: sampled,
+           flagMismatches: mismatch, pctSampled: +(100 * sampled / n).toFixed(1),
+           boundBy: JSON.stringify(from) };
 };
 console.table([
-  regime(0.5, 'young city (the round-9 driver)'),
-  regime(5,   'five-year-old buildings'),
-  regime(60,  'mature city (the critic’s regime)'),
+  regime(0.5, false, 'young city (the round-9 driver)'),
+  regime(5,   false, 'five-year-old buildings'),
+  regime(60,  false, 'mature city (the critic’s regime)'),
+  regime(0.5, true,  'young city, firm stamped'),
+  regime(5,   true,  'five-year-old business'),
+  regime(60,  true,  'mature city, firm stamped'),
 ]);
+
+/* 🔴 THE REBUILD REGIME — the one the stamp exists for. Same 60-year-old
+   business, but the building under it was raised THIS INSTANT. Unstamped, every
+   citizen falls out of `worklife` into a site-bound 0.0 years and the row prints
+   grade 1 under the word DERIVED: a wrong number wearing the stronger label.
+   Stamped, they stay worklife-bound and stay marked SAMPLED. The mark must move
+   toward MORE honesty here, never less. */
+const rebuilt = (stamped) => {
+  M.reset(); W.setRoster(40); M.seed();
+  W.firms['f1'] = { id: 'f1', name: 'Old Mill', level: 5, rung: 'HEALTHY' };
+  if (stamped) W.firms['f1'].foundedDay = Math.round(W.day - 60 * DPY);
+  W.tileBorn['3,3'] = W.now;                       // rebuilt this instant
+  for (const c of W.roster) W.employers[c.id] = { id: 'f1', name: 'Old Mill', ind: 'mill', tile: '3,3' };
+  let n = 0, sampled = 0, mismatch = 0, gsum = 0, from = {};
+  for (const c of W.roster) {
+    const q = M.careerOf(c.id); if (!q.ok) continue;
+    n++; gsum += q.grade;
+    from[q.tenureFrom] = (from[q.tenureFrom] || 0) + 1;
+    if (q.sampled) sampled++;
+    if (q.sampled !== (q.tenureFrom === 'worklife')) mismatch++;
+  }
+  return { stamp: stamped ? 'firm' : 'none (old save)', n, sampledTrue: sampled,
+           flagMismatches: mismatch, meanGrade: +(gsum / n).toFixed(2),
+           boundBy: JSON.stringify(from) };
+};
+console.table([rebuilt(false), rebuilt(true)]);
 
 /* D5 — the third site provenance. */
 M.reset(); W.setRoster(40); M.seed();

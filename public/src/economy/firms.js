@@ -95,6 +95,62 @@ let ESTATE_SINK = null;
 let estateWarned = false;
 export function setEstateSink(fn) { ESTATE_SINK = typeof fn === 'function' ? fn : null; }
 
+/* ── ⏱ WHEN A BUSINESS WAS FOUNDED — THE THIRD SEAM, AND IT MOVES NO MONEY ──
+   🔴 A FIRM USED TO CARRY NO TIME AT ALL. `found()` wrote a balance sheet, a
+   crew and a tile key and not one stamp, so nothing anywhere could answer "how
+   long has this business existed". That absence was not free: /src/lifepath had
+   to bound a worker's tenure by `tile.born` — the age of the MASONRY — because
+   it was the only time reference in reach. Demolishing and re-raising a
+   workplace then took every grade in it from 5 to 1 with nobody's job having
+   changed, and the module's own header recorded it as unfixable from that side.
+   It is fixed from THIS side, because this is the side that knows.
+
+   ⚠ THE STAMP IS AN ECONOMIC DAY, NOT A WALL CLOCK. `S.day` is the only clock
+     this package has and the only one its own state is denominated in. A reader
+     that wants years converts with the same days-per-year figure it already
+     derives from ECON — it must NOT compare this against `game.cityAge`, which
+     is a different clock that the catch-up cap can and does let drift.
+
+   ⚠ IT COSTS NOTHING AND IT MAY NOT. This is a monotone integer written once,
+     at founding, and never again. It touches no balance, so `totalCinder()` is
+     invariant across it by construction and the day audit cannot see it — which
+     is the correct relationship for a readout, and the same one `rentLife` has.
+
+   🔴 WHY A REGISTERED SOURCE AND NOT AN ARGUMENT. Exactly the reason
+   `setCapitalSource` gives one line up: sim.js owns `S.day`, sim.js already
+   imports firms.js, and importing it back to read a counter would close a
+   load-time cycle. Registering also means every founding path is stamped
+   without touching any of them — `syncBuildings`, `seedChain`, the bootstrap
+   and the re-founding path all go through `found()`.
+
+   ⚠ NO SOURCE ⇒ NO STAMP, and the fallback is `null` and never a number. The
+     tempting fallbacks are both worse than the absence:
+       · `0` would say "founded on the city's first day", i.e. every unstamped
+         firm in a mature city is as old as the city — a confident lie in the
+         direction that flatters.
+       · the CURRENT day would say "founded today", which is the failure mode a
+         reader of an old save would meet on every business at once.
+     `null` says the one true thing — this record predates the stamp — and a
+     reader falls back to whatever ceiling it had before this existed. */
+let CLOCK_SOURCE = null;
+export function setClockSource(fn) { CLOCK_SOURCE = typeof fn === 'function' ? fn : null; }
+function stampDay() {
+  if (!CLOCK_SOURCE) return null;
+  try {
+    const d = Number(CLOCK_SOURCE());
+    return (isFinite(d) && d >= 0) ? Math.floor(d) : null;
+  } catch (e) { return null; }
+}
+/* How long this business has traded, in economic days, against a day the caller
+   supplies. Returns null — never 0 — for a firm with no stamp, because "no
+   answer" and "founded this morning" are different statements. */
+export function ageDays(f, day) {
+  if (!f || f.foundedDay == null) return null;
+  const d = Number(day);
+  if (!isFinite(d)) return null;
+  return Math.max(0, d - f.foundedDay);
+}
+
 export function all() { return FIRMS.slice(); }
 export function alive() { return FIRMS.filter(f => f.rung !== 'BANKRUPT'); }
 export function byId(id) { return FIRMS.find(f => f.id === id) || null; }
@@ -139,6 +195,18 @@ export function found(out, opts) {
     lastFill: 1, lastInputAvail: 1, lastProduced: 0, lastBottleneck: null, lastLeg: null,
     inventory: 0,
     tileKey: opts.tileKey || null,   // optional link back to a node-city tile
+    /* ⏱ THE FOUNDING STAMP. Written once, here, and never touched again — not
+       by `levelUp`, not by `closeDay`, not by `reap()`'s kept shell (a shell is
+       still the same business, so it keeps its birthday).
+       🔴 AND A RE-FOUNDED TILE IS A NEW BUSINESS, WHICH IS WHY THIS IS ON THE
+          RECORD AND NOT ON THE TILE. `syncBuildings` marks the old firm
+          BANKRUPT and calls `found()` again; that second call lands HERE, on a
+          brand-new record with a brand-new id, and takes TODAY. There is no
+          path by which a successor inherits its predecessor's age — the same
+          separation the closure log already exists to make readable ("that shop
+          went bankrupt" vs "that shop was replaced"). Stamping the tile instead
+          would have merged exactly the two things that log separates. */
+    foundedDay: stampDay(),
   };
   /* 💰 SEED CASH IS DRAWN, NOT PRINTED. `seedWant` is what the business would
      like to open with; `f.cash` is what an account actually paid for it, which
@@ -611,6 +679,12 @@ export function serialize() {
          a reload and false after it is worse than no sentence. The gauntlet's
          save/load round has caught three fields already. */
       rentLife: Math.round((f.rentLife || 0) * 100) / 100,
+      /* ⏱ AND THE FOUNDING STAMP RIDES THE SAVE, as `null` when there is none.
+         Writing it as a number would be a lie on reload; leaving the KEY out
+         would be indistinguishable from an old save, which is a different
+         state with a different fallback. So the key is always present and the
+         absence is explicit. */
+      foundedDay: (f.foundedDay == null ? null : (f.foundedDay | 0)),
     })),
   };
 }
@@ -653,6 +727,20 @@ export function load(raw) {
          deliberately not saved: a save taken mid-day reloads at the top of a
          day, so restoring a part-day charge would double-count it. */
       rentDay: 0, rentLife: Math.max(0, Number(r.rentLife) || 0),
+      /* ⏱ 🔴 AN OLD SAVE HAS NO STAMP AND MUST NOT ACQUIRE ONE HERE. `found()`
+         is not on this path precisely so that a firm restored from a save keeps
+         its own birthday rather than being re-founded on the spot; the same
+         argument says a firm that never HAD a birthday does not get today's.
+         Every firm in a mature city reading "founded today" is the single worst
+         outcome available here — it would show up as a whole workforce demoted
+         to grade 1 by the act of reloading. `null` means "this record predates
+         the stamp", every reader falls back to what it used before the stamp
+         existed, and the city heals one business at a time as tiles turn over.
+         ⚠ A NEGATIVE OR NON-FINITE VALUE IS ALSO AN ABSENCE, not a clamp to 0:
+           0 is a real, meaningful day (the bootstrap firms carry it), so
+           coercing a corrupt byte into it would manufacture a founder. */
+      foundedDay: (r.foundedDay == null || !isFinite(Number(r.foundedDay)) || Number(r.foundedDay) < 0)
+                  ? null : Math.floor(Number(r.foundedDay)),
     };
     if (r.workers) for (const b in f.workers) f.workers[b] = Math.max(0, (r.workers[b] | 0));
     if (Array.isArray(r.suppliers)) for (const s of r.suppliers) f.suppliers[s] = true;

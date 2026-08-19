@@ -45,7 +45,7 @@ than money appearing, because the number only ever goes down.
 | `endowment.js` | What is in the ground under a node. **The one gate** on whether an extractor may exist. |
 | `prices.js` | Prices **derived** from the graph, then moved by supply/demand/scarcity/freight/competition. |
 | `households.js` | Jobs, wages, the consumption basket, wealth tiers, subsistence. |
-| `firms.js` | Balance sheets: cash, payroll, ground rent, the distress ladder, levels 1–5. |
+| `firms.js` | Balance sheets: cash, payroll, ground rent, the distress ladder, levels 1–5, and the founding stamp. |
 | `logistics.js` | Freight capacity, congestion, delivered cost. |
 | `bank.js` | Simulated firm credit. **Not `player_banks`** — see below. |
 | `trade.js` | Specializations (earned, never chosen) and city-to-city trade. |
@@ -123,6 +123,22 @@ duplication bug that would look correct on both sides in isolation.
 not be merged. Terroir's §SOLO promise ("nobody is ever locked out") is preserved at the
 *economy* level, not the tile level: a resource you cannot mine, you can always **buy**. So
 `canExtract()` returning false must never gate a *purchase* path. Grep before adding a caller.
+
+**`firm.foundedDay` is a STAMP, not a balance, and that is why it is allowed.** A firm
+records the economic day it was founded — one integer, written once by `found()` from a
+clock sim.js registers (`setClockSource`, the same seam shape as the capital source and the
+estate sink, and for the same "sim.js already imports firms.js" reason). It moves no money,
+so `totalCinder()` is invariant across it and `audit()` cannot see it; that is the correct
+relationship for a readout, and the same one `rentLife` has. It exists because
+`/src/lifepath` had to bound a worker's tenure by `tile.born` — the age of the MASONRY —
+and demolish-and-rebuild therefore demoted a whole workforce. Two things about it are
+load-bearing: it is on the **firm record and not the tile**, so a re-founded tile is a new
+business with a new stamp and inherits nothing (the separation the closure log exists to
+make readable); and a firm with no stamp loads as **`null`**, never 0 ("as old as the
+city") and never today ("every business in a mature city was founded the moment you
+reloaded"). It is denominated in **economic days**, not wall seconds — `maxCatchUpDays`
+means `S.day` and `game.cityAge` are not the same clock, and a consumer that subtracts one
+from the other is wrong.
 
 **Two graph cycles are real and are not bugs**: `steel ⇄ recycledMetal` and `electricity ⇄
 its fuels`. `topoOrder()` breaks them deliberately and `cycles()` reports which. A real

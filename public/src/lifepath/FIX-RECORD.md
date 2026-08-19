@@ -54,14 +54,74 @@ arguments, the third deciding:
 Regime sweep, the test the original driver never ran: 0.5-year buildings → 0/40
 sampled; 5-year → 3/40; 60-year → **39/40**; flag mismatches **0** at every point.
 
-## D6 — NOT FIXED, and it cannot be fixed here
+## D6 — WAS "cannot be fixed here". FIXED, from the other side.
 
-Demolish-and-rebuild demotes a whole workforce (tenure 23.6 → 0.0, grade 3 → 1).
-`firms.js found()` writes **no founding time at all**, so the only cures are a hire
-date on the roster or a stamp on the firm record — both writes into layers this
-module is read-only over. Said plainly rather than papered over, and the row's
-wording now survives it: it states that the ceiling is the age of the building
-standing there *now*, and why.
+Demolish-and-rebuild demoted a whole workforce (tenure 23.6 → 0.0, grade 3 → 1).
+The diagnosis above was exactly right and named its own cure: `firms.js found()`
+wrote **no founding time at all**, so the only stamps in reach were a hire date on
+the roster or a stamp on the firm record. The firm stamp was written, in the file
+that owns the firm record:
+
+- **`firms.js`** — `found()` writes `foundedDay`, the economic day the business
+  opened, taken from a registered clock source (`setClockSource`, the same seam
+  shape as `setCapitalSource` / `setEstateSink`, and for the same cycle reason).
+  One integer, written once, never re-written, riding `serialize()`/`load()`.
+  It moves no money: `totalCinder()` is invariant across it by construction.
+- **`model.js`** — the ceiling reads the age of the **business** instead of the age
+  of the **building**. The site term is not kept as a third `min()` — after a
+  rebuild it is the smallest of the three, so keeping it would re-admit the whole
+  defect with the new stamp sitting unused. `siteYears` is still reported, so the
+  row can say "the walls are younger than the business in them".
+- **`facts.js`** — a third `ceilWords` branch (`'firm'`), which names the founding
+  day and, on a rebuild, says why the ceiling did *not* move.
+
+Measured, `.gauntlet/critlife-5-career.mjs`, same citizen, same firm at level 5, the
+same demolish-and-rebuild of its tile:
+
+| | tenure | grade |
+|---|---|---|
+| unstamped firm (a pre-stamp save) | 60.0 → **0.0** | 5 → **1** |
+| stamped firm | 59.99 → **59.99** | 5 → **5** |
+
+Whole roster through the same rebuild: **0 of 40 grades changed**, mean grade
+4.30 → 4.30. It was 40 of 40 changed, mean 4.30 → 1.00.
+
+**A successor still starts at zero.** The stamp is on the firm RECORD, not the tile,
+so `syncBuildings` re-founding a tile produces a new record with today's day —
+measured through the shipped seam: predecessor firm 15 `foundedDay 0`, successor
+firm 16 `foundedDay 62`. Stamping the tile would have merged exactly the two things
+the closure log exists to separate.
+
+**An old save has no stamp, and does not pretend to.** `load()` maps a missing (or
+negative, or non-finite) field to `null` — never 0, which would say "as old as the
+city", and never today's day, which would demote every business in a mature city
+the moment you reloaded. The ceiling then falls back to the building and the row
+says so, word for word as it read before. A city heals one business at a time as
+tiles turn over.
+
+### What is STILL not fixed, and it is the honest half
+
+**There is no hire date, so tenure is still a ceiling.** Firm age is a real bound
+and a much better one than masonry — it stops moving for reasons that have nothing
+to do with the person — but "this business has traded 40 years" is not "this person
+has worked here 40 years". The honest answer needs a stamp per *(citizen, employer)*
+pair, written where the seat is assigned. It was not built, and the cost is:
+a `hiredDay` on the roster's employment record, written by whatever assigns the seat
+and re-written on every job change; that field in the roster's save slice; and
+**nothing in /src/lifepath**, which is read-only over the roster deliberately.
+Writing it from here would make a career depend on when a panel was first opened
+and reset every career on reload.
+
+### And the SAMPLED mark did not go away
+
+It moved toward more honesty, not less. `sampled` is still exactly
+`tenureFrom === 'worklife'`, and in a mature city the business outlives any single
+career, so the worklife still binds for **39 of 40**. What changed is the *other*
+branch: a rebuild used to throw the whole roster into a site-bound 0.0 years printed
+under **DERIVED** — a wrong number wearing the stronger label. Those rows are
+worklife-bound and marked SAMPLED now. Measured in `critlife-9`: rebuild regime,
+unstamped 0/40 sampled at mean grade 1.00; stamped 39/40 sampled at mean grade 4.30;
+**flag mismatches 0** in every regime, stamped and unstamped alike.
 
 ## D8 — the drift: disclosed, not re-dealt, not aged out
 
@@ -131,9 +191,25 @@ next reader off that percentage, printing `cityTotal_people` beside it. Same for
 "15 citizens crossed a career rung": the driver now reports
 `gradesThatActuallyMoved: 2, tenureRungsCrossed: 15, heldByTheEmployerLevel: 13`.
 
-## Still not a fact, and the fixer said so unprompted
+## The "of 3" — closed
 
-**The "of 3" on the Job level row still reads as "this employer has three grades",
-and that count is the analogy rather than a reading.** The `≈` marks the whole
-string and the source line names it, but the value does not separate its sampled
-left half from its analogical right half. That is the next thing to fix on this row.
+The fixer volunteered this and was right: **"≈ Grade 2 of 3" reads as "this employer
+has three grades", and that count is the analogy rather than a reading.** The `≈`
+marks the whole string, so a reader takes it as approximating the *grade* — which is
+precisely the half that is NOT the analogy. `ECON.firm.levels` gates on headcount,
+revenue and customers; nothing in that table is about a person.
+
+The value now reads **`≈ Grade 2 of an assumed 3`**. The left half is a claim about
+the person and carries the sample mark; the right half is a claim about the model
+and carries its own word, so the two are separable without opening the source line.
+The source line names it again in place: *"of 3" is a modelling choice and not a
+reading — the level 3 itself IS a reading, and only its reinterpretation as a rung
+count is not.*
+
+- ✗ **Move the cap out of the value into the source line** — rejected. The cap is
+  the one part of this row with no sample in it (`MythicEconomy.firm(n).level`,
+  live), and hiding an earned reading because its reinterpretation is an analogy
+  trades one dishonesty for another. It is printed, and it is labelled.
+- ✗ **A second `≈` on the count** — rejected. Two hedges in one value read as one
+  hedge repeated, and this is not an approximation: an *assumed* quantity is not an
+  imprecise one.

@@ -19,7 +19,7 @@ const arg=(f,d)=>{const i=process.argv.indexOf(f);return i>0?process.argv[i+1]:d
 const USAGE = `
   node .gauntlet/capture.mjs <outDir> [options]
 
-    <outDir>            where the three framings are written (required)
+    <outDir>            where the five framings are written (required)
     --tag <name>        filename prefix; default "shot"
     --hour <0-23>       pin the in-game clock; default 15 (do not un-pin: the
                         game reads the real wall clock, so an unpinned capture
@@ -27,7 +27,8 @@ const USAGE = `
     --against <dir>     diff each framing against the same framing in <dir> and
                         warn when one barely moved
 
-  Writes <tag>-aerial, <tag>-street, <tag>-district as .png and .jpg, and prints
+  Writes <tag>-aerial, <tag>-street, <tag>-district, <tag>-frontage and
+  <tag>-venue as .png and .jpg, and prints
   JSON with the scene bounding box, mesh/triangle counts and console output.
 `;
 if (process.argv.includes('--help') || process.argv.includes('-h') || !process.argv[2]) {
@@ -161,8 +162,22 @@ const frame = await page.evaluate(() => {
     const d = t.mesh.position.z - best.z;
     if (Math.abs(Math.abs(d) - 1) < .35) { if (d < 0) sideNeg++; else sidePos++; }
   }
+  /* 🏟 WHERE THE CIVIC LANDMARK IS — needed by the fifth framing below, and
+     read here for the same reason everything else in this block is: the tiles
+     are already in hand and placeMeshAt owns the tile->world mapping. The
+     ROTATION comes with it, because the arena has a front and a framing that
+     photographed its back would be no better than one that photographed
+     nothing. rot is quarter-turns about +y and the recipe's entrance is on
+     +z, so the outward normal of the entrance is (sin, cos) of rot*90deg. */
+  let venue = null;
+  for (const t of Object.values(nc.game.tiles)) {
+    if (!t.mesh || t.type !== 'arena') continue;
+    const a = ((t.rot | 0) & 3) * Math.PI / 2;
+    venue = { x: t.mesh.position.x, z: t.mesh.position.z, fx: Math.sin(a), fz: Math.cos(a) };
+    break;
+  }
   return { box, cx, cz, road: best, side: sidePos >= sideNeg ? 1 : -1,
-           sideCount: { pos: sidePos, neg: sideNeg } };
+           sideCount: { pos: sidePos, neg: sideNeg }, venue };
 });
 const box = frame && frame.box;
 const cx = frame ? frame.cx : 0, cz = frame ? frame.cz : 0;
@@ -231,11 +246,53 @@ const frontage = R && R.xs.length > 4
   ? { cam: [fx - 2.0, .80, R.z - SIDE * .34],
       tgt: [fx + .10, .02, R.z + SIDE * .50] }
   : { cam: [cx - 2.0, .80, cz - .34], tgt: [cx + .10, .02, cz + .50] };
+/* -- 🏟 THE FIFTH FRAMING: `venue` ----------------------------------------
+   ADDED ROUND 15, AND aerial / street / district ARE UNTOUCHED — rounds 0-14
+   are captured with them and moving one breaks every historical comparison in
+   this project. `frontage` (round 12) is the precedent for adding rather than
+   editing, and this is the second time the answer has been "the frame does not
+   contain the thing being judged".
+
+   WHY IT EXISTS. The round-14 critic, on the district's most expensive unlock:
+   "The Duel Arena is in no photograph. It projects through the aerial camera to
+   (1299, 435); the Zone Demand panel's opaque left edge is at x = 1266-1267. It
+   is 33 px behind the UI, and off the right edge of the district framing."
+   That is arithmetic, not taste: the arena sits at tile (C+6, C-6) = world
+   (6.5, -5.5), which is the far +x, far -z corner of a bounding box the aerial
+   frames from the +x, +z corner, so it lands hard against the right edge —
+   under the one panel the capture does not hide. Three development points, the
+   priciest node in `gates`, for a building no critic has ever seen.
+
+   WHY NOT MOVE THE TILE INSTEAD. That was the other option in the brief and it
+   was rejected: `layout.tileHash` is b1f8cdea and it is the guarantee that an
+   A/B between two rounds compares RENDERS AND NOT LAYOUTS. Moving the arena
+   changes every key in that hash, so r14 vs r15 would silently become two
+   different cities — the exact failure the hash was added to make impossible.
+   A framing costs one screenshot and invalidates nothing.
+
+   WHAT IT IS. A three-quarter hero of the arena from in front of its entrance:
+   the eye at 1.30 with ~21 degrees of depression, ~2.8 units out, so the frame
+   carries the podium, the full elevation, the roofline AND the plaza it stands
+   on — a building whose whole argument is its silhouette cannot be judged from
+   above it. The camera is swung to the entrance side off the tile's own
+   rotation, and the housing block at (C+1..C+3, C-7..C-5) sits behind it, which
+   is deliberate: the brief for the arena is that it must not look like it came
+   from a different game than the street it stands on, and the only way to score
+   that is to put both in one frame.
+   ⚠ DERIVED, NEVER HARDCODED — same rule as the other four. No arena in the
+     scene (a future district, or a refused placement) falls back to the
+     district framing rather than pointing the lens at empty ground. */
+const V = frame && frame.venue;
+const venue = V
+  ? { cam: [V.x + V.fx * 2.35 + V.fz * 1.45, 1.30, V.z + V.fz * 2.35 - V.fx * 1.45],
+      tgt: [V.x, .26, V.z] }
+  : { cam: [cx + span * .26, span * .22, cz + span * .34], tgt: [cx - span * .06, 0, cz - span * .06] };
 const SHOTS = [
  { n: 'aerial',   cam: [cx + span * .62, span * .55, cz + span * .62], tgt: [cx, 0, cz] },
  { n: 'street',   cam: street.cam, tgt: street.tgt },
  { n: 'district', cam: [cx + span * .26, span * .22, cz + span * .34], tgt: [cx - span * .06, 0, cz - span * .06] },
  { n: 'frontage', cam: frontage.cam, tgt: frontage.tgt },
+ { n: 'venue',    cam: venue.cam, tgt: venue.tgt },
 ];
 fs.mkdirSync(outDir,{recursive:true});
 /* 🎥 RELAX THE PLAYER-CAMERA CLAMPS FOR THE DURATION OF THE CAPTURE.

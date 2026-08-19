@@ -4629,8 +4629,8 @@ function updateSky() {
   }
 
   /* 🪞 …and the glass follows the sky it has just been given. LAST, after the
-     weather block, so the reflection carries the storm too — and a no-op on all
-     but ~70 frames of a 24 h cycle. See THE SKY ENVIRONMENT MAP below. */
+     weather block, so the reflection carries the storm too — and a no-op on
+     99.994% of frames. See THE SKY ENVIRONMENT MAP below. */
   skyEnvTick();
 
   const ph = h < 5 ? 'Deep Night' : h < 7 ? 'Dawn' : h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : h < 19 ? 'Dusk' : h < 21 ? 'Evening' : 'Night';
@@ -4725,14 +4725,17 @@ const SKYENV_GLOW_P = 4;              // lobe exponent — wide on purpose, see 
    rebuilding every frame would spend that ~60x a second to track a sky that
    moves through one hue in two hours.
    So it rebuilds ON CHANGE, not on a timer, and the change is measured on the
-   five things the paint actually reads. The thresholds are chosen against the
-   steepest ramp in the cycle: dawn moves the sky key ~0.07 linear over two
-   wall-clock hours, so 0.006 buys ~12 rebuilds across it; the sun sweeps 78 deg
-   of azimuth over twelve hours, so a 0.05 dot threshold (~3 deg) buys ~26 across
-   the daylight arc. Total over a full 24 h is ~70 rebuilds — call it three a
-   wall-clock hour — and between them the compare is six subtractions and a dot
-   product, which is cheaper than one of the Color.lerp calls updateSky already
-   does unconditionally.
+   five things the paint actually reads. Between rebuilds the compare is nine
+   subtractions and a dot product, cheaper than one of the Color.lerp calls
+   updateSky already does unconditionally.
+   📏 REPLAYED AT ONE-SECOND RESOLUTION over a full cycle with these exact
+      thresholds: 292 rebuilds per 24 h, i.e. a rebuild on 0.0056% of frames at
+      60 fps. It is not evenly spread and that is the design working — 0 an hour
+      from 21:00 to 04:00 when nothing moves, 3-8 an hour through the middle of
+      the day when only the sun's azimuth is turning, and 58 in the 17:00 hour
+      and 58 in the 18:00 hour, which is the dusk ramp. Worst case is therefore
+      ONE rebuild every 62 s, and a rebuild measured 0.4-1.9 ms (median ~0.7)
+      under SwiftShader with the full district standing.
    ⚠ 17:00-19:00 IS THE CASE THAT MATTERS and it is why the threshold is on the
      COLOUR rather than on the hour: dusk is where the sky moves fastest and
      where a stale reflection would be most visible (blue glass under a red sky).
@@ -6830,7 +6833,15 @@ function buildMesh(type, lvl, tx, tz) {
       _adopt(g, makeFountain(lvl));
       break; }
     case 'arena': {
-      _adopt(g, makeArena(lvl));
+      /* 🏟 tx,tz ARE PASSED, and this arm is one of only five that does it.
+         makeArena seeds its palette and its terrace programme on the tile, so
+         the arena is a property of its PLOT rather than of the moment it was
+         built — the harness's own meshHash note names `farm`, `lot`, `shop` and
+         `machineshop` as the recipes that still redraw themselves on every
+         boot, and the arena was on that list until round 15. Same contract as
+         the housing arm below: the coords are used for SEEDING ONLY and
+         placeMeshAt still puts the building on the real tile. */
+      _adopt(g, makeArena(lvl, tx, tz));
       break; }
     case 'shop': {
       _adopt(g, makeShop(lvl));
@@ -13956,133 +13967,431 @@ function makeShop(lvl) {
   return g;
 }
 
+/* ── the Duel Arena's own palette, forced the way the med lab forces
+      _CV_CLINIC — and forced for a reason that is the whole design.
+      winMat's emissive is a FIXED warm amber (0xffc978) and the reference
+      frame's one unmistakable property is warm interior light seen against a
+      cool exterior. A warm wall puts that amber against beige and the effect
+      simply disappears, which is what happens to every recipe that draws its
+      wall from _CV_WALL — six of its ten hexes are creams and tans. So every
+      hex here is a cool graphite / steel / slate, the accent set is the only
+      saturated thing on the building, and the glazing does the rest.
+      ⛔ REJECTED: a violet MAT.arcane shell to say "science fiction" out loud.
+         The rubric's first dimension is "no global purple cast" and the whole
+         district was re-graded once to get rid of one; a landmark that
+         reintroduces it in a single building is a regression a critic
+         photographs from the air. The sci-fi is carried by MASSING and LIGHT,
+         which is what the reference is strong at, not by hue. ── */
+const _CV_VENUE = [0x6d7684, 0x5e6673, 0x77808c, 0x69707e];
+const _CV_VSIGN = [0x2fb3c8, 0x8a5cf0, 0xe0553c, 0x30b0a8];
+
 /* ══════════════════════════════════════════════════════════════════════════
-   DUEL ARENA — "Tactical card battles draw crowds."
+   DUEL ARENA — "Tactical card battles draw crowds."          REBUILT ROUND 15.
 
-   A venue, not a ring: an octagonal bowl whose outer face is eight real façade
-   panels with lit openings and pilasters between them, three stepped seating
-   tiers with seat rows inside, a vomitory tunnel where the entrance segment
-   would otherwise have seating, a marquee and lit sign over the door, banners,
-   floodlight masts that glow with the city, and a duelling dais with two lit
-   card slots at the centre.  10 meshes.
+   WHAT IT WAS. An open octagonal bowl: eight façade panels, three rings of
+   seating, a vomitory and four floodlight masts, with nothing over the top of
+   it. From the game camera that reads as a bandstand — you look down INTO it,
+   the tiers are the widest thing in the silhouette, and the building has no
+   roofline at all. Round 14's critic never saw it (see `venue` in
+   capture.mjs), but the two faults are measurable without a photograph: the
+   whole mass topped out at 0.44 against housing at ~0.9, and `lvl` reached
+   nothing except _cvInner's scale-cancel, so upgrading a Duel Arena to level 3
+   produced a byte-identical mesh.
+
+   WHAT IT IS NOW — a STEPPED VENUE, in three set-back layers, which is the
+   first thing the user's Cities: Skylines II reference actually contains:
+
+     1. a wide GLAZED CONCOURSE on an octagonal plinth: eight bays of
+        floor-to-ceiling curtain wall in a regular mullion grid (two mullions,
+        two transoms, a cill and a head per bay), wrapping every corner, with a
+        structural fin standing proud on all eight joints;
+     2. a SET-BACK DRUM above it, ringed with banded glazing, its fins running
+        on from the concourse fins so the two tiers read as one building — and
+        the ring of podium roof that the set-back leaves over is a TERRACE THAT
+        IS OCCUPIED: glass balustrade and handrail, parasols on posts, café
+        tables and stools, planted troughs and a water basin;
+     3. a FURTHER-SET-BACK ROOF STRUCTURE: a cantilevered ring canopy on radial
+        ribs with downlights under its eave, a fully glazed lantern over the
+        hall, a floating light halo on four struts, and a spire.
+
+   WHERE THE SCIENCE FICTION IS, given this is a card-battle game standing on a
+   street of brick housing and a Retail Parade. NOT in the palette — see the
+   note on _CV_VENUE above. It is in three things a viewer reads in silhouette
+   before they read anything else: the cantilevered halo, which nothing else in
+   the city has; the glazed lantern and spire, which make the tallest point on
+   the street a light rather than a chimney; and the fact that the whole
+   elevation is glass in a fin rhythm while its neighbours are punched holes in
+   masonry. It is the same street; it is obviously not the same century.
+
+   AND IT CARRIES SIGNAGE, because the round-14 critic's other finding was that
+   "no fascia carries text or a logo. The only readable sign in the district is
+   the med lab's blue cross." There are three signs, all on the shared winMat
+   so they are lightboxes after dark: a fascia board over the entrance marquee,
+   a blade sign standing on the roof canopy, and a LOGO — two duelling cards
+   crossed over a lit disc, which is the one thing this building can say about
+   itself without letterforms.
+
+   Ten buckets, ten meshes — the family ceiling, unchanged.
+   ⚠ `alt` IS MAT.foliage HERE, NOT MAT.dark. This recipe wants planting (the
+     reference's clipped hedges, street tree and terrace troughs) far more than
+     it wants a second dark; every deep reveal, lobby void and interior core
+     goes in B.roof instead, whose colour is forced to a graphite below for
+     exactly that double duty. That swap is why the arena can have greenery on
+     its own plot without an eleventh draw call.
    ══════════════════════════════════════════════════════════════════════════ */
-function makeArena(lvl) {
+function makeArena(lvl, tx, tz) {
   const g = new THREE.Group(), inner = _cvInner(g, lvl);
-  const R = Math.random, G = _cvGround();
-  const ctx = _cvCtx(.8, .8, .03), B = ctx.B;      // ctx only for its buckets here
-  const cols = _cvPalette(R);
 
-  const N = 8, STEP = Math.PI * 2 / N, FR = .38, PT = .055;   // façade radius, podium top
-  const CH = 2 * FR * Math.tan(Math.PI / N);                  // façade chord ≈ .315
+  /* 🐞 SEEDED ON THE TILE, NOT ON THE MOMENT — the same fix makeHousing carries
+     and for the same reason: buildMesh runs again on load, on upgrade, on
+     repair and on an admin re-skin, so a recipe rolling Math.random at call
+     time is a building that changes colour when you reload the page. The
+     harness records this one at the district level too: `farm`, `lot`, `shop`
+     and `machineshop` still re-roll every boot and are named in scene.js's
+     meshHash note as the reason that hash is allowed to move. The arena is off
+     that list from this round.
+     rdRng is the road recipe's tile hash, reused rather than re-implemented,
+     and it already falls back to Math.random when the coords are absent —
+     which is the GLB-preview and bare-harness case.
+     ⚠ THE SEED DELIBERATELY IGNORES `lvl`, exactly as makeHousing's does:
+       upgrading must add storeys to the arena that is standing there, not swap
+       it for a differently-coloured one. */
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const G = _cvGround();
+  /* ctx is here for its ten buckets and for _cvApron; W/D/T are never read,
+     because nothing in this recipe is a rectangular box with four elevations. */
+  const ctx = _cvCtx(1, 1, .03), B = ctx.B;
+  const cols = _cvPalette(R, _CV_VENUE, _CV_VSIGN);
+  cols.roof = 0x2a2e35;   // graphite: the canopy, AND every deep reveal and core
+  cols.base = 0x4b515b;   // plinth, terrace deck, entrance steps
+  cols.trim = 0xe2e8f0;   // pale steel: mullions and fins must read AGAINST the
+                          // glass, and the glass is a 3%-reflectance near-black
+                          // by day. _cvPalette's contrast test is not enough
+                          // here — it only guarantees separation from the WALL,
+                          // and on this building the wall is barely visible.
 
-  B.base.push(_cvCyl(.44, .445, PT - G.GB, 0, (PT + G.GB) / 2, 0, 16));        // podium
-  B.trim.push(_cvCyl(.452, .452, .016, 0, PT - .008, 0, 16));                  // podium nosing
+  /* ── the octagon, and the one transform everything below is written in ──── */
+  const N = 8, STEP = Math.PI * 2 / N, TAN = Math.tan(Math.PI / N);
+  // APOTHEM, never circumradius: every dimension below is "how far out is that
+  // face", which is what a façade is authored against. Face width follows.
+  const FW = ap => 2 * ap * TAN;
+  /* Place a box in BAY SPACE — u along the face, v up, r out along the bay's
+     normal, roll an in-plane tilt (used only by the crossed cards). This is the
+     old recipe's local `put`, lifted out of the loop so the terrace, the roof
+     and the plaza can all be written in the same coordinates the façade is. */
+  const bay = (list, w, h, d, u, v, r, a, roll) => {
+    const q = new THREE.BoxGeometry(w, h, d);
+    if (roll) q.rotateZ(roll);
+    q.rotateY(a);
+    q.translate(Math.sin(a) * r + Math.cos(a) * u, v, Math.cos(a) * r - Math.sin(a) * u);
+    list.push(q);
+  };
+  const at = (a, u, r) => [Math.sin(a) * r + Math.cos(a) * u, Math.cos(a) * r - Math.sin(a) * u];
+  // A band that wraps all eight faces: one segment per bay, deliberately
+  // overlapping at the vertices (`over`) so the ring has no hairline gaps.
+  const band = (list, ap, v, h, d, over) => {
+    for (let i = 0; i < N; i++) bay(list, FW(ap) + (over || 0), h, d, 0, v, ap, i * STEP);
+  };
+  /* A solid octagonal prism. CylinderGeometry puts a VERTEX at theta 0, so an
+     8-segment cylinder has its flats facing the 22.5° diagonals — half a bay
+     out of register with everything else here. The rotate is not cosmetic: the
+     first cut without it left the plinth's corners poking through the middle of
+     each façade panel. */
+  const oct = (list, ap, h, v, seg) => {
+    const rc = ap / Math.cos(Math.PI / N);
+    const q = new THREE.CylinderGeometry(rc, rc, h, seg || N);
+    q.rotateY(Math.PI / N);
+    q.translate(0, v, 0);
+    list.push(q);
+  };
 
+  /* ── the section. LEVELS ADD DRUM STOREYS, not girth — item 4 of the family
+        header, and the reason the footprint below is a constant. The old recipe
+        ignored lvl entirely, so a level-3 arena was the level-1 mesh. ─────── */
+  const UF = Math.max(1, Math.min(3, lvl));
+  const PL = .048;                       // plinth top
+  const HA = .335, TA = PL + HA;         // concourse storey → head at .383
+  const DA = TA + .030;                  // terrace deck top  → .413
+  const SH = .170;                       // drum storey
+  const DH = .155 + UF * SH;             // drum height  .325 / .495 / .665
+  const TB = DA + DH;                    // drum head    .738 / .908 / 1.078
+  const CT = TB + .054;                  // canopy top
+  const AP = .398, AA = .360, AB = .245; // apothems: plinth, concourse, drum
+  const AC = .292, AL = .120, AH = .200; // apothems: canopy, lantern, halo
+  /* ⚠ AP = .398 IS THE PLAZA BUDGET AND IT IS THE WHOLE GROUND DESIGN. The tile
+     is 1.0, so a face-on plaza band is .102 — a paving strip and nothing else.
+     But an octagon set square to the tile puts its FACES on the diagonals too,
+     which leaves four corner pockets .3 deep between the plinth and the tile
+     corner, and that is where the fountain, the street tree and the two hedges
+     actually fit. The old recipe used a 16-gon at .44, i.e. a circle, and had
+     nowhere to put anything: its whole forecourt was one slab, two bollards and
+     a bin. ⛔ REJECTED: shrinking to .34 for an even plaza all round. It buys a
+     .16 band that still fits nothing and costs the building a fifth of its
+     frontage, which is the dimension a landmark cannot spend. */
+
+  /* ── 1. PLINTH ─────────────────────────────────────────────────────────── */
+  oct(B.base, AP, PL - G.GB, (PL + G.GB) / 2);
+  band(B.trim, AP + .004, PL - .010, .016, .026, .006);          // plinth nosing
+
+  /* ── 2. THE CONCOURSE, AND THE CURTAIN WALL ─────────────────────────────
+        The reference's strongest single feature is floor-to-ceiling glazing in
+        a regular mullion grid that wraps the corners. So the opening in each
+        panel is very nearly the whole bay — a .034 cill upstand and a .082 head
+        is all the solid wall there is — and the grid is drawn ON the glass with
+        two mullions and two transoms, not implied by the hole. A hole with one
+        sheet behind it reads as a window; a hole with a grid on it reads as a
+        curtain wall, and that is the entire difference between this elevation
+        and the old one's punched openings. ─────────────────────────────────── */
   for (let i = 0; i < N; i++) {
-    const a = i * STEP, front = (i === 0);
-    const holes = front ? [{ u: 0, v: 0, w: .21, h: .245 }] : [{ u: 0, v: .095, w: .165, h: .150 }];
-    const p = _cvPanel(CH - .004, .30, .03, holes);
+    const a = i * STEP, front = (i === 0), fw = FW(AA);
+    const ow = front ? .200 : fw - .052;            // entrance portal / glazed bay
+    const ov = front ? .010 : .034;                 // cill height
+    const oh = front ? HA - .072 : HA - .082;       // opening height
+    const oc = PL + ov + oh / 2;
+
+    const p = _cvPanel(fw - .003, HA, .030, [{ u: 0, v: ov, w: ow, h: oh }]);
     p.rotateY(a);
-    p.translate(Math.sin(a) * (FR - .03), PT, Math.cos(a) * (FR - .03));
+    p.translate(Math.sin(a) * (AA - .030), PL, Math.cos(a) * (AA - .030));
     B.wall.push(p);
 
-    const put = (list, w, h, d, u, v, off) => {
-      const gg = new THREE.BoxGeometry(w, h, d);
-      gg.rotateY(a);
-      gg.translate(Math.sin(a) * (FR + off) + Math.cos(a) * u, PT + v, Math.cos(a) * (FR + off) - Math.sin(a) * u);
-      list.push(gg);
-    };
-    if (front) {
-      B.alt.push(_cvBox(.22, .245, .10, 0, PT + .1225, FR - .09));             // vomitory tunnel
-      put(B.trim, .016, .275, .020, -.113, .137, .002);                        // door surround
-      put(B.trim, .016, .275, .020, .113, .137, .002);
-      put(B.trim, .255, .020, .024, 0, .255, .003);
-    } else {
-      put(B.glass, .171, .156, .010, 0, .170, -.025);                          // crowd glow behind
-      put(B.trim, .199, .013, .020, 0, .089, .002);                            // sill
-      put(B.trim, .199, .012, .018, 0, .252, .002);                            // head
-      put(B.trim, .012, .170, .016, -.090, .170, .001);
-      put(B.trim, .012, .170, .016, .090, .170, .001);
-    }
-    put(B.roof, CH + .03, .032, .080, 0, .316, .000);                          // cornice segment
+    bay(B.glass, ow + .008, oh + .008, .010, 0, oc, AA - .026, a);   // the sheet
+    bay(B.trim, fw - .006, .016, .022, 0, PL + ov - .006, AA + .002, a);        // cill
+    bay(B.trim, fw - .006, .014, .020, 0, PL + ov + oh + .007, AA + .002, a);   // head
 
-    // seating: three stepped tiers, skipped on the entrance segment so the
-    // tunnel actually leads somewhere
-    if (!front) {
-      const RAD = [.330, .262, .194], HGT = [.200, .146, .092];
-      for (let k = 0; k < 3; k++) {
-        const rk = RAD[k], ck = 2 * rk * Math.tan(Math.PI / N);
-        const tier = _cvBox(ck + .006, HGT[k], .078, 0, PT + HGT[k] / 2 - .02, rk, 0);
-        tier.rotateY(a); B.base.push(tier);
-        const seat = _cvBox(ck - .022, .015, .050, 0, PT + HGT[k] - .012, rk - .012, 0);
-        seat.rotateY(a); B.accent.push(seat);
-        const rail = _cvBox(ck - .022, .020, .010, 0, PT + HGT[k] + .008, rk + .030, 0);
-        rail.rotateY(a); B.trim.push(rail);
-      }
+    if (front) {
+      /* The entrance: a lobby void that stops the eye going clean through the
+         building, two door stiles, and a portal frame standing proud. */
+      bay(B.roof, ow - .014, oh - .010, .014, 0, oc, AA - .046, a);
+      for (const sx of [-1, 1]) bay(B.metal, .009, oh - .026, .012, sx * .046, oc, AA - .034, a);
+      bay(B.trim, ow + .056, .026, .040, 0, PL + ov + oh + .026, AA + .012, a);
+      for (const sx of [-1, 1])
+        bay(B.trim, .022, oh + .042, .034, sx * (ow / 2 + .017), oc + .014, AA + .008, a);
+    } else {
+      for (const u of [-ow / 6, ow / 6]) bay(B.trim, .011, oh, .014, u, oc, AA - .008, a);
+      for (const q of [.34, .68]) bay(B.trim, ow, .009, .014, 0, PL + ov + oh * q, AA - .008, a);
     }
   }
+  /* The core. One prism, 32 triangles, and without it the building is a paper
+     lantern: two opposite curtain walls line up and you see the grass through
+     the middle of the arena. Same job _cvWalls does for the box recipes. */
+  oct(B.roof, AA - .058, HA - .004, PL + HA / 2);
 
-  /* ── pilasters on every joint: they cover the panel seams AND give the
-        elevation a rhythm, which is what makes a ring read as architecture ── */
+  /* ── 3. THE FINS ────────────────────────────────────────────────────────
+        On the eight JOINTS, not on the faces — a fin on a face is a pilaster
+        and reads as classical; a fin on the joint covers the panel seam and
+        reads as structure, which is what the reference's ribs are. They run up
+        the drum as well, and that is the detail that stops a stepped mass from
+        looking like two buildings stacked. ──────────────────────────────────*/
+  const RA = AA / Math.cos(Math.PI / N) - .010;      // out at the concourse vertex
+  const RB = AB / Math.cos(Math.PI / N) - .008;      // out at the drum vertex
   for (let i = 0; i < N; i++) {
     const a = i * STEP + STEP / 2;
-    const q = _cvBox(.050, .335, .060, 0, PT + .1675, .400);
-    q.rotateY(a); B.trim.push(q);
-    const cap = _cvBox(.062, .018, .070, 0, PT + .344, .400);
-    cap.rotateY(a); B.roof.push(cap);
+    bay(B.trim, .042, HA + .030, .050, 0, PL + HA / 2, RA, a);
+    bay(B.roof, .052, .014, .060, 0, TA + .022, RA, a);            // fin cap at the terrace
+    bay(B.trim, .034, DH + .022, .042, 0, DA + DH / 2, RB, a);     // and on up the drum
+    bay(B.metal, .014, .030, .046, 0, DA + .012, (RA + RB) / 2, a); // the corbel between them
   }
 
-  /* ── the court, the dais, and two lit card slots.  The dais top is pushed to
-        PT+.152 — just PROUD of the innermost tier (PT+.092) — because sunk in
-        the pit it was invisible from the game camera, and the duelling table is
-        the whole reason this building is not a bandstand.                     */
-  B.path.push(_cvCyl(.158, .158, .026, 0, PT + .030, 0, 14));
-  B.base.push(_cvCyl(.100, .112, .110, 0, PT + .085, 0, 12));
-  B.trim.push(_cvCyl(.114, .114, .014, 0, PT + .147, 0, 12));
-  B.accent.push(_cvBox(.076, .010, .054, -.050, PT + .157, 0));
-  B.accent.push(_cvBox(.076, .010, .054, .050, PT + .157, 0));
-  B.glass.push(_cvBox(.060, .008, .040, -.050, PT + .163, 0));
-  B.glass.push(_cvBox(.060, .008, .040, .050, PT + .163, 0));
-
-  /* ── floodlight masts — heads on the shared winMat, so they light with the
-        city instead of needing their own emissive material ────────────────── */
-  // MR is outside the cornice's own reach (.415) and inside the podium edge
-  // (.44): at .405 the masts speared straight through the cornice band.
-  const MR = .426;
-  for (let i = 0; i < 4; i++) {
-    const a = i * Math.PI / 2 + Math.PI / 4, x = Math.sin(a) * MR, z = Math.cos(a) * MR;
-    B.metal.push(_cvCyl(.011, .013, .400, x, PT + .200, z, 6));
-    const head = _cvBox(.080, .038, .046, 0, PT + .418, MR);
-    head.rotateY(a); B.glass.push(head);
-    const hood = _cvBox(.090, .014, .056, 0, PT + .444, MR);
-    hood.rotateY(a); B.metal.push(hood);
+  /* ── 4. THE TERRACE — the podium roof the set-back leaves over ───────────
+        The reference is explicit that this is a PLACE and not a lid: parasols,
+        tables, planting, a water feature, railings. It is also the single
+        cheapest way to answer the round-14 note that the newest buildings in
+        the district have its worst silhouettes, because everything standing on
+        it breaks the roofline. ────────────────────────────────────────────── */
+  oct(B.base, AA + .008, .026, DA - .013);                       // deck, oversailing
+  band(B.trim, AA + .020, DA - .028, .014, .034, .008);          // deck edge coping
+  for (let i = 0; i < N; i++) {
+    const a = i * STEP, r = AA - .012, fw = FW(r);
+    bay(B.glass, fw - .034, .056, .008, 0, DA + .034, r, a);      // glass balustrade
+    bay(B.metal, fw - .014, .010, .016, 0, DA + .067, r, a);      // handrail
+    for (const sx of [-1, 1]) bay(B.trim, .013, .064, .016, sx * (fw / 2 - .013), DA + .036, r, a);
   }
 
-  /* ── banners on the flanks ───────────────────────────────────────────── */
-  for (const i of [2, 4, 6]) {
+  /* WHO USES THE TERRACE, and it is a property of the PLOT rather than of the
+     moment it was built: one fixed programme — café, planting, water — rotated
+     round the ring by a single seeded draw. So every arena has all three, no
+     two arenas have them on the same elevation, and a reload rebuilds the same
+     one. ⛔ REJECTED: rolling each bay independently, which gives a one-in-a
+     -hundred arena with seven planters and no tables on it. Bay 0 is always
+     left clear because it is over the entrance and carries the signage. */
+  const ROLE = ['sit', 'plant', 'sit', 'water', 'plant', 'sit', 'plant'];
+  const ROT = (R() * ROLE.length) | 0;
+  const rT = .300;                                    // the ring's own centre line
+  for (let i = 1; i < N; i++) {
+    const a = i * STEP, role = ROLE[(i - 1 + ROT) % ROLE.length];
+    if (role === 'sit') {
+      const pp = at(a, -.052, rT), tp = at(a, .050, rT);
+      B.metal.push(_cvCyl(.006, .006, .118, pp[0], DA + .072, pp[1], 6));   // parasol post
+      B.accent.push(_cvCyl(.008, .048, .026, pp[0], DA + .140, pp[1], 6));  // its canopy
+      B.glass.push(_cvCyl(.007, .039, .008, pp[0], DA + .127, pp[1], 6));   // lit underside
+      B.metal.push(_cvCyl(.006, .008, .046, tp[0], DA + .036, tp[1], 6));   // table stem
+      B.trim.push(_cvCyl(.036, .036, .008, tp[0], DA + .063, tp[1], 8));    // table top
+      for (const du of [-.044, .044]) {
+        const sp = at(a, .050 + du, rT);
+        B.accent.push(_cvCyl(.017, .015, .030, sp[0], DA + .028, sp[1], 6));
+      }
+    } else if (role === 'water') {
+      const wp = at(a, 0, rT);
+      B.path.push(_cvCyl(.052, .055, .022, wp[0], DA + .024, wp[1], 8));    // basin
+      B.glass.push(_cvCyl(.043, .043, .008, wp[0], DA + .033, wp[1], 8));   // water, lit at night
+      B.metal.push(_cvCyl(.004, .004, .052, wp[0], DA + .056, wp[1], 6));   // jet
+    } else {
+      bay(B.trim, .118, .032, .050, 0, DA + .029, rT, a);                   // trough
+      bay(B.alt, .102, .028, .036, 0, DA + .056, rT, a);                    // clipped planting
+    }
+  }
+
+  /* ── 5. THE DRUM ────────────────────────────────────────────────────────
+        Banded glazing, one band per level, so an upgrade is visible from the
+        street. Bay 0 is left SOLID: it is the sign face, and a sign hung over
+        a window is what makes a fascia read as a sticker. ──────────────────── */
+  for (let i = 0; i < N; i++) {
+    const a = i * STEP, front = (i === 0), fw = FW(AB);
+    const holes = [];
+    if (!front) for (let f = 0; f < UF; f++)
+      holes.push({ u: 0, v: .060 + f * SH + .022, w: fw - .050, h: SH - .044 });
+    const p = _cvPanel(fw - .003, DH, .028, holes);
+    p.rotateY(a);
+    p.translate(Math.sin(a) * (AB - .028), DA, Math.cos(a) * (AB - .028));
+    B.wall.push(p);
+    if (front) continue;
+    for (let f = 0; f < UF; f++) {
+      const v0 = DA + .060 + f * SH + .022, hh = SH - .044;
+      bay(B.glass, fw - .042, hh + .008, .010, 0, v0 + hh / 2, AB - .024, a);
+      bay(B.trim, fw - .002, .012, .020, 0, v0 - .008, AB + .002, a);         // cill
+      bay(B.trim, fw - .002, .010, .018, 0, v0 + hh + .006, AB + .002, a);    // head
+      bay(B.trim, .010, hh, .012, 0, v0 + hh / 2, AB - .006, a);              // mullion
+    }
+  }
+  oct(B.roof, AB - .046, DH - .006, DA + DH / 2);                            // drum core
+  band(B.roof, AB + .012, TB - .028, .050, .046, .008);                      // fascia band
+  band(B.trim, AB + .020, TB - .004, .012, .034, .008);                      // its coping
+
+  /* ── 6. THE ROOF STRUCTURE ──────────────────────────────────────────────
+        Three pieces, each further in than the last, which is the reference's
+        third setback: a cantilevered ring canopy on radial ribs, a glazed
+        lantern over the hall, and a halo floating clear of both. The eave
+        downlights are winMat, so at dusk the canopy lights the terrace under it
+        instead of going flat — the same argument the road recipe makes for
+        B_LAMP, taken through the bucket the _cv family already has for it. */
+  oct(B.roof, AC, .024, TB + .012);                              // the canopy
+  oct(B.trim, AC - .020, .012, TB - .004);                       // its soffit lip
+  band(B.trim, AC + .008, TB + .028, .012, .028, .008);          // canopy edge
+  for (let i = 0; i < N; i++) {
+    const a = i * STEP + STEP / 2;
+    bay(B.metal, .020, .012, AC - AB + .060, 0, TB + .030, (AB + AC) / 2, a);   // radial rib
+    bay(B.glass, .066, .008, .028, 0, TB - .003, AC - .034, a);                 // eave downlight
+  }
+  oct(B.glass, AL, .088, CT + .044);                             // the lantern
+  for (let i = 0; i < N; i++)
+    bay(B.trim, .012, .092, .014, 0, CT + .044, AL + .002, i * STEP + STEP / 2);
+  oct(B.roof, AL + .022, .016, CT + .096);                       // lantern cap
+
+  /* THE HALO. The one piece of pure science fiction on the building, and it is
+     deliberately the piece that costs the least: eight boxes and four struts,
+     read entirely in silhouette against the sky. Nothing else in this city has
+     anything cantilevered over its own roof, which is why it works — and its
+     inner edge is winMat, so after dark the arena is a ring of light on the
+     skyline rather than a dark shape with lit windows. */
+  const HY = CT + .070;
+  for (let i = 0; i < N; i++) {
     const a = i * STEP;
-    const ban = _cvBox(.105, .135, .012, 0, PT + .175, .418);
-    ban.rotateY(a); B.accent.push(ban);
-    const rod = _cvBox(.130, .010, .010, 0, PT + .246, .418);
-    rod.rotateY(a); B.metal.push(rod);
+    bay(B.accent, FW(AH) + .012, .026, .020, 0, HY, AH, a);
+    bay(B.glass, FW(AH) - .006, .012, .012, 0, HY, AH - .013, a);
+  }
+  for (let i = 0; i < 4; i++)
+    bay(B.metal, .012, HY - TB - .030, .012, 0, (HY + TB + .030) / 2, AH, i * Math.PI / 2 + Math.PI / 4);
+  B.glass.push(_cvCyl(.015, .015, .030, 0, CT + .124, 0, 6));    // beacon lamp on the lantern
+  B.metal.push(_cvCyl(.005, .019, .190, 0, CT + .234, 0, 6));    // spire
+  B.accent.push(_cvCyl(.000, .012, .046, 0, CT + .352, 0, 6));   // its tip
+
+  /* ── 7. SIGNAGE — three of them, all lit ────────────────────────────────
+        Round 14: "No fascia carries text or a logo. The only readable sign in
+        the district is the med lab's blue cross." There are no letterforms
+        available here — a glyph set would be hundreds of triangles per
+        character and the family has no texture atlas — so the readable thing is
+        a LOGO: two duelling cards crossed over a lit disc. It is the med lab's
+        cross argument applied to a card game, and it is the only mark this
+        building can make that a viewer decodes without reading. ───────────── */
+  bay(B.roof, .330, .026, .092, 0, TA - .054, AA + .044, 0);          // entrance marquee
+  bay(B.glass, .286, .010, .066, 0, TA - .070, AA + .042, 0);         // its lit soffit
+  for (const sx of [-1, 1]) bay(B.metal, .008, .008, .088, sx * .130, TA - .038, AA + .042, 0);
+  _cvSign(B, .288, .064, 0, TA + .004, AA + .028, 0, true);           // the fascia sign
+
+  {   // the logo, on the drum's solid front face
+    const ez = AB + .014, ey = DA + DH * .46;
+    B.trim.push(_cvCyl(.070, .070, .014, 0, ey, ez, 10, Math.PI / 2));
+    B.glass.push(_cvCyl(.058, .058, .012, 0, ey, ez + .008, 10, Math.PI / 2));
+    for (const roll of [.38, -.38]) bay(B.accent, .032, .108, .012, 0, ey, ez + .018, 0, roll);
   }
 
-  /* ── marquee + lit sign over the entrance.  Both are pinned BELOW the
-        cornice band (PT+.355): floated above it they read as detached
-        signage hovering over the roof rather than as part of the elevation.  */
-  B.roof.push(_cvBox(.320, .024, .085, 0, PT + .252, .410));
-  for (const sx of [-1, 1]) B.metal.push(_cvCyl(.006, .006, .110, sx * .12, PT + .296, .392, 5, .85));
-  _cvSign(B, .265, .066, 0, PT + .300, .398, 0, true);
-  B.trim.push(_cvBox(.340, .014, .022, 0, PT + .339, .398));
+  /* The roof blade. Standing ON the canopy, above the entrance, which is where
+     the reference puts its roof signage — and pinned to the canopy rather than
+     floated over it, the same correction the old recipe's marquee comment
+     records for the fascia. */
+  bay(B.trim, .224, .014, .028, 0, CT + .028, AC - .034, 0);
+  for (const sx of [-1, 1]) bay(B.metal, .012, .066, .014, sx * .082, CT + .062, AC - .034, 0);
+  _cvSign(B, .208, .112, 0, CT + .151, AC - .034, 0, true);
 
-  /* ── steps up onto the podium, then the plaza in front ───────────────── */
-  B.base.push(_cvBox(.340, .034 - G.GB, .060, 0, (.034 + G.GB) / 2, .430));
-  B.base.push(_cvBox(.300, .052 - G.GB, .050, 0, (.052 + G.GB) / 2, .398));
+  // Two banners on the flank fins, the one thing worth keeping from the old
+  // recipe: a venue that has never hung a banner is a venue with no event on.
+  for (const i of [2, 6]) {
+    const a = i * STEP + STEP / 2;
+    bay(B.accent, .076, .150, .010, 0, PL + HA * .58, RA + .026, a);
+    bay(B.metal, .096, .009, .009, 0, PL + HA * .58 + .082, RA + .026, a);
+  }
+
+  /* ── 8. THE PLAZA — the building has to meet the street through something ──
+        Reference list: paved forecourt, lamp columns, clipped hedges, a street
+        tree, benches, a fountain. All six are here and every one of them is in
+        a bucket the recipe already emits. The four corner pockets described at
+        AP above are what makes that possible on a 1.0 tile. ───────────────── */
   _cvApron(ctx, G);
-  _cvPush(B.path, _cvSlab(-.21, .21, .360, .484, G.PY, G.GB));
-  for (const sx of [-1, 1]) B.metal.push(_cvCyl(.014, .016, .070, sx * .26, G.AY + .035, .450, 6));
+  _cvPush(B.path, _cvSlab(-.235, .235, .300, .492, G.PY, G.GB));   // stone forecourt
+  bay(B.base, .350, .018 - G.GB, .060, 0, (.018 + G.GB) / 2, AP + .054, 0);   // steps
+  bay(B.base, .312, .034 - G.GB, .050, 0, (.034 + G.GB) / 2, AP + .022, 0);
+  for (const sx of [-1, 1]) {           // step handrails
+    bay(B.metal, .010, .010, .132, sx * .176, G.AY + .066, AP + .040, 0);
+    for (const dz of [-.004, .086]) bay(B.metal, .010, .060, .010, sx * .176, G.AY + .036, AP + .040 + dz, 0);
+  }
+  // Lamp columns: two flanking the entrance, one on the rear face. Mast, base
+  // plate, housing and a winMat lens — the lens is what comes on at dusk, and
+  // it is in the glass bucket for the reason B_LAMP exists in the road recipe:
+  // a lantern merged into an ordinary bucket is a lamp that never lights.
+  for (const [lx, lz] of [[-.255, .452], [.255, .452], at(Math.PI, 0, .452)]) {
+    B.trim.push(_cvCyl(.024, .028, .014, lx, G.AY + .007, lz, 8));
+    B.metal.push(_cvCyl(.008, .011, .215, lx, G.AY + .118, lz, 6));
+    B.trim.push(_cvBox(.052, .011, .036, lx, G.AY + .231, lz));
+    B.glass.push(_cvBox(.042, .012, .028, lx, G.AY + .220, lz));
+  }
+  {   // the fountain, in the front-right pocket
+    const f0 = at(Math.PI * .25, 0, .545);
+    B.path.push(_cvCyl(.098, .104, .034, f0[0], G.AY + .017, f0[1], 8));
+    B.glass.push(_cvCyl(.084, .084, .010, f0[0], G.AY + .030, f0[1], 8));
+    B.trim.push(_cvCyl(.026, .030, .046, f0[0], G.AY + .056, f0[1], 8));
+    B.trim.push(_cvCyl(.034, .034, .010, f0[0], G.AY + .084, f0[1], 8));
+    B.glass.push(_cvCyl(.005, .005, .066, f0[0], G.AY + .112, f0[1], 5));
+  }
+  {   // the street tree, in the front-left pocket
+    const t0 = at(-Math.PI * .25, 0, .545);
+    B.path.push(_cvCyl(.058, .062, .016, t0[0], G.AY + .008, t0[1], 8));
+    B.trim.push(_cvCyl(.013, .019, .180, t0[0], G.AY + .090, t0[1], 6));
+    B.alt.push(_cvCyl(.070, .048, .092, t0[0], G.AY + .216, t0[1], 7));
+    B.alt.push(_cvCyl(.018, .064, .080, t0[0], G.AY + .296, t0[1], 7));
+  }
+  for (const a of [Math.PI * .75, Math.PI * 1.25]) {    // clipped hedges, rear pockets
+    const h0 = at(a, 0, .545);
+    B.path.push(_cvBox(.230, .020, .078, h0[0], G.AY + .008, h0[1], a));
+    B.alt.push(_cvBox(.206, .050, .058, h0[0], G.AY + .041, h0[1], a));
+  }
+  for (const sx of [-1, 1]) {                            // two benches, on the flanks
+    const bx = sx * .452;
+    for (const dz of [-.052, .052]) B.trim.push(_cvBox(.016, .030, .014, bx, G.AY + .015, dz));
+    B.accent.push(_cvBox(.160, .012, .066, bx, G.AY + .036, 0, Math.PI / 2));
+    B.accent.push(_cvBox(.160, .048, .012, bx + sx * .026, G.AY + .064, 0, Math.PI / 2));
+  }
 
-  _cvEmit(inner, ctx, cols, { apron: MAT.drive, path: MAT.stone });
+  _cvEmit(inner, ctx, cols, { alt: MAT.foliage, apron: MAT.drive, path: MAT.stone });
   return g;
 }
 

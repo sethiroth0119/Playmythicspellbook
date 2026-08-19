@@ -740,5 +740,89 @@
     "gap": "And one of the corrections is to me: I diagnosed the cross-boot noise as perimeterScenery rolling from Math.random. It does not — it rolls through the seeded rdRng and hashes identically across two boots. The noise is common-mode lighting and time drift. Right symptom, wrong cause, published as a finding."
    }
   ]
+ },
+ {
+  "round": 13,
+  "headline": "The first score of a district that exists. Mean 6.46 — and half of it is not new art.",
+  "status": "done",
+  "meanScore": 6.46,
+  "strangerTest": "instantly",
+  "tris": 315257,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 7
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 7
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 7.5
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 6.5
+   },
+   {
+    "dimension": "The plot",
+    "score": 5.5
+   },
+   {
+    "dimension": "Roads",
+    "score": 7.5
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 7
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 5.5
+   },
+   {
+    "dimension": "Citizens",
+    "score": 5.5
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 5.5
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 6.5
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 6.5
+   }
+  ],
+  "pieces": [
+   {
+    "title": "The honest baseline",
+    "verdict": "WINS",
+    "summary": "218 tiles, tileHash b1f8cdea reproduced independently, so this is the same city the capture took and not a coin flip. Mean 5.67 to 6.46. THE CRITIC SAYS ROUGHLY HALF THE RISE IS NOT NEW ART: rounds 10-12 shipped no renderer change reaching these frames, so what moved is that the district finally contains the buildings it always claimed to, and that round 12 added the frontage camera — the first framing in this project that can resolve a kerb, a lamp base or a window reveal. Roads, street furniture and vehicles move mostly because a camera exists that can see them. Recorded per dimension rather than banked.",
+    "gap": "Dimension 11 judged fresh: legible, but by the narrowest margin available and by ORNAMENT rather than by form. The entire commercial read at the aerial camera is an eight-pixel band — a column scan puts the parade fascia at four pixels, only two of them saturated. Take the stripe away and a Retail Parade and a Supply Depot are the same object. And round 8 six for this dimension was scoring a district with ZERO commercial buildings in it: not a low score for a weak commercial read, but a score for industrial-only legibility that happened to land mid-scale."
+   },
+   {
+    "title": "No glass in the city reflects anything",
+    "verdict": "THE BIGGEST GAP",
+    "summary": "The flattest number in the review. On a sunlit facade at luminance 212.8, four separate window panes measure rgb(35,36,38), rgb(36,36,39), rgb(34,35,37) — achromatic, identical, zero variance inside a pane, 17% of their own wall, and carrying not one trace of the rgb(125,176,224) sky they face. There is no envMap, no scene.environment and no PMREM anywhere in index.html, and line 10452 already says it out loud: metalness .80 with NO environment map has nothing to reflect. One change at the renderer touches every window, every windscreen and every shopfront at once, and moves dimensions 1, 2, 4, 8 and 11 — the bar own commercial read is literally continuous glass curtain walls.",
+    "gap": "THE STRANGER TEST IS STILL INSTANTLY, AND THE TELL HAS CHANGED. It is no longer composition — an honest district shown small could pass for a stylised builder. It is that NOTHING IN THIS CITY IS SHINY: not one specular highlight, one reflection or one sky-tinted surface in 1,440,000 pixels across four framings. A CS2 frame gives that away in the first fixation, before a viewer has parsed a single building."
+   },
+   {
+    "title": "Things found that no round had looked at",
+    "verdict": "OPEN",
+    "summary": "The kerb is LAVENDER: C_KERB 0x8d8698 is hue 263 with blue above red above green, rendering as hue 279 and perfectly flat across a 39-pixel run, bordering a pavement at hue 34. Two surfaces that are the same material in every reference frame sit 245 degrees apart, on the kerb line of all 130 road tiles, every tree pit and every plot edge. The comment three lines above it records that an earlier pass repainted C_DARK because it put a purple bin and a purple lamp mast on every street — and walked past this one. FOG DISSOLVES THE FAR THIRD of the aerial: far grass and far asphalt converge to within 1.7 luminance and 9 degrees of hue, because the medium tier sets fog 21 to 30 against an 18-unit district. NO LAMP, SIGN, BOLLARD OR BIN CASTS A VISIBLE SHADOW — at 1536 squared over a 14-unit span a 0.05-unit mast is three texels and soft filtering erases it, which is what makes the street furniture read as decals standing on the pavement. ROAD PAINT STANDS PROUD: every zebra bar is a floating slab with its own shadow line at the raking angle.",
+    "gap": "AND THE DUEL ARENA IS IN NO PHOTOGRAPH. It projects to x 1299 through the aerial camera; the Zone Demand panel opaque left edge is at x 1266. It is 33 pixels behind the UI and off the right edge of the district framing. The district paid 3 development points for it — the most expensive unlock in the gates list — for a civic landmark no frame contains. There is also no office building anywhere in the district, though the game own panel shows Office demand at 53%."
+   },
+   {
+    "title": "A null control on the fixed district",
+    "verdict": "METHOD",
+    "summary": "The r13 commit touches zero files under public/, and so does the commit that produced the previous capture — so the pair is a true null control. It reads aerial 22.70 points, district 17.87, frontage 11.85, street 3.44. A 6.6x SPREAD BETWEEN FRAMINGS WITH LITERALLY NOTHING CHANGED. The surviving rule from the harness rebuild was quote the ratio and not the percentage; this establishes that the ratio has a null floor of its own, up to about 7x. Round 5 12x still stands. Nothing below about 7x should ever be quoted again.",
+    "gap": "Recorded as a standing limit on the instrument rather than as a finding about any round."
+   }
+  ]
  }
 ]

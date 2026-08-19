@@ -68,9 +68,60 @@ if (process.env.MONITOR_USER && process.env.MONITOR_PASS) {
   app.use('/colyseus', basicAuth, monitor());
 }
 
+// ---- Horizontal scaling ------------------------------------------------------------
+/* 🔴 WHY THIS EXISTS BEFORE IT IS NEEDED.
+   `gameServer.define('battle', BattleRoom).filterBy(['matchId'])` is what makes
+   two players with the same Supabase matchId land in the SAME room. That filter
+   is evaluated against THIS PROCESS'S room registry. With one process that is
+   the whole world and pairing is exact.
+   The moment there are two — `fly scale count 2` — each process has its own
+   registry and its own presence. Two players holding the same matchId can be
+   routed to different machines, each happily CREATES a room with that id, and
+   they sit in separate rooms waiting for an opponent who is already "in" a room
+   somewhere else. That is not a desync, it is a silent failure to ever meet,
+   and it looks exactly like the game being broken.
+
+   RedisDriver puts the room registry in Redis so `filterBy` sees every process's
+   rooms; RedisPresence puts presence/messaging there so a room on one process
+   can be discovered from another. The migration brief called for both "from day
+   one, even on a single process — retrofitting it later means rewriting
+   matchmaking."
+
+   ⚠ OFF BY DEFAULT AND THAT IS DELIBERATE. With no REDIS_URL this is a literal
+   no-op: identical behaviour to before, single process, zero new dependencies at
+   runtime. Set REDIS_URL and it activates. So this can ship today, unmeasured,
+   without changing what production does — and the day scaling is needed it is
+   one `fly secrets set` away instead of a rewrite under load.
+
+     fly redis create                       # or any Upstash/Redis URL
+     fly secrets set REDIS_URL=redis://…
+     fly scale count 2
+
+   ⚠ DO NOT `fly scale count 2` WITHOUT REDIS_URL SET. That is the exact
+   failure described above. */
+const REDIS_URL = process.env.REDIS_URL || '';
+let scaleOpts: Record<string, unknown> = {};
+if (REDIS_URL) {
+  try {
+    // Required lazily so a deployment without Redis never needs the packages.
+    const { RedisDriver } = require('@colyseus/redis-driver');
+    const { RedisPresence } = require('@colyseus/redis-presence');
+    scaleOpts = { driver: new RedisDriver(REDIS_URL), presence: new RedisPresence(REDIS_URL) };
+    console.log('[mp] scaling: RedisDriver + RedisPresence ENABLED — safe to run multiple processes');
+  } catch (err) {
+    // Fail LOUD but keep serving. A missing package must not take multiplayer
+    // down; it must not silently pretend to be clustered either.
+    console.error('[mp] ⚠ REDIS_URL is set but the redis packages failed to load — '
+      + 'STAYING SINGLE-PROCESS. Do NOT scale count > 1. ' + String((err as Error)?.message || err));
+  }
+} else {
+  console.log('[mp] scaling: single-process (no REDIS_URL). Do NOT scale count > 1.');
+}
+
 // ---- Colyseus server --------------------------------------------------------------
 const httpServer = http.createServer(app);
 const gameServer = new Server({
+  ...scaleOpts,
   transport: new WebSocketTransport({
     server: httpServer,
     // More tolerant heartbeat. A briefly-backgrounded browser tab (e.g. an admin

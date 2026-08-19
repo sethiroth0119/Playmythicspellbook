@@ -76,8 +76,15 @@ single point where "what goes on this plot" is decided):
 `public/battle-board/`. CLAUDE.md tells you not to touch battle code; do not let their
 presence under `public/src` suggest otherwise.
 
-**Rendering:** `wild` (ground scatter) `parcel` (the plot under non-housing) `crowd`
-(standing figures) `parking`
+**Rendering:** `wild` (ground scatter) `parcel` (the plot under non-housing, plus the
+foundation plinth) `crowd` (standing figures) `parking`
+
+**Landed after the first draft of this document:** an **Office Block** (`office`) — the
+game had ~53% office demand and no office building, so zoning office gave you a research
+spire; wired across 16 sites, with `ECO_BUILDING_MAP` a *deliberate* non-site because no
+tile in this city makes paper, plastic or printing ink. A **`foundedDay` stamp on firms**,
+which dissolved the demolish-and-rebuild workforce demotion. Fog, road-paint and
+parcel-coverage fixes (below).
 
 ## 4. 🔴 The save layer — read before wiring the cloud
 
@@ -167,14 +174,18 @@ this work; `036` and `037` are unrelated and predate it.
 ## 6. Known open, honestly
 
 **Named and unfixed:**
-- `/src/parcel` lays very little flat parcel, because `HAS_OWN_GROUND` (20 members) has
-  grown until it swallows most non-housing buildings. Diagnosed, worked around, not fixed.
-  ⚠ **Do not quote a coverage ratio for this without re-running it.** The measurement in
-  the module's own comment ("13 of the 14") was taken on the OLD 14-building district;
-  there are 31 non-housing buildings now. `.gauntlet/README.md` retires that figure
-  explicitly.
-- Demolish-and-rebuild demotes a whole workforce: `firms.js` writes no founding time, so
-  tenure is capped by the building's age. Every cure is a write into another layer.
+- ~~`/src/parcel` is starved by `HAS_OWN_GROUND`.~~ **FIXED, and the diagnosis was
+  backwards.** Measured by rasterising each tile's own mesh: every non-housing type that
+  places already paves 87.9–100% of its tile, and five were *missing* from the list — so
+  the layer was laying a **second full-tile pad over five recipes' own aprons** and a green
+  lawn quadrant over the Med Lab's plaza. `own` is now measured, not listed; the list
+  survives only as a floor that can suppress and never add. Flat triangles 160 → 0, meshes
+  2 → 1.
+- ~~Demolish-and-rebuild demotes a whole workforce.~~ **FIXED** — firms carry a
+  `foundedDay`. Tenure through a rebuild now holds (grade 5 → 5, where it was 5 → 1).
+  ⚠ Still open underneath it: **a per-citizen hire date**. Firm age is a real ceiling but
+  not a hire date; the honest version needs a stamp per (citizen, employer) pair in the
+  **roster's** save slice, which `/src/lifepath` is deliberately read-only over.
 - The Job level row's *"of 3"* still reads as a reading when it is an analogy.
 - The charter fund still exhausts on a 220-firm board. The fix added the missing
   investment arrow; on that board **the richest firm holds 10.65 days of its own operating
@@ -182,14 +193,24 @@ this work; `036` and `037` are unrelated and predate it.
   deliberately not raised**; that is the tuned-number move.
 - Rent → failure → land value falls is **open, not closed**: no land-value term reads firm
   health, and a bankrupt firm leaves its building standing.
-- No office building exists in the game, though the panel shows office demand.
 - The geology→water link is unverified.
 - ⚠ *Not* a defect, though it has been filed as one: road condition **does** accumulate,
   from counted vehicle passes — it is just imperceptible on a young street.
   `/src/streets` documents this and ships `wearRate` specifically to separate "is worn"
   from "is wearing".
 
-**Visual — mean 6.46 across 12 dimensions at round 13.** ⚠ That score PREDATES the
+**Visual — fog and road paint fixed since the last score.** Fog was arithmetic: the aerial
+camera sits 18.6 units from the centre of an 18-unit district whose far corner is 30.18
+units out, and `fog.far` was 30 — it was dissolving the city, not fading distance. Road
+paint stood proud because **a paint slab was a box and a box has walls**; it is a quad now,
+with speckle *below* baseline and every marking 24 verts → 4.
+🔴 **Small-object shadows were swept and deliberately REFUSED.** Signal-minus-control goes
+0.25 → 0.69 across the sweep, monotone in texel density, and it takes a 6-unit frustum to
+double — a second cascade, which three r171 has no support for. The existing 58-px penumbra
+and 2.0× key/fill ratio are not worth trading for a 0.031-unit mast. The sweep and the shape
+of a cheaper fix (contact patches at each prop's foot) are recorded at `sun.shadow.radius`.
+
+**Mean 6.46 across 12 dimensions at round 13.** ⚠ That score PREDATES the
 environment map, the interior glass content and the arena (rounds 14–16), which are
 unscored: `rounds.json` carries `meanScore: null` for round 14. The next round's first job
 is to re-score. the glass reflects the sky and now
@@ -215,6 +236,11 @@ scene line naming a *mesh* rather than a building, and headless Chromium auto-di
 `window.confirm` on any order over an hour. Rounds 0–12 were judged on a warehouse estate
 with no commercial building in it, so **every "can you tell commercial from industrial from
 the air" judgement before round 13 is void.**
+
+🔴 **`capture.mjs` pins the hour but NOT the weather.** One run photographed the aerial in
+CLEAR and the frontage, thirty seconds later, in STORM — carriageway warm brown to
+blue-grey. Any cross-run colour comparison must check the badge. Same class as the
+clock-pinning bug that cost two earlier rounds.
 
 🔴 **Cross-boot per-framing PERCENTAGES are retired.** Two boots with nothing changed read
 **14.7–15.9 pp** on the aerial against a real signal of **2.45 pp** — the null control is

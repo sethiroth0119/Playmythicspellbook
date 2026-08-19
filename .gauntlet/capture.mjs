@@ -149,7 +149,20 @@ const frame = await page.evaluate(() => {
     const score = front * 2 + xsr.length - Math.abs(+z - cz) * .5;
     if (!best || score > best.score) best = { z: +z, xs: xsr, score, front };
   }
-  return { box, cx, cz, road: best };
+  /* 🧱 WHICH SIDE OF THAT ROAD IS THE FRONTAGE — needed by the fourth framing
+     below, and derived here because this is where the tiles are already in
+     hand. A plot one tile off the carriageway fronts it; count both sides and
+     take the busier one. Ties break to +z, which is arbitrary and deterministic
+     (a tie means both sides are equally built, so either is an honest choice —
+     what must never happen is that it varies between two boots). */
+  let sideNeg = 0, sidePos = 0;
+  if (best) for (const t of Object.values(nc.game.tiles)) {
+    if (!t.mesh || !isPlot(t)) continue;
+    const d = t.mesh.position.z - best.z;
+    if (Math.abs(Math.abs(d) - 1) < .35) { if (d < 0) sideNeg++; else sidePos++; }
+  }
+  return { box, cx, cz, road: best, side: sidePos >= sideNeg ? 1 : -1,
+           sideCount: { pos: sidePos, neg: sideNeg } };
 });
 const box = frame && frame.box;
 const cx = frame ? frame.cx : 0, cz = frame ? frame.cz : 0;
@@ -171,10 +184,58 @@ const R = frame && frame.road;
 const street = R && R.xs.length > 3
   ? { cam: [R.xs[1], .30, R.z - .12], tgt: [R.xs[R.xs.length - 2], .26, R.z + .10] }
   : { cam: [cx - span * .34, .30, cz], tgt: [cx + span * .3, .26, cz] };
+/* ── 🧱 THE FOURTH FRAMING: `frontage` ─────────────────────────────────────
+   ADDED ROUND 12, AND THE THREE ABOVE ARE UNTOUCHED ON PURPOSE — rounds 0-9
+   are all captured with them and moving one would break every historical
+   comparison this project has.
+
+   WHY IT EXISTS. The round-9 parcel critic, on the aerial: "I can see no
+   difference at all. The rear walls are occluded by the roofs that stand in
+   front of them at this angle, and the foundation planting is below the eaves.
+   The framing this dimension has historically been judged from does not contain
+   the change." That is true of all three: the aerial and the district shot look
+   DOWN, where a roof covers its own plot; the street shot sits at 0.30 in the
+   carriageway looking ALONG it, where the frontage is edge-on and every ground
+   feature is one pixel of grazing incidence.
+
+   WHAT IT IS. A raking three-quarter view DOWN a frontage: the eye just under
+   the eaves, in the road corridor two units back along the built row, looking
+   DOWN at a point on the ground at the foot of the building line. That geometry
+   is what puts a lawn, a drive, a kerb, a verge, a foundation bed and the line
+   where a wall meets its ground into the same frame, receding — none of which
+   any of the three existing framings contains.
+
+   ⚠ 0.80, NOT 0.30 AND NOT 2.0. SH = 0.34, so a two-storey house with its roof
+     is ~0.9. An eye at 0.30 (the street shot's) is level with the ground floor
+     and the near plot hides everything past it; an eye above 0.9 is a low
+     aerial and the roof planes come back. 0.80 is just under the eaves — high
+     enough to see over a garden wall, a hedge and a parked car onto the ground
+     behind them, low enough that no roof is looked down on.
+   ⚠ ~19° OF DEPRESSION, AND THE CAMERA STAYS INSIDE THE ROAD CORRIDOR. The
+     depression is the whole framing: it is what gives the strip of ground in
+     front of a building actual AREA in the image, where at the street shot's
+     ~1° it is a line one pixel high. It cannot be bought by standing further
+     back — plots are 1 unit and the carriageway is 0.40 wide, so |z - R.z|
+     above ~0.45 puts the lens INSIDE the building on the opposite side, which
+     is exactly what the first cut did: half the frame was the interior face of
+     a wall. It is bought by standing CLOSE and looking down.
+   ⚠ TARGETED AT y = 0.02, i.e. AT THE GROUND, not at the building. The whole
+     point of this framing is the join, so the join is what the lens is on.
+   ⚠ DERIVED, NEVER HARDCODED — same rule as the other three. It hangs off the
+     road row the street shot already chose and off `frame.side`, the side of it
+     with more plots on it, so it cannot drift onto open grass the first time
+     the district changes shape. */
+const SIDE = (frame && frame.side) || 1;
+const fx = R && R.xs.length > 4 ? R.xs[Math.min(R.xs.length - 2, 6)] : cx;
+const frontage = R && R.xs.length > 4
+  ? { cam: [fx - 2.0, .80, R.z - SIDE * .34],
+      tgt: [fx + .10, .02, R.z + SIDE * .50] }
+  : { cam: [cx - 2.0, .80, cz - .34], tgt: [cx + .10, .02, cz + .50] };
 const SHOTS = [
  { n: 'aerial',   cam: [cx + span * .62, span * .55, cz + span * .62], tgt: [cx, 0, cz] },
  { n: 'street',   cam: street.cam, tgt: street.tgt },
  { n: 'district', cam: [cx + span * .26, span * .22, cz + span * .34], tgt: [cx - span * .06, 0, cz - span * .06] },
+ { n: 'frontage', cam: frontage.cam, tgt: frontage.tgt },
 ];
 fs.mkdirSync(outDir,{recursive:true});
 /* 🎥 RELAX THE PLAYER-CAMERA CLAMPS FOR THE DURATION OF THE CAPTURE.
@@ -281,20 +342,51 @@ async function onFilmAt() { return page.evaluate(()=>{const nc=window.__nc,{came
          parkedInFrame:P.length, standingInFrame:S, standingTotal:ST,
          peopleInFrame:A.filter(a=>a.kind==='civilian').length+S,
          vehiclesInFrame:A.filter(a=>a.kind!=='civilian').length+P.length}})}
-/* ── 🔬 PER-FRAMING DIFF AGAINST THE PREVIOUS ROUND ────────────────────────
-   The round-5 critic's first recommendation, and it is free: "this round's
-   ground work never reached the street frame (74.8% pixel-identical to r4) and
-   NOBODY NOTICED, BECAUSE NOBODY DIFFED IT."
+/* ── 🔬 THE CROSS-BOOT TRIPWIRE ────────────────────────────────────────────
+   🔴 THIS IS NOT A MEASUREMENT AND ITS PERCENTAGES MUST NOT BE QUOTED AS ONE.
+   Read that first, because they were, for several rounds.
 
-   A round can now ship work that satisfies its commit message and never touches
-   a frame the critics score. So every capture reports, per framing, what
-   fraction of pixels differ from the same framing in --against. A framing that
-   comes back ~0% changed is not proof of nothing done — but it IS proof that
-   this framing cannot evidence it, and the round has to say so rather than let
-   a critic discover it.
+   MEASURED, WITH LITERALLY NOTHING CHANGED — the same commit, the same pinned
+   hour, two boots of this same script — the aerial framing came back 14.70 pp
+   and 15.90 pp different from itself. A real parcel-scale change is worth about
+   2.45 pp on that framing. THE NULL CONTROL IS SIX TIMES THE SIGNAL. Every
+   absolute per-framing figure this gate has ever printed was inside its own
+   noise, and `NULL_CONTROL_PP` below is printed beside the numbers so that can
+   never quietly stop being true.
+
+   ⚠ AND `perimeterScenery` IS NOT THE CAUSE. public/src/parcel/FIX-RECORD.md
+     blames it ("rolls from Math.random and fills the aerial's background"); it
+     is wrong. That function seeds every roll off `rdRng`, the file's own tile
+     hash, and its two merged buckets hash IDENTICALLY across two boots — checked
+     per scene-graph group, not inferred. Hiding every agent, every parked
+     vehicle and the entire standing crowd moves the cross-boot figure from
+     14.70 pp to 14.68 pp: the moving things are not the cause either.
+     What actually happens is that EVERY PIXEL MOVES A LITTLE. estClock() runs
+     on wall time, two boots reach the shutter a few seconds apart, and the
+     resulting mean delta of ~2.7/255 across the whole frame trips a 6/255
+     threshold on a seventh of the image. A scene this busy has no quiet pixels
+     (README, item 5). Even within ONE boot, two shots 5 s apart differ by
+     6.14 pp.
+
+   🔵 THE INSTRUMENT FOR "HOW MUCH DID MY CHANGE DO" IS `layer-ab.mjs`:
+      one boot, one camera, `renderer.render()` and the pixel read in the SAME
+      TASK, and a do-nothing control that comes back at exactly 0. Use that for
+      a number. Use this for a RATIO.
+
+   WHAT IS STILL WORTH HAVING. The comparison this gate was built for is
+   relative, and relative survives a common-mode noise floor: round 5's ground
+   work moved the aerial 48.9 % and the street frame 4 % — a 12x spread that no
+   plausible drift explains, and nobody noticed for two rounds. So what is
+   reported is the RATIO between framings and the warning when one of them is
+   far behind the others; the raw percentages are kept only because the ratio is
+   made of them.
 
    Pure JPEG byte-sampling would be meaningless (recompression), so this decodes
    both PNGs through the page that is already open — no new dependency. */
+/* Measured on this scene, aerial framing, two boots, nothing changed. Re-measure
+   it with `noise-floor.mjs` if the scene or the pinned hour ever changes;
+   a floor nobody re-measures is a floor nobody believes. */
+const NULL_CONTROL_PP = { aerial: '14.7 - 15.9', sameBoot5s: '6.1', note: 'nothing changed at all' };
 async function diffAgainst(prevDir, tag, names) {
   if (!prevDir || !fs.existsSync(prevDir)) return null;
   const out = {};
@@ -334,27 +426,43 @@ async function diffAgainst(prevDir, tag, names) {
 }
 const AGAINST = process.argv.includes('--against') ? process.argv[process.argv.indexOf('--against')+1] : null;
 const changed = await diffAgainst(AGAINST, TAG, SHOTS.map(s => s.n));
+let tripwire = null;
 if (changed) {
-  /* Relative, not absolute. On the round-5 build against r4 this reported
-     aerial 48.9 / district 35.0 / street 4.0 — and 4% is not "nothing changed",
-     it is "this framing did not get the round". An absolute floor would have
-     missed it; a framing that moved less than a quarter as much as the round's
-     best framing is the signal. Independently reproduces what the round-5
-     critic found by hand: the ground work never reached the street frame. */
+  /* RELATIVE, NEVER ABSOLUTE — see the header. On the round-5 build against r4
+     this reported aerial 48.9 / district 35.0 / street 4.0, and 4% is not
+     "nothing changed", it is "this framing did not get the round". A framing
+     that moved less than a quarter as much as the round's best framing is the
+     signal, and it is a signal precisely because the drift floor is COMMON to
+     all four framings: it cannot manufacture a 12x spread between them. */
   const nums = Object.entries(changed).filter(([, v]) => typeof v === 'number');
   const errs = Object.entries(changed).filter(([, v]) => typeof v === 'string');
   const max = nums.length ? Math.max(...nums.map(([, v]) => v)) : 0;
   const weak = nums.filter(([, v]) => max > 5 && v < max * 0.25);
+  tripwire = {
+    WARNING: 'RELATIVE ONLY. These percentages are NOT a measurement of this round — ' +
+             'two boots with nothing changed read ' + NULL_CONTROL_PP.aerial + ' pp on the aerial. ' +
+             'For "how much did my change do", use layer-ab.mjs.',
+    nullControl: NULL_CONTROL_PP,
+    perFraming: changed,
+    ratioToBest: Object.fromEntries(nums.map(([k, v]) => [k, max ? +(v / max).toFixed(2) : null])),
+    weakFramings: weak.map(([k]) => k),
+  };
   if (errs.length) console.error(`\n⚠ DIFF FAILED for ${errs.map(([k, v]) => k + ': ' + v).join('; ')}\n`);
   if (weak.length) console.error(
     `\n⚠ THIS ROUND DID NOT REACH ${weak.length === 1 ? 'A FRAMING' : 'SOME FRAMINGS'}, vs ${AGAINST}:\n` +
     nums.map(([k, v]) => `    ${k.padEnd(9)} ${String(v).padStart(5)}% changed${v < max * 0.25 ? '   <-- barely moved' : ''}`).join('\n') +
-    `\n  Say so in the round's report. A critic scoring that framing will find it,\n` +
+    `\n  ⚠ RATIO, NOT AMOUNT: two boots with nothing changed read ${NULL_CONTROL_PP.aerial} pp here.\n` +
+    `  Say so in the round's report. A critic scoring that framing will find it,\n` +
     `  and a round that only shows up in one camera is not the round it claims.\n`);
 }
 
 const diag=await page.evaluate(()=>{const{renderer,scene}=window.__nc.three();
   let m=0;scene.traverse(o=>{if(o.isMesh)m++});
   return{meshes:m,geoms:renderer.info.memory.geometries,tris:renderer.info.render.triangles}});
-console.log(JSON.stringify({built,box,made,diag,changedVsPrev:changed,onFilm,logs:logs.slice(-10)},null,2));
+/* ⚠ `changedVsPrev` IS GONE, DELIBERATELY, AND THE KEY IS NOT COMING BACK.
+   It was a bare per-framing percentage that read exactly like a result, and it
+   was quoted as one in round reports more than once. What replaces it carries
+   its own null control in the same object, so the number and the reason it
+   cannot be trusted alone can never be separated by a copy-paste. */
+console.log(JSON.stringify({built,box,made,diag,crossBootTripwire:tripwire,onFilm,logs:logs.slice(-10)},null,2));
 await browser.close(); server.close();

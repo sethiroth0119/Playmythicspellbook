@@ -1,3 +1,52 @@
+# ⚠ READ THIS FIRST — findings 2 and 3 below were acted on in round 12
+
+Both were **right that something was wrong** and both are why the harness got
+fixed. Finding 2's diagnosis was incomplete and finding 3's was mistaken, and
+the corrections are recorded here rather than in the round report because this
+is the file the next reader will find.
+
+**Finding 2 (the scene is not building the district it claims to) — CONFIRMED,
+and it was four separate causes, not one.** Everything in that section is
+accurate as a description. The one thing it does not say is *why*, and the
+assumption in the room was "the municipal ceiling, as usual". Measured by
+capturing the game's own refusal sentence per tile through
+`window.__ncToastSink`: `retail`, the trees, the bushes, the gardens and the
+fountain were refused by **/src/progression**, not by the ceiling; `tenantbiz`
+is **not a building at all** (it is the mesh name for a leased `lot`, so
+`tryPlace` returned at `if (!def) return` and never spoke); only `shop`, `arena`
+and `medlab` were the ceiling. And behind the ceiling sat a fifth refusal that
+no map could show, because it emitted nothing: **headless Chromium
+auto-dismisses `window.confirm`**, so `bldConfirmLong()` was answered *Cancel*.
+The standard scene now places 218 tiles and 31 non-housing buildings, three
+Retail Parades and three shops among them. See `.gauntlet/README.md`, "Why the
+district was a warehouse estate".
+
+**Finding 3 (cross-boot diffs are noise-dominated) — CONFIRMED. The named cause
+is WRONG.** `perimeterScenery` does not roll from `Math.random`; every roll in
+it goes through `rdRng`, the file's own lattice hash, and its two merged buckets
+hash **identically** across two boots (checked per scene-graph group, not
+inferred). The `Math.random` treeline it replaced is what the memory is of — its
+own header says so. Hiding every agent, every parked vehicle and the whole
+standing crowd moves the cross-boot figure from 14.70 pp to **14.68 pp**, so the
+moving things are not the cause either. The real cause is that **every pixel
+moves a little**: `estClock()` runs on wall time, two boots reach the shutter a
+few seconds apart, and a mean delta of ~2.7/255 across the whole frame trips a
+6/255 threshold on a seventh of the image. Nothing can be seeded to fix that, so
+nothing in `node-city/index.html` was changed for it; the percentage has been
+retired and the gate kept as a **relative** tripwire. The single-boot A/B this
+section correctly recommends is now a tool — `.gauntlet/layer-ab.mjs` — and it
+is stronger than described: driven with `renderer.render()` and the pixel read
+**in the same task**, the do-nothing control is *exactly 0*, not a floor.
+
+**Finding 1 (`/src/parcel` is dead on this district) is now worth re-running.**
+It was measured on a district of 14 non-housing buildings, 13 of which carry
+`HAS_OWN_GROUND`. There are 31 now, including three Retail Parades, three shops,
+a tenant business, an arena and a med lab. The "20 triangles of flat parcel
+across the entire city" number is from the old scene and should not be quoted
+again without re-measuring.
+
+---
+
 # 🔴 Two findings here matter more than the parcel work itself
 
 The round-9 retry at rubric dimension 5 ("The plot") came back with a **5.5, not

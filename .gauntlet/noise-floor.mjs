@@ -1,7 +1,28 @@
-/* TEMP EXPERIMENT (problem 2): boot, build the standard scene, shoot the AERIAL
-   framing twice over — once as the capture does, once with every moving thing
-   hidden — then diff each against a previous run's pair.
-   Usage: node .gauntlet/_noise.mjs <outDir> [--against <dir>] */
+/* ══ THE NULL CONTROL FOR THE CROSS-BOOT TRIPWIRE ═══════════════════════════
+   Measures what `capture.mjs --against` reports WHEN NOTHING HAS CHANGED.
+
+     node .gauntlet/noise-floor.mjs .gauntlet/shots/_n1
+     node .gauntlet/noise-floor.mjs .gauntlet/shots/_n2 --against .gauntlet/shots/_n1
+
+   Two runs of the same commit. The second prints the floor.
+
+   It exists because the cross-boot per-framing percentage was quoted as a
+   result for several rounds, and nobody had ever run the control. The control
+   is 14.7 - 15.9 pp on the aerial against a real change worth ~2.45 pp — the
+   noise is six times the signal. See README, "The cross-boot tripwire".
+
+   WHAT EACH OUTPUT IS FOR:
+     · `all`    — the aerial exactly as capture.mjs shoots it.
+     · `static` — the same frame with EVERY agent, the parked fleet and the
+       standing crowd hidden. If the moving things were the cause, this would
+       come back near zero. It comes back at 14.68 against 14.70: they are not.
+     · `control.same_boot_immediate` / `same_boot_5s` — two shots inside ONE
+       boot. Even 5 s apart, in one browser, the same camera and the same city
+       differ by 6 pp. That is the drift, and it is why no amount of seeding
+       fixes this gate.
+   ⚠ These are all `page.screenshot` reads, i.e. the same instrument the gate
+     itself uses, on purpose — the point is to characterise THAT instrument.
+     For a measurement, use layer-ab.mjs, whose control is exactly 0. */
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
 const ROOT=path.resolve(process.cwd(),'public'), THREE_='/home/user/Playmythicspellbook/.gauntlet/package';

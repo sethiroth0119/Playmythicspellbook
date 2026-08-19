@@ -824,5 +824,40 @@
     "gap": "Recorded as a standing limit on the instrument rather than as a finding about any round."
    }
   ]
+ },
+ {
+  "round": 14,
+  "headline": "The city has glass. The stranger test stopped being about shininess.",
+  "status": "done",
+  "meanScore": null,
+  "strangerTest": "instantly, but on a different tell",
+  "tris": 556629,
+  "scores": [],
+  "pieces": [
+   {
+    "title": "An environment map, sourced from the sky the game already renders",
+    "verdict": "WINS",
+    "summary": "Every value in the map is read off the objects updateSky() just wrote, THIS FRAME — never off the SKY tuning table, never a hex chosen in the block. Upper band is scene.background, horizon is scene.fog.color, lower is the exact expression the land haze is built from re-evaluated AFTER the weather block so a storm dims the ground the glass reflects, and the circumsolar lobe is the live sun colour about the live sun direction. No sun disc is painted, because the disc is already a DirectionalLight and three GGX specular from it IS the reflected disc — painting one would double-count the one highlight the frame most needs to be honest about. Four materials registered, each argued where it lives, and scene.environment deliberately NOT set. The key insight is on glass: METALNESS STAYS 0, because glass is a dielectric, so three gives it a 4% F0 and a Schlick Fresnel — a few percent of the sky head-on, most of it along the facade. That angular ramp is what an emissive floor can never be. The counter-intuitive one is vehicle glazing: a METAL F0 is its base colour, and near-black reflected almost nothing whatever intensity it was given, so metalness went .80 to .06.",
+    "gap": "Rebuilt on change rather than on a timer: replayed at one-second resolution over a full 24-hour cycle, 292 rebuilds — a rebuild on 0.0056% of frames — and the distribution is the design working, with zero between 21:00 and 04:00, a handful per hour through midday when only the azimuth turns, and 58 in each of the two dusk hours. At 19:00 the on/off A/B moves ZERO pixels of 1,440,000: no noon sky on a midnight street, met from the other end."
+   },
+   {
+    "title": "The four panes, re-measured",
+    "verdict": "WINS",
+    "summary": "Both states rendered and read in the SAME TASK with the control at exactly zero pixels, and the before state reproduced in-page rather than remembered. It independently reproduced the critic numbers to within two levels. Then: wall luminance 145.4 went from rgb(29,29,32) at chroma 2.6 to rgb(30,41,55) at chroma 25.0; wall 99.1 from rgb(12,14,19) to rgb(25,37,50). Normalised to blue, the sky is (0.558, 0.786, 1.000) and the panes now read (0.545, 0.745, 1.000) — the sky own chromaticity, in the glass, to within a few percent. Cost: frame time up 4.9% under SwiftShader, with TRIANGLES AND DRAW CALLS UNCHANGED by construction. Whether that costs a quality tier is not answerable from this harness and the report says so rather than guessing.",
+    "gap": "NOT OVERCLAIMED, in the builder own words: intra-pane variance went DOWN, and it should — a flat pane facing one direction reflects one part of a smooth sky. The variance that appeared is BETWEEN orientations. Variance INSIDE a pane needs a normal map or blinds, not an environment map."
+   },
+   {
+    "title": "The kerb was lavender on every street in the city",
+    "verdict": "WINS",
+    "summary": "Derived rather than picked: the pavement is the stone material times 0.828 linear, which is what a MAPPED stone renders as, and the kerb is the unmapped twin of that same footway — so it is the stone own hex, undivided. Measured by taking every violet pixel in the previous capture and reading THE SAME PIXELS in the new one: median hue 277.5 to 34.7 degrees, luminance 134.8 to 134.1, a change of half a percent. A hue rotation and nothing else, so nothing tuned against the kerb brightness needs re-tuning. 92.9% of the violet band converted; the residual is genuinely violet things.",
+    "gap": "C_GLASS, the bus-shelter glazing, is now the only glass in the city that is still paint — it rides the shared vertex-colour bucket, and giving that an environment map would make every kerb and bin shiny."
+   },
+   {
+    "title": "What it gives itself away on now",
+    "verdict": "OPEN",
+    "summary": "The builder own answer to the stranger test: not shininess any more. The first fixation lands on glass that is glass — sky-tinted, Fresnel-graded along a facade, dark where it faces the ground and bright where it faces the dome, dimming into its own lamplight at dusk. In order, what is left: (1) THE GLASS HAS NO CONTENT — every pane reflects the sky and nothing else, where a CS2 window at this distance is a dark interior with a sky highlight across the top third; (2) nothing casts INTO the glass, so a street canyon reads as if it had no other side, which is a planar-projection problem and not an environment-map one; (3) the silhouette is still uniformly hard — right colour, machine-perfect edges, no ambient occlusion in the reveals and no dirt run-off under the sills.",
+    "gap": "Item 1 is the next thing to build and it is cheap: a vertical gradient in the pane own vertex colour, or one shared 8x8 canvas on the window material."
+   }
+  ]
  }
 ]

@@ -36492,7 +36492,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y0';
+  window.BUILD_VERSION = 'v120y1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -86295,9 +86295,10 @@ const getStatBonus = (unit, statKey) => {
   // here; percent is taken off the unit's BASE stat so two percent auras stack
   // additively rather than compounding into runaway numbers.
   if (App.state && Array.isArray(App.state.units)) {
-    for (const src of _auraSources(App.state)) {
+    for (const _ap of _auraPlan(App.state)) {
+      const src = _ap.src;
       // A unit may project SEVERAL auras at once — they all stack.
-      for (const a of _unitAuras(src)) {
+      for (const a of _ap.auras) {
         if (!a.stats || !a.stats[statKey]) continue;
         if (!_auraAffects(App.state, src, a, unit)) continue;
         // 🐛 v120c8 — this used to be Math.max(0, …), which silently clamped
@@ -89747,12 +89748,58 @@ function _heroUnitOf(state, side) {
 }
 
 // Resolve an authored card definition by its card id (Forge custom or catalog).
+/* 🗃 STEP-SCOPED DEFINITION MEMO (perf) — `_cardDefById` is a pure
+   id → card-definition lookup, but a MISS is expensive: it walks the custom pool
+   twice (tombstone check + two linear scans of Forge.customCards and
+   Catalog.cards, once per `custom:` and once per `unit:` key), then falls back to
+   scanning the merged getAllCustomCards() pool. ~15µs a call.
+
+   That would be fine if it were called a few times. It isn't: getStatBonus →
+   _auraSources → _unitAuras resolves the definition of EVERY aura source on
+   EVERY stat read, and calculateDamage does several stat reads. One AI step that
+   scores 24 candidate tiles was measured making ~4,600 _cardDefById calls for a
+   handful of DISTINCT ids — the top single cost in the AI turn (profiled: the
+   _cardDefById → resolveDeckCard → lookupCustomCard chain was ~29% of the step).
+
+   ⚠ Deliberately NOT a permanent cache. It is opened by doAIStep and dropped
+   again in that step's _wrappedReturn hook, so it lives for exactly one
+   macrotask. Nothing can edit or delete a card inside that window — the Forge is
+   behind user input, and a cloud/catalog load resolves on a later task — so a
+   memoised definition can never be served stale. A process-lifetime cache WOULD
+   go stale the moment an admin edited a card in the Forge; don't "simplify" this
+   into one.
+   `var`, not `let`: _cardDefById is a hoisted function declaration and is
+   reachable during load, which would hit the temporal dead zone of a `let`.
+
+   The same bracket also memoises the two functions immediately above
+   _cardDefById in that hot chain — _auraSources (rebuilds a 14+ entry array AND
+   rescans all 56 board tiles for walls) and _unitAuras (per source) — because
+   getStatBonus re-derives the ENTIRE aura set on every single stat read. Same
+   one-macrotask lifetime, same staleness argument. */
+var _cardDefMemo = null;    // cardId -> definition
+// ⚠ `_auraSrcMemo !== null` doubles as "the memo is open". Open seeds it with a
+//   placeholder whose `state` is null so the first real call always misses.
+var _auraSrcMemo = null;    // { state, units, board, weather, loc, ench, list }
+var _unitAuraMemo = null;   // Map: aura source object -> its aura list
+function _cardDefMemoOpen() {
+  _cardDefMemo = new Map();
+  _auraSrcMemo = { state: null, units: null, board: null, weather: null, loc: null, ench: null, list: null };
+  _unitAuraMemo = new Map();
+  _auraPlanMemo = { src: null, list: null };
+}
+function _cardDefMemoClose() { _cardDefMemo = null; _auraSrcMemo = null; _unitAuraMemo = null; _auraPlanMemo = null; }
 function _cardDefById(id) {
   if (!id) return null;
+  if (_cardDefMemo !== null) {
+    const hit = _cardDefMemo.get(id);
+    if (hit !== undefined) return hit;
+  }
   let def = null;
   if (typeof resolveDeckCard === 'function') { try { def = resolveDeckCard('custom:' + id) || resolveDeckCard('unit:' + id); } catch (e) {} }
   if (!def && typeof getAllCustomCards === 'function') { try { def = (getAllCustomCards() || []).find(c => c && c.id === id) || null; } catch (e) {} }
-  return def || null;
+  const out = def || null;
+  if (_cardDefMemo !== null) _cardDefMemo.set(id, out);
+  return out;
 }
 
 // ✋ HAND-ACTIVATED ABILITY (v116r) — a card sitting in your HAND can activate an
@@ -90917,6 +90964,15 @@ function _presenceAuraMet(state, a) {
 // as it does for a unit. Without this, an aura authored on a location/weather/
 // wall card was a dead knob in the editor.
 function _auraSources(state) {
+  // 🗃 See _cardDefMemoOpen. Keyed on EVERY input this function reads, by object
+  // identity, so a state rebuilt by any AI branch ({...s, weather}) misses the
+  // cache and recomputes. Callers only iterate the result — none mutate it.
+  if (_auraSrcMemo !== null && state
+      && _auraSrcMemo.state === state && _auraSrcMemo.units === state.units
+      && _auraSrcMemo.board === state.board && _auraSrcMemo.weather === state.weather
+      && _auraSrcMemo.loc === state.activeLocation && _auraSrcMemo.ench === state.enchantments) {
+    return _auraSrcMemo.list;
+  }
   const out = (state && Array.isArray(state.units)) ? state.units.slice() : [];
   try {
     if (!state) return out;
@@ -90961,9 +91017,19 @@ function _auraSources(state) {
       }
     }
   } catch (e) {}
+  if (_auraSrcMemo !== null && state) {
+    _auraSrcMemo = { state, units: state.units, board: state.board, weather: state.weather,
+                     loc: state.activeLocation, ench: state.enchantments, list: out };
+  }
   return out;
 }
 function _unitAuras(src) {
+  // 🗃 See _cardDefMemoOpen. Keyed on the source OBJECT, and only live while the
+  // memo is open — a unit's authored auras cannot change inside one macrotask.
+  if (_unitAuraMemo !== null && src) {
+    const hit = _unitAuraMemo.get(src);
+    if (hit !== undefined) return hit;
+  }
   try {
     if (!src) return [];
     let list = src.auras, legacy = src.presenceAura;
@@ -90976,8 +91042,32 @@ function _unitAuras(src) {
     const out = [];
     if (Array.isArray(list)) for (const a of list) { if (a && a.enabled !== false) out.push(a); }
     if (legacy && typeof legacy === 'object' && legacy.enabled !== false) out.push(legacy);
+    if (_unitAuraMemo !== null) _unitAuraMemo.set(src, out);
     return out;
   } catch (e) { return []; }
+}
+
+/* 🗃 The aura sources that actually project something, as {src, auras} pairs.
+   getStatBonus runs several times per damage roll and used to re-walk the WHOLE
+   source list — 14+ objects on a busy board, nearly all of them units with no
+   authored auras at all — calling _unitAuras on each one every time. Dropping
+   the empty sources is a no-op by construction: their inner loop had zero
+   iterations, so nothing that was reachable stops being reachable.
+   Keyed on the identity of the array _auraSources returns, which is itself
+   memoised per state, so the plan invalidates exactly when the board does.
+   With the memo closed this still costs one array build instead of N
+   _unitAuras calls, so the player-turn path does not regress. */
+var _auraPlanMemo = null;   // { src: <the _auraSources array>, list: [{src, auras}] }
+function _auraPlan(state) {
+  const srcs = _auraSources(state);
+  if (_auraPlanMemo !== null && _auraPlanMemo.src === srcs) return _auraPlanMemo.list;
+  const list = [];
+  for (const src of srcs) {
+    const auras = _unitAuras(src);
+    if (auras && auras.length) list.push({ src, auras });
+  }
+  if (_auraPlanMemo !== null) _auraPlanMemo = { src: srcs, list };
+  return list;
 }
 
 // The auras authored on a CARD definition (as opposed to `_unitAuras`, which resolves
@@ -91092,8 +91182,9 @@ function _unitProtectedFrom(unit, key) {
     // Live aura pass.
     const st = (typeof App !== 'undefined' && App.state) ? App.state : null;
     if (!st || !Array.isArray(st.units)) return false;
-    for (const src of _auraSources(st)) {
-      for (const a of _unitAuras(src)) {
+    for (const _ap of _auraPlan(st)) {
+      const src = _ap.src;
+      for (const a of _ap.auras) {
         if (!a.protect || !a.protect[key]) continue;
         if (!_auraAffects(st, src, a, unit)) continue;
         return true;
@@ -106083,7 +106174,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120y0';
+const BB_VER = 'v120y1';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -153952,6 +154043,10 @@ function doAIStep() {
   // future profiling has breadcrumbs. Hot-path optimization later targets
   // any function whose name shows up repeatedly in the warning bursts.
   const _aiStart = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+  // 🗃 Open the card-definition memo for THIS step only (closed in
+  // _wrappedReturn below). See the long note on _cardDefById: the scoring loop
+  // resolves the same handful of definitions thousands of times per step.
+  try { _cardDefMemoOpen(); } catch (e) {}
   // Schedule the "AI thinking" pill if this step alone might exceed 400ms
   // of UI silence. Cleared by finishAIPhase + every action that re-renders.
   if (App._aiHintTimer) { try { clearTimeout(App._aiHintTimer); } catch (e) {} }
@@ -153960,6 +154055,11 @@ function doAIStep() {
   // call scheduleAIStep → another doAIStep, which clears+restarts the
   // hint timer, so the pill only shows during legitimately long thinks.
   const _wrappedReturn = () => {
+    // 🗃 Drop the step-scoped definition memo. This fires on a setTimeout(0), so
+    // it runs after the synchronous step body AND after renderBattle's microtask
+    // — i.e. the memo covers exactly one macrotask and no user input can have
+    // landed in between.
+    try { _cardDefMemoClose(); } catch (e) {}
     const dt = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - _aiStart;
     _AI_PERF.totalSteps++;
     if (dt > 50) {
@@ -154834,26 +154934,53 @@ function doAIStep() {
       }
     }
 
-    // ===== Best attack from a hypothetical position (defaults to current) =====
-    const tryAttackFromPos = (atPos) => {
-      const probe = { ...unit, pos: atPos };
-      // 🧱 A Wall Unit with attacking disabled never attacks (AI side).
-      if (probe.isWall && probe.wall && probe.wall.canAttack === false) return null;
+    /* ⚡ POSITION-INVARIANT HALF OF tryAttackFromPos (perf).
+       The movement scorer below calls tryAttackFromPos ONCE PER REACHABLE TILE
+       — 24+ times for a speed-3 unit — and every one of these four values came
+       out identical each time, because none of them reads `atPos`:
+         • getAvailableMoves() ignores position entirely (it reads knownMoves /
+           learnset / statusEffects),
+         • the dispel and Corrupted status gates read statusEffects,
+         • the candidate pool is filtered from App.state.units.
+       So this is a HOIST, not a change: the scoring loop is handed exactly the
+       lists it built for itself before.
+       Keyed on both `unit` and `App.state.units` identity and recomputed if
+       either changes — `unit` is re-fetched from state further down (after a
+       move), and this must never hand that refreshed unit a stale pool. */
+    let _atkInvFor = null, _atkInvUnits = null, _atkInv = null;
+    const _attackInvariants = () => {
+      if (_atkInv && _atkInvFor === unit && _atkInvUnits === App.state.units) return _atkInv;
+      _atkInvFor = unit; _atkInvUnits = App.state.units;
       // 👑 Also consider take-control ability moves (they target one enemy like
       // an attack but seize it instead of dealing damage).
-      const moves = getAvailableMoves(probe).filter(m =>
+      const moves = getAvailableMoves(unit).filter(m =>
         (m.kind === 'attack') ||
         (m.kind === 'ability' && m.takeControl && (m.target === 'enemy' || m.target === 'allEnemies')));
-      const isDispelled = (probe.statusEffects || []).some(e => e.type === 'dispel');
+      const isDispelled = (unit.statusEffects || []).some(e => e.type === 'dispel');
       // 🕷 Corrupted inverts the AI's candidate pool onto its OWN units. Without
       // this the AI keeps scoring the player's units, canAttackTarget rejects
       // every one of them, the pool comes back empty, and a corrupted AI unit
       // simply does nothing — which reads as Corrupted being a stun rather than
       // the drawback it is. Self is excluded: nothing may attack itself.
-      const _aiCorrupt = !!_statusForcingAllyAttack(probe);
+      const _aiCorrupt = !!_statusForcingAllyAttack(unit);
       const playerUnits = _aiCorrupt
-        ? App.state.units.filter(u => u.owner === probe.owner && u.id !== probe.id && u.alive && !isVanished(u))
+        ? App.state.units.filter(u => u.owner === unit.owner && u.id !== unit.id && u.alive && !isVanished(u))
         : App.state.units.filter(u => u.owner === 'player' && u.alive && !isVanished(u));
+      // 🩸 Raged / Berserk is a STATUS on the unit — also position-free.
+      const isRaged = !!_statusForcingNearest(unit);
+      _atkInv = { moves, isDispelled, playerUnits, isRaged };
+      return _atkInv;
+    };
+
+    // ===== Best attack from a hypothetical position (defaults to current) =====
+    const tryAttackFromPos = (atPos) => {
+      const probe = { ...unit, pos: atPos };
+      // 🧱 A Wall Unit with attacking disabled never attacks (AI side).
+      if (probe.isWall && probe.wall && probe.wall.canAttack === false) return null;
+      const _inv = _attackInvariants();
+      const moves = _inv.moves;
+      const isDispelled = _inv.isDispelled;
+      const playerUnits = _inv.playerUnits;
       const candidates = [];
       for (const move of moves) {
         const _isControl = move.kind === 'ability' && !!move.takeControl;
@@ -154896,7 +155023,9 @@ function doAIStep() {
       // Flag-driven, matching the player-side check — this tested e.type ===
       // 'rage' literally, so a berserk AI unit kept its +6 ATK and picked
       // targets freely. See _statusForcingNearest().
-      const isRaged = !!_statusForcingNearest(probe);
+      // (The status read is hoisted; findNearestReachableEnemy is NOT — "nearest"
+      // is measured from the tile being probed, so it genuinely varies.)
+      const isRaged = _inv.isRaged;
       const rageTarget = isRaged ? findNearestReachableEnemy(probe, App.state.units) : null;
       const ragedPool = rageTarget ? candidates.filter(c => c.target && c.target.id === rageTarget.id) : candidates;
       const taunts = ragedPool.filter(c => c.target && hasPassive(c.target, 'taunt'));
@@ -211423,7 +211552,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120y0';
+  f.src = 'node-city/index.html?v=v120y1';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228600,8 +228729,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120y0">
-<script type="module" src="src/battle/hud.js?v=v120y0"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120y1">
+<script type="module" src="src/battle/hud.js?v=v120y1"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

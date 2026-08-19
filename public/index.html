@@ -211885,6 +211885,68 @@ function _cityOwnerBadgeSync() {
     if (b.textContent !== t) b.textContent = t;
     b.style.borderColor = App._cityOwnerId ? 'rgba(212,175,55,.55)' : 'rgba(150,170,200,.34)';
     b.style.color = App._cityOwnerId ? '#f3e7c8' : '#cfd8e6';
+    b.title = t;               // the box can ellipsize; hover still gives the whole sentence
+    _cityOwnerBadgePlace();    // text just changed, so the width did — re-measure
+  } catch (e) {}
+}
+/* 📐 PUT THE OWNER BADGE TO THE RIGHT OF THE TIER PILL, BY MEASUREMENT.
+   ---------------------------------------------------------------------------
+   Both are position:fixed on the PARENT document, floating over the city
+   iframe, so neither can be laid out by the city's own CSS and there is no
+   flex row to put them in — the left edge has to be computed.
+
+   TWO THINGS IT MUST NOT TOUCH, and both move:
+   · THE TIER PILL, whose width is its text ('🔌 ' + name + ' · ' + rate + '%',
+     plus ' ✎' for an admin). Measured, never assumed — a hardcoded left would
+     just pick which tier name overlaps, which is exactly the bug the pill's own
+     header records from when it sat at top:52px.
+   · THE BUILD BAR inside the iframe, which is CENTRED. Measured at 1280×720 its
+     buttons start at x=464 while the pill ends near x=170, so the gap is real
+     but it narrows as the viewport does. Rather than reach across documents for
+     it, the badge is capped to stop short of the centre line — every
+     bottom-anchored city element (#buildbar, #toasts, #ctrlhint) is centred with
+     left:50%, so anything wholly left of centre-minus-clearance cannot collide
+     with any of them at any width.
+
+   When the pill is absent (no MythicNodeTiers, or no resolvable PRN) the badge
+   simply keeps the left margin the pill would have had. */
+function _cityOwnerBadgePlace() {
+  try {
+    const b = document.getElementById('node-city-owner');
+    if (!b) return;
+    const GAP = 10, MARGIN = 16, ROW_GAP = 8, USABLE = 140;
+    /* The left edge of the centred build bar, without reaching into the iframe.
+       Measured both ways at two widths: the bar's first button starts at 464 of
+       1280 and at 274 of 900, while (innerWidth / 2) - 200 gives 440 and 250 —
+       conservative by 24px in both. Every bottom-anchored city element is
+       centred on left:50%, so this bound holds for #toasts and #ctrlhint too. */
+    const limit = Math.round((window.innerWidth / 2) - 200);
+
+    const pill = document.getElementById('node-city-tier');
+    const pr = pill ? pill.getBoundingClientRect() : null;
+    const left = (pr && pr.width > 0) ? Math.round(pr.right + GAP) : MARGIN;
+    const avail = limit - left;
+
+    if (avail >= USABLE) {
+      // Asked-for layout: same row, immediately right of the tier pill.
+      b.style.left = left + 'px';
+      b.style.bottom = '16px';
+      b.style.maxWidth = avail + 'px';
+      return;
+    }
+    /* NOT ENOUGH ROW LEFT — STACK ABOVE THE PILL RATHER THAN OVERLAP.
+       A long tier name is not hypothetical: the real list has 'Foundation
+       Contributor' and 'Titan Node Founder', which take the pill to ~282px, and
+       at 900 wide the build bar has already come in to 274. An earlier version
+       of this clamped the width to a 120px floor instead, which did not avoid
+       the collision — it just guaranteed one, because a floor overrides the very
+       bound that was keeping the badge clear. Second row is free at the left:
+       #leftcol is capped at `calc(100% - var(--topbarh) - 140px)` so it never
+       reaches the bottom band at any width. */
+    const rowH = pr && pr.height > 0 ? Math.round(pr.height) : 27;
+    b.style.left = MARGIN + 'px';
+    b.style.bottom = (16 + rowH + ROW_GAP) + 'px';
+    b.style.maxWidth = Math.max(0, limit - MARGIN) + 'px';
   } catch (e) {}
 }
 function _openNodeCity(nodeId, _resolved) {
@@ -212108,13 +212170,30 @@ function _openNodeCity(nodeId, _resolved) {
   try {
     const b = document.createElement('div');
     b.id = 'node-city-owner';
-    b.style.cssText = 'position:fixed;top:14px;left:16px;z-index:2147483301;padding:7px 14px;border-radius:999px;'
+    /* 📐 BOTTOM-LEFT, TO THE RIGHT OF THE TIER PILL. This was top:14px/left:16px.
+       The `left` here is a PLACEHOLDER — _cityOwnerBadgePlace() overwrites it
+       from the pill's MEASURED right edge every sync. Do not hardcode a number:
+       the pill's text is '🔌 ' + tier.name + ' · ' + rate + '%' (+ ' ✎' for an
+       admin), so its width moves with the tier and with who is looking, and a
+       fixed offset would only choose which tier name to be broken at — the same
+       mistake the pill's own header records from when it lived at top:52px. */
+    b.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:2147483301;padding:7px 14px;border-radius:999px;'
       + 'font-family:Cinzel,serif;font-weight:700;font-size:12px;letter-spacing:.08em;color:#f3e7c8;'
-      + 'background:rgba(12,9,18,.92);border:1px solid rgba(212,175,55,.55);box-shadow:0 6px 20px rgba(0,0,0,.55)';
+      + 'background:rgba(12,9,18,.92);border:1px solid rgba(212,175,55,.55);box-shadow:0 6px 20px rgba(0,0,0,.55);'
+      + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box';
     document.body.appendChild(b);
     _cityOwnerBadgeSync();
     if (App._cityBadgeTimer) { try { clearInterval(App._cityBadgeTimer); } catch (e) {} }
     App._cityBadgeTimer = setInterval(_cityOwnerBadgeSync, 2000);
+    /* 📐 The width cap is a function of innerWidth, so a resize has to re-place
+       the badge — the 2s tick would otherwise leave it wrong for up to two
+       seconds, and dragging a window fires resize far faster than that.
+       Attached ONCE (the badge is rebuilt on every city open) and harmless when
+       no badge exists, since _cityOwnerBadgePlace() returns immediately. */
+    if (!App._cityBadgeResizeBound) {
+      App._cityBadgeResizeBound = true;
+      try { window.addEventListener('resize', () => { try { _cityOwnerBadgePlace(); } catch (e) {} }); } catch (e) {}
+    }
   } catch (e) {}
   // 🔌 Tier pill — the generation rate THIS city's node pays, and (for an
   //    admin) the place to assign it. Sits under the owner badge.
@@ -212255,6 +212334,12 @@ function _cityTierPill() {
     + 'box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:' + (canEdit ? 'pointer' : 'default');
   if (canEdit) p.onclick = () => { try { _cityTierModal(node, res.kind); } catch (e) {} };
   document.body.appendChild(p);
+  /* 📐 The owner badge sits to the RIGHT of this pill and is placed from the
+     pill's measured width — so it has to be re-placed every time the pill is
+     rebuilt, not just when the badge's own text changes. A rebuild happens
+     whenever the tier, the rate, the resolution path or admin-ness changes, and
+     each of those moves the pill's right edge. */
+  try { _cityOwnerBadgePlace(); } catch (e) {}
 }
 /* 🔁 Keep the pill honest as data arrives. FoundationReserve.nodes lands after
    the city opens (and repopulates when a corp fetch completes), so a pill built

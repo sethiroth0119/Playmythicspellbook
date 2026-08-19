@@ -148,7 +148,15 @@ export const SPECS = [
        district's businesses this plot can hold — but a description that
        promised card shops on land that will not take one would be a claim
        nothing checks, so it says both. */
-    desc: 'Card shops, graders and collectors, unit after unit — selling the packs your own presses printed. On land that will not yet carry a shopfront it develops parade units instead.' },
+    /* ⚠ AND WHAT IT DOES NOT NAME: GRADING. The brief asks for "card shops,
+       graders and collectors" and the first draft of this line printed all
+       three — but there is no grading, authentication or slabbing building in
+       node-city's BUILDINGS, so a district promising graders advertises a tile
+       that cannot develop. Same treatment as printingInk and holographicFoil
+       below: the gap is named here so the next hand ADDS THE BUILDING and then
+       adds it to this mix, instead of re-deriving the omission and quietly
+       putting the word back. */
+    desc: 'Card shops and collectors, unit after unit — selling the packs your own presses printed. On land that will not yet carry a shopfront it develops parade units instead.' },
   /* 🏟 MYTHIC ENTERTAINMENT — tournament halls and arenas. The Duel Arena's own
      description is "tactical card battles draw crowds"; the Stadium is the
      event venue /src/city/stadium.* already runs. Both are PRIME-band tenants
@@ -159,9 +167,23 @@ export const SPECS = [
     desc: 'Tournament halls and duel arenas, with the nightlife that fills up around a card event.' },
 
   /* ══ 🧠 OFFICE ══════════════════════════════════════════════════════════ */
+  /* 🔬 TECHNOLOGY, AND THE ONE HONEST THING TO SAY ABOUT IT: on 🧠 Office park
+     it changes NOTHING. `o_low.mix` is [['reslab',1]] and this mix is
+     [['reslab',1]] — the same single id — so at every band the filtered bags
+     are identical and the plot develops the Research Spire it was always going
+     to develop. That is not a reason to delete the spec: on 📈 Office towers
+     (mix forge + indexfund) it is a real district, and it is the only way to
+     say "research here, not finance". It IS a reason the panel must not offer
+     it beside two chips that do change something without saying so, and that
+     is enforced rather than described: `inertOn()` in index.js computes the
+     pairing from the live zone table and the live band ladder, the chip row
+     marks it, and verify() fails if a chip is offered unqualified on a zone it
+     cannot change. The old desc here — "the only office district a young city
+     can afford" — pointed at exactly the zone where it does nothing, which is
+     how a placebo gets shipped with a recommendation attached. */
   { id: 'o_tech', cat: 'off', ico: '🔬', short: 'Technology', name: 'Technology',
     mix: [['reslab', 1]],
-    desc: 'Research spires. Clean work, no freight, and the only office district a young city can afford.' },
+    desc: 'Research spires and only research spires — it keeps finance off the block. On an Office park, which already builds nothing else, it changes nothing.' },
   { id: 'o_fin', cat: 'off', ico: '📈', short: 'Financial', name: 'Financial',
     mix: [['forge', 3], ['indexfund', 2]],
     desc: 'Trusts and funds. They mint nothing — they lift every Cinder earner in the city and invest a slice of the takings.' },

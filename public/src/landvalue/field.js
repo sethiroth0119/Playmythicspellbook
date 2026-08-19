@@ -75,6 +75,20 @@
 import { LV } from './tuning.js';
 import { bandIndex, premiumFull } from './bands.js';
 
+/* 🛣 WHAT THE HOST'S STENCIL COUNTS, WRITTEN DOWN EXACTLY ONCE.
+   Everything else this module says about "how do I raise the value" is DERIVED
+   — the amenity list comes back out of `amenityWeight()` itself (see
+   `amenityMenu()` below), which is the only way a list of remedies cannot
+   drift from the model that scores them. This one cannot be: `stencilAt(x,z)`
+   is the only thing that crosses `mount()`, so what is inside it is a black box
+   here and no derivation is available. So it is named once, and the two places
+   that need it — the causal list's label and `refusal()`'s kerb clause — both
+   quote THIS. A second copy of it in the refusal sentence is exactly the defect
+   the refusal sentence was rewritten to fix.
+   ⚠ If node-city's `lotValueStencil` gains or loses a term, this string and
+     `LV.inner` move in the same commit. */
+export const KERB = 'road, anchor, arena, beauty';
+
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const W = () => (typeof window !== 'undefined' ? window : {});
 
@@ -113,8 +127,20 @@ export function makeField(ctx) {
 
   let city = 20;
   let builtAt = -1e9;
-  let live = { demog: false, transit: false, water: false, pollution: false };
+  let live = { demog: false, transit: false, water: false, pollution: false, stencil: false };
   let stats = { min: 0, max: 0, mean: 0, hist: [0, 0, 0, 0, 0], maxStencil: 0, tiles: N };
+  /* 🔴 THE STENCIL IS THE ONLY TERM WITH A HOST CALL BEHIND IT, AND IT WAS THE
+     ONLY TERM WITH NO LIVE FLAG — which made it the one term that could fail
+     SILENTLY. `verify()` could catch `LV.stencilRef` going STALE (a stencil that
+     outgrew the anchor) and could not catch the stencil VANISHING: the try/catch
+     in rebuild reads a throw as 0, 0 is a legal reading for bare ground, and a
+     genuinely empty board legitimately sits near 0 — so no floor on the VALUE
+     can tell the two apart without false-positiving on every new city.
+     What separates them is not the number, it is whether the CALL THREW, and
+     that is knowable exactly here and nowhere else. So it is counted at the
+     source, published through `sources()`, and reported by `verify()`. */
+  const hasStencil = typeof ctx.stencilAt === 'function';
+  let stencilFails = 0, stencilErr = null, warnedStencil = false;
 
   const idx = (x, z) => z * GRID + x;
   const inGrid = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID;
@@ -235,17 +261,31 @@ export function makeField(ctx) {
     const tsrc = transitSources();
     const wmask = waterMask();
     const PL = POLL();
-    live = { demog: !!wsrc, transit: !!tsrc, water: !!wmask, pollution: !!PL };
+    /* ⚠ `stencil` is filled in BELOW, not here: it is the only flag that is not
+       "did a module answer" but "did the host call survive 576 invocations",
+       and that is not known until the loop has run. Seeded from the last pass
+       so a reader between the two lines never sees `undefined`. */
+    live = { demog: !!wsrc, transit: !!tsrc, water: !!wmask, pollution: !!PL, stencil: live.stencil };
 
     /* ① the host's stencil, and its live maximum — `verify()` uses it to catch
        `LV.stencilRef` going stale, which is the only thing anchoring the
        ladder to reality. */
-    let maxSten = 0;
+    let maxSten = 0, fails = 0;
     for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
       let s = 0;
-      try { s = +stencilAt(x, z) || 0; } catch (e) { s = 0; }
+      try { s = +stencilAt(x, z) || 0; }
+      catch (e) { s = 0; fails++; if (!stencilErr) stencilErr = (e && e.message) || String(e); }
       tStencil[idx(x, z)] = s;
       if (s > maxSten) maxSten = s;
+    }
+    stencilFails = fails;
+    live.stencil = hasStencil && !fails;
+    /* Reported at the source, and ONCE — a warning on every 2.5 s rebuild is a
+       warning everybody filters. `verify()` carries the standing state. */
+    if (fails && !warnedStencil) {
+      warnedStencil = true;
+      console.warn('[LandValue] the host stencil threw on ' + fails + ' of ' + N +
+                   ' tiles — the largest term in the model reads 0 there: ' + stencilErr);
     }
 
     /* ② reach — scatter, not gather. One pass over the tiles that HAVE a weight
@@ -343,7 +383,8 @@ export function makeField(ctx) {
       if (v < min) min = v; if (v > max) max = v; sum += v;
     }
     stats = { min: min === Infinity ? 0 : min, max: max === -Infinity ? 0 : max,
-              mean: sum / N, hist, maxStencil: maxSten, tiles: N, full: FULL, city };
+              mean: sum / N, hist, maxStencil: maxSten, tiles: N, full: FULL, city,
+              stencilHost: hasStencil, stencilFails, stencilErr };
     return true;
   }
 
@@ -372,13 +413,40 @@ export function makeField(ctx) {
       if (i < 0) return [];
       const m = polmul[i];
       return [
-        { k: 'stencil', ico: '🛣', label: 'Frontage — road, anchor, arena, beauty', v: tStencil[i] * m, src: 'host' },
+        /* `dead` rather than the panel's default "no module": this term's source
+           is node-city itself, and "no module" would send a reader looking for
+           a 404 that is not there. */
+        { k: 'stencil', ico: '🛣', label: 'Frontage — ' + KERB, v: tStencil[i] * m, src: 'host',
+          live: live.stencil, dead: hasStencil ? 'host threw' : 'not handed over' },
         { k: 'reach', ico: '🏪', label: 'Amenity within ' + LV.radius + ' tiles', v: tReach[i] * m, src: 'city' },
         { k: 'wealth', ico: '👥', label: 'Households nearby', v: tWealth[i] * m, src: 'demographics', live: live.demog },
         { k: 'transit', ico: '🚌', label: 'Served transit stop', v: tTransit[i] * m, src: 'transit', live: live.transit },
         { k: 'water', ico: '🌊', label: 'Waterfront', v: tWater[i] * m, src: 'water', live: live.water },
         { k: 'poison', ico: '☁', label: 'Pollution discount', v: -(tStencil[i] + tReach[i] + tWealth[i] + tTransit[i] + tWater[i]) * (1 - m), src: 'pollution', live: live.pollution },
       ];
+    },
+    /* 🏪 WHAT ACTUALLY RAISES THE VALUE AT RANGE, ASKED OF THE SCORER ITSELF.
+       The refusal sentence used to name three remedies and two of them did
+       nothing: an arena and a fountain are STENCIL terms (adjacency only) and
+       the Player Shop has no `svc` block at all, so it is worth zero at every
+       distance including on the kerb. A retyped list of advice is the same
+       class of defect as a retyped list of tenants — it is a claim nothing
+       checks — so this does not retype anything: it runs `amenityWeight()`
+       over the live BUILDINGS table and returns exactly what scores above zero.
+       Add an `svc` block to a building and it appears here on the next boot; a
+       building that loses one disappears. There is nothing to keep in step.
+       ⚠ ORDER IS WEIGHT DESCENDING, TIES IN THE GAME'S OWN TABLE ORDER. `sort`
+         is stable, so a tie falls back to how BUILDINGS is authored rather than
+         to the alphabet — which is why the third name a player is offered is a
+         Food Truck (18 ₵, cheapest thing in the list) and not a Clinic. */
+    amenityMenu() {
+      const out = [];
+      for (const id in BUILDINGS) {
+        const w = amenityWeight({ type: id });
+        if (w > 0) out.push({ type: id, w });
+      }
+      out.sort((a, b) => b.w - a.w);
+      return out;
     },
     fields: () => ({ premium, value, band, polmul, grid: GRID }),
     stats: () => { rebuild(false); return stats; },

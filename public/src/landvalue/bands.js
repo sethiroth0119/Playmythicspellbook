@@ -17,6 +17,35 @@
       mixes. A band whose set empties is a band that develops nothing, and the
       panel says so rather than pretending.
 
+   🔴 …AND THE SECOND HONEST CUT IS ONE LAYER PAST THAT, AND IT WAS MISSED
+      FIRST TIME ROUND. Being a real BUILDINGS key is not the same as being
+      something a ZONED PLOT CAN EVER DEVELOP INTO. `typeFor()` picks out of a
+      bag, and every bag in the game comes from either a /src/zoning zone `mix`
+      or a /src/districts specialisation `mix`; an id in neither can be listed
+      on a rung for ever and never appear on a street. Measured on the shipped
+      tables, SIX are in that position — `scrapmine`, `quarry`, `lumbercamp`,
+      `fibercroft`, `fuelrig` (Marginal) and `farm` (Modest), all of them
+      extraction tiles a player sites by hand on the resource it wants.
+      `compile()` now MARKS those rather than dropping them, and the two words
+      of that sentence are both deliberate:
+        · MARKS, because they are perfectly legal buildings to have on that
+          land — the ladder's claim is "this grade of land will take this", and
+          for a hand placement that claim is TRUE. Dropping them would answer a
+          question nobody asked, and `admits()` is asked by more than the
+          develop pass (see /src/districts `admitsAnywhere`).
+        · rather than DROPPING, because dropping is not local. /src/districts
+          validates its own spec mixes against `admits…` — an id no band admits
+          is culled from its bag — so narrowing this table to the ZONE mixes
+          alone would cull `arena`, `stadium`, `holdco`, `retail`, `railyard`,
+          `papermill`, `printworks` and `gasstation` out of the very
+          specialisations that exist to develop them, and Mythic Arena, Card
+          Works and Corporate would quietly become chips that build nothing.
+          That is a circular collapse, and it is the reason the recommendation
+          "just intersect and drop" was not taken.
+      What IS a failure, and what `verify()` now catches, is a band that lists
+      tenants of which NONE is developable: that is a rung the develop pass can
+      never climb, and it is a rule nobody enforces.
+
    So the brief's ladder is delivered in the buildings this city HAS. The shape
    survives the translation intact:
 
@@ -143,31 +172,52 @@ export function premiumFull() {
 
 /* ── COMPILE ────────────────────────────────────────────────────────────────
    Validate every id against what is REALLY in the game, once, at mount.
-     · a BUILDINGS id that does not exist is dropped (the /src/zoning rule);
-     · a zone id /src/zoning does not know is dropped;
-   and both are reported to the console ONCE, because a silently shrinking
+     · a BUILDINGS id that does not exist is DROPPED (the /src/zoning rule);
+     · a zone id /src/zoning does not know is DROPPED;
+     · a BUILDINGS id no live mix can develop is MARKED — see the header for
+       why this one is a mark and the other two are drops;
+   and all three are reported to the console ONCE, because a silently shrinking
    tenant table is a feature that quietly stops working. Nothing throws: a band
    that loses every tenant becomes a band that develops nothing, which is a
    legible state, and a crash is not.
+
+   ⚠ ABSENT SIBLING ⇒ OPEN, AND IT HAS TO BE THE MIXES THAT ARE ABSENT, NOT
+     JUST THE IDS. `zoneIds` empty already means "/src/zoning is not there to be
+     asked" and reads as drop nothing; `devIds` is the same contract for the
+     develop check, and the caller must only pass a non-empty list when it has
+     actually READ a catalogue of mixes. Passing `[]` because a module has not
+     mounted yet would mark the whole table hand-only, which is a sibling's
+     absence reported as a hostile fact — the thing this codebase keeps paying
+     for. `devKnown` comes back so the caller can re-ask once the mixes land.
 
    ⚠ PROGRESSION IS **NOT** BAKED IN HERE. `MythicProgress.buildingUnlocked()`
      is asked at CALL time, not at compile time, because the tree unlocks
      things during a session and a table compiled at boot would be a stale
      promise. See `setsFor()`. */
-export function compile(BUILDINGS, zoneIds) {
+export function compile(BUILDINGS, zoneIds, devIds) {
   const haveB = (t) => !!(BUILDINGS && BUILDINGS[t]);
   const haveZ = zoneIds && zoneIds.length ? (z) => zoneIds.indexOf(z) >= 0 : () => true;
-  const droppedB = [], droppedZ = [];
+  const devKnown = !!(devIds && devIds.length);
+  const canDev = devKnown ? (t) => devIds.indexOf(t) >= 0 : () => true;
+  const droppedB = [], droppedZ = [], handOnly = [];
   const tenants = {}, grades = {};
   for (const b of BANDS) {
     const src = TENANTS[b.id] || {};
-    const out = {};
+    const out = { handOnly: [] };
     for (const cat of ['com', 'off', 'ind', 'res']) {
       out[cat] = (src[cat] || []).filter((t) => {
         if (haveB(t)) return true;
         if (droppedB.indexOf(t) < 0) droppedB.push(t);
         return false;
       });
+      /* The mark, per band, because the panel prints per band — and per band
+         is also the only scale at which "this rung develops nothing" can be
+         asked, which is the failure `verify()` is looking for. */
+      for (const t of out[cat]) {
+        if (canDev(t)) continue;
+        if (out.handOnly.indexOf(t) < 0) out.handOnly.push(t);
+        if (handOnly.indexOf(t) < 0) handOnly.push(t);
+      }
     }
     tenants[b.id] = out;
     grades[b.id] = (GRADES[b.id] || []).filter((z) => {
@@ -178,5 +228,6 @@ export function compile(BUILDINGS, zoneIds) {
   }
   if (droppedB.length) console.warn('[LandValue] tenant ids not in BUILDINGS, dropped:', droppedB.join(', '));
   if (droppedZ.length) console.warn('[LandValue] grade ids not in the zone catalogue, dropped:', droppedZ.join(', '));
-  return { tenants, grades, droppedB, droppedZ };
+  if (handOnly.length) console.warn('[LandValue] tenant ids no zone or district mix develops — listed as hand-placed only, not dropped:', handOnly.join(', '));
+  return { tenants, grades, droppedB, droppedZ, handOnly, devKnown };
 }

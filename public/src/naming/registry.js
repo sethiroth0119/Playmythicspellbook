@@ -136,6 +136,40 @@ export class NameRegister {
     return (base + ' II').slice(0, NAME_MAX);
   }
 
+  /* ── 🏢 A NAME SUPPLIED FROM OUTSIDE ────────────────────────────────────
+     /src/tenants runs a market: NPC companies bid for zoned lots, and the
+     winner arrives with a name it already had while it was still a candidate
+     in the pool. That name has to become the name on the sign, and it must not
+     be marked CUSTOM — custom means "the player typed this", and the dossier
+     offers a reset affordance on exactly that basis.
+
+     So `pin` is a third source, sitting between the two that already exist:
+       1. custom  — the player typed it            (setName)
+       2. PINNED  — a module supplied it           (this)
+       3. auto    — generated from the tile        (_mint)
+     It never overwrites a custom name, and it de-duplicates against everything
+     already spoken for, exactly as `_mint` does — two shops with one name is
+     the bug the de-duplicator exists to prevent, and a name arriving from
+     another module is no more entitled to collide than a generated one.
+     Returns the string that was actually stored, or null. */
+  pin(key, raw) {
+    if (!this.eligible(key)) return null;
+    if (this.custom.has(key)) return this.names.get(key) || null;
+    const clean = sanitise(raw);
+    if (!clean) return null;
+    const taken = this._taken(key);
+    let name = clean;
+    if (taken.has(name.toLowerCase())) {
+      for (let n = 2; n < 40; n++) {
+        const alt = (clean + ' ' + n).slice(0, NAME_MAX);
+        if (!taken.has(alt.toLowerCase())) { name = alt; break; }
+      }
+    }
+    this.names.set(key, name);
+    try { this.ctx.saveSoon && this.ctx.saveSoon(); } catch (e) {}
+    return name;
+  }
+
   /* Every name currently spoken for: pinned names, plus live operation labels
      so a generated shop can never collide with a City Hall business. */
   _taken(exceptKey) {

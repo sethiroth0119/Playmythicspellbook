@@ -5139,6 +5139,31 @@ scene.add(ground);
      which reads WORSE than a colour step. */
 let NC_GROUND_AT = null;      // (wx, wz, out?) -> THREE.Color, the plate's tone there
 let NC_GROUND_MAP = null;     // the plate's grain canvas, so a patch can carry it
+/* ⭐ ROUND 12 — AND THE FIELD ITSELF, NOT JUST THE COLOUR IT PRODUCES.
+   NC_GROUND_AT answers "what tone is the ground here", which is everything a
+   PATCH needs. It is not everything a SCATTER needs, and /src/wild is a
+   scatter: to decide whether a tile carries thicket or bare dust it has to read
+   the moisture the tone was derived FROM, and to stand a rock on the plate it
+   has to know where the plate's surface actually is. Both are recoverable from
+   the colour only by inverting a two-ramp lerp — i.e. by transcribing the
+   expression, which is the exact failure the note above NC_GROUND_AT exists to
+   prevent. So the field is published in its own right:
+
+       NC_TERRAIN_AT(wx, wz) -> { h, m, y }
+         h  the height field, ~[0,1] piled around .5  (high = dry ridge)
+         m  the moisture field, ~[0,1]                (high = damp hollow)
+         y  the WORLD Y of the plate's surface there, edge fade included —
+            which is the only honest place to stand anything, because the
+            lattice is displaced by ±AMP and a scatter pinned to y = 0 floats
+            9mm over a ridge and buries itself 9mm into a hollow.
+
+   ⚠ IT IS A SAMPLER, NOT A COPY, for the same reason NC_GROUND_AT is: hfield,
+     mfield and AMP are locals of the plate block and a second evaluation
+     anywhere else is how the scatter and the ground it stands on drift apart.
+   ⚠ y IS EXACT ONLY INSIDE THE PLATE. Past the plate's own edge ramp the
+     surrounding plain is authored dead flat at y = 0 (see its rebuild below),
+     and this returns 0 out there — which is correct, not a fallback. */
+let NC_TERRAIN_AT = null;     // (wx, wz) -> {h, m, y}; see above
 /* ⚠ 3.71 TILES, AND IT IS NOT A DIVISOR OF 1 — the argument is at the map's own
    note inside the block; the declaration is out here so patches share it. */
 const NC_GRAIN_PER = 3.71;
@@ -5498,6 +5523,21 @@ const tileGroup = new THREE.Group(); scene.add(tileGroup);
       return o;
     };
     NC_GROUND_MAP = TEX_GROUND;
+    /* …and the field underneath it — see NC_TERRAIN_AT's note at its
+       declaration for why a scatter needs the field and not the tone.
+       ⚠ THE y LINE IS THE PLATE'S OWN, CHARACTER FOR CHARACTER. It is
+         `(H - .5) * 2 * AMP * (1 - fade)` in the build loop above and it is
+         that here, with the same `fade`, because the whole value of publishing
+         it is that a caller lands on the lattice rather than near it. If the
+         envelope or the ramp is ever retuned, both lines move together or the
+         scatter starts floating. */
+    NC_TERRAIN_AT = (wx, wz) => {
+      const u = wx + HALF, w = wz + HALF;
+      const H = hfield(u, w), M = mfield(u, w);
+      const d = Math.max(Math.abs(wx), Math.abs(wz)) / HALF;
+      const fade = d > .86 ? Math.min(1, (d - .86) / .14) : 0;
+      return { h: H, m: M, y: (H - .5) * 2 * AMP * (1 - fade) };
+    };
   }
 
   /* ⭐ AND THE PLAIN GETS THE SAME FIELD. `ground` (declared above, two
@@ -26805,6 +26845,12 @@ function manageAgents() {
   /* 🧱 The parcel layer rides the SAME lifecycle for the same reason, and
      early-outs on an unchanged tile signature exactly as parking does. */
   try { if (window.MythicParcel) window.MythicParcel.refresh(); } catch (e) {}
+  /* 🌾 …and the WILD GROUND, which is the parcel layer's complement: /src/parcel
+     dresses the tiles somebody built on and /src/wild dresses the ones nobody
+     has. It rides the same lifecycle for the same reason and early-outs on an
+     unchanged tile signature — and its signature is the one that matters most
+     here, because every single placement changes which tiles are empty. */
+  try { if (window.MythicWild) window.MythicWild.refresh(); } catch (e) {}
   const want = desiredAgentCounts();
   const have = { civilian: 0, truck: 0, police: 0, car: 0 };
   for (const a of agents) have[a.kind]++;
@@ -27811,14 +27857,26 @@ function renderVitals() {
            module answered": a brand-new city is one flat band everywhere, and a
            chip claiming a land value story on a board that has none is the same
            false HUD claim the ⚡ chip's comment above has had to close twice.
-           Two bands is the smallest thing worth opening the panel for. */
+           🔴 AND THE FIRST VERSION OF THAT GUARD DID NOT DO IT. It counted bands
+              with ANY tile in them, so ONE tile counted as a band — and on a
+              boot with no scene at all, three pre-placed anchors plus the
+              waterfront term put FOUR of 576 tiles into band 1 and the chip
+              rendered "🏷 20–52" over exactly the flat map the comment says it
+              refuses to claim a story about. The predicate now lives in
+              /src/landvalue (`spread()`), with its floor DERIVED from the host
+              stencil's own footprint, and this asks it instead of re-deriving
+              it: the same test was written out twice and both copies were
+              wrong, which is what a duplicated rule is for. */
       (function () {
         try {
           const LVm = window.MythicLandValue;
           if (!LVm || !LVm.ready()) return '';
           const st = LVm.stats();
           if (!st || !st.hist) return '';
-          if (st.hist.filter(v => v > 0).length < 2) return '';
+          /* Older module, no `spread()` — fall back to the shipped-before test
+             rather than hiding the chip: an absent seam is not a hostile fact. */
+          const sp = LVm.spread ? LVm.spread() : null;
+          if (sp ? sp.flat : st.hist.filter(v => v > 0).length < 2) return '';
           return '<span class="schip pw" id="lvchip" title="The spread of land value across the city. ' +
                  'Click for the land value info view — the bands, and what each grade of land will take.  (V)">🏷 ' +
                  Math.round(st.min) + '–' + Math.round(st.max) + '</span>';
@@ -35751,6 +35809,72 @@ function animate() {
       propMat: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .82, vertexColors: true }),
     });
   } catch (e) { console.warn('[Parcel] not mounted (non-fatal):', e); }
+  /* ══ 🌾 THE WILD GROUND ══════════════════════════════════════════════════
+     Rubric dimensions 5 and 10, and the half of dimension 5 the parcel layer
+     cannot reach. /src/parcel dresses the tiles somebody BUILT on; this dresses
+     the ~400 they have not, which on the round-9 aerial is most of the picture
+     and is an unbroken plane with nothing on it at any scale.
+
+     ⚠ IT IS A SCATTER AND NOT A THIRD MATERIAL PASS, and the module's header
+       carries the measurement that decided that: the plate already has two
+       ramps, a moisture field, a grain canvas and ±9mm of relief, and the two
+       rubric lines it was supposed to move have not moved in four rounds. What
+       is missing from flat ground under one key light is something that STANDS
+       on it and drops a shadow — which is the argument /src/crowd made for the
+       pavement, applied to the field.
+
+     🔴 THE GLOBALS TRAP, for the twelfth module. `game`, `scene`, `THREE`,
+     `GRID`, `HALF`, `isRoad`, `NAT_GROUND`, `NAT_PAINT`, `_VG_TEXDIV`,
+     `NC_GRAIN_PER`, `NC_GROUND_AT` and `NC_TERRAIN_AT` are top-level bindings
+     in THIS module script and are invisible to an ES module. This ctx is the
+     hand-over, exactly as Parcel above is.
+
+     What is NOT handed over: anything that writes a tile, the ledger, or a mesh
+     the module did not make. It reads game.tiles for OCCUPANCY ONLY — a key
+     that exists is a tile it stays off, which is also the whole of its z-fight
+     defence, since it therefore never draws on ground a recipe already owns. */
+  try {
+    const wdmod = await import('../src/wild/index.js?v=' + (window.NC_BUILD || 'r1'));
+    window.MythicWild = wdmod.mount({
+      THREE, scene, game, GRID, HALF, isRoad,
+      /* ⭐ THE TWO MATERIALS ARE THE ONES THIS FILE ALREADY HAS. NAT_GROUND is
+         the round-7 ground material — vertex-coloured and wearing the PLATE'S
+         OWN grain canvas at the plate's own period, which is what stops a bare
+         -earth patch reading as a smooth shape laid on rough ground. NAT_PAINT
+         is the unmapped vertex-colour material every small natural prop in the
+         city already rides. Handing them over rather than minting a pair costs
+         this layer zero materials and zero textures, and it means a tint pass
+         on either one reaches the wild ground for free.
+         ⚠ AND THEREFORE THE DIVIDE, WHICH IS DIFFERENT FOR THE TWO. A map is
+           decoded to LINEAR before it multiplies and NAT_GROUND's mean is
+           _TEX_LIN, so a colour authored for an unmapped material renders at
+           83% of its stated level the moment the map goes on. _VG_TEXDIV is
+           that number (or 1 when the plate published no map, e.g. the preview
+           path), and the module applies it to the FLAT bucket only. */
+      groundMat: NAT_GROUND, propMat: NAT_PAINT, texDiv: _VG_TEXDIV,
+      grainPer: NC_GRAIN_PER,
+      /* 🔴 HOW FAR A ROAD REACHES INTO THE TILE NEXT DOOR, AND IT IS NOT ZERO.
+         r1_road.js's APRON GEOMETRY block is explicit: a road tile aprons 150mm
+         PAST its own edge into the neighbouring plot, 110mm of that as paving
+         standing 46mm proud. So the visible grass/pavement line on an EMPTY
+         tile is not the tile line — it is 150mm inside it, and a layer that
+         does not know that stands its bushes inside the paving and draws its
+         kerb wear underneath it. Measured before this was handed over: 654 wear
+         bands built and rendered, zero pixels of any of them in the capture.
+         Handed over rather than copied so it stays the road's number. */
+      roadApron: RD_AP,
+      /* The plate's tone under a point, so every tuft, bush and scuff is tinted
+         from the ground it grew out of instead of from a fixed hex — the round
+         -5 critic's "sits ON TOP of the mottled ground and does not receive the
+         mottle", answered the same way the tree-base patches answered it. */
+      groundAt: NC_GROUND_AT,
+      /* …and the FIELD, not just the tone: the moisture the tone came from (so
+         thicket lands in the damp hollows and stone on the dry ridges) and the
+         plate's actual surface y (so nothing floats over a ridge or sinks into
+         a hollow — the lattice is displaced by ±9mm). See NC_TERRAIN_AT. */
+      terrainAt: NC_TERRAIN_AT,
+    });
+  } catch (e) { console.warn('[Wild] not mounted (non-fatal):', e); }
   /* ══ 🏠 THE DOSSIER LAYER ════════════════════════════════════════════════
      Addresses, zone, level pips, residents, household wealth and the money
      rows — /src/dossier. READ-ONLY: nothing in that module writes to a tile,

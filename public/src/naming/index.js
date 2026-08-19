@@ -227,6 +227,11 @@ export function mount(ctx) {
     autoFor: (k) => reg.autoFor(k),
     isCustom: (k) => reg.isCustom(k),
     setName: (k, v) => { const n = reg.setName(k, v); decorate(k); return n; },
+    /* 🏢 The seam /src/tenants writes a winning company's name through. It is
+       NOT setName: a tenant's name is not a name the player typed, and marking
+       it custom would offer a "reset to auto" that throws the business's own
+       name away. See NameRegister.pin. */
+    pinName: (k, v) => { const n = reg.pin(k, v); decorate(k); return n; },
     clearName: (k) => { const n = reg.clearName(k); decorate(k); return n; },
     address: (k) => reg.address(k),
     ensureAll: () => reg.ensureAll(),

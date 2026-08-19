@@ -70,8 +70,12 @@ function causes(terms) {
   let h = '<div class="lvcauses">';
   for (const t of terms) {
     if (t.live === false) {
+      /* `t.dead` overrides the default, because not every dead term is a missing
+         module: the frontage term's source is node-city itself, and telling a
+         reader "no module" would send them hunting a 404 that is not there. */
       h += '<div class="lvcause dim"><span class="lvsign">·</span><span class="lvci">' + t.ico + '</span>' +
-           '<span class="lvcl">' + esc(t.label) + '</span><span class="lvcv">no module</span></div>';
+           '<span class="lvcl">' + esc(t.label) + '</span><span class="lvcv">' +
+           esc(t.dead || 'no module') + '</span></div>';
       continue;
     }
     if (Math.abs(t.v) < 0.5) continue;
@@ -83,6 +87,18 @@ function causes(terms) {
   return h + '</div>';
 }
 
+/* The two halves of the remedy sentence, read off the payload `report()` built
+   from `remedies()`. Nothing is spelled out here: a panel that knew which
+   buildings raise land value would be a second opinion about the model, and
+   the model is one import away from being asked. */
+function remedyKerb(s) { return (s && s.remedy && s.remedy.kerb) || ''; }
+function remedyRange(s) {
+  const r = s && s.remedy;
+  if (!r || !r.top || !r.top.length) return '';
+  return r.top.join(', ') + (r.more ? ' and ' + r.more + ' more service ' +
+         (r.more === 1 ? 'building' : 'buildings') : '') + ', within ' + r.radius + ' tiles';
+}
+
 /* ── THE LADDER ────────────────────────────────────────────────────────────
    One row per band: how much of the city is in it, and what it will take. This
    is the whole panel's reason to exist. */
@@ -90,10 +106,24 @@ function ladder(s) {
   const hist = (s && s.stats && s.stats.hist) || [0, 0, 0, 0, 0];
   const total = hist.reduce((a, b) => a + b, 0) || 1;
   let h = '<div class="lvsec">THE LADDER<span class="lvsecv">' + n0(total) + ' tiles</span></div>';
+  let anyHand = false;
   for (let i = BANDS.length - 1; i >= 0; i--) {
     const b = BANDS[i];
     const sets = (s.sets && s.sets[b.id]) || { com: [], off: [], ind: [], res: [] };
-    const names = (ids) => ids.map(id => (s.nameOf ? s.nameOf(id) : id));
+    /* 🏗 THE HAND-ONLY MARK. A tenant this band admits that no zone mix and no
+       district specialisation can DEVELOP into — a Duel Arena on Prime land is
+       a legal building for that grade and a player can put one there, but no
+       bag `typeFor()` picks out of contains it. Marked rather than dropped, and
+       the whole argument for that is in bands.js: dropping is not local,
+       because /src/districts culls its own spec mixes against what the bands
+       admit, so a drop here would empty the very specialisations that exist to
+       build these. Also marked rather than hidden — "the land will take it, you
+       just have to place it yourself" is actionable; a silently shorter list
+       is not. */
+    const hand = sets.handOnly || [];
+    const mark = (id) => (s.nameOf ? s.nameOf(id) : id) + (hand.indexOf(id) >= 0 ? '†' : '');
+    const names = (ids) => ids.map(mark);
+    if (hand.length) anyHand = true;
     const line = [];
     if (sets.com.length) line.push('🛒 ' + names(sets.com).join(' · '));
     if (sets.off.length) line.push('🧠 ' + names(sets.off).join(' · '));
@@ -111,9 +141,20 @@ function ladder(s) {
         : '<div class="lvtenants none">Nothing this city can build wants land at this grade — a plot here stays vacant, and the development run reports it.</div>') +
       (sets.locked && sets.locked.length
         ? '<div class="lvlocked">🔒 ' + esc(names(sets.locked).join(' · ')) + ' — not unlocked yet</div>' : '') +
+      /* 🏠 THE ZONE'S OWN DISPLAY NAME, NOT ITS INTERNAL ID. This line used to
+         print `r_high, r_mixed` — every BUILDING on the row above went through
+         `nameOf()` and the grades did not, so the one line labelled ADVICE was
+         the one line a player could not read. `gradeOf` asks /src/zoning live
+         and falls back to the id only when there is nothing there to ask. */
       (sets.res && sets.res.grades && sets.res.grades.length
-        ? '<div class="lvgrades">🏠 suits ' + esc(sets.res.grades.join(', ')) + ' <span class="lvadv">(advice)</span></div>' : '') +
+        ? '<div class="lvgrades">🏠 suits ' +
+          esc(sets.res.grades.map(g => (s.gradeOf ? s.gradeOf(g) : g)).join(', ')) +
+          ' <span class="lvadv">(advice)</span></div>' : '') +
       '</div>';
+  }
+  if (anyHand) {
+    h += '<div class="lvfoot">† this land will take it, but nothing develops into it — no zone mix ' +
+         'and no district specialisation builds these, so they are yours to place by hand.</div>';
   }
   return h;
 }
@@ -164,10 +205,18 @@ function html(s, caps) {
 
   h += ladder(s);
 
+  /* ⚠ THE REMEDIES IN THIS NOTE ARE THE REFUSAL'S, DERIVED, NOT A SECOND COPY.
+     The first cut wrote them out here as well — "an arena or a fountain on a
+     corner, shops … within N tiles" — and two of those three raise nothing at
+     range: the arena is an ADJACENCY term in the host's stencil and the Player
+     Shop has no `svc` block, so it scores 0 at every distance. Both sentences
+     now come out of `remedies()`, which asks the scorer. See index.js. */
   if (s.flat) {
-    h += '<div class="lvnote">Every tile in this city is in one band. That is not a bug — nothing here is ' +
-         'separating one plot from another yet. Roads, an arena or a fountain on a corner, shops and a served ' +
-         'bus stop within ' + LV.radius + ' tiles are what pull a district up.</div>';
+    h += '<div class="lvnote">One band covers effectively this whole map' +
+         (s.spread ? ' (no other band holds more than ' + s.spread.floor + ' tiles)' : '') +
+         '. That is not a bug — nothing here is separating one plot from another yet. ' +
+         'Frontage counts only what TOUCHES a plot (' + esc(remedyKerb(s)) + ')' +
+         (remedyRange(s) ? '; what lifts it from further off is ' + esc(remedyRange(s)) : '') + '.</div>';
   }
   h += '<div class="lvnote">🏠 The residential lines are <b>advice, not a rule</b>. The zoning tool will not ' +
        'refuse a grade this land does not suit — who moves in is /src/demographics\' model and is deliberately ' +
@@ -222,6 +271,7 @@ const CSS = `
 #nclv .lvtenants.none{opacity:.7;font-style:italic}
 #nclv .lvlocked{color:#e0a060;font-size:10px;margin-top:2px}
 #nclv .lvgrades{color:var(--mist);font-size:10px;margin-top:2px;opacity:.85}
+#nclv .lvfoot{color:var(--mist);font-size:10px;margin-top:6px;opacity:.8;border-top:1px solid var(--edge);padding-top:4px}
 #nclv .lvadv{opacity:.7}
 #nclv .lvnote{margin-top:8px;font-size:11px;color:var(--mist);background:rgba(79,216,232,.06);
   border-left:2px solid var(--edge);padding:4px 7px;border-radius:0 4px 4px 0}

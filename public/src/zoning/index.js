@@ -393,9 +393,25 @@ export function mount(ctx) {
       if (LVm && LVm.ready()) bag = LVm.filterMix(x, z, bag) || [];
     } catch (e) { bag = MIX[zdef.id] || []; }
     if (!bag.length) return null;
-    // Deterministic per plot: the same tile always develops as the same thing,
-    // so a develop that was refused for money and retried later does not
-    // shuffle the street into a different set of businesses.
+    /* Deterministic per plot: the pick is a hash of the TILE, never a counter
+       and never a random draw, so a develop that was refused for money and
+       retried a minute later does not reshuffle the street.
+
+       ⚠ AND THAT IS A WEAKER PROMISE THAN IT USED TO BE — it says the same tile
+         picks the same INDEX, not that it develops the same THING. The index is
+         taken modulo `bag.length`, and the bag is filtered above by the tile's
+         land-value band, which MOVES. Measured through this very function on
+         the live page: tile 11,13 zoned `c_low` plans a `foodtruck` at a 45 ₵
+         premium (Modest) and a `grocery` at 96 ₵ (Established) — one tile, one
+         zone, one hash, two tenants.
+         That is the feature working — land value decides which of a zone's
+         businesses this plot can hold, and a plot whose neighbourhood got
+         richer should attract a better tenant — but the comment that used to
+         sit here read as if nothing could ever change what a plot builds, and a
+         reader who trusted it would have called the improvement a bug. What is
+         actually guaranteed is narrower and still worth having: FOR A FIXED
+         BAND the answer is fixed, so retrying a refused permit, reloading a
+         save, or planning twice in the same second all agree. */
     const h = (Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(z | 0, 0x165667b1) ^ 0x7f4a7c15) >>> 0;
     return bag[h % bag.length];
   }

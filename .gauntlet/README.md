@@ -47,6 +47,25 @@ shipped a semi whose eaves overhung the neighbour by 5mm and whose driveway the
 code was correctly refusing to build — neither visible in any capture, both a
 one-line number here. Run it after anything that touches `makeHousing`.
 
+**`precommit-scan.mjs`** — the THIRD gate, and the only one that is not about
+syntax. `_synckcheck.mjs` and `modcheck.mjs` answer "does this parse". This
+answers "did anyone mean this". It greps the working diff for markers an agent
+leaves on a line it intends to take back out — `TEMPORARY REGRESSION`,
+`DO NOT COMMIT`, `PRE-FIX BEHAVIOUR` and friends — and exits non-zero.
+
+🔴 It exists because commit `47e230f` shipped a deliberately broken line. An
+agent had injected a regression so it could photograph the pre-fix behaviour;
+a checkpoint commit sampled the tree at that instant; **both syntax gates passed,
+and always would have, because the injected line is valid JavaScript.** Checked
+out, that commit is a build where a fix is disabled while appearing present.
+See `public/src/districts/FIX-RECORD.md`, and `public/src/demographics/FIX-RECORD.md`
+for the first, milder instance of the same mechanism.
+
+It is a grep and it says so: it finds the marker, not the breakage. **The
+convention it depends on is that the marker goes ON the line you are about to
+remove**, not in a comment three lines away. Run it before any commit that sweeps
+a tree other agents are writing to.
+
 **`lumscan.mjs`** — prints one row of a capture as RGB + luminance. The round-9
 critic's own instrument: they answered "I can see the boundary at 4x" with "it
 is 1-2 px wide and ~15 units of separation from what it is meant to separate",

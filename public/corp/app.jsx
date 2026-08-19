@@ -899,6 +899,45 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
               {amOwner && <SumRow label="Over-cap hire" value={fee + ' Aza coin each'} />}
             </div>
             <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>Roster</div>
+            {/* 💸 TRANSFER INBOX — incoming payments to claim, outgoing ones you
+                can still cancel. A payment sits here until the recipient accepts
+                it, which is why corp_send_asset writes status 'sent' rather than
+                moving the asset outright. Hidden entirely when there is nothing
+                pending, so it costs the roster no space in the normal case. */}
+            {(() => {
+              const tf = (econ && Array.isArray(econ.transfers)) ? econ.transfers : [];
+              const inc = tf.filter(t => t.incoming), out = tf.filter(t => t.outgoing);
+              if (!inc.length && !out.length) return null;
+              return (
+                <div className="card flat" style={{ padding: 10, marginBottom: 12 }}>
+                  <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--aza)', marginBottom: 6 }}>
+                    💸 Transfers
+                  </div>
+                  <div className="col" style={{ gap: 5, maxHeight: '20vh', overflow: 'auto' }}>
+                    {inc.map(t => (
+                      <div key={t.id} className="row" style={{ justifyContent: 'space-between', gap: 8, padding: '6px 10px', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ fontWeight: 600, fontSize: 12 }}>{t.icon} {t.qty} {t.name}</span>
+                          <span className="mono muted" style={{ fontSize: 10.5 }}> · from {t.from}{t.note ? ' · ' + t.note : ''}</span>
+                        </span>
+                        <button className="btn sm" style={{ flexShrink: 0 }}
+                          onClick={() => act({ kind: 'corpClaim', transferId: t.id })}>📥 Claim</button>
+                      </div>
+                    ))}
+                    {out.map(t => (
+                      <div key={t.id} className="row" style={{ justifyContent: 'space-between', gap: 8, padding: '6px 10px', border: '1px dashed var(--line-soft)', borderRadius: 4, opacity: .8 }}>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ fontSize: 12 }}>{t.icon} {t.qty} {t.name}</span>
+                          <span className="mono muted" style={{ fontSize: 10.5 }}> · to {t.to} · awaiting claim</span>
+                        </span>
+                        <button className="btn sm" style={{ flexShrink: 0, color: 'var(--toxic)' }}
+                          onClick={() => act({ kind: 'corpCancel', transferId: t.id })}>↩ Cancel</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             <div className="col" style={{ gap: 4, maxHeight: '34vh', overflow: 'auto' }}>
               {roster.length === 0 && pendingHires.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Just you so far.</div>}
               {roster.map(m => (
@@ -910,6 +949,25 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
                         onChange={e => act({ kind: 'corpSetRole', userId: m.userId, role: e.target.value })} title="Assign position">
                         {CORP_ROLES.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                       </select>
+                      {/* 💸 PAY THIS MEMBER. The whole reason the owner opens this
+                          screen after a job is done. The server side has always
+                          existed (corp_send_asset); nothing in this app ever
+                          called it, which is why paying "did not work".
+                          Two-step by design: this creates a PENDING transfer the
+                          member claims from their inbox, so nothing lands in an
+                          account without the game acknowledging it and the sender
+                          can still cancel. */}
+                      <button className="btn sm" title={'Pay ' + m.name + ' from your Cinder'}
+                        onClick={() => {
+                          const raw = window.prompt('Pay ' + m.name + ' how much 🔥 Cinder?', '100');
+                          if (raw === null) return;
+                          const qty = parseInt(raw, 10);
+                          if (isNaN(qty) || qty <= 0) { window.alert('Enter a whole number greater than zero.'); return; }
+                          const note = window.prompt('What is this payment for? (optional)', 'Work completed') || '';
+                          act({ kind: 'corpSend', toId: m.userId, toName: m.name,
+                                assetKind: 'resource', itemId: 'cinder', name: 'Cinder', icon: '🔥',
+                                qty: qty, note: note });
+                        }}>💸 Pay</button>
                       <button className="btn sm" onClick={() => act({ kind: 'corpKick', userId: m.userId })} style={{ color: 'var(--toxic)' }}>Remove</button>
                     </span>
                   )}

@@ -16,6 +16,7 @@
     "deploy:check": "node deploy-all.mjs --dry"
   },
   "devDependencies": {
+    "@babel/standalone": "^8.0.4",
     "@gltf-transform/cli": "^4.4.2",
     "terser": "^5.48.0",
     "three": "^0.128.0",

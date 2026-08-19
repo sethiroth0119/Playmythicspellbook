@@ -36492,7 +36492,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y1';
+  window.BUILD_VERSION = 'v120y2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -81470,7 +81470,7 @@ function _baseNavTo(screen) {
 // so corpId is always real. All Supabase access is guarded — the app still
 // works (mock data) if offline / tables not yet set up.
 // ============================================================================
-const Corp = { mine: null, roster: [], requests: [], pendingHires: [], vault: [], directory: [], licenses: [], licensesUnknown: false, compliance: 0, complianceParts: [], treasury: 0, amOwner: false, _ensuring: false, _err: null, laws: null, lawsUnknown: false, _compRaw: null };
+const Corp = { mine: null, roster: [], requests: [], pendingHires: [], vault: [], transfers: [], directory: [], licenses: [], licensesUnknown: false, compliance: 0, complianceParts: [], treasury: 0, amOwner: false, _ensuring: false, _err: null, laws: null, lawsUnknown: false, _compRaw: null };
 // 🏦 Corp Treasury — a shared Cinder balance (append-only ledger; balance =
 // sum(amount)). Members deposit; node construction can be funded from it
 // instead of the founder's personal Cinder. No new race surface — same
@@ -82965,6 +82965,33 @@ async function _corpEnsureRun() {
             return { depId: v.depositor_id, dep: v.depositor_name || 'Member', kind: v.kind, id: v.item_id, name: v.name || v.item_id, icon: v.icon || '', qty: v.qty | 0 };
           }) : [];
         } catch (e) { Corp.vault = []; }
+        /* 💸 PENDING TRANSFERS — what someone has sent you and not yet claimed,
+           and what you have sent and can still cancel. Without this the corp
+           app's inbox and its history panel are structurally empty: the app was
+           built to display transfers and was never given any.
+           ⚠ Read only the rows RLS already lets us see — `ctr_sel` is
+           (from_id = auth.uid() or to_id = auth.uid()), so this cannot leak
+           another pair's business even though the query is corp-scoped.
+           A failed read leaves the previous list alone rather than blanking it,
+           for the same reason the licence shelf below does: an empty list
+           renders identically to "your money vanished". */
+        try {
+          const me = Profile.cloud && Profile.cloud.userId;
+          const tr = await Cloud.client.from('corp_transfers')
+            .select('id,corp_id,from_id,from_name,to_id,to_name,kind,item_id,name,icon,qty,note,status,created_at')
+            .eq('corp_id', c.data.id).eq('status', 'sent')
+            .order('created_at', { ascending: false }).limit(200);
+          if (tr && !tr.error && tr.data) {
+            Corp.transfers = tr.data.map(function (t) {
+              return { id: t.id, fromId: t.from_id, from: t.from_name || 'Member',
+                       toId: t.to_id, to: t.to_name || 'Member',
+                       kind: t.kind, itemId: t.item_id, name: t.name || t.item_id,
+                       icon: t.icon || '', qty: Number(t.qty) || 0, note: t.note || '',
+                       status: t.status, at: t.created_at,
+                       incoming: !!me && t.to_id === me, outgoing: !!me && t.from_id === me };
+            });
+          }
+        } catch (e) { /* keep whatever we had */ }
         // 📜 Licences held.
         /* 🔴 A FAILED READ IS NOT AN EMPTY LICENCE SHELF. This used to set
            Corp.licenses = [] on ANY failure — a thrown request, an RLS hiccup,
@@ -83063,7 +83090,7 @@ async function _corpEnsureRun() {
       // failed read is not an empty result — the same lesson opFetch learned
       // below. Wiping on error is how a network blip used to evict a real
       // corporation from the UI for the rest of the session.
-      Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.licenses = []; Corp.compliance = 0; Corp.complianceParts = []; Corp.treasury = 0; Corp.amOwner = false; Corp.laws = null; Corp.lawsUnknown = false; Corp._compRaw = null; try { Operations.list = []; } catch (e) {}
+      Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.transfers = []; Corp.licenses = []; Corp.compliance = 0; Corp.complianceParts = []; Corp.treasury = 0; Corp.amOwner = false; Corp.laws = null; Corp.lawsUnknown = false; Corp._compRaw = null; try { Operations.list = []; } catch (e) {}
     }
     // 🏢 Public directory of EVERY corporation started (so players who
     // aren't in one can see them). corporations select RLS is public.
@@ -83322,6 +83349,9 @@ function _jbEcon() {
     memberCap: CORP_MEMBER_CAP,
     overflowFee: CORP_OVERFLOW_FEE,
     vault: Corp.vault || [],
+    // 💸 pending member-to-member transfers — the inbox/history the corp app
+    // renders. Empty before 2026-08-19 because nothing ever fetched them.
+    transfers: Corp.transfers || [],
     corps: Corp.directory || [],
     depositable: _jbDepositable(),
     // 🖼 Admin-curated photos — published Catalog art with the admin's local
@@ -83995,6 +84025,85 @@ function _jbHandleAction(a) {
           await Cloud.client.from('corp_members').delete().eq('user_id', uid).eq('corp_id', Corp.mine.id);
           await Cloud.client.from('corp_requests').delete().eq('user_id', uid).eq('corp_id', Corp.mine.id);
           showToast('Member removed from the corporation.', 3000);
+          try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
+        } catch (e) {}
+      })();
+    /* 💸 PAYING A MEMBER FOR THEIR WORK — the host half, added 2026-08-19.
+       ─────────────────────────────────────────────────────────────────────
+       Reported: "players who own corporations pay other players for their
+       work … it is not working." It was not working because NOTHING CONNECTED
+       THE TWO HALVES.
+
+       The server side has been complete and deployed the whole time:
+       `corp_send_asset`, `corp_claim_transfer` and `corp_cancel_transfer` all
+       exist in production, all SECURITY DEFINER, all granted to
+       `authenticated` — verified against the live database. `corp_transfers`
+       has RLS on with a SELECT policy for both parties and INSERT/UPDATE/DELETE
+       deliberately revoked, because writes are supposed to go through those
+       RPCs. That design is right.
+
+       The client side had an inbox screen and a history screen and NO WAY TO
+       CREATE A TRANSFER: grep the corp app for the action kinds it can emit and
+       there is no send, no claim, no cancel. `corp_transfers` held zero rows —
+       not because nobody tried, but because no code path existed to try with.
+       The history panel's "No transfers logged." was guaranteed to be true
+       forever.
+
+       ⚠ THE RPCs ARE THE SECURITY BOUNDARY, NOT THIS CODE. corp_send_asset
+       checks signed-in, positive quantity, not-to-self, and BOTH parties'
+       membership of that corp, server-side, reading nothing from the caller it
+       can be lied to about. So the worst a bug here can do is fail — it cannot
+       mint, and it cannot move assets between strangers. Keep it that way: do
+       not add a client-side balance change beside these calls. */
+    } else if (a.kind === 'corpSend') {
+      (async function () {
+        try {
+          if (!Corp.mine) { showToast('You are not in a corporation.', 2600); return; }
+          if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
+            showToast('Sign in to send assets.', 2600); return;
+          }
+          const qty = Math.floor(Number(a.qty) || 0);
+          if (qty <= 0) { showToast('Enter an amount greater than zero.', 2600); return; }
+          const toId = (a.toId || '').toString();
+          if (!toId) { showToast('Pick who to pay.', 2600); return; }
+          const r = await Cloud.client.rpc('corp_send_asset', {
+            p_corp_id: Corp.mine.id, p_to_id: toId,
+            p_kind: (a.assetKind || 'resource'), p_item_id: (a.itemId || 'cinder'),
+            p_name: a.name || null, p_icon: a.icon || null,
+            p_qty: qty, p_note: a.note || null,
+            p_from_name: (Profile.name || null), p_to_name: (a.toName || null),
+          });
+          if (r && r.error) {
+            const m = (r.error.message || '') + '';
+            if (/PGRST202|does not exist|schema cache|Could not find the function/i.test(m + (r.error.code || ''))) {
+              showToast('⚠ Transfers are not installed on the server — run supabase-org-vault.sql.', 6000);
+            } else {
+              // The RPC raises readable messages ('recipient is not a member of
+              // that organization', 'cannot send to yourself'). Show them.
+              showToast('Transfer refused: ' + (m || 'unknown error'), 5000);
+            }
+            return;
+          }
+          showToast('💸 Sent — it waits in their inbox until they claim it.', 3600);
+          try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
+        } catch (e) { try { showToast('Transfer failed: ' + ((e && e.message) || e), 4000); } catch (e2) {} }
+      })();
+    } else if (a.kind === 'corpClaim' || a.kind === 'corpCancel') {
+      (async function () {
+        try {
+          const id = (a.transferId || '').toString();
+          if (!id) return;
+          if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return;
+          const fn = a.kind === 'corpClaim' ? 'corp_claim_transfer' : 'corp_cancel_transfer';
+          const r = await Cloud.client.rpc(fn, { p_id: id });
+          if (r && r.error) {
+            const m = (r.error.message || '') + '';
+            if (/PGRST202|does not exist|schema cache|Could not find the function/i.test(m + (r.error.code || ''))) {
+              showToast('⚠ Transfers are not installed on the server — run supabase-org-vault.sql.', 6000);
+            } else showToast((a.kind === 'corpClaim' ? 'Claim' : 'Cancel') + ' refused: ' + (m || 'unknown'), 5000);
+            return;
+          }
+          showToast(a.kind === 'corpClaim' ? '📥 Claimed.' : '↩ Cancelled — returned to you.', 3000);
           try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
         } catch (e) {}
       })();
@@ -106174,7 +106283,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120y1';
+const BB_VER = 'v120y2';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -211552,7 +211661,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120y1';
+  f.src = 'node-city/index.html?v=v120y2';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228729,8 +228838,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120y1">
-<script type="module" src="src/battle/hud.js?v=v120y1"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120y2">
+<script type="module" src="src/battle/hud.js?v=v120y2"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

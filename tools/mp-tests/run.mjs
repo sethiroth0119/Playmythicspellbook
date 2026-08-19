@@ -13,7 +13,7 @@
    — the first multiplayer load test passed while comparing nothing at all.
    The shipped tree is never written to; every mutation lands in a temp copy. */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, cpSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs'];
+
+/* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
+   a real ES module, not an extracted function, so its proof works by swapping
+   the module itself. `file` is repo-relative and defaults to public/index.html.
+   The copy is written to a mirror path under the temp dir so a module's own
+   relative imports still resolve. */
+const DEFAULT_TARGET = 'public/index.html';
 
 /* Each entry reverts ONE shipped fix by substring surgery, and names the bug it
    reintroduces. `find` must match exactly once — if index.html is edited such
@@ -65,14 +72,43 @@ const MUTATIONS = [
     find: "      for (const _mc of milled) _mpNotePrivateRemoval(state, _mc, 'deck', 'graveyard');",
     replace: '',
   },
+  {
+    /* The property-losing shape: shipping 40 of 100 because that is all there
+       was. Turn the refusal into a partial and the suite must go red.
+
+       ⚠ A PROOF CAN PASS FOR THE WRONG REASON, and this one did. The first
+         version replaced the `return` with `left = need;`, which is a TDZ error
+         (`left` is declared below it) — so the module threw ReferenceError, the
+         run went red, and the mutation was scored "proven" while demonstrating
+         nothing about whether the test can SEE a part-delivery. A mutation that
+         crashes the code under test proves only that the test executes it.
+         Neutering the CONDITION instead lets the function run to completion and
+         return a genuine partial, which is the thing the assertion is for.
+         Check that a red mutation is red for the reason you intended. */
+    name: 'planDraw part-delivers instead of refusing',
+    file: 'public/src/citytrade/plan.js',
+    find: '  if (available < need) {',
+    replace: '  if (false) {',
+  },
+  {
+    /* Make the cycle index depend on what has been settled rather than on the
+       clock, which is how two offline clients start disagreeing about which
+       cycle is which and the unique constraint stops guarding anything. */
+    name: 'cycle count stops being a function of the clock',
+    file: 'public/src/citytrade/plan.js',
+    find: '  const fired = Math.min(total, Math.floor(elapsed / periodMs));',
+    replace: '  const fired = Math.min(total, (settled || []).length + 1);',
+  },
 ];
 
-const runSuite = (srcOverride) => {
+const runSuite = (srcOverride, cwdOverride) => {
   let worst = 0;
   const out = [];
   for (const t of TESTS) {
     const r = spawnSync(process.execPath, [join(HERE, t)], {
-      cwd: ROOT,
+      // A module mutation runs the suite against a MIRRORED tree, so the tests'
+      // own `../../public/src/...` imports resolve to the mutated copy.
+      cwd: cwdOverride || ROOT,
       encoding: 'utf8',
       env: srcOverride ? { ...process.env, MP_SRC: srcOverride } : process.env,
     });
@@ -102,16 +138,43 @@ const tmp = mkdtempSync(join(tmpdir(), 'mp-gate-'));
 let broken = 0;
 try {
   for (const m of MUTATIONS) {
-    const hits = html.split(m.find).length - 1;
+    const target = m.file || DEFAULT_TARGET;
+    const source = target === DEFAULT_TARGET
+      ? html
+      : readFileSync(join(ROOT, target), 'utf8').replace(/\r\n/g, '\n');
+    const hits = source.split(m.find).length - 1;
     if (hits !== 1) {
-      console.log('  ⚠ PROOF BROKEN  "' + m.name + '" — anchor matched ' + hits + ' times, expected exactly 1.');
+      console.log('  ⚠ PROOF BROKEN  "' + m.name + '" — anchor matched ' + hits + ' times in ' + target + ', expected exactly 1.');
       console.log('                  The mutation did not apply, so this check is UNPROVEN.');
       broken++;
       continue;
     }
-    const copy = join(tmp, 'index.html');
-    writeFileSync(copy, html.replace(m.find, m.replace));
-    const r = runSuite(copy);
+    const mutated = source.replace(m.find, m.replace);
+    let r;
+    if (target === DEFAULT_TARGET) {
+      // index.html is reached through MP_SRC, so a bare copy is enough.
+      const copy = join(tmp, 'index.html');
+      writeFileSync(copy, mutated);
+      r = runSuite(copy, null);
+    } else {
+      /* A MODULE is imported by relative path, so it has to be mutated inside a
+         MIRROR of the tree — never in place. Editing the shipped file and
+         restoring afterwards is the shape that has already bitten this repo
+         once (deploy.mjs minifying index.html in place, where an interrupted
+         run left a 9 MB tree). A mirror cannot leave wreckage behind. */
+      const mirror = mkdtempSync(join(tmpdir(), 'mp-mut-'));
+      try {
+        cpSync(HERE, join(mirror, 'tools', 'mp-tests'), { recursive: true });
+        const dest = join(mirror, target);
+        mkdirSync(dirname(dest), { recursive: true });
+        writeFileSync(dest, mutated);
+        r = spawnSync(process.execPath, [join(mirror, 'tools', 'mp-tests', 'citytrade.mjs')],
+          { cwd: mirror, encoding: 'utf8' });
+        r = { status: r.status || 0, output: (r.stdout || '') + (r.stderr || '') };
+      } finally {
+        rmSync(mirror, { recursive: true, force: true });
+      }
+    }
     if (r.status === 0) {
       console.log('  ❌ NOT PROVEN   "' + m.name + '" — suite still passed with the fix reverted.');
       broken++;

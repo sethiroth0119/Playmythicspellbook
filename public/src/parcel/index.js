@@ -422,10 +422,10 @@ function reachable(occ) {
                fences and crops its whole tile, so this finds no ground at all
                on the standard district and correctly draws nothing.          */
 const FOUND = {
-  industry: { col: C_GRIT,  rate: .16, r0: .026, r1: .018 },
-  commerce: { col: C_MULCH, rate: .58, r0: .032, r1: .026 },
-  civic:    { col: C_MULCH, rate: .64, r0: .034, r1: .026 },
-  farm:     { col: C_GRIT,  rate: .34, r0: .030, r1: .022 },
+  industry: { col: C_GRIT,  rate: .20, r0: .024, r1: .016, h: .024 },
+  commerce: { col: C_MULCH, rate: .58, r0: .032, r1: .024, h: .034 },
+  civic:    { col: C_MULCH, rate: .64, r0: .034, r1: .024, h: .034 },
+  farm:     { col: C_GRIT,  rate: .34, r0: .030, r1: .022, h: .028 },
 };
 
 /* Draw it. `skip(lx,lz)` is the caller's veto — the drive corridor and the
@@ -475,10 +475,13 @@ function foundationEdge(S, R, cls, mesh, cx, cz, RD_Y, y, skip) {
       let e = i; while (e + 1 < FN && ring[j * FN + e + 1]) e++;
       const w = (e - i + 1) * FCELL;
       const mx = cx + ((i + e + 2) / 2) * FCELL - .5, mz = cz + (j + .5) * FCELL - .5;
-      /* .034 tall, seated so its underside is 8mm BELOW the layer's prop datum
-         and therefore under the buildable plate — a bed that floats reads as a
-         tray, and the plate is what hides the join. */
-      box(S, F.col, w, .034, FCELL, mx, y + .009, mz);
+      /* Seated so its underside is 8mm BELOW the layer's prop datum and
+         therefore under the buildable plate — a bed that floats reads as a
+         tray, and the plate is what hides the join. The height is the class's:
+         a planted bed stands 34mm and an industrial one 24mm, because at 34mm
+         a grit margin beside a dock stopped reading as a kerb and started
+         reading as a bench. */
+      box(S, F.col, w, F.h, FCELL, mx, y + F.h / 2 - .008, mz);
       i = e + 1;
     }
   }
@@ -488,7 +491,7 @@ function foundationEdge(S, R, cls, mesh, cx, cz, RD_Y, y, skip) {
     if (!ring[j * FN + i]) continue;
     if (R() > F.rate) continue;
     const lx = (i + .5) * FCELL - .5, lz = (j + .5) * FCELL - .5;
-    shrub(S, R, cx + lx, cz + lz, y + .026, F.r0 + R() * F.r1);
+    shrub(S, R, cx + lx, cz + lz, y + F.h - .008, F.r0 + R() * F.r1);
   }
   return cells;
 }
@@ -712,6 +715,16 @@ function build() {
          centreline, and a bed across them is a bed a lorry drives through. */
       const a = fl * fx + fz2 * fz, l = fl * (-fz) + fz2 * fx;
       if (a > 0 && Math.abs(l) < dw + .045) return true;
+      /* 🐞 AND THE WHOLE FRONTAGE OF AN INDUSTRIAL PLOT, NOT JUST ITS DRIVE.
+         Looked at, at the district camera, before this line: the first cut
+         vetoed only the drive corridor, so a depot's bed ran the rest of the
+         way across its own DOCK APRON — over the yellow-and-black hazard
+         chevrons the recipe paints in front of its roller shutters, which is
+         the one thing on that tile the reference frame names explicitly. At
+         4x it read as a plank with two bushes on it lying across the loading
+         bay. A yard that has to take a lorry is kept clear across its whole
+         width; the flanks and the rear are where anything grows. */
+      if (cls === 'industry' && a > -.02) return true;
       for (let i = 0; i < propXZ.length; i += 2)
         if (Math.abs(cx + fl - propXZ[i]) < .085 && Math.abs(cz + fz2 - propXZ[i + 1]) < .085) return true;
       return false;

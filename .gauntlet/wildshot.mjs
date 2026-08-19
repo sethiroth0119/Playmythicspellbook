@@ -186,6 +186,27 @@ const cost = await page.evaluate(() => {
   return {on,off,delta:{meshes:on.meshes-off.meshes,calls:on.calls-off.calls,tris:on.tris-off.tris}};
 });
 
-console.log(JSON.stringify({ out:OUT, crop, timing, cost,
-  logs: logs.filter(l=>/Wild|error|Error|FAIL/.test(l)).slice(-10) }, null, 2));
 await browser.close(); server.close();
+
+/* ── and the diff, against the control, in the same run ─────────────────
+   ⚠ THE FLOOR IS NOT A CONSTANT. On the street framing it runs above 10% on
+     its own — traffic and pedestrians move between two frames 900ms apart and
+     they cover most of that picture. A net figure computed under a floor that
+     large is not evidence either way, which is the whole reason the floor is
+     printed beside it instead of being subtracted quietly. */
+const raw = async f => sharp(OUT+'/'+f).raw().toBuffer({resolveWithObject:true});
+const cmp = (a,b) => { const W=a.info.width,H=a.info.height,C=a.info.channels; let ch=0,tot=0;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){ const i=(y*W+x)*C;
+    if((x>1265&&y>370&&y<845)||y<115||y>845) continue;   // the UI panel and the HUD bands
+    const d=Math.abs(a.data[i]-b.data[i])+Math.abs(a.data[i+1]-b.data[i+1])+Math.abs(a.data[i+2]-b.data[i+2]);
+    tot++; if(d>12)ch++; }
+  return 100*ch/tot; };
+const diff=[];
+for(const s of ['aerial','street','district']){
+  const on=await raw(s+'-on.png'), on2=await raw(s+'-on2.png'), off=await raw(s+'-off.png');
+  const floor=cmp(on,on2), net=cmp(on,off);
+  diff.push({shot:s, driftFloor:+floor.toFixed(2), onVsOff:+net.toFixed(2),
+             netContribution:+(net-floor).toFixed(2)});
+}
+console.log(JSON.stringify({ out:OUT, crop, timing, cost, diff,
+  logs: logs.filter(l=>/Wild|error|Error|FAIL/.test(l)).slice(-10) }, null, 2));

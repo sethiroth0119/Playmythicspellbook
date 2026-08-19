@@ -11,8 +11,14 @@
    where `src` is the live call the value came from, in words, and `un` marks
    a row the game does not model. A row is LIVE (read off another layer), DERIVED
    (arithmetic over live readings with no free parameters), SAMPLED (a
-   deterministic draw — there is exactly one, the age, and it is printed with a
-   "≈" so the panel cannot pass a draw off as a reading) or UNAVAILABLE.
+   deterministic draw, or arithmetic over one, printed with a "≈" so the panel
+   cannot pass a draw off as a reading) or UNAVAILABLE.
+   🔴 "OR ARITHMETIC OVER ONE" IS NOT PEDANTRY, IT IS A BUG THIS PANEL SHIPPED.
+      The legend used to read "there is exactly one, the age". There is exactly
+      one DRAW — but the Job level row is bounded by (age − 18) and that bound is
+      the binding one for almost every citizen of a settled city, so the row was
+      printing a sample under the word DERIVED. A quantity computed from a
+      sample is a sample. Job level is SAMPLED per citizen now, and says which.
    This is not decoration: this project has
    already had to rip content out of two panels for inventing numbers (a demand
    cause with no model behind it, and a water alarm that contradicted the panel
@@ -36,6 +42,10 @@
                             (MythicDemographics.report().ages) and draws a year
                             inside their band off a hash of their id. It is a
                             SAMPLE, it is printed with a "≈", and it says so.
+                            The deal matches the pyramid to within one person
+                            WHEN IT IS MADE and drifts thereafter — nobody on
+                            the roster dies or leaves — and the row says that
+                            too, with the live figure once the bound breaks.
                             UNAVAILABLE, word for word as before, with no
                             /src/lifepath.
      Education    DERIVED   a FLOOR, not a value: the wage band of their
@@ -51,12 +61,18 @@
                             derives residence rather than storing it; this
                             reads that deal, it does not re-deal it.
      Occupation   LIVE      their crewed tile, else the economy's firm.
-     Job level    DERIVED   their employer's level on ECON.firm.levels is how
-                            many grades it has; tenure — bounded by the age of
-                            the building it stands in and by the years since
-                            they turned 18 — is how far up they are. Both
-                            stamps are the game's own. UNAVAILABLE with no
-                            /src/lifepath, and with no firm to stand in.
+     Job level    SAMPLED   …when the bound that binds is the years since they
+                  ‑or‑      turned 18, which is the sampled age and is the
+                  DERIVED   normal case in a settled city — then it prints
+                            "≈ Grade N of C" and leads on SAMPLED.
+                            DERIVED only when the workplace itself is the
+                            shorter ceiling (a young or rebuilt building), which
+                            is a real stamp. Which one bound it is in the source
+                            line, named. How many grades a firm has, and how
+                            long a grade takes, are ANALOGIES — labelled as such
+                            in the row, not passed off as readings.
+                            UNAVAILABLE with no /src/lifepath, and with no firm
+                            to stand in.
      Work band    DERIVED   the firm's industry band (ECON.labor.bands).
      Employer     LIVE      MythicCitizens.employer(id).
      Destination  LIVE      the last tile of the agent's path.
@@ -274,15 +290,34 @@ export function factsOf(C, id) {
      second, different truth about them.
      What changed is that /src/lifepath makes it the SAME truth rather than a
      second one — it deals every named citizen into the city's live pyramid
-     (MythicDemographics.report().ages) so the roster REPRODUCES that
-     distribution, then draws the year inside the band off a hash of the id.
+     (MythicDemographics.report().ages), then draws the year inside the band off
+     a hash of the id.
      🔴 So it is a sample, and the panel must never let it read as a reading:
         the value carries a "≈", the source line leads with the word SAMPLED,
-        and the module reports `sampled: true` on every answer. */
+        and the module reports `sampled: true` on every answer.
+     ⚠ AND THE DISTRIBUTION CLAIM IS TENSED, WHICH IT WAS NOT. These words said
+       the roster "REPRODUCES that distribution", present tense, unqualified.
+       It reproduces it AT THE MOMENT EACH PERSON IS DEALT and drifts from it
+       every second afterwards, because nobody on the named roster ever dies,
+       retires off it or leaves while the clock ages all of them together —
+       about three real hours of play puts the largest band outside the
+       one-person bound the deal guarantees. The source line now says so, and
+       when the module can see the bound is actually broken it says THAT
+       instead, in the present tense, with the number. See /src/lifepath
+       model.js distribution() for why the alternatives (re-dealing, ageing
+       people out) were rejected rather than skipped. */
   const LP = LIFEPATH();
   const la = LP ? (() => { try { return LP.age(c.id); } catch (e) { return null; } })() : null;
   const clk = LP ? (() => { try { return LP.clock(); } catch (e) { return null; } })() : null;
   if (la && la.ok && clk && clk.ok) {
+    /* 📊 The live drift, read off the module's own falsifiability seam rather
+       than asserted here. It is a whole-roster figure and this is a per-person
+       row, but the claim being qualified is a whole-roster claim, so the
+       qualification belongs in the same sentence that makes it. Guarded and
+       optional: an older /src/lifepath with no `distribution` answers nothing
+       and the row simply carries the general warning. */
+    const dist = (LP && typeof LP.distribution === 'function')
+      ? (() => { try { return LP.distribution(); } catch (e) { return null; } })() : null;
     citizenRows.push(row('Age', '≈ ' + la.whole + ' years · ' + la.bandIco + ' ' + la.bandLabel,
       'SAMPLED, not recorded — the roster still carries no age. /src/lifepath deals every named ' +
       'citizen into the city’s OWN age pyramid (MythicDemographics.report().ages, children ' +
@@ -294,7 +329,15 @@ export function factsOf(C, id) {
       clk.workingLifeYears + '-year working life) — about ' + clk.hoursPerYear.toFixed(1) +
       ' hours of play per year of their life. Born at cityAge ' + la.born + ' s' +
       (la.pastExpectancy ? '; they are past the ' + clk.lifeExpectancy.toFixed(0) +
-        '-year life expectancy the same table derives, which is a real state and not a fault' : '')));
+        '-year life expectancy the same table derives, which is a real state and not a fault' : '') +
+      /* ⚠ THE DRIFT, AND IT IS NOT A FOOTNOTE. Without this sentence the row
+         above claims the roster matches the city's pyramid, which is true for
+         about three hours of play and false for ever after. */
+      '. ⚠ THE DEAL MATCHED THE CITY’S PYRAMID TO WITHIN ONE PERSON WHEN IT WAS MADE, AND DRIFTS ' +
+      'AFTERWARDS: no named citizen ever dies, retires off the roster or leaves, so they all age ' +
+      'together on one clock while the city’s own pyramid does not follow them. About three real ' +
+      'hours of play is enough to put the largest band outside that one-person bound' +
+      (dist && dist.ok && dist.drift ? ', and it is outside it now — ' + dist.drift : '')));
   } else {
     citizenRows.push(unav('Age',
       'the roster carries id, name, job, mood and employer — no age. /src/demographics models an ' +
@@ -387,11 +430,24 @@ export function factsOf(C, id) {
   /* ── 🪜 JOB LEVEL ────────────────────────────────────────────────────────
      The footer's old claim — "this city keeps no rank for a person" — was true
      of the ROSTER and is still true of it. What /src/lifepath adds is not a
-     rank field on a person; it is the observation that the game already has
-     exactly one rank ladder, ECON.firm.levels, and that a person's place on
-     their employer's own ladder is computable from two stamps the game already
-     saves: when the building their firm occupies was raised, and how long they
-     have been of working age.
+     rank field on a person; it is a CEILING on where they could stand on their
+     employer's own ladder, out of the age of the building that employer occupies
+     and the years since they turned 18.
+     🔴 AND THIS ROW IS SAMPLED FOR MOST PEOPLE, WHICH IT DID NOT USED TO ADMIT.
+        Its old source line opened "DERIVED from two live readings and one
+        bound", and the bound IS the sample: the second half of the ceiling is
+        (age − 18), the age is a draw, and once a building has stood longer than
+        a worker's whole career — every mature city, 39 of 40 citizens measured
+        — that half is the one that binds and the grade is a pure function of
+        the draw. So the row now asks the module which term bound it and prints
+        "≈ Grade N of C" under the word SAMPLED whenever the answer is the
+        worklife, exactly as the Age row above it has always done. UNAVAILABLE
+        was the considered alternative; /src/lifepath model.js argues why the
+        marking is the better answer and what it would have cost.
+     ⚠ AND THE LADDER IS AN ANALOGY. ECON.firm.levels gates on employees,
+       revenue and customers — it is a company-size class, so "as many grades as
+       levels" is a choice this model makes and the row says so rather than
+       calling it a derivation.
      🔴 IT IS NOT A SECOND OPINION ABOUT EMPLOYMENT. Who they work for is
         MythicCitizens.employer(id) and the firm behind it, read here and never
         written; if that changes, this changes with it, because nothing about
@@ -401,20 +457,62 @@ export function factsOf(C, id) {
        depend on when the player looked. The row says the word. */
   const lc = LP ? (() => { try { return LP.career(c.id); } catch (e) { return null; } })() : null;
   if (lc && lc.ok && clk && clk.ok) {
-    occRows.push(row('Job level',
-      'Grade ' + lc.grade + ' of ' + lc.cap + ' · ' + lc.firm.levelIco + ' ' + lc.firm.levelName,
-      'DERIVED from two live readings and one bound. Their employer stands at level ' + lc.cap +
-      ' of ' + lc.ladder + ' on ECON.firm.levels (MythicEconomy.firm(' + lc.firm.id + ').level), and a ' +
-      'firm has as many grades as it has levels — so a ' + lc.firm.levelName + ' has ' + lc.cap +
-      '. They can have worked there at most ' + lc.tenureYears.toFixed(1) + ' years: ' +
-      (lc.siteFrom === 'tile'
-        ? 'the building it occupies (' + lc.siteKey + ') has stood ' + lc.siteYears.toFixed(1) + ' years'
+    /* 🏢 WHERE THE SITE CEILING CAME FROM, IN WORDS. Three provenances, not
+       two: the third ('gone') is a firm that names a tile which carries no
+       raise stamp. This row used to describe that case as "the building it
+       occupies (3,3) has stood 3.5 years" — a building that does not exist,
+       with the city's age printed as its age. See model.js careerOf(). */
+    const siteWords = lc.siteFrom === 'tile'
+      ? 'the building it occupies (' + lc.siteKey + ') has stood ' + lc.siteYears.toFixed(1) + ' years'
+      : lc.siteFrom === 'gone'
+        ? 'the firm names tile ' + lc.siteKey + ' but nothing there carries a raise stamp — the ' +
+          'building was cleared, or this host handed no tile clock over — so the ceiling falls back ' +
+          'to the age of the city itself, ' + lc.siteYears.toFixed(1) + ' years'
         : 'the firm holds no tile of its own, so the ceiling is the age of the city itself, ' +
-          lc.siteYears.toFixed(1) + ' years') +
-      ', capped by the ' + lc.workedYears.toFixed(1) + ' years since they turned ' + clk.workAge +
-      '. One grade per ' + clk.gradeYears.toFixed(1) + ' years — that is ' +
-      'ECON.demographics.education.graduatePerDay, the only rate this game has for a person moving ' +
-      'up a rung, reused rather than copied. ⚠ A CEILING ON TENURE, NOT A HIRE DATE: the roster ' +
+          lc.siteYears.toFixed(1) + ' years';
+    /* ⚠ NAME THE TERM THAT IS ACTUALLY CAPPING. The old template always ended
+       "…capped by the N years since they turned 18", whichever half was
+       smaller — so on the whole roster of a mature city it printed "3.5 years:
+       the building has stood 3.5 years, capped by the 23.6 years since they
+       turned 18", which is backwards. It branches now. */
+    const ceilWords = lc.tenureFrom === 'worklife'
+      ? 'and it is THEIR OWN AGE that caps it: the ' + lc.workedYears.toFixed(1) + ' years since ' +
+        'they turned ' + clk.workAge + ', which is shorter than the ' + lc.siteYears.toFixed(1) +
+        ' years ' + (lc.siteFrom === 'tile' ? 'their workplace has stood' : 'the city has stood') +
+        '. 🔴 So this row is a restatement of the SAMPLED age above it — that is why it carries a ' +
+        '"≈" and why this line says SAMPLED and not DERIVED'
+      : 'and it is the SITE that caps it: ' + siteWords + ', shorter than the ' +
+        lc.workedYears.toFixed(1) + ' years since they turned ' + clk.workAge +
+        (lc.siteFrom === 'tile'
+          ? '. ⚠ That is the age of the building standing there NOW: tile.born is stamped at ' +
+            'placement, so demolishing and re-raising the same workplace takes this ceiling — and ' +
+            'every grade under it — back to zero, with nobody’s job having changed. The roster ' +
+            'keeps no hire date to override it and a firm record carries no founding date either'
+          : '');
+    occRows.push(row('Job level',
+      (lc.sampled ? '≈ ' : '') + 'Grade ' + lc.grade + ' of ' + lc.cap,
+      /* ⚠ THE VALUE IS THE GRADE AND NOTHING ELSE. It used to end
+         "· 🏢 Major Business", which is ECON.firm.levels[2].name — the
+         EMPLOYER'S SIZE CLASS. On the right-hand side of a row labelled "Job
+         level" a player reads that as the person's title. The firm's class is
+         the Employer row's business and this row's source line's. */
+      (lc.sampled
+        ? 'SAMPLED, because the number that caps this is the sampled age above. '
+        : 'DERIVED from two live readings and one bound. ') +
+      'Their employer stands at level ' + lc.cap + ' of ' + lc.ladder + ' on ECON.firm.levels ' +
+      '(MythicEconomy.firm(' + lc.firm.id + ').level) — ' + lc.firm.levelIco + ' ' +
+      lc.firm.levelName + ', which is a COMPANY-SIZE class and not a job title. ' +
+      '⚠ That a firm has as many employee grades as it has levels is an ANALOGY this model makes, ' +
+      'not something read out of that table: the levels gate on headcount, revenue and customers, ' +
+      'and none of them is about a person. What IS read off ECON is the direction — a bigger firm ' +
+      'has more rungs than a smaller one. They can have worked there at most ' +
+      lc.tenureYears.toFixed(1) + ' years, ' + ceilWords +
+      '. One grade per ' + clk.gradeYears.toFixed(1) + ' years, from ' +
+      'ECON.demographics.education.graduatePerDay — ⚠ also an ANALOGY: that rate moves an ' +
+      'in-school household one EDUCATION rung, and this game models no promotion at all. It is ' +
+      'used because it is the only live rate in the table whose subject is a person advancing a ' +
+      'step, and a written-down "years per promotion" would be a number with nothing behind it. ' +
+      '⚠ A CEILING ON TENURE, NOT A HIRE DATE: the roster ' +
       'keeps none, and inventing one would make this number depend on when you opened the panel' +
       (lc.capped ? '. Their tenure alone would carry them to grade ' + lc.rungs + '; their ' +
         'employer’s level is what holds them at ' + lc.grade + ' — nobody is a regional ' +
@@ -432,16 +530,40 @@ export function factsOf(C, id) {
   }
 
   if (bi) {
+    /* 💷 THE WAGE THIS EMPLOYER ACTUALLY PAYS, NOT THE BASE OF THE LADDER.
+       ⚠ THE OLD REASONING HERE FAILED ON ITS OWN TERMS AND IS WORTH KEEPING.
+         This row printed the band's BASE wage with the words "at FIRM LEVEL 1",
+         directly beneath a Job level row saying "Grade 2 of 3" — which reads as
+         a flat contradiction about the same firm. The defence was that
+         firms.js pays band.wage × ECON.firm.levels[level].wageMul, does not
+         expose the product, and that computing it here "would be a second
+         opinion about pay". It is not: bandInfo() ALREADY reads
+         ECON.labor.bands[band].wage and /src/lifepath ALREADY reads
+         ECON.firm.levels[level] for this very citizen. Multiplying two fields
+         of the same table is the same lookup firms.js does (payWages,
+         wageBill, unitCost — all three lines are identical), not a rival model.
+       The level comes from the career read, which has already clamped it into
+       the ladder; with no career read there is no level to apply and the row
+       falls back to the base, saying which. */
+    const lvlDef = (() => {
+      try {
+        if (!lc || !lc.ok) return null;
+        const L = ECONOMY().ECON.firm.levels[lc.firm.level - 1];
+        return (L && isFinite(L.wageMul)) ? L : null;
+      } catch (e) { return null; }
+    })();
+    const paid = (bi.wage != null && lvlDef) ? bi.wage * lvlDef.wageMul : null;
     occRows.push(row('Work band', bi.ico + ' ' + bi.label,
       'DERIVED: MythicEconomy.industries.' + emp.ind + '.band = "' + bi.band + '" — the band this ' +
-      'firm draws its workforce from' + (bi.wage != null ? ', paid ' + bi.wage + ' 🔥 an economic day at FIRM LEVEL 1' : '')));
-    /* ⚠ "at firm level 1" is ECON.labor.bands[band].wage, the base of the wage
-       ladder — NOT a claim that this firm stands at level 1, which the Job
-       level row above may well say is 3. firms.js pays
-       band.wage × ECON.firm.levels[level].wageMul and does not expose the
-       product, and computing it here would be a second opinion about pay. The
-       words were "at level 1" until the Job level row landed beside them and
-       made that read like a contradiction. */
+      'firm draws its workforce from' +
+      (bi.wage == null ? ''
+        : paid != null
+          ? ', paid ' + (Math.round(paid * 100) / 100) + ' 🔥 an economic day: ECON.labor.bands.' +
+            bi.band + '.wage (' + bi.wage + ') × the ×' + lvlDef.wageMul + ' a level-' +
+            lc.firm.level + ' employer carries. That product is the line firms.js itself pays'
+          : ', paid ' + bi.wage + ' 🔥 an economic day at the BASE of the wage ladder — this ' +
+            'employer’s level is not readable here, so the multiplier ECON.firm.levels carries ' +
+            'is not applied')));
   } else if (jobTile) {
     occRows.push(unav('Work band',
       'no firm stands on tile ' + jobTile + ', so this is a civic seat and the economy prices no ' +

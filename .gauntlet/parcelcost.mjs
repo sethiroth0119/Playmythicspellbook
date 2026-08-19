@@ -44,6 +44,11 @@ const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromi
          '--no-sandbox','--disable-dev-shm-usage','--no-proxy-server'],
   env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(HTTPS?_PROXY|https?_proxy|ALL_PROXY|all_proxy)$/.test(k))) });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1 });
+/* ⚠ SwiftShader renders the built district at well under a frame a second and
+   the street framing is the slowest of the three. Playwright's 30 s default
+   screenshot timeout throws there, which is a tool failure that looks like a
+   page failure. */
+page.setDefaultTimeout(180000);
 await page.route('**/*', r => { const u = r.request().url();
   (u.startsWith('data:') || u.includes('127.0.0.1') || u.includes('localhost') || u.includes('jsdelivr')) ? r.continue() : r.abort(); });
 await page.route('**/cdn.jsdelivr.net/npm/three@0.171.0/**', r => {
@@ -109,45 +114,44 @@ const read = (vis) => page.evaluate((v) => {
 const rows = [];
 for (const s of SHOTS) {
   await frameAt(s); await page.waitForTimeout(900); await frameAt(s);
-  const on   = await read(true);  await page.screenshot({ path: path.join(OUT, s.n+'-on.png') });
-  const ctrl = await read(true);  await page.screenshot({ path: path.join(OUT, s.n+'-ctrl.png') });
-  const off  = await read(false); await page.screenshot({ path: path.join(OUT, s.n+'-off.png') });
+  /* ⚠ THE THREE COUNT READS HAPPEN BACK TO BACK, BEFORE ANY SCREENSHOT.
+     The first cut interleaved them — read, shoot, read, shoot — and a
+     screenshot under SwiftShader takes tens of seconds, during which rAF fires
+     and animate() steps the crowd and the clock. Measured that way the DISTRICT
+     framing reported dMeshes -12 and dCalls -10: the layer apparently made the
+     scene CHEAPER, which is arithmetic nonsense and was entirely agents being
+     culled differently between the two reads. Nothing moves between these three
+     lines except `group.visible`. */
+  const on = await read(true), ctrl = await read(true), off = await read(false);
+  await read(true);  await page.screenshot({ path: path.join(OUT, s.n+'-on.png'), timeout: 180000 });
+  await read(true);  await page.screenshot({ path: path.join(OUT, s.n+'-ctrl.png'), timeout: 180000 });
+  await read(false); await page.screenshot({ path: path.join(OUT, s.n+'-off.png'), timeout: 180000 });
   await read(true);
   rows.push({ n:s.n, on, ctrl, off });
 }
-/* Diff the PNGs through the page that is already open — served over the
-   harness's own loopback HTTP, never as data: URIs (the catch-all route aborts
-   those, and a bare catch reported that as "no diff" once). */
-const diff = async (a, b) => page.evaluate(async ([ua, ub]) => {
-  const load = u => new Promise((res, rej) => { const i = new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('load '+u)); i.src=u; });
-  const [A,B] = await Promise.all([load(ua), load(ub)]);
-  const c = document.createElement('canvas'); c.width=A.width; c.height=A.height;
-  const x = c.getContext('2d', { willReadFrequently:true });
-  x.drawImage(A,0,0); const da = x.getImageData(0,0,c.width,c.height).data;
-  x.clearRect(0,0,c.width,c.height); x.drawImage(B,0,0);
-  const db = x.getImageData(0,0,c.width,c.height).data;
-  let n=0, tot=c.width*c.height;
-  for (let i=0;i<da.length;i+=4) {
-    const d = Math.abs(da[i]-db[i])+Math.abs(da[i+1]-db[i+1])+Math.abs(da[i+2]-db[i+2]);
-    if (d > 12) n++;
+/* ── THE DIFF, DONE IN NODE WITH sharp, NOT IN THE PAGE ────────────────────
+   The first cut decoded the two PNGs through the page that was already open,
+   which is capture.mjs's trick — but capture.mjs serves them from the SAME
+   loopback origin the page was loaded from. Serving them from a second port
+   taints the canvas and getImageData throws, and the honest fix is not a
+   `catch { null }` (a silent fallback inside the tool built to stop silent
+   fallbacks) but to stop needing a canvas at all. */
+await browser.close(); server.close();
+const { default: sharp } = await import('sharp');
+const raw = async f => (await sharp(f).removeAlpha().raw().toBuffer({ resolveWithObject: true }));
+const diff = async (a, b) => {
+  const A = await raw(a), B = await raw(b);
+  let n = 0; const d = A.data, e = B.data;
+  for (let i = 0; i < d.length; i += 3) {
+    if (Math.abs(d[i]-e[i]) + Math.abs(d[i+1]-e[i+1]) + Math.abs(d[i+2]-e[i+2]) > 12) n++;
   }
-  return { pct: +(100*n/tot).toFixed(3), px: n, tot };
-}, [a, b]);
-
-const base = 'http://127.0.0.1:'+PORT+'/__ab/';
-server.on('request', () => {});                    // shots are served below
-const shotSrv = http.createServer((req,res) => {
-  const f = path.join(path.resolve(process.cwd(), OUT), path.basename(req.url));
-  if (!fs.existsSync(f)) { res.writeHead(404); return res.end('nf'); }
-  res.writeHead(200, {'Content-Type':'image/png'}); fs.createReadStream(f).pipe(res);
-});
-const P2 = PORT + 300;
-await new Promise(r => shotSrv.listen(P2, '127.0.0.1', r));
-const U = n => 'http://127.0.0.1:'+P2+'/'+n;
-
+  const tot = A.info.width * A.info.height;
+  return { pct: +(100 * n / tot).toFixed(3), px: n, tot };
+};
 for (const r of rows) {
-  r.floor = await diff(U(r.n+'-on.png'), U(r.n+'-ctrl.png'));       // do-nothing control
-  r.layer = await diff(U(r.n+'-on.png'), U(r.n+'-off.png'));        // the whole parcel layer
+  const f = n => path.join(OUT, r.n + '-' + n + '.png');
+  r.floor = await diff(f('on'), f('ctrl'));      // do-nothing control, identical spacing
+  r.layer = await diff(f('on'), f('off'));       // the whole parcel layer
 }
 console.log(JSON.stringify({ out: OUT, rows: rows.map(r => ({
   framing: r.n,
@@ -156,4 +160,3 @@ console.log(JSON.stringify({ out: OUT, rows: rows.map(r => ({
   meshesWith: r.on.meshes, meshesWithout: r.off.meshes, dMeshes: r.on.meshes - r.off.meshes,
   pxDoNothingControl: r.floor.pct, pxWholeParcelLayer: r.layer.pct,
 })), logs: logs.slice(-6) }, null, 1));
-await browser.close(); server.close(); shotSrv.close();

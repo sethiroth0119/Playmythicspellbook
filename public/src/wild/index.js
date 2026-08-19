@@ -46,6 +46,18 @@
    thing about the same square metre, which is the difference between "terrain"
    and "decorated".
 
+   ⚠ AND "EVERY PLANT IS A BLOB AT THIS DISTANCE" WAS THE WRONG CONCLUSION.
+     The first cut spent one prototype — a squashed icosahedron — on tuft,
+     scrub, rock and crown alike, on the argument that at these sizes only
+     size, squash and tone survive. Photographed at 4x on the district
+     framing, a field of them reads as SCATTERED GREEN STONES: convex,
+     faceted, hard straight silhouettes. That is the same category error the
+     cone note in protos() diagnoses, committed again with a different solid.
+     Tufts now have their own 12-triangle splayed fan, and the thing that
+     changed is not detail but SILHOUETTE — vertical, tapered, non-convex,
+     which an icosahedron cannot produce at any scale or squash. See
+     PROTO.fan.
+
    ── 🔴 THE GLOBALS TRAP (CLAUDE.md) ───────────────────────────────────────
    `game`, `scene`, `THREE`, `GRID`, `HALF`, `isRoad`, `NAT_GROUND`,
    `NAT_PAINT`, `_VG_TEXDIV`, `NC_GRAIN_PER`, `NC_GROUND_AT` and
@@ -82,29 +94,64 @@
    ALREADY has (NAT_GROUND, NAT_PAINT), so this adds no material and no
    texture either.
    MEASURED on the standard gauntlet district as an A/B inside ONE boot —
-   .gauntlet/wildcost.mjs toggles this group's `visible` and reads
+   .gauntlet/wildcost.mjs (or .gauntlet/wildshot.mjs, which does this and the
+   pictures and the timings together) toggles this group's `visible` and reads
    renderer.info twice, because capture.mjs's own header records the whole-scene
    mesh count moving by ±15 between boots and a cross-boot delta of "+2 meshes"
    is therefore inside the instrument's own noise:
 
-       meshes      2111 -> 2113     (+2)
-       draw calls  1980 -> 1982     (+2)
-       triangles 477,476 -> 492,850 (+15,374, i.e. +3.2%)
+       meshes      1919 -> 1921     (+2)
+       draw calls  1624 -> 1626     (+2)
+       triangles 457,744 -> 477,125 (+19,381, i.e. +4.2%)
 
-   …serving 224 tiles with 543 standing objects (13,130 tris), 104 ground
-   stains and 654 kerb-wear bands (2,244 tris between them).
+   …serving 224 tiles with 1,062 standing objects (16,696 tris — of which 906
+   field tufts and 315 kerb tufts), 111 ground stains and 843 kerb-wear bands
+   (2,685 tris between them).
    ⚠ +2 CALLS AND NOT +3. The standing bucket casts, so it was expected to cost
      a shadow-map draw as well; the shadow map is not re-rendered on every
      frame, so the steady-state figure is two.
+   ⚠ AND THE MESH LINE IS A MEASUREMENT AGAIN. For one round wildcost.mjs
+     computed the `off` mesh count by SUBTRACTING `g.children.length`, which is
+     arithmetic that cannot fail: it could only ever restate that this group
+     has two children, and it would have gone on printing +2 after the layer
+     stopped drawing. It now walks each mesh's ancestry for visibility, which
+     is the same question the renderer asks.
 
    ⚠ THE GEOMETRY IS STAMPED, NOT ALLOCATED. /src/parcel builds a THREE
-     geometry per prop and merges at the end, which is fine for the 8 parcels
-     it serves and is not fine for 400 tiles: that would be ~2,800 geometry
-     allocations and 2,800 disposes on EVERY rebuild, and refresh() runs from
-     manageAgents(), i.e. every time the player lays one road. Each shape here
-     is authored once at module load into a plain Float32Array and then STAMPED
-     — transformed straight into the output arrays — so a rebuild is arithmetic
-     with no allocation per object and no merge pass at all.
+   geometry per prop and merges at the end, which is fine for the 8 parcels
+   it serves and is not fine for 400 tiles: that would be ~2,800 geometry
+   allocations and 2,800 disposes on EVERY rebuild, and refresh() runs from
+   manageAgents(), i.e. every time the player lays one road. Each shape here
+   is authored once at module load into a plain Float32Array and then STAMPED
+   — transformed straight into the output arrays — so a rebuild is arithmetic
+   with no allocation per object and no merge pass at all.
+
+   🔴 …AND THAT PARAGRAPH WAS TRUE AND THE REBUILD STALLED ANYWAY. Measured in
+   the browser on the standard district: 88.5 / 89.9 / 28.3 / 25.1 / 24.5 /
+   18.8 ms, and 55.4 ms on an EMPTY 576-tile map — one to three dropped frames
+   every time the player lays a road, for a layer that had congratulated itself
+   on not allocating geometry. It was allocating everything else. A CPU profile
+   (.gauntlet/wildbench.mjs runs build() in node, no browser, so a profile
+   points at lines instead of at SwiftShader) named five things, and all five
+   are fixed with their own notes at the code:
+
+       Array.push into growing plain arrays  -> Float32Array + a cursor
+       Color.setHex per tinted vertex        -> the palettes converted once
+       fresh 32k buffers per rebuild         -> buffers held across rebuilds
+       computeBoundingSphere over 140k floats-> a sphere set from GRID
+       a Set of "x,z" keys + isRoad per cell -> one Uint8Array of occupancy
+
+   The layer now carries TWICE the objects and 26% more triangles than the
+   build that stalled, and rebuilds in 8.3-19.3 ms in the browser (node bench:
+   district 7.21 -> 6.30 ms, empty map 10.47 -> 4.22 ms). Every rebuild fits
+   inside a 60 fps frame, including the two JIT-cold ones.
+
+   ── 🔍 AND IT CHECKS ITSELF ───────────────────────────────────────────────
+   `verify()`, reported only when it fails, called one line after the mount in
+   the same idiom as MythicLandValue and MythicDistricts. It exists because
+   this module's mount is `catch { console.warn('not mounted (non-fatal)') }`
+   and nothing else, which makes "drew nothing", "drew the wrong thing" and
+   "was never there" the same observation. See its own header.
    ══════════════════════════════════════════════════════════════════════════ */
 
 let CTX = null, group = null, sig = '', flatMesh = null, standMesh = null;
@@ -352,10 +399,13 @@ function protos(THREE) {
            keeps this prototype in the same unit box as blob — foot at the
            origin, y in [0,1], x/z in [-.5,.5] — so a caller's sx/sy mean the
            same thing for both and no stamp needs a per-shape fudge.
-         · half-width = length / (2 * 2.6), tapering to 17% of that at the tip.
-           At sx = sy a blade is 2.6x taller than wide; the tuft is stamped at
-           sy/sx = 1.48 (see the tuft note below), so on screen it is 3.9x —
-           inside the 2.5-4 band that reads as a blade rather than a leaf.
+         · half-width = length / (2 * 2.35), tapering to 17% of that at the
+           tip. At sx = sy a blade is 2.35x taller than wide; the tuft is
+           stamped at sy/sx = 1.48 (see the tuft note below), so on screen it
+           is 3.5x — inside the 2.5-4 band that reads as a blade rather than a
+           leaf. 🐞 2.6 photographed as REEDS: at the district framing three
+           blades that thin are three separate spikes with plate between them,
+           not a tussock, and the tuft's own outline stopped being one shape.
          · three yaws deliberately UNEVEN (0, 132, 247 deg). At 120 apart a
            tuft seen from above is a perfect tripod, and 500 perfect tripods is
            the stipple failure arriving through the geometry.
@@ -378,7 +428,7 @@ function fanProto() {
   const TILT = [.36652, .47124, .57596];       // 21, 27, 33 deg
   const LEN  = [1.0709, 1.0000, .91800];       // see the note above
   const YAW  = [0, 2.3038, 4.3110];            // 0, 132, 247 deg
-  const RATIO = 2.6, TAPER = .17;
+  const RATIO = 2.35, TAPER = .17;
   const P = new Float32Array(3 * 3 * 4 * 3), N = new Float32Array(P.length);
   let o = 0;
   const put = (px, py, pz, nx, ny, nz) => {
@@ -1098,17 +1148,22 @@ function build() {
          wide: unmown 50cm-1.1m tussock, splayed the way ungrazed grass splays,
          which is both what grows on land nobody maintains and the smallest
          thing that survives the district framing.
-       ⚠ 5.4 A TILE AND NOT 4.2, and it still costs less than before: the fan is
-         12 triangles against the blob's 20, so the tuft budget falls even as
-         the count rises. The count matters because tufts are now the only
-         element working at the district scale — scrub reads at the aerial and
-         saplings are one tile in nine.
+       ⚠ 6.0 A TILE AND NOT 4.2, AND THE SPREAD IS .44 AND NOT .62. The fan is
+         12 triangles against the blob's 20, so the tuft budget barely moves
+         even as the count rises by half — and it has to rise, because tufts
+         are now the only element working at the district scale (scrub reads at
+         the aerial, saplings are one tile in nine). The narrower spread is the
+         more important of the two: at .62 six tufts are six isolated marks
+         scattered over a whole tile, which is the even-stipple failure the
+         anchor note above is written against; at .44 they overlap into two or
+         three tussocks with bare ground between, which is what rough grass
+         does. Same objects, same cost, different read.
        See putTuft for the stamp, and tuftReach for why the radius handed to
        place() is computed rather than the .05 that used to be typed here. */
-    const nT = Math.round(cover * 5.4);
+    const nT = Math.round(cover * 6.0);
     for (let i = 0; i < nT; i++) {
       const r = .042 + R() * .034;
-      place(tuftReach(r), .62, (px, pz) => putTuft(R, px, pz, r, dry), CLR_ROAD_TIGHT);
+      place(tuftReach(r), .44, (px, pz) => putTuft(R, px, pz, r, dry), CLR_ROAD_TIGHT);
     }
 
     /* SCRUB. The thing that actually reads at the aerial camera: .2-.3 across
@@ -1419,6 +1474,14 @@ function signature() {
 
 export function mount(ctx) {
   CTX = ctx;
+  /* ⚠ THE SIGNATURE IS RESET, and it was not. `sig` is module state and
+     refresh() short-circuits on it, so a SECOND mount() of the same city —
+     which is what a hot reload, a preview canvas or a test harness does —
+     handed back the first mount's stats and never called build() at all, with
+     a brand-new empty group in the scene. Found by a harness that mounted
+     three times to check the null-host refusals below and got three identical
+     healthy answers, one of which should have been a refusal. */
+  sig = '';
   const { THREE, scene } = ctx;
   group = new THREE.Group(); group.name = 'wild'; scene.add(group);
   const api = {

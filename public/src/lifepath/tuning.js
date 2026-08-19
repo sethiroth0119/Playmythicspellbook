@@ -12,7 +12,7 @@
 
        🔴 HOW LONG IS A YEAR IN THIS CITY?
 
-   ── THE DERIVATION, AND IT IS NOT A CHOICE ─────────────────────────────────
+   ── THE DERIVATION, AND WHAT DOES AND DOES NOT CORROBORATE IT ──────────────
    ECON.demographics.lifecycle.agePerDay is a LIVE RATE the move-in pipeline
    runs every economic day: the share of working households that age out of the
    labour force and become pensioners. Its own comment in tuning.js states the
@@ -29,10 +29,43 @@
        working life, in years              = retireAge − workAge        =   52
        ⇒ economic days per year            = 1 / (agePerDay × 52)       ≈ 24.04
 
-   which lands on ECON's own "~24". That is the point: the two files agree BY
-   CONSTRUCTION rather than by coincidence, and retuning agePerDay moves the
-   citizens' ages with it instead of leaving a stale copy behind. This is the
-   `_opEcon()` rule applied to a number nobody had written down yet.
+   Reading the rate LIVE is still the right call and is the `_opEcon()` rule
+   applied to a number nobody had written down: retune agePerDay and every
+   citizen's age moves with it instead of a stale copy sitting here.
+
+   ⚠ BUT THE LANDING ON ECON'S OWN "~24" IS NOT EVIDENCE, AND THIS FILE USED TO
+     SAY IT WAS. The words were "the two files agree BY CONSTRUCTION rather than
+     by coincidence", which reads as a corroboration and is not one: ECON derived
+     52 years FROM ~24 days/year, and this file derives ~24 days/year FROM 52.
+     That is one assumption written twice and read back — a round trip through a
+     single number. It cannot disagree, so it cannot confirm anything either.
+
+   🔴 THE CORROBORATION THAT IS REAL COMES FROM THE OTHER RATE, and it does not
+      touch agePerDay at all. ECON's tenancy-turnover comment checks the
+      EDUCATION rate against a fact from outside the game — "graduatePerDay's
+      83 days ≈ a 3.5-year degree". Run that the same way round:
+
+          economic days per education rung = 1 / graduatePerDay  = 83.3
+          a degree, in years                                     =  3.5
+          ⇒ economic days per year         = 83.3 / 3.5          ≈ 23.81
+
+      23.81 against 24.04 — two different ECON rates, two different anchors
+      (a 52-year working life; a 3.5-year degree), 1% apart. THAT is the check
+      this module is entitled to cite, and it is the one it cites now.
+
+   ⚠ AND ONE THING agePerDay IS NOT, which the derivation above quietly assumed.
+     At its use site (/src/demographics/pipeline.js, the life-course step) it is
+     a CAUSE-SPECIFIC HAZARD, not a life clock. It moves `couple` and `single`
+     households to `retired` and it competes with tenancy turnover running at
+     0.004–0.035/day, so ageing is a MINORITY of the exits from the working
+     state — roughly 2% of them in a cheap-flat zone and 17% in a detached one.
+     `family` and `student` are not in `lifecycle.ages` at all and never age out
+     by this path.
+     So 1/agePerDay is the mean time to retirement FOR A HOUSEHOLD THAT LEAVES
+     THE LABOUR FORCE BY AGEING, which is exactly the quantity "how long is a
+     working life" wants and is why the reading survives the objection — but it
+     is NOT the mean residence time of a working household, and nothing here may
+     be read as claiming it is.
 
    Everything else falls out of the same table:
 
@@ -47,9 +80,18 @@
        life expectancy    retireAge + 1 / (retiredLeavePerDay × daysPerYear)
                           ≈ 70 + 10.4 = 80.4, which is ECON's own "≈ 10 years
                           of retirement" read as an age instead of a duration.
-       one career grade   1 / (graduatePerDay × daysPerYear) ≈ 3.47 years —
-                          the game's ONLY rate for a person moving up a rung,
-                          reused rather than duplicated. See model.js.
+       one career grade   1 / (graduatePerDay × daysPerYear) ≈ 3.47 years.
+                          ⚠ THIS ONE IS AN ANALOGY AND IS LABELLED AS ONE. The
+                          three above are derivations — the rate they read is
+                          about the very thing they measure. graduatePerDay is
+                          not: it moves an IN-SCHOOL HOUSEHOLD one EDUCATION
+                          rung, and a promotion at work is a different event.
+                          Calling that "the only rate this game has for a person
+                          moving up a rung, reused rather than duplicated" was
+                          dressing a repurposing up as the `_opEcon()` virtue,
+                          and it is not that. See model.js for why it is still
+                          the least-bad number available and what the honest
+                          alternative to it would have been.
 
    ── ⚠ AND HERE IS THE HONEST PART, WHICH IS NOT FLATTERING ─────────────────
    ECON.clock.dayMin = 20, so one economic day is 20 REAL MINUTES. Therefore:
@@ -96,9 +138,19 @@ export const LIFE = {
   workAge: 18,
   retireAge: 70,
 
-  /* A floor under the sampled age inside a band, so a "young adult" drawn at
-     the very bottom of their band is 18 and never 17.999 printed as 17. */
-  round: 1,
+  /* ⚠ THERE WAS A THIRD FIELD HERE AND IT WAS A LIE OF OMISSION. `round: 1`
+     sat here with a comment describing a floor "so a young adult drawn at the
+     very bottom of their band is 18 and never 17.999 printed as 17" — and
+     NOTHING READ IT. Eight `LIFE.` references in this module, not one of them
+     `.round`. So the file's own headline, that exactly two numbers are written
+     down here, was false, and it was false in the direction that flatters:
+     a third number, doing nothing, documenting a guard that did not exist.
+     The HAZARD it named is real — seed() stores an integer stamp, so the
+     rounding could move a read age by up to 0.5 s / secPerYear ≈ 1.7e-5 years,
+     enough to turn a citizen sampled at exactly 18.0000 into 17.99998, floor to
+     17 and band `child`. The guard now EXISTS and needs no number at all:
+     model.js floors the stamp instead of rounding it, which can only make a
+     person older than sampled and never younger. See seed(). */
 };
 
 /* ── the live tuning reads ────────────────────────────────────────────────

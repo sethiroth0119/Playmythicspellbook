@@ -1,8 +1,28 @@
-/* Node-side rebuild bench for /src/wild: the module with a ctx that reproduces
-   node-city's hfield/mfield/ramp arithmetic exactly, so a CPU profile points at
-   real lines instead of at a Chromium frame. Throwaway; not a gate. */
-import * as THREE from './.gauntlet/package/build/three.module.js';
-const M = await import(process.argv[3]||'./public/src/wild/index.js');
+/* ══ THE WILD-GROUND REBUILD BENCH ═════════════════════════════════════════
+   /src/wild's build() in node, no browser — the same argument
+   check-streets-clock.mjs makes for traffic.js. refresh() runs from
+   manageAgents(), so a rebuild that overruns a frame is felt every time the
+   player lays a road, and answering "which line is it" needs a CPU profile
+   rather than a screenshot. A browser boot is ~2.5 minutes and its profile is
+   buried under SwiftShader; this is 2 seconds and profiles clean:
+
+       node --cpu-prof --cpu-prof-dir=/tmp/prof .gauntlet/wildbench.mjs 200
+
+   ⚠ THE ctx BELOW REPRODUCES node-city's hfield / mfield / rampAt ARITHMETIC,
+     character for character. It is a COST model, not a correctness one: the
+     numbers it returns are only meaningful because the host callbacks cost
+     what the real ones cost. If index.html's field ever changes, this file is
+     wrong until it is changed with it — which is why nothing here is a gate.
+   ⚠ AND THE TILE MAP IS AN APPROXIMATION of .gauntlet/scene.js's district (the
+     road cross, the housing blocks, the depots). Absolute figures differ a
+     little from the browser's; the A/B between two versions of the module does
+     not, which is what it is for.
+
+   Usage: node .gauntlet/wildbench.mjs [iterations] [path to a module to bench]
+          EMPTY=1 …  benches a brand-new 576-tile map instead.
+   ══════════════════════════════════════════════════════════════════════════ */
+import * as THREE from './package/build/three.module.js';
+const M = await import(process.argv[3]||'../public/src/wild/index.js');
 
 const GRID = 24, HALF = 12, AMP = .009;
 const hash = (x, z, s) => { let h = (Math.imul(x|0,0x27d4eb2d) ^ Math.imul(z|0,0x165667b1) ^ s)>>>0;

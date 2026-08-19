@@ -8691,6 +8691,67 @@ function _hHouseBody(lvl, tx, tz) {
       B.base.push(_hBox(.140, .062 - GB, .140, px, (.062 + GB) / 2, .385));
       _vegClump(B.leaf, R, px, .385, .062, .050, .82, _N_HEDGE);
     }
+    /* ⭐ ROUND 12 — FOUNDATION PLANTING ON A FORECOURT PLOT, AND WHY IT WAS
+       THE MISSING THIRD OF THE SUBURB.
+       Measured on the standard gauntlet district before this line existed:
+       54 housing plots, 36 of them GARDEN (semi / cottage / detached) and 18
+       FORECOURT (11 terraces, 7 walkups). A garden plot has run a row of
+       clipped shrubs along its front elevation since round 5 (§3c below) and
+       carries 519-619 triangles of planting. A forecourt plot carried 75-151 —
+       one or two entrance planters, and on a terrace often ONE, because the
+       pair above is rolled at pathU ± (pathHW + .105) and a terrace's path sits
+       at W*.27 = .262, which throws the outer planter past the .43 clip every
+       single time. So a third of the housing stock, and the TALLEST third —
+       the terraces and walkups are the mass in the middle of both the aerial
+       and the district frame — met its own ground with a flat grey slab and
+       nothing whatever in the join. That is the textbook "model on a board"
+       read, arrived at by omission rather than by design.
+       ⚠ IT IS A KERBED BED, NOT LOOSE SHRUBS. A shrub standing on paving with
+         no edging reads as a shrub someone left there; the kerb is what makes
+         it a bed, and it is the same 0.05-tall masonry as the planters beside
+         the door so a frontage still reads as one piece of work. Two boxes and
+         two or three clumps, in B.base and B.leaf — both buckets a forecourt
+         plot already emits, so this costs NO mesh, NO material and NO draw
+         call, and the bucket count stays at 11 (lotcheck's garden test reads
+         12, and must keep reading 12 only on a garden plot).
+       ⚠ THE SPAN IS W*.78, NOT W*.84 AS ON A GARDEN PLOT. A terrace body is
+         .97 wide against a garden plot's clamped .72, and a clump reaches its
+         offset plus about 1.73r — so the garden figure would put foliage at
+         .48 and the LOT GATE asserts nothing crosses .5005 in x. .78 lands the
+         outermost reach at ~.465 with the fattest roll. */
+    {
+      const fSpan = W * .78, fz = hzs + .035, fGap = pathHW + .060;
+      /* The kerb runs as the intervals LEFT OVER once the path is subtracted,
+         for the same reason §3b's lawn does: a single slab with a path drawn
+         over it is two solids fighting for the same ground. */
+      for (const seg of _freeSpans(-fSpan / 2, fSpan / 2,
+                                   [[pathU - fGap, pathU + fGap]])) {
+        if (seg[1] - seg[0] < .050) continue;
+        B.base.push(_hSlab(seg[0], seg[1], fz - .038, fz + .038, AY + .046, GB));
+        const n = Math.max(1, Math.round((seg[1] - seg[0]) / .175));
+        for (let i = 0; i < n; i++)
+          _vegClump(B.leaf, R, seg[0] + (i + .5) * ((seg[1] - seg[0]) / n), fz,
+                    AY + .044, .034 + R() * .016, .74 + R() * .22, _N_HEDGE);
+      }
+    }
+    /* ⭐ AND BINS, WHICH A TERRACE HAD NONE OF. The walkup's recessed entrance
+       has had a two-bay bin store since round 5; `row` — 11 of the 54 plots —
+       had nothing, and "bins" is a named element of the rubric row this is
+       measured against. They stand on the far side of the frontage from the
+       path, INBOARD of the .470 kerb band and OUTBOARD of the .385 planters,
+       which is the only strip of a terrace forecourt that nothing else has
+       already claimed. Same two boxes as a garden plot's pair, in the same two
+       buckets, for the same reason: B.core is the dark carcass and B.trim the
+       house's own painted lid, so the pair costs 24 triangles and nothing else. */
+    if (front !== 'recess') {
+      const bs = pathU > 0 ? -1 : 1, bx = bs * .250;
+      for (let i = 0; i < 2; i++) {
+        const px = bx + (i - .5) * .102;
+        if (Math.abs(px) > .40) continue;
+        B.core.push(_hBox(.086, .112, .076, px, AY + .056, .430));
+        B.trim.push(_hBox(.092, .014, .082, px, AY + .119, .430));
+      }
+    }
     /* A terrace still owns a parcel line — it is just drawn in concrete rather
        than in privet. A pale kerb band at the frontage in the PATH material is
        what separates this lot's hard standing from the footway outside it, and
@@ -9058,6 +9119,26 @@ function _hHouseBody(lvl, tx, tz) {
     putFlank(-sEdge - fbT / 2, -sEdge + fbT / 2, zEnd, zTop);
     putFlank(sEdge - fbT / 2, sEdge + fbT / 2, zEnd, zTop);
   }
+  /* ⭐ ROUND 12 — AND THE BACK OF A FORECOURT PLOT, WHICH WAS OPEN.
+     Round 10 closed the rear of every GARDEN plot and its own note says why:
+     housing is placed in runs several tiles deep, so the rear of one row abuts
+     the rear of the next and that seam was "the widest continuous stretch of
+     undivided ground in the whole district". Every word of that is true of a
+     TERRACE too, and a terrace was never given the fix — `!party` excluded the
+     11 row plots outright and `plotSty === 'garden'` excluded the 7 walkups on
+     top of it, so 18 of 54 plots still ran straight into the plot behind them
+     with nothing on the line.
+     ⚠ THE REAR RUN ONLY, NOT THE FLANKS. A row house HAS no flanks — its party
+       walls are its side boundary, and a wall standing beside one is a wall in
+       the neighbour's living room. A walkup already gets full-length flanks
+       from the block above. The rear is the one line both are missing.
+     ⚠ SAME putFlank, SAME B.path, SAME light concrete as every other boundary
+       run on the plot: no mesh, no material, no draw call, and the coping is
+       the instrument for the same reason it is on a garden flank — a
+       horizontal .078 face catches the sky term where a vertical one is the
+       "1-2 px" the round-9 critic measured and refused to call a boundary. */
+  if (plotSty === 'forecourt')
+    putFlank(-(sEdge - .030), sEdge - .030, -sEdge - fbT / 2, -sEdge + fbT / 2);
   /* ══ ⭐ THE CORNER POSTS — the round's other half ═════════════════════════
      A run of hedge has no ENDS. That is the whole of why round 5's boundary
      failed its critic: the critic's literal complaint was that it "read as
@@ -9096,6 +9177,14 @@ function _hHouseBody(lvl, tx, tz) {
     postAt(sx * sEdge, edge, .062);
     postAt(sx * sEdge, -sEdge, .062);
   }
+  /* …and the REAR pair on a forecourt plot, terminating the run just added.
+     Only the rear pair: the frontage of a terrace or a walkup carries its own
+     kerb band and its own gate piers, and the block above is explicit that a
+     row of urban railings notched every metre is a mistake, not a street. Two
+     abutting plots put two posts .115 apart with the seam running between
+     them, which is the pair-of-verticals cue that reads from the air where a
+     single line does not. */
+  if (plotSty === 'forecourt') for (const sx of [-1, 1]) postAt(sx * sEdge, -sEdge, .062);
   /* ⭐ AND THE BACK FENCE. The line above this block used to read "the rear edge
      is deliberately open — it is the one edge a player never sees", and that was
      measured on a single house. It is false for a BLOCK: housing is placed in

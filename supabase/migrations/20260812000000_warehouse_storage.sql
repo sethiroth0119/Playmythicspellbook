@@ -34,28 +34,38 @@
 create or replace function public.wh_config()
 returns jsonb language sql immutable as $$
   select jsonb_build_object(
+    -- ⚠ aza_to_cinder IS THE GAME'S PEG, NOT THIS MODULE'S PRICING RULE.
+    -- It stays 5,000 because AZA_TO_CINDER in public/index.html is 5,000 and
+    -- other systems convert against it. The warehouse's Cinder prices below are
+    -- DELIBERATELY NO LONGER DERIVED FROM IT: every Cinder price is ×100 the
+    -- pegged value while every Aza price is unchanged, which is a design
+    -- decision — Aza is the real-money price ("10 Aza is $10 and that is
+    -- reasonable") and Cinder is the grind alternative. The warehouse's own
+    -- effective rate is therefore 500,000 Cinder per Aza, not 5,000. Nothing in
+    -- this module may present the two prices as equivalent; they are two
+    -- independent ways to pay, and the copy says so.
     'aza_to_cinder', 5000,
     -- 📦 A fresh warehouse starts SMALL — two bays, exactly as designed.
     'start_units', 2,
     'unit_price_aza', 10,
-    'unit_price_cinder', 50000,
+    'unit_price_cinder', 5000000,
     'unit_capacity_kg', 500,
     -- 🏗 Warehouse tiers → how many bays may exist at all.
     'tiers', jsonb_build_array(
       jsonb_build_object('tier', 1, 'max_units', 4,  'aza', 0,   'cinder', 0,       'name', 'Lean-To Depot'),
-      jsonb_build_object('tier', 2, 'max_units', 8,  'aza', 25,  'cinder', 125000,  'name', 'Sheet-Metal Warehouse'),
-      jsonb_build_object('tier', 3, 'max_units', 14, 'aza', 60,  'cinder', 300000,  'name', 'Concrete Distribution Hub'),
-      jsonb_build_object('tier', 4, 'max_units', 22, 'aza', 140, 'cinder', 700000,  'name', 'Regional Freight Terminal'),
-      jsonb_build_object('tier', 5, 'max_units', 32, 'aza', 300, 'cinder', 1500000, 'name', 'Ashfall Logistics Yard')
+      jsonb_build_object('tier', 2, 'max_units', 8,  'aza', 25,  'cinder', 12500000,  'name', 'Sheet-Metal Warehouse'),
+      jsonb_build_object('tier', 3, 'max_units', 14, 'aza', 60,  'cinder', 30000000,  'name', 'Concrete Distribution Hub'),
+      jsonb_build_object('tier', 4, 'max_units', 22, 'aza', 140, 'cinder', 70000000,  'name', 'Regional Freight Terminal'),
+      jsonb_build_object('tier', 5, 'max_units', 32, 'aza', 300, 'cinder', 150000000, 'name', 'Ashfall Logistics Yard')
     ),
     -- 🏋 Weight lifters — "owners OR workers can buy weight lifters to be able
     -- to hold more". Anyone may buy any tier; tier only ever goes up.
     'lifters', jsonb_build_array(
       jsonb_build_object('tier', 0, 'carry_kg', 25,  'aza', 0,  'cinder', 0,      'name', 'Bare Hands',  'icon', '🖐'),
-      jsonb_build_object('tier', 1, 'carry_kg', 45,  'aza', 2,  'cinder', 10000,  'name', 'Back Brace',  'icon', '🎽'),
-      jsonb_build_object('tier', 2, 'carry_kg', 90,  'aza', 5,  'cinder', 25000,  'name', 'Hand Truck',  'icon', '🛒'),
-      jsonb_build_object('tier', 3, 'carry_kg', 180, 'aza', 12, 'cinder', 60000,  'name', 'Pallet Jack', 'icon', '🛠'),
-      jsonb_build_object('tier', 4, 'carry_kg', 400, 'aza', 30, 'cinder', 150000, 'name', 'Forklift',    'icon', '🚜')
+      jsonb_build_object('tier', 1, 'carry_kg', 45,  'aza', 2,  'cinder', 1000000,  'name', 'Back Brace',  'icon', '🎽'),
+      jsonb_build_object('tier', 2, 'carry_kg', 90,  'aza', 5,  'cinder', 2500000,  'name', 'Hand Truck',  'icon', '🛒'),
+      jsonb_build_object('tier', 3, 'carry_kg', 180, 'aza', 12, 'cinder', 6000000,  'name', 'Pallet Jack', 'icon', '🛠'),
+      jsonb_build_object('tier', 4, 'carry_kg', 400, 'aza', 30, 'cinder', 15000000, 'name', 'Forklift',    'icon', '🚜')
     ),
     -- ⚖ Per-resource weight in kg. Ids match the game's salvage ledger
     -- (RESOURCES[] in index.html) — do not invent new ids here.
@@ -95,7 +105,7 @@ returns jsonb language sql immutable as $$
     'free_city_hours', 72,
     'max_hours', 72,
     -- 💰 Renting a bay: what the renter pays the warehouse owner per day.
-    'rent_cinder_per_day', 1200,
+    'rent_cinder_per_day', 120000,
     'rent_max_days', 30,
     -- How long a lapsed renter keeps their goods before the warehouse owner may
     -- impound them. Goods are NEVER silently deleted.

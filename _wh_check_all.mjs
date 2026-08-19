@@ -51,6 +51,8 @@ const CHECKS = [
     requires: ['terser'], dep: 'npm i terser --no-save' },
   { name: 'warehouse paste artifact matches the live module',
     cmd: 'node', args: ['_wh_paste_check.mjs'] },
+  { name: 'the offline yard\'s prices mirror wh_config()',
+    cmd: 'node', args: ['_wh_price_check.mjs'] },
   { name: 'floor bay-number stencils read upright from a standing position',
     cmd: 'node', args: ['_wh_stencil_check.mjs'],
     requires: ['playwright'], dep: 'npm i playwright --no-save' },

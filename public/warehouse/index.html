@@ -283,20 +283,20 @@ var WH = (function () {
 var MOCK = (function () {
   var CFG = {
     aza_to_cinder: 5000, start_units: 2,
-    unit_price_aza: 10, unit_price_cinder: 50000, unit_capacity_kg: 500,
+    unit_price_aza: 10, unit_price_cinder: 5000000, unit_capacity_kg: 500,
     tiers: [
       { tier: 1, max_units: 4,  aza: 0,   cinder: 0,       name: 'Lean-To Depot' },
-      { tier: 2, max_units: 8,  aza: 25,  cinder: 125000,  name: 'Sheet-Metal Warehouse' },
-      { tier: 3, max_units: 14, aza: 60,  cinder: 300000,  name: 'Concrete Distribution Hub' },
-      { tier: 4, max_units: 22, aza: 140, cinder: 700000,  name: 'Regional Freight Terminal' },
-      { tier: 5, max_units: 32, aza: 300, cinder: 1500000, name: 'Ashfall Logistics Yard' }
+      { tier: 2, max_units: 8,  aza: 25,  cinder: 12500000,  name: 'Sheet-Metal Warehouse' },
+      { tier: 3, max_units: 14, aza: 60,  cinder: 30000000,  name: 'Concrete Distribution Hub' },
+      { tier: 4, max_units: 22, aza: 140, cinder: 70000000,  name: 'Regional Freight Terminal' },
+      { tier: 5, max_units: 32, aza: 300, cinder: 150000000, name: 'Ashfall Logistics Yard' }
     ],
     lifters: [
       { tier: 0, carry_kg: 25,  aza: 0,  cinder: 0,      name: 'Bare Hands',  icon: '🖐' },
-      { tier: 1, carry_kg: 45,  aza: 2,  cinder: 10000,  name: 'Back Brace',  icon: '🎽' },
-      { tier: 2, carry_kg: 90,  aza: 5,  cinder: 25000,  name: 'Hand Truck',  icon: '🛒' },
-      { tier: 3, carry_kg: 180, aza: 12, cinder: 60000,  name: 'Pallet Jack', icon: '🛠' },
-      { tier: 4, carry_kg: 400, aza: 30, cinder: 150000, name: 'Forklift',    icon: '🚜' }
+      { tier: 1, carry_kg: 45,  aza: 2,  cinder: 1000000,  name: 'Back Brace',  icon: '🎽' },
+      { tier: 2, carry_kg: 90,  aza: 5,  cinder: 2500000,  name: 'Hand Truck',  icon: '🛒' },
+      { tier: 3, carry_kg: 180, aza: 12, cinder: 6000000,  name: 'Pallet Jack', icon: '🛠' },
+      { tier: 4, carry_kg: 400, aza: 30, cinder: 15000000, name: 'Forklift',    icon: '🚜' }
     ],
     weights: { food: 1.2, water: 2.0, ammo: 0.8, medicine: 0.4, energyDrink: 0.5,
                supplies: 1.5, metal: 3.5, fuel: 3.0, corruptedEssence: 0.6,
@@ -307,7 +307,7 @@ var MOCK = (function () {
     // unplayable (every crate too heavy for bare hands) while production was fine.
     default_weight: 1.0, crate_kg: 22, max_shipment_kg: 1800, rent_grace_days: 3,
     eta_hours: { 0: 72, 1: 68, 2: 62, 3: 56, 4: 50, 5: 44, 6: 37, 7: 30, 8: 22, 9: 14, 10: 6 },
-    free_city_hours: 72, max_hours: 72, rent_cinder_per_day: 1200, rent_max_days: 30
+    free_city_hours: 72, max_hours: 72, rent_cinder_per_day: 120000, rent_max_days: 30
   };
   var S = null;
   function wt(p) { var t = 0; for (var k in p) t += p[k] * (CFG.weights[k] || CFG.default_weight); return Math.round(t * 10) / 10; }
@@ -1474,11 +1474,18 @@ function openNoRoomModal(unit, needKg, crate) {
         + ' kg). The rest of this load has to go back — or the renter needs a second bay.</p>'
       : '<p>Open more space <b>in Bay ' + unit.bay_no + ' itself</b>. It gains another <b>'
         + C.unit_capacity_kg + ' kg</b>, and the crate in your hands goes straight in.</p>'
+        // ⚠ TWO INDEPENDENT PRICES — NOT EQUIVALENTS. These used to be pegged
+        // and this copy said so: "the same price at the 5,000 Cinder / Aza peg".
+        // Cinder is now ×100 while Aza is unchanged, so the warehouse's own
+        // effective rate is 500,000 Cinder per Aza. Presenting them as matched
+        // would be false, and false parity copy is exactly the class of defect
+        // this module keeps getting caught on.
+        + '<p style="color:var(--mist);font-size:.82rem">Two ways to pay for the same space — '
+        + 'Aza is the short way, Cinder is the long one.</p>'
         + '<div class="opt"><div class="g"><div class="t">🪙 ' + C.unit_price_aza + ' Aza Coin</div>'
         + '<div class="d">You hold ' + fmt(w.aza) + ' Aza</div></div></div>'
         + '<div class="opt"><div class="g"><div class="t">🔥 ' + fmt(C.unit_price_cinder) + ' Cinder</div>'
-        + '<div class="d">You hold ' + fmt(w.cinder) + ' Cinder — the same price at the '
-        + fmt(C.aza_to_cinder) + ' Cinder / Aza peg</div></div></div>');
+        + '<div class="d">You hold ' + fmt(w.cinder) + ' Cinder</div></div></div>');
   var foot = [{ label: 'Not now', on: closeModal }];
   foot.push({ label: '↩ Send this load back', on: function () { returnLoad(crate); } });
   if (!maxed) {

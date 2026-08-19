@@ -204,24 +204,56 @@ kept in sync by hand).
 
 | Constant | Value | Note |
 |---|---|---|
-| `aza_to_cinder` | 5000 | The game's peg: 1 Aza = $1 = 5,000 Cinder |
+| `aza_to_cinder` | 5000 | The GAME-WIDE peg (1 Aza = $1 = 5,000 Cinder), mirroring `AZA_TO_CINDER` in index.html. ⚠ **The warehouse's own prices are NOT derived from it.** |
 | `start_units` | 2 | A new warehouse starts small |
-| `unit_price_aza` / `unit_price_cinder` | 10 / 50,000 | "about $10 of Aza", matched in Cinder |
+| `unit_price_aza` / `unit_price_cinder` | 10 / **5,000,000** | $10 of Aza; the Cinder price is a separate grind price, NOT a match |
 | `unit_capacity_kg` | 500 | Per bay |
 | `crate_kg` | **22** | ⚠ must stay ≤ tier-0 lifter capacity |
 | `max_shipment_kg` | **1800** | Sized to a tier-1 renter's real 1,932 kg ceiling. Bigger loads are refused, never truncated — and `wh_send_shipment` also checks the actual destination. |
-| `rent_cinder_per_day` | 1200 | Paid to the warehouse owner |
+| `rent_cinder_per_day` | **120,000** | Paid to the warehouse owner |
 | `rent_max_days` / `rent_grace_days` | 30 / 3 | Grace before goods can be impounded |
 | bay expansion ceiling | **4 × `unit_capacity_kg`** (2,000 kg) | `wh_expand_unit` refuses past this with `bay_maxed`; hard-coded in the rpc, not in the config block |
 | `free_city_hours` / `max_hours` | 72 / 72 | The ceiling, and the free-city rule |
 
+### ⚠ Cinder and Aza are NOT pegged in this module
+
+Every Cinder price here is **×100** the value it would have at the game's
+5,000 Cinder / Aza peg. Every Aza price is unchanged. That is deliberate: Aza is
+the real-money price (10 Aza = $10) and Cinder is the grind alternative. The
+warehouse's effective internal rate is therefore **500,000 Cinder per Aza**, and
+**no UI string may present the two prices as equivalent** — the iframe's
+"the same price at the 5,000 Cinder / Aza peg" line was removed for exactly this
+reason. `_wh_price_check.mjs` guards the numbers; nothing guards the prose, so
+read it when you change a price.
+
+**Reachability of the Cinder path — measured, reported without editorialising.**
+A bay costs 5,000,000 Cinder or 10 Aza. Against the rest of the game's economy:
+
+| Reference point (measured at HEAD) | Value |
+|---|---|
+| Largest single scripted Cinder reward found | 10,000 |
+| Largest campaign-completion reward | 250 |
+| Most expensive existing Cinder sink in the game | 1,400,000 |
+| Node Cinder production per cycle, LV1 → LV10 | 25 → 1,600 |
+| Node daily bank accrual, a healthy owned node | ≈1,700/day |
+| **Days of a healthy node's entire output for ONE bay** | **≈2,940 (≈8 years)** |
+| Bays purchasable with the game's biggest existing sink's worth of Cinder | 0.28 |
+| Cost to buy the Cinder via the Aza exchange (5,000/Aza) | 1,000 Aza = **$1,000** |
+| Cost to buy the bay with Aza directly | 10 Aza = **$10** |
+
+So at these numbers the Cinder option is not merely slower — buying Aza to
+convert into 5,000,000 Cinder costs 100× what buying the bay with Aza costs, and
+no ordinary income source approaches it. **Aza is effectively the only path.**
+That may be exactly the intent at a $10 price point; it is recorded here so it
+is a decision and not a surprise.
+
 **Warehouse tiers** — tier → max bays / Aza / Cinder:
-1 Lean-To Depot 4 / — · 2 Sheet-Metal 8 / 25 / 125,000 · 3 Concrete Hub 14 / 60 / 300,000 ·
-4 Regional Terminal 22 / 140 / 700,000 · 5 Ashfall Logistics 32 / 300 / 1,500,000
+1 Lean-To Depot 4 / — · 2 Sheet-Metal 8 / 25 / 12,500,000 · 3 Concrete Hub 14 / 60 / 30,000,000 ·
+4 Regional Terminal 22 / 140 / 70,000,000 · 5 Ashfall Logistics 32 / 300 / 150,000,000
 
 **Weight lifters** — tier → carry kg / Aza / Cinder:
-0 Bare Hands 25 / free · 1 Back Brace 45 / 2 / 10,000 · 2 Hand Truck 90 / 5 / 25,000 ·
-3 Pallet Jack 180 / 12 / 60,000 · 4 Forklift 400 / 30 / 150,000
+0 Bare Hands 25 / free · 1 Back Brace 45 / 2 / 1,000,000 · 2 Hand Truck 90 / 5 / 2,500,000 ·
+3 Pallet Jack 180 / 12 / 6,000,000 · 4 Forklift 400 / 30 / 15,000,000
 
 **ETA by node level (hours):**
 
@@ -255,7 +287,7 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 | `wh_send_shipment(unit, kind, node, label, payload, name)` | renter | Weight + ETA computed server-side; splits into crates. |
 | `wh_store_crate(crate, unit)` | owner or renter | The unload gate. |
 | `wh_buy_unit(currency)` | owner | Adds a NEW empty bay. 10 Aza / 50,000 Cinder. |
-| `wh_expand_unit(unit, currency)` | owner or that renter, rental must be CURRENT | **Grows an EXISTING bay** by another 500 kg, same price. This is what the "you need to open storage unit space" modal calls — buying a new bay cannot help a crate addressed to a full one. |
+| `wh_expand_unit(unit, currency)` | owner or that renter, rental must be CURRENT | **Grows an EXISTING bay** by another 500 kg, charged at the same `unit_price_*` as buying a new one (it reads the config key, so a price change follows automatically). This is what the "you need to open storage unit space" modal calls — buying a new bay cannot help a crate addressed to a full one. |
 | `wh_upgrade_tier(currency)` | owner | Raises the bay cap **and builds 2 bays**. |
 | `wh_buy_lifter(tier, currency)` | anyone | Carry capacity. |
 | `wh_withdraw(unit, res, qty)` | renter | Takes goods back out. |
@@ -324,7 +356,7 @@ something to show a player. Add a line to *both* whenever you add an RPC.
 - [ ] **E** at the wrong bay is refused and names the right one.
 - [ ] **E** at the right bay stores it; the bay's fill bar and stacked goods grow.
 - [ ] Filling a bay raises **"You need to open storage unit space"** offering
-      **10 Aza** or **50,000 Cinder**; unaffordable options are disabled.
+      **10 Aza** or **5,000,000 Cinder**; unaffordable options are disabled. The modal must NOT claim the two prices match.
 - [ ] Buying **grows that bay by 500 kg** and the crate in hand then fits.
 - [ ] **Upgrade to **tier 5** (32 bays), then WALK TO EVERY NEW BAY** and press E at each one.
       Counting bays in the HUD is not enough — a build where the bays exist but

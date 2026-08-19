@@ -1019,7 +1019,22 @@ function signature() {
   let h = 0, n = 0;
   for (const k in game.tiles) {
     const t = game.tiles[k]; n++;
-    const s = k + '|' + t.type + '|' + ((t.rot | 0) & 3);
+    /* 🐞 THE MESH ID IS IN THE HASH, AND ROUND 17 FOUND OUT WHY THE HARD WAY.
+       The foundation edge and the plinth are both RASTERISED OFF `t.mesh` —
+       they are the only things in this file that read the recipe's geometry
+       rather than the tile's data — so a tile whose MESH is replaced while its
+       type and rotation stay the same leaves this layer holding a bed and a
+       base course derived from a building that is no longer there. That is not
+       hypothetical: `repaint(key)` is exactly that call (dropTileMesh →
+       buildMesh → placeMeshAt), it is what the inspect handler runs when a plot
+       is leased, and the standard gauntlet scene leases one — so the `lot` that
+       becomes a `tenantbiz` kept the vacant lot's parcel.
+       MEASURED: the layer's own verify(), which forces a rebuild, counted 92
+       plinth runs on a district whose merged buffer held 85. Seven runs of
+       difference, and every one of them a tile whose mesh had moved on without
+       this hash noticing. THREE's `.id` is monotonic per object, so a replaced
+       mesh always changes it and a re-used one never does. */
+    const s = k + '|' + t.type + '|' + ((t.rot | 0) & 3) + '|' + (t.mesh ? t.mesh.id : 0);
     for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
   }
   return h + ':' + n;

@@ -57,9 +57,20 @@ business, an arena, a med lab and the planting.
 The scene's return value now carries **`why`** (the game's own refusal sentence
 for every tile that did not place, captured through `window.__ncToastSink` —
 never re-derived) and **`gates`** (what the scene had to satisfy to get the city
-up, including the 12 development points of research it granted itself). Read
+up, including the development points of research it granted itself). Read
 both. A bare `fails` count is what let one wrong explanation stand for ten
 rounds.
+
+🏢 **Round 17 added a sixth block and a seventh gate.** node-city gained an
+`office` building — there was none, and four systems (the Zone Demand panel,
+`o_low`/`o_high`, /src/districts' three office specialisations and
+/src/landvalue's `off` column) had been advertising a land use that resolved to
+a Research Spire or a holding company. Three Office Blocks now stand at
+`(C+5…C+7, C+3)`, in line with the three Retail Parades across the x = C+4
+junction, so one frontage carries shopfronts and then office massing. That
+needs `off_low` (2 dp), so the scene grants **14** development points, not 12,
+and places **221** tiles. The tiles are inside the existing bounding box, so
+the `aerial` / `street` / `district` framings did not move.
 
 **`drive-streets.mjs`** — a LONG run with sampling, for anything that has to
 accumulate. `shot.mjs` throws the eval's return value away and truncates

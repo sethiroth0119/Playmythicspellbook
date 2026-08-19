@@ -1,7 +1,7 @@
 # Handoff — 2026-08-19
 
-**Branch:** `city-construction-timers` · **HEAD** `90020b127d` · tree clean
-**Live:** `v120y7` (Cloudflare, edge-verified 2026-08-19) · MP server live on Fly, **not** redeployed this session
+**Branch:** `city-construction-timers` · **HEAD** `cb83c939df` · tree clean
+**Live:** `v120y8` (Cloudflare, edge-verified 2026-08-19) · MP server live on Fly, **not** redeployed this session
 
 ---
 
@@ -99,6 +99,55 @@ test plays its own units. It says nothing about whether the real client does.
 
 Next steps and the gating question are in `colyseus-server/RELAY_CLOSURE_PLAN.md`.
 
+
+---
+
+## 2b. The city builder is merged in — 2026-08-19
+
+`origin/claude/city-builder-visual-upgrade-g9deb4` (34 feature modules under
+`public/src`, zoning/districts/tenants, the visual rounds) is **merged and live
+at v120y8**. All 30 modules that expose an `index.js` return 200 at the edge.
+
+🔴 **Its own handover (`HANDOVER.md`, in Downloads) says "nothing here has been
+deployed" and gives four knobs at `v120w9`. Do not follow that literally now —
+and do not follow it again from any stale copy.** The two lines diverged from
+`2fcf50b4fc` on 2026-08-16, this one 62 commits ahead and that one 150.
+Deploying it as written would have shipped `v120w9` over `v120y7` and rolled
+back every `v120x`/`v120y` build. It could not know that; it was written from
+inside the other branch.
+
+Three of the six merge conflicts needed a **hybrid** — taking either side whole
+would have been wrong. They are documented inline at each site in
+`public/node-city/index.html`, and in the merge commit `cb83c939df`:
+
+| Site | Resolution |
+|---|---|
+| `~23876` | **Both kept.** Not a real conflict — each branch inserted *different* new code at one point (our stash split, their power/water helpers). The brace the conflict shared belonged to whichever survived. |
+| `~24830` | Ours + **their** `wtFactor(k)`. Their side still clamped `madeR` against `_ledgerFree` inline — the build-order ratchet the stash split exists to kill. |
+| `~24890` | Their banking block **dropped** (it would double-bank under `_stashSplit`), their `genR` fix **kept** (`waterNetRaw` must see the ground multiplier). |
+| `~28754` | `bldCrewLoad()` from **them** (zoning dev sites are not crew jobs, and zoning only exists here post-merge), `bldHasCo()` from **us**. |
+| `~34260` | Same predicate fix + `bldCeilingMsg()`. |
+
+**Gate note:** `_synckcheck.mjs` **must be given both index files**. A bare run
+checks `public/index.html` and nothing else — and the city work is almost
+entirely in `public/node-city/index.html`. The full set is now:
+
+```bash
+node _synckcheck.mjs public/index.html public/node-city/index.html
+node .gauntlet/modcheck.mjs
+node .gauntlet/precommit-scan.mjs
+node tools/economy-tests/run.mjs
+node tools/mp-tests/run.mjs
+```
+
+The economy suite was proven able to fail on this tree via
+`ECON_TEST_SABOTAGE=seed-mint` (red, exit 1, caught the injected mint).
+
+**Still open from that handover, unchanged by the merge:** `sql/038` is recorded
+there as written-but-**not applied**, while this project's memory records 036–038
+as all applied. ⚠ Those cannot both be true — **verify in the Supabase editor
+before trusting either.** Until it is applied, `/src/economy/trade.js` runs
+against simulated partners.
 ---
 
 ## 3. Shipped this session

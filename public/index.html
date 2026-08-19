@@ -36492,7 +36492,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y3';
+  window.BUILD_VERSION = 'v120y4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -44851,6 +44851,29 @@ const Cue = {
 // Expose so non-module code (and the few inline scripts) can reach it.
 try { window.Cue = Cue; } catch (e) {}
 
+/* 🎁 THE STARTING CINDER GRANT — ONE NUMBER, TWO READERS, AND THAT IS THE POINT.
+   A brand-new Profile is seeded with this much Cinder. `_profileLooksEmpty()`
+   has to know it, because "has this player got any Cinder?" is NOT the same
+   question as "has this player played?", and confusing the two destroyed
+   accounts:
+
+   `_profileLooksEmpty` bailed on `p.gems > 0`. Every default profile ships with
+   this grant, so the function returned "not empty" for a device that had never
+   been played. That made the `localEmpty && cloudHasProg` fresh-device branch
+   DEAD CODE. Control fell through to `localIsFresher` — and a fresh boot saves
+   its defaults locally, stamping the edit time as "now", which out-ranks any
+   real cloud row — so the empty profile was kept AND uploaded over the player's
+   real account. Signing in on a second device did not fail to load your
+   progress; it deleted it. Confirmed live from the owner's console:
+   "Cloud fetch skipped: local progression is newer than cloud snapshot."
+
+   Every OTHER field on a default profile is genuinely empty (sovereigns 0,
+   resources all 0, itemInventory {}, salvage {}, heroes {}, decks [],
+   cardCollection {}) — this grant was the single reason the guard never fired.
+
+   ⚠ If you change the grant, change it HERE. Both the Profile literal below and
+   the emptiness check read this constant, so they cannot drift apart again. */
+const PROFILE_START_GEMS = 30;
 // Saved progression: levels, XP, kills, win/loss records, equipment
 const Profile = {
   heroes: {},                   // 'cedric' -> { level, xp, kills, wins }
@@ -44898,7 +44921,7 @@ const Profile = {
   // Cinders drop from battles, daily challenges, achievements, event cards, and selling cards.
   // Cinders CANNOT be bought with real money — they're the "honest sweat" coinage.
   // Cinders CAN be cashed out (mock) via the Cashout Vault, or spent in the shop / market.
-  gems: 30,                     // <span class="cinder-icon"></span> Cinders (display) — kept as `gems` for save-file back-compat
+  gems: PROFILE_START_GEMS,     // <span class="cinder-icon"></span> Cinders (display) — kept as `gems` for save-file back-compat
   // Profile.sovereigns is 👑 SOVEREIGNS, the premium currency.
   // Sovereigns are PURCHASED WITH REAL MONEY ONLY from the Sovereigns Store.
   // They can buy from the shop and trade with other players, but cannot be earned in-game.
@@ -47423,7 +47446,19 @@ function _profileLooksEmpty(p) {
     // empty check NEVER falsely returns true for a player with real
     // progress. Better to err on the side of "looks empty" and pull
     // cloud than to wrongly believe local is fresh.
-    if (typeof p.gems === 'number' && p.gems > 0) return false;
+    /* 🔴 THE STARTING GRANT IS NOT PROGRESS — this line destroyed accounts.
+       It used to read `p.gems > 0`. A default Profile ships with
+       PROFILE_START_GEMS, so this returned "not empty" for a device that had
+       never been played, the fresh-device branch below became dead code, and
+       the empty profile was uploaded over the player's real cloud save. See the
+       long note above PROFILE_START_GEMS for the full chain.
+       Comparing against the GRANT rather than against zero is what makes the
+       question "has this player earned anything?" instead of "does this player
+       have a wallet?". A returning player who has genuinely spent down below
+       the grant is still caught by every other signal here — battles, cards,
+       decks, starterPicked, hero advancement — none of which a fresh profile
+       has. ⚠ Do not "simplify" this back to `> 0`. */
+    if (typeof p.gems === 'number' && p.gems > PROFILE_START_GEMS) return false;
     if (typeof p.sovereigns === 'number' && p.sovereigns > 0) return false;
     if (p.itemInventory && typeof p.itemInventory === 'object') {
       for (const k in p.itemInventory) { if ((p.itemInventory[k] | 0) > 0) return false; }
@@ -106351,7 +106386,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120y3';
+const BB_VER = 'v120y4';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -211729,7 +211764,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120y3';
+  f.src = 'node-city/index.html?v=v120y4';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -228906,8 +228941,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120y3">
-<script type="module" src="src/battle/hud.js?v=v120y3"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120y4">
+<script type="module" src="src/battle/hud.js?v=v120y4"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

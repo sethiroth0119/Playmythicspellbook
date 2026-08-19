@@ -10,7 +10,7 @@
     "parity": "node test/catalog-parity.mjs",
     "freshness": "node ../tools/extract-engine-data.mjs --check",
     "test": "node ../tools/extract-engine-data.mjs --check && tsc && node test/catalog-parity.mjs && node test/damage-golden.mjs",
-    "loadtest": "colyseus-loadtest loadtest/example.ts --room battle --numClients 10"
+    "loadtest": "node test/loadtest.mjs"
   },
   "engines": {
     "node": ">=20"

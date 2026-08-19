@@ -702,6 +702,10 @@ const api = {
      ambiguity and could only file every closure as "wound up, last seen
      HEALTHY". Bounded, read-only, and it moves nothing. */
   closures: (n) => (mounted ? Sim.closures(n) : []),
+  /* The distress ladder itself — its order, its labels and its colours. Read by
+     any surface that draws a rung, so the map, the economy panel and the tenant
+     ledger cannot show one business in three different colours. */
+  RUNGS: Firms.RUNGS, RUNG_META: Firms.RUNG_META,
   inventory: () => Sim.inventory(),
   price: (id) => Prices.priceOf(id),
   movers: (n) => Prices.movers(n),

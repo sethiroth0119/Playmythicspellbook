@@ -66,16 +66,18 @@ export function mount(host) {
   return true;
 }
 
+/* THE COLOUR IS firms.js's OWN — `RUNG_META` is re-exported on the economy API
+   for exactly this, so the map, the economy panel and the tenant ledger cannot
+   show one business in three different colours. The literals below are a
+   fallback for a build whose /src/economy predates that export; a wrong colour
+   is a wrong tint and never a wrong number, which is why a fallback is
+   acceptable HERE and is not acceptable for anything the bid reads. */
 function rungColour(rung) {
   try {
     const E = (typeof window !== 'undefined') && window.MythicEconomy;
-    const meta = E && E.ECON ? null : null;   // ECON does not carry RUNG_META
     const R = E && E.RUNG_META;
     if (R && R[rung] && R[rung].color) return R[rung].color;
   } catch (e) {}
-  /* firms.js's own table, mirrored ONLY as a fallback and marked as such: the
-     economy module does not currently re-export RUNG_META, and a colour is
-     cosmetic — a wrong one is a wrong tint, never a wrong number. */
   return ({ HEALTHY: '#9ad17a', REDUCED: '#e0c060', LAYOFFS: '#e0a060',
             DEBT: '#7fb8ff', DEFAULT: '#e0556a', BANKRUPT: '#8a8578' })[rung] || NEUTRAL;
 }

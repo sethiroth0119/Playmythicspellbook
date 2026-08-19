@@ -859,5 +859,95 @@
     "gap": "Item 1 is the next thing to build and it is cheap: a vertical gradient in the pane own vertex colour, or one shared 8x8 canvas on the window material."
    }
   ]
+ },
+ {
+  "round": 19,
+  "headline": "6.46 → 6.92. The tell moved off the materials entirely.",
+  "status": "done",
+  "meanScore": 6.92,
+  "strangerTest": "instantly, but on composition now",
+  "tris": null,
+  "scores": [
+   {
+    "dimension": "Palette & grade",
+    "score": 7.5
+   },
+   {
+    "dimension": "Lighting & shadow",
+    "score": 7
+   },
+   {
+    "dimension": "Building silhouette",
+    "score": 8
+   },
+   {
+    "dimension": "Building surface detail",
+    "score": 8
+   },
+   {
+    "dimension": "The plot",
+    "score": 6
+   },
+   {
+    "dimension": "Roads",
+    "score": 8
+   },
+   {
+    "dimension": "Street furniture",
+    "score": 7
+   },
+   {
+    "dimension": "Vehicles",
+    "score": 6
+   },
+   {
+    "dimension": "Citizens",
+    "score": 5.5
+   },
+   {
+    "dimension": "Vegetation",
+    "score": 5.5
+   },
+   {
+    "dimension": "Density & zoning read",
+    "score": 7.5
+   },
+   {
+    "dimension": "UI legibility",
+    "score": 7
+   }
+  ],
+  "pieces": [
+   {
+    "title": "The glass carried the round",
+    "verdict": "WINS",
+    "summary": "Building surface detail 6.5 to 8.0, the biggest single move in the project. Same pane, same coordinates, weather-matched: mean went from a flat warm-grey card at hue 23 and chroma 5.7 to hue 216 and chroma 42.5, and intra-pane variation from 2.76 to 19.38. The r13 window got BRIGHTER toward the bottom; the r19 one has 44 units of structure running the right way with a floor-slab return. Palette also confirmed at the pixel: the kerb rotated hue 279 to 33 at unchanged luminance, and bright-lilac pixels in the frontage went 31,687 to 18.",
+    "gap": "The purple is not gone, it MOVED — the parcel planting-bed and plaza edging is still lilac and byte-identical between rounds. That residual is the one saturated non-natural hue left on the ground and is what stands between palette and an 8."
+   },
+   {
+    "title": "The office block did the zoning read",
+    "verdict": "WINS",
+    "summary": "Density and zoning read 6.5 to 7.5. From the aerial a viewer now separates four uses with no UI — pitched-roof housing, a high street under coloured awnings, a logistics yard with hazard chevrons and dock lorries, and an office cluster of three glass-ribboned blocks with a surface car park. At r13 the entire commercial read was a four-pixel fascia stripe. The office is also the most CS2-correct object in the city, matching the reference frame line by line.",
+    "gap": "Density tops out at five floors — no high-density tower, no wall-to-wall row housing — and the built area is a hard-edged rectangle in an empty field, so density has no gradient to read across."
+   },
+   {
+    "title": "Nothing below building scale casts a shadow",
+    "verdict": "THE BIGGEST GAP",
+    "summary": "Measured on an isolated pickup: the ground band immediately down-sun runs a 7-unit spread, which is the surface texture own noise, with no notch anywhere. Pedestrians, lamp masts, bollards, benches, fences, bins and shrubs are all likewise unshadowed. Round 18 swept this and refused it — correctly, because a 0.031-unit lamp mast cannot be resolved by one cascade at any affordable map resolution. But that finding does not cover a vehicle or a person, and no substitute was shipped. The fix is a contact DECAL, one quad per object, which needs no cascade at all and is not blocked by that refusal.",
+    "gap": "It is the only change that moves four dimensions at once — lighting, street furniture, vehicles and citizens — and it is measurable against the zero recorded above."
+   },
+   {
+    "title": "The stranger test tell has moved off the materials",
+    "verdict": "OPEN",
+    "summary": "Still instantly, but the giveaway is no longer rendering. FIRST: the aerial is a diorama on a lawn — 41.6% of the aerial viewport is undeveloped green, and the built area is a hard-edged rectangle with nothing beyond it. Every CS2 aerial runs off all four frame edges. That is a COMPOSITION problem and no amount of material work touches it. SECOND: everything small floats. THIRD, and a correction to the previous round: it is not that the glass reflects the sky instead of the scene — it is that EVERY pane in the city carries the IDENTICAL head-first profile regardless of which way it faces, so two office blocks three metres apart have indistinguishable facing glass. Convincing on one pane, a giveaway on fifty.",
+    "gap": "FOURTH is the lattice — every road dead straight, every junction square, every lamp at the same tile-local offset. It ranks fourth now, where it used to rank first."
+   },
+   {
+    "title": "A trap left for the next round",
+    "verdict": "METHOD",
+    "summary": "The second-largest cluster on the r13-to-r19 change map is the shopfront block, where the awnings go teal-and-purple to magenta. That is the shop recipe per-boot Math.random redraw, documented in the harness README — not work and not a regression. Anyone diffing these two rounds will find it before they find the offices. Confirmed real on the change map and nothing else: the office cluster and its cast shadows, the far cluster de-hazing, a thin fleck on every window pane, and a thin line down every kerb.",
+    "gap": "Recorded because two regressions in this project history turned out to be random draws, and this is the third candidate."
+   }
+  ]
  }
 ]

@@ -210,7 +210,25 @@ double — a second cascade, which three r171 has no support for. The existing 5
 and 2.0× key/fill ratio are not worth trading for a 0.031-unit mast. The sweep and the shape
 of a cheaper fix (contact patches at each prop's foot) are recorded at `sun.shadow.radius`.
 
-**Mean 6.46 across 12 dimensions at round 13.** ⚠ That score PREDATES the
+**Mean 6.92 across 12 dimensions at round 19** (was 6.46 at round 13), weather-matched and
+pixel-aligned between rounds. Biggest moves: building surface detail 6.5 → **8.0** (the
+window skin — the largest single visual return in the project), density and zoning read
+6.5 → **7.5** (the office block), silhouette and roads both to 8.0.
+
+🔴 **The biggest remaining gap: nothing below building scale casts a shadow.** Measured —
+the ground immediately down-sun of an isolated pickup runs a 7-unit spread, which is the
+surface texture's own noise, with no notch. Pedestrians, lamps, bollards, benches and bins
+are all likewise unshadowed. The fix is a contact **decal**, not a shadow-map entry, and it
+is *not* blocked by round 18's refusal — that finding was about resolving a 0.031-unit mast
+in a depth map, and a decal needs no cascade.
+
+**The stranger test is still "instantly", and the tell has moved off the materials.** It is
+now composition: **41.6% of the aerial viewport is undeveloped green**, and the built area is
+a hard-edged rectangle with nothing beyond it, where every CS2 aerial runs off all four frame
+edges. No amount of material work touches that. Second is that everything small floats. Third
+— correcting an earlier round — is not that the glass reflects only the sky, but that **every
+pane in the city carries the identical head-first profile** regardless of which way it faces,
+so two office blocks three metres apart have indistinguishable facing glass. ⚠ That score PREDATES the
 environment map, the interior glass content and the arena (rounds 14–16), which are
 unscored: `rounds.json` carries `meanScore: null` for round 14. The next round's first job
 is to re-score. the glass reflects the sky and now

@@ -307,7 +307,10 @@ drop policy if exists ctc_upd on public.city_trade_shipment_claims;
 drop policy if exists ctc_del on public.city_trade_shipment_claims;
 
 -- ════════════════════════════════════════════════════════════════════════════
--- VERIFY — expect 3 tables, 1 function, 1 trigger, and 8 policies.
+-- VERIFY — expect 3 tables, 1 function, 1 trigger, and 7 policies.
+-- (3 on agreements: select / insert / update. 2 each on shipments and claims:
+--  select / insert. No update or delete policy anywhere — both tables are
+--  append-only and the agreements row is delete-less on purpose.)
 -- ════════════════════════════════════════════════════════════════════════════
 select
   (select count(*) from information_schema.tables
@@ -317,7 +320,7 @@ select
      where n.nspname = 'public' and p.proname = 'is_city_trade_party')                                        as party_fn_expect_1,
   (select count(*) from pg_trigger where tgname = 'city_trade_freeze' and not tgisinternal)                   as freeze_trigger_expect_1,
   (select count(*) from pg_policies where schemaname = 'public'
-     and tablename in ('city_trade_agreements','city_trade_shipments','city_trade_shipment_claims'))          as policies_expect_8,
+     and tablename in ('city_trade_agreements','city_trade_shipments','city_trade_shipment_claims'))          as policies_expect_7,
   (select count(*) from pg_tables where schemaname = 'public'
      and tablename in ('city_trade_agreements','city_trade_shipments','city_trade_shipment_claims')
      and rowsecurity)                                                                                        as rls_on_expect_3;

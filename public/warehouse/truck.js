@@ -373,8 +373,32 @@
   }
 
   // ── tiny helpers, in the shorthand the rest of this codebase uses ──
+  // ─── ♻ GEOMETRY CACHE — one buffer per distinct shape ──────────────────────
+  // Reuse was exactly ZERO (166 meshes / 166 geometries): six wheels each built
+  // their own identical tyre, sidewall rings and cap, and every box in the model
+  // built its own BoxGeometry. Nothing in this file mutates a geometry after
+  // creation — verified, no .translate/.scale/.rotate/.applyMatrix on any
+  // geometry — so identical dimensions can safely share one buffer. Position and
+  // rotation live on the MESH, which stays per-instance.
+  const _geo = {};
+  const geoCyl = (THREE, rt, rb, h, seg) => {
+    const k = 'c' + rt + '_' + rb + '_' + h + '_' + seg;
+    return _geo[k] || (_geo[k] = new THREE.CylinderGeometry(rt, rb, h, seg));
+  };
+
+  // ⚠ SHARE THE BOX GEOMETRIES TOO. The cylinder cache closed the wheels'
+  // tyres and caps, but every box in the model still built its own
+  // BoxGeometry — 164 meshes against 143 geometries, and the six wheels alone
+  // rebuilt identical shapes six times over. Nothing in this file mutates a
+  // geometry after creation (verified: no .translate/.scale/.rotate/
+  // .applyMatrix on any geometry), so identical dimensions can safely share one
+  // buffer. Position and rotation live on the MESH, which is per-instance.
+  const geoBox = (THREE, w, h, d) => {
+    const k = 'b' + w + '_' + h + '_' + d;
+    return _geo[k] || (_geo[k] = new THREE.BoxGeometry(w, h, d));
+  };
   const box = (THREE, g, w, h, d, mat, x, y, z) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    const m = new THREE.Mesh(geoBox(THREE, w, h, d), mat);
     m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; g.add(m); return m;
   };
   const cyl = (THREE, g, rt, rb, h, seg, mat, x, y, z) => {
@@ -420,16 +444,6 @@
   }
 
   // ─── 🛞 Wheel — steel rim, modest hubcap, chunky sidewall ───────────────────
-  // Geometry cache. Six wheels were building six identical tyre cylinders, six
-  // identical sidewall rings and six identical caps — geometry reuse was exactly
-  // zero at 166 meshes / 166 geometries. Same shape, same dimensions, no reason
-  // for six copies on the GPU.
-  const _geo = {};
-  const geoCyl = (THREE, rt, rb, h, seg) => {
-    const k = 'c' + rt + '_' + rb + '_' + h + '_' + seg;
-    return _geo[k] || (_geo[k] = new THREE.CylinderGeometry(rt, rb, h, seg));
-  };
-
   function wheel(THREE, mats, x, z) {
     const g = new THREE.Group();
     // ⚠ MIRROR BY SIDE. The cap and the lug ring used to be placed at a fixed
@@ -798,9 +812,15 @@
     box(THREE, T, 2.06, 0.05, 0.07, mats.seam,  0, 0.865, nz + 0.12);
     box(THREE, T, 0.58, 0.26, 0.06, mats.black, 0, 0.74, nz + 0.21);
     box(THREE, T, 0.46, 0.16, 0.02, mats.plate, 0, 0.74, nz + 0.245);
-    // ⚠ Tucked UP into the bumper, not hung below it. At y 0.58 with the bumper
-    // at 0.62-0.90 they overlapped by 20 mm and read as two black stilts.
-    [-1, 1].forEach(sd => box(THREE, T, 0.10, 0.18, 0.16, mats.black, sd * 0.86, 0.70, nz + 0.06));
+    // ⚠ ON THE FACE OF THE BUMPER, WHICH IS THE ONLY PLACE A GUARD CAN BE.
+    // They were tucked up out of the way of an earlier "two black stilts" bug
+    // and went one step too far: at y 0.61-0.79 / z nz-0.02..nz+0.14 they were
+    // wholly INSIDE the bumper's own volume (0.62-0.90, nz-0.01..nz+0.21) —
+    // geometry that cannot be seen from any angle, paying its draw cost to
+    // render nothing. A vertical guard stands proud of the face and overlaps the
+    // bumper top and bottom by 40 mm, which is what makes it read as bolted on
+    // rather than hung under.
+    [-1, 1].forEach(sd => box(THREE, T, 0.10, 0.36, 0.10, mats.black, sd * 0.86, 0.76, nz + 0.20));
 
     // ── curb-side sliding door, standing OPEN ───────────────────────────────
     // A real opening in the side: a dark doorway, a recessed step well you can
@@ -875,7 +895,13 @@
       cyl(THREE, p, 0.016, 0.016, 0.20, 8, mats.chrome, 0.034, -0.16, dw / 2 - 0.16).rotation.x = Math.PI / 2;
       p.position.set(fx + 0.048, dyc, dz - dw - 0.09);
       p.castShadow = true; T.add(p);
-      box(THREE, T, 0.042, 0.05, dw * 2.2, mats.black, fx + 0.044, dyT + 0.09, dz - dw * 0.60);
+      // ⚠ THE TRACK HAS TO TOUCH THE TRUCK. At y dyT+0.09 its underside sat
+      // 7.3 mm above the header return's top (dyT+0.058) and its inboard face
+      // 2 mm outboard of the header's outer face — a rail hovering in the air
+      // beside the body with the door hanging off it. Dropped and pulled in so
+      // it overlaps the header by 8 mm vertically and 10 mm in x: still a
+      // separate part, but a mounted one.
+      box(THREE, T, 0.042, 0.05, dw * 2.2, mats.black, fx + 0.032, dyT + 0.075, dz - dw * 0.60);
     }
 
     // ── rear: ribbed roll-up door, step bumper, twin round tail lamps ────────
@@ -920,7 +946,20 @@
     // the rail, below the deck, in a dark material, with two straps.
     const tank = cyl(THREE, T, 0.145, 0.145, 0.86, 14, mats.black, -0.74, 0.30, 0.20);
     tank.rotation.x = Math.PI / 2;
-    [-0.26, 0.26].forEach(dz => box(THREE, T, 0.32, 0.028, 0.045, mats.steel, -0.74, 0.30, 0.20 + dz));
+    // ⚠ BANDS, NOT DECALS. The straps were flat 0.32 x 0.028 plates sitting at
+    // the tank's own centre height, so each one read as a stripe painted across
+    // the drum — from every angle you can actually see the tank from, a sticker.
+    // A strap goes AROUND, so it is a ring; and it holds the tank up, so it ends
+    // somewhere. Each band now carries a bracket outboard to the frame rail
+    // (rail underside y 0.44, tank crown y 0.445 — they meet), which is the
+    // difference between a strapped tank and a drum floating under the floor.
+    [-0.26, 0.26].forEach(dz => {
+      const bandG = new THREE.TorusGeometry(0.152, 0.013, 6, 18);
+      const band = new THREE.Mesh(bandG, mats.steel);
+      band.position.set(-0.74, 0.30, 0.20 + dz);
+      band.castShadow = true; T.add(band);
+      box(THREE, T, 0.30, 0.026, 0.048, mats.steel, -0.60, 0.452, 0.20 + dz);
+    });
     // Mud flaps HANG from the sill; they used to start 0.41 m below it, attached
     // to nothing.
     [-1, 1].forEach(s => box(THREE, T, 0.02, 0.42, 0.30, mats.rubber, s * 0.92, D.floorY - 0.21, D.zAxleR - 0.74));

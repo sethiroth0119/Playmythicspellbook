@@ -410,15 +410,29 @@ async function onClick(ev) {
       const why = H.billetBlock(h, spec, roomId);
       if (why) { CTX.toast(why, 'bad'); return; }
       const room = H.roomById(roomId);
-      CTX.openCardPicker('Billet a card in the ' + room.name + ' → ' + room.stat.toUpperCase(),
-        c => c.type !== 'Structure',
+      /* 🛏 UNITS ONLY. This read `c.type !== 'Structure'`, which offered the
+         player Heroes, Kalons, Spells, Equipment, Artifacts and Relics as well
+         — everything in the collection bar one type. A House trains a fighter's
+         stat line (ATK/MAG/DEF/RES/SPD/HP); a Spell has no stat line to raise
+         and an Artifact is not something that sleeps, so those were offers the
+         room could never honour.
+         ⚠ The list is already restricted to cards the player OWNS and has not
+           assigned elsewhere — openCardPicker draws from freeCards(), which is
+           CARDS minus assignedCardIds(). This filter narrows the TYPE and
+           nothing else; ownership was never the missing half. */
+      CTX.openCardPicker('Billet a unit in the ' + room.name + ' → ' + room.stat.toUpperCase(),
+        c => c.type === 'Unit',
         (c) => {
           const err = H.billet(h, c.id, roomId, spec);
           if (err) { CTX.toast(err, 'bad'); return; }
           try { CTX.assignCard(c.id, true); } catch (e) {}
           CTX.toast('🛏 ' + c.name + ' bedded down in the ' + room.name + ' — training ' + room.stat.toUpperCase() + '.', 'good');
           CTX.saveSoon(); render(k);
-        });
+        },
+        // Says what was actually looked at. "No unassigned cards" would be a
+        // statement about the whole collection from a dialog that only read one
+        // type of it — see openCardPicker's note on the default.
+        'No free units. Every unit you own is already billeted, socketed or in a deck.');
       return;
     }
     if (act === 'wake') {

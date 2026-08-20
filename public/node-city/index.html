@@ -1455,6 +1455,30 @@
   #railbar { position: absolute; top: calc(var(--topbarh) + 34px); left: 12px; right: 12px;
     z-index: 43; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
     gap: 6px; pointer-events: none; }
+  /* 🔴 THE DOCK MAY NOT WRAP OVER THE MAP. The launcher registry's own note
+     records the row measured at 1242px against a 1256px track in the worst case
+     — one line with 14px spare — and warns that a fourteenth launcher wraps it
+     onto a second line across the city, which is the failure the rails were
+     collapsed to fix. A fourteenth (🌳 Research) has been added, so the failure
+     mode is changed rather than the ceiling ignored: at desktop widths the row
+     no longer wraps at all, it scrolls in place, and the map stays clear
+     however many launchers are visible or however long a raid clock runs.
+     ⚠ WRAP IS KEPT BELOW 900px on purpose. There the dock is not lying across
+       the map in the same way, and a narrow screen is better served stacking
+       than hiding launchers off the right edge of a scroller. */
+  @media (min-width: 900px) {
+    #railbar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+      scrollbar-width: none; }
+    #railbar::-webkit-scrollbar { display: none; }
+  }
+  /* ⚠ `pointer-events: none` on #railbar is NOT relaxed for the scroll, and
+     that was a real mistake caught before shipping. The bar is a full-width
+     strip pinned across the city (left:12px right:12px), and the base rule
+     makes it transparent to the pointer so clicks reach the map underneath.
+     Setting it to `auto` so the wheel could scroll the dock turned a 32px band
+     across the whole map into a click sink. The .rl buttons already re-enable
+     their own pointer events, so a wheel over a LAUNCHER still scrolls the row
+     — which is where a player's cursor is when they want to. */
   .rl { pointer-events: auto; position: relative; display: flex; align-items: center; gap: 6px;
     padding: 5px 10px 5px 8px; cursor: pointer; color: var(--bone);
     border: 1px solid rgba(212,175,55,.42); border-radius: 8px;
@@ -32301,7 +32325,14 @@ $('topbar').addEventListener('click', (ev) => {
   openVaultPanel(id);
 });
 
-function openCardPicker(title, filter, onPick) {
+/* @param emptyMsg  optional. What to say when the pool is empty.
+   ⚠ THE DEFAULT IS A LIE FOR A FILTERED PICKER, which is why this exists. The
+     Resting House now offers Units only, so a player holding six unassigned
+     Spells and no free Unit was told "No unassigned cards available" — a
+     sentence about their whole collection, from a dialog that had only looked
+     at one type of it. Callers that narrow the filter should say what they
+     narrowed to. Unfiltered callers keep the original wording. */
+function openCardPicker(title, filter, onPick, emptyMsg) {
   const pool = freeCards().filter(filter || (() => true));
   const box2 = document.createElement('div');
   box2.id = 'cardpicker';
@@ -32309,7 +32340,7 @@ function openCardPicker(title, filter, onPick) {
     (pool.length ? pool.map(c =>
       '<button class="cpcard" data-cid="' + c.id + '"><span class="cpname">' + c.name + '</span>' +
       '<span class="cpmeta">' + c.type + ' · ' + c.element + ' · ⚡' + c.power + ' · ' + c.rarity + '</span></button>').join('')
-      : '<div class="cpempty">No unassigned cards available.</div>') +
+      : '<div class="cpempty">' + (emptyMsg || 'No unassigned cards available.') + '</div>') +
     '</div><button class="pbtn" id="cp-close">Close</button></div>';
   document.body.appendChild(box2);
   box2.addEventListener('click', (ev) => {
@@ -41045,6 +41076,24 @@ const RAILS = [
           — which is the exact failure the rails were collapsed to fix. Measure
           with .gauntlet/eval-rail-worst.js before adding either. */
   { id: 'bcphone',    ico: '📱', name: 'Phone',  title: 'Emergency Broadcast', ext: 'phone' },
+  /* 🌳 THE FOURTEENTH SEAT, and the note above says there is no room for one.
+     It is here anyway, because the research tree had NO on-screen affordance at
+     all — /src/progression binds `K` and nothing else, so a player who never
+     pressed it never learned the tree exists. An undiscoverable feature costs
+     more than a tight row.
+     🔴 THE WIDTH RULE IS HONOURED BY CHANGING THE FAILURE, NOT BY IGNORING IT.
+        What the note forbids is the dock WRAPPING onto a second line over the
+        map — #railbar is `flex-wrap: wrap`, so overflow used to do exactly
+        that. At desktop widths the bar is now `nowrap` with `overflow-x: auto`,
+        so an over-long row scrolls in place and the map is never covered. The
+        wrap is kept below 900px, where the dock is not over the map in the same
+        way and stacking is the better answer.
+     ⚠ I COULD NOT RE-MEASURE. The note's figures come from
+       .gauntlet/eval-rail-worst.js; my attempt read a city in the "cut off"
+       state and measured an error banner, not the dock. The scroll guard is
+       what makes that safe to ship without the number — but run that script
+       before trusting the row at 1280 in the worst case it defines. */
+  { id: 'progtree',   ico: '🌳', name: 'Research', title: 'Research tree (K)', ext: 'progress' },
 ];
 
 let _railOpen = null;                    // id of the panel currently in #rmbody
@@ -41081,6 +41130,15 @@ function railState(r) {
      Tone `bad` when the unread posts include a subject the mayor FOLLOWED —
      they asked to be told about that one, so it earns the colour. No `urgent`:
      a feed is not a raider countdown and must never pulse like one. */
+  /* 🌳 Hidden until the module is up — same contract as the phone: a 404 on
+     /src/progression costs this launcher and nothing else, and the city ticks
+     on. No badge: a research tree is not a raider countdown and must never
+     pulse like one. */
+  if (r.ext === 'progress') {
+    const G = window.MythicProgress;
+    if (!G || typeof G.openPanel !== 'function') return { hide: true };
+    return {};
+  }
   if (r.ext === 'phone') {
     const B = window.MythicBroadcast, P = window.MythicPhone;
     if (!B || !P || !B.ready() || !P.ready()) return { hide: true };
@@ -41227,6 +41285,17 @@ function railOpen(id) {
      railClose would try to replaceChild a card that was never moved.
      The two housekeeping rules the rest of this function keeps are kept here
      too — one dialog at a time, and the dossier is the other body-level panel. */
+  if (r.ext === 'progress') {
+    if (railState(r).hide) return false;
+    if (_railOpen) railClose();
+    try { if (document.getElementById('inspect').classList.contains('open')) closeInspect(); } catch (e) {}
+    // panel(true) is the module's own open; openPanel() is the alias. Prefer the
+    // former so a build that only ships one of them still works.
+    try {
+      const G = window.MythicProgress;
+      return !!(typeof G.panel === 'function' ? G.panel(true) : G.openPanel());
+    } catch (e) { return false; }
+  }
   if (r.ext === 'phone') {
     if (railState(r).hide) return false;
     if (_railOpen) railClose();

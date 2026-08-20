@@ -61725,7 +61725,37 @@ function openCityHall() {
           '</div>' +
           '<div class="small-text" style="color:#8a7a4a;margin-top:6px">↑ pay taxes/fees · support the Reserve · keep ops running &nbsp;·&nbsp; ↓ smuggling · member crimes/raids · dodged taxes.' + (owner ? '' : ' Only the founder/CEO can file.') + '</div>' +
         '</div>';
-      const rows = CITY_LICENSES.map(L => {
+      /* 📜 WHAT YOU HOLD, ABOVE WHAT YOU COULD FILE FOR.
+         The list below answers "can I get this" for all nine, one row at a
+         time; nothing answered "what do I already have". A player who earned
+         Construction by owning a node had no place that said so — they had to
+         read nine rows and spot the one green word. This says it in one line.
+         ⚠ It reads cityHoldsLicense(), the SAME predicate the rows and the node
+           build gate use. A summary with its own copy of the rule is the
+           duplicated-read-side-rule shape that has already bitten landvalue's
+           vitals chip, where two copies of one predicate disagreed. */
+      const _heldList = CITY_LICENSES.filter(L => cityHoldsLicense(L.id));
+      const _heldHtml =
+        '<div style="margin-bottom:10px;padding:10px 12px;border-radius:9px;border:1px solid ' +
+          (_heldList.length ? 'rgba(127,224,160,0.34)' : 'rgba(212,175,55,0.2)') +
+          ';background:rgba(20,30,22,' + (_heldList.length ? '0.3' : '0.12') + ')">' +
+          '<div class="small-text" style="color:#9fc48a;font-weight:800;letter-spacing:0.08em">' +
+            '📜 LICENCES YOU HOLD · ' + _heldList.length + ' of ' + CITY_LICENSES.length + '</div>' +
+          (Corp.licensesUnknown && !_heldList.length
+            ? '<div class="small-text" style="color:#e0c070;margin-top:6px">⚠ Your filed licences could not be loaded, so this may be short. It is not a statement that you hold none.</div>'
+            : _heldList.length
+              ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">' +
+                  _heldList.map(function (L) {
+                    var viaN = cityLicenseByNodes(L.id);
+                    return '<span class="small-text" title="' + (viaN ? 'Granted because you operate ' + esc(cityLicenseNodeReason()) : 'Filed by your corporation') + '"' +
+                      ' style="white-space:nowrap;padding:3px 9px;border-radius:999px;border:1px solid rgba(127,224,160,0.4);background:rgba(40,80,50,0.28);color:#9fe0b0;font-weight:700">' +
+                      L.icon + ' ' + esc(L.name.replace(/ License$/, '')) +
+                      (viaN ? '<span style="color:#7fa88a;font-weight:600"> · via nodes</span>' : '') + '</span>';
+                  }).join('') +
+                '</div>'
+              : '<div class="small-text" style="color:#8a7a4a;margin-top:6px">None yet. Operating a Reserve node or claiming a city node earns Construction outright — no fee, no materials, no compliance floor.</div>') +
+        '</div>';
+      const rows = _heldHtml + CITY_LICENSES.map(L => {
         const has = cityHoldsLicense(L.id);
         const viaNodes = cityLicenseByNodes(L.id);
         const resStr = Object.keys(L.res).length ? Object.keys(L.res).map(k => L.res[k] + '× ' + ((_meta(k).name) || k)).join(' · ') : '—';
@@ -82984,9 +83014,35 @@ function _ownsAnyCityNode(userId) {
     const me = userId || (Profile.cloud && Profile.cloud.userId) || null;
     if (!me) return false;
     if (typeof _twForge !== 'function' || typeof _twNodeOwnerUser !== 'function') return false;
-    for (const n of ((_twForge() || {}).nodes || [])) {
-      if (!n || !n.id) continue;
-      const o = _twNodeOwnerUser(n.id);
+    /* 🔴 THE OWNERS MAP IS FETCHED, NOT DERIVED — and that is what made the
+       first version of this fix look like it had not shipped at all.
+       _twNodeOwnerUser() reads App._twNodeOwners.byNode, a cache filled by
+       tw_cloudFetchNodeOwners(). Only Territory Wars ever asked for it, and the
+       Licensing panel lives in City Hall — which a player reaches without the
+       map ever rendering. So a node owner opening Licensing directly got an
+       EMPTY cache, no owner for any node, and "🔒 need 55" on a licence they
+       had already earned. The node was claimed the whole time; nothing here
+       could see it.
+       Same lazy-fetch shape the map already uses (5-minute staleness, an
+       in-flight flag), plus a re-render when it lands, because this pass has to
+       answer NOW and the honest answer before the data arrives is "not yet". */
+    if (!App._twNodeOwners && typeof tw_cloudFetchNodeOwners === 'function' && !App._twNodeOwnersFetching) {
+      App._twNodeOwnersFetching = true;
+      Promise.resolve(tw_cloudFetchNodeOwners()).catch(() => {}).then(() => {
+        App._twNodeOwnersFetching = false;
+        try { render(); } catch (e) {}     // the licence row can now say HELD
+      });
+    }
+    /* Scan the OWNERSHIP MAP, not the node list. The first version walked
+       _twForge().nodes and asked the map about each one — which needs BOTH to
+       be loaded, and Forge.territoryWars is its own separate fetch. The map is
+       keyed by node id and its values carry the owner, so it answers "do I own
+       any node" on its own. One dependency instead of two. */
+    const byNode = (App._twNodeOwners && App._twNodeOwners.byNode) || null;
+    if (!byNode) return false;
+    for (const k in byNode) {
+      if (!Object.prototype.hasOwnProperty.call(byNode, k)) continue;
+      const o = byNode[k];
       if (o && (o.user_id === me || o.id === me)) return true;
     }
     return false;

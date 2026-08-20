@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping
@@ -107,6 +107,16 @@ const MUTATIONS = [
     name: 'the moveset merge goes back to picking by length',
     find: '    if (la || ra) takeLocal = la > ra;                       // 1 + 2',
     replace: '    if (false) takeLocal = false;',
+  },
+  {
+    /* Put back the fail-closed reading of an absent tier: rate 0 → cap 0 rather
+       than "no cap". That is the bug I nearly shipped — one guarded module
+       404ing would have clamped every PRN payout to nothing. The suite must go
+       red on it, or the gate is not guarding the direction that locks players
+       out of their own money. */
+    name: 'an absent tier means a ZERO daily cap instead of none',
+    find: '    if (!isFinite(rate) || rate <= 0) return Infinity;',
+    replace: '    if (!isFinite(rate) || rate <= 0) return 0;',
   },
 ];
 

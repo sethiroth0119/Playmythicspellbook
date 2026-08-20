@@ -62457,7 +62457,35 @@ const NODE_CLAIM_COOLDOWN_MS = 6 * 3600000;  // collect once per 6h per node
 const NODE_MAX_PER_CORP      = 6;
 const NODE_EFF_DECAY_PER_HR  = 2.2;          // efficiency % lost per idle hour
 const NODE_EFF_FLOOR         = 20;
-const NODE_PAYOUT_CAP        = 250000;       // hard cap per collect (anti-abuse ceiling)
+/* 🔴 THE ANTI-ABUSE CEILING IS A DAY, NOT A COLLECT.
+   ---------------------------------------------------------------------------
+   It was 250,000 PER COLLECT, per node — which is not really a ceiling: the
+   cooldown is the only thing between two collects, and a player with six nodes
+   had six of them. This is now a rolling 24-hour allowance for the PLAYER,
+   scaled by their tier.
+
+   ONE CONSTANT, NOT SEVEN. cap = tier.rate × NODE_DAILY_CAP_PER_RATE, so the
+   table stays derived from the rate ladder that already exists rather than
+   gaining seven hand-written numbers that can drift out of step with it:
+
+     Free 0.5 →   3,750     Dominion  8 →  60,000
+     Starter 1 →  7,500     Titan    10 →  75,000
+     Outpost 3 → 22,500     Eternal  20 → 150,000
+     Foundation 5 → 37,500
+
+   ⚠ PER PLAYER, NOT PER NODE, and that is a deliberate reading of "150,000 per
+     24 hours for Eternal Founder" — a tier is a property of the player, so the
+     allowance is too. The old cap was per node, so this is a tightening; on a
+     ceiling that guards real withdrawable value (Cinder → Aza → 1 ◈ = $1) the
+     tighter reading is the safe one to be wrong about. Loosening it later is a
+     number change; a leak is not.
+   ⚠ COUNTED FROM SERVER META, not a local tally. Each node's `meta.dayPaid` /
+     `meta.dayStart` are written inside the same compare-and-swap that commits
+     the claim, so a reload, a second tab or another device cannot reset the
+     day. See _nodeDayUsed(). */
+const NODE_DAILY_CAP_PER_RATE = 7500;        // × tier rate → Eternal (20) = 150,000 / 24h
+const NODE_DAY_MS             = 86400000;
+const NODE_PAYOUT_CAP        = 250000;       // per-collect backstop, kept BELOW the day cap's job
 /* 🔒 The highest node level the PAYOUT will price — deliberately 1, because 1 is
    the only level this app can honestly produce. nodeEstablish and the gift claim
    both INSERT level 1 and nothing anywhere updates it (city_set_node_level is
@@ -63046,6 +63074,48 @@ function _nodeOwnerTierMul() {
 // bounded-only behavior, so existing players never regress).
 // 🔌 The slice is now the node's TIER rate (Free 0.5% … Eternal 20%) rather
 //    than one flat 5% for everyone, so the finite pool distributes by standing.
+/* 💰 THIS PLAYER'S 24-HOUR ALLOWANCE, from their tier. */
+function _nodeDailyCap() {
+  try {
+    const t = _nodeOwnerTierMul();
+    const rate = Number(t && t.rate);
+    /* 🔴 NO TIER INFORMATION MEANS NO DAY CAP — NOT A CAP OF ZERO.
+       _nodeOwnerTierMul()'s OFF value carries `rate: 0`, and it is returned
+       when /src/nodes/tiers.js is absent, when the pledge has not been fetched,
+       or before a tier is stamped. Reading that as "your allowance is 0" made
+       _nodeRealPay clamp every payout to nothing, so a 404 on one guarded
+       module silently stopped ALL PRN collection — precisely the fail-closed
+       shape CLAUDE.md's module contract exists to prevent (a missing module
+       costs that feature and nothing else).
+       Infinity leaves the per-collect NODE_PAYOUT_CAP as the only ceiling,
+       which is exactly the behaviour before this change. */
+    if (!isFinite(rate) || rate <= 0) return Infinity;
+    return Math.floor(rate * NODE_DAILY_CAP_PER_RATE);
+  } catch (e) { return Infinity; }
+}
+/* …and how much of it has been spent, summed across the player's own nodes.
+   ⚠ READ OFF SERVER META. `meta.dayPaid` / `meta.dayStart` are committed by the
+     same compare-and-swap that records the claim, so this survives a reload and
+     cannot be reset by a second tab. A local counter would be a suggestion.
+   ⚠ A ROLLING WINDOW, not a calendar day. `dayStart` older than 24h means that
+     node's tally has expired and contributes nothing — no midnight to farm, and
+     no timezone to pick. */
+function _nodeDayUsed() {
+  let used = 0;
+  try {
+    const now = Date.now();
+    for (const nd of (FoundationReserve.nodes || [])) {
+      const m = nd && nd.meta;
+      if (!m) continue;
+      const start = Number(m.dayStart) || 0;
+      if (!start || (now - start) >= NODE_DAY_MS) continue;   // window expired
+      used += Math.max(0, Number(m.dayPaid) || 0);
+    }
+  } catch (e) {}
+  return used;
+}
+function _nodeDayLeft() { return Math.max(0, _nodeDailyCap() - _nodeDayUsed()); }
+
 function _nodeRealPay(n) {
   /* 🏛 The capital earns what its TOWNS feed it. Applied to the bounded ACCRUAL
      rather than to the pool slice on purpose: the slice is this node's share of
@@ -63063,10 +63133,17 @@ function _nodeRealPay(n) {
   const accrual = Math.floor(_nodeClaimable(n) * _nodeTownBoost(n));       // unchanged
   const bounded = Math.min(NODE_PAYOUT_CAP,
     Math.floor(accrual * _nodeOwnerTierMul().bp / 10000));                 // exact integers
+  /* ⏳ THE 24-HOUR ALLOWANCE, APPLIED HERE AND NOT ONLY AT THE WRITE.
+     The collect path is emphatic that the button LABEL and the payout must both
+     come from this function — "the label is the only thing the player can
+     check". So a day cap enforced only inside the compare-and-swap would print
+     a number it then refuses to pay, which is the exact class of defect that
+     comment exists to prevent. Clamped in both places, from the same helper. */
+  const dayLeft = _nodeDayLeft();
   const pool = FoundationReserve.nodePool;
-  if (!pool || pool.legacy) return Math.max(0, bounded);
+  if (!pool || pool.legacy) return Math.max(0, Math.min(bounded, dayLeft));
   const slice = Math.floor((pool.avail || 0) * _nodeTierPoolShare(n));
-  return Math.max(0, Math.min(bounded, slice, pool.avail | 0));
+  return Math.max(0, Math.min(bounded, slice, pool.avail | 0, dayLeft));
 }
 const RESERVE_NODE_TYPES = [
   { id: 'supply',  name: 'Supply PRN',       icon: '📦', proc: 'Food · Water · Supplies · Medicine', cinder: 60000,  res: { supplies: 200, food: 150 },                 buildH: 6,  blurb: 'Resource intake & relief routing.' },
@@ -63579,12 +63656,35 @@ async function nodeCollect(nodeId) {
          FRESH meta, so the label and the payout still agree. */
       pay = _nodeRealPay(n);
       if (pay <= 0) {
-        refuse = pool.legacy
-          ? 'No new contribution to convert. Deposit resources to the Reserve, then collect.'
-          : '🌍 The global reward pool is depleted. It refills as the Foundation Treasury grows (taxes, fines, bail & license fees) — try again once it does.';
+        /* ⏳ Name the DAY CAP when that is what stopped it. "No new
+           contribution" would be a lie to a player who has plenty of accrual
+           and has simply spent their 24-hour allowance, and a wrong reason is
+           how a working limit gets reported as a broken payout. */
+        const _left = _nodeDayLeft(), _capD = _nodeDailyCap();
+        refuse = (isFinite(_capD) && _left <= 0)
+          ? '⏳ Daily payout limit reached — ' + _capD.toLocaleString() + ' 🔥 per 24 hours on your tier. '
+            + 'Your accrual keeps building and is not lost; collect again once the window rolls forward.'
+          : pool.legacy
+            ? 'No new contribution to convert. Deposit resources to the Reserve, then collect.'
+            : '🌍 The global reward pool is depleted. It refills as the Foundation Treasury grows (taxes, fines, bail & license fees) — try again once it does.';
         return null;
       }
-      return { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: Date.now(), eff: _nodeEff(n), lastTick: Date.now(), status: 'active' };
+      /* ⏳ BANK THE DAY'S TALLY IN THE SAME COMMIT AS THE CLAIM. Written here
+         and nowhere else, so the allowance can only move when a claim actually
+         lands — the same guarantee `claimedPoints` gets from this CAS.
+         The window RESTARTS rather than sliding per-payment: once dayStart is
+         older than 24h the tally is stale, so it resets to this payment and
+         re-anchors. Simpler than a per-payment ledger and it cannot under-count
+         — a fresh window always begins with the payment that opened it. */
+      const _m0 = (n && n.meta) || {};
+      const _st = Number(_m0.dayStart) || 0;
+      const _fresh = (_st && (Date.now() - _st) < NODE_DAY_MS);
+      return {
+        claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: Date.now(),
+        eff: _nodeEff(n), lastTick: Date.now(), status: 'active',
+        dayStart: _fresh ? _st : Date.now(),
+        dayPaid: (_fresh ? (Number(_m0.dayPaid) || 0) : 0) + pay,
+      };
     }, { cols: { status: 'active' } });
     if (!wr.ok) {
       // 'abort' is one of OUR gates declining on fresh data and already carries

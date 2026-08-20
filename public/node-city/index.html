@@ -584,6 +584,27 @@
   .cpmeta{display:block;font-size:10px;color:var(--mist);}
   .cpempty{font-size:11.5px;color:var(--mist);padding:8px 0;}
 
+  /* ── 🏛 In-world confirm ────────────────────────────────────────────────
+     z-index 9860 — ABOVE #toasts (9850) and every panel that can raise one.
+     A confirm that opens behind the dossier or the build shop is a frozen
+     city: the caller is awaiting an answer the player cannot give. */
+  #ncconfirm{position:absolute;inset:0;background:rgba(8,6,12,.78);z-index:9860;display:flex;
+    align-items:center;justify-content:center;backdrop-filter:blur(3px);padding:16px;}
+  .nccbox{width:min(440px,92vw);max-height:82vh;overflow-y:auto;background:var(--panel-solid);
+    border:1px solid var(--edge);border-radius:12px;padding:16px 18px;
+    box-shadow:0 18px 60px rgba(0,0,0,.7);}
+  .nccbox h3{font-family:'Cinzel',serif;font-size:13px;letter-spacing:.09em;color:var(--gold);
+    margin-bottom:4px;text-transform:uppercase;}
+  .nccrule{height:1px;background:linear-gradient(90deg,rgba(212,175,55,.55),transparent);margin:8px 0 10px;}
+  .nccmsg{font-size:12.5px;line-height:1.6;color:var(--bone);white-space:pre-wrap;}
+  .nccbtns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;}
+  .nccbtn{padding:8px 16px;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:700;
+    font-size:12px;border:1px solid var(--edge);background:#120e1c;color:var(--mist);
+    transition:border-color .15s,color .15s;}
+  .nccbtn:hover{border-color:var(--gold);color:var(--bone);}
+  .nccbtn.go{border-color:rgba(212,175,55,.6);color:#ffcf5a;
+    background:linear-gradient(180deg,rgba(212,175,55,.26),rgba(212,175,55,.1));}
+
   /* ── Toasts ── */
   /* ⚠ z-index 9850, not 9. Toasts are the ONLY feedback several dossier actions
      give ("card returned to your collection", "lease ended", "cannot afford"),
@@ -3006,6 +3027,27 @@ const BUILDINGS = {
               gen: { memoryShards: 0.06 }, desc: 'Distills memory shards from the node hum.' },
   siphon:   { name: 'Rift Siphon',   ico: '🟣', cost: { cinder: 110, metal: 26, fuel: 16 }, pop: 3, crew: 2,
               gen: { corruptedEssence: 0.05 }, desc: 'Draws corrupted essence off the rift. Handle with care.' },
+  /* 🔧 THE WORKS — a standing repair FIRM, not another button.
+     Storms and fire rain damage buildings whether or not anyone is watching, and
+     until now every repair was a click: a player who left for a day came back to
+     a town that had been idle the whole time because nothing had put it right.
+     This building answers the damage on its own, at HALF the normal repair bill,
+     and it keeps working while the player is away — the offline catch-up runs
+     the same economyTick this is hooked into, so "while offline" costs no extra
+     code and cannot drift from the live behaviour.
+     💰 DELIBERATELY EXPENSIVE AND DELIBERATELY BROAD. It is the most costly
+     building in this table and it asks for SEVEN inputs, not the usual metal-
+     and-supplies: a city cannot rush it off one mine. Ammo and medicine are
+     there because a works that keeps a town standing through a storm is a crew
+     with tools and a sick bay, and because they are the two chains a player is
+     least likely to have already built.
+     ⚠ pop 6 / crew 5 is a real staffing cost — an under-staffed city will find
+       this building throttles like any other. That is intended: automation the
+       city cannot man should not run. */
+  repairyard: { name: 'Public Works', ico: '🔧',
+              cost: { cinder: 900, metal: 260, supplies: 180, fuel: 120, stone: 140, ammo: 60, medicine: 40 },
+              pop: 6, crew: 5, powerNeed: 1.2,
+              desc: 'A standing repair crew. Puts damaged buildings right on its own, at half cost — even while you are away.' },
   /* ══ THE MATERIAL CHAIN (r12) ═══════════════════════════════════════════
      Until now every building in this city was raised out of metal, and metal
      had exactly one source. These add a second, cheaper structural chain that
@@ -24016,9 +24058,23 @@ function renderRepairs() {
   $('btn-repair-all').innerHTML = (list.length > 1 ? '🔧 Repair ALL ' + list.length + ' — ' : '🔧 Repair — ')
     + costChipsHtml(totalRepairCost(list), { verb: 'Total repair cost' });
 }
-async function repairTile(k, quiet) {
+/* @param discount  optional 0–1 multiplier on the repair bill. Public Works
+   passes 0.5; every other caller passes nothing and pays the full price.
+   ⚠ THE DISCOUNT IS A PARAMETER RATHER THAN A SECOND REPAIR FUNCTION. This body
+     also books `t.spent` (repairs are money sunk into the tile, which the
+     demolish refund reads) and calls clearDamagedLook() — a parallel
+     implementation would have to remember both, and the version that forgets is
+     the one nobody notices. One seam knowing the rule while another writes the
+     store is the failure this codebase records against itself repeatedly. */
+async function repairTile(k, quiet, discount) {
   const t = game.tiles[k]; if (!t || !t.damaged) return false;
-  const rc = repairCost(t);
+  const _rcFull = repairCost(t);
+  let rc = _rcFull;
+  const _d = Number(discount);
+  if (isFinite(_d) && _d > 0 && _d < 1) {
+    rc = {};
+    for (const r in _rcFull) { const v = Math.ceil(_rcFull[r] * _d); if (v) rc[r] = v; }
+  }
   const _rcCin = (rc && rc.cinder) | 0;
   if (!(await payCost(rc))) {
     if (!quiet) toast('Cannot afford repairs (' + costLabel(rc) + ').', 'bad');
@@ -25034,7 +25090,70 @@ function tileMult(x, z, t, staff, powered) {
   return Math.min(m, TILE_MULT_CAP);
 }
 
+/* 🔧 PUBLIC WORKS — the standing repair crew, run once per economy tick.
+   ---------------------------------------------------------------------------
+   Hooked HERE and nowhere else on purpose: economyTick is the one body the live
+   frame loop AND the offline catch-up both drive (see the slice loop in the
+   away path, which awaits this same function). So "it keeps working while you
+   are offline" costs no second implementation and, more to the point, cannot
+   drift away from the live behaviour — which is how a feature ends up behaving
+   differently depending on whether anyone was watching.
+
+   HALF THE NORMAL BILL. repairCost() is already REPAIR_COST_FRAC of the build
+   cost; the works pays PUBLIC_WORKS_DISCOUNT of that. Derived from the existing
+   number rather than a second hand-written fraction, so retuning repairs
+   retunes this with them.
+
+   ⚠ ONE BUILDING PER TICK. A city that comes back from a storm with fifteen
+     damaged tiles repairs them over fifteen ticks, not in one instant that
+     empties the vault without the player seeing a single line about it. It also
+     bounds the work this does inside a loop the offline path runs thousands of
+     times.
+   ⚠ CHEAPEST FIRST, via the same repairCostWeight() the repair list sorts by —
+     so the crew's order matches the order the panel already shows, and a player
+     watching the list sees it drain from the top.
+   ⚠ IT PAYS, AND IT CAN FAIL. payCost() routes through MythicCityBridge, which
+     the offline path PATCHES so every spend is a real ledger write. A works
+     with no materials simply does nothing this tick — it is a firm, not a
+     miracle, and it must never repair on credit.
+   ⚠ THE WORKS CANNOT REPAIR ITSELF while damaged: `_pwActive` requires an
+     undamaged, sited works. A crew whose own roof is off goes and fixes the
+     roof — by hand, like before. */
+const PUBLIC_WORKS_DISCOUNT = 0.5;      // × repairCost() → half the normal bill
+function _pwActive() {
+  try {
+    for (const k in game.tiles) {
+      const t = game.tiles[k];
+      if (t && t.type === 'repairyard' && !t.damaged && !bldSite(t)) return true;
+    }
+  } catch (e) {}
+  return false;
+}
+async function publicWorksTick() {
+  try {
+    if (!_pwActive()) return;
+    /* damagedTiles() returns [key, tile] pairs already sorted cheapest-first by
+       repairCostWeight — the same order the repair panel shows, so a player
+       watching the list sees it drain from the top. */
+    const dmg = damagedTiles();
+    if (!dmg || !dmg.length) return;
+    const [key, t] = dmg[0];
+    if (!key || !t || t.type === 'repairyard') return;     // it cannot fix its own roof
+    const bill = {}; const full = repairCost(t);
+    for (const r in full) { const v = Math.ceil(full[r] * PUBLIC_WORKS_DISCOUNT); if (v) bill[r] = v; }
+    // ONE repair path: repairTile books t.spent and clears the damaged look.
+    // `quiet` because a toast per tick would be a stream during a long catch-up;
+    // the city log still records every one.
+    const ok = await repairTile(key, true, PUBLIC_WORKS_DISCOUNT);
+    if (!ok) return;                                       // no materials → nothing happens
+    try { logEvent('city good', '🔧 Public Works repaired the ' + ((BUILDINGS[t.type] || {}).name || t.type)
+      + ' for ' + costLabel(bill) + ' — half the usual bill.'); } catch (e) {}
+    try { computeLinks(); renderRepairs(); saveSoon(); } catch (e) {}
+  } catch (e) {}
+}
+
 async function economyTick(dtMin) {
+  try { await publicWorksTick(); } catch (e) {}
   for (const k in prodPerMin) prodPerMin[k] = 0;
   const spendNeeds = {};
   // First pass: net rates
@@ -31790,6 +31909,80 @@ function _taxPolicyShelf() {
     },
   });
   return _taxPolicyShelved;
+}
+
+/* 🏛 gcConfirm — THE IN-WORLD CONFIRM, DEFINED IN THIS DOCUMENT.
+   ---------------------------------------------------------------------------
+   Eleven call sites in this file already read
+
+       typeof gcConfirm === 'function' ? gcConfirm(msg) : confirm(msg)
+
+   and every one of them was taking the fallback. `gcConfirm` is defined in
+   public/index.html — the HOST page. node-city is an IFRAME with its own
+   global scope, so a function declared in the parent document is simply not
+   there, the typeof check failed, and the player got the browser's own
+   `playmythicspellbook.com says…` box: a grey OS dialog that breaks the frame
+   the whole city is trying to hold.
+   Declaring it HERE satisfies all eleven with no call-site change. Same name on
+   purpose — the call sites were always asking for the right thing.
+
+   ⚠ NATIVE confirm() BLOCKS THE THREAD; this does not. Every caller already
+     `await`s the result (the pattern above wraps the native one in
+     Promise.resolve), so the async version is a drop-in — but anything that
+     assumed the world was frozen while the box was up is now wrong. The build
+     order path already knows this and re-reads its state after the dialog;
+     see the RE-READ AFTER THE DIALOG note at the tryPlace confirm.
+   ⚠ ESC AND THE BACKDROP BOTH CANCEL, and cancel is the SAFE answer for every
+     caller here (they gate spends and demolitions). A dialog with no way out
+     that is awaiting an answer is a frozen city.
+   ⚠ Resolves EXACTLY ONCE. Two paths can close it (a button and the key
+     handler), and a double-resolve would leave the listener attached. */
+function gcConfirm(msg, opts) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => {
+      if (done) return; done = true;
+      try { document.removeEventListener('keydown', onKey, true); } catch (e) {}
+      try { const b = document.getElementById('ncconfirm'); if (b) b.remove(); } catch (e) {}
+      resolve(!!v);
+    };
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finish(false); }
+      else if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); finish(true); }
+    };
+    try {
+      const o = opts || {};
+      const old = document.getElementById('ncconfirm');
+      if (old) old.remove();
+      const el = document.createElement('div');
+      el.id = 'ncconfirm';
+      const esc = (s) => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      el.innerHTML =
+        '<div class="nccbox" role="dialog" aria-modal="true">' +
+          '<h3>' + esc(o.title || 'Confirm') + '</h3>' +
+          '<div class="nccrule"></div>' +
+          '<div class="nccmsg">' + esc(msg) + '</div>' +
+          '<div class="nccbtns">' +
+            '<button type="button" class="nccbtn" data-ncc="0">' + esc(o.cancelText || 'Cancel') + '</button>' +
+            '<button type="button" class="nccbtn go" data-ncc="1">' + esc(o.okText || 'Confirm') + '</button>' +
+          '</div>' +
+        '</div>';
+      el.addEventListener('click', (ev) => {
+        if (ev.target === el) { finish(false); return; }          // backdrop = cancel
+        const b = ev.target.closest('[data-ncc]');
+        if (b) finish(b.dataset.ncc === '1');
+      });
+      document.addEventListener('keydown', onKey, true);
+      (document.getElementById('wrap') || document.body).appendChild(el);
+      try { el.querySelector('[data-ncc="1"]').focus(); } catch (e) {}
+    } catch (e) {
+      /* If the dialog cannot be built at all, REFUSE rather than fall through to
+         a native confirm(). Every caller here gates a spend or a demolition, so
+         "no" is the answer that cannot cost the player anything. */
+      finish(false);
+    }
+  });
 }
 
 function ncTradeConvoy(label) {

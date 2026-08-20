@@ -68890,6 +68890,22 @@ function snapshotParent(entry) {
     rarity: data.rarity || 'common',
     valueProfile: (data.valueProfile && typeof data.valueProfile === 'object') ? { ...data.valueProfile } : null,
     isHero: entry.kind === 'hero',
+    /* 🧬 THE RELATIONSHIP, snapshotted at breed time (/src/ranch/lineage.js).
+       breedParents() already crossed stats, elements, moves, passives and
+       values — and then threw the relationship away, so the child of two
+       Sworn veterans hatched a stranger at Neutral with a temperament hashed
+       off its brand-new random id. That is the one thing Monster Rancher's
+       Combining is actually for.
+       ⚠ Taken NOW rather than at hatch, deliberately: a core can sit
+         incubating for three battles and the player may sell, release or
+         further breed a parent in between. The lineage is what the parents
+         were WHEN THEY BRED, which is also the only version that can still be
+         attributed honestly if a parent is gone by hatching. Fusion ignores
+         all four fields, as it ignores the two above. */
+    bond: (() => { try { const e = Profile.units[entry.id]; return e ? (e.bond | 0) : 0; } catch (x) { return 0; } })(),
+    tierIdx: (() => { try { const e = Profile.units[entry.id]; return e ? bondTierIndex(e.bond || 0) : 0; } catch (x) { return 0; } })(),
+    temper: (() => { try { const t = getUnitTemper(entry.id, Profile.units[entry.id]); return t ? t.id : null; } catch (x) { return null; } })(),
+    memories: (() => { try { const e = Profile.units[entry.id]; return Array.isArray(e && e.memories) ? e.memories.map(m => ({ k: m.k, n: m.n | 0 })) : []; } catch (x) { return []; } })(),
   };
 }
 
@@ -69086,6 +69102,36 @@ function hatchCore(core) {
     try {
       Profile.cardCollection = Profile.cardCollection || {};
       Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] | 0) + 1;
+      /* 🧬 THE LEGACY. Seeds the heir's profile entry from what the parents
+         were at breed time — temperament, opening loyalty and ONE memory,
+         rewritten as a story it was told rather than something it did.
+         Capped at Trusted however devoted the parents were: Devoted and Sworn
+         stay things you reach with a specific companion, and an heir that
+         inherited a whole history could claim battles it was not at.
+         Degrades to the old behaviour (a stranger at BOND_NEW with a hashed
+         temperament) if the module has not evaluated — it is a deferred ES
+         module and a hatch must never depend on load order. */
+      try {
+        if (window.MythicRanch && window.MythicRanch.inherit) {
+          const seed = window.MythicRanch.inherit(core.parentA, core.parentB, BOND_NEW);
+          if (seed) {
+            Profile.units = Profile.units || {};
+            const e = Profile.units[card.id] || (Profile.units[card.id] =
+              { level: 1, xp: 0, kills: 0, fielded: 0, statGains: emptyGains(), evs: emptyEvs() });
+            e.bond = Math.max(0, Math.min(BOND_MAX, seed.bond | 0));
+            e.bondScaled = true;
+            // Written onto the CARD too, so getUnitTemper's authored-override
+            // path returns it everywhere — board, collection and Table alike —
+            // rather than only where the profile entry happens to be passed.
+            if (seed.temper) { e.temper = seed.temper; card.temper = seed.temper; }
+            if (seed.memories && seed.memories.length) {
+              e.memories = (Array.isArray(e.memories) ? e.memories : [])
+                .concat(seed.memories.map(m => ({ k: m.k, at: Date.now(), n: 1, d: m.d })));
+            }
+            if (seed.note) showToast('🧬 ' + card.name + ' — ' + seed.note + '.', 6000);
+          }
+        }
+      } catch (e) { console.warn('[lineage] seed failed (non-fatal):', e); }
       saveProfile();
     } catch (e) {}
   }
@@ -70432,6 +70478,17 @@ function loadForge() {
          uncollected Resonance would vanish silently on refresh. Shape is
          normalised in house.core.js's loadHouse(), which is absent-tolerant —
          a missing, empty or corrupt blob comes back as an empty Bunkhouse. */
+      /* 🎖 The quartermaster's "last thing I said" stamp (/src/ranch/steward.js).
+         Whitelisted here for the reason the bunkhouse block below documents:
+         the loader is a whitelist, so an un-whitelisted field is written, saved
+         and silently dropped on the next load. */
+      if (p.stewardLast && typeof p.stewardLast === 'object') {
+        Profile.stewardLast = {
+          id:   String(p.stewardLast.id || ''),
+          kind: String(p.stewardLast.kind || ''),
+          at:   Math.max(0, +p.stewardLast.at || 0),
+        };
+      }
       if (p.bunkhouse && typeof p.bunkhouse === 'object') {
         Profile.bunkhouse = { built: p.bunkhouse.built ? 1 : 0,
                               house: (p.bunkhouse.house && typeof p.bunkhouse.house === 'object') ? p.bunkhouse.house : null };
@@ -74785,9 +74842,32 @@ function _lqShowNext() {
     bodyHtml = `<div style="font-size:1.05rem;line-height:1.5;color:${oppose ? '#f0d8d8' : '#dcf0d8'}">"${escapeHtml(line)}"</div>
       <div class="small-text" style="margin-top:8px;color:${oppose ? '#e89a9a' : '#9fe0b0'}">${(LQ_POLE_LABEL[b.pole] || '')} · ${deltaTxt}</div>
       ${refuse ? '<div class="small-text" style="margin-top:6px;color:#e89a9a">⚠ Pushed too far — they will refuse to deploy until you fight differently, or you let them go.</div>' : ''}
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
-        ${refuse ? `<button class="btn-mini" style="border-color:#cf6868;color:#e89a9a" onclick="_LQ.releaseFromBanter('${pend.id}')">Release them →</button>` : ''}
-        <button class="btn-primary" onclick="_LQ.ackBanter('${pend.id}')">…I hear you</button></div>`;
+      ${(() => {
+        /* 🏕 THE JUDGEMENT (/src/ranch). This used to be ONE button — "…I hear
+           you" — and that was the hole in the whole relationship system: the
+           companion spoke and nothing came back. The three buttons all mean
+           the same thing on one axis (see /src/ranch/judgement.js):
+             praise  = I endorse what you believe   → bond ↑, conviction ↑
+             silence = I am not discussing it       → bond ↓ a little
+             scold   = you are wrong to believe it  → bond ↓↓, conviction ↓
+           Only the WORDING changes with the verdict, because "praise" is the
+           wrong English word for agreeing with a companion who has just
+           complained at you.
+           ⚠ Falls back to the original single acknowledge button if the module
+             has not evaluated yet (it is a deferred ES module) — a camp visit
+             in that window must not present three dead buttons. */
+        let L = null;
+        try { if (window.MythicRanch) L = window.MythicRanch.labels(b.verdict); } catch (e) { L = null; }
+        if (!L) return `<div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+          ${refuse ? `<button class="btn-mini" style="border-color:#cf6868;color:#e89a9a" onclick="_LQ.releaseFromBanter('${pend.id}')">Release them →</button>` : ''}
+          <button class="btn-primary" onclick="_LQ.ackBanter('${pend.id}')">…I hear you</button></div>`;
+        return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;justify-content:flex-end">
+          ${refuse ? `<button class="btn-mini" style="border-color:#cf6868;color:#e89a9a" onclick="_LQ.releaseFromBanter('${pend.id}')">Release them →</button>` : ''}
+          <button class="btn-mini" style="border-color:#7fd8a077;color:#9fe0b0" onclick="_LQ.judge('${pend.id}','praise')">${escapeHtml(L.praise)}</button>
+          <button class="btn-mini" onclick="_LQ.judge('${pend.id}','silence')">${escapeHtml(L.silence)}</button>
+          <button class="btn-mini" style="border-color:#cf6868;color:#e89a9a" onclick="_LQ.judge('${pend.id}','scold')">${escapeHtml(L.scold)}</button>
+        </div>`;
+      })()}`;
   } else if (pend.kind === 'confront') {
     bodyHtml = `<div style="font-size:1.05rem;line-height:1.5;color:#f0d8d8">"You sold ${escapeHtml(pend.prof._confront.soldName || 'one of us')}. We bled together. Are we just inventory to you?"</div>
       <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
@@ -74894,6 +74974,24 @@ window._LQ = {
     const p = Profile.units[id]; if (p) delete p._banter;
     _lqSeen[id] = true;
     try { saveProfile(); } catch (e) {}
+    _lqShowNext();
+  },
+  /* 🏕 §6b — PRAISE / SILENCE / SCOLD. The reply half of banter, and the one
+     place the player answers a companion instead of dismissing it. All of the
+     resolution — the deltas, the temperament weighting on WORDS (distinct from
+     adjustBond's weighting on DEEDS), the conviction shift and the line the
+     unit says back — lives in /src/ranch/judgement.js, because it is pure and
+     testable and this file is neither.
+     ⚠ Degrades to ackBanter if the module has not evaluated (deferred ES
+       module): the banter is still cleared and the dialog still advances, so a
+       press in that window can never strand a companion mid-conversation with
+       an unconsumed `_banter` that re-pops every camp visit. */
+  judge: (id, choice) => {
+    let res = null;
+    try { if (window.MythicRanch) res = window.MythicRanch.judge(id, choice); } catch (e) { res = null; }
+    if (!res) { _LQ.ackBanter(id); return; }
+    _lqSeen[id] = true;
+    try { if (typeof playSfx === 'function') playSfx(res.tone === 'warm' ? 'levelup' : 'click'); } catch (e) {}
     _lqShowNext();
   },
   // §7 — let a scorned, refuse-to-deploy companion leave (the "demand transfer"
@@ -75219,7 +75317,21 @@ function _lqValuesEval(s, won, fieldedSet, faintedByCard, killsPerCard) {
       let net = 0, opposedHit = 0, approvedHit = 0, oppThreshold = 0, oppIntensity = '';
       const lines = [];
       for (const entry of profile) {
-        const intn = LQ_INTENSITY[entry.intensity] || LQ_INTENSITY.firm;
+        /* 🏕 CONVICTION (/src/ranch) — the ONLY place praise/scold reaches
+           back into battle scoring. Every judgement the player makes at the
+           Table nudges this pole's conviction; the multiplier it returns is
+           0.50 … 1.50 and is EXACTLY 1 when nothing has been said, so a
+           roster that never uses the feature scores precisely as it always
+           did. Wrapped and failing closed at 1: a throw in a cosmetic module
+           must never change how a battle scores. */
+        const _base = LQ_INTENSITY[entry.intensity] || LQ_INTENSITY.firm;
+        let _cm = 1;
+        try { if (window.MythicRanch) _cm = window.MythicRanch.convictionMul(p, entry.pole) || 1; } catch (e) { _cm = 1; }
+        const intn = (_cm === 1) ? _base : {
+          approve: Math.max(1, Math.round(_base.approve * _cm)),
+          oppose:  Math.max(1, Math.round(_base.oppose  * _cm)),
+          threshold: _base.threshold, label: _base.label,
+        };
         const v = _lqPoleVerdict(entry.pole, st);
         if (v === 'approve') { net += intn.approve; approvedHit += intn.approve; lines.push({ pole: entry.pole, v: 'approve', d: intn.approve }); }
         else if (v === 'oppose') {
@@ -160569,6 +160681,15 @@ function renderCamp() {
   // 💗 Surface a companion's loyalty request / confrontation (deferred so it lands
   // after the camp DOM is injected; the dialog is a body-level modal that persists).
   try { setTimeout(() => { try { _lqMaybeSurface(); } catch (e) {} }, 80); } catch (e) {}
+  /* 🎖 THE QUARTERMASTER (/src/ranch/steward.js) — one line about whichever
+     companion most needs you. Deferred behind the banter modal and the other
+     arrival toasts (tithe, research, convoy) so it lands as the last thing
+     said rather than competing with them, and it stays silent whenever there
+     is nothing worth raising. All of the ranking and the do-not-repeat rule
+     live in the module; this is only the door. */
+  try { setTimeout(() => {
+    try { if (window.MythicRanch && window.MythicRanch.steward) window.MythicRanch.steward(); } catch (e) {}
+  }, 1400); } catch (e) {}
   // Entry gate — defense in depth. The title-hub portal is already locked
   // until CAMP_UNLOCK_LEVEL is reached, but if the player lands on the Camp
   // screen via state manipulation / stale App.screen, bounce them back to
@@ -160690,13 +160811,21 @@ function renderCamp() {
     return `
       <div class="dpx-slot" data-slot="${slot.id}">
         <button class="dpx-x" data-act="eject" data-slot="${slot.id}" title="Remove without applying XP">×</button>
-        <div class="dpx-port">${_staticSpriteThumb(spriteId, meta.icon)}</div>
+        <div class="dpx-port" data-table="${escapeHtml(slot.refId)}" title="Sit down with ${escapeHtml(meta.name)}" style="cursor:pointer">${_staticSpriteThumb(spriteId, meta.icon)}</div>
         <div class="dpx-body">
           <div>
             <div class="dpx-name" title="${escapeHtml(meta.name)}">${escapeHtml(meta.name)}</div>
             <div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.5rem;flex-wrap:wrap">
               <span class="dpx-pill">${_kind}</span>
               <span class="dpx-av-s">${getLevelIcon('1em')} Lv ${prof.level || 1} · 🙂 ${Math.round(morale)}</span>
+              ${/* 🏕 THE TABLE (/src/ranch). Bond, temperament, memories, rapport,
+                    the Resonance spread and the service record all existed and all
+                    persisted, but they lived on four different screens and no view
+                    ever showed a unit whole. This is the door to the one that does.
+                    The dot appears only when the companion has something queued to
+                    say, so the button advertises a conversation rather than a panel. */''}
+              <span class="dpx-av-s" data-table="${escapeHtml(slot.refId)}" title="Sit down with ${escapeHtml(meta.name)}"
+                style="cursor:pointer;border:1px solid ${getBondTier(bond).color}66;color:${getBondTier(bond).color};border-radius:999px;padding:0 8px">🪵 Table${(() => { try { return (window.MythicRanch && window.MythicRanch.hasBanter(slot.refId)) ? ' <b>•</b>' : ''; } catch (e) { return ''; } })()}</span>
             </div>
             ${statRow}
           </div>
@@ -161431,6 +161560,17 @@ function renderCamp() {
       if (_bhRoot) window.MythicBunkhouse.mountInto(_bhRoot);
     }
   } catch (e) { try { console.warn('[Bunkhouse] mount failed (non-fatal):', e); } catch (_) {} }
+  /* 🏕 Open the Table on a parked companion. No render() afterwards — the
+     table is a body-level overlay ABOVE the bunker iframe (same reason the
+     Bunkhouse overlay exists), and re-rendering the camp underneath it would
+     tear down the DOM the overlay is anchored beside. It repaints itself. */
+  document.querySelectorAll('[data-table]').forEach(el => {
+    el.onclick = (ev) => {
+      ev.stopPropagation();
+      try { if (window.MythicRanch) window.MythicRanch.open(el.dataset.table); }
+      catch (e) { try { console.warn('[Ranch] table open failed (non-fatal):', e); } catch (_) {} }
+    };
+  });
   document.querySelectorAll('[data-act="collect"]').forEach(el => {
     el.onclick = () => { collectCampSlot(el.dataset.slot); render(); };
   });
@@ -213706,6 +213846,149 @@ window.MythicHouseBridge = {
   render: () => { try { render(); } catch (e) {} },
   collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
   accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
+  /* 🏋 DRILL STRAIN — the two calls hard drill needs, and nothing more.
+     house.core.js REPORTS strain and refuses to apply it (it is a pure file
+     and reaches for no profile); this is where it lands. Both are on the
+     existing camp condition fields, so a hard-drilled unit shows up worn out
+     on the camp slot row and at the Table, and clears through the SAME
+     Med-bay Medicine sink (`campTreatUnit`) that trauma and corruption use —
+     no second recovery economy.
+     ⚠ Both clamp to 0-100. `_campTreatNeed` sums trauma+corruption+fatigue and
+       `80 - morale` to price the treatment, so an unclamped 340 fatigue from a
+       long absence would bill a player ~29 Medicine for one unit. */
+  unitFatigue: (cardId) => { try { return (_campUnitProf(cardId).fatigue) | 0; } catch (e) { return 0; } },
+  applyStrain: (cardId, fatigue, morale) => {
+    try {
+      const p = _campUnitProf(cardId); if (!p) return false;
+      if (fatigue > 0) p.fatigue = Math.max(0, Math.min(100, (p.fatigue || 0) + fatigue));
+      if (morale  > 0) p.morale  = Math.max(0, Math.min(100, (p.morale != null ? p.morale : 80) - morale));
+      return true;
+    } catch (e) { return false; }
+  },
+};
+/* 🏕 THE RANCH BRIDGE — for /src/ranch/*.js (the Table + praise/scold).
+   🔴 THE GLOBALS TRAP, a fourth time (CLAUDE.md). `Profile`, `adjustBond`,
+   `getBondTier`, `resolveDeckCard`, `_campUnitProf`, `_staticSpriteThumb` and
+   every other name below is a top-level `const` / `function` declaration in
+   this file. They are global LEXICAL bindings — an ES module CANNOT see one of
+   them, and `window.Profile` is undefined however much `const Profile` looks
+   global. This object is the hand-over, exactly as MythicHouseBridge is for the
+   Bunkhouse. If /src/ranch needs something new it is ADDED HERE, never guessed
+   at from inside the module.
+
+   🔴 adjustBond IS EXPOSED, `bond` IS NOT WRITABLE FROM THE MODULE.
+   That asymmetry is deliberate and is the whole safety story for this bridge.
+   `adjustBond()` is the single choke point where the unit's TEMPERAMENT scales
+   the change and where `bondCeilingFor()` caps it (sale count, first-owner
+   Sworn). A module that could assign `prof.bond = n` would walk straight
+   through both — a scolded Vain unit would take a flat hit instead of its
+   1.50×, and a resold card could be pushed back above a ceiling the
+   marketplace lowered on purpose. So the table hands deltas to this function
+   and never touches the field.
+
+   ⚠ EVERY READER IS WRAPPED AND RETURNS A SAFE EMPTY VALUE. The table renders
+   inside an overlay over the live camp; a throw from a missing card or a
+   half-migrated profile row must blank one row, never the screen. */
+window.MythicRanchBridge = {
+  Profile,
+  // ── readers
+  unitProf: (id) => { try { return _campUnitProf(id); } catch (e) { return null; } },
+  card: (id) => {
+    try {
+      const c = resolveDeckCard('unit:' + id);
+      if (c) return c;
+      return (typeof lookupCustomCard === 'function') ? lookupCustomCard(id) : null;
+    } catch (e) { return null; }
+  },
+  temper: (id, entry) => { try { return getUnitTemper(id, entry); } catch (e) { return null; } },
+  bondTier: (b) => { try { return getBondTier(b); } catch (e) { return { name: '?', color: '#9aa0a6' }; } },
+  bondTierIndex: (b) => { try { return bondTierIndex(b); } catch (e) { return 0; } },
+  bondMax: () => { try { return BOND_MAX; } catch (e) { return 1200; } },
+  valueProfile: (card) => { try { return _lqUnitValueProfile(card) || []; } catch (e) { return []; } },
+  poleLabel: (p) => { try { return LQ_POLE_LABEL[p] || p; } catch (e) { return p; } },
+  poleDesc:  (p) => { try { return LQ_POLE_DESC[p] || ''; } catch (e) { return ''; } },
+  banterLines: (pole, verdict) => { try { return (LQ_BANTER[pole] && LQ_BANTER[pole][verdict]) || []; } catch (e) { return []; } },
+  memoryKinds: () => { try { return UNIT_MEMORY_KINDS; } catch (e) { return {}; } },
+  /* 🧬 /src/ranch/lineage.js OWNS the heir memory kinds and merges them in on
+     load. They live there rather than being duplicated here because the file
+     that decides an heir carries `heirStand` is the only file that should get
+     to say what `heirStand` reads as — two copies would drift.
+     Safe against ordering: the only writer of an heir memory is hatchCore,
+     which goes through the same module, so no orphan key can exist before
+     this merge runs. Mutating the const object is fine; the binding is what
+     is const, not the contents. */
+  mergeMemoryKinds: (kinds) => {
+    try { Object.assign(UNIT_MEMORY_KINDS, kinds || {}); return true; } catch (e) { return false; }
+  },
+  bondNew: () => { try { return BOND_NEW; } catch (e) { return 100; } },
+  /* 🎖 The roster the quartermaster reads. OWNED units only — Profile.units
+     accumulates an entry for anything that has ever been on a board, including
+     cards long since sold, and having him report on a companion the player no
+     longer has would be worse than saying nothing. */
+  roster: () => {
+    try {
+      const coll = Profile.cardCollection || {}, out = [];
+      for (const id in (Profile.units || {})) {
+        if (!((coll[id] | 0) > 0)) continue;
+        const prof = Profile.units[id]; if (!prof) continue;
+        let card = null;
+        try { card = resolveDeckCard('unit:' + id) || (typeof lookupCustomCard === 'function' ? lookupCustomCard(id) : null); } catch (e) {}
+        if (!card) continue;                      // a name we cannot resolve is a name he cannot say
+        out.push({ id: id, name: card.name || id, card: card, prof: prof });
+      }
+      return out;
+    } catch (e) { return []; }
+  },
+  /* ⚠ Profile.stewardLast IS WHITELISTED IN THE LOADER (search stewardLast).
+     saveProfile() stringifies the whole Profile but the loader is a field
+     whitelist, so a field written and not whitelisted saves and is silently
+     dropped on every reload — this project has shipped that exact bug for
+     sideDeck, archonDeck, salvage and bunkhouse. Without it the "do not repeat
+     yourself" guard resets on every refresh. */
+  stewardLast: () => { try { return Profile.stewardLast || null; } catch (e) { return null; } },
+  setStewardLast: (v) => {
+    try { Profile.stewardLast = { id: String(v.id), kind: String(v.kind), at: Date.now() }; saveProfile(); return true; }
+    catch (e) { return false; }
+  },
+  rapportPartners: (id) => { try { return rapportPartners(id) || []; } catch (e) { return []; } },
+  rapportWith: (a, b) => { try { return rapportWith(a, b) | 0; } catch (e) { return 0; } },
+  rapportMax: () => { try { return RAPPORT_MAX; } catch (e) { return 100; } },
+  rapportBonus: () => { try { return RAPPORT_BONUS; } catch (e) { return { atk: 0, def: 0 }; } },
+  itemName: (id) => { try { return _lqItemName(id); } catch (e) { return id; } },
+  itemById: (id) => { try { return getItemById(id) || (HELD_ITEMS && HELD_ITEMS[id]) || null; } catch (e) { return null; } },
+  /* 🎁 The gift pool is the UNION of LQ_ITEM_POOL's tiers, deduped — i.e.
+     exactly the set the game already treats as things a companion wants. A
+     unit's favourite is hashed out of this list (/src/ranch/gifts.js), so
+     deriving it from, say, every item in HELD_ITEMS would let a companion's
+     favourite be a quest key or a crafting reagent. Kept as a function rather
+     than a constant so a later change to LQ_ITEM_POOL flows through. */
+  giftPool: () => {
+    try { return Array.from(new Set([].concat.apply([], Object.keys(LQ_ITEM_POOL).map(k => LQ_ITEM_POOL[k])))); }
+    catch (e) { return []; }
+  },
+  ownCount: (id) => { try { return _resOwnCount('item', id) | 0; } catch (e) { return 0; } },
+  takeItem: (id) => { try { _resTakeOwned('item', id); return true; } catch (e) { return false; } },
+  /* Only what the player actually holds, and only from the gift pool. The raw
+     itemInventory carries everything they own; offering a companion a crafting
+     reagent as a "gift" is noise in a list that should read as a shortlist. */
+  giftable: () => {
+    try {
+      const pool = new Set([].concat.apply([], Object.keys(LQ_ITEM_POOL).map(k => LQ_ITEM_POOL[k])));
+      const inv = Profile.itemInventory || {};
+      return Object.keys(inv).filter(id => pool.has(id) && (inv[id] | 0) > 0)
+                   .map(id => ({ id: id, n: inv[id] | 0 }));
+    } catch (e) { return []; }
+  },
+  spriteThumb: (key, icon) => { try { return _staticSpriteThumb(key, icon); } catch (e) { return icon || '🃏'; } },
+  decks: () => { try { return getAllDecks() || []; } catch (e) { return []; } },
+  deckKeyCardId: (k) => { try { return _deckKeyCardId(k); } catch (e) { return null; } },
+  resolveDeckCard: (k) => { try { return resolveDeckCard(k); } catch (e) { return null; } },
+  battleCount: () => { try { return (Profile.records && Profile.records.battles) | 0; } catch (e) { return 0; } },
+  // ── the one mutator. See the note above on why this is a function, not a field.
+  adjustBond: (entry, d) => { try { adjustBond(entry, d); return true; } catch (e) { return false; } },
+  saveProfile: () => { try { saveProfile(); } catch (e) {} },
+  showToast: (m, ms) => { try { showToast(m, ms); } catch (e) {} },
+  render: () => { try { render(); } catch (e) {} },
 };
 /* 🏭 THE CITY PRODUCTION BRIDGE — for /src/city/*.js (CITY_PRODUCTION).
    🔴 THE GLOBALS TRAP, a third time (CLAUDE.md). `Profile`, `getRes`, `addRes`,
@@ -229923,7 +230206,17 @@ render();
      the ONLY place the rooms, tiers, rest quality and accrual live.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset. -->
-<script type="module" src="src/resonance/house.camp.js?v=120i2"></script>
+<script type="module" src="src/resonance/house.camp.js?v=v120z6drill1"></script>
+<!-- 🏕 THE RANCH — the Table (one companion, laid out whole) + the
+     praise/scold verb. Registers window.MythicRanch and is INERT until a
+     camp slot or the banter dialog opens it. Reads nothing by itself:
+     window.MythicRanchBridge (defined next to MythicHouseBridge) hands it
+     Profile access, adjustBond, the bond/temper/memory/rapport readers and
+     the deck resolver. Without the bridge every entry point no-ops and the
+     game behaves exactly as it did before the module existed.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset. -->
+<script type="module" src="src/ranch/index.js?v=v120z6ranch1"></script>
 <!-- 🔮 RESONANCE — the card training model + ⚔ Path B (battle-earned).
      See resonance-card-training.md. Registered on window.MythicResonance;
      index.html's half of the seam is `_rezKey/_rezGet/_rezSet/_rezEmit` next to

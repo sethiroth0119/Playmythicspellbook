@@ -6,6 +6,14 @@
    never opened the city screen still has a door into directed training, so
    the House is convenience rather than a gate (doc §2, §9).
 
+   🏋 DRILL INTENSITY (v120w8). Every bed is Light or Hard. Light is what this
+   panel has always done, unchanged. Hard is ×1.80 Resonance for +2.2 fatigue
+   and −1.1 morale an hour, refused above 70 fatigue, and cleared through the
+   Med-bay Medicine sink that already exists — the House was a faucet with no
+   decision in it, and the camp's condition fields had almost nothing feeding
+   them. The rule and the arithmetic live in house.core.js; this file only
+   renders them and lands the strain the engine reports.
+
    🔴 NO CITY MEANS NO REST QUALITY. §6's coupling reads city Food coverage,
    city Morale and city Security. A camp has none of those, so the Bunkhouse
    trains at restQuality = 1.0 — the plain 14/hr, no tier multiplier, two beds,
@@ -85,7 +93,29 @@ export function settle() {
      and the camp is meant to be the floor you always have. 0.75 sits above the
      city's 0.50 worst case and below its 1.00 best, so a working city is always
      worth building and a camp-only player is never locked out. */
-  return H.settle(st.house, { tierRate: SPEC.rate, restQuality: CAMP_REST_QUALITY, accrualCapH: b.accrualCapH, perHour: H.RES_PER_HOUR });
+  const r = H.settle(st.house, {
+    tierRate: SPEC.rate, restQuality: CAMP_REST_QUALITY,
+    accrualCapH: b.accrualCapH, perHour: H.RES_PER_HOUR,
+    // 🏋 The pure engine cannot read a profile, so it asks. See house.core.js.
+    strainOf: (cardId) => { try { return b.unitFatigue ? b.unitFatigue(cardId) : 0; } catch (e) { return 0; } },
+  });
+  applyStrain(r);
+  return r;
+}
+
+/* 🏋 Land the strain a hard drill just earned. Called from BOTH accrual paths
+   (settle and the panel's own repaint), which is safe for exactly one reason:
+   `advance()` only reports strain for hours it actually PAID, and the watermark
+   guarantees each hour is paid once. Ten panel opens settle zero hours and
+   therefore apply zero fatigue — the same anti-double-pay property the
+   Resonance itself has, inherited rather than re-implemented. */
+function applyStrain(r) {
+  const b = B();
+  if (!b || !b.applyStrain || !r || !Array.isArray(r.strain) || !r.strain.length) return;
+  for (const s of r.strain) {
+    if (!s || !s.card) continue;
+    try { b.applyStrain(s.card, s.fatigue || 0, s.morale || 0); } catch (e) {}
+  }
 }
 
 let CARD_CACHE = [];
@@ -93,6 +123,10 @@ async function loadCards() {
   try { CARD_CACHE = (typeof window.cityCardCollection === 'function' ? await window.cityCardCollection() : []) || []; }
   catch (e) { CARD_CACHE = []; }
   return CARD_CACHE;
+}
+function fatigueOf(cardId) {
+  const b = B();
+  try { return (b && b.unitFatigue) ? (b.unitFatigue(cardId) | 0) : 0; } catch (e) { return 0; }
 }
 function freeCards() {
   const b = B(); const P = (b && b.Profile) || {};
@@ -122,6 +156,12 @@ const CSS = `
   background:rgba(212,175,55,.14);color:#ffd166;font-family:'Cinzel',serif;font-size:.8rem;cursor:pointer;}
 #bunkhouse button.bh-act[disabled]{opacity:.4;cursor:not-allowed;}
 #bunkhouse .bh-note{color:#8f8570;font-size:.7rem;margin-top:.6rem;line-height:1.4;}
+#bunkhouse .bh-drill{display:inline-flex;border:1px solid rgba(212,175,55,.3);border-radius:999px;overflow:hidden;margin-left:.4rem;}
+#bunkhouse .bh-drill button{padding:1px 9px;border:0;background:transparent;color:#8f8570;font-size:.68rem;cursor:pointer;font-family:inherit;}
+#bunkhouse .bh-drill button.on{background:rgba(212,175,55,.22);color:#ffd166;}
+#bunkhouse .bh-drill button.on.hard{background:rgba(224,122,95,.22);color:#ffb199;}
+#bunkhouse .bh-drill button[disabled]{opacity:.35;cursor:not-allowed;}
+#bunkhouse .bh-worn{color:#e07a5f;font-size:.68rem;}
 `;
 let cssDone = false;
 function ensureCss() {
@@ -149,7 +189,9 @@ function html() {
   const pend = h.billets.reduce((s, x) => s + Math.floor(x.pend || 0), 0);
   return '<h3>⛺ BUNKHOUSE</h3>' +
     '<div class="bh-sub">' + H.RES_PER_HOUR + ' Resonance per hour, per card, into the room they sleep in. ' +
-    'No rest-quality modifier here — a camp has no district to feed. ' +
+    'Push a bed to <b>' + H.DRILLS.hard.ico + ' Hard</b> for ×' + H.DRILLS.hard.rate.toFixed(2) +
+    ' the rate, paid for at +' + H.DRILLS.hard.fatiguePerH + ' fatigue and −' + H.DRILLS.hard.moralePerH +
+    ' morale an hour — the Med-bay clears both. Above ' + H.FATIGUE_HARD_MAX + ' fatigue they refuse it. ' +
     'What a Node City buys you is <b>breadth</b>: twenty beds and six rooms at once.</div>' +
     '<div class="bh-stat"><span>🛏 Beds <b>' + h.billets.length + ' / ' + SPEC.capacity + '</b></span>' +
       '<span>🚪 Rooms at once <b>' + used.size + ' / ' + SPEC.rooms + '</b></span>' +
@@ -165,8 +207,26 @@ function html() {
       const c = CARD_CACHE.find(y => y.id === x.card);
       const room = H.roomById(x.room);
       const spread = H.spreadOf(coreCtx(), x.card);
+      /* 🏋 The Light / Hard toggle. Hard is disabled — with the REASON in the
+         tooltip — rather than hidden when the unit is too worn, because a
+         control that vanishes reads as a bug and teaches the player nothing
+         about why. `hardDrillBlock` is the same function the click handler
+         calls, so the disabled state and the refusal can never disagree. */
+      const fat = fatigueOf(x.card);
+      const why = H.hardDrillBlock(fat);
+      const cur = (x.int === 'hard') ? 'hard' : 'light';
+      const rate = H.billetRate(SPEC, CAMP_REST_QUALITY, H.RES_PER_HOUR, x.spent ? 'light' : cur);
+      const toggle = '<span class="bh-drill">' +
+        '<button data-bhdrill="' + esc(x.card) + '" data-int="light"' + (cur === 'light' ? ' class="on"' : '') +
+          ' title="' + H.DRILLS.light.blurb + '">' + H.DRILLS.light.ico + ' Light</button>' +
+        '<button data-bhdrill="' + esc(x.card) + '" data-int="hard"' + (cur === 'hard' ? ' class="on hard"' : '') +
+          (why ? ' disabled title="' + esc(why) + '"' : ' title="' + H.DRILLS.hard.blurb + ' ×' + H.DRILLS.hard.rate.toFixed(2) +
+           ' rate · +' + H.DRILLS.hard.fatiguePerH + ' fatigue/hr"') + '>' + H.DRILLS.hard.ico + ' Hard</button></span>';
       return '<div class="bh-bed"><span>🃏 ' + esc(c ? c.name : x.card) + ' — ' + room.ico + ' ' + esc(room.name) +
-        (spread ? ' · ' + room.stat.toUpperCase() + ' ' + (spread[room.stat] | 0) : '') + '</span>' +
+        (spread ? ' · ' + room.stat.toUpperCase() + ' ' + (spread[room.stat] | 0) : '') + toggle +
+        '<span style="display:block;color:#8f8570;font-size:.68rem;margin-top:2px">' +
+          rate.perHour.toFixed(1) + '/hr · 😖 ' + Math.round(fat) + '/100' +
+          (x.spent ? ' · <span class="bh-worn">SPENT — drilling light until treated</span>' : '') + '</span></span>' +
         '<span><b>+' + Math.floor(x.pend || 0) + ' ✨</b>' + (x.capped ? ' <i style="color:#e07a5f;font-size:.7rem">36h CAP</i>' : '') +
         ' <button class="bh-act" data-bhwake="' + esc(x.card) + '">Wake</button></span></div>';
     }).join('') +
@@ -192,6 +252,23 @@ function paint(root) {
     rerender();
   };
   root.querySelectorAll('[data-bhroom]').forEach(el => { el.onclick = () => pick(root, el.dataset.bhroom); });
+  root.querySelectorAll('[data-bhdrill]').forEach(el => { el.onclick = () => {
+    const card = el.dataset.bhdrill, want = el.dataset.int;
+    /* ⚠ SETTLE BEFORE SWITCHING. The hours accrued so far were earned at the
+       OLD intensity and must be paid at it — flipping to Hard first would
+       retroactively pay a week of light drill at the hard rate, and flipping
+       to Light would erase strain the player already owed. settle() is the
+       watermark, so this is one call and it is idempotent. */
+    settle(); persist();
+    const err = H.setDrill(st.house, card, want, fatigueOf(card));
+    if (err) { b.showToast(err, 4200); return; }
+    const c = CARD_CACHE.find(y => y.id === card);
+    const d = H.drillById(want);
+    b.showToast(d.id === 'hard'
+      ? '🏋️ ' + ((c && c.name) || card) + ' steps up to hard drill — ×' + d.rate.toFixed(2) + ' Resonance, +' + d.fatiguePerH + ' fatigue an hour.'
+      : '🌿 ' + ((c && c.name) || card) + ' eases off. Steady work, no strain.', 4200);
+    rerender();
+  }; });
   root.querySelectorAll('[data-bhwake]').forEach(el => { el.onclick = () => {
     const x = H.unbillet(st.house, el.dataset.bhwake);
     if (!x) return;

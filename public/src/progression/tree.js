@@ -232,6 +232,19 @@ export const NODES = [
     name: 'Warehousing & Logistics',
     desc: 'Land zoned for storage and distribution rather than for making anything.',
     zones: ['i_ware'], buildings: ['warehouse'], specs: ['i_log'] },
+  /* 🔧 THE DEEPEST RUNG ON THIS BRANCH, and priced to be. Public Works repairs
+     damaged buildings on its own at half the usual bill and keeps doing it
+     while the player is away — the first thing in this city that acts without
+     being clicked, so it is gated behind the two heaviest industrial rungs AND
+     the materials line, and costs more points than anything else on the tree.
+     ⚠ It unlocks the right to BUILD it, not the building. The tile itself is
+       the most expensive in the city and asks for seven different inputs, so a
+       player reaching this node still has a real project in front of them
+       rather than a reward. */
+  { id: 'ind_works', cat: 'ind', row: 2, col: 4, cost: 5, req: ['ind_ware', 'ind_district'],
+    name: 'Public Works Department',
+    desc: 'A standing repair crew on the city payroll. Damaged buildings are put right without you, at half cost — and the crew does not stop when you log off.',
+    buildings: ['repairyard'] },
 
   /* ══ 🚌 TRANSPORTATION ══════════════════════════════════════════════════
      The branch the user's own screenshot shows, mirrored: a free trunk, then

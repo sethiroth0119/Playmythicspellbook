@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w9';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -66951,6 +66951,22 @@ function snapshotParent(entry) {
     rarity: data.rarity || 'common',
     valueProfile: (data.valueProfile && typeof data.valueProfile === 'object') ? { ...data.valueProfile } : null,
     isHero: entry.kind === 'hero',
+    /* 🧬 THE RELATIONSHIP, snapshotted at breed time (/src/ranch/lineage.js).
+       breedParents() already crossed stats, elements, moves, passives and
+       values — and then threw the relationship away, so the child of two
+       Sworn veterans hatched a stranger at Neutral with a temperament hashed
+       off its brand-new random id. That is the one thing Monster Rancher's
+       Combining is actually for.
+       ⚠ Taken NOW rather than at hatch, deliberately: a core can sit
+         incubating for three battles and the player may sell, release or
+         further breed a parent in between. The lineage is what the parents
+         were WHEN THEY BRED, which is also the only version that can still be
+         attributed honestly if a parent is gone by hatching. Fusion ignores
+         all four fields, as it ignores the two above. */
+    bond: (() => { try { const e = Profile.units[entry.id]; return e ? (e.bond | 0) : 0; } catch (x) { return 0; } })(),
+    tierIdx: (() => { try { const e = Profile.units[entry.id]; return e ? bondTierIndex(e.bond || 0) : 0; } catch (x) { return 0; } })(),
+    temper: (() => { try { const t = getUnitTemper(entry.id, Profile.units[entry.id]); return t ? t.id : null; } catch (x) { return null; } })(),
+    memories: (() => { try { const e = Profile.units[entry.id]; return Array.isArray(e && e.memories) ? e.memories.map(m => ({ k: m.k, n: m.n | 0 })) : []; } catch (x) { return []; } })(),
   };
 }
 
@@ -67147,6 +67163,36 @@ function hatchCore(core) {
     try {
       Profile.cardCollection = Profile.cardCollection || {};
       Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] | 0) + 1;
+      /* 🧬 THE LEGACY. Seeds the heir's profile entry from what the parents
+         were at breed time — temperament, opening loyalty and ONE memory,
+         rewritten as a story it was told rather than something it did.
+         Capped at Trusted however devoted the parents were: Devoted and Sworn
+         stay things you reach with a specific companion, and an heir that
+         inherited a whole history could claim battles it was not at.
+         Degrades to the old behaviour (a stranger at BOND_NEW with a hashed
+         temperament) if the module has not evaluated — it is a deferred ES
+         module and a hatch must never depend on load order. */
+      try {
+        if (window.MythicRanch && window.MythicRanch.inherit) {
+          const seed = window.MythicRanch.inherit(core.parentA, core.parentB, BOND_NEW);
+          if (seed) {
+            Profile.units = Profile.units || {};
+            const e = Profile.units[card.id] || (Profile.units[card.id] =
+              { level: 1, xp: 0, kills: 0, fielded: 0, statGains: emptyGains(), evs: emptyEvs() });
+            e.bond = Math.max(0, Math.min(BOND_MAX, seed.bond | 0));
+            e.bondScaled = true;
+            // Written onto the CARD too, so getUnitTemper's authored-override
+            // path returns it everywhere — board, collection and Table alike —
+            // rather than only where the profile entry happens to be passed.
+            if (seed.temper) { e.temper = seed.temper; card.temper = seed.temper; }
+            if (seed.memories && seed.memories.length) {
+              e.memories = (Array.isArray(e.memories) ? e.memories : [])
+                .concat(seed.memories.map(m => ({ k: m.k, at: Date.now(), n: 1, d: m.d })));
+            }
+            if (seed.note) showToast('🧬 ' + card.name + ' — ' + seed.note + '.', 6000);
+          }
+        }
+      } catch (e) { console.warn('[lineage] seed failed (non-fatal):', e); }
       saveProfile();
     } catch (e) {}
   }
@@ -207465,6 +207511,18 @@ window.MythicRanchBridge = {
   poleDesc:  (p) => { try { return LQ_POLE_DESC[p] || ''; } catch (e) { return ''; } },
   banterLines: (pole, verdict) => { try { return (LQ_BANTER[pole] && LQ_BANTER[pole][verdict]) || []; } catch (e) { return []; } },
   memoryKinds: () => { try { return UNIT_MEMORY_KINDS; } catch (e) { return {}; } },
+  /* 🧬 /src/ranch/lineage.js OWNS the heir memory kinds and merges them in on
+     load. They live there rather than being duplicated here because the file
+     that decides an heir carries `heirStand` is the only file that should get
+     to say what `heirStand` reads as — two copies would drift.
+     Safe against ordering: the only writer of an heir memory is hatchCore,
+     which goes through the same module, so no orphan key can exist before
+     this merge runs. Mutating the const object is fine; the binding is what
+     is const, not the contents. */
+  mergeMemoryKinds: (kinds) => {
+    try { Object.assign(UNIT_MEMORY_KINDS, kinds || {}); return true; } catch (e) { return false; }
+  },
+  bondNew: () => { try { return BOND_NEW; } catch (e) { return 100; } },
   rapportPartners: (id) => { try { return rapportPartners(id) || []; } catch (e) { return []; } },
   rapportWith: (a, b) => { try { return rapportWith(a, b) | 0; } catch (e) { return 0; } },
   rapportMax: () => { try { return RAPPORT_MAX; } catch (e) { return 100; } },
@@ -223223,7 +223281,7 @@ render();
      game behaves exactly as it did before the module existed.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset. -->
-<script type="module" src="src/ranch/index.js?v=120w9"></script>
+<script type="module" src="src/ranch/index.js?v=120x0"></script>
 <!-- 🔮 RESONANCE — the card training model + ⚔ Path B (battle-earned).
      See resonance-card-training.md. Registered on window.MythicResonance;
      index.html's half of the seam is `_rezKey/_rezGet/_rezSet/_rezEmit` next to

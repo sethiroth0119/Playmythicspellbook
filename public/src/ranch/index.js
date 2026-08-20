@@ -20,6 +20,7 @@
      MythicRanch.judge(cardId, choice)     -> apply praise / silence / scold
      MythicRanch.gift(cardId, itemId)      -> hand them something, unprompted
      MythicRanch.favouriteOf(id,card,pool) -> the item this card likes best
+     MythicRanch.inherit(pa, pb, bondNew)  -> an heir's temperament/bond/memory
      MythicRanch.labels(verdict)           -> button wording for the LQ dialog
      MythicRanch.convictionMul(entry,pole) -> 0.50 … 1.50, for _lqValuesEval
      MythicRanch.hasBanter(cardId)         -> is something queued to be judged
@@ -28,6 +29,7 @@
 import * as J from './judgement.js';
 import * as T from './table.js';
 import * as G from './gifts.js';
+import * as L from './lineage.js';
 
 export const VERSION = 'ranch-1.0.0';
 
@@ -56,13 +58,24 @@ export const api = {
   judge: (id, choice) => { try { return T.judge(id, choice); } catch (e) { console.warn('[ranch] judge', e); return null; } },
   gift:  (id, itemId) => { try { return T.gift(id, itemId); } catch (e) { console.warn('[ranch] gift', e); return null; } },
   favouriteOf: (id, card, pool) => { try { return G.favouriteOf(id, card, pool); } catch (e) { return null; } },
+  /* 🧬 Called by hatchCore. Returns null on any failure rather than throwing —
+     a bred card must always hatch, with or without a legacy. */
+  inherit: (pa, pb, bondNew) => { try { return L.inherit(pa, pb, bondNew); } catch (e) { console.warn('[ranch] inherit', e); return null; } },
   labels: (verdict) => { try { return J.labels(verdict); } catch (e) { return J.labels('approve'); } },
   convictionMul,
   convictionOf: (entry, pole) => { try { return J.convictionOf(entry, pole); } catch (e) { return 0; } },
   hasBanter,
   greeting: T.greeting,
-  J, G,
+  J, G, L,
 };
 
 try { window.MythicRanch = api; } catch (e) {}
+/* 🧬 Hand index.html the heir memory kinds so every existing renderer (the
+   Table, the card-detail modal) picks them up with no changes of its own.
+   Fire-and-forget: without the bridge an inherited memory simply does not
+   render, which is a missing line, not a broken screen. */
+try {
+  const b = window.MythicRanchBridge;
+  if (b && typeof b.mergeMemoryKinds === 'function') b.mergeMemoryKinds(L.memoryKinds());
+} catch (e) {}
 export default api;

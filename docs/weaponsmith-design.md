@@ -123,8 +123,17 @@ slings) · `fuel` (forge heat, quench) · `stone` (whetstone, grinding) · `supp
 ### Two new promotions to `RESOURCES` — and only two
 | id | name | icon | produced by |
 | --- | --- | --- | --- |
-| `gunParts` | Gun Parts | ⚙️ | the Weapon Smith op's `yields` |
+| `weaponParts` | Weapon Parts | 🔫 | the Weapon Smith op's `yields` — **and it already existed**, see below |
 | `gunOil` | Gun Oil | 🛢 | the **Oil Company** op (`oil`) — gives an existing business a new downstream customer |
+
+⚠ **`weaponParts` was already in the file.** It has been a `SALVAGE_RES` id all
+along — lootable, bankable, counted by `getResourceUnits()` and **sold by the
+Industrialist at 280 Cinder** — while being produced by nothing and spendable on
+nothing. That is exactly the stranded-resource trap this section warns about,
+sitting in the codebase already. Minting a parallel `gunParts` beside it would
+have been two ids for one thing. Promoting the existing id instead fixes the
+stranded resource *and* gives the smith a second supply line (the trader) for
+free. Only `gunOil` is genuinely new.
 
 Promoting them is just adding the rows to `RESOURCES` — `RESOURCE_IDS`, `_ensureResources`,
 the market guard, the cost renderers and the admin editors all derive from it. The stash
@@ -440,7 +449,7 @@ licence:   ownsWeaponSmith()
 | ✅ 1 | `weaponsmith` in `OPS_ECON` + `OP_LABELS`, `_opAfterFound` branch, `_wsOwnsLicense()`, the two new resources | **Done.** `gunOil` is produced by `OPS_ECON.oil` (additive — the fuel rate is untouched) so neither new resource ships without a producer |
 | ✅ 2 | Bridge + module skeleton + `Profile.weaponSmith` + cloud-save whitelist | **Done.** `window.WeaponSmithBridge` + `src/weaponsmith/{ws.bridge,state,index}.js`. `__weaponSmith__` restores LOCAL-WINS because `bench` holds already-paid-for materials. Probe: `__mg.weaponSmith` |
 | ✅ 3 | `getItemById` crafted source + `Profile.craftedItems` + `__craftedItems__` in the save whitelist | **Done.** `mint.js` holds the §3 budget clamp + a refusal assert. `__craftedItems__` merges ADDITIVE-ONLY (a dropped def reads as a vanished weapon). Probe: `__mg.weaponSmith.mint()` / `.equip()` |
-| 4 | Parts as stackable `slotType:'weaponPart'` items (condition in the id), vault footprints, strip-a-donor, cleaning station | The collectible layer. No minting here — parts are ordinary items |
+| ✅ 4 | Parts as stackable `slotType:'weaponPart'` items (condition in the id), vault footprints, strip-a-donor, cleaning station | **Done.** `parts.js`: 21 variants × 3 tiers = 63 ids + 3 donors, registered into `getItemById` via `WS_PART_DEFS`. Probes: `__mg.weaponSmith.strip()` / `.clean()` |
 | 5 | Assembly bench: dependency graph, fitment, torque bar | The actual game |
 | 6 | `sql/038_weaponsmith.sql` — `crafted_weapons`, `ws_blueprints_owned`, `ws_shop` + `ws_mint` / `ws_grant_blueprint` / `ws_deliver` + market integration | Turns it tradeable, and moves blueprints + rep off the local save |
 | 7 | Loot-dropped blueprints (grant through `ws_grant_blueprint`, source `'loot'`) | Cheapest of the three sources — do it first to exercise the table |

@@ -10,9 +10,10 @@
    why nothing in this folder may touch a bare global.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { ready, warnMissing, equipToUnit, getItem } from './ws.bridge.js';
+import { ready, warnMissing, equipToUnit, getItem, registerItemDefs } from './ws.bridge.js';
 import { ensureWeaponSmith, wsLog, wsSave, wsUnlocked } from './state.js';
 import { mintLocal, composeDef, distribute, budgetPoints, SEED_BLUEPRINTS } from './mint.js';
+import { allItemDefs, CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, partDef, isPart, isDonor, TIERS } from './parts.js';
 
 /* A missing bridge disables the Weapon Smith and does nothing else. It must
    never throw: this module is loaded from a plain <script type="module"> tag,
@@ -22,6 +23,11 @@ if (!ready()) {
   warnMissing('src/weaponsmith/index.js');
 } else {
   ensureWeaponSmith();
+  /* 🔩 Register the static part + donor catalogue with getItemById. Done at
+     load and unconditionally — a part sitting in a player's vault has to
+     resolve whether or not they currently hold the licence, or their stash
+     would render as blank tiles the moment the op lapsed. */
+  registerItemDefs(allItemDefs());
 }
 
 /* 🧪 The probe, in the spirit of __mg.cityMgr and __mg.rez.
@@ -49,8 +55,17 @@ try {
     equip: (unitId, itemId) => equipToUnit(unitId, itemId),
     item: (itemId) => getItem(itemId),
     blueprints: () => Object.keys(SEED_BLUEPRINTS),
+    // 🔩 Phase-4 probes: parts are ordinary items, so these all work through
+    // the same inventory every other item uses.
+    parts: () => Object.keys(CATALOG),
+    part: (id) => partDef(id),
+    donors: () => Object.keys(DONOR_CATALOG),
+    strip: (donorId) => stripDonor(donorId || 'wsd_service'),
+    clean: (partIdStr) => cleanPart(partIdStr),
+    cleanCost: (partIdStr) => cleanCost(partIdStr),
   };
 } catch (e) {}
 
 export { ensureWeaponSmith, wsLog, wsSave, wsUnlocked };
 export { mintLocal, composeDef, distribute, budgetPoints, SEED_BLUEPRINTS };
+export { CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, partDef, isPart, isDonor, TIERS };

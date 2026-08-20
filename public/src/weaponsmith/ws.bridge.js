@@ -90,3 +90,11 @@ export const craftedBook = ()            => { const b = bridge(); try { return b
 export const grantCrafted= (id)          => { const b = bridge(); try { return b ? !!b.grantCrafted(id) : false; } catch (e) { return false; } };
 export const equipToUnit = (uid, itemId) => { const b = bridge(); try { return b ? !!b.equipToUnit(uid, itemId) : false; } catch (e) { return false; } };
 export const getItem     = (id)          => { const b = bridge(); try { return b ? b.getItem(id) : null; } catch (e) { return null; } };
+
+/* 🔩 Parts. registerItemDefs hands the static catalogue to getItemById once at
+   load; itemCount / moveItem are the stackable-inventory pair the cleaning
+   station and the strip bench move parts with. */
+export const registerItemDefs = (map)      => { const b = bridge(); try { return b ? (b.registerItemDefs(map) | 0) : 0; } catch (e) { return 0; } };
+export const itemCount        = (id)       => { const b = bridge(); try { return b ? (b.itemCount(id) | 0) : 0; } catch (e) { return 0; } };
+export const moveItem         = (id, d)    => { const b = bridge(); try { return b ? !!b.moveItem(id, d) : false; } catch (e) { return false; } };
+export const refundRes        = (cost)     => { const b = bridge(); try { b && b.refundRes(cost); } catch (e) {} };

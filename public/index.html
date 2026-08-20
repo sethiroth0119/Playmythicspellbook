@@ -39303,12 +39303,20 @@ const RESOURCES = [
      stash cap while being produced by nothing and spendable on nothing, which
      is strictly worse than not existing. So neither of these ships without a
      source in the same change:
-       gunParts — OPS_ECON.weaponsmith yields it (the smith IS the industry)
-       gunOil   — OPS_ECON.oil yields it, which hands the Oil Company a real
-                  downstream customer instead of inventing a third op
+       weaponParts — OPS_ECON.weaponsmith yields it (the smith IS the industry)
+       gunOil      — OPS_ECON.oil yields it, which hands the Oil Company a real
+                     downstream customer instead of inventing a third op
+     ⚠ weaponParts IS NOT NEW. It has been a SALVAGE_RES id all along — lootable,
+       bankable, counted by getResourceUnits() and SOLD BY THE INDUSTRIALIST at
+       280 Cinder — while being produced by nothing and spendable on nothing.
+       It is precisely the trap described above, and it was sitting in the file
+       the whole time. Minting a parallel `gunParts` beside it would have been
+       two ids for one thing, which is how a ledger starts lying. Promoting the
+       existing id instead fixes the stranded resource AND gives the smith a
+       second acquisition path (the trader) for free.
      ⚠ THE COUNT IS NOW 16. _resStashFloor() derives from RESOURCE_IDS.length,
        so the stash ceiling rises on its own and no cap edit is needed. */
-  { id: 'gunParts',         name: 'Gun Parts',        icon: '⚙️', color: '#b9b2a4' },
+  { id: 'weaponParts',      name: 'Weapon Parts',     icon: '🔫', color: '#b9b2a4' },
   { id: 'gunOil',           name: 'Gun Oil',          icon: '🛢', color: '#8fa07a' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
@@ -42566,6 +42574,24 @@ function getItemImage(itemId) {
 // Unified item lookup — checks Forge custom items first, then falls back to the
 // built-in HELD_ITEMS table. Returns null when nothing matches. Use this any
 // time a piece of code needs item meta + a custom item id might be in play.
+/* 🔩 WEAPON-SMITH PART DEFS — a STATIC catalogue registered by
+   /src/weaponsmith/parts.js at module load, not player data. Parts are
+   ordinary stackable items (condition is a tier in the id), so only the COUNTS
+   live in Profile.itemInventory; the defs live here, shared by every player,
+   and are never written to a save.
+   ⚠ Registered rather than authored here on purpose. This file is 215k lines
+     and CLAUDE.md says a new system belongs in a module — 63 part rows plus
+     donors would be a new top-level catalogue in the legacy file, which is
+     exactly what that rule exists to prevent. */
+const WS_PART_DEFS = {};
+function wsRegisterPartDefs(map) {
+  try {
+    if (!map || typeof map !== 'object') return 0;
+    let n = 0;
+    for (const id in map) { if (map[id] && typeof map[id] === 'object') { WS_PART_DEFS[id] = map[id]; n++; } }
+    return n;
+  } catch (e) { return 0; }
+}
 function getItemById(itemId) {
   if (!itemId || itemId === 'none') return null;
   /* 🔧 Player-crafted weapons resolve FIRST and by direct key lookup. First
@@ -42577,6 +42603,11 @@ function getItemById(itemId) {
   try {
     const mine = Profile.craftedItems && Profile.craftedItems[itemId];
     if (mine && typeof mine === 'object') return mine;
+    // 🔩 …then the static part catalogue, also a direct key lookup. Above the
+    // two catalog scans for the same reason: parts are handled in bulk by the
+    // bench and the vault, and a linear scan per part would be the hot path.
+    const prt = WS_PART_DEFS[itemId];
+    if (prt) return prt;
   } catch (e) {}
   const custom = (Forge.customItems || []).find(x => x && x.id === itemId);
   if (custom) return custom;
@@ -79873,15 +79904,15 @@ const OPS_ECON = {
   bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
   /* 🔧 WEAPON SMITH — the licence to run a BENCH, and the industry that feeds
      it. Same two-jobs-on-purpose shape as genelab: owning it unlocks the
-     assembly bench, and staffing it is the only industrial source of gunParts.
+     assembly bench, and staffing it is the only industrial source of weaponParts.
      A licence with no supply sells a locked door; a supply with no licence
      leaves the bench free. Sized between genelab (550k) and research (700k) —
      it gates a whole crafting loop, not a convenience.
      ⚠ THE YIELD AND THE PART COSTS ARE ONE DIAL IN TWO PLACES, exactly like
-       genelab's dna line. Fully staffed this is 8 x 1.5 = 12 gunParts/hr, so a
+       genelab's dna line. Fully staffed this is 8 x 1.5 = 12 weaponParts/hr, so a
        mid-tier build should cost roughly one shift. Retune either number and
        the other has to move with it. */
-  weaponsmith:  { startup: 650000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 8,  yields: { gunParts: 1.5 }, inputs: { metal: 1.4, fuel: 0.3 } },
+  weaponsmith:  { startup: 650000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 8,  yields: { weaponParts: 1.5 }, inputs: { metal: 1.4, fuel: 0.3 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -190891,6 +190922,11 @@ const VAULT_GRID_DEFAULTS = {
   backpack:        { w: 3, h: 2 },
   consumable:      { w: 1, h: 1 },
   relic:           { w: 2, h: 2 },
+  /* 🔩 Weapon parts fall back to 1x1, but nearly every real part overrides it
+     with its own w/h from the catalogue (getItemGridDims prefers it.w/it.h) —
+     a receiver is 3x2 and a trigger is 1x1, so grid space is a genuine
+     constraint on how many donors you can tear down before tidying up. */
+  weaponPart:      { w: 1, h: 1 },
 };
 
 function getItemGridDims(itemId) {
@@ -207275,6 +207311,39 @@ try {
       } catch (e) { return false; }
     },
     getItem: (itemId) => { try { return getItemById(itemId) || null; } catch (e) { return null; } },
+    /* 🔩 Hand the module's static part catalogue to getItemById. Called once at
+       module load — see WS_PART_DEFS for why the defs are registered rather
+       than authored in this file. */
+    registerItemDefs: (map) => { try { return wsRegisterPartDefs(map); } catch (e) { return 0; } },
+    itemCount: (itemId) => { try { return (Profile.itemInventory && Profile.itemInventory[itemId]) | 0; } catch (e) { return 0; } },
+    /* 🔩 Move a stackable item's count. Parts STACK, so unlike grantCrafted
+       this is additive and clamps at zero.
+       ⚠ Returns false rather than clamping when a removal would go negative.
+         Every caller here unwinds a multi-step operation (clean = take one,
+         give one; strip = take the donor, give the parts), and a silent clamp
+         would turn a failed step into free items. */
+    moveItem: (itemId, delta) => {
+      try {
+        if (!itemId || !delta) return false;
+        if (!Profile.itemInventory || typeof Profile.itemInventory !== 'object') Profile.itemInventory = {};
+        const have = Profile.itemInventory[itemId] | 0;
+        const next = have + (delta | 0);
+        if (next < 0) return false;
+        if (next === 0) delete Profile.itemInventory[itemId];
+        else Profile.itemInventory[itemId] = next;
+        if (delta > 0) { try { if (typeof recordItemOwned === 'function') recordItemOwned(itemId); } catch (e) {} }
+        try { if (typeof syncVaultWithInventory === 'function') syncVaultWithInventory(); } catch (e) {}
+        try { saveProfile(); } catch (e) {}
+        return true;
+      } catch (e) { return false; }
+    },
+    /* ↩️ UNWIND ONLY. _refundRes ignores the stash cap, which is right for
+       undoing a deduction this call stack just made and catastrophically wrong
+       for anything that creates units — see the long warning on _refundRes
+       itself. The single caller is the cleaning station's failure path. */
+    refundRes: (cost) => {
+      try { for (const id in (cost || {})) _refundRes(id, cost[id]); } catch (e) {}
+    },
   };
 } catch (e) {}
 
@@ -223363,7 +223432,7 @@ render();
      ⚠ window.WeaponSmithBridge is installed in ordinary source order ABOVE, in
        the main script. This tag must stay below it.
      Bump ?v= on every change — the service worker caches these like any asset. -->
-<script type="module" src="src/weaponsmith/index.js?v=ws-p3"></script>
+<script type="module" src="src/weaponsmith/index.js?v=ws-p4"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

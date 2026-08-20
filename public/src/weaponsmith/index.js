@@ -14,6 +14,9 @@ import { ready, warnMissing, equipToUnit, getItem, registerItemDefs } from './ws
 import { ensureWeaponSmith, wsLog, wsSave, wsUnlocked } from './state.js';
 import { mintLocal, composeDef, distribute, budgetPoints, SEED_BLUEPRINTS } from './mint.js';
 import { allItemDefs, CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, partDef, isPart, isDonor, TIERS } from './parts.js';
+import { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots } from './blueprints.js';
+import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore } from './bench.gun.js';
+import { openBench, closeBench, benchOpen } from './render.js';
 
 /* A missing bridge disables the Weapon Smith and does nothing else. It must
    never throw: this module is loaded from a plain <script type="module"> tag,
@@ -63,9 +66,31 @@ try {
     strip: (donorId) => stripDonor(donorId || 'wsd_service'),
     clean: (partIdStr) => cleanPart(partIdStr),
     cleanCost: (partIdStr) => cleanCost(partIdStr),
+    /* 🔧 Phase-5 bench probes. The whole loop from a console:
+         __mg.weaponSmith.start('ws_bp_carbine')
+         __mg.weaponSmith.seat('wsp_receiver_mil_pristine', 0.74)
+         ... __mg.weaponSmith.score() ... __mg.weaponSmith.finish() */
+    bp: () => blueprintIds(),
+    start: (id) => startBuild(id || 'ws_bp_carbine'),
+    seat: (partIdStr, torque) => seatPart(partIdStr, torque),
+    pull: (slot) => pullPart(slot),
+    tryFit: (partIdStr) => tryFit(partIdStr),
+    score: () => scoreBuild(ensureWeaponSmith().bench),
+    finish: () => finishBuild(),
+    abandon: () => abandonBuild(),
+    open: () => openBench(),
+    close: () => closeBench(),
   };
+  /* 🔧 The opener index.html calls. A plain window function rather than another
+     bridge entry, because the flow is the OTHER direction: the bridge is what
+     the module reads FROM the app, and this is what the app calls INTO the
+     module. Same shape as window.cityStateLoad and friends. */
+  window.openWeaponSmithBench = () => openBench();
 } catch (e) {}
 
 export { ensureWeaponSmith, wsLog, wsSave, wsUnlocked };
 export { mintLocal, composeDef, distribute, budgetPoints, SEED_BLUEPRINTS };
 export { CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, partDef, isPart, isDonor, TIERS };
+export { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots };
+export { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore };
+export { openBench, closeBench, benchOpen };

@@ -23,31 +23,22 @@
 
 import { ensureWeaponSmith, wsLog, wsSave } from './state.js';
 import { bridge, ready } from './ws.bridge.js';
+import { BLUEPRINTS, blueprint } from './blueprints.js';
 
 export const QUALITY_MIN = 0.60;   // a barely-working build still functions
 export const QUALITY_MAX = 1.00;   // 🔴 a perfect build TIES the shop weapon. Never above.
 
-/* 🌱 PHASE-3 SEED BLUEPRINT. One entry, deliberately, so the mint path can be
-   exercised end to end before the real catalogue exists. blueprints.js
-   replaces this in phase 5 — do not grow it here.
+/* Blueprints live in blueprints.js — the phase-3 seed table that used to sit
+   here is gone, replaced by the real catalogue. SEED_BLUEPRINTS stays exported
+   as an alias so nothing that imported it breaks.
 
    ⚠ `budget` covers the numeric `stats` map ONLY. range and crit are
-     properties of the weapon CLASS, not of the point pool: pw_combatRifle is
-     "+8 ATK, range 2" — the 8 points are the ATK, and range 2 comes with being
-     a carbine. Folding range into the budget would either make short weapons
-     strictly better or require pricing a tile of range in ATK, and neither
-     matches how the existing shop weapons are built. */
-export const SEED_BLUEPRINTS = {
-  ws_bp_carbine: {
-    id: 'ws_bp_carbine',
-    name: 'Field Carbine',
-    icon: '🔫',
-    slotType: 'primeWeapon',
-    budget: 8,                                  // benchmarked to pw_combatRifle (+8 ATK)
-    weapon: { range: 2 },
-    tier: 1,
-  },
-};
+     properties of the weapon CLASS: pw_combatRifle is "+8 ATK, range 2" — the
+     8 points are the ATK, and range 2 comes with being a carbine. Folding
+     range into the budget would either make short weapons strictly better or
+     require pricing a tile of range in ATK, and neither matches how the
+     existing shop weapons are built. */
+export const SEED_BLUEPRINTS = BLUEPRINTS;
 
 /* Distribute `points` across weighted `allocation` so the total NEVER exceeds
    the pool. Naive rounding is the trap: three stats at x.5 each round up and
@@ -156,7 +147,7 @@ function _nextId(blueprintId) {
    getItemById. Either half alone is an invisible weapon. */
 export function mintLocal(blueprintId, allocation, qualityFactor, parts) {
   if (!ready()) return null;
-  const bp = SEED_BLUEPRINTS[blueprintId];
+  const bp = blueprint(blueprintId);
   if (!bp) return null;
 
   const s = ensureWeaponSmith();
@@ -176,4 +167,15 @@ export function mintLocal(blueprintId, allocation, qualityFactor, parts) {
   wsLog('build', 'Minted ' + def.name + ' (' + def.crafted.quality + '% quality).');
   wsSave();
   return def;
+}
+
+
+/* The bench's finishing call. Identical to mintLocal today — it exists as its
+   own name because phase 6 splits them: a bench build goes through ws_mint()
+   on the server (verified, tradeable) while mintLocal stays the offline path
+   (unverified, flagged `local`, never tradeable). Naming the two call sites
+   now means that split is a change to ONE function rather than a hunt through
+   callers. */
+export function mintFromBench(blueprintId, allocation, qualityFactor, parts) {
+  return mintLocal(blueprintId, allocation, qualityFactor, parts);
 }

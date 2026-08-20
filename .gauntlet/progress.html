@@ -5,10 +5,10 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-20 \u2014 Wave 1 in flight",
-  "headline": "Ten pieces, each with its own builder and its own critic. Foundation first.",
-  "phase": "Wave 1",
-  "round": 1,
+  "updated": "2026-08-20 \u2014 Wave 2: cutting the grid into hexes",
+  "headline": "Foundation holds. Both lattices are being cut to hexes from one binding spec.",
+  "phase": "Wave 2",
+  "round": 2,
   "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
   "bar": [
     "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
@@ -23,21 +23,46 @@
   "pieces": [
     {
       "name": "Headless board harness",
-      "state": "building",
-      "note": "Drives the real canvas stage over the real postMessage protocol so every later critic can SEE the board in game-produced states. Without it, critics grade prose.",
+      "state": "won",
+      "note": "Drives the real canvas stage over the real postMessage protocol, with payload shapes copied from the game's own senders, so every later critic looks at pixels instead of grading prose. Scenes are labelled by provenance \u2014 which parts of a frame the game could actually have produced.",
       "rounds": [
         {
           "n": 1,
-          "verdict": "run",
-          "label": "building",
-          "short": "\u00b7\u00b7\u00b7"
+          "verdict": "rework",
+          "label": "payloads richer than the game sends",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "pass",
+          "label": "as-shipped scene added",
+          "short": "\u2713"
         }
       ]
     },
     {
       "name": "Metric + bounds unification",
+      "state": "won",
+      "note": "99 inlined Chebyshev sites and 6 hand-rolled bounds checks now route through one definition each. Proven by executing pre- and post-change functions side by side across five board shapes: 312,447 comparisons, 0 mismatches. The leftover \u2014 clampUnitsToBoard still reading constants instead of the live board \u2014 was handed to Wave 2, where it actually bites.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "a hunk changed meaning",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "pass",
+          "label": "verify sweep clean",
+          "short": "\u2713"
+        }
+      ]
+    },
+    {
+      "name": "Hex lattice \u2014 board side",
       "state": "building",
-      "note": "The movement metric is inlined ~80 times instead of calling distance(); inBounds has 5 hand-rolled copies. Flip the board to hex with those in place and the highlights disagree with the click gate \u2014 the exact 'UI lies about the rules' bug this codebase already carries a scar comment about. Pure refactor, behaviour identical.",
+      "note": "gw() and pickTile() are analytic inverses of each other with nothing asserting it; they must convert in one commit or clicks silently address the wrong tile. Then tilePoly, the surface-FX clip, the raised-tile side walls, and the seven 'world-X offset radius' idioms.",
       "rounds": [
         {
           "n": 1,
@@ -48,14 +73,17 @@
       ]
     },
     {
-      "name": "Hex lattice \u2014 board side",
-      "state": "queued",
-      "note": "gw() and pickTile() are analytic inverses of each other with nothing asserting it; they must convert in one commit or clicks silently address the wrong tile. Then tilePoly, the surface-FX clip, the raised-tile side walls, and the seven 'world-X offset radius' idioms."
-    },
-    {
       "name": "Hex lattice \u2014 game side",
-      "state": "queued",
-      "note": "Flip distance() to a cube-coordinate hex metric, restagger inBounds, and break the hardcoded 8x7 CSS grid that is a second, unlinked source of truth. Then grow the map."
+      "state": "building",
+      "note": "Flip distance() to a cube-coordinate hex metric, restagger inBounds, and break the hardcoded 8x7 CSS grid that is a second, unlinked source of truth. Then grow the map.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "run",
+          "label": "building",
+          "short": "\u00b7\u00b7\u00b7"
+        }
+      ]
     },
     {
       "name": "Free camera",
@@ -123,6 +151,31 @@
       "t": "00:28",
       "kind": "build",
       "text": "Wave 1 launched on disjoint files \u2014 the harness (new files) and the metric unification (index.html) build in parallel, each followed by a fresh-context critic that re-runs the work itself rather than trusting the report."
+    },
+    {
+      "t": "01:35",
+      "kind": "critic",
+      "text": "Both Wave 1 critics returned rework twice \u2014 one caught a hunk that changed meaning, the other caught the harness pushing payloads richer than the game can actually send, which would have validated sprite work against frames the game never produces."
+    },
+    {
+      "t": "01:38",
+      "kind": "pass",
+      "text": "Independent verify sweep: clean. No breakage, no npm dependency, syntax gates green. Wave 1 committed."
+    },
+    {
+      "t": "01:41",
+      "kind": "finding",
+      "text": "With the harness rendering real sprite units on the real board, the distance to the bar is unmistakable: a glass table floating on a matte painting, where the reference is a full-frame diorama with real elevation and lit cliff faces."
+    },
+    {
+      "t": "01:44",
+      "kind": "build",
+      "text": "Wave 2 launched. One binding spec \u2014 pointy-top, odd-r offset, cube distance \u2014 written down first so two builders converting two independent lattices cannot each invent their own. Board grows 8x7 to 14x12, driven from one constant pair."
+    },
+    {
+      "t": "01:44",
+      "kind": "phase",
+      "text": "A reconciler runs after both: it executes the game's metric and the stage's projection together in one process and proves, tile by tile, that the six tiles the rules call adjacent are the six hexagons physically touching on screen. Nothing in either file asserts that today."
     }
   ]
 }

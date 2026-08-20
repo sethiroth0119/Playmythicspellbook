@@ -263,11 +263,33 @@
         `__truncated()` returns empty for arbitrary input, not just for the
         names that happen to be on the board today.
    ------------------------------------------------------------------------ */
+/* THE PLATE SCALES WITH THE BOARD, NOT WITH A 7-ROW ASSUMPTION.
+   `--u-name-fs` / `--u-plate-k` are derived from `--board-h`, which renderBattle
+   writes onto `.board` from BOARD_H (index.html §"THE DOM GRID IS DRIVEN FROM
+   BOARD_W / BOARD_H"). Both resolve to EXACTLY the values shipped before this
+   wave when --board-h is 7, so a 7-row board is unchanged; the fallback `7` in
+   each var() keeps that true for any board rendered without the custom props.
+
+   🔴 WHY: the `.board` height is viewport-capped and does NOT grow with BOARD_H,
+   so going 7 rows -> 12 halved the row track (~80px -> ~46px) and `.unit` with it
+   (~70px -> ~33px). Every number on this plate was an absolute rem or px tuned
+   against the taller row, so the plate did not shrink at all — it went from a
+   third of the unit to essentially all of it, "Sir Cedric" wrapped onto two
+   lines, and the art window it sits under was squeezed to nothing. Measured in
+   Chromium: the sprite/portrait box went from 54.34px on HEAD to 5.79px.
+   The companion half of that fix is `.unit-icon { flex: 0 0 auto }` in
+   index.html — the plate shrinking is worthless if flex is still free to
+   collapse the art, and the art surviving is worthless if the plate covers it.
+   Keep them together. */
+.board > .tile > .unit {
+  --u-plate-k: clamp(0.55, calc(7 / var(--board-h, 7)), 1);
+  --u-name-fs: clamp(0.34rem, calc(0.62rem * var(--u-plate-k)), 0.62rem);
+}
 .board > .tile > .unit .unit-info {
   position: relative;          /* anchor for the floated level badge in §5 */
   display: block;              /* was a flex row; the name now owns the width */
-  margin: 0 8% 6%;
-  padding: 1px 2px 2px;
+  margin: 0 8% calc(6% * var(--u-plate-k));
+  padding: calc(1px * var(--u-plate-k)) 2px calc(2px * var(--u-plate-k));
   border-radius: 0 0 2px 2px;
   /* Bone plate. This is the brightest element on the unit and it is what pulls
      the piece above the plate in value — the art alone cannot be relied on,
@@ -292,7 +314,8 @@
   overflow-wrap: break-word;
   overflow: hidden;
   text-align: center;
-  font-size: 0.62rem;
+  /* Board-scaled (see the --u-name-fs note above). 0.62rem at 7 rows. */
+  font-size: var(--u-name-fs);
   line-height: 1.06;
   font-weight: 700;
   letter-spacing: -0.012em;
@@ -326,12 +349,17 @@
      the badge lands inside the bottom-right corner of the ART WINDOW rather
      than colliding with the gauge — measured on the probe, not guessed. */
   bottom: 100%;
-  margin-bottom: 7px;
+  /* Clearance over the HP gauge. Scales with the plate for the same reason the
+     plate scales: at 12 rows a fixed 7px lifted the badge clean off the tile,
+     where `.unit { overflow:hidden }` hard-clips it with no ellipsis (§5). */
+  margin-bottom: calc(7px * var(--u-plate-k));
   z-index: 4;
   display: flex;
   align-items: center;
   gap: 1px;
-  font-size: 0.6rem;
+  /* Board-scaled like the name. A fixed 0.6rem badge on a 33px-tall unit read as
+     bigger than the sprite it was annotating; clamped so it stays legible. */
+  font-size: clamp(0.36rem, calc(0.6rem * var(--u-plate-k)), 0.6rem);
   line-height: 1;
   color: #ffe6a4;
   text-shadow:
@@ -488,11 +516,15 @@
    the nameplate loses a little padding so the art window keeps its area.
    ------------------------------------------------------------------------ */
 @media (max-width: 700px) {
-  .board > .tile > .unit .unit-info { padding: 0 2px 1px; margin-bottom: 4%; }
-  .board > .tile > .unit .unit-name { font-size: 0.58rem; line-height: 1.02; }
+  /* These stay board-scaled for the same reason the desktop rules are: an
+     absolute rem here would re-introduce the 7-row assumption on exactly the
+     screens where the row track is smallest, which is where it hurts most.
+     Each resolves to its previous literal when --board-h is 7. */
+  .board > .tile > .unit .unit-info { padding: 0 2px calc(1px * var(--u-plate-k)); margin-bottom: calc(4% * var(--u-plate-k)); }
+  .board > .tile > .unit .unit-name { font-size: clamp(0.32rem, calc(0.58rem * var(--u-plate-k)), 0.58rem); line-height: 1.02; }
   /* The gauge keeps its 4px — the enemy red goes muddy below that (see §6) — so
      only its seat tightens, and the badge's clearance follows it. */
   .board > .tile > .unit .unit-hp   { margin-top: 1px; }
-  .board > .tile > .unit .unit-meta { font-size: 0.55rem; margin-bottom: 6px; }
+  .board > .tile > .unit .unit-meta { font-size: clamp(0.32rem, calc(0.55rem * var(--u-plate-k)), 0.55rem); margin-bottom: calc(6px * var(--u-plate-k)); }
   .board > .tile > .unit.hero .hero-board-marker { left: calc(8% + 7px); width: 14px; }
 }

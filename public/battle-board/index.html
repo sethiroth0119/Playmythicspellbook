@@ -214,7 +214,14 @@ const CONFIG = {
   viewShiftY: -40,
   /* gutters reserved for the EXISTING battle HUD (added by Claude Code) */
   SAFE:{ left:384, right:244, top:78, bottom:292 },
-  tile:1.0, wall:0.30
+  /* `tile` is now the hex CIRCUMRADIUS (centre → vertex) in world units; it
+     used to be the edge length of a square cell. 1/√3 is not arbitrary: it
+     makes hexW = tile*√3 = 1.0, so one pointy-top hex is exactly as WIDE as
+     the 1.0 square it replaces. Unit sprites are sized from `def.h` in world
+     units and know nothing about the lattice, so keeping the width fixed is
+     what keeps a unit the same size relative to its tile as before the hex
+     conversion — pick any other number and every sprite silently rescales. */
+  tile: 1/Math.sqrt(3), wall:0.30
 };
 
 /* ══════════════════════════════════════════════════════════════════
@@ -254,8 +261,17 @@ function setLocations(table, keepDefault){
   }
 }
 
+/* 📐 BOARD SIZE — ONE source of truth in this file. HEXSPEC §7 pins the shipped
+   board to BOARD_W × BOARD_H on the GAME side and requires the canvas to be FED
+   from them, never to re-type them; the host does that through `board:init` /
+   `board:map`. This object is only the fallback for a payload that carries no
+   dimensions (the standalone preview, and any host that predates the resize).
+   Do not write 14 or 12 anywhere else in this file. */
+const BOARD_DEFAULT = { cols:14, rows:12 };
+
 const MAP = {
-  id:'ruins-downtown-01', name:'Overgrown Downtown', cols:8, rows:7,
+  id:'ruins-downtown-01', name:'Overgrown Downtown',
+  cols: BOARD_DEFAULT.cols, rows: BOARD_DEFAULT.rows,
   timeOfDay:'day',
   location: DEFAULT_LOCATION,
   ground:{ base:'#2a2418', accent:'#4a3f24' },
@@ -371,12 +387,21 @@ function loadLocation(id, instant){
   if (loc.timeOfDay) setTimeOfDay(loc.timeOfDay);
 }
 function drawGroundSlices(img, alpha){
-  const halfW = MAP.cols/2, halfD = MAP.rows/2;
+  /* ±cols/2 × ±rows/2 was only ever the board's extent while a tile was 1×1
+     world units. A hex row is hexW wide and hexV deep and neither is 1, so
+     this went through boardExtent() like the other five extent sites — and
+     now goes through groundExtent(), which is the SAME quad drawBoard clips
+     to. These two must not drift: the slices are blitted as axis-aligned
+     rects and the clip is a projected quad, so a slice range wider than the
+     clip is invisible, and one narrower leaves a bare wedge of apron showing
+     through the location art. */
+  const g = groundExtent();
+  const halfW = g.x, zFar = -g.far, depth = g.far + g.near;
   const N = 150;                       /* depth bands — raise for more accuracy */
   ctx.globalAlpha = alpha;
   for (let i=0;i<N;i++){
     const t0 = i/N, t1 = (i+1)/N;
-    const z0 = -halfD + t0*MAP.rows, z1 = -halfD + t1*MAP.rows;
+    const z0 = zFar + t0*depth, z1 = zFar + t1*depth;
     const L0 = project({x:-halfW, y:0, z:z0}), R0 = project({x:halfW, y:0, z:z0});
     const L1 = project({x:-halfW, y:0, z:z1}), R1 = project({x:halfW, y:0, z:z1});
     if (!L0||!R0||!L1||!R1) continue;
@@ -440,7 +465,10 @@ function resize(){
   VIEW.box = { l, r, t, b, w:Math.max(120, W-l-r), h:Math.max(90, H-t-b) };
   VIEW.scale = (VIEW.box.h/2) / Math.tan(CONFIG.camera.fov/2);
 }
-addEventListener('resize', resize);
+/* The braziers are clamped to the host box by seedBraziers(), so a window
+   resize has to re-anchor them too — they are the one piece of scenery whose
+   position is a function of the FRAME and not of the board. */
+addEventListener('resize', () => { applyFit(); seedBraziers(); });
 
 /* ══════════════════════════════════════════════════════════════════
    PROJECTION — pinhole camera. (Three.js: replace with the real
@@ -465,11 +493,134 @@ function project(p){
   const s = VIEW.scale / z;
   return { x: VIEW.cx + x*s, y: VIEW.cy - y*s, z, s };
 }
-/* grid (col,row) → world. Board centred on origin. */
-function gw(gx, gz, y){
-  return { x:(gx - (MAP.cols-1)/2)*CONFIG.tile, y:y||0, z:(gz - (MAP.rows-1)/2)*CONFIG.tile };
+/* ══════════════════════════════════════════════════════════════════
+   HEX LATTICE — pointy-top, odd-r offset. HEXSPEC §1–§3, binding.
+   Vertices at i*60°−30°, so one point is up. Odd ROWS (gz odd) are
+   shifted +½ column to the right; no other row is shifted.
+     SIZE = CONFIG.tile   circumradius, centre → vertex
+     hexW = SIZE*√3       full width, = centre-to-centre along a row
+     hexV = SIZE*1.5      centre-to-centre between adjacent rows
+     tileR = SIZE*√3/2    INRADIUS, centre → edge midpoint
+   The last one matters more than it looks: on a square cell the
+   circumradius and "half a tile" were the same number, so every ground
+   circle in this file was written as a bare fraction of 0.5. On a hex
+   they differ by √3/2, and a radius that fits inside the tile has to be
+   a fraction of the INRADIUS, not of the circumradius.
+   ══════════════════════════════════════════════════════════════════ */
+const SQRT3 = Math.sqrt(3);
+function hexSize(){ return CONFIG.tile; }
+function hexW(){ return CONFIG.tile * SQRT3; }
+function hexV(){ return CONFIG.tile * 1.5; }
+function tileR(){ return CONFIG.tile * SQRT3 / 2; }
+
+/* Odd rows shift +½ column (HEXSPEC §2). HEXSPEC writes that as `(gz & 1)*0.5`
+   and for an integer row that is exactly what this returns. But gw() is also
+   called with FRACTIONAL rows — moveUnit and the lunge tween write `u.z`
+   straight through — and a bitwise `&` truncates, so a unit crossing from row 2
+   to row 3 would snap half a hex sideways the instant it passed z=3. Interpolate
+   the shift instead: that traces the straight world-space line between the two
+   hex centres, which is the path the tween is supposed to describe.
+   `&` (never `%`) for the parity: in JS `-1 % 2` is -1 and would shift the wrong
+   way, while `-1 & 1` is 1, i.e. correct. */
+function rowShift(gz){
+  const f = Math.floor(gz), t = gz - f;
+  return t === 0 ? (f & 1) * 0.5 : lerp((f & 1) * 0.5, ((f+1) & 1) * 0.5, t);
 }
-function tileAt(x,z){ return MAP.tiles.find(t => t.x===x && t.z===z) || null; }
+/* grid (col,row) → world. Board centred on origin. HEXSPEC §3. */
+function gw(gx, gz, y){
+  return { x:(gx + rowShift(gz) - (MAP.cols-1)/2) * hexW(),
+           y:y||0,
+           z:(gz - (MAP.rows-1)/2) * hexV() };
+}
+/* The six WORLD corners of one tile, shared by tilePoly (which projects them),
+   the surface-FX clip and the cliff-face normals — three things that must agree
+   about where a tile's edges are or the paint drifts off the tile it belongs to.
+   `inset` is RADIAL: it shrinks the circumradius. It used to be an edge offset
+   on a square, which is a different quantity. */
+function hexCorners(gx, gz, inset, y){
+  const a = gw(gx, gz, y);
+  const R = hexSize() - (inset || 0);
+  const pts = [];
+  for (let i=0;i<6;i++){
+    const ang = i*Math.PI/3 - Math.PI/6;         /* pointy-top, HEXSPEC §1 */
+    pts.push({ x:a.x + Math.cos(ang)*R, y:a.y, z:a.z + Math.sin(ang)*R });
+  }
+  return pts;
+}
+
+/* boardExtent() — the ONE answer to "how far does the LATTICE reach", as half
+   extents from the origin, in world units. Six sites used to spell ±MAP.cols/2
+   and ±MAP.rows/2 inline (apron, ground-art clip, ground slices, frame,
+   braziers, backdrop anchor); all of them were only right while a tile was one
+   world unit square. Because odd rows are shifted +½ column the tile centres
+   are NOT symmetric about the origin — take the wider side for both so the
+   frame stays optically centred instead of leaning left.
+   ⚠ Four of those six (apron, ground-art clip, ground slices, backdrop anchor)
+   have since moved to groundExtent() below, which answers a different question
+   and answers it in terms of the FRAME. This one still owns the frame band,
+   the braziers, the motes and the shards — everything whose position is a
+   statement about the play field rather than about the picture. */
+function boardExtent(){
+  return { x:(MAP.cols + 1)/2 * hexW(),
+           z:(MAP.rows - 1)/2 * hexV() + hexSize() };
+}
+
+/* 🌍 GROUND EXTENT — how far the DIORAMA reaches. That is a different question
+   from how far the LATTICE reaches, and until this wave the file only had the
+   one answer. The gold frame, the braziers and the motes genuinely want the
+   lattice's edge and still call boardExtent(). The apron, the location art and
+   the ground slices do not: BAR R1 is explicit that "the map IS the frame — the diorama fills the screen edge to
+   edge, there is no small board plate floating in the middle of a painting",
+   and a floor that stopped at ext+wall left the bottom third of the in-game
+   host rect as bare backdrop with a gold-railed plate hovering above it.
+   So walk the floor out until it leaves the box: cast the screen row just
+   below the box back onto y=0 and take that as the NEAR reach, then take the
+   half-width the box subtends at that depth. The FAR reach stays at the
+   lattice, deliberately — the backdrop's horizon is anchored to it (see
+   drawOneBackdrop) and pushing the floor past the horizon would erase the sky
+   the reference has, trading one wrong picture for another.
+   Clamped to 3× the board: a degenerate camera must not be able to ask the
+   ground texture to stretch across a floor it has no texels for, and the
+   clamp is also what keeps this cheap enough to call per frame. */
+function groundExtent(){
+  const e = boardExtent();
+  const out = { x:e.x, near:e.z, far:e.z };
+  if (!CAM || !VIEW.box) return out;
+  const a = (VIEW.cy - (VIEW.box.t + VIEW.box.h + 24)) / VIEW.scale;
+  const d = { x:CAM.u.x*a + CAM.f.x, y:CAM.u.y*a + CAM.f.y, z:CAM.u.z*a + CAM.f.z };
+  if (d.y < -1e-3){                       /* ray must actually meet the floor */
+    const t = -CAM.pos.y / d.y;
+    /* also has to stay IN FRONT of the eye — a degenerate camera would
+       otherwise ask for a floor that begins behind the near clip, where
+       project() returns null and the whole apron silently disappears. */
+    out.near = clamp(CAM.pos.z + d.z*t, e.z, Math.min(e.z*3, CAM.pos.z - 1));
+  }
+  /* Half-width is measured at the FAR row, not the near one. Screen offset is
+     x·scale/depth, so for a fixed screen edge the world x needed GROWS with
+     depth: sizing off the near row leaves two dark wedges of nothing in the
+     top corners where the floor has already run out. */
+  const depth = dot(sub({x:0,y:0,z:-out.far}, CAM.pos), CAM.f);
+  if (depth > 0.2)
+    out.x = clamp((VIEW.box.w/2 + 24)*depth/VIEW.scale + Math.abs(latticeCentreX()),
+                  e.x, e.x*3);
+  return out;
+}
+
+/* 🔎 O(1) tile lookup. This was `MAP.tiles.find(...)`, a linear scan run from
+   tileElev/tileBlocked once per tile per frame plus once per unit, tomb, event
+   and painted surface — ~500 scans/frame at 8×7 and ~2000 at 14×12, all of it
+   re-walking the same short array. The index is rebuilt only when the host
+   replaces the map (buildStage), which is the only time MAP.tiles changes. */
+let TILE_INDEX = null;
+function rebuildTileIndex(){
+  if (!Array.isArray(MAP.tiles)) MAP.tiles = [];
+  TILE_INDEX = new Map();
+  for (const t of MAP.tiles) if (t) TILE_INDEX.set(t.x + ',' + t.z, t);
+}
+function tileAt(x,z){
+  if (!TILE_INDEX) rebuildTileIndex();
+  return TILE_INDEX.get(x + ',' + z) || null;
+}
 function tileElev(x,z){ const t = tileAt(x,z); return t && t.elev ? t.elev : 0; }
 function tileBlocked(x,z){
   const t = tileAt(x,z);
@@ -477,6 +628,24 @@ function tileBlocked(x,z){
   /* an event may block the tile (e.g. a standing structure) */
   return eventsAt(x,z).some(e => (EVENT_TYPES[e.type]||{}).blocks);
 }
+
+/* 📏 Ground-circle radius, in PIXELS.
+   Every ground ring in this file used to size itself by projecting a SECOND
+   point offset along world +X and measuring the screen gap. That is only the
+   right length while the camera looks down -Z: as it yaws toward the X axis the
+   gap shrinks continuously to zero and every ring deflates to nothing, silently
+   (CONTRACT §2 Tier 2.1). `p.s` is already pixels-per-world-unit at that depth,
+   so worldR*p.s is the same number at yaw 0 and stays correct at every other
+   yaw — and costs one projection instead of two.
+   Radii that must FIT INSIDE a tile are written as a fraction of tileR(), the
+   hex INRADIUS, because that is the shortest centre→edge distance and the only
+   bound that guarantees the ring stays on its own tile. On the old square cell
+   the inradius happened to be 0.5, which is why those constants used to look
+   like bare fractions of half a tile — they were fractions of the inradius all
+   along, just never named. Radii that describe an OBJECT (a pillar's bowl rim,
+   a unit's shadow) stay in world units: they scale with the prop, not the
+   lattice. */
+function ringPx(p, worldR){ return worldR * p.s; }
 
 /* light direction from the preset (used for shadows + rim) */
 function lightVector(){
@@ -487,8 +656,201 @@ function lightVector(){
 /* ══════════════════════════════════════════════════════════════════
    STAGE BUILD — pure from MAP. Editor calls this to hot-reload.
    ══════════════════════════════════════════════════════════════════ */
+/* 📏 SPRITE SCALE — how tall one unit of `def.h` reads on this lattice.
+   `def.h` is authored in BOARD TILES (the same convention PYLON_ART's
+   widthWorld/heightWorld states outright) and the game sends the same literal
+   1.05 for every unit (index.html `_bbUnitDefs`). On the 8×7 board that read
+   at ~1/13 of the stage height, because eight columns across the real in-game
+   .board-area rect (802×688) leave ~75px per column. Fourteen columns leave
+   ~57px, so the SAME 1.05 reads at ~1/17 — the sprites shrank with the tiles
+   even though nothing about the units changed, and no camera fit can undo it:
+   sprite height and hex width are locked to each other by def.h, so the only
+   way to move one without the other is here. BAR R1 puts units at "roughly
+   1/12 of frame height" and the user's requirement #3 is that they stay
+   extremely clear on the board, so the stage scales what it DRAWS rather than
+   pretending 1.05 describes the same picture at every board size. 1.30 puts a
+   unit at ~1.35 hex widths tall, which is where the reference sits.
+   ⚠ Read in exactly TWO places — drawUnit() and unitScreenBox() — and it has
+   to stay that way. unitScreenBox is what every host-side VFX and cinematic
+   anchors off (CONTRACT §1.5), so a sprite drawn at one scale and boxed at
+   another puts every nameplate and every projectile in the wrong place, with
+   nothing to catch it. */
+const SPRITE_SCALE = 1.30;
+function unitWorldH(def){ return (def && def.h || 1) * SPRITE_SCALE; }
+
+/* x of the LATTICE's own centre. Odd rows are shifted +½ column (HEXSPEC §2),
+   so the tile centres span [−(cols−1)/2 , (cols−1)/2+½] hex widths and are not
+   centred on the origin. Aiming the eye at 0 makes the fit reserve frame for a
+   half column that only exists on one flank, which costs ~3.5% of hex size at
+   14 columns — and hex size is exactly what this wave is trying to buy back.
+   boardExtent() stays symmetric because the frame band is; this is only where
+   the EYE looks. fitAim() below refines it further. */
+function latticeCentreX(){ return MAP.rows > 1 ? hexW()*0.25 : 0; }
+
+/* ══════════════════════════════════════════════════════════════════
+   THE FIT — solve the camera to the HOST RECT, not to a remembered board.
+   ══════════════════════════════════════════════════════════════════ */
+/* This used to dolly the eye straight back by max(ext.x/4.0, ext.z/3.5, 1):
+   the 8×7 board's extents were the reference framing and any bigger board
+   simply moved the eye away until it fit the same optical box. That holds the
+   board's SCREEN AREA constant and pays for the extra tiles entirely out of
+   hex size and sprite size. Measured in the real in-game rect (802×688) the
+   14×12 board came out 649×279px — 81% of the host's width but 41% of its
+   height — with a 46px near-row hex and 30px units, while the same scene
+   forced back to 8×7 framed at 599×284 with a 75px hex. Three times the
+   tiles, the same plate, smaller everything, and BAR R1 says the opposite:
+   "the map IS the frame".
+   So fit to the HOST:
+     • DISTANCE is solved in closed form from the widest row of tile CENTRES,
+       so every centre lands inside the box and it is the outermost half-hexes
+       that bleed off the edge rather than the whole board retreating from it.
+     • PITCH is searched steep→shallow and takes the steepest value that still
+       leaves a near-row sprite at least `spriteMin` of the box height. This
+       trade has to be made against a number, not by eye: a steeper pitch
+       fills more of the box vertically, but the apparent height of a standing
+       sprite goes as (eye.z − tile.z)/depth², which collapses as the eye comes
+       over the top — at 60° the near-row units are SHORTER than the far-row
+       ones. Shallower fills less and keeps sprites tall. There is no pitch
+       that satisfies both at 14 columns; the search picks the boundary
+       instead of a literal, and re-picks it if the board ever changes size.
+     • viewShiftY is re-derived from the resulting board bbox instead of
+       staying at the −40 tuned for 8×7, so the leftover height is spent as
+       sky above the far edge and floor below the near edge instead of as two
+       dead bands.
+   Pure function of MAP.cols/rows and VIEW.box: idempotent across repeated
+   board:map, which matters because `map` fires on every host map push.
+   (The free camera in a later wave replaces this with a real
+   focus/yaw/pitch/dist rig — this is a fit, not a camera.) */
+const CAM_FIT = {
+  /* The band brackets BAR R1's "low isometric three-quarter, roughly 40° down".
+     At 14×12 in the in-game rect the search settles at 43°; a smaller board
+     has sprite headroom to spare and rides pitchHi. */
+  pitchLo: 34*Math.PI/180,
+  pitchHi: 52*Math.PI/180,
+  pitchStep: Math.PI/180,
+  fillX: 1.0,                  /* share of box width the outermost CENTRES span */
+  skyShare: 0.58,              /* of the leftover height, how much sits above    */
+  spriteMin: 1/13.5,           /* near-row sprite height / box height, the floor */
+  targetY: CONFIG.camera.target.y
+};
+
+/* Point the eye at (tx, targetY, 0) from `dist` away at `pitch` below level.
+   Yaw is fixed at 0 — this is a fit, and CONTRACT §2 Tier 2 owns yaw. */
+function camAt(pitch, dist, tx){
+  const c = CONFIG.camera;
+  c.target.x = tx; c.target.y = CAM_FIT.targetY; c.target.z = 0;
+  c.pos.x = tx;
+  c.pos.y = CAM_FIT.targetY + dist*Math.sin(pitch);
+  c.pos.z = dist*Math.cos(pitch);
+  buildCam();
+}
+
+/* Smallest distance at which every tile CENTRE still lands inside the box.
+   A tile at grid (gx,gz) sits at world x = px, z = pz; the eye is on the z
+   axis at `dist`, so that tile's camera depth is dist + targetY·sinθ − pz·cosθ
+   and its screen offset is px·scale/depth. Requiring |offset| ≤ wMax inverts
+   to a distance per tile, and the fit is the largest of them. Only the first
+   and last COLUMN can be extreme, so this is 2·rows work, not cols·rows. */
+function fitDistance(pitch, tx){
+  const scale = VIEW.scale, wMax = Math.max(40, VIEW.box.w/2 * CAM_FIT.fillX);
+  const st = Math.sin(pitch), ct = Math.cos(pitch);
+  /* floor: the near edge must stay a comfortable margin in front of the near
+     clip, or project() starts returning null and geometry vanishes silently
+     (CONTRACT §1.6 / R17). */
+  let d = 1.5 - CAM_FIT.targetY*st + boardExtent().z*ct;
+  for (let gz = 0; gz < MAP.rows; gz++){
+    const pz = (gz - (MAP.rows-1)/2) * hexV();
+    for (const gx of [0, MAP.cols-1]){
+      const px = (gx + rowShift(gz) - (MAP.cols-1)/2) * hexW() - tx;
+      d = Math.max(d, Math.abs(px)*scale/wMax - CAM_FIT.targetY*st + pz*ct);
+    }
+  }
+  return d;
+}
+
+/* Where to AIM so both flanks bind equally hard.
+   latticeCentreX() is the right answer under an orthographic camera. Under
+   perspective it is not: the near row is odd, so it reaches half a column
+   further right AND sits closer to the eye, and both effects push the same
+   way. Aiming at the lattice's own centre therefore hands the right flank the
+   whole width budget while the left flank finishes ~15px short, and the fit
+   then backs the camera off to pay for a margin only one side is using.
+   Balancing the two recovers that — worth ~2% of hex size at 14×12, which is
+   the difference between a 59px near-row hex and a 60px one.
+   Damped fixed point rather than algebra because the depth the correction is
+   measured at depends on the distance, which depends on the aim: eight passes
+   converge to under half a pixel and it only runs on a map change. */
+function fitAim(pitch){
+  let tx = latticeCentreX();
+  let dist = fitDistance(pitch, tx);
+  for (let i = 0; i < 8; i++){
+    camAt(pitch, dist, tx);
+    let lo = 0, hi = 0, any = false;
+    for (let gz = 0; gz < MAP.rows; gz++){
+      for (const gx of [0, MAP.cols-1]){
+        const q = project(gw(gx, gz, 0)); if (!q) continue;
+        any = true;
+        lo = Math.min(lo, q.x - VIEW.cx); hi = Math.max(hi, q.x - VIEW.cx);
+      }
+    }
+    if (!any) break;
+    const off = (hi + lo)/2;                     /* px the lattice sits right of centre */
+    if (Math.abs(off) < 0.5) break;
+    tx += off * dist / VIEW.scale * 0.9;         /* px → world, damped */
+    dist = fitDistance(pitch, tx);
+  }
+  return { tx, dist };
+}
+
+/* Screen height of a reference unit standing on the NEAR row — the row the
+   player's own units deploy on, and the one a steep pitch flattens first. */
+function fitSpriteH(pitch, dist, tx){
+  camAt(pitch, dist, tx);
+  const zn = (MAP.rows - 1)/2 * hexV();
+  const a = project({ x:tx, y:0, z:zn });
+  const b = project({ x:tx, y:unitWorldH({ h:1.05 }), z:zn });
+  return (a && b) ? Math.abs(a.y - b.y) : 0;
+}
+
+function fitCamera(){
+  if (!VIEW.box) resize();
+  const floor = VIEW.box.h * CAM_FIT.spriteMin;
+  let pitch = CAM_FIT.pitchLo, aim = fitAim(pitch);
+  for (let p = CAM_FIT.pitchHi; p > CAM_FIT.pitchLo; p -= CAM_FIT.pitchStep){
+    const a = fitAim(p);
+    if (fitSpriteH(p, a.dist, a.tx) >= floor){ pitch = p; aim = a; break; }
+  }
+  const tx = aim.tx;
+  camAt(pitch, aim.dist, tx);
+  /* Re-derive the optical shift from the board's OWN bbox. Measured with the
+     shift zeroed first, so the answer never depends on the shift already in
+     place — that is what makes a second board:map land on the same numbers
+     instead of walking the board off the top of the screen one push at a
+     time. */
+  CONFIG.viewShiftY = 0; resize(); buildCam();
+  const e = boardExtent();
+  const far = project({ x:tx, y:0, z:-e.z }), near = project({ x:tx, y:0, z:e.z });
+  if (far && near){
+    const span = near.y - far.y, slack = VIEW.box.h - span;
+    const wantFar = VIEW.box.t + (slack > 0 ? slack*CAM_FIT.skyShare : slack/2);
+    /* resize() scales viewShiftY by this same factor, so divide it back out. */
+    const kk = clamp(H/1080, .6, 1.2) || 1;
+    CONFIG.viewShiftY = (wantFar - far.y) / kk;
+    resize(); buildCam();
+  }
+}
+
+/* resize → fit → resize. VIEW.box feeds the fit and the fit writes viewShiftY
+   back through VIEW.cy, so the two only agree in that order. The window
+   resize listener goes through here as well: a fit that only ran on board:map
+   would be stale the moment the HUD reflowed the host rect, which is exactly
+   when the framing matters most. */
+function applyFit(){ resize(); fitCamera(); buildCam(); }
+
 function buildStage(){
-  buildCam(); resize(); seedBraziers();
+  rebuildTileIndex();
+  applyFit();
+  seedBraziers(); seedShards(); seedMotes();
   units = units.filter(u => u.persist);
 }
 
@@ -710,11 +1072,22 @@ function emberDissolve(sx, sy){
       vx:rnd(-26,26), vy:rnd(-90,-26), t:0, dur:rnd(.6,1.2), col:'#ffcf7a' });
   }
 }
-/* ambient motes floating over the stage */
-for (let i=0;i<70;i++){
-  particles.push({ amb:true, x:rnd(-5,5), y:rnd(.1,3.4), z:rnd(-4,4),
-    vx:rnd(-.06,.06), vy:rnd(.05,.22), vz:rnd(-.06,.06), t:0, life:1e9,
-    col: Math.random()<.5 ? '#b98cff' : '#ffcf7a', size:rnd(.8,2.1), g:0, w:Math.random()*7 });
+/* Ambient motes drifting over the stage. The box was rnd(-5,5) x rnd(-4,4) —
+   the 8×7 arena written as literals in two places (here and the recycle in
+   update()), so on a bigger board the motes hugged the middle third and the
+   outer rows had no atmosphere at all. moteBox() is the single description now,
+   and buildStage() reseeds so a map change redistributes them immediately
+   instead of waiting for each mote to drift past the ceiling. */
+const AMBIENT_MOTES = 70;
+function moteBox(){ const e = boardExtent(); return { x:e.x*1.25, z:e.z*1.15 }; }
+function seedMotes(){
+  const b = moteBox();
+  particles = particles.filter(p => !p.amb);
+  for (let i=0;i<AMBIENT_MOTES;i++){
+    particles.push({ amb:true, x:rnd(-b.x,b.x), y:rnd(.1,3.4), z:rnd(-b.z,b.z),
+      vx:rnd(-.06,.06), vy:rnd(.05,.22), vz:rnd(-.06,.06), t:0, life:1e9,
+      col: Math.random()<.5 ? '#b98cff' : '#ffcf7a', size:rnd(.8,2.1), g:0, w:Math.random()*7 });
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -863,7 +1236,7 @@ function drawOneBackdrop(img, alpha){
   /* COVER the entire viewport — no horizon cut, no empty gradient below.
      The image is scaled to fill W x H, then slid vertically so its own
      horizon lands near the board's far edge. */
-  const far = project({ x:0, y:0, z:-MAP.rows/2 - CONFIG.wall });
+  const far = project({ x:0, y:0, z:-groundExtent().far - CONFIG.wall });
   const anchorY = (far ? far.y : H*0.45);
   const sc = Math.max(W/img.naturalWidth, H/img.naturalHeight) * 1.02;
   const dw = img.naturalWidth*sc, dh = img.naturalHeight*sc;
@@ -901,11 +1274,21 @@ function drawBackdrop(){
   ctx.restore();
 }
 
-/* crystal shards floating around the arena (reference art) */
-const SHARDS = Array.from({length:14}, (_,i) => ({
-  x: (i%2? 1:-1) * rnd(4.4, 7.4), y: rnd(.4, 3.6), z: rnd(-5, 3.4),
-  s: rnd(.28,.72), r: rnd(-.5,.5), w: Math.random()*7
-}));
+/* crystal shards floating around the arena (reference art).
+   These are meant to hang OUTSIDE the play field. The old seed was
+   ±rnd(4.4,7.4) in x and rnd(-5,3.4) in z — literals for the 8×7 board, i.e.
+   1.1–1.85 apron half-widths out. On anything wider they land on the board and
+   read as props. Re-derived from boardExtent() and reseeded whenever the host
+   changes the map. */
+let SHARDS = [];
+function seedShards(){
+  const e = boardExtent();
+  SHARDS = Array.from({length:14}, (_,i) => ({
+    x: (i%2? 1:-1) * rnd(e.x*1.10, e.x*1.85), y: rnd(.4, 3.6),
+    z: rnd(-e.z*1.43, e.z*0.97),
+    s: rnd(.28,.72), r: rnd(-.5,.5), w: Math.random()*7
+  }));
+}
 function drawShards(){
   for (const s of SHARDS){
     const p = project({ x:s.x, y:s.y + Math.sin(T*.6+s.w)*.12, z:s.z }); if (!p) continue;
@@ -920,23 +1303,31 @@ function drawShards(){
   }
 }
 
+/* Six projected corners, in the same winding hexCorners() produces. pathPoly()
+   below is already generic over N points, so nothing downstream cared that this
+   used to return four. */
 function tilePoly(gx,gz,inset,y){
   const e = y!==undefined ? y : tileElev(gx,gz);
-  const a = gw(gx,gz,e), h = CONFIG.tile/2 - (inset||0);
-  const pts = [ {x:a.x-h,y:a.y,z:a.z-h}, {x:a.x+h,y:a.y,z:a.z-h}, {x:a.x+h,y:a.y,z:a.z+h}, {x:a.x-h,y:a.y,z:a.z+h} ];
-  const pr = pts.map(project);
+  const pr = hexCorners(gx, gz, inset||0, e).map(project);
   return pr.some(p=>!p) ? null : pr;
 }
 function pathPoly(P){ ctx.beginPath(); ctx.moveTo(P[0].x,P[0].y); for (let i=1;i<P.length;i++) ctx.lineTo(P[i].x,P[i].y); ctx.closePath(); }
 
 function drawBoard(){
   const lv = lightVector();
-  /* stone apron under the grid */
+  /* Stone apron under the grid. This used to be boardExtent()+wall — the
+     lattice's own edge — which is what left a gold-railed plate hovering in
+     the middle of the rect with dead backdrop above and below it. The floor
+     now runs out to groundExtent(), i.e. to wherever the box stops seeing it,
+     so the diorama reaches the frame edges (BAR R1). The rail is still
+     stroked on it; it simply lands off-frame on the near side, which is the
+     point — a rail you can see all four sides of IS the floating plate. */
+  const gnd = groundExtent();
   const outer = [
-    project({x:-MAP.cols/2-CONFIG.wall, y:-.02, z:-MAP.rows/2-CONFIG.wall}),
-    project({x: MAP.cols/2+CONFIG.wall, y:-.02, z:-MAP.rows/2-CONFIG.wall}),
-    project({x: MAP.cols/2+CONFIG.wall, y:-.02, z: MAP.rows/2+CONFIG.wall}),
-    project({x:-MAP.cols/2-CONFIG.wall, y:-.02, z: MAP.rows/2+CONFIG.wall})
+    project({x:-gnd.x-CONFIG.wall, y:-.02, z:-gnd.far-CONFIG.wall}),
+    project({x: gnd.x+CONFIG.wall, y:-.02, z:-gnd.far-CONFIG.wall}),
+    project({x: gnd.x+CONFIG.wall, y:-.02, z: gnd.near+CONFIG.wall}),
+    project({x:-gnd.x-CONFIG.wall, y:-.02, z: gnd.near+CONFIG.wall})
   ];
   if (outer.every(Boolean)){
     pathPoly(outer);
@@ -951,8 +1342,8 @@ function drawBoard(){
 
   /* ── LOCATION GROUND ART (clipped to the play plane) ── */
   const bq = [
-    project({x:-MAP.cols/2, y:0, z:-MAP.rows/2}), project({x:MAP.cols/2, y:0, z:-MAP.rows/2}),
-    project({x:MAP.cols/2, y:0, z:MAP.rows/2}),  project({x:-MAP.cols/2, y:0, z:MAP.rows/2})
+    project({x:-gnd.x, y:0, z:-gnd.far}), project({x:gnd.x, y:0, z:-gnd.far}),
+    project({x:gnd.x, y:0, z:gnd.near}),  project({x:-gnd.x, y:0, z:gnd.near})
   ];
   if (bq.every(Boolean) && GROUND.img && GROUND.img.complete && GROUND.img.naturalWidth){
     ctx.save();
@@ -993,7 +1384,10 @@ function drawBoard(){
       }
       /* lambert-ish shade: tiles further from the light read darker */
       const wpos = gw(x,z);
-      const nd = clamp(.55 + lv.y*.45 + (wpos.x*lv.x + wpos.z*lv.z)*.018, .25, 1);
+      /* the .018 is a gradient PER TILE, tuned when one tile spanned one world
+         unit. Divide by the row pitch so a wider board does not clamp one whole
+         flank to the floor value the moment the world coordinates grow. */
+      const nd = clamp(.55 + lv.y*.45 + ((wpos.x*lv.x + wpos.z*lv.z)/hexW())*.018, .25, 1);
       let base = mixHex(MAP.ground.base, LIGHT.key, .16*nd);
       if (t && t.type==='hazard') base = mixHex('#4a1a10', LIGHT.key, .12);
       if (t && t.type==='objective') base = mixHex('#3a3016', LIGHT.key, .2);
@@ -1004,13 +1398,58 @@ function drawBoard(){
                                      t && t.type ? .30 : .16)
                                  : base;
       ctx.fill();
-      /* raised tile side walls */
+      /* 🧱 RAISED TOPS. BAR R1 wants height readable at a glance. A slab whose
+         top is filled exactly like flat ground reads as a HOLE with a dark rim
+         round it rather than as a plateau — the side walls below only say
+         which way is down once the top says it is lit. So lift the top toward
+         the key light in proportion to how far it stands up. Kept as a wash
+         over the location art rather than a replacement fill, so terrain
+         texture still reads through the shelf. */
       const e = tileElev(x,z);
+      if (e > 0){
+        pathPoly(P);
+        ctx.fillStyle = rgba(LIGHT.key, clamp(0.09 + e*0.62, 0.09, 0.34) * (0.45 + LIGHT.keyI*0.45));
+        ctx.fill();
+      }
+      /* raised tile side walls */
       if (e > 0){
         const B = tilePoly(x,z,0.02,0);
         if (B){
-          ctx.fillStyle = mixHex('#0b0910', LIGHT.key, .05);
-          for (const [i,j] of [[2,3],[1,2],[3,0]]){
+          /* CLIFF FACES. This used to draw three quads from the fixed index
+             pairs [[2,3],[1,2],[3,0]] — the front/left/right faces of a CUBE,
+             correct only for an axis-aligned box seen from one frozen camera.
+             A hexagon has six edges and the free camera in a later wave will
+             swing past all of them, so choose the visible ones by their OUTWARD
+             NORMAL: an edge is front-facing when its normal still points back
+             toward the eye. That test is what survives yaw; an index list never
+             could. Front faces of a convex prism cannot overlap each other, so
+             they need no sort among themselves. */
+          const Wtop = hexCorners(x, z, 0.02, e);
+          const ctr = gw(x, z, e);
+          for (let i=0;i<Wtop.length;i++){
+            const j = (i+1) % Wtop.length;
+            const mx = (Wtop[i].x + Wtop[j].x)/2, mz = (Wtop[i].z + Wtop[j].z)/2;
+            const nx = mx - ctr.x, nz = mz - ctr.z;
+            if (nx*(CAM.pos.x - mx) + nz*(CAM.pos.z - mz) <= 0) continue;
+            /* BAR R1 asks for cliff faces that read differently from the tops.
+               The normal is already in hand, so shade the wall by how much it
+               turns toward the key light instead of filling all of them flat. */
+            const nl = Math.hypot(nx, nz) || 1;
+            /* Normalise against the light's HORIZONTAL length, not its full
+               length: a wall is vertical, so only lv.x/lv.z reach it, and at
+               a high sun those two are most of the way to zero. Without this
+               the whole range collapses toward the middle at noon. */
+            const lh = Math.hypot(lv.x, lv.z) || 1;
+            const lam = clamp(.5 + ((nx/nl)*lv.x + (nz/nl)*lv.z)/lh*.5, 0, 1);
+            /* WIDEN. This was mixHex('#0b0910', LIGHT.key, .04 + lam*.14).
+               Dumped per drawn edge under the day preset that spans
+               rgb(23,20,25)→rgb(34,31,33) — an 11/255 delta on near-black,
+               i.e. "cliff faces lit differently from the tops" was true in
+               the code and invisible on the screen. The same dump on the line
+               below spans rgb(28,26,27)→rgb(100,95,82), 72/255. Darker base
+               on purpose, so the away-facing walls still read as shadow
+               rather than as flat grey now that the range is real. */
+            ctx.fillStyle = mixHex('#07060b', LIGHT.key, .08 + lam*.30);
             ctx.beginPath(); ctx.moveTo(P[i].x,P[i].y); ctx.lineTo(P[j].x,P[j].y);
             ctx.lineTo(B[j].x,B[j].y); ctx.lineTo(B[i].x,B[i].y); ctx.closePath(); ctx.fill();
           }
@@ -1036,9 +1475,7 @@ function drawBoard(){
 
 function drawRune(gx,gz,nd,t){
   const c = project(gw(gx,gz, tileElev(gx,gz)+.002)); if (!c) return;
-  const rp = project(gw(gx,gz, tileElev(gx,gz)+.002)); const edge = project({ ...gw(gx,gz,tileElev(gx,gz)+.002), x: gw(gx,gz).x + .34 });
-  if (!edge) return;
-  const R = Math.abs(edge.x - c.x);
+  const R = ringPx(c, tileR() * 0.68);          /* 0.68 of the hex inradius */
   const pulse = .5 + Math.sin(T*1.1 + gx*.7 + gz*.9)*.5;
   const col = t && t.type==='objective' ? '#f6dc95' : '#d2a44e';
   ctx.save(); ctx.translate(c.x, c.y); ctx.scale(1, .46);
@@ -1062,8 +1499,13 @@ function drawRune(gx,gz,nd,t){
 
 /* ornate gold frame + corner brazier pylons (reference art) */
 function drawFrame(){
-  const hw = MAP.cols/2 + CONFIG.wall, hh = MAP.rows/2 + CONFIG.wall;
-  const corners = [ {x:-hw,z:-hh}, {x:hw,z:-hh}, {x:hw,z:hh}, {x:-hw,z:hh} ];
+  const ext = boardExtent();
+  /* Centred on the lattice, not on the origin: odd rows are shifted +½ column
+     so the hexes are not symmetric about x=0, and a frame that is would sit a
+     quarter hex off to one side of the field it is framing. */
+  const tx = latticeCentreX();
+  const hw = ext.x + CONFIG.wall, hh = ext.z + CONFIG.wall;
+  const corners = [ {x:tx-hw,z:-hh}, {x:tx+hw,z:-hh}, {x:tx+hw,z:hh}, {x:tx-hw,z:hh} ];
   /* frame band */
   const top = corners.map(c => project({x:c.x, y:.14, z:c.z}));
   const bot = corners.map(c => project({x:c.x, y:-.02, z:c.z}));
@@ -1177,9 +1619,8 @@ function drawEvent(ev){
   if (ev.color || ev.name) E = { ...E, color: ev.color || E.color, name: ev.name || E.name };
   const el = tileElev(ev.x, ev.z);
   const c = project(gw(ev.x, ev.z, el + .01));
-  const edge = project({ ...gw(ev.x, ev.z, el + .01), x: gw(ev.x, ev.z).x + .40 });
-  if (!c || !edge) return;
-  const R = Math.abs(edge.x - c.x);
+  if (!c) return;
+  const R = ringPx(c, tileR() * 0.80);          /* 0.80 of the hex inradius */
   const pulse = .5 + Math.sin(T*2.2 + ev.x + ev.z)*.5;
 
   /* glowing pad on the tile */
@@ -1420,9 +1861,10 @@ function drawPylon(br){
   fillBand(bandQuad(px,pz, 1.40, P.top, P.bowl, P.rim), goldM, goldL);
   /* rim ellipse + hot interior */
   const c = project({x:px, y:P.top, z:pz});
-  const e = project({x:px + P.rim, y:P.top, z:pz});
-  if (c && e){
-    const R = Math.abs(e.x - c.x);
+  if (c){
+    /* P.rim is the bowl's own radius in world units — a property of the pillar,
+       not of the lattice, so it is NOT expressed against tileR(). */
+    const R = ringPx(c, P.rim);
     ctx.save(); ctx.translate(c.x, c.y); ctx.scale(1, .42);
     /* bowl interior glow */
     const bg = ctx.createRadialGradient(0,0,0,0,0,R);
@@ -1459,8 +1901,7 @@ function drawPylon(br){
   }
   /* this pylon's flames + its projection beam */
   const bc = project({x:px, y:P.top, z:pz});
-  const bs = project({x:px + P.rim, y:P.top, z:pz});
-  if (bc && bs) br._spr = { x:bc.x, fireY:bc.y, emitY:bc.y, s:Math.abs(bs.x-bc.x)*2.6 };
+  if (bc) br._spr = { x:bc.x, fireY:bc.y, emitY:bc.y, s:ringPx(bc, P.rim)*2.6 };
   drawFlames(br);
   drawHoloBeam(br);
 }
@@ -1605,11 +2046,57 @@ function pylonClearance(){
   const halfW = PYLON_ART.img ? PYLON_ART.widthWorld*0.5 : 0.45;
   return CONFIG.wall + halfW + 0.22;
 }
+/* The four pylons used to sit at the apron's corners, ±(ext+clearance) in
+   both axes. That was right while the board floated in the middle of the
+   frame; now that it fills the frame, ±(ext.x+clearance) projects clean off
+   the sides and the two NEAR pylons were simply not in the picture at all.
+   A pylon is off the play grid when |x| ≥ ext.x+c OR |z| ≥ ext.z+c — not
+   both — so holding z at the apron's lip and pulling x IN is legal, and it is
+   the only move that keeps all four visible. One shared half-width for all
+   four keeps them a rectangle, so they still read as a colonnade round the
+   field instead of a scatter; the NEAR pair is the binding one (it projects
+   widest), so testing that pair is enough. */
 function seedBraziers(){
   const c = pylonClearance();
-  const hw = MAP.cols/2 + c, hh = MAP.rows/2 + c;
+  const ext = boardExtent();
+  const tx = latticeCentreX();
+  const hh = ext.z + c;
+  const hw0 = ext.x + c;
+  let hw = hw0;
+  if (CAM && VIEW.box){
+    const wHalf = (PYLON_ART.img ? PYLON_ART.widthWorld : 0.9) * 0.5;
+    const tall  = PYLON_ART.img ? PYLON_ART.heightWorld : 1.4;
+    const pad = 6;
+    const lo = VIEW.box.l + pad, hi = VIEW.box.l + VIEW.box.w - pad;
+    const top = VIEW.box.t + pad, bot = VIEW.box.t + VIEW.box.h - pad;
+    const fits = w => {
+      for (const zz of [hh, -hh]) for (const sgn of [-1, 1]){
+        const a = project({ x:tx + sgn*w,         y:0,    z:zz });
+        const b = project({ x:tx + sgn*w + wHalf, y:0,    z:zz });
+        const c = project({ x:tx + sgn*w,         y:tall, z:zz });
+        if (!a || !b || !c) return false;
+        const half = Math.abs(b.x - a.x);
+        if (a.x - half < lo || a.x + half > hi) return false;
+        if (c.y < top || a.y > bot) return false;
+      }
+      return true;
+    };
+    const STEPS = 48, floorW = ext.x*0.30;   /* never let a pair meet in the middle */
+    let found = null;
+    for (let i = 0; i <= STEPS && hw >= floorW; i++){
+      if (fits(hw)){ found = hw; break; }
+      hw -= hw0/STEPS;
+    }
+    /* All-or-nothing on purpose. If no half-width fits — which is what happens
+       in the standalone/full-viewport framing, where the board already covers
+       ~90% of the frame height and there is simply no room outside it — put
+       them back on the apron corners rather than leaving them halfway in. A
+       pylon parked at a third of the board's width is neither at a corner nor
+       visible; the old placement is at least the one the art was drawn for. */
+    hw = found === null ? hw0 : found;
+  }
   const fireY = PYLON_ART.img ? artY(PYLON_ART.fireY) : PYLON.top;
-  braziers = [ {x:-hw,z:-hh}, {x:hw,z:-hh}, {x:hw,z:hh}, {x:-hw,z:hh} ]
+  braziers = [ {x:tx-hw,z:-hh}, {x:tx+hw,z:-hh}, {x:tx+hw,z:hh}, {x:tx-hw,z:hh} ]
     .map((c2,i) => ({ x:c2.x, y:fireY + 0.02, z:c2.z, seed:i*2.7, id:i }));
 }
 function updateFlames(dt){
@@ -1676,7 +2163,10 @@ function drawFlames(br){
 function drawProp(t){
   const base = gw(t.x, t.z, tileElev(t.x,t.z));
   const p = project(base); if (!p) return;
-  const S = p.s * .5, lv = lightVector();
+  /* props are drawn to fit their tile, so their scale unit is the inradius —
+     the .5 that used to be here was that same number back when a square cell's
+     inradius happened to be 0.5. */
+  const S = ringPx(p, tileR()), lv = lightVector();
   /* shadow */
   shadowEllipse(base, .38, .8);
   ctx.save(); ctx.translate(p.x, p.y);
@@ -1718,8 +2208,10 @@ function shadowEllipse(world, rx, alpha){
   const len = clamp(1/(lv.y+.16), .8, 3.6);
   const off = { x: -lv.x*len*.42, z: -lv.z*len*.42 };
   const c = project({ x:world.x + off.x, y:world.y+.006, z:world.z + off.z }); if (!c) return;
-  const e = project({ x:world.x + off.x + rx, y:world.y+.006, z:world.z + off.z }); if (!e) return;
-  const R = Math.abs(e.x - c.x);
+  /* rx is the CASTER's radius in world units (a unit, a tomb, a pillar), not a
+     fraction of a tile — a sprite's shadow tracks the sprite, so this one does
+     not go through tileR(). */
+  const R = ringPx(c, rx);
   ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(Math.atan2(-lv.z, lv.x)*.12); ctx.scale(1*len*.55+.6, .40);
   const g = ctx.createRadialGradient(0,0,0,0,0,R);
   g.addColorStop(0, `rgba(0,0,0,${(alpha||.75)*clamp(lv.y+.25,.25,1)})`);
@@ -1904,7 +2396,7 @@ function unitScreenBox(u){
   const base = gw(u.x, u.z, tileElev(u.gx, u.gz));
   const wy = base.y + u.y;
   const foot = project({ x:base.x, y:wy, z:base.z });
-  const head = project({ x:base.x, y:wy + (u.def && u.def.h || 1), z:base.z });
+  const head = project({ x:base.x, y:wy + unitWorldH(u.def), z:base.z });
   if (!foot || !head) return null;
   const h = Math.abs(foot.y - head.y);
   const w = h * 0.8;
@@ -1920,9 +2412,8 @@ function drawTomb(tb){
   /* a glowing stone is about to revive — pulse a ring under it */
   if (tb.glowing){
     const c = project({ x:wp.x, y:wp.y + .01, z:wp.z });
-    const e = project({ x:wp.x + .38, y:wp.y + .01, z:wp.z });
-    if (c && e){
-      const R = Math.abs(e.x - c.x);
+    if (c){
+      const R = ringPx(c, tileR() * 0.76);      /* 0.76 of the hex inradius */
       ctx.save(); ctx.translate(c.x, c.y); ctx.scale(1, .44);
       ctx.strokeStyle = rgba('#9fe8ff', .45 + Math.sin(T * 3.2) * .3);
       ctx.lineWidth = 2.6; ctx.beginPath(); ctx.arc(0, 0, R, 0, 7); ctx.stroke(); ctx.restore();
@@ -1959,7 +2450,7 @@ function drawUnit(u){
   const base = gw(u.x, u.z, tileElev(u.gx,u.gz));
   const wy = base.y + u.y;
   const foot = project({ x:base.x, y:wy, z:base.z }); if (!foot) return;
-  const head = project({ x:base.x, y:wy + u.def.h, z:base.z }); if (!head) return;
+  const head = project({ x:base.x, y:wy + unitWorldH(u.def), z:base.z }); if (!head) return;
   const k = Math.abs(foot.y - head.y);
   if (u.y > -0.9) shadowEllipse(base, .30, .8);
 
@@ -2011,9 +2502,8 @@ function drawUnit(u){
   /* selection ring */
   if (selected === u.id){
     const c = project({x:base.x, y:base.y+.01, z:base.z});
-    const e = project({x:base.x+.42, y:base.y+.01, z:base.z});
-    if (c && e){
-      const R = Math.abs(e.x-c.x);
+    if (c){
+      const R = ringPx(c, tileR() * 0.84);      /* 0.84 of the hex inradius */
       ctx.save(); ctx.translate(c.x,c.y); ctx.scale(1,.44);
       ctx.strokeStyle = rgba('#7fe89f', .55 + Math.sin(T*3)*.25); ctx.lineWidth = 2.4;
       ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.stroke(); ctx.restore();
@@ -2028,16 +2518,19 @@ function drawEffects(pass){
   for (const f of effects){
     const p = f.t / f.dur, a = 1 - p;
     if (f.k === 'ring' && pass === 'ground'){
-      const c = project({x:f.x, y:.02, z:f.z}); const e = project({x:f.x + lerp(f.r0,f.r1,easeOut(p)), y:.02, z:f.z});
-      if (c && e){ const R = Math.abs(e.x-c.x);
+      const c = project({x:f.x, y:.02, z:f.z});
+      /* f.r0/f.r1 are stored at the push sites as fractions of the OLD half
+         tile (0.5), so ×2 reads them as fractions of tileR() — one conversion
+         here beats editing a dozen effects.push() calls that never knew what
+         unit they were in. */
+      if (c){ const R = ringPx(c, tileR() * lerp(f.r0,f.r1,easeOut(p)) * 2);
         ctx.save(); ctx.translate(c.x,c.y); ctx.scale(1,.44);
         ctx.strokeStyle = rgba(f.col, a*.9); ctx.lineWidth = 3*a+1;
         ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.stroke(); ctx.restore(); }
     }
     if (f.k === 'rune' && pass === 'ground'){
       const c = project(gw(f.gx,f.gz,tileElev(f.gx,f.gz)+.004));
-      const e = project({ ...gw(f.gx,f.gz,tileElev(f.gx,f.gz)+.004), x: gw(f.gx,f.gz).x+.44 });
-      if (c && e){ const R = Math.abs(e.x-c.x);
+      if (c){ const R = ringPx(c, tileR() * 0.88);   /* 0.88 of the inradius */
         ctx.save(); ctx.translate(c.x,c.y); ctx.scale(1,.46); ctx.rotate(T*1.4);
         ctx.strokeStyle = rgba(f.col, a*.95); ctx.lineWidth = 2.4;
         ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.stroke();
@@ -2049,9 +2542,8 @@ function drawEffects(pass){
     }
     if (f.k === 'pillar' && pass === 'air'){
       const b = project(gw(f.gx,f.gz,0)), t2 = project(gw(f.gx,f.gz,4.2));
-      const e = project({ ...gw(f.gx,f.gz,0), x: gw(f.gx,f.gz).x+.42 });
-      if (b && t2 && e){
-        const R = Math.abs(e.x-b.x) * (1 - p*.25);
+      if (b && t2){
+        const R = ringPx(b, tileR() * 0.84) * (1 - p*.25);  /* 0.84 inradius */
         const g = ctx.createLinearGradient(b.x, b.y, t2.x, t2.y);
         g.addColorStop(0, rgba(f.col, a*.75)); g.addColorStop(.5, rgba(f.col, a*.3)); g.addColorStop(1, rgba(f.col,0));
         ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle = g;
@@ -2203,7 +2695,7 @@ function update(dt){
   for (const p of particles){
     if (p.amb){
       p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt;
-      if (p.y > 3.8){ p.y = .05; p.x = rnd(-5,5); p.z = rnd(-4,4); }
+      if (p.y > 3.8){ const b = moteBox(); p.y = .05; p.x = rnd(-b.x,b.x); p.z = rnd(-b.z,b.z); }
       continue;
     }
     p.t += dt;
@@ -2248,13 +2740,15 @@ let frameErr = false;
    patterns don't march in lockstep, and animate off the shared clock T. */
 let SURFACES = {};                 /* "x,z" -> effect key */
 function _sHash(x, z, n){ let h = (x * 73856093) ^ (z * 19349663) ^ ((n || 0) * 83492791); h = (h ^ (h >> 13)) * 1274126177; h = (h ^ (h >> 16)) >>> 0; return (h % 10000) / 10000; }
+/* The tile's clip polygon. It used to offset the GRID coordinates by ±0.5 and
+   project the four corners — an offset of ±half a COLUMN, which on a staggered
+   hex lattice is not a tile corner at all (and on odd rows is not even on the
+   tile). Build the same hexagon tilePoly does, from the same hexCorners(), so
+   the paint can never drift off the tile it belongs to. Still called _sQuad
+   because the whole surface-FX API and all 17 painters take `q`; only the
+   number of points in it changed. */
 function _sQuad(gx, gz){
-  const e = tileElev(gx, gz) + 0.012;
-  const c = [[0,0],[1,0],[1,1],[0,1]].map(o => {
-    const wp = gw(gx - 0.5 + o[0], gz - 0.5 + o[1], e);
-    return project({ x: wp.x, y: wp.y, z: wp.z });
-  });
-  return c.some(q => !q) ? null : c;
+  return tilePoly(gx, gz, 0, tileElev(gx, gz) + 0.012);
 }
 /* one painter per effect key — c is pre-clipped to the tile quad.
    (cx,cy) centre, r ≈ half-width in px, T = clock. */
@@ -2499,9 +2993,16 @@ function drawSurfaceFx(T){
     const p2 = key.split(','), gx = +p2[0], gz = +p2[1];
     const quad = _sQuad(gx, gz);
     if (!quad) continue;
-    const cx2 = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
-    const cy2 = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
-    const r2 = Math.max(6, (Math.abs(quad[1].x - quad[0].x) + Math.abs(quad[2].x - quad[3].x)) / 4);
+    /* The centre used to be the mean of EXACTLY FOUR vertices and the radius
+       came out of |q1.x-q0.x| / |q2.x-q3.x|, i.e. a specific square winding.
+       Both are now derived from the projection itself: the tile centre is a
+       real world point, and p.s is pixels-per-world-unit at that depth, so
+       SIZE*p.s is the hexagon's circumradius in pixels with no winding
+       assumption left to break. */
+    const cp = project(gw(gx, gz, tileElev(gx, gz) + 0.012));
+    if (!cp) continue;
+    const cx2 = cp.x, cy2 = cp.y;
+    const r2 = Math.max(6, hexSize() * cp.s);
     ctx.save();
     ctx.beginPath();
     quad.forEach((pt, i) => i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y));
@@ -2541,7 +3042,10 @@ function frame(now){
   for (const tb of TOMBS) drawables.push({ z:tb.z, kind:'tomb', tb });
   /* pylons live in world z, convert to grid-space depth for one sort */
   for (const ev of (MAP.events||[])) drawables.push({ z:ev.z, kind:'event', ev });
-  for (const br of braziers) drawables.push({ z: br.z + (MAP.rows-1)/2, kind:'pylon', br });
+  /* pylons live in world z; the rest of this list is in GRID rows, so divide by
+     the row pitch before the offset. It used to add (rows-1)/2 to a raw world z,
+     which only agreed with a grid row while a row was one world unit deep. */
+  for (const br of braziers) drawables.push({ z: br.z/hexV() + (MAP.rows-1)/2, kind:'pylon', br });
   drawables.sort((a,b) => a.z - b.z);
   for (const d of drawables){
     if (d.kind==='prop') drawProp(d.t);
@@ -2599,6 +3103,40 @@ function frame(now){
 /* ══════════════════════════════════════════════════════════════════
    INTERACTION — screen → tile via ray/plane intersect
    ══════════════════════════════════════════════════════════════════ */
+/* Cube rounding. Rounding a fractional axial/cube coordinate axis-by-axis can
+   land off the hex; the fix is to round all three, then discard and re-derive
+   whichever component moved furthest, restoring x+y+z === 0. */
+function cubeRound(x, y, z){
+  let rx = Math.round(x), ry = Math.round(y), rz = Math.round(z);
+  const dx = Math.abs(rx-x), dy = Math.abs(ry-y), dz = Math.abs(rz-z);
+  if (dx > dy && dx > dz)      rx = -ry - rz;
+  else if (dy > dz)            ry = -rx - rz;
+  else                         rz = -rx - ry;
+  return { x:rx, y:ry, z:rz };
+}
+/* world (x,z) on the play plane → tile. THE ANALYTIC INVERSE OF gw(),
+   HEXSPEC §4 — and note what it is NOT: it does not round the column and the
+   row independently. That shortcut is right in the middle of every hex and
+   wrong along every edge, which is exactly the "the click landed one tile off,
+   but only sometimes" bug HEXSPEC §4 calls out. Go to axial, cube-round, come
+   back to the same odd-r offset scheme gw() uses. */
+function worldToTile(wx, wz){
+  const s = hexSize();
+  /* undo the board-centre offset gw() applies, so the origin is tile (0,0) */
+  const u = wx + ((MAP.cols-1)/2) * hexW();
+  const v = wz + ((MAP.rows-1)/2) * hexV();
+  const q = (SQRT3/3 * u - v/3) / s;
+  const r = (2/3 * v) / s;
+  const c = cubeRound(q, -q - r, r);
+  /* axial → odd-r offset. `&` and not `%` for the parity: JS gives -1 % 2 === -1
+     and the column would come back one short on every negative row. */
+  const col = c.x + (c.z - (c.z & 1)) / 2;
+  const row = c.z;
+  /* the bounds test has to be re-derived for staggered rows: a hex board is a
+     rhombus in cube space, so test the OFFSET pair, after the conversion. */
+  if (col < 0 || row < 0 || col >= MAP.cols || row >= MAP.rows) return null;
+  return { x:col, z:row };
+}
 function pickTile(mx, my){
   /* unproject to a ray, intersect y=0 plane, convert to grid */
   const ndx = (mx - VIEW.cx) / VIEW.scale;
@@ -2610,12 +3148,93 @@ function pickTile(mx, my){
   });
   if (Math.abs(dir.y) < 1e-5) return null;
   const t = -CAM.pos.y / dir.y; if (t <= 0) return null;
-  const wx = CAM.pos.x + dir.x*t, wz = CAM.pos.z + dir.z*t;
-  const gx = Math.round(wx/CONFIG.tile + (MAP.cols-1)/2);
-  const gz = Math.round(wz/CONFIG.tile + (MAP.rows-1)/2);
-  if (gx<0 || gz<0 || gx>=MAP.cols || gz>=MAP.rows) return null;
-  return { x:gx, z:gz };
+  return worldToTile(CAM.pos.x + dir.x*t, CAM.pos.z + dir.z*t);
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   HEX SELF-CHECK — required by HEXSPEC §4, and the only thing that
+   ties gw() to worldToTile(). They are hand-derived analytic inverses
+   sharing no code: flip a parity in either and the board still looks
+   perfect, while the tile you CLICK slides away from the tile you
+   HIGHLIGHTED, further the further you are from the origin. Nothing
+   else in this file would notice.
+   It lives on window rather than running at boot on purpose — a match
+   must not pay for it and must not have its console spammed. Call it:
+     window.__bbHexCheck()   →  { ok, tiles, centreFails, jitterFails }
+   ══════════════════════════════════════════════════════════════════ */
+function hexSelfCheck(opts){
+  const rings = (opts && opts.rings) || 8;
+  const centre = [], jitter = [];
+  for (let z = 0; z < MAP.rows; z++){
+    for (let x = 0; x < MAP.cols; x++){
+      const w = gw(x, z, 0);
+      const t = worldToTile(w.x, w.z);
+      if (!t || t.x !== x || t.z !== z)
+        centre.push({ want:[x,z], got:t ? [t.x,t.z] : null,
+                      world:[+w.x.toFixed(4), +w.z.toFixed(4)] });
+      /* Centres alone are a weak test: an inverse that rounds col and row
+         separately passes every centre and fails near the edges. Probe inside
+         the tile as well, at 90% of the INRADIUS — a circle of that radius is
+         strictly inside one hex and touches no other, so every sample has
+         exactly one right answer. */
+      for (let i = 0; i < rings; i++){
+        const a = i * Math.PI * 2 / rings, rr = tileR() * 0.9;
+        const t2 = worldToTile(w.x + Math.cos(a)*rr, w.z + Math.sin(a)*rr);
+        if (!t2 || t2.x !== x || t2.z !== z)
+          jitter.push({ want:[x,z], got:t2 ? [t2.x,t2.z] : null,
+                        deg: Math.round(a*180/Math.PI) });
+      }
+    }
+  }
+  const tiles = MAP.cols * MAP.rows;
+  return { cols:MAP.cols, rows:MAP.rows, tiles,
+           samples: tiles * (1 + rings),
+           centreFails: centre.length, jitterFails: jitter.length,
+           ok: centre.length === 0 && jitter.length === 0,
+           fails: centre.slice(0,10).concat(jitter.slice(0,10)) };
+}
+window.__bbHexCheck = hexSelfCheck;
+
+/* 📐 FIT SELF-REPORT — the framing equivalent of __bbHexCheck, and on window
+   for the same reason: the numbers BAR R1 is judged on (how much of the host
+   rect the board covers, how wide a near-row hex is, how tall a unit reads)
+   are not knowable by reading the code, only by measuring the projection that
+   actually ran. A capture can be eyeballed; this can be asserted.
+     window.__bbFitProbe()  →  { host, pitchDeg, dist, hexNear, unitH, board,
+                                 ground, braziers }
+   All lengths are CSS px inside the iframe, matching board:rects. */
+function fitReport(){
+  const tx = latticeCentreX(), e = boardExtent(), g = groundExtent();
+  const zn = (MAP.rows-1)/2*hexV();
+  const px = p => p ? { x:+p.x.toFixed(1), y:+p.y.toFixed(1) } : null;
+  const a = project(gw(0, MAP.rows-1, 0)), b = project(gw(MAP.cols-1, MAP.rows-1, 0));
+  const f = project({x:tx,y:0,z:-e.z}), n = project({x:tx,y:0,z:e.z});
+  const u0 = project({x:tx,y:0,z:zn}), u1 = project({x:tx,y:unitWorldH({h:1.05}),z:zn});
+  const dir = norm(sub(CONFIG.camera.target, CONFIG.camera.pos));
+  return {
+    host: { w:+VIEW.box.w.toFixed(0), h:+VIEW.box.h.toFixed(0) },
+    pitchDeg: +(Math.asin(-dir.y)*180/Math.PI).toFixed(1),
+    dist: +Math.hypot(CONFIG.camera.pos.y - CONFIG.camera.target.y, CONFIG.camera.pos.z).toFixed(2),
+    viewShiftY: +CONFIG.viewShiftY.toFixed(1),
+    hexNear: (a && b) ? +((b.x - a.x)/(MAP.cols-1)).toFixed(1) : null,
+    unitH:   (u0 && u1) ? +Math.abs(u1.y - u0.y).toFixed(1) : null,
+    board:   (f && n) ? { top:+f.y.toFixed(0), bottom:+n.y.toFixed(0),
+                          pctH:+(100*(n.y - f.y)/VIEW.box.h).toFixed(0) } : null,
+    ground:  { x:+g.x.toFixed(2), near:+g.near.toFixed(2), far:+g.far.toFixed(2) },
+    braziers: braziers.map(br => {
+      const q = project({ x:br.x, y:0, z:br.z });
+      const t = project({ x:br.x, y:PYLON_ART.heightWorld, z:br.z });
+      const w = project({ x:br.x + (PYLON_ART.img ? PYLON_ART.widthWorld : 0.9)*0.5, y:0, z:br.z });
+      if (!q || !t || !w) return null;
+      const half = Math.abs(w.x - q.x);
+      return { base:px(q), left:+(q.x-half).toFixed(0), right:+(q.x+half).toFixed(0),
+               top:+t.y.toFixed(0),
+               inside: (q.x-half) >= VIEW.box.l && (q.x+half) <= VIEW.box.l+VIEW.box.w
+                       && t.y >= VIEW.box.t && q.y <= VIEW.box.t+VIEW.box.h };
+    })
+  };
+}
+window.__bbFitProbe = fitReport;
 cv.addEventListener('mousemove', e => { hoverTile = pickTile(e.clientX, e.clientY); });
 cv.addEventListener('mouseleave', () => hoverTile = null);
 cv.addEventListener('click', e => {
@@ -2809,6 +3428,27 @@ function applyUnits(list){
   for (const x of units.slice()) if (!x.dead && !seen.has(String(x.id))) killUnit(x.id);
 }
 
+/* 🗺 THE ONE DOOR the host's map comes through. `board:init` and `board:map`
+   both used to do a bare Object.assign(MAP, msg.map) in line, so a payload
+   carrying a BAD dimension ('14', NaN, 0, -3) propagated straight into gw()
+   and worldToTile(). Both return NaN for a NaN cols, project() then fails
+   every test, and the whole board renders nothing at all with no error
+   anywhere — exactly the silent class of failure the near clip already gives
+   us. Clamped here, once.
+   ⚠ Object.assign MERGES (CONTRACT §2 R18): a payload with no `cols` key at
+   all does NOT fall back to BOARD_DEFAULT, it KEEPS the previous map's size,
+   because there is nothing for Math.round to reject. That is deliberate — a
+   `board:map` that only repaints tiles must not silently resize the board —
+   but it does mean BOARD_DEFAULT is reached only at boot, or when the key is
+   present and unusable. Do not read the fallback as "a dimensionless payload
+   resets the board"; it does not. */
+function applyMapPayload(m){
+  if (!m || typeof m !== 'object') return;
+  Object.assign(MAP, m);
+  MAP.cols = Math.max(1, Math.round(+MAP.cols) || BOARD_DEFAULT.cols);
+  MAP.rows = Math.max(1, Math.round(+MAP.rows) || BOARD_DEFAULT.rows);
+}
+
 function handleHostMessage(msg){
   if (!msg || typeof msg.type !== 'string' || msg.type.indexOf('board:') !== 0) return;
   const t = msg.type.slice(6);
@@ -2816,7 +3456,7 @@ function handleHostMessage(msg){
     if (t === 'init'){
       if (msg.safe) Object.assign(CONFIG.SAFE, msg.safe);
       if (msg.locations) setLocations(msg.locations, true);
-      if (msg.map) Object.assign(MAP, msg.map);
+      applyMapPayload(msg.map);
       buildStage();
       applyDefs(msg.defs);
       loadLocation(msg.location || MAP.location || DEFAULT_LOCATION, true);
@@ -2829,7 +3469,7 @@ function handleHostMessage(msg){
       if (msg.events) setEvents(msg.events);
       resize();
     }
-    else if (t === 'map'){ if (msg.map) Object.assign(MAP, msg.map); buildStage(); if (msg.events) setEvents(msg.events); resize(); }
+    else if (t === 'map'){ applyMapPayload(msg.map); buildStage(); if (msg.events) setEvents(msg.events); resize(); }
     else if (t === 'events'){ setEvents(msg.events); }
     else if (t === 'defs')      applyDefs(msg.defs);
     else if (t === 'units')     applyUnits(msg.units);

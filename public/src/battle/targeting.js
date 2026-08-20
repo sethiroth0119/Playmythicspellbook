@@ -101,7 +101,10 @@
        it in to the board's CONTENT box — the exact rectangle the tiles are
        laid out in. `grid-template-columns/rows: inherit` and `gap: inherit`
        copy the board's own track definition, so the overlay stays registered
-       with the tiles for free if the grid is ever re-shaped (8×7 today).
+       with the tiles for free if the grid is ever re-shaped. It is BOARD_W ×
+       BOARD_H hexes today, laid out as 2·BOARD_W+1 half-column tracks by
+       BOARD_H row tracks — inheriting the tracks is free, but the per-cell
+       placement below has to do the same odd-r arithmetic the tiles do.
 
        `.tgt-cell` carries `min-width:0; min-height:0` for the same reason
        `.tile` does (index.html:11789): without it a long name's min-content
@@ -118,7 +121,7 @@
        board box instead, stacking them all in the bottom-left. Measured, not
        assumed. The overlay grid has no such dependency.
 
-       The layer is appended AFTER all 56 tiles, and it is the only element we
+       The layer is appended AFTER all BOARD_W×BOARD_H tiles, and it is the only element we
        add to `.board`, so no tile's :nth-child index moves (body.bfx-quake
        staggers its shake by .tile:nth-child(3n+k), index.html:9417).
        z-index clears both the tile layer (5) and the ambient drift layer (6). */
@@ -340,11 +343,18 @@
     var b = boardEl();
     if (b) {
       try {
+        /* ⚠ THE TRACK COUNT IS NO LONGER THE COLUMN COUNT. The board is a
+           pointy-top odd-r hex grid laid out in HALF-column tracks so the
+           +0.5 shift of odd rows lands on an integer grid line: 2W+1 tracks,
+           every tile spanning 2 (index.html renderBoard). Reading the track
+           count raw would return 29 for a 14-wide board and every fallback
+           coordinate would be garbage. Odd count ⇒ half-columns ⇒ (n-1)/2. */
         var n = getComputedStyle(b).gridTemplateColumns.split(/\s+/).filter(Boolean).length;
+        if (n > 3 && (n % 2) === 1) return (_colsCache = (n - 1) / 2);
         if (n > 1) return (_colsCache = n);
       } catch (e) {}
     }
-    return 8;
+    return 14;
   }
   function domPos(unitEl) {
     var tile = unitEl && unitEl.closest ? unitEl.closest('.tile') : null;
@@ -372,13 +382,15 @@
     var b = boardEl();
     if (b) {
       try {
+        /* Rows ARE one track each (the row track is the hex row pitch), so
+           unlike cols() this count needs no halving. */
         var n = getComputedStyle(b).gridTemplateRows.split(/\s+/).filter(Boolean).length;
         if (n > 1) return (_rowsCache = n);
       } catch (e) {}
       var nt = b.querySelectorAll(':scope > .tile').length;
       if (nt) return (_rowsCache = Math.round(nt / cols()));
     }
-    return 7;
+    return 12;
   }
 
   /* Display name for an enemy. Prefer state (authoritative) over DOM text.
@@ -527,7 +539,13 @@
           if (!layer) { layer = document.createElement('div'); layer.className = LAYER_CLASS; layer.setAttribute('aria-hidden', 'true'); }
           var cell = document.createElement('div');
           cell.className = CELL_CLASS;
-          cell.style.gridColumn = String(epos.x + 1);
+          /* 🔷 SAME ODD-R PLACEMENT THE TILES USE. `grid-template-columns:
+             inherit` copies the board's HALF-column tracks, so a plain
+             `epos.x + 1` would land the plate roughly half a board to the
+             left and would look like a rendering bug rather than a
+             coordinate bug. Mirror renderBoard exactly: span two half-columns
+             starting at 2x+1, plus one more on odd rows. */
+          cell.style.gridColumn = String(2 * epos.x + 1 + (epos.y & 1)) + ' / span 2';
           cell.style.gridRow = String(epos.y + 1);
           cell.appendChild(plate);
           layer.appendChild(cell);

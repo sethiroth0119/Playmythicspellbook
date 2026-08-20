@@ -83,12 +83,16 @@
   background: var(--plate-bg) !important;
   --plate-stone: rgba(184, 160, 122, 0.215);
 }
-/* `.tile.even` alternates the stone tone across the board (board.css §2). On
-   the three lifted rows the even variant has to be lifted with it or the back
-   half of the board reads as a checkerboard. */
-.board.iso-mode .tile.even[data-y="0"],
-.board.iso-mode .tile.even[data-y="1"] { --plate-stone: rgba(206, 180, 142, 0.275); }
-.board.iso-mode .tile.even[data-y="2"] { --plate-stone: rgba(176, 152, 116, 0.235); }
+/* `.hexc-1` / `.hexc-2` carry two of the three hex stone tones (board.css §2;
+   they replaced `.tile.even`, which could not alternate on a hex lattice). On
+   the three lifted rows the tinted variants have to be lifted with them or the
+   far half of the board reads as a stripe. */
+.board.iso-mode .tile.hexc-1[data-y="0"],
+.board.iso-mode .tile.hexc-1[data-y="1"],
+.board.iso-mode .tile.hexc-2[data-y="0"],
+.board.iso-mode .tile.hexc-2[data-y="1"] { --plate-stone: rgba(206, 180, 142, 0.275); }
+.board.iso-mode .tile.hexc-1[data-y="2"],
+.board.iso-mode .tile.hexc-2[data-y="2"] { --plate-stone: rgba(176, 152, 116, 0.235); }
 
 
 /* ---------------------------------------------------------------------------

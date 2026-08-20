@@ -196,20 +196,26 @@
   box-shadow: none;
 }
 
-/* Stone is never uniform. `.tile.even` already alternates across the board, so
-   reuse it for a whisper of tonal variance — far too small to read as a
-   checkerboard, just enough that no two neighbours are identical. */
-/* ⚠ `.tile.even` sets `background:` at (0,2,0) in index.html, which out-specifies
-   the base plate above — leaving HALF the board with no plate at all. Re-applied
-   here at (0,3,0). Any future `.tile.<state> { background }` added to
-   index.html needs the same one-line treatment; the audited list is
-   even / location-* / move-target / attack-target / placement / swap-target /
-   consumable-target-*. (`.tile.bp-targetable`, `.board.iso-mode .tile*` and
-   `.board.has-active-location-img > .tile*` all use `!important` and are
-   deliberately left exactly as they are.) */
-.board > .tile.even {
+/* Stone is never uniform. The board now carries a THREE-tone classing
+   (`.hexc-1` / `.hexc-2` / unclassed) instead of the old `.tile.even`
+   checkerboard, because a hex lattice cannot be 2-coloured — see the comment
+   in renderBoard(). Same whisper of tonal variance, now actually delivering
+   the promise this rule was written for: no two neighbours are identical. */
+/* ⚠ `.tile.hexc-*` set `background:` at (0,2,0) in index.html, which
+   out-specifies the base plate above — leaving TWO THIRDS of the board with no
+   plate at all. Re-applied here at (0,3,0). Any future `.tile.<state>
+   { background }` added to index.html needs the same one-line treatment; the
+   audited list is hexc-1 / hexc-2 / location-* / move-target / attack-target /
+   placement / swap-target / consumable-target-*. (`.tile.bp-targetable`,
+   `.board.iso-mode .tile*` and `.board.has-active-location-img > .tile*` all
+   use `!important` and are deliberately left exactly as they are.) */
+.board > .tile.hexc-1 {
   background: var(--plate-bg);
-  --plate-stone: rgba(140, 118, 88, 0.200);
+  --plate-stone: rgba(140, 118, 88, 0.180);
+}
+.board > .tile.hexc-2 {
+  background: var(--plate-bg);
+  --plate-stone: rgba(140, 118, 88, 0.220);
 }
 
 
@@ -473,3 +479,56 @@
    `overflow: visible !important` and that let the groove bleed. */
 .board.iso-mode .tile::before,
 .board.has-active-location-img > .tile::before { opacity: 1; }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. THE HEX PASS — the plate stops being a square
+
+   The lattice is pointy-top odd-r (.gauntlet/HEXSPEC.md). index.html now lays
+   the grid out as 2·BOARD_W+1 half-column tracks by BOARD_H row tracks and
+   places every tile explicitly (`grid-column: 2x+1+(y&1) / span 2`), so the
+   stagger is already correct before this file is read. What is left is the
+   SHAPE: a plate that still reads as a square inside a staggered grid is worse
+   than either, because the eye reads the offset as a rendering fault.
+
+   ⚠ THE SHAPE GOES ON ::before, NOT ON .tile. Putting `clip-path` on `.tile`
+   would give exact hexagonal hit regions — genuinely the better answer for
+   geometry — but clip-path clips CONTENT too, and index.html:8074 turns the
+   tile's paint containment OFF in iso-mode on purpose so a standing sprite can
+   rise above its own cell. Clipping it back would crop every unit's head. So
+   the tile box stays rectangular (it is the hex PITCH rectangle, centred on
+   the true hex centre) and only the decoration is a hexagon. The residual is
+   documented at index.html:11219: a click in the sliver by a top/bottom vertex
+   can resolve to the vertically adjacent row. The canvas stage's own hit test
+   is exact regardless — it cube-rounds in pickTile().
+
+   Still zero new elements, zero new layers: this re-points the clip-path that
+   §3 already declared on the same pseudo-element.
+   ------------------------------------------------------------------------ */
+
+/* The cell is HEXW × HEXV = √3 : 1.5 wide, but a pointy-top hexagon is
+   HEXW × 2·SIZE — 4/3 of the cell's height. `inset: -16.667% 0` grows the
+   decoration back to the true hexagon and lets it interlock with the rows
+   above and below, which is exactly how hexes tile. In iso-mode (the default)
+   the tile is `overflow: visible; contain: none`, so the overhang draws; in
+   the flat board it is clipped back to the cell and reads as a squat hexagon.
+   Same shape either way, and neither can shift a grid track. */
+.board > .tile::before {
+  inset: -16.667% 0;
+  /* Hexagonal ring, same doubled-bridge trick §3 explains for the octagon:
+     outer hexagon clockwise from the top vertex, bridge in, inner hexagon
+     counter-clockwise, bridge back. Zero-area bridge + the default nonzero
+     fill rule leaves a clean ring. Deliberately NOT polygon(evenodd, …): an
+     engine without it drops the whole declaration and paints a filled slab. */
+  clip-path: polygon(
+    50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%, 50% 0%,
+    50% 5%, 5% 27.5%, 5% 72.5%, 50% 95%, 95% 72.5%, 95% 27.5%, 50% 5%,
+    50% 0%
+  );
+}
+
+/* The 1px rectangular keyline on `.tile` (index.html:11793) is the last square
+   cue left, and on a staggered grid it draws a brick wall. The hexagonal ring
+   above is the grid line now. Border-box geometry is untouched — only the
+   colour goes — so nothing reflows. */
+.board > .tile { border-color: transparent; border-radius: 0; }

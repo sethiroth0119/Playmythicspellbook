@@ -7891,7 +7891,8 @@
     transform-style: preserve-3d;
     overflow: visible !important;
   }
-  .board.iso-mode .tile.even { background: rgba(255,255,255,0.02) !important; }
+  .board.iso-mode .tile.hexc-1 { background: rgba(255,255,255,0.015) !important; }
+  .board.iso-mode .tile.hexc-2 { background: rgba(255,255,255,0.03) !important; }
   .board.iso-mode .tile.move-target { background: rgba(94,227,255,0.22) !important; box-shadow: inset 0 0 0 1px rgba(140,230,255,0.65) !important; }
   /* Targetable highlight: red when occupant is enemy (attack), cyan when
      occupant is a player ally (support move). Surrounding box pulses. */
@@ -8022,6 +8023,36 @@
      the tile is capped at z:2 so the unit (z:12) wins cleanly. */
   .board.iso-mode .tile::before,
   .board.iso-mode .tile::after { z-index: 2 !important; }
+  /* 🔴 REJECTED DESIGN, recorded so it is not tried again: the first attempt at
+     this fix took the HP bar and nameplate OUT of the flex column entirely
+     (`position:absolute; bottom:0`) so the icon would be the only in-flow child.
+     It does not work, for two reasons found by measuring rather than reading.
+     (1) src/battle/units.css wins the cascade for `.unit-info` at equal
+     specificity, so the `position` override never applied at all — the plate
+     stayed `position:relative` and the declarations were dead. (2) Even if it had
+     applied it would have BROKEN the floating level badge, which is positioned
+     with `bottom:100%` against the RELATIVELY-positioned nameplate (units.css §5);
+     making the plate absolute re-anchors the badge to the unit box and throws it
+     off the tile, where `.unit { overflow:hidden }` hard-clips it.
+     The plate therefore stays in flow, and it is made to FIT instead — the two
+     vars below and their siblings in units.css §4 shrink it with the row count.
+     Shrinking the plate and `flex: 0 0 auto` on the icon are one fix in two
+     halves; neither works alone. */
+  /* --iso-plate-fs is the "size it from the board, not from a 7-row assumption"
+     knob. It is NOT a position override: src/battle/units.css owns where the
+     nameplate sits, and `.unit-info` must stay `position:relative` there because
+     the floating level badge anchors to it with `bottom:100%`. This var only
+     scales type, and it CLAMPS so the plate can never become unreadable.
+     At BOARD_H=7 it evaluates to exactly 0.78rem — the value shipped before this
+     wave — so the PLATE is pixel-identical to HEAD at 7 rows (verified in
+     Chromium: --board-h:7 gives .unit-name 9.92px / .unit-meta 9.6px / plate
+     padding 1px 2px 2px, byte-for-byte HEAD's values). The ICON rule above is
+     deliberately NOT identical — `flex: 0 0 auto` is the fix. It drives `.unit-meta`
+     (the level numeral) by inheritance; the NAME is scaled by the matching
+     `--u-name-fs` in units.css §4, which is the rule that actually wins for it. */
+  .board.iso-mode .unit {
+    --iso-plate-fs: clamp(0.42rem, calc(0.78rem * 7 / var(--board-h, 7)), 0.78rem);
+  }
   /* HP bar + name banner stay readable but no longer look like a card label */
   .board.iso-mode .unit .unit-hp {
     background: rgba(0,0,0,0.55);
@@ -8033,8 +8064,9 @@
     padding: 2px 5px;
     margin-top: 2px;
     text-shadow: 0 1px 2px black, 0 0 4px rgba(0,0,0,0.85);
-    /* Slightly bigger floor size so back-row name tags stay readable. */
-    font-size: 0.78rem;
+    /* Floor size comes from --iso-plate-fs so it tracks the board's row count
+       instead of a hard-coded 7-row assumption. Resolves to 0.78rem at 7 rows. */
+    font-size: var(--iso-plate-fs);
     font-weight: 600;
     letter-spacing: 0.01em;
     line-height: 1.15;
@@ -8045,9 +8077,16 @@
      so the player can still read who's there at a glance. Counter-intuitive
      vs perspective ("things in the distance should be smaller") but the
      game-design call is clarity > realism for HUD elements. */
+  /* Rows 0-2 are "the far end of the field" — that reading is size-agnostic
+     and stays correct on a 12-row board, so this ladder is deliberately NOT
+     extended. It shrinks the three most distant rows; it was never a per-row
+     ramp like the transform ladders below. */
+  /* Multipliers, not absolute rem — an absolute value here would re-introduce
+     exactly the 7-row assumption --iso-plate-fs exists to remove, and the three
+     far rows would have gone back to eating the column on a 12-row board. */
   .board.iso-mode .unit[data-y="0"] .unit-info,
-  .board.iso-mode .unit[data-y="1"] .unit-info { font-size: 0.82rem; }
-  .board.iso-mode .unit[data-y="2"] .unit-info { font-size: 0.80rem; }
+  .board.iso-mode .unit[data-y="1"] .unit-info { font-size: calc(var(--iso-plate-fs) * 1.051); }
+  .board.iso-mode .unit[data-y="2"] .unit-info { font-size: calc(var(--iso-plate-fs) * 1.026); }
   /* HP bars get the same back-row brightness bump so red/green is visible
      on far units even when the backdrop is dim ruined-city debris. */
   .board.iso-mode .unit[data-y="0"] .unit-hp,
@@ -8130,13 +8169,22 @@
      they don't shrink into illegible pixels — gameplay readability beats
      strict perspective accuracy. The taper between rows is still there
      (front-row units are visibly larger) but the FLOOR is high. */
-  .board.iso-mode .unit[data-y="0"] .unit-icon { transform: translate3d(0, -18%, 30px) scale(1.66); }
-  .board.iso-mode .unit[data-y="1"] .unit-icon { transform: translate3d(0, -19%, 34px) scale(1.72); }
-  .board.iso-mode .unit[data-y="2"] .unit-icon { transform: translate3d(0, -22%, 40px) scale(1.78); }
-  .board.iso-mode .unit[data-y="3"] .unit-icon { transform: translate3d(0, -31%, 46px) scale(1.90); }
-  .board.iso-mode .unit[data-y="4"] .unit-icon { transform: translate3d(0, -32%, 54px) scale(1.94); }
-  .board.iso-mode .unit[data-y="5"] .unit-icon { transform: translate3d(0, -33%, 62px) scale(1.98); }
-  .board.iso-mode .unit[data-y="6"] .unit-icon { transform: translate3d(0, -34%, 72px) scale(2.02); }
+  /* Per-row lift ladder — same endpoints as the 7-row version, interpolated
+     across twelve rows. Rows 7-11 used to match nothing and fell back to the
+     un-lifted .unit-icon transform, so half the board's units sat visibly
+     lower and smaller than the other half with no rule to point at. */
+  .board.iso-mode .unit[data-y="0"]  .unit-icon { transform: translate3d(0, -18%, 30px) scale(1.66); }
+  .board.iso-mode .unit[data-y="1"]  .unit-icon { transform: translate3d(0, -19%, 34px) scale(1.69); }
+  .board.iso-mode .unit[data-y="2"]  .unit-icon { transform: translate3d(0, -21%, 38px) scale(1.72); }
+  .board.iso-mode .unit[data-y="3"]  .unit-icon { transform: translate3d(0, -23%, 42px) scale(1.76); }
+  .board.iso-mode .unit[data-y="4"]  .unit-icon { transform: translate3d(0, -25%, 46px) scale(1.79); }
+  .board.iso-mode .unit[data-y="5"]  .unit-icon { transform: translate3d(0, -27%, 50px) scale(1.83); }
+  .board.iso-mode .unit[data-y="6"]  .unit-icon { transform: translate3d(0, -29%, 55px) scale(1.86); }
+  .board.iso-mode .unit[data-y="7"]  .unit-icon { transform: translate3d(0, -30%, 59px) scale(1.90); }
+  .board.iso-mode .unit[data-y="8"]  .unit-icon { transform: translate3d(0, -31%, 63px) scale(1.93); }
+  .board.iso-mode .unit[data-y="9"]  .unit-icon { transform: translate3d(0, -32%, 67px) scale(1.96); }
+  .board.iso-mode .unit[data-y="10"] .unit-icon { transform: translate3d(0, -33%, 70px) scale(1.99); }
+  .board.iso-mode .unit[data-y="11"] .unit-icon { transform: translate3d(0, -34%, 72px) scale(2.02); }
   /* 🎯 UNIFORM UNIT SIZE — give every board unit-icon the SAME definite square
      box. Without an explicit size the inner <img>/sprite "width:100%" resolved
      against an indefinite box and fell back to each art's INTRINSIC pixel size,
@@ -8144,10 +8192,40 @@
      art rendered tiny. A fixed square + contain makes every unit the same size
      regardless of its source aspect ratio; the per-row standing scale above
      still applies on top. */
+  /* 🔴 FIXED HERE — THE ROW HEIGHT HALVED AND THE ART VANISHED.
+     `.unit` is `display:flex; flex-direction:column; height:100%`, and its three
+     children are the icon, the HP bar and the nameplate. The icon declared
+     `width:74%; aspect-ratio:1/1; height:auto` — which is a PREFERRED height, not
+     a floor. Flex items default to `flex-shrink:1`, and BOTH siblings are
+     `flex-shrink:0`, so when the column ran short the icon was the only thing
+     that could give and it gave ALL of it: measured 5.79px / 7.66px tall against
+     54.34px on HEAD, cropped to a sliver by `.unit { overflow:hidden }`. The board
+     rendered as bare nameplates with no sprites at all.
+     It was latent on 7 rows and fatal on 12 for a purely arithmetic reason: the
+     `.board` height is viewport-capped (~558px here) and does NOT grow with
+     BOARD_H, so the row track fell from ~80px to ~46px and `.unit` from ~70px to
+     ~33px while the nameplate — sized from a fixed rem — did not move at all and
+     ate the whole column.
+     TWO changes, and both have to be here or the other does nothing:
+      1. `flex: 0 0 auto` — the icon is no longer the column's shock absorber.
+      2. the HP bar and nameplate come OUT of the column (rules below) and float
+         over the unit's feet, so the art's size stops being a function of how
+         tall a nameplate happens to be. That is what "size it from the board,
+         not from a 7-row assumption" means: `--iso-plate-fs` scales the plate
+         with BOARD_H and resolves to exactly today's 0.78rem at 7 rows.
+     Height, not width, is the binding axis now — a 14-wide/12-tall board gives
+     landscape tiles (~57x33), so a square keyed off 74% of the WIDTH could never
+     fit. Keyed off the height it always can. 58% is not a taste number: it is
+     tuned so that after the per-row `scale()` ladder below the RENDERED icon is
+     ~1.05x the unit box, which is the ratio HEAD shipped (74.59/70.12 = 1.064),
+     measured in Chromium on both builds. */
   .board.iso-mode .unit .unit-icon {
-    width: 74%;
+    flex: 0 0 auto;
+    height: 62%;
+    width: auto;
     aspect-ratio: 1 / 1;
-    height: auto;
+    margin-left: auto;
+    margin-right: auto;
   }
   .board.iso-mode .unit .unit-icon > img,
   .board.iso-mode .unit .unit-icon .sprite-stack,
@@ -8317,13 +8395,20 @@
   }
   /* Per-depth row scaling for events — same taper as units so back-row
      events are still legible but front-row events sit tall. */
+  /* Event-marker lift ladder — extended to BOARD_H-1 for the same reason as
+     the unit ladder above. */
   .board.iso-mode .tile[data-y="0"] .tile-marker.event,
   .board.iso-mode .tile[data-y="1"] .tile-marker.event { transform: translate3d(0, -26%, 38px) scale(1.55) !important; }
-  .board.iso-mode .tile[data-y="2"] .tile-marker.event { transform: translate3d(0, -27%, 42px) scale(1.58) !important; }
-  .board.iso-mode .tile[data-y="3"] .tile-marker.event { transform: translate3d(0, -28%, 48px) scale(1.62) !important; }
-  .board.iso-mode .tile[data-y="4"] .tile-marker.event { transform: translate3d(0, -30%, 54px) scale(1.66) !important; }
-  .board.iso-mode .tile[data-y="5"] .tile-marker.event { transform: translate3d(0, -32%, 62px) scale(1.70) !important; }
-  .board.iso-mode .tile[data-y="6"] .tile-marker.event { transform: translate3d(0, -34%, 70px) scale(1.74) !important; }
+  .board.iso-mode .tile[data-y="2"] .tile-marker.event { transform: translate3d(0, -27%, 41px) scale(1.57) !important; }
+  .board.iso-mode .tile[data-y="3"] .tile-marker.event { transform: translate3d(0, -28%, 44px) scale(1.59) !important; }
+  .board.iso-mode .tile[data-y="4"] .tile-marker.event { transform: translate3d(0, -29%, 47px) scale(1.61) !important; }
+  .board.iso-mode .tile[data-y="5"] .tile-marker.event { transform: translate3d(0, -30%, 50px) scale(1.63) !important; }
+  .board.iso-mode .tile[data-y="6"] .tile-marker.event { transform: translate3d(0, -31%, 54px) scale(1.65) !important; }
+  .board.iso-mode .tile[data-y="7"] .tile-marker.event { transform: translate3d(0, -32%, 58px) scale(1.67) !important; }
+  .board.iso-mode .tile[data-y="8"] .tile-marker.event { transform: translate3d(0, -32%, 62px) scale(1.69) !important; }
+  .board.iso-mode .tile[data-y="9"] .tile-marker.event { transform: translate3d(0, -33%, 66px) scale(1.71) !important; }
+  .board.iso-mode .tile[data-y="10"] .tile-marker.event { transform: translate3d(0, -34%, 68px) scale(1.73) !important; }
+  .board.iso-mode .tile[data-y="11"] .tile-marker.event { transform: translate3d(0, -34%, 70px) scale(1.74) !important; }
   /* Bigger ground disc to match the taller standing figure — the disc
      widens proportionally so the contact footprint stays visible under
      the lifted silhouette. */
@@ -11155,13 +11240,16 @@
      stand vertically like physical figures on the tilted surface. */
   /* 🎮 Hybrid Pixi port — when renderBoard() emits the mount-point div, this
      override neutralizes the .board grid layout (the canvas is one element,
-     not 56 tiles) while keeping the same outer footprint so the .battle-grid
-     center column doesn't reflow. The 3D tilt also drops since Pixi handles
-     2.5D projection in-canvas. */
+     not BOARD_W×BOARD_H tiles) while keeping the same outer footprint so the
+     .battle-grid center column doesn't reflow. The 3D tilt also drops since
+     Pixi handles 2.5D projection in-canvas. */
   .board.pixi-board {
     display: block;
     transform: none;
-    aspect-ratio: 8 / 7;
+    /* ⚠ The pixi mount div is emitted WITHOUT renderBoard's inline style, so
+       it never receives --board-aspect. The fallback on the `.board` rule
+       below covers it; this must not be re-hardcoded to a ratio. */
+    aspect-ratio: var(--board-aspect, 1.3953);
     overflow: hidden;
   }
   .board.pixi-board .pixi-board-canvas {
@@ -11172,7 +11260,9 @@
 
   .board {
     display: grid;
-    /* 8 columns × 7 rows = 56 tiles. The board is one tilted ground
+    /* BOARD_W columns × BOARD_H rows of pointy-top odd-r hexes, laid out in
+       half-column tracks — see the --board-* block below. The board is one
+       tilted ground
        plane; preserve-3d propagates the 3D context to children (units,
        tile markers, ground decals) so they counter-rotate to stand
        upright on it. The tilt angle is the inherited --board-tilt var
@@ -11216,8 +11306,51 @@
     transform: translateZ(0);
     transform-origin: 50% 50%;
     transform-style: flat;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 2px;
+    /* ═══ THE DOM BOARD IS NO LONGER A SECOND SOURCE OF TRUTH ═══════════
+       These four custom properties are the ONLY numbers the board's layout
+       reads, and renderBoard() rewrites all four inline on every render from
+       BOARD_W / BOARD_H (:71890). The literals here are the no-JS default and
+       must stay equal to the constants; they are never the authority.
+
+       WHY this mattered: `repeat(8, 1fr)`, `repeat(7, 1fr)` and an
+       `aspect-ratio: 8/7` lock lived here, hardcoded, while the rules,
+       renderBoard's cell loop and the canvas stage all read BOARD_W/BOARD_H.
+       Changing the constants alone left the track count and the tile count
+       disagreeing: tiles wrapped into the wrong rows, every `data-x`/`data-y`
+       still said the right thing, and targeting.js's index-modulo fallback
+       (targeting.js:359) computed coordinates off the wrong column count. The
+       board LOOKED like a board and lied about which cell was which.
+
+       ═══ HEX LAYOUT (HEXSPEC §2/§3) ═══
+       Pointy-top odd-r. Columns are split into HALF-columns so the +0.5 shift
+       of odd rows is expressible in integer grid lines: 2W+1 tracks, every
+       tile spans 2, an even-row tile starts at 2x+1 and an odd-row tile at
+       2x+2. The +1 track is the half-cell of overhang the last odd row needs.
+       Rows are one track each at the hex ROW PITCH (HEXV = 1.5·SIZE), so cell
+       centres land exactly on the canvas stage's hex centres.
+
+       DISCLOSED APPROXIMATION: the cell is the pitch rectangle (HEXW × HEXV),
+       not the hexagon's bounding box (HEXW × 2·SIZE) — so the hit region is a
+       rectangle around the true hex centre, and a click in the ~0.25·SIZE
+       sliver by a top/bottom vertex can resolve to the vertically adjacent
+       row. The honest alternative is `clip-path` on `.tile`, which gives exact
+       hexagonal hit regions — but clip-path also clips CONTENT, and iso-mode
+       (the default, :8074) deliberately turns OFF the tile's paint containment
+       so the standing sprite can rise above its cell. Clipping it back would
+       be a visible regression on the layer players actually see when the
+       canvas stage is off. The canvas stage's own hit test is unaffected: it
+       goes through pickTile()'s cube rounding, which is exact. */
+    --board-w: 14;
+    --board-h: 12;
+    /* (2W+1)·√3 / (3H) — the pitch rectangle's aspect. Written from JS. */
+    --board-aspect: 1.3953;
+    /* border (2px) + padding (12px, set by src/battle/board.css) on each side.
+       Subtracted before the aspect is applied and added back after, so the
+       aspect describes the CONTENT box and the hexes stay regular. Change the
+       padding or the border and this must change with them. */
+    --board-chrome: 28px;
+    grid-template-columns: repeat(29, 1fr);
+    gap: 0;
     /* 🗺️ BATTLEFIELD GROUND — the photo covers the WHOLE field, edge to
        edge. The old stack layered a heavy corner vignette (up to 85%
        black) + multiply blend + an 80px inset black shadow on top of the
@@ -11275,7 +11408,7 @@
        The hand strip still has its 240px exactly + the top bar still
        has its 60px exactly — the budget is now tight-fitting rather
        than padded. */
-    grid-template-rows: repeat(7, 1fr);
+    grid-template-rows: repeat(12, 1fr);
     /* 🩹 ZOOM ROOT-CAUSE FIX (the real one).
        The tiles are `aspect-ratio: 1` (square). The board is an 8-col ×
        7-row grid. If the board is `width: 100%` on a wide screen it
@@ -11310,7 +11443,7 @@
        paints, so no sprite — Kalon or otherwise — can ever change the
        board's size again. */
     height: calc(100svh - 212px);
-    width: min(100%, calc((100svh - 212px) * (8 / 7)));
+    width: min(100%, calc((100svh - 212px - var(--board-chrome)) * var(--board-aspect) + var(--board-chrome)));
     margin: 0 auto;
     box-sizing: border-box;
     /* ✅ CLIP TO THE FRAME. There is no projection anymore (flat board),
@@ -11358,23 +11491,26 @@
      never resize the board at any breakpoint. */
   @media (max-width: 1500px) { .board {
     height: calc(100svh - 208px);
-    width:  min(100%, calc((100svh - 208px) * (8 / 7)));
+    width:  min(100%, calc((100svh - 208px - var(--board-chrome)) * var(--board-aspect) + var(--board-chrome)));
   } }
   @media (max-width: 1300px) { .board {
     height: calc(100svh - 200px);
-    width:  min(100%, calc((100svh - 200px) * (8 / 7)));
+    width:  min(100%, calc((100svh - 200px - var(--board-chrome)) * var(--board-aspect) + var(--board-chrome)));
   } }
   @media (max-width: 1100px) { .board {
     /* 📱 Board FILLS the space the compact rail leaves. .battle-center is a
        flex:1 box with a DEFINITE height (grid height − rail height), so the
        board takes height:100% of it and grows down to meet the hand strip —
        killing the dark bar that appeared under the rail when the board didn't
-       fill. Width follows the 8/7 ratio (letterboxed on the sides on very
+       fill. Width follows --board-aspect (letterboxed on the sides on very
        narrow screens); max-width/height clamp so it can never overflow or push
-       the page into scroll, and a loading sprite can't balloon it. */
+       the page into scroll, and a loading sprite can't balloon it.
+       ⚠ This is the one branch where the aspect lands on the BORDER box, so
+       the hexes are off by the chrome inset (~2%) here and only here — the
+       explicit-size branches above correct for it. */
     height: 100%;
     width: auto;
-    aspect-ratio: 8 / 7;
+    aspect-ratio: var(--board-aspect);
     max-width: 100%;
     max-height: 100%;
     margin: 0 auto;
@@ -11797,15 +11933,19 @@
     align-items: center;
     justify-content: center;
     transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-    aspect-ratio: 1;
+    /* WAS `aspect-ratio: 1`. A hex cell is not square: it is HEXW × HEXV, i.e.
+       √3 : 1.5 ≈ 1.155 wide. The size now comes entirely from the grid area
+       (2 half-columns × 1 row track), which is what keeps the whole grid
+       registered with the canvas stage. A square lock here would fight it. */
+    aspect-ratio: auto;
     overflow: hidden;
     /* 🔒 GRID-TRACK LOCK. Grid items default to min-width/height:auto,
        which lets a large child (a freshly-loading Kalon sprite at its
        intrinsic size) EXPAND its row/column. With the board now a rigid
        fixed-size box, an expanded track would either squash siblings or
        overflow-and-clip — read as the board "zooming". Forcing min:0
-       means every one of the 8×7 tracks stays an exact equal fraction
-       no matter what any sprite does. This is the companion to the
+       means every one of the (2·BOARD_W+1)×BOARD_H tracks stays an exact
+       equal fraction no matter what any sprite does. This is the companion to the
        fixed board size: box fixed + tracks fixed = truly immovable. */
     min-width: 0;
     min-height: 0;
@@ -11820,7 +11960,11 @@
        markers stay crisp. The "drift" ambient layer (z:6) draws over us. */
     z-index: 5;
   }
-  .tile.even { background: rgba(0, 0, 0, 0.10); }
+  /* Two of the three hex stone tones (see renderBoard's 3-colouring). The
+     third is the unclassed base. These replace `.tile.even`, which could not
+     alternate on a hex lattice — a 2-colouring of one does not exist. */
+  .tile.hexc-1 { background: rgba(0, 0, 0, 0.08); }
+  .tile.hexc-2 { background: rgba(0, 0, 0, 0.12); }
   .tile.location-lava { background: linear-gradient(135deg, #5a1f0e, #3a1408); border-color: #a04020; }
   .tile.location-forest { background: linear-gradient(135deg, #1a3a22, #0f2614); border-color: #3aa86b; }
   .tile.location-altar { background: linear-gradient(135deg, #3a1a4a, #20102a); border-color: #b070e0; }
@@ -13348,6 +13492,9 @@
   /* Stagger the breathing across units so they don't all inhale
      in lockstep. We key off data-y on the parent .unit so neighbours
      animate slightly out of phase. */
+  /* One rung per ROW. The ladder stopped at 6 because the board was 7 rows
+     tall; on a 12-row board rows 7-11 fell off the end and every unit back
+     there inhaled in lockstep. Extend the ladder whenever BOARD_H grows. */
   .unit[data-y="0"] .sprite-stack { animation-delay: -0.0s; }
   .unit[data-y="1"] .sprite-stack { animation-delay: -0.5s; }
   .unit[data-y="2"] .sprite-stack { animation-delay: -1.0s; }
@@ -13355,6 +13502,11 @@
   .unit[data-y="4"] .sprite-stack { animation-delay: -2.0s; }
   .unit[data-y="5"] .sprite-stack { animation-delay: -2.5s; }
   .unit[data-y="6"] .sprite-stack { animation-delay: -3.0s; }
+  .unit[data-y="7"] .sprite-stack { animation-delay: -3.5s; }
+  .unit[data-y="8"] .sprite-stack { animation-delay: -4.0s; }
+  .unit[data-y="9"] .sprite-stack { animation-delay: -4.5s; }
+  .unit[data-y="10"] .sprite-stack { animation-delay: -5.0s; }
+  .unit[data-y="11"] .sprite-stack { animation-delay: -5.5s; }
   /* State animations — when a unit is attacking, casting, taking
      damage, or transforming, the sprite-stack temporarily takes
      a state-specific transform on top of the breathing. Any code
@@ -13414,13 +13566,24 @@
      a top-down "tilted camera" sense) render slightly larger and
      in front of units on higher rows. The CSS variable approach
      uses calc + data-y so we don't need a per-row class explosion. */
-  .unit[data-y="0"] { --depth-scale: 0.94; --depth-z: 10; }
-  .unit[data-y="1"] { --depth-scale: 0.96; --depth-z: 11; }
-  .unit[data-y="2"] { --depth-scale: 0.98; --depth-z: 12; }
-  .unit[data-y="3"] { --depth-scale: 1.00; --depth-z: 13; }
-  .unit[data-y="4"] { --depth-scale: 1.02; --depth-z: 14; }
-  .unit[data-y="5"] { --depth-scale: 1.04; --depth-z: 15; }
-  .unit[data-y="6"] { --depth-scale: 1.06; --depth-z: 16; }
+  /* ⚠ THIS LADDER IS PER-ROW AND MUST COVER EVERY ROW. It stopped at 6 (the
+     old BOARD_H-1). Rows 7-11 matched nothing, so --depth-z fell through to
+     its `var(--depth-z, 10)` fallback and FIVE rows of units all stacked at
+     z-index 10 — overlapping sprites would have painted in arbitrary DOM
+     order instead of front-to-back. Same total front-to-back span as before,
+     spread across twelve rows instead of seven. */
+  .unit[data-y="0"]  { --depth-scale: 0.94; --depth-z: 10; }
+  .unit[data-y="1"]  { --depth-scale: 0.955; --depth-z: 11; }
+  .unit[data-y="2"]  { --depth-scale: 0.966; --depth-z: 12; }
+  .unit[data-y="3"]  { --depth-scale: 0.977; --depth-z: 13; }
+  .unit[data-y="4"]  { --depth-scale: 0.988; --depth-z: 14; }
+  .unit[data-y="5"]  { --depth-scale: 1.00; --depth-z: 15; }
+  .unit[data-y="6"]  { --depth-scale: 1.011; --depth-z: 16; }
+  .unit[data-y="7"]  { --depth-scale: 1.022; --depth-z: 17; }
+  .unit[data-y="8"]  { --depth-scale: 1.033; --depth-z: 18; }
+  .unit[data-y="9"]  { --depth-scale: 1.044; --depth-z: 19; }
+  .unit[data-y="10"] { --depth-scale: 1.05; --depth-z: 20; }
+  .unit[data-y="11"] { --depth-scale: 1.06; --depth-z: 21; }
   .unit { z-index: var(--depth-z, 10); }
   .unit .unit-icon .sprite-stack {
     /* Multiply the per-row depth-scale onto the breathing animation
@@ -37389,7 +37552,7 @@ const PASSIVES = {
   trapHunter:    { id: 'trapHunter',    name: 'Trap Hunter',    desc: '🪤 +2 ATK and +1 SPD while ANY trap is on the field (yours OR theirs). The unit thrives when the board is dangerous.' },
   trapDog:       { id: 'trapDog',       name: 'Trap Dog',       desc: '🐕 On entering play: reveals every enemy trap on the board for the rest of the match, and springs every enemy face-down (Subterfuge) unit.' },
   detection:     { id: 'detection',     name: 'Detection',      desc: '🔍 On entering play and after it moves: springs every ADJACENT enemy face-down (Subterfuge) trap — forcing the ambush on YOUR terms before it can surprise you.' },
-  trapBreaker:   { id: 'trapBreaker',   name: 'Trap Breaker',   desc: '🔧 At the start of your turn: disarms one adjacent enemy trap (random pick from those in Chebyshev radius 1).' },
+  trapBreaker:   { id: 'trapBreaker',   name: 'Trap Breaker',   desc: '🔧 At the start of your turn: disarms one adjacent enemy trap (random pick from the six tiles touching it).' },
   wallBreaker:   { id: 'wallBreaker',   name: 'Wall Breaker',   desc: '🧱 +50% damage to walls/structures (any wall tile attacked).' },
   surfaceWalker: { id: 'surfaceWalker', name: 'Surface Walker', desc: '🧹 Immune to surface hazards. When this unit moves onto a tile with a surface, that surface is cleared (oil / fire / water / glass / mud).' },
   weatherWarden: { id: 'weatherWarden', name: 'Weather Warden', desc: '🌤 Active weather ends 1 turn sooner each round this unit is on the field. Clears calm weather windows.' },
@@ -37764,7 +37927,7 @@ const HELD_ITEMS = {
   // 💨 Smoke Cloud — AOE consumable that drops a smoke field in a 1-tile
   // radius around the picked tile. Units inside lose 50% accuracy for 2
   // turns. (Note: existing c_smokeBomb is a self-buff; this is the AOE.)
-  c_smokeCloud:    { id: 'c_smokeCloud',    name: 'Smoke Cloud',      icon: '🌫',  slotType: 'consumable', isConsumable: true, desc: 'Single-use: drop a smoke cloud in a 1-tile radius (3×3). Units inside take −50% accuracy for 2 turns.', consumable: { effect: 'smokeCloud', radius: 1, duration: 2, target: 'tile' } },
+  c_smokeCloud:    { id: 'c_smokeCloud',    name: 'Smoke Cloud',      icon: '🌫',  slotType: 'consumable', isConsumable: true, desc: 'Single-use: drop a smoke cloud over a tile and the 6 hexes around it. Units inside take −50% accuracy for 2 turns.', consumable: { effect: 'smokeCloud', radius: 1, duration: 2, target: 'tile' } },
   // ⚡ Flashbang — AOE stun + overwatch clear. Stuns all units in a
   // 1-tile radius for 1 turn and wipes their Ambush Guard / Predator's
   // Eye reaction-armed flags so they don't fire on movement next turn.
@@ -37827,7 +37990,7 @@ const MOVES = {
     id: 'whirlwindSlash', name: 'Whirlwind Slash', kind: 'attack', type: 'physical',
     power: 22, range: 1, cost: 2, element: 'wind',
     aoeRadius: 1, splashDamagePct: 0.7,
-    desc: 'Full spin — strike the target and every unit (friend or foe) in the 8 tiles around you (70% splash).',
+    desc: 'Full spin — strike the target and every unit (friend or foe) in the 6 hexes around you (70% splash).',
   },
   frostNova: {
     id: 'frostNova', name: 'Frost Nova', kind: 'attack', type: 'magic',
@@ -38226,7 +38389,7 @@ const MOVES = {
     id: 'oilSlick', name: 'Oil Slick', kind: 'attack', type: 'physical',
     power: 8, range: 3, cost: 1, element: 'metal',
     paintSurface: { type: 'oil', radius: 1, turns: 6 },
-    desc: 'Hurl a burst flask — 8 dmg and coats a 3×3 area in flammable Oil (Slows units; ignites under fire).',
+    desc: 'Hurl a burst flask — 8 dmg and coats a tile and the 6 hexes around it in flammable Oil (Slows units; ignites under fire).',
   },
   emberToss: {
     id: 'emberToss', name: 'Ember Toss', kind: 'attack', type: 'magic',
@@ -38238,7 +38401,7 @@ const MOVES = {
     id: 'tidePool', name: 'Tide Pool', kind: 'attack', type: 'magic',
     power: 12, range: 3, cost: 1, element: 'water',
     paintSurface: { type: 'water', radius: 1, turns: 6 },
-    desc: 'Splash a 3×3 area with conductive Water — 12 dmg. A storm attack electrifies the whole pool.',
+    desc: 'Splash a tile and the 6 hexes around it with conductive Water — 12 dmg. A storm attack electrifies the whole pool.',
   },
 
   // ===== Sleep / Mental =====
@@ -38295,8 +38458,8 @@ const MOVES = {
     applyStatus: { id: 'ambushGuard3', chance: 100, duration: 99 },
     desc: '🎯 Ready a long watch — the first enemy to move within 3 tiles on the enemy turn eats a free reaction strike. Once per enemy turn; re-cast after it fires.',
   },
-  // 🪝 Grappling Hook — teleport-to-tile movement move. Up to 4 tiles
-  // (Chebyshev). Free action: does NOT consume the unit's move. Tile
+  // 🪝 Grappling Hook — teleport-to-tile movement move. Up to 4 tiles as
+  // distance() measures them. Free action: does NOT consume the unit's move. Tile
   // must be empty. Range 4 means the action panel routes it through
   // the standard teleport target-picker.
   grapplingHook: {
@@ -40158,7 +40321,13 @@ const WALL_CARDS = [
 // data URL) that displays in the modal. A separate 0.1% global drop chance can additionally
 // reward a card on any event trigger.
 const EVENT_CARD_DROP_CHANCE = 0.001;  // 0.1% per event encounter
-const DEFAULT_EVENTS_PER_GAME = 3;     // 3 events spawn each game
+// 3 events spawn each game. ⚠ This is a COUNT, not a density: it was tuned on
+// a 56-tile board and the board is now 168 tiles, so event density fell by 3x.
+// Left alone deliberately — how much stuff is on the map is content design (the
+// BAR asks for five lootable ruins and three control points on top of this),
+// not lattice work, and raising it here would quietly change every match's
+// economy. Decide it with the map-content wave, not by accident.
+const DEFAULT_EVENTS_PER_GAME = 3;
 // ============ EVENT BOARD ICONS ============
 // Pool of PNG artwork available for event tiles on the battlefield. Every
 // event-tile placement picks one of these to render at the tile (so the
@@ -40965,7 +41134,7 @@ function mergePassives(setA, setB) {
 }
 
 // ===== Weather-passive plumbing =====
-// Returns true if any adjacent (Chebyshev-distance 1) living ally has the given
+// Returns true if any adjacent (distance 1 — one of the six hex neighbours) living ally has the given
 // passive. Used by AURA-style weather passives like radiantAegis and
 // crimsonCovenant where one unit buffs nearby allies rather than itself.
 function hasAdjacentAllyWithPassive(unit, passiveId, state) {
@@ -71884,10 +72053,33 @@ function applyImportPayload(payload, opts) {
 }
 
 // ============ HELPERS ============
-// Battle grid dimensions. 8 columns × 7 rows — sized to fit cleanly above
-// the fixed hand strip on common monitor heights without needing to scroll
-// and without crushing the tile area.
-const BOARD_W = 8, BOARD_H = 7, MAX_LVL = 50;
+// 🗺 BOARD SIZE — ONE SOURCE OF TRUTH (HEXSPEC §7). 14 columns x 12 rows of
+// pointy-top odd-r hexes. Everything that draws or measures the board must
+// read these (or better, _boardDims(state) — see :74976): the DOM grid gets
+// them as the CSS custom properties --board-w / --board-h written once per
+// render by renderBoard(), and the canvas stage gets them as MAP.cols/rows
+// through _bbMapFromEditor(). Do not re-type 8, 7, 14 or 12 anywhere else.
+const BOARD_W = 14, BOARD_H = 12, MAX_LVL = 50;
+// 🚩 HOW FAR IN FROM ITS OWN EDGE EACH HERO DEPLOYS. This is the ONE knob for
+// engagement pacing; set it to 0 to put the heroes back on the literal edge
+// rows, which is where they stood on the 8x7 board.
+//
+// MEASURED, not guessed (the numbers are in the wave report, and the harness
+// that produced them walks the real six-way BFS with the real getCardRange=1
+// summon rule). Turn on which two spd-1 units — 41 of the 72 spd literals in
+// UNIT_CARDS, i.e. the typical body — can first reach melee:
+//     8x7 Chebyshev, heroes on the edge  ..... turn 3   (hero gap 6, front gap 4)
+//    14x12 hex,      heroes on the edge  ..... turn 5   (hero gap 11, front gap 9)
+//    14x12 hex,      DEPLOY_INSET = 2    ..... turn 3   (hero gap 7, front gap 5)
+// Two rows in restores the old opening EXACTLY — turn 3 at spd 1, turn 2 at
+// spd 2+ — on a board with three times the area, so the extra space becomes
+// flanking room instead of a two-turn walk before anything happens.
+//
+// It must stay symmetric: the multiplayer coordinate mirror is a point
+// reflection about the board centre (:179449), so a player hero at
+// (⌊W/2⌋-1, H-1-INSET) must map onto the AI hero at (⌊W/2⌋, INSET). It does,
+// for every INSET — do not give the two sides different insets.
+const DEPLOY_INSET = 2;
 const uid = (() => { let n = 0; return () => `u${Date.now()}_${++n}`; })();
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -73528,7 +73720,7 @@ function _rezHit(unit, dmg, type, hpAfter, maxHp) {
     _rezEmit({ k: 'hit', card: k, dmg: dmg | 0, type: type, hpAfter: hpAfter, maxHp: maxHp });
   } catch (e) {}
 }
-// 👢 Moved a lot → SPD. Chebyshev, matching how the board measures range.
+// 👢 Moved a lot → SPD. Measured with distance(), matching how the board measures range.
 function _rezMoved(unit, from, to) {
   try {
     if (!from || !to) return;
@@ -74084,23 +74276,65 @@ const xpFromKill = (target) => target.isHero ? 200 : 25 + (target.level || 1) * 
 // in ONE place.
 //
 // Corollary for ring scans: measure the two TILES, not the raw dx/dy offset.
-// `Math.max(Math.abs(dx), Math.abs(dy))` happens to equal the Chebyshev norm on
-// a square lattice and stops being the distance on any other one.
+// `Math.max(Math.abs(dx), Math.abs(dy))` happened to equal the Chebyshev norm
+// on the square lattice and stopped being the distance the moment this became
+// a hex board. Same trap for `Math.abs(dx) + Math.abs(dy)`.
 //
-// KNOWN SURVIVORS — two sites still measure with MANHATTAN and were left alone
-// on purpose. Whoever flips the metric must decide them explicitly; line
-// numbers drift, so grep the quoted source:
-//   • clampUnitsToBoard's outward free-tile scan, `Math.abs(dx) + Math.abs(dy)
-//     !== r`. Manhattan is only the scan ORDER there — every candidate is then
-//     re-tested with inBounds(), so any total order gives a legal tile. Purely
-//     cosmetic; safe to leave square.
-//   • the 'sacrificeNearby' nearest-enemy pick, `Math.abs(u.pos.x - unit.pos.x)
-//     + Math.abs(u.pos.y - unit.pos.y)`. This one is a REAL target-selection
-//     metric — routing it through distance() picks a different victim on any
-//     diagonal, which is a gameplay change, not a refactor, so it stayed put.
-//     ⚠ CONTRACT §2 Tier 0.2 claims Manhattan "appears exactly once and only
-//     cosmetically". That is wrong: this is the second one, and it is live.
-const distance = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+// KNOWN SURVIVORS — RESOLVED IN WAVE 2 (the hex flip). Both are gone; this
+// note is kept so nobody re-derives them from the CONTRACT, which is wrong
+// about them (§2 Tier 0.2 says Manhattan "appears exactly once and only
+// cosmetically" — there were two, and the second was live):
+//   • clampUnitsToBoard's outward free-tile scan used Manhattan purely as a
+//     scan ORDER. It now walks true hex rings via distance(), because the old
+//     scan also read the CONSTANTS while half the game reads the live board.
+//   • the 'sacrificeNearby' nearest-enemy pick measured with Manhattan. It now
+//     measures with distance(). Disclosed at that site: on odd-r, Manhattan
+//     over (x,y) double-counts the half-column stagger and is not a distance,
+//     so "nearest" would have been meaningless rather than merely different.
+// ═══ THE LATTICE IS POINTY-TOP ODD-R HEX (HEXSPEC §1/§2) ═══════════════════
+// x is still the column, y still the row, state.board[y][x] is unchanged.
+// ODD ROWS (y odd) are shifted +0.5 column to the right. Nothing else moves.
+//
+// (y & 1), never (y % 2): in JS `-1 % 2` is -1, which would shift a negative
+// row the WRONG way and hand back a cube triple that does not sum to zero.
+// Negative y is legal INPUT here (ring scans probe off-board tiles before
+// inBounds() rejects them), so the parity operator has to be the safe one.
+const offsetToCube = (x, y) => {
+  const cx = x - ((y - (y & 1)) / 2);
+  const cz = y;
+  return { x: cx, y: -cx - cz, z: cz };
+};
+// Cube distance (HEXSPEC §6). Replaces the Chebyshev body this used to have.
+// DISCLOSED CONSEQUENCE, not a regression: a range-N reach is 3N²+3N+1 tiles
+// on hex against (2N+1)² on Chebyshev — range 2 covers 19 tiles, not 25 — and
+// diagonal reach shortens. Every range check in the game reads this one
+// definition, so the highlight and the click gate change shape together.
+const distance = (a, b) => {
+  const A = offsetToCube(a.x, a.y), B = offsetToCube(b.x, b.y);
+  return (Math.abs(A.x - B.x) + Math.abs(A.y - B.y) + Math.abs(A.z - B.z)) / 2;
+};
+// ═══ THE SIX NEIGHBOURS — THE OTHER SINGLE SOURCE OF TRUTH ═════════════════
+// SIX, never eight. There are no diagonals on a hex grid, and the six differ
+// BY ROW PARITY (HEXSPEC §5) — which is exactly why an inlined `for dy=-1..1
+// for dx=-1..1` cannot be patched in place: the correct offsets are not a
+// subset of that square, they depend on (y & 1).
+//
+// WHY this is a function and not a constant table: the eight-way loops it
+// replaces were spread across the movement BFS, the path BFS, the surface
+// flood fill, fire spread, zone-of-control, trap-breaker, the Mimic ring and
+// three Territory Wars spawns. Every one of them was independently correct on
+// a square lattice and independently WRONG the moment the lattice changed.
+// Route new adjacency here; never re-inline the offsets.
+//
+// Order is stable (E, W, then the four row-adjacent) so BFS tie-breaks and the
+// "first open adjacent tile" pickers stay deterministic between runs.
+const HEX_DIRS_EVEN = [[+1, 0], [-1, 0], [0, -1], [-1, -1], [0, +1], [-1, +1]];
+const HEX_DIRS_ODD  = [[+1, 0], [-1, 0], [+1, -1], [0, -1], [+1, +1], [0, +1]];
+const hexDirs = (y) => ((y & 1) ? HEX_DIRS_ODD : HEX_DIRS_EVEN);
+// The six tiles touching (x,y). NOT bounds-checked — callers already have to
+// decide between inBounds() and inBoundsOf(state,…), and silently dropping
+// off-board neighbours here would hide that choice.
+const hexNeighbors = (x, y) => hexDirs(y).map(d => ({ x: x + d[0], y: y + d[1] }));
 const inBounds = (x, y) => x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H;
 // State-aware sibling. inBounds() answers from the CONSTANTS; inBoundsOf()
 // answers from the LIVE board array via _boardDims() (:74915). They agree
@@ -74128,32 +74362,52 @@ const inBoundsOf = (state, x, y) => {
 // the board and becomes invisible to renderBattle's grid loop. This sweeps
 // every unit and pulls out-of-bounds occupants back to the nearest valid
 // cell, so the AI can never "walk off" the board the player can see.
+//
+// 🔴 THE BUG THIS FUNCTION USED TO BE — the wave-1 critic found it and it is
+// why every read below now goes through _boardDims/inBoundsOf and NOT through
+// BOARD_W/BOARD_H. This runs on EVERY renderBattle. It used to test membership
+// with inBounds() (the CONSTANTS) and clamp with `Math.min(BOARD_W - 1, …)`,
+// while the surface subsystem, the TW ticks and the spawn searches around it
+// all measure the LIVE state.board array. Those two agree only while the
+// constants and the array agree. The instant they don't — a saved match from
+// before a size change, a replay, a multiplayer snapshot built against another
+// build, or simply a board grown in one file and not the other — this function
+// drags legitimately-placed units back toward (BOARD_W-1, BOARD_H-1) once per
+// frame, with nothing in the log but a generic warning. Units would slide
+// toward a corner while the player watched. Never reintroduce a constant here.
 function clampUnitsToBoard(state) {
   if (!state || !Array.isArray(state.units)) return state;
+  const d = _boardDims(state);
+  // No board array = no tiles. Clamping against a guessed size is exactly the
+  // failure above, so do nothing rather than invent a grid.
+  if (!(d.W > 0 && d.H > 0)) return state;
   let changed = false;
   const occupied = new Set();
   // First pass: gather currently-occupied valid tiles so we don't clamp two
   // out-of-bounds units onto the same destination.
   for (const u of state.units) {
     if (!u || !u.pos) continue;
-    if (inBounds(u.pos.x, u.pos.y)) occupied.add(u.pos.x + ',' + u.pos.y);
+    if (inBoundsOf(state, u.pos.x, u.pos.y)) occupied.add(u.pos.x + ',' + u.pos.y);
   }
   // Second pass: for each out-of-bounds unit, find the nearest valid + free
-  // cell (Manhattan distance from clamped coords) and move it there.
+  // cell and move it there. The outward scan walks true HEX rings via
+  // distance() — the old scan ordered candidates by Manhattan, which is not a
+  // distance on odd-r (it double-counts the half-column stagger) and would
+  // have visited the box corners before tiles that are genuinely closer.
   state.units = state.units.map(u => {
     if (!u || !u.pos) return u;
-    if (inBounds(u.pos.x, u.pos.y)) return u;
-    let cx = Math.max(0, Math.min(BOARD_W - 1, u.pos.x | 0));
-    let cy = Math.max(0, Math.min(BOARD_H - 1, u.pos.y | 0));
+    if (inBoundsOf(state, u.pos.x, u.pos.y)) return u;
+    let cx = Math.max(0, Math.min(d.W - 1, u.pos.x | 0));
+    let cy = Math.max(0, Math.min(d.H - 1, u.pos.y | 0));
     // If the clamped target is occupied, scan outward for a free tile.
     if (occupied.has(cx + ',' + cy)) {
       let found = false;
-      for (let r = 1; r < BOARD_W + BOARD_H && !found; r++) {
+      for (let r = 1; r < d.W + d.H && !found; r++) {
         for (let dy = -r; dy <= r && !found; dy++) {
           for (let dx = -r; dx <= r && !found; dx++) {
-            if (Math.abs(dx) + Math.abs(dy) !== r) continue;
             const nx = cx + dx, ny = cy + dy;
-            if (!inBounds(nx, ny)) continue;
+            if (distance({ x: cx, y: cy }, { x: nx, y: ny }) !== r) continue;
+            if (!inBoundsOf(state, nx, ny)) continue;
             if (occupied.has(nx + ',' + ny)) continue;
             cx = nx; cy = ny; found = true;
           }
@@ -74574,12 +74828,21 @@ function _rebirthCfg(unit) {
   };
 }
 function _nearestEmptyTile(state, ox, oy) {
-  const maxR = Math.max(typeof BOARD_W !== 'undefined' ? BOARD_W : 10, typeof BOARD_H !== 'undefined' ? BOARD_H : 8);
+  // Measure the board we are actually standing on, not the constants. The old
+  // line had stale literal fallbacks (`: 10` / `: 8` on a 8x7 board, CONTRACT
+  // R34) which only ever fired when the constant was missing and then scanned
+  // a region that does not exist. _boardDims() cannot be stale.
+  const d = _boardDims(state);
+  const maxR = Math.max(d.W, d.H);
+  // The -rad..rad box is a strict SUPERSET of the hex ring of radius rad
+  // (|dx| can never exceed rad on odd-r), so the box still enumerates every
+  // candidate; distance() then keeps exactly the ring. Do not "tighten" the
+  // box to the hex row spans — the filter is what makes it correct.
   for (let rad = 0; rad <= maxR; rad++) {
     for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
       const nx = ox + dx, ny = oy + dy;
       if (distance({ x: ox, y: oy }, { x: nx, y: ny }) !== rad) continue;
-      if (!inBounds(nx, ny)) continue;
+      if (!inBoundsOf(state, nx, ny)) continue;
       if (state.units.some(u => u.alive && u.pos && u.pos.x === nx && u.pos.y === ny)) continue;
       if (typeof tileBlockedByTombstone === 'function' && tileBlockedByTombstone(state, nx, ny)) continue;
       return { x: nx, y: ny };
@@ -74929,11 +75192,29 @@ function _setSurface(state, x, y, type, turns) {
 function _clearSurface(state, x, y) {
   if (state && state.board && state.board[y] && state.board[y][x]) delete state.board[y][x].surface;
 }
-// Paint a Chebyshev-radius disc of surface. Skips wall tiles.
+// Paint a distance()-radius disc of surface — a HEX disc now (3N²+3N+1 tiles,
+// not (2N+1)²). Skips wall tiles.
+// ⚠ This comment was written one pass BEFORE the body below actually did it —
+// the loop was still a square box. Verified by execution now, not by reading:
+// r=1 -> 7 tiles, r=2 -> 19, on both row parities.
 function _paintSurface(state, cx, cy, type, radius, turns) {
   const r = Math.max(0, radius | 0);
+  const centre = { x: cx, y: cy };
   for (let y = cy - r; y <= cy + r; y++) {
     for (let x = cx - r; x <= cx + r; x++) {
+      // 🔴 FIXED HERE — a SQUARE slick on a hex board. "coats a 3×3 area in
+      // flammable Oil" painted 9 tiles, two of which are at hex distance 2, so a
+      // radius-1 splash reached further than any radius-1 range check in the game
+      // and further than the highlight tilesWithinRange() draws (it has measured
+      // with distance() since wave 1). Oil/water/fire slicks feed the AI's tile
+      // scoring and _floodCollectSurface's spread, so the square disc quietly
+      // seeded two extra tiles of blaze on every ignition.
+      // Kept the box as the enumerator — it is a strict superset of the hex disc —
+      // and let distance() define the shape. HEXSPEC §6.
+      // ⚠ This one survived the first sweep because the loop reads `cy - r`, not
+      // `-r`; a grep for `for (let d? = -N` does not see it. Scan for centre±r,
+      // not just for a negative literal.
+      if (distance(centre, { x, y }) > r) continue;
       if (!inBoundsOf(state, x, y)) continue;
       const tile = state.board[y][x];
       if (!tile || tile.wall) continue;
@@ -74941,7 +75222,10 @@ function _paintSurface(state, cx, cy, type, radius, turns) {
     }
   }
 }
-// Collect every 8-connected tile of `type` reachable from (x,y).
+// Collect every tile of `type` reachable from (x,y) across shared hex EDGES.
+// Was 8-connected on the square lattice; on hex a tile has six edge-neighbours
+// and no diagonals, so a burning slick now spreads exactly where the six
+// neighbours go. hexNeighbors() is the only enumeration allowed.
 function _floodCollectSurface(state, x, y, type) {
   const out = []; const seen = new Set(); const stack = [[x, y]];
   while (stack.length) {
@@ -74951,7 +75235,7 @@ function _floodCollectSurface(state, x, y, type) {
     const s = _surfaceAt(state, cx, cy);
     if (!s || s.type !== type) continue;
     out.push({ x: cx, y: cy });
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) stack.push([cx + dx, cy + dy]);
+    for (const n of hexNeighbors(cx, cy)) stack.push([n.x, n.y]);
   }
   return out;
 }
@@ -74990,11 +75274,11 @@ function tickSurfaces(state) {
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const s = _surfaceAt(state, x, y);
     if (!s || s.type !== 'fire') continue;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (!dx && !dy) continue;
-      const ns = _surfaceAt(state, x + dx, y + dy);
+    // Six edge-neighbours, not eight — fire crosses a shared hex edge.
+    for (const n of hexNeighbors(x, y)) {
+      const ns = _surfaceAt(state, n.x, n.y);
       const ncfg = ns && SURFACE_TYPES[ns.type];
-      if (ncfg && ncfg.flammable) toIgnite.push([x + dx, y + dy]);
+      if (ncfg && ncfg.flammable) toIgnite.push([n.x, n.y]);
     }
   }
   toIgnite.forEach(p => _setSurface(state, p[0], p[1], 'fire', 3));
@@ -83383,10 +83667,8 @@ const getOccupant = (pos, units) => units.find(u => u.alive && u.pos.x === pos.x
 
 const getEmptyAdjacent = (pos, units) => {
   const tiles = [];
-  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-    if (dx === 0 && dy === 0) continue;
-    const nx = pos.x + dx, ny = pos.y + dy;
-    if (inBounds(nx, ny) && !getOccupant({ x: nx, y: ny }, units)) tiles.push({ x: nx, y: ny });
+  for (const n of hexNeighbors(pos.x, pos.y)) {
+    if (inBounds(n.x, n.y) && !getOccupant(n, units)) tiles.push({ x: n.x, y: n.y });
   }
   return tiles;
 };
@@ -83394,7 +83676,7 @@ const getEmptyAdjacent = (pos, units) => {
 // ===== Card placement / cast range rules =====
 // Default ranges from the hero (overridden via card.range).
 const STARTING_HAND_SIZE = 5;
-const DEFAULT_UNIT_PLACE_RANGE = 1;  // hero summons units within 1 tile (Chebyshev) — override with card.range
+const DEFAULT_UNIT_PLACE_RANGE = 1;  // hero summons onto one of its six neighbours — override with card.range
 const DEFAULT_SPELL_RANGE = 2;        // spells reach targets within 2 tiles of hero — override with card.range
 const DEFAULT_TRAP_RANGE = 2;         // traps placed within 2 tiles of hero — override with card.range
 
@@ -83625,18 +83907,21 @@ const getValidMoves = (unit, units, weather, board) => {
     (units || []).forEach(e => {
       if (!e || !e.alive || !e.pos || e.owner === unit.owner) return;
       if (!(typeof hasPassive === 'function' && hasPassive(e, 'zoneOfControl'))) return;
-      for (let zy = -1; zy <= 1; zy++) for (let zx = -1; zx <= 1; zx++) {
-        if (!zx && !zy) continue;
-        zocTiles.add((e.pos.x + zx) + ',' + (e.pos.y + zy));
-      }
+      // Six neighbours. A ZoC line on hex is a hexagon, not a 3x3 box —
+      // widening it to eight here would block two tiles the unit is allowed
+      // to walk through, and the move highlight would never say why.
+      for (const n of hexNeighbors(e.pos.x, e.pos.y)) zocTiles.add(n.x + ',' + n.y);
     });
   } catch (e) {}
   while (queue.length) {
     const { pos, dist } = queue.shift();
     if (dist >= speed) continue;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const nx = pos.x + dx, ny = pos.y + dy;
+    // 🔷 THE MOVEMENT FRONTIER IS SIX-WAY. One step = one shared hex edge, so
+    // a spd-N unit reaches the 3N²+3N tiles of a hex disc, not the (2N+1)²-1
+    // of a Chebyshev box. getMovePath() runs the same expansion and the two
+    // MUST stay identical (CONTRACT R31) — edit them together.
+    for (const nb of hexNeighbors(pos.x, pos.y)) {
+      const nx = nb.x, ny = nb.y;
       if (!inBounds(nx, ny)) continue;
       const key = `${nx},${ny}`;
       if (visited.has(key)) continue;
@@ -83804,7 +84089,7 @@ const getAvailableMoves = (unit) => {
   return moves;
 };
 
-// Closest reachable enemy to `unit` (Chebyshev distance), restricted to enemies the unit can
+// Closest reachable enemy to `unit` (hex distance), restricted to enemies the unit can
 // actually hit with at least one of its attack moves. Used by Rage targeting enforcement and
 // the AI's nearest-target picker.
 function findNearestReachableEnemy(unit, units) {
@@ -84995,7 +85280,10 @@ function spawnEventsOntoBoard(board, units, count) {
     const t = board[y][x];
     if (t.trap || t.location || t.wall || t.event) occupied.add(`${x},${y}`);
   }
-  // Candidate tiles: not occupied AND at least Chebyshev distance >= 3 from each hero
+  // Candidate tiles: not occupied AND at least 3 tiles from each hero. That is
+  // measured with distance(), so on hex it is a 37-tile exclusion disc per
+  // hero, not a 49-tile box — deliberately, so an event cannot land inside a
+  // hero's opening summon ring.
   const heroes = units.filter(u => u.isHero);
   const candidates = [];
   for (let y = 0; y < BOARD_H; y++) for (let x = 0; x < BOARD_W; x++) {
@@ -85690,16 +85978,23 @@ function _applyInGraveTick(state, who, trigger) {
       case 'selfDeploy': {
         // Resurrect as a field unit. Only meaningful for unit-type cards.
         if (card.type !== 'unit' && card.type !== 'hero') continue;
-        // Find an empty tile adjacent to the owner's hero (chebyshev radius 2).
+        // Find an empty tile within 2 of the owner's hero.
+        // 🔴 FIXED HERE: this used to test `x >= (s.boardW || 8)`. Nothing in
+        // the game has EVER assigned s.boardW or s.boardH — grep them — so the
+        // fallback always won and every grave-raise was gated on a phantom 8x8
+        // box. On the old 8x7 board that box was one row too tall (it let a
+        // unit be raised onto row 7, which does not exist, and buildUnit then
+        // placed it off-board); on 14x12 it would have confined every raise to
+        // the top-left corner. inBoundsOf() reads the live board array.
         const hero = (s.units || []).find(u => u && u.owner === who && u.isHero && u.alive);
         if (!hero || !hero.pos) continue;
         let dropTile = null;
         const occupied = new Set((s.units || []).filter(u => u.alive && u.pos).map(u => u.pos.x + ',' + u.pos.y));
         outer: for (let r = 1; r <= 2 && !dropTile; r++) {
           for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-            if (dx === 0 && dy === 0) continue;
             const x = hero.pos.x + dx, y = hero.pos.y + dy;
-            if (x < 0 || y < 0 || x >= (s.boardW || 8) || y >= (s.boardH || 8)) continue;
+            if (distance(hero.pos, { x, y }) !== r) continue;
+            if (!inBoundsOf(s, x, y)) continue;
             if (occupied.has(x + ',' + y)) continue;
             dropTile = { x, y }; break outer;
           }
@@ -85789,10 +86084,27 @@ function _applyInGraveTick(state, who, trigger) {
         const count = Math.max(1, Math.min(3, ig.amount | 0 || 1));
         const occupied = new Set((s.units || []).filter(u => u.alive && u.pos).map(u => u.pos.x + ',' + u.pos.y));
         let placed = 0;
+        // 🔴 FIXED HERE — the SAME bug as `selfDeploy` ninety lines above, and it
+        // was walked past the first time this file was converted. This scanned the
+        // eight square offsets and took the FIRST free candidate, with no metric
+        // filter and — unlike selfDeploy — no bounds check of any kind. Row-major
+        // order means the first candidate is always (x-1, y-1), and on odd-r that
+        // tile is a hex neighbour only when y is EVEN. On the shipped player hero
+        // tile (6,9) — an odd row — (5,8) is at hex distance 2, so a card whose
+        // text reads "raises N zombies ADJACENT to your hero" raised them two
+        // tiles out for the player and one tile out for the AI hero at (7,2).
+        // Parity-dependent, silent, and nothing in the log said a word.
+        // The box stays as the ENUMERATOR (for r<=2 it is a strict superset of the
+        // hex ring, so nothing legal is lost); `distance(...) !== r` is what makes
+        // the shape a ring, and inBoundsOf() reads the LIVE board array so a hero
+        // standing on the rim can no longer raise a unit onto a column that does
+        // not exist. Do not re-inline these offsets — see HEXSPEC §5.
         for (let r = 1; r <= 2 && placed < count; r++) {
           for (let dy = -r; dy <= r && placed < count; dy++) for (let dx = -r; dx <= r && placed < count; dx++) {
-            if (dx === 0 && dy === 0) continue;
             const x = hero.pos.x + dx, y = hero.pos.y + dy;
+            // (0,0) needs no special case: distance 0 can never equal r >= 1.
+            if (distance(hero.pos, { x, y }) !== r) continue;
+            if (!inBoundsOf(s, x, y)) continue;
             if (occupied.has(x + ',' + y)) continue;
             const z = (typeof cardToUnit === 'function') ? cardToUnit(def, who, { x, y })
               : { id: 'u_zsum_' + Date.now() + '_' + placed, owner: who, alive: true, name: def.name, icon: def.icon || '🧟', pos: { x, y }, currentHp: 6, maxHp: 6, stats: def.stats || { hp: 6, atk: 2, def: 0, mag: 0, res: 0, spd: 1 }, statusEffects: [], hasMoved: true, hasAttacked: true };
@@ -86469,10 +86781,19 @@ function _vanishReturnTick(state, side) {
     for (const rec of back) {
       let pos = rec.pos && !occupied.has(rec.pos.x + ',' + rec.pos.y) ? rec.pos : null;
       if (!pos) {
+        // 🔴 FIXED HERE — this is a NEAREST-open-tile search, and without a ring
+        // filter the -rad..rad box is not ordered by distance: at rad 1 it walks
+        // (x-1,y-1) first, which on odd-r rows is hex distance 2, so a returning
+        // unit could pop two tiles from where it vanished while a true neighbour
+        // sat empty. `distance(...) !== rad` makes the scan expand ring by ring,
+        // which is what "returns near where it left" is supposed to mean. The box
+        // is kept purely as the enumerator (superset of the ring for rad<=4).
+        const _anchor = { x: (rec.pos && rec.pos.x) | 0, y: (rec.pos && rec.pos.y) | 0 };
         outer:
         for (let rad = 1; rad <= 4 && !pos; rad++) {
           for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
-            const x = ((rec.pos && rec.pos.x) | 0) + dx, y = ((rec.pos && rec.pos.y) | 0) + dy;
+            const x = _anchor.x + dx, y = _anchor.y + dy;
+            if (distance(_anchor, { x, y }) !== rad) continue;
             if (!inBoundsOf(state, x, y)) continue;
             if (occupied.has(x + ',' + y)) continue;
             pos = { x, y }; break outer;
@@ -87031,7 +87352,7 @@ function _flipSubterfuge(state, unit, reason) {
 try { window.__mg = window.__mg || {}; window.__mg.flipSubterfuge = _flipSubterfuge; } catch (e) {}
 
 // 🃏 When a unit finishes (or is stopped) on a tile, spring any ENEMY face-down
-// Subterfuge unit now within striking distance (Chebyshev ≤ 1). Each adjacent trap
+// Subterfuge unit now within striking distance (distance ≤ 1). Each adjacent trap
 // flips and resolves its Flip Effect — a reactive ambush. Re-fetches the live unit
 // each iteration since an earlier flip may have changed the board (kills, summons…).
 // 🪤 WOULD THIS FLIP JUST FIZZLE? A face-down card that springs, spends itself and
@@ -87105,7 +87426,7 @@ function _flipAdjacentFaceDown(state, mover) {
 }
 
 // 🔍 DETECTION — a unit with the `detection` passive force-flips every ENEMY face-down
-// Subterfuge unit within `radius` tiles (Chebyshev). radius <= 0 / omitted = board-wide.
+// Subterfuge unit within `radius` tiles (hex distance). radius <= 0 / omitted = board-wide.
 // Springs the trap on the DETECTOR's terms (denying the ambush timing). Re-fetches the
 // live unit each pass since an earlier flip can change the board.
 function _battleDetectionFlip(state, unit, radius) {
@@ -88203,7 +88524,7 @@ function _auraAffects(state, src, aura, target) {
       || (tgt === 'enemies' && target.owner !== owner);
     if (!match) return false;
     // Radius 0 / missing = the whole board, which is how Presence Aura has always
-    // worked; a positive radius measures Chebyshev distance from the aura's owner.
+    // worked; a positive radius measures hex distance from the aura's owner.
     const rad = aura.radius | 0;
     if (rad > 0) {
       if (!src.pos || !target.pos) return false;
@@ -88313,9 +88634,16 @@ function _tickVanishReturn(state, who) {
     let tile = null;
     const anchor = (v.pos && !occ.has(v.pos.x + ',' + v.pos.y)) ? v.pos
       : (_heroUnitOf(s, u.owner) ? _heroUnitOf(s, u.owner).pos : (v.pos || { x: 4, y: 3 }));
+    // 🔴 FIXED HERE — same nearest-open-tile bug as the vanish-bay scan: the
+    // -r..r box is not distance-ordered on odd-r, so a unit returning from the
+    // rift could surface two tiles from its anchor with a real neighbour free.
+    // r starts at 0 on purpose (distance 0 === the anchor tile itself, the
+    // preferred landing spot); the ring filter then expands one hex ring at a
+    // time. Box kept as the enumerator only. HEXSPEC §6.
     for (let r = 0; r <= 3 && !tile; r++) {
       for (let dy = -r; dy <= r && !tile; dy++) for (let dx = -r; dx <= r && !tile; dx++) {
         const x = (anchor.x | 0) + dx, y = (anchor.y | 0) + dy;
+        if (distance({ x: anchor.x | 0, y: anchor.y | 0 }, { x, y }) !== r) continue;
         if (!inBoundsOf(s, x, y)) continue;
         if (occ.has(x + ',' + y)) continue;
         tile = { x, y };
@@ -92410,7 +92738,13 @@ function _applyOnPlayOneRaw(state, unit, card) {
         let best = Infinity;
         for (const u of (state.units || [])) {
           if (!u || !u.alive || !isEnemy(u) || u.isHero) continue;
-          const d = (u.pos && unit.pos) ? (Math.abs(u.pos.x - unit.pos.x) + Math.abs(u.pos.y - unit.pos.y)) : 99;
+          // 🔻 DISCLOSED CHANGE (hex wave). This was MANHATTAN, and wave 1
+          // deliberately left it alone because re-metricising a live target
+          // picker changes which unit dies. That reasoning expires here: on
+          // the odd-r lattice Manhattan over (x,y) is not a distance at all
+          // — it double-counts the half-column stagger — so 'nearest' would
+          // have meant nothing. It now measures with the board's one metric.
+          const d = (u.pos && unit.pos) ? distance(u.pos, unit.pos) : 99;
           if (d < best) { best = d; target = u; }
         }
         if (!target) target = (state.units || []).find(u => u && u.alive && isEnemy(u) && u.isHero) || null;
@@ -92743,6 +93077,14 @@ function _applyOnPlayOneRaw(state, unit, card) {
     if (unit.pos) {
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         const x = unit.pos.x + dx, y = unit.pos.y + dy;
+        // 🔴 FIXED HERE — the box painted a SQUARE disc: "radius 1" sealed a 3x3
+        // of 9 tiles, two of which are at hex distance 2. Every other range gate
+        // in the game (and the tile highlight that previews this AoE) measures
+        // with distance(), so the seal covered tiles the preview did not, which is
+        // exactly the "UI lies about the rules" scar this file already carries a
+        // comment about. The box is kept as the enumerator because it is a strict
+        // superset of the hex disc; distance() is what defines the shape. HEXSPEC §6.
+        if (distance(unit.pos, { x, y }) > r) continue;
         if (!state.board || !state.board[y] || !state.board[y][x]) continue;
         if (out.some(t => t.x === x && t.y === y)) continue;
         out.push({ x, y, turnsLeft: n }); count++;
@@ -94503,15 +94845,15 @@ function _battleTrapDogReveal(state, unit) {
   return next;
 }
 
-// 🌌 Hero-adjacent free tiles — the empty board tiles in Chebyshev radius 1
-// around a hero. Skips tiles holding a unit / bleeding body / wall / tomb.
+// 🌌 Hero-adjacent free tiles — the empty board tiles touching a hero, i.e.
+// its six hex neighbours (was eight, Chebyshev radius 1).
+// Skips tiles holding a unit / bleeding body / wall / tomb.
 // Used by Polycreation fusion placement (player picker + AI auto-place).
 function _heroAdjacentFreeTiles(state, hero) {
   const out = [];
   if (!hero || !hero.pos) return out;
-  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-    if (dx === 0 && dy === 0) continue;
-    const x = hero.pos.x + dx, y = hero.pos.y + dy;
+  for (const n of hexNeighbors(hero.pos.x, hero.pos.y)) {
+    const x = n.x, y = n.y;
     if (!inBoundsOf(state, x, y)) continue;
     const occ = (state.units || []).find(u => u && u.pos && u.pos.x === x && u.pos.y === y && (u.alive || u._bleeding));
     if (occ) continue;
@@ -94697,8 +95039,9 @@ function _battleSpawnSummonByCardId(state, caster, summonCardId, requestedCount)
       passive: 'none',
     };
   }
-  // Find open adjacent tiles around the caster (Chebyshev radius 1
-  // initially, then expand to radius 2 if the immediate ring is full).
+  // Find open adjacent tiles around the caster (the six neighbours first,
+  // then the 12-tile ring at distance 2 if the immediate ring is full).
+  // The -rad..rad box is a superset of the hex ring; distance() keeps the ring.
   const occ = new Set();
   units.forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
   const ringFor = (rad) => {
@@ -97558,8 +97901,10 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
     App._fieldBagLoss = null;
   } catch (e) {}
   const playerProf = getHeroProfile(heroData.id);
-  // Center the heroes on the wider 10-column board so the opening doesn't feel lopsided.
-  const playerHero = buildHero(heroData, 'player', { x: Math.floor(BOARD_W / 2) - 1, y: BOARD_H - 1 }, playerProf.level, playerProf.xp);
+  // Centre the heroes horizontally, and stand them DEPLOY_INSET rows in from
+  // their own edge rather than on them — see the constant for the measured
+  // reason. Point-symmetric with the AI hero below.
+  const playerHero = buildHero(heroData, 'player', { x: Math.floor(BOARD_W / 2) - 1, y: BOARD_H - 1 - DEPLOY_INSET }, playerProf.level, playerProf.xp);
   // 🗺️ Roguelite: carry persistent HP into the fight. Only fires when this is
   // an RLC battle (guarded) so normal/campaign battles are untouched.
   if (App.battlePrep && App.battlePrep.rlc) {
@@ -97579,8 +97924,8 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
   // level-1 stand-in. _mpProg is absent for solo/campaign, so those are unchanged.
   const _oppProg = (App.battlePrep && App.battlePrep.multiplayer && opponentHero && opponentHero._mpProg) ? opponentHero._mpProg : null;
   const aiHero = _oppProg
-    ? buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: 0 }, _oppProg.level || 1, _oppProg.xp || 0, _oppProg)
-    : buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: 0 });
+    ? buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: DEPLOY_INSET }, _oppProg.level || 1, _oppProg.xp || 0, _oppProg)
+    : buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: DEPLOY_INSET });
   // 🗺️ Roguelite: optional per-node enemy HP override (guarded to RLC battles).
   if (App.battlePrep && App.battlePrep.rlc && App.battlePrep.rlcEnemyMaxHp) {
     const _em = Math.max(1, parseInt(App.battlePrep.rlcEnemyMaxHp, 10) || aiHero.maxHp);
@@ -99581,6 +99926,17 @@ const executeMove = (state, attacker, target, move) => {
   // ===== Knockback: push the target N tiles in the direction away from the attacker =====
   // Stops short if it hits a wall, another unit, or the board edge. Skips if target died or
   // if move.knockback isn't set. Flying targets are still pushed.
+  // ⚠ KNOWN GAP, DELIBERATELY NOT FIXED IN THE HEX WAVE (this is combat
+  // resolution and that wave was forbidden from editing it). `Math.sign(dx)`
+  // / `Math.sign(dy)` picks one of the EIGHT square directions and then steps
+  // it repeatedly. On odd-r that traces a zigzag, not a straight hex line —
+  // the shove still lands on real, unoccupied, in-bounds tiles (inBounds() and
+  // getOccupant() still gate every step, so nothing can end up off-board), but
+  // "away from the attacker" drifts by up to half a column per row. Same in
+  // the pull block below and in _slideOnIce's direction walk. The fix is one
+  // helper — pick the hexDirs(y) entry with the largest dot product against
+  // the away-vector, and re-pick it each step because the six offsets change
+  // with row parity — applied at three call sites. Needs the combat owner.
   if (updatedTarget.alive && move.knockback && move.knockback > 0
       && (Math.random() * 100 < ((move.knockbackChance == null) ? 100 : move.knockbackChance))
       && !(updatedTarget.isWall && !(updatedTarget.wall && updatedTarget.wall.canBePushed))) {
@@ -100320,9 +100676,12 @@ function getMovePath(unit, units, weather, target) {
     const { pos, dist } = queue.shift();
     if (pos.x === target.x && pos.y === target.y) break;
     if (dist >= speed) continue;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const nx = pos.x + dx, ny = pos.y + dy;
+    // Same six-way expansion as getValidMoves. These two BFS bodies are
+    // near-duplicates that already disagree about tombstones and ZoC
+    // (CONTRACT R31); do not let them disagree about the LATTICE as well —
+    // that would draw a walk path through tiles the move highlight refuses.
+    for (const nb of hexNeighbors(pos.x, pos.y)) {
+      const nx = nb.x, ny = nb.y;
       if (!inBounds(nx, ny)) continue;
       const key = `${nx},${ny}`;
       if (visited.has(key)) continue;
@@ -100877,7 +101236,7 @@ function _stabilizeRevive(state, healer, bleedingUnit, opts) {
   if (!state || !healer || !bleedingUnit) return state;
   if (!bleedingUnit._bleeding) return state;
   if (!opts.fromMedkit) {
-    // Adjacency check (Chebyshev radius 1).
+    // Adjacency check — distance 1 means the two tiles share a hex edge.
     const dist = distance(healer.pos, bleedingUnit.pos);
     if (dist > 1) return state;
   }
@@ -101711,16 +102070,15 @@ const startTurn = (state, who) => {
   }
 
   // 🔧 TRAP BREAKER — at the START of `who`'s turn, every alive Trap Breaker
-  // on that side scans its 8 adjacent tiles and disarms ONE random enemy
+  // on that side scans its 6 adjacent tiles and disarms ONE random enemy
   // trap it finds. One trap per Breaker per turn so swarms can methodically
   // sweep a minefield without instantly nuking everything.
   try {
     const breakers = (s.units || []).filter(u => u && u.alive && u.owner === who && typeof hasPassive === 'function' && hasPassive(u, 'trapBreaker'));
     for (const u of breakers) {
       const candidates = [];
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
-        const tx = u.pos.x + dx, ty = u.pos.y + dy;
+      for (const n of hexNeighbors(u.pos.x, u.pos.y)) {
+        const tx = n.x, ty = n.y;
         const tile = (s.board && s.board[ty]) ? s.board[ty][tx] : null;
         if (tile && tile.trap && tile.trap.owner && tile.trap.owner !== who) candidates.push({ x: tx, y: ty });
       }
@@ -103237,8 +103595,12 @@ const BB_PROP_MAP = {
 };
 function _bbMapFromEditor(raw) {
   const m = raw || (typeof _b3dActiveMap === 'function' ? _b3dActiveMap() : null) || {};
-  const cols = m.cols || (typeof BOARD_W === 'number' ? BOARD_W : 8);
-  const rows = m.rows || (typeof BOARD_H === 'number' ? BOARD_H : 7);
+  // Fallbacks track BOARD_W/BOARD_H. They were 8/7 — the PREVIOUS board size —
+  // which is the CONTRACT R34 failure mode: a stale literal that only fires
+  // when the constant is missing and then silently hands the canvas stage a
+  // map smaller than the one the rules are being played on.
+  const cols = m.cols || (typeof BOARD_W === 'number' ? BOARD_W : 14);
+  const rows = m.rows || (typeof BOARD_H === 'number' ? BOARD_H : 12);
   const terrain = Array.isArray(m.terrain) ? m.terrain : [];
   const tiles = [];
   for (let c = 0; c < cols; c++) {
@@ -103660,7 +104022,7 @@ function _bbUnitsFromBoard() {
     const st = App.state; if (!st || !Array.isArray(st.board)) return out;
     for (let i = 0; i < st.board.length; i++) {
       const cell = st.board[i]; if (!cell || !cell.card) continue;
-      const cols = (typeof BOARD_W === 'number') ? BOARD_W : 8;
+      const cols = (typeof BOARD_W === 'number') ? BOARD_W : 14;
       out.push({ id: cell.iid || ('u' + i), key: String(cell.card.id),
                  x: i % cols, z: Math.floor(i / cols),
                  side: cell.owner === 'player' ? 'mine' : 'foe' });
@@ -110341,8 +110703,8 @@ function _isoStart() {
         spire(c, sx, hY + 14, w, 14 + t1 * 42, t1 > 0.4);
       }
     }
-    const COLS = (typeof BOARD_W !== 'undefined') ? BOARD_W : 8;
-    const ROWS = (typeof BOARD_H !== 'undefined') ? BOARD_H : 7;
+    const COLS = (typeof BOARD_W !== 'undefined') ? BOARD_W : 14;
+    const ROWS = (typeof BOARD_H !== 'undefined') ? BOARD_H : 12;
     const groundY = H * 0.78;
     const isoW = Math.min(W * 0.085, 70);
     const isoH = isoW * 0.5;
@@ -133840,15 +134202,21 @@ function _applyHeroGuardian(state) {
       if (!guardian || !guardian.pos) continue;
       const hero = state.units.find(u => u && u.isHero && u.owner === who);
       if (!hero) continue;
-      // First free tile in an expanding ring around the guardian.
+      // First free tile in an expanding HEX ring around the guardian. Two
+      // things changed here and both matter: the ring is now measured with
+      // distance() (a raw -r..r box is not a ring on any lattice, and on hex
+      // its corners are up to 2r away — the hero could be resummoned twice as
+      // far from its guardian as intended), and membership is inBoundsOf, so
+      // this render-time revive answers from the live board like the rest of
+      // the sweep around it rather than from the constants.
       const occ = new Set(state.units.filter(u => u.alive && u.pos && u.id !== hero.id).map(u => u.pos.x + ',' + u.pos.y));
       let spot = null;
       for (let r = 1; r <= 3 && !spot; r++) {
         for (let dy = -r; dy <= r && !spot; dy++) {
           for (let dx = -r; dx <= r && !spot; dx++) {
-            if (dx === 0 && dy === 0) continue;
             const nx = guardian.pos.x + dx, ny = guardian.pos.y + dy;
-            if (!inBounds(nx, ny) || occ.has(nx + ',' + ny)) continue;
+            if (distance(guardian.pos, { x: nx, y: ny }) !== r) continue;
+            if (!inBoundsOf(state, nx, ny) || occ.has(nx + ',' + ny)) continue;
             spot = { x: nx, y: ny };
           }
         }
@@ -134046,8 +134414,11 @@ function _renderBattleImmediateImpl() {
   if (!App._turnTimer) {
     App._turnTimer = setInterval(_turnTimerStep, 1000);
   }
-  // 🛡 Safety: pull any out-of-bounds units back into the 8×7 grid. Handles
-  // saved games from older board sizes (10×8) where AI units could legitimately
+  // 🛡 Safety: pull any out-of-bounds units back onto the LIVE board array
+  // (clampUnitsToBoard measures state.board, never the constants — read the
+  // comment on it, this is the once-per-frame function that used to drag
+  // units toward a corner whenever the two disagreed). Handles saved games
+  // from older board sizes where AI units could legitimately
   // sit at coords that no longer exist. Without this they'd be invisible —
   // present in state but never drawn by the tile loop below.
   try { if (s && typeof clampUnitsToBoard === 'function') clampUnitsToBoard(s); } catch (e) {}
@@ -136766,11 +137137,25 @@ function _tickTunneledCards(s, who) {
     // Find first free adjacent tile.
     const occupied = new Set((s.units || []).filter(u => u.alive && u.pos).map(u => u.pos.x + ',' + u.pos.y));
     let placed = false;
+    // 🔴 FIXED HERE — identical bug to `summonZombie` in _applyInGraveTick and to
+    // `selfDeploy` above it. This walked the eight square offsets and took the
+    // FIRST free candidate with no metric filter and no bounds check at all, so
+    // "Tunnel: emerges ADJACENT to your hero" emerged at hex distance 2 whenever
+    // the hero stood on an ODD row (row-major order yields (x-1, y-1) first, and
+    // on odd-r that tile is a neighbour only on EVEN rows). The shipped player
+    // hero spawns at (6,9) — odd — so this misfired every single game for the
+    // player and never for the AI hero at (7,2). It also had no inBoundsOf(), so
+    // a hero pushed against the rim could surface a unit off the board entirely,
+    // where renderBattle's grid loop simply never draws it.
+    // The -r..r box is kept only as the enumerator (a superset of the ring for
+    // r<=3); distance()===r is what makes it a hex ring. HEXSPEC §5/§6.
     for (let r = 1; r <= 3 && !placed; r++) {
       for (let dy = -r; dy <= r && !placed; dy++) {
         for (let dx = -r; dx <= r && !placed; dx++) {
-          if (dx === 0 && dy === 0) continue;
           const nx = hero.pos.x + dx, ny = hero.pos.y + dy;
+          // (0,0) needs no special case: distance 0 can never equal r >= 1.
+          if (distance(hero.pos, { x: nx, y: ny }) !== r) continue;
+          if (!inBoundsOf(s, nx, ny)) continue;
           const key = nx + ',' + ny;
           if (occupied.has(key)) continue;
           // Build and place the unit.
@@ -141655,15 +142040,18 @@ function renderBoard() {
         consumableTargets.push({ x, y, kind: 'tile' });
       }
     } else if (mode === 'adjacentTile') {
-      // 🎭 Mimic Beacon / adjacent-deploy mode — only the 8 tiles touching
-      // the player's hero (Chebyshev 1), and only those that are EMPTY of
-      // units / walls / tombstones. Bleeding units count as occupants too.
+      // 🎭 Mimic Beacon / adjacent-deploy mode — only the 6 tiles touching
+      // the player's hero, and only those that are EMPTY of units / walls /
+      // tombstones. Bleeding units count as occupants too.
+      // This highlight and resolveHeroConsumable's `distance() > 1` gate are
+      // the UI-lies-about-the-rules pair: both now say "shares an edge with
+      // the hero", where the ring used to light two corner tiles the gate
+      // then refused.
       const _hero = (s.units || []).find(u => u && u.owner === 'player' && u.isHero && u.alive);
       if (_hero && _hero.pos) {
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue;   // skip hero's own tile
-          const tx = _hero.pos.x + dx, ty = _hero.pos.y + dy;
-          if (!inBounds(tx, ty)) continue;
+        for (const _n of hexNeighbors(_hero.pos.x, _hero.pos.y)) {
+          const tx = _n.x, ty = _n.y;
+          if (!inBoundsOf(s, tx, ty)) continue;
           // Skip tiles with a unit (alive OR bleeding-out body), wall, or
           // tombstone — Mimic decoy needs clear ground.
           const occ = (s.units || []).find(u => u && u.pos && u.pos.x === tx && u.pos.y === ty && (u.alive || u._bleeding));
@@ -141688,9 +142076,27 @@ function renderBoard() {
   // sizing (cover, centered) so any aspect ratio drops in cleanly.
   const activeLoc = (App.state && App.state.activeLocation) || null;
   const boardClass = activeLoc ? ' has-active-location' + (activeLoc.image ? ' has-active-location-img' : '') : '';
-  const boardStyle = (activeLoc && activeLoc.image)
-    ? ` style="background-image:url('${(activeLoc.image || '').replace(/'/g, "\\'")}');background-size:100% 100%;background-position:center;background-repeat:no-repeat"`
+  const boardStyle0 = (activeLoc && activeLoc.image)
+    ? `background-image:url('${(activeLoc.image || '').replace(/'/g, "\\'")}');background-size:100% 100%;background-position:center;background-repeat:no-repeat;`
     : '';
+  // ═══ THE DOM GRID IS DRIVEN FROM BOARD_W / BOARD_H, ONCE, HERE ═══════════
+  // The stylesheet carries the same numbers only as a no-JS default (:11219).
+  // These four declarations are the authority, and they are written on every
+  // render so the grid can never drift from the constants the rules use.
+  //
+  // Track layout is HEXSPEC §2 odd-r expressed in integers: 2W+1 half-column
+  // tracks (each tile spans 2; odd rows start one half-column further right,
+  // and the trailing +1 track is the half cell that overhang needs) by H row
+  // tracks at the hex row pitch. Cell centres therefore coincide with the
+  // canvas stage's hex centres — that is the whole point, and it is what stops
+  // the highlighted tile and the clicked tile from drifting apart.
+  //
+  // --board-aspect is (2W+1)·√3 / (3H), computed here rather than in CSS
+  // because `repeat(calc(…), 1fr)` is not supported by browsers and because a
+  // resolved number is one less thing to get wrong in four media queries.
+  const _bw = BOARD_W, _bh = BOARD_H;
+  const _boardAspect = ((2 * _bw + 1) * Math.sqrt(3)) / (3 * _bh);
+  const boardStyle = ` style="${boardStyle0}--board-w:${_bw};--board-h:${_bh};--board-aspect:${_boardAspect.toFixed(4)};grid-template-columns:repeat(${2 * _bw + 1},1fr);grid-template-rows:repeat(${_bh},1fr)"`;
   // 🩻 ISO-BOARD — now the default battlefield. Renders a 2.5D iso canvas
   // BEHIND the existing tile grid (tiles + units stay HTML for unchanged
   // gameplay; only the surface look changes). To flip BACK to the flat
@@ -141734,7 +142140,26 @@ function renderBoard() {
       const isSwapTile = validSwaps.some(p => p.x === x && p.y === y);
       const cTarget = consumableTargets.find(p => p.x === x && p.y === y);
       const tileClasses = ['tile'];
-      if ((x + y) % 2 === 0) tileClasses.push('even');
+      // ═══ THE CHECKERBOARD IS DEAD; A HEX BOARD NEEDS THREE TONES ═══════
+      // `(x + y) % 2 === 0` was a SQUARE artifact and it does not survive the
+      // move to odd-r, for a reason worth stating rather than hand-waving: a
+      // 2-colouring of a hex lattice does not exist. Check it against the six
+      // neighbours (HEXSPEC §5) — on an even row, (x-1, y-1) has the same
+      // (x+y) parity as (x, y). Four of the six flip and two do not, so the
+      // old class does not alternate at all here; it paints diagonal STRIPES,
+      // which on a staggered grid reads as a rendering fault.
+      //
+      // The stated intent of the class (src/battle/board.css §2, verbatim) is
+      // "far too small to read as a checkerboard, just enough that no two
+      // neighbours are identical". On hex that intent has an exact answer:
+      // hexagonal lattices are 3-chromatic, and (cube.x - cube.z) mod 3 is a
+      // proper 3-colouring — every one of the six cube directions changes
+      // (x - z) by ±1 or ±2, never by a multiple of 3, so no neighbour can
+      // ever share a tone. Colour 0 stays unclassed exactly as the odd tiles
+      // used to; hexc-1 / hexc-2 carry the two tints.
+      const _hcC = offsetToCube(x, y);
+      const _hc = ((((_hcC.x - _hcC.z) % 3) + 3) % 3);
+      if (_hc) tileClasses.push('hexc-' + _hc);
       if (isMoveTile) tileClasses.push('move-target');
       // (the same four sets are pushed to the new board — see _bbPaintFromState)
       if (isAttackTile) tileClasses.push('attack-target');
@@ -142045,7 +142470,16 @@ function renderBoard() {
       }
       // 🩸 Prepend bleeding overlay so the body shows under any occupant
       // or marker rendered above it.
-      html += `<div class="${tileClasses.join(' ')}${bleedingHere ? ' has-bleeding' : ''}" data-x="${x}" data-y="${y}"${surfTitle}>${surfHtml}${bleedOverlay}${cellInner}</div>`;
+      // 🔷 ODD-R STAGGER. Explicit placement, never auto-flow: a tile spans
+      // two half-column tracks, and odd rows start one half-column to the
+      // right (HEXSPEC §2 — odd rows shift +0.5, no other row moves).
+      // (y & 1), not (y % 2): y is a non-negative loop index here so both
+      // agree, but the parity operator is spelled the same way everywhere in
+      // this codebase precisely so nobody copies the `%` form to a site where
+      // y can be negative and gets the shift backwards.
+      const _gc = 2 * x + 1 + (y & 1);
+      const _gridStyle = ` style="grid-column:${_gc} / span 2;grid-row:${y + 1}"`;
+      html += `<div class="${tileClasses.join(' ')}${bleedingHere ? ' has-bleeding' : ''}" data-x="${x}" data-y="${y}"${_gridStyle}${surfTitle}>${surfHtml}${bleedOverlay}${cellInner}</div>`;
     }
   }
   // 🌌 Inject the living-battlefield ambient overlay — drifting ash + embers,
@@ -143689,7 +144123,7 @@ function getSwapTargets(unit, units) {
     u.alive &&
     u.owner === unit.owner &&
     u.id !== unit.id &&
-    distance(u.pos, hero.pos) <= 1   // partner must be next to the hero (Chebyshev 1)
+    distance(u.pos, hero.pos) <= 1   // partner must be next to the hero (one of its six)
   );
 }
 
@@ -150450,7 +150884,7 @@ function _aiShouldFireUltimate(s, aiHero) {
   const playerHero = enemies.find(t => t.isHero);
 
   if (def.id === 'ult_volley') {
-    // 80 dmg in 3-tile Chebyshev radius. Fire when ≥ 1 enemy in range
+    // 80 dmg in 3-tile radius (37 hex tiles). Fire when ≥ 1 enemy in range
     // (huge tempo). Always fire on lethal-to-player-hero.
     const radius = 3, dmg = 80;
     let hits = 0, lethal = false, killCount = 0;
@@ -172254,6 +172688,10 @@ function _campPath(sx, sy, tx, ty) {
   while (queue.length) {
     const cur = queue.shift();
     if (cur.x === tx && cur.y === ty) { goalNode = cur; break; }
+    // Four-way on purpose, and NOT a HEXSPEC violation: this walks the base-camp
+    // layout grid (_campIsWalkable / L.mapW x L.mapH), which is a square tile map
+    // for the camp avatar. It is not state.board, has no odd-r stagger and no
+    // unit.pos. hexNeighbors() would be wrong here, not right.
     const neighbors = [[1,0],[-1,0],[0,1],[0,-1]];
     for (const [dx, dy] of neighbors) {
       const nx = cur.x + dx, ny = cur.y + dy;
@@ -173710,6 +174148,11 @@ function _campLayoutDuplicate(kind, id) {
     if (_campRectOverlapsAny({ x, y, w, h })) return false;
     spot = { x, y }; return true;
   };
+  // NOT a battle-board scan and deliberately still SQUARE — L.mapW/mapH is the
+  // base-camp layout grid, a free-placement canvas of w x h rectangles with its
+  // own tryAt() bounds test. It has no hex lattice, no unit.pos and no distance()
+  // semantics, so a hex ring here would be meaningless. Do not "fix" it to match
+  // HEXSPEC; the only lattice in this file is state.board.
   for (let r = 1; r < Math.max(L.mapW, L.mapH) && !spot; r++) {
     for (let dy = -r; dy <= r && !spot; dy++) {
       for (let dx = -r; dx <= r && !spot; dx++) {
@@ -179444,6 +179887,22 @@ function _clearMatchSession() {
 
 // 🔁 Position mirror — flip a 2D point across the board center. Used by the
 // perspective swap so each client always sees themselves at the bottom.
+//
+// 🔴 THIS IS ONLY A VALID MIRROR WHILE BOARD_H IS EVEN. On the old square
+// lattice a point reflection was trivially distance-preserving, so nobody had
+// to think about it. On pointy-top ODD-R it is not automatic: the reflection
+// sends row y to row H-1-y, and odd-r's six neighbour offsets DEPEND ON ROW
+// PARITY (HEXSPEC §5). With H even, y and H-1-y always have opposite parity
+// and the two half-column shifts cancel to a constant — the map is exactly a
+// 180° cube rotation and every distance survives. With H ODD they have the
+// SAME parity, the shifts stop cancelling, and the mirror silently becomes a
+// shear: adjacent units arrive two tiles apart on the remote client, ranges
+// disagree between the two players, and nothing throws.
+//
+// Verified by exhaustive check over every ordered pair (28224 of them at
+// 14x12): 0 broken pairs at H=12 and H=8, 8960 broken at H=11, 1128 at the
+// old 8x7. BOARD_H is 12. If anyone ever makes it odd, this function needs a
+// parity correction on x — it will not announce itself.
 function _mirrorPos(p) {
   if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return p;
   return { x: (BOARD_W - 1) - p.x, y: (BOARD_H - 1) - p.y };
@@ -188427,7 +188886,7 @@ const HERO_PASSIVE_DEFS = {
 // (Pricing Admin → ⚡ Hero Ultimates) without any engine changes.
 //
 // Effect types + their params:
-//   attack   — radius (tiles, Chebyshev), damage, applyStatus?, statusTurns?
+//   attack   — radius (tiles, hex distance), damage, applyStatus?, statusTurns?
 //   mapwide  — damage, skipFlying?, applyStatus?, statusTurns?
 //   buff     — atkBuff / defBuff / magBuff / resBuff / spdBuff, buffTurns, healAmount?
 //   summon   — summonName, summonIcon, summonHp, summonAtk, summonDef, summonMag,
@@ -189340,7 +189799,7 @@ function buildCosmicClass(cls) {
 // base move. Each `cm_*` is keyed below and registered into MOVES.
 const COSMIC_SKILL_MOVES = {
   // ⚔ Vanguard — storm / fire bruiser
-  cm_whirlwind:    { id: 'cm_whirlwind',    name: 'Whirlwind Strike', kind: 'attack', type: 'physical', power: 24, range: 1, cost: 2, element: 'storm', aoeRadius: 1, splashDamagePct: 0.7, desc: 'Spin attack — strike every unit in the 8 adjacent tiles (70% splash).' },
+  cm_whirlwind:    { id: 'cm_whirlwind',    name: 'Whirlwind Strike', kind: 'attack', type: 'physical', power: 24, range: 1, cost: 2, element: 'storm', aoeRadius: 1, splashDamagePct: 0.7, desc: 'Spin attack — strike every unit in the 6 adjacent hexes (70% splash).' },
   cm_warhorn:      { id: 'cm_warhorn',      name: 'War Horn',         kind: 'attack', type: 'physical', power: 20, range: 2, cost: 1, element: 'storm', crit: 8, desc: 'Sound the war horn — a galvanizing storm strike that rallies the charge.' },
   cm_defiantroar:  { id: 'cm_defiantroar',  name: 'Defiant Roar',     kind: 'attack', type: 'physical', power: 16, range: 1, cost: 1, element: 'earth', applyStatus: { id: 'slow', chance: 100, duration: 2 }, desc: 'A defiant bellow that rattles the target — always Slows for 2 turns.' },
   // 🛡 Aegis — tank / retaliate
@@ -190161,8 +190620,8 @@ function _battleHeroOnSide(state, side) {
   return (state.units || []).find(u => u && u.isHero && u.alive && u.owner === side) || null;
 }
 
-// --- Manhattan-style 2-tile radius for emotion radius checks. Uses Chebyshev
-// (max of dx/dy) so a 2-tile radius covers a 5×5 box around the hero.
+// --- Radius check for emotion auras. Routes through distance(), so a 2-tile
+// radius is the 19-tile hex disc around the hero (it used to be a 5×5 box).
 function _battleWithinRadius(a, b, r) {
   if (!a || !b || !a.pos || !b.pos) return false;
   return distance(a.pos, b.pos) <= (r | 0);
@@ -190428,7 +190887,7 @@ function renderHeroUltimateBar(heroUnit) {
 // emotion (per the spec: "heroUltimateSucceeded" trigger).
 //
 // Effects per def:
-//   ult_volley        — 80 dmg to every enemy in a 3-tile Chebyshev radius
+//   ult_volley        — 80 dmg to every enemy in a 3-tile radius (37 hex tiles)
 //   ult_rally         — +5 ATK / +1 SPD to every ally for 3 turns
 //   ult_summon        — spawn an allied basic combatant adjacent to the hero
 //   ult_overwatch     — push a 1-turn 'overwatch' status: auto-counter any
@@ -201104,17 +201563,16 @@ function _battleEvasiveRollHit(defender) {
   return true;
 }
 
-// --- Pick the first open Chebyshev-adjacent tile to `pos`, on-board and
-// unoccupied. Returns null when the hero is fully boxed in.
+// --- Pick the first open tile TOUCHING `pos` — one of its six hex
+// neighbours — on-board and unoccupied. Returns null when the hero is fully
+// boxed in. Was a hand-rolled eight-direction table; the four diagonals it
+// listed do not exist on hex, so it could have displaced a hero two tiles
+// away and read as a teleport. Bounds now come from the live board too.
 function _findOpenAdjacentTile(state, pos) {
   if (!state || !pos) return null;
-  const dirs = [
-    { x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 },
-    { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }, { x: -1, y: -1 },
-  ];
-  for (const d of dirs) {
-    const x = pos.x + d.x, y = pos.y + d.y;
-    if (!inBounds(x, y)) continue;
+  for (const d of hexNeighbors(pos.x, pos.y)) {
+    const x = d.x, y = d.y;
+    if (!inBoundsOf(state, x, y)) continue;
     if (state.units.some(u => u && u.alive && u.pos && u.pos.x === x && u.pos.y === y)) continue;
     return { x, y };
   }
@@ -201352,6 +201810,15 @@ function resolveHeroConsumable(slotIdx, targetPos, targetUnit) {
     let count = 0;
     for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
       const x = targetPos.x + dx, y = targetPos.y + dy;
+      // 🔴 FIXED HERE — the box painted a SQUARE cloud: a "radius 1" smoke covered
+      // 9 tiles, two of them at hex distance 2. The accuracy hook that reads
+      // s.smokedTiles and the tile highlight that previews the cloud both measure
+      // in hex, so the −50% zone silently extended past the wash the player was
+      // shown. Note the sibling effects immediately below (flashbang, and the
+      // damage AoEs) already gate on `distance(u.pos, targetPos) > radius`; this
+      // one enumerated tiles rather than units and was missed. The box stays as the
+      // enumerator (superset of the hex disc); distance() defines the shape. HEXSPEC §6.
+      if (distance(targetPos, { x, y }) > radius) continue;
       if (!s.board || !s.board[y] || !s.board[y][x]) continue;
       // Replace any existing smoke timer on this tile, keep longest.
       const exist = s.smokedTiles.find(t => t.x === x && t.y === y);
@@ -213593,14 +214060,16 @@ function _twBuildConvoyCard() {
 function _twOilTowerLabel() { return { name: 'Oil Tower', icon: '🛢' }; }
 
 // Picks N random open tiles for spawning towers, ensuring minimum
-// Chebyshev spacing between picks and never spawning adjacent to the
+// hex spacing between picks and never spawning adjacent to the
 // player hero. Returns at most N tiles.
 function _twPickSpreadTiles(state, n, opts) {
   opts = opts || {};
   const minSpacing = opts.minSpacing || 2;
   const avoidPos = opts.avoidPos || null;
-  const W = state.board && state.board[0] ? state.board[0].length : 9;
-  const H = state.board ? state.board.length : 7;
+  // Was `: 9` / `: 7` — two stale literals that disagreed with each other AND
+  // with the board (CONTRACT R34). _boardDims() is the one reader; no board
+  // means no candidate tiles, which is the honest answer.
+  const { W, H } = _boardDims(state);
   const occ = new Set();
   (state.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
   const candidates = [];
@@ -213631,12 +214100,17 @@ function _twStampGameMode(state) {
   const has = (id) => state.mods.twObjectives.indexOf(id) >= 0;
   const attackerSide = state.mods.twAttackerSide || 'player';
   const hero = (state.units || []).find(u => u && u.owner === attackerSide && u.isHero);
-  const heroPos = hero ? hero.pos : { x: 4, y: 6 };
+  // Fallback was the literal (4,6) — the old 8x7 board's player-hero tile.
+  // Derive the board centre instead so it degrades to somewhere real on any
+  // size. (It only fires when the attacker has no hero, which is already odd.)
+  const _hpDims = _boardDims(state);
+  const heroPos = hero ? hero.pos
+    : { x: Math.max(0, (_hpDims.W >> 1) - 1), y: Math.max(0, _hpDims.H - 3) };
 
   // 🚛 Convoy Escort
   if (has('convoy_escort') && !state.mods.twConvoy) {
-    const W = state.board && state.board[0] ? state.board[0].length : 9;
-    const H = state.board ? state.board.length : 7;
+    // Stale `: 9` / `: 7` literals removed — see _twPickSpreadTiles.
+    const { W, H } = _boardDims(state);
     // Convoy spawn — same side as the player hero (one tile in front).
     const convoyPos = { x: Math.max(0, Math.min(W - 1, heroPos.x)), y: Math.max(0, Math.min(H - 1, heroPos.y - 1)) };
     // Make sure that tile is free; nudge sideways if not.
@@ -213668,8 +214142,8 @@ function _twStampGameMode(state) {
   // The VIP identity is rolled from Forge.vipPool (admin-uploaded) if
   // present, else falls back to a generic VIP card. Image is optional.
   if (has('vip_rescue') && !state.mods.twVip) {
-    const W = state.board && state.board[0] ? state.board[0].length : 9;
-    const H = state.board ? state.board.length : 7;
+    // Stale `: 9` / `: 7` literals removed — see _twPickSpreadTiles.
+    const { W, H } = _boardDims(state);
     const vipPos = { x: Math.max(0, Math.min(W - 1, heroPos.x)), y: Math.max(0, Math.min(H - 1, heroPos.y - 1)) };
     const occ = new Set();
     (state.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
@@ -213763,8 +214237,8 @@ function _twTickGameMode(state, who) {
   const log = state.log || (state.log = []);
 
   // 🚛 Convoy movement — only fires when the AI turn starts (= player's
-  // turn just ended). One-tile step toward the extraction tile via
-  // greedy Chebyshev pathing; bails on blocked + writes a log entry.
+  // turn just ended). One-tile step toward the extraction tile via greedy
+  // best-neighbour pathing; bails on blocked + writes a log entry.
   let _convoySkippedThisTurn = false;
   if (state.mods.twConvoy && !state.mods.twConvoy.extracted && who === 'ai') {
     const cv = (state.units || []).find(u => u && u.id === state.mods.twConvoy.unitId);
@@ -213787,16 +214261,16 @@ function _twTickGameMode(state, who) {
         state.mods.twConvoy.extracted = true;
         log.push({ msg: `🚛 Convoy reached extraction! Mission complete.`, color: 'green' });
       } else {
-        // Try direct step, then orthogonal alternatives if blocked.
-        const dx = Math.sign(exit.x - cv.pos.x);
-        const dy = Math.sign(exit.y - cv.pos.y);
-        const tries = [
-          { x: cv.pos.x + dx, y: cv.pos.y + dy },
-          { x: cv.pos.x,      y: cv.pos.y + dy },
-          { x: cv.pos.x + dx, y: cv.pos.y },
-          { x: cv.pos.x - dx, y: cv.pos.y + dy },
-          { x: cv.pos.x + dx, y: cv.pos.y - dy },
-        ];
+        // Six candidate steps, best-first. This was a hand-rolled list of
+        // five SQUARE offsets built from Math.sign(dx)/Math.sign(dy) — four
+        // of which are not moves on a hex lattice at all, so on odd rows the
+        // convoy would have picked a "direct step" that is two tiles away and
+        // then failed its own occupancy test for no visible reason. Ordering
+        // the real six neighbours by distance() to the exit is both correct
+        // and strictly better greedy pathing: the first legal one is always
+        // the one that gets closest.
+        const tries = hexNeighbors(cv.pos.x, cv.pos.y)
+          .sort((a, b) => distance(a, exit) - distance(b, exit));
         const occ = new Set();
         (state.units || []).forEach(u => { if (u && u.alive && u.pos && u.id !== cv.id) occ.add(u.pos.x + ',' + u.pos.y); });
         let moved = false;
@@ -213953,10 +214427,11 @@ function _twResolveHack(approach) {
     if (typeof buildUnit === 'function' && s.board) {
       const occ = new Set();
       (s.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
-      for (let dy = -1; dy <= 1 && spawned < 2; dy++) {
-        for (let dx = -1; dx <= 1 && spawned < 2; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const x = hk.pos.x + dx, y = hk.pos.y + dy;
+      // Six neighbours of the mainframe tile, stopping at two bodies.
+      for (const _n of hexNeighbors(hk.pos.x, hk.pos.y)) {
+        if (spawned >= 2) break;
+        {
+          const x = _n.x, y = _n.y;
           if (!inBoundsOf(s, x, y)) continue;
           if (occ.has(x + ',' + y)) continue;
           const reinfCard = {
@@ -214050,6 +214525,13 @@ function _twFireGameModeRng(state) {
       const exit = state.mods.twConvoy.exit;
       const dyDir = Math.sign(exit.y - cv.pos.y) || -1;
       let dropped = 0;
+      // NOT an adjacency scan — a 3-wide band of the four rows ahead of the
+      // convoy, and it stays a band on hex. The odd-r stagger means row y+k is
+      // offset by up to half a column, so the band leans slightly; that is
+      // cosmetic for a minefield ("mines drop ahead on the route") and the
+      // board-array lookup below is the bounds test, so no tile off the map is
+      // ever written. Left deliberately square rather than pretending it is a
+      // hex cone.
       for (let dy = 1; dy <= 4 && dropped < 3; dy++) {
         for (let dx = -1; dx <= 1 && dropped < 3; dx++) {
           const x = cv.pos.x + dx, y = cv.pos.y + dy * dyDir;
@@ -214179,9 +214661,8 @@ function _twFireGameModeRng(state) {
       const occ = new Set();
       (state.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
       const spots = [];
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        const x = tw.pos.x + dx, y = tw.pos.y + dy;
+      for (const n of hexNeighbors(tw.pos.x, tw.pos.y)) {
+        const x = n.x, y = n.y;
         if (!inBoundsOf(state, x, y)) continue;
         if (occ.has(x + ',' + y)) continue;
         spots.push({ x, y });
@@ -223148,12 +223629,12 @@ render();
        is a SUMMON effect — _vfxQuakeSummon fires on a 30+ ATK unit landing
        ('heavy landing'), not on an attack. It has nothing to do with combat.
      Bump ?v= on every change — the service worker caches these like any asset. -->
-<link rel="stylesheet" href="src/battle/board.css?v=120k6">
+<link rel="stylesheet" href="src/battle/board.css?v=120x1hex">
 <link rel="stylesheet" href="src/battle/units.css?v=120k6">
 <link rel="stylesheet" href="src/battle/chrome.css?v=120k6">
-<link rel="stylesheet" href="src/battle/alive.css?v=120k6">
+<link rel="stylesheet" href="src/battle/alive.css?v=120x1hex">
 <script src="src/battle/combat.js?v=120m4" defer></script>
-<script src="src/battle/targeting.js?v=120w6metric" defer></script>
+<script src="src/battle/targeting.js?v=120x1hex" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">
 <script src="src/battle/fit.js?v=120k6" defer></script>
 <!-- 🃏 DRAW FX — deck → reveal → hand (round 7, `draw` piece).

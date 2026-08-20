@@ -480,7 +480,11 @@ async function bridgeEvents(sc) {
    3 · SCENARIOS. Plain objects, in game terms. Add one by adding a key.
    ══════════════════════════════════════════════════════════════════ */
 
-const COLS = 8, ROWS = 7;   /* BOARD_W / BOARD_H, index.html:71892 */
+/* BOARD_W / BOARD_H (index.html:71892), which HEXSPEC §7 pins at 14×12 for the
+   hex board — and §7 is explicit that the canvas MAP.cols/rows must be FED from
+   these, never re-typed board-side. That is what every payload below does. The
+   board's own BOARD_DEFAULT is only its fallback for a host that sends neither. */
+const COLS = 14, ROWS = 12;
 
 /* 🔴 TARGET-STATE FIXTURE. NOTHING BELOW THIS LINE IS ON THE WIRE TODAY.
 
@@ -528,17 +532,31 @@ const COLS = 8, ROWS = 7;   /* BOARD_W / BOARD_H, index.html:71892 */
    Placed irregularly on purpose — evenly spaced props on a lattice is a named
    fail condition in .gauntlet/BAR.md (R1). */
 const RUIN_TILES = [
-  { x:0, z:1, prop:'bones' },
-  { x:6, z:1, prop:'barricade' },
-  { x:7, z:2, prop:'pylon', elev:0.18 },
-  { x:1, z:2, prop:'crater', type:'hazard' },
-  { x:5, z:3, prop:'crater', type:'hazard' },
-  { x:2, z:4, prop:'barricade' },
-  { x:0, z:5, prop:'pylon', elev:0.18 },
-  { x:7, z:5, prop:'bones' },
-  { x:6, z:6, prop:'bones' },
-  { x:3, z:2, type:'objective' },
-  { x:4, z:4, type:'objective' }
+  { x:1,  z:1,  prop:'bones' },
+  { x:10, z:1,  prop:'barricade' },
+  { x:12, z:3,  prop:'pylon', elev:0.18 },
+  { x:3,  z:3,  prop:'crater', type:'hazard' },
+  { x:8,  z:4,  prop:'crater', type:'hazard' },
+  { x:0,  z:6,  prop:'barricade' },
+  { x:2,  z:5,  prop:'barricade' },
+  { x:11, z:6,  prop:'crater', type:'hazard' },
+  { x:5,  z:7,  prop:'barricade' },
+  { x:1,  z:8,  prop:'pylon', elev:0.18 },
+  { x:13, z:8,  prop:'bones' },
+  { x:9,  z:10, prop:'bones' },
+  { x:4,  z:10, prop:'bones' },
+  { x:6,  z:2,  type:'objective' },
+  { x:7,  z:8,  type:'objective' },
+  /* A RAISED SHELF, four tiles of it. The only elevation in the fixture used to
+     be the two 0.18 pylon pads, which are one tile each — too small to show
+     whether the cliff faces are drawn on the right EDGES. A hexagon has six,
+     and which of them are visible is now decided by projected outward normal
+     rather than by a fixed index triple, so the fixture needs a slab with
+     edges facing several ways at once for that to be checkable at all. */
+  { x:6,  z:8,  elev:0.24 },
+  { x:7,  z:9,  elev:0.24 },
+  { x:6,  z:9,  elev:0.24 },
+  { x:5,  z:9,  elev:0.24 }
 ];
 
 /* 🗿 EVENT ART. `_bbEvents()` (index.html:103625) hands the board a per-tile
@@ -559,8 +577,8 @@ const RUIN_ART = {
    (index.html:103208) for the shipped default, field for field:
      id      m.id   ‖ 'editor'      → `_b3dActiveMap()` has no id  → 'editor'
      name    m.name ‖ 'Battlemap'   → no name                      → 'Battlemap'
-     cols    m.cols ‖ BOARD_W       → 8      (index.html:71892)
-     rows    m.rows ‖ BOARD_H       → 7
+     cols    m.cols ‖ BOARD_W       → 14     (index.html:71892, HEXSPEC §7)
+     rows    m.rows ‖ BOARD_H       → 12
      ground  the same literal pair, hardcoded at :103237
      tiles   [] — terrain is null and models is empty, so both loops in the
              converter run zero times (see the RUIN_TILES note above)
@@ -608,14 +626,30 @@ function unit(cardId, owner, x, y) {
            owner: owner, alive: true, pos: { x: x, y: y } };
 }
 
-/* Chebyshev disc, the game's metric (`distance`, index.html:74070), minus
-   anything a unit could not stand on. This is a FIXTURE convenience, not a
-   port of getValidMoves — the board has no pathfinding and neither does this. */
+/* HEXSPEC §6 — cube distance over odd-r offset coordinates. This used to be a
+   Chebyshev disc, and on a hex lattice that is the wrong SHAPE, not just the
+   wrong count: a range-2 reach covers 3N²+3N+1 = 19 tiles, not (2N+1)² = 25,
+   and the corners it drops are the diagonals a hex grid does not have. Painting
+   the square shape onto a hex board would put a telegraph on screen that the
+   rules will never agree with — the "UI lies about the rules" failure the game
+   already carries a scar comment about. */
+function offsetToCube(x, y) {
+  const cx = x - (y - (y & 1)) / 2;      /* & not %: -1 % 2 is -1 in JS */
+  return { x: cx, y: -cx - y, z: y };
+}
+function hexDistance(ax, ay, bx, by) {
+  const a = offsetToCube(ax, ay), b = offsetToCube(bx, by);
+  return (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z)) / 2;
+}
+
+/* Hex disc, the game's metric (`distance`, index.html:74070), minus anything a
+   unit could not stand on. This is a FIXTURE convenience, not a port of
+   getValidMoves — the board has no pathfinding and neither does this. */
 function disc(units, blocked, cx, cy, r) {
   const taken = new Set((units || []).map(u => u.pos.x + ',' + u.pos.y));
   const out = [];
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
-    if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) > r) continue;
+    if (hexDistance(x, y, cx, cy) > r) continue;
     if (x === cx && y === cy) continue;
     if (taken.has(x + ',' + y)) continue;
     if (blocked && blocked.has(x + ',' + y)) continue;
@@ -632,7 +666,7 @@ const SCENES = {};
 /* — 0 · GAMEMAP. ⭐ THE ONLY AS-SHIPPED SCENE, AND THE CONTROL CAPTURE. ⭐
 
      The map is the literal output of `_bbMapFromEditor()` for the shipped
-     default (`shippedMap` above): 8×7, the hardcoded ground pair, and an EMPTY
+     default (`shippedMap` above): 14×12, the hardcoded ground pair, and an EMPTY
      tiles array — no props, no hazards, no objective tiles, no elevation. That
      is the terrain a player gets today, and it is the honest A/B partner for
      .gauntlet/baseline-stage.png.
@@ -647,20 +681,23 @@ const SCENES = {};
      diffed: the ONLY differences in the pixels are the terrain the game cannot
      send and the unit heights it does not vary. */
 SCENES.gamemap = (function () {
+  /* Deployment re-laid for the 14×12 board: the same thirteen units, still one
+     side per end of the field, spread so neither force sits in a corner of a
+     board almost three times the old area. */
   const units = [
-    unit('zombie',       'ai',     1, 0),
-    unit('scum-grunt',   'ai',     3, 0),
-    unit('scum-boss',    'ai',     4, 1),
-    unit('zombie',       'ai',     5, 1),
-    unit('giant-spider', 'ai',     2, 2),
-    unit('mutant-dog',   'ai',     6, 2),
-    unit('scp-guard',    'ai',     0, 2),
-    unit('dual-blader',  'player', 2, 5),
-    unit('field-medic',  'player', 4, 5),
-    unit('guard-dog',    'player', 6, 5),
-    unit('warrior-hero', 'player', 3, 6),
-    unit('rifleman',     'player', 5, 6),
-    unit('survivor-lead','player', 1, 6)
+    unit('zombie',       'ai',      2, 0),
+    unit('scum-grunt',   'ai',      5, 0),
+    unit('scum-boss',    'ai',      7, 1),
+    unit('zombie',       'ai',      9, 1),
+    unit('giant-spider', 'ai',      4, 2),
+    unit('mutant-dog',   'ai',     11, 2),
+    unit('scp-guard',    'ai',      1, 3),
+    unit('dual-blader',  'player',  4, 9),
+    unit('field-medic',  'player',  7, 9),
+    unit('guard-dog',    'player', 10, 9),
+    unit('survivor-lead','player',  2, 10),
+    unit('warrior-hero', 'player',  5, 11),
+    unit('rifleman',     'player',  9, 11)
   ];
   return {
     shipped: true,
@@ -669,11 +706,11 @@ SCENES.gamemap = (function () {
     map: shippedMap('day', 'battlefield'),
     units: units,
     tombstones: [
-      { x:4, y:3, owner:'ai',     lootable:true,  looted:false, glowing:false },
-      { x:1, y:4, owner:'player', lootable:true,  looted:true,  glowing:false },
-      { x:6, y:4, owner:'ai',     lootable:false, looted:false, glowing:true  }
+      { x:7,  y:5, owner:'ai',     lootable:true,  looted:false, glowing:false },
+      { x:2,  y:6, owner:'player', lootable:true,  looted:true,  glowing:false },
+      { x:11, y:6, owner:'ai',     lootable:false, looted:false, glowing:true  }
     ],
-    surfaces: { '2,3':'oil', '5,3':'fire', '3,4':'water' },
+    surfaces: { '4,5':'oil', '9,5':'fire', '6,6':'water' },
     paint: null
   };
 })();
@@ -698,20 +735,23 @@ SCENES.empty = {
      different states (plain / glowing / already looted) and three painted
      surfaces. This is the "mid-match" capture. */
 SCENES.skirmish = (function () {
+  /* Deployment re-laid for the 14×12 board: the same thirteen units, still one
+     side per end of the field, spread so neither force sits in a corner of a
+     board almost three times the old area. */
   const units = [
-    unit('zombie',       'ai',     1, 0),
-    unit('scum-grunt',   'ai',     3, 0),
-    unit('scum-boss',    'ai',     4, 1),
-    unit('zombie',       'ai',     5, 1),
-    unit('giant-spider', 'ai',     2, 2),
-    unit('mutant-dog',   'ai',     6, 2),
-    unit('scp-guard',    'ai',     0, 2),
-    unit('dual-blader',  'player', 2, 5),
-    unit('field-medic',  'player', 4, 5),
-    unit('guard-dog',    'player', 6, 5),
-    unit('warrior-hero', 'player', 3, 6),
-    unit('rifleman',     'player', 5, 6),
-    unit('survivor-lead','player', 1, 6)
+    unit('zombie',       'ai',      2, 0),
+    unit('scum-grunt',   'ai',      5, 0),
+    unit('scum-boss',    'ai',      7, 1),
+    unit('zombie',       'ai',      9, 1),
+    unit('giant-spider', 'ai',      4, 2),
+    unit('mutant-dog',   'ai',     11, 2),
+    unit('scp-guard',    'ai',      1, 3),
+    unit('dual-blader',  'player',  4, 9),
+    unit('field-medic',  'player',  7, 9),
+    unit('guard-dog',    'player', 10, 9),
+    unit('survivor-lead','player',  2, 10),
+    unit('warrior-hero', 'player',  5, 11),
+    unit('rifleman',     'player',  9, 11)
   ];
   return {
     shipped: false,
@@ -720,13 +760,13 @@ SCENES.skirmish = (function () {
     map: ruinsMap('day', 'battlefield'),
     units: units,
     tombstones: [
-      { x:4, y:3, owner:'ai',     lootable:true,  looted:false, glowing:false },
-      { x:1, y:4, owner:'player', lootable:true,  looted:true,  glowing:false },
-      { x:6, y:4, owner:'ai',     lootable:false, looted:false, glowing:true  }
+      { x:7,  y:5, owner:'ai',     lootable:true,  looted:false, glowing:false },
+      { x:2,  y:6, owner:'player', lootable:true,  looted:true,  glowing:false },
+      { x:11, y:6, owner:'ai',     lootable:false, looted:false, glowing:true  }
     ],
     /* keys are GAME "x,y"; values are game surface TYPE ids, mapped through
        _BB_SURFACE_FX by the bridge exactly as the game does */
-    surfaces: { '2,3':'oil', '5,3':'fire', '3,4':'water' },
+    surfaces: { '4,5':'oil', '9,5':'fire', '6,6':'water' },
     paint: null
   };
 })();
@@ -735,29 +775,29 @@ SCENES.skirmish = (function () {
      The capture for anything about telegraphing (BAR R2/R3). */
 SCENES.moverange = (function () {
   const units = [
-    unit('zombie',       'ai',     3, 2),
-    unit('scum-grunt',   'ai',     5, 3),
-    unit('scum-boss',    'ai',     6, 1),
-    unit('dual-blader',  'player', 3, 4),
-    unit('warrior-hero', 'player', 4, 6),
-    unit('rifleman',     'player', 2, 6)
+    unit('zombie',       'ai',     5, 4),
+    unit('scum-grunt',   'ai',     6, 5),
+    unit('scum-boss',    'ai',     8, 3),
+    unit('dual-blader',  'player', 5, 6),
+    unit('warrior-hero', 'player', 6, 10),
+    unit('rifleman',     'player', 3, 10)
   ];
   const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
                                     .map(t => t.x + ',' + t.z));
-  const sel = { x:3, y:4 };
+  const sel = { x:5, y:6 };
   const move = disc(units, blocked, sel.x, sel.y, 2);
   /* attacks are enemy-occupied tiles in reach — the same thing `validAttacks`
      holds when the game fills App._bbPaint (index.html:141689) */
   const attack = units.filter(u => u.owner === 'ai' &&
-      Math.max(Math.abs(u.pos.x - sel.x), Math.abs(u.pos.y - sel.y)) <= 2)
+      hexDistance(u.pos.x, u.pos.y, sel.x, sel.y) <= 2)
     .map(u => ({ x: u.pos.x, y: u.pos.y }));
   return {
     shipped: false,
-    desc: 'Dual Blader selected at (3,4): blue move set, red attack set, gold ring on the unit. Paint is real; terrain is target-state.',
+    desc: 'Dual Blader selected at (5,6): blue HEX move set (19 tiles at range 2, not 25), red attack set, gold ring on the unit. Paint is real; terrain is target-state.',
     timeOfDay: 'day', location: 'battlefield',
     map: ruinsMap('day', 'battlefield'),
     units: units,
-    tombstones: [ { x:6, y:4, owner:'ai', lootable:true, looted:false, glowing:false } ],
+    tombstones: [ { x:10, y:5, owner:'ai', lootable:true, looted:false, glowing:false } ],
     surfaces: {},
     paint: { move: move, attack: attack, place: [], swap: [], sel: sel }
   };
@@ -788,20 +828,54 @@ SCENES.ruins = {
   desc: 'Ruin art on event tiles: car, house, building, facility, truck. Doubly target-state — the battle stage is never sent events at all.',
   timeOfDay: 'dusk', location: 'battlefield',
   map: ruinsMap('dusk', 'battlefield', [
-    { x:7, z:2, prop:'pylon', elev:0.18 },
-    { x:0, z:5, prop:'pylon', elev:0.18 },
-    { x:0, z:1, prop:'bones' },
-    { x:6, z:6, prop:'bones' }
+    { x:12, z:3, prop:'pylon', elev:0.18 },
+    { x:1,  z:8, prop:'pylon', elev:0.18 },
+    { x:1,  z:1, prop:'bones' },
+    { x:11, z:9, prop:'bones' }
   ]),
-  units: [ unit('warrior-hero', 'player', 3, 6), unit('zombie', 'ai', 4, 1) ],
+  units: [ unit('warrior-hero', 'player', 6, 10), unit('zombie', 'ai', 7, 2) ],
   tombstones: [], surfaces: {}, paint: null,
+  /* spread across the 14x12 board rather than the top-left corner of it — five
+     ruins bunched in one quadrant told you nothing about how the art reads at
+     the far edge, where the projection is smallest. */
   events: [
-    { x:1, y:1, type:'structure', name:'Wrecked Car',      art:RUIN_ART.car,      scale:0.9 },
-    { x:3, y:2, type:'structure', name:'Burnt House',      art:RUIN_ART.house },
-    { x:5, y:2, type:'structure', name:'Ruined Building',  art:RUIN_ART.building },
-    { x:2, y:4, type:'structure', name:'Abandoned Facility',art:RUIN_ART.facility },
-    { x:6, y:4, type:'structure', name:'Abandoned Truck',  art:RUIN_ART.truck,    scale:0.9 }
+    { x:2,  y:2, type:'structure', name:'Wrecked Car',       art:RUIN_ART.car,      scale:0.9 },
+    { x:6,  y:1, type:'structure', name:'Burnt House',       art:RUIN_ART.house },
+    { x:10, y:3, type:'structure', name:'Ruined Building',   art:RUIN_ART.building },
+    { x:3,  y:6, type:'structure', name:'Abandoned Facility',art:RUIN_ART.facility },
+    { x:9,  y:7, type:'structure', name:'Abandoned Truck',   art:RUIN_ART.truck,    scale:0.9 }
   ]
+};
+
+/* — 6 · SURFACES. Every painter in SURFACE_2D at once, one per tile.
+     ⚠ TARGET-STATE for the terrain, but the surface half is real protocol: the
+     keys below are the GAME's surface type ids and go through _BB_SURFACE_FX
+     exactly as `_bbStagePushSurfaces` sends them.
+     This scene exists because the surface FX are the one system the hex
+     conversion could break INVISIBLY. Each painter is clipped to its own tile
+     polygon, and that polygon used to be built by offsetting the GRID
+     coordinates by ±0.5 — half a COLUMN, which on a staggered lattice is not a
+     tile corner at all and on odd rows is not even over the tile. It now comes
+     from the same hexCorners() the tile itself is drawn from. Sixteen painters
+     is too many to eyeball one at a time from a scene that shows three, so
+     they all go on the board together and the failure — paint bleeding past a
+     hex edge, or sitting half a tile to the side on odd rows only — is a single
+     look. Deliberately alternating odd and even rows for that reason. */
+SCENES.surfaces = {
+  shipped: false,
+  desc: 'All 16 surface painters, one per tile, alternating odd/even rows — the clip-polygon check for the hex conversion.',
+  timeOfDay: 'day', location: 'battlefield',
+  map: ruinsMap('day', 'battlefield', []),
+  units: [], tombstones: [], paint: null,
+  surfaces: {
+    '2,3':'oil',        '4,3':'grease',   '6,3':'water',     '8,3':'fire',
+    '3,4':'toxin',      '5,4':'web',      '7,4':'caltrops',  '9,4':'ice',
+    '2,5':'blood',      '4,5':'steam',    '6,5':'rift',      '8,5':'acid',
+    '3,6':'poison',     '5,6':'electrified', '7,6':'holy',   '9,6':'cracked',
+    /* the same four again on the opposite parity, hard against the right edge:
+       an odd-row-only half-column drift shows up here and nowhere else */
+    '11,3':'fire',      '12,4':'water',   '11,5':'oil',      '12,6':'ice'
+  }
 };
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1164,6 +1238,18 @@ window.__harness = {
   shipped: !!SCENE.shipped, kind: KIND, hostMode: HOSTMODE,
   post: post, push: pushScene, frame: frame,
   errors: errors,
+  /* HEXSPEC §4's round-trip assertion, run inside the stage. gw() and
+     worldToTile() are hand-derived analytic inverses with nothing else tying
+     them together, so this is the only thing that can catch a parity slip —
+     and a parity slip is invisible in a screenshot. Same-origin iframe, so we
+     call straight into it rather than inventing a protocol message for a test
+     hook the game must never fire. */
+  hexCheck: (opts) => {
+    const w = frame.contentWindow;
+    if (!w || typeof w.__bbHexCheck !== 'function')
+      return { ok:false, error:'board has no __bbHexCheck (not loaded yet?)' };
+    return w.__bbHexCheck(opts);
+  },
   /* `camSent` is the only externally checkable proof that forwarded keys
      actually left the parent — the board has no receiver, so nothing on the
      board side can show it. */

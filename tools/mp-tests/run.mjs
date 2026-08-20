@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs', 'overlays.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs', 'overlays.mjs', 'heroart.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping
@@ -107,6 +107,23 @@ const MUTATIONS = [
     name: 'the moveset merge goes back to picking by length',
     find: '    if (la || ra) takeLocal = la > ra;                       // 1 + 2',
     replace: '    if (false) takeLocal = false;',
+  },
+  {
+    /* Put the gate back to drawing the hero's emoji glyph. Six forged custom
+       heroes all carry 🦄, so the picker showed six identical unicorns. */
+    name: 'the warpath gate goes back to emoji glyphs',
+    find: "_heroArtSrc === 'function') ? _heroArtSrc(h) : ''",
+    replace: "_heroArtSrc === 'function') ? '' : ''",
+  },
+  {
+    /* Eat one backslash out of the extension test — /\.(png…)/ becomes
+       /.(png…)/, which still PARSES and still matches real images, so every
+       existing check stays green while non-images start resolving as art.
+       This is the mutation that matters: the syntax-error version of the same
+       slip was caught instantly, and this one would not have been. */
+    name: 'the image-extension regex loses its escape',
+    find: '/\\.(png|jpe?g|webp|gif|avif|svg)(\\?|#|$)/i.test(a)',
+    replace: '/.(png|jpe?g|webp|gif|avif|svg)(\\?|#|$)/i.test(a)',
   },
   {
     /* Put the paint order back the way it shipped: the JB iframe above the

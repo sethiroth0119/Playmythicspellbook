@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping

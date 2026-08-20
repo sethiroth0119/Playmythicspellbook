@@ -213723,7 +213723,32 @@ window.MythicCityTradeBridge = {
   now: () => Date.now(),
   myUserId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
   resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES : []; } catch (e) { return []; } },
-  meta: (id) => { try { return _meta(id); } catch (e) { return { id: id, name: id, icon: '📦' }; } },
+  /* 🔗 The 258-entry resource chain — what a CITY actually produces, and what
+     takeForExport() draws from. index.html's RESOURCES (70) is the camp
+     catalogue and is the wrong list on its own for a city trade; the dialog
+     offers both because the three stores speak both id spaces. Read off
+     window because /src/resources registers a REAL window property, unlike the
+     top-level `const`s around it. */
+  chainResources: () => {
+    try {
+      const C = (typeof window !== 'undefined') ? window.MythicResourceChain : null;
+      const list = C && C.ALL;      // the module publishes ALL + byId; see its footer
+      return Array.isArray(list) ? list : [];
+    } catch (e) { return []; }
+  },
+  /* _meta() only knows camp resources, so a chain id would come back as its own
+     raw string. Fall through to the chain catalogue before giving up — the
+     preview prints this name, and "constructionComponents" instead of
+     "Construction Components" reads as a bug. */
+  meta: (id) => {
+    try { const m = _meta(id); if (m && m.name && m.name !== id) return m; } catch (e) {}
+    try {
+      const C = (typeof window !== 'undefined') ? window.MythicResourceChain : null;
+      const r = C && typeof C.byId === 'function' ? C.byId(id) : null;
+      if (r) return r;
+    } catch (e) {}
+    try { return _meta(id); } catch (e) { return { id: id, name: id, icon: '📦' }; }
+  },
   toast: (m, ms) => { try { showToast(m, ms || 4200); } catch (e) {} },
 
   /* What this player can put on a truck, per store. */

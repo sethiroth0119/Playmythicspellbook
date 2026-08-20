@@ -41,10 +41,30 @@ cmp('crate_kg',            one(SQL, /'crate_kg', (\d+)/, 'sql crate'),
                            one(WH,  /crate_kg: (\d+)/,   'mock crate'));
 cmp('max_shipment_kg',     one(SQL, /'max_shipment_kg', (\d+)/, 'sql maxship'),
                            one(WH,  /max_shipment_kg: (\d+)/,   'mock maxship'));
+// ⚠ max_units IS A PRICE. It is the number of bays a tier may hold, so a drift
+// here does not misquote a cost — it hands the player a tier that cannot fit
+// what they paid for, or one that can fit more than the yard will draw. It sat
+// INSIDE the anchor of both tier regexes below, matched as \d+ and thrown away,
+// which is the most dangerous place for a value to be: present enough that the
+// regex keeps working, never once compared. Verified before this line existed:
+// changing tier 5 from 32 to 12 in MOCK reported "identical", exit 0.
+cmpL('tier max_units ladder', many(SQL, /'tier',\s+\d+,\s+'max_units',\s+(\d+)/g, 'sql tier max_units ladder'),
+                           many(WH,  /tier:\s+\d+,\s+max_units:\s+(\d+)/g, 'mock tier max_units ladder'));
 cmpL('tier cinder ladder', many(SQL, /'tier',\s+\d+,\s+'max_units',\s+\d+,\s+'aza',\s+\d+,\s+'cinder',\s+(\d+)/g, 'sql tier cinder ladder'),
                            many(WH,  /tier:\s+\d+,\s+max_units:\s+\d+,\s+aza:\s+\d+,\s+cinder:\s+(\d+)/g, 'mock tier cinder ladder'));
 cmpL('tier aza ladder', many(SQL, /'tier',\s+\d+,\s+'max_units',\s+\d+,\s+'aza',\s+(\d+)/g, 'sql tier aza ladder'),
                            many(WH,  /tier:\s+\d+,\s+max_units:\s+\d+,\s+aza:\s+(\d+)/g, 'mock tier aza ladder'));
+// ⚠ AND carry_kg IS THE LIMIT THE HEADER OF THIS FILE IS ABOUT. The bug it
+// cites — "crate_kg drifted to 50 against a 25 kg bare-hands limit and every
+// crate became unliftable" — has two numbers in it, and only crate_kg was
+// guarded. carry_kg sat inside the anchor of both lifter regexes, matched as
+// \d+ and discarded, exactly like max_units above. Verified before this line
+// existed: changing tier-0 Bare Hands from 25 to 10 in MOCK reported
+// "identical", exit 0 — the offline yard would refuse a 25 kg crate that the
+// server lifts, which is the same unplayable state, arrived at from the other
+// side.
+cmpL('lifter carry_kg ladder', many(SQL, /'tier',\s+\d+,\s+'carry_kg',\s+(\d+)/g, 'sql lifter carry_kg ladder'),
+                           many(WH,  /tier:\s+\d+,\s+carry_kg:\s+(\d+)/g, 'mock lifter carry_kg ladder'));
 // NB \s+ everywhere, not a literal single space: the SQL pads these columns for
 // alignment, and a regex demanding one space silently matched only the wide rows
 // — which looks exactly like a drift failure when nothing has drifted.

@@ -212,6 +212,14 @@ async function _whOpenDirectory(kind, nodeId, label) {
 // ⚠ EVERY reason code the server can return needs a line here. Anything missing
 // falls through and shows the player a raw identifier — "❌ too_large" was
 // reaching people, and too_large is very reachable.
+//
+// ⚠ THE TABLE GOES STALE EVERY TIME THE SERVER GAINS A CODE, and it did:
+// already_seeded and seeding_closed shipped without a line here. There are 34;
+// count them, do not trust this comment:
+//   grep -o "'reason', '[a-z_]*'" supabase/migrations/*_warehouse_storage.sql \
+//     | sed "s/.*'reason', '//;s/'//" | sort -u | wc -l
+// The same list must also be in reasonText() in public/warehouse/index.html —
+// that is the map the yard iframe actually fires, and it is a separate copy.
 function _whReason(r) {
   const cur = (r && r.currency === 'aza') ? 'Aza' : 'Cinder';
   const m = {
@@ -222,6 +230,9 @@ function _whReason(r) {
     insufficient_resources: 'The storage network does not have those goods on your account. '
                    + 'Resources earned outside the warehouse are not on its ledger yet — '
                    + 'send what it lists, or withdraw and re-send to resync.',
+    already_seeded:'Your storage ledger has already been set up — it is only ever filled once.',
+    seeding_closed:'Storage ledger setup is closed'
+                   + (r && r.cutoff_at ? ' (it ended ' + String(r.cutoff_at).slice(0, 10) + ').' : '.'),
     no_free_unit:  'That warehouse has no free bay left.',
     own_warehouse: 'That is your own warehouse — you cannot rent from yourself.',
     closed:        'That warehouse is not taking renters.',

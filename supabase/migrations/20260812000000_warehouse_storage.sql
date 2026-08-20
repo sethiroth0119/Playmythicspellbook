@@ -1162,9 +1162,14 @@ grant execute on function public.wh_rent_unit(uuid, integer, text) to authentica
 -- rows → "Send to your storage".
 create or replace function public.wh_my_rentals()
 returns jsonb language sql stable security definer set search_path = public as $$
+  -- ⚠ NO owner_id — the third and last path that leaked it. wh_warehouse_json()
+  -- gates the owner's auth UUID behind v_is_owner and wh_directory() had the key
+  -- removed for the same reason; this one handed it to every renter of every bay
+  -- and nothing consumed it. Shipping takes the unit_id, the row already carries
+  -- owner_name for display, and node_id is what routes the delivery.
   select coalesce((select jsonb_agg(jsonb_build_object(
     'unit_id', u.id, 'bay_no', u.bay_no, 'warehouse_id', w.id,
-    'owner_name', w.owner_name, 'owner_id', w.owner_id, 'node_id', w.node_id,
+    'owner_name', w.owner_name, 'node_id', w.node_id,
     'capacity_kg', u.capacity_kg, 'used_kg', u.used_kg, 'contents', u.contents,
     'rent_until', u.rent_until
   ) order by w.owner_name, u.bay_no)

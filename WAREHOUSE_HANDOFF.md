@@ -62,11 +62,24 @@ select public.wh_eta_hours(0), public.wh_eta_hours(10); -- 72, 6
 
 ## 3 · Client — four insertions in `public/index.html`
 
-Each anchor below is **unique** in the file. ⚠ One caveat: the 3-line city
-anchor in §3.4 returns 0 from a naive `grep -c` because its third line is what
-the insertion displaces — check the first two lines of that one, or search for
-`x.onclick = _closeNodeCity;` alone. The other six match exactly once. Search for the
-anchor, then insert exactly where stated.
+⚠ **TWO of the seven anchors below return 0 from a literal search of a branch
+that already has the insertion, and for the same reason: the last line of the
+anchor is what the insertion displaces.** Counted, on this branch:
+
+| anchor | literal matches | search for instead |
+|---|---|---|
+| §3.1 `// Run a real economy action posted by the app.` | 1 | — |
+| §3.2 `bankRow: { label: 'Bank Row', …` | 1 | — |
+| §3.3A Objectives block ending `…</span> / </div> / </div> / </aside>` | **0** | its first two lines, up to the first `</div>` |
+| §3.3B `const _crBtn = …'btn-camp-resistance-ring'…` | 1 | — |
+| §3.4 city `x.onclick = _closeNodeCity; / document.body.appendChild(x); / }` | **0** | `x.onclick = _closeNodeCity;` alone |
+| §3.4 house `${residencyPanel ? …}` | 1 | — |
+| §3.4 house `root.querySelectorAll('.re-tab')…` | 1 | — |
+
+This document previously flagged only the city one and said "the other six match
+exactly once", which was wrong about §3.3A in exactly the way it was right about
+§3.4 — the same displacement, unflagged. Search for the anchor, then insert
+exactly where stated.
 
 ### 3.1 The module
 
@@ -118,7 +131,9 @@ grep -n "^\(function\|const\|async function\) _wh\|^const WH_" WAREHOUSE_PASTE_i
 
 ### 3.3 The CAMP screen panel + its binding
 
-**Anchor A** (end of the Objectives panel inside `renderCamp()`'s `root.innerHTML`):
+**Anchor A** (end of the Objectives panel inside `renderCamp()`'s `root.innerHTML`)
+— ⚠ this is one of the two that will not match literally once inserted; search
+for its first two lines only:
 ```html
         <br><span class="ink-dim">Only units you own are listed. You must always keep at least <strong>${CAMP_MIN_COLLECTION}</strong> cards available — you have <strong>${_totalOwnedCards()}</strong> owned · <strong>${Camp.slots.length}</strong> parked.</span>
       </div>
@@ -325,9 +340,27 @@ memoryShards 0.2 · dna 0.1. Ids match `RESOURCES[]`; unknown ids are stripped.
 ⚠ **There are TWO reason maps and both must be kept complete.** `_whReason` in
 `public/index.html` covers the host-side modals; `reasonText` in
 `public/warehouse/index.html` covers everything you do standing in the yard, and
-it is the one players hit most. Both now cover all 31 server codes, and **neither
-falls back to `r.reason`** — an unmapped code is a bug in the table, not
-something to show a player. Add a line to *both* whenever you add an RPC.
+it is the one players hit most. **Neither falls back to `r.reason`** — an
+unmapped code is a bug in the table, not something to show a player. Add a line
+to *both* whenever you add an RPC.
+
+The server currently returns **34** codes. Do not trust that number either —
+count it, and diff it against both maps, before claiming coverage:
+
+```sh
+grep -o "'reason', '[a-z_]*'" supabase/migrations/*_warehouse_storage.sql \
+  | sed "s/.*'reason', '//;s/'//" | sort -u
+```
+
+Each map also carries three client-only codes the server never sends —
+`blocked`, `rpc_failed`, `timeout` — so a complete map has 37 keys, not 34.
+
+⚠ This document previously said "all 31 server codes", and that claim decayed
+the moment three more shipped. `already_seeded` and `seeding_closed` were
+missing from both maps; `insufficient_resources` was missing from the yard's,
+where it is **the likeliest refusal in the feature** — it is what the resource
+ledger returns when it declines a shipment, and it rendered as "Something went
+wrong."
 
 ---
 
@@ -384,8 +417,14 @@ something to show a player. Add a line to *both* whenever you add an RPC.
       Counting bays in the HUD is not enough — a build where the bays exist but
       cannot be reached satisfies a count and fails the player.
 - [ ] A truck **pulls up** when a load lands, and pulls away once it is empty.
-- [ ] The 🏗 terminal offers **➕ Open another storage bay** (10 Aza / 50,000
-      Cinder) whenever bays < cap — and buying one really adds a numbered bay.
+- [ ] The 🏗 terminal offers **➕ Open another storage bay** (10 Aza /
+      **5,000,000** Cinder) whenever bays < cap — and buying one really adds a
+      numbered bay. *(This line read 50,000 — the pre-repricing figure, 100×
+      low, and the fifth surviving copy of it in this document. The number of
+      record is `unit_price_cinder` in the migration; §5's table and §6's RPC
+      table already carried the right one, which is how a stale copy survives:
+      nothing compares them. `_wh_price_check.mjs` compares the CODE, not this
+      file.)*
 - [ ] **Upgrading the building builds 2 bays immediately** and raises the cap;
       the toast names how many were built. It must never move only the number.
 - [ ] At the tier cap the ➕ control disappears and the modal offers the upgrade.
@@ -408,6 +447,8 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
 | `_harness.js` | A parse error or top-level TDZ anywhere in the game. |
 | `_synckcheck.mjs` | An inline `<script>` block that will not minify. |
 | `_wh_paste_check.mjs` | `WAREHOUSE_PASTE_index-module.js` drifting behind the live module. It has silently drifted **twice**; both times the stale file still parsed and looked fine, and following the handoff would have pasted back a version where resources could never be withdrawn. |
+| `_wh_price_check.mjs` | `MOCK.CFG` in the offline yard drifting away from `wh_config()`. Compares **21** key groups. Two of them are new because they were sitting *inside* the anchors of other regexes, matched as `\d+` and thrown away: tier `max_units` (changing tier 5 from 32 to 12 in MOCK used to exit 0) and lifter `carry_kg` (changing Bare Hands from 25 to 10 used to exit 0 — and `carry_kg` is the *other half* of the bug this gate's own header cites). All six defect injections re-verified. |
+| `_wh_stencil_check.mjs` | Floor bay-number stencils that are upside down, mirrored, rotated, missing — **or the wrong number**. Sweeps **every bay at both tiers** (4 + 32 = 36 numerals), each isolated causally by repainting the floor with `App.noStencils = <bay>` and diffing. It used to sample bay 2 and bay 31 and nothing else: painting bay 7 as "8" with all 31 other numerals correct scored 13 PASS / 0 FAIL, exit 0. |
 | `_wh_reach_check.mjs` | A warehouse bay you cannot walk to. Floods the yard on a 0.2 m grid from the truck door using the page's **own** `blocked()` predicate at 2/4/8/14/22/32 bays. The bay layout is derived from the unit count, so a spacing or row-wrap change can wall one off — and nothing shows it until a player has paid up to 150,000,000 Cinder (or 300 Aza) for Tier 5 and finds Bay 27 behind a collider. **Re-run it if you touch `BW`, `BD`, the row pitch, the shed dimensions or the collider list.** Exits non-zero on any unreachable bay, so it belongs in CI. |
 
 **Regression**
@@ -458,34 +499,76 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
      guarantee about a balance the player can also edit.
 3. **Bay contents are visible to the warehouse owner by design** — they have to
    see a load to unload it. Everyone else sees `renter_id`, `renter_name`,
-   `used_kg`, `capacity_kg` and `rent_until` as `null`, and the warehouse
-   owner's `auth` id is never exported. The client renders those bays as
-   *private*; if you add UI that reads those fields, handle `null`.
-   *(`wh_directory()` used to contradict this: it handed every signed-in caller
-   the `owner_id` of every open warehouse in the game, while
-   `wh_warehouse_json()` was carefully withholding the same UUID. The key is
-   gone from the directory row — nothing consumed it, renting takes the
-   warehouse id, and the row still carries `owner_name` for display.)*
+   `used_kg`, `capacity_kg` and `rent_until` as `null`. The client renders those
+   bays as *private*; if you add UI that reads those fields, handle `null`.
+
+   **The warehouse owner's `auth` id is exported by exactly one function, to
+   exactly one caller: `wh_warehouse_json()`, gated behind `v_is_owner`.** That
+   sentence used to read "is never exported" and was false when written — the
+   same UUID was leaving by two other doors:
+   - `wh_directory()` handed every signed-in caller the `owner_id` of every open
+     warehouse in the game;
+   - `wh_my_rentals()` handed every renter the `owner_id` of the warehouse they
+     rent in — verified live, a renter's `my_rentals` row carried the UUID while
+     `warehouse_json` returned `null` for the same field.
+
+   Both keys are gone. Nothing consumed either one: renting takes the warehouse
+   id, shipping takes the unit id, routing takes `node_id`, and both rows still
+   carry `owner_name` for display. **If you add a key to any of these three
+   builders, check it against this list** — the rule is enforced per-function,
+   so it can be broken one function at a time, and it was, twice.
 4. **Performance is unmeasured on real hardware.** An independent probe measured
    frame rate scaling exactly with pixel count at constant draw calls — i.e. the
    2–4 fps seen headless is purely SwiftShader fill rate, not scene complexity.
    It is very likely fine on any GPU, but nobody has measured a real one.
-   Measured from a standing view at the dock, before and after the yard's
-   backdrop work (sky dome, apron, perimeter wall, railed fence, distant crate
-   stacks) and the truck's geometry cache:
+   ⚠ **A DRAW-CALL COUNT WITHOUT A CAMERA IS NOT A MEASUREMENT.** The version of
+   this table before this one quoted draw calls and drawn triangles that nobody
+   could reproduce — an independent probe at "the same" camera got 40/44 at tier
+   1 and 178/188 at tier 5 against the 37/40 and 175/184 printed here. Both were
+   honestly taken; neither said *where the camera was*, and every number in
+   those two columns depends entirely on that. The mesh, geometry and
+   scene-triangle columns, which do not, were exact.
+
+   **Protocol, so the next person gets the same numbers.** Viewport 1000×700,
+   the page's own FOV, `camera.position = (0, 1.70, 0.5)`, `Ctl.yaw = 0`,
+   `Ctl.pitch = 0` — standing on the dock threshold facing into the shed. Tier 1
+   is **2 bays** (`start_units`), tier 5 is 32. Counters read from
+   `renderer.info.render` immediately after one `renderer.render(scene, camera)`
+   with `renderer.info.reset()` before it. "before" is commit `fe66261`, i.e.
+   ahead of the backdrop work (sky dome, apron, perimeter wall, railed fence,
+   distant stacks), the truck's geometry cache, and the bay signage rework.
 
    | | meshes | geometries | scene tris | draw calls | drawn tris |
    |---|---|---|---|---|---|
-   | tier 1 before | 249 | 227 | 9,957 | 37 | 1,730 |
-   | tier 1 after | 255 | 204 | 11,353 | 40 | 2,478 |
-   | tier 5 before | 387 | 365 | 12,309 | 175 | 4,082 |
-   | tier 5 after | 399 | 348 | 13,717 | 184 | 4,842 |
+   | tier 1 before | 249 | 227 | 9,957 | 35 | 1,716 |
+   | tier 1 now | 255 | 204 | 11,375 | 38 | 2,486 |
+   | tier 5 before | 387 | 365 | 12,309 | 172 | 4,066 |
+   | tier 5 now | 393 | 342 | 13,895 | 174 | 5,000 |
 
-   Draw calls went **up** by 3 and 9: the backdrop is merged into 3 meshes plus
-   a sky dome, and tier 5 adds one aisle-facing bay sign per row. The truck's
-   geometry cache (`geoBox`/`geoCyl` in truck.js) buys **memory**, not calls —
-   143 → 116 geometries for the same 166 meshes — because each mesh is still its
-   own call. Said plainly rather than filed under "optimised".
+   **And the worst case, because a single standing view is the easy one.** Every
+   walkable position on a 2 m grid — filtered by the page's own `clampPos()` and
+   `blocked()`, not a model of them — at eight yaws, 1,712 views at tier 1 and
+   2,240 at tier 5:
+
+   | | positions | views | worst draw calls | worst drawn tris |
+   |---|---|---|---|---|
+   | tier 1 | 214 | 1,712 | **254** | 11,339 |
+   | tier 5 | 280 | 2,240 | **392** | 13,859 |
+
+   Both worst cases are the same shot: standing in the −X corner of the shed
+   looking diagonally down the whole building, where nothing culls. That is 6.7×
+   the standing-view figure at tier 1 and 2.3× at tier 5, and it is the number a
+   frame budget has to be built on.
+
+   Draw calls went **up** by 3 and 2. The backdrop is merged into 3 meshes plus
+   a sky dome; the bay signage rework added a mouth header to every bay and an
+   aisle blade to every row while *removing* a mesh, because all of a bay's
+   boards are now merged into one. The truck's geometry cache (`geoBox`/`geoCyl`
+   in truck.js) buys **memory**, not calls — 143 → 116 geometries — because each
+   mesh is still its own call. It is also **164 → 166 meshes, not "the same 166
+   meshes"**: the cache landed in the same commit as two small additions, and
+   the old count was taken from the new build. Said plainly rather than filed
+   under "optimised".
 5. **The truck now carries three real openings** cut from the lofted shell by the
    same mechanism — the kerb door, both wheel arches, and the cargo roll-up.
    The cargo one exists because the delivered load was otherwise invisible: a
@@ -546,6 +629,59 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
     The slab's speckle is **seeded**, not `Math.random()`, so two paints of the
     same shed are pixel-identical — `_wh_stencil_check.mjs` relies on that to
     isolate a numeral by repainting with `App.noStencils = <bay number>` and
-    diffing. That gate now catches all four orientation defects (upside down,
-    mirrored, rotated 90°, deleted) at both tiers; the measured matrix is in the
-    file's header. If you change the floor painting, keep it deterministic.
+    diffing. That gate now reads **every** numeral at both tiers, not two of
+    them, and catches a wrong DIGIT as well as a wrong angle; the measured
+    matrix of injected defects is in the file's header. If you change the floor
+    painting, keep it deterministic.
+
+    ⚠ Two of that gate's tests are **skipped per numeral, by measurement, not
+    by a list**: five of the 32 numerals (1, 8, 10, 11, 30) have artwork that
+    correlates >0.85 with a flip of itself — "8" scores 0.999 against its own
+    mirror — so demanding that identity beat every rotation by a margin fails a
+    perfectly drawn floor. The gate computes that self-symmetry from the
+    reference artwork at runtime and prints which numerals it stood down on.
+    They are still covered by the which-numeral test and the on-screen upright
+    test.
+
+12. **The floor's concrete speckle is specified by its BLOBS, not its discs.**
+    15 discs/m² of radius 1.1–2.8 px covered 15.2% of the slab, and at that
+    coverage randomly placed discs merge: connected-component span was p50 4 px
+    (11.8 cm), p90 8 px (23.5 cm), p99 14 px (41.2 cm) — nine in ten inside the
+    intended 16.5 cm ceiling and the top tenth half again over it, which reads
+    as pale blotching at eye height. Same 15/m², radius 0.8–1.9 px: 7.5% cover,
+    p50 3 px (8.8 cm), p90 5 px (14.7 cm), p99 7 px (20.6 cm), identical at 2,
+    8, 14 and 32 units. **If you retune it, label the components** — the disc
+    radius in the source will tell you what you want to hear.
+
+13. **The fog colour and the sky dome are in DIFFERENT COLOUR SPACES, and the
+    hex codes matching is what proves they do not.** `<fog_fragment>` runs after
+    tone mapping and the sRGB encode, so `scene.fog.color` lands on screen at
+    its own sRGB value; the dome is a textured mesh, so its pixels go through
+    both. Measured: `0x1a2230` renders at luminance **33** as fog and at **80**
+    on the dome. The previous build set both to `0x1a2230` "so they match" and
+    got a 47-luminance mismatch, plus `far = 120`, which meant the ground never
+    reached even that: scanning down the yard gate the horizon read sky 78.5 →
+    ground 99 → 157 across five rows — noon tarmac against a night sky. Fog is
+    now `0x42546f`, the sky's *measured* on-screen value, with `far = 72`, and
+    the 200 m ground plane's albedo is `0x0b0d12` instead of `0x14161b`, which
+    was rendering at 157, brighter than the sky above it. Same scan now: sky 82,
+    ground 82, 82, 82, 87, 95; largest adjacent step **5.6** where it was
+    **19.7**. **If you change the dome gradient, re-measure the fog colour — you
+    cannot read it off the gradient.** (Still open: the concrete apron itself
+    renders ~155 under a sky of 82. That is the mood of the yard rather than a
+    seam, and it was left alone.)
+
+14. **Every bay carries its number on a face someone can read, and that is not
+    the same as “on every aisle-facing face”.** The aisle decal used to be gated
+    on `col === BAYS_PER_ROW - 1`, i.e. the fifth column — which does not exist
+    below 5 bays. Counted at every unit count: 0 signs at 2 units, 0 at 4, 1 at
+    8, 2 at 14, 6 at 32. Tier 1 is where every player starts and it had none.
+    An interior bay has no aisle-facing face at all (0.45 m to the next bay's
+    wall), so what every bay now gets is a header over its own mouth, onto the
+    walkway a player uses to reach it; the row-end bay keeps the +X decal and
+    gains a double-sided blade turned to face down the aisle. Measured from the
+    dock end of the aisle at tier 5, projected width of the number: the flat
+    decal 1.5–17.8 px at 43.6–12.6 m, the blade 20.4–70.6 px from the same
+    camera. All of a bay's boards are merged into ONE mesh (`mergeGeos` carries
+    UVs now, which it did not), so this costs **fewer** draw calls than the two
+    boards it replaced.

@@ -522,11 +522,32 @@ function buildScene() {
   // fog were both 0x0a0c11, so the dock opening — framed dead centre every time
   // the player walks back toward the truck — was a pure black rectangle with a
   // hard daylight patch thrown through it onto the floor. Strong sunlight from
-  // a hole. The sky now carries a value the light can plausibly come from, and
-  // the fog matches its HORIZON band so distant ground melts into the sky
-  // instead of ending at an edge.
-  scene.fog = new T.Fog(0x1a2230, 38, 120);
-  scene.background = new T.Color(0x1a2230);
+  // a hole. The sky now carries a value the light can plausibly come from.
+  //
+  // ⚠⚠ AND THEN THE SAME HOLE APPEARED THE OTHER WAY UP. The fog colour used to
+  // be 0x1a2230 "to match the dome's HORIZON band", which is the same hex the
+  // gradient uses at stop 0.82 — and the two still did not match on screen,
+  // because THEY ARE NOT IN THE SAME COLOUR SPACE:
+  //   • the dome is a textured mesh, so its pixels go through ACES tone mapping
+  //     and the sRGB output encoding. Measured: 0x1a2230 on the dome renders at
+  //     luminance ~80.
+  //   • fog is mixed in <fog_fragment>, which the shader chain runs AFTER
+  //     tonemapping and encoding. Measured with near/far collapsed so every
+  //     pixel is pure fog: 0x1a2230 renders at luminance 33, its own sRGB
+  //     value, untouched.
+  // Matching the hex codes therefore GUARANTEED a mismatch of 47 luminance, and
+  // fog far = 120 meant the ground never reached even that. Measured through
+  // the yard gate from the apron, scanning down the middle of the gap:
+  //   before — sky 81.6, ground 99 → 157 in the first five rows below the
+  //            horizon, i.e. a 61-luminance rise across 5 px. Bright noon
+  //            tarmac butted against a night sky.
+  //   after  — sky 80.6, ground 82, 82, 82, 87, 95; biggest adjacent step 8.2
+  //            where it was 18.1, and the ramp is 15 px instead of 5.
+  // The fog colour is now the sky's MEASURED ON-SCREEN value, not the hex that
+  // produces it. If you change the dome gradient, re-measure it — you cannot
+  // read this number off the gradient.
+  scene.fog = new T.Fog(0x42546f, 38, 72);
+  scene.background = new T.Color(0x42546f);
   camera = new T.PerspectiveCamera(72, innerWidth / innerHeight, 0.08, 260);
   camera.position.set(0, EYE, -2);
   // Restore where the player was stood, so a re-entry does not snap them back
@@ -594,8 +615,12 @@ function buildScene() {
   // back corner projects to ~30.3 in light space — just outside a ±30 frustum,
   // so the corner silently stopped casting. Fit the whole box to the site.
   fitKeyShadow(key, (App.shedZB != null ? App.shedZB : -19));
-  
-  key.shadow.camera.near = 1; key.shadow.camera.far = 70;
+  // (A `key.shadow.camera.near = 1; key.shadow.camera.far = 70;` used to sit
+  //  here, three lines under a comment insisting `far` must follow the shed
+  //  depth and one line under the call that sets it correctly. It was dead —
+  //  fitKeyShadow() runs again on every tier change and overwrote it at boot —
+  //  but it contradicted the paragraph above it, which is how the hardcoded
+  //  frustum got reintroduced twice already. Deleted rather than corrected.)
   key.shadow.bias = sh.bias; key.shadow.normalBias = Math.max(0.28, sh.normalBias);
   App.keyLight = key;
   App.fitKeyShadow = fitKeyShadow;
@@ -629,7 +654,13 @@ function buildScene() {
 
   var M = function (o) { return new T.MeshStandardMaterial(o); };
   var mat = {
-    asphalt: M({ color: 0x14161b, roughness: 0.58, metalness: 0.22 }),
+    // ⚠ 0x0b0d12, not 0x14161b. This material is on ONE mesh — the 200 m ground
+    // plane — and nothing in the pipeline treats its hex as sRGB, so a colour
+    // that reads as near-black in a swatch rendered at luminance 157: brighter
+    // than the sky above it. Isolated by substitution: dropping the albedo to
+    // pure black took the same pixels to 78, and metalness/roughness moved them
+    // by 9 and 18 — the albedo was the whole of it.
+    asphalt: M({ color: 0x0b0d12, roughness: 0.58, metalness: 0.22 }),
     slab:    M({ color: 0x1e2126, roughness: 0.95 }),   // dark concrete — the darkest value
     // ⚠ THREE VALUES, DELIBERATELY SEPARATED. Floor, walls and bay shells were
     // 0x2a2d34 / 0x3a3f49 / 0x4a505c — close enough in luminance (37 / 55 / 72)
@@ -692,20 +723,36 @@ function buildScene() {
     } catch (e) {}
     try { if (n.parent) n.parent.remove(n); else scene.remove(n); } catch (e) {}
   };
+  // ⚠ IT CARRIES UVs NOW. It copied position/normal/index only, which is fine
+  // for the untextured shells it was written for and silently wrong the moment
+  // anything with a map is merged: a bay's four signboards came out as one
+  // untextured rectangle. UVs are copied when EVERY input has them, so the
+  // untextured callers are unaffected.
   var mergeGeos = function (list) {
-    var pos = [], nor = [], idx = [], base = 0;
+    var pos = [], nor = [], uvs = [], idx = [], base = 0;
+    var haveUV = list.every(function (g) { return !!g.attributes.uv; });
     list.forEach(function (g) {
       var p = g.attributes.position.array, nA = g.attributes.normal.array, iA = g.index.array;
       for (var i = 0; i < p.length; i++) pos.push(p[i]);
       for (var j = 0; j < nA.length; j++) nor.push(nA[j]);
       for (var k = 0; k < iA.length; k++) idx.push(iA[k] + base);
+      if (haveUV) { var uA = g.attributes.uv.array; for (var q = 0; q < uA.length; q++) uvs.push(uA[q]); }
       base += g.attributes.position.count;
     });
     var out = new T.BufferGeometry();
     out.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
     out.setAttribute('normal', new T.Float32BufferAttribute(nor, 3));
+    if (haveUV) out.setAttribute('uv', new T.Float32BufferAttribute(uvs, 2));
     out.setIndex(idx);
     return out;
+  };
+  // The top band of a bay's sign canvas — the "BAY n" line on its own, without
+  // the renter subtitle underneath. Used for the boards that have to read at a
+  // glance from across the shed. Same texture object, so no second upload.
+  var signHeadUV = function (g) {
+    var uv = g.attributes.uv;
+    for (var k = 0; k < uv.count; k++) uv.setY(k, 0.305 + uv.getY(k) * 0.609);
+    uv.needsUpdate = true; return g;
   };
   var box = function (w, h, d, m, x, y, z, noShadow) {
     var o = new T.Mesh(new T.BoxGeometry(w, h, d), m);
@@ -1101,11 +1148,27 @@ function buildScene() {
     // every one of which hit the Math.max(0.6, …) floor. It rendered as uniform
     // noise — the code said "aggregate", the pixels said "grain". Asking the
     // canvas for a size it cannot express is a lie however carefully commented.
-    // So: radius 1.1-2.8 px, which AT 34 px/m IS 6.5-16.5 cm across. That is
-    // coarse chip rather than fine aggregate — bigger than real concrete — but
-    // it is what a 34 px/m raster can actually resolve, and it reads as a
-    // speckled slab instead of TV static. Density drops to match the larger
-    // blob so the total covered area stays put.
+    //
+    // ⚠⚠ AND THEN THE PRIMITIVE SIZE WAS THE WRONG THING TO SPECIFY. The next
+    // version asked for radius 1.1-2.8 px — "6.5-16.5 cm across at 34 px/m" —
+    // and every one of those numbers was true of a disc in isolation. Discs are
+    // not placed in isolation: 15/m² at that radius covers 15.2% of the slab,
+    // and at 15% randomly-placed discs MERGE. Measured by labelling the
+    // connected components of the covered pixels rather than by reading the
+    // radius out of the source:
+    //     15/m², r 1.1-2.8 px →  15.2% cover, blob span p50 4 px (11.8 cm),
+    //                            p90 8 px (23.5 cm), p99 14 px (41.2 cm)
+    // So nine chips in ten were inside the stated ceiling and the top tenth was
+    // half again over it, which at eye height is exactly the pale blotching the
+    // 1-4 cm version was replaced for. THE BLOB IS WHAT THE EYE SEES, NOT THE
+    // DISC. Same 15/m² so the slab is no less busy, smaller primitive so they
+    // stop touching:
+    //     15/m², r 0.8-1.9 px →   7.5% cover, blob span p50 3 px  (8.8 cm),
+    //                            p90 5 px (14.7 cm), p99 7 px (20.6 cm)
+    // Identical at 2, 8, 14 and 32 units. Alpha is raised to keep the total ink
+    // roughly where it was now that half the area is gone. If you retune this,
+    // measure the COMPONENTS — the disc radius will tell you what you want to
+    // hear.
     // ⚠ SEEDED, NOT Math.random(). Two paints of the same slab must come out
     // pixel-identical. _wh_stencil_check.mjs isolates a numeral by repainting
     // the floor with App.noStencils and diffing the two canvases; a re-rolled
@@ -1119,8 +1182,8 @@ function buildScene() {
     };
     var mArea = fw * fd, mN = Math.round(mArea * 15);
     for (var mo = 0; mo < mN; mo++) {
-      cx.fillStyle = 'rgba(255,255,255,' + (0.010 + mRnd() * 0.016).toFixed(3) + ')';
-      var mr = 1.1 + mRnd() * 1.7;                        // PIXELS: 2.2-5.6 px across
+      cx.fillStyle = 'rgba(255,255,255,' + (0.013 + mRnd() * 0.021).toFixed(3) + ')';
+      var mr = 0.8 + mRnd() * 1.1;                        // PIXELS: 1.6-3.8 px across
       cx.beginPath(); cx.arc(mRnd() * cw, mRnd() * ch, mr, 0, 7); cx.fill();
     }
     // expansion joints on a 6 m grid
@@ -1283,6 +1346,12 @@ function buildScene() {
       gs[0].translate(-BW / 2, BH / 2, 0);
       gs[1].translate(BW / 2, BH / 2, 0);
       gs[2].translate(0, BH / 2, -BD / 2);
+      // the blade's bracket rides in the shell merge, so it costs nothing
+      if ((col === BAYS_PER_ROW - 1) || (i === st.units.length - 1)) {
+        var arm = new T.BoxGeometry(0.90, 0.07, 0.07);
+        arm.translate(BW / 2 + 0.45, 2.72, 0);
+        gs.push(arm);
+      }
       var merged = mergeGeos(gs);
       var mm = new T.Mesh(merged, wallM);
       mm.castShadow = true; mm.receiveShadow = true; n.add(mm);
@@ -1301,23 +1370,59 @@ function buildScene() {
       cx.fillText(u.renter_name ? String(u.renter_name).slice(0, 16)
                 : (u.occupied ? 'OCCUPIED' : 'UNRENTED'), 128, 100);
       var tx = new T.CanvasTexture(cv); tx.minFilter = T.LinearFilter;
-      var sign = new T.Mesh(new T.PlaneGeometry(2.6, 1.3),
-        new T.MeshBasicMaterial({ map: tx, transparent: true }));
-      sign.position.set(0, 2.1, -BD / 2 + 0.11); n.add(sign);
-      // ⚠ AND ON THE AISLE-FACING FACE. The number lived only on the inside back
-      // wall and the floor stencil, so walking a 27 m aisle at tier 5 meant
-      // walking past featureless slabs — the outward faces are most of what a
-      // player actually sees. Only the LAST column gets one, because that is the
-      // only column whose +X wall faces open floor; adding it to all 32 would be
-      // 25 extra draw calls behind other bays. Same canvas texture, no second
-      // renderer and no second texture upload.
-      if (col === BAYS_PER_ROW - 1) {
-        var side = new T.Mesh(new T.PlaneGeometry(2.4, 1.2),
-          new T.MeshBasicMaterial({ map: tx, transparent: true }));
-        side.position.set(BW / 2 + 0.10, 2.1, 0);
-        side.rotation.y = Math.PI / 2;
-        n.add(side);
+      // ── EVERY BOARD THIS BAY CARRIES, AS ONE MESH ────────────────────────
+      // They all draw the same canvas with the same material, so merging them
+      // costs one draw call per bay no matter how many boards it has — fewer
+      // than before, which spent a second call on the row-end bays.
+      //
+      // ⚠ WHO ACTUALLY SEES EACH ONE. This went wrong by reasoning about faces
+      // instead of about sightlines:
+      //   • back wall — only visible once you are standing in the bay's mouth.
+      //   • +X wall of the last column — the only bay face that meets the open
+      //     aisle. It used to be gated on `col === BAYS_PER_ROW - 1`, i.e. the
+      //     FIFTH column, which does not exist below 5 bays: counted at every
+      //     unit count, that is 0 signs at 2 units, 0 at 4, 1 at 8, 2 at 14 and
+      //     6 at 32. Tier 1 is where every player starts and it had none. The
+      //     gate is now "the last bay that EXISTS in this row".
+      //   • mouth header — NEW, and the one every bay gets. An interior bay has
+      //     no aisle-facing face at all: the gap between bays is 0.45 m and the
+      //     next bay's wall is directly across it, so a board on an interior +X
+      //     wall is invisible from the aisle and 25 more draw calls. What every
+      //     bay does have is an open mouth onto the 1.85 m walkway a player
+      //     uses to reach it, so the number goes over the mouth, high enough to
+      //     clear the crates and the back-wall board's text.
+      //   • aisle blade — NEW. The +X decal is flat against the wall, so from
+      //     27 m down the aisle it is ~84° off-normal and the whole string
+      //     projects to about 11 px: present, unreadable, exactly the "walking
+      //     past featureless slabs" problem it was added to fix. The blade is
+      //     the same number turned to FACE down the aisle, two single-sided
+      //     planes back to back so it reads walking in either direction, on a
+      //     bracket at 2.72 m so nobody walks through it.
+      var sgeo = [];
+      var gBack = new T.PlaneGeometry(2.6, 1.3);
+      gBack.translate(0, 2.1, -BD / 2 + 0.11);
+      sgeo.push(gBack);
+      var gHead = signHeadUV(new T.PlaneGeometry(2.5, 0.75));
+      gHead.translate(0, 2.56, BD / 2 + 0.07);
+      sgeo.push(gHead);
+      // last bay that exists in this row — not the fifth column, which at tier 1
+      // is not there at all
+      var rowEnd = (col === BAYS_PER_ROW - 1) || (i === st.units.length - 1);
+      if (rowEnd) {
+        var gSide = new T.PlaneGeometry(2.4, 1.2);
+        gSide.rotateY(Math.PI / 2);
+        gSide.translate(BW / 2 + 0.10, 2.1, 0);
+        sgeo.push(gSide);
+        var bladeF = signHeadUV(new T.PlaneGeometry(1.7, 0.51));
+        bladeF.translate(BW / 2 + 0.90, 2.72, 0.012);
+        var bladeB = signHeadUV(new T.PlaneGeometry(1.7, 0.51));
+        bladeB.rotateY(Math.PI);
+        bladeB.translate(BW / 2 + 0.90, 2.72, -0.012);
+        sgeo.push(bladeF, bladeB);
       }
+      var sign = new T.Mesh(mergeGeos(sgeo),
+        new T.MeshBasicMaterial({ map: tx, transparent: true }));
+      n.add(sign);
       // Stacked goods, so a full bay LOOKS full.
       var frac = bayFillPct(u) / 100;
       var stacks = Math.round(frac * 9);
@@ -1847,10 +1952,29 @@ function buyLifter(tier, cur) {
 // the RAW IDENTIFIER — maxing a bay showed the player "❌ bay_maxed", and a
 // blocked rpc showed them "❌ blocked". Never return r.reason: an unmapped code
 // is a bug in this table, and the player should not be the one to read it.
+//
+// ⚠ AND IT DRIFTS AGAIN EVERY TIME THE SERVER GAINS A CODE. Three were added
+// after the last sweep — already_seeded, seeding_closed and, worst of all,
+// insufficient_resources, which is what the resource ledger returns when it
+// refuses a shipment: the single likeliest refusal in the whole feature, and it
+// rendered as "Something went wrong." The server has 34 codes; count them with
+//   grep -o "'reason', '[a-z_]*'" supabase/migrations/*_warehouse_storage.sql \
+//     | sed "s/.*'reason', '//;s/'//" | sort -u
+// and every one of them must appear here (plus the three client-only codes
+// blocked / rpc_failed / timeout, which the server never sends).
 function reasonText(r) {
   var cur = (r && r.currency === 'aza') ? 'Aza' : 'Cinder';
   var m = {
     insufficient:  'Not enough ' + cur + '.',
+    // Not "not enough" — this one means the storage network's own ledger
+    // disagrees with the inventory screen. Say so, or the player reads it as
+    // the game having eaten their goods.
+    insufficient_resources: 'The storage network does not have those goods on your account. '
+                   + 'Resources earned outside the warehouse are not on its ledger yet — '
+                   + 'send what it lists, or withdraw and re-send to resync.',
+    already_seeded:'Your storage ledger has already been set up — it is only ever filled once.',
+    seeding_closed:'Storage ledger setup is closed'
+                   + (r && r.cutoff_at ? ' (it ended ' + String(r.cutoff_at).slice(0, 10) + ').' : '.'),
     no_room:       'That bay has no room left.',
     no_room_at_destination: 'Your bay cannot hold that much'
                    + (r && r.free_kg != null ? ' — only ' + Math.floor(r.free_kg).toLocaleString() + ' kg is free.' : '.'),

@@ -46603,6 +46603,20 @@ async function cloudSyncProfile() {
       // survives cloud restores / new devices (was localStorage-only + missing here).
       __archonDeck__:      (Profile.archonDeck      && typeof Profile.archonDeck      === 'object') ? Profile.archonDeck      : { cards: [] },
       __socketedGems__:    (Profile.socketedGems    && typeof Profile.socketedGems    === 'object') ? Profile.socketedGems    : {},
+      /* 🔧 WEAPON SMITH — the bench save. Piggybacks this JSONB like every
+         other blob here rather than taking a schema migration.
+         ⚠ It carries a HALF-BUILT WEAPON (`bench`) that the player has already
+           paid resources for. Leaving it out of the whitelist would mean a
+           device change silently destroys parts that were really spent, which
+           is the same class of bug __itemInventory__ was added to fix.
+         ⚠ The rep / contracts / blueprints fields on this blob are a MIRROR of
+           the server and are NOT the record — see src/weaponsmith/state.js.
+           Round-tripping them here is a convenience, never an authority. */
+      __weaponSmith__:     (Profile.weaponSmith    && typeof Profile.weaponSmith    === 'object') ? Profile.weaponSmith    : {},
+      // 🔧 The Weapon Smith LICENCE flag. Cheap to carry and it stops a player
+      // who founded the op on another device seeing a locked bench during the
+      // window before Operations.list has fetched.
+      __weaponSmithUnlocked__: !!Profile.weaponSmithUnlocked,
       // 🎒 HELD-ITEM INVENTORY + EQUIPPED GEAR — purchased medicine / relics /
       // weapons + per-hero equipment. These were localStorage-ONLY: a corrupt
       // or cleared hg_profile, or a new device, lost every bought item FOREVER
@@ -47820,6 +47834,24 @@ async function cloudFetchProfile() {
           ? Object.values(Profile.socketedGems).flat().filter(g => g && g !== '').length : 0;
         if (_localGemCount === 0) Profile.socketedGems = f.__socketedGems__;
       }
+      /* 🔧 WEAPON SMITH restore — LOCAL WINS whenever this device has a bench
+         in progress. Same policy as the side deck and for a sharper reason:
+         `bench` holds a part-built weapon whose materials are already spent,
+         so letting a stale cloud copy overwrite an in-progress build would
+         destroy resources the player really paid. A cloud blob therefore fills
+         in only when this device has nothing going on.
+         ⚠ Rep / contracts / blueprints on the restored blob stay a MIRROR.
+           Whatever lands here is overwritten by the server on the next sync,
+           and nothing may gate a real-money entitlement on it. */
+      if (f.__weaponSmith__ && typeof f.__weaponSmith__ === 'object') {
+        const _lw = (Profile.weaponSmith && typeof Profile.weaponSmith === 'object') ? Profile.weaponSmith : null;
+        const _localBusy = !!(_lw && (_lw.bench || (Array.isArray(_lw.log) && _lw.log.length)));
+        if (!_localBusy) Profile.weaponSmith = f.__weaponSmith__;
+      }
+      // 🔧 Licence flag — OR'd, never overwritten down. Founding the op is a
+      // one-way door, so a cloud copy that predates it must not re-lock the
+      // bench on a device that already knows better.
+      if (f.__weaponSmithUnlocked__ === true) Profile.weaponSmithUnlocked = true;
       // 🎒 HELD-ITEM INVENTORY restore — MERGED with MAX so a stale cloud copy
       // can NEVER wipe an item bought on this device the cloud hasn't synced
       // yet (identical policy to __cardCollection__). This is the cloud
@@ -207079,6 +207111,73 @@ try {
   };
 } catch (e) {}
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔧 WEAPON SMITH BRIDGE — the ONE seam between this file and /src/weaponsmith.
+   Same contract, and same reason, as MythicBridge directly above: Profile /
+   Cloud / App / Forge are top-level `const` here, which makes them global
+   LEXICAL bindings and NOT properties of window, so an ES module cannot see
+   them. `window.Profile` is undefined even though `const Profile` is right
+   there. Everything the bench needs is handed over explicitly, below.
+
+   ⚠ Every accessor is a FUNCTION, never a snapshot — Profile.gems and the
+     salvage ledger both move constantly.
+   ⚠ Nothing here writes a balance directly. Cinder goes through spendGems /
+     addGems and resources through spendResources / addRes, because those are
+     the only places that enforce the stash cap and persist the change.
+   ═══════════════════════════════════════════════════════════════════════════ */
+try {
+  window.WeaponSmithBridge = {
+    /* 📦 The persisted blob, created empty on first touch. The SHAPE of it is
+       owned by src/weaponsmith/state.js, deliberately — this file seeding
+       fields it does not own is how two definitions of one save drift apart.
+       Handed back live so the module's ensure-pass can default in place. */
+    getWeaponSmith: () => {
+      try {
+        if (!Profile.weaponSmith || typeof Profile.weaponSmith !== 'object') Profile.weaponSmith = {};
+        return Profile.weaponSmith;
+      } catch (e) { return null; }
+    },
+    // 🔧 The licence. One recognisable way to ask, shared with the rest of the
+    // app — see _wsOwnsLicense's own note about the local flag.
+    ownsWeaponSmith: () => { try { return !!_wsOwnsLicense(); } catch (e) { return false; } },
+    isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+    saveProfile: () => { try { saveProfile(); } catch (e) {} },
+    toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+    confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
+    render: () => { try { render(); } catch (e) {} },
+    // 🔥 Cinder.
+    gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+    spendGems: (n) => { try { return !!spendGems(n); } catch (e) { return false; } },
+    addGems: (n) => { try { addGems(n); } catch (e) {} },
+    /* 🧰 Resources. spendRes is all-or-nothing (canAffordResources gates it),
+       which is what stops a half-paid build consuming metal and then failing
+       on fuel. addRes enforces the stash cap and can therefore take LESS than
+       asked — a refund path must use the refund helper, not this. */
+    getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+    addRes: (id, n) => { try { addRes(id, n); } catch (e) {} },
+    spendRes: (cost) => { try { return !!spendResources(cost); } catch (e) { return false; } },
+    /* 📈 The single producer hook every other production site already uses
+       (ops, nodes, packs). Pushing output through it is what softens the
+       market price — bumpMarketPriceDown does not exist, and reaching for it
+       is a mistake this codebase has already made once. */
+    produce: (map) => { try { if (typeof cxProduce === 'function' && map) cxProduce(map, 'weaponsmith'); } catch (e) {} },
+    /* ☁ Cloud. BOTH return null when offline or signed out, and the module has
+       to handle that — CLAUDE.md: the app must still work before the tables
+       exist, degrading to empty rather than breaking. */
+    signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn && Cloud && Cloud.client); } catch (e) { return false; } },
+    userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+    rpc: async (name, args) => {
+      try {
+        if (!Cloud || !Cloud.client || !name) return null;
+        return await Cloud.client.rpc(name, args || {});
+      } catch (e) { return null; }
+    },
+    table: (name) => {
+      try { return (Cloud && Cloud.client && name) ? Cloud.client.from(name) : null; } catch (e) { return null; }
+    },
+  };
+} catch (e) {}
+
 /* 💰 The city's economy accessors. Identical to the camp ones EXCEPT when a
    hired mayor is running someone else's city, where they read and write the
    OWNER's ledger instead. The city calls these; the camp keeps using getRes /
@@ -223158,6 +223257,13 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- 🔧 WEAPON SMITH — operation + assembly bench. See docs/weaponsmith-design.md.
+     Wires nothing into gameplay yet: phase 2 is the bridge and the save shape,
+     verified in isolation before there is a mini-game riding on them.
+     ⚠ window.WeaponSmithBridge is installed in ordinary source order ABOVE, in
+       the main script. This tag must stay below it.
+     Bump ?v= on every change — the service worker caches these like any asset. -->
+<script type="module" src="src/weaponsmith/index.js?v=ws-p2"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

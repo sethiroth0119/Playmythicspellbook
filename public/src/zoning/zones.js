@@ -40,7 +40,7 @@ export const CATS = {
    the player cannot pay and reports how many stalled. A zone never spends
    money the player did not agree to: nothing here builds itself. */
 export const ZONES = [
-  // ── residential ×6 (+ the grandfather zone, below) ───────────────────────
+  // ── residential ×8 (+ the grandfather zone, below) ───────────────────────
   { id: 'r_low',   cat: 'res', ico: '🏡', name: 'Low density houses', short: 'Low',
     col: 0x8ed162, arch: 'detached', lvl: 1, mix: [['housing', 1]],
     desc: 'Detached family houses on their own plot — gardens, driveways, a hedge on the line.' },
@@ -61,6 +61,22 @@ export const ZONES = [
     col: 0x4fb389, arch: 'walkup', lvl: 2,
     mix: [['housing', 5], ['grocery', 1], ['restaurant', 1], ['shop', 1]],
     desc: 'Retail at street level, flats above. Answers residential AND commercial demand at once.' },
+  /* 🏛 MANSIONS — the bottom of the density ladder and the top of the value one.
+     arch 'detached' at lvl 3: no other zone pairs those, so a mansion plot is
+     visually its own thing rather than a recolour. r_low is the same archetype
+     at lvl 1, which is exactly the relationship intended — a mansion is what a
+     detached house grows into when the land is worth it.
+     ⚠ lvl 3 is MAX_LVL. There is no taller form available to any zone. */
+  { id: 'r_mansion', cat: 'res', ico: '🏛', name: 'Mansions', short: 'Mansion',
+    col: 0x9fd6b8, arch: 'detached', lvl: 3, mix: [['housing', 1]],
+    desc: 'Large detached estates on generous plots. The fewest people per tile in the city, and the most value per plot.' },
+  /* 🏬 CONDOMINIUMS — between apartments and towers. Shares the walkup archetype
+     with both, and that is CORRECT rather than a shortcut: a condominium is a
+     walk-up block; what separates it from a rental block is who owns it and what
+     the land is worth, which is what the zone carries. */
+  { id: 'r_condo', cat: 'res', ico: '🏢', name: 'Condominiums', short: 'Condo',
+    col: 0x2f8f6b, arch: 'walkup', lvl: 2, mix: [['housing', 1]],
+    desc: 'Owner-occupied flats. Denser than a house, quieter than a tower, and the step most cities actually live on.' },
   { id: 'r_rent',  cat: 'res', ico: '🏚', name: 'Low rent', short: 'Low rent',
     col: 0xb0cc63, arch: 'walkup', lvl: 1, mix: [['housing', 1]],
     desc: 'Large blocks of small flats — cheap, plain, and where the young and the broke actually live.' },

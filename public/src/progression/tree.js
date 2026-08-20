@@ -124,8 +124,13 @@ export const NODES = [
     buildings: ['arena', 'stadium'] },
 
   /* ══ 🏘 RESIDENTIAL ═════════════════════════════════════════════════════
-     Five of the six residential zone grades. The sixth (`r_low`) is on the
-     trunk above, because a city with no housing zone is not a city. */
+     Seven of the eight residential zone grades. The eighth (r_low) is on the
+     trunk above, because a city with no housing zone is not a city.
+
+     ⚠ HIGH-RISES ARE High-Density Towers, below — not a missing grade. MAX_LVL
+       is 3 and r_high is already walkup at lvl 3, so there is no taller form
+       for any zone to ask for. A separate "high-rise" grade would render
+       identically to towers and differ only in its label. */
   { id: 'res_row', cat: 'res', row: 1, col: 1, cost: 1, req: ['civ_basic'],
     name: 'Row Housing',
     desc: 'Wall-to-wall terraces that close a street block instead of scattering across it.',
@@ -138,6 +143,18 @@ export const NODES = [
     name: 'Apartments',
     desc: 'Walk-up blocks with balconies and a shared entrance — the first real step up in density.',
     zones: ['r_apt'] },
+  /* 🏛 MANSIONS hang off row housing, not off apartments: they are the LOW
+     density branch, and routing them through the density ladder would say the
+     opposite of what they are. */
+  { id: 'res_mansion', cat: 'res', row: 3, col: 1, cost: 3, req: ['res_row'],
+    name: 'Mansions',
+    desc: 'Large detached estates on generous plots — the fewest people per tile, and the most value per plot.',
+    zones: ['r_mansion'] },
+  /* 🏬 CONDOMINIUMS sit above apartments on the same ladder. */
+  { id: 'res_condo', cat: 'res', row: 2, col: 3, cost: 3, req: ['res_apt'],
+    name: 'Condominiums',
+    desc: 'Owner-occupied flats. Denser than a house, quieter than a tower, and the step most cities actually live on.',
+    zones: ['r_condo'] },
   /* 🔗 THE CROSS-CATEGORY LINK, and the reason the tree is a tree. Mixed use
      answers residential AND commercial demand from one strip, so it cannot be
      reached from the residential ladder alone. */

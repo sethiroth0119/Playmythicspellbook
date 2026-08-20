@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs', 'overlays.mjs', 'heroart.mjs', 'wxshield.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs', 'overlays.mjs', 'heroart.mjs', 'wxshield.mjs', 'zones.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping
@@ -115,6 +115,16 @@ const MUTATIONS = [
     name: 'hero art stops consulting getCardArt',
     find: "    if (id && typeof getCardArt === 'function') {",
     replace: '    if (false) {',
+  },
+  {
+    /* Unhook the Mansions research node from its zone. A grade that exists in
+       zones.js and is unlocked by nothing is a zone the player can never
+       reach, and it looks perfectly correct in its own file. */
+    name: 'two research nodes collide on one grid slot',
+    file: 'public/src/progression/tree.js',
+    test: 'zones.mjs',
+    find: "{ id: 'res_condo', cat: 'res', row: 2, col: 3",
+    replace: "{ id: 'res_condo', cat: 'res', row: 2, col: 2",
   },
   {
     /* Remove the fire shield from the ember path. A protective building that

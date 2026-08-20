@@ -98,3 +98,14 @@ export const registerItemDefs = (map)      => { const b = bridge(); try { return
 export const itemCount        = (id)       => { const b = bridge(); try { return b ? (b.itemCount(id) | 0) : 0; } catch (e) { return 0; } };
 export const moveItem         = (id, d)    => { const b = bridge(); try { return b ? !!b.moveItem(id, d) : false; } catch (e) { return false; } };
 export const refundRes        = (cost)     => { const b = bridge(); try { b && b.refundRes(cost); } catch (e) {} };
+
+/* Ⓐ Aza. Read-only balance, and ONE purchase call that carries its own refund.
+   There is deliberately no spendAza here: handing a module the half of the
+   pair that takes real money, without the half that gives it back, is how a
+   charged-but-not-granted purchase becomes possible. See wsBuyBlueprintAza. */
+export const aza              = ()               => { const b = bridge(); try { return b ? (b.aza() | 0) : 0; } catch (e) { return 0; } };
+export const buyBlueprintAza  = async (id, p, l) => {
+  const b = bridge();
+  try { return b ? await b.buyBlueprintAza(id, p, l) : { ok: false, error: 'no_bridge' }; }
+  catch (e) { return { ok: false, error: 'threw' }; }
+};

@@ -453,7 +453,7 @@ licence:   ownsWeaponSmith()
 | ✅ 5 | Assembly bench: dependency graph, fitment, torque bar | **Done.** `blueprints.js` (5 frames) + `bench.gun.js` (order / fitment / torque / scoring) + `render.js` (module-owned overlay). Opened by the `openWeaponSmith` JB action — **the JB iframe still needs a sidebar entry emitting it** |
 | ✅ 6 | `sql/038_weaponsmith.sql` — `crafted_weapons`, `ws_blueprints_owned`, `ws_shop`, `ws_blueprints` + `ws_mint` / `ws_grant_blueprint` / `ws_deliver` / `ws_state` | **Done and verified against a real Postgres 16** — see the commit. `server.js` routes the bench mint through `ws_mint`; offline still mints `local: true` (untradeable). ⚠ **Not yet applied** — run it by hand in the SQL editor |
 | ✅ 7 | Loot-dropped blueprints (grant through `ws_grant_blueprint`, source `'loot'`) | **Done.** `schematics.js` — blueprints drop as TRADEABLE items consumed to grant the entitlement. Loot hook: `window.wsDropSchematic()`. ⚠ **Not wired into the battle drop table** — that arm is battle code, out of scope |
-| 8 | Ⓐ Blueprints tab in the Vendor Market | ⚠ Real money. Await `sov_charge`, `refundSovereigns()` on a failed grant. Do NOT copy the Oil Sim's local-flag pattern |
+| ✅ 8 | Ⓐ Blueprints tab in the Vendor Market | **Done.** `wsBuyBlueprintAza()` owns charge+refund together (the module is never handed a bare charge). Button disables on click — two clicks would be two charges for one frame. Verified: Aza restored on every failure path |
 | 9 | Order board + reputation + rep-gated blueprint tiers | Career mode. Scoring and rep writes are server-side |
 | 10 | Forge bench (blades) | Second craft |
 | 11 | Hero loadout parity + provenance UI | Round two |
@@ -475,10 +475,11 @@ composite, so call renderers directly rather than relying on `render()`.
 
 ## 12. Still open
 
-1. **Aza pricing per blueprint tier.** The Oil Sim's licences sit at 8 / 18 / 25 Aza
-   (index.html:198734), which is the only in-app reference point for what an unlock is
-   "worth". Weapon blueprints are a bigger unlock and probably sit above that, but this is
-   a pricing call, not an engineering one.
+1. **Aza pricing per blueprint tier.** Shipped at **tier 2 = 12 Aza, tier 3 = 22 Aza**,
+   benchmarked against the Oil Sim's 8 / 18 / 25 licences (index.html:198734) — the only
+   in-app reference point. Easy to retune: the numbers live in `store.js` `AZA_PRICE` and
+   in `ws_blueprints.aza_price`, and **the server's copy decides** (a client that
+   undercharges gets `underpaid` and a refund, which is the correct failure).
 2. ~~Do blueprints drop as items or as entitlements?~~ **Resolved in phase 7: item.**
    A schematic is a tradeable item consumed to grant the entitlement. A schematic in the
    vault is an *asset*; a learned blueprint is a *capability*. Selling the first is

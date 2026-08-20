@@ -64699,6 +64699,69 @@ function refundSovereigns(amount) {
     .then(j => { _sovAdopt(j); return !!(j && j.ok); })
     .catch(() => false);
 }
+/* 🔧 BUY A WEAPON-SMITH BLUEPRINT WITH AZA — the real-money path, kept HERE
+   rather than in /src/weaponsmith on purpose.
+
+   🔴 THE CHARGE AND THE REFUND MUST NOT BE SEPARABLE. Every failure below has
+      to unwind the Aza, and _sovLastCharge (the receipt this refund needs) is
+      module-local to this file. Exposing a raw "charge" to a module without
+      the matching "refund" would be handing out the half of the pair that
+      takes money. So the module calls THIS, once, and either gets a blueprint
+      or gets its Aza back.
+
+   🔴 WHY THE LEDGER ID MATTERS. spendSovereigns() debits LOCALLY and returns
+      true immediately — the real sov_charge is still in flight, and it is what
+      hands back the ledger id. ws_grant_blueprint refuses any Aza grant whose
+      receipt it cannot verify, so the id is not optional bookkeeping, it is
+      the thing that makes the purchase real. A device change must not be able
+      to lose this, which is exactly why the entitlement is a server row and
+      NOT a local flag — see the Oil Sim's _osimState.blueprints for the
+      pattern this deliberately does not copy.
+
+   Order: charge → await the receipt → grant → refund on any failure. */
+async function wsBuyBlueprintAza(blueprintId, price, label) {
+  const amt = Math.max(0, Math.floor(price || 0));
+  if (!blueprintId || amt <= 0) return { ok: false, error: 'bad_request' };
+  if (!(Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) {
+    return { ok: false, error: 'offline' };
+  }
+  if ((Profile.sovereigns | 0) < amt) return { ok: false, error: 'insufficient' };
+
+  if (!spendSovereigns(amt, 'Weapon Smith blueprint: ' + (label || blueprintId))) {
+    return { ok: false, error: 'insufficient' };
+  }
+  // Capture the pending receipt WITHOUT consuming it — refundSovereigns needs
+  // it intact if anything below fails.
+  const pending = _sovLastCharge;
+  let ledgerId = null;
+  try { ledgerId = pending ? await pending.promise : null; } catch (e) { ledgerId = null; }
+
+  if (!ledgerId) {
+    // The server charge never landed (offline, RPC missing, rejected). Put the
+    // local debit back; there is nothing server-side to reverse.
+    try { refundSovereigns(amt); } catch (e) {}
+    return { ok: false, error: 'charge_failed' };
+  }
+
+  let g = null;
+  try {
+    const r = await Cloud.client.rpc('ws_grant_blueprint', {
+      p_blueprint_id: String(blueprintId), p_source: 'aza', p_ledger_id: ledgerId,
+    });
+    g = (r && !r.error) ? r.data : null;
+  } catch (e) { g = null; }
+
+  if (!g || g.ok !== true) {
+    // 🔴 CHARGED BUT NOT GRANTED — the one outcome that must never stand.
+    try { refundSovereigns(amt); } catch (e) {}
+    return { ok: false, error: (g && g.error) || 'grant_failed', refunded: true };
+  }
+
+  try { saveProfile(); } catch (e) {}
+  return { ok: true, blueprintId: blueprintId, already: !!g.already };
+}
+try { window.__mg = window.__mg || {}; window.__mg.wsBuyBlueprintAza = wsBuyBlueprintAza; } catch (e) {}
+
 /* The ONLY way gameplay creates Aza. The client says what happened; the server
    decides whether it pays, how much, and whether the player has had too many
    lately. Returns the granted amount (0 is a legitimate outcome for a chest).
@@ -162248,10 +162311,85 @@ function _bindConvoyShopHandlers() {
     };
   });
 }
+/* 🔧 Blueprint-shop bindings. The purchase itself is one call into the module,
+   which calls back into wsBuyBlueprintAza — charge and refund together.
+   ⚠ THE BUTTON IS DISABLED ON CLICK AND STAYS DISABLED until the round-trip
+     finishes. This is real money and the flow is asynchronous: without it, two
+     fast clicks are two charges, and only one of them can result in a
+     blueprint (the second grant returns already:true) — so the player would
+     pay twice for one frame. */
+function _bindBlueprintShopHandlers() {
+  document.querySelectorAll('[data-ws-buy]').forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.getAttribute('data-ws-buy');
+      const ws = (window.__mg && window.__mg.weaponSmith) || null;
+      if (!ws || typeof ws.storeBuy !== 'function') { showToast('🔧 The bench is still loading — try again in a moment.', 3600); return; }
+      btn.disabled = true;
+      const was = btn.innerHTML;
+      btn.innerHTML = '…';
+      let r = null;
+      try { r = await ws.storeBuy(id); } catch (e) { r = null; }
+      if (r && r.ok) { render(); return; }        // repaint shows it as Owned
+      // Failed: say why, and re-enable so a transient failure can be retried.
+      showToast('Ⓐ ' + ((r && r.reason) || 'The purchase did not complete.'), 6000);
+      btn.innerHTML = was;
+      btn.disabled = false;
+    };
+  });
+}
+
+/* 🔧 THE BLUEPRINT SHOP — Weapon Smith frames, priced in Aza.
+   ⚠ REAL MONEY. Everything about the purchase itself lives in
+     wsBuyBlueprintAza (charge + refund together) and in
+     /src/weaponsmith/store.js (the copy and the failure sentences). This
+     builder only paints; it must never charge.
+   ⚠ Reads the module through window.__mg.weaponSmith, which is absent until
+     the module loads. A missing module renders an honest "loading" panel
+     rather than an empty tab. */
+function _buildBlueprintShopBody(sovBal) {
+  const ws = (typeof window !== 'undefined' && window.__mg && window.__mg.weaponSmith) || null;
+  if (!ws || typeof ws.storeList !== 'function') {
+    return '<div class="vm-tab-body-inner" style="padding:1.2rem;text-align:center;color:#a89880">' +
+           '🔧 The blueprint catalogue is still loading — reopen this tab in a moment.</div>';
+  }
+  let rows = [];
+  try { rows = ws.storeList() || []; } catch (e) { rows = []; }
+  const owns = !!(typeof _wsOwnsLicense === 'function' && _wsOwnsLicense());
+
+  const gate = owns ? '' :
+    '<div style="background:rgba(255,209,102,0.10);border:1px solid rgba(255,209,102,0.35);border-radius:6px;padding:0.7rem 0.9rem;margin-bottom:0.9rem;font-size:0.85rem">' +
+    '⚠ You do not run a <b>Weapon Smith</b> yet. Blueprints are still yours to keep once bought, but you will need the operation (Just Business) before you can build one.</div>';
+
+  const cards = rows.map(function (r) {
+    const price = r.price | 0;
+    const can = !r.owned && sovBal >= price;
+    return '<div class="shop-item-card" style="display:flex;align-items:center;gap:0.9rem;padding:0.8rem;margin-bottom:0.6rem;' +
+           'background:rgba(24,20,16,0.85);border:1px solid rgba(212,175,55,0.28);border-radius:7px">' +
+           '<div style="font-size:2rem">' + escapeHtml(r.icon || '🔧') + '</div>' +
+           '<div style="flex:1"><div style="font-weight:700;color:#ffefb8">' + escapeHtml(r.name) + '</div>' +
+           '<div class="small-text ink-dim">' + escapeHtml(r.blurb || '') + '</div>' +
+           '<div class="small-text" style="color:#8a7f6a;margin-top:0.2rem">Tier ' + (r.tier | 0) +
+           ' · ' + (r.budget | 0) + '-point frame · also findable as a schematic</div></div>' +
+           (r.owned
+             ? '<div style="color:#9fe8b0;font-weight:700;font-size:0.85rem">✓ Owned</div>'
+             : '<button class="btn-primary vmx-price aza" data-ws-buy="' + escapeHtml(r.id) + '"' +
+               (can ? '' : ' disabled') + '>' + price + ' <span class="aza-icon"></span></button>') +
+           '</div>';
+  }).join('') || '<div class="small-text ink-dim">No blueprints for sale.</div>';
+
+  return '<div class="vm-tab-body-inner">' + gate +
+    '<div class="small-text ink-dim" style="margin-bottom:0.9rem">' +
+    'Blueprints unlock <b>frames</b> at the Weapon Smith bench. ' +
+    '<b>A bought frame is not a stronger weapon</b> — every frame is capped to the same stat budget as its shop-bought equivalent, ' +
+    'so Aza buys <i>which shapes you can build</i>, never how strong they are. Each of these also drops in the field as a schematic ' +
+    'and unlocks through shop reputation.</div>' + cards + '</div>';
+}
+
 function renderVendorMarket() {
   const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'
             : (App.vendorMarketTab === 'starter')    ? 'starter'
             : (App.vendorMarketTab === 'convoy')     ? 'convoy'
+            : (App.vendorMarketTab === 'blueprints') ? 'blueprints'
             : 'packs';
   const gems = Profile.gems || 0;
   const sovBal = Profile.sovereigns || 0;
@@ -162261,6 +162399,7 @@ function renderVendorMarket() {
   const sovBody     = _buildSovereignsStoreBody(sovBal);
   const starterBody = _buildStarterDeckShopBody(gems, sovBal);
   const convoyBody  = _buildConvoyShopBody(sovBal);
+  const bpBody      = _buildBlueprintShopBody(sovBal);
 
   root.innerHTML = `
     <div class="campaign-page vendor-market-page">
@@ -162316,10 +162455,14 @@ function renderVendorMarket() {
           🚚 Convoy Rigs
           <span class="vm-tab-sub">Raise your daily sends</span>
         </button>
+        <button class="vm-tab ${tab === 'blueprints' ? 'vm-tab-active' : ''}" data-vm-tab="blueprints">
+          🔧 Blueprints
+          <span class="vm-tab-sub">Weapon Smith frames</span>
+        </button>
       </div>
 
       <div class="vm-tab-body">
-        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : tab === 'convoy' ? convoyBody : starterBody}
+        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : tab === 'convoy' ? convoyBody : tab === 'blueprints' ? bpBody : starterBody}
       </div>
 
       ${App._packReveal ? renderPackRevealModal() : ''}
@@ -162344,6 +162487,7 @@ function renderVendorMarket() {
   if (tab === 'packs')           _bindPackShopHandlers();
   else if (tab === 'sovereigns') _bindSovereignsStoreHandlers();
   else if (tab === 'convoy')     _bindConvoyShopHandlers();
+  else if (tab === 'blueprints') _bindBlueprintShopHandlers();
   else                           _bindStarterDeckShopHandlers();
 }
 // ----- 🪦 Tombstone cosmetics shop — admin-listed grave markers. Buying one
@@ -207361,6 +207505,16 @@ try {
     refundRes: (cost) => {
       try { for (const id in (cost || {})) _refundRes(id, cost[id]); } catch (e) {}
     },
+    // Ⓐ Aza balance, read-only. There is deliberately no spendAza here — see
+    // wsBuyBlueprintAza for why the charge is not handed out on its own.
+    aza: () => { try { return Profile.sovereigns | 0; } catch (e) { return 0; } },
+    /* Ⓐ The whole real-money purchase, charge and refund together. The module
+       gets a blueprint or gets the player's Aza back; it is not given the
+       ability to take money without the unwind. */
+    buyBlueprintAza: async (bpId, price, label) => {
+      try { return await wsBuyBlueprintAza(bpId, price, label); }
+      catch (e) { return { ok: false, error: 'threw' }; }
+    },
   };
 } catch (e) {}
 
@@ -223449,7 +223603,7 @@ render();
      ⚠ window.WeaponSmithBridge is installed in ordinary source order ABOVE, in
        the main script. This tag must stay below it.
      Bump ?v= on every change — the service worker caches these like any asset. -->
-<script type="module" src="src/weaponsmith/index.js?v=ws-p7"></script>
+<script type="module" src="src/weaponsmith/index.js?v=ws-p8"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

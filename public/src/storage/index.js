@@ -242,10 +242,10 @@ export async function openOffice() {
     + '<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.2rem">'
       + '<button id="wh-yard" style="' + BTN + ';flex:1;min-width:150px">🚚 Walk your yard</button>'
       + '<button id="wh-bays" style="' + BTN2 + ';flex:1;min-width:150px">📦 Bays you rent</button>'
-      + '<button id="wh-dir" style="' + BTN2 + ';flex:1;min-width:150px">🏬 Rent a bay</button>'
+      + '<button id="wh-dir" style="' + BTN2 + ';flex:1;min-width:150px">🏬 Rent a physical bay</button>'
     + '</div>'
     + '<div style="display:flex;justify-content:space-between;gap:.5rem;margin-top:1rem">'
-      + '<button id="wh-market" style="' + BTN + '">🏙 Hire storage from players</button>'
+      + '<button id="wh-market" style="' + BTN + '">📊 Rent ceiling space</button>'
       + '<button data-close="1" style="' + BTN2 + '">Close</button>'
     + '</div>');
 
@@ -349,12 +349,15 @@ export async function openMarket() {
       + 'If you own a Warehouse you could be the first — the Office has a “Rent out” button.</div>';
 
   const ov = shell('wh-market',
-    '<div style="' + H + '">🏙 Storage for hire</div>' + RULE
+    '<div style="' + H + '">📊 Ceiling space for hire</div>' + RULE
     + (_state.available === false ? notReady('This market') : '')
     + '<div style="font-size:.8rem;color:#cfd8e6;margin-bottom:.8rem">'
       + 'Other players rent out spare warehouse space. Hired units raise your resource ceiling '
       + 'for as long as the agreement runs — the fastest answer to STASH FULL that does not cost '
-      + 'you 280,000 🔥 for a warehouse of your own.</div>'
+      + 'you 280,000 🔥 for a warehouse of your own.<br><br>'
+      + '<b style="color:#e0c070">This is capacity, not a place.</b> Nothing is shipped and nothing '
+      + 'is carried: your limit simply goes up. If you want a numbered unit that crates are actually '
+      + 'driven to, that is <b>Rent a physical bay</b> in the Warehouse Office.</div>'
     + rows
     + '<div style="display:flex;justify-content:space-between;gap:.5rem;margin-top:1rem">'
       + '<button id="wh-back" style="' + BTN2 + '">← Office</button>'

@@ -105,7 +105,7 @@ const NAV = [
      under My Companies: the player who needs this most is the one who does NOT
      own a warehouse and keeps hitting STASH FULL, so gating it behind owning
      one would hide it from its whole audience. */
-  { id: 'storageMarket', label: 'Storage Market', ico: '📦', action: 'openStorageMarket' },
+  { id: 'storageMarket', label: 'Ceiling Space', ico: '📊', action: 'openStorageMarket' },
   { id: 'realestate', label: 'Real Estate',    ico: '⌂' },
   { id: 'black',      label: 'Black Market',   ico: '▥', badgeCls: 'toxic', badge: '6' },
   { id: 'feed',       label: 'Guild Wire',      ico: '☷' },

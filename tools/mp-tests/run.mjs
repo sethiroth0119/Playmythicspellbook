@@ -147,7 +147,10 @@ const MUTATIONS = [
        so without it a returning player keeps the old corp/index.html and never
        sees a new sidebar entry no matter how the .jsx tags inside are bumped. */
     name: 'the JB iframe URL loses its cache-buster',
-    find: "f.src = 'corp/?v=121a1';",
+    /* Version-agnostic: this anchor broke once already when the corp URL was
+       bumped, and a PROOF BROKEN is a check that silently stops guarding. The
+       runner requires exactly one match, and only one line assigns f.src. */
+    find: "f.src = 'corp/?v=121a7';",
     replace: "f.src = 'corp/';",
   },
   {

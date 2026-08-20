@@ -103593,6 +103593,362 @@ const BB_PROP_MAP = {
   statue:'pylon', wreck:'wreck', crates:'barricade', tent:'house',
   lamp:'pylon', bonfire:'pylon', crystal:'pylon', spawn:null, banner:'pylon'
 };
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏙 TERRAIN GENERATOR — the ground a match is actually fought on.
+//
+// WHY IT EXISTS. `_bbMapFromEditor` used to return `tiles: []` for the shipped
+// default (no admin battlemap configured, i.e. every normal match), so the
+// canvas stage drew 168 identical cells over a backdrop photograph. The stage
+// has always been able to draw lit slabs, cliff faces and props — the sender
+// simply never fed it any. This is the feed.
+//
+// 🎲 DETERMINISM IS NOT DECORATION — IT IS THE WHOLE CONTRACT.
+// The map is NOT part of the synced battle state: every client builds its own
+// copy from `_bbMapSeed()`. If anything below reached for `Math.random()`,
+// `Date.now()` or the wall clock, the two players in a multiplayer match — and
+// a replay of that match — would each raise DIFFERENT tiles. Unit positions are
+// synced; terrain would not be. The same unit would stand in an open street on
+// one screen and on top of a two-level rubble slab on the other, cover would
+// disagree with what the rules think, and NOTHING WOULD THROW: it reads as a
+// rendering bug forever. Every random number here comes out of the seeded PRNG
+// below, consumed in a fixed order.
+//
+// 🪞 AND THE MAP IS POINT-SYMMETRIC, ON PURPOSE.
+// Multiplayer does not hand the guest the host's coordinates — it rotates the
+// whole board 180° (`_mirrorAllPositions`, and see its BOARD_H-must-be-even
+// note) so that each player's own army sits at the bottom of their own screen.
+// Terrain, being generated rather than synced, does not go through that
+// rotation. A map that IS its own 180° rotation is therefore the only map that
+// lands on the same tiles for both players — and the only fair one, since on an
+// asymmetric map one side gets the rubble fort and the other gets open street.
+// Every field below is built from primitives that are symmetric about the
+// lattice centre, and a final pass copies the canonical half onto its partner
+// so that a bug in one of those primitives degrades to "rotated" rather than to
+// "unfair, and silently desynced".
+//
+// 🚧 TERRAIN IS DRESSING. It emits `surf` (what the tile is made of), `elev`
+// (slab height) and `deco` (silhouette props) and nothing else. It never emits
+// `type:'blocked'` and never emits `prop:'pylon'` — those are the two things the
+// canvas stage treats as impassable (`tileBlocked`, battle-board:625), and the
+// stage's idea of blocked is not the game's. The game's own walkable rules stay
+// authoritative, so every tile raised here is still a tile a unit may stand on.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// mulberry32. Chosen because it is entirely uint32 arithmetic (Math.imul), so
+// it produces the identical stream on every JS engine — a generator seeded the
+// same on two machines that disagreed in the last float bit would defeat the
+// whole point of seeding it.
+function _bbRng(seed) {
+  let a = (seed >>> 0) || 0x9e3779b9;
+  return function () {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+// FNV-1a over a string → uint32. Used to turn a match id into a seed.
+function _bbSeedFromString(s) {
+  let h = 0x811c9dc5; const str = String(s);
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h >>> 0;
+}
+
+// 🌱 THE SEED. Resolved in strict priority order, and every branch is about two
+// clients (or a client and a replay) agreeing without talking to each other.
+let _BB_SEED_FALLBACK = 0;
+function _bbMapSeed() {
+  // 1 · A multiplayer match id is the strongest source: BOTH clients hold the
+  //     same string before either has received a single state snapshot, so both
+  //     derive the same seed with no round trip and no race over who stamps it.
+  try {
+    const bp = (typeof App !== 'undefined' && App.battlePrep) || null;
+    const mid = (bp && (bp.multiplayerMatchId || bp._matchId)) ||
+      ((typeof MatchBroadcast !== 'undefined' && MatchBroadcast && MatchBroadcast.matchId) || null);
+    if (mid) return _bbSeedFromString('bbmap:' + mid);
+  } catch (e) {}
+  // 2 · Otherwise stamp it on the battle state. That is what carries it into a
+  //     saved replay: a replay re-renders from the recorded state, so a seed
+  //     that lived only in a module variable would give the replay a different
+  //     battlefield from the match it claims to be replaying. It is a plain
+  //     number, so it survives `_serializeBattleStateForBroadcast` untouched
+  //     (HEAVY_KEYS only blanks strings).
+  try {
+    const s = (typeof App !== 'undefined' && App.state) || null;
+    if (s) {
+      if (typeof s._bbMapSeed === 'number' && s._bbMapSeed) return s._bbMapSeed >>> 0;
+      const v = ((Math.random() * 0xffffffff) >>> 0) || 1;
+      s._bbMapSeed = v;
+      return v;
+    }
+  } catch (e) {}
+  // 3 · No state at all — the stage mounted before the match built one. Cache
+  //     one value for the page so two calls in the same session cannot disagree
+  //     and rebuild the board underneath the player.
+  if (!_BB_SEED_FALLBACK) _BB_SEED_FALLBACK = ((Math.random() * 0xffffffff) >>> 0) || 1;
+  return _BB_SEED_FALLBACK;
+}
+
+// 🪜 THE ELEVATION LADDER, and why it stops at 0.34.
+// `pickTile` (battle-board:2612 area) intersects the view ray with the y = 0
+// plane ONLY — CONTRACT §7 R27. A tile whose TOP sits at height e therefore
+// resolves a click at a ground point pushed toward the camera by
+// e · (cam.z / cam.y) ≈ 1.09·e world units. One hex row is hexV = 1.5/√3 ≈
+// 0.866 deep, so 0.34 of height is 0.43 of a row — still inside the rounding
+// radius of the tile that was actually clicked. 0.40 would be 0.50 of a row and
+// would start resolving to the tile BEHIND, with no error and no warning.
+// Raise this number and high ground quietly becomes unclickable.
+const _BB_ELEV = [0, 0.13, 0.26, 0.34];
+
+// Odd-r neighbour offsets, indexed [rowParity][edge], where `edge` is the same
+// index the stage's hexCorners() uses: edge i faces outward at i·60°.
+// HEXSPEC §5 — six neighbours, never eight.
+const _BB_NB = [
+  [[1, 0], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1]],   // even row
+  [[1, 0], [1, 1], [0, 1], [-1, 0], [0, -1], [1, -1]]      // odd row
+];
+
+function _bbGenTerrain(cols, rows, seed) {
+  const rnd = _bbRng(seed);
+  const SALT_M = (rnd() * 0x7fffffff) | 0;      // moisture — grass and standing water
+  const SALT_D = (rnd() * 0x7fffffff) | 0;      // debris — where rubble drifted to
+
+  // ── lattice, in COLUMN widths ─────────────────────────────────────────────
+  // ax counts columns, az counts rows scaled by the row pitch (hexV/hexW =
+  // 1.5/√3), so a circle in (ax,az) is a circle on the board rather than an
+  // ellipse. Odd rows are shifted +½ column (HEXSPEC §2), which puts the
+  // lattice's own centre ¼ column right of column (cols-1)/2 — the same +0.25
+  // the stage's latticeCentreX() applies. Subtracting it is what makes
+  // (x,z) → (cols-1-x, rows-1-z) exactly (ax,az) → (-ax,-az).
+  const HEXV = 1.5 / Math.sqrt(3);
+  const ccx = (cols - 1) / 2, ccz = (rows - 1) / 2;
+  const A = (x, z) => ({ ax: (x + (z & 1) * 0.5 - ccx) - 0.25, az: (z - ccz) * HEXV });
+
+  // ── value noise ───────────────────────────────────────────────────────────
+  function h2(ix, iz, salt) {
+    let h = Math.imul(ix | 0, 374761393) ^ Math.imul(iz | 0, 668265263) ^ Math.imul(salt | 0, 2246822519);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+  function vnoise(ax, az, f, salt) {
+    const px = ax * f, pz = az * f;
+    const x0 = Math.floor(px), z0 = Math.floor(pz);
+    const tx = px - x0, tz = pz - z0;
+    const sx = tx * tx * (3 - 2 * tx), sz = tz * tz * (3 - 2 * tz);
+    const a0 = h2(x0, z0, salt), a1 = h2(x0 + 1, z0, salt);
+    const b0 = h2(x0, z0 + 1, salt), b1 = h2(x0 + 1, z0 + 1, salt);
+    const t0 = a0 + (a1 - a0) * sx, t1 = b0 + (b1 - b0) * sx;
+    return t0 + (t1 - t0) * sz;
+  }
+  // Two octaves so a patch has an edge as well as a middle, then folded against
+  // its own 180° partner. Folding HERE rather than copying half the finished
+  // board keeps the field CONTINUOUS through the centre line: a straight copy
+  // leaves a seam that every drift and every grass patch runs into.
+  function fld(ax, az, f, salt) {
+    return vnoise(ax, az, f, salt) * 0.68 + vnoise(ax, az, f * 2.3, salt ^ 0x5bf03635) * 0.32;
+  }
+  const nsym = (ax, az, f, salt) => 0.5 * (fld(ax, az, f, salt) + fld(-ax, -az, f, salt));
+
+  // ── the street network ────────────────────────────────────────────────────
+  // NOT per-tile noise. Uncorrelated random per tile is the tell of a generated
+  // map; a place has roads that go somewhere. One avenue runs across the board
+  // through a central plaza, two side streets run up and down it, and the four
+  // lots those lines cut out are where the buildings used to be.
+  // Every line passes through — or is mirrored about — the lattice centre, and
+  // every wobble term is ODD in its argument, which is what keeps the whole
+  // network its own 180° rotation. (Check: for the avenue residual
+  // r = az − Aꞏsin(kꞏax), r(−ax,−az) = −r(ax,az), so |r| is symmetric. For the
+  // side-street pair r₁ = ax − D − Bꞏsin(mꞏaz) and r₂ = ax + D − Bꞏsin(mꞏaz),
+  // r₁(−ax,−az) = −r₂(ax,az), so min(|r₁|,|r₂|) is symmetric as a set.)
+  const avA = 0.34 + rnd() * 0.42, avK = 0.26 + rnd() * 0.2, avW = 0.80;
+  const csD = 3.0 + rnd() * 1.0, csB = 0.30 + rnd() * 0.40, csM = 0.30 + rnd() * 0.22, csW = 0.74;
+  const plzR = 1.5 + rnd() * 0.45;
+  function streetDist(ax, az) {
+    const av = Math.abs(az - avA * Math.sin(avK * ax * 2)) / avW;
+    const wob = csB * Math.sin(csM * az * 2);
+    const cs = Math.min(Math.abs(ax - csD - wob), Math.abs(ax + csD - wob)) / csW;
+    const pl = Math.hypot(ax * 0.88, az * 1.10) / plzR;
+    return Math.min(av, cs, pl);                   // < 1 → paved
+  }
+
+  // ── ruined building footprints ────────────────────────────────────────────
+  // Sampled in ONE half and mirrored, so the pair is symmetric by construction.
+  // Rejection-sampled off the road network and off each other: a building grown
+  // through the road would erase the thing that makes the map read as a place.
+  const lots = [];
+  for (let guard = 0; lots.length < 6 && guard < 600; guard++) {
+    const p = A(Math.floor(rnd() * cols), Math.floor(rnd() * (rows / 2)));
+    const r = 1.25 + rnd() * 0.95;
+    if (streetDist(p.ax, p.az) < 1 + r * 0.5) continue;
+    if (lots.some(L => Math.hypot(L.ax - p.ax, L.az - p.az) < (L.r + r) * 0.9)) continue;
+    lots.push({ ax: p.ax, az: p.az, r: r }, { ax: -p.ax, az: -p.az, r: r });
+  }
+  function lotLevel(ax, az) {
+    let lv = 0;
+    for (let i = 0; i < lots.length; i++) {
+      const L = lots[i], d = Math.hypot(ax - L.ax, az - L.az) / L.r;
+      if (d < 1) lv = Math.max(lv, d < 0.34 ? 3 : d < 0.68 ? 2 : 1);
+    }
+    return lv;
+  }
+  // Drifts. Rubble does not lie in an even border round an arena — it piles
+  // where something pushed it, so the edge band is gated on the debris field
+  // and comes out as three or four heaps, not a picture frame.
+  function driftLevel(x, z, ax, az) {
+    const edge = Math.min(x, cols - 1 - x, z, rows - 1 - z);
+    if (edge > 1) return 0;
+    const d = nsym(ax, az, 0.40, SALT_D);
+    return edge === 0 ? (d > 0.56 ? 2 : d > 0.44 ? 1 : 0) : (d > 0.60 ? 1 : 0);
+  }
+
+  // ── assemble ──────────────────────────────────────────────────────────────
+  const out = [];
+  const moists = [];
+  for (let z = 0; z < rows; z++) {
+    for (let x = 0; x < cols; x++) {
+      const p = A(x, z);
+      const paved = streetDist(p.ax, p.az) < 1;
+      // The road is the LOW ground, always: it is what the player reads height
+      // against, and a street that climbed over a rubble heap would say the
+      // opposite of what the silhouette says.
+      const lvl = paved ? 0 : Math.max(lotLevel(p.ax, p.az), driftLevel(x, z, p.ax, p.az));
+      const moist = nsym(p.ax, p.az, 0.30, SALT_M);
+      out.push({ x: x, z: z, elev: _BB_ELEV[lvl], _lvl: lvl, _pv: paved ? 1 : 0,
+                 _m: moist, _d: nsym(p.ax, p.az, 0.52, SALT_D) });
+      // Only FLAT ground competes for the water/grass quantiles: a lot core is
+      // rubble whatever its moisture, and letting those tiles hold slots in the
+      // sort silently ate the puddles on seeds whose wettest spots landed under
+      // a building.
+      if (lvl === 0) moists.push(moist);
+    }
+  }
+  // 💧 QUANTILES, NOT FIXED CUTOFFS. Thresholding a noise field at a constant
+  // is a coin flip on how much water and grass a given seed happens to get: an
+  // early build of this ran four seeds and one of them produced ZERO grass on a
+  // map whose whole brief is "nature is taking over". Sorting the field and
+  // cutting it at a fraction pins the MIX instead of the threshold, so every
+  // seed gets the same amount of overgrowth in a different shape. The field is
+  // symmetric and a quantile is a whole-board statistic, so this does not break
+  // the 180° symmetry.
+  const sorted = moists.slice().sort((a, b) => a - b);
+  const qAt = f => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(f * sorted.length)))];
+  const qWater = qAt(0.955), qGrass = qAt(0.70);
+  for (const t of out) {
+    if (t._lvl >= 2) t.surf = 'rubble';
+    else if (t._lvl === 1) t.surf = t._d > 0.46 ? 'rubble' : 'dirt';
+    else if (t._m >= qWater) t.surf = 'water';
+    else if (t._m >= qGrass) t.surf = 'grass';
+    else t.surf = t._pv ? 'asphalt' : 'dirt';
+  }
+
+  // 🛤 THE KERB STEP. Pavement stands one step above the carriageway — that is
+  // what a street IS, and it is the cheapest relief on the whole map because it
+  // follows a line the player is already reading. Without it every raised tile
+  // sat in a corner lot and the MIDDLE of the board, which is where the fight
+  // actually happens, was one flat sheet. Applied AFTER the surface pass on
+  // purpose: a kerb-height tile stays grass or dirt. How high a tile is and what
+  // it is made of are two questions, and an earlier build conflated them —
+  // raising the kerb there turned every verge into rubble.
+  for (const t of out) {
+    if (t.elev || t._pv) continue;
+    const nb = _BB_NB[t.z & 1];
+    for (let e2 = 0; e2 < 6; e2++) {
+      const ox = t.x + nb[e2][0], oz = t.z + nb[e2][1];
+      if (ox < 0 || oz < 0 || ox >= cols || oz >= rows) continue;
+      if (out[oz * cols + ox]._pv) { t.elev = _BB_ELEV[1]; break; }
+    }
+  }
+
+  // 🪞 Belt and braces — see the header. Pairs are taken by LINEAR index so this
+  // still terminates, and still pairs correctly, if either dimension is ever
+  // odd (an odd total leaves one self-paired middle tile, which the loop bound
+  // skips rather than mangles).
+  const total = cols * rows;
+  for (let i = 0; i < total >> 1; i++) {
+    const a = out[i], b = out[total - 1 - i];
+    b.surf = a.surf; b.elev = a.elev; b._lvl = a._lvl; b._pv = a._pv;
+  }
+
+  // ── props ─────────────────────────────────────────────────────────────────
+  // Small, numerous, irregularly placed — BAR R1 names "evenly spaced props on
+  // a lattice" as a fail condition, so nothing here sits at the tile centre and
+  // nothing draws at a fixed size. `u`/`v` are offsets from the tile centre in
+  // units of the hex CIRCUMRADIUS (the stage multiplies by CONFIG.tile); `r` is
+  // a rotation in radians; `s` is a size multiplier.
+  const R2 = v => Math.round(v * 100) / 100;
+  const idx = (x, z) => (x >= 0 && z >= 0 && x < cols && z < rows) ? out[z * cols + x] : null;
+  function decoFor(t, x, z) {
+    // Seeded from the TILE, not from the iteration, so the same tile gets the
+    // same props no matter what order the board is walked in.
+    const rp = _bbRng((seed ^ Math.imul(x + 1, 0x27d4eb2d) ^ Math.imul(z + 1, 0x165667b1)) >>> 0);
+    const d = [];
+    const put = (k, spread, s0, s1) => d.push({
+      k: k, u: R2((rp() - 0.5) * spread), v: R2((rp() - 0.5) * spread),
+      s: R2(s0 + rp() * (s1 - s0)), r: R2(rp() * 6.28)
+    });
+    if (t.surf === 'rubble') {
+      const n = 3 + ((rp() * 3) | 0);
+      for (let i = 0; i < n; i++) put('chunk', 1.15, 0.18, 0.42);
+      if (rp() < 0.42) put('rebar', 0.9, 0.5, 0.95);
+      if (rp() < 0.3) put('slab', 0.8, 0.45, 0.8);
+    } else if (t.surf === 'dirt') {
+      if (rp() < 0.55) put('chunk', 1.1, 0.14, 0.3);
+      if (rp() < 0.4) put('scrub', 1.0, 0.4, 0.8);
+      if (rp() < 0.22) put('chunk', 1.1, 0.12, 0.24);
+    } else if (t.surf === 'grass') {
+      const n = 1 + ((rp() * 3) | 0);
+      for (let i = 0; i < n; i++) put('tuft', 1.15, 0.4, 0.95);
+      if (rp() < 0.3) put('scrub', 0.95, 0.45, 0.85);
+    } else if (t.surf === 'asphalt') {
+      if (rp() < 0.3) put('chunk', 1.1, 0.12, 0.26);
+      if (rp() < 0.12) put('tuft', 1.0, 0.3, 0.55);
+    } else if (t.surf === 'water') {
+      if (rp() < 0.5) put('reed', 0.9, 0.4, 0.8);
+    }
+    // 🧱 KERBSTONES. The one prop that is NOT randomly placed: it marks where
+    // the pavement ended, so it goes on the edge the road is actually on. This
+    // is what makes the street read as a street instead of a grey stripe. Half
+    // are dropped and every one is jittered, so the run stays broken.
+    if (!t._pv && t._lvl === 0) {
+      const nb = _BB_NB[z & 1];
+      for (let e = 0; e < 6; e++) {
+        const o = idx(x + nb[e][0], z + nb[e][1]);
+        if (!o || !o._pv || rp() < 0.45) continue;
+        const a = e * Math.PI / 3;
+        d.push({ k: 'kerb', u: R2(Math.cos(a) * 0.72 + (rp() - 0.5) * 0.2),
+                 v: R2(Math.sin(a) * 0.72 + (rp() - 0.5) * 0.2),
+                 s: R2(0.55 + rp() * 0.4), r: R2(a + Math.PI / 2 + (rp() - 0.5) * 0.5) });
+      }
+    }
+    return d;
+  }
+  const TAU = Math.PI * 2;
+  for (let i = 0; i < total >> 1; i++) {
+    const a = out[i], b = out[total - 1 - i];
+    const d = decoFor(a, a.x, a.z);
+    a.deco = d;
+    // The partner tile is the SAME tile rotated 180°, so its props are the same
+    // props rotated 180°: offsets negate, headings turn by π.
+    b.deco = d.map(o => ({ k: o.k, u: R2(-o.u), v: R2(-o.v), s: o.s, r: R2((o.r + Math.PI) % TAU) }));
+  }
+
+  // Emit the wire shape only. `_lvl`/`_pv` were scratch; `elev` and `deco` are
+  // dropped when empty because this array crosses a postMessage boundary once
+  // per battle and 168 tiles of "elev: 0" is pure freight.
+  return out.map(t => {
+    const o = { x: t.x, z: t.z, surf: t.surf };
+    if (t.elev) o.elev = t.elev;
+    if (t.deco && t.deco.length) o.deco = t.deco;
+    return o;
+  });
+}
+// Admin battlemap-editor terrain key → generated-surface key. The editor is the
+// author's intent about what a tile is MADE OF, so where it has an opinion it
+// wins; the generator keeps supplying the relief and the props, which the
+// editor's v3 format has no way to express at all.
+const BB_EDITOR_SURF = { road:'asphalt', rubble:'rubble', dirt:'dirt', grass:'grass',
+                         stone:'rubble', ash:'dirt', sand:'dirt', water:'water' };
 function _bbMapFromEditor(raw) {
   const m = raw || (typeof _b3dActiveMap === 'function' ? _b3dActiveMap() : null) || {};
   // Fallbacks track BOARD_W/BOARD_H. They were 8/7 — the PREVIOUS board size —
@@ -103602,12 +103958,22 @@ function _bbMapFromEditor(raw) {
   const cols = m.cols || (typeof BOARD_W === 'number' ? BOARD_W : 14);
   const rows = m.rows || (typeof BOARD_H === 'number' ? BOARD_H : 12);
   const terrain = Array.isArray(m.terrain) ? m.terrain : [];
-  const tiles = [];
+  // 🏙 EVERY tile, ALWAYS — this used to be `const tiles = []` filled only from
+  // the editor, which is why the shipped default sent an empty array and the
+  // board drew bare ground. See _bbGenTerrain's header for the determinism and
+  // symmetry contracts this is standing on.
+  const tiles = _bbGenTerrain(cols, rows, _bbMapSeed());
+  const byKey = new Map();
+  for (const t of tiles) byKey.set(t.x + ',' + t.z, t);
   for (let c = 0; c < cols; c++) {
     for (let r = 0; r < rows; r++) {
       const key = Array.isArray(terrain[c]) ? terrain[c][r] : terrain[c * rows + r];
+      if (!key) continue;
+      const hit = byKey.get(c + ',' + r);
+      if (!hit) continue;
       const type = BB_TERRAIN_TYPE[key];
-      if (type) tiles.push({ x: c, z: r, type: type });
+      if (type) hit.type = type;
+      if (BB_EDITOR_SURF[key]) hit.surf = BB_EDITOR_SURF[key];
     }
   }
   // Free-floating editor models become tile props on their nearest cell.
@@ -103617,7 +103983,7 @@ function _bbMapFromEditor(raw) {
     if (!prop) continue;
     const x = Math.max(0, Math.min(cols - 1, Math.round((mo.x || 0) + (cols - 1) / 2)));
     const z = Math.max(0, Math.min(rows - 1, Math.round((mo.z || 0) + (rows - 1) / 2)));
-    const hit = tiles.find(t => t.x === x && t.z === z);
+    const hit = byKey.get(x + ',' + z);
     if (hit) hit.prop = prop; else tiles.push({ x: x, z: z, prop: prop });
   }
   return {

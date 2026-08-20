@@ -122,3 +122,30 @@ route; enemy health only visible on hover; objectives hidden in a menu.
    battlefield function, the verdict is `fail` no matter how good it looks.
 5. Verdicts: `pass` (wins against the bar), `rework` (real progress, gap named),
    `fail` (broken or regressed).
+
+---
+
+## Standing constraint, restated by the user (binding on every piece)
+
+> "I want to make sure I keep all of the functions of the battlefield. Just when a
+> unit or hero moves have an arrow show where they are going or where they are
+> attacking like how games like XCOM have it. Make the UI where it fits this style
+> and keep all of the gameplay the same but for this battlefield and new changes."
+
+Three things follow, and every critic applies them:
+
+1. **Nothing is removed.** Every battlefield function that worked before must still
+   work: summon, move, attack, abilities, consumables, fusion, traps, walls,
+   tombstones and looting, the hover action menu, unit details, placement, the hand
+   and rail, end turn, the AI, replays, and multiplayer broadcast. A piece that
+   improves the look and quietly drops a feature is a `fail`, not a tradeoff. When
+   a piece cannot preserve something, it says so out loud instead of deleting it.
+2. **Movement and attack telegraph with an arrow.** Selecting a move shows the route
+   the unit will actually walk, ending in a destination marker; selecting an attack
+   shows an arc to the target. XCOM-style, and derived from the real path the game
+   will take — not a straight line drawn between two points, which would be another
+   way for the UI to lie about the rules.
+3. **The UI matches the new battlefield.** The HUD, panels and markers are restyled
+   to sit with the post-apocalyptic field rather than fighting it, using the existing
+   battle chrome tokens in CONTRACT.md §6. Restyled, not rebuilt — the panels keep
+   their functions and their positions.

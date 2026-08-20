@@ -418,7 +418,12 @@ function drawGroundSlices(img, alpha){
 const SUN_IMG = new Image(); SUN_IMG.src = '../assets/board/sun.png';
 const MOON_IMG = new Image(); MOON_IMG.src = '../assets/board/moon.png';
 const cv = document.getElementById('stage');
-const ctx = cv.getContext('2d');
+/* `let`, not `const`, for exactly one reason: terrainLayer() points this at an
+   offscreen canvas while it bakes the ground and puts it straight back in a
+   `finally`. Every painter in this file writes to this binding, so the swap is
+   what lets the same code draw into either target without threading a context
+   argument through twenty functions. Nothing else may reassign it. */
+let ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1;
 let units = [], particles = [], effects = [];
 let uid = 1, selected = null, armedCard = null, focus = null, hoverTile = null;
@@ -434,6 +439,13 @@ const easeOut = t => 1 - Math.pow(1-t, 3);
 const easeInOut = t => t<.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
 const easeBack = t => { const c=1.70158+1, s=1.70158; return 1 + c*Math.pow(t-1,3) + s*Math.pow(t-1,2); };
 function hexRgb(h){ const n = parseInt(h.slice(1),16); return [n>>16&255, n>>8&255, n&255]; }
+/* ⚠ mixHex RETURNS "rgb(r,g,b)", NOT A HEX STRING. It is a fillStyle, and only
+   a fillStyle: feeding its result back into mixHex() or into rgba() sends
+   hexRgb() → parseInt("gb(103,…)", 16) → NaN → rgb(0,0,0), with no throw. The
+   whole terrain pass was built on chained mixes and came out near-black for it —
+   every "lit" rim, every grid highlight and every slab top silently resolved to
+   black. Use mixHexRaw() (below, returns '#rrggbb') for anything that will be
+   mixed again or wrapped in rgba(). */
 function mixHex(a,b,t){ const A=hexRgb(a), B=hexRgb(b);
   return `rgb(${Math.round(lerp(A[0],B[0],t))},${Math.round(lerp(A[1],B[1],t))},${Math.round(lerp(A[2],B[2],t))})`; }
 function rgba(h,a){ const c = hexRgb(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
@@ -849,6 +861,11 @@ function applyFit(){ resize(); fitCamera(); buildCam(); }
 
 function buildStage(){
   rebuildTileIndex();
+  /* MAP.tiles has just been replaced, so the baked terrain describes a board
+     that no longer exists. Bumping the signature is the only thing that tells
+     terrainLayer() so — it cannot see MAP.tiles change and re-hashing the array
+     every frame would cost more than the rebuild it is avoiding. */
+  MAPSIG++;
   applyFit();
   seedBraziers(); seedShards(); seedMotes();
   units = units.filter(u => u.persist);
@@ -1303,6 +1320,38 @@ function drawShards(){
   }
 }
 
+/* 🌧 RAIN. BAR R1's reference is "soft rain streaks and a heavy vignette", and
+   this board had neither. Deliberately the cheapest thing that could work: the
+   streaks live in NORMALISED screen space (so a resize needs no reseed), their
+   fall is a pure function of T rather than integrated state (so no per-frame
+   allocation and nothing to desync), and all of them go into ONE path with ONE
+   stroke — about 0.1 ms for 120 streaks. Intensity follows LIGHT.haze so the
+   night rig gets a thinner rain than dusk rather than the same white noise. */
+const RAIN = [];
+function seedRain(){
+  for (let i=0;i<120;i++)
+    RAIN.push({ x:Math.random(), y:Math.random(), len:26+Math.random()*46, sp:0.20+Math.random()*0.34 });
+}
+function drawRain(){
+  if (!RAIN.length) seedRain();
+  const a = 0.055 + LIGHT.haze*0.20;
+  ctx.save();
+  ctx.strokeStyle = rgba(LIGHT.rim || '#cfe4ff', a);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i=0;i<RAIN.length;i++){
+    const r = RAIN[i];
+    const t = r.y + T*r.sp;
+    const y = (t - Math.floor(t)) * (H + 140) - 70;
+    /* nudge x by the wrap count so a streak does not fall down the same line
+       forever — otherwise 120 streaks read as 120 static scratches */
+    const x = ((r.x + Math.floor(t)*0.6180339) % 1) * W;
+    ctx.moveTo(x, y); ctx.lineTo(x - r.len*0.26, y + r.len);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 /* Six projected corners, in the same winding hexCorners() produces. pathPoly()
    below is already generic over N points, so nothing downstream cared that this
    used to return four. */
@@ -1313,15 +1362,532 @@ function tilePoly(gx,gz,inset,y){
 }
 function pathPoly(P){ ctx.beginPath(); ctx.moveTo(P[0].x,P[0].y); for (let i=1;i<P.length;i++) ctx.lineTo(P[i].x,P[i].y); ctx.closePath(); }
 
-function drawBoard(){
+/* ══════════════════════════════════════════════════════════════════
+   🏚 TERRAIN — surfaces, relief and props, BAKED ONCE.
+   ══════════════════════════════════════════════════════════════════
+   The tile pass used to run every frame: ~12 canvas path ops per tile plus a
+   drawRune() of ~15 more, plus drawGroundSlices' 150 blits, plus a projected
+   apron — call it 4,700 path ops and 150 image blits, sixty times a second, at
+   14x12. It was already the frame's biggest cost at 8x7 and this wave triples
+   the tile count while adding textures and props on top.
+
+   But NONE of it moves. Surfaces, relief, cliff faces, cast shadows, the cell
+   division and the props are a pure function of (map, projection, light) — and
+   the projection only changes on resize while the light only changes on a
+   time-of-day lerp. So the whole ground is rendered into an offscreen canvas
+   and the frame blits it. Everything that DOES move — the move/attack paint,
+   the selection ring, hover, focus, runes — stays live in drawBoard() below,
+   and there are at most a couple of dozen of those tiles rather than 168.
+
+   The cache key is a string of everything the picture depends on. Miss it and
+   the board silently freezes a stale ground; include too much and it rebuilds
+   every frame and this was pointless. TERR.ms carries the last rebuild cost so
+   fitReport() can print it.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* 🎨 THE PALETTE. BAR R1: "muted and desaturated — mossy greens, wet browns,
+   cool grey-blue shadow. One value range; nothing neon." Every entry is a
+   low-chroma pair (`lo` in shadow, `hi` in the key light) plus the colour of
+   its grit, and NOTHING here is more saturated than the location photograph it
+   sits on. `wet` is how much of the sky this surface throws back: standing
+   water is a mirror, rubble is not. */
+const SURF = {
+  dirt:    { lo:'#282115', hi:'#4d3d29', grit:'#75603f', a:0.86 },
+  asphalt: { lo:'#23272d', hi:'#474d55', grit:'#6a7079', a:0.90 },
+  rubble:  { lo:'#2a2926', hi:'#4f4e48', grit:'#767468', a:0.89 },
+  grass:   { lo:'#232819', hi:'#454f2c', grit:'#66734a', a:0.88 },
+  water:   { lo:'#141a1f', hi:'#2f414b', grit:'#5d757f', a:0.91 }
+};
+function surfOf(t){ return (t && SURF[t.surf]) || SURF.dirt; }
+/* Radial shrink applied to every tile polygon. It has to be ONE number: the
+   slab top, the cliff-face corners, the surface-texture clip and the highlight
+   strokes all build the same hexagon and any disagreement shows up as paint
+   sliding off its own tile. Small — a wide gap between cells is the tabletop
+   look; the cell division is carried by the seam stroke, not by a moat. */
+const TILE_INSET = 0.008;
+
+/* Odd-r neighbour offsets, [rowParity][edge], where `edge` is the index
+   hexCorners() uses — edge i faces outward at i*60 degrees. HEXSPEC §5. This is
+   what lets a cliff face know how far it has to fall: a slab beside an equally
+   high slab has no face on that side at all, which is the difference between a
+   four-tile plateau and four separate blocks with black seams between them. */
+const NB6 = [
+  [[1,0],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1]],   /* even row */
+  [[1,0],[1,1],[0,1],[-1,0],[0,-1],[1,-1]]      /* odd row  */
+];
+function elevOf(x,z){
+  if (x < 0 || z < 0 || x >= MAP.cols || z >= MAP.rows) return 0;   /* off-board is the floor */
+  return tileElev(x,z);
+}
+
+const TERR = { cv:null, g:null, key:'', ms:0 };
+/* Bumped whenever the host replaces MAP.tiles. Hashing the tiles array itself
+   every frame would cost more than the rebuild it is trying to avoid. */
+let MAPSIG = 0;
+function terrainKey(){
+  const gk = GROUND.img ? (GROUND.key + '|' + (GROUND.img.complete ? 1 : 0) + '|' + Math.round(GROUND.fade*10)) : '-';
+  /* The light lerps over 2.5s (setTimeOfDay). Quantising it rebuilds ~20 times
+     across a transition instead of 150, which is invisible and cheap. */
+  const lk = LIGHT.key + LIGHT.fog + Math.round(LIGHT.keyI*12) + ',' + Math.round(LIGHT.elev*20) + ',' + Math.round(LIGHT.az*20) + ',' + Math.round(LIGHT.ambI*12);
+  return W+'x'+H+'@'+DPR+'|'+((VIEW.cx|0)+','+(VIEW.cy|0)+','+(VIEW.scale|0))+'|'+MAP.cols+'x'+MAP.rows+'#'+MAPSIG+'|'+gk+'|'+lk;
+}
+function terrainLayer(){
+  const key = terrainKey();
+  if (TERR.cv && TERR.key === key) return TERR.cv;
+  if (!TERR.cv) TERR.cv = document.createElement('canvas');
+  if (TERR.cv.width !== cv.width || TERR.cv.height !== cv.height){
+    TERR.cv.width = cv.width; TERR.cv.height = cv.height; TERR.g = null;
+  }
+  if (!TERR.g) TERR.g = TERR.cv.getContext('2d');
+  const g = TERR.g;
+  const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+  g.setTransform(DPR,0,0,DPR,0,0);
+  g.clearRect(0,0,W,H);
+  /* Every painter in this file draws into the module-level `ctx`, including
+     pathPoly() and drawGroundSlices(). Rather than thread a context argument
+     through twenty functions, point `ctx` at the offscreen for the duration —
+     and put it back in a `finally`, because a throw here with the swap still in
+     place would send every later frame into the offscreen and leave the visible
+     canvas frozen with no error at all. */
+  const prev = ctx;
+  ctx = g;
+  try { paintTerrain(); } finally { ctx = prev; }
+  TERR.key = key;
+  TERR.ms = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - t0;
+  return TERR.cv;
+}
+
+/* 🎞 FILM GRAIN, baked in with the ground. Flat vector fills are what make a
+   generated board look generated: every asphalt hex is literally the same
+   swatch, and the eye reads "painted cardboard" long before it reads "street".
+   A single 128px noise tile, laid over the whole play plane in `overlay` so it
+   modulates whatever is underneath rather than fogging it, is the cheapest way
+   to put a photographic surface back on top. Built once per page — it is a
+   CanvasPattern, so it survives the ctx swap and every rebuild. The PORT BRIEF
+   at the top of this file already asked for "film grain 0.015"; this is that,
+   applied where it does the most good instead of over the whole frame. */
+let NOISE_PAT = null;
+function noisePattern(g){
+  if (NOISE_PAT) return NOISE_PAT;
+  const n = document.createElement('canvas'); n.width = n.height = 128;
+  const nc = n.getContext('2d');
+  const im = nc.createImageData(128,128);
+  /* xorshift32, so the grain is identical every session — a rebuild that
+     reshuffled the noise would make the whole board crawl on a light change. */
+  let h = 0x1a2b3c4d;
+  for (let i=0;i<im.data.length;i+=4){
+    h ^= h<<13; h ^= h>>>17; h ^= h<<5; h |= 0;
+    const v = 128 + (((h >>> 8) & 255) - 128) * .62;
+    im.data[i] = im.data[i+1] = im.data[i+2] = v; im.data[i+3] = 255;
+  }
+  nc.putImageData(im,0,0);
+  NOISE_PAT = g.createPattern(n,'repeat');
+  return NOISE_PAT;
+}
+
+/* The screen-space basis of the GROUND PLANE at one tile: where +1 world X and
+   +1 world Z go once projected. Feeding those to ctx.transform() lets a texture
+   be drawn in world units and land on the ground in correct perspective — the
+   flat-ellipse ctx.scale(1,k) idiom used elsewhere in this file is a constant
+   fudge that only holds at one depth and one yaw; this is exact at every depth
+   and survives a camera that turns. */
+function groundBasis(gx,gz,y){
+  const w = gw(gx,gz,y);
+  const c = project(w); if (!c) return null;
+  const px = project({x:w.x+1, y:w.y, z:w.z}); if (!px) return null;
+  const pz = project({x:w.x, y:w.y, z:w.z+1}); if (!pz) return null;
+  return { c:c, ax:px.x-c.x, ay:px.y-c.y, bx:pz.x-c.x, by:pz.y-c.y };
+}
+
+/* ── surface textures ─────────────────────────────────────────────────────
+   Drawn INSIDE the ground basis, so every length below is in world units and
+   foreshortens by itself. All randomness comes from _sHash(x,z,n) — the tile's
+   own coordinates — because this is baked: a texture that moved between two
+   rebuilds would make the whole board shimmer on a time-of-day change. */
+function paintSurfTexture(x,z,e,S,surf){
+  const B = groundBasis(x,z,e); if (!B) return;
+  const R = hexSize();
+  ctx.save(); ctx.transform(B.ax,B.ay,B.bx,B.by,B.c.x,B.c.y);
+  /* grit — every surface has some, in its own colour */
+  ctx.fillStyle = rgba(S.grit, surf==='water' ? .06 : .15);
+  for (let i=0;i<22;i++){
+    const a = _sHash(x,z,i*3+1)*6.283, r = Math.sqrt(_sHash(x,z,i*3+2))*R*.80;
+    const s = R*(.016 + _sHash(x,z,i*3+3)*.042);
+    ctx.fillRect(Math.cos(a)*r, Math.sin(a)*r, s, s);
+  }
+  /* …and a few larger, softer stains. Grit alone is uniform noise, which at
+     this scale reads as film grain rather than as ground; the low-frequency
+     blotches are what keep a 60px hex from looking like a flat swatch. */
+  for (let i=0;i<3;i++){
+    const a = _sHash(x,z,200+i*2)*6.283, r = _sHash(x,z,201+i*2)*R*.5;
+    ctx.fillStyle = rgba(_sHash(x,z,210+i) > .5 ? S.hi : S.lo, .18);
+    ctx.beginPath(); ctx.ellipse(Math.cos(a)*r, Math.sin(a)*r,
+      R*(.24+_sHash(x,z,214+i)*.30), R*(.18+_sHash(x,z,218+i)*.26),
+      _sHash(x,z,222+i)*3.14, 0, 6.284); ctx.fill();
+  }
+  if (surf === 'asphalt'){
+    /* CRACKED street. Two branching fractures per tile, drawn dark and then
+       re-drawn a hair offset in the grit colour so the crack has a lip — that
+       lip is what makes it read as broken road rather than a scratch. */
+    for (let k=0;k<2;k++){
+      const a0 = _sHash(x,z,40+k)*6.283;
+      let ang = a0 + Math.PI + (_sHash(x,z,44+k)-.5);
+      const pts = [{x:Math.cos(a0)*R*.92, y:Math.sin(a0)*R*.92}];
+      for (let s=0;s<4;s++){
+        ang += (_sHash(x,z,50+k*8+s)-.5)*1.25;
+        const p0 = pts[pts.length-1];
+        pts.push({ x:p0.x+Math.cos(ang)*R*.42, y:p0.y+Math.sin(ang)*R*.42 });
+      }
+      ctx.lineWidth = R*.024; ctx.strokeStyle = rgba(S.grit,.22);
+      ctx.beginPath(); ctx.moveTo(pts[0].x+R*.024, pts[0].y+R*.024);
+      for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x+R*.024, pts[i].y+R*.024);
+      ctx.stroke();
+      ctx.lineWidth = R*.02; ctx.strokeStyle = 'rgba(6,6,9,.60)';
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+    }
+  } else if (surf === 'grass'){
+    /* moss and weed BLOTCHES, flat. The standing blades are props (see the
+       'tuft' case in paintDeco) — painting upright grass into the ground plane
+       is what makes overgrowth look like green paint. */
+    for (let i=0;i<5;i++){
+      const a = _sHash(x,z,70+i*2)*6.283, r = _sHash(x,z,71+i*2)*R*.55;
+      ctx.fillStyle = rgba(i&1 ? S.hi : S.lo, .34);
+      ctx.beginPath(); ctx.ellipse(Math.cos(a)*r, Math.sin(a)*r,
+        R*(.20+_sHash(x,z,80+i)*.26), R*(.14+_sHash(x,z,86+i)*.22),
+        _sHash(x,z,90+i)*3.14, 0, 6.284); ctx.fill();
+    }
+  } else if (surf === 'rubble'){
+    /* the gravel bed the standing chunks sit in */
+    for (let i=0;i<9;i++){
+      const a = _sHash(x,z,100+i*2)*6.283, r = Math.sqrt(_sHash(x,z,101+i*2))*R*.72;
+      const s = R*(.07+_sHash(x,z,120+i)*.13);
+      ctx.fillStyle = rgba(_sHash(x,z,130+i) > .5 ? S.grit : S.lo, .40);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a)*r - s, Math.sin(a)*r);
+      ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r - s*.8);
+      ctx.lineTo(Math.cos(a)*r + s, Math.sin(a)*r + s*.2);
+      ctx.lineTo(Math.cos(a)*r - s*.3, Math.sin(a)*r + s*.7);
+      ctx.closePath(); ctx.fill();
+    }
+  } else if (surf === 'water'){
+    /* STANDING WATER. A dark pool with the sky lying on it: one pale band for
+       the reflection, a scum rim where it meets the ground, and algae flecks.
+       No animation — this is baked, and a puddle in a ruined street is not
+       supposed to be doing anything. */
+    ctx.fillStyle = rgba(LIGHT.sky ? LIGHT.sky[2] : '#6b7f92', .10 + LIGHT.haze*.12);
+    ctx.beginPath(); ctx.ellipse(0, -R*.12, R*.62, R*.15, 0, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = rgba(S.grit,.28); ctx.lineWidth = R*.045;
+    ctx.beginPath(); ctx.ellipse(0,0,R*.80,R*.80,0,0,6.284); ctx.stroke();
+    for (let i=0;i<4;i++){
+      const a = _sHash(x,z,150+i*2)*6.283, r = _sHash(x,z,151+i*2)*R*.6;
+      ctx.fillStyle = rgba('#6b7a4e', .22);
+      ctx.beginPath(); ctx.ellipse(Math.cos(a)*r, Math.sin(a)*r, R*.16, R*.09, a, 0, 6.284); ctx.fill();
+    }
+  } else {
+    /* dirt — wheel ruts and scrapes */
+    ctx.strokeStyle = rgba(S.lo,.42); ctx.lineWidth = R*.09;
+    for (let k=0;k<2;k++){
+      const a = _sHash(x,z,160+k)*3.14;
+      ctx.beginPath();
+      ctx.moveTo(-Math.cos(a)*R*.8, -Math.sin(a)*R*.8 + (k-.5)*R*.3);
+      ctx.lineTo( Math.cos(a)*R*.8,  Math.sin(a)*R*.8 + (k-.5)*R*.3);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/* ── one tile: cliff faces, slab top, texture, cell division ─────────────── */
+function paintTile(x,z,lv){
+  const t = tileAt(x,z);
+  const e = t && t.elev ? t.elev : 0;
+  const P = tilePoly(x,z,TILE_INSET,e); if (!P) return;
+  const S = surfOf(t);
+  const surf = (t && t.surf) || 'dirt';
+  const wpos = gw(x,z);
+  /* lambert-ish shade: tiles further from the light read darker. The .018 is a
+     gradient PER TILE, divided by the row pitch so a wider board does not clamp
+     one whole flank to the floor value. */
+  const nd = clamp(.55 + lv.y*.45 + ((wpos.x*lv.x + wpos.z*lv.z)/hexW())*.018, .25, 1);
+
+  /* 🧱 CLIFF FACES, drawn before the top they hang from. */
+  if (e > 0) paintWalls(x,z,e,P,lv);
+
+  /* the slab top */
+  /* mixHexRaw, not mixHex — this value gets mixed again below. See the note at
+     mixHex's definition; the hex/rgb() distinction is silent and fatal. */
+  let col = mixHexRaw(S.lo, S.hi, clamp(nd,0,1));
+  col = mixHexRaw(col, LIGHT.key, .04 + LIGHT.keyI*.05);
+  /* 🌙 EXPOSURE. Without this the board sat at the same value under every
+     preset — the lambert term only tracks the sun's ELEVATION, which barely
+     moves between day and night, so a night battle came out as a daylit board
+     with a dark sky over it. Fold in the rig's actual energy (keyI + ambI) and
+     pull the shortfall toward the ambient colour, so night is darker AND cooler
+     rather than just darker. day 1.10 · dusk 0.98 · dawn 0.95 · night 0.67. */
+  const expo = clamp(.34 + LIGHT.keyI*.42 + LIGHT.ambI*.50, .35, 1.15);
+  if (expo < 1){
+    col = mixHexRaw(col, LIGHT.ambient, clamp((1-expo)*1.25, 0, .42));
+    col = mixHexRaw(col, '#000000', clamp((1-expo)*.55, 0, .28));
+  }
+  /* high ground catches more of the key. BAR R1 wants height readable at a
+     GLANCE, and a slab whose top is shaded exactly like the floor reads as a
+     hole with a rim round it — the side walls only say which way is down once
+     the top says it is up. Two steps, deliberately: a lift toward the surface's
+     OWN highlight (a value step, which is what carries at a glance and at small
+     size) and then a smaller warm wash toward the key (which is what says the
+     step is height and not a different material). */
+  if (e > 0){
+    col = mixHexRaw(col, S.hi, clamp(e*1.25, 0, .40));
+    col = mixHexRaw(col, LIGHT.key, clamp(.05 + e*.42, 0, .20));
+  }
+  /* 🎲 PER-TILE VALUE JITTER. Without it every dirt tile is the identical
+     swatch and the board reads as painted cardboard hexes rather than as
+     ground that happens to be divided into cells — the same "grid on a photo"
+     smell, arrived at from the other direction. Hashed off the tile, so it is
+     stable across rebuilds. */
+  const j = (_sHash(x,z,7) - .5) * .34;
+  col = mixHexRaw(col, j > 0 ? S.hi : S.lo, Math.abs(j));
+  /* …and a value gradient across the tile itself, dark at the far edge and lit
+     at the near one. P[4] is the far corner and P[1] the near one (corner i
+     sits at i*60-30 degrees, so +z — toward the eye — is corner 1). */
+  pathPoly(P);
+  const tg = ctx.createLinearGradient(P[4].x, P[4].y, P[1].x, P[1].y);
+  tg.addColorStop(0, mixHexRaw(col, S.lo, .30));
+  tg.addColorStop(1, mixHexRaw(col, S.hi, .16));
+  ctx.globalAlpha = S.a; ctx.fillStyle = tg; ctx.fill(); ctx.globalAlpha = 1;
+  if (t && t.type === 'hazard'){ pathPoly(P); ctx.fillStyle = rgba('#5a1a0e',.34); ctx.fill(); }
+  if (t && t.type === 'objective'){ pathPoly(P); ctx.fillStyle = rgba('#6a5a1e',.30); ctx.fill(); }
+
+  ctx.save(); pathPoly(P); ctx.clip(); paintSurfTexture(x,z,e,S,surf); ctx.restore();
+
+  /* 🌫 AERIAL PERSPECTIVE. Far rows sit further into the fog. Without it a
+     14-deep board reads as a flat sheet of the same value from the horizon to
+     the player's feet, which is the "flat plate" fail condition wearing a
+     texture. Row 0 is the far edge. */
+  const hz = (1 - z/Math.max(1,MAP.rows-1)) * (.06 + LIGHT.haze*.20);
+  if (hz > .004){ pathPoly(P); ctx.fillStyle = rgba(LIGHT.fog, hz); ctx.fill(); }
+
+  /* 🔲 THE CELL DIVISION — and this is the line that used to be
+     `rgba('#d2a44e', .30 + nd*.18)`, a 1.2px GOLD stroke on all 168 tiles.
+     Together with a rune circle on every one of them it was the single loudest
+     reason the board read as "a grid drawn on a photo" (a named BAR R1 fail):
+     the brightest, most saturated thing in the frame was the lattice itself.
+     The grid still has to be LEGIBLE — this is a tactics game and the player
+     picks cells — so it is drawn the way paving is divided instead: a dark
+     seam with a thin lit lip on the sunward side of it. That reads as the
+     GROUND being divided rather than as jewellery laid on top, and it survives
+     both a dark asphalt tile and a pale rubble one because it carries a value
+     step in each direction. */
+  pathPoly(P);
+  ctx.strokeStyle = 'rgba(6,6,10,.38)'; ctx.lineWidth = 1.8; ctx.stroke();
+  pathPoly(P);
+  ctx.strokeStyle = rgba(mixHexRaw(S.grit, LIGHT.key, .35), .13 + nd*.13);
+  ctx.lineWidth = .9; ctx.stroke();
+}
+
+/* 🧱 CLIFF FACES. This used to draw three quads from the fixed index pairs
+   [[2,3],[1,2],[3,0]] — the front/left/right faces of a CUBE, correct only for
+   an axis-aligned box seen from one frozen camera. A hexagon has six edges and
+   a free camera swings past all of them, so the visible ones are chosen by
+   OUTWARD NORMAL: an edge is front-facing while its normal still points back
+   toward the eye. Front faces of a convex prism cannot overlap each other, so
+   they need no sort among themselves.
+   What is new here is the FLOOR of each face. It used to drop every wall to
+   y = 0 regardless of what was next to it, so a four-tile plateau was drawn as
+   four separate towers with full-height black seams ruled between them. Each
+   edge now falls only as far as the tile on the other side of it, which is what
+   turns a cluster of raised tiles into one slab with a terraced skirt. */
+function paintWalls(x,z,e,P,lv){
+  const Wtop = hexCorners(x,z,TILE_INSET,e);
+  const ctr = gw(x,z,e);
+  const nb = NB6[z & 1];
+  const lh = Math.hypot(lv.x, lv.z) || 1;
+  for (let i=0;i<6;i++){
+    const j = (i+1)%6;
+    const mx = (Wtop[i].x+Wtop[j].x)/2, mz = (Wtop[i].z+Wtop[j].z)/2;
+    const nx = mx-ctr.x, nz = mz-ctr.z;
+    if (nx*(CAM.pos.x-mx) + nz*(CAM.pos.z-mz) <= 0) continue;       /* back-facing */
+    const below = elevOf(x+nb[i][0], z+nb[i][1]);
+    if (below >= e - 1e-4) continue;                                 /* flush: no face */
+    const B = tilePoly(x,z,TILE_INSET,below); if (!B) continue;
+    const nl = Math.hypot(nx,nz) || 1;
+    /* Normalise against the light's HORIZONTAL length, not its full length: a
+       wall is vertical, so only lv.x/lv.z reach it, and at a high sun those two
+       are most of the way to zero. Without this the whole range collapses to
+       the middle at noon and "lit differently from the tops" is true in the
+       code and invisible on the screen. */
+    const lam = clamp(.5 + ((nx/nl)*lv.x + (nz/nl)*lv.z)/lh*.5, 0, 1);
+    ctx.beginPath();
+    ctx.moveTo(P[i].x,P[i].y); ctx.lineTo(P[j].x,P[j].y);
+    ctx.lineTo(B[j].x,B[j].y); ctx.lineTo(B[i].x,B[i].y); ctx.closePath();
+    /* vertical gradient: bright at the lip, occluded at the foot */
+    const g2 = ctx.createLinearGradient(0, (P[i].y+P[j].y)/2, 0, (B[i].y+B[j].y)/2);
+    g2.addColorStop(0, mixHex('#0a0810', LIGHT.key, .10 + lam*.34));
+    g2.addColorStop(1, mixHex('#050409', LIGHT.key, .03 + lam*.12));
+    ctx.fillStyle = g2; ctx.fill();
+    /* a hairline of exposed aggregate along the broken lip */
+    ctx.beginPath(); ctx.moveTo(P[i].x,P[i].y); ctx.lineTo(P[j].x,P[j].y);
+    ctx.strokeStyle = rgba(mixHexRaw('#8a7f6c', LIGHT.key, .3), .10 + lam*.28);
+    ctx.lineWidth = 1.4; ctx.stroke();
+  }
+}
+
+/* 🌑 The shadow a slab throws onto the level below it. Drawn one row LATE (see
+   paintTerrain) because it lands on the tile in FRONT of the slab, which has
+   not been painted yet when the slab is. Length comes off the light's own
+   elevation, so it lies down at dusk and pulls in at noon. */
+function paintShadow(x,z,lv){
+  const e = tileElev(x,z); if (e <= 0) return;
+  const len = clamp(e/(lv.y+.22), 0, e*3.2);
+  const dx = -lv.x*len, dz = -lv.z*len;
+  const C = hexCorners(x,z,TILE_INSET,0);
+  const nb = NB6[z & 1];
+  for (let i=0;i<6;i++){
+    const j = (i+1)%6;
+    /* only edges the light is leaving cast anything forward */
+    const mx = (C[i].x+C[j].x)/2, mz = (C[i].z+C[j].z)/2;
+    const w = gw(x,z,0);
+    if ((mx-w.x)*dx + (mz-w.z)*dz <= 0) continue;
+    const below = elevOf(x+nb[i][0], z+nb[i][1]); if (below >= e-1e-4) continue;
+    const q = [ project({x:C[i].x, y:below+.004, z:C[i].z}),
+                project({x:C[j].x, y:below+.004, z:C[j].z}),
+                project({x:C[j].x+dx, y:below+.004, z:C[j].z+dz}),
+                project({x:C[i].x+dx, y:below+.004, z:C[i].z+dz}) ];
+    if (!q.every(Boolean)) continue;
+    pathPoly(q);
+    const g2 = ctx.createLinearGradient(q[0].x,q[0].y, q[2].x,q[2].y);
+    g2.addColorStop(0, 'rgba(0,0,0,.46)'); g2.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g2; ctx.fill();
+  }
+}
+
+/* ── props ────────────────────────────────────────────────────────────────
+   BAR R1: props "sit ON the terrain and read as SILHOUETTES — small, numerous,
+   irregularly placed. They break up the grid without hiding it", and it names
+   "props evenly spaced on a lattice" as a fail condition. So none of these is
+   drawn at the tile centre and none at a fixed size: the generator hands every
+   tile its own jittered offsets, sizes and headings (see _bbGenTerrain's `deco`
+   block in index.html). They are billboards — projected from a world point on
+   the slab top, then drawn in screen pixels so they stand UP out of the ground
+   instead of lying in it. */
+function decoInk(){
+  return {
+    /* all mixHexRaw: several of these are wrapped in rgba() at use */
+    stone : mixHexRaw('#282621', LIGHT.key, .06 + LIGHT.keyI*.06),
+    lit   : mixHexRaw('#9a8f7c', LIGHT.key, .30),
+    dark  : mixHexRaw('#08070a', LIGHT.key, .02),
+    plant : mixHexRaw('#23291a', LIGHT.key, .05),
+    plantL: mixHexRaw('#414c2a', LIGHT.key, .10),
+    rust  : mixHexRaw('#3a2a1c', LIGHT.key, .08)
+  };
+}
+/* Per-kind size discipline, applied on TOP of the generator's own jitter. The
+   generator says where a prop is and how much bigger or smaller than its
+   neighbours; how large that KIND reads on screen is a rendering decision and
+   belongs here, where it can be tuned against a capture without regenerating
+   every map. First pass had waist-high grass and dinner-plate rubble. */
+const DECO_K = { chunk:0.62, slab:0.80, kerb:0.78, rebar:0.66, scrub:0.72, tuft:0.46, reed:0.60 };
+function paintDeco(x,z,INK){
+  const t = tileAt(x,z); if (!t || !t.deco || !t.deco.length) return;
+  const e = t.elev || 0, R = hexSize();
+  const w = gw(x,z,e);
+  for (let i=0;i<t.deco.length;i++){
+    const d = t.deco[i];
+    const p = project({ x:w.x + (d.u||0)*R, y:e, z:w.z + (d.v||0)*R });
+    if (!p) continue;
+    const k = p.s * R * (d.s || .5) * (DECO_K[d.k] || .7);   /* pixels, at THIS depth */
+    if (k < 1.2) continue;                   /* below a pixel it is only noise */
+    /* contact shadow — without it every prop hovers */
+    ctx.save(); ctx.translate(p.x, p.y); ctx.scale(1,.42);
+    ctx.fillStyle = 'rgba(0,0,0,.26)';
+    ctx.beginPath(); ctx.arc(0,0,k*.50,0,6.284); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(0);
+    paintDecoShape(d, k, INK, (d.r||0));
+    ctx.restore();
+  }
+}
+function paintDecoShape(d, k, INK, rot){
+  const kind = d.k;
+  if (kind === 'chunk' || kind === 'slab' || kind === 'kerb'){
+    /* A broken lump of concrete: a dark body with one lit facet on top. Drawn
+       as one irregular outline so it reads as a silhouette at 20px, which is
+       the size most of these are on screen. */
+    const wdt = kind === 'kerb' ? k*1.5 : k*1.05, hgt = kind === 'kerb' ? k*.42 : k*.95;
+    const sk = Math.cos(rot)*wdt*.18;
+    ctx.beginPath();
+    ctx.moveTo(-wdt*.5, 0);
+    ctx.lineTo(-wdt*.42 + sk, -hgt*.78);
+    ctx.lineTo( wdt*.12 + sk, -hgt);
+    ctx.lineTo( wdt*.5,  -hgt*.5);
+    ctx.lineTo( wdt*.44, 0);
+    ctx.closePath();
+    /* Body dark, rim light — BAR R1 wants props that "read as silhouettes",
+       and the first pass had it backwards: a big pale lit facet filling the
+       whole shape made every chunk look like a flat plate lying on the ground
+       rather than a lump standing on it. */
+    ctx.fillStyle = INK.stone; ctx.fill();
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = Math.max(.6, k*.08); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-wdt*.42 + sk, -hgt*.78);
+    ctx.lineTo( wdt*.12 + sk, -hgt);
+    ctx.lineTo( wdt*.5,  -hgt*.5);
+    ctx.strokeStyle = rgba(INK.lit, .55); ctx.lineWidth = Math.max(.7, k*.10);
+    ctx.stroke();
+  } else if (kind === 'rebar'){
+    /* bent reinforcement bar out of a broken slab */
+    ctx.strokeStyle = INK.rust; ctx.lineWidth = Math.max(.9, k*.10);
+    ctx.lineCap = 'round';
+    for (let i=0;i<3;i++){
+      const a = rot + i*1.9;
+      ctx.beginPath(); ctx.moveTo((i-1)*k*.16, 0);
+      ctx.quadraticCurveTo((i-1)*k*.16 + Math.cos(a)*k*.30, -k*.72,
+                           (i-1)*k*.16 + Math.cos(a)*k*.62, -k*.92);
+      ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
+  } else if (kind === 'scrub'){
+    /* bare dead thorn bush — the reference's silhouette prop */
+    ctx.strokeStyle = INK.plant; ctx.lineWidth = Math.max(.7, k*.075);
+    const n = 7;
+    for (let i=0;i<n;i++){
+      const a = -Math.PI/2 + (i/(n-1) - .5)*2.3 + Math.sin(rot+i)*.18;
+      const L = k*(.55 + ((i*7919 % 13)/13)*.55);
+      ctx.beginPath(); ctx.moveTo(0,0);
+      ctx.quadraticCurveTo(Math.cos(a)*L*.4, -Math.abs(Math.sin(a))*L*.55,
+                           Math.cos(a)*L, -Math.abs(Math.sin(a))*L);
+      ctx.stroke();
+    }
+  } else if (kind === 'tuft' || kind === 'reed'){
+    const tall = kind === 'reed' ? 1.5 : 1.0;
+    ctx.strokeStyle = kind === 'reed' ? INK.plant : INK.plantL;
+    ctx.lineWidth = Math.max(.6, k*.07);
+    const n = kind === 'reed' ? 4 : 6;
+    for (let i=0;i<n;i++){
+      const lean = Math.sin(rot + i*1.7)*.55;
+      const L = k*tall*(.5 + ((i*104729 % 11)/11)*.6);
+      ctx.beginPath(); ctx.moveTo((i-(n-1)/2)*k*.12, 0);
+      ctx.quadraticCurveTo((i-(n-1)/2)*k*.12 + lean*L*.3, -L*.6,
+                           (i-(n-1)/2)*k*.12 + lean*L, -L);
+      ctx.stroke();
+    }
+  }
+}
+
+/* ── the bake ─────────────────────────────────────────────────────────────
+   Row order is far to near (gz 0 is the far edge). Within a row: tops, then
+   the shadows cast by the PREVIOUS row — which land on this one, and so have
+   to wait until it exists — then this row's props, which the next row's tops
+   will correctly occlude. */
+function paintTerrain(){
   const lv = lightVector();
-  /* Stone apron under the grid. This used to be boardExtent()+wall — the
-     lattice's own edge — which is what left a gold-railed plate hovering in
-     the middle of the rect with dead backdrop above and below it. The floor
-     now runs out to groundExtent(), i.e. to wherever the box stops seeing it,
-     so the diorama reaches the frame edges (BAR R1). The rail is still
-     stroked on it; it simply lands off-frame on the near side, which is the
-     point — a rail you can see all four sides of IS the floating plate. */
+  const INK = decoInk();
+  /* Stone apron under the grid, out to groundExtent() so the floor reaches the
+     frame edges (BAR R1: "the map IS the frame"). The rail on it is now a dark
+     kerb with a dim warm lip rather than a bright gold rail: a gold rail you
+     can see all four sides of IS the floating plate the bar rejects. */
   const gnd = groundExtent();
   const outer = [
     project({x:-gnd.x-CONFIG.wall, y:-.02, z:-gnd.far-CONFIG.wall}),
@@ -1335,9 +1901,8 @@ function drawBoard(){
     g.addColorStop(0, mixHex('#0f0c14', LIGHT.key, .10));
     g.addColorStop(1, mixHex('#050409', LIGHT.key, .04));
     ctx.fillStyle = g; ctx.fill();
-    /* gold rail */
-    ctx.strokeStyle = rgba('#d2a44e',.85); ctx.lineWidth = 3; ctx.stroke();
-    ctx.strokeStyle = rgba('#f6dc95',.35); ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = rgba('#0a0810',.85); ctx.lineWidth = 3; ctx.stroke();
+    ctx.strokeStyle = rgba('#8a6f3a',.22); ctx.lineWidth = 1; ctx.stroke();
   }
 
   /* ── LOCATION GROUND ART (clipped to the play plane) ── */
@@ -1361,114 +1926,104 @@ function drawBoard(){
     ctx.restore();
   }
 
-  /* tiles */
   for (let z=0; z<MAP.rows; z++){
-    for (let x=0; x<MAP.cols; x++){
-      const t = tileAt(x,z);
-      const P = tilePoly(x,z,0.02); if (!P) continue;
-      /* surface paint sits UNDER the tile shading below so it reads as part of
-         the ground, not a sticker on top of it */
-      const pk = x + ',' + z;
-      let paintCol = null;
-      if (PAINT.attack.has(pk))     paintCol = '#ff5a4a';
-      else if (PAINT.move.has(pk))  paintCol = '#4fd0ff';
-      else if (PAINT.place.has(pk)) paintCol = '#7fe89f';
-      else if (PAINT.swap.has(pk))  paintCol = '#e0b64a';
-      if (paintCol){
-        const pulse = 0.16 + Math.sin(T * 3 + (x + z) * 0.6) * 0.05;
-        pathPoly(P); ctx.fillStyle = rgba(paintCol, pulse + 0.16); ctx.fill();
-        pathPoly(P); ctx.strokeStyle = rgba(paintCol, 0.85); ctx.lineWidth = 2; ctx.stroke();
-      }
-      if (PAINT.sel && PAINT.sel.x === x && PAINT.sel.z === z){
-        pathPoly(P); ctx.strokeStyle = rgba('#f6dc95', 0.95); ctx.lineWidth = 3; ctx.stroke();
-      }
-      /* lambert-ish shade: tiles further from the light read darker */
-      const wpos = gw(x,z);
-      /* the .018 is a gradient PER TILE, tuned when one tile spanned one world
-         unit. Divide by the row pitch so a wider board does not clamp one whole
-         flank to the floor value the moment the world coordinates grow. */
-      const nd = clamp(.55 + lv.y*.45 + ((wpos.x*lv.x + wpos.z*lv.z)/hexW())*.018, .25, 1);
-      let base = mixHex(MAP.ground.base, LIGHT.key, .16*nd);
-      if (t && t.type==='hazard') base = mixHex('#4a1a10', LIGHT.key, .12);
-      if (t && t.type==='objective') base = mixHex('#3a3016', LIGHT.key, .2);
-      pathPoly(P);
-      /* with location art present the tile fill is only a faint grade */
-      ctx.fillStyle = GROUND.img ? rgba(t && t.type==='hazard' ? '#5a1a0e'
-                                     : t && t.type==='objective' ? '#6a5a1e' : '#0d0a12',
-                                     t && t.type ? .30 : .16)
-                                 : base;
-      ctx.fill();
-      /* 🧱 RAISED TOPS. BAR R1 wants height readable at a glance. A slab whose
-         top is filled exactly like flat ground reads as a HOLE with a dark rim
-         round it rather than as a plateau — the side walls below only say
-         which way is down once the top says it is lit. So lift the top toward
-         the key light in proportion to how far it stands up. Kept as a wash
-         over the location art rather than a replacement fill, so terrain
-         texture still reads through the shelf. */
-      const e = tileElev(x,z);
-      if (e > 0){
-        pathPoly(P);
-        ctx.fillStyle = rgba(LIGHT.key, clamp(0.09 + e*0.62, 0.09, 0.34) * (0.45 + LIGHT.keyI*0.45));
-        ctx.fill();
-      }
-      /* raised tile side walls */
-      if (e > 0){
-        const B = tilePoly(x,z,0.02,0);
-        if (B){
-          /* CLIFF FACES. This used to draw three quads from the fixed index
-             pairs [[2,3],[1,2],[3,0]] — the front/left/right faces of a CUBE,
-             correct only for an axis-aligned box seen from one frozen camera.
-             A hexagon has six edges and the free camera in a later wave will
-             swing past all of them, so choose the visible ones by their OUTWARD
-             NORMAL: an edge is front-facing when its normal still points back
-             toward the eye. That test is what survives yaw; an index list never
-             could. Front faces of a convex prism cannot overlap each other, so
-             they need no sort among themselves. */
-          const Wtop = hexCorners(x, z, 0.02, e);
-          const ctr = gw(x, z, e);
-          for (let i=0;i<Wtop.length;i++){
-            const j = (i+1) % Wtop.length;
-            const mx = (Wtop[i].x + Wtop[j].x)/2, mz = (Wtop[i].z + Wtop[j].z)/2;
-            const nx = mx - ctr.x, nz = mz - ctr.z;
-            if (nx*(CAM.pos.x - mx) + nz*(CAM.pos.z - mz) <= 0) continue;
-            /* BAR R1 asks for cliff faces that read differently from the tops.
-               The normal is already in hand, so shade the wall by how much it
-               turns toward the key light instead of filling all of them flat. */
-            const nl = Math.hypot(nx, nz) || 1;
-            /* Normalise against the light's HORIZONTAL length, not its full
-               length: a wall is vertical, so only lv.x/lv.z reach it, and at
-               a high sun those two are most of the way to zero. Without this
-               the whole range collapses toward the middle at noon. */
-            const lh = Math.hypot(lv.x, lv.z) || 1;
-            const lam = clamp(.5 + ((nx/nl)*lv.x + (nz/nl)*lv.z)/lh*.5, 0, 1);
-            /* WIDEN. This was mixHex('#0b0910', LIGHT.key, .04 + lam*.14).
-               Dumped per drawn edge under the day preset that spans
-               rgb(23,20,25)→rgb(34,31,33) — an 11/255 delta on near-black,
-               i.e. "cliff faces lit differently from the tops" was true in
-               the code and invisible on the screen. The same dump on the line
-               below spans rgb(28,26,27)→rgb(100,95,82), 72/255. Darker base
-               on purpose, so the away-facing walls still read as shadow
-               rather than as flat grey now that the range is real. */
-            ctx.fillStyle = mixHex('#07060b', LIGHT.key, .08 + lam*.30);
-            ctx.beginPath(); ctx.moveTo(P[i].x,P[i].y); ctx.lineTo(P[j].x,P[j].y);
-            ctx.lineTo(B[j].x,B[j].y); ctx.lineTo(B[i].x,B[i].y); ctx.closePath(); ctx.fill();
-          }
-        }
-      }
-      /* grid lines */
-      ctx.strokeStyle = rgba('#d2a44e', .30 + nd*.18); ctx.lineWidth = 1.2;
-      pathPoly(P); ctx.stroke();
-      /* rune circle */
-      drawRune(x, z, nd, t);
-      /* hover / focus */
-      if (hoverTile && hoverTile.x===x && hoverTile.z===z){
-        pathPoly(P); ctx.fillStyle = rgba('#f6dc95', .12); ctx.fill();
-        ctx.strokeStyle = rgba('#f6dc95',.9); ctx.lineWidth = 2; ctx.stroke();
-      }
-      if (focus && focus.x===x && focus.z===z){
-        pathPoly(P); ctx.strokeStyle = rgba('#7fe89f',.9); ctx.lineWidth = 2.4; ctx.stroke();
-      }
+    for (let x=0; x<MAP.cols; x++) paintTile(x,z,lv);
+    if (z > 0) for (let x=0; x<MAP.cols; x++) paintShadow(x,z-1,lv);
+    for (let x=0; x<MAP.cols; x++) paintDeco(x,z,INK);
+  }
+
+  /* grain over the whole play plane, under the horizon fade */
+  if (bq.every(Boolean)){
+    const pat = noisePattern(ctx);
+    if (pat){
+      ctx.save(); pathPoly(bq); ctx.clip();
+      ctx.globalCompositeOperation = 'overlay'; ctx.globalAlpha = .085;
+      ctx.fillStyle = pat; ctx.fillRect(0,0,W,H);
+      ctx.restore();
     }
+  }
+
+  /* 🌫 THE FAR EDGE, DISSOLVED. groundExtent() deliberately stops the floor at
+     the lattice on the far side (the backdrop's horizon is anchored there), so
+     the ground used to END in a hard horizontal rule with the sky photograph
+     immediately above it — which is precisely what makes a diorama read as a
+     PLATE sitting in a painting rather than as the world (BAR R1's first fail
+     condition). A band of the sky's own fog laid over the last few rows walks
+     the terrain into the horizon instead. Screen-space and one gradient, so it
+     costs nothing and it is baked with everything else. */
+  /* Anchored to REAL ROW PROJECTIONS, not to a world-z guess. A first pass
+     took the band's depth as `-gnd.far + hexV()*3.2` and got a 6px strip that
+     sat almost entirely in the SKY — the ground plane is extremely compressed
+     right at the far edge, so equal world depth is nothing like equal screen
+     depth there. Asking the projector where rows 0 and 3 actually landed is the
+     only version of this that cannot be wrong. */
+  const yFar = project({x:0, y:0, z:-gnd.far});
+  const yIn  = project(gw(0, Math.min(MAP.rows-1, 3), 0));
+  if (yFar && yIn && yIn.y > yFar.y + 6){
+    const top = yFar.y - 4, bot = yIn.y;
+    const fade = ctx.createLinearGradient(0, top, 0, bot);
+    fade.addColorStop(0, rgba(LIGHT.fog, .50));
+    fade.addColorStop(.30, rgba(LIGHT.fog, .26));
+    fade.addColorStop(1, rgba(LIGHT.fog, 0));
+    ctx.fillStyle = fade; ctx.fillRect(0, top, W, bot - top);
+  }
+  /* the near row's own shadows have nothing in front of them to land on, so
+     there is deliberately no trailing paintShadow pass */
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   drawBoard — one blit, then only what MOVES.
+   ══════════════════════════════════════════════════════════════════ */
+function drawBoard(){
+  const layer = terrainLayer();
+  if (layer) ctx.drawImage(layer, 0, 0, W, H);
+
+  /* Everything below is per-frame, and it is deliberately driven off the PAINT
+     sets rather than off a 14x12 sweep: in a normal frame nothing is painted
+     and this loop runs zero times. */
+  const seen = Object.create(null);
+  const live = [];
+  const push = (x,z,col) => {
+    if (x < 0 || z < 0 || x >= MAP.cols || z >= MAP.rows) return;
+    const k = x+','+z; if (seen[k]) return; seen[k] = 1; live.push({x:x,z:z,col:col});
+  };
+  for (const k of PAINT.attack){ const c = k.indexOf(','); push(+k.slice(0,c), +k.slice(c+1), '#ff5a4a'); }
+  for (const k of PAINT.move)  { const c = k.indexOf(','); push(+k.slice(0,c), +k.slice(c+1), '#4fd0ff'); }
+  for (const k of PAINT.place) { const c = k.indexOf(','); push(+k.slice(0,c), +k.slice(c+1), '#7fe89f'); }
+  for (const k of PAINT.swap)  { const c = k.indexOf(','); push(+k.slice(0,c), +k.slice(c+1), '#e0b64a'); }
+  for (const d of live){
+    const P = tilePoly(d.x,d.z,TILE_INSET); if (!P) continue;
+    const pulse = 0.16 + Math.sin(T*3 + (d.x+d.z)*0.6)*0.05;
+    pathPoly(P); ctx.fillStyle = rgba(d.col, pulse + 0.16); ctx.fill();
+    pathPoly(P); ctx.strokeStyle = rgba(d.col, 0.85); ctx.lineWidth = 2; ctx.stroke();
+  }
+
+  /* 🔮 RUNES BELONG ON TILES THAT MEAN SOMETHING.
+     drawRune() used to be called for all 168 tiles, every frame: 168 pulsing
+     gold rune circles laid over a photograph, which is exactly the "grid drawn
+     on a photo" BAR R1 rejects — and ~2,500 path ops a frame for it. A rune is
+     a marker, so it now marks: the objective tiles, the selected tile, and the
+     focused one. Everything else is ground. */
+  if (Array.isArray(MAP.tiles)){
+    for (let i=0;i<MAP.tiles.length;i++){
+      const t = MAP.tiles[i];
+      if (t && t.type === 'objective') drawRune(t.x, t.z, .8, t);
+    }
+  }
+  if (PAINT.sel){
+    const P = tilePoly(PAINT.sel.x, PAINT.sel.z, TILE_INSET);
+    if (P){ drawRune(PAINT.sel.x, PAINT.sel.z, 1, tileAt(PAINT.sel.x, PAINT.sel.z));
+      pathPoly(P); ctx.strokeStyle = rgba('#f6dc95', 0.95); ctx.lineWidth = 3; ctx.stroke(); }
+  }
+  if (hoverTile){
+    const P = tilePoly(hoverTile.x, hoverTile.z, TILE_INSET);
+    if (P){ pathPoly(P); ctx.fillStyle = rgba('#f6dc95', .12); ctx.fill();
+      ctx.strokeStyle = rgba('#f6dc95',.9); ctx.lineWidth = 2; ctx.stroke(); }
+  }
+  if (focus){
+    const P = tilePoly(focus.x, focus.z, TILE_INSET);
+    if (P){ drawRune(focus.x, focus.z, 1, tileAt(focus.x, focus.z));
+      pathPoly(P); ctx.strokeStyle = rgba('#7fe89f',.9); ctx.lineWidth = 2.4; ctx.stroke(); }
   }
   drawFrame();
 }
@@ -1515,10 +2070,16 @@ function drawFrame(){
       ctx.beginPath();
       ctx.moveTo(top[i].x,top[i].y); ctx.lineTo(top[j].x,top[j].y);
       ctx.lineTo(bot[j].x,bot[j].y); ctx.lineTo(bot[i].x,bot[i].y); ctx.closePath();
+      /* Weathered concrete kerb with a dim warm lip, not a gold rail. This band
+         used to run f6dc95 -> a97f2e -> 4a3616 at half alpha, which put the
+         single most saturated object in the frame around the OUTSIDE of the
+         battlefield — a picture frame drawn on the world, when BAR R1 wants the
+         world to BE the frame. The geometry is unchanged; only its material is. */
       const g = ctx.createLinearGradient(top[i].x,top[i].y, bot[i].x,bot[i].y);
-      g.addColorStop(0, rgba('#f6dc95',.55)); g.addColorStop(.5, rgba('#a97f2e',.5)); g.addColorStop(1, rgba('#4a3616',.6));
+      g.addColorStop(0, rgba(mixHexRaw('#6a6154', LIGHT.key, .22), .55));
+      g.addColorStop(.45, rgba('#39332a',.5)); g.addColorStop(1, rgba('#14110d',.6));
       ctx.fillStyle = g; ctx.fill();
-      ctx.strokeStyle = rgba('#f6dc95',.5); ctx.lineWidth = 1.4; ctx.stroke();
+      ctx.strokeStyle = rgba('#c8a765',.20); ctx.lineWidth = 1.2; ctx.stroke();
     }
   }
   /* pillars are depth-sorted with units — see drawPylon() */
@@ -3082,8 +3643,13 @@ function frame(now){
   drawParticles();
   drawEffects('air');
   /* atmosphere */
-  const vg = ctx.createRadialGradient(VIEW.cx, VIEW.cy, Math.min(W,H)*.25, VIEW.cx, VIEW.cy, Math.max(W,H)*.75);
-  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,`rgba(0,0,0,.42)`);
+  drawRain();
+  /* BAR R1 asks for a HEAVY vignette, and .42 starting at 25% of the frame was
+     not one — it read as a slight corner falloff. Pulling the inner stop in and
+     the outer value up is what makes the diorama sit in a pool of light instead
+     of filling a lit rectangle. */
+  const vg = ctx.createRadialGradient(VIEW.cx, VIEW.cy, Math.min(W,H)*.16, VIEW.cx, VIEW.cy, Math.max(W,H)*.72);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(.62,'rgba(0,0,0,.13)'); vg.addColorStop(1,'rgba(0,0,0,.54)');
   ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
   drawEffects('screen');
   drawGuides();
@@ -3221,6 +3787,10 @@ function fitReport(){
     board:   (f && n) ? { top:+f.y.toFixed(0), bottom:+n.y.toFixed(0),
                           pctH:+(100*(n.y - f.y)/VIEW.box.h).toFixed(0) } : null,
     ground:  { x:+g.x.toFixed(2), near:+g.near.toFixed(2), far:+g.far.toFixed(2) },
+    /* Rebuild cost of the baked terrain layer, in ms. It is NOT a per-frame
+       cost — the frame blits the cache — but it is the number to watch if the
+       tile painters ever grow, because a time-of-day lerp pays it ~20 times. */
+    terrainBakeMs: +TERR.ms.toFixed(2),
     braziers: braziers.map(br => {
       const q = project({ x:br.x, y:0, z:br.z });
       const t = project({ x:br.x, y:PYLON_ART.heightWorld, z:br.z });

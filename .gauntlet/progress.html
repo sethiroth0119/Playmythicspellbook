@@ -5,10 +5,10 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-20 \u2014 Wave 2: cutting the grid into hexes",
-  "headline": "Foundation holds. Both lattices are being cut to hexes from one binding spec.",
-  "phase": "Wave 2",
-  "round": 2,
+  "updated": "2026-08-20 \u2014 Wave 3: making the ground a place",
+  "headline": "The hex field is proven correct. Now it has to become beautiful.",
+  "phase": "Wave 3",
+  "round": 3,
   "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
   "bar": [
     "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
@@ -61,27 +61,39 @@
     },
     {
       "name": "Hex lattice \u2014 board side",
-      "state": "building",
-      "note": "gw() and pickTile() are analytic inverses of each other with nothing asserting it; they must convert in one commit or clicks silently address the wrong tile. Then tilePoly, the surface-FX clip, the raised-tile side walls, and the seven 'world-X offset radius' idioms.",
+      "state": "won",
+      "note": "Pointy-top hexes tessellating cleanly at 14x12; side walls now pick their faces by projected outward normal rather than fixed cube-face indices, so they survive a rotating camera later. tileAt became an indexed lookup \u2014 it was a linear scan called per tile per frame.",
       "rounds": [
         {
           "n": 1,
-          "verdict": "run",
-          "label": "building",
-          "short": "\u00b7\u00b7\u00b7"
+          "verdict": "rework",
+          "label": "3x the tiles, same screen area",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "handed to terrain",
+          "short": "\u25d1"
         }
       ]
     },
     {
       "name": "Hex lattice \u2014 game side",
-      "state": "building",
-      "note": "Flip distance() to a cube-coordinate hex metric, restagger inBounds, and break the hardcoded 8x7 CSS grid that is a second, unlinked source of truth. Then grow the map.",
+      "state": "won",
+      "note": "Cube distance over odd-r offsets, six neighbours everywhere. Two enumerations were placing a raised zombie and a tunnelling unit two tiles from the hero on odd rows with no distance filter at all. Five card descriptions still promised '8 adjacent tiles' for what is now a six-hex disc \u2014 fixed, display text only.",
       "rounds": [
         {
           "n": 1,
-          "verdict": "run",
-          "label": "building",
-          "short": "\u00b7\u00b7\u00b7"
+          "verdict": "fail",
+          "label": "4 square enumerations survived",
+          "short": "\u2717"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "card text still lied",
+          "short": "\u25d1"
         }
       ]
     },
@@ -92,8 +104,16 @@
     },
     {
       "name": "Post-apocalyptic terrain",
-      "state": "queued",
-      "note": "Dirt, cracked street, rubble, grass taking it back \u2014 with real elevation and lit cliff faces, per the FFT bar. The map has to become the frame, not a plate floating on a painting."
+      "state": "building",
+      "note": "The map generator emits no elevation at all and returns an empty tile list, so the stage \u2014 which can already draw lit slabs and cliff walls \u2014 is being fed nothing. Meanwhile every one of 168 tiles carries a pulsing gold rune circle. Both halves are this piece.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "run",
+          "label": "building",
+          "short": "\u00b7\u00b7\u00b7"
+        }
+      ]
     },
     {
       "name": "Ruins + loot",
@@ -176,6 +196,26 @@
       "t": "01:44",
       "kind": "phase",
       "text": "A reconciler runs after both: it executes the game's metric and the stage's projection together in one process and proves, tile by tile, that the six tiles the rules call adjacent are the six hexagons physically touching on screen. Nothing in either file asserts that today."
+    },
+    {
+      "t": "04:50",
+      "kind": "critic",
+      "text": "Wave 2 game-side round 1: FAIL. The critic found four square-lattice enumerations still live \u2014 two of them walking the eight square offsets to place a unit the card text calls 'adjacent', with no distance filter and no bounds check. On an odd row that put a raised zombie two tiles from the hero, silently."
+    },
+    {
+      "t": "05:40",
+      "kind": "critic",
+      "text": "Board-side round 1: the board got three times the tiles and did not get any bigger. The camera was holding screen area constant, so the extra tiles were paid for out of hex size and sprite size \u2014 measured at 1/22 of frame height against the bar's 1/12."
+    },
+    {
+      "t": "06:55",
+      "kind": "pass",
+      "text": "Reconciler: the two lattices ARE the same lattice. 168/168 tiles round-trip world-space, 33,600 jittered points inside the tile inradius, and the six tiles the rules call adjacent are exactly the six hexagons physically touching on screen \u2014 on both row parities, unclipped past the board edge. In real Chromium: 162 clicks and ~220,000 sampled pixels, zero resolving to the wrong hexagon."
+    },
+    {
+      "t": "07:05",
+      "kind": "build",
+      "text": "Wave 2 committed. Wave 3 opens on the piece the bar hinges on: the ground itself. Three rounds, a fresh critic each time doing a blind A/B against the two earlier captures of this same board, with a final judge who has seen none of the work."
     }
   ]
 }

@@ -104,10 +104,21 @@ ok('the original is hidden only AFTER ours is appended',
    idx.indexOf('bar.appendChild(p);') > 0
    && idx.indexOf("src.style.display = 'none'") > idx.indexOf('bar.appendChild(p);'));
 ok('a missing status bar leaves the city button alone',
-   idx.includes('if (++tries < 12) setTimeout(mount, 250);'));
+   idx.includes('if (++tries < 40) setTimeout(mount, 250);'));
 ok('state is mirrored from the source, not tracked locally',
    idx.includes('new MutationObserver(paint)')
    && idx.includes("attributeFilter: ['aria-expanded', 'class']"));
+/* The host chrome must run on the iframe LOAD event. Running it on append
+   reads the placeholder about:blank document a fresh iframe carries — which
+   has a documentElement, so the gutter wrote the variable into a document that
+   was about to be discarded and returned as though it had worked. That made
+   --host-gutter a no-op for its whole life. */
+ok('the city chrome runs on iframe load, not on append',
+   idx.includes("f.addEventListener('load', () => {")
+   && idx.includes('try { _ncZonePill(); } catch (e) {}'));
+ok('the gutter refuses the pre-load about:blank document',
+   idx.includes("d.location.href.indexOf('about:blank') !== 0"));
+
 ok('the observer is disconnected on teardown',
    idx.includes('App._ncZoneObs.disconnect()'));
 

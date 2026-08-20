@@ -23,6 +23,7 @@ import { startForge, workStep, currentStep, scoreForge, finishForge, abandonForg
 import { isBlade } from './blueprints.js';
 import { armoury, armouryDetail, provenance, slotsFor, equip, heroList, carriedBy } from './armoury.js';
 import { mount as mountBench3D } from './scene.bench.js';
+import { mount as mountForge3D } from './scene.forge.js';
 
 const ID = 'ws-bench-overlay';
 let _tick = null, _torque = null;
@@ -85,8 +86,12 @@ const CSS = `
 #${ID} .wsb-tier-pristine{color:#9fe8b0}#${ID} .wsb-tier-worn{color:#e8d79f}#${ID} .wsb-tier-shot{color:#e8a09f}
 /* 🔧 The 3D view. Sized by the scene itself (it sets an explicit height from
    the width), so the panel does not need to guess an aspect ratio. */
+/* ⚠ CAPPED. The scene sizes itself from its width, and the forge panel is
+   full-width — which gave a 640px-tall canvas that pushed the step controls off
+   the bottom of the screen entirely. The viewport is for the work, not for the
+   room. */
 #${ID} .wsb-3d{width:100%;display:block;border-radius:6px;border:1px solid rgba(212,175,55,.28);
-  background:#0d0b09;margin-bottom:.6rem}
+  background:#0d0b09;margin-bottom:.6rem;max-height:340px}
 #${ID} .wsb-3d-note{font-size:.72rem;color:#7b6f5c;margin:-.35rem 0 .6rem}
 #${ID} .wsb-bar{position:relative;height:26px;border:1px solid rgba(212,175,55,.4);border-radius:5px;
   background:rgba(0,0,0,.5);overflow:hidden;margin:.5rem 0}
@@ -150,6 +155,9 @@ function startTorque(partIdStr) {
     if (_scene && _scene.setWork) {
       _scene.setWork(partIdStr === '__forge' ? 'hammer' : 'wrench', _torque.v);
     }
+    // ⚔️ On the forge the same value is the HEAT, and the step decides how to
+    // read it — see setHeat's note on quench.
+    if (_scene && _scene.setHeat) _scene.setHeat(_torque.v, currentStepId());
     if (_torque.v >= 1) release();          // ran the fastener all the way out
   }, 16);
 }
@@ -158,6 +166,10 @@ function stopTorque() {
   _torque = null;
   // Hands go back down the moment the fastener is released.
   if (_scene && _scene.setWork) { try { _scene.setWork(null); } catch (e) {} }
+  // The billet keeps its heat and cools on its own — see the asymmetric rate
+  // in scene.forge. Snapping it cold on release would throw away the best
+  // moment in the whole sequence.
+  if (_scene && _scene.setHeat) { try { _scene.setHeat(0, currentStepId()); } catch (e) {} }
 }
 
 function release() {
@@ -196,11 +208,14 @@ function paint() {
      bound to a detached canvas impossible. Within one view the scene persists
      and only the weapon is rebuilt. */
 function sync3D(s) {
-  const wantFor = s.bench ? ('build:' + s.bench.blueprintId) : null;
+  const wantFor = s.bench ? ('build:' + s.bench.blueprintId)
+                : s.forge ? ('forge:' + s.forge.blueprintId)
+                : null;
   if (_sceneFor !== wantFor) { disposeScene(); _sceneFor = wantFor; }
   if (!wantFor) return;
 
-  const cv = document.getElementById(ID + '-3d');
+  const isForge = wantFor.indexOf('forge:') === 0;
+  const cv = document.getElementById(ID + (isForge ? '-3df' : '-3d'));
   if (!cv) { disposeScene(); return; }
 
   if (_scene && _scene.renderer && _scene.renderer.domElement !== cv) {
@@ -211,12 +226,13 @@ function sync3D(s) {
 
   if (!_scene) {
     const token = wantFor;
-    mountBench3D(cv).then((sc) => {
+    (isForge ? mountForge3D(cv) : mountBench3D(cv)).then((sc) => {
       // The player may have closed or moved on while three.js was loading.
       if (!sc) { markNo3D(); return; }
       if (_sceneFor !== token || !document.getElementById(ID)) { sc.dispose(); return; }
       _scene = sc;
-      _scene.setSeated(seatedForScene());
+      if (_scene.setSeated) _scene.setSeated(seatedForScene());
+      if (_scene.setHeat) _scene.setHeat(0, currentStepId());
       _scene.start();
       // 🧪 Dev probe, same spirit as __mg elsewhere: the scene is otherwise
       // module-private, so there is no way to pose the hands from a console
@@ -225,8 +241,15 @@ function sync3D(s) {
     }).catch(() => markNo3D());
     return;
   }
-  _scene.setSeated(seatedForScene());
+  if (_scene.setSeated) _scene.setSeated(seatedForScene());
+  if (_scene.setHeat && !_torque) _scene.setHeat(0, currentStepId());
   _scene.resize();
+}
+
+/* Which forge step is live — the scene needs it because a QUENCH must read the
+   bar inverted (holding it under takes heat OUT, it does not add it). */
+function currentStepId() {
+  try { const st = currentStep(); return st ? st.id : null; } catch (e) { return null; }
 }
 
 /* Slot -> { partId, tier } for the scene. Tier comes from the part id, which
@@ -527,6 +550,11 @@ function forgeView(s) {
       <button class="wsb-x" id="${ID}-close">Close</button></div>
     <div class="wsb-panel">
       <h3>${done ? 'Finished' : esc(step.icon + ' ' + step.name)}</h3>
+      <!-- ⚔️ The smithy. The billet's COLOUR is the game state: it runs black →
+           cherry → orange → yellow → white with the bar, and cools when you
+           stop. A smith reads heat by colour, and after a few blades the
+           player will too. -->
+      <canvas class="wsb-3d" id="${ID}-3df"></canvas>
       <div class="wsb-sub" style="margin-bottom:.5rem">${done
         ? 'The blade is done. Proof it and take it.'
         : esc(step.verb) + '. Hold, and release inside the band — past the red and the steel is ruined.'}</div>

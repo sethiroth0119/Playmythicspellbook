@@ -379,7 +379,11 @@ function build(THREE, canvas) {
     const w = canvas.clientWidth || canvas.parentElement.clientWidth || 640;
     // ⚠ 0.46 was too letterboxed once hands were in play: they entered at the
     //   bottom edge and got cropped to a sliver. Taller frame, room to work.
-    const h = Math.max(200, Math.round(w * 0.56));
+    /* ⚠ CLAMPED AT 340. Height derived purely from width gave a 640px canvas on
+       the full-width forge panel and pushed the controls off-screen. The CSS
+       caps it too; both are needed, since the renderer sizes the drawing buffer
+       and the CSS only sizes the box. */
+    const h = Math.min(340, Math.max(200, Math.round(w * 0.56)));
     canvas.style.height = h + 'px';
     renderer.setSize(w, h, false);
     camera.aspect = w / h;

@@ -22,9 +22,13 @@ import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finis
 import { startForge, workStep, currentStep, scoreForge, finishForge, abandonForge } from './bench.forge.js';
 import { isBlade } from './blueprints.js';
 import { armoury, armouryDetail, provenance, slotsFor, equip, heroList, carriedBy } from './armoury.js';
+import { mount as mountBench3D } from './scene.bench.js';
 
 const ID = 'ws-bench-overlay';
 let _tick = null, _torque = null;
+/* 🔧 The 3D workshop. One scene at a time, torn down on close and whenever the
+   view changes away from a build — see disposeScene. */
+let _scene = null, _sceneFor = null;
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -79,6 +83,11 @@ const CSS = `
 #${ID} .wsb-p:not([disabled]).wsb-fits{border-color:rgba(120,220,160,.55);background:rgba(120,220,160,.07)}
 #${ID} .wsb-p .q{margin-left:auto;font-size:.72rem;color:#a89880}
 #${ID} .wsb-tier-pristine{color:#9fe8b0}#${ID} .wsb-tier-worn{color:#e8d79f}#${ID} .wsb-tier-shot{color:#e8a09f}
+/* 🔧 The 3D view. Sized by the scene itself (it sets an explicit height from
+   the width), so the panel does not need to guess an aspect ratio. */
+#${ID} .wsb-3d{width:100%;display:block;border-radius:6px;border:1px solid rgba(212,175,55,.28);
+  background:#0d0b09;margin-bottom:.6rem}
+#${ID} .wsb-3d-note{font-size:.72rem;color:#7b6f5c;margin:-.35rem 0 .6rem}
 #${ID} .wsb-bar{position:relative;height:26px;border:1px solid rgba(212,175,55,.4);border-radius:5px;
   background:rgba(0,0,0,.5);overflow:hidden;margin:.5rem 0}
 #${ID} .wsb-fill{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,#6b8f4f,#d4af37)}
@@ -116,6 +125,7 @@ export function openBench() {
 
 export function closeBench() {
   stopTorque();
+  disposeScene();
   const el = document.getElementById(ID);
   if (el) el.remove();
   return true;
@@ -164,6 +174,70 @@ function paint() {
   const s = ensureWeaponSmith();
   el.innerHTML = s.bench ? buildView(s) : (s.forge ? forgeView(s) : pickerView(s));
   bind(s);
+  sync3D(s);
+}
+
+/* Keep the scene in step with the bench.
+
+   ⚠ paint() replaces innerHTML wholesale, which DESTROYS the canvas element the
+     renderer is bound to. So the scene is torn down and rebuilt whenever the
+     view changes — cheap (ten boxes and a room), and it makes a stale context
+     bound to a detached canvas impossible. Within one view the scene persists
+     and only the weapon is rebuilt. */
+function sync3D(s) {
+  const wantFor = s.bench ? ('build:' + s.bench.blueprintId) : null;
+  if (_sceneFor !== wantFor) { disposeScene(); _sceneFor = wantFor; }
+  if (!wantFor) return;
+
+  const cv = document.getElementById(ID + '-3d');
+  if (!cv) { disposeScene(); return; }
+
+  if (_scene && _scene.renderer && _scene.renderer.domElement !== cv) {
+    // A repaint swapped the canvas under us.
+    disposeScene();
+    _sceneFor = wantFor;
+  }
+
+  if (!_scene) {
+    const token = wantFor;
+    mountBench3D(cv).then((sc) => {
+      // The player may have closed or moved on while three.js was loading.
+      if (!sc) { markNo3D(); return; }
+      if (_sceneFor !== token || !document.getElementById(ID)) { sc.dispose(); return; }
+      _scene = sc;
+      _scene.setSeated(seatedForScene());
+      _scene.start();
+    }).catch(() => markNo3D());
+    return;
+  }
+  _scene.setSeated(seatedForScene());
+  _scene.resize();
+}
+
+/* Slot -> { partId, tier } for the scene. Tier comes from the part id, which
+   is where condition lives (§6d), so a worn barrel renders duller than a
+   pristine one with no extra bookkeeping. */
+function seatedForScene() {
+  const s = ensureWeaponSmith();
+  const out = {};
+  if (!s.bench) return out;
+  for (const slot in s.bench.seated) {
+    const seat = s.bench.seated[slot];
+    const d = seat && partDef(seat.partId);
+    out[slot] = { partId: seat.partId, tier: (d && d.part.tier) || 'pristine' };
+  }
+  return out;
+}
+
+function markNo3D() {
+  const cv = document.getElementById(ID + '-3d');
+  if (cv) cv.style.display = 'none';         // no WebGL: quietly fall back to the DOM bench
+}
+
+export function disposeScene() {
+  if (_scene) { try { _scene.dispose(); } catch (e) {} }
+  _scene = null;
+  _sceneFor = null;
 }
 
 function pickerView(s) {
@@ -377,7 +451,13 @@ function buildView(s) {
       <div class="wsb-sub">${esc(bp.blurb)} · budget ${bp.budget} pts</div></div>
       <button class="wsb-x" id="${ID}-close">Close</button></div>
     <div class="wsb-cols">
-      <div class="wsb-panel"><h3>Stations</h3><div class="wsb-stations">${stations}</div>
+      <div class="wsb-panel"><h3>Stations</h3>
+        <!-- 🔧 The workshop. First-person over your own bench — the weapon
+             assembles here as you seat parts. Purely presentational: if WebGL
+             is unavailable the canvas never mounts and the stations below are
+             exactly the bench that shipped in phase 5. -->
+        <canvas class="wsb-3d" id="${ID}-3d"></canvas>
+        <div class="wsb-stations">${stations}</div>
         <div class="wsb-meter">
           <span>quality <b>${Math.round(sc.quality * 100)}%</b></span>
           <span>ceiling <b>${Math.round(sc.cap * 100)}%</b></span>

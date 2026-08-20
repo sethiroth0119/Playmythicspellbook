@@ -457,6 +457,10 @@ licence:   ownsWeaponSmith()
 | ✅ 8 | Ⓐ Blueprints tab in the Vendor Market | **Done.** `wsBuyBlueprintAza()` owns charge+refund together (the module is never handed a bare charge). Button disables on click — two clicks would be two charges for one frame. Verified: Aza restored on every failure path |
 | ✅ 9 | Order board + reputation + rep-gated blueprint tiers | **Done.** `sql/039_weaponsmith_board.sql` — contracts are SERVER-generated from templates. Verified against Postgres 16; caught a real bug (a new smith's first roll was throttled to an empty board). ⚠ **Not yet applied** |
 | ✅ 10 | Forge bench (blades) | **Done.** `bench.forge.js` + `sql/040_weaponsmith_blades.sql` (knife 4 / sword 11 / greatsword 12, none for sale). Quality is the **worst** step, not the average; a ruined billet is gone |
+| ✅ 3D-1 | The workshop in 3D — bench, tools, lamp, camera, teardown | **Done.** `three.boot.js` (local vendored copy first, CDN fallback) + `scene.bench.js`. Degrades to the DOM bench with no WebGL |
+| ✅ 3D-2 | Parts land on the bench as you seat them | **Done.** 10 anchors driven by `bench.seated`; condition tier tints the metal. Rebuilt wholesale per change so 3D can't drift from the DOM |
+| 🔨 3D-3 | Hands + tool driven by the torque bar | This is the "I'm working" feeling — no rigged character needed |
+| 🔨 3D-4 | The forge in 3D — anvil, quench barrel, billet that glows with the heat | Emissive colour tracks the heat bar |
 | ✅ 11 | Hero loadout parity + provenance UI | **Done.** Hero parity needed **no new equip code** — `itemSlotFit` reads `slotType` and a minted weapon carries it. `armoury.js` adds provenance: parts, condition ceiling, budget used, unverified flag |
 
 ⚠ **Three migrations to apply by hand**, in order: `sql/038_weaponsmith.sql`,
@@ -490,5 +494,12 @@ composite, so call renderers directly rather than relying on `render()`.
    A schematic is a tradeable item consumed to grant the entitlement. A schematic in the
    vault is an *asset*; a learned blueprint is a *capability*. Selling the first is
    reasonable, "selling" the second would mean un-learning, which nothing else here does.
-3. **Corp-shared bench.** Communities sit above corps; a corp-owned smith serving its
+3. **A rigged smith model.** The 3D bench is FIRST-PERSON, which is what Gunsmith
+   Simulator itself does and what the reference screenshots show — you see the bench and
+   the gun, not a person. That is deliberate: there is **no rigged character model anywhere
+   in this project** (the 19 `.glb` files are furniture, vehicles and static statues; heroes
+   are 2D card art), so a visible working character is an *asset* problem, not a code one.
+   If one is ever commissioned it drops in behind the bench — `_bmLoadGLBUrl` already
+   parses animation clips and `_cs3DAutoplay` already drives a mixer.
+4. **Corp-shared bench.** Communities sit above corps; a corp-owned smith serving its
    roster is a natural later feature, deliberately not in scope now.

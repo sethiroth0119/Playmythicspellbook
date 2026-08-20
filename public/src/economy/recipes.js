@@ -215,6 +215,19 @@ export const RECIPES = {
   reclaimedWater:   { in: { wastewater: 1.4 }, labor: 0.03, power: 0.11, ind: 'wasteWorks' },
 
   // ── 🌾 Agriculture (the made ones) ────────────────────────────────────────
+  /* 🐟🌱 ALT LEGS, NOT EXTRA INPUTS — and the distinction is the whole design.
+     `seeds` and `seaweed` were deposits a player could extract and NOTHING in
+     the city would ever buy: the Survey graded the ground Rich and the tile
+     produced into a void.
+     ⚠ THEY ARE ALTERNATIVE LEGS BECAUSE A REQUIRED INPUT WOULD MAKE THE
+       BROWNOUTS WORSE. The resource round closed the phantom-feedstock hole,
+       and the honest consequence is that mills on an under-built board already
+       run short. Adding seeds to the DEFAULT leg would deepen every feed
+       chain's requirement — "give this deposit a customer" would have cost the
+       city its animal feed. A leg is a choice the mill takes when it has the
+       stock, and ignores when it does not.
+     Both are real feeds: seed cake is what an oil press leaves behind, and
+     seaweed meal is a standard livestock supplement. */
   animalFeed:  { in: { corn: 0.6, soybeans: 0.3, biomass: 0.2 }, labor: 0.04, power: 0.05, ind: 'mill' },
   livestock:   { in: { animalFeed: 3.2, freshWater: 2.4 },       labor: 0.28, power: 0.04, ind: 'ranch' },
   poultry:     { in: { animalFeed: 1.6, freshWater: 1.1 },       labor: 0.18, power: 0.04, ind: 'ranch' },
@@ -236,6 +249,11 @@ export const RECIPES = {
   cannedFood:       { in: { vegetables: 0.7, meat: 0.2, sheetMetal: 0.08 },  labor: 0.10, power: 0.19, ind: 'foodPlant' },
   snacks:           { in: { flour: 0.3, sugar: 0.25, cookingOil: 0.12, packagingMaterial: 0.1 }, labor: 0.09, power: 0.15, ind: 'foodPlant' },
   beverages:        { in: { freshWater: 1.6, sugar: 0.2, fruit: 0.15, packagingMaterial: 0.12 }, labor: 0.08, power: 0.16, ind: 'foodPlant' },
+  /* 🥔🐟 The kitchen's other four legs. `potatoes`, `freshFish`, `seafood` and
+     `shellfish` were all extractable and all unsellable — a fishery could work
+     a Rich seam into nothing. Same rule as animalFeed above: LEGS, never extra
+     inputs on the default, because a mandatory fish would close every food
+     plant on a board with no coast. */
   preparedMeals:    { in: { meat: 0.25, vegetables: 0.4, rice: 0.3, cookingOil: 0.06 }, labor: 0.15, power: 0.17, ind: 'foodPlant' },
   restaurantSupplies:{in: { preparedMeals: 0.4, cannedFood: 0.3, cookingOil: 0.15, cleaningChemicals: 0.05 }, labor: 0.07, power: 0.08, ind: 'distributor' },
 
@@ -269,6 +287,9 @@ export const RECIPES = {
   // ── 🧱 Construction ───────────────────────────────────────────────────────
   brick:                   { in: { clay: 1.3, industrialFuel: 0.05 },                  labor: 0.05, power: 0.16, ind: 'cementWorks' },
   cement:                  { in: { limestone: 1.5, clay: 0.3, industrialFuel: 0.08 },  labor: 0.05, power: 0.34, ind: 'cementWorks' },
+  /* 🪨 Crushed stone is the aggregate a quarry actually sells, and `stone` had
+     no buyer at all — the one deposit on this list that is not exotic and not
+     new, just never wired. A leg, so a city with gravel keeps using gravel. */
   concrete:                { in: { cement: 0.45, gravel: 0.9, sand: 0.6, industrialWater: 0.4 }, labor: 0.06, power: 0.11, ind: 'cementWorks' },
   glass:                   { in: { silica: 1.2, sand: 0.4, industrialFuel: 0.09 },     labor: 0.07, power: 0.42, ind: 'glassworks' },
   steel:                   { in: { pigIron: 1.05, coal: 0.22, metalAlloys: 0.04 },     labor: 0.11, power: 0.55, ind: 'steelMill' },
@@ -290,6 +311,12 @@ export const RECIPES = {
   aluminum:        { in: { aluminumOre: 2.0, electricity: 4.2 },          labor: 0.09, power: 0.10, ind: 'smelter' },
   copper:          { in: { copperOre: 1.8, acids: 0.08 },                 labor: 0.09, power: 0.44, ind: 'smelter' },
   copperWire:      { in: { copper: 1.02, plastic: 0.05 },                 labor: 0.08, power: 0.17, ind: 'fabricator' },
+  /* 💎 `platinumOre` and `rareMinerals` are the two the Deep Mine works that
+     nothing bought. Both are real alloying and catalyst feeds, and both are
+     scarce (yield 5 and 8 against nickel's ordinary seam), so the leg takes far
+     less of them and costs more labour — a speciality melt, not a cheaper
+     route to the same alloy. `band: 'technical'` is kept: it is the same
+     furnace and the same crew. */
   metalAlloys:     { in: { nickelOre: 0.4, zincOre: 0.3, steel: 0.4 },    labor: 0.16, power: 0.38, ind: 'smelter', band: 'technical' },
   advancedAlloys:  { in: { titanium: 0.5, tungsten: 0.25, cobalt: 0.2, metalAlloys: 0.3 }, labor: 0.38, power: 0.72, ind: 'smelter', band: 'advanced' },
 
@@ -654,6 +681,50 @@ export const ALT_FEEDSTOCK = {
                    { in: { recycledMetal: 1.05, electricity: 0.5 },        labor: 0.07, tag: 'secondary' }],
   freshWater:     [{ in: { rawWater: 1.15 },                               labor: 0.02, tag: 'raw' },
                    { in: { reclaimedWater: 1.05 },                         labor: 0.03, tag: 'reclaimed' }],
+
+  /* ⛏ CUSTOMERS FOR THE ORPHANED SEAMS.
+     Nine DEPOSITS could be extracted and nothing in the city would ever buy
+     them — the Survey graded the ground Rich and the tile produced into a void.
+     Derived, not taken on trust: the count in the handover is twelve; walking
+     RECIPES for anything nothing consumes gives NINE, and six of them
+     (potatoes, freshFish, seafood, shellfish, seaweed, stone) are not from the
+     new buildings at all. They were always orphans.
+
+     🔴 THEY ARE LEGS, NOT EXTRA INPUTS ON THE DEFAULT, and that is the whole
+        design. The resource round closed the phantom-feedstock hole, and the
+        honest consequence is that plants on an under-built board already brown
+        out. Adding seeds to animalFeed's DEFAULT leg would have deepened every
+        feed chain's requirement — "give this deposit a customer" would have
+        cost the city its animal feed. A leg is a route a firm takes when it
+        has the stock and ignores when it does not.
+
+     🔴 AND THEY BELONG HERE, NOT IN RECIPES. I first wrote them as arrays
+        inside RECIPES, copying the shape of the entries above — but those
+        entries ARE this object. legsOf() reads ALT_FEEDSTOCK first and
+        otherwise takes `r.in` off the RECIPES row; an array has no `.in`, so
+        the four recipes became inputless, i.e. FREE, and 69 base prices moved.
+        The gate caught it ("a recipe edit did not silently reprice the
+        catalogue"). Prices in this economy are derived from the graph and
+        written down nowhere, so the container is not a detail.
+
+     Each default leg below is byte-identical to its RECIPES row, because
+     legsOf() replaces the default entirely once a key appears here — omitting
+     it would delete the original route. */
+  animalFeed:     [{ in: { corn: 0.6, soybeans: 0.3, biomass: 0.2 },      labor: 0.04, power: 0.05, tag: 'grain' },
+                   { in: { seeds: 0.7, biomass: 0.25 },                   labor: 0.05, power: 0.05, tag: 'seedcake' },
+                   { in: { seaweed: 1.1, corn: 0.2 },                     labor: 0.06, power: 0.06, tag: 'seaweed' }],
+  preparedMeals:  [{ in: { meat: 0.25, vegetables: 0.4, rice: 0.3, cookingOil: 0.06 }, labor: 0.15, power: 0.17, tag: 'meat' },
+                   { in: { potatoes: 0.8, vegetables: 0.3, cookingOil: 0.06 },         labor: 0.13, power: 0.16, tag: 'root' },
+                   { in: { freshFish: 0.45, vegetables: 0.3, cookingOil: 0.05 },       labor: 0.16, power: 0.17, tag: 'fish' },
+                   { in: { seafood: 0.4, shellfish: 0.15, vegetables: 0.25 },          labor: 0.19, power: 0.18, tag: 'shellfish' }],
+  concrete:       [{ in: { cement: 0.45, gravel: 0.9, sand: 0.6, industrialWater: 0.4 }, labor: 0.06, power: 0.11, tag: 'gravel' },
+                   { in: { cement: 0.45, stone: 1.0, sand: 0.5, industrialWater: 0.4 },  labor: 0.08, power: 0.14, tag: 'crushed' }],
+  /* platinumOre yields 5 and rareMinerals 8, against nickel's ordinary seam —
+     so these take far less ore and far more labour. A speciality melt, not a
+     cheaper route to the same alloy. */
+  metalAlloys:    [{ in: { nickelOre: 0.4, zincOre: 0.3, steel: 0.4 },       labor: 0.16, power: 0.38, tag: 'nickel', band: 'technical' },
+                   { in: { rareMinerals: 0.12, nickelOre: 0.2, steel: 0.4 }, labor: 0.22, power: 0.42, tag: 'rare', band: 'technical' },
+                   { in: { platinumOre: 0.05, zincOre: 0.25, steel: 0.4 },   labor: 0.26, power: 0.44, tag: 'platinum', band: 'technical' }],
 };
 
 /* ════════════════════════════════════════════════════════════════════════════

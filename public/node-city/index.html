@@ -1455,30 +1455,15 @@
   #railbar { position: absolute; top: calc(var(--topbarh) + 34px); left: 12px; right: 12px;
     z-index: 43; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
     gap: 6px; pointer-events: none; }
-  /* 🔴 THE DOCK MAY NOT WRAP OVER THE MAP. The launcher registry's own note
-     records the row measured at 1242px against a 1256px track in the worst case
-     — one line with 14px spare — and warns that a fourteenth launcher wraps it
-     onto a second line across the city, which is the failure the rails were
-     collapsed to fix. A fourteenth (🌳 Research) has been added, so the failure
-     mode is changed rather than the ceiling ignored: at desktop widths the row
-     no longer wraps at all, it scrolls in place, and the map stays clear
-     however many launchers are visible or however long a raid clock runs.
-     ⚠ WRAP IS KEPT BELOW 900px on purpose. There the dock is not lying across
-       the map in the same way, and a narrow screen is better served stacking
-       than hiding launchers off the right edge of a scroller. */
-  @media (min-width: 900px) {
-    #railbar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
-      scrollbar-width: none; }
-    #railbar::-webkit-scrollbar { display: none; }
-  }
-  /* ⚠ `pointer-events: none` on #railbar is NOT relaxed for the scroll, and
-     that was a real mistake caught before shipping. The bar is a full-width
-     strip pinned across the city (left:12px right:12px), and the base rule
-     makes it transparent to the pointer so clicks reach the map underneath.
-     Setting it to `auto` so the wheel could scroll the dock turned a 32px band
-     across the whole map into a click sink. The .rl buttons already re-enable
-     their own pointer events, so a wheel over a LAUNCHER still scrolls the row
-     — which is where a player's cursor is when they want to. */
+  /* ⚠ NO nowrap/overflow-x HERE, AND THAT WAS TRIED. Adding the fourteenth
+     launcher (🌳 Research) risks the wrap the registry's note warns about, so
+     the dock was briefly switched to `flex-wrap: nowrap; overflow-x: auto` at
+     ≥900px to make an over-long row scroll instead of wrapping.
+     REVERTED ON SIGHT OF IT: `justify-content: center` on a nowrap scroller
+     stops centring the way it does on a wrapping row, and on a wide viewport
+     the bar ran across the SERVICES column on the left instead of sitting
+     clear of it. The scroll fixed a risk and created a visible defect, which
+     is the wrong trade. The row wraps, as it always did, left to right. */
   .rl { pointer-events: auto; position: relative; display: flex; align-items: center; gap: 6px;
     padding: 5px 10px 5px 8px; cursor: pointer; color: var(--bone);
     border: 1px solid rgba(212,175,55,.42); border-radius: 8px;
@@ -32332,7 +32317,12 @@ $('topbar').addEventListener('click', (ev) => {
      sentence about their whole collection, from a dialog that had only looked
      at one type of it. Callers that narrow the filter should say what they
      narrowed to. Unfiltered callers keep the original wording. */
-function openCardPicker(title, filter, onPick, emptyMsg) {
+/* @param onClose  optional. Fired whenever the picker leaves the screen — after
+   a pick, on Close, and on a backdrop click. A caller that HID something to
+   make room for this needs one signal for all three exits; without it the
+   Resting House had to guess, and guessing wrong leaves the player staring at
+   a city with no dialog and no way back to the one they were using. */
+function openCardPicker(title, filter, onPick, emptyMsg, onClose) {
   const pool = freeCards().filter(filter || (() => true));
   const box2 = document.createElement('div');
   box2.id = 'cardpicker';
@@ -32343,10 +32333,12 @@ function openCardPicker(title, filter, onPick, emptyMsg) {
       : '<div class="cpempty">' + (emptyMsg || 'No unassigned cards available.') + '</div>') +
     '</div><button class="pbtn" id="cp-close">Close</button></div>';
   document.body.appendChild(box2);
+  // One exit path, so onClose cannot be missed on any of the three ways out.
+  const dismiss = () => { try { box2.remove(); } catch (e) {} try { if (onClose) onClose(); } catch (e) {} };
   box2.addEventListener('click', (ev) => {
-    if (ev.target === box2 || ev.target.id === 'cp-close') { box2.remove(); return; }
+    if (ev.target === box2 || ev.target.id === 'cp-close') { dismiss(); return; }
     const b = ev.target.closest('.cpcard');
-    if (b) { const c = cardById(b.dataset.cid); box2.remove(); if (c) onPick(c); }
+    if (b) { const c = cardById(b.dataset.cid); dismiss(); if (c) onPick(c); }
   });
 }
 

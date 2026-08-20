@@ -397,10 +397,18 @@ function render(k) {
 }
 
 async function onClick(ev) {
-  const k = OPEN_KEY; if (!k || !CTX) return;
-  const t = CTX.game.tiles[k]; if (!t) return;
+  /* 🔴 CLOSE IS CHECKED FIRST, BEFORE ANY GUARD THAT CAN RETURN.
+     It used to sit third, behind `if (!k || !CTX) return;` and
+     `if (!t) return;` — so the moment OPEN_KEY went stale or the tile lookup
+     missed (a demolish, a reload, a save swapped underneath the dialog), the
+     Close button and the backdrop both stopped responding and the panel could
+     not be dismissed at all. A dialog you cannot close is a worse outcome than
+     anything those two guards protect against, and it does not need either of
+     them: removing the box reads nothing from the tile. */
   const box = document.getElementById('housemod');
   if (ev.target === box || ev.target.id === 'hm-close') { close(); return; }
+  const k = OPEN_KEY; if (!k || !CTX) return;
+  const t = CTX.game.tiles[k]; if (!t) return;
   const h = houseOf(t), spec = specOf(t);
   const btn = ev.target.closest('[data-hact]');
   if (btn) {
@@ -420,6 +428,17 @@ async function onClick(ev) {
            assigned elsewhere — openCardPicker draws from freeCards(), which is
            CARDS minus assignedCardIds(). This filter narrows the TYPE and
            nothing else; ownership was never the missing half. */
+      /* 🔴 STAND ASIDE WHILE THE PICKER IS UP. #housemod is z-index 46 and
+         #cardpicker is 45 — the House sits ABOVE the list it opens, so hitting
+         "+ Billet" appeared to do nothing and the player had to close the House
+         to find the units waiting underneath. Raising the picker instead would
+         put a body-level dialog over every other panel that opens one; hiding
+         the opener is local to this call and is what the player asked for
+         anyway: the House gets out of the way, the list appears, and the House
+         comes back when the list is done. Restored on ALL THREE exits (pick,
+         Close, backdrop) through openCardPicker's onClose — see its note. */
+      const _hm = document.getElementById('housemod');
+      if (_hm) _hm.style.display = 'none';
       CTX.openCardPicker('Billet a unit in the ' + room.name + ' → ' + room.stat.toUpperCase(),
         c => c.type === 'Unit',
         (c) => {
@@ -432,7 +451,11 @@ async function onClick(ev) {
         // Says what was actually looked at. "No unassigned cards" would be a
         // statement about the whole collection from a dialog that only read one
         // type of it — see openCardPicker's note on the default.
-        'No free units. Every unit you own is already billeted, socketed or in a deck.');
+        'No free units. Every unit you own is already billeted, socketed or in a deck.',
+        /* Bring the House back however the picker was dismissed. Re-queried
+           rather than reusing `_hm`, because a pick calls render(k) which may
+           have replaced the element by the time this runs. */
+        () => { const b = document.getElementById('housemod'); if (b) b.style.display = ''; });
       return;
     }
     if (act === 'wake') {

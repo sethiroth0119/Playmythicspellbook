@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w7';
+  window.BUILD_VERSION = 'v120w8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207402,6 +207402,25 @@ window.MythicHouseBridge = {
   render: () => { try { render(); } catch (e) {} },
   collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
   accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
+  /* 🏋 DRILL STRAIN — the two calls hard drill needs, and nothing more.
+     house.core.js REPORTS strain and refuses to apply it (it is a pure file
+     and reaches for no profile); this is where it lands. Both are on the
+     existing camp condition fields, so a hard-drilled unit shows up worn out
+     on the camp slot row and at the Table, and clears through the SAME
+     Med-bay Medicine sink (`campTreatUnit`) that trauma and corruption use —
+     no second recovery economy.
+     ⚠ Both clamp to 0-100. `_campTreatNeed` sums trauma+corruption+fatigue and
+       `80 - morale` to price the treatment, so an unclamped 340 fatigue from a
+       long absence would bill a player ~29 Medicine for one unit. */
+  unitFatigue: (cardId) => { try { return (_campUnitProf(cardId).fatigue) | 0; } catch (e) { return 0; } },
+  applyStrain: (cardId, fatigue, morale) => {
+    try {
+      const p = _campUnitProf(cardId); if (!p) return false;
+      if (fatigue > 0) p.fatigue = Math.max(0, Math.min(100, (p.fatigue || 0) + fatigue));
+      if (morale  > 0) p.morale  = Math.max(0, Math.min(100, (p.morale != null ? p.morale : 80) - morale));
+      return true;
+    } catch (e) { return false; }
+  },
 };
 /* 🏕 THE RANCH BRIDGE — for /src/ranch/*.js (the Table + praise/scold).
    🔴 THE GLOBALS TRAP, a fourth time (CLAUDE.md). `Profile`, `adjustBond`,
@@ -223170,7 +223189,7 @@ render();
      the ONLY place the rooms, tiers, rest quality and accrual live.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset. -->
-<script type="module" src="src/resonance/house.camp.js?v=120i2"></script>
+<script type="module" src="src/resonance/house.camp.js?v=120w8"></script>
 <!-- 🏕 THE RANCH — the Table (one companion, laid out whole) + the
      praise/scold verb. Registers window.MythicRanch and is INERT until a
      camp slot or the banter dialog opens it. Reads nothing by itself:

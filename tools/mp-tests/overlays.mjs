@@ -88,7 +88,29 @@ ok('the bar itself cannot eat map clicks', /pointer-events:none/.test(cityBar));
 ok('its buttons re-enable pointer events',
    (cityBar.match(/pointer-events:auto/g) || []).length >= 3);
 ok('layout order is explicit, not creation order',
-   (cityBar.match(/order:[123];/g) || []).length === 3);
+   (cityBar.match(/order:[1234];/g) || []).length === 3);
+ok('the Zones pill sits between Buy storage and Leave city',
+   idx.includes("p.id = 'node-city-zones'")
+   && idx.includes("'order:3;flex:none")
+   && idx.includes("x.style.cssText = 'order:4;"));
+
+/* 🗺 The Zones pill drives node-city's OWN #ncsb-demand button across the
+   same-origin boundary, then hides the original so the control is not offered
+   twice. The ORDERING is the safety property: hiding first and failing after
+   would take the Zone Demand dock away with no way back. */
+ok('the Zones pill drives the real button, not a copy',
+   idx.includes("getElementById('ncsb-demand')") && idx.includes('src.click()'));
+ok('the original is hidden only AFTER ours is appended',
+   idx.indexOf('bar.appendChild(p);') > 0
+   && idx.indexOf("src.style.display = 'none'") > idx.indexOf('bar.appendChild(p);'));
+ok('a missing status bar leaves the city button alone',
+   idx.includes('if (++tries < 12) setTimeout(mount, 250);'));
+ok('state is mirrored from the source, not tracked locally',
+   idx.includes('new MutationObserver(paint)')
+   && idx.includes("attributeFilter: ['aria-expanded', 'class']"));
+ok('the observer is disconnected on teardown',
+   idx.includes('App._ncZoneObs.disconnect()'));
+
 ok('NO hardcoded right offsets remain',
    !/right:\s*(?:168|378)px/.test(cityBar) && !/\(168 \+ 210\)/.test(cityBar));
 ok('the gutter measures the ROW, not one pill',

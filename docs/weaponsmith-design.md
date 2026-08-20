@@ -452,7 +452,7 @@ licence:   ownsWeaponSmith()
 | ✅ 4 | Parts as stackable `slotType:'weaponPart'` items (condition in the id), vault footprints, strip-a-donor, cleaning station | **Done.** `parts.js`: 21 variants × 3 tiers = 63 ids + 3 donors, registered into `getItemById` via `WS_PART_DEFS`. Probes: `__mg.weaponSmith.strip()` / `.clean()` |
 | ✅ 5 | Assembly bench: dependency graph, fitment, torque bar | **Done.** `blueprints.js` (5 frames) + `bench.gun.js` (order / fitment / torque / scoring) + `render.js` (module-owned overlay). Opened by the `openWeaponSmith` JB action — **the JB iframe still needs a sidebar entry emitting it** |
 | ✅ 6 | `sql/038_weaponsmith.sql` — `crafted_weapons`, `ws_blueprints_owned`, `ws_shop`, `ws_blueprints` + `ws_mint` / `ws_grant_blueprint` / `ws_deliver` / `ws_state` | **Done and verified against a real Postgres 16** — see the commit. `server.js` routes the bench mint through `ws_mint`; offline still mints `local: true` (untradeable). ⚠ **Not yet applied** — run it by hand in the SQL editor |
-| 7 | Loot-dropped blueprints (grant through `ws_grant_blueprint`, source `'loot'`) | Cheapest of the three sources — do it first to exercise the table |
+| ✅ 7 | Loot-dropped blueprints (grant through `ws_grant_blueprint`, source `'loot'`) | **Done.** `schematics.js` — blueprints drop as TRADEABLE items consumed to grant the entitlement. Loot hook: `window.wsDropSchematic()`. ⚠ **Not wired into the battle drop table** — that arm is battle code, out of scope |
 | 8 | Ⓐ Blueprints tab in the Vendor Market | ⚠ Real money. Await `sov_charge`, `refundSovereigns()` on a failed grant. Do NOT copy the Oil Sim's local-flag pattern |
 | 9 | Order board + reputation + rep-gated blueprint tiers | Career mode. Scoring and rep writes are server-side |
 | 10 | Forge bench (blades) | Second craft |
@@ -479,8 +479,9 @@ composite, so call renderers directly rather than relying on `render()`.
    (index.html:198734), which is the only in-app reference point for what an unlock is
    "worth". Weapon blueprints are a bigger unlock and probably sit above that, but this is
    a pricing call, not an engineering one.
-2. **Do blueprints drop as items or as entitlements?** An item can be traded between
-   players (nice: a blueprint market); an entitlement cannot. Leaning **item that is
-   consumed to grant the entitlement** — it trades, then it is spent.
+2. ~~Do blueprints drop as items or as entitlements?~~ **Resolved in phase 7: item.**
+   A schematic is a tradeable item consumed to grant the entitlement. A schematic in the
+   vault is an *asset*; a learned blueprint is a *capability*. Selling the first is
+   reasonable, "selling" the second would mean un-learning, which nothing else here does.
 3. **Corp-shared bench.** Communities sit above corps; a corp-owned smith serving its
    roster is a natural later feature, deliberately not in scope now.

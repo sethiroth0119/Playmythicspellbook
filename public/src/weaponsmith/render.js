@@ -16,6 +16,8 @@ import { ensureWeaponSmith } from './state.js';
 import { itemCount, toast, ready } from './ws.bridge.js';
 import { CATALOG, DONOR_CATALOG, partDef, cleanCost, cleanPart, stripDonor, tierOf } from './parts.js';
 import { BLUEPRINTS, blueprint, blueprintIds, stepFor } from './blueprints.js';
+import { SCHEMATICS, learnSchematic, unlearned } from './schematics.js';
+import { ownsBlueprint, online } from './server.js';
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, TORQUE_BAND, TORQUE_STRIP } from './bench.gun.js';
 
 const ID = 'ws-bench-overlay';
@@ -135,20 +137,37 @@ function paint() {
 }
 
 function pickerView(s) {
+  /* Tier-1 frames come with the operation; higher tiers need the blueprint,
+     which is a SERVER row. A locked frame is shown rather than hidden — a
+     player should be able to see what they are working towards, and hiding it
+     makes the schematic they just looted look like it does nothing. */
   const rows = blueprintIds().map((id) => {
     const b = BLUEPRINTS[id];
-    return `<button class="wsb-p" data-bp="${esc(id)}">
-      <span style="font-size:1.2rem">${esc(b.icon)}</span>
+    const known = b.tier <= 1 || ownsBlueprint(id);
+    return `<button class="wsb-p" data-bp="${esc(id)}" ${known ? '' : 'disabled title="' + esc('Needs the ' + b.name + ' blueprint — loot or buy the schematic, then learn it.') + '"'}>
+      <span style="font-size:1.2rem">${esc(known ? b.icon : '🔒')}</span>
       <span><b>${esc(b.name)}</b><div class="wsb-sub">${esc(b.blurb)}</div></span>
       <span class="q">T${b.tier} · ${b.budget} pts</span></button>`;
   }).join('');
+
+  const schem = unlearned().map((sid) => {
+    const d = SCHEMATICS[sid];
+    return `<button class="wsb-p" data-learn="${esc(sid)}"><span>📜</span>
+      <span><b>${esc(d.name)}</b><div class="wsb-sub">Learn it — this consumes the schematic</div></span>
+      <span class="q">×${itemCount(sid)}</span></button>`;
+  }).join('');
+  const schemPanel = schem
+    ? `<div class="wsb-panel" style="margin-top:.8rem"><h3>📜 Schematics</h3>
+         <div class="wsb-sub" style="margin-bottom:.4rem">${online() ? 'Learning is recorded to your account, not this device.' : '⚠ Offline — learning needs a connection.'}</div>
+         <div class="wsb-tray">${schem}</div></div>`
+    : '';
   return `<div class="wsb-wrap">
     <div class="wsb-head"><div><h2>🔧 The Bench</h2>
       <div class="wsb-sub">Pick a frame. Parts come off donors and out of the shop — clean them before you build.</div></div>
       <button class="wsb-x" id="${ID}-close">Close</button></div>
     <div class="wsb-cols">
       <div class="wsb-panel"><h3>Blueprints</h3><div class="wsb-tray">${rows}</div></div>
-      <div class="wsb-panel"><h3>Workshop</h3>${workshopView()}</div>
+      <div><div class="wsb-panel"><h3>Workshop</h3>${workshopView()}</div>${schemPanel}</div>
     </div></div>`;
 }
 
@@ -243,6 +262,14 @@ function bind(s) {
   el.querySelectorAll('[data-bp]').forEach((b) => { b.onclick = () => { _msg = ''; startBuild(b.getAttribute('data-bp')); paint(); }; });
   el.querySelectorAll('[data-strip]').forEach((b) => {
     b.onclick = () => { const r = stripDonor(b.getAttribute('data-strip')); _msg = r ? ('Stripped — ' + r.parts.length + ' parts recovered.') : 'Could not strip that.'; paint(); };
+  });
+  el.querySelectorAll('[data-learn]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;                       // learning round-trips; no double-spend
+      const r = await learnSchematic(b.getAttribute('data-learn'));
+      _msg = r.ok ? ('Learned the ' + r.name + ' — the frame is unlocked.') : r.reason;
+      paint();
+    };
   });
   el.querySelectorAll('[data-clean]').forEach((b) => {
     b.onclick = () => { const to = cleanPart(b.getAttribute('data-clean')); _msg = to ? ('Cleaned up to ' + (partDef(to) || {}).name + '.') : 'Not enough gun oil.'; paint(); };

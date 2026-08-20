@@ -18,6 +18,7 @@ import { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots }
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore } from './bench.gun.js';
 import { openBench, closeBench, benchOpen } from './render.js';
 import { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online } from './server.js';
+import { SCHEMATICS, schematicCatalog, learnSchematic, dropSchematic, rollSchematic, unlearned, isSchematic, schematicId, blueprintOf } from './schematics.js';
 
 /* A missing bridge disables the Weapon Smith and does nothing else. It must
    never throw: this module is loaded from a plain <script type="module"> tag,
@@ -31,7 +32,7 @@ if (!ready()) {
      load and unconditionally — a part sitting in a player's vault has to
      resolve whether or not they currently hold the licence, or their stash
      would render as blank tiles the moment the op lapsed. */
-  registerItemDefs(allItemDefs());
+  registerItemDefs(Object.assign({}, allItemDefs(), schematicCatalog()));
 }
 
 /* 🧪 The probe, in the spirit of __mg.cityMgr and __mg.rez.
@@ -88,12 +89,30 @@ try {
     grant: (bpId, src) => grantBlueprint(bpId, src || 'loot'),
     deliver: (cId, itemId) => deliverContract(cId, itemId),
     owns: (bpId) => ownsBlueprint(bpId),
+    // 📜 Phase-7 probes. drop() grants the ITEM; learn() turns it into the
+    // server-side entitlement and consumes it.
+    schematics: () => Object.keys(SCHEMATICS),
+    drop: (bpId) => dropSchematic(bpId),
+    learn: (sid) => learnSchematic(sid),
+    unlearned: () => unlearned(),
   };
   /* 🔧 The opener index.html calls. A plain window function rather than another
      bridge entry, because the flow is the OTHER direction: the bridge is what
      the module reads FROM the app, and this is what the app calls INTO the
      module. Same shape as window.cityStateLoad and friends. */
   window.openWeaponSmithBench = () => openBench();
+  /* 📜 THE LOOT HOOK. Whoever owns a drop table calls this in one line to put a
+     blueprint schematic in the player's vault:
+         window.wsDropSchematic()               // weighted random
+         window.wsDropSchematic('ws_bp_lance')  // a specific frame
+     It grants the ITEM only — never the entitlement — so a drop is worth
+     exactly what dropped and nothing reaches the server until the player
+     chooses to learn it.
+     ⚠ Deliberately a hook rather than an edit to the battle reward table:
+       that arm lives in battle/encounter code, which CLAUDE.md puts out of
+       scope for this feature. This lets the loot owner opt in without the
+       Weapon Smith reaching into their system. */
+  window.wsDropSchematic = (bpId) => dropSchematic(bpId || rollSchematic());
 } catch (e) {}
 
 export { ensureWeaponSmith, wsLog, wsSave, wsUnlocked };
@@ -103,3 +122,4 @@ export { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots }
 export { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore };
 export { openBench, closeBench, benchOpen };
 export { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online };
+export { SCHEMATICS, learnSchematic, dropSchematic, rollSchematic, unlearned, isSchematic, schematicId, blueprintOf };

@@ -246,5 +246,8 @@ export function stripDonor(donorItemId, rng) {
   return { parts: got, scrap: Object.assign({}, d.donor.scrap) };
 }
 
-/* Everything index.html needs to resolve a part or a donor by id. */
+/* Everything index.html needs to resolve a part or a donor by id.
+   ⚠ Schematics are added by index.js rather than imported here — schematics.js
+     imports blueprints.js, and pulling that chain into parts.js would make the
+     part catalogue depend on the blueprint catalogue for no reason. */
 export function allItemDefs() { return Object.assign({}, CATALOG, DONOR_CATALOG); }

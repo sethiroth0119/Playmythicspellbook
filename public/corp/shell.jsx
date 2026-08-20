@@ -101,6 +101,11 @@ const NAV = [
   // Triggers parent-window navigation to the standalone Vehicle Market
   // screen via the existing jb:open bridge.
   { id: 'vehicleMarket', label: 'Vehicle Market', ico: '🚗', action: 'openVehicleMarket' },
+  /* 📦 Hire storage from other players. Deliberately in Economy rather than
+     under My Companies: the player who needs this most is the one who does NOT
+     own a warehouse and keeps hitting STASH FULL, so gating it behind owning
+     one would hide it from its whole audience. */
+  { id: 'storageMarket', label: 'Storage Market', ico: '📦', action: 'openStorageMarket' },
   { id: 'realestate', label: 'Real Estate',    ico: '⌂' },
   { id: 'black',      label: 'Black Market',   ico: '▥', badgeCls: 'toxic', badge: '6' },
   { id: 'feed',       label: 'Guild Wire',      ico: '☷' },
@@ -122,6 +127,10 @@ const COMPANY_PAGES = {
      'openWeaponSmith' is already handled by index.html; this is the emitter it
      was waiting on. */
   weaponsmith: { label: 'The Weapon Smith',   ico: '🔧', action: 'openWeaponSmith' },
+  /* 📦 Keyed on the OPS_ECON op id, so the entry appears the moment a Warehouse
+     is founded and never before. The office is where an owner rents spare
+     capacity out; the market below is open to everyone. */
+  warehouse:   { label: 'Warehouse',          ico: '📦', action: 'openWarehouse' },
 };
 
 function Sidebar({ route, setRoute, mailCount, blackCount }) {

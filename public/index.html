@@ -36564,7 +36564,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120z9';
+  window.BUILD_VERSION = 'v121a0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -82315,12 +82315,13 @@ const OPS_ECON = {
      assembly bench, and staffing it is the only industrial source of weaponParts.
      A licence with no supply sells a locked door; a supply with no licence
      leaves the bench free. Sized between genelab (550k) and research (700k) —
-     it gates a whole crafting loop, not a convenience.
+     it gates a whole crafting loop, not a convenience. Set to 600,000 by
+     the owner's call; still inside that band, so the reasoning holds.
      ⚠ THE YIELD AND THE PART COSTS ARE ONE DIAL IN TWO PLACES, exactly like
        genelab's dna line. Fully staffed this is 8 x 1.5 = 12 weaponParts/hr, so a
        mid-tier build should cost roughly one shift. Retune either number and
        the other has to move with it. */
-  weaponsmith:  { startup: 650000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 8,  yields: { weaponParts: 1.5 }, inputs: { metal: 1.4, fuel: 0.3 } },
+  weaponsmith:  { startup: 600000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 8,  yields: { weaponParts: 1.5 }, inputs: { metal: 1.4, fuel: 0.3 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -82586,6 +82587,17 @@ function _warehouseCapacity() {
       const w = Math.max(0, o.workers | 0);
       cap += (e.storageBase | 0) + w * (e.storagePerWorker | 0);
     }
+    /* 📦 …plus capacity HIRED from other keepers, minus capacity rented OUT.
+       The loop above counts the shelves you OWN; the market layer knows who is
+       currently standing on them. Renting out space you are still using would
+       be selling the same shelf twice, so the commitment is subtracted here
+       rather than only being displayed.
+       Guarded on purpose: before /src/storage mounts, or before sql/043 is
+       applied, both figures are 0 and this is exactly the old behaviour. */
+    try {
+      const S = window.MythicStorage;
+      if (S) cap += (S.hiredUnits() | 0) - (S.committedUnits() | 0);
+    } catch (e) {}
     return Math.max(0, cap);
   } catch (e) { return 0; }
 }
@@ -84590,6 +84602,23 @@ function _jbHandleAction(a) {
        ⚠ Guarded on the function existing. The module is a separate <script
          type="module"> and a cache miss on it must degrade to a toast, never
          a broken sidebar entry. */
+    // 📦 The Warehouse office — the "My Companies" entry, shown once founded.
+    if (a.kind === 'openWarehouse') {
+      try {
+        if (window.MythicStorage) window.MythicStorage.openOffice();
+        else showToast('📦 The warehouse office is still loading — try again in a moment.', 3600);
+      } catch (e) {}
+      return;
+    }
+    // 🏙 The capacity market — open to everyone, not just warehouse owners.
+    // That is the point: it is how a player WITHOUT a warehouse buys ceiling.
+    if (a.kind === 'openStorageMarket') {
+      try {
+        if (window.MythicStorage) window.MythicStorage.openMarket();
+        else showToast('📦 The storage market is still loading — try again in a moment.', 3600);
+      } catch (e) {}
+      return;
+    }
     if (a.kind === 'openWeaponSmith') {
       try {
         if (typeof window.openWeaponSmithBench === 'function') window.openWeaponSmithBench();
@@ -107247,7 +107276,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120z9';
+const BB_VER = 'v121a0';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -117448,7 +117477,7 @@ function _mmMount() {
   } catch (e) {}
   const f = document.createElement('iframe');
   f.id = 'mm-frame';
-  f.src = 'main-menu/index.html?v=v120z9';
+  f.src = 'main-menu/index.html?v=v121a0';
   f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:5;background:#0a0610';
   document.body.appendChild(f);
   App._mmReady = false;
@@ -213075,7 +213104,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120z9';
+  f.src = 'node-city/index.html?v=v121a0';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -213797,6 +213826,39 @@ try {
      the only places that enforce the stash cap and persist the change.
    ═══════════════════════════════════════════════════════════════════════════ */
 try {
+  /* 📦 The seam for /src/storage. Profile, Operations, Cloud and getResourceCap
+     are top-level `const` in this file — lexical bindings an ES module cannot
+     see — so every one of them is handed over explicitly here. Every accessor is
+     total: it returns a safe empty value rather than throwing, because this
+     object is read during a render and one exception takes the screen down. */
+  window.StorageBridge = {
+    escapeHtml: (s) => { try { return escapeHtml(s); } catch (e) { return ''; } },
+    showToast:  (m, ms) => { try { showToast(m, ms); } catch (e) {} },
+    confirm:    async (m) => { try { return await gcConfirm(m); } catch (e) { return false; } },
+    client:     () => { try { return (Cloud && Cloud.client) || null; } catch (e) { return null; } },
+    userId:     () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+    displayName: () => {
+      try {
+        const cc = Profile.cloud || {};
+        return cc.displayName || (Profile.account && Profile.account.displayName)
+            || (cc.email || '').split('@')[0] || 'A keeper';
+      } catch (e) { return 'A keeper'; }
+    },
+    gems:       () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+    spendGems:  (n, why) => { try { return spendGems(n, why); } catch (e) { return false; } },
+    opEcon:     (id) => { try { return (typeof _opEcon === 'function') ? _opEcon(id) : null; } catch (e) { return null; } },
+    /* The SAME combined list _warehouseCapacity() walks — cloud-backed rows
+       plus the local Just Business ops. Two different sources of "my
+       operations" would let the office and the ceiling disagree. */
+    operations: () => {
+      const out = [];
+      try { if (typeof Operations !== 'undefined' && Operations.list) out.push.apply(out, Operations.list); } catch (e) {}
+      try { if (typeof _jbLocalOpsList === 'function') out.push.apply(out, _jbLocalOpsList() || []); } catch (e) {}
+      return out;
+    },
+    resourceUnits: () => { try { return getResourceUnits() | 0; } catch (e) { return 0; } },
+    resourceCap:   () => { try { return getResourceCap() | 0; } catch (e) { return 0; } },
+  };
   window.WeaponSmithBridge = {
     /* 📦 The persisted blob, created empty on first touch. The SHAPE of it is
        owned by src/weaponsmith/state.js, deliberately — this file seeding
@@ -232234,6 +232296,7 @@ render();
        the main script. This tag must stay below it.
      Bump ?v= on every change — the service worker caches these like any asset. -->
 <script type="module" src="src/weaponsmith/index.js?v=ws-3d5"></script>
+<script type="module" src="src/storage/index.js?v=st-1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the
@@ -232281,8 +232344,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120z9">
-<script type="module" src="src/battle/hud.js?v=v120z9"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v121a0">
+<script type="module" src="src/battle/hud.js?v=v121a0"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

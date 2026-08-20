@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping
@@ -107,6 +107,24 @@ const MUTATIONS = [
     name: 'the moveset merge goes back to picking by length',
     find: '    if (la || ra) takeLocal = la > ra;                       // 1 + 2',
     replace: '    if (false) takeLocal = false;',
+  },
+  {
+    /* One warehouse arriving from both Operations.list and the local JB list is
+       ONE warehouse. Drop the dedupe and a player's ceiling silently doubles —
+       invisible, because a ceiling is just a number. */
+    name: 'a duplicated warehouse op is counted twice',
+    file: 'public/src/storage/index.js',
+    test: 'storage.mjs',
+    find: "      if (!o || o.op_type !== 'warehouse' || seen[o.id]) continue;",
+    replace: "      if (!o || o.op_type !== 'warehouse') continue;",
+  },
+  {
+    /* A negative worker count must not subtract from the ceiling. */
+    name: 'negative workers subtract from capacity',
+    file: 'public/src/storage/index.js',
+    test: 'storage.mjs',
+    find: '    return (e.storageBase | 0) + Math.max(0, op.workers | 0) * (e.storagePerWorker | 0);',
+    replace: '    return (e.storageBase | 0) + (op.workers | 0) * (e.storagePerWorker | 0);',
   },
   {
     /* Open the admin-only phase to everyone. Warpath ships before its migration
@@ -217,7 +235,7 @@ try {
         const dest = join(mirror, target);
         mkdirSync(dirname(dest), { recursive: true });
         writeFileSync(dest, mutated);
-        r = spawnSync(process.execPath, [join(mirror, 'tools', 'mp-tests', 'citytrade.mjs')],
+        r = spawnSync(process.execPath, [join(mirror, 'tools', 'mp-tests', m.test || 'citytrade.mjs')],
           { cwd: mirror, encoding: 'utf8' });
         r = { status: r.status || 0, output: (r.stdout || '') + (r.stderr || '') };
       } finally {

@@ -1093,6 +1093,12 @@ const OPERATIONS = [
      money never comes from this array. See the warehouse note above: this
      catalog is hardcoded, so a type added to OPS_ECON is invisible until it is
      listed here too. */
+  /* 🔧 THE WEAPON SMITH. Owning it unlocks the crafting bench (the sidebar
+     entry appears under My Companies via COMPANY_PAGES) and staffing it is the
+     only industrial source of weaponParts. It was missing from this array
+     entirely, so it existed in OPS_ECON and was unbuyable — exactly the failure
+     the warehouse note above warns about. */
+  { id: 'weaponsmith',  name: 'Weapon Smith',        cat: 'Industry',  icon: '🔧', focus: 'Build guns and blades at your own bench', produces: ['Weapon Parts', 'Crafted weapons'], startup: '600,000 Cinder',                                    maint: 'Staff wages · 1.5 parts / worker·hr', risk: 'Low' },
   { id: 'bus',          name: 'Bus Company',         cat: 'Logistics', icon: '🚌', focus: 'Move your citizens without cars',      produces: ['Bus routes', 'Fares'],              startup: '2,000,000 Cinder',                                   maint: 'Driver wages · fuel · depot',     risk: 'Low' },
   { id: 'rail',         name: 'Rail Operator',       cat: 'Logistics', icon: '🚆', focus: 'Track, stations and rolling stock',    produces: ['Rail lines', 'Fares'],              startup: '10,000,000 Cinder',                                  maint: 'Crew wages · fuel · track',       risk: 'Medium' },
 ];

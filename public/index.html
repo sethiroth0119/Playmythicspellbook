@@ -39411,7 +39411,7 @@ const RESOURCES = [
   { id: 'stone',            name: 'Stone',            icon: '🪨', color: '#a8a29a' },
   { id: 'cloth',            name: 'Cloth',            icon: '🧵', color: '#e0b8c8' },
 
-  /* ══ 🧰 THE CHAIN PROMOTION (v120t9 — 56 ids) ═══════════════════════════════
+  /* ══ 🧰 THE CHAIN PROMOTION (v120t9 — 56 ids; 71 after the extraction round) ═
      🔴 THIS LIST IS DERIVED, NOT CHOSEN. The rule, in one line:
 
          promote = { every `out` id of ECO_BUILDING_MAP (ops join included) }
@@ -39446,70 +39446,106 @@ const RESOURCES = [
        not change how the closed loop accounts internally, and the gate
        (tools/economy-tests/run.mjs round0p) asserts that boundary is intact.
 
-     ⚠ THE COUNT IS NOW 70. Every derived site follows for free — RESOURCE_IDS,
-       _ensureResources, the market guard, resourceCostHtml/_normCost/_facCostAt,
-       the admin editors, MythicCityBridge.resources → terroir — and the stash
-       floor scales itself (_resStashFloor: 143 × 70 = 10,010, up from 2,002).
+     ⚠ THE COUNT IS NOW 85 (14 legacy + 71 promoted). Every derived site follows
+       for free — RESOURCE_IDS, _ensureResources, the market guard,
+       resourceCostHtml/_normCost/_facCostAt, the admin editors and
+       MythicCityBridge.resources → terroir (whose slot bag re-derives through
+       slotsFor(), which is why a promotion no longer silently switches terroir
+       off).
+     🔴 …AND THE STASH FLOOR DOES **NOT** SCALE WITH THIS LIST ANY MORE. The
+       line above used to say "the stash floor scales itself (_resStashFloor:
+       143 × 70 = 10,010)" and that sentence is now false: `_resStashFloor()`
+       counts LOOT_RES_IDS, not RESOURCE_IDS, and LOOT_RES_IDS is the legacy 14,
+       so the floor is 143 × 14 = 2,002 and this round does not move it by one
+       unit. round0q asserts exactly that ("the legacy-14 allowance is its
+       pre-promotion value, NOT the 10,010 the promotion silently granted"), and
+       the wrong figure is corrected here rather than left standing beside a
+       green gate that contradicts it.
+     ⚠ THE 15 NEWEST ROWS ARE THE EXTRACTION ROUND, and they are here for the
+       same derived reason as the other 56: node-city gained a Water Intake, a
+       Deep Mine, a Strategic Minerals Works, a Cane & Seed Croft and a Deep
+       Rift Bore, so `rawWater`, the deep and strategic minerals, `quartz`,
+       `sugarCrops` and four of the five deep anomalous seams acquired a real
+       producer and were promoted WITH it, never before it. `seeds`,
+       `soulEnergy` and `rareMinerals` are worked by those same buildings and
+       are deliberately NOT here: they are outside `chain.NEW_IDS`, so the
+       derivation does not reach them and hand-adding one would be exactly the
+       drift round0p exists to catch.
      ⚠ DO NOT EDIT THIS BLOCK BY HAND. round0p re-runs the derivation above
        against the shipped node-city map and goes RED on any drift, in either
        direction. Add a building to ECO_BUILDING_MAP and the gate will tell you
        exactly which row to add here. */
-  { id: 'aluminumOre',             name: 'Aluminum Ore',            icon: '🪨', color: '#a8a29a' },
-  { id: 'anomalousEnergy',         name: 'Anomalous Energy',        icon: '🟣', color: '#b06bff' },
-  { id: 'arcaneCrystal',           name: 'Arcane Crystal',          icon: '🟣', color: '#b06bff' },
-  { id: 'beverages',               name: 'Beverages',               icon: '🍞', color: '#e0a86a' },
-  { id: 'boosterPacks',            name: 'Booster Packs',           icon: '🃏', color: '#d4af37' },
-  { id: 'bread',                   name: 'Bread',                   icon: '🍞', color: '#e0a86a' },
-  { id: 'cannedFood',              name: 'Canned Food',             icon: '🍞', color: '#e0a86a' },
-  { id: 'cardStock',               name: 'Card Stock',              icon: '🃏', color: '#d4af37' },
-  { id: 'cardboard',               name: 'Cardboard',               icon: '🪵', color: '#c08a4a' },
-  { id: 'cars',                    name: 'Cars',                    icon: '🚗', color: '#e08a5a' },
-  { id: 'clay',                    name: 'Clay',                    icon: '🪨', color: '#a8a29a' },
-  { id: 'coal',                    name: 'Coal',                    icon: '⚡', color: '#ffcf6b' },
-  { id: 'constructionComponents',  name: 'Construction Components', icon: '🧱', color: '#c2725a' },
-  { id: 'copperOre',               name: 'Copper Ore',              icon: '🪨', color: '#a8a29a' },
-  { id: 'corn',                    name: 'Corn',                    icon: '🌾', color: '#d9c46a' },
-  { id: 'cotton',                  name: 'Cotton',                  icon: '🌾', color: '#d9c46a' },
-  { id: 'crudeOil',                name: 'Crude Oil',               icon: '⚡', color: '#ffcf6b' },
-  { id: 'electricity',             name: 'Electricity',             icon: '⚡', color: '#ffcf6b' },
-  { id: 'fabric',                  name: 'Fabric',                  icon: '🧥', color: '#e0b8c8' },
-  { id: 'freshFish',               name: 'Fresh Fish',              icon: '🐟', color: '#6fc0d8' },
-  { id: 'freshWater',              name: 'Fresh Water',             icon: '💧', color: '#7fd6ff' },
-  { id: 'fruit',                   name: 'Fruit',                   icon: '🌾', color: '#d9c46a' },
-  { id: 'gasoline',                name: 'Gasoline',                icon: '⚡', color: '#ffcf6b' },
-  { id: 'gravel',                  name: 'Gravel',                  icon: '🪨', color: '#a8a29a' },
-  { id: 'herbs',                   name: 'Herbs',                   icon: '🌾', color: '#d9c46a' },
-  { id: 'householdGoods',          name: 'Household Goods',         icon: '🧥', color: '#e0b8c8' },
-  { id: 'limestone',               name: 'Limestone',               icon: '🪨', color: '#a8a29a' },
-  { id: 'lumber',                  name: 'Lumber',                  icon: '🪵', color: '#c08a4a' },
-  { id: 'machineParts',            name: 'Machine Parts',           icon: '⚙️', color: '#b0b7c3' },
-  { id: 'maintenanceParts',        name: 'Maintenance Parts',       icon: '🚗', color: '#e08a5a' },
-  { id: 'metalComponents',         name: 'Metal Components',        icon: '⛓️', color: '#9fb4d8' },
-  { id: 'mythicResidue',           name: 'Mythic Residue',          icon: '🟣', color: '#b06bff' },
-  { id: 'naturalGas',              name: 'Natural Gas',             icon: '⚡', color: '#ffcf6b' },
-  { id: 'nickelOre',               name: 'Nickel Ore',              icon: '🪨', color: '#a8a29a' },
-  { id: 'packagingMaterial',       name: 'Packaging Material',      icon: '🃏', color: '#d4af37' },
-  { id: 'pigIron',                 name: 'Pig Iron',                icon: '⛓️', color: '#9fb4d8' },
-  { id: 'plantFiber',              name: 'Plant Fiber',             icon: '🌾', color: '#d9c46a' },
-  { id: 'potatoes',                name: 'Potatoes',                icon: '🌾', color: '#d9c46a' },
-  { id: 'preparedMeals',           name: 'Prepared Meals',          icon: '🍞', color: '#e0a86a' },
-  { id: 'printedCards',            name: 'Printed Cards',           icon: '🃏', color: '#d4af37' },
-  { id: 'recycledMetal',           name: 'Recycled Metal',          icon: '♻️', color: '#86e08a' },
-  { id: 'researchChemicals',       name: 'Research Chemicals',      icon: '💊', color: '#ff8aa0' },
-  { id: 'researchEquipment',       name: 'Research Equipment',      icon: '🛡️', color: '#7fa8c8' },
-  { id: 'rice',                    name: 'Rice',                    icon: '🌾', color: '#d9c46a' },
-  { id: 'sand',                    name: 'Sand',                    icon: '🪨', color: '#a8a29a' },
-  { id: 'seafood',                 name: 'Seafood',                 icon: '🐟', color: '#6fc0d8' },
-  { id: 'seaweed',                 name: 'Seaweed',                 icon: '🐟', color: '#6fc0d8' },
-  { id: 'shellfish',               name: 'Shellfish',               icon: '🐟', color: '#6fc0d8' },
-  { id: 'silica',                  name: 'Silica',                  icon: '🪨', color: '#a8a29a' },
-  { id: 'soybeans',                name: 'Soybeans',                icon: '🌾', color: '#d9c46a' },
-  { id: 'sportingGoods',           name: 'Sporting Goods',          icon: '🧥', color: '#e0b8c8' },
-  { id: 'timber',                  name: 'Timber',                  icon: '🪵', color: '#c08a4a' },
-  { id: 'tires',                   name: 'Tires',                   icon: '🚗', color: '#e08a5a' },
-  { id: 'vegetables',              name: 'Vegetables',              icon: '🌾', color: '#d9c46a' },
-  { id: 'wheat',                   name: 'Wheat',                   icon: '🌾', color: '#d9c46a' },
-  { id: 'zincOre',                 name: 'Zinc Ore',                icon: '🪨', color: '#a8a29a' },
+  { id: 'aluminumOre',            name: 'Aluminum Ore',            icon: '🪨', color: '#a8a29a' },
+  { id: 'anomalousEnergy',        name: 'Anomalous Energy',        icon: '🟣', color: '#b06bff' },
+  { id: 'anomalousMatter',        name: 'Anomalous Matter',        icon: '🟣', color: '#b06bff' },
+  { id: 'arcaneCrystal',          name: 'Arcane Crystal',          icon: '🟣', color: '#b06bff' },
+  { id: 'beverages',              name: 'Beverages',               icon: '🍞', color: '#e0a86a' },
+  { id: 'boosterPacks',           name: 'Booster Packs',           icon: '🃏', color: '#d4af37' },
+  { id: 'bread',                  name: 'Bread',                   icon: '🍞', color: '#e0a86a' },
+  { id: 'cannedFood',             name: 'Canned Food',             icon: '🍞', color: '#e0a86a' },
+  { id: 'cardStock',              name: 'Card Stock',              icon: '🃏', color: '#d4af37' },
+  { id: 'cardboard',              name: 'Cardboard',               icon: '🪵', color: '#c08a4a' },
+  { id: 'cars',                   name: 'Cars',                    icon: '🚗', color: '#e08a5a' },
+  { id: 'clay',                   name: 'Clay',                    icon: '🪨', color: '#a8a29a' },
+  { id: 'coal',                   name: 'Coal',                    icon: '⚡', color: '#ffcf6b' },
+  { id: 'cobalt',                 name: 'Cobalt',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'constructionComponents', name: 'Construction Components', icon: '🧱', color: '#c2725a' },
+  { id: 'copperOre',              name: 'Copper Ore',              icon: '🪨', color: '#a8a29a' },
+  { id: 'corn',                   name: 'Corn',                    icon: '🌾', color: '#d9c46a' },
+  { id: 'cotton',                 name: 'Cotton',                  icon: '🌾', color: '#d9c46a' },
+  { id: 'crudeOil',               name: 'Crude Oil',               icon: '⚡', color: '#ffcf6b' },
+  { id: 'dimensionalMaterial',    name: 'Dimensional Material',    icon: '🟣', color: '#b06bff' },
+  { id: 'electricity',            name: 'Electricity',             icon: '⚡', color: '#ffcf6b' },
+  { id: 'fabric',                 name: 'Fabric',                  icon: '🧥', color: '#e0b8c8' },
+  { id: 'freshFish',              name: 'Fresh Fish',              icon: '🐟', color: '#6fc0d8' },
+  { id: 'freshWater',             name: 'Fresh Water',             icon: '💧', color: '#7fd6ff' },
+  { id: 'fruit',                  name: 'Fruit',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'gasoline',               name: 'Gasoline',                icon: '⚡', color: '#ffcf6b' },
+  { id: 'goldOre',                name: 'Gold Ore',                icon: '🪨', color: '#a8a29a' },
+  { id: 'gravel',                 name: 'Gravel',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'herbs',                  name: 'Herbs',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'householdGoods',         name: 'Household Goods',         icon: '🧥', color: '#e0b8c8' },
+  { id: 'limestone',              name: 'Limestone',               icon: '🪨', color: '#a8a29a' },
+  { id: 'lithium',                name: 'Lithium',                 icon: '🪨', color: '#a8a29a' },
+  { id: 'lumber',                 name: 'Lumber',                  icon: '🪵', color: '#c08a4a' },
+  { id: 'machineParts',           name: 'Machine Parts',           icon: '⚙️', color: '#b0b7c3' },
+  { id: 'maintenanceParts',       name: 'Maintenance Parts',       icon: '🚗', color: '#e08a5a' },
+  { id: 'metalComponents',        name: 'Metal Components',        icon: '⛓️', color: '#9fb4d8' },
+  { id: 'mythicResidue',          name: 'Mythic Residue',          icon: '🟣', color: '#b06bff' },
+  { id: 'naturalGas',             name: 'Natural Gas',             icon: '⚡', color: '#ffcf6b' },
+  { id: 'nickelOre',              name: 'Nickel Ore',              icon: '🪨', color: '#a8a29a' },
+  { id: 'packagingMaterial',      name: 'Packaging Material',      icon: '🃏', color: '#d4af37' },
+  { id: 'pigIron',                name: 'Pig Iron',                icon: '⛓️', color: '#9fb4d8' },
+  { id: 'plantFiber',             name: 'Plant Fiber',             icon: '🌾', color: '#d9c46a' },
+  { id: 'platinumOre',            name: 'Platinum Ore',            icon: '🪨', color: '#a8a29a' },
+  { id: 'potatoes',               name: 'Potatoes',                icon: '🌾', color: '#d9c46a' },
+  { id: 'preparedMeals',          name: 'Prepared Meals',          icon: '🍞', color: '#e0a86a' },
+  { id: 'printedCards',           name: 'Printed Cards',           icon: '🃏', color: '#d4af37' },
+  { id: 'quartz',                 name: 'Quartz',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'rareEarthMinerals',      name: 'Rare Earth Minerals',     icon: '🪨', color: '#a8a29a' },
+  { id: 'rawWater',               name: 'Raw Water',               icon: '💧', color: '#7fd6ff' },
+  { id: 'realityFragments',       name: 'Reality Fragments',       icon: '🟣', color: '#b06bff' },
+  { id: 'realityMatter',          name: 'Reality Matter',          icon: '🟣', color: '#b06bff' },
+  { id: 'recycledMetal',          name: 'Recycled Metal',          icon: '♻️', color: '#86e08a' },
+  { id: 'researchChemicals',      name: 'Research Chemicals',      icon: '💊', color: '#ff8aa0' },
+  { id: 'researchEquipment',      name: 'Research Equipment',      icon: '🛡️', color: '#7fa8c8' },
+  { id: 'rice',                   name: 'Rice',                    icon: '🌾', color: '#d9c46a' },
+  { id: 'sand',                   name: 'Sand',                    icon: '🪨', color: '#a8a29a' },
+  { id: 'seafood',                name: 'Seafood',                 icon: '🐟', color: '#6fc0d8' },
+  { id: 'seaweed',                name: 'Seaweed',                 icon: '🐟', color: '#6fc0d8' },
+  { id: 'shellfish',              name: 'Shellfish',               icon: '🐟', color: '#6fc0d8' },
+  { id: 'silica',                 name: 'Silica',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'silverOre',              name: 'Silver Ore',              icon: '🪨', color: '#a8a29a' },
+  { id: 'soybeans',               name: 'Soybeans',                icon: '🌾', color: '#d9c46a' },
+  { id: 'sportingGoods',          name: 'Sporting Goods',          icon: '🧥', color: '#e0b8c8' },
+  { id: 'sugarCrops',             name: 'Sugar Crops',             icon: '🌾', color: '#d9c46a' },
+  { id: 'timber',                 name: 'Timber',                  icon: '🪵', color: '#c08a4a' },
+  { id: 'tires',                  name: 'Tires',                   icon: '🚗', color: '#e08a5a' },
+  { id: 'titanium',               name: 'Titanium',                icon: '🪨', color: '#a8a29a' },
+  { id: 'tungsten',               name: 'Tungsten',                icon: '🪨', color: '#a8a29a' },
+  { id: 'vegetables',             name: 'Vegetables',              icon: '🌾', color: '#d9c46a' },
+  { id: 'wheat',                  name: 'Wheat',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'zincOre',                name: 'Zinc Ore',                icon: '🪨', color: '#a8a29a' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -160044,13 +160080,29 @@ const RESOURCE_CINDER_VALUE = {
   corruptedEssence: 8, memoryShards: 10, dna: 10,
   // ── construction raws (r12) — input parity off their own producers ────────
   wood: 1, stone: 1, cloth: 2,
-  // ── chain tier 0 — 30 raws, parity 40🔥 / 40 units ────────────────────────
+  // ── chain tier 0 — 45 raws, parity 40🔥 / 40 units ────────────────────────
   aluminumOre: 1, anomalousEnergy: 1, arcaneCrystal: 1, clay: 1, coal: 1,
   copperOre: 1, corn: 1, cotton: 1, crudeOil: 1, freshFish: 1,
   fruit: 1, gravel: 1, herbs: 1, limestone: 1, mythicResidue: 1,
   naturalGas: 1, nickelOre: 1, plantFiber: 1, potatoes: 1, rice: 1,
   sand: 1, seafood: 1, seaweed: 1, shellfish: 1, silica: 1,
   soybeans: 1, timber: 1, vegetables: 1, wheat: 1, zincOre: 1,
+  /* ⛏ THE EXTRACTION ROUND — 15 more tier-0 raws, and every one of them is 1
+     for the same DERIVED reason as the thirty above and not because a rare
+     mineral "feels" cheap: the price is `max(1, floor(inputValue / yield))` off
+     their own generated producer, and CHAIN_TIER[0] is 10 fuel (40🔥) for 40
+     units on all of them. round0t re-derives exactly that and reddens on any
+     hand-chosen figure.
+     ⚠ SCARCITY IS ALREADY PRICED, TWICE, AND NOT HERE. `DEPOSITS[].yield` in
+       /src/economy/recipes.js gives platinum 5/labour-day against coal's 88,
+       and prices.js derives the city market price off the recipe graph. This
+       table is the CAMP refinery's swap rate, whose only input is what the
+       ledger building costs to run — a third opinion on how precious platinum
+       is would be a number with no model behind it and two systems to disagree
+       with. */
+  anomalousMatter: 1, cobalt: 1, dimensionalMaterial: 1, goldOre: 1, lithium: 1,
+  platinumOre: 1, quartz: 1, rareEarthMinerals: 1, rawWater: 1, realityFragments: 1,
+  realityMatter: 1, silverOre: 1, sugarCrops: 1, titanium: 1, tungsten: 1,
   // ── chain tier 1 — 17 intermediates, parity 78🔥 / 28 units ───────────────
   beverages: 2, boosterPacks: 2, bread: 2, cannedFood: 2, cardStock: 2,
   cardboard: 2, constructionComponents: 2, electricity: 2, freshWater: 2, gasoline: 2,

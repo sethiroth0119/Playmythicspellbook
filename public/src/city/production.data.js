@@ -358,17 +358,22 @@ export const CITY_PRODUCTION = [
    tools/economy-tests/run.mjs scrapes the shipped map, recomputes the
    intersection and fails on ANY difference from this array, in either
    direction. Do not edit it by hand — change the map and let the gate tell you.
-   30 tier-0 raws, 17 tier-1 intermediates, 9 tier-2 finished goods. */
+   45 tier-0 raws, 17 tier-1 intermediates, 9 tier-2 finished goods — the 15 added
+   by the extraction round (rawWater, the deep and strategic minerals, quartz,
+   sugar cane and the four deep anomalous seams) are all tier 0. */
 export const PROMOTED_CHAIN_IDS = [
-  'aluminumOre', 'anomalousEnergy', 'arcaneCrystal', 'beverages', 'boosterPacks', 'bread',
-  'cannedFood', 'cardStock', 'cardboard', 'cars', 'clay', 'coal', 'constructionComponents',
-  'copperOre', 'corn', 'cotton', 'crudeOil', 'electricity', 'fabric', 'freshFish',
-  'freshWater', 'fruit', 'gasoline', 'gravel', 'herbs', 'householdGoods', 'limestone',
+  'aluminumOre', 'anomalousEnergy', 'anomalousMatter', 'arcaneCrystal', 'beverages',
+  'boosterPacks', 'bread', 'cannedFood', 'cardStock', 'cardboard', 'cars', 'clay', 'coal',
+  'cobalt', 'constructionComponents', 'copperOre', 'corn', 'cotton', 'crudeOil',
+  'dimensionalMaterial', 'electricity', 'fabric', 'freshFish', 'freshWater', 'fruit',
+  'gasoline', 'goldOre', 'gravel', 'herbs', 'householdGoods', 'limestone', 'lithium',
   'lumber', 'machineParts', 'maintenanceParts', 'metalComponents', 'mythicResidue',
-  'naturalGas', 'nickelOre', 'packagingMaterial', 'pigIron', 'plantFiber', 'potatoes',
-  'preparedMeals', 'printedCards', 'recycledMetal', 'researchChemicals',
+  'naturalGas', 'nickelOre', 'packagingMaterial', 'pigIron', 'plantFiber', 'platinumOre',
+  'potatoes', 'preparedMeals', 'printedCards', 'quartz', 'rareEarthMinerals', 'rawWater',
+  'realityFragments', 'realityMatter', 'recycledMetal', 'researchChemicals',
   'researchEquipment', 'rice', 'sand', 'seafood', 'seaweed', 'shellfish', 'silica',
-  'soybeans', 'sportingGoods', 'timber', 'tires', 'vegetables', 'wheat', 'zincOre',
+  'silverOre', 'soybeans', 'sportingGoods', 'sugarCrops', 'timber', 'tires', 'titanium',
+  'tungsten', 'vegetables', 'wheat', 'zincOre',
 ];
 
 /* The building noun per catalogue category. Cosmetic, but it is what stops 56

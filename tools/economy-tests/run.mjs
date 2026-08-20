@@ -42,6 +42,9 @@ let bad = 0;
    evidence they are designed to distrust. Each accepts one deliberate injury:
 
      ECON_TEST_SABOTAGE=bogus-id   round0b: add an unproducible id to the map
+     ECON_TEST_SABOTAGE=gate-blind round0b: strip the `gen:` exemption out of the
+                                   lifted ecoGroundRefusal body — the regression
+                                   that refused lumbercamp on 139 of 500 nodes
      ECON_TEST_SABOTAGE=no-map     round0b AND round0d: read node-city from a
                                    path that is not there, i.e. extraction
                                    returns NOTHING
@@ -558,6 +561,9 @@ const SABOTAGES = [
   'beat-dead', 'offline-nosweep', 'licence-paywalled',
   // ── PRICES, round0x: the three halves of the Black River faucet ──
   'br-abs-price', 'br-free-salvage', 'br-batch-40',
+  // ⛏ round0b — strip the ground gate's `gen:` exemption, i.e. put the
+  //   four-buildings-deleted-from-half-the-nodes regression back.
+  'gate-blind',
 ];
 const RETIRED_SABOTAGES = {
   rearm: 'retired: it flipped an argument this file passed itself — see round0s §3',
@@ -1446,6 +1452,80 @@ const stripComments = (src) => {
         badOut.length === 0, badOut.join(' | '));
     chk('every `ind` exists in INDUSTRIES — else the firm silently becomes a distributor',
         badInd.length === 0, badInd.join(' | '));
+
+    /* ── ⛏ THE GROUND GATE'S ONE ASSUMPTION, RE-DERIVED ────────────────────
+       `ecoGroundRefusal()` refuses a tile whose whole `out` list is deposits the
+       node lacks. That is a CHAIN test, and it may only be spent as an answer to
+       "is this tile worth anything here" for a tile whose whole job IS the chain
+       firm. It shipped without that qualifier for one commit and deleted four
+       standing buildings from up to half the nodes in the game — lumbercamp from
+       139 of 500, siphon from 249 — because each is also the only producer of a
+       CITY LEDGER resource, and the ledger tick reads `def.gen` off BUILDINGS
+       without ever asking the economy.
+
+       The gate's fix is `if (BUILDINGS[type].gen) return null`. That one
+       predicate is exactly right TODAY because the thirteen all-deposit rows
+       partition cleanly: eight carry a `gen:` and nothing else, five carry no
+       city-side contribution at all. Both halves are checked here rather than
+       trusted, because the failure is silent in both directions — a `gen:` that
+       goes missing takes the tile away from a fraction of nodes, and a NEW
+       all-deposit row that earns its keep some other way (a `svc`, a `defense`,
+       a `popCap`, a `decorPts`) would be deleted by a gate that cannot see it.
+       Either way the author gets a red line pointing at §4 of the gate's header
+       instead of a bug report from a player whose Rift Siphon vanished.
+       Prove it can fail: ECON_TEST_SABOTAGE=gate-blind. */
+    const looseObj = (decl) => {
+      const txt = srcBlockAfter(HTML, decl);
+      if (!txt) return null;
+      try {
+        const sc = new Proxy({}, { has: () => true, get: (t, k) => (k === Symbol.unscopables ? undefined : 0) });
+        return new Function('__s', 'with (__s) { return (' + txt + '); }')(sc);
+      } catch (e) { return null; }
+    };
+    const BLD = looseObj('const BUILDINGS = {');
+    let GATE = srcBlockAfter(HTML, 'function ecoGroundRefusal(type)');
+    if (SABOTAGE === 'gate-blind' && GATE) {
+      GATE = GATE.replace(/if \(BUILDINGS\[type\] && BUILDINGS\[type\]\.gen\) return null;/, '');
+      console.log('   \ud83e\udde8 stripped the `gen:` exemption out of the lifted ecoGroundRefusal body');
+    }
+    /* A scrape that matched nothing must fail HARD — this round's own rule. */
+    chk('read BUILDINGS + ecoGroundRefusal out of node-city/index.html',
+        !!BLD && Object.keys(BLD).length > 20 && !!GATE,
+        'BUILDINGS=' + (BLD ? Object.keys(BLD).length + ' rows' : 'UNREADABLE') +
+        ' ecoGroundRefusal=' + (GATE ? 'ok' : 'UNREADABLE'));
+    if (BLD && GATE) {
+      chk('the ground gate still waves `gen:` tiles through before its deposit test',
+          /BUILDINGS\[type\]\s*&&\s*BUILDINGS\[type\]\.gen/.test(GATE),
+          'the §4 exemption is GONE from ecoGroundRefusal — every all-deposit `gen:` tile ' +
+          'is now refused on every node that lacks its seams. Read §4 before re-removing it.');
+      /* Only the STATIC map: an operation is exempt at §1 of the gate regardless
+         of what it produces, so an op row here would be a vacuous pass. */
+      const allDep = Object.keys(STATIC).filter(k => {
+        const m = STATIC[k];
+        return m && Array.isArray(m.out) && m.out.length && m.out.every(o => R.isDeposit(o));
+      });
+      chk('found the all-deposit rows the gate speaks for (shipped: ' + allDep.length + ')',
+          allDep.length >= 10, allDep.join(', '));
+      /* Every way a node-city tile pays off that is NOT the chain firm. `use` is
+         a COST, not a benefit, and `pop`/`crew`/`powerNeed`/`cost`/`outdoor` are
+         costs or flavour — none of them make a seamless tile worth buying. */
+      const EARNS = ['gen', 'svc', 'defense', 'garrison', 'popCap', 'decorPts', 'cap',
+                     'fin', 'sockets', 'stockCap', 'concourse', 'lightRadius'];
+      const blind = allDep.filter(k => {
+        const d = BLD[k] || {};
+        return !d.gen && EARNS.some(f => d[f] != null);
+      });
+      chk('no all-deposit row earns its keep in a way the `gen:` predicate cannot see',
+          blind.length === 0,
+          blind.map(k => k + ' has ' + EARNS.filter(f => (BLD[k] || {})[f] != null).join('+') +
+                         ' but no `gen` — the gate WILL delete it from every node without its seams').join(' | '));
+      const withGen = allDep.filter(k => (BLD[k] || {}).gen);
+      const chainOnly = allDep.filter(k => !(BLD[k] || {}).gen);
+      console.log('     ' + withGen.length + ' all-deposit rows feed the city ledger and are exempt: ' + withGen.join(', '));
+      console.log('     ' + chainOnly.length + ' are chain-only and are gated: ' + chainOnly.join(', '));
+      chk('the gate still has something to gate — at least one chain-only all-deposit row',
+          chainOnly.length > 0, 'nothing is gated any more; the gate is now dead code');
+    }
 
     if (fails) { bad++; console.log('\n=== ROUND 0b: ' + fails + ' FAILED ==='); }
     else console.log('\n=== ROUND 0b: ALL PASS ===');
@@ -3549,6 +3629,43 @@ const stripComments = (src) => {
         ' vs purifier ×' + under('rain', () => A.weatherMult('purifier')));
 
     // ── 3. THE INSPECTOR PRINTS WHAT THE TICK CHARGED ───────────────────────
+    /* ── \u26cf THE SAME PARITY CLAIM, BETWEEN TWO STANDING TILES ────────────
+       WEATHER_TWIN_OPS answers "which standing tile governs this OPERATION".
+       It has nothing to say about two standing tiles that are halves of one
+       industry, and the extraction round shipped two such pairs and wired only
+       the first half of each:
+
+         waterintake carries `outdoor: true` (it is an open screened river
+         intake), which alone dropped it into the `outdoorMult` branch while the
+         Purifier it feeds sat in `waterMult`. Measured on that tree: RAIN
+         \u00d71.00 against the Purifier's \u00d71.35, STORM \u00d70.70 against \u00d71.20 — a
+         1.71\u00d7 divergence between two halves of one waterworks, printed side by
+         side in the inspector.
+         riftbore was given the Rift Siphon's row in pollution, in power and in
+         naming, and left off the ANOMALY list: the Siphon feasted at \u00d73 and its
+         own deep twin sat at \u00d71.
+
+       Asserted across EVERY weather state rather than the two that happen to
+       differ, because the fix has to keep the FALL-THROUGH right too: tornado,
+       fire rain and anomaly define no `waterMult`, so both waterworks tiles must
+       drop to the outdoor branch together. A fix that only handled rain and
+       storm would pass a two-state check and still be wrong in three.
+       Prove it can fail: revert either literal in weatherMult(). */
+    const FAMILY = [['waterintake', 'purifier'], ['riftbore', 'siphon']];
+    for (const [tile, twin] of FAMILY) {
+      const diff = Object.keys(WEATHER).filter(w =>
+        under(w, () => A.weatherMult(tile)) !== under(w, () => A.weatherMult(twin)));
+      chk(tile + ' gets the same weather row as ' + twin + ' in all ' +
+          Object.keys(WEATHER).length + ' weather states',
+          diff.length === 0,
+          diff.map(w => w + ' \u00d7' + under(w, () => A.weatherMult(tile)).toFixed(2) +
+                        ' vs \u00d7' + under(w, () => A.weatherMult(twin)).toFixed(2)).join(', '));
+      chk('…and ' + tile + ' shows the same inspector row as ' + twin +
+          ' — one predicate, so the row cannot disagree with the charge',
+          A.weatherSensitive(tile) === A.weatherSensitive(twin),
+          tile + ' ' + A.weatherSensitive(tile) + ' vs ' + twin + ' ' + A.weatherSensitive(twin));
+    }
+
     const rowMiss = twins.filter(o => A.weatherSensitive(opsKeyOf(o)) !== A.weatherSensitive(twinOf(o)));
     chk('the weather ROW appears for an op exactly when it appears for its twin ' +
         '(op_agri showed none at all)', rowMiss.length === 0,
@@ -5317,6 +5434,18 @@ const stripComments = (src) => {
        hand-written copies. Lifted, never stubbed: a stub would let the round
        pass while the shipped string said anything at all. */
     bldCeilingMsg:  fnText(NC, 'bldCeilingMsg'),
+    /* ⛏ THE GROUND GATE, lifted for exactly the reason bldCeilingMsg above it
+       is: tryPlace CALLS it, so a sandbox without it throws the moment §8 places
+       anything at all — which is what happened the minute the gate landed. It is
+       written to fail OPEN (its whole body is inside one try/catch, and a bare
+       `ECO_BUILDING_MAP[…]` on an identifier this sandbox does not declare is a
+       ReferenceError that lands in that catch), so in here it answers null and
+       every placement behaves exactly as it did before the gate existed. That is
+       the correct sandbox behaviour: §8 is the ORDER gate's round, and the ground
+       gate has its own driver. Lifted, never stubbed — a stub would let this
+       round pass while the shipped function said anything at all. */
+    _ecoResLabel:      fnText(NC, '_ecoResLabel'),
+    ecoGroundRefusal:  fnText(NC, 'ecoGroundRefusal'),
     tryPlace:       fnText(NC, 'tryPlace'),
   };
   /* Each entry below re-commits the pre-fix source for one defect, on the way

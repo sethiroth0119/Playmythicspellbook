@@ -282,8 +282,19 @@ export const POWER = {
       clinic: 'lifeline', medlab: 'lifeline', firestation: 'lifeline', police: 'lifeline',
       purifier: 'utility', streetlight: 'utility', depot: 'utility', warehouse: 'utility',
       railyard: 'utility', hydrofarm: 'utility',
+      /* 💧 The Water Intake is the Purifier's other half and sheds with it. */
+      waterintake: 'utility',
       farm: 'industry', scrapmine: 'industry', fuelrig: 'industry', gasstation: 'industry',
       quarry: 'industry', lumbercamp: 'industry', fibercroft: 'industry', munitions: 'industry',
+      /* ⛏ THE EXTRACTION ROUND. These four declare `powerNeed` on their own
+         BUILDINGS rows rather than joining `extra` below — no save can contain
+         one, so the save-compatibility rule that created `extra` does not apply
+         to them and the honest home is the row (the `papermill` / `printworks`
+         precedent). They still need a CLASS or they would be billed and never
+         shed, which is the half-wired state §③ warns about. `riftbore` is
+         deliberately absent: it is the Rift Siphon's deep twin, and §② lists
+         `reslab` / `siphon` as "arcane and run on essence, not amps". */
+      deepmine: 'industry', alloyworks: 'industry', canecroft: 'industry',
       smelter: 'industry', machineshop: 'industry', cannery: 'industry',
       sawmill: 'industry', weavery: 'industry', papermill: 'industry', printworks: 'industry',
       grocery: 'commerce', restaurant: 'commerce', motorpool: 'commerce', shop: 'commerce',

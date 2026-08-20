@@ -90,10 +90,23 @@ const CLASS = {
              'machineshop', 'railyard', 'motorpool', 'scrapmine', 'fuelrig', 'quarry',
              'lumbercamp', 'sawmill', 'weavery', 'papermill', 'printworks', 'fibercroft',
              'forge', 'reslab', 'siphon', 'purifier', 'wind', 'solar', 'coal', 'gas',
-             'oil', 'geothermal', 'hydro', 'nuclear', 'incinerator'],
+             'oil', 'geothermal', 'hydro', 'nuclear', 'incinerator',
+             /* ⛏ The extraction round. Listed EXPLICITLY rather than left to the
+                `commerce` fallback, for the reason the `office` entry below
+                gives: a fallback is indistinguishable from a type nobody
+                thought about. Each takes the class of the tile it was derived
+                from — `waterintake` ← `purifier`, `deepmine` ← `scrapmine`,
+                `alloyworks` ← `quarry`, `riftbore` ← `siphon`. `canecroft` is
+                in `farm` below, with `fibercroft`'s siblings.
+                ⚠ NONE of them joins HAS_OWN_GROUND: all five pave to ±.45 the
+                  way `scrapmine`, `quarry` and `fuelrig` do, not to the tile
+                  line, so there is nothing for this layer's surface to fight
+                  with. That is a claim about the recipes, and the raster below
+                  measures it rather than trusting this note. */
+             'waterintake', 'deepmine', 'alloyworks', 'riftbore'],
   civic:    ['medlab', 'clinic', 'police', 'firestation', 'arena', 'stadium', 'tower',
              'resthouse', 'barracks', 'obelisk', 'caravanpost'],
-  farm:     ['farm', 'hydrofarm'],
+  farm:     ['farm', 'hydrofarm', 'canecroft'],
   commerce: ['shop', 'lot', 'tenantbiz', 'gasstation', 'restaurant', 'grocery',
              'club', 'foodtruck', 'kalonstable', 'retail',
              /* 🏢 The office (round 17) is listed EXPLICITLY rather than left to

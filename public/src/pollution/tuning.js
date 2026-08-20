@@ -272,6 +272,24 @@ export const POLLUTE = {
     /* ── The rest of the works ────────────────────────────────────────── */
     machineshop: { air: 0.050, ground: 0.040, water: 0.020, why: 'cutting oil and swarf' },
     quarry:      { air: 0.060, ground: 0.035, water: 0.015, why: 'blasting dust' },
+    /* ⛏ THE EXTRACTION ROUND — three rows, and every figure is COPIED from a
+       named neighbour rather than tuned, because a fourth extraction profile
+       invented for one building is a number nobody can defend later.
+         deepmine   ← `scrapmine` exactly. Same rock, same tailings; a shaft
+                      raises less dust than an open cut but hoists the same
+                      tonnes, and splitting that hair would be inventing a
+                      number to look thorough.
+         alloyworks ← `munitions` exactly ("propellant and solvent waste"). It
+                      is the table's other ACID-AND-SOLVENT row, which is what a
+                      leach plant actually is; its own mesh carries the reagent
+                      tanks that say so.
+         canecroft  ← `fibercroft` exactly ("retting and fertiliser"). A cane
+                      croft is a fertilised field with a wet yard on it.
+       ⚠ `waterintake` is DELIBERATELY ABSENT, exactly as `purifier` is: a
+         waterworks is what the polluters make necessary, not a polluter. */
+    deepmine:    { air: 0.045, ground: 0.090, water: 0.030, why: 'rock dust and tailings' },
+    alloyworks:  { air: 0.045, ground: 0.055, water: 0.035, why: 'leach acids and solvent waste' },
+    canecroft:   { air: 0.006, ground: 0.014, water: 0.020, why: 'cane trash and fertiliser' },
     munitions:   { air: 0.045, ground: 0.055, water: 0.035, why: 'propellant and solvent waste' },
     papermill:   { air: 0.040, ground: 0.030, water: 0.075, why: 'pulping liquor — a water polluter above all' },
     printworks:  { air: 0.030, ground: 0.025, water: 0.040, why: 'ink and press solvents' },
@@ -295,6 +313,11 @@ export const POLLUTE = {
        it is not smoke — but corrupted essence has to go somewhere, and the
        ground under a siphon is the somewhere. */
     siphon:      { air: 0.020, ground: 0.030, water: 0.010, why: 'corrupted essence bleed' },
+    /* 🌌 The Deep Rift Bore takes the Siphon's row unchanged. It is cased and
+       collared where the Siphon is open, which argues for less — but it reaches
+       the seam itself rather than the leak, which argues for more, and there is
+       no measurement behind either. Equal, and said out loud. */
+    riftbore:    { air: 0.020, ground: 0.030, water: 0.010, why: 'corrupted essence bleed' },
   },
 
   /* ══════════════════════════════════════════════════════════════════════════

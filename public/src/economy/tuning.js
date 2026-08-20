@@ -1000,6 +1000,38 @@ export const ECON = {
     /* Scarcity kicker: an id nobody in the region can produce. This is what
        makes "your node has no Iron" cost money rather than just being flavour. */
     unavailableMul: 1.9,
+    /* ── ⚡ ALTERNATE FEEDSTOCKS: the two numbers `bestLeg()` ranks with ──
+       A resource in ALT_FEEDSTOCK can be made several ways, and `bestLeg()`
+       scores each leg as cost / availability so a coal shortage moves a plant
+       onto gas on its own.
+
+       `legRankFloor` is the DIVIDE GUARD in that score, not a price and not a
+       policy: a leg at 0% availability would otherwise score Infinity for every
+       leg at once and the ranking would be arbitrary. Floored, a fully blocked
+       leg still ranks by cost, so a city with every leg blocked picks a leg
+       deterministically instead of picking none.
+
+       🔴 `legBlockedBelow` IS THE ONE THAT MATTERS, AND IT EXISTS BECAUSE OF A
+          REAL BUG. A firm whose EVERY leg is below this has no feedstock at all,
+          and must be diagnosed as such rather than as "short of reclaimed
+          water" — the alternate leg is not the player's problem, the empty yard
+          is. Measured before it existed: a Purifier with 0 rawWater AND 0
+          reclaimedWater in the city reported HEALTHY at 100% and made 92,880
+          units in 30 days, because sim.js only measured the inputs of the leg
+          the firm ran LAST and an unmeasured input read as fully available.
+          Five of the seven ALT_FEEDSTOCK ids did it, electricity included.
+       ⚠ NOT 0, AND VERY SMALL. Not 0 because a yard holding a rounding error of
+         one fuel is not a running power station, and a threshold of exactly zero
+         would let 1e-9 units of nuclear fuel keep the old behaviour alive on one
+         leg. Very small because this is a LABEL, not a throttle — it changes
+         nothing about how much the plant makes, and a plant running on a genuine
+         trickle is "Starved of inputs", which is already the right sentence and
+         already names the fuel. Measured on a 400-day board: at 0.02 the power
+         plant was called "no feedstock at all" on 255 days while it was in fact
+         producing on 394 of them, i.e. the label was describing a brownout as an
+         empty yard. At 0.001 it fires on the days the yard is actually empty. */
+    legRankFloor: 0.05,
+    legBlockedBelow: 0.001,
     /* Distance/logistics premium is applied per hop by logistics.js and is NOT
        a price number — see ECON.logistics. */
   },

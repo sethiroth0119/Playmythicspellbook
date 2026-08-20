@@ -851,6 +851,77 @@ export function bootstrap(opts) {
   return true;
 }
 
+/* 👻 ── THE SCAFFOLD COMES DOWN WHEN THE REAL THING GOES UP ─────────────────
+   ----------------------------------------------------------------------------
+   Everything `bootstrap()` founds above is founded with NO `tileKey`: a
+   Waterworks, a fuel seam, a Power Plant, a staple farm per strength, a grocer
+   and a Property Company. That is deliberate and it has to stay — a brand-new
+   city has no buildings at all, so without them it has no water, no power and
+   no food on day one and every chain seeded on top of them dies immediately.
+
+   🔴 WHAT WAS MISSING IS THE OTHER END OF THEIR LIFE. `syncBuildings` opens
+   with `if (!f.tileKey) continue` — bootstrap firms are not tile-owned, so it
+   has never reaped one — and the extraction round then gave the player a
+   BUILDING for the same job. Measured with .gauntlet/crit-seam-8.mjs on the
+   commit that added it, after the player builds one Water Intake:
+
+       [{id:1,  tileKey:null,  name:"Waterworks",   made:440},
+        {id:13, tileKey:"5,5", name:"Water Intake", made:440}]
+
+   TWO firms, both pumping, both hiring. The player doubled their own supply and
+   took on a second payroll for a business they cannot see in any panel, cannot
+   inspect, and cannot demolish, because there is no tile under it. The round
+   made the supply REPLACEABLE and never retired the thing being replaced.
+
+   So the scaffold is withdrawn the moment a tile-owned firm is doing its job.
+
+   ── THE THREE THINGS THAT MAKE THIS SAFE, EACH ONE CHECKED ─────────────────
+   1. 🔴 A FRESH CITY STILL HAS WATER, STRUCTURALLY AND NOT BY LUCK. This can
+      only ever retire a firm when a TILE-OWNED firm with the same job is
+      already standing — so on a city with no tiles the loop below cannot
+      select anything, whatever `established` said at mount. The rejected
+      alternative was "never seed what the player could build instead", which
+      reads tidier and is much worse: `rawWater` is in the ground on the same
+      nodes where a Water Intake may be placed, so it would leave EVERY such
+      city bone dry from day one until the player happened to build one.
+   2. IDENTITY IS `out` + `ind`, WHICH IS THE KEY syncBuildings ITSELF USES for
+      exactly this question ("a key that now names a different business is not
+      the same business"). Matching on `out` alone is wrong and was caught here
+      rather than in play: bootstrap founds TWO `bread` firms — a `foodPlant`
+      that bakes it and a `grocer` that sells it — so opening one Grocery would
+      have retired the city's only bakery along with the shop it replaced.
+   3. IT IS ALWAYS RECOVERABLE, because the player necessarily BUILT the
+      replacement to trigger it; demolishing that tile leaves them able to
+      rebuild it. That is what "replaceable" was supposed to mean.
+
+   ⚠ THE MONEY GOES WHERE A DEMOLISHED FIRM'S MONEY ALREADY GOES — `reap()`
+     hands the estate to `receiveEstate` and the treasury receives it. This is a
+     TRANSFER between two terms of `totalCinder()`, so `audit()` is untouched,
+     which is the only reason a reconcile step is allowed to close a firm at
+     all. Burning the cash instead is the leak firms.js's estate header measured
+     at 42,612.05 🔥 across 12 demolitions, with err=-0.000000.
+   ⚠ Called from `syncBuildings` AFTER its founding loop, never from the tick.
+     Before that loop the replacement does not exist yet and this would retire
+     nothing on the sync that builds it, leaving the ghost standing for one more
+     reconcile. */
+export function retireSeededDuplicates() {
+  const jobOf = (f) => String(f.out) + '\u0000' + String(f.ind);
+  const tiled = new Set();
+  for (const f of Firms.alive()) if (f.tileKey) tiled.add(jobOf(f));
+  if (!tiled.size) return 0;
+  let n = 0;
+  for (const f of Firms.all()) {
+    if (f.tileKey || f.rung === 'BANKRUPT') continue;   // tile-owned, or already closing
+    if (!tiled.has(jobOf(f))) continue;
+    f.rung = 'BANKRUPT'; f.reported = true; n++;
+    logEvent('city', '🏗 ' + (f.name || 'A founding business') + ' was the city\'s own ' +
+                     'bootstrap operation, running without a building. Now that you have built ' +
+                     'one that does the same job, it has been wound up.');
+  }
+  if (n) Firms.reap();
+  return n;
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
 /* ════════════════════════════════════════════════════════════════════════════
    🌩 THE DISASTER GUARD — kept, and it now answers 1 to everything.
@@ -948,21 +1019,70 @@ export function advance(dtMin, host) {
 /* Availability map: for every input any firm needs, what fraction of the wanted
    quantity the city can actually supply out of inventory. Computed ONCE per day
    against a snapshot, so every firm is judged against the same city — the same
-   reasoning node-city's `cityOutputMultipliers()` documents for its own tick. */
+   reasoning node-city's `cityOutputMultipliers()` documents for its own tick.
+
+   🔴 IT MEASURES EVERY LEG, NOT ONLY THE ONE THE FIRM RAN LAST, AND THAT IS THE
+      WHOLE BUG THIS FUNCTION ONCE HAD.
+   `avail` is read back by `bestLeg()` and `Firms.produce()`, and BOTH of them
+   treat an id that is ABSENT from the map as fully available (`== null ? 1`) —
+   correctly, because a caller may legitimately pass no map at all. So an id
+   this function did not put in the map read as 100% supplied. Building `want`
+   from `f.lastLeg` alone meant the inputs of every OTHER leg were exactly that:
+   absent, therefore perfect, therefore always the cheapest leg to switch to.
+
+   Driven, on the shipped tree: a Purifier in a city with 0 rawWater and 0
+   reclaimedWater alternated `reclaimed, raw, reclaimed, raw…` day after day —
+   whichever leg it had NOT run was unmeasured and looked full — and made 92,880
+   units in 30 days at a reported 100% efficiency and rung HEALTHY. Five of the
+   seven ALT_FEEDSTOCK ids did it, `electricity` at 100% of a fully fuelled
+   plant's output from zero coal, zero gas, zero oil, zero biomass, zero
+   hydrogen, zero nuclear fuel and zero anomalous energy. `paper` and `glass`
+   were spared only by accident: both of their legs share one input
+   (industrialWater, industrialFuel), so that input was always in the map.
+
+   ⚠ THE CANDIDATE DEMAND IS DELIBERATELY NOT ADDED TO `want`, AND THE
+     DENOMINATORS ARE DELIBERATELY NOT SUMMED. Two rejected shapes:
+       · Fold every leg into `want`. `want` is returned and booked as the day's
+         OBSERVED DEMAND (`S.observed[id].demand`), which drives prices — a
+         coal-fired plant would post demand for gas, oil, hydrogen, nuclear fuel
+         and biomass it never buys, and the market would price six fuels off a
+         city that consumes one.
+       · Use `committed + candidate` as one denominator. Only ONE leg actually
+         runs, so counting the others' requirements against the same stock
+         understates availability for the leg that IS running: an aluminium
+         smelter on the secondary leg (0.5 electricity/unit) would be judged
+         against the primary leg's 4.2, and throttled for a shortage it does not
+         have.
+     So: committed demand where there is any, and the hypothetical requirement
+     ONLY as the denominator for an input nothing is currently committed to —
+     which is exactly the question "could I switch to that leg". */
 function availabilityMap(days) {
-  const want = {};
+  const want = {};                 // committed: the leg each firm is running
+  const cand = {};                 // hypothetical: what an alternate leg WOULD need
   for (const f of Firms.alive()) {
     if (DEPOSITS[f.out]) continue;           // extractors consume nothing
-    const leg = Firms.all().length ? (f.lastLeg || legsOf(f.out)[0]) : legsOf(f.out)[0];
-    if (!leg) continue;
+    const legs = legsOf(f.out);
+    if (!legs.length) continue;
+    const run = f.lastLeg || legs[0];
     const lvl = Firms.levelDef(f.level);
     const units = f.capacity * lvl.capMul * f.throttle * days;
-    for (const inp in (leg.in || {})) want[inp] = (want[inp] || 0) + leg.in[inp] * units;
+    for (const inp in (run.in || {})) want[inp] = (want[inp] || 0) + run.in[inp] * units;
+    for (const leg of legs) {
+      /* `legsOf()` returns fresh objects every call, so `f.lastLeg` is never
+         identity-equal to anything in this list — compare the tag, which is
+         what `legsOf` guarantees is present and unique per id. */
+      if (leg.tag === (run.tag || 'default')) continue;
+      for (const inp in (leg.in || {})) cand[inp] = (cand[inp] || 0) + leg.in[inp] * units;
+    }
   }
   const avail = {};
-  for (const id in want) {
+  for (const id in cand) {
     const have = S.INV[id] || 0;
-    avail[id] = want[id] > 0 ? Math.min(1, have / want[id]) : 1;
+    avail[id] = cand[id] > 0 ? Math.min(1, have / cand[id]) : 1;
+  }
+  for (const id in want) {         // committed demand wins wherever there is any
+    const have = S.INV[id] || 0;
+    avail[id] = want[id] > 0 ? Math.min(1, have / want[id]) : (avail[id] != null ? avail[id] : 1);
   }
   return { want, avail };
 }

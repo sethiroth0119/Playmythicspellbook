@@ -44,6 +44,14 @@ export const CAUSES = {
                   fix: 'No business in the city produces this. Build one, or import it.' },
   NO_INPUT:     { key: 'NO_INPUT',     ico: '📦', label: 'Starved of inputs',
                   fix: 'Its own suppliers are short. Trace upstream.' },
+  /* ⚡ Sits ABOVE NO_INPUT because it is a different instruction. "Starved of
+     inputs" tells a player to go and look at one supplier; this tells them the
+     plant has a CHOICE of feedstocks and the city has not got any of them, so
+     any ONE of the alternatives fixes it. Before it existed, a Purifier with
+     nothing in the yard reported "Nobody makes reclaimedWater" — true, useless,
+     and pointing at the harder of its two options. */
+  NO_FEEDSTOCK: { key: 'NO_FEEDSTOCK', ico: '🛢️', label: 'No feedstock at all',
+                  fix: 'This plant can run on any one of several feedstocks and the city has none of them. Build or import ONE — the list is above.' },
   NO_WORKERS:   { key: 'NO_WORKERS',   ico: '👷', label: 'Understaffed',
                   fix: 'Not enough workers. Add housing, or a higher-paying rival is outbidding it.' },
   NO_POWER:     { key: 'NO_POWER',     ico: '⚡', label: 'Brownout',
@@ -92,8 +100,19 @@ export function diagnose(firm) {
     bottleneck: worst && worst.pct < 0.995 ? worst : null,
     cause,
     leg: firm.lastLeg ? (firm.lastLeg.tag || 'default') : null,
+    /* ⚡ Only meaningful when `noLeg` is set: the feedstocks this plant may
+       choose between. Published so the panel can name every option rather than
+       the one the ranking happened to land on. */
+    noLeg: !!firm.lastNoLeg,
+    feedstocks: firm.lastNoLeg ? Array.from(new Set(firm.lastFeedstocks || [])) : [],
     cash: firm.cash, inventory: firm.inventory,
   };
+}
+
+/* An id as words, with no "Supply" suffix — for prose, where "Runs on Raw Water
+   Supply or Reclaimed Water Supply" reads like a machine wrote it. */
+function prettyName(key) {
+  return String(key).replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim();
 }
 
 function prettyLabel(key, fallback) {
@@ -111,6 +130,11 @@ function prettyLabel(key, fallback) {
 export function classify(firm, worst) {
   if (firm.rung === 'BANKRUPT') return CAUSES.NO_CASH;
   if (!worst || worst.pct >= 0.995) return CAUSES.OK;
+  /* ⚡ Before any per-input verdict: if EVERY leg of the recipe is blocked, the
+     binding row is one arbitrary input of one arbitrary leg and naming it is
+     misdirection. `produce()` sets this flag and has already pointed the row at
+     the PRIMARY leg, so the trace still walks somewhere useful. */
+  if (firm.lastNoLeg) return CAUSES.NO_FEEDSTOCK;
   if (worst.key === '__demand__') return CAUSES.NO_DEMAND;
   if (worst.key === 'workers') return CAUSES.NO_WORKERS;
   if (worst.key === 'freight') return CAUSES.NO_FREIGHT;
@@ -163,11 +187,18 @@ export function trace(resId, maxDepth) {
     // There ARE producers. Are they managing?
     const worstFirm = producers.slice().sort((a, b) => (a.lastFill || 0) - (b.lastFill || 0))[0];
     const d2 = diagnose(worstFirm);
+    /* ⚡ A plant with no feedstock at all gets its own sentence, naming every
+       feedstock it could have used. "Reclaimed Water Supply at 0%" is a true
+       statement about a leg the player never chose and may not be able to
+       reach; this is the one they can act on. */
+    const detail = d2.cause === CAUSES.NO_FEEDSTOCK
+      ? ('Runs on ' + d2.feedstocks.map(prettyName).join(' or ') + ' — the city has none of them.')
+      : (d2.bottleneck ? (d2.bottleneck.label + ' at ' + Math.round(d2.bottleneck.pct * 100) + '%') : 'Running');
     path.push({
       res: cur, step: worstFirm.name, firmId: worstFirm.id,
       cause: d2.cause, ok: !d2.bottleneck,
       pct: d2.efficiency,
-      detail: d2.bottleneck ? (d2.bottleneck.label + ' at ' + Math.round(d2.bottleneck.pct * 100) + '%') : 'Running',
+      detail,
     });
     if (!d2.bottleneck) break;                         // this link is fine
     if (d2.cause === CAUSES.NO_FREIGHT) {

@@ -193,6 +193,10 @@ export function found(out, opts) {
     rentDay: 0, rentLife: 0,
     // last tick's diagnosis, for the bottleneck panel
     lastFill: 1, lastInputAvail: 1, lastProduced: 0, lastBottleneck: null, lastLeg: null,
+    /* ⚡ "every leg of my recipe is blocked", and the legs it could choose
+       between. Readouts, recomputed by `produce()` every tick like `lastFill`
+       beside them, and therefore deliberately NOT serialised. */
+    lastNoLeg: false, lastFeedstocks: [],
     inventory: 0,
     tileKey: opts.tileKey || null,   // optional link back to a node-city tile
     /* ⏱ THE FOUNDING STAMP. Written once, here, and never touched again — not
@@ -461,12 +465,39 @@ export function produce(f, days, availability, ctx) {
   const laborFill = hc.n > 0 ? Math.min(1, staffed / hc.n) : 1;
 
   // Input availability — pick the leg that is actually runnable
+  const legs = legsOf(f.out);
   const best = bestLeg(f.out, availability);
-  f.lastLeg = best ? best.leg : null;
+  /* ── ⚡ WHEN EVERY LEG IS BLOCKED, REPORT AGAINST THE PRIMARY ONE ─────────
+     `bestLeg()` still returns a leg when nothing is runnable — it has to, or a
+     firm with two empty yards would report no leg at all — but at 0%
+     availability its ranking collapses to bare cost, and the cheapest leg is
+     not the one to send the player after. For `electricity` that is the nuclear
+     leg (0.0016 nuclearFuel/unit), so a city with no fuel of any kind would be
+     told to go and build a nuclear supply chain.
+
+     The primary leg is the honest answer, and for the reason prices.js already
+     gives for deriving BASE PRICE off it: it is the way you can ALWAYS make the
+     thing. The alternates are margin for a city that has the scrap, not the
+     path out of an empty yard.
+
+     ⚠ THIS IS DIAGNOSIS ONLY. `fill` is 0 on this path, so the firm produces
+       nothing and `runProduction` consumes nothing — swapping the reported leg
+       cannot move a unit of anything. It changes what the panel says and which
+       resource `bottleneck.trace()` walks up, and nothing else. */
+  const blocked = best != null && legs.length > 1 &&
+                  best.availability <= ECON.price.legBlockedBelow;
+  f.lastLeg = blocked ? legs[0] : (best ? best.leg : null);
+  f.lastNoLeg = blocked;
+  /* The feedstocks the player may choose between, named, so the panel and the
+     tracer can say "it runs on X or Y and the city has neither" instead of
+     naming whichever one the ranking happened to land on. */
+  f.lastFeedstocks = legs.length > 1
+    ? legs.map(l => Object.keys(l.in || {})).reduce((a, b) => a.concat(b), []) : [];
   let inputFill = 1;
   const constraints = [{ key: 'workers', label: 'Workers', pct: laborFill }];
-  if (best && best.leg && best.leg.in) {
-    for (const inp in best.leg.in) {
+  const useLeg = f.lastLeg;
+  if (useLeg && useLeg.in) {
+    for (const inp in useLeg.in) {
       const a = availability && availability[inp] != null ? availability[inp] : 1;
       constraints.push({ key: inp, label: inp, pct: a });
       inputFill = Math.min(inputFill, a);
@@ -722,6 +753,7 @@ export function load(raw) {
       lifetimeRevenue: Number(r.lifetimeRevenue) || 0, lifetimeProfit: Number(r.lifetimeProfit) || 0,
       revenueAvg: Number(r.revenueAvg) || 0, customersAvg: Number(r.customersAvg) || 0,
       lastFill: 1, lastInputAvail: 1, lastProduced: 0, lastBottleneck: null, lastLeg: null,
+      lastNoLeg: false, lastFeedstocks: [],
       inventory: Math.max(0, Number(r.inventory) || 0), tileKey: r.tileKey || null,
       /* `rentDay` is a WITHIN-day accumulator like `costDay` beside it and is
          deliberately not saved: a save taken mid-day reloads at the top of a

@@ -154,7 +154,14 @@ export function bestLeg(id, availability) {
     // An unavailable leg is not "expensive", it is not runnable — but it is
     // still ranked, so a city with two blocked legs picks the less blocked one
     // rather than reporting no leg at all.
-    const eff = cost / Math.max(0.05, worst);
+    /* ⚠ THE FLOOR IS A DIVIDE GUARD AND IT LIVES IN ECON, not here — see the
+       note beside `legRankFloor`. It is also why the CALLER, not this function,
+       decides what a firm with every leg blocked should report: at 0% every leg
+       scores by bare cost, and for `electricity` the cheapest is the nuclear
+       leg, so a stranded city told to go and find nuclear fuel would be reading
+       a ranking artefact as advice. `Firms.produce()` falls back to the primary
+       leg for exactly that reason. */
+    const eff = cost / Math.max(ECON.price.legRankFloor, worst);
     if (!best || eff < best.eff) best = { leg, cost, availability: worst, eff };
   }
   return best;

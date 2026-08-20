@@ -489,7 +489,16 @@ function syncBuildings(list) {
     Firms.found(b.out, { ind: b.ind, capacity: cap, tileKey: key, name: b.name });
     added++;
   }
-  return { added, removed };
+  /* 👻 RETIRE THE BOOTSTRAP SCAFFOLD THE PLAYER HAS JUST REPLACED.
+     The loop at the top of this function skips `!f.tileKey` on purpose, so it
+     structurally CANNOT reap a firm `bootstrap()` seeded — which is how a city
+     ended up with an invisible Waterworks pumping beside the Water Intake the
+     player built, two payrolls for one job. sim.js owns both ends of a seeded
+     firm's life and the reasoning is written at `retireSeededDuplicates`; it
+     runs HERE, after the founding loop, because before it the replacement does
+     not exist yet. Counted into `removed` so the host still saves. */
+  const retired = Sim.retireSeededDuplicates();
+  return { added, removed: removed + retired };
 }
 
 /* Can the player put an extractor for `resId` on this node at all?

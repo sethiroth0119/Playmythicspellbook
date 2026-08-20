@@ -21,14 +21,25 @@ should be read only for its round 0–9 visual history.
 | `.gauntlet/README.md` | Six things that each cost an agent a full debugging round. Item 6 is a measurement contract — read it before you A/B anything on screen. |
 | The six `FIX-RECORD.md` files | `demographics`, `districts`, `wild`, `parcel`, `lifepath`, `landvalue`. Each says where work **actually** landed when a commit subject misfiled it. ⚠ `.gauntlet/README.md` records that the **parcel** one is wrong about the landvalue one. |
 
-## 2. Three gates, and you need all three
+## 2. Four gates, and you need all four
 
 ```bash
 node _synckcheck.mjs public/index.html public/node-city/index.html
 node .gauntlet/modcheck.mjs         # 172 .js/.mjs FILES under public/src today
 node .gauntlet/precommit-scan.mjs   # refuses a line marked deliberately broken
-node tools/economy-tests/run.mjs    # 663 assertions; the audit is the point
+node tools/economy-tests/run.mjs    # 678 assertions; the audit is the point
 ```
+
+🔴 **The economy suite must also be able to FAIL, and there are now three ways to
+prove it.** A gate that cannot be made to redden is decoration:
+
+| sabotage | puts back |
+|---|---|
+| `ECON_TEST_SABOTAGE=seed-mint` | a Cinder mint at `syncBuildings` |
+| `ECON_TEST_SABOTAGE=gate-blind` | the ground-gate regression that deleted the Rift Siphon from half the map |
+| (see `run.mjs`) | a failed-credit path that must stay detectable |
+
+Run one before you trust a green suite you did not expect.
 
 🔴 **`_synckcheck.mjs` must be given its files.** With no arguments it checks
 `public/index.html` **and nothing else** — and essentially all of this branch's work is in
@@ -51,7 +62,7 @@ returns a red round. A suite that cannot be made to fail is not a gate.
 
 ## 3. What is on the branch
 
-**33** feature directories under `public/src/`. Most register a `window.Mythic*` global and
+**34** feature directories under `public/src/`. Most register a `window.Mythic*` global and
 every one is guarded so a 404 costs that feature and nothing else — but **`battle` and
 `sprites` have no `Mythic*` global at all** (`battle` sets `window.DrawFX`), and five others
 (`crowd parcel parking sprites streets wild`) are assigned by the host from `mount()`'s
@@ -171,6 +182,59 @@ line.** A missing `using (auth.uid() = …)` is a data breach and looks fine in 
 ⚠ `git log -- sql/` shows three recent files (`036`, `037`, `038`). Only `038` belongs to
 this work; `036` and `037` are unrelated and predate it.
 
+## 5b. ⛏ The resource round — five seams, and three bugs behind them
+
+The Survey panel grades all **52 deposits**, so it would tell a player their node was
+*Rich* in Platinum Ore or Lithium with nothing in the game able to touch it. Measured:
+**33 extractable, 19 missing.** Five new buildings close 18 of the 19.
+
+| tile | works |
+|---|---|
+| 🚰 **Water Intake** | `rawWater` |
+| 🔩 **Strategic Minerals Works** | lithium · cobalt · titanium · tungsten · rareEarthMinerals |
+| 💎 **Deep Mine** | goldOre · silverOre · platinumOre · rareMinerals · quartz |
+| 🌾 **Cane & Seed Croft** | sugarCrops · seeds |
+| 🌌 **Deep Rift Bore** | the five anomalous seams the Siphon does not work |
+
+`wood` is deliberately left out — a note on the Lumber Camp measured that 88 of 200 nodes
+lost their card chain to it, and that decision was made with numbers.
+
+### 🔴 Three bugs the missing buildings were hiding
+
+1. **Your water came from a firm the player could never see.** `bootstrap()` founds a
+   `rawWater` extractor with **no `tileKey`**, and `syncBuildings` only re-founds tile-owned
+   firms — so once it went bankrupt the supply was gone for the life of the save. Fixed,
+   and the scaffold now retires itself when a tiled producer of the same job appears.
+   ⚠ Retirement matches on **`out` + `ind`, not `out`** — bootstrap seeds *two* bread firms,
+   and matching on output alone closes the city's bakery the day it opens a corner shop.
+2. **Cities were powering themselves with no fuel at all.** Four of seven `ALT_FEEDSTOCK`
+   ids were 100% phantom, electricity worst: **108,000 units in 30 days from zero coal, gas,
+   oil, biomass, hydrogen, nuclear fuel and anomalous energy.** The availability table was
+   built from the leg each firm ran *last*, and an absent input reads as fully available — so
+   the legs a firm was **not** running were always the cheapest to switch to. It never ran out
+   because it never ran the same way twice. A plant with a full coal yard was ignoring it to
+   "run" on nuclear fuel it did not have.
+3. **The new gate deleted five pre-existing buildings** — the Rift Siphon from 49.8% of nodes,
+   the Lumber Camp from 27.8%. Its test was "is every output a deposit", a question about the
+   *chain* layer; it never asked what the tile does in the *city ledger* layer. A `gen:`
+   exemption closes it, and a sabotage puts it back.
+
+### ⚠ The consequence that is content, not tuning
+With phantom production closed, plants on an under-built board **genuinely brown out** — on
+the 400-day test board, steel on 393 days, paper on 398, electricity on 255. That board has a
+Steel Mill with no pig iron and a Paper Mill with no pulp. **The next round's job is chains to
+feed them, or the trade layer buying the feedstock — not a coefficient.** "Soften it" is
+re-opening the hole with a smaller number.
+
+Closures went *down* (120 → 100) and unemployment fell, so the economy is playable; the
+brownouts are a content debt, not instability.
+
+### ⚠ Twelve of the new resources have no customer yet
+Only `rawWater` and the five strategic minerals have a consumer or a partner buyer today. The
+other twelve produce for chains the city cannot build — the state `scrapmine` has always been
+in for zinc. **Nothing in the UI warns a player before they pay.** That is the first thing to
+fix if you touch this area.
+
 ## 6. Known open, honestly
 
 **Named and unfixed:**
@@ -278,6 +342,24 @@ would throw away the signal the gate exists to catch.
 `.gauntlet/layer-ab.mjs` is the instrument for "how much did my change do": one boot, layer
 toggled, `render()` then `drawImage` **in the same task** — it asserts its own do-nothing
 control is exactly **0.000%** and fails the run otherwise.
+
+### 🔴 Three instruments failed in one round — trust the tool last
+
+The resource round's most transferable finding is not about the game. Every one of these was
+a *measuring* failure, and a broken instrument is confidently wrong:
+
+- A critic's 500-node census **hardcoded the rule it was testing**, so it printed byte-identical
+  numbers after the fix and would have reported the regression as unfixed for ever. The repair
+  is to lift the **shipped** function out of the file and execute it.
+- A critic reported two buildings as not tile-seeded. **They were.** The measuring script hashed
+  only `geometry.attributes.position`, and those recipes vary entirely in the vertex *colour*
+  attribute. The tell was that the building cited as the precedent measured "false" too.
+- A driver **asserted one thing and printed its opposite two lines away**, because the hole it
+  tested had been closed underneath it by another commit.
+
+Add to that the round-19 lesson that a moving agent's position is not reproducible across
+boots, and the standing rule: **if a number matters to a decision you are about to make,
+re-derive it — including a number in this document.**
 
 ## 8. The rule that governs everything here
 

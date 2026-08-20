@@ -121,7 +121,21 @@ export const TENANTS = {
   marginal: {
     com: ['foodtruck', 'gasstation'],
     off: [],
-    ind: ['scrapmine', 'quarry', 'lumbercamp', 'fibercroft', 'fuelrig', 'warehouse', 'depot'],
+    /* ⛏ THE THREE NEW HAND-SITED EXTRACTORS JOIN THE MARGINAL RUNG, beside the
+       three they were costed from (`scrapmine`, `quarry`, `fibercroft`). They
+       are in exactly the position the header's second honest cut describes —
+       real BUILDINGS keys that no zone mix and no district mix can ever
+       develop into — so `compile()` MARKS them rather than dropping them, and
+       the claim the rung makes about them ("this grade of land will take this")
+       is true for a hand placement, which is the only way any of them is ever
+       sited.
+       ⚠ `waterintake` and `riftbore` are DELIBERATELY ABSENT, and each mirrors
+         the shipped tile it was derived from: `purifier` and `siphon` are
+         absent from every rung of this table too. A waterworks and an arcane
+         draw station are not tenants competing for land value; they are
+         infrastructure sited where the ground allows. */
+    ind: ['scrapmine', 'quarry', 'lumbercamp', 'fibercroft', 'fuelrig', 'warehouse', 'depot',
+          'deepmine', 'alloyworks', 'canecroft'],
     res: ['housing'],
   },
   modest: {

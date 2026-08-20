@@ -101,3 +101,6 @@ migration/*.err
 .gauntlet/probe-*.mjs
 .gauntlet/shots/wip-*/
 .gauntlet/shots/*.json
+
+# Warehouse minigame headless capture output — regenerable.
+_wh_shots/

@@ -1,0 +1,2405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Mythic Spellbook — Storage Warehouse</title>
+<!-- WH_BUILD is a deploy probe, not decoration. Bump it on every content change
+     so wrangler's manifest can't decide the file is "already live" and skip the
+     upload (the same trap NODE CITY fell into — see NC_BUILD). -->
+<script>window.WH_BUILD = "v1-warehouse";</script>
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     🏗 STORAGE WAREHOUSE — the player-owned warehouse minigame.
+
+     Other live players rent a numbered BAY here and ship resources to it out of
+     their city, house or camp. A step van pulls up on the apron; the warehouse
+     owner walks out first-person, presses E at the open kerb-side door, hauls
+     a crate at a time under a real weight limit, and drops it in the renter's
+     bay. Bay full → "You need to open storage unit space" → buy more space with
+     Cinder or Aza. Can't lift it → buy a bigger weight lifter.
+
+     HOW IT CONNECTS TO THE MAIN GAME (index.html):
+       Everything authoritative lives in Postgres (supabase/migrations/
+       20260812000000_warehouse_storage.sql). This page never decides what
+       anything costs, weighs, or holds — it asks. The host page owns the
+       Supabase client, so the page talks to it over postMessage with ONE
+       generic envelope:
+
+         child → parent  { type:'wh:ready' }
+         parent → child  { type:'wh:state', state, wallet, me }
+         child → parent  { type:'wh:rpc', reqId, fn, args }
+         parent → child  { type:'wh:rpcResult', reqId, ok, data, error }
+         child → parent  { type:'wh:exit' }
+
+       `fn` is one of the wh_* rpcs and the HOST whitelists it — see
+       WAREHOUSE_HANDOFF.md. Opened with no parent (or a parent that never
+       answers) the page drops into MOCK MODE and is fully playable offline,
+       which is also how it gets tested.
+     ══════════════════════════════════════════════════════════════════════ -->
+<style>
+  /* Same token vocabulary the game uses: Cinzel display, #ffd166 gold,
+     rgba(212,175,55,…) rules, Roboto Mono for numbers. */
+  :root{
+    --obsidian:#0b0910;
+    --panel:rgba(20,17,30,.94);
+    --edge:rgba(212,175,55,.35);
+    --gold:#ffd166;
+    --gold-dim:#bfae87;
+    --bone:#e8e2d5;
+    --mist:#8f87a3;
+    --good:#7ce8a8;
+    --bad:#ff6b6b;
+    --ember:#ff7a2f;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--obsidian);
+    font-family:'Inter','Roboto',system-ui,sans-serif;color:var(--bone);user-select:none}
+  canvas{display:block}
+  .display{font-family:'Cinzel',Georgia,serif;letter-spacing:.06em;text-transform:uppercase}
+  .mono{font-family:'Roboto Mono',ui-monospace,monospace}
+
+  /* ── boot ── */
+  #boot{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;background:var(--obsidian)}
+  #boot h1{font-family:'Cinzel',Georgia,serif;color:var(--gold);font-size:1.3rem;letter-spacing:.12em}
+  #boot p{color:var(--mist);font-size:.85rem}
+  #boot.gone{display:none}
+
+  /* ── HUD ── */
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:20}
+  .card{position:absolute;background:var(--panel);border:1px solid var(--edge);
+    border-radius:12px;padding:10px 13px;backdrop-filter:blur(6px);
+    box-shadow:0 10px 34px rgba(0,0,0,.55)}
+  #topbar{top:12px;left:12px;display:flex;gap:16px;align-items:center;font-size:.8rem}
+  #topbar b{color:var(--gold)}
+  #wallet{top:12px;right:12px;font-size:.8rem;text-align:right;line-height:1.6}
+  #carry{bottom:14px;left:12px;min-width:260px}
+  #carry .lbl{font-size:.66rem;letter-spacing:.12em;color:var(--gold-dim);text-transform:uppercase}
+  #carry .kg{font-size:1.15rem;color:var(--gold);margin:2px 0 6px}
+  .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#7ce8a8,#ffd166);transition:width .18s}
+  .bar.over i{background:linear-gradient(90deg,#ff9c2e,#ff6b6b)}
+    /* ⚠ scroll, do not clip. At 32 bays this box measured the same as at 14 and
+     silently showed ~13 rows while the top bar advertised "Bays 32/32". */
+  #bays{bottom:14px;right:12px;min-width:240px;max-height:46vh;overflow-y:auto;pointer-events:auto}
+  #bays::-webkit-scrollbar{width:6px}
+  #bays::-webkit-scrollbar-thumb{background:rgba(212,175,55,.4);border-radius:3px}
+  #bays .row{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:.74rem}
+  #bays .row .n{width:46px;color:var(--gold);font-weight:700}
+  #bays .row .bar{flex:1}
+  #bays .row .v{width:74px;text-align:right;color:var(--gold-dim)}
+  #bays .row.mine .n{color:var(--good)}
+  #ship{top:64px;left:12px;font-size:.75rem;line-height:1.7;max-width:330px}
+  #ship .eta{color:var(--ember);font-weight:700}
+  #prompt{position:fixed;left:50%;bottom:19%;transform:translateX(-50%);z-index:22;
+    background:rgba(10,8,16,.9);border:1px solid var(--edge);border-radius:10px;
+    padding:8px 16px;font-size:.86rem;color:var(--gold);display:none;
+    font-family:'Cinzel',Georgia,serif;letter-spacing:.05em;pointer-events:none}
+  #cross{position:fixed;left:50%;top:50%;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;
+    border-radius:50%;background:rgba(255,209,102,.85);z-index:21;pointer-events:none;
+    box-shadow:0 0 0 1px rgba(0,0,0,.6)}
+  #toast{position:fixed;left:50%;top:16%;transform:translateX(-50%);z-index:40;
+    display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none}
+  #toast div{background:rgba(10,8,16,.94);border:1px solid var(--edge);border-radius:10px;
+    padding:8px 15px;font-size:.82rem;color:var(--bone);animation:tin .25s ease-out}
+  @keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+  /* ── back / exit ── */
+  #topbtns{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:23;display:flex;gap:8px}
+  button{font:inherit;cursor:pointer}
+  .btn{background:rgba(27,37,64,.9);color:#cdd3e3;border:1px solid var(--edge);
+    padding:7px 15px;border-radius:8px;font-weight:600;font-size:.8rem}
+  .btn:hover{background:rgba(40,54,92,.95)}
+  .btn.gold{background:rgba(255,209,102,.16);color:var(--gold);border-color:rgba(255,209,102,.55)}
+  .btn.gold:hover{background:rgba(255,209,102,.26)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+
+  /* ── modal — the game's own modal idiom ── */
+  #modal{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at center,rgba(8,4,20,.65),rgba(2,1,8,.93));
+    backdrop-filter:blur(4px)}
+  #modal.on{display:flex}
+  .sheet{max-width:640px;width:94vw;max-height:86vh;display:flex;flex-direction:column;
+    background:linear-gradient(180deg,rgba(28,22,52,.97),rgba(12,8,28,.99));
+    border:1px solid rgba(212,175,55,.5);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.75)}
+  .sheet h2{font-family:'Cinzel',Georgia,serif;color:var(--gold);font-size:1.22rem;
+    letter-spacing:.06em;margin:0;padding:1.05rem 1.3rem .35rem}
+  .sheet .sub{color:var(--gold-dim);font-size:.82rem;padding:0 1.3rem .8rem}
+  .sheet .body{flex:1;overflow-y:auto;padding:0 1.3rem 1rem;font-size:.87rem;line-height:1.6}
+  .sheet .foot{display:flex;gap:8px;justify-content:flex-end;padding:.85rem 1.3rem;
+    border-top:1px solid rgba(212,175,55,.2)}
+  .opt{display:flex;align-items:center;gap:12px;padding:.7rem .85rem;margin-bottom:.55rem;
+    background:rgba(0,0,0,.34);border:1px solid rgba(212,175,55,.28);border-radius:10px}
+  .opt .g{flex:1}
+  .opt .t{color:var(--bone);font-weight:600}
+  .opt .d{color:var(--gold-dim);font-size:.76rem}
+  .opt.owned{border-color:rgba(124,232,168,.5)}
+  .note{background:rgba(255,209,102,.09);border:1px solid rgba(255,209,102,.3);
+    border-radius:9px;padding:.65rem .8rem;color:var(--gold);font-size:.8rem;margin-bottom:.7rem}
+
+  /* ── touch ── */
+  #touch{position:fixed;inset:0;z-index:24;pointer-events:none;display:none}
+  #touch.on{display:block}
+  #touch .pad{position:absolute;bottom:90px;left:20px;width:150px;height:150px}
+  #touch .k{position:absolute;width:48px;height:48px;border-radius:12px;pointer-events:auto;
+    background:rgba(20,17,30,.85);border:1px solid var(--edge);color:var(--gold);
+    display:flex;align-items:center;justify-content:center;font-size:1.05rem}
+  #touch .use{position:absolute;bottom:110px;right:26px;width:74px;height:74px;border-radius:50%;
+    pointer-events:auto;background:rgba(255,209,102,.18);border:1px solid rgba(255,209,102,.6);
+    color:var(--gold);display:flex;align-items:center;justify-content:center;
+    font-family:'Cinzel',Georgia,serif;font-size:.9rem}
+  /* ⚠ Below ~800 px the fixed cards overprinted each other: the button row sat
+     on top of "Tier 1/5 Bays 2/4", and at 390 px the top strip was unreadable.
+     Cards shrink and step out of each other's way instead of overlapping. */
+  @media (max-width:900px){
+    #bays{display:none}
+    #ship{max-width:52vw;font-size:.7rem;top:96px}
+    #topbtns{top:auto;bottom:12px;transform:translateX(-50%) scale(.94)}
+    #topbar{font-size:.7rem;gap:9px;padding:7px 9px}
+    #wallet{font-size:.7rem;padding:7px 9px}
+    #carry{min-width:190px;bottom:74px;padding:8px 10px}
+  }
+  @media (max-width:560px){
+    #topbar{left:8px;right:auto;max-width:58vw;flex-wrap:wrap;gap:4px 8px}
+    #wallet{top:8px;right:8px;font-size:.66rem;line-height:1.35}
+    #ship{display:none}
+    #carry{left:8px;bottom:80px;min-width:150px}
+    #topbtns{gap:5px}
+    .btn{padding:6px 9px;font-size:.7rem}
+    #prompt{font-size:.74rem;padding:6px 11px;bottom:24%}
+  }
+</style>
+</head>
+<body>
+
+<div id="boot"><h1>🏗 Storage Warehouse</h1><p id="bootmsg">Opening the yard…</p></div>
+
+<div id="hud">
+  <div class="card" id="topbar"></div>
+  <div class="card" id="wallet"></div>
+  <div class="card" id="ship"></div>
+  <div class="card" id="carry">
+    <div class="lbl">Carrying</div>
+    <div class="kg mono" id="carrykg">0 / 25 kg</div>
+    <div class="bar" id="carrybar"><i style="width:0%"></i></div>
+    <div class="lbl" style="margin-top:8px" id="lifterlbl">🖐 Bare Hands</div>
+  </div>
+  <div class="card" id="bays"></div>
+</div>
+
+<div id="topbtns">
+  <button class="btn" id="b-exit">← Back</button>
+  <button class="btn gold" id="b-lift">🏋 Weight Lifters</button>
+  <button class="btn gold" id="b-up">🏗 Warehouse</button>
+</div>
+
+<div id="prompt"></div>
+<div id="cross"></div>
+<div id="toast"></div>
+
+<div id="touch">
+  <div class="pad">
+    <button class="k" style="left:51px;top:0">▲</button>
+    <button class="k" style="left:0;top:51px">◀</button>
+    <button class="k" style="left:102px;top:51px">▶</button>
+    <button class="k" style="left:51px;top:102px">▼</button>
+  </div>
+  <button class="use" id="t-use">E</button>
+</div>
+
+<div id="modal"><div class="sheet">
+  <h2 id="m-title"></h2>
+  <div class="sub" id="m-sub"></div>
+  <div class="body" id="m-body"></div>
+  <div class="foot" id="m-foot"></div>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- ⚠ FALLBACK. The CDN was a single point of failure for the whole minigame,
+     while this repo already ships the same r128 build at assets/vfx/three.min.js.
+     document.write is deliberate: it is the one way to load a replacement
+     SYNCHRONOUSLY here, so truck.js below still finds window.THREE. -->
+<script>
+  if (!window.THREE) {
+    document.write('<script src="../assets/vfx/three.min.js"><\/script>');
+  }
+</script>
+<script src="truck.js"></script>
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   🔌 HOST BRIDGE — one generic rpc envelope, plus a MOCK fallback so the page
+   is playable (and testable) with no game around it.
+   ══════════════════════════════════════════════════════════════════════════ */
+var WH = (function () {
+  var state = null, wallet = { cinder: 0, aza: 0 }, me = { id: 'local', name: 'You' };
+  var bridged = false, seq = 0, pending = {}, readyFns = [];
+  function post(m) { try { if (parent && parent !== window) parent.postMessage(m, '*'); } catch (e) {} }
+  window.addEventListener('message', function (e) {
+    var d = e && e.data; if (!d || typeof d !== 'object') return;
+    if (d.type === 'wh:state') {
+      bridged = true;
+      state = d.state || state;
+      if (d.wallet) wallet = d.wallet;
+      if (d.me) me = d.me;
+      readyFns.splice(0).forEach(function (f) { try { f(); } catch (_) {} });
+      try { window.dispatchEvent(new Event('wh:changed')); } catch (_) {}
+    } else if (d.type === 'wh:rpcResult') {
+      var p = pending[d.reqId]; if (!p) return;
+      delete pending[d.reqId];
+      p(d.ok ? (d.data || null) : null, d.error || null);
+    }
+  });
+  post({ type: 'wh:ready' });
+  return {
+    bridged: function () { return bridged; },
+    state: function () { return state; },
+    setState: function (s) { state = s; try { window.dispatchEvent(new Event('wh:changed')); } catch (_) {} },
+    wallet: function () { return wallet; },
+    setWallet: function (w) { if (w) wallet = w; },
+    me: function () { return me; },
+    onReady: function (f) { if (state) f(); else readyFns.push(f); },
+    exit: function () { post({ type: 'wh:exit' }); },
+    // Every server call funnels through here. Unbridged → MOCK.rpc answers it.
+    rpc: function (fn, args) {
+      return new Promise(function (res) {
+        if (!bridged) { res(MOCK.rpc(fn, args || {})); return; }
+        var id = ++seq;
+        pending[id] = function (data, err) { res(err ? { ok: false, reason: String(err) } : data); };
+        post({ type: 'wh:rpc', reqId: id, fn: fn, args: args || {} });
+        setTimeout(function () {
+          if (pending[id]) { delete pending[id]; res({ ok: false, reason: 'timeout' }); }
+        }, 12000);
+      });
+    },
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════════════
+   🧪 MOCK — a faithful stand-in for the SQL so the yard runs standalone.
+   It mirrors wh_config()'s numbers and re-implements the SAME gates the rpcs
+   enforce (lifter capacity, bay capacity, tier cap, wallet) — deliberately, so
+   a bug in the client's assumptions shows up here instead of in production.
+   ══════════════════════════════════════════════════════════════════════════ */
+var MOCK = (function () {
+  var CFG = {
+    aza_to_cinder: 5000, start_units: 2,
+    unit_price_aza: 10, unit_price_cinder: 5000000, unit_capacity_kg: 500,
+    tiers: [
+      { tier: 1, max_units: 4,  aza: 0,   cinder: 0,       name: 'Lean-To Depot' },
+      { tier: 2, max_units: 8,  aza: 25,  cinder: 12500000,  name: 'Sheet-Metal Warehouse' },
+      { tier: 3, max_units: 14, aza: 60,  cinder: 30000000,  name: 'Concrete Distribution Hub' },
+      { tier: 4, max_units: 22, aza: 140, cinder: 70000000,  name: 'Regional Freight Terminal' },
+      { tier: 5, max_units: 32, aza: 300, cinder: 150000000, name: 'Ashfall Logistics Yard' }
+    ],
+    lifters: [
+      { tier: 0, carry_kg: 25,  aza: 0,  cinder: 0,      name: 'Bare Hands',  icon: '🖐' },
+      { tier: 1, carry_kg: 45,  aza: 2,  cinder: 1000000,  name: 'Back Brace',  icon: '🎽' },
+      { tier: 2, carry_kg: 90,  aza: 5,  cinder: 2500000,  name: 'Hand Truck',  icon: '🛒' },
+      { tier: 3, carry_kg: 180, aza: 12, cinder: 6000000,  name: 'Pallet Jack', icon: '🛠' },
+      { tier: 4, carry_kg: 400, aza: 30, cinder: 15000000, name: 'Forklift',    icon: '🚜' }
+    ],
+    weights: { food: 1.2, water: 2.0, ammo: 0.8, medicine: 0.4, energyDrink: 0.5,
+               supplies: 1.5, metal: 3.5, fuel: 3.0, corruptedEssence: 0.6,
+               memoryShards: 0.2, dna: 0.1 },
+    // ⚠ These MUST mirror wh_config() in the migration exactly. When they drift
+    // the standalone yard behaves differently from the live one — this block
+    // said crate_kg 50 after the server moved to 22, and the mock yard became
+    // unplayable (every crate too heavy for bare hands) while production was fine.
+    default_weight: 1.0, crate_kg: 22, max_shipment_kg: 1800, rent_grace_days: 3,
+    eta_hours: { 0: 72, 1: 68, 2: 62, 3: 56, 4: 50, 5: 44, 6: 37, 7: 30, 8: 22, 9: 14, 10: 6 },
+    free_city_hours: 72, max_hours: 72, rent_cinder_per_day: 120000, rent_max_days: 30
+  };
+  var S = null;
+  function wt(p) { var t = 0; for (var k in p) t += p[k] * (CFG.weights[k] || CFG.default_weight); return Math.round(t * 10) / 10; }
+  // ⚠ Crate ids must be unique ACROSS shipments. They used to be 'c1','c2'…
+  // per shipment, so two loads both had a 'c1' and wh_store_crate matched the
+  // wrong one — a crate off the arrived van resolved to the shipment still on
+  // the road and came back "That load has not arrived yet." The real ids are
+  // uuids; the mock now prefixes with the shipment id for the same guarantee.
+  function crates(payload, sid) {
+    var rem = {}, out = [], n = 0;
+    for (var k in payload) rem[k] = payload[k];
+    while (n < 200) {
+      var pay = {}, w = 0, left = CFG.crate_kg, any = false;
+      var keys = Object.keys(rem).sort();
+      if (!keys.length) break;
+      for (var i = 0; i < keys.length; i++) {
+        var k2 = keys[i], uw = CFG.weights[k2] || CFG.default_weight;
+        var take = Math.min(rem[k2], Math.floor(left / uw));
+        if (take < 1 && w === 0) take = 1;
+        if (take >= 1) {
+          pay[k2] = take; w += take * uw; left -= take * uw; any = true;
+          rem[k2] -= take; if (rem[k2] <= 0) delete rem[k2];
+        }
+        if (left <= 0) break;
+      }
+      if (!any) break;
+      n++; out.push({ id: sid + '-c' + n, crate_no: n, payload: pay, weight_kg: Math.round(w * 10) / 10 });
+    }
+    return out;
+  }
+  function build() {
+    // Two shipments: one from a FREE CITY (72h, already landed) and one from a
+    // LV8 owned node, so the ETA rule is visible without waiting three days.
+    var s1 = { id: 's1', sender_name: 'Ashvane', unit_id: 'u1', origin_kind: 'city',
+      origin_label: 'Ashfall Commons (free city)', node_level: 0, free_city: true,
+      eta_hours: 72, eta_at: new Date(Date.now() - 60000).toISOString(),
+      weight_kg: 0, status: 'arrived', crates_total: 0, crates_stored: 0,
+      payload: { metal: 40, food: 60, supplies: 25 } };
+    var s2 = { id: 's2', sender_name: 'Corvin', unit_id: 'u2', origin_kind: 'house',
+      origin_label: 'Ironrow Terrace', node_level: 8, free_city: false,
+      eta_hours: 20, eta_at: new Date(Date.now() + 20 * 3600000).toISOString(),
+      weight_kg: 0, status: 'transit', crates_total: 0, crates_stored: 0,
+      payload: { fuel: 30, medicine: 40 } };
+    [s1, s2].forEach(function (s) { s.crates = crates(s.payload, s.id); s.weight_kg = wt(s.payload); s.crates_total = s.crates.length; });
+    S = {
+      ok: true, is_owner: true, config: CFG,
+      warehouse: { id: 'w1', owner_id: 'local', owner_name: 'You', node_id: 'node_demo',
+        tier: 1, units_total: 2, max_units: 4, open_to_all: true },
+      units: [
+        { id: 'u1', bay_no: 1, renter_id: 'p2', renter_name: 'Ashvane', capacity_kg: 500, used_kg: 0, contents: {}, mine: false, occupied: true },
+        { id: 'u2', bay_no: 2, renter_id: 'p3', renter_name: 'Corvin',  capacity_kg: 500, used_kg: 492, contents: { metal: 130, water: 18 }, mine: false, occupied: true }
+      ],
+      shipments: [s1, s2],
+      lifter_tier: 0,
+      wallet: { cinder: 260000, aza: 45 }
+    };
+    return S;
+  }
+  function chg(cur, amt) {
+    var w = S.wallet;
+    if (cur === 'aza') { if (w.aza < amt) return false; w.aza -= amt; }
+    else { if (w.cinder < amt) return false; w.cinder -= amt; }
+    return true;
+  }
+  return {
+    build: build,
+    rpc: function (fn, a) {
+      if (!S) build();
+      if (fn === 'wh_my_warehouse') return S;
+      if (fn === 'wh_buy_unit') {
+        var cur = a.p_currency === 'aza' ? 'aza' : 'cinder';
+        var max = CFG.tiers[S.warehouse.tier - 1].max_units;
+        if (S.warehouse.units_total >= max) return { ok: false, reason: 'tier_cap', max_units: max, tier: S.warehouse.tier };
+        var cost = cur === 'aza' ? CFG.unit_price_aza : CFG.unit_price_cinder;
+        if (!chg(cur, cost)) return { ok: false, reason: 'insufficient', currency: cur, cost: cost };
+        var n = S.units.length + 1;
+        S.units.push({ id: 'u' + n, bay_no: n, renter_id: null, renter_name: null, occupied: false,
+          capacity_kg: CFG.unit_capacity_kg, used_kg: 0, contents: {}, mine: false });
+        S.warehouse.units_total = n;
+        return Object.assign({}, S, { bought: true, spent: cost, currency: cur });
+      }
+      if (fn === 'wh_upgrade_tier') {
+        var cur2 = a.p_currency === 'aza' ? 'aza' : 'cinder';
+        var nx = S.warehouse.tier + 1;
+        if (nx > 5) return { ok: false, reason: 'max_tier' };
+        var row = CFG.tiers[nx - 1], cost2 = cur2 === 'aza' ? row.aza : row.cinder;
+        if (!chg(cur2, cost2)) return { ok: false, reason: 'insufficient', currency: cur2, cost: cost2 };
+        S.warehouse.tier = nx; S.warehouse.max_units = row.max_units;
+        // Mirror the server: an upgrade BUILDS bays, it does not just raise a cap.
+        var seed = Math.min(row.max_units, S.units.length + 2), added = 0;
+        while (S.units.length < seed) {
+          var bn = S.units.length + 1;
+          S.units.push({ id: 'u' + bn, bay_no: bn, renter_id: null, renter_name: null,
+            capacity_kg: CFG.unit_capacity_kg, used_kg: 0, contents: {}, mine: false });
+          added++;
+        }
+        S.warehouse.units_total = S.units.length;
+        return Object.assign({}, S, { upgraded: nx, spent: cost2, currency: cur2, bays_added: added });
+      }
+      if (fn === 'wh_buy_lifter') {
+        var cur3 = a.p_currency === 'aza' ? 'aza' : 'cinder', t = a.p_tier | 0;
+        if (t < 1 || t > 4) return { ok: false, reason: 'bad_tier' };
+        if (S.lifter_tier >= t) return { ok: false, reason: 'already_owned', tier: S.lifter_tier };
+        var lr = CFG.lifters[t], cost3 = cur3 === 'aza' ? lr.aza : lr.cinder;
+        if (!chg(cur3, cost3)) return { ok: false, reason: 'insufficient', currency: cur3, cost: cost3 };
+        S.lifter_tier = t;
+        return { ok: true, tier: t, carry_kg: lr.carry_kg, spent: cost3, currency: cur3, wallet: S.wallet };
+      }
+      if (fn === 'wh_expand_unit') {
+        var curE = a.p_currency === 'aza' ? 'aza' : 'cinder';
+        var uE = S.units.filter(function (x) { return x.id === a.p_unit_id; })[0];
+        if (!uE) return { ok: false, reason: 'no_unit' };
+        if (uE.capacity_kg >= CFG.unit_capacity_kg * 4) return { ok: false, reason: 'bay_maxed', capacity_kg: uE.capacity_kg };
+        var costE = curE === 'aza' ? CFG.unit_price_aza : CFG.unit_price_cinder;
+        if (!chg(curE, costE)) return { ok: false, reason: 'insufficient', currency: curE, cost: costE };
+        uE.capacity_kg += CFG.unit_capacity_kg;
+        return { ok: true, unit_id: uE.id, bay_no: uE.bay_no, capacity_kg: uE.capacity_kg,
+                 used_kg: uE.used_kg, spent: costE, currency: curE, wallet: S.wallet };
+      }
+      if (fn === 'wh_cancel_shipment') {
+        var shC = S.shipments.filter(function (x) { return x.id === a.p_shipment_id; })[0];
+        if (!shC) return { ok: false, reason: 'no_shipment' };
+        var back = {};
+        (shC.crates || []).forEach(function (c2) {
+          for (var k2 in c2.payload) back[k2] = (back[k2] || 0) + c2.payload[k2];
+        });
+        shC.status = 'cancelled'; shC.crates = [];
+        return { ok: true, payload: back };
+      }
+      if (fn === 'wh_withdraw') {
+        var uW = S.units.filter(function (x) { return x.id === a.p_unit_id; })[0];
+        if (!uW) return { ok: false, reason: 'no_unit' };
+        var out = uW.contents; uW.contents = {}; uW.used_kg = 0;
+        return { ok: true, payload: out };
+      }
+      if (fn === 'wh_store_crate') {
+        var c = null, sh = null;
+        S.shipments.forEach(function (s) { (s.crates || []).forEach(function (x) { if (x.id === a.p_crate_id) { c = x; sh = s; } }); });
+        if (!c) return { ok: false, reason: 'no_crate' };
+        if (new Date(sh.eta_at).getTime() > Date.now()) return { ok: false, reason: 'in_transit', eta_at: sh.eta_at };
+        var u = S.units.filter(function (x) { return x.id === (a.p_unit_id || sh.unit_id); })[0];
+        if (!u) return { ok: false, reason: 'no_unit' };
+        var carry = CFG.lifters[S.lifter_tier].carry_kg;
+        if (c.weight_kg > carry) return { ok: false, reason: 'too_heavy', weight_kg: c.weight_kg, carry_kg: carry, lifter_tier: S.lifter_tier };
+        if (u.used_kg + c.weight_kg > u.capacity_kg)
+          return { ok: false, reason: 'no_room', used_kg: u.used_kg, capacity_kg: u.capacity_kg, weight_kg: c.weight_kg };
+        for (var k in c.payload) u.contents[k] = (u.contents[k] || 0) + c.payload[k];
+        u.used_kg = Math.round((u.used_kg + c.weight_kg) * 10) / 10;
+        sh.crates = sh.crates.filter(function (x) { return x.id !== c.id; });
+        sh.crates_stored++;
+        if (sh.crates_stored >= sh.crates_total) sh.status = 'stored';
+        return { ok: true, crate_id: c.id, unit_id: u.id, bay_no: u.bay_no,
+          weight_kg: c.weight_kg, used_kg: u.used_kg, capacity_kg: u.capacity_kg,
+          crates_stored: sh.crates_stored, crates_total: sh.crates_total,
+          shipment_done: sh.crates_stored >= sh.crates_total };
+      }
+      return { ok: false, reason: 'unknown_fn' };
+    }
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════════════
+   🌍 THE YARD
+   ══════════════════════════════════════════════════════════════════════════ */
+var App = {
+  ready: false, held: null, near: null, carried: 0,
+  crateMeshes: {}, bayNodes: [], truck: null, colliders: [], sensors: [],
+};
+var T = null, scene, camera, renderer, clock;
+var Ctl = { yaw: 0, pitch: 0, keys: {}, move: { f: 0, b: 0, l: 0, r: 0 },
+            locked: false, drag: false, lx: 0, ly: 0, bob: 0, vy: 0 };
+
+var EYE = 1.70, SPEED = 4.2, SPRINT = 7.4;
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+  return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+function fmt(n) { return (n | 0).toLocaleString(); }
+function cfg() { var s = WH.state(); return (s && s.config) || MOCK.rpc('wh_my_warehouse', {}).config; }
+
+function toast(msg, ms) {
+  var d = document.createElement('div'); d.innerHTML = msg;
+  $('toast').appendChild(d);
+  setTimeout(function () { try { d.remove(); } catch (e) {} }, ms || 2600);
+}
+
+/* ── ⏱ ETA text. The spec's promise, said in the spec's words. ─────────────── */
+function etaText(s) {
+  var ms = new Date(s.eta_at).getTime() - Date.now();
+  if (ms <= 0) return '<span style="color:var(--good)">ARRIVED</span>';
+  var h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return '<span class="eta mono">' + h + 'h ' + m + 'm</span>';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BUILD THE SCENE
+   ══════════════════════════════════════════════════════════════════════════ */
+function buildScene() {
+  T = window.THREE;
+  renderer = new T.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = T.PCFSoftShadowMap;
+  renderer.outputEncoding = T.sRGBEncoding;
+  renderer.toneMapping = T.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
+  document.body.appendChild(renderer.domElement);
+
+  scene = new T.Scene();
+  // ⚠ A 1.5-INTENSITY WARM KEY CANNOT COME OUT OF A BLACK SKY. Background and
+  // fog were both 0x0a0c11, so the dock opening — framed dead centre every time
+  // the player walks back toward the truck — was a pure black rectangle with a
+  // hard daylight patch thrown through it onto the floor. Strong sunlight from
+  // a hole. The sky now carries a value the light can plausibly come from.
+  //
+  // ⚠⚠ AND THEN THE SAME HOLE APPEARED THE OTHER WAY UP. The fog colour used to
+  // be 0x1a2230 "to match the dome's HORIZON band", which is the same hex the
+  // gradient uses at stop 0.82 — and the two still did not match on screen,
+  // because THEY ARE NOT IN THE SAME COLOUR SPACE:
+  //   • the dome is a textured mesh, so its pixels go through ACES tone mapping
+  //     and the sRGB output encoding. Measured: 0x1a2230 on the dome renders at
+  //     luminance ~80.
+  //   • fog is mixed in <fog_fragment>, which the shader chain runs AFTER
+  //     tonemapping and encoding. Measured with near/far collapsed so every
+  //     pixel is pure fog: 0x1a2230 renders at luminance 33, its own sRGB
+  //     value, untouched.
+  // Matching the hex codes therefore GUARANTEED a mismatch of 47 luminance, and
+  // fog far = 120 meant the ground never reached even that. Measured through
+  // the yard gate from the apron, scanning down the middle of the gap:
+  //   before — sky 81.6, ground 99 → 157 in the first five rows below the
+  //            horizon, i.e. a 61-luminance rise across 5 px. Bright noon
+  //            tarmac butted against a night sky.
+  //   after  — sky 80.6, ground 82, 82, 82, 87, 95; biggest adjacent step 8.2
+  //            where it was 18.1, and the ramp is 15 px instead of 5.
+  // The fog colour is now the sky's MEASURED ON-SCREEN value, not the hex that
+  // produces it. If you change the dome gradient, re-measure it — you cannot
+  // read this number off the gradient.
+  scene.fog = new T.Fog(0x42546f, 38, 72);
+  scene.background = new T.Color(0x42546f);
+  camera = new T.PerspectiveCamera(72, innerWidth / innerHeight, 0.08, 260);
+  camera.position.set(0, EYE, -2);
+  // Restore where the player was stood, so a re-entry does not snap them back
+  // to the door — the card-shop walk does the same with App._csWalk.
+  try {
+    var _w = JSON.parse(sessionStorage.getItem('wh_walk') || 'null');
+    if (_w && isFinite(_w.x) && isFinite(_w.z)) {
+      camera.position.set(_w.x, EYE, _w.z);
+      Ctl.yaw = Ctl.cyaw = _w.yaw || 0; Ctl.pitch = Ctl.cpitch = _w.pitch || 0;
+    }
+  } catch (e) {}
+  clock = new T.Clock();
+
+  // ── THE LIGHT CENSUS, stated honestly. This scene runs SEVEN lights and TWO
+  //    shadow-map passes per frame:
+  //      2 × PointLight     the shed fixtures (no shadows)
+  //      3 × Directional    key (2048² shadow), hiBay (1024² shadow), fill
+  //      1 × Hemisphere     1 × Ambient
+  //    An earlier comment described this as "2 PointLights plus the key", which
+  //    undercounts it by three lights and hides the fact that hiBay is a SECOND
+  //    shadow map, not a free extra. Every light recompiles every material and
+  //    adds an iteration to every fragment shader; every shadow map is another
+  //    render of the scene. Add one and you are paying twice.
+  //
+  // Hemisphere carries everything the two fixtures cannot reach — the back of a
+  // 48 m shed is 20 m from the nearest one. Not a new light: this already existed.
+  // ⚠ EVERY LIGHT IS EXPOSED ON App.lights. A scene whose lighting cannot be
+  // measured cannot be verified, and two rounds were spent arguing about which
+  // light was doing what from screenshots. With this, a probe can zero any one
+  // of them and read the delta — the causation test, not a guess.
+  App.lights = {};
+  App.lights.hemi = new T.HemisphereLight(0x39435a, 0x0d0f14, 0.86);
+  App.lights.amb  = new T.AmbientLight(0x1c2230, 0.34);
+  scene.add(App.lights.hemi); scene.add(App.lights.amb);
+  // One overhead yard lamp, warm, casting the real contact shadows. Bias values
+  // come from WHTruck.SHADOW_HINT — flat slab sides stripe themselves with acne
+  // if normalBias is stingy.
+  var sh = (window.WHTruck && WHTruck.SHADOW_HINT) || { bias: -0.0002, normalBias: 0.06, mapSize: 2048 };
+  // ⚠ Use the map size the MESH IS AUTHORED FOR. Hard-coding 1024 against
+  // WHTruck.SHADOW_HINT.mapSize = 2048 halved the shadow resolution the bias
+  // values were tuned against, and produced hard horizontal corduroy banding
+  // across the middle tier of crates — in the exact frame the player sees when
+  // they press E. normalBias is raised well past the mesh hint too, because the
+  // yard has far more near-parallel flat surfaces than the truck alone.
+  var SHMAP = sh.mapSize || 2048;
+  // One place that sizes the shadow box, called at boot AND on every tier change.
+  function fitKeyShadow(L, zb) {
+    var span = Math.abs(zb) + 22;                  // site depth plus the apron
+    L.shadow.camera.left = -span; L.shadow.camera.right = span;
+    L.shadow.camera.top = span;   L.shadow.camera.bottom = -span;
+    L.shadow.camera.near = 1;     L.shadow.camera.far = span * 2.4;
+    L.shadow.camera.updateProjectionMatrix();
+  }
+  var key = new T.DirectionalLight(0xffd9a8, 1.5);
+  key.position.set(6, 20, 14); key.castShadow = true;
+  key.shadow.mapSize.set(SHMAP, SHMAP);
+  // ⚠ THE SHADOW FRUSTUM MUST REACH THE BACK WALL. Like the movement clamp,
+  // this was fixed at -30 while the shed's depth became derived: at tier 5 the
+  // building runs to z -46.6, so the back 16.6 m — half the bays — cast and
+  // received no shadows at all. Sized off the same shedZB the geometry uses,
+  // with a margin, so the two cannot drift apart.
+  // ⚠ ALL FOUR SIDES AND `far`, not just `bottom`. This is the movement-clamp
+  // bug for the third time: only the one bound that had visibly failed was made
+  // to follow the shed, and left/right/far stayed hardcoded. At tier 5 the +X
+  // back corner projects to ~30.3 in light space — just outside a ±30 frustum,
+  // so the corner silently stopped casting. Fit the whole box to the site.
+  fitKeyShadow(key, (App.shedZB != null ? App.shedZB : -19));
+  // (A `key.shadow.camera.near = 1; key.shadow.camera.far = 70;` used to sit
+  //  here, three lines under a comment insisting `far` must follow the shed
+  //  depth and one line under the call that sets it correctly. It was dead —
+  //  fitKeyShadow() runs again on every tier change and overwrote it at boot —
+  //  but it contradicted the paragraph above it, which is how the hardcoded
+  //  frustum got reintroduced twice already. Deleted rather than corrected.)
+  key.shadow.bias = sh.bias; key.shadow.normalBias = Math.max(0.28, sh.normalBias);
+  App.keyLight = key;
+  App.fitKeyShadow = fitKeyShadow;
+  scene.add(key);
+  // ⚠ THE INTERIOR HAD NO SHADOWS AT ALL. Closing the roof was right, but it
+  // removed the key light's only indoor contribution: with every other light
+  // zeroed, interior floor luminance measured p50 = 0 at all three tiers.
+  // Neither PointLight casts, nor does hemisphere, ambient or the fill — so
+  // nothing indoors touched the ground. Walking away from a bay-row face the
+  // floor read 121, 120, 119, 123, 120, 104 at 0.1 → 2.5 m: dead flat, with no
+  // contact dip at all, and the bay shells met the slab like paper standees.
+  //
+  // The fix is a second shadow-casting light INSIDE, under the roof, aimed
+  // straight down — and crucially one that FOLLOWS THE PLAYER. A static frustum
+  // big enough for a tier-5 shed is 137 m across (6.7 cm/texel even at 2048²);
+  // a 26 m box that travels with the camera is 2.5 cm/texel at 1024² and only
+  // ever renders what someone is actually looking at.
+  var hiBay = new T.DirectionalLight(0xffe6bd, 0.55);
+  hiBay.castShadow = true;
+  hiBay.shadow.mapSize.set(1024, 1024);
+  hiBay.shadow.camera.left = -13; hiBay.shadow.camera.right = 13;
+  hiBay.shadow.camera.top = 13;   hiBay.shadow.camera.bottom = -13;
+  hiBay.shadow.camera.near = 0.4; hiBay.shadow.camera.far = 12;
+  hiBay.shadow.bias = -0.0004; hiBay.shadow.normalBias = 0.05;
+  hiBay.position.set(0, 6.2, 0);
+  hiBay.target.position.set(0, 0, 0);
+  scene.add(hiBay); scene.add(hiBay.target);
+  App.hiBay = hiBay;
+  var fill = new T.DirectionalLight(0x5b76a8, 0.26); fill.position.set(-12, 8, -14); scene.add(fill);
+  App.lights.fill = fill; App.lights.key = key; App.lights.hiBay = hiBay;
+
+  var M = function (o) { return new T.MeshStandardMaterial(o); };
+  var mat = {
+    // ⚠ 0x0b0d12, not 0x14161b. This material is on ONE mesh — the 200 m ground
+    // plane — and nothing in the pipeline treats its hex as sRGB, so a colour
+    // that reads as near-black in a swatch rendered at luminance 157: brighter
+    // than the sky above it. Isolated by substitution: dropping the albedo to
+    // pure black took the same pixels to 78, and metalness/roughness moved them
+    // by 9 and 18 — the albedo was the whole of it.
+    asphalt: M({ color: 0x0b0d12, roughness: 0.58, metalness: 0.22 }),
+    slab:    M({ color: 0x1e2126, roughness: 0.95 }),   // dark concrete — the darkest value
+    // ⚠ THREE VALUES, DELIBERATELY SEPARATED. Floor, walls and bay shells were
+    // 0x2a2d34 / 0x3a3f49 / 0x4a505c — close enough in luminance (37 / 55 / 72)
+    // that from the middle of the floor the room had no depth cue at all: a
+    // grey plane meeting a grey wall in front of grey boxes. Now ~39 / 114 / 69,
+    // so the eye reads floor, then bays, then walls, in that order, and the
+    // space has a back to it.
+    wall:    M({ color: 0x6b7280, roughness: 0.82 }),   // pale galvanised sheet
+    wallRib: M({ color: 0x5a616e, roughness: 0.78 }),   // the rib profile on it
+    skirt:   M({ color: 0x2e323a, roughness: 0.92 }),   // kick rail at the floor
+    roofDek: M({ color: 0x1b1e24, roughness: 0.95 }),   // deck, read from below
+    purlin:  M({ color: 0x4e5563, roughness: 0.7, metalness: 0.5 }),
+    hazard:  M({ color: 0xd8b13a, roughness: 0.7 }),    // bollard sleeves
+    // ⚠ MEASURED, NOT CHOSEN. At 0x3f4550 the bay shells rendered at luminance
+    // 108 against a floor at 105 — indistinguishable, which is the exact defect
+    // this round exists to fix, just moved from wall-vs-floor to bay-vs-floor.
+    // Raised until the rendered gap is real: floor ~70, bays ~140, walls ~180.
+    // ⚠ ALBEDO, NOT PLACEMENT, IS WHAT HOLDS THE SEPARATION. At 0x646c7c the
+    // shells read +43 against the floor near a light fixture and −42 at the back
+    // of a tier-5 shed, because a point light at range cannot lift them. A
+    // brighter base plus a little self-lift keeps them above the floor
+    // everywhere: the separation stops depending on where the player stands.
+    // ⚠ NO EMISSIVE. Separation from the floor was real but bought by taking the
+    // largest object class in the room OUT of the light rig: with emissive
+    // 0x14181f the shells measured a flat 142 at 9 of 11 positions regardless of
+    // distance from any fixture — a constant, not a measurement, and immune to
+    // every light. Separation comes from albedo instead, so the shells shade,
+    // take the interior light's contact shadows, and still sit clear of the
+    // 0x1e2126 slab.
+    wallIn:  M({ color: 0x99a2b4, roughness: 0.82 }),
+    steel:   M({ color: 0x767d88, roughness: 0.42, metalness: 0.8 }),
+    dark:    M({ color: 0x191c22, roughness: 0.8 }),
+    gold:    M({ color: 0xd4af37, roughness: 0.35, metalness: 0.7,
+                 emissive: 0x6a5520, emissiveIntensity: 0.5 }),
+    crate:   M({ color: 0x8a6a3e, roughness: 0.86 }),
+    crateT:  M({ color: 0x6d5230, roughness: 0.9 }),
+    // A bay YOU rent is tinted green, so your own space is findable at a glance.
+    bayMine: M({ color: 0x2c4a3a, roughness: 0.85, emissive: 0x0d2a1c, emissiveIntensity: 0.6 }),
+  };
+
+  // Merge indexed BoxGeometries into one buffer — r128 keeps BufferGeometryUtils
+  // in /examples, which we do not load, and this is all we need from it.
+  // ⚠ three.js never frees GPU memory for you. buildBays() and
+  // rebuildTruckCrates() used to scene.remove() and walk away, so geometries
+  // climbed +29 per 100 refreshes and never plateaued — and refreshWorld()
+  // fires on EVERY crate stored, so a long unloading session bled steadily.
+  window.disposeNode = function (n) {
+    if (!n) return;
+    try {
+      n.traverse(function (o) {
+        if (!o.isMesh) return;
+        if (o.geometry) o.geometry.dispose();
+        var mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(function (mm) {
+          if (!mm) return;
+          if (mm.map) mm.map.dispose();
+          mm.dispose();
+        });
+      });
+    } catch (e) {}
+    try { if (n.parent) n.parent.remove(n); else scene.remove(n); } catch (e) {}
+  };
+  // ⚠ IT CARRIES UVs NOW. It copied position/normal/index only, which is fine
+  // for the untextured shells it was written for and silently wrong the moment
+  // anything with a map is merged: a bay's four signboards came out as one
+  // untextured rectangle. UVs are copied when EVERY input has them, so the
+  // untextured callers are unaffected.
+  var mergeGeos = function (list) {
+    var pos = [], nor = [], uvs = [], idx = [], base = 0;
+    var haveUV = list.every(function (g) { return !!g.attributes.uv; });
+    list.forEach(function (g) {
+      var p = g.attributes.position.array, nA = g.attributes.normal.array, iA = g.index.array;
+      for (var i = 0; i < p.length; i++) pos.push(p[i]);
+      for (var j = 0; j < nA.length; j++) nor.push(nA[j]);
+      for (var k = 0; k < iA.length; k++) idx.push(iA[k] + base);
+      if (haveUV) { var uA = g.attributes.uv.array; for (var q = 0; q < uA.length; q++) uvs.push(uA[q]); }
+      base += g.attributes.position.count;
+    });
+    var out = new T.BufferGeometry();
+    out.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+    out.setAttribute('normal', new T.Float32BufferAttribute(nor, 3));
+    if (haveUV) out.setAttribute('uv', new T.Float32BufferAttribute(uvs, 2));
+    out.setIndex(idx);
+    return out;
+  };
+  // The top band of a bay's sign canvas — the "BAY n" line on its own, without
+  // the renter subtitle underneath. Used for the boards that have to read at a
+  // glance from across the shed. Same texture object, so no second upload.
+  var signHeadUV = function (g) {
+    var uv = g.attributes.uv;
+    for (var k = 0; k < uv.count; k++) uv.setY(k, 0.305 + uv.getY(k) * 0.609);
+    uv.needsUpdate = true; return g;
+  };
+  var box = function (w, h, d, m, x, y, z, noShadow) {
+    var o = new T.Mesh(new T.BoxGeometry(w, h, d), m);
+    o.position.set(x, y, z);
+    if (!noShadow) { o.castShadow = true; o.receiveShadow = true; }
+    scene.add(o); return o;
+  };
+  // Everything solid registers an AABB. One list, one test — no per-object rules.
+  var solid = function (o, w, d) {
+    App.colliders.push({ x: o.position.x, z: o.position.z, hw: w / 2, hd: d / 2 });
+    return o;
+  };
+
+  // ── ground ──
+  var g = new T.Mesh(new T.PlaneGeometry(200, 200), mat.asphalt);
+  g.rotation.x = -Math.PI / 2; g.receiveShadow = true; scene.add(g);
+  // ⚠ NO SECOND SLAB. The apron slab used to be drawn here at y 0.01 AND again
+  // as slab2 at y 0.012 inside the shed rebuild — the lower one entirely
+  // occluded, never resized when the shed grew, and a permanently invisible
+  // draw call. Only the apron portion outside the shed is drawn here now.
+  // 28 x 16 ended a few metres past the truck and read as an edge. 44 x 34
+  // carries the concrete out to the fence line.
+  var slab = new T.Mesh(new T.PlaneGeometry(44, 34), mat.slab);
+  slab.rotation.x = -Math.PI / 2; slab.position.set(0, 0.01, 14); slab.receiveShadow = true; scene.add(slab);
+
+  // ── sky: one inverted dome with a baked vertical gradient ───────────────
+  // MeshBasic + fog:false so it is never fogged into the flat colour it exists
+  // to replace, and BackSide so we are inside it. One draw call, no lighting.
+  (function () {
+    var cv = document.createElement('canvas'); cv.width = 4; cv.height = 128;
+    var cx = cv.getContext('2d');
+    var gr = cx.createLinearGradient(0, 0, 0, 128);
+    gr.addColorStop(0.00, '#05070c');   // zenith
+    gr.addColorStop(0.55, '#101724');
+    gr.addColorStop(0.82, '#1a2230');   // horizon — MUST match scene.fog
+    gr.addColorStop(1.00, '#20293a');
+    cx.fillStyle = gr; cx.fillRect(0, 0, 4, 128);
+    // A smooth 8-bit ramp stretched over a 150 m dome bands visibly. One pass of
+    // per-row noise costs nothing and breaks the steps up.
+    var img = cx.getImageData(0, 0, 4, 128), d = img.data;
+    for (var n = 0; n < d.length; n += 4) {
+      var jitter = (Math.random() * 3 - 1.5) | 0;
+      d[n] += jitter; d[n + 1] += jitter; d[n + 2] += jitter;
+    }
+    cx.putImageData(img, 0, 0);
+    var tex = new T.CanvasTexture(cv);
+    tex.minFilter = T.LinearFilter; tex.magFilter = T.LinearFilter;
+    var dome = new T.Mesh(new T.SphereGeometry(150, 16, 12),
+      new T.MeshBasicMaterial({ map: tex, side: T.BackSide, fog: false, depthWrite: false }));
+    dome.renderOrder = -10;
+    scene.add(dome);
+  })();
+
+  // ── middle distance: a yard wall, a fence line and distant stacks ────────
+  // ⚠ The apron used to end in nothing, so the opening read as an edge rather
+  // than as somewhere the truck drove in FROM. This is deliberately crude —
+  // silhouettes at 40-60 m, all merged into ONE mesh per material, because it
+  // only has to stop the view being a hole.
+  (function () {
+    var wallG = [], postG = [], crateG = [];
+    // perimeter wall across the far side of the yard, with a gap the van uses
+    for (var i = -6; i <= 6; i++) {
+      if (i >= -1 && i <= 1) continue;                    // the gate the truck comes through
+      var w = new T.BoxGeometry(7.6, 3.2, 0.5);
+      w.translate(i * 8, 1.6, 46); wallG.push(w);
+    }
+    // returns down each side so the yard reads as enclosed, not as a flat card
+    for (var k = 0; k < 5; k++) {
+      var a = new T.BoxGeometry(0.5, 3.2, 8.4); a.translate(-50, 1.6, 46 - k * 9); wallG.push(a);
+      var b2 = new T.BoxGeometry(0.5, 3.2, 8.4); b2.translate(50, 1.6, 46 - k * 9); wallG.push(b2);
+    }
+    // Fence posts along the apron edge — WITH RAILS. Posts alone read as a row
+    // of unexplained bollards; two horizontal runs turn the same geometry into a
+    // boundary the eye accepts and stops looking at.
+    for (var j = -5; j <= 5; j++) {
+      var pg = new T.BoxGeometry(0.18, 1.5, 0.18); pg.translate(j * 4.2, 0.75, 20.5); postG.push(pg);
+    }
+    [0.55, 1.25].forEach(function (ry) {
+      var rg = new T.BoxGeometry(42.2, 0.09, 0.09); rg.translate(0, ry, 20.5); postG.push(rg);
+    });
+    // distant stacks, so the gap between apron and wall is not empty tarmac
+    var spots = [[-22, 34], [-15, 40], [14, 36], [24, 42], [30, 30], [-31, 38]];
+    for (var q = 0; q < spots.length; q++) {
+      for (var t2 = 0; t2 < 3; t2++) {
+        var cg = new T.BoxGeometry(2.2, 1.1, 2.2);
+        cg.translate(spots[q][0] + (t2 % 2) * 0.3, 0.55 + t2 * 1.1, spots[q][1]);
+        crateG.push(cg);
+      }
+    }
+    var far = new T.MeshStandardMaterial({ color: 0x232a36, roughness: 0.95 });
+    var farD = new T.MeshStandardMaterial({ color: 0x1b212b, roughness: 0.95 });
+    [[wallG, far], [postG, farD], [crateG, farD]].forEach(function (pair) {
+      if (!pair[0].length) return;
+      var m = new T.Mesh(mergeGeos(pair[0]), pair[1]);
+      m.receiveShadow = true; scene.add(m);
+    });
+  })();
+
+  // ── the shed ─────────────────────────────────────────────────────────────
+  // ⚠ THE BUILDING GROWS WITH THE BAYS. It used to be a fixed 26 x 21 m box
+  // while bays were laid out 7-to-a-row across its full width with 0.35 m
+  // between shells — and the player's collision radius is 0.42 m. A completed
+  // row was an impassable wall. A flood fill from the truck door found bays
+  // 1-14 unreachable at tier 4, and at tier 5 the yard collapsed to a 4 m²
+  // pocket with BOTH terminals and the dock door sealed off, with bays planted
+  // in the front wall and outside the building entirely. 1,500,000 Cinder
+  // bought storage nobody could walk to — the same "sold but not delivered"
+  // shape as wh_buy_unit having no callers, and exposed by fixing that one.
+  //
+  // The layout rules that make it impossible now:
+  //   • BAYS_PER_ROW is capped so a row can never span the shed,
+  //   • a SIDE CORRIDOR of AISLE_W is always left clear on the +X side,
+  //   • rows are pitched ROW_PITCH apart so there is an aisle in front of each,
+  //   • and the shed's DEPTH is derived from the row count, so the building is
+  //     always big enough for every bay the current tier can sell.
+  var BW = 3.3, BD = 3.6, BH = 3.0;          // bay width / depth / height
+  var BAYS_PER_ROW = 5, ROW_PITCH = BD + 2.6, AISLE_W = 2.6;
+  var WX = 13, ZF = 2, H = 7;
+  // Where the aisle fixtures hang. The bay block ends near x +6.2 and the wall
+  // is at +13, so this is the middle of the walking aisle — the position from
+  // which a fixture can actually see the bay flanks the player looks at.
+  var AISLE_X = 8.8;
+  function rowsFor(n) { return Math.max(1, Math.ceil(Math.max(1, n) / BAYS_PER_ROW)); }
+  function shedZB(n) { return Math.min(-19, -(3.2 + rowsFor(n) * ROW_PITCH)); }
+
+  App.shedParts = [];
+  App.shedRows = -1;
+  App.shedUnits = -1;
+  App.buildShed = function (units) {
+    var rows = rowsFor(units);
+    // ⚠ THE EARLY-OUT WATCHES units, NOT JUST rows. It used to compare row
+    // counts alone, and rows only change every 5th unit — so buying units 2, 3,
+    // 4 and 5 added bays to a floor that was still painted for one unit: no
+    // numeral in front of four of the five bays, no stall edging, and the aisle
+    // lane still drawn where the row used to stop. The bays are placed by
+    // buildBays() and the paint under them by buildShed(), and only one of the
+    // two was reacting. Repainting on every unit change costs one canvas at the
+    // moment a player buys a unit.
+    // (App.noStencils is in the comparison for _wh_stencil_check.mjs: it
+    // repaints the slab with one numeral SUPPRESSED so the gate can diff the
+    // two and isolate that glyph BY CAUSATION. The old destination-out erase
+    // removed the concrete in the numeral's shape whether or not a numeral had
+    // ever been drawn, so a deleted stencil still produced a digit-shaped diff
+    // and the gate passed it. Nothing in the game sets the flag — but the
+    // early-out has to see it or the repaint is a silent no-op and the gate
+    // measures the same texture twice.)
+    if (rows === App.shedRows && units === App.shedUnits
+        && App.noStencils === App.shedNoStencils) return;
+    App.shedRows = rows;
+    App.shedUnits = units;
+    App.shedNoStencils = App.noStencils;
+    App.shedParts.forEach(function (o) { disposeNode(o); });
+    App.shedParts = [];
+    // Drop the shed's colliders; bay colliders are rebuilt separately.
+    App.colliders = App.colliders.filter(function (c) { return !c._shed; });
+    var ZB = shedZB(units);
+    App.shedZB = ZB;
+    // Re-fit the shadow frustum to the new depth. buildScene() sizes it once at
+    // boot, but the shed grows every time a tier is bought.
+    try {
+      if (App.keyLight && App.fitKeyShadow) App.fitKeyShadow(App.keyLight, ZB);
+    } catch (e) {}
+    var keep = function (o) { App.shedParts.push(o); return o; };
+    var wall = function (w, h, d, m, x, y, z, noShadow) {
+      var o = box(w, h, d, m, x, y, z, noShadow); keep(o); return o;
+    };
+    var solidShed = function (o, w, d) {
+      var c = { x: o.position.x, z: o.position.z, hw: w / 2, hd: d / 2, _shed: true };
+      App.colliders.push(c); return o;
+    };
+    solidShed(wall(WX * 2, H, 0.5, mat.wall, 0, H / 2, ZB), WX * 2, 0.5);
+    solidShed(wall(0.5, H, ZF - ZB, mat.wall, -WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
+    solidShed(wall(0.5, H, ZF - ZB, mat.wall,  WX, H / 2, (ZB + ZF) / 2), 0.5, ZF - ZB);
+    // The dock opening is whatever the two front-wall pieces leave between them.
+    // Derived once, so the rib run below cannot disagree with the wall it is on.
+    var FRONT_PIER = 9.5, DOCK_W = WX * 2 - FRONT_PIER * 2;
+    solidShed(wall(FRONT_PIER, H, 0.5, mat.wall, -WX + FRONT_PIER / 2, H / 2, ZF), FRONT_PIER, 0.5);
+    solidShed(wall(FRONT_PIER, H, 0.5, mat.wall,  WX - FRONT_PIER / 2, H / 2, ZF), FRONT_PIER, 0.5);
+    wall(9.0, 1.6, 0.5, mat.wall, 0, H - 0.8, ZF);                 // header over the opening
+    // ⚠ THE ROOF MUST CAST. It was built with noShadow=true, so the key light
+    // passed straight THROUGH a solid roof and lit the floor directly. Flipping
+    // this one flag drops the interior floor band from 135 to 76 — about 44% of
+    // the floor's brightness was sunlight coming through the lid. Every colour
+    // number measured before this was measuring the leak, not the palette: the
+    // floor swung 58→183 across positions a player can stand in, a 125-point
+    // range on ONE uniform material, against the 33-point separation the whole
+    // interior scheme is built on. It also explained a result that should have
+    // stopped the round on its own — the shed was DIMMEST at the dock, where
+    // daylight actually enters, and brightest 32 m inside.
+    var roof = wall(WX * 2 + 0.5, 0.4, ZF - ZB, mat.wall, 0, H, (ZB + ZF) / 2);
+    // ⚠ THE ROOF MUST NOT RECEIVE. It sits ABOVE the interior shadow light, so
+    // it falls outside that light's shadow frustum (near 0.4, looking down from
+    // y 6.2) and the shadow lookup clamps to "occluded" — which painted the
+    // whole ceiling pure black the moment the light was added. It casts, so the
+    // roof still seals the room; it just does not take shadow from a lamp it is
+    // standing on top of.
+    roof.castShadow = true; roof.receiveShadow = false;
+    // Trusses + emissive strip fixtures. Lights stay at TWO no matter how long
+    // the shed gets — every extra light recompiles every material in the scene.
+    var nT = Math.max(7, Math.round((ZF - ZB) / 3.0));
+    for (var i = 0; i < nT; i++) {
+      var z = ZB + 1.6 + i * ((ZF - ZB - 3.2) / Math.max(1, nT - 1));
+      // Trusses cast too — they are what puts structure into the light.
+      // ⚠ FULL SPAN AND NO SHADOW RECEIPT. These sit above the interior light
+      // for the same reason the roof does. They also used to stop 1.83 m short
+      // of each side wall (x ±10.92 against inner faces at ±12.75) — a purlin
+      // that does not reach the wall is not carrying anything.
+      var _pl = wall(WX * 2 + 0.5, 0.28, 0.28, mat.steel, 0, H - 0.55, z);
+      _pl.castShadow = true; _pl.receiveShadow = false;
+      wall(6.0, 0.10, 0.34, mat.gold, 0, H - 0.78, z, true);   // emissive fixture: no shadow
+    }
+    // ⚠ THE LIGHT BUDGET MUST FOLLOW THE SHED — WITHOUT ADDING LIGHTS. Two
+    // fixtures at range 34 lit a 21 m tier-1 shed adequately and a 48.6 m tier-5
+    // one not at all: walls fell 211 → 136-145. That was masked while the roof
+    // leaked sunlight; closing the leak would have left tier 5 murky. Lights
+    // stay at TWO (every extra recompiles every material) but their RANGE and
+    // INTENSITY scale with the depth they have to cover, and they sit at the
+    // thirds of the shed rather than at fixed offsets from the back wall.
+    var depth = ZF - ZB;
+    var lint = 0.85 + Math.min(0.95, (depth - 21) * 0.031);
+    var lrng = Math.max(34, depth * 0.92);
+    if (!App.shedLights) {
+      // ⚠ THE FIXTURES HANG OVER THE AISLE, NOT THE CENTRELINE.
+      // They used to sit at x = 0. The bays occupy x −10.45 … +4.55 and the
+      // walking strip is x 9.2, so every bay flank you actually LOOK AT from
+      // the aisle has normal (+1,0,0) and sits at x ≈ 6.2 — which puts a light
+      // at x = 0 BEHIND it. N·L is negative there, so both fixtures delivered
+      // exactly zero to the one surface the player spends the whole walk
+      // looking at. That is why its luminance was a flat CONSTANT of 103 at
+      // five positions: hemisphere (Δ70) + ambient (Δ19) and nothing else, no
+      // matter where you stood. Measured per-light, per-face, at those exact
+      // positions — both PointLights Δ0, all three DirectionalLights Δ0.
+      // Real warehouses light the aisles for exactly this reason.
+      App.shedLights = [0.30, 0.72].map(function (f) {
+        var pl = new T.PointLight(0xffe6bd, lint, lrng, 2);
+        pl.position.set(AISLE_X, H - 1.4, ZB + depth * f); scene.add(pl); return pl;
+      });
+    }
+    try { App.lights.shed = App.shedLights; } catch (e) {}
+    App.shedLights.forEach(function (pl, i) {
+      pl.position.x = AISLE_X;
+      pl.position.z = ZB + depth * (i === 0 ? 0.30 : 0.72);
+      pl.intensity = lint; pl.distance = lrng;
+    });
+    // ── 🧱 RIBBED WALLS. Real industrial sheds are profiled steel, and a rib run
+    //    plus a kick rail does more for the room than any amount of colour work.
+    //    ⚠ EVERY DIMENSION DERIVES FROM ZB / WX / H. Hardcode a length here and
+    //    it silently stops covering the wall at tier 3 — the same way the -19.5
+    //    movement clamp survived until someone drove to tier 5. And they are
+    //    MERGED: 102 ribs at tier 5 as separate meshes would be 102 draw calls.
+    var RIB_PITCH = 1.15, RIB_W = 0.09, RIB_D = 0.05;
+    var ribGeos = [], skirtGeos = [];
+    var addRib = function (w, h, d, x, y, z) {
+      var g = new T.BoxGeometry(w, h, d); g.translate(x, y, z); ribGeos.push(g);
+    };
+    var addSkirt = function (w, h, d, x, y, z) {
+      var g = new T.BoxGeometry(w, h, d); g.translate(x, y, z); skirtGeos.push(g);
+    };
+    var ribH = H - 0.35, ribY = ribH / 2 + 0.28;
+    // back wall (spans X), ribs vertical
+    var nBack = Math.max(2, Math.round((WX * 2 - 1) / RIB_PITCH));
+    for (var rb = 0; rb <= nBack; rb++) {
+      var rx = -WX + 0.5 + rb * ((WX * 2 - 1) / nBack);
+      addRib(RIB_W, ribH, RIB_D, rx, ribY, ZB + 0.27);
+    }
+    addSkirt(WX * 2 - 0.4, 0.30, 0.10, 0, 0.15, ZB + 0.29);
+    // side walls (span Z), ribs vertical
+    var sideLen = ZF - ZB - 0.6;
+    var nSide = Math.max(2, Math.round(sideLen / RIB_PITCH));
+    for (var sd = -1; sd <= 1; sd += 2) {
+      for (var rs = 0; rs <= nSide; rs++) {
+        var rz = ZB + 0.3 + rs * (sideLen / nSide);
+        addRib(RIB_D, ribH, RIB_W, sd * (WX - 0.27), ribY, rz);
+      }
+      addSkirt(0.10, 0.30, sideLen + 0.2, sd * (WX - 0.29), 0.15, (ZB + ZF) / 2);
+    }
+    // ⚠ THE DOCK-END WALL TOO. Rib vertex counts told the story: back wall 600,
+    // side walls 1968, FRONT WALL 0 — the 26 x 7 m surface you face every time
+    // you walk back toward the truck was the one blank pale field in a room
+    // where everything else was profiled, and the corner transition was stark.
+    // It is built in two pieces because the dock opening is cut out of it.
+    var frontLen = FRONT_PIER - 0.6;
+    for (var fsd = -1; fsd <= 1; fsd += 2) {
+      var fx0 = fsd * (DOCK_W / 2 + 0.3);
+      var nFront = Math.max(2, Math.round(frontLen / RIB_PITCH));
+      for (var rf = 0; rf <= nFront; rf++) {
+        addRib(RIB_W, ribH, RIB_D, fx0 + fsd * rf * (frontLen / nFront), ribY, ZF - 0.27);
+      }
+      addSkirt(frontLen + 0.2, 0.30, 0.10, fx0 + fsd * frontLen / 2, 0.15, ZF - 0.29);
+    }
+    var ribMesh = new T.Mesh(mergeGeos(ribGeos), mat.wallRib);
+    ribMesh.receiveShadow = true; scene.add(ribMesh); keep(ribMesh);
+    var skirtMesh = new T.Mesh(mergeGeos(skirtGeos), mat.skirt);
+    skirtMesh.receiveShadow = true; scene.add(skirtMesh); keep(skirtMesh);
+
+    // ── 🏗 CEILING DEPTH — purlins between the trusses, and a deck that reads
+    //    as a deck. One merged mesh; the trusses themselves are untouched.
+    // ⚠ CONTINUOUS RUNS, WALL TO WALL. These were 1.42 m boxes butted with
+    // 0.08 m gaps, in three lines that stopped 5.8 m short of each side wall —
+    // 45% of the ceiling bare, and every butt end catching light so the whole
+    // thing read as dashed cable rather than structure. Five unbroken runs now,
+    // spanning the full depth, spaced across the full width.
+    var purGeos = [];
+    for (var pi = -2; pi <= 2; pi++) {
+      var pg = new T.BoxGeometry(0.10, 0.10, ZF - ZB - 0.5);
+      pg.translate(pi * (WX * 0.42), H - 0.30, (ZB + ZF) / 2); purGeos.push(pg);
+    }
+    if (purGeos.length) {
+      var purMesh = new T.Mesh(mergeGeos(purGeos), mat.purlin);
+      scene.add(purMesh); keep(purMesh);
+    }
+    var deck = new T.Mesh(new T.PlaneGeometry(WX * 2 - 0.6, ZF - ZB - 0.6), mat.roofDek);
+    deck.rotation.x = Math.PI / 2; deck.position.set(0, H - 0.22, (ZB + ZF) / 2);
+    deck.castShadow = true; deck.receiveShadow = true;
+    scene.add(deck); keep(deck);
+
+    // ── 🚧 THE DOCK END should say vehicles come in here. Bollards sit OUTSIDE
+    //    the 9 m opening (which spans x ±4.5) so they can never block the route
+    //    in — _wh_reach_check.mjs drives every tier and would fail if they did.
+    // ⚠ ONE SET OF BOLLARDS, AND THEY ARE SOLID. There were already gold ones
+    // at x ±7.5 z 3.2 WITH colliders; these went in at ±5.6/±7.1 z 3.1, so a
+    // chunky gold box and a slim grey cylinder parked 0.4 m apart — two design
+    // languages in one cluster. Worse, these registered NO colliders:
+    // blocked(±5.6, 3.1) returned false and you walked straight through solid
+    // steel. The gold pair is retired (see the dock-furniture block below) and
+    // these are the only ones, on a 1.5 m pitch, each with a collider.
+    var bolGeos = [], sleeveGeos = [];
+    App.bollardX = [];
+    [-1, 1].forEach(function (bs) {
+      [0, 1].forEach(function (bi) {
+        var bx = bs * (5.6 + bi * 1.9), bz = ZF + 1.1;
+        var bg = new T.CylinderGeometry(0.13, 0.15, 1.05, 10);
+        bg.translate(bx, 0.52, bz); bolGeos.push(bg);
+        var sg = new T.CylinderGeometry(0.145, 0.145, 0.22, 10);
+        sg.translate(bx, 0.80, bz); sleeveGeos.push(sg);
+          // ⚠ _shed: true. buildShed() prunes with filter(c => !c._shed), so an
+      // untagged push here survived every rebuild: 118 colliders / 4 bollards
+      // after one build became 1,630 / 104 after 25 row-count changes, four
+      // bollards deep at the same four positions. This is verbatim the bug the
+      // note on the bay colliders says _bay exists to prevent, reintroduced one
+      // object class over. blocked() is an O(n) scan run twice per axis per
+      // frame, so the cost is paid every frame forever.
+      App.colliders.push({ x: bx, z: bz, hw: 0.22, hd: 0.22, _shed: true });
+        App.bollardX.push(bx);
+      });
+    });
+    var bol = new T.Mesh(mergeGeos(bolGeos), mat.skirt);
+    bol.castShadow = true; scene.add(bol); keep(bol);
+    var slv = new T.Mesh(mergeGeos(sleeveGeos), mat.hazard);
+    slv.castShadow = true; scene.add(slv); keep(slv);
+
+    // (The old flat gold threshold plane used to sit at y 0.02, ON TOP of the
+    //  painted hazard border below, hiding it behind a plain yellow bar. The
+    //  border is painted into the floor texture now, so the plane is gone.)
+
+    // ── 🎨 THE FLOOR is the largest surface in the room and carried nothing.
+    //    One CanvasTexture — aisle lanes, a hazard-striped dock border, and a
+    //    bay-number stencil in front of every bay — costs ONE draw call and no
+    //    extra geometry. Every coordinate below is computed from the same ZB /
+    //    WX / BW / ROW_PITCH the bays themselves are placed from, so it grows
+    //    with the shed instead of drifting out of register at high tiers.
+    var fw = WX * 2 + 2, fd = ZF - ZB + 2;
+    // 34 px/m, up from 26. At tier 5 the slab is 28 x 50.6 m, so this is a
+    // 952 x 1720 canvas — the largest that still clears the 2048 clamp at every
+    // tier, and the clamp is what makes a physical size meaningless anyway.
+    var PX = 34;                                   // px per metre
+    var cw = Math.min(2048, Math.round(fw * PX)), ch = Math.min(2048, Math.round(fd * PX));
+    var sx = cw / fw, sy = ch / fd;                // world → canvas
+    var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+    var cx = cv.getContext('2d');
+    var X2 = function (x) { return (x + fw / 2) * sx; };            // world x → px
+    // ⚠ CANVAS TOP IS −Z, NOT +Z. PlaneGeometry lies in XY and the floor is
+    // rotated −90° about X, which sends the plane's local +Y to world −Z. Canvas
+    // row 0 is therefore the BACK of the shed. Mapping +z to the top instead
+    // mirrored the whole floor front-to-back: bay 5 (row 0, at the back) painted
+    // itself by the dock, and every stencil came out reversed.
+    var Z2 = function (z) { return (z - (ZB - 1)) * sy; };          // world z → px (−z at top)
+    cx.fillStyle = '#1e2126'; cx.fillRect(0, 0, cw, ch);
+    // subtle concrete mottling so the slab is not a flat fill
+    // ⚠ AGGREGATE, NOT STAINS. 900 discs of 0.23-1.3 m were large soft
+    // overlapping blotches — the most visible thing on the floor after the lane
+    // lines. Concrete aggregate is small and dense: many more, much smaller,
+    // and low enough in contrast to read as texture rather than damp patches.
+    // ⚠ SIZED IN METRES, NOT PIXELS, and dense enough to be texture. Pixel radii
+    // change meaning when the shed grows and the canvas clamps at 2048: the same
+    // "1-3 px" speck is 8 cm at tier 1 and 20 cm at tier 5. Aggregate is 1-4 cm
+    // across, so it is specified that way and converted. Count scales with area
+    // so density is constant, and alpha stays low enough that overlaps do not
+    // accumulate into the pale blotches this replaced.
+    // ⚠ SPECIFIED IN PIXELS, BECAUSE THE RASTER CANNOT HOLD CENTIMETRES.
+    // The previous version asked for 1-4 cm aggregate and was honoured in source
+    // and meaningless in output: at 26 px/m that is a radius of 0.26-1.04 px,
+    // every one of which hit the Math.max(0.6, …) floor. It rendered as uniform
+    // noise — the code said "aggregate", the pixels said "grain". Asking the
+    // canvas for a size it cannot express is a lie however carefully commented.
+    //
+    // ⚠⚠ AND THEN THE PRIMITIVE SIZE WAS THE WRONG THING TO SPECIFY. The next
+    // version asked for radius 1.1-2.8 px — "6.5-16.5 cm across at 34 px/m" —
+    // and every one of those numbers was true of a disc in isolation. Discs are
+    // not placed in isolation: 15/m² at that radius covers 15.2% of the slab,
+    // and at 15% randomly-placed discs MERGE. Measured by labelling the
+    // connected components of the covered pixels rather than by reading the
+    // radius out of the source:
+    //     15/m², r 1.1-2.8 px →  15.2% cover, blob span p50 4 px (11.8 cm),
+    //                            p90 8 px (23.5 cm), p99 14 px (41.2 cm)
+    // So nine chips in ten were inside the stated ceiling and the top tenth was
+    // half again over it, which at eye height is exactly the pale blotching the
+    // 1-4 cm version was replaced for. THE BLOB IS WHAT THE EYE SEES, NOT THE
+    // DISC. Same 15/m² so the slab is no less busy, smaller primitive so they
+    // stop touching:
+    //     15/m², r 0.8-1.9 px →   7.5% cover, blob span p50 3 px  (8.8 cm),
+    //                            p90 5 px (14.7 cm), p99 7 px (20.6 cm)
+    // Identical at 2, 8, 14 and 32 units. Alpha is raised to keep the total ink
+    // roughly where it was now that half the area is gone. If you retune this,
+    // measure the COMPONENTS — the disc radius will tell you what you want to
+    // hear.
+    // ⚠ SEEDED, NOT Math.random(). Two paints of the same slab must come out
+    // pixel-identical. _wh_stencil_check.mjs isolates a numeral by repainting
+    // the floor with App.noStencils and diffing the two canvases; a re-rolled
+    // speckle buries the glyph under ~25,000 changed pixels of noise and the
+    // diff means nothing. It is the better behaviour anyway — the floor used to
+    // re-speckle itself every time a unit was bought.
+    var mSeed = ((cw * 73856093) ^ (ch * 19349663) ^ 0x5bf03635) >>> 0;
+    var mRnd = function () {
+      mSeed = (Math.imul(mSeed, 1103515245) + 12345) >>> 0;
+      return (mSeed >>> 8) / 0x1000000;
+    };
+    var mArea = fw * fd, mN = Math.round(mArea * 15);
+    for (var mo = 0; mo < mN; mo++) {
+      cx.fillStyle = 'rgba(255,255,255,' + (0.013 + mRnd() * 0.021).toFixed(3) + ')';
+      var mr = 0.8 + mRnd() * 1.1;                        // PIXELS: 1.6-3.8 px across
+      cx.beginPath(); cx.arc(mRnd() * cw, mRnd() * ch, mr, 0, 7); cx.fill();
+    }
+    // expansion joints on a 6 m grid
+    cx.strokeStyle = 'rgba(0,0,0,0.34)'; cx.lineWidth = Math.max(1, 0.03 * sx);
+    for (var jx = -WX; jx <= WX; jx += 6) { cx.beginPath(); cx.moveTo(X2(jx), 0); cx.lineTo(X2(jx), ch); cx.stroke(); }
+    for (var jz = ZF; jz > ZB; jz -= 6) { cx.beginPath(); cx.moveTo(0, Z2(jz)); cx.lineTo(cw, Z2(jz)); cx.stroke(); }
+    // AISLE LANES down the clear side of the shed, derived from where the bay
+    // rows actually stop (they hug −X and leave AISLE_W of clear floor).
+    // ⚠ DERIVE FROM THE BAYS THAT EXIST, not from a full 5-wide row. At tier 1
+    // the two bays sit at x −10.45 and −6.7 while a full-row laneX0 put the
+    // walkway at x 7→10, hard against the far wall with ~18 m of blank slab
+    // between: a walkway leading nowhere, at the tier every player starts at.
+    var laneCols = Math.min(BAYS_PER_ROW, Math.max(1, units));
+    var laneX0 = -WX + 0.9 + laneCols * (BW + 0.45) + 0.35;
+    cx.strokeStyle = '#d8d2c0'; cx.lineWidth = Math.max(2, 0.12 * sx);
+    [laneX0, Math.min(WX - 1.0, laneX0 + 3.0)].forEach(function (lx) {
+      cx.beginPath(); cx.moveTo(X2(lx), Z2(ZF - 0.8)); cx.lineTo(X2(lx), Z2(ZB + 0.8)); cx.stroke();
+    });
+    // walkway hatching between the two lane lines
+    cx.strokeStyle = 'rgba(216,210,192,0.30)'; cx.lineWidth = Math.max(1, 0.05 * sx);
+    // ⚠ CHEVRON ANGLE. 0.6 m of rise over a 3.0 m span is 11° — a ladder lying
+    // flat, not hazard hatching. 45° is what the marking means.
+    var laneX1 = Math.min(WX - 1.0, laneX0 + 3.0);
+    for (var hz = ZB + 1.2; hz < ZF - 1.0; hz += 0.9) {
+      cx.beginPath(); cx.moveTo(X2(laneX0), Z2(hz)); cx.lineTo(X2(laneX1), Z2(hz - (laneX1 - laneX0))); cx.stroke();
+    }
+    // HAZARD BORDER along the dock edge
+    // ⚠ INSIDE THE ROOM. hy at ZF−0.10 put the band at world z 1.9-2.65 while
+    // the front wall occupies 1.75-2.25: two thirds buried under the wall and
+    // the visible third OUTSIDE on the apron. As an interior marking it did not
+    // exist. It now sits wholly inboard of the wall face.
+    var hb0 = X2(-WX + 0.5), hb1 = X2(WX - 0.5), hh = 0.75 * sy;
+    var hy = Z2(ZF - 0.35) - hh;                 // band runs from the wall inward
+    cx.save(); cx.beginPath(); cx.rect(hb0, hy, hb1 - hb0, hh); cx.clip();
+    cx.fillStyle = '#c9a227'; cx.fillRect(hb0, hy, hb1 - hb0, hh);
+    cx.fillStyle = '#1a1c21';
+    for (var sxp = hb0 - hh; sxp < hb1 + hh; sxp += hh * 1.4) {
+      cx.beginPath(); cx.moveTo(sxp, hy + hh); cx.lineTo(sxp + hh * 0.7, hy + hh);
+      cx.lineTo(sxp + hh * 1.4, hy); cx.lineTo(sxp + hh * 0.7, hy); cx.closePath(); cx.fill();
+    }
+    cx.restore();
+    // BAY NUMBER STENCILS on the floor in front of each bay — same layout maths
+    // buildBays uses, so they stay in register at every tier.
+    cx.textAlign = 'center'; cx.textBaseline = 'middle';
+    for (var bn = 0; bn < units; bn++) {
+      var bcol = bn % BAYS_PER_ROW, brow = Math.floor(bn / BAYS_PER_ROW);
+      var bx = -WX + 0.9 + BW / 2 + bcol * (BW + 0.45);
+      var bz = ZB + 1.2 + BD / 2 + brow * ROW_PITCH + BD / 2 + 0.75;
+      // ⚠ NO ROTATION. Work the chain through once and it is unambiguous:
+      //   canvas row 0 → v = 1 (three flips Y on CanvasTexture by default)
+      //   v = 1 → the plane's local +Y
+      //   rotation.x = −π/2 maps local +Y → world −Z
+      //   and Z2() already puts world −Z at canvas row 0.
+      // The two agree, so the bitmap is NOT mirrored: for a player walking in
+      // from the dock — facing −Z — screen-up IS canvas-up, and text drawn
+      // normally reads normally. A 180° rotate can only turn it upside down.
+      //
+      // This cost two rounds. It was removed, then REINSTATED on a bad
+      // verification of my own: I rendered from a camera that was not where a
+      // player stands and had no upright reference in frame, so I could not
+      // tell which way was up and trusted the wrong reading. The check that
+      // settles it is the one in _wh_stencil_check.mjs — a standing eye
+      // position with the bay's own wall sign visible in the same frame.
+      cx.save(); cx.translate(X2(bx), Z2(bz));
+      cx.font = 'bold ' + Math.round(0.85 * sy) + 'px Georgia, serif';
+      cx.fillStyle = 'rgba(216,210,192,0.80)';
+      // ⚠ TWO HOOKS FOR THE ORIENTATION GATE, recorded HERE so they cannot lie.
+      //   stencilRef() draws the same numeral CANONICALLY (translation only) on
+      //     a scratch canvas. That is the artwork as intended, and it is what
+      //     the isolated floor mask gets matched against. It is captured
+      //     OUTSIDE the transform on purpose: any rotate/scale/mirror applied
+      //     to cx above is inside the real drawing and not inside the
+      //     reference, so the two disagree the moment the floor glyph moves.
+      //   stencilAt() is where the numeral landed on the canvas, so the gate
+      //     can crop to one bay instead of diffing all 32 at once.
+      // ⚠ THE NUMERAL ONLY. The word "BAY" is drawn at alpha 0.45 and at tier 1
+      // it did not survive the diff at all, so the mask was a bare digit while
+      // the reference still carried "BAY" above it. Comparing different CONTENT
+      // reads as an orientation fault: clean tier 1 scored margin −0.332 and
+      // the gate failed a correct build. Same content on both sides or the
+      // comparison means nothing — so "BAY" is drawn unconditionally below and
+      // stays out of the diff by being identical in both paints.
+      try {
+        App.stencilRef = App.stencilRef || [];
+        App.stencilAt = App.stencilAt || [];
+        App.stencilAt[bn] = { x: X2(bx), y: Z2(bz), em: sy };
+        (function (num, fs, ta, tb) {
+          App.stencilRef[bn] = function (c2, ox, oy) {
+            c2.save(); c2.translate(ox, oy);
+            c2.textAlign = ta; c2.textBaseline = tb; c2.fillStyle = '#f00';
+            c2.font = 'bold ' + Math.round(0.85 * fs) + 'px Georgia, serif';
+            c2.fillText(String(num), 0, 0);
+            c2.restore();
+          };
+        })(bn + 1, sy, cx.textAlign, cx.textBaseline);
+      } catch (e) {}
+      // ⚠ THE ONE LINE App.noStencils SUPPRESSES. Everything else on the floor
+      // — the concrete, the joints, the lanes, the hazard band, "BAY", the
+      // stall edging — is painted identically either way, so a with/without
+      // diff of the two paints contains suppressed numerals and nothing else.
+      // true suppresses every numeral; a BAY NUMBER suppresses just that one,
+      // which is what the gate uses: with a single glyph missing, the diff of
+      // the two RENDERS is that glyph alone even when neighbouring bays are in
+      // frame, so no cropping heuristic has to guess which blob is the subject.
+      if (!(App.noStencils === true || App.noStencils === bn + 1)) {
+        cx.fillText(String(bn + 1), 0, 0);
+      }
+      cx.font = Math.round(0.30 * sy) + 'px Georgia, serif';
+      cx.fillStyle = 'rgba(216,210,192,0.45)';
+      cx.fillText('BAY', 0, -0.62 * sy);         // canvas −y = screen-up = above
+      cx.restore();
+      // stall edging either side of the bay mouth
+      cx.strokeStyle = 'rgba(216,210,192,0.5)'; cx.lineWidth = Math.max(1, 0.07 * sx);
+      cx.beginPath();
+      cx.moveTo(X2(bx - BW / 2), Z2(bz + 0.55)); cx.lineTo(X2(bx - BW / 2), Z2(bz - 1.15));
+      cx.moveTo(X2(bx + BW / 2), Z2(bz + 0.55)); cx.lineTo(X2(bx + BW / 2), Z2(bz - 1.15));
+      cx.stroke();
+    }
+    var ftex = new T.CanvasTexture(cv);
+    App.floorCanvas = cv; App.floorTex = ftex;
+    ftex.anisotropy = 4;
+    var slab2 = new T.Mesh(new T.PlaneGeometry(fw, fd),
+      new T.MeshStandardMaterial({ map: ftex, roughness: 0.95 }));
+    slab2.rotation.x = -Math.PI / 2; slab2.position.set(0, 0.012, (ZB + ZF) / 2);
+    slab2.receiveShadow = true; scene.add(slab2); keep(slab2);
+  };
+  App.buildShed(2);
+
+  // ── the bays ─────────────────────────────────────────────────────────────
+  // Numbered open-front cubicles down the back and side walls. Each bay gets a
+  // sensor so walking into it is what "putting it into storage" means.
+  App.buildBays = function () {
+    App.bayNodes.forEach(function (b) { disposeNode(b.node); });
+    App.bayNodes = [];
+    App.sensors = App.sensors.filter(function (s) { return s.kind !== 'bay'; });
+    var st = WH.state(); if (!st) return;
+    // Grow the building FIRST, so there is somewhere to put them.
+    App.buildShed(st.units.length);
+    var ZB = App.shedZB;
+    st.units.forEach(function (u, i) {
+      var col = i % BAYS_PER_ROW, row = Math.floor(i / BAYS_PER_ROW);
+      // Rows hug the −X wall and stop short of +X, leaving AISLE_W of clear
+      // floor down the whole length of the shed: every row is reachable from
+      // the dock without passing through another one.
+      var x = -WX + 0.9 + BW / 2 + col * (BW + 0.45);
+      var z = ZB + 1.2 + BD / 2 + row * ROW_PITCH;
+      var n = new T.Group(); n.position.set(x, 0, z); scene.add(n);
+      var wallM = u.mine ? mat.bayMine : mat.wallIn;
+      var sub = function (w, h, d, m, px, py, pz) {
+        var o = new T.Mesh(new T.BoxGeometry(w, h, d), m);
+        o.position.set(px, py, pz); o.castShadow = true; o.receiveShadow = true; n.add(o); return o;
+      };
+      // One merged shell per bay. Bays are static furniture; five separate
+      // boxes each was pure draw-call tax.
+      var shell = new T.Group();
+      var gs = [
+        new T.BoxGeometry(0.18, BH, BD), new T.BoxGeometry(0.18, BH, BD),
+        new T.BoxGeometry(BW, BH, 0.18)
+      ];
+      gs[0].translate(-BW / 2, BH / 2, 0);
+      gs[1].translate(BW / 2, BH / 2, 0);
+      gs[2].translate(0, BH / 2, -BD / 2);
+      // the blade's bracket rides in the shell merge, so it costs nothing
+      if ((col === BAYS_PER_ROW - 1) || (i === st.units.length - 1)) {
+        var arm = new T.BoxGeometry(0.90, 0.07, 0.07);
+        arm.translate(BW / 2 + 0.45, 2.72, 0);
+        gs.push(arm);
+      }
+      var merged = mergeGeos(gs);
+      var mm = new T.Mesh(merged, wallM);
+      mm.castShadow = true; mm.receiveShadow = true; n.add(mm);
+      sub(BW, 0.14, BD, mat.dark, 0, BH, 0);
+      var pad = new T.Mesh(new T.PlaneGeometry(BW - 0.3, BD - 0.3), mat.slab);
+      pad.rotation.x = -Math.PI / 2; pad.position.y = 0.03; n.add(pad);
+      // The bay number, painted on the back wall — a canvas texture, no fonts fetched.
+      var cv = document.createElement('canvas'); cv.width = 256; cv.height = 128;
+      var cx = cv.getContext('2d');
+      cx.fillStyle = 'rgba(0,0,0,0)'; cx.fillRect(0, 0, 256, 128);
+      cx.font = 'bold 74px Georgia,serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+      cx.fillStyle = u.mine ? '#7ce8a8' : '#ffd166';
+      cx.fillText('BAY ' + u.bay_no, 128, 52);
+      cx.font = '30px Georgia,serif'; cx.fillStyle = '#bfae87';
+      // renter_name is masked for bays that are not yours and not in your yard.
+      cx.fillText(u.renter_name ? String(u.renter_name).slice(0, 16)
+                : (u.occupied ? 'OCCUPIED' : 'UNRENTED'), 128, 100);
+      var tx = new T.CanvasTexture(cv); tx.minFilter = T.LinearFilter;
+      // ── EVERY BOARD THIS BAY CARRIES, AS ONE MESH ────────────────────────
+      // They all draw the same canvas with the same material, so merging them
+      // costs one draw call per bay no matter how many boards it has — fewer
+      // than before, which spent a second call on the row-end bays.
+      //
+      // ⚠ WHO ACTUALLY SEES EACH ONE. This went wrong by reasoning about faces
+      // instead of about sightlines:
+      //   • back wall — only visible once you are standing in the bay's mouth.
+      //   • +X wall of the last column — the only bay face that meets the open
+      //     aisle. It used to be gated on `col === BAYS_PER_ROW - 1`, i.e. the
+      //     FIFTH column, which does not exist below 5 bays: counted at every
+      //     unit count, that is 0 signs at 2 units, 0 at 4, 1 at 8, 2 at 14 and
+      //     6 at 32. Tier 1 is where every player starts and it had none. The
+      //     gate is now "the last bay that EXISTS in this row".
+      //   • mouth header — NEW, and the one every bay gets. An interior bay has
+      //     no aisle-facing face at all: the gap between bays is 0.45 m and the
+      //     next bay's wall is directly across it, so a board on an interior +X
+      //     wall is invisible from the aisle and 25 more draw calls. What every
+      //     bay does have is an open mouth onto the 1.85 m walkway a player
+      //     uses to reach it, so the number goes over the mouth, high enough to
+      //     clear the crates and the back-wall board's text.
+      //   • aisle blade — NEW. The +X decal is flat against the wall, so from
+      //     27 m down the aisle it is ~84° off-normal and the whole string
+      //     projects to about 11 px: present, unreadable, exactly the "walking
+      //     past featureless slabs" problem it was added to fix. The blade is
+      //     the same number turned to FACE down the aisle, two single-sided
+      //     planes back to back so it reads walking in either direction, on a
+      //     bracket at 2.72 m so nobody walks through it.
+      var sgeo = [];
+      var gBack = new T.PlaneGeometry(2.6, 1.3);
+      gBack.translate(0, 2.1, -BD / 2 + 0.11);
+      sgeo.push(gBack);
+      var gHead = signHeadUV(new T.PlaneGeometry(2.5, 0.75));
+      gHead.translate(0, 2.56, BD / 2 + 0.07);
+      sgeo.push(gHead);
+      // last bay that exists in this row — not the fifth column, which at tier 1
+      // is not there at all
+      var rowEnd = (col === BAYS_PER_ROW - 1) || (i === st.units.length - 1);
+      if (rowEnd) {
+        var gSide = new T.PlaneGeometry(2.4, 1.2);
+        gSide.rotateY(Math.PI / 2);
+        gSide.translate(BW / 2 + 0.10, 2.1, 0);
+        sgeo.push(gSide);
+        var bladeF = signHeadUV(new T.PlaneGeometry(1.7, 0.51));
+        bladeF.translate(BW / 2 + 0.90, 2.72, 0.012);
+        var bladeB = signHeadUV(new T.PlaneGeometry(1.7, 0.51));
+        bladeB.rotateY(Math.PI);
+        bladeB.translate(BW / 2 + 0.90, 2.72, -0.012);
+        sgeo.push(bladeF, bladeB);
+      }
+      var sign = new T.Mesh(mergeGeos(sgeo),
+        new T.MeshBasicMaterial({ map: tx, transparent: true }));
+      n.add(sign);
+      // Stacked goods, so a full bay LOOKS full.
+      var frac = bayFillPct(u) / 100;
+      var stacks = Math.round(frac * 9);
+      for (var s2 = 0; s2 < stacks; s2++) {
+        var sx = -0.95 + (s2 % 3) * 0.95, sz = -0.9 + Math.floor(s2 / 3) * 0.95;
+        sub(0.72, 0.62, 0.72, mat.crate, sx, 0.34, sz);
+      }
+      // ⚠ `_bay: true` is what refreshWorld() prunes on. Without it every
+      // refresh — one per crate stored — appended another three colliders per
+      // bay and never removed any: 16 → 136 over twenty refreshes, invisible
+      // walls accumulating around the bays.
+      App.colliders.push({ x: x - BW / 2, z: z, hw: 0.14, hd: BD / 2, _bay: true });
+      App.colliders.push({ x: x + BW / 2, z: z, hw: 0.14, hd: BD / 2, _bay: true });
+      App.colliders.push({ x: x, z: z - BD / 2, hw: BW / 2, hd: 0.14, _bay: true });
+      App.sensors.push({ kind: 'bay', unit: u, x: x, z: z + 0.4, r: 2.2 });
+      App.bayNodes.push({ node: n, unit: u });
+    });
+  };
+
+  // ── the step van, parked kerb-side to the dock ───────────────────────────
+  // rotation.y = π/2 maps the truck's local +X (the sliding door) onto world −Z,
+  // so the open door faces the warehouse and the nose points down the apron.
+  App.truck = WHTruck.build(T, { profile: 'squircle', doorOpen: true, cargoOpen: true });
+  App.truckHome = new T.Vector3(-1.2, 0, 10.5);
+  App.truck.position.copy(App.truckHome);
+  App.truck.rotation.y = Math.PI / 2;
+  scene.add(App.truck);
+  // 🚚 The van PULLS UP. It used to be parked forever, present even while the
+  // prompt read "The van is empty" — the design says trucks arrive. It drives in
+  // down the apron whenever a load lands, and reverses back out once the last
+  // crate is off it.
+  App.truckDrive = null;
+  App.truckArrive = function (instant) {
+    if (instant) { App.truck.position.copy(App.truckHome); App.truck.visible = true; return; }
+    App.truck.visible = true;
+    App.truck.position.set(App.truckHome.x + 34, 0, App.truckHome.z + 5);
+    App.truckDrive = { t0: performance.now(), dur: 3400, from: App.truck.position.clone(), to: App.truckHome.clone(), out: false };
+    toast('🚚 <b>A truck is pulling up.</b> Walk out and unload it.', 5000);
+  };
+  App.truckDepart = function () {
+    if (!App.truck.visible || App.truckDrive) return;
+    App.truckDrive = { t0: performance.now(), dur: 3000, from: App.truck.position.clone(),
+                       to: new T.Vector3(App.truckHome.x + 34, 0, App.truckHome.z + 5), out: true };
+  };
+  App.colliders.push({ x: -1.2, z: 10.5, hw: 3.7, hd: 1.15 });
+  // Where the player stands to reach into the cargo — just outside the slider.
+  // ⚠ THE SENSOR MUST SIT AT THE CARGO OPENING. It used to be placed from the
+  // truck's KERB DOOR (local z 2.26) — 3.7 m forward of the freight, beside the
+  // front wheel arch — so from the spot where E is pressed the raycast saw 0 of
+  // 12 crates, and the centre itself was inside the truck's collider and
+  // unreachable. "Press E and SEE the storage that was delivered" is only met if
+  // the crates are visible from where you stand to press it. The cargo opening
+  // is truck-local z −1.45 (the midpoint of CARGO), and rotation.y = π/2 maps
+  // local (x, z) → world (z, −x).
+  var cargoLocalZ = -1.45, standOut = 2.05;
+  App.truckDoor = { x: App.truck.position.x + cargoLocalZ, z: App.truck.position.z - standOut };
+  App.sensors.push({ kind: 'truck', x: App.truckDoor.x, z: App.truckDoor.z, r: 2.8 });
+
+  // Apron markings + a couple of bollards so the yard reads as a place.
+  var line = new T.Mesh(new T.PlaneGeometry(0.16, 16), mat.gold);
+  line.rotation.x = -Math.PI / 2; line.position.set(-5.6, 0.02, 9); scene.add(line);
+  var line2 = line.clone(); line2.position.x = 3.4; scene.add(line2);
+  // (The old gold bollards at x ±7.5 z 3.2 are retired. The dock now has ONE
+  //  set of bollards — the steel pair built with the shed, which derive from
+  //  the opening and carry their own colliders. Two of them 0.4 m apart in two
+  //  different design languages was the tell that they had been added twice.)
+
+  // ── the two terminals: weight lifters, and the building itself ───────────
+  var term = function (x, z, ry, col) {
+    var n = new T.Group(); n.position.set(x, 0, z); n.rotation.y = ry; scene.add(n);
+    var b = new T.Mesh(new T.BoxGeometry(1.0, 1.2, 0.5), mat.dark);
+    b.position.y = 0.6; b.castShadow = true; n.add(b);
+    var scr = new T.Mesh(new T.BoxGeometry(0.86, 0.62, 0.06),
+      new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.1, roughness: 0.4 }));
+    scr.position.set(0, 1.42, 0.02); n.add(scr);
+    var post = new T.Mesh(new T.BoxGeometry(0.14, 0.7, 0.14), mat.steel);
+    post.position.y = 1.0; n.add(post);
+    // No PointLight here either — the emissive screen carries it. Two terminals
+    // meant two more lights in every shader for a glow that emissive already gives.
+    App.colliders.push({ x: x, z: z, hw: 0.6, hd: 0.4 });
+    return n;
+  };
+  term(-10.6, 0.2, -0.5, 0x4aa0d8);
+  // Sensor centre pushed clear of the terminal's own collider — it used to sit
+  // inside it, so the exact point the prompt is anchored to was unstandable.
+  App.sensors.push({ kind: 'lifter', x: -9.3, z: 1.3, r: 2.4 });
+  term(10.6, 0.2, 0.5, 0xd4af37);
+  App.sensors.push({ kind: 'upgrade', x: 9.3, z: 1.3, r: 2.4 });
+
+  // ── the crate you carry ──────────────────────────────────────────────────
+  App.heldMesh = new T.Group();
+  var cb = new T.Mesh(new T.BoxGeometry(0.62, 0.5, 0.5), mat.crate);
+  App.heldMesh.add(cb);
+  [-0.24, 0.24].forEach(function (o) {
+    var s3 = new T.Mesh(new T.BoxGeometry(0.66, 0.07, 0.54), mat.crateT);
+    s3.position.y = o * 0.9; App.heldMesh.add(s3);
+  });
+  App.heldMesh.position.set(0, -0.34, -0.72);
+  App.heldMesh.visible = false;
+  camera.add(App.heldMesh);
+  scene.add(camera);
+
+  addEventListener('resize', function () {
+    camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+}
+
+/* ── 📦 the crates still sitting in the truck ─────────────────────────────── */
+// ⚠ Stacked INSIDE the cargo opening truck.js now cuts in the kerb flank, at
+// deck height, facing the warehouse. The previous build put them at y = 1.16
+// inside a sealed shell: a raycast from 1,888 standable positions saw exactly
+// none of them. If the player cannot see the load, "pick up the load" is just a
+// text prompt and a teleport.
+function rebuildTruckCrates() {
+  var st = WH.state(); if (!st || !T) return;
+  Object.keys(App.crateMeshes).forEach(function (k) {
+    disposeNode(App.crateMeshes[k]); delete App.crateMeshes[k];
+  });
+  var pending = [];
+  (st.shipments || []).forEach(function (s) {
+    if (new Date(s.eta_at).getTime() > Date.now()) return;   // still on the road
+    (s.crates || []).forEach(function (c) { pending.push({ c: c, s: s }); });
+  });
+  App.pendingCrates = pending;
+  // Roll the cargo door down when the van is empty — an open black aperture
+  // filling most of the frame is not what "the van is empty" should look like.
+  try {
+    if (App.truck && App.truckCargoOpen !== (pending.length > 0)) {
+      App.truckCargoOpen = pending.length > 0;
+      var pos = App.truck.position.clone(), rot = App.truck.rotation.y, vis = App.truck.visible;
+      disposeNode(App.truck);
+      App.truck = WHTruck.build(T, { profile: 'squircle', doorOpen: true, cargoOpen: App.truckCargoOpen });
+      App.truck.position.copy(pos); App.truck.rotation.y = rot; App.truck.visible = vis;
+      scene.add(App.truck);
+    }
+  } catch (e) {}
+  // The van is only here when there is something on it.
+  try {
+    if (!App.truckDrive) {
+      if (pending.length && !App.truck.visible) App.truckArrive(!App.ready);
+      else if (!pending.length && App.truck.visible && App.ready) App.truckDepart();
+    }
+  } catch (e) {}
+  if (App.truckDrive) return;                 // do not stack crates on a moving van
+  var CO = (window.WHTruck && WHTruck.CARGO) || { z0: -2.46, z1: -0.44, deckY: 0.66, x: 0.42 };
+  var m = new T.MeshStandardMaterial({ color: 0x8a6a3e, roughness: 0.86 });
+  var m2 = new T.MeshStandardMaterial({ color: 0x6d5230, roughness: 0.9 });
+  App.crateMats = [m, m2];
+  // Three along, two deep — and the BACK row is STEPPED UP a tier so its crates
+  // clear the front row instead of hiding behind it. Straight rows put 6 of the
+  // 12 permanently out of sight from every standable position.
+  pending.slice(0, 12).forEach(function (p, i) {
+    var col = i % 3, grp = Math.floor(i / 3);            // 0,1 front · 2,3 back
+    var row = grp >= 2 ? 1 : 0;
+    var tier = (grp % 2) + row;                          // back row starts a tier higher
+    var lz = CO.z0 + 0.42 + col * 0.62;                   // along the truck
+    var lx = CO.x - row * 0.56;                           // into the box
+    var ly = CO.deckY + 0.27 + tier * 0.52;
+    var g = new T.Group();
+    var b = new T.Mesh(new T.BoxGeometry(0.52, 0.5, 0.52), m);
+    g.add(b);
+    [-0.21, 0.21].forEach(function (o) {
+      var sl = new T.Mesh(new T.BoxGeometry(0.56, 0.055, 0.56), m2);
+      sl.position.y = o; g.add(sl);
+    });
+    // truck-local → world: the van is rotated so local +X faces world −Z.
+    g.position.set(App.truck.position.x + lz, ly, App.truck.position.z - lx);
+    g.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    scene.add(g);
+    App.crateMeshes[p.c.id] = g;
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   HUD
+   ══════════════════════════════════════════════════════════════════════════ */
+function carryLimit() {
+  var st = WH.state(), C = cfg();
+  var t = st ? (st.lifter_tier | 0) : 0;
+  return (C.lifters[t] || C.lifters[0]).carry_kg;
+}
+// True only in YOUR OWN yard. A visiting renter used to see the upgrade
+// terminal rendering the OWNER's tier with live buy buttons, while
+// wh_upgrade_tier resolves by owner_id = auth.uid() — so the charge landed on
+// the visitor's own warehouse, or came back no_warehouse.
+function isOwner() { var st = WH.state(); return !st || st.is_owner !== false; }
+function renderHud() {
+  var st = WH.state(); if (!st) return;
+  // Owner-only controls disappear when visiting somebody else's yard.
+  var own = isOwner();
+  $('b-up').style.display = own ? '' : 'none';
+  $('topbar').setAttribute('data-visiting', own ? '' : '1');
+  var C = cfg(), w = st.wallet || WH.wallet();
+  var tier = C.tiers[st.warehouse.tier - 1] || C.tiers[0];
+  $('topbar').innerHTML = '<span class="display" style="color:var(--gold)">🏗 ' + esc(tier.name) + '</span>'
+    + (own ? '' : '<span style="color:var(--mist)">visiting ' + esc(st.warehouse.owner_name || 'another player') + '</span>')
+    + '<span>Tier <b>' + st.warehouse.tier + '</b>/5</span>'
+    + '<span>Bays <b>' + st.units.length + '</b>/' + tier.max_units + '</span>';
+  $('wallet').innerHTML = '🔥 <b class="mono" style="color:var(--gold)">' + fmt(w.cinder) + '</b> Cinder'
+    + '<br>🪙 <b class="mono" style="color:var(--gold)">' + fmt(w.aza) + '</b> Aza';
+
+  var lt = C.lifters[st.lifter_tier | 0] || C.lifters[0];
+  $('lifterlbl').textContent = lt.icon + ' ' + lt.name + ' — ' + lt.carry_kg + ' kg limit';
+  var lim = carryLimit(), pct = Math.min(100, App.carried / lim * 100);
+  $('carrykg').textContent = App.carried.toFixed(1) + ' / ' + lim + ' kg';
+  $('carrybar').className = 'bar' + (App.carried > lim ? ' over' : '');
+  $('carrybar').firstChild.style.width = pct + '%';
+
+  $('bays').innerHTML = '<div class="lbl display" style="font-size:.66rem;color:var(--gold-dim);letter-spacing:.12em">Storage bays</div>'
+    + st.units.map(function (u) {
+      return '<div class="row' + (u.mine ? ' mine' : '') + '"><span class="n">BAY ' + u.bay_no + '</span>'
+        + '<span class="bar"><i style="width:' + bayFillPct(u) + '%"></i></span>'
+        + '<span class="v mono">' + bayFillText(u) + '</span></div>';
+    }).join('');
+
+  var live = (st.shipments || []).filter(function (s) { return s.status !== 'stored'; });
+  if (!live.length) {
+    $('ship').innerHTML = '<span style="color:var(--mist)">No inbound freight. Renters send from their city, house or camp.</span>';
+  } else {
+    $('ship').innerHTML = '<div class="lbl display" style="font-size:.66rem;color:var(--gold-dim);letter-spacing:.12em">Inbound</div>'
+      + live.map(function (s) {
+        var left = (s.crates || []).length;
+        return '<div style="margin-top:5px">🚚 <b>' + esc(s.sender_name || 'A renter') + '</b> → Bay '
+          + (bayNoFor(s.unit_id) || '?') + '<br><span style="color:var(--mist)">'
+          + esc(s.origin_label || s.origin_kind) + ' · '
+          + (s.free_city ? 'free city, 72h' : 'node LV ' + s.node_level + ', ' + s.eta_hours + 'h')
+          + '</span> · ' + etaText(s) + (left ? ' · <b>' + left + '</b> crates left' : '') + '</div>';
+      }).join('');
+  }
+}
+// A bay you are not entitled to see reports null for used_kg / capacity_kg.
+// Never do arithmetic on those — show the bay as occupied and move on.
+// ⚠ ONE predicate, and it asks the right question: were we actually given this
+// bay's numbers? An earlier build asked `capacity_kg != null` under the name
+// bayVisible and used it to decide whether a bay was anyone's business — but
+// the server masks capacity_kg for every bay the viewer neither owns nor rents,
+// so FREE bays failed it too. The directory advertised them, the 3D label
+// (which reads `occupied`) said "free", and walking up to one said it belonged
+// to another player. Occupancy and knowability are different questions; keep
+// them apart.
+function bayKnown(u) { return !!u && u.capacity_kg != null && u.used_kg != null; }
+function bayFillPct(u) {
+  if (!bayKnown(u)) return 0;
+  return Math.min(100, (u.used_kg || 0) / Math.max(1, u.capacity_kg) * 100);
+}
+function bayFillText(u) {
+  if (!bayKnown(u)) return u && u.occupied ? 'private' : 'free';
+  return Math.round(u.used_kg || 0) + '/' + u.capacity_kg;
+}
+function bayNoFor(unitId) {
+  var st = WH.state(); if (!st) return null;
+  var u = st.units.filter(function (x) { return x.id === unitId; })[0];
+  return u ? u.bay_no : null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MODALS
+   ══════════════════════════════════════════════════════════════════════════ */
+function closeModal() { $('modal').classList.remove('on'); }
+function openModal(title, sub, body, foot) {
+  $('m-title').innerHTML = title; $('m-sub').innerHTML = sub || '';
+  $('m-body').innerHTML = body; $('m-foot').innerHTML = '';
+  (foot || []).forEach(function (b) {
+    var el = document.createElement('button');
+    el.className = 'btn' + (b.gold ? ' gold' : ''); el.innerHTML = b.label;
+    if (b.disabled) el.disabled = true;
+    el.onclick = b.on; $('m-foot').appendChild(el);
+  });
+  $('modal').classList.add('on');
+  if (Ctl.locked) { try { document.exitPointerLock(); } catch (e) {} }
+}
+
+/* ── 📦 "You need to open storage unit space" — the spec's exact words ────── */
+// ⚠ This modal used to charge for a NEW bay. The crate in your hands is
+// addressed to the RENTER's bay, so wh_store_crate then refused it with
+// `wrong_unit` and the load stayed stranded — the player paid 50,000 Cinder for
+// nothing. Opening storage unit space now GROWS the addressed bay
+// (wh_expand_unit), which is the only purchase that can possibly help. And if
+// they would rather not pay, the load can go home instead.
+function openNoRoomModal(unit, needKg, crate) {
+  var C = cfg(), st = WH.state(), w = st.wallet || WH.wallet();
+  var maxCap = C.unit_capacity_kg * 4;
+  var maxed = unit.capacity_kg >= maxCap;
+  var body =
+    '<div class="note">Bay ' + unit.bay_no + ' is holding <b>' + Math.round(unit.used_kg) + ' kg</b> of '
+      + unit.capacity_kg + ' kg. This crate weighs <b>' + needKg + ' kg</b> and will not fit.</div>'
+    + (maxed
+      ? '<p>Bay ' + unit.bay_no + ' is already as large as one bay can get (' + maxCap
+        + ' kg). The rest of this load has to go back — or the renter needs a second bay.</p>'
+      : '<p>Open more space <b>in Bay ' + unit.bay_no + ' itself</b>. It gains another <b>'
+        + C.unit_capacity_kg + ' kg</b>, and the crate in your hands goes straight in.</p>'
+        // ⚠ TWO INDEPENDENT PRICES — NOT EQUIVALENTS. These used to be pegged
+        // and this copy said so: "the same price at the 5,000 Cinder / Aza peg".
+        // Cinder is now ×100 while Aza is unchanged, so the warehouse's own
+        // effective rate is 500,000 Cinder per Aza. Presenting them as matched
+        // would be false, and false parity copy is exactly the class of defect
+        // this module keeps getting caught on.
+        + '<p style="color:var(--mist);font-size:.82rem">Two ways to pay for the same space — '
+        + 'Aza is the short way, Cinder is the long one.</p>'
+        + '<div class="opt"><div class="g"><div class="t">🪙 ' + C.unit_price_aza + ' Aza Coin</div>'
+        + '<div class="d">You hold ' + fmt(w.aza) + ' Aza</div></div></div>'
+        + '<div class="opt"><div class="g"><div class="t">🔥 ' + fmt(C.unit_price_cinder) + ' Cinder</div>'
+        + '<div class="d">You hold ' + fmt(w.cinder) + ' Cinder</div></div></div>');
+  var foot = [{ label: 'Not now', on: closeModal }];
+  foot.push({ label: '↩ Send this load back', on: function () { returnLoad(crate); } });
+  if (!maxed) {
+    foot.push({ label: '🪙 Buy with Aza', gold: true, disabled: w.aza < C.unit_price_aza,
+      on: function () { expandUnit(unit, 'aza'); } });
+    foot.push({ label: '🔥 Buy with Cinder', gold: true, disabled: w.cinder < C.unit_price_cinder,
+      on: function () { expandUnit(unit, 'cinder'); } });
+  }
+  openModal('📦 You need to open storage unit space', 'Bay ' + unit.bay_no + ' is full', body, foot);
+}
+
+function expandUnit(unit, cur) {
+  WH.rpc('wh_expand_unit', { p_unit_id: unit.id, p_currency: cur }).then(function (r) {
+    if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3400); return; }
+    var st = WH.state();
+    var u = st.units.filter(function (x) { return x.id === r.unit_id; })[0];
+    if (u) u.capacity_kg = r.capacity_kg;
+    if (r.wallet) st.wallet = r.wallet;
+    WH.setState(st); closeModal(); refreshWorld();
+    // ⚠ The modal promises "the crate in your hands goes straight in", so put
+    // it in. It used to leave the player still holding it while the toast said
+    // "Put it in" — the copy and the behaviour contradicted each other one
+    // second apart.
+    if (App.held) {
+      var c = App.held;
+      WH.rpc('wh_store_crate', { p_crate_id: c.c.id, p_unit_id: unit.id }).then(function (r2) {
+        if (!r2 || r2.ok === false) {
+          toast('📦 Bay ' + r.bay_no + ' opened up — now ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg.', 3600);
+          return;
+        }
+        applyStored(c, r2);
+        toast('📦 Bay ' + r2.bay_no + ' opened up and the crate went straight in — '
+          + Math.round(r2.used_kg) + '/' + r2.capacity_kg + ' kg.', 4000);
+      });
+    } else {
+      toast('📦 Bay ' + r.bay_no + ' opened up — now ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg.', 3600);
+    }
+  });
+}
+
+// ↩ The way out when nobody wants to pay: the whole remaining load goes home.
+function returnLoad(crate) {
+  if (!crate) { closeModal(); return; }
+  WH.rpc('wh_cancel_shipment', { p_shipment_id: crate.s.id }).then(function (r) {
+    if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3600); return; }
+    var st = WH.state();
+    st.shipments = st.shipments.filter(function (x) { return x.id !== crate.s.id; });
+    WH.setState(st);
+    App.held = null; App.carried = 0; App.heldMesh.visible = false;
+    closeModal(); refreshWorld();
+    toast('↩ The rest of the load is on its way back to the sender.', 4200);
+  });
+}
+
+function buyUnit(cur) {
+  WH.rpc('wh_buy_unit', { p_currency: cur }).then(function (r) {
+    if (!r || r.ok === false) {
+      toast('❌ ' + reasonText(r), 3400);
+      return;
+    }
+    WH.setState(r); refreshWorld();
+    toast('📦 Storage unit opened — Bay ' + r.warehouse.units_total + ' is ready to rent out.', 3200);
+    openUpgradeModal();
+  });
+}
+
+function openUpgradeModal() {
+  var C = cfg(), st = WH.state(), w = st.wallet || WH.wallet();
+  var cur = st.warehouse.tier, next = C.tiers[cur];
+  var capNow = C.tiers[cur - 1].max_units, have = st.units.length;
+  var canBuy = have < capNow;
+  // ⚠ wh_buy_unit had ZERO call sites — the only rpc that can add a bay was
+  // dead code in both halves, so a warehouse was permanently stuck at 2 bays
+  // and "upgrade the building to store more storage for other players" bought
+  // nothing but a bigger number. The upgrade now seeds bays server-side AND
+  // the rest of the cap is buyable right here.
+  var body = '<div class="note">This warehouse has <b>' + have + '</b> of <b>' + capNow
+    + '</b> storage bays built. Every bay is one more player who can rent from you.</div>'
+    + (canBuy
+      ? '<div class="opt"><div class="g"><div class="t">➕ Open another storage bay</div>'
+        + '<div class="d">' + C.unit_capacity_kg + ' kg · 🪙 ' + C.unit_price_aza
+        + ' Aza or 🔥 ' + fmt(C.unit_price_cinder) + ' Cinder</div></div>'
+        + '<button class="btn gold" data-bay-aza="1"' + (w.aza < C.unit_price_aza ? ' disabled' : '') + '>🪙 ' + C.unit_price_aza + '</button>'
+        + '<button class="btn gold" data-bay-cin="1"' + (w.cinder < C.unit_price_cinder ? ' disabled' : '') + '>🔥 ' + fmt(C.unit_price_cinder) + '</button></div>'
+      : '<div class="note">Every bay this tier allows is built. Upgrade the building to make room for more.</div>')
+    + C.tiers.map(function (t) {
+      var state = t.tier < cur ? 'built' : t.tier === cur ? 'current' : 'locked';
+      return '<div class="opt' + (state === 'current' ? ' owned' : '') + '">'
+        + '<div class="g"><div class="t">Tier ' + t.tier + ' · ' + esc(t.name)
+        + (state === 'current' ? ' <span style="color:var(--good)">— you are here</span>' : '') + '</div>'
+        + '<div class="d">Holds up to <b>' + t.max_units + '</b> storage bays'
+        + (t.tier > 1 ? ' · 🪙 ' + t.aza + ' Aza or 🔥 ' + fmt(t.cinder) + ' Cinder · <b>+2 bays built on upgrade</b>' : ' · starting building')
+        + '</div></div></div>';
+    }).join('');
+  var foot = [{ label: 'Close', on: closeModal }];
+  if (next) {
+    foot.push({ label: '🏗 Upgrade · 🪙 ' + next.aza, gold: true, disabled: w.aza < next.aza,
+      on: function () { upgradeTier('aza'); } });
+    foot.push({ label: '🏗 Upgrade · 🔥 ' + fmt(next.cinder), gold: true, disabled: w.cinder < next.cinder,
+      on: function () { upgradeTier('cinder'); } });
+  }
+  openModal('🏗 Warehouse', next ? 'Upgrade to Tier ' + next.tier + ' · ' + esc(next.name)
+    : 'Fully upgraded', body, foot);
+  $('m-body').querySelectorAll('[data-bay-aza]').forEach(function (b) { b.onclick = function () { buyUnit('aza'); }; });
+  $('m-body').querySelectorAll('[data-bay-cin]').forEach(function (b) { b.onclick = function () { buyUnit('cinder'); }; });
+}
+
+function upgradeTier(cur) {
+  WH.rpc('wh_upgrade_tier', { p_currency: cur }).then(function (r) {
+    if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3400); return; }
+    WH.setState(r); closeModal(); refreshWorld();
+    toast('🏗 Warehouse upgraded to Tier ' + r.warehouse.tier + ' — <b>'
+      + (r.bays_added || 0) + ' new bays</b> built, ' + r.warehouse.units_total + ' of '
+      + r.warehouse.max_units + ' now standing.', 4600);
+  });
+}
+
+// ── 📦 What is actually in a bay ───────────────────────────────────────────
+// contents comes straight from wh_units; the server masks it to the warehouse
+// owner and the bay's own renter, so anything shown here is something the
+// viewer is entitled to see.
+var RES_META = {
+  food: ['🥫', 'Food'], water: ['💧', 'Water'], ammo: ['🔫', 'Ammo'],
+  medicine: ['💊', 'Medicine'], energyDrink: ['🥤', 'Energy Drink'],
+  supplies: ['📦', 'Supplies'], metal: ['⛓️', 'Metal'], fuel: ['⛽', 'Fuel'],
+  corruptedEssence: ['🟣', 'Corrupted Essence'], memoryShards: ['🧠', 'Memory Shards'],
+  dna: ['🧬', 'DNA']
+};
+function openBayModal(unit) {
+  // Three cases, and they must line up with what the 3D label already says:
+  //   • we have the numbers      → show what is stored
+  //   • occupied by someone else → say so, show nothing
+  //   • free                     → say it is FREE, because the directory is
+  //                                advertising it and the label says so too
+  if (!bayKnown(unit)) {
+    if (unit.occupied) {
+      openModal('📦 Bay ' + unit.bay_no, 'Someone else\'s storage',
+        '<div class="note">This bay belongs to another player. What is inside it, and how full it is, '
+        + 'is between them and the warehouse owner.</div>', [{ label: 'Close', on: closeModal }]);
+    } else {
+      openModal('📦 Bay ' + unit.bay_no, 'Free — nobody is renting this one',
+        '<div class="note">This bay is empty and available. Rent it from the Camp or the Real Estate '
+        + 'Office and you can ship your own resources here.</div>', [{ label: 'Close', on: closeModal }]);
+    }
+    return;
+  }
+  var c = unit.contents || {};
+  var keys = Object.keys(c).filter(function (k) { return (c[k] | 0) > 0; });
+  var pct = Math.min(100, unit.used_kg / Math.max(1, unit.capacity_kg) * 100);
+  // ⚠ renter_name is MASKED to null for a bay you neither own nor rent, so a
+  // null name does not mean "empty" — the server ships `occupied` for exactly
+  // this. Reading the mask as vacancy told players a stranger's full bay was
+  // free to take.
+  var known = (unit.renter_name != null) || (unit.used_kg != null);
+  var body = '<div class="note">' + (unit.renter_name
+      ? 'Rented by <b>' + esc(unit.renter_name) + '</b>.'
+      : (unit.occupied ? 'Rented by another player — what is inside is theirs.'
+                       : 'Not rented yet — any player can take this bay.'))
+    + (known ? ' Holding <b>' + Math.round(unit.used_kg || 0) + ' kg</b> of ' + unit.capacity_kg + ' kg.'
+             : ' Capacity ' + unit.capacity_kg + ' kg.') + '</div>'
+    + (known ? '<div class="bar" style="margin-bottom:.8rem"><i style="width:' + pct + '%"></i></div>' : '')
+    + (!known ? '<p style="color:var(--mist)">You can only see inside a bay you own the building for, or rent yourself.</p>'
+      : keys.length
+      ? keys.map(function (k) {
+          var m = RES_META[k] || ['📦', k];
+          var kg = ((cfg().weights[k] || cfg().default_weight) * c[k]).toFixed(1);
+          return '<div class="opt"><div class="g"><div class="t">' + m[0] + ' ' + esc(m[1]) + '</div>'
+            + '<div class="d mono">' + (c[k] | 0).toLocaleString() + ' units · ' + kg + ' kg</div></div></div>';
+        }).join('')
+      : '<p style="color:var(--mist)">Nothing has been carried in here yet. Loads that have landed are waiting on the van.</p>');
+  var inbound = (WH.state().shipments || []).filter(function (sp) { return sp.unit_id === unit.id && sp.status !== 'stored'; });
+  if (inbound.length) {
+    body += '<div class="note" style="margin-top:.8rem">🚚 ' + inbound.map(function (sp) {
+      var n = (sp.crates || []).length;
+      var landed = new Date(sp.eta_at).getTime() <= Date.now();
+      return esc(sp.sender_name || 'A renter') + ' — ' + n + (n === 1 ? ' crate ' : ' crates ')
+        + (landed ? 'waiting on the van to be carried in' : 'still on the road, ' + etaText(sp).replace(/<[^>]+>/g, ''));
+    }).join('<br>') + '</div>';
+  }
+  openModal('📦 Bay ' + unit.bay_no, 'What is in storage here', body, [{ label: 'Close', on: closeModal }]);
+}
+
+/* ── 🏋 weight lifters — "owners or workers can buy weight lifters" ───────── */
+function openLifterModal() {
+  var C = cfg(), st = WH.state(), w = st.wallet || WH.wallet(), have = st.lifter_tier | 0;
+  var body = '<div class="note">Every crate has a real weight. Your lifter decides the '
+    + 'heaviest single crate you can pick up — the server checks it too, so a bigger '
+    + 'lifter is the only way to move a heavy pallet.</div>'
+    + C.lifters.map(function (l) {
+      var owned = have >= l.tier;
+      return '<div class="opt' + (owned ? ' owned' : '') + '"><div class="g">'
+        + '<div class="t">' + l.icon + ' ' + esc(l.name) + ' — <span class="mono">' + l.carry_kg + ' kg</span>'
+        + (owned ? ' <span style="color:var(--good)">✓ owned</span>' : '') + '</div>'
+        + '<div class="d">' + (l.tier === 0 ? 'What you start with.'
+            : '🪙 ' + l.aza + ' Aza or 🔥 ' + fmt(l.cinder) + ' Cinder') + '</div></div>'
+        + (owned || l.tier === 0 ? '' :
+           '<button class="btn gold" data-lift-aza="' + l.tier + '"' + (w.aza < l.aza ? ' disabled' : '') + '>🪙 ' + l.aza + '</button>'
+         + '<button class="btn gold" data-lift-cin="' + l.tier + '"' + (w.cinder < l.cinder ? ' disabled' : '') + '>🔥 ' + fmt(l.cinder) + '</button>')
+        + '</div>';
+    }).join('');
+  openModal('🏋 Weight Lifters', 'Raise how much you can carry', body, [{ label: 'Close', on: closeModal }]);
+  $('m-body').querySelectorAll('[data-lift-aza]').forEach(function (b) {
+    b.onclick = function () { buyLifter(b.getAttribute('data-lift-aza') | 0, 'aza'); };
+  });
+  $('m-body').querySelectorAll('[data-lift-cin]').forEach(function (b) {
+    b.onclick = function () { buyLifter(b.getAttribute('data-lift-cin') | 0, 'cinder'); };
+  });
+}
+function buyLifter(tier, cur) {
+  WH.rpc('wh_buy_lifter', { p_tier: tier, p_currency: cur }).then(function (r) {
+    if (!r || r.ok === false) { toast('❌ ' + reasonText(r), 3400); return; }
+    var st = WH.state();
+    st.lifter_tier = r.tier;
+    if (r.wallet) st.wallet = r.wallet;
+    WH.setState(st);
+    toast('🏋 ' + cfg().lifters[r.tier].name + ' bought — you can now lift ' + r.carry_kg + ' kg.', 3200);
+    openLifterModal();
+  });
+}
+
+// ⚠ THE IFRAME HAS ITS OWN MAP AND IT IS THE ONE THAT FIRES. Fixing the host's
+// _whReason left this one covering 10 of 31 codes with a fallback that returned
+// the RAW IDENTIFIER — maxing a bay showed the player "❌ bay_maxed", and a
+// blocked rpc showed them "❌ blocked". Never return r.reason: an unmapped code
+// is a bug in this table, and the player should not be the one to read it.
+//
+// ⚠ AND IT DRIFTS AGAIN EVERY TIME THE SERVER GAINS A CODE. Three were added
+// after the last sweep — already_seeded, seeding_closed and, worst of all,
+// insufficient_resources, which is what the resource ledger returns when it
+// refuses a shipment: the single likeliest refusal in the whole feature, and it
+// rendered as "Something went wrong." The server has 34 codes; count them with
+//   grep -o "'reason', '[a-z_]*'" supabase/migrations/*_warehouse_storage.sql \
+//     | sed "s/.*'reason', '//;s/'//" | sort -u
+// and every one of them must appear here (plus the three client-only codes
+// blocked / rpc_failed / timeout, which the server never sends).
+function reasonText(r) {
+  var cur = (r && r.currency === 'aza') ? 'Aza' : 'Cinder';
+  var m = {
+    insufficient:  'Not enough ' + cur + '.',
+    // Not "not enough" — this one means the storage network's own ledger
+    // disagrees with the inventory screen. Say so, or the player reads it as
+    // the game having eaten their goods.
+    insufficient_resources: 'The storage network does not have those goods on your account. '
+                   + 'Resources earned outside the warehouse are not on its ledger yet — '
+                   + 'send what it lists, or withdraw and re-send to resync.',
+    already_seeded:'Your storage ledger has already been set up — it is only ever filled once.',
+    seeding_closed:'Storage ledger setup is closed'
+                   + (r && r.cutoff_at ? ' (it ended ' + String(r.cutoff_at).slice(0, 10) + ').' : '.'),
+    no_room:       'That bay has no room left.',
+    no_room_at_destination: 'Your bay cannot hold that much'
+                   + (r && r.free_kg != null ? ' — only ' + Math.floor(r.free_kg).toLocaleString() + ' kg is free.' : '.'),
+    too_heavy:     'That crate is too heavy for your lifter'
+                   + (r && r.weight_kg ? ' (' + r.weight_kg + ' kg vs ' + r.carry_kg + ' kg).' : '.'),
+    too_large:     'That load is too heavy for one run — send it in smaller batches.',
+    in_transit:    'That load has not arrived yet.',
+    wrong_unit:    'That crate is addressed to a different bay.',
+    already_stored:'That crate has already been put away.',
+    rental_expired:'That rental has run out — renew it before storing more.',
+    bay_maxed:     'That bay is as large as one bay can get — the renter needs a second one.',
+    tier_cap:      'This warehouse cannot hold any more bays — upgrade the building first.',
+    max_tier:      'The warehouse is already fully upgraded.',
+    already_owned: 'You already own that weight lifter.',
+    bad_tier:      'That is not a weight lifter you can buy.',
+    not_allowed:   'You are not allowed to touch that bay.',
+    not_your_unit: 'That bay is not yours.',
+    not_yours:     'That is not yours.',
+    no_unit:       'That storage bay no longer exists.',
+    no_crate:      'That crate is no longer on the van.',
+    no_shipment:   'That load no longer exists.',
+    no_warehouse:  'That warehouse no longer exists.',
+    no_free_unit:  'There is no free bay here.',
+    not_rented:    'Nobody is renting that bay.',
+    still_in_grace:'That renter still has time to collect their goods.',
+    nothing_there: 'There is nothing in there to take out.',
+    too_late:      'That load has already been put away.',
+    own_warehouse: 'That is your own warehouse.',
+    closed:        'That warehouse is not taking renters.',
+    empty_payload: 'Nothing was selected to send.',
+    bad_origin:    'That is not a valid place to send from.',
+    not_signed_in: 'You need to be signed in.',
+    blocked:       'That action is not available from here.',
+    rpc_failed:    'The storage network could not complete that.',
+    timeout:       'The storage network did not answer.'
+  };
+  return (r && m[r.reason]) || 'Something went wrong.';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   INTERACTION — pick a crate up, put it down
+   ══════════════════════════════════════════════════════════════════════════ */
+function nextCrate() {
+  var p = (App.pendingCrates || [])[0];
+  return p || null;
+}
+function doInteract() {
+  var n = App.near;
+  if (!n) return;
+  if (n.kind === 'lifter') { openLifterModal(); return; }
+  if (n.kind === 'upgrade') {
+    if (!isOwner()) { toast('🏗 This is not your warehouse — only its owner can upgrade it.', 3200); return; }
+    openUpgradeModal(); return;
+  }
+  if (n.kind === 'truck') {
+    if (App.held) { toast('You are already carrying a crate — take it to a bay.', 2400); return; }
+    var p = nextCrate();
+    if (!p) {
+      var st = WH.state();
+      var waiting = (st.shipments || []).filter(function (s) { return new Date(s.eta_at).getTime() > Date.now(); });
+      toast(waiting.length
+        ? '🚚 The van is empty. The next load lands in ' + etaText(waiting[0]).replace(/<[^>]+>/g, '') + '.'
+        : '🚚 The van is empty.', 3000);
+      return;
+    }
+    var lim = carryLimit();
+    if (p.c.weight_kg > lim) {
+      toast('🏋 That crate is <b>' + p.c.weight_kg + ' kg</b> — your lifter tops out at <b>'
+        + lim + ' kg</b>. Buy a bigger weight lifter.', 4200);
+      return;
+    }
+    App.held = p;
+    App.carried = p.c.weight_kg;
+    App.heldMesh.visible = true;
+    var m = App.crateMeshes[p.c.id]; if (m) { scene.remove(m); delete App.crateMeshes[p.c.id]; }
+    var bn = bayNoFor(p.s.unit_id);
+    toast('📦 Picked up a ' + p.c.weight_kg + ' kg crate — take it to <b>Bay ' + bn + '</b>.', 3000);
+    renderHud();
+    return;
+  }
+  if (n.kind === 'bay') {
+    // Empty-handed at a bay = LOOK INSIDE IT. This is a literal clause of the
+    // design ("press E and see the storage that was delivered") and it used to
+    // answer "Nothing to put down", which told the player nothing at all.
+    if (!App.held) { openBayModal(n.unit); return; }
+    var target = n.unit;
+    var want = App.held.s.unit_id;
+    if (target.id !== want) {
+      toast('❌ That crate is addressed to <b>Bay ' + bayNoFor(want) + '</b>, not Bay ' + target.bay_no + '.', 3400);
+      return;
+    }
+    var crate = App.held;
+    WH.rpc('wh_store_crate', { p_crate_id: crate.c.id, p_unit_id: target.id }).then(function (r) {
+      if (!r || r.ok === false) {
+        if (r && r.reason === 'no_room') { openNoRoomModal(target, crate.c.weight_kg, crate); return; }
+        toast('❌ ' + reasonText(r), 3600);
+        return;
+      }
+      applyStored(crate, r);
+      toast('📦 Stored in Bay ' + r.bay_no + ' — ' + Math.round(r.used_kg) + '/' + r.capacity_kg + ' kg'
+        + (r.shipment_done ? '. <b>Delivery complete.</b>' : '.'), 3200);
+    });
+  }
+}
+
+// Mirror the server's answer for one stored crate into local state, drop the
+// crate from the player's hands, and rebuild what changed. Shared by the normal
+// drop and by the buy-space-then-store path, so the two can never drift.
+function applyStored(crate, r) {
+  App.held = null; App.carried = 0; App.heldMesh.visible = false;
+  var st = WH.state();
+  var u = st.units.filter(function (x) { return x.id === r.unit_id; })[0];
+  if (u) { u.used_kg = r.used_kg; if (r.capacity_kg) u.capacity_kg = r.capacity_kg; }
+  (st.shipments || []).forEach(function (s) {
+    if (s.id !== crate.s.id) return;
+    s.crates = (s.crates || []).filter(function (c) { return c.id !== crate.c.id; });
+    s.crates_stored = r.crates_stored;
+    if (r.shipment_done) s.status = 'stored';
+  });
+  WH.setState(st); refreshWorld();
+}
+
+function refreshWorld() {
+  // Rebuild only what the world derives from state; the player keeps standing
+  // exactly where they were.
+  App.colliders = App.colliders.filter(function (c) { return !c._bay; });
+  App.buildBays();
+  rebuildTruckCrates();
+  renderHud();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FIRST-PERSON CONTROLLER
+   ══════════════════════════════════════════════════════════════════════════ */
+function bindControls() {
+  var el = renderer.domElement;
+  // Pointer lock is the primary control — "normal standard gaming controls".
+  // Drag-look is kept as the fallback for touch and for browsers that refuse
+  // the lock, so the yard is never unplayable.
+  el.addEventListener('click', function () {
+    if ($('modal').classList.contains('on')) return;
+    if (!Ctl.locked && el.requestPointerLock) { try { el.requestPointerLock(); } catch (e) {} }
+  });
+  document.addEventListener('pointerlockchange', function () {
+    Ctl.locked = (document.pointerLockElement === el);
+    $('cross').style.display = Ctl.locked ? 'block' : 'block';
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (Ctl.locked) {
+      Ctl.yaw -= e.movementX * 0.0022;
+      Ctl.pitch = Math.max(-1.25, Math.min(1.25, Ctl.pitch - e.movementY * 0.0022));
+    } else if (Ctl.drag) {
+      Ctl.yaw -= (e.clientX - Ctl.lx) * 0.005;
+      Ctl.pitch = Math.max(-1.25, Math.min(1.25, Ctl.pitch - (e.clientY - Ctl.ly) * 0.005));
+      Ctl.lx = e.clientX; Ctl.ly = e.clientY;
+    }
+  });
+  el.addEventListener('mousedown', function (e) { Ctl.drag = true; Ctl.lx = e.clientX; Ctl.ly = e.clientY; });
+  addEventListener('mouseup', function () { Ctl.drag = false; });
+  el.addEventListener('touchstart', function (e) {
+    var t = e.touches[0]; Ctl.drag = true; Ctl.lx = t.clientX; Ctl.ly = t.clientY;
+  }, { passive: true });
+  addEventListener('touchmove', function (e) {
+    if (!Ctl.drag) return; var t = e.touches[0];
+    Ctl.yaw -= (t.clientX - Ctl.lx) * 0.006;
+    Ctl.pitch = Math.max(-1.25, Math.min(1.25, Ctl.pitch - (t.clientY - Ctl.ly) * 0.006));
+    Ctl.lx = t.clientX; Ctl.ly = t.clientY;
+  }, { passive: true });
+  addEventListener('touchend', function () { Ctl.drag = false; });
+
+  addEventListener('keydown', function (e) {
+    var k = (e.key || '').toLowerCase();
+    Ctl.keys[k] = true;
+    if (k === 'e') { doInteract(); }
+    if (k === 'q' && App.held) { dropHeld(); }
+    if (k === 'escape' && $('modal').classList.contains('on')) closeModal();
+    if (['w', 'a', 's', 'd', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) e.preventDefault();
+  });
+  addEventListener('keyup', function (e) { Ctl.keys[(e.key || '').toLowerCase()] = false; });
+  // ⚠ Losing focus mid-stride used to leave the key DOWN: hold W, switch tabs
+  // for 2.5 s, come back and you had walked four metres blind. The browser
+  // never sends the keyup, so the state has to be cleared by hand.
+  var releaseAll = function () {
+    Ctl.keys = {}; Ctl.move.f = Ctl.move.b = Ctl.move.l = Ctl.move.r = 0; Ctl.drag = false;
+  };
+  addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); });
+
+  // Touch thumb pad.
+  var map = ['f', 'l', 'r', 'b'];
+  document.querySelectorAll('#touch .pad .k').forEach(function (b, i) {
+    var k = map[i];
+    var on = function (ev) { ev.preventDefault(); Ctl.move[k] = 1; };
+    var off = function (ev) { ev.preventDefault(); Ctl.move[k] = 0; };
+    b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off);
+    b.addEventListener('pointerleave', off); b.addEventListener('pointercancel', off);
+  });
+  $('t-use').addEventListener('click', doInteract);
+  if ('ontouchstart' in window) $('touch').classList.add('on');
+
+  $('b-exit').onclick = function () { WH.exit(); };
+  $('b-lift').onclick = openLifterModal;
+  $('b-up').onclick = openUpgradeModal;
+  $('prompt').addEventListener('click', doInteract);
+}
+
+function dropHeld() {
+  if (!App.held) return;
+  var p = App.held;
+  App.held = null; App.carried = 0; App.heldMesh.visible = false;
+  // Put it back on the van rather than leaving it in the mud.
+  App.pendingCrates = App.pendingCrates || [];
+  if (App.pendingCrates.indexOf(p) < 0) App.pendingCrates.unshift(p);
+  rebuildTruckCrates(); renderHud();
+  toast('📦 Crate put back on the van.', 2200);
+}
+
+/* ── movement + collision. One AABB list, swept per axis so sliding along a
+      wall feels right instead of sticking. ─────────────────────────────────── */
+// ⚠ THE ONLY PLACE THE YARD DECIDES WHERE A PLAYER MAY STAND.
+// The back wall MOVES: shedZB() derives the shed's depth from the bay count,
+// but this clamp used to be hardcoded at -19.5 and never followed it. At tier 5
+// the shed reaches z -46.6 and holds 32 bays — 20 of them sat behind an
+// invisible wall you could walk into but never through. 1,500,000 Cinder for 12
+// walkable bays out of 32.
+//
+// It is a FUNCTION, and the tick loop calls it, because the reachability gate
+// calls it too. The first fix left the clamp inline and taught the gate to model
+// it; the gate then happily re-certified the hardcoded version, because a gate
+// that reimplements a rule only ever tests its own copy of it. Same discipline
+// as blocked(): the check runs the game's code, never a paraphrase of it.
+function clampPos(x, z) {
+  var zBack = (App.shedZB != null ? App.shedZB : -19) + 0.6;
+  return { x: Math.max(-14.5, Math.min(14.5, x)),
+           z: Math.max(zBack, Math.min(17.0, z)) };
+}
+App.clampPos = clampPos;
+
+function blocked(x, z) {
+  var R = 0.42;
+  for (var i = 0; i < App.colliders.length; i++) {
+    var c = App.colliders[i];
+    if (Math.abs(x - c.x) < c.hw + R && Math.abs(z - c.z) < c.hd + R) return true;
+  }
+  return false;
+}
+
+function tick() {
+  requestAnimationFrame(tick);
+  var dt = Math.min(0.05, clock.getDelta());
+  if (!App.ready) { renderer.render(scene, camera); return; }
+
+  // roll the truck along its arrival / departure path
+  if (App.truckDrive) {
+    var d = App.truckDrive;
+    // ⚠ WALL CLOCK, not `dt`. Movement caps dt at 50 ms so a stalled frame can
+    // never teleport the player through a wall — but feeding that capped value
+    // to a cinematic means a machine running at 2 fps takes 34 seconds to park
+    // a 3.4-second animation. A cinematic should take the time it says.
+    var dt2 = Math.min(1, (performance.now() - d.t0) / d.dur);
+    // ease-out on arrival (it brakes), ease-in on departure (it pulls away)
+    var e = d.out ? dt2 * dt2 : 1 - Math.pow(1 - dt2, 3);
+    App.truck.position.lerpVectors(d.from, d.to, e);
+    if (dt2 >= 1) {
+      if (d.out) App.truck.visible = false;
+      App.truckDrive = null;
+      rebuildTruckCrates();
+    }
+  }
+  // Smoothed look, the same way the card-shop walk (_cs3d) does it:
+  //   const k = 1 - Math.exp(-dt * 14); cyaw += (yaw - cyaw) * k
+  // Frame-rate independent, and it gives the head real weight instead of
+  // snapping straight to the raw input.
+  if (Ctl.cyaw === undefined) { Ctl.cyaw = Ctl.yaw; Ctl.cpitch = Ctl.pitch; }
+  var kSm = 1 - Math.exp(-dt * 18);
+  Ctl.cyaw += (Ctl.yaw - Ctl.cyaw) * kSm;
+  Ctl.cpitch += (Ctl.pitch - Ctl.cpitch) * kSm;
+  camera.rotation.order = 'YXZ';
+  camera.rotation.x = Ctl.cpitch; camera.rotation.y = Ctl.cyaw;
+
+  // ⚠ Reading a modal must not walk you out of the sensor that raised it.
+  var modalOpen = $('modal').classList.contains('on');
+  var K = modalOpen ? {} : Ctl.keys, mv = modalOpen ? { f: 0, b: 0, l: 0, r: 0 } : Ctl.move;
+  var f = (K['w'] || K['arrowup'] || mv.f ? 1 : 0) - (K['s'] || K['arrowdown'] || mv.b ? 1 : 0);
+  var r = (K['d'] || K['arrowright'] || mv.r ? 1 : 0) - (K['a'] || K['arrowleft'] || mv.l ? 1 : 0);
+  if (f || r) {
+    var spd = (K['shift'] ? SPRINT : SPEED) * (App.held ? 0.78 : 1) * dt;
+    // Normalise so diagonal is not 41% faster — the classic tell of a rushed
+    // controller.
+    var len = Math.hypot(f, r); f /= len; r /= len;
+    var fx = -Math.sin(Ctl.cyaw), fz = -Math.cos(Ctl.cyaw);
+    var rx = Math.cos(Ctl.cyaw), rz = -Math.sin(Ctl.cyaw);
+    var dx = (fx * f + rx * r) * spd, dz = (fz * f + rz * r) * spd;
+    var nx = camera.position.x + dx, nz = camera.position.z + dz;
+    if (!blocked(nx, camera.position.z)) camera.position.x = nx;
+    if (!blocked(camera.position.x, nz)) camera.position.z = nz;
+    // Keep the player in the yard. The clamps used to enclose 80 x 54 m around
+    // a 26 x 30 m site, so three quarters of the walkable area was unlit grey
+    // plane with the warehouse out of sight behind you.
+    var _cp = App.clampPos(camera.position.x, camera.position.z);
+    camera.position.x = _cp.x; camera.position.z = _cp.z;
+    Ctl.bob += spd * 2.2;
+  } else {
+    Ctl.bob += dt * 1.2;
+  }
+  // Head bob: small enough not to nauseate, present enough that you are walking
+  // rather than gliding. Carrying a crate slows the cadence and deepens it.
+  var amp = (f || r) ? (App.held ? 0.035 : 0.024) : 0.004;
+  camera.position.y = EYE + Math.sin(Ctl.bob) * amp;
+  if (App.heldMesh.visible) {
+    App.heldMesh.position.y = -0.34 + Math.sin(Ctl.bob * 0.5) * 0.018;
+    App.heldMesh.rotation.z = Math.sin(Ctl.bob * 0.5) * 0.03;
+  }
+
+  // Nearest sensor → the E prompt.
+  var best = null, bd = Infinity;
+  for (var i = 0; i < App.sensors.length; i++) {
+    var s = App.sensors[i];
+    var d = Math.hypot(camera.position.x - s.x, camera.position.z - s.z);
+    if (d < s.r && d < bd) { bd = d; best = s; }
+  }
+  if (best !== App.near) {
+    App.near = best;
+    var p = $('prompt');
+    if (!best) p.style.display = 'none';
+    else {
+      p.style.display = 'block';
+      p.innerHTML = 'E — ' + promptFor(best);
+    }
+  } else if (best) {
+    $('prompt').innerHTML = 'E — ' + promptFor(best);
+  }
+
+  try {
+    if ((App._saveTick = (App._saveTick || 0) + 1) % 40 === 0) {
+      sessionStorage.setItem('wh_walk', JSON.stringify({
+        x: camera.position.x, z: camera.position.z, yaw: Ctl.cyaw, pitch: Ctl.cpitch }));
+    }
+  } catch (e) {}
+  // Walk the interior shadow light along with the player so its tight frustum is
+  // always over what is on screen.
+  //
+  // ⚠ IT IS TILTED, AND BOTH REASONS MATTER.
+  //
+  // 1. It used to sit at (camX, 6.2, camZ) aiming at (camX, 0, camZ) — straight
+  //    down. A vertical wall lit from directly overhead casts its shadow into
+  //    its own footprint, hidden underneath itself, so it could not draw a
+  //    contact shadow beside anything by construction. Measured: toggling
+  //    castShadow moved mean frame luminance 132.60 → 132.66, Δ 0.06 of ~133.
+  //    Zeroing its intensity moved it 132.6 → 121.0 — so it was contributing
+  //    ~11.6 of light and ~0 of shadow.
+  // 2. Straight down also means N·L = 0 on every VERTICAL face, so it lit the
+  //    floor and contributed exactly nothing to the bay flanks. A causation
+  //    test (zero each light, read the delta on an aisle-facing bay face)
+  //    measured: hiBay 0.0, key 0.0, hemisphere 6.1, ambient 1.8, fill 2.6 —
+  //    and the NEAREST shed point light 63.7 against the far one's 5.4. The
+  //    only thing lighting a bay flank was distance to one of two fixtures, so
+  //    between them the flanks fell to ~10 while the floor kept the ~16 that
+  //    hiBay and the key were giving it, and the floor < bays < walls ladder
+  //    inverted. That was the real bug; the albedo I changed was a symptom.
+  //
+  // So: over the player's shoulder and off to one side, aiming ahead of them.
+  // ~52° elevation gives vertical faces a real N·L and throws their shadows
+  // away from the player where they can be seen.
+  if (App.hiBay) {
+    var _hy = (Ctl.cyaw !== undefined ? Ctl.cyaw : Ctl.yaw);
+    var _fx = -Math.sin(_hy), _fz = -Math.cos(_hy);      // where the player looks
+    var _rx = Math.cos(_hy),  _rz = -Math.sin(_hy);      // their right
+    var _tx = camera.position.x + _fx * 3.0;             // aim a little ahead
+    var _tz = camera.position.z + _fz * 3.0;
+    App.hiBay.position.set(_tx - _fx * 4.2 + _rx * 2.6, 6.2, _tz - _fz * 4.2 + _rz * 2.6);
+    App.hiBay.target.position.set(_tx, 0, _tz);
+    App.hiBay.__oldFollow = false;
+    App.hiBay.target.updateMatrixWorld();
+  }
+  renderer.render(scene, camera);
+}
+function promptFor(s) {
+  if (s.kind === 'lifter') return 'Weight lifters';
+  if (s.kind === 'upgrade') return 'Warehouse & storage units';
+  if (s.kind === 'truck') {
+    if (App.held) return 'Put the crate back on the van';
+    var p = nextCrate();
+    return p ? ('Take a crate (' + p.c.weight_kg + ' kg → Bay ' + bayNoFor(p.s.unit_id) + ')')
+             : 'The van is empty';
+  }
+  if (s.kind === 'bay') {
+    if (!App.held) return 'Look in Bay ' + s.unit.bay_no + ' (' + bayFillText(s.unit) + (bayKnown(s.unit) ? ' kg)' : ')');
+    return 'Drop in Bay ' + s.unit.bay_no;
+  }
+  return 'Use';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BOOT
+   ══════════════════════════════════════════════════════════════════════════ */
+function start() {
+  if (!window.THREE) {
+    $('bootmsg').innerHTML = '3D failed to load.<br><span style="color:var(--bad)">Check the connection and reopen the warehouse.</span>';
+    return;
+  }
+  buildScene();
+  bindControls();
+  App.buildBays();
+  rebuildTruckCrates();
+  renderHud();
+  App.ready = true;
+  $('boot').classList.add('gone');
+  toast('🏗 <b>Your warehouse.</b> WASD to walk · mouse to look · <b>E</b> to use · Shift to run.', 6000);
+  tick();
+}
+
+window.addEventListener('wh:changed', function () { renderHud(); });
+
+// Ask the host for state. If nobody answers in 1.2 s we are standalone — build
+// the mock yard and play anyway, which is also how this page gets tested.
+(function boot() {
+  var started = false;
+  var go = function () { if (started) return; started = true; start(); };
+  WH.onReady(function () { go(); });
+  setTimeout(function () {
+    if (!WH.state()) { WH.setState(MOCK.build()); }
+    go();
+  }, 1200);
+})();
+</script>
+</body>
+</html>

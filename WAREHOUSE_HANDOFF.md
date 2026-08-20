@@ -461,11 +461,31 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
    `used_kg`, `capacity_kg` and `rent_until` as `null`, and the warehouse
    owner's `auth` id is never exported. The client renders those bays as
    *private*; if you add UI that reads those fields, handle `null`.
+   *(`wh_directory()` used to contradict this: it handed every signed-in caller
+   the `owner_id` of every open warehouse in the game, while
+   `wh_warehouse_json()` was carefully withholding the same UUID. The key is
+   gone from the directory row — nothing consumed it, renting takes the
+   warehouse id, and the row still carries `owner_name` for display.)*
 4. **Performance is unmeasured on real hardware.** An independent probe measured
-   **36 draw calls and 410 triangles** in the rendered frame with frame rate
-   scaling exactly with pixel count at constant calls — i.e. the 2–4 fps seen
-   headless is purely SwiftShader fill rate, not scene complexity. It is very
-   likely fine on any GPU, but nobody has measured a real one.
+   frame rate scaling exactly with pixel count at constant draw calls — i.e. the
+   2–4 fps seen headless is purely SwiftShader fill rate, not scene complexity.
+   It is very likely fine on any GPU, but nobody has measured a real one.
+   Measured from a standing view at the dock, before and after the yard's
+   backdrop work (sky dome, apron, perimeter wall, railed fence, distant crate
+   stacks) and the truck's geometry cache:
+
+   | | meshes | geometries | scene tris | draw calls | drawn tris |
+   |---|---|---|---|---|---|
+   | tier 1 before | 249 | 227 | 9,957 | 37 | 1,730 |
+   | tier 1 after | 255 | 204 | 11,353 | 40 | 2,478 |
+   | tier 5 before | 387 | 365 | 12,309 | 175 | 4,082 |
+   | tier 5 after | 399 | 348 | 13,717 | 184 | 4,842 |
+
+   Draw calls went **up** by 3 and 9: the backdrop is merged into 3 meshes plus
+   a sky dome, and tier 5 adds one aisle-facing bay sign per row. The truck's
+   geometry cache (`geoBox`/`geoCyl` in truck.js) buys **memory**, not calls —
+   143 → 116 geometries for the same 166 meshes — because each mesh is still its
+   own call. Said plainly rather than filed under "optimised".
 5. **The truck now carries three real openings** cut from the lofted shell by the
    same mechanism — the kerb door, both wheel arches, and the cargo roll-up.
    The cargo one exists because the delivered load was otherwise invisible: a
@@ -515,3 +535,17 @@ node _wh_check_all.mjs                       # runs everything below; exit 0 = s
     spans the whole cargo opening in z. Stack from the real deck instead and the
     bottom tier of crates is buried 0.40 m inside a dark box and visibly passes
     through it.
+
+11. **The floor slab repaints on every unit change, and that is load-bearing.**
+    `buildShed()`'s early-out compares `units`, not just the row count. It used
+    to compare rows alone, and rows only change every 5th unit — so buying units
+    2–5 added bays over a slab still painted for one: no numeral in front of
+    four of the five bays, no stall edging, and the aisle lane still drawn where
+    the row used to stop. The bays are placed by `buildBays()` and the paint
+    under them by `buildShed()`; both have to react to the same number.
+    The slab's speckle is **seeded**, not `Math.random()`, so two paints of the
+    same shed are pixel-identical — `_wh_stencil_check.mjs` relies on that to
+    isolate a numeral by repainting with `App.noStencils = <bay number>` and
+    diffing. That gate now catches all four orientation defects (upside down,
+    mirrored, rotated 90°, deleted) at both tiers; the measured matrix is in the
+    file's header. If you change the floor painting, keep it deterministic.

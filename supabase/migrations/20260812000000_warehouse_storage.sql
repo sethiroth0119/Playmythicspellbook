@@ -930,8 +930,14 @@ returns jsonb language sql stable security definer set search_path = public as $
   -- The page is selected FIRST, then aggregated. Aggregating and then limiting
   -- would still have built the whole list server-side.
   select coalesce((select jsonb_agg(t.row) from (
+    -- ⚠ NO owner_id. wh_warehouse_json() withholds the owner's auth UUID from
+    -- everyone but the owner, and then this function handed the same UUID to
+    -- any signed-in caller for every open warehouse in the game — the privacy
+    -- rule enforced in one path and given away in the other. Nothing needs it:
+    -- renting takes the WAREHOUSE id, the row already carries owner_name for
+    -- display, and the "not mine" filter below is applied server-side.
     select jsonb_build_object(
-      'id', w.id, 'owner_id', w.owner_id, 'owner_name', w.owner_name,
+      'id', w.id, 'owner_name', w.owner_name,
       'node_id', w.node_id, 'tier', w.tier, 'units_total', w.units_total,
       'free_units', (select count(*) from public.wh_units u
                       where u.warehouse_id = w.id

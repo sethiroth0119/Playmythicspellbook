@@ -40101,14 +40101,21 @@ function ensureAdminCardGrant() {
     };
     try { (getAllCustomCards() || []).forEach(c => c && grant(c.id)); } catch (e) {}
     try { if (typeof STARTER_HEROES !== 'undefined' && Array.isArray(STARTER_HEROES)) STARTER_HEROES.forEach(h => h && grant(h.id)); } catch (e) {}
-    // Built-in mockup pools too (harmless even when the custom-only pool hides
-    // them — keeps the admin's collection genuinely complete).
+    /* Built-in mockup pools. ⚠ This used to run unconditionally, reasoning that
+       granting them was "harmless even when the custom-only pool hides them".
+       It was not harmless: the camp Table (and the quartermaster that reads the
+       same roster) list OWNED cards straight out of Profile.cardCollection and
+       never consulted the pool flag, so this function was the reason 13
+       placeholder units showed up at the Table with bond tiers. Skip the grant
+       whenever built-ins are hidden — dev mode still gets the full set. */
     try {
-      [typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS, typeof SPELL_CARDS !== 'undefined' && SPELL_CARDS,
-       typeof TRAP_CARDS !== 'undefined' && TRAP_CARDS, typeof LOCATION_CARDS !== 'undefined' && LOCATION_CARDS,
-       typeof WEATHER_CARDS !== 'undefined' && WEATHER_CARDS, typeof WALL_CARDS !== 'undefined' && WALL_CARDS,
-       typeof HERO_CARDS !== 'undefined' && HERO_CARDS]
-        .forEach(arr => { if (Array.isArray(arr)) arr.forEach(c => c && grant(c.id)); });
+      if (!_hideBuiltins()) {
+        [typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS, typeof SPELL_CARDS !== 'undefined' && SPELL_CARDS,
+         typeof TRAP_CARDS !== 'undefined' && TRAP_CARDS, typeof LOCATION_CARDS !== 'undefined' && LOCATION_CARDS,
+         typeof WEATHER_CARDS !== 'undefined' && WEATHER_CARDS, typeof WALL_CARDS !== 'undefined' && WALL_CARDS,
+         typeof HERO_CARDS !== 'undefined' && HERO_CARDS]
+          .forEach(arr => { if (Array.isArray(arr)) arr.forEach(c => c && grant(c.id)); });
+      }
     } catch (e) {}
     App._adminGrantSig = sig;
     if (mutated) { try { saveProfile(); } catch (e) {} }
@@ -40137,11 +40144,11 @@ function spendEssence(elementId, amount) {
 // craft list since the player already owns them by definition.
 function getCraftablePool() {
   return [
-    ...UNIT_CARDS,
-    ...SPELL_CARDS,
-    ...TRAP_CARDS,
-    ...LOCATION_CARDS,
-    ...WEATHER_CARDS,
+    ..._noBuiltins(UNIT_CARDS),
+    ..._noBuiltins(SPELL_CARDS),
+    ..._noBuiltins(TRAP_CARDS),
+    ..._noBuiltins(LOCATION_CARDS),
+    ..._noBuiltins(WEATHER_CARDS),
   ];
 }
 // True if the player can pay the craft cost in the card's element.
@@ -40541,12 +40548,73 @@ const TRAP_CARDS = [
 ];
 
 // ===== Walls: blocking obstacles placed on the board =====
+
+
 const WALL_DEFAULT_HP = 50;
 const WALL_CARDS = [
   { id: 'stoneWall', name: 'Stone Wall', cost: 2, type: 'wall', icon: '🧱', desc: 'A solid 50 HP barrier — blocks movement and attacks.' },
   { id: 'iceWall',   name: 'Ice Wall',   cost: 2, type: 'wall', icon: '❄️', desc: 'A frozen 50 HP barrier.' },
   { id: 'thornWall', name: 'Thorn Wall', cost: 2, type: 'wall', icon: '🌵', desc: 'A spiky 50 HP barrier.' },
 ];
+/* 🚫 BUILT-IN MOCKUP CARDS — one predicate, asked by every pool.
+   Goblin Scout, Orc Warrior, Cave Troll, Cedric, Lyra and the rest are
+   PLACEHOLDER content from before the admin catalog existed.
+   `Forge.useCustomOnlyPool` is clamped ON in production (see the override in the
+   profile loader) and its own settings label promises "built-ins hidden
+   everywhere" — but only the Inventory, the deck builder and the pack roller
+   ever honoured it. Every other surface kept handing placeholders to players:
+   the camp Table, battle-event card drops, NPC offers, the craft list, the
+   move tutor — and ensureAdminCardGrant() actively GRANTED all of them.
+
+   ⚠ THIS GATES POOLS, NOT RESOLVERS — the distinction is the whole design.
+   A POOL decides what may be offered, granted or listed. A RESOLVER answers
+   "what is this card called" for something the player ALREADY owns. Gating a
+   resolver would turn every legacy collection entry and every saved deck slot
+   into a blank '?', so resolveDeckCard() and its siblings still see the
+   built-ins on purpose. Hiding is not deleting: no definition is removed and no
+   cardCollection is rewritten, so flipping the admin toggle back OFF restores
+   the built-in pool intact — which is what makes this safe to ship live. */
+function _hideBuiltins() {
+  try { return !!Forge.useCustomOnlyPool; } catch (e) { return false; }
+}
+// Pool helper — `_noBuiltins(UNIT_CARDS)` reads as the array it replaces.
+function _noBuiltins(arr) {
+  return _hideBuiltins() ? [] : (Array.isArray(arr) ? arr : []);
+}
+/* Id test, for the surfaces that walk Profile.cardCollection rather than a pool
+   (the camp Table is the one that started this). Built lazily and cached — the
+   source arrays are consts, so it cannot drift. */
+let _builtinIdSet = null;
+function _isBuiltinCardId(id) {
+  if (!_hideBuiltins()) return false;
+  if (!_builtinIdSet) {
+    _builtinIdSet = new Set();
+    /* ⚠ Each pool is read through its own thunk, in its own try. `typeof` on
+       a const still inside its temporal dead zone THROWS ReferenceError rather
+       than returning 'undefined' — the usual typeof guard does not protect a
+       const, so an early call would have taken out every caller at once. If the
+       pools are not initialised yet we hide NOTHING and stay uncached, so the
+       next call re-tries rather than freezing a half-built set. */
+    for (const get of [
+      () => UNIT_CARDS, () => SPELL_CARDS, () => TRAP_CARDS,
+      () => LOCATION_CARDS, () => WEATHER_CARDS, () => WALL_CARDS,
+    ]) {
+      try {
+        const arr = get();
+        if (Array.isArray(arr)) for (const c of arr) if (c && c.id) _builtinIdSet.add(c.id);
+      } catch (e) { _builtinIdSet = null; return false; }
+    }
+  }
+  if (!_builtinIdSet.has(id)) return false;
+  /* A FORGED card that reuses a built-in id is real content and must never be
+     hidden — the Inventory already treats a custom as winning an id collision
+     (see mergeByKind), so this agrees with it rather than inventing a rule. */
+  try {
+    const customs = (typeof getAllCustomCards === 'function') ? getAllCustomCards() : (Forge.customCards || []);
+    if ((customs || []).some(c => c && c.id === id)) return false;
+  } catch (e) {}
+  return true;
+}
 
 // ===== Random board events =====
 // Events are spawned on random tiles at battle start. When a hero steps on one, the event
@@ -51088,7 +51156,7 @@ async function cloudPublishCatalog(opts) {
             elements: c.elements || [], factions: c.factions || [],
           }));
           return [].concat(
-            pack(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : []),
+            pack(_noBuiltins(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : [])),
             pack(typeof SPELL_CARDS !== 'undefined' ? SPELL_CARDS : []),
             pack(typeof TRAP_CARDS !== 'undefined' ? TRAP_CARDS : [])
           );
@@ -55719,7 +55787,7 @@ function dvsAllCards() {
   const out = [];
   const seen = new Set();
   const add = (arr) => { if (Array.isArray(arr)) for (const c of arr) { if (c && c.id && !seen.has(c.id)) { seen.add(c.id); out.push(c); } } };
-  try { add(UNIT_CARDS); } catch (e) {}
+  try { add(_noBuiltins(UNIT_CARDS)); } catch (e) {}
   try { add(SPELL_CARDS); } catch (e) {}
   try { add(LOCATION_CARDS); } catch (e) {}
   try { add(TRAP_CARDS); } catch (e) {}
@@ -65871,7 +65939,7 @@ function buildNpcOffer() {
     };
   }
   const pools = [
-    { type: 'unit', src: UNIT_CARDS },
+    { type: 'unit', src: _noBuiltins(UNIT_CARDS) },
     { type: 'spell', src: SPELL_CARDS },
     { type: 'trap', src: TRAP_CARDS },
     { type: 'location', src: LOCATION_CARDS },
@@ -104642,7 +104710,8 @@ function triggerEvent(state, hero, evtTile, pos) {
   const rolled = (def.rewards || []).map(r => ({ ...r }));
   let dropped = null;
   if (hero.owner === 'player' && Math.random() < EVENT_CARD_DROP_CHANCE) {
-    const pool = [...UNIT_CARDS, ...SPELL_CARDS, ...TRAP_CARDS, ...LOCATION_CARDS, ...WEATHER_CARDS, ...Forge.customCards];
+    const pool = [..._noBuiltins(UNIT_CARDS), ..._noBuiltins(SPELL_CARDS), ..._noBuiltins(TRAP_CARDS),
+                  ..._noBuiltins(LOCATION_CARDS), ..._noBuiltins(WEATHER_CARDS), ...Forge.customCards];
     if (pool.length > 0) {
       const picked = pool[Math.floor(Math.random() * pool.length)];
       dropped = { id: picked.id, name: picked.name, icon: picked.icon, type: picked.type || 'unit' };
@@ -125401,7 +125470,7 @@ function renderPricingAdmin() {
     try { push(typeof getAllCustomCards === 'function' ? getAllCustomCards() : (Forge.customCards || [])); } catch (e) {}
     try { push((typeof Catalog !== 'undefined' && Catalog.cards) || []); } catch (e) {}
     try { push(typeof STARTER_HEROES !== 'undefined' ? STARTER_HEROES : []); } catch (e) {}
-    try { push(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : []); } catch (e) {}
+    try { push(_noBuiltins(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : [])); } catch (e) {}
     try { push(typeof SPELL_CARDS !== 'undefined' ? SPELL_CARDS : []); } catch (e) {}
     try { push(typeof TRAP_CARDS !== 'undefined' ? TRAP_CARDS : []); } catch (e) {}
     try { push(typeof LOCATION_CARDS !== 'undefined' ? LOCATION_CARDS : []); } catch (e) {}
@@ -129681,7 +129750,7 @@ function renderCardEditor() {
           const pts = Array.isArray(card.bredParents) ? card.bredParents : [];
           const unitNames = [].concat(
             ((typeof getAllCustomCards === 'function') ? getAllCustomCards() : (Forge.customCards || [])).filter((c) => c && c.type === 'unit'),
-            (typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : [])
+            _noBuiltins(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : [])
           ).map((c) => c && c.name).filter(Boolean).slice(0, 400);
           return `
         <div class="editor-field full" style="border:1px dashed rgba(140,220,160,0.45);border-radius:9px;padding:0.8rem;background:rgba(80,200,120,0.05)">
@@ -135349,7 +135418,7 @@ function renderPackEditor() {
             };
             const names = [].concat(
               (Forge.customCards || []).map((c) => c && c.name),
-              (typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : []).map((c) => c.name),
+              _noBuiltins(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : []).map((c) => c.name),
               (typeof SPELL_CARDS !== 'undefined' ? SPELL_CARDS : []).map((c) => c.name)
             ).filter(Boolean).slice(0, 400);
             return rowHtml(0, 'mythic') + rowHtml(1, 'legendary') +
@@ -135930,7 +135999,7 @@ function bindForgeStructureDecks() {
 // Pool of every card that can go into a structure deck — base + custom (no heroes).
 function getStructDeckCardPool() {
   const pool = [];
-  if (typeof UNIT_CARDS     !== 'undefined') UNIT_CARDS.forEach(c     => pool.push({ ...c, _kind: 'unit' }));
+  _noBuiltins(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : []).forEach(c => pool.push({ ...c, _kind: 'unit' }));
   if (typeof SPELL_CARDS    !== 'undefined') SPELL_CARDS.forEach(c    => pool.push({ ...c, _kind: 'spell' }));
   if (typeof TRAP_CARDS     !== 'undefined') TRAP_CARDS.forEach(c     => pool.push({ ...c, _kind: 'trap' }));
   if (typeof LOCATION_CARDS !== 'undefined') LOCATION_CARDS.forEach(c => pool.push({ ...c, _kind: 'location' }));
@@ -136107,13 +136176,13 @@ function renderForgeLoadouts() {
     { id: 'heroes', label: 'Heroes', icon: '⚔️' },
     { id: 'units',  label: 'Base Units', icon: '🪖' },
     { id: 'custom', label: 'Custom Cards', icon: '🦄' },
-  ].map(g => `<button class="btn-secondary ${App.loadoutGroup === g.id ? 'active' : ''}" data-group="${g.id}" style="${App.loadoutGroup === g.id ? 'border-color:var(--gold);color:var(--gold)' : ''}">${g.icon} ${g.label}</button>`).join('');
+  ].filter(g => !(g.id === 'units' && _hideBuiltins())).map(g => `<button class="btn-secondary ${App.loadoutGroup === g.id ? 'active' : ''}" data-group="${g.id}" style="${App.loadoutGroup === g.id ? 'border-color:var(--gold);color:var(--gold)' : ''}">${g.icon} ${g.label}</button>`).join('');
 
   let entries = [];
   if (App.loadoutGroup === 'heroes') {
     entries = STARTER_HEROES.map(h => ({ key: 'h_' + h.id, name: h.name, icon: h.icon, element: h.element, level: getHeroProfile(h.id).level }));
   } else if (App.loadoutGroup === 'units') {
-    entries = UNIT_CARDS.map(u => ({ key: 'u_' + u.id, name: u.name, icon: u.icon, element: u.element, level: getUnitProfile(u.id).level }));
+    entries = _noBuiltins(UNIT_CARDS).map(u => ({ key: 'u_' + u.id, name: u.name, icon: u.icon, element: u.element, level: getUnitProfile(u.id).level }));
   } else {
     entries = Forge.customCards.map(c => ({ key: 'u_' + c.id, name: c.name, icon: c.icon, element: c.element, level: getUnitProfile(c.id).level }));
   }
@@ -136241,7 +136310,7 @@ function renderSprites() {
   const _prevScroll = (typeof window !== 'undefined') ? (window.scrollY || window.pageYOffset || 0) : 0;
   // Build the subject list: heroes, base unit cards, custom cards, Kalon forms
   const heroSubjects = STARTER_HEROES.map(h => ({ id: 'h_' + h.id, name: h.name, sub: 'Hero', icon: h.icon }));
-  const unitSubjects = UNIT_CARDS.map(u => ({ id: 'u_' + u.id, name: u.name, sub: 'Unit', icon: u.icon }));
+  const unitSubjects = _noBuiltins(UNIT_CARDS).map(u => ({ id: 'u_' + u.id, name: u.name, sub: 'Unit', icon: u.icon }));
   const customSubjects = Forge.customCards
     .filter(c => c.type !== 'hero') // heroes already appear under "Heroes" via custom-hero registration; units only here
     .map(c => ({ id: 'u_' + c.id, name: c.name, sub: c.type === 'hero' ? 'Hero (Custom)' : 'Custom', icon: c.icon }));
@@ -136251,7 +136320,7 @@ function renderSprites() {
     .map(c => ({ id: 'h_' + c.id, name: c.name, sub: 'Custom Hero', icon: c.icon }));
   // Kalon forms — any unit card (custom or base) that has a kalonForm exposes a separate subject
   const kalonSourceCards = [
-    ...UNIT_CARDS.filter(c => c.kalonForm),
+    ..._noBuiltins(UNIT_CARDS).filter(c => c.kalonForm),
     ...Forge.customCards.filter(c => c.kalonForm && c.type === 'unit'),
   ];
   const kalonSubjects = kalonSourceCards.map(c => ({
@@ -157140,7 +157209,7 @@ function getTutorTargets() {
     learnset: h.learnset || [], factions: getFactionsOf(h),
     elements: getElementsOf(h),
   }));
-  const units = UNIT_CARDS.map(u => ({
+  const units = _noBuiltins(UNIT_CARDS).map(u => ({
     kind: 'unit', id: u.id, name: u.name, icon: u.icon, sub: 'Unit',
     learnset: u.learnset || [], factions: getFactionsOf(u),
     elements: getElementsOf(u),
@@ -214030,6 +214099,7 @@ window.MythicRanchBridge = {
       const coll = Profile.cardCollection || {}, out = [];
       for (const id in (Profile.units || {})) {
         if (!((coll[id] | 0) > 0)) continue;
+        if (_isBuiltinCardId(id)) continue;      // placeholders get no seat at the Table
         const prof = Profile.units[id]; if (!prof) continue;
         let card = null;
         try { card = resolveDeckCard('unit:' + id) || (typeof lookupCustomCard === 'function' ? lookupCustomCard(id) : null); } catch (e) {}
@@ -220220,7 +220290,7 @@ function renderBestiary() {
   });
   // Units = UNIT_CARDS + custom forge cards that AREN'T heroes (units, etc.)
   const allUnitDefs = [
-    ...UNIT_CARDS.map(u => ({ ...u, source: 'base' })),
+    ..._noBuiltins(UNIT_CARDS).map(u => ({ ...u, source: 'base' })),
     ...Forge.customCards.filter(c => c.type !== 'hero').map(c => ({ ...c, source: 'custom' })),
   ];
   const unitEntries = allUnitDefs.map(u => {

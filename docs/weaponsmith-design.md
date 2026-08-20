@@ -3,13 +3,17 @@
 **Status:** design agreed, not yet built. Branch `claude/weapon-smith-crafting-yczg12`.
 **Inspiration:** Gunsmith Simulator (strip → clean → assemble → proof → deliver).
 
-Three decisions were made up front and everything below follows from them:
+Five decisions are settled, and everything below follows from them:
 
 1. **Power ceiling — crafted weapons sidegrade INTO existing stat budgets.** Never a new
    top tier. A perfect craft *equals* the best shop weapon; it does not beat it.
 2. **Crafted weapons are sellable.** So stats are computed SERVER-SIDE from day one. The
    client never posts a stat block.
 3. **Units first, heroes second.** Units are the simpler equip path and validate the loop.
+4. **Parts stack.** Condition is baked into the part id, not stored per-part — so parts stay
+   entirely inside the existing quantity-based `itemInventory`. Only finished weapons mint.
+5. **Blueprints come from all three sources:** Aza in the Vendor Market, loot drops, and
+   order-board reputation.
 
 ---
 
@@ -202,12 +206,118 @@ Parts carry `condition 0–100`, cleaned up with `gunOil` at the bench. Conditio
 battle code, which is out of scope per CLAUDE.md. Condition lives entirely inside the
 smith. A minted weapon's stats are fixed forever.
 
-### 6d. Order board
+### 6d. Parts stack — condition is in the id
 
-NPC contracts in the shape of the other mini-games' event tables (`FC_EVENTS`,
-`WF_DISPATCH_*`): *"8mm carbine, range ≥ 2, ATK ≥ 6, delivered under 40 minutes."* Pays
-Cinder + shop reputation; reputation unlocks higher blueprint tiers. This is the career
-mode and the operation's Cinder faucet.
+`itemInventory` is quantity-based, so parts stack naturally. Rather than fight that,
+**condition is a tier baked into the part id**:
+
+```
+bar_long_pristine   bar_long_worn   bar_long_shot     (barrel, long profile)
+rcv_mil_pristine    rcv_mil_worn    rcv_mil_shot      (receiver, milspec)
+```
+
+- Stripping a donor yields the tier the donor was in. Junk donors yield `worn` / `shot`.
+- The **Cleaning station** consumes `gunOil` (+ `cloth`) to promote a part one tier:
+  `shot → worn → pristine`. That is the whole refurb loop and it is a pure id swap.
+- Condition tier is one input to `qualityFactor` at mint time. A `pristine` build tops out
+  at 1.00; a `shot` build cannot reach it however well you assemble.
+
+**Nothing about parts needs minting, uid tracking, or a server row.** Parts are ordinary
+stackable items in the vault, tradeable on the existing market with zero new code. Only the
+finished weapon mints. This halves the mint surface and was the deciding reason.
+
+---
+
+## 6.5 Where blueprints come from
+
+Three sources, each with a distinct job. **The same blueprint should be reachable more than
+one way** wherever possible — that is what keeps Aza a *shortcut* rather than a *gate*.
+
+| Source | Role | Mechanism |
+| --- | --- | --- |
+| **Ⓐ Aza — Vendor Market** | Buy access now | New `🔧 Blueprints` tab in `renderVendorMarket()` (index.html:162056), priced in Aza via `spendSovereigns()` |
+| **🎁 Loot drops** | Exploration reward | Blueprint drops from nodes/caches like any other item |
+| **🏅 Order-board reputation** | Mastery track | Rep tiers unlock blueprint tiers — see §6.6 |
+
+### Why Aza-priced blueprints are not pay-to-win
+
+Because of the §3 budget rule, a blueprint bought with real money produces a weapon that
+**cannot exceed the shop weapon it is benchmarked against**. Aza buys *which shapes you can
+build*, not *how strong they are*. A player who never spends reaches the same ceiling
+through loot and reputation. Worth stating in the store copy, not just in this doc.
+
+### 🔴 Aza blueprints are a real-money entitlement — they MUST be server-held
+
+This is the single easiest thing to get wrong here, and the existing precedent gets it
+wrong in a way we must not copy.
+
+- **Aza is `Profile.sovereigns`, bought with real money only** (index.html:44488).
+- `Profile.gems` and `Profile.sovereigns` are **deliberately NOT uploaded** to the cloud
+  save (index.html:46751, v120t7) — the balance is server-canonical via `sov_charge` /
+  `aza_purchases`.
+- The Oil Sim stores its Aza-bought blueprints in **local state only**
+  (`_osimState.blueprints`, index.html:199277). For a real-money purchase that means a
+  device change or a cache clear destroys something the player paid cash for.
+
+So: **blueprint ownership is a server row (`ws_blueprints_owned`), written in the same
+transaction as the Aza charge — never a local flag.** Loot-granted and rep-granted
+blueprints go in the same table so there is one source of truth for "what can this player
+build".
+
+⚠ `spendSovereigns()` debits locally and returns `true` **before** the server `sov_charge`
+resolves; it hands back a ledger id via a promise. The grant path must therefore await the
+charge and call `refundSovereigns()` if the entitlement write fails — otherwise a player
+can be charged for a blueprint they never receive.
+
+---
+
+## 6.6 The Order Board + Reputation
+
+Reputation is the career spine: it is what makes being *good* at the craft pay, and it is
+the third blueprint source.
+
+**Precedent to copy:** Fuel Command already runs a multi-axis reputation with generated
+reviews (`s.rep`, `s.repPrice`, `s.repSafety`, `s.repQuality`, `s.repReli`, `FC_REVIEWS` at
+index.html:199530). The Weapon Smith uses the same shape so it reads as one game.
+
+### Contracts
+
+Generated onto the board like `FC_EVENTS` / `WF_DISPATCH_*`. A contract is a **spec plus a
+deadline**, never a named item — the player decides how to meet it:
+
+```js
+{ id, client, tier, deadlineMs,
+  spec:   { class: 'carbine', minRange: 2, minAtk: 6, maxWeight: 8 },
+  pays:   { cinder: 4200, rep: 6 },
+  bonus:  { onQuality: 90, cinder: 1500 } }
+```
+
+### Three reputation axes
+
+| Axis | Earned by |
+| --- | --- |
+| `repQuality` | the `qualityFactor` of what you delivered |
+| `repSpeed` | delivering inside the deadline |
+| `repSpec` | meeting the spec exactly — overshooting is not rewarded |
+
+Overall `rep` is their weighted blend. **Failing or letting a contract expire lowers it** —
+a board with no downside is a board with no decisions.
+
+### Rep tiers
+
+| Tier | Rep | Unlocks |
+| --- | --- | --- |
+| Unproven | 0 | 1 concurrent contract, tier-1 blueprints |
+| Jobbing Smith | 20 | 2 contracts, better pay |
+| Registered Armorer | 45 | 3 contracts, tier-2 blueprints |
+| Master Armorer | 70 | 4 contracts, tier-3 blueprints |
+| Guild Master | 90 | 5 contracts, exotic blueprints, best clients |
+
+Rep-unlocked blueprints are written to the same `ws_blueprints_owned` table as Aza and loot
+grants — one source of truth, and rep unlocks survive a device change for free.
+
+⚠ Rep must be **server-held too**, for a different reason than Aza: it gates content and is
+trivially forgeable in a local save. Same table pattern, `SECURITY DEFINER` writes only.
 
 ---
 
@@ -227,12 +337,39 @@ crafted_weapons
   created_at timestamptz default now()
 ```
 
+```
+ws_blueprints_owned                    -- one source of truth for "what can this player build"
+  owner_id uuid not null references auth.users(id) on delete cascade
+  blueprint_id text not null
+  source text not null                 -- 'aza' | 'loot' | 'rep'
+  aza_ledger_id uuid                   -- set when source='aza'; the sov_charge receipt
+  granted_at timestamptz default now()
+  primary key (owner_id, blueprint_id)
+
+ws_shop                                -- the smith's career record
+  owner_id uuid primary key references auth.users(id) on delete cascade
+  rep int not null default 0
+  rep_quality int not null default 0
+  rep_speed int not null default 0
+  rep_spec int not null default 0
+  contracts jsonb not null default '[]'
+  updated_at timestamptz default now()
+```
+
+- `ws_grant_blueprint(blueprint_id, source, aza_ledger_id)` — `SECURITY DEFINER`. For
+  `source='aza'` it **verifies the ledger id against the Aza charge** before granting, so a
+  client cannot grant itself a paid blueprint by calling the RPC directly. Idempotent on
+  `(owner_id, blueprint_id)`.
+- `ws_deliver(contract_id, crafted_weapon_id)` — scores the delivery against the contract
+  spec **server-side**, moves rep, pays Cinder. Rep is never client-written.
 - `ws_mint(blueprint_id, parts, build_log)` — `SECURITY DEFINER` RPC. Recomputes
   `qualityFactor` from the build log, recomputes `stats` from
   `budget × quality × allocation`, **clamps to the blueprint budget**, and inserts. The
   client posts *what it did*, never *what it got*.
 - Market listings reference a `crafted_weapons.id`. Selling transfers `owner_id`; the stat
   block travels with the row, so a buyer cannot receive forged stats.
+- **Blueprint ownership is checked in `ws_mint`.** Minting a weapon from a blueprint the
+  player does not own must fail server-side, not just be hidden in the UI.
 - **RLS is the whole security boundary.** `select` = `owner_id = auth.uid()` **or** the row
   is on an open listing. `insert` only via `ws_mint`. No direct client `update` of `stats`
   or `quality` — ever.
@@ -303,26 +440,38 @@ licence:   ownsWeaponSmith()
 | 1 | `weaponsmith` in `OPS_ECON` + `OP_LABELS`, `_opAfterFound` branch, `_wsOwnsLicense()`, the two new resources | Small, self-contained, testable via Just Business |
 | 2 | Bridge + module skeleton + `Profile.weaponSmith` + cloud-save whitelist | The riskiest plumbing, done while it is still cheap |
 | 3 | `getItemById` crafted source + `Profile.craftedItems` + `__craftedItems__` in the save whitelist | Mint a hardcoded weapon, equip it to a unit, verify it survives a reload **and a second device** |
-| 4 | Parts as `slotType:'weaponPart'` items, vault footprints, strip-a-donor | The collectible layer |
+| 4 | Parts as stackable `slotType:'weaponPart'` items (condition in the id), vault footprints, strip-a-donor, cleaning station | The collectible layer. No minting here — parts are ordinary items |
 | 5 | Assembly bench: dependency graph, fitment, torque bar | The actual game |
-| 6 | `sql/038_weaponsmith.sql` + `ws_mint` + market integration | Turns it tradeable |
-| 7 | Forge bench (blades) | Second craft |
-| 8 | Order board + reputation + blueprint tiers | Career mode |
-| 9 | Hero loadout parity + provenance UI | Round two |
+| 6 | `sql/038_weaponsmith.sql` — `crafted_weapons`, `ws_blueprints_owned`, `ws_shop` + `ws_mint` / `ws_grant_blueprint` / `ws_deliver` + market integration | Turns it tradeable, and moves blueprints + rep off the local save |
+| 7 | Loot-dropped blueprints (grant through `ws_grant_blueprint`, source `'loot'`) | Cheapest of the three sources — do it first to exercise the table |
+| 8 | Ⓐ Blueprints tab in the Vendor Market | ⚠ Real money. Await `sov_charge`, `refundSovereigns()` on a failed grant. Do NOT copy the Oil Sim's local-flag pattern |
+| 9 | Order board + reputation + rep-gated blueprint tiers | Career mode. Scoring and rep writes are server-side |
+| 10 | Forge bench (blades) | Second craft |
+| 11 | Hero loadout parity + provenance UI | Round two |
 
 **Verify with `node _synckcheck.mjs`, not `build.mjs`.** The Browser pane does not
 composite, so call renderers directly rather than relying on `render()`.
 
 ---
 
-## 11. Open questions
+## 11. Decisions log
 
-1. **Blueprint source.** Bought with Cinder, dropped as loot, or earned through order-board
-   reputation? Reputation is the most Gunsmith-Sim-like and the best Cinder sink.
-2. **Do parts stack?** `itemInventory` is quantity-based, so parts stack naturally — but
-   then *part condition* cannot be per-part. Either condition is per part-type-tier
-   (stackable, simpler) or parts also need minting (not stackable, richer). **Leaning
-   stackable with a condition tier baked into the part id** (`bar_long_worn`,
-   `bar_long_pristine`), which keeps parts inside the existing inventory model entirely.
-3. **Corp-shared bench?** Communities sit above corps; a corp-owned smith serving its
+| Question | Decision |
+| --- | --- |
+| Power ceiling | **Sidegrade only.** Budget × quality (clamped ≤ 1.00), parts redistribute |
+| Sellable? | **Yes** — so stats are server-computed from day one |
+| Units or heroes first | **Units**, via the existing single-slot `Profile.equipment` |
+| Do parts stack? | **Yes** — condition tier baked into the part id. Only weapons mint |
+| Blueprint source | **All three** — Aza in the Vendor Market, loot drops, rep tiers |
+
+## 12. Still open
+
+1. **Aza pricing per blueprint tier.** The Oil Sim's licences sit at 8 / 18 / 25 Aza
+   (index.html:198734), which is the only in-app reference point for what an unlock is
+   "worth". Weapon blueprints are a bigger unlock and probably sit above that, but this is
+   a pricing call, not an engineering one.
+2. **Do blueprints drop as items or as entitlements?** An item can be traded between
+   players (nice: a blueprint market); an entitlement cannot. Leaning **item that is
+   consumed to grant the entitlement** — it trades, then it is spent.
+3. **Corp-shared bench.** Communities sit above corps; a corp-owned smith serving its
    roster is a natural later feature, deliberately not in scope now.

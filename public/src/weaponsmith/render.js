@@ -53,12 +53,30 @@ const CSS = `
 #${ID} .wsb-st .mt{font-size:.68rem;color:#8a7f6a;margin-top:.15rem}
 #${ID} .wsb-st .pt{font-size:.75rem;color:#cfe8d0;margin-top:.3rem}
 #${ID} .wsb-st .opt{font-size:.64rem;color:#7b6f5c;font-style:italic}
-#${ID} .wsb-tray{display:flex;flex-direction:column;gap:.3rem;max-height:340px;overflow:auto}
+/* ⚠ A tray that clips MUST LOOK like it clips. The default dark-on-dark
+   scrollbar is invisible here, so a cut-off list read as a complete one — the
+   blueprint picker hid two frames and the parts tray hid every part that
+   actually fit, which is the difference between "there is nothing I can use"
+   and "scroll down". Both a visible thumb and a bottom fade, because either
+   alone is easy to miss. */
+#${ID} .wsb-tray{display:flex;flex-direction:column;gap:.3rem;overflow:auto;
+  scrollbar-width:thin;scrollbar-color:rgba(212,175,55,.55) rgba(0,0,0,.35)}
+#${ID} .wsb-tray::-webkit-scrollbar{width:9px}
+#${ID} .wsb-tray::-webkit-scrollbar-track{background:rgba(0,0,0,.35);border-radius:5px}
+#${ID} .wsb-tray::-webkit-scrollbar-thumb{background:rgba(212,175,55,.55);border-radius:5px}
+#${ID} .wsb-tray::-webkit-scrollbar-thumb:hover{background:rgba(255,209,102,.8)}
+#${ID} .wsb-scroll{position:relative}
+#${ID} .wsb-scroll::after{content:'';position:absolute;left:0;right:9px;bottom:0;height:26px;
+  pointer-events:none;background:linear-gradient(180deg,rgba(24,20,16,0),rgba(24,20,16,.95))}
+/* Rows must never be sliced through the middle — a half-height row reads as a
+   rendering fault rather than as more content. */
+#${ID} .wsb-tray > *{flex:0 0 auto}
 #${ID} .wsb-p{display:flex;align-items:center;gap:.5rem;padding:.35rem .5rem;border-radius:5px;
   border:1px solid rgba(212,175,55,.2);background:rgba(0,0,0,.28);cursor:pointer;text-align:left;
   color:inherit;font:inherit;width:100%}
 #${ID} .wsb-p:hover{border-color:rgba(255,209,102,.6)}
-#${ID} .wsb-p[disabled]{opacity:.4;cursor:not-allowed}
+#${ID} .wsb-p[disabled]{opacity:.38;cursor:not-allowed}
+#${ID} .wsb-p:not([disabled]).wsb-fits{border-color:rgba(120,220,160,.55);background:rgba(120,220,160,.07)}
 #${ID} .wsb-p .q{margin-left:auto;font-size:.72rem;color:#a89880}
 #${ID} .wsb-tier-pristine{color:#9fe8b0}#${ID} .wsb-tier-worn{color:#e8d79f}#${ID} .wsb-tier-shot{color:#e8a09f}
 #${ID} .wsb-bar{position:relative;height:26px;border:1px solid rgba(212,175,55,.4);border-radius:5px;
@@ -180,7 +198,10 @@ function pickerView(s) {
       <div class="wsb-sub">Pick a frame. Parts come off donors and out of the shop — clean them before you build.</div></div>
       <button class="wsb-x" id="${ID}-close">Close</button></div>
     <div class="wsb-cols">
-      <div class="wsb-panel"><h3>Blueprints</h3><div class="wsb-tray">${rows}</div></div>
+      <div class="wsb-panel"><h3>Blueprints</h3>
+        <!-- No max-height: this is the primary navigation and the panel has
+             room. Capping it hid two frames behind an invisible scrollbar. -->
+        <div class="wsb-tray">${rows}</div></div>
       <div><div class="wsb-panel"><h3>Workshop</h3>${workshopView()}</div>${schemPanel}</div>
     </div>
     ${arms}
@@ -312,9 +333,9 @@ function workshopView() {
     }).join('') || '<div class="wsb-sub">Nothing needs cleaning.</div>';
 
   return `<div style="margin-bottom:.6rem"><b style="font-size:.8rem">🪛 Strip</b>
-    <div class="wsb-tray" style="max-height:150px">${donors}</div></div>
+    <div class="wsb-scroll"><div class="wsb-tray" style="max-height:156px">${donors}</div></div></div>
     <div><b style="font-size:.8rem">🧽 Clean</b>
-    <div class="wsb-tray" style="max-height:180px">${dirty}</div></div>`;
+    <div class="wsb-scroll"><div class="wsb-tray" style="max-height:208px">${dirty}</div></div></div>`;
 }
 
 function buildView(s) {
@@ -336,10 +357,15 @@ function buildView(s) {
 
   // Only parts the player actually holds, and only ones this frame has a
   // station for — a tray full of things that can never fit is noise.
+  /* Fitting parts first. A visible scrollbar fixes "I cannot see the rest";
+     this fixes "the rest is what I needed" — the parts that can go on RIGHT NOW
+     belong above the ones that cannot, or the bench reads as empty of options
+     while holding eight of them. */
   const tray = Object.keys(CATALOG).filter((id) => itemCount(id) > 0 && stepFor(bp, CATALOG[id].part.slot))
+    .sort((a, b) => (tryFit(b).ok ? 1 : 0) - (tryFit(a).ok ? 1 : 0))
     .map((id) => {
       const d = CATALOG[id], fit = tryFit(id);
-      return `<button class="wsb-p" data-seat="${esc(id)}" ${fit.ok ? '' : 'disabled title="' + esc(fit.reason) + '"'}>
+      return `<button class="wsb-p ${fit.ok ? 'wsb-fits' : ''}" data-seat="${esc(id)}" ${fit.ok ? '' : 'disabled title="' + esc(fit.reason) + '"'}>
         <span>${esc(d.icon)}</span><span><b>${esc(d.name)}</b>
         <div class="wsb-sub wsb-tier-${esc(d.part.tier)}">${esc(d.part.mount.toUpperCase())} · ${esc(tierOf(d.part.tier).name)}</div></span>
         <span class="q">×${itemCount(id)}</span></button>`;
@@ -371,7 +397,10 @@ function buildView(s) {
           <div class="wsb-danger" style="width:${(1 - TORQUE_STRIP) * 100}%"></div>
         </div>
         <div class="wsb-sub">Click a part to drive the fastener, click again to seat it. Green is spec; the red end strips it.</div>
-        <div class="wsb-tray" style="margin-top:.5rem">${tray}</div>
+        <!-- The parts tray is where the clipping hurt most: every part that
+             actually FIT this frame sorted below the fold, so the bench looked
+             like it had nothing usable in it. -->
+        <div class="wsb-scroll"><div class="wsb-tray" style="margin-top:.5rem;max-height:420px">${tray}</div></div>
       </div>
     </div></div>`;
 }

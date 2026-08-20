@@ -330,8 +330,6 @@
     return mv + rng;
   }
 
-  function cheb(a, b) { return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)); }
-
   /* Grid coords for a `.unit` element. Real render stamps data-x/data-y on the
      tile; the probe doesn't, so fall back to the tile's index in the board.
      One computed-style read per apply at most — never per frame, never a rect. */
@@ -496,7 +494,17 @@
         var epos = (eu && eu.pos) || domPos(el);
         if (anchorPos && epos) {
           var reach = eu ? reachOf(eu) : 3;   /* 3 = default move 2 + melee 1, used by the probe */
-          inReach = cheb(anchorPos, epos) <= reach;
+          /* distance() is the game's ONE board metric (index.html:74103). This
+             used to be a private cheb() here, and that is exactly the bug the
+             unification removed: this nameplate tells the player "that enemy
+             can reach you", so a second copy of the metric means the telegraph
+             and the rules disagree the moment the lattice stops being square.
+             The bare global resolves because this file is a CLASSIC deferred
+             script (index.html:223130) sharing the inline script's top-level
+             lexical scope — the same reason cols()/rows() below read bare
+             BOARD_W/BOARD_H. Do NOT re-inline it, and do NOT convert this file
+             to type="module": that would break all three at once. */
+          inReach = distance(anchorPos, epos) <= reach;
         }
 
         var plate = document.createElement('div');

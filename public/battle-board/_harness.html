@@ -1,0 +1,1180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Battle Stage Harness</title>
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     🔬 BATTLE STAGE HARNESS — drive battle-board/index.html without the game.
+
+     WHY THIS FILE EXISTS
+     Until now the only way to look at the canvas stage was its own built-in
+     standalone demo (the `else` branch at battle-board/index.html:2925-2933).
+     That demo is NOT what the game shows, for a reason that is easy to miss:
+     the stage checks `EMBEDDED` (:2736) and, when it is in an iframe, ZEROES
+     `CONFIG.SAFE` and `CONFIG.viewShiftY` (:2917-2920). `VIEW.scale` fits the
+     vertical FOV to the SAFE-BOX height (:441), so the standalone preview is
+     framed differently from the in-game stage — different zoom, different
+     horizon. Anyone who tunes the board against the standalone demo is tuning
+     against a view the player never sees.
+
+     So this harness does the ONE thing that makes a capture trustworthy: it
+     embeds the stage in an iframe exactly the way `_bbStageMount()` does
+     (index.html:104150-104166) and speaks the real `board:*` postMessage
+     protocol at it. Every payload below is produced by a bridge function
+     copied from index.html — same field names, same game-y → board-z rename,
+     same absolute-URL rule. If the game can put the board in a state, this
+     harness can too, and the pixels are the pixels the player would get.
+
+     WHAT IS DELIBERATELY *NOT* COPIED
+     - No game rules. Scenarios are fixtures, not a simulation. The board owns
+       no pathfinding either (CONTRACT §1), so "legal moves" here are a painted
+       set of strings, exactly as they are on the wire.
+     - No Kalon handling in `_bbUnitKey`. The real one (index.html:103328) has
+       a `kalon:` branch for transformed units; there are no transforms in a
+       fixture, and inventing one would be inventing protocol.
+
+     🏷 AS-SHIPPED vs TARGET-STATE — READ THIS BEFORE JUDGING A CAPTURE
+     A harness fixture can only be trusted as far as the GAME's sender can
+     actually produce it, and for the map payload it currently cannot. The one
+     producer of the battle stage's `map` is `_bbMapFromEditor`
+     (index.html:103208); see the long note above RUIN_TILES for exactly what
+     it does and does not emit. The short version is that with the shipped
+     default it sends an EMPTY tiles array — no props, no hazards, no
+     elevation — while every richly-terrained scene here is a fixture showing
+     what the board COULD draw if something sent it.
+
+     So every scene carries `shipped: true|false`, the chrome panel labels it,
+     and `?shot=1` stamps the label into the corner of the PNG. Exactly one
+     scene is honest about today: `gamemap`. Judge "does the game look like
+     this" against that one. Judge "can the board draw this" against the rest.
+
+     USAGE
+       /battle-board/_harness.html?scene=gamemap           what a match shows TODAY
+       /battle-board/_harness.html?scene=skirmish          what the board CAN show
+       /battle-board/_harness.html?scene=skirmish&shot=1   capture it
+       node .gauntlet/shot.mjs "/battle-board/_harness.html?scene=gamemap&shot=1" out.png 1600 900
+
+     `?host=boardarea|full` overrides the host box (see boardAreaRect below).
+
+     `?shot=1` hides the harness chrome and publishes `window.__harnessReady`
+     (see the READY SIGNAL block near the bottom). `window.__harness` is the
+     live driver handle — `__harness.post('timeOfDay',{key:'night'})` works
+     from a console or from Playwright.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<style>
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ width:100%; height:100%; overflow:hidden; background:#05040a; }
+  body{ font-family:'Cinzel','Trajan Pro',Georgia,serif; color:#f6efe3; }
+
+  /* The game mounts the stage into a host div sized to `.board-area`'s rect
+     and stretches the iframe to `inset:0` inside it (`_bbStageTrack`,
+     index.html:104381). The harness does the same, and `sizeHost()` writes the
+     box — NOT `inset:0`, because the host's aspect is load-bearing (see
+     boardAreaRect). Left/top/width/height start at full-viewport and are
+     overwritten on load and on resize. */
+  #bb-stage-host{ position:fixed; left:0; top:0; width:100%; height:100%; }
+  #bb-stage-host .bb-stage{
+    position:absolute; inset:0; width:100%; height:100%; border:0; display:block;
+    background:#05040a; opacity:0; transition:opacity .2s ease;
+  }
+  #bb-stage-host .bb-stage.ready{ opacity:1; }
+
+  /* 🖱 THE CATCHER. In game the stage paints BELOW the app so the HUD stays on
+     top, which means the canvas can never receive its own mouse events; the
+     host captures them and forwards normalised coords over `board:pointer`
+     (CONTRACT §1.4). Here the iframe is on top and *could* use its own local
+     listeners (battle-board/index.html:2618-2632) — so a transparent catcher
+     is laid over it on purpose, to make sure what we exercise is the SAME
+     forwarded path the game uses. */
+  #bb-catch{ position:absolute; inset:0; z-index:3; background:transparent; cursor:crosshair; }
+
+  #chrome{
+    position:fixed; left:14px; top:14px; z-index:10; width:290px;
+    padding:12px 14px 11px; border:2px solid transparent; border-radius:10px;
+    background:
+      linear-gradient(180deg,#171625,#12121e) padding-box,
+      linear-gradient(155deg,#f4d47c 0%,#c29a3a 22%,#7a5f24 50%,#c29a3a 78%,#f6d780 100%) border-box;
+    box-shadow:0 7px 24px rgba(0,0,0,.6), inset 0 0 26px rgba(0,0,0,.5);
+    font-size:12px; line-height:1.5;
+  }
+  #chrome h1{ font-size:11px; font-weight:900; letter-spacing:.18em; color:#d4af37; margin-bottom:2px; }
+  #chrome .sub{ font-family:'EB Garamond',Georgia,serif; font-size:12.5px; color:#9a8d6c; margin-bottom:9px; }
+  #chrome .lab{ font-size:9.5px; font-weight:700; letter-spacing:.18em; color:#a2957a; margin-top:8px; }
+  #chrome .scenes{ display:flex; flex-wrap:wrap; gap:5px; margin-top:4px; }
+  #chrome a{
+    display:inline-block; padding:3px 8px; border-radius:5px; text-decoration:none;
+    font-size:10.5px; letter-spacing:.06em; color:#e9dab2;
+    border:1.5px solid rgba(210,164,78,.55); background:rgba(10,9,15,.85);
+  }
+  #chrome a.on{ color:#3a2606; background:linear-gradient(180deg,#ffe9a2,#d99f34); border-color:#8a6218; font-weight:700; }
+  #chrome .read{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:#b9afa0; }
+  #chrome .err{ color:#e0553c; }
+  /* ◆ = as-shipped, ◇ = target-state fixture. The marker is on the chip so the
+     distinction survives someone screenshotting only the panel. */
+  #chrome a.ship::before{ content:'◆ '; color:#5edb8a; }
+  #chrome a.fix::before{ content:'◇ '; color:#b9afa0; }
+  #chrome .legend{ font-size:9.5px; letter-spacing:.06em; color:#7a7466; margin-top:6px; }
+  #chrome .prov{ font-size:9.5px; font-weight:700; letter-spacing:.18em; margin-bottom:6px; }
+  #chrome .prov.ship{ color:#5edb8a; }
+  #chrome .prov.fix{ color:#e0a34a; }
+  body.shot #chrome{ display:none; }
+
+  /* 🏷 PROVENANCE WATERMARK. A PNG outlives the URL that made it, and the whole
+     failure this harness exists to prevent is someone treating a fixture as
+     evidence of what the game looks like. So the label is burned into the
+     capture itself, small enough not to compete with the board and impossible
+     to crop off accidentally without noticing. Hidden outside ?shot=1 — the
+     chrome panel says the same thing, louder. */
+  #h-mark{ display:none; }
+  body.shot #h-mark{
+    display:block; position:fixed; left:10px; bottom:9px; z-index:11;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10px;
+    letter-spacing:.06em; padding:3px 7px; border-radius:4px;
+    background:rgba(5,4,10,.72); border:1px solid rgba(210,164,78,.35);
+    color:#b9afa0; white-space:nowrap;
+  }
+  body.shot #h-mark b{ font-weight:700; }
+
+  /* 📐 FRAME GUIDES. Only drawn when the host is sized to the in-game
+     `.board-area` rect, where the board legitimately occupies about half the
+     screen and the rest is HUD. Without these the surround reads as a broken
+     capture; with them it reads as the point — this is the board's real share
+     of a 1600×900 match. Deliberately drawn as hairline outlines with caps
+     labels so nobody mistakes them for game UI: the game's rail is an opaque
+     gold-bordered panel (CONTRACT §6.4), nothing like this. */
+  #h-guides{ display:none; }
+  body.shot.guides #h-guides{ display:block; position:fixed; inset:0; z-index:2; pointer-events:none; }
+  #h-guides div{
+    position:absolute; border:1px dashed rgba(210,164,78,.22);
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10px;
+    letter-spacing:.1em; color:rgba(185,175,160,.42); padding:5px 7px;
+  }
+  #h-guides div.board{ border-style:solid; border-color:rgba(94,219,138,.30); color:rgba(94,219,138,.5); }
+  body.shot #h-mark b.ship{ color:#5edb8a; }
+  body.shot #h-mark b.fix{ color:#e0a34a; }
+</style>
+</head>
+<body>
+<div id="bb-stage-host"><div id="bb-catch"></div></div>
+<div id="chrome">
+  <h1>BATTLE STAGE HARNESS</h1>
+  <div class="prov" id="h-prov">…</div>
+  <div class="sub" id="h-desc">…</div>
+  <div class="lab">SCENE</div>
+  <div class="scenes" id="h-scenes"></div>
+  <div class="legend">◆ as-shipped &nbsp;·&nbsp; ◇ target-state fixture</div>
+  <div class="lab">HOST BOX</div>
+  <div class="read" id="h-host">…</div>
+  <div class="lab">BOARD → HOST</div>
+  <div class="read" id="h-read">waiting for board:ready…</div>
+</div>
+<div id="h-guides"></div>
+<div id="h-mark"></div>
+
+<script>
+'use strict';
+(function () {
+
+/* 🚦 READY SIGNAL — FIRST STATEMENT IN THE IIFE, on purpose, because its
+   PRESENCE is the contract and everything below it can throw. `.gauntlet/
+   shot.mjs` probes for `typeof window.__harnessReady !== 'undefined'`: defined
+   means "this page publishes a real signal, wait for it"; undefined means "no
+   signal, use the fixed delay" — which is how every other page in the repo
+   keeps working unchanged. It used to sit ~470 lines down, after the ROSTER and
+   SCENES construction, so a throw in any of that left the global undefined and
+   silently downgraded a stalled capture into a fixed-delay one. The gate that
+   flips it to true is at the bottom of the driver. */
+window.__harnessReady = false;
+
+/* ══════════════════════════════════════════════════════════════════
+   0 · CONSTANTS COPIED FROM THE HOST
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Must track `const BB_VER` at index.html:103180. It is only a cache-buster,
+   but a harness that loads a different build than the game is a lie. */
+const BB_VER = 'v119k4';
+
+/* 🎨 Game surface type → board shader key. Verbatim from index.html:103972.
+   The game asserts this table against SURFACE_TYPES at load; the harness has
+   no SURFACE_TYPES to assert against, so it is a straight copy — re-copy it if
+   the game's ever changes. */
+const _BB_SURFACE_FX = {
+  oil: 'oil',              grease: 'grease',        water: 'puddle',
+  fire: 'fire',            toxin: 'gas',            web: 'web',
+  caltrops: 'caltrops',    ice: 'ice',              blood: 'blood',
+  steam: 'gas',            rift: 'void',            acid: 'toxic',
+  poison: 'mire',          electrified: 'electric', holy: 'holy',
+  cracked: 'crack'
+};
+
+/* The battlefield backdrop + ground the game registers for the neutral
+   'battlefield' location (index.html:103283-103302). Same files, same ids. */
+const _BB_BATTLEFIELD_BG = 'assets/board/Battlefield/battlefield-background.png';
+const _BB_DARK_FOREST_BG = 'assets/board/Battlefield/dark-forest.png';
+const _BB_GROUND_ART     = 'assets/board/locations/dark-forest-ground.jpg';
+
+/* The bundled default gravestone — the exact string getTombstoneImage()
+   returns when no cosmetic is equipped (index.html:74174). */
+const TOMB_ART = 'assets/tombstone/Base%20Tombstone.png';
+
+/* ⚠ ABSOLUTE URLs OR NOTHING. `_bbAbs` (index.html:103245) resolves against
+   the GAME's location, which is the deploy root. This page lives one level
+   down in /battle-board/, so resolving against `location.href` here would
+   produce /battle-board/assets/… — the exact silent-404 class the game's own
+   comment warns about. Resolve against the root explicitly. */
+const ROOT = new URL('..', location.href).href;
+function _bbAbs(u) {
+  if (!u || typeof u !== 'string') return null;
+  if (/^(data:|blob:|https?:)/i.test(u)) return u;
+  try { return new URL(u, ROOT).href; } catch (e) { return u; }
+}
+
+/* 🔑 THE BOARD'S IDENTITY KEY for a unit — index.html:103328, minus the Kalon
+   branch (see the header note). `applyUnits` re-keys and swaps a unit's def
+   only when this string changes. */
+function _bbUnitKey(u) {
+  if (!u) return '';
+  return String((u && u.cardId) || (u && u.originalCardId) || (u && u.id) || '');
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   1 · SPRITE SLICER — real frames, from art that is really in the repo.
+
+   In a live match `_bbUnitDefs` (index.html:103345) fills `def.frames` from
+   `getSpriteFrames()` — an ARRAY OF FULL-RES FRAME IMAGES uploaded through the
+   Sprite Atelier and kept in IndexedDB. None of that exists in a cold headless
+   browser, so a naive harness sends `frames:null, art:null` and every unit
+   falls through `paintSprite` to the procedural jelly (:1803). Critics would
+   then be judging a failure mode, not the board.
+
+   The repo does ship real sprite art: ~370 transparent 768×768 sheets laid out
+   5 cols × 5 rows, one animation per row. This slices row 0 (idle) into five
+   PNG data: URLs and hands them over as `frames`. That is the SAME payload
+   shape the game sends, and data: URLs are explicitly the game's own fix for
+   art that cannot cross the iframe (`_artValueToDataUrl`, index.html:103944).
+
+   Every frame is cropped to ONE shared bounding box measured across the whole
+   row, not per-frame — `paintSprite` anchors a sprite by its BOTTOM edge
+   (:1760 `dy = -h`), so per-frame trimming would make the unit bob and skate
+   across the tile as the animation cycles.
+   ══════════════════════════════════════════════════════════════════ */
+const _sheetCache = new Map();
+
+function loadImg(src) {
+  return new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error('sprite sheet failed to load: ' + src));
+    i.src = src;
+  });
+}
+
+async function sliceSheet(sp) {
+  const src = _bbAbs(sp.src);
+  if (_sheetCache.has(src)) return _sheetCache.get(src);
+  const img = await loadImg(src);
+  const cols = sp.cols || 5, rows = sp.rows || 5, row = sp.row | 0;
+  const cw = img.width / cols, ch = img.height / rows;
+
+  /* draw the whole row into a probe canvas so the alpha scan is one pass */
+  const probe = document.createElement('canvas');
+  probe.width = img.width; probe.height = Math.round(ch);
+  const pc = probe.getContext('2d', { willReadFrequently: true });
+  pc.drawImage(img, 0, row * ch, img.width, ch, 0, 0, probe.width, probe.height);
+  const px = pc.getImageData(0, 0, probe.width, probe.height).data;
+
+  let top = -1, bot = -1;
+  for (let y = 0; y < probe.height; y++) {
+    for (let x = 0; x < probe.width; x += 2) {
+      if (px[(y * probe.width + x) * 4 + 3] > 16) { if (top < 0) top = y; bot = y; break; }
+    }
+  }
+  if (top < 0) { top = 0; bot = probe.height - 1; }   // fully blank row — ship it anyway
+
+  const fw = Math.round(cw), fh = bot - top + 1;
+  const n = Math.min(sp.frames || cols, cols);
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const c = document.createElement('canvas');
+    c.width = fw; c.height = fh;
+    c.getContext('2d').drawImage(probe, Math.round(k * cw), top, fw, fh, 0, 0, fw, fh);
+    out.push(c.toDataURL('image/png'));
+  }
+  _sheetCache.set(src, out);
+  return out;
+}
+
+/* 🎨 THE FIXTURE ROSTER. Keyed by the same string `_bbUnitKey` produces, i.e.
+   a card id. `color` stands in for ELEMENT_DATA[el].color, which is where the
+   real def gets it (index.html:103512).
+
+   ⚠ `h` IS THE HARNESS'S OPINION, NOT THE GAME'S. `_bbUnitDefs` writes
+   `h: 1.05` as a LITERAL for every unit it emits (index.html:103514) — there is
+   no per-card height in the game at all, so a boss is exactly as tall as a dog.
+   The 0.78–1.22 spread below is a fixture showing what the board does with
+   varied heights; it is applied in TARGET-STATE scenes only. Any scene with
+   `shipped: true` gets 1.05 across the board, enforced in bridgeDefs, so a
+   silhouette-scale judgement made from an as-shipped capture is a judgement
+   about the real game. */
+const ROSTER = {
+  /* — survivors (player side) — */
+  'warrior-hero':  { name:'Warrior',        color:'#d4af37', h:1.20,   /* hero: reads taller */
+                     sheet:{ src:'assets/Heros/Warriors/Warrior.png' } },
+  'survivor-lead': { name:'Survivor Lead',  color:'#3aa86b', h:1.05,
+                     sheet:{ src:'assets/artwork/Survivor 1/Survivor hero-standing-v1.png' } },
+  'dual-blader':   { name:'Dual Blader',    color:'#4a8fd4', h:1.05,
+                     sheet:{ src:'assets/artwork/survivor guard dual blader/Survivor Guard dual blader-standing-v1.png' } },
+  'rifleman':      { name:'Guard Rifleman', color:'#a89888', h:1.05,
+                     sheet:{ src:'assets/artwork/survivorrilfeman/Suvivor Guard Riflemen-standing-v2.png' } },
+  'field-medic':   { name:'Field Medic',    color:'#e8e0d0', h:1.05,
+                     sheet:{ src:'assets/artwork/Fleld Medic/Fleld Medic.png' } },
+  'guard-dog':     { name:'Guard Dog',      color:'#8b5cf6', h:0.78,   /* quadruped: sits low */
+                     sheet:{ src:'assets/artwork/Survivor dog/Survivor guard dog-standing-v1.png' } },
+  /* — the other side — */
+  'zombie':        { name:'Zombie',         color:'#6f7240', h:1.02,
+                     sheet:{ src:'assets/artwork/Zombie/Zombie.png' } },
+  'scum-grunt':    { name:'Scum Grunt',     color:'#a02828', h:1.05,
+                     sheet:{ src:'assets/artwork/Scum Grunt/Scum Grunt-standing-v1.png' } },
+  'scum-boss':     { name:'Scum Boss',      color:'#e85d3c', h:1.22,   /* boss: reads bigger */
+                     sheet:{ src:'assets/artwork/Scum boss/Scum boss.png' } },
+  'mutant-dog':    { name:'Mutant Dog',     color:'#a02828', h:0.80,
+                     sheet:{ src:'assets/artwork/Mutant dog/Mutant dog-standing-v1.png' } },
+  'giant-spider':  { name:'Giant Spider',   color:'#6b5499', h:0.86,
+                     sheet:{ src:'assets/artwork/Giantspider/giant Spider-standing-v1.png' } },
+  'scp-guard':     { name:'SCP Guard',      color:'#4a8fd4', h:1.06,
+                     sheet:{ src:'assets/artwork/Scp Guard/Scp Guard.png' } }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   2 · THE BRIDGE — game state → board payloads.
+
+   Every function here is the harness's copy of an index.html original and is
+   named for it. The shapes are the contract; do not "improve" them.
+   Scenarios are therefore written in GAME terms (`pos:{x,y}`, `owner`,
+   `tombstones[].y`, surfaces keyed `"x,y"` by surface TYPE) and the rename to
+   board terms (`{x,z}`, `side`, shader key) happens ONLY here — which is
+   exactly where it happens in the game (CONTRACT §1.1).
+   ══════════════════════════════════════════════════════════════════ */
+
+/* _bbLocations — index.html:103283. The two bundled entries; the game adds a
+   row per location card, which a fixture has no catalog to enumerate. */
+function bridgeLocations() {
+  return {
+    'battlefield': { name:'Battlefield', image:_bbAbs(_BB_GROUND_ART),
+                     backdrop:_bbAbs(_BB_BATTLEFIELD_BG), timeOfDay:null, tint:null },
+    'dark-forest': { name:'The Dark Forest', image:_bbAbs(_BB_GROUND_ART),
+                     backdrop:_bbAbs(_BB_DARK_FOREST_BG), timeOfDay:null, tint:null }
+  };
+}
+
+/* _bbStagePayload — index.html:103815. NOTE what it leaves out: `defs` and
+   `units` are deliberately empty and `events` is absent entirely, because the
+   stage mount pushes the roster separately a beat later. Matching that
+   ordering matters — it is what the board actually receives. */
+function bridgeInitPayload(sc) {
+  return { map: sc.map, locations: bridgeLocations(), location: sc.location,
+           timeOfDay: sc.timeOfDay, defs: {}, units: [] };
+}
+
+/* _bbStageUnitList — index.html:104051. Game {x,y}/owner → board {x,z}/side. */
+function bridgeUnitList(sc) {
+  const out = [];
+  for (const u of (sc.units || [])) {
+    if (!u || !u.alive || !u.pos) continue;
+    out.push({ id: String(u.id), key: _bbUnitKey(u),
+               x: u.pos.x | 0, z: u.pos.y | 0,
+               side: u.owner === 'player' ? 'mine' : 'foe' });
+  }
+  return out;
+}
+
+/* _bbUnitDefs — index.html:103363, reduced to the tier that survives a cold
+   headless load: sprite frames, then a still, then nothing (procedural).
+   `h` is forced to the game's hardcoded 1.05 for an as-shipped scene — see the
+   ROSTER note. Everything else in this payload (field names, order, fps:10,
+   sheet:null) is what the real builder emits at index.html:103514. */
+async function bridgeDefs(sc) {
+  const defs = {};
+  for (const u of (sc.units || [])) {
+    if (!u || !u.alive) continue;
+    const key = _bbUnitKey(u);
+    if (!key || defs[key]) continue;
+    const r = ROSTER[key] || {};
+    let frames = null;
+    if (r.sheet) {
+      try { frames = await sliceSheet(r.sheet); }
+      catch (e) { note('def art: ' + (e && e.message || e), true); }
+    }
+    const h = sc.shipped ? 1.05 : ((typeof r.h === 'number') ? r.h : 1.05);
+    defs[key] = { name: u.name || r.name || key, color: r.color || '#cfd6e4',
+                  h: h,
+                  art: r.art ? _bbAbs(r.art) : null, frames: frames, fps: 10, sheet: null };
+  }
+  return defs;
+}
+
+/* _bbStagePushPaint — index.html:103885. The four highlight sets are arrays of
+   `"x,z"` strings built from GAME {x,y} pairs (`k()` at :103887), and `sel` is
+   the one place the rename is written out longhand: `{x: sel.pos.x, z: sel.pos.y}`. */
+function bridgePaint(sc) {
+  const p = sc.paint || {};
+  const k = (arr) => (arr || []).map(t => t.x + ',' + t.y);
+  return { move: k(p.move), attack: k(p.attack), place: k(p.place), swap: k(p.swap),
+           sel: (p.sel) ? { x: p.sel.x, z: p.sel.y } : null };
+}
+
+/* _bbStagePushTombs — index.html:103880. Note `z: t.y|0`, the rename the
+   CONTRACT calls out by name, and that a blob: image is dropped rather than
+   sent (it cannot cross into the iframe). */
+function bridgeTombs(sc) {
+  const list = [];
+  for (const t of (sc.tombstones || [])) {
+    if (!t || t.x == null || t.y == null) continue;
+    let img = t.image || TOMB_ART;
+    if (typeof img !== 'string' || img.slice(0, 5) === 'blob:') img = null;
+    list.push({ x: t.x | 0, z: t.y | 0, img: _bbAbs(img), owner: t.owner || 'ai',
+                glowing: !!t.glowing, lootable: !!t.lootable, looted: !!t.looted });
+  }
+  return { list: list };
+}
+
+/* _bbStagePushSurfaces — index.html:103990. The game walks board[y][x].surface
+   and emits `out[x + ',' + y] = _BB_SURFACE_FX[type]`, silently skipping a
+   type with no shader. A fixture hands the same thing in as a flat map. */
+function bridgeSurfaces(sc) {
+  const out = {};
+  for (const key of Object.keys(sc.surfaces || {})) {
+    const fx = _BB_SURFACE_FX[sc.surfaces[key]];
+    if (fx) out[key] = fx;
+  }
+  return { tiles: out };
+}
+
+/* _bbEvents — index.html:103625. Shape {x, z, type, name, color, art, scale};
+   the board re-runs each entry through `spawnEvent` (battle-board:1131).
+
+   ⚠ WHERE THIS DOES NOT COME FROM. `_bbStagePayload` (index.html:103815) — the
+   payload the IN-BATTLE stage receives — omits `events` entirely, and
+   `_bbStageMount` never posts `board:events`. So the stage a player looks at
+   during a match currently shows no event tiles at all, even when the match has
+   them; only the full-screen board (`_bbMount` → `_bbSnapshot`, :103658) sends
+   them. Scenes therefore default to NO events, so a capture matches the battle
+   stage; the `ruins` scene opts in, matching the full-screen board. */
+async function bridgeEvents(sc) {
+  const out = [];
+  for (const e of (sc.events || [])) {
+    let art = null;
+    if (e.art) {
+      try { art = (await sliceSheet({ src: e.art, frames: 1 }))[0]; }
+      catch (err) { note('event art: ' + (err && err.message || err), true); }
+    }
+    out.push({ x: e.x | 0, z: e.y | 0, type: e.type || 'relic', name: e.name || null,
+               color: e.color || null, art: art,
+               scale: (typeof e.scale === 'number') ? e.scale : 1 });
+  }
+  return { events: out };
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   3 · SCENARIOS. Plain objects, in game terms. Add one by adding a key.
+   ══════════════════════════════════════════════════════════════════ */
+
+const COLS = 8, ROWS = 7;   /* BOARD_W / BOARD_H, index.html:71892 */
+
+/* 🔴 TARGET-STATE FIXTURE. NOTHING BELOW THIS LINE IS ON THE WIRE TODAY.
+
+   The tile VOCABULARY here is the board's RECEIVER vocabulary — the PORT BRIEF
+   at battle-board/index.html:92-93 advertises
+   'normal'|'blocked'|'hazard'|'objective'|'spawn' plus `elev` in world units,
+   and the drawing code really does honour all of it. But what the board can
+   RECEIVE is not what the game can SEND, and the sender is the honest source:
+
+     `_bbMapFromEditor` (index.html:103208-103242) is the ONE producer of the
+     battle stage's `map`. It emits tiles as `{x, z, type}` plus an optional
+     `prop`, and that is the whole shape:
+       · `elev` APPEARS NOWHERE IN THE FUNCTION. Not defaulted, not derived —
+         the word is absent. Every raised slab and lit cliff face below is the
+         harness's invention.
+       · `BB_TERRAIN_TYPE` (:103200) is `{water:'hazard', lava:'hazard',
+         blight:'hazard'}`, so the only `type` it can ever emit is 'hazard'.
+         `'objective'` and `'blocked'` are unreachable from the sender.
+       · props come only from `m.models` via `BB_PROP_MAP` (:103202) — free
+         editor models snapped to their nearest cell.
+
+     And with the SHIPPED DEFAULT there is no input at all: `_b3dActiveMap()`
+     (index.html:102835) returns `terrain: null, models: []` when no admin map
+     is configured, so both loops run zero times and `_bbMapFromEditor` returns
+     `tiles: []`. `board:init` then does `Object.assign(MAP, msg.map)`
+     (battle-board:2818), which REPLACES the board's demo tiles with that empty
+     array. A real match today therefore shows ZERO props, ZERO hazards, ZERO
+     objective tiles and ZERO elevation.
+
+   That is `SCENES.gamemap`, and it is the control capture. This table is the
+   target state: what the board would draw if a sender ever fed it. It matters
+   which is which because .gauntlet/BAR.md R1 is judged almost entirely on
+   elevation and cliff faces — validating hex cliff-face lighting or raised-tile
+   side walls against a green capture from a scene below would validate work
+   that is invisible in a real match.
+
+   ⚠ ONLY FOUR PROPS ACTUALLY DRAW. The PORT BRIEF still advertises
+   'house' and 'wreck' and `BB_PROP_MAP` can still emit both, but `drawProp`
+   (battle-board/index.html:1688-1711) only handles barricade / crater / pylon /
+   bones — its own comment at :1686 says houses and wrecked cars "are EVENTS
+   now". A tile carrying prop:'house' renders as bare ground with no warning, so
+   the fixture does not use one; the `ruins` scene below shows a building the
+   way the board can really show one.
+
+   Placed irregularly on purpose — evenly spaced props on a lattice is a named
+   fail condition in .gauntlet/BAR.md (R1). */
+const RUIN_TILES = [
+  { x:0, z:1, prop:'bones' },
+  { x:6, z:1, prop:'barricade' },
+  { x:7, z:2, prop:'pylon', elev:0.18 },
+  { x:1, z:2, prop:'crater', type:'hazard' },
+  { x:5, z:3, prop:'crater', type:'hazard' },
+  { x:2, z:4, prop:'barricade' },
+  { x:0, z:5, prop:'pylon', elev:0.18 },
+  { x:7, z:5, prop:'bones' },
+  { x:6, z:6, prop:'bones' },
+  { x:3, z:2, type:'objective' },
+  { x:4, z:4, type:'objective' }
+];
+
+/* 🗿 EVENT ART. `_bbEvents()` (index.html:103625) hands the board a per-tile
+   `art` — a PNG baked from the admin's uploaded .glb — and `drawEvent`
+   (:1218-1231) scales it to fit exactly one tile. The repo's ruin art is in the
+   same 5×5 sheet format as the units, so frame 0 of each is the still.
+   Types come from EVENT_TYPES (battle-board/index.html:1111): 'structure'
+   blocks its tile, the rest do not. */
+const RUIN_ART = {
+  car:      'assets/artwork/Eventlocations/Cars/Abandon car-abandon_car-v2.png',
+  house:    'assets/artwork/Eventlocations/homes/Abandon house-house-v1.png',
+  building: 'assets/artwork/Eventlocations/buildings/Abandon building-building-v3.png',
+  facility: 'assets/artwork/Eventlocations/scpbuiilding/Abandon SCP Tactility-building-v1.png',
+  truck:    'assets/artwork/Eventlocations/tricks/Abandon truck-truck-v1.png'
+};
+
+/* 🗺 THE AS-SHIPPED MAP — the literal return value of `_bbMapFromEditor()`
+   (index.html:103208) for the shipped default, field for field:
+     id      m.id   ‖ 'editor'      → `_b3dActiveMap()` has no id  → 'editor'
+     name    m.name ‖ 'Battlemap'   → no name                      → 'Battlemap'
+     cols    m.cols ‖ BOARD_W       → 8      (index.html:71892)
+     rows    m.rows ‖ BOARD_H       → 7
+     ground  the same literal pair, hardcoded at :103237
+     tiles   [] — terrain is null and models is empty, so both loops in the
+             converter run zero times (see the RUIN_TILES note above)
+     events  [] — hardcoded empty in the converter
+     spawns  the same derived literal
+   timeOfDay/location come from `_bbTimeOfDay()`/`_bbActiveLocationId()`, which
+   are the match's own state, so they are scene inputs here.
+   Change this ONLY to track a change in `_bbMapFromEditor`. Its whole value is
+   being boring and true. */
+function shippedMap(timeOfDay, location) {
+  return {
+    id:'editor', name:'Battlemap', cols:COLS, rows:ROWS,
+    timeOfDay: timeOfDay, location: location,
+    ground:{ base:'#2a2418', accent:'#4a3f24' },
+    tiles: [],
+    events: [],
+    spawns:{ mine:[[2,ROWS-1],[3,ROWS-1],[4,ROWS-1],[5,ROWS-1]],
+             foe: [[2,0],[3,0],[4,0],[5,0]] }
+  };
+}
+
+/* 🔴 THE TARGET-STATE MAP. Same envelope as `shippedMap` — the board's
+   receiver takes it happily — but the `tiles` array carries `elev` and
+   `type:'objective'`, which `_bbMapFromEditor` has no branch for and no input
+   that could produce. It is a picture of a board with terrain, not a picture of
+   this game. `events:[]` matches the real builder; the match's events arrive
+   separately (and, for the battle stage, never — see bridgeEvents). */
+function ruinsMap(timeOfDay, location, tiles) {
+  return {
+    id:'harness-ruins', name:'Overgrown Downtown', cols:COLS, rows:ROWS,
+    timeOfDay: timeOfDay, location: location,
+    ground:{ base:'#2a2418', accent:'#4a3f24' },
+    tiles: tiles || RUIN_TILES,
+    events: [],
+    spawns:{ mine:[[2,ROWS-1],[3,ROWS-1],[4,ROWS-1],[5,ROWS-1]],
+             foe: [[2,0],[3,0],[4,0],[5,0]] }
+  };
+}
+
+let _uid = 0;
+function unit(cardId, owner, x, y) {
+  _uid++;
+  const r = ROSTER[cardId] || {};
+  return { id: 'u' + _uid, cardId: cardId, name: r.name || cardId,
+           owner: owner, alive: true, pos: { x: x, y: y } };
+}
+
+/* Chebyshev disc, the game's metric (`distance`, index.html:74070), minus
+   anything a unit could not stand on. This is a FIXTURE convenience, not a
+   port of getValidMoves — the board has no pathfinding and neither does this. */
+function disc(units, blocked, cx, cy, r) {
+  const taken = new Set((units || []).map(u => u.pos.x + ',' + u.pos.y));
+  const out = [];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) > r) continue;
+    if (x === cx && y === cy) continue;
+    if (taken.has(x + ',' + y)) continue;
+    if (blocked && blocked.has(x + ',' + y)) continue;
+    out.push({ x: x, y: y });
+  }
+  return out;
+}
+
+/* Every scene carries `shipped`. There is no default: a scene that forgets it
+   is falsy, i.e. target-state, which is the safe way round — the failure mode
+   of the flag is "labelled as a fixture when it was honest", never the reverse. */
+const SCENES = {};
+
+/* — 0 · GAMEMAP. ⭐ THE ONLY AS-SHIPPED SCENE, AND THE CONTROL CAPTURE. ⭐
+
+     The map is the literal output of `_bbMapFromEditor()` for the shipped
+     default (`shippedMap` above): 8×7, the hardcoded ground pair, and an EMPTY
+     tiles array — no props, no hazards, no objective tiles, no elevation. That
+     is the terrain a player gets today, and it is the honest A/B partner for
+     .gauntlet/baseline-stage.png.
+
+     Everything else in this scene is verbatim-real and was checked field for
+     field against its sender: units (`_bbStageUnitList` :103862), defs with the
+     hardcoded h:1.05 (`_bbUnitDefs` :103514), tombstones (`_bbStagePushTombs`
+     :103898) and surfaces (`_bbStagePushSurfaces` :104008). No `events` — the
+     in-battle stage is never sent any (see bridgeEvents).
+
+     The unit and grave layout deliberately matches `skirmish` so the two can be
+     diffed: the ONLY differences in the pixels are the terrain the game cannot
+     send and the unit heights it does not vary. */
+SCENES.gamemap = (function () {
+  const units = [
+    unit('zombie',       'ai',     1, 0),
+    unit('scum-grunt',   'ai',     3, 0),
+    unit('scum-boss',    'ai',     4, 1),
+    unit('zombie',       'ai',     5, 1),
+    unit('giant-spider', 'ai',     2, 2),
+    unit('mutant-dog',   'ai',     6, 2),
+    unit('scp-guard',    'ai',     0, 2),
+    unit('dual-blader',  'player', 2, 5),
+    unit('field-medic',  'player', 4, 5),
+    unit('guard-dog',    'player', 6, 5),
+    unit('warrior-hero', 'player', 3, 6),
+    unit('rifleman',     'player', 5, 6),
+    unit('survivor-lead','player', 1, 6)
+  ];
+  return {
+    shipped: true,
+    desc: 'What a match renders TODAY: _bbMapFromEditor() with the shipped default sends tiles:[] — bare ground, no props, no elevation.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: shippedMap('day', 'battlefield'),
+    units: units,
+    tombstones: [
+      { x:4, y:3, owner:'ai',     lootable:true,  looted:false, glowing:false },
+      { x:1, y:4, owner:'player', lootable:true,  looted:true,  glowing:false },
+      { x:6, y:4, owner:'ai',     lootable:false, looted:false, glowing:true  }
+    ],
+    surfaces: { '2,3':'oil', '5,3':'fire', '3,4':'water' },
+    paint: null
+  };
+})();
+
+/* — 1 · EMPTY. The board and nothing else: ground, props, horizon, lighting.
+     ⚠ TARGET-STATE. This was called "the control capture" in an earlier
+     revision and it is not one: with no units to look at, every pixel in it
+     that is not flat ground — the two raised pylon slabs with lit side faces,
+     the craters, the barricades, the brighter objective tiles — comes from
+     RUIN_TILES, and none of it reaches a player. `gamemap` is the control. This
+     scene's job is narrower and still worth having: terrain, horizon and
+     lighting with nothing standing in front of them. */
+SCENES.empty = {
+  shipped: false,
+  desc: 'Bare stage — target-state terrain, props and horizon, no units.',
+  timeOfDay: 'day', location: 'battlefield',
+  map: ruinsMap('day', 'battlefield'),
+  units: [], tombstones: [], surfaces: {}, paint: null
+};
+
+/* — 2 · SKIRMISH. Both sides deployed, mixed unit types, tombstones in three
+     different states (plain / glowing / already looted) and three painted
+     surfaces. This is the "mid-match" capture. */
+SCENES.skirmish = (function () {
+  const units = [
+    unit('zombie',       'ai',     1, 0),
+    unit('scum-grunt',   'ai',     3, 0),
+    unit('scum-boss',    'ai',     4, 1),
+    unit('zombie',       'ai',     5, 1),
+    unit('giant-spider', 'ai',     2, 2),
+    unit('mutant-dog',   'ai',     6, 2),
+    unit('scp-guard',    'ai',     0, 2),
+    unit('dual-blader',  'player', 2, 5),
+    unit('field-medic',  'player', 4, 5),
+    unit('guard-dog',    'player', 6, 5),
+    unit('warrior-hero', 'player', 3, 6),
+    unit('rifleman',     'player', 5, 6),
+    unit('survivor-lead','player', 1, 6)
+  ];
+  return {
+    shipped: false,
+    desc: 'Both sides deployed, mixed types, three graves, three painted surfaces. Terrain and unit heights are target-state.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield'),
+    units: units,
+    tombstones: [
+      { x:4, y:3, owner:'ai',     lootable:true,  looted:false, glowing:false },
+      { x:1, y:4, owner:'player', lootable:true,  looted:true,  glowing:false },
+      { x:6, y:4, owner:'ai',     lootable:false, looted:false, glowing:true  }
+    ],
+    /* keys are GAME "x,y"; values are game surface TYPE ids, mapped through
+       _BB_SURFACE_FX by the bridge exactly as the game does */
+    surfaces: { '2,3':'oil', '5,3':'fire', '3,4':'water' },
+    paint: null
+  };
+})();
+
+/* — 3 · MOVERANGE. One unit selected, its move set and attack set painted.
+     The capture for anything about telegraphing (BAR R2/R3). */
+SCENES.moverange = (function () {
+  const units = [
+    unit('zombie',       'ai',     3, 2),
+    unit('scum-grunt',   'ai',     5, 3),
+    unit('scum-boss',    'ai',     6, 1),
+    unit('dual-blader',  'player', 3, 4),
+    unit('warrior-hero', 'player', 4, 6),
+    unit('rifleman',     'player', 2, 6)
+  ];
+  const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
+                                    .map(t => t.x + ',' + t.z));
+  const sel = { x:3, y:4 };
+  const move = disc(units, blocked, sel.x, sel.y, 2);
+  /* attacks are enemy-occupied tiles in reach — the same thing `validAttacks`
+     holds when the game fills App._bbPaint (index.html:141689) */
+  const attack = units.filter(u => u.owner === 'ai' &&
+      Math.max(Math.abs(u.pos.x - sel.x), Math.abs(u.pos.y - sel.y)) <= 2)
+    .map(u => ({ x: u.pos.x, y: u.pos.y }));
+  return {
+    shipped: false,
+    desc: 'Dual Blader selected at (3,4): blue move set, red attack set, gold ring on the unit. Paint is real; terrain is target-state.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield'),
+    units: units,
+    tombstones: [ { x:6, y:4, owner:'ai', lootable:true, looted:false, glowing:false } ],
+    surfaces: {},
+    paint: { move: move, attack: attack, place: [], swap: [], sel: sel }
+  };
+})();
+
+/* — 4 · NIGHT. Skirmish under the night rig, which swaps the whole lighting
+     preset (TIME_PRESETS, battle-board/index.html:284) and turns the braziers
+     into the dominant light source. Cheap to ship, and half the board's look
+     lives in this one flag. */
+SCENES.night = Object.assign({}, SCENES.skirmish, {
+  shipped: false,
+  desc: 'Skirmish under the night lighting rig.',
+  timeOfDay: 'night',
+  map: ruinsMap('night', 'battlefield')
+});
+
+/* — 5 · RUINS. What a lootable map structure (BAR item 5) looks like on this
+     board today: an EVENT tile with baked art, which is the only way the board
+     can currently draw a building. Read the bridgeEvents note above before
+     drawing conclusions — the in-battle stage is not sent events at all, so
+     this is the full-screen board's view.
+     ⚠ The five ruins the brief names are car / church / school / hospital /
+     house. The repo ships art for a car, a house, a generic building, an SCP
+     facility and a truck — there is no church art and no school art, so this
+     scene labels each tile for the asset it really is rather than pretending. */
+SCENES.ruins = {
+  shipped: false,
+  desc: 'Ruin art on event tiles: car, house, building, facility, truck. Doubly target-state — the battle stage is never sent events at all.',
+  timeOfDay: 'dusk', location: 'battlefield',
+  map: ruinsMap('dusk', 'battlefield', [
+    { x:7, z:2, prop:'pylon', elev:0.18 },
+    { x:0, z:5, prop:'pylon', elev:0.18 },
+    { x:0, z:1, prop:'bones' },
+    { x:6, z:6, prop:'bones' }
+  ]),
+  units: [ unit('warrior-hero', 'player', 3, 6), unit('zombie', 'ai', 4, 1) ],
+  tombstones: [], surfaces: {}, paint: null,
+  events: [
+    { x:1, y:1, type:'structure', name:'Wrecked Car',      art:RUIN_ART.car,      scale:0.9 },
+    { x:3, y:2, type:'structure', name:'Burnt House',      art:RUIN_ART.house },
+    { x:5, y:2, type:'structure', name:'Ruined Building',  art:RUIN_ART.building },
+    { x:2, y:4, type:'structure', name:'Abandoned Facility',art:RUIN_ART.facility },
+    { x:6, y:4, type:'structure', name:'Abandoned Truck',  art:RUIN_ART.truck,    scale:0.9 }
+  ]
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   4 · THE DRIVER
+   ══════════════════════════════════════════════════════════════════ */
+
+const QS    = new URLSearchParams(location.search);
+const SHOT  = QS.get('shot') === '1';
+/* The bare URL lands on the AS-SHIPPED scene deliberately. Whoever opens this
+   file with no query string is the person most likely to mistake it for the
+   game, so give them the true picture and make them ask for a fixture. */
+const NAME  = SCENES[QS.get('scene')] ? QS.get('scene') : 'gamemap';
+const SCENE = SCENES[NAME];
+const KIND  = SCENE.shipped ? 'as-shipped' : 'target-state fixture';
+
+const host  = document.getElementById('bb-stage-host');
+const catch_ = document.getElementById('bb-catch');
+const readEl = document.getElementById('h-read');
+
+let boardReady = false;      // board:ready seen
+let pushedAt   = 0;          // performance.now() when the scenario finished going out
+let rectsSeen  = 0;          // board:rects since the push — proof the iframe's RAF runs
+const errors   = [];
+
+function note(msg, isErr) {
+  if (isErr) errors.push(msg);
+  if (!readEl) return;
+  readEl.innerHTML = String(msg).replace(/[<&]/g, c => c === '<' ? '&lt;' : '&amp;');
+  readEl.className = 'read' + (isErr ? ' err' : '');
+}
+
+if (SHOT) document.body.classList.add('shot');
+
+/* ── 📐 THE IN-GAME HOST RECT — measured, not guessed ──────────────────
+   The game sizes #bb-stage-host to `.board-area`'s bounding rect
+   (`_bbStageTrack`, index.html:104381-104425) and stretches the iframe to
+   inset:0 inside it. That rect is NOT the viewport, and the difference is not
+   cosmetic: `VIEW.scale` (battle-board:441) fits the vertical FOV to the
+   SAFE-BOX HEIGHT, and EMBEDDED zeroes SAFE (:2917) — so vertical FOV is pinned
+   to the host's HEIGHT and horizontal FOV falls out of its ASPECT (CONTRACT
+   §1.6). A full-viewport host frames the board differently from a match, which
+   is precisely the "right in the rig, wrong in the game" error this file exists
+   to prevent.
+
+   The numbers below are a MEASUREMENT of the live cascade, not a reading of the
+   CSS. Method: load /index.html in headless Chromium, append an empty
+   `.battle-screen > .battle-grid > .battle-center > .board-area` into #app,
+   force root zoom to 1 (the battle screen is exempt from the UI auto-scale —
+   index.html:209104 sets z=1 when App.screen==='battle'), read the rect.
+   Re-measure the same way if the rail widths move.
+
+       viewport      .board-area (CSS px)
+       1600 × 900     801.6 × 688   at (490.4, 5.6)
+       1440 × 900     781.6 × 692   at (370.4, 5.6)
+       1920 × 1080   1111.2 × 868   at (496.0, 9.6)
+
+   The arithmetic reproduces the first two to under a pixel and 1920 to ~1%.
+   Its inputs are the ones the cascade really uses:
+     rail L   chrome.css:97-99    440 / 320 / 280 by breakpoint — it OVERRIDES
+                                  index.html:7082-7089's 560/400/330
+     rail R   chrome.css:114-115  248 / 228 — index.html's --btl-rail-r lies
+                                  about this and says so in its own comment
+     grid     index.html:6921-6928  gap 1rem, +20px rail offset, +24px right
+                                  reservation, padding-right .75rem
+     height   index.html:6926     min-height: calc(100vh - 1.2rem - 190px) */
+function boardAreaRect(W, H) {
+  const railL = (W >= 1600) ? 440 : (W >= 1280 ? 320 : 280);
+  const railR = (W > 1500) ? 248 : 228;
+  const left  = 14 + (railL + 20) + 16;          /* #app inset + column 1 + gap */
+  return { left: left, top: 6,
+           width:  Math.max(240, W - left - 16 - (railR + 24) - 20),
+           height: Math.max(200, H - 22 - 190) };
+}
+
+/* Which box this scene mounts into. An as-shipped scene gets the in-game rect,
+   because a capture that claims to be the game must be framed like the game. A
+   target-state scene keeps the full viewport: a bigger, lower-framed picture
+   that no match produces — which is fine, it is a fixture, and the watermark
+   says so. `?host=full|boardarea` overrides either way for a direct A/B. */
+const HOSTMODE = (QS.get('host') === 'full' || QS.get('host') === 'boardarea')
+  ? QS.get('host') : (SCENE.shipped ? 'boardarea' : 'full');
+let hostBox = { left:0, top:0, width:0, height:0 };
+
+function sizeHost() {
+  const W = window.innerWidth || 1600, H = window.innerHeight || 900;
+  const r = (HOSTMODE === 'boardarea') ? boardAreaRect(W, H)
+                                       : { left:0, top:0, width:W, height:H };
+  host.style.left = r.left + 'px'; host.style.top = r.top + 'px';
+  host.style.width = r.width + 'px'; host.style.height = r.height + 'px';
+  hostBox = r;
+  paintMark();
+  paintGuides();
+}
+window.addEventListener('resize', sizeHost);
+
+/* 📐 Draw the furniture the game puts around the board, from the SAME numbers
+   boardAreaRect uses so the two cannot drift. Nothing here is rendered — these
+   are outlines of the space a match spends on HUD, which is the whole reason
+   the board's rect is not the viewport. */
+function paintGuides() {
+  const box = document.getElementById('h-guides');
+  if (!box) return;
+  box.innerHTML = '';
+  document.body.classList.toggle('guides', HOSTMODE === 'boardarea');
+  if (HOSTMODE !== 'boardarea') return;
+  const W = window.innerWidth || 1600, H = window.innerHeight || 900;
+  const railL = (W >= 1600) ? 440 : (W >= 1280 ? 320 : 280);   /* chrome.css:97-99   */
+  const railR = (W > 1500) ? 248 : 228;                        /* chrome.css:114-115 */
+  const HAND  = 190;                                           /* index.html:6927    */
+  const parts = [
+    { l:14,        t:6, w:railL,  h:H - HAND - 12, s:'HUD RAIL · .battle-left', c:'' },
+    { l:W - railR - 12, t:6, w:railR, h:H - HAND - 12, s:'DECK RAIL · .bp-wrap', c:'' },
+    { l:0,         t:H - HAND, w:W, h:HAND, s:'HAND STRIP · position:fixed', c:'' },
+    { l:hostBox.left, t:hostBox.top, w:hostBox.width, h:hostBox.height,
+      s:'.board-area — the stage host', c:'board' }
+  ];
+  for (const p of parts) {
+    const d = document.createElement('div');
+    d.className = p.c;
+    d.style.left = p.l + 'px'; d.style.top = p.t + 'px';
+    d.style.width = p.w + 'px'; d.style.height = p.h + 'px';
+    d.textContent = p.s;
+    box.appendChild(d);
+  }
+}
+
+/* 🏷 The watermark. Kind first because that is the thing a stray PNG loses. */
+function paintMark() {
+  const el = document.getElementById('h-mark');
+  if (!el) return;
+  el.innerHTML = '<b class="' + (SCENE.shipped ? 'ship' : 'fix') + '">' +
+    (SCENE.shipped ? '◆ AS-SHIPPED' : '◇ TARGET-STATE FIXTURE') + '</b>' +
+    ' · scene=' + NAME +
+    ' · host ' + (HOSTMODE === 'boardarea' ? '.board-area' : 'viewport') + ' ' +
+    Math.round(hostBox.width) + '×' + Math.round(hostBox.height);
+  const hb = document.getElementById('h-host');
+  if (hb) hb.textContent = (HOSTMODE === 'boardarea' ? '.board-area (in-game)' : 'full viewport')
+    + ' · ' + Math.round(hostBox.width) + '×' + Math.round(hostBox.height);
+}
+
+/* chrome. Every chip is labelled, not just the active one — the panel has to
+   answer "which of these are real" without clicking through five of them. */
+(function paintChrome() {
+  const pv = document.getElementById('h-prov');
+  if (pv) {
+    pv.textContent = SCENE.shipped ? '◆ AS-SHIPPED' : '◇ TARGET-STATE FIXTURE';
+    pv.className = 'prov ' + (SCENE.shipped ? 'ship' : 'fix');
+  }
+  const d = document.getElementById('h-desc');
+  if (d) d.textContent = SCENE.desc || '';
+  const box = document.getElementById('h-scenes');
+  if (!box) return;
+  for (const k of Object.keys(SCENES)) {
+    const a = document.createElement('a');
+    a.href = '?scene=' + k; a.textContent = k;
+    a.className = (SCENES[k].shipped ? 'ship' : 'fix') + (k === NAME ? ' on' : '');
+    a.title = SCENES[k].shipped ? 'as-shipped — the game can send this today'
+                                : 'target-state fixture — the game cannot send this today';
+    box.appendChild(a);
+  }
+})();
+
+/* The iframe, mounted the way _bbStageMount does (index.html:104155-104163):
+   same src + cache-buster, hidden until `load` so the browser's white
+   pre-paint frame never shows, with a belt-and-braces timer behind it. */
+sizeHost();
+
+const frame = document.createElement('iframe');
+frame.className = 'bb-stage';
+frame.setAttribute('aria-hidden', 'true');
+frame.setAttribute('tabindex', '-1');
+frame.src = 'index.html?v=' + BB_VER;
+frame.addEventListener('load', () => frame.classList.add('ready'));
+setTimeout(() => frame.classList.add('ready'), 4000);
+host.insertBefore(frame, catch_);
+
+/* _bbStagePost — index.html:103820. Same envelope, same same-origin target. */
+function post(type, detail) {
+  if (!frame.contentWindow) return;
+  try {
+    frame.contentWindow.postMessage(Object.assign({ type: 'board:' + type }, detail || {}),
+                                    location.origin);
+  } catch (e) { note('post ' + type + ' failed: ' + e.message, true); }
+}
+
+/* The push order is copied from the `board:ready` branch at index.html:104147-104149:
+   init → units (which pushes defs first) → paint → tombs → surfaces. Order is
+   load-bearing: `applyUnits` mints a placeholder def for any key it has not
+   seen (battle-board/index.html:2795-2800), so defs must land first or a unit
+   spends its first frames as a procedural body. */
+async function pushScene() {
+  post('init', bridgeInitPayload(SCENE));
+
+  /* _bbStagePushLocation (index.html:103936) registers the entry and THEN
+     switches, because setLocation() hard-bails on an id it has never seen.
+     init already carried the table; doing it again costs nothing and keeps
+     the harness on the same code path the game uses mid-match. */
+  post('locations', { locations: bridgeLocations() });
+  post('location', { id: SCENE.location });
+  post('timeOfDay', { key: SCENE.timeOfDay });
+
+  /* _bbStagePushUnits — index.html:104041: defs(force) first, then the FULL
+     roster. The game always sends the whole list; withholding a unit and
+     asking for a summon ceremony instead is a documented past bug. */
+  const defs = await bridgeDefs(SCENE);
+  post('defs', { defs: defs });
+  post('units', { units: bridgeUnitList(SCENE) });
+
+  post('paint', bridgePaint(SCENE));
+  post('tombs', bridgeTombs(SCENE));
+  post('surfaces', bridgeSurfaces(SCENE));
+  post('events', await bridgeEvents(SCENE));
+
+  pushedAt = performance.now();
+  rectsSeen = 0;
+  note('scene "' + NAME + '" pushed · ' + (SCENE.units || []).length + ' units');
+}
+
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin) return;
+  const d = e.data;
+  if (!d || typeof d.type !== 'string' || d.type.indexOf('board:') !== 0) return;
+  if (!frame.contentWindow || e.source !== frame.contentWindow) return;
+
+  if (d.type === 'board:ready') {
+    boardReady = true;
+    pushScene().catch(err => note('pushScene: ' + (err && err.message || err), true));
+    return;
+  }
+  /* board:rects is EMBEDDED-only and throttled to 4/sec (CONTRACT §1.3). It is
+     published from inside frame() itself, so receiving them is direct evidence
+     the stage's RAF loop is alive — which is what the ready gate below wants,
+     and what a parent-side rAF count could never prove. */
+  if (d.type === 'board:rects') { rectsSeen++; return; }
+  if (d.type === 'board:tileClick') {
+    note('tileClick ' + d.x + ',' + d.z + (d.unitId ? ' → unit ' + d.unitId : ''));
+    return;
+  }
+  if (d.type === 'board:tileHover') {
+    if (d.x >= 0) note('hover ' + d.x + ',' + d.z + (d.unitId ? ' · ' + d.unitId : ''));
+    return;
+  }
+});
+
+/* Forwarded pointer — `_bbStageCatcher`, index.html:104344-104353. Normalised
+   against the STAGE HOST (not the catcher), which is the fix for the "clicks
+   land one tile over" bug the game's comment records. */
+function norm(e) {
+  const r = host.getBoundingClientRect();
+  return { nx: (e.clientX - r.left) / Math.max(1, r.width),
+           ny: (e.clientY - r.top) / Math.max(1, r.height) };
+}
+catch_.addEventListener('click', (e) => { const n = norm(e); post('pointer', { kind:'click', nx:n.nx, ny:n.ny }); });
+catch_.addEventListener('mousemove', (e) => { const n = norm(e); post('pointer', { kind:'move', nx:n.nx, ny:n.ny }); });
+catch_.addEventListener('mouseleave', () => post('pointer', { kind:'move', nx:-1, ny:-1 }));
+
+/* ── ⌨ KEY FORWARDING — a STUB, and here is exactly what that means ─────
+   .gauntlet/BAR.md requirement #2 is "Camera: WASD moves it, Q/E turns it".
+   There are no camera controls today: `CONFIG.camera` (battle-board:209) is
+   never mutated at runtime, and `handleHostMessage` (:2812-2907) has no `key`
+   and no `camera` case — so both messages below fall off the end of its if/else
+   chain and do nothing. SILENTLY: the try/catch at :2905 only fires on a throw,
+   and an unmatched `t` is not a throw. Nothing warns. That is expected today
+   and must stop being true the moment someone adds the case.
+
+   It is wired anyway, because of CONTRACT §2 Tier 2: an embedded free camera
+   needs HOST-FORWARDED KEYS. An iframe that never holds focus receives no
+   `keydown`, for exactly the reason it receives no mouse events (§1.4) — so a
+   camera built and tested only against the standalone preview's local listener
+   (:2634) will be dead in the game, and, without this, dead in the rig too. A
+   rig that cannot exercise the single most-requested feature of the build
+   cannot be used to judge it.
+
+   TWO messages go out, because which shape the board will want is not decided:
+     board:key    {down, code, key, repeat}   raw. CONTRACT §2 Tier 2 is explicit
+                  that held-key state must be integrated in `update(dt)` (:2139)
+                  and NOT on keydown, or the camera speed tracks frame rate — so
+                  the board tracks its own held set and this is just the edges.
+     board:camera {dx, dz, yaw}               resolved intent, re-sent every
+                  animation frame while a camera key is held, with dt already
+                  applied. A board that would rather not own key state can take
+                  this instead.
+   Add either case to the chain and this rig drives it with no harness change.
+
+   ⚠ `g` and `1`-`4` ARE ALREADY CLAIMED by the board's own local listener
+   (:2634-2639: guides, and the four time-of-day presets). They are forwarded as
+   `board:key` like everything else and are equally inert, because that listener
+   is inside the iframe and the iframe has no focus. Use
+   `__harness.post('timeOfDay',{key:'night'})` for time of day — that one is
+   real protocol and works today. */
+const CAMKEYS = { KeyW:'fwd', KeyS:'back', KeyA:'left', KeyD:'right', KeyQ:'yawL', KeyE:'yawR' };
+const held = Object.create(null);
+let camSent = 0, camRaf = 0, camLast = 0;
+
+function camStep(t) {
+  camRaf = 0;
+  const dt = camLast ? Math.min(0.1, (t - camLast) / 1000) : 0.016;
+  camLast = t;
+  const dx  = (held.KeyD ? 1 : 0) - (held.KeyA ? 1 : 0);
+  const dz  = (held.KeyS ? 1 : 0) - (held.KeyW ? 1 : 0);
+  const yaw = (held.KeyE ? 1 : 0) - (held.KeyQ ? 1 : 0);
+  if (!dx && !dz && !yaw) { camLast = 0; return; }
+  /* Units are per-second and world-ish: 6 tiles/s pan, 90°/s turn. They are the
+     harness's guess — the board will own the real rates once it owns a camera. */
+  post('camera', { dx: dx * 6 * dt, dz: dz * 6 * dt, yaw: yaw * (Math.PI / 2) * dt });
+  camSent++;
+  camRaf = requestAnimationFrame(camStep);
+}
+function pumpCam() { if (!camRaf) camRaf = requestAnimationFrame(camStep); }
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat && CAMKEYS[e.code]) { pumpCam(); return; }   /* the rAF pump owns repeats */
+  post('key', { down: true, code: e.code, key: e.key, repeat: !!e.repeat });
+  if (CAMKEYS[e.code]) {
+    held[e.code] = true;
+    pumpCam();
+    note('key ' + e.code + ' ↓ → board:key + board:camera (' + CAMKEYS[e.code] + ')');
+  } else {
+    note('key ' + e.code + ' ↓ → board:key (no receiver on the board yet)');
+  }
+});
+window.addEventListener('keyup', (e) => {
+  post('key', { down: false, code: e.code, key: e.key, repeat: false });
+  if (CAMKEYS[e.code]) delete held[e.code];
+});
+/* A window that loses focus never delivers the keyup, which would leave a key
+   stuck down and the rAF pump running forever. */
+window.addEventListener('blur', () => { for (const k in held) delete held[k]; });
+
+/* ── READY GATE ──────────────────────────────────────────────────────
+   __harnessReady flips only when all three of the required conditions hold:
+     1. the stage reported board:ready,
+     2. the scenario finished going out (pushedAt is set — and it is set AFTER
+        the awaited sprite slicing, so no unit can still be an empty def), and
+     3. one full second of real animation has elapsed since that push, which is
+        checked by BOTH wall clock and ≥3 board:rects (4/sec ⇒ ≥0.75 s of
+        frames actually rendered).
+   The degraded escape hatch exists because rAF genuinely does not fire in some
+   embedded viewers (CLAUDE.md's Browser-pane note). Rather than hang a
+   screenshotter for 30 s, give up after 6 s, flip ready anyway, and SAY SO on
+   `window.__harnessDegraded` so nobody mistakes a frozen board for a rendered
+   one. */
+const readyTick = setInterval(() => {
+  if (window.__harnessReady) { clearInterval(readyTick); return; }
+  if (!boardReady || !pushedAt) return;
+  const age = performance.now() - pushedAt;
+  if (age >= 1000 && rectsSeen >= 3) { window.__harnessReady = true; clearInterval(readyTick); return; }
+  if (age >= 6000) {
+    window.__harnessDegraded = 'no board:rects after ' + Math.round(age) +
+      'ms — the stage RAF loop is probably not running';
+    note(window.__harnessDegraded, true);
+    window.__harnessReady = true; clearInterval(readyTick);
+  }
+}, 100);
+
+/* Driver handle: `__harness.post('timeOfDay',{key:'night'})`,
+   `__harness.push()` to re-send, `__harness.scenes` to enumerate. */
+window.__harness = {
+  scene: NAME, scenes: Object.keys(SCENES), data: SCENE,
+  shipped: !!SCENE.shipped, kind: KIND, hostMode: HOSTMODE,
+  post: post, push: pushScene, frame: frame,
+  errors: errors,
+  /* `camSent` is the only externally checkable proof that forwarded keys
+     actually left the parent — the board has no receiver, so nothing on the
+     board side can show it. */
+  state: () => ({ boardReady, pushedAt, rectsSeen, ready: window.__harnessReady,
+                  degraded: window.__harnessDegraded || null,
+                  shipped: !!SCENE.shipped, hostMode: HOSTMODE,
+                  host: { w: Math.round(hostBox.width), h: Math.round(hostBox.height) },
+                  heldKeys: Object.keys(held), camSent: camSent })
+};
+
+})();
+</script>
+</body>
+</html>

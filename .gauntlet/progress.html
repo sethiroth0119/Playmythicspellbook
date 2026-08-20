@@ -1,0 +1,597 @@
+<title>Hexfield Gauntlet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Spline+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<script id="run-data" type="application/json">
+{
+  "updated": "2026-08-20 \u2014 Wave 1 in flight",
+  "headline": "Ten pieces, each with its own builder and its own critic. Foundation first.",
+  "phase": "Wave 1",
+  "round": 1,
+  "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
+  "bar": [
+    "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
+    "The battlefield itself is beautiful: dirt, cracked street, rubble, grass reclaiming it",
+    "Loot sites read as destroyed: car, church, school, hospital, house",
+    "Control points are SCP trucks with nodes",
+    "Looting a ruin opens the exact tombstone salvage grid \u2014 take and swap",
+    "Hold 2 of 3 points for 3 straight turns to win, without killing the hero",
+    "Move and attack telegraph with a path arrow, XCOM-style",
+    "Every current battlefield function still works"
+  ],
+  "pieces": [
+    {
+      "name": "Headless board harness",
+      "state": "building",
+      "note": "Drives the real canvas stage over the real postMessage protocol so every later critic can SEE the board in game-produced states. Without it, critics grade prose.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "run",
+          "label": "building",
+          "short": "\u00b7\u00b7\u00b7"
+        }
+      ]
+    },
+    {
+      "name": "Metric + bounds unification",
+      "state": "building",
+      "note": "The movement metric is inlined ~80 times instead of calling distance(); inBounds has 5 hand-rolled copies. Flip the board to hex with those in place and the highlights disagree with the click gate \u2014 the exact 'UI lies about the rules' bug this codebase already carries a scar comment about. Pure refactor, behaviour identical.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "run",
+          "label": "building",
+          "short": "\u00b7\u00b7\u00b7"
+        }
+      ]
+    },
+    {
+      "name": "Hex lattice \u2014 board side",
+      "state": "queued",
+      "note": "gw() and pickTile() are analytic inverses of each other with nothing asserting it; they must convert in one commit or clicks silently address the wrong tile. Then tilePoly, the surface-FX clip, the raised-tile side walls, and the seven 'world-X offset radius' idioms."
+    },
+    {
+      "name": "Hex lattice \u2014 game side",
+      "state": "queued",
+      "note": "Flip distance() to a cube-coordinate hex metric, restagger inBounds, and break the hardcoded 8x7 CSS grid that is a second, unlinked source of truth. Then grow the map."
+    },
+    {
+      "name": "Free camera",
+      "state": "queued",
+      "note": "WASD pan and Q/E yaw. No camera controls exist today. Yaw breaks the painter sort, the ground slices, the screen-anchored sky, and every ground-circle radius at once."
+    },
+    {
+      "name": "Post-apocalyptic terrain",
+      "state": "queued",
+      "note": "Dirt, cracked street, rubble, grass taking it back \u2014 with real elevation and lit cliff faces, per the FFT bar. The map has to become the frame, not a plate floating on a painting."
+    },
+    {
+      "name": "Ruins + loot",
+      "state": "queued",
+      "note": "Car, church, school, hospital, house \u2014 visibly destroyed. Looting calls the real _lootGridOpen, not a lookalike, so the salvage grid and the swap behaviour are literally the tombstone ones."
+    },
+    {
+      "name": "SCP truck control points",
+      "state": "queued",
+      "note": "Three trucks with nodes. Per-turn tick scores a held point and un-scores a lost one; two of three held for three straight turns wins without touching the enemy hero."
+    },
+    {
+      "name": "XCOM telegraph",
+      "state": "queued",
+      "note": "Move range as a glowing contour, a path arrow along the actual route, and an arc to the attack target. Not a tile checkerboard, not a straight laser."
+    },
+    {
+      "name": "Sprite clarity",
+      "state": "queued",
+      "note": "Units stay sprites and stay crisp at the new map scale \u2014 hard edges, ownership rings, readable nameplates."
+    }
+  ],
+  "log": [
+    {
+      "t": "00:00",
+      "kind": "start",
+      "text": "Gauntlet opened. Two-layer architecture confirmed: public/index.html holds game logic (BOARD_W 8 x BOARD_H 7, renderBattle, _lootGridOpen, _lootWithUnit); public/battle-board/index.html is a 2,950-line canvas perspective stage driven entirely by postMessage."
+    },
+    {
+      "t": "00:04",
+      "kind": "phase",
+      "text": "Phase R \u2014 four readers fanned out over the stage renderer, the square-grid game logic, the tombstone loot system, and the turn loop + UI style."
+    },
+    {
+      "t": "00:12",
+      "kind": "tooling",
+      "text": "Capture rig built and proven: real Chromium at 2x renders the live board to PNG headlessly. Critics will look at pixels, not at claims. Baseline captured."
+    },
+    {
+      "t": "00:14",
+      "kind": "finding",
+      "text": "Baseline is a long way from the bar: the board is a small floating plate in the middle of a matte painting, while the FFT reference is a full-frame diorama with real elevation and lit cliff faces. That gap is the whole job."
+    },
+    {
+      "t": "00:23",
+      "kind": "phase",
+      "text": "Recon closed \u2014 817-line contract brief. 22 inbound board messages, 9 outbound; game 'y' is board 'z'; _lootGridOpen is already generic enough to reuse unchanged; _twTickGameMode and _twEvalObjectives are existing per-turn and victory seams."
+    },
+    {
+      "t": "00:25",
+      "kind": "finding",
+      "text": "Two landmines named before anyone writes code: the metric is inlined ~80 times rather than calling distance(), and gw()/pickTile() are inverses with no assertion tying them. Both become their own pieces rather than being discovered mid-build."
+    },
+    {
+      "t": "00:28",
+      "kind": "build",
+      "text": "Wave 1 launched on disjoint files \u2014 the harness (new files) and the metric unification (index.html) build in parallel, each followed by a fresh-context critic that re-runs the work itself rather than trusting the report."
+    }
+  ]
+}
+</script>
+
+<style>
+:root {
+  --ground: #eae7de;
+  --surface: #f4f2ec;
+  --sunken: #dedbd1;
+  --line: #cbc7ba;
+  --line-soft: #ded9cc;
+  --ink: #1c211f;
+  --ink-2: #4a534e;
+  --ink-3: #7c857f;
+  --accent: #a9701a;
+  --accent-soft: #f0e2c6;
+  --hold: #2f7a4c;
+  --contest: #a8621f;
+  --lost: #a83a33;
+  --idle: #a09a8c;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0d1013;
+    --surface: #141a1d;
+    --sunken: #0a0d10;
+    --line: #263033;
+    --line-soft: #1c2427;
+    --ink: #d8ded9;
+    --ink-2: #96a09a;
+    --ink-3: #6b7873;
+    --accent: #e0a53c;
+    --accent-soft: #2a2317;
+    --hold: #63b37a;
+    --contest: #d98246;
+    --lost: #cf5a52;
+    --idle: #4a5450;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0d1013;
+  --surface: #141a1d;
+  --sunken: #0a0d10;
+  --line: #263033;
+  --line-soft: #1c2427;
+  --ink: #d8ded9;
+  --ink-2: #96a09a;
+  --ink-3: #6b7873;
+  --accent: #e0a53c;
+  --accent-soft: #2a2317;
+  --hold: #63b37a;
+  --contest: #d98246;
+  --lost: #cf5a52;
+  --idle: #4a5450;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Spline Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 40px) 80px;
+}
+
+/* ── masthead ─────────────────────────────────────────────── */
+
+header.top {
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    var(--ground);
+  position: relative;
+  overflow: hidden;
+}
+header.top::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(115deg, transparent 0 46%, color-mix(in srgb, var(--accent) 7%, transparent) 46% 47%, transparent 47%),
+    linear-gradient(65deg, transparent 0 71%, color-mix(in srgb, var(--accent) 5%, transparent) 71% 72%, transparent 72%);
+  pointer-events: none;
+}
+.top-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 26px clamp(16px, 4vw, 40px) 22px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px 32px;
+  align-items: flex-end;
+  position: relative;
+  z-index: 1;
+}
+.brand { flex: 1 1 340px; min-width: 0; }
+.eyebrow {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 4px;
+}
+h1 {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 700;
+  font-size: clamp(30px, 5vw, 44px);
+  line-height: 1.02;
+  letter-spacing: -0.005em;
+  margin: 0;
+  text-wrap: balance;
+}
+.headline {
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  max-width: 62ch;
+}
+.stamps { display: flex; gap: 10px; flex-wrap: wrap; }
+.stamp {
+  border: 1px solid var(--line);
+  background: var(--ground);
+  padding: 7px 13px 8px;
+  min-width: 86px;
+}
+.stamp .k {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  display: block;
+}
+.stamp .v {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 700;
+  font-size: 21px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.stamp.live .v { color: var(--accent); }
+
+/* ── sections ─────────────────────────────────────────────── */
+
+section { margin-top: 44px; }
+h2 {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+h2 .count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0;
+  margin-left: auto;
+  text-transform: none;
+}
+
+/* ── the brief ────────────────────────────────────────────── */
+
+.brief {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 28px 40px;
+}
+@media (max-width: 760px) { .brief { grid-template-columns: 1fr; } }
+.goal-text { margin: 0; max-width: 60ch; }
+.bar-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.bar-list li {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.bar-list li::before {
+  content: "";
+  width: 9px;
+  height: 10px;
+  margin-top: 6px;
+  background: var(--accent);
+  opacity: 0.5;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+
+/* ── piece ledger ─────────────────────────────────────────── */
+
+.ledger { display: grid; gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); }
+.piece {
+  background: var(--surface);
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 4px 14px;
+  align-items: start;
+}
+.piece .idx {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  padding-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.piece .nm {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600;
+  font-size: 19px;
+  line-height: 1.2;
+}
+.piece .note {
+  grid-column: 2;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  max-width: 68ch;
+}
+.piece .rounds { grid-column: 2; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.piece .state { justify-self: end; }
+
+.chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  padding: 3px 8px 4px;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+.chip.pass  { border-color: color-mix(in srgb, var(--hold) 55%, transparent); color: var(--hold); background: color-mix(in srgb, var(--hold) 9%, transparent); }
+.chip.rework{ border-color: color-mix(in srgb, var(--contest) 55%, transparent); color: var(--contest); background: color-mix(in srgb, var(--contest) 9%, transparent); }
+.chip.fail  { border-color: color-mix(in srgb, var(--lost) 55%, transparent); color: var(--lost); background: color-mix(in srgb, var(--lost) 9%, transparent); }
+.chip.run   { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.chip.wait  { color: var(--ink-3); }
+
+/* ── round matrix ─────────────────────────────────────────── */
+
+.matrix-scroll { overflow-x: auto; border: 1px solid var(--line-soft); background: var(--surface); }
+table.matrix { border-collapse: collapse; width: 100%; min-width: 520px; }
+table.matrix th, table.matrix td {
+  border-bottom: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+  padding: 9px 12px;
+  text-align: left;
+}
+table.matrix thead th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 600;
+  background: var(--sunken);
+}
+table.matrix tbody th {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  white-space: nowrap;
+}
+table.matrix td { text-align: center; padding: 6px; }
+.cell {
+  display: inline-block;
+  width: 100%;
+  height: 22px;
+  line-height: 22px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-3);
+  background: var(--sunken);
+}
+.cell.pass   { background: color-mix(in srgb, var(--hold) 26%, transparent); color: var(--hold); }
+.cell.rework { background: color-mix(in srgb, var(--contest) 26%, transparent); color: var(--contest); }
+.cell.fail   { background: color-mix(in srgb, var(--lost) 26%, transparent); color: var(--lost); }
+.cell.run    { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+
+/* ── log ──────────────────────────────────────────────────── */
+
+.log { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.log li {
+  display: grid;
+  grid-template-columns: 58px 76px minmax(0, 1fr);
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 14px;
+  color: var(--ink-2);
+  align-items: baseline;
+}
+@media (max-width: 620px) {
+  .log li { grid-template-columns: 58px minmax(0, 1fr); }
+  .log li .kind { grid-column: 1 / -1; }
+}
+.log .t {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.log .kind {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.log .kind[data-k="critic"] { color: var(--contest); }
+.log .kind[data-k="pass"]   { color: var(--hold); }
+.log .kind[data-k="build"]  { color: var(--ink-3); }
+
+footer.foot {
+  margin-top: 56px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.empty {
+  padding: 26px 16px;
+  border: 1px dashed var(--line);
+  color: var(--ink-3);
+  font-size: 14px;
+  text-align: center;
+}
+</style>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <p class="eyebrow">Builder · Critic gauntlet — live</p>
+      <h1>Hexfield Gauntlet</h1>
+      <p class="headline" id="headline"></p>
+    </div>
+    <div class="stamps">
+      <div class="stamp live"><span class="k">Phase</span><span class="v" id="s-phase">—</span></div>
+      <div class="stamp"><span class="k">Round</span><span class="v" id="s-round">—</span></div>
+      <div class="stamp"><span class="k">Pieces won</span><span class="v" id="s-won">—</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section>
+    <h2>The run</h2>
+    <div class="brief">
+      <div>
+        <p class="goal-text" id="goal"></p>
+      </div>
+      <div>
+        <ul class="bar-list" id="bar"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pieces <span class="count" id="pieces-count"></span></h2>
+    <div id="ledger-host"></div>
+  </section>
+
+  <section>
+    <h2>Rounds <span class="count">each cell is a critic verdict</span></h2>
+    <div id="matrix-host"></div>
+  </section>
+
+  <section>
+    <h2>Log <span class="count" id="log-count"></span></h2>
+    <ul class="log" id="log"></ul>
+  </section>
+
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<script>
+(function () {
+  var D = JSON.parse(document.getElementById('run-data').textContent);
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  };
+
+  document.getElementById('headline').textContent = D.headline || '';
+  document.getElementById('goal').textContent = D.goal || '';
+  document.getElementById('s-phase').textContent = D.phase || '—';
+  document.getElementById('s-round').textContent = D.round == null ? '—' : D.round;
+
+  var pieces = D.pieces || [];
+  var won = pieces.filter(function (p) { return p.state === 'won'; }).length;
+  document.getElementById('s-won').textContent = pieces.length ? (won + '/' + pieces.length) : '—';
+  document.getElementById('pieces-count').textContent = pieces.length ? (pieces.length + ' tracked') : '';
+
+  document.getElementById('bar').innerHTML = (D.bar || [])
+    .map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('');
+
+  var STATE_CHIP = { won: 'pass', building: 'run', critiqued: 'rework', blocked: 'fail', queued: 'wait' };
+  var STATE_TEXT = { won: 'clears the bar', building: 'building', critiqued: 'in rework', blocked: 'blocked', queued: 'queued' };
+
+  var lh = document.getElementById('ledger-host');
+  if (!pieces.length) {
+    lh.innerHTML = '<div class="empty">Pieces are named once the contract brief lands.</div>';
+  } else {
+    lh.innerHTML = '<div class="ledger">' + pieces.map(function (p, i) {
+      var rounds = (p.rounds || []).map(function (r) {
+        return '<span class="chip ' + esc(r.verdict || 'wait') + '">R' + esc(r.n) + ' · ' + esc(r.label || r.verdict || '') + '</span>';
+      }).join('');
+      return '<div class="piece">'
+        + '<div class="idx">' + String(i + 1).padStart(2, '0') + '</div>'
+        + '<div class="nm">' + esc(p.name) + '</div>'
+        + '<span class="chip ' + (STATE_CHIP[p.state] || 'wait') + ' state">' + esc(STATE_TEXT[p.state] || p.state) + '</span>'
+        + (p.note ? '<div class="note">' + esc(p.note) + '</div>' : '')
+        + (rounds ? '<div class="rounds">' + rounds + '</div>' : '')
+        + '</div>';
+    }).join('') + '</div>';
+  }
+
+  var maxR = 0;
+  pieces.forEach(function (p) { (p.rounds || []).forEach(function (r) { if (r.n > maxR) maxR = r.n; }); });
+  var mh = document.getElementById('matrix-host');
+  if (!maxR) {
+    mh.innerHTML = '<div class="empty">The round matrix fills in as builders ship and critics rule.</div>';
+  } else {
+    var head = '<tr><th>Piece</th>';
+    for (var r = 1; r <= maxR; r++) head += '<th>R' + r + '</th>';
+    head += '</tr>';
+    var body = pieces.map(function (p) {
+      var row = '<tr><th>' + esc(p.name) + '</th>';
+      for (var r = 1; r <= maxR; r++) {
+        var hit = (p.rounds || []).filter(function (x) { return x.n === r; })[0];
+        row += '<td>' + (hit
+          ? '<span class="cell ' + esc(hit.verdict) + '" title="' + esc(hit.gap || '') + '">' + esc(hit.short || hit.verdict) + '</span>'
+          : '<span class="cell">·</span>') + '</td>';
+      }
+      return row + '</tr>';
+    }).join('');
+    mh.innerHTML = '<div class="matrix-scroll"><table class="matrix"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+  }
+
+  var log = (D.log || []).slice().reverse();
+  document.getElementById('log-count').textContent = log.length + ' entries · newest first';
+  document.getElementById('log').innerHTML = log.map(function (e) {
+    return '<li><span class="t">' + esc(e.t) + '</span>'
+      + '<span class="kind" data-k="' + esc(e.kind) + '">' + esc(e.kind) + '</span>'
+      + '<span>' + esc(e.text) + '</span></li>';
+  }).join('');
+
+  document.getElementById('foot').textContent = 'Last update: ' + (D.updated || '');
+})();
+</script>

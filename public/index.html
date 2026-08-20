@@ -40975,9 +40975,7 @@ function hasAdjacentAllyWithPassive(unit, passiveId, state) {
     if (u.owner !== unit.owner) continue;
     if (!u.pos) continue;
     if (!hasPassive(u, passiveId)) continue;
-    const dx = Math.abs(u.pos.x - unit.pos.x);
-    const dy = Math.abs(u.pos.y - unit.pos.y);
-    if (Math.max(dx, dy) <= 1) return true;
+    if (distance(u.pos, unit.pos) <= 1) return true;
   }
   return false;
 }
@@ -72396,7 +72394,7 @@ function _traitUnitsAround(st, u, radius, wantEnemy) {
   return (st.units || []).filter(function (o) {
     if (!o || !o.alive || !o.pos || o.id === u.id) return false;
     if (wantEnemy ? (o.owner === u.owner) : (o.owner !== u.owner)) return false;
-    return Math.max(Math.abs(o.pos.x - u.pos.x), Math.abs(o.pos.y - u.pos.y)) <= radius;
+    return distance(o.pos, u.pos) <= radius;
   });
 }
 function _traitFactionsOf(u) {
@@ -72439,7 +72437,7 @@ const _TRAIT_LIVE_WHEN = {
       return o && o.alive && o.isHero && o.owner !== u.owner && o.pos;
     });
     if (!foeHero) return false;
-    const d = function (p) { return Math.max(Math.abs(p.x - foeHero.pos.x), Math.abs(p.y - foeHero.pos.y)); };
+    const d = function (p) { return distance(p, foeHero.pos); };
     const mine = (st.units || []).filter(function (o) {
       return o && o.alive && o.pos && o.owner === u.owner && !o.isHero;
     });
@@ -73536,7 +73534,7 @@ function _rezMoved(unit, from, to) {
     if (!from || !to) return;
     const k = _rezPlayerKey(unit);
     if (!k) return;
-    const tiles = Math.max(Math.abs((to.x | 0) - (from.x | 0)), Math.abs((to.y | 0) - (from.y | 0)));
+    const tiles = distance({ x: (to.x | 0), y: (to.y | 0) }, { x: (from.x | 0), y: (from.y | 0) });
     if (tiles > 0) _rezEmit({ k: 'move', card: k, tiles: tiles });
   } catch (e) {}
 }
@@ -74067,8 +74065,63 @@ function _catalogResolved() {
 
 const xpForLevel = (lvl) => Math.floor(50 + 30 * lvl + 5 * lvl * lvl);
 const xpFromKill = (target) => target.isHero ? 200 : 25 + (target.level || 1) * 18;
+// ═══ THE BOARD METRIC AND THE BOARD EDGE — SINGLE SOURCE OF TRUTH ═══════════
+// distance() answers "how far apart are these two tiles" and inBounds() answers
+// "is this a real tile". Every range check, highlight painter, click gate, AI
+// scorer and ring scan in the game routes through these two, and nothing may
+// re-derive them inline.
+//
+// WHY, and it is not style: this used to be inlined ~90 times as
+// `Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y))` with five hand-rolled
+// copies of `x < 0 || y < 0 || x >= BOARD_W || ...` alongside. Those copies are
+// invisible to any change made here, so the moment the metric or the playable
+// region moves — the hex conversion is exactly that move — renderBoard()'s
+// highlight and onTileClick()'s gate start answering the same question two
+// different ways. That is the UI-lies-about-the-rules bug the scar comment
+// inside renderBoard() records; it shows up as tiles that light up and then
+// refuse the click, with no error anywhere. The ~90 copies were folded back in
+// here as a pure no-op refactor precisely so the metric could later be changed
+// in ONE place.
+//
+// Corollary for ring scans: measure the two TILES, not the raw dx/dy offset.
+// `Math.max(Math.abs(dx), Math.abs(dy))` happens to equal the Chebyshev norm on
+// a square lattice and stops being the distance on any other one.
+//
+// KNOWN SURVIVORS — two sites still measure with MANHATTAN and were left alone
+// on purpose. Whoever flips the metric must decide them explicitly; line
+// numbers drift, so grep the quoted source:
+//   • clampUnitsToBoard's outward free-tile scan, `Math.abs(dx) + Math.abs(dy)
+//     !== r`. Manhattan is only the scan ORDER there — every candidate is then
+//     re-tested with inBounds(), so any total order gives a legal tile. Purely
+//     cosmetic; safe to leave square.
+//   • the 'sacrificeNearby' nearest-enemy pick, `Math.abs(u.pos.x - unit.pos.x)
+//     + Math.abs(u.pos.y - unit.pos.y)`. This one is a REAL target-selection
+//     metric — routing it through distance() picks a different victim on any
+//     diagonal, which is a gameplay change, not a refactor, so it stayed put.
+//     ⚠ CONTRACT §2 Tier 0.2 claims Manhattan "appears exactly once and only
+//     cosmetically". That is wrong: this is the second one, and it is live.
 const distance = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 const inBounds = (x, y) => x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H;
+// State-aware sibling. inBounds() answers from the CONSTANTS; inBoundsOf()
+// answers from the LIVE board array via _boardDims() (:74915). They agree
+// today because initBoard() is the only board constructor and it builds
+// BOARD_H x BOARD_W — but they are not interchangeable, so pick deliberately:
+//   • have `state` in hand → inBoundsOf(state, x, y). This is the one that
+//     still tells the truth on a map that is not 8x7 (CONTRACT §2 Tier 3),
+//     and it is what every ring scan and spawn search here uses.
+//   • no state (pure geometry, DOM-side hit tests) → inBounds(x, y).
+// WHY it exists at all: a dozen sites used to hand-roll
+// `x < 0 || y < 0 || x >= W || y >= H` off a locally-derived W/H, several with
+// a STALE literal fallback (`: 9` on a 7-wide board — CONTRACT R34) that
+// placed units off-board whenever it fired. Folding them in here also killed
+// the split where one half of the Territory Wars tick measured the board array
+// and the other half measured the constants, which is invisible at 8x7 and a
+// silent confinement bug the moment the map grows. No constant fallback on
+// purpose: no board means no tiles, never a phantom 9x7 grid.
+const inBoundsOf = (state, x, y) => {
+  const d = _boardDims(state);
+  return x >= 0 && x < d.W && y >= 0 && y < d.H;
+};
 
 // Defensive auto-clamp — when the board size shrinks (e.g. went from 10×8 to
 // 8×7), any unit whose pos was valid under the old dimensions now sits off
@@ -74524,8 +74577,8 @@ function _nearestEmptyTile(state, ox, oy) {
   const maxR = Math.max(typeof BOARD_W !== 'undefined' ? BOARD_W : 10, typeof BOARD_H !== 'undefined' ? BOARD_H : 8);
   for (let rad = 0; rad <= maxR; rad++) {
     for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
-      if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
       const nx = ox + dx, ny = oy + dy;
+      if (distance({ x: ox, y: oy }, { x: nx, y: ny }) !== rad) continue;
       if (!inBounds(nx, ny)) continue;
       if (state.units.some(u => u.alive && u.pos && u.pos.x === nx && u.pos.y === ny)) continue;
       if (typeof tileBlockedByTombstone === 'function' && tileBlockedByTombstone(state, nx, ny)) continue;
@@ -74572,7 +74625,7 @@ function _phoenixCovers(phx, dead, cfg) {
   if (!phx || !phx.pos || !dead || !dead.pos) return false;
   if (cfg.range === 'row') { if (phx.pos.y !== dead.pos.y) return false; }
   else if (cfg.range !== 'board') {
-    if (Math.max(Math.abs(phx.pos.x - dead.pos.x), Math.abs(phx.pos.y - dead.pos.y)) > cfg.range) return false;
+    if (distance(phx.pos, dead.pos) > cfg.range) return false;
   }
   if (dead.isHero && !cfg.allowHeroes) return false;
   if (dead.isToken && !cfg.allowTokens) return false;
@@ -74630,7 +74683,7 @@ function processTombstoneDrops(state) {
       const dmg = Math.max(5, Math.round((u.maxHp || 20) * 0.2));
       for (const e of state.units) {
         if (e && e.alive && e.owner !== u.owner && e.pos
-            && Math.max(Math.abs(e.pos.x - u.pos.x), Math.abs(e.pos.y - u.pos.y)) <= 1) {
+            && distance(e.pos, u.pos) <= 1) {
           e.currentHp = Math.max(0, (e.currentHp || 0) - dmg);
           if (e.currentHp <= 0) e.alive = false;
         }
@@ -74878,11 +74931,10 @@ function _clearSurface(state, x, y) {
 }
 // Paint a Chebyshev-radius disc of surface. Skips wall tiles.
 function _paintSurface(state, cx, cy, type, radius, turns) {
-  const { W, H } = _boardDims(state);
   const r = Math.max(0, radius | 0);
   for (let y = cy - r; y <= cy + r; y++) {
     for (let x = cx - r; x <= cx + r; x++) {
-      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      if (!inBoundsOf(state, x, y)) continue;
       const tile = state.board[y][x];
       if (!tile || tile.wall) continue;
       _setSurface(state, x, y, type, turns);
@@ -74891,11 +74943,10 @@ function _paintSurface(state, cx, cy, type, radius, turns) {
 }
 // Collect every 8-connected tile of `type` reachable from (x,y).
 function _floodCollectSurface(state, x, y, type) {
-  const { W, H } = _boardDims(state);
   const out = []; const seen = new Set(); const stack = [[x, y]];
   while (stack.length) {
     const cur = stack.pop(); const cx = cur[0], cy = cur[1];
-    if (cx < 0 || cy < 0 || cx >= W || cy >= H) continue;
+    if (!inBoundsOf(state, cx, cy)) continue;
     const k = cx + ',' + cy; if (seen.has(k)) continue; seen.add(k);
     const s = _surfaceAt(state, cx, cy);
     if (!s || s.type !== type) continue;
@@ -74914,13 +74965,12 @@ function _floodConvertSurface(state, x, y, fromType, toType, turns) {
 // skidding in the same direction until it runs off the ice, hits a wall /
 // unit, or reaches the board edge. Returns the final tile + slide distance.
 function _slideOnIce(state, cx, cy, dx, dy) {
-  const { W, H } = _boardDims(state);
   let steps = 0;
   while (steps < 12) {
     const surf = _surfaceAt(state, cx, cy);
     if (!surf || surf.type !== 'ice') break;          // only slide while ON ice
     const nx = cx + dx, ny = cy + dy;
-    if (nx < 0 || ny < 0 || nx >= W || ny >= H) break;
+    if (!inBoundsOf(state, nx, ny)) break;
     const tile = state.board[ny] && state.board[ny][nx];
     if (tile && tile.wall) break;
     if (typeof getOccupant === 'function' && getOccupant({ x: nx, y: ny }, state.units)) break;
@@ -77270,7 +77320,7 @@ function _applyTombstoneRisk(s, looterId, risk) {
         return { ...x, currentHp: hp };
       }
       if (risk === 'explosive' && x.alive && x.pos && lk.pos && x.owner === lk.owner && x.id !== looterId
-          && Math.max(Math.abs(x.pos.x - lk.pos.x), Math.abs(x.pos.y - lk.pos.y)) <= 1) {
+          && distance(x.pos, lk.pos) <= 1) {
         const adj = Math.max(1, Math.round((x.maxHp || 20) * 0.10));
         const hp = Math.max(1, (x.currentHp != null ? x.currentHp : (x.maxHp || 20)) - adj);
         return { ...x, currentHp: hp };
@@ -83362,8 +83412,8 @@ const tilesWithinRange = (origin, range) => {
   const tiles = [];
   for (let dy = -range; dy <= range; dy++) for (let dx = -range; dx <= range; dx++) {
     if (dx === 0 && dy === 0) continue;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) > range) continue;
     const nx = origin.x + dx, ny = origin.y + dy;
+    if (distance(origin, { x: nx, y: ny }) > range) continue;
     if (inBounds(nx, ny)) tiles.push({ x: nx, y: ny });
   }
   return tiles;
@@ -83514,7 +83564,7 @@ function _squadSightCanSee(state, attacker, target) {
   const VISION = 3;
   return (state.units || []).some(u =>
     u && u.alive && u.owner === attacker.owner && u.id !== attacker.id &&
-    Math.max(Math.abs(u.pos.x - target.pos.x), Math.abs(u.pos.y - target.pos.y)) <= VISION
+    distance(u.pos, target.pos) <= VISION
   );
 }
 
@@ -83767,7 +83817,7 @@ function findNearestReachableEnemy(unit, units) {
   const maxAttackRange = moves.filter(m => m && m.kind === 'attack').reduce((mx, m) => Math.max(mx, getEffectiveAttackRange(unit, m)), 0);
   let best = null, bestDist = Infinity;
   for (const e of enemies) {
-    const d = Math.max(Math.abs(unit.pos.x - e.pos.x), Math.abs(unit.pos.y - e.pos.y));
+    const d = distance(unit.pos, e.pos);
     if (maxAttackRange > 0 && d > maxAttackRange) continue;
     if (d < bestDist) { bestDist = d; best = e; }
   }
@@ -84746,7 +84796,7 @@ const calculateDamage = (move, attacker, defender, weather) => {
       && Array.isArray(App.state && App.state.units)) {
     const hasAdj = App.state.units.some(u =>
       u && u.alive && u.owner === attacker.owner && u.id !== attacker.id && u.pos
-      && Math.max(Math.abs(u.pos.x - defender.pos.x), Math.abs(u.pos.y - defender.pos.y)) === 1);
+      && distance(u.pos, defender.pos) === 1);
     if (hasAdj) dmg = Math.floor(dmg * 1.3);
   }
   // 🗡️ Sneak Attack MOVE flag (bonusIfAllyAdjacent) — same idea but driven
@@ -84757,7 +84807,7 @@ const calculateDamage = (move, attacker, defender, weather) => {
       && Array.isArray(App.state && App.state.units)) {
     const hasAdj = App.state.units.some(u =>
       u && u.alive && u.owner === attacker.owner && u.id !== attacker.id && u.pos
-      && Math.max(Math.abs(u.pos.x - defender.pos.x), Math.abs(u.pos.y - defender.pos.y)) === 1);
+      && distance(u.pos, defender.pos) === 1);
     if (hasAdj) dmg = Math.floor(dmg * (1 + move.bonusIfAllyAdjacent));
   }
   // ⚔️ Moxie buff stacks (Pokémon) — pile of stackable +2 ATK per stack.
@@ -84899,7 +84949,7 @@ const calculateDamage = (move, attacker, defender, weather) => {
     // punch through 50% of the target's armor.
     if (dr > 0 && isCrit && attacker && attacker.pos && defender.pos
         && typeof _attackerSkillFlag === 'function' && _attackerSkillFlag(attacker, 'cosmic_headhunter')) {
-      const _hd = Math.max(Math.abs(attacker.pos.x - defender.pos.x), Math.abs(attacker.pos.y - defender.pos.y));
+      const _hd = distance(attacker.pos, defender.pos);
       if (_hd >= (move.range || 1)) dr = Math.floor(dr / 2);
     }
     if (dr > 0) {
@@ -84952,7 +85002,7 @@ function spawnEventsOntoBoard(board, units, count) {
     if (occupied.has(`${x},${y}`)) continue;
     let ok = true;
     for (const h of heroes) {
-      const d = Math.max(Math.abs(h.pos.x - x), Math.abs(h.pos.y - y));
+      const d = distance(h.pos, { x, y });
       if (d < 3) { ok = false; break; }
     }
     if (ok) candidates.push({ x, y });
@@ -85697,8 +85747,8 @@ function _applyInGraveTick(state, who, trigger) {
         const enemies = (s.units || []).filter(u => u && u.owner === opp && u.alive && u.pos);
         if (!enemies.length) continue;
         enemies.sort((a, b) => {
-          const da = Math.max(Math.abs(a.pos.x - hero.pos.x), Math.abs(a.pos.y - hero.pos.y));
-          const db = Math.max(Math.abs(b.pos.x - hero.pos.x), Math.abs(b.pos.y - hero.pos.y));
+          const da = distance(a.pos, hero.pos);
+          const db = distance(b.pos, hero.pos);
           return da - db;
         });
         const target = enemies[0];
@@ -86414,8 +86464,6 @@ function _vanishReturnTick(state, side) {
     if (!back.length) return state;
     let units = (state.units || []).slice();
     const occupied = new Set(units.filter(u => u && u.alive && u.pos).map(u => u.pos.x + ',' + u.pos.y));
-    const W = (state.board && state.board[0]) ? state.board[0].length : 9;
-    const H = state.board ? state.board.length : 7;
     const stillWaiting = [];
     const log = (state.log || []).slice();
     for (const rec of back) {
@@ -86425,7 +86473,7 @@ function _vanishReturnTick(state, side) {
         for (let rad = 1; rad <= 4 && !pos; rad++) {
           for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
             const x = ((rec.pos && rec.pos.x) | 0) + dx, y = ((rec.pos && rec.pos.y) | 0) + dy;
-            if (x < 0 || y < 0 || x >= W || y >= H) continue;
+            if (!inBoundsOf(state, x, y)) continue;
             if (occupied.has(x + ',' + y)) continue;
             pos = { x, y }; break outer;
           }
@@ -86913,7 +86961,7 @@ function _fireCounterUnits(state, side, mode, near) {
     const live = (s.units || []).find(u => u && u.id === id && u.alive && u.isFaceDown);
     if (!live) continue;
     if (near && live.pos) {
-      const d = Math.max(Math.abs(live.pos.x - near.x), Math.abs(live.pos.y - near.y));
+      const d = distance(live.pos, near);
       const reach = mode === 'ambushFlip' ? 1 : 2;
       if (d > reach) continue;
     }
@@ -87018,7 +87066,7 @@ function _flipAdjacentFaceDown(state, mover) {
   const mp = mover.pos;
   const ids = (next.units || [])
     .filter(u => u && u.alive && u.isFaceDown && u.owner !== mover.owner && u.pos
-      && Math.max(Math.abs(u.pos.x - mp.x), Math.abs(u.pos.y - mp.y)) <= 1)
+      && distance(u.pos, mp) <= 1)
     .map(u => u.id);
   // ⛓ Walking between two traps springs BOTH — one chain, last-in-first-out. Each link
   // re-reads the live board at fire time, so an earlier link's kill/revive still counts.
@@ -87065,7 +87113,7 @@ function _battleDetectionFlip(state, unit, radius) {
   let next = state;
   const within = (u) => (radius == null || radius <= 0)
     ? true
-    : Math.max(Math.abs(u.pos.x - unit.pos.x), Math.abs(u.pos.y - unit.pos.y)) <= radius;
+    : distance(u.pos, unit.pos) <= radius;
   const ids = (next.units || [])
     .filter(u => u && u.alive && u.isFaceDown && u.owner !== unit.owner && u.pos && within(u))
     .map(u => u.id);
@@ -88159,8 +88207,7 @@ function _auraAffects(state, src, aura, target) {
     const rad = aura.radius | 0;
     if (rad > 0) {
       if (!src.pos || !target.pos) return false;
-      if (Math.max(Math.abs((src.pos.x | 0) - (target.pos.x | 0)),
-                   Math.abs((src.pos.y | 0) - (target.pos.y | 0))) > rad) return false;
+      if (distance({ x: (src.pos.x | 0), y: (src.pos.y | 0) }, { x: (target.pos.x | 0), y: (target.pos.y | 0) }) > rad) return false;
     }
     // No named cards = UNCONDITIONAL. This is the case that previously had no home:
     // an always-on ward had to be authored as an on-play, which burned the card's
@@ -88269,8 +88316,7 @@ function _tickVanishReturn(state, who) {
     for (let r = 0; r <= 3 && !tile; r++) {
       for (let dy = -r; dy <= r && !tile; dy++) for (let dx = -r; dx <= r && !tile; dx++) {
         const x = (anchor.x | 0) + dx, y = (anchor.y | 0) + dy;
-        const { W, H } = (typeof _boardDims === 'function') ? _boardDims(s) : { W: 9, H: 7 };
-        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        if (!inBoundsOf(s, x, y)) continue;
         if (occ.has(x + ',' + y)) continue;
         tile = { x, y };
       }
@@ -90675,7 +90721,7 @@ function _targetCandidates(state, caster, eff) {
     // entirely, so neither the player's board-click nor the AI's auto-pick can
     // choose it. A friendly ward never blocks your own beneficial targeting.
     if (!wantAlly && typeof _unitProtectedFrom === 'function' && _unitProtectedFrom(u, 'target')) return false;
-    return Math.max(Math.abs(u.pos.x - caster.pos.x), Math.abs(u.pos.y - caster.pos.y)) <= r;
+    return distance(u.pos, caster.pos) <= r;
   });
 }
 // AI's deterministic pick: highest-HP candidate (biggest threat / best save).
@@ -90690,8 +90736,8 @@ function _resolveTargetUnit(eff, candidates, caster) {
   if (eff && eff._targetId) { const t = candidates.find(u => u && u.id === eff._targetId); if (t) return t; }
   if (!candidates.length) return null;
   return candidates.slice().sort((a, b) => {
-    const da = Math.max(Math.abs(a.pos.x - caster.pos.x), Math.abs(a.pos.y - caster.pos.y));
-    const db = Math.max(Math.abs(b.pos.x - caster.pos.x), Math.abs(b.pos.y - caster.pos.y));
+    const da = distance(a.pos, caster.pos);
+    const db = distance(b.pos, caster.pos);
     return da - db;
   })[0];
 }
@@ -91601,7 +91647,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
     // every unit AND hero it targets instead of only those within `radius`.
     if (eff.aoeAll) return !!(u && (u.pos || u.isHero));
     if (!u || !u.pos || !unit.pos) return false;
-    return Math.max(Math.abs(u.pos.x - unit.pos.x), Math.abs(u.pos.y - unit.pos.y)) <= radius;
+    return distance(u.pos, unit.pos) <= radius;
   };
   const nameFor = (sid) => (STATUS_EFFECTS[sid] && STATUS_EFFECTS[sid].name) || sid;
   const foeSide = owner === 'player' ? 'ai' : 'player';
@@ -91856,7 +91902,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
     if (!unit.pos) { log.push({ msg: `${unit.name} has no footing to ${isPull ? 'pull' : 'push'} from.`, color: 'amber' }); return { ...state, log }; }
     const ox = unit.pos.x, oy = unit.pos.y;
     const side = eff.tSide || 'enemy';
-    const dist = (u) => Math.max(Math.abs(u.pos.x - ox), Math.abs(u.pos.y - oy));
+    const dist = (u) => distance(u.pos, { x: ox, y: oy });
     const cands = (state.units || []).filter(u => u && u.alive && u.id !== unit.id && u.pos && inRadius(u)
       && (side === 'all' ? true : (side === 'ally' ? isAlly(u) : isEnemy(u)))
       // A wall that isn't flagged pushable is scenery — it never budges.
@@ -92594,7 +92640,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
   const _side1 = (def) => (eff.tSide || def) === 'ally' ? isAlly : isEnemy;
   const _pick = (test) => (state.units || []).filter(u => test(u) && inRadius(u) && !u.isHero);
   const _nearest = (list) => list.slice().sort((a, b) => {
-    const d = (u) => (!u.pos || !unit.pos) ? 99 : Math.max(Math.abs(u.pos.x - unit.pos.x), Math.abs(u.pos.y - unit.pos.y));
+    const d = (u) => (!u.pos || !unit.pos) ? 99 : distance(u.pos, unit.pos);
     return d(a) - d(b);
   });
 
@@ -93392,7 +93438,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
   if (eff.type === 'banishUnit') {
     const enemies = state.units.filter(u => isEnemy(u) && inRadius(u) && !u.isHero);
     if (enemies.length) {
-      enemies.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y))));
+      enemies.sort((a, b) => (distance(a.pos, unit.pos)) - (distance(b.pos, unit.pos)));
       const victims = enemies.slice(0, Math.max(1, Math.min(3, eff.amount || 1)));
       const vids = new Set(victims.map(v => v.id));
       victims.forEach(v => {
@@ -93587,7 +93633,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
     const allies = state.units.filter(u => isAlly(u) && !u.isHero && u.pos);
     const enemies = state.units.filter(u => isEnemy(u) && u.pos);
     if (allies.length && enemies.length) {
-      const near = (arr) => { arr.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y)))); return arr[0]; };
+      const near = (arr) => { arr.sort((a, b) => (distance(a.pos, unit.pos)) - (distance(b.pos, unit.pos))); return arr[0]; };
       const A = near(allies.slice()); const E = near(enemies.slice());
       const aAtk = (A.stats && A.stats.atk) || A.atk || 5;
       const eAtk = (E.stats && E.stats.atk) || E.atk || 5;
@@ -93681,8 +93727,8 @@ function _applyOnPlayOneRaw(state, unit, card) {
     const enemies = state.units.filter(u => isEnemy(u) && inRadius(u));
     if (enemies.length === 0) return { ...state, log };
     enemies.sort((a, b) => {
-      const da = Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y));
-      const db = Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y));
+      const da = distance(a.pos, unit.pos);
+      const db = distance(b.pos, unit.pos);
       return da - db;
     });
     const target = (eff._targetId && enemies.find(u => u.id === eff._targetId)) || enemies[0];
@@ -93848,8 +93894,8 @@ function _applyOnPlayOneRaw(state, unit, card) {
     const enemies = state.units.filter(u => isEnemy(u) && inRadius(u) && _canDestroy(u));
     if (enemies.length === 0) return { ...state, log };
     enemies.sort((a, b) => {
-      const da = Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y));
-      const db = Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y));
+      const da = distance(a.pos, unit.pos);
+      const db = distance(b.pos, unit.pos);
       return da - db;
     });
     const target = (eff._targetId && enemies.find(u => u.id === eff._targetId)) || enemies[0];
@@ -93878,8 +93924,8 @@ function _applyOnPlayOneRaw(state, unit, card) {
       return { ...state, log };
     }
     allies.sort((a, b) => {
-      const da = Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y));
-      const db = Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y));
+      const da = distance(a.pos, unit.pos);
+      const db = distance(b.pos, unit.pos);
       return da - db;
     });
     const target = (eff._targetId && allies.find(u => u.id === eff._targetId)) || allies[0];
@@ -93969,7 +94015,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
     const heroRange = Math.max(1, Math.min(4, radius || (kalon.heroRange | 0) || 1));
     const candidates = (state.units || []).filter(u =>
       u && u.alive && u.owner === owner && !u.isHero && u.id !== unit.id &&
-      Math.max(Math.abs(u.pos.x - unit.pos.x), Math.abs(u.pos.y - unit.pos.y)) <= heroRange
+      distance(u.pos, unit.pos) <= heroRange
     );
     const usedIds = new Set();
     const materials = [];
@@ -94228,7 +94274,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
     const board = state.board.map((row, y) => row.map((t, x) => {
       if (!t || !t.wall) return t;
       if (t.wall.owner === owner) return t;   // never break your own
-      const inR = Math.max(Math.abs(x - unit.pos.x), Math.abs(y - unit.pos.y)) <= radius;
+      const inR = distance({ x, y }, unit.pos) <= radius;
       if (!inR) return t;
       smashed++;
       _smashedWalls.push(t.wall);
@@ -94279,7 +94325,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
     let cleaned = 0;
     const board = state.board.map((row, y) => row.map((t, x) => {
       if (!t || !t.surface) return t;
-      const inR = Math.max(Math.abs(x - unit.pos.x), Math.abs(y - unit.pos.y)) <= radius;
+      const inR = distance({ x, y }, unit.pos) <= radius;
       if (!inR) return t;
       cleaned++;
       return { ...t, surface: null };
@@ -94388,8 +94434,8 @@ function _applyOnPlayOneRaw(state, unit, card) {
     const bestowTargets = (state.units || []).filter(u => isAlly(u) && inRadius(u));
     if (bestowTargets.length > 0) {
       bestowTargets.sort((a, b) => {
-        const da = Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y));
-        const db = Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y));
+        const da = distance(a.pos, unit.pos);
+        const db = distance(b.pos, unit.pos);
         return da - db;
       });
       const tgt = bestowTargets[0];
@@ -94463,12 +94509,10 @@ function _battleTrapDogReveal(state, unit) {
 function _heroAdjacentFreeTiles(state, hero) {
   const out = [];
   if (!hero || !hero.pos) return out;
-  const W = (state.board && state.board[0]) ? state.board[0].length : 9;
-  const H = state.board ? state.board.length : 7;
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     if (dx === 0 && dy === 0) continue;
     const x = hero.pos.x + dx, y = hero.pos.y + dy;
-    if (x < 0 || y < 0 || x >= W || y >= H) continue;
+    if (!inBoundsOf(state, x, y)) continue;
     const occ = (state.units || []).find(u => u && u.pos && u.pos.x === x && u.pos.y === y && (u.alive || u._bleeding));
     if (occ) continue;
     const tile = (state.board && state.board[y]) ? state.board[y][x] : null;
@@ -94657,15 +94701,13 @@ function _battleSpawnSummonByCardId(state, caster, summonCardId, requestedCount)
   // initially, then expand to radius 2 if the immediate ring is full).
   const occ = new Set();
   units.forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
-  const _W = state.board && state.board[0] ? state.board[0].length : 9;
-  const _H = state.board ? state.board.length : 7;
   const ringFor = (rad) => {
     const out = [];
     for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
       if (dx === 0 && dy === 0) continue;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
       const x = (caster.pos.x | 0) + dx, y = (caster.pos.y | 0) + dy;
-      if (x < 0 || y < 0 || x >= _W || y >= _H) continue;
+      if (distance({ x: caster.pos.x | 0, y: caster.pos.y | 0 }, { x, y }) !== rad) continue;
+      if (!inBoundsOf(state, x, y)) continue;
       if (occ.has(x + ',' + y)) continue;
       out.push({ x, y });
     }
@@ -94953,7 +94995,7 @@ function _unitIsFusionReady(u, side) {
     const hero = (App.state.units || []).find(h => h && h.owner === side && h.isHero && h.alive && h.pos);
     if (!hero) return null;
     const reach = Math.max(1, (k.heroRange | 0) || 1);
-    const d = Math.max(Math.abs(u.pos.x - hero.pos.x), Math.abs(u.pos.y - hero.pos.y));
+    const d = distance(u.pos, hero.pos);
     if (d > reach) return null;
     return k;
   } catch (e) { return null; }
@@ -95109,7 +95151,7 @@ function findLegalFusionMaterials(state, side, kalonCard) {
   if (!hero) return null;
   const inRange = (state.units || []).filter(u =>
     u && u.alive && u.owner === side && !u.isHero &&
-    Math.max(Math.abs((u.pos.x | 0) - (hero.pos.x | 0)), Math.abs((u.pos.y | 0) - (hero.pos.y | 0))) <= radius
+    distance({ x: (u.pos.x | 0), y: (u.pos.y | 0) }, { x: (hero.pos.x | 0), y: (hero.pos.y | 0) }) <= radius
   );
   const used = new Set();
   const out = [];
@@ -95348,7 +95390,7 @@ function _polyFuseFromSources(state, unit, eff, owner, log) {
   const anchor = (unit && unit.pos) ? unit : (state.units || []).find(u => u && u.owner === owner && u.isHero && u.alive);
   if (!anchor || !anchor.pos) { log.push({ msg: `🌌 ${unit.name}'s fusion has no anchor on the field.`, color: 'amber' }); return { ...state, log }; }
   const rad = Math.max(1, Math.min(8, eff.radius || 3));
-  const inR = (u) => u && u.pos && Math.max(Math.abs(u.pos.x - anchor.pos.x), Math.abs(u.pos.y - anchor.pos.y)) <= rad;
+  const inR = (u) => u && u.pos && distance(u.pos, anchor.pos) <= rad;
   const foeSide = owner === 'player' ? 'ai' : 'player';
   const alias = String(eff.seizeTreatAs || '').trim();
   const side = state[owner] || {};
@@ -95450,15 +95492,13 @@ function _polycreationFindSummonTile(state, hero) {
   if (!state || !hero || !hero.pos) return null;
   const occ = new Set();
   (state.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
-  const W = state.board && state.board[0] ? state.board[0].length : 9;
-  const H = state.board ? state.board.length : 7;
   for (let rad = 1; rad <= 3; rad++) {
     const ring = [];
     for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
       if (dx === 0 && dy === 0) continue;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
       const x = (hero.pos.x | 0) + dx, y = (hero.pos.y | 0) + dy;
-      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      if (distance({ x: hero.pos.x | 0, y: hero.pos.y | 0 }, { x, y }) !== rad) continue;
+      if (!inBoundsOf(state, x, y)) continue;
       if (occ.has(x + ',' + y)) continue;
       ring.push({ x, y });
     }
@@ -95994,7 +96034,7 @@ function findArchonOfferings(state, side, catalyst, archonCard) {
   const cx = catalyst.pos.x | 0, cy = catalyst.pos.y | 0;
   const inRange = (state.units || []).filter(u =>
     u && u.alive && u.owner === side && !u.isHero && u.id !== catalyst.id && u.pos &&
-    Math.max(Math.abs((u.pos.x | 0) - cx), Math.abs((u.pos.y | 0) - cy)) <= radius
+    distance({ x: (u.pos.x | 0), y: (u.pos.y | 0) }, { x: cx, y: cy }) <= radius
   );
   const used = new Set();
   const picked = [];
@@ -96883,7 +96923,7 @@ function _applyTriggerEffect(state, unit, trg, ctx) {
       else if (dt === 'allEnemies') victims = enemies;
       else { // nearestEnemy to this unit
         if (enemies.length && unit.pos) {
-          enemies.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y))));
+          enemies.sort((a, b) => (distance(a.pos, unit.pos)) - (distance(b.pos, unit.pos)));
           victims = [enemies[0]];
         }
       }
@@ -96941,7 +96981,7 @@ function _applyTriggerEffect(state, unit, trg, ctx) {
     case 'bounceEnemy': {
       const enemies = (s.units || []).filter(u => u && u.alive && u.owner !== side && !u.isHero);
       if (enemies.length && unit.pos) {
-        enemies.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y))));
+        enemies.sort((a, b) => (distance(a.pos, unit.pos)) - (distance(b.pos, unit.pos)));
         const tgt = enemies[0];
         const _tgtSide = tgt.owner === 'player' ? 'your' : 'enemy';
         const ret = (typeof _unitReturnToHandCard === 'function') ? _unitReturnToHandCard(tgt) : { card: null, archon: false };
@@ -98993,7 +99033,7 @@ const executeMove = (state, attacker, target, move) => {
       let killed = 0;
       s.board = s.board.map((row, y) => row.map((t, x) => {
         if (!t || !t.trap || !t.trap.owner || t.trap.owner === attacker.owner) return t;
-        if (!isWhole && attacker.pos && Math.max(Math.abs(x - attacker.pos.x), Math.abs(y - attacker.pos.y)) > r) return t;
+        if (!isWhole && attacker.pos && distance({ x, y }, attacker.pos) > r) return t;
         killed++;
         return { ...t, trap: null };
       }));
@@ -99017,7 +99057,7 @@ const executeMove = (state, attacker, target, move) => {
       let smashed = 0;
       s.board = s.board.map((row, y) => row.map((t, x) => {
         if (!t || !t.wall || (t.wall.owner === attacker.owner)) return t;
-        if (attacker.pos && Math.max(Math.abs(x - attacker.pos.x), Math.abs(y - attacker.pos.y)) > r) return t;
+        if (attacker.pos && distance({ x, y }, attacker.pos) > r) return t;
         smashed++;
         return { ...t, wall: null };
       }));
@@ -99042,7 +99082,7 @@ const executeMove = (state, attacker, target, move) => {
       let n = 0;
       (s.units || []).forEach(u => {
         if (!u || !u.alive || u.owner === attacker.owner) return;
-        if (!isWhole && attacker.pos && u.pos && Math.max(Math.abs(u.pos.x - attacker.pos.x), Math.abs(u.pos.y - attacker.pos.y)) > r) return;
+        if (!isWhole && attacker.pos && u.pos && distance(u.pos, attacker.pos) > r) return;
         if (!s.scanned[u.id]) { s.scanned[u.id] = true; n++; }
       });
       if (n > 0) log.push({ msg: `🔍 ${attacker.name}'s ${move.name} reveals ${n} enemy unit${n === 1 ? '' : 's'} — full intel!`, color: attacker.owner === 'player' ? 'green' : 'red' });
@@ -99054,7 +99094,7 @@ const executeMove = (state, attacker, target, move) => {
       let cleaned = 0;
       s.board = s.board.map((row, y) => row.map((t, x) => {
         if (!t || !t.surface) return t;
-        if (attacker.pos && Math.max(Math.abs(x - attacker.pos.x), Math.abs(y - attacker.pos.y)) > r) return t;
+        if (attacker.pos && distance({ x, y }, attacker.pos) > r) return t;
         cleaned++;
         return { ...t, surface: null };
       }));
@@ -99723,7 +99763,15 @@ const executeMove = (state, attacker, target, move) => {
       const ax = attacker.pos.x;
       for (let step = 1; step <= move.laneDepth; step++) {
         const ny = attacker.pos.y + dy * step;
-        if (ny < 0 || ny >= BOARD_H) break;
+        // inBounds() is the one definition of "real tile" (:74104). Disclosed
+        // delta: this line used to test the ROW only (`ny < 0 || ny >= BOARD_H`)
+        // and inBounds() also tests the column. That is loop-invariant here —
+        // the lane never changes x — so it can only fire if the ATTACKER itself
+        // is standing off-board, which clampUnitsToBoard() (:74131) makes
+        // impossible for a living unit. Kept rather than hand-rolling a y-only
+        // copy, because a y-only copy is exactly what stops being correct when
+        // the lattice changes and "the row in front of me" is no longer x-aligned.
+        if (!inBounds(ax, ny)) break;
         const occ = s.units.find(u => u && u.alive && u.pos.x === ax && u.pos.y === ny && !hitSet.has(u.id));
         if (occ) {
           secondaries.push(occ);
@@ -99941,7 +99989,7 @@ const executeMove = (state, attacker, target, move) => {
         s.units = (s.units || []).map(u => {
           if (!u || !u.alive || !u.pos || u.id === finalTarget.id) return u;
           if (!hasPassive(u, 'soulHarvest')) return u;
-          const d = Math.max(Math.abs(u.pos.x - finalTarget.pos.x), Math.abs(u.pos.y - finalTarget.pos.y));
+          const d = distance(u.pos, finalTarget.pos);
           if (d > 2) return u;
           log.push({ msg: `👻 ${u.name} HARVESTS the soul — +2 max HP.`, color: u.owner === 'player' ? 'green' : 'red' });
           return { ...u, maxHp: (u.maxHp | 0) + 2, currentHp: (u.currentHp | 0) + 2 };
@@ -99955,7 +100003,7 @@ const executeMove = (state, attacker, target, move) => {
       const _ip = finalTarget.pos;
       s.units = s.units.map(u => {
         if (u && u.alive && u.owner === finalTarget.owner && u.id !== finalTarget.id && u.pos
-            && Math.max(Math.abs(u.pos.x - _ip.x), Math.abs(u.pos.y - _ip.y)) <= 1) {
+            && distance(u.pos, _ip) <= 1) {
           log.push({ msg: `🔥 Inferno — ${u.name} catches fire from the blast!`, color: attacker.owner === 'player' ? 'green' : 'red' });
           return applyStatusEffect(u, 'burn', 2);
         }
@@ -100590,7 +100638,7 @@ function _ambushReactToMove(state, mover, toPos) {
       if (w._ambushFiredThisEnemyTurn) continue;        // once per enemy turn
       const radius = radiusOf(w);
       if (radius <= 0) continue;
-      const dist = Math.max(Math.abs(w.pos.x - toPos.x), Math.abs(w.pos.y - toPos.y));
+      const dist = distance(w.pos, toPos);
       if (dist > radius) continue;
       if ((w.statusEffects || []).some(e => e && disabled.indexOf(e.type) >= 0)) continue;
       // Re-resolve live refs from the working state each iteration (a prior
@@ -100732,7 +100780,7 @@ function _panicRollOnDeath(state, deadUnit) {
   const PANIC_BASE_PCT = 30;
   const nearby = (state.units || []).filter(u =>
     u && u.alive && u.owner === deadUnit.owner && u.id !== deadUnit.id && !u.isHero &&
-    Math.max(Math.abs(u.pos.x - deadUnit.pos.x), Math.abs(u.pos.y - deadUnit.pos.y)) <= PANIC_RADIUS
+    distance(u.pos, deadUnit.pos) <= PANIC_RADIUS
   );
   // 🦁 Brave trait grants flat panic immunity to the whole player side.
   const braveImmune = (deadUnit.owner === 'player' && typeof _campTraitBonus === 'function') ? _campTraitBonus('noPanic') : false;
@@ -100776,7 +100824,7 @@ function _squadCohesionBonus(state, attacker) {
   let bonus = 0;
   for (const u of (state.units || [])) {
     if (!u || !u.alive || u.id === attacker.id || u.owner !== attacker.owner) continue;
-    if (Math.max(Math.abs(u.pos.x - attacker.pos.x), Math.abs(u.pos.y - attacker.pos.y)) > 1) continue;
+    if (distance(u.pos, attacker.pos) > 1) continue;
     if (!u.cardId) continue;
     if ((mates[u.cardId] | 0) >= 5) bonus += 1;
   }
@@ -100830,7 +100878,7 @@ function _stabilizeRevive(state, healer, bleedingUnit, opts) {
   if (!bleedingUnit._bleeding) return state;
   if (!opts.fromMedkit) {
     // Adjacency check (Chebyshev radius 1).
-    const dist = Math.max(Math.abs(healer.pos.x - bleedingUnit.pos.x), Math.abs(healer.pos.y - bleedingUnit.pos.y));
+    const dist = distance(healer.pos, bleedingUnit.pos);
     if (dist > 1) return state;
   }
   const hpRestore = opts.fromMedkit ? 5 : 1;
@@ -100864,7 +100912,7 @@ function _stabilizeFindAdjacentBleedingAlly(state, healer) {
   if (!state || !healer) return null;
   return (state.units || []).find(u =>
     u && u._bleeding && u.owner === healer.owner && u.id !== healer.id &&
-    Math.max(Math.abs(u.pos.x - healer.pos.x), Math.abs(u.pos.y - healer.pos.y)) <= 1
+    distance(u.pos, healer.pos) <= 1
   ) || null;
 }
 
@@ -100923,7 +100971,7 @@ const moveUnit = (state, unit, newPos) => {
       const watchers = (s.units || []).filter(w =>
         w && w.alive && w.pos && w.owner !== _mover.owner && !w._vigilantTurn
         && typeof hasPassive === 'function' && hasPassive(w, 'vigilant')
-        && Math.max(Math.abs(w.pos.x - _mover.pos.x), Math.abs(w.pos.y - _mover.pos.y)) === 1);
+        && distance(w.pos, _mover.pos) === 1);
       if (watchers.length) {
         const w = watchers[0];
         const hit = Math.max(1, Math.floor(((w.stats && w.stats.atk) || 0) * 0.5));
@@ -101155,7 +101203,7 @@ const startTurn = (state, who) => {
         let hit = 0;
         s.units = (s.units || []).map(u => {
           if (!u || !u.alive || !u.pos || u.owner === b.owner) return u;
-          if (Math.max(Math.abs(u.pos.x - b.x), Math.abs(u.pos.y - b.y)) > (b.radius | 0)) return u;
+          if (distance(u.pos, b) > (b.radius | 0)) return u;
           hit++;
           const hp = Math.max(0, (u.currentHp | 0) - (b.amount | 0));
           return { ...u, currentHp: hp, alive: hp > 0 };
@@ -101353,7 +101401,7 @@ const startTurn = (state, who) => {
       // ⛓ CHOKEHOLD — starting a turn next to a chokehold enemy costs 1 movement.
       _chokeheld: (Array.isArray(s.units) && u.pos) ? s.units.some(e => e && e.alive && e.owner !== u.owner
         && e.pos && hasPassive(e, 'chokehold')
-        && Math.max(Math.abs(e.pos.x - u.pos.x), Math.abs(e.pos.y - u.pos.y)) === 1) : false };
+        && distance(e.pos, u.pos) === 1) : false };
     // 👑 CONTROL-STEAL REVERT — a temporarily-seized unit (set by takeControl /
     // move.takeControl) ticks down once per turn it serves the new owner. When
     // the counter runs out it returns to its original side, re-sick so it can't
@@ -101538,7 +101586,7 @@ const startTurn = (state, who) => {
     if (_reck && _reck.pos) {
       s.units = s.units.map(u => {
         if (u && u.alive && u.owner !== who && u.pos
-            && Math.max(Math.abs(u.pos.x - _reck.pos.x), Math.abs(u.pos.y - _reck.pos.y)) <= 1) {
+            && distance(u.pos, _reck.pos) <= 1) {
           log.push({ msg: `⚔ Reckoning shockwave stuns ${u.name}!`, color: who === 'player' ? 'green' : 'red' });
           return applyStatusEffect(u, 'stun', 1);
         }
@@ -133794,14 +133842,13 @@ function _applyHeroGuardian(state) {
       if (!hero) continue;
       // First free tile in an expanding ring around the guardian.
       const occ = new Set(state.units.filter(u => u.alive && u.pos && u.id !== hero.id).map(u => u.pos.x + ',' + u.pos.y));
-      const _W = (typeof BOARD_W !== 'undefined') ? BOARD_W : 8, _H = (typeof BOARD_H !== 'undefined') ? BOARD_H : 8;
       let spot = null;
       for (let r = 1; r <= 3 && !spot; r++) {
         for (let dy = -r; dy <= r && !spot; dy++) {
           for (let dx = -r; dx <= r && !spot; dx++) {
             if (dx === 0 && dy === 0) continue;
             const nx = guardian.pos.x + dx, ny = guardian.pos.y + dy;
-            if (nx < 0 || ny < 0 || nx >= _W || ny >= _H || occ.has(nx + ',' + ny)) continue;
+            if (!inBounds(nx, ny) || occ.has(nx + ',' + ny)) continue;
             spot = { x: nx, y: ny };
           }
         }
@@ -136073,7 +136120,7 @@ function _aiAutoCounter(state, opts) {
           if (src) {
             let best = tiles[0]; let bestD = Infinity;
             for (const t of tiles) {
-              const d = Math.max(Math.abs(t.x - src.x), Math.abs(t.y - src.y));
+              const d = distance(t, src);
               if (d < bestD) { bestD = d; best = t; }
             }
             pos = best;
@@ -136385,7 +136432,7 @@ function _battleActivateCounter(cardInstanceId) {
           if (src) {
             let best = tiles[0]; let bestD = Infinity;
             for (const t of tiles) {
-              const d = Math.max(Math.abs(t.x - src.x), Math.abs(t.y - src.y));
+              const d = distance(t, src);
               if (d < bestD) { bestD = d; best = t; }
             }
             pos = best;
@@ -141616,7 +141663,7 @@ function renderBoard() {
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue;   // skip hero's own tile
           const tx = _hero.pos.x + dx, ty = _hero.pos.y + dy;
-          if (tx < 0 || ty < 0 || tx >= BOARD_W || ty >= BOARD_H) continue;
+          if (!inBounds(tx, ty)) continue;
           // Skip tiles with a unit (alive OR bleeding-out body), wall, or
           // tombstone — Mimic decoy needs clear ground.
           const occ = (s.units || []).find(u => u && u.pos && u.pos.x === tx && u.pos.y === ty && (u.alive || u._bleeding));
@@ -141716,8 +141763,7 @@ function renderBoard() {
         else if (_se.some(e => e && e.type === 'ambushGuard1')) _wr = 1;
         if (_wr < 2 && typeof hasPassive === 'function' && hasPassive(sel, 'predatorsEye')) _wr = Math.max(_wr, 2);
         if (_wr > 0) {
-          const _dx = Math.abs(x - sel.pos.x), _dy = Math.abs(y - sel.pos.y);
-          const _cheb = Math.max(_dx, _dy);
+          const _cheb = distance({ x, y }, sel.pos);
           if (_cheb > 0 && _cheb <= _wr) tileClasses.push('ow-watch-radius');
         }
       }
@@ -141738,8 +141784,7 @@ function renderBoard() {
         const fmHero = (s.units || []).find(u => u && u.owner === 'player' && u.isHero && u.alive);
         if (fmHero) {
           const r = App.ui.fusionMode.heroRadius || 1;
-          const dx = Math.abs(x - fmHero.pos.x), dy = Math.abs(y - fmHero.pos.y);
-          if (Math.max(dx, dy) <= r) tileClasses.push('poly-radius');
+          if (distance({ x, y }, fmHero.pos) <= r) tileClasses.push('poly-radius');
         }
       }
 
@@ -143745,7 +143790,7 @@ function onTileClick(x, y) {
       const _hero = (s.units || []).find(u => u && u.owner === 'player' && u.isHero && u.alive);
       if (!_hero || !_hero.pos) { showToast('No hero on the field.'); return; }
       const dx = Math.abs(_hero.pos.x - x), dy = Math.abs(_hero.pos.y - y);
-      if (Math.max(dx, dy) > 1 || (dx === 0 && dy === 0)) {
+      if (distance(_hero.pos, { x, y }) > 1 || (dx === 0 && dy === 0)) {
         showToast('Pick a tile NEXT TO your hero.'); return;
       }
       if (occupantHere) { showToast('Tile is occupied.'); return; }
@@ -150081,7 +150126,7 @@ function aiEstimateThreat(attacker, defender, state) {
   for (const m of moves) {
     // Account for current range + 1 step of movement
     const reach = (m.range || 1) + 1;
-    if (Math.max(Math.abs(attacker.pos.x - defender.pos.x), Math.abs(attacker.pos.y - defender.pos.y)) > reach) continue;
+    if (distance(attacker.pos, defender.pos) > reach) continue;
     const probe = calculateDamage({ ...m, accuracy: 100, crit: 0 }, attacker, defender, state.weather);
     if (probe.damage > best) best = probe.damage;
   }
@@ -150374,7 +150419,7 @@ function aiPickBestPlacement(card, aiHero, state) {
   const isTank = (card.stats && (card.stats.hp || 0) >= 24);
   let best = null, bestScore = -Infinity;
   for (const t of tiles) {
-    const distToFoe = playerHero ? Math.max(Math.abs(t.x - playerHero.pos.x), Math.abs(t.y - playerHero.pos.y)) : 5;
+    const distToFoe = playerHero ? distance(t, playerHero.pos) : 5;
     // Threat at this tile if our new unit stood here
     const ghostUnit = { ...buildUnit(card, 'ai', t, aiHero ? aiHero.heroPassive : null), pos: t };
     const incoming = aiIncomingThreatAt(ghostUnit, t, state);
@@ -150411,7 +150456,7 @@ function _aiShouldFireUltimate(s, aiHero) {
     let hits = 0, lethal = false, killCount = 0;
     for (const e of enemies) {
       if (!e.pos) continue;
-      const cheb = Math.max(Math.abs(e.pos.x - aiHero.pos.x), Math.abs(e.pos.y - aiHero.pos.y));
+      const cheb = distance(e.pos, aiHero.pos);
       if (cheb > radius) continue;
       hits++;
       if (dmg >= (e.currentHp | 0)) { killCount++; if (e.isHero) lethal = true; }
@@ -150422,7 +150467,7 @@ function _aiShouldFireUltimate(s, aiHero) {
     // Single-target with no kill — only fire if the lone enemy is the hero
     // (cripples their gameplan even if not lethal).
     if (hits === 1) {
-      const lone = enemies.find(e => e.pos && Math.max(Math.abs(e.pos.x - aiHero.pos.x), Math.abs(e.pos.y - aiHero.pos.y)) <= radius);
+      const lone = enemies.find(e => e.pos && distance(e.pos, aiHero.pos) <= radius);
       if (lone && lone.isHero) return { fire: true, reason: 'volley on player hero' };
     }
     return null;
@@ -150432,7 +150477,7 @@ function _aiShouldFireUltimate(s, aiHero) {
     // allies (so 10+ ATK swing) OR ≥ 1 ally engaged with enemies (about
     // to attack and benefit immediately).
     if (allies.length >= 2) {
-      const engaged = allies.some(a => a.pos && enemies.some(e => e.pos && Math.max(Math.abs(a.pos.x - e.pos.x), Math.abs(a.pos.y - e.pos.y)) <= 3));
+      const engaged = allies.some(a => a.pos && enemies.some(e => e.pos && distance(a.pos, e.pos) <= 3));
       if (engaged || allies.length >= 3) return { fire: true, reason: `rally on ${allies.length} allies` };
     }
     return null;
@@ -150446,7 +150491,7 @@ function _aiShouldFireUltimate(s, aiHero) {
     // is close (extra blocker buys time).
     if (allies.length <= 2 && enemies.length >= 2) return { fire: true, reason: 'summon — outnumbered' };
     if (playerHero && playerHero.pos) {
-      const d = Math.max(Math.abs(playerHero.pos.x - aiHero.pos.x), Math.abs(playerHero.pos.y - aiHero.pos.y));
+      const d = distance(playerHero.pos, aiHero.pos);
       if (d <= 3) return { fire: true, reason: 'summon — blocker for hero' };
     }
     return null;
@@ -150456,7 +150501,7 @@ function _aiShouldFireUltimate(s, aiHero) {
     // are close + likely to swing on the AI hero. Save it for moments
     // we expect to be attacked.
     const hp = aiHero.currentHp / Math.max(1, aiHero.maxHp);
-    const closeEnemies = enemies.filter(e => e.pos && Math.max(Math.abs(e.pos.x - aiHero.pos.x), Math.abs(e.pos.y - aiHero.pos.y)) <= 3).length;
+    const closeEnemies = enemies.filter(e => e.pos && distance(e.pos, aiHero.pos) <= 3).length;
     if (closeEnemies >= 1 && hp < 0.7) return { fire: true, reason: 'overwatch — under threat' };
     if (closeEnemies >= 2) return { fire: true, reason: 'overwatch — multiple threats' };
     return null;
@@ -151010,7 +151055,7 @@ function doAIStep() {
         // Pick the tile closest to the player hero — that's the most likely walked-through tile
         const scored = tiles
           .filter(t => !(s.board[t.y] && s.board[t.y][t.x] && s.board[t.y][t.x].trap))
-          .map(t => ({ t, d: playerHero ? Math.max(Math.abs(t.x - playerHero.pos.x), Math.abs(t.y - playerHero.pos.y)) : 0 }))
+          .map(t => ({ t, d: playerHero ? distance(t, playerHero.pos) : 0 }))
           .sort((a, b) => a.d - b.d);
         if (scored.length > 0) {
           const dest = scored[0].t;
@@ -151586,7 +151631,7 @@ function doAIStep() {
           // Score this destination by best attack reachable + safety
           const reachable = tryAttackFromPos(dest);
           const attackScore = reachable ? reachable.score : 0;
-          const distToFoe = Math.max(Math.abs(dest.x - playerHero.pos.x), Math.abs(dest.y - playerHero.pos.y));
+          const distToFoe = distance(dest, playerHero.pos);
           // Approximate incoming threat at this tile
           const threat = aiIncomingThreatAt({ ...unit, pos: dest }, dest, App.state);
           let sc = attackScore;
@@ -151629,7 +151674,7 @@ function doAIStep() {
             // penalty, not a spread-out order.
             let adj = 0;
             for (const a of _allies) {
-              if (Math.max(Math.abs(a.pos.x - dest.x), Math.abs(a.pos.y - dest.y)) <= 1) adj++;
+              if (distance(a.pos, dest) <= 1) adj++;
             }
             if (adj >= 2) sc -= (adj - 1) * 14;
 
@@ -151637,7 +151682,7 @@ function doAIStep() {
             // radius is the whole reason those units were played. Radius 2 is the
             // common aura reach.
             for (const a of _allies) {
-              const d2 = Math.max(Math.abs(a.pos.x - dest.x), Math.abs(a.pos.y - dest.y));
+              const d2 = distance(a.pos, dest);
               if (d2 > 2) continue;
               if (typeof hasPassive !== 'function') break;
               if (hasPassive(a, 'inspire') || hasPassive(a, 'inspireAtk') || hasPassive(a, 'inspireDef')
@@ -151652,19 +151697,19 @@ function doAIStep() {
             const _myHero = (App.state.units || []).find(u => u && u.owner === 'ai' && u.isHero && u.alive);
             if (_myHero && _myHero.pos && !unit.isHero) {
               const hurt = 1 - Math.max(0, Math.min(1, (_myHero.currentHp | 0) / Math.max(1, _myHero.maxHp | 0)));
-              const dHero = Math.max(Math.abs(dest.x - _myHero.pos.x), Math.abs(dest.y - _myHero.pos.y));
+              const dHero = distance(dest, _myHero.pos);
               // Nearest enemy to OUR hero — the thing worth blocking.
               let nearestFoeD = 99, foe = null;
               for (const e of (App.state.units || [])) {
                 if (!e || !e.alive || e.owner !== 'player' || !e.pos) continue;
-                const d3 = Math.max(Math.abs(e.pos.x - _myHero.pos.x), Math.abs(e.pos.y - _myHero.pos.y));
+                const d3 = distance(e.pos, _myHero.pos);
                 if (d3 < nearestFoeD) { nearestFoeD = d3; foe = e; }
               }
               // Only defend when something is actually closing in.
               if (foe && nearestFoeD <= 4) {
                 // Interposing: closer to our hero than the threat is, and roughly
                 // on the line between them.
-                const onLine = Math.max(Math.abs(dest.x - foe.pos.x), Math.abs(dest.y - foe.pos.y)) <= 2;
+                const onLine = distance(dest, foe.pos) <= 2;
                 if (dHero < nearestFoeD && onLine) sc += (26 + 60 * hurt) * _ta;
                 else if (dHero <= 2) sc += (10 + 26 * hurt) * _ta;
               }
@@ -188719,7 +188764,7 @@ function summonHeroPet(state, hero, summonId) {
     let nearest = null, nd = Infinity;
     for (const u of state.units) {
       if (!u || !u.alive || u.owner === hero.owner || !u.pos) continue;
-      const d = Math.max(Math.abs(u.pos.x - unit.pos.x), Math.abs(u.pos.y - unit.pos.y));
+      const d = distance(u.pos, unit.pos);
       if (d < nd) { nd = d; nearest = u; }
     }
     if (nearest && typeof markUnitScanned === 'function') {
@@ -190120,7 +190165,7 @@ function _battleHeroOnSide(state, side) {
 // (max of dx/dy) so a 2-tile radius covers a 5×5 box around the hero.
 function _battleWithinRadius(a, b, r) {
   if (!a || !b || !a.pos || !b.pos) return false;
-  return Math.max(Math.abs(a.pos.x - b.pos.x), Math.abs(a.pos.y - b.pos.y)) <= (r | 0);
+  return distance(a.pos, b.pos) <= (r | 0);
 }
 
 // --- Personality-aware emotion radius. Defaults to HERO_EMOTION_RADIUS but
@@ -190419,7 +190464,7 @@ function _applyUltimateEffect(s, hero, def) {
       if (!t || !t.alive || t.owner === hero.owner || !t.pos) continue;
       if (mapwide && def.skipFlying && _isFlying(t)) continue;
       if (!mapwide && hero.pos &&
-          Math.max(Math.abs(t.pos.x - hero.pos.x), Math.abs(t.pos.y - hero.pos.y)) > radius) continue;
+          distance(t.pos, hero.pos) > radius) continue;
       const trig = applyDamageTriggers(t, dmg, 'physical');
       let updated = trig.unit;
       (trig.log || []).forEach(l => s.log.push(l));
@@ -201069,7 +201114,7 @@ function _findOpenAdjacentTile(state, pos) {
   ];
   for (const d of dirs) {
     const x = pos.x + d.x, y = pos.y + d.y;
-    if (x < 0 || y < 0 || x >= BOARD_W || y >= BOARD_H) continue;
+    if (!inBounds(x, y)) continue;
     if (state.units.some(u => u && u.alive && u.pos && u.pos.x === x && u.pos.y === y)) continue;
     return { x, y };
   }
@@ -201230,7 +201275,7 @@ function resolveHeroConsumable(slotIdx, targetPos, targetUnit) {
     if (!targetPos) { showToast('⚠ Pick an empty tile next to your hero.'); return; }
     const _dx = Math.abs(playerHero.pos.x - targetPos.x);
     const _dy = Math.abs(playerHero.pos.y - targetPos.y);
-    if (Math.max(_dx, _dy) > 1 || (_dx === 0 && _dy === 0)) {
+    if (distance(playerHero.pos, targetPos) > 1 || (_dx === 0 && _dy === 0)) {
       showToast('⚠ Mimic Beacon only deploys to a tile next to your hero.');
       return;
     }
@@ -201278,7 +201323,7 @@ function resolveHeroConsumable(slotIdx, targetPos, targetUnit) {
   else if (eff.effect === 'teleport') {
     if (!targetPos) { showToast('⚠ Pick a tile.'); return; }
     const reach = eff.amount || 4;
-    const dist = Math.max(Math.abs(playerHero.pos.x - targetPos.x), Math.abs(playerHero.pos.y - targetPos.y));
+    const dist = distance(playerHero.pos, targetPos);
     if (dist > reach) { showToast(`⚠ Tile too far — max ${reach} tiles.`); return; }
     const occ = (s.units || []).find(u => u && u.alive && u.pos && u.pos.x === targetPos.x && u.pos.y === targetPos.y);
     if (occ) { showToast('⚠ Tile is occupied.'); return; }
@@ -201326,7 +201371,7 @@ function resolveHeroConsumable(slotIdx, targetPos, targetUnit) {
     let count = 0;
     s.units = s.units.map(u => {
       if (!u || !u.alive) return u;
-      const dist = Math.max(Math.abs(u.pos.x - targetPos.x), Math.abs(u.pos.y - targetPos.y));
+      const dist = distance(u.pos, targetPos);
       if (dist > radius) return u;
       count++;
       const cleaned = (u.statusEffects || []).filter(e => e && e.type !== 'ambushGuard1' && e.type !== 'ambushGuard3');
@@ -201358,7 +201403,7 @@ function resolveHeroConsumable(slotIdx, targetPos, targetUnit) {
       const u = s.units[i];
       if (!u || !u.alive || u.owner === 'player') continue;
       if (!u.pos) continue;
-      if (Math.max(Math.abs(u.pos.x - center.x), Math.abs(u.pos.y - center.y)) > radius) continue;
+      if (distance(u.pos, center) > radius) continue;
       const trig = applyDamageTriggers(u, dmg, 'physical');
       s.units[i] = trig.unit;
       (trig.log || []).forEach(l => s.log.push(l));
@@ -213561,7 +213606,7 @@ function _twPickSpreadTiles(state, n, opts) {
   const candidates = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     if (occ.has(x + ',' + y)) continue;
-    if (avoidPos && Math.max(Math.abs(x - avoidPos.x), Math.abs(y - avoidPos.y)) <= 1) continue;
+    if (avoidPos && distance({ x, y }, avoidPos) <= 1) continue;
     candidates.push({ x, y });
   }
   for (let i = candidates.length - 1; i > 0; i--) {
@@ -213571,7 +213616,7 @@ function _twPickSpreadTiles(state, n, opts) {
   const out = [];
   for (const c of candidates) {
     if (out.length >= n) break;
-    if (out.every(p => Math.max(Math.abs(p.x - c.x), Math.abs(p.y - c.y)) >= minSpacing)) {
+    if (out.every(p => distance(p, c) >= minSpacing)) {
       out.push(c);
     }
   }
@@ -213752,20 +213797,18 @@ function _twTickGameMode(state, who) {
           { x: cv.pos.x - dx, y: cv.pos.y + dy },
           { x: cv.pos.x + dx, y: cv.pos.y - dy },
         ];
-        const W = state.board && state.board[0] ? state.board[0].length : 9;
-        const H = state.board ? state.board.length : 7;
         const occ = new Set();
         (state.units || []).forEach(u => { if (u && u.alive && u.pos && u.id !== cv.id) occ.add(u.pos.x + ',' + u.pos.y); });
         let moved = false;
         for (const t of tries) {
-          if (t.x < 0 || t.y < 0 || t.x >= W || t.y >= H) continue;
+          if (!inBoundsOf(state, t.x, t.y)) continue;
           if (occ.has(t.x + ',' + t.y)) continue;
           cv.pos = { x: t.x, y: t.y };
           moved = true;
           break;
         }
         if (moved) {
-          const remain = Math.max(Math.abs(cv.pos.x - exit.x), Math.abs(cv.pos.y - exit.y));
+          const remain = distance(cv.pos, exit);
           if (cv.pos.x === exit.x && cv.pos.y === exit.y) {
             state.mods.twConvoy.extracted = true;
             log.push({ msg: `🚛 Convoy reached extraction! Mission complete.`, color: 'green' });
@@ -213908,14 +213951,13 @@ function _twResolveHack(approach) {
     const reinforcements = ['reinforcement_1', 'reinforcement_2'];
     let spawned = 0;
     if (typeof buildUnit === 'function' && s.board) {
-      const W = s.board[0].length, H = s.board.length;
       const occ = new Set();
       (s.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
       for (let dy = -1; dy <= 1 && spawned < 2; dy++) {
         for (let dx = -1; dx <= 1 && spawned < 2; dx++) {
           if (dx === 0 && dy === 0) continue;
           const x = hk.pos.x + dx, y = hk.pos.y + dy;
-          if (x < 0 || y < 0 || x >= W || y >= H) continue;
+          if (!inBoundsOf(s, x, y)) continue;
           if (occ.has(x + ',' + y)) continue;
           const reinfCard = {
             id: '_tw_hack_reinf', name: 'Reinforcement', icon: '👤',
@@ -213964,15 +214006,14 @@ function _twFireGameModeRng(state) {
         elements: ['shadow'], factions: ['raider'],
         learnset: [{ lvl: 1, m: 'slash' }], passive: 'none',
       };
-      const W = state.board[0].length, H = state.board.length;
       const occ = new Set();
       (state.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
       // Spawn 2-3 tiles from the convoy on a random side.
       const spots = [];
       for (let r = 2; r <= 3; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         const x = cv.pos.x + dx, y = cv.pos.y + dy;
-        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        if (distance(cv.pos, { x, y }) !== r) continue;
+        if (!inBoundsOf(state, x, y)) continue;
         if (occ.has(x + ',' + y)) continue;
         spots.push({ x, y });
       }
@@ -214066,7 +214107,7 @@ function _twFireGameModeRng(state) {
       state.mods.twOilTowers.forEach(tw => {
         (state.units || []).forEach(u => {
           if (!u || !u.alive || !u.pos) return;
-          if (Math.max(Math.abs(u.pos.x - tw.pos.x), Math.abs(u.pos.y - tw.pos.y)) <= 1) {
+          if (distance(u.pos, tw.pos) <= 1) {
             const dmg = 4;
             u.currentHp = Math.max(0, u.currentHp - dmg);
             if (u.currentHp === 0) u.alive = false;
@@ -214105,14 +214146,13 @@ function _twFireGameModeRng(state) {
         elements: ['shadow'], factions: ['raider'],
         learnset: [{ lvl: 1, m: 'slash' }], passive: 'none',
       };
-      const W = state.board[0].length, H = state.board.length;
       const occ = new Set();
       (state.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
       const spots = [];
       for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== 2) continue;
         const x = tw.pos.x + dx, y = tw.pos.y + dy;
-        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        if (distance(tw.pos, { x, y }) !== 2) continue;
+        if (!inBoundsOf(state, x, y)) continue;
         if (occ.has(x + ',' + y)) continue;
         spots.push({ x, y });
       }
@@ -214136,14 +214176,13 @@ function _twFireGameModeRng(state) {
         elements: ['shadow'], factions: ['beast'],
         learnset: [{ lvl: 1, m: 'slash' }], passive: 'none',
       };
-      const W = state.board[0].length, H = state.board.length;
       const occ = new Set();
       (state.units || []).forEach(u => { if (u && u.alive && u.pos) occ.add(u.pos.x + ',' + u.pos.y); });
       const spots = [];
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         if (dx === 0 && dy === 0) continue;
         const x = tw.pos.x + dx, y = tw.pos.y + dy;
-        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        if (!inBoundsOf(state, x, y)) continue;
         if (occ.has(x + ',' + y)) continue;
         spots.push({ x, y });
       }
@@ -223114,7 +223153,7 @@ render();
 <link rel="stylesheet" href="src/battle/chrome.css?v=120k6">
 <link rel="stylesheet" href="src/battle/alive.css?v=120k6">
 <script src="src/battle/combat.js?v=120m4" defer></script>
-<script src="src/battle/targeting.js?v=120k6" defer></script>
+<script src="src/battle/targeting.js?v=120w6metric" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">
 <script src="src/battle/fit.js?v=120k6" defer></script>
 <!-- 🃏 DRAW FX — deck → reveal → hand (round 7, `draw` piece).

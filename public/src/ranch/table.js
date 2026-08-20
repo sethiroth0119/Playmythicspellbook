@@ -32,6 +32,7 @@
    exactly as it was.
    ══════════════════════════════════════════════════════════════════════════ */
 import * as J from './judgement.js';
+import * as G from './gifts.js';
 
 function B() { try { return window.MythicRanchBridge || null; } catch (e) { return null; } }
 function REZ() { try { return (window.MythicResonance && typeof window.MythicResonance.get === 'function') ? window.MythicResonance : null; } catch (e) { return null; } }
@@ -184,6 +185,12 @@ const CSS = `
 .rt-btn[disabled]{opacity:.4;cursor:not-allowed;}
 .rt-btn.warm{border-color:#7fd8a077;background:#7fd8a018;color:#9fe0b0;}
 .rt-btn.cold{border-color:#cf686877;background:#cf686818;color:#e89a9a;}
+.rt-gift{display:inline-flex;align-items:center;gap:.3rem;padding:.3rem .6rem;border-radius:8px;margin:0 5px 5px 0;
+  border:1px solid rgba(212,175,55,.28);background:rgba(0,0,0,.3);color:#d8cba6;font-size:.76rem;cursor:pointer;font-family:inherit;}
+.rt-gift:hover{border-color:#ffd166;color:#ffd166;}
+.rt-gift[disabled]{opacity:.4;cursor:not-allowed;}
+.rt-gift.fav{border-color:#ffd166;background:rgba(255,209,102,.12);color:#ffd166;}
+.rt-gift .rt-n{color:#8f8264;font-size:.68rem;}
 @media (max-width:640px){ .rt-cardcol{flex:1 1 100%;} .rt-card{width:170px;} }
 `;
 let cssDone = false;
@@ -345,13 +352,47 @@ export function sheetHtml(cardId, inject) {
   }
   h += `</div>`;
 
-  // ── bound items ────────────────────────────────────────────────────────
+  // ── bound items + the gift shelf ───────────────────────────────────────
   const items = Array.isArray(prof.boundItems) ? prof.boundItems : [];
+  const pool = (b.giftPool && b.giftPool()) || [];
+  const fav = G.favouriteOf(cardId, card, pool);
+  const favKnown = G.favouriteKnown(tierIdx);
+  const cd = G.cooldownLeft(prof);
+  h += `<div class="rt-deck"><div class="rt-hdr">🎁 Given To Them</div>`;
   if (items.length) {
-    h += `<div class="rt-deck"><div class="rt-hdr">🎁 Given To Them</div>`
-      + items.map(id => `<span class="rt-chip" style="border:1px solid #d4af3755;background:#d4af3718;color:#e8c46a">🎁 ${esc(b.itemName(id))}</span>`).join('')
-      + `<div class="rt-note">Things they asked for, and you found.</div></div>`;
+    h += items.map(id => {
+      const isFav = fav && id === fav && favKnown;
+      return `<span class="rt-chip" style="border:1px solid ${isFav ? '#ffd166' : '#d4af3755'};background:${isFav ? '#ffd16620' : '#d4af3718'};color:${isFav ? '#ffd166' : '#e8c46a'}">${isFav ? '★' : '🎁'} ${esc(b.itemName(id))}</span>`;
+    }).join('');
+  } else {
+    h += `<div class="rt-note">Nothing yet.</div>`;
   }
+
+  /* 🎁 THE SHELF — giving before you are asked. Everything the player holds
+     that this game already treats as a companion gift, with the favourite
+     marked ONCE THEY HAVE EARNED THE RIGHT TO KNOW IT (Steady, the same gate
+     as the temperament quirk and the value tags). Below that the panel says
+     plainly that you are guessing — a wrong guess still pays, it just does not
+     tell you it was wrong, so the discovery stays worth something. */
+  const shelf = (b.giftable && b.giftable()) || [];
+  h += `<div class="rt-hdr" style="margin-top:.9rem">🎀 Give Them Something</div>`;
+  if (favKnown && fav) {
+    h += `<div class="rt-note" style="margin-bottom:.45rem">They would most like <b style="color:#ffd166">${esc(b.itemName(fav))}</b>.</div>`;
+  } else {
+    h += `<div class="rt-note" style="margin-bottom:.45rem">You do not know their taste yet — bond to Steady and they will let it slip. Guess anyway; a lucky one still counts.</div>`;
+  }
+  if (cd > 0) {
+    h += `<div class="rt-note" style="color:#e8c46a">They have had a gift recently. Another in ${esc(G.fmtLeft(cd))}.</div>`;
+  } else if (!shelf.length) {
+    h += `<div class="rt-note">You are carrying nothing they would want.</div>`;
+  } else {
+    h += shelf.slice(0, 24).map(it => {
+      const isFav = favKnown && fav && it.id === fav;
+      return `<button class="rt-gift${isFav ? ' fav' : ''}" data-gift="${esc(it.id)}"
+        title="${esc((b.itemById(it.id) || {}).desc || '')}">${isFav ? '★ ' : ''}${esc(b.itemName(it.id))} <span class="rt-n">×${it.n}</span></button>`;
+    }).join('');
+  }
+  h += `</div>`;
 
   // ── rapport ────────────────────────────────────────────────────────────
   const partners = b.rapportPartners(cardId) || [];
@@ -427,6 +468,9 @@ function paint(host, cardId) {
   host.querySelectorAll('[data-judge]').forEach(el => {
     el.onclick = () => { judge(cardId, el.dataset.judge); paint(host, cardId); };
   });
+  host.querySelectorAll('[data-gift]').forEach(el => {
+    el.onclick = () => { gift(cardId, el.dataset.gift); paint(host, cardId); };
+  });
 }
 
 /** Apply one judgement. The ONLY write path on this screen besides the gift.
@@ -445,7 +489,17 @@ export function judge(cardId, choice) {
     seed: (b.battleCount() | 0) + (prof.fielded | 0) + (prof.bond | 0),
   });
 
+  /* 🔴 REPORT THE OBSERVED DELTA, NOT THE REQUESTED ONE. `res.bond` is the
+     ask; adjustBond then applies the temperament multiplier AND clamps to
+     bondCeilingFor(), so what actually lands is routinely different — a Vain
+     unit scolded for a nominal −15 loses 21 here and 31 after adjustBond, and
+     a companion sitting on its ceiling gains 0 from a nominal +49. Printing
+     the ask meant the toast and the bar disagreed every single time. Measure
+     it instead: this is also the only way the toast stays honest if the
+     ceiling rules ever change. */
+  const bondBefore = prof.bond | 0;
   if (res.bond) b.adjustBond(prof, res.bond);
+  const landed = (prof.bond | 0) - bondBefore;
   if (res.grief) prof.grievance = Math.max(0, (prof.grievance | 0) + res.grief);
   if (res.conviction) {
     if (!prof.conviction || typeof prof.conviction !== 'object') prof.conviction = {};
@@ -469,9 +523,60 @@ export function judge(cardId, choice) {
   try { b.saveProfile(); } catch (e) {}
 
   const card = b.card(cardId) || { name: 'They' };
-  const sign = res.bond > 0 ? '+' : '';
   const note = J.convictionNote(res, b.poleLabel(ban.pole) || 'That conviction');
-  b.showToast(`${res.tone === 'warm' ? '💗' : res.tone === 'cold' ? '💔' : '🫥'} ${card.name}: “${res.line}” — ${sign}${res.bond} loyalty.${note ? ' ' + note : ''}`, 6000);
+  // A nominal change that lands as 0 means the ceiling ate it — say so, rather
+  // than printing "+0 loyalty", which reads as a broken button.
+  const money = landed === 0 && res.bond !== 0
+    ? (res.bond > 0 ? 'no loyalty to gain — they are at their ceiling' : 'no loyalty left to lose')
+    : (landed > 0 ? '+' : '') + landed + ' loyalty';
+  b.showToast(`${res.tone === 'warm' ? '💗' : res.tone === 'cold' ? '💔' : '🫥'} ${card.name}: “${res.line}” — ${money}.${note ? ' ' + note : ''}`, 6000);
+  res.landed = landed;
+  return res;
+}
+
+/** Hand a companion something, unprompted. Second and last write path on this
+ *  screen. Same discipline as judge(): bond goes through the bridge's
+ *  adjustBond so the temperament multiplier and the bond ceiling both apply.
+ *  ⚠ The item is consumed BEFORE the bond is paid and only after give() has
+ *    returned ok — a resolve-then-consume order would pay loyalty on a gift
+ *    the player turned out not to have, and a consume-then-resolve order would
+ *    eat the item on a cooldown refusal. */
+export function gift(cardId, itemId) {
+  const b = B(); if (!b) return null;
+  const prof = b.unitProf(cardId); if (!prof) return null;
+  const card = b.card(cardId) || { id: cardId, name: cardId };
+  const pool = (b.giftPool && b.giftPool()) || [];
+  const tierIdx = b.bondTierIndex(prof.bond || 0);
+
+  const res = G.give({
+    entry: prof, itemId,
+    owned: b.ownCount(itemId),
+    favourite: G.favouriteOf(cardId, card, pool),
+    tierIdx,
+    seed: (b.battleCount() | 0) + (prof.fielded | 0),
+  });
+  if (!res.ok) {
+    b.showToast(res.reason === 'cooldown'
+      ? '🎁 ' + card.name + ' has had a gift recently — another in ' + G.fmtLeft(res.cdLeft) + '.'
+      : res.reason === 'notowned' ? '🎁 You are not carrying one of those.' : '🎁 Nothing to give.', 3600);
+    return res;
+  }
+
+  if (!b.takeItem(itemId)) { b.showToast('🎁 Could not hand that over.', 3000); return null; }
+  const bondBefore = prof.bond | 0;          // see judge(): report what landed
+  b.adjustBond(prof, res.bond);
+  const landed = (prof.bond | 0) - bondBefore;
+  if (!Array.isArray(prof.boundItems)) prof.boundItems = [];
+  prof.boundItems.push(res.bind);
+  prof.lastGiftAt = Date.now();
+  try { b.saveProfile(); } catch (e) {}
+
+  const money = landed <= 0
+    ? 'they are at their loyalty ceiling'
+    : '+' + landed + ' loyalty';
+  b.showToast((res.isFavourite && res.known ? '⭐ ' : '🎁 ') + card.name + ': “' + res.line + '” — ' + money + '.'
+    + (res.isFavourite && res.known ? ' Their favourite.' : ''), 5200);
+  res.landed = landed;
   return res;
 }
 

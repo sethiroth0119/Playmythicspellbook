@@ -18,6 +18,8 @@
      MythicRanch.open(cardId)              -> open the table on one companion
      MythicRanch.close()
      MythicRanch.judge(cardId, choice)     -> apply praise / silence / scold
+     MythicRanch.gift(cardId, itemId)      -> hand them something, unprompted
+     MythicRanch.favouriteOf(id,card,pool) -> the item this card likes best
      MythicRanch.labels(verdict)           -> button wording for the LQ dialog
      MythicRanch.convictionMul(entry,pole) -> 0.50 … 1.50, for _lqValuesEval
      MythicRanch.hasBanter(cardId)         -> is something queued to be judged
@@ -25,6 +27,7 @@
    ══════════════════════════════════════════════════════════════════════════ */
 import * as J from './judgement.js';
 import * as T from './table.js';
+import * as G from './gifts.js';
 
 export const VERSION = 'ranch-1.0.0';
 
@@ -51,12 +54,14 @@ export const api = {
   open:  (id) => { try { return T.open(id); } catch (e) { console.warn('[ranch] open', e); return false; } },
   close: ()   => { try { T.close(); } catch (e) {} },
   judge: (id, choice) => { try { return T.judge(id, choice); } catch (e) { console.warn('[ranch] judge', e); return null; } },
+  gift:  (id, itemId) => { try { return T.gift(id, itemId); } catch (e) { console.warn('[ranch] gift', e); return null; } },
+  favouriteOf: (id, card, pool) => { try { return G.favouriteOf(id, card, pool); } catch (e) { return null; } },
   labels: (verdict) => { try { return J.labels(verdict); } catch (e) { return J.labels('approve'); } },
   convictionMul,
   convictionOf: (entry, pole) => { try { return J.convictionOf(entry, pole); } catch (e) { return 0; } },
   hasBanter,
   greeting: T.greeting,
-  J,
+  J, G,
 };
 
 try { window.MythicRanch = api; } catch (e) {}

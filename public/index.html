@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w8';
+  window.BUILD_VERSION = 'v120w9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207470,6 +207470,30 @@ window.MythicRanchBridge = {
   rapportMax: () => { try { return RAPPORT_MAX; } catch (e) { return 100; } },
   rapportBonus: () => { try { return RAPPORT_BONUS; } catch (e) { return { atk: 0, def: 0 }; } },
   itemName: (id) => { try { return _lqItemName(id); } catch (e) { return id; } },
+  itemById: (id) => { try { return getItemById(id) || (HELD_ITEMS && HELD_ITEMS[id]) || null; } catch (e) { return null; } },
+  /* 🎁 The gift pool is the UNION of LQ_ITEM_POOL's tiers, deduped — i.e.
+     exactly the set the game already treats as things a companion wants. A
+     unit's favourite is hashed out of this list (/src/ranch/gifts.js), so
+     deriving it from, say, every item in HELD_ITEMS would let a companion's
+     favourite be a quest key or a crafting reagent. Kept as a function rather
+     than a constant so a later change to LQ_ITEM_POOL flows through. */
+  giftPool: () => {
+    try { return Array.from(new Set([].concat.apply([], Object.keys(LQ_ITEM_POOL).map(k => LQ_ITEM_POOL[k])))); }
+    catch (e) { return []; }
+  },
+  ownCount: (id) => { try { return _resOwnCount('item', id) | 0; } catch (e) { return 0; } },
+  takeItem: (id) => { try { _resTakeOwned('item', id); return true; } catch (e) { return false; } },
+  /* Only what the player actually holds, and only from the gift pool. The raw
+     itemInventory carries everything they own; offering a companion a crafting
+     reagent as a "gift" is noise in a list that should read as a shortlist. */
+  giftable: () => {
+    try {
+      const pool = new Set([].concat.apply([], Object.keys(LQ_ITEM_POOL).map(k => LQ_ITEM_POOL[k])));
+      const inv = Profile.itemInventory || {};
+      return Object.keys(inv).filter(id => pool.has(id) && (inv[id] | 0) > 0)
+                   .map(id => ({ id: id, n: inv[id] | 0 }));
+    } catch (e) { return []; }
+  },
   spriteThumb: (key, icon) => { try { return _staticSpriteThumb(key, icon); } catch (e) { return icon || '🃏'; } },
   decks: () => { try { return getAllDecks() || []; } catch (e) { return []; } },
   deckKeyCardId: (k) => { try { return _deckKeyCardId(k); } catch (e) { return null; } },
@@ -223199,7 +223223,7 @@ render();
      game behaves exactly as it did before the module existed.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset. -->
-<script type="module" src="src/ranch/index.js?v=120w7"></script>
+<script type="module" src="src/ranch/index.js?v=120w9"></script>
 <!-- 🔮 RESONANCE — the card training model + ⚔ Path B (battle-earned).
      See resonance-card-training.md. Registered on window.MythicResonance;
      index.html's half of the seam is `_rezKey/_rezGet/_rezSet/_rezEmit` next to

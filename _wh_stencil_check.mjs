@@ -460,7 +460,7 @@ for (const [tier, units] of [['t1', 4], ['t5', 32]]) {
 
   // Per-bay numbers, so a failure is diagnosable without re-running anything.
   console.log(`\n── ${tier} · ${units} bays swept ────────────────────────────────────────`);
-  console.log('  bay  texPx stray   TEXTURE best/margin  selfMax       own-vs-others     asp  |  scrPx  SCREEN best/margin  id−flipY  id−rot180  top/bot');
+  console.log('  bay  texPx stray   TEXTURE best/margin  selfMax       own-vs-others     asp  |  scrPx  SCREEN best/margin  id−flipY  id−rot180  top/bot   inFrame bbox');
   for (const r of rows) {
     if (r.missing) { console.log(`  ${String(r.bay).padStart(3)}   MISSING`); continue; }
     if (r.fatal)   { console.log(`  ${String(r.bay).padStart(3)}   FATAL ${r.fatal}`); continue; }
@@ -469,7 +469,8 @@ for (const [tier, units] of [['t1', 4], ['t5', 32]]) {
       + `${t.best.padEnd(8)}${String(t.margin).padStart(7)}  ${String(t.self.v).padStart(5)} ${t.self.k.padEnd(8)} `
       + `${String(t.score.identity).padStart(6)} vs ${String(t.xBest).padStart(6)} ("${t.xBestN}")  `
       + `${String(t.aspectErr).padStart(5)}  | ${String(g.px).padStart(6)}  `
-      + `${g.best.padEnd(8)}${String(g.margin).padStart(7)}  ${String(g.vsFlipY).padStart(8)}  ${String(g.vsRot180).padStart(9)}  ${g.top}/${g.bot}`);
+      + `${g.best.padEnd(8)}${String(g.margin).padStart(7)}  ${String(g.vsFlipY).padStart(8)}  ${String(g.vsRot180).padStart(9)}  ${g.top}/${g.bot}`
+      + `  ${g.inFrame ? "yes" : "NO "}  ${g.bbox ? g.bbox.join(",") : "-"}`);
   }
 
   // ── one verdict per property, over every bay ──────────────────────────────
@@ -554,11 +555,20 @@ for (const [tier, units] of [['t1', 4], ['t5', 32]]) {
     const file = join(OUT, `STENCIL_${tier}_bay${res.canon.bay}.png`);
     await p.waitForTimeout(120);
     await p.screenshot({ path: file });
+    /* The verdict: ink present, wholly in frame, and correlating with the
+       ARTWORK under identity rather than under either inversion. That last pair
+       is the direct test — see the note above this file's framed section for why
+       the bottom-heaviness proxy is no longer ANDed into it. */
     ok(`${tier} · bay ${res.canon.bay} reads upright from the FRAMED standing view (5.4 m, wall sign in shot)`,
-       g.px > T.scrInkMin && g.inFrame && g.bot > g.top * T.bottomHeavy
+       g.px > T.scrInkMin && g.inFrame
        && g.score.identity > g.score.flipY + T.screenFlip && g.score.identity > g.score.rot180 + T.screenFlip,
-       `${g.px} px changed · top=${g.top} bottom=${g.bot} · identity ${g.score.identity} `
+       `${g.px} px changed · identity ${g.score.identity} `
        + `(flipY ${g.score.flipY}, rot180 ${g.score.rot180}) · ${file.replace(ROOT + '/', '')}`);
+    /* Reported, never vetoing. A digit is USUALLY bottom-heavy on this floor and
+       a change here is worth a look, but at 5.4 m the split is near parity and
+       noise decides it — so it informs a human instead of failing a build. */
+    console.log(`       ink split: top=${g.top} bottom=${g.bot} (bottom/top `
+       + `${(g.bot / (g.top || 1)).toFixed(3)}; usually >1, informational)`);
   } else {
     ok(`${tier} · the framed reference shot was taken`, false, 'bay not found');
   }

@@ -79,3 +79,14 @@ export const table       = (n)            => { const b = bridge(); try { return 
    more — the SHAPE of it is owned by state.js in this folder, deliberately, so
    there is exactly one definition of what a Weapon Smith save looks like. */
 export const rawState    = () => { const b = bridge(); try { return b ? b.getWeaponSmith() : null; } catch (e) { return null; } };
+
+/* 🔧 The crafted item book + the two writes that make a minted weapon real.
+   `craftedBook` hands back the live map so a mint can key straight into it;
+   `grantCrafted` puts the matching count into the ordinary inventory. BOTH are
+   required for one weapon — the vault prunes placements whose itemId the
+   inventory does not hold, and the loadout resolves the def through
+   getItemById, so either half on its own is an invisible weapon. */
+export const craftedBook = ()            => { const b = bridge(); try { return b ? b.craftedBook() : null; } catch (e) { return null; } };
+export const grantCrafted= (id)          => { const b = bridge(); try { return b ? !!b.grantCrafted(id) : false; } catch (e) { return false; } };
+export const equipToUnit = (uid, itemId) => { const b = bridge(); try { return b ? !!b.equipToUnit(uid, itemId) : false; } catch (e) { return false; } };
+export const getItem     = (id)          => { const b = bridge(); try { return b ? b.getItem(id) : null; } catch (e) { return null; } };

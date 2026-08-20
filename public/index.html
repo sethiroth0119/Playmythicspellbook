@@ -42568,6 +42568,16 @@ function getItemImage(itemId) {
 // time a piece of code needs item meta + a custom item id might be in play.
 function getItemById(itemId) {
   if (!itemId || itemId === 'none') return null;
+  /* 🔧 Player-crafted weapons resolve FIRST and by direct key lookup. First
+     because a minted def is the player's own property and nothing published
+     may shadow it; by key because this map is hot — the loadout, the vault
+     grid and the battle stat reader all call getItemById per frame-ish, and
+     the two sources below are linear scans over catalogs that can run to
+     hundreds of entries. */
+  try {
+    const mine = Profile.craftedItems && Profile.craftedItems[itemId];
+    if (mine && typeof mine === 'object') return mine;
+  } catch (e) {}
   const custom = (Forge.customItems || []).find(x => x && x.id === itemId);
   if (custom) return custom;
   // Players receive admin items/relics via the published Catalog, not the
@@ -44457,6 +44467,17 @@ const Profile = {
   aiHeroes: {},                 // 'cedric' -> { level, xp, kills, statGains, evs, nature } — AI-side persistence
   aiUnits: {},                  // 'goblin' -> { level, xp, kills, statGains, evs, nature } — AI-side persistence
   equipment: {},                // 'h_cedric' or 'u_goblin' -> 'powerBand'
+  /* 🔧 CRAFTED WEAPONS — minted item DEFS, keyed by their generated id
+     ('wsc_<blueprint>_<seq>'). This is the player's own item book and it is
+     the reason a Weapon Smith build needs no change to the vault, the loadout
+     or the battle stat reader: a minted weapon IS an item with an id, so
+     getItemById() resolves it and everything downstream already works.
+     🔴 A crafted id that fails to resolve does NOT error — getItemById returns
+       null and an equipped slot renders SILENTLY EMPTY. That makes an
+       unresolvable id a silent loss of the player's weapon, which is why this
+       map is on the cloud-save whitelist (__craftedItems__) and restored with
+       a MERGE that can never delete a def. See docs/weaponsmith-design.md §2. */
+  craftedItems: {},             // 'wsc_carbine_7' -> { id, name, icon, slotType, stats, ... }
   relicEquipment: {},           // 'h_cedric' -> ['relicId','relicId'] (heroes only, 2 slots)
   // 🪦 Player's currently-equipped tombstone cosmetic. Set when the player
   // buys + equips one from the shop. Overrides the admin's default for
@@ -46624,6 +46645,14 @@ async function cloudSyncProfile() {
       // items were the lone casualty). Now on the forge JSONB so a purchase is
       // always backed up to the cloud and can never vanish on a refresh.
       __itemInventory__:   (Profile.itemInventory  && typeof Profile.itemInventory  === 'object') ? Profile.itemInventory  : {},
+      /* 🔧 CRAFTED WEAPON DEFS — the item book behind every 'wsc_' id in the
+         inventory above. __itemInventory__ without this would sync the COUNT
+         of a crafted weapon to a new device while leaving the DEF behind, and
+         getItemById would then return null for it — which does not error, it
+         renders the equipped slot silently empty. The player would see their
+         crafted weapon simply gone, with the inventory still claiming they own
+         one. The two fields are only ever correct together. */
+      __craftedItems__:    (Profile.craftedItems  && typeof Profile.craftedItems  === 'object') ? Profile.craftedItems  : {},
       __equipment__:       (Profile.equipment      && typeof Profile.equipment      === 'object') ? Profile.equipment      : {},
       __relicEquipment__:  (Profile.relicEquipment && typeof Profile.relicEquipment === 'object') ? Profile.relicEquipment : {},
       // 💰 Foundation Tax ledger — this player's permanent 2%-tax record. Rides
@@ -46983,7 +47012,10 @@ function _resetProfileForNewOwner() {
   Profile.heroes = {}; Profile.units = {};
   Profile.aiHeroes = {}; Profile.aiUnits = {};
   Profile.cardCollection = {}; Profile.decks = []; Profile.deckByHero = {};
-  Profile.equipment = {}; Profile.itemInventory = {};
+  // 🔧 craftedItems goes WITH itemInventory, always. The map is only ever
+  // meaningful as defs for ids the inventory holds; leaving it behind on a
+  // wipe would hand the new owner a book of weapons they do not own.
+  Profile.equipment = {}; Profile.itemInventory = {}; Profile.craftedItems = {};
   Profile.gems = 0; Profile.sovereigns = 0;
   Profile.records = { battles: 0, wins: 0, losses: 0 };
   Profile.matchLog = [];
@@ -47863,6 +47895,27 @@ async function cloudFetchProfile() {
         for (const id in _ii) {
           const cv = _ii[id] | 0, lv = Profile.itemInventory[id] | 0;
           if (cv > lv) Profile.itemInventory[id] = cv;
+        }
+      }
+      /* 🔧 CRAFTED WEAPON DEFS restore — a pure ADDITIVE merge, and never a
+         replace. Two reasons it can only ever add:
+         · A def is immutable once minted. Stats are fixed at mint time (§6c:
+           condition never decays on a finished weapon), so a local copy and a
+           cloud copy of the same id are the same object and there is nothing
+           to reconcile — last-writer-wins would be churn with no upside.
+         · Dropping a def is not a cosmetic loss. getItemById returning null
+           renders an equipped slot SILENTLY EMPTY rather than erroring, so a
+           def deleted here reads to the player as "my crafted weapon vanished"
+           while __itemInventory__ still says they own one. Additive-only makes
+           that unreachable: a def that exists on either side survives.
+         Runs immediately after the inventory merge on purpose — the counts and
+         the defs they point at must land in the same pass. */
+      if (f.__craftedItems__ && typeof f.__craftedItems__ === 'object') {
+        if (!Profile.craftedItems || typeof Profile.craftedItems !== 'object') Profile.craftedItems = {};
+        const _ci = f.__craftedItems__;
+        for (const id in _ci) {
+          const def = _ci[id];
+          if (!Profile.craftedItems[id] && def && typeof def === 'object') Profile.craftedItems[id] = def;
         }
       }
       // 🛡 Equipped gear / relics — per-hero merge (cloud value wins per known
@@ -187357,7 +187410,7 @@ function renderDataPanel() {
     });
     if (!ok) return;
     Profile.heroes = {}; Profile.units = {}; Profile.aiHeroes = {}; Profile.aiUnits = {};
-    Profile.equipment = {}; Profile.itemInventory = {}; Profile.deckByHero = {}; Profile.decks = [];
+    Profile.equipment = {}; Profile.itemInventory = {}; Profile.craftedItems = {}; Profile.deckByHero = {}; Profile.decks = [];
     Profile.cardCollection = {}; Profile.records = { wins: 0, losses: 0, battles: 0 };
     saveProfile(); showToast('Profile wiped'); render();
   };
@@ -207175,6 +207228,53 @@ try {
     table: (name) => {
       try { return (Cloud && Cloud.client && name) ? Cloud.client.from(name) : null; } catch (e) { return null; }
     },
+    /* 🔧 The player's crafted item book, live. getItemById() resolves this map
+       FIRST, which is the whole trick behind the feature: a minted weapon is
+       an ordinary item id, so the vault, the loadout and the battle stat
+       reader need no changes at all. */
+    craftedBook: () => {
+      try {
+        if (!Profile.craftedItems || typeof Profile.craftedItems !== 'object') Profile.craftedItems = {};
+        return Profile.craftedItems;
+      } catch (e) { return null; }
+    },
+    /* Put a minted weapon into the ordinary inventory at qty 1.
+       ⚠ WRITES DIRECTLY rather than through grantItemAtomic, on purpose. That
+         path calls the inv_grant RPC, which validates against the server's
+         item catalog — and a 'wsc_' id exists only in this player's own book,
+         so it would be rejected. craftItem() writes directly for the same
+         reason. The cloud backstop for a crafted weapon is __craftedItems__ +
+         __itemInventory__ on the forge JSONB, not inv_grant.
+       ⚠ Qty is deliberately 1 and not additive: every mint generates a fresh
+         id, so a second copy is a different weapon, never a stack of two. */
+    grantCrafted: (itemId) => {
+      try {
+        if (!itemId) return false;
+        if (!Profile.itemInventory || typeof Profile.itemInventory !== 'object') Profile.itemInventory = {};
+        Profile.itemInventory[itemId] = 1;
+        try { if (typeof recordItemOwned === 'function') recordItemOwned(itemId); } catch (e) {}
+        // Stow it on the vault grid so it is visible where every other item is.
+        try { if (typeof syncVaultWithInventory === 'function') syncVaultWithInventory(); } catch (e) {}
+        try { saveProfile(); } catch (e) {}
+        return true;
+      } catch (e) { return false; }
+    },
+    /* 🎒 Equip to a UNIT. Units are still on the legacy single-slot map
+       (Profile.equipment['u_goblin'] = itemId), which is exactly why the spec
+       does units before heroes: a minted weapon is an item id, so this works
+       with no new equip code whatsoever. Heroes get heroLoadouts parity in
+       phase 11. */
+    equipToUnit: (unitId, itemId) => {
+      try {
+        if (!unitId || !itemId) return false;
+        if (!Profile.equipment || typeof Profile.equipment !== 'object') Profile.equipment = {};
+        if (!getItemById(itemId)) return false;   // never point a slot at an id that will not resolve
+        Profile.equipment['u_' + unitId] = itemId;
+        try { saveProfile(); } catch (e) {}
+        return true;
+      } catch (e) { return false; }
+    },
+    getItem: (itemId) => { try { return getItemById(itemId) || null; } catch (e) { return null; } },
   };
 } catch (e) {}
 
@@ -223263,7 +223363,7 @@ render();
      ⚠ window.WeaponSmithBridge is installed in ordinary source order ABOVE, in
        the main script. This tag must stay below it.
      Bump ?v= on every change — the service worker caches these like any asset. -->
-<script type="module" src="src/weaponsmith/index.js?v=ws-p2"></script>
+<script type="module" src="src/weaponsmith/index.js?v=ws-p3"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

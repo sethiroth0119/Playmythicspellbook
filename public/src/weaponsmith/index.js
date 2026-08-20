@@ -10,8 +10,9 @@
    why nothing in this folder may touch a bare global.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { ready, warnMissing } from './ws.bridge.js';
+import { ready, warnMissing, equipToUnit, getItem } from './ws.bridge.js';
 import { ensureWeaponSmith, wsLog, wsSave, wsUnlocked } from './state.js';
+import { mintLocal, composeDef, distribute, budgetPoints, SEED_BLUEPRINTS } from './mint.js';
 
 /* A missing bridge disables the Weapon Smith and does nothing else. It must
    never throw: this module is loaded from a plain <script type="module"> tag,
@@ -37,7 +38,19 @@ try {
     unlocked: () => wsUnlocked(),
     log: (m) => { if (!ready()) return false; wsLog('info', m); wsSave(); return true; },
     bridgeReady: () => ready(),
+    /* 🔧 The phase-3 end-to-end check, from a console:
+         const w = __mg.weaponSmith.mint();          // mint a Field Carbine
+         __mg.weaponSmith.equip('goblin', w.id);     // equip it to a unit
+       then reload and confirm getItem(w.id) still resolves and the unit still
+       holds it. That round-trip is the entire point of this phase — a crafted
+       id that fails to resolve renders the slot SILENTLY EMPTY rather than
+       erroring, so it has to be checked, never assumed. */
+    mint: (q, alloc) => mintLocal('ws_bp_carbine', alloc || { atk: 1 }, (q == null ? 1 : q)),
+    equip: (unitId, itemId) => equipToUnit(unitId, itemId),
+    item: (itemId) => getItem(itemId),
+    blueprints: () => Object.keys(SEED_BLUEPRINTS),
   };
 } catch (e) {}
 
 export { ensureWeaponSmith, wsLog, wsSave, wsUnlocked };
+export { mintLocal, composeDef, distribute, budgetPoints, SEED_BLUEPRINTS };

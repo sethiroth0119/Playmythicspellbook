@@ -160636,6 +160636,36 @@ function _campCommandBarHtml() {
         <button class="btn-secondary" id="btn-camp-dojo" title="Visit player dojos to buy moves — or run your own">🥋 Dojo Shop</button>
         <button class="btn-secondary" id="btn-camp-research" title="Spend rare resources on permanent camp buffs">🔬 Research${researchDone}</button>
         <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${vehicleCount}</button>
+        ${/* 🪵 THE TABLE, on the command bar.
+              It was only ever reachable from a PARKED companion's slot card, so a
+              player with nothing parked had no way to find it at all — and it is
+              the one screen that shows a unit whole. This opens a roster picker
+              instead, because the Table takes a companion and a command-bar
+              button has none to give it.
+              The badge counts companions with something waiting — queued banter,
+              a request you can fill, a favourite sitting in the stores — so the
+              button advertises a conversation rather than a menu, exactly as the
+              slot chip's dot does. Hidden entirely when /src/ranch is absent:
+              a launcher for a module that 404'd is worse than no launcher. */''}
+        ${(() => { try {
+          if (!window.MythicRanch || typeof window.MythicRanch.open !== 'function') return '';
+          let waiting = 0;
+          try {
+            const _R = window.MythicRanch;
+            // hasBanter is a separate call, NOT a field on the roster entry —
+            // see the note in _campTablePicker. Counting only the fields would
+            // miss the very thing the badge is for.
+            waiting = (_R.stewardRoster() || []).filter(u => {
+              if (!u) return false;
+              let b = false; try { b = !!_R.hasBanter(u.id); } catch (e) {}
+              return b || u.hasRequested || u.giftReady;
+            }).length;
+          } catch (e) {}
+          const badge = waiting > 0
+            ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${waiting}</span>`
+            : '';
+          return `<button class="btn-secondary" id="btn-camp-table" title="Sit down with a companion — bond, temperament, memories and their service record">🪵 Table${badge}</button>`;
+        } catch (e) { return ''; } })()}
         <span class="cbx-spacer"></span>
         <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
       </nav>`;
@@ -161542,6 +161572,11 @@ function renderCamp() {
   if (_crBtn) _crBtn.onclick = () => { App.screen = 'resistanceRing'; render(); };
   const _vmBtn = document.getElementById('btn-camp-vehicle-market');
   if (_vmBtn) _vmBtn.onclick = () => { App._vmReturnTo = 'camp'; App.screen = 'vehicleMarket'; render(); };
+  /* 🪵 The Table from the command bar. No render() after opening — the Table is
+     a body-level overlay and re-rendering the camp underneath it would tear down
+     the DOM it is anchored beside (same reason the slot chip does not either). */
+  const _tblBtn = document.getElementById('btn-camp-table');
+  if (_tblBtn) _tblBtn.onclick = () => { try { _campTablePicker(); } catch (e) {} };
   document.querySelectorAll('[data-park]').forEach(el => {
     el.onclick = () => {
       const [kind, id] = el.dataset.park.split(':');
@@ -213889,6 +213924,71 @@ window.MythicHouseBridge = {
    ⚠ EVERY READER IS WRAPPED AND RETURNS A SAFE EMPTY VALUE. The table renders
    inside an overlay over the live camp; a throw from a missing card or a
    half-migrated profile row must blank one row, never the screen. */
+/* 🪵 WHO DO YOU WANT TO SIT WITH? The Table takes one companion; the command-bar
+   button has none, so this asks.
+   Ordered by what is WAITING rather than alphabetically — a companion with
+   queued banter, a request you can fill, or a favourite in the stores comes
+   first, and says which. That is the same ranking the quartermaster uses, so the
+   line it speaks on arrival and the top of this list agree; two different
+   answers to "who needs me" would make both untrustworthy.
+   ⚠ It does NOT call render(): the Table it opens is a body-level overlay
+     anchored to the document, and re-rendering the camp underneath would tear
+     that DOM out from under it. */
+function _campTablePicker() {
+  const R = window.MythicRanch;
+  if (!R || typeof R.open !== 'function') { showToast('🪵 The Table module did not load — reload the camp.', 4200); return; }
+  let roster = [];
+  try { roster = R.stewardRoster() || []; } catch (e) { roster = []; }
+  if (!roster.length) {
+    showToast('🪵 No companions yet. Recruit a unit and it will have a seat at the Table.', 4600);
+    return;
+  }
+  /* ⚠ hasBanter IS NOT ON THE ROSTER ENTRY. stewardRoster() decorates each unit
+     with hasRequested / giftReady and nothing else; queued banter is a separate
+     exported call. Reading `u.hasBanter` looked right and was always undefined,
+     which would have silently dropped the HIGHEST-priority signal out of both
+     the badge and this order — the one case the feature most wants to surface. */
+  const _banter = (id) => { try { return !!R.hasBanter(id); } catch (e) { return false; } };
+  roster = roster.map(u => ({ ...u, hasBanter: _banter(u.id) }));
+  const score = (u) => (u.hasBanter ? 4 : 0) + (u.hasRequested ? 2 : 0) + (u.giftReady ? 1 : 0);
+  roster = roster.slice().sort((a, b) => score(b) - score(a));
+  const old = document.getElementById('rt-pick'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'rt-pick';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483401;background:rgba(6,4,12,.8);'
+    + 'backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:1.2rem';
+  const row = (u) => {
+    const wait = u.hasBanter ? '💬 wants a word'
+      : u.hasRequested ? ('🎁 asked for ' + escapeHtml(u.requestName || 'something'))
+      : u.giftReady ? ('✨ would love ' + escapeHtml(u.giftName || 'a gift'))
+      : '';
+    const tier = (() => { try { return getBondTier((u.prof && u.prof.bond) || 0); } catch (e) { return { name: '', color: '#9aa0a6' }; } })();
+    return '<button data-pick="' + escapeHtml(u.id) + '" style="display:flex;align-items:center;gap:.6rem;text-align:left;'
+      + 'padding:.55rem .7rem;border-radius:8px;cursor:pointer;font-family:inherit;'
+      + 'border:1px solid rgba(212,175,55,.24);background:rgba(0,0,0,.3);color:#ffe6b0">'
+      + '<span style="flex:1;font-weight:700;font-size:.92rem">' + escapeHtml(u.name || u.id) + '</span>'
+      + '<span style="font-size:.72rem;color:' + tier.color + '">' + escapeHtml(tier.name || '') + '</span>'
+      + (wait ? '<span style="font-size:.72rem;color:#e0c070;white-space:nowrap">' + wait + '</span>' : '')
+      + '</button>';
+  };
+  ov.innerHTML =
+    '<div style="max-width:460px;width:100%;max-height:80vh;overflow:auto;background:linear-gradient(180deg,rgba(18,14,26,.99),rgba(11,9,16,.99));'
+      + 'border:1px solid rgba(212,175,55,.5);border-radius:14px;padding:1.1rem 1.2rem;box-shadow:0 18px 60px rgba(0,0,0,.7)">'
+      + '<div style="font-family:Cinzel,serif;font-weight:800;font-size:1.05rem;color:#ffe6b0;letter-spacing:.05em">🪵 Sit down with…</div>'
+      + '<div style="height:1px;background:linear-gradient(90deg,rgba(212,175,55,.55),transparent);margin:.5rem 0 .7rem"></div>'
+      + '<div style="display:flex;flex-direction:column;gap:6px">' + roster.map(row).join('') + '</div>'
+      + '<div style="display:flex;justify-content:flex-end;margin-top:1rem">'
+        + '<button id="rtp-x" style="cursor:pointer;padding:.5rem 1.1rem;border-radius:8px;font-family:inherit;font-weight:700;'
+        + 'border:1px solid rgba(150,150,170,.3);background:rgba(0,0,0,.25);color:#cfd8e6">Close</button>'
+      + '</div></div>';
+  ov.addEventListener('click', (ev) => {
+    if (ev.target === ov || ev.target.id === 'rtp-x') { ov.remove(); return; }
+    const b = ev.target.closest('[data-pick]');
+    if (b) { const id = b.dataset.pick; ov.remove(); try { R.open(id); } catch (e) {} }
+  });
+  document.body.appendChild(ov);
+}
+
 window.MythicRanchBridge = {
   Profile,
   // ── readers

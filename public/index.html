@@ -36564,7 +36564,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121b1';
+  window.BUILD_VERSION = 'v121b2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -85150,7 +85150,7 @@ async function _whOpen(warehouseId) {
   ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;background:#0b0910';
   const fr = document.createElement('iframe');
   fr.id = 'wh-frame';
-  fr.src = 'warehouse/index.html?v=v121b1';
+  fr.src = 'warehouse/index.html?v=v121b2';
   fr.setAttribute('title', 'Storage Warehouse');
   fr.style.cssText = 'width:100%;height:100%;border:0;background:#0b0910';
   ov.appendChild(fr);
@@ -107935,7 +107935,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v121b1';
+const BB_VER = 'v121b2';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -118136,7 +118136,7 @@ function _mmMount() {
   } catch (e) {}
   const f = document.createElement('iframe');
   f.id = 'mm-frame';
-  f.src = 'main-menu/index.html?v=v121b1';
+  f.src = 'main-menu/index.html?v=v121b2';
   f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:5;background:#0a0610';
   document.body.appendChild(f);
   App._mmReady = false;
@@ -213859,7 +213859,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v121b1';
+  f.src = 'node-city/index.html?v=v121b2';
   f.setAttribute('title', 'Node City');
   /* 🔴 THE HOST CHROME RUNS ON LOAD, AND THIS IS THE BUG IT FIXES.
      _ncHostGutter and _ncZonePill used to run synchronously right after this
@@ -213877,6 +213877,7 @@ function _openNodeCity(nodeId, _resolved) {
     f.addEventListener('load', () => {
       try { _ncHostGutter(); } catch (e) {}
       try { _ncZonePill(); } catch (e) {}
+      try { _ncViewPills(); } catch (e) {}
     });
   } catch (e) {}
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
@@ -213912,7 +213913,7 @@ function _openNodeCity(nodeId, _resolved) {
   const x = document.createElement('button');
   x.id = 'node-city-close';
   x.textContent = '✕ LEAVE CITY';
-  x.style.cssText = 'order:4;flex:none;white-space:nowrap;pointer-events:auto;padding:8px 16px;border-radius:999px;cursor:pointer;'
+  x.style.cssText = 'order:6;flex:none;white-space:nowrap;pointer-events:auto;padding:8px 16px;border-radius:999px;cursor:pointer;'
     + 'font-family:Cinzel,serif;font-weight:800;font-size:12px;letter-spacing:.1em;color:#f3e7c8;border:2px solid transparent;'
     + 'background:linear-gradient(180deg,rgba(24,18,34,.95),rgba(12,9,18,.97)) padding-box,linear-gradient(150deg,#f6d67e,#c29a3a 30%,#7a5f24 55%,#c29a3a 78%,#f6d780) border-box;'
     + 'box-shadow:0 7px 22px rgba(0,0,0,.62)';
@@ -213970,6 +213971,7 @@ function _openNodeCity(nodeId, _resolved) {
   //    admin) the place to assign it. Sits under the owner badge.
   try { _cityTierPill(); } catch (e) {}
   try { _ncZonePill(); } catch (e) {}
+  try { _ncViewPills(); } catch (e) {}
   // 🚚 Ship this city's stash to a player-owned warehouse. Sits beside the
   // leave pill, above the iframe (the city can't reach the parent's DOM).
   // Label flips on whether this player already rents a bay somewhere.
@@ -214304,6 +214306,9 @@ function _closeNodeCity() {
   if (App._cityBadgeTimer) { try { clearInterval(App._cityBadgeTimer); } catch (e) {} App._cityBadgeTimer = null; }
   // An open still resolving when the player leaves must not land afterwards.
   try { App._cityResolveToken = (App._cityResolveToken | 0) + 1; _cityResolvingUI(false); } catch (e) {}
+  if (App._ncViewTimer) { try { clearInterval(App._ncViewTimer); } catch (e) {} App._ncViewTimer = null; }
+  const _vp1 = document.getElementById('node-city-land'); if (_vp1) { try { _vp1.remove(); } catch (e) {} }
+  const _vp2 = document.getElementById('node-city-air');  if (_vp2) { try { _vp2.remove(); } catch (e) {} }
   if (App._ncZoneObs) { try { App._ncZoneObs.disconnect(); } catch (e) {} App._ncZoneObs = null; }
   const hb = document.getElementById('node-city-hostbar');
   if (hb) { try { hb.remove(); } catch (e) {} }
@@ -215816,6 +215821,86 @@ function _ncZonePill() {
       App._ncZoneObs = mo;
     } catch (e) {}
     try { _ncHostGutter(); } catch (e) {}   // the row just got wider
+  };
+  mount();
+}
+
+/* 🏷☁ LAND VALUE AND POLLUTION — put the doors where they can be found.
+   ---------------------------------------------------------------------------
+   Both systems were already complete: /src/landvalue has bands, a field and a
+   panel; /src/pollution has a wind model, plume attribution and a panel that
+   prints the bearing, the arrow, "blowing toward / out of", strength and
+   weather. Neither needed building.
+
+   🔴 WHAT WAS ACTUALLY MISSING, AND IT IS WORSE THAN "HARD TO FIND". Each panel
+      opened from a chip in the vitals card, and BOTH CHIPS ARE CONDITIONAL:
+
+        #plchip renders only when exposure is already past the deadband
+        #lvchip renders only once land value has already spread
+
+      So the door to "watch my pollution" does not exist until the pollution is
+      already bad, and the door to "watch land value develop" does not exist
+      until it has already developed. A player cannot TRACK either one, which is
+      exactly what was asked for. The P and V hotkeys always worked, but an
+      undocumented keypress is not a way in.
+
+   These pills are unconditional. The chips stay exactly as they are — they are
+   READOUTS (exposure %, the value range) as well as doors, so unlike the Zone
+   Demand toggle there is nothing here to move and hiding them would delete
+   information.
+
+   State is read back from each module's own panelOpen(), so Escape or the
+   panel's own ✕ cannot desync the pill. */
+function _ncViewPills() {
+  const bar = document.getElementById('node-city-hostbar');
+  const f = document.getElementById('node-city-frame');
+  if (!bar || !f) return;
+
+  const cfg = [
+    { id: 'node-city-land', order: 4, label: '🏷 LAND', mod: 'MythicLandValue', on: '#8fe3a0',
+      title: 'Land value — the bands across the city, and what each grade of land will take.  (V)' },
+    { id: 'node-city-air',  order: 5, label: '☁ AIR',  mod: 'MythicPollution', on: '#ff9a5a',
+      title: 'Pollution — wind direction, plumes, which building is causing it and what it is costing.  (P)' },
+  ];
+
+  let tries = 0;
+  const mount = () => {
+    let w = null;
+    try { w = f.contentWindow; } catch (e) { return; }   // cross-origin: never
+    if (!w) { if (++tries < 40) setTimeout(mount, 250); return; }
+    /* Wait for at least one module to have registered. Both mount during the
+       city's boot; asking before that is how a pill gets wired to undefined. */
+    const live = (c) => { try { return !!(w[c.mod] && w[c.mod].ready && w[c.mod].ready()); } catch (e) { return false; } };
+    if (!cfg.some(live)) { if (++tries < 40) setTimeout(mount, 250); return; }
+
+    for (const c of cfg) {
+      if (document.getElementById(c.id)) continue;
+      if (!live(c)) continue;                 // module absent → no pill, rather than a dead one
+      const p = document.createElement('button');
+      p.id = c.id; p.title = c.title; p.textContent = c.label;
+      p.style.cssText = 'order:' + c.order + ';flex:none;white-space:nowrap;pointer-events:auto;'
+        + 'padding:8px 16px;border-radius:999px;cursor:pointer;font-family:Cinzel,serif;font-weight:800;'
+        + 'font-size:12px;letter-spacing:.08em;background:rgba(20,17,30,.95);box-shadow:0 7px 22px rgba(0,0,0,.62)';
+      p.onclick = () => { try { w[c.mod].togglePanel(); } catch (e) {} };
+      bar.appendChild(p);
+    }
+
+    /* One timer for both, reading the modules' own state. Two boolean reads a
+       second is nothing, and it is the only thing that survives the panel being
+       closed by Escape or by its own ✕. */
+    const paint = () => {
+      for (const c of cfg) {
+        const el = document.getElementById(c.id); if (!el) continue;
+        let open = false;
+        try { open = !!(w[c.mod] && w[c.mod].panelOpen && w[c.mod].panelOpen()); } catch (e) {}
+        el.style.color = open ? c.on : '#cfd8e6';
+        el.style.border = '1px solid ' + (open ? c.on + 'bf' : 'rgba(150,150,170,.35)');
+      }
+    };
+    paint();
+    if (App._ncViewTimer) { try { clearInterval(App._ncViewTimer); } catch (e) {} }
+    App._ncViewTimer = setInterval(paint, 900);
+    try { _ncHostGutter(); } catch (e) {}     // the row just got wider
   };
   mount();
 }
@@ -233289,8 +233374,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v121b1">
-<script type="module" src="src/battle/hud.js?v=v121b1"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v121b2">
+<script type="module" src="src/battle/hud.js?v=v121b2"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

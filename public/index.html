@@ -212306,6 +212306,19 @@ function _openNodeCity(nodeId, _resolved) {
     + 'box-shadow:0 7px 22px rgba(0,0,0,.62)';
   x.onclick = _closeNodeCity;
   document.body.appendChild(x);
+  /* 📐 TELL THE CITY HOW MUCH ROOM THIS BUTTON NEEDS. It is position:fixed over
+     the iframe, in a DIFFERENT document, so node-city's top bar cannot see it
+     and its last chip — the DEMAND meter — was running underneath. The city
+     reserves `--host-gutter` on the right of #ncsb; this measures the rendered
+     button and writes it there.
+     MEASURED, not a constant: the width is the label, and a hardcoded gutter
+     would only choose which label to overlap on. Re-run on resize because the
+     font falls back differently at different widths. */
+  try { _ncHostGutter(); } catch (e) {}
+  if (!App._ncGutterBound) {
+    App._ncGutterBound = true;
+    try { window.addEventListener('resize', () => { try { _ncHostGutter(); } catch (e) {} }); } catch (e) {}
+  }
   /* 🏛 Say whose city this is — ALWAYS, and for as long as it is open. A mayor
      and an owner see an identical screen, and the bug this fixes was precisely
      someone building the wrong city without ever being told which one they were
@@ -213641,6 +213654,34 @@ window.MythicHouseBridge = {
 /* 🤝 CITY TRADE — the Supabase half. Every one of these degrades to a refusal
    or an empty list, so the dialog opens, the sweep no-ops and nothing throws
    before sql/039 is applied. CLAUDE.md: the app MUST work before tables exist. */
+/* 📐 Measure ✕ LEAVE CITY and reserve that much on the right of node-city's top
+   bar. Same-origin, so the iframe's document is reachable — the same access the
+   trade convoy already uses.
+   ⚠ RETRIED, because the iframe may not have a document yet. The button is
+     created immediately after the frame is appended and `about:blank` is still
+     loading, so the first call can find nothing to write to. A few short
+     retries cost nothing and the alternative is a gutter that only appears
+     after the next resize.
+   ⚠ +10px breathing room, and NOT more: the gutter pushes the DEMAND meter
+     left, and over-reserving on a narrow viewport is what wraps the bar. */
+function _ncHostGutter() {
+  const btn = document.getElementById('node-city-close');
+  const f = document.getElementById('node-city-frame');
+  if (!btn || !f) return;
+  const w = Math.ceil(btn.getBoundingClientRect().width);
+  if (!(w > 0)) return;
+  const px = (w + 14 + 10) + 'px';          // button + its right offset + gap
+  let tries = 0;
+  const put = () => {
+    try {
+      const d = f.contentDocument;
+      if (d && d.documentElement) { d.documentElement.style.setProperty('--host-gutter', px); return; }
+    } catch (e) { return; }                 // cross-origin: nothing to do, and never will be
+    if (++tries < 12) setTimeout(put, 250);
+  };
+  put();
+}
+
 function _ctReady() { try { return !!(initCloud() && Profile.cloud && Profile.cloud.signedIn); } catch (e) { return false; } }
 
 /* ↩ Undo a city-stock take when a LATER leg of the same shipment fails. Routes

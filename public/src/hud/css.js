@@ -50,8 +50,21 @@ export const HUD_CSS = `
    244 + demand 198 + stores 91 + models 60 + gaps 96 = 1514, and the bar is one
    48px row. It wraps below ~1520 and --topbarh follows it, which is the
    documented behaviour of everything pinned underneath. */
+/* 🔴 THE RIGHT GUTTER BELONGS TO A BUTTON IN ANOTHER DOCUMENT.
+   "✕ LEAVE CITY" is drawn by the HOST page at position:fixed top:12px right:14px
+   — outside this iframe, over the top of it — and nothing in here reserves
+   space for it, so the last chip in this bar (the DEMAND meter) ran underneath
+   it. Neither side can see the other's layout.
+   The host MEASURES its own button and writes the width it needs into
+   --host-gutter on this document (see _ncHostGutter in index.html). It is a
+   var and not a number because the button's width is its TEXT, and a hardcoded
+   gutter would only pick which label to overlap on — the same mistake the tier
+   pill's header records from when it was positioned by taste.
+   0px default: with no host (the page opened directly, or an old build that
+   does not set it) the bar simply keeps its normal padding. */
 #ncsb{display:flex;align-items:center;gap:calc(var(--hu)*2);
-  padding:calc(var(--hu)*1.5) calc(var(--hu)*3);min-height:44px;flex-wrap:wrap;}
+  padding:calc(var(--hu)*1.5) calc(var(--hu)*3);min-height:44px;flex-wrap:wrap;
+  padding-right:calc(var(--hu)*3 + var(--host-gutter, 0px));}
 #ncsb .sbgrow{flex:1 1 12px;min-width:0;}
 #ncsb .sbsep{width:1px;align-self:stretch;margin:calc(var(--hu)) 0;
   background:linear-gradient(180deg,transparent,rgba(212,175,55,.30),transparent);}

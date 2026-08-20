@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x0';
+  window.BUILD_VERSION = 'v120x1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -68539,6 +68539,17 @@ function loadForge() {
          uncollected Resonance would vanish silently on refresh. Shape is
          normalised in house.core.js's loadHouse(), which is absent-tolerant —
          a missing, empty or corrupt blob comes back as an empty Bunkhouse. */
+      /* 🎖 The quartermaster's "last thing I said" stamp (/src/ranch/steward.js).
+         Whitelisted here for the reason the bunkhouse block below documents:
+         the loader is a whitelist, so an un-whitelisted field is written, saved
+         and silently dropped on the next load. */
+      if (p.stewardLast && typeof p.stewardLast === 'object') {
+        Profile.stewardLast = {
+          id:   String(p.stewardLast.id || ''),
+          kind: String(p.stewardLast.kind || ''),
+          at:   Math.max(0, +p.stewardLast.at || 0),
+        };
+      }
       if (p.bunkhouse && typeof p.bunkhouse === 'object') {
         Profile.bunkhouse = { built: p.bunkhouse.built ? 1 : 0,
                               house: (p.bunkhouse.house && typeof p.bunkhouse.house === 'object') ? p.bunkhouse.house : null };
@@ -156393,6 +156404,15 @@ function renderCamp() {
   // 💗 Surface a companion's loyalty request / confrontation (deferred so it lands
   // after the camp DOM is injected; the dialog is a body-level modal that persists).
   try { setTimeout(() => { try { _lqMaybeSurface(); } catch (e) {} }, 80); } catch (e) {}
+  /* 🎖 THE QUARTERMASTER (/src/ranch/steward.js) — one line about whichever
+     companion most needs you. Deferred behind the banter modal and the other
+     arrival toasts (tithe, research, convoy) so it lands as the last thing
+     said rather than competing with them, and it stays silent whenever there
+     is nothing worth raising. All of the ranking and the do-not-repeat rule
+     live in the module; this is only the door. */
+  try { setTimeout(() => {
+    try { if (window.MythicRanch && window.MythicRanch.steward) window.MythicRanch.steward(); } catch (e) {}
+  }, 1400); } catch (e) {}
   // Entry gate — defense in depth. The title-hub portal is already locked
   // until CAMP_UNLOCK_LEVEL is reached, but if the player lands on the Camp
   // screen via state manipulation / stale App.screen, bounce them back to
@@ -207523,6 +207543,35 @@ window.MythicRanchBridge = {
     try { Object.assign(UNIT_MEMORY_KINDS, kinds || {}); return true; } catch (e) { return false; }
   },
   bondNew: () => { try { return BOND_NEW; } catch (e) { return 100; } },
+  /* 🎖 The roster the quartermaster reads. OWNED units only — Profile.units
+     accumulates an entry for anything that has ever been on a board, including
+     cards long since sold, and having him report on a companion the player no
+     longer has would be worse than saying nothing. */
+  roster: () => {
+    try {
+      const coll = Profile.cardCollection || {}, out = [];
+      for (const id in (Profile.units || {})) {
+        if (!((coll[id] | 0) > 0)) continue;
+        const prof = Profile.units[id]; if (!prof) continue;
+        let card = null;
+        try { card = resolveDeckCard('unit:' + id) || (typeof lookupCustomCard === 'function' ? lookupCustomCard(id) : null); } catch (e) {}
+        if (!card) continue;                      // a name we cannot resolve is a name he cannot say
+        out.push({ id: id, name: card.name || id, card: card, prof: prof });
+      }
+      return out;
+    } catch (e) { return []; }
+  },
+  /* ⚠ Profile.stewardLast IS WHITELISTED IN THE LOADER (search stewardLast).
+     saveProfile() stringifies the whole Profile but the loader is a field
+     whitelist, so a field written and not whitelisted saves and is silently
+     dropped on every reload — this project has shipped that exact bug for
+     sideDeck, archonDeck, salvage and bunkhouse. Without it the "do not repeat
+     yourself" guard resets on every refresh. */
+  stewardLast: () => { try { return Profile.stewardLast || null; } catch (e) { return null; } },
+  setStewardLast: (v) => {
+    try { Profile.stewardLast = { id: String(v.id), kind: String(v.kind), at: Date.now() }; saveProfile(); return true; }
+    catch (e) { return false; }
+  },
   rapportPartners: (id) => { try { return rapportPartners(id) || []; } catch (e) { return []; } },
   rapportWith: (a, b) => { try { return rapportWith(a, b) | 0; } catch (e) { return 0; } },
   rapportMax: () => { try { return RAPPORT_MAX; } catch (e) { return 100; } },
@@ -223281,7 +223330,7 @@ render();
      game behaves exactly as it did before the module existed.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset. -->
-<script type="module" src="src/ranch/index.js?v=120x0"></script>
+<script type="module" src="src/ranch/index.js?v=120x1"></script>
 <!-- 🔮 RESONANCE — the card training model + ⚔ Path B (battle-earned).
      See resonance-card-training.md. Registered on window.MythicResonance;
      index.html's half of the seam is `_rezKey/_rezGet/_rezSet/_rezEmit` next to

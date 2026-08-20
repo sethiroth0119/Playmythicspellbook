@@ -411,7 +411,7 @@
 // answering and players were served stale /assets/ images indefinitely.
 // The manual per-deploy version bump below is the real freshness signal:
 // new bytes → install+activate → old caches reaped.
-const CACHE_VERSION = 'mythic-v120x0-lineage';
+const CACHE_VERSION = 'mythic-v120x1-quartermaster';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

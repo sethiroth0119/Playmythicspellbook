@@ -30948,6 +30948,48 @@ function caravanTick(nowSec) {
     }
     toast('🐪 A caravan departs for ' + dest.name + ' (' + dest.owner + "'s city)…", 'good');
   }
+
+/* 🚚 A TRADE CONVOY, DISPATCHED FROM THE PARENT.
+   ---------------------------------------------------------------------------
+   index.html settles city-trade agreements (the shipment rows, the Bank of
+   Ethos leg, the notifications) and has no renderer of its own — it draws the
+   city by mounting THIS page in an iframe. So a truck for a trade shipment has
+   to be spawned in here, and index.html reaches it through
+   `frame.contentWindow.ncTradeConvoy(...)`. Same origin, and the parent already
+   reads `contentWindow.BB_BUILD` the same way.
+
+   Same road-BFS visual the caravan above uses, deliberately: a trade shipment
+   and a caravan trip are the same event to a person watching the city, and two
+   different-looking trucks would imply a distinction the game does not make.
+
+   ⚠ RETURNS FALSE WHEN IT CANNOT DRAW, and the parent falls back to a toast.
+     There is no truck to see if the city was never opened, has no roads yet, or
+     the scene has not booted — and a caller that assumed success would report a
+     convoy the player never saw. This is why it answers rather than throwing.
+   ⚠ NO GAMEPLAY HERE. It moves no goods and books no trip: the shipment was
+     already settled by the parent before this was called. Purely the picture. */
+  function ncTradeConvoy(label) {
+    try {
+      if (typeof allRoadKeys !== 'function' || typeof agentMesh !== 'function') return false;
+      const roads = allRoadKeys();
+      if (!roads || roads.length < 2) return false;
+      const from = roads[Math.floor(Math.random() * roads.length)];
+      const to = roads[Math.floor(Math.random() * roads.length)];
+      const path = bfsPath(from, to);
+      if (!path || path.length < 2) return false;
+      const mesh = agentMesh('truck');
+      // Gold banner so a trade run reads apart from an ordinary delivery van.
+      const banner = new THREE.Mesh(new THREE.BoxGeometry(.02, .1, .12), MAT.roadLine);
+      banner.position.set(-.16, .26, 0); mesh.add(banner);
+      const [sx2, sz2] = from.split(',').map(Number);
+      mesh.position.set(sx2 - HALF + .5, 0, sz2 - HALF + .5);
+      agentGroup.add(mesh);
+      agents.push({ kind: 'truck', mesh, path, i: 0, t: 0, speed: AGENTS.truckSpeed, dwell: 0, state: 'travel', lateral: 0, caravan: true });
+      if (label) toast('🚚 ' + label, 'good');
+      return true;
+    } catch (e) { return false; }
+  }
+  try { window.ncTradeConvoy = ncTradeConvoy; } catch (e) {}
   for (let i = game.caravan.trips.length - 1; i >= 0; i--) {
     const tr = game.caravan.trips[i];
     if (nowSec < tr.until) continue;

@@ -213535,6 +213535,18 @@ window.MythicHouseBridge = {
    before sql/039 is applied. CLAUDE.md: the app MUST work before tables exist. */
 function _ctReady() { try { return !!(initCloud() && Profile.cloud && Profile.cloud.signedIn); } catch (e) { return false; } }
 
+/* ↩ Undo a city-stock take when a LATER leg of the same shipment fails. Routes
+   to the economy's refund-only verb, which is the /src/trading `_refundRes`
+   precedent rather than a general "add stock" — see returnFromExport's header.
+   A no-op for 0, so every unwind path can call it unconditionally. */
+function _ctPutBackCity(id, units) {
+  if (!(units > 0)) return;
+  try {
+    const E = (typeof window !== 'undefined') ? window.MythicEconomy : null;
+    if (E && typeof E.returnFromExport === 'function') E.returnFromExport(id, units);
+  } catch (e) {}
+}
+
 /* Turn the selected TW node into what the dialog needs: who owns it and which
    city_profiles row is theirs. Both can be null — the dialog opens anyway and
    refuses on submit with a reason, because a modal that will not open is
@@ -213667,13 +213679,24 @@ async function _ctNotifyPartner(agreement, message) {
   } catch (e) { return false; }
 }
 
-/* 🚚 The truck. Deliberately a toast rather than a vehicle on the map: the
-   convoy mesh belongs to node-city's renderer, this fires from index.html, and
-   a fake truck drawn in the wrong document would be worse than an honest line
-   of text. Wiring the real convoy is a node-city change. */
+/* 🚚 A REAL TRUCK WHEN THE CITY IS ON SCREEN, a line of text when it is not.
+   The convoy mesh belongs to node-city's renderer and this settles from
+   index.html, so the vehicle is spawned through the iframe — same origin, the
+   same way `contentWindow.BB_BUILD` is already read elsewhere in this file.
+   ncTradeConvoy() ANSWERS rather than throwing: false when the city was never
+   opened, has no roads yet, or has not booted — and then the toast is the
+   honest report. Claiming a convoy the player cannot see is worse than saying
+   it plainly. */
 function _ctTruck(agreement, resId, units) {
   const nm = (_meta(resId) || {}).name || resId;
-  showToast('🚚 Shipment away — ' + units + '× ' + nm + ' left for your trade partner.', 4200);
+  const line = 'Shipment away — ' + units + '× ' + nm + ' left for your trade partner.';
+  let drew = false;
+  try {
+    const f = document.getElementById('node-city-frame');
+    const cw = f && f.contentWindow;
+    if (cw && typeof cw.ncTradeConvoy === 'function') drew = !!cw.ncTradeConvoy(line);
+  } catch (e) { /* cross-document access can throw mid-teardown */ }
+  if (!drew) showToast('🚚 ' + line, 4200);
 }
 
 /* 🤝 CITY TRADE BRIDGE — what /src/citytrade may touch.
@@ -213706,6 +213729,19 @@ window.MythicCityTradeBridge = {
   /* What this player can put on a truck, per store. */
   available: (id) => {
     const out = { city: 0, vault: 0, boe: 0 };
+    /* 🏙 City stock, through the economy's OWN audited reader. This used to be
+       a hardcoded 0 because the only handle was MythicEconomy.inventory(),
+       which returns the live S.INV and would have let this bridge drain a
+       ledger nobody audits. exportableStock() answers the same question without
+       that risk, and refuses any id the recipe catalogue does not know — the
+       mirror of the addRes() chain-id trap CLAUDE.md documents.
+       ⚠ Only the 56 PROMOTED chain ids share a string with index.html's
+         RESOURCES. For every other tradeable id the economy has no such good
+         and this correctly reads 0, which planDraw handles natively. */
+    try {
+      const E = (typeof window !== 'undefined') ? window.MythicEconomy : null;
+      if (E && typeof E.exportableStock === 'function') out.city = Math.max(0, Math.floor(E.exportableStock(id)));
+    } catch (e) {}
     try { out.vault = Math.max(0, getRes(id) | 0); } catch (e) {}
     try {
       const bank = (typeof BankEthos !== 'undefined' && BankEthos && BankEthos.resources) || null;
@@ -213720,22 +213756,39 @@ window.MythicCityTradeBridge = {
      once destroyed 215 units exactly that way. Same contract as
      /src/trading/settle.js. */
   take: async (id, plan) => {
+    const c = Math.max(0, Number(plan && plan.city) || 0);
     const v = Math.max(0, Number(plan && plan.vault) || 0);
     const bo = Math.max(0, Number(plan && plan.boe) || 0);
-    let tookVault = 0;
+    let tookCity = 0, tookVault = 0;
+    /* Unwinds in reverse, leg by leg, exactly like /src/trading/settle.js.
+       ⚠ takeForExport RETURNS WHAT IT TOOK and it can be less than asked — the
+         shelf can move between the plan and the take. A short city leg fails
+         the WHOLE shipment rather than quietly shipping less: a part-delivery
+         is the shape that loses property, and planDraw already refused to
+         propose one. */
     try {
+      if (c > 0) {
+        const E = (typeof window !== 'undefined') ? window.MythicEconomy : null;
+        tookCity = (E && typeof E.takeForExport === 'function') ? Number(E.takeForExport(id, c)) || 0 : 0;
+        if (tookCity < c) { _ctPutBackCity(id, tookCity); return false; }
+      }
       if (v > 0) {
-        if (!spendResources({ [id]: v })) return false;
+        if (!spendResources({ [id]: v })) { _ctPutBackCity(id, tookCity); return false; }
         tookVault = v;
       }
       if (bo > 0) {
         const ok = await _ctBoeTake(id, bo);
-        if (!ok) { if (tookVault > 0) { try { _refundRes(id, tookVault); } catch (e) {} } return false; }
+        if (!ok) {
+          if (tookVault > 0) { try { _refundRes(id, tookVault); } catch (e) {} }
+          _ctPutBackCity(id, tookCity);
+          return false;
+        }
       }
       try { saveProfile(); } catch (e) {}
       return true;
     } catch (e) {
       if (tookVault > 0) { try { _refundRes(id, tookVault); } catch (e2) {} }
+      _ctPutBackCity(id, tookCity);
       return false;
     }
   },

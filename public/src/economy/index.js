@@ -810,6 +810,17 @@ const api = {
      ledger cannot show one business in three different colours. */
   RUNGS: Firms.RUNGS, RUNG_META: Firms.RUNG_META,
   inventory: () => Sim.inventory(),
+  /* 🚚 CITY TRADE. The only sanctioned way for goods to leave this city to
+     another player's, and the read that goes with it. `inventory()` above hands
+     back the LIVE map, which is fine for a panel and was never safe for a
+     spender — see takeForExport's header for why subtracting is sound while
+     the caller-drains-S.INV shape was not. Returns what it ACTUALLY took. */
+  exportableStock: (id) => (mounted ? Sim.exportableStock(id) : 0),
+  takeForExport: (id, units) => (mounted ? Sim.takeForExport(id, units) : 0),
+  /* ↩ Refund-only. Undoes a takeForExport in the SAME call stack when a later
+     leg of the shipment fails — never a general "add stock" verb, for the
+     reason its header in sim.js gives. */
+  returnFromExport: (id, units) => (mounted ? Sim.returnFromExport(id, units) : 0),
   price: (id) => Prices.priceOf(id),
   movers: (n) => Prices.movers(n),
   survey: () => ({

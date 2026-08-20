@@ -33,7 +33,7 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 import { ECON } from './tuning.js';
-import { DEPOSITS, RECIPES, INDUSTRIES, legsOf, industryOf, bandOf } from './recipes.js';
+import { DEPOSITS, RECIPES, INDUSTRIES, legsOf, industryOf, bandOf, producible } from './recipes.js';
 import * as Prices from './prices.js';
 import * as Endow from './endowment.js';
 import * as HH from './households.js';
@@ -223,6 +223,81 @@ const S = {
 export function state() { return S; }
 export function treasury() { return S.treasury; }
 export function inventory() { return S.INV; }
+
+/* 📦 THE ONE WAY GOODS MAY LEAVE THIS CITY FOR AN OUTSIDE BUYER.
+   ---------------------------------------------------------------------------
+   A city-trade agreement ships real stock to another player's city. Before this
+   existed the only honest answer the bridge could give was `city: 0`, because
+   `inventory()` hands back the LIVE S.INV and any caller could have drained it
+   — silently, unclamped, with no entry in the city log and no catalogue check.
+
+   WHY THIS IS SAFE TO ADD, stated rather than assumed:
+   · The tick audit is a CINDER audit. It compares totalCinder() at the top of
+     runDay with the same at the bottom and suspends the payout on a mismatch.
+     Goods are not a term of it, and they already appear (production) and vanish
+     (household consumption, exports) every single day. Removing stock for an
+     export is an ordinary operation in this model, not a hole in it.
+   · What WOULD have been a hole is minting. This function can only ever
+     SUBTRACT: units is clamped to what is on the shelf, negatives are refused,
+     and there is no path here that raises S.INV.
+
+   ⚠ CATALOGUED IDS ONLY. `producible()` is the same guard trade.js's
+     recordFill uses. An uncatalogued id would create an S.INV key that no
+     recipe, price or panel knows about — the mirror of the addRes() trap
+     CLAUDE.md documents in the other direction.
+   ⚠ RETURNS WHAT IT ACTUALLY TOOK, and the caller must honour that rather than
+     what it asked for. /src/citytrade refuses the whole shipment when the three
+     stores together fall short, so a partial take here is put back by its
+     unwinding step — but a caller that assumed success would ship goods it
+     never received. Never assume the ask.
+   ⚠ NOT A SALE. No Cinder is credited: the counterparty's payment is whatever
+     the agreement's other leg says it is, and inventing a price here would put
+     a second, unaudited valuation next to Prices.priceOf(). */
+export function takeForExport(id, units) {
+  const want = Number(units);
+  if (typeof id !== 'string' || !id) return 0;
+  if (!Number.isFinite(want) || want <= 0) return 0;
+  if (!producible(id)) return 0;
+  const have = Number(S.INV[id]) || 0;
+  if (have <= 0) return 0;
+  const took = Math.min(have, want);
+  S.INV[id] = have - took;
+  logEvent('info', '🚚 ' + took.toFixed(2) + '× ' + id + ' shipped out under a trade agreement.');
+  return took;
+}
+
+/* ↩ PUT BACK WHAT takeForExport JUST TOOK — and nothing else.
+   A shipment has three legs (city, vault, Bank of Ethos) and the bank leg is a
+   network call that can fail after the city leg has already come off the shelf.
+   Without this, that failure strands the goods: gone from the city, never
+   delivered, unrecoverable.
+
+   🔴 THIS IS A REFUND, NOT A GRANT, and the distinction is one this codebase
+      already draws explicitly — /src/trading/settle.js routes a put-back
+      through `_refundRes` (uncapped) and a genuine gain through `addRes`
+      (capped), because conflating them once destroyed 215 units of a player's
+      resources. Same rule: call this ONLY to undo a takeForExport in the same
+      call stack. Anything else is minting goods, and goods that appear from
+      nowhere distort every price the sim derives from scarcity.
+   ⚠ Deliberately NOT exported through MythicEconomy as a general "add stock"
+     verb. There is no such verb, and there should not be one. */
+export function returnFromExport(id, units) {
+  const back = Number(units);
+  if (typeof id !== 'string' || !id) return 0;
+  if (!Number.isFinite(back) || back <= 0) return 0;
+  if (!producible(id)) return 0;
+  S.INV[id] = (Number(S.INV[id]) || 0) + back;
+  logEvent('info', '↩ ' + back.toFixed(2) + '× ' + id + ' returned — the shipment did not leave.');
+  return back;
+}
+
+/* What a trade agreement could draw right now, without taking it. Read-only
+   companion to takeForExport so the dialog can show a number it will honour. */
+export function exportableStock(id) {
+  if (typeof id !== 'string' || !id || !producible(id)) return 0;
+  const have = Number(S.INV[id]) || 0;
+  return have > 0 ? have : 0;
+}
 export function day() { return S.day; }
 export function invOf(id) { return S.INV[id] || 0; }
 

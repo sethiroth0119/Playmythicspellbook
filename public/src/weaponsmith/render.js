@@ -21,6 +21,7 @@ import { ownsBlueprint, online, rollBoard, deliverContract, claimRepBlueprint, r
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, TORQUE_BAND, TORQUE_STRIP } from './bench.gun.js';
 import { startForge, workStep, currentStep, scoreForge, finishForge, abandonForge } from './bench.forge.js';
 import { isBlade } from './blueprints.js';
+import { armoury, armouryDetail, provenance, slotsFor, equip, heroList, carriedBy } from './armoury.js';
 
 const ID = 'ws-bench-overlay';
 let _tick = null, _torque = null;
@@ -168,6 +169,7 @@ function pickerView(s) {
       <span class="q">×${itemCount(sid)}</span></button>`;
   }).join('');
   const board = boardView(s);
+  const arms = armouryView();
   const schemPanel = schem
     ? `<div class="wsb-panel" style="margin-top:.8rem"><h3>📜 Schematics</h3>
          <div class="wsb-sub" style="margin-bottom:.4rem">${online() ? 'Learning is recorded to your account, not this device.' : '⚠ Offline — learning needs a connection.'}</div>
@@ -181,8 +183,61 @@ function pickerView(s) {
       <div class="wsb-panel"><h3>Blueprints</h3><div class="wsb-tray">${rows}</div></div>
       <div><div class="wsb-panel"><h3>Workshop</h3>${workshopView()}</div>${schemPanel}</div>
     </div>
+    ${arms}
     ${board}
     </div>`;
+}
+
+/* 🏛 THE ARMOURY. Everything the player has built, with its provenance —
+   which parts went in, what ceiling their condition imposed, and how much of
+   the blueprint's budget the build actually realised. Without this, all that
+   survives a two-minute build is a stat line, and the point of a gunsmith game
+   is that the thing in your hands has a history. */
+function armouryView() {
+  const list = armoury();
+  if (!list.length) {
+    return `<div class="wsb-panel" style="margin-top:1rem"><h3>🏛 Armoury</h3>
+      <div class="wsb-sub">Nothing built yet. Pick a frame above.</div></div>`;
+  }
+  const hs = heroList();
+
+  const rows = list.map((def) => {
+    const p = provenance(def);
+    const holder = carriedBy(def.id);
+    const statLine = Object.keys(p.stats).map((k) => '+' + p.stats[k] + ' ' + k.toUpperCase()).join(' · ');
+    const partLine = p.parts.length
+      ? p.parts.map((x) => esc(x.name)).join(' · ')
+      : (p.forged ? 'Forged from a billet — no parts.' : 'No parts recorded.');
+
+    /* The ceiling is shown whenever it bit. "Why is my perfect build only 90%?"
+       is otherwise unanswerable, and the answer — a worn part — is exactly the
+       thing that should push a player towards the cleaning station. */
+    const capNote = p.conditionCap < 100
+      ? `<div class="mt">condition ceiling ${p.conditionCap}% — a worn part capped this build</div>` : '';
+
+    const equipBtns = hs.length
+      ? slotsFor(def).map((sl) => hs.map((h) =>
+          `<button class="wsb-btn" style="padding:.15rem .45rem;font-size:.68rem;margin:.15rem .15rem 0 0"
+                   data-equip="${esc(def.id)}" data-hero="${esc(h.id)}" data-slot="${esc(sl.key)}"
+                   ${holder && holder.hero.id === h.id && holder.slot === sl.key ? 'disabled' : ''}>${esc(h.name)} · ${esc(sl.label)}</button>`
+        ).join('')).join('')
+      : '<div class="wsb-sub">No heroes yet.</div>';
+
+    return `<div class="wsb-st filled" style="min-height:0;padding:.65rem">
+      <div class="nm">${esc(p.icon)} ${esc(p.name)}
+        ${p.unverified ? '<span style="color:#e8a09f;font-size:.68rem">· unverified, cannot be sold</span>' : ''}</div>
+      <div class="pt">${esc(statLine)}${p.weapon.range ? ' · range ' + p.weapon.range : ''}</div>
+      <div class="mt">${esc(p.blueprintName)} · quality ${p.quality}% · ${p.spent}/${p.budget} pts used</div>
+      ${capNote}
+      <div class="wsb-sub" style="margin-top:.25rem">${partLine}</div>
+      ${holder ? `<div class="mt" style="color:#9fe8b0">carried by ${esc(holder.hero.name)}</div>` : ''}
+      <div style="margin-top:.3rem">${equipBtns}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="wsb-panel" style="margin-top:1rem"><h3>🏛 Armoury</h3>
+    <div class="wsb-sub" style="margin-bottom:.5rem">What you have built, and what went into it.</div>
+    <div class="wsb-stations">${rows}</div></div>`;
 }
 
 /* 📋 THE ORDER BOARD. Contracts are SERVER-GENERATED (sql/039) — a client that
@@ -389,6 +444,13 @@ function bind(s) {
   });
   el.querySelectorAll('[data-strip]').forEach((b) => {
     b.onclick = () => { const r = stripDonor(b.getAttribute('data-strip')); _msg = r ? ('Stripped — ' + r.parts.length + ' parts recovered.') : 'Could not strip that.'; paint(); };
+  });
+  el.querySelectorAll('[data-equip]').forEach((b) => {
+    b.onclick = () => {
+      const ok = equip(b.getAttribute('data-hero'), b.getAttribute('data-slot'), b.getAttribute('data-equip'));
+      _msg = ok ? 'Equipped.' : 'That weapon does not fit that slot.';
+      paint();
+    };
   });
   const roll = document.getElementById(ID + '-roll');
   if (roll) roll.onclick = async () => {

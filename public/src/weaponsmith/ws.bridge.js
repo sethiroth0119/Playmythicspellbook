@@ -103,6 +103,13 @@ export const refundRes        = (cost)     => { const b = bridge(); try { b && b
    There is deliberately no spendAza here: handing a module the half of the
    pair that takes real money, without the half that gives it back, is how a
    charged-but-not-granted purchase becomes possible. See wsBuyBlueprintAza. */
+/* 🦸 Heroes. equipToHero routes through setHeroLoadoutSlot, which validates
+   the fit and the ownership exactly as it does for a shop-bought weapon —
+   crafted weapons needed no special case, which was the whole point of
+   minting them as ordinary item ids. */
+export const heroes           = ()               => { const b = bridge(); try { return b ? (b.heroes() || []) : []; } catch (e) { return []; } };
+export const equipToHero      = (h, slot, id)    => { const b = bridge(); try { return b ? !!b.equipToHero(h, slot, id) : false; } catch (e) { return false; } };
+
 export const aza              = ()               => { const b = bridge(); try { return b ? (b.aza() | 0) : 0; } catch (e) { return 0; } };
 export const buyBlueprintAza  = async (id, p, l) => {
   const b = bridge();

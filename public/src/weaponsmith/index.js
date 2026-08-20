@@ -17,6 +17,7 @@ import { allItemDefs, CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, 
 import { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots } from './blueprints.js';
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore } from './bench.gun.js';
 import { startForge, workStep, currentStep, scoreForge, finishForge, abandonForge, stepScore } from './bench.forge.js';
+import { armoury, armouryDetail, provenance, slotsFor, equip as equipHero, heroList, carriedBy } from './armoury.js';
 import { openBench, closeBench, benchOpen } from './render.js';
 import { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online, rollBoard, claimRepBlueprint, repTier } from './server.js';
 import { SCHEMATICS, schematicCatalog, learnSchematic, dropSchematic, rollSchematic, unlearned, isSchematic, schematicId, blueprintOf } from './schematics.js';
@@ -115,6 +116,11 @@ try {
     forgeScore: () => scoreForge(ensureWeaponSmith().forge),
     forgeDone: () => finishForge(),
     forgeAbandon: () => abandonForge(),
+    // 🏛 Phase-11 probes.
+    armoury: () => armouryDetail(),
+    equipHero: (h, slot, id) => equipHero(h, slot, id),
+    heroes: () => heroList(),
+    carriedBy: (id) => carriedBy(id),
   };
   /* 🔧 The opener index.html calls. A plain window function rather than another
      bridge entry, because the flow is the OTHER direction: the bridge is what
@@ -146,3 +152,4 @@ export { SCHEMATICS, learnSchematic, dropSchematic, rollSchematic, unlearned, is
 export { forSale, storeBuy, priceOf, AZA_PRICE };
 export { rollBoard, claimRepBlueprint, repTier };
 export { startForge, workStep, currentStep, scoreForge, finishForge, abandonForge, stepScore };
+export { armoury, armouryDetail, provenance, slotsFor, equipHero, heroList, carriedBy };

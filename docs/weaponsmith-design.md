@@ -1,6 +1,7 @@
 # 🔧 The Weapon Smith — operation + assembly mini-game
 
-**Status:** design agreed, not yet built. Branch `claude/weapon-smith-crafting-yczg12`.
+**Status:** ✅ **all 11 phases built and pushed** on `claude/weapon-smith-crafting-yczg12`.
+⚠ Three migrations still need applying by hand — see §10.
 **Inspiration:** Gunsmith Simulator (strip → clean → assemble → proof → deliver).
 
 Five decisions are settled, and everything below follows from them:
@@ -456,7 +457,7 @@ licence:   ownsWeaponSmith()
 | ✅ 8 | Ⓐ Blueprints tab in the Vendor Market | **Done.** `wsBuyBlueprintAza()` owns charge+refund together (the module is never handed a bare charge). Button disables on click — two clicks would be two charges for one frame. Verified: Aza restored on every failure path |
 | ✅ 9 | Order board + reputation + rep-gated blueprint tiers | **Done.** `sql/039_weaponsmith_board.sql` — contracts are SERVER-generated from templates. Verified against Postgres 16; caught a real bug (a new smith's first roll was throttled to an empty board). ⚠ **Not yet applied** |
 | ✅ 10 | Forge bench (blades) | **Done.** `bench.forge.js` + `sql/040_weaponsmith_blades.sql` (knife 4 / sword 11 / greatsword 12, none for sale). Quality is the **worst** step, not the average; a ruined billet is gone |
-| 11 | Hero loadout parity + provenance UI | Round two |
+| ✅ 11 | Hero loadout parity + provenance UI | **Done.** Hero parity needed **no new equip code** — `itemSlotFit` reads `slotType` and a minted weapon carries it. `armoury.js` adds provenance: parts, condition ceiling, budget used, unverified flag |
 
 ⚠ **Three migrations to apply by hand**, in order: `sql/038_weaponsmith.sql`,
 `sql/039_weaponsmith_board.sql`, `sql/040_weaponsmith_blades.sql`. Until they are, the client keeps its mirror, the board

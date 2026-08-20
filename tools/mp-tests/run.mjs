@@ -134,6 +134,15 @@ const MUTATIONS = [
     replace: '/.(png|jpe?g|webp|gif|avif|svg)(\\?|#|$)/i.test(a)',
   },
   {
+    /* Put one pill back on a hardcoded right offset — the exact shape of the
+       reported overlap. "Buy storage from player" is 244px wide and this offset
+       leaves it 210px, so it runs 34px into its neighbour. It looks like a
+       perfectly ordinary style string in a diff, which is why it needs a gate. */
+    name: 'a city pill goes back to a hardcoded right offset',
+    find: "    wh.style.cssText = 'order:2;flex:none;white-space:nowrap;pointer-events:auto;padding:8px 16px;border-radius:999px;cursor:pointer;'",
+    replace: "    wh.style.cssText = 'position:fixed;top:12px;right:168px;z-index:2147483301;padding:8px 16px;border-radius:999px;cursor:pointer;'",
+  },
+  {
     /* Put the paint order back the way it shipped: the JB iframe above the
        sub-apps it opens. This is the real bug — the bench drew underneath a
        full-screen iframe and looked like a dead button, and clicking any other

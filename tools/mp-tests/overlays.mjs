@@ -69,5 +69,32 @@ const jsxV = [...corpHtml.matchAll(/\.jsx\?v=([0-9a-z]+)/g)].map((m) => m[1]);
 ok('every corp .jsx tag is versioned', jsxV.length >= 3, jsxV.join(','));
 ok('the corp .jsx tags agree with each other', new Set(jsxV).size === 1, jsxV.join(','));
 
+
+/* 🏙 THE CITY HOST BAR. Three parent-side pills sit over the node-city iframe.
+   They used to be independently position:fixed with HARDCODED right offsets
+   (14 / 168 / 378) and they overlapped: "Buy storage from player" measures
+   244 px against the 210 px the next offset allowed — a 34 px overrun, measured
+   in a real browser. That label also FLIPS to "Send to your storage", a
+   different width, so no single offset can be correct for both states.
+
+   A flex row removes the arithmetic. These assertions exist because a returning
+   hardcoded offset looks perfectly reasonable in a diff. */
+const cityBar = idx.slice(idx.indexOf('const bar = document.createElement'),
+                          idx.indexOf('function _closeNodeCity'));
+ok('the city chrome is one flex row',
+   /node-city-hostbar/.test(cityBar) && /display:flex/.test(cityBar));
+ok('the row wraps rather than overflowing', /flex-wrap:wrap/.test(cityBar));
+ok('the bar itself cannot eat map clicks', /pointer-events:none/.test(cityBar));
+ok('its buttons re-enable pointer events',
+   (cityBar.match(/pointer-events:auto/g) || []).length >= 3);
+ok('layout order is explicit, not creation order',
+   (cityBar.match(/order:[123];/g) || []).length === 3);
+ok('NO hardcoded right offsets remain',
+   !/right:\s*(?:168|378)px/.test(cityBar) && !/\(168 \+ 210\)/.test(cityBar));
+ok('the gutter measures the ROW, not one pill',
+   /_ncHostGutter[\s\S]{0,900}?getElementById\('node-city-hostbar'\)/.test(idx));
+ok('teardown removes the bar',
+   /node-city-hostbar'\);[\s\S]{0,140}?hb\.remove\(\)/.test(idx));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

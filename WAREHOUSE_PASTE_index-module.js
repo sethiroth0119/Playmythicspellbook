@@ -602,7 +602,7 @@ async function _whOpen(warehouseId) {
   ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;background:#0b0910';
   const fr = document.createElement('iframe');
   fr.id = 'wh-frame';
-  fr.src = 'warehouse/index.html?v=v121a7';
+  fr.src = 'warehouse/index.html?v=v121a8';
   fr.setAttribute('title', 'Storage Warehouse');
   fr.style.cssText = 'width:100%;height:100%;border:0;background:#0b0910';
   ov.appendChild(fr);

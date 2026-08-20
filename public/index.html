@@ -226855,6 +226855,7 @@ function renderTerritoryWars() {
         ${objHtml}
         <div class="tw-action-buttons">
           ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">🤝 Do business with this city</button>` : ''}
+          ${!iOwn ? `<button class="btn-secondary" id="tw-act-raid">${selNode && selNode._isSabotageNode ? '🧨 Clear the Sabotage PRN' : '⚔ Attack PRN'}</button>` : ''}
           ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect Resources</button>` : ''}
           ${iOwn ? `<button class="btn-secondary" id="tw-act-hire">🛡 Hire Guard</button>` : ''}
           ${iOwn ? `<button class="btn-secondary" id="tw-act-shop">🏗 PRN Shop</button>` : ''}
@@ -227428,6 +227429,7 @@ function renderTerritoryWars() {
       <div class="tw-nd-actions">
         <div class="tw-nd-action-row">
           ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">🤝 Do business with this city</button>` : ''}
+          ${!iOwn ? `<button class="btn-secondary" id="tw-act-raid">${selNode && selNode._isSabotageNode ? '🧨 Clear the Sabotage PRN' : '⚔ Attack PRN'}</button>` : ''}
           ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect Resources</button>` : ''}
         </div>
         <div class="tw-nd-action-row">
@@ -227980,6 +227982,21 @@ function renderTerritoryWars() {
     }
     CT.open(_ctTargetFor(App._twSelectedNode));
   });
+  /* ⚔ ATTACK, RESTORED AS A SECOND ACTION — and this is a bug fix, not a
+     preference. When trade took over #tw-act-attack, _twAttackFlow lost its
+     only caller, and it is the ONLY path that calls _twCancelDarkEvent():
+
+         if (node._isSabotageNode && node._darkEventId) _twCancelDarkEvent(…)
+
+     A Dark Event otherwise just runs to expiresAt, so with no way to attack, a
+     SECTOR LOCKDOWN could not be cleared at all — the lockdown toast tells the
+     player to "find and clear the Sabotage PRN" and there was no longer a
+     control that does it. Deleting the dead function would have made that
+     permanent instead of obvious.
+     Trade stays the primary gold button; this is secondary, and on a sabotage
+     node it says what it is FOR rather than "Attack PRN", because that is the
+     one case where attacking is the cure and not an act of war. */
+  act('tw-act-raid', () => _twAttackFlow(App._twSelectedNode));
   act('tw-act-collect', () => {
     const r = tw_collectNode(App._twSelectedNode);
     if (!r) return;

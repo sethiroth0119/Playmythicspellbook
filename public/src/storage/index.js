@@ -228,12 +228,46 @@ export async function openOffice() {
     + '</div>'
     + '<div style="' + H + ';font-size:.86rem">Your warehouses</div>' + RULE + rows
     + rentedBlock
+    /* 🚚 THE YARD. This is the physical warehouse — bays, crates, a step van and
+       a weight limit — and it had NO entry point from the business that owns it:
+       it could only be reached from the city, camp or house buttons, which is
+       the wrong way round for the owner. The office is where you stand when you
+       run the place, so the door belongs here.
+       Shown even when the bridge cannot reach it, because _whOpen() explains
+       itself better than a hidden button does. */
+    + '<div style="' + H + ';font-size:.86rem;margin-top:1rem">The yard</div>' + RULE
+    + '<div style="font-size:.76rem;color:#9aa0a6;margin-bottom:.6rem">'
+      + 'Walk the floor in first person. Vans arrive with other players\' shipments — '
+      + 'press <b>E</b> at the kerb-side door, carry a crate at a time and drop it in the renter\'s bay.</div>'
+    + '<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.2rem">'
+      + '<button id="wh-yard" style="' + BTN + ';flex:1;min-width:150px">🚚 Walk your yard</button>'
+      + '<button id="wh-bays" style="' + BTN2 + ';flex:1;min-width:150px">📦 Bays you rent</button>'
+      + '<button id="wh-dir" style="' + BTN2 + ';flex:1;min-width:150px">🏬 Rent a bay</button>'
+    + '</div>'
     + '<div style="display:flex;justify-content:space-between;gap:.5rem;margin-top:1rem">'
       + '<button id="wh-market" style="' + BTN + '">🏙 Hire storage from players</button>'
       + '<button data-close="1" style="' + BTN2 + '">Close</button>'
     + '</div>');
 
   ov.addEventListener('click', async (ev) => {
+    /* The yard replaces this overlay rather than stacking on it — it is a
+       full-screen first-person view, and leaving the office open underneath
+       would leave a Close button the player cannot see but can still hit. */
+    const yd = ev.target.closest && ev.target.closest('#wh-yard');
+    if (yd) {
+      /* yardReady() distinguishes "the yard module never loaded" from "the yard
+         loaded and is telling you to sign in". _whOpen handles the second case
+         itself and says something useful; only the first needs saying here, and
+         without this the button would just do nothing at all. */
+      if (!(function () { try { return B().yardReady(); } catch (e) { return false; } })()) {
+        toast('🚚 The yard did not load — reload the page and try again.', 4200); return;
+      }
+      ov.remove(); try { B().yardOpen(); } catch (e) {} return;
+    }
+    const by = ev.target.closest && ev.target.closest('#wh-bays');
+    if (by) { ov.remove(); try { B().yardMine(); } catch (e) {} return; }
+    const dirBtn = ev.target.closest && ev.target.closest('#wh-dir');
+    if (dirBtn) { ov.remove(); try { B().yardMarket(); } catch (e) {} return; }
     const mk = ev.target.closest && ev.target.closest('#wh-market');
     if (mk) { ov.remove(); openMarket(); return; }
     const li = ev.target.closest && ev.target.closest('[data-list]');

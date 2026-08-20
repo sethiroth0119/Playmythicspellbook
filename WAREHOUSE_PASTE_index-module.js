@@ -71,9 +71,15 @@ async function _whRpc(fn, args) {
     const res = await Cloud.client.rpc(fn, args || {});
     if (res.error) {
       // Migration not applied → say so ONCE rather than spamming the console.
-      if (!App._whSqlWarned && /does not exist|schema cache/i.test(res.error.message || '')) {
-        App._whSqlWarned = true;
-        console.log('🚚 Warehouse SQL not applied yet — run supabase/migrations/20260812000000_warehouse_storage.sql');
+      /* Distinguish "not installed" from every other failure and REMEMBER it.
+         This used to be console-only and fire once, so the person who could
+         actually fix it saw the same "try again shortly" as everyone else. */
+      if (/does not exist|schema cache/i.test(res.error.message || '')) {
+        App._whSqlMissing = true;
+        if (!App._whSqlWarned) {
+          App._whSqlWarned = true;
+          console.log('🚚 Warehouse SQL not applied yet — run supabase/migrations/20260812000000_warehouse_storage.sql');
+        }
       }
       return null;
     }
@@ -592,9 +598,22 @@ async function _whOpen(warehouseId) {
   if (!state || state.ok === false) {
     // Never show a player a migration filename. Signed-out and not-installed
     // look identical from here, so say the one true thing that helps them.
-    showToast(_whReady()
-      ? '🚚 Player storage is unavailable right now — please try again shortly.'
-      : '🚚 Sign in to use player storage.', 4200);
+    /* ⚠ THREE DIFFERENT CAUSES WORE ONE SENTENCE. "Unavailable right now —
+       try again shortly" is right for a player and actively wrong for the
+       admin: it describes a transient outage when the real state is that the
+       migration was never applied, and "try again shortly" invites them to
+       keep retrying something that cannot start working on its own.
+
+       The original rule — never show a player a migration filename — still
+       holds. It just should never have applied to the one person who can act
+       on it. */
+    const _whAdmin = (typeof isAdmin === 'function') && isAdmin();
+    showToast(!_whReady() ? '🚚 Sign in to use player storage.'
+      : (_whAdmin && App._whSqlMissing)
+        ? '🚚 ADMIN: the warehouse tables are not installed. Apply '
+          + 'supabase/migrations/20260812000000_warehouse_storage.sql in the Supabase SQL editor.'
+        : '🚚 Player storage is unavailable right now — please try again shortly.',
+      _whAdmin ? 9000 : 4200);
     return;
   }
   const ov = document.createElement('div');
@@ -602,7 +621,7 @@ async function _whOpen(warehouseId) {
   ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;background:#0b0910';
   const fr = document.createElement('iframe');
   fr.id = 'wh-frame';
-  fr.src = 'warehouse/index.html?v=v121a8';
+  fr.src = 'warehouse/index.html?v=v121a9';
   fr.setAttribute('title', 'Storage Warehouse');
   fr.style.cssText = 'width:100%;height:100%;border:0;background:#0b0910';
   ov.appendChild(fr);

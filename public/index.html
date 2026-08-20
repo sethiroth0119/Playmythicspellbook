@@ -47814,12 +47814,7 @@ async function cloudFetchProfile() {
       for (const _id in data.heroes) {
         const _rem = data.heroes[_id], _loc = Profile.heroes && Profile.heroes[_id];
         if (!_loc || typeof _loc !== 'object' || !_rem || typeof _rem !== 'object') { _mh[_id] = _rem; continue; }
-        const _m = { ..._loc, ..._rem };
-        const _lk = Array.isArray(_loc.knownMoves) ? _loc.knownMoves : null;
-        const _rk = Array.isArray(_rem.knownMoves) ? _rem.knownMoves : null;
-        if (_lk && (!_rk || _lk.length > _rk.length)) _m.knownMoves = _lk.slice();
-        if (_loc.knownMovesAuto === false) _m.knownMovesAuto = false;
-        _mh[_id] = _m;
+        _mh[_id] = _mergeMoveRow(_loc, _rem);
       }
       Profile.heroes = _mh;
     }
@@ -47832,16 +47827,7 @@ async function cloudFetchProfile() {
       for (const _id in data.units) {
         const _rem = data.units[_id], _loc = Profile.units && Profile.units[_id];
         if (!_loc || typeof _loc !== 'object' || !_rem || typeof _rem !== 'object') { _mergedUnits[_id] = _rem; continue; }
-        const _m = { ..._loc, ..._rem };
-        // 📚 Moves only ever GET LEARNED, so the longer list is the newer one no
-        // matter whose row won the timestamp comparison.
-        const _lk = Array.isArray(_loc.knownMoves) ? _loc.knownMoves : null;
-        const _rk = Array.isArray(_rem.knownMoves) ? _rem.knownMoves : null;
-        if (_lk && (!_rk || _lk.length > _rk.length)) _m.knownMoves = _lk.slice();
-        // A unit whose moveset was hand-picked must not be reverted to auto by a
-        // row that predates the choice.
-        if (_loc.knownMovesAuto === false) _m.knownMovesAuto = false;
-        _mergedUnits[_id] = _m;
+        _mergedUnits[_id] = _mergeMoveRow(_loc, _rem);
       }
       Profile.units = _mergedUnits;
     }
@@ -100719,6 +100705,11 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
       const _store = (owner === 'player') ? Profile.units : Profile.aiUnits;
       _store[cardData.id] = _store[cardData.id] || prof;
       if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|')) {
+        /* 📚 DELIBERATELY NOT _stampMoves()'d. This branch re-derives an AUTO
+           loadout from the learnset — it is not a player decision, and stamping
+           it would let a stale device's re-derive out-rank another device's
+           real swap on the next merge. Unstamped means an explicit choice
+           (which IS stamped) always wins by merge rule 2. */
         _store[cardData.id].knownMoves = knownMoves.slice(0);
         saveProfile();
       }
@@ -103708,10 +103699,12 @@ const executeMove = (state, attacker, target, move) => {
           if (u.isHero) {
             const ph = Profile.heroes[u.heroId] = Profile.heroes[u.heroId] || { level: 1, xp: 0, kills: 0, wins: 0, statGains: emptyGains(), evs: emptyEvs() };
             ph.knownMoves = updatedKnown.slice(0);
+            _stampMoves(ph);
           } else {
             const id = u.originalCardId || u.cardId;
             const pu = Profile.units[id] = Profile.units[id] || { level: 1, xp: 0, kills: 0, fielded: 0, statGains: emptyGains(), evs: emptyEvs() };
             pu.knownMoves = updatedKnown.slice(0);
+            _stampMoves(pu);
           }
           saveProfile();
         } else {
@@ -143841,6 +143834,7 @@ function resolvePendingLearn(pending, oldMoveId) {
       // re-deriving from the learnset and wiping the swap. Applies to BOTH a
       // level-up replace and a Tutor purchase — either way the player decided.
       ph.knownMovesAuto = false;
+      _stampMoves(ph);
       if (pending.isTutor) {
         ph.tutorMoves = Array.isArray(ph.tutorMoves) ? ph.tutorMoves : [];
         if (ph.tutorMoves.indexOf(pending.moveId) < 0) ph.tutorMoves.push(pending.moveId);
@@ -143849,6 +143843,7 @@ function resolvePendingLearn(pending, oldMoveId) {
       const pu = Profile.units[pending.profileId] = Profile.units[pending.profileId] || { level: 1, xp: 0, kills: 0, fielded: 0, statGains: emptyGains(), evs: emptyEvs() };
       pu.knownMoves = next.slice(0);
       pu.knownMovesAuto = false;   // 🔒 explicit player choice — keep it (see above)
+      _stampMoves(pu);
       if (pending.isTutor) {
         pu.tutorMoves = Array.isArray(pu.tutorMoves) ? pu.tutorMoves : [];
         if (pu.tutorMoves.indexOf(pending.moveId) < 0) pu.tutorMoves.push(pending.moveId);
@@ -213681,6 +213676,58 @@ function _ncHostGutter() {
   };
   put();
 }
+
+/* 📚 MERGE ONE UNIT/HERO ROW, CLOUD OVER LOCAL, KEEPING THE NEWER MOVESET.
+   ---------------------------------------------------------------------------
+   🔴 THE BUG THIS REPLACES, and it is the "my new move didn't save" report that
+      has come back repeatedly. The old rule was:
+
+        // Moves only ever GET LEARNED, so the longer list is the newer one
+        if (_lk && (!_rk || _lk.length > _rk.length)) _m.knownMoves = _lk;
+
+      Moves do NOT only ever get learned. A unit at the MAX_KNOWN_MOVES cap does
+      not gain a fifth — it SWAPS, and the length does not change. So for every
+      unit with a full moveset `_lk.length > _rk.length` was false, the local
+      swap lost, and `{..._loc, ..._rem}` handed back the cloud's pre-swap list.
+      Units below the cap grew the array and survived, which is exactly why the
+      report was always about units that already had four.
+      Worse, `knownMovesAuto === false` WAS carried over — so the profile said
+      "this loadout is hand-picked" while the moves in it had been reverted.
+
+   THE RULE NOW, in order:
+     1. `movesAt` — a stamp written every time knownMoves changes. Newer wins.
+        Unambiguous, and it handles two devices both swapping.
+     2. Only one side stamped → that side is newer. A stamp can only have been
+        written by the build that writes stamps, so its row is the later one.
+     3. Neither stamped (rows saved before this existed) → the old length rule
+        as a floor, then local-custom beats remote-auto. Length still cannot
+        prove a swap, so the custom flag is what rescues the legacy case.
+   ⚠ `knownMovesAuto` is sticky-false on purpose and independently of which
+     moveset won: a hand-picked loadout must never be reverted to auto by a row
+     that predates the choice. */
+function _mergeMoveRow(loc, rem) {
+  const m = { ...loc, ...rem };
+  try {
+    const lk = Array.isArray(loc.knownMoves) ? loc.knownMoves : null;
+    const rk = Array.isArray(rem.knownMoves) ? rem.knownMoves : null;
+    const la = Number(loc.movesAt) || 0, ra = Number(rem.movesAt) || 0;
+    let takeLocal;
+    if (la || ra) takeLocal = la > ra;                       // 1 + 2
+    else if (lk && !rk) takeLocal = true;                    // 3
+    else if (lk && rk && lk.length !== rk.length) takeLocal = lk.length > rk.length;
+    else takeLocal = !!(lk && loc.knownMovesAuto === false && rem.knownMovesAuto !== false);
+    if (takeLocal && lk) { m.knownMoves = lk.slice(0); if (la) m.movesAt = la; }
+    if (loc.knownMovesAuto === false) m.knownMovesAuto = false;
+  } catch (e) {}
+  return m;
+}
+
+/* Stamp a profile row the moment its moveset changes. Every writer of
+   knownMoves calls this — one helper so the two seams (level-up persist and
+   resolvePendingLearn) cannot drift, which is the shape this codebase records
+   as its recurring failure: one seam knowing the rule and another writing the
+   store. */
+function _stampMoves(prof) { try { if (prof) prof.movesAt = Date.now(); } catch (e) {} }
 
 function _ctReady() { try { return !!(initCloud() && Profile.cloud && Profile.cloud.signedIn); } catch (e) { return false; } }
 

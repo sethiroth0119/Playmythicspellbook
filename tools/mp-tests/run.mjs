@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping
@@ -98,6 +98,15 @@ const MUTATIONS = [
     file: 'public/src/citytrade/plan.js',
     find: '  const fired = Math.min(total, Math.floor(elapsed / periodMs));',
     replace: '  const fired = Math.min(total, (settled || []).length + 1);',
+  },
+  {
+    /* Put the ORIGINAL bug back: decide the moveset by length alone. A swap at
+       the move cap does not change the length, so the local choice loses and
+       the cloud's pre-swap list returns — the "my new move didn't save" report.
+       If this does not redden, the gate is not testing the thing it exists for. */
+    name: 'the moveset merge goes back to picking by length',
+    find: '    if (la || ra) takeLocal = la > ra;                       // 1 + 2',
+    replace: '    if (false) takeLocal = false;',
   },
 ];
 

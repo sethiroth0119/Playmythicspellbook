@@ -36554,7 +36554,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120z7';
+  window.BUILD_VERSION = 'v120z8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -47287,6 +47287,11 @@ async function cloudSyncProfile() {
       // a player who picks their starter on Device A would land on Device B
       // with ZERO cards. Piggybacks the forge JSONB (no schema migration).
       __cardCollection__:  (Profile.cardCollection  && typeof Profile.cardCollection  === 'object') ? Profile.cardCollection  : {},
+      // 🗺 WARPATH MATERIALS — piggyback for the same reason cardCollection
+      // does. Without it a player extracts a Dragon Heart on their phone and
+      // it does not exist on their laptop; with the loader clause but not this
+      // one, a cloud restore silently wipes it.
+      __warpathMaterials__: (Profile.warpathMaterials && typeof Profile.warpathMaterials === 'object') ? Profile.warpathMaterials : {},
       // 📋 Side Deck + 💎 Socketed Gems — piggyback the forge JSONB (v86u) so the
       // Deck Builder's side-deck cards and per-card gem sockets survive new
       // devices / cloud restores, same as cardCollection above. Both were
@@ -48626,6 +48631,18 @@ async function cloudFetchProfile() {
         for (const id in _ci) {
           const def = _ci[id];
           if (!Profile.craftedItems[id] && def && typeof def === 'object') Profile.craftedItems[id] = def;
+        }
+      }
+      // 🗺 WARPATH MATERIALS restore — MERGED with MAX, identical policy to
+      // __cardCollection__ / __itemInventory__ above, so a stale cloud copy can
+      // never wipe a material extracted on this device that the cloud has not
+      // synced yet.
+      if (f.__warpathMaterials__ && typeof f.__warpathMaterials__ === 'object') {
+        if (!Profile.warpathMaterials || typeof Profile.warpathMaterials !== 'object') Profile.warpathMaterials = {};
+        const _wm = f.__warpathMaterials__;
+        for (const id in _wm) {
+          const cv = _wm[id] | 0, lv = Profile.warpathMaterials[id] | 0;
+          if (cv > lv) Profile.warpathMaterials[id] = cv;
         }
       }
       // 🛡 Equipped gear / relics — per-hero merge (cloud value wins per known
@@ -55488,6 +55505,18 @@ function getDecksForHero(heroId) {
   return getAllDecks().filter(d => d.heroId === heroId);
 }
 function getDeckById(id) {
+  /* 🔒 TRANSIENT RUN DECKS — the only edit to this function, and it is two
+     added lines above the original body, which is untouched.
+     A Warpath run's pool is temporary state that must never reach the permanent
+     profile. It used to be pushed into Profile.decks, which is persisted to
+     disk AND uploaded as forge.userDecks, so it survived reload, appeared on
+     the deck picker, counted toward validDecks, and was fieldable despite
+     holding 14 copies of a card the player owns 3 of (buildDeckFromKeys applies
+     no copy limit). See warpathStartBattle. This slot is null unless a Warpath
+     battle is on screen right now, so for every other caller in the game this
+     function behaves exactly as it did. */
+  const _wpT = (typeof window !== 'undefined') ? window.__wpRunDeck : null;
+  if (_wpT && _wpT.id === id) return _wpT;
   return getAllDecks().find(d => d.id === id) || null;
 }
 function findOrCreateLooseDeck(heroId, cards, name) {
@@ -70716,6 +70745,16 @@ function loadForge() {
         });
       }
       if (p.cardCollection && typeof p.cardCollection === 'object') Profile.cardCollection = p.cardCollection;
+      // 🗺 WARPATH EXTRACTION MATERIALS — Dragon Heart, Void Crystal and the
+      // rest. Same class of bug as sideDeck/socketedGems below: the Warpath
+      // wrote Profile.warpathMaterials and saveProfile() serialised it, but
+      // this loader is a field-by-field allowlist and had no clause for it —
+      // so every material a player extracted survived until the next reload
+      // and was then dropped on the floor, AFTER the server had already
+      // recorded the grant as delivered. These are the one reward the mode
+      // says cannot be obtained anywhere else, so losing them is the whole
+      // point of the mode evaporating.
+      if (p.warpathMaterials && typeof p.warpathMaterials === 'object') Profile.warpathMaterials = p.warpathMaterials;
       // 📋 Side Deck + 💎 Socketed Gems — added to the whitelist (v86u). Both
       // were written by the Deck Builder and stringified to localStorage by
       // saveProfile(), but were MISSING from this loader, so every reload
@@ -107198,7 +107237,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120z7';
+const BB_VER = 'v120z8';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -117333,6 +117372,9 @@ const _MD_ICO = {
 // ═══════════════════════════════════════════════════════════════════════════
 function _mmData() {
   const out = { type: 'mm:data', player: {}, event: null };
+  // 🗺 The cinematic menu hides its Warpath button when the mode is switched
+  // off. Without this the kill switch only silences the classic menu.
+  try { out.warpath = (typeof warpathEnabled === 'function') ? warpathEnabled() : true; } catch (e) { out.warpath = true; }
   try {
     const cc = Profile.cloud || {};
     out.player.name = (cc.displayName || (Profile.account && Profile.account.displayName) || (cc.email || '').split('@')[0] || 'Survivor').slice(0, 24);
@@ -117469,6 +117511,15 @@ const MD_SECTIONS = [
   { t: 'The Codex',     s: 'Inventory, bestiary, trophies',           ic: _MD_ICO.book,    go: () => { App.titleHub = 'codex'; } },
   { t: 'The Camp',      s: 'Roster, replays, leaders',                ic: _MD_ICO.tent,    go: () => { App.titleHub = 'field'; } },
   { t: 'Arcanum',       s: 'Settings & data',                         ic: _MD_ICO.compass, go: () => { App.titleHub = 'arcanum'; } },
+  // 🗺 WARPATH — the run-based expedition draft. Opens a body-level overlay
+  // (openWarpathGate) rather than switching App.screen, so nothing about the
+  // existing screen routing changes. Hidden entirely when the mode is off.
+  // 🗺 WARPATH — hidden outright when the mode is off, rather than present and
+  // apologising. `warpathEnabled` is a hoisted function declaration, so it is
+  // callable here even though it is defined much further down the file.
+  { t: 'Warpath',       s: 'Leave the city · draft a deck by surviving', ic: _MD_ICO.tent,
+    hidden: () => !(typeof warpathEnabled === 'function' && warpathEnabled()),
+    go: () => { if (typeof openWarpathGate === 'function') openWarpathGate(); } },
 ];
 
 // 🎴 The featured-character roster — shown to EVERY player. Priority:
@@ -118138,7 +118189,11 @@ function _masterMenuHtml() {
   const xpPct = (typeof getAccountXpPct === 'function') ? getAccountXpPct() : 0;
   const cinder = (Profile.gems || 0).toLocaleString();
   const aza = (Profile.sovereigns || 0).toLocaleString();
+  // A section may hide itself. Hidden ones emit '' rather than being filtered
+  // out, so every remaining item keeps its ORIGINAL index — the click handler
+  // below looks up MD_SECTIONS[i] by that index.
   const items = MD_SECTIONS.map((sec, i) =>
+    (sec.hidden && sec.hidden()) ? '' :
     `<div class="md-mitem" data-md-nav="${i}"><span class="md-mico">${sec.ic || ''}</span><div class="md-mtext"><div class="md-mtitle">${escapeHtml(sec.t)}</div><div class="md-msub">${escapeHtml(sec.s)}</div></div></div>`).join('');
   return `<div id="md-stage">
     <canvas id="md-fx"></canvas>
@@ -156672,6 +156727,7 @@ function bindGameOverEvents() {
   const wasCampaign = !!(App.campaignVictory) || !!(App.battlePrep && App.battlePrep.campaignNode);
   const wasDaily    = !!(App.dailyVictory)    || !!(App.battlePrep && App.battlePrep.dailyChallenge);
   const wasRlc      = !!App._rlcPendingAfterBattle;
+  const wasWarpath  = !!App._warpathAfter;
   const wasGym      = !!App._gymPendingAfterBattle;
   const wasWorld    = !!App._worldAfter;
   const wasFishing  = !!App._fishingEncounterAfter;
@@ -156721,6 +156777,7 @@ function bindGameOverEvents() {
       if (typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
       App._gymPendingAfterBattle = null; App.screen = 'gymWars'; render(); return;
     }
+    if (wasWarpath && typeof warpathAfterBattle === 'function') { warpathAfterBattle(); return; }
     if (wasRlc) {
       if (typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
       App.screen = 'rlcMap'; render(); return;
@@ -156770,6 +156827,7 @@ function bindGameOverEvents() {
     }
     // 🗺️ Roguelite: still resolve the run (HP carry / fail) before leaving so
     // progress isn't silently lost — rlcAfterBattle routes appropriately.
+    if (wasWarpath && typeof warpathAfterBattle === 'function') { warpathAfterBattle(); return; }
     if (wasWorld && typeof worldBattleAfter === 'function') { worldBattleAfter(); return; }
     if (wasRlc && typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
     if (wasGym && typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
@@ -157060,6 +157118,19 @@ function recordBattleProgress() {
       if (ph) endHP = Math.max(1, parseInt(ph.currentHp, 10) || 1);
     } catch (e) {}
     App._rlcPendingAfterBattle = { campaignId: App.battlePrep.rlc.campaignId, nodeId: App.battlePrep.rlc.nodeId, won: !!won, endHP };
+  }
+
+  // 🗺 Warpath: record which battle this was and who won, so the game-over
+  // return path can report it. This is the ONLY thing the engine contributes
+  // to the Warpath — the run itself lives on the server.
+  if (App.battlePrep && App.battlePrep.warpath) {
+    App._warpathAfter = {
+      battle_id: App.battlePrep.warpath.battle_id,
+      kind: App.battlePrep.warpath.kind,
+      expedition_id: App.battlePrep.warpath.expedition_id,
+      opponent_expedition_id: App.battlePrep.warpath.opponent_expedition_id || null,
+      won: !!won,
+    };
   }
 
   // 🏛️ Gym Core Wars outcome. A Core Trial win grants that Core Badge (once;
@@ -212976,7 +213047,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120z7';
+  f.src = 'node-city/index.html?v=v120z8';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -230845,6 +230916,1118 @@ function _twBindNodeEditor(t) {
   window.renderNow = function () { try { return _renderImmediate(); } catch (e) { try { console.warn('renderNow error', e); } catch (_) {} } };
 })();
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🗺 WARPATH HOST — public/warpath/ as the run-based expedition mode.
+// ---------------------------------------------------------------------------
+// Same-origin iframe, mounted the way the node city (_openNodeCity) and the
+// Ascent map (_rlcAscentMount) already are. Everything Warpath needs from the
+// server crosses ONE channel — a postMessage RPC proxy — so the sub-app never
+// holds a Supabase session and nothing about auth is duplicated.
+//
+// ⚠ THE ARCHITECTURAL RULE LIVES HERE.
+// The Warpath server creates a battle and consumes its result; it never
+// resolves one. When two heroes collide, the iframe posts `warpath:battle` and
+// THIS file builds an ordinary App.battlePrep and hands it to the existing
+// engine — the same vsScreen path ranked, roguelite and gym battles take. When
+// the engine is done, warpathAfterBattle() reports the verdict back through
+// warpath_battle_report() and remounts the map. There is no Warpath combat
+// code anywhere, in this file or in public/warpath/.
+//
+// ⚠ ADDITIVE ONLY. Outside this block the monolith changes in three places,
+// each one line, each guarded by App._warpathAfter being set — which only ever
+// happens if a Warpath battle actually started:
+//   • the gameover capture block   (records the verdict)
+//   • the two goPlayAgain dispatch sites (routes back to the map)
+// With the mode switched off (localStorage `hg_warpath` = '0') both menu
+// entries are hidden and the gate refuses, so nothing ever sets
+// App._warpathAfter and the three hooks are dead code.
+// ═══════════════════════════════════════════════════════════════════════════
+const WARPATH_VER = 'v120g1';
+// Kill switch — `hg_warpath = '0'` disables the mode without a deploy, same
+// pattern as `hg_ascent_map`. Both menu surfaces read this, so "off" means the
+// entry is gone rather than present-and-apologising.
+function warpathEnabled() {
+  try { return localStorage.getItem('hg_warpath') !== '0'; } catch (e) { return true; }
+}
+// Set the first time this account successfully enters a Warpath. The
+// extraction drain is gated on it so a player who has never touched the mode
+// never spends an RPC on it — which also means shipping index.html before the
+// migration lands costs the playerbase nothing.
+const WARPATH_SEEN_KEY = 'hg_warpath_seen';
+function warpathEverEntered() {
+  try { return localStorage.getItem(WARPATH_SEEN_KEY) === '1'; } catch (e) { return false; }
+}
+
+/* ⚠ WHAT THIS LIST IS, AND WHAT IT IS NOT.
+   It is a GUARDRAIL AGAINST MISTAKES — it stops the Warpath screen from
+   quietly acquiring the ability to call the bank, and makes every power it
+   does have enumerable in one place. Adding a name here is granting a power.
+
+   It is NOT a security boundary. public/warpath/ is same-origin, so anything
+   running in that frame can already reach `parent.Cloud.client` directly and
+   ignore this list entirely; a critic demonstrated exactly that. The real
+   boundary is Postgres — RLS plus the auth.uid() checks inside every
+   security-definer RPC — and that is where it has to stay.
+
+   Object.create(null) because a plain object literal inherits `constructor`,
+   `toString` and `__proto__`, all of which passed the bare `WARPATH_RPCS[fn]`
+   truthiness test this used to do. */
+const WARPATH_RPCS = Object.assign(Object.create(null), {
+  warpath_state: 1, warpath_move: 1, warpath_harvest: 1,
+  warpath_camp_place: 1, warpath_camp_build: 1, warpath_secure: 1,
+  warpath_recruit: 1, warpath_encounter_open: 1, warpath_encounter_pick: 1,
+  warpath_end_turn: 1, warpath_battle_open: 1, warpath_battle_report: 1,
+  warpath_extract_begin: 1, warpath_extract_finish: 1, warpath_abandon: 1,
+  warpath_scout_report: 1, warpath_battle_alive: 1,
+});
+function _warpathAllowed(fn) {
+  return typeof fn === 'string' && Object.prototype.hasOwnProperty.call(WARPATH_RPCS, fn);
+}
+
+const _WP = { host: null, frame: null, onMsg: null, expeditionId: null, runId: null };
+
+// ── The RPC proxy ─────────────────────────────────────────────────────────
+async function _warpathRpc(fn, args) {
+  if (!_warpathAllowed(fn)) throw new Error('warpath: ' + fn + ' is not a permitted call');
+  if (!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client)) {
+    throw new Error('Sign in to enter the Warpath — it is a shared world.');
+  }
+  const { data, error } = await Cloud.client.rpc(fn, args || {});
+  if (error) {
+    // The migration not being applied yet is the single most likely failure,
+    // and "function does not exist" is not a useful thing to show a player.
+    const m = String((error && error.message) || '');
+    if (/does not exist|PGRST202|PGRST205|42883|schema cache/i.test(m)) {
+      throw new Error('The Warpath is not installed on this server yet (run the warpath migration).');
+    }
+    throw new Error(m || 'Warpath call failed');
+  }
+  return data;
+}
+
+// ── Mount / unmount ───────────────────────────────────────────────────────
+function _warpathClose(silent) {
+  try { if (_WP.onMsg) window.removeEventListener('message', _WP.onMsg); } catch (e) {}
+  try { if (_WP.host && _WP.host.parentNode) _WP.host.parentNode.removeChild(_WP.host); } catch (e) {}
+  _WP.host = _WP.frame = _WP.onMsg = null;
+  if (!silent) { try { render(); } catch (e) {} }
+}
+
+function _warpathOpen() {
+  if (_WP.host) return;
+  const host = document.createElement('div');
+  host.id = 'warpath-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:2147483300;background:#07060b';
+  const f = document.createElement('iframe');
+  f.id = 'warpath-frame';
+  f.src = 'warpath/index.html?v=' + encodeURIComponent(WARPATH_VER) + '&s=' + Date.now().toString(36);
+  f.setAttribute('title', 'Warpath');
+  f.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;display:block';
+  host.appendChild(f);
+
+  // Parent-side exit. The map has its own Abandon button, but Esc inside an
+  // iframe never reaches us, so a player must always have a way out.
+  const x = document.createElement('button');
+  x.textContent = '✕ LEAVE THE WARPATH';
+  x.style.cssText = 'position:absolute;top:12px;right:14px;z-index:3;padding:8px 16px;border-radius:999px;cursor:pointer;'
+    + "font-family:'Cinzel',serif;font-weight:800;font-size:12px;letter-spacing:.1em;color:#f3e7c8;border:2px solid transparent;"
+    + 'background:linear-gradient(180deg,rgba(24,18,34,.95),rgba(12,9,18,.97)) padding-box,'
+    + 'linear-gradient(150deg,#f6d67e,#c29a3a 30%,#7a5f24 55%,#c29a3a 78%,#f6d780) border-box;'
+    + 'box-shadow:0 7px 22px rgba(0,0,0,.62)';
+  x.onclick = () => {
+    // Leaving does NOT abandon the expedition — the run is server-side and
+    // still there when they come back. Only the map screen closes.
+    _warpathClose();
+    showToast('Your expedition is still out there. Return through the Warpath Gate.', 4200);
+  };
+  host.appendChild(x);
+  document.body.appendChild(host);
+  _WP.host = host; _WP.frame = f;
+
+  _WP.onMsg = async (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== 'object' || typeof d.type !== 'string') return;
+    if (!_WP.frame || ev.source !== _WP.frame.contentWindow) return;   // only our frame
+
+    if (d.type === 'warpath:rpc') {
+      let result = null, error = null;
+      try { result = await _warpathRpc(d.fn, d.args); }
+      catch (e) { error = String((e && e.message) || e); }
+      try {
+        _WP.frame.contentWindow.postMessage(
+          { type: 'warpath:rpc:result', id: d.id, result: result, error: error },
+          window.location.origin);
+      } catch (e) {}
+      // Track the live expedition so the battle bridge knows who is fighting.
+      if (d.fn === 'warpath_state' && result && result.in_run) {
+        _WP.expeditionId = (result.me && result.me.expedition_id) || null;
+        _WP.runId = (result.run && result.run.id) || null;
+      }
+      return;
+    }
+    /* 🃏 The draft screen has to show the player what they are choosing
+       between — name, cost, element, stats, text. The catalogs live here, not
+       in the sub-app, so we hand them over. This is the authoritative copy:
+       it includes admin-forged custom cards, and it is what the engine deals.
+       The sub-app ships a generated fallback for standalone use only. */
+    if (d.type === 'warpath:cardmeta:req') {
+      const meta = {};
+      try {
+        const packs = [['unit', UNIT_CARDS], ['spell', SPELL_CARDS], ['trap', TRAP_CARDS],
+                       ['location', LOCATION_CARDS], ['weather', WEATHER_CARDS]];
+        for (const [kind, arr] of packs) {
+          for (const c of (arr || [])) {
+            if (!c || !c.id) continue;
+            const e = { n: c.name, i: c.icon || '', t: kind };
+            if (c.cost != null) e.c = c.cost;
+            if (c.elements && c.elements.length) e.el = c.elements;
+            if (c.stats) e.s = [c.stats.hp, c.stats.atk, c.stats.def, c.stats.mag, c.stats.res, c.stats.spd];
+            if (c.passive && c.passive !== 'none') e.p = c.passive;
+            if (c.flying) e.fly = 1;
+            if (c.desc) e.d = c.desc;
+            if (c.restriction != null) e.r = c.restriction;
+            meta[kind + ':' + c.id] = e;
+          }
+        }
+      } catch (e) {}
+      try { _WP.frame.contentWindow.postMessage({ type: 'warpath:cardmeta', meta: meta },
+                                                window.location.origin); } catch (e) {}
+      /* The rebuilt frame has just spoken for the first time, which is the
+         earliest moment it can be handed the verdict of the battle that caused
+         the rebuild. Delivered exactly once. */
+      if (_WP.pendingResult) {
+        const pr = _WP.pendingResult; _WP.pendingResult = null;
+        try { _WP.frame.contentWindow.postMessage(pr, window.location.origin); } catch (e) {}
+      }
+      return;
+    }
+    if (d.type === 'warpath:battle') { warpathStartBattle(d.battle); return; }
+    if (d.type === 'warpath:done')   { _warpathClose(); warpathClaimGrants(); return; }
+  };
+  window.addEventListener('message', _WP.onMsg);
+}
+
+/* ── THE BATTLE BRIDGE ────────────────────────────────────────────────────
+   Turn a Warpath collision into an ordinary battle. Everything below is the
+   same battlePrep shape rlcStartBattle() builds — no engine change, no new
+   battle path, no Warpath-specific combat rules. */
+/* 🚩 Flip to false to restore the acquisition-order bridge exactly as it
+   shipped. Kept as a one-line escape hatch because this is the only place a
+   Warpath pool becomes a battle deck, so it is the only place a regression
+   here can hide. */
+const WARPATH_DECK_SELECT = true;
+
+function _warpathPadDeckLegacy(keys) {
+  const deck = (keys || []).filter(k => typeof resolveDeckCard === 'function' && !!resolveDeckCard(k));
+  if (!deck.length) return [];
+  const base = deck.slice(0);
+  let i = 0;
+  while (deck.length < DECK_SIZE) { deck.push(base[i % base.length]); i++; }
+  return deck.slice(0, DECK_SIZE);
+}
+
+/* What one card is worth to a run deck. Units are ranked by stats-per-energy —
+   the same body/cost the harness's tuned reference and the Forge's own scoring
+   use — and everything else by cheapness, because a Trap or a Location you
+   cannot afford to set is a Trap you never set. Both get the game's existing
+   hero-theme bonus on top, so a run deck leans the way the hero does. Type
+   quotas keep units from competing with locations for the same slot, so the
+   two halves only have to be self-consistent, not commensurable. */
+function _warpathCardScore(card, hero) {
+  if (!card) return -1e9;
+  let s = 0;
+  try { if (hero && typeof _scoreCardForHero === 'function') s += _scoreCardForHero(card, hero); }
+  catch (e) {}
+  const st = card.stats || {};
+  const cost = Math.max(1, card.cost | 0);
+  if (card.type === 'unit') {
+    const body = (st.hp | 0) + Math.max(st.atk | 0, st.mag | 0) * 1.5 + ((st.def | 0) + (st.res | 0)) * 0.5;
+    s += body / cost;
+  } else {
+    s += Math.max(0, 8 - cost);
+  }
+  /* ⚠ A CURVE TERM WAS TRIED HERE AND MEASURED WORSE. q5 kept finding rungs
+     where a bigger pool made a worse deck, and the thing that moved with them
+     was average cost — a 1.93 deck losing to a 1.80 one, repeatedly — so
+     `s -= 1.2 * cost` looked obviously right: efficiency is not castability,
+     and a hand of 3-drops on turn one is a hand of nothing. Same probe, same
+     donors: it turned two small backward rungs into one 15.6-point cliff and
+     cut what the whole draft is worth from +10.6% to +6.9%. The correlation
+     with average cost is real and the causal reading of it was wrong. Left
+     out, and written down so it is not rediscovered. */
+  return s;
+}
+
+function warpathPadDeck(keys, hero) {
+  // The Warpath pool starts at 24 cards and grows past DECK_SIZE as the run
+  // goes on. The engine deals exactly DECK_SIZE, so this is where a pool
+  // becomes a deck. Nothing here is added to the player's pool — a duplicated
+  // card exists for the length of one match and is never extractable.
+  //
+  // ⚠ It used to be `pool.slice(0, DECK_SIZE)`. The server hands the pool over
+  // in acquisition order and the 24 starter cards are inserted at entry, so
+  // the first 24 of those 40 slots were ALWAYS the starter issue and a run
+  // could never field more than 16 drafted cards however long it lasted. The
+  // deck harness measured the consequence directly: drafted slots peaked at
+  // 9.7/40 around +20 gained and then FELL to 8.0 at +35, i.e. drafting more
+  // made the deck worse. Selecting the deck instead of truncating the pool is
+  // the fix; see tools/warpath-deck/probe-truncation.mjs.
+  if (!WARPATH_DECK_SELECT) return _warpathPadDeckLegacy(keys);
+  if (typeof resolveDeckCard !== 'function') return [];
+  const cap = (typeof DECK_SIZE === 'number') ? DECK_SIZE : 40;
+  const maxCopies = (typeof MAX_COPIES_PER_CARD === 'number') ? MAX_COPIES_PER_CARD : 3;
+
+  /* Distinct candidates. A pool can hold several copies of a key and the deck
+     may run up to MAX_COPIES_PER_CARD of it regardless — padding a short pool
+     to DECK_SIZE has always been allowed to duplicate, and is explicitly
+     battle-only: nothing here is written back to the pool and a duplicated card
+     is never extractable. */
+  const seenKey = Object.create(null);
+  const order = [];                            // first-seen order, for a stable tiebreak
+  for (const k of (keys || [])) {
+    if (seenKey[k]) continue;
+    const c = resolveDeckCard(k);
+    // Summons and Archons are never drawable — buildDeckFromKeys drops them at
+    // battle time, so spending a slot on one would deal a short deck.
+    if (!c || c.type === 'summon' || c.isSummon || c.type === 'hero') continue;
+    if (c.archonSummon && c.archonSummon.enabled) continue;
+    seenKey[k] = true;
+    order.push({ key: k, card: c, seen: order.length });
+  }
+  if (!order.length) return [];
+
+  /* ⚠ THE DECK IS CHOSEN A COPY AT A TIME, NOT A CARD AT A TIME.
+     The first version of this filled each bucket breadth-first — every distinct
+     card got its first copy before any card got a second. That is monotone on
+     paper and wrong in play: a newly drafted mediocre card ALWAYS displaced a
+     second copy of a better one, so the deck got wider and weaker as the run
+     went on. Measured, that produced a progression curve that went backwards
+     twice (probe-progression.mjs: 31→38 60.0%→46.9%, 46→52 58.8%→44.4%, and the
+     entire draft worth +3.8 points).
+
+     So each COPY is a candidate with its own score, discounted by how many
+     copies of that card are already in. A second Goblin beats a first Spider;
+     a third Spider does not beat a first anything. The discount is the one
+     dial between "three of the best card" and "one of everything", and it was
+     measured rather than guessed — four settings, same probe, same donors:
+
+       fill                    rungs that go backwards   the whole draft is worth
+       breadth-first            2  (−13.1, −14.4 pts)              +3.8%
+       copies at 0.95 / 0.90    3                                  −2.5%
+       copies at 0.85 / 0.72    1  (−6.9 pts)                      +5.6%
+       copies at 0.75 / 0.55    2  (−3.2, −4.4 pts, both noise)   +10.6%
+
+     Near-depth-first is the worst of the four by a distance: it collapses the
+     deck onto 14 distinct cards and the pool stops mattering at all. */
+  const COPY_FALLOFF = [1, 0.75, 0.55];
+  const cand = [];
+  for (const e of order) {
+    const base = _warpathCardScore(e.card, hero);
+    for (let c = 0; c < maxCopies; c++) {
+      cand.push({ e, copy: c, type: e.card.type || 'unit', score: base * COPY_FALLOFF[c] });
+    }
+  }
+  // Deterministic: same pool ⇒ same deck. Ties break on copy index first so a
+  // card's copies stay in order, then on the order the pool listed them.
+  cand.sort((a, b) => (b.score - a.score) || (a.copy - b.copy) || (a.e.seen - b.e.seen));
+
+  const deck = [], used = Object.create(null);
+  const push = e => { deck.push(e.key); used[e.key] = (used[e.key] | 0) + 1; };
+
+  /* The house shape — the same 22/8/4/3/3 getGeneratedDeckForHero builds, so a
+     run deck and a collection deck are the same kind of object. Quotas are
+     CEILINGS, not floors: a pool that drafted no traps does not get traps
+     invented for it, and the 3-card ceiling on locations and weather is what
+     stops a location-heavy biome pool from filling a deck with cards that
+     compete for one board slot (only one location and one weather can ever be
+     in play at a time). */
+  const QUOTA = { unit: 22, spell: 8, trap: 4, location: 3, weather: 3 };
+  const taken = { unit: 0, spell: 0, trap: 0, location: 0, weather: 0 };
+  for (const c of cand) {
+    if (deck.length >= cap) break;
+    if ((taken[c.type] | 0) >= (QUOTA[c.type] | 0)) continue;
+    if ((used[c.e.key] | 0) >= maxCopies) continue;
+    push(c.e); taken[c.type]++;
+  }
+
+  /* Whatever the ceilings left unfilled goes to the rest of the pool, in the
+     same order, ignoring the type quotas but never the copy limit. This is also
+     the ONLY path by which a 24-card starter pool reaches 40: it duplicates its
+     best cards up to the legal limit rather than cycling the pool from the
+     front, which used to push cards past three copies. Locations and weather
+     stay capped — a deck of six Locations is five dead cards. */
+  for (const c of cand) {
+    if (deck.length >= cap) break;
+    if (c.type === 'location' || c.type === 'weather') continue;
+    if ((used[c.e.key] | 0) >= maxCopies) continue;
+    push(c.e);
+  }
+  /* Only if that still cannot fill 40 do Locations and Weather come off their
+     leash — a pool of nothing but Locations is a terrible deck either way, and
+     a LEGAL terrible deck beats an illegal one. */
+  for (const c of cand) {
+    if (deck.length >= cap) break;
+    if ((used[c.e.key] | 0) >= maxCopies) continue;
+    push(c.e);
+  }
+  // A pool with too few distinct cards to make a legal 40 (fewer than 14
+  // distinct) would otherwise deal a short deck, which decks the player out
+  // almost immediately. Size wins over the copy limit at that point, exactly
+  // as _legalizeDeck decides it for AI decks.
+  for (let i = 0; deck.length < cap && order.length; i++) push(order[i % order.length]);
+  return deck.slice(0, cap);
+}
+
+/* ── THE GUARDIANS ────────────────────────────────────────────────────────
+   Two of the three landmarks are guarded, and beating one is the only authored
+   PvE encounter the mode has. It used to be fought with `enemyDeckOverride:
+   null`, which hands the fight to buildAIDeck() — the generic admin AI deck on
+   an install that has one, and an EMPTY ARRAY on an install that does not
+   (probe-emptyfoe.mjs: 20/20 Warpath wins, median two half-turns).
+   So both Guardians fought the same, and on a fresh install neither fought at
+   all. These are authored, legal 40-card decks: exactly DECK_SIZE, never more
+   than MAX_COPIES_PER_CARD of anything, built only from ids that exist in the
+   built-in catalogue, and each one is a different fight on purpose.
+
+   The hero is fixed per landmark rather than hashed from the battle id. The
+   old comment claimed the hash made "the same Guardian the same foe", but a
+   battle id is per-battle, so every run met a different one. */
+const WARPATH_GUARDIANS = {
+  /* 🔺 THE BLACK PYRAMID — "It was not built. It was left." Ouroboros: a swarm
+     that gets worse the longer you leave it, every body carrying xenoBond. It
+     goes wide and it goes fast, so it punishes a slow, tall draw. */
+  black_pyramid: {
+    heroId: 'zarra',
+    /* ⚠ REBUILT ONCE. The first version ran 18 units, ten traps and THREE
+       Brood Tyrants at five energy, and probe-guardian measured it at 80.8%
+       to the player — a landmark boss losing four fights in five. The Drowned
+       Choir, built the same evening with twenty two-and-three-drops, measured
+       55.8%. The difference was the opening hand: a swarm that cannot deploy
+       until turn five is not a swarm. Same cards, same identity, twenty bodies
+       and one fewer Tyrant. */
+    deck: [['unit:xenoDrone', 3], ['unit:parasiteHost', 3], ['unit:spider', 3],
+           ['unit:hiveDrone', 3], ['unit:golem', 3], ['unit:ice', 3], ['unit:broodTyrant', 2],
+           ['spell:arcaneInsight', 3], ['spell:bolt', 3],
+           ['trap:xenoBurst', 3], ['trap:staticMine', 3], ['trap:nullGlyph', 2],
+           ['location:manaFont', 2], ['location:skyCitadel', 1],
+           ['weather:lightningStorm', 2], ['weather:mindRealm', 1]],
+  },
+  /* 🕯 THE DROWNED CHOIR — "Thirty voices, no throats." The opposite fight:
+     slow, cold and attritional. It drains, it freezes, and it wins by still
+     being there. Bring reach or bring a clock. */
+  drowned_choir: {
+    heroId: 'vex',
+    deck: [['unit:lich', 3], ['unit:ice', 3], ['unit:priest', 3], ['unit:parasiteHost', 3],
+           ['unit:spider', 3], ['unit:golem', 3], ['unit:archer', 2],
+           ['spell:frostwind', 3], ['spell:mend', 3],
+           ['trap:soulSnare', 3], ['trap:frostGlyph', 3], ['trap:hexSigil', 2],
+           ['location:necropolis', 2], ['location:mire', 1],
+           ['weather:eclipse', 2], ['weather:mistveil', 1]],
+  },
+};
+
+/* Expand a Guardian recipe into DECK_SIZE keys. Anything the catalogue cannot
+   resolve is dropped rather than trusted, and a short deck is topped up from
+   the parts of the recipe that did resolve — a Guardian with 31 cards would
+   deck out mid-fight and hand the player a win it did not earn. Returns null
+   if the landmark has no authored Guardian, which leaves the old behaviour
+   exactly where it was. */
+function warpathGuardianDeck(landmarkId) {
+  const spec = WARPATH_GUARDIANS[landmarkId];
+  if (!spec || typeof resolveDeckCard !== 'function') return null;
+  const cap = (typeof DECK_SIZE === 'number') ? DECK_SIZE : 40;
+  const out = [], distinct = [];
+  for (const [key, copies] of spec.deck) {
+    if (!resolveDeckCard(key)) continue;              // catalogue drift, not a crash
+    distinct.push(key);
+    for (let i = 0; i < copies && out.length < cap; i++) out.push(key);
+  }
+  if (!distinct.length) return null;
+  for (let i = 0; out.length < cap; i++) out.push(distinct[i % distinct.length]);
+  return out.slice(0, cap);
+}
+
+function warpathStartBattle(b) {
+  if (!b || !b.battle_id) return;
+  const hero = (typeof findHeroById === 'function') ? findHeroById(b.hero_id) : null;
+  const heroes = (typeof getAllHeroes === 'function') ? getAllHeroes() : [];
+  const myHero = hero || heroes[0];
+  if (!myHero) { showToast('Could not resolve your Hero for this battle.', 4000); return; }
+  // The opponent is a real Hero from the catalog.
+  const guardian = (b.kind === 'guardian') ? WARPATH_GUARDIANS[b.landmark_id] : null;
+  let foe = null;
+  if (b.opponent_expedition_id) {
+    foe = heroes.filter(h => h.id !== myHero.id)[0] || myHero;
+  } else if (guardian) {
+    // A named Guardian is the SAME Hero in every world, every run. That is what
+    // makes it a landmark rather than a random fight.
+    foe = heroes.filter(h => h.id === guardian.heroId)[0]
+       || heroes.filter(h => h.id !== myHero.id)[0] || myHero;
+  } else {
+    const others = heroes.filter(h => h.id !== myHero.id);
+    let n = 0; for (let i = 0; i < String(b.battle_id).length; i++) n = (n * 31 + String(b.battle_id).charCodeAt(i)) >>> 0;
+    foe = others.length ? others[n % others.length] : myHero;
+  }
+  if (b.opponent_name) foe = Object.assign({}, foe, { name: String(b.opponent_name) });
+
+  const cards = warpathPadDeck(b.card_keys, myHero);
+  if (!cards.length) { showToast('Your Warpath pool has no playable cards yet.', 4000); return; }
+  /* ⚠ THIS USED TO BE `Profile.decks.push(...)`, AND THAT IS HARD CONSTRAINT #4
+     BROKEN IN ONE LINE. Profile.decks is written to disk and uploaded to the
+     cloud row as forge.userDecks, so a run deck survived reload, showed up on
+     the deck picker, counted toward validDecks, and was fieldable — with 14
+     copies of a card the player owns three of, because buildDeckFromKeys
+     applies no copy limit. Temporary run state in the permanent profile.
+
+     It lives in one transient slot now, read by getDeckById and by nothing
+     else, and cleared the moment the battle is over. */
+  window.__wpRunDeck = { id: 'warpath_run_deck', name: 'Warpath Pool', heroId: myHero.id,
+                         cards: cards, createdAt: Date.now(), transient: true };
+  // Anything a previous build persisted is swept out, once, here.
+  _wpPurgePersistedRunDeck();
+
+  // The map screen has to go away for the battle; the run itself is on the
+  // server and is untouched by unmounting the iframe.
+  _warpathClose(true);
+
+  App.battlePrep = {
+    hero: myHero, opponent: foe, customCards: Forge.customCards,
+    deckId: 'warpath_run_deck', deckName: 'Warpath Pool',
+    campaignNode: null, scriptedWeather: null,
+    enemyLevel: b.kind === 'guardian' ? 6 : null,
+    // A PvP collision is still whatever the AI brings; only the authored
+    // Guardians override the deck, and only when the landmark names one.
+    enemyDeckOverride: guardian ? warpathGuardianDeck(b.landmark_id) : null,
+    encounterModifiers: null,
+    // The ONLY Warpath-specific field the engine ever sees. It is not read by
+    // any combat code — the gameover hook uses it to know where to report.
+    warpath: { battle_id: b.battle_id, kind: b.kind,
+               expedition_id: b.expedition_id,
+               opponent_expedition_id: b.opponent_expedition_id || null },
+    coinCall: null, coinResult: null, playerWonFlip: null, playerGoesFirst: null,
+    rankedMode: false, openCupRun: null, openCupAPPerWin: 0,
+  };
+  App.battlePrepFlags = null;
+  App.screen = 'vsScreen';
+  // The server now learns this match is still being played from the client
+  // that is playing it, rather than assuming how long cards take.
+  _wpStartHeartbeat(b.battle_id);
+  render();
+}
+
+/* Called from the game-over return path. Reports the verdict the ENGINE
+   produced and puts the player back on the map. warpath_battle_report is
+   race-gated server-side, so reporting twice is harmless by design — which is
+   what lets an authoritative server report it later instead of us. */
+/* Earlier builds pushed the run deck into Profile.decks, so it is already on
+   disk and in the cloud row for anyone who has played this branch. Sweep it —
+   and its deck-history entry, which recordDeckResult() creates on every
+   Warpath battle — whenever the bridge runs. Idempotent, and it only ever
+   removes the one id this mode owns. */
+function _wpPurgePersistedRunDeck() {
+  try {
+    let changed = false;
+    if (Array.isArray(Profile.decks)) {
+      const kept = Profile.decks.filter(d => !d || d.id !== 'warpath_run_deck');
+      if (kept.length !== Profile.decks.length) { Profile.decks = kept; changed = true; }
+    }
+    if (Profile.deckHistory && Profile.deckHistory.warpath_run_deck) {
+      delete Profile.deckHistory.warpath_run_deck; changed = true;
+    }
+    if (changed && typeof saveProfile === 'function') saveProfile();
+    return changed;
+  } catch (e) { return false; }
+}
+
+/* 💓 THE HEARTBEAT. The Warpath screen is unmounted for the duration of a
+   battle, so the only thing that knows the match is still being played is this
+   page. Without it the server has to guess how long a game of cards takes, and
+   the guess it shipped with was four minutes against a measured median of 25
+   half-turns — which threw away honest verdicts mid-match and made claiming
+   victory at t=0 strictly better than playing.
+
+   Every 45s while a Warpath battle is on screen. It cannot extend the window
+   the OTHER two players are waiting through — that is `pause_until`, server
+   side, and no client can move it. */
+let _wpAliveTimer = null;
+function _wpStartHeartbeat(battleId) {
+  _wpStopHeartbeat();
+  if (!battleId) return;
+  const beat = () => {
+    // Only while this battle is genuinely still the thing on screen.
+    const bp = App.battlePrep && App.battlePrep.warpath;
+    if (!bp || bp.battle_id !== battleId) { _wpStopHeartbeat(); return; }
+    _warpathRpc('warpath_battle_alive', { p_battle: battleId }).then(r => {
+      if (r && r.battle_over) _wpStopHeartbeat();
+    }).catch(() => { /* a missed beat is survivable; that is the point of a window */ });
+  };
+  beat();
+  _wpAliveTimer = setInterval(beat, 45000);
+}
+function _wpStopHeartbeat() {
+  if (_wpAliveTimer) { try { clearInterval(_wpAliveTimer); } catch (e) {} _wpAliveTimer = null; }
+}
+
+async function warpathAfterBattle() {
+  _wpStopHeartbeat();
+  // The run deck existed for exactly one match. Drop it, and sweep anything a
+  // previous build managed to persist while we are here.
+  try { window.__wpRunDeck = null; } catch (e) {}
+  _wpPurgePersistedRunDeck();
+  const res = App._warpathAfter; App._warpathAfter = null;
+  App.state = null;
+  if (!res) { App.screen = 'title'; return render(); }
+  /* ⚠ THE VERDICT USED TO BE REPORTED AND THEN DROPPED ON THE FLOOR.
+     Nothing in the shipped game ever posted `warpath:battleResult`, so the
+     sub-app's handler for it was dead code, and the two fields the server uses
+     to say "not yet" — pending_confirmation / awaiting_opponent — were never
+     read by anybody. A player who won was told "Victory, the Warpath has
+     recorded it", was then frozen by battle_pending, and was offered a Fight
+     button for the battle they had just won.
+
+     The screen is torn down around a battle and rebuilt afterwards, so the
+     answer cannot be handed over synchronously — it is stashed and posted to
+     the new frame once it says it is ready. */
+  let report = null;
+  try {
+    report = await _warpathRpc('warpath_battle_report', {
+      p_battle: res.battle_id,
+      p_winner: res.won ? res.expedition_id : (res.opponent_expedition_id || null),
+    });
+  } catch (e) {
+    try { console.warn('[warpath] could not report the battle:', e); } catch (e2) {}
+    showToast('⚠ Could not reach the Warpath to report that battle — it will resolve when you return.', 5200);
+  }
+  _WP.pendingResult = {
+    type: 'warpath:battleResult',
+    battle_id: res.battle_id, kind: res.kind || null, won: !!res.won,
+    // The server's own words, not a guess made here.
+    awaiting: !!(report && report.pending_confirmation),
+    resolved: !!(report && report.winner),
+    reported: !!report,
+  };
+  App.screen = 'title';
+  render();
+  _warpathOpen();
+}
+
+/* ── EXTRACTION → THE PERMANENT COLLECTION ────────────────────────────────
+   ⭐ The only place in the game where Warpath data touches a player's real
+   cards. It reads warpath_grants, the outbox that only warpath_extract_finish()
+   writes with the cap already applied.
+
+   ⚠ THE ORDER OF OPERATIONS HERE IS THE WHOLE SAFETY PROPERTY, and the first
+   version had it backwards. It called warpath_grants_claim(), which marks the
+   grant delivered IN THE SAME CALL that returns it, and then applied the cards
+   and called saveProfile(). saveProfile() returns early in a non-writer tab
+   (`MultiTab.amWriter === false`), and this drain ran in EVERY tab on a timer —
+   including tabs that had never opened the Warpath. A critic reproduced the
+   result with two real tabs: server says delivered, disk has nothing, and the
+   server has no copy left to re-issue. The player permanently lost cards they
+   had earned.
+
+   So now:
+     1. refuse to run at all unless we are the elected writer tab
+     2. warpath_grants_pending()  — read-only; the server still owes them
+     3. skip anything already in the local ledger (idempotency WE own, rather
+        than trusting the server's claimed flag to be the only defence)
+     4. validate and clamp everything before it touches Profile
+     5. apply, saveProfile(), then READ THE BLOB BACK and prove the cards are
+        actually on disk — rolling the in-memory change back if they are not
+     6. only then warpath_grants_ack()
+
+   Every step before 6 is retryable. If we die anywhere in 1-5 the grant is
+   still pending and we pick it up next boot. */
+/* ⭐ THE LEDGER CARRIES THE GOODS, NOT JUST A RECEIPT.
+
+   ⚠ It used to be a list of grant ids, and that made it useless for the one
+   job that matters. MultiTab's rule is "older claim wins ties", and a tab
+   throttled or suspended past STALE_MS never sets amWriter = false — the other
+   tab simply promotes itself. When the first tab wakes it broadcasts its older
+   claimedAt and takes the lock back WITHOUT EVER HAVING BEEN A READER, so the
+   reader→writer edge never fires, the promotion reconcile never runs, and its
+   boot-time Profile goes over the top of disk. A critic drove it with two real
+   pages and CDP Debugger.pause — which is what a backgrounded tab actually is:
+   two extracted Paladins and four Void Crystals gone from disk, gone from the
+   server, and ledgered as delivered so no future drain re-applied them. And the
+   cloud is not a backstop: the piggyback fields are MAX-merged on DOWNLOAD but
+   uploaded as a full-row replace, so the stale tab's upload wins there too.
+
+   Edge-detection on a promotion event is guessing at browser scheduling. A
+   ledger with the goods in it is not. Each entry records the value we PROVED
+   was on disk at ack time, so repair is a high-water mark — it can never invent
+   more than was actually delivered, and a legitimate later increase survives
+   untouched. localStorage is shared across tabs, so the tab that wakes up reads
+   the entries the other tab wrote and repairs itself before it can save. */
+// The six extraction materials, whitelisted because an unknown key is dropped:
+// Profile is deep-cloned into the cloud row and the export payload, so anything
+// that lands here travels. Declared above the ledger because the repair pass
+// reads it.
+const WARPATH_MATERIALS = ['dragon_heart', 'void_crystal', 'celestial_ore',
+                           'ancient_bone', 'ouroboros_core', 'kalon_fragment'];
+const WARPATH_LEDGER_KEY = 'hg_warpath_grants';
+function _wpLedger() {
+  try {
+    const a = JSON.parse(localStorage.getItem(WARPATH_LEDGER_KEY) || '[]');
+    if (!Array.isArray(a)) return [];
+    // Tolerate the old id-only shape so an upgrade does not re-apply history.
+    return a.map(e => (e && typeof e === 'object') ? e : { id: String(e), cards: {}, mats: {} });
+  } catch (e) { return []; }
+}
+function _wpLedgerHas(id) {
+  const s = String(id);
+  return _wpLedger().some(e => e && String(e.id) === s);
+}
+function _wpLedgerAdd(entries) {
+  try {
+    const next = _wpLedger().concat(entries);
+    // Keep it bounded; a player will never have hundreds of unacked grants.
+    localStorage.setItem(WARPATH_LEDGER_KEY, JSON.stringify(next.slice(-300)));
+    return true;
+  } catch (e) { return false; }
+}
+
+/* Bring Profile up to at least what the ledger proves was delivered. Runs
+   unconditionally — not on an edge — because the failure it exists for leaves
+   no edge to catch. Returns the number of values it had to raise. */
+function _wpLedgerRepair(why) {
+  let raised = 0;
+  try {
+    const led = _wpLedger();
+    if (!led.length) return 0;
+    Profile.cardCollection = Profile.cardCollection || {};
+    Profile.warpathMaterials = Profile.warpathMaterials || {};
+    for (const e of led) {
+      for (const id in (e && e.cards) || {}) {
+        const want = e.cards[id] | 0;
+        if ((Profile.cardCollection[id] | 0) < want) { Profile.cardCollection[id] = want; raised++; }
+      }
+      for (const k in (e && e.mats) || {}) {
+        if (WARPATH_MATERIALS.indexOf(k) < 0) continue;
+        const want = e.mats[k] | 0;
+        if ((Profile.warpathMaterials[k] | 0) < want) { Profile.warpathMaterials[k] = want; raised++; }
+      }
+    }
+    if (raised) {
+      try {
+        console.warn('[warpath] ' + raised + ' extracted value(s) had been clobbered on disk ('
+          + (why || 'repair') + ') — restored from the local grant ledger.');
+      } catch (e2) {}
+      if (typeof saveProfile === 'function') saveProfile();
+    }
+  } catch (e) { /* a repair that throws must never block the game */ }
+  return raised;
+}
+// Only the elected writer tab may apply a grant, because only it can save one.
+function _wpAmWriter() {
+  try { return !(typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false); }
+  catch (e) { return true; }
+}
+
+/* ── A PROMOTED WRITER MUST NOT WRITE ITS BOOT-TIME PROFILE ───────────────
+   MultiTab promotion (`_amWriterCheck`) flips `amWriter` to true after
+   STALE_MS and does NOT reload anything. A reader tab therefore sits on the
+   Profile it parsed at boot, and the moment it is promoted its next
+   saveProfile() serialises that stale copy over whatever the previous writer
+   had persisted since. A critic drove it with two real tabs: A drains, proves,
+   acks; A closes; B is promoted by the genuine election and writes
+   {"d0":0,"d1":0,"mats":{}} over the top. Server pending is empty. The cards
+   are gone, and the drain fires 6s after boot so no user action is needed to
+   set it up.
+
+   The general form of this is a pre-existing property of the save layer and
+   is not the Warpath's to rewrite. What IS ours is the property the Warpath
+   put at risk, so on promotion we reconcile the two fields this mode writes
+   against the persisted blob before anything can be saved over them. Disk
+   wins: this tab was a READER, so its in-memory divergence was never going to
+   be persisted anyway — the game already tells the player as much ("this tab
+   is now read-only to protect your saves").
+
+   Registered through the existing onMultiTab() listener registry rather than
+   by editing the election, so the save path itself is untouched. */
+function _wpReconcileFromDisk(why) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.profile);
+    if (!raw) return false;
+    const disk = JSON.parse(raw);
+    if (!disk || typeof disk !== 'object') return false;
+    let changed = 0;
+    if (disk.cardCollection && typeof disk.cardCollection === 'object') {
+      Profile.cardCollection = Profile.cardCollection || {};
+      for (const id in disk.cardCollection) {
+        const dv = disk.cardCollection[id] | 0;
+        if ((Profile.cardCollection[id] | 0) < dv) { Profile.cardCollection[id] = dv; changed++; }
+      }
+    }
+    if (disk.warpathMaterials && typeof disk.warpathMaterials === 'object') {
+      Profile.warpathMaterials = Profile.warpathMaterials || {};
+      for (const k in disk.warpathMaterials) {
+        const dv = disk.warpathMaterials[k] | 0;
+        if ((Profile.warpathMaterials[k] | 0) < dv) { Profile.warpathMaterials[k] = dv; changed++; }
+      }
+    }
+    if (changed) {
+      try { console.warn('[warpath] reconciled ' + changed + ' entries from disk on ' + why); } catch (e) {}
+    }
+    return true;
+  } catch (e) { return false; }
+}
+/* Fires on every MultiTab state change.
+
+   ⚠ THE EDGE IS NOT ENOUGH, AND CANNOT BE. A tab suspended past STALE_MS never
+   sets amWriter = false — the other tab promotes itself — so when this one
+   wakes it reclaims the lock on its older claimedAt without ever having been a
+   reader, and reader→writer never fires. That is the common case, not an
+   exotic one: a background tab and a foreground tab is the ordinary state of a
+   browser. So the edge still triggers the cheap reconcile, and the LEDGER
+   REPAIR runs on every state change regardless of direction, because it is
+   idempotent, it is a high-water mark, and it does not need to know which way
+   the lock moved. */
+let _wpWasWriter = null;
+try {
+  if (typeof onMultiTab === 'function') {
+    onMultiTab(function (mt) {
+      const now = !(mt && mt.amWriter === false);
+      if (_wpWasWriter === false && now === true) _wpReconcileFromDisk('writer promotion');
+      if (now) _wpLedgerRepair('multitab change');
+      _wpWasWriter = now;
+    });
+  }
+} catch (e) {}
+/* Whatever the server sends, only cards this build can actually resolve are
+   applied, and never past the per-card copy limit (`_cardCopyLimit` honours
+   the Banned/Limited list, so a banned card cannot arrive by this route
+   either). resolveDeckCard() throws on a non-string, so it is guarded. */
+function _wpResolveGrantKey(key) {
+  try {
+    if (typeof key !== 'string' || key.indexOf(':') < 1) return null;
+    const card = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null;
+    return (card && card.id) ? card : null;
+  } catch (e) { return null; }
+}
+// Material ids are compared against the six the mode actually defines. An
+
+async function warpathClaimGrants() {
+  if (!warpathEnabled()) return;
+  // 1 — reader tabs must never touch this. They cannot persist the result.
+  if (!_wpAmWriter()) return;
+
+  let out = null;
+  try { out = await _warpathRpc('warpath_grants_pending', {}); }
+  catch (e) { return; }
+  const all = (out && out.grants) || [];
+  // 3 — local idempotency. Anything already applied is only waiting on an ack.
+  const already = all.filter(g => g && g.id && _wpLedgerHas(g.id)).map(g => g.id);
+  let   fresh   = all.filter(g => g && g.id && !_wpLedgerHas(g.id));
+
+  /* ⚠ AN UNRESOLVABLE KEY USED TO BE DROPPED AND THE GRANT ACKED ANYWAY.
+     `if (!card) continue;` reads like caution — "never invent a card this build
+     lacks" — and it is silent permanent destruction: the card never reaches
+     disk, the ack tells the server to forget it, and the server holds the only
+     re-issuable copy. It fires on ordinary catalogue drift: a client still
+     running a cached sw.js after a content drop, or a `custom:` key granted
+     before Catalog.cards has finished downloading (Catalog.cards at boot: 0).
+
+     So a grant this build cannot fully understand is DEFERRED, not applied and
+     not acked. It stays pending server-side and we try again next boot, by
+     which time the catalogue has usually arrived. A grant that is permanently
+     unresolvable stays visibly owed rather than vanishing quietly. */
+  const deferred = fresh.filter(g => ((g && g.card_keys) || []).some(k => !_wpResolveGrantKey(k)));
+  if (deferred.length) {
+    fresh = fresh.filter(g => deferred.indexOf(g) < 0);
+    try {
+      console.warn('[warpath] ' + deferred.length + ' grant(s) deferred — this build cannot resolve '
+        + 'every card in them yet. They stay owed by the server and will be retried.');
+    } catch (e) {}
+  }
+
+  /* ⚠ Re-check the election AFTER the await. `pending()` is a network round
+     trip, and the writer can change under us mid-flight — the promotion path
+     needs only STALE_MS. Applying against a Profile we are no longer allowed
+     to save is exactly the case the proof below has to catch, so do not even
+     start. */
+  if (!_wpAmWriter()) return;
+
+  const applied = [];      // [{id, n}] so we can undo if the write does not land
+  const mats    = {};      // materialId -> delta, likewise
+  const names   = [];
+  // BEFORE snapshot, filled lazily as ids are touched. The proof compares
+  // after >= before + delta; without this it can only ever prove "non-zero".
+  const before  = { cards: {}, mats: {} };
+  let added = 0;
+
+  // Never apply onto a base this tab may have drifted from. Cheap, and it
+  // makes the before-snapshot below agree with what is actually on disk.
+  _wpReconcileFromDisk('grant drain');
+  // ...and repair anything a stale tab has already written over. This runs on
+  // every drain rather than on a promotion edge, because the clobber that
+  // matters leaves no edge behind — see the note on the ledger.
+  _wpLedgerRepair('grant drain');
+
+  // 4 + 5 — apply in memory. The whole loop is guarded: a single malformed key
+  // used to throw out here, outside the try, and take the grant with it.
+  try {
+    Profile.cardCollection = Profile.cardCollection || {};
+    for (const g of fresh) {
+      for (const key of ((g && g.card_keys) || [])) {
+        // Cannot be null here: a grant containing an unresolvable key was
+        // deferred above rather than reaching this loop.
+        const card = _wpResolveGrantKey(key);
+        if (!card) continue;
+        const limit = (typeof _cardCopyLimit === 'function') ? _cardCopyLimit(card) : 3;
+        const have = Profile.cardCollection[card.id] || 0;
+        if (have >= limit) continue;               // clamp — the server is not the only judge
+        if (before.cards[card.id] === undefined) before.cards[card.id] = have;
+        Profile.cardCollection[card.id] = have + 1;
+        applied.push({ id: card.id, n: 1 });
+        added++;
+        if (names.length < 4) names.push(card.name || card.id);
+      }
+      if (g && g.materials && typeof g.materials === 'object') {
+        Profile.warpathMaterials = Profile.warpathMaterials || {};
+        for (const k of Object.keys(g.materials)) {
+          if (WARPATH_MATERIALS.indexOf(k) < 0) continue;   // drop anything not ours
+          const n = parseInt(g.materials[k], 10);
+          if (!isFinite(n) || n <= 0) continue;
+          const add = Math.min(n, 999);
+          if (before.mats[k] === undefined) before.mats[k] = Profile.warpathMaterials[k] || 0;
+          Profile.warpathMaterials[k] = (Profile.warpathMaterials[k] || 0) + add;
+          mats[k] = (mats[k] || 0) + add;
+        }
+      }
+    }
+  } catch (e) {
+    try { console.warn('[warpath] grant apply failed, rolling back:', e); } catch (e2) {}
+    _wpUndoGrant(applied, mats);
+    return;                                        // nothing acked — retried next boot
+  }
+
+  if (fresh.length) {
+    try { saveProfile(); } catch (e) {}
+    // 5 — prove it. saveProfile() can no-op (reader tab) or fail (quota), and
+    // both are silent. Read the blob back before telling the server anything.
+    if (!_wpGrantPersisted(before, applied, mats)) {
+      try { console.warn('[warpath] grant did not reach disk — rolling back, will retry'); } catch (e) {}
+      _wpUndoGrant(applied, mats);
+      return;
+    }
+    /* Record the value we just PROVED is on disk, not the delta — a high-water
+       mark can be re-asserted safely any number of times, where a delta cannot.
+       This is the only copy of these cards that will exist once the ack below
+       tells the server to forget them. */
+    const proof = { cards: {}, mats: {} };
+    for (const a of applied) proof.cards[a.id] = Profile.cardCollection[a.id] | 0;
+    for (const k in mats)    proof.mats[k]     = (Profile.warpathMaterials || {})[k] | 0;
+    _wpLedgerAdd(fresh.map(g => ({ id: String(g.id), cards: proof.cards, mats: proof.mats,
+                                   ts: Date.now() })));
+  }
+
+  // 6 — and only now.
+  const ackIds = already.concat(fresh.map(g => g.id));
+  if (ackIds.length) {
+    try { await _warpathRpc('warpath_grants_ack', { p_ids: ackIds }); }
+    catch (e) { /* still ledgered; the next drain re-acks and does not re-apply */ }
+  }
+
+  if (added || Object.keys(mats).length) {
+    showToast('🗺 Extraction complete — ' + added + ' card' + (added === 1 ? '' : 's')
+      + ' added to your collection' + (names.length ? ': ' + names.join(', ') : '') + '.', 6000);
+  }
+  try { render(); } catch (e) {}
+}
+
+/* Read the saved blob back and confirm the grant is genuinely on disk.
+
+   ⚠ THIS COMPARED A DELTA AGAINST AN ABSOLUTE. The first version built
+   `want[id] = <copies this grant adds>` and then asserted `disk[id] >= want[id]`
+   — i.e. "does the disk hold at least one copy?", not "does the disk hold what
+   it held before, plus what we just added?". A critic called it against a disk
+   that had received NO write at all and got `proofSays: true`. It only ever
+   fired when the player owned FEWER copies than the grant added, so for any
+   repeat card — and for materials on every run after the first — it was a
+   no-op, and a silent saveProfile() failure walked straight through to the ack.
+
+   Now it takes a BEFORE snapshot and asserts `after >= before + delta`, which
+   is the only form that detects "nothing was written". */
+function _wpGrantPersisted(before, applied, mats) {
+  try {
+    if (!applied.length && !Object.keys(mats).length) return true;
+    const raw = localStorage.getItem(STORAGE_KEYS.profile);
+    if (!raw) return false;
+    const disk = JSON.parse(raw);
+    const cc = (disk && disk.cardCollection) || {};
+    const delta = {};
+    applied.forEach(a => { delta[a.id] = (delta[a.id] || 0) + a.n; });
+    for (const id in delta) {
+      if ((cc[id] | 0) < (before.cards[id] | 0) + delta[id]) return false;
+    }
+    const dm = (disk && disk.warpathMaterials) || {};
+    for (const k in mats) {
+      if ((dm[k] | 0) < (before.mats[k] | 0) + mats[k]) return false;
+    }
+    return true;
+  } catch (e) { return false; }
+}
+// Undo an in-memory application. Used when the write did not land, so the
+// player's live session matches what is actually saved.
+function _wpUndoGrant(applied, mats) {
+  try {
+    applied.forEach(a => {
+      const cur = (Profile.cardCollection && Profile.cardCollection[a.id]) || 0;
+      const next = cur - a.n;
+      if (next > 0) Profile.cardCollection[a.id] = next;
+      else if (Profile.cardCollection) delete Profile.cardCollection[a.id];
+    });
+    for (const k in mats) {
+      const cur = (Profile.warpathMaterials && Profile.warpathMaterials[k]) || 0;
+      const next = cur - mats[k];
+      if (next > 0) Profile.warpathMaterials[k] = next;
+      else if (Profile.warpathMaterials) delete Profile.warpathMaterials[k];
+    }
+  } catch (e) {}
+}
+
+/* ── THE WARPATH GATE ─────────────────────────────────────────────────────
+   "From the main city: WARPATH GATE. Player selects Begin Expedition. Then
+   SELECT HERO." Built as a body-level overlay rather than a new App.screen so
+   render() and the screen switch are not touched at all. */
+function openWarpathGate() {
+  if (!warpathEnabled()) { showToast('The Warpath is closed.', 3000); return; }
+  if (document.getElementById('warpath-gate')) return;
+  if (!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client)) {
+    showToast('Sign in to enter the Warpath — it is a shared world.', 4200); return;
+  }
+  const heroes = ((typeof getAllHeroes === 'function') ? getAllHeroes() : []).slice(0, 12);
+  const owned = heroes.filter(h => !Profile.heroes || Profile.heroes[h.id] || Object.keys(Profile.heroes || {}).length === 0);
+  const list = (owned.length ? owned : heroes);
+
+  const wrap = document.createElement('div');
+  wrap.id = 'warpath-gate';
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;'
+    + 'justify-content:center;padding:20px;background:rgba(5,4,9,.9);backdrop-filter:blur(4px)';
+  wrap.innerHTML =
+    '<div style="width:min(720px,100%);max-height:92vh;overflow-y:auto;border:1px solid #2e2740;border-radius:14px;'
+    + 'padding:26px;background:radial-gradient(700px 320px at 50% 0%,#221634 0%,transparent 70%),#1a1626;'
+    + 'box-shadow:0 24px 70px rgba(0,0,0,.75)">'
+    + '<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:.44em;color:#ff7a2f;text-align:center">Warpath Gate</div>'
+    + '<h2 style="font-family:Cinzel,serif;font-size:26px;letter-spacing:.1em;text-transform:uppercase;text-align:center;'
+    + 'color:#f3e7c8;margin:8px 0">Begin Expedition</h2>'
+    + '<div style="text-align:center;font-style:italic;color:#8f87a3;max-width:520px;margin:0 auto 18px;line-height:1.6">'
+    + 'Your Hero leaves the city and enters a temporary world with three others. Build a camp, draft a deck out of what '
+    + 'you find, and get back to a gate alive. Only what you secure comes home.</div>'
+    + '<div id="wp-gate-status" style="text-align:center;color:#8f87a3;font-size:13px;margin-bottom:14px">Checking your tickets…</div>'
+    + '<div style="font-family:Cinzel,serif;font-size:11px;letter-spacing:.16em;color:#d4af37;text-transform:uppercase;'
+    + 'border-bottom:1px solid #2e2740;padding-bottom:5px;margin-bottom:10px">Select Hero</div>'
+    + '<div id="wp-gate-heroes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:18px">'
+    + list.map((h, i) =>
+        '<button data-wp-hero="' + escapeHtml(h.id) + '" style="border:1px solid #2e2740;border-radius:9px;padding:10px 6px;'
+        + 'background:rgba(20,16,30,.8);color:#e8e2d5;cursor:pointer;font-family:inherit;text-align:center">'
+        + '<div style="font-size:24px">' + (h.icon || '🧙') + '</div>'
+        + '<div style="font-family:Cinzel,serif;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;margin-top:4px">'
+        + escapeHtml(h.name || h.id) + '</div></button>').join('')
+    + '</div>'
+    + '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">'
+    + '<button id="wp-go-ticket" class="btn-primary" disabled>🎟 Enter · 1 Ticket</button>'
+    + '<button id="wp-go-aza" class="btn-secondary" disabled>👑 Enter · 3 AZA</button>'
+    + '<button id="wp-free" class="btn-secondary">Claim weekly ticket</button>'
+    + '<button id="wp-cancel" class="btn-secondary">Not today</button>'
+    + '</div>'
+    + '<div style="text-align:center;color:#8f87a3;font-size:12px;font-style:italic;margin-top:12px">'
+    + 'AZA buys entry, never power. The world, the loot tables and the extraction cap are identical either way.</div>'
+    + '</div>';
+  document.body.appendChild(wrap);
+
+  let chosen = null;
+  const heroBtns = wrap.querySelectorAll('[data-wp-hero]');
+  const sync = () => {
+    heroBtns.forEach(b => { b.style.borderColor = (b.dataset.wpHero === chosen) ? '#d4af37' : '#2e2740'; });
+    wrap.querySelector('#wp-go-ticket').disabled = !chosen;
+    wrap.querySelector('#wp-go-aza').disabled = !chosen;
+  };
+  heroBtns.forEach(b => { b.onclick = () => { chosen = b.dataset.wpHero; sync(); }; });
+  sync();
+
+  // Resuming beats entering: a player who already has an expedition out there
+  // must not be able to buy a second one.
+  _warpathRpc('warpath_state', {}).then((st) => {
+    const el = wrap.querySelector('#wp-gate-status');
+    if (st && st.in_run) {
+      el.innerHTML = '<b style="color:#d4af37">You already have a Hero in the Warpath.</b>';
+      const go = wrap.querySelector('#wp-go-ticket');
+      go.disabled = false; go.textContent = '↩ Return to your expedition';
+      go.onclick = () => { wrap.remove(); _warpathOpen(); };
+      wrap.querySelector('#wp-go-aza').style.display = 'none';
+    } else {
+      el.textContent = 'Choose the Hero who walks through the gate.';
+    }
+  }).catch((e) => {
+    wrap.querySelector('#wp-gate-status').innerHTML =
+      '<span style="color:#c0473f">' + escapeHtml(String(e.message || e)) + '</span>';
+  });
+
+  const enter = async (pay) => {
+    if (!chosen) return;
+    const el = wrap.querySelector('#wp-gate-status');
+    el.textContent = 'Entering the Warpath…';
+    const hero = list.filter(h => h.id === chosen)[0];
+    try {
+      const r = await _warpathRpc('warpath_enter', {
+        p_hero_id: chosen, p_hero_name: (hero && hero.name) || chosen, p_pay: pay,
+      });
+      if (!r || !r.ok) {
+        const msg = { no_ticket: 'You have no Warpath Ticket. Claim the weekly one, or pay in AZA.',
+                      insufficient_aza: 'Not enough banked AZA — the entry fee comes from your Bank of Ethos balance.',
+                      already_in_a_warpath: 'You already have a Hero out there.',
+                      run_full: 'That world just filled. Try again.' }[r && r.reason]
+                  || ('Could not enter (' + ((r && r.reason) || 'unknown') + ').');
+        el.innerHTML = '<span style="color:#c0473f">' + escapeHtml(msg) + '</span>';
+        return;
+      }
+      try { localStorage.setItem(WARPATH_SEEN_KEY, '1'); } catch (e2) {}
+      wrap.remove();
+      _warpathOpen();
+    } catch (e) {
+      el.innerHTML = '<span style="color:#c0473f">' + escapeHtml(String(e.message || e)) + '</span>';
+    }
+  };
+  wrap.querySelector('#wp-go-ticket').onclick = () => enter('ticket');
+  wrap.querySelector('#wp-go-aza').onclick = () => enter('aza');
+  wrap.querySelector('#wp-cancel').onclick = () => wrap.remove();
+  wrap.querySelector('#wp-free').onclick = async () => {
+    const el = wrap.querySelector('#wp-gate-status');
+    try {
+      const r = await _warpathRpc('warpath_claim_free_ticket', {});
+      el.textContent = (r && r.ok) ? ('🎟 Ticket claimed — you have ' + r.tickets + '.')
+                                   : 'You have already claimed this week’s ticket.';
+    } catch (e) { el.textContent = String(e.message || e); }
+  };
+}
+// The free-ticket RPC is reachable from the gate, so it belongs on the list.
+WARPATH_RPCS.warpath_enter = 1;
+WARPATH_RPCS.warpath_claim_free_ticket = 1;
+// The read/ack pair, NOT warpath_grants_claim — see the note on ordering above.
+WARPATH_RPCS.warpath_grants_pending = 1;
+WARPATH_RPCS.warpath_grants_ack = 1;
+
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.warpath = { gate: openWarpathGate, open: _warpathOpen, close: _warpathClose,
+                          claim: warpathClaimGrants, enabled: warpathEnabled,
+                          reconcile: _wpReconcileFromDisk };
+} catch (e) {}
+
+// Drain any extraction that completed while the player was away — e.g. they
+// extracted, closed the tab, and came back on another device.
+// Gated three ways: the mode must be on, this account must have actually
+// entered a Warpath at some point, and we must be the writer tab. A player who
+// has never touched the mode never spends a request on it.
+try {
+  setTimeout(() => {
+    if (warpathEnabled() && warpathEverEntered() && _wpAmWriter()) warpathClaimGrants();
+  }, 6000);
+} catch (e) {}
+
+
 render();
 
 
@@ -230992,7 +232175,7 @@ render();
      ⚠ window.WeaponSmithBridge is installed in ordinary source order ABOVE, in
        the main script. This tag must stay below it.
      Bump ?v= on every change — the service worker caches these like any asset. -->
-<script type="module" src="src/weaponsmith/index.js?v=ws-3d4"></script>
+<script type="module" src="src/weaponsmith/index.js?v=ws-3d5"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the
@@ -231040,8 +232223,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120z7">
-<script type="module" src="src/battle/hud.js?v=v120z7"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120z8">
+<script type="module" src="src/battle/hud.js?v=v120z8"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

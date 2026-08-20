@@ -244,22 +244,43 @@ console.log('\n########## §3 the dead recipe: freshWater from rawWater ########
       !E.firms().some(f => f.out === 'rawWater') && !(E.inventory().rawWater > 0),
       'firms ' + E.firms().filter(f => f.out === 'rawWater').length + ' inv ' + (E.inventory().rawWater || 0));
 
-  /* 🔴 AND THIS IS WHY NOBODY EVER NOTICED. The Purifier is not idle — it
-     reports HEALTHY and makes a full day's output out of an input the city does
-     not have one unit of. That is the ALT_FEEDSTOCK hole ECONOMY.md documents
-     in as many words ("an electricity plant on a node with no fuel at all
-     hopped to the biomass leg and produced 1200 units from zero biomass"):
-     sim.js availabilityMap() only measures the inputs of the leg a firm is
-     ALREADY running, so `freshWater`'s alternate leg reads as fully available.
-     It is a PRE-EXISTING hole, it is not this round's to close, and it is
-     exactly what disguised a missing building as a working chain. */
+  /* 🔴 WHY NOBODY EVER NOTICED — AND WHY THIS ASSERTION IS THE OPPOSITE OF
+     WHAT IT WAS. When this round was written the Purifier was not idle here: it
+     reported HEALTHY and made a FULL DAY'S OUTPUT out of an input the city did
+     not hold one unit of, which is precisely what disguised a missing building
+     as a working chain. That was the ALT_FEEDSTOCK hole — sim.js
+     availabilityMap() built its `want` table from the leg each firm ran LAST and
+     only that leg, and both readers treat an absent id as 100% available, so
+     every leg a firm was NOT running read as perfect and was therefore always
+     the cheapest one to switch to.
+
+     ✅ IT IS CLOSED, by commit 31c8ae4 ("Cities were powering themselves with no
+     fuel at all"), which found the same default behind four of the seven
+     ALT_FEEDSTOCK ids and electricity worst of all. So the number this section
+     was built on — 1,200 freshWater from zero rawWater — no longer describes the
+     game, and the assertion that asserted it went RED while its own printed line
+     said "made 0 freshWater today out of 0 rawWater": a driver contradicting
+     itself in adjacent lines, which is worse than no driver, because a reader
+     cannot tell which half to believe.
+
+     🔴 THE ASSERTION IS NOT DELETED, IT IS TURNED OVER. What §3 needs from
+     this point is unchanged — that BEFORE the Water Intake the chain is
+     genuinely dead — and today the honest evidence for that is the STRONGER
+     one: the Purifier produces exactly nothing and the tracer names the real
+     cause. Deleting the check instead would have quietly dropped the only line
+     standing between this round and a regression that re-opened the hole. */
   const madeFromNothing = fwB ? fwB.lastProduced : 0;
-  console.log('  ⚠ the Purifier made ' + madeFromNothing.toFixed(0) + ' freshWater today out of ' +
-              (E.inventory().rawWater || 0).toFixed(0) + ' rawWater — the documented ALT_FEEDSTOCK hole,');
-  console.log('    which is what made a missing building look like a working chain.');
-  chk('BEFORE: it is producing out of nothing, not producing nothing',
-      madeFromNothing > 0 && !(E.inventory().rawWater > 0),
-      'produced ' + madeFromNothing);
+  console.log('  ✅ the Purifier made ' + madeFromNothing.toFixed(0) + ' freshWater today out of ' +
+              (E.inventory().rawWater || 0).toFixed(0) + ' rawWater. Before 31c8ae4 it made a full');
+  console.log('    day\'s output from the same nothing — the ALT_FEEDSTOCK hole — which is what made');
+  console.log('    a missing building look like a working chain. It is closed, so the gap now SHOWS.');
+  chk('BEFORE: the Purifier produces NOTHING, because there is nothing to produce from',
+      madeFromNothing === 0 && !(E.inventory().rawWater > 0),
+      'produced ' + madeFromNothing + ' out of ' + (E.inventory().rawWater || 0) + ' rawWater — ' +
+      'if this is non-zero the ALT_FEEDSTOCK hole 31c8ae4 closed has been re-opened');
+  chk('BEFORE: and the tracer says so out loud, rather than reporting a healthy line',
+      beforeFW.some(x => x.res === 'freshWater') && beforeFW.some(x => x.cause.key === 'NO_PRODUCER'),
+      JSON.stringify(beforeFW.map(x => x.res + ':' + x.cause.key)));
   const revB = 0;
 
   /* ONE VARIABLE: a Water Intake goes up on the next tile. Nothing else moves. */

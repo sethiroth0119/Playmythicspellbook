@@ -776,6 +776,77 @@ export function bootstrap(opts) {
   return true;
 }
 
+/* 👻 ── THE SCAFFOLD COMES DOWN WHEN THE REAL THING GOES UP ─────────────────
+   ----------------------------------------------------------------------------
+   Everything `bootstrap()` founds above is founded with NO `tileKey`: a
+   Waterworks, a fuel seam, a Power Plant, a staple farm per strength, a grocer
+   and a Property Company. That is deliberate and it has to stay — a brand-new
+   city has no buildings at all, so without them it has no water, no power and
+   no food on day one and every chain seeded on top of them dies immediately.
+
+   🔴 WHAT WAS MISSING IS THE OTHER END OF THEIR LIFE. `syncBuildings` opens
+   with `if (!f.tileKey) continue` — bootstrap firms are not tile-owned, so it
+   has never reaped one — and the extraction round then gave the player a
+   BUILDING for the same job. Measured with .gauntlet/crit-seam-8.mjs on the
+   commit that added it, after the player builds one Water Intake:
+
+       [{id:1,  tileKey:null,  name:"Waterworks",   made:440},
+        {id:13, tileKey:"5,5", name:"Water Intake", made:440}]
+
+   TWO firms, both pumping, both hiring. The player doubled their own supply and
+   took on a second payroll for a business they cannot see in any panel, cannot
+   inspect, and cannot demolish, because there is no tile under it. The round
+   made the supply REPLACEABLE and never retired the thing being replaced.
+
+   So the scaffold is withdrawn the moment a tile-owned firm is doing its job.
+
+   ── THE THREE THINGS THAT MAKE THIS SAFE, EACH ONE CHECKED ─────────────────
+   1. 🔴 A FRESH CITY STILL HAS WATER, STRUCTURALLY AND NOT BY LUCK. This can
+      only ever retire a firm when a TILE-OWNED firm with the same job is
+      already standing — so on a city with no tiles the loop below cannot
+      select anything, whatever `established` said at mount. The rejected
+      alternative was "never seed what the player could build instead", which
+      reads tidier and is much worse: `rawWater` is in the ground on the same
+      nodes where a Water Intake may be placed, so it would leave EVERY such
+      city bone dry from day one until the player happened to build one.
+   2. IDENTITY IS `out` + `ind`, WHICH IS THE KEY syncBuildings ITSELF USES for
+      exactly this question ("a key that now names a different business is not
+      the same business"). Matching on `out` alone is wrong and was caught here
+      rather than in play: bootstrap founds TWO `bread` firms — a `foodPlant`
+      that bakes it and a `grocer` that sells it — so opening one Grocery would
+      have retired the city's only bakery along with the shop it replaced.
+   3. IT IS ALWAYS RECOVERABLE, because the player necessarily BUILT the
+      replacement to trigger it; demolishing that tile leaves them able to
+      rebuild it. That is what "replaceable" was supposed to mean.
+
+   ⚠ THE MONEY GOES WHERE A DEMOLISHED FIRM'S MONEY ALREADY GOES — `reap()`
+     hands the estate to `receiveEstate` and the treasury receives it. This is a
+     TRANSFER between two terms of `totalCinder()`, so `audit()` is untouched,
+     which is the only reason a reconcile step is allowed to close a firm at
+     all. Burning the cash instead is the leak firms.js's estate header measured
+     at 42,612.05 🔥 across 12 demolitions, with err=-0.000000.
+   ⚠ Called from `syncBuildings` AFTER its founding loop, never from the tick.
+     Before that loop the replacement does not exist yet and this would retire
+     nothing on the sync that builds it, leaving the ghost standing for one more
+     reconcile. */
+export function retireSeededDuplicates() {
+  const jobOf = (f) => String(f.out) + '\u0000' + String(f.ind);
+  const tiled = new Set();
+  for (const f of Firms.alive()) if (f.tileKey) tiled.add(jobOf(f));
+  if (!tiled.size) return 0;
+  let n = 0;
+  for (const f of Firms.all()) {
+    if (f.tileKey || f.rung === 'BANKRUPT') continue;   // tile-owned, or already closing
+    if (!tiled.has(jobOf(f))) continue;
+    f.rung = 'BANKRUPT'; f.reported = true; n++;
+    logEvent('city', '🏗 ' + (f.name || 'A founding business') + ' was the city\'s own ' +
+                     'bootstrap operation, running without a building. Now that you have built ' +
+                     'one that does the same job, it has been wound up.');
+  }
+  if (n) Firms.reap();
+  return n;
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
 /* ════════════════════════════════════════════════════════════════════════════
    🌩 THE DISASTER GUARD — kept, and it now answers 1 to everything.

@@ -82,6 +82,69 @@ const c1=E.snapshot().firms; E.syncBuildings(list()); E.syncBuildings(list());
 chk('syncBuildings is idempotent', E.snapshot().firms===c1, c1+' → '+E.snapshot().firms);
 
 /* ════════════════════════════════════════════════════════════════════════════
+   👻 THE BOOTSTRAP SCAFFOLD — IT HAS TO STAND, AND IT HAS TO COME DOWN
+   ----------------------------------------------------------------------------
+   `bootstrap()` founds firms with NO tileKey so a brand-new city has water,
+   power and food before the player has built anything. `syncBuildings` opens
+   with `if (!f.tileKey) continue`, so for the whole life of that seam it could
+   never retire one — and once `waterintake` gave the player a BUILDING for the
+   same job, every city that built one ran TWO rawWater businesses: the visible
+   Water Intake and an invisible Waterworks the player could not inspect or
+   demolish, on a second payroll, doubling their own supply.
+
+   Both directions are asserted here because fixing one by breaking the other is
+   the obvious failure: retire too eagerly and a fresh city has no water at all,
+   which is strictly worse than the ghost. sim.js `retireSeededDuplicates()`
+   carries the reasoning. */
+{
+  const rw = () => Firms.alive().filter(f=>f.out==='rawWater');
+  const H = {powerFactor:1,waterFactor:1,hasBank:true,infrastructure:.8,logisticsCounts:{warehouse:3,depot:3}};
+  const DAY = 24*60;
+
+  /* 1. THE SCAFFOLD STANDS. A city the player has built nothing in — and whose
+        host reconciles an EMPTY tile list at every tick, which is what node-city
+        actually does — must still have a water business. */
+  E.mount({nodeId:'crit-ghost-1',population:200,established:false});
+  for(let d=0;d<30;d++){ E.tick(DAY,H); E.syncBuildings([]); }
+  const fresh = rw();
+  chk('a fresh city with NO buildings still has water (the scaffold is not reaped)',
+      fresh.length===1 && !fresh[0].tileKey, JSON.stringify(fresh.map(f=>f.name+'@'+f.tileKey)));
+
+  /* 2. AND IT COMES DOWN when the player builds the real thing. One producer,
+        and it is the one with a tile under it. */
+  const intake = [{key:'5,5',out:'rawWater',ind:'waterworks',lvl:1,name:'Water Intake'}];
+  E.syncBuildings(intake);
+  for(let d=0;d<10;d++){ E.tick(DAY,H); E.syncBuildings(intake); }
+  const after = rw();
+  chk('building a Water Intake retires the invisible bootstrap Waterworks',
+      after.length===1 && after[0].tileKey==='5,5', JSON.stringify(after.map(f=>f.name+'@'+(f.tileKey||'(none)'))));
+  chk('…and the surviving producer is actually producing',
+      (after[0]&&after[0].lastProduced||0) > 0, 'made '+(after[0]&&after[0].lastProduced));
+  const sn = E.snapshot();
+  chk('…and the audit is clean across the retirement (the estate is a transfer)',
+      sn.audit.ok, 'err='+(sn.audit&&sn.audit.err));
+
+  /* 3. IDENTITY IS out+ind, NOT out. bootstrap founds bread twice — a foodPlant
+        that bakes it and a grocer that sells it — so a rule keyed on `out`
+        alone would close the city's bakery the day it opened a corner shop.
+        Driven from the other side: a tile whose `ind` DIFFERS must retire
+        nothing. */
+  E.mount({nodeId:'crit-ghost-1',population:200,established:false});
+  E.tick(DAY,H);
+  const seededBread = Firms.alive().filter(f=>f.out==='bread'&&!f.tileKey).map(f=>f.ind);
+  E.syncBuildings([{key:'7,7',out:'bread',ind:'foodPlant',lvl:1,name:'Bakery'}]);
+  const kept = Firms.alive().filter(f=>f.out==='bread'&&!f.tileKey).map(f=>f.ind);
+  chk('a tile matching only on `out` retires NOTHING — identity is out+ind',
+      seededBread.length>0 && kept.length===seededBread.length,
+      'seeded ['+seededBread.join(',')+'] → kept ['+kept.join(',')+']');
+  E.syncBuildings([{key:'7,7',out:'bread',ind:'foodPlant',lvl:1,name:'Bakery'},
+                   {key:'8,8',out:'bread',ind:'grocer',lvl:1,name:'Grocery'}]);
+  chk('…and a tile matching on BOTH does retire it',
+      Firms.alive().filter(f=>f.out==='bread'&&!f.tileKey).length===0,
+      JSON.stringify(Firms.alive().filter(f=>f.out==='bread').map(f=>f.ind+'@'+(f.tileKey||'(none)'))));
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
    🃏 THE OUROBOROS CHAIN, END TO END — and why this section was rewritten.
    ----------------------------------------------------------------------------
    🔴 THE ASSERTION THAT USED TO LIVE HERE COULD NOT FAIL:

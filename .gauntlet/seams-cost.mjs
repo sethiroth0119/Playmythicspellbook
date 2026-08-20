@@ -51,10 +51,27 @@ const out=await page.evaluate(()=>{
   const TYPES=['waterintake','deepmine','alloyworks','canecroft','riftbore'];
   const REF=['scrapmine','purifier','office'];      // shipped neighbours, for scale
   const h32=(s)=>{let h=0x811c9dc5;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0;}return h.toString(16).padStart(8,'0');};
-  const fingerprint=(g)=>{const parts=[];g.traverse(o=>{if(!o.isMesh)return;
-    const a=o.geometry.attributes.position.array;let s=0,x=0;
+  /* \ud83d\udd34 `fingerprint` USED TO HASH ONLY `position`, AND THAT MADE THE
+     `tileSeeded` COLUMN BELOW LIE. These recipes are merged-bucket builders:
+     a tile's per-tile variation is carried in the vertex COLOUR attribute
+     (_ntB().add(geo, hex) writes it), and several of them — deepmine, riftbore
+     and the shipped `office` reference beside them — vary ONLY in colour. A
+     position-only hash reported those three as `tileSeeded=false`, which reads
+     as "not seeded on the tile, every one in the city is byte-identical". They
+     are seeded on the tile, they do vary between tiles, and the hash simply
+     could not see the channel the variation is in. That false reading was
+     written up as a defect once; hashing both channels is what stops it being
+     written up again.
+     ⚠ The two are still reported SEPARATELY (`geoVaries` / `tileVaries`)
+       because they answer different questions and merging them would just move
+       the blind spot: a recipe that varies only in colour is fine, and a recipe
+       that varies in neither is the real finding. */
+  const attrHash=(q,name)=>{const at=q.attributes[name];if(!at)return name+':-';
+    const a=at.array;let s=0,x=0;
     for(let i=0;i<a.length;i++){s+=a[i];x=(x*31+Math.round(a[i]*1e5))|0;}
-    parts.push(a.length+':'+s.toFixed(4)+':'+(x>>>0));});
+    return name+':'+a.length+':'+s.toFixed(4)+':'+(x>>>0);};
+  const fingerprint=(g,withColour)=>{const parts=[];g.traverse(o=>{if(!o.isMesh)return;
+    parts.push(attrHash(o.geometry,'position')+(withColour?'|'+attrHash(o.geometry,'color'):''));});
     return h32(parts.sort().join('|'));};
   const measure=(k)=>{
     const g=nc.game.tiles[k].mesh;
@@ -76,7 +93,7 @@ const out=await page.evaluate(()=>{
     renderer.info.autoReset=aw;renderer.shadowMap.enabled=sw;
     const bb=new THREE.Box3().setFromObject(g);
     return {meshes,casters,tris,verts,geometries:geos.size,drawCallsBothPasses:calls,
-            hash:fingerprint(g),
+            hash:fingerprint(g,false), fullHash:fingerprint(g,true),
             bbox:{x:+(bb.max.x-bb.min.x).toFixed(3),y:+(bb.max.y-bb.min.y).toFixed(3),z:+(bb.max.z-bb.min.z).toFixed(3)}};
   };
   const rows=[],notes=[];
@@ -97,11 +114,16 @@ const out=await page.evaluate(()=>{
     per.hashes=hs;
     // seeded on the TILE: a second tile must differ, a repaint must not
     const k2=place(type,1); nc.game.tiles[k2].lvl=1; nc.repaint(k2);
-    const h2=measure(k2).hash;
+    const m2=measure(k2);
     nc.game.tiles[k].lvl=1; nc.repaint(k);
-    const h1a=measure(k).hash; nc.repaint(k); const h1b=measure(k).hash;
-    per.tileSeeded = (h1a!==h2);
-    per.repaintStable = (h1a===h1b);
+    const m1a=measure(k); nc.repaint(k); const m1b=measure(k);
+    per.geoVaries  = (m1a.hash !== m2.hash);            // positions differ between two tiles
+    per.tileVaries = (m1a.fullHash !== m2.fullHash);    // positions OR colour differ
+    /* THE ONE THAT ACTUALLY CATCHES `Math.random`: repaint the SAME tile twice
+       and demand the same mesh. A recipe rolling from the moment fails this and
+       cannot fail it by accident; a recipe seeded on (tx,tz) passes it even when
+       its two sampled tiles happen to collide. */
+    per.repaintStable = (m1a.fullHash === m1b.fullHash);
     rows.push(per);
     delete nc.game.tiles[k]; delete nc.game.tiles[k2];
   }
@@ -117,8 +139,11 @@ for (const r of R) for (const l of [1,2,3]) {
 console.log('\nlevel ladder / seeding:');
 for (const r of R) console.log('  '+r.type.padEnd(13)+
   ' levelVaries='+String(r.levelVaries).padEnd(6)+
-  ' tileSeeded='+String(r.tileSeeded).padEnd(6)+
+  ' tileVaries='+String(r.tileVaries).padEnd(6)+
+  ' (geometry only: '+String(r.geoVaries).padEnd(5)+')'+
   ' repaintStable='+String(r.repaintStable).padEnd(6)+
   ' hashes '+r.hashes.join(' '));
+console.log('\n  tileVaries = this tile draws differently from the one next to it, in POSITION or COLOUR.');
+console.log('  repaintStable = repainting the SAME tile gives the same mesh — the test that catches Math.random.');
 console.log('\nconsole errors: '+JSON.stringify(errs.slice(-6)));
 await browser.close(); server.close();

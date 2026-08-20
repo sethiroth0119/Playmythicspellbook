@@ -5458,14 +5458,40 @@ function weatherSensitive(type) {
   const ty = weatherTwinType(type), def = BUILDINGS[ty];
   return !!(def && def.outdoor) || ty === 'farm' || ty === 'purifier';
 }
-// Production multiplier from current weather for one building type.
+/* Production multiplier from current weather for one building type.
+   ⚠ THE TWENTY-FIRST WIRING SITE. The extraction round gave `riftbore` the
+     Rift Siphon's row in pollution, in power, in naming and in its own BUILDINGS
+     description ("the Rift Siphon's deep twin"), and gave `waterintake` the
+     Purifier's row in all four of the same places — and then dropped both here,
+     which is the only one of the five tables that pays money.
+
+     💧 `waterintake` IS A WATERWORKS, NOT A GENERIC OUTDOOR TILE. It carries
+     `outdoor: true` (it is an open screened river intake, so it must), and that
+     alone put it in the `outdoorMult` branch: in RAIN the Purifier took ×1.35
+     and the intake feeding it took ×1.00; in a STORM 1.20 against 0.70 — a
+     1.71× divergence between two halves of the same waterworks, printed side by
+     side in the inspector. It joins the `purifier` branch rather than getting a
+     branch of its own, which also keeps the FALL-THROUGH right: tornado, fire
+     rain and anomaly define no `waterMult`, so both tiles drop to the outdoor
+     branch together (×.5 / ×.6 / ×.7) exactly as the Purifier always has.
+     Parity in every one of the seven weather states, not just the two that
+     have a waterMult.
+
+     🌀 `riftbore` FEASTS IN AN ANOMALY FOR THE SAME REASON THE SIPHON DOES — it
+     is bored into the same tear, deeper. The Siphon got ×3 and the Bore got ×1.
+     Note this branch RETURNS before `allMult`, which is correct and unchanged:
+     ANOMALY declares no allMult, so there is nothing to compound.
+     ⚠ Neither tile changes `weatherSensitive()`, deliberately. `waterintake`
+       already answered true through `outdoor`, and `riftbore` answers false
+       exactly as `siphon` does — that predicate's header states parity with the
+       twin is the whole claim "including where the twin shows nothing". */
 function weatherMult(type) {
   const W = WEATHER[wx.type]; if (!W || wx.type === 'clear') return 1;
   const ty = weatherTwinType(type);                                      // op ⇒ its standing twin
-  if (W.anomaly && (ty === 'siphon' || ty === 'reslab')) return 3;       // rift labs feast
+  if (W.anomaly && (ty === 'siphon' || ty === 'reslab' || ty === 'riftbore')) return 3;   // rift labs feast
   const def = BUILDINGS[ty]; let m = W.allMult || 1;
   if (ty === 'farm' && W.farmMult != null) m *= W.farmMult;
-  else if (ty === 'purifier' && W.waterMult != null) m *= W.waterMult;
+  else if ((ty === 'purifier' || ty === 'waterintake') && W.waterMult != null) m *= W.waterMult;
   else if (def && def.outdoor && W.outdoorMult != null) m *= W.outdoorMult;
   return m;
 }
@@ -22480,6 +22506,19 @@ function buildRoadMesh(conn, drv = {}, tx, tz) { // conn = road links, drv = str
       that is standing there, not swap it for a differently-coloured one.
       `rdRng` already falls back to Math.random when the coords are absent,
       which is the GLB-preview case.
+      ⚠ REPORTED ONCE AS A DEFECT — "deepmine and riftbore do not vary with
+        (tx, tz), so every Deep Mine in a city is byte-identical" — AND THAT WAS
+        WRONG. It came from .gauntlet/seams-cost.mjs, whose `tileSeeded` column
+        hashed only the `position` attribute. These are merged-bucket recipes and
+        deepmine's and riftbore's every `R()` draw picks a PALETTE entry
+        (_SM_CONC, _SM_STEEL), so their variation lives entirely in the vertex
+        COLOUR attribute, which that hash could not see. The tell that it was the
+        metric and not the recipes: `office` — cited two lines up as the
+        precedent — measured false as well. Driven again with colour in the hash,
+        all five report `tileVaries=true`, and `repaintStable` (the column that
+        does catch a `Math.random` roll) is true for all five and FALSE for
+        scrapmine and purifier, exactly as this rule claims. The instrument is
+        fixed; nothing in these recipes needed to change.
 
    2. MERGED BUCKETS, NOT LOOSE MESHES — the r1_housing / r4_extract technique,
       through the `_ntB` / `_ntMesh` kit. Bare pre-transformed BufferGeometry
@@ -25357,14 +25396,77 @@ function ecoBuildings() {
       it, and for the same reason: losing a restriction is a far smaller harm
       than a building the player cannot place because a script failed to load.
 
+   🔴 4. IT ONLY SPEAKS FOR TILES WHOSE *WHOLE* JOB IS THE CHAIN FIRM, AND
+      THIS RULE WAS MISSING FOR ONE COMMIT. Read it before touching the gate.
+
+      The three rules above are all about the CHAIN layer, and the test below is
+      a chain test: `pickAvailable` answers "would syncBuildings found a business
+      on this tile". The gate then spent that answer as if it were "is this tile
+      worth anything here" — and for eight of the thirteen all-deposit rows those
+      are different questions, because a Lumber Camp is ALSO a `gen:` tile in the
+      CITY LEDGER, one layer down, where the economy module does not reach.
+
+      MEASURED over 500 nodes on the commit that shipped this gate — every one of
+      them a building the player could already place before it:
+
+          lumbercamp   gen wood 1.30                139 nodes (27.8%) REFUSED
+          siphon       gen corruptedEssence 0.05    249 nodes (49.8%) REFUSED
+          fuelrig      gen fuel 0.6                  34 nodes (6.8%)  REFUSED
+          fibercroft   gen cloth 0.60                34 nodes (6.8%)  REFUSED
+
+      Each is the ONLY producer of its ledger resource, and those resources are
+      load-bearing: `wood` is `cost:` for sawmill, papermill and printworks — the
+      whole Ouroboros card chain — and `fuel` is `use:` for powerstation, coal,
+      gas, oil, quarry and gasstation and `cost:` for forge, siphon and riftbore.
+      Half the nodes in the game lost a Rift Siphon they were already allowed to
+      build, and it was a REGRESSION on a standing save, not a new restriction.
+
+      🔴 AND THE REFUSAL TEXT COMPOUNDED IT. It points at Trade — "a seam you
+         cannot dig you can still BUY" — which is true of `timber`, a chain id.
+         The player's actual loss was `wood`, a CITY LEDGER id the trade layer
+         does not carry and cannot sell them. A refusal that misdescribes what
+         it takes is worse than one that says nothing.
+
+      SO THE GATE ASKS ONE MORE QUESTION FIRST: does this tile pay off in the
+      city ledger whatever the ground carries? `def.gen` IS that question — the
+      ledger production tick reads `def.gen` straight off BUILDINGS and never
+      consults the economy — so a `gen:` tile is waved through and keeps every
+      node it had.
+
+      ⚠ WHAT THIS DOES *NOT* REOPEN, because that was the thing to check and it
+        was checked rather than assumed. The door this gate closed is "a player
+        pays for a building that produces NOTHING". A waved-through `gen:` tile
+        on ground with none of its seams is not that case, and here is exactly
+        what its chain half does there: `ecoBuildings()` calls the same
+        `pickAvailable`, gets null, and hits its own `if (!res) continue` — so
+        the tile is never handed to `syncBuildings`, no firm is founded, no
+        payroll is hired and nothing goes bankrupt. It is economically absent
+        from the chain layer and fully present in the ledger layer, which is
+        PRECISELY the building that shipped for the whole life of this game
+        before the chain layer existed. Nothing is lost that was ever had.
+
+      ⚠ AND THE FIVE NEW ROWS ARE STILL REFUSED, which is the half that is easy
+        to break while fixing this one. `waterintake`, `deepmine`, `alloyworks`,
+        `canecroft` and `riftbore` carry NO `gen`, no `use`, no `svc`, no
+        `defense`, no `popCap` and no `decorPts` — their entire economic
+        existence IS the chain firm, so on ground without their seams they
+        really do produce nothing, which is the case endowment.js calls "the
+        worst of both". That partition is exact today and is NOT left as a
+        coincidence to lean on: round0b of tools/economy-tests/run.mjs
+        re-derives it from the shipped source on every run and goes RED if a
+        future all-deposit row earns its keep some way this one predicate cannot
+        see. That tripwire, not this comment, is what stops instance two.
+
    ⚠ IT IS NOT NEW BEHAVIOUR FOR NEW BUILDINGS ONLY. `farm`, `hydrofarm`,
      `fibercroft`, `lumbercamp`, `quarry`, `scrapmine`, `fuelrig` and `siphon`
-     are all-deposit rows too and are now refused on ground that carries none of
-     their seams. That is the announcement's own sentence ("If your Node doesn't
-     contain Iron: You cannot simply build an Iron Mine") finally being enforced
-     where a player can see it, instead of at `if (!res) continue` where they
-     cannot. The Farm can never be refused — endowment.js pins at least one of
-     the five FOOD_STAPLES present on every node and the Farm lists all five. */
+     are all-deposit rows too. All eight carry a `gen:` and so all eight are
+     waved through by §4 and keep every node they had; what the gate actually
+     changed is the FIVE rows added with it, where the announcement's own
+     sentence ("If your Node doesn't contain Iron: You cannot simply build an
+     Iron Mine") is now enforced where a player can see it instead of at
+     `if (!res) continue` where they cannot. The Farm could never be refused
+     anyway — endowment.js pins at least one of the five FOOD_STAPLES present on
+     every node and the Farm lists all five. */
 function _ecoResLabel(id) {
   return String(id).replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim();
 }
@@ -25380,6 +25482,10 @@ function ecoGroundRefusal(type) {
        Resolved through opsTypeOf() rather than by testing for an 'op_' prefix,
        because a hand-written prefix is the bug class OP_ECO_MAP's header names. */
     if (opsTypeOf(type)) return null;
+    /* §4 — this tile also feeds the CITY LEDGER, which the chain test below
+       cannot see. Read §4 above before removing it: without this line the gate
+       deleted four shipped buildings from up to half the nodes in the game. */
+    if (BUILDINGS[type] && BUILDINGS[type].gen) return null;
     for (const id of m.out) if (!E.recipes.isDeposit(id)) return null;   // §2
     if (E.pickAvailable(m.out)) return null;                             // the ground says yes
     const def = BUILDINGS[type] || { name: type, ico: '⛏️' };

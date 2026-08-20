@@ -27,10 +27,21 @@
 
 -- ─── ⚙ CONFIG — every tunable in ONE place ──────────────────────────────────
 -- The client reads these through wh_config() and NEVER hardcodes its own copy,
--- so a price change is a single-file change. Canonical peg (index.html:56557):
---   1 Aza Coin = $1 USD = 5,000 Cinder.
---     • a storage bay is "$10 of Aza"  → 10 Aza  or 50,000 Cinder
---     • every Aza price below has an exactly-pegged Cinder twin.
+-- so a price change is a single-file change.
+--
+-- ⚠ THE WAREHOUSE IS NOT PEGGED. The game-wide peg is 1 Aza = $1 USD = 5,000
+-- Cinder (AZA_TO_CINDER, public/index.html:56560) and this module's Cinder
+-- prices are DELIBERATELY NOT DERIVED FROM IT:
+--     • a storage bay is 10 Aza  OR  5,000,000 Cinder
+--     • every Cinder price here is ×100 its pegged value; every Aza price is
+--       unchanged, so the warehouse's effective rate is 500,000 Cinder / Aza
+--     • no UI string may present the two as equivalent
+-- These three lines were the FIRST thing anyone read before touching prices and
+-- they still said "10 Aza or 50,000 Cinder" and "every Aza price below has an
+-- exactly-pegged Cinder twin" — both false after the ×100 change, five lines
+-- above the ⚠ block that contradicts them. The line citation was wrong too
+-- (56557 → 56560). Stale docs at the top of a pricing file are how the next
+-- person reintroduces the bug.
 create or replace function public.wh_config()
 returns jsonb language sql immutable as $$
   select jsonb_build_object(
@@ -613,57 +624,114 @@ returns jsonb language sql stable security definer set search_path = public as $
 $$;
 grant execute on function public.wh_my_resources() to authenticated;
 
--- ─── 🌱 wh_seed_resources — the one-time bootstrap from the profile blob ────
--- ⚠ THIS IS THE NEW ATTACK SURFACE AND IT IS TRUSTED EXACTLY ONCE.
+-- ─── 🎛 wh_flags — the admin kill switch for the seed faucet ─────────────────
+-- ⚠ THIS EXISTS BECAUSE THE SEED IS A FAUCET, NOT A ONE-OFF. It is one-time PER
+-- ACCOUNT, and accounts are free: a brand-new signup with no warehouse, no bay
+-- and no prerequisites could call wh_seed_resources with 11 ids × 100,000 and
+-- receive 1,100,000 units, worth ~1,650,000 Cinder at the game's own rates.
+-- There was no window, no cutoff and no way to turn it off. Now there are two
+-- independent brakes, and either one closes it:
+--   • seed_enabled — flip to false the moment the real migration is done;
+--   • seed_cutoff_at — a hard date after which it refuses regardless.
+-- Nobody but a service-role/SQL-console admin can change either.
+create table if not exists public.wh_flags (
+  id             boolean primary key default true check (id),
+  seed_enabled   boolean not null default true,
+  seed_cutoff_at timestamptz not null default (now() + interval '90 days'),
+  updated_at     timestamptz not null default now()
+);
+insert into public.wh_flags (id) values (true) on conflict (id) do nothing;
+alter table public.wh_flags enable row level security;
+drop policy if exists whf_sel on public.wh_flags;
+create policy whf_sel on public.wh_flags for select to authenticated using (true);
+drop policy if exists whf_ins on public.wh_flags;
+create policy whf_ins on public.wh_flags for insert to authenticated with check (false);
+drop policy if exists whf_upd on public.wh_flags;
+create policy whf_upd on public.wh_flags for update to authenticated using (false) with check (false);
+drop policy if exists whf_del on public.wh_flags;
+create policy whf_del on public.wh_flags for delete to authenticated using (false);
+
+-- ─── 🌱 wh_seed_resources — the one-time-per-account bootstrap ──────────────
+-- ⚠ THE NEW ATTACK SURFACE, AND IT IS TRUSTED EXACTLY ONCE PER ACCOUNT.
 -- Every player's resources currently live in Profile.salvage inside the profile
 -- blob, which the client owns. There is no server-side history to reconstruct a
 -- balance from, so the ledger has to start SOMEWHERE, and the only available
--- source is the client's own claim. That is a real trust concession and it is
--- written down rather than buried.
+-- source is the client's own claim. That is a real trust concession, and its
+-- SIZE is stated here and in both §DIVERGENCE and WAREHOUSE_HANDOFF §5:
+-- a maximal seed is 11 × 100,000 = 1,100,000 units ≈ 1,650,000 Cinder.
 --
 -- What contains it:
---   • ONCE. If the caller has any row at all — including a zero-quantity row —
---     this refuses. It can never top up an existing ledger.
---   • A row is written for EVERY known resource, not just the ones claimed, so
---     the "no rows yet" test cannot be defeated by seeding one resource now and
---     another later. After one call the ledger is fully populated forever.
---   • Quantities are shape-validated by _wh_sane_payload and then hard-capped
---     per line, so a fresh account cannot declare an absurd opening balance.
---   • Every seed writes a wallet_ledger row recording that the amount was
---     SELF-DECLARED, so an auditor can find them later.
+--   • ONCE PER ACCOUNT. A row is written for EVERY known resource, so the
+--     "no rows yet" test cannot be defeated by seeding one id now and another
+--     later. After one call the ledger is fully populated forever.
+--   • AN ADVISORY LOCK ON THE UID, and the INSERT ITSELF is the guard.
+--     ⚠ The count(*)-then-insert version had a check-then-act race: eight
+--     concurrent seeds on one fresh user returned ok:true FOUR times while only
+--     one actually applied, and wrote four wallet_ledger rows claiming 400,000
+--     when 100,000 was credited. No mint — the PK held — but the caller was
+--     lied to and the audit trail, whose entire purpose is being reconstructible
+--     later, over-reported by 4×. Now the losers get `already_seeded` and write
+--     nothing.
+--   • ADMIN-CLOSEABLE and time-limited — see wh_flags above.
+--   • Quantities shape-validated then capped per line. The cap TRUNCATES, and
+--     truncation is REPORTED back to the caller (see `truncated` in the result)
+--     so the player can be told they are over the ceiling rather than silently
+--     losing the difference.
 create or replace function public.wh_seed_resources(p_payload jsonb default '{}'::jsonb)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
-  v_uid uuid := auth.uid(); v_pay jsonb; k text; v numeric;
+  v_uid uuid := auth.uid(); v_pay jsonb; k text; v numeric; v_claim numeric;
   -- The most a self-declared opening balance may contain of any one resource.
   -- Deliberately a literal, not a wh_config key: this is a trust boundary, not
-  -- a game-balance dial, and it should not move when prices are tuned.
+  -- a game-balance dial, and it must not move when prices are tuned.
   v_cap constant bigint := 100000;
-  v_rows int;
+  v_inserted int := 0; v_trunc jsonb := '{}'::jsonb; v_flags public.wh_flags;
 begin
   if v_uid is null then return jsonb_build_object('ok', false, 'reason', 'not_signed_in'); end if;
-  select count(*) into v_rows from public.user_resources where user_id = v_uid;
-  if v_rows > 0 then
-    return jsonb_build_object('ok', false, 'reason', 'already_seeded', 'rows', v_rows);
+  select * into v_flags from public.wh_flags where id;
+  if v_flags.seed_enabled is not true then
+    return jsonb_build_object('ok', false, 'reason', 'seeding_closed');
   end if;
+  if v_flags.seed_cutoff_at is not null and now() > v_flags.seed_cutoff_at then
+    return jsonb_build_object('ok', false, 'reason', 'seeding_closed',
+      'cutoff_at', v_flags.seed_cutoff_at);
+  end if;
+  -- Serialise every concurrent seed for THIS uid. Transaction-scoped, so it is
+  -- released on commit or rollback without any cleanup path to forget.
+  perform pg_advisory_xact_lock(hashtext('wh_seed:' || v_uid::text));
+
   v_pay := public._wh_sane_payload(p_payload);
-  -- Populate EVERY known id, zero where unclaimed. This is what makes the
-  -- once-only guard airtight: after this call there is no "not seeded yet"
-  -- state left to exploit for any resource.
   for k in select jsonb_object_keys(public.wh_config() -> 'weights') loop
-    v := least(v_cap, coalesce((v_pay ->> k)::numeric, 0));
+    v_claim := coalesce((v_pay ->> k)::numeric, 0);
+    v := least(v_cap, v_claim);
+    if v_claim > v_cap then
+      v_trunc := v_trunc || jsonb_build_object(k, jsonb_build_object(
+        'claimed', floor(v_claim), 'granted', v_cap, 'lost', floor(v_claim) - v_cap));
+    end if;
+    -- THE INSERT IS THE GUARD. `returning` tells us whether this call is the one
+    -- that actually created the ledger, rather than a count(*) read that another
+    -- session can invalidate a microsecond later.
     insert into public.user_resources (user_id, resource_id, qty)
       values (v_uid, k, floor(v)::bigint)
       on conflict (user_id, resource_id) do nothing;
+    if found then v_inserted := v_inserted + 1; end if;
   end loop;
+
+  if v_inserted = 0 then
+    return jsonb_build_object('ok', false, 'reason', 'already_seeded',
+      'rows', (select count(*) from public.user_resources where user_id = v_uid));
+  end if;
+
   begin
     insert into public.wallet_ledger (user_id, op, resource, delta, balance_after, reason, meta)
       values (v_uid, 'seed', 'user_resources', 0, null,
               'Warehouse ledger seeded from the client profile (SELF-DECLARED)',
-              jsonb_build_object('claimed', v_pay, 'cap_per_resource', v_cap));
+              jsonb_build_object('claimed', v_pay, 'cap_per_resource', v_cap,
+                                 'truncated', v_trunc, 'rows_created', v_inserted));
   exception when others then null;    -- wallet_ledger not installed → not fatal
   end;
-  return jsonb_build_object('ok', true, 'seeded', public.wh_my_resources());
+  return jsonb_build_object('ok', true, 'seeded', public.wh_my_resources(),
+    'cap_per_resource', v_cap, 'truncated', v_trunc);
 end; $$;
 grant execute on function public.wh_seed_resources(jsonb) to authenticated;
 
@@ -688,9 +756,32 @@ grant execute on function public.wh_seed_resources(jsonb) to authenticated;
 --      is the mint again, one level up: not from nothing, but from goods that
 --      were already spent elsewhere.
 --
---   c) SEED TIMING. The seed is taken once, from whatever the blob held at that
---      moment. Everything earned before the seed counts; a player who seeds from
---      a device with a stale profile locks in the stale number permanently.
+--   c) THE SEED CAP SILENTLY TRUNCATES — the most likely player-facing loss in
+--      the whole feature, and this section previously asserted it could not
+--      happen ("Everything earned before the seed counts"). It is false. The
+--      seed is capped at 100,000 PER RESOURCE, so a veteran holding 500,000
+--      metal is granted 100,000 and the other 400,000 never reaches the
+--      warehouse — while their inventory screen still reads 500,000. The seed
+--      now RETURNS what it truncated (`truncated: {metal:{claimed,granted,lost}}`)
+--      so the client can say so out loud instead of the player discovering it
+--      the first time a send is refused. It still truncates rather than
+--      refusing: refusing would lock every long-standing account out of the
+--      feature entirely, which is worse, but this is a product call and should
+--      be revisited with the cap number.
+--
+--   d) SEED TIMING IS ARBITRARY, NOT "AT ACCOUNT CREATION". The client only
+--      calls wh_seed_resources from _whOpenSendModal, so the snapshot is taken
+--      the first time a player opens the send modal — which may be years into a
+--      save. The risk is not "a stale profile"; it is a late snapshot measured
+--      against a fixed cap, so the longer a player waits the more they lose.
+--
+--   e) THE SEED IS A FAUCET, AND HERE IS ITS SIZE. It is one-time PER ACCOUNT
+--      and accounts are free. A maximal seed is 11 ids × 100,000 = 1,100,000
+--      units ≈ 1,650,000 Cinder at the game's own rates. Two brakes now exist —
+--      public.wh_flags.seed_enabled and .seed_cutoff_at (90 days by default) —
+--      and BOTH should be closed the moment the real migration in (1)-(4) below
+--      lands. Until then this is the largest single source of new value in the
+--      feature and it should be watched, not forgotten.
 --
 -- WHAT IS ACTUALLY GUARANTEED TODAY:
 --   • no shipment can exceed the LEDGER balance;
@@ -1364,6 +1455,11 @@ begin
   select * into v_u from public.wh_units where id = p_unit_id for update;
   if not found then return jsonb_build_object('ok', false, 'reason', 'no_unit'); end if;
   if v_u.renter_id is distinct from v_uid then return jsonb_build_object('ok', false, 'reason', 'not_your_unit'); end if;
+  -- An empty bay is `nothing_there`, matching wh_reclaim. Returning ok:true with
+  -- an empty payload made the client toast a successful collection of nothing.
+  if v_u.contents = '{}'::jsonb or v_u.contents is null then
+    return jsonb_build_object('ok', false, 'reason', 'nothing_there');
+  end if;
   if p_resource is null then
     v_out := v_u.contents; v_kg := v_u.used_kg;
     update public.wh_units set contents = '{}'::jsonb, used_kg = 0, updated_at = now() where id = v_u.id;

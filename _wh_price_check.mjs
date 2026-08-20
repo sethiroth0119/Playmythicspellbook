@@ -13,10 +13,21 @@ import { readFileSync } from 'node:fs';
 const SQL = readFileSync('supabase/migrations/20260812000000_warehouse_storage.sql', 'utf8');
 const WH  = readFileSync('public/warehouse/index.html', 'utf8');
 const one = (src, re, label) => { const m = src.match(re); if (!m) throw new Error('could not find ' + label); return m[1]; };
-const many = (src, re) => [...src.matchAll(re)].map(m => m[1]);
+const many = (src, re, label) => {
+  const out = [...src.matchAll(re)].map(m => m[1]);
+  // ⚠ ARITY IS PART OF THE CHECK. one() throws on a miss but many() returned []
+  // silently, so a formatting change that stopped BOTH regexes matching deleted
+  // the whole row from the comparison and the gate still reported "identical".
+  // Verified: reformatting tier 2 in both files to 999 vs 111 passed, exit 0.
+  if (!out.length) throw new Error('matched NOTHING for ' + label + ' — the regex or the file changed');
+  return out;
+};
 
 const checks = [];
 const cmp = (label, a, b) => checks.push({ label, sql: String(a), mock: String(b), ok: String(a) === String(b) });
+// Compare two lists AND their lengths — a short list is a failure, not a match.
+const cmpL = (label, a, b) => checks.push({ label, sql: a.join(','), mock: b.join(','),
+  ok: a.length === b.length && a.length > 0 && a.join(',') === b.join(',') });
 
 cmp('unit_price_cinder',   one(SQL, /'unit_price_cinder', (\d+)/, 'sql unit_price_cinder'),
                            one(WH,  /unit_price_cinder: (\d+)/,   'mock unit_price_cinder'));
@@ -30,19 +41,48 @@ cmp('crate_kg',            one(SQL, /'crate_kg', (\d+)/, 'sql crate'),
                            one(WH,  /crate_kg: (\d+)/,   'mock crate'));
 cmp('max_shipment_kg',     one(SQL, /'max_shipment_kg', (\d+)/, 'sql maxship'),
                            one(WH,  /max_shipment_kg: (\d+)/,   'mock maxship'));
-cmp('tier cinder ladder',  many(SQL, /'tier',\s+\d+,\s+'max_units',\s+\d+,\s+'aza',\s+\d+,\s+'cinder',\s+(\d+)/g).join(','),
-                           many(WH,  /tier:\s+\d+,\s+max_units:\s+\d+,\s+aza:\s+\d+,\s+cinder:\s+(\d+)/g).join(','));
-cmp('tier aza ladder',     many(SQL, /'tier',\s+\d+,\s+'max_units',\s+\d+,\s+'aza',\s+(\d+)/g).join(','),
-                           many(WH,  /tier:\s+\d+,\s+max_units:\s+\d+,\s+aza:\s+(\d+)/g).join(','));
+cmpL('tier cinder ladder', many(SQL, /'tier',\s+\d+,\s+'max_units',\s+\d+,\s+'aza',\s+\d+,\s+'cinder',\s+(\d+)/g, 'sql tier cinder ladder'),
+                           many(WH,  /tier:\s+\d+,\s+max_units:\s+\d+,\s+aza:\s+\d+,\s+cinder:\s+(\d+)/g, 'mock tier cinder ladder'));
+cmpL('tier aza ladder', many(SQL, /'tier',\s+\d+,\s+'max_units',\s+\d+,\s+'aza',\s+(\d+)/g, 'sql tier aza ladder'),
+                           many(WH,  /tier:\s+\d+,\s+max_units:\s+\d+,\s+aza:\s+(\d+)/g, 'mock tier aza ladder'));
 // NB \s+ everywhere, not a literal single space: the SQL pads these columns for
 // alignment, and a regex demanding one space silently matched only the wide rows
 // — which looks exactly like a drift failure when nothing has drifted.
-cmp('lifter cinder ladder',many(SQL, /'carry_kg',\s+\d+,\s+'aza',\s+\d+,\s+'cinder',\s+(\d+)/g).join(','),
-                           many(WH,  /carry_kg:\s+\d+,\s+aza:\s+\d+,\s+cinder:\s+(\d+)/g).join(','));
-cmp('lifter aza ladder',   many(SQL, /'carry_kg',\s+\d+,\s+'aza',\s+(\d+)/g).join(','),
-                           many(WH,  /carry_kg:\s+\d+,\s+aza:\s+(\d+)/g).join(','));
+cmpL('lifter cinder ladder', many(SQL, /'carry_kg',\s+\d+,\s+'aza',\s+\d+,\s+'cinder',\s+(\d+)/g, 'sql lifter cinder ladder'),
+                           many(WH,  /carry_kg:\s+\d+,\s+aza:\s+\d+,\s+cinder:\s+(\d+)/g, 'mock lifter cinder ladder'));
+cmpL('lifter aza ladder', many(SQL, /'carry_kg',\s+\d+,\s+'aza',\s+(\d+)/g, 'sql lifter aza ladder'),
+                           many(WH,  /carry_kg:\s+\d+,\s+aza:\s+(\d+)/g, 'mock lifter aza ladder'));
 cmp('eta ceiling',         one(SQL, /'free_city_hours', (\d+)/, 'sql free'),
                            one(WH,  /free_city_hours: (\d+)/,   'mock free'));
+
+// ⚠ THE TABLES, NOT JUST THE SCALARS. The gate covered 11 of ~19 wh_config keys,
+// and `weights` — which drives kg → crate count → bay capacity — was unguarded.
+// That is the SAME failure class that made the offline yard unplayable when
+// crate_kg drifted. Verified before this line existed: changing metal's weight
+// from 3.5 to 0.1 in MOCK still reported "identical", exit 0. So did drifting
+// the entire eta_hours table, and so did aza_to_cinder 5000 → 1.
+// SQL writes pairs as  'food', 1.2   and JS as  food: 1.2 — including NUMERIC
+// keys in eta_hours ('0', 72 / 0: 72), which an [A-Za-z_]-anchored key pattern
+// silently matched zero of. The arity guard above is what caught that; without
+// it this would have reported "identical" on two empty lists.
+const sqlPairs = (src, re, label) =>
+  [...one(src, re, label).matchAll(/'([A-Za-z0-9_]+)'\s*,\s*([0-9.]+)/g)].map(m => m[1] + '=' + Number(m[2]));
+const jsPairs = (src, re, label) =>
+  [...one(src, re, label).matchAll(/([A-Za-z0-9_]+)\s*:\s*([0-9.]+)/g)].map(m => m[1] + '=' + Number(m[2]));
+cmpL('resource weight table',
+  sqlPairs(SQL, /'weights', jsonb_build_object\(([\s\S]*?)\n\s*\),/, 'sql weights'),
+  jsPairs(WH,   /weights: \{([\s\S]*?)\},/, 'mock weights'));
+cmpL('eta_hours table',
+  sqlPairs(SQL, /'eta_hours', jsonb_build_object\(([\s\S]*?)\n\s*\),/, 'sql eta'),
+  jsPairs(WH,   /eta_hours: \{([\s\S]*?)\},/, 'mock eta'));
+for (const [k, sqlRe, whRe] of [
+  ['aza_to_cinder',    /'aza_to_cinder', (\d+)/,    /aza_to_cinder: (\d+)/],
+  ['start_units',      /'start_units', (\d+)/,      /start_units: (\d+)/],
+  ['default_weight',   /'default_weight', ([\d.]+)/, /default_weight: ([\d.]+)/],
+  ['rent_max_days',    /'rent_max_days', (\d+)/,    /rent_max_days: (\d+)/],
+  ['rent_grace_days',  /'rent_grace_days', (\d+)/,  /rent_grace_days: (\d+)/],
+  ['max_hours',        /'max_hours', (\d+)/,        /max_hours: (\d+)/],
+]) cmp(k, one(SQL, sqlRe, 'sql ' + k), one(WH, whRe, 'mock ' + k));
 
 let bad = 0;
 for (const c of checks) {
@@ -51,4 +91,7 @@ for (const c of checks) {
 }
 console.log('');
 if (bad) { console.error(`✖ ${bad} price(s) DRIFTED — the offline yard does not match the server.`); process.exit(1); }
-console.log(`✔ MOCK.CFG mirrors wh_config() — ${checks.length} price groups identical.`);
+// ⚠ Say what was actually compared. "11 price groups identical" reads as
+// "MOCK mirrors wh_config()", which it did not — 8 keys were unguarded.
+console.log(`✔ ${checks.length} wh_config key groups compared, all identical.`);
+console.log('  Covered: ' + checks.map(c => c.label).join(', '));

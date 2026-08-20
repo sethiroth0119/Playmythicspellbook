@@ -297,14 +297,35 @@ async function _whLoadConfig() {
 let _whSeeded = false;
 async function _whSeedLedger() {
   if (_whSeeded) return;
-  _whSeeded = true;
+  // ⚠ The latch is set only on a CONFIRMED outcome, never up front. Setting it
+  // before the await meant one network blip on wh_my_resources disabled seeding
+  // for the whole session, and every send afterwards failed as
+  // `insufficient_resources` on a ledger that was never seeded — a support
+  // ticket that looks exactly like lost goods.
   try {
     const have = await _whRpc('wh_my_resources', {});
-    if (have && Object.keys(have).length) return;      // already seeded
+    if (have && Object.keys(have).length) { _whSeeded = true; return; }   // already seeded
+    if (have === null) return;                        // call failed — retry next time
     const L = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {});
     const pay = {};
     Object.keys(L || {}).forEach(id => { const q = Math.max(0, Math.floor(+L[id] || 0)); if (q > 0) pay[id] = q; });
-    await _whRpc('wh_seed_resources', { p_payload: pay });
+    const r = await _whRpc('wh_seed_resources', { p_payload: pay });
+    if (!r) return;                                   // call failed — retry next time
+    _whSeeded = true;
+    // 🔔 The cap TRUNCATES. Tell the player rather than letting them find out
+    // when a send is refused against an inventory that still shows the goods.
+    try {
+      const t = r.truncated || {};
+      const ids = Object.keys(t);
+      if (ids.length) {
+        const lost = ids.reduce((n, k) => n + (t[k].lost | 0), 0);
+        showToast('⚠ Player storage caps an opening balance at '
+          + (r.cap_per_resource || 100000).toLocaleString() + ' per resource — '
+          + lost.toLocaleString() + ' units across ' + ids.length
+          + (ids.length === 1 ? ' resource' : ' resources')
+          + ' could not be carried onto its ledger.', 8000);
+      }
+    } catch (er) {}
   } catch (e) {}
 }
 

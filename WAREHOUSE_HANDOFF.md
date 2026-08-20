@@ -226,26 +226,48 @@ warehouse's effective internal rate is therefore **500,000 Cinder per Aza**, and
 reason. `_wh_price_check.mjs` guards the numbers; nothing guards the prose, so
 read it when you change a price.
 
-**Reachability of the Cinder path — measured, reported without editorialising.**
-A bay costs 5,000,000 Cinder or 10 Aza. Against the rest of the game's economy:
+**Reachability of the Cinder path — corrected.** An independent audit found
+three of my inputs wrong and one material comparator missing. Everything below
+is re-verified against HEAD with its file and line.
 
-| Reference point (measured at HEAD) | Value |
-|---|---|
-| Largest single scripted Cinder reward found | 10,000 |
-| Largest campaign-completion reward | 250 |
-| Most expensive existing Cinder sink in the game | 1,400,000 |
-| Node Cinder production per cycle, LV1 → LV10 | 25 → 1,600 |
-| Node daily bank accrual, a healthy owned node | ≈1,700/day |
-| **Days of a healthy node's entire output for ONE bay** | **≈2,940 (≈8 years)** |
-| Bays purchasable with the game's biggest existing sink's worth of Cinder | 0.28 |
-| Cost to buy the Cinder via the Aza exchange (5,000/Aza) | 1,000 Aza = **$1,000** |
-| Cost to buy the bay with Aza directly | 10 Aza = **$10** |
+| Reference point | Value | Source |
+|---|---|---|
+| Largest scripted Cinder reward | **50,000** | `_twChosenAwardTrophy`, `index.html:208132` — I previously said 10,000, which was 5× too low |
+| Most expensive existing Cinder sink | **1,500,000** | Founder Reserve PRN, `index.html:59587` — I said 1,400,000 |
+| Node daily bank accrual | `players×30 + contrib×50 + trade×4 + civ×3 + rebuilt×6 + commerce×2` | `tw_node_cinder_bank`/`tw_node_residency:138` |
+| …small node (≈10 players, 5 contributors) | ≈1,700/day | |
+| …large node (100 players, 20 contributors) | ≈5,300/day | the formula is **unbounded in registered players** |
+| **Days of a node's whole output for ONE 5,000,000 bay** | **≈940 (large) to ≈2,940 (small)** | present as a range; it is highly sensitive to node population |
+| Direct Cinder purchase | **5,000,000 Cinder for $1,150** | `index.html:159028` (+15% bonus) |
+| Same bay bought with Aza | **10 Aza = $10** | |
+| **Real-money spread between the two payment paths** | **115×** | $1,150 vs $10 |
 
-So at these numbers the Cinder option is not merely slower — buying Aza to
-convert into 5,000,000 Cinder costs 100× what buying the bay with Aza costs, and
-no ordinary income source approaches it. **Aza is effectively the only path.**
-That may be exactly the intent at a $10 price point; it is recorded here so it
-is a decision and not a surprise.
+⚠ I also previously cited a "node production LV1→LV10 = 25 → 1,600" ladder as
+income. `getCinderProductionByLevel` does exist (`index.html:211239`) and feeds
+`node.cinderProductionRate` for display, but the **actual** Cinder a node banks
+is the `v_daily` formula above. Quoting the display ladder as income was wrong.
+
+So: the game sells 5,000,000 Cinder for **$1,150**, and sells the same bay for
+**$10** of Aza. That is the honest comparator — 115×, more direct and worse than
+the Aza-exchange figure I gave before. Grinding it is roughly 2.5–8 years of a
+node's entire output. **Aza is effectively the only path.** That may be exactly
+the intent at a $10 price point; it is recorded so it is a decision, not a
+surprise.
+
+**⚠ THE SEED IS THE LARGEST FAUCET IN THE FEATURE — and it was missing from
+this table entirely.** `wh_seed_resources` is one-time PER ACCOUNT, and accounts
+are free. A maximal seed is 11 resources × 100,000 = **1,100,000 units ≈
+1,650,000 Cinder** at the game's own rates, obtainable by a brand-new signup
+with no warehouse, no bay and no prerequisites. Two brakes now exist and both
+should be closed once the real migration lands:
+
+```sql
+update public.wh_flags set seed_enabled = false;              -- kill it now
+update public.wh_flags set seed_cutoff_at = now();            -- or time-box it
+```
+`seed_cutoff_at` defaults to **90 days** from install. No client can change
+either — `wh_flags` is RLS-readable and RLS-unwritable, verified by a real
+`authenticated` role update returning 0 rows.
 
 **Warehouse tiers** — tier → max bays / Aza / Cinder:
 1 Lean-To Depot 4 / — · 2 Sheet-Metal 8 / 25 / 12,500,000 · 3 Concrete Hub 14 / 60 / 30,000,000 ·

@@ -411,7 +411,7 @@
 // answering and players were served stale /assets/ images indefinitely.
 // The manual per-deploy version bump below is the real freshness signal:
 // new bytes → install+activate → old caches reaped.
-const CACHE_VERSION = 'mythic-v120y9-city-trade';
+const CACHE_VERSION = 'mythic-v120z0-trade-draw-and-raid';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

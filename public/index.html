@@ -39546,6 +39546,30 @@ const RESOURCES = [
   { id: 'vegetables',             name: 'Vegetables',              icon: '🌾', color: '#d9c46a' },
   { id: 'wheat',                  name: 'Wheat',                   icon: '🌾', color: '#d9c46a' },
   { id: 'zincOre',                name: 'Zinc Ore',                icon: '🪨', color: '#a8a29a' },
+  /* 🔧 WEAPON SMITH RAWS. Both are additions, not retunes — nothing above moves.
+     ⚠ EVERY RESOURCE NEEDS A PRODUCER. The r12 note above is the reason: wood,
+     stone and cloth spent a release lootable, bankable and counted against the
+     stash cap while being produced by nothing and spendable on nothing, which
+     is strictly worse than not existing. So neither of these ships without a
+     source in the same change:
+       weaponParts — OPS_ECON.weaponsmith yields it (the smith IS the industry)
+       gunOil      — OPS_ECON.oil yields it, which hands the Oil Company a real
+                     downstream customer instead of inventing a third op
+     ⚠ weaponParts IS NOT NEW. It has been a SALVAGE_RES id all along — lootable,
+       bankable, counted by getResourceUnits() and SOLD BY THE INDUSTRIALIST at
+       280 Cinder — while being produced by nothing and spendable on nothing.
+       It is precisely the trap described above, and it was sitting in the file
+       the whole time. Minting a parallel `gunParts` beside it would have been
+       two ids for one thing, which is how a ledger starts lying. Promoting the
+       existing id instead fixes the stranded resource AND gives the smith a
+       second acquisition path (the trader) for free.
+     ⚠ THE COUNT IS NOW 87 (85 + these 2). This said 16 when it was written
+       against a 14-id list; the chain promotion above landed in the same merge
+       and moved the base to 85, so the old figure was wrong the moment both
+       sides met. _resStashFloor() derives from RESOURCE_IDS.length,
+       so the stash ceiling rises on its own and no cap edit is needed. */
+  { id: 'weaponParts',      name: 'Weapon Parts',     icon: '🔫', color: '#b9b2a4' },
+  { id: 'gunOil',           name: 'Gun Oil',          icon: '🛢', color: '#8fa07a' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -43133,8 +43157,41 @@ function getItemImage(itemId) {
 // Unified item lookup — checks Forge custom items first, then falls back to the
 // built-in HELD_ITEMS table. Returns null when nothing matches. Use this any
 // time a piece of code needs item meta + a custom item id might be in play.
+/* 🔩 WEAPON-SMITH PART DEFS — a STATIC catalogue registered by
+   /src/weaponsmith/parts.js at module load, not player data. Parts are
+   ordinary stackable items (condition is a tier in the id), so only the COUNTS
+   live in Profile.itemInventory; the defs live here, shared by every player,
+   and are never written to a save.
+   ⚠ Registered rather than authored here on purpose. This file is 215k lines
+     and CLAUDE.md says a new system belongs in a module — 63 part rows plus
+     donors would be a new top-level catalogue in the legacy file, which is
+     exactly what that rule exists to prevent. */
+const WS_PART_DEFS = {};
+function wsRegisterPartDefs(map) {
+  try {
+    if (!map || typeof map !== 'object') return 0;
+    let n = 0;
+    for (const id in map) { if (map[id] && typeof map[id] === 'object') { WS_PART_DEFS[id] = map[id]; n++; } }
+    return n;
+  } catch (e) { return 0; }
+}
 function getItemById(itemId) {
   if (!itemId || itemId === 'none') return null;
+  /* 🔧 Player-crafted weapons resolve FIRST and by direct key lookup. First
+     because a minted def is the player's own property and nothing published
+     may shadow it; by key because this map is hot — the loadout, the vault
+     grid and the battle stat reader all call getItemById per frame-ish, and
+     the two sources below are linear scans over catalogs that can run to
+     hundreds of entries. */
+  try {
+    const mine = Profile.craftedItems && Profile.craftedItems[itemId];
+    if (mine && typeof mine === 'object') return mine;
+    // 🔩 …then the static part catalogue, also a direct key lookup. Above the
+    // two catalog scans for the same reason: parts are handled in bulk by the
+    // bench and the vault, and a linear scan per part would be the hot path.
+    const prt = WS_PART_DEFS[itemId];
+    if (prt) return prt;
+  } catch (e) {}
   const custom = (Forge.customItems || []).find(x => x && x.id === itemId);
   if (custom) return custom;
   // Players receive admin items/relics via the published Catalog, not the
@@ -45047,6 +45104,17 @@ const Profile = {
   aiHeroes: {},                 // 'cedric' -> { level, xp, kills, statGains, evs, nature } — AI-side persistence
   aiUnits: {},                  // 'goblin' -> { level, xp, kills, statGains, evs, nature } — AI-side persistence
   equipment: {},                // 'h_cedric' or 'u_goblin' -> 'powerBand'
+  /* 🔧 CRAFTED WEAPONS — minted item DEFS, keyed by their generated id
+     ('wsc_<blueprint>_<seq>'). This is the player's own item book and it is
+     the reason a Weapon Smith build needs no change to the vault, the loadout
+     or the battle stat reader: a minted weapon IS an item with an id, so
+     getItemById() resolves it and everything downstream already works.
+     🔴 A crafted id that fails to resolve does NOT error — getItemById returns
+       null and an equipped slot renders SILENTLY EMPTY. That makes an
+       unresolvable id a silent loss of the player's weapon, which is why this
+       map is on the cloud-save whitelist (__craftedItems__) and restored with
+       a MERGE that can never delete a def. See docs/weaponsmith-design.md §2. */
+  craftedItems: {},             // 'wsc_carbine_7' -> { id, name, icon, slotType, stats, ... }
   relicEquipment: {},           // 'h_cedric' -> ['relicId','relicId'] (heroes only, 2 slots)
   // 🪦 Player's currently-equipped tombstone cosmetic. Set when the player
   // buys + equips one from the shop. Overrides the admin's default for
@@ -47228,6 +47296,20 @@ async function cloudSyncProfile() {
       // survives cloud restores / new devices (was localStorage-only + missing here).
       __archonDeck__:      (Profile.archonDeck      && typeof Profile.archonDeck      === 'object') ? Profile.archonDeck      : { cards: [] },
       __socketedGems__:    (Profile.socketedGems    && typeof Profile.socketedGems    === 'object') ? Profile.socketedGems    : {},
+      /* 🔧 WEAPON SMITH — the bench save. Piggybacks this JSONB like every
+         other blob here rather than taking a schema migration.
+         ⚠ It carries a HALF-BUILT WEAPON (`bench`) that the player has already
+           paid resources for. Leaving it out of the whitelist would mean a
+           device change silently destroys parts that were really spent, which
+           is the same class of bug __itemInventory__ was added to fix.
+         ⚠ The rep / contracts / blueprints fields on this blob are a MIRROR of
+           the server and are NOT the record — see src/weaponsmith/state.js.
+           Round-tripping them here is a convenience, never an authority. */
+      __weaponSmith__:     (Profile.weaponSmith    && typeof Profile.weaponSmith    === 'object') ? Profile.weaponSmith    : {},
+      // 🔧 The Weapon Smith LICENCE flag. Cheap to carry and it stops a player
+      // who founded the op on another device seeing a locked bench during the
+      // window before Operations.list has fetched.
+      __weaponSmithUnlocked__: !!Profile.weaponSmithUnlocked,
       // 🎒 HELD-ITEM INVENTORY + EQUIPPED GEAR — purchased medicine / relics /
       // weapons + per-hero equipment. These were localStorage-ONLY: a corrupt
       // or cleared hg_profile, or a new device, lost every bought item FOREVER
@@ -47235,6 +47317,14 @@ async function cloudSyncProfile() {
       // items were the lone casualty). Now on the forge JSONB so a purchase is
       // always backed up to the cloud and can never vanish on a refresh.
       __itemInventory__:   (Profile.itemInventory  && typeof Profile.itemInventory  === 'object') ? Profile.itemInventory  : {},
+      /* 🔧 CRAFTED WEAPON DEFS — the item book behind every 'wsc_' id in the
+         inventory above. __itemInventory__ without this would sync the COUNT
+         of a crafted weapon to a new device while leaving the DEF behind, and
+         getItemById would then return null for it — which does not error, it
+         renders the equipped slot silently empty. The player would see their
+         crafted weapon simply gone, with the inventory still claiming they own
+         one. The two fields are only ever correct together. */
+      __craftedItems__:    (Profile.craftedItems  && typeof Profile.craftedItems  === 'object') ? Profile.craftedItems  : {},
       __equipment__:       (Profile.equipment      && typeof Profile.equipment      === 'object') ? Profile.equipment      : {},
       __relicEquipment__:  (Profile.relicEquipment && typeof Profile.relicEquipment === 'object') ? Profile.relicEquipment : {},
       // 💰 Foundation Tax ledger — this player's permanent 2%-tax record. Rides
@@ -47600,7 +47690,10 @@ function _resetProfileForNewOwner() {
   Profile.heroes = {}; Profile.units = {};
   Profile.aiHeroes = {}; Profile.aiUnits = {};
   Profile.cardCollection = {}; Profile.decks = []; Profile.deckByHero = {};
-  Profile.equipment = {}; Profile.itemInventory = {};
+  // 🔧 craftedItems goes WITH itemInventory, always. The map is only ever
+  // meaningful as defs for ids the inventory holds; leaving it behind on a
+  // wipe would hand the new owner a book of weapons they do not own.
+  Profile.equipment = {}; Profile.itemInventory = {}; Profile.craftedItems = {};
   Profile.gems = 0; Profile.sovereigns = 0;
   Profile.records = { battles: 0, wins: 0, losses: 0 };
   Profile.matchLog = [];
@@ -48483,6 +48576,24 @@ async function cloudFetchProfile() {
           ? Object.values(Profile.socketedGems).flat().filter(g => g && g !== '').length : 0;
         if (_localGemCount === 0) Profile.socketedGems = f.__socketedGems__;
       }
+      /* 🔧 WEAPON SMITH restore — LOCAL WINS whenever this device has a bench
+         in progress. Same policy as the side deck and for a sharper reason:
+         `bench` holds a part-built weapon whose materials are already spent,
+         so letting a stale cloud copy overwrite an in-progress build would
+         destroy resources the player really paid. A cloud blob therefore fills
+         in only when this device has nothing going on.
+         ⚠ Rep / contracts / blueprints on the restored blob stay a MIRROR.
+           Whatever lands here is overwritten by the server on the next sync,
+           and nothing may gate a real-money entitlement on it. */
+      if (f.__weaponSmith__ && typeof f.__weaponSmith__ === 'object') {
+        const _lw = (Profile.weaponSmith && typeof Profile.weaponSmith === 'object') ? Profile.weaponSmith : null;
+        const _localBusy = !!(_lw && (_lw.bench || (Array.isArray(_lw.log) && _lw.log.length)));
+        if (!_localBusy) Profile.weaponSmith = f.__weaponSmith__;
+      }
+      // 🔧 Licence flag — OR'd, never overwritten down. Founding the op is a
+      // one-way door, so a cloud copy that predates it must not re-lock the
+      // bench on a device that already knows better.
+      if (f.__weaponSmithUnlocked__ === true) Profile.weaponSmithUnlocked = true;
       // 🎒 HELD-ITEM INVENTORY restore — MERGED with MAX so a stale cloud copy
       // can NEVER wipe an item bought on this device the cloud hasn't synced
       // yet (identical policy to __cardCollection__). This is the cloud
@@ -48494,6 +48605,27 @@ async function cloudFetchProfile() {
         for (const id in _ii) {
           const cv = _ii[id] | 0, lv = Profile.itemInventory[id] | 0;
           if (cv > lv) Profile.itemInventory[id] = cv;
+        }
+      }
+      /* 🔧 CRAFTED WEAPON DEFS restore — a pure ADDITIVE merge, and never a
+         replace. Two reasons it can only ever add:
+         · A def is immutable once minted. Stats are fixed at mint time (§6c:
+           condition never decays on a finished weapon), so a local copy and a
+           cloud copy of the same id are the same object and there is nothing
+           to reconcile — last-writer-wins would be churn with no upside.
+         · Dropping a def is not a cosmetic loss. getItemById returning null
+           renders an equipped slot SILENTLY EMPTY rather than erroring, so a
+           def deleted here reads to the player as "my crafted weapon vanished"
+           while __itemInventory__ still says they own one. Additive-only makes
+           that unreachable: a def that exists on either side survives.
+         Runs immediately after the inventory merge on purpose — the counts and
+         the defs they point at must land in the same pass. */
+      if (f.__craftedItems__ && typeof f.__craftedItems__ === 'object') {
+        if (!Profile.craftedItems || typeof Profile.craftedItems !== 'object') Profile.craftedItems = {};
+        const _ci = f.__craftedItems__;
+        for (const id in _ci) {
+          const def = _ci[id];
+          if (!Profile.craftedItems[id] && def && typeof def === 'object') Profile.craftedItems[id] = def;
         }
       }
       // 🛡 Equipped gear / relics — per-hero merge (cloud value wins per known
@@ -66573,6 +66705,69 @@ function refundSovereigns(amount) {
     .then(j => { _sovAdopt(j); return !!(j && j.ok); })
     .catch(() => false);
 }
+/* 🔧 BUY A WEAPON-SMITH BLUEPRINT WITH AZA — the real-money path, kept HERE
+   rather than in /src/weaponsmith on purpose.
+
+   🔴 THE CHARGE AND THE REFUND MUST NOT BE SEPARABLE. Every failure below has
+      to unwind the Aza, and _sovLastCharge (the receipt this refund needs) is
+      module-local to this file. Exposing a raw "charge" to a module without
+      the matching "refund" would be handing out the half of the pair that
+      takes money. So the module calls THIS, once, and either gets a blueprint
+      or gets its Aza back.
+
+   🔴 WHY THE LEDGER ID MATTERS. spendSovereigns() debits LOCALLY and returns
+      true immediately — the real sov_charge is still in flight, and it is what
+      hands back the ledger id. ws_grant_blueprint refuses any Aza grant whose
+      receipt it cannot verify, so the id is not optional bookkeeping, it is
+      the thing that makes the purchase real. A device change must not be able
+      to lose this, which is exactly why the entitlement is a server row and
+      NOT a local flag — see the Oil Sim's _osimState.blueprints for the
+      pattern this deliberately does not copy.
+
+   Order: charge → await the receipt → grant → refund on any failure. */
+async function wsBuyBlueprintAza(blueprintId, price, label) {
+  const amt = Math.max(0, Math.floor(price || 0));
+  if (!blueprintId || amt <= 0) return { ok: false, error: 'bad_request' };
+  if (!(Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) {
+    return { ok: false, error: 'offline' };
+  }
+  if ((Profile.sovereigns | 0) < amt) return { ok: false, error: 'insufficient' };
+
+  if (!spendSovereigns(amt, 'Weapon Smith blueprint: ' + (label || blueprintId))) {
+    return { ok: false, error: 'insufficient' };
+  }
+  // Capture the pending receipt WITHOUT consuming it — refundSovereigns needs
+  // it intact if anything below fails.
+  const pending = _sovLastCharge;
+  let ledgerId = null;
+  try { ledgerId = pending ? await pending.promise : null; } catch (e) { ledgerId = null; }
+
+  if (!ledgerId) {
+    // The server charge never landed (offline, RPC missing, rejected). Put the
+    // local debit back; there is nothing server-side to reverse.
+    try { refundSovereigns(amt); } catch (e) {}
+    return { ok: false, error: 'charge_failed' };
+  }
+
+  let g = null;
+  try {
+    const r = await Cloud.client.rpc('ws_grant_blueprint', {
+      p_blueprint_id: String(blueprintId), p_source: 'aza', p_ledger_id: ledgerId,
+    });
+    g = (r && !r.error) ? r.data : null;
+  } catch (e) { g = null; }
+
+  if (!g || g.ok !== true) {
+    // 🔴 CHARGED BUT NOT GRANTED — the one outcome that must never stand.
+    try { refundSovereigns(amt); } catch (e) {}
+    return { ok: false, error: (g && g.error) || 'grant_failed', refunded: true };
+  }
+
+  try { saveProfile(); } catch (e) {}
+  return { ok: true, blueprintId: blueprintId, already: !!g.already };
+}
+try { window.__mg = window.__mg || {}; window.__mg.wsBuyBlueprintAza = wsBuyBlueprintAza; } catch (e) {}
+
 /* The ONLY way gameplay creates Aza. The client says what happened; the server
    decides whether it pays, how much, and whether the player has had too many
    lately. Returns the granted amount (0 is a legitimate outcome for a chest).
@@ -81985,7 +82180,11 @@ const NODE_ACCRUAL_CAP_H = 24 * 7;
 // supply squeeze is felt as reduced output rather than a dead business.
 const OPS_ECON = {
   mining:       { startup: 400000, ratePerWorkerHr: 900,  salaryPerWorkerHr: 220, maxWorkers: 12, yields: { metal: 2.2 } },
-  oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10, yields: { fuel: 2.6 } },
+  // 🛢 The gunOil line is ADDITIVE — the fuel rate is untouched. Refining fuel
+  // throws off a lubricant cut, and the Weapon Smith's cleaning station is the
+  // only thing that consumes it, so this is what stops gunOil being a resource
+  // with no producer (see the RESOURCES note).
+  oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10, yields: { fuel: 2.6, gunOil: 0.4 } },
   /* 🏗 CONSTRUCTION CO. — startup 0, and that zero is a product decision, not a
      placeholder. City building timers put every Cinder earner (gas station
      1h53, arena 3h23) above the free Municipal Works ceiling, so the Co. is the
@@ -82062,6 +82261,17 @@ const OPS_ECON = {
      already has. */
   bus:          { startup: 2000000,  ratePerWorkerHr: 1400, salaryPerWorkerHr: 520, maxWorkers: 16, yields: {}, inputs: { fuel: 0.9 } },
   rail:         { startup: 10000000, ratePerWorkerHr: 3600, salaryPerWorkerHr: 900, maxWorkers: 20, yields: {}, inputs: { fuel: 1.2, metal: 0.4 } },
+  /* 🔧 WEAPON SMITH — the licence to run a BENCH, and the industry that feeds
+     it. Same two-jobs-on-purpose shape as genelab: owning it unlocks the
+     assembly bench, and staffing it is the only industrial source of weaponParts.
+     A licence with no supply sells a locked door; a supply with no licence
+     leaves the bench free. Sized between genelab (550k) and research (700k) —
+     it gates a whole crafting loop, not a convenience.
+     ⚠ THE YIELD AND THE PART COSTS ARE ONE DIAL IN TWO PLACES, exactly like
+       genelab's dna line. Fully staffed this is 8 x 1.5 = 12 weaponParts/hr, so a
+       mid-tier build should cost roughly one shift. Retune either number and
+       the other has to move with it. */
+  weaponsmith:  { startup: 650000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 8,  yields: { weaponParts: 1.5 }, inputs: { metal: 1.4, fuel: 0.3 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -82307,6 +82517,7 @@ const OP_LABELS = {
   // no label here is buyable but shows up in the shop as "bus".
   bus: 'Bus Company',
   rail: 'Rail Operator',
+  weaponsmith: 'Weapon Smith',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -82644,6 +82855,21 @@ function _opAfterFound(opId) {
       }
     } catch (_) {}
   }
+  /* 🔧 Weapon Smith → grants the per-player LICENCE to run a bench. Deliberately
+     the flag-only shape (dojo / cardshop) rather than the state-blob shape
+     (fishing / cars / oil / gas): Profile.weaponSmith and its bench state do
+     not exist yet, and seeding a blob from here before the module that owns
+     its shape is written is how the two drift apart. The blob arrives with the
+     module; this branch only opens the door. */
+  if (opId === 'weaponsmith') {
+    try {
+      if (!Profile.weaponSmithUnlocked) {
+        Profile.weaponSmithUnlocked = true;
+        try { saveProfile && saveProfile(); } catch (_) {}
+        showToast('🔧 WEAPON SMITH founded! The bench is yours — open it from Just Business → My Companies.', 7600);
+      }
+    } catch (_) {}
+  }
   // 🥋 Dojo → grants the per-player LICENCE to train and resell moves. It is
   // the gate on the Tutor Shop (wholesale) AND on opening a dojo storefront.
   if (opId === 'dojo') {
@@ -82679,6 +82905,24 @@ function _geneLabOwnsLicense() {
   } catch (e) {}
   return false;
 }
+/* 🔧 True once the player has founded the Weapon Smith operation (or is admin).
+   Deliberately the same shape as _dojoOwnsLicense / _geneLabOwnsLicense so
+   there is one recognisable way to ask "does this player hold that licence".
+   ⚠ Operations.list is the CLOUD-BACKED list, so the licence follows the
+     ACCOUNT rather than the device. Profile.weaponSmithUnlocked is the local
+     flag _opAfterFound sets and is accepted too, matching the other three —
+     but it is a convenience, never the source of truth. Nothing that costs
+     real money may ever be gated on it alone (see the Aza blueprint rule in
+     docs/weaponsmith-design.md §6.5). */
+function _wsOwnsLicense() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return true;
+    if (Profile && Profile.weaponSmithUnlocked) return true;
+    if (typeof Operations !== 'undefined' && Operations.list && Operations.list.some(x => x && x.op_type === 'weaponsmith')) return true;
+  } catch (e) {}
+  return false;
+}
+try { window.__mg = window.__mg || {}; window.__mg.wsOwnsLicense = _wsOwnsLicense; } catch (e) {}
 // 🧹 CARD SHOP RESET (v118t1) — the storefront economy was wiped clean server
 // side (every shop, listing and sale removed) so everyone starts fresh. The
 // LICENCE lives only on the device (Profile.cardShopUnlocked is not cloud
@@ -84285,6 +84529,23 @@ function _jbHandleAction(a) {
           if (typeof render === 'function') render();
         } catch (e) {}
       }, 360);
+      return;
+    }
+    /* 🔧 The Weapon Smith bench — fired by the sidebar "Weapon Smith" entry.
+       Unlike the other four this does NOT switch App.screen: the bench is a
+       module-owned overlay (src/weaponsmith/render.js) that mounts above
+       whatever is showing and removes itself on close, so the player lands
+       back in Just Business rather than at the title. Same treatment the
+       Dwelling gets, and the reason is the same — the module owns its own
+       chrome, per CLAUDE.md.
+       ⚠ Guarded on the function existing. The module is a separate <script
+         type="module"> and a cache miss on it must degrade to a toast, never
+         a broken sidebar entry. */
+    if (a.kind === 'openWeaponSmith') {
+      try {
+        if (typeof window.openWeaponSmithBench === 'function') window.openWeaponSmithBench();
+        else showToast('🔧 The bench is still loading — try again in a moment.', 3600);
+      } catch (e) {}
       return;
     }
     // ⛽ Black River Petroleum — fired by the sidebar "Oil Company" entry.
@@ -166620,10 +166881,85 @@ function _bindConvoyShopHandlers() {
     };
   });
 }
+/* 🔧 Blueprint-shop bindings. The purchase itself is one call into the module,
+   which calls back into wsBuyBlueprintAza — charge and refund together.
+   ⚠ THE BUTTON IS DISABLED ON CLICK AND STAYS DISABLED until the round-trip
+     finishes. This is real money and the flow is asynchronous: without it, two
+     fast clicks are two charges, and only one of them can result in a
+     blueprint (the second grant returns already:true) — so the player would
+     pay twice for one frame. */
+function _bindBlueprintShopHandlers() {
+  document.querySelectorAll('[data-ws-buy]').forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.getAttribute('data-ws-buy');
+      const ws = (window.__mg && window.__mg.weaponSmith) || null;
+      if (!ws || typeof ws.storeBuy !== 'function') { showToast('🔧 The bench is still loading — try again in a moment.', 3600); return; }
+      btn.disabled = true;
+      const was = btn.innerHTML;
+      btn.innerHTML = '…';
+      let r = null;
+      try { r = await ws.storeBuy(id); } catch (e) { r = null; }
+      if (r && r.ok) { render(); return; }        // repaint shows it as Owned
+      // Failed: say why, and re-enable so a transient failure can be retried.
+      showToast('Ⓐ ' + ((r && r.reason) || 'The purchase did not complete.'), 6000);
+      btn.innerHTML = was;
+      btn.disabled = false;
+    };
+  });
+}
+
+/* 🔧 THE BLUEPRINT SHOP — Weapon Smith frames, priced in Aza.
+   ⚠ REAL MONEY. Everything about the purchase itself lives in
+     wsBuyBlueprintAza (charge + refund together) and in
+     /src/weaponsmith/store.js (the copy and the failure sentences). This
+     builder only paints; it must never charge.
+   ⚠ Reads the module through window.__mg.weaponSmith, which is absent until
+     the module loads. A missing module renders an honest "loading" panel
+     rather than an empty tab. */
+function _buildBlueprintShopBody(sovBal) {
+  const ws = (typeof window !== 'undefined' && window.__mg && window.__mg.weaponSmith) || null;
+  if (!ws || typeof ws.storeList !== 'function') {
+    return '<div class="vm-tab-body-inner" style="padding:1.2rem;text-align:center;color:#a89880">' +
+           '🔧 The blueprint catalogue is still loading — reopen this tab in a moment.</div>';
+  }
+  let rows = [];
+  try { rows = ws.storeList() || []; } catch (e) { rows = []; }
+  const owns = !!(typeof _wsOwnsLicense === 'function' && _wsOwnsLicense());
+
+  const gate = owns ? '' :
+    '<div style="background:rgba(255,209,102,0.10);border:1px solid rgba(255,209,102,0.35);border-radius:6px;padding:0.7rem 0.9rem;margin-bottom:0.9rem;font-size:0.85rem">' +
+    '⚠ You do not run a <b>Weapon Smith</b> yet. Blueprints are still yours to keep once bought, but you will need the operation (Just Business) before you can build one.</div>';
+
+  const cards = rows.map(function (r) {
+    const price = r.price | 0;
+    const can = !r.owned && sovBal >= price;
+    return '<div class="shop-item-card" style="display:flex;align-items:center;gap:0.9rem;padding:0.8rem;margin-bottom:0.6rem;' +
+           'background:rgba(24,20,16,0.85);border:1px solid rgba(212,175,55,0.28);border-radius:7px">' +
+           '<div style="font-size:2rem">' + escapeHtml(r.icon || '🔧') + '</div>' +
+           '<div style="flex:1"><div style="font-weight:700;color:#ffefb8">' + escapeHtml(r.name) + '</div>' +
+           '<div class="small-text ink-dim">' + escapeHtml(r.blurb || '') + '</div>' +
+           '<div class="small-text" style="color:#8a7f6a;margin-top:0.2rem">Tier ' + (r.tier | 0) +
+           ' · ' + (r.budget | 0) + '-point frame · also findable as a schematic</div></div>' +
+           (r.owned
+             ? '<div style="color:#9fe8b0;font-weight:700;font-size:0.85rem">✓ Owned</div>'
+             : '<button class="btn-primary vmx-price aza" data-ws-buy="' + escapeHtml(r.id) + '"' +
+               (can ? '' : ' disabled') + '>' + price + ' <span class="aza-icon"></span></button>') +
+           '</div>';
+  }).join('') || '<div class="small-text ink-dim">No blueprints for sale.</div>';
+
+  return '<div class="vm-tab-body-inner">' + gate +
+    '<div class="small-text ink-dim" style="margin-bottom:0.9rem">' +
+    'Blueprints unlock <b>frames</b> at the Weapon Smith bench. ' +
+    '<b>A bought frame is not a stronger weapon</b> — every frame is capped to the same stat budget as its shop-bought equivalent, ' +
+    'so Aza buys <i>which shapes you can build</i>, never how strong they are. Each of these also drops in the field as a schematic ' +
+    'and unlocks through shop reputation.</div>' + cards + '</div>';
+}
+
 function renderVendorMarket() {
   const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'
             : (App.vendorMarketTab === 'starter')    ? 'starter'
             : (App.vendorMarketTab === 'convoy')     ? 'convoy'
+            : (App.vendorMarketTab === 'blueprints') ? 'blueprints'
             : 'packs';
   const gems = Profile.gems || 0;
   const sovBal = Profile.sovereigns || 0;
@@ -166633,6 +166969,7 @@ function renderVendorMarket() {
   const sovBody     = _buildSovereignsStoreBody(sovBal);
   const starterBody = _buildStarterDeckShopBody(gems, sovBal);
   const convoyBody  = _buildConvoyShopBody(sovBal);
+  const bpBody      = _buildBlueprintShopBody(sovBal);
 
   root.innerHTML = `
     <div class="campaign-page vendor-market-page">
@@ -166688,10 +167025,14 @@ function renderVendorMarket() {
           🚚 Convoy Rigs
           <span class="vm-tab-sub">Raise your daily sends</span>
         </button>
+        <button class="vm-tab ${tab === 'blueprints' ? 'vm-tab-active' : ''}" data-vm-tab="blueprints">
+          🔧 Blueprints
+          <span class="vm-tab-sub">Weapon Smith frames</span>
+        </button>
       </div>
 
       <div class="vm-tab-body">
-        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : tab === 'convoy' ? convoyBody : starterBody}
+        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : tab === 'convoy' ? convoyBody : tab === 'blueprints' ? bpBody : starterBody}
       </div>
 
       ${App._packReveal ? renderPackRevealModal() : ''}
@@ -166716,6 +167057,7 @@ function renderVendorMarket() {
   if (tab === 'packs')           _bindPackShopHandlers();
   else if (tab === 'sovereigns') _bindSovereignsStoreHandlers();
   else if (tab === 'convoy')     _bindConvoyShopHandlers();
+  else if (tab === 'blueprints') _bindBlueprintShopHandlers();
   else                           _bindStarterDeckShopHandlers();
 }
 // ----- 🪦 Tombstone cosmetics shop — admin-listed grave markers. Buying one
@@ -192010,7 +192352,7 @@ function renderDataPanel() {
     });
     if (!ok) return;
     Profile.heroes = {}; Profile.units = {}; Profile.aiHeroes = {}; Profile.aiUnits = {};
-    Profile.equipment = {}; Profile.itemInventory = {}; Profile.deckByHero = {}; Profile.decks = [];
+    Profile.equipment = {}; Profile.itemInventory = {}; Profile.craftedItems = {}; Profile.deckByHero = {}; Profile.decks = [];
     Profile.cardCollection = {}; Profile.records = { wins: 0, losses: 0, battles: 0 };
     saveProfile(); showToast('Profile wiped'); render();
   };
@@ -195511,6 +195853,11 @@ const VAULT_GRID_DEFAULTS = {
   backpack:        { w: 3, h: 2 },
   consumable:      { w: 1, h: 1 },
   relic:           { w: 2, h: 2 },
+  /* 🔩 Weapon parts fall back to 1x1, but nearly every real part overrides it
+     with its own w/h from the catalogue (getItemGridDims prefers it.w/it.h) —
+     a receiver is 3x2 and a trigger is 1x1, so grid space is a genuine
+     constraint on how many donors you can tear down before tidying up. */
+  weaponPart:      { w: 1, h: 1 },
 };
 
 function getItemGridDims(itemId) {
@@ -213336,6 +213683,188 @@ try {
   };
 } catch (e) {}
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔧 WEAPON SMITH BRIDGE — the ONE seam between this file and /src/weaponsmith.
+   Same contract, and same reason, as MythicBridge directly above: Profile /
+   Cloud / App / Forge are top-level `const` here, which makes them global
+   LEXICAL bindings and NOT properties of window, so an ES module cannot see
+   them. `window.Profile` is undefined even though `const Profile` is right
+   there. Everything the bench needs is handed over explicitly, below.
+
+   ⚠ Every accessor is a FUNCTION, never a snapshot — Profile.gems and the
+     salvage ledger both move constantly.
+   ⚠ Nothing here writes a balance directly. Cinder goes through spendGems /
+     addGems and resources through spendResources / addRes, because those are
+     the only places that enforce the stash cap and persist the change.
+   ═══════════════════════════════════════════════════════════════════════════ */
+try {
+  window.WeaponSmithBridge = {
+    /* 📦 The persisted blob, created empty on first touch. The SHAPE of it is
+       owned by src/weaponsmith/state.js, deliberately — this file seeding
+       fields it does not own is how two definitions of one save drift apart.
+       Handed back live so the module's ensure-pass can default in place. */
+    getWeaponSmith: () => {
+      try {
+        if (!Profile.weaponSmith || typeof Profile.weaponSmith !== 'object') Profile.weaponSmith = {};
+        return Profile.weaponSmith;
+      } catch (e) { return null; }
+    },
+    // 🔧 The licence. One recognisable way to ask, shared with the rest of the
+    // app — see _wsOwnsLicense's own note about the local flag.
+    ownsWeaponSmith: () => { try { return !!_wsOwnsLicense(); } catch (e) { return false; } },
+    isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+    saveProfile: () => { try { saveProfile(); } catch (e) {} },
+    toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+    confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
+    render: () => { try { render(); } catch (e) {} },
+    // 🔥 Cinder.
+    gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+    spendGems: (n) => { try { return !!spendGems(n); } catch (e) { return false; } },
+    addGems: (n) => { try { addGems(n); } catch (e) {} },
+    /* 🧰 Resources. spendRes is all-or-nothing (canAffordResources gates it),
+       which is what stops a half-paid build consuming metal and then failing
+       on fuel. addRes enforces the stash cap and can therefore take LESS than
+       asked — a refund path must use the refund helper, not this. */
+    getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+    addRes: (id, n) => { try { addRes(id, n); } catch (e) {} },
+    spendRes: (cost) => { try { return !!spendResources(cost); } catch (e) { return false; } },
+    /* 📈 The single producer hook every other production site already uses
+       (ops, nodes, packs). Pushing output through it is what softens the
+       market price — bumpMarketPriceDown does not exist, and reaching for it
+       is a mistake this codebase has already made once. */
+    produce: (map) => { try { if (typeof cxProduce === 'function' && map) cxProduce(map, 'weaponsmith'); } catch (e) {} },
+    /* ☁ Cloud. BOTH return null when offline or signed out, and the module has
+       to handle that — CLAUDE.md: the app must still work before the tables
+       exist, degrading to empty rather than breaking. */
+    signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn && Cloud && Cloud.client); } catch (e) { return false; } },
+    userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+    rpc: async (name, args) => {
+      try {
+        if (!Cloud || !Cloud.client || !name) return null;
+        return await Cloud.client.rpc(name, args || {});
+      } catch (e) { return null; }
+    },
+    table: (name) => {
+      try { return (Cloud && Cloud.client && name) ? Cloud.client.from(name) : null; } catch (e) { return null; }
+    },
+    /* 🔧 The player's crafted item book, live. getItemById() resolves this map
+       FIRST, which is the whole trick behind the feature: a minted weapon is
+       an ordinary item id, so the vault, the loadout and the battle stat
+       reader need no changes at all. */
+    craftedBook: () => {
+      try {
+        if (!Profile.craftedItems || typeof Profile.craftedItems !== 'object') Profile.craftedItems = {};
+        return Profile.craftedItems;
+      } catch (e) { return null; }
+    },
+    /* Put a minted weapon into the ordinary inventory at qty 1.
+       ⚠ WRITES DIRECTLY rather than through grantItemAtomic, on purpose. That
+         path calls the inv_grant RPC, which validates against the server's
+         item catalog — and a 'wsc_' id exists only in this player's own book,
+         so it would be rejected. craftItem() writes directly for the same
+         reason. The cloud backstop for a crafted weapon is __craftedItems__ +
+         __itemInventory__ on the forge JSONB, not inv_grant.
+       ⚠ Qty is deliberately 1 and not additive: every mint generates a fresh
+         id, so a second copy is a different weapon, never a stack of two. */
+    grantCrafted: (itemId) => {
+      try {
+        if (!itemId) return false;
+        if (!Profile.itemInventory || typeof Profile.itemInventory !== 'object') Profile.itemInventory = {};
+        Profile.itemInventory[itemId] = 1;
+        try { if (typeof recordItemOwned === 'function') recordItemOwned(itemId); } catch (e) {}
+        // Stow it on the vault grid so it is visible where every other item is.
+        try { if (typeof syncVaultWithInventory === 'function') syncVaultWithInventory(); } catch (e) {}
+        try { saveProfile(); } catch (e) {}
+        return true;
+      } catch (e) { return false; }
+    },
+    /* 🎒 Equip to a UNIT. Units are still on the legacy single-slot map
+       (Profile.equipment['u_goblin'] = itemId), which is exactly why the spec
+       does units before heroes: a minted weapon is an item id, so this works
+       with no new equip code whatsoever. Heroes get heroLoadouts parity in
+       phase 11. */
+    equipToUnit: (unitId, itemId) => {
+      try {
+        if (!unitId || !itemId) return false;
+        if (!Profile.equipment || typeof Profile.equipment !== 'object') Profile.equipment = {};
+        if (!getItemById(itemId)) return false;   // never point a slot at an id that will not resolve
+        Profile.equipment['u_' + unitId] = itemId;
+        try { saveProfile(); } catch (e) {}
+        return true;
+      } catch (e) { return false; }
+    },
+    getItem: (itemId) => { try { return getItemById(itemId) || null; } catch (e) { return null; } },
+    /* 🔩 Hand the module's static part catalogue to getItemById. Called once at
+       module load — see WS_PART_DEFS for why the defs are registered rather
+       than authored in this file. */
+    registerItemDefs: (map) => { try { return wsRegisterPartDefs(map); } catch (e) { return 0; } },
+    itemCount: (itemId) => { try { return (Profile.itemInventory && Profile.itemInventory[itemId]) | 0; } catch (e) { return 0; } },
+    /* 🔩 Move a stackable item's count. Parts STACK, so unlike grantCrafted
+       this is additive and clamps at zero.
+       ⚠ Returns false rather than clamping when a removal would go negative.
+         Every caller here unwinds a multi-step operation (clean = take one,
+         give one; strip = take the donor, give the parts), and a silent clamp
+         would turn a failed step into free items. */
+    moveItem: (itemId, delta) => {
+      try {
+        if (!itemId || !delta) return false;
+        if (!Profile.itemInventory || typeof Profile.itemInventory !== 'object') Profile.itemInventory = {};
+        const have = Profile.itemInventory[itemId] | 0;
+        const next = have + (delta | 0);
+        if (next < 0) return false;
+        if (next === 0) delete Profile.itemInventory[itemId];
+        else Profile.itemInventory[itemId] = next;
+        if (delta > 0) { try { if (typeof recordItemOwned === 'function') recordItemOwned(itemId); } catch (e) {} }
+        try { if (typeof syncVaultWithInventory === 'function') syncVaultWithInventory(); } catch (e) {}
+        try { saveProfile(); } catch (e) {}
+        return true;
+      } catch (e) { return false; }
+    },
+    /* ↩️ UNWIND ONLY. _refundRes ignores the stash cap, which is right for
+       undoing a deduction this call stack just made and catastrophically wrong
+       for anything that creates units — see the long warning on _refundRes
+       itself. The single caller is the cleaning station's failure path. */
+    refundRes: (cost) => {
+      try { for (const id in (cost || {})) _refundRes(id, cost[id]); } catch (e) {}
+    },
+    /* 🦸 HEROES — parity with units, which phase 3 got for free.
+       A minted weapon carries slotType from its blueprint, and itemSlotFit
+       reads exactly that, so setHeroLoadoutSlot already accepts a crafted
+       weapon with no changes at all. This is the seam, not a new code path:
+       it validates through the same function every other equip goes through,
+       including the ownership check against itemInventory. */
+    heroes: () => {
+      try {
+        return Object.keys(Profile.heroes || {}).map((id) => {
+          const lo = (typeof getHeroLoadout === 'function') ? getHeroLoadout(id) : {};
+          const h = (typeof HEROES !== 'undefined' && Array.isArray(HEROES)) ? HEROES.find((x) => x && x.id === id) : null;
+          return { id: id, name: (h && h.name) || id,
+                   primeWeapon: lo.primeWeapon || null, secondaryWeapon: lo.secondaryWeapon || null };
+        });
+      } catch (e) { return []; }
+    },
+    equipToHero: (heroId, slot, itemId) => {
+      try {
+        if (!heroId || !slot || !itemId) return false;
+        if (!getItemById(itemId)) return false;    // never point a slot at an id that will not resolve
+        setHeroLoadoutSlot(heroId, slot, itemId);
+        const lo = getHeroLoadout(heroId);
+        return (slot === 'primeWeapon' ? lo.primeWeapon : lo.secondaryWeapon) === itemId;
+      } catch (e) { return false; }
+    },
+    // Ⓐ Aza balance, read-only. There is deliberately no spendAza here — see
+    // wsBuyBlueprintAza for why the charge is not handed out on its own.
+    aza: () => { try { return Profile.sovereigns | 0; } catch (e) { return 0; } },
+    /* Ⓐ The whole real-money purchase, charge and refund together. The module
+       gets a blueprint or gets the player's Aza back; it is not given the
+       ability to take money without the unwind. */
+    buyBlueprintAza: async (bpId, price, label) => {
+      try { return await wsBuyBlueprintAza(bpId, price, label); }
+      catch (e) { return { ok: false, error: 'threw' }; }
+    },
+  };
+} catch (e) {}
+
 /* 💰 The city's economy accessors. Identical to the camp ones EXCEPT when a
    hired mayor is running someone else's city, where they read and write the
    OWNER's ledger instead. The city calls these; the camp keeps using getRes /
@@ -230457,6 +230986,13 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- 🔧 WEAPON SMITH — operation + assembly bench. See docs/weaponsmith-design.md.
+     Wires nothing into gameplay yet: phase 2 is the bridge and the save shape,
+     verified in isolation before there is a mini-game riding on them.
+     ⚠ window.WeaponSmithBridge is installed in ordinary source order ABOVE, in
+       the main script. This tag must stay below it.
+     Bump ?v= on every change — the service worker caches these like any asset. -->
+<script type="module" src="src/weaponsmith/index.js?v=ws-3d4"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

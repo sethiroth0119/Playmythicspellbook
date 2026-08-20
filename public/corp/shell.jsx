@@ -116,6 +116,12 @@ const COMPANY_PAGES = {
   cars:    { label: 'Prince Portfolios',      ico: '🚗', action: 'openPrincePortfolios' },
   oil:     { label: 'Black River Petroleum',  ico: '⛽', action: 'openBlackRiver' },
   gas:     { label: 'Ethos Fuel Command',     ico: '⛽', action: 'openFuelCommand' },
+  /* 🔧 The bench. Keyed on the OPS_ECON op id ('weaponsmith'), so the entry
+     appears only once the operation is actually founded — which is the same
+     gate the licence uses, rather than a second copy of that rule living here.
+     'openWeaponSmith' is already handled by index.html; this is the emitter it
+     was waiting on. */
+  weaponsmith: { label: 'The Weapon Smith',   ico: '🔧', action: 'openWeaponSmith' },
 };
 
 function Sidebar({ route, setRoute, mailCount, blackCount }) {

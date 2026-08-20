@@ -218,7 +218,7 @@ export function scoreBuild(bench) {
 
 /* Finish. The bench hands the mint a quality number and an allocation built
    from the parts; the mint applies the budget rule and can refuse. */
-export function finishBuild() {
+export async function finishBuild() {
   if (!ready()) return { ok: false, reason: 'Bench unavailable.' };
   const s = ensureWeaponSmith();
   if (!s.bench) return { ok: false, reason: 'No build on the bench.' };
@@ -240,7 +240,7 @@ export function finishBuild() {
   for (const k in alloc) if (alloc[k] <= 0) delete alloc[k];
 
   const parts = Object.keys(s.bench.seated).map((sl) => s.bench.seated[sl].partId);
-  const def = mintFromBench(s.bench.blueprintId, alloc, sc.quality, parts);
+  const def = await mintFromBench(s.bench.blueprintId, alloc, sc.quality, parts);
   if (!def) return { ok: false, reason: 'The build did not pass proof.' };
 
   s.bench = null;

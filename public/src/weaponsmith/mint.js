@@ -24,6 +24,7 @@
 import { ensureWeaponSmith, wsLog, wsSave } from './state.js';
 import { bridge, ready } from './ws.bridge.js';
 import { BLUEPRINTS, blueprint } from './blueprints.js';
+import { mintServer } from './server.js';
 
 export const QUALITY_MIN = 0.60;   // a barely-working build still functions
 export const QUALITY_MAX = 1.00;   // 🔴 a perfect build TIES the shop weapon. Never above.
@@ -150,11 +151,62 @@ export function mintLocal(blueprintId, allocation, qualityFactor, parts) {
   const bp = blueprint(blueprintId);
   if (!bp) return null;
 
-  const s = ensureWeaponSmith();
   const id = _nextId(bp.id);
   const def = composeDef(id, bp, allocation, qualityFactor, parts);
   if (!def) return null;                       // over budget — refused, see composeDef
+  return _stow(id, def);
+}
 
+
+/* The bench's finishing call — and the phase-6 split the two names existed for.
+
+   Tries the SERVER first. What comes back is authoritative: the server
+   recomputed the stats from the blueprint budget and clamped them, so the def
+   we store is what the weapon actually IS, and it is tradeable.
+
+   Falls back to the local mint when offline or when the tables are not there
+   yet, which CLAUDE.md requires. A local mint keeps `local: true` and must
+   never reach the market — nothing verified it.
+
+   ⚠ ASYNC, where mintLocal is not. The caller has to await it; a bench that
+     fired and forgot would clear itself before knowing whether the weapon
+     exists. */
+export async function mintFromBench(blueprintId, allocation, qualityFactor, parts) {
+  if (!ready()) return null;
+  const bp = blueprint(blueprintId);
+  if (!bp) return null;
+
+  const id = _nextId(bp.id);
+  const q = Math.min(QUALITY_MAX, Math.max(QUALITY_MIN, Number(qualityFactor) || 0));
+
+  let srv = null;
+  try { srv = await mintServer(id, bp.id, parts || [], Math.round(q * 100), allocation || {}); } catch (e) { srv = null; }
+
+  if (srv) {
+    /* Compose from the SERVER's numbers, not ours. If the two ever disagree
+       the server is right by definition, and silently preferring the local
+       arithmetic is exactly how a clamp gets bypassed. */
+    const def = composeDef(id, bp, allocation, srv.quality / 100, parts);
+    if (!def) return null;
+    def.stats = srv.stats || {};
+    def.weapon = Object.assign({}, srv.weapon || bp.weapon || {});
+    def.desc = _describe(def.stats, bp);
+    def.crafted.quality = srv.quality | 0;
+    def.crafted.serverId = srv.id || null;
+    delete def.local;                         // verified — this one may be sold
+    return _stow(id, def);
+  }
+
+  // Offline path. Unverified, flagged, untradeable.
+  return mintLocal(blueprintId, allocation, qualityFactor, parts);
+}
+
+/* Put a finished def into the player's book AND a count into the inventory.
+   Both, always — the vault prunes placements whose itemId the inventory does
+   not hold, and the loadout resolves the def through getItemById, so either
+   half alone is an invisible weapon. Shared by both mint paths so they cannot
+   drift on this. */
+function _stow(id, def) {
   const b = bridge();
   try {
     const book = b.craftedBook();
@@ -162,20 +214,9 @@ export function mintLocal(blueprintId, allocation, qualityFactor, parts) {
     book[id] = def;
     if (!b.grantCrafted(id)) { delete book[id]; return null; }
   } catch (e) { return null; }
-
+  const s = ensureWeaponSmith();
   s.built = (s.built | 0) + 1;
-  wsLog('build', 'Minted ' + def.name + ' (' + def.crafted.quality + '% quality).');
+  wsLog('build', 'Minted ' + def.name + ' (' + def.crafted.quality + '% quality' + (def.local ? ', local' : '') + ').');
   wsSave();
   return def;
-}
-
-
-/* The bench's finishing call. Identical to mintLocal today — it exists as its
-   own name because phase 6 splits them: a bench build goes through ws_mint()
-   on the server (verified, tradeable) while mintLocal stays the offline path
-   (unverified, flagged `local`, never tradeable). Naming the two call sites
-   now means that split is a change to ONE function rather than a hunt through
-   callers. */
-export function mintFromBench(blueprintId, allocation, qualityFactor, parts) {
-  return mintLocal(blueprintId, allocation, qualityFactor, parts);
 }

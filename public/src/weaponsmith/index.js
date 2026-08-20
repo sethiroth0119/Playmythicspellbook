@@ -17,6 +17,7 @@ import { allItemDefs, CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, 
 import { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots } from './blueprints.js';
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore } from './bench.gun.js';
 import { openBench, closeBench, benchOpen } from './render.js';
+import { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online } from './server.js';
 
 /* A missing bridge disables the Weapon Smith and does nothing else. It must
    never throw: this module is loaded from a plain <script type="module"> tag,
@@ -80,6 +81,13 @@ try {
     abandon: () => abandonBuild(),
     open: () => openBench(),
     close: () => closeBench(),
+    // ☁ Phase-6 probes. Each returns null when offline or when sql/038 has not
+    // been applied yet, which is the same thing from the client's side.
+    sync: () => syncState(),
+    online: () => online(),
+    grant: (bpId, src) => grantBlueprint(bpId, src || 'loot'),
+    deliver: (cId, itemId) => deliverContract(cId, itemId),
+    owns: (bpId) => ownsBlueprint(bpId),
   };
   /* 🔧 The opener index.html calls. A plain window function rather than another
      bridge entry, because the flow is the OTHER direction: the bridge is what
@@ -94,3 +102,4 @@ export { CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, partDef, isPa
 export { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots };
 export { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore };
 export { openBench, closeBench, benchOpen };
+export { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online };

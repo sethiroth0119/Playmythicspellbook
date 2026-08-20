@@ -262,8 +262,10 @@ function bind(s) {
   });
 
   const fin = document.getElementById(ID + '-finish');
-  if (fin) fin.onclick = () => {
-    const r = finishBuild();
+  if (fin) fin.onclick = async () => {
+    // Awaited — finishBuild now round-trips to ws_mint when online, and a
+    // bench that cleared itself before the answer arrived would lose the build.
+    const r = await finishBuild();
     _msg = r.ok ? ('Built ' + r.item.name + ' at ' + r.quality + '% — it is in your vault.') : r.reason;
     if (r.ok) { try { toast('🔧 ' + r.item.name + ' finished (' + r.quality + '%).', 5200); } catch (e) {} }
     paint();

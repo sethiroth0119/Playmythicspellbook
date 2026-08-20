@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs', 'overlays.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping
@@ -107,6 +107,23 @@ const MUTATIONS = [
     name: 'the moveset merge goes back to picking by length',
     find: '    if (la || ra) takeLocal = la > ra;                       // 1 + 2',
     replace: '    if (false) takeLocal = false;',
+  },
+  {
+    /* Put the paint order back the way it shipped: the JB iframe above the
+       sub-apps it opens. This is the real bug — the bench drew underneath a
+       full-screen iframe and looked like a dead button, and clicking any other
+       business revealed it. Nothing but a stacking check can see it. */
+    name: 'the JB iframe covers the sub-apps it opens',
+    find: 'border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986)',
+    replace: 'border:0;z-index:2147483999;background:#0b0b10;opacity:0;transform:scale(.986)',
+  },
+  {
+    /* Drop the iframe's cache-buster. sw.js is cache-first for sub-resources,
+       so without it a returning player keeps the old corp/index.html and never
+       sees a new sidebar entry no matter how the .jsx tags inside are bumped. */
+    name: 'the JB iframe URL loses its cache-buster',
+    find: "f.src = 'corp/?v=121a1';",
+    replace: "f.src = 'corp/';",
   },
   {
     /* One warehouse arriving from both Operations.list and the local JB list is

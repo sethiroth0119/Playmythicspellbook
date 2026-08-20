@@ -34,7 +34,7 @@ let _scene = null, _sceneFor = null;
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const CSS = `
-#${ID}{position:fixed;inset:0;z-index:9600;background:rgba(8,7,6,.96);overflow:auto;
+#${ID}{position:fixed;inset:0;z-index:2147483400;background:rgba(8,7,6,.96);overflow:auto;
   font-family:inherit;color:#e8dcc0;padding:1rem;box-sizing:border-box}
 #${ID} .wsb-wrap{max-width:1180px;margin:0 auto}
 #${ID} .wsb-head{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;

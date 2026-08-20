@@ -36564,7 +36564,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121a0';
+  window.BUILD_VERSION = 'v121a1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -85659,7 +85659,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=120h1';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=121a1';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {
@@ -107276,7 +107276,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v121a0';
+const BB_VER = 'v121a1';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -117477,7 +117477,7 @@ function _mmMount() {
   } catch (e) {}
   const f = document.createElement('iframe');
   f.id = 'mm-frame';
-  f.src = 'main-menu/index.html?v=v121a0';
+  f.src = 'main-menu/index.html?v=v121a1';
   f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:5;background:#0a0610';
   document.body.appendChild(f);
   App._mmReady = false;
@@ -213104,7 +213104,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v121a0';
+  f.src = 'node-city/index.html?v=v121a1';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -232295,8 +232295,8 @@ render();
      ⚠ window.WeaponSmithBridge is installed in ordinary source order ABOVE, in
        the main script. This tag must stay below it.
      Bump ?v= on every change — the service worker caches these like any asset. -->
-<script type="module" src="src/weaponsmith/index.js?v=ws-3d5"></script>
-<script type="module" src="src/storage/index.js?v=st-1"></script>
+<script type="module" src="src/weaponsmith/index.js?v=ws-3d6"></script>
+<script type="module" src="src/storage/index.js?v=st-2"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the
@@ -232344,8 +232344,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v121a0">
-<script type="module" src="src/battle/hud.js?v=v121a0"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v121a1">
+<script type="module" src="src/battle/hud.js?v=v121a1"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

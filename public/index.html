@@ -25992,6 +25992,16 @@
     font-weight: 700;
     letter-spacing: 0.08em;
   }
+  /* 🔒 A main-hub tile that is present but not yet playable. Greyed, not
+     hidden — the point is that the player can see it coming. */
+  .md-mitem.md-mlocked { opacity: 0.45; filter: grayscale(0.85); cursor: not-allowed; }
+  .md-mitem.md-mlocked:hover { transform: none; }
+  .md-mlock {
+    font-size: 0.58rem; letter-spacing: 0.1em; font-weight: 800;
+    color: #ffcf5a; border: 1px solid rgba(212,175,55,0.55);
+    background: rgba(212,175,55,0.12); border-radius: 4px;
+    padding: 0 5px; margin-left: 6px; vertical-align: middle; white-space: nowrap;
+  }
   .hub-portal.portal-locked { opacity: 0.65; }
   .hub-portal.portal-locked:hover { transform: none; cursor: not-allowed; }
 
@@ -36554,7 +36564,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120z8';
+  window.BUILD_VERSION = 'v120z9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -107237,7 +107247,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v120z8';
+const BB_VER = 'v120z9';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -117374,7 +117384,13 @@ function _mmData() {
   const out = { type: 'mm:data', player: {}, event: null };
   // 🗺 The cinematic menu hides its Warpath button when the mode is switched
   // off. Without this the kill switch only silences the classic menu.
-  try { out.warpath = (typeof warpathEnabled === 'function') ? warpathEnabled() : true; } catch (e) { out.warpath = true; }
+  /* Two flags, not one. `warpath` still means "render the button" so the kill
+     switch keeps hiding it outright; `warpathLocked` greys it in place for
+     everyone who may not run the mode yet. An older cached main-menu that does
+     not know the second flag simply shows an enabled button — and the mm:nav
+     handler below refuses it anyway, so the stale-iframe case is still safe. */
+  try { out.warpath = (typeof warpathVisible === 'function') ? warpathVisible() : true; } catch (e) { out.warpath = true; }
+  try { out.warpathLocked = !((typeof warpathEnabled === 'function') && warpathEnabled()); } catch (e) { out.warpathLocked = true; }
   try {
     const cc = Profile.cloud || {};
     out.player.name = (cc.displayName || (Profile.account && Profile.account.displayName) || (cc.email || '').split('@')[0] || 'Survivor').slice(0, 24);
@@ -117432,7 +117448,7 @@ function _mmMount() {
   } catch (e) {}
   const f = document.createElement('iframe');
   f.id = 'mm-frame';
-  f.src = 'main-menu/index.html?v=120f6';
+  f.src = 'main-menu/index.html?v=v120z9';
   f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:5;background:#0a0610';
   document.body.appendChild(f);
   App._mmReady = false;
@@ -117476,6 +117492,9 @@ function _mmBindMsg() {
     if (d.type === 'mm:nav') {
       const sec = MD_SECTIONS.find((s) => s && s.t === d.label);
       if (!sec) return;
+      // Same refusal as the classic hub. This is the one that matters for a
+      // cached iframe that never received the warpathLocked flag.
+      if (sec.locked && sec.locked()) { try { showToast(sec.lockMsg || '🔒 Not available yet.', 3200); } catch (e2) {} return; }
       // Small beat so the menu's flash transition lands before the swap.
       setTimeout(() => { try { sec.go(); render(); } catch (e2) {} }, 60);
       return;
@@ -117518,7 +117537,9 @@ const MD_SECTIONS = [
   // apologising. `warpathEnabled` is a hoisted function declaration, so it is
   // callable here even though it is defined much further down the file.
   { t: 'Warpath',       s: 'Leave the city · draft a deck by surviving', ic: _MD_ICO.tent,
-    hidden: () => !(typeof warpathEnabled === 'function' && warpathEnabled()),
+    hidden: () => !(typeof warpathVisible === 'function' && warpathVisible()),
+    locked: () => !(typeof warpathEnabled === 'function' && warpathEnabled()),
+    lockMsg: '🗺 The Warpath is still being built — admin only for now.',
     go: () => { if (typeof openWarpathGate === 'function') openWarpathGate(); } },
 ];
 
@@ -118194,7 +118215,7 @@ function _masterMenuHtml() {
   // below looks up MD_SECTIONS[i] by that index.
   const items = MD_SECTIONS.map((sec, i) =>
     (sec.hidden && sec.hidden()) ? '' :
-    `<div class="md-mitem" data-md-nav="${i}"><span class="md-mico">${sec.ic || ''}</span><div class="md-mtext"><div class="md-mtitle">${escapeHtml(sec.t)}</div><div class="md-msub">${escapeHtml(sec.s)}</div></div></div>`).join('');
+    `<div class="md-mitem${(sec.locked && sec.locked()) ? ' md-mlocked' : ''}" data-md-nav="${i}"><span class="md-mico">${sec.ic || ''}</span><div class="md-mtext"><div class="md-mtitle">${escapeHtml(sec.t)}${(sec.locked && sec.locked()) ? ' <span class="md-mlock">👑 ADMIN</span>' : ''}</div><div class="md-msub">${escapeHtml(sec.s)}</div></div></div>`).join('');
   return `<div id="md-stage">
     <canvas id="md-fx"></canvas>
     <div id="md-heroWrap">
@@ -118400,7 +118421,14 @@ function _initMasterMenu() {
     setTimeout(() => { try { fn(); } catch (e) {} try { render(); } catch (e) {} }, 90);
   };
   stage.querySelectorAll('[data-md-nav]').forEach(el => {
-    el.addEventListener('click', () => { const i = +el.getAttribute('data-md-nav'); const sec = MD_SECTIONS[i]; if (sec) nav(sec.go); });
+    el.addEventListener('click', () => {
+      const i = +el.getAttribute('data-md-nav'); const sec = MD_SECTIONS[i];
+      if (!sec) return;
+      // A locked tile is inert. The CSS greys it, but the refusal lives here so
+      // the tile cannot be activated by keyboard or via a stale rendered class.
+      if (sec.locked && sec.locked()) { try { showToast(sec.lockMsg || '🔒 Not available yet.', 3200); } catch (e2) {} return; }
+      nav(sec.go);
+    });
   });
   // 💠 Standard currency rail (cloud / rank / music / account level / Cinder /
   // Aza) — the same bar shown on every other screen. Its pills self-wire here.
@@ -213047,7 +213075,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v120z8';
+  f.src = 'node-city/index.html?v=v120z9';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -230946,8 +230974,34 @@ const WARPATH_VER = 'v120g1';
 // Kill switch — `hg_warpath = '0'` disables the mode without a deploy, same
 // pattern as `hg_ascent_map`. Both menu surfaces read this, so "off" means the
 // entry is gone rather than present-and-apologising.
-function warpathEnabled() {
+/* 🔒 ADMIN-ONLY PHASE. Warpath is built and deployed but its migration is not
+   applied yet, so for everyone except the admin the mode must be VISIBLE AND
+   DEAD rather than either hidden or live — the player should see it coming
+   without being able to walk into an error.
+
+   That needs THREE states where there used to be two:
+     warpathVisible()  the entry renders at all      (kill switch only)
+     warpathEnabled()  the mode may actually be run  (kill switch + admin)
+   Everything that DOES something — the gate, the grant drain, the exposed API —
+   stays on warpathEnabled(). Only the two menu surfaces read warpathVisible(),
+   and they grey the entry when it is visible but not enabled.
+
+   ⚠ Flip WARPATH_ADMIN_ONLY to false to open the mode to everyone. That is the
+   ONLY line to change; do it once the migration is applied and verified. The
+   'hg_warpath' kill switch still overrides it for everybody, admin included.
+
+   isAdmin() reads Profile.cloud, which can be empty for a beat during boot, so
+   a signed-in admin may briefly see the locked state. That is the right way to
+   be wrong: locked() is re-evaluated on every render and on click, so it
+   resolves itself, and a non-admin can never transiently be let IN. */
+const WARPATH_ADMIN_ONLY = true;
+function warpathVisible() {
   try { return localStorage.getItem('hg_warpath') !== '0'; } catch (e) { return true; }
+}
+function warpathEnabled() {
+  if (!warpathVisible()) return false;
+  if (!WARPATH_ADMIN_ONLY) return true;
+  try { return (typeof isAdmin === 'function') && isAdmin(); } catch (e) { return false; }
 }
 // Set the first time this account successfully enters a Warpath. The
 // extraction drain is gated on it so a player who has never touched the mode
@@ -231892,7 +231946,11 @@ function _wpUndoGrant(applied, mats) {
    SELECT HERO." Built as a body-level overlay rather than a new App.screen so
    render() and the screen switch are not touched at all. */
 function openWarpathGate() {
-  if (!warpathEnabled()) { showToast('The Warpath is closed.', 3000); return; }
+  if (!warpathEnabled()) {
+    showToast(warpathVisible() ? '🗺 The Warpath is still being built — admin only for now.'
+                               : 'The Warpath is closed.', 3200);
+    return;
+  }
   if (document.getElementById('warpath-gate')) return;
   if (!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client)) {
     showToast('Sign in to enter the Warpath — it is a shared world.', 4200); return;
@@ -232223,8 +232281,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v120z8">
-<script type="module" src="src/battle/hud.js?v=v120z8"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v120z9">
+<script type="module" src="src/battle/hud.js?v=v120z9"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

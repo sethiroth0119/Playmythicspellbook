@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping
@@ -107,6 +107,21 @@ const MUTATIONS = [
     name: 'the moveset merge goes back to picking by length',
     find: '    if (la || ra) takeLocal = la > ra;                       // 1 + 2',
     replace: '    if (false) takeLocal = false;',
+  },
+  {
+    /* Open the admin-only phase to everyone. Warpath ships before its migration
+       is applied, so a player let in reaches a mode whose database does not
+       exist — this gate is the only thing standing between them and that. */
+    name: 'the warpath admin-only phase is lifted',
+    find: 'const WARPATH_ADMIN_ONLY = true;',
+    replace: 'const WARPATH_ADMIN_ONLY = false;',
+  },
+  {
+    /* Grey-but-clickable is worse than either state on its own: it LOOKS
+       unavailable and still opens. The CSS is not the enforcement. */
+    name: 'a locked hub tile becomes clickable again',
+    find: "      if (sec.locked && sec.locked()) { try { showToast(sec.lockMsg || '🔒 Not available yet.', 3200); } catch (e2) {} return; }\n      nav(sec.go);",
+    replace: '      nav(sec.go);',
   },
   {
     /* The root cause of the placeholder cards on the camp Table: the admin

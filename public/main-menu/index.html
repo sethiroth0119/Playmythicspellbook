@@ -862,6 +862,17 @@ addEventListener('message', (e) => {
   if (typeof d.warpath === 'boolean') {
     var _wpBtn = document.querySelector('.nav-item[data-label="Warpath"]');
     if (_wpBtn) _wpBtn.style.display = d.warpath ? '' : 'none';
+    /* 🔒 Visible but not yet playable — grey it in place rather than hiding it.
+       The parent refuses the nav anyway (mm:nav checks sec.locked), so this is
+       presentation only, and an older parent that never sends the flag just
+       leaves the button looking normal. */
+    if (_wpBtn && d.warpath) {
+      var _wpLock = d.warpathLocked === true;
+      _wpBtn.style.opacity = _wpLock ? '0.42' : '';
+      _wpBtn.style.filter = _wpLock ? 'grayscale(0.85)' : '';
+      _wpBtn.style.cursor = _wpLock ? 'not-allowed' : '';
+      _wpBtn.setAttribute('title', _wpLock ? 'Still being built — admin only for now' : '');
+    }
   }
   try { if (d.characters) setChars(d.characters); } catch(err){}
   try { if (typeof d.music === 'boolean') paintMusic(d.music); } catch(err){}
